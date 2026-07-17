@@ -269,18 +269,59 @@ func itemActionURL(workspaceID, itemID int) string {
 // config use this to avoid the event→rule→recipient pipeline which can't
 // express "notify exactly these users".
 func (ns *NotificationService) NotifyUsers(userIDs []int, workspaceID, itemID, actorUserID int, notifType, title, message string) error {
-	if ns.notificationManager == nil {
-		return fmt.Errorf("notification manager not configured")
+	var authorize func(int) (bool, error)
+	if ns.permService != nil {
+		authorize = func(userID int) (bool, error) {
+			return ns.permService.HasWorkspacePermission(userID, workspaceID, models.PermissionItemView)
+		}
 	}
-	actionURL := itemActionURL(workspaceID, itemID)
+	_, err := ns.notifyUsersAtURL(userIDs, actorUserID, notifType, title, message, itemActionURL(workspaceID, itemID), authorize)
+	return err
+}
+
+// NotifyUsersForAsset creates direct notifications for users who currently
+// retain view access to the asset's set. Asset actions cannot use the
+// workspace notification-rule pipeline, and silently skipping this check
+// would disclose asset-derived titles/messages to arbitrary configured IDs.
+func (ns *NotificationService) NotifyUsersForAsset(userIDs []int, setID, assetID, actorUserID int, notifType, title, message string, includeLink bool, checker AssetSetPermissionChecker) (int, error) {
+	if checker == nil {
+		return 0, fmt.Errorf("asset notification blocked: asset permission checker not configured")
+	}
+	actionURL := ""
+	if includeLink {
+		actionURL = fmt.Sprintf("/assets/%d", assetID)
+	}
+	authorize := func(userID int) (bool, error) {
+		return checker.HasAssetSetPermission(userID, setID, AssetPermissionKeyView)
+	}
+	return ns.notifyUsersAtURL(userIDs, actorUserID, notifType, title, message, actionURL, authorize)
+}
+
+func (ns *NotificationService) notifyUsersAtURL(userIDs []int, actorUserID int, notifType, title, message, actionURL string, authorize func(int) (bool, error)) (int, error) {
+	if ns.notificationManager == nil {
+		return 0, fmt.Errorf("notification manager not configured")
+	}
+	skipAsAgent := map[int]bool{}
+	if ns.db != nil {
+		skipAsAgent = ns.agentOrUnknownUsers(userIDs)
+	}
 	seen := make(map[int]bool, len(userIDs))
 	notifications := make([]models.Notification, 0, len(userIDs))
 	now := time.Now()
 	for _, uid := range userIDs {
-		if uid == 0 || uid == actorUserID || seen[uid] {
+		if uid <= 0 || uid == actorUserID || seen[uid] || skipAsAgent[uid] {
 			continue
 		}
 		seen[uid] = true
+		if authorize != nil {
+			allowed, err := authorize(uid)
+			if err != nil {
+				return 0, fmt.Errorf("authorize notification recipient %d: %w", uid, err)
+			}
+			if !allowed {
+				continue
+			}
+		}
 		notifications = append(notifications, models.Notification{
 			UserID:    uid,
 			Title:     title,
@@ -291,10 +332,13 @@ func (ns *NotificationService) NotifyUsers(userIDs []int, workspaceID, itemID, a
 			ActionURL: actionURL,
 		})
 	}
-	if _, err := ns.notificationManager.AddNotifications(notifications); err != nil {
-		return fmt.Errorf("add notifications for %d users: %w", len(notifications), err)
+	if len(notifications) == 0 {
+		return 0, nil
 	}
-	return nil
+	if _, err := ns.notificationManager.AddNotifications(notifications); err != nil {
+		return 0, fmt.Errorf("add notifications for %d users: %w", len(notifications), err)
+	}
+	return len(notifications), nil
 }
 
 // CreateNotification stores a single notification through the notification

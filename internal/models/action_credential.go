@@ -1,6 +1,12 @@
 package models
 
-import "time"
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+	"time"
+	"unicode"
+)
 
 // ActionCredentialEncryptionInfo is the HKDF info label used to derive the
 // action-credentials encryption key from SSO_SECRET. Domain-separated from
@@ -51,6 +57,13 @@ type ActionCredential struct {
 
 // Sanitize returns a redacted view safe for any client response.
 func (c *ActionCredential) Sanitize() ActionCredentialSanitized {
+	metadata := c.SecretMetadata
+	// Treat persisted metadata as untrusted on reads too. Validation prevents
+	// new unsafe values, but legacy rows (or rows written by an older binary)
+	// must not become a plaintext-secret disclosure through a list endpoint.
+	if ValidateActionCredentialMetadata(metadata) != nil {
+		metadata = ""
+	}
 	return ActionCredentialSanitized{
 		ID:                     c.ID,
 		Name:                   c.Name,
@@ -59,10 +72,99 @@ func (c *ActionCredential) Sanitize() ActionCredentialSanitized {
 		WorkspaceIDs:           c.WorkspaceIDs,
 		HasSecret:              c.EncryptedSecret != "",
 		SecretPrefix:           c.SecretPrefix,
-		SecretMetadata:         c.SecretMetadata,
+		SecretMetadata:         metadata,
 		IsEnabled:              c.IsEnabled,
 		CreatedAt:              c.CreatedAt,
 		UpdatedAt:              c.UpdatedAt,
+	}
+}
+
+// ValidateActionCredentialMetadata requires metadata to be a JSON object and
+// rejects sensitive-looking keys at any nesting depth. Metadata is returned to
+// clients, so allowing a nested {"provider":{"token":"..."}} value would
+// defeat the write-only credential contract just as surely as a top-level
+// token field would.
+func ValidateActionCredentialMetadata(metadata string) error {
+	if metadata == "" {
+		return nil
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(metadata), &parsed); err != nil {
+		return fmt.Errorf("secret_metadata must be a JSON object: %w", err)
+	}
+	if parsed == nil {
+		return fmt.Errorf("secret_metadata must be a JSON object")
+	}
+	if key, ok := findSensitiveCredentialMetadataKey(parsed); ok {
+		return fmt.Errorf("secret_metadata must not contain sensitive key %q (use the secret field)", key)
+	}
+	return nil
+}
+
+func findSensitiveCredentialMetadataKey(value interface{}) (string, bool) {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		for key, child := range typed {
+			if IsSensitiveActionCredentialMetadataKey(key) {
+				return key, true
+			}
+			if nested, ok := findSensitiveCredentialMetadataKey(child); ok {
+				return nested, true
+			}
+		}
+	case []interface{}:
+		for _, child := range typed {
+			if nested, ok := findSensitiveCredentialMetadataKey(child); ok {
+				return nested, true
+			}
+		}
+	}
+	return "", false
+}
+
+// IsSensitiveActionCredentialMetadataKey reports whether a metadata key looks
+// like it can hold secret material. It recognizes snake/kebab/space separated
+// and camelCase forms so clientSecret cannot bypass a client_secret check.
+func IsSensitiveActionCredentialMetadataKey(key string) bool {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return false
+	}
+
+	var compact strings.Builder
+	var words strings.Builder
+	var previousWasLowerOrDigit bool
+	for _, r := range key {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			if unicode.IsUpper(r) && previousWasLowerOrDigit {
+				words.WriteByte(' ')
+			}
+			lower := unicode.ToLower(r)
+			compact.WriteRune(lower)
+			words.WriteRune(lower)
+			previousWasLowerOrDigit = unicode.IsLower(r) || unicode.IsDigit(r)
+			continue
+		}
+		words.WriteByte(' ')
+		previousWasLowerOrDigit = false
+	}
+
+	switch compact.String() {
+	case "secret", "token", "password", "apikey", "authorization",
+		"clientsecret", "privatekey", "accesstoken", "refreshtoken",
+		"signingkey", "encryptionkey", "signature":
+		return true
+	}
+
+	parts := strings.Fields(words.String())
+	if len(parts) < 2 {
+		return false
+	}
+	switch parts[len(parts)-1] {
+	case "token", "secret", "password", "key", "signature":
+		return true
+	default:
+		return false
 	}
 }
 

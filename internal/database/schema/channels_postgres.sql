@@ -1,5 +1,6 @@
 -- Channels system tables
 -- Channels table moved to base_tables_postgres.sql
+CREATE UNIQUE INDEX IF NOT EXISTS uq_channels_default_route ON channels(type, direction) WHERE is_default = true;
 
 -- Channel managers table for access control
 CREATE TABLE IF NOT EXISTS channel_managers (

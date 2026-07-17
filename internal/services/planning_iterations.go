@@ -128,7 +128,8 @@ func (s *PlanningService) ListIterations(params IterationListParams) ([]Iteratio
 	var countArgs []interface{}
 
 	// Filter by workspace - show local iterations for this workspace + optionally global iterations
-	if params.WorkspaceID != nil {
+	switch {
+	case params.WorkspaceID != nil:
 		if params.IncludeGlobal {
 			query += " AND (i.workspace_id = ? OR i.is_global = ?)"
 			countQuery += " AND (i.workspace_id = ? OR i.is_global = ?)"
@@ -140,7 +141,7 @@ func (s *PlanningService) ListIterations(params IterationListParams) ([]Iteratio
 			args = append(args, *params.WorkspaceID)
 			countArgs = append(countArgs, *params.WorkspaceID)
 		}
-	} else if len(params.WorkspaceIDs) > 0 {
+	case len(params.WorkspaceIDs) > 0:
 		workspaceClause, workspaceArgs := planningWorkspaceFilter("i.workspace_id", params.WorkspaceIDs)
 		workspaceClause = strings.TrimPrefix(workspaceClause, " AND ")
 		if params.IncludeGlobal {
@@ -156,13 +157,13 @@ func (s *PlanningService) ListIterations(params IterationListParams) ([]Iteratio
 			args = append(args, workspaceArgs...)
 			countArgs = append(countArgs, workspaceArgs...)
 		}
-	} else if params.IncludeGlobal {
+	case params.IncludeGlobal:
 		// If no workspace specified but include_global, only show global iterations
 		query += " AND i.is_global = ?"
 		countQuery += " AND i.is_global = ?"
 		args = append(args, true)
 		countArgs = append(countArgs, true)
-	} else {
+	default:
 		// An unscoped local list must never widen to every workspace.
 		query += " AND 1=0"
 		countQuery += " AND 1=0"

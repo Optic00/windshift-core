@@ -22,6 +22,7 @@ func RegisterWorkspaceRoutes(deps *Deps) {
 	api.HandleH("DELETE /workspaces/{id}", auth(http.HandlerFunc(deps.Workspaces.Workspace.Delete)))
 	api.HandleH("GET /workspaces/{id}/stats", auth(workspaceView(http.HandlerFunc(deps.Workspaces.Workspace.GetStats))))
 	api.HandleH("GET /workspaces/{id}/statuses", auth(http.HandlerFunc(deps.Workspaces.Workspace.GetStatuses)))
+	api.HandleH("GET /workspaces/{id}/item-types", auth(workspaceView(http.HandlerFunc(deps.Workspaces.Workspace.GetItemTypes))))
 	api.HandleH("GET /workspaces/{id}/homepage/layout", auth(http.HandlerFunc(deps.Workspaces.Workspace.GetHomepageLayout)))
 	api.HandleH("PUT /workspaces/{id}/homepage/layout", auth(http.HandlerFunc(deps.Workspaces.Workspace.UpdateHomepageLayout)))
 

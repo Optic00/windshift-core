@@ -16,15 +16,23 @@ func ValidateFlowAcyclic[
 		FlowEdgeItem
 	},
 ](nodes []N, edges []E) error {
-	if len(nodes) == 0 || len(edges) == 0 {
+	if len(nodes) == 0 {
+		if len(edges) > 0 {
+			return fmt.Errorf("flow has %d edges but no nodes", len(edges))
+		}
 		return nil
 	}
-
 	adj := make(map[int][]int, len(nodes))
 	known := make(map[int]struct{}, len(nodes))
 	for i := range nodes {
 		id := NP(&nodes[i]).FlowNodeID()
+		if _, exists := known[id]; exists {
+			return fmt.Errorf("flow contains duplicate node ID %d", id)
+		}
 		known[id] = struct{}{}
+	}
+	if len(edges) == 0 {
+		return nil
 	}
 	for i := range edges {
 		ep := EP(&edges[i])
@@ -137,13 +145,22 @@ func CreateFlowNodesAndEdges[
 	rollback func(),
 ) error {
 	if len(nodes) == 0 {
+		if len(edges) > 0 {
+			rollback()
+			return fmt.Errorf("flow has %d edges but no nodes", len(edges))
+		}
 		return nil
 	}
 
 	known := make(map[int]struct{}, len(nodes))
 	for i := range nodes {
 		np := NP(&nodes[i])
-		known[np.FlowNodeID()] = struct{}{}
+		id := np.FlowNodeID()
+		if _, exists := known[id]; exists {
+			rollback()
+			return fmt.Errorf("flow contains duplicate node ID %d", id)
+		}
+		known[id] = struct{}{}
 	}
 	for i := range edges {
 		ep := EP(&edges[i])

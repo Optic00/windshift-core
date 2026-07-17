@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"windshift/internal/database"
+	"windshift/internal/email"
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
@@ -34,6 +35,12 @@ import (
 func newSSRFSafeWebhookClient(timeout time.Duration) *http.Client {
 	return &http.Client{
 		Timeout: timeout,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			// Never forward configured authentication headers or request bodies
+			// to a receiver-selected destination. Treat every 3xx as a failed
+			// delivery and require operators to configure the final URL.
+			return http.ErrUseLastResponse
+		},
 		Transport: &http.Transport{
 			DialContext: utils.SafeNetDialer(timeout).DialContext,
 		},
@@ -59,6 +66,14 @@ const (
 	// worker while still allowing modest parallelism per channel.
 	destinationConcurrency = 2
 )
+
+var supportedAutomaticEvents = map[string]bool{
+	"item.created":   true,
+	"item.updated":   true,
+	"item.deleted":   true,
+	"item.assigned":  true,
+	"status.changed": true,
+}
 
 type dispatchJob struct {
 	event string
@@ -100,6 +115,7 @@ type WebhookSender struct {
 	deliveryRepo     *repository.WebhookDeliveryRepository
 	httpClient       *http.Client
 	pluginDispatcher PluginDispatcher
+	encryption       email.Encryptor
 
 	dispatchCtx    context.Context
 	dispatchCancel context.CancelFunc
@@ -132,7 +148,7 @@ type WebhookSender struct {
 }
 
 // NewWebhookSender creates a new webhook sender
-func NewWebhookSender(db database.Database) *WebhookSender {
+func NewWebhookSender(db database.Database, encryptors ...email.Encryptor) *WebhookSender {
 	dispatchCtx, dispatchCancel := context.WithCancel(context.Background())
 	w := &WebhookSender{
 		db:                db,
@@ -144,6 +160,9 @@ func NewWebhookSender(db database.Database) *WebhookSender {
 		dispatchQueue:     make(chan dispatchJob, dispatchQueueCapacity),
 		accepting:         true,
 		destinationLimits: make(map[int]chan struct{}),
+	}
+	if len(encryptors) > 0 {
+		w.encryption = encryptors[0]
 	}
 	w.dispatchJobFn = w.dispatchQueuedEvent
 	w.itemPayloadFn = w.itemPayloadJSON
@@ -201,7 +220,9 @@ func (w *WebhookSender) dispatchQueuedEvent(job dispatchJob) {
 		return
 	}
 	for _, webhook := range webhooks {
-		w.sendWebhookPayload(ctx, webhook, job.event, job.item.ID, itemJSON)
+		if err := w.sendWebhookPayload(ctx, webhook, job.event, job.item.ID, itemJSON); err != nil {
+			logger.Get().Warn("Webhook delivery failed", "error", err, "event", job.event, "item_id", job.item.ID, "channel_id", webhook.ChannelID)
+		}
 	}
 }
 
@@ -281,7 +302,13 @@ func (w *WebhookSender) Shutdown(ctx context.Context) error {
 func (w *WebhookSender) recordDelivery(ctx context.Context, d *models.WebhookDelivery) {
 	start := time.Now()
 	defer func() { w.databaseNanos.Add(time.Since(start).Nanoseconds()) }()
-	if err := w.deliveryRepo.Insert(ctx, d); err != nil {
+	recordCtx := ctx
+	cancel := func() {}
+	if ctx == nil || ctx.Err() != nil {
+		recordCtx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+	}
+	defer cancel()
+	if err := w.deliveryRepo.Insert(recordCtx, d); err != nil {
 		logger.Get().Warn("Failed to record webhook delivery", "error", err, "channel_id", d.ChannelID)
 	}
 }
@@ -409,7 +436,7 @@ func (w *WebhookSender) subscriptionIndex(ctx context.Context) (*subscriptionInd
 	w.subscriptionMisses.Add(1)
 
 	query := `
-		SELECT id, name, config, plugin_name, plugin_webhook_id
+		SELECT id, name, COALESCE(config, '{}'), plugin_name, plugin_webhook_id
 		FROM channels
 		WHERE type = 'webhook' AND direction = 'outbound' AND status = 'enabled'
 	`
@@ -447,12 +474,18 @@ func (w *WebhookSender) subscriptionIndex(ctx context.Context) (*subscriptionInd
 			continue
 		}
 
+		secret, decryptErr := email.DecryptOrLegacy(w.encryption, config.WebhookSecret)
+		if decryptErr != nil {
+			logger.Get().Error("Failed to decrypt webhook secret", "error", decryptErr, "channel_id", channelID)
+			continue
+		}
+
 		// Build webhook config
 		webhook := WebhookConfig{
 			ChannelID:        channelID,
 			Name:             channelName,
 			URL:              config.WebhookURL,
-			Secret:           config.WebhookSecret,
+			Secret:           secret,
 			Headers:          config.WebhookHeaders,
 			ScopeType:        config.WebhookScopeType,
 			WorkspaceIDs:     config.WebhookWorkspaceIDs,
@@ -471,6 +504,13 @@ func (w *WebhookSender) subscriptionIndex(ctx context.Context) (*subscriptionInd
 		}
 
 		for _, subscribedEvent := range webhook.SubscribedEvents {
+			// User-configured external webhooks are limited to the payload
+			// contracts exposed by the editor. Plugin-owned handlers are trusted
+			// internal consumers and may subscribe to additional coordinator
+			// events such as approval lifecycle notifications.
+			if webhook.PluginName == "" && !supportedAutomaticEvents[subscribedEvent] {
+				continue
+			}
 			index.byEvent[subscribedEvent] = append(index.byEvent[subscribedEvent], webhook)
 		}
 		index.entries++
@@ -528,6 +568,9 @@ func ValidateWebhookURL(rawURL string) error {
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return fmt.Errorf("webhook URL must use http or https scheme, got %q", u.Scheme)
 	}
+	if u.User != nil {
+		return fmt.Errorf("webhook URL must not contain user credentials")
+	}
 
 	host := u.Hostname()
 	if host == "" {
@@ -541,7 +584,9 @@ func ValidateWebhookURL(rawURL string) error {
 		if host == "localhost" || host == "ip6-localhost" || host == "ip6-loopback" {
 			return fmt.Errorf("webhook URL must not target localhost")
 		}
-		ips, err := net.LookupHost(host)
+		lookupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		ips, err := net.DefaultResolver.LookupHost(lookupCtx, host)
 		if err != nil {
 			return fmt.Errorf("cannot resolve webhook host %q: %w", host, err)
 		}
@@ -559,7 +604,7 @@ func ValidateWebhookURL(rawURL string) error {
 
 // isPrivateIP returns true for loopback, private, and link-local addresses.
 func isPrivateIP(ip net.IP) bool {
-	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified()
+	return utils.IsBlockedSSRFAddr(ip)
 }
 
 func (w *WebhookSender) itemPayloadJSON(ctx context.Context, event string, item *models.Item) (json.RawMessage, error) {
@@ -625,7 +670,7 @@ func (w *WebhookSender) observeDeliveryLatency(elapsed time.Duration) {
 
 // sendWebhookPayload sends one already-hydrated item payload to a configured
 // URL or plugin. Hydration happens once per event, not once per destination.
-func (w *WebhookSender) sendWebhookPayload(parentCtx context.Context, webhook WebhookConfig, event string, itemID int, itemJSON json.RawMessage) {
+func (w *WebhookSender) sendWebhookPayload(parentCtx context.Context, webhook WebhookConfig, event string, itemID int, itemJSON json.RawMessage) error {
 	deliveryStart := time.Now()
 	defer func() { w.observeDeliveryLatency(time.Since(deliveryStart)) }()
 
@@ -637,7 +682,7 @@ func (w *WebhookSender) sendWebhookPayload(parentCtx context.Context, webhook We
 		defer func() { <-limit }()
 	case <-ctx.Done():
 		w.recordPayloadFailure(ctx, webhook, event, itemID, ctx.Err())
-		return
+		return ctx.Err()
 	}
 
 	delivery := &models.WebhookDelivery{
@@ -662,7 +707,7 @@ func (w *WebhookSender) sendWebhookPayload(parentCtx context.Context, webhook We
 		logger.Get().Error("Failed to serialize webhook payload", "error", err)
 		delivery.ErrorMessage = "failed to serialize payload: " + err.Error()
 		w.recordDelivery(ctx, delivery)
-		return
+		return fmt.Errorf("serialize webhook payload: %w", err)
 	}
 
 	// If this is a plugin webhook, dispatch to plugin instead of HTTP
@@ -677,7 +722,7 @@ func (w *WebhookSender) sendWebhookPayload(parentCtx context.Context, webhook We
 			)
 			delivery.ErrorMessage = "plugin dispatcher not configured"
 			w.recordDelivery(ctx, delivery)
-			return
+			return fmt.Errorf("plugin dispatcher is not configured")
 		}
 
 		pluginStart := time.Now()
@@ -701,27 +746,30 @@ func (w *WebhookSender) sendWebhookPayload(parentCtx context.Context, webhook We
 		ms := int(time.Since(pluginStart).Milliseconds())
 		delivery.ResponseTimeMs = &ms
 		w.recordDelivery(ctx, delivery)
-		return
+		if !delivery.Success {
+			return fmt.Errorf("plugin webhook delivery failed: %s", delivery.ErrorMessage)
+		}
+		return nil
 	}
 
 	// Standard HTTP webhook
-	delivery.RequestURL = webhook.URL
+	delivery.RequestURL = redactedWebhookURL(webhook.URL)
 
 	// Validate URL to prevent SSRF
 	if err := ValidateWebhookURL(webhook.URL); err != nil {
-		logger.Get().Error("Webhook URL validation failed", "error", err, "url", webhook.URL, "webhook_id", webhook.ChannelID)
+		logger.Get().Error("Webhook URL validation failed", "error", err, "url", delivery.RequestURL, "webhook_id", webhook.ChannelID)
 		delivery.ErrorMessage = "URL validation failed: " + err.Error()
 		w.recordDelivery(ctx, delivery)
-		return
+		return fmt.Errorf("webhook URL validation failed: %w", err)
 	}
 
 	// Create request
 	req, err := http.NewRequestWithContext(ctx, "POST", webhook.URL, bytes.NewBuffer(payloadBytes))
 	if err != nil {
-		logger.Get().Error("Failed to create webhook request", "error", err, "url", webhook.URL)
+		logger.Get().Error("Failed to create webhook request", "error", err, "url", delivery.RequestURL)
 		delivery.ErrorMessage = "failed to create request: " + err.Error()
 		w.recordDelivery(ctx, delivery)
-		return
+		return fmt.Errorf("create webhook request: %w", err)
 	}
 
 	// Apply custom headers FIRST so reserved Windshift headers (Content-Type,
@@ -751,11 +799,11 @@ func (w *WebhookSender) sendWebhookPayload(parentCtx context.Context, webhook We
 	delivery.ResponseTimeMs = &elapsedMs
 
 	if err != nil {
-		logger.Get().Error("Failed to send webhook", "error", err, "url", webhook.URL, "webhook_id", webhook.ChannelID)
+		logger.Get().Error("Failed to send webhook", "error", err, "url", delivery.RequestURL, "webhook_id", webhook.ChannelID)
 		w.updateChannelActivity(ctx, webhook.ChannelID, false)
 		delivery.ErrorMessage = err.Error()
 		w.recordDelivery(ctx, delivery)
-		return
+		return fmt.Errorf("send webhook request: %w", err)
 	}
 	defer func() {
 		_, _ = io.Copy(io.Discard, resp.Body)
@@ -783,6 +831,21 @@ func (w *WebhookSender) sendWebhookPayload(parentCtx context.Context, webhook We
 		}
 	}
 	w.recordDelivery(ctx, delivery)
+	if !delivery.Success {
+		return fmt.Errorf("webhook returned HTTP %d", resp.StatusCode)
+	}
+	return nil
+}
+
+func redactedWebhookURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	u.User = nil
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
 }
 
 // webhookResponsePreviewBytes caps how much of a non-2xx response body we
@@ -806,7 +869,7 @@ func (w *WebhookSender) TriggerManually(ctx context.Context, webhookID, itemID i
 		status      string
 		configJSON  string
 	)
-	query := "SELECT name, status, config FROM channels WHERE id = ? AND type = 'webhook' AND direction = 'outbound'"
+	query := "SELECT name, status, COALESCE(config, '{}') FROM channels WHERE id = ? AND type = 'webhook' AND direction = 'outbound'"
 	err := w.db.QueryRowContext(ctx, query, webhookID).Scan(&channelName, &status, &configJSON)
 	if err != nil {
 		return fmt.Errorf("webhook not found: %w", err)
@@ -818,6 +881,10 @@ func (w *WebhookSender) TriggerManually(ctx context.Context, webhookID, itemID i
 	var config models.ChannelConfig
 	if err = json.Unmarshal([]byte(configJSON), &config); err != nil {
 		return fmt.Errorf("failed to parse webhook config: %w", err)
+	}
+	secret, err := email.DecryptOrLegacy(w.encryption, config.WebhookSecret)
+	if err != nil {
+		return fmt.Errorf("decrypt webhook secret: %w", err)
 	}
 
 	// Get item
@@ -838,7 +905,7 @@ func (w *WebhookSender) TriggerManually(ctx context.Context, webhookID, itemID i
 		ChannelID: webhookID,
 		Name:      channelName,
 		URL:       config.WebhookURL,
-		Secret:    config.WebhookSecret,
+		Secret:    secret,
 		Headers:   config.WebhookHeaders,
 	}
 
@@ -847,8 +914,9 @@ func (w *WebhookSender) TriggerManually(ctx context.Context, webhookID, itemID i
 	if err != nil {
 		return fmt.Errorf("serialize webhook item: %w", err)
 	}
-	w.sendWebhookPayload(ctx, webhook, "manual", item.ID, itemJSON)
-
+	if err := w.sendWebhookPayload(ctx, webhook, "manual", item.ID, itemJSON); err != nil {
+		return fmt.Errorf("webhook delivery failed: %w", err)
+	}
 	return nil
 }
 

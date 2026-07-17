@@ -150,6 +150,7 @@ func (p *MicrosoftProvider) Connect(ctx context.Context, config *models.ChannelC
 	}
 
 	client, err := Connect(ConnectOptions{
+		Context:    ctx,
 		Host:       MicrosoftIMAPHost,
 		Port:       MicrosoftIMAPPort,
 		Encryption: "ssl",

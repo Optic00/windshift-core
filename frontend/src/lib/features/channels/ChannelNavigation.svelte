@@ -8,6 +8,7 @@
   import { t } from '../../stores/i18n.svelte.js';
   import SidebarHeader from '../../layout/SidebarHeader.svelte';
   import { channelTypes as channelTypeDefs, allTypesEntry } from './channelTypes.js';
+  import { isSystemAdmin } from '../../stores/permissions.svelte.js';
 
   // Get active filters from URL params
   let activeCategoryId = $derived($currentRoute.params?.categoryId || null);
@@ -29,17 +30,17 @@
 
   function handleTypeClick(typeId) {
     if (typeId === null) {
-      navigate('/channels');
+      navigate('/admin/channels');
     } else {
-      navigate(`/channels/type/${typeId}`);
+      navigate(`/admin/channels/type/${typeId}`);
     }
   }
 
   function handleCategoryClick(categoryId) {
     if (categoryId === null) {
-      navigate('/channels');
+      navigate('/admin/channels');
     } else {
-      navigate(`/channels/category/${categoryId}`);
+      navigate(`/admin/channels/category/${categoryId}`);
     }
   }
 
@@ -118,14 +119,16 @@
   </nav>
 
   <!-- Footer - Manage Categories -->
-  <div class="pt-4 border-t" style="border-color: var(--ds-border);">
-    <Button
-      variant="default"
-      icon={IconTag}
-      onclick={handleManageCategories}
-      class="w-full justify-center"
-    >
-      {t('channels.manageCategories')}
-    </Button>
-  </div>
+  {#if $isSystemAdmin}
+    <div class="pt-4 border-t" style="border-color: var(--ds-border);">
+      <Button
+        variant="default"
+        icon={IconTag}
+        onclick={handleManageCategories}
+        class="w-full justify-center"
+      >
+        {t('channels.manageCategories')}
+      </Button>
+    </div>
+  {/if}
 </div>

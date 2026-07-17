@@ -25,14 +25,14 @@ func NewConfigReadService(db database.Database) *ConfigReadService {
 
 // ItemTypeResult represents an item type for API responses.
 type ItemTypeResult struct {
-	ID             int
-	Name           string
-	Description    string
-	Icon           string
-	Color          string
-	HierarchyLevel int
-	SortOrder      int
-	IsDefault      bool
+	ID             int    `json:"id"`
+	Name           string `json:"name"`
+	Description    string `json:"description"`
+	Icon           string `json:"icon"`
+	Color          string `json:"color"`
+	HierarchyLevel int    `json:"hierarchy_level"`
+	SortOrder      int    `json:"sort_order"`
+	IsDefault      bool   `json:"is_default"`
 }
 
 // ScanItemTypes scans rows from an item_types query into a slice of ItemTypeResult.

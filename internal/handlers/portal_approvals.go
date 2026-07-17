@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"sort"
@@ -105,8 +104,7 @@ func (h *PortalHandler) DecideAsPortalCustomer(w http.ResponseWriter, r *http.Re
 	}
 
 	var body portalDecideRequest
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		respondValidationError(w, r, "Invalid request body")
+	if !decodeChannelRequest(w, r, &body, false) {
 		return
 	}
 	// Portal decision comments surface on the same approval timeline as

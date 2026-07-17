@@ -57,8 +57,7 @@ func (h *WebhookHandler) TriggerWebhook(w http.ResponseWriter, r *http.Request) 
 	var request struct {
 		ItemID int `json:"item_id"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		respondBadRequest(w, r, "Invalid JSON")
+	if !decodeChannelRequest(w, r, &request, false) {
 		return
 	}
 
@@ -174,6 +173,14 @@ func (h *WebhookHandler) GetWebhooksForItem(w http.ResponseWriter, r *http.Reque
 
 	webhooks := make([]WebhookInfo, 0, len(channels))
 	for _, c := range channels {
+		canManage, manageErr := h.channelService.UserCanManage(ctx, user.ID, c.ID)
+		if manageErr != nil {
+			respondInternalError(w, r, manageErr)
+			return
+		}
+		if !canManage {
+			continue
+		}
 		var config models.ChannelConfig
 		if err := json.Unmarshal([]byte(c.Config), &config); err != nil {
 			continue

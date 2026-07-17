@@ -2,11 +2,14 @@ package email
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,13 +17,37 @@ import (
 	"windshift/internal/models"
 )
 
+const encryptedSecretPrefix = "enc:v1:"
+
+const (
+	credentialLeaseDuration = 3 * time.Minute
+	credentialLeasePoll     = 200 * time.Millisecond
+)
+
+// EncryptSecret writes an unambiguous envelope around new ciphertext. Older
+// channel secrets were stored as bare base64, which is indistinguishable by
+// shape from a perfectly valid long base64 password.
+func EncryptSecret(enc Encryptor, value string) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+	if enc == nil {
+		return "", fmt.Errorf("secret encryption is not configured")
+	}
+	ciphertext, err := enc.Encrypt(value)
+	if err != nil {
+		return "", err
+	}
+	return encryptedSecretPrefix + ciphertext, nil
+}
+
 // DecryptOrLegacy unwraps an encrypted secret, distinguishing three cases:
 //   - empty string: returns "" (caller shortcuts).
-//   - value looks like a base64-encoded AES-GCM ciphertext (decodable and
-//     long enough to contain nonce + tag + body): attempt decrypt and
-//     propagate failure. A failure here means the serverSecret rotated or
-//     the DB is corrupt — don't silently use the ciphertext as plaintext,
-//     which would send garbage to upstream IDPs and produce opaque 401s.
+//   - enc:v1-prefixed value: decrypt strictly and propagate any corruption or
+//     key mismatch.
+//   - unprefixed value that looks like legacy ciphertext: try decrypting it;
+//     if authentication fails, treat it as legacy plaintext because long
+//     base64 passwords are otherwise impossible to represent.
 //   - anything else: legacy plaintext from before encryption was introduced;
 //     return as-is so existing channels keep working.
 //
@@ -32,6 +59,13 @@ func DecryptOrLegacy(enc Encryptor, value string) (string, error) {
 	if enc == nil {
 		return value, nil
 	}
+	if strings.HasPrefix(value, encryptedSecretPrefix) {
+		plain, err := enc.Decrypt(strings.TrimPrefix(value, encryptedSecretPrefix))
+		if err != nil {
+			return "", fmt.Errorf("decrypt secret: %w", err)
+		}
+		return plain, nil
+	}
 	// AES-GCM ciphertext minimum: 12-byte nonce + 16-byte auth tag = 28 bytes
 	// raw, ~40 base64 chars. Short-and-not-base64 inputs are legacy plaintext.
 	const minCipherBytes = 28
@@ -41,7 +75,7 @@ func DecryptOrLegacy(enc Encryptor, value string) (string, error) {
 	}
 	plain, err := enc.Decrypt(value)
 	if err != nil {
-		return "", fmt.Errorf("decrypt secret: %w", err)
+		return value, nil //nolint:nilerr // legacy plaintext may itself be long base64
 	}
 	return plain, nil
 }
@@ -62,9 +96,8 @@ type CredentialManager struct {
 	// sync for the same channel would otherwise both hit an expired token,
 	// both call the provider, and both write back — and since providers like
 	// Microsoft rotate refresh tokens, the losing writer's refresh_token is
-	// dead on arrival. A per-channel mutex removes that race single-instance.
-	// (Multi-instance deployments still need a DB-level lock; that's a
-	// separate change.)
+	// dead on arrival. A per-channel mutex avoids needless local lease
+	// contention; the database-backed lease below covers other instances.
 	refreshLocks sync.Map // map[int]*sync.Mutex
 }
 
@@ -91,6 +124,66 @@ func (m *CredentialManager) lockForChannel(channelID int) *sync.Mutex {
 	return &sync.Mutex{}
 }
 
+func (m *CredentialManager) acquireCredentialLease(ctx context.Context, channelID int) (string, error) {
+	ownerBytes := make([]byte, 16)
+	if _, err := rand.Read(ownerBytes); err != nil {
+		return "", fmt.Errorf("generate credential lease token: %w", err)
+	}
+	owner := hex.EncodeToString(ownerBytes)
+	for {
+		expiresAt := time.Now().Add(credentialLeaseDuration)
+		result, err := m.db.ExecWriteContext(ctx, `
+			INSERT INTO email_credential_leases(channel_id, owner_token, expires_at)
+			VALUES (?, ?, ?)
+			ON CONFLICT(channel_id) DO UPDATE SET
+				owner_token = excluded.owner_token,
+				expires_at = excluded.expires_at
+			WHERE email_credential_leases.expires_at <= CURRENT_TIMESTAMP
+		`, channelID, owner, expiresAt)
+		if err != nil {
+			return "", fmt.Errorf("claim email credential lease: %w", err)
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return "", fmt.Errorf("count claimed email credential leases: %w", err)
+		}
+		if rows > 0 {
+			return owner, nil
+		}
+
+		timer := time.NewTimer(credentialLeasePoll)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return "", ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func (m *CredentialManager) releaseCredentialLease(ctx context.Context, channelID int, owner string) {
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if _, err := m.db.ExecWriteContext(releaseCtx,
+		"DELETE FROM email_credential_leases WHERE channel_id = ? AND owner_token = ?",
+		channelID, owner,
+	); err != nil {
+		slog.Error("failed to release email credential lease", "channel_id", channelID, "error", err)
+	}
+}
+
+func (m *CredentialManager) withCredentialLease(ctx context.Context, channelID int, mutate func() error) error {
+	mu := m.lockForChannel(channelID)
+	mu.Lock()
+	defer mu.Unlock()
+	owner, err := m.acquireCredentialLease(ctx, channelID)
+	if err != nil {
+		return err
+	}
+	defer m.releaseCredentialLease(ctx, channelID, owner)
+	return mutate()
+}
+
 // GetProviderForChannel creates the appropriate provider for a channel
 // last review: ser, 210426
 func (m *CredentialManager) GetProviderForChannel(ctx context.Context, channelID int) (Provider, *models.ChannelConfig, error) {
@@ -98,7 +191,7 @@ func (m *CredentialManager) GetProviderForChannel(ctx context.Context, channelID
 	var configJSON string
 
 	err := m.db.QueryRow(`
-		SELECT config FROM channels WHERE id = ? AND type = 'email' AND direction = 'inbound'
+		SELECT COALESCE(config, '{}') FROM channels WHERE id = ? AND type = 'email' AND direction = 'inbound'
 	`, channelID).Scan(&configJSON)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get channel: %w", err)
@@ -260,34 +353,45 @@ func (m *CredentialManager) RefreshOAuthTokenIfNeeded(
 		return config.EmailOAuthAccessToken, nil
 	}
 
-	// Serialize refreshes per channel. The caller's `config` may be stale by the
-	// time we get the lock if another goroutine already refreshed — re-read the
-	// current state from DB and bail if a fresh token is now present.
+	// Serialize refreshes per channel in-process and across application servers.
+	// The caller's config may be stale by the time the lease is acquired, so
+	// re-read and validate the OAuth identity before calling the provider.
 	mu := m.lockForChannel(channelID)
 	mu.Lock()
 	defer mu.Unlock()
+	owner, err := m.acquireCredentialLease(ctx, channelID)
+	if err != nil {
+		return "", err
+	}
+	defer m.releaseCredentialLease(ctx, channelID, owner)
 
-	currentAccess, currentRefresh, currentExpiresAt, err := m.readOAuthTokens(ctx, channelID)
+	current, err := m.readOAuthConfig(ctx, channelID)
 	if err != nil {
 		return "", fmt.Errorf("failed to re-read channel config after acquiring refresh lock: %w", err)
 	}
-	if currentExpiresAt != nil && time.Until(*currentExpiresAt) > 5*time.Minute {
+	if current.EmailOAuthExpiresAt != nil && time.Until(*current.EmailOAuthExpiresAt) > 5*time.Minute {
 		// Someone else refreshed while we were waiting.
-		return currentAccess, nil
+		return current.EmailOAuthAccessToken, nil
+	}
+	if !sameOAuthIdentity(config, current) {
+		return "", fmt.Errorf("email OAuth identity changed while waiting to refresh")
 	}
 
 	slog.Info("refreshing email OAuth token", "channel_id", channelID)
 
-	if currentRefresh == "" {
+	if current.EmailOAuthRefreshToken == "" {
 		return "", fmt.Errorf("token expired and no refresh token available")
 	}
 
-	newTokens, err := provider.RefreshToken(ctx, currentRefresh)
+	newTokens, err := provider.RefreshToken(ctx, current.EmailOAuthRefreshToken)
 	if err != nil {
 		return "", fmt.Errorf("failed to refresh token: %w", err)
 	}
+	if newTokens == nil || strings.TrimSpace(newTokens.AccessToken) == "" {
+		return "", fmt.Errorf("OAuth provider returned no refreshed access token")
+	}
 
-	newAccessTokenEnc, err := m.encryption.Encrypt(newTokens.AccessToken)
+	newAccessTokenEnc, err := EncryptSecret(m.encryption, newTokens.AccessToken)
 	if err != nil {
 		return "", fmt.Errorf("failed to encrypt new access token: %w", err)
 	}
@@ -297,7 +401,7 @@ func (m *CredentialManager) RefreshOAuthTokenIfNeeded(
 		// A silently-dropped encryption error here used to wipe the stored
 		// refresh token (empty ciphertext), leaving the channel unable to
 		// refresh and requiring manual re-auth. Surface the error instead.
-		newRefreshTokenEnc, err = m.encryption.Encrypt(newTokens.RefreshToken)
+		newRefreshTokenEnc, err = EncryptSecret(m.encryption, newTokens.RefreshToken)
 		if err != nil {
 			return "", fmt.Errorf("failed to encrypt new refresh token: %w", err)
 		}
@@ -308,36 +412,38 @@ func (m *CredentialManager) RefreshOAuthTokenIfNeeded(
 	// one is now dead and the next tick would refresh with it and fail hard.
 	// Surface the error so the caller records it and retries next tick with
 	// the hopefully-still-valid old refresh token.
-	if err := m.updateChannelTokens(ctx, channelID, newAccessTokenEnc, newRefreshTokenEnc, newTokens.ExpiresAt); err != nil {
+	if err := m.updateChannelTokens(ctx, channelID, newAccessTokenEnc, newRefreshTokenEnc, newTokens.ExpiresAt, current); err != nil {
 		return "", fmt.Errorf("failed to store refreshed tokens: %w", err)
 	}
 
 	return newTokens.AccessToken, nil
 }
 
-// readOAuthTokens reads and decrypts the current OAuth tokens from the DB.
+// readOAuthConfig reads and decrypts the current OAuth tokens from the DB.
 // Used by RefreshOAuthTokenIfNeeded after acquiring the per-channel lock to
 // guard against acting on a stale in-memory config.
-func (m *CredentialManager) readOAuthTokens(ctx context.Context, channelID int) (access, refresh string, expiresAt *time.Time, err error) {
+func (m *CredentialManager) readOAuthConfig(ctx context.Context, channelID int) (*models.ChannelConfig, error) {
 	var configJSON string
-	if err := m.db.QueryRowContext(ctx, `SELECT config FROM channels WHERE id = ?`, channelID).Scan(&configJSON); err != nil {
-		return "", "", nil, err
+	if err := m.db.QueryRowContext(ctx, `SELECT COALESCE(config, '{}') FROM channels WHERE id = ?`, channelID).Scan(&configJSON); err != nil {
+		return nil, err
 	}
 	var cfg models.ChannelConfig
 	if configJSON != "" {
 		if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
-			return "", "", nil, err
+			return nil, err
 		}
 	}
-	access, err = DecryptOrLegacy(m.encryption, cfg.EmailOAuthAccessToken)
+	access, err := DecryptOrLegacy(m.encryption, cfg.EmailOAuthAccessToken)
 	if err != nil {
-		return "", "", nil, err
+		return nil, err
 	}
-	refresh, err = DecryptOrLegacy(m.encryption, cfg.EmailOAuthRefreshToken)
+	refresh, err := DecryptOrLegacy(m.encryption, cfg.EmailOAuthRefreshToken)
 	if err != nil {
-		return "", "", nil, err
+		return nil, err
 	}
-	return access, refresh, cfg.EmailOAuthExpiresAt, nil
+	cfg.EmailOAuthAccessToken = access
+	cfg.EmailOAuthRefreshToken = refresh
+	return &cfg, nil
 }
 
 // updateChannelTokens updates the OAuth tokens in the channel config
@@ -346,42 +452,62 @@ func (m *CredentialManager) updateChannelTokens(
 	channelID int,
 	accessToken, refreshToken string,
 	expiresAt *time.Time,
+	expected *models.ChannelConfig,
 ) error {
-	// Get current config
-	var configJSON string
-	err := m.db.QueryRowContext(ctx, `SELECT config FROM channels WHERE id = ?`, channelID).Scan(&configJSON)
-	if err != nil {
-		return fmt.Errorf("failed to get channel config: %w", err)
-	}
-
-	var config models.ChannelConfig
-	if configJSON != "" {
-		if err = json.Unmarshal([]byte(configJSON), &config); err != nil {
-			return fmt.Errorf("failed to parse channel config: %w", err)
+	_, err := m.patchChannelConfig(ctx, channelID, func(config map[string]any) error {
+		encoded, err := json.Marshal(config)
+		if err != nil {
+			return err
 		}
-	}
+		var current models.ChannelConfig
+		if err := json.Unmarshal(encoded, &current); err != nil {
+			return err
+		}
+		currentAccess, err := DecryptOrLegacy(m.encryption, current.EmailOAuthAccessToken)
+		if err != nil {
+			return err
+		}
+		currentRefresh, err := DecryptOrLegacy(m.encryption, current.EmailOAuthRefreshToken)
+		if err != nil {
+			return err
+		}
+		if !sameOAuthIdentity(expected, &current) || currentAccess != expected.EmailOAuthAccessToken ||
+			currentRefresh != expected.EmailOAuthRefreshToken || !sameOptionalTime(current.EmailOAuthExpiresAt, expected.EmailOAuthExpiresAt) {
+			return fmt.Errorf("email OAuth credentials changed during token refresh")
+		}
+		config["email_oauth_access_token"] = accessToken
+		if refreshToken != "" {
+			config["email_oauth_refresh_token"] = refreshToken
+		}
+		setOptionalConfigTime(config, "email_oauth_expires_at", expiresAt)
+		return nil
+	})
+	return err
+}
 
-	// Update token fields
-	config.EmailOAuthAccessToken = accessToken
-	if refreshToken != "" {
-		config.EmailOAuthRefreshToken = refreshToken
+func sameOAuthIdentity(left, right *models.ChannelConfig) bool {
+	if left == nil || right == nil {
+		return false
 	}
-	config.EmailOAuthExpiresAt = expiresAt
+	return left.EmailAuthMethod == right.EmailAuthMethod &&
+		left.EmailOAuthProviderType == right.EmailOAuthProviderType &&
+		left.EmailOAuthClientID == right.EmailOAuthClientID &&
+		left.EmailOAuthTenantID == right.EmailOAuthTenantID &&
+		sameOptionalInt(left.EmailProviderID, right.EmailProviderID)
+}
 
-	// Save updated config
-	updatedConfigJSON, err := json.Marshal(config)
-	if err != nil {
-		return fmt.Errorf("failed to marshal updated config: %w", err)
+func sameOptionalInt(left, right *int) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
 	}
+	return *left == *right
+}
 
-	_, err = m.db.ExecWriteContext(ctx, `
-		UPDATE channels SET config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
-	`, string(updatedConfigJSON), channelID)
-	if err != nil {
-		return fmt.Errorf("failed to update channel config: %w", err)
+func sameOptionalTime(left, right *time.Time) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
 	}
-
-	return nil
+	return left.Equal(*right)
 }
 
 // SaveOAuthTokens saves OAuth tokens for a channel after successful OAuth flow
@@ -390,85 +516,174 @@ func (m *CredentialManager) SaveOAuthTokens(
 	channelID int,
 	tokens *OAuthTokens,
 	email string,
-) error {
-	// Get current config
-	var configJSON string
-	err := m.db.QueryRow(`SELECT config FROM channels WHERE id = ?`, channelID).Scan(&configJSON)
-	if err != nil {
-		return fmt.Errorf("failed to get channel config: %w", err)
+	expectedIdentity *models.ChannelConfig,
+) (string, error) {
+	var savedConfig string
+	err := m.withCredentialLease(ctx, channelID, func() error {
+		var saveErr error
+		savedConfig, saveErr = m.saveOAuthTokens(ctx, channelID, tokens, email, nil, expectedIdentity)
+		return saveErr
+	})
+	return savedConfig, err
+}
+
+// SaveOAuthTokensForProvider persists a central-provider OAuth result and its
+// provider binding in one config mutation. Keeping these fields together
+// avoids the old second blind read/modify/write in the provider callback.
+func (m *CredentialManager) SaveOAuthTokensForProvider(
+	ctx context.Context,
+	channelID int,
+	tokens *OAuthTokens,
+	mailboxEmail string,
+	providerID int,
+	expectedIdentity *models.ChannelConfig,
+) (string, error) {
+	if providerID <= 0 {
+		return "", fmt.Errorf("invalid email provider id %d", providerID)
+	}
+	var savedConfig string
+	err := m.withCredentialLease(ctx, channelID, func() error {
+		var saveErr error
+		savedConfig, saveErr = m.saveOAuthTokens(ctx, channelID, tokens, mailboxEmail, &providerID, expectedIdentity)
+		return saveErr
+	})
+	return savedConfig, err
+}
+
+func (m *CredentialManager) saveOAuthTokens(
+	ctx context.Context,
+	channelID int,
+	tokens *OAuthTokens,
+	mailboxEmail string,
+	providerID *int,
+	expectedIdentity *models.ChannelConfig,
+) (string, error) {
+	if tokens == nil {
+		return "", fmt.Errorf("OAuth provider returned no tokens")
+	}
+	if strings.TrimSpace(tokens.AccessToken) == "" {
+		return "", fmt.Errorf("OAuth provider returned an empty access token")
+	}
+	mailboxEmail = strings.TrimSpace(mailboxEmail)
+	if mailboxEmail == "" {
+		return "", fmt.Errorf("OAuth provider returned an empty mailbox address")
+	}
+	if m.encryption == nil {
+		return "", fmt.Errorf("OAuth token encryption is not configured")
 	}
 
-	var config models.ChannelConfig
-	if configJSON != "" {
-		if err = json.Unmarshal([]byte(configJSON), &config); err != nil {
-			return fmt.Errorf("failed to parse channel config: %w", err)
-		}
-	}
-
-	// Encrypt tokens
-	accessTokenEnc, err := m.encryption.Encrypt(tokens.AccessToken)
+	accessTokenEnc, err := EncryptSecret(m.encryption, tokens.AccessToken)
 	if err != nil {
-		return fmt.Errorf("failed to encrypt access token: %w", err)
+		return "", fmt.Errorf("failed to encrypt access token: %w", err)
 	}
 
 	var refreshTokenEnc string
 	if tokens.RefreshToken != "" {
-		refreshTokenEnc, err = m.encryption.Encrypt(tokens.RefreshToken)
+		refreshTokenEnc, err = EncryptSecret(m.encryption, tokens.RefreshToken)
 		if err != nil {
-			return fmt.Errorf("failed to encrypt refresh token: %w", err)
+			return "", fmt.Errorf("failed to encrypt refresh token: %w", err)
 		}
 	}
 
-	// Update config
-	config.EmailAuthMethod = "oauth"
-	config.EmailOAuthAccessToken = accessTokenEnc
-	config.EmailOAuthRefreshToken = refreshTokenEnc
-	config.EmailOAuthExpiresAt = tokens.ExpiresAt
-	config.EmailOAuthEmail = email
-
-	// Save updated config
-	updatedConfigJSON, err := json.Marshal(config)
+	savedConfig, err := m.patchChannelConfig(ctx, channelID, func(config map[string]any) error {
+		encoded, err := json.Marshal(config)
+		if err != nil {
+			return err
+		}
+		var current models.ChannelConfig
+		if err := json.Unmarshal(encoded, &current); err != nil {
+			return err
+		}
+		if expectedIdentity != nil && !sameOAuthIdentity(expectedIdentity, &current) {
+			return fmt.Errorf("email OAuth identity changed while authorization was in progress")
+		}
+		config["email_auth_method"] = "oauth"
+		config["email_oauth_access_token"] = accessTokenEnc
+		if refreshTokenEnc != "" {
+			config["email_oauth_refresh_token"] = refreshTokenEnc
+		} else if existing, _ := config["email_oauth_refresh_token"].(string); existing == "" && tokens.ExpiresAt != nil {
+			return fmt.Errorf("OAuth provider returned no refresh token")
+		}
+		setOptionalConfigTime(config, "email_oauth_expires_at", tokens.ExpiresAt)
+		config["email_oauth_email"] = mailboxEmail
+		if providerID != nil {
+			config["email_provider_id"] = *providerID
+		}
+		return nil
+	})
 	if err != nil {
-		return fmt.Errorf("failed to marshal updated config: %w", err)
+		return "", err
 	}
 
-	_, err = m.db.ExecWrite(`
-		UPDATE channels SET config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
-	`, string(updatedConfigJSON), channelID)
-	if err != nil {
-		return fmt.Errorf("failed to update channel config: %w", err)
+	slog.Info("saved OAuth tokens for email channel", "channel_id", channelID, "email", mailboxEmail)
+
+	return savedConfig, nil
+}
+
+const channelConfigPatchAttempts = 5
+
+// patchChannelConfig performs a forward-compatible JSON-object patch with an
+// optimistic compare-and-swap retry. It preserves keys unknown to this binary
+// and merges over a concurrent admin edit instead of blindly replacing it.
+func (m *CredentialManager) patchChannelConfig(ctx context.Context, channelID int, patch func(map[string]any) error) (string, error) {
+	for attempt := 0; attempt < channelConfigPatchAttempts; attempt++ {
+		var raw string
+		if err := m.db.QueryRowContext(ctx, `
+			SELECT COALESCE(config, '{}')
+			FROM channels
+			WHERE id = ? AND type = 'email' AND direction = 'inbound'
+		`, channelID).Scan(&raw); err != nil {
+			return "", fmt.Errorf("failed to get channel config: %w", err)
+		}
+
+		var config map[string]any
+		normalized := strings.TrimSpace(raw)
+		if normalized == "" || normalized == "null" {
+			return "", fmt.Errorf("channel config must be a JSON object")
+		}
+		if err := json.Unmarshal([]byte(raw), &config); err != nil {
+			return "", fmt.Errorf("failed to parse channel config: %w", err)
+		}
+		if config == nil {
+			return "", fmt.Errorf("channel config must be a JSON object")
+		}
+		if err := patch(config); err != nil {
+			return "", err
+		}
+		updated, err := json.Marshal(config)
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal updated config: %w", err)
+		}
+
+		result, err := m.db.ExecWriteContext(ctx, `
+			UPDATE channels
+			SET config = ?, updated_at = CURRENT_TIMESTAMP
+			WHERE id = ? AND type = 'email' AND direction = 'inbound'
+			  AND COALESCE(config, '{}') = ?
+		`, string(updated), channelID, raw)
+		if err != nil {
+			return "", fmt.Errorf("failed to update channel config: %w", err)
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return "", fmt.Errorf("failed to count updated channel configs: %w", err)
+		}
+		if rows > 0 {
+			return string(updated), nil
+		}
 	}
+	return "", fmt.Errorf("channel config changed repeatedly while saving OAuth credentials")
+}
 
-	slog.Info("saved OAuth tokens for email channel", "channel_id", channelID, "email", email)
-
-	return nil
+func setOptionalConfigTime(config map[string]any, key string, value *time.Time) {
+	if value == nil {
+		delete(config, key)
+		return
+	}
+	config[key] = value
 }
 
 // splitScopes splits a space-separated scope string into a slice
 func splitScopes(scopes string) []string {
-	if scopes == "" {
-		return nil
-	}
-	var result []string
-	for _, s := range []byte(scopes) {
-		if s == ' ' {
-			continue
-		}
-	}
-	// Simple space split
-	var current string
-	for _, c := range scopes {
-		if c == ' ' {
-			if current != "" {
-				result = append(result, current)
-				current = ""
-			}
-		} else {
-			current += string(c)
-		}
-	}
-	if current != "" {
-		result = append(result, current)
-	}
-	return result
+	return strings.Fields(scopes)
 }

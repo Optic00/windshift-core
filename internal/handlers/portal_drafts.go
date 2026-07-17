@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -91,8 +90,7 @@ func (h *PortalHandler) SaveDraft(w http.ResponseWriter, r *http.Request) {
 		CustomFields  map[string]interface{} `json:"custom_fields"`
 		CurrentStep   int                    `json:"current_step"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		respondBadRequest(w, r, "Invalid draft body")
+	if !decodeChannelRequest(w, r, &body, false) {
 		return
 	}
 	// Drafts are submitted by portal customers and stored; both fields

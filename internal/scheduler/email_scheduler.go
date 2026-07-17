@@ -3,7 +3,9 @@ package scheduler
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -147,7 +149,10 @@ func (es *EmailScheduler) processEmailChannels() {
 	// shows a green "100% success rate" while real mail is silently dropped.
 	failures := 0
 	for _, channel := range channels {
-		if !es.processChannel(ctx, channel) {
+		channelCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		ok := es.processChannel(channelCtx, channel)
+		cancel()
+		if !ok {
 			failures++
 		}
 		channelsProcessed++
@@ -168,7 +173,7 @@ type channelInfo struct {
 // getActiveEmailChannels retrieves all enabled inbound email channels
 func (es *EmailScheduler) getActiveEmailChannels(ctx context.Context) ([]channelInfo, error) {
 	rows, err := es.db.QueryContext(ctx, `
-		SELECT id, name, config
+		SELECT id, name, COALESCE(config, '{}')
 		FROM channels
 		WHERE type = 'email' AND direction = 'inbound' AND status = 'enabled'
 	`)
@@ -199,11 +204,64 @@ func (es *EmailScheduler) getActiveEmailChannels(ctx context.Context) ([]channel
 // one un-parseable email can't wedge the whole channel forever.
 const maxDeliveryAttempts = 5
 
+const emailProcessingLeaseDuration = 3 * time.Minute
+
+// acquireProcessingLease makes mailbox polling single-writer across both
+// scheduler instances and the manual process-now endpoint. It is deliberately
+// non-blocking: another worker already owns the useful work, so a duplicate
+// scheduler tick should skip instead of waiting only to re-fetch the same UIDs.
+// The lease outlives the two-minute per-channel context by one minute so a
+// canceled worker cannot overlap its replacement while unwinding.
+func (es *EmailScheduler) acquireProcessingLease(ctx context.Context, channelID int) (owner string, acquired bool, err error) {
+	ownerBytes := make([]byte, 16)
+	if _, err := rand.Read(ownerBytes); err != nil {
+		return "", false, fmt.Errorf("generate email processing lease token: %w", err)
+	}
+	owner = hex.EncodeToString(ownerBytes)
+	result, err := es.db.ExecWriteContext(ctx, `
+		INSERT INTO email_processing_leases(channel_id, owner_token, expires_at)
+		VALUES (?, ?, ?)
+		ON CONFLICT(channel_id) DO UPDATE SET
+			owner_token = excluded.owner_token,
+			expires_at = excluded.expires_at
+		WHERE email_processing_leases.expires_at <= CURRENT_TIMESTAMP
+	`, channelID, owner, time.Now().Add(emailProcessingLeaseDuration))
+	if err != nil {
+		return "", false, fmt.Errorf("claim email processing lease: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return "", false, fmt.Errorf("count claimed email processing leases: %w", err)
+	}
+	return owner, rows > 0, nil
+}
+
+func (es *EmailScheduler) releaseProcessingLease(ctx context.Context, channelID int, owner string) {
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if _, err := es.db.ExecWriteContext(releaseCtx, `
+		DELETE FROM email_processing_leases
+		WHERE channel_id = ? AND owner_token = ?
+	`, channelID, owner); err != nil {
+		slog.Error("failed to release email processing lease", "channel_id", channelID, "error", err)
+	}
+}
+
 // processChannel processes a single email channel. Returns true on success
 // (including the no-new-messages case) and false when any step failed; the caller
 // counts failures so the scheduler_run record reflects partial outages.
 func (es *EmailScheduler) processChannel(ctx context.Context, ch channelInfo) bool {
 	slog.Debug("processing email channel", "channel_id", ch.ID, "name", ch.Name)
+	owner, acquired, err := es.acquireProcessingLease(ctx, ch.ID)
+	if err != nil {
+		slog.Error("failed to acquire email processing lease", "channel_id", ch.ID, "error", err)
+		return false
+	}
+	if !acquired {
+		slog.Debug("email channel is already being processed; skipping duplicate poll", "channel_id", ch.ID)
+		return true
+	}
+	defer es.releaseProcessingLease(ctx, ch.ID, owner)
 
 	// Parse channel config
 	var config models.ChannelConfig
@@ -292,7 +350,10 @@ func (es *EmailScheduler) processChannel(ctx context.Context, ch channelInfo) bo
 	}
 
 	if len(messages) == 0 {
-		es.updateLastChecked(ctx, ch.ID)
+		// Persist the observed UIDVALIDITY even when the mailbox is empty. If the
+		// server changed epochs, retaining the old validity/LastUID would make
+		// every subsequent poll restart from UID 0 until a message arrived.
+		es.updateLastChecked(ctx, ch.ID, currentValidity)
 		return true
 	}
 
@@ -303,7 +364,7 @@ func (es *EmailScheduler) processChannel(ctx context.Context, ch channelInfo) bo
 	// gap would permanently lose the failed UID (next poll searches UID > last,
 	// which skips it), so a stuck message is retried on subsequent polls. To
 	// keep one bad message from wedging the channel forever, processChannel
-	// counts consecutive failed polls on it (persisted as error_count) and, once
+	// counts retries for that exact UID and UIDVALIDITY epoch and, once
 	// maxDeliveryAttempts is reached, drops it past the watermark (see below).
 	// Seed maxUID from sinceUID (not state.LastUID) so a UIDVALIDITY reset
 	// persists: after a reset sinceUID==0 and we want LastUID to reflect the
@@ -315,6 +376,17 @@ func (es *EmailScheduler) processChannel(ctx context.Context, ch channelInfo) bo
 	var offenderUID uint32
 
 	for _, msg := range messages {
+		if msg.FetchError != nil {
+			slog.Error("failed to fetch bounded email body, stopping batch to avoid skipping the UID",
+				"channel_id", ch.ID,
+				"uid", msg.UID,
+				"error", msg.FetchError,
+			)
+			errorCount++
+			offenderUID = msg.UID
+			lastBatchError = fmt.Sprintf("fetch UID %d: %s", msg.UID, msg.FetchError.Error())
+			break
+		}
 		parsed := es.parser.Parse(msg)
 
 		result, err := es.processor.ProcessEmail(ctx, parsed, ch.ID, currentValidity, decryptedConfig)
@@ -375,39 +447,45 @@ func (es *EmailScheduler) processChannel(ctx context.Context, ch channelInfo) bo
 
 	// Consecutive-failure / poison-message handling. errorCount > 0 means the
 	// loop broke at offenderUID. Because the watermark didn't advance, the same
-	// lowest-UID message is refetched first on every poll. error_count tracks
-	// consecutive failed polls on the channel (recordError bumps it for
-	// connect/fetch failures too, which keeps an outage from looking healthy);
-	// when the channel has been stuck this long and the current blocker is a
-	// specific message, we treat that message as poison and advance the
+	// lowest-UID message is refetched first on every poll. Poison retry state is
+	// keyed to that UID plus UIDVALIDITY, independently from error_count (the
+	// channel-health counter, which also includes connect/fetch failures). When
+	// this exact message has been stuck long enough, we advance the
 	// watermark past it so the channel keeps making progress instead of wedging
 	// forever. The drop is surfaced to admins via the channel's last_error plus
 	// the failed scheduler_run this tick records (processChannel returns false).
-	consecutiveFailures := 0
+	healthErrorCount := 0
+	failedMessageUID := 0
+	failedMessageUIDValidity := uint32(0)
+	failedMessageCount := 0
 	if errorCount > 0 {
-		consecutiveFailures = state.ErrorCount + 1
-		if consecutiveFailures >= maxDeliveryAttempts {
+		healthErrorCount = state.ErrorCount + 1
+		failedMessageUID, failedMessageUIDValidity, failedMessageCount = nextFailedMessageAttempt(state, offenderUID, currentValidity)
+		if failedMessageCount >= maxDeliveryAttempts {
 			slog.Error("dropping poison email after repeated failures; advancing past it",
 				"channel_id", ch.ID,
 				"uid", offenderUID,
-				"attempts", consecutiveFailures,
+				"attempts", failedMessageCount,
 				"error", lastBatchError,
 			)
 			if offenderUID > maxUID {
 				maxUID = offenderUID
 			}
 			lastBatchError = fmt.Sprintf("dropped poison message uid=%d after %d failed attempts: %s",
-				offenderUID, consecutiveFailures, lastBatchError)
+				offenderUID, failedMessageCount, lastBatchError)
 			// Watermark advanced past the offender — the counter restarts on the
 			// next message. last_error (set above) keeps the channel flagged
 			// unhealthy until a clean poll clears it.
-			consecutiveFailures = 0
+			failedMessageUID = 0
+			failedMessageUIDValidity = 0
+			failedMessageCount = 0
 		}
 	}
 
 	// Update channel state (including the observed UIDVALIDITY so a future
 	// server-side reset is detected on the next tick).
-	es.updateChannelState(ctx, ch.ID, int(maxUID), currentValidity, consecutiveFailures, lastBatchError)
+	es.updateChannelState(ctx, ch.ID, int(maxUID), currentValidity, healthErrorCount, lastBatchError,
+		failedMessageUID, failedMessageUIDValidity, failedMessageCount)
 
 	// Update channel last_activity
 	es.updateLastActivity(ctx, ch.ID)
@@ -425,6 +503,17 @@ func (es *EmailScheduler) processChannel(ctx context.Context, ch channelInfo) bo
 	return errorCount == 0
 }
 
+// nextFailedMessageAttempt advances the poison counter only when the same UID
+// failed in the same UIDVALIDITY epoch. Connectivity failures and a different
+// message must never inherit attempts from an older blocker.
+func nextFailedMessageAttempt(state *models.EmailChannelState, uid, uidValidity uint32) (failedUID int, failedUIDValidity uint32, count int) {
+	count = 1
+	if state != nil && state.FailedMessageUID == int(uid) && state.FailedMessageUIDValidity == uidValidity {
+		count = state.FailedMessageCount + 1
+	}
+	return int(uid), uidValidity, count
+}
+
 // getOrCreateChannelState gets or creates the channel state record
 func (es *EmailScheduler) getOrCreateChannelState(ctx context.Context, channelID int) (*models.EmailChannelState, error) {
 	var state models.EmailChannelState
@@ -432,12 +521,14 @@ func (es *EmailScheduler) getOrCreateChannelState(ctx context.Context, channelID
 	var lastError sql.NullString
 
 	err := es.db.QueryRowContext(ctx, `
-		SELECT id, channel_id, last_uid, uid_validity, last_checked_at, error_count, last_error
+		SELECT id, channel_id, last_uid, uid_validity, last_checked_at, error_count, last_error,
+		       failed_message_uid, failed_message_uid_validity, failed_message_count
 		FROM email_channel_state
 		WHERE channel_id = ?
 	`, channelID).Scan(
 		&state.ID, &state.ChannelID, &state.LastUID, &state.UIDValidity,
 		&lastCheckedAt, &state.ErrorCount, &lastError,
+		&state.FailedMessageUID, &state.FailedMessageUIDValidity, &state.FailedMessageCount,
 	)
 
 	if err == nil {
@@ -475,7 +566,16 @@ func (es *EmailScheduler) getOrCreateChannelState(ctx context.Context, channelID
 // operator keeps the concrete message instead of just an error counter. It's
 // cleared only on a clean run so a previously broken channel can be seen to
 // recover.
-func (es *EmailScheduler) updateChannelState(ctx context.Context, channelID, lastUID int, uidValidity uint32, errorCount int, lastBatchError string) {
+func (es *EmailScheduler) updateChannelState(
+	ctx context.Context,
+	channelID, lastUID int,
+	uidValidity uint32,
+	errorCount int,
+	lastBatchError string,
+	failedMessageUID int,
+	failedMessageUIDValidity uint32,
+	failedMessageCount int,
+) {
 	// last_error is keyed off the message, not the count: a dropped poison
 	// message resets error_count to 0 but still records why, so the channel
 	// stays flagged unhealthy until a clean poll passes lastBatchError == "".
@@ -485,21 +585,36 @@ func (es *EmailScheduler) updateChannelState(ctx context.Context, channelID, las
 	}
 	_, err := es.db.ExecWriteContext(ctx, `
 		UPDATE email_channel_state
-		SET last_uid = ?, uid_validity = ?, last_checked_at = CURRENT_TIMESTAMP, error_count = ?, last_error = ?, updated_at = CURRENT_TIMESTAMP
+		SET last_uid = ?, uid_validity = ?, last_checked_at = CURRENT_TIMESTAMP,
+		    error_count = ?, last_error = ?, failed_message_uid = ?,
+		    failed_message_uid_validity = ?, failed_message_count = ?,
+		    updated_at = CURRENT_TIMESTAMP
 		WHERE channel_id = ?
-	`, lastUID, uidValidity, errorCount, lastError, channelID)
+	`, lastUID, uidValidity, errorCount, lastError, failedMessageUID,
+		failedMessageUIDValidity, failedMessageCount, channelID)
 	if err != nil {
 		slog.Error("failed to update channel state", "error", err)
 	}
 }
 
-// updateLastChecked updates the last checked timestamp
-func (es *EmailScheduler) updateLastChecked(ctx context.Context, channelID int) {
+// updateLastChecked records a clean empty poll. The current UIDVALIDITY must be
+// persisted here as well as after non-empty batches; otherwise a changed epoch
+// is rediscovered on every empty poll. Match processChannel's legacy behavior
+// by preserving LastUID when the stored validity is 0 (unknown), but reset it
+// when a known epoch changes.
+func (es *EmailScheduler) updateLastChecked(ctx context.Context, channelID int, uidValidity uint32) {
 	_, _ = es.db.ExecWriteContext(ctx, `
 		UPDATE email_channel_state
-		SET last_checked_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+		SET last_uid = CASE
+		        WHEN uid_validity <> 0 AND uid_validity <> ? THEN 0
+		        ELSE last_uid
+		    END,
+		    uid_validity = ?, last_checked_at = CURRENT_TIMESTAMP,
+		    error_count = 0, last_error = NULL,
+		    failed_message_uid = 0, failed_message_uid_validity = 0,
+		    failed_message_count = 0, updated_at = CURRENT_TIMESTAMP
 		WHERE channel_id = ?
-	`, channelID)
+	`, uidValidity, uidValidity, channelID)
 }
 
 // recordError records an error for the channel
@@ -520,13 +635,12 @@ func (es *EmailScheduler) updateLastActivity(ctx context.Context, channelID int)
 
 // ProcessChannelNow triggers immediate processing of a specific channel.
 // This is primarily used for testing to avoid waiting for the scheduler interval.
-func (es *EmailScheduler) ProcessChannelNow(channelID int) error {
-	ctx := context.Background()
-
+// The caller's deadline is honored by every DB and IMAP operation.
+func (es *EmailScheduler) ProcessChannelNow(ctx context.Context, channelID int) error {
 	// Get channel info
 	var ch channelInfo
-	err := es.db.QueryRow(`
-		SELECT id, name, config FROM channels
+	err := es.db.QueryRowContext(ctx, `
+		SELECT id, name, COALESCE(config, '{}') FROM channels
 		WHERE id = ? AND type = 'email' AND direction = 'inbound'
 	`, channelID).Scan(&ch.ID, &ch.Name, &ch.Config)
 	if err != nil {

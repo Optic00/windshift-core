@@ -16,10 +16,11 @@ CREATE TABLE IF NOT EXISTS channels (
 	name TEXT NOT NULL,
 	type TEXT NOT NULL, -- smtp, webhook, portal, imap, etc.
 	direction TEXT NOT NULL, -- inbound, outbound
-	description TEXT,
+	description TEXT NOT NULL DEFAULT '',
 	status TEXT NOT NULL DEFAULT 'disabled', -- enabled, disabled
-	is_default BOOLEAN DEFAULT false,
-	config TEXT, -- JSON configuration data specific to channel type
+	is_default BOOLEAN NOT NULL DEFAULT false,
+	config TEXT NOT NULL DEFAULT '{}', -- JSON configuration data specific to channel type
+	public_slug TEXT, -- normalized portal/form slug used for race-safe uniqueness
 	plugin_name TEXT, -- NULL for user-created, plugin name for plugin-managed
 	plugin_webhook_id TEXT, -- Plugin's internal webhook identifier
 	category_id INTEGER REFERENCES channel_categories(id) ON DELETE SET NULL,
@@ -32,8 +33,12 @@ CREATE INDEX IF NOT EXISTS idx_channels_type ON channels(type);
 CREATE INDEX IF NOT EXISTS idx_channels_direction ON channels(direction);
 CREATE INDEX IF NOT EXISTS idx_channels_status ON channels(status);
 CREATE INDEX IF NOT EXISTS idx_channels_is_default ON channels(is_default);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_channels_default_route ON channels(type, direction) WHERE is_default = true;
 CREATE INDEX IF NOT EXISTS idx_channels_plugin_name ON channels(plugin_name);
 CREATE INDEX IF NOT EXISTS idx_channels_category_id ON channels(category_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_channels_public_slug
+	ON channels(type, public_slug)
+	WHERE direction = 'inbound' AND public_slug IS NOT NULL;
 
 -- Channel managers table for access control
 CREATE TABLE IF NOT EXISTS channel_managers (

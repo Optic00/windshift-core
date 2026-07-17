@@ -49,6 +49,19 @@ func (h *ActionHandler) HasCapability(workspaceID, capabilityID int) bool {
 	return err == nil && scoped
 }
 
+// HasCapabilityOfType lets the shared validator enforce the same typed
+// capability references on the bearer-token surface as on the cookie and MCP
+// surfaces. Without it, the resolver falls back to existence-only checks and
+// accepts (for example) a docker capability on an http_request node.
+func (h *ActionHandler) HasCapabilityOfType(workspaceID, capabilityID int, capabilityType models.CapabilityType) bool {
+	capability, err := h.repo.GetCapabilityByID(capabilityID)
+	if err != nil || capability == nil || !capability.IsEnabled || capability.CapabilityType != capabilityType {
+		return false
+	}
+	scoped, err := h.repo.IsCapabilityScopedToWorkspace(capabilityID, workspaceID)
+	return err == nil && scoped
+}
+
 // requireActionManage authenticates, parses the workspace ID from the
 // {id} path parameter, and requires the caller hold action.manage on that
 // workspace. action.manage is the existing permission gating the cookie-
@@ -63,7 +76,11 @@ func (h *ActionHandler) requireActionManage(w http.ResponseWriter, r *http.Reque
 	if !idOK {
 		return 0, 0, false
 	}
-	allowed, _ := h.PermissionService.HasWorkspacePermission(user.ID, wsID, models.PermissionActionManage)
+	allowed, err := h.PermissionService.HasWorkspacePermission(user.ID, wsID, models.PermissionActionManage)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return 0, 0, false
+	}
 	if !allowed {
 		// 404 to avoid disclosing the workspace's existence to unauthorized
 		// callers — same posture as the items / workflows v1 surface.

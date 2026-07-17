@@ -63,6 +63,9 @@ func (s *ActionCredentialService) Create(req models.CreateActionCredentialReques
 	if strings.TrimSpace(req.Secret) == "" {
 		return nil, errors.New("secret is required")
 	}
+	if err := validateCredentialSecret(req.CredentialType, req.Secret); err != nil {
+		return nil, err
+	}
 	if err := validateSecretMetadata(req.SecretMetadata); err != nil {
 		return nil, err
 	}
@@ -70,7 +73,10 @@ func (s *ActionCredentialService) Create(req models.CreateActionCredentialReques
 	if req.AppliesToAllWorkspaces != nil {
 		appliesAll = *req.AppliesToAllWorkspaces
 	}
-	workspaceIDs := dedupeWorkspaceIDs(req.WorkspaceIDs)
+	workspaceIDs, err := normalizeCredentialWorkspaceIDs(req.WorkspaceIDs)
+	if err != nil {
+		return nil, err
+	}
 	if !appliesAll && len(workspaceIDs) == 0 {
 		return nil, errors.New("workspace_ids must contain at least one workspace when applies_to_all_workspaces is false")
 	}
@@ -98,13 +104,10 @@ func (s *ActionCredentialService) Create(req models.CreateActionCredentialReques
 		SecretMetadata:         req.SecretMetadata,
 		IsEnabled:              enabled,
 	}
-	if _, err := s.repo.CreateActionCredential(c); err != nil {
+	if _, err := s.repo.CreateActionCredentialWithWorkspaces(c, workspaceIDs); err != nil {
 		return nil, err
 	}
 	if !appliesAll {
-		if err := s.repo.SetCredentialWorkspaces(c.ID, workspaceIDs); err != nil {
-			return nil, err
-		}
 		c.WorkspaceIDs = workspaceIDs
 	}
 	return c, nil
@@ -147,7 +150,10 @@ func (s *ActionCredentialService) UpdateMetadata(id int, req models.UpdateAction
 	scopeTouched := req.AppliesToAllWorkspaces != nil || req.WorkspaceIDs != nil
 	if scopeTouched {
 		if req.WorkspaceIDs != nil {
-			nextWorkspaceIDs = dedupeWorkspaceIDs(*req.WorkspaceIDs)
+			nextWorkspaceIDs, err = normalizeCredentialWorkspaceIDs(*req.WorkspaceIDs)
+			if err != nil {
+				return nil, err
+			}
 		} else {
 			nextWorkspaceIDs = append([]int(nil), c.WorkspaceIDs...)
 		}
@@ -160,14 +166,13 @@ func (s *ActionCredentialService) UpdateMetadata(id int, req models.UpdateAction
 		c.AppliesToAllWorkspaces = nextAppliesAll
 	}
 
-	if err := s.repo.UpdateActionCredentialMetadata(c); err != nil {
-		return nil, err
-	}
 	if scopeTouched {
-		if err := s.repo.SetCredentialWorkspaces(c.ID, nextWorkspaceIDs); err != nil {
+		if err := s.repo.UpdateActionCredentialMetadataWithWorkspaces(c, nextWorkspaceIDs); err != nil {
 			return nil, err
 		}
 		c.WorkspaceIDs = nextWorkspaceIDs
+	} else if err := s.repo.UpdateActionCredentialMetadata(c); err != nil {
+		return nil, err
 	}
 	return c, nil
 }
@@ -181,6 +186,9 @@ func (s *ActionCredentialService) Rotate(id int, req models.RotateActionCredenti
 	if err != nil {
 		return nil, err
 	}
+	if err := validateCredentialSecret(existing.CredentialType, req.Secret); err != nil {
+		return nil, err
+	}
 	ciphertext, err := s.encryption.Encrypt(req.Secret)
 	if err != nil {
 		return nil, fmt.Errorf("encrypt credential: %w", err)
@@ -192,6 +200,13 @@ func (s *ActionCredentialService) Rotate(id int, req models.RotateActionCredenti
 	existing.EncryptedSecret = ciphertext
 	existing.SecretPrefix = prefix
 	return existing, nil
+}
+
+func validateCredentialSecret(credentialType models.ActionCredentialType, secret string) error {
+	if credentialType == models.CredentialBasicAuth && !strings.Contains(secret, ":") {
+		return errors.New("basic_auth secret must use username:password format")
+	}
+	return nil
 }
 
 // Delete removes a credential. Callers must enforce permission/scope first.
@@ -283,17 +298,18 @@ func CanCapabilityReference(credential *models.ActionCredential, capabilityWorks
 	return true
 }
 
-// dedupeWorkspaceIDs removes duplicates and zero/negative IDs while preserving
-// the input order. Returns nil for an empty/all-invalid input.
-func dedupeWorkspaceIDs(ids []int) []int {
+// normalizeCredentialWorkspaceIDs rejects invalid IDs and removes duplicates
+// while preserving input order. Silently dropping a zero/negative value can
+// hide a broken scope request when other IDs happen to be valid.
+func normalizeCredentialWorkspaceIDs(ids []int) ([]int, error) {
 	if len(ids) == 0 {
-		return nil
+		return nil, nil
 	}
 	seen := make(map[int]struct{}, len(ids))
 	out := make([]int, 0, len(ids))
 	for _, id := range ids {
 		if id <= 0 {
-			continue
+			return nil, errors.New("workspace_ids must contain positive workspace IDs")
 		}
 		if _, ok := seen[id]; ok {
 			continue
@@ -301,28 +317,13 @@ func dedupeWorkspaceIDs(ids []int) []int {
 		seen[id] = struct{}{}
 		out = append(out, id)
 	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
+	return out, nil
 }
 
 // validateSecretMetadata rejects metadata that's not parsable JSON or that
 // contains keys that look like plaintext secrets.
 func validateSecretMetadata(metadata string) error {
-	if metadata == "" {
-		return nil
-	}
-	var parsed map[string]interface{}
-	if err := json.Unmarshal([]byte(metadata), &parsed); err != nil {
-		return fmt.Errorf("secret_metadata must be a JSON object: %w", err)
-	}
-	for k := range parsed {
-		if isSensitiveMetadataKey(k) {
-			return fmt.Errorf("secret_metadata must not contain sensitive key %q (use the secret field)", k)
-		}
-	}
-	return nil
+	return models.ValidateActionCredentialMetadata(metadata)
 }
 
 // ScanLegacyInlineSecrets walks every http_client capability and emits a
@@ -393,21 +394,4 @@ func ScanLegacyInlineSecrets(db scanLegacyDB) int {
 // the scanner needs, so tests can pass a stub.
 type scanLegacyDB interface {
 	Query(query string, args ...interface{}) (*sql.Rows, error)
-}
-
-// isSensitiveMetadataKey rejects keys that look like they hold plaintext
-// secret material. The credential's secret belongs in encrypted_secret only.
-func isSensitiveMetadataKey(k string) bool {
-	lk := strings.ToLower(strings.TrimSpace(k))
-	if lk == "" {
-		return false
-	}
-	switch lk {
-	case "secret", "token", "password", "api_key", "apikey", "authorization", "client_secret", "private_key":
-		return true
-	}
-	if strings.HasSuffix(lk, "_token") || strings.HasSuffix(lk, "_secret") || strings.HasSuffix(lk, "_password") || strings.HasSuffix(lk, "_key") {
-		return true
-	}
-	return false
 }

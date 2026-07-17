@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -79,8 +78,7 @@ func (h *PortalAuthHandler) RequestMagicLink(w http.ResponseWriter, r *http.Requ
 	var request struct {
 		Email string `json:"email" validate:"required,email,max=255"`
 	}
-	if err = json.NewDecoder(r.Body).Decode(&request); err != nil {
-		respondBadRequest(w, r, "Invalid request body")
+	if !decodeChannelRequest(w, r, &request, false) {
 		return
 	}
 	sanitize.Apply(&request.Email, sanitize.ShortIdentifier)
@@ -117,6 +115,16 @@ func (h *PortalAuthHandler) RequestMagicLink(w http.ResponseWriter, r *http.Requ
 			respondValidationError(w, r, "This email domain is not permitted for this portal.")
 			return
 		}
+	}
+
+	// Unknown modes fail closed. An empty value is the legacy spelling of
+	// "open"; anything else must not silently turn a typo into open signup.
+	if config.PortalRegistrationMode != "" && config.PortalRegistrationMode != "open" && config.PortalRegistrationMode != "manual" {
+		respondJSONOK(w, map[string]interface{}{
+			"success": true,
+			"message": "If your email is registered, you will receive a sign-in link shortly.",
+		})
+		return
 	}
 
 	// Manual registration mode: only admin-managed customers with existing channel

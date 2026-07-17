@@ -17,6 +17,7 @@ import (
 	"windshift/internal/repository"
 	"windshift/internal/sanitize"
 	"windshift/internal/services"
+	"windshift/internal/utils"
 )
 
 // sanitizeHubConfig scrubs the user-facing fields on the hub config
@@ -48,6 +49,20 @@ func sanitizeHubConfig(config *models.PortalHubConfig) {
 			)
 		}
 	}
+}
+
+func validateHubPublicURLs(config *models.PortalHubConfig) error {
+	if err := utils.ValidateBrowserAssetURL(config.LogoURL); err != nil {
+		return fmt.Errorf("hub logo URL is invalid: %w", err)
+	}
+	for _, column := range config.FooterColumns {
+		for _, link := range column.Links {
+			if err := utils.ValidateBrowserNavigationURL(link.URL); err != nil {
+				return fmt.Errorf("hub footer link URL is invalid: %w", err)
+			}
+		}
+	}
+	return nil
 }
 
 // HubHandler handles HTTP requests for the Portal Hub
@@ -168,6 +183,10 @@ func (h *HubHandler) UpdateHubConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sanitizeHubConfig(&config)
+	if err := validateHubPublicURLs(&config); err != nil {
+		respondValidationError(w, r, err.Error())
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
@@ -321,7 +340,7 @@ func (h *HubHandler) getUserGroupIDs(ctx context.Context, userID int) []int {
 func (h *HubHandler) getEnabledPortals(ctx context.Context, isAdmin bool, userGroupIDs []int) ([]models.HubPortalInfo, error) {
 	query := `
 		SELECT
-			c.id, c.name, c.description, c.status, c.config,
+			c.id, c.name, COALESCE(c.description, ''), c.status, COALESCE(c.config, '{}'),
 			(SELECT COUNT(*) FROM request_types rt WHERE rt.channel_id = c.id AND rt.is_active = true) as request_type_count
 		FROM channels c
 		WHERE c.type = 'portal' AND c.status = 'enabled'

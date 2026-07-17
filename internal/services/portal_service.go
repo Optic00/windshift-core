@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -344,6 +345,10 @@ type RequestTypeField struct {
 
 // GetRequestTypeFields gets fields for a request type
 func (s *PortalService) GetRequestTypeFields(ctx context.Context, requestTypeID int) ([]RequestTypeField, error) {
+	allowedCustomFieldIDs, err := allowedRequestTypeCustomFieldIdentifiers(ctx, s.db, requestTypeID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve request type create-screen fields: %w", err)
+	}
 	query := `
 		SELECT rtf.id, rtf.request_type_id, rtf.field_identifier, rtf.field_type,
 		       rtf.display_order, rtf.is_required, rtf.display_name, rtf.description,
@@ -384,6 +389,11 @@ func (s *PortalService) GetRequestTypeFields(ctx context.Context, requestTypeID 
 		)
 		if err != nil {
 			continue
+		}
+		if field.FieldType == "custom" {
+			if _, allowed := allowedCustomFieldIDs[field.FieldIdentifier]; !allowed {
+				continue
+			}
 		}
 		if displayName.Valid {
 			field.DisplayName = &displayName.String
@@ -495,75 +505,101 @@ func (s *PortalService) GetCustomFieldsForChannel(ctx context.Context, channelID
 // after applying portal visibility rules. Admins skip the IsVisibleTo gate.
 func (s *PortalService) collectVisibleChannelCustomFieldIDs(ctx context.Context, channelID int, userGroupIDs []int, customerOrgID *int, isAdmin bool) (map[int]struct{}, error) {
 	cfIDs := make(map[int]struct{})
+	var channelType, configJSON string
+	if err := s.db.QueryRowContext(ctx, "SELECT type, config FROM channels WHERE id = ?", channelID).Scan(&channelType, &configJSON); err != nil {
+		return nil, fmt.Errorf("load channel custom-field routing: %w", err)
+	}
+	var channelConfig models.ChannelConfig
+	if err := json.Unmarshal([]byte(configJSON), &channelConfig); err != nil {
+		return nil, fmt.Errorf("parse channel custom-field routing: %w", err)
+	}
+	var servedWorkspaceIDs []int
+	switch channelType {
+	case "portal":
+		servedWorkspaceIDs = channelConfig.PortalWorkspaceIDs
+	case "form":
+		servedWorkspaceIDs = channelConfig.FormWorkspaceIDs
+	}
 
 	// Visible request types → their custom-typed configured fields.
 	rtRows, err := s.db.QueryContext(ctx, `
-		SELECT rt.id, rt.visibility_group_ids, rt.visibility_org_ids
+		SELECT rt.id, rt.item_type_id, rt.workspace_id, rt.visibility_group_ids, rt.visibility_org_ids
 		FROM request_types rt
 		WHERE rt.channel_id = ? AND rt.is_active = true
 	`, channelID)
 	if err != nil {
 		return nil, fmt.Errorf("list channel request types: %w", err)
 	}
-	var visibleRTIDs []int
+	type visibleRoute struct {
+		id          int
+		itemTypeID  int
+		workspaceID int
+	}
+	var visibleRTRoutes []visibleRoute
 	func() {
 		defer rtRows.Close()
 		for rtRows.Next() {
-			var id int
+			var id, itemTypeID int
+			var workspaceID *int
 			var groups, orgs sql.NullString
-			if err := rtRows.Scan(&id, &groups, &orgs); err != nil {
+			if err := rtRows.Scan(&id, &itemTypeID, &workspaceID, &groups, &orgs); err != nil {
 				continue
 			}
-			if isAdmin || portalRowVisible(groups, orgs, userGroupIDs, customerOrgID) {
-				visibleRTIDs = append(visibleRTIDs, id)
+			if !isAdmin && !portalRowVisible(groups, orgs, userGroupIDs, customerOrgID) {
+				continue
+			}
+			resolvedWorkspaceID := 0
+			if workspaceID != nil {
+				resolvedWorkspaceID = *workspaceID
+			} else if len(servedWorkspaceIDs) > 0 {
+				resolvedWorkspaceID = servedWorkspaceIDs[0]
+			}
+			if resolvedWorkspaceID > 0 && containsInt(servedWorkspaceIDs, resolvedWorkspaceID) {
+				visibleRTRoutes = append(visibleRTRoutes, visibleRoute{id: id, itemTypeID: itemTypeID, workspaceID: resolvedWorkspaceID})
 			}
 		}
 	}()
 	if err := rtRows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate channel request types: %w", err)
 	}
-	if len(visibleRTIDs) > 0 {
-		if err := s.collectCustomFieldIDsFor(ctx, cfIDs, `
-			SELECT CAST(rtf.field_identifier AS INTEGER)
-			FROM request_type_fields rtf
-			WHERE rtf.field_type = 'custom' AND rtf.request_type_id IN (%s)
-		`, visibleRTIDs); err != nil {
+	for _, route := range visibleRTRoutes {
+		if err := s.collectBoundCustomFieldIDs(ctx, cfIDs, "request_type", route.id, route.workspaceID, route.itemTypeID); err != nil {
 			return nil, err
 		}
 	}
 
 	// Visible form-mode asset reports → their custom-typed configured fields.
 	arRows, err := s.db.QueryContext(ctx, `
-		SELECT ar.id, ar.visibility_group_ids, ar.visibility_org_ids
+		SELECT ar.id, ar.item_type_id, ar.workspace_id, ar.visibility_group_ids, ar.visibility_org_ids
 		FROM asset_reports ar
 		WHERE ar.channel_id = ? AND ar.is_active = true AND ar.run_mode = 'form'
 	`, channelID)
 	if err != nil {
 		return nil, fmt.Errorf("list channel asset reports: %w", err)
 	}
-	var visibleARIDs []int
+	var visibleARRoutes []visibleRoute
 	func() {
 		defer arRows.Close()
 		for arRows.Next() {
 			var id int
+			var itemTypeID, workspaceID *int
 			var groups, orgs sql.NullString
-			if err := arRows.Scan(&id, &groups, &orgs); err != nil {
+			if err := arRows.Scan(&id, &itemTypeID, &workspaceID, &groups, &orgs); err != nil {
 				continue
 			}
-			if isAdmin || portalRowVisible(groups, orgs, userGroupIDs, customerOrgID) {
-				visibleARIDs = append(visibleARIDs, id)
+			if !isAdmin && !portalRowVisible(groups, orgs, userGroupIDs, customerOrgID) {
+				continue
+			}
+			if itemTypeID != nil && workspaceID != nil && containsInt(channelConfig.PortalWorkspaceIDs, *workspaceID) {
+				visibleARRoutes = append(visibleARRoutes, visibleRoute{id: id, itemTypeID: *itemTypeID, workspaceID: *workspaceID})
 			}
 		}
 	}()
 	if err := arRows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate channel asset reports: %w", err)
 	}
-	if len(visibleARIDs) > 0 {
-		if err := s.collectCustomFieldIDsFor(ctx, cfIDs, `
-			SELECT CAST(arf.field_identifier AS INTEGER)
-			FROM asset_report_fields arf
-			WHERE arf.field_type = 'custom' AND arf.asset_report_id IN (%s)
-		`, visibleARIDs); err != nil {
+	for _, route := range visibleARRoutes {
+		if err := s.collectBoundCustomFieldIDs(ctx, cfIDs, "asset_report", route.id, route.workspaceID, route.itemTypeID); err != nil {
 			return nil, err
 		}
 	}
@@ -571,30 +607,63 @@ func (s *PortalService) collectVisibleChannelCustomFieldIDs(ctx context.Context,
 	return cfIDs, nil
 }
 
-// collectCustomFieldIDsFor expands the %s placeholder with len(parentIDs)
-// '?' tokens and adds the scanned integer IDs into out (maps are reference
-// types so the caller observes the mutation).
-func (s *PortalService) collectCustomFieldIDsFor(ctx context.Context, out map[int]struct{}, queryTpl string, parentIDs []int) error {
-	placeholders := make([]string, 0, len(parentIDs))
-	args := make([]interface{}, 0, len(parentIDs))
-	for _, id := range parentIDs {
-		placeholders = append(placeholders, "?")
-		args = append(args, id)
+// collectBoundCustomFieldIDs admits only custom fields present on the route's
+// effective create screen. This keeps legacy or forged field rows from
+// exposing definitions outside the portal/form workspace configuration.
+func (s *PortalService) collectBoundCustomFieldIDs(ctx context.Context, out map[int]struct{}, ownerType string, ownerID, workspaceID, itemTypeID int) error {
+	createScreenID, err := repository.NewScreenRepository(s.db).GetCreateScreenID(workspaceID, itemTypeID)
+	if err != nil || createScreenID == nil {
+		return err
 	}
-	q := fmt.Sprintf(queryTpl, strings.Join(placeholders, ","))
-	rows, err := s.db.QueryContext(ctx, q, args...)
+	screenFields, err := repository.NewScreenRepository(s.db).ListFields(*createScreenID)
 	if err != nil {
-		return fmt.Errorf("collect custom field ids: %w", err)
+		return err
+	}
+	allowed := make(map[string]struct{}, len(screenFields))
+	for _, field := range screenFields {
+		if field.FieldType == "custom" && field.FieldName != "" {
+			allowed[field.FieldIdentifier] = struct{}{}
+		}
+	}
+
+	var query string
+	switch ownerType {
+	case "request_type":
+		query = "SELECT field_identifier FROM request_type_fields WHERE field_type = 'custom' AND request_type_id = ?"
+	case "asset_report":
+		query = "SELECT field_identifier FROM asset_report_fields WHERE field_type = 'custom' AND asset_report_id = ?"
+	default:
+		return fmt.Errorf("unsupported public form owner %q", ownerType)
+	}
+	rows, err := s.db.QueryContext(ctx, query, ownerID)
+	if err != nil {
+		return fmt.Errorf("collect bound custom field ids: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var id int
-		if err := rows.Scan(&id); err != nil {
+		var identifier string
+		if err := rows.Scan(&identifier); err != nil {
+			continue
+		}
+		if _, ok := allowed[identifier]; !ok {
+			continue
+		}
+		id, err := strconv.Atoi(identifier)
+		if err != nil || id <= 0 {
 			continue
 		}
 		out[id] = struct{}{}
 	}
 	return rows.Err()
+}
+
+func containsInt(values []int, candidate int) bool {
+	for _, value := range values {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 // portalRowVisible mirrors models.RequestType.IsVisibleTo / AssetReport.IsVisibleTo
@@ -603,10 +672,14 @@ func (s *PortalService) collectCustomFieldIDsFor(ctx context.Context, out map[in
 func portalRowVisible(groupsCol, orgsCol sql.NullString, userGroupIDs []int, customerOrgID *int) bool {
 	var allowGroups, allowOrgs []int
 	if groupsCol.Valid && groupsCol.String != "" {
-		_ = json.Unmarshal([]byte(groupsCol.String), &allowGroups)
+		if err := json.Unmarshal([]byte(groupsCol.String), &allowGroups); err != nil {
+			return false
+		}
 	}
 	if orgsCol.Valid && orgsCol.String != "" {
-		_ = json.Unmarshal([]byte(orgsCol.String), &allowOrgs)
+		if err := json.Unmarshal([]byte(orgsCol.String), &allowOrgs); err != nil {
+			return false
+		}
 	}
 	if len(allowGroups) == 0 && len(allowOrgs) == 0 {
 		return true

@@ -50,6 +50,7 @@
   import PermissionGuard from '../layout/PermissionGuard.svelte';
   import { resolveAdminGroups } from '../admin/adminNavigation.js';
   import { isTypingInField } from '../utils/keyboardShortcuts.js';
+  import { isSystemAdmin } from '../stores/permissions.svelte.js';
 
   const ADMIN_DETAIL_ROUTES = [
     { prefix: '/admin/permission-sets/',    tabId: 'permissions',         component: PermissionSetEdit },
@@ -272,8 +273,11 @@
 
 <!-- Main container with sidebar layout -->
 <div class="flex min-h-screen" style="background-color: var(--ds-surface);">
-  <!-- Left Sidebar -->
-  <div class="w-64 border-r flex-shrink-0" style="border-color: var(--ds-border); background-color: var(--ds-surface-raised);">
+  <!-- Channel managers can use channel routes without seeing the rest of the
+       system-administration navigation. Non-channel admin routes remain
+       guarded in MainApp. -->
+  {#if $isSystemAdmin}
+    <div class="w-64 border-r flex-shrink-0" style="border-color: var(--ds-border); background-color: var(--ds-surface-raised);">
     <div class="p-6">
       <SidebarHeader title={t('settings.admin')} description={t('settings.systemSettings')} noBorder />
       
@@ -368,7 +372,8 @@
         </div>
       </nav>
     </div>
-  </div>
+    </div>
+  {/if}
 
   <!-- Main Content -->
   <div class="flex-1 flex flex-col overflow-hidden">

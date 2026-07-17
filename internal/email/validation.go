@@ -39,8 +39,8 @@ func ValidateConfigForEnable(channel *models.Channel, config *models.ChannelConf
 
 	switch strings.ToLower(config.EmailAuthMethod) {
 	case "oauth":
-		if config.EmailOAuthProviderType == "" {
-			return fmt.Errorf("%w: email_oauth_provider_type is required", ErrConfigNotReady)
+		if config.EmailOAuthProviderType != models.EmailProviderTypeMicrosoft && config.EmailOAuthProviderType != models.EmailProviderTypeGoogle {
+			return fmt.Errorf("%w: email_oauth_provider_type must be microsoft or google", ErrConfigNotReady)
 		}
 		if config.EmailOAuthClientID == "" {
 			return fmt.Errorf("%w: email_oauth_client_id is required", ErrConfigNotReady)
@@ -65,6 +65,14 @@ func ValidateConfigForEnable(channel *models.Channel, config *models.ChannelConf
 		}
 		if config.IMAPPassword == "" {
 			return fmt.Errorf("%w: imap_password is required", ErrConfigNotReady)
+		}
+		if config.IMAPPort <= 0 || config.IMAPPort > 65535 {
+			return fmt.Errorf("%w: imap_port must be between 1 and 65535", ErrConfigNotReady)
+		}
+		switch strings.ToLower(config.IMAPEncryption) {
+		case "ssl", "tls", "starttls":
+		default:
+			return fmt.Errorf("%w: imap_encryption must be ssl or starttls", ErrConfigNotReady)
 		}
 	default:
 		return fmt.Errorf("%w: unknown email_auth_method %q", ErrConfigNotReady, config.EmailAuthMethod)

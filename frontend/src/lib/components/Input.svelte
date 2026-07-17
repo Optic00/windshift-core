@@ -19,6 +19,7 @@
    *   title?: string,
    *   autocomplete?: string,
    *   readonly?: boolean,
+   *   minlength?: number,
    *   maxlength?: number,
    *   class?: string,
    *   dataTestid?: string,
@@ -48,6 +49,7 @@
     title = undefined,
     autocomplete = undefined,
     readonly = false,
+    minlength = undefined,
     maxlength = undefined,
     class: className = '',
     dataTestid = undefined,
@@ -89,6 +91,7 @@
   {title}
   autocomplete={autocompleteValue}
   {readonly}
+  {minlength}
   {maxlength}
   bind:value
   bind:this={inputRef}

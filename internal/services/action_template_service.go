@@ -8,7 +8,6 @@ import (
 
 	"windshift/internal/database"
 	"windshift/internal/models"
-	"windshift/internal/repository"
 	"windshift/internal/services/actiontemplates"
 )
 
@@ -17,16 +16,14 @@ import (
 // itself is read-only and shipped with the binary; this service is the
 // only place that writes derived rows.
 type ActionTemplateService struct {
-	db      database.Database
-	actions *repository.ActionRepository
+	db database.Database
 }
 
 // NewActionTemplateService constructs a template service backed by the
 // shared action repository.
 func NewActionTemplateService(db database.Database) *ActionTemplateService {
 	return &ActionTemplateService{
-		db:      db,
-		actions: repository.NewActionRepository(db),
+		db: db,
 	}
 }
 
@@ -69,76 +66,93 @@ func (s *ActionTemplateService) ApplyToWorkspace(
 		creator = nil
 	}
 
-	action := &models.Action{
-		WorkspaceID:   workspaceID,
-		Name:          tmpl.Name,
-		Description:   tmpl.Description,
-		IsEnabled:     true,
-		TriggerType:   tmpl.TriggerType,
-		TriggerConfig: string(triggerConfigJSON),
-		CreatedBy:     creator,
+	// Marshal and cross-check the immutable blueprint before opening the write
+	// transaction. The registry validates at startup too, but keeping the
+	// materializer self-contained makes it safe if another registry source is
+	// introduced later.
+	type pendingNode struct {
+		yamlID     string
+		nodeType   models.ActionNodeType
+		nodeConfig string
+		positionX  float64
+		positionY  float64
 	}
-
-	actionID, err := s.actions.Create(action)
-	if err != nil {
-		return nil, fmt.Errorf("create action: %w", err)
-	}
-
-	// Stamp template_key for lineage. Done as a follow-up UPDATE so we don't
-	// have to thread template_key through ActionRepository.Create's signature
-	// (the column is an automation-history concern, not part of the action's
-	// runtime semantics).
-	if _, err := s.db.ExecWrite(`UPDATE actions SET template_key = ? WHERE id = ?`, tmpl.Key, actionID); err != nil {
-		return nil, fmt.Errorf("stamp template_key: %w", err)
-	}
-
-	// Materialize nodes. Track yaml-id → DB-id so edges can be rewritten.
-	nodeIDByYAML := make(map[string]int, len(tmpl.Nodes))
+	pendingNodes := make([]pendingNode, 0, len(tmpl.Nodes))
+	knownNodeIDs := make(map[string]struct{}, len(tmpl.Nodes))
 	for _, tn := range tmpl.Nodes {
+		if _, exists := knownNodeIDs[tn.ID]; exists {
+			return nil, fmt.Errorf("template contains duplicate node id %q", tn.ID)
+		}
+		knownNodeIDs[tn.ID] = struct{}{}
 		nodeConfigJSON, err := json.Marshal(tn.NodeConfig)
 		if err != nil {
 			return nil, fmt.Errorf("marshal node %q config: %w", tn.ID, err)
 		}
-		dbNode := &models.ActionNode{
-			ActionID:   actionID,
-			NodeType:   models.ActionNodeType(tn.NodeType),
-			NodeConfig: string(nodeConfigJSON),
-			PositionX:  tn.Position.X,
-			PositionY:  tn.Position.Y,
-		}
-		newID, err := s.actions.CreateNode(dbNode)
-		if err != nil {
-			return nil, fmt.Errorf("create node %q: %w", tn.ID, err)
-		}
-		nodeIDByYAML[tn.ID] = newID
+		pendingNodes = append(pendingNodes, pendingNode{
+			yamlID:     tn.ID,
+			nodeType:   models.ActionNodeType(tn.NodeType),
+			nodeConfig: string(nodeConfigJSON),
+			positionX:  tn.Position.X,
+			positionY:  tn.Position.Y,
+		})
 	}
-
 	for _, te := range tmpl.Edges {
-		srcID, ok := nodeIDByYAML[te.SourceNodeID]
-		if !ok {
+		if _, ok := knownNodeIDs[te.SourceNodeID]; !ok {
 			return nil, fmt.Errorf("edge references unknown node id %q", te.SourceNodeID)
 		}
-		dstID, ok := nodeIDByYAML[te.TargetNodeID]
-		if !ok {
+		if _, ok := knownNodeIDs[te.TargetNodeID]; !ok {
 			return nil, fmt.Errorf("edge references unknown node id %q", te.TargetNodeID)
-		}
-		edgeType := te.EdgeType
-		if edgeType == "" {
-			edgeType = "default"
-		}
-		dbEdge := &models.ActionEdge{
-			ActionID:     actionID,
-			SourceNodeID: srcID,
-			TargetNodeID: dstID,
-			EdgeType:     edgeType,
-		}
-		if _, err := s.actions.CreateEdge(dbEdge); err != nil {
-			return nil, fmt.Errorf("create edge %s→%s: %w", te.SourceNodeID, te.TargetNodeID, err)
 		}
 	}
 
-	_ = ctx // ctx reserved for future audit-log call
-	_ = time.Now
+	var actionID int
+	err = database.WithTx(s.db, func(tx database.Tx) error {
+		now := time.Now()
+		if err := tx.QueryRowContext(ctx, `
+			INSERT INTO actions (
+				workspace_id, name, description, is_enabled, trigger_type,
+				trigger_config, created_by, template_key, created_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+		`, workspaceID, tmpl.Name, tmpl.Description, true, tmpl.TriggerType,
+			string(triggerConfigJSON), creator, tmpl.Key, now, now,
+		).Scan(&actionID); err != nil {
+			return fmt.Errorf("create action: %w", err)
+		}
+
+		// Track YAML ID → DB ID so edges can be rewritten inside the same
+		// transaction as the parent and nodes.
+		nodeIDByYAML := make(map[string]int, len(pendingNodes))
+		for _, node := range pendingNodes {
+			var nodeID int
+			if err := tx.QueryRowContext(ctx, `
+				INSERT INTO action_nodes (
+					action_id, node_type, node_config, position_x, position_y,
+					created_at, updated_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id
+			`, actionID, node.nodeType, node.nodeConfig, node.positionX, node.positionY, now, now).Scan(&nodeID); err != nil {
+				return fmt.Errorf("create node %q: %w", node.yamlID, err)
+			}
+			nodeIDByYAML[node.yamlID] = nodeID
+		}
+
+		for _, edge := range tmpl.Edges {
+			edgeType := edge.EdgeType
+			if edgeType == "" {
+				edgeType = "default"
+			}
+			if _, err := tx.ExecWriteContext(ctx, `
+				INSERT INTO action_edges (
+					action_id, source_node_id, target_node_id, edge_type, created_at
+				) VALUES (?, ?, ?, ?, ?)
+			`, actionID, nodeIDByYAML[edge.SourceNodeID], nodeIDByYAML[edge.TargetNodeID], edgeType, now); err != nil {
+				return fmt.Errorf("create edge %s→%s: %w", edge.SourceNodeID, edge.TargetNodeID, err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
 
 	return &ApplyToWorkspaceResult{
 		ActionID:    actionID,

@@ -16,6 +16,7 @@
   let loading = $state(true);
   let saving = $state(false);
   let activeTab = $state('settings');
+  let loadSequence = 0;
 
   let portalConfigRef = $state(null);
 
@@ -39,17 +40,26 @@
 
   onMount(async () => {
     await channelCategoriesStore.init();
-    await loadChannel();
   });
 
-  async function loadChannel() {
+  $effect(() => {
+    const id = channelId;
+    if (Number.isInteger(id) && id > 0) void loadChannel(id);
+  });
+
+  async function loadChannel(id) {
+    const requestSequence = ++loadSequence;
     try {
       loading = true;
-      channel = await api.channels.get(channelId);
+      const loadedChannel = await api.channels.get(id);
+      if (loadedChannel.type !== 'portal' || loadedChannel.direction !== 'inbound') {
+        throw new Error('This route requires an inbound portal channel');
+      }
+      const config = parseChannelConfig(loadedChannel.config);
+      if (requestSequence !== loadSequence) return;
+      channel = loadedChannel;
 
       channelFormData = channelBasicFormData(channel);
-
-      const config = parseChannelConfig(channel.config);
       portalFormData = {
         slug: config.portal_slug || '',
         workspace_ids: config.portal_workspace_ids || [],
@@ -62,10 +72,12 @@
           : '',
       };
     } catch (err) {
+      if (requestSequence !== loadSequence) return;
       console.error('Failed to load channel:', err);
-      errorToast(t('channel.failedToLoad', 'Failed to load channel'));
+      channel = null;
+      errorToast(err.message || t('channel.failedToLoad', 'Failed to load channel'));
     } finally {
-      loading = false;
+      if (requestSequence === loadSequence) loading = false;
     }
   }
 
@@ -90,7 +102,7 @@
         enabled: portalFormData.enabled,
       });
 
-      channel = await api.channels.get(channelId);
+      await loadChannel(channelId);
       successToast(t('common.saved'));
     } catch (err) {
       console.error('Failed to save:', err);

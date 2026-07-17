@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -617,6 +618,15 @@ func (as *ActionService) matchesTrigger(action *models.Action, event *models.Act
 
 // executeAction executes an action's flow
 func (as *ActionService) executeAction(action *models.Action, event *models.ActionEvent, chain *ExecutionChain) error {
+	if action == nil {
+		return errors.New("action is required")
+	}
+	if !action.IsEnabled {
+		return fmt.Errorf("action %d is disabled", action.ID)
+	}
+	if event == nil {
+		return errors.New("action event is required")
+	}
 	startTime := time.Now()
 
 	// Get or create execution chain for cascade tracking
@@ -2865,7 +2875,7 @@ func (as *ActionService) executeAgentHTTPRequest(ctx context.Context, workspaceI
 
 	// Validate URL against allowed patterns
 	if !isURLAllowed(args.URL, httpConfig.AllowedURLPatterns) {
-		return "", fmt.Errorf("URL %q not allowed by capability %d", args.URL, capID)
+		return "", fmt.Errorf("URL %q not allowed by capability %d", redactHTTPURLForDiagnostics(args.URL), capID)
 	}
 
 	mergedHeaders, err := as.buildHTTPHeadersWithCredentials(ctx, &httpConfig, args.Headers, workspaceID, capID)
@@ -2876,13 +2886,11 @@ func (as *ActionService) executeAgentHTTPRequest(ctx context.Context, workspaceI
 }
 
 func normalizeAgentHTTPMethod(method string) (string, error) {
-	method = strings.ToUpper(strings.TrimSpace(method))
-	switch method {
-	case "GET", "POST", "PUT", "DELETE", "PATCH":
-		return method, nil
-	default:
-		return "", fmt.Errorf("unsupported HTTP method %q", method)
+	normalized, ok := models.NormalizeActionHTTPMethod(method)
+	if !ok {
+		return "", fmt.Errorf("unsupported HTTP method %q", normalized)
 	}
+	return normalized, nil
 }
 
 func isMutatingAgentHTTPToolCall(name, arguments string) bool {
@@ -2993,9 +3001,13 @@ func (as *ActionService) executeHTTPRequest(node *models.ActionNode, ctx *models
 	if err := json.Unmarshal([]byte(node.NodeConfig), &config); err != nil {
 		return fmt.Errorf("failed to parse http_request config: %w", err)
 	}
+	method, err := normalizeAgentHTTPMethod(config.Method)
+	if err != nil {
+		return fmt.Errorf("http_request: %w", err)
+	}
 
 	// Substitute variables in URL, body, and headers
-	url := as.substituteVariables(config.URLTemplate, ctx)
+	targetURL := as.substituteVariables(config.URLTemplate, ctx)
 	body := as.substituteVariables(config.Body, ctx)
 	headers := make(map[string]string)
 	for k, v := range config.Headers {
@@ -3018,8 +3030,8 @@ func (as *ActionService) executeHTTPRequest(node *models.ActionNode, ctx *models
 		return fmt.Errorf("failed to parse http_client config: %w", err)
 	}
 
-	if !isURLAllowed(url, httpConfig.AllowedURLPatterns) {
-		return fmt.Errorf("URL %q not allowed by capability %d", url, config.CapabilityID)
+	if !isURLAllowed(targetURL, httpConfig.AllowedURLPatterns) {
+		return fmt.Errorf("URL %q not allowed by capability %d", redactHTTPURLForDiagnostics(targetURL), config.CapabilityID)
 	}
 
 	mergedHeaders, err := as.buildHTTPHeadersWithCredentials(context.Background(), &httpConfig, headers, ctx.Event.WorkspaceID, config.CapabilityID)
@@ -3027,7 +3039,7 @@ func (as *ActionService) executeHTTPRequest(node *models.ActionNode, ctx *models
 		return fmt.Errorf("http_request: %w", err)
 	}
 
-	result, err := doHTTPRequest(context.Background(), config.Method, url, body, mergedHeaders, nil, httpConfig.TimeoutSecs, httpConfig.AllowedURLPatterns)
+	result, err := doHTTPRequest(context.Background(), method, targetURL, body, mergedHeaders, nil, httpConfig.TimeoutSecs, httpConfig.AllowedURLPatterns)
 	if err != nil {
 		return fmt.Errorf("http_request failed: %w", err)
 	}
@@ -3038,14 +3050,14 @@ func (as *ActionService) executeHTTPRequest(node *models.ActionNode, ctx *models
 	}
 
 	stepResult.Output = map[string]interface{}{
-		"response_preview": truncateString(result, 500),
+		"response_preview": truncateString(RedactString(result), 500),
 	}
 
 	slog.Debug("http_request completed",
 		slog.String("component", "actions"),
 		slog.Int("node_id", node.ID),
-		slog.String("method", config.Method),
-		slog.String("url", url),
+		slog.String("method", method),
+		slog.String("url", redactHTTPURLForDiagnostics(targetURL)),
 	)
 
 	return nil
@@ -3058,7 +3070,8 @@ func (as *ActionService) executeHTTPRequest(node *models.ActionNode, ctx *models
 //  2. capability.Auth (decrypts the referenced credential, applies scheme)
 //  3. capability.SecretHeaderRefs (per-header credential lookups)
 //  4. caller-supplied per-request headers (the action node's Headers map, or
-//     the agent tool's headers arg)
+//     the agent tool's headers arg), except that they may not override a
+//     credential-backed header
 //
 // Sensitive caller-supplied header names are rejected here — node validation
 // is the primary gate, but the runtime double-checks so a future code path
@@ -3067,6 +3080,28 @@ func (as *ActionService) executeHTTPRequest(node *models.ActionNode, ctx *models
 // Returns a freshly allocated map so caller-side header maps are not mutated.
 func (as *ActionService) buildHTTPHeadersWithCredentials(ctx context.Context, httpConfig *models.HTTPClientConfig, callerHeaders map[string]string, workspaceID, capabilityID int) (map[string]string, error) {
 	merged := make(map[string]string, len(httpConfig.DefaultHeaders)+len(callerHeaders)+len(httpConfig.SecretHeaderRefs)+1)
+	headerKeys := make(map[string]string, len(httpConfig.DefaultHeaders)+len(callerHeaders)+len(httpConfig.SecretHeaderRefs)+1)
+	credentialHeaderKeys := make(map[string]string, len(httpConfig.SecretHeaderRefs)+1)
+	setHeader := func(name, value string, rejectDuplicate bool) error {
+		name = strings.TrimSpace(name)
+		normalized := strings.ToLower(name)
+		if !models.IsValidHTTPHeaderName(name) {
+			return fmt.Errorf("invalid HTTP header name %q", name)
+		}
+		if previous, exists := headerKeys[normalized]; exists {
+			if rejectDuplicate {
+				return fmt.Errorf("HTTP headers %q and %q target the same header", previous, name)
+			}
+			delete(merged, previous)
+		}
+		canonical := http.CanonicalHeaderKey(name)
+		if canonical == "" {
+			canonical = name
+		}
+		headerKeys[normalized] = canonical
+		merged[canonical] = value
+		return nil
+	}
 
 	// 1) default headers (non-sensitive literals).
 	for k, v := range httpConfig.DefaultHeaders {
@@ -3076,7 +3111,9 @@ func (as *ActionService) buildHTTPHeadersWithCredentials(ctx context.Context, ht
 			// a legacy inline token slip out.
 			continue
 		}
-		merged[k] = v
+		if err := setHeader(k, v, true); err != nil {
+			return nil, fmt.Errorf("default_headers: %w", err)
+		}
 	}
 
 	// 2) auth ref.
@@ -3092,16 +3129,20 @@ func (as *ActionService) buildHTTPHeadersWithCredentials(ctx context.Context, ht
 		if err != nil {
 			return nil, fmt.Errorf("format auth credential %d: %w", httpConfig.Auth.CredentialID, err)
 		}
-		headerName := httpConfig.Auth.HeaderName
+		headerName := strings.TrimSpace(httpConfig.Auth.HeaderName)
 		if strings.TrimSpace(headerName) == "" {
 			headerName = "Authorization"
 		}
-		merged[headerName] = value
+		if err := setHeader(headerName, value, true); err != nil {
+			return nil, fmt.Errorf("auth: %w", err)
+		}
+		credentialHeaderKeys[strings.ToLower(headerName)] = headerName
 	}
 
 	// 3) secret_header_refs — each entry decrypts independently.
 	for headerName, credentialID := range httpConfig.SecretHeaderRefs {
-		if credentialID <= 0 || strings.TrimSpace(headerName) == "" {
+		headerName = strings.TrimSpace(headerName)
+		if credentialID <= 0 || headerName == "" {
 			continue
 		}
 		if as.credentialService == nil {
@@ -3115,15 +3156,29 @@ func (as *ActionService) buildHTTPHeadersWithCredentials(ctx context.Context, ht
 		if err != nil {
 			return nil, fmt.Errorf("format secret_header_refs[%q] credential %d: %w", headerName, credentialID, err)
 		}
-		merged[headerName] = value
+		if err := setHeader(headerName, value, true); err != nil {
+			return nil, fmt.Errorf("secret_header_refs: %w", err)
+		}
+		credentialHeaderKeys[strings.ToLower(headerName)] = headerName
 	}
 
 	// 4) caller-supplied headers — non-sensitive only.
+	callerHeaderKeys := make(map[string]string, len(callerHeaders))
 	for k, v := range callerHeaders {
 		if models.IsSensitiveHeaderName(k) {
 			return nil, fmt.Errorf("header %q is sensitive — reference a credential instead of supplying a raw value", k)
 		}
-		merged[k] = v
+		normalized := strings.ToLower(strings.TrimSpace(k))
+		if previous, exists := callerHeaderKeys[normalized]; exists {
+			return nil, fmt.Errorf("request headers %q and %q target the same header", previous, k)
+		}
+		callerHeaderKeys[normalized] = k
+		if credentialHeader, exists := credentialHeaderKeys[normalized]; exists {
+			return nil, fmt.Errorf("header %q would override credential-backed header %q", k, credentialHeader)
+		}
+		if err := setHeader(k, v, false); err != nil {
+			return nil, fmt.Errorf("request headers: %w", err)
+		}
 	}
 	return merged, nil
 }
@@ -3139,6 +3194,9 @@ func formatCredentialHeaderValue(credType models.ActionCredentialType, scheme, p
 		if s == "" {
 			s = "Bearer"
 		}
+		if !models.IsValidHTTPAuthScheme(s) {
+			return "", errors.New("invalid HTTP auth scheme")
+		}
 		return s + " " + plaintext, nil
 	case models.CredentialBasicAuth:
 		// Stored secret is "username:password". Inject as RFC7617.
@@ -3152,12 +3210,12 @@ func formatCredentialHeaderValue(credType models.ActionCredentialType, scheme, p
 // isURLAllowed checks if a URL matches any of the allowed patterns.
 // Patterns support wildcards: * matches any sequence of non-/ characters,
 // ** matches any sequence including /.
-func isURLAllowed(url string, patterns []string) bool {
+func isURLAllowed(rawURL string, patterns []string) bool {
 	if len(patterns) == 0 {
 		return false
 	}
 	for _, pattern := range patterns {
-		if matchURLPattern(url, pattern) {
+		if matchURLPattern(rawURL, pattern) {
 			return true
 		}
 	}
@@ -3165,7 +3223,7 @@ func isURLAllowed(url string, patterns []string) bool {
 }
 
 // matchURLPattern matches a URL against a pattern with * and ** wildcards.
-func matchURLPattern(url, pattern string) bool {
+func matchURLPattern(rawURL, pattern string) bool {
 	// Convert pattern to regex
 	regexStr := "^"
 	for i := 0; i < len(pattern); i++ {
@@ -3181,7 +3239,7 @@ func matchURLPattern(url, pattern string) bool {
 	}
 	regexStr += "$"
 
-	matched, err := regexp.MatchString(regexStr, url)
+	matched, err := regexp.MatchString(regexStr, rawURL)
 	if err != nil {
 		return false
 	}
@@ -3194,7 +3252,7 @@ func matchURLPattern(url, pattern string) bool {
 // bouncing to an arbitrary target. A scoped http.Client with a dialer that
 // rejects loopback / private / link-local addresses also defends against DNS
 // rebinding to internal services (169.254.169.254, 127.0.0.1, etc.).
-func doHTTPRequest(ctx context.Context, method, url, body string, headers, defaultHeaders map[string]string, timeoutSecs int, allowedPatterns []string) (string, error) {
+func doHTTPRequest(ctx context.Context, method, targetURL, body string, headers, defaultHeaders map[string]string, timeoutSecs int, allowedPatterns []string) (string, error) {
 	if timeoutSecs <= 0 {
 		timeoutSecs = 30
 	}
@@ -3207,9 +3265,9 @@ func doHTTPRequest(ctx context.Context, method, url, body string, headers, defau
 		bodyReader = strings.NewReader(body)
 	}
 
-	req, err := http.NewRequestWithContext(httpCtx, method, url, bodyReader)
+	req, err := http.NewRequestWithContext(httpCtx, method, targetURL, bodyReader)
 	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
+		return "", fmt.Errorf("failed to create request for %q", redactHTTPURLForDiagnostics(targetURL))
 	}
 
 	// Apply default headers first, then override with specific headers
@@ -3223,7 +3281,7 @@ func doHTTPRequest(ctx context.Context, method, url, body string, headers, defau
 	client := newSSRFSafeClient(time.Duration(timeoutSecs)*time.Second, allowedPatterns)
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("request failed: %w", err)
+		return "", fmt.Errorf("request failed: %s", redactHTTPRequestError(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -3281,11 +3339,70 @@ func newSSRFSafeClient(timeout time.Duration, allowedPatterns []string) *http.Cl
 				return errors.New("stopped after 5 redirects")
 			}
 			if !isURLAllowed(req.URL.String(), allowedPatterns) {
-				return fmt.Errorf("%w: %s", errDisallowedRedirect, req.URL.String())
+				return fmt.Errorf("%w: %s", errDisallowedRedirect, redactHTTPURLForDiagnostics(req.URL.String()))
+			}
+			// net/http only strips its built-in sensitive headers on some
+			// cross-host redirects. Action credentials can use custom names
+			// (for example X-API-Key), so explicitly remove every header our
+			// credential model considers sensitive once any hop changes origin.
+			if redirectChainChangesOrigin(req, via) {
+				for name := range req.Header {
+					if models.IsSensitiveHeaderName(name) {
+						req.Header.Del(name)
+					}
+				}
 			}
 			return nil
 		},
 	}
+}
+
+func redirectChainChangesOrigin(req *http.Request, via []*http.Request) bool {
+	if len(via) == 0 {
+		return false
+	}
+	origin := via[0].URL
+	if !sameHTTPOrigin(req.URL, origin) {
+		return true
+	}
+	for _, previous := range via[1:] {
+		if !sameHTTPOrigin(previous.URL, origin) {
+			return true
+		}
+	}
+	return false
+}
+
+func sameHTTPOrigin(a, b *url.URL) bool {
+	return a != nil && b != nil &&
+		strings.EqualFold(a.Scheme, b.Scheme) &&
+		strings.EqualFold(a.Host, b.Host)
+}
+
+// redactHTTPURLForDiagnostics deliberately removes the full query and
+// fragment, rather than trying to guess which parameter names are secret.
+// Action URL templates can interpolate arbitrary values, so even an innocent
+// parameter name may carry confidential data.
+func redactHTTPURLForDiagnostics(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "[invalid URL]"
+	}
+	if parsed.User != nil {
+		parsed.User = url.User("[REDACTED]")
+	}
+	parsed.RawQuery = ""
+	parsed.ForceQuery = false
+	parsed.Fragment = ""
+	return parsed.String()
+}
+
+func redactHTTPRequestError(err error) string {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return fmt.Sprintf("%s %q: %s", urlErr.Op, redactHTTPURLForDiagnostics(urlErr.URL), RedactString(urlErr.Err.Error()))
+	}
+	return RedactString(err.Error())
 }
 
 // isBlockedIP reports whether an IP is on a network we never want server-side

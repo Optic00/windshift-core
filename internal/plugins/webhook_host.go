@@ -128,7 +128,7 @@ func (m *Manager) UnregisterPluginWebhooks(ctx context.Context, db database.Data
 func GetPluginWebhookHandler(ctx context.Context, db database.Database, pluginName, webhookID string) (string, error) {
 	var configJSON string
 	err := db.QueryRowContext(ctx,
-		"SELECT config FROM channels WHERE plugin_name = ? AND plugin_webhook_id = ?",
+		"SELECT COALESCE(config, '{}') FROM channels WHERE plugin_name = ? AND plugin_webhook_id = ?",
 		pluginName, webhookID,
 	).Scan(&configJSON)
 	if err != nil {

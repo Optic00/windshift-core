@@ -20,7 +20,7 @@
     })
   } = $props();
 
-  const SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
+  const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/;
   const DOMAIN_PATTERN = /^(?!-)[a-z0-9-]+(?<!-)(?:\.(?!-)[a-z0-9-]+(?<!-))*\.[a-z]{2,}$/;
 
   function parseDomains(input) {
@@ -50,7 +50,7 @@
 
   export function getConfig() {
     return {
-      portal_slug: formData.slug,
+      portal_slug: formData.slug.trim(),
       portal_workspace_ids: formData.workspace_ids,
       portal_title: formData.title || formData.slug,
       portal_description: formData.description || '',

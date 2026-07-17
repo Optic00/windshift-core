@@ -541,7 +541,7 @@ func (ec *EventCoordinator) lookupPortalSlugForItem(item *models.Item) string {
 		return ""
 	}
 	var rawConfig sql.NullString
-	if err := ec.db.QueryRow(`SELECT config FROM channels WHERE id = ?`, *item.ChannelID).Scan(&rawConfig); err != nil {
+	if err := ec.db.QueryRow(`SELECT COALESCE(config, '{}') FROM channels WHERE id = ?`, *item.ChannelID).Scan(&rawConfig); err != nil {
 		return ""
 	}
 	if !rawConfig.Valid || rawConfig.String == "" {

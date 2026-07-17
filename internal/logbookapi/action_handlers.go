@@ -12,7 +12,48 @@ import (
 	"windshift/internal/repository"
 	"windshift/internal/repository/actionutil"
 	"windshift/internal/restapi"
+	"windshift/internal/sanitize"
 )
+
+func respondActionValidation(w http.ResponseWriter, r *http.Request, message string) {
+	restapi.RespondErrorWithMessage(w, r, http.StatusBadRequest, restapi.ErrCodeValidationFailed, message)
+}
+
+func sanitizeLogbookActionFlow(nodes []models.LogbookActionNode, edges []models.LogbookActionEdge) error {
+	for i := range nodes {
+		if err := sanitize.ValidateJSONPayload("node_config", nodes[i].NodeConfig); err != nil {
+			return err
+		}
+	}
+	for i := range edges {
+		sanitize.ApplyAll(
+			sanitize.Pair{Target: &edges[i].EdgeType, Policy: sanitize.ShortIdentifier},
+			sanitize.Pair{Target: &edges[i].SourceHandle, Policy: sanitize.ShortIdentifier},
+			sanitize.Pair{Target: &edges[i].TargetHandle, Policy: sanitize.ShortIdentifier},
+		)
+	}
+	return nil
+}
+
+func validateLogbookActionKinds(triggerType models.LogbookActionTriggerType, nodes []models.LogbookActionNode) string {
+	switch triggerType {
+	case models.LogbookTriggerDocumentClassified, models.LogbookTriggerContentKeyword,
+		models.LogbookTriggerMimeType, models.LogbookTriggerManual:
+		// valid
+	default:
+		return fmt.Sprintf("Invalid logbook action trigger type: %s", triggerType)
+	}
+	for i, node := range nodes {
+		switch node.NodeType {
+		case models.LogbookNodeTrigger, models.LogbookNodeCreateItem, models.LogbookNodeCreateAsset,
+			models.LogbookNodeAssociateCustomer, models.LogbookNodeCondition:
+			// valid
+		default:
+			return fmt.Sprintf("Invalid logbook action node type at nodes[%d]: %s", i, node.NodeType)
+		}
+	}
+	return ""
+}
 
 // ActionHandlers holds HTTP handlers for logbook action automation.
 type ActionHandlers struct {
@@ -161,9 +202,32 @@ func (h *ActionHandlers) CreateAction(w http.ResponseWriter, r *http.Request) {
 		restapi.RespondErrorWithMessage(w, r, http.StatusBadRequest, restapi.ErrCodeInvalidInput, "Invalid request body")
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText},
+	)
+	if err := sanitize.ValidateJSONPayload("trigger_config", req.TriggerConfig); err != nil {
+		respondActionValidation(w, r, err.Error())
+		return
+	}
+	if err := sanitizeLogbookActionFlow(req.Nodes, req.Edges); err != nil {
+		respondActionValidation(w, r, err.Error())
+		return
+	}
 
 	if msg := actionutil.ValidateActionFields(req.Name, string(req.TriggerType)); msg != "" {
-		restapi.RespondErrorWithMessage(w, r, http.StatusBadRequest, restapi.ErrCodeValidationFailed, msg)
+		respondActionValidation(w, r, msg)
+		return
+	}
+	if msg := validateLogbookActionKinds(req.TriggerType, req.Nodes); msg != "" {
+		respondActionValidation(w, r, msg)
+		return
+	}
+	if err := actionutil.ValidateFlowAcyclic[
+		models.LogbookActionNode, *models.LogbookActionNode,
+		models.LogbookActionEdge, *models.LogbookActionEdge,
+	](req.Nodes, req.Edges); err != nil {
+		respondActionValidation(w, r, err.Error())
 		return
 	}
 
@@ -243,10 +307,47 @@ func (h *ActionHandlers) UpdateAction(w http.ResponseWriter, r *http.Request) {
 		restapi.RespondErrorWithMessage(w, r, http.StatusBadRequest, restapi.ErrCodeInvalidInput, "Invalid request body")
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: req.Description, Policy: sanitize.RichText},
+	)
+	if req.TriggerConfig != nil {
+		if err := sanitize.ValidateJSONPayload("trigger_config", *req.TriggerConfig); err != nil {
+			respondActionValidation(w, r, err.Error())
+			return
+		}
+	}
+	if err := sanitizeLogbookActionFlow(req.Nodes, req.Edges); err != nil {
+		respondActionValidation(w, r, err.Error())
+		return
+	}
+	if req.Nodes == nil && req.Edges != nil {
+		respondActionValidation(w, r, "nodes must be provided when replacing action edges")
+		return
+	}
 
 	applyLogbookActionUpdateFields(action, &req)
+	if msg := actionutil.ValidateActionFields(action.Name, string(action.TriggerType)); msg != "" {
+		respondActionValidation(w, r, msg)
+		return
+	}
+	effectiveNodes := action.Nodes
+	if req.Nodes != nil {
+		effectiveNodes = req.Nodes
+	}
+	if msg := validateLogbookActionKinds(action.TriggerType, effectiveNodes); msg != "" {
+		respondActionValidation(w, r, msg)
+		return
+	}
 
 	if req.Nodes != nil {
+		if err := actionutil.ValidateFlowAcyclic[
+			models.LogbookActionNode, *models.LogbookActionNode,
+			models.LogbookActionEdge, *models.LogbookActionEdge,
+		](req.Nodes, req.Edges); err != nil {
+			respondActionValidation(w, r, err.Error())
+			return
+		}
 		if err := h.repo.SaveActionWithNodesAndEdges(action, req.Nodes, req.Edges); err != nil {
 			respondInternalError(w, r, fmt.Errorf("failed to save logbook action: %w", err))
 			return
@@ -313,8 +414,12 @@ func (h *ActionHandlers) ToggleAction(w http.ResponseWriter, r *http.Request) {
 
 // ExecuteAction manually triggers a logbook action for a specific document.
 func (h *ActionHandlers) ExecuteAction(w http.ResponseWriter, r *http.Request) {
-	bucketID, lbUser, _, actionID, ok := h.requireBucketAction(w, r)
+	bucketID, lbUser, action, actionID, ok := h.requireBucketAction(w, r)
 	if !ok {
+		return
+	}
+	if !action.IsEnabled {
+		respondActionValidation(w, r, "action is disabled")
 		return
 	}
 
@@ -329,51 +434,53 @@ func (h *ActionHandlers) ExecuteAction(w http.ResponseWriter, r *http.Request) {
 		restapi.RespondErrorWithMessage(w, r, http.StatusBadRequest, restapi.ErrCodeValidationFailed, "document_id is required")
 		return
 	}
+	if h.actionService == nil || h.logbookRepo == nil {
+		respondInternalError(w, r, fmt.Errorf("logbook action service not available"))
+		return
+	}
 
-	if h.actionService != nil {
-		// Fetch document and verify it belongs to the same bucket as the action.
-		// Without this check, a bucket admin could trigger an action against a
-		// document from another bucket (IDOR).
-		doc, err := h.logbookRepo.GetDocument(req.DocumentID)
-		if err != nil || doc == nil {
-			respondNotFound(w, r)
-			return
-		}
-		if doc.BucketID != bucketID {
-			respondNotFound(w, r)
-			return
-		}
+	// Fetch document and verify it belongs to the same bucket as the action.
+	// Without this check, a bucket admin could trigger an action against a
+	// document from another bucket (IDOR).
+	doc, err := h.logbookRepo.GetDocument(req.DocumentID)
+	if err != nil || doc == nil {
+		respondNotFound(w, r)
+		return
+	}
+	if doc.BucketID != bucketID {
+		respondNotFound(w, r)
+		return
+	}
 
-		event := &models.LogbookActionEvent{
-			EventType:   models.LogbookTriggerManual,
-			BucketID:    bucketID,
-			DocumentID:  req.DocumentID,
-			ActorUserID: lbUser.ID,
-			Title:       doc.Title,
-			ContentType: doc.ContentType,
-			MimeType:    doc.MimeType,
-			SourceType:  doc.SourceType,
-			Author:      doc.Author,
-		}
+	event := &models.LogbookActionEvent{
+		EventType:   models.LogbookTriggerManual,
+		BucketID:    bucketID,
+		DocumentID:  req.DocumentID,
+		ActorUserID: lbUser.ID,
+		Title:       doc.Title,
+		ContentType: doc.ContentType,
+		MimeType:    doc.MimeType,
+		SourceType:  doc.SourceType,
+		Author:      doc.Author,
+	}
 
-		slog.Info("starting manual action execution",
+	slog.Info("starting manual action execution",
+		slog.String("component", "logbook-actions"),
+		slog.Int("action_id", actionID),
+		slog.String("document_id", req.DocumentID),
+		slog.String("bucket_id", bucketID),
+	)
+
+	// Execute directly (synchronous for manual triggers) so logs are immediately available
+	if execErr := h.actionService.ExecuteActionDirectly(actionID, event); execErr != nil {
+		slog.Error("manual action execution failed",
 			slog.String("component", "logbook-actions"),
 			slog.Int("action_id", actionID),
 			slog.String("document_id", req.DocumentID),
-			slog.String("bucket_id", bucketID),
+			slog.Any("error", execErr),
 		)
-
-		// Execute directly (synchronous for manual triggers) so logs are immediately available
-		if execErr := h.actionService.ExecuteActionDirectly(actionID, event); execErr != nil {
-			slog.Error("manual action execution failed",
-				slog.String("component", "logbook-actions"),
-				slog.Int("action_id", actionID),
-				slog.String("document_id", req.DocumentID),
-				slog.Any("error", execErr),
-			)
-			respondInternalError(w, r, execErr)
-			return
-		}
+		respondInternalError(w, r, execErr)
+		return
 	}
 
 	restapi.RespondOK(w, map[string]string{"status": "executed"})

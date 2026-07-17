@@ -921,11 +921,20 @@ func (r *ActionRepository) GetCapabilityWorkspaceIDs(capabilityID int) ([]int, e
 // Pass an empty slice to clear (only meaningful when AppliesToAllWorkspaces is
 // false; the caller is responsible for that invariant).
 func (r *ActionRepository) SetCapabilityWorkspaces(capabilityID int, workspaceIDs []int) error {
-	if _, err := r.db.ExecWrite(`DELETE FROM action_capability_workspaces WHERE capability_id = ?`, capabilityID); err != nil {
+	return setCapabilityWorkspaces(r.db, capabilityID, workspaceIDs)
+}
+
+type capabilityWriter interface {
+	QueryRow(query string, args ...interface{}) *sql.Row
+	ExecWrite(query string, args ...interface{}) (sql.Result, error)
+}
+
+func setCapabilityWorkspaces(writer capabilityWriter, capabilityID int, workspaceIDs []int) error {
+	if _, err := writer.ExecWrite(`DELETE FROM action_capability_workspaces WHERE capability_id = ?`, capabilityID); err != nil {
 		return fmt.Errorf("failed to clear capability workspace scope: %w", err)
 	}
 	for _, wsID := range workspaceIDs {
-		if _, err := r.db.ExecWrite(`INSERT INTO action_capability_workspaces (capability_id, workspace_id) VALUES (?, ?)`, capabilityID, wsID); err != nil {
+		if _, err := writer.ExecWrite(`INSERT INTO action_capability_workspaces (capability_id, workspace_id) VALUES (?, ?)`, capabilityID, wsID); err != nil {
 			return fmt.Errorf("failed to add capability workspace scope (ws %d): %w", wsID, err)
 		}
 	}
@@ -934,32 +943,77 @@ func (r *ActionRepository) SetCapabilityWorkspaces(capabilityID int, workspaceID
 
 // CreateCapability creates a new capability.
 func (r *ActionRepository) CreateCapability(c *models.ActionCapability) (int, error) {
+	return createCapability(r.db, c)
+}
+
+func createCapability(writer capabilityWriter, c *models.ActionCapability) (int, error) {
 	var id int64
-	err := r.db.QueryRow(`
+	now := time.Now()
+	err := writer.QueryRow(`
 		INSERT INTO action_capabilities (name, capability_type, config, is_enabled, applies_to_all_workspaces, created_by, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
 	`,
 		c.Name, c.CapabilityType, c.Config, c.IsEnabled, c.AppliesToAllWorkspaces,
-		c.CreatedBy, time.Now(), time.Now(),
+		c.CreatedBy, now, now,
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create capability: %w", err)
 	}
-	return int(id), nil
+	c.ID = int(id)
+	c.CreatedAt = now
+	c.UpdatedAt = now
+	return c.ID, nil
+}
+
+// CreateCapabilityWithWorkspaces inserts a capability and its workspace
+// allowlist atomically. A failed allowlist insert (for example, a stale
+// workspace ID) must not leave behind an enabled but unreachable capability.
+func (r *ActionRepository) CreateCapabilityWithWorkspaces(c *models.ActionCapability, workspaceIDs []int) (int, error) {
+	var id int
+	err := database.WithTx(r.db, func(tx database.Tx) error {
+		createdID, err := createCapability(tx, c)
+		if err != nil {
+			return err
+		}
+		id = createdID
+		return setCapabilityWorkspaces(tx, id, workspaceIDs)
+	})
+	if err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 // UpdateCapability updates a capability.
 func (r *ActionRepository) UpdateCapability(c *models.ActionCapability) error {
-	_, err := r.db.ExecWrite(`
+	return updateCapability(r.db, c)
+}
+
+func updateCapability(writer capabilityWriter, c *models.ActionCapability) error {
+	c.UpdatedAt = time.Now()
+	_, err := writer.ExecWrite(`
 		UPDATE action_capabilities SET name = ?, config = ?, is_enabled = ?, applies_to_all_workspaces = ?, updated_at = ?
 		WHERE id = ?
 	`,
-		c.Name, c.Config, c.IsEnabled, c.AppliesToAllWorkspaces, time.Now(), c.ID,
+		c.Name, c.Config, c.IsEnabled, c.AppliesToAllWorkspaces, c.UpdatedAt, c.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update capability: %w", err)
 	}
 	return nil
+}
+
+// UpdateCapabilityWithWorkspaces updates capability metadata/config and
+// replaces its workspace allowlist in one transaction. This keeps the scope
+// bit and join rows from describing different authorization states after a
+// partial failure.
+func (r *ActionRepository) UpdateCapabilityWithWorkspaces(c *models.ActionCapability, workspaceIDs []int) error {
+	return database.WithTx(r.db, func(tx database.Tx) error {
+		if err := updateCapability(tx, c); err != nil {
+			return err
+		}
+		return setCapabilityWorkspaces(tx, c.ID, workspaceIDs)
+	})
 }
 
 // DeleteCapability deletes a capability by ID.

@@ -18,6 +18,7 @@ export const channels = {
       method: 'PUT',
       body: JSON.stringify({ config }),
     }),
+  getDeleteImpact: (id) => fetchAPI(`/channels/${id}/delete-impact`),
   testConfig: (id, config) =>
     fetchAPI(`/channels/${id}/test-config`, {
       method: 'POST',
@@ -44,9 +45,10 @@ export const channels = {
     return fetchAPI(url);
   },
   // Email OAuth (inline per-channel OAuth credentials)
-  startEmailOAuth: (channelId) =>
+  startEmailOAuth: (channelId, restoreChannelEnabled = false) =>
     fetchAPI(`/channels/${channelId}/inline-oauth/start`, {
       method: 'POST',
+      body: JSON.stringify({ restore_channel_enabled: restoreChannelEnabled }),
     }),
 };
 

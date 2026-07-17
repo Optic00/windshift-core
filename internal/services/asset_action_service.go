@@ -16,6 +16,7 @@ import (
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/repository/actionutil"
+	"windshift/internal/sanitize"
 	"windshift/internal/utils"
 
 	"github.com/google/uuid"
@@ -40,6 +41,8 @@ type AssetActionService struct {
 	notificationService *NotificationService
 	eventCoordinator    *EventCoordinator
 	chainStore          *ExecutionChainStore
+	permissionService   *PermissionService
+	assetPermChecker    AssetSetPermissionChecker
 
 	// Statistics
 	eventsProcessed int64
@@ -85,6 +88,17 @@ func (as *AssetActionService) SetNotificationService(ns *NotificationService) {
 // SetEventCoordinator sets the event coordinator for emitting item events
 func (as *AssetActionService) SetEventCoordinator(ec *EventCoordinator) {
 	as.eventCoordinator = ec
+}
+
+// SetPermissionService wires workspace RBAC for create_item nodes.
+func (as *AssetActionService) SetPermissionService(ps *PermissionService) {
+	as.permissionService = ps
+}
+
+// SetAssetPermissionChecker wires asset-set RBAC for mutating asset nodes and
+// recipient visibility checks.
+func (as *AssetActionService) SetAssetPermissionChecker(checker AssetSetPermissionChecker) {
+	as.assetPermChecker = checker
 }
 
 // EmitAssetActionEvent sends an event to be processed asynchronously (non-blocking)
@@ -388,6 +402,15 @@ func (as *AssetActionService) matchesTrigger(action *models.AssetAction, event *
 }
 
 func (as *AssetActionService) executeAction(action *models.AssetAction, event *models.AssetActionEvent, chain *ExecutionChain) error {
+	if action == nil {
+		return fmt.Errorf("asset action is required")
+	}
+	if !action.IsEnabled {
+		return fmt.Errorf("asset action %d is disabled", action.ID)
+	}
+	if event == nil {
+		return fmt.Errorf("asset action event is required")
+	}
 	startTime := time.Now()
 
 	// Get or create execution chain
@@ -559,8 +582,14 @@ func (as *AssetActionService) executeNode(node *models.AssetActionNode, ctx *mod
 	case models.AssetNodeCreateItem:
 		return as.executeCreateItem(node, ctx, stepResult)
 	case models.AssetNodeSetField:
+		if err := as.authorizeAssetActionMutation(ctx.Event.ActorUserID, ctx.Event.SetID, AssetPermissionKeyEdit); err != nil {
+			return err
+		}
 		return as.executeSetField(node, ctx, stepResult)
 	case models.AssetNodeSetStatus:
+		if err := as.authorizeAssetActionMutation(ctx.Event.ActorUserID, ctx.Event.SetID, AssetPermissionKeyEdit); err != nil {
+			return err
+		}
 		return as.executeSetStatus(node, ctx, stepResult)
 	case models.AssetNodeCondition:
 		return as.executeCondition(node, ctx, stepResult)
@@ -577,12 +606,22 @@ func (as *AssetActionService) executeCreateItem(node *models.AssetActionNode, ct
 	if err := json.Unmarshal([]byte(node.NodeConfig), &config); err != nil {
 		return fmt.Errorf("failed to parse create_item config: %w", err)
 	}
+	if err := as.authorizeAssetActionWorkspaceMutation(ctx.Event.ActorUserID, config.WorkspaceID, models.PermissionItemCreate); err != nil {
+		return err
+	}
 
 	title := as.substituteVariables(config.Title, ctx)
 	if title == "" {
 		title = "Asset Action: " + fmt.Sprintf("%v", ctx.Variables["asset_title"])
 	}
 	description := as.substituteVariables(config.Description, ctx)
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &title, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &description, Policy: sanitize.RichText},
+	)
+	if title == "" {
+		return fmt.Errorf("create_item title is empty after sanitization")
+	}
 
 	creatorID := ctx.Event.ActorUserID
 	itemTypeID := config.ItemTypeID
@@ -623,6 +662,40 @@ func (as *AssetActionService) executeCreateItem(node *models.AssetActionNode, ct
 		})
 	}
 
+	return nil
+}
+
+func (as *AssetActionService) authorizeAssetActionMutation(actorUserID, setID int, permissionKey string) error {
+	if actorUserID <= 0 {
+		return fmt.Errorf("asset action mutation requires an identified actor (set %d)", setID)
+	}
+	if as.assetPermChecker == nil {
+		return fmt.Errorf("asset action mutation blocked: asset permission checker not configured")
+	}
+	allowed, err := as.assetPermChecker.HasAssetSetPermission(actorUserID, setID, permissionKey)
+	if err != nil {
+		return fmt.Errorf("failed to check asset set %d permission: %w", setID, err)
+	}
+	if !allowed {
+		return fmt.Errorf("user %d not authorized (%s) on asset set %d", actorUserID, permissionKey, setID)
+	}
+	return nil
+}
+
+func (as *AssetActionService) authorizeAssetActionWorkspaceMutation(actorUserID, workspaceID int, permissionKey string) error {
+	if actorUserID <= 0 {
+		return fmt.Errorf("asset action workspace mutation requires an identified actor (workspace %d)", workspaceID)
+	}
+	if as.permissionService == nil {
+		return fmt.Errorf("asset action workspace mutation blocked: permission service not configured")
+	}
+	allowed, err := as.permissionService.HasWorkspacePermission(actorUserID, workspaceID, permissionKey)
+	if err != nil {
+		return fmt.Errorf("failed to check workspace %d permission: %w", workspaceID, err)
+	}
+	if !allowed {
+		return fmt.Errorf("user %d not authorized (%s) on workspace %d", actorUserID, permissionKey, workspaceID)
+	}
 	return nil
 }
 
@@ -707,11 +780,16 @@ func (as *AssetActionService) executeSetField(node *models.AssetActionNode, ctx 
 		oldValue = customFields[config.FieldName]
 		customFields[config.FieldName] = value
 
-		// Same text/textarea sanitize pass the asset CF write paths apply
-		// (WI-319) before the merged map is persisted. Refresh the local
-		// value so the step output / cascade event carry the sanitized form.
-		if err := NewAssetService(as.db, repository.NewAssetRepository(as.db)).SanitizeCustomFieldTextValues(int(assetTypeID.Int64), customFields); err != nil {
-			return fmt.Errorf("failed to sanitize asset custom_field_values: %w", err)
+		// Run the same schema/type/option validation as interactive asset
+		// updates. The old path sanitized known text fields but silently wrote
+		// unknown keys and invalid select/number values into the JSON blob.
+		if !assetTypeID.Valid || assetTypeID.Int64 <= 0 {
+			return fmt.Errorf("asset %d has no valid asset type", ctx.Event.AssetID)
+		}
+		if err := NewAssetService(as.db, repository.NewAssetRepository(as.db)).ValidateCustomFieldsSchema(
+			int(assetTypeID.Int64), customFields, CustomFieldsValidationOpts{EnforceRequired: false},
+		); err != nil {
+			return fmt.Errorf("invalid asset custom_field_values: %w", err)
 		}
 		if sanitized, ok := customFields[config.FieldName].(string); ok {
 			value = sanitized
@@ -787,10 +865,20 @@ func (as *AssetActionService) executeSetStatus(node *models.AssetActionNode, ctx
 	if err := json.Unmarshal([]byte(node.NodeConfig), &config); err != nil {
 		return fmt.Errorf("failed to parse set_status config: %w", err)
 	}
+	if config.StatusID <= 0 {
+		return fmt.Errorf("set_status requires a positive status_id")
+	}
+	belongs, err := repository.NewAssetRepository(as.db).StatusBelongsToSet(config.StatusID, ctx.Event.SetID)
+	if err != nil {
+		return fmt.Errorf("validate asset status: %w", err)
+	}
+	if !belongs {
+		return fmt.Errorf("asset status %d does not belong to set %d", config.StatusID, ctx.Event.SetID)
+	}
 
 	// Get current status
 	var oldStatusID int
-	err := as.db.QueryRow(`SELECT COALESCE(status_id, 0) FROM assets WHERE id = ?`, ctx.Event.AssetID).Scan(&oldStatusID)
+	err = as.db.QueryRow(`SELECT COALESCE(status_id, 0) FROM assets WHERE id = ?`, ctx.Event.AssetID).Scan(&oldStatusID)
 	if err != nil {
 		return fmt.Errorf("failed to get current asset status: %w", err)
 	}
@@ -853,12 +941,7 @@ func (as *AssetActionService) executeCondition(node *models.AssetActionNode, ctx
 // executeNotifyUser sends notifications
 func (as *AssetActionService) executeNotifyUser(node *models.AssetActionNode, ctx *models.AssetActionExecutionContext, stepResult *models.StepResult) error {
 	if as.notificationService == nil {
-		stepResult.Output = map[string]interface{}{
-			"recipient_count": 0,
-			"skipped":         true,
-			"reason":          "notification service not configured",
-		}
-		return nil
+		return fmt.Errorf("notify_user: notification service not configured")
 	}
 
 	var config models.NotifyUserNodeConfig
@@ -866,9 +949,13 @@ func (as *AssetActionService) executeNotifyUser(node *models.AssetActionNode, ct
 		return fmt.Errorf("failed to parse notify_user config: %w", err)
 	}
 
+	recipients := config.Recipients
+	if len(recipients) == 0 && config.RecipientType != "" {
+		recipients = []string{config.RecipientType}
+	}
 	userIDs := []int{}
-	for _, recipient := range config.Recipients {
-		if id, err := strconv.Atoi(recipient); err == nil {
+	for _, recipient := range recipients {
+		if id, err := strconv.Atoi(recipient); err == nil && id > 0 {
 			userIDs = append(userIDs, id)
 		}
 	}
@@ -876,19 +963,23 @@ func (as *AssetActionService) executeNotifyUser(node *models.AssetActionNode, ct
 	message := as.substituteVariables(config.Message, ctx)
 	title := as.substituteVariables(config.Title, ctx)
 
-	for range userIDs {
-		as.notificationService.EmitEvent(&NotificationEvent{
-			EventType:   "action.notification",
-			ActorUserID: ctx.Event.ActorUserID,
-			Title:       title,
-			TemplateData: map[string]interface{}{
-				"message": message,
-			},
-		})
+	recipientCount, err := as.notificationService.NotifyUsersForAsset(
+		userIDs,
+		ctx.Event.SetID,
+		ctx.Event.AssetID,
+		ctx.Event.ActorUserID,
+		"action",
+		title,
+		message,
+		config.IncludeLink,
+		as.assetPermChecker,
+	)
+	if err != nil {
+		return fmt.Errorf("notify_user failed: %w", err)
 	}
 
 	stepResult.Output = map[string]interface{}{
-		"recipient_count": len(userIDs),
+		"recipient_count": recipientCount,
 		"title":           title,
 		"message":         message,
 	}

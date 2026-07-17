@@ -1105,17 +1105,21 @@
       </div>
 
     {:else if view === 'admin'}
-      <PermissionGuard requireSystemAdmin={true}>
-        {#snippet children()}
-          {@render lazyLoadedComponent(view, routeProps)}
-        {/snippet}
-        {#snippet fallback(requiredPermissionDisplay)}
-          <UnauthorizedAccess
-            message="You need system administrator privileges to access the administration panel."
-            requiredPermission={requiredPermissionDisplay}
-          />
-        {/snippet}
-      </PermissionGuard>
+      {#if $currentRoute.path.startsWith('/admin/channels')}
+        {@render lazyLoadedComponent(view, routeProps)}
+      {:else}
+        <PermissionGuard requireSystemAdmin={true}>
+          {#snippet children()}
+            {@render lazyLoadedComponent(view, routeProps)}
+          {/snippet}
+          {#snippet fallback(requiredPermissionDisplay)}
+            <UnauthorizedAccess
+              message="You need system administrator privileges to access the administration panel."
+              requiredPermission={requiredPermissionDisplay}
+            />
+          {/snippet}
+        </PermissionGuard>
+      {/if}
 
     {:else if view === 'workspace-actions'}
       <div class="h-full" style="background-color: var(--ds-surface); height: calc(100vh - 56px);">

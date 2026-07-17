@@ -259,7 +259,8 @@ func (s *PlanningService) ListMilestones(params MilestoneListParams) ([]Mileston
 	var countArgs []interface{}
 
 	// Filter by workspace - show local milestones for this workspace + optionally global milestones
-	if params.WorkspaceID != nil {
+	switch {
+	case params.WorkspaceID != nil:
 		if params.IncludeGlobal {
 			query += " AND (m.workspace_id = ? OR m.is_global = ?)"
 			countQuery += " AND (m.workspace_id = ? OR m.is_global = ?)"
@@ -271,7 +272,7 @@ func (s *PlanningService) ListMilestones(params MilestoneListParams) ([]Mileston
 			args = append(args, *params.WorkspaceID)
 			countArgs = append(countArgs, *params.WorkspaceID)
 		}
-	} else if len(params.WorkspaceIDs) > 0 {
+	case len(params.WorkspaceIDs) > 0:
 		workspaceClause, workspaceArgs := planningWorkspaceFilter("m.workspace_id", params.WorkspaceIDs)
 		workspaceClause = strings.TrimPrefix(workspaceClause, " AND ")
 		if params.IncludeGlobal {
@@ -287,13 +288,13 @@ func (s *PlanningService) ListMilestones(params MilestoneListParams) ([]Mileston
 			args = append(args, workspaceArgs...)
 			countArgs = append(countArgs, workspaceArgs...)
 		}
-	} else if params.IncludeGlobal {
+	case params.IncludeGlobal:
 		// If no workspace specified but include_global, only show global milestones
 		query += " AND m.is_global = ?"
 		countQuery += " AND m.is_global = ?"
 		args = append(args, true)
 		countArgs = append(countArgs, true)
-	} else {
+	default:
 		// An unscoped local list must never widen to every workspace.
 		query += " AND 1=0"
 		countQuery += " AND 1=0"

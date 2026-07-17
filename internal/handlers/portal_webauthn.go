@@ -98,7 +98,7 @@ func (h *PortalWebAuthnHandler) StartPortalRegistration(w http.ResponseWriter, r
 	if !ok {
 		return
 	}
-	req, ok := decodeJSON[portalRegistrationStartRequest](w, r)
+	req, ok := decodeChannelJSON[portalRegistrationStartRequest](w, r)
 	if !ok {
 		return
 	}
@@ -159,7 +159,7 @@ func (h *PortalWebAuthnHandler) CompletePortalRegistration(w http.ResponseWriter
 	if !ok {
 		return
 	}
-	req, ok := decodeJSON[portalRegistrationCompleteRequest](w, r)
+	req, ok := decodeChannelJSON[portalRegistrationCompleteRequest](w, r)
 	if !ok {
 		return
 	}
@@ -277,7 +277,7 @@ func (h *PortalWebAuthnHandler) CompletePortalLogin(w http.ResponseWriter, r *ht
 		return
 	}
 
-	req, ok := decodeJSON[portalLoginCompleteRequest](w, r)
+	req, ok := decodeChannelJSON[portalLoginCompleteRequest](w, r)
 	if !ok {
 		return
 	}

@@ -277,3 +277,21 @@ func (h *WorkspaceHandler) GetStatuses(w http.ResponseWriter, r *http.Request) {
 
 	respondJSONOK(w, statuses)
 }
+
+// GetItemTypes returns only item types allowed by the workspace's active
+// configuration set.
+func (h *WorkspaceHandler) GetItemTypes(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := requireWorkspaceIDParam(w, r, h.keyCache, "id")
+	if !ok {
+		return
+	}
+	if !h.requireWorkspacePermission(w, r, workspaceID, models.PermissionItemView) {
+		return
+	}
+	itemTypes, err := services.NewWorkspaceService(h.db).GetItemTypes(workspaceID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	respondJSONOK(w, itemTypes)
+}

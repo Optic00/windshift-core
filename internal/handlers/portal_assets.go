@@ -17,6 +17,7 @@ import (
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/restapi"
+	"windshift/internal/services"
 )
 
 // formFieldPlaceholderRe matches ${identifier} placeholders that form-mode
@@ -25,6 +26,20 @@ import (
 // ${cf_5}). The body of the placeholder is replaced with a CQL string literal
 // built from the submitted value, with " and \ escaped per the tokenizer.
 var formFieldPlaceholderRe = regexp.MustCompile(`\$\{([A-Za-z0-9_\-]+)\}`)
+
+func applyAssetReportVisibility(report *models.AssetReport, groups, orgs sql.NullString) error {
+	groupIDs, err := unmarshalIntIDs(groups)
+	if err != nil {
+		return fmt.Errorf("parse asset report %d visibility groups: %w", report.ID, err)
+	}
+	orgIDs, err := unmarshalIntIDs(orgs)
+	if err != nil {
+		return fmt.Errorf("parse asset report %d visibility organizations: %w", report.ID, err)
+	}
+	report.VisibilityGroupIDs = groupIDs
+	report.VisibilityOrgIDs = orgIDs
+	return nil
+}
 
 // substituteFormFields replaces ${identifier} placeholders in a CQL query
 // with quoted, escaped string literals built from the submitted form values.
@@ -60,6 +75,7 @@ func readFormParams(r *http.Request) (map[string]string, error) {
 		Params map[string]interface{} `json:"params"`
 	}
 	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
 	if err := dec.Decode(&body); err != nil {
 		return nil, err
 	}
@@ -82,6 +98,32 @@ func readFormParams(r *http.Request) (map[string]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// assetReportBindingAvailable revalidates form bindings on public reads. This
+// covers legacy rows and later portal/configuration-set drift even though new
+// management writes are already validated.
+func (h *PortalHandler) assetReportBindingAvailable(ctx context.Context, config *models.ChannelConfig, runMode string, itemTypeID, workspaceID *int) (bool, error) {
+	if runMode != "form" {
+		return true, nil
+	}
+	if itemTypeID == nil || *itemTypeID <= 0 {
+		return false, nil
+	}
+	var itemTypeExists bool
+	if err := h.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM item_types WHERE id = ?)", *itemTypeID).Scan(&itemTypeExists); err != nil {
+		return false, err
+	}
+	if !itemTypeExists {
+		return false, nil
+	}
+	if workspaceID == nil {
+		return true, nil
+	}
+	if *workspaceID <= 0 || !containsID(config.PortalWorkspaceIDs, *workspaceID) {
+		return false, nil
+	}
+	return services.IsItemTypeAllowedInWorkspace(h.db, *workspaceID, *itemTypeID)
 }
 
 // ExecuteAssetReport executes a CQL query for an asset report and returns the assets
@@ -113,15 +155,17 @@ func (h *PortalHandler) ExecuteAssetReport(w http.ResponseWriter, r *http.Reques
 		CQLQuery           string
 		IsActive           bool
 		RunMode            string
+		ItemTypeID         *int
+		WorkspaceID        *int
 		ColumnConfig       sql.NullString
 		VisibilityGroupIDs sql.NullString
 		VisibilityOrgIDs   sql.NullString
 	}
 	err = h.db.QueryRowContext(ctx, `
-		SELECT id, channel_id, asset_set_id, cql_query, is_active, run_mode, column_config,
+		SELECT id, channel_id, asset_set_id, cql_query, is_active, run_mode, item_type_id, workspace_id, column_config,
 		       visibility_group_ids, visibility_org_ids
 		FROM asset_reports WHERE id = ?
-	`, reportID).Scan(&report.ID, &report.ChannelID, &report.AssetSetID, &report.CQLQuery, &report.IsActive, &report.RunMode, &report.ColumnConfig,
+	`, reportID).Scan(&report.ID, &report.ChannelID, &report.AssetSetID, &report.CQLQuery, &report.IsActive, &report.RunMode, &report.ItemTypeID, &report.WorkspaceID, &report.ColumnConfig,
 		&report.VisibilityGroupIDs, &report.VisibilityOrgIDs)
 
 	if errors.Is(err, sql.ErrNoRows) {
@@ -144,15 +188,27 @@ func (h *PortalHandler) ExecuteAssetReport(w http.ResponseWriter, r *http.Reques
 		respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Asset report not found"))
 		return
 	}
+	bindingAvailable, err := h.assetReportBindingAvailable(ctx, &portalResult.config, report.RunMode, report.ItemTypeID, report.WorkspaceID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	if !bindingAvailable {
+		respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Asset report not found"))
+		return
+	}
 
 	// Visibility check — must mirror GetAssetReports so the list and execute paths
 	// agree on who can see this report. Return 404 (not 403) so report existence
 	// is not disclosed to unauthorized callers.
 	vc := h.getPortalVisibilityContext(ctx, r, channel.ID)
 	if !vc.isAdmin {
-		ar := models.AssetReport{
-			VisibilityGroupIDs: unmarshalIntIDs(report.VisibilityGroupIDs),
-			VisibilityOrgIDs:   unmarshalIntIDs(report.VisibilityOrgIDs),
+		ar := models.AssetReport{ID: report.ID}
+		if err := applyAssetReportVisibility(&ar, report.VisibilityGroupIDs, report.VisibilityOrgIDs); err != nil {
+			slog.Error("hiding asset report with invalid visibility configuration",
+				slog.String("component", "portal_assets"), slog.Int("asset_report_id", report.ID), slog.Any("error", err))
+			respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Asset report not found"))
+			return
 		}
 		if !ar.IsVisibleTo(vc.userGroupIDs, vc.customerOrgID) {
 			respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Asset report not found"))
@@ -163,7 +219,7 @@ func (h *PortalHandler) ExecuteAssetReport(w http.ResponseWriter, r *http.Reques
 	// Get portal customer ID for CQL function replacements
 	var portalCustomerID *int
 	var customerOrgID *int
-	portalCustomerID, _ = h.getPortalCustomerID(ctx, r)
+	portalCustomerID, _ = h.getPortalCustomerID(ctx, r, channel.ID)
 
 	//nolint:misspell // British spelling used in database
 	// Get organisation ID for this customer if authenticated
@@ -178,8 +234,13 @@ func (h *PortalHandler) ExecuteAssetReport(w http.ResponseWriter, r *http.Reques
 	// this step — its CQL is self-contained.
 	cqlQuery := report.CQLQuery
 	if report.RunMode == "form" {
+		r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 		formValues, formErr := readFormParams(r)
 		if formErr != nil {
+			if isRequestBodyTooLarge(formErr) {
+				respondRequestTooLarge(w, r)
+				return
+			}
 			respondValidationError(w, r, "Invalid request body: "+formErr.Error())
 			return
 		}
@@ -190,6 +251,16 @@ func (h *PortalHandler) ExecuteAssetReport(w http.ResponseWriter, r *http.Reques
 		if ferr != nil {
 			respondInternalError(w, r, ferr)
 			return
+		}
+		allowedFields := make(map[string]struct{}, len(fields))
+		for _, field := range fields {
+			allowedFields[field.FieldIdentifier] = struct{}{}
+		}
+		for identifier := range formValues {
+			if _, allowed := allowedFields[identifier]; !allowed {
+				respondValidationError(w, r, "Unknown form field: "+identifier)
+				return
+			}
 		}
 		// Empty form submission (no params at all) on a form-mode report is
 		// the "show me the form" state — return an empty result and the column
@@ -462,6 +533,7 @@ func (h *PortalHandler) GetAssetReports(w http.ResponseWriter, r *http.Request) 
 		SELECT ar.id, ar.channel_id, ar.asset_set_id, ar.name, ar.description,
 		       ar.cql_query, ar.icon, ar.color, ar.display_order, ar.is_active,
 		       ar.column_config, ar.visibility_group_ids, ar.visibility_org_ids,
+		       ar.run_mode, ar.item_type_id, ar.workspace_id,
 		       ar.created_at, ar.updated_at,
 		       ams.name as asset_set_name
 		FROM asset_reports ar
@@ -486,6 +558,7 @@ func (h *PortalHandler) GetAssetReports(w http.ResponseWriter, r *http.Request) 
 		err := rows.Scan(&ar.ID, &ar.ChannelID, &ar.AssetSetID, &ar.Name, &ar.Description,
 			&ar.CQLQuery, &ar.Icon, &ar.Color, &ar.DisplayOrder, &ar.IsActive,
 			&columnConfig, &visibilityGroupIDs, &visibilityOrgIDs,
+			&ar.RunMode, &ar.ItemTypeID, &ar.WorkspaceID,
 			&ar.CreatedAt, &ar.UpdatedAt,
 			&ar.AssetSetName)
 		if err != nil {
@@ -499,11 +572,20 @@ func (h *PortalHandler) GetAssetReports(w http.ResponseWriter, r *http.Request) 
 				ar.ColumnConfig = cols
 			}
 		}
-		if ids := unmarshalIntIDs(visibilityGroupIDs); ids != nil {
-			ar.VisibilityGroupIDs = ids
+		if err := applyAssetReportVisibility(&ar, visibilityGroupIDs, visibilityOrgIDs); err != nil {
+			slog.Error("hiding asset report with invalid visibility configuration",
+				slog.String("component", "portal_assets"), slog.Int("asset_report_id", ar.ID), slog.Any("error", err))
+			if !vc.isAdmin {
+				continue
+			}
 		}
-		if ids := unmarshalIntIDs(visibilityOrgIDs); ids != nil {
-			ar.VisibilityOrgIDs = ids
+		bindingAvailable, err := h.assetReportBindingAvailable(ctx, &portalResult.config, ar.RunMode, ar.ItemTypeID, ar.WorkspaceID)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return
+		}
+		if !bindingAvailable {
+			continue
 		}
 
 		// Admin users see all; others see only visible ones
@@ -633,6 +715,23 @@ func decodeColumnConfig(raw sql.NullString) []string {
 // substitution) and GetAssetReportFields (to surface the schema to the
 // portal-side form renderer).
 func (h *PortalHandler) loadAssetReportFields(ctx context.Context, assetReportID int) ([]models.AssetReportField, error) {
+	var itemTypeID, workspaceID *int
+	if err := h.db.QueryRowContext(ctx, `
+		SELECT item_type_id, workspace_id
+		FROM asset_reports
+		WHERE id = ? AND run_mode = 'form'
+	`, assetReportID).Scan(&itemTypeID, &workspaceID); err != nil {
+		return nil, err
+	}
+	allowedCustomFieldIDs := make(map[string]struct{})
+	if itemTypeID != nil && workspaceID != nil {
+		var err error
+		allowedCustomFieldIDs, err = services.AllowedCreateScreenCustomFieldIdentifiers(h.db, *workspaceID, *itemTypeID)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	rows, err := h.db.QueryContext(ctx, `
 		SELECT arf.id, arf.asset_report_id, arf.field_identifier, arf.field_type,
 		       arf.display_order, arf.is_required, arf.display_name, arf.description,
@@ -668,6 +767,11 @@ func (h *PortalHandler) loadAssetReportFields(ctx context.Context, assetReportID
 			&f.FieldName, &f.FieldLabel); err != nil {
 			return nil, err
 		}
+		if f.FieldType == "custom" {
+			if _, allowed := allowedCustomFieldIDs[f.FieldIdentifier]; !allowed {
+				continue
+			}
+		}
 		out = append(out, f)
 	}
 	if err := rows.Err(); err != nil {
@@ -701,13 +805,16 @@ func (h *PortalHandler) GetAssetReportFields(w http.ResponseWriter, r *http.Requ
 	var report struct {
 		ChannelID          int
 		IsActive           bool
+		RunMode            string
+		ItemTypeID         *int
+		WorkspaceID        *int
 		VisibilityGroupIDs sql.NullString
 		VisibilityOrgIDs   sql.NullString
 	}
 	err = h.db.QueryRowContext(ctx, `
-		SELECT channel_id, is_active, visibility_group_ids, visibility_org_ids
+		SELECT channel_id, is_active, run_mode, item_type_id, workspace_id, visibility_group_ids, visibility_org_ids
 		FROM asset_reports WHERE id = ?
-	`, reportID).Scan(&report.ChannelID, &report.IsActive, &report.VisibilityGroupIDs, &report.VisibilityOrgIDs)
+	`, reportID).Scan(&report.ChannelID, &report.IsActive, &report.RunMode, &report.ItemTypeID, &report.WorkspaceID, &report.VisibilityGroupIDs, &report.VisibilityOrgIDs)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && (report.ChannelID != channel.ID || !report.IsActive)) {
 		respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Asset report not found"))
 		return
@@ -716,17 +823,33 @@ func (h *PortalHandler) GetAssetReportFields(w http.ResponseWriter, r *http.Requ
 		respondInternalError(w, r, err)
 		return
 	}
+	bindingAvailable, err := h.assetReportBindingAvailable(ctx, &portalResult.config, report.RunMode, report.ItemTypeID, report.WorkspaceID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	if !bindingAvailable {
+		respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Asset report not found"))
+		return
+	}
 
 	vc := h.getPortalVisibilityContext(ctx, r, channel.ID)
 	if !vc.isAdmin {
-		ar := models.AssetReport{
-			VisibilityGroupIDs: unmarshalIntIDs(report.VisibilityGroupIDs),
-			VisibilityOrgIDs:   unmarshalIntIDs(report.VisibilityOrgIDs),
+		ar := models.AssetReport{ID: reportID}
+		if err := applyAssetReportVisibility(&ar, report.VisibilityGroupIDs, report.VisibilityOrgIDs); err != nil {
+			slog.Error("hiding asset report fields with invalid visibility configuration",
+				slog.String("component", "portal_assets"), slog.Int("asset_report_id", reportID), slog.Any("error", err))
+			respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Asset report not found"))
+			return
 		}
 		if !ar.IsVisibleTo(vc.userGroupIDs, vc.customerOrgID) {
 			respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Asset report not found"))
 			return
 		}
+	}
+	if report.RunMode != "form" {
+		respondJSONOK(w, []models.AssetReportField{})
+		return
 	}
 
 	fields, err := h.loadAssetReportFields(ctx, reportID)

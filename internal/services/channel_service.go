@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -39,6 +40,16 @@ var (
 		"pending": true,
 	}
 )
+
+var requiredChannelDirection = map[string]string{
+	"smtp":    "outbound",
+	"webhook": "outbound",
+	"email":   "inbound",
+	"portal":  "inbound",
+	"form":    "inbound",
+	"imap":    "inbound",
+	"widget":  "inbound",
+}
 
 // ErrInvalidChannelField is returned by Create/Update when a caller supplies
 // an unknown type/direction/status, or an empty name. The handler maps it to
@@ -105,10 +116,49 @@ func (s *ChannelService) GetByID(ctx context.Context, id int) (*models.Channel, 
 func (s *ChannelService) UserCanManage(ctx context.Context, userID, channelID int) (bool, error) {
 	if s.permissionService != nil {
 		if isAdmin, err := s.permissionService.IsSystemAdmin(userID); err == nil && isAdmin {
-			return true, nil
+			// Preserve existence-hiding semantics for non-admins while ensuring
+			// admins still receive a clean 404 for a channel that does not exist.
+			return s.repo.Exists(ctx, channelID)
 		}
 	}
 	return s.repo.UserCanManage(ctx, userID, channelID)
+}
+
+// UserIsSystemAdmin exposes the shared permission decision to channel-adjacent
+// handlers that must re-authorize an unauthenticated callback state.
+func (s *ChannelService) UserIsSystemAdmin(userID int) (bool, error) {
+	if s.permissionService == nil {
+		return false, nil
+	}
+	return s.permissionService.IsSystemAdmin(userID)
+}
+
+// ItemTypeAllowedInWorkspace verifies both that the item type exists and that
+// the workspace's configuration set permits it.
+func (s *ChannelService) ItemTypeAllowedInWorkspace(workspaceID, itemTypeID int) (bool, error) {
+	var exists bool
+	if err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM item_types WHERE id = ?)", itemTypeID).Scan(&exists); err != nil {
+		return false, err
+	}
+	if !exists {
+		return false, nil
+	}
+	return IsItemTypeAllowedInWorkspace(s.db, workspaceID, itemTypeID)
+}
+
+// PriorityAllowedInWorkspace verifies both that the priority exists and that
+// the target workspace's configuration set permits it.
+func (s *ChannelService) PriorityAllowedInWorkspace(workspaceID, priorityID int) (bool, error) {
+	return IsPriorityAllowedInWorkspace(s.db, workspaceID, priorityID)
+}
+
+// UserCanConnectWorkspace requires the administrative workspace grant used
+// when a channel or request type is wired to accept external submissions.
+func (s *ChannelService) UserCanConnectWorkspace(userID, workspaceID int) (bool, error) {
+	if s.permissionService == nil {
+		return false, nil
+	}
+	return s.permissionService.HasWorkspacePermission(userID, workspaceID, models.PermissionWorkspaceAdmin)
 }
 
 // ChannelCreateRequest contains data for creating a channel
@@ -128,6 +178,14 @@ func (s *ChannelService) Create(ctx context.Context, req ChannelCreateRequest) (
 	if req.Name == "" || req.Type == "" || req.Direction == "" {
 		return nil, fmt.Errorf("name, type, and direction are required")
 	}
+	// Default channels are seeded system infrastructure. Letting the generic
+	// create endpoint make one would atomically demote the working default and
+	// replace it with the intentionally-disabled, not-yet-configured row below.
+	// There is no public default-promotion workflow, so fail closed here as well
+	// as in the HTTP handler.
+	if req.IsDefault {
+		return nil, fmt.Errorf("%w: default channels cannot be created through this endpoint", ErrInvalidChannelField)
+	}
 
 	if req.Status == "" {
 		req.Status = "disabled"
@@ -139,8 +197,18 @@ func (s *ChannelService) Create(ctx context.Context, req ChannelCreateRequest) (
 	if !ValidChannelDirections[req.Direction] {
 		return nil, fmt.Errorf("%w: direction %q", ErrInvalidChannelField, req.Direction)
 	}
+	if required := requiredChannelDirection[req.Type]; required != "" && req.Direction != required {
+		return nil, fmt.Errorf("%w: %s channels must be %s", ErrInvalidChannelField, req.Type, required)
+	}
 	if !ValidChannelStatuses[req.Status] {
 		return nil, fmt.Errorf("%w: status %q", ErrInvalidChannelField, req.Status)
+	}
+
+	// Newly created integrations are configured in a second UI step and must
+	// never begin dispatching/accepting traffic with an incomplete config.
+	req.Status = "disabled"
+	if strings.TrimSpace(req.Config) == "" {
+		req.Config = "{}"
 	}
 
 	if req.Type == "portal" {
@@ -181,7 +249,6 @@ type ChannelUpdateRequest struct {
 	Description string
 	Status      string
 	IsDefault   bool
-	Config      string
 	CategoryID  *int
 }
 
@@ -190,10 +257,6 @@ func (s *ChannelService) Update(ctx context.Context, id int, req ChannelUpdateRe
 	if req.Name == "" {
 		return nil, fmt.Errorf("%w: name is required", ErrInvalidChannelField)
 	}
-	if req.Status != "" && !ValidChannelStatuses[req.Status] {
-		return nil, fmt.Errorf("%w: status %q", ErrInvalidChannelField, req.Status)
-	}
-
 	// Check if channel is plugin-managed
 	isPluginManaged, err := s.repo.IsPluginManaged(ctx, id)
 	if err != nil {
@@ -202,14 +265,12 @@ func (s *ChannelService) Update(ctx context.Context, id int, req ChannelUpdateRe
 	if isPluginManaged {
 		return nil, fmt.Errorf("cannot modify plugin-managed channel")
 	}
-
 	channel := &models.Channel{
 		ID:          id,
 		Name:        req.Name,
 		Description: req.Description,
 		Status:      req.Status,
 		IsDefault:   req.IsDefault,
-		Config:      req.Config,
 		CategoryID:  req.CategoryID,
 	}
 
@@ -252,10 +313,23 @@ func (s *ChannelService) SetStatus(ctx context.Context, id int, status string) e
 	})
 }
 
+func (s *ChannelService) SetStatusIfConfigUnchanged(ctx context.Context, id int, status, expectedConfig string) (bool, error) {
+	return database.WithTxResult(s.db, func(tx database.Tx) (bool, error) {
+		return s.repo.SetStatusIfConfigUnchanged(ctx, tx, id, status, expectedConfig)
+	})
+}
+
 // UpdateConfig updates only the config column with caller-prepared JSON.
 func (s *ChannelService) UpdateConfig(ctx context.Context, id int, config string) error {
 	return database.WithTx(s.db, func(tx database.Tx) error {
 		return s.repo.UpdateConfig(ctx, tx, id, config)
+	})
+}
+
+// UpdateConfigIfUnchanged avoids losing a concurrent channel-config edit.
+func (s *ChannelService) UpdateConfigIfUnchanged(ctx context.Context, id int, expectedConfig, expectedStatus, config string) (bool, error) {
+	return database.WithTxResult(s.db, func(tx database.Tx) (bool, error) {
+		return s.repo.UpdateConfigIfUnchanged(ctx, tx, id, expectedConfig, expectedStatus, config)
 	})
 }
 
@@ -289,8 +363,33 @@ func (s *ChannelService) AddManager(ctx context.Context, channelID int, managerT
 		return fmt.Errorf("manager type must be 'user' or 'group'")
 	}
 
-	return database.WithTx(s.db, func(tx database.Tx) error {
+	_, err := database.WithTxResult(s.db, func(tx database.Tx) (bool, error) {
 		return s.repo.AddManager(ctx, tx, channelID, managerType, managerID, addedBy)
+	})
+	return err
+}
+
+// AddManagers inserts a validated batch atomically and returns only IDs whose
+// manager rows were newly created.
+func (s *ChannelService) AddManagers(ctx context.Context, channelID int, managerType string, managerIDs []int, addedBy int) ([]int, error) {
+	if managerType != "user" && managerType != "group" {
+		return nil, fmt.Errorf("manager type must be 'user' or 'group'")
+	}
+	return database.WithTxResult(s.db, func(tx database.Tx) ([]int, error) {
+		if err := s.repo.LockManagerSet(ctx, tx, channelID); err != nil {
+			return nil, err
+		}
+		inserted := make([]int, 0, len(managerIDs))
+		for _, managerID := range managerIDs {
+			created, err := s.repo.AddManager(ctx, tx, channelID, managerType, managerID, addedBy)
+			if err != nil {
+				return nil, err
+			}
+			if created {
+				inserted = append(inserted, managerID)
+			}
+		}
+		return inserted, nil
 	})
 }
 
@@ -303,17 +402,25 @@ func (s *ChannelService) AddManager(ctx context.Context, channelID int, managerT
 // ErrLastManager when their removal would drop the count to zero.
 func (s *ChannelService) RemoveManager(ctx context.Context, id, channelID int, actorIsAdmin bool) (bool, error) {
 	return database.WithTxResult(s.db, func(tx database.Tx) (bool, error) {
-		if !actorIsAdmin {
-			count, err := s.repo.CountManagers(ctx, tx, channelID)
-			if err != nil {
-				return false, err
-			}
-			if count <= 1 {
-				return false, ErrLastManager
-			}
+		if err := s.repo.LockManagerSet(ctx, tx, channelID); err != nil {
+			return false, err
+		}
+		removed, err := s.repo.RemoveManager(ctx, tx, id, channelID)
+		if err != nil || !removed || actorIsAdmin {
+			return removed, err
 		}
 
-		return s.repo.RemoveManager(ctx, tx, id, channelID)
+		// Count after the tentative delete. If no active manager remains, the
+		// returned error rolls the transaction back; deleting a stale inactive
+		// assignment is still allowed when a real manager remains.
+		count, err := s.repo.CountManagers(ctx, tx, channelID)
+		if err != nil {
+			return false, err
+		}
+		if count == 0 {
+			return false, ErrLastManager
+		}
+		return true, nil
 	})
 }
 
@@ -332,6 +439,9 @@ func ensureDefaultPortalSection(config string) (string, error) {
 	if config != "" {
 		if err := json.Unmarshal([]byte(config), &cfg); err != nil {
 			return "", err
+		}
+		if cfg == nil {
+			return "", fmt.Errorf("channel configuration must be a JSON object")
 		}
 	}
 

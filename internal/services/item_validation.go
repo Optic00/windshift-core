@@ -63,6 +63,44 @@ func IsItemTypeAllowedInWorkspace(db database.Database, workspaceID, itemTypeID 
 	return exists, nil
 }
 
+// IsPriorityAllowedInWorkspace verifies that the priority exists and is
+// available through the workspace's configuration set. Workspaces without a
+// configuration set retain the legacy behavior where every global priority is
+// available.
+func IsPriorityAllowedInWorkspace(db database.Database, workspaceID, priorityID int) (bool, error) {
+	var priorityExists bool
+	if err := db.QueryRow(
+		"SELECT EXISTS(SELECT 1 FROM priorities WHERE id = ?)",
+		priorityID,
+	).Scan(&priorityExists); err != nil {
+		return false, fmt.Errorf("failed to check priority existence: %w", err)
+	}
+	if !priorityExists {
+		return false, nil
+	}
+
+	var configSetID *int
+	err := db.QueryRow(
+		"SELECT configuration_set_id FROM workspace_configuration_sets WHERE workspace_id = ?",
+		workspaceID,
+	).Scan(&configSetID)
+	if errors.Is(err, sql.ErrNoRows) || configSetID == nil {
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("failed to query workspace config set: %w", err)
+	}
+
+	var allowed bool
+	if err := db.QueryRow(
+		"SELECT EXISTS(SELECT 1 FROM configuration_set_priorities WHERE configuration_set_id = ? AND priority_id = ?)",
+		*configSetID, priorityID,
+	).Scan(&allowed); err != nil {
+		return false, fmt.Errorf("failed to check priority in config set: %w", err)
+	}
+	return allowed, nil
+}
+
 // ValidateItemCreation validates all parameters for creating an item
 // Returns a validation result indicating success or failure with error message
 func ValidateItemCreation(db database.Database, params ItemValidationParams) *ItemValidationResult {

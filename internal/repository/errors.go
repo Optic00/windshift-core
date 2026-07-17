@@ -16,6 +16,14 @@ var (
 
 	// ErrDuplicateEntry is returned when a unique constraint is violated
 	ErrDuplicateEntry = errors.New("duplicate entry")
+
+	// ErrDefaultChannel is returned when a delete is rejected because the
+	// channel became (or remained) the default for its route.
+	ErrDefaultChannel = errors.New("cannot delete default channel")
+
+	// ErrChannelSlugConflict is returned when a concurrent portal/form write
+	// claims the same normalized public slug.
+	ErrChannelSlugConflict = errors.New("channel public slug is already in use")
 )
 
 // notFoundOrWrap maps a row-scan error to a repository sentinel: sql.ErrNoRows

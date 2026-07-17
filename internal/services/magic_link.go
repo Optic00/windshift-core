@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"windshift/internal/database"
@@ -239,14 +240,20 @@ func (s *MagicLinkService) ValidateMagicLink(token string, expectedChannelID int
 
 // FindOrCreatePortalCustomer finds a portal customer by email or creates one if it doesn't exist
 func (s *MagicLinkService) FindOrCreatePortalCustomer(email, name string, channelID int) (int, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" {
+		return 0, fmt.Errorf("email is required")
+	}
 	// First try to find existing customer
 	var customerID int
-	findQuery := `SELECT id FROM portal_customers WHERE email = ?`
+	findQuery := `SELECT id FROM portal_customers WHERE LOWER(email) = ?`
 	err := s.db.QueryRow(findQuery, email).Scan(&customerID)
 
 	if err == nil {
 		// Customer exists, grant channel access if not already granted
-		s.grantChannelAccess(customerID, channelID)
+		if err := s.grantChannelAccess(customerID, channelID); err != nil {
+			return 0, err
+		}
 		return customerID, nil
 	}
 
@@ -254,58 +261,45 @@ func (s *MagicLinkService) FindOrCreatePortalCustomer(email, name string, channe
 		return 0, fmt.Errorf("failed to find portal customer: %w", err)
 	}
 
-	// Customer doesn't exist, create new one
-	now := time.Now()
+	// Customer doesn't exist. Another request for the same email may be doing
+	// this concurrently, so let the unique email constraint pick a winner and
+	// re-read its row if this insert loses the race.
 	insertQuery := `
 		INSERT INTO portal_customers (name, email, created_at, updated_at)
-		VALUES (?, ?, ?, ?)
+		VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		ON CONFLICT DO NOTHING
 		RETURNING id
 	`
-	err = s.db.QueryRow(insertQuery, name, email, now, now).Scan(&customerID)
-	if err != nil {
+	err = s.db.QueryRow(insertQuery, name, email).Scan(&customerID)
+	if errors.Is(err, sql.ErrNoRows) {
+		if err = s.db.QueryRow(findQuery, email).Scan(&customerID); err != nil {
+			return 0, fmt.Errorf("failed to re-select portal customer after conflict: %w", err)
+		}
+	} else if err != nil {
 		return 0, fmt.Errorf("failed to create portal customer: %w", err)
 	}
 
 	// Grant channel access
-	s.grantChannelAccess(customerID, channelID)
+	if err := s.grantChannelAccess(customerID, channelID); err != nil {
+		return 0, err
+	}
 
 	slog.Info("portal customer created", slog.String("component", "magic_link"), slog.Int("portal_customer_id", customerID), slog.String("email", email))
 	return customerID, nil
 }
 
-// grantChannelAccess grants a portal customer access to a channel if not already granted
-func (s *MagicLinkService) grantChannelAccess(portalCustomerID, channelID int) {
-	// Check if already has access
-	var accessID int
-	checkQuery := `SELECT id FROM portal_customer_channels WHERE portal_customer_id = ? AND channel_id = ?`
-	err := s.db.QueryRow(checkQuery, portalCustomerID, channelID).Scan(&accessID)
-	if err == nil {
-		// Already has access
-		return
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		slog.Error("failed to check existing portal channel access",
-			slog.String("component", "magic_link"),
-			slog.Int("portal_customer_id", portalCustomerID),
-			slog.Int("channel_id", channelID),
-			slog.Any("error", err),
-		)
-		return
-	}
-
-	// Grant access
-	insertQuery := `
+// grantChannelAccess grants a portal customer access to a channel if not
+// already granted. The upsert is safe under concurrent login requests.
+func (s *MagicLinkService) grantChannelAccess(portalCustomerID, channelID int) error {
+	_, err := s.db.ExecWrite(`
 		INSERT INTO portal_customer_channels (portal_customer_id, channel_id, created_at)
 		VALUES (?, ?, ?)
-	`
-	if _, err := s.db.ExecWrite(insertQuery, portalCustomerID, channelID, time.Now()); err != nil {
-		slog.Error("failed to grant portal channel access",
-			slog.String("component", "magic_link"),
-			slog.Int("portal_customer_id", portalCustomerID),
-			slog.Int("channel_id", channelID),
-			slog.Any("error", err),
-		)
+		ON CONFLICT(portal_customer_id, channel_id) DO NOTHING
+	`, portalCustomerID, channelID, time.Now())
+	if err != nil {
+		return fmt.Errorf("grant portal customer %d access to channel %d: %w", portalCustomerID, channelID, err)
 	}
+	return nil
 }
 
 // GetPortalCustomerByEmail finds a portal customer by email

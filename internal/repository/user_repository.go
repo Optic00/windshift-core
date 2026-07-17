@@ -36,6 +36,18 @@ func (r *UserRepository) Exists(id int) (bool, error) {
 	return ok, nil
 }
 
+// ActiveExists reports whether an active user row with the given id exists.
+// It is intentionally separate from Exists: administrative workflows may
+// need to reference inactive users, while assigning an inactive user as a
+// channel manager would leave the channel without an effective manager.
+func (r *UserRepository) ActiveExists(id int) (bool, error) {
+	var ok bool
+	if err := r.db.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE id = ? AND is_active = true)", id).Scan(&ok); err != nil {
+		return false, fmt.Errorf("check active user %d: %w", id, err)
+	}
+	return ok, nil
+}
+
 // GetIDByEmail returns the user ID for an email address.
 func (r *UserRepository) GetIDByEmail(email string) (int, error) {
 	var id int

@@ -129,6 +129,7 @@ func (p *GoogleProvider) Connect(ctx context.Context, config *models.ChannelConf
 	}
 
 	client, err := Connect(ConnectOptions{
+		Context:    ctx,
 		Host:       GoogleIMAPHost,
 		Port:       GoogleIMAPPort,
 		Encryption: "ssl",

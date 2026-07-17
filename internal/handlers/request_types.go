@@ -40,12 +40,30 @@ func sanitizeRequestTypeFields(fields []models.RequestTypeField) []string {
 	var warnings []string
 	for i := range fields {
 		w := sanitize.ApplyAllWithWarnings(
+			sanitize.Pair{Target: &fields[i].FieldIdentifier, Policy: sanitize.ShortIdentifier, Label: "Field identifier"},
+			sanitize.Pair{Target: &fields[i].FieldType, Policy: sanitize.ShortIdentifier, Label: "Field type"},
 			sanitize.Pair{Target: fields[i].DisplayName, Policy: sanitize.PlainTextField, Label: "Field display name"},
 			sanitize.Pair{Target: fields[i].Description, Policy: sanitize.RichText, Label: "Field help text"},
+			sanitize.Pair{Target: fields[i].VirtualFieldType, Policy: sanitize.ShortIdentifier, Label: "Virtual field type"},
 		)
 		warnings = append(warnings, w...)
 	}
 	return warnings
+}
+
+func requestTypeFieldSchemas(fields []models.RequestTypeField) []publicFormFieldSchema {
+	schemas := make([]publicFormFieldSchema, 0, len(fields))
+	for _, field := range fields {
+		schemas = append(schemas, publicFormFieldSchema{
+			Identifier:          field.FieldIdentifier,
+			FieldType:           field.FieldType,
+			DisplayOrder:        field.DisplayOrder,
+			StepNumber:          field.StepNumber,
+			VirtualFieldType:    field.VirtualFieldType,
+			VirtualFieldOptions: field.VirtualFieldOptions,
+		})
+	}
+	return schemas
 }
 
 type RequestTypeHandler struct {
@@ -56,6 +74,8 @@ type RequestTypeHandler struct {
 	auditor        *logger.Auditor
 	channelService *services.ChannelService
 }
+
+var errChannelDoesNotSupportRequestTypes = errors.New("channel does not support request types")
 
 func NewRequestTypeHandler(
 	repo *repository.RequestTypeRepository,
@@ -75,10 +95,44 @@ func NewRequestTypeHandler(
 	}
 }
 
+func channelSupportsRequestTypes(channel *models.Channel) bool {
+	return channel != nil && channel.Direction == "inbound" && (channel.Type == "portal" || channel.Type == "form")
+}
+
+func channelSupportsAssetReports(channel *models.Channel) bool {
+	return channel != nil && channel.Direction == "inbound" && channel.Type == "portal"
+}
+
+// effectiveRequestTypeWorkspace resolves the runtime routing target. Legacy
+// request types with a NULL workspace_id use the channel's first workspace;
+// management validation must use that same target instead of skipping checks.
+func effectiveRequestTypeWorkspace(served []int, pinned *int) (int, bool) {
+	if pinned != nil {
+		return *pinned, true
+	}
+	if len(served) == 0 {
+		return 0, false
+	}
+	return served[0], true
+}
+
 // GetAllForChannel returns all request types for a specific channel
 func (h *RequestTypeHandler) GetAllForChannel(w http.ResponseWriter, r *http.Request) {
 	channelID, ok := requireIDParam(w, r, "channel_id")
 	if !ok {
+		return
+	}
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+	canManage, err := h.channelService.UserCanManage(r.Context(), user.ID, channelID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	if !canManage {
+		respondNotFound(w, r, "channel")
 		return
 	}
 
@@ -127,10 +181,17 @@ func (h *RequestTypeHandler) Get(w http.ResponseWriter, r *http.Request) {
 	respondJSONOK(w, rt)
 }
 
-// channelServedWorkspaceIDs returns the union of the channel's configured
-// portal and form target workspaces. A request type may only pin a workspace
-// the channel actually serves.
+// channelServedWorkspaceIDs returns the workspace list used by the owning
+// channel's immutable type. Mixing portal/form lists lets an irrelevant JSON
+// key satisfy validation even though the public runtime never reads it.
 func (h *RequestTypeHandler) channelServedWorkspaceIDs(ctx context.Context, channelID int) ([]int, error) {
+	channel, err := h.channelService.GetByID(ctx, channelID)
+	if err != nil {
+		return nil, err
+	}
+	if !channelSupportsRequestTypes(channel) {
+		return nil, fmt.Errorf("%w: channel %d", errChannelDoesNotSupportRequestTypes, channelID)
+	}
 	cfgStr, err := h.channelRepo.GetConfig(ctx, channelID)
 	if err != nil {
 		return nil, err
@@ -141,31 +202,70 @@ func (h *RequestTypeHandler) channelServedWorkspaceIDs(ctx context.Context, chan
 			return nil, fmt.Errorf("parse channel %d config: %w", channelID, err)
 		}
 	}
-	ids := append([]int(nil), cfg.PortalWorkspaceIDs...)
-	ids = append(ids, cfg.FormWorkspaceIDs...)
-	return ids, nil
+	switch channel.Type {
+	case "portal":
+		return append([]int(nil), cfg.PortalWorkspaceIDs...), nil
+	case "form":
+		return append([]int(nil), cfg.FormWorkspaceIDs...), nil
+	default:
+		return nil, fmt.Errorf("%w: channel %d", errChannelDoesNotSupportRequestTypes, channelID)
+	}
 }
 
-// validateRequestTypeRouting enforces, when a request type pins a workspace,
-// that (1) the workspace is one the channel serves and (2) the item type is
-// allowed in that workspace's configuration set. A nil workspace is a no-op
-// (legacy request type; submission routing falls back to the channel's first
-// configured workspace). Writes the error response and returns false on
-// failure.
-func (h *RequestTypeHandler) validateRequestTypeRouting(w http.ResponseWriter, r *http.Request, channelID int, rt *models.RequestType) bool {
-	if rt.WorkspaceID == nil {
-		return true
+func (h *RequestTypeHandler) availableFieldsForRequestType(ctx context.Context, rt *models.RequestType) ([]AvailableField, error) {
+	workspaceID := rt.WorkspaceID
+	if workspaceID == nil {
+		served, err := h.channelServedWorkspaceIDs(ctx, rt.ChannelID)
+		if err != nil {
+			return nil, err
+		}
+		if effective, ok := effectiveRequestTypeWorkspace(served, nil); ok {
+			workspaceID = &effective
+		}
 	}
+	return availableCreateFields(h.screenRepo, workspaceID, rt.ItemTypeID)
+}
+
+// validateRequestTypeRouting first verifies the owning channel is an inbound
+// portal/form channel, then, when the request type pins a workspace, enforces
+// that the channel serves it and its configuration allows the item type. A nil
+// workspace preserves the legacy fallback to the channel's first workspace.
+func (h *RequestTypeHandler) validateRequestTypeRouting(w http.ResponseWriter, r *http.Request, channelID int, rt *models.RequestType) bool {
 	served, err := h.channelServedWorkspaceIDs(r.Context(), channelID)
+	if err != nil {
+		switch {
+		case errors.Is(err, repository.ErrNotFound):
+			respondValidationError(w, r, "Channel not found")
+		case errors.Is(err, errChannelDoesNotSupportRequestTypes):
+			respondValidationError(w, r, "Channel does not support request types")
+		default:
+			respondInternalError(w, r, err)
+		}
+		return false
+	}
+	effectiveWorkspaceID, routable := effectiveRequestTypeWorkspace(served, rt.WorkspaceID)
+	if !routable {
+		respondValidationError(w, r, "Channel has no workspace for this request type")
+		return false
+	}
+	if !containsID(served, effectiveWorkspaceID) {
+		respondValidationError(w, r, "Workspace is not served by this channel")
+		return false
+	}
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return false
+	}
+	canConnect, err := h.channelService.UserCanConnectWorkspace(user.ID, effectiveWorkspaceID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return false
 	}
-	if !containsID(served, *rt.WorkspaceID) {
-		respondValidationError(w, r, "Workspace is not served by this channel")
+	if !canConnect {
+		respondForbidden(w, r)
 		return false
 	}
-	allowed, err := h.repo.ItemTypeAllowedInWorkspace(*rt.WorkspaceID, rt.ItemTypeID)
+	allowed, err := h.repo.ItemTypeAllowedInWorkspace(effectiveWorkspaceID, rt.ItemTypeID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return false
@@ -184,7 +284,7 @@ func (h *RequestTypeHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rt, ok := decodeJSON[models.RequestType](w, r)
+	rt, ok := decodeChannelJSON[models.RequestType](w, r)
 	if !ok {
 		return
 	}
@@ -201,11 +301,6 @@ func (h *RequestTypeHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	channelExists, err := h.repo.ChannelExists(rt.ChannelID)
-	if err != nil || !channelExists {
-		respondValidationError(w, r, "Channel not found")
-		return
-	}
 	itemTypeExists, err := h.itemTypeRepo.Exists(rt.ItemTypeID)
 	if err != nil || !itemTypeExists {
 		respondValidationError(w, r, "Item type not found")
@@ -308,7 +403,7 @@ func (h *RequestTypeHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rt, ok := decodeJSON[models.RequestType](w, r)
+	rt, ok := decodeChannelJSON[models.RequestType](w, r)
 	if !ok {
 		return
 	}
@@ -429,26 +524,6 @@ func (h *RequestTypeHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Best-effort portal-section cleanup before deleting the row itself —
-	// strip this request_type's id from every PortalSection.RequestTypeIDs
-	// list. The actual load/save dance lives in ChannelRepository.
-	h.channelRepo.UpdatePortalSections(channelID, func(cfg *models.ChannelConfig) bool {
-		modified := false
-		for i := range cfg.PortalSections {
-			ids := cfg.PortalSections[i].RequestTypeIDs
-			newIDs := make([]int, 0, len(ids))
-			for _, v := range ids {
-				if v == id {
-					modified = true
-					continue
-				}
-				newIDs = append(newIDs, v)
-			}
-			cfg.PortalSections[i].RequestTypeIDs = newIDs
-		}
-		return modified
-	})
-
 	if err := h.repo.Delete(id, channelID); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			respondNotFound(w, r, "request_type")
@@ -526,16 +601,17 @@ func (h *RequestTypeHandler) UpdateFields(w http.ResponseWriter, r *http.Request
 	}
 
 	// Verify request type exists in this channel before mutating any fields.
-	if _, err := h.repo.GetNameForChannel(requestTypeID, channelID); err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			respondNotFound(w, r, "request_type")
-			return
-		}
+	rt, err := h.repo.GetByID(requestTypeID)
+	if errors.Is(err, repository.ErrNotFound) || (err == nil && rt.ChannelID != channelID) {
+		respondNotFound(w, r, "request_type")
+		return
+	}
+	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
 
-	fields, ok := decodeJSON[[]models.RequestTypeField](w, r)
+	fields, ok := decodeChannelJSON[[]models.RequestTypeField](w, r)
 	if !ok {
 		return
 	}
@@ -547,6 +623,15 @@ func (h *RequestTypeHandler) UpdateFields(w http.ResponseWriter, r *http.Request
 	// will land when UpdateFields gets its own dedicated response in a
 	// future slice.
 	_ = sanitizeRequestTypeFields(fields)
+	available, err := h.availableFieldsForRequestType(r.Context(), rt)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	if err := validatePublicFormFieldSchema(requestTypeFieldSchemas(fields), available); err != nil {
+		respondValidationError(w, r, err.Error())
+		return
+	}
 
 	if err := h.repo.ReplaceFields(requestTypeID, fields); err != nil {
 		respondInternalError(w, r, err)
@@ -576,8 +661,11 @@ func (h *RequestTypeHandler) GetAvailableFields(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
-
-	itemTypeID, workspaceID, err := h.repo.GetItemTypeAndWorkspace(requestTypeID)
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+	rt, err := h.repo.GetByID(requestTypeID)
 	if errors.Is(err, repository.ErrNotFound) {
 		respondNotFound(w, r, "request_type")
 		return
@@ -586,43 +674,20 @@ func (h *RequestTypeHandler) GetAvailableFields(w http.ResponseWriter, r *http.R
 		respondInternalError(w, r, err)
 		return
 	}
-
-	// Always include default fields
-	fields := []AvailableField{
-		{Identifier: "title", Name: "Title", Type: "default"},
-		{Identifier: "description", Name: "Description", Type: "default"},
-	}
-
-	if workspaceID == nil {
-		respondJSONOK(w, fields)
-		return
-	}
-
-	createScreenID, err := h.screenRepo.GetCreateScreenID(*workspaceID, itemTypeID)
+	canManage, err := h.channelService.UserCanManage(r.Context(), user.ID, rt.ChannelID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
-	if createScreenID == nil {
-		respondJSONOK(w, fields)
+	if !canManage {
+		respondNotFound(w, r, "request_type")
 		return
 	}
 
-	screenFields, err := h.screenRepo.ListFields(*createScreenID)
+	fields, err := h.availableFieldsForRequestType(r.Context(), rt)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
-	}
-	for _, sf := range screenFields {
-		if sf.FieldType != "custom" {
-			continue
-		}
-		fields = append(fields, AvailableField{
-			Identifier: sf.FieldIdentifier,
-			Name:       sf.FieldName,
-			Type:       "custom",
-			FieldType:  sf.CustomFieldType,
-		})
 	}
 
 	respondJSONOK(w, fields)
@@ -642,8 +707,7 @@ func (h *RequestTypeHandler) UpdateVisibility(w http.ResponseWriter, r *http.Req
 	}
 
 	var req visibilityInput
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondBadRequest(w, r, "Invalid request body")
+	if !decodeChannelRequest(w, r, &req, false) {
 		return
 	}
 

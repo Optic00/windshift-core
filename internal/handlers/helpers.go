@@ -2,6 +2,10 @@ package handlers
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +19,35 @@ import (
 	"windshift/internal/models"
 	"windshift/internal/repository"
 )
+
+const emailOAuthStateRandomBytes = 32
+
+// newEmailOAuthState binds an otherwise-random OAuth state to the exact raw
+// channel config present when the flow started. The state row still provides
+// one-time authenticity; the suffix lets callbacks reject an old browser tab
+// after another admin changes the channel while the user is at the provider.
+func newEmailOAuthState(configJSON string) (string, error) {
+	random := make([]byte, emailOAuthStateRandomBytes)
+	if _, err := rand.Read(random); err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256([]byte(configJSON))
+	return hex.EncodeToString(random) + "." + hex.EncodeToString(digest[:]), nil
+}
+
+func emailOAuthStateMatchesConfig(state, configJSON string) bool {
+	const randomHexLen = emailOAuthStateRandomBytes * 2
+	const digestHexLen = sha256.Size * 2
+	if len(state) != randomHexLen+1+digestHexLen || state[randomHexLen] != '.' {
+		return false
+	}
+	expected, err := hex.DecodeString(state[randomHexLen+1:])
+	if err != nil || len(expected) != sha256.Size {
+		return false
+	}
+	actual := sha256.Sum256([]byte(configJSON))
+	return subtle.ConstantTimeCompare(expected, actual[:]) == 1
+}
 
 // rowScanner abstracts sql.Row and sql.Rows for Scan.
 type rowScanner interface {
@@ -176,23 +209,18 @@ type channelResult struct {
 	config  models.ChannelConfig
 }
 
-// findChannelBySlug queries all channels of the given type, parses each
-// channel's JSON config, and returns the first enabled channel whose slug
-// (extracted via slugFromConfig) matches the provided slug. This is the
-// single implementation behind PortalHandler.findChannelByPortalSlug and
-// FormHandler.findChannelByFormSlug.
+// findChannelBySlug resolves through channels.public_slug's unique partial
+// index, then verifies that the derived column still matches the JSON config.
+// This is the single implementation behind PortalHandler and FormHandler.
 func findChannelBySlug(ctx context.Context, db database.Database, channelType, slug string, slugFromConfig func(*models.ChannelConfig) string) (*channelResult, error) {
-	candidates, err := repository.NewChannelRepository(db).ListSlugCandidates(ctx, channelType)
+	candidate, err := repository.NewChannelRepository(db).FindEnabledByPublicSlug(ctx, channelType, slug)
 	if err != nil {
 		return nil, err
 	}
-	for _, candidate := range candidates {
-		cfg := candidate.Config
-		if slugFromConfig(&cfg) == slug && candidate.Channel.Status == "enabled" {
-			return &channelResult{channel: candidate.Channel, config: candidate.Config}, nil
-		}
+	if slugFromConfig(&candidate.Config) != slug {
+		return nil, fmt.Errorf("%s channel not found", channelType)
 	}
-	return nil, fmt.Errorf("%s channel not found", channelType)
+	return &channelResult{channel: candidate.Channel, config: candidate.Config}, nil
 }
 
 // visibilityInput holds the decoded visibility update request.

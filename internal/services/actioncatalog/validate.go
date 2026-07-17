@@ -436,7 +436,13 @@ func validateNodeConfigValues(n models.ActionNode) (msg, field string) {
 	if n.NodeType == models.ActionNodeHTTPRequest {
 		var cfg models.HTTPRequestNodeConfig
 		if err := json.Unmarshal([]byte(n.NodeConfig), &cfg); err == nil {
+			if _, ok := models.NormalizeActionHTTPMethod(cfg.Method); !ok {
+				return fmt.Sprintf("Unsupported HTTP method %q", cfg.Method), "method"
+			}
 			for header := range cfg.Headers {
+				if !models.IsValidHTTPHeaderName(header) {
+					return fmt.Sprintf("Invalid HTTP header name %q", header), fmt.Sprintf("headers[%q]", header)
+				}
 				if models.IsSensitiveHeaderName(header) {
 					return fmt.Sprintf("Header %q is sensitive — reference a credential via the capability's auth/secret_header_refs instead of placing a raw value on the node", header), fmt.Sprintf("headers[%q]", header)
 				}

@@ -1,9 +1,8 @@
 package handlers
 
 import (
-	"crypto/rand"
+	"context"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,24 +17,123 @@ import (
 	"windshift/internal/email"
 	"windshift/internal/logger"
 	"windshift/internal/models"
+	"windshift/internal/repository"
 	"windshift/internal/sanitize"
+	"windshift/internal/services"
 	"windshift/internal/utils"
 )
 
 // EmailProviderHandler handles email provider API endpoints
 type EmailProviderHandler struct {
-	db         database.Database
-	encryption email.Encryptor
-	baseURL    string // Base URL for OAuth callbacks
+	db          database.Database
+	encryption  email.Encryptor
+	baseURL     string // Base URL for OAuth callbacks
+	channels    *services.ChannelService
+	credentials *email.CredentialManager
 }
 
 // NewEmailProviderHandler creates a new email provider handler
-func NewEmailProviderHandler(db database.Database, encryption email.Encryptor, baseURL string) *EmailProviderHandler {
+func NewEmailProviderHandler(db database.Database, encryption email.Encryptor, baseURL string, channels *services.ChannelService) *EmailProviderHandler {
 	return &EmailProviderHandler{
-		db:         db,
-		encryption: encryption,
-		baseURL:    baseURL,
+		db:          db,
+		encryption:  encryption,
+		baseURL:     baseURL,
+		channels:    channels,
+		credentials: email.NewCredentialManager(db, encryption),
 	}
+}
+
+// SetCredentialManager lets the server share one per-channel refresh lock
+// across the scheduler, inline callback, provider callback, and manual test.
+func (h *EmailProviderHandler) SetCredentialManager(credentials *email.CredentialManager) {
+	if credentials != nil {
+		h.credentials = credentials
+	}
+}
+
+func scanEmailProvider(row rowScanner) (models.EmailProvider, error) {
+	var provider models.EmailProvider
+	var oauthClientID, oauthScopes, oauthTenantID sql.NullString
+	var imapHost, imapEncryption sql.NullString
+	var imapPort sql.NullInt64
+	err := row.Scan(
+		&provider.ID, &provider.Name, &provider.Slug, &provider.Type, &provider.IsEnabled,
+		&oauthClientID, &oauthScopes, &oauthTenantID,
+		&imapHost, &imapPort, &imapEncryption,
+		&provider.CreatedAt, &provider.UpdatedAt,
+	)
+	if err != nil {
+		return models.EmailProvider{}, err
+	}
+	provider.OAuthClientID = oauthClientID.String
+	provider.OAuthScopes = oauthScopes.String
+	provider.OAuthTenantID = oauthTenantID.String
+	provider.IMAPHost = imapHost.String
+	provider.IMAPPort = int(imapPort.Int64)
+	provider.IMAPEncryption = imapEncryption.String
+	return provider, nil
+}
+
+// requireManagedInboundEmailChannel is defense-in-depth for the legacy email
+// endpoints. Route middleware performs the same management check, but OAuth
+// callbacks are intentionally unauthenticated and must re-authorize the user
+// captured in the state row before changing channel credentials.
+func (h *EmailProviderHandler) requireManagedInboundEmailChannel(ctx context.Context, userID, channelID int) error {
+	if h.channels == nil {
+		return fmt.Errorf("channel service is not configured")
+	}
+	canManage, err := h.channels.UserCanManage(ctx, userID, channelID)
+	if err != nil {
+		return err
+	}
+	if !canManage {
+		return repository.ErrNotFound
+	}
+	channel, err := h.channels.GetByID(ctx, channelID)
+	if err != nil {
+		return err
+	}
+	if channel == nil || channel.Type != "email" || channel.Direction != "inbound" {
+		return repository.ErrNotFound
+	}
+	if channel.IsDefault {
+		isAdmin, adminErr := h.channels.UserIsSystemAdmin(userID)
+		if adminErr != nil {
+			return adminErr
+		}
+		if !isAdmin {
+			return repository.ErrNotFound
+		}
+	}
+	return nil
+}
+
+func (h *EmailProviderHandler) channelsUsingProvider(ctx context.Context, providerID int) ([]int, error) {
+	rows, err := h.db.QueryContext(ctx, `
+		SELECT id, COALESCE(config, '{}')
+		FROM channels
+		WHERE type = 'email' AND direction = 'inbound'
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var channelIDs []int
+	for rows.Next() {
+		var channelID int
+		var raw string
+		if err := rows.Scan(&channelID, &raw); err != nil {
+			return nil, err
+		}
+		var config models.ChannelConfig
+		if err := json.Unmarshal([]byte(raw), &config); err != nil {
+			return nil, fmt.Errorf("parse email channel %d while checking provider references: %w", channelID, err)
+		}
+		if config.EmailProviderID != nil && *config.EmailProviderID == providerID {
+			channelIDs = append(channelIDs, channelID)
+		}
+	}
+	return channelIDs, rows.Err()
 }
 
 // GetEmailProviders returns all email providers
@@ -63,15 +161,10 @@ func (h *EmailProviderHandler) GetEmailProviders(w http.ResponseWriter, r *http.
 
 	var providers []models.EmailProvider
 	for rows.Next() {
-		var p models.EmailProvider
-		err := rows.Scan(
-			&p.ID, &p.Name, &p.Slug, &p.Type, &p.IsEnabled,
-			&p.OAuthClientID, &p.OAuthScopes, &p.OAuthTenantID,
-			&p.IMAPHost, &p.IMAPPort, &p.IMAPEncryption,
-			&p.CreatedAt, &p.UpdatedAt,
-		)
+		p, err := scanEmailProvider(rows)
 		if err != nil {
-			continue
+			respondInternalError(w, r, err)
+			return
 		}
 		providers = append(providers, p)
 	}
@@ -92,19 +185,13 @@ func (h *EmailProviderHandler) GetEmailProvider(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	var p models.EmailProvider
-	err = h.db.QueryRow(`
+	p, err := scanEmailProvider(h.db.QueryRow(`
 		SELECT id, name, slug, type, is_enabled,
 		       oauth_client_id, oauth_scopes, oauth_tenant_id,
 		       imap_host, imap_port, imap_encryption,
 		       created_at, updated_at
 		FROM email_providers WHERE id = ?
-	`, id).Scan(
-		&p.ID, &p.Name, &p.Slug, &p.Type, &p.IsEnabled,
-		&p.OAuthClientID, &p.OAuthScopes, &p.OAuthTenantID,
-		&p.IMAPHost, &p.IMAPPort, &p.IMAPEncryption,
-		&p.CreatedAt, &p.UpdatedAt,
-	)
+	`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		respondNotFound(w, r, "provider")
 		return
@@ -136,9 +223,50 @@ type CreateEmailProviderRequest struct {
 	IMAPEncryption string `json:"imap_encryption,omitempty"`
 }
 
+func validateEmailProviderRequest(req CreateEmailProviderRequest, requireOAuthSecret bool) error {
+	if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.Slug) == "" {
+		return fmt.Errorf("name and slug are required")
+	}
+	switch req.Type {
+	case models.EmailProviderTypeMicrosoft, models.EmailProviderTypeGoogle:
+		if strings.TrimSpace(req.OAuthClientID) == "" {
+			return fmt.Errorf("OAuth client ID is required")
+		}
+		if requireOAuthSecret && strings.TrimSpace(req.OAuthClientSecret) == "" {
+			return fmt.Errorf("OAuth client secret is required")
+		}
+	case models.EmailProviderTypeGeneric:
+		if strings.TrimSpace(req.IMAPHost) == "" {
+			return fmt.Errorf("IMAP host is required")
+		}
+		if req.IMAPPort <= 0 || req.IMAPPort > 65535 {
+			return fmt.Errorf("IMAP port must be between 1 and 65535")
+		}
+		if req.IMAPEncryption != "ssl" && req.IMAPEncryption != "starttls" {
+			return fmt.Errorf("IMAP encryption must be ssl or starttls")
+		}
+	default:
+		return fmt.Errorf("invalid provider type")
+	}
+	return nil
+}
+
+func normalizeEmailProviderRequest(req *CreateEmailProviderRequest) {
+	if req.Type == models.EmailProviderTypeGeneric {
+		req.OAuthClientID = ""
+		req.OAuthClientSecret = ""
+		req.OAuthScopes = ""
+		req.OAuthTenantID = ""
+		return
+	}
+	req.IMAPHost = ""
+	req.IMAPPort = 0
+	req.IMAPEncryption = ""
+}
+
 // CreateEmailProvider creates a new email provider
 func (h *EmailProviderHandler) CreateEmailProvider(w http.ResponseWriter, r *http.Request) {
-	req, ok := decodeJSON[CreateEmailProviderRequest](w, r)
+	req, ok := decodeChannelJSON[CreateEmailProviderRequest](w, r)
 	if !ok {
 		return
 	}
@@ -149,35 +277,30 @@ func (h *EmailProviderHandler) CreateEmailProvider(w http.ResponseWriter, r *htt
 		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
 		sanitize.Pair{Target: &req.Slug, Policy: sanitize.ShortIdentifier, Label: "Slug"},
 	)
-
-	// Validate required fields
-	if req.Name == "" || req.Slug == "" || req.Type == "" {
-		respondValidationError(w, r, "Name, slug, and type are required")
-		return
+	normalizeEmailProviderRequest(&req)
+	if req.Type == models.EmailProviderTypeGeneric {
+		if req.IMAPPort == 0 {
+			req.IMAPPort = 993
+		}
+		if req.IMAPEncryption == "" {
+			req.IMAPEncryption = "ssl"
+		}
 	}
 
-	// Validate type
-	if req.Type != models.EmailProviderTypeMicrosoft &&
-		req.Type != models.EmailProviderTypeGoogle &&
-		req.Type != models.EmailProviderTypeGeneric {
-		respondValidationError(w, r, "Invalid provider type")
+	if err := validateEmailProviderRequest(req, true); err != nil {
+		respondValidationError(w, r, err.Error())
 		return
 	}
 
 	// Encrypt client secret if provided
 	var clientSecretEnc *string
-	if req.OAuthClientSecret != "" && h.encryption != nil {
-		encrypted, err := h.encryption.Encrypt(req.OAuthClientSecret)
+	if req.Type != models.EmailProviderTypeGeneric && req.OAuthClientSecret != "" {
+		encrypted, err := email.EncryptSecret(h.encryption, req.OAuthClientSecret)
 		if err != nil {
 			respondInternalError(w, r, err)
 			return
 		}
 		clientSecretEnc = &encrypted
-	}
-
-	// Default port for generic
-	if req.Type == models.EmailProviderTypeGeneric && req.IMAPPort == 0 {
-		req.IMAPPort = 993
 	}
 
 	// Check uniqueness before insert
@@ -239,7 +362,7 @@ func (h *EmailProviderHandler) UpdateEmailProvider(w http.ResponseWriter, r *htt
 		return
 	}
 
-	req, ok := decodeJSON[CreateEmailProviderRequest](w, r)
+	req, ok := decodeChannelJSON[CreateEmailProviderRequest](w, r)
 	if !ok {
 		return
 	}
@@ -247,12 +370,52 @@ func (h *EmailProviderHandler) UpdateEmailProvider(w http.ResponseWriter, r *htt
 		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
 		sanitize.Pair{Target: &req.Slug, Policy: sanitize.ShortIdentifier, Label: "Slug"},
 	)
+	normalizeEmailProviderRequest(&req)
+	if req.Type == models.EmailProviderTypeGeneric {
+		if req.IMAPPort == 0 {
+			req.IMAPPort = 993
+		}
+		if req.IMAPEncryption == "" {
+			req.IMAPEncryption = "ssl"
+		}
+	}
+	var existingType string
+	var existingEnabled bool
+	var existingClientID, existingSecret, existingTenantID sql.NullString
+	if err = h.db.QueryRow(`
+		SELECT type, is_enabled, oauth_client_id, oauth_client_secret_encrypted, oauth_tenant_id
+		FROM email_providers WHERE id = ?
+	`, id).Scan(&existingType, &existingEnabled, &existingClientID, &existingSecret, &existingTenantID); errors.Is(err, sql.ErrNoRows) {
+		respondNotFound(w, r, "provider")
+		return
+	} else if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	requireOAuthSecret := req.Type != models.EmailProviderTypeGeneric &&
+		(!existingSecret.Valid || existingSecret.String == "" || existingType != req.Type || existingClientID.String != req.OAuthClientID)
+	if err = validateEmailProviderRequest(req, requireOAuthSecret); err != nil {
+		respondValidationError(w, r, err.Error())
+		return
+	}
+	identityChanged := existingType != req.Type || existingClientID.String != req.OAuthClientID || existingTenantID.String != req.OAuthTenantID
+	if identityChanged || (existingEnabled && !req.IsEnabled) {
+		channelIDs, refErr := h.channelsUsingProvider(r.Context(), id)
+		if refErr != nil {
+			respondInternalError(w, r, refErr)
+			return
+		}
+		if len(channelIDs) > 0 {
+			respondConflict(w, r, fmt.Sprintf("Provider is still connected to email channels %v; disconnect it before changing its identity or disabling it", channelIDs))
+			return
+		}
+	}
 
 	// Encrypt client secret if provided
 	var clientSecretEnc *string
-	if req.OAuthClientSecret != "" && h.encryption != nil {
+	if req.Type != models.EmailProviderTypeGeneric && req.OAuthClientSecret != "" {
 		var encrypted string
-		encrypted, err = h.encryption.Encrypt(req.OAuthClientSecret)
+		encrypted, err = email.EncryptSecret(h.encryption, req.OAuthClientSecret)
 		if err != nil {
 			respondInternalError(w, r, err)
 			return
@@ -271,8 +434,11 @@ func (h *EmailProviderHandler) UpdateEmailProvider(w http.ResponseWriter, r *htt
 		nullString(req.IMAPHost), req.IMAPPort, nullString(req.IMAPEncryption),
 	}
 
-	// Only update client secret if provided
-	if clientSecretEnc != nil {
+	// Secrets belong to one OAuth application. Clear them when switching to
+	// generic IMAP; changing provider type/client ID requires a replacement.
+	if req.Type == models.EmailProviderTypeGeneric {
+		query += `, oauth_client_secret_encrypted = NULL`
+	} else if clientSecretEnc != nil {
 		query += `, oauth_client_secret_encrypted = ?`
 		args = append(args, clientSecretEnc)
 	}
@@ -280,9 +446,20 @@ func (h *EmailProviderHandler) UpdateEmailProvider(w http.ResponseWriter, r *htt
 	query += ` WHERE id = ?`
 	args = append(args, id)
 
-	_, err = h.db.ExecWrite(query, args...)
+	result, err := h.db.ExecWrite(query, args...)
 	if err != nil {
+		if database.IsUniqueConstraintError(err) {
+			respondConflict(w, r, "A provider with this slug already exists")
+			return
+		}
 		respondInternalError(w, r, err)
+		return
+	}
+	if rows, rowsErr := result.RowsAffected(); rowsErr != nil {
+		respondInternalError(w, r, rowsErr)
+		return
+	} else if rows == 0 {
+		respondNotFound(w, r, "provider")
 		return
 	}
 
@@ -307,10 +484,26 @@ func (h *EmailProviderHandler) DeleteEmailProvider(w http.ResponseWriter, r *htt
 		respondInvalidID(w, r, "id")
 		return
 	}
+	channelIDs, refErr := h.channelsUsingProvider(r.Context(), id)
+	if refErr != nil {
+		respondInternalError(w, r, refErr)
+		return
+	}
+	if len(channelIDs) > 0 {
+		respondConflict(w, r, fmt.Sprintf("Provider is still connected to email channels %v; disconnect it before deleting it", channelIDs))
+		return
+	}
 
-	_, err = h.db.ExecWrite(`DELETE FROM email_providers WHERE id = ?`, id)
+	result, err := h.db.ExecWrite(`DELETE FROM email_providers WHERE id = ?`, id)
 	if err != nil {
 		respondInternalError(w, r, err)
+		return
+	}
+	if rows, rowsErr := result.RowsAffected(); rowsErr != nil {
+		respondInternalError(w, r, rowsErr)
+		return
+	} else if rows == 0 {
+		respondNotFound(w, r, "provider")
 		return
 	}
 
@@ -342,16 +535,25 @@ func (h *EmailProviderHandler) StartEmailOAuth(w http.ResponseWriter, r *http.Re
 		return
 	}
 	userID := user.ID
+	if err = h.requireManagedInboundEmailChannel(r.Context(), userID, channelID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			respondNotFound(w, r, "channel")
+			return
+		}
+		respondInternalError(w, r, err)
+		return
+	}
 
 	// Get provider
 	var provider models.EmailProvider
 	var clientSecretEnc *string
+	var oauthClientID, oauthScopes, oauthTenantID sql.NullString
 	err = h.db.QueryRow(`
 		SELECT id, name, slug, type, oauth_client_id, oauth_client_secret_encrypted, oauth_scopes, oauth_tenant_id
 		FROM email_providers WHERE slug = ? AND is_enabled = true
 	`, slug).Scan(
 		&provider.ID, &provider.Name, &provider.Slug, &provider.Type,
-		&provider.OAuthClientID, &clientSecretEnc, &provider.OAuthScopes, &provider.OAuthTenantID,
+		&oauthClientID, &clientSecretEnc, &oauthScopes, &oauthTenantID,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		respondNotFound(w, r, "provider")
@@ -361,28 +563,43 @@ func (h *EmailProviderHandler) StartEmailOAuth(w http.ResponseWriter, r *http.Re
 		respondInternalError(w, r, err)
 		return
 	}
+	provider.OAuthClientID = oauthClientID.String
+	provider.OAuthScopes = oauthScopes.String
+	provider.OAuthTenantID = oauthTenantID.String
 
 	if provider.Type == models.EmailProviderTypeGeneric {
 		respondBadRequest(w, r, "OAuth not supported for generic IMAP provider")
 		return
 	}
+	if provider.OAuthClientID == "" || clientSecretEnc == nil || *clientSecretEnc == "" {
+		respondValidationError(w, r, "OAuth provider credentials are incomplete")
+		return
+	}
 
 	// Decrypt client secret
 	var clientSecret string
-	if clientSecretEnc != nil && *clientSecretEnc != "" && h.encryption != nil {
-		clientSecret, err = h.encryption.Decrypt(*clientSecretEnc)
+	if clientSecretEnc != nil && *clientSecretEnc != "" {
+		clientSecret, err = email.DecryptOrLegacy(h.encryption, *clientSecretEnc)
 		if err != nil {
-			slog.Warn("failed to decrypt OAuth client secret", slog.String("component", "email_providers"), slog.Int("provider_id", provider.ID), slog.Any("error", err))
+			respondInternalError(w, r, fmt.Errorf("decrypt OAuth client secret: %w", err))
+			return
 		}
 	}
 
-	// Generate state token
-	stateBytes := make([]byte, 32)
-	if _, err = rand.Read(stateBytes); err != nil {
+	startingConfig, err := h.channels.GetConfig(r.Context(), channelID)
+	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
-	state := hex.EncodeToString(stateBytes)
+	// Bind the state to the channel config at flow start. Central providers are
+	// independent of the channel config, so without this guard a callback from
+	// an old tab could silently switch a channel back from a newer basic/inline
+	// configuration.
+	state, err := newEmailOAuthState(startingConfig)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
 
 	// Store state in database (expires in 5 minutes)
 	expiresAt := time.Now().Add(5 * time.Minute)
@@ -430,6 +647,11 @@ func (h *EmailProviderHandler) EmailOAuthCallback(w http.ResponseWriter, r *http
 	if errorParam != "" {
 		errorDesc := r.URL.Query().Get("error_description")
 		slog.Error("OAuth error", "error", errorParam, "description", errorDesc)
+		if state != "" {
+			// Provider-declined/error callbacks are terminal too. Consume their
+			// state so a captured value cannot be replayed until expiry.
+			_, _, _, _, _ = repository.NewChannelRepository(h.db).ConsumeOAuthState(r.Context(), state, true)
+		}
 		// URL-encode the error parameter to prevent open redirect attacks
 		http.Redirect(w, r, "/admin/channels?oauth_error="+url.QueryEscape(errorParam), http.StatusFound)
 		return
@@ -439,15 +661,12 @@ func (h *EmailProviderHandler) EmailOAuthCallback(w http.ResponseWriter, r *http
 		respondValidationError(w, r, "Missing code or state parameter")
 		return
 	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
 
-	// Validate state and get associated data
-	var providerID, channelID, userID int
-	err := h.db.QueryRow(`
-		SELECT provider_id, channel_id, user_id
-		FROM email_oauth_state
-		WHERE state = ? AND expires_at > CURRENT_TIMESTAMP
-	`, state).Scan(&providerID, &channelID, &userID)
-	if errors.Is(err, sql.ErrNoRows) {
+	// Consume state atomically so concurrent callbacks cannot replay it.
+	providerID, channelID, userID, _, err := repository.NewChannelRepository(h.db).ConsumeOAuthState(ctx, state, true)
+	if errors.Is(err, repository.ErrNotFound) {
 		respondBadRequest(w, r, "Invalid or expired state")
 		return
 	}
@@ -455,31 +674,64 @@ func (h *EmailProviderHandler) EmailOAuthCallback(w http.ResponseWriter, r *http
 		respondInternalError(w, r, err)
 		return
 	}
-
-	// Delete used state
-	_, _ = h.db.ExecWrite(`DELETE FROM email_oauth_state WHERE state = ?`, state)
+	if err = h.requireManagedInboundEmailChannel(ctx, userID, channelID); err != nil {
+		handleEmailOAuthAuthorizationFailure(w, r, err)
+		return
+	}
+	expectedConfigJSON, err := h.channels.GetConfig(ctx, channelID)
+	if err != nil {
+		http.Redirect(w, r, "/admin/channels?oauth_error=channel_not_found", http.StatusFound)
+		return
+	}
+	if !emailOAuthStateMatchesConfig(state, expectedConfigJSON) {
+		http.Redirect(w, r, "/admin/channels?oauth_error=config_changed", http.StatusFound)
+		return
+	}
+	var expectedConfig models.ChannelConfig
+	if err := json.Unmarshal([]byte(expectedConfigJSON), &expectedConfig); err != nil {
+		http.Redirect(w, r, "/admin/channels?oauth_error=invalid_config", http.StatusFound)
+		return
+	}
 
 	// Get provider
 	var provider models.EmailProvider
 	var clientSecretEnc *string
+	var oauthClientID, oauthScopes, oauthTenantID sql.NullString
 	err = h.db.QueryRow(`
-		SELECT id, type, oauth_client_id, oauth_client_secret_encrypted, oauth_scopes, oauth_tenant_id
-		FROM email_providers WHERE id = ?
+		SELECT id, slug, type, oauth_client_id, oauth_client_secret_encrypted, oauth_scopes, oauth_tenant_id
+		FROM email_providers WHERE id = ? AND is_enabled = true
 	`, providerID).Scan(
-		&provider.ID, &provider.Type,
-		&provider.OAuthClientID, &clientSecretEnc, &provider.OAuthScopes, &provider.OAuthTenantID,
+		&provider.ID, &provider.Slug, &provider.Type,
+		&oauthClientID, &clientSecretEnc, &oauthScopes, &oauthTenantID,
 	)
+	if errors.Is(err, sql.ErrNoRows) {
+		http.Redirect(w, r, "/admin/channels?oauth_error=provider_unavailable", http.StatusFound)
+		return
+	}
 	if err != nil {
 		respondInternalError(w, r, err)
+		return
+	}
+	provider.OAuthClientID = oauthClientID.String
+	provider.OAuthScopes = oauthScopes.String
+	provider.OAuthTenantID = oauthTenantID.String
+	if provider.Slug != slug {
+		respondBadRequest(w, r, "OAuth callback provider does not match state")
+		return
+	}
+	if provider.OAuthClientID == "" || clientSecretEnc == nil || *clientSecretEnc == "" {
+		http.Redirect(w, r, "/admin/channels?oauth_error=provider_unavailable", http.StatusFound)
 		return
 	}
 
 	// Decrypt client secret
 	var clientSecret string
-	if clientSecretEnc != nil && *clientSecretEnc != "" && h.encryption != nil {
-		clientSecret, err = h.encryption.Decrypt(*clientSecretEnc)
+	if clientSecretEnc != nil && *clientSecretEnc != "" {
+		clientSecret, err = email.DecryptOrLegacy(h.encryption, *clientSecretEnc)
 		if err != nil {
-			slog.Warn("failed to decrypt OAuth client secret in callback", slog.String("component", "email_providers"), slog.Int("provider_id", provider.ID), slog.Any("error", err))
+			slog.Error("failed to decrypt OAuth client secret in callback", slog.String("component", "email_providers"), slog.Int("provider_id", provider.ID), slog.Any("error", err))
+			http.Redirect(w, r, "/admin/channels?oauth_error=decrypt_failed", http.StatusFound)
+			return
 		}
 	}
 
@@ -488,7 +740,6 @@ func (h *EmailProviderHandler) EmailOAuthCallback(w http.ResponseWriter, r *http
 	redirectURI := fmt.Sprintf("%s/api/email/oauth/%s/callback", h.baseURL, slug)
 
 	// Exchange code for tokens
-	ctx := r.Context()
 	scopes := strings.Fields(provider.OAuthScopes)
 
 	var tokens *email.OAuthTokens
@@ -504,8 +755,10 @@ func (h *EmailProviderHandler) EmailOAuthCallback(w http.ResponseWriter, r *http
 			return
 		}
 		userEmail, err = p.GetUserEmail(ctx, tokens.AccessToken)
-		if err != nil {
-			slog.Warn("failed to get user email from Microsoft", slog.String("component", "email_providers"), slog.Int("provider_id", provider.ID), slog.Any("error", err))
+		if err != nil || strings.TrimSpace(userEmail) == "" {
+			slog.Error("failed to get user email from Microsoft", slog.String("component", "email_providers"), slog.Int("provider_id", provider.ID), slog.Any("error", err))
+			http.Redirect(w, r, "/admin/channels?oauth_error=identity_failed", http.StatusFound)
+			return
 		}
 
 	case models.EmailProviderTypeGoogle:
@@ -517,8 +770,10 @@ func (h *EmailProviderHandler) EmailOAuthCallback(w http.ResponseWriter, r *http
 			return
 		}
 		userEmail, err = p.GetUserEmail(ctx, tokens.AccessToken)
-		if err != nil {
-			slog.Warn("failed to get user email from Google", slog.String("component", "email_providers"), slog.Int("provider_id", provider.ID), slog.Any("error", err))
+		if err != nil || strings.TrimSpace(userEmail) == "" {
+			slog.Error("failed to get user email from Google", slog.String("component", "email_providers"), slog.Int("provider_id", provider.ID), slog.Any("error", err))
+			http.Redirect(w, r, "/admin/channels?oauth_error=identity_failed", http.StatusFound)
+			return
 		}
 
 	default:
@@ -527,16 +782,28 @@ func (h *EmailProviderHandler) EmailOAuthCallback(w http.ResponseWriter, r *http
 	}
 
 	// Save tokens to channel
-	credManager := email.NewCredentialManager(h.db, h.encryption)
-	err = credManager.SaveOAuthTokens(ctx, channelID, tokens, userEmail)
+	// Permissions may have been revoked while the user was at the provider.
+	// Re-check immediately before the credential mutation.
+	if err = h.requireManagedInboundEmailChannel(ctx, userID, channelID); err != nil {
+		handleEmailOAuthAuthorizationFailure(w, r, err)
+		return
+	}
+	var currentType string
+	var currentClientID, currentTenantID sql.NullString
+	if err = h.db.QueryRow(`
+		SELECT type, oauth_client_id, oauth_tenant_id
+		FROM email_providers WHERE id = ? AND is_enabled = true
+	`, providerID).Scan(&currentType, &currentClientID, &currentTenantID); err != nil ||
+		currentType != provider.Type || currentClientID.String != provider.OAuthClientID || currentTenantID.String != provider.OAuthTenantID {
+		http.Redirect(w, r, "/admin/channels?oauth_error=provider_unavailable", http.StatusFound)
+		return
+	}
+	_, err = h.credentials.SaveOAuthTokensForProvider(ctx, channelID, tokens, userEmail, providerID, &expectedConfig)
 	if err != nil {
 		slog.Error("failed to save tokens", "error", err)
 		http.Redirect(w, r, "/admin/channels?oauth_error=save_failed", http.StatusFound)
 		return
 	}
-
-	// Also update provider ID in channel config
-	h.updateChannelProviderID(channelID, providerID)
 
 	slog.Info("OAuth completed for email channel",
 		"channel_id", channelID,
@@ -545,26 +812,8 @@ func (h *EmailProviderHandler) EmailOAuthCallback(w http.ResponseWriter, r *http
 	)
 
 	// Redirect back to admin
+	// #nosec G710 -- local relative URL built from a database integer; no caller-controlled text reaches the destination
 	http.Redirect(w, r, fmt.Sprintf("/admin/channels/%d?oauth_success=true", channelID), http.StatusFound)
-}
-
-// updateChannelProviderID updates the email_provider_id in channel config
-func (h *EmailProviderHandler) updateChannelProviderID(channelID, providerID int) {
-	var configJSON string
-	if err := h.db.QueryRow(`SELECT config FROM channels WHERE id = ?`, channelID).Scan(&configJSON); err != nil {
-		slog.Warn("failed to load channel config for provider update", slog.String("component", "email_providers"), slog.Int("channel_id", channelID), slog.Any("error", err))
-		return
-	}
-
-	var config models.ChannelConfig
-	if configJSON != "" {
-		_ = json.Unmarshal([]byte(configJSON), &config)
-	}
-
-	config.EmailProviderID = &providerID
-
-	updatedJSON, _ := json.Marshal(config)
-	_, _ = h.db.ExecWrite(`UPDATE channels SET config = ? WHERE id = ?`, string(updatedJSON), channelID)
 }
 
 // TestEmailChannel tests an email channel connection
@@ -575,11 +824,21 @@ func (h *EmailProviderHandler) TestEmailChannel(w http.ResponseWriter, r *http.R
 		respondInvalidID(w, r, "id")
 		return
 	}
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+	if err = h.requireManagedInboundEmailChannel(r.Context(), user.ID, channelID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			respondNotFound(w, r, "channel")
+			return
+		}
+		respondInternalError(w, r, err)
+		return
+	}
 
 	ctx := r.Context()
-	credManager := email.NewCredentialManager(h.db, h.encryption)
-
-	provider, config, err := credManager.GetProviderForChannel(ctx, channelID)
+	provider, config, err := h.credentials.GetProviderForChannel(ctx, channelID)
 	if err != nil {
 		respondJSON(w, http.StatusBadRequest, map[string]string{
 			"success": "false",
@@ -602,4 +861,11 @@ func (h *EmailProviderHandler) TestEmailChannel(w http.ResponseWriter, r *http.R
 		"success": true,
 		"email":   config.EmailOAuthEmail,
 	})
+}
+
+func handleEmailOAuthAuthorizationFailure(w http.ResponseWriter, r *http.Request, err error) {
+	if !errors.Is(err, repository.ErrNotFound) {
+		slog.Error("failed to re-authorize email OAuth callback", "error", err)
+	}
+	http.Redirect(w, r, "/admin/channels?oauth_error=authorization_failed", http.StatusFound)
 }

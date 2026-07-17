@@ -1290,6 +1290,64 @@ type HTTPAuthRef struct {
 	Scheme       string `json:"scheme,omitempty"`    // e.g. "Bearer"
 }
 
+// IsValidHTTPHeaderName reports whether name is a non-empty RFC 9110 token.
+// Header maps are persisted before net/http sees them, so rejecting malformed
+// names here prevents CR/LF and whitespace tricks from becoming latent runtime
+// failures (or confusing case-insensitive collision checks).
+func IsValidHTTPHeaderName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		if !isHTTPTokenChar(name[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func isHTTPTokenChar(c byte) bool {
+	if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') {
+		return true
+	}
+	switch c {
+	case '!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~':
+		return true
+	default:
+		return false
+	}
+}
+
+// IsValidHTTPAuthScheme validates the auth-scheme grammar (RFC 9110 §11.1).
+// In particular it excludes spaces, so a scheme field cannot smuggle an
+// inline credential alongside the encrypted credential reference.
+func IsValidHTTPAuthScheme(scheme string) bool {
+	if scheme == "" {
+		return true
+	}
+	for i := 0; i < len(scheme); i++ {
+		c := scheme[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+			(i > 0 && ((c >= '0' && c <= '9') || c == '-' || c == '.' || c == '_' || c == '~')) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// NormalizeActionHTTPMethod canonicalizes the intentionally small method set
+// supported by action HTTP nodes and agent HTTP tools.
+func NormalizeActionHTTPMethod(method string) (string, bool) {
+	method = strings.ToUpper(strings.TrimSpace(method))
+	switch method {
+	case "GET", "POST", "PUT", "DELETE", "PATCH":
+		return method, true
+	default:
+		return method, false
+	}
+}
+
 // IsSensitiveHeaderName reports whether the given HTTP header name is
 // considered sensitive and must therefore not appear as a literal in
 // DefaultHeaders or in an HTTPRequestNodeConfig.Headers map. Matching is
@@ -1312,6 +1370,7 @@ func IsSensitiveHeaderName(name string) bool {
 		"x-auth-token",
 		"x-access-token",
 		"x-secret-key",
+		"x-signature",
 		"x-amz-security-token",
 		"x-github-token":
 		return true
@@ -1322,7 +1381,8 @@ func IsSensitiveHeaderName(name string) bool {
 	return strings.HasSuffix(lk, "-token") ||
 		strings.HasSuffix(lk, "-key") ||
 		strings.HasSuffix(lk, "-secret") ||
-		strings.HasSuffix(lk, "-password")
+		strings.HasSuffix(lk, "-password") ||
+		strings.HasSuffix(lk, "-signature")
 }
 
 // LLMConnectionCapabilityConfig is the config for an llm_connection capability.

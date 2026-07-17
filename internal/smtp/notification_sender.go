@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"mime"
 	"net"
+	"net/mail"
 	"net/smtp"
 	"os"
 	"strings"
@@ -47,7 +48,9 @@ type Encryptor interface {
 	Decrypt(ciphertext string) (string, error)
 }
 
-// decryptOrLegacy mirrors email/credentials.go::decryptOrLegacy. The legacy-
+const encryptedSecretPrefix = "enc:v1:"
+
+// decryptOrLegacy mirrors email/credentials.go::DecryptOrLegacy. The legacy-
 // plaintext fallback (return value verbatim if it's not a valid AES-GCM
 // ciphertext) lets pre-encryption rows keep working through a rolling
 // migration of SMTPPassword from plaintext to AES-GCM. AES-GCM minimum is
@@ -56,6 +59,13 @@ func decryptOrLegacy(enc Encryptor, value string) (string, error) {
 	if value == "" || enc == nil {
 		return value, nil
 	}
+	if strings.HasPrefix(value, encryptedSecretPrefix) {
+		plain, err := enc.Decrypt(strings.TrimPrefix(value, encryptedSecretPrefix))
+		if err != nil {
+			return "", fmt.Errorf("decrypt SMTP secret: %w", err)
+		}
+		return plain, nil
+	}
 	const minCipherBytes = 28
 	raw, err := base64.StdEncoding.DecodeString(value)
 	if err != nil || len(raw) < minCipherBytes {
@@ -63,7 +73,7 @@ func decryptOrLegacy(enc Encryptor, value string) (string, error) {
 	}
 	plain, err := enc.Decrypt(value)
 	if err != nil {
-		return "", fmt.Errorf("decrypt SMTP secret: %w", err)
+		return value, nil //nolint:nilerr // legacy plaintext may itself be long base64
 	}
 	return plain, nil
 }
@@ -72,6 +82,7 @@ func decryptOrLegacy(enc Encryptor, value string) (string, error) {
 // to an SMTP server. Without this the scheduler can hang its 5-minute tick
 // on a single wedged MX, stalling notifications for every other user.
 const smtpDialTimeout = 15 * time.Second
+const smtpOperationTimeout = 30 * time.Second
 
 // hostFromAddr returns just the host portion of an SMTP address, handling
 // IPv6 bracketed notation safely. The old `strings.Split(addr, ":")[0]` path
@@ -115,6 +126,19 @@ func encodeMailbox(name, addr string) string {
 		return addr
 	}
 	return fmt.Sprintf("%s <%s>", encodeHeaderWord(name), addr)
+}
+
+// normalizeEnvelopeAddress accepts only a bare addr-spec for SMTP MAIL/RCPT
+// commands. Header sanitization alone is insufficient at this layer: display
+// names, address lists, or control characters must never reach net/smtp's
+// command formatter.
+func normalizeEnvelopeAddress(raw string) (string, error) {
+	address := strings.TrimSpace(raw)
+	parsed, err := mail.ParseAddress(address)
+	if err != nil || parsed.Address == "" || parsed.Address != address {
+		return "", fmt.Errorf("invalid bare email address")
+	}
+	return address, nil
 }
 
 // NotificationSMTPSender handles sending batched notifications via email.
@@ -210,9 +234,10 @@ func (s *NotificationSMTPSender) IsSMTPConfigured() bool {
 // getSMTPConfig retrieves the active SMTP configuration
 func (s *NotificationSMTPSender) getSMTPConfig() (*models.ChannelConfig, error) {
 	query := `
-		SELECT config FROM channels
-		WHERE type = 'smtp' AND direction = 'outbound' AND status = 'enabled'
-		ORDER BY updated_at DESC, is_default DESC
+		SELECT COALESCE(config, '{}') FROM channels
+		WHERE type = 'smtp' AND direction = 'outbound'
+		  AND status = 'enabled' AND is_default = true
+		ORDER BY updated_at DESC
 		LIMIT 1
 	`
 
@@ -379,6 +404,20 @@ func buildMime(opts mimeOptions) string {
 // through the encryption-aware sender, even the channel-test path that loads
 // raw config from the DB on its own.
 func (s *NotificationSMTPSender) dispatch(config *models.ChannelConfig, toEmail, message string) error {
+	if config == nil {
+		return fmt.Errorf("SMTP config is required")
+	}
+	fromEmail, err := normalizeEnvelopeAddress(config.SMTPFromEmail)
+	if err != nil {
+		return fmt.Errorf("invalid SMTP from address: %w", err)
+	}
+	toEmail, err = normalizeEnvelopeAddress(toEmail)
+	if err != nil {
+		return fmt.Errorf("invalid SMTP recipient address: %w", err)
+	}
+	if strings.TrimSpace(config.SMTPHost) == "" || config.SMTPPort <= 0 || config.SMTPPort > 65535 {
+		return fmt.Errorf("invalid SMTP host or port")
+	}
 	password, err := decryptOrLegacy(s.encryption, config.SMTPPassword)
 	if err != nil {
 		return err
@@ -393,12 +432,12 @@ func (s *NotificationSMTPSender) dispatch(config *models.ChannelConfig, toEmail,
 
 	switch strings.ToLower(config.SMTPEncryption) {
 	case "tls", "starttls":
-		return sendWithStartTLS(addr, auth, config.SMTPFromEmail, toEmail, message)
+		return sendWithStartTLS(addr, auth, fromEmail, toEmail, message)
 	case "ssl":
-		return sendWithSSL(addr, auth, config.SMTPFromEmail, toEmail, message)
+		return sendWithSSL(addr, auth, fromEmail, toEmail, message)
 	case "none":
 		if e2eInsecureSMTPEnabled() {
-			return sendPlaintext(addr, auth, config.SMTPFromEmail, toEmail, message)
+			return sendPlaintext(addr, auth, fromEmail, toEmail, message)
 		}
 		fallthrough
 	default:
@@ -424,6 +463,10 @@ func (s *NotificationSMTPSender) sendEmail(config *models.ChannelConfig, toEmail
 func sendWithStartTLS(addr string, auth smtp.Auth, from, to, message string) error {
 	conn, err := utils.SafeNetDialer(smtpDialTimeout).Dial("tcp", addr)
 	if err != nil {
+		return err
+	}
+	if err := conn.SetDeadline(time.Now().Add(smtpOperationTimeout)); err != nil {
+		_ = conn.Close()
 		return err
 	}
 	client, err := smtp.NewClient(conn, hostFromAddr(addr))
@@ -457,6 +500,10 @@ func sendWithSSL(addr string, auth smtp.Auth, from, to, message string) error {
 	if err != nil {
 		return err
 	}
+	if err := conn.SetDeadline(time.Now().Add(smtpOperationTimeout)); err != nil {
+		_ = conn.Close()
+		return err
+	}
 	defer func() { _ = conn.Close() }()
 
 	client, err := smtp.NewClient(conn, hostFromAddr(addr))
@@ -475,6 +522,10 @@ func sendWithSSL(addr string, auth smtp.Auth, from, to, message string) error {
 func sendPlaintext(addr string, auth smtp.Auth, from, to, message string) error {
 	conn, err := (&net.Dialer{Timeout: smtpDialTimeout}).Dial("tcp", addr)
 	if err != nil {
+		return err
+	}
+	if err := conn.SetDeadline(time.Now().Add(smtpOperationTimeout)); err != nil {
+		_ = conn.Close()
 		return err
 	}
 	client, err := smtp.NewClient(conn, hostFromAddr(addr))
@@ -507,10 +558,14 @@ func sendWithClient(client *smtp.Client, auth smtp.Auth, from, to, message strin
 	if err != nil {
 		return err
 	}
-	defer func() { _ = writer.Close() }()
-
-	_, err = writer.Write([]byte(message))
-	return err
+	if _, err = writer.Write([]byte(message)); err != nil {
+		_ = writer.Close()
+		return err
+	}
+	// DATA is not accepted until the writer is closed; servers report final
+	// policy/recipient failures (for example 550) here. Discarding this error
+	// falsely reported rejected mail as delivered.
+	return writer.Close()
 }
 
 // SendCustomEmail sends a custom email with the provided subject and body

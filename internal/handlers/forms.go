@@ -15,6 +15,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/middleware"
 	"windshift/internal/models"
+	"windshift/internal/repository"
 	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
@@ -33,6 +34,12 @@ type FormHandler struct {
 	ipExtractor          *utils.IPExtractor
 	portalService        *services.PortalService
 	channelService       *services.ChannelService
+	eventCoordinator     *services.EventCoordinator
+}
+
+// SetEventCoordinator wires the shared item-created side-effect pipeline.
+func (h *FormHandler) SetEventCoordinator(ec *services.EventCoordinator) {
+	h.eventCoordinator = ec
 }
 
 // NewFormHandler creates a new form handler
@@ -314,9 +321,10 @@ func (h *FormHandler) SubmitForm(w http.ResponseWriter, r *http.Request) {
 	submission.Description = sanitize.Comment.Sanitize(submission.Description)
 
 	// Check if this form requires auth and belongs to this channel.
-	var rtChannelID int
+	var rtChannelID, rtID int
+	var rtName, rtTitleTemplate string
 	var rtConfigStr sql.NullString
-	err = h.db.QueryRowContext(ctx, `SELECT channel_id, config FROM request_types WHERE id = ? AND is_active = true`, *submission.RequestTypeID).Scan(&rtChannelID, &rtConfigStr)
+	err = h.db.QueryRowContext(ctx, `SELECT id, channel_id, name, title_template, config FROM request_types WHERE id = ? AND is_active = true`, *submission.RequestTypeID).Scan(&rtID, &rtChannelID, &rtName, &rtTitleTemplate, &rtConfigStr)
 	if err != nil {
 		respondBadRequest(w, r, "Request type not found or inactive")
 		return
@@ -329,8 +337,10 @@ func (h *FormHandler) SubmitForm(w http.ResponseWriter, r *http.Request) {
 	var rtConfig models.RequestTypeConfig
 	if rtConfigStr.Valid && rtConfigStr.String != "" {
 		if err := json.Unmarshal([]byte(rtConfigStr.String), &rtConfig); err != nil {
-			// Invalid JSON in config — treat as empty config rather than failing the submission.
-			rtConfig = models.RequestTypeConfig{}
+			// require_auth lives in this blob. Treating malformed JSON as empty
+			// would turn a protected form into an anonymous one, so fail closed.
+			respondInternalError(w, r, fmt.Errorf("request type %d has invalid config: %w", rtID, err))
+			return
 		}
 	}
 	if rtConfig.RequireAuth {
@@ -349,6 +359,15 @@ func (h *FormHandler) SubmitForm(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		respondValidationError(w, r, err.Error())
 		return
+	}
+	if !validationResult.TitleFieldInForm {
+		requestType := &models.RequestType{ID: rtID, ChannelID: rtChannelID, Name: rtName, TitleTemplate: rtTitleTemplate}
+		rendered := renderSubmissionTitle(ctx, h.portalService, requestType, submission.Description, validationResult.CustomFieldValues, authenticatedUserID, portalCustomerID)
+		if rendered == "" {
+			respondValidationError(w, r, "request type is misconfigured: title field is hidden but no title template is set")
+			return
+		}
+		submission.Title = sanitize.PlainTextField.Sanitize(rendered)
 	}
 
 	// Resolve the target workspace. The request type's own workspace_id is the
@@ -380,6 +399,16 @@ func (h *FormHandler) SubmitForm(w http.ResponseWriter, r *http.Request) {
 			initialStatus = status
 		}
 	}
+	customFieldsJSON, err := json.Marshal(validationResult.CustomFieldValues)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	virtualFieldsJSON, err := json.Marshal(validationResult.VirtualFieldValues)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
 
 	// Create item
 	itemID, err := services.CreateItem(h.db, services.ItemCreationParams{
@@ -393,15 +422,26 @@ func (h *FormHandler) SubmitForm(w http.ResponseWriter, r *http.Request) {
 		CreatorPortalCustomerID: portalCustomerID,
 		ChannelID:               &channel.ID,
 		RequestTypeID:           submission.RequestTypeID,
+		CustomFieldValuesJSON:   string(customFieldsJSON),
+		VirtualFieldDataJSON:    string(virtualFieldsJSON),
 	})
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
 
-	// Store custom and virtual field values
-	services.StoreCustomFieldValues(ctx, h.db, "forms", itemID, validationResult.CustomFieldValues)
-	services.StoreVirtualFieldValues(ctx, h.db, "forms", itemID, validationResult.VirtualFieldValues)
+	if h.eventCoordinator != nil {
+		fullItem, fetchErr := repository.NewItemRepository(h.db).FindByIDWithDetailsContext(ctx, int(itemID))
+		if fetchErr != nil {
+			slog.Error("failed to hydrate form-created item for side effects", slog.Int64("item_id", itemID), slog.Any("error", fetchErr))
+		} else {
+			actorID := 0
+			if authenticatedUserID != nil {
+				actorID = *authenticatedUserID
+			}
+			h.eventCoordinator.EmitItemCreated(fullItem, actorID)
+		}
+	}
 
 	// Update channel last activity
 	if _, err := h.db.ExecWriteContext(ctx, `UPDATE channels SET last_activity = ? WHERE id = ?`, time.Now(), channel.ID); err != nil {
@@ -496,8 +536,7 @@ func (h *FormHandler) UpdateRequestTypeConfig(w http.ResponseWriter, r *http.Req
 	}
 
 	var rtConfig models.RequestTypeConfig
-	if err := json.NewDecoder(r.Body).Decode(&rtConfig); err != nil {
-		respondBadRequest(w, r, "Invalid request body")
+	if !decodeChannelRequest(w, r, &rtConfig, false) {
 		return
 	}
 

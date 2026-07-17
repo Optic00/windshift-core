@@ -43,6 +43,7 @@ type NotificationScheduler struct {
 	runRepo       *repository.SchedulerRunRepository
 	notifSvc      *services.NotificationService
 	batchInterval time.Duration
+	replyOutbox   emailReplyOutbox
 
 	// Per-user failure tracking for the circuit breaker. Keyed by user email
 	// (matching how we fan-out batches today). Resets on restart — the goal
@@ -56,6 +57,18 @@ type NotificationScheduler struct {
 type SMTPSender interface {
 	SendBatchedNotifications(userEmail, userName string, notifications []models.Notification) error
 	IsSMTPConfigured() bool
+}
+
+type emailReplyOutbox interface {
+	ProcessPendingReplies(limit int) (int, error)
+}
+
+// SetEmailReplyOutbox wires the durable threaded-reply queue after the
+// comment service is constructed. The scheduler may already be running.
+func (ns *NotificationScheduler) SetEmailReplyOutbox(outbox emailReplyOutbox) {
+	ns.mu.Lock()
+	ns.replyOutbox = outbox
+	ns.mu.Unlock()
 }
 
 // NewNotificationScheduler creates a new notification scheduler. batchInterval
@@ -141,6 +154,18 @@ func (ns *NotificationScheduler) processPendingNotifications() {
 
 	slog.Debug("Processing notification batches", slog.String("component", "scheduler"))
 
+	ns.mu.RLock()
+	replyOutbox := ns.replyOutbox
+	ns.mu.RUnlock()
+	if replyOutbox != nil {
+		delivered, err := replyOutbox.ProcessPendingReplies(maxBatchSize)
+		batchesProcessed += delivered
+		if err != nil {
+			slog.Error("Failed to process pending threaded email replies", slog.Any("error", err))
+			runErr = err
+		}
+	}
+
 	// Get all users with unread notifications
 	userBatches, err := ns.notifSvc.UnreadEmailBatches(maxBatchSize)
 	if err != nil {
@@ -153,7 +178,7 @@ func (ns *NotificationScheduler) processPendingNotifications() {
 		slog.Debug("No unread notifications to process", slog.String("component", "scheduler"))
 		return
 	}
-	batchesProcessed = len(userBatches)
+	batchesProcessed += len(userBatches)
 
 	// Send batches for each user. Track failures so the deferred recordSchedulerRun
 	// can mark this tick failed when at least one batch couldn't be sent — otherwise

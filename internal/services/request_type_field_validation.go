@@ -5,12 +5,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"reflect"
 	"strings"
-	"time"
 
 	"windshift/internal/database"
+	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/validation"
 )
@@ -56,6 +55,88 @@ type RequestTypeValidationResult struct {
 	TitleFieldInForm bool
 }
 
+// AllowedCreateScreenCustomFieldIdentifiers resolves the custom fields that
+// may be used when creating an item of itemTypeID in workspaceID. Public form
+// schemas and submissions both use this list so stale or forged field rows do
+// not expose or write fields outside the effective create screen.
+func AllowedCreateScreenCustomFieldIdentifiers(db database.Database, workspaceID, itemTypeID int) (map[string]struct{}, error) {
+	allowed := make(map[string]struct{})
+	if workspaceID <= 0 || itemTypeID <= 0 {
+		return allowed, nil
+	}
+	itemTypeAllowed, err := IsItemTypeAllowedInWorkspace(db, workspaceID, itemTypeID)
+	if err != nil {
+		return nil, err
+	}
+	if !itemTypeAllowed {
+		return allowed, nil
+	}
+
+	screenRepo := repository.NewScreenRepository(db)
+	createScreenID, err := screenRepo.GetCreateScreenID(workspaceID, itemTypeID)
+	if err != nil || createScreenID == nil {
+		return allowed, err
+	}
+	fields, err := screenRepo.ListFields(*createScreenID)
+	if err != nil {
+		return nil, err
+	}
+	for _, field := range fields {
+		if field.FieldType == "custom" && field.FieldIdentifier != "" && field.FieldName != "" {
+			allowed[field.FieldIdentifier] = struct{}{}
+		}
+	}
+	return allowed, nil
+}
+
+func allowedRequestTypeCustomFieldIdentifiers(ctx context.Context, db database.Database, requestTypeID int) (map[string]struct{}, error) {
+	var itemTypeID int
+	var workspaceID sql.NullInt64
+	var channelType, direction, configJSON string
+	err := db.QueryRowContext(ctx, `
+		SELECT rt.item_type_id, rt.workspace_id, c.type, c.direction, COALESCE(c.config, '{}')
+		FROM request_types rt
+		JOIN channels c ON c.id = rt.channel_id
+		WHERE rt.id = ? AND rt.is_active = true
+	`, requestTypeID).Scan(&itemTypeID, &workspaceID, &channelType, &direction, &configJSON)
+	if err != nil {
+		return nil, err
+	}
+
+	var config models.ChannelConfig
+	if err := json.Unmarshal([]byte(configJSON), &config); err != nil {
+		return nil, fmt.Errorf("parse request type channel config: %w", err)
+	}
+	var servedWorkspaceIDs []int
+	if direction == "inbound" {
+		switch channelType {
+		case "portal":
+			servedWorkspaceIDs = config.PortalWorkspaceIDs
+		case "form":
+			servedWorkspaceIDs = config.FormWorkspaceIDs
+		}
+	}
+	if len(servedWorkspaceIDs) == 0 {
+		return map[string]struct{}{}, nil
+	}
+
+	effectiveWorkspaceID := servedWorkspaceIDs[0]
+	if workspaceID.Valid {
+		effectiveWorkspaceID = int(workspaceID.Int64)
+		served := false
+		for _, candidate := range servedWorkspaceIDs {
+			if candidate == effectiveWorkspaceID {
+				served = true
+				break
+			}
+		}
+		if !served {
+			return map[string]struct{}{}, nil
+		}
+	}
+	return AllowedCreateScreenCustomFieldIdentifiers(db, effectiveWorkspaceID, itemTypeID)
+}
+
 // ValidateAndSeparateRequestFields validates request type fields and separates virtual from custom fields.
 func ValidateAndSeparateRequestFields(ctx context.Context, db database.Database, requestTypeID *int, title, description string, customFields map[string]interface{}) (*RequestTypeValidationResult, error) {
 	result := &RequestTypeValidationResult{}
@@ -82,6 +163,10 @@ func ValidateAndSeparateRequestFields(ctx context.Context, db database.Database,
 		wsID := int(workspaceID.Int64)
 		result.WorkspaceID = &wsID
 	}
+	allowedCustomFieldIDs, err := allowedRequestTypeCustomFieldIdentifiers(ctx, db, *requestTypeID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve request type create-screen fields: %w", err)
+	}
 
 	virtualFieldIDs := make(map[string]bool)
 	configuredCustomFieldIDs := make(map[string]bool)
@@ -96,6 +181,11 @@ func ValidateAndSeparateRequestFields(ctx context.Context, db database.Database,
 		var isRequired bool
 		if err := rows.Scan(&fieldID, &fieldType, &isRequired); err != nil {
 			continue
+		}
+		if fieldType == "custom" {
+			if _, allowed := allowedCustomFieldIDs[fieldID]; !allowed {
+				continue
+			}
 		}
 
 		switch fieldType {
@@ -146,79 +236,42 @@ func ValidateAndSeparateRequestFields(ctx context.Context, db database.Database,
 			result.CustomFieldValues[fieldID] = value
 		}
 	}
+	if err := validation.ValidateAndNormalizeCustomFieldValues(db, result.CustomFieldValues); err != nil {
+		return nil, err
+	}
 
 	return result, nil
 }
 
 // StoreCustomFieldValues stores custom field values for an item.
 // The component parameter is used for log attribution (e.g. "forms", "portal").
-func StoreCustomFieldValues(ctx context.Context, db database.Database, component string, itemID int64, customFields map[string]interface{}) {
+func StoreCustomFieldValues(ctx context.Context, db database.Database, component string, itemID int64, customFields map[string]interface{}) error {
+	_ = component
 	if len(customFields) == 0 {
-		return
+		return nil
 	}
-
-	// Forms/portal submissions carry raw anonymous-user text; bound
-	// text/textarea values before they reach either persistence target
-	// below. Failure to load field definitions only skips sanitization
-	// (logged), matching this function's tolerant store-what-we-can style.
-	if err := validation.SanitizeCustomFieldTextValues(db, customFields); err != nil {
-		slog.Warn("failed to sanitize custom field values", slog.String("component", component), slog.Int64("item_id", itemID), slog.Any("error", err))
-	}
-
-	now := time.Now()
-	for fieldIDStr, value := range customFields {
-		if value == nil || value == "" {
-			continue
-		}
-
-		var valueStr string
-		switch v := value.(type) {
-		case string:
-			valueStr = v
-		case float64:
-			valueStr = fmt.Sprintf("%v", v)
-		case bool:
-			valueStr = fmt.Sprintf("%v", v)
-		default:
-			valueBytes, err := json.Marshal(v)
-			if err == nil {
-				valueStr = string(valueBytes)
-			}
-		}
-
-		if valueStr != "" {
-			if _, err := db.ExecWriteContext(ctx, `
-				INSERT INTO custom_field_values (item_id, custom_field_id, value, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?)
-				ON CONFLICT(item_id, custom_field_id) DO UPDATE SET value = ?, updated_at = ?
-			`, itemID, fieldIDStr, valueStr, now, now, valueStr, now); err != nil {
-				slog.Warn("failed to save custom field value", slog.String("component", component), slog.Int64("item_id", itemID), slog.String("field_id", fieldIDStr), slog.Any("error", err))
-			}
-		}
+	if err := validation.ValidateAndNormalizeCustomFieldValues(db, customFields); err != nil {
+		return err
 	}
 
 	customFieldsJSON, err := json.Marshal(customFields)
-	if err == nil {
-		if err := repository.NewItemRepository(db).SetCustomFieldValuesRaw(ctx, int(itemID), string(customFieldsJSON)); err != nil {
-			slog.Warn("failed to update item custom_field_values", slog.String("component", component), slog.Int64("item_id", itemID), slog.Any("error", err))
-		}
+	if err != nil {
+		return fmt.Errorf("marshal custom field values: %w", err)
 	}
+	return repository.NewItemRepository(db).SetCustomFieldValuesRaw(ctx, int(itemID), string(customFieldsJSON))
 }
 
 // StoreVirtualFieldValues stores virtual field values for an item.
 // The component parameter is used for log attribution (e.g. "forms", "portal").
-func StoreVirtualFieldValues(ctx context.Context, db database.Database, component string, itemID int64, virtualFields map[string]interface{}) {
+func StoreVirtualFieldValues(ctx context.Context, db database.Database, component string, itemID int64, virtualFields map[string]interface{}) error {
+	_ = component
 	if len(virtualFields) == 0 {
-		return
+		return nil
 	}
 
 	virtualFieldsJSON, err := json.Marshal(virtualFields)
 	if err != nil {
-		slog.Warn("failed to marshal virtual field values", slog.String("component", component), slog.Int64("item_id", itemID), slog.Any("error", err))
-		return
+		return fmt.Errorf("marshal virtual field values: %w", err)
 	}
-
-	if err := repository.NewItemRepository(db).SetVirtualFieldDataRaw(ctx, int(itemID), string(virtualFieldsJSON)); err != nil {
-		slog.Warn("failed to update item virtual_field_data", slog.String("component", component), slog.Int64("item_id", itemID), slog.Any("error", err))
-	}
+	return repository.NewItemRepository(db).SetVirtualFieldDataRaw(ctx, int(itemID), string(virtualFieldsJSON))
 }

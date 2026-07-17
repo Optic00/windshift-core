@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/mail"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,6 +70,18 @@ func (p *Processor) ProcessEmail(
 	uidValidity uint32,
 	config *models.ChannelConfig,
 ) (*ProcessingResult, error) {
+	if email == nil {
+		return nil, fmt.Errorf("email is required")
+	}
+	sender := strings.TrimSpace(email.From.Address)
+	parsedSender, senderErr := mail.ParseAddress(sender)
+	if senderErr != nil || parsedSender.Address == "" {
+		return nil, fmt.Errorf("email has no valid sender address")
+	}
+	if config == nil {
+		return nil, fmt.Errorf("channel config is required")
+	}
+	email.From.Address = parsedSender.Address
 	dedupKey := dedupKeyFor(email, channelID, uidValidity)
 
 	// 1. Preclaim tracking row. INSERT ... ON CONFLICT DO NOTHING reports 0
@@ -191,7 +204,9 @@ func (p *Processor) findOrCreatePortalCustomer(
 
 	if err == nil {
 		// Customer exists
-		p.grantChannelAccess(ctx, customerID, channelID, email, config)
+		if err := p.grantChannelAccess(ctx, customerID, channelID, email, config); err != nil {
+			return 0, err
+		}
 		return customerID, nil
 	}
 
@@ -216,7 +231,9 @@ func (p *Processor) findOrCreatePortalCustomer(
 		if err = p.db.QueryRow(`SELECT id FROM portal_customers WHERE LOWER(email) = ?`, email).Scan(&customerID); err != nil {
 			return 0, fmt.Errorf("failed to re-select portal customer after conflict: %w", err)
 		}
-		p.grantChannelAccess(ctx, customerID, channelID, email, config)
+		if err := p.grantChannelAccess(ctx, customerID, channelID, email, config); err != nil {
+			return 0, err
+		}
 		return customerID, nil
 	}
 	if err != nil {
@@ -224,7 +241,9 @@ func (p *Processor) findOrCreatePortalCustomer(
 	}
 
 	customerID = int(id)
-	p.grantChannelAccess(ctx, customerID, channelID, email, config)
+	if err := p.grantChannelAccess(ctx, customerID, channelID, email, config); err != nil {
+		return 0, err
+	}
 
 	slog.Info("created portal customer from email", "customer_id", customerID, "email", email)
 
@@ -237,16 +256,18 @@ func (p *Processor) findOrCreatePortalCustomer(
 // PortalRegistrationMode so email ingestion can't bypass portal-side policy
 // (e.g. a "manual registration only" portal must not auto-admit arbitrary
 // senders just because they emailed the ingest channel).
-func (p *Processor) grantChannelAccess(ctx context.Context, customerID, channelID int, senderEmail string, config *models.ChannelConfig) {
+func (p *Processor) grantChannelAccess(ctx context.Context, customerID, channelID int, senderEmail string, config *models.ChannelConfig) error {
 	// Grant access to email channel
-	_, _ = p.db.ExecWriteContext(ctx, `
+	if _, err := p.db.ExecWriteContext(ctx, `
 		INSERT INTO portal_customer_channels (portal_customer_id, channel_id)
 		VALUES (?, ?)
 		ON CONFLICT DO NOTHING
-	`, customerID, channelID)
+	`, customerID, channelID); err != nil {
+		return fmt.Errorf("grant customer access to email channel: %w", err)
+	}
 
 	if config.EmailConnectedPortalID == nil {
-		return
+		return nil
 	}
 	portalID := *config.EmailConnectedPortalID
 	if !p.connectedPortalAdmitsEmail(ctx, portalID, senderEmail) {
@@ -255,13 +276,16 @@ func (p *Processor) grantChannelAccess(ctx context.Context, customerID, channelI
 			"portal_channel_id", portalID,
 			"sender", senderEmail,
 		)
-		return
+		return nil
 	}
-	_, _ = p.db.ExecWriteContext(ctx, `
+	if _, err := p.db.ExecWriteContext(ctx, `
 		INSERT INTO portal_customer_channels (portal_customer_id, channel_id)
 		VALUES (?, ?)
 		ON CONFLICT DO NOTHING
-	`, customerID, portalID)
+	`, customerID, portalID); err != nil {
+		return fmt.Errorf("grant customer access to connected portal: %w", err)
+	}
+	return nil
 }
 
 // connectedPortalAdmitsEmail returns true when the connected portal's policy
@@ -302,6 +326,12 @@ func (p *Processor) connectedPortalAdmitsEmail(ctx context.Context, portalChanne
 		if !allowed {
 			return false
 		}
+	}
+
+	// Unknown registration modes fail closed; empty is the legacy spelling of
+	// open. A typo must never auto-register an email sender.
+	if pCfg.PortalRegistrationMode != "" && pCfg.PortalRegistrationMode != "open" && pCfg.PortalRegistrationMode != "manual" {
+		return false
 	}
 
 	// Manual registration: only existing portal_customer_channels rows admit.
@@ -372,8 +402,8 @@ func (p *Processor) senderIsThreadParticipant(ctx context.Context, itemID, chann
 	var priorCount int
 	if err := p.db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM email_message_tracking
-		WHERE item_id = ? AND LOWER(from_email) = ?
-	`, itemID, senderEmail).Scan(&priorCount); err == nil && priorCount > 0 {
+		WHERE item_id = ? AND channel_id = ? AND LOWER(from_email) = ?
+	`, itemID, channelID, senderEmail).Scan(&priorCount); err == nil && priorCount > 0 {
 		return true
 	}
 	// Original creator via portal customer.
@@ -419,11 +449,20 @@ func (p *Processor) createItemFromEmail( //nolint:unparam // ctx reserved for fu
 	if !allowed {
 		return nil, fmt.Errorf("item type %d is not allowed in workspace %d", *config.EmailItemTypeID, config.EmailWorkspaceID)
 	}
+	if config.EmailDefaultPriorityID != nil {
+		allowed, err := services.IsPriorityAllowedInWorkspace(p.db, config.EmailWorkspaceID, *config.EmailDefaultPriorityID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check priority restriction: %w", err)
+		}
+		if !allowed {
+			return nil, fmt.Errorf("priority %d is not allowed in workspace %d", *config.EmailDefaultPriorityID, config.EmailWorkspaceID)
+		}
+	}
 
-	// Build item parameters. Leave StatusID/PriorityID nil so services.CreateItem
-	// resolves them from the workspace's workflow and default-priority config —
-	// the same path the REST API uses. A prior implementation tried to resolve
-	// these here with a global query, which failed for custom workflows.
+	// Build item parameters. Leave StatusID nil so services.CreateItem resolves
+	// it from the workspace workflow. PriorityID is supplied only when the
+	// channel explicitly configured a workspace-valid override; otherwise the
+	// shared service resolves the workspace default.
 	params := services.ItemCreationParams{
 		WorkspaceID:             config.EmailWorkspaceID,
 		Title:                   sanitize.PlainTextField.Sanitize(email.GetSubjectForItem()),
@@ -690,10 +729,14 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	return nil
 }
 
+const trackingClaimStaleAfter = 5 * time.Minute
+
 // preclaimTracking inserts the tracking row up front (NULL item_id/comment_id)
-// so duplicate detection happens before item creation, not after. Returns true
-// when this caller owns the claim and should proceed; false when the row
-// already existed (i.e. another worker or a prior run already tracked it).
+// so duplicate detection happens before item creation, not after. A process
+// crash can leave that preclaim behind forever, so an incomplete claim older
+// than the processing lease + request budget is atomically reclaimed. Returns
+// true when this caller owns the claim and should proceed; false when another
+// worker or a completed prior run owns it.
 func (p *Processor) preclaimTracking(
 	ctx context.Context,
 	email *ParsedEmail,
@@ -705,7 +748,16 @@ func (p *Processor) preclaimTracking(
 			channel_id, message_id, dedup_key, in_reply_to, from_email, from_name, subject,
 			item_id, comment_id, direction, processed_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'inbound', CURRENT_TIMESTAMP)
-		ON CONFLICT DO NOTHING
+		ON CONFLICT(channel_id, dedup_key) DO UPDATE SET
+			message_id = excluded.message_id,
+			in_reply_to = excluded.in_reply_to,
+			from_email = excluded.from_email,
+			from_name = excluded.from_name,
+			subject = excluded.subject,
+			processed_at = CURRENT_TIMESTAMP
+		WHERE email_message_tracking.item_id IS NULL
+		  AND email_message_tracking.comment_id IS NULL
+		  AND email_message_tracking.processed_at < ?
 	`,
 		channelID,
 		email.MessageID,
@@ -714,6 +766,7 @@ func (p *Processor) preclaimTracking(
 		email.From.Address,
 		nullString(email.From.Name),
 		nullString(email.Subject),
+		time.Now().Add(-trackingClaimStaleAfter),
 	)
 	if err != nil {
 		return false, err

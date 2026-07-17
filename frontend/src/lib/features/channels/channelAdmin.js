@@ -1,16 +1,23 @@
 import { api } from '../../api.js';
 
 export function parseChannelConfig(config) {
-  if (!config) return {};
+  if (config == null) return {};
   if (typeof config === 'string') {
     if (config.trim() === '') return {};
     try {
-      return JSON.parse(config);
-    } catch {
-      return {};
+      const parsed = JSON.parse(config);
+      if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
+        throw new Error('Channel configuration must be a JSON object');
+      }
+      return parsed;
+    } catch (error) {
+      throw new Error('Channel configuration is invalid JSON', { cause: error });
     }
   }
-  return config || {};
+  if (Array.isArray(config) || typeof config !== 'object') {
+    throw new Error('Channel configuration must be a JSON object');
+  }
+  return config;
 }
 
 export function channelBasicFormData(channel) {
@@ -33,10 +40,7 @@ export async function saveChannelSettings({ channel, channelFormData, configRef,
   });
 
   if (configRef) {
-    await api.channels.updateConfig(channel.id, {
-      ...parseChannelConfig(channel.config),
-      ...configRef.getConfig(),
-    });
+    await api.channels.updateConfig(channel.id, configRef.getConfig());
   }
 
   const currentlyEnabled = channel.status === 'enabled';

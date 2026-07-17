@@ -131,6 +131,8 @@ func (h *RunnerBrokerHandler) GetSecret(w http.ResponseWriter, r *http.Request) 
 		respondNotFound(w, r, "credential")
 		return
 	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
 	respondJSON(w, http.StatusOK, map[string]any{"value": plaintext})
 }
 

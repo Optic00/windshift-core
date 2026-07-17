@@ -138,7 +138,7 @@ func (pm *PermissionMiddleware) RequireChannelManagement() func(http.Handler) ht
 
 			// Check if channel is a default channel
 			var isDefault bool
-			err = pm.db.QueryRowContext(r.Context(), `SELECT is_default FROM channels WHERE id = ?`, channelID).Scan(&isDefault)
+			err = pm.db.QueryRowContext(r.Context(), `SELECT COALESCE(is_default, false) FROM channels WHERE id = ?`, channelID).Scan(&isDefault)
 			if err != nil {
 				restapi.RespondError(w, r, restapi.ErrChannelNotFound)
 				return
@@ -222,7 +222,10 @@ func (pm *PermissionMiddleware) isChannelManager(ctx context.Context, userID, ch
 			WHERE channel_id = ?
 			AND ((manager_type = 'user' AND manager_id = ?)
 				 OR (manager_type = 'group' AND manager_id IN (
-					 SELECT group_id FROM group_members WHERE user_id = ?
+					 SELECT gm.group_id
+					 FROM group_members gm
+					 JOIN groups g ON g.id = gm.group_id
+					 WHERE gm.user_id = ? AND g.is_active = true
 				 )))
 		)
 	`, channelID, userID, userID).Scan(&isManager)

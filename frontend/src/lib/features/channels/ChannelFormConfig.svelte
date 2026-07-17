@@ -27,7 +27,7 @@
     { value: 'auto', label: 'Auto' }
   ];
 
-  const SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
+  const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/;
   const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
 
   function isValidHttpUrl(value) {
@@ -64,7 +64,7 @@
 
   export function getConfig() {
     return {
-      form_slug: formData.slug,
+      form_slug: formData.slug.trim(),
       form_workspace_ids: formData.workspace_ids,
       form_theme: formData.theme || 'light',
       form_brand_color: formData.brand_color || '#14b8a6',

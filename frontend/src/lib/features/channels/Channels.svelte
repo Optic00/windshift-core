@@ -27,6 +27,7 @@
   import Label from '../../components/Label.svelte';
   import DescriptionText from '../../components/DescriptionText.svelte';
   import DialogFooter from '../../dialogs/DialogFooter.svelte';
+  import { isSystemAdmin } from '../../stores/permissions.svelte.js';
 
   // Props
   let { embedded = false } = $props();
@@ -42,38 +43,28 @@
   let error = $state(null);
   let channelSearch = $state('');
 
-  // Local state for embedded mode filters
-  let embeddedTypeFilter = $state(null);
-  let embeddedCategoryId = $state(null);
-
-  // Filters - use local state for embedded mode, URL for standalone
-  let activeCategoryId = $derived(embedded ? embeddedCategoryId : ($currentRoute.params?.categoryId || null));
-  let activeTypeFilter = $derived(embedded ? embeddedTypeFilter : ($currentRoute.params?.type || null));
+  // Filters are URL-backed in both layouts so deep links and picker/tab
+  // changes cannot disagree about which channels are visible.
+  let activeCategoryId = $derived($currentRoute.params?.categoryId || null);
+  let activeTypeFilter = $derived($currentRoute.params?.type || null);
 
   // Handlers for embedded tab navigation
   function handleTypeClick(typeId) {
-    if (embedded) {
-      embeddedTypeFilter = typeId;
+    if (typeId === null) {
+      navigate('/admin/channels');
     } else {
-      if (typeId === null) {
-        navigate('/admin/channels');
-      } else {
-        navigate(`/admin/channels/type/${typeId}`);
-      }
+      navigate(`/admin/channels/type/${typeId}`);
     }
   }
 
-  function handleCategoryChange(event) {
-    const value = event.target.value;
-    if (embedded) {
-      embeddedCategoryId = value === '' ? null : value;
-    } else {
-      if (value === '') {
-        navigate('/admin/channels');
-      } else {
-        navigate(`/admin/channels/category/${value}`);
-      }
+  async function deleteCategory(id) {
+    await channelCategoriesStore.delete(id);
+    if (Number(activeCategoryId) === Number(id)) {
+      navigate('/admin/channels');
     }
+    // The category FK is SET NULL server-side; refresh channel rows so an
+    // edit modal cannot retain the deleted ID in its local form state.
+    await loadChannels();
   }
 
   // Filtered channels based on type, category, and search
@@ -105,6 +96,7 @@
   let selectedChannel = $state(null);
   let showEmailLog = $state(false);
   let emailLogChannel = $state(null);
+  let creating = $state(false);
 
 
   // Form data for new channel
@@ -163,7 +155,7 @@
       });
     }
 
-    if ((channel.type === 'email' || channel.type === 'portal' || channel.type === 'form') && !isPluginOwned(channel)) {
+    if (!isPluginOwned(channel)) {
       items.push({
         title: channel.status === 'enabled' ? 'Disable' : 'Enable',
         icon: IconPower,
@@ -184,6 +176,7 @@
 
     // Handle OAuth callback parameters (after channels are loaded)
     handleOAuthCallback();
+    openChannelFromRoute();
   });
 
   useEventListener(() => document, 'manage-channel-categories', handleManageCategories);
@@ -212,11 +205,25 @@
         'save_failed': 'Failed to save OAuth tokens',
         'channel_not_found': 'Channel not found',
         'invalid_config': 'Invalid channel configuration',
-        'unsupported_provider': 'Unsupported OAuth provider'
+        'unsupported_provider': 'Unsupported OAuth provider',
+        'decrypt_failed': 'Could not decrypt the OAuth client secret',
+        'identity_failed': 'Could not read the connected mailbox identity',
+        'authorization_failed': 'You no longer have permission to connect this channel',
+        'config_changed': 'The channel changed while OAuth was open. Review the latest settings and reconnect.'
       };
       errorToast(errorMessages[oauthError] || `OAuth error: ${oauthError}`);
       // Clear URL params
       window.history.replaceState({}, '', window.location.pathname);
+    }
+  }
+
+  function openChannelFromRoute() {
+    const match = window.location.pathname.match(/^\/admin\/channels\/(\d+)$/);
+    if (!match || showConfigModal) return;
+    const channel = channels.find(candidate => candidate.id === Number(match[1]));
+    if (channel) {
+      selectedChannel = channel;
+      showConfigModal = true;
     }
   }
 
@@ -228,7 +235,7 @@
     try {
       loading = true;
       error = null;
-      channels = await api.channels.getAll();
+      channels = await api.channels.getAll({ include_disabled: true });
     } catch (err) {
       console.error('Failed to load channels:', err);
       error = 'Failed to load channels';
@@ -286,7 +293,9 @@
   }
 
   async function handleChannelSubmit() {
+    if (creating) return;
     try {
+      creating = true;
       // Auto-determine direction based on type
       const directionMap = {
         'portal': 'inbound',
@@ -305,28 +314,17 @@
 
       const newChannel = await api.channels.create(channelData);
 
-      // Set initial config with slug for portal/form channels
-      if (channelFormData.type === 'portal' && channelFormData.slug) {
-        await api.channels.updateConfig(newChannel.id, {
-          portal_slug: channelFormData.slug,
-          portal_title: channelFormData.name
-        });
-      }
-      if (channelFormData.type === 'form' && channelFormData.slug) {
-        await api.channels.updateConfig(newChannel.id, {
-          form_slug: channelFormData.slug
-        });
-      }
-
       await loadChannels();
       cancelChannelForm();
 
       // Open config modal for the new channel
-      selectedChannel = newChannel;
+      selectedChannel = channels.find(channel => channel.id === newChannel.id) || newChannel;
       showConfigModal = true;
     } catch (error) {
       console.error('Failed to save channel:', error);
       errorToast('Failed to save channel: ' + (error.message || error));
+    } finally {
+      creating = false;
     }
   }
 
@@ -340,8 +338,12 @@
     selectedChannel = null;
   }
 
-  function handleConfigSave() {
-    loadChannels();
+  async function handleConfigSave() {
+    const selectedID = selectedChannel?.id;
+    await loadChannels();
+    if (selectedID) {
+      selectedChannel = channels.find(channel => channel.id === selectedID) || selectedChannel;
+    }
   }
 
   async function deleteChannel(channel) {
@@ -353,9 +355,37 @@
       errorToast('Cannot delete a plugin-owned channel');
       return;
     }
+    let impact;
+    try {
+      impact = await api.channels.getDeleteImpact(channel.id);
+    } catch (error) {
+      console.error('Failed to load channel delete impact:', error);
+      errorToast('Could not verify what this deletion would remove. Please try again.');
+      return;
+    }
+    const impactLabels = [
+      ['request types', impact.request_types],
+      ['asset reports', impact.asset_reports],
+      ['customer access grants', impact.portal_customer_channels],
+      ['email log entries', impact.email_message_tracking],
+      ['queued email replies', impact.email_reply_outbox],
+      ['pending email authorizations', impact.email_oauth_states],
+      ['email credential leases', impact.email_credential_leases],
+      ['active mailbox-processing leases', impact.email_processing_leases],
+      ['mailbox sync states', impact.email_channel_state],
+      ['webhook delivery records', impact.webhook_deliveries],
+      ['manager assignments', impact.channel_managers],
+      ['in-progress portal drafts', impact.portal_request_drafts],
+      ['portal sign-in links', impact.portal_magic_links],
+      ['portal sessions', impact.portal_sessions],
+      ['linked items', impact.items]
+    ].filter(([, count]) => count > 0).map(([label, count]) => `${count} ${label}`);
+    const impactMessage = impactLabels.length > 0
+      ? ` This will affect ${impactLabels.join(', ')}.`
+      : '';
     const ok = await confirm({
       title: 'Delete Channel',
-      message: 'Are you sure you want to delete this channel? This action cannot be undone.',
+      message: `Are you sure you want to delete this channel?${impactMessage} This action cannot be undone.`,
       confirmText: 'Delete Channel',
       variant: 'danger',
     });
@@ -428,26 +458,24 @@
               allowClear={false}
               class="w-48"
               onSelect={(item) => {
-                if (embedded) {
-                  embeddedCategoryId = item ? item.id : null;
+                if (!item) {
+                  navigate('/admin/channels');
                 } else {
-                  if (!item) {
-                    navigate('/admin/channels');
-                  } else {
-                    navigate(`/admin/channels/category/${item.id}`);
-                  }
+                  navigate(`/admin/channels/category/${item.id}`);
                 }
               }}
             />
-            <Button
-              onclick={() => showCategoryModal = true}
-              variant="ghost"
-              size="small"
-              icon={IconTag}
-              class="whitespace-nowrap flex-shrink-0"
-            >
-              {t('channels.manageCategories', 'Manage')}
-            </Button>
+            {#if $isSystemAdmin}
+              <Button
+                onclick={() => showCategoryModal = true}
+                variant="ghost"
+                size="small"
+                icon={IconTag}
+                class="whitespace-nowrap flex-shrink-0"
+              >
+                {t('channels.manageCategories', 'Manage')}
+              </Button>
+            {/if}
           </div>
         </div>
       </div>
@@ -484,16 +512,18 @@
           </div>
         {/if}
       </div>
-      <Button
-        onclick={showAddChannelForm}
-        variant="primary"
-        icon={IconPlus}
-        size="medium"
-        keyboardHint={getShortcutDisplay('channels', 'addChannel')}
-        hotkeyConfig={{ key: toHotkeyString('channels', 'addChannel'), guard: () => !showAddForm && !showConfigModal && !showCategoryModal }}
-      >
-        {t('channels.createChannel')}
-      </Button>
+      {#if $isSystemAdmin}
+        <Button
+          onclick={showAddChannelForm}
+          variant="primary"
+          icon={IconPlus}
+          size="medium"
+          keyboardHint={getShortcutDisplay('channels', 'addChannel')}
+          hotkeyConfig={{ key: toHotkeyString('channels', 'addChannel'), guard: () => !showAddForm && !showConfigModal && !showCategoryModal }}
+        >
+          {t('channels.createChannel')}
+        </Button>
+      {/if}
     </div>
 
     <!-- Search Bar (non-embedded) -->
@@ -577,7 +607,7 @@
   onclose={cancelChannelForm}
   onSubmit={handleChannelSubmit}
   submitDisabled={!channelFormData.name.trim() ||
-    ((channelFormData.type === 'portal' || channelFormData.type === 'form') && !channelFormData.slug.trim())}
+    ((channelFormData.type === 'portal' || channelFormData.type === 'form') && !channelFormData.slug.trim()) || creating}
   maxWidth="max-w-xl"
   autoFocus={true}
 >
@@ -624,7 +654,9 @@
             id="channelSlug"
             bind:value={channelFormData.slug}
             required
-            pattern="[a-z0-9\-]+"
+            minlength={3}
+            maxlength={64}
+            pattern={'[a-z0-9](?:[a-z0-9-]{1,62}[a-z0-9])'}
             placeholder="e.g., support"
           />
           <DescriptionText>
@@ -656,7 +688,7 @@
     onConfirm={handleChannelSubmit}
     confirmLabel={t('channels.createChannel')}
     disabled={!channelFormData.name.trim() ||
-      ((channelFormData.type === 'portal' || channelFormData.type === 'form') && !channelFormData.slug.trim())}
+      ((channelFormData.type === 'portal' || channelFormData.type === 'form') && !channelFormData.slug.trim()) || creating}
     showKeyboardHint={true}
     confirmKeyboardHint={submitHint}
   />
@@ -670,7 +702,7 @@
   title="Manage Channel Categories"
   categories={$channelCategoriesStore}
   onAdd={async (data) => await channelCategoriesStore.add(data)}
-  onDelete={async (id) => await channelCategoriesStore.delete(id)}
+  onDelete={deleteCategory}
   showColorPicker={true}
 />
 
@@ -688,5 +720,3 @@
   channel={emailLogChannel}
   onClose={() => { showEmailLog = false; emailLogChannel = null; }}
 />
-
-

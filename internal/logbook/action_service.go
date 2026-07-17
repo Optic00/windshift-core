@@ -408,6 +408,15 @@ func matchMimeType(pattern, mimeType string) bool {
 }
 
 func (s *LogbookActionService) executeAction(action *models.LogbookAction, event *models.LogbookActionEvent) error {
+	if action == nil {
+		return fmt.Errorf("logbook action is required")
+	}
+	if !action.IsEnabled {
+		return fmt.Errorf("logbook action %d is disabled", action.ID)
+	}
+	if event == nil {
+		return fmt.Errorf("logbook action event is required")
+	}
 	startTime := time.Now()
 
 	// Generate execution chain ID for cross-application loop prevention
@@ -582,7 +591,6 @@ func (s *LogbookActionService) executeViaMainServer(node *models.LogbookActionNo
 		slog.String("component", "logbook-actions"),
 		slog.String("node_type", string(node.NodeType)),
 		slog.String("url", url),
-		slog.String("resolved_config", resolvedConfig),
 	)
 
 	httpReq, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))

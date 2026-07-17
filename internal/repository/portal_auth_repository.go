@@ -30,18 +30,14 @@ type PortalCustomerSessionInfo struct {
 
 // FindPortalBySlug resolves an enabled portal channel by its public slug.
 func (r *PortalAuthRepository) FindPortalBySlug(ctx context.Context, slug string) (*models.Channel, *models.ChannelConfig, error) {
-	candidates, err := r.channelRepo.ListSlugCandidates(ctx, "portal")
+	candidate, err := r.channelRepo.FindEnabledByPublicSlug(ctx, "portal", slug)
 	if err != nil {
 		return nil, nil, err
 	}
-	for _, candidate := range candidates {
-		cfg := candidate.Config
-		if cfg.PortalSlug == slug && candidate.Channel.Status == "enabled" {
-			channel := candidate.Channel
-			return &channel, &cfg, nil
-		}
+	if candidate.Config.PortalSlug != slug {
+		return nil, nil, ErrNotFound
 	}
-	return nil, nil, ErrNotFound
+	return &candidate.Channel, &candidate.Config, nil
 }
 
 // CustomerEmailHasChannelAccess reports whether an existing portal customer

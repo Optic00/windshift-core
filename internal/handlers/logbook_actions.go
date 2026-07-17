@@ -93,7 +93,6 @@ func (h *LogbookNodeExecutionHandler) HandleNodeExecution(w http.ResponseWriter,
 		slog.Error("node execution failed",
 			slog.String("component", "logbook-actions"),
 			slog.String("node_type", req.NodeType),
-			slog.String("node_config", req.NodeConfig),
 			slog.Any("error", execErr),
 		)
 		respondJSON(w, http.StatusInternalServerError, models.NodeExecutionResponse{
@@ -112,6 +111,12 @@ func (h *LogbookNodeExecutionHandler) executeCreateItem(nodeConfig string, event
 	if err := json.Unmarshal([]byte(nodeConfig), &config); err != nil {
 		return nil, fmt.Errorf("failed to parse create_item config: %w", err)
 	}
+	if config.WorkspaceID <= 0 || config.ItemTypeID <= 0 {
+		return nil, fmt.Errorf("create_item requires positive workspace_id and item_type_id")
+	}
+	if event.ActorUserID <= 0 {
+		return nil, fmt.Errorf("create_item requires an identified actor")
+	}
 	sanitize.ApplyAll(
 		sanitize.Pair{Target: &config.Title, Policy: sanitize.PlainTextField},
 		sanitize.Pair{Target: &config.Description, Policy: sanitize.RichText},
@@ -127,30 +132,32 @@ func (h *LogbookNodeExecutionHandler) executeCreateItem(nodeConfig string, event
 
 	// Authorize: the action config may target any workspace, so verify the
 	// acting user has edit permission on the target before creating an item.
-	if h.permissionService != nil {
-		hasPerm, permErr := h.permissionService.HasWorkspacePermission(creatorID, config.WorkspaceID, models.PermissionItemEdit)
-		if permErr != nil {
-			return nil, fmt.Errorf("failed to check workspace permission: %w", permErr)
-		}
-		if !hasPerm {
-			return nil, fmt.Errorf("user %d not authorized to create items in workspace %d", creatorID, config.WorkspaceID)
-		}
+	if h.permissionService == nil || h.createItem == nil {
+		return nil, fmt.Errorf("create_item blocked: permission or item service not configured")
+	}
+	hasPerm, permErr := h.permissionService.HasWorkspacePermission(creatorID, config.WorkspaceID, models.PermissionItemCreate)
+	if permErr != nil {
+		return nil, fmt.Errorf("failed to check workspace permission: %w", permErr)
+	}
+	if !hasPerm {
+		return nil, fmt.Errorf("user %d not authorized to create items in workspace %d", creatorID, config.WorkspaceID)
 	}
 
 	slog.Info("creating item from logbook action",
 		slog.String("component", "logbook-actions"),
 		slog.Int("workspace_id", config.WorkspaceID),
 		slog.Int("item_type_id", itemTypeID),
-		slog.String("title", title),
 		slog.Int("creator_id", creatorID),
 	)
 
 	itemID, err := h.createItem(services.ItemCreationParams{
-		WorkspaceID: config.WorkspaceID,
-		Title:       title,
-		Description: config.Description,
-		ItemTypeID:  &itemTypeID,
-		CreatorID:   &creatorID,
+		WorkspaceID:      config.WorkspaceID,
+		Title:            title,
+		Description:      config.Description,
+		ItemTypeID:       &itemTypeID,
+		CreatorID:        &creatorID,
+		ValidatingUserID: creatorID,
+		PermService:      h.permissionService,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create item: %w", err)
@@ -172,8 +179,10 @@ func (h *LogbookNodeExecutionHandler) executeCreateItem(nodeConfig string, event
 			CreatorID:   &creatorID,
 		}
 		// Load workspace key for event emission
-		if key, err := h.workspaceRepo.GetKey(config.WorkspaceID); err == nil {
-			item.WorkspaceKey = key
+		if h.workspaceRepo != nil {
+			if key, err := h.workspaceRepo.GetKey(config.WorkspaceID); err == nil {
+				item.WorkspaceKey = key
+			}
 		}
 
 		h.eventCoordinator.EmitItemCreatedWithContext(item, creatorID, services.ActionContext{
@@ -196,6 +205,12 @@ func (h *LogbookNodeExecutionHandler) executeCreateAsset(nodeConfig string, even
 	if err := json.Unmarshal([]byte(nodeConfig), &config); err != nil {
 		return nil, fmt.Errorf("failed to parse create_asset config: %w", err)
 	}
+	if config.AssetSetID <= 0 || config.AssetTypeID <= 0 {
+		return nil, fmt.Errorf("create_asset requires positive asset_set_id and asset_type_id")
+	}
+	if event.ActorUserID <= 0 {
+		return nil, fmt.Errorf("create_asset requires an identified actor")
+	}
 	sanitize.ApplyAll(
 		sanitize.Pair{Target: &config.Title, Policy: sanitize.PlainTextField},
 		sanitize.Pair{Target: &config.Description, Policy: sanitize.RichText},
@@ -209,13 +224,39 @@ func (h *LogbookNodeExecutionHandler) executeCreateAsset(nodeConfig string, even
 
 	// Authorize: the action config may target any asset set, so verify the
 	// acting user has create permission on the target set before inserting.
-	if h.assetHandler != nil {
-		hasPerm, permErr := h.assetHandler.HasAssetSetPermission(event.ActorUserID, config.AssetSetID, services.AssetPermissionKeyCreate)
-		if permErr != nil {
-			return nil, fmt.Errorf("failed to check asset set permission: %w", permErr)
+	if h.assetHandler == nil || h.assetRepo == nil {
+		return nil, fmt.Errorf("create_asset blocked: asset permission or repository service not configured")
+	}
+	hasPerm, permErr := h.assetHandler.HasAssetSetPermission(event.ActorUserID, config.AssetSetID, services.AssetPermissionKeyCreate)
+	if permErr != nil {
+		return nil, fmt.Errorf("failed to check asset set permission: %w", permErr)
+	}
+	if !hasPerm {
+		return nil, fmt.Errorf("user %d not authorized to create assets in set %d", event.ActorUserID, config.AssetSetID)
+	}
+	belongs, err := h.assetRepo.AssetTypeBelongsToSet(config.AssetTypeID, config.AssetSetID)
+	if err != nil {
+		return nil, fmt.Errorf("validate asset type: %w", err)
+	}
+	if !belongs {
+		return nil, fmt.Errorf("asset type %d does not belong to set %d", config.AssetTypeID, config.AssetSetID)
+	}
+	if config.CategoryID != nil {
+		belongs, err = h.assetRepo.CategoryBelongsToSet(*config.CategoryID, config.AssetSetID)
+		if err != nil {
+			return nil, fmt.Errorf("validate asset category: %w", err)
 		}
-		if !hasPerm {
-			return nil, fmt.Errorf("user %d not authorized to create assets in set %d", event.ActorUserID, config.AssetSetID)
+		if !belongs {
+			return nil, fmt.Errorf("asset category %d does not belong to set %d", *config.CategoryID, config.AssetSetID)
+		}
+	}
+	if config.StatusID != nil {
+		belongs, err = h.assetRepo.StatusBelongsToSet(*config.StatusID, config.AssetSetID)
+		if err != nil {
+			return nil, fmt.Errorf("validate asset status: %w", err)
+		}
+		if !belongs {
+			return nil, fmt.Errorf("asset status %d does not belong to set %d", *config.StatusID, config.AssetSetID)
 		}
 	}
 

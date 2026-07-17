@@ -154,7 +154,10 @@ func loadFieldsForCFV(db database.Database, cfv map[string]interface{}) (map[str
 		placeholders += "?"
 	}
 
-	query := "SELECT id, field_type, options FROM custom_field_definitions WHERE id IN (" + placeholders + ")"
+	// options is nullable for every non-choice field. Scan a stable empty value
+	// so validating ordinary text/textarea fields does not fail before their
+	// type-specific sanitizer runs.
+	query := "SELECT id, field_type, COALESCE(options, '') FROM custom_field_definitions WHERE id IN (" + placeholders + ")"
 	rows, err := db.Query(query, ids...)
 	if err != nil {
 		return nil, err

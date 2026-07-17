@@ -107,6 +107,330 @@ var Catalog = []Migration{
 		`,
 	},
 	{
+		Version:       "20260716_email_credential_leases",
+		Name:          "Serialize email OAuth credential mutations across servers",
+		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='email_credential_leases'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='email_credential_leases'",
+		SQLite: `
+			CREATE TABLE email_credential_leases (
+				channel_id INTEGER PRIMARY KEY,
+				owner_token TEXT NOT NULL,
+				expires_at DATETIME NOT NULL,
+				FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE
+			);
+			CREATE INDEX idx_email_credential_leases_expires_at
+				ON email_credential_leases(expires_at);
+		`,
+		Postgres: `
+			CREATE TABLE email_credential_leases (
+				channel_id INTEGER PRIMARY KEY,
+				owner_token TEXT NOT NULL,
+				expires_at TIMESTAMPTZ NOT NULL,
+				FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE
+			);
+			CREATE INDEX idx_email_credential_leases_expires_at
+				ON email_credential_leases(expires_at);
+		`,
+	},
+	{
+		Version:       "20260716_email_processing_leases",
+		Name:          "Serialize inbound email polling across servers",
+		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='email_processing_leases'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='email_processing_leases'",
+		SQLite: `
+			CREATE TABLE email_processing_leases (
+				channel_id INTEGER PRIMARY KEY,
+				owner_token TEXT NOT NULL,
+				expires_at DATETIME NOT NULL,
+				FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE
+			);
+			CREATE INDEX idx_email_processing_leases_expires_at
+				ON email_processing_leases(expires_at);
+		`,
+		Postgres: `
+			CREATE TABLE email_processing_leases (
+				channel_id INTEGER PRIMARY KEY,
+				owner_token TEXT NOT NULL,
+				expires_at TIMESTAMPTZ NOT NULL,
+				FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE
+			);
+			CREATE INDEX idx_email_processing_leases_expires_at
+				ON email_processing_leases(expires_at);
+		`,
+	},
+	{
+		Version:       "20260716_email_reply_outbox",
+		Name:          "Add durable outbox for threaded customer replies",
+		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='email_reply_outbox'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='email_reply_outbox'",
+		SQLite: `
+			CREATE TABLE IF NOT EXISTS email_reply_outbox (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				comment_id INTEGER NOT NULL UNIQUE,
+				channel_id INTEGER NOT NULL,
+				item_id INTEGER NOT NULL,
+				to_email TEXT NOT NULL,
+				to_name TEXT NOT NULL DEFAULT '',
+				subject TEXT NOT NULL,
+				html_body TEXT NOT NULL,
+				text_body TEXT NOT NULL,
+				message_id TEXT NOT NULL,
+				in_reply_to TEXT NOT NULL DEFAULT '',
+				references_json TEXT NOT NULL DEFAULT '[]',
+				from_email TEXT NOT NULL,
+				from_name TEXT NOT NULL DEFAULT '',
+				attempt_count INTEGER NOT NULL DEFAULT 0,
+				next_attempt_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				last_error TEXT,
+				delivered_at DATETIME,
+				created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (comment_id) REFERENCES comments(id) ON DELETE CASCADE,
+				FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+				FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
+			);
+			CREATE INDEX IF NOT EXISTS idx_email_reply_outbox_pending
+				ON email_reply_outbox(delivered_at, next_attempt_at);
+		`,
+		Postgres: `
+			CREATE TABLE IF NOT EXISTS email_reply_outbox (
+				id SERIAL PRIMARY KEY,
+				comment_id INTEGER NOT NULL UNIQUE,
+				channel_id INTEGER NOT NULL,
+				item_id INTEGER NOT NULL,
+				to_email TEXT NOT NULL,
+				to_name TEXT NOT NULL DEFAULT '',
+				subject TEXT NOT NULL,
+				html_body TEXT NOT NULL,
+				text_body TEXT NOT NULL,
+				message_id TEXT NOT NULL,
+				in_reply_to TEXT NOT NULL DEFAULT '',
+				references_json TEXT NOT NULL DEFAULT '[]',
+				from_email TEXT NOT NULL,
+				from_name TEXT NOT NULL DEFAULT '',
+				attempt_count INTEGER NOT NULL DEFAULT 0,
+				next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				last_error TEXT,
+				delivered_at TIMESTAMPTZ,
+				created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (comment_id) REFERENCES comments(id) ON DELETE CASCADE,
+				FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+				FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
+			);
+			CREATE INDEX IF NOT EXISTS idx_email_reply_outbox_pending
+				ON email_reply_outbox(delivered_at, next_attempt_at);
+		`,
+	},
+	{
+		Version: "20260716_channels_metadata_nonnull",
+		Name:    "Backfill and require channel description and default metadata",
+		CheckSQLite: `SELECT CASE WHEN
+			COALESCE((SELECT [notnull] FROM pragma_table_info('channels') WHERE name='description'), 0) = 1
+			AND COALESCE((SELECT [notnull] FROM pragma_table_info('channels') WHERE name='is_default'), 0) = 1
+			THEN 1 ELSE 0 END`,
+		CheckPostgres: `SELECT CASE WHEN COUNT(*) = 2 THEN 1 ELSE 0 END FROM information_schema.columns
+			WHERE table_schema=current_schema() AND table_name='channels'
+			  AND column_name IN ('description', 'is_default') AND is_nullable='NO'`,
+		// Existing SQLite tables cannot gain NOT NULL constraints in place.
+		// Normalize legacy rows and guard future writes; fresh schemas carry the
+		// actual constraints and skip this body via CheckSQLite.
+		SQLite: `
+			UPDATE channels SET description = '' WHERE description IS NULL;
+			UPDATE channels SET is_default = false WHERE is_default IS NULL;
+			CREATE TRIGGER IF NOT EXISTS trg_channels_metadata_nonnull_insert
+			AFTER INSERT ON channels WHEN NEW.description IS NULL OR NEW.is_default IS NULL
+			BEGIN
+				UPDATE channels
+				SET description = COALESCE(NEW.description, ''),
+				    is_default = COALESCE(NEW.is_default, false)
+				WHERE id = NEW.id;
+			END;
+			CREATE TRIGGER IF NOT EXISTS trg_channels_metadata_nonnull_update
+			AFTER UPDATE OF description, is_default ON channels
+			WHEN NEW.description IS NULL OR NEW.is_default IS NULL
+			BEGIN
+				UPDATE channels
+				SET description = COALESCE(NEW.description, ''),
+				    is_default = COALESCE(NEW.is_default, false)
+				WHERE id = NEW.id;
+			END;
+		`,
+		Postgres: `
+			UPDATE channels SET description = '' WHERE description IS NULL;
+			UPDATE channels SET is_default = false WHERE is_default IS NULL;
+			ALTER TABLE channels ALTER COLUMN description SET DEFAULT '';
+			ALTER TABLE channels ALTER COLUMN description SET NOT NULL;
+			ALTER TABLE channels ALTER COLUMN is_default SET DEFAULT false;
+			ALTER TABLE channels ALTER COLUMN is_default SET NOT NULL;
+		`,
+	},
+	{
+		Version: "20260716_channels_config_nonnull",
+		Name:    "Backfill and require channel configuration JSON",
+		CheckSQLite: `SELECT COUNT(*) FROM pragma_table_info('channels')
+			WHERE name='config' AND [notnull] = 1`,
+		CheckPostgres: `SELECT COUNT(*) FROM information_schema.columns
+			WHERE table_schema=current_schema() AND table_name='channels'
+			  AND column_name='config' AND is_nullable='NO'`,
+		// SQLite cannot add a NOT NULL constraint without rebuilding the parent
+		// table (which is unsafe here because many tables reference channels).
+		// Backfill existing rows and normalize any future legacy-schema NULL
+		// writes with triggers; fresh databases get the real constraint above.
+		SQLite: `
+			UPDATE channels SET config = '{}' WHERE config IS NULL;
+			CREATE TRIGGER IF NOT EXISTS trg_channels_config_nonnull_insert
+			AFTER INSERT ON channels WHEN NEW.config IS NULL
+			BEGIN
+				UPDATE channels SET config = '{}' WHERE id = NEW.id;
+			END;
+			CREATE TRIGGER IF NOT EXISTS trg_channels_config_nonnull_update
+			AFTER UPDATE OF config ON channels WHEN NEW.config IS NULL
+			BEGIN
+				UPDATE channels SET config = '{}' WHERE id = NEW.id;
+			END;
+		`,
+		Postgres: `
+			UPDATE channels SET config = '{}' WHERE config IS NULL;
+			ALTER TABLE channels ALTER COLUMN config SET DEFAULT '{}';
+			ALTER TABLE channels ALTER COLUMN config SET NOT NULL;
+		`,
+	},
+	{
+		Version:       "20260716_unique_default_channels",
+		Name:          "Enforce one default channel per type and direction",
+		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='uq_channels_default_route'",
+		CheckPostgres: "SELECT COUNT(*) FROM pg_indexes WHERE schemaname=current_schema() AND indexname='uq_channels_default_route'",
+		SQLite: `
+			UPDATE channels SET is_default = false
+			WHERE is_default = true AND id NOT IN (
+				SELECT MAX(id) FROM channels WHERE is_default = true GROUP BY type, direction
+			);
+			CREATE UNIQUE INDEX uq_channels_default_route ON channels(type, direction) WHERE is_default = true;
+		`,
+		Postgres: `
+			UPDATE channels SET is_default = false
+			WHERE is_default = true AND id NOT IN (
+				SELECT MAX(id) FROM channels WHERE is_default = true GROUP BY type, direction
+			);
+			CREATE UNIQUE INDEX uq_channels_default_route ON channels(type, direction) WHERE is_default = true;
+		`,
+	},
+	{
+		Version:       "20260716_channel_public_slugs",
+		Name:          "Enforce race-safe uniqueness for public channel slugs",
+		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('channels') WHERE name='public_slug'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='channels' AND column_name='public_slug'",
+		SQLite: `
+			ALTER TABLE channels ADD COLUMN public_slug TEXT;
+			WITH extracted AS (
+				SELECT id, type, status,
+					CASE WHEN json_valid(config) THEN
+						CASE
+							WHEN type = 'portal' AND json_type(config, '$.portal_slug') = 'text'
+								THEN NULLIF(json_extract(config, '$.portal_slug'), '')
+							WHEN type = 'form' AND json_type(config, '$.form_slug') = 'text'
+								THEN NULLIF(json_extract(config, '$.form_slug'), '')
+						END
+					END AS slug
+				FROM channels
+				WHERE direction = 'inbound' AND type IN ('portal', 'form')
+			), winners AS (
+				SELECT COALESCE(MAX(CASE WHEN status = 'enabled' THEN id END), MAX(id)) AS id, type, slug
+				FROM extracted
+				WHERE slug IS NOT NULL
+				GROUP BY type, slug
+			)
+			UPDATE channels
+			SET public_slug = (SELECT slug FROM winners WHERE winners.id = channels.id)
+			WHERE id IN (SELECT id FROM winners);
+			CREATE UNIQUE INDEX uq_channels_public_slug
+				ON channels(type, public_slug)
+				WHERE direction = 'inbound' AND public_slug IS NOT NULL;
+		`,
+		Postgres: `
+			ALTER TABLE channels ADD COLUMN public_slug TEXT;
+			WITH extracted AS (
+				SELECT id, type, status,
+					CASE type
+						WHEN 'portal' THEN substring(config FROM '"portal_slug"[[:space:]]*:[[:space:]]*"([a-z0-9-]{3,64})"')
+						WHEN 'form' THEN substring(config FROM '"form_slug"[[:space:]]*:[[:space:]]*"([a-z0-9-]{3,64})"')
+					END AS slug
+				FROM channels
+				WHERE direction = 'inbound' AND type IN ('portal', 'form')
+			), winners AS (
+				SELECT COALESCE(MAX(CASE WHEN status = 'enabled' THEN id END), MAX(id)) AS id, type, slug
+				FROM extracted
+				WHERE slug IS NOT NULL
+				GROUP BY type, slug
+			)
+			UPDATE channels c
+			SET public_slug = winners.slug
+			FROM winners
+			WHERE winners.id = c.id;
+			CREATE UNIQUE INDEX uq_channels_public_slug
+				ON channels(type, public_slug)
+				WHERE direction = 'inbound' AND public_slug IS NOT NULL;
+		`,
+	},
+	{
+		Version: "20260716_email_oauth_state_nullable_provider",
+		Name:    "Allow inline channel OAuth state without an email provider row",
+		CheckSQLite: `SELECT COUNT(*) FROM pragma_table_info('email_oauth_state')
+			WHERE name='provider_id' AND [notnull] = 0`,
+		CheckPostgres: `SELECT COUNT(*) FROM information_schema.columns
+			WHERE table_schema=current_schema() AND table_name='email_oauth_state'
+			  AND column_name='provider_id' AND is_nullable='YES'`,
+		SQLite: `
+			CREATE TABLE email_oauth_state_new (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				provider_id INTEGER,
+				channel_id INTEGER,
+				state TEXT UNIQUE NOT NULL,
+				user_id INTEGER NOT NULL,
+				expires_at DATETIME NOT NULL,
+				created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (provider_id) REFERENCES email_providers(id) ON DELETE CASCADE,
+				FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+				FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+			);
+			INSERT INTO email_oauth_state_new
+				(id, provider_id, channel_id, state, user_id, expires_at, created_at)
+			SELECT id, NULLIF(provider_id, 0), channel_id, state, user_id, expires_at, created_at
+			FROM email_oauth_state;
+			DROP TABLE email_oauth_state;
+			ALTER TABLE email_oauth_state_new RENAME TO email_oauth_state;
+			CREATE INDEX IF NOT EXISTS idx_email_oauth_state_state ON email_oauth_state(state);
+			CREATE INDEX IF NOT EXISTS idx_email_oauth_state_provider_id ON email_oauth_state(provider_id);
+			CREATE INDEX IF NOT EXISTS idx_email_oauth_state_expires_at ON email_oauth_state(expires_at);
+		`,
+		Postgres: `ALTER TABLE email_oauth_state ALTER COLUMN provider_id DROP NOT NULL`,
+	},
+	{
+		Version:       "20260716_email_oauth_restore_channel_status",
+		Name:          "Remember enabled channel status across email OAuth",
+		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('email_oauth_state') WHERE name='restore_channel_enabled'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='email_oauth_state' AND column_name='restore_channel_enabled'",
+		SQLite:        "ALTER TABLE email_oauth_state ADD COLUMN restore_channel_enabled BOOLEAN NOT NULL DEFAULT false",
+		Postgres:      "ALTER TABLE email_oauth_state ADD COLUMN restore_channel_enabled BOOLEAN NOT NULL DEFAULT false",
+	},
+	{
+		Version:       "20260716_email_channel_message_failures",
+		Name:          "Track poison email retries independently from channel health",
+		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('email_channel_state') WHERE name='failed_message_count'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='email_channel_state' AND column_name='failed_message_count'",
+		SQLite: `
+			ALTER TABLE email_channel_state ADD COLUMN failed_message_uid INTEGER NOT NULL DEFAULT 0;
+			ALTER TABLE email_channel_state ADD COLUMN failed_message_uid_validity INTEGER NOT NULL DEFAULT 0;
+			ALTER TABLE email_channel_state ADD COLUMN failed_message_count INTEGER NOT NULL DEFAULT 0;
+		`,
+		Postgres: `
+			ALTER TABLE email_channel_state ADD COLUMN IF NOT EXISTS failed_message_uid INTEGER NOT NULL DEFAULT 0;
+			ALTER TABLE email_channel_state ADD COLUMN IF NOT EXISTS failed_message_uid_validity BIGINT NOT NULL DEFAULT 0;
+			ALTER TABLE email_channel_state ADD COLUMN IF NOT EXISTS failed_message_count INTEGER NOT NULL DEFAULT 0;
+		`,
+	},
+	{
 		Version:       "20260618_push_subscriptions",
 		Name:          "Create Web Push subscriptions table",
 		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='push_subscriptions'",

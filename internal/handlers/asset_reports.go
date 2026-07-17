@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -68,6 +69,21 @@ func sanitizeAssetReportFields(w http.ResponseWriter, r *http.Request, fields []
 		}
 	}
 	return true
+}
+
+func assetReportFieldSchemas(fields []models.AssetReportField) []publicFormFieldSchema {
+	schemas := make([]publicFormFieldSchema, 0, len(fields))
+	for _, field := range fields {
+		schemas = append(schemas, publicFormFieldSchema{
+			Identifier:          field.FieldIdentifier,
+			FieldType:           field.FieldType,
+			DisplayOrder:        field.DisplayOrder,
+			StepNumber:          field.StepNumber,
+			VirtualFieldType:    field.VirtualFieldType,
+			VirtualFieldOptions: field.VirtualFieldOptions,
+		})
+	}
+	return schemas
 }
 
 type AssetReportHandler struct {
@@ -186,6 +202,104 @@ func (h *AssetReportHandler) requireAssetSetView(w http.ResponseWriter, r *http.
 	return true
 }
 
+func (h *AssetReportHandler) requirePortalOwner(w http.ResponseWriter, r *http.Request, channelID int) bool {
+	channel, err := h.channelRepo.FindByID(r.Context(), channelID)
+	if errors.Is(err, repository.ErrNotFound) {
+		respondValidationError(w, r, "Channel not found")
+		return false
+	}
+	if err != nil {
+		respondInternalError(w, r, err)
+		return false
+	}
+	if !channelSupportsAssetReports(channel) {
+		respondValidationError(w, r, "Asset reports require an inbound portal channel")
+		return false
+	}
+	return true
+}
+
+func (h *AssetReportHandler) availableFieldsForAssetReport(ar *models.AssetReport) ([]AvailableField, error) {
+	if ar.ItemTypeID == nil {
+		return availableCreateFields(h.screenRepo, ar.WorkspaceID, 0)
+	}
+	return availableCreateFields(h.screenRepo, ar.WorkspaceID, *ar.ItemTypeID)
+}
+
+// validateAssetReportFormBinding applies the same workspace and item-type
+// authorization as request-type routing. A nil workspace is supported for
+// forms that use only default/virtual fields; binding custom fields requires a
+// portal-served workspace the manager can administer.
+func (h *AssetReportHandler) validateAssetReportFormBinding(w http.ResponseWriter, r *http.Request, userID int, ar *models.AssetReport) bool {
+	switch ar.RunMode {
+	case "direct":
+		// Direct reports do not have a form binding. Clear caller-supplied stale
+		// values so the available-fields endpoint cannot later expose them.
+		ar.ItemTypeID = nil
+		ar.WorkspaceID = nil
+		return true
+	case "form":
+	default:
+		respondValidationError(w, r, "Invalid run_mode")
+		return false
+	}
+
+	if ar.ItemTypeID == nil || *ar.ItemTypeID <= 0 {
+		respondValidationError(w, r, "Item type ID is required for form-mode asset reports")
+		return false
+	}
+	if ar.WorkspaceID == nil {
+		exists, err := h.repo.ItemTypeExists(*ar.ItemTypeID)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return false
+		}
+		if !exists {
+			respondValidationError(w, r, "Item type not found")
+			return false
+		}
+		return true
+	}
+	if *ar.WorkspaceID <= 0 {
+		respondValidationError(w, r, "Workspace ID is invalid")
+		return false
+	}
+
+	configJSON, err := h.channelRepo.GetConfig(r.Context(), ar.ChannelID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return false
+	}
+	var config models.ChannelConfig
+	if err := json.Unmarshal([]byte(configJSON), &config); err != nil {
+		respondInternalError(w, r, fmt.Errorf("parse channel %d config: %w", ar.ChannelID, err))
+		return false
+	}
+	if !containsID(config.PortalWorkspaceIDs, *ar.WorkspaceID) {
+		respondValidationError(w, r, "Workspace is not served by this portal channel")
+		return false
+	}
+	canConnect, err := h.channelService.UserCanConnectWorkspace(userID, *ar.WorkspaceID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return false
+	}
+	if !canConnect {
+		respondForbidden(w, r)
+		return false
+	}
+	allowed, err := h.channelService.ItemTypeAllowedInWorkspace(*ar.WorkspaceID, *ar.ItemTypeID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return false
+	}
+	if !allowed {
+		respondValidationError(w, r, "Item type is not allowed in the selected workspace")
+		return false
+	}
+	return true
+}
+
 // Create creates a new asset report
 func (h *AssetReportHandler) Create(w http.ResponseWriter, r *http.Request) {
 	user, ok := RequireAuth(w, r)
@@ -198,7 +312,7 @@ func (h *AssetReportHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ar, ok := decodeJSON[models.AssetReport](w, r)
+	ar, ok := decodeChannelJSON[models.AssetReport](w, r)
 	if !ok {
 		return
 	}
@@ -221,9 +335,7 @@ func (h *AssetReportHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	channelExists, err := h.repo.ChannelExists(ar.ChannelID)
-	if err != nil || !channelExists {
-		respondBadRequest(w, r, "Channel not found")
+	if !h.requirePortalOwner(w, r, ar.ChannelID) {
 		return
 	}
 	assetSetExists, err := h.repo.AssetSetExists(ar.AssetSetID)
@@ -246,6 +358,9 @@ func (h *AssetReportHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	if ar.RunMode != "direct" && ar.RunMode != "form" {
 		respondValidationError(w, r, "Invalid run_mode")
+		return
+	}
+	if !h.validateAssetReportFormBinding(w, r, user.ID, &ar) {
 		return
 	}
 	// Reports default to active on create — JSON's false zero-value collides
@@ -308,8 +423,8 @@ func (h *AssetReportHandler) Create(w http.ResponseWriter, r *http.Request) {
 // Update updates an existing asset report. Route is
 // PUT /channels/{channel_id}/asset-reports/{id}; channelMgmt middleware gates
 // access and the SQL UPDATE is constrained by channel_id. Body-supplied
-// channel_id and workspace_id are ignored — channel_id comes from the URL,
-// and workspace_id is not mutable via this endpoint.
+// channel_id is ignored; workspace/item-type changes are authorized below and
+// atomically clear fields from the previous create-screen binding.
 func (h *AssetReportHandler) Update(w http.ResponseWriter, r *http.Request) {
 	user, ok := RequireAuth(w, r)
 	if !ok {
@@ -334,8 +449,11 @@ func (h *AssetReportHandler) Update(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
+	if !h.requirePortalOwner(w, r, channelID) {
+		return
+	}
 
-	ar, ok := decodeJSON[models.AssetReport](w, r)
+	ar, ok := decodeChannelJSON[models.AssetReport](w, r)
 	if !ok {
 		return
 	}
@@ -380,6 +498,10 @@ func (h *AssetReportHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if ar.RunMode != "direct" && ar.RunMode != "form" {
 		respondValidationError(w, r, "Invalid run_mode")
+		return
+	}
+	ar.ChannelID = channelID
+	if !h.validateAssetReportFormBinding(w, r, user.ID, &ar) {
 		return
 	}
 
@@ -450,26 +572,6 @@ func (h *AssetReportHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Best-effort portal-section cleanup before deleting the row itself —
-	// strip this asset_report's id from every PortalSection.AssetReportIDs
-	// list. The actual load/save dance lives in ChannelRepository.
-	h.channelRepo.UpdatePortalSections(channelID, func(cfg *models.ChannelConfig) bool {
-		modified := false
-		for i := range cfg.PortalSections {
-			ids := cfg.PortalSections[i].AssetReportIDs
-			newIDs := make([]int, 0, len(ids))
-			for _, v := range ids {
-				if v == id {
-					modified = true
-					continue
-				}
-				newIDs = append(newIDs, v)
-			}
-			cfg.PortalSections[i].AssetReportIDs = newIDs
-		}
-		return modified
-	})
-
 	if err := h.repo.Delete(id, channelID); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			respondNotFound(w, r, "asset_report")
@@ -507,8 +609,7 @@ func (h *AssetReportHandler) UpdateVisibility(w http.ResponseWriter, r *http.Req
 	}
 
 	var req visibilityInput
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondBadRequest(w, r, "Invalid request body")
+	if !decodeChannelRequest(w, r, &req, false) {
 		return
 	}
 
@@ -548,44 +649,51 @@ func (h *AssetReportHandler) UpdateVisibility(w http.ResponseWriter, r *http.Req
 // missing and when the user can't manage the channel (no existence leak).
 // Returns the report and true on success; writes the response and returns
 // false otherwise.
-func (h *AssetReportHandler) requireManagedAssetReport(w http.ResponseWriter, r *http.Request) (*models.AssetReport, bool) {
+func (h *AssetReportHandler) requireManagedAssetReport(w http.ResponseWriter, r *http.Request) (*models.AssetReport, *models.User, bool) {
 	id, ok := requireIDParam(w, r, "id")
 	if !ok {
-		return nil, false
+		return nil, nil, false
 	}
 
 	user, ok := RequireAuth(w, r)
 	if !ok {
-		return nil, false
+		return nil, nil, false
 	}
 
 	ar, err := h.repo.GetByID(id)
 	if errors.Is(err, repository.ErrNotFound) {
 		respondNotFound(w, r, "asset_report")
-		return nil, false
+		return nil, nil, false
 	}
 	if err != nil {
 		respondInternalError(w, r, err)
-		return nil, false
+		return nil, nil, false
 	}
 
 	canManage, err := h.channelService.UserCanManage(r.Context(), user.ID, ar.ChannelID)
 	if err != nil {
 		respondInternalError(w, r, err)
-		return nil, false
+		return nil, nil, false
 	}
 	if !canManage {
 		respondNotFound(w, r, "asset_report")
-		return nil, false
+		return nil, nil, false
 	}
 
-	return ar, true
+	return ar, user, true
 }
 
 // GetFields returns all fields for a form-mode asset report.
 func (h *AssetReportHandler) GetFields(w http.ResponseWriter, r *http.Request) {
-	ar, ok := h.requireManagedAssetReport(w, r)
+	ar, user, ok := h.requireManagedAssetReport(w, r)
 	if !ok {
+		return
+	}
+	if ar.RunMode != "form" {
+		respondJSONOK(w, []models.AssetReportField{})
+		return
+	}
+	if !h.validateAssetReportFormBinding(w, r, user.ID, ar) {
 		return
 	}
 	assetReportID := ar.ID
@@ -602,6 +710,10 @@ func (h *AssetReportHandler) GetFields(w http.ResponseWriter, r *http.Request) {
 // PUT /channels/{channel_id}/asset-reports/{id}/fields; channelMgmt-gated and
 // scoped to asset reports that belong to the URL-supplied channel.
 func (h *AssetReportHandler) UpdateFields(w http.ResponseWriter, r *http.Request) {
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
 	channelID, ok := requireIDParam(w, r, "channel_id")
 	if !ok {
 		return
@@ -611,20 +723,37 @@ func (h *AssetReportHandler) UpdateFields(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if _, err := h.repo.GetNameForChannel(assetReportID, channelID); err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			respondNotFound(w, r, "asset_report")
-			return
-		}
+	ar, err := h.repo.GetByID(assetReportID)
+	if errors.Is(err, repository.ErrNotFound) || (err == nil && ar.ChannelID != channelID) {
+		respondNotFound(w, r, "asset_report")
+		return
+	}
+	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
+	if ar.RunMode != "form" {
+		respondValidationError(w, r, "Fields can only be configured for form-mode asset reports")
+		return
+	}
+	if !h.validateAssetReportFormBinding(w, r, user.ID, ar) {
+		return
+	}
 
-	fields, ok := decodeJSON[[]models.AssetReportField](w, r)
+	fields, ok := decodeChannelJSON[[]models.AssetReportField](w, r)
 	if !ok {
 		return
 	}
 	if !sanitizeAssetReportFields(w, r, fields) {
+		return
+	}
+	available, err := h.availableFieldsForAssetReport(ar)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	if err := validatePublicFormFieldSchema(assetReportFieldSchemas(fields), available); err != nil {
+		respondValidationError(w, r, err.Error())
 		return
 	}
 
@@ -647,57 +776,22 @@ func (h *AssetReportHandler) UpdateFields(w http.ResponseWriter, r *http.Request
 
 // GetAvailableFields returns fields available to bind on a form-mode asset report.
 func (h *AssetReportHandler) GetAvailableFields(w http.ResponseWriter, r *http.Request) {
-	ar, ok := h.requireManagedAssetReport(w, r)
+	ar, user, ok := h.requireManagedAssetReport(w, r)
 	if !ok {
 		return
 	}
-	assetReportID := ar.ID
-
-	itemTypeID, workspaceID, err := h.repo.GetItemTypeAndWorkspace(assetReportID)
-	if errors.Is(err, repository.ErrNotFound) {
-		respondNotFound(w, r, "asset_report")
+	if ar.RunMode != "form" {
+		respondJSONOK(w, []AvailableField{})
 		return
 	}
+	if !h.validateAssetReportFormBinding(w, r, user.ID, ar) {
+		return
+	}
+
+	fields, err := h.availableFieldsForAssetReport(ar)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
-	}
-
-	fields := []AvailableField{
-		{Identifier: "title", Name: "Title", Type: "default"},
-		{Identifier: "description", Name: "Description", Type: "default"},
-	}
-
-	if workspaceID == nil || itemTypeID == nil {
-		respondJSONOK(w, fields)
-		return
-	}
-
-	createScreenID, err := h.screenRepo.GetCreateScreenID(*workspaceID, *itemTypeID)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	if createScreenID == nil {
-		respondJSONOK(w, fields)
-		return
-	}
-
-	screenFields, err := h.screenRepo.ListFields(*createScreenID)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	for _, sf := range screenFields {
-		if sf.FieldType != "custom" {
-			continue
-		}
-		fields = append(fields, AvailableField{
-			Identifier: sf.FieldIdentifier,
-			Name:       sf.FieldName,
-			Type:       "custom",
-			FieldType:  sf.CustomFieldType,
-		})
 	}
 
 	respondJSONOK(w, fields)

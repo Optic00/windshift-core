@@ -259,6 +259,10 @@ func (h *ActionsHandler) CreateAction(w http.ResponseWriter, r *http.Request) {
 		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
 		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
 	)
+	if req.Nodes == nil && req.Edges != nil {
+		respondValidationError(w, r, "nodes must be provided when action edges are present")
+		return
+	}
 
 	// Unified validator covers required fields, trigger/node config schemas,
 	// edge sanity, graph cycles, iterator-body containment, and capability
@@ -385,6 +389,10 @@ func (h *ActionsHandler) UpdateAction(w http.ResponseWriter, r *http.Request) {
 		sanitize.Pair{Target: req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
 		sanitize.Pair{Target: req.Description, Policy: sanitize.RichText, Label: "Description"},
 	)
+	if req.Nodes == nil && req.Edges != nil {
+		respondValidationError(w, r, "nodes must be provided when replacing action edges")
+		return
+	}
 
 	currentUser := utils.GetCurrentUser(r)
 
@@ -412,22 +420,33 @@ func (h *ActionsHandler) UpdateAction(w http.ResponseWriter, r *http.Request) {
 
 	applyActionUpdateFields(action, &req)
 
-	// If nodes and edges are provided, update them atomically. Run the
-	// unified validator against the post-merge effective state so a partial
-	// update can't violate the catalog invariants (schema shape, cycle
-	// freedom, iterator-body containment, capability scope).
-	if req.Nodes != nil {
+	// Run the unified validator against the post-merge effective definition
+	// whenever any definition field changes. Previously metadata-only patches
+	// could persist an empty name, unknown trigger, or invalid trigger config
+	// because validation happened only when nodes were also supplied.
+	definitionTouched := req.Name != nil || req.TriggerType != nil || req.TriggerConfig != nil || req.Nodes != nil || (req.IsEnabled != nil && *req.IsEnabled)
+	if definitionTouched {
+		nodes := action.Nodes
+		edges := action.Edges
+		if req.Nodes != nil {
+			nodes = req.Nodes
+			edges = req.Edges
+		}
 		def := actioncatalog.ActionDefinition{
 			Name:          action.Name,
 			Description:   action.Description,
 			TriggerType:   action.TriggerType,
 			TriggerConfig: action.TriggerConfig,
-			Nodes:         req.Nodes,
-			Edges:         req.Edges,
+			Nodes:         nodes,
+			Edges:         edges,
 		}
 		if !h.validateActionDefinition(w, r, workspaceID, def) {
 			return
 		}
+	}
+
+	// If nodes and edges are provided, update them atomically.
+	if req.Nodes != nil {
 		err = h.repo.SaveActionWithNodesAndEdges(action, req.Nodes, req.Edges)
 		if err != nil {
 			respondInternalError(w, r, fmt.Errorf("failed to save action: %w", err))
@@ -738,10 +757,21 @@ func (h *ActionsHandler) validateCapabilityConfig(w http.ResponseWriter, r *http
 				return false
 			}
 		}
+		seenHeaders := make(map[string]string, len(config.DefaultHeaders))
 		// default_headers must hold non-sensitive literals only. Auth tokens
 		// live in the credential store; an inline Authorization header here
 		// would be readable by anyone who can list workspace capabilities.
 		for header := range config.DefaultHeaders {
+			if !models.IsValidHTTPHeaderName(header) {
+				respondValidationError(w, r, fmt.Sprintf("Invalid HTTP header name %q in default_headers", header))
+				return false
+			}
+			normalized := strings.ToLower(strings.TrimSpace(header))
+			if previous, exists := seenHeaders[normalized]; exists {
+				respondValidationError(w, r, fmt.Sprintf("Headers %q and %q differ only by case or surrounding whitespace", previous, header))
+				return false
+			}
+			seenHeaders[normalized] = header
 			if models.IsSensitiveHeaderName(header) {
 				respondValidationError(w, r, fmt.Sprintf("Header %q is sensitive — use auth/secret_header_refs to reference a credential instead of placing it in default_headers", header))
 				return false
@@ -816,6 +846,7 @@ func (h *ActionsHandler) validateHTTPAuthRefs(w http.ResponseWriter, r *http.Req
 		return false
 	}
 
+	seenSecretHeaders := make(map[string]string, len(config.SecretHeaderRefs)+1)
 	if config.Auth != nil {
 		if config.Auth.CredentialID <= 0 {
 			respondValidationError(w, r, "auth.credential_id is required when auth is set")
@@ -825,12 +856,22 @@ func (h *ActionsHandler) validateHTTPAuthRefs(w http.ResponseWriter, r *http.Req
 			respondValidationError(w, r, "auth.header_name is required when auth is set")
 			return false
 		}
+		if !models.IsValidHTTPHeaderName(config.Auth.HeaderName) {
+			respondValidationError(w, r, fmt.Sprintf("Invalid auth.header_name %q", config.Auth.HeaderName))
+			return false
+		}
 		if !models.IsSensitiveHeaderName(config.Auth.HeaderName) {
 			respondValidationError(w, r, fmt.Sprintf("auth.header_name %q is not in the sensitive-header allowlist; rename it to a known auth header (e.g. Authorization, X-API-Key) or use default_headers for non-secret literals", config.Auth.HeaderName))
 			return false
 		}
+		normalized := strings.ToLower(strings.TrimSpace(config.Auth.HeaderName))
+		seenSecretHeaders[normalized] = config.Auth.HeaderName
 		if config.Auth.Placement != "" && config.Auth.Placement != "header" {
 			respondValidationError(w, r, fmt.Sprintf("auth.placement %q is not supported (use \"header\")", config.Auth.Placement))
+			return false
+		}
+		if !models.IsValidHTTPAuthScheme(config.Auth.Scheme) {
+			respondValidationError(w, r, "auth.scheme must be a single HTTP auth-scheme token without spaces")
 			return false
 		}
 		if !checkCredScope(config.Auth.CredentialID, "auth") {
@@ -842,10 +883,20 @@ func (h *ActionsHandler) validateHTTPAuthRefs(w http.ResponseWriter, r *http.Req
 			respondValidationError(w, r, "secret_header_refs contains an empty header name")
 			return false
 		}
+		if !models.IsValidHTTPHeaderName(headerName) {
+			respondValidationError(w, r, fmt.Sprintf("Invalid secret_header_refs header name %q", headerName))
+			return false
+		}
 		if !models.IsSensitiveHeaderName(headerName) {
 			respondValidationError(w, r, fmt.Sprintf("secret_header_refs header %q is not in the sensitive-header allowlist; use default_headers for non-secret literals", headerName))
 			return false
 		}
+		normalized := strings.ToLower(strings.TrimSpace(headerName))
+		if previous, exists := seenSecretHeaders[normalized]; exists {
+			respondValidationError(w, r, fmt.Sprintf("Secret headers %q and %q target the same HTTP header", previous, headerName))
+			return false
+		}
+		seenSecretHeaders[normalized] = headerName
 		if credentialID <= 0 {
 			respondValidationError(w, r, fmt.Sprintf("secret_header_refs[%q] must reference a credential id > 0", headerName))
 			return false
@@ -934,11 +985,19 @@ func (h *ActionsHandler) CreateCapability(w http.ResponseWriter, r *http.Request
 	if req.AppliesToAllWorkspaces != nil {
 		appliesAll = *req.AppliesToAllWorkspaces
 	}
-	if !appliesAll && len(req.WorkspaceIDs) == 0 {
+	workspaceIDs, err := normalizeCapabilityWorkspaceIDs(req.WorkspaceIDs)
+	if err != nil {
+		respondValidationError(w, r, err.Error())
+		return
+	}
+	if !appliesAll && len(workspaceIDs) == 0 {
 		respondValidationError(w, r, "At least one workspace is required when restricting capability scope")
 		return
 	}
-	if !h.validateCapabilityConfig(w, r, req.CapabilityType, req.Config, appliesAll, req.WorkspaceIDs) {
+	if appliesAll {
+		workspaceIDs = nil
+	}
+	if !h.validateCapabilityConfig(w, r, req.CapabilityType, req.Config, appliesAll, workspaceIDs) {
 		return
 	}
 
@@ -958,20 +1017,14 @@ func (h *ActionsHandler) CreateCapability(w http.ResponseWriter, r *http.Request
 		Config:                 req.Config,
 		IsEnabled:              isEnabled,
 		AppliesToAllWorkspaces: appliesAll,
+		WorkspaceIDs:           workspaceIDs,
 		CreatedBy:              &currentUser.ID,
 	}
 
-	id, err := h.repo.CreateCapability(capability)
+	id, err := h.repo.CreateCapabilityWithWorkspaces(capability, workspaceIDs)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
-	}
-
-	if !appliesAll {
-		if err := h.repo.SetCapabilityWorkspaces(id, req.WorkspaceIDs); err != nil {
-			respondInternalError(w, r, err)
-			return
-		}
 	}
 
 	created, err := h.repo.GetCapabilityByID(id)
@@ -998,6 +1051,10 @@ func (h *ActionsHandler) UpdateCapability(w http.ResponseWriter, r *http.Request
 	sanitize.Apply(req.Name, sanitize.PlainTextField)
 
 	if req.Name != nil {
+		if *req.Name == "" {
+			respondValidationError(w, r, "Name is required")
+			return
+		}
 		capability.Name = *req.Name
 	}
 	if req.IsEnabled != nil {
@@ -1012,7 +1069,12 @@ func (h *ActionsHandler) UpdateCapability(w http.ResponseWriter, r *http.Request
 	effectiveWorkspaceIDs := capability.WorkspaceIDs
 	if !capability.AppliesToAllWorkspaces {
 		if req.WorkspaceIDs != nil {
-			effectiveWorkspaceIDs = *req.WorkspaceIDs
+			var err error
+			effectiveWorkspaceIDs, err = normalizeCapabilityWorkspaceIDs(*req.WorkspaceIDs)
+			if err != nil {
+				respondValidationError(w, r, err.Error())
+				return
+			}
 		}
 		if len(effectiveWorkspaceIDs) == 0 {
 			respondValidationError(w, r, "At least one workspace is required when restricting capability scope")
@@ -1021,33 +1083,25 @@ func (h *ActionsHandler) UpdateCapability(w http.ResponseWriter, r *http.Request
 	} else {
 		effectiveWorkspaceIDs = nil
 	}
+	candidateConfig := capability.Config
 	if req.Config != nil {
-		if !h.validateCapabilityConfig(w, r, capability.CapabilityType, *req.Config, capability.AppliesToAllWorkspaces, effectiveWorkspaceIDs) {
+		candidateConfig = *req.Config
+	}
+	// Config references and workspace scope form one authorization invariant.
+	// Revalidate the existing config when only the scope changes; otherwise a
+	// workspace-only credential can be stranded behind a newly-global HTTP
+	// capability without the update endpoint noticing.
+	if req.Config != nil || req.AppliesToAllWorkspaces != nil || req.WorkspaceIDs != nil || (req.IsEnabled != nil && *req.IsEnabled) {
+		if !h.validateCapabilityConfig(w, r, capability.CapabilityType, candidateConfig, capability.AppliesToAllWorkspaces, effectiveWorkspaceIDs) {
 			return
 		}
-		capability.Config = *req.Config
 	}
+	capability.Config = candidateConfig
+	capability.WorkspaceIDs = effectiveWorkspaceIDs
 
-	if err := h.repo.UpdateCapability(capability); err != nil {
+	if err := h.repo.UpdateCapabilityWithWorkspaces(capability, effectiveWorkspaceIDs); err != nil {
 		respondInternalError(w, r, err)
 		return
-	}
-
-	// Persist scope changes. We rewrite the workspace allowlist when the caller
-	// either flipped to "specific workspaces" mode or supplied an explicit
-	// workspace_ids list. When the capability is now applies-to-all, clear the
-	// allowlist to keep the join table tidy and avoid stale entries silently
-	// re-applying if the bool flips back.
-	if capability.AppliesToAllWorkspaces {
-		if err := h.repo.SetCapabilityWorkspaces(capability.ID, nil); err != nil {
-			respondInternalError(w, r, err)
-			return
-		}
-	} else if req.WorkspaceIDs != nil {
-		if err := h.repo.SetCapabilityWorkspaces(capability.ID, *req.WorkspaceIDs); err != nil {
-			respondInternalError(w, r, err)
-			return
-		}
 	}
 
 	updated, err := h.repo.GetCapabilityByID(capability.ID)
@@ -1099,6 +1153,8 @@ func (h *ActionsHandler) ListWorkspaceCapabilities(w http.ResponseWriter, r *htt
 // sanitizeCapabilitiesForWorkspace strips potentially sensitive material from
 // http_client capability configs before exposing them via the workspace
 // listing endpoint. Specifically:
+//   - docker_environment env var names remain visible but every value is
+//     replaced so an admin-provisioned token cannot leak to action authors;
 //   - default_headers loses any key matching IsSensitiveHeaderName so a
 //     legacy inline Authorization token never reaches a workspace-admin view;
 //   - secret_header_refs maps every entry to a 1 sentinel so the workspace
@@ -1115,25 +1171,53 @@ func sanitizeCapabilitiesForWorkspace(caps []*models.ActionCapability) []*models
 	}
 	out := make([]*models.ActionCapability, 0, len(caps))
 	for _, c := range caps {
+		if c.CapabilityType == models.CapabilityDockerEnvironment {
+			var cfg models.DockerEnvironmentConfig
+			if err := json.Unmarshal([]byte(c.Config), &cfg); err != nil {
+				cp := *c
+				cp.Config = "{}"
+				out = append(out, &cp)
+				continue
+			}
+			for key := range cfg.EnvVars {
+				cfg.EnvVars[key] = "[REDACTED]"
+			}
+			newBytes, err := json.Marshal(cfg)
+			if err != nil {
+				cp := *c
+				cp.Config = "{}"
+				out = append(out, &cp)
+				continue
+			}
+			cp := *c
+			cp.Config = string(newBytes)
+			out = append(out, &cp)
+			continue
+		}
 		if c.CapabilityType != models.CapabilityHTTPClient {
 			out = append(out, c)
 			continue
 		}
 		var cfg models.HTTPClientConfig
 		if err := json.Unmarshal([]byte(c.Config), &cfg); err != nil {
-			// Malformed config — return as-is so the editor can show an
-			// actionable error. (Default headers in an unparsable blob can't
-			// be selectively stripped without parsing.)
-			out = append(out, c)
+			// Fail closed. A malformed legacy config cannot be selectively
+			// scrubbed, so returning it verbatim could disclose an inline token
+			// to workspace action authors.
+			cp := *c
+			cp.Config = "{}"
+			out = append(out, &cp)
 			continue
 		}
 		if len(cfg.DefaultHeaders) > 0 {
 			cleaned := make(map[string]string, len(cfg.DefaultHeaders))
-			for k, v := range cfg.DefaultHeaders {
+			for k := range cfg.DefaultHeaders {
 				if models.IsSensitiveHeaderName(k) {
 					continue
 				}
-				cleaned[k] = v
+				// Workspace action authors need to know which defaults exist,
+				// not their literal values. Redact every value so a legacy token
+				// under an unusual header name cannot bypass name heuristics.
+				cleaned[k] = "[REDACTED]"
 			}
 			cfg.DefaultHeaders = cleaned
 		}
@@ -1152,12 +1236,14 @@ func sanitizeCapabilitiesForWorkspace(caps []*models.ActionCapability) []*models
 				CredentialID: 0,
 				Placement:    cfg.Auth.Placement,
 				HeaderName:   cfg.Auth.HeaderName,
-				Scheme:       cfg.Auth.Scheme,
+				Scheme:       "",
 			}
 		}
 		newBytes, err := json.Marshal(cfg)
 		if err != nil {
-			out = append(out, c)
+			cp := *c
+			cp.Config = "{}"
+			out = append(out, &cp)
 			continue
 		}
 		cp := *c
@@ -1165,6 +1251,22 @@ func sanitizeCapabilitiesForWorkspace(caps []*models.ActionCapability) []*models
 		out = append(out, &cp)
 	}
 	return out
+}
+
+func normalizeCapabilityWorkspaceIDs(ids []int) ([]int, error) {
+	seen := make(map[int]struct{}, len(ids))
+	out := make([]int, 0, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			return nil, fmt.Errorf("workspace_ids must contain positive workspace IDs")
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out, nil
 }
 
 // DeleteCapability deletes a capability

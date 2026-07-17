@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"windshift/internal/models"
+	"windshift/internal/services"
 	tmpl "windshift/internal/services/template"
 )
 
@@ -27,6 +28,10 @@ import (
 // Returns the rendered, trimmed title. Empty result means the template
 // rendered to whitespace (or was empty); callers reject that.
 func (h *PortalHandler) renderPortalTitle(ctx context.Context, rt *models.RequestType, description string, customFields map[string]interface{}, userID, customerID *int) string {
+	return renderSubmissionTitle(ctx, h.portalService, rt, description, customFields, userID, customerID)
+}
+
+func renderSubmissionTitle(ctx context.Context, portalService *services.PortalService, rt *models.RequestType, description string, customFields map[string]interface{}, userID, customerID *int) string {
 	if rt == nil || strings.TrimSpace(rt.TitleTemplate) == "" {
 		return ""
 	}
@@ -41,18 +46,18 @@ func (h *PortalHandler) renderPortalTitle(ctx context.Context, rt *models.Reques
 
 	switch {
 	case userID != nil:
-		if name, email, err := h.portalService.GetUserRequesterTemplateVars(ctx, *userID); err == nil {
+		if name, email, err := portalService.GetUserRequesterTemplateVars(ctx, *userID); err == nil {
 			vars["requester.name"] = name
 			vars["requester.email"] = email
 		}
 	case customerID != nil:
-		if name, email, err := h.portalService.GetCustomerRequesterTemplateVars(ctx, *customerID); err == nil {
+		if name, email, err := portalService.GetCustomerRequesterTemplateVars(ctx, *customerID); err == nil {
 			vars["requester.name"] = name
 			vars["requester.email"] = email
 		}
 	}
 
-	for name, value := range resolveCustomFieldNames(ctx, h, customFields) {
+	for name, value := range resolveCustomFieldNames(ctx, portalService, customFields) {
 		vars["custom."+name] = value
 	}
 
@@ -63,7 +68,7 @@ func (h *PortalHandler) renderPortalTitle(ctx context.Context, rt *models.Reques
 // customFields to its custom_field_definitions.name, returning a
 // {name → string-value} map ready to fold into the template var map.
 // Non-numeric keys (virtual fields, malformed input) are skipped.
-func resolveCustomFieldNames(ctx context.Context, h *PortalHandler, customFields map[string]interface{}) map[string]string {
+func resolveCustomFieldNames(ctx context.Context, portalService *services.PortalService, customFields map[string]interface{}) map[string]string {
 	if len(customFields) == 0 {
 		return nil
 	}
@@ -80,7 +85,7 @@ func resolveCustomFieldNames(ctx context.Context, h *PortalHandler, customFields
 		return nil
 	}
 
-	names, err := h.portalService.GetCustomFieldNamesByID(ctx, ids)
+	names, err := portalService.GetCustomFieldNamesByID(ctx, ids)
 	if err != nil {
 		return nil
 	}

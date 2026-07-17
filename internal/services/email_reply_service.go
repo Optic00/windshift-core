@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
+	"time"
 
 	"windshift/internal/database"
 	"windshift/internal/emailutil"
@@ -19,6 +21,7 @@ import (
 type EmailReplyService struct {
 	db         database.Database
 	smtpSender ThreadedEmailSender
+	outboxMu   sync.Mutex
 }
 
 // NewEmailReplyService creates a new EmailReplyService.
@@ -47,11 +50,6 @@ func (s *EmailReplyService) HandleCommentCreated(params HandleCommentParams) err
 
 	// Guard: skip if no identified author
 	if params.AuthorID == 0 {
-		return nil
-	}
-
-	// Check SMTP is configured
-	if !s.smtpSender.IsSMTPConfigured() {
 		return nil
 	}
 
@@ -95,9 +93,9 @@ func (s *EmailReplyService) HandleCommentCreated(params HandleCommentParams) err
 	}
 	rows, err := s.db.Query(`
 		SELECT message_id, subject FROM email_message_tracking
-		WHERE item_id = ?
+		WHERE item_id = ? AND channel_id = ?
 		ORDER BY processed_at ASC
-	`, params.ItemID)
+	`, params.ItemID, *item.ChannelID)
 	if err != nil {
 		return fmt.Errorf("failed to query email tracking: %w", err)
 	}
@@ -187,53 +185,206 @@ func (s *EmailReplyService) HandleCommentCreated(params HandleCommentParams) err
 		return fmt.Errorf("failed to render portal reply email: %w", err)
 	}
 
+	referencesJSON, err := json.Marshal(references)
+	if err != nil {
+		return fmt.Errorf("encode email references: %w", err)
+	}
+	_, err = s.db.ExecWrite(`
+		INSERT INTO email_reply_outbox (
+			comment_id, channel_id, item_id, to_email, to_name, subject,
+			html_body, text_body, message_id, in_reply_to, references_json,
+			from_email, from_name, next_attempt_at, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		ON CONFLICT(comment_id) DO NOTHING
+	`, params.CommentID, *item.ChannelID, params.ItemID, customerEmail, customerName,
+		subject, htmlBody, textBody, messageID, inReplyTo, string(referencesJSON),
+		s.getSMTPFromEmail(), authorName)
+	if err != nil {
+		return fmt.Errorf("enqueue threaded email reply: %w", err)
+	}
+
+	// Sending immediately keeps the current low-latency behavior. The durable
+	// row remains pending on failure and is retried by NotificationScheduler.
+	if !s.smtpSender.IsSMTPConfigured() {
+		return nil
+	}
+	s.outboxMu.Lock()
+	defer s.outboxMu.Unlock()
+	if _, err := s.deliverPendingReply(params.CommentID); err != nil {
+		return fmt.Errorf("threaded email queued for retry: %w", err)
+	}
+	return nil
+}
+
+type emailReplyOutboxRow struct {
+	CommentID      int
+	ChannelID      int
+	ItemID         int
+	ToEmail        string
+	ToName         string
+	Subject        string
+	HTMLBody       string
+	TextBody       string
+	MessageID      string
+	InReplyTo      string
+	ReferencesJSON string
+	FromEmail      string
+	FromName       string
+	AttemptCount   int
+}
+
+// ProcessPendingReplies retries a bounded batch from the durable reply outbox.
+// It is called by NotificationScheduler on the existing SMTP cadence.
+func (s *EmailReplyService) ProcessPendingReplies(limit int) (int, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if !s.smtpSender.IsSMTPConfigured() {
+		return 0, nil
+	}
+
+	s.outboxMu.Lock()
+	defer s.outboxMu.Unlock()
+
+	rows, err := s.db.Query(`
+		SELECT comment_id
+		FROM email_reply_outbox
+		WHERE delivered_at IS NULL AND next_attempt_at <= CURRENT_TIMESTAMP
+		ORDER BY created_at ASC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return 0, fmt.Errorf("query email reply outbox: %w", err)
+	}
+	var commentIDs []int
+	for rows.Next() {
+		var commentID int
+		if err := rows.Scan(&commentID); err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("scan email reply outbox: %w", err)
+		}
+		commentIDs = append(commentIDs, commentID)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, fmt.Errorf("iterate email reply outbox: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return 0, fmt.Errorf("close email reply outbox rows: %w", err)
+	}
+
+	delivered := 0
+	var lastErr error
+	for _, commentID := range commentIDs {
+		sent, err := s.deliverPendingReply(commentID)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if sent {
+			delivered++
+		}
+	}
+	// Delivered rows are retained briefly for idempotence/audit, then pruned.
+	cutoff := time.Now().Add(-30 * 24 * time.Hour)
+	if _, err := s.db.ExecWrite(`DELETE FROM email_reply_outbox WHERE delivered_at IS NOT NULL AND delivered_at < ?`, cutoff); err != nil {
+		slog.Warn("failed to prune delivered email reply outbox rows", "error", err)
+	}
+	return delivered, lastErr
+}
+
+func (s *EmailReplyService) deliverPendingReply(commentID int) (bool, error) {
+	var row emailReplyOutboxRow
+	// Atomically lease the row before crossing the SMTP boundary. The process
+	// mutex prevents duplicates within one server; this conditional UPDATE also
+	// prevents two application instances from selecting and sending the same
+	// pending reply. A crashed worker releases itself when the lease expires.
+	leaseUntil := time.Now().Add(5 * time.Minute)
+	err := s.db.QueryRow(`
+		UPDATE email_reply_outbox
+		SET next_attempt_at = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE comment_id = ? AND delivered_at IS NULL
+		  AND next_attempt_at <= CURRENT_TIMESTAMP
+		RETURNING comment_id, channel_id, item_id, to_email, to_name, subject,
+		       html_body, text_body, message_id, in_reply_to, references_json,
+		       from_email, from_name, attempt_count
+	`, leaseUntil, commentID).Scan(
+		&row.CommentID, &row.ChannelID, &row.ItemID, &row.ToEmail, &row.ToName,
+		&row.Subject, &row.HTMLBody, &row.TextBody, &row.MessageID, &row.InReplyTo,
+		&row.ReferencesJSON, &row.FromEmail, &row.FromName, &row.AttemptCount,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("claim pending email reply: %w", err)
+	}
+
+	var references []string
+	if err := json.Unmarshal([]byte(row.ReferencesJSON), &references); err != nil {
+		s.recordReplyFailure(row.CommentID, row.AttemptCount, err)
+		return false, fmt.Errorf("decode pending email references: %w", err)
+	}
 	err = s.smtpSender.SendThreadedEmail(smtp.ThreadedEmailParams{
-		ToEmail:    customerEmail,
-		ToName:     customerName,
-		Subject:    subject,
-		HTMLBody:   htmlBody,
-		TextBody:   textBody,
-		MessageID:  messageID,
-		InReplyTo:  inReplyTo,
+		ToEmail:    row.ToEmail,
+		ToName:     row.ToName,
+		Subject:    row.Subject,
+		HTMLBody:   row.HTMLBody,
+		TextBody:   row.TextBody,
+		MessageID:  row.MessageID,
+		InReplyTo:  row.InReplyTo,
 		References: references,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to send threaded email: %w", err)
+		s.recordReplyFailure(row.CommentID, row.AttemptCount, err)
+		return false, fmt.Errorf("send threaded email: %w", err)
 	}
 
-	slog.Info("sent threaded email reply to customer",
-		slog.String("component", "email_reply_service"),
-		slog.Int("comment_id", params.CommentID),
-		slog.Int("item_id", params.ItemID),
-		slog.String("to", customerEmail),
-	)
+	if _, err := s.db.ExecWrite(`
+		UPDATE email_reply_outbox
+		SET delivered_at = CURRENT_TIMESTAMP, last_error = NULL, updated_at = CURRENT_TIMESTAMP
+		WHERE comment_id = ? AND delivered_at IS NULL
+	`, row.CommentID); err != nil {
+		return false, fmt.Errorf("mark threaded email delivered: %w", err)
+	}
 
-	// Record outbound message in tracking
-	_, err = s.db.ExecWrite(`
+	// Tracking is best-effort after delivery. Do not retry SMTP merely because
+	// this audit/threading insert failed; that would duplicate customer mail.
+	if _, err := s.db.ExecWrite(`
 		INSERT INTO email_message_tracking (
 			channel_id, message_id, dedup_key, in_reply_to, from_email, from_name, subject,
 			item_id, comment_id, direction, processed_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'outbound', CURRENT_TIMESTAMP)
-	`,
-		*item.ChannelID,
-		messageID,
-		messageID,
-		inReplyTo,
-		s.getSMTPFromEmail(),
-		authorName,
-		subject,
-		params.ItemID,
-		params.CommentID,
-	)
-	if err != nil {
-		slog.Warn("failed to record outbound email in tracking",
-			slog.String("component", "email_reply_service"),
-			slog.Int("comment_id", params.CommentID),
-			slog.Any("error", err),
-		)
+		ON CONFLICT(channel_id, dedup_key) DO NOTHING
+	`, row.ChannelID, row.MessageID, row.MessageID, row.InReplyTo, row.FromEmail,
+		row.FromName, row.Subject, row.ItemID, row.CommentID); err != nil {
+		slog.Warn("failed to record delivered outbound email in tracking",
+			"comment_id", row.CommentID, "error", err)
 	}
 
-	return nil
+	slog.Info("sent threaded email reply to customer",
+		"component", "email_reply_service",
+		"comment_id", row.CommentID,
+		"item_id", row.ItemID,
+		"to", row.ToEmail,
+	)
+	return true, nil
+}
+
+func (s *EmailReplyService) recordReplyFailure(commentID, previousAttempts int, sendErr error) {
+	shift := previousAttempts
+	if shift > 6 {
+		shift = 6
+	}
+	nextAttempt := time.Now().Add(time.Minute * time.Duration(1<<shift))
+	if _, err := s.db.ExecWrite(`
+		UPDATE email_reply_outbox
+		SET attempt_count = attempt_count + 1, next_attempt_at = ?,
+		    last_error = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE comment_id = ? AND delivered_at IS NULL
+	`, nextAttempt, sendErr.Error(), commentID); err != nil {
+		slog.Error("failed to record email reply delivery failure", "comment_id", commentID, "error", err)
+	}
 }
 
 // getSMTPDomain extracts the domain from the SMTP from email.
@@ -249,9 +400,10 @@ func (s *EmailReplyService) getSMTPDomain() string {
 func (s *EmailReplyService) getSMTPFromEmail() string {
 	var configJSON string
 	err := s.db.QueryRow(`
-		SELECT config FROM channels
-		WHERE type = 'smtp' AND direction = 'outbound' AND status = 'enabled'
-		ORDER BY updated_at DESC, is_default DESC
+		SELECT COALESCE(config, '{}') FROM channels
+		WHERE type = 'smtp' AND direction = 'outbound'
+		  AND status = 'enabled' AND is_default = true
+		ORDER BY updated_at DESC
 		LIMIT 1
 	`).Scan(&configJSON)
 	if err != nil {

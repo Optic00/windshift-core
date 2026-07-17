@@ -433,8 +433,13 @@ type EmailChannelState struct {
 	LastCheckedAt *time.Time `json:"last_checked_at,omitempty"`
 	ErrorCount    int        `json:"error_count"`
 	LastError     string     `json:"last_error,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	// FailedMessage* is separate from ErrorCount: connection outages should
+	// affect health without making an unrelated email look like poison.
+	FailedMessageUID         int       `json:"-"`
+	FailedMessageUIDValidity uint32    `json:"-"`
+	FailedMessageCount       int       `json:"-"`
+	CreatedAt                time.Time `json:"created_at"`
+	UpdatedAt                time.Time `json:"updated_at"`
 }
 
 // EmailMessageTracking records processed emails for deduplication and reply threading

@@ -47,6 +47,7 @@ type PortalHandler struct {
 	approvalService      *services.ApprovalService
 	draftRepo            *repository.PortalDraftRepository
 	attachmentPath       string
+	eventCoordinator     *services.EventCoordinator
 }
 
 // SetApprovalService wires the approval service so portal customers can
@@ -54,6 +55,11 @@ type PortalHandler struct {
 // the approval routes return 503.
 func (h *PortalHandler) SetApprovalService(s *services.ApprovalService) {
 	h.approvalService = s
+}
+
+// SetEventCoordinator wires the shared item-created side-effect pipeline.
+func (h *PortalHandler) SetEventCoordinator(ec *services.EventCoordinator) {
+	h.eventCoordinator = ec
 }
 
 // getClientIP extracts the client IP with proxy validation
@@ -65,7 +71,7 @@ func (h *PortalHandler) getClientIP(r *http.Request) string {
 // 1. A direct portal customer session (magic link auth)
 // 2. An internal user session with a linked portal customer (backward compatible)
 // Returns the portal customer ID and an error if authentication fails
-func (h *PortalHandler) getPortalCustomerID(ctx context.Context, r *http.Request) (*int, error) {
+func (h *PortalHandler) getPortalCustomerID(ctx context.Context, r *http.Request, channelID int) (*int, error) {
 	clientIP := h.getClientIP(r)
 
 	// First, try portal customer session (direct magic link auth)
@@ -73,7 +79,7 @@ func (h *PortalHandler) getPortalCustomerID(ctx context.Context, r *http.Request
 		portalToken, err := h.portalSessionManager.GetPortalSessionFromRequest(r)
 		if err == nil && portalToken != "" {
 			portalSession, err := h.portalSessionManager.ValidatePortalSession(portalToken, clientIP)
-			if err == nil && portalSession != nil {
+			if err == nil && portalSession != nil && portalSession.ChannelID != nil && *portalSession.ChannelID == channelID {
 				slog.Debug("portal customer authenticated via portal session", slog.String("component", "portal"), slog.Int("portal_customer_id", portalSession.PortalCustomerID))
 				return &portalSession.PortalCustomerID, nil
 			}
@@ -120,7 +126,12 @@ func (h *PortalHandler) getInternalUserGroupIDs(ctx context.Context, r *http.Req
 	}
 
 	// Get user's group memberships
-	rows, err := h.db.QueryContext(ctx, `SELECT group_id FROM group_members WHERE user_id = ?`, session.UserID)
+	rows, err := h.db.QueryContext(ctx, `
+		SELECT gm.group_id
+		FROM group_members gm
+		JOIN groups g ON g.id = gm.group_id
+		WHERE gm.user_id = ? AND g.is_active = true
+	`, session.UserID)
 	if err != nil {
 		return nil
 	}
@@ -221,14 +232,23 @@ func (h *PortalHandler) getPortalVisibilityContext(ctx context.Context, r *http.
 					JOIN permissions p ON ugp.permission_id = p.id
 					WHERE ugp.user_id = ? AND p.permission_key = 'system.admin'
 				) OR EXISTS(
+					SELECT 1 FROM group_members gm
+					JOIN groups g ON g.id = gm.group_id
+					JOIN group_global_permissions ggp ON ggp.group_id = gm.group_id
+					JOIN permissions p ON p.id = ggp.permission_id
+					WHERE gm.user_id = ? AND p.permission_key = 'system.admin' AND g.is_active = true
+				) OR EXISTS(
 					SELECT 1 FROM channel_managers cm
 					WHERE cm.channel_id = ?
 					AND ((cm.manager_type = 'user' AND cm.manager_id = ?)
 						 OR (cm.manager_type = 'group' AND cm.manager_id IN (
-							 SELECT group_id FROM group_members WHERE user_id = ?
+							 SELECT gm.group_id
+							 FROM group_members gm
+							 JOIN groups g ON g.id = gm.group_id
+							 WHERE gm.user_id = ? AND g.is_active = true
 						 )))
 				)
-			`, session.UserID, channelID, session.UserID, session.UserID).Scan(&isAdmin)
+			`, session.UserID, session.UserID, channelID, session.UserID, session.UserID).Scan(&isAdmin)
 			if err == nil && isAdmin {
 				vc.isAdmin = true
 			}
@@ -255,33 +275,41 @@ func (h *PortalHandler) getRequestTypeWithVisibility(ctx context.Context, reques
 		return nil, err
 	}
 
-	applyRequestTypeVisibility(&rt, visibilityGroupIDs, visibilityOrgIDs)
+	if err := applyRequestTypeVisibility(&rt, visibilityGroupIDs, visibilityOrgIDs); err != nil {
+		return nil, err
+	}
 	return &rt, nil
 }
 
 // unmarshalIntIDs decodes a JSON-encoded []int stored in a nullable string
-// column, returning nil if the column is NULL, empty, or malformed.
-func unmarshalIntIDs(n sql.NullString) []int {
+// column. Malformed access-control data is an error so public endpoints can
+// fail closed instead of turning a restricted row into an unrestricted one.
+func unmarshalIntIDs(n sql.NullString) ([]int, error) {
 	if !n.Valid || n.String == "" {
-		return nil
+		return nil, nil
 	}
 	var ids []int
 	if err := json.Unmarshal([]byte(n.String), &ids); err != nil {
-		return nil
+		return nil, err
 	}
-	return ids
+	return ids, nil
 }
 
 // applyRequestTypeVisibility populates rt.VisibilityGroupIDs / VisibilityOrgIDs
 // from the JSON-encoded nullable string columns that the schema uses for
 // per-row visibility lists.
-func applyRequestTypeVisibility(rt *models.RequestType, groups, orgs sql.NullString) {
-	if ids := unmarshalIntIDs(groups); ids != nil {
-		rt.VisibilityGroupIDs = ids
+func applyRequestTypeVisibility(rt *models.RequestType, groups, orgs sql.NullString) error {
+	groupIDs, err := unmarshalIntIDs(groups)
+	if err != nil {
+		return fmt.Errorf("parse request type %d visibility groups: %w", rt.ID, err)
 	}
-	if ids := unmarshalIntIDs(orgs); ids != nil {
-		rt.VisibilityOrgIDs = ids
+	orgIDs, err := unmarshalIntIDs(orgs)
+	if err != nil {
+		return fmt.Errorf("parse request type %d visibility organizations: %w", rt.ID, err)
 	}
+	rt.VisibilityGroupIDs = groupIDs
+	rt.VisibilityOrgIDs = orgIDs
+	return nil
 }
 
 // NewPortalHandler creates a new portal handler
@@ -302,34 +330,30 @@ func (h *PortalHandler) findChannelByPortalSlug(ctx context.Context, slug string
 	return findChannelBySlug(ctx, h.db, "portal", slug, func(c *models.ChannelConfig) string { return c.PortalSlug })
 }
 
-// grantChannelAccess grants a portal customer access to a channel if not already granted
-func (h *PortalHandler) grantChannelAccess(ctx context.Context, customerID, channelID int) {
-	var accessID int
-	err := h.db.QueryRowContext(ctx, `SELECT id FROM portal_customer_channels WHERE portal_customer_id = ? AND channel_id = ?`, customerID, channelID).Scan(&accessID)
-
-	if errors.Is(err, sql.ErrNoRows) {
-		if _, err := h.db.ExecWriteContext(ctx, `
-			INSERT INTO portal_customer_channels (portal_customer_id, channel_id, created_at)
-			VALUES (?, ?, ?)
-		`, customerID, channelID, time.Now()); err != nil {
-			slog.Warn("failed to grant channel access to portal customer", slog.String("component", "portal"), slog.Int("customer_id", customerID), slog.Int("channel_id", channelID), slog.Any("error", err))
-		}
-	}
+// grantChannelAccess grants a portal customer access to a channel if not
+// already granted. A single upsert avoids the SELECT/INSERT race between two
+// concurrent first submissions.
+func (h *PortalHandler) grantChannelAccess(ctx context.Context, customerID, channelID int) error {
+	_, err := h.db.ExecWriteContext(ctx, `
+		INSERT INTO portal_customer_channels (portal_customer_id, channel_id, created_at)
+		VALUES (?, ?, ?)
+		ON CONFLICT(portal_customer_id, channel_id) DO NOTHING
+	`, customerID, channelID, time.Now())
+	return err
 }
 
 // customerHasChannelAccess returns true if the portal customer already has an
 // access row for the given channel. Used by SubmitToPortal in manual-
 // registration mode to refuse silent auto-grants for customers who have not
 // been pre-provisioned.
-func (h *PortalHandler) customerHasChannelAccess(ctx context.Context, customerID, channelID int) bool {
+func (h *PortalHandler) customerHasChannelAccess(ctx context.Context, customerID, channelID int) (bool, error) {
 	var exists bool
 	if err := h.db.QueryRowContext(ctx, `
 		SELECT EXISTS(SELECT 1 FROM portal_customer_channels WHERE portal_customer_id = ? AND channel_id = ?)
 	`, customerID, channelID).Scan(&exists); err != nil {
-		slog.Error("failed to check portal customer channel access", slog.String("component", "portal"), slog.Int("customer_id", customerID), slog.Int("channel_id", channelID), slog.Any("error", err))
-		return false
+		return false, err
 	}
-	return exists
+	return exists, nil
 }
 
 // verifyPortalSessionBinding writes 401 and returns false if a portal session
@@ -509,7 +533,13 @@ func (h *PortalHandler) GetRequestTypes(w http.ResponseWriter, r *http.Request) 
 		rt.WorkspaceName = workspaceName.String
 		rt.WorkspaceKey = workspaceKey.String
 
-		applyRequestTypeVisibility(&rt, visibilityGroupIDs, visibilityOrgIDs)
+		if err := applyRequestTypeVisibility(&rt, visibilityGroupIDs, visibilityOrgIDs); err != nil {
+			slog.Error("hiding request type with invalid visibility configuration",
+				slog.String("component", "portal"), slog.Int("request_type_id", rt.ID), slog.Any("error", err))
+			if !vc.isAdmin {
+				continue
+			}
+		}
 
 		// Admin users see all request types; others see only visible ones
 		if vc.isAdmin || rt.IsVisibleTo(vc.userGroupIDs, vc.customerOrgID) {
@@ -569,8 +599,21 @@ func (h *PortalHandler) SubmitToPortal(w http.ResponseWriter, r *http.Request) {
 	// regression) would silently gain access to a manual-mode portal.
 	// Internal users don't need portal customer records - they're tracked via user_id.
 	if portalCustomerID != nil {
-		if config.PortalRegistrationMode == "manual" {
-			if !h.customerHasChannelAccess(ctx, *portalCustomerID, channel.ID) {
+		switch {
+		case config.PortalRegistrationMode != "" && config.PortalRegistrationMode != "open" && config.PortalRegistrationMode != "manual":
+			slog.Warn("portal blocked submit because registration mode is invalid",
+				slog.String("component", "portal"),
+				slog.Int("channel_id", channel.ID),
+			)
+			respondUnauthorized(w, r)
+			return
+		case config.PortalRegistrationMode == "manual":
+			hasAccess, accessErr := h.customerHasChannelAccess(ctx, *portalCustomerID, channel.ID)
+			if accessErr != nil {
+				respondInternalError(w, r, accessErr)
+				return
+			}
+			if !hasAccess {
 				slog.Warn("manual-mode portal blocked submit from customer without channel access",
 					slog.String("component", "portal"),
 					slog.Int("portal_customer_id", *portalCustomerID),
@@ -579,8 +622,11 @@ func (h *PortalHandler) SubmitToPortal(w http.ResponseWriter, r *http.Request) {
 				respondUnauthorized(w, r)
 				return
 			}
-		} else {
-			h.grantChannelAccess(ctx, *portalCustomerID, channel.ID)
+		default:
+			if accessErr := h.grantChannelAccess(ctx, *portalCustomerID, channel.ID); accessErr != nil {
+				respondInternalError(w, r, accessErr)
+				return
+			}
 		}
 	}
 
@@ -629,7 +675,7 @@ func (h *PortalHandler) SubmitToPortal(w http.ResponseWriter, r *http.Request) {
 	// form, render its title_template. Items have a NOT NULL title, so we
 	// reject when the template is missing or renders to empty.
 	if requestType != nil && !validationResult.TitleFieldInForm {
-		rendered := h.renderPortalTitle(ctx, requestType, submission.Description, submission.CustomFields, authenticatedUserID, portalCustomerID)
+		rendered := h.renderPortalTitle(ctx, requestType, submission.Description, validationResult.CustomFieldValues, authenticatedUserID, portalCustomerID)
 		if rendered == "" {
 			respondValidationError(w, r, "request type is misconfigured: title field is hidden but no title template is set")
 			return
@@ -675,6 +721,16 @@ func (h *PortalHandler) SubmitToPortal(w http.ResponseWriter, r *http.Request) {
 			initialStatus = status
 		}
 	}
+	customFieldsJSON, err := json.Marshal(validationResult.CustomFieldValues)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	virtualFieldsJSON, err := json.Marshal(validationResult.VirtualFieldValues)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
 
 	// Create item using centralized service
 	itemID, err := services.CreateItem(h.db, services.ItemCreationParams{
@@ -688,15 +744,26 @@ func (h *PortalHandler) SubmitToPortal(w http.ResponseWriter, r *http.Request) {
 		CreatorPortalCustomerID: portalCustomerID, // nil for internal users, set for portal customers
 		ChannelID:               &channel.ID,
 		RequestTypeID:           submission.RequestTypeID,
+		CustomFieldValuesJSON:   string(customFieldsJSON),
+		VirtualFieldDataJSON:    string(virtualFieldsJSON),
 	})
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
 
-	// Store custom and virtual field values
-	services.StoreCustomFieldValues(ctx, h.db, "portal", itemID, validationResult.CustomFieldValues)
-	services.StoreVirtualFieldValues(ctx, h.db, "portal", itemID, validationResult.VirtualFieldValues)
+	if h.eventCoordinator != nil {
+		fullItem, fetchErr := repository.NewItemRepository(h.db).FindByIDWithDetailsContext(ctx, int(itemID))
+		if fetchErr != nil {
+			slog.Error("failed to hydrate portal-created item for side effects", slog.Int64("item_id", itemID), slog.Any("error", fetchErr))
+		} else {
+			actorID := 0
+			if authenticatedUserID != nil {
+				actorID = *authenticatedUserID
+			}
+			h.eventCoordinator.EmitItemCreated(fullItem, actorID)
+		}
+	}
 
 	// Update channel last activity
 	if _, err := h.db.ExecWriteContext(ctx, `UPDATE channels SET last_activity = ? WHERE id = ?`, time.Now(), channel.ID); err != nil {
@@ -804,9 +871,13 @@ func (h *PortalHandler) SearchKnowledgeBase(w http.ResponseWriter, r *http.Reque
 	// snippets; anything larger is either misconfigured or an attempted
 	// memory-exhaustion vector via this public, unauthenticated endpoint.
 	const maxKBResponseBytes = 2 << 20
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxKBResponseBytes))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxKBResponseBytes+1))
 	if err != nil {
 		respondInternalError(w, r, err)
+		return
+	}
+	if len(body) > maxKBResponseBytes {
+		respondError(w, r, restapi.NewAPIError(http.StatusBadGateway, "BAD_GATEWAY", "Knowledge base response was too large"))
 		return
 	}
 

@@ -22,6 +22,9 @@
       oauth_tenant_id: 'common',
       oauth_connected: false,
       oauth_email: '',
+      connected_oauth_provider_type: '',
+      connected_oauth_client_id: '',
+      connected_oauth_tenant_id: '',
       imap_host: '',
       imap_port: 993,
       imap_encryption: 'ssl',
@@ -38,8 +41,20 @@
     itemTypes = [],
     loading = $bindable(false),
     onLoadItemTypes = () => {},
+    onSaveBeforeOAuth = async () => {},
+    onOAuthStartFailed = async () => {},
     onToast = () => {}
   } = $props();
+
+  let oauthIdentityChanged = $derived(
+    formData.oauth_connected && (
+      formData.oauth_provider_type !== formData.connected_oauth_provider_type ||
+      formData.oauth_client_id.trim() !== formData.connected_oauth_client_id.trim() ||
+      (formData.oauth_provider_type === 'microsoft' &&
+        formData.oauth_tenant_id.trim() !== formData.connected_oauth_tenant_id.trim())
+    )
+  );
+  let oauthIsConnected = $derived(formData.oauth_connected && !oauthIdentityChanged);
 
   async function startOAuthFlow() {
     if (!channelId) return;
@@ -49,13 +64,22 @@
       return;
     }
 
+    let restoreEnabled = false;
     try {
       loading = true;
-      const result = await api.channels.startEmailOAuth(channelId);
+      restoreEnabled = await onSaveBeforeOAuth();
+      const result = await api.channels.startEmailOAuth(channelId, restoreEnabled);
       if (result.auth_url) {
         window.location.href = result.auth_url;
+      } else {
+        throw new Error('OAuth start did not return an authorization URL');
       }
     } catch (error) {
+      try {
+        await onOAuthStartFailed(restoreEnabled);
+      } catch (restoreError) {
+        console.error('Failed to restore email channel after OAuth start failure:', restoreError);
+      }
       console.error('Failed to start OAuth:', error);
       onToast('Failed to start OAuth: ' + (error.message || error));
     } finally {
@@ -75,7 +99,7 @@
       if (!formData.oauth_client_id?.trim()) {
         return { valid: false, message: t('channel.clientIdRequired') };
       }
-      if (!formData.oauth_connected && !formData.oauth_client_secret?.trim()) {
+      if (!oauthIsConnected && !formData.oauth_client_secret?.trim()) {
         return { valid: false, message: t('channel.clientSecretRequired') };
       }
     }
@@ -104,9 +128,9 @@
       return {
         ...baseConfig,
         email_oauth_provider_type: formData.oauth_provider_type,
-        email_oauth_client_id: formData.oauth_client_id,
+        email_oauth_client_id: formData.oauth_client_id.trim(),
         email_oauth_client_secret: formData.oauth_client_secret || undefined,
-        email_oauth_tenant_id: formData.oauth_provider_type === 'microsoft' ? formData.oauth_tenant_id : undefined
+        email_oauth_tenant_id: formData.oauth_provider_type === 'microsoft' ? formData.oauth_tenant_id.trim() : undefined
       };
     } else {
       return {
@@ -206,7 +230,7 @@
             <Input
               type="password"
               bind:value={formData.oauth_client_secret}
-              placeholder={formData.oauth_connected ? t('channel.leaveBlankToKeep') : 'Client secret value'}
+              placeholder={oauthIsConnected ? t('channel.leaveBlankToKeep') : 'Client secret value'}
             />
           </div>
         </div>
@@ -222,7 +246,7 @@
         {/if}
 
         <!-- Connection Status -->
-        {#if formData.oauth_connected}
+        {#if oauthIsConnected}
           <div class="p-4 rounded-lg border" style="background: var(--ds-background-success-subtle); border-color: var(--ds-border-success);">
             <div class="flex items-center gap-3">
               <IconCheck class="w-5 h-5" style="color: var(--ds-icon-success);" />

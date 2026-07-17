@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -213,8 +212,7 @@ func (h *PortalHandler) AddRequestComment(w http.ResponseWriter, r *http.Request
 	var commentData struct {
 		Content string `json:"content"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&commentData); err != nil {
-		respondBadRequest(w, r, "Invalid request body")
+	if !decodeChannelRequest(w, r, &commentData, false) {
 		return
 	}
 

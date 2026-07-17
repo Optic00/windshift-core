@@ -79,6 +79,7 @@ func (p *GenericProvider) Connect(ctx context.Context, config *models.ChannelCon
 	encryption := p.GetEncryption(config)
 
 	client, err := Connect(ConnectOptions{
+		Context:    ctx,
 		Host:       host,
 		Port:       port,
 		Encryption: encryption,

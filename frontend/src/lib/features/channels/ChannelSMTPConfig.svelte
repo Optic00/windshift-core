@@ -8,6 +8,7 @@
   import Select from '../../components/Select.svelte';
   import Spinner from '../../components/Spinner.svelte';
   import DescriptionText from '../../components/DescriptionText.svelte';
+  import Toggle from '../../components/Toggle.svelte';
 
   let {
     channelId,
@@ -18,7 +19,8 @@
       password: '',
       from_email: '',
       from_name: '',
-      encryption: 'tls'
+      encryption: 'tls',
+      enabled: false
     }),
     onSave = () => {}
   } = $props();
@@ -28,6 +30,7 @@
   let loading = $state(false);
 
   async function testSmtpSettings() {
+    if (loading) return;
     if (!channelId || !formData.host || !formData.from_email) {
       testResult = { success: false, message: t('channel.smtpHostAndFromRequired') };
       return;
@@ -39,6 +42,7 @@
     }
 
     testResult = { success: true, message: t('channel.sendingTestEmail'), loading: true };
+    loading = true;
 
     try {
       // Save config first
@@ -68,6 +72,8 @@
         message: t('channel.testEmailFailed') + ': ' + (error.message || error),
         loading: false
       };
+    } finally {
+      loading = false;
     }
   }
 
@@ -85,10 +91,10 @@
     return {
       smtp_host: formData.host,
       smtp_port: formData.port || 587,
-      smtp_username: formData.username || undefined,
+      smtp_username: formData.username || '',
       smtp_password: formData.password || undefined,
       smtp_from_email: formData.from_email,
-      smtp_from_name: formData.from_name || undefined,
+      smtp_from_name: formData.from_name || '',
       smtp_encryption: formData.encryption || 'tls'
     };
   }
@@ -117,7 +123,7 @@
 
       <div>
         <Label color="default" class="mb-2">{t('channel.smtpEncryption')}</Label>
-        <Select bind:value={formData.encryption} options={[{ value: 'tls', label: 'TLS (Port 587)' }, { value: 'ssl', label: 'SSL (Port 465)' }, { value: 'none', label: t('channel.noEncryption') }]} />
+        <Select bind:value={formData.encryption} options={[{ value: 'tls', label: 'TLS (Port 587)' }, { value: 'ssl', label: 'SSL (Port 465)' }]} />
       </div>
     </div>
 
@@ -152,6 +158,20 @@
           <Input type="text" bind:value={formData.from_name} placeholder={t('channel.smtpFromNamePlaceholder')} />
         </div>
       </div>
+    </div>
+
+    <div class="flex items-center justify-between pt-4 border-t" style="border-color: var(--ds-border);">
+      <div>
+        <div class="text-sm font-medium" style="color: var(--ds-text);">
+          {t('channel.enableSmtp', 'Enable SMTP Channel')}
+        </div>
+        <div class="text-xs mt-1" style="color: var(--ds-text-subtle);">
+          {formData.enabled
+            ? t('channel.smtpIsActive', 'SMTP channel is active')
+            : t('channel.smtpIsInactive', 'SMTP channel is currently disabled')}
+        </div>
+      </div>
+      <Toggle bind:checked={formData.enabled} />
     </div>
   </div>
 

@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -91,6 +92,7 @@ type Server struct {
 	pluginManager             *plugins.Manager
 	databaseDiagRepo          *repository.DatabaseDiagnosticsRepository
 	databasePoolMonitor       *services.DatabasePoolMonitor
+	channelService            *services.ChannelService
 
 	// Rate limiters that need cleanup
 	loginRateLimiter    *middleware.RateLimiter
@@ -243,6 +245,7 @@ func (s *Server) initialize() error {
 	// FormHandler, RequestTypeHandler, and AssetReportHandler for the
 	// "user manages channel C" gate.
 	channelService := services.NewChannelService(s.db, permService)
+	s.channelService = channelService
 
 	// Initialize activity tracker
 	s.activityTracker, err = services.NewActivityTracker(s.db, services.DefaultActivityTrackerConfig())
@@ -444,6 +447,7 @@ func (s *Server) initialize() error {
 	// Initialize asset action service (shared chain store for cross-application loop prevention)
 	s.assetActionService = services.NewAssetActionService(s.db, services.DefaultActionServiceConfig(), chainStore)
 	s.assetActionService.SetNotificationService(s.notificationService)
+	s.assetActionService.SetPermissionService(permService)
 	slog.Info("asset action service initialized")
 
 	// Determine base URL — cfg.BaseURL is already resolved by config.Load
@@ -902,11 +906,15 @@ func (s *Server) initialize() error {
 	// Jira import handler
 	jiraImportHandler := handlers.NewJiraImportHandler(s.db, cfg.Auth.SessionSecret, cfg.Jira.CapturePayloadsDir)
 
+	// Share one credential manager so every in-process refresh/callback path
+	// uses the same per-channel lock and CAS config writer.
+	emailCredManager := email.NewCredentialManager(s.db, scmProviderHandler.GetEncryption())
+
 	// Email provider handler
-	emailProviderHandler := handlers.NewEmailProviderHandler(s.db, scmProviderHandler.GetEncryption(), baseURL)
+	emailProviderHandler := handlers.NewEmailProviderHandler(s.db, scmProviderHandler.GetEncryption(), baseURL, channelService)
+	emailProviderHandler.SetCredentialManager(emailCredManager)
 
 	// Email scheduler
-	emailCredManager := email.NewCredentialManager(s.db, scmProviderHandler.GetEncryption())
 	s.emailScheduler = scheduler.NewEmailScheduler(s.db, emailCredManager, cfg.AttachmentPath)
 	s.emailScheduler.Start()
 	slog.Info("email scheduler started (IMAP polling)")
@@ -939,7 +947,7 @@ func (s *Server) initialize() error {
 	go s.runMagicLinkCleanup(magicLinkService)
 
 	// Webhook sender
-	webhookSender := webhook.NewWebhookSender(s.db)
+	webhookSender := webhook.NewWebhookSender(s.db, scmProviderHandler.GetEncryption())
 	s.webhookSender = webhookSender
 
 	// Event coordinator
@@ -953,6 +961,7 @@ func (s *Server) initialize() error {
 	s.actionService.SetAssetActionService(s.assetActionService)
 	s.actionService.SetEventCoordinator(eventCoordinator)
 	s.actionService.SetAssetPermissionChecker(assetHandler)
+	s.assetActionService.SetAssetPermissionChecker(assetHandler)
 	s.assetActionService.SetEventCoordinator(eventCoordinator)
 	slog.Info("event coordinator initialized")
 
@@ -991,6 +1000,7 @@ func (s *Server) initialize() error {
 	// Wire email reply service for bidirectional email threading
 	emailReplyService := services.NewEmailReplyService(s.db, smtpSender)
 	commentService.SetEmailReplyService(emailReplyService)
+	s.notificationScheduler.SetEmailReplyOutbox(emailReplyService)
 
 	// Wire CommentService into email processor for unified comment creation
 	s.emailScheduler.SetCommentService(commentService)
@@ -1071,7 +1081,7 @@ func (s *Server) initialize() error {
 	channelHandler.SetEncryption(scmProviderHandler.GetEncryption())
 	channelHandler.SetBaseURL(baseURL)
 	channelHandler.SetSMTPSender(smtpSender)
-	channelHandler.SetCredentialManager(email.NewCredentialManager(s.db, scmProviderHandler.GetEncryption()))
+	channelHandler.SetCredentialManager(emailCredManager)
 	// Wire at-rest decryption into the SMTP sender so dispatch can decrypt
 	// SMTPPassword before AUTH PLAIN. Done here (after scmProviderHandler is
 	// initialized) rather than at smtpSender construction time because the
@@ -1083,6 +1093,7 @@ func (s *Server) initialize() error {
 	webhookHandler := handlers.NewWebhookHandler(repository.NewChannelRepository(s.db), repository.NewItemRepository(s.db), webhookSender, permService, channelService)
 	portalHandler := handlers.NewPortalHandler(s.db, sessionManager, portalSessionManager, ipExtractor, cfg.AttachmentPath)
 	portalHandler.SetApprovalService(approvalService)
+	portalHandler.SetEventCoordinator(eventCoordinator)
 	portalAuthHandler := handlers.NewPortalAuthHandler(repository.NewPortalAuthRepository(s.db), portalSessionManager, sessionManager, magicLinkService, ipExtractor)
 	portalWebAuthnHandler := handlers.NewPortalWebAuthnHandler(
 		portalSessionManager,
@@ -1100,6 +1111,7 @@ func (s *Server) initialize() error {
 		func() interface{} { return &models.ContactRole{} })
 	hubHandler := handlers.NewHubHandler(s.db, permService, logger.NewAuditor(s.db))
 	formHandler := handlers.NewFormHandler(s.db, sessionManager, portalSessionManager, ipExtractor, channelService)
+	formHandler.SetEventCoordinator(eventCoordinator)
 
 	// Notification settings
 	notificationSettingsHandler := handlers.NewNotificationSettingsHandler(repository.NewNotificationSettingsRepository(s.db), logger.NewAuditor(s.db), s.notificationService)
@@ -2112,19 +2124,26 @@ func (s *Server) runSCMLinkRefresh(scmSyncService *scm.SyncService) {
 	}
 }
 
-// runSCMOAuthStateCleanup periodically deletes expired rows from
-// scm_oauth_state. Postgres has a stored function defined for this but
+// runSCMOAuthStateCleanup periodically deletes expired OAuth state. Email
+// states also restore a channel that was temporarily disabled for reconnect.
+// Postgres has a stored function for SCM state but
 // nothing in the code or schema schedules it; SQLite has a probabilistic
 // AFTER INSERT trigger that fires on ~1% of inserts. A unified Go-side
 // periodic covers both backends and bounds table growth on Postgres.
 func (s *Server) runSCMOAuthStateCleanup() {
-	ticker := time.NewTicker(1 * time.Hour)
+	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
-	slog.Info("SCM OAuth state cleanup scheduler started (1-hour interval)")
+	slog.Info("OAuth state cleanup scheduler started (1-minute interval)")
 	for {
 		select {
 		case <-ticker.C:
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			if err := s.restoreExpiredEmailOAuthChannels(ctx); err != nil {
+				slog.Error("expired email OAuth channel restore failed", slog.Any("error", err))
+			}
+			if _, err := s.db.ExecWriteContext(ctx, `DELETE FROM email_oauth_state WHERE expires_at < CURRENT_TIMESTAMP`); err != nil {
+				slog.Error("email_oauth_state cleanup failed", slog.Any("error", err))
+			}
 			res, err := s.db.ExecWriteContext(ctx, `DELETE FROM scm_oauth_state WHERE expires_at < CURRENT_TIMESTAMP`)
 			cancel()
 			if err != nil {
@@ -2135,10 +2154,72 @@ func (s *Server) runSCMOAuthStateCleanup() {
 				slog.Debug("scm_oauth_state cleanup", slog.Int64("deleted", n))
 			}
 		case <-s.scmSyncStopChan:
-			slog.Info("SCM OAuth state cleanup scheduler stopped")
+			slog.Info("OAuth state cleanup scheduler stopped")
 			return
 		}
 	}
+}
+
+// restoreExpiredEmailOAuthChannels re-enables only channels whose current
+// configuration is still ingestion-ready. A reconnect can change OAuth
+// identity and clear its old tokens before the browser flow completes; blindly
+// restoring that row on expiry would leave an enabled channel that can never
+// poll successfully.
+func (s *Server) restoreExpiredEmailOAuthChannels(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT DISTINCT channel_id
+		FROM email_oauth_state
+		WHERE expires_at < CURRENT_TIMESTAMP
+		  AND restore_channel_enabled = true
+		  AND channel_id IS NOT NULL
+	`)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var channelIDs []int
+	for rows.Next() {
+		var channelID int
+		if err := rows.Scan(&channelID); err != nil {
+			return err
+		}
+		channelIDs = append(channelIDs, channelID)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	for _, channelID := range channelIDs {
+		channel, err := s.channelService.GetByID(ctx, channelID)
+		if errors.Is(err, repository.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		configJSON, err := s.channelService.GetConfig(ctx, channelID)
+		if err != nil {
+			return err
+		}
+		var channelConfig models.ChannelConfig
+		if err := json.Unmarshal([]byte(configJSON), &channelConfig); err != nil {
+			slog.Warn("invalid email config while restoring expired OAuth state", "channel_id", channelID, "error", err)
+			continue
+		}
+		if err := email.ValidateConfigForEnable(channel, &channelConfig); err != nil {
+			slog.Warn("expired OAuth left email channel disabled because config is not ready", "channel_id", channelID, "error", err)
+			continue
+		}
+		updated, err := s.channelService.SetStatusIfConfigUnchanged(ctx, channelID, "enabled", configJSON)
+		if err != nil {
+			return err
+		}
+		if !updated {
+			slog.Warn("email config changed during expired OAuth restoration; leaving disabled", "channel_id", channelID)
+		}
+	}
+	return nil
 }
 
 // runIssueSync runs periodic GitHub Issue synchronization.
