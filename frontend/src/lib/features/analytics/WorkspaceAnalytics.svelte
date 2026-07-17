@@ -1,280 +1,1098 @@
 <script>
   import { onMount } from 'svelte';
-  import { t } from '../../stores/i18n.svelte.js';
+  import { RefreshCw } from '@lucide/svelte';
   import { api } from '../../api.js';
-  import Text from '../../components/Text.svelte';
+  import { navigate } from '../../router.js';
+  import { t } from '../../stores/i18n.svelte.js';
+  import Button from '../../components/Button.svelte';
+  import Card from '../../components/Card.svelte';
   import Input from '../../components/Input.svelte';
   import Label from '../../components/Label.svelte';
   import Select from '../../components/Select.svelte';
-  import Card from '../../components/Card.svelte';
+  import Text from '../../components/Text.svelte';
   import PageHeader from '../../layout/PageHeader.svelte';
   import Chart from '../../widgets/Chart.svelte';
-  import ForecastPanel from './ForecastPanel.svelte';
-
-  const fallbackColors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'];
-  const fmtD = (s) => { const d = new Date(s); return `${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`; };
-  function formatHours(h) {
-    if (h < 1) return `${Math.round(h * 60)}m`;
-    if (h < 24) return `${h.toFixed(1)}h`;
-    return `${(h / 24).toFixed(1)}d`;
-  }
+  import {
+    defaultAnalyticsRange,
+    formatDateOnly,
+    formatDayNumber,
+    inclusiveDateRangeDays,
+    localDateString,
+    shiftDateString,
+    validateAnalyticsRange,
+  } from './analyticsView.js';
 
   let { workspaceId = null } = $props();
 
+  const initialRange = defaultAnalyticsRange();
+  let initialized = $state(false);
   let loading = $state(true);
   let analyticsData = $state(null);
+  let loadError = $state('');
+  let validationCode = $state(null);
   let collections = $state([]);
+  let collectionLoadError = $state(false);
   let selectedCollection = $state('');
+  let selectedPreset = $state('84');
+  let startDate = $state(initialRange.startDate);
+  let endDate = $state(initialRange.endDate);
 
-  // Date range (default: last 30 days)
-  const today = new Date();
-  const thirtyDaysAgo = new Date(today);
-  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-  let endDate = $state(today.toISOString().split('T')[0]);
-  let startDate = $state(thirtyDaysAgo.toISOString().split('T')[0]);
+  let analyticsLoadVersion = 0;
+  let collectionsLoadVersion = 0;
+  let lastAnalyticsLoadKey = null;
+  let lastCollectionsWorkspace = null;
 
   const collectionOptions = $derived([
     { value: '', label: t('analytics.allItems') },
-    ...collections.map(c => ({ value: String(c.id), label: c.name })),
+    ...collections.map((collection) => ({
+      value: String(collection.id),
+      label: collection.name,
+    })),
   ]);
 
-  async function fetchCollections() {
-    if (!workspaceId) return;
+  const rangeOptions = $derived([
+    { value: '30', label: t('analytics.range.last30Days') },
+    { value: '84', label: t('analytics.range.last12Weeks') },
+    { value: '180', label: t('analytics.range.last6Months') },
+    { value: '365', label: t('analytics.range.lastYear') },
+    { value: 'custom', label: t('analytics.range.custom') },
+  ]);
+
+  const analyticsLoadKey = $derived(
+    initialized && workspaceId
+      ? `${workspaceId}|${selectedCollection}|${startDate}|${endDate}`
+      : null,
+  );
+
+  $effect(() => {
+    const currentWorkspace = initialized && workspaceId ? String(workspaceId) : null;
+    if (!currentWorkspace || currentWorkspace === lastCollectionsWorkspace) return;
+
+    if (lastCollectionsWorkspace !== null) {
+      selectedCollection = '';
+    }
+    lastCollectionsWorkspace = currentWorkspace;
+    analyticsData = null;
+    loadCollections(currentWorkspace);
+  });
+
+  $effect(() => {
+    const key = analyticsLoadKey;
+    if (!key || key === lastAnalyticsLoadKey) return;
+    lastAnalyticsLoadKey = key;
+    loadAnalytics();
+  });
+
+  onMount(() => {
+    if (typeof window !== 'undefined') {
+      const query = new URLSearchParams(window.location.search);
+      const queryStart = query.get('start_date');
+      const queryEnd = query.get('end_date');
+      const queryCollection = query.get('collection_id');
+      if (queryStart) startDate = queryStart;
+      if (queryEnd) endDate = queryEnd;
+      if (queryCollection && /^\d+$/.test(queryCollection)) {
+        selectedCollection = queryCollection;
+      }
+      selectedPreset = detectPreset(startDate, endDate);
+    }
+    initialized = true;
+  });
+
+  async function loadCollections(targetWorkspace) {
+    const version = ++collectionsLoadVersion;
+    collectionLoadError = false;
     try {
-      const data = await api.collections.getAll({ workspace_id: workspaceId });
-      collections = data || [];
-    } catch {
+      const response = await api.collections.getAll({ workspace_id: targetWorkspace });
+      if (version !== collectionsLoadVersion) return;
+      collections = Array.isArray(response) ? response : response?.items || [];
+      if (
+        selectedCollection &&
+        !collections.some((collection) => String(collection.id) === String(selectedCollection))
+      ) {
+        selectedCollection = '';
+      }
+    } catch (error) {
+      if (version !== collectionsLoadVersion) return;
+      console.error('Failed to load analytics collections:', error);
       collections = [];
+      selectedCollection = '';
+      collectionLoadError = true;
     }
   }
 
-  async function fetchAnalytics() {
-    if (!workspaceId) return;
+  async function loadAnalytics() {
+    const version = ++analyticsLoadVersion;
+    const rangeError = validateAnalyticsRange(startDate, endDate);
+    validationCode = rangeError;
+    loadError = '';
+    if (rangeError || !workspaceId) {
+      loading = false;
+      return;
+    }
+
     loading = true;
+    analyticsData = null;
+    syncQueryString();
     try {
       const params = { start_date: startDate, end_date: endDate };
-      if (selectedCollection) {
-        params.collection_id = selectedCollection;
+      if (selectedCollection) params.collection_id = selectedCollection;
+      const response = await api.analytics.getAnalytics(workspaceId, params);
+      if (version !== analyticsLoadVersion) return;
+      if (response?.schema_version !== 2) {
+        throw new Error(t('analytics.unsupportedVersion'));
       }
-      analyticsData = await api.analytics.getAnalytics(workspaceId, params);
-    } catch (err) {
-      console.error('Failed to load analytics:', err);
-      analyticsData = null;
+      analyticsData = response;
+    } catch (error) {
+      if (version !== analyticsLoadVersion) return;
+      console.error('Failed to load analytics:', error);
+      loadError = error?.message || t('analytics.errorTitle');
     } finally {
-      loading = false;
+      if (version === analyticsLoadVersion) loading = false;
     }
   }
 
-  onMount(async () => {
-    await fetchCollections();
-    await fetchAnalytics();
-  });
-
-  async function onFilterChange() {
-    await fetchAnalytics();
+  function syncQueryString() {
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    url.searchParams.set('start_date', startDate);
+    url.searchParams.set('end_date', endDate);
+    if (selectedCollection) {
+      url.searchParams.set('collection_id', selectedCollection);
+    } else {
+      url.searchParams.delete('collection_id');
+    }
+    window.history.replaceState(window.history.state, '', url);
   }
 
-  // Derived data sections
+  function applyPreset(value) {
+    selectedPreset = value;
+    if (value === 'custom') return;
+    const days = Number(value);
+    endDate = localDateString();
+    startDate = shiftDateString(endDate, -(days - 1));
+  }
+
+  function detectPreset(from, to) {
+    const days = inclusiveDateRangeDays(from, to);
+    return [30, 84, 180, 365].includes(days) ? String(days) : 'custom';
+  }
+
+  function handleDateEdit() {
+    selectedPreset = detectPreset(startDate, endDate);
+  }
+
+  function retry() {
+    lastAnalyticsLoadKey = null;
+    loadAnalytics();
+  }
+
+  function openItem(item) {
+    navigate(`/workspaces/${workspaceId}/items/${item.id}`);
+  }
+
+  function days(value) {
+    return t('analytics.daysValue', { value: formatDayNumber(value) });
+  }
+
+  function period(bucket) {
+    return `${formatDateOnly(bucket.start_date)} – ${formatDateOnly(bucket.end_date, {
+      year: 'numeric',
+    })}`;
+  }
+
+  function signed(value) {
+    return value > 0 ? `+${value}` : String(value);
+  }
+
   const dataset = $derived(analyticsData?.dataset || null);
-  const velocityData = $derived(analyticsData?.velocity || null);
-  const cfdData = $derived(analyticsData?.cumulative_flow || null);
-  const cycleTimeData = $derived(analyticsData?.cycle_time || null);
-  const forecastData = $derived(analyticsData?.forecast || null);
+  const health = $derived(analyticsData?.health || null);
+  const throughput = $derived(analyticsData?.throughput || null);
+  const aging = $derived(analyticsData?.aging_wip || null);
+  const deliveryTime = $derived(analyticsData?.delivery_time || null);
 
-  // Data basis text
-  const dataBasisText = $derived.by(() => {
-    if (!dataset) return '';
-    if (dataset.iteration_count > 0) {
-      return t('analytics.datasetBasis', {
-        count: dataset.iteration_count,
-        items: dataset.total_items,
-        iterations: dataset.iteration_count,
-      });
-    }
-    return t('analytics.datasetBasisNoIterations', { items: dataset.total_items });
-  });
+  const healthMetrics = $derived.by(() => [
+    { key: 'unfinished', label: t('analytics.health.unfinished'), value: health?.unfinished_items || 0 },
+    { key: 'overdue', label: t('analytics.health.overdue'), value: health?.overdue || 0 },
+    { key: 'stale', label: t('analytics.health.stale'), value: health?.stale || 0 },
+    { key: 'unassigned', label: t('analytics.health.unassigned'), value: health?.unassigned || 0 },
+    {
+      key: 'without-priority',
+      label: t('analytics.health.withoutPriority'),
+      value: health?.without_priority || 0,
+    },
+    {
+      key: 'without-estimate',
+      label: t('analytics.health.withoutEstimate'),
+      value: health?.without_estimate || 0,
+    },
+  ]);
 
-  const iterationNames = $derived(
-    (dataset?.iterations || []).map(i => i.name).join(' → ')
+  const throughputBuckets = $derived(throughput?.buckets || []);
+  const throughputCategories = $derived(
+    throughputBuckets.map((bucket) => formatDateOnly(bucket.start_date)),
   );
+  const throughputSeries = $derived([
+    {
+      key: 'created',
+      label: t('analytics.throughput.created'),
+      color: '#8b5cf6',
+      values: throughputBuckets.map((bucket) => bucket.created),
+      showArea: false,
+    },
+    {
+      key: 'completed',
+      label: t('analytics.throughput.completed'),
+      color: '#10b981',
+      values: throughputBuckets.map((bucket) => bucket.completed),
+      showArea: false,
+    },
+  ]);
 
-  // Velocity chart transforms
-  const velIters = $derived(velocityData?.iterations || []);
-  const velCategories = $derived(velIters.map(i => i.name));
-  const velSeries = $derived([{
-    key: 'completed', label: t('analytics.velocity.completed'), color: '#3b82f6',
-    values: velIters.map(i => i.completed_count)
-  }]);
-  const velRefLines = $derived(
-    velocityData?.averages?.avg_count > 0
-      ? [{ value: velocityData.averages.avg_count, color: '#f59e0b', label: velocityData.averages.avg_count.toFixed(1), dashed: true }]
-      : []
+  const agingBuckets = $derived(aging?.buckets || []);
+  const agingCategories = $derived(
+    agingBuckets.map((bucket) => t(`analytics.aging.buckets.${bucket.key}`)),
   );
+  const agingSeries = $derived([
+    {
+      key: 'items',
+      label: t('analytics.aging.itemCount'),
+      color: '#f59e0b',
+      values: agingBuckets.map((bucket) => bucket.item_count),
+    },
+  ]);
 
-  // CFD chart transforms
-  const cfdCats = $derived(cfdData?.categories || []);
-  const cfdPoints = $derived(cfdData?.data_points || []);
-  const cfdCategories = $derived(cfdPoints.map(d => fmtD(d.date)));
-  const cfdSeries = $derived(cfdCats.map((cat, i) => ({
-    key: cat.name, label: cat.name,
-    color: cat.color || fallbackColors[i % fallbackColors.length],
-    values: cfdPoints.map(dp => (dp.counts || {})[cat.name] || 0)
-  })));
-
-  // Cycle time chart transforms
-  const ctStages = $derived(cycleTimeData?.stages || []);
-  const ctTotal = $derived(cycleTimeData?.total_cycle_time || {});
-  const ctAnalyzed = $derived(cycleTimeData?.total_items_analyzed || 0);
-  const ctCategories = $derived(ctStages.map(s => s.name));
-  const ctSeries = $derived([
-    { key: 'p85', label: 'P85', color: '#06b6d4', values: ctStages.map(s => s.p85_hours || 0), opacity: 0.3 },
-    { key: 'avg', label: t('analytics.cycleTime.avgTotal'), color: '#3b82f6', values: ctStages.map(s => s.avg_hours || 0) }
+  const deliveryTrend = $derived(deliveryTime?.trend || []);
+  const deliveryChartTrend = $derived(
+    deliveryTrend.filter((point) => point.completed_items > 0),
+  );
+  const deliveryCategories = $derived(
+    deliveryChartTrend.map((point) => formatDateOnly(point.start_date)),
+  );
+  const deliverySeries = $derived([
+    {
+      key: 'median',
+      label: t('analytics.deliveryTime.median'),
+      color: '#3b82f6',
+      values: deliveryChartTrend.map((point) => point.median_days),
+      showArea: false,
+    },
+    {
+      key: 'p85',
+      label: t('analytics.deliveryTime.p85'),
+      color: '#06b6d4',
+      values: deliveryChartTrend.map((point) => point.p85_days),
+      dashed: true,
+      showArea: false,
+    },
   ]);
 </script>
 
 <div class="analytics-page min-h-screen" style="background-color: var(--ds-surface);">
-  <div class="p-6">
-    <PageHeader title={t('analytics.title')}>
+  <div class="p-4 sm:p-6">
+    <PageHeader title={t('analytics.title')} subtitle={t('analytics.subtitle')}>
       {#snippet actions()}
-        <div class="flex items-center gap-3 flex-wrap">
-          <Label size="xs" color="subtle">{t('analytics.collection')}</Label>
-          <Select
-            options={collectionOptions}
-            value={selectedCollection}
-            onchange={(v) => { selectedCollection = v; onFilterChange(); }}
-            size="small"
-            class="w-48"
-          />
-          <div style="width: 1px; height: 24px; background: var(--ds-border);" class="mx-1"></div>
-          <Label size="xs" color="subtle">{t('analytics.dateRange')}</Label>
-          <div class="w-40">
-            <Input type="date" size="small" bind:value={startDate} onchange={onFilterChange} />
+        <div class="analytics-filters">
+          <div class="filter-field collection-filter">
+            <Label for="analytics-collection" size="xs" color="subtle">
+              {t('analytics.collection')}
+            </Label>
+            <Select
+              id="analytics-collection"
+              options={collectionOptions}
+              bind:value={selectedCollection}
+              size="small"
+              disabled={collectionLoadError}
+            />
           </div>
-          <span style="color: var(--ds-text-subtle);">—</span>
-          <div class="w-40">
-            <Input type="date" size="small" bind:value={endDate} onchange={onFilterChange} />
+          <div class="filter-field preset-filter">
+            <Label for="analytics-range" size="xs" color="subtle">
+              {t('analytics.dateRange')}
+            </Label>
+            <Select
+              id="analytics-range"
+              options={rangeOptions}
+              value={selectedPreset}
+              onchange={applyPreset}
+              size="small"
+            />
+          </div>
+          <div class="filter-field date-filter">
+            <Label for="analytics-start-date" size="xs" color="subtle">
+              {t('analytics.from')}
+            </Label>
+            <Input
+              id="analytics-start-date"
+              type="date"
+              size="small"
+              max={endDate}
+              bind:value={startDate}
+              onchange={handleDateEdit}
+            />
+          </div>
+          <div class="filter-field date-filter">
+            <Label for="analytics-end-date" size="xs" color="subtle">
+              {t('analytics.to')}
+            </Label>
+            <Input
+              id="analytics-end-date"
+              type="date"
+              size="small"
+              min={startDate}
+              bind:value={endDate}
+              onchange={handleDateEdit}
+            />
           </div>
         </div>
       {/snippet}
     </PageHeader>
 
-    {#if loading}
-      <div class="flex items-center justify-center py-12">
+    {#if collectionLoadError}
+      <div class="notice notice-warning mb-4" role="status">
+        {t('analytics.collectionLoadError')}
+      </div>
+    {/if}
+
+    {#if validationCode}
+      <div class="notice notice-error mb-4" role="alert">
+        {t(`analytics.validation.${validationCode}`)}
+      </div>
+    {:else if loadError}
+      <Card variant="outlined" padding="default" class="mb-5 error-card">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div class="font-semibold" style="color: var(--ds-text-danger);">
+              {t('analytics.errorTitle')}
+            </div>
+            <Text variant="subtle" size="sm">{loadError}</Text>
+          </div>
+          <Button variant="default" size="small" icon={RefreshCw} onclick={retry}>
+            {t('analytics.retry')}
+          </Button>
+        </div>
+      </Card>
+    {:else if loading}
+      <div class="flex items-center justify-center py-16" role="status">
         <Text variant="subtle" size="sm">{t('analytics.loading')}</Text>
       </div>
-    {:else}
-      <!-- Data basis banner -->
+    {:else if analyticsData}
       {#if dataset}
-        <div class="mb-6 p-4 rounded-lg" style="background: var(--ds-surface-sunken); border: 1px solid var(--ds-border);">
-          <div class="flex items-center gap-2 mb-1">
-            <Text variant="subtle" size="xs" weight="semibold" class="uppercase tracking-wider">{dataBasisText}</Text>
+        <div class="scope-banner mb-6">
+          <div>
+            <div class="text-sm font-semibold" style="color: var(--ds-text);">
+              {dataset.cohort_mode === 'current_collection'
+                ? t('analytics.scope.currentCollection')
+                : t('analytics.scope.currentWorkspace')}
+            </div>
+            <Text variant="subtle" size="sm">
+              {t('analytics.scope.summary', {
+                items: dataset.total_items,
+                from: formatDateOnly(dataset.date_from, { year: 'numeric' }),
+                to: formatDateOnly(dataset.date_to, { year: 'numeric' }),
+              })}
+            </Text>
           </div>
-          {#if iterationNames}
-            <Text variant="subtle" size="xs">{iterationNames}</Text>
-          {/if}
+          <div class="scope-note">
+            <Text variant="subtle" size="xs">
+              {dataset.cohort_mode === 'current_collection'
+                ? t('analytics.scope.currentCollectionNote')
+                : t('analytics.scope.currentWorkspaceNote')}
+            </Text>
+          </div>
         </div>
       {/if}
 
-      <!-- Charts grid -->
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card variant="raised" padding="default" style="border-color: var(--ds-border);">
-          {#snippet header()}
-            <h3 class="text-sm font-semibold" style="color: var(--ds-text);">{t('analytics.velocity.title')}</h3>
-          {/snippet}
-          {#if velocityData && velIters.length > 0}
-            <div class="flex items-center gap-4 text-xs mb-3" style="color: var(--ds-text-subtle);">
-              <div class="flex items-center gap-1.5">
-                <span class="inline-block w-3 h-3 rounded-sm" style="background: #3b82f6;"></span>
-                {t('analytics.velocity.completed')}
-              </div>
-              <div class="flex items-center gap-1.5">
-                <span class="inline-block w-3 h-0.5" style="background: #f59e0b;"></span>
-                {t('analytics.velocity.average')}
-              </div>
+      <section class="analytics-section" aria-labelledby="health-heading">
+        <div class="section-heading">
+          <div>
+            <h2 id="health-heading">{t('analytics.health.title')}</h2>
+            <Text variant="subtle" size="sm">{t('analytics.health.description')}</Text>
+          </div>
+          {#if health?.stale_after_days}
+            <Text variant="subtle" size="xs">
+              {t('analytics.health.staleHint', { days: health.stale_after_days })}
+            </Text>
+          {/if}
+        </div>
+
+        <div class="metric-grid">
+          {#each healthMetrics as metric (metric.key)}
+            <div class="metric-card">
+              <div class="metric-value">{metric.value}</div>
+              <div class="metric-label">{metric.label}</div>
             </div>
-            <Chart type="bar" series={velSeries} categories={velCategories} referenceLines={velRefLines} maxXLabels={8}>
-              {#snippet tooltipContent({ index, category })}
-                {@const iter = velIters[index]}
-                <div style="font-weight:600;">{category}</div>
-                <div style="color:var(--ds-text-subtle);font-size:0.7rem;">{iter.completed_count} items &middot; {iter.completed_points ?? 0} pts</div>
-                <div style="color:var(--ds-text-subtle);font-size:0.7rem;">{iter.total_count} total</div>
-              {/snippet}
-            </Chart>
+          {/each}
+        </div>
+
+        <Card variant="raised" padding="none">
+          {#snippet header()}
+            <h3>{t('analytics.health.attentionItems')}</h3>
+          {/snippet}
+          {#if health?.attention_items?.length}
+            <div class="table-scroll">
+              <table class="analytics-table">
+                <thead>
+                  <tr>
+                    <th>{t('analytics.health.item')}</th>
+                    <th>{t('analytics.health.status')}</th>
+                    <th class="number-cell">{t('analytics.health.age')}</th>
+                    <th>{t('analytics.health.signals')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each health.attention_items as item (item.id)}
+                    <tr>
+                      <td>
+                        <button type="button" class="item-link" onclick={() => openItem(item)}>
+                          <span class="item-number">#{item.workspace_item_number}</span>
+                          {item.title}
+                        </button>
+                      </td>
+                      <td>{item.status || '—'}</td>
+                      <td class="number-cell">{days(item.age_days)}</td>
+                      <td>
+                        <div class="flag-list">
+                          {#each item.flags as flag}
+                            <span class="flag">{t(`analytics.health.flags.${flag}`)}</span>
+                          {/each}
+                        </div>
+                      </td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
           {:else}
-            <div class="flex flex-col items-center justify-center py-10 gap-2" style="color: var(--ds-text-subtle);">
-              {#if velocityData?.data_quality?.reason}
-                <Text variant="subtle" size="sm">{t('analytics.insufficientData.' + velocityData.data_quality.reason)}</Text>
-              {:else}
-                <Text variant="subtle" size="sm">{t('analytics.noData')}</Text>
-              {/if}
+            <div class="empty-copy">{t('analytics.health.allClear')}</div>
+          {/if}
+        </Card>
+      </section>
+
+      <section class="analytics-section flow-grid" aria-label={t('analytics.throughput.title')}>
+        <Card variant="raised" padding="default">
+          {#snippet header()}
+            <div>
+              <h3>{t('analytics.throughput.title')}</h3>
+              <Text variant="subtle" size="xs">{t('analytics.throughput.description')}</Text>
+            </div>
+          {/snippet}
+          <div class="summary-strip">
+            <div>
+              <span>{t('analytics.throughput.created')}</span>
+              <strong>{throughput?.total_created || 0}</strong>
+            </div>
+            <div>
+              <span>{t('analytics.throughput.completed')}</span>
+              <strong>{throughput?.total_completed || 0}</strong>
+            </div>
+            <div>
+              <span>{t('analytics.throughput.average')}</span>
+              <strong>{formatDayNumber(throughput?.average_completed || 0)}</strong>
+            </div>
+          </div>
+          {#if throughputBuckets.length}
+            <div aria-hidden="true">
+              <Chart
+                type="line"
+                series={throughputSeries}
+                categories={throughputCategories}
+                maxXLabels={6}
+                minHeight={180}
+                maxHeight={240}
+              />
+            </div>
+            <details class="data-details">
+              <summary>{t('analytics.dataTable.show')}</summary>
+              <div class="table-scroll">
+                <table class="analytics-table compact">
+                  <caption class="sr-only">{t('analytics.throughput.title')}</caption>
+                  <thead>
+                    <tr>
+                      <th>{t('analytics.throughput.period')}</th>
+                      <th class="number-cell">{t('analytics.throughput.created')}</th>
+                      <th class="number-cell">{t('analytics.throughput.completed')}</th>
+                      <th class="number-cell">{t('analytics.throughput.net')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {#each throughputBuckets as bucket (bucket.start_date)}
+                      <tr>
+                        <td>{period(bucket)}</td>
+                        <td class="number-cell">{bucket.created}</td>
+                        <td class="number-cell">{bucket.completed}</td>
+                        <td class="number-cell">{signed(bucket.net_change)}</td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+            <div class="definition-copy">
+              <Text variant="subtle" size="xs">
+                {t('analytics.throughput.definition')}
+              </Text>
             </div>
           {/if}
         </Card>
 
-        <Card variant="raised" padding="default" style="border-color: var(--ds-border);">
+        <Card variant="raised" padding="default">
           {#snippet header()}
-            <h3 class="text-sm font-semibold" style="color: var(--ds-text);">{t('analytics.cumulativeFlow.title')}</h3>
+            <div>
+              <h3>{t('analytics.aging.title')}</h3>
+              <Text variant="subtle" size="xs">{t('analytics.aging.description')}</Text>
+            </div>
           {/snippet}
-          {#if cfdData && cfdPoints.length > 0}
-            <Chart type="stacked-area" series={cfdSeries} categories={cfdCategories} />
+          {#if aging?.total_items}
+            <div class="summary-strip">
+              <div>
+                <span>{t('analytics.aging.total')}</span>
+                <strong>{aging.total_items}</strong>
+              </div>
+              <div>
+                <span>{t('analytics.aging.median')}</span>
+                <strong>{days(aging.median_days)}</strong>
+              </div>
+              <div>
+                <span>{t('analytics.aging.p85')}</span>
+                <strong>{days(aging.p85_days)}</strong>
+              </div>
+            </div>
+            <div aria-hidden="true">
+              <Chart
+                type="bar"
+                series={agingSeries}
+                categories={agingCategories}
+                maxXLabels={5}
+                minHeight={180}
+                maxHeight={240}
+              />
+            </div>
+            <details class="data-details">
+              <summary>{t('analytics.dataTable.show')}</summary>
+              <div class="table-scroll">
+                <table class="analytics-table compact">
+                  <caption class="sr-only">{t('analytics.aging.title')}</caption>
+                  <thead>
+                    <tr>
+                      <th>{t('analytics.aging.ageBand')}</th>
+                      <th class="number-cell">{t('analytics.aging.itemCount')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {#each agingBuckets as bucket (bucket.key)}
+                      <tr>
+                        <td>{t(`analytics.aging.buckets.${bucket.key}`)}</td>
+                        <td class="number-cell">{bucket.item_count}</td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+            </details>
           {:else}
-            <div class="flex flex-col items-center justify-center py-10 gap-2" style="color: var(--ds-text-subtle);">
-              {#if cfdData?.data_quality?.reason}
-                <Text variant="subtle" size="sm">{t('analytics.insufficientData.' + cfdData.data_quality.reason)}</Text>
-              {:else}
-                <Text variant="subtle" size="sm">{t('analytics.noData')}</Text>
-              {/if}
+            <div class="empty-copy">{t('analytics.aging.noActive')}</div>
+          {/if}
+        </Card>
+      </section>
+
+      {#if aging?.total_items}
+        <section class="analytics-section aging-detail-grid" aria-label={t('analytics.aging.byStatus')}>
+          <Card variant="raised" padding="none">
+            {#snippet header()}
+              <h3>{t('analytics.aging.byStatus')}</h3>
+            {/snippet}
+            <div class="table-scroll">
+              <table class="analytics-table">
+                <thead>
+                  <tr>
+                    <th>{t('analytics.aging.status')}</th>
+                    <th class="number-cell">{t('analytics.aging.itemCount')}</th>
+                    <th class="number-cell">{t('analytics.aging.median')}</th>
+                    <th class="number-cell">{t('analytics.aging.p85')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each aging.by_status as row (row.status)}
+                    <tr>
+                      <td>{row.status || '—'}</td>
+                      <td class="number-cell">{row.item_count}</td>
+                      <td class="number-cell">{days(row.median_days)}</td>
+                      <td class="number-cell">{days(row.p85_days)}</td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+
+          <Card variant="raised" padding="none">
+            {#snippet header()}
+              <h3>{t('analytics.aging.oldest')}</h3>
+            {/snippet}
+            <div class="table-scroll">
+              <table class="analytics-table">
+                <thead>
+                  <tr>
+                    <th>{t('analytics.health.item')}</th>
+                    <th>{t('analytics.health.status')}</th>
+                    <th class="number-cell">{t('analytics.health.age')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each aging.oldest_items as item (item.id)}
+                    <tr>
+                      <td>
+                        <button type="button" class="item-link" onclick={() => openItem(item)}>
+                          <span class="item-number">#{item.workspace_item_number}</span>
+                          {item.title}
+                        </button>
+                      </td>
+                      <td>{item.status || '—'}</td>
+                      <td class="number-cell">{days(item.age_days)}</td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        </section>
+      {/if}
+
+      <section class="analytics-section" aria-labelledby="delivery-heading">
+        <Card variant="raised" padding="default">
+          {#snippet header()}
+            <div>
+              <h3 id="delivery-heading">{t('analytics.deliveryTime.title')}</h3>
+              <Text variant="subtle" size="xs">{t('analytics.deliveryTime.description')}</Text>
+            </div>
+          {/snippet}
+
+          {#if deliveryTime?.total_items_analyzed}
+            <div class="summary-strip summary-strip-wide">
+              <div>
+                <span>{t('analytics.deliveryTime.analyzed')}</span>
+                <strong>{deliveryTime.total_items_analyzed}</strong>
+              </div>
+              <div>
+                <span>{t('analytics.deliveryTime.average')}</span>
+                <strong>{days(deliveryTime.average_days)}</strong>
+              </div>
+              <div>
+                <span>{t('analytics.deliveryTime.median')}</span>
+                <strong>{days(deliveryTime.median_days)}</strong>
+              </div>
+              <div>
+                <span>{t('analytics.deliveryTime.p85')}</span>
+                <strong>{days(deliveryTime.p85_days)}</strong>
+              </div>
+            </div>
+
+            {#if !deliveryTime.data_quality?.sufficient}
+              <div class="notice notice-warning mb-4" role="status">
+                {t(`analytics.insufficientData.${deliveryTime.data_quality.reason}`)}
+              </div>
+            {/if}
+
+            <div aria-hidden="true">
+              <Chart
+                type="line"
+                series={deliverySeries}
+                categories={deliveryCategories}
+                valueFormat={days}
+                yAxisFormat={formatDayNumber}
+                maxXLabels={8}
+                minHeight={200}
+                maxHeight={280}
+              />
+            </div>
+
+            <details class="data-details">
+              <summary>{t('analytics.dataTable.show')}</summary>
+              <div class="table-scroll">
+                <table class="analytics-table compact">
+                  <caption class="sr-only">{t('analytics.deliveryTime.title')}</caption>
+                  <thead>
+                    <tr>
+                      <th>{t('analytics.deliveryTime.period')}</th>
+                      <th class="number-cell">{t('analytics.deliveryTime.completed')}</th>
+                      <th class="number-cell">{t('analytics.deliveryTime.median')}</th>
+                      <th class="number-cell">{t('analytics.deliveryTime.p85')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {#each deliveryTrend as point (point.start_date)}
+                      <tr>
+                        <td>{period(point)}</td>
+                        <td class="number-cell">{point.completed_items}</td>
+                        <td class="number-cell">
+                          {point.completed_items ? days(point.median_days) : '—'}
+                        </td>
+                        <td class="number-cell">
+                          {point.completed_items ? days(point.p85_days) : '—'}
+                        </td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+
+            <div class="mt-5">
+              <h4>{t('analytics.deliveryTime.slowest')}</h4>
+              <div class="table-scroll mt-2">
+                <table class="analytics-table">
+                  <thead>
+                    <tr>
+                      <th>{t('analytics.health.item')}</th>
+                      <th>{t('analytics.deliveryTime.completedDate')}</th>
+                      <th class="number-cell">{t('analytics.deliveryTime.duration')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {#each deliveryTime.slowest_items as item (item.id)}
+                      <tr>
+                        <td>
+                          <button type="button" class="item-link" onclick={() => openItem(item)}>
+                            <span class="item-number">#{item.workspace_item_number}</span>
+                            {item.title}
+                          </button>
+                        </td>
+                        <td>{formatDateOnly(item.completed_date)}</td>
+                        <td class="number-cell">{days(item.delivery_days)}</td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div class="definition-copy">
+              <Text variant="subtle" size="xs">
+                {t('analytics.deliveryTime.definition')}
+              </Text>
+            </div>
+          {:else}
+            <div class="empty-copy">
+              {t(
+                `analytics.insufficientData.${deliveryTime?.data_quality?.reason ||
+                  'no_completed_items'}`,
+              )}
+            </div>
+          {/if}
+
+          {#if deliveryTime?.missing_history_items > 0}
+            <div class="notice notice-warning mt-4" role="status">
+              {t('analytics.deliveryTime.missingHistory', {
+                count: deliveryTime.missing_history_items,
+              })}
             </div>
           {/if}
         </Card>
-
-        <Card variant="raised" padding="default" style="border-color: var(--ds-border);">
-          {#snippet header()}
-            <h3 class="text-sm font-semibold" style="color: var(--ds-text);">{t('analytics.cycleTime.title')}</h3>
-          {/snippet}
-          {#if cycleTimeData && ctStages.length > 0}
-            <Text variant="subtle" size="xs" class="mb-3">{ctAnalyzed} {t('analytics.cycleTime.itemsAnalyzed')}</Text>
-            <!-- Summary card -->
-            <div class="flex gap-4 mb-4 p-3 rounded-lg" style="background: var(--ds-surface-sunken);">
-              <div class="text-center">
-                <Text variant="subtle" size="xs">{t('analytics.cycleTime.avgTotal')}</Text>
-                <div class="text-lg font-semibold" style="color: var(--ds-text);">{formatHours(ctTotal.avg_hours || 0)}</div>
-              </div>
-              <div class="text-center">
-                <Text variant="subtle" size="xs">{t('analytics.cycleTime.median')}</Text>
-                <div class="text-lg font-semibold" style="color: var(--ds-text);">{formatHours(ctTotal.median_hours || 0)}</div>
-              </div>
-              <div class="text-center">
-                <Text variant="subtle" size="xs">{t('analytics.cycleTime.p85')}</Text>
-                <div class="text-lg font-semibold" style="color: var(--ds-text);">{formatHours(ctTotal.p85_hours || 0)}</div>
-              </div>
-            </div>
-            <Chart type="horizontal-bar" series={ctSeries} categories={ctCategories} valueFormat={formatHours}>
-              {#snippet tooltipContent({ index, category })}
-                {@const stage = ctStages[index]}
-                <div style="font-weight:600;">{category}</div>
-                <div style="color:var(--ds-text-subtle);font-size:0.7rem;">avg {formatHours(stage.avg_hours)} &middot; med {formatHours(stage.median_hours)}</div>
-                <div style="color:var(--ds-text-subtle);font-size:0.7rem;">p85 {formatHours(stage.p85_hours)}</div>
-              {/snippet}
-            </Chart>
-          {:else}
-            <div class="flex flex-col items-center justify-center py-10 gap-2" style="color: var(--ds-text-subtle);">
-              {#if cycleTimeData?.data_quality?.reason}
-                <Text variant="subtle" size="sm">{t('analytics.insufficientData.' + cycleTimeData.data_quality.reason)}</Text>
-              {:else}
-                <Text variant="subtle" size="sm">{t('analytics.noData')}</Text>
-              {/if}
-            </div>
-          {/if}
-        </Card>
-
-        <Card variant="raised" padding="default" style="border-color: var(--ds-border);">
-          {#snippet header()}
-            <h3 class="text-sm font-semibold" style="color: var(--ds-text);">{t('analytics.forecast.title')}</h3>
-          {/snippet}
-          <ForecastPanel data={forecastData} />
-        </Card>
-      </div>
+      </section>
     {/if}
   </div>
 </div>
+
+<style>
+  .analytics-filters {
+    display: flex;
+    align-items: end;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .filter-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .collection-filter {
+    width: 12rem;
+  }
+
+  .preset-filter {
+    width: 10rem;
+  }
+
+  .date-filter {
+    width: 9.5rem;
+  }
+
+  .scope-banner,
+  .notice {
+    border: 1px solid var(--ds-border);
+    border-radius: 0.75rem;
+    background: var(--ds-background-neutral);
+  }
+
+  .scope-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.5rem;
+    padding: 1rem;
+  }
+
+  .scope-note {
+    max-width: 34rem;
+  }
+
+  .notice {
+    padding: 0.75rem 1rem;
+    font-size: 0.875rem;
+    color: var(--ds-text-subtle);
+  }
+
+  .notice-warning {
+    border-color: color-mix(in srgb, var(--ds-warning, #f59e0b) 38%, var(--ds-border));
+    background: color-mix(in srgb, var(--ds-warning, #f59e0b) 8%, var(--ds-surface));
+  }
+
+  .notice-error,
+  :global(.error-card) {
+    border-color: color-mix(in srgb, var(--ds-danger, #ef4444) 38%, var(--ds-border));
+    background: color-mix(in srgb, var(--ds-danger, #ef4444) 7%, var(--ds-surface));
+  }
+
+  .analytics-section {
+    margin-bottom: 1.5rem;
+  }
+
+  .section-heading {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 0.875rem;
+  }
+
+  h2 {
+    margin: 0;
+    color: var(--ds-text);
+    font-size: 1.125rem;
+    font-weight: 650;
+  }
+
+  h3,
+  h4 {
+    margin: 0;
+    color: var(--ds-text);
+    font-size: 0.875rem;
+    font-weight: 650;
+  }
+
+  .metric-grid {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  }
+
+  .metric-card {
+    padding: 1rem;
+    border: 1px solid var(--ds-border);
+    border-radius: 0.75rem;
+    background: var(--ds-surface-raised);
+  }
+
+  .metric-value {
+    color: var(--ds-text);
+    font-size: 1.75rem;
+    font-weight: 700;
+    line-height: 1.1;
+  }
+
+  .metric-label {
+    margin-top: 0.35rem;
+    color: var(--ds-text-subtle);
+    font-size: 0.75rem;
+  }
+
+  .flow-grid,
+  .aging-detail-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1.5rem;
+  }
+
+  .summary-strip {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+  }
+
+  .summary-strip-wide {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .summary-strip > div {
+    padding: 0.75rem;
+    border-radius: 0.5rem;
+    background: var(--ds-background-neutral);
+  }
+
+  .summary-strip span {
+    display: block;
+    color: var(--ds-text-subtle);
+    font-size: 0.7rem;
+  }
+
+  .summary-strip strong {
+    display: block;
+    margin-top: 0.2rem;
+    color: var(--ds-text);
+    font-size: 1.15rem;
+  }
+
+  .table-scroll {
+    overflow-x: auto;
+  }
+
+  .analytics-table {
+    width: 100%;
+    border-collapse: collapse;
+    color: var(--ds-text);
+    font-size: 0.8rem;
+  }
+
+  .analytics-table th,
+  .analytics-table td {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--ds-border);
+    text-align: start;
+    vertical-align: middle;
+  }
+
+  .analytics-table th {
+    color: var(--ds-text-subtle);
+    background: var(--ds-surface);
+    font-size: 0.7rem;
+    font-weight: 650;
+    letter-spacing: 0.025em;
+  }
+
+  .analytics-table tbody tr:last-child td {
+    border-bottom: 0;
+  }
+
+  .analytics-table.compact th,
+  .analytics-table.compact td {
+    padding: 0.55rem 0.75rem;
+  }
+
+  .analytics-table .number-cell {
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  .item-link {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.45rem;
+    max-width: 30rem;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--ds-text-link);
+    cursor: pointer;
+    font: inherit;
+    text-align: start;
+  }
+
+  .item-link:hover {
+    text-decoration: underline;
+  }
+
+  .item-link:focus-visible {
+    border-radius: 0.2rem;
+    outline: 2px solid var(--ds-border-focused);
+    outline-offset: 3px;
+  }
+
+  .item-number {
+    color: var(--ds-text-subtlest);
+    font-size: 0.7rem;
+    white-space: nowrap;
+  }
+
+  .flag-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+  }
+
+  .flag {
+    padding: 0.15rem 0.4rem;
+    border-radius: 999px;
+    background: var(--ds-background-neutral);
+    color: var(--ds-text-subtle);
+    font-size: 0.65rem;
+    white-space: nowrap;
+  }
+
+  .empty-copy {
+    padding: 2.5rem 1rem;
+    color: var(--ds-text-subtle);
+    font-size: 0.875rem;
+    text-align: center;
+  }
+
+  .data-details {
+    margin-top: 0.5rem;
+    border-top: 1px solid var(--ds-border);
+  }
+
+  .data-details summary {
+    padding: 0.75rem 0;
+    color: var(--ds-text-link);
+    font-size: 0.75rem;
+    cursor: pointer;
+  }
+
+  .definition-copy {
+    display: block;
+    margin-top: 0.75rem;
+  }
+
+  @media (max-width: 1100px) {
+    .metric-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .flow-grid,
+    .aging-detail-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 720px) {
+    .analytics-filters {
+      width: 100%;
+      justify-content: stretch;
+    }
+
+    .filter-field,
+    .collection-filter,
+    .preset-filter,
+    .date-filter {
+      width: calc(50% - 0.375rem);
+    }
+
+    .scope-banner,
+    .section-heading {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+
+    .metric-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .summary-strip,
+    .summary-strip-wide {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+</style>
