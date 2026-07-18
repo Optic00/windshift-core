@@ -6,12 +6,14 @@ const WS_SIDEBAR_WIDTH_STORAGE_KEY = 'windshift-ws-sidebar-width';
 const WS_SIDEBAR_COLLAPSED_STORAGE_KEY = 'windshift-ws-sidebar-collapsed';
 const WS_SIDEBAR_DEFAULT_WIDTH = 256;
 const WS_SIDEBAR_LEGACY_DEFAULT_WIDTH = 192;
+export const WS_SIDEBAR_MIN_WIDTH = 180;
+export const WS_SIDEBAR_MAX_WIDTH = 520;
 
 // Helper to get initial navExpanded value from localStorage
 function getInitialNavExpanded() {
   if (typeof window === 'undefined') return false;
   try {
-    const stored = localStorage.getItem(NAV_EXPANDED_STORAGE_KEY);
+    const stored = window.localStorage.getItem(NAV_EXPANDED_STORAGE_KEY);
     return stored === 'true';
   } catch {
     return false;
@@ -21,7 +23,7 @@ function getInitialNavExpanded() {
 function getInitialWsSidebarCollapsed() {
   if (typeof window === 'undefined') return false;
   try {
-    return localStorage.getItem(WS_SIDEBAR_COLLAPSED_STORAGE_KEY) === 'true';
+    return window.localStorage.getItem(WS_SIDEBAR_COLLAPSED_STORAGE_KEY) === 'true';
   } catch {
     return false;
   }
@@ -30,14 +32,16 @@ function getInitialWsSidebarCollapsed() {
 function getInitialWsSidebarWidth() {
   if (typeof window === 'undefined') return WS_SIDEBAR_DEFAULT_WIDTH;
   try {
-    const stored = localStorage.getItem(WS_SIDEBAR_WIDTH_STORAGE_KEY);
+    const stored = window.localStorage.getItem(WS_SIDEBAR_WIDTH_STORAGE_KEY);
     if (stored) {
       const val = parseInt(stored, 10);
       // The store persisted the old default for every visitor, even when they
       // never resized the sidebar. Migrate only that exact value so custom
       // widths continue to be respected.
       if (val === WS_SIDEBAR_LEGACY_DEFAULT_WIDTH) return WS_SIDEBAR_DEFAULT_WIDTH;
-      if (!Number.isNaN(val) && val >= 148 && val <= 320) return val;
+      if (!Number.isNaN(val) && val >= WS_SIDEBAR_MIN_WIDTH && val <= WS_SIDEBAR_MAX_WIDTH) {
+        return val;
+      }
     }
   } catch {
     // Ignore
@@ -56,7 +60,7 @@ function createUIStore() {
   navExpanded.subscribe((value) => {
     if (typeof window !== 'undefined') {
       try {
-        localStorage.setItem(NAV_EXPANDED_STORAGE_KEY, String(value));
+        window.localStorage.setItem(NAV_EXPANDED_STORAGE_KEY, String(value));
       } catch {
         // Ignore localStorage errors
       }
@@ -67,7 +71,7 @@ function createUIStore() {
   wsSidebarWidth.subscribe((value) => {
     if (typeof window !== 'undefined') {
       try {
-        localStorage.setItem(WS_SIDEBAR_WIDTH_STORAGE_KEY, String(value));
+        window.localStorage.setItem(WS_SIDEBAR_WIDTH_STORAGE_KEY, String(value));
       } catch {
         // Ignore localStorage errors
       }
@@ -78,7 +82,7 @@ function createUIStore() {
   wsSidebarCollapsed.subscribe((value) => {
     if (typeof window !== 'undefined') {
       try {
-        localStorage.setItem(WS_SIDEBAR_COLLAPSED_STORAGE_KEY, String(value));
+        window.localStorage.setItem(WS_SIDEBAR_COLLAPSED_STORAGE_KEY, String(value));
       } catch {
         // Ignore localStorage errors
       }

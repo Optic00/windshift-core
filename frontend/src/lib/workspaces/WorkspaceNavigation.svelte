@@ -29,10 +29,14 @@
   import { t } from '../stores/i18n.svelte.js';
   import { workspaceGradientIndex, applyToAllViews, loadWorkspaceGradient, getGradientStyle } from '../stores/workspaceGradient.svelte.js';
   import { useEventListener } from 'runed';
-  import { uiStore } from '../stores/ui.svelte.js';
+  import {
+    uiStore,
+    WS_SIDEBAR_MAX_WIDTH,
+    WS_SIDEBAR_MIN_WIDTH,
+  } from '../stores/ui.svelte.js';
 
-  const MIN_WIDTH = 180;
-  const MAX_WIDTH = 520;
+  const MIN_WIDTH = WS_SIDEBAR_MIN_WIDTH;
+  const MAX_WIDTH = WS_SIDEBAR_MAX_WIDTH;
   const COLLAPSE_THRESHOLD = 100;
   const COLLAPSED_WIDTH = 48;
 
