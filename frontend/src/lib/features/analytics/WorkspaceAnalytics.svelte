@@ -4,6 +4,7 @@
     AlertCircle,
     Clock3,
     Gauge,
+    Info,
     RefreshCw,
     Ruler,
     UserRoundMinus,
@@ -11,16 +12,17 @@
   import { api } from '../../api.js';
   import { navigate } from '../../router.js';
   import { t } from '../../stores/i18n.svelte.js';
+  import AlertBox from '../../components/AlertBox.svelte';
+  import Badge from '../../components/Badge.svelte';
   import Button from '../../components/Button.svelte';
   import Card from '../../components/Card.svelte';
   import Input from '../../components/Input.svelte';
   import Label from '../../components/Label.svelte';
   import Select from '../../components/Select.svelte';
+  import StateDisplay from '../../components/StateDisplay.svelte';
   import Text from '../../components/Text.svelte';
   import PageHeader from '../../layout/PageHeader.svelte';
   import Chart from '../../widgets/Chart.svelte';
-  import StatCard from '../../widgets/StatCard.svelte';
-  import WidgetWrapper from '../../widgets/WidgetWrapper.svelte';
   import {
     defaultAnalyticsRange,
     formatDateOnly,
@@ -214,6 +216,12 @@
     return value > 0 ? `+${value}` : String(value);
   }
 
+  function flagVariant(flag) {
+    if (flag === 'overdue') return 'danger';
+    if (flag === 'stale') return 'warning';
+    return 'neutral';
+  }
+
   const dataset = $derived(analyticsData?.dataset || null);
   const health = $derived(analyticsData?.health || null);
   const throughput = $derived(analyticsData?.throughput || null);
@@ -224,15 +232,13 @@
     {
       key: 'unfinished',
       icon: Clock3,
-      bgColor: 'var(--ds-accent-blue-subtler)',
-      iconColor: 'var(--ds-icon-accent-blue)',
+      iconColor: 'var(--ds-icon-subtle)',
       label: t('analytics.health.unfinished'),
       value: health?.unfinished_items || 0,
     },
     {
       key: 'overdue',
       icon: AlertCircle,
-      bgColor: 'var(--ds-background-danger-subtle)',
       iconColor: 'var(--ds-icon-danger)',
       label: t('analytics.health.overdue'),
       value: health?.overdue || 0,
@@ -240,7 +246,6 @@
     {
       key: 'stale',
       icon: Gauge,
-      bgColor: 'var(--ds-background-warning-subtle)',
       iconColor: 'var(--ds-icon-warning)',
       label: t('analytics.health.stale'),
       value: health?.stale || 0,
@@ -248,15 +253,13 @@
     {
       key: 'unassigned',
       icon: UserRoundMinus,
-      bgColor: 'var(--ds-background-accent-purple-subtler)',
-      iconColor: 'var(--ds-icon-accent-purple)',
+      iconColor: 'var(--ds-icon-subtle)',
       label: t('analytics.health.unassigned'),
       value: health?.unassigned || 0,
     },
     {
       key: 'without-priority',
       icon: AlertCircle,
-      bgColor: 'var(--ds-background-neutral)',
       iconColor: 'var(--ds-icon-subtle)',
       label: t('analytics.health.withoutPriority'),
       value: health?.without_priority || 0,
@@ -264,7 +267,6 @@
     {
       key: 'without-estimate',
       icon: Ruler,
-      bgColor: 'var(--ds-background-neutral)',
       iconColor: 'var(--ds-icon-subtle)',
       label: t('analytics.health.withoutEstimate'),
       value: health?.without_estimate || 0,
@@ -279,14 +281,14 @@
     {
       key: 'created',
       label: t('analytics.throughput.created'),
-      color: '#8b5cf6',
+      color: 'var(--ds-icon-accent-blue)',
       values: throughputBuckets.map((bucket) => bucket.created),
       showArea: false,
     },
     {
       key: 'completed',
       label: t('analytics.throughput.completed'),
-      color: '#10b981',
+      color: 'var(--ds-icon-accent-green)',
       values: throughputBuckets.map((bucket) => bucket.completed),
       showArea: false,
     },
@@ -300,7 +302,7 @@
     {
       key: 'items',
       label: t('analytics.aging.itemCount'),
-      color: '#f59e0b',
+      color: 'var(--ds-icon-accent-orange)',
       values: agingBuckets.map((bucket) => bucket.item_count),
     },
   ]);
@@ -316,14 +318,14 @@
     {
       key: 'median',
       label: t('analytics.deliveryTime.median'),
-      color: '#3b82f6',
+      color: 'var(--ds-icon-accent-blue)',
       values: deliveryChartTrend.map((point) => point.median_days),
       showArea: false,
     },
     {
       key: 'p85',
       label: t('analytics.deliveryTime.p85'),
-      color: '#06b6d4',
+      color: 'var(--ds-icon-accent-teal)',
       values: deliveryChartTrend.map((point) => point.p85_days),
       dashed: true,
       showArea: false,
@@ -332,9 +334,11 @@
 </script>
 
 <div class="analytics-page min-h-screen" style="background-color: var(--ds-surface);">
-  <div class="p-4 sm:p-6">
-    <PageHeader title={t('analytics.title')} subtitle={t('analytics.subtitle')}>
-      {#snippet actions()}
+  <div class="analytics-shell">
+    <PageHeader title={t('analytics.title')} subtitle={t('analytics.subtitle')} />
+
+    <div class="filter-card">
+      <Card variant="raised" padding="default" rounded="lg">
         <div class="analytics-filters">
           <div class="filter-field collection-filter">
             <Label for="analytics-collection" size="xs" color="subtle">
@@ -387,47 +391,54 @@
             />
           </div>
         </div>
-      {/snippet}
-    </PageHeader>
+      </Card>
+    </div>
 
     {#if collectionLoadError}
-      <div class="notice notice-warning mb-4" role="status">
-        {t('analytics.collectionLoadError')}
+      <div role="status">
+        <AlertBox variant="warning" class="mb-4">
+          {#snippet children()}{t('analytics.collectionLoadError')}{/snippet}
+        </AlertBox>
       </div>
     {/if}
 
     {#if validationCode}
-      <div class="notice notice-error mb-4" role="alert">
-        {t(`analytics.validation.${validationCode}`)}
+      <div role="alert">
+        <AlertBox variant="error" class="mb-4">
+          {#snippet children()}{t(`analytics.validation.${validationCode}`)}{/snippet}
+        </AlertBox>
       </div>
     {:else if loadError}
-      <Card variant="outlined" padding="default" class="mb-5 error-card">
-        <div class="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <div class="font-semibold" style="color: var(--ds-text-danger);">
-              {t('analytics.errorTitle')}
+      <div role="alert">
+        <AlertBox variant="error" class="mb-5">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div class="font-semibold" style="color: var(--ds-text);">
+                {t('analytics.errorTitle')}
+              </div>
+              <Text variant="subtle" size="sm">{loadError}</Text>
             </div>
-            <Text variant="subtle" size="sm">{loadError}</Text>
+            <Button variant="default" size="small" icon={RefreshCw} onclick={retry}>
+              {t('analytics.retry')}
+            </Button>
           </div>
-          <Button variant="default" size="small" icon={RefreshCw} onclick={retry}>
-            {t('analytics.retry')}
-          </Button>
-        </div>
-      </Card>
+        </AlertBox>
+      </div>
     {:else if loading}
-      <div class="flex items-center justify-center py-16" role="status">
-        <Text variant="subtle" size="sm">{t('analytics.loading')}</Text>
+      <div role="status">
+        <StateDisplay type="loading" message={t('analytics.loading')} class="py-20" />
       </div>
     {:else if analyticsData}
       {#if dataset}
         <div class="scope-banner mb-6">
-          <div>
-            <div class="text-sm font-semibold" style="color: var(--ds-text);">
+          <Info class="scope-icon" aria-hidden="true" />
+          <div class="scope-summary">
+            <div class="scope-title">
               {dataset.cohort_mode === 'current_collection'
                 ? t('analytics.scope.currentCollection')
                 : t('analytics.scope.currentWorkspace')}
             </div>
-            <Text variant="subtle" size="sm">
+            <Text variant="subtle" size="xs">
               {t('analytics.scope.summary', {
                 items: dataset.total_items,
                 from: formatDateOnly(dataset.date_from, { year: 'numeric' }),
@@ -446,32 +457,38 @@
       {/if}
 
       <section class="analytics-section" aria-label={t('analytics.health.title')}>
-        <WidgetWrapper title={t('analytics.health.title')} widgetId="analytics-work-health">
-          <div class="widget-intro">
+        <div class="section-heading">
+          <div>
+            <h2>{t('analytics.health.title')}</h2>
             <Text variant="subtle" size="sm">{t('analytics.health.description')}</Text>
-            {#if health?.stale_after_days}
-              <Text variant="subtle" size="xs">
-                {t('analytics.health.staleHint', { days: health.stale_after_days })}
-              </Text>
-            {/if}
           </div>
-          <div class="metric-grid">
-            {#each healthMetrics as metric (metric.key)}
-              <StatCard
-                icon={metric.icon}
-                bgColor={metric.bgColor}
-                iconColor={metric.iconColor}
-                label={metric.label}
-                value={metric.value}
-              />
-            {/each}
+          {#if health?.stale_after_days}
+            <Text variant="subtle" size="xs">
+              {t('analytics.health.staleHint', { days: health.stale_after_days })}
+            </Text>
+          {/if}
+        </div>
+        <Card variant="raised" padding="none" rounded="lg">
+          <div class="widget-intro">
+            <div class="metric-grid">
+              {#each healthMetrics as metric (metric.key)}
+                {@const MetricIcon = metric.icon}
+                <div class="health-metric">
+                  <MetricIcon class="metric-icon" style="color: {metric.iconColor};" />
+                  <div>
+                    <div class="metric-label">{metric.label}</div>
+                    <div class="metric-value">{metric.value}</div>
+                  </div>
+                </div>
+              {/each}
+            </div>
           </div>
-        </WidgetWrapper>
+        </Card>
 
-        <WidgetWrapper
-          title={t('analytics.health.attentionItems')}
-          widgetId="analytics-attention-items"
-        >
+        <Card variant="raised" padding="none" rounded="lg">
+          <div class="panel-titlebar">
+            <h3>{t('analytics.health.attentionItems')}</h3>
+          </div>
           {#if health?.attention_items?.length}
             <div class="table-scroll">
               <table class="analytics-table">
@@ -497,7 +514,13 @@
                       <td>
                         <div class="flag-list">
                           {#each item.flags as flag}
-                            <span class="flag">{t(`analytics.health.flags.${flag}`)}</span>
+                            <Badge
+                              variant={flagVariant(flag)}
+                              size="xs"
+                              class="signal-badge signal-{flag}"
+                            >
+                              {t(`analytics.health.flags.${flag}`)}
+                            </Badge>
                           {/each}
                         </div>
                       </td>
@@ -509,138 +532,148 @@
           {:else}
             <div class="empty-copy">{t('analytics.health.allClear')}</div>
           {/if}
-        </WidgetWrapper>
+        </Card>
       </section>
 
       <section class="analytics-section flow-grid" aria-label={t('analytics.throughput.title')}>
-        <WidgetWrapper
-          title={t('analytics.throughput.title')}
-          widgetId="analytics-throughput"
-          width={1}
-        >
-          <div class="widget-description">
-            <Text variant="subtle" size="xs">{t('analytics.throughput.description')}</Text>
-          </div>
-          <div class="summary-strip">
+        <article class="analytics-panel">
+          <div class="section-heading compact">
             <div>
-              <span>{t('analytics.throughput.created')}</span>
-              <strong>{throughput?.total_created || 0}</strong>
-            </div>
-            <div>
-              <span>{t('analytics.throughput.completed')}</span>
-              <strong>{throughput?.total_completed || 0}</strong>
-            </div>
-            <div>
-              <span>{t('analytics.throughput.average')}</span>
-              <strong>{formatDayNumber(throughput?.average_completed || 0)}</strong>
+              <h2>{t('analytics.throughput.title')}</h2>
+              <Text variant="subtle" size="sm">{t('analytics.throughput.description')}</Text>
             </div>
           </div>
-          {#if throughputBuckets.length}
-            <div aria-hidden="true">
-              <Chart
-                type="line"
-                series={throughputSeries}
-                categories={throughputCategories}
-                maxXLabels={6}
-                minHeight={180}
-                maxHeight={240}
-              />
-            </div>
-            <details class="data-details">
-              <summary>{t('analytics.dataTable.show')}</summary>
-              <div class="table-scroll">
-                <table class="analytics-table compact">
-                  <caption class="sr-only">{t('analytics.throughput.title')}</caption>
-                  <thead>
-                    <tr>
-                      <th>{t('analytics.throughput.period')}</th>
-                      <th class="number-cell">{t('analytics.throughput.created')}</th>
-                      <th class="number-cell">{t('analytics.throughput.completed')}</th>
-                      <th class="number-cell">{t('analytics.throughput.net')}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {#each throughputBuckets as bucket (bucket.start_date)}
-                      <tr>
-                        <td>{period(bucket)}</td>
-                        <td class="number-cell">{bucket.created}</td>
-                        <td class="number-cell">{bucket.completed}</td>
-                        <td class="number-cell">{signed(bucket.net_change)}</td>
-                      </tr>
-                    {/each}
-                  </tbody>
-                </table>
-              </div>
-            </details>
-            <div class="definition-copy">
-              <Text variant="subtle" size="xs">
-                {t('analytics.throughput.definition')}
-              </Text>
-            </div>
-          {/if}
-        </WidgetWrapper>
-
-        <WidgetWrapper title={t('analytics.aging.title')} widgetId="analytics-aging" width={1}>
-          <div class="widget-description">
-            <Text variant="subtle" size="xs">{t('analytics.aging.description')}</Text>
-          </div>
-          {#if aging?.total_items}
+          <Card variant="raised" padding="default" rounded="lg">
             <div class="summary-strip">
               <div>
-                <span>{t('analytics.aging.total')}</span>
-                <strong>{aging.total_items}</strong>
+                <span>{t('analytics.throughput.created')}</span>
+                <strong>{throughput?.total_created || 0}</strong>
               </div>
               <div>
-                <span>{t('analytics.aging.median')}</span>
-                <strong>{days(aging.median_days)}</strong>
+                <span>{t('analytics.throughput.completed')}</span>
+                <strong>{throughput?.total_completed || 0}</strong>
               </div>
               <div>
-                <span>{t('analytics.aging.p85')}</span>
-                <strong>{days(aging.p85_days)}</strong>
+                <span>{t('analytics.throughput.average')}</span>
+                <strong>{formatDayNumber(throughput?.average_completed || 0)}</strong>
               </div>
             </div>
-            <div aria-hidden="true">
-              <Chart
-                type="bar"
-                series={agingSeries}
-                categories={agingCategories}
-                maxXLabels={5}
-                minHeight={180}
-                maxHeight={240}
-              />
-            </div>
-            <details class="data-details">
-              <summary>{t('analytics.dataTable.show')}</summary>
-              <div class="table-scroll">
-                <table class="analytics-table compact">
-                  <caption class="sr-only">{t('analytics.aging.title')}</caption>
-                  <thead>
-                    <tr>
-                      <th>{t('analytics.aging.ageBand')}</th>
-                      <th class="number-cell">{t('analytics.aging.itemCount')}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {#each agingBuckets as bucket (bucket.key)}
+            {#if throughputBuckets.length}
+              <div aria-hidden="true">
+                <Chart
+                  type="line"
+                  series={throughputSeries}
+                  categories={throughputCategories}
+                  maxXLabels={6}
+                  minHeight={180}
+                  maxHeight={240}
+                />
+              </div>
+              <details class="data-details">
+                <summary>{t('analytics.dataTable.show')}</summary>
+                <div class="table-scroll">
+                  <table class="analytics-table compact">
+                    <caption class="sr-only">{t('analytics.throughput.title')}</caption>
+                    <thead>
                       <tr>
-                        <td>{t(`analytics.aging.buckets.${bucket.key}`)}</td>
-                        <td class="number-cell">{bucket.item_count}</td>
+                        <th>{t('analytics.throughput.period')}</th>
+                        <th class="number-cell">{t('analytics.throughput.created')}</th>
+                        <th class="number-cell">{t('analytics.throughput.completed')}</th>
+                        <th class="number-cell">{t('analytics.throughput.net')}</th>
                       </tr>
-                    {/each}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {#each throughputBuckets as bucket (bucket.start_date)}
+                        <tr>
+                          <td>{period(bucket)}</td>
+                          <td class="number-cell">{bucket.created}</td>
+                          <td class="number-cell">{bucket.completed}</td>
+                          <td class="number-cell">{signed(bucket.net_change)}</td>
+                        </tr>
+                      {/each}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+              <div class="definition-copy">
+                <Text variant="subtle" size="xs">
+                  {t('analytics.throughput.definition')}
+                </Text>
               </div>
-            </details>
-          {:else}
-            <div class="empty-copy">{t('analytics.aging.noActive')}</div>
-          {/if}
-        </WidgetWrapper>
+            {/if}
+          </Card>
+        </article>
+
+        <article class="analytics-panel">
+          <div class="section-heading compact">
+            <div>
+              <h2>{t('analytics.aging.title')}</h2>
+              <Text variant="subtle" size="sm">{t('analytics.aging.description')}</Text>
+            </div>
+          </div>
+          <Card variant="raised" padding="default" rounded="lg">
+            {#if aging?.total_items}
+              <div class="summary-strip">
+                <div>
+                  <span>{t('analytics.aging.total')}</span>
+                  <strong>{aging.total_items}</strong>
+                </div>
+                <div>
+                  <span>{t('analytics.aging.median')}</span>
+                  <strong>{days(aging.median_days)}</strong>
+                </div>
+                <div>
+                  <span>{t('analytics.aging.p85')}</span>
+                  <strong>{days(aging.p85_days)}</strong>
+                </div>
+              </div>
+              <div aria-hidden="true">
+                <Chart
+                  type="bar"
+                  series={agingSeries}
+                  categories={agingCategories}
+                  maxXLabels={5}
+                  minHeight={180}
+                  maxHeight={240}
+                />
+              </div>
+              <details class="data-details">
+                <summary>{t('analytics.dataTable.show')}</summary>
+                <div class="table-scroll">
+                  <table class="analytics-table compact">
+                    <caption class="sr-only">{t('analytics.aging.title')}</caption>
+                    <thead>
+                      <tr>
+                        <th>{t('analytics.aging.ageBand')}</th>
+                        <th class="number-cell">{t('analytics.aging.itemCount')}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {#each agingBuckets as bucket (bucket.key)}
+                        <tr>
+                          <td>{t(`analytics.aging.buckets.${bucket.key}`)}</td>
+                          <td class="number-cell">{bucket.item_count}</td>
+                        </tr>
+                      {/each}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            {:else}
+              <div class="empty-copy">{t('analytics.aging.noActive')}</div>
+            {/if}
+          </Card>
+        </article>
       </section>
 
       {#if aging?.total_items}
         <section class="analytics-section aging-detail-grid" aria-label={t('analytics.aging.byStatus')}>
-          <WidgetWrapper title={t('analytics.aging.byStatus')} widgetId="analytics-aging-status" width={1}>
-            <div class="table-scroll">
+          <article class="analytics-panel">
+            <div class="section-heading compact">
+              <h2>{t('analytics.aging.byStatus')}</h2>
+            </div>
+            <Card variant="raised" padding="none" rounded="lg">
+              <div class="table-scroll table-scroll-flush">
               <table class="analytics-table">
                 <thead>
                   <tr>
@@ -661,11 +694,16 @@
                   {/each}
                 </tbody>
               </table>
-            </div>
-          </WidgetWrapper>
+              </div>
+            </Card>
+          </article>
 
-          <WidgetWrapper title={t('analytics.aging.oldest')} widgetId="analytics-oldest-items" width={1}>
-            <div class="table-scroll">
+          <article class="analytics-panel">
+            <div class="section-heading compact">
+              <h2>{t('analytics.aging.oldest')}</h2>
+            </div>
+            <Card variant="raised" padding="none" rounded="lg">
+              <div class="table-scroll table-scroll-flush">
               <table class="analytics-table">
                 <thead>
                   <tr>
@@ -689,19 +727,20 @@
                   {/each}
                 </tbody>
               </table>
-            </div>
-          </WidgetWrapper>
+              </div>
+            </Card>
+          </article>
         </section>
       {/if}
 
       <section class="analytics-section" aria-label={t('analytics.deliveryTime.title')}>
-        <WidgetWrapper
-          title={t('analytics.deliveryTime.title')}
-          widgetId="analytics-delivery-time"
-        >
-          <div class="widget-description">
-            <Text variant="subtle" size="xs">{t('analytics.deliveryTime.description')}</Text>
+        <div class="section-heading">
+          <div>
+            <h2>{t('analytics.deliveryTime.title')}</h2>
+            <Text variant="subtle" size="sm">{t('analytics.deliveryTime.description')}</Text>
           </div>
+        </div>
+        <Card variant="raised" padding="default" rounded="lg">
 
           {#if deliveryTime?.total_items_analyzed}
             <div class="summary-strip summary-strip-wide">
@@ -724,8 +763,12 @@
             </div>
 
             {#if !deliveryTime.data_quality?.sufficient}
-              <div class="notice notice-warning mb-4" role="status">
-                {t(`analytics.insufficientData.${deliveryTime.data_quality.reason}`)}
+              <div role="status">
+                <AlertBox variant="warning" class="mb-4">
+                  {#snippet children()}
+                    {t(`analytics.insufficientData.${deliveryTime.data_quality.reason}`)}
+                  {/snippet}
+                </AlertBox>
               </div>
             {/if}
 
@@ -816,24 +859,37 @@
           {/if}
 
           {#if deliveryTime?.missing_history_items > 0}
-            <div class="notice notice-warning mt-4" role="status">
-              {t('analytics.deliveryTime.missingHistory', {
-                count: deliveryTime.missing_history_items,
-              })}
+            <div role="status">
+              <AlertBox variant="warning" class="mt-4">
+                {#snippet children()}
+                  {t('analytics.deliveryTime.missingHistory', {
+                    count: deliveryTime.missing_history_items,
+                  })}
+                {/snippet}
+              </AlertBox>
             </div>
           {/if}
-        </WidgetWrapper>
+        </Card>
       </section>
     {/if}
   </div>
 </div>
 
 <style>
+  .analytics-shell {
+    width: min(100%, 96rem);
+    margin: 0 auto;
+    padding: 1.5rem;
+  }
+
+  .filter-card {
+    margin-bottom: 1rem;
+  }
+
   .analytics-filters {
     display: flex;
     align-items: end;
-    justify-content: flex-end;
-    gap: 0.75rem;
+    gap: 1rem;
     flex-wrap: wrap;
   }
 
@@ -844,100 +900,161 @@
   }
 
   .collection-filter {
-    width: 12rem;
+    width: min(20rem, 100%);
   }
 
   .preset-filter {
-    width: 10rem;
+    width: 12rem;
   }
 
   .date-filter {
-    width: 9.5rem;
-  }
-
-  .scope-banner,
-  .notice {
-    border: 1px solid var(--ds-border);
-    border-radius: 0.75rem;
-    background: var(--ds-background-neutral);
+    width: 10rem;
   }
 
   .scope-banner {
-    display: flex;
+    display: grid;
+    grid-template-columns: auto max-content minmax(18rem, 1fr);
     align-items: center;
-    justify-content: space-between;
-    gap: 1.5rem;
-    padding: 1rem;
+    gap: 0.75rem;
+    padding: 0.75rem 0;
+    border-top: 1px solid var(--ds-border);
+    border-bottom: 1px solid var(--ds-border);
+  }
+
+  .analytics-page :global(.scope-icon) {
+    width: 1rem;
+    height: 1rem;
+    color: var(--ds-icon-subtle);
+  }
+
+  .scope-summary {
+    min-width: 0;
+  }
+
+  .scope-title {
+    color: var(--ds-text);
+    font-size: 0.75rem;
+    font-weight: 600;
   }
 
   .scope-note {
-    max-width: 34rem;
-  }
-
-  .notice {
-    padding: 0.75rem 1rem;
-    font-size: 0.875rem;
-    color: var(--ds-text-subtle);
-  }
-
-  .notice-warning {
-    border-color: color-mix(in srgb, var(--ds-warning, #f59e0b) 38%, var(--ds-border));
-    background: color-mix(in srgb, var(--ds-warning, #f59e0b) 8%, var(--ds-surface));
-  }
-
-  .notice-error,
-  :global(.error-card) {
-    border-color: color-mix(in srgb, var(--ds-danger, #ef4444) 38%, var(--ds-border));
-    background: color-mix(in srgb, var(--ds-danger, #ef4444) 7%, var(--ds-surface));
+    min-width: 0;
+    padding-left: 0.75rem;
+    border-left: 1px solid var(--ds-border);
   }
 
   .analytics-section {
-    margin-bottom: 1.5rem;
+    margin-bottom: 2rem;
   }
 
   .analytics-section:not(.flow-grid):not(.aging-detail-grid) {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    gap: 0.75rem;
   }
 
-  .widget-intro {
+  .section-heading {
     display: flex;
-    align-items: center;
+    align-items: flex-end;
     justify-content: space-between;
     gap: 1rem;
   }
 
-  .widget-description {
-    margin-bottom: 1rem;
+  .section-heading.compact {
+    min-height: 3.25rem;
+    margin-bottom: 0.75rem;
   }
 
+  .section-heading h2,
+  .panel-titlebar h3,
   h4 {
     margin: 0;
     color: var(--ds-text);
     font-size: 0.875rem;
-    font-weight: 650;
+    font-weight: 600;
+  }
+
+  .section-heading h2 {
+    margin-bottom: 0.125rem;
+    font-size: 1rem;
+  }
+
+  h4 {
+    font-size: 0.8125rem;
+  }
+
+  .widget-intro {
+    padding: 1.25rem;
+  }
+
+  .panel-titlebar {
+    padding: 0.875rem 1rem;
+    border-bottom: 1px solid var(--ds-border);
   }
 
   .metric-grid {
     display: grid;
     grid-template-columns: repeat(6, minmax(0, 1fr));
-    gap: 1rem;
-    margin-top: 1rem;
+  }
+
+  .health-metric {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    min-width: 0;
+    padding: 0.125rem 1rem;
+    border-right: 1px solid var(--ds-border);
+  }
+
+  .health-metric:first-child {
+    padding-left: 0;
+  }
+
+  .health-metric:last-child {
+    padding-right: 0;
+    border-right: 0;
+  }
+
+  .analytics-page :global(.metric-icon) {
+    width: 1rem;
+    height: 1rem;
+    flex: 0 0 auto;
+  }
+
+  .metric-label {
+    overflow: hidden;
+    color: var(--ds-text-subtle);
+    font-size: 0.75rem;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .metric-value {
+    margin-top: 0.125rem;
+    color: var(--ds-text);
+    font-size: 1.375rem;
+    font-weight: 600;
+    line-height: 1.2;
   }
 
   .flow-grid,
   .aging-detail-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 1.5rem;
+    gap: 1.25rem;
+  }
+
+  .analytics-panel {
+    min-width: 0;
   }
 
   .summary-strip {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 0.5rem;
-    margin-bottom: 1rem;
+    margin-bottom: 0.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--ds-border);
   }
 
   .summary-strip-wide {
@@ -945,35 +1062,53 @@
   }
 
   .summary-strip > div {
-    padding: 0.75rem;
-    border-radius: 0.5rem;
-    background: var(--ds-background-neutral);
+    min-width: 0;
+    padding: 0 1rem;
+    border-right: 1px solid var(--ds-border);
+  }
+
+  .summary-strip > div:first-child {
+    padding-left: 0;
+  }
+
+  .summary-strip > div:last-child {
+    padding-right: 0;
+    border-right: 0;
   }
 
   .summary-strip span {
     display: block;
     color: var(--ds-text-subtle);
-    font-size: 0.7rem;
+    font-size: 0.75rem;
+    line-height: 1.25;
   }
 
   .summary-strip strong {
     display: block;
-    margin-top: 0.2rem;
+    margin-top: 0.25rem;
     color: var(--ds-text);
-    font-size: 1.15rem;
+    font-size: 1.25rem;
+    font-weight: 600;
+    line-height: 1.25;
   }
 
   .table-scroll {
     overflow-x: auto;
     border: 1px solid var(--ds-border);
-    border-radius: 0.75rem;
+    border-radius: 0.375rem;
+  }
+
+  .panel-titlebar + .table-scroll,
+  .table-scroll-flush {
+    border: 0;
+    border-radius: 0;
   }
 
   .analytics-table {
     width: 100%;
     border-collapse: collapse;
     color: var(--ds-text);
-    font-size: 0.8rem;
+    font-size: 0.8125rem;
   }
 
   .analytics-table th,
@@ -985,15 +1120,18 @@
   }
 
   .analytics-table th {
-    color: var(--ds-text-subtle);
     background: var(--ds-surface);
-    font-size: 0.7rem;
-    font-weight: 650;
-    letter-spacing: 0.025em;
+    color: var(--ds-text);
+    font-size: 0.75rem;
+    font-weight: 600;
   }
 
   .analytics-table tbody tr:last-child td {
     border-bottom: 0;
+  }
+
+  .analytics-table tbody tr:hover {
+    background: var(--ds-background-neutral-hovered);
   }
 
   .analytics-table.compact th,
@@ -1014,13 +1152,15 @@
     padding: 0;
     border: 0;
     background: transparent;
-    color: var(--ds-text-link);
+    color: var(--ds-text);
     cursor: pointer;
     font: inherit;
+    font-weight: 500;
     text-align: start;
   }
 
   .item-link:hover {
+    color: var(--ds-text-link);
     text-decoration: underline;
   }
 
@@ -1032,7 +1172,8 @@
 
   .item-number {
     color: var(--ds-text-subtlest);
-    font-size: 0.7rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.6875rem;
     white-space: nowrap;
   }
 
@@ -1042,13 +1183,18 @@
     gap: 0.3rem;
   }
 
-  .flag {
-    padding: 0.15rem 0.4rem;
-    border-radius: 999px;
-    background: var(--ds-background-neutral);
-    color: var(--ds-text-subtle);
-    font-size: 0.65rem;
+  .flag-list :global(span) {
     white-space: nowrap;
+  }
+
+  .analytics-page :global(.signal-overdue) {
+    background-color: var(--ds-danger-subtle);
+    color: var(--ds-text-danger);
+  }
+
+  .analytics-page :global(.signal-stale) {
+    background-color: var(--ds-warning-subtle);
+    color: var(--ds-text-warning);
   }
 
   .empty-copy {
@@ -1059,7 +1205,7 @@
   }
 
   .data-details {
-    margin-top: 0.5rem;
+    margin-top: 0.25rem;
     border-top: 1px solid var(--ds-border);
   }
 
@@ -1067,12 +1213,19 @@
     padding: 0.75rem 0;
     color: var(--ds-text-link);
     font-size: 0.75rem;
+    font-weight: 500;
     cursor: pointer;
+  }
+
+  .data-details summary:hover {
+    color: var(--ds-text-link-hovered);
   }
 
   .definition-copy {
     display: block;
     margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--ds-border);
   }
 
   @media (max-width: 1100px) {
@@ -1084,34 +1237,122 @@
     .aging-detail-grid {
       grid-template-columns: 1fr;
     }
+
+    .health-metric:nth-child(3) {
+      border-right: 0;
+    }
+
+    .health-metric:nth-child(n + 4) {
+      margin-top: 0.875rem;
+      padding-top: 0.875rem;
+      border-top: 1px solid var(--ds-border);
+    }
+
+    .health-metric:nth-child(4) {
+      padding-left: 0;
+    }
   }
 
   @media (max-width: 720px) {
-    .analytics-filters {
-      width: 100%;
-      justify-content: stretch;
+    .analytics-shell {
+      padding: 1rem;
     }
 
-    .filter-field,
-    .collection-filter,
+    .analytics-filters {
+      width: 100%;
+    }
+
+    .collection-filter {
+      width: 100%;
+    }
+
     .preset-filter,
     .date-filter {
-      width: calc(50% - 0.375rem);
+      width: calc((100% - 2rem) / 3);
     }
 
     .scope-banner,
-    .widget-intro {
+    .section-heading {
       align-items: flex-start;
-      flex-direction: column;
+    }
+
+    .scope-banner {
+      grid-template-columns: auto minmax(0, 1fr);
+    }
+
+    .scope-note {
+      grid-column: 1 / -1;
+      padding-top: 0.75rem;
+      padding-left: 0;
+      border-top: 1px solid var(--ds-border);
+      border-left: 0;
     }
 
     .metric-grid {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
-    .summary-strip,
+    .health-metric {
+      margin-top: 0.75rem;
+      padding: 0.75rem 0 0;
+      border-top: 1px solid var(--ds-border);
+      border-right: 0;
+    }
+
+    .health-metric:nth-child(-n + 2) {
+      margin-top: 0;
+      padding-top: 0;
+      border-top: 0;
+    }
+
+    .health-metric:nth-child(odd) {
+      padding-right: 0.75rem;
+      border-right: 1px solid var(--ds-border);
+    }
+
+    .health-metric:nth-child(even) {
+      padding-left: 0.75rem;
+    }
+
     .summary-strip-wide {
       grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .summary-strip > div {
+      padding: 0 0.75rem;
+    }
+
+    .summary-strip-wide > div:nth-child(2) {
+      border-right: 0;
+    }
+
+    .summary-strip-wide > div:nth-child(n + 3) {
+      margin-top: 0.75rem;
+      padding-top: 0.75rem;
+      border-top: 1px solid var(--ds-border);
+    }
+  }
+
+  @media (max-width: 520px) {
+    .preset-filter {
+      width: 100%;
+    }
+
+    .date-filter {
+      width: calc(50% - 0.5rem);
+    }
+
+    .section-heading {
+      flex-direction: column;
+    }
+
+    .summary-strip {
+      gap: 0.75rem;
+    }
+
+    .summary-strip > div {
+      padding: 0;
+      border-right: 0;
     }
   }
 </style>
