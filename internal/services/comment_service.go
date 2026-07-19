@@ -383,12 +383,14 @@ type CommentWithDetails struct {
 func (s *CommentService) Get(commentID int) (*CommentWithDetails, error) {
 	var comment CommentWithDetails
 	var authorID, portalCustomerID sql.NullInt64
-	var authorName, authorEmail sql.NullString
+	var authorName, authorEmail, authorAvatar sql.NullString
 
 	err := s.db.QueryRow(`
-		SELECT c.id, c.item_id, c.author_id, c.portal_customer_id, c.content, c.is_private, c.created_at, c.updated_at,
+		SELECT c.id, c.item_id, c.author_id, c.portal_customer_id, c.content, c.is_private,
+		       c.created_at AS feed_created_at, c.updated_at,
 		       COALESCE(NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), ''), pc.name) AS author_name,
 		       COALESCE(u.email, pc.email) AS author_email,
+		       u.avatar_url, 'human' AS source, COALESCE(u.is_agent, FALSE) AS is_agent,
 		       i.workspace_id, i.title
 		FROM comments c
 		LEFT JOIN users u ON c.author_id = u.id
@@ -398,12 +400,12 @@ func (s *CommentService) Get(commentID int) (*CommentWithDetails, error) {
 	`, commentID).Scan(
 		&comment.ID, &comment.ItemID, &authorID, &portalCustomerID, &comment.Content, &comment.IsPrivate,
 		&comment.CreatedAt, &comment.UpdatedAt,
-		&authorName, &authorEmail,
+		&authorName, &authorEmail, &authorAvatar, &comment.Source, &comment.IsAgent,
 		&comment.WorkspaceID, &comment.ItemTitle,
 	)
 
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("comment not found: %d", commentID)
+		return nil, fmt.Errorf("comment %d: %w", commentID, repository.ErrNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch comment: %w", err)
@@ -423,8 +425,80 @@ func (s *CommentService) Get(commentID int) (*CommentWithDetails, error) {
 	if authorEmail.Valid {
 		comment.AuthorEmail = authorEmail.String
 	}
+	if authorAvatar.Valid {
+		comment.AuthorAvatar = authorAvatar.String
+	}
 
 	return &comment, nil
+}
+
+// GetFeedByItemID returns the cookie-auth comment feed for an item. In
+// addition to ordinary comments it projects approval decision comments into
+// the same model so every HTTP surface reads comment data through this
+// service. Agent-owner attribution is permission-filtered by the caller.
+func (s *CommentService) GetFeedByItemID(itemID int, includeAgentOwner bool) ([]models.Comment, error) {
+	rows, err := s.db.Query(`
+		SELECT c.id, c.item_id, c.author_id, c.portal_customer_id, c.content, c.is_private, c.created_at, c.updated_at,
+		       COALESCE(NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), ''), pc.name, 'Unknown User') AS author_name,
+		       COALESCE(u.email, pc.email) AS author_email, u.avatar_url,
+		       'human' AS source, COALESCE(u.is_agent, FALSE) AS is_agent,
+		       COALESCE(NULLIF(TRIM(COALESCE(owner.first_name, '') || ' ' || COALESCE(owner.last_name, '')), ''), owner.username, '') AS agent_owner_name
+		FROM comments c
+		LEFT JOIN users u ON c.author_id = u.id
+		LEFT JOIN users owner ON owner.id = u.agent_owner_user_id
+		LEFT JOIN portal_customers pc ON c.portal_customer_id = pc.id
+		WHERE c.item_id = ?
+		UNION ALL
+		SELECT -d.id, ar.item_id, d.actor_user_id, NULL, d.comment, FALSE,
+		       d.created_at AS feed_created_at, d.created_at,
+		       COALESCE(NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), ''), 'Unknown User') AS author_name,
+		       u.email AS author_email, u.avatar_url,
+		       'approval' AS source, COALESCE(u.is_agent, FALSE) AS is_agent,
+		       COALESCE(NULLIF(TRIM(COALESCE(owner.first_name, '') || ' ' || COALESCE(owner.last_name, '')), ''), owner.username, '') AS agent_owner_name
+		FROM approval_decisions d
+		JOIN approval_requests ar ON ar.id = d.approval_request_id
+		LEFT JOIN users u ON u.id = d.actor_user_id
+		LEFT JOIN users owner ON owner.id = u.agent_owner_user_id
+		WHERE ar.item_id = ? AND d.comment IS NOT NULL AND d.comment <> ''
+		ORDER BY feed_created_at DESC
+	`, itemID, itemID)
+	if err != nil {
+		return nil, fmt.Errorf("get comment feed for item %d: %w", itemID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var comments []models.Comment
+	for rows.Next() {
+		var comment models.Comment
+		var authorID, portalCustomerID sql.NullInt64
+		var authorName, authorEmail, authorAvatar, agentOwnerName sql.NullString
+		if err := rows.Scan(
+			&comment.ID, &comment.ItemID, &authorID, &portalCustomerID, &comment.Content, &comment.IsPrivate,
+			&comment.CreatedAt, &comment.UpdatedAt, &authorName, &authorEmail, &authorAvatar,
+			&comment.Source, &comment.IsAgent, &agentOwnerName,
+		); err != nil {
+			return nil, fmt.Errorf("scan comment feed for item %d: %w", itemID, err)
+		}
+		if authorID.Valid {
+			id := int(authorID.Int64)
+			comment.AuthorID = &id
+		}
+		if portalCustomerID.Valid {
+			id := int(portalCustomerID.Int64)
+			comment.PortalCustomerID = &id
+		}
+		comment.AuthorName = authorName.String
+		comment.AuthorEmail = authorEmail.String
+		comment.AuthorAvatar = authorAvatar.String
+		if includeAgentOwner {
+			comment.AgentOwnerName = agentOwnerName.String
+		}
+		comments = append(comments, comment)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read comment feed for item %d: %w", itemID, err)
+	}
+	return comments, nil
 }
 
 // Update updates a comment's content

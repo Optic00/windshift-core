@@ -87,6 +87,7 @@ import App from './App.svelte';
 import { api } from './lib/api.js';
 import { authStore } from './lib/stores';
 import { i18n } from './lib/stores/i18n.svelte.js';
+import { themeStore } from './lib/stores/theme.svelte.js';
 
 const authenticatedState = {
   isAuthenticated: true,
@@ -103,6 +104,8 @@ describe('App startup recovery', () => {
     });
     api.setup.getStatus.mockReset().mockResolvedValue({ setup_completed: true });
     api.themes.getActive.mockReset().mockResolvedValue({});
+    themeStore.init.mockClear();
+    themeStore.setActiveTheme.mockClear();
     i18n.init.mockReset().mockResolvedValue(undefined);
   });
 
@@ -118,6 +121,59 @@ describe('App startup recovery', () => {
 
     expect(await screen.findByTestId('app-shell-ready')).toBeInTheDocument();
     expect(api.themes.getActive).toHaveBeenCalledWith({ timeout: 10_000 });
+  });
+
+  it('loads the active theme after an interactive login', async () => {
+    const activeTheme = {
+      nav_background_color_light: '#112233',
+      nav_text_color_light: '#fefefe',
+      nav_background_color_dark: '#010203',
+      nav_text_color_dark: '#eeeeee',
+    };
+    authStore.init.mockResolvedValue({ status: 'unauthenticated' });
+    api.themes.getActive.mockResolvedValue(activeTheme);
+
+    render(App);
+
+    expect(await screen.findByTestId('dialog-stub')).toBeInTheDocument();
+    expect(api.themes.getActive).not.toHaveBeenCalled();
+
+    authStore.set(authenticatedState);
+
+    await waitFor(() => expect(api.themes.getActive).toHaveBeenCalledWith({ timeout: 10_000 }));
+    expect(themeStore.setActiveTheme).toHaveBeenLastCalledWith(activeTheme);
+  });
+
+  it('ignores an authenticated theme response that arrives after logout', async () => {
+    const activeTheme = {
+      nav_background_color_light: '#112233',
+      nav_text_color_light: '#fefefe',
+      nav_background_color_dark: '#010203',
+      nav_text_color_dark: '#eeeeee',
+    };
+    let resolveTheme;
+    const themeRequest = new Promise((resolve) => {
+      resolveTheme = resolve;
+    });
+    api.themes.getActive.mockReturnValue(themeRequest);
+
+    render(App);
+
+    expect(await screen.findByTestId('app-shell-ready')).toBeInTheDocument();
+    await waitFor(() => expect(api.themes.getActive).toHaveBeenCalledOnce());
+
+    authStore.set({ isAuthenticated: false, loading: false, currentUser: null });
+    await waitFor(() =>
+      expect(themeStore.setActiveTheme).toHaveBeenLastCalledWith(
+        expect.objectContaining({ nav_background_color_light: '#ffffff' })
+      )
+    );
+
+    resolveTheme(activeTheme);
+    await themeRequest;
+    await Promise.resolve();
+
+    expect(themeStore.setActiveTheme).not.toHaveBeenCalledWith(activeTheme);
   });
 
   it('shows a connection error and retries bootstrap in place', async () => {

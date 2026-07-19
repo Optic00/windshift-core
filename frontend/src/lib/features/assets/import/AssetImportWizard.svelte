@@ -72,6 +72,12 @@
     }
   }
 
+  function handleSubmit() {
+    if (confirmLabel && !isDisabled) {
+      handleNext();
+    }
+  }
+
   function getConfirmLabel() {
     if (currentStepId === 'upload') return 'Continue';
     if (currentStepId === 'mapping') return 'Continue';
@@ -97,7 +103,13 @@
   );
 </script>
 
-<Modal bind:isOpen maxWidth="max-w-4xl" onclose={handleClose}>
+<Modal
+  bind:isOpen
+  maxWidth="max-w-4xl"
+  onclose={handleClose}
+  onSubmit={handleSubmit}
+  submitDisabled={!confirmLabel || isDisabled}
+>
   <div class="flex flex-col max-h-[90vh]">
     <ModalHeader
       title="Import Assets from CSV"
@@ -133,9 +145,11 @@
     <!-- Footer -->
     <DialogFooter
       showCancel={false}
+      confirmTestid="asset-import-next"
       confirmLabel={confirmLabel}
       loading={isLoading}
       disabled={isDisabled}
+      showKeyboardHint={true}
       onConfirm={confirmLabel ? handleNext : null}
     >
       {#snippet extra()}

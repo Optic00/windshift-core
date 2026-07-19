@@ -25,7 +25,7 @@ export default {
     confirmPassword: 'تأكيد كلمة المرور',
     passwordRequired: 'كلمة المرور مطلوبة',
     rememberMe: 'تذكرني',
-    staySignedIn: 'البقاء مسجل الدخول',
+    staySignedIn: 'إبقائي مسجّلًا في Windshift لمدة 30 يومًا',
     emailOrUsername: 'البريد الإلكتروني أو اسم المستخدم',
     welcomeBack: 'مرحباً بعودتك',
     loginTitle: 'تسجيل الدخول إلى حسابك',

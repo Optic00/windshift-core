@@ -90,6 +90,9 @@
   }
 
   // Create Melt combobox
+  // Melt builds the positioning action once with the component. Callers pass
+  // a static layout policy; changing it requires remounting the picker.
+  // svelte-ignore state_referenced_locally
   const {
     elements: { menu, input, option, label: labelEl },
     states: { open, inputValue, touchedInput, selected },
@@ -479,7 +482,9 @@
              class="absolute inset-0 w-full h-full opacity-0 pointer-events-none" />
       <div
         role="combobox"
+        tabindex={disabled ? -1 : 0}
         aria-expanded={$open}
+        aria-controls={$menu.id}
         aria-haspopup="listbox"
         aria-disabled={disabled}
         onclick={handleTriggerClick}

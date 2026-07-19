@@ -321,6 +321,30 @@ type AssetReport struct {
 	ItemTypeName string `json:"item_type_name,omitempty"`
 }
 
+// PublicAssetReport is the unauthenticated portal contract for an asset
+// report. It intentionally excludes the internal CQL expression, visibility
+// principal IDs, channel/asset-set bindings, lifecycle flags, and timestamps.
+type PublicAssetReport struct {
+	ID           int                      `json:"id"`
+	Name         string                   `json:"name"`
+	Description  string                   `json:"description"`
+	Icon         string                   `json:"icon"`
+	Color        string                   `json:"color"`
+	DisplayOrder int                      `json:"display_order"`
+	ColumnConfig []string                 `json:"column_config,omitempty"`
+	RunMode      string                   `json:"run_mode"`
+	ItemTypeID   *int                     `json:"item_type_id,omitempty"`
+	WorkspaceID  *int                     `json:"workspace_id,omitempty"`
+	Config       *PublicAssetReportConfig `json:"config,omitempty"`
+}
+
+// PublicAssetReportConfig contains only copy used by the current portal form
+// UI. Internal auth and redirect controls are not part of the guest contract.
+type PublicAssetReportConfig struct {
+	SuccessMessage   string `json:"success_message,omitempty"`
+	SubmitButtonText string `json:"submit_button_text,omitempty"`
+}
+
 // AssetReportField represents a field configuration for a form-mode asset report.
 // Mirrors RequestTypeField; values collected at submission are substituted into the CQL query.
 type AssetReportField struct {

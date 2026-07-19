@@ -5,16 +5,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"windshift/internal/database"
 	"windshift/internal/models"
 )
 
-// TimeWorklogRepository persists rows in the time_worklogs table. The AI
-// log_time tool routes through here; the HTTP TimeWorklogHandler.Create and
-// the timer-stop path (ActiveTimerRepository.CreateWorklog) still inline the
-// same INSERT and are follow-up candidates for migrating here.
+// TimeWorklogRepository persists rows in the time_worklogs table for both the
+// cookie-auth and bearer-token HTTP surfaces. The timer-stop path performs its
+// insert in ActiveTimerRepository because it must commit atomically with timer
+// deletion.
 type TimeWorklogRepository struct {
 	db database.Database
 }
@@ -22,6 +23,148 @@ type TimeWorklogRepository struct {
 // NewTimeWorklogRepository creates a TimeWorklogRepository.
 func NewTimeWorklogRepository(db database.Database) *TimeWorklogRepository {
 	return &TimeWorklogRepository{db: db}
+}
+
+const worklogDetailSelect = `SELECT w.id, w.project_id, w.customer_id, w.item_id, w.description, w.date, w.start_time,
+       w.end_time, w.duration_minutes, w.created_at, w.updated_at,
+       c.name, p.name, i.title, ws.id, ws.key, i.workspace_item_number,
+       p.settings,
+       (SELECT COALESCE(SUM(duration_minutes), 0) / 60.0 FROM time_worklogs WHERE project_id = w.project_id),
+       w.user_id, COALESCE(u.first_name || ' ' || u.last_name, '')
+FROM time_worklogs w
+JOIN customer_organisations c ON w.customer_id = c.id
+JOIN time_projects p ON w.project_id = p.id
+LEFT JOIN items i ON w.item_id = i.id
+LEFT JOIN workspaces ws ON i.workspace_id = ws.id
+LEFT JOIN users u ON w.user_id = u.id`
+
+type worklogDetailScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanWorklogDetail(scanner worklogDetailScanner) (models.Worklog, error) {
+	var worklog models.Worklog
+	var itemTitle, workspaceKey, projectSettings, userName sql.NullString
+	var workspaceID, workspaceItemNumber, userID sql.NullInt64
+	var projectTotalHours sql.NullFloat64
+
+	err := scanner.Scan(
+		&worklog.ID, &worklog.ProjectID, &worklog.CustomerID, &worklog.ItemID, &worklog.Description,
+		&worklog.Date, &worklog.StartTime, &worklog.EndTime, &worklog.DurationMins,
+		&worklog.CreatedAt, &worklog.UpdatedAt, &worklog.CustomerName, &worklog.ProjectName, &itemTitle,
+		&workspaceID, &workspaceKey, &workspaceItemNumber, &projectSettings, &projectTotalHours,
+		&userID, &userName,
+	)
+	if err != nil {
+		return models.Worklog{}, err
+	}
+
+	worklog.ItemTitle = itemTitle.String
+	if workspaceID.Valid {
+		id := int(workspaceID.Int64)
+		worklog.WorkspaceID = &id
+	}
+	worklog.WorkspaceKey = workspaceKey.String
+	worklog.WorkspaceItemNumber = int(workspaceItemNumber.Int64)
+	if projectTotalHours.Valid {
+		worklog.ProjectTotalHours = &projectTotalHours.Float64
+	}
+	if userID.Valid {
+		id := int(userID.Int64)
+		worklog.UserID = &id
+	}
+	worklog.UserName = userName.String
+	if projectSettings.Valid && projectSettings.String != "" {
+		var settings map[string]interface{}
+		if err := json.Unmarshal([]byte(projectSettings.String), &settings); err == nil {
+			if maxHours, ok := settings["max_hours"].(float64); ok && maxHours > 0 {
+				worklog.ProjectMaxHours = &maxHours
+			}
+		}
+	}
+	return worklog, nil
+}
+
+// WorklogDetailFilter narrows cookie-auth worklog list endpoints. A nil
+// AccessibleProjectIDs slice means unrestricted access; an empty non-nil
+// slice returns no rows.
+type WorklogDetailFilter struct {
+	AccessibleProjectIDs []int
+	CustomerID           *int
+	ProjectID            *int
+	ItemID               *int
+	DateFromUnix         *int64
+	DateToUnix           *int64
+}
+
+// ListDetails returns joined worklogs ordered newest-first.
+func (r *TimeWorklogRepository) ListDetails(filter WorklogDetailFilter) ([]models.Worklog, error) {
+	if filter.AccessibleProjectIDs != nil && len(filter.AccessibleProjectIDs) == 0 {
+		return []models.Worklog{}, nil
+	}
+
+	query := worklogDetailSelect + "\nWHERE 1=1"
+	args := make([]any, 0)
+	if filter.AccessibleProjectIDs != nil {
+		placeholders := make([]string, len(filter.AccessibleProjectIDs))
+		for i, id := range filter.AccessibleProjectIDs {
+			placeholders[i] = "?"
+			args = append(args, id)
+		}
+		query += " AND w.project_id IN (" + strings.Join(placeholders, ",") + ")"
+	}
+	if filter.CustomerID != nil {
+		query += " AND w.customer_id = ?"
+		args = append(args, *filter.CustomerID)
+	}
+	if filter.ProjectID != nil {
+		query += " AND w.project_id = ?"
+		args = append(args, *filter.ProjectID)
+	}
+	if filter.ItemID != nil {
+		query += " AND w.item_id = ?"
+		args = append(args, *filter.ItemID)
+	}
+	if filter.DateFromUnix != nil {
+		query += " AND w.date >= ?"
+		args = append(args, *filter.DateFromUnix)
+	}
+	if filter.DateToUnix != nil {
+		query += " AND w.date <= ?"
+		args = append(args, *filter.DateToUnix)
+	}
+	query += " ORDER BY w.date DESC, w.start_time DESC"
+
+	rows, err := r.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list worklog details: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	worklogs := make([]models.Worklog, 0)
+	for rows.Next() {
+		worklog, err := scanWorklogDetail(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan worklog details: %w", err)
+		}
+		worklogs = append(worklogs, worklog)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read worklog details: %w", err)
+	}
+	return worklogs, nil
+}
+
+// GetDetail returns a joined worklog or ErrNotFound when it does not exist.
+func (r *TimeWorklogRepository) GetDetail(worklogID int) (*models.Worklog, error) {
+	worklog, err := scanWorklogDetail(r.db.QueryRow(worklogDetailSelect+"\nWHERE w.id = ?", worklogID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get worklog details: %w", err)
+	}
+	return &worklog, nil
 }
 
 // NewWorklog captures the fields needed to insert a worklog row. Date and
@@ -36,6 +179,34 @@ type NewWorklog struct {
 	StartTimeUnix   int64
 	EndTimeUnix     int64
 	DurationMinutes int
+}
+
+// UpdateWorklog captures the mutable fields of an existing worklog.
+type UpdateWorklog struct {
+	ID              int
+	ProjectID       int
+	CustomerID      int
+	ItemID          *int
+	Description     string
+	DateUnix        int64
+	StartTimeUnix   int64
+	EndTimeUnix     int64
+	DurationMinutes int
+}
+
+// Update replaces a worklog's editable fields and stamps updated_at.
+func (r *TimeWorklogRepository) Update(in UpdateWorklog) error {
+	_, err := r.db.ExecWrite(`
+		UPDATE time_worklogs
+		SET project_id = ?, customer_id = ?, item_id = ?, description = ?, date = ?,
+		    start_time = ?, end_time = ?, duration_minutes = ?, updated_at = ?
+		WHERE id = ?
+	`, in.ProjectID, in.CustomerID, in.ItemID, in.Description, in.DateUnix,
+		in.StartTimeUnix, in.EndTimeUnix, in.DurationMinutes, time.Now().Unix(), in.ID)
+	if err != nil {
+		return fmt.Errorf("update worklog: %w", err)
+	}
+	return nil
 }
 
 // Create inserts a worklog row, stamping created_at/updated_at, and returns

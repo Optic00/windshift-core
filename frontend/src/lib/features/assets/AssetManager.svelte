@@ -594,6 +594,7 @@
             {t('assets.permissions')}
           </button>
           <button
+            data-testid="asset-automations-tab"
             class="pb-2 px-1 border-b-2 transition-colors {activeTab === 'automations' ? 'asset-tab-active' : 'border-transparent asset-tab-inactive'}"
             onclick={() => activeTab = 'automations'}
           >
@@ -1038,4 +1039,3 @@
     background-color: var(--ds-background-neutral-hovered);
   }
 </style>
-

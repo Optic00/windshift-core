@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -57,6 +56,7 @@ func NewCommentHandler(db database.Database, permissionService *services.Permiss
 		permissionService:   permissionService,
 		activityTracker:     activityTracker,
 		notificationService: notificationService,
+		commentService:      services.NewCommentService(db),
 	}
 }
 
@@ -129,67 +129,10 @@ func (h *CommentHandler) GetComments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Approval-engine comment text (approval_decisions.comment) is unioned in
-	// here so it surfaces in the same feed users already read. Synthetic rows
-	// use a negated id so they can't be edited or deleted via the existing
-	// id-based handlers, and source='approval' lets the UI tag them.
 	includeAgentOwner := canViewAgentOwnerAttribution(h.permissionService, user.ID)
-	query := `
-		SELECT c.id, c.item_id, c.author_id, c.portal_customer_id, c.content, c.is_private, c.created_at, c.updated_at,
-		       u.first_name, u.last_name, u.email, u.avatar_url,
-		       pc.name as customer_name, pc.email as customer_email,
-		       'human' AS source, COALESCE(u.is_agent, FALSE) AS is_agent,
-		       COALESCE(NULLIF(TRIM(COALESCE(owner.first_name, '') || ' ' || COALESCE(owner.last_name, '')), ''), owner.username, '') AS agent_owner_name
-		FROM comments c
-		LEFT JOIN users u ON c.author_id = u.id
-		LEFT JOIN users owner ON owner.id = u.agent_owner_user_id
-		LEFT JOIN portal_customers pc ON c.portal_customer_id = pc.id
-		WHERE c.item_id = ?
-		UNION ALL
-		SELECT
-		       -d.id AS id,
-		       ar.item_id,
-		       d.actor_user_id AS author_id,
-		       NULL AS portal_customer_id,
-		       d.comment AS content,
-		       FALSE AS is_private,
-		       d.created_at AS created_at,
-		       d.created_at AS updated_at,
-		       u.first_name, u.last_name, u.email, u.avatar_url,
-		       NULL AS customer_name, NULL AS customer_email,
-		       'approval' AS source, COALESCE(u.is_agent, FALSE) AS is_agent,
-		       COALESCE(NULLIF(TRIM(COALESCE(owner.first_name, '') || ' ' || COALESCE(owner.last_name, '')), ''), owner.username, '') AS agent_owner_name
-		FROM approval_decisions d
-		JOIN approval_requests ar ON ar.id = d.approval_request_id
-		LEFT JOIN users u ON u.id = d.actor_user_id
-		LEFT JOIN users owner ON owner.id = u.agent_owner_user_id
-		WHERE ar.item_id = ? AND d.comment IS NOT NULL AND d.comment <> ''
-		ORDER BY created_at DESC
-	`
-
-	rows, err := h.db.Query(query, itemID, itemID)
+	comments, err := h.commentService.GetFeedByItemID(itemID, includeAgentOwner)
 	if err != nil {
 		respondInternalError(w, r, fmt.Errorf("failed to fetch comments: %w", err))
-		return
-	}
-	defer func() { _ = rows.Close() }()
-
-	var comments []models.Comment
-	for rows.Next() {
-		comment, err := scanCommentWithAgentOwner(rows)
-		if err != nil {
-			respondInternalError(w, r, fmt.Errorf("failed to scan comment: %w", err))
-			return
-		}
-		if !includeAgentOwner {
-			comment.AgentOwnerName = ""
-		}
-
-		comments = append(comments, comment)
-	}
-
-	if err = rows.Err(); err != nil {
-		respondInternalError(w, r, fmt.Errorf("error reading comments: %w", err))
 		return
 	}
 
@@ -305,8 +248,8 @@ type commentEditContext struct {
 	ItemTitle           string
 	WorkspaceItemNumber int
 	WorkspaceKey        string
-	AssigneeID          sql.NullInt64
-	CreatorID           sql.NullInt64
+	AssigneeID          *int
+	CreatorID           *int
 	User                *models.User
 }
 
@@ -325,10 +268,9 @@ func (h *CommentHandler) requireCommentEditAccess(w http.ResponseWriter, r *http
 		return nil, false
 	}
 
-	var itemID, authorID int
-	err = h.db.QueryRow("SELECT item_id, author_id FROM comments WHERE id = ?", commentID).Scan(&itemID, &authorID)
+	comment, err := h.commentService.Get(commentID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, repository.ErrNotFound) {
 			respondNotFound(w, r, "comment")
 			return nil, false
 		}
@@ -338,12 +280,14 @@ func (h *CommentHandler) requireCommentEditAccess(w http.ResponseWriter, r *http
 
 	ctx := &commentEditContext{
 		CommentID: commentID,
-		ItemID:    itemID,
-		AuthorID:  authorID,
+		ItemID:    comment.ItemID,
 		User:      user,
 	}
+	if comment.AuthorID != nil {
+		ctx.AuthorID = *comment.AuthorID
+	}
 
-	item, err := repository.NewItemRepository(h.db).FindByIDWithDetails(itemID)
+	item, err := repository.NewItemRepository(h.db).FindByIDWithDetails(comment.ItemID)
 	if err != nil {
 		respondInternalError(w, r, fmt.Errorf("failed to fetch item workspace: %w", err))
 		return nil, false
@@ -352,14 +296,10 @@ func (h *CommentHandler) requireCommentEditAccess(w http.ResponseWriter, r *http
 	ctx.ItemTitle = item.Title
 	ctx.WorkspaceItemNumber = item.WorkspaceItemNumber
 	ctx.WorkspaceKey = item.WorkspaceKey
-	if item.AssigneeID != nil {
-		ctx.AssigneeID = sql.NullInt64{Int64: int64(*item.AssigneeID), Valid: true}
-	}
-	if item.CreatorID != nil {
-		ctx.CreatorID = sql.NullInt64{Int64: int64(*item.CreatorID), Valid: true}
-	}
+	ctx.AssigneeID = item.AssigneeID
+	ctx.CreatorID = item.CreatorID
 
-	isAuthor := user.ID == authorID
+	isAuthor := comment.AuthorID != nil && user.ID == *comment.AuthorID
 	if !isAuthor {
 		canEditOthers, permErr := h.canEditOthersComments(user.ID, ctx.WorkspaceID)
 		if permErr != nil {
@@ -426,16 +366,13 @@ func (h *CommentHandler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 
 	// Emit notification event
 	if h.notificationService != nil {
-		assigneeIDPtr := utils.NullInt64ToPtr(assigneeID)
-		creatorIDPtr := utils.NullInt64ToPtr(creatorID)
-
 		h.notificationService.EmitEvent(&services.NotificationEvent{
 			EventType:   models.EventCommentUpdated,
 			WorkspaceID: workspaceID,
 			ActorUserID: user.ID,
 			ItemID:      itemID,
-			AssigneeID:  assigneeIDPtr,
-			CreatorID:   creatorIDPtr,
+			AssigneeID:  assigneeID,
+			CreatorID:   creatorID,
 			Title:       "Comment Updated",
 			TemplateData: map[string]interface{}{
 				"item.title": itemTitle,
@@ -520,16 +457,13 @@ func (h *CommentHandler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 
 	// Emit notification event
 	if h.notificationService != nil {
-		assigneeIDPtr := utils.NullInt64ToPtr(assigneeID)
-		creatorIDPtr := utils.NullInt64ToPtr(creatorID)
-
 		h.notificationService.EmitEvent(&services.NotificationEvent{
 			EventType:   models.EventCommentDeleted,
 			WorkspaceID: workspaceID,
 			ActorUserID: user.ID,
 			ItemID:      itemID,
-			AssigneeID:  assigneeIDPtr,
-			CreatorID:   creatorIDPtr,
+			AssigneeID:  assigneeID,
+			CreatorID:   creatorID,
 			Title:       "Comment Deleted",
 			TemplateData: map[string]interface{}{
 				"item.title": itemTitle,
@@ -550,97 +484,13 @@ func (h *CommentHandler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// scanComment scans a comment row (from *sql.Row or *sql.Rows) and populates
-// the author name, email, and avatar fields from the joined user/customer columns.
-func scanComment(scanner interface {
-	Scan(dest ...interface{}) error
-}) (models.Comment, error) {
-	return scanCommentRow(scanner, false)
-}
-
-func scanCommentWithAgentOwner(scanner interface {
-	Scan(dest ...interface{}) error
-}) (models.Comment, error) {
-	return scanCommentRow(scanner, true)
-}
-
-func scanCommentRow(scanner interface {
-	Scan(dest ...interface{}) error
-}, withAgentOwner bool) (models.Comment, error) {
-	var comment models.Comment
-	var authorID, portalCustomerID sql.NullInt64
-	var firstName, lastName sql.NullString
-	var email, avatarURL sql.NullString
-	var customerName, customerEmail sql.NullString
-	var isAgent sql.NullBool
-	var agentOwnerName sql.NullString
-
-	dest := []interface{}{
-		&comment.ID, &comment.ItemID, &authorID, &portalCustomerID, &comment.Content, &comment.IsPrivate,
-		&comment.CreatedAt, &comment.UpdatedAt,
-		&firstName, &lastName, &email, &avatarURL,
-		&customerName, &customerEmail,
-		&comment.Source, &isAgent,
-	}
-	if withAgentOwner {
-		dest = append(dest, &agentOwnerName)
-	}
-	err := scanner.Scan(dest...)
-	if err != nil {
-		return comment, err
-	}
-	comment.IsAgent = isAgent.Valid && isAgent.Bool
-	comment.AgentOwnerName = agentOwnerName.String
-
-	comment.AuthorID = utils.NullInt64ToPtr(authorID)
-	comment.PortalCustomerID = utils.NullInt64ToPtr(portalCustomerID)
-
-	// Construct author name - prefer user info, fall back to portal customer
-	switch {
-	case firstName.Valid && lastName.Valid:
-		comment.AuthorName = strings.TrimSpace(firstName.String + " " + lastName.String)
-	case firstName.Valid:
-		comment.AuthorName = firstName.String
-	case lastName.Valid:
-		comment.AuthorName = lastName.String
-	case customerName.Valid:
-		comment.AuthorName = customerName.String
-	default:
-		comment.AuthorName = "Unknown User"
-	}
-
-	// Set email - prefer user email, fall back to portal customer
-	switch {
-	case email.Valid:
-		comment.AuthorEmail = email.String
-	case customerEmail.Valid:
-		comment.AuthorEmail = customerEmail.String
-	}
-
-	comment.AuthorAvatar = avatarURL.String
-
-	return comment, nil
-}
-
 // Helper function to get a comment by ID with author details
 func (h *CommentHandler) getCommentByID(commentID int) (*models.Comment, error) {
-	query := `
-		SELECT c.id, c.item_id, c.author_id, c.portal_customer_id, c.content, c.is_private, c.created_at, c.updated_at,
-		       u.first_name, u.last_name, u.email, u.avatar_url,
-		       pc.name as customer_name, pc.email as customer_email,
-		       'human' AS source, COALESCE(u.is_agent, FALSE) AS is_agent
-		FROM comments c
-		LEFT JOIN users u ON c.author_id = u.id
-		LEFT JOIN portal_customers pc ON c.portal_customer_id = pc.id
-		WHERE c.id = ?
-	`
-
-	comment, err := scanComment(h.db.QueryRow(query, commentID))
+	comment, err := h.commentService.Get(commentID)
 	if err != nil {
 		return nil, err
 	}
-
-	return &comment, nil
+	return &comment.Comment, nil
 }
 
 // Permission helper methods

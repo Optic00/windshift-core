@@ -8,10 +8,13 @@
   let {
     attachments = [],
     diagrams = [],
+    loadingDiagrams = false,
+    diagramsLoaded = false,
     canDelete = true,
     ondelete,
     oneditdiagram,
-    ondeletediagram
+    ondeletediagram,
+    onloadDiagrams
   } = $props();
 
   // Lightbox state. Holds the attachment currently being previewed full-size
@@ -101,7 +104,7 @@
   }
 </script>
 
-{#if attachments.length > 0 || diagrams.length > 0}
+{#if attachments.length > 0 || diagrams.length > 0 || !diagramsLoaded}
   <div class="space-y-1">
     {#each attachments as attachment}
       <div class="flex items-center gap-2 py-1 px-2 -mx-2 rounded group hover:bg-[var(--ds-background-neutral-hovered)] transition-colors">
@@ -158,6 +161,19 @@
         {/if}
       </div>
     {/each}
+    {#if !diagramsLoaded}
+      <button
+        type="button"
+        class="flex items-center gap-2 py-1 px-2 -mx-2 rounded text-sm transition-colors hover:bg-[var(--ds-background-neutral-hovered)] disabled:opacity-60"
+        style="color: var(--ds-text-subtle);"
+        data-testid="load-item-diagrams"
+        disabled={loadingDiagrams}
+        onclick={() => onloadDiagrams?.()}
+      >
+        <IconPencil class="w-3.5 h-3.5 flex-shrink-0" />
+        {loadingDiagrams ? t('common.loading') : `${t('common.show')} ${t('items.diagram')}`}
+      </button>
+    {/if}
     {#each diagrams as diagram}
       <div class="flex items-center gap-2 py-1 px-2 -mx-2 rounded group hover:bg-[var(--ds-background-neutral-hovered)] transition-colors">
         <IconPencil class="w-3.5 h-3.5 flex-shrink-0" style="color: var(--ds-text-subtle);" />

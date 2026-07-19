@@ -22,7 +22,7 @@ export default {
     welcomeBack: 'Willkommen zurück',
     loginSubtitle: 'Geben Sie Ihre Anmeldedaten ein, um fortzufahren',
     emailOrUsername: 'E-Mail oder Benutzername',
-    staySignedIn: 'Angemeldet bleiben',
+    staySignedIn: '30 Tage lang bei Windshift angemeldet bleiben',
     enterCode: 'Code eingeben',
     accountLocked: 'Konto gesperrt. Bitte kontaktieren Sie den Support.',
     sessionExpired: 'Sitzung abgelaufen. Bitte erneut anmelden.',

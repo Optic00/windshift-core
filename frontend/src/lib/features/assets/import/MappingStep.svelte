@@ -49,7 +49,7 @@
   <div class="flex-1 space-y-6 min-w-0">
     <div class="flex items-center justify-between">
       <h3 class="text-sm font-semibold" style="color: var(--ds-text);">Field Mapping</h3>
-      <Button variant="ghost" size="small" onclick={() => assetImportStore.autoMap()}>
+      <Button dataTestid="asset-import-auto-map" variant="ghost" size="small" onclick={() => assetImportStore.autoMap()}>
         <IconWand class="w-3.5 h-3.5 mr-1" />
         Auto-map
       </Button>

@@ -613,7 +613,7 @@
             <!-- Login prompt -->
             <div class="max-w-md mx-auto">
               <p class="text-white/80 mb-6">{t('portal.signInToAccess')}</p>
-              <GlassButton variant="cta" onclick={() => portalStore.showLoginDialog = true}>
+              <GlassButton id="portal-sign-in" variant="cta" onclick={() => portalStore.showLoginDialog = true}>
                 {t('auth.signIn')}
               </GlassButton>
             </div>

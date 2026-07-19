@@ -40,8 +40,8 @@
 
   // Done-items date range: caps the indefinitely-growing completed list.
   // '7' | '30' | '90' | 'all' | 'custom'; default = last 7 days.
-  const RANGE_KEY = `todo-done-range-${workspaceId}`;
   // svelte-ignore state_referenced_locally
+  const RANGE_KEY = `todo-done-range-${workspaceId}`;
   let completedRange = $state('7');
   let customDate = $state('');
 

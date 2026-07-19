@@ -17,7 +17,9 @@
 
   // Internal row state so a half-typed or temporarily-empty key doesn't drop
   // the row out of the map mid-edit. We rebuild the object on every change.
+  // svelte-ignore state_referenced_locally
   let rows = $state(objectToRows(headers));
+  // svelte-ignore state_referenced_locally
   let seededFor = nodeId;
 
   $effect(() => {

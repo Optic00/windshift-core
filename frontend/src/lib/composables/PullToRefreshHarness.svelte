@@ -7,6 +7,9 @@
   let { threshold = 64, maxPull = 96, resistance = 2, onRefresh = null } = $props();
 
   let host = $state(null);
+  // The harness constructs the composable once; individual tests mount it
+  // with fixed options instead of changing props after initialization.
+  // svelte-ignore state_referenced_locally
   const ptr = usePullToRefresh(() => host, () => onRefresh?.(), {
     threshold,
     maxPull,

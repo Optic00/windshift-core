@@ -102,6 +102,11 @@ func (h *SSOHandler) SAMLLogin(w http.ResponseWriter, r *http.Request) {
 	// Generate relay state containing a CSRF state token
 	state := generateRandomState()
 	rememberMe := ssoRememberMeFromRequest(r)
+	slog.Info("starting SAML login",
+		slog.String("component", "sso"),
+		slog.String("provider", provider.Slug),
+		slog.Bool("remember_me", rememberMe),
+	)
 
 	redirectURI := r.URL.Query().Get("redirect_uri")
 	if redirectURI == "" {
@@ -123,7 +128,7 @@ func (h *SSOHandler) SAMLLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Store state token for CSRF protection, bound to the AuthnRequest ID.
-	storeErr := repository.NewSSOStateRepository(h.db).Store(provider.ID, state, requestID, redirectURI, rememberMe, time.Now().Add(5*time.Minute))
+	storeErr := repository.NewSSOStateRepository(h.db).Store(provider.ID, state, requestID, redirectURI, rememberMe, time.Now().Add(ssoStateTokenTTL))
 	if storeErr != nil {
 		slog.Error("failed to store SAML state token", "error", storeErr)
 		h.redirectWithError(w, r, "Internal server error")
@@ -164,6 +169,11 @@ func (h *SSOHandler) SAMLAssertionConsumerService(w http.ResponseWriter, r *http
 	}
 	redirectURI := token.RedirectURI
 	rememberMe := token.RememberMe
+	slog.Info("restored SAML login state",
+		slog.String("component", "sso"),
+		slog.String("provider", provider.Slug),
+		slog.Bool("remember_me", rememberMe),
+	)
 	// Delete used state token (single-use)
 	_ = repository.NewSSOStateRepository(h.db).Delete(token.ID)
 
@@ -236,6 +246,12 @@ func (h *SSOHandler) SAMLAssertionConsumerService(w http.ResponseWriter, r *http
 	ipAddress := h.ipExtractor.GetClientIP(r)
 
 	// Create session
+	slog.Info("creating SAML session",
+		slog.String("component", "sso"),
+		slog.String("provider", provider.Slug),
+		slog.Int("user_id", user.ID),
+		slog.Bool("remember_me", rememberMe),
+	)
 	session, err := h.sessionManager.CreateSession(user.ID, ipAddress, r.UserAgent(), rememberMe)
 	if err != nil {
 		slog.Error("failed to create session after SAML login", "error", err, "user_id", user.ID)

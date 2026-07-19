@@ -2,10 +2,25 @@ package handlers
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"windshift/internal/models"
 )
+
+func TestExecuteActionRejectsUnauthenticatedRequestsBeforeResourceLookup(t *testing.T) {
+	t.Parallel()
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/workspaces/1/actions/1/execute", nil)
+
+	(&ActionsHandler{}).ExecuteAction(recorder, request)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+	}
+}
 
 func TestSanitizeCapabilitiesForWorkspaceFailsClosedOnMalformedHTTPConfig(t *testing.T) {
 	t.Parallel()

@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { createRawSnippet } from 'svelte';
 import { afterEach, beforeAll, describe, expect, test, vi } from 'vitest';
 
 // jsdom does not implement the Web Animations API. Svelte 5 transitions
@@ -243,5 +244,25 @@ describe('BasePicker — opening a pre-selected single-select does not filter (W
       expect(document.querySelector('[data-option-value="completed"]')).toBeInTheDocument();
       expect(document.querySelector('[data-option-value="planning"]')).not.toBeInTheDocument();
     });
+  });
+});
+
+describe('BasePicker — popover trigger accessibility', () => {
+  test('custom triggers expose one keyboard-operable combobox', async () => {
+    const children = createRawSnippet(() => ({
+      render: () => '<div data-testid="custom-picker-trigger">Status</div>',
+    }));
+    render(BasePicker, { props: { items, children } });
+
+    const trigger = screen.getByRole('combobox');
+    expect(trigger).toHaveAttribute('tabindex', '0');
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    expect(trigger).toHaveAttribute('aria-controls');
+
+    await fireEvent.keyDown(trigger, { key: 'Enter' });
+
+    const dropdown = await screen.findByTestId('picker-dropdown');
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    expect(dropdown.id).toBe(trigger.getAttribute('aria-controls'));
   });
 });

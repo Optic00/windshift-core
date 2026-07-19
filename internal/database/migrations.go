@@ -48,8 +48,19 @@ var Catalog = []Migration{
 	{
 		Version: "20260716_milestone_scope_guard",
 		Name:    "Enforce global and workspace milestone scope consistency",
-		CheckSQLite: `SELECT CASE WHEN COUNT(*) = 2 THEN 1 ELSE 0 END FROM sqlite_master
-			WHERE type='trigger' AND name IN ('trg_milestones_scope_insert', 'trg_milestones_scope_update')`,
+		// Fresh databases enforce this invariant with a named table CHECK.
+		// Existing databases cannot add that CHECK in place, so their upgrade
+		// path normalizes old rows and installs equivalent insert/update
+		// triggers. Recognize either representation as the migration's effect.
+		CheckSQLite: `SELECT CASE WHEN
+			(SELECT COUNT(*) FROM sqlite_master
+			 WHERE type='trigger' AND name IN ('trg_milestones_scope_insert', 'trg_milestones_scope_update')) = 2
+			OR EXISTS (
+				SELECT 1 FROM sqlite_master
+				WHERE type='table' AND name='milestones'
+				  AND sql LIKE '%CONSTRAINT milestones_scope_check%'
+			)
+			THEN 1 ELSE 0 END`,
 		CheckPostgres: `SELECT COUNT(*) FROM information_schema.table_constraints
 			WHERE table_schema=current_schema() AND table_name='milestones'
 			  AND constraint_name='milestones_scope_check'`,

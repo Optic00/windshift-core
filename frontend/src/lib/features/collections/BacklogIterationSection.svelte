@@ -164,6 +164,7 @@
           {#each items as item (item.id)}
             <div
               class="relative"
+              data-testid="backlog-item"
               data-item-card
               data-item-id={item.id}
               data-section-id={sectionId}

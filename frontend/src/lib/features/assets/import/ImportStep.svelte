@@ -43,11 +43,11 @@
         <p class="text-xs" style="color: var(--ds-text-subtle);">Total Rows</p>
       </div>
       <div class="p-3 rounded-lg border text-center" style="border-color: var(--ds-border-success); background: var(--ds-background-success-subtle);">
-        <p class="text-2xl font-semibold" style="color: var(--ds-text-success);">{importData.importedCount}</p>
+        <p id="asset-imported-count" class="text-2xl font-semibold" style="color: var(--ds-text-success);">{importData.importedCount}</p>
         <p class="text-xs" style="color: var(--ds-text-subtle);">Imported</p>
       </div>
       <div class="p-3 rounded-lg border text-center" style="border-color: {importData.failedCount > 0 ? 'var(--ds-border-danger)' : 'var(--ds-border)'}; background: {importData.failedCount > 0 ? 'var(--ds-background-danger-subtle)' : 'var(--ds-background-input)'};">
-        <p class="text-2xl font-semibold" style="color: {importData.failedCount > 0 ? 'var(--ds-text-danger)' : 'var(--ds-text)'};">{importData.failedCount}</p>
+        <p id="asset-import-failed-count" class="text-2xl font-semibold" style="color: {importData.failedCount > 0 ? 'var(--ds-text-danger)' : 'var(--ds-text)'};">{importData.failedCount}</p>
         <p class="text-xs" style="color: var(--ds-text-subtle);">Failed</p>
       </div>
     </div>

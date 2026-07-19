@@ -93,7 +93,13 @@ func (s *ApprovalService) GetTimelineForItem(ctx context.Context, itemID int) ([
 // GetForUser returns approval requests where the user is in the active approver
 // pool of any pending step. status filters request status (empty = "pending").
 func (s *ApprovalService) GetForUser(ctx context.Context, userID int, status string) ([]*models.ApprovalRequest, error) {
-	return s.getForActor(ctx, "user_id", userID, status)
+	return s.getForActor(ctx, "user_id", userID, status, nil)
+}
+
+// GetForUserInChannel restricts the user's active approval pool to items that
+// belong to channelID. Portal callers must use this scoped variant.
+func (s *ApprovalService) GetForUserInChannel(ctx context.Context, userID int, status string, channelID int) ([]*models.ApprovalRequest, error) {
+	return s.getForActor(ctx, "user_id", userID, status, &channelID)
 }
 
 // UserHasActivePoolMembershipOnItem returns true iff the user is in an active
@@ -118,13 +124,30 @@ func (s *ApprovalService) PortalCustomerHasActivePoolMembershipOnItem(ctx contex
 // GetForPortalCustomer is the customer-flavored counterpart to GetForUser.
 // Returns approval requests where the portal customer is in the active pool.
 func (s *ApprovalService) GetForPortalCustomer(ctx context.Context, customerID int, status string) ([]*models.ApprovalRequest, error) {
-	return s.getForActor(ctx, "portal_customer_id", customerID, status)
+	return s.getForActor(ctx, "portal_customer_id", customerID, status, nil)
 }
 
-func (s *ApprovalService) getForActor(ctx context.Context, actorColumn string, actorID int, status string) ([]*models.ApprovalRequest, error) {
-	ids, err := s.runtimeRepo.FindRequestIDsForActor(ctx, actorColumn, actorID, status)
+// GetForPortalCustomerInChannel restricts the customer's active approval pool
+// to items that belong to channelID. Portal callers must use this scoped variant.
+func (s *ApprovalService) GetForPortalCustomerInChannel(ctx context.Context, customerID int, status string, channelID int) ([]*models.ApprovalRequest, error) {
+	return s.getForActor(ctx, "portal_customer_id", customerID, status, &channelID)
+}
+
+func (s *ApprovalService) getForActor(ctx context.Context, actorColumn string, actorID int, status string, channelID *int) ([]*models.ApprovalRequest, error) {
+	var (
+		ids []int
+		err error
+	)
+	if channelID != nil {
+		ids, err = s.runtimeRepo.FindRequestIDsForActorInChannel(ctx, actorColumn, actorID, status, *channelID)
+	} else {
+		ids, err = s.runtimeRepo.FindRequestIDsForActor(ctx, actorColumn, actorID, status)
+	}
 	if err != nil {
 		return nil, err
+	}
+	if channelID != nil {
+		return s.loadRequestsInChannel(ctx, ids, *channelID)
 	}
 	return s.loadRequests(ctx, ids)
 }
@@ -141,9 +164,32 @@ func (s *ApprovalService) loadRequests(ctx context.Context, ids []int) ([]*model
 	return out, nil
 }
 
+func (s *ApprovalService) loadRequestsInChannel(ctx context.Context, ids []int, channelID int) ([]*models.ApprovalRequest, error) {
+	out := make([]*models.ApprovalRequest, 0, len(ids))
+	for _, id := range ids {
+		req, err := s.GetRequestInChannel(ctx, id, channelID)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, req)
+	}
+	return out, nil
+}
+
 // GetRequest loads a request with its step instances, approvers, and decisions.
 func (s *ApprovalService) GetRequest(ctx context.Context, requestID int) (*models.ApprovalRequest, error) {
 	req, err := s.runtimeRepo.FindFullRequestByID(ctx, requestID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, sql.ErrNoRows
+	}
+	return req, err
+}
+
+// GetRequestInChannel loads a request only if its item belongs to channelID.
+// This is the portal-safe detail lookup; a mismatch is indistinguishable from
+// a missing approval.
+func (s *ApprovalService) GetRequestInChannel(ctx context.Context, requestID, channelID int) (*models.ApprovalRequest, error) {
+	req, err := s.runtimeRepo.FindFullRequestByIDInChannel(ctx, requestID, channelID)
 	if errors.Is(err, repository.ErrNotFound) {
 		return nil, sql.ErrNoRows
 	}

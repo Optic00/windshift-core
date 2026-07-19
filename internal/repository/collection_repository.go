@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"windshift/internal/database"
+	"windshift/internal/models"
 )
 
 // CollectionRecord is the read projection needed by REST v1 collection embeds.
@@ -32,6 +33,200 @@ type CollectionRepository struct {
 // NewCollectionRepository creates a collection repository.
 func NewCollectionRepository(db database.Database) *CollectionRepository {
 	return &CollectionRepository{db: db}
+}
+
+const collectionModelSelect = `SELECT c.id, c.name, COALESCE(c.description, ''), COALESCE(c.ql_query, ''),
+       c.filter_state, c.is_public, c.workspace_id, c.category_id, c.created_by,
+       c.public_slug, c.created_at, c.updated_at,
+       COALESCE(u.first_name || ' ' || u.last_name, ''), COALESCE(u.email, ''),
+       COALESCE(cc.name, ''), COALESCE(cc.color, '')
+FROM collections c
+LEFT JOIN users u ON c.created_by = u.id
+LEFT JOIN collection_categories cc ON c.category_id = cc.id`
+
+type collectionModelScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanCollectionModel(scanner collectionModelScanner) (models.Collection, error) {
+	var collection models.Collection
+	var workspaceID, categoryID, createdBy sql.NullInt64
+	var publicSlug, filterState sql.NullString
+	err := scanner.Scan(
+		&collection.ID, &collection.Name, &collection.Description, &collection.QLQuery,
+		&filterState, &collection.IsPublic, &workspaceID, &categoryID, &createdBy,
+		&publicSlug, &collection.CreatedAt, &collection.UpdatedAt,
+		&collection.CreatorName, &collection.CreatorEmail,
+		&collection.CategoryName, &collection.CategoryColor,
+	)
+	if err != nil {
+		return models.Collection{}, err
+	}
+	if workspaceID.Valid {
+		id := int(workspaceID.Int64)
+		collection.WorkspaceID = &id
+	}
+	if categoryID.Valid {
+		id := int(categoryID.Int64)
+		collection.CategoryID = &id
+	}
+	if createdBy.Valid {
+		id := int(createdBy.Int64)
+		collection.CreatedBy = &id
+	}
+	if publicSlug.Valid {
+		collection.PublicSlug = &publicSlug.String
+	}
+	if filterState.Valid {
+		collection.FilterState = &filterState.String
+	}
+	return collection, nil
+}
+
+// CollectionListFilter narrows the cookie-auth collection list.
+type CollectionListFilter struct {
+	UserID      int
+	WorkspaceID *int
+	CategoryID  *int
+}
+
+// ListVisibleModels returns public collections plus collections owned by the
+// caller, newest first.
+func (r *CollectionRepository) ListVisibleModels(filter CollectionListFilter) ([]models.Collection, error) {
+	query := collectionModelSelect + "\nWHERE (c.is_public = true OR c.created_by = ?)"
+	args := []any{filter.UserID}
+	if filter.WorkspaceID != nil {
+		query += " AND c.workspace_id = ?"
+		args = append(args, *filter.WorkspaceID)
+	}
+	if filter.CategoryID != nil {
+		query += " AND c.category_id = ?"
+		args = append(args, *filter.CategoryID)
+	}
+	query += " ORDER BY c.created_at DESC"
+
+	rows, err := r.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list visible collections: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	collections := make([]models.Collection, 0)
+	for rows.Next() {
+		collection, err := scanCollectionModel(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan visible collection: %w", err)
+		}
+		collections = append(collections, collection)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read visible collections: %w", err)
+	}
+	return collections, nil
+}
+
+// GetVisibleModel returns a collection only when it is public or caller-owned.
+func (r *CollectionRepository) GetVisibleModel(id, userID int) (*models.Collection, error) {
+	collection, err := scanCollectionModel(r.db.QueryRow(
+		collectionModelSelect+"\nWHERE c.id = ? AND (c.is_public = true OR c.created_by = ?)", id, userID,
+	))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get visible collection %d: %w", id, err)
+	}
+	return &collection, nil
+}
+
+// GetModel returns the full editable collection model without a visibility
+// filter. Authorization remains the handler's responsibility.
+func (r *CollectionRepository) GetModel(id int) (*models.Collection, error) {
+	collection, err := scanCollectionModel(r.db.QueryRow(collectionModelSelect+"\nWHERE c.id = ?", id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get collection model %d: %w", id, err)
+	}
+	return &collection, nil
+}
+
+// GetOwnerID returns the creator ID. A nil creator represents an unowned
+// legacy collection.
+func (r *CollectionRepository) GetOwnerID(id int) (*int, error) {
+	var ownerID sql.NullInt64
+	err := r.db.QueryRow("SELECT created_by FROM collections WHERE id = ?", id).Scan(&ownerID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get collection %d owner: %w", id, err)
+	}
+	if !ownerID.Valid {
+		return nil, nil
+	}
+	idValue := int(ownerID.Int64)
+	return &idValue, nil
+}
+
+// CategoryExists reports whether a collection category exists.
+func (r *CollectionRepository) CategoryExists(id int) (bool, error) {
+	var exists bool
+	if err := r.db.QueryRow("SELECT EXISTS(SELECT 1 FROM collection_categories WHERE id = ?)", id).Scan(&exists); err != nil {
+		return false, fmt.Errorf("check collection category %d: %w", id, err)
+	}
+	return exists, nil
+}
+
+// Create inserts a collection and populates its generated ID and owner.
+func (r *CollectionRepository) Create(collection *models.Collection, userID int) error {
+	var id int64
+	err := r.db.QueryRow(`
+		INSERT INTO collections (name, description, ql_query, filter_state, is_public, workspace_id, category_id, created_by, public_slug, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING id
+	`, collection.Name, collection.Description, collection.QLQuery, collection.FilterState,
+		collection.IsPublic, collection.WorkspaceID, collection.CategoryID, userID, collection.PublicSlug).Scan(&id)
+	if err != nil {
+		return fmt.Errorf("create collection: %w", err)
+	}
+	collection.ID = int(id)
+	collection.CreatedBy = &userID
+	return nil
+}
+
+// Update replaces all editable collection fields.
+func (r *CollectionRepository) Update(id int, collection *models.Collection) error {
+	_, err := r.db.ExecWrite(`
+		UPDATE collections
+		SET name = ?, description = ?, ql_query = ?, filter_state = ?, is_public = ?, workspace_id = ?, category_id = ?, public_slug = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, collection.Name, collection.Description, collection.QLQuery, collection.FilterState,
+		collection.IsPublic, collection.WorkspaceID, collection.CategoryID, collection.PublicSlug, id)
+	if err != nil {
+		return fmt.Errorf("update collection %d: %w", id, err)
+	}
+	return nil
+}
+
+// UpdatePublicSharing updates only public-board visibility fields.
+func (r *CollectionRepository) UpdatePublicSharing(id int, isPublic bool, publicSlug *string) error {
+	_, err := r.db.ExecWrite(
+		"UPDATE collections SET is_public = ?, public_slug = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+		isPublic, publicSlug, id,
+	)
+	if err != nil {
+		return fmt.Errorf("update collection %d public sharing: %w", id, err)
+	}
+	return nil
+}
+
+// Delete removes a collection.
+func (r *CollectionRepository) Delete(id int) error {
+	if _, err := r.db.ExecWrite("DELETE FROM collections WHERE id = ?", id); err != nil {
+		return fmt.Errorf("delete collection %d: %w", id, err)
+	}
+	return nil
 }
 
 // GetByID fetches a collection by numeric id.

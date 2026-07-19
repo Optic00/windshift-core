@@ -643,6 +643,11 @@ func (h *PublicBoardHandler) loadPublicComments(itemID int) ([]publicComment, er
 
 // DownloadAttachment serves an image attachment for a public board item
 func (h *PublicBoardHandler) DownloadAttachment(w http.ResponseWriter, r *http.Request) {
+	// Access is derived from mutable public-board state (published flag, slug,
+	// and collection membership). Never let a browser or shared proxy reuse
+	// bytes after any of those authorization inputs have been revoked.
+	w.Header().Set("Cache-Control", "no-store")
+
 	slug := r.PathValue("slug")
 	attachmentIDStr := r.PathValue("id")
 	if slug == "" || attachmentIDStr == "" {
@@ -728,7 +733,6 @@ func (h *PublicBoardHandler) DownloadAttachment(w http.ResponseWriter, r *http.R
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Content-Disposition", fileserve.ContentDisposition("inline", originalFilename))
-	w.Header().Set("Cache-Control", "public, max-age=86400")
 
 	_, _ = io.Copy(w, file)
 }

@@ -1,17 +1,14 @@
 package handlers
 
 import (
-	"database/sql"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
-	"strings"
-	"time"
 
 	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
+	"windshift/internal/repository"
 	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
@@ -19,6 +16,9 @@ import (
 
 type TimeProjectHandler struct {
 	db                    database.Database
+	projects              *repository.TimeProjectRepository
+	customers             *repository.CustomerOrganisationRepository
+	categories            *repository.TimeProjectCategoryRepository
 	timePermissionService *services.TimePermissionService
 	customerOrgPermission *services.CustomerOrganisationPermissionService
 	keyCache              *WorkspaceKeyCache
@@ -27,79 +27,33 @@ type TimeProjectHandler struct {
 func NewTimeProjectHandler(db database.Database, timePermissionService *services.TimePermissionService, customerOrgPermission *services.CustomerOrganisationPermissionService, keyCache *WorkspaceKeyCache) *TimeProjectHandler {
 	return &TimeProjectHandler{
 		db:                    db,
+		projects:              repository.NewTimeProjectRepository(db),
+		customers:             repository.NewCustomerOrganisationRepository(db),
+		categories:            repository.NewTimeProjectCategoryRepository(db),
 		timePermissionService: timePermissionService,
 		customerOrgPermission: customerOrgPermission,
 		keyCache:              keyCache,
 	}
 }
 
-// scanTimeProjectWithJoins scans a row from a query that joins time_projects with
-// customer_organisations, time_project_categories, and the total_hours subquery.
-func scanTimeProjectWithJoins(scanner interface {
-	Scan(dest ...interface{}) error
-}) (models.TimeProject, error) {
-	var p models.TimeProject
-	var customerName, categoryName, categoryColor, status, color, settingsStr sql.NullString
-	var totalHours sql.NullFloat64
-
-	err := scanner.Scan(&p.ID, &p.CustomerID, &p.CategoryID, &p.Name, &p.Description, &status, &color,
-		&p.HourlyRate, &settingsStr, &p.CreatedAt, &p.UpdatedAt, &customerName, &categoryName, &categoryColor, &totalHours)
-	if err != nil {
-		return p, err
+func timeProjectFromDetail(detail repository.TimeProjectDetail) models.TimeProject {
+	return models.TimeProject{
+		ID:            detail.ID,
+		CustomerID:    detail.CustomerID,
+		CategoryID:    detail.CategoryID,
+		Name:          detail.Name,
+		Description:   detail.Description,
+		Status:        detail.Status,
+		Color:         detail.Color,
+		HourlyRate:    detail.HourlyRate,
+		Settings:      detail.Settings,
+		CreatedAt:     detail.CreatedAt,
+		UpdatedAt:     detail.UpdatedAt,
+		CustomerName:  detail.CustomerName,
+		CategoryName:  detail.CategoryName,
+		CategoryColor: detail.CategoryColor,
+		TotalHours:    detail.TotalHours,
 	}
-
-	p.Status = status.String
-	p.Color = color.String
-	p.CustomerName = customerName.String
-	p.CategoryName = categoryName.String
-	p.CategoryColor = categoryColor.String
-	if totalHours.Valid {
-		p.TotalHours = &totalHours.Float64
-	}
-	if settingsStr.Valid && settingsStr.String != "" {
-		if err := json.Unmarshal([]byte(settingsStr.String), &p.Settings); err != nil {
-			slog.Warn("failed to parse project settings", slog.Int("project_id", p.ID), slog.Any("error", err))
-		}
-	}
-
-	return p, nil
-}
-
-// scanTimeProjectRows scans all rows from a query using scanTimeProjectWithJoins and returns them
-// as a slice. On scan error it writes the appropriate HTTP error response and returns nil, false.
-func scanTimeProjectRows(w http.ResponseWriter, r *http.Request, rows interface {
-	Next() bool
-	Scan(dest ...interface{}) error
-	Err() error
-}) ([]models.TimeProject, bool) {
-	var projects []models.TimeProject
-	for rows.Next() {
-		p, err := scanTimeProjectWithJoins(rows)
-		if err != nil {
-			respondInternalError(w, r, err)
-			return nil, false
-		}
-		projects = append(projects, p)
-	}
-	if err := rows.Err(); err != nil {
-		respondInternalError(w, r, err)
-		return nil, false
-	}
-	return projects, true
-}
-
-// marshalTimeProjectSettings serializes the project's Settings map to a JSON
-// string pointer suitable for database storage. Returns nil when Settings is empty.
-func marshalTimeProjectSettings(settings map[string]interface{}) *string {
-	if len(settings) == 0 {
-		return nil
-	}
-	b, err := json.Marshal(settings)
-	if err != nil {
-		return nil
-	}
-	s := string(b)
-	return &s
 }
 
 // validateTimeProjectReferences checks that the referenced customer and category exist.
@@ -111,25 +65,18 @@ func (h *TimeProjectHandler) validateTimeProjectReferences(w http.ResponseWriter
 		return false
 	}
 
-	// Validate customer exists
-	{
-		var customerExists bool
-		//nolint:misspell // database table name uses British spelling (customer_organisations)
-		err := h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM customer_organisations WHERE id = ?)", *customerID).Scan(&customerExists)
-		if err != nil {
-			respondInternalError(w, r, err)
-			return false
-		}
-		if !customerExists {
+	if _, err := h.customers.GetByID(*customerID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
 			respondValidationError(w, r, "Customer not found")
-			return false
+		} else {
+			respondInternalError(w, r, err)
 		}
+		return false
 	}
 
 	// Validate category exists (if provided)
 	if categoryID != nil {
-		var categoryExists bool
-		err := h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM time_project_categories WHERE id = ?)", *categoryID).Scan(&categoryExists)
+		categoryExists, err := h.categories.Exists(*categoryID)
 		if err != nil {
 			respondInternalError(w, r, err)
 			return false
@@ -143,27 +90,7 @@ func (h *TimeProjectHandler) validateTimeProjectReferences(w http.ResponseWriter
 	return true
 }
 
-// timeProjectSelectPrefix is the shared SELECT column list + FROM/JOIN for every
-// time_projects list query in this handler. Consumers append WHERE/ORDER BY.
-//
-//nolint:misspell // database table name uses British spelling (customer_organisations)
-const timeProjectSelectPrefix = `
-	SELECT p.id, p.customer_id, p.category_id, p.name, p.description, p.status, p.color,
-	       p.hourly_rate, p.settings, p.created_at, p.updated_at,
-	       c.name as customer_name, cat.name as category_name, cat.color as category_color,
-	       (SELECT COALESCE(SUM(duration_minutes), 0) / 60.0 FROM time_worklogs WHERE project_id = p.id) as total_hours
-	FROM time_projects p
-	LEFT JOIN customer_organisations c ON p.customer_id = c.id
-	LEFT JOIN time_project_categories cat ON p.category_id = cat.id`
-
-// respondTimeProjects runs query, scans time-project rows, post-filters by
-// the caller's project membership, and writes the result (or an empty array)
-// as JSON. userID gates the response so endpoints sharing this helper can't
-// leak projects the caller cannot view.
-//
-// Filter semantics match GetAll: nil from GetAccessibleProjects means full
-// access (no filtering); an empty slice means no access at all.
-func (h *TimeProjectHandler) respondTimeProjects(w http.ResponseWriter, r *http.Request, userID int, query string, args ...interface{}) {
+func (h *TimeProjectHandler) respondTimeProjects(w http.ResponseWriter, r *http.Request, userID int, filter repository.TimeProjectListFilter) {
 	var accessibleIDs []int
 	if h.timePermissionService != nil {
 		var err error
@@ -172,46 +99,17 @@ func (h *TimeProjectHandler) respondTimeProjects(w http.ResponseWriter, r *http.
 			respondInternalError(w, r, err)
 			return
 		}
-		if accessibleIDs != nil && len(accessibleIDs) == 0 {
-			respondJSONOK(w, []models.TimeProject{})
-			return
-		}
 	}
+	filter.AccessibleIDs = accessibleIDs
 
-	rows, err := h.db.Query(query, args...)
+	details, err := h.projects.ListDetailsFiltered(filter)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
-	defer func() { _ = rows.Close() }()
-
-	projects, ok := scanTimeProjectRows(w, r, rows)
-	if !ok {
-		return
-	}
-	if err := rows.Err(); err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	if projects == nil {
-		projects = []models.TimeProject{}
-	}
-
-	if accessibleIDs != nil {
-		allowed := make(map[int]bool, len(accessibleIDs))
-		for _, id := range accessibleIDs {
-			allowed[id] = true
-		}
-		filtered := projects[:0]
-		for _, p := range projects {
-			if allowed[p.ID] {
-				filtered = append(filtered, p)
-			}
-		}
-		projects = filtered
-		if projects == nil {
-			projects = []models.TimeProject{}
-		}
+	projects := make([]models.TimeProject, 0, len(details))
+	for _, detail := range details {
+		projects = append(projects, timeProjectFromDetail(detail))
 	}
 
 	respondJSONOK(w, projects)
@@ -235,44 +133,20 @@ func (h *TimeProjectHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Build query based on accessible projects
-	query := timeProjectSelectPrefix
-
-	var args []interface{}
-	if len(accessibleIDs) > 0 {
-		// Filter to only accessible projects
-		placeholders := make([]string, len(accessibleIDs))
-		for i, id := range accessibleIDs {
-			placeholders[i] = "?"
-			args = append(args, id)
-		}
-		query += " WHERE p.id IN (" + strings.Join(placeholders, ",") + ")"
-	} else if accessibleIDs != nil {
+	if accessibleIDs != nil && len(accessibleIDs) == 0 {
 		// User has no access to any projects (slice is non-nil but empty)
 		respondJSONOK(w, []models.TimeProject{})
 		return
 	}
-	// If accessibleIDs is nil, user has full access - no WHERE clause needed
 
-	query += " ORDER BY p.name ASC"
-
-	rows, err := h.db.Query(query, args...)
+	details, err := h.projects.ListDetails(accessibleIDs, "")
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
-	defer func() { _ = rows.Close() }()
-
-	projects, ok := scanTimeProjectRows(w, r, rows)
-	if !ok {
-		return
-	}
-	if err := rows.Err(); err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	if projects == nil {
-		projects = []models.TimeProject{}
+	projects := make([]models.TimeProject, 0, len(details))
+	for _, detail := range details {
+		projects = append(projects, timeProjectFromDetail(detail))
 	}
 
 	// Set IsManager flag for each project
@@ -318,19 +192,8 @@ func (h *TimeProjectHandler) Get(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	//nolint:misspell // database table name uses British spelling (customer_organisations)
-	p, err := scanTimeProjectWithJoins(h.db.QueryRow(`
-		SELECT p.id, p.customer_id, p.category_id, p.name, p.description, p.status, p.color,
-		       p.hourly_rate, p.settings, p.created_at, p.updated_at,
-		       c.name as customer_name, cat.name as category_name, cat.color as category_color,
-		       (SELECT COALESCE(SUM(duration_minutes), 0) / 60.0 FROM time_worklogs WHERE project_id = p.id) as total_hours
-		FROM time_projects p
-		LEFT JOIN customer_organisations c ON p.customer_id = c.id
-		LEFT JOIN time_project_categories cat ON p.category_id = cat.id
-		WHERE p.id = ?
-	`, id))
-
-	if errors.Is(err, sql.ErrNoRows) {
+	detail, err := h.projects.GetDetail(id)
+	if errors.Is(err, repository.ErrNotFound) {
 		respondNotFound(w, r, "project")
 		return
 	}
@@ -339,7 +202,7 @@ func (h *TimeProjectHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSONOK(w, p)
+	respondJSONOK(w, timeProjectFromDetail(*detail))
 }
 
 func (h *TimeProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -382,22 +245,10 @@ func (h *TimeProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	settingsJSON := marshalTimeProjectSettings(p.Settings)
-
-	now := time.Now()
-	var id int64
-	err := h.db.QueryRow(`
-		INSERT INTO time_projects (customer_id, category_id, name, description, status, color, hourly_rate, settings, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
-	`, p.CustomerID, p.CategoryID, p.Name, p.Description, p.Status, p.Color, p.HourlyRate, settingsJSON, now, now).Scan(&id)
-	if err != nil {
+	if err := h.projects.Create(&p); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
-
-	p.ID = int(id)
-	p.CreatedAt = now
-	p.UpdatedAt = now
 
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
@@ -451,23 +302,10 @@ func (h *TimeProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	settingsJSON := marshalTimeProjectSettings(p.Settings)
-
-	now := time.Now()
-	_, err := h.db.ExecWrite(`
-		UPDATE time_projects
-		SET customer_id = ?, category_id = ?, name = ?, description = ?, status = ?, color = ?,
-		    hourly_rate = ?, settings = ?, updated_at = ?
-		WHERE id = ?
-	`, p.CustomerID, p.CategoryID, p.Name, p.Description, p.Status, p.Color, p.HourlyRate, settingsJSON, now, id)
-
-	if err != nil {
+	if err := h.projects.Update(id, &p); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
-
-	p.ID = id
-	p.UpdatedAt = now
 
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
@@ -505,8 +343,7 @@ func (h *TimeProjectHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	_, err := h.db.ExecWrite("DELETE FROM time_projects WHERE id = ?", id)
-	if err != nil {
+	if err := h.projects.Delete(id); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
@@ -542,9 +379,7 @@ func (h *TimeProjectHandler) GetByCustomer(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	h.respondTimeProjects(w, r, user.ID, timeProjectSelectPrefix+`
-		WHERE p.customer_id = ?
-		ORDER BY p.name ASC`, customerID)
+	h.respondTimeProjects(w, r, user.ID, repository.TimeProjectListFilter{CustomerID: &customerID})
 }
 
 func (h *TimeProjectHandler) GetByWorkspace(w http.ResponseWriter, r *http.Request) {
@@ -558,52 +393,11 @@ func (h *TimeProjectHandler) GetByWorkspace(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Check if workspace has category restrictions
-	categoryRows, err := h.db.Query(`
-		SELECT time_project_category_id
-		FROM workspace_time_project_categories
-		WHERE workspace_id = ?
-	`, workspaceID)
+	allowedCategories, err := h.categories.ListIDsForWorkspace(workspaceID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
 
-	var allowedCategories []int
-	for categoryRows.Next() {
-		var categoryID int
-		if err = categoryRows.Scan(&categoryID); err != nil {
-			_ = categoryRows.Close()
-			respondInternalError(w, r, err)
-			return
-		}
-		allowedCategories = append(allowedCategories, categoryID)
-	}
-	if err := categoryRows.Err(); err != nil {
-		_ = categoryRows.Close()
-		respondInternalError(w, r, err)
-		return
-	}
-	_ = categoryRows.Close()
-
-	// Build query based on whether there are category restrictions
-	var query string
-	var args []interface{}
-
-	if len(allowedCategories) > 0 {
-		// Workspace has category restrictions - filter projects
-		placeholders := make([]string, len(allowedCategories))
-		for i, categoryID := range allowedCategories {
-			placeholders[i] = "?"
-			args = append(args, categoryID)
-		}
-		query = timeProjectSelectPrefix + `
-			WHERE p.category_id IN (` + strings.Join(placeholders, ",") + `)
-			ORDER BY p.name ASC`
-	} else {
-		query = timeProjectSelectPrefix + `
-			ORDER BY p.name ASC`
-	}
-
-	h.respondTimeProjects(w, r, user.ID, query, args...)
+	h.respondTimeProjects(w, r, user.ID, repository.TimeProjectListFilter{CategoryIDs: allowedCategories})
 }

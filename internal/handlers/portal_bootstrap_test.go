@@ -77,6 +77,52 @@ func TestPublicPortalBootstrapComposesShellCatalogs(t *testing.T) {
 	}
 }
 
+func TestPublicPortalBootstrapAssetReportsUseExactSafeContract(t *testing.T) {
+	db, channelID, workspaceID := setupPortalBootstrapTest(t)
+	var itemTypeID int
+	if err := db.QueryRow(`SELECT id FROM item_types WHERE name = 'Portal bootstrap request'`).Scan(&itemTypeID); err != nil {
+		t.Fatalf("load item type: %v", err)
+	}
+	var assetSetID int
+	if err := db.QueryRow(`INSERT INTO asset_management_sets (name) VALUES ('Internal inventory') RETURNING id`).Scan(&assetSetID); err != nil {
+		t.Fatalf("insert asset set: %v", err)
+	}
+	var reportID int
+	if err := db.QueryRow(`
+		INSERT INTO asset_reports
+			(channel_id, asset_set_id, name, description, cql_query, icon, color, display_order,
+			 column_config, visibility_group_ids, visibility_org_ids, run_mode, item_type_id, workspace_id, config)
+		VALUES (?, ?, 'Guest inventory', 'Safe presentation', 'secret_internal = true', 'Table2', '#123456', 7,
+		        '["title"]', NULL, NULL, 'form', ?, ?,
+		        '{"require_auth":true,"success_message":"Safe success","submit_button_text":"Run safely","redirect_url":"https://internal.example.test"}')
+		RETURNING id
+	`, channelID, assetSetID, itemTypeID, workspaceID).Scan(&reportID); err != nil {
+		t.Fatalf("insert asset report: %v", err)
+	}
+
+	handler := NewPortalHandler(db, nil, nil, nil, "")
+	request := httptest.NewRequest(http.MethodGet, "/api/portal/support/bootstrap", nil)
+	request.SetPathValue("slug", "support")
+	recorder := httptest.NewRecorder()
+	handler.GetBootstrap(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
+	}
+	var response PublicPortalBootstrapResponse
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	got, err := json.Marshal(response.AssetReports)
+	if err != nil {
+		t.Fatalf("marshal asset reports: %v", err)
+	}
+	want := fmt.Sprintf(`[{"id":%d,"name":"Guest inventory","description":"Safe presentation","icon":"Table2","color":"#123456","display_order":7,"column_config":["title"],"run_mode":"form","item_type_id":%d,"workspace_id":%d,"config":{"success_message":"Safe success","submit_button_text":"Run safely"}}]`, reportID, itemTypeID, workspaceID)
+	if string(got) != want {
+		t.Fatalf("asset_reports contract = %s, want %s", got, want)
+	}
+}
+
 func TestPortalUserBootstrapUsesValidatedInternalContext(t *testing.T) {
 	db, _, _ := setupPortalBootstrapTest(t)
 	var userID int

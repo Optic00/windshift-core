@@ -14,7 +14,7 @@ export default {
     confirmPassword: '确认密码',
     passwordRequired: '密码为必填项',
     rememberMe: '记住我',
-    staySignedIn: '保持登录状态',
+    staySignedIn: '在 Windshift 中保持登录 30 天',
     emailOrUsername: '电子邮件或用户名',
     welcomeBack: '欢迎回来',
     loginTitle: '登录您的账户',

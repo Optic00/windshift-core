@@ -1,5 +1,6 @@
 -- SSO (Single Sign-On) tables for OIDC and future SAML support
 -- Uses github.com/zitadel/oidc library for OIDC implementation
+-- migration: 20260710_sso_state_request_id
 
 -- SSO Identity Providers configuration
 -- Supports multiple providers (MVP limits to one OIDC)
@@ -46,7 +47,7 @@ CREATE TABLE IF NOT EXISTS sso_state_tokens (
 	redirect_uri TEXT NOT NULL, -- Callback URL
 	remember_me BOOLEAN DEFAULT 0, -- Extended session flag
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-	expires_at DATETIME NOT NULL, -- 5-minute expiry
+	expires_at DATETIME NOT NULL, -- 15-minute expiry
 	FOREIGN KEY (provider_id) REFERENCES sso_providers(id) ON DELETE CASCADE
 );
 

@@ -720,7 +720,7 @@ function getSectionAssetReports(section, inCustomizeMode = false) {
   return reportIds
     .map((id) => assetReports.find((ar) => ar.id === id))
     .filter((ar) => ar !== undefined)
-    .filter((ar) => inCustomizeMode || ar.is_active);
+    .filter((ar) => inCustomizeMode || ar.is_active !== false);
 }
 
 /**

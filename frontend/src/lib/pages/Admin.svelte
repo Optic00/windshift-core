@@ -78,7 +78,7 @@
 
   // Search functionality
   let searchQuery = $state('');
-  let searchInput;
+  let searchInput = $state(null);
 
   // Navigation focus management
   let navButtons = $state([]);

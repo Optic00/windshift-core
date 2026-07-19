@@ -67,6 +67,8 @@
     attachments = [],
     attachmentPagination = null,
     diagrams = [],
+    loadingDiagrams = false,
+    diagramsLoaded = false,
     manualActions = [],
     // Callback props
     onnavigate = null,
@@ -101,6 +103,7 @@
     onattachmentPageChange = null,
     onattachmentPageSizeChange = null,
     ondiagramSaved = null,
+    onloadDiagrams = null,
     onexecuteAction = null,
     onaiAction = null,
     onreorderChildren = null,
@@ -383,6 +386,8 @@
             {availableSubIssueTypes}
             {attachments}
             {diagrams}
+            {loadingDiagrams}
+            {diagramsLoaded}
             {manualActions}
             {canCreate}
             onsavefield={handleSaveField}
@@ -395,6 +400,7 @@
             onattachmentUploadFiles={(data) => onattachmentUploadFiles?.(data)}
             onattachmentDelete={(data) => onattachmentDelete?.(data)}
             onnewDiagram={handleNewDiagram}
+            onloadDiagrams={() => onloadDiagrams?.()}
             oneditDiagram={handleEditDiagram}
             ondeleteDiagram={handleDeleteDiagram}
             onexecuteAction={handleExecuteAction}

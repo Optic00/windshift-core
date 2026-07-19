@@ -54,6 +54,7 @@
   let assetFormData = $state({
     title: '',
     description: '',
+    asset_tag: '',
     asset_type_id: null,
     category_id: null,
     status_id: null,
@@ -330,6 +331,7 @@
     assetFormData = {
       title: '',
       description: '',
+      asset_tag: '',
       asset_type_id: assetTypes.length > 0 ? assetTypes[0].id : null,
       category_id: selectedCategoryId ?? null,
       status_id: defaultStatus?.id ?? null,
@@ -343,6 +345,7 @@
     assetFormData = {
       title: asset.title,
       description: asset.description || '',
+      asset_tag: asset.asset_tag || '',
       asset_type_id: asset.asset_type_id ?? null,
       category_id: asset.category_id ?? null,
       status_id: asset.status_id ?? null,
@@ -533,6 +536,7 @@
             </button>
             {#if canEdit}
               <button
+                data-testid="asset-edit"
                 class="p-2 rounded-lg transition-colors"
                 style="background: transparent;"
                 onmouseenter={(e) => e.currentTarget.style.background = 'var(--ds-background-neutral-hovered)'}
@@ -778,13 +782,13 @@
       </div>
       {#if selectedSetId}
         {#if isAdmin}
-          <Button onclick={() => { showImportWizard = true; }} variant="default" class="whitespace-nowrap">
+          <Button dataTestid="asset-import-open" onclick={() => { showImportWizard = true; }} variant="default" class="whitespace-nowrap">
             <IconUpload class="w-4 h-4 mr-1" />
             Import
           </Button>
         {/if}
         {#if canEdit}
-          <Button onclick={showAddAssetForm} class="whitespace-nowrap" keyboardHint="A" hotkeyConfig={{ key: toHotkeyString('assets', 'upload'), guard: () => !!(selectedSetId && !showAssetForm) }}>
+          <Button dataTestid="asset-create" onclick={showAddAssetForm} class="whitespace-nowrap" keyboardHint="A" hotkeyConfig={{ key: toHotkeyString('assets', 'upload'), guard: () => !!(selectedSetId && !showAssetForm) }}>
             <IconPlus class="w-4 h-4 mr-1" />
             {t('common.create')}
           </Button>
@@ -907,6 +911,7 @@
           </button>
           {#if canEdit}
             <button
+              data-testid="asset-edit"
               class="p-1 rounded"
               style="background: transparent;"
               onmouseenter={(e) => e.currentTarget.style.background = 'var(--ds-background-neutral-hovered)'}
@@ -1028,6 +1033,7 @@
       <div>
         <Label color="default" class="mb-1">Title</Label>
         <input
+          id="asset-title-input"
           type="text"
           bind:value={assetFormData.title}
           required
@@ -1043,6 +1049,16 @@
           class="w-full px-3 py-2 rounded-lg"
           style="background: var(--ds-background-input); border: 1px solid var(--ds-border); color: var(--ds-text);"
         ></textarea>
+      </div>
+      <div>
+        <Label color="default" class="mb-1">Asset Tag</Label>
+        <input
+          id="asset-tag-input"
+          type="text"
+          bind:value={assetFormData.asset_tag}
+          class="w-full px-3 py-2 rounded-lg"
+          style="background: var(--ds-background-input); border: 1px solid var(--ds-border); color: var(--ds-text);"
+        />
       </div>
       <div>
         <Label color="default" class="mb-1">Asset Type</Label>
@@ -1086,7 +1102,7 @@
     </div>
     <div class="flex justify-end gap-2 mt-6">
       <Button variant="outline" type="button" onclick={() => showAssetForm = false} keyboardHint="Esc">{t('common.cancel')}</Button>
-      <Button type="submit" keyboardHint="↵">{editingAsset ? t('common.save') : t('common.create')}</Button>
+      <Button dataTestid="asset-submit" type="submit" keyboardHint="↵">{editingAsset ? t('common.save') : t('common.create')}</Button>
     </div>
   </form>
 </Modal>

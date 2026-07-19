@@ -1422,18 +1422,19 @@ func (ps *PermissionService) getRecentlyActiveUsers(duration time.Duration) ([]i
 	since := time.Now().Add(-duration)
 
 	rows, err := ps.db.Query(`
-		SELECT DISTINCT user_id
+		SELECT user_id
 		FROM user_sessions
-		WHERE created_at > ? OR last_activity > ?
-		ORDER BY last_activity DESC
+		WHERE is_active = true AND expires_at > CURRENT_TIMESTAMP AND created_at > ?
+		GROUP BY user_id
+		ORDER BY MAX(created_at) DESC
 		LIMIT ?
-	`, since, since, ps.batchSize*2) // Limit to prevent excessive warm-up
+	`, since, ps.batchSize*2) // Limit to prevent excessive warm-up
 
 	if err != nil {
 		// If session table doesn't exist or has issues, fall back to basic user list
 		rows, err = ps.db.Query(`
 			SELECT id FROM users 
-			WHERE role != 'inactive'
+			WHERE is_active = true
 			ORDER BY updated_at DESC
 			LIMIT ?
 		`, ps.batchSize)

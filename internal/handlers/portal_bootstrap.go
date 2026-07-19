@@ -17,9 +17,9 @@ import (
 )
 
 type PublicPortalBootstrapResponse struct {
-	Portal       map[string]interface{} `json:"portal"`
-	RequestTypes []models.RequestType   `json:"request_types"`
-	AssetReports []models.AssetReport   `json:"asset_reports"`
+	Portal       map[string]interface{}     `json:"portal"`
+	RequestTypes []models.RequestType       `json:"request_types"`
+	AssetReports []models.PublicAssetReport `json:"asset_reports"`
 }
 
 type PortalUserBootstrapResponse struct {
@@ -59,7 +59,7 @@ func (h *PortalHandler) GetBootstrap(w http.ResponseWriter, r *http.Request) {
 	response := PublicPortalBootstrapResponse{
 		Portal:       portal,
 		RequestTypes: []models.RequestType{},
-		AssetReports: []models.AssetReport{},
+		AssetReports: []models.PublicAssetReport{},
 	}
 	vc := h.getPortalVisibilityContext(ctx, r, portalResult.channel.ID)
 	var wait sync.WaitGroup
@@ -132,7 +132,7 @@ func (h *PortalHandler) GetUserBootstrap(w http.ResponseWriter, r *http.Request)
 			slog.Warn("portal user bootstrap: approval actor unavailable", "channel_id", channel.ID, "error", err)
 			return
 		}
-		approvals, err := h.getApprovalsForPortalActor(ctx, actor, "pending")
+		approvals, err := h.getApprovalsForPortalActor(ctx, actor, "pending", channel.ID)
 		if err != nil {
 			slog.Warn("portal user bootstrap: approvals unavailable", "channel_id", channel.ID, "error", err)
 			return

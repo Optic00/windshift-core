@@ -143,6 +143,9 @@ func approverPortalCustomerIDs(approvers []models.ApprovalStepApprover) []int {
 type DecideOptions struct {
 	// ItemRepo can be supplied to avoid re-instantiating it; nil is fine.
 	ItemRepo *repository.ItemRepository
+	// ChannelID scopes portal decisions to approval items in the resolved route
+	// channel. Internal approval routes leave it nil.
+	ChannelID *int
 }
 
 // Decide records a decision against the active step of an approval request. On
@@ -187,7 +190,13 @@ func (s *ApprovalService) decideAs(ctx context.Context, requestID int, actor app
 
 	out, err := database.WithTxResult(s.db, func(tx database.Tx) (decideOutcome, error) {
 		var zero decideOutcome
-		req, err := s.runtimeRepo.LoadRequestByIDInTx(ctx, tx, requestID)
+		var req *models.ApprovalRequest
+		var err error
+		if opts.ChannelID != nil {
+			req, err = s.runtimeRepo.LoadRequestByIDInChannelInTx(ctx, tx, requestID, *opts.ChannelID)
+		} else {
+			req, err = s.runtimeRepo.LoadRequestByIDInTx(ctx, tx, requestID)
+		}
 		if err != nil {
 			return zero, fmt.Errorf("load request: %w", err)
 		}

@@ -85,6 +85,34 @@ func (r *TimeProjectCategoryRepository) Exists(id int) (bool, error) {
 	return exists, nil
 }
 
+// ListIDsForWorkspace returns the category restrictions configured for a
+// workspace. An empty slice means the workspace does not restrict projects by
+// category.
+func (r *TimeProjectCategoryRepository) ListIDsForWorkspace(workspaceID int) ([]int, error) {
+	rows, err := r.db.Query(`
+		SELECT time_project_category_id
+		FROM workspace_time_project_categories
+		WHERE workspace_id = ?
+	`, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("list time project categories for workspace %d: %w", workspaceID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	categoryIDs := make([]int, 0)
+	for rows.Next() {
+		var categoryID int
+		if err := rows.Scan(&categoryID); err != nil {
+			return nil, fmt.Errorf("scan time project category for workspace %d: %w", workspaceID, err)
+		}
+		categoryIDs = append(categoryIDs, categoryID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read time project categories for workspace %d: %w", workspaceID, err)
+	}
+	return categoryIDs, nil
+}
+
 // NextDisplayOrder returns the next display_order to use for a new category
 // (max(existing)+1, or 0 when the table is empty).
 func (r *TimeProjectCategoryRepository) NextDisplayOrder() (int, error) {

@@ -128,8 +128,6 @@ func (sm *SessionManager) CreateSession(userID int, ipAddress, userAgent string,
 		ipAddress = host
 	}
 
-	slog.Debug("creating session", slog.String("component", "sso"), slog.Int("user_id", userID), slog.String("ip_address", ipAddress))
-
 	token, err := generateSessionToken()
 	if err != nil {
 		return nil, err
@@ -140,6 +138,13 @@ func (sm *SessionManager) CreateSession(userID int, ipAddress, userAgent string,
 		duration = ExtendedSessionDuration
 	}
 	expiresAt := time.Now().Add(duration)
+	slog.Debug("creating session",
+		slog.String("component", "auth"),
+		slog.Int("user_id", userID),
+		slog.String("ip_address", ipAddress),
+		slog.Bool("remember_me", rememberMe),
+		slog.Duration("duration", duration),
+	)
 
 	// Insert session into database using RETURNING clause (supported by both SQLite 3.35+ and PostgreSQL).
 	// Store only a hash of the bearer token; the plaintext token is returned to

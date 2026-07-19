@@ -61,7 +61,7 @@
   {:else}
     <div class="actions-list">
       {#each actions as action (action.id)}
-        <div class="action-card">
+        <div class="action-card" data-testid="action-card-{action.id}">
           <div class="action-info">
             <div class="action-header">
               <Badge variant={action.is_enabled ? 'success' : 'neutral'}>
@@ -87,6 +87,7 @@
             {/if}
             {#if onviewlogs}
               <Button
+                dataTestid="action-view-logs"
                 variant="ghost"
                 size="small"
                 title="View Logs"

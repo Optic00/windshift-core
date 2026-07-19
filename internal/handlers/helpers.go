@@ -12,7 +12,6 @@ import (
 	"io"
 	"net/http"
 	"strconv"
-	"time"
 
 	"windshift/internal/database"
 	"windshift/internal/logger"
@@ -265,23 +264,4 @@ func parseOffsetPagination(r *http.Request, defaultLimit, maxLimit int) (limit, 
 		}
 	}
 	return limit, offset
-}
-
-// addDateRangeFilter appends date_from/date_to query parameter filters to a SQL query.
-// Expects dates in "2006-01-02" format. Compares against a Unix timestamp column.
-func addDateRangeFilter(r *http.Request, query *string, args *[]interface{}, column string) {
-	if dateFrom := r.URL.Query().Get("date_from"); dateFrom != "" {
-		t, err := time.Parse("2006-01-02", dateFrom)
-		if err == nil {
-			*query += " AND " + column + " >= ?"
-			*args = append(*args, t.Unix())
-		}
-	}
-	if dateTo := r.URL.Query().Get("date_to"); dateTo != "" {
-		t, err := time.Parse("2006-01-02", dateTo)
-		if err == nil {
-			*query += " AND " + column + " <= ?"
-			*args = append(*args, t.Add(24*time.Hour-time.Second).Unix())
-		}
-	}
 }

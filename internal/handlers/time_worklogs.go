@@ -1,13 +1,12 @@
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
+	"strconv"
 	"time"
 
 	"windshift/internal/database"
@@ -19,120 +18,21 @@ import (
 )
 
 type TimeWorklogHandler struct {
-	db                    database.Database
+	worklogs              *repository.TimeWorklogRepository
+	projects              *repository.TimeProjectRepository
+	items                 *repository.ItemRepository
 	permissionService     *services.PermissionService
 	timePermissionService *services.TimePermissionService
 }
 
 func NewTimeWorklogHandler(db database.Database, permissionService *services.PermissionService, timePermissionService *services.TimePermissionService) *TimeWorklogHandler {
 	return &TimeWorklogHandler{
-		db:                    db,
+		worklogs:              repository.NewTimeWorklogRepository(db),
+		projects:              repository.NewTimeProjectRepository(db),
+		items:                 repository.NewItemRepository(db),
 		permissionService:     permissionService,
 		timePermissionService: timePermissionService,
 	}
-}
-
-//nolint:misspell // database table name uses British spelling (customer_organisations)
-const worklogBaseQuery = `SELECT w.id, w.project_id, w.customer_id, w.item_id, w.description, w.date, w.start_time,
-       w.end_time, w.duration_minutes, w.created_at, w.updated_at,
-       c.name, p.name, i.title, ws.id, ws.key, i.workspace_item_number,
-       p.settings as project_settings,
-       (SELECT COALESCE(SUM(duration_minutes), 0) / 60.0 FROM time_worklogs WHERE project_id = w.project_id) as project_total_hours
-FROM time_worklogs w
-JOIN customer_organisations c ON w.customer_id = c.id
-JOIN time_projects p ON w.project_id = p.id
-LEFT JOIN items i ON w.item_id = i.id
-LEFT JOIN workspaces ws ON i.workspace_id = ws.id`
-
-// worklogWithUserQuery extends worklogBaseQuery with user_id and user_name columns and the users join.
-const worklogWithUserQuery = `SELECT w.id, w.project_id, w.customer_id, w.item_id, w.description, w.date, w.start_time,
-       w.end_time, w.duration_minutes, w.created_at, w.updated_at,
-       c.name, p.name, i.title, ws.id, ws.key, i.workspace_item_number,
-       p.settings as project_settings,
-       (SELECT COALESCE(SUM(duration_minutes), 0) / 60.0 FROM time_worklogs WHERE project_id = w.project_id) as project_total_hours,
-       w.user_id, COALESCE(u.first_name || ' ' || u.last_name, '') as user_name
-FROM time_worklogs w
-JOIN customer_organisations c ON w.customer_id = c.id
-JOIN time_projects p ON w.project_id = p.id
-LEFT JOIN items i ON w.item_id = i.id
-LEFT JOIN workspaces ws ON i.workspace_id = ws.id
-LEFT JOIN users u ON w.user_id = u.id`
-
-// worklogScanner is an interface satisfied by both *sql.Row and *sql.Rows.
-type worklogScanner interface {
-	Scan(dest ...interface{}) error
-}
-
-// populateWorklogFields assigns nullable columns to worklog fields and parses project settings.
-func populateWorklogFields(wl *models.Worklog, itemTitle, workspaceKey, projectSettings sql.NullString, workspaceID, workspaceItemNumber sql.NullInt64, projectTotalHours sql.NullFloat64) {
-	wl.ItemTitle = itemTitle.String
-	wl.WorkspaceID = utils.NullInt64ToPtr(workspaceID)
-	wl.WorkspaceKey = workspaceKey.String
-	wl.WorkspaceItemNumber = int(workspaceItemNumber.Int64)
-	if projectTotalHours.Valid {
-		wl.ProjectTotalHours = &projectTotalHours.Float64
-	}
-	if projectSettings.Valid && projectSettings.String != "" {
-		var settings map[string]interface{}
-		if err := json.Unmarshal([]byte(projectSettings.String), &settings); err == nil {
-			if maxHours, ok := settings["max_hours"].(float64); ok && maxHours > 0 {
-				wl.ProjectMaxHours = &maxHours
-			}
-		}
-	}
-}
-
-// scanWorklog scans the 19 base worklog columns from a row and returns a populated Worklog.
-func scanWorklog(s worklogScanner) (models.Worklog, error) {
-	var wl models.Worklog
-	var itemTitle, workspaceKey, projectSettings sql.NullString
-	var workspaceID, workspaceItemNumber sql.NullInt64
-	var projectTotalHours sql.NullFloat64
-
-	err := s.Scan(&wl.ID, &wl.ProjectID, &wl.CustomerID, &wl.ItemID, &wl.Description, &wl.Date, &wl.StartTime,
-		&wl.EndTime, &wl.DurationMins, &wl.CreatedAt, &wl.UpdatedAt, &wl.CustomerName, &wl.ProjectName, &itemTitle,
-		&workspaceID, &workspaceKey, &workspaceItemNumber, &projectSettings, &projectTotalHours)
-	if err != nil {
-		return wl, err
-	}
-
-	populateWorklogFields(&wl, itemTitle, workspaceKey, projectSettings, workspaceID, workspaceItemNumber, projectTotalHours)
-	return wl, nil
-}
-
-// scanWorklogWithUser scans the 19 base columns plus user_id and user_name (21 total).
-func scanWorklogWithUser(s worklogScanner) (models.Worklog, error) {
-	var wl models.Worklog
-	var itemTitle, workspaceKey, projectSettings, userName sql.NullString
-	var workspaceID, workspaceItemNumber sql.NullInt64
-	var projectTotalHours sql.NullFloat64
-
-	err := s.Scan(&wl.ID, &wl.ProjectID, &wl.CustomerID, &wl.ItemID, &wl.Description, &wl.Date, &wl.StartTime,
-		&wl.EndTime, &wl.DurationMins, &wl.CreatedAt, &wl.UpdatedAt, &wl.CustomerName, &wl.ProjectName, &itemTitle,
-		&workspaceID, &workspaceKey, &workspaceItemNumber, &projectSettings, &projectTotalHours,
-		&wl.UserID, &userName)
-	if err != nil {
-		return wl, err
-	}
-
-	populateWorklogFields(&wl, itemTitle, workspaceKey, projectSettings, workspaceID, workspaceItemNumber, projectTotalHours)
-	wl.UserName = userName.String
-	return wl, nil
-}
-
-// scanWorklogWithUserRows iterates rows calling scanWorklogWithUser and returns the collected slice.
-// On scan error it writes an internal-error response and returns nil, false.
-func scanWorklogWithUserRows(w http.ResponseWriter, r *http.Request, rows *sql.Rows) ([]models.Worklog, bool) {
-	var worklogs []models.Worklog
-	for rows.Next() {
-		worklog, err := scanWorklogWithUser(rows)
-		if err != nil {
-			respondInternalError(w, r, err)
-			return nil, false
-		}
-		worklogs = append(worklogs, worklog)
-	}
-	return worklogs, true
 }
 
 // ParseDuration is re-exported from internal/utils for backward compat.
@@ -193,6 +93,32 @@ func (h *TimeWorklogHandler) filterWorklogsByPermission(worklogs []models.Worklo
 	})
 }
 
+func applyWorklogDateFilters(r *http.Request, filter *repository.WorklogDetailFilter) {
+	if dateFrom := r.URL.Query().Get("date_from"); dateFrom != "" {
+		if parsed, err := time.Parse("2006-01-02", dateFrom); err == nil {
+			value := parsed.Unix()
+			filter.DateFromUnix = &value
+		}
+	}
+	if dateTo := r.URL.Query().Get("date_to"); dateTo != "" {
+		if parsed, err := time.Parse("2006-01-02", dateTo); err == nil {
+			value := parsed.Add(24*time.Hour - time.Second).Unix()
+			filter.DateToUnix = &value
+		}
+	}
+}
+
+func parseWorklogIDFilter(value string) *int {
+	if value == "" {
+		return nil
+	}
+	id, err := strconv.Atoi(value)
+	if err != nil || id <= 0 {
+		id = 0
+	}
+	return &id
+}
+
 func (h *TimeWorklogHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 	user, ok := RequireAuth(w, r)
 	if !ok {
@@ -212,44 +138,16 @@ func (h *TimeWorklogHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Support filtering by date range, customer, project
-	query := worklogWithUserQuery + ` WHERE 1=1`
-
-	args := []interface{}{}
-
-	if accessibleProjectIDs != nil {
-		placeholders := make([]string, len(accessibleProjectIDs))
-		for i, id := range accessibleProjectIDs {
-			placeholders[i] = "?"
-			args = append(args, id)
-		}
-		query += " AND w.project_id IN (" + strings.Join(placeholders, ",") + ")"
+	filter := repository.WorklogDetailFilter{
+		AccessibleProjectIDs: accessibleProjectIDs,
+		CustomerID:           parseWorklogIDFilter(r.URL.Query().Get("customer_id")),
+		ProjectID:            parseWorklogIDFilter(r.URL.Query().Get("project_id")),
 	}
+	applyWorklogDateFilters(r, &filter)
 
-	// Add filters based on query parameters
-	if customerID := r.URL.Query().Get("customer_id"); customerID != "" {
-		query += " AND w.customer_id = ?"
-		args = append(args, customerID)
-	}
-
-	if projectID := r.URL.Query().Get("project_id"); projectID != "" {
-		query += " AND w.project_id = ?"
-		args = append(args, projectID)
-	}
-
-	addDateRangeFilter(r, &query, &args, "w.date")
-
-	query += " ORDER BY w.date DESC, w.start_time DESC"
-
-	rows, err := h.db.Query(query, args...)
+	worklogs, err := h.worklogs.ListDetails(filter)
 	if err != nil {
 		respondInternalError(w, r, err)
-		return
-	}
-	defer func() { _ = rows.Close() }()
-
-	worklogs, ok := scanWorklogWithUserRows(w, r, rows)
-	if !ok {
 		return
 	}
 
@@ -269,9 +167,8 @@ func (h *TimeWorklogHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	wl, err := scanWorklog(h.db.QueryRow(worklogBaseQuery+` WHERE w.id = ?`, id))
-
-	if errors.Is(err, sql.ErrNoRows) {
+	wl, err := h.worklogs.GetDetail(id)
+	if errors.Is(err, repository.ErrNotFound) {
 		respondNotFound(w, r, "worklog")
 		return
 	}
@@ -293,7 +190,10 @@ func (h *TimeWorklogHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Filter item info by permission
-	filtered := h.filterWorklogsByPermission([]models.Worklog{wl}, user.ID)
+	visible := *wl
+	visible.UserID = nil
+	visible.UserName = ""
+	filtered := h.filterWorklogsByPermission([]models.Worklog{visible}, user.ID)
 	respondJSONOK(w, filtered[0])
 }
 
@@ -302,25 +202,24 @@ func (h *TimeWorklogHandler) Get(w http.ResponseWriter, r *http.Request) {
 //nolint:gocritic // tooManyResultsChecker: returns are semantically grouped
 func (h *TimeWorklogHandler) validateAndParseWorklog(req WorklogRequest) (customerID int, date, startTime, endTime time.Time, durationMins int, err error) {
 	// Validate project exists, get customer_id, and check status
-	var projectStatus string
-	var customerIDNull sql.NullInt64
-	err = h.db.QueryRow("SELECT customer_id, status FROM time_projects WHERE id = ?", req.ProjectID).Scan(&customerIDNull, &projectStatus)
-	if errors.Is(err, sql.ErrNoRows) {
+	project, projectErr := h.projects.GetBookingInfo(req.ProjectID)
+	if errors.Is(projectErr, repository.ErrNotFound) {
 		err = fmt.Errorf("project not found")
 		return
 	}
-	if err != nil {
+	if projectErr != nil {
+		err = projectErr
 		return
 	}
-	if !customerIDNull.Valid {
+	if project.CustomerID == nil {
 		err = fmt.Errorf("project has no customer assigned")
 		return
 	}
-	customerID = int(customerIDNull.Int64)
+	customerID = int(*project.CustomerID)
 
 	// Only allow time logging on Active projects
-	if projectStatus != "Active" {
-		err = fmt.Errorf("cannot log time on a project that is not active (status: %s)", projectStatus)
+	if project.Status != "Active" {
+		err = fmt.Errorf("cannot log time on a project that is not active (status: %s)", project.Status)
 		return
 	}
 
@@ -428,7 +327,7 @@ func (h *TimeWorklogHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// on both not-found and no-permission so we don't disclose the item (or its
 	// title / workspace key) to callers who can't see it.
 	if req.ItemID != nil && *req.ItemID > 0 {
-		if !CheckItemPermission(w, r, repository.NewItemRepository(h.db), h.permissionService, *req.ItemID, models.PermissionItemView) {
+		if !CheckItemPermission(w, r, h.items, h.permissionService, *req.ItemID, models.PermissionItemView) {
 			return
 		}
 	}
@@ -446,25 +345,22 @@ func (h *TimeWorklogHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Convert times to unix timestamps for database operations
-	dateUnix := date.Unix()
-	startTimeUnix := startTime.Unix()
-	endTimeUnix := endTime.Unix()
-
 	// No overlap validation - users should be free to log time as needed
 
-	now := time.Now()
-	nowUnix := now.Unix()
-
 	// Debug: Log the data being inserted
-	slog.Debug("inserting worklog", slog.String("component", "time_tracking"), slog.Int("project_id", req.ProjectID), slog.Int("customer_id", customerID), slog.Any("item_id", req.ItemID), slog.String("description", req.Description), slog.Int64("date", dateUnix), slog.Int64("start_time", startTimeUnix), slog.Int64("end_time", endTimeUnix), slog.Int("duration_minutes", durationMins))
+	slog.Debug("inserting worklog", slog.String("component", "time_tracking"), slog.Int("project_id", req.ProjectID), slog.Int("customer_id", customerID), slog.Any("item_id", req.ItemID), slog.String("description", req.Description), slog.Int64("date", date.Unix()), slog.Int64("start_time", startTime.Unix()), slog.Int64("end_time", endTime.Unix()), slog.Int("duration_minutes", durationMins))
 
-	var id int64
-	err = h.db.QueryRow(`
-		INSERT INTO time_worklogs (project_id, customer_id, user_id, item_id, description, date, start_time, end_time, duration_minutes, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
-	`, req.ProjectID, customerID, user.ID, req.ItemID, req.Description, dateUnix, startTimeUnix, endTimeUnix, durationMins, nowUnix, nowUnix).Scan(&id)
-
+	id, err := h.worklogs.Create(repository.NewWorklog{
+		ProjectID:       req.ProjectID,
+		CustomerID:      int64(customerID),
+		UserID:          user.ID,
+		ItemID:          req.ItemID,
+		Description:     req.Description,
+		DateUnix:        date.Unix(),
+		StartTimeUnix:   startTime.Unix(),
+		EndTimeUnix:     endTime.Unix(),
+		DurationMinutes: durationMins,
+	})
 	if err != nil {
 		slog.Error("database insert error", slog.String("component", "time_tracking"), slog.Any("error", err))
 		respondInternalError(w, r, err)
@@ -472,16 +368,18 @@ func (h *TimeWorklogHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Return the created worklog with joined data
-	wl, err := scanWorklog(h.db.QueryRow(worklogBaseQuery+` WHERE w.id = ?`, id))
+	wl, err := h.worklogs.GetDetail(int(id))
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
+	wl.UserID = nil
+	wl.UserName = ""
 
 	respondJSONCreated(w, struct {
 		models.Worklog
 		Warnings []string `json:"warnings,omitempty"`
-	}{wl, warnings})
+	}{*wl, warnings})
 }
 
 func (h *TimeWorklogHandler) Update(w http.ResponseWriter, r *http.Request) {
@@ -522,7 +420,7 @@ func (h *TimeWorklogHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// when present the caller must be able to view it. 404 on failure hides the
 	// item rather than disclosing it via the re-read joined row below.
 	if req.ItemID != nil && *req.ItemID > 0 {
-		if !CheckItemPermission(w, r, repository.NewItemRepository(h.db), h.permissionService, *req.ItemID, models.PermissionItemView) {
+		if !CheckItemPermission(w, r, h.items, h.permissionService, *req.ItemID, models.PermissionItemView) {
 			return
 		}
 	}
@@ -537,36 +435,35 @@ func (h *TimeWorklogHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Convert times to unix timestamps for database operations
-	dateUnix := date.Unix()
-	startTimeUnix := startTime.Unix()
-	endTimeUnix := endTime.Unix()
-	nowUnix := time.Now().Unix()
-
-	_, err = h.db.ExecWrite(`
-		UPDATE time_worklogs 
-		SET project_id = ?, customer_id = ?, item_id = ?, description = ?, date = ?, 
-		    start_time = ?, end_time = ?, duration_minutes = ?, updated_at = ?
-		WHERE id = ?
-	`, req.ProjectID, customerID, req.ItemID, req.Description, dateUnix, startTimeUnix, endTimeUnix, durationMins, nowUnix, id)
-
-	if err != nil {
+	if err := h.worklogs.Update(repository.UpdateWorklog{
+		ID:              id,
+		ProjectID:       req.ProjectID,
+		CustomerID:      customerID,
+		ItemID:          req.ItemID,
+		Description:     req.Description,
+		DateUnix:        date.Unix(),
+		StartTimeUnix:   startTime.Unix(),
+		EndTimeUnix:     endTime.Unix(),
+		DurationMinutes: durationMins,
+	}); err != nil {
 		slog.Error("database update error", slog.String("component", "time_tracking"), slog.Any("error", err))
 		respondInternalError(w, r, err)
 		return
 	}
 
 	// Return the updated worklog with joined data
-	wl, err := scanWorklog(h.db.QueryRow(worklogBaseQuery+` WHERE w.id = ?`, id))
+	wl, err := h.worklogs.GetDetail(id)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
+	wl.UserID = nil
+	wl.UserName = ""
 
 	respondJSONOK(w, struct {
 		models.Worklog
 		Warnings []string `json:"warnings,omitempty"`
-	}{wl, warnings})
+	}{*wl, warnings})
 }
 
 func (h *TimeWorklogHandler) Delete(w http.ResponseWriter, r *http.Request) {
@@ -575,8 +472,7 @@ func (h *TimeWorklogHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err := h.db.ExecWrite("DELETE FROM time_worklogs WHERE id = ?", id)
-	if err != nil {
+	if err := h.worklogs.Delete(id); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
@@ -608,28 +504,12 @@ func (h *TimeWorklogHandler) GetByProject(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	query := worklogWithUserQuery + ` WHERE w.project_id = ?`
-
-	args := []interface{}{projectID}
-
-	addDateRangeFilter(r, &query, &args, "w.date")
-
-	query += " ORDER BY w.date DESC, w.start_time DESC"
-
-	rows, err := h.db.Query(query, args...)
+	filter := repository.WorklogDetailFilter{ProjectID: &projectID}
+	applyWorklogDateFilters(r, &filter)
+	worklogs, err := h.worklogs.ListDetails(filter)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
-	}
-	defer func() { _ = rows.Close() }()
-
-	worklogs, ok := scanWorklogWithUserRows(w, r, rows)
-	if !ok {
-		return
-	}
-
-	if worklogs == nil {
-		worklogs = []models.Worklog{}
 	}
 
 	respondJSONOK(w, worklogs)
@@ -641,24 +521,14 @@ func (h *TimeWorklogHandler) GetByItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !CheckItemPermission(w, r, repository.NewItemRepository(h.db), h.permissionService, itemID, models.PermissionItemView) {
+	if !CheckItemPermission(w, r, h.items, h.permissionService, itemID, models.PermissionItemView) {
 		return
 	}
 
-	rows, err := h.db.Query(worklogWithUserQuery+` WHERE w.item_id = ? ORDER BY w.date DESC, w.start_time DESC`, itemID)
+	worklogs, err := h.worklogs.ListDetails(repository.WorklogDetailFilter{ItemID: &itemID})
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
-	}
-	defer func() { _ = rows.Close() }()
-
-	worklogs, ok := scanWorklogWithUserRows(w, r, rows)
-	if !ok {
-		return
-	}
-
-	if worklogs == nil {
-		worklogs = []models.Worklog{}
 	}
 
 	respondJSONOK(w, worklogs)

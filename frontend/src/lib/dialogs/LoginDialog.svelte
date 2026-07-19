@@ -246,8 +246,19 @@
       <AlertBox variant="error" message={$authStore.error} class="mb-4" />
     {/if}
 
-    <!-- SSO Login Button(s) -->
+    <!-- Keep the session choice in front of SSO so it also remains available
+         when the authentication policy hides the password form. -->
     {#if $ssoStore.enabled && !$ssoStore.statusLoading}
+      <Checkbox
+        bind:checked={rememberMe}
+        disabled={$authStore.loading}
+        label={t('auth.staySignedIn')}
+        size="small"
+        class="mb-4"
+        dataTestid="login-remember-me"
+      />
+
+      <!-- SSO Login Button(s) -->
       {#if $ssoStore.providers.length <= 1}
         <Button
           variant="default"
@@ -408,13 +419,15 @@
         </div>
       </div>
 
-      <!-- Remember Me -->
-      <Checkbox
-        bind:checked={rememberMe}
-        disabled={$authStore.loading}
-        label={t('auth.staySignedIn')}
-        size="small"
-      />
+      {#if !$ssoStore.enabled || $ssoStore.statusLoading}
+        <Checkbox
+          bind:checked={rememberMe}
+          disabled={$authStore.loading}
+          label={t('auth.staySignedIn')}
+          size="small"
+          dataTestid="login-remember-me"
+        />
+      {/if}
 
       <!-- FIDO Authentication Option -->
       {#if showFidoOption && fidoAvailable}

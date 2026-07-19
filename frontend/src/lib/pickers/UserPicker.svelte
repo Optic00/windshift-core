@@ -100,13 +100,10 @@
     {:else}
       <div
         aria-disabled={disabled}
-        tabindex={disabled ? -1 : 0}
         class="relative w-full flex items-center justify-between gap-2 px-3 py-2 rounded text-sm transition-colors"
         style="background-color: var(--ds-background-input); border: 1px solid var(--ds-border); color: var(--ds-text);"
         style:opacity={disabled ? 0.5 : 1}
         style:cursor={disabled ? 'not-allowed' : 'pointer'}
-        role="combobox"
-        aria-haspopup="listbox"
         data-testid="user-picker-trigger"
       >
         <div class="flex items-center gap-2 flex-1 min-w-0">

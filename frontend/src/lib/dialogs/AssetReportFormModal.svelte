@@ -164,6 +164,7 @@
 
 {#if isOpen && report}
   <PortalModal
+    id="portal-asset-report-form"
     isOpen={isOpen}
     isDarkMode={isDarkMode}
     maxWidth="max-w-3xl"
@@ -186,7 +187,7 @@
           <AlertBox variant="info" message={t('portal.noFieldsConfigured')} class="mb-4" />
           <div class="flex justify-end gap-2">
             <Button variant="default" onclick={close}>{t('common.cancel')}</Button>
-            <Button variant="primary" onclick={handleSubmit} disabled={submitting}>
+            <Button variant="primary" onclick={handleSubmit} disabled={submitting} dataTestid="portal-asset-report-form-submit">
               {submitting ? t('common.submitting') : submitLabel}
             </Button>
           </div>
@@ -319,7 +320,7 @@
 
           <div class="flex justify-end gap-2 mt-6">
             <Button variant="default" onclick={close}>{t('common.cancel')}</Button>
-            <Button variant="primary" onclick={handleSubmit} disabled={submitting}>
+            <Button variant="primary" onclick={handleSubmit} disabled={submitting} dataTestid="portal-asset-report-form-submit">
               {submitting ? t('common.submitting') : submitLabel}
             </Button>
           </div>

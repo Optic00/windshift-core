@@ -1235,6 +1235,8 @@ import Button from '../../components/Button.svelte';
     attachments={attachmentManager.attachments || []}
     attachmentPagination={attachmentManager.pagination}
     diagrams={itemDetailStore.diagrams}
+    loadingDiagrams={itemDetailStore.loadingDiagrams}
+    diagramsLoaded={itemDetailStore.diagramsLoaded}
     manualActions={itemDetailStore.manualActions}
     canCreate={untrack(() => workspacePermissions.canCreate(workspaceId))}
     onaiAction={handleAIAction}
@@ -1271,6 +1273,7 @@ import Button from '../../components/Button.svelte';
     onattachmentPageChange={attachmentManager.handlePageChange}
     onattachmentPageSizeChange={attachmentManager.handlePageSizeChange}
     ondiagramSaved={handleDiagramSaved}
+    onloadDiagrams={() => itemDetailStore.loadDiagrams()}
     onexecuteAction={handleExecuteAction}
     onreorderChildren={handleReorderChildren}
     onclose={closeModal}

@@ -536,14 +536,14 @@ func (h *PortalHandler) GetAssetReports(w http.ResponseWriter, r *http.Request) 
 	respondJSONOK(w, assetReports)
 }
 
-func (h *PortalHandler) loadPortalAssetReports(ctx context.Context, portalResult *channelResult, vc portalVisibilityContext) ([]models.AssetReport, error) {
+func (h *PortalHandler) loadPortalAssetReports(ctx context.Context, portalResult *channelResult, vc portalVisibilityContext) ([]models.PublicAssetReport, error) {
 	channel := portalResult.channel
 	// Query all asset reports for this channel
 	query := `
 		SELECT ar.id, ar.channel_id, ar.asset_set_id, ar.name, ar.description,
 		       ar.cql_query, ar.icon, ar.color, ar.display_order, ar.is_active,
 		       ar.column_config, ar.visibility_group_ids, ar.visibility_org_ids,
-		       ar.run_mode, ar.item_type_id, ar.workspace_id,
+		       ar.run_mode, ar.item_type_id, ar.workspace_id, ar.config,
 		       ar.created_at, ar.updated_at,
 		       ams.name as asset_set_name
 		FROM asset_reports ar
@@ -557,14 +557,14 @@ func (h *PortalHandler) loadPortalAssetReports(ctx context.Context, portalResult
 	}
 	defer func() { _ = rows.Close() }()
 
-	assetReports := []models.AssetReport{}
+	assetReports := []models.PublicAssetReport{}
 	for rows.Next() {
 		var ar models.AssetReport
-		var columnConfig, visibilityGroupIDs, visibilityOrgIDs sql.NullString
+		var columnConfig, visibilityGroupIDs, visibilityOrgIDs, rawConfig sql.NullString
 		err := rows.Scan(&ar.ID, &ar.ChannelID, &ar.AssetSetID, &ar.Name, &ar.Description,
 			&ar.CQLQuery, &ar.Icon, &ar.Color, &ar.DisplayOrder, &ar.IsActive,
 			&columnConfig, &visibilityGroupIDs, &visibilityOrgIDs,
-			&ar.RunMode, &ar.ItemTypeID, &ar.WorkspaceID,
+			&ar.RunMode, &ar.ItemTypeID, &ar.WorkspaceID, &rawConfig,
 			&ar.CreatedAt, &ar.UpdatedAt,
 			&ar.AssetSetName)
 		if err != nil {
@@ -595,7 +595,31 @@ func (h *PortalHandler) loadPortalAssetReports(ctx context.Context, portalResult
 
 		// Admin users see all; others see only visible ones
 		if vc.isAdmin || ar.IsVisibleTo(vc.userGroupIDs, vc.customerOrgID) {
-			assetReports = append(assetReports, ar)
+			publicReport := models.PublicAssetReport{
+				ID:           ar.ID,
+				Name:         ar.Name,
+				Description:  ar.Description,
+				Icon:         ar.Icon,
+				Color:        ar.Color,
+				DisplayOrder: ar.DisplayOrder,
+				ColumnConfig: ar.ColumnConfig,
+				RunMode:      ar.RunMode,
+				ItemTypeID:   ar.ItemTypeID,
+				WorkspaceID:  ar.WorkspaceID,
+			}
+			if rawConfig.Valid && rawConfig.String != "" {
+				var config models.RequestTypeConfig
+				if err := json.Unmarshal([]byte(rawConfig.String), &config); err != nil {
+					slog.Warn("ignoring invalid public asset report config",
+						slog.String("component", "portal_assets"), slog.Int("asset_report_id", ar.ID), slog.Any("error", err))
+				} else if config.SuccessMessage != "" || config.SubmitButtonText != "" {
+					publicReport.Config = &models.PublicAssetReportConfig{
+						SuccessMessage:   config.SuccessMessage,
+						SubmitButtonText: config.SubmitButtonText,
+					}
+				}
+			}
+			assetReports = append(assetReports, publicReport)
 		}
 	}
 	if err := rows.Err(); err != nil {

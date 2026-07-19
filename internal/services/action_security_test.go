@@ -214,6 +214,147 @@ func TestAssetActionMutationsFailClosedWithoutPermissionDependencies(t *testing.
 	}
 }
 
+func TestAssetCreateItemActionEnforcesActorWorkspacePermission(t *testing.T) {
+	db, err := database.NewSQLiteDB(filepath.Join(t.TempDir(), "asset-action-item-create.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteDB: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := db.Initialize(); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+
+	insertID := func(query string, args ...interface{}) int {
+		t.Helper()
+		var id int
+		if err := db.QueryRow(query, args...).Scan(&id); err != nil {
+			t.Fatalf("insert fixture: %v", err)
+		}
+		return id
+	}
+	targetWorkspaceID := insertID(`INSERT INTO workspaces (name, key) VALUES ('Asset action target', 'AAT') RETURNING id`)
+	itemTypeID := insertID(`INSERT INTO item_types (name) VALUES ('Asset action item') RETURNING id`)
+	deniedActorID := insertID(`INSERT INTO users (email, username, first_name, last_name) VALUES ('asset-denied@example.test', 'asset-denied', 'Asset', 'Denied') RETURNING id`)
+	allowedActorID := insertID(`INSERT INTO users (email, username, first_name, last_name) VALUES ('asset-allowed@example.test', 'asset-allowed', 'Asset', 'Allowed') RETURNING id`)
+	setID := insertID(`INSERT INTO asset_management_sets (name, created_by) VALUES ('Asset action source', ?) RETURNING id`, allowedActorID)
+	assetTypeID := insertID(`INSERT INTO asset_types (set_id, name) VALUES (?, 'Asset action source type') RETURNING id`, setID)
+	assetID := insertID(`INSERT INTO assets (set_id, asset_type_id, title, created_by) VALUES (?, ?, 'Asset action source', ?) RETURNING id`, setID, assetTypeID, allowedActorID)
+	actionID := insertID(`INSERT INTO asset_actions (set_id, name, trigger_type, created_by) VALUES (?, 'Create target item', 'asset_created', ?) RETURNING id`, setID, allowedActorID)
+
+	permissionService, err := NewPermissionService(db, PermissionCacheConfig{
+		TTL:          time.Minute,
+		MaxCacheSize: 8,
+		BatchSize:    10,
+	})
+	if err != nil {
+		t.Fatalf("NewPermissionService: %v", err)
+	}
+	t.Cleanup(func() { _ = permissionService.cache.Close() })
+	now := time.Now()
+	for actorID, allowed := range map[int]bool{
+		deniedActorID:  false,
+		allowedActorID: true,
+	} {
+		if err := permissionService.storeUserPermissionCache(actorID, &models.UserPermissionCache{
+			UserID: actorID,
+			WorkspacePermissions: map[int]map[string]bool{
+				targetWorkspaceID: {models.PermissionItemCreate: allowed},
+			},
+			CachedAt:  now,
+			ExpiresAt: now.Add(time.Minute),
+		}); err != nil {
+			t.Fatalf("store permission snapshot for actor %d: %v", actorID, err)
+		}
+	}
+
+	service := &AssetActionService{
+		db:                db,
+		repo:              repository.NewAssetActionRepository(db),
+		chainStore:        NewExecutionChainStore(),
+		permissionService: permissionService,
+	}
+	makeAction := func(title string) *models.AssetAction {
+		return &models.AssetAction{
+			ID:          actionID,
+			SetID:       setID,
+			Name:        title,
+			IsEnabled:   true,
+			TriggerType: models.AssetTriggerAssetCreated,
+			Nodes: []models.AssetActionNode{
+				{ID: 1, NodeType: models.AssetNodeTrigger, NodeConfig: `{}`},
+				{ID: 2, NodeType: models.AssetNodeCreateItem, NodeConfig: fmt.Sprintf(
+					`{"workspace_id":%d,"item_type_id":%d,"title":%q}`,
+					targetWorkspaceID, itemTypeID, title,
+				)},
+			},
+			Edges: []models.AssetActionEdge{{SourceNodeID: 1, TargetNodeID: 2, EdgeType: "default"}},
+		}
+	}
+	itemCount := func(title string) int {
+		t.Helper()
+		var count int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM items WHERE workspace_id = ? AND title = ?`, targetWorkspaceID, title).Scan(&count); err != nil {
+			t.Fatalf("count items: %v", err)
+		}
+		return count
+	}
+
+	t.Run("automatic denial inserts no item", func(t *testing.T) {
+		title := "automatic denied item"
+		action := makeAction(title)
+		event := &models.AssetActionEvent{
+			EventType:   models.AssetTriggerAssetCreated,
+			SetID:       action.SetID,
+			AssetID:     assetID,
+			ActorUserID: deniedActorID,
+			OldValues:   map[string]interface{}{},
+			NewValues:   map[string]interface{}{},
+		}
+		if err := service.executeAction(action, event, nil); err != nil {
+			t.Fatalf("executeAction: %v", err)
+		}
+		if got := itemCount(title); got != 0 {
+			t.Fatalf("created items = %d, want 0", got)
+		}
+	})
+
+	t.Run("manual denial inserts no item", func(t *testing.T) {
+		title := "manual denied item"
+		if err := service.ExecuteActionManually(makeAction(title), assetID, deniedActorID); err != nil {
+			t.Fatalf("ExecuteActionManually: %v", err)
+		}
+		if got := itemCount(title); got != 0 {
+			t.Fatalf("created items = %d, want 0", got)
+		}
+	})
+
+	t.Run("automatic and manual allowed executions succeed", func(t *testing.T) {
+		automaticTitle := "automatic allowed item"
+		action := makeAction(automaticTitle)
+		if err := service.executeAction(action, &models.AssetActionEvent{
+			EventType:   models.AssetTriggerAssetCreated,
+			SetID:       action.SetID,
+			AssetID:     assetID,
+			ActorUserID: allowedActorID,
+			OldValues:   map[string]interface{}{},
+			NewValues:   map[string]interface{}{},
+		}, nil); err != nil {
+			t.Fatalf("executeAction: %v", err)
+		}
+		if got := itemCount(automaticTitle); got != 1 {
+			t.Fatalf("automatic created items = %d, want 1", got)
+		}
+
+		manualTitle := "manual allowed item"
+		if err := service.ExecuteActionManually(makeAction(manualTitle), assetID, allowedActorID); err != nil {
+			t.Fatalf("ExecuteActionManually: %v", err)
+		}
+		if got := itemCount(manualTitle); got != 1 {
+			t.Fatalf("manual created items = %d, want 1", got)
+		}
+	})
+}
+
 func TestAssetActionNotificationsTargetOnlyAuthorizedConfiguredUsers(t *testing.T) {
 	t.Parallel()
 

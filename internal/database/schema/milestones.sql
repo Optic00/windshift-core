@@ -1,4 +1,5 @@
 -- Milestone System Tables
+-- migration: 20260716_milestone_scope_guard
 CREATE TABLE IF NOT EXISTS milestone_categories (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	name TEXT NOT NULL UNIQUE,
@@ -23,7 +24,7 @@ CREATE TABLE IF NOT EXISTS milestones (
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	FOREIGN KEY (category_id) REFERENCES milestone_categories(id) ON DELETE SET NULL,
 	FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
-	CHECK (
+	CONSTRAINT milestones_scope_check CHECK (
 		(is_global = 1 AND workspace_id IS NULL) OR
 		(is_global = 0 AND workspace_id IS NOT NULL)
 	)

@@ -649,6 +649,15 @@ type ExecuteActionRequest struct {
 
 // ExecuteAction manually executes an action for a specific item
 func (h *ActionsHandler) ExecuteAction(w http.ResponseWriter, r *http.Request) {
+	// Authenticate before resolving any route-owned resources. The router also
+	// wraps this endpoint with auth, but keeping the handler fail-closed avoids
+	// turning action or item lookups into an existence oracle if it is invoked
+	// directly or mounted without that wrapper.
+	currentUser, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+
 	workspaceID, ok := requireWorkspaceIDParam(w, r, h.keyCache, "workspaceId")
 	if !ok {
 		return
@@ -707,12 +716,6 @@ func (h *ActionsHandler) ExecuteAction(w http.ResponseWriter, r *http.Request) {
 
 	// Verify user has edit permission on the item's workspace
 	if !CheckItemPermission(w, r, h.itemRepo, h.permissionService, req.ItemID, models.PermissionItemEdit) {
-		return
-	}
-
-	// Get current user
-	currentUser, ok := RequireAuth(w, r)
-	if !ok {
 		return
 	}
 

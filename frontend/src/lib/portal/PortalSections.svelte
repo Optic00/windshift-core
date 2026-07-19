@@ -264,6 +264,8 @@
                   {@const isAssetForm = entry.kind === 'asset-form'}
                   <button
                     type="button"
+                    data-testid={isAssetForm ? 'portal-asset-form-card' : 'portal-request-type-card'}
+                    id={isAssetForm ? `portal-asset-form-${entry.item.id}` : undefined}
                     class="appearance-none font-[inherit] text-[inherit] text-left w-full m-0 rounded p-6 border hover:shadow-md transition-shadow cursor-pointer relative group"
                     style="background-color: var(--ds-surface-card); border-color: var(--ds-border);"
                     onclick={() => isAssetForm ? onOpenAssetReportForm(entry.item) : onOpenRequestForm(entry.item)}

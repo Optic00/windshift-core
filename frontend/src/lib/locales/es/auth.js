@@ -24,7 +24,7 @@ export default {
     confirmPassword: 'Confirmar contrasena',
     passwordRequired: 'La contrasena es obligatoria',
     rememberMe: 'Recordarme',
-    staySignedIn: 'Mantener sesion iniciada',
+    staySignedIn: 'Mantener mi sesión de Windshift iniciada durante 30 días',
     emailOrUsername: 'Correo electronico o nombre de usuario',
     welcomeBack: 'Bienvenido de nuevo',
     loginTitle: 'Inicie sesion en su cuenta',

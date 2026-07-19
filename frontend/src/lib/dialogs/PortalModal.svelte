@@ -8,6 +8,7 @@
     maxWidth = 'max-w-2xl',
     bodyClass = 'px-6 py-4 max-h-[60vh] overflow-y-auto',
     headerPaddingClass = 'px-6 py-4',
+    id = undefined,
     title = '',
     subtitle = '',
     showHeader = true,
@@ -40,6 +41,7 @@
 
 {#if isOpen}
   <div
+    {id}
     class="fixed inset-0 z-50 p-4"
     role="dialog"
     aria-modal="true"

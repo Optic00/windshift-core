@@ -42,6 +42,71 @@ func TestWorkspacePermissionFromSnapshot(t *testing.T) {
 	}
 }
 
+func TestRecentlyActiveUsersUsesCurrentSessionAndUserSchema(t *testing.T) {
+	t.Run("active sessions", func(t *testing.T) {
+		db, err := database.NewSQLiteDB(filepath.Join(t.TempDir(), "active-sessions.db"))
+		if err != nil {
+			t.Fatalf("NewSQLiteDB: %v", err)
+		}
+		t.Cleanup(func() { _ = db.Close() })
+		if err := db.Initialize(); err != nil {
+			t.Fatalf("Initialize: %v", err)
+		}
+
+		result, err := db.ExecWrite(`
+			INSERT INTO users (email, username, first_name, last_name)
+			VALUES ('active@example.test', 'active-user', 'Active', 'User')
+		`)
+		if err != nil {
+			t.Fatalf("insert user: %v", err)
+		}
+		userID, err := result.LastInsertId()
+		if err != nil {
+			t.Fatalf("LastInsertId: %v", err)
+		}
+		if _, err := db.ExecWrite(`
+			INSERT INTO user_sessions (user_id, session_token, expires_at, is_active)
+			VALUES (?, 'active-session', ?, true)
+		`, userID, time.Now().Add(time.Hour)); err != nil {
+			t.Fatalf("insert session: %v", err)
+		}
+
+		service := &PermissionService{db: db, batchSize: 10}
+		users, err := service.getRecentlyActiveUsers(24 * time.Hour)
+		if err != nil {
+			t.Fatalf("getRecentlyActiveUsers: %v", err)
+		}
+		if len(users) != 1 || users[0] != int(userID) {
+			t.Fatalf("recent users = %v, want [%d]", users, userID)
+		}
+	})
+
+	t.Run("fallback active users", func(t *testing.T) {
+		db, err := database.NewSQLiteDB(filepath.Join(t.TempDir(), "fallback-users.db"))
+		if err != nil {
+			t.Fatalf("NewSQLiteDB: %v", err)
+		}
+		t.Cleanup(func() { _ = db.Close() })
+		for _, statement := range []string{
+			`CREATE TABLE users (id INTEGER PRIMARY KEY, is_active BOOLEAN, updated_at DATETIME)`,
+			`INSERT INTO users (id, is_active, updated_at) VALUES (1, true, CURRENT_TIMESTAMP), (2, false, CURRENT_TIMESTAMP)`,
+		} {
+			if _, err := db.ExecWrite(statement); err != nil {
+				t.Fatalf("exec %q: %v", statement, err)
+			}
+		}
+
+		service := &PermissionService{db: db, batchSize: 10}
+		users, err := service.getRecentlyActiveUsers(24 * time.Hour)
+		if err != nil {
+			t.Fatalf("getRecentlyActiveUsers fallback: %v", err)
+		}
+		if len(users) != 1 || users[0] != 1 {
+			t.Fatalf("fallback users = %v, want [1]", users)
+		}
+	})
+}
+
 type countingPermissionDatabase struct {
 	database.Database
 	calls atomic.Int64

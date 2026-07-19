@@ -63,6 +63,7 @@
     <div class="flex items-center gap-2">
       <div class="flex-1">
         <Select
+          id="asset-import-type"
           value={target.assetTypeId || ''}
           onchange={(v) => handleTypeChange({ target: { value: v } })}
           size="small"
@@ -218,6 +219,7 @@
       </button>
 
       <input
+        id="asset-import-file"
         bind:this={fileInput}
         type="file"
         accept=".csv,.tsv,.txt"

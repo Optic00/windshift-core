@@ -87,7 +87,14 @@
     <h3>Logs: {action.name}</h3>
   </div>
 
-  <DataTable {columns} data={logs} {loading} pageSize={25} emptyMessage="No execution logs yet">
+  <DataTable
+    {columns}
+    data={logs}
+    {loading}
+    pageSize={25}
+    emptyMessage="No execution logs yet"
+    rowAttrs={() => ({ 'data-testid': 'action-log-row' })}
+  >
     {#snippet cell(column, row)}
       {#if column.key === 'status'}
         {@const StatusIcon = getStatusIcon(row.status)}

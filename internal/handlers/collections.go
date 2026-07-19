@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +12,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
+	"windshift/internal/repository"
 	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
@@ -46,11 +46,16 @@ func sanitizeCollection(w http.ResponseWriter, r *http.Request, c *models.Collec
 
 type CollectionHandler struct {
 	db                database.Database
+	repo              *repository.CollectionRepository
 	permissionService *services.PermissionService
 }
 
 func NewCollectionHandler(db database.Database, permissionService *services.PermissionService) *CollectionHandler {
-	return &CollectionHandler{db: db, permissionService: permissionService}
+	return &CollectionHandler{
+		db:                db,
+		repo:              repository.NewCollectionRepository(db),
+		permissionService: permissionService,
+	}
 }
 
 // requireCollectionOwner authenticates the user, verifies the collection
@@ -63,9 +68,8 @@ func (h *CollectionHandler) requireCollectionOwner(w http.ResponseWriter, r *htt
 		return nil, false
 	}
 
-	var existingCreatedBy sql.NullInt64
-	err := h.db.QueryRow("SELECT created_by FROM collections WHERE id = ?", collectionID).Scan(&existingCreatedBy)
-	if errors.Is(err, sql.ErrNoRows) {
+	ownerID, err := h.repo.GetOwnerID(collectionID)
+	if errors.Is(err, repository.ErrNotFound) {
 		respondNotFound(w, r, "collection")
 		return nil, false
 	}
@@ -74,7 +78,7 @@ func (h *CollectionHandler) requireCollectionOwner(w http.ResponseWriter, r *htt
 		return nil, false
 	}
 
-	if !existingCreatedBy.Valid || int(existingCreatedBy.Int64) != currentUser.ID {
+	if ownerID == nil || *ownerID != currentUser.ID {
 		respondForbidden(w, r)
 		return nil, false
 	}
@@ -88,66 +92,34 @@ func (h *CollectionHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 	workspaceIDParam := r.URL.Query().Get("workspace_id")
 	categoryIDParam := r.URL.Query().Get("category_id")
 
-	query := `
-		SELECT c.id, c.name, c.description, c.ql_query, c.filter_state, c.is_public, c.workspace_id, c.category_id, c.created_by,
-		       c.public_slug, c.created_at, c.updated_at,
-		       COALESCE(u.first_name || ' ' || u.last_name, '') as creator_name,
-		       COALESCE(u.email, '') as creator_email,
-		       COALESCE(cc.name, '') as category_name,
-		       COALESCE(cc.color, '') as category_color
-		FROM collections c
-		LEFT JOIN users u ON c.created_by = u.id
-		LEFT JOIN collection_categories cc ON c.category_id = cc.id
-		WHERE (c.is_public = true OR c.created_by = ?)`
-
-	var args []interface{}
 	currentUser, ok := RequireAuth(w, r)
 	if !ok {
 		return
 	}
-	args = append(args, currentUser.ID)
+	filter := repository.CollectionListFilter{UserID: currentUser.ID}
 
 	// Add workspace filter if provided
 	if workspaceIDParam != "" {
-		query += " AND c.workspace_id = ?"
 		workspaceID, err := strconv.Atoi(workspaceIDParam)
 		if err != nil {
 			respondInvalidID(w, r, "workspace_id")
 			return
 		}
-		args = append(args, workspaceID)
+		filter.WorkspaceID = &workspaceID
 	}
 
 	// Add category filter if provided
 	if categoryIDParam != "" {
-		query += " AND c.category_id = ?"
 		categoryID, err := strconv.Atoi(categoryIDParam)
 		if err != nil {
 			respondInvalidID(w, r, "category_id")
 			return
 		}
-		args = append(args, categoryID)
+		filter.CategoryID = &categoryID
 	}
 
-	query += " ORDER BY c.created_at DESC"
-
-	rows, err := h.db.Query(query, args...)
+	collections, err := h.repo.ListVisibleModels(filter)
 	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	defer func() { _ = rows.Close() }()
-
-	var collections []models.Collection
-	for rows.Next() {
-		collection, err := scanCollection(rows)
-		if err != nil {
-			respondInternalError(w, r, err)
-			return
-		}
-		collections = append(collections, collection)
-	}
-	if err := rows.Err(); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
@@ -162,25 +134,13 @@ func (h *CollectionHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	query := `
-		SELECT c.id, c.name, c.description, c.ql_query, c.filter_state, c.is_public, c.workspace_id, c.category_id, c.created_by,
-		       c.public_slug, c.created_at, c.updated_at,
-		       COALESCE(u.first_name || ' ' || u.last_name, '') as creator_name,
-		       COALESCE(u.email, '') as creator_email,
-		       COALESCE(cc.name, '') as category_name,
-		       COALESCE(cc.color, '') as category_color
-		FROM collections c
-		LEFT JOIN users u ON c.created_by = u.id
-		LEFT JOIN collection_categories cc ON c.category_id = cc.id
-		WHERE c.id = ? AND (c.is_public = true OR c.created_by = ?)`
-
 	currentUser, ok := RequireAuth(w, r)
 	if !ok {
 		return
 	}
 
-	collection, err := scanCollection(h.db.QueryRow(query, id, currentUser.ID))
-	if errors.Is(err, sql.ErrNoRows) {
+	collection, err := h.repo.GetVisibleModel(id, currentUser.ID)
+	if errors.Is(err, repository.ErrNotFound) {
 		respondNotFound(w, r, "collection")
 		return
 	}
@@ -246,8 +206,7 @@ func (h *CollectionHandler) Create(w http.ResponseWriter, r *http.Request) {
 			respondValidationError(w, r, "Categories can only be applied to global collections (workspace_id must be null)")
 			return
 		}
-		var exists bool
-		err := h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM collection_categories WHERE id = ?)", *collection.CategoryID).Scan(&exists)
+		exists, err := h.repo.CategoryExists(*collection.CategoryID)
 		if err != nil {
 			respondInternalError(w, r, fmt.Errorf("failed to validate category: %w", err))
 			return
@@ -258,21 +217,10 @@ func (h *CollectionHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Insert the collection
-	var id int64
-	err := h.db.QueryRow(`
-		INSERT INTO collections (name, description, ql_query, filter_state, is_public, workspace_id, category_id, created_by, public_slug, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING id
-	`, collection.Name, collection.Description, collection.QLQuery, collection.FilterState, collection.IsPublic, collection.WorkspaceID, collection.CategoryID, currentUser.ID, collection.PublicSlug).Scan(&id)
-
-	if err != nil {
+	if err := h.repo.Create(&collection, currentUser.ID); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
-
-	// Return the created collection
-	collection.ID = int(id)
-	collection.CreatedBy = &currentUser.ID
 
 	logAudit(h.db, r, currentUser, logger.ActionCollectionCreate, logger.ResourceCollection, &collection.ID, collection.Name)
 
@@ -325,13 +273,8 @@ func (h *CollectionHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fetch existing values for field preservation
-	var existingWorkspaceID sql.NullInt64
-	var existingCategoryID sql.NullInt64
-	var existingPublicSlug sql.NullString
-	var existingFilterState sql.NullString
-	var existingIsPublic bool
-	err = h.db.QueryRow("SELECT workspace_id, category_id, public_slug, filter_state, is_public FROM collections WHERE id = ?", id).Scan(&existingWorkspaceID, &existingCategoryID, &existingPublicSlug, &existingFilterState, &existingIsPublic)
+	// Fetch existing values for field preservation.
+	existing, err := h.repo.GetModel(id)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -339,11 +282,11 @@ func (h *CollectionHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	// Preserve is_public unless the field is explicitly sent in the payload
 	if !isPublicProvided {
-		collection.IsPublic = existingIsPublic
+		collection.IsPublic = existing.IsPublic
 	}
 
 	// Check public board permission if trying to change public status or slug
-	changingPublic := isPublicProvided && collection.IsPublic != existingIsPublic
+	changingPublic := isPublicProvided && collection.IsPublic != existing.IsPublic
 	changingSlug := publicSlugProvided
 	if changingPublic || changingSlug {
 		isAdmin, _ := h.permissionService.IsSystemAdmin(currentUser.ID)
@@ -364,41 +307,23 @@ func (h *CollectionHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	// Preserve workspace association unless the field is explicitly sent in the payload
 	if !workspaceProvided {
-		if existingWorkspaceID.Valid {
-			val := int(existingWorkspaceID.Int64)
-			collection.WorkspaceID = &val
-		} else {
-			collection.WorkspaceID = nil
-		}
+		collection.WorkspaceID = existing.WorkspaceID
 	}
 
 	// Preserve category association unless the field is explicitly sent in the payload
 	if !categoryProvided {
-		if existingCategoryID.Valid {
-			val := int(existingCategoryID.Int64)
-			collection.CategoryID = &val
-		} else {
-			collection.CategoryID = nil
-		}
+		collection.CategoryID = existing.CategoryID
 	}
 
 	// Preserve public_slug unless the field is explicitly sent in the payload
 	if !publicSlugProvided {
-		if existingPublicSlug.Valid {
-			collection.PublicSlug = &existingPublicSlug.String
-		} else {
-			collection.PublicSlug = nil
-		}
+		collection.PublicSlug = existing.PublicSlug
 	}
 
 	// Preserve filter_state unless the field is explicitly sent in the payload.
 	// An explicit null in the payload (raw mode) clears it.
 	if !filterStateProvided {
-		if existingFilterState.Valid {
-			collection.FilterState = &existingFilterState.String
-		} else {
-			collection.FilterState = nil
-		}
+		collection.FilterState = existing.FilterState
 	}
 
 	// Validate workspace_id if provided — check user has view permission
@@ -415,8 +340,7 @@ func (h *CollectionHandler) Update(w http.ResponseWriter, r *http.Request) {
 			respondValidationError(w, r, "Categories can only be applied to global collections (workspace_id must be null)")
 			return
 		}
-		var exists bool
-		err = h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM collection_categories WHERE id = ?)", *collection.CategoryID).Scan(&exists)
+		exists, err := h.repo.CategoryExists(*collection.CategoryID)
 		if err != nil {
 			respondInternalError(w, r, fmt.Errorf("failed to validate category: %w", err))
 			return
@@ -427,14 +351,7 @@ func (h *CollectionHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Update the collection
-	_, err = h.db.ExecWrite(`
-		UPDATE collections
-		SET name = ?, description = ?, ql_query = ?, filter_state = ?, is_public = ?, workspace_id = ?, category_id = ?, public_slug = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?
-	`, collection.Name, collection.Description, collection.QLQuery, collection.FilterState, collection.IsPublic, collection.WorkspaceID, collection.CategoryID, collection.PublicSlug, id)
-
-	if err != nil {
+	if err := h.repo.Update(id, &collection); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
@@ -489,11 +406,7 @@ func (h *CollectionHandler) UpdatePublicSharing(w http.ResponseWriter, r *http.R
 		}
 	}
 
-	_, err := h.db.ExecWrite(
-		"UPDATE collections SET is_public = ?, public_slug = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-		payload.IsPublic, payload.PublicSlug, id,
-	)
-	if err != nil {
+	if err := h.repo.UpdatePublicSharing(id, payload.IsPublic, payload.PublicSlug); err != nil {
 		if database.IsUniqueConstraintError(err) {
 			respondConflict(w, r, "This public slug is already in use")
 			return
@@ -522,9 +435,7 @@ func (h *CollectionHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Delete the collection
-	_, err := h.db.ExecWrite("DELETE FROM collections WHERE id = ?", id)
-	if err != nil {
+	if err := h.repo.Delete(id); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
@@ -532,47 +443,4 @@ func (h *CollectionHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	logAudit(h.db, r, currentUser, logger.ActionCollectionDelete, logger.ResourceCollection, &id, "")
 
 	respondJSONOK(w, map[string]string{"message": "Collection deleted successfully"})
-}
-
-// scanCollection scans a collection row (including joined user and category
-// fields) and hydrates nullable pointer fields.
-func scanCollection(s interface{ Scan(dest ...any) error }) (models.Collection, error) {
-	var c models.Collection
-	var workspaceID sql.NullInt64
-	var categoryID sql.NullInt64
-	var createdBy sql.NullInt64
-	var publicSlug sql.NullString
-	var filterState sql.NullString
-
-	err := s.Scan(
-		&c.ID, &c.Name, &c.Description,
-		&c.QLQuery, &filterState, &c.IsPublic, &workspaceID, &categoryID, &createdBy,
-		&publicSlug, &c.CreatedAt, &c.UpdatedAt,
-		&c.CreatorName, &c.CreatorEmail,
-		&c.CategoryName, &c.CategoryColor,
-	)
-	if err != nil {
-		return c, err
-	}
-
-	if workspaceID.Valid {
-		v := int(workspaceID.Int64)
-		c.WorkspaceID = &v
-	}
-	if categoryID.Valid {
-		v := int(categoryID.Int64)
-		c.CategoryID = &v
-	}
-	if createdBy.Valid {
-		v := int(createdBy.Int64)
-		c.CreatedBy = &v
-	}
-	if publicSlug.Valid {
-		c.PublicSlug = &publicSlug.String
-	}
-	if filterState.Valid {
-		c.FilterState = &filterState.String
-	}
-
-	return c, nil
 }

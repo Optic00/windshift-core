@@ -33,6 +33,8 @@
   let startupError = $state('');
   let startupSlow = $state(false);
   let startupAttempt = 0;
+  let themeAudience = null;
+  let themeLoadGeneration = 0;
 
   const BOOTSTRAP_TIMEOUT_MS = 10_000;
   const SLOW_START_MS = 4_000;
@@ -57,6 +59,7 @@
 
   onMount(() => {
     initRouter();
+    themeStore.init();
     void initializeApp();
   });
 
@@ -89,9 +92,6 @@
       if (attempt !== startupAttempt) return;
 
       setupLoading = false;
-      // Theme loading is best-effort and must never hold the app shell hostage.
-      // The design-system defaults render immediately while this resolves.
-      void loadAndApplyTheme();
 
       // The shell is ready once setup and session state are known. MainApp and
       // MobileShell own their subsequent data loading.
@@ -142,6 +142,22 @@
       showLoginDialog = false;
       appInitialized = true;
     }
+  });
+
+  // Theme loading follows the authenticated audience rather than only the
+  // initial bootstrap. This covers interactive login/logout without delaying
+  // shell rendering or requiring a page reload to pick up the active theme.
+  $effect(() => {
+    if (!appInitialized) return;
+
+    const nextAudience = $authStore.isAuthenticated
+      ? `user:${$authStore.currentUser?.id ?? 'authenticated'}`
+      : 'public';
+    if (nextAudience === themeAudience) return;
+
+    themeAudience = nextAudience;
+    const generation = ++themeLoadGeneration;
+    void loadAndApplyTheme($authStore.isAuthenticated, generation);
   });
 
   // Sync i18n locale with user's saved language preference
@@ -207,10 +223,7 @@
     }
   }
 
-  async function loadAndApplyTheme() {
-    // Initialize theme store (sets up system preference detection)
-    themeStore.init();
-
+  async function loadAndApplyTheme(isAuthenticated, generation) {
     const defaultTheme = {
       nav_background_color_light: '#ffffff',
       nav_text_color_light: '#374151',
@@ -221,7 +234,8 @@
     // Public pages have no authenticated theme to load. Applying defaults
     // locally avoids a guaranteed 401 request on portals, public forms, and
     // the login shell.
-    if (!$authStore.isAuthenticated) {
+    if (!isAuthenticated) {
+      if (generation !== themeLoadGeneration) return;
       themeStore.setActiveTheme(defaultTheme);
       applyNavColors(defaultTheme);
       return;
@@ -229,10 +243,12 @@
 
     try {
       const activeTheme = await api.themes.getActive({ timeout: BOOTSTRAP_TIMEOUT_MS });
+      if (generation !== themeLoadGeneration) return;
       // Store the active theme in the theme store
       themeStore.setActiveTheme(activeTheme);
       applyNavColors(activeTheme);
     } catch (error) {
+      if (generation !== themeLoadGeneration) return;
       // 401 is expected when not logged in - don't spam console
       if (error.status !== 401) {
         console.error('Failed to load active theme:', error);

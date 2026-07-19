@@ -48,6 +48,10 @@ var oidcErrorMessages = map[string]string{
 	"invalid_grant":              "Invalid or expired authorization code",
 }
 
+// ssoStateTokenTTL leaves enough time for slower identity-provider flows,
+// including MFA and account-selection prompts, while keeping state short-lived.
+const ssoStateTokenTTL = 15 * time.Minute
+
 // SSOHandler handles SSO authentication endpoints
 type SSOHandler struct {
 	db                       database.Database
@@ -294,6 +298,11 @@ func (h *SSOHandler) StartLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rememberMe := ssoRememberMeFromRequest(r)
+	slog.Info("starting OIDC login",
+		slog.String("component", "sso"),
+		slog.String("provider", provider.Slug),
+		slog.Bool("remember_me", rememberMe),
+	)
 
 	// Decrypt client secret
 	clientSecret, err := h.encryption.Decrypt(provider.ClientSecretEncrypted)
@@ -319,7 +328,7 @@ func (h *SSOHandler) StartLogin(w http.ResponseWriter, r *http.Request) {
 	state := generateRandomState()
 
 	// Store state token with redirect_uri and remember_me
-	storeErr := repository.NewSSOStateRepository(h.db).Store(provider.ID, state, "", redirectAfterLogin, rememberMe, time.Now().Add(5*time.Minute))
+	storeErr := repository.NewSSOStateRepository(h.db).Store(provider.ID, state, "", redirectAfterLogin, rememberMe, time.Now().Add(ssoStateTokenTTL))
 	if storeErr != nil {
 		slog.Error("failed to store OIDC state token", "error", storeErr)
 		respondInternalError(w, r, storeErr)
@@ -399,7 +408,7 @@ func (h *SSOHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		// a valid state. The DB lookup is here for application-level metadata
 		// (where to redirect, remember-me flag) and as a defense-in-depth layer
 		// against state replay across deployments. If the row is missing —
-		// most likely the 5-minute expiry elapsed — fail closed instead of
+		// most likely the state expiry elapsed — fail closed instead of
 		// silently defaulting to "/", so the user gets a retry prompt and the
 		// audit log carries a discrete signal.
 		token, stateErr := repository.NewSSOStateRepository(h.db).GetValid(state, provider.ID, time.Now())
@@ -411,6 +420,11 @@ func (h *SSOHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		_ = repository.NewSSOStateRepository(h.db).Delete(token.ID)
 		storedRedirectURI := token.RedirectURI
 		rememberMe := token.RememberMe
+		slog.Info("restored OIDC login state",
+			slog.String("component", "sso"),
+			slog.String("provider", provider.Slug),
+			slog.Bool("remember_me", rememberMe),
+		)
 		// A native (desktop/iOS) flow is identified by its custom-scheme
 		// redirect target, stored in StartLogin. Web flows keep the existing
 		// relative-path coercion; the native target is left intact so the
@@ -490,7 +504,12 @@ func (h *SSOHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		ipAddress := h.ipExtractor.GetClientIP(r)
 
 		// Create session
-		slog.Debug("creating session", slog.String("component", "sso"), slog.Int("user_id", user.ID), slog.String("ip_address", ipAddress))
+		slog.Info("creating OIDC session",
+			slog.String("component", "sso"),
+			slog.String("provider", provider.Slug),
+			slog.Int("user_id", user.ID),
+			slog.Bool("remember_me", rememberMe),
+		)
 		session, err := h.sessionManager.CreateSession(user.ID, ipAddress, r.UserAgent(), rememberMe)
 		if err != nil {
 			slog.Error("failed to create session", slog.String("component", "sso"), slog.Any("error", err))

@@ -32,13 +32,20 @@ func (h *PortalHandler) GetMyApprovals(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx, cancel, channel, _, ok := h.resolvePortalBySlug(w, r)
+	if !ok {
+		return
+	}
+	defer cancel()
+	r = r.WithContext(ctx)
+
 	actor, ok := h.requirePortalApprovalActor(w, r)
 	if !ok {
 		return
 	}
 
 	status := r.URL.Query().Get("status")
-	requests, err := h.getApprovalsForPortalActor(r.Context(), actor, status)
+	requests, err := h.getApprovalsForPortalActor(ctx, actor, status, channel.ID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -60,6 +67,13 @@ func (h *PortalHandler) GetApproval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx, cancel, channel, _, ok := h.resolvePortalBySlug(w, r)
+	if !ok {
+		return
+	}
+	defer cancel()
+	r = r.WithContext(ctx)
+
 	actor, ok := h.requirePortalApprovalActor(w, r)
 	if !ok {
 		return
@@ -69,7 +83,7 @@ func (h *PortalHandler) GetApproval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req, err := h.approvalService.GetRequest(r.Context(), requestID)
+	req, err := h.approvalService.GetRequestInChannel(ctx, requestID, channel.ID)
 	if err != nil {
 		respondNotFound(w, r, "Approval request")
 		return
@@ -96,12 +110,24 @@ func (h *PortalHandler) DecideAsPortalCustomer(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	ctx, cancel, channel, _, ok := h.resolvePortalBySlug(w, r)
+	if !ok {
+		return
+	}
+	defer cancel()
+	r = r.WithContext(ctx)
+
 	actor, ok := h.requirePortalApprovalActor(w, r)
 	if !ok {
 		return
 	}
 	requestID, ok := requireIDParam(w, r, "id")
 	if !ok {
+		return
+	}
+	scopedRequest, loadErr := h.approvalService.GetRequestInChannel(ctx, requestID, channel.ID)
+	if loadErr != nil || !portalActorCanViewRequest(actor, scopedRequest) {
+		respondNotFound(w, r, "Approval request")
 		return
 	}
 
@@ -126,13 +152,14 @@ func (h *PortalHandler) DecideAsPortalCustomer(w http.ResponseWriter, r *http.Re
 		req      *models.ApprovalRequest
 		err      error
 	)
+	decideOptions := services.DecideOptions{ChannelID: &channel.ID}
 	switch {
-	case actor.userID != nil && portalActorCanActAsUser(r.Context(), actor, h.approvalService, requestID):
-		decision, req, err = h.approvalService.Decide(r.Context(), requestID, *actor.userID, body.Decision, body.Comment, services.DecideOptions{})
+	case actor.userID != nil && portalActorCanActAsUser(actor, scopedRequest):
+		decision, req, err = h.approvalService.Decide(ctx, requestID, *actor.userID, body.Decision, body.Comment, decideOptions)
 	case actor.customerID != nil:
-		decision, req, err = h.approvalService.DecideAsCustomer(r.Context(), requestID, *actor.customerID, body.Decision, body.Comment, services.DecideOptions{})
+		decision, req, err = h.approvalService.DecideAsCustomer(ctx, requestID, *actor.customerID, body.Decision, body.Comment, decideOptions)
 	case actor.userID != nil:
-		decision, req, err = h.approvalService.Decide(r.Context(), requestID, *actor.userID, body.Decision, body.Comment, services.DecideOptions{})
+		decision, req, err = h.approvalService.Decide(ctx, requestID, *actor.userID, body.Decision, body.Comment, decideOptions)
 	}
 	if err != nil {
 		respondValidationError(w, r, err.Error())
@@ -188,10 +215,10 @@ func (h *PortalHandler) portalApprovalActorFromRequest(r *http.Request) (portalA
 	return actor, nil
 }
 
-func (h *PortalHandler) getApprovalsForPortalActor(ctx context.Context, actor portalApprovalActor, status string) ([]*models.ApprovalRequest, error) {
+func (h *PortalHandler) getApprovalsForPortalActor(ctx context.Context, actor portalApprovalActor, status string, channelID int) ([]*models.ApprovalRequest, error) {
 	byID := map[int]*models.ApprovalRequest{}
 	if actor.customerID != nil {
-		requests, err := h.approvalService.GetForPortalCustomer(ctx, *actor.customerID, status)
+		requests, err := h.approvalService.GetForPortalCustomerInChannel(ctx, *actor.customerID, status, channelID)
 		if err != nil {
 			return nil, err
 		}
@@ -200,7 +227,7 @@ func (h *PortalHandler) getApprovalsForPortalActor(ctx context.Context, actor po
 		}
 	}
 	if actor.userID != nil {
-		requests, err := h.approvalService.GetForUser(ctx, *actor.userID, status)
+		requests, err := h.approvalService.GetForUserInChannel(ctx, *actor.userID, status, channelID)
 		if err != nil {
 			return nil, err
 		}
@@ -231,12 +258,8 @@ func portalActorCanViewRequest(actor portalApprovalActor, req *models.ApprovalRe
 	return false
 }
 
-func portalActorCanActAsUser(ctx context.Context, actor portalApprovalActor, svc *services.ApprovalService, requestID int) bool {
+func portalActorCanActAsUser(actor portalApprovalActor, req *models.ApprovalRequest) bool {
 	if actor.userID == nil {
-		return false
-	}
-	req, err := svc.GetRequest(ctx, requestID)
-	if err != nil {
 		return false
 	}
 	for _, si := range req.StepInstances {

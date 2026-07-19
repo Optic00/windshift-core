@@ -583,30 +583,32 @@ func (h *AssetHandler) importCSVRow(record []string, setID int, req StartAssetIm
 		statusID = defaultStatusID
 	}
 
-	// Build custom field values
+	// Build and validate an explicit custom-field map for every row. Required
+	// fields must still be enforced when no custom columns are mapped or all
+	// mapped cells are blank.
+	cfValues := make(map[string]interface{})
+	for fieldKey, colIdx := range req.Mappings.CustomFields {
+		val := getCol(colIdx)
+		if val != "" {
+			sanitized := sanitize.PlainTextField.Sanitize(val)
+			// Resolve text values to option IDs for select/multiselect fields
+			resolved := h.resolveImportFieldValue(fieldKey, sanitized)
+			cfValues[fieldKey] = resolved
+		}
+	}
+	coerced, err := h.assetService.CoerceAndValidateCustomFieldValues(req.AssetTypeID, cfValues)
+	if err != nil {
+		return err
+	}
+
 	var customFieldValuesJSON *string
-	if len(req.Mappings.CustomFields) > 0 {
-		cfValues := make(map[string]interface{})
-		for fieldKey, colIdx := range req.Mappings.CustomFields {
-			val := getCol(colIdx)
-			if val != "" {
-				sanitized := sanitize.PlainTextField.Sanitize(val)
-				// Resolve text values to option IDs for select/multiselect fields
-				resolved := h.resolveImportFieldValue(fieldKey, sanitized)
-				cfValues[fieldKey] = resolved
-			}
+	if len(coerced) > 0 {
+		b, err := json.Marshal(coerced)
+		if err != nil {
+			return fmt.Errorf("encode custom field values: %w", err)
 		}
-		if len(cfValues) > 0 {
-			coerced, err := h.assetService.CoerceAndValidateCustomFieldValues(req.AssetTypeID, cfValues)
-			if err != nil {
-				return err
-			}
-			b, err := json.Marshal(coerced)
-			if err == nil {
-				s := string(b)
-				customFieldValuesJSON = &s
-			}
-		}
+		s := string(b)
+		customFieldValuesJSON = &s
 	}
 
 	return h.repo.InsertImportedAsset(repository.ImportAssetRowInput{

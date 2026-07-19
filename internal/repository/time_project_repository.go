@@ -9,11 +9,11 @@ import (
 	"time"
 
 	"windshift/internal/database"
+	"windshift/internal/models"
 )
 
-// TimeProjectRepository reads rows from the time_projects table. The v1 REST
-// handlers route through here; the cookie-auth TimeProjectsHandler still
-// inlines its own SQL and is a follow-up candidate for migrating here.
+// TimeProjectRepository owns time-project persistence for both the cookie-auth
+// and bearer-token HTTP surfaces.
 type TimeProjectRepository struct {
 	db database.Database
 }
@@ -73,25 +73,55 @@ func scanTimeProjectDetail(scan func(dest ...any) error) (TimeProjectDetail, err
 	return p, nil
 }
 
+// TimeProjectListFilter narrows joined time-project lists. Nil ID slices mean
+// no restriction; an empty non-nil AccessibleIDs slice means no access.
+type TimeProjectListFilter struct {
+	AccessibleIDs []int
+	CategoryIDs   []int
+	CustomerID    *int
+	Status        string
+}
+
 // ListDetails returns project detail rows ordered by name. A nil
 // accessibleIDs slice means no access restriction; a non-nil slice limits the
 // result to those project IDs. An empty statusFilter disables status
 // filtering.
 func (r *TimeProjectRepository) ListDetails(accessibleIDs []int, statusFilter string) ([]TimeProjectDetail, error) {
+	return r.ListDetailsFiltered(TimeProjectListFilter{AccessibleIDs: accessibleIDs, Status: statusFilter})
+}
+
+// ListDetailsFiltered returns joined projects matching filter.
+func (r *TimeProjectRepository) ListDetailsFiltered(filter TimeProjectListFilter) ([]TimeProjectDetail, error) {
+	if filter.AccessibleIDs != nil && len(filter.AccessibleIDs) == 0 {
+		return []TimeProjectDetail{}, nil
+	}
+
 	query := timeProjectDetailSelect + "\nWHERE 1=1"
 	var qa []any
 
-	if accessibleIDs != nil {
-		ph := make([]string, len(accessibleIDs))
-		for i, id := range accessibleIDs {
+	if filter.AccessibleIDs != nil {
+		ph := make([]string, len(filter.AccessibleIDs))
+		for i, id := range filter.AccessibleIDs {
 			ph[i] = "?"
 			qa = append(qa, id)
 		}
 		query += " AND tp.id IN (" + strings.Join(ph, ",") + ")"
 	}
-	if statusFilter != "" {
+	if filter.CustomerID != nil {
+		query += " AND tp.customer_id = ?"
+		qa = append(qa, *filter.CustomerID)
+	}
+	if len(filter.CategoryIDs) > 0 {
+		ph := make([]string, len(filter.CategoryIDs))
+		for i, id := range filter.CategoryIDs {
+			ph[i] = "?"
+			qa = append(qa, id)
+		}
+		query += " AND tp.category_id IN (" + strings.Join(ph, ",") + ")"
+	}
+	if filter.Status != "" {
 		query += " AND tp.status = ?"
-		qa = append(qa, statusFilter)
+		qa = append(qa, filter.Status)
 	}
 	query += " ORDER BY tp.name"
 
@@ -105,7 +135,7 @@ func (r *TimeProjectRepository) ListDetails(accessibleIDs []int, statusFilter st
 	for rows.Next() {
 		p, err := scanTimeProjectDetail(rows.Scan)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("scan time project: %w", err)
 		}
 		out = append(out, p)
 	}
@@ -113,6 +143,69 @@ func (r *TimeProjectRepository) ListDetails(accessibleIDs []int, statusFilter st
 		return nil, fmt.Errorf("list time projects: %w", err)
 	}
 	return out, nil
+}
+
+// Create inserts a project and populates its generated ID and timestamps.
+func (r *TimeProjectRepository) Create(project *models.TimeProject) error {
+	settings, err := encodeTimeProjectSettings(project.Settings)
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	var id int64
+	err = r.db.QueryRow(`
+		INSERT INTO time_projects (customer_id, category_id, name, description, status, color, hourly_rate, settings, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+	`, project.CustomerID, project.CategoryID, project.Name, project.Description, project.Status,
+		project.Color, project.HourlyRate, settings, now, now).Scan(&id)
+	if err != nil {
+		return fmt.Errorf("create time project: %w", err)
+	}
+	project.ID = int(id)
+	project.CreatedAt = now
+	project.UpdatedAt = now
+	return nil
+}
+
+// Update replaces a project's editable fields and stamps UpdatedAt.
+func (r *TimeProjectRepository) Update(id int, project *models.TimeProject) error {
+	settings, err := encodeTimeProjectSettings(project.Settings)
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	_, err = r.db.ExecWrite(`
+		UPDATE time_projects
+		SET customer_id = ?, category_id = ?, name = ?, description = ?, status = ?, color = ?,
+		    hourly_rate = ?, settings = ?, updated_at = ?
+		WHERE id = ?
+	`, project.CustomerID, project.CategoryID, project.Name, project.Description, project.Status,
+		project.Color, project.HourlyRate, settings, now, id)
+	if err != nil {
+		return fmt.Errorf("update time project %d: %w", id, err)
+	}
+	project.ID = id
+	project.UpdatedAt = now
+	return nil
+}
+
+// Delete removes a time project.
+func (r *TimeProjectRepository) Delete(id int) error {
+	if _, err := r.db.ExecWrite("DELETE FROM time_projects WHERE id = ?", id); err != nil {
+		return fmt.Errorf("delete time project %d: %w", id, err)
+	}
+	return nil
+}
+
+func encodeTimeProjectSettings(settings map[string]interface{}) (any, error) {
+	if len(settings) == 0 {
+		return nil, nil
+	}
+	encoded, err := json.Marshal(settings)
+	if err != nil {
+		return nil, fmt.Errorf("encode time project settings: %w", err)
+	}
+	return string(encoded), nil
 }
 
 // GetDetail returns a single project detail row. Returns ErrNotFound when the

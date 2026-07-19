@@ -107,6 +107,7 @@
             class="p-2 rounded hover:bg-black/5 transition-colors"
             style="color: var(--ds-text-subtle);"
             aria-label="Close approval"
+            id="portal-approval-close"
           >
             <X class="w-5 h-5" />
           </button>
@@ -209,6 +210,7 @@
               icon={MessageSquare}
               disabled={portalStore.decidingApproval}
               onclick={() => portalStore.decideApproval('comment')}
+              dataTestid="portal-approval-comment-submit"
             >
               Comment
             </Button>
@@ -218,7 +220,11 @@
 
       <!-- Audit log -->
       {#if req.decisions?.length > 0}
-        <div class="p-6 rounded" style="background-color: var(--ds-surface-card); border: 1px solid var(--ds-border);">
+        <div
+          class="p-6 rounded"
+          style="background-color: var(--ds-surface-card); border: 1px solid var(--ds-border);"
+          data-testid="portal-approval-audit"
+        >
           <h4 class="text-sm font-semibold mb-3" style="color: var(--ds-text-subtle);">Audit log</h4>
           <ul class="space-y-2 text-sm">
             {#each req.decisions as d (d.id)}
@@ -255,6 +261,7 @@
             class="w-full p-4 rounded text-left transition-all hover:shadow-md"
             style="background-color: var(--ds-surface-card); border: 1px solid var(--ds-border);"
             data-testid="portal-approval-row"
+            id={`portal-approval-row-${approval.id}`}
           >
             <div class="flex items-start justify-between gap-3">
               <div class="flex-1 min-w-0">
