@@ -14,7 +14,9 @@
   let channel = $state(null);
   let forms = $state([]);
   let fields = $state([]);
+  let customFieldDefinitions = $state([]);
   let selectedFormId = $state(null);
+  let loadedDetailFormId = $state(null);
   let loading = $state(true);
   let fieldsLoading = $state(false);
   let submitting = $state(false);
@@ -40,7 +42,7 @@
   });
 
   $effect(() => {
-    if (selectedFormId) loadFields();
+    if (selectedFormId && loadedDetailFormId !== selectedFormId) loadFields();
   });
 
   async function request(path, options = {}) {
@@ -73,13 +75,12 @@
     try {
       loading = true;
       error = '';
-      const [channelData, formsData] = await Promise.all([
-        request(`/forms/${encodeURIComponent(slug)}`),
-        request(`/forms/${encodeURIComponent(slug)}/forms`),
-      ]);
-      channel = channelData;
-      forms = formsData || [];
-      if (!selectedFormId && forms.length === 1) selectedFormId = forms[0].id;
+      const bootstrap = await request(`/forms/${encodeURIComponent(slug)}/bootstrap`);
+      channel = bootstrap.channel;
+      forms = bootstrap.forms || [];
+      const nextFormId = selectedFormId || (forms.length === 1 ? forms[0].id : null);
+      if (bootstrap.form_detail?.form_id === nextFormId) applyDetail(bootstrap.form_detail);
+      selectedFormId = nextFormId;
     } catch (err) {
       error = err.message || 'Unable to load form';
       onError(err);
@@ -92,16 +93,23 @@
     try {
       fieldsLoading = true;
       error = '';
-      fields = await request(
-        `/forms/${encodeURIComponent(slug)}/forms/${encodeURIComponent(selectedFormId)}/fields`
+      const detail = await request(
+        `/forms/${encodeURIComponent(slug)}/forms/${encodeURIComponent(selectedFormId)}/detail`
       );
-      values = initialValues(fields || []);
+      applyDetail(detail);
     } catch (err) {
       error = err.message || 'Unable to load form fields';
       onError(err);
     } finally {
       fieldsLoading = false;
     }
+  }
+
+  function applyDetail(detail) {
+    fields = detail.fields || [];
+    customFieldDefinitions = detail.custom_field_definitions || [];
+    values = initialValues(fields);
+    loadedDetailFormId = detail.form_id;
   }
 
   function initialValues(nextFields) {
@@ -117,7 +125,8 @@
       if (next.custom_fields[key] !== undefined) continue;
       if (key === 'email' && prefill.email) next.custom_fields[key] = prefill.email;
       else if (key === 'name' && prefill.name) next.custom_fields[key] = prefill.name;
-      else if (field.virtual_field_type === 'checkbox') next.custom_fields[key] = false;
+      else if (fieldKind(field) === 'checkbox') next.custom_fields[key] = false;
+      else if (fieldKind(field) === 'multiselect') next.custom_fields[key] = [];
       else next.custom_fields[key] = '';
     }
     return next;
@@ -127,14 +136,44 @@
     return field.display_name || field.field_label || field.field_name || field.field_identifier;
   }
 
+  function customFieldDefinition(field) {
+    return customFieldDefinitions.find(
+      (definition) => String(definition.id) === String(field.field_identifier)
+    );
+  }
+
+  function fieldKind(field) {
+    if (field.field_type === 'custom') return customFieldDefinition(field)?.field_type || 'text';
+    if (field.field_type === 'virtual') return field.virtual_field_type || 'text';
+    return field.field_identifier === 'description' ? 'textarea' : 'text';
+  }
+
   function optionsFor(field) {
-    if (!field.options) return [];
-    if (Array.isArray(field.options)) return field.options;
+    const raw =
+      field.field_type === 'custom'
+        ? customFieldDefinition(field)?.options
+        : field.virtual_field_options;
+    if (!raw) return [];
+    if (Array.isArray(raw)) return normalizeOptions(raw);
     try {
-      return JSON.parse(field.options) || [];
+      const parsed = JSON.parse(raw);
+      return normalizeOptions(Array.isArray(parsed) ? parsed : parsed?.items || []);
     } catch {
       return [];
     }
+  }
+
+  function normalizeOptions(options) {
+    return options.map((option) => ({
+      value: option?.id ?? option?.value ?? option,
+      label: option?.label ?? String(option),
+    }));
+  }
+
+  function selectValue(field, rawValue) {
+    if (field.field_type !== 'custom' || rawValue === '') return rawValue;
+    const numeric = Number(rawValue);
+    return Number.isFinite(numeric) ? numeric : rawValue;
   }
 
   function valueFor(field) {
@@ -157,7 +196,12 @@
     for (const field of fields) {
       if (!field.is_required) continue;
       const value = valueFor(field);
-      if (value === undefined || value === null || value === '') {
+      if (
+        value === undefined ||
+        value === null ||
+        value === '' ||
+        (Array.isArray(value) && value.length === 0)
+      ) {
         error = `${labelFor(field)} is required`;
         return false;
       }
@@ -208,7 +252,7 @@
         </div>
       {/each}
     {:else if success}
-      <div class="wsf-notice wsf-notice-success">{success}</div>
+      <div id="wsf-success" class="wsf-notice wsf-notice-success">{success}</div>
     {:else}
       {#if selectedForm}
         <h2 class="wsf-title">{selectedForm.name}</h2>
@@ -221,10 +265,12 @@
         {#if error}<div class="wsf-notice wsf-notice-error">{error}</div>{/if}
         <form onsubmit={(event) => { event.preventDefault(); submit(); }}>
           {#each fields as field}
+            {@const kind = fieldKind(field)}
             <div class="wsf-field">
-              {#if field.virtual_field_type === 'checkbox'}
+              {#if kind === 'checkbox'}
                 <label class="wsf-checkbox">
                   <input
+                    id={`wsf-${field.field_identifier}`}
                     type="checkbox"
                     checked={Boolean(valueFor(field))}
                     onchange={(event) => setValue(field, event.currentTarget.checked)}
@@ -235,32 +281,56 @@
                 <label class="wsf-label" for={`wsf-${field.field_identifier}`}>
                   {labelFor(field)} {#if field.is_required}<span class="wsf-required">*</span>{/if}
                 </label>
-                {#if field.field_identifier === 'description'}
+                {#if kind === 'textarea'}
                   <textarea
                     class="wsf-textarea"
                     id={`wsf-${field.field_identifier}`}
                     value={valueFor(field)}
                     oninput={(event) => setValue(field, event.currentTarget.value)}
                   ></textarea>
-                {:else if optionsFor(field).length > 0}
+                {:else if kind === 'select'}
                   <select
                     class="wsf-select"
                     id={`wsf-${field.field_identifier}`}
                     value={valueFor(field)}
-                    onchange={(event) => setValue(field, event.currentTarget.value)}
+                    onchange={(event) => setValue(field, selectValue(field, event.currentTarget.value))}
                   >
                     <option value="">Select…</option>
                     {#each optionsFor(field) as option}
-                      <option value={option.value ?? option}>{option.label ?? option}</option>
+                      <option value={option.value}>{option.label}</option>
+                    {/each}
+                  </select>
+                {:else if kind === 'multiselect'}
+                  <select
+                    class="wsf-select"
+                    id={`wsf-${field.field_identifier}`}
+                    multiple
+                    onchange={(event) =>
+                      setValue(
+                        field,
+                        [...event.currentTarget.selectedOptions].map((option) =>
+                          selectValue(field, option.value)
+                        )
+                      )}
+                  >
+                    {#each optionsFor(field) as option}
+                      <option value={option.value}>{option.label}</option>
                     {/each}
                   </select>
                 {:else}
                   <input
                     class="wsf-input"
                     id={`wsf-${field.field_identifier}`}
-                    type={field.virtual_field_type === 'email' ? 'email' : 'text'}
+                    type={kind === 'email' ? 'email' : kind === 'date' ? 'date' : kind === 'number' ? 'number' : 'text'}
+                    step={kind === 'number' ? 'any' : undefined}
                     value={valueFor(field)}
-                    oninput={(event) => setValue(field, event.currentTarget.value)}
+                    oninput={(event) =>
+                      setValue(
+                        field,
+                        kind === 'number' && event.currentTarget.value !== ''
+                          ? Number(event.currentTarget.value)
+                          : event.currentTarget.value
+                      )}
                   />
                 {/if}
               {/if}
@@ -268,7 +338,7 @@
             </div>
           {/each}
           <div class="wsf-actions">
-            <button class="wsf-button" type="submit" disabled={submitting}>
+            <button id="wsf-submit" class="wsf-button" type="submit" disabled={submitting}>
               {submitting ? 'Submitting…' : selectedForm?.config?.submit_button_text || 'Submit'}
             </button>
           </div>
