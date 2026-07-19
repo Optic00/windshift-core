@@ -38,6 +38,15 @@ afterEach(() => {
 });
 
 describe('currentWorkspace.load', () => {
+  test('hydrates an already-fetched workspace without an API request', () => {
+    const workspace = { id: 7, name: 'Shared snapshot' };
+
+    currentWorkspace.hydrate(workspace);
+
+    expect(api.workspaces.get).not.toHaveBeenCalled();
+    expect(get(currentWorkspace)).toEqual(workspace);
+  });
+
   test('fetches the workspace and stores it', async () => {
     const ws = { id: 1, name: 'Alpha' };
     api.workspaces.get.mockResolvedValueOnce(ws);
@@ -203,6 +212,21 @@ describe('workspacesStore.load', () => {
     expect(get(workspacesStore).loading).toBe(false);
     expect(errSpy).toHaveBeenCalled();
   });
+
+  test('shares an in-flight list request and reuses the loaded catalog', async () => {
+    const pending = deferred();
+    api.workspaces.getAll.mockReturnValueOnce(pending.promise);
+
+    const first = workspacesStore.load();
+    const second = workspacesStore.load();
+    expect(api.workspaces.getAll).toHaveBeenCalledOnce();
+
+    const all = [{ id: 1, name: 'Shared' }];
+    pending.resolve(all);
+    await expect(Promise.all([first, second])).resolves.toEqual([all, all]);
+    await expect(workspacesStore.load()).resolves.toEqual(all);
+    expect(api.workspaces.getAll).toHaveBeenCalledOnce();
+  });
 });
 
 describe('workspacesStore — regularWorkspaces derived', () => {
@@ -237,6 +261,21 @@ describe('workspacesStore.loadPersonalWorkspace', () => {
     expect(result).toBeNull();
     expect(get(workspacesStore).personalWorkspace).toBeNull();
     expect(errSpy).toHaveBeenCalled();
+  });
+
+  test('shares an in-flight personal workspace request and reuses its result', async () => {
+    const pending = deferred();
+    api.workspaces.getOrCreatePersonal.mockReturnValueOnce(pending.promise);
+
+    const first = workspacesStore.loadPersonalWorkspace();
+    const second = workspacesStore.loadPersonalWorkspace();
+    expect(api.workspaces.getOrCreatePersonal).toHaveBeenCalledOnce();
+
+    const personal = { id: 99, is_personal: true };
+    pending.resolve(personal);
+    await expect(Promise.all([first, second])).resolves.toEqual([personal, personal]);
+    await expect(workspacesStore.loadPersonalWorkspace()).resolves.toBe(personal);
+    expect(api.workspaces.getOrCreatePersonal).toHaveBeenCalledOnce();
   });
 });
 

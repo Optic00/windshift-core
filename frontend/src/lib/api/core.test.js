@@ -19,7 +19,7 @@ vi.mock('../stores', () => ({
 }));
 
 import { authStore } from '../stores';
-import { fetchAPI } from './core.js';
+import { clearAPIRequestSessionKey, fetchAPI, setAPIRequestSessionKey } from './core.js';
 
 // Build a Response-like mock without depending on the actual Response
 // constructor (jsdom's varies subtly across versions).
@@ -36,6 +36,7 @@ function makeResponse({ status = 200, statusText = 'OK', body = '', headers = {}
 }
 
 beforeEach(() => {
+  clearAPIRequestSessionKey();
   vi.clearAllMocks();
 });
 
@@ -379,5 +380,103 @@ describe('fetchAPI — request shape', () => {
         }),
       })
     );
+  });
+});
+
+describe('fetchAPI — authenticated in-flight GET ownership', () => {
+  test('coalesces concurrent normalized GET paths within one session', async () => {
+    let resolveFetch;
+    global.fetch = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        })
+    );
+    setAPIRequestSessionKey('session-a');
+
+    const first = fetchAPI('/catalog?b=2&a=1');
+    const second = fetchAPI('/catalog?a=1&b=2');
+
+    expect(first).toBe(second);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+
+    resolveFetch(
+      makeResponse({
+        body: '{"items":[1]}',
+        headers: { 'content-type': 'application/json' },
+      })
+    );
+    await expect(Promise.all([first, second])).resolves.toEqual([{ items: [1] }, { items: [1] }]);
+
+    global.fetch.mockResolvedValueOnce(
+      makeResponse({ body: '{"items":[2]}', headers: { 'content-type': 'application/json' } })
+    );
+    await expect(fetchAPI('/catalog?a=1&b=2')).resolves.toEqual({ items: [2] });
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  test('does not coalesce unauthenticated requests', async () => {
+    global.fetch = vi.fn(() =>
+      Promise.resolve(makeResponse({ body: '{}', headers: { 'content-type': 'application/json' } }))
+    );
+
+    await Promise.all([fetchAPI('/catalog'), fetchAPI('/catalog')]);
+
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  test('does not share a pending request across session changes', async () => {
+    const resolvers = [];
+    global.fetch = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          resolvers.push(resolve);
+        })
+    );
+
+    setAPIRequestSessionKey('session-a');
+    const first = fetchAPI('/catalog');
+    setAPIRequestSessionKey('session-b');
+    const second = fetchAPI('/catalog');
+
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    resolvers[0](
+      makeResponse({ body: '{"session":"a"}', headers: { 'content-type': 'application/json' } })
+    );
+    resolvers[1](
+      makeResponse({ body: '{"session":"b"}', headers: { 'content-type': 'application/json' } })
+    );
+    await expect(first).resolves.toEqual({ session: 'a' });
+    await expect(second).resolves.toEqual({ session: 'b' });
+  });
+
+  test('removes failed requests so retries reach the network', async () => {
+    setAPIRequestSessionKey('session-a');
+    global.fetch = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError('offline'))
+      .mockResolvedValueOnce(
+        makeResponse({ body: '{"ok":true}', headers: { 'content-type': 'application/json' } })
+      );
+
+    await expect(fetchAPI('/catalog')).rejects.toMatchObject({ code: 'NETWORK_ERROR' });
+    await expect(fetchAPI('/catalog')).resolves.toEqual({ ok: true });
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  test('keeps mutations and caller-controlled GET lifetimes independent', async () => {
+    setAPIRequestSessionKey('session-a');
+    global.fetch = vi.fn(() =>
+      Promise.resolve(makeResponse({ body: '{}', headers: { 'content-type': 'application/json' } }))
+    );
+
+    await Promise.all([
+      fetchAPI('/items', { method: 'POST', body: '{}' }),
+      fetchAPI('/items', { method: 'POST', body: '{}' }),
+      fetchAPI('/catalog', { timeout: 1000 }),
+      fetchAPI('/catalog', { timeout: 1000 }),
+    ]);
+
+    expect(global.fetch).toHaveBeenCalledTimes(4);
   });
 });

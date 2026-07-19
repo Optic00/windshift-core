@@ -1,7 +1,7 @@
 <script>
   import { Star, Play, Loader, ChevronDown, ChevronRight, GitPullRequest, Bot, RefreshCw, Plus, Check } from '@lucide/svelte';
   import { api } from '../api.js';
-  import { agentRuns } from '../api/agentRuns.js';
+  import { loadMobileItemDetailSummary } from './mobileItemDetailData.js';
   import { agentRuns as agentRunBus } from '../stores/agentRuns.svelte.js';
   import { navigate } from '../router.js';
   import { notificationActions } from '../stores/notifications.js';
@@ -61,9 +61,8 @@
   // sub-item) without the component remounting.
   let loadToken = 0;
 
-  // SCM (commits/PRs) + coding-agent panels — gated exactly like the desktop
-  // ItemDetail: SCM via the per-item connection-status probe (has_repositories),
-  // agent via a one-row agent-runs probe. Bodies mount lazily on expand.
+  // The item summary carries only the cheap availability flags for these
+  // panels. SCM bodies and agent logs still mount and load lazily on expand.
   let scmAvailable = $state(false);
   let hasAgentRuns = $state(false);
   let scmOpen = $state(false);
@@ -102,9 +101,21 @@
     loading = true;
     errored = false;
     try {
-      const loaded = await api.items.get(id);
+      const summary = await loadMobileItemDetailSummary(id);
       if (token !== loadToken) return;
-      item = loaded;
+      item = summary?.item ?? null;
+      transitions = summary?.transitions?.available_transitions ?? [];
+      isWatching = summary?.watching || false;
+      personalTaskCount = summary?.personal_task_count ?? 0;
+      const childItems = Array.isArray(summary?.children) ? summary.children : [];
+      children = childItems.filter((child) => child?.id).map(normalizeChild);
+      ancestors = Array.isArray(summary?.ancestors)
+        ? summary.ancestors.filter((ancestor) => ancestor?.id)
+        : [];
+      availableSubIssueTypes = summary?.available_sub_issue_types ?? [];
+      scmAvailable = summary?.scm_available || false;
+      hasAgentRuns = summary?.has_agent_runs || false;
+      if (!item) throw new Error('Item detail summary did not include an item');
     } catch (err) {
       if (token !== loadToken) return;
       console.error('Failed to load item:', err);
@@ -120,86 +131,16 @@
     item = null;
     await loadItem(itemId, token);
     if (token === loadToken && !errored) {
-      void loadAux(itemId, token);
       notificationActions.markItemAsRead(itemId);
     }
   }
 
-  async function loadAux(id, token) {
-    // Best-effort side data — failures here shouldn't blank the screen. Every
-    // assignment is guarded by the load token so a stale item's response can't
-    // overwrite the current one.
+  async function refreshTransitionState(id, token) {
     try {
       const res = await api.items.getAvailableStatusTransitions(id);
       if (token === loadToken) transitions = res?.available_transitions ?? [];
     } catch (err) {
       console.error('Failed to load transitions:', err);
-    }
-    try {
-      const res = await api.items.getWatchStatus(id);
-      if (token === loadToken) isWatching = res?.watching || false;
-    } catch (err) {
-      console.error('Failed to load watch status:', err);
-    }
-    try {
-      const tasks = await api.items.getPersonalTasks(id);
-      if (token === loadToken) personalTaskCount = Array.isArray(tasks) ? tasks.length : (tasks?.items?.length ?? 0);
-    } catch {
-      if (token === loadToken) personalTaskCount = 0;
-    }
-    try {
-      const res = await api.items.getChildren(id);
-      const list = Array.isArray(res) ? res : (res?.items ?? []);
-      if (token === loadToken) children = list.filter((c) => c?.id).map(normalizeChild);
-    } catch {
-      if (token === loadToken) children = [];
-    }
-    // Parent chain (root → immediate parent) for the up-navigation breadcrumb.
-    if (item?.parent_id) {
-      try {
-        const anc = await api.items.getAncestors(id);
-        const list = Array.isArray(anc) ? anc : (anc?.items ?? []);
-        if (token === loadToken) ancestors = list.filter((a) => a?.id);
-      } catch {
-        if (token === loadToken) ancestors = [];
-      }
-    }
-    // SCM gate: show the panel unless the connection probe says the workspace
-    // has no repositories (matches ItemSCMLinks' own has_repositories gate;
-    // personal workspaces have no repos, so this also covers the desktop's
-    // non-personal check).
-    try {
-      const cs = await api.itemSCMLinks.getConnectionStatus(id);
-      if (token === loadToken) scmAvailable = cs?.has_repositories !== false;
-    } catch {
-      if (token === loadToken) scmAvailable = false;
-    }
-    // Agent gate: a coding-agent session exists iff a one-row probe is non-empty.
-    try {
-      const runs = await agentRuns.listForItem(id, { limit: 1 });
-      if (token === loadToken) hasAgentRuns = (runs?.length ?? 0) > 0;
-    } catch {
-      if (token === loadToken) hasAgentRuns = false;
-    }
-    // Sub-issue types: the item types one hierarchy level below this item's
-    // type. Used to gate + populate the "Add sub-item" dialog. Mirrors the
-    // desktop itemDetailStore's #loadItemTypeData (item types + hierarchy
-    // levels, filtered to level = current + 1).
-    try {
-      const currentTypeId = item?.item_type_id ?? null;
-      const [typesRes, levelsRes] = await Promise.all([
-        api.itemTypes.getAll(),
-        api.hierarchyLevels.getAll(),
-      ]);
-      const types = Array.isArray(typesRes) ? typesRes : (typesRes?.items ?? []);
-      const levels = Array.isArray(levelsRes) ? levelsRes : (levelsRes?.items ?? []);
-      const current = currentTypeId ? types.find((t) => t.id === currentTypeId) : null;
-      const level = current ? levels.find((l) => l.level === current.hierarchy_level) : null;
-      const nextLevel = level ? level.level + 1 : null;
-      const subTypes = nextLevel != null ? types.filter((t) => t.hierarchy_level === nextLevel) : [];
-      if (token === loadToken) availableSubIssueTypes = subTypes;
-    } catch {
-      if (token === loadToken) availableSubIssueTypes = [];
     }
   }
 
@@ -209,7 +150,7 @@
     try {
       const updated = await api.items.transition(itemId, statusId);
       item = { ...item, ...updated };
-      await loadAux(itemId, loadToken);
+      await refreshTransitionState(itemId, loadToken);
     } catch (err) {
       console.error('Failed to transition item:', err);
     } finally {
@@ -329,7 +270,6 @@
     createChildOpen = false;
     loadItem(id, token).then(() => {
       if (token === loadToken && !errored) {
-        loadAux(id, token);
         // Clear notifications pointing at this item — viewing an item should
         // mark its notifications read regardless of entry point (PWA push,
         // deep link), not only when opened from the notification list.

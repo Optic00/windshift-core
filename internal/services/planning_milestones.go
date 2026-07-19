@@ -762,21 +762,68 @@ type MilestoneTestStats struct {
 
 // GetMilestoneTestStatistics retrieves test plan statistics for a milestone.
 func (s *PlanningService) GetMilestoneTestStatistics(milestoneID int, workspaceIDs []int) (*MilestoneTestStats, error) {
-	var stats MilestoneTestStats
-	workspaceClause, workspaceArgs := planningWorkspaceFilter("ts.workspace_id", workspaceIDs)
-	queryArgs := make([]interface{}, 0, 1+len(workspaceArgs))
-	queryArgs = append(queryArgs, milestoneID)
-	queryArgs = append(queryArgs, workspaceArgs...)
+	statsByID, err := s.GetMilestoneTestStatisticsBatch([]int{milestoneID}, workspaceIDs)
+	if err != nil {
+		return nil, err
+	}
+	if stats, ok := statsByID[milestoneID]; ok {
+		return stats, nil
+	}
+	return &MilestoneTestStats{}, nil
+}
 
-	err := s.db.QueryRow(`
+// GetMilestoneTestStatisticsBatch returns test statistics keyed by milestone
+// ID in one read. Global milestones are visible to every authenticated caller;
+// local milestones and every test-set contribution remain restricted to the
+// caller's accessible workspace IDs.
+func (s *PlanningService) GetMilestoneTestStatisticsBatch(milestoneIDs, workspaceIDs []int) (map[int]*MilestoneTestStats, error) {
+	uniqueIDs := make([]int, 0, len(milestoneIDs))
+	seen := make(map[int]struct{}, len(milestoneIDs))
+	for _, milestoneID := range milestoneIDs {
+		if milestoneID <= 0 {
+			continue
+		}
+		if _, exists := seen[milestoneID]; exists {
+			continue
+		}
+		seen[milestoneID] = struct{}{}
+		uniqueIDs = append(uniqueIDs, milestoneID)
+	}
+	result := make(map[int]*MilestoneTestStats, len(uniqueIDs))
+	if len(uniqueIDs) == 0 {
+		return result, nil
+	}
+
+	milestonePlaceholders := strings.TrimSuffix(strings.Repeat("?,", len(uniqueIDs)), ",")
+	testSetWorkspaceClause, testSetWorkspaceArgs := planningWorkspaceFilter("ts.workspace_id", workspaceIDs)
+	visibilityClause := "m.is_global = true"
+	visibilityArgs := []interface{}{}
+	if len(workspaceIDs) > 0 {
+		workspacePlaceholders := strings.TrimSuffix(strings.Repeat("?,", len(workspaceIDs)), ",")
+		visibilityClause += " OR m.workspace_id IN (" + workspacePlaceholders + ")"
+		visibilityArgs = make([]interface{}, len(workspaceIDs))
+		for i, workspaceID := range workspaceIDs {
+			visibilityArgs[i] = workspaceID
+		}
+	}
+	queryArgs := make([]interface{}, 0, len(testSetWorkspaceArgs)+len(uniqueIDs)+len(visibilityArgs))
+	queryArgs = append(queryArgs, testSetWorkspaceArgs...)
+	for _, milestoneID := range uniqueIDs {
+		queryArgs = append(queryArgs, milestoneID)
+	}
+	queryArgs = append(queryArgs, visibilityArgs...)
+
+	rows, err := s.db.Query(`
 		SELECT
+			m.id,
 			COUNT(DISTINCT ts.id) as total_test_plans,
 			COALESCE(SUM(run_stats.total_runs), 0) as total_test_runs,
 			COALESCE(SUM(run_stats.successful_runs), 0) as successful_test_runs,
 			COALESCE(SUM(run_stats.failed_runs), 0) as failed_test_runs,
 			COALESCE(SUM(run_stats.in_progress_runs), 0) as in_progress_test_runs,
 			COALESCE(SUM(tc_counts.test_case_count), 0) as total_test_cases
-		FROM test_sets ts
+		FROM milestones m
+		LEFT JOIN test_sets ts ON ts.milestone_id = m.id`+testSetWorkspaceClause+`
 		LEFT JOIN (
 			SELECT
 				set_id,
@@ -794,21 +841,36 @@ func (s *PlanningService) GetMilestoneTestStatistics(milestoneID int, workspaceI
 			FROM set_test_cases stc
 			GROUP BY stc.set_id
 		) tc_counts ON ts.id = tc_counts.set_id
-		WHERE ts.milestone_id = ?`+workspaceClause+`
-	`, queryArgs...).Scan(
-		&stats.TotalTestPlans,
-		&stats.TotalTestRuns,
-		&stats.SuccessfulTestRuns,
-		&stats.FailedTestRuns,
-		&stats.InProgressTestRuns,
-		&stats.TotalTestCases,
-	)
-
+		WHERE m.id IN (`+milestonePlaceholders+`)
+		  AND (`+visibilityClause+`)
+		GROUP BY m.id
+	`, queryArgs...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get milestone test statistics: %w", err)
+		return nil, fmt.Errorf("failed to get milestone test statistics batch: %w", err)
 	}
+	defer func() { _ = rows.Close() }()
 
-	return &stats, nil
+	for rows.Next() {
+		var milestoneID int
+		var stats MilestoneTestStats
+		if err := rows.Scan(
+			&milestoneID,
+			&stats.TotalTestPlans,
+			&stats.TotalTestRuns,
+			&stats.SuccessfulTestRuns,
+			&stats.FailedTestRuns,
+			&stats.InProgressTestRuns,
+			&stats.TotalTestCases,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan milestone test statistics batch: %w", err)
+		}
+		statsCopy := stats
+		result[milestoneID] = &statsCopy
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate milestone test statistics batch: %w", err)
+	}
+	return result, nil
 }
 
 // MilestoneProgressReport represents the full milestone progress data.

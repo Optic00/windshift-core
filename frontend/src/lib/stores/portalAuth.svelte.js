@@ -16,6 +16,7 @@ import { clearStores, getStoreValue } from './storeUtils.js';
  */
 
 function createPortalAuthStore() {
+  let userBootstrap = null;
   const customer = writable(null);
   const user = writable(null); // internal user
   const isAuthenticated = writable(false);
@@ -97,6 +98,10 @@ function createPortalAuthStore() {
       return getStoreValue(showPasskeyBanner);
     },
 
+    get userBootstrap() {
+      return userBootstrap;
+    },
+
     /**
      * Check current authentication status for a portal
      * @param {string} slug - Portal slug
@@ -106,7 +111,8 @@ function createPortalAuthStore() {
       error.set(null);
 
       try {
-        const response = await api.portalAuth.getCurrentCustomer(slug);
+        const response = await api.portal.getUserBootstrap(slug);
+        userBootstrap = response;
         if (response.authenticated) {
           if (response.is_internal) {
             // Internal user authenticated
@@ -129,6 +135,7 @@ function createPortalAuthStore() {
           isInternal.set(false);
           showPasskeyBanner.set(false);
         }
+        return response;
       } catch (_err) {
         // Not authenticated is not an error
         customer.set(null);
@@ -136,6 +143,8 @@ function createPortalAuthStore() {
         isAuthenticated.set(false);
         isInternal.set(false);
         showPasskeyBanner.set(false);
+        userBootstrap = { authenticated: false, my_requests: [], my_approvals: [] };
+        return userBootstrap;
       } finally {
         loading.set(false);
       }
@@ -167,8 +176,8 @@ function createPortalAuthStore() {
         });
         if (completeResponse.success) {
           // Server set the session cookie; refresh state so UI reflects it.
-          await this.checkAuth(slug);
-          return { success: true };
+          const bootstrap = await this.checkAuth(slug);
+          return { success: true, userBootstrap: bootstrap };
         }
         const msg = completeResponse.message || 'Passkey sign-in failed';
         error.set(msg);
@@ -298,6 +307,7 @@ function createPortalAuthStore() {
       isInternal.set(false);
       loading.set(false);
       emailSent.set(false);
+      userBootstrap = null;
     },
 
     /**
@@ -323,6 +333,7 @@ function createPortalAuthStore() {
       isInternal.set(false);
       loading.set(false);
       emailSent.set(false);
+      userBootstrap = null;
     },
   };
 }

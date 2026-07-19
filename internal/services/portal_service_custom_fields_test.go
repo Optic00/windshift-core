@@ -125,6 +125,13 @@ func TestGetCustomFieldsForChannelOnlyReturnsFieldsBoundToCreateScreen(t *testin
 	if len(requestFields) != 1 || requestFields[0].FieldIdentifier != strconv.Itoa(allowedFieldID) {
 		t.Fatalf("request fields = %+v, want only bound field %d", requestFields, allowedFieldID)
 	}
+	requestDefinitions, err := NewPortalService(db).GetCustomFieldsForRequestType(context.Background(), requestTypeID)
+	if err != nil {
+		t.Fatalf("GetCustomFieldsForRequestType: %v", err)
+	}
+	if len(requestDefinitions) != 1 || requestDefinitions[0].ID != allowedFieldID {
+		t.Fatalf("request definitions = %+v, want only bound field %d", requestDefinitions, allowedFieldID)
+	}
 
 	validationResult, err := ValidateAndSeparateRequestFields(context.Background(), db, &requestTypeID, "Title", "", map[string]interface{}{
 		strconv.Itoa(allowedFieldID): "allowed value",

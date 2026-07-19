@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from 'svelte';
+  import { untrack } from 'svelte';
   import { api } from '../api.js';
   import { useEventListener } from 'runed';
   import Avatar from '../components/Avatar.svelte';
@@ -29,9 +29,12 @@
   let menuWidth = $state(0);
   let menuHeight = $state(0);
 
-  // Load users on mount
-  onMount(async () => {
-    await loadUsers();
+  // Editors keep the picker mounted while it is closed. Defer the user
+  // catalog until somebody actually types an @ mention; pages with several
+  // editors otherwise issue one identical /users request per editor.
+  $effect(() => {
+    const shouldLoad = open;
+    if (shouldLoad) untrack(() => void loadUsers());
   });
 
   // Measure the rendered menu after each content change so the clamp below is
@@ -103,7 +106,7 @@
   );
 
   async function loadUsers() {
-    if (loading) return;
+    if (loading || users.length > 0) return;
     try {
       loading = true;
       users = await api.getUsers() || [];

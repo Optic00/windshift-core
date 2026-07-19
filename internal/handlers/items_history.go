@@ -54,7 +54,8 @@ func (h *ItemHandler) GetItemHistory(w http.ResponseWriter, r *http.Request) {
 	// is the single chronological feed (approve/reject/comment text included).
 	// Synthetic IDs for approval rows are negated to avoid colliding with
 	// item_history IDs in the response.
-	history, err := repository.NewItemRepository(h.db).GetHistoryWithApprovals(id)
+	includeAgentOwner := canViewAgentOwnerAttribution(h.permissionService, user.ID)
+	history, err := repository.NewItemRepository(h.db).GetHistoryWithApprovals(id, includeAgentOwner)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return

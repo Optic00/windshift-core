@@ -19,7 +19,7 @@ beforeAll(() => {
   }
 });
 
-// MentionPicker fetches users from the API on mount. Provide a fixed roster.
+// MentionPicker fetches users when opened. Provide a fixed roster.
 vi.mock('../api.js', () => ({
   api: {
     getUsers: vi.fn(async () => [
@@ -56,6 +56,7 @@ vi.mock('runed', () => ({
   },
 }));
 
+import { api } from '../api.js';
 import MentionPicker from './MentionPicker.svelte';
 
 afterEach(() => {
@@ -65,6 +66,7 @@ afterEach(() => {
   keydownHandler = null;
   registeredCapture = null;
   document.body.innerHTML = '';
+  vi.clearAllMocks();
 });
 
 function pressKey(key) {
@@ -86,7 +88,7 @@ describe('MentionPicker — Enter while open must not break the mention (WI-200)
     const onSelect = vi.fn();
     render(MentionPicker, { props: { open: true, onSelect } });
 
-    // onMount kicks off getUsers(); wait for the list to populate.
+    // Opening the picker kicks off getUsers(); wait for the list to populate.
     await vi.waitFor(() => {
       expect(document.querySelector('[role="option"]')).toBeTruthy();
     });
@@ -127,6 +129,7 @@ describe('MentionPicker — Enter while open must not break the mention (WI-200)
 
     expect(onSelect).not.toHaveBeenCalled();
     expect(preventDefault).not.toHaveBeenCalled();
+    expect(api.getUsers).not.toHaveBeenCalled();
   });
 
   test('Escape cancels and consumes the key even with zero results', async () => {

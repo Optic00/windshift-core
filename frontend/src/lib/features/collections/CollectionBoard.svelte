@@ -29,7 +29,7 @@
   import CollectionViewSwitcher from './CollectionViewSwitcher.svelte';
   import Tooltip from '../../components/Tooltip.svelte';
   import DropdownMenu from '../../layout/DropdownMenu.svelte';
-  import { backlogStore, workspaceDataStore, statusTransitionStore } from '../../stores/index.js';
+  import { backlogStore, workspaceDataStore, workspacesStore, statusTransitionStore } from '../../stores/index.js';
   import { useWorkItemPoller } from '../../composables/useWorkItemPoller.svelte.js';
   import { agentRuns } from '../../stores/agentRuns.svelte.js';
   import { getVisibleColor, hexToRgb } from '../../utils/colorUtils.js';
@@ -74,7 +74,7 @@
 
   // Quick-add state per column
   let quickAddState = $state({});
-  let workspaces = $state([]);
+  let workspaces = $derived($workspacesStore.regularWorkspaces || []);
 
   // Backlog functionality
   let backlogItems = $derived(collectionStore.backlogItems);
@@ -228,8 +228,9 @@
         localStorage.setItem('board-quickadd-last-item-type-id', String(state.itemTypeId));
       } catch (e) { /* ignore storage errors */ }
 
-      // Optimistic local add: fetch full item and add to store directly
-      const fullItem = await api.items.get(newItem.id);
+      // The create endpoint returns the complete permission-masked item, so it
+      // can be added directly without an immediate GET of the same item.
+      const fullItem = newItem;
       collectionStore.items = [...collectionStore.items, fullItem];
       await statusTransitionStore.preloadForItems([fullItem]);
       setTimeout(() => setupDragAndDrop(), 100);
@@ -248,18 +249,13 @@
   }
 
   onMount(async () => {
-    if (workspaceId) {
-      await loadWorkspaceGradient(workspaceId);
-      await workspaceDataStore.initialize(workspaceId);
-    } else {
-      await workspaceDataStore.initializeGlobal();
-    }
-    try {
-      workspaces = await api.workspaces.getAll() || [];
-    } catch (error) {
-      console.error('Failed to load workspaces:', error);
-      workspaces = [];
-    }
+    await Promise.all([
+      workspaceId ? loadWorkspaceGradient(workspaceId) : Promise.resolve(),
+      workspaceId
+        ? workspaceDataStore.initialize(workspaceId)
+        : workspaceDataStore.initializeGlobal(),
+      workspacesStore.load(),
+    ]);
     loading = false;
   });
 
@@ -413,7 +409,7 @@
     const requestedView = viewSignature;
     boardConfig = null;
     try {
-      const config = await api.collections.getBoardConfiguration(collectionId, workspaceId);
+      const config = await collectionStore.getBoardConfiguration(workspaceId, collectionId);
       if (requestedView !== viewSignature) return;
       boardConfig = config;
     } catch (error) {

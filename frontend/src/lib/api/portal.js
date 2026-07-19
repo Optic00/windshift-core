@@ -61,6 +61,8 @@ export const portalPasskey = {
 // Portal API (uses fetchAPI for automatic CSRF handling)
 export const portal = {
   get: (slug) => fetchAPI(`/portal/${slug}`),
+  getBootstrap: (slug) => fetchAPI(`/portal/${slug}/bootstrap`),
+  getUserBootstrap: (slug) => fetchAPI(`/portal/${slug}/user-bootstrap`),
 
   submit: (slug, data) =>
     fetchAPI(`/portal/${slug}/submit`, {

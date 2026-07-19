@@ -63,6 +63,7 @@ export const configurationSets = {
 
 export const screens = {
   ...createCrudClient('/screens'),
+  getAllWithFields: () => fetchAPI('/screens?include_fields=true'),
   getFields: (id) => fetchAPI(`/screens/${id}/fields`),
   updateFields: (id, data) =>
     fetchAPI(`/screens/${id}/fields`, {

@@ -25,6 +25,8 @@ export const milestones = {
       body: JSON.stringify(data),
     }),
   getTestStatistics: (id) => fetchAPI(`/milestones/${id}/test-statistics`),
+  getTestStatisticsMany: (ids = []) =>
+    fetchAPI(`/milestones/test-statistics?ids=${[...new Set(ids)].join(',')}`),
   getProgress: (id) => fetchAPI(`/milestones/${id}/progress`),
   release: (id, data) =>
     fetchAPI(`/milestones/${id}/release`, {

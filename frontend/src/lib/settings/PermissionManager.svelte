@@ -2,6 +2,8 @@
   import { onMount } from 'svelte';
   import { api } from '../api.js';
   import { t } from '../stores/i18n.svelte.js';
+  import { authStore } from '../stores/auth.svelte.js';
+  import { permissionStore } from '../stores/permissions.svelte.js';
   import { Shield, Users as UsersIcon, Plus, X, User, Crown } from '@lucide/svelte';
   import PageHeader from '../layout/PageHeader.svelte';
   import AssigneePicker from '../pickers/AssigneePicker.svelte';
@@ -12,6 +14,10 @@
   import Button from '../components/Button.svelte';
   import Modal from '../dialogs/Modal.svelte';
   import ModalHeader from '../dialogs/ModalHeader.svelte';
+  import {
+    buildPermissionAssignmentMap,
+    loadPermissionManagerData,
+  } from './permissionManagerData.js';
 
   let permissions = $state([]);
   let users = $state([]);
@@ -38,16 +44,15 @@
     error = '';
 
     try {
-      // Load permissions, users, and groups in parallel
-      await Promise.all([
-        loadPermissions(),
-        loadUsers(),
-        loadGroups()
-      ]);
-
-      // Load user and group permissions after data is loaded
-      await loadAllUserPermissions();
-      await loadAllGroupPermissions();
+      await permissionStore.loadAllPermissions(authStore.currentUser);
+      const data = await loadPermissionManagerData(api, {
+        permissions: $permissionStore.permissions,
+      });
+      permissions = data.permissions;
+      users = data.users;
+      groups = data.groups;
+      userPermissions = data.userPermissions;
+      groupPermissions = data.groupPermissions;
     } catch (err) {
       error = t('settings.permissions.failedToLoadData') + err.message;
     } finally {
@@ -55,36 +60,13 @@
     }
   }
 
-  async function loadPermissions() {
-    permissions = await api.permissions.getAll();
-  }
-
-  async function loadUsers() {
-    users = await api.getUsers();
-  }
-
-  async function loadGroups() {
-    groups = await api.groups.getAll();
-  }
-
   async function loadAllUserPermissions() {
-    userPermissions = new Map();
-
-    // Load permissions for each user
-    for (const user of users) {
-      try {
-        const userPerms = await api.permissions.getUserPermissions(user.id);
-        const globalPermissionIds = new Set(
-          (userPerms.global_permissions || []).map(p => p.permission_id)
-        );
-        userPermissions.set(user.id, globalPermissionIds);
-      } catch (err) {
-        console.warn(`Failed to load permissions for user ${user.id}:`, err);
-        userPermissions.set(user.id, new Set());
-      }
+    try {
+      const allUserPerms = await api.permissions.getAllUserGlobalPermissions();
+      userPermissions = buildPermissionAssignmentMap(allUserPerms, 'user_id');
+    } catch (err) {
+      console.warn('Failed to load user permissions:', err);
     }
-    // Trigger reactivity
-    userPermissions = userPermissions;
   }
 
   async function loadAllGroupPermissions() {
@@ -100,16 +82,7 @@
         return;
       }
 
-      // Build map of groupId -> Set of permissionIds
-      for (const gp of allGroupPerms) {
-        if (!groupPermissions.has(gp.group_id)) {
-          groupPermissions.set(gp.group_id, new Set());
-        }
-        groupPermissions.get(gp.group_id).add(gp.permission_id);
-      }
-
-      // Trigger reactivity
-      groupPermissions = groupPermissions;
+      groupPermissions = buildPermissionAssignmentMap(allGroupPerms, 'group_id');
     } catch (err) {
       console.warn('Failed to load group permissions:', err);
     }
@@ -261,7 +234,11 @@
   ];
 </script>
 
-<div>
+<div
+  data-testid="permission-manager"
+  data-ready={!loading}
+  data-user-count={users.length}
+>
   <PageHeader
     icon={Shield}
     title={t('settings.permissions.title')}

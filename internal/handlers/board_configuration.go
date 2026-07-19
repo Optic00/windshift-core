@@ -18,10 +18,21 @@ type BoardConfigurationHandler struct {
 	repo              *repository.BoardConfigurationRepository
 	collections       *repository.CollectionRepository
 	permissionService *services.PermissionService
+	items             *services.ItemCRUDService
+	workspaces        *services.WorkspaceService
 }
 
-func NewBoardConfigurationHandler(repo *repository.BoardConfigurationRepository, collections *repository.CollectionRepository, permissionService *services.PermissionService) *BoardConfigurationHandler {
-	return &BoardConfigurationHandler{repo: repo, collections: collections, permissionService: permissionService}
+func NewBoardConfigurationHandler(
+	repo *repository.BoardConfigurationRepository,
+	collections *repository.CollectionRepository,
+	permissionService *services.PermissionService,
+	items *services.ItemCRUDService,
+	workspaces *services.WorkspaceService,
+) *BoardConfigurationHandler {
+	return &BoardConfigurationHandler{
+		repo: repo, collections: collections, permissionService: permissionService,
+		items: items, workspaces: workspaces,
+	}
 }
 
 // checkCollectionAccess verifies the user can READ the collection (public or
@@ -29,27 +40,32 @@ func NewBoardConfigurationHandler(repo *repository.BoardConfigurationRepository,
 // (response already written). Do NOT use this for write paths — see
 // checkCollectionWriteAccess.
 func (h *BoardConfigurationHandler) checkCollectionAccess(w http.ResponseWriter, r *http.Request, collectionID int) bool {
+	_, ok := h.loadReadableCollection(w, r, collectionID)
+	return ok
+}
+
+func (h *BoardConfigurationHandler) loadReadableCollection(w http.ResponseWriter, r *http.Request, collectionID int) (*repository.CollectionRecord, bool) {
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser == nil {
 		respondUnauthorized(w, r)
-		return false
+		return nil, false
 	}
 
 	coll, err := h.collections.GetByID(collectionID)
 	if errors.Is(err, repository.ErrNotFound) {
 		respondNotFound(w, r, "collection")
-		return false
+		return nil, false
 	}
 	if err != nil {
 		respondInternalError(w, r, err)
-		return false
+		return nil, false
 	}
 
 	if !coll.IsPublic && (coll.CreatedBy == nil || *coll.CreatedBy != currentUser.ID) {
 		respondNotFound(w, r, "collection")
-		return false
+		return nil, false
 	}
-	return true
+	return coll, true
 }
 
 // checkCollectionWriteAccess verifies the user can MUTATE board configs for
@@ -211,6 +227,183 @@ func (h *BoardConfigurationHandler) GetByCollection(w http.ResponseWriter, r *ht
 	config.Columns = columns
 
 	respondJSONOK(w, config)
+}
+
+type boardConfigurationCollection struct {
+	ID          int     `json:"id"`
+	Name        string  `json:"name"`
+	Description string  `json:"description"`
+	QLQuery     string  `json:"ql_query"`
+	IsPublic    bool    `json:"is_public"`
+	WorkspaceID *int    `json:"workspace_id,omitempty"`
+	CreatedBy   *int    `json:"created_by,omitempty"`
+	PublicSlug  *string `json:"public_slug,omitempty"`
+}
+
+type boardConfigurationBootstrapResponse struct {
+	Collection             *boardConfigurationCollection `json:"collection,omitempty"`
+	BoardConfiguration     *models.BoardConfiguration    `json:"board_configuration"`
+	Statuses               []models.Status               `json:"statuses"`
+	ReferencedWorkspaceIDs []int                         `json:"referenced_workspace_ids"`
+}
+
+// GetBootstrap returns the configuration editor's collection metadata,
+// persisted board layout and status catalog together. Collection CQL is
+// evaluated as a DISTINCT workspace projection, then every workspace's
+// available statuses are unioned in one query; matching item rows never cross
+// the API boundary and browser request count does not grow with workspace count.
+func (h *BoardConfigurationHandler) GetBootstrap(w http.ResponseWriter, r *http.Request) {
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+
+	id := r.PathValue("id")
+	if id == "default" {
+		workspaceID, ok := boardConfigurationWorkspaceID(w, r, true)
+		if !ok {
+			return
+		}
+		if !h.checkWorkspaceAccess(w, r, workspaceID) {
+			return
+		}
+
+		config, err := h.loadBootstrapConfiguration(nil, &workspaceID)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return
+		}
+		statuses, err := h.workspaces.GetStatusesForWorkspaces([]int{workspaceID})
+		if err != nil {
+			respondInternalError(w, r, err)
+			return
+		}
+		respondJSONOK(w, boardConfigurationBootstrapResponse{
+			BoardConfiguration: config, Statuses: statuses,
+			ReferencedWorkspaceIDs: []int{workspaceID},
+		})
+		return
+	}
+
+	collectionID, err := strconv.Atoi(id)
+	if err != nil {
+		respondInvalidID(w, r, "id")
+		return
+	}
+	collection, ok := h.loadReadableCollection(w, r, collectionID)
+	if !ok {
+		return
+	}
+	fallbackWorkspaceID, ok := boardConfigurationWorkspaceID(w, r, false)
+	if !ok {
+		return
+	}
+
+	config, err := h.loadBootstrapConfiguration(&collectionID, nil)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	accessibleWorkspaceIDs, err := h.permissionService.AccessibleWorkspaceIDs(user.ID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+
+	referencedWorkspaceIDs := []int{}
+	if collection.QLQuery != "" {
+		referencedWorkspaceIDs, err = h.items.ListDistinctWorkspaceIDsWithQLContext(
+			r.Context(), collection.QLQuery, accessibleWorkspaceIDs, user.ID,
+		)
+		if err != nil {
+			// A configuration editor must remain usable for a temporarily invalid
+			// saved query. Match the previous frontend behavior by falling back to
+			// its route/global status scope instead of failing the whole bootstrap.
+			slog.Warn("board configuration bootstrap: collection CQL workspace projection failed",
+				"collection_id", collectionID, "error", err)
+			referencedWorkspaceIDs = []int{}
+		}
+	}
+	if len(referencedWorkspaceIDs) == 0 {
+		candidate := fallbackWorkspaceID
+		if candidate == 0 && collection.WorkspaceID != nil {
+			candidate = *collection.WorkspaceID
+		}
+		if candidate != 0 && containsInt(accessibleWorkspaceIDs, candidate) {
+			referencedWorkspaceIDs = []int{candidate}
+		}
+	}
+
+	statuses, err := h.workspaces.GetStatusesForWorkspaces(referencedWorkspaceIDs)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	respondJSONOK(w, boardConfigurationBootstrapResponse{
+		Collection:             boardConfigurationCollectionFromRecord(collection),
+		BoardConfiguration:     config,
+		Statuses:               statuses,
+		ReferencedWorkspaceIDs: referencedWorkspaceIDs,
+	})
+}
+
+func boardConfigurationWorkspaceID(w http.ResponseWriter, r *http.Request, required bool) (int, bool) {
+	value := r.URL.Query().Get("workspace_id")
+	if value == "" {
+		if required {
+			respondValidationError(w, r, "workspace_id query parameter required for default configuration")
+			return 0, false
+		}
+		return 0, true
+	}
+	workspaceID, err := strconv.Atoi(value)
+	if err != nil || workspaceID <= 0 {
+		respondInvalidID(w, r, "workspace_id")
+		return 0, false
+	}
+	return workspaceID, true
+}
+
+func (h *BoardConfigurationHandler) loadBootstrapConfiguration(collectionID, workspaceID *int) (*models.BoardConfiguration, error) {
+	var config *models.BoardConfiguration
+	var err error
+	if collectionID != nil {
+		config, err = h.repo.GetByCollectionID(*collectionID)
+	} else {
+		config, err = h.repo.GetByWorkspaceID(*workspaceID)
+	}
+	if errors.Is(err, repository.ErrNotFound) {
+		if workspaceID != nil {
+			return &models.BoardConfiguration{WorkspaceID: workspaceID}, nil
+		}
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	config.Columns, err = h.repo.GetColumnsWithStatuses(config.ID)
+	return config, err
+}
+
+func boardConfigurationCollectionFromRecord(collection *repository.CollectionRecord) *boardConfigurationCollection {
+	result := &boardConfigurationCollection{
+		ID: collection.ID, Name: collection.Name, Description: collection.Description,
+		QLQuery: collection.QLQuery, IsPublic: collection.IsPublic,
+		WorkspaceID: collection.WorkspaceID, CreatedBy: collection.CreatedBy,
+	}
+	if collection.Slug != "" {
+		result.PublicSlug = &collection.Slug
+	}
+	return result
+}
+
+func containsInt(values []int, target int) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 // CreateForCollection creates a new board configuration for a collection or workspace

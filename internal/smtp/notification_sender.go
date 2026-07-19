@@ -34,6 +34,21 @@ func e2eInsecureSMTPEnabled() bool {
 	return os.Getenv(e2eInsecureSMTPEnv) == "1"
 }
 
+// EncryptionModeAllowed reports whether the sender can dispatch with the
+// configured mode. Plaintext is deliberately available only to the local E2E
+// harness; channel validation and dispatch must use the same policy so a test
+// configuration cannot be accepted by one layer and rejected by the other.
+func EncryptionModeAllowed(mode string) bool {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "tls", "starttls", "ssl":
+		return true
+	case "none":
+		return e2eInsecureSMTPEnabled()
+	default:
+		return false
+	}
+}
+
 // ErrSMTPNotConfigured is returned when a transactional send is attempted but
 // SMTP isn't configured. Re-exported by `internal/services` so existing
 // callers (e.g. internal/handlers/auth.go) keep working.
@@ -452,7 +467,7 @@ func (s *NotificationSMTPSender) dispatch(config *models.ChannelConfig, toEmail,
 	case "ssl":
 		return sendWithSSL(addr, auth, fromEmail, toEmail, message)
 	case "none":
-		if e2eInsecureSMTPEnabled() {
+		if EncryptionModeAllowed(config.SMTPEncryption) {
 			return sendPlaintext(addr, auth, fromEmail, toEmail, message)
 		}
 		fallthrough

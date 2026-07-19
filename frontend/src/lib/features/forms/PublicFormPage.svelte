@@ -2,9 +2,9 @@
   import { onMount } from 'svelte';
   import { useResizeObserver } from 'runed';
   import { currentRoute } from '../../router.js';
-  import { api } from '../../api.js';
   import Spinner from '../../components/Spinner.svelte';
   import FormRenderer from './FormRenderer.svelte';
+  import { loadPublicFormBootstrap } from './publicFormData.js';
 
   let slug = $derived($currentRoute.params?.slug || '');
   let embed = $derived(new URLSearchParams(window.location.search).get('embed') === 'true');
@@ -12,6 +12,7 @@
   let channel = $state(null);
   let forms = $state([]);
   let selectedFormId = $state(null);
+  let selectedFormDetail = $state(null);
   let loading = $state(true);
   let error = $state(null);
 
@@ -43,13 +44,11 @@
       loading = true;
       error = null;
 
-      const [channelData, formsData] = await Promise.all([
-        api.forms.getChannel(slug),
-        api.forms.getForms(slug),
-      ]);
+      const bootstrap = await loadPublicFormBootstrap(slug);
 
-      channel = channelData;
-      forms = formsData || [];
+      channel = bootstrap.channel;
+      forms = bootstrap.forms || [];
+      selectedFormDetail = bootstrap.form_detail || null;
 
       // If only one form, select it automatically
       if (forms.length === 1) {
@@ -65,16 +64,20 @@
 
   function selectForm(formId) {
     selectedFormId = formId;
+    selectedFormDetail = null;
   }
 
   function backToList() {
     selectedFormId = null;
+    selectedFormDetail = null;
   }
 </script>
 
 <div
   class="min-h-screen flex flex-col"
   style="background-color: {isDarkMode ? '#0f172a' : '#f8fafc'};"
+  data-testid="public-form-page"
+  data-ready={!loading && !error}
 >
   {#if loading}
     <div class="flex-1 flex items-center justify-center">
@@ -145,6 +148,7 @@
               formSlug={slug}
               formId={selectedFormId}
               formConfig={selectedForm?.config}
+              initialDetail={selectedFormDetail}
               {brandColor}
               {isDarkMode}
             />

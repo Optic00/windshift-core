@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => ({
     getAll: vi.fn(),
   },
   portal: {
-    get: vi.fn(),
+    getBootstrap: vi.fn(),
   },
   requestTypes: {
     getForPortal: vi.fn(),
@@ -80,12 +80,16 @@ describe('portal asset-report loading', () => {
     mocks.auth.internal = false;
     mocks.auth.portalCustomer = false;
     mocks.auth.portalInternal = false;
-    mocks.portal.get.mockResolvedValue({
-      channel_id: 7,
-      slug: 'support',
-      title: 'Support',
-      sections: [],
-      workspace_ids: [],
+    mocks.portal.getBootstrap.mockResolvedValue({
+      portal: {
+        channel_id: 7,
+        slug: 'support',
+        title: 'Support',
+        sections: [],
+        workspace_ids: [],
+      },
+      request_types: [],
+      asset_reports: publicReports,
     });
     mocks.requestTypes.getForPortal.mockResolvedValue([]);
     mocks.assetReports.getForPortal.mockResolvedValue(publicReports);
@@ -98,12 +102,14 @@ describe('portal asset-report loading', () => {
     ['portal customer', { portalCustomer: true }],
     ['internal non-manager', { internal: true }],
     ['channel manager', { internal: true }],
-  ])('loads the %s audience through the public portal endpoint', async (_viewer, auth) => {
+  ])('hydrates the %s audience from the public portal bootstrap', async (_viewer, auth) => {
     Object.assign(mocks.auth, auth);
 
     await portalStore.loadPortal('support');
 
-    expect(mocks.assetReports.getForPortal).toHaveBeenCalledWith('support');
+    expect(mocks.portal.getBootstrap).toHaveBeenCalledWith('support');
+    expect(mocks.requestTypes.getForPortal).not.toHaveBeenCalled();
+    expect(mocks.assetReports.getForPortal).not.toHaveBeenCalled();
     expect(mocks.assetReports.getForChannel).not.toHaveBeenCalled();
     expect(mocks.assetSets.getAll).not.toHaveBeenCalled();
     expect(portalStore.assetReports).toEqual(publicReports);
@@ -155,5 +161,33 @@ describe('portal asset-report loading', () => {
     await Promise.resolve();
 
     expect(portalStore.assetReports).toEqual(publicReports);
+  });
+
+  it('hydrates authenticated badge data and internal field counts without follow-up GETs', async () => {
+    mocks.portal.getBootstrap.mockResolvedValueOnce({
+      portal: {
+        channel_id: 7,
+        slug: 'support',
+        title: 'Support',
+        sections: [],
+        workspace_ids: [],
+      },
+      request_types: [{ id: 9, field_count: 3 }],
+      asset_reports: publicReports,
+    });
+    await portalStore.loadPortal('support');
+
+    portalStore.hydrateUserBootstrap({
+      authenticated: true,
+      is_internal: true,
+      my_requests: [{ id: 41 }],
+      my_approvals: [{ id: 51 }],
+    });
+
+    expect(portalStore.requestTypes[0].field_count).toBe(3);
+    expect(portalStore.myRequests).toEqual([{ id: 41 }]);
+    expect(portalStore.myApprovals).toEqual([{ id: 51 }]);
+    expect(mocks.requestTypes.getForPortal).not.toHaveBeenCalled();
+    expect(mocks.assetReports.getForPortal).not.toHaveBeenCalled();
   });
 });

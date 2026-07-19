@@ -5,12 +5,13 @@ const mocks = vi.hoisted(() => ({
   fetchCollectionBacklog: vi.fn(),
   fetchCollectionItemChanges: vi.fn(),
   fetchCollectionItems: vi.fn(),
+  getBoardConfiguration: vi.fn(),
 }));
 
 vi.mock('../api.js', () => ({
   api: {
     collections: {
-      getBoardConfiguration: vi.fn().mockResolvedValue(null),
+      getBoardConfiguration: mocks.getBoardConfiguration,
     },
   },
 }));
@@ -51,6 +52,7 @@ function itemResult(options) {
     collectionName: 'Test board',
     pagination: { page, limit: options.limit, total: 2, total_pages: 2 },
     sortableFields: [],
+    watermark: 1,
   };
 }
 
@@ -66,6 +68,7 @@ describe('CollectionStore board ordering', () => {
       pagination: { page: 1, limit: 100, total: 0, total_pages: 0 },
     });
     mocks.fetchCollectionItemChanges.mockResolvedValue({ watermark: 1 });
+    mocks.getBoardConfiguration.mockResolvedValue(null);
 
     mocks.routeSubscriber({ view: 'workspace-board', params: { id: '42' } });
     await vi.waitFor(() => expect(mocks.fetchCollectionItems).toHaveBeenCalledTimes(1));
@@ -157,7 +160,7 @@ describe('CollectionStore board ordering', () => {
       items: [],
       pagination: { page: 1, limit: 100, total: 0, total_pages: 0 },
     });
-    mocks.fetchCollectionItemChanges.mockResolvedValueOnce({ watermark: 2 });
+    mocks.getBoardConfiguration.mockResolvedValue(null);
 
     mocks.routeSubscriber({ view: 'workspace-list', params: { id: '44' } });
     await vi.waitFor(() => expect(collectionStore.loading).toBe(false));
@@ -170,5 +173,79 @@ describe('CollectionStore board ordering', () => {
     await collectionStore.refreshDeltas();
 
     expect(errorSpy).not.toHaveBeenCalled();
+  });
+
+  it('loads only items for list views and only backlog for backlog views', async () => {
+    mocks.fetchCollectionItems.mockClear();
+    mocks.fetchCollectionBacklog.mockClear();
+    mocks.fetchCollectionItemChanges.mockClear();
+    mocks.fetchCollectionItems.mockImplementation((_workspaceId, _collectionId, options) =>
+      Promise.resolve(itemResult(options))
+    );
+    mocks.fetchCollectionBacklog.mockResolvedValue({
+      items: [{ id: 2, status_id: 1 }],
+      collectionName: 'Backlog',
+      pagination: { page: 1, limit: 100, total: 1, total_pages: 1 },
+      watermark: 3,
+    });
+
+    mocks.routeSubscriber({ view: 'workspace-list', params: { id: '45' } });
+    await vi.waitFor(() => expect(collectionStore.loading).toBe(false));
+
+    expect(mocks.fetchCollectionItems).toHaveBeenCalledTimes(1);
+    expect(mocks.fetchCollectionBacklog).not.toHaveBeenCalled();
+    expect(mocks.fetchCollectionItemChanges).not.toHaveBeenCalled();
+
+    mocks.fetchCollectionItems.mockClear();
+    mocks.fetchCollectionBacklog.mockClear();
+    mocks.routeSubscriber({ view: 'workspace-backlog', params: { id: '46' } });
+    await vi.waitFor(() => expect(collectionStore.loading).toBe(false));
+
+    expect(mocks.fetchCollectionItems).not.toHaveBeenCalled();
+    expect(mocks.fetchCollectionBacklog).toHaveBeenCalledTimes(1);
+  });
+
+  it('polls from the oldest watermark returned by parallel board snapshots', async () => {
+    mocks.fetchCollectionItems.mockImplementation((_workspaceId, _collectionId, options) =>
+      Promise.resolve({ ...itemResult(options), watermark: 5 })
+    );
+    mocks.fetchCollectionBacklog.mockResolvedValue({
+      items: [],
+      pagination: { page: 1, limit: 100, total: 0, total_pages: 0 },
+      watermark: 7,
+    });
+    mocks.fetchCollectionItemChanges.mockResolvedValue({
+      watermark: 7,
+      changed_item_ids: [],
+      removed_item_ids: [],
+    });
+    mocks.getBoardConfiguration.mockResolvedValue(null);
+
+    mocks.routeSubscriber({ view: 'workspace-board', params: { id: '47' } });
+    await vi.waitFor(() => expect(collectionStore.loading).toBe(false));
+    await collectionStore.refreshDeltas();
+
+    expect(mocks.fetchCollectionItemChanges).toHaveBeenLastCalledWith(
+      '47',
+      null,
+      expect.objectContaining({ since: 5 })
+    );
+  });
+
+  it('single-flights board configuration for store and view consumers', async () => {
+    mocks.getBoardConfiguration.mockClear();
+    let resolveConfiguration;
+    mocks.getBoardConfiguration.mockReturnValue(
+      new Promise((resolve) => {
+        resolveConfiguration = resolve;
+      })
+    );
+
+    const storeLoad = collectionStore.getBoardConfiguration(48, null, { force: true });
+    const viewLoad = collectionStore.getBoardConfiguration(48, null);
+
+    expect(mocks.getBoardConfiguration).toHaveBeenCalledTimes(1);
+    resolveConfiguration({ id: 9, columns: [] });
+    await Promise.all([storeLoad, viewLoad]);
   });
 });

@@ -8,6 +8,9 @@ export const permissions = {
   // Get user's permissions
   getUserPermissions: (userId) => fetchAPI(`/users/${userId}/permissions`),
 
+  // Get effective global permission assignments for all users
+  getAllUserGlobalPermissions: () => fetchAPI('/users/permissions/global'),
+
   // Grant global permission to user
   grantGlobal: (data) =>
     fetchAPI('/permissions/global/grant', {

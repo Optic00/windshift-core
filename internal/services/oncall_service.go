@@ -28,7 +28,7 @@ func NewOnCallService(db database.Database, onCallRepo *repository.OnCallReposit
 // at the specified time. Returns nil if no member is on call (e.g. outside the
 // layer's active window or no members configured).
 func (s *OnCallService) ComputeRotationForLayer(layer *models.OnCallScheduleLayer, t time.Time) *int {
-	startDate, err := time.Parse("2006-01-02", layer.StartDate)
+	startDate, err := parseDate(layer.StartDate)
 	if err != nil {
 		return nil
 	}
@@ -37,7 +37,7 @@ func (s *OnCallService) ComputeRotationForLayer(layer *models.OnCallScheduleLaye
 	}
 
 	if layer.EndDate != nil {
-		endDate, err := time.Parse("2006-01-02", *layer.EndDate)
+		endDate, err := parseDate(*layer.EndDate)
 		if err != nil {
 			return nil
 		}
@@ -115,35 +115,33 @@ func (s *OnCallService) GetCurrentOnCall(scheduleID int) (*models.CurrentOnCallR
 		return nil, fmt.Errorf("failed to get schedule: %w", err)
 	}
 
-	overrides, err := s.onCallRepo.GetActiveOverrides(scheduleID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get overrides: %w", err)
-	}
+	return s.CurrentOnCallForSchedule(schedule, time.Now()), nil
+}
 
-	now := time.Now()
-
+// CurrentOnCallForSchedule resolves a fully hydrated schedule without database
+// reads. It is shared by the single-schedule endpoint and the team overview.
+func (s *OnCallService) CurrentOnCallForSchedule(schedule *models.OnCallSchedule, now time.Time) *models.CurrentOnCallResponse {
 	resp := &models.CurrentOnCallResponse{
-		ScheduleID: scheduleID,
+		ScheduleID: schedule.ID,
 		OnCall:     []models.OnCallUserEntry{},
 	}
 
 	// Check overrides first. An override replaces the original user with the
 	// override user for the duration of the override window.
-	for _, o := range overrides {
-		if now.After(o.StartTime) && now.Before(o.EndTime) {
-			resp.OnCall = append(resp.OnCall, models.OnCallUserEntry{
-				UserID:     o.OverrideUserID,
-				UserName:   o.OverrideUserName,
-				IsOverride: true,
-			})
-		}
-	}
-
-	// Build a set of user IDs already covered by overrides so we don't
-	// duplicate entries from layer resolution.
+	replacedUserIDs := make(map[int]bool)
 	overrideUserIDs := make(map[int]bool)
-	for _, entry := range resp.OnCall {
-		overrideUserIDs[entry.UserID] = true
+	for _, o := range schedule.Overrides {
+		if now.After(o.StartTime) && now.Before(o.EndTime) {
+			replacedUserIDs[o.UserID] = true
+			if !overrideUserIDs[o.OverrideUserID] {
+				resp.OnCall = append(resp.OnCall, models.OnCallUserEntry{
+					UserID:     o.OverrideUserID,
+					UserName:   o.OverrideUserName,
+					IsOverride: true,
+				})
+				overrideUserIDs[o.OverrideUserID] = true
+			}
+		}
 	}
 
 	// Process layers by priority (lowest priority number = highest importance).
@@ -158,16 +156,26 @@ func (s *OnCallService) GetCurrentOnCall(scheduleID int) (*models.CurrentOnCallR
 		if userID == nil {
 			continue
 		}
-		if overrideUserIDs[*userID] {
+		if replacedUserIDs[*userID] || overrideUserIDs[*userID] {
 			continue
+		}
+		var userName, userEmail string
+		for _, member := range layer.Members {
+			if member.UserID == *userID {
+				userName = member.UserName
+				userEmail = member.UserEmail
+				break
+			}
 		}
 		resp.OnCall = append(resp.OnCall, models.OnCallUserEntry{
 			UserID:    *userID,
+			UserName:  userName,
+			UserEmail: userEmail,
 			LayerName: layer.Name,
 		})
 	}
 
-	return resp, nil
+	return resp
 }
 
 // AcknowledgeIncident marks an incident as acknowledged by the given user.

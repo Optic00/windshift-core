@@ -8,6 +8,7 @@
   import BasePicker from '../../pickers/BasePicker.svelte';
   import { IconTag as Tag, IconLoader as Loader2, IconSparkles as Sparkles } from '@tabler/icons-svelte-runes';
   import AlertBox from '../../components/AlertBox.svelte';
+  import { loadMilestoneReleaseConnections } from './milestoneReleaseData.js';
 
   let { milestone, workspaceId = null, hasExistingRelease = false, onreleased, onclose } = $props();
 
@@ -56,26 +57,7 @@
     loading = true;
     error = null;
     try {
-      if (workspaceId) {
-        // Workspace-scoped milestone: load connections for this workspace only
-        const conns = await api.workspaceSCM.getConnections(workspaceId) || [];
-        connections = conns.map(c => ({ ...c, _workspaceName: null, _workspaceId: workspaceId }));
-      } else {
-        // Global milestone: load connections across all accessible workspaces
-        const allWorkspaces = await api.workspaces.getAll() || [];
-        const allConns = [];
-        await Promise.all(
-          allWorkspaces.map(async (ws) => {
-            try {
-              const conns = await api.workspaceSCM.getConnections(ws.id) || [];
-              conns.forEach(c => allConns.push({ ...c, _workspaceName: ws.name, _workspaceId: ws.id }));
-            } catch {
-              // skip workspaces where connections can't be loaded
-            }
-          })
-        );
-        connections = allConns;
-      }
+      connections = await loadMilestoneReleaseConnections(api, workspaceId);
 
       if (connections.length === 1) {
         selectedConnectionId = connections[0].id;

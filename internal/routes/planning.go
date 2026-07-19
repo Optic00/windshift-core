@@ -24,6 +24,7 @@ func RegisterPlanningRoutes(deps *Deps) {
 	// Milestone endpoints
 	api.HandleH("GET /milestones", auth(http.HandlerFunc(deps.Planning.Milestone.GetAll)))
 	api.HandleH("POST /milestones", auth(http.HandlerFunc(deps.Planning.Milestone.Create)))
+	api.HandleH("GET /milestones/test-statistics", auth(http.HandlerFunc(deps.Planning.Milestone.GetTestStatisticsBatch)))
 	api.HandleH("GET /milestones/{id}", auth(http.HandlerFunc(deps.Planning.Milestone.Get)))
 	// Update is split by scope: the URL-supplied workspaceId (or the /global prefix)
 	// determines which middleware gates the request and which rows the SQL UPDATE

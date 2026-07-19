@@ -77,7 +77,7 @@ func (h *WorkspaceHandler) GetHomepageLayout(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	homepageLayout, err := h.repo.GetHomepageLayoutJSON(workspaceID)
+	layout, err := h.loadHomepageLayout(workspaceID)
 	if errors.Is(err, repository.ErrNotFound) {
 		respondNotFound(w, r, "workspace")
 		return
@@ -88,23 +88,26 @@ func (h *WorkspaceHandler) GetHomepageLayout(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// If no layout exists, return empty structure
-	var layout models.WorkspaceHomepageLayout
-	if homepageLayout != "" {
-		if err := json.Unmarshal([]byte(homepageLayout), &layout); err != nil {
-			slog.Error("failed to parse homepage layout JSON", slog.String("component", "workspaces"), slog.Int("workspace_id", workspaceID), slog.Any("error", err))
-			respondInternalError(w, r, err)
-			return
-		}
-	} else {
-		// Return empty structure with empty arrays
-		layout = models.WorkspaceHomepageLayout{
-			Sections: []models.WorkspaceHomepageSection{},
-			Widgets:  []models.WorkspaceWidget{},
-		}
+	respondJSONOK(w, layout)
+}
+
+func (h *WorkspaceHandler) loadHomepageLayout(workspaceID int) (models.WorkspaceHomepageLayout, error) {
+	homepageLayout, err := h.repo.GetHomepageLayoutJSON(workspaceID)
+	if err != nil {
+		return models.WorkspaceHomepageLayout{}, err
 	}
 
-	respondJSONOK(w, layout)
+	layout := models.WorkspaceHomepageLayout{
+		Sections: []models.WorkspaceHomepageSection{},
+		Widgets:  []models.WorkspaceWidget{},
+	}
+	if homepageLayout == "" {
+		return layout, nil
+	}
+	if err := json.Unmarshal([]byte(homepageLayout), &layout); err != nil {
+		return models.WorkspaceHomepageLayout{}, err
+	}
+	return layout, nil
 }
 
 // UpdateHomepageLayout handles PUT /api/workspaces/:id/homepage/layout
@@ -237,27 +240,33 @@ func (h *WorkspaceHandler) GetStatuses(w http.ResponseWriter, r *http.Request) {
 		itemTypeIDPtr = &itID
 	}
 
-	// Use WorkflowService for proper fallback chain (item type override → config set → global default)
-	workflowService := services.NewWorkflowService(h.db)
-	workflowID, err := workflowService.GetWorkflowIDForItem(workspaceID, itemTypeIDPtr)
+	statuses, err := h.loadWorkspaceStatuses(workspaceID, itemTypeIDPtr)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
+	}
+	respondJSONOK(w, statuses)
+}
+
+func (h *WorkspaceHandler) loadWorkspaceStatuses(workspaceID int, itemTypeID *int) ([]models.Status, error) {
+	// Use WorkflowService for proper fallback chain (item type override → config set → global default)
+	workflowService := services.NewWorkflowService(h.db)
+	workflowID, err := workflowService.GetWorkflowIDForItem(workspaceID, itemTypeID)
+	if err != nil {
+		return nil, err
 	}
 
 	// Fall back to default workflow if service returned nil (e.g. personal workspace)
 	if workflowID == nil {
 		workflowID, err = workflowService.GetDefaultWorkflowID()
 		if err != nil || workflowID == nil {
-			respondJSONOK(w, []models.Status{})
-			return
+			return []models.Status{}, err
 		}
 	}
 
 	statusResults, err := services.NewStatusService(h.db).ListWorkflowStatuses(*workflowID)
 	if err != nil {
-		respondInternalError(w, r, err)
-		return
+		return nil, err
 	}
 	statuses := make([]models.Status, 0, len(statusResults))
 	for _, st := range statusResults {
@@ -275,7 +284,7 @@ func (h *WorkspaceHandler) GetStatuses(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	respondJSONOK(w, statuses)
+	return statuses, nil
 }
 
 // GetItemTypes returns only item types allowed by the workspace's active

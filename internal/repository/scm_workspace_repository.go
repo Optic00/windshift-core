@@ -25,20 +25,40 @@ func NewSCMWorkspaceRepository(db database.Database) *SCMWorkspaceRepository {
 // SCMWorkspaceConnection represents a workspace SCM connection joined with
 // provider metadata and the linked-repository count.
 type SCMWorkspaceConnection struct {
-	ID                   int                    `json:"id"`
-	WorkspaceID          int                    `json:"workspace_id"`
-	SCMProviderID        int                    `json:"scm_provider_id"`
-	ProviderName         string                 `json:"provider_name"`
-	ProviderType         models.SCMProviderType `json:"provider_type"`
-	ProviderSlug         string                 `json:"provider_slug"`
-	Enabled              bool                   `json:"enabled"`
-	SmartCommitsEnabled  bool                   `json:"smart_commits_enabled"`
-	DefaultBranchPattern string                 `json:"default_branch_pattern,omitempty"`
-	ItemKeyPattern       string                 `json:"item_key_pattern,omitempty"`
-	RepositoryCount      int                    `json:"repository_count"`
-	CreatedBy            *int                   `json:"created_by,omitempty"`
-	CreatedAt            time.Time              `json:"created_at"`
-	UpdatedAt            time.Time              `json:"updated_at"`
+	ID                   int                      `json:"id"`
+	WorkspaceID          int                      `json:"workspace_id"`
+	WorkspaceName        string                   `json:"workspace_name"`
+	SCMProviderID        int                      `json:"scm_provider_id"`
+	ProviderName         string                   `json:"provider_name"`
+	ProviderType         models.SCMProviderType   `json:"provider_type"`
+	ProviderSlug         string                   `json:"provider_slug"`
+	Enabled              bool                     `json:"enabled"`
+	SmartCommitsEnabled  bool                     `json:"smart_commits_enabled"`
+	DefaultBranchPattern string                   `json:"default_branch_pattern,omitempty"`
+	ItemKeyPattern       string                   `json:"item_key_pattern,omitempty"`
+	RepositoryCount      int                      `json:"repository_count"`
+	CreatedBy            *int                     `json:"created_by,omitempty"`
+	CreatedAt            time.Time                `json:"created_at"`
+	UpdatedAt            time.Time                `json:"updated_at"`
+	Repositories         []SCMLinkedRepository    `json:"repositories,omitempty"`
+	AuthStatus           *SCMConnectionAuthStatus `json:"auth_status,omitempty"`
+}
+
+// SCMConnectionAuthStatus is the credential-presence summary rendered by the
+// workspace connection list. It never contains credential material.
+type SCMConnectionAuthStatus struct {
+	AuthMethod        models.SCMAuthMethod `json:"auth_method"`
+	IsAuthenticated   bool                 `json:"is_authenticated"`
+	ProviderSlug      string               `json:"provider_slug"`
+	HasWorkspaceToken bool                 `json:"has_workspace_token,omitempty"`
+	HasUserToken      bool                 `json:"has_user_token,omitempty"`
+	SCMUsername       string               `json:"scm_username,omitempty"`
+	TokenExpiresAt    *time.Time           `json:"token_expires_at,omitempty"`
+	TokenExpired      *bool                `json:"token_expired,omitempty"`
+	HasWorkspacePAT   bool                 `json:"has_workspace_pat,omitempty"`
+	HasProviderPAT    bool                 `json:"has_provider_pat,omitempty"`
+	HasGitHubAppKey   bool                 `json:"has_github_app_key,omitempty"`
+	AuthSource        string               `json:"auth_source,omitempty"`
 }
 
 // SCMLinkedRepository represents a repository linked to a workspace SCM connection.
@@ -98,13 +118,14 @@ type SCMProviderAuthInfo struct {
 
 const scmWorkspaceConnectionSelect = `
 	SELECT
-		wsc.id, wsc.workspace_id, wsc.scm_provider_id, wsc.enabled,
+		wsc.id, wsc.workspace_id, w.name, wsc.scm_provider_id, wsc.enabled,
 		wsc.smart_commits_enabled,
 		wsc.default_branch_pattern, wsc.item_key_pattern,
 		wsc.created_by, wsc.created_at, wsc.updated_at,
 		sp.name, sp.provider_type, sp.slug,
 		(SELECT COUNT(*) FROM workspace_repositories wr WHERE wr.workspace_scm_connection_id = wsc.id) as repo_count
 	FROM workspace_scm_connections wsc
+	JOIN workspaces w ON w.id = wsc.workspace_id
 	JOIN scm_providers sp ON sp.id = wsc.scm_provider_id
 `
 
@@ -118,7 +139,7 @@ func scanSCMWorkspaceConnection(scanner scmWorkspaceScanner) (SCMWorkspaceConnec
 	var createdBy sql.NullInt64
 
 	if err := scanner.Scan(
-		&conn.ID, &conn.WorkspaceID, &conn.SCMProviderID, &conn.Enabled,
+		&conn.ID, &conn.WorkspaceID, &conn.WorkspaceName, &conn.SCMProviderID, &conn.Enabled,
 		&conn.SmartCommitsEnabled,
 		&defaultBranchPattern, &itemKeyPattern,
 		&createdBy, &conn.CreatedAt, &conn.UpdatedAt,
@@ -173,6 +194,38 @@ func (r *SCMWorkspaceRepository) ListConnections(workspaceID int) ([]SCMWorkspac
 			continue
 		}
 		connections = append(connections, conn)
+	}
+	return connections, rows.Err()
+}
+
+// ListConnectionsForWorkspaces returns every SCM connection belonging to the
+// supplied accessible workspace IDs in one query. An empty scope fails closed.
+func (r *SCMWorkspaceRepository) ListConnectionsForWorkspaces(workspaceIDs []int) ([]SCMWorkspaceConnection, error) {
+	if len(workspaceIDs) == 0 {
+		return []SCMWorkspaceConnection{}, nil
+	}
+	placeholders := make([]string, len(workspaceIDs))
+	args := make([]interface{}, len(workspaceIDs))
+	for i, workspaceID := range workspaceIDs {
+		placeholders[i] = "?"
+		args[i] = workspaceID
+	}
+	rows, err := r.db.Query(scmWorkspaceConnectionSelect+`
+		WHERE wsc.workspace_id IN (`+strings.Join(placeholders, ",")+`)
+		ORDER BY w.name, sp.name
+	`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	connections := []SCMWorkspaceConnection{}
+	for rows.Next() {
+		connection, err := scanSCMWorkspaceConnection(rows)
+		if err != nil {
+			return nil, err
+		}
+		connections = append(connections, connection)
 	}
 	return connections, rows.Err()
 }
@@ -299,6 +352,98 @@ func (r *SCMWorkspaceRepository) ListLinkedRepositories(connID int) ([]SCMLinked
 		repos = append(repos, repo)
 	}
 	return repos, rows.Err()
+}
+
+// ListLinkedRepositoriesForWorkspace loads repositories for every connection
+// in a workspace with one read. Callers group the returned rows by
+// WorkspaceSCMConnectionID.
+func (r *SCMWorkspaceRepository) ListLinkedRepositoriesForWorkspace(workspaceID int) ([]SCMLinkedRepository, error) {
+	rows, err := r.db.Query(`
+		SELECT wr.id, wr.workspace_scm_connection_id, wr.repository_external_id,
+		       wr.repository_name, wr.repository_url, wr.default_branch,
+		       wr.is_active, wr.milestone_tag_pattern, wr.milestone_branch_pattern,
+		       wr.last_synced_at, wr.created_at, wr.updated_at
+		FROM workspace_repositories wr
+		JOIN workspace_scm_connections wsc ON wsc.id = wr.workspace_scm_connection_id
+		WHERE wsc.workspace_id = ?
+		ORDER BY wr.workspace_scm_connection_id, wr.repository_name
+	`, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	repositories := []SCMLinkedRepository{}
+	for rows.Next() {
+		repository, err := scanSCMLinkedRepository(rows)
+		if err != nil {
+			return nil, err
+		}
+		repositories = append(repositories, repository)
+	}
+	return repositories, rows.Err()
+}
+
+// ListConnectionAuthStatusesForWorkspace loads credential-presence summaries
+// for every workspace connection in one read. It joins the current user's
+// optional OAuth token but never selects or returns credential material.
+func (r *SCMWorkspaceRepository) ListConnectionAuthStatusesForWorkspace(workspaceID, userID int) (map[int]*SCMConnectionAuthStatus, error) {
+	rows, err := r.db.Query(`
+		SELECT wsc.id, sp.auth_method, sp.slug,
+		       CASE WHEN wsc.oauth_access_token_encrypted IS NOT NULL AND wsc.oauth_access_token_encrypted != '' THEN 1 ELSE 0 END,
+		       wsc.oauth_token_expires_at,
+		       CASE WHEN wsc.personal_access_token_encrypted IS NOT NULL AND wsc.personal_access_token_encrypted != '' THEN 1 ELSE 0 END,
+		       CASE WHEN sp.personal_access_token_encrypted IS NOT NULL AND sp.personal_access_token_encrypted != '' THEN 1 ELSE 0 END,
+		       CASE WHEN sp.github_app_private_key_encrypted IS NOT NULL AND sp.github_app_private_key_encrypted != '' THEN 1 ELSE 0 END,
+		       CASE WHEN user_token.oauth_access_token_encrypted IS NOT NULL AND user_token.oauth_access_token_encrypted != '' THEN 1 ELSE 0 END,
+		       COALESCE(user_token.scm_username, '')
+		FROM workspace_scm_connections wsc
+		JOIN scm_providers sp ON sp.id = wsc.scm_provider_id
+		LEFT JOIN user_scm_oauth_tokens user_token
+		  ON user_token.user_id = ? AND user_token.scm_provider_id = wsc.scm_provider_id
+		WHERE wsc.workspace_id = ?
+	`, userID, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	statuses := map[int]*SCMConnectionAuthStatus{}
+	for rows.Next() {
+		var connectionID int
+		var status SCMConnectionAuthStatus
+		var expiresAt sql.NullTime
+		var hasWorkspaceOAuth, hasWorkspacePAT, hasProviderPAT, hasGitHubAppKey, hasUserOAuth bool
+		if err := rows.Scan(
+			&connectionID, &status.AuthMethod, &status.ProviderSlug,
+			&hasWorkspaceOAuth, &expiresAt, &hasWorkspacePAT, &hasProviderPAT,
+			&hasGitHubAppKey, &hasUserOAuth, &status.SCMUsername,
+		); err != nil {
+			return nil, err
+		}
+		switch status.AuthMethod {
+		case models.SCMAuthMethodOAuth:
+			status.HasWorkspaceToken = hasWorkspaceOAuth
+			status.HasUserToken = hasUserOAuth
+			status.IsAuthenticated = hasWorkspaceOAuth || hasUserOAuth
+			if expiresAt.Valid {
+				status.TokenExpiresAt = &expiresAt.Time
+				expired := expiresAt.Time.Before(time.Now())
+				status.TokenExpired = &expired
+			}
+		case models.SCMAuthMethodPAT:
+			status.HasWorkspacePAT = hasWorkspacePAT
+			status.HasProviderPAT = hasProviderPAT
+			status.IsAuthenticated = hasWorkspacePAT || hasProviderPAT
+		case models.SCMAuthMethodGitHubApp:
+			status.HasGitHubAppKey = hasGitHubAppKey
+			status.IsAuthenticated = hasGitHubAppKey
+			status.AuthSource = "provider"
+		}
+		statusCopy := status
+		statuses[connectionID] = &statusCopy
+	}
+	return statuses, rows.Err()
 }
 
 // LinkRepository links a repository to a connection and returns the new row id.

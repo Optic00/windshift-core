@@ -16,6 +16,7 @@ class TimerStore {
   #timerStartTimeUTC = null;
   #syncInterval = null;
   #stateVersion = 0;
+  #initializePromise = null;
 
   // === Derived Values ===
 
@@ -240,7 +241,12 @@ class TimerStore {
    * This should be called when the app starts to sync with any existing active timer
    */
   async initialize() {
-    await this.sync();
+    if (this.#initializePromise) return this.#initializePromise;
+    const request = this.sync().finally(() => {
+      if (this.#initializePromise === request) this.#initializePromise = null;
+    });
+    this.#initializePromise = request;
+    return request;
   }
 
   /**
@@ -264,6 +270,7 @@ class TimerStore {
    */
   reset() {
     this.cleanup();
+    this.#initializePromise = null;
     this.#stateVersion += 1;
     this.activeTimer = null;
     this.syncing = false;

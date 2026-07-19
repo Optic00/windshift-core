@@ -585,3 +585,16 @@ func (h *PermissionHandler) GetAllGroupPermissions(w http.ResponseWriter, r *htt
 
 	respondJSONOK(w, groupPermissions)
 }
+
+// GetAllUserGlobalPermissions returns compact effective global permission
+// assignments for every user. Route middleware restricts this bulk view to
+// system administrators.
+func (h *PermissionHandler) GetAllUserGlobalPermissions(w http.ResponseWriter, r *http.Request) {
+	userPermissions, err := h.repo.ListEffectiveUserGlobalGrants()
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+
+	respondJSONOK(w, userPermissions)
+}

@@ -19,6 +19,11 @@ export const collections = {
         : `/collections/${id}/board-configuration`;
     return fetchAPI(url);
   },
+  getBoardConfigurationBootstrap: (collectionId, workspaceId = null) => {
+    const id = collectionId || 'default';
+    const query = workspaceId ? `?workspace_id=${encodeURIComponent(workspaceId)}` : '';
+    return fetchAPI(`/collections/${id}/board-configuration/bootstrap${query}`);
+  },
   createBoardConfiguration: (collectionId, workspaceId, data) => {
     const id = collectionId || 'default';
     const url =

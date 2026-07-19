@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"windshift/internal/sanitize"
-	"windshift/internal/services"
 )
 
 // resolvePortalRequest is a shared preamble for handlers that operate on a
@@ -141,17 +140,7 @@ func (h *PortalHandler) GetMyRequests(w http.ResponseWriter, r *http.Request) {
 	}
 	channel := portalResult.channel
 
-	// Get auth info from context (middleware already validated)
-	internalUserID, portalCustomerID := h.getAuthFromContext(r)
-
-	// Use service to get requests based on auth type
-	var requests []services.PortalRequestSummary
-	if internalUserID != nil {
-		requests, err = h.portalService.GetRequestsByCreatorID(ctx, *internalUserID, channel.ID)
-	} else {
-		requests, err = h.portalService.GetRequestsByPortalCustomerID(ctx, *portalCustomerID, channel.ID)
-	}
-
+	requests, err := h.loadMyPortalRequests(ctx, r, channel.ID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return

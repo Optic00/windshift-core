@@ -22,6 +22,7 @@ export async function fetchCollectionItems(
   // markdown/TipTap descriptions for every loaded item; item detail fetches
   // still retrieve the full description on demand.
   filters.omit_descriptions = true;
+  filters.include_watermark = true;
 
   if (collectionId) {
     // Reuse a collection the caller already fetched this load cycle (one board
@@ -43,10 +44,11 @@ export async function fetchCollectionItems(
   const items = response?.items ?? (Array.isArray(response) ? response : []);
   const pagination = response?.pagination ?? null;
   const sortableFields = response?.sortable_fields ?? [];
+  const watermark = response?.watermark ?? 0;
 
   const publicSlug =
     collection?.is_public && collection?.public_slug ? collection.public_slug : null;
-  return { items, collectionName, pagination, sortableFields, publicSlug };
+  return { items, collectionName, pagination, sortableFields, publicSlug, watermark };
 }
 
 /**
@@ -75,10 +77,12 @@ export async function fetchCollectionBacklog(
     limit,
     sub_ql,
     omit_descriptions: true,
+    include_watermark: true,
   });
   const items = response?.items ?? (Array.isArray(response) ? response : []);
   const pagination = response?.pagination ?? null;
-  return { items, collectionName, pagination };
+  const watermark = response?.watermark ?? 0;
+  return { items, collectionName, pagination, watermark };
 }
 
 /**

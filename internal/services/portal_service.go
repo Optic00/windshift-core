@@ -444,6 +444,43 @@ func (s *PortalService) GetCustomFieldsForChannel(ctx context.Context, channelID
 	if err != nil {
 		return nil, err
 	}
+	return s.getCustomFieldDefinitions(ctx, cfIDs)
+}
+
+// GetRequestTypeForm returns the filtered form fields together with exactly
+// the custom-field definitions referenced by those fields. Deriving the IDs
+// from the filtered result avoids resolving the create-screen allowance twice
+// and excludes unrelated fields from the complete public form response.
+func (s *PortalService) GetRequestTypeForm(ctx context.Context, requestTypeID int) ([]RequestTypeField, []models.CustomFieldDefinition, error) {
+	fields, err := s.GetRequestTypeFields(ctx, requestTypeID)
+	if err != nil {
+		return nil, nil, err
+	}
+	cfIDs := make(map[int]struct{})
+	for _, field := range fields {
+		if field.FieldType != "custom" {
+			continue
+		}
+		id, err := strconv.Atoi(field.FieldIdentifier)
+		if err == nil {
+			cfIDs[id] = struct{}{}
+		}
+	}
+	definitions, err := s.getCustomFieldDefinitions(ctx, cfIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+	return fields, definitions, nil
+}
+
+// GetCustomFieldsForRequestType returns only the definitions consumed by one
+// public request form.
+func (s *PortalService) GetCustomFieldsForRequestType(ctx context.Context, requestTypeID int) ([]models.CustomFieldDefinition, error) {
+	_, definitions, err := s.GetRequestTypeForm(ctx, requestTypeID)
+	return definitions, err
+}
+
+func (s *PortalService) getCustomFieldDefinitions(ctx context.Context, cfIDs map[int]struct{}) ([]models.CustomFieldDefinition, error) {
 	if len(cfIDs) == 0 {
 		return []models.CustomFieldDefinition{}, nil
 	}
@@ -464,7 +501,7 @@ func (s *PortalService) GetCustomFieldsForChannel(ctx context.Context, channelID
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch custom fields for channel: %w", err)
+		return nil, fmt.Errorf("failed to fetch custom-field definitions: %w", err)
 	}
 	defer rows.Close()
 
@@ -490,7 +527,7 @@ func (s *PortalService) GetCustomFieldsForChannel(ctx context.Context, channelID
 		fields = append(fields, field)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate custom fields for channel: %w", err)
+		return nil, fmt.Errorf("failed to iterate custom-field definitions: %w", err)
 	}
 
 	if fields == nil {

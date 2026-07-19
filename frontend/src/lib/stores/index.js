@@ -41,7 +41,7 @@ export {
 export { collectionEditorOptions } from './collectionEditorOptions.svelte.js';
 export { collectionFieldLinks } from './collectionFieldLinks.svelte.js';
 // Homepage store
-// Access via: homepageStore.recentWorkspaces, homepageStore.notifications,
+// Access via: homepageStore.recentWorkspaces, homepageStore.getSnapshot(),
 // homepageStore.loadDashboardData(), homepageStore.isOnboarding, etc.
 // Centralized state management for homepage/dashboard
 export { homepageStore } from './homepageStore.svelte.js';

@@ -289,7 +289,6 @@
   $effect(() => {
     if (isOpen) {
       loadData();
-      timerStore.initialize();
     }
   });
 

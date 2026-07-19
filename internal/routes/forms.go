@@ -12,7 +12,9 @@ func RegisterFormRoutes(deps *Deps) {
 
 	// Public form endpoints (no auth required)
 	api.Handle("GET /forms/{slug}", deps.Portal.Form.GetFormChannel)
+	api.Handle("GET /forms/{slug}/bootstrap", deps.Portal.Form.GetBootstrap)
 	api.Handle("GET /forms/{slug}/forms", deps.Portal.Form.GetForms)
+	api.Handle("GET /forms/{slug}/forms/{id}/detail", deps.Portal.Form.GetFormDetail)
 	api.Handle("GET /forms/{slug}/forms/{id}/fields", deps.Portal.Form.GetFormFields)
 	api.Handle("GET /forms/{slug}/custom-fields", deps.Portal.Form.GetCustomFields)
 

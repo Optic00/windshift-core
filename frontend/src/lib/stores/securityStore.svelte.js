@@ -4,6 +4,7 @@
  * Centralizes credentials, tokens, SSH keys, and password management.
  */
 import { api } from '../api.js';
+import { capabilitiesStore } from './capabilities.svelte.js';
 
 class SecurityStore {
   // === User ===
@@ -116,15 +117,8 @@ class SecurityStore {
   // === Data Loading ===
 
   async loadFeatures() {
-    try {
-      const resp = await fetch('/api/features');
-      if (resp.ok) {
-        const data = await resp.json();
-        this.sshAvailable = data.ssh_available || false;
-      }
-    } catch (err) {
-      console.warn('Failed to load features:', err);
-    }
+    await capabilitiesStore.load();
+    this.sshAvailable = capabilitiesStore.sshAvailable;
   }
 
   async loadUserProfile() {

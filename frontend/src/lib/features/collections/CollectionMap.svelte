@@ -6,6 +6,7 @@
   import { t } from '../../stores/i18n.svelte.js';
   import { getCollection, checkItemVisibility } from '../collections/collectionService.js';
   import { collectionStore, reloadCollection } from '../../stores/collectionContext.js';
+  import { workspaceDataStore, workspacesStore } from '../../stores/index.js';
   import { useGradientStyles, loadWorkspaceGradient } from '../../stores/workspaceGradient.svelte.js';
   import { FileText, Plus, ChevronDown, ChevronRight, Home, MapPin } from '@lucide/svelte';
   import { itemTypeIconMap } from '../../utils/icons.js';
@@ -27,15 +28,14 @@
 
   let { workspaceId, collectionId = null } = $props();
 
-  let workspace = $state(null);
+  let workspace = $derived(workspaceDataStore.workspace);
   let loading = $state(true);
   let backboneItems = $state([]); // Current backbone items (horizontal)
   let childItemsByParent = $state({}); // Child items grouped by parent ID
-  let itemTypes = $state([]);
-  let statuses = $state([]);
-  let statusCategories = $state([]);
-  let workspaces = $state([]);
-  let hierarchyLevels = $state([]);
+  let itemTypes = $derived(workspaceDataStore.itemTypes);
+  let statuses = $derived(workspaceDataStore.statuses);
+  let statusCategories = $derived(workspaceDataStore.statusCategories);
+  let workspaces = $derived($workspacesStore.regularWorkspaces || []);
   let currentParentId = $state(null); // null = root level, otherwise parent ID for current backbone
   let hierarchyBreadcrumbs = $state([]); // Navigation breadcrumbs for hierarchy levels
 
@@ -70,8 +70,6 @@
     if (workspaceId) {
       await loadWorkspaceGradient(workspaceId);
     }
-    // Align with the collection store default page size so filter reloads keep the same scope.
-    await collectionStore.setItemsPage(1, 250);
     await loadAllData();
   });
 
@@ -86,78 +84,14 @@
 
   async function loadAllData() {
     loading = true;
-    if (workspaceId) {
-      await Promise.all([
-        loadWorkspace(),
-        loadWorkspaces(),
-        loadItemTypesAndHierarchyLevels(),
-        loadStoryMapDataFromURL(),
-        loadStatuses()
-      ]);
-    } else {
-      // Global mode — load reference data via global APIs
-      await Promise.all([
-        loadWorkspaces(),
-        loadItemTypesAndHierarchyLevels(),
-        loadStoryMapDataFromURL(),
-        loadStatusesGlobal()
-      ]);
-    }
+    await Promise.all([
+      workspaceId
+        ? workspaceDataStore.initialize(workspaceId)
+        : workspaceDataStore.initializeGlobal(),
+      workspacesStore.load(),
+    ]);
+    loadStoryMapDataFromURL();
     loading = false;
-  }
-
-async function loadWorkspaces() {
-  try {
-    workspaces = await api.workspaces.getAll() || [];
-  } catch (error) {
-    console.error('Failed to load workspaces:', error);
-    workspaces = [];
-  }
-}
-
-async function loadStatuses() {
-  try {
-    const [statusesData, statusCategoriesData] = await Promise.all([
-      api.workspaces.getStatuses(workspaceId),
-      api.statusCategories.getAll()
-    ]);
-    statuses = statusesData || [];
-    statusCategories = statusCategoriesData || [];
-  } catch (error) {
-    console.error('Failed to load statuses:', error);
-    statuses = [];
-    statusCategories = [];
-  }
-}
-
-async function loadStatusesGlobal() {
-  try {
-    const [statusesData, statusCategoriesData] = await Promise.all([
-      api.statuses.getAll(),
-      api.statusCategories.getAll()
-    ]);
-    statuses = statusesData || [];
-    statusCategories = statusCategoriesData || [];
-  } catch (error) {
-    console.error('Failed to load global statuses:', error);
-    statuses = [];
-    statusCategories = [];
-  }
-}
-
-  async function loadItemTypesAndHierarchyLevels() {
-    try {
-      const [itemTypesResult, hierarchyLevelsResult] = await Promise.all([
-        api.itemTypes.getAll(),
-        api.hierarchyLevels.getAll()
-      ]);
-      itemTypes = itemTypesResult || [];
-      hierarchyLevels = hierarchyLevelsResult || [];
-    } catch (error) {
-      console.error('Failed to load item types:', error);
-      itemTypes = [];
-      hierarchyLevels = [];
-    }
   }
 
   function loadStoryMapDataFromURL() {
@@ -176,14 +110,6 @@ async function loadStatusesGlobal() {
       setTimeout(setupDragAndDrop, 0);
     }
   });
-
-  async function loadWorkspace() {
-    try {
-      workspace = await api.workspaces.get(workspaceId);
-    } catch (error) {
-      console.error('Failed to load workspace:', error);
-    }
-  }
 
   async function updateHierarchyBreadcrumbs() {
     const newBreadcrumbs = [];
@@ -285,20 +211,9 @@ async function loadStatusesGlobal() {
     updateHierarchyBreadcrumbs();
   }
 
-  async function loadStoryMapData(parentId = null) {
-    try {
-      // Load item types
-      const itemTypesResponse = await api.itemTypes.getAll();
-      itemTypes = itemTypesResponse;
-
-      // Set current parent ID
-      currentParentId = parentId;
-
-      // Process items from the store
-      processMapItems(collectionStore.items);
-    } catch (error) {
-      console.error('Failed to load story map data:', error);
-    }
+  function loadStoryMapData(parentId = null) {
+    currentParentId = parentId;
+    processMapItems(collectionStore.items);
   }
 
   function updateURL(parentId) {
@@ -656,6 +571,7 @@ async function loadStatusesGlobal() {
     backgroundStyle={styles.backgroundStyle}
     contextVars={styles.contextVars}
     contentClass=""
+    testid="map-view"
   >
     <!-- Header -->
     <div class="p-6 border-b" style="border-color: var(--ctx-border, var(--ds-border));">

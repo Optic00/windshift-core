@@ -13,32 +13,36 @@ import (
 
 // HomepageHandler handles homepage-related HTTP requests
 type HomepageHandler struct {
-	workspaceRepo   *repository.WorkspaceRepository
-	itemRepo        *repository.ItemRepository
-	activityTracker *services.ActivityTracker
-	permService     *services.PermissionService
+	workspaceRepo      *repository.WorkspaceRepository
+	itemRepo           *repository.ItemRepository
+	activityTracker    *services.ActivityTracker
+	permService        *services.PermissionService
+	preferencesService *services.UserPreferencesService
 }
 
 // NewHomepageHandler creates a new homepage handler
-func NewHomepageHandler(workspaceRepo *repository.WorkspaceRepository, itemRepo *repository.ItemRepository, activityTracker *services.ActivityTracker, permService *services.PermissionService) *HomepageHandler {
+func NewHomepageHandler(workspaceRepo *repository.WorkspaceRepository, itemRepo *repository.ItemRepository, activityTracker *services.ActivityTracker, permService *services.PermissionService, preferencesService *services.UserPreferencesService) *HomepageHandler {
 	return &HomepageHandler{
-		workspaceRepo:   workspaceRepo,
-		itemRepo:        itemRepo,
-		activityTracker: activityTracker,
-		permService:     permService,
+		workspaceRepo:      workspaceRepo,
+		itemRepo:           itemRepo,
+		activityTracker:    activityTracker,
+		permService:        permService,
+		preferencesService: preferencesService,
 	}
 }
 
 // HomepageData represents the comprehensive data for the user's homepage
 type HomepageData struct {
-	RecentWorkspaces    []WorkspaceActivity `json:"recent_workspaces"`
-	TotalWorkspaceCount int                 `json:"total_workspace_count"`
-	TotalItemCount      int                 `json:"total_item_count"`
-	RecentlyViewed      []ItemActivity      `json:"recently_viewed"`
-	RecentlyEdited      []ItemActivity      `json:"recently_edited"`
-	RecentlyCommented   []ItemActivity      `json:"recently_commented"`
-	WatchedItems        []ItemActivity      `json:"watched_items"`
-	UpcomingMilestones  []MilestoneProgress `json:"upcoming_milestones"`
+	RecentWorkspaces    []WorkspaceActivity        `json:"recent_workspaces"`
+	TotalWorkspaceCount int                        `json:"total_workspace_count"`
+	TotalItemCount      int                        `json:"total_item_count"`
+	RecentlyViewed      []ItemActivity             `json:"recently_viewed"`
+	RecentlyEdited      []ItemActivity             `json:"recently_edited"`
+	RecentlyCommented   []ItemActivity             `json:"recently_commented"`
+	WatchedItems        []ItemActivity             `json:"watched_items"`
+	UpcomingMilestones  []MilestoneProgress        `json:"upcoming_milestones"`
+	Layout              models.UserDashboardLayout `json:"layout"`
+	LayoutRevision      string                     `json:"layout_revision"`
 }
 
 // WorkspaceActivity represents a workspace visit with metadata
@@ -110,6 +114,23 @@ func (h *HomepageHandler) GetHomepage(w http.ResponseWriter, r *http.Request) {
 		RecentlyCommented:   []ItemActivity{},
 		WatchedItems:        []ItemActivity{},
 		UpcomingMilestones:  []MilestoneProgress{},
+		Layout: models.UserDashboardLayout{
+			Sections: []models.UserDashboardSection{},
+			Widgets:  []models.UserDashboardWidget{},
+		},
+	}
+
+	// Dashboard layout is part of the route snapshot so homepage entry does not
+	// need a second request. A layout read failure is non-critical: the client
+	// can still render its default layout around the rest of the homepage data.
+	if h.preferencesService != nil {
+		layout, revision, layoutErr := h.preferencesService.GetDashboardLayoutSnapshot(user.ID)
+		if layoutErr != nil {
+			slog.Warn("error loading dashboard layout", slog.String("component", "homepage"), slog.Any("error", layoutErr))
+		} else {
+			homepageData.Layout = layout
+			homepageData.LayoutRevision = revision
+		}
 	}
 
 	// Get total workspace count (excluding personal workspaces for onboarding purposes)

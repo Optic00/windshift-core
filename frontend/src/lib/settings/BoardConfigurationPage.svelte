@@ -9,7 +9,9 @@
   import { CARD_SELECTABLE_FIELDS, getSystemFieldName } from '../stores/fieldConfig.js';
   import { confirm } from '../composables/useConfirm.js';
   import { workspacePermissions } from '../stores/workspacePermissions.svelte.js';
-  import { getCollection } from '../features/collections/collectionService.js';
+  import { collectionStore } from '../stores/collectionContext.svelte.js';
+  import { workspaceDataStore } from '../stores/workspaceDataStore.svelte.js';
+  import { loadBoardConfigurationPageData } from './boardConfigurationData.js';
   import { Plus, GripVertical, X, Grip } from '@lucide/svelte';
   import { useGradientStyles, loadWorkspaceGradient } from '../stores/workspaceGradient.svelte.js';
   import ViewHeader from '../layout/ViewHeader.svelte';
@@ -69,10 +71,10 @@
   });
 
   onMount(async () => {
-    if (workspaceId) {
-      await loadWorkspaceGradient(workspaceId);
-    }
-    await loadData();
+    await Promise.all([
+      workspaceId ? loadWorkspaceGradient(workspaceId) : Promise.resolve(),
+      loadData()
+    ]);
     loading = false;
   });
 
@@ -94,66 +96,22 @@
 
   async function loadData() {
     try {
-      if (workspaceId) {
-        workspace = await api.workspaces.get(workspaceId);
-      }
+      const data = await loadBoardConfigurationPageData(
+        api,
+        workspaceDataStore,
+        workspaceId,
+        collectionId
+      );
+      workspace = data.workspace;
+      statuses = data.statuses;
+      customFieldDefinitions = data.customFieldDefinitions;
+      currentCollectionName = data.collection?.name || 'Default';
+      publicSlug = data.collection?.is_public && data.collection?.public_slug
+        ? data.collection.public_slug
+        : null;
+      boardConfig = data.boardConfiguration;
 
-      if (collectionId) {
-        const collection = await getCollection(collectionId);
-        if (collection) {
-          currentCollectionName = collection.name;
-          publicSlug = (collection.is_public && collection.public_slug) ? collection.public_slug : null;
-        }
-      } else {
-        currentCollectionName = 'Default';
-      }
-
-      const statusMap = new Map();
-
-      if (collectionId) {
-        const collection = await getCollection(collectionId);
-
-        if (collection && collection.ql_query) {
-          try {
-            const items = await api.items.getAll({ ql: collection.ql_query });
-            const workspaceIds = [...new Set(items.map(item => item.workspace_id).filter(id => id))];
-
-            for (const wsId of workspaceIds) {
-              const wsStatuses = await api.workspaces.getStatuses(wsId);
-              wsStatuses.forEach(status => statusMap.set(status.id, status));
-            }
-
-            if (workspaceIds.length === 0) {
-              const allStatuses = workspaceId
-                ? await api.workspaces.getStatuses(workspaceId)
-                : await api.statuses.getAll();
-              allStatuses.forEach(status => statusMap.set(status.id, status));
-            }
-          } catch (error) {
-            console.error('Failed to load items for collection:', error);
-            const allStatuses = workspaceId
-              ? await api.workspaces.getStatuses(workspaceId)
-              : await api.statuses.getAll();
-            allStatuses.forEach(status => statusMap.set(status.id, status));
-          }
-        } else {
-          const allStatuses = workspaceId
-            ? await api.workspaces.getStatuses(workspaceId)
-            : await api.statuses.getAll();
-          allStatuses.forEach(status => statusMap.set(status.id, status));
-        }
-      } else if (workspaceId) {
-        const wsStatuses = await api.workspaces.getStatuses(workspaceId);
-        wsStatuses.forEach(status => statusMap.set(status.id, status));
-      } else {
-        const allStatuses = await api.statuses.getAll();
-        allStatuses.forEach(status => statusMap.set(status.id, status));
-      }
-
-      statuses = Array.from(statusMap.values());
-
-      try {
-        boardConfig = await api.collections.getBoardConfiguration(collectionId, workspaceId);
+      if (boardConfig) {
         columns = (boardConfig.columns || []).map(col => ({
           ...col,
           status_ids: col.status_ids || []
@@ -163,23 +121,12 @@
           : statuses.filter(s => !s.is_default && !s.is_completed).map(s => s.id);
         cardFields = boardConfig.card_fields || [];
         showRightmostColumnLast50 = Boolean(boardConfig.show_rightmost_column_last_50);
-      } catch (error) {
-        if (error.status !== 404) {
-          console.error('Failed to load board configuration:', error);
-        }
+      } else {
         columns = [];
         backlogStatusIDs = statuses.filter(s => !s.is_default && !s.is_completed).map(s => s.id);
         cardFields = [];
         showRightmostColumnLast50 = false;
       }
-
-      try {
-        const cfData = await api.customFields.getAll(workspaceId ? { workspace_id: workspaceId } : {});
-        customFieldDefinitions = (cfData?.data || cfData || []);
-      } catch (e) {
-        customFieldDefinitions = [];
-      }
-
     } catch (error) {
       console.error('Failed to load data:', error);
     }
@@ -574,6 +521,7 @@
         const newConfig = await api.collections.createBoardConfiguration(collectionId, workspaceId, payload);
         boardConfig = newConfig;
       }
+      collectionStore.invalidateBoardConfiguration(workspaceId, collectionId);
 
       hasChanges = false;
       goToBoard();
@@ -1092,4 +1040,3 @@
     </div>
   </div>
 {/if}
-

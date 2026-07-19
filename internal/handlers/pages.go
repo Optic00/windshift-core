@@ -70,17 +70,19 @@ func (h *KnowledgeSearchHandler) Search(w http.ResponseWriter, r *http.Request) 
 //     which combines workspace page.* role grants with per-page ACL rows
 //     walked along the materialized path.
 type PageHandler struct {
-	service  *services.PageService
-	pageAuth *services.PagePermissionService
-	auditor  *logger.Auditor
+	service           *services.PageService
+	pageAuth          *services.PagePermissionService
+	permissionService *services.PermissionService
+	auditor           *logger.Auditor
 }
 
 // NewPageHandler constructs a PageHandler.
-func NewPageHandler(service *services.PageService, pageAuth *services.PagePermissionService, auditor *logger.Auditor) *PageHandler {
+func NewPageHandler(service *services.PageService, pageAuth *services.PagePermissionService, permissionService *services.PermissionService, auditor *logger.Auditor) *PageHandler {
 	return &PageHandler{
-		service:  service,
-		pageAuth: pageAuth,
-		auditor:  auditor,
+		service:           service,
+		pageAuth:          pageAuth,
+		permissionService: permissionService,
+		auditor:           auditor,
 	}
 }
 
@@ -466,7 +468,7 @@ func (h *PageHandler) Move(w http.ResponseWriter, r *http.Request) {
 
 // GetHistory returns paginated revision history for a page.
 func (h *PageHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
-	_, pageID, _, ok := h.requireWorkspacePageAuth(w, r, services.PageOpView)
+	_, pageID, user, ok := h.requireWorkspacePageAuth(w, r, services.PageOpView)
 	if !ok {
 		return
 	}
@@ -476,7 +478,20 @@ func (h *PageHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
+	isAdmin, _ := h.permissionService.IsSystemAdmin(user.ID)
+	hasListPermission, _ := h.permissionService.HasGlobalPermission(user.ID, models.PermissionUserList)
+	filterPageRevisionAuthors(revs, user.ID, isAdmin, hasListPermission)
 	respondJSONOK(w, pageHistoryResponse{Revisions: revs})
+}
+
+func filterPageRevisionAuthors(revs []models.PageRevision, userID int, isAdmin, hasListPermission bool) {
+	for i := range revs {
+		author := revs[i].Author
+		if author == nil || author.ID == userID || isAdmin || (hasListPermission && author.IsActive) {
+			continue
+		}
+		revs[i].Author = nil
+	}
 }
 
 // GetRevision returns a single revision; the revision must belong to the

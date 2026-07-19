@@ -250,7 +250,12 @@
   bind:activeCategory={customizationCategory}
 />
 
-<div class="min-h-screen max-w-7xl mx-auto px-6 pt-8 pb-6" style="background-color: var(--ds-surface);">
+<div
+  class="min-h-screen max-w-7xl mx-auto px-6 pt-8 pb-6"
+  style="background-color: var(--ds-surface);"
+  data-testid="homepage"
+  data-ready={layoutLoaded}
+>
   <!-- Greeting + action buttons -->
   {#if !isOnboarding}
     <div class="mb-6 flex items-start justify-between gap-4">

@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { slide } from 'svelte/transition';
   import { currentRoute, navigate, isWorkspaceRoute, GLOBAL_COLLECTION_VIEWS } from '../router.js';
-  import { authStore, permissionStore, uiStore, currentWorkspace, workspacesStore, workspacePermissions, ssoStore, workspaceDataStore, activityStore, collectionStore } from '../stores';
+  import { authStore, permissionStore, uiStore, currentWorkspace, workspacesStore, workspacePermissions, ssoStore, workspaceDataStore, activityStore, collectionStore, homepageStore } from '../stores';
   import EmailVerificationBanner from '../features/notifications/EmailVerificationBanner.svelte';
   import { moduleSettings } from '../stores/moduleSettings.js';
   import { attachmentStatus } from '../stores/attachmentStatus.svelte.js';
@@ -154,6 +154,10 @@
   let loadingRoutes = $state(new Set());
   let lastSpaceTime = 0;
   const DOUBLE_SPACE_THRESHOLD = 300; // milliseconds
+
+  // Security and other late-mounted consumers can await the shell feature
+  // snapshot instead of racing it with a second /api/features request.
+  capabilitiesStore.beginHydration();
 
   // Component loaders with literal import paths for Vite's static analysis
   const componentLoaders = {
@@ -665,6 +669,7 @@
           permissionStore.setHasAssetSets(bootstrap.has_asset_sets === true);
           permissionStore.setHasActivePortals(bootstrap.has_active_portals === true);
         } catch (err) {
+          capabilitiesStore.failHydration();
           console.warn('Failed to load shell capabilities:', err);
         }
       },
@@ -680,8 +685,6 @@
           console.warn('Failed to check email verification status:', err);
         }
       },
-      // Re-fetch collection data now that auth is established.
-      () => collectionStore.reload(),
     ];
 
     void runAuthenticatedShellBootstrap({
@@ -695,6 +698,7 @@
 
     return () => {
       stopNotificationPoller();
+      homepageStore.reset();
       resetAuthenticatedShellState();
     };
   });
@@ -746,26 +750,40 @@
       workspaceDataStore.refresh();
     }
 
+    function handleRefreshWorkItems() {
+      homepageStore.invalidateSnapshot();
+    }
+
     window.addEventListener('refresh-workspaces', handleRefreshWorkspaces);
     window.addEventListener('refresh-workspace-data', handleRefreshWorkspaceData);
+    window.addEventListener('refresh-work-items', handleRefreshWorkItems);
 
     return () => {
       window.removeEventListener('show-create-modal', handleShowCreateModal);
       window.removeEventListener('refresh-workspaces', handleRefreshWorkspaces);
       window.removeEventListener('refresh-workspace-data', handleRefreshWorkspaceData);
+      window.removeEventListener('refresh-work-items', handleRefreshWorkItems);
     };
   });
 
 
 
-  // Load current workspace when route changes (only for workspace routes)
+  async function hydrateCurrentWorkspaceFromSharedData(workspaceId) {
+    await workspaceDataStore.initialize(workspaceId);
+    const expectedId = Number.parseInt(String(workspaceId), 10);
+    if (workspaceDataStore.workspaceId !== expectedId || !workspaceDataStore.workspace) return;
+    currentWorkspace.hydrate(workspaceDataStore.workspace);
+  }
+
+  // Load current workspace when route changes (only for workspace routes).
+  // workspaceDataStore owns the request; currentWorkspace is hydrated from the
+  // same response so the shell does not issue an identical workspace GET.
   $effect(() => {
     // Handle personal workspace routes
     if ($currentRoute.path?.startsWith('/personal') && ($currentRoute.view?.startsWith('workspace-') || $currentRoute.view === 'personal-workspace' || $currentRoute.view === 'personal-plan' || $currentRoute.view === 'item-detail')) {
       const personalWorkspaceId = $workspacesStore.personalWorkspace?.id;
       if (personalWorkspaceId) {
-        currentWorkspace.load(personalWorkspaceId);
-        workspaceDataStore.initialize(personalWorkspaceId);
+        void hydrateCurrentWorkspaceFromSharedData(personalWorkspaceId);
       } else {
         // Personal workspace not loaded yet - trigger loading
         // The effect will re-run when personalWorkspace is set in the store
@@ -774,8 +792,7 @@
     }
     // Handle regular workspace routes
     else if ($currentRoute.params?.id && /^\d+$/.test(String($currentRoute.params.id)) && ($currentRoute.view?.startsWith('workspace-') || $currentRoute.view === 'workspace' || $currentRoute.view === 'item-detail' || $currentRoute.view === 'item' || testViews.has($currentRoute.view))) {
-      currentWorkspace.load($currentRoute.params.id);
-      workspaceDataStore.initialize($currentRoute.params.id);
+      void hydrateCurrentWorkspaceFromSharedData($currentRoute.params.id);
     }
     // Handle global collection views (no workspace)
     else if (GLOBAL_COLLECTION_VIEWS.has($currentRoute.view)) {

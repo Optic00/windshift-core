@@ -14,6 +14,7 @@
   import ScheduleEditor from './ScheduleEditor.svelte';
   import LayerEditor from './LayerEditor.svelte';
   import OverrideEditor from './OverrideEditor.svelte';
+  import { loadTeamOnCallOverview } from './onCallOverviewData.js';
 
   let { team, canEdit } = $props();
 
@@ -31,30 +32,9 @@
   async function loadSchedules() {
     loading = true;
     try {
-      schedules = (await api.onCallSchedules.listForTeam(team.id)) || [];
-      // Hydrate full schedule (with layers) for each
-      const detailed = await Promise.all(
-        schedules.map(async (s) => {
-          try {
-            return await api.onCallSchedules.get(s.id);
-          } catch {
-            return s;
-          }
-        })
-      );
-      schedules = detailed;
-      // Load current on-call for each
-      const currentEntries = await Promise.all(
-        schedules.map(async (s) => {
-          try {
-            const current = await api.onCallSchedules.getCurrent(s.id);
-            return [s.id, current];
-          } catch {
-            return [s.id, null];
-          }
-        })
-      );
-      currentByScheduleId = new Map(/** @type {[any, any][]} */ (currentEntries));
+      const overview = await loadTeamOnCallOverview(api, team.id);
+      schedules = overview.schedules;
+      currentByScheduleId = overview.currentByScheduleId;
       error = '';
     } catch (err) {
       error = err.message || t('teams.oncall.failedToLoad');
@@ -142,7 +122,7 @@
   });
 </script>
 
-<div class="space-y-6">
+<div class="space-y-6" data-testid="on-call-tab" data-ready={!loading}>
   <div class="flex items-center justify-between">
     <h3 class="text-base font-medium" style="color: var(--ds-text)">
       {t('teams.oncall.schedules')}

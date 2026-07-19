@@ -99,26 +99,15 @@ export const notificationActions = {
 
   // Mark all as read
   markAllAsRead: async () => {
-    const unreadNotifications = get(notifications).filter((item) => !item.read);
-    const results = await Promise.allSettled(
-      unreadNotifications.map(async (item) => {
-        await api.notifications.markAsRead(item.id);
-        return item.id;
-      })
-    );
+    if (!get(notifications).some((item) => !item.read)) return;
 
-    const readIDs = new Set();
-    for (const result of results) {
-      if (result.status === 'fulfilled') {
-        readIDs.add(result.value);
-      } else {
-        console.error('Failed to mark notification as read:', result.reason);
-      }
-    }
-    if (readIDs.size > 0) {
+    try {
+      await api.notifications.markAllAsRead();
       notifications.update((items) =>
-        items.map((item) => (readIDs.has(item.id) ? { ...item, read: true } : item))
+        items.map((item) => (item.read ? item : { ...item, read: true }))
       );
+    } catch (error) {
+      console.error('Failed to mark all notifications as read:', error);
     }
   },
 

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 
 	"windshift/internal/logger"
 	"windshift/internal/models"
@@ -21,6 +22,30 @@ type TestRunHandler struct {
 	testRunRepo *repository.TestRunRepository
 	itemRepo    *repository.ItemRepository
 	auditor     *logger.Auditor
+}
+
+type testRunResultResponse struct {
+	models.TestResult
+	TestCaseTitle string `json:"test_case_title"`
+}
+
+type testRunStepResultResponse struct {
+	StepID       int        `json:"step_id"`
+	TestCaseID   int        `json:"test_case_id"`
+	Status       string     `json:"status"`
+	ActualResult string     `json:"actual_result"`
+	Notes        string     `json:"notes"`
+	ItemID       *int       `json:"item_id"`
+	ExecutedAt   *time.Time `json:"executed_at"`
+}
+
+// TestRunDetailResponse is the complete read model shared by execution and
+// completed-run detail screens.
+type TestRunDetailResponse struct {
+	Run         *models.TestRun                      `json:"run"`
+	TestCases   []models.TestCase                    `json:"test_cases"`
+	Results     []testRunResultResponse              `json:"results"`
+	StepResults map[string]testRunStepResultResponse `json:"step_results"`
 }
 
 func NewTestRunHandlerWithPool(
@@ -87,6 +112,73 @@ func (h *TestRunHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSONOK(w, run)
+}
+
+// GetDetail returns the run, its case/step snapshot, and all result rows in a
+// single frontend request without per-case repository queries.
+func (h *TestRunHandler) GetDetail(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := requireIDParam(w, r, "workspaceId")
+	if !ok {
+		return
+	}
+	runID, ok := requireIDParam(w, r, "id")
+	if !ok {
+		return
+	}
+
+	run, err := h.service.GetByID(runID, workspaceID)
+	if errors.Is(err, repository.ErrNotFound) {
+		respondNotFound(w, r, "test_run")
+		return
+	}
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+
+	testCases, err := h.testRunRepo.FindCasesWithStepsForRun(runID, workspaceID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	resultRows, err := h.testRunRepo.FindResultsWithTestCase(runID, workspaceID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	stepRows, err := h.testRunRepo.FindStepResultsForRun(runID, workspaceID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+
+	results := make([]testRunResultResponse, 0, len(resultRows))
+	for _, row := range resultRows {
+		results = append(results, testRunResultResponse{
+			TestResult:    row.TestResult,
+			TestCaseTitle: row.TestCaseTitle,
+		})
+	}
+	stepResults := make(map[string]testRunStepResultResponse, len(stepRows))
+	for _, row := range stepRows {
+		key := fmt.Sprintf("%d_%d", row.TestCaseID, row.StepID)
+		stepResults[key] = testRunStepResultResponse{
+			StepID:       row.StepID,
+			TestCaseID:   row.TestCaseID,
+			Status:       row.Status,
+			ActualResult: row.ActualResult,
+			Notes:        row.Notes,
+			ItemID:       row.ItemID,
+			ExecutedAt:   row.ExecutedAt,
+		}
+	}
+
+	respondJSONOK(w, TestRunDetailResponse{
+		Run:         run,
+		TestCases:   testCases,
+		Results:     results,
+		StepResults: stepResults,
+	})
 }
 
 func (h *TestRunHandler) Create(w http.ResponseWriter, r *http.Request) {

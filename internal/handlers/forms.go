@@ -26,6 +26,44 @@ import (
 // headroom while still bounding per-request memory on this public endpoint.
 const formSubmissionMaxBytes = 1 << 20
 
+// PublicFormChannel is the public, sanitized channel configuration used by
+// both the granular compatibility endpoint and the aggregate bootstrap.
+type PublicFormChannel struct {
+	ChannelID      int    `json:"channel_id"`
+	Name           string `json:"name"`
+	Slug           string `json:"slug"`
+	Theme          string `json:"theme"`
+	BrandColor     string `json:"brand_color"`
+	LogoURL        string `json:"logo_url"`
+	SuccessMessage string `json:"success_message"`
+	RedirectURL    string `json:"redirect_url"`
+}
+
+type PublicFormInfo struct {
+	ID            int                       `json:"id"`
+	Name          string                    `json:"name"`
+	Description   string                    `json:"description"`
+	Icon          string                    `json:"icon"`
+	Color         string                    `json:"color"`
+	DisplayOrder  int                       `json:"display_order"`
+	WorkspaceID   *int                      `json:"workspace_id,omitempty"`
+	WorkspaceName string                    `json:"workspace_name,omitempty"`
+	WorkspaceKey  string                    `json:"workspace_key,omitempty"`
+	Config        *models.RequestTypeConfig `json:"config,omitempty"`
+}
+
+type PublicFormDetail struct {
+	FormID                 int                            `json:"form_id"`
+	Fields                 []services.RequestTypeField    `json:"fields"`
+	CustomFieldDefinitions []models.CustomFieldDefinition `json:"custom_field_definitions"`
+}
+
+type PublicFormBootstrapResponse struct {
+	Channel    PublicFormChannel `json:"channel"`
+	Forms      []PublicFormInfo  `json:"forms"`
+	FormDetail *PublicFormDetail `json:"form_detail,omitempty"`
+}
+
 // FormHandler handles public form channel submissions
 type FormHandler struct {
 	db                   database.Database
@@ -74,6 +112,174 @@ func (h *FormHandler) getAuthFromContext(r *http.Request) (userID, customerID *i
 	return nil, nil
 }
 
+// GetBootstrap returns the public channel and active form catalog together.
+// When the channel has exactly one form, its complete render data is embedded
+// so the common public-form entry path needs one browser request instead of
+// two request waterfalls totaling four GETs.
+func (h *FormHandler) GetBootstrap(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	result, err := h.findChannelByFormSlug(ctx, slug)
+	if err != nil {
+		respondNotFound(w, r, "form_channel")
+		return
+	}
+	forms, err := h.loadPublicForms(ctx, result.channel.ID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+
+	response := PublicFormBootstrapResponse{
+		Channel: h.publicFormChannel(slug, result),
+		Forms:   forms,
+	}
+	if len(forms) == 1 {
+		detail, err := h.loadPublicFormDetail(ctx, result.channel.ID, forms[0].ID)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return
+		}
+		response.FormDetail = &detail
+	}
+	respondJSONOK(w, response)
+}
+
+// GetFormDetail returns the two datasets needed to render a selected form in
+// one request. Multi-form channels use this after a visitor chooses a form.
+func (h *FormHandler) GetFormDetail(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	formID, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		respondBadRequest(w, r, "Invalid form ID")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	result, err := h.findChannelByFormSlug(ctx, slug)
+	if err != nil {
+		respondNotFound(w, r, "form_channel")
+		return
+	}
+	detail, err := h.loadPublicFormDetail(ctx, result.channel.ID, formID)
+	if errors.Is(err, repository.ErrNotFound) {
+		respondNotFound(w, r, "form")
+		return
+	}
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	respondJSONOK(w, detail)
+}
+
+func (h *FormHandler) publicFormChannel(slug string, result *channelResult) PublicFormChannel {
+	safeRedirectURL := result.config.FormRedirectURL
+	if safeRedirectURL != "" {
+		if err := utils.ValidateClientRedirectURL(safeRedirectURL); err != nil {
+			slog.Warn("dropped unsafe form_redirect_url from form channel response",
+				slog.String("component", "forms"),
+				slog.String("slug", slug),
+				slog.Any("error", err))
+			safeRedirectURL = ""
+		}
+	}
+	return PublicFormChannel{
+		ChannelID:      result.channel.ID,
+		Name:           result.channel.Name,
+		Slug:           result.config.FormSlug,
+		Theme:          result.config.FormTheme,
+		BrandColor:     result.config.FormBrandColor,
+		LogoURL:        result.config.FormLogoURL,
+		SuccessMessage: result.config.FormSuccessMessage,
+		RedirectURL:    safeRedirectURL,
+	}
+}
+
+func (h *FormHandler) loadPublicForms(ctx context.Context, channelID int) ([]PublicFormInfo, error) {
+	query := `
+		SELECT rt.id, rt.channel_id, rt.name, rt.description, rt.item_type_id,
+		       rt.icon, rt.color, rt.display_order, rt.is_active, rt.config,
+		       rt.created_at, rt.updated_at,
+		       it.name as item_type_name,
+		       rt.workspace_id, ws.name as workspace_name, ws.key as workspace_key
+		FROM request_types rt
+		LEFT JOIN item_types it ON rt.item_type_id = it.id
+		LEFT JOIN workspaces ws ON rt.workspace_id = ws.id
+		WHERE rt.channel_id = ? AND rt.is_active = true
+		ORDER BY rt.display_order, rt.name`
+
+	rows, err := h.db.QueryContext(ctx, query, channelID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	forms := []PublicFormInfo{}
+	for rows.Next() {
+		var rt models.RequestType
+		var workspaceID sql.NullInt64
+		var workspaceName, workspaceKey sql.NullString
+		if err := rows.Scan(&rt.ID, &rt.ChannelID, &rt.Name, &rt.Description, &rt.ItemTypeID,
+			&rt.Icon, &rt.Color, &rt.DisplayOrder, &rt.IsActive, &rt.Config,
+			&rt.CreatedAt, &rt.UpdatedAt,
+			&rt.ItemTypeName,
+			&workspaceID, &workspaceName, &workspaceKey); err != nil {
+			return nil, err
+		}
+
+		form := PublicFormInfo{
+			ID:            rt.ID,
+			Name:          rt.Name,
+			Description:   rt.Description,
+			Icon:          rt.Icon,
+			Color:         rt.Color,
+			DisplayOrder:  rt.DisplayOrder,
+			WorkspaceName: workspaceName.String,
+			WorkspaceKey:  workspaceKey.String,
+		}
+		if workspaceID.Valid {
+			id := int(workspaceID.Int64)
+			form.WorkspaceID = &id
+		}
+		if rt.Config != nil && *rt.Config != "" {
+			var config models.RequestTypeConfig
+			if err := json.Unmarshal([]byte(*rt.Config), &config); err == nil {
+				form.Config = &config
+			}
+		}
+		forms = append(forms, form)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return forms, nil
+}
+
+func (h *FormHandler) loadPublicFormDetail(ctx context.Context, channelID, formID int) (PublicFormDetail, error) {
+	belongs, err := h.portalService.ValidateRequestTypeBelongsToChannel(ctx, formID, channelID)
+	if err != nil {
+		return PublicFormDetail{}, err
+	}
+	if !belongs {
+		return PublicFormDetail{}, repository.ErrNotFound
+	}
+
+	detail := PublicFormDetail{
+		FormID:                 formID,
+		Fields:                 []services.RequestTypeField{},
+		CustomFieldDefinitions: []models.CustomFieldDefinition{},
+	}
+	detail.Fields, detail.CustomFieldDefinitions, err = h.portalService.GetRequestTypeForm(ctx, formID)
+	if err != nil {
+		return PublicFormDetail{}, err
+	}
+	return detail, nil
+}
+
 // GetFormChannel returns the form channel configuration for public display
 func (h *FormHandler) GetFormChannel(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
@@ -87,33 +293,7 @@ func (h *FormHandler) GetFormChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	config := result.config
-
-	// Defense-in-depth: drop a stored redirect_url that isn't http(s) before
-	// echoing it to the public form page. Same rationale as SubmitForm — keeps
-	// a stale or API-bypassing config from XSS'ing form visitors via
-	// window.location.href in FormRenderer.svelte.
-	safeRedirectURL := config.FormRedirectURL
-	if safeRedirectURL != "" {
-		if err := utils.ValidateClientRedirectURL(safeRedirectURL); err != nil {
-			slog.Warn("dropped unsafe form_redirect_url from form channel response",
-				slog.String("component", "forms"),
-				slog.String("slug", slug),
-				slog.Any("error", err))
-			safeRedirectURL = ""
-		}
-	}
-
-	respondJSONOK(w, map[string]interface{}{
-		"channel_id":      result.channel.ID,
-		"name":            result.channel.Name,
-		"slug":            config.FormSlug,
-		"theme":           config.FormTheme,
-		"brand_color":     config.FormBrandColor,
-		"logo_url":        config.FormLogoURL,
-		"success_message": config.FormSuccessMessage,
-		"redirect_url":    safeRedirectURL,
-	})
+	respondJSONOK(w, h.publicFormChannel(slug, result))
 }
 
 // GetForms returns active forms (request types) for a form channel
@@ -129,85 +309,11 @@ func (h *FormHandler) GetForms(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	query := `
-		SELECT rt.id, rt.channel_id, rt.name, rt.description, rt.item_type_id,
-		       rt.icon, rt.color, rt.display_order, rt.is_active, rt.config,
-		       rt.created_at, rt.updated_at,
-		       it.name as item_type_name,
-		       rt.workspace_id, ws.name as workspace_name, ws.key as workspace_key
-		FROM request_types rt
-		LEFT JOIN item_types it ON rt.item_type_id = it.id
-		LEFT JOIN workspaces ws ON rt.workspace_id = ws.id
-		WHERE rt.channel_id = ? AND rt.is_active = true
-		ORDER BY rt.display_order, rt.name`
-
-	rows, err := h.db.QueryContext(ctx, query, result.channel.ID)
+	forms, err := h.loadPublicForms(ctx, result.channel.ID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
-	defer func() { _ = rows.Close() }()
-
-	type formInfo struct {
-		ID            int                       `json:"id"`
-		Name          string                    `json:"name"`
-		Description   string                    `json:"description"`
-		Icon          string                    `json:"icon"`
-		Color         string                    `json:"color"`
-		DisplayOrder  int                       `json:"display_order"`
-		WorkspaceID   *int                      `json:"workspace_id,omitempty"`
-		WorkspaceName string                    `json:"workspace_name,omitempty"`
-		WorkspaceKey  string                    `json:"workspace_key,omitempty"`
-		Config        *models.RequestTypeConfig `json:"config,omitempty"`
-	}
-
-	var forms []formInfo
-	for rows.Next() {
-		var rt models.RequestType
-		var workspaceID sql.NullInt64
-		var workspaceName, workspaceKey sql.NullString
-		if err := rows.Scan(&rt.ID, &rt.ChannelID, &rt.Name, &rt.Description, &rt.ItemTypeID,
-			&rt.Icon, &rt.Color, &rt.DisplayOrder, &rt.IsActive, &rt.Config,
-			&rt.CreatedAt, &rt.UpdatedAt,
-			&rt.ItemTypeName,
-			&workspaceID, &workspaceName, &workspaceKey); err != nil {
-			continue
-		}
-
-		fi := formInfo{
-			ID:            rt.ID,
-			Name:          rt.Name,
-			Description:   rt.Description,
-			Icon:          rt.Icon,
-			Color:         rt.Color,
-			DisplayOrder:  rt.DisplayOrder,
-			WorkspaceName: workspaceName.String,
-			WorkspaceKey:  workspaceKey.String,
-		}
-		if workspaceID.Valid {
-			wsID := int(workspaceID.Int64)
-			fi.WorkspaceID = &wsID
-		}
-
-		// Parse per-form config
-		if rt.Config != nil && *rt.Config != "" {
-			var rtConfig models.RequestTypeConfig
-			if err := json.Unmarshal([]byte(*rt.Config), &rtConfig); err == nil {
-				fi.Config = &rtConfig
-			}
-		}
-
-		forms = append(forms, fi)
-	}
-	if err := rows.Err(); err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-
-	if forms == nil {
-		forms = []formInfo{}
-	}
-
 	respondJSONOK(w, forms)
 }
 
@@ -229,10 +335,12 @@ func (h *FormHandler) GetFormFields(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify the form belongs to this channel
-	var channelID int
-	err = h.db.QueryRowContext(ctx, `SELECT channel_id FROM request_types WHERE id = ? AND is_active = true`, formID).Scan(&channelID)
-	if err != nil || channelID != result.channel.ID {
+	belongs, err := h.portalService.ValidateRequestTypeBelongsToChannel(ctx, formID, result.channel.ID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	if !belongs {
 		respondNotFound(w, r, "form")
 		return
 	}

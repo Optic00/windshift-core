@@ -48,6 +48,7 @@ func RegisterSCMRoutes(deps *Deps) {
 	// Workspace SCM connection endpoints
 	wsView := deps.PermissionMiddleware.RequireWorkspacePermission(models.PermissionItemView)
 	wsAdmin := deps.PermissionMiddleware.RequireWorkspacePermission(models.PermissionWorkspaceAdmin)
+	api.HandleH("GET /scm-connections", auth(http.HandlerFunc(deps.SCM.Workspace.GetAccessibleSCMConnections)))
 	api.HandleH("GET /workspaces/{id}/scm-providers", auth(wsView(http.HandlerFunc(deps.SCM.Workspace.GetAvailableSCMProviders))))
 	api.HandleH("GET /workspaces/{id}/scm-connections", auth(wsView(http.HandlerFunc(deps.SCM.Workspace.GetWorkspaceSCMConnections))))
 	api.HandleH("POST /workspaces/{id}/scm-connections", auth(wsAdmin(http.HandlerFunc(deps.SCM.Workspace.CreateWorkspaceSCMConnection))))

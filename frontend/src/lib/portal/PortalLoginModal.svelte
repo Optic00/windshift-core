@@ -61,6 +61,7 @@
   async function handlePasskeyLogin() {
     const result = await portalAuthStore.loginWithPasskey(portalStore.currentSlug);
     if (result.success) {
+      portalStore.hydrateUserBootstrap(result.userBootstrap);
       onloginsuccess?.();
       closeModal();
     }
@@ -81,7 +82,8 @@
 
     if (result.success) {
       // Refresh portal auth state to detect internal user session
-      await portalAuthStore.checkAuth(portalStore.currentSlug);
+      const userBootstrap = await portalAuthStore.checkAuth(portalStore.currentSlug);
+      portalStore.hydrateUserBootstrap(userBootstrap);
       onloginsuccess?.();
       closeModal();
     } else {

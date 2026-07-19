@@ -48,21 +48,32 @@ type PageNode struct {
 // PageRevision is an immutable snapshot of a page produced on every
 // content/title/parent/permission-impacting edit and on restore.
 type PageRevision struct {
-	ID             int       `json:"id" db:"id"`
-	PageID         int       `json:"page_id" db:"page_id"`
-	RevisionNumber int       `json:"revision_number" db:"revision_number"`
-	Title          string    `json:"title" db:"title"`
-	Slug           string    `json:"slug" db:"slug"`
-	Content        string    `json:"content" db:"content"`
-	ContentHash    string    `json:"content_hash" db:"content_hash"`
-	Excerpt        string    `json:"excerpt" db:"excerpt"`
-	ParentID       *int      `json:"parent_id" db:"parent_id"`
-	Path           string    `json:"path" db:"path"`
-	Depth          int       `json:"depth" db:"depth"`
-	ChangeSummary  string    `json:"change_summary" db:"change_summary"`
-	ChangeType     string    `json:"change_type" db:"change_type"`
-	CreatedBy      int       `json:"created_by" db:"created_by"`
-	CreatedAt      time.Time `json:"created_at" db:"created_at"`
+	ID             int                 `json:"id" db:"id"`
+	PageID         int                 `json:"page_id" db:"page_id"`
+	RevisionNumber int                 `json:"revision_number" db:"revision_number"`
+	Title          string              `json:"title" db:"title"`
+	Slug           string              `json:"slug" db:"slug"`
+	Content        string              `json:"content" db:"content"`
+	ContentHash    string              `json:"content_hash" db:"content_hash"`
+	Excerpt        string              `json:"excerpt" db:"excerpt"`
+	ParentID       *int                `json:"parent_id" db:"parent_id"`
+	Path           string              `json:"path" db:"path"`
+	Depth          int                 `json:"depth" db:"depth"`
+	ChangeSummary  string              `json:"change_summary" db:"change_summary"`
+	ChangeType     string              `json:"change_type" db:"change_type"`
+	CreatedBy      int                 `json:"created_by" db:"created_by"`
+	CreatedAt      time.Time           `json:"created_at" db:"created_at"`
+	Author         *PageRevisionAuthor `json:"author,omitempty" db:"-"`
+}
+
+// PageRevisionAuthor is the small user projection needed by revision lists.
+// IsActive is used by handlers to preserve user-directory visibility rules
+// and is deliberately never serialized.
+type PageRevisionAuthor struct {
+	ID       int    `json:"id"`
+	Name     string `json:"name,omitempty"`
+	Username string `json:"username,omitempty"`
+	IsActive bool   `json:"-"`
 }
 
 // PageRevisionChangeType enumerates valid values for PageRevision.ChangeType.

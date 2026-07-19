@@ -28,6 +28,7 @@
   import { parseFieldOptions, serializeOptions } from '../utils/optionUtils.js';
   import { X as XIcon } from '@lucide/svelte';
   import DescriptionText from '../components/DescriptionText.svelte';
+  import { loadCustomFieldsOverview } from './customFieldsData.js';
 
   const entityTypeOptions = [
     { id: 'item', name: 'Items' },
@@ -116,59 +117,31 @@
   });
 
   onMount(async () => {
-    await loadCustomFields();
-
-    // Load asset sets for asset field type
-    try {
-      assetSets = await api.assetSets.getAll() || [];
-    } catch (error) {
-      console.error('Failed to load asset sets:', error);
-      assetSets = [];
-    }
-
-    // Load link types and item types for linking field type
-    try {
-      linkTypes = await api.linkTypes.getAll() || [];
-    } catch (error) {
-      console.error('Failed to load link types:', error);
-      linkTypes = [];
-    }
-    try {
-      itemTypes = await api.itemTypes.getAll() || [];
-    } catch (error) {
-      console.error('Failed to load item types:', error);
-      itemTypes = [];
-    }
+    const loadCatalog = async (loader, label) => {
+      try {
+        return (await loader()) || [];
+      } catch (error) {
+        console.error(`Failed to load ${label}:`, error);
+        return [];
+      }
+    };
+    const [, loadedAssetSets, loadedLinkTypes, loadedItemTypes] = await Promise.all([
+      loadCustomFields(),
+      loadCatalog(() => api.assetSets.getAll(), 'asset sets'),
+      loadCatalog(() => api.linkTypes.getAll(), 'link types'),
+      loadCatalog(() => api.itemTypes.getAll(), 'item types'),
+    ]);
+    assetSets = loadedAssetSets;
+    linkTypes = loadedLinkTypes;
+    itemTypes = loadedItemTypes;
   });
 
   async function loadCustomFields() {
     try {
-      const [fieldsResult, screensResult] = await Promise.all([
-        api.customFields.getAll(),
-        api.screens.getAll()
-      ]);
-      // Handle new response format with data array and index_counts
-      if (fieldsResult && fieldsResult.data) {
-        customFields = fieldsResult.data || [];
-        indexCounts = fieldsResult.index_counts || { items: { current: 0, max: 20 }, assets: { current: 0, max: 20 } };
-      } else {
-        customFields = fieldsResult || [];
-      }
-      
-      // Load screen fields for each screen
-      const screensWithFields = await Promise.all(
-        (screensResult || []).map(async (screen) => {
-          try {
-            const fields = await api.screens.getFields(screen.id);
-            return { ...screen, fields: fields || [] };
-          } catch (error) {
-            console.error(`Failed to load fields for screen ${screen.id}:`, error);
-            return { ...screen, fields: [] };
-          }
-        })
-      );
-      
-      screens = screensWithFields;
+      const overview = await loadCustomFieldsOverview(api);
+      customFields = overview.customFields;
+      indexCounts = overview.indexCounts;
+      screens = overview.screens;
     } catch (error) {
       console.error('Failed to load custom fields:', error);
       customFields = [];

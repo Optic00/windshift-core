@@ -1,6 +1,7 @@
 <script>
   import { Clock } from '@lucide/svelte';
   import { api } from '../api.js';
+  import { homepageStore } from '../stores';
   import { formatRelativeCompact } from '../utils/dateFormatter.js';
   import WidgetState from './WidgetState.svelte';
   import { t } from '../stores/i18n.svelte.js';
@@ -58,7 +59,7 @@
           }))
           .slice(0, maxItems);
       } else {
-        const data = await api.homepage.get();
+        const data = await homepageStore.getSnapshot();
         if (currentVersion !== fetchVersion) return;
 
         const sources = [

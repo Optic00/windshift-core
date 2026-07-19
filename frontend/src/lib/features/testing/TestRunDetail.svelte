@@ -11,6 +11,7 @@
   import { t } from '../../stores/i18n.svelte.js';
   import { errorToast, infoToast } from '../../stores/toasts.svelte.js';
   import { escapeHtml } from '../../utils/sanitize.ts';
+  import { loadTestRunDetail } from './testRunDetailData.js';
 
   let testRun = $state(null);
   let testResults = $state([]);
@@ -29,24 +30,16 @@
   async function loadTestRun(runId) {
     try {
       loading = true;
-      testRun = await api.tests.testRuns.get(workspaceId, runId);
+      const detail = await loadTestRunDetail(api, workspaceId, runId);
+      testRun = detail.run;
       
       // Load test results if the run has been executed
       if (testRun.ended_at) {
-        const results = await api.tests.testRuns.getResults(workspaceId, runId);
-        const stepResults = await api.tests.testRuns.getStepResults(workspaceId, runId);
-        
-        // Load test cases to get their steps for proper association
-        const testSet = await api.tests.testSets.get(workspaceId, testRun.set_id);
-        const testCases = await api.tests.testSets.getTestCases(workspaceId, testRun.set_id);
-        
-        // Load test steps for each test case
-        for (let testCase of testCases) {
-          testCase.test_steps = await api.tests.testCases.steps.getAll(workspaceId, testCase.id) || [];
-        }
+        const testCases = detail.testCases;
+        const stepResults = detail.stepResults;
         
         // Combine results with step results for display
-        testResults = results.map(result => {
+        testResults = detail.results.map(result => {
           // Find the corresponding test case
           const testCase = testCases.find(tc => tc.id === result.test_case_id);
           
@@ -535,4 +528,3 @@
     {/if}
   </div>
 </div>
-

@@ -11,25 +11,43 @@
   import { authStore } from '../../stores';
   import { confirm } from '../../composables/useConfirm.js';
 
-  let { itemId, canCancel = false, ondecisionMade = null } = $props();
+  let {
+    itemId,
+    canCancel = false,
+    initialRequests = null,
+    ondecisionMade = null,
+  } = $props();
 
   let requests = $state([]);
   let loading = $state(true);
   let acting = $state(false);
   let comment = $state('');
   let expandedRequests = $state(new Set());
+  let lastInitialRequests = null;
 
-  onMount(load);
+  function applyRequests(nextRequests) {
+    requests = nextRequests || [];
+    const next = new Set(expandedRequests);
+    for (const request of requests) if (request.status === 'pending') next.add(request.id);
+    expandedRequests = next;
+  }
+
+  $effect(() => {
+    if (initialRequests === null || initialRequests === lastInitialRequests) return;
+    lastInitialRequests = initialRequests;
+    applyRequests(initialRequests);
+    loading = false;
+  });
+
+  onMount(() => {
+    if (initialRequests === null) void load();
+  });
 
   async function load() {
     if (!itemId) return;
     try {
       loading = true;
-      requests = (await api.approvals.forItem(itemId)) || [];
-      // Auto-expand any pending request so the user lands on the actionable card.
-      const next = new Set(expandedRequests);
-      for (const r of requests) if (r.status === 'pending') next.add(r.id);
-      expandedRequests = next;
+      applyRequests((await api.approvals.forItem(itemId)) || []);
     } catch (err) {
       console.error('load approvals', err);
       errorToast(err.message || JSON.stringify(err));
@@ -94,7 +112,7 @@
       comment = '';
       successToast(`Decision recorded: ${decision}`);
       await load();
-      ondecisionMade?.();
+      ondecisionMade?.(requests);
     } catch (err) {
       errorToast(err.message || JSON.stringify(err));
     } finally {
@@ -117,7 +135,7 @@
       comment = '';
       successToast('Approval cancelled and item returned to previous status');
       await load();
-      ondecisionMade?.();
+      ondecisionMade?.(requests);
     } catch (err) {
       errorToast(err.message || JSON.stringify(err));
     } finally {

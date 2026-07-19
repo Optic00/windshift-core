@@ -18,6 +18,7 @@
 	import AlertBox from '../../components/AlertBox.svelte';
 	import Tooltip from '../../components/Tooltip.svelte';
 	import { Shield, Bot } from '@lucide/svelte';
+	import { agentOwnerName, loadAttributedComments } from './activityAttributionData.js';
 
 	// Get shortcut configuration (use same as description save)
 	const submitShortcut = getShortcut('description', 'save');
@@ -43,30 +44,11 @@
 	// Count of comments that arrived via polling and the user hasn't acknowledged.
 	let newCount = $state(0);
 
-	// Per-author cache of agent owner info, keyed by author_id. Populated
-	// lazily after comments load. A null entry means "we already asked and
-	// the requester isn't allowed to see this agent's owner" so the tooltip
-	// falls back to the generic message instead of re-fetching on every poll.
-	let agentOwnerCache = $state({});
-
-	async function ensureAgentOwnerLoaded(authorId) {
-		if (authorId == null || authorId in agentOwnerCache) return;
-		agentOwnerCache = { ...agentOwnerCache, [authorId]: undefined };
-		try {
-			const info = await api.getAgentOwner(authorId);
-			agentOwnerCache = { ...agentOwnerCache, [authorId]: info };
-		} catch {
-			// 403/404/network failure — keep null so the UI shows the generic
-			// "Authored by an AI agent" tooltip without retrying every poll.
-			agentOwnerCache = { ...agentOwnerCache, [authorId]: null };
-		}
-	}
-
 	function agentTooltipContent(comment) {
 		if (!comment.is_agent) return '';
-		const info = agentOwnerCache[comment.author_id];
-		if (info?.owner_name) {
-			return t('comments.agentOwnedBy', { owner: info.owner_name });
+		const owner = agentOwnerName(comment);
+		if (owner) {
+			return t('comments.agentOwnedBy', { owner });
 		}
 		return t('comments.agentAuthored');
 	}
@@ -139,7 +121,7 @@
 	async function loadComments({ initial = false } = {}) {
 		let next;
 		try {
-			next = (await api.getComments(itemId)) || [];
+			next = (await loadAttributedComments(api, itemId)) || [];
 		} catch (err) {
 			if (initial) {
 				console.error('Failed to load comments:', err);
@@ -154,7 +136,6 @@
 
 		if (initial) {
 			comments = next;
-			prefetchAgentOwners(next);
 			onCommentsLoaded?.({ count: comments.length });
 			return;
 		}
@@ -172,19 +153,8 @@
 		// created_at so ordering is stable. Local-only state (editingCommentId,
 		// newCommentContent) is tracked separately and isn't touched.
 		comments = next;
-		prefetchAgentOwners(next);
 		if (arrived > 0) newCount += arrived;
 		onCommentsLoaded?.({ count: comments.length });
-	}
-
-	function prefetchAgentOwners(list) {
-		const seen = new Set();
-		for (const c of list) {
-			if (!c.is_agent || c.author_id == null) continue;
-			if (seen.has(c.author_id)) continue;
-			seen.add(c.author_id);
-			ensureAgentOwnerLoaded(c.author_id);
-		}
 	}
 
 	async function submitComment() {
@@ -508,4 +478,3 @@
 		</div>
 	</div>
 </div>
-

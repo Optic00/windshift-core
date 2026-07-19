@@ -35,6 +35,7 @@
   import EmptyState from '../../components/EmptyState.svelte';
   import PageHeader from '../../layout/PageHeader.svelte';
   import { useEventListener } from 'runed';
+  import { loadMilestoneTestStatistics } from './milestoneStatisticsData.js';
 
   // Props for workspace-scoped view (optional)
   let { workspaceId = null } = $props();
@@ -136,28 +137,10 @@
 
   async function loadTestStatistics() {
     try {
-      const milestones = $milestonesStore;
-      const statsPromises = milestones.map(async (milestone) => {
-        try {
-          const stats = await api.milestones.getTestStatistics(milestone.id);
-          return { milestoneId: milestone.id, stats };
-        } catch (error) {
-          console.error(`Failed to load test stats for milestone ${milestone.id}:`, error);
-          return { milestoneId: milestone.id, stats: null };
-        }
-      });
-      
-      const results = await Promise.all(statsPromises);
-      const newTestStatistics = {};
-      results.forEach(({ milestoneId, stats }) => {
-        if (stats) {
-          newTestStatistics[milestoneId] = stats;
-        }
-      });
-      
-      testStatistics = newTestStatistics;
+      testStatistics = await loadMilestoneTestStatistics(api, $milestonesStore);
     } catch (error) {
       console.error('Failed to load test statistics:', error);
+      testStatistics = {};
     }
   }
 

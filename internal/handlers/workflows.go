@@ -35,6 +35,23 @@ func (h *WorkflowHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
+	if r.URL.Query().Get("include_transitions") == "true" {
+		transitions, err := h.repo.ListAllTransitions()
+		if err != nil {
+			respondInternalError(w, r, err)
+			return
+		}
+		workflowIndexes := make(map[int]int, len(workflows))
+		for i := range workflows {
+			workflows[i].Transitions = []models.WorkflowTransition{}
+			workflowIndexes[workflows[i].ID] = i
+		}
+		for _, transition := range transitions {
+			if index, ok := workflowIndexes[transition.WorkflowID]; ok {
+				workflows[index].Transitions = append(workflows[index].Transitions, transition)
+			}
+		}
+	}
 
 	slog.Info("workflows listed", "count", len(workflows))
 	respondJSONOK(w, workflows)

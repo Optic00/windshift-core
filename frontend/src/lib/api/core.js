@@ -11,6 +11,47 @@ export const API_BASE = '/api';
 // Ensure the clock-drift warning toast fires at most once per session
 let driftWarningShown = false;
 
+// In-flight GET ownership is scoped to the authenticated browser session.
+// Settled responses are never retained here: this removes duplicate concurrent
+// network work without turning live endpoints into a cache.
+let apiRequestSessionKey = null;
+const inFlightGetRequests = new Map();
+
+function normalizeGETEndpoint(endpoint) {
+  try {
+    const url = new URL(endpoint, 'https://windshift.invalid');
+    url.searchParams.sort();
+    return `${url.pathname}${url.search}`;
+  } catch {
+    return endpoint;
+  }
+}
+
+function inFlightGETKey(endpoint, options) {
+  if (!apiRequestSessionKey) return null;
+  const method = String(options?.method || 'GET').toUpperCase();
+  if (method !== 'GET') return null;
+
+  // Caller-specific request controls cannot safely share one underlying
+  // fetch: aborting or timing out one consumer must not cancel another.
+  const optionKeys = Object.keys(options || {});
+  if (optionKeys.some((key) => key !== 'method')) return null;
+
+  return `${apiRequestSessionKey}|${normalizeGETEndpoint(endpoint)}`;
+}
+
+/** Replace the in-flight ownership scope after authentication changes. */
+export function setAPIRequestSessionKey(sessionKey) {
+  const nextKey = sessionKey == null ? null : String(sessionKey);
+  if (nextKey === apiRequestSessionKey) return;
+  apiRequestSessionKey = nextKey;
+  inFlightGetRequests.clear();
+}
+
+export function clearAPIRequestSessionKey() {
+  setAPIRequestSessionKey(null);
+}
+
 /**
  * Create an enhanced error object from an API response
  * @param {Response} response - Fetch Response object
@@ -55,7 +96,7 @@ function createApiError(response, responseText) {
  * @param {string} endpoint
  * @param {RequestInit & { timeout?: number }} [options]
  */
-export async function fetchAPI(endpoint, options = {}) {
+async function performFetchAPI(endpoint, options = {}) {
   const { timeout: requestedTimeout = 0, signal: callerSignal, ...fetchOptions } = options;
   const headers = {
     'Content-Type': 'application/json',
@@ -207,6 +248,23 @@ export async function fetchAPI(endpoint, options = {}) {
   } finally {
     cleanup();
   }
+}
+
+export function fetchAPI(endpoint, options = {}) {
+  const key = inFlightGETKey(endpoint, options);
+  if (!key) return performFetchAPI(endpoint, options);
+
+  const existing = inFlightGetRequests.get(key);
+  if (existing) return existing;
+
+  let trackedRequest;
+  trackedRequest = performFetchAPI(endpoint, options).finally(() => {
+    if (inFlightGetRequests.get(key) === trackedRequest) {
+      inFlightGetRequests.delete(key);
+    }
+  });
+  inFlightGetRequests.set(key, trackedRequest);
+  return trackedRequest;
 }
 
 // Generic HTTP methods

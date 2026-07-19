@@ -9,9 +9,9 @@ import {
   getDashboardWidgetDefaultWidth,
 } from '../services/dashboardWidgetRegistry.js';
 import { formatDateSimple, formatDateWithOptions } from '../utils/dateFormatter.js';
-import { notificationActions } from './notifications.js';
 
 const ONBOARDING_STORAGE_KEY = 'windshift-dashboard-onboarding-dismissed';
+const HOMEPAGE_SNAPSHOT_REUSE_MS = 5_000;
 
 class HomepageStore {
   // === Dashboard Data ===
@@ -27,9 +27,6 @@ class HomepageStore {
 
   // === Milestones ===
   upcomingMilestones = $state([]);
-
-  // === Notifications ===
-  notifications = $state([]);
 
   // === Loading States ===
   loading = $state(true);
@@ -51,12 +48,17 @@ class HomepageStore {
   // === Layout / Customization ===
   sections = $state([]);
   widgets = $state([]);
+  layoutRevision = $state('');
   layoutLoaded = $state(false);
   isEditMode = $state(false);
   isCustomizeMode = $state(false);
   _saveTimeout = null;
   _savePending = false;
   _pendingSaveQueued = false;
+  _snapshot = null;
+  _snapshotFetchedAt = 0;
+  _loadPromise = null;
+  _generation = 0;
 
   // === Derived Values ===
 
@@ -83,30 +85,28 @@ class HomepageStore {
     }
 
     this.calculateGreeting(userTimezone);
-    await Promise.all([this.loadDashboardData(), this.loadLayout()]);
+    const data = await this.getSnapshot();
+    this.applyLayout(data?.layout, data?.layout_revision);
   }
 
   // === Layout loading / saving ===
 
   async loadLayout() {
-    try {
-      const layout = await api.homepage.getLayout();
-      if (layout && Array.isArray(layout.sections) && layout.sections.length > 0) {
-        this.sections = [...layout.sections].sort((a, b) => a.display_order - b.display_order);
-        this.widgets = Array.isArray(layout.widgets) ? [...layout.widgets] : [];
-      } else {
-        const defaults = buildDefaultDashboardLayout();
-        this.sections = defaults.sections;
-        this.widgets = defaults.widgets;
-      }
-    } catch (err) {
-      console.error('Failed to load dashboard layout:', err);
+    const data = await this.getSnapshot();
+    this.applyLayout(data?.layout, data?.layout_revision);
+  }
+
+  applyLayout(layout, revision = '') {
+    if (layout && Array.isArray(layout.sections) && layout.sections.length > 0) {
+      this.sections = [...layout.sections].sort((a, b) => a.display_order - b.display_order);
+      this.widgets = Array.isArray(layout.widgets) ? [...layout.widgets] : [];
+    } else {
       const defaults = buildDefaultDashboardLayout();
       this.sections = defaults.sections;
       this.widgets = defaults.widgets;
-    } finally {
-      this.layoutLoaded = true;
     }
+    this.layoutRevision = revision || '';
+    this.layoutLoaded = true;
   }
 
   async saveLayout() {
@@ -121,7 +121,13 @@ class HomepageStore {
         sections: this.sections.map((s, idx) => ({ ...s, display_order: idx })),
         widgets: this.widgets.map((w, idx) => ({ ...w, position: idx })),
       };
-      await api.homepage.updateLayout(layout);
+      const savedLayout = await api.homepage.updateLayout(layout);
+      if (this._snapshot) {
+        this._snapshot = { ...this._snapshot, layout: savedLayout || layout };
+      }
+      // The save endpoint intentionally keeps its backward-compatible layout
+      // response shape, so the next aggregate refresh will supply its revision.
+      this.layoutRevision = '';
     } catch (err) {
       console.error('Failed to save dashboard layout:', err);
     } finally {
@@ -226,46 +232,72 @@ class HomepageStore {
   // === Data Loading ===
 
   /**
-   * Load all homepage data.
+   * Return the current route snapshot, sharing an in-flight request between
+   * widgets. Live refreshes call loadDashboardData(), which always replaces it.
    */
+  async getSnapshot() {
+    const snapshotFresh =
+      this._snapshot && Date.now() - this._snapshotFetchedAt <= HOMEPAGE_SNAPSHOT_REUSE_MS;
+    if (snapshotFresh) return this._snapshot;
+    return this._fetchDashboardData({ force: Boolean(this._snapshot) });
+  }
+
+  /** Mark live homepage data stale without blanking currently rendered widgets. */
+  invalidateSnapshot() {
+    this._snapshotFetchedAt = 0;
+  }
+
+  /** Load fresh homepage data and replace the shared widget snapshot. */
   async loadDashboardData() {
-    try {
-      this.loading = true;
-      const data = await api.homepage.get();
+    return this._fetchDashboardData({ force: true });
+  }
 
-      // Load recent workspaces with icon and color
-      this.recentWorkspaces = (data.recent_workspaces || []).slice(0, 5);
+  async _fetchDashboardData({ force = false } = {}) {
+    if (this._loadPromise) return this._loadPromise;
+    if (!force && this._snapshot) return this._snapshot;
 
-      // Load total counts
-      this.totalWorkspaceCount = data.total_workspace_count || 0;
-      this.totalItemCount = data.total_item_count || 0;
+    const generation = this._generation;
+    this.loading = true;
+    const request = api.homepage
+      .get()
+      .then((data) => {
+        if (generation !== this._generation) return this._snapshot;
+        this._snapshot = data || {};
+        this._snapshotFetchedAt = Date.now();
 
-      // Load watched items
-      this.watchedItems = data.watched_items || [];
+        // Load recent workspaces with icon and color
+        this.recentWorkspaces = (data?.recent_workspaces || []).slice(0, 5);
 
-      // Load upcoming milestones
-      this.upcomingMilestones = data.upcoming_milestones || [];
+        // Load total counts
+        this.totalWorkspaceCount = data?.total_workspace_count || 0;
+        this.totalItemCount = data?.total_item_count || 0;
 
-      // Load activity data
-      this.recentlyViewed = data.recently_viewed || [];
-      this.recentlyEdited = data.recently_edited || [];
-      this.recentlyCommented = data.recently_commented || [];
+        // Load watched items
+        this.watchedItems = data?.watched_items || [];
 
-      // Load notifications. "What's New" hides read notifications once they're
-      // older than a day — the tray keeps them, the dashboard doesn't.
-      // Fetch a wider pool than the widget shows so per-workspace grouping
-      // still fills after filtering.
-      const notificationsData = await api.notifications.getAll({ limit: 50 });
-      const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
-      this.notifications = (notificationsData || []).filter((n) => {
-        if (!n.read) return true;
-        return new Date(n.timestamp).getTime() >= dayAgo;
+        // Load upcoming milestones
+        this.upcomingMilestones = data?.upcoming_milestones || [];
+
+        // Load activity data
+        this.recentlyViewed = data?.recently_viewed || [];
+        this.recentlyEdited = data?.recently_edited || [];
+        this.recentlyCommented = data?.recently_commented || [];
+
+        return this._snapshot;
+      })
+      .catch((err) => {
+        if (generation === this._generation) {
+          console.error('Failed to load homepage data:', err);
+        }
+        return this._snapshot;
+      })
+      .finally(() => {
+        if (generation === this._generation) this.loading = false;
+        if (this._loadPromise === request) this._loadPromise = null;
       });
-    } catch (err) {
-      console.error('Failed to load homepage data:', err);
-    } finally {
-      this.loading = false;
-    }
+
+    this._loadPromise = request;
+    return request;
   }
 
   /**
@@ -273,19 +305,6 @@ class HomepageStore {
    */
   async refresh() {
     await this.loadDashboardData();
-  }
-
-  /**
-   * Mark a notification as read, reusing the shared notification logic (which
-   * hits the API and updates the tray store) and syncing the dashboard's own
-   * copy so the "What's New" widget reflects the read state immediately.
-   */
-  async markNotificationRead(id) {
-    if (id == null) return;
-    const target = this.notifications.find((n) => n.id === id);
-    if (!target || target.read) return;
-    await notificationActions.markAsRead(id);
-    this.notifications = this.notifications.map((n) => (n.id === id ? { ...n, read: true } : n));
   }
 
   // === Greeting Calculation ===
@@ -402,7 +421,6 @@ class HomepageStore {
     this.recentlyEdited = [];
     this.recentlyCommented = [];
     this.upcomingMilestones = [];
-    this.notifications = [];
     this.loading = true;
     this.activityLoading = false;
     this.milestonesLoading = false;
@@ -414,10 +432,15 @@ class HomepageStore {
     this.currentDate = '';
     this.sections = [];
     this.widgets = [];
+    this.layoutRevision = '';
     this.layoutLoaded = false;
     this.isEditMode = false;
     this.isCustomizeMode = false;
     clearTimeout(this._saveTimeout);
+    this._generation += 1;
+    this._snapshot = null;
+    this._snapshotFetchedAt = 0;
+    this._loadPromise = null;
   }
 }
 

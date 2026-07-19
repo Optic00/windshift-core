@@ -11,11 +11,13 @@ vi.mock('../api.js', () => ({
 }));
 
 import { api } from '../api.js';
+import { capabilitiesStore } from './capabilities.svelte.js';
 import { securityStore } from './securityStore.svelte.js';
 
 describe('securityStore passkey enrollment mode', () => {
   beforeEach(() => {
     securityStore.reset();
+    capabilitiesStore.reset();
     vi.clearAllMocks();
     global.fetch = vi
       .fn()
@@ -37,6 +39,15 @@ describe('securityStore passkey enrollment mode', () => {
     expect(api.getUser).not.toHaveBeenCalled();
     expect(api.getUserCredentials).not.toHaveBeenCalled();
     expect(api.getApiTokens).not.toHaveBeenCalled();
+  });
+
+  it('reuses the shell feature snapshot instead of fetching features again', async () => {
+    capabilitiesStore.hydrate({ ssh_available: true, capabilities: [] });
+
+    securityStore.setCurrentUserId(42);
+
+    await vi.waitFor(() => expect(securityStore.sshAvailable).toBe(true));
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 
   it('resets stale state when a different user enters enrollment', () => {

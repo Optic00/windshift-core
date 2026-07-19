@@ -36,6 +36,7 @@ func RegisterUserRoutes(deps *Deps) {
 
 	// Permission endpoints
 	api.HandleH("GET /permissions", admin(http.HandlerFunc(deps.Users.Permission.GetAllPermissions)))
+	api.HandleH("GET /users/permissions/global", admin(http.HandlerFunc(deps.Users.Permission.GetAllUserGlobalPermissions)))
 	api.HandleH("GET /users/{userId}/permissions", auth(http.HandlerFunc(deps.Users.Permission.GetUserPermissions)))
 	api.HandleH("POST /permissions/global/grant", admin(http.HandlerFunc(deps.Users.Permission.GrantGlobalPermission)))
 	api.HandleH("DELETE /users/{userId}/permissions/global/{permissionId}", admin(http.HandlerFunc(deps.Users.Permission.RevokeGlobalPermission)))

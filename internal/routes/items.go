@@ -25,10 +25,12 @@ func RegisterItemRoutes(deps *Deps) {
 	api.HandleH("POST /items/bulk-update", auth(http.HandlerFunc(deps.Items.Item.BulkUpdate)))
 	api.HandleH("GET /items/cache-stats", auth(http.HandlerFunc(deps.Items.Item.GetCacheStats)))
 	// Stable key lookup for SPA/CLI deep links: /workspaces/WI/items/123.
+	api.HandleH("GET /workspaces/{key}/items/{number}/detail-summary", auth(http.HandlerFunc(deps.Items.Detail.GetByKeyAndNumber)))
 	api.HandleH("GET /workspaces/{key}/items/{number}", auth(http.HandlerFunc(deps.Items.Item.GetByKeyAndNumber)))
 	// Item live-update stream (WI-484). Item-view gated (404 on no view); the
 	// path ends in /events so it is exempt from per-user concurrency slots.
 	api.HandleH("GET /items/{id}/events", auth(http.HandlerFunc(deps.Items.Item.Events)))
+	api.HandleH("GET /items/{id}/detail-summary", auth(http.HandlerFunc(deps.Items.Detail.Get)))
 	api.HandleH("GET /items/{id}", auth(http.HandlerFunc(deps.Items.Item.Get)))
 	api.HandleH("PUT /items/{id}", auth(http.HandlerFunc(deps.Items.Item.Update)))
 	api.HandleH("DELETE /items/{id}", auth(http.HandlerFunc(deps.Items.Item.Delete)))

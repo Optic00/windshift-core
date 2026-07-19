@@ -15,6 +15,11 @@ vi.mock('../api.js', () => ({
   },
 }));
 
+vi.mock('../api/core.js', () => ({
+  setAPIRequestSessionKey: vi.fn(),
+}));
+
+import { setAPIRequestSessionKey } from '../api/core.js';
 import { api } from '../api.js';
 // Import after mocking
 import { authStore } from './auth.svelte.js';
@@ -313,6 +318,14 @@ describe('authStore', () => {
       expect(state.session).toEqual(mockSession);
       expect(state.loading).toBe(false);
       expect(state.error).toBeNull();
+    });
+
+    it('scopes shared GET ownership to auth and clears it on logout state', () => {
+      authStore.setAuthData({ id: '7' }, { id: 'session-7' });
+      expect(setAPIRequestSessionKey).toHaveBeenLastCalledWith('auth:7:session-7');
+
+      authStore.clearAuth();
+      expect(setAPIRequestSessionKey).toHaveBeenLastCalledWith(null);
     });
   });
 

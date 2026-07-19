@@ -222,6 +222,42 @@ func (r *ItemRepository) FindAllWithDetailsContext(ctx context.Context, params I
 	return items, total, nil
 }
 
+// FindDistinctWorkspaceIDsContext returns the workspace IDs represented by an
+// item filter without loading the matching item rows. It uses the same joins
+// and WHERE builder as the paginated item list so CQL aliases and access
+// scoping remain identical while the result size stays bounded by workspace
+// count rather than item count.
+func (r *ItemRepository) FindDistinctWorkspaceIDsContext(ctx context.Context, params ItemListParams) ([]int, error) {
+	whereClause, args := r.buildWhereClause(params)
+	query := `SELECT DISTINCT i.workspace_id
+		FROM items i
+		JOIN workspaces w ON i.workspace_id = w.id
+		LEFT JOIN item_types it ON i.item_type_id = it.id
+		LEFT JOIN statuses st ON i.status_id = st.id
+		LEFT JOIN status_categories sc ON st.category_id = sc.id
+		` + whereClause + `
+		ORDER BY i.workspace_id`
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query distinct item workspaces: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	workspaceIDs := []int{}
+	for rows.Next() {
+		var workspaceID int
+		if err := rows.Scan(&workspaceID); err != nil {
+			return nil, fmt.Errorf("failed to scan distinct item workspace: %w", err)
+		}
+		workspaceIDs = append(workspaceIDs, workspaceID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate distinct item workspaces: %w", err)
+	}
+	return workspaceIDs, nil
+}
+
 // Search searches items by title and description with text matching.
 // It delegates to FindAllWithDetails using TextQuery/ItemKeyQuery filters.
 func (r *ItemRepository) Search(query string, workspaceIDs []int, pagination PaginationParams) ([]models.Item, int, error) {

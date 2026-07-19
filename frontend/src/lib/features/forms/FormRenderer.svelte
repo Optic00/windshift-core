@@ -1,15 +1,18 @@
 <script>
+  import { untrack } from 'svelte';
   import { api } from '../../api.js';
   import { t } from '../../stores/i18n.svelte.js';
   import CustomFieldRenderer from '../items/CustomFieldRenderer.svelte';
   import Spinner from '../../components/Spinner.svelte';
   import Label from '../../components/Label.svelte';
   import { toExternal } from '../../runtime/contextPath.js';
+  import { loadPublicFormDetail } from './publicFormData.js';
 
   let {
     formSlug = '',
     formId = null,
     formConfig = null,
+    initialDetail = null,
     brandColor = '#14b8a6',
     isDarkMode = false,
     onSubmitted = () => {},
@@ -25,6 +28,7 @@
   let success = $state(false);
   let successMessage = $state('');
   let redirectUrl = $state('');
+  let loadSequence = 0;
 
   // Multi-step
   let steps = $state([1]);
@@ -38,46 +42,62 @@
   let formData = $state({ title: '', description: '' });
   let customFieldValues = $state({});
 
-  // Load fields when formId changes
+  // The sole-form bootstrap already contains its complete render data. For a
+  // multi-form channel, selection uses one complete-detail request.
   $effect(() => {
-    if (formSlug && formId) {
-      loadFields();
-    }
+    const activeSlug = formSlug;
+    const activeFormId = formId;
+    const seededDetail = initialDetail;
+    if (!activeSlug || !activeFormId) return;
+
+    const sequence = ++loadSequence;
+    untrack(() => {
+      if (seededDetail?.form_id === activeFormId) {
+        applyDetail(seededDetail);
+      } else {
+        void loadFields(activeSlug, activeFormId, sequence);
+      }
+    });
   });
 
-  async function loadFields() {
+  function applyDetail(detail) {
+    error = null;
+    success = false;
+    fields = detail.fields || [];
+    customFieldDefinitions = detail.custom_field_definitions || [];
+
+    const stepNumbers = [...new Set(fields.map(f => f.step_number || 1))].sort((a, b) => a - b);
+    steps = stepNumbers.length > 0 ? stepNumbers : [1];
+    currentStep = Math.min(...steps);
+
+    customFieldValues = {};
+    fields.forEach(field => {
+      if (field.field_type === 'custom' || field.field_type === 'virtual') {
+        if (field.field_type === 'virtual' && field.virtual_field_type === 'checkbox') {
+          customFieldValues[field.field_identifier] = false;
+        } else {
+          customFieldValues[field.field_identifier] = '';
+        }
+      }
+    });
+    loading = false;
+  }
+
+  async function loadFields(activeSlug, activeFormId, sequence) {
     try {
       loading = true;
       error = null;
       success = false;
 
-      const [fieldsResult, cfResult] = await Promise.all([
-        api.forms.getFormFields(formSlug, formId),
-        api.forms.getCustomFields(formSlug),
-      ]);
-
-      fields = fieldsResult || [];
-      customFieldDefinitions = cfResult || [];
-
-      const stepNumbers = [...new Set(fields.map(f => f.step_number || 1))].sort((a, b) => a - b);
-      steps = stepNumbers.length > 0 ? stepNumbers : [1];
-      currentStep = Math.min(...steps);
-
-      customFieldValues = {};
-      fields.forEach(field => {
-        if (field.field_type === 'custom' || field.field_type === 'virtual') {
-          if (field.field_type === 'virtual' && field.virtual_field_type === 'checkbox') {
-            customFieldValues[field.field_identifier] = false;
-          } else {
-            customFieldValues[field.field_identifier] = '';
-          }
-        }
-      });
+      const detail = await loadPublicFormDetail(activeSlug, activeFormId);
+      if (sequence !== loadSequence) return;
+      applyDetail(detail);
     } catch (err) {
+      if (sequence !== loadSequence) return;
       console.error('Failed to load form fields:', err);
       error = err.message || 'Failed to load form fields';
     } finally {
-      loading = false;
+      if (sequence === loadSequence) loading = false;
     }
   }
 

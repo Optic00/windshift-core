@@ -1,4 +1,5 @@
 import { derived, writable } from 'svelte/store';
+import { setAPIRequestSessionKey } from '../api/core.js';
 import { api } from '../api.js';
 import { clearStores, getStoreValue } from './storeUtils.js';
 
@@ -30,6 +31,20 @@ function createAuthStore() {
       error: $error,
     })
   );
+
+  // Keep API request coalescing isolated to one authenticated session. The
+  // server does not expose the cookie token, so user id + session creation
+  // time is the stable public session marker; tests/legacy responses may
+  // provide an explicit id instead.
+  combined.subscribe((state) => {
+    if (!state.isAuthenticated || state.user?.id == null) {
+      setAPIRequestSessionKey(null);
+      return;
+    }
+    const marker =
+      state.session?.id || state.session?.created_at || state.session?.expires_at || 'active';
+    setAPIRequestSessionKey(`auth:${state.user.id}:${marker}`);
+  });
 
   return {
     // Subscribe to combined state

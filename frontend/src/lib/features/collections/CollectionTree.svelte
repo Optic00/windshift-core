@@ -18,16 +18,16 @@
   import TableHeaderBar from '../../components/TableHeaderBar.svelte';
   import { formatDate } from '../../utils/dateFormatter.js';
   import { moduleSettings } from '../../stores/moduleSettings.js';
-  import { itemTestCaseLinksStore } from '../../stores/index.js';
+  import { itemTestCaseLinksStore, workspaceDataStore } from '../../stores/index.js';
 
   let { workspaceId, collectionId = null } = $props();
 
-  let workspace = $state(null);
+  let workspace = $derived(workspaceDataStore.workspace);
   let allItems = $state([]);
-  let itemTypes = $state([]);
-  let statuses = $state([]);
-  let statusCategories = $state([]);
-  let priorities = $state([]);
+  let itemTypes = $derived(workspaceDataStore.itemTypes);
+  let statuses = $derived(workspaceDataStore.statuses);
+  let statusCategories = $derived(workspaceDataStore.statusCategories);
+  let priorities = $derived(workspaceDataStore.priorities);
   let loading = $state(true);
   let currentCollectionName = $state('Default');
   let expandedItems = $state(new Set()); // Track which items are expanded
@@ -58,8 +58,6 @@
     if (workspaceId) {
       await loadWorkspaceGradient(workspaceId);
     }
-    // Keep this aligned with the collection store default page size.
-    await collectionStore.setItemsPage(1, 250);
     await loadData();
   });
 
@@ -81,24 +79,13 @@
     loading = true;
     if (workspaceId) {
       itemTestCaseLinksStore.initialize(workspaceId);
-
-      await Promise.all([
-        loadWorkspace(),
-        loadItemTypes(),
-        loadStatusData(),
-        loadPriorities()
-      ]);
+      await workspaceDataStore.initialize(workspaceId);
 
       if (showTestCases) {
         await loadPendingTestCases();
       }
     } else {
-      // Global mode — load reference data via global APIs
-      await Promise.all([
-        loadItemTypes(),
-        loadStatusDataGlobal(),
-        loadPriorities()
-      ]);
+      await workspaceDataStore.initializeGlobal();
     }
     loading = false;
   }
@@ -108,62 +95,6 @@
       loadPendingTestCases();
     }
   });
-
-  async function loadWorkspace() {
-    try {
-      workspace = await api.workspaces.get(workspaceId);
-    } catch (error) {
-      console.error('[CollectionTree] Failed to load workspace:', error);
-    }
-  }
-
-  async function loadItemTypes() {
-    try {
-      itemTypes = await api.itemTypes.getAll();
-    } catch (error) {
-      console.error('[CollectionTree] Failed to load item types:', error);
-      itemTypes = [];
-    }
-  }
-
-  async function loadStatusData() {
-    try {
-      const [statusesData, statusCategoriesData] = await Promise.all([
-        api.workspaces.getStatuses(workspaceId),
-        api.statusCategories.getAll()
-      ]);
-      statuses = statusesData || [];
-      statusCategories = statusCategoriesData || [];
-    } catch (error) {
-      console.error('[CollectionTree] Failed to load status data:', error);
-      statuses = [];
-      statusCategories = [];
-    }
-  }
-
-  async function loadStatusDataGlobal() {
-    try {
-      const [statusesData, statusCategoriesData] = await Promise.all([
-        api.statuses.getAll(),
-        api.statusCategories.getAll()
-      ]);
-      statuses = statusesData || [];
-      statusCategories = statusCategoriesData || [];
-    } catch (error) {
-      console.error('[CollectionTree] Failed to load global status data:', error);
-      statuses = [];
-      statusCategories = [];
-    }
-  }
-
-  async function loadPriorities() {
-    try {
-      priorities = await api.priorities.getAll();
-    } catch (error) {
-      console.error('[CollectionTree] Failed to load priorities:', error);
-      priorities = [];
-    }
-  }
 
   function getItemsByParent(parentId) {
     return allItems.filter(item => item.parent_id === parentId);
@@ -393,6 +324,7 @@
   <StaticViewBackground
     backgroundStyle={styles.backgroundStyle}
     contextVars={styles.contextVars}
+    testid="tree-view"
   >
     <!-- Content Container -->
       <!-- Header -->

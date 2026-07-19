@@ -319,8 +319,60 @@ func (s *WorkspaceService) GetStatuses(workspaceID int) ([]models.Status, error)
 		return nil, fmt.Errorf("failed to get workspace statuses: %w", err)
 	}
 	defer rows.Close()
+	return scanWorkspaceStatuses(rows)
+}
 
-	var statuses []models.Status
+// GetStatusesForWorkspaces returns the union of statuses available to any of
+// the supplied workspaces in one query. An empty workspace list means global
+// status context and therefore returns the complete status catalog.
+func (s *WorkspaceService) GetStatusesForWorkspaces(workspaceIDs []int) ([]models.Status, error) {
+	if len(workspaceIDs) == 0 {
+		return repository.NewStatusRepository(s.db).List()
+	}
+
+	placeholders := make([]string, len(workspaceIDs))
+	args := make([]interface{}, len(workspaceIDs))
+	for i, workspaceID := range workspaceIDs {
+		placeholders[i] = "?"
+		args[i] = workspaceID
+	}
+
+	rows, err := s.db.Query(fmt.Sprintf(`
+		SELECT DISTINCT s.id, s.name, s.description, s.category_id, s.is_default,
+		       sc.name as category_name, sc.color as category_color, sc.is_completed
+		FROM statuses s
+		JOIN status_categories sc ON s.category_id = sc.id
+		WHERE EXISTS (
+			SELECT 1
+			FROM workspaces target
+			WHERE target.id IN (%s)
+			  AND (
+				NOT EXISTS (
+					SELECT 1 FROM workspace_configuration_sets wcs
+					JOIN configuration_sets cs ON wcs.configuration_set_id = cs.id
+					JOIN workflow_transitions wt ON wt.workflow_id = cs.workflow_id
+					WHERE wcs.workspace_id = target.id
+				)
+				OR EXISTS (
+					SELECT 1 FROM workspace_configuration_sets wcs
+					JOIN configuration_sets cs ON wcs.configuration_set_id = cs.id
+					JOIN workflow_transitions wt ON wt.workflow_id = cs.workflow_id
+					WHERE wcs.workspace_id = target.id
+					  AND (wt.from_status_id = s.id OR wt.to_status_id = s.id)
+				)
+			  )
+		)
+		ORDER BY s.category_id, s.name
+	`, strings.Join(placeholders, ",")), args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get statuses for workspaces: %w", err)
+	}
+	defer rows.Close()
+	return scanWorkspaceStatuses(rows)
+}
+
+func scanWorkspaceStatuses(rows *sql.Rows) ([]models.Status, error) {
+	statuses := []models.Status{}
 	for rows.Next() {
 		var status models.Status
 		var description sql.NullString
@@ -337,11 +389,6 @@ func (s *WorkspaceService) GetStatuses(workspaceID int) ([]models.Status, error)
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("failed to iterate workspace statuses: %w", err)
 	}
-
-	if statuses == nil {
-		statuses = []models.Status{}
-	}
-
 	return statuses, nil
 }
 

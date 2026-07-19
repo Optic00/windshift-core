@@ -40,11 +40,27 @@ export const scmProviders = {
 
 // Workspace SCM connections and repositories
 export const workspaceSCM = {
+  // Get connections across every workspace the current user may view.
+  getAccessibleConnections: () => fetchAPI('/scm-connections'),
+
   // Get available SCM providers for a workspace (enabled providers with connection status)
   getAvailableProviders: (workspaceId) => fetchAPI(`/workspaces/${workspaceId}/scm-providers`),
 
   // Get all SCM connections for a workspace
   getConnections: (workspaceId) => fetchAPI(`/workspaces/${workspaceId}/scm-connections`),
+
+  // Opt-in connection overview for screens that also consume repository or
+  // authentication summaries.
+  getConnectionsOverview: (
+    workspaceId,
+    { includeRepositories = false, includeAuthStatus = false } = {}
+  ) => {
+    const query = new URLSearchParams();
+    if (includeRepositories) query.set('include_repositories', 'true');
+    if (includeAuthStatus) query.set('include_auth_status', 'true');
+    const suffix = query.size > 0 ? `?${query}` : '';
+    return fetchAPI(`/workspaces/${workspaceId}/scm-connections${suffix}`);
+  },
 
   // Create a new SCM connection for a workspace
   createConnection: (workspaceId, data) =>

@@ -157,7 +157,6 @@ func (r *OnCallRepository) ListSchedulesForTeam(teamID int) ([]models.OnCallSche
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
 	var schedules []models.OnCallSchedule
 	for rows.Next() {
@@ -171,14 +170,161 @@ func (r *OnCallRepository) ListSchedulesForTeam(teamID int) ([]models.OnCallSche
 			&createdByName,
 		)
 		if err != nil {
+			_ = rows.Close()
 			return nil, err
 		}
 
 		s.CreatedBy = nullIntPtr(createdBy)
 		s.CreatedByName = createdByName.String
+		s.Layers = []models.OnCallScheduleLayer{}
+		s.Overrides = []models.OnCallScheduleOverride{}
 		schedules = append(schedules, s)
 	}
 	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if len(schedules) == 0 {
+		return schedules, nil
+	}
+
+	return r.hydrateSchedulesForTeam(teamID, schedules)
+}
+
+// hydrateSchedulesForTeam fills every schedule's layers, members, and active
+// overrides with three bounded queries. Together with the schedule query above,
+// team overview cost remains four reads regardless of schedule/layer count.
+func (r *OnCallRepository) hydrateSchedulesForTeam(teamID int, schedules []models.OnCallSchedule) ([]models.OnCallSchedule, error) {
+	scheduleIndexes := make(map[int]int, len(schedules))
+	for i := range schedules {
+		scheduleIndexes[schedules[i].ID] = i
+	}
+
+	layerRows, err := r.db.Query(`
+		SELECT l.id, l.schedule_id, l.name, l.priority, l.rotation_type,
+		       l.rotation_interval_days, l.handoff_time, l.start_date, l.end_date,
+		       l.created_at, l.updated_at
+		FROM on_call_schedule_layers l
+		JOIN on_call_schedules s ON s.id = l.schedule_id
+		WHERE s.team_id = ?
+		ORDER BY l.schedule_id, l.priority
+	`, teamID)
+	if err != nil {
+		return nil, err
+	}
+	type layerLocation struct {
+		schedule int
+		layer    int
+	}
+	layerIndexes := make(map[int]layerLocation)
+	for layerRows.Next() {
+		var layer models.OnCallScheduleLayer
+		var endDate sql.NullString
+		if err := layerRows.Scan(
+			&layer.ID, &layer.ScheduleID, &layer.Name, &layer.Priority, &layer.RotationType,
+			&layer.RotationIntervalDays, &layer.HandoffTime, &layer.StartDate, &endDate,
+			&layer.CreatedAt, &layer.UpdatedAt,
+		); err != nil {
+			_ = layerRows.Close()
+			return nil, err
+		}
+		if endDate.Valid {
+			layer.EndDate = &endDate.String
+		}
+		layer.Members = []models.OnCallScheduleLayerMember{}
+		scheduleIndex, ok := scheduleIndexes[layer.ScheduleID]
+		if !ok {
+			continue
+		}
+		layerIndex := len(schedules[scheduleIndex].Layers)
+		schedules[scheduleIndex].Layers = append(schedules[scheduleIndex].Layers, layer)
+		layerIndexes[layer.ID] = layerLocation{schedule: scheduleIndex, layer: layerIndex}
+	}
+	if err := layerRows.Err(); err != nil {
+		_ = layerRows.Close()
+		return nil, err
+	}
+	if err := layerRows.Close(); err != nil {
+		return nil, err
+	}
+
+	memberRows, err := r.db.Query(`
+		SELECT m.id, m.layer_id, m.user_id, m.position, m.created_at,
+		       u.first_name || ' ' || u.last_name AS user_name,
+		       u.email, COALESCE(u.avatar_url, '') AS avatar_url
+		FROM on_call_schedule_layer_members m
+		JOIN on_call_schedule_layers l ON l.id = m.layer_id
+		JOIN on_call_schedules s ON s.id = l.schedule_id
+		JOIN users u ON u.id = m.user_id
+		WHERE s.team_id = ?
+		ORDER BY l.schedule_id, l.priority, m.position
+	`, teamID)
+	if err != nil {
+		return nil, err
+	}
+	for memberRows.Next() {
+		var member models.OnCallScheduleLayerMember
+		if err := memberRows.Scan(
+			&member.ID, &member.LayerID, &member.UserID, &member.Position, &member.CreatedAt,
+			&member.UserName, &member.UserEmail, &member.UserAvatarURL,
+		); err != nil {
+			_ = memberRows.Close()
+			return nil, err
+		}
+		location, ok := layerIndexes[member.LayerID]
+		if !ok {
+			continue
+		}
+		layer := &schedules[location.schedule].Layers[location.layer]
+		layer.Members = append(layer.Members, member)
+	}
+	if err := memberRows.Err(); err != nil {
+		_ = memberRows.Close()
+		return nil, err
+	}
+	if err := memberRows.Close(); err != nil {
+		return nil, err
+	}
+
+	overrideRows, err := r.db.Query(`
+		SELECT o.id, o.schedule_id, o.user_id, o.override_user_id,
+		       o.start_time, o.end_time, o.reason, o.created_by, o.created_at,
+		       u.first_name || ' ' || u.last_name AS user_name,
+		       ou.first_name || ' ' || ou.last_name AS override_user_name,
+		       cb.first_name || ' ' || cb.last_name AS created_by_name
+		FROM on_call_schedule_overrides o
+		JOIN on_call_schedules s ON s.id = o.schedule_id
+		JOIN users u ON u.id = o.user_id
+		JOIN users ou ON ou.id = o.override_user_id
+		LEFT JOIN users cb ON cb.id = o.created_by
+		WHERE s.team_id = ? AND o.end_time > ?
+		ORDER BY o.schedule_id, o.start_time
+	`, teamID, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	defer overrideRows.Close()
+	for overrideRows.Next() {
+		var override models.OnCallScheduleOverride
+		var createdBy sql.NullInt64
+		var createdByName sql.NullString
+		if err := overrideRows.Scan(
+			&override.ID, &override.ScheduleID, &override.UserID, &override.OverrideUserID,
+			&override.StartTime, &override.EndTime, &override.Reason, &createdBy, &override.CreatedAt,
+			&override.UserName, &override.OverrideUserName, &createdByName,
+		); err != nil {
+			return nil, err
+		}
+		override.CreatedBy = nullIntPtr(createdBy)
+		override.CreatedByName = createdByName.String
+		if scheduleIndex, ok := scheduleIndexes[override.ScheduleID]; ok {
+			schedules[scheduleIndex].Overrides = append(schedules[scheduleIndex].Overrides, override)
+		}
+	}
+	if err := overrideRows.Err(); err != nil {
 		return nil, err
 	}
 

@@ -10,6 +10,7 @@
   import DescriptionText from '../components/DescriptionText.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import { safeHref } from '../utils/sanitize';
+  import { loadWorkspaceSCMOverview } from './workspaceSCMData.js';
 
   let { workspaceId } = $props();
 
@@ -71,33 +72,16 @@
   async function loadData() {
     loading = true;
     try {
-      const [providersRes, connectionsRes] = await Promise.all([
-        api.workspaceSCM.getAvailableProviders(workspaceId),
-        api.workspaceSCM.getConnections(workspaceId)
-      ]);
-      availableProviders = providersRes || [];
-      connections = connectionsRes || [];
-      if (connections.length > 0) {
-        await loadAuthStatuses(connections);
-      }
+      const overview = await loadWorkspaceSCMOverview(api, workspaceId);
+      availableProviders = overview.availableProviders;
+      connections = overview.connections;
+      authStatuses = overview.authStatuses;
     } catch (error) {
       console.error('Failed to load SCM data:', error);
       showNotification('Failed to load SCM settings', 'error');
     } finally {
       loading = false;
     }
-  }
-
-  async function loadAuthStatuses(conns) {
-    const results = await Promise.allSettled(
-      conns.map(c => api.workspaceSCM.getAuthStatus(workspaceId, c.id))
-    );
-    authStatuses = results.reduce((next, res, i) => {
-      if (res.status === 'fulfilled' && res.value) {
-        next[conns[i].id] = res.value;
-      }
-      return next;
-    }, { ...authStatuses });
   }
 
   async function reconnectOAuth(conn) {
@@ -531,4 +515,3 @@
     onlinked={handleReposLinked}
   />
 {/if}
-

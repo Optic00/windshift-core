@@ -423,6 +423,40 @@ func (nm *NotificationManager) MarkAsRead(userID, notificationID int) error {
 	return nm.setCacheSnapshot(userID, cache)
 }
 
+// MarkAllAsRead marks every unread notification for a user in one durable
+// update, then mirrors that state into the compact tray cache when it is warm.
+func (nm *NotificationManager) MarkAllAsRead(userID int) error {
+	lock := nm.userLock(userID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	now := time.Now()
+	if _, err := nm.db.ExecWrite(`
+		UPDATE notifications SET read = true, updated_at = ?
+		WHERE user_id = ? AND read = false
+	`, now, userID); err != nil {
+		return fmt.Errorf("mark all notifications read: %w", err)
+	}
+
+	cache, ok := nm.cacheSnapshot(userID)
+	if !ok {
+		return nil
+	}
+	changed := false
+	for i := range cache.Notifications {
+		if cache.Notifications[i].Read {
+			continue
+		}
+		cache.Notifications[i].Read = true
+		cache.Notifications[i].UpdatedAt = now
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return nm.setCacheSnapshot(userID, cache)
+}
+
 // MarkItemNotificationsAsRead marks cached unread notifications pointing at the
 // given item as read. Notifications carry their item deep link in action_url
 // (e.g. "/workspaces/<ws>/items/<itemID>"). The database update is durable
@@ -807,6 +841,23 @@ func (nh *NotificationHandler) MarkNotificationAsRead(w http.ResponseWriter, r *
 	}
 
 	slog.Debug("successfully marked notification as read", slog.String("component", "notifications"), slog.Int("notification_id", id), slog.Int("user_id", userID))
+	w.WriteHeader(http.StatusOK)
+}
+
+// MarkAllNotificationsAsRead handles PATCH /api/notifications/read-all.
+func (nh *NotificationHandler) MarkAllNotificationsAsRead(w http.ResponseWriter, r *http.Request) {
+	user := utils.GetCurrentUser(r)
+	if user == nil {
+		respondUnauthorized(w, r)
+		return
+	}
+
+	if err := nh.manager.MarkAllAsRead(user.ID); err != nil {
+		slog.Error("failed to mark all notifications as read", slog.String("component", "notifications"), slog.Int("user_id", user.ID), slog.Any("error", err))
+		respondInternalError(w, r, err)
+		return
+	}
+
 	w.WriteHeader(http.StatusOK)
 }
 

@@ -10,6 +10,7 @@ export const statuses = {
 
 export const workflows = {
   ...createCrudClient('/workflows'),
+  getAllWithTransitions: () => fetchAPI('/workflows?include_transitions=true'),
   getTransitions: (id) => fetchAPI(`/workflows/${id}/transitions`),
   updateTransitions: (id, data) =>
     fetchAPI(`/workflows/${id}/transitions`, {

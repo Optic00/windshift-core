@@ -396,6 +396,14 @@ func (h *ItemHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 	// endpoints unchanged.
 	omitDescriptions := strings.EqualFold(r.URL.Query().Get("omit_descriptions"), "true") ||
 		strings.EqualFold(r.URL.Query().Get("fields"), "summary")
+	var watermark int64
+	if strings.EqualFold(r.URL.Query().Get("include_watermark"), "true") {
+		watermark, err = repository.NewItemChangeRepository(h.db).CurrentWatermark(accessibleWorkspaceIDs, workspaceID)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return
+		}
+	}
 
 	// Call service
 	items, totalCount, err := h.itemCRUD.ListWithQLContext(ctx, services.ListWithQLParams{
@@ -475,6 +483,7 @@ func (h *ItemHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 			TotalPages: (totalCount + limit - 1) / limit,
 		},
 		SortableFields: sortableFields,
+		Watermark:      watermark,
 	}
 
 	respondJSONOK(w, response)
@@ -560,42 +569,49 @@ func (h *ItemHandler) GetByKeyAndNumber(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *ItemHandler) respondItemByID(w http.ResponseWriter, r *http.Request, user *models.User, id int) {
+	item, err := h.loadItemForUser(r.Context(), user, id, true)
+	if errors.Is(err, repository.ErrNotFound) {
+		respondNotFound(w, r, "item")
+		return
+	}
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	respondJSONOK(w, item)
+}
+
+// loadItemForUser returns the same enriched, permission-filtered item used by
+// the standalone item endpoint. Keeping this orchestration below the HTTP
+// layer lets aggregate endpoints reuse it without issuing internal requests.
+func (h *ItemHandler) loadItemForUser(ctx context.Context, user *models.User, id int, trackView bool) (*models.Item, error) {
 	// Get item with all details using service
 	crudService := services.NewItemCRUDService(h.db)
 	result, err := crudService.GetByIDWithWorkspaceStatus(id)
 	if err != nil {
-		if err == repository.ErrNotFound {
-			respondNotFound(w, r, "item")
-			return
-		}
-		respondInternalError(w, r, err)
-		return
+		return nil, err
 	}
 	item := result.Item
 
 	// Check if user has permission to view this item. Active approvers without
 	// workspace item.view are allowed through here so the approval inbox →
 	// item navigation works; see CheckItemPermissionAsActor for the model.
-	canView, err := h.canViewItemAsActor(r.Context(), user.ID, item.ID, item.WorkspaceID)
+	canView, err := h.canViewItemAsActor(ctx, user.ID, item.ID, item.WorkspaceID)
 	if err != nil {
-		respondInternalError(w, r, err)
-		return
+		return nil, err
 	}
 	if !canView {
-		respondNotFound(w, r, "Item")
-		return
+		return nil, repository.ErrNotFound
 	}
 
 	// Check if workspace is inactive and user has permission to access it
 	if !result.WorkspaceActive {
 		canAccess, err := h.canAccessInactiveWorkspace(user, item.WorkspaceID)
 		if err != nil {
-			respondInternalError(w, r, err)
-			return
+			return nil, err
 		}
 		if !canAccess {
-			respondNotFound(w, r, "Item")
-			return
+			return nil, repository.ErrNotFound
 		}
 	}
 
@@ -625,10 +641,9 @@ func (h *ItemHandler) respondItemByID(w http.ResponseWriter, r *http.Request, us
 		slog.Warn("failed to load milestones for item", slog.Any("error", err))
 	}
 	*item = singleItems[0]
-	*item = singleItems[0]
 
 	// Track item view activity
-	if h.activityTracker != nil {
+	if trackView && h.activityTracker != nil {
 		if err := h.activityTracker.TrackItemActivity(user.ID, item.ID, services.ActivityView); err != nil {
 			slog.Warn("failed to track item view activity", slog.Int("user_id", user.ID), slog.Int("item_id", item.ID), slog.Any("error", err))
 		}
@@ -640,7 +655,7 @@ func (h *ItemHandler) respondItemByID(w http.ResponseWriter, r *http.Request, us
 	h.maskInaccessibleProjectNames(user.ID, masked)
 	*item = masked[0]
 
-	respondJSONOK(w, item)
+	return item, nil
 }
 
 // maxBatchItems caps how many item ids GetBatch accepts in one request,

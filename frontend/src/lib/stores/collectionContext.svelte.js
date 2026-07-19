@@ -17,7 +17,6 @@ import { workspaceDataStore } from './workspaceDataStore.svelte.js';
 
 const COLLECTION_VIEWS = new Set([
   'workspace-board',
-  'workspace-board-config',
   'workspace-backlog',
   'workspace-list',
   'workspace-tree',
@@ -27,6 +26,7 @@ const COLLECTION_VIEWS = new Set([
 
 const BOARD_VIEWS = new Set(['workspace-board', 'collection-board']);
 const LIST_VIEWS = new Set(['workspace-list', 'collection-list']);
+const BACKLOG_VIEWS = new Set(['workspace-backlog', 'collection-backlog']);
 
 const DEFAULT_PAGE_SIZE = 100;
 const LIST_INITIAL_PAGE_SIZE = 50;
@@ -45,6 +45,29 @@ function initialItemsPageSize(view) {
     return LARGE_COLLECTION_PAGE_SIZE;
   }
   return DEFAULT_PAGE_SIZE;
+}
+
+function loadsItems(view) {
+  return !BACKLOG_VIEWS.has(view);
+}
+
+function loadsBacklog(view) {
+  return BOARD_VIEWS.has(view) || BACKLOG_VIEWS.has(view);
+}
+
+function minimumWatermark(...values) {
+  const watermarks = values
+    .filter((value) => value != null)
+    .map(Number)
+    .filter(Number.isFinite);
+  return watermarks.length > 0 ? Math.min(...watermarks) : null;
+}
+
+// Parallel item/backlog reads can start on opposite sides of a concurrent
+// mutation. Retaining the oldest response watermark guarantees the delta poll
+// will replay anything that was not present in every returned snapshot.
+function snapshotWatermark(...results) {
+  return minimumWatermark(...results.filter(Boolean).map((result) => result.watermark ?? 0));
 }
 
 class CollectionStore {
@@ -82,6 +105,7 @@ class CollectionStore {
 
   // Server-side sort state
   sortableFields = $state([]);
+  boardConfiguration = $state(null);
   #sortBy = null;
   #sortDirection = null;
   #boardSortMode = 'rank';
@@ -94,6 +118,9 @@ class CollectionStore {
   #previousRouteKey = null;
   #currentView = null;
   #unsubscribe = null;
+  #boardConfigurationKey = null;
+  #boardConfigurationPromise = null;
+  #boardConfigurationLoaded = false;
 
   constructor() {
     this.#unsubscribe = currentRoute.subscribe(($route) => {
@@ -143,11 +170,13 @@ class CollectionStore {
     // roundtrip when the already-loaded item page is large enough and there is
     // no active server-side sort/filter. Board views may need capped-column
     // fetches, so they intentionally keep loading.
+    const canReuseTargetData = loadsItems(view)
+      ? this.items.length > 0 && (this.itemsPagination?.limit ?? 0) >= targetInitialLimit
+      : this.backlogPagination !== null;
     if (
       sameCollection &&
       viewChanged &&
-      this.items.length > 0 &&
-      (this.itemsPagination?.limit ?? 0) >= targetInitialLimit &&
+      canReuseTargetData &&
       !this.subFilterQL &&
       !this.#sortBy &&
       !this.#sortDirection &&
@@ -178,6 +207,10 @@ class CollectionStore {
       this.#sortBy = null;
       this.#sortDirection = null;
       this.sortableFields = [];
+      this.boardConfiguration = null;
+      this.#boardConfigurationKey = null;
+      this.#boardConfigurationPromise = null;
+      this.#boardConfigurationLoaded = false;
       this.#changesWatermark = null;
     }
     this.#wsId = wsId;
@@ -188,49 +221,67 @@ class CollectionStore {
     this.loading = true;
 
     try {
-      const [capStatusIds, , collection] = await Promise.all([
+      const [capStatusIds, collection] = await Promise.all([
         this.#resolveBoardCap(wsId, colId, view),
-        this.#primeChangesWatermark(),
         colId ? getCollection(colId) : Promise.resolve(null),
       ]);
       if (loadId !== this.#loadId) return; // stale
 
       const itemsLimit = targetInitialLimit;
       const [itemsResult, backlogResult, capResult] = await Promise.all([
-        fetchCollectionItems(wsId, colId, {
-          page: 1,
-          limit: itemsLimit,
-          sub_ql: this.subFilterQL || undefined,
-          collection,
-          ...this.#itemSortOptions(),
-          ...this.#capExclusionFilter(capStatusIds),
-        }),
-        fetchCollectionBacklog(wsId, colId, {
-          page: 1,
-          limit: DEFAULT_PAGE_SIZE,
-          sub_ql: this.subFilterQL || undefined,
-          collection,
-        }),
-        this.#fetchCapItems(wsId, colId, capStatusIds, collection),
+        loadsItems(view)
+          ? fetchCollectionItems(wsId, colId, {
+              page: 1,
+              limit: itemsLimit,
+              sub_ql: this.subFilterQL || undefined,
+              collection,
+              ...this.#itemSortOptions(),
+              ...this.#capExclusionFilter(capStatusIds),
+            })
+          : Promise.resolve(null),
+        loadsBacklog(view)
+          ? fetchCollectionBacklog(wsId, colId, {
+              page: 1,
+              limit: DEFAULT_PAGE_SIZE,
+              sub_ql: this.subFilterQL || undefined,
+              collection,
+            })
+          : Promise.resolve(null),
+        loadsItems(view)
+          ? this.#fetchCapItems(wsId, colId, capStatusIds, collection)
+          : Promise.resolve(null),
       ]);
 
       if (loadId !== this.#loadId) return; // stale
 
-      this.items = capResult ? [...itemsResult.items, ...capResult.items] : itemsResult.items;
-      this.rightmostCap = capResult
-        ? { statusIds: capStatusIds, total: capResult.pagination?.total ?? capResult.items.length }
-        : null;
-      this.collectionName = itemsResult.collectionName;
-      this.publicSlug = itemsResult.publicSlug ?? null;
-      this.itemsPagination = itemsResult.pagination;
-      this.itemsHasMore = calcHasMore(itemsResult.pagination);
-      if (itemsResult.sortableFields?.length) {
-        this.sortableFields = itemsResult.sortableFields;
+      if (itemsResult) {
+        this.items = capResult ? [...itemsResult.items, ...capResult.items] : itemsResult.items;
+        this.rightmostCap = capResult
+          ? {
+              statusIds: capStatusIds,
+              total: capResult.pagination?.total ?? capResult.items.length,
+            }
+          : null;
+        this.collectionName = itemsResult.collectionName;
+        this.publicSlug = itemsResult.publicSlug ?? null;
+        this.itemsPagination = itemsResult.pagination;
+        this.itemsHasMore = calcHasMore(itemsResult.pagination);
+        if (itemsResult.sortableFields?.length) {
+          this.sortableFields = itemsResult.sortableFields;
+        }
       }
 
-      this.backlogItems = backlogResult.items;
-      this.backlogPagination = backlogResult.pagination;
-      this.backlogHasMore = calcHasMore(backlogResult.pagination);
+      if (backlogResult) {
+        this.backlogItems = backlogResult.items;
+        this.backlogPagination = backlogResult.pagination;
+        this.backlogHasMore = calcHasMore(backlogResult.pagination);
+        if (!itemsResult) {
+          this.collectionName = backlogResult.collectionName;
+          this.publicSlug =
+            collection?.is_public && collection?.public_slug ? collection.public_slug : null;
+        }
+      }
+      this.#changesWatermark = snapshotWatermark(itemsResult, backlogResult, capResult);
     } catch (error) {
       if (loadId !== this.#loadId) return;
       console.error('[collectionStore] Load failed:', error);
@@ -250,7 +301,7 @@ class CollectionStore {
   async #resolveBoardCap(wsId, colId, view) {
     if (!BOARD_VIEWS.has(view)) return null;
     try {
-      const config = await api.collections.getBoardConfiguration(colId || null, wsId || null);
+      const config = await this.getBoardConfiguration(wsId, colId);
       if (!config?.show_rightmost_column_last_50) return null;
       let statuses = [];
       if (!(config.columns?.length > 0)) {
@@ -270,6 +321,48 @@ class CollectionStore {
       }
       return null;
     }
+  }
+
+  async getBoardConfiguration(wsId = this.#wsId, colId = this.#colId, { force = false } = {}) {
+    const key = `${colId ?? ''}|${wsId ?? ''}`;
+    if (!force && this.#boardConfigurationLoaded && this.#boardConfigurationKey === key) {
+      return this.boardConfiguration;
+    }
+    if (!force && this.#boardConfigurationPromise && this.#boardConfigurationKey === key) {
+      return this.#boardConfigurationPromise;
+    }
+
+    this.#boardConfigurationKey = key;
+    this.#boardConfigurationLoaded = false;
+    const request = api.collections
+      .getBoardConfiguration(colId || null, wsId || null)
+      .catch((error) => {
+        if (error?.status !== 404) throw error;
+        return null;
+      })
+      .then((config) => {
+        if (this.#boardConfigurationKey === key) {
+          this.boardConfiguration = config;
+          this.#boardConfigurationLoaded = true;
+        }
+        return config;
+      })
+      .finally(() => {
+        if (this.#boardConfigurationPromise === request) {
+          this.#boardConfigurationPromise = null;
+        }
+      });
+    this.#boardConfigurationPromise = request;
+    return request;
+  }
+
+  invalidateBoardConfiguration(wsId = this.#wsId, colId = this.#colId) {
+    const key = `${colId ?? ''}|${wsId ?? ''}`;
+    if (this.#boardConfigurationKey !== key) return;
+    this.#boardConfigurationKey = null;
+    this.#boardConfigurationPromise = null;
+    this.#boardConfigurationLoaded = false;
+    this.boardConfiguration = null;
   }
 
   /** Query-param fragment excluding capped-column statuses from a paged items fetch. */
@@ -330,6 +423,7 @@ class CollectionStore {
       this.itemsHasMore = result.pagination
         ? result.pagination.page < result.pagination.total_pages
         : false;
+      this.#changesWatermark = minimumWatermark(this.#changesWatermark, result.watermark ?? 0);
     } catch (error) {
       console.error('[collectionStore] loadMoreItems failed:', error);
     } finally {
@@ -362,6 +456,7 @@ class CollectionStore {
       this.backlogHasMore = result.pagination
         ? result.pagination.page < result.pagination.total_pages
         : false;
+      this.#changesWatermark = minimumWatermark(this.#changesWatermark, result.watermark ?? 0);
     } catch (error) {
       console.error('[collectionStore] loadMoreBacklog failed:', error);
     } finally {
@@ -399,6 +494,7 @@ class CollectionStore {
       if (result.sortableFields?.length) {
         this.sortableFields = result.sortableFields;
       }
+      this.#changesWatermark = minimumWatermark(this.#changesWatermark, result.watermark ?? 0);
     } catch (error) {
       if (loadId !== this.#loadId) return;
       console.error('[collectionStore] setItemsPage failed:', error);
@@ -422,45 +518,57 @@ class CollectionStore {
     const backlogLimit = Math.max(DEFAULT_PAGE_SIZE, this.backlogItems.length);
 
     try {
-      const [capStatusIds, , collection] = await Promise.all([
+      const [capStatusIds, collection] = await Promise.all([
         this.#resolveBoardCap(this.#wsId, this.#colId, this.#currentView),
-        this.#primeChangesWatermark(),
         this.#colId ? getCollection(this.#colId) : Promise.resolve(null),
       ]);
       if (loadId !== this.#loadId) return;
 
       const [itemsResult, backlogResult, capResult] = await Promise.all([
-        fetchCollectionItems(this.#wsId, this.#colId, {
-          page: 1,
-          limit: itemsLimit,
-          sub_ql: this.subFilterQL || undefined,
-          collection,
-          ...this.#itemSortOptions(),
-          ...this.#capExclusionFilter(capStatusIds),
-        }),
-        fetchCollectionBacklog(this.#wsId, this.#colId, {
-          page: 1,
-          limit: backlogLimit,
-          sub_ql: this.subFilterQL || undefined,
-          collection,
-        }),
-        this.#fetchCapItems(this.#wsId, this.#colId, capStatusIds, collection),
+        loadsItems(this.#currentView)
+          ? fetchCollectionItems(this.#wsId, this.#colId, {
+              page: 1,
+              limit: itemsLimit,
+              sub_ql: this.subFilterQL || undefined,
+              collection,
+              ...this.#itemSortOptions(),
+              ...this.#capExclusionFilter(capStatusIds),
+            })
+          : Promise.resolve(null),
+        loadsBacklog(this.#currentView)
+          ? fetchCollectionBacklog(this.#wsId, this.#colId, {
+              page: 1,
+              limit: backlogLimit,
+              sub_ql: this.subFilterQL || undefined,
+              collection,
+            })
+          : Promise.resolve(null),
+        loadsItems(this.#currentView)
+          ? this.#fetchCapItems(this.#wsId, this.#colId, capStatusIds, collection)
+          : Promise.resolve(null),
       ]);
       if (loadId !== this.#loadId) return;
 
-      this.items = capResult ? [...itemsResult.items, ...capResult.items] : itemsResult.items;
-      this.rightmostCap = capResult
-        ? { statusIds: capStatusIds, total: capResult.pagination?.total ?? capResult.items.length }
-        : null;
+      if (itemsResult) {
+        this.items = capResult ? [...itemsResult.items, ...capResult.items] : itemsResult.items;
+        this.rightmostCap = capResult
+          ? {
+              statusIds: capStatusIds,
+              total: capResult.pagination?.total ?? capResult.items.length,
+            }
+          : null;
+        this.collectionName = itemsResult.collectionName;
+        this.publicSlug = itemsResult.publicSlug ?? null;
+        this.itemsPagination = itemsResult.pagination;
+        this.itemsHasMore = calcHasMore(itemsResult.pagination);
+      }
 
-      this.collectionName = itemsResult.collectionName;
-      this.publicSlug = itemsResult.publicSlug ?? null;
-      this.itemsPagination = itemsResult.pagination;
-      this.itemsHasMore = calcHasMore(itemsResult.pagination);
-
-      this.backlogItems = backlogResult.items;
-      this.backlogPagination = backlogResult.pagination;
-      this.backlogHasMore = calcHasMore(backlogResult.pagination);
+      if (backlogResult) {
+        this.backlogItems = backlogResult.items;
+        this.backlogPagination = backlogResult.pagination;
+        this.backlogHasMore = calcHasMore(backlogResult.pagination);
+      }
+      this.#changesWatermark = snapshotWatermark(itemsResult, backlogResult, capResult);
     } catch (error) {
       if (loadId !== this.#loadId) return;
       if (!isExpectedBackgroundSyncError(error)) {

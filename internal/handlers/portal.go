@@ -44,6 +44,7 @@ type PortalHandler struct {
 	portalSessionManager *auth.PortalSessionManager
 	ipExtractor          *utils.IPExtractor
 	portalService        *services.PortalService
+	portalAuthRepo       *repository.PortalAuthRepository
 	approvalService      *services.ApprovalService
 	draftRepo            *repository.PortalDraftRepository
 	attachmentPath       string
@@ -64,6 +65,9 @@ func (h *PortalHandler) SetEventCoordinator(ec *services.EventCoordinator) {
 
 // getClientIP extracts the client IP with proxy validation
 func (h *PortalHandler) getClientIP(r *http.Request) string {
+	if h.ipExtractor == nil {
+		return r.RemoteAddr
+	}
 	return h.ipExtractor.GetClientIP(r)
 }
 
@@ -114,14 +118,8 @@ func (h *PortalHandler) getPortalCustomerID(ctx context.Context, r *http.Request
 // getInternalUserGroupIDs returns the group IDs for an internal user
 // Returns nil if not an internal user or if no groups found
 func (h *PortalHandler) getInternalUserGroupIDs(ctx context.Context, r *http.Request) []int {
-	clientIP := h.getClientIP(r)
-	sessionToken, err := h.sessionManager.GetSessionFromRequest(r)
-	if err != nil {
-		return nil
-	}
-
-	session, err := h.sessionManager.ValidateSessionContext(r.Context(), sessionToken, clientIP)
-	if err != nil || session == nil {
+	session := h.internalSessionFromRequest(r)
+	if session == nil {
 		return nil
 	}
 
@@ -149,6 +147,24 @@ func (h *PortalHandler) getInternalUserGroupIDs(ctx context.Context, r *http.Req
 		return nil
 	}
 	return groupIDs
+}
+
+func (h *PortalHandler) internalSessionFromRequest(r *http.Request) *auth.Session {
+	if session, ok := r.Context().Value(middleware.ContextKeySession).(*auth.Session); ok && session != nil {
+		return session
+	}
+	if h.sessionManager == nil {
+		return nil
+	}
+	sessionToken, err := h.sessionManager.GetSessionFromRequest(r)
+	if err != nil {
+		return nil
+	}
+	session, err := h.sessionManager.ValidateSessionContext(r.Context(), sessionToken, h.getClientIP(r))
+	if err != nil {
+		return nil
+	}
+	return session
 }
 
 // getAuthFromContext extracts auth info from context (set by RequirePortalAuth middleware)
@@ -210,7 +226,11 @@ func (h *PortalHandler) getPortalVisibilityContext(ctx context.Context, r *http.
 	// Get portal customer org ID if authenticated as portal customer. Sessions
 	// minted on a different portal are ignored so a cookie from portal A
 	// cannot bias visibility filtering on portal B.
-	if h.portalSessionManager != nil {
+	if portalSession, ok := r.Context().Value(middleware.ContextKeyPortalSession).(*auth.PortalSession); ok && portalSession != nil {
+		if portalSession.ChannelID != nil && *portalSession.ChannelID == channelID {
+			vc.customerOrgID = h.getPortalCustomerOrgID(ctx, portalSession.PortalCustomerID)
+		}
+	} else if h.portalSessionManager != nil {
 		portalToken, err := h.portalSessionManager.GetPortalSessionFromRequest(r)
 		if err == nil && portalToken != "" {
 			clientIP := h.getClientIP(r)
@@ -222,11 +242,9 @@ func (h *PortalHandler) getPortalVisibilityContext(ctx context.Context, r *http.
 	}
 
 	// Check if this is an admin viewing for customization (has internal session)
-	if sessionToken, err := h.sessionManager.GetSessionFromRequest(r); err == nil {
-		clientIP := h.getClientIP(r)
-		if session, err := h.sessionManager.ValidateSessionContext(r.Context(), sessionToken, clientIP); err == nil && session != nil {
-			var isAdmin bool
-			err := h.db.QueryRowContext(ctx, `
+	if session := h.internalSessionFromRequest(r); session != nil {
+		var isAdmin bool
+		err := h.db.QueryRowContext(ctx, `
 				SELECT EXISTS(
 					SELECT 1 FROM user_global_permissions ugp
 					JOIN permissions p ON ugp.permission_id = p.id
@@ -249,9 +267,8 @@ func (h *PortalHandler) getPortalVisibilityContext(ctx context.Context, r *http.
 						 )))
 				)
 			`, session.UserID, session.UserID, channelID, session.UserID, session.UserID).Scan(&isAdmin)
-			if err == nil && isAdmin {
-				vc.isAdmin = true
-			}
+		if err == nil && isAdmin {
+			vc.isAdmin = true
 		}
 	}
 
@@ -320,6 +337,7 @@ func NewPortalHandler(db database.Database, sessionManager *auth.SessionManager,
 		portalSessionManager: portalSessionManager,
 		ipExtractor:          ipExtractor,
 		portalService:        services.NewPortalService(db),
+		portalAuthRepo:       repository.NewPortalAuthRepository(db),
 		draftRepo:            repository.NewPortalDraftRepository(db),
 		attachmentPath:       attachmentPath,
 	}
@@ -413,7 +431,19 @@ func (h *PortalHandler) GetPortal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer cancel()
+	response, err := h.loadPortalData(ctx, channel, config)
+	if errors.Is(err, repository.ErrNotFound) {
+		respondNotFound(w, r, "workspace")
+		return
+	}
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	respondJSONOK(w, response)
+}
 
+func (h *PortalHandler) loadPortalData(ctx context.Context, channel models.Channel, config models.ChannelConfig) (map[string]interface{}, error) {
 	// Get workspace info (use first workspace for backward compatibility)
 	var workspace models.Workspace
 	var workspaceID int
@@ -425,8 +455,10 @@ func (h *PortalHandler) GetPortal(w http.ResponseWriter, r *http.Request) {
 		if err := h.db.QueryRowContext(ctx, `SELECT id, name, key FROM workspaces WHERE id = ?`, workspaceID).Scan(
 			&workspace.ID, &workspace.Name, &workspace.Key,
 		); err != nil {
-			respondNotFound(w, r, "workspace")
-			return
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, repository.ErrNotFound
+			}
+			return nil, err
 		}
 	}
 
@@ -464,7 +496,7 @@ func (h *PortalHandler) GetPortal(w http.ResponseWriter, r *http.Request) {
 		"hub_logo_url":              hubLogoURL,
 	}
 
-	respondJSONOK(w, response)
+	return response, nil
 }
 
 // GetRequestTypes returns request types for a portal, filtered by visibility
@@ -483,7 +515,16 @@ func (h *PortalHandler) GetRequestTypes(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	channel := portalResult.channel
+	vc := h.getPortalVisibilityContext(ctx, r, channel.ID)
+	requestTypes, err := h.loadPortalRequestTypes(ctx, channel.ID, vc)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	respondJSONOK(w, requestTypes)
+}
 
+func (h *PortalHandler) loadPortalRequestTypes(ctx context.Context, channelID int, vc portalVisibilityContext) ([]models.RequestType, error) {
 	// Query all request types for this channel
 	query := `
 		SELECT rt.id, rt.channel_id, rt.name, rt.description, rt.item_type_id,
@@ -499,17 +540,13 @@ func (h *PortalHandler) GetRequestTypes(w http.ResponseWriter, r *http.Request) 
 		WHERE rt.channel_id = ? AND rt.is_active = true
 		ORDER BY rt.display_order, rt.name`
 
-	rows, err := h.db.QueryContext(ctx, query, channel.ID)
+	rows, err := h.db.QueryContext(ctx, query, channelID)
 	if err != nil {
-		respondInternalError(w, r, err)
-		return
+		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
 
-	// Get visibility context for filtering
-	vc := h.getPortalVisibilityContext(ctx, r, channel.ID)
-
-	var requestTypes []models.RequestType
+	requestTypes := []models.RequestType{}
 	for rows.Next() {
 		var rt models.RequestType
 		var visibilityGroupIDs, visibilityOrgIDs sql.NullString
@@ -523,7 +560,7 @@ func (h *PortalHandler) GetRequestTypes(w http.ResponseWriter, r *http.Request) 
 			&workspaceID, &workspaceName, &workspaceKey,
 			&rt.FieldCount)
 		if err != nil {
-			continue
+			return nil, err
 		}
 
 		if workspaceID.Valid {
@@ -547,15 +584,9 @@ func (h *PortalHandler) GetRequestTypes(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if err := rows.Err(); err != nil {
-		respondInternalError(w, r, err)
-		return
+		return nil, err
 	}
-
-	if requestTypes == nil {
-		requestTypes = []models.RequestType{}
-	}
-
-	respondJSONOK(w, requestTypes)
+	return requestTypes, nil
 }
 
 // SubmitToPortal handles portal item submissions (requires authentication)

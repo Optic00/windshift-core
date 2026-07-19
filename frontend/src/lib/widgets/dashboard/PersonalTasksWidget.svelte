@@ -1,6 +1,6 @@
 <script>
   import { ListChecks } from '@lucide/svelte';
-  import { authStore } from '../../stores';
+  import { authStore, workspacesStore } from '../../stores';
   import { api } from '../../api.js';
   import DashboardItemRow from './DashboardItemRow.svelte';
   import { completedSinceCutoff, normalizeTaskResponse, openTask } from './taskWidgetState.js';
@@ -8,40 +8,36 @@
   let tasks = $state([]);
   let loading = $state(false);
   let errored = $state(false);
-  let personalWorkspaceId = $state(null);
-  let lastUserId = null;
+  let lastLoadKey = null;
   let version = 0;
 
   const currentUserId = $derived($authStore?.currentUser?.id ?? null);
+  const personalWorkspaceId = $derived($workspacesStore.personalWorkspace?.id ?? null);
 
   $effect(() => {
-    if (currentUserId && currentUserId !== lastUserId) {
-      lastUserId = currentUserId;
-      personalWorkspaceId = null;
-      load();
-    } else if (!currentUserId && lastUserId !== null) {
-      lastUserId = null;
+    if (currentUserId && !personalWorkspaceId) {
+      void workspacesStore.loadPersonalWorkspace();
+    }
+
+    const loadKey = currentUserId && personalWorkspaceId
+      ? `${currentUserId}:${personalWorkspaceId}`
+      : null;
+    if (loadKey && loadKey !== lastLoadKey) {
+      lastLoadKey = loadKey;
+      load(personalWorkspaceId);
+    } else if (!currentUserId && lastLoadKey !== null) {
+      lastLoadKey = null;
       tasks = [];
-      personalWorkspaceId = null;
     }
   });
 
-  async function load() {
+  async function load(workspaceId) {
     const v = ++version;
     loading = true;
     errored = false;
     try {
-      if (!personalWorkspaceId) {
-        const ws = await api.workspaces.getOrCreatePersonal();
-        if (v !== version) return;
-        personalWorkspaceId = ws?.id ?? null;
-      }
-      if (!personalWorkspaceId) {
-        tasks = [];
-        return;
-      }
       const response = await api.items.getAll({
-        ql: `workspace_id = ${personalWorkspaceId}`,
+        ql: `workspace_id = ${workspaceId}`,
         limit: 30,
         order_by: 'updated_at',
         // Hide tasks completed more than the default window ago, matching the

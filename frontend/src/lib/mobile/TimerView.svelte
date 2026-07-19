@@ -43,7 +43,6 @@
   }
 
   onMount(() => {
-    timerStore.initialize();
     timeEntryStore.init();
   });
 </script>

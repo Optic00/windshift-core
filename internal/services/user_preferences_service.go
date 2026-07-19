@@ -1,8 +1,10 @@
 package services
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"windshift/internal/models"
@@ -117,6 +119,23 @@ func (s *UserPreferencesService) GetDashboardLayout(userID int) (models.UserDash
 		}
 	}
 	return layout, nil
+}
+
+// GetDashboardLayoutSnapshot returns the dashboard layout together with a
+// stable content revision. The revision changes only when the layout changes,
+// rather than whenever another field in the shared preferences row is saved.
+func (s *UserPreferencesService) GetDashboardLayoutSnapshot(userID int) (models.UserDashboardLayout, string, error) {
+	layout, err := s.GetDashboardLayout(userID)
+	if err != nil {
+		return models.UserDashboardLayout{}, "", err
+	}
+
+	raw, err := json.Marshal(layout)
+	if err != nil {
+		return models.UserDashboardLayout{}, "", err
+	}
+	revision := fmt.Sprintf("sha256:%x", sha256.Sum256(raw))
+	return layout, revision, nil
 }
 
 // UpdateDashboardLayout stores the user's dashboard layout without clobbering other preferences.

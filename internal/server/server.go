@@ -553,7 +553,13 @@ func (s *Server) initialize() error {
 	credentialHandler := handlers.NewCredentialHandler(repository.NewCredentialRepository(s.db), logger.NewAuditor(s.db), permService, cfg.SSH.Enabled)
 	webAuthnHandler := handlers.NewWebAuthnHandler(s.db, permService, sessionManager, webAuthnConfig, ipExtractor)
 	collectionHandler := handlers.NewCollectionHandler(s.db, permService)
-	boardConfigHandler := handlers.NewBoardConfigurationHandler(repository.NewBoardConfigurationRepository(s.db), repository.NewCollectionRepository(s.db), permService)
+	boardConfigHandler := handlers.NewBoardConfigurationHandler(
+		repository.NewBoardConfigurationRepository(s.db),
+		repository.NewCollectionRepository(s.db),
+		permService,
+		services.NewItemCRUDService(s.db),
+		services.NewWorkspaceService(s.db),
+	)
 	testCoverageHandler := handlers.NewTestCoverageHandler(repository.NewTestCoverageRepository(s.db), permService)
 	publicBoardHandler := handlers.NewPublicBoardHandler(s.db, permService, cfg.AttachmentPath)
 	permissionHandler := handlers.NewPermissionHandlerWithCache(repository.NewPermissionRepository(s.db), permService, logger.NewAuditor(s.db))
@@ -623,7 +629,7 @@ func (s *Server) initialize() error {
 	pageService.SetPageLabelRepository(pageLabelRepo)
 	pagePermissionService := services.NewPagePermissionService(s.db, permService)
 	itemLinkHandler.SetPagePermissionChecker(pagePermissionService)
-	pageHandler := handlers.NewPageHandler(pageService, pagePermissionService, logger.NewAuditor(s.db))
+	pageHandler := handlers.NewPageHandler(pageService, pagePermissionService, permService, logger.NewAuditor(s.db))
 	knowledgeRetrieval := services.NewKnowledgeRetrievalService(s.db, pagePermissionService)
 	knowledgeSearchHandler := handlers.NewKnowledgeSearchHandler(knowledgeRetrieval)
 	pageLabelHandler := handlers.NewPageLabelHandler(pageLabelRepo, pagePermissionService, logger.NewAuditor(s.db))
@@ -641,6 +647,7 @@ func (s *Server) initialize() error {
 		permService,
 		workspaceKeyCache,
 	)
+	itemDetailHandler := handlers.NewItemDetailHandler(itemHandler, itemLinkHandler, linkTypeHandler, screenHandler, requestTypeHandler, actionsHandler)
 	actionCredentialService := services.NewActionCredentialService(repository.NewActionCredentialRepository(s.db), cfg.Auth.SessionSecret)
 	actionCredentialsHandler := handlers.NewActionCredentialsHandler(actionCredentialService, permService, workspaceKeyCache, logger.NewAuditor(s.db))
 	// Wire credential resolution into the action runtime so HTTP capabilities
@@ -728,8 +735,9 @@ func (s *Server) initialize() error {
 	invitationHandler := handlers.NewInvitationHandler(invitationService)
 
 	themeHandler := handlers.NewThemeHandler(services.NewThemeService(repository.NewThemeRepository(s.db)), logger.NewAuditor(s.db))
-	userPreferencesHandler := handlers.NewUserPreferencesHandler(services.NewUserPreferencesService(repository.NewUserPreferencesRepository(s.db), repository.NewThemeRepository(s.db)))
-	homepageHandler := handlers.NewHomepageHandler(repository.NewWorkspaceRepository(s.db), repository.NewItemRepository(s.db), s.activityTracker, permService)
+	userPreferencesService := services.NewUserPreferencesService(repository.NewUserPreferencesRepository(s.db), repository.NewThemeRepository(s.db))
+	userPreferencesHandler := handlers.NewUserPreferencesHandler(userPreferencesService)
+	homepageHandler := handlers.NewHomepageHandler(repository.NewWorkspaceRepository(s.db), repository.NewItemRepository(s.db), s.activityTracker, permService, userPreferencesService)
 
 	// Notification handlers
 	notificationHandler := handlers.NewNotificationHandler(s.notificationManager, s.notificationService)
@@ -868,6 +876,7 @@ func (s *Server) initialize() error {
 	// Agent presence for assignment pickers (WI-272): binding → pool →
 	// heartbeat-fresh runner count, surfaced as online/offline/local/unbound.
 	userHandler.SetAgentPresenceService(services.NewAgentPresenceService(agentBindingRepo, repository.NewRunnerRepository(s.db)))
+	workspaceBootstrapHandler := handlers.NewWorkspaceBootstrapHandler(workspaceHandler, userHandler, milestoneHandler, iterationHandler, timeProjectHandler)
 	// Secretless access layer (WI-144): brokers a granted credential to a
 	// running job without it ever living on the runner host.
 	runnerBrokerHandler := handlers.NewRunnerBrokerHandler(tokenManager, repository.NewAgentRunRepository(s.db), credentialSvc, llmManager, &scmCredsAdapter{cr: scmCredResolver})
@@ -1366,6 +1375,7 @@ func (s *Server) initialize() error {
 		},
 		Items: routes.ItemHandlers{
 			Item:               itemHandler,
+			Detail:             itemDetailHandler,
 			Recurrence:         recurrenceHandler,
 			Comment:            commentHandler,
 			Attachment:         attachmentHandler,
@@ -1378,6 +1388,7 @@ func (s *Server) initialize() error {
 		},
 		Workspaces: routes.WorkspaceHandlers{
 			Workspace:             workspaceHandler,
+			Bootstrap:             workspaceBootstrapHandler,
 			Screen:                screenHandler,
 			ConfigSet:             configSetHandler,
 			ConfigSetNotification: configSetNotificationHandler,

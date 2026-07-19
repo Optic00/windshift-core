@@ -4,6 +4,7 @@ import { buildQueryString } from './utils.js';
 
 export const workspaces = {
   ...createCrudClient('/workspaces'),
+  getBootstrap: (id) => fetchAPI(`/workspaces/${id}/bootstrap`),
   getProjects: (id) => fetchAPI(`/workspaces/${id}/projects`),
   getOrCreatePersonal: () => fetchAPI('/workspaces/personal'),
   getStats: (id, params = {}) => {

@@ -42,6 +42,17 @@ beforeEach(() => {
 });
 
 describe('ApprovalsTimeline cancellation', () => {
+  test('renders an existing approval list without fetching it again', async () => {
+    render(ApprovalsTimeline, {
+      itemId: 12,
+      canCancel: true,
+      initialRequests: [pendingRequest],
+    });
+
+    expect(await screen.findByText('Approval #7')).toBeTruthy();
+    expect(api.approvals.forItem).not.toHaveBeenCalled();
+  });
+
   test('shows cancellation to an item editor when another user opened the request', async () => {
     render(ApprovalsTimeline, { itemId: 12, canCancel: true });
 

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -8,9 +9,16 @@ import (
 	"strconv"
 	"strings"
 
+	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/services"
 )
+
+type ItemTransitionSummary struct {
+	CurrentStatus        string                           `json:"current_status"`
+	AvailableTransitions []map[string]interface{}         `json:"available_transitions"`
+	PendingApproval      *services.PendingApprovalSummary `json:"pending_approval"`
+}
 
 // GetAvailableStatusTransitions returns the valid status transitions for a work item
 func (h *ItemHandler) GetAvailableStatusTransitions(w http.ResponseWriter, r *http.Request) {
@@ -35,12 +43,8 @@ func (h *ItemHandler) GetAvailableStatusTransitions(w http.ResponseWriter, r *ht
 		respondInternalError(w, r, err)
 		return
 	}
-	workspaceID := item.WorkspaceID
-	currentStatusID := item.StatusID
-	itemTypeIDPtr := item.ItemTypeID
-
 	// Check if user has permission to view this item's workspace
-	canView, permErr := h.canViewItem(user.ID, workspaceID)
+	canView, permErr := h.canViewItem(user.ID, item.WorkspaceID)
 	if permErr != nil {
 		respondInternalError(w, r, permErr)
 		return
@@ -50,48 +54,51 @@ func (h *ItemHandler) GetAvailableStatusTransitions(w http.ResponseWriter, r *ht
 		return
 	}
 
+	response, err := h.loadAvailableStatusTransitions(r.Context(), user.ID, item)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	respondJSONOK(w, response)
+}
+
+func (h *ItemHandler) loadAvailableStatusTransitions(ctx context.Context, userID int, item *models.Item) (ItemTransitionSummary, error) {
+	response := ItemTransitionSummary{AvailableTransitions: []map[string]interface{}{}}
+	workspaceID := item.WorkspaceID
+	currentStatusID := item.StatusID
+	itemTypeIDPtr := item.ItemTypeID
+	itemID := item.ID
 	workflowService := services.NewWorkflowService(h.db)
 
 	// Get current status name for response
-	currentStatusName := ""
 	if currentStatusID != nil {
-		currentStatusName, err = workflowService.GetStatusName(int64(*currentStatusID))
+		currentStatusName, err := workflowService.GetStatusName(int64(*currentStatusID))
 		if err != nil {
-			respondInternalError(w, r, err)
-			return
+			return ItemTransitionSummary{}, err
 		}
+		response.CurrentStatus = currentStatusName
 	}
 
 	// Get the workflow using WorkflowService (considers item type override)
 	workflowID, err := workflowService.GetWorkflowIDForItem(workspaceID, itemTypeIDPtr)
 	if err != nil {
-		respondInternalError(w, r, err)
-		return
+		return ItemTransitionSummary{}, err
 	}
 
 	// No workflow configured - return empty transitions
 	if workflowID == nil {
-		response := map[string]interface{}{
-			"current_status":        currentStatusName,
-			"available_transitions": []map[string]interface{}{},
-		}
-		respondJSONOK(w, response)
-		return
+		return response, nil
 	}
 
 	// Build the list of available transitions
-	availableTransitions := []map[string]interface{}{}
-	var pendingApproval *services.PendingApprovalSummary
-
 	// Always include current status first
 	if currentStatusID != nil {
 		currentOption, optionErr := workflowService.GetStatusTransitionOption(int64(*currentStatusID))
 		if optionErr != nil {
-			respondInternalError(w, r, optionErr)
-			return
+			return ItemTransitionSummary{}, optionErr
 		}
 		if currentOption != nil {
-			availableTransitions = append(availableTransitions, transitionOptionResponse(*currentOption))
+			response.AvailableTransitions = append(response.AvailableTransitions, transitionOptionResponse(*currentOption))
 		}
 	}
 
@@ -99,14 +106,13 @@ func (h *ItemHandler) GetAvailableStatusTransitions(w http.ResponseWriter, r *ht
 	if currentStatusID != nil {
 		rawTransitions, listErr := workflowService.ListAvailableTransitionOptions(*workflowID, int64(*currentStatusID))
 		if listErr != nil {
-			respondInternalError(w, r, listErr)
-			return
+			return ItemTransitionSummary{}, listErr
 		}
 
 		// Apply approval gating: drop transitions whose ID is the approve or
 		// deny target of an in-flight approval on this item.
 		if h.approvalService != nil {
-			gatedIDs, summary, gErr := h.approvalService.GetGatedTransitionsForItem(r.Context(), itemID, user.ID)
+			gatedIDs, summary, gErr := h.approvalService.GetGatedTransitionsForItem(ctx, itemID, userID)
 			if gErr != nil {
 				slog.Warn("approval gating lookup failed, returning unfiltered transitions",
 					slog.Int("item_id", itemID),
@@ -124,7 +130,7 @@ func (h *ItemHandler) GetAvailableStatusTransitions(w http.ResponseWriter, r *ht
 				}
 				rawTransitions = kept
 			}
-			pendingApproval = summary
+			response.PendingApproval = summary
 		}
 
 		// Apply condition filtering if condition service is available
@@ -150,7 +156,7 @@ func (h *ItemHandler) GetAvailableStatusTransitions(w http.ResponseWriter, r *ht
 				}
 
 				filtered, filterErr := h.conditionService.FilterTransitionsByConditions(
-					r.Context(), *conditionSetID, twids, user.ID, itemCtx,
+					ctx, *conditionSetID, twids, userID, itemCtx,
 				)
 				if filterErr != nil {
 					slog.Warn("condition filtering failed, returning unfiltered transitions",
@@ -183,19 +189,13 @@ func (h *ItemHandler) GetAvailableStatusTransitions(w http.ResponseWriter, r *ht
 
 		for _, rt := range rawTransitions {
 			if !addedIDs[rt.StatusID] {
-				availableTransitions = append(availableTransitions, transitionOptionResponse(rt))
+				response.AvailableTransitions = append(response.AvailableTransitions, transitionOptionResponse(rt))
 				addedIDs[rt.StatusID] = true
 			}
 		}
 	}
 
-	response := map[string]interface{}{
-		"current_status":        currentStatusName,
-		"available_transitions": availableTransitions,
-		"pending_approval":      pendingApproval,
-	}
-
-	respondJSONOK(w, response)
+	return response, nil
 }
 
 // GetWorkspaceTransitionMatrix returns the allowed status transitions for every

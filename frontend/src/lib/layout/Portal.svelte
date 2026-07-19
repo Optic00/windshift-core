@@ -140,22 +140,14 @@
   );
 
   onMount(async () => {
-    // Initialize auth (non-blocking for portal)
-    authStore.init().catch(() => {});
-
-    // Load portal data
     const slug = $currentRoute.params?.slug;
-    await portalStore.loadPortal(slug);
-
-    // Check portal customer auth (magic link session) - await to prevent flash
-    await portalAuthStore.checkAuth(slug);
+    const [, userBootstrap] = await Promise.all([
+      portalStore.loadPortal(slug),
+      portalAuthStore.checkAuth(slug),
+    ]);
+    portalStore.hydrateUserBootstrap(userBootstrap);
+    previousAuthState = userBootstrap?.authenticated === true;
     authCheckComplete = true;
-
-    // Load my requests + approvals for badge counts if authenticated
-    if (($authStore.isAuthenticated || $portalAuthStore.isAuthenticated) && portalStore.currentSlug) {
-      portalStore.loadMyRequests();
-      portalStore.loadMyApprovals();
-    }
 
     // Apply theme CSS variables
     applyThemeStyles();
@@ -231,11 +223,10 @@
 
     // Only reload when auth state changes from false to true (login)
     if (authCheckComplete && currentAuth && !previousAuthState && portalStore.currentSlug) {
+      if (portalAuthStore.userBootstrap?.authenticated) {
+        portalStore.hydrateUserBootstrap(portalAuthStore.userBootstrap);
+      }
       portalStore.loadRequestTypes();
-      // Always load My Requests on login (needed for badge count)
-      portalStore.loadMyRequests();
-      // Refresh approvals for the badge count too.
-      portalStore.loadMyApprovals();
     }
 
     previousAuthState = currentAuth;
@@ -396,16 +387,10 @@
 
     navigate(next || `/portal/${slug}`, { replace: true });
 
-    // Force re-check auth to ensure UI reflects authenticated state
-    await portalAuthStore.checkAuth(slug);
-
-    // Refresh request types after auth change to ensure they're visible
-    await portalStore.loadRequestTypes();
-
-    // Reload my requests if that view is showing
-    if (portalStore.showMyRequests) {
-      portalStore.loadMyRequests();
-    }
+    // Re-check auth. The auth-state effect reuses its badge snapshot and
+    // refreshes only the visibility-sensitive request-type catalog.
+    const userBootstrap = await portalAuthStore.checkAuth(slug);
+    portalStore.hydrateUserBootstrap(userBootstrap);
   }
 
   function handleVerifyError(message, code, hintEmail) {
@@ -445,7 +430,12 @@
 <svelte:window onkeydown={handleKeydown} />
 
 <!-- Portal Page - Standalone, no Windshift navigation -->
-<div class="min-h-screen flex flex-col" style="background-color: var(--ds-surface, #ffffff);">
+<div
+  class="min-h-screen flex flex-col"
+  style="background-color: var(--ds-surface, #ffffff);"
+  data-testid="portal-page"
+  data-ready={!!portalStore.portalData && authCheckComplete}
+>
   {#if portalStore.loading}
     <!-- Loading State -->
     <div class="flex-1 flex items-center justify-center">

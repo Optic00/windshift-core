@@ -42,6 +42,26 @@ func TestNormalizeEnvelopeAddressRejectsHeaderSyntax(t *testing.T) {
 	}
 }
 
+func TestEncryptionModeAllowedKeepsPlaintextE2EOnly(t *testing.T) {
+	t.Setenv(e2eInsecureSMTPEnv, "")
+	for _, mode := range []string{"tls", "starttls", "ssl"} {
+		if !EncryptionModeAllowed(mode) {
+			t.Fatalf("secure mode %q was rejected", mode)
+		}
+	}
+	if EncryptionModeAllowed("none") {
+		t.Fatal("plaintext SMTP was accepted without the E2E gate")
+	}
+
+	t.Setenv(e2eInsecureSMTPEnv, "1")
+	if !EncryptionModeAllowed("none") {
+		t.Fatal("plaintext SMTP was rejected with the E2E gate enabled")
+	}
+	if EncryptionModeAllowed("bogus") {
+		t.Fatal("unknown SMTP mode was accepted")
+	}
+}
+
 func TestGetSMTPConfigUsesExplicitDefault(t *testing.T) {
 	db, err := database.NewSQLiteDB(filepath.Join(t.TempDir(), "smtp.db"))
 	if err != nil {

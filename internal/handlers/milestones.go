@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -398,6 +399,36 @@ func (h *MilestoneHandler) GetTestStatistics(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	respondJSONOK(w, stats)
+}
+
+// GetTestStatisticsBatch handles GET /api/milestones/test-statistics?ids=1,2.
+// The service performs one grouped read and omits local milestones outside the
+// caller's accessible workspace set.
+func (h *MilestoneHandler) GetTestStatisticsBatch(w http.ResponseWriter, r *http.Request) {
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+	ids := parseIDListParam(r.URL.Query().Get("ids"))
+	if len(ids) == 0 {
+		respondJSONOK(w, map[int]*services.MilestoneTestStats{})
+		return
+	}
+	if len(ids) > maxBatchItems {
+		respondBadRequest(w, r, fmt.Sprintf("too many ids (max %d per request)", maxBatchItems))
+		return
+	}
+	workspaceIDs, err := h.permissionService.AccessibleWorkspaceIDs(user.ID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	stats, err := h.planningService.GetMilestoneTestStatisticsBatch(ids, workspaceIDs)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
 	respondJSONOK(w, stats)
 }
 

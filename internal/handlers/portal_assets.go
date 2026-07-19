@@ -527,7 +527,17 @@ func (h *PortalHandler) GetAssetReports(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	channel := portalResult.channel
+	vc := h.getPortalVisibilityContext(ctx, r, channel.ID)
+	assetReports, err := h.loadPortalAssetReports(ctx, portalResult, vc)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	respondJSONOK(w, assetReports)
+}
 
+func (h *PortalHandler) loadPortalAssetReports(ctx context.Context, portalResult *channelResult, vc portalVisibilityContext) ([]models.AssetReport, error) {
+	channel := portalResult.channel
 	// Query all asset reports for this channel
 	query := `
 		SELECT ar.id, ar.channel_id, ar.asset_set_id, ar.name, ar.description,
@@ -543,15 +553,11 @@ func (h *PortalHandler) GetAssetReports(w http.ResponseWriter, r *http.Request) 
 
 	rows, err := h.db.QueryContext(ctx, query, channel.ID)
 	if err != nil {
-		respondInternalError(w, r, err)
-		return
+		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
 
-	// Get visibility context for filtering
-	vc := h.getPortalVisibilityContext(ctx, r, channel.ID)
-
-	var assetReports []models.AssetReport
+	assetReports := []models.AssetReport{}
 	for rows.Next() {
 		var ar models.AssetReport
 		var columnConfig, visibilityGroupIDs, visibilityOrgIDs sql.NullString
@@ -562,7 +568,7 @@ func (h *PortalHandler) GetAssetReports(w http.ResponseWriter, r *http.Request) 
 			&ar.CreatedAt, &ar.UpdatedAt,
 			&ar.AssetSetName)
 		if err != nil {
-			continue
+			return nil, err
 		}
 
 		// Deserialize arrays
@@ -581,8 +587,7 @@ func (h *PortalHandler) GetAssetReports(w http.ResponseWriter, r *http.Request) 
 		}
 		bindingAvailable, err := h.assetReportBindingAvailable(ctx, &portalResult.config, ar.RunMode, ar.ItemTypeID, ar.WorkspaceID)
 		if err != nil {
-			respondInternalError(w, r, err)
-			return
+			return nil, err
 		}
 		if !bindingAvailable {
 			continue
@@ -594,15 +599,9 @@ func (h *PortalHandler) GetAssetReports(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if err := rows.Err(); err != nil {
-		respondInternalError(w, r, err)
-		return
+		return nil, err
 	}
-
-	if assetReports == nil {
-		assetReports = []models.AssetReport{}
-	}
-
-	respondJSONOK(w, assetReports)
+	return assetReports, nil
 }
 
 // GetRequestTypeFields returns fields for a request type (portal-aware authentication)

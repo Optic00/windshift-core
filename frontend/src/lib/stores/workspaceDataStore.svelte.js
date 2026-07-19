@@ -15,6 +15,7 @@ const AUTO_REFRESH_INTERVAL = 5 * 60 * 1000; // 5 minutes
 class WorkspaceDataStore {
   workspaceId = $state(null);
   workspace = $state(null);
+  homepageLayout = $state(null);
   statuses = $state([]);
   statusCategories = $state([]);
   itemTypes = $state([]);
@@ -69,7 +70,7 @@ class WorkspaceDataStore {
     this.initialized = false;
     this.error = null;
 
-    this._initPromise = this._fetchAll(id)
+    const request = this._fetchAll(id)
       .then(() => {
         // Race condition guard: make sure we're still on the same workspace
         if (this.workspaceId !== id) return;
@@ -87,10 +88,11 @@ class WorkspaceDataStore {
         if (this.workspaceId === id) {
           this.initialLoading = false;
         }
-        this._initPromise = null;
+        if (this._initPromise === request) this._initPromise = null;
       });
 
-    return this._initPromise;
+    this._initPromise = request;
+    return request;
   }
 
   /**
@@ -118,7 +120,7 @@ class WorkspaceDataStore {
     this.initialized = false;
     this.error = null;
 
-    this._initPromise = this._fetchAllGlobal()
+    const request = this._fetchAllGlobal()
       .then(() => {
         if (this.workspaceId !== GLOBAL_SENTINEL) return;
         this.initialized = true;
@@ -134,10 +136,11 @@ class WorkspaceDataStore {
         if (this.workspaceId === GLOBAL_SENTINEL) {
           this.initialLoading = false;
         }
-        this._initPromise = null;
+        if (this._initPromise === request) this._initPromise = null;
       });
 
-    return this._initPromise;
+    this._initPromise = request;
+    return request;
   }
 
   /**
@@ -191,6 +194,7 @@ class WorkspaceDataStore {
   /** @private */
   _clearData() {
     this.workspace = null;
+    this.homepageLayout = null;
     this.statuses = [];
     this.statusCategories = [];
     this.itemTypes = [];
@@ -228,53 +232,27 @@ class WorkspaceDataStore {
 
   /** @private */
   async _fetchAll(workspaceId) {
-    const [
-      workspaceData,
-      itemTypesData,
-      statusesData,
-      statusCategoriesData,
-      usersData,
-      milestonesData,
-      iterationsData,
-      prioritiesData,
-      projectsData,
-    ] = await Promise.all([
-      api.workspaces.get(workspaceId),
-      api.itemTypes.getAll(),
-      api.workspaces.getStatuses(workspaceId),
-      api.statusCategories.getAll(),
-      api.getAssignableUsers(workspaceId),
-      api.milestones.getAll({ workspace_id: workspaceId, include_global: true }),
-      api.iterations.getAll({ workspace_id: workspaceId }),
-      api.priorities.getAll(),
-      api.workspaces.getProjects ? api.workspaces.getProjects(workspaceId) : Promise.resolve([]),
-    ]);
+    const bootstrap = await api.workspaces.getBootstrap(workspaceId);
 
     // Race condition guard
     if (this.workspaceId !== workspaceId) return;
 
-    this.workspace = workspaceData;
-    this.itemTypes = itemTypesData || [];
-    this.statuses = statusesData || [];
-    this.statusCategories = statusCategoriesData || [];
-    this.users = usersData || [];
-    this.milestones = milestonesData || [];
-    this.iterations = iterationsData || [];
-    this.priorities = prioritiesData || [];
-    this.projects = projectsData || [];
+    this.workspace = bootstrap?.workspace ?? null;
+    this.homepageLayout = bootstrap?.homepage_layout ?? null;
+    this.itemTypes = bootstrap?.item_types ?? [];
+    this.statuses = bootstrap?.statuses ?? [];
+    this.statusCategories = bootstrap?.status_categories ?? [];
+    this.users = bootstrap?.users ?? [];
+    this.milestones = bootstrap?.milestones ?? [];
+    this.iterations = bootstrap?.iterations ?? [];
+    this.priorities = bootstrap?.priorities ?? [];
+    this.projects = bootstrap?.projects ?? [];
+    this.customFieldDefinitions = bootstrap?.custom_field_definitions ?? [];
+  }
 
-    // Custom fields loaded separately since it can fail independently
-    try {
-      const cfData = await api.customFields.getAll();
-      if (this.workspaceId === workspaceId) {
-        this.customFieldDefinitions = cfData?.data || [];
-      }
-    } catch (e) {
-      console.warn('WorkspaceDataStore: failed to load custom field definitions', e);
-      if (this.workspaceId === workspaceId) {
-        this.customFieldDefinitions = [];
-      }
-    }
+  hydrateHomepageLayout(workspaceId, layout) {
+    const id = typeof workspaceId === 'string' ? parseInt(workspaceId, 10) : workspaceId;
+    if (this.workspaceId === id) this.homepageLayout = layout;
   }
 
   /** @private */
@@ -318,6 +296,7 @@ class WorkspaceDataStore {
   async _fetchField(workspaceId, field) {
     const fetchers = {
       workspace: () => api.workspaces.get(workspaceId),
+      homepageLayout: () => api.workspaces.getHomepageLayout(workspaceId),
       statuses: () => api.workspaces.getStatuses(workspaceId),
       statusCategories: () => api.statusCategories.getAll(),
       itemTypes: () => api.itemTypes.getAll(),

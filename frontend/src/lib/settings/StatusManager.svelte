@@ -18,6 +18,7 @@
   import { t } from '../stores/i18n.svelte.js';
   import { errorToast } from '../stores/toasts.svelte.js';
   import { confirm } from '../composables/useConfirm.js';
+  import { loadStatusManagerData } from './statusManagerData.js';
   import './settings-form.css';
 
   // System-protected status IDs (cannot be deleted)
@@ -40,61 +41,27 @@
   });
 
   onMount(async () => {
-    await loadStatusCategories();
-    await loadStatuses();
-  });
-
-  async function loadStatusCategories() {
     try {
+      loading = true;
       loadingCategories = true;
-      statusCategories = await api.get('/status-categories') || [];
+      const data = await loadStatusManagerData(api);
+      statusCategories = data.statusCategories;
+      workflowTransitions = data.workflowTransitions;
+      statuses = data.statuses;
       // Set default category if none selected
       if (statusCategories.length > 0 && !formData.category_id) {
         formData.category_id = statusCategories[0].id;
       }
     } catch (error) {
-      console.error('Failed to load status categories:', error);
-      statusCategories = [];
-    } finally {
-      loadingCategories = false;
-    }
-  }
-
-  async function loadStatuses() {
-    try {
-      loading = true;
-      const [statusesResult, workflows] = await Promise.all([
-        api.get('/statuses') || [],
-        api.get('/workflows') || []
-      ]);
-      
-      // Get all transitions from all workflows
-      const allTransitions = [];
-      for (const workflow of workflows) {
-        try {
-          const transitions = await api.get(`/workflows/${workflow.id}/transitions`) || [];
-          allTransitions.push(...transitions);
-        } catch (error) {
-          console.error(`Failed to load transitions for workflow ${workflow.id}:`, error);
-        }
-      }
-      
-      workflowTransitions = allTransitions;
-      
-      // Add transition count to each status
-      statuses = statusesResult.map(status => ({
-        ...status,
-        transitionCount: allTransitions.filter(t => 
-          t.from_status_id === status.id || t.to_status_id === status.id
-        ).length
-      }));
-    } catch (error) {
       console.error('Failed to load statuses:', error);
+      statusCategories = [];
+      workflowTransitions = [];
       statuses = [];
     } finally {
       loading = false;
+      loadingCategories = false;
     }
-  }
+  });
 
   function startCreate() {
     formData = {
@@ -385,4 +352,3 @@
     {/snippet}
   </Modal>
 </div>
-

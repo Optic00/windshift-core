@@ -133,13 +133,16 @@ func (h *CommentHandler) GetComments(w http.ResponseWriter, r *http.Request) {
 	// here so it surfaces in the same feed users already read. Synthetic rows
 	// use a negated id so they can't be edited or deleted via the existing
 	// id-based handlers, and source='approval' lets the UI tag them.
+	includeAgentOwner := canViewAgentOwnerAttribution(h.permissionService, user.ID)
 	query := `
 		SELECT c.id, c.item_id, c.author_id, c.portal_customer_id, c.content, c.is_private, c.created_at, c.updated_at,
 		       u.first_name, u.last_name, u.email, u.avatar_url,
 		       pc.name as customer_name, pc.email as customer_email,
-		       'human' AS source, COALESCE(u.is_agent, FALSE) AS is_agent
+		       'human' AS source, COALESCE(u.is_agent, FALSE) AS is_agent,
+		       COALESCE(NULLIF(TRIM(COALESCE(owner.first_name, '') || ' ' || COALESCE(owner.last_name, '')), ''), owner.username, '') AS agent_owner_name
 		FROM comments c
 		LEFT JOIN users u ON c.author_id = u.id
+		LEFT JOIN users owner ON owner.id = u.agent_owner_user_id
 		LEFT JOIN portal_customers pc ON c.portal_customer_id = pc.id
 		WHERE c.item_id = ?
 		UNION ALL
@@ -154,10 +157,12 @@ func (h *CommentHandler) GetComments(w http.ResponseWriter, r *http.Request) {
 		       d.created_at AS updated_at,
 		       u.first_name, u.last_name, u.email, u.avatar_url,
 		       NULL AS customer_name, NULL AS customer_email,
-		       'approval' AS source, COALESCE(u.is_agent, FALSE) AS is_agent
+		       'approval' AS source, COALESCE(u.is_agent, FALSE) AS is_agent,
+		       COALESCE(NULLIF(TRIM(COALESCE(owner.first_name, '') || ' ' || COALESCE(owner.last_name, '')), ''), owner.username, '') AS agent_owner_name
 		FROM approval_decisions d
 		JOIN approval_requests ar ON ar.id = d.approval_request_id
 		LEFT JOIN users u ON u.id = d.actor_user_id
+		LEFT JOIN users owner ON owner.id = u.agent_owner_user_id
 		WHERE ar.item_id = ? AND d.comment IS NOT NULL AND d.comment <> ''
 		ORDER BY created_at DESC
 	`
@@ -171,10 +176,13 @@ func (h *CommentHandler) GetComments(w http.ResponseWriter, r *http.Request) {
 
 	var comments []models.Comment
 	for rows.Next() {
-		comment, err := scanComment(rows)
+		comment, err := scanCommentWithAgentOwner(rows)
 		if err != nil {
 			respondInternalError(w, r, fmt.Errorf("failed to scan comment: %w", err))
 			return
+		}
+		if !includeAgentOwner {
+			comment.AgentOwnerName = ""
 		}
 
 		comments = append(comments, comment)
@@ -547,24 +555,42 @@ func (h *CommentHandler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 func scanComment(scanner interface {
 	Scan(dest ...interface{}) error
 }) (models.Comment, error) {
+	return scanCommentRow(scanner, false)
+}
+
+func scanCommentWithAgentOwner(scanner interface {
+	Scan(dest ...interface{}) error
+}) (models.Comment, error) {
+	return scanCommentRow(scanner, true)
+}
+
+func scanCommentRow(scanner interface {
+	Scan(dest ...interface{}) error
+}, withAgentOwner bool) (models.Comment, error) {
 	var comment models.Comment
 	var authorID, portalCustomerID sql.NullInt64
 	var firstName, lastName sql.NullString
 	var email, avatarURL sql.NullString
 	var customerName, customerEmail sql.NullString
 	var isAgent sql.NullBool
+	var agentOwnerName sql.NullString
 
-	err := scanner.Scan(
+	dest := []interface{}{
 		&comment.ID, &comment.ItemID, &authorID, &portalCustomerID, &comment.Content, &comment.IsPrivate,
 		&comment.CreatedAt, &comment.UpdatedAt,
 		&firstName, &lastName, &email, &avatarURL,
 		&customerName, &customerEmail,
 		&comment.Source, &isAgent,
-	)
+	}
+	if withAgentOwner {
+		dest = append(dest, &agentOwnerName)
+	}
+	err := scanner.Scan(dest...)
 	if err != nil {
 		return comment, err
 	}
 	comment.IsAgent = isAgent.Valid && isAgent.Bool
+	comment.AgentOwnerName = agentOwnerName.String
 
 	comment.AuthorID = utils.NullInt64ToPtr(authorID)
 	comment.PortalCustomerID = utils.NullInt64ToPtr(portalCustomerID)

@@ -203,7 +203,29 @@ func (r *WorkflowRepository) ListTransitions(workflowID int) ([]models.WorkflowT
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
+	return scanWorkflowTransitions(rows)
+}
 
+// ListAllTransitions returns every workflow transition in one bounded query
+// for enriched workflow list responses.
+func (r *WorkflowRepository) ListAllTransitions() ([]models.WorkflowTransition, error) {
+	rows, err := r.db.Query(`
+		SELECT wt.id, wt.workflow_id, wt.from_status_id, wt.to_status_id, wt.display_order, wt.source_handle, wt.target_handle, wt.created_at,
+		       fs.name as from_status_name, ts.name as to_status_name, w.name as workflow_name
+		FROM workflow_transitions wt
+		LEFT JOIN statuses fs ON wt.from_status_id = fs.id
+		JOIN statuses ts ON wt.to_status_id = ts.id
+		JOIN workflows w ON wt.workflow_id = w.id
+		ORDER BY wt.workflow_id, wt.from_status_id NULLS FIRST, wt.display_order ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	return scanWorkflowTransitions(rows)
+}
+
+func scanWorkflowTransitions(rows *sql.Rows) ([]models.WorkflowTransition, error) {
 	var transitions []models.WorkflowTransition
 	for rows.Next() {
 		var transition models.WorkflowTransition

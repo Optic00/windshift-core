@@ -148,7 +148,6 @@
   onMount(async () => {
     if (workspaceId) {
       await loadWorkspaceGradient(workspaceId);
-      await loadCollections();
     }
   });
 

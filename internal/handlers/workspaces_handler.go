@@ -127,8 +127,8 @@ func (h *WorkspaceHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	workspace, err := h.repo.FindByID(workspaceID)
-	if err == repository.ErrNotFound {
+	workspace, err := h.loadWorkspaceForUser(currentUser, workspaceID)
+	if errors.Is(err, repository.ErrNotFound) {
 		respondNotFound(w, r, "workspace")
 		return
 	}
@@ -137,36 +137,37 @@ func (h *WorkspaceHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.trackWorkspaceVisit(currentUser.ID, workspace.ID)
+	respondJSONOK(w, workspace)
+}
+
+// loadWorkspaceForUser resolves a workspace and applies the same visibility
+// rules used by the standalone detail endpoint. Access-denied workspaces are
+// deliberately reported as not found to avoid disclosing their existence.
+func (h *WorkspaceHandler) loadWorkspaceForUser(currentUser *models.User, workspaceID int) (*models.Workspace, error) {
+	workspace, err := h.repo.FindByID(workspaceID)
+	if err != nil {
+		return nil, err
+	}
+
 	// Check permissions based on workspace state
 	if !workspace.Active {
 		// For inactive workspaces, check if user has admin access
 		canAccess, err := h.canAccessInactiveWorkspace(currentUser, workspace.ID)
 		if err != nil {
-			respondInternalError(w, r, err)
-			return
+			return nil, err
 		}
 		if !canAccess {
-			respondNotFound(w, r, "workspace")
-			return
+			return nil, repository.ErrNotFound
 		}
 	} else {
 		// For active workspaces, check if user has view permission
 		canView, err := h.canViewWorkspace(currentUser.ID, workspace.ID)
 		if err != nil {
-			respondInternalError(w, r, err)
-			return
+			return nil, err
 		}
 		if !canView {
-			respondNotFound(w, r, "workspace")
-			return
-		}
-	}
-
-	// Track workspace visit
-	if h.activityTracker != nil {
-		if err = h.activityTracker.TrackWorkspaceVisit(currentUser.ID, workspace.ID); err != nil {
-			slog.Error("failed to track workspace visit", slog.String("component", "workspaces"), slog.Int("user_id", currentUser.ID), slog.Int("workspace_id", workspace.ID), slog.Any("error", err))
-			// Don't fail the request, just log the error
+			return nil, repository.ErrNotFound
 		}
 	}
 
@@ -179,8 +180,16 @@ func (h *WorkspaceHandler) Get(w http.ResponseWriter, r *http.Request) {
 	} else {
 		workspace.TimeProjectCategories = timeProjectCats // Set even if empty
 	}
+	return workspace, nil
+}
 
-	respondJSONOK(w, workspace)
+func (h *WorkspaceHandler) trackWorkspaceVisit(userID, workspaceID int) {
+	if h.activityTracker == nil {
+		return
+	}
+	if err := h.activityTracker.TrackWorkspaceVisit(userID, workspaceID); err != nil {
+		slog.Error("failed to track workspace visit", slog.String("component", "workspaces"), slog.Int("user_id", userID), slog.Int("workspace_id", workspaceID), slog.Any("error", err))
+	}
 }
 
 func (h *WorkspaceHandler) Create(w http.ResponseWriter, r *http.Request) {

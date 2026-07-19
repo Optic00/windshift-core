@@ -3,6 +3,8 @@ import { createCrudClient } from '../createCrudClient.js';
 
 export const testRuns = {
   ...createCrudClient('/test-runs', { parentPath: '/workspaces' }),
+  getDetail: (workspaceId, runId) =>
+    fetchAPI(`/workspaces/${workspaceId}/test-runs/${runId}/detail`),
   end: (workspaceId, id) =>
     fetchAPI(`/workspaces/${workspaceId}/test-runs/${id}/end`, {
       method: 'POST',

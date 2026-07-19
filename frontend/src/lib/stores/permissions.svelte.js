@@ -1,4 +1,4 @@
-import { derived, writable } from 'svelte/store';
+import { derived, get, writable } from 'svelte/store';
 import { api } from '../api.js';
 import { authStore } from './auth.svelte.js';
 import { clearPermissionProfiles, loadPermissionProfile } from './permissionProfile.js';
@@ -17,6 +17,9 @@ function createPermissionStore() {
   const hasAssetSets = writable(false);
   const hasActivePortals = writable(false);
   const logbookAvailable = writable(false);
+  let allPermissionsLoaded = false;
+  let allPermissionsLoadPromise = null;
+  let allPermissionsLoadGeneration = 0;
 
   const canAccessAdmin = derived([authStore], ([$authStore]) => {
     return $authStore.currentUser?.is_system_admin === true;
@@ -215,33 +218,56 @@ function createPermissionStore() {
     },
 
     // Load all permissions (for admin only)
-    async loadAllPermissions(user) {
-      loading.set(true);
-
+    loadAllPermissions(user, { force = false } = {}) {
       // Only load all permissions if user is system admin
       if (!user?.is_system_admin) {
+        allPermissionsLoadGeneration += 1;
+        allPermissionsLoaded = false;
+        allPermissionsLoadPromise = null;
         permissions.set([]);
         loading.set(false);
         error.set(null);
-        return;
+        return Promise.resolve([]);
       }
 
-      try {
-        const allPermissions = await api.permissions.getAll();
-        permissions.set(allPermissions);
-        loading.set(false);
-        error.set(null);
-      } catch (err) {
-        console.warn('Failed to load all permissions:', err);
-        permissions.set([]);
-        loading.set(false);
-        error.set(err.message);
-      }
+      if (!force && allPermissionsLoaded) return Promise.resolve(get(permissions));
+      if (!force && allPermissionsLoadPromise) return allPermissionsLoadPromise;
+
+      const generation = ++allPermissionsLoadGeneration;
+      loading.set(true);
+      const request = api.permissions
+        .getAll()
+        .then((allPermissions) => {
+          if (generation !== allPermissionsLoadGeneration) return [];
+          const nextPermissions = allPermissions || [];
+          permissions.set(nextPermissions);
+          allPermissionsLoaded = true;
+          error.set(null);
+          return nextPermissions;
+        })
+        .catch((err) => {
+          if (generation !== allPermissionsLoadGeneration) return [];
+          console.warn('Failed to load all permissions:', err);
+          permissions.set([]);
+          allPermissionsLoaded = false;
+          error.set(err.message);
+          return [];
+        })
+        .finally(() => {
+          if (generation === allPermissionsLoadGeneration) loading.set(false);
+          if (allPermissionsLoadPromise === request) allPermissionsLoadPromise = null;
+        });
+
+      allPermissionsLoadPromise = request;
+      return request;
     },
 
     // Clear permissions
     clear() {
       clearPermissionProfiles();
+      allPermissionsLoadGeneration += 1;
+      allPermissionsLoaded = false;
+      allPermissionsLoadPromise = null;
       permissions.set([]);
       userPermissions.set(new Set());
       userPermissionKeys.set(new Set());

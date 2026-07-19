@@ -98,6 +98,60 @@ func (h *SCMWorkspaceHandler) GetWorkspaceSCMConnections(w http.ResponseWriter, 
 		return
 	}
 
+	if strings.EqualFold(r.URL.Query().Get("include_repositories"), "true") {
+		repositories, err := h.repo.ListLinkedRepositoriesForWorkspace(workspaceID)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return
+		}
+		connectionIndexes := make(map[int]int, len(connections))
+		for i := range connections {
+			connectionIndexes[connections[i].ID] = i
+			connections[i].Repositories = []repository.SCMLinkedRepository{}
+		}
+		for _, linkedRepository := range repositories {
+			if index, exists := connectionIndexes[linkedRepository.WorkspaceSCMConnectionID]; exists {
+				connections[index].Repositories = append(connections[index].Repositories, linkedRepository)
+			}
+		}
+	}
+
+	if strings.EqualFold(r.URL.Query().Get("include_auth_status"), "true") {
+		user, ok := RequireAuth(w, r)
+		if !ok {
+			return
+		}
+		authStatuses, err := h.repo.ListConnectionAuthStatusesForWorkspace(workspaceID, user.ID)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return
+		}
+		for i := range connections {
+			connections[i].AuthStatus = authStatuses[connections[i].ID]
+		}
+	}
+
+	respondJSONOK(w, connections)
+}
+
+// GetAccessibleSCMConnections returns connections across every workspace the
+// caller can view. It supports global release pickers without a workspace-list
+// request followed by one connection request per workspace.
+func (h *SCMWorkspaceHandler) GetAccessibleSCMConnections(w http.ResponseWriter, r *http.Request) {
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+	workspaceIDs, err := h.permissionService.AccessibleWorkspaceIDs(user.ID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	connections, err := h.repo.ListConnectionsForWorkspaces(workspaceIDs)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
 	respondJSONOK(w, connections)
 }
 

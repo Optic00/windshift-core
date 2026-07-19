@@ -16,6 +16,7 @@ type CollectionRecord struct {
 	Slug        string
 	Name        string
 	Description string
+	QLQuery     string
 	WorkspaceID *int
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
@@ -40,12 +41,12 @@ func (r *CollectionRepository) GetByID(id int) (*CollectionRecord, error) {
 	var createdBy sql.NullInt64
 	var slug sql.NullString
 	err := r.db.QueryRow(`
-		SELECT id, name, COALESCE(description, ''), workspace_id, is_public, created_by,
+		SELECT id, name, COALESCE(description, ''), COALESCE(ql_query, ''), workspace_id, is_public, created_by,
 		       public_slug, created_at, updated_at
 		FROM collections
 		WHERE id = ?
 	`, id).Scan(
-		&rec.ID, &rec.Name, &rec.Description,
+		&rec.ID, &rec.Name, &rec.Description, &rec.QLQuery,
 		&workspaceID, &rec.IsPublic, &createdBy,
 		&slug, &rec.CreatedAt, &rec.UpdatedAt,
 	)

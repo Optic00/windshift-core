@@ -307,7 +307,8 @@ async function loadPortal(slug) {
       return;
     }
 
-    portalData = await api.portal.get(slug);
+    const bootstrap = await api.portal.getBootstrap(slug);
+    portalData = bootstrap.portal;
 
     // Initialize editable state with portal data
     editableTitle = portalData.title || 'Support Portal';
@@ -339,10 +340,9 @@ async function loadPortal(slug) {
     // Ensure workspace_ids is always an array
     portalData.workspace_ids = portalData.workspace_ids || [];
 
-    // Load request types and asset reports for rendering sections
-    if (portalData.channel_id) {
-      await Promise.all([loadRequestTypes(), loadAssetReports({ forCustomization: false })]);
-    }
+    requestTypes = normalizeRequestTypes(bootstrap.request_types || []);
+    assetReports = bootstrap.asset_reports || [];
+    hasAssetSets = assetReports.length > 0;
 
     // Allow saves from user changes after initial load
     setTimeout(() => {
@@ -629,18 +629,38 @@ async function loadRequestTypes() {
     // Surface the count only for internal users (preserves prior behavior where
     // portal customers don't see field counts). Internal users may be
     // authenticated via either auth store.
-    const isInternal =
-      authStore.isAuthenticated || (portalAuthStore.isAuthenticated && portalAuthStore.isInternal);
-    requestTypes = types.map((rt) => ({
-      ...rt,
-      field_count: isInternal ? (rt.field_count ?? 0) : 0,
-    }));
+    requestTypes = normalizeRequestTypes(types);
   } catch (err) {
     console.error('Failed to load request types:', err);
   } finally {
     loadingRequestTypes = false;
     isLoadingRequestTypes = false;
   }
+}
+
+function normalizeRequestTypes(types, isInternal = null) {
+  const showFieldCounts =
+    isInternal ??
+    (authStore.isAuthenticated || (portalAuthStore.isAuthenticated && portalAuthStore.isInternal));
+  return types.map((requestType) => {
+    const rawFieldCount = requestType._field_count ?? requestType.field_count ?? 0;
+    return {
+      ...requestType,
+      _field_count: rawFieldCount,
+      field_count: showFieldCounts ? rawFieldCount : 0,
+    };
+  });
+}
+
+function hydrateUserBootstrap(bootstrap) {
+  if (!bootstrap?.authenticated) {
+    myRequests = [];
+    myApprovals = [];
+    return;
+  }
+  myRequests = bootstrap.my_requests || [];
+  myApprovals = bootstrap.my_approvals || [];
+  requestTypes = normalizeRequestTypes(requestTypes, bootstrap.is_internal === true);
 }
 
 /**
@@ -1546,6 +1566,7 @@ export const portalStore = {
 
   // Actions
   loadPortal,
+  hydrateUserBootstrap,
   toggleEditing,
   toggleTheme,
   selectGradient,

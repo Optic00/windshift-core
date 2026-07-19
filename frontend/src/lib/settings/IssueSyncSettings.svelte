@@ -15,6 +15,8 @@
   import UserPicker from '../pickers/UserPicker.svelte';
   import { itemTypeIconMap } from '../utils/icons.js';
   import { safeHref } from '../utils/sanitize';
+  import { workspaceDataStore } from '../stores/workspaceDataStore.svelte.js';
+  import { loadIssueSyncPageData } from './issueSyncData.js';
 
   let { workspaceId } = $props();
 
@@ -58,28 +60,13 @@
   async function loadData() {
     loading = true;
     try {
-      // Load config separately so a 404 (no config yet) doesn't break other loads
-      let configRes = null;
-      try {
-        configRes = await api.issueSync.getConfig(workspaceId);
-      } catch (e) {
-        if (e.status !== 404) console.error('Failed to load issue sync config:', e);
-      }
-
-      await loadLinkedRepos();
-      config = configRes;
-
-      // Load additional data
-      const [typesRes, prioritiesRes, usersRes, milestonesRes] = await Promise.all([
-        api.itemTypes.getAll({ workspace_id: workspaceId }),
-        api.priorities.getAll({ workspace_id: workspaceId }),
-        api.getAssignableUsers(workspaceId),
-        api.milestones.getAll({ workspace_id: workspaceId }),
-      ]);
-      itemTypes = typesRes || [];
-      priorities = prioritiesRes || [];
-      users = usersRes || [];
-      milestones = milestonesRes || [];
+      const data = await loadIssueSyncPageData(api, workspaceDataStore, workspaceId);
+      config = data.config;
+      linkedRepos = data.linkedRepositories;
+      itemTypes = data.itemTypes;
+      priorities = data.priorities;
+      users = data.users;
+      milestones = data.milestones;
 
       if (config) {
         populateForm(config);
@@ -89,22 +76,6 @@
       console.error('Failed to load issue sync data:', error);
     } finally {
       loading = false;
-    }
-  }
-
-  async function loadLinkedRepos() {
-    try {
-      const connections = await api.workspaceSCM.getConnections(workspaceId);
-      const allRepos = [];
-      for (const conn of (connections || [])) {
-        try {
-          const repos = await api.workspaceSCM.getLinkedRepos(workspaceId, conn.id);
-          if (repos) allRepos.push(...repos);
-        } catch { /* skip */ }
-      }
-      linkedRepos = allRepos;
-    } catch {
-      linkedRepos = [];
     }
   }
 

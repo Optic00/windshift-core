@@ -1,6 +1,7 @@
 import { writable } from 'svelte/store';
 import { api } from '../api.js';
 import { gradients } from '../utils/gradients.js';
+import { workspaceDataStore } from './workspaceDataStore.svelte.js';
 
 // Store for workspace gradient settings (using writable for compatibility with components using $ syntax)
 export const workspaceGradientIndex = writable(0); // Default to 0 (None)
@@ -11,6 +12,12 @@ export const workspaceBackgroundImageUrl = writable(null); // Custom background 
 let _gradientIndex = $state(0);
 let _applyToAll = $state(false);
 let _backgroundImageUrl = $state(null);
+
+let cachedWorkspaceKey = null;
+let cachedLayout = null;
+let loadPromise = null;
+let loadPromiseKey = null;
+let loadGeneration = 0;
 
 // Sync stores to internal state
 workspaceGradientIndex.subscribe((value) => {
@@ -33,20 +40,79 @@ function applyGradientFromLayout(layout) {
 
 // Load gradient settings from workspace homepage layout. Returns the fetched
 // layout so callers that also need sections/widgets can avoid a second fetch.
-export async function loadWorkspaceGradient(workspaceId) {
-  try {
-    const layout = await api.workspaces.getHomepageLayout(workspaceId);
-    applyGradientFromLayout(layout);
-    return layout;
-  } catch (error) {
-    console.error('Failed to load workspace gradient:', error);
-    applyGradientFromLayout(null);
-    return null;
+export async function loadWorkspaceGradient(workspaceId, { force = false } = {}) {
+  if (!workspaceId) return null;
+  const workspaceKey = String(workspaceId);
+
+  if (!force && cachedWorkspaceKey === workspaceKey) {
+    applyGradientFromLayout(cachedLayout);
+    return cachedLayout;
   }
+  if (!force && loadPromise && loadPromiseKey === workspaceKey) {
+    return loadPromise;
+  }
+
+  const generation = ++loadGeneration;
+  loadPromiseKey = workspaceKey;
+  const request = loadWorkspaceLayout(workspaceId, force)
+    .then((layout) => {
+      if (generation === loadGeneration) {
+        cachedWorkspaceKey = workspaceKey;
+        cachedLayout = layout;
+        workspaceDataStore.hydrateHomepageLayout(workspaceId, layout);
+        applyGradientFromLayout(layout);
+      }
+      return layout;
+    })
+    .catch((error) => {
+      console.error('Failed to load workspace gradient:', error);
+      if (generation === loadGeneration) applyGradientFromLayout(null);
+      return null;
+    })
+    .finally(() => {
+      if (loadPromise === request) {
+        loadPromise = null;
+        loadPromiseKey = null;
+      }
+    });
+  loadPromise = request;
+  return request;
+}
+
+async function loadWorkspaceLayout(workspaceId, force) {
+  if (force) return api.workspaces.getHomepageLayout(workspaceId);
+  await workspaceDataStore.initialize(workspaceId);
+  const expectedID = Number.parseInt(String(workspaceId), 10);
+  if (
+    workspaceDataStore.initialized &&
+    workspaceDataStore.workspaceId === expectedID &&
+    workspaceDataStore.homepageLayout
+  ) {
+    return workspaceDataStore.homepageLayout;
+  }
+  // Keep standalone/error recovery behavior when the aggregate snapshot could
+  // not initialize. A healthy workspace route never reaches this fallback.
+  return api.workspaces.getHomepageLayout(workspaceId);
+}
+
+export function hydrateWorkspaceGradientLayout(workspaceId, layout) {
+  if (!workspaceId) return;
+  loadGeneration += 1;
+  loadPromise = null;
+  loadPromiseKey = null;
+  cachedWorkspaceKey = String(workspaceId);
+  cachedLayout = layout;
+  workspaceDataStore.hydrateHomepageLayout(workspaceId, layout);
+  applyGradientFromLayout(layout);
 }
 
 // Clear all gradient stores to defaults
 export function clearWorkspaceGradient() {
+  loadGeneration += 1;
+  loadPromise = null;
+  loadPromiseKey = null;
+  cachedWorkspaceKey = null;
+  cachedLayout = null;
   workspaceGradientIndex.set(0);
   applyToAllViews.set(false);
   workspaceBackgroundImageUrl.set(null);

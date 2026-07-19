@@ -6,6 +6,7 @@
   import { errorToast } from '../stores/toasts.svelte.js';
   import { confirm } from '../composables/useConfirm.js';
   import { currentWorkspace, workspacesStore } from '../stores';
+  import { workspaceDataStore } from '../stores/workspaceDataStore.svelte.js';
   import { formatDateSimple } from '../utils/dateFormatter.js';
   import { Plus, CheckSquare } from '@lucide/svelte';
   import WorkspaceNavigation from './WorkspaceNavigation.svelte';
@@ -50,9 +51,9 @@
 
   async function loadWorkspace() {
     try {
-      workspace = await api.workspaces.get(effectiveWorkspaceId);
-      // Update the currentWorkspace store so WorkspaceNavigation can react to it
-      await currentWorkspace.load(effectiveWorkspaceId);
+      await workspaceDataStore.initialize(effectiveWorkspaceId);
+      workspace = workspaceDataStore.workspace;
+      currentWorkspace.hydrate(workspace);
     } catch (error) {
       console.error('Failed to load workspace:', error);
     }
@@ -60,8 +61,8 @@
 
   async function loadProjects() {
     try {
-      const result = await api.workspaces.getProjects(effectiveWorkspaceId);
-      projects = result || [];
+      await workspaceDataStore.initialize(effectiveWorkspaceId);
+      projects = workspaceDataStore.projects || [];
     } catch (error) {
       console.error('Failed to load projects:', error);
       projects = [];

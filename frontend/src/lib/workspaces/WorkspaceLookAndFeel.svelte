@@ -4,7 +4,14 @@
   import { api } from '../api.js';
   import { navigate } from '../router.js';
   import { workspacePermissions, currentWorkspace, attachmentStatus, workspacesStore } from '../stores';
-  import { workspaceGradientIndex, applyToAllViews as applyToAllViewsStore, workspaceBackgroundImageUrl } from '../stores/workspaceGradient.svelte.js';
+  import { workspaceDataStore } from '../stores/workspaceDataStore.svelte.js';
+  import {
+    workspaceGradientIndex,
+    applyToAllViews as applyToAllViewsStore,
+    workspaceBackgroundImageUrl,
+    hydrateWorkspaceGradientLayout,
+    loadWorkspaceGradient,
+  } from '../stores/workspaceGradient.svelte.js';
   import { gradients } from '../utils/gradients.js';
   import { backgroundCategories, getPresetsByCategory } from '../utils/backgroundImages.js';
   import { workspaceIconMap } from '../utils/icons.js';
@@ -68,12 +75,12 @@
 
   onMount(async () => {
     try {
-      const [ws, layout] = await Promise.all([
-        api.workspaces.get(workspaceId),
-        api.workspaces.getHomepageLayout(workspaceId)
+      const [, layout] = await Promise.all([
+        workspaceDataStore.initialize(workspaceId),
+        loadWorkspaceGradient(workspaceId)
       ]);
 
-      workspace = ws;
+      workspace = workspaceDataStore.workspace;
       if (workspace) {
         icon = workspace.icon || 'Package';
         color = workspace.color || '#3b82f6';
@@ -135,6 +142,7 @@
       workspaceGradientIndex.set(selectedGradient);
       applyToAllViewsStore.set(true);
       workspaceBackgroundImageUrl.set(backgroundImageUrl);
+      hydrateWorkspaceGradientLayout(workspaceId, layoutPayload);
     } catch (error) {
       console.error('Failed to save:', error);
       errorToast(t('lookAndFeel.failedToSave', { error: error.message || error }));

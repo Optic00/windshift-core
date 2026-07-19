@@ -1,4 +1,4 @@
-import { derived, writable } from 'svelte/store';
+import { derived, get, writable } from 'svelte/store';
 import { api } from '../api.js';
 
 // Current workspace store - automatically syncs with route
@@ -9,6 +9,16 @@ function createCurrentWorkspaceStore() {
 
   return {
     subscribe,
+
+    // Hydrate from an already-fetched workspace snapshot. This is used by the
+    // shared workspace bootstrap/store so route consumers do not issue a
+    // second GET for the same workspace.
+    hydrate(workspace) {
+      if (!workspace?.id) return;
+      loadGeneration += 1;
+      set(workspace);
+      lastWorkspaceId = String(workspace.id);
+    },
 
     // Patch workspace with partial updates (no API call)
     patch(updates) {
@@ -25,7 +35,8 @@ function createCurrentWorkspaceStore() {
       }
 
       // Avoid unnecessary API calls if workspace ID hasn't changed
-      if (workspaceId === lastWorkspaceId) {
+      const workspaceKey = String(workspaceId);
+      if (workspaceKey === lastWorkspaceId) {
         return;
       }
 
@@ -36,7 +47,7 @@ function createCurrentWorkspaceStore() {
         set(workspace);
         // Only mark this id as loaded once the fetch actually succeeded —
         // otherwise a transient failure would suppress all retries.
-        lastWorkspaceId = workspaceId;
+        lastWorkspaceId = workspaceKey;
       } catch (error) {
         if (generation !== loadGeneration) return;
         console.error('Failed to load workspace:', error);
@@ -62,7 +73,9 @@ function createWorkspacesStore() {
   const loading = writable(false);
   let lifecycleGeneration = 0;
   let listLoadGeneration = 0;
+  let listLoadPromise = null;
   let personalLoadGeneration = 0;
+  let personalLoadPromise = null;
 
   // Derived store for regular (non-personal) workspaces
   const regularWorkspaces = derived(workspaces, ($workspaces) =>
@@ -87,55 +100,80 @@ function createWorkspacesStore() {
     subscribe: combined.subscribe,
 
     // Load all workspaces (but not personal workspace - that's loaded on-demand)
-    async load() {
+    load({ force = false } = {}) {
+      if (!force && get(loaded)) return Promise.resolve(get(workspaces));
+      if (!force && listLoadPromise) return listLoadPromise;
+
       const lifecycle = lifecycleGeneration;
       const generation = ++listLoadGeneration;
       loading.set(true);
 
-      try {
-        const allWorkspaces = await api.workspaces.getAll();
-        if (lifecycle !== lifecycleGeneration || generation !== listLoadGeneration) return;
+      const request = api.workspaces
+        .getAll()
+        .then((allWorkspaces) => {
+          if (lifecycle !== lifecycleGeneration || generation !== listLoadGeneration) return [];
 
-        workspaces.set(allWorkspaces || []);
-        // Don't set personalWorkspace here - it's loaded on-demand
-        loaded.set(true);
-      } catch (error) {
-        if (lifecycle !== lifecycleGeneration || generation !== listLoadGeneration) return;
-        console.error('Failed to load workspaces:', error);
-        workspaces.set([]);
-        loaded.set(true);
-      } finally {
-        if (lifecycle === lifecycleGeneration && generation === listLoadGeneration) {
-          loading.set(false);
-        }
-      }
+          const nextWorkspaces = allWorkspaces || [];
+          workspaces.set(nextWorkspaces);
+          // Don't set personalWorkspace here - it's loaded on-demand
+          loaded.set(true);
+          return nextWorkspaces;
+        })
+        .catch((error) => {
+          if (lifecycle !== lifecycleGeneration || generation !== listLoadGeneration) return [];
+          console.error('Failed to load workspaces:', error);
+          workspaces.set([]);
+          loaded.set(true);
+          return [];
+        })
+        .finally(() => {
+          if (lifecycle === lifecycleGeneration && generation === listLoadGeneration) {
+            loading.set(false);
+          }
+          if (listLoadPromise === request) listLoadPromise = null;
+        });
+
+      listLoadPromise = request;
+      return request;
     },
 
     // Load personal workspace on-demand
-    async loadPersonalWorkspace() {
+    loadPersonalWorkspace() {
+      const current = get(personalWorkspace);
+      if (current) return Promise.resolve(current);
+      if (personalLoadPromise) return personalLoadPromise;
+
       const lifecycle = lifecycleGeneration;
       const generation = ++personalLoadGeneration;
-      try {
-        const personal = await api.workspaces.getOrCreatePersonal();
-        if (lifecycle !== lifecycleGeneration || generation !== personalLoadGeneration) {
+      const request = api.workspaces
+        .getOrCreatePersonal()
+        .then((personal) => {
+          if (lifecycle !== lifecycleGeneration || generation !== personalLoadGeneration) {
+            return null;
+          }
+          personalWorkspace.set(personal);
+          return personal;
+        })
+        .catch((error) => {
+          if (lifecycle !== lifecycleGeneration || generation !== personalLoadGeneration) {
+            return null;
+          }
+          console.error('Failed to load personal workspace:', error);
           return null;
-        }
-        personalWorkspace.set(personal);
-        return personal;
-      } catch (error) {
-        if (lifecycle !== lifecycleGeneration || generation !== personalLoadGeneration) {
-          return null;
-        }
-        console.error('Failed to load personal workspace:', error);
-        return null;
-      }
+        })
+        .finally(() => {
+          if (personalLoadPromise === request) personalLoadPromise = null;
+        });
+
+      personalLoadPromise = request;
+      return request;
     },
 
     // Force reload from API
     async reload() {
       loaded.set(false);
       loading.set(false);
-      await this.load();
+      await this.load({ force: true });
     },
 
     // Add a new workspace to the store
@@ -156,6 +194,10 @@ function createWorkspacesStore() {
     // Clear the store
     clear() {
       lifecycleGeneration += 1;
+      listLoadGeneration += 1;
+      listLoadPromise = null;
+      personalLoadGeneration += 1;
+      personalLoadPromise = null;
       workspaces.set([]);
       personalWorkspace.set(null);
       loaded.set(false);

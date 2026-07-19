@@ -9,18 +9,13 @@
 	import EmptyState from '../../components/EmptyState.svelte';
 	import Tooltip from '../../components/Tooltip.svelte';
 	import { t } from '../../stores/i18n.svelte.js';
+	import { agentOwnerName, loadAttributedItemHistory } from './activityAttributionData.js';
 
 	let { itemId } = $props();
 
 	let history = $state([]);
 	let loading = $state(true);
 	let error = $state('');
-
-	// Per-author cache of agent owner info, keyed by user_id. Mirrors the
-	// pattern in Comments.svelte: null means "we already asked and the
-	// requester isn't allowed to see this agent's owner" so we fall back to
-	// the generic tooltip instead of re-fetching.
-	let agentOwnerCache = $state({});
 
 	// Get user's timezone
 	let timezone = $derived(getUserTimezone(authStore.currentUser));
@@ -33,8 +28,7 @@
 		loading = true;
 		error = '';
 		try {
-			history = await api.items.getHistory(itemId);
-			prefetchAgentOwners(history);
+			history = await loadAttributedItemHistory(api, itemId);
 		} catch (err) {
 			error = err.message || 'Failed to load item history';
 			console.error('Error loading item history:', err);
@@ -43,31 +37,10 @@
 		}
 	}
 
-	async function ensureAgentOwnerLoaded(userId) {
-		if (userId == null || userId in agentOwnerCache) return;
-		agentOwnerCache = { ...agentOwnerCache, [userId]: undefined };
-		try {
-			const info = await api.getAgentOwner(userId);
-			agentOwnerCache = { ...agentOwnerCache, [userId]: info };
-		} catch {
-			agentOwnerCache = { ...agentOwnerCache, [userId]: null };
-		}
-	}
-
-	function prefetchAgentOwners(list) {
-		const seen = new Set();
-		for (const entry of list) {
-			if (!entry.is_agent || entry.user_id == null) continue;
-			if (seen.has(entry.user_id)) continue;
-			seen.add(entry.user_id);
-			ensureAgentOwnerLoaded(entry.user_id);
-		}
-	}
-
-	function agentTooltipContent(userId) {
-		const info = agentOwnerCache[userId];
-		if (info?.owner_name) {
-			return t('comments.agentOwnedBy', { owner: info.owner_name });
+	function agentTooltipContent(entry) {
+		const owner = agentOwnerName(entry);
+		if (owner) {
+			return t('comments.agentOwnedBy', { owner });
 		}
 		return t('comments.agentAuthored');
 	}
@@ -93,6 +66,7 @@
 					user_name: entry.user_name,
 					user_email: entry.user_email,
 					is_agent: entry.is_agent,
+					agent_owner_name: entry.agent_owner_name,
 					changes: []
 				};
 				groups.push(currentGroup);
@@ -243,7 +217,7 @@
 					<div class="body">
 						<div class="header">
 							{#if group.is_agent}
-								<Tooltip content={agentTooltipContent(group.user_id)} placement="top">
+								<Tooltip content={agentTooltipContent(group)} placement="top">
 									<Bot class="w-3.5 h-3.5" style="color: var(--ds-text-subtle);" />
 								</Tooltip>
 							{/if}

@@ -363,6 +363,14 @@ func (h *ItemHandler) GetBacklogItems(w http.ResponseWriter, r *http.Request) {
 
 	omitDescriptions := strings.EqualFold(r.URL.Query().Get("omit_descriptions"), "true") ||
 		strings.EqualFold(r.URL.Query().Get("fields"), "summary")
+	var watermark int64
+	if strings.EqualFold(r.URL.Query().Get("include_watermark"), "true") {
+		watermark, err = repository.NewItemChangeRepository(h.db).CurrentWatermark(accessibleWorkspaceIDs, wsID)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return
+		}
+	}
 
 	// Call service
 	items, totalCount, err := h.itemCRUD.GetBacklogItemsContext(ctx, services.BacklogParams{
@@ -419,6 +427,7 @@ func (h *ItemHandler) GetBacklogItems(w http.ResponseWriter, r *http.Request) {
 			Total:      totalCount,
 			TotalPages: totalPages,
 		},
+		Watermark: watermark,
 	}
 	respondJSONOK(w, response)
 }

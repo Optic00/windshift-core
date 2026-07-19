@@ -100,6 +100,7 @@ type SCMHandlers struct {
 // ItemHandlers groups item-related handlers.
 type ItemHandlers struct {
 	Item               *handlers.ItemHandler
+	Detail             *handlers.ItemDetailHandler
 	Recurrence         *handlers.RecurrenceHandler
 	Comment            *handlers.CommentHandler
 	Attachment         *handlers.AttachmentHandler         // May be nil if attachments disabled
@@ -114,6 +115,7 @@ type ItemHandlers struct {
 // WorkspaceHandlers groups workspace-related handlers.
 type WorkspaceHandlers struct {
 	Workspace             *handlers.WorkspaceHandler
+	Bootstrap             *handlers.WorkspaceBootstrapHandler
 	Screen                *handlers.ScreenHandler
 	ConfigSet             *handlers.ConfigurationSetHandler
 	ConfigSetNotification *handlers.ConfigurationSetNotificationHandler

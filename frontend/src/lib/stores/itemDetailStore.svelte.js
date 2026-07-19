@@ -37,11 +37,6 @@ function hasSharedWorkspaceReferences(workspaceId) {
   );
 }
 
-async function waitForSharedWorkspaceReferences(workspaceId) {
-  if (Number(workspaceDataStore.workspaceId) !== Number(workspaceId)) return;
-  if (workspaceDataStore._initPromise) await workspaceDataStore._initPromise;
-}
-
 function childItemListsMatch(current = [], next = []) {
   if (current === next) return true;
   if (!Array.isArray(current) || !Array.isArray(next) || current.length !== next.length) {
@@ -279,28 +274,28 @@ class ItemDetailStore {
       this.loading = true;
       this.loadingLinks = true;
     }
+    this.loadingStatusTransitions = true;
+    this.loadingWatchStatus = true;
+    this.loadingChildItems = true;
 
     try {
-      let itemData = null;
-      if (lookupWorkspaceKey) {
-        const resolved = await api.items.getByKey(
-          lookupWorkspaceKey,
-          lookupItemNumber,
-          requestOptions
-        );
-        if (token !== this.#loadToken) return;
-        effectiveItemId = resolved.id;
-        effectiveWorkspaceId = resolved.workspace_id;
-        this.itemId = effectiveItemId;
-        // The key endpoint already returns the full item-detail payload. Reuse
-        // it instead of immediately requesting GET /items/{id} again.
-        itemData = resolved;
-      }
-
-      // Fetch item first to derive workspaceId if not provided
-      itemData ??= await api.items.get(effectiveItemId, requestOptions);
+      let workspaceInitPromise = isNumericID(effectiveWorkspaceId)
+        ? workspaceDataStore.initialize(effectiveWorkspaceId)
+        : null;
+      const summary = lookupWorkspaceKey
+        ? await api.items.getDetailSummaryByKey(
+            lookupWorkspaceKey,
+            lookupItemNumber,
+            requestOptions
+          )
+        : await api.items.getDetailSummary(effectiveItemId, requestOptions);
       if (token !== this.#loadToken) return;
 
+      const itemData = summary?.item;
+      if (!itemData) throw new Error('Item detail summary did not include an item');
+      effectiveItemId = itemData.id;
+      effectiveWorkspaceId = itemData.workspace_id;
+      this.itemId = effectiveItemId;
       this.item = itemData;
       if (this.item.assignee_id === undefined) {
         this.item.assignee_id = null;
@@ -310,54 +305,23 @@ class ItemDetailStore {
       const wsId = effectiveWorkspaceId || itemData.workspace_id;
       this.workspaceId = wsId;
 
-      // MainApp owns the workspace reference graph. If that graph is already
-      // in flight, share it rather than issuing duplicate workspace, custom
-      // field, milestone, iteration, priority, and item-type requests.
-      await waitForSharedWorkspaceReferences(wsId);
+      // The item summary deliberately references, rather than duplicates, the
+      // workspace catalog snapshot. Start both requests together when the
+      // workspace is known and share MainApp's in-flight bootstrap.
+      workspaceInitPromise ??= workspaceDataStore.initialize(wsId);
+      await workspaceInitPromise;
       if (token !== this.#loadToken) return;
       const useSharedReferences = hasSharedWorkspaceReferences(wsId);
 
-      const [
-        workspaceData,
-        linkTypesData,
-        linksData,
-        customFieldsData,
-        milestonesData,
-        iterationsData,
-        projectsData,
-        requestTypeFieldsData,
-      ] = await Promise.all([
-        useSharedReferences
-          ? Promise.resolve(workspaceDataStore.workspace)
-          : api.workspaces.get(wsId, requestOptions),
-        api.linkTypes.getAll(false, requestOptions),
-        api.links.getForItem('items', effectiveItemId, requestOptions),
-        useSharedReferences
-          ? Promise.resolve({ data: workspaceDataStore.customFieldDefinitions })
-          : api.customFields.getAll({}, requestOptions),
-        useSharedReferences
-          ? Promise.resolve(workspaceDataStore.milestones)
-          : api.milestones.getAll({ workspace_id: wsId, include_global: true }, requestOptions),
-        useSharedReferences
-          ? Promise.resolve(workspaceDataStore.iterations)
-          : api.iterations.getAll({ workspace_id: wsId, include_global: true }, requestOptions),
-        useSharedReferences
-          ? Promise.resolve(workspaceDataStore.projects)
-          : api.time.projects.getByWorkspace(wsId, requestOptions),
-        itemData.request_type_id
-          ? api.requestTypes.getFields(itemData.request_type_id, requestOptions).catch((error) => {
-              if (isAbortError(error)) throw error;
-              return [];
-            })
-          : Promise.resolve([]),
-      ]);
-      if (token !== this.#loadToken) return;
-
-      this.workspace = workspaceData;
-      this.customFieldDefinitions = customFieldsData?.data || [];
+      this.workspace = useSharedReferences
+        ? workspaceDataStore.workspace
+        : await api.workspaces.get(wsId, requestOptions);
+      this.customFieldDefinitions = useSharedReferences
+        ? workspaceDataStore.customFieldDefinitions
+        : [];
 
       // Filter milestones by workspace restrictions
-      let allMilestones = milestonesData || [];
+      const allMilestones = useSharedReferences ? workspaceDataStore.milestones : [];
       if (this.workspace?.milestone_categories?.length > 0) {
         const allowedCategoryIds = this.workspace.milestone_categories;
         this.milestones = allMilestones.filter((m) => allowedCategoryIds.includes(m.category_id));
@@ -365,52 +329,46 @@ class ItemDetailStore {
         this.milestones = allMilestones;
       }
 
-      this.iterations = iterationsData || [];
-      this.timeProjects = projectsData || [];
-      this.requestTypeFields = requestTypeFieldsData || [];
+      this.iterations = useSharedReferences ? workspaceDataStore.iterations : [];
+      this.timeProjects = useSharedReferences ? workspaceDataStore.projects : [];
+      this.itemTypes = useSharedReferences ? workspaceDataStore.itemTypes : [];
+      this.priorities = [
+        ...(summary.priorities?.length
+          ? summary.priorities
+          : useSharedReferences
+            ? workspaceDataStore.priorities
+            : []),
+      ].sort((a, b) => a.sort_order - b.sort_order);
 
-      this.linkTypes = linkTypesData;
-      this.#applyLinks(linksData);
+      this.requestTypeFields = summary.request_type_fields || [];
+      this.linkTypes = summary.link_types || [];
+      this.#applyLinks(summary.links);
+      this.availableStatusTransitions = summary.transitions?.available_transitions || [];
+      this.pendingApproval = summary.transitions?.pending_approval || null;
+      this.isWatching = summary.watching || false;
+      this.childItems = summary.children || [];
+      this.currentItemType = summary.current_item_type || null;
+      this.currentHierarchyLevel = summary.current_hierarchy_level || null;
+      this.availableSubIssueTypes = summary.available_sub_issue_types || [];
+      this.manualActions = summary.manual_actions || [];
 
-      // Sync editing state from item before the secondary loaders complete so
-      // the core detail surface can render as soon as the critical data lands.
+      const fieldConfig = buildDetailScreenFieldConfig(
+        summary.screen_context?.edit,
+        summary.screen_context?.view
+      );
+      this.workspaceScreenFields = fieldConfig.visibleCustomFields;
+      this.workspaceScreenSystemFields = fieldConfig.visibleSystemFields;
+      this.editableScreenFieldIds = fieldConfig.editableCustomFieldIds;
+      this.editableScreenSystemFields = fieldConfig.editableSystemFields;
+
+      this.parentHierarchy = (summary.ancestors || []).map((ancestor) => {
+        const itemType = this.itemTypes.find((type) => type.id === ancestor.item_type_id);
+        return itemType ? { ...ancestor, itemType } : ancestor;
+      });
+
+      // Heavy optional panels such as diagrams, worklogs, history, SCM detail,
+      // and agent logs remain deferred behind their existing loaders.
       this.#syncEditingFromItem();
-
-      // Resolve the workspace's configuration set once. Priorities and screen-
-      // field resolution both need it; fetching it twice would add a redundant
-      // round trip on every item open.
-      const configSet = this.workspace?.configuration_set_id
-        ? await api.configurationSets
-            .get(this.workspace.configuration_set_id, requestOptions)
-            .catch((err) => {
-              if (isAbortError(err)) throw err;
-              console.warn('Failed to load configuration set:', err);
-              return null;
-            })
-        : null;
-      if (token !== this.#loadToken) return;
-
-      // These resources are independent once the item, workspace, and config
-      // set are known. Running them together removes the former priorities →
-      // item-types → children → screens → diagrams → actions waterfall.
-      await Promise.all([
-        this.#loadPriorities(configSet, requestOptions),
-        this.#loadAvailableStatusTransitions(requestOptions),
-        this.#loadWatchStatus(requestOptions),
-        this.#loadItemTypeData(requestOptions),
-        this.loadChildItems(requestOptions),
-        this.#loadWorkspaceScreenFields(configSet, requestOptions),
-        this.loadDiagrams(),
-        this.#loadManualActions(requestOptions),
-      ]);
-      if (token !== this.#loadToken) return;
-
-      // Parent enrichment reuses the item types loaded in the parallel phase.
-      if (this.item.parent_id) {
-        await this.#loadParentHierarchy(requestOptions);
-      } else {
-        this.parentHierarchy = [];
-      }
       return this.item;
     } catch (err) {
       if (token !== this.#loadToken || isAbortError(err)) return;
@@ -422,6 +380,9 @@ class ItemDetailStore {
         if (this.#loadController === controller) this.#loadController = null;
         this.loading = false;
         this.loadingLinks = false;
+        this.loadingStatusTransitions = false;
+        this.loadingWatchStatus = false;
+        this.loadingChildItems = false;
         this.transitioning = false;
       }
     }
@@ -704,32 +665,6 @@ class ItemDetailStore {
     this.itemLinks = links;
   }
 
-  async #loadPriorities(configSet = undefined, requestOptions = {}) {
-    if (!this.workspace) return;
-    try {
-      if (hasSharedWorkspaceReferences(this.workspaceId)) {
-        this.priorities = workspaceDataStore.priorities;
-      } else if (this.workspace.configuration_set_id) {
-        const cs =
-          configSet !== undefined
-            ? configSet
-            : await api.configurationSets.get(this.workspace.configuration_set_id, requestOptions);
-        const configuredPriorities = cs?.priorities_detailed || [];
-        this.priorities =
-          configuredPriorities.length > 0
-            ? configuredPriorities
-            : await api.priorities.getAll({}, requestOptions);
-      } else {
-        this.priorities = await api.priorities.getAll({}, requestOptions);
-      }
-      this.priorities = this.priorities.sort((a, b) => a.sort_order - b.sort_order);
-    } catch (err) {
-      if (isAbortError(err)) return;
-      console.error('Failed to load priorities:', err);
-      this.priorities = [];
-    }
-  }
-
   async #loadAvailableStatusTransitions(requestOptions = {}) {
     if (!this.item?.id) return;
     const itemId = this.item.id;
@@ -757,25 +692,6 @@ class ItemDetailStore {
    */
   async refreshAvailableTransitions() {
     await this.#loadAvailableStatusTransitions();
-  }
-
-  async #loadWatchStatus(requestOptions = {}) {
-    if (!this.item?.id) return;
-    const itemId = this.item.id;
-    try {
-      this.loadingWatchStatus = true;
-      const result = await api.items.getWatchStatus(itemId, requestOptions);
-      if (this.item?.id !== itemId) return;
-      this.isWatching = result.watching || false;
-    } catch (err) {
-      if (isAbortError(err)) return;
-      console.error('Failed to load watch status:', err);
-      this.isWatching = false;
-    } finally {
-      if (!requestOptions.signal?.aborted && this.item?.id === itemId) {
-        this.loadingWatchStatus = false;
-      }
-    }
   }
 
   async #loadParentHierarchy(requestOptions = {}) {
@@ -893,20 +809,6 @@ class ItemDetailStore {
       this.workspaceScreenSystemFields = [];
       this.editableScreenFieldIds = null;
       this.editableScreenSystemFields = null;
-    }
-  }
-
-  async #loadManualActions(requestOptions = {}) {
-    if (!this.workspaceId) return;
-    try {
-      const allActions = await api.actions.getAll(this.workspaceId, requestOptions);
-      this.manualActions = (allActions || []).filter(
-        (a) => a.trigger_type === 'manual' && a.is_enabled
-      );
-    } catch (err) {
-      if (isAbortError(err)) return;
-      console.error('Failed to load manual actions:', err);
-      this.manualActions = [];
     }
   }
 

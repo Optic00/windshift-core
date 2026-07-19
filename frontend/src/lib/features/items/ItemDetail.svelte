@@ -933,9 +933,6 @@ import Button from '../../components/Button.svelte';
   }
 
   onMount(async () => {
-    // Initialize timer state from server
-    await timerStore.initialize();
-
     await loadData();
 
     // Register context-sensitive commands for this item

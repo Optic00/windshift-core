@@ -11,6 +11,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
+	"windshift/internal/repository"
 	"windshift/internal/sanitize"
 	"windshift/internal/utils"
 )
@@ -41,25 +42,40 @@ func (h *ScreenHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
-	defer func() { _ = rows.Close() }()
 
 	var screens []models.Screen
 	for rows.Next() {
 		var screen models.Screen
 		err := rows.Scan(&screen.ID, &screen.Name, &screen.Description, &screen.CreatedAt, &screen.UpdatedAt)
 		if err != nil {
+			_ = rows.Close()
 			respondInternalError(w, r, err)
 			return
 		}
 		screens = append(screens, screen)
 	}
 	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		respondInternalError(w, r, err)
+		return
+	}
+	if err := rows.Close(); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
 
 	if screens == nil {
 		screens = []models.Screen{}
+	}
+	if r.URL.Query().Get("include_fields") == "true" {
+		fieldsByScreen, err := h.getAllScreenFields()
+		if err != nil {
+			respondInternalError(w, r, err)
+			return
+		}
+		for i := range screens {
+			screens[i].Fields = ensureAlwaysVisibleScreenFields(screens[i].ID, fieldsByScreen[screens[i].ID])
+		}
 	}
 
 	respondJSONOK(w, screens)
@@ -71,13 +87,8 @@ func (h *ScreenHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var screen models.Screen
-	err := h.db.QueryRow(`
-		SELECT id, name, description, created_at, updated_at
-		FROM screens WHERE id = ?
-	`, id).Scan(&screen.ID, &screen.Name, &screen.Description, &screen.CreatedAt, &screen.UpdatedAt)
-
-	if errors.Is(err, sql.ErrNoRows) {
+	screen, err := h.loadScreen(id)
+	if errors.Is(err, repository.ErrNotFound) {
 		respondNotFound(w, r, "screen")
 		return
 	}
@@ -85,24 +96,38 @@ func (h *ScreenHandler) Get(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
+	respondJSONOK(w, screen)
+}
+
+func (h *ScreenHandler) loadScreen(id int) (*models.Screen, error) {
+	var screen models.Screen
+	err := h.db.QueryRow(`
+		SELECT id, name, description, created_at, updated_at
+		FROM screens WHERE id = ?
+	`, id).Scan(&screen.ID, &screen.Name, &screen.Description, &screen.CreatedAt, &screen.UpdatedAt)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, repository.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
 
 	// Load screen fields
 	fields, err := h.getScreenFields(id)
 	if err != nil {
-		respondInternalError(w, r, err)
-		return
+		return nil, err
 	}
 	screen.Fields = ensureAlwaysVisibleScreenFields(id, fields)
 
 	// Load system fields
 	systemFields, err := h.getSystemFields(id)
 	if err != nil {
-		respondInternalError(w, r, err)
-		return
+		return nil, err
 	}
 	screen.SystemFields = systemFields
 
-	respondJSONOK(w, screen)
+	return &screen, nil
 }
 
 func (h *ScreenHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -397,6 +422,47 @@ func (h *ScreenHandler) getScreenFields(screenID int) ([]models.ScreenField, err
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
+	return scanScreenFields(rows)
+}
+
+// getAllScreenFields returns all screen assignments in one query for enriched
+// list responses, grouped by screen ID in memory.
+func (h *ScreenHandler) getAllScreenFields() (map[int][]models.ScreenField, error) {
+	rows, err := h.db.Query(`
+		SELECT sf.id, sf.screen_id, sf.field_type, sf.field_identifier, sf.display_order, sf.is_required, sf.field_width,
+		       CASE
+		           WHEN sf.field_type = 'custom' THEN cfd.name
+		           ELSE ''
+		       END as field_name,
+		       CASE
+		           WHEN sf.field_type = 'custom' THEN cfd.name
+		           ELSE ''
+		       END as field_label,
+		       CASE
+		           WHEN sf.field_type = 'custom' THEN cfd.options
+		           ELSE NULL
+		       END as field_config
+		FROM screen_fields sf
+		LEFT JOIN custom_field_definitions cfd ON sf.field_type = 'custom' AND (CASE WHEN sf.field_type = 'custom' THEN CAST(sf.field_identifier AS INTEGER) END) = cfd.id
+		ORDER BY sf.screen_id, sf.display_order, sf.id
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	fields, err := scanScreenFields(rows)
+	if err != nil {
+		return nil, err
+	}
+	fieldsByScreen := make(map[int][]models.ScreenField)
+	for _, field := range fields {
+		fieldsByScreen[field.ScreenID] = append(fieldsByScreen[field.ScreenID], field)
+	}
+	return fieldsByScreen, nil
+}
+
+func scanScreenFields(rows *sql.Rows) ([]models.ScreenField, error) {
 
 	var fields []models.ScreenField
 	for rows.Next() {

@@ -33,16 +33,43 @@ function withCrossTabNotice(fn, type) {
   );
 }
 
+/**
+ * @param {number|string} id
+ * @param {RequestInit & { surface?: string }} [options]
+ */
+function fetchItemDetailSummary(id, options = {}) {
+  const { surface, ...requestOptions } = options;
+  return fetchAPI(
+    `/items/${id}/detail-summary${surface ? `?surface=${encodeURIComponent(surface)}` : ''}`,
+    requestOptions
+  );
+}
+
+/**
+ * @param {string} workspaceKey
+ * @param {number|string} itemNumber
+ * @param {RequestInit & { surface?: string }} [options]
+ */
+function fetchItemDetailSummaryByKey(workspaceKey, itemNumber, options = {}) {
+  const { surface, ...requestOptions } = options;
+  return fetchAPI(
+    `/workspaces/${encodeURIComponent(workspaceKey)}/items/${encodeURIComponent(itemNumber)}/detail-summary${surface ? `?surface=${encodeURIComponent(surface)}` : ''}`,
+    requestOptions
+  );
+}
+
 export const items = {
   getAll: (filters = {}, requestOptions = {}) => {
     return fetchAPI(`/items${buildQueryString(filters)}`, requestOptions);
   },
   get: (id, requestOptions = {}) => fetchAPI(`/items/${id}`, requestOptions),
+  getDetailSummary: fetchItemDetailSummary,
   getByKey: (workspaceKey, itemNumber, requestOptions = {}) =>
     fetchAPI(
       `/workspaces/${encodeURIComponent(workspaceKey)}/items/${encodeURIComponent(itemNumber)}`,
       requestOptions
     ),
+  getDetailSummaryByKey: fetchItemDetailSummaryByKey,
   /**
    * Fetch many items in one (or a few) bulk requests instead of one
    * GET /items/{id} per id. Returns an array of full item-detail objects in
@@ -141,7 +168,7 @@ export const items = {
     workspaceId,
     ql = null,
     collectionId = null,
-    /** @type {any} */ { page, limit, sub_ql, omit_descriptions } = {}
+    /** @type {any} */ { page, limit, sub_ql, omit_descriptions, include_watermark } = {}
   ) => {
     const params = new URLSearchParams();
     if (collectionId) {
@@ -152,6 +179,7 @@ export const items = {
     if (ql) params.append('ql', ql);
     if (sub_ql) params.append('sub_ql', sub_ql);
     if (omit_descriptions) params.append('omit_descriptions', 'true');
+    if (include_watermark) params.append('include_watermark', 'true');
     if (page) params.append('page', page);
     if (limit) params.append('limit', limit);
     return fetchAPI(`/items/backlog?${params}`);

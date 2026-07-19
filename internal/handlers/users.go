@@ -830,9 +830,7 @@ func (h *UserHandler) GetAgentOwner(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	isAdmin, _ := h.permissionService.IsSystemAdmin(currentUser.ID)
-	hasListPerm, _ := h.permissionService.HasGlobalPermission(currentUser.ID, models.PermissionUserList)
-	if !isAdmin && !hasListPerm {
+	if !canViewAgentOwnerAttribution(h.permissionService, currentUser.ID) {
 		respondNotFound(w, r, "agent")
 		return
 	}
@@ -848,6 +846,21 @@ func (h *UserHandler) GetAgentOwner(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSONOK(w, info)
+}
+
+// canViewAgentOwnerAttribution centralizes the visibility rule used by both
+// the individual lookup and enriched activity DTOs. Permission lookup errors
+// fail closed.
+func canViewAgentOwnerAttribution(permissionService *services.PermissionService, userID int) bool {
+	if permissionService == nil {
+		return false
+	}
+	isAdmin, _ := permissionService.IsSystemAdmin(userID)
+	if isAdmin {
+		return true
+	}
+	hasListPermission, _ := permissionService.HasGlobalPermission(userID, models.PermissionUserList)
+	return hasListPermission
 }
 
 // ActivateUser activates a user account

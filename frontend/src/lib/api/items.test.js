@@ -113,4 +113,24 @@ describe('items API cross-tab broadcast', () => {
     expect(posted).toEqual([]);
     peer.close();
   });
+
+  it('loads the numeric item-detail summary with the optional surface selector', async () => {
+    const { items } = await import('./items.js');
+    const controller = new AbortController();
+
+    await items.getDetailSummary(42, { surface: 'mobile', signal: controller.signal });
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(fetchSpy.mock.calls[0][0]).toBe('/api/items/42/detail-summary?surface=mobile');
+    expect(fetchSpy.mock.calls[0][1].signal).toBe(controller.signal);
+  });
+
+  it('loads a key-addressed item-detail summary without a preliminary item request', async () => {
+    const { items } = await import('./items.js');
+
+    await items.getDetailSummaryByKey('WI', 689);
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(fetchSpy.mock.calls[0][0]).toBe('/api/workspaces/WI/items/689/detail-summary');
+  });
 });

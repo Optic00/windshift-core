@@ -314,6 +314,82 @@ func (r *TestRunRepository) FindResultsWithTestCase(runID, workspaceID int) ([]T
 	return results, nil
 }
 
+// FindCasesWithStepsForRun returns the run's test cases with all steps using
+// two bounded queries, independent of the number of cases. test_results is the
+// authoritative case-membership snapshot for a run, so later test-set edits do
+// not add or remove cases from an in-progress or completed execution.
+func (r *TestRunRepository) FindCasesWithStepsForRun(runID, workspaceID int) ([]models.TestCase, error) {
+	rows, err := r.db.Query(`
+		SELECT tc.id, tc.workspace_id, tc.folder_id, tc.title, tc.name,
+		       tc.priority, tc.status, tc.estimated_duration, tc.preconditions,
+		       tc.sort_order, tc.created_at, tc.updated_at
+		FROM test_results tr
+		JOIN test_runs run ON run.id = tr.run_id
+		JOIN test_cases tc ON tc.id = tr.test_case_id
+		WHERE tr.run_id = ? AND run.workspace_id = ?
+		ORDER BY tc.id
+	`, runID, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("query test cases for run: %w", err)
+	}
+
+	testCases := make([]models.TestCase, 0)
+	caseIndex := make(map[int]int)
+	for rows.Next() {
+		var testCase models.TestCase
+		if scanErr := rows.Scan(
+			&testCase.ID, &testCase.WorkspaceID, &testCase.FolderID,
+			&testCase.Title, &testCase.Name, &testCase.Priority, &testCase.Status,
+			&testCase.EstimatedDuration, &testCase.Preconditions, &testCase.SortOrder,
+			&testCase.CreatedAt, &testCase.UpdatedAt,
+		); scanErr != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("scan test case for run: %w", scanErr)
+		}
+		testCase.TestSteps = []models.TestStep{}
+		caseIndex[testCase.ID] = len(testCases)
+		testCases = append(testCases, testCase)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, fmt.Errorf("iterate test cases for run: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close test cases for run: %w", err)
+	}
+
+	stepRows, err := r.db.Query(`
+		SELECT ts.id, ts.test_case_id, ts.step_number, ts.action, ts.data,
+		       ts.expected, ts.created_at, ts.updated_at
+		FROM test_steps ts
+		JOIN test_results tr ON tr.test_case_id = ts.test_case_id
+		JOIN test_runs run ON run.id = tr.run_id
+		WHERE tr.run_id = ? AND run.workspace_id = ?
+		ORDER BY ts.test_case_id, ts.step_number
+	`, runID, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("query test steps for run: %w", err)
+	}
+	defer func() { _ = stepRows.Close() }()
+
+	for stepRows.Next() {
+		var step models.TestStep
+		if scanErr := stepRows.Scan(
+			&step.ID, &step.TestCaseID, &step.StepNumber, &step.Action,
+			&step.Data, &step.Expected, &step.CreatedAt, &step.UpdatedAt,
+		); scanErr != nil {
+			return nil, fmt.Errorf("scan test step for run: %w", scanErr)
+		}
+		if index, ok := caseIndex[step.TestCaseID]; ok {
+			testCases[index].TestSteps = append(testCases[index].TestSteps, step)
+		}
+	}
+	if err := stepRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate test steps for run: %w", err)
+	}
+	return testCases, nil
+}
+
 // TestResultBelongsToWorkspace reports whether a test result is owned by the given workspace
 // (via its parent run).
 func (r *TestRunRepository) TestResultBelongsToWorkspace(resultID, workspaceID int) (bool, error) {

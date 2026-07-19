@@ -893,8 +893,6 @@
     } else {
       await workspaceDataStore.initializeGlobal();
     }
-    // Keep this aligned with the collection store default page size.
-    await collectionStore.setItemsPage(1, 250);
     await Promise.all([loadConfig(), loadReferenceData()]);
     loading = false;
   });
@@ -917,6 +915,7 @@
     class="h-screen flex flex-col overflow-hidden {isResizingPanel || scheduleDragInfo?.active ? 'roadmap-dragging' : ''}"
     contentClass="p-6 flex-1 flex flex-col min-h-0"
     rootStyle="overscroll-behavior: none;"
+    testid="roadmap-view"
   >
       <!-- Header -->
       <div class="relative z-50 mb-6">

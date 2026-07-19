@@ -798,8 +798,8 @@ func (h *ChannelHandler) ToggleChannel(w http.ResponseWriter, r *http.Request) {
 			respondValidationError(w, r, "SMTP from address must be a valid bare email address")
 			return
 		}
-		if cfg.SMTPEncryption != "tls" && cfg.SMTPEncryption != "ssl" {
-			respondValidationError(w, r, "SMTP encryption must be tls or ssl")
+		if !windshiftsmtp.EncryptionModeAllowed(cfg.SMTPEncryption) {
+			respondValidationError(w, r, "SMTP encryption must be tls, starttls, or ssl")
 			return
 		}
 	}
@@ -1671,7 +1671,7 @@ func (h *ChannelHandler) UpdateChannelConfig(w http.ResponseWriter, r *http.Requ
 			_, validFrom := bareEmailAddress(from)
 			if strings.TrimSpace(finalConfig.SMTPHost) == "" || finalConfig.SMTPPort <= 0 || finalConfig.SMTPPort > 65535 ||
 				from == "" || !validFrom ||
-				(finalConfig.SMTPEncryption != "tls" && finalConfig.SMTPEncryption != "ssl") {
+				!windshiftsmtp.EncryptionModeAllowed(finalConfig.SMTPEncryption) {
 				respondValidationError(w, r, "Enabled SMTP channels require a valid host, port, from address, and TLS mode")
 				return
 			}

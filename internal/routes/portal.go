@@ -12,6 +12,11 @@ func RegisterPortalRoutes(deps *Deps) {
 
 	// Public portal API endpoints (OptionalAuth - work both authenticated and unauthenticated)
 	api.Handle("GET /portal/{slug}", deps.Portal.Portal.GetPortal)
+	if deps.PortalAuthMiddleware != nil {
+		api.HandleH("GET /portal/{slug}/bootstrap", deps.PortalAuthMiddleware.OptionalPortalAuth(http.HandlerFunc(deps.Portal.Portal.GetBootstrap)))
+	} else {
+		api.Handle("GET /portal/{slug}/bootstrap", deps.Portal.Portal.GetBootstrap)
+	}
 	api.Handle("GET /portal/{slug}/request-types", deps.Portal.Portal.GetRequestTypes)
 	api.Handle("GET /portal/{slug}/asset-reports", deps.Portal.Portal.GetAssetReports)
 	api.HandleH("GET /portal/{slug}/asset-reports/{id}/execute", deps.PortalSearchLimiter.Limit(http.HandlerFunc(deps.Portal.Portal.ExecuteAssetReport)))
@@ -36,6 +41,7 @@ func RegisterPortalRoutes(deps *Deps) {
 	// Portal-authenticated endpoints (accept both internal and portal sessions)
 	if deps.PortalAuthMiddleware != nil {
 		portalAuth := deps.PortalAuthMiddleware.RequirePortalAuth
+		api.HandleH("GET /portal/{slug}/user-bootstrap", deps.PortalAuthMiddleware.OptionalPortalAuth(http.HandlerFunc(deps.Portal.Portal.GetUserBootstrap)))
 
 		// Request type fields and custom fields
 		api.HandleH("GET /portal/{slug}/request-types/{id}/fields", portalAuth(http.HandlerFunc(deps.Portal.Portal.GetRequestTypeFields)))

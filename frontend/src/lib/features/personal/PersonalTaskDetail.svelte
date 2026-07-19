@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { api } from '../../api.js';
   import { attachmentStatus, workspacesStore } from '../../stores';
+  import { workspaceDataStore } from '../../stores/workspaceDataStore.svelte.js';
   import Modal from '../../dialogs/Modal.svelte';
   import Comments from '../items/Comments.svelte';
   import ItemDetailDescription from '../items/ItemDetailDescription.svelte';
@@ -61,28 +62,19 @@
   let effectiveStatuses = $derived(statuses.length > 0 ? statuses : localStatuses);
 
   onMount(async () => {
-    // Load statuses if not provided (full-page mode)
-    if (statuses.length === 0) {
-      await loadStatuses();
-    }
-    await loadItem();
+    const initialLoads = [loadItem(), loadWorkspace()];
+    if (statuses.length === 0) initialLoads.push(loadStatuses());
+    if (attachmentStatus.enabled) initialLoads.push(loadAttachments());
+    await Promise.all(initialLoads);
 
-    // Load breadcrumbs data for full-page mode
-    await loadWorkspace();
-    if (item?.parent_id) {
-      await loadParentHierarchy();
-    }
-    await loadItemTypeData();
-
-    if (attachmentStatus.enabled) {
-      await loadAttachments();
-    }
+    await loadHierarchyData();
     loading = false;
   });
 
   async function loadStatuses() {
     try {
-      localStatuses = await api.statuses.getAll();
+      await workspaceDataStore.initialize(workspaceId);
+      localStatuses = workspaceDataStore.statuses;
     } catch (err) {
       console.error('Failed to load statuses:', err);
       localStatuses = [];
@@ -113,40 +105,26 @@
   // Breadcrumbs data loading functions
   async function loadWorkspace() {
     try {
-      workspace = await api.workspaces.get(workspaceId);
+      await workspaceDataStore.initialize(workspaceId);
+      workspace = workspaceDataStore.workspace;
     } catch (err) {
       console.error('Failed to load workspace:', err);
     }
   }
 
-  async function loadParentHierarchy() {
-    if (!item?.parent_id) {
-      parentHierarchy = [];
-      return;
-    }
+  async function loadHierarchyData() {
     try {
-      const ancestors = await api.items.getAncestors(item.id);
-      const itemTypesData = await api.itemTypes.getAll();
-      parentHierarchy = ancestors.map(ancestor => {
-        if (ancestor.item_type_id) {
-          const itemType = itemTypesData.find(type => type.id === ancestor.item_type_id);
-          return { ...ancestor, itemType };
-        }
-        return ancestor;
-      });
-    } catch (err) {
-      console.error('Failed to load parent hierarchy:', err);
-      parentHierarchy = [];
-    }
-  }
-
-  async function loadItemTypeData() {
-    try {
-      const [itemTypesData, hierarchyLevels] = await Promise.all([
-        api.itemTypes.getAll(),
-        api.hierarchyLevels.getAll()
+      const [itemTypesData, hierarchyLevels, ancestors] = await Promise.all([
+        Promise.resolve(workspaceDataStore.itemTypes),
+        api.hierarchyLevels.getAll(),
+        item?.parent_id ? api.items.getAncestors(item.id) : Promise.resolve([]),
       ]);
       itemTypes = itemTypesData || [];
+      parentHierarchy = (ancestors || []).map((ancestor) => {
+        if (!ancestor.item_type_id) return ancestor;
+        const itemType = itemTypes.find((type) => type.id === ancestor.item_type_id);
+        return { ...ancestor, itemType };
+      });
       if (item?.item_type_id) {
         currentItemType = itemTypes.find(type => type.id === item.item_type_id);
         if (currentItemType) {
@@ -154,7 +132,8 @@
         }
       }
     } catch (err) {
-      console.error('Failed to load item type data:', err);
+      console.error('Failed to load hierarchy data:', err);
+      parentHierarchy = [];
       currentItemType = null;
       currentHierarchyLevel = null;
     }
@@ -354,7 +333,7 @@
           {iconMap}
           {workspaceId}
           onnavigate={(path) => navigate(path)}
-          onparentChanged={loadParentHierarchy}
+          onparentChanged={loadHierarchyData}
           oncopyKey={() => {
             copyToClipboard(`${workspace?.key || 'WORK'}-${item.workspace_item_number}`);
           }}

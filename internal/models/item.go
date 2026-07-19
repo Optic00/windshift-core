@@ -129,6 +129,8 @@ type ItemHistory struct {
 	UserName  string `json:"user_name,omitempty"`  // Full name of user who made the change
 	UserEmail string `json:"user_email,omitempty"` // Email of user who made the change
 	IsAgent   bool   `json:"is_agent"`             // Whether the user is an AI agent
+	// AgentOwnerName is permission-filtered by the item-history handler.
+	AgentOwnerName string `json:"agent_owner_name,omitempty"`
 	// Resolved values for display (when value is an ID)
 	ResolvedOldValue *string `json:"resolved_old_value,omitempty"` // Human-readable version of old_value
 	ResolvedNewValue *string `json:"resolved_new_value,omitempty"` // Human-readable version of new_value
@@ -170,6 +172,8 @@ type Comment struct {
 	// IsAgent mirrors users.is_agent so the UI can mark agent-authored rows.
 	Source  string `json:"source"`
 	IsAgent bool   `json:"is_agent,omitempty"`
+	// AgentOwnerName is permission-filtered by the comment-list handler.
+	AgentOwnerName string `json:"agent_owner_name,omitempty"`
 }
 
 // Mention represents an @mention in a comment or item description
@@ -400,6 +404,7 @@ type PaginatedItemsResponse struct {
 	Items          []Item         `json:"items"`
 	Pagination     PaginationMeta `json:"pagination"`
 	SortableFields []string       `json:"sortable_fields,omitempty"`
+	Watermark      int64          `json:"watermark,omitempty"`
 }
 
 // PaginatedAttachmentsResponse represents a paginated list of attachments

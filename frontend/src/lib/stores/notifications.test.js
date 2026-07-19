@@ -7,6 +7,7 @@ vi.mock('../api.js', () => ({
     notifications: {
       getAll: vi.fn(() => Promise.resolve([])),
       markAsRead: vi.fn(() => Promise.resolve()),
+      markAllAsRead: vi.fn(() => Promise.resolve()),
       markItemAsRead: vi.fn(() => Promise.resolve()),
       create: vi.fn(),
     },
@@ -206,7 +207,7 @@ describe('notificationActions.dismiss', () => {
 });
 
 describe('notificationActions.markAllAsRead', () => {
-  test('marks only the unread ones via the API and flips them all read locally', async () => {
+  test('uses one API call and flips all unread notifications locally', async () => {
     notifications.set([
       { id: 1, read: false, title: 'a' },
       { id: 2, read: true, title: 'b' }, // already read — must not hit API
@@ -215,17 +216,16 @@ describe('notificationActions.markAllAsRead', () => {
 
     await notificationActions.markAllAsRead();
 
-    // API was called for ids 1 and 3, not 2.
-    const callIds = api.notifications.markAsRead.mock.calls.map((c) => c[0]).sort();
-    expect(callIds).toEqual([1, 3]);
+    expect(api.notifications.markAllAsRead).toHaveBeenCalledTimes(1);
+    expect(api.notifications.markAsRead).not.toHaveBeenCalled();
 
     // Every item now has read=true.
     expect(get(notifications).map((n) => n.read)).toEqual([true, true, true]);
   });
 
-  test('keeps only failed notifications unread when one API call rejects', async () => {
+  test('keeps notifications unread when the API call rejects', async () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    api.notifications.markAsRead.mockRejectedValueOnce(new Error('500'));
+    api.notifications.markAllAsRead.mockRejectedValueOnce(new Error('500'));
     notifications.set([
       { id: 1, read: false },
       { id: 2, read: false },
@@ -234,7 +234,15 @@ describe('notificationActions.markAllAsRead', () => {
     await notificationActions.markAllAsRead();
 
     expect(errSpy).toHaveBeenCalled();
-    expect(get(notifications).map((n) => n.read)).toEqual([false, true]);
+    expect(get(notifications).map((n) => n.read)).toEqual([false, false]);
+  });
+
+  test('does not call the API when all notifications are already read', async () => {
+    notifications.set([{ id: 1, read: true }]);
+
+    await notificationActions.markAllAsRead();
+
+    expect(api.notifications.markAllAsRead).not.toHaveBeenCalled();
   });
 });
 

@@ -282,6 +282,40 @@ describe('loadAllPermissions', () => {
     expect(get(permissionStore).permissions).toEqual(all);
   });
 
+  test('shares an in-flight request and reuses the loaded catalog', async () => {
+    let resolvePermissions;
+    const pending = new Promise((resolve) => {
+      resolvePermissions = resolve;
+    });
+    api.permissions.getAll.mockReturnValueOnce(pending);
+    const admin = { id: 1, is_system_admin: true };
+
+    const first = permissionStore.loadAllPermissions(admin);
+    const second = permissionStore.loadAllPermissions(admin);
+    expect(api.permissions.getAll).toHaveBeenCalledOnce();
+
+    const all = [{ id: 1, permission_key: 'a' }];
+    resolvePermissions(all);
+    await expect(Promise.all([first, second])).resolves.toEqual([all, all]);
+    await expect(permissionStore.loadAllPermissions(admin)).resolves.toEqual(all);
+    expect(api.permissions.getAll).toHaveBeenCalledOnce();
+  });
+
+  test('does not restore a permission catalog after clear', async () => {
+    let resolvePermissions;
+    const pending = new Promise((resolve) => {
+      resolvePermissions = resolve;
+    });
+    api.permissions.getAll.mockReturnValueOnce(pending);
+
+    const load = permissionStore.loadAllPermissions({ id: 1, is_system_admin: true });
+    permissionStore.clear();
+    resolvePermissions([{ id: 1, permission_key: 'old-account' }]);
+    await load;
+
+    expect(get(permissionStore).permissions).toEqual([]);
+  });
+
   test('records error on failure', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     api.permissions.getAll.mockRejectedValueOnce(new Error('boom'));

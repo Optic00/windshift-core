@@ -87,6 +87,7 @@ func RegisterTestManagementRoutes(deps *Deps) {
 	api.HandleH("GET /workspaces/{workspaceId}/test-runs", auth(testView(http.HandlerFunc(deps.TestMgmt.Run.GetAll))))
 	api.HandleH("POST /workspaces/{workspaceId}/test-runs", auth(testExecute(http.HandlerFunc(deps.TestMgmt.Run.Create))))
 	api.HandleH("GET /workspaces/{workspaceId}/test-runs/{id}", auth(testView(http.HandlerFunc(deps.TestMgmt.Run.Get))))
+	api.HandleH("GET /workspaces/{workspaceId}/test-runs/{id}/detail", auth(testView(http.HandlerFunc(deps.TestMgmt.Run.GetDetail))))
 	api.HandleH("PUT /workspaces/{workspaceId}/test-runs/{id}", auth(testExecute(http.HandlerFunc(deps.TestMgmt.Run.Update))))
 	api.HandleH("DELETE /workspaces/{workspaceId}/test-runs/{id}", auth(testManage(http.HandlerFunc(deps.TestMgmt.Run.Delete))))
 	api.HandleH("POST /workspaces/{workspaceId}/test-runs/{id}/end", auth(testExecute(http.HandlerFunc(deps.TestMgmt.Run.End))))

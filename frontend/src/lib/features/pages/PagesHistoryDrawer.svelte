@@ -10,6 +10,7 @@
   import EmptyState from '../../components/EmptyState.svelte';
   import Badge from '../../components/Badge.svelte';
   import { IconX, IconHistory, IconRestore } from '@tabler/icons-svelte-runes';
+  import { loadPageHistory, pageRevisionAuthorName } from './pageHistoryData.js';
 
   /**
    * Right-side slide-in drawer that lists the revision history for a
@@ -38,9 +39,6 @@
   let error = $state('');
   let expandedRevisionId = $state(/** @type {number|null} */ (null));
   let pendingRestoreId = $state(/** @type {number|null} */ (null));
-  // Per-user-id cache so we don't refetch the same author N times.
-  let userCache = $state(/** @type {Record<number, any>} */ ({}));
-
   // Reload when the drawer opens against a new page, or transitions
   // from closed → open. Skipping the load while closed keeps the
   // history request out of the hot path for users who never open it.
@@ -57,45 +55,13 @@
     loading = true;
     error = '';
     try {
-      const rows = await api.pages.getHistory(workspaceId, pageId, { limit: 50 });
-      // Cookie-auth returns { revisions }, v1 returns { items }. Accept both
-      // shapes because this drawer sits on the cookie surface while the CLI
-      // shares the same api/pages helper conventions.
-      history = Array.isArray(rows?.revisions)
-        ? rows.revisions
-        : Array.isArray(rows?.items)
-          ? rows.items
-          : Array.isArray(rows)
-            ? rows
-            : [];
-      void prefetchAuthors(history);
+      history = await loadPageHistory(api, workspaceId, pageId, { limit: 50 });
     } catch (e) {
       error = e?.message || t('pages.history.loadError');
       history = [];
     } finally {
       loading = false;
     }
-  }
-
-  async function prefetchAuthors(rows) {
-    const seen = new Set();
-    for (const r of rows) {
-      const uid = r?.created_by;
-      if (uid == null || seen.has(uid) || uid in userCache) continue;
-      seen.add(uid);
-      try {
-        const u = await api.getUser(uid);
-        userCache = { ...userCache, [uid]: u };
-      } catch {
-        userCache = { ...userCache, [uid]: null };
-      }
-    }
-  }
-
-  function authorName(uid) {
-    const u = userCache[uid];
-    if (!u) return uid != null ? `#${uid}` : '—';
-    return u.full_name || u.username || u.email || `#${uid}`;
   }
 
   function changeTypeColor(t) {
@@ -187,7 +153,7 @@
               >
                 <span class="rev-number">#{rev.revision_number}</span>
                 <Badge variant={changeTypeColor(rev.change_type)}>{rev.change_type}</Badge>
-                <span class="rev-author">{authorName(rev.created_by)}</span>
+                <span class="rev-author">{pageRevisionAuthorName(rev)}</span>
                 <span class="rev-time" title={rev.created_at}>{formatRelativeTime(rev.created_at)}</span>
               </button>
 

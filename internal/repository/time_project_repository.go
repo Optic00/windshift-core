@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"windshift/internal/database"
 )
@@ -34,6 +35,8 @@ type TimeProjectDetail struct {
 	Color         string
 	HourlyRate    float64
 	Settings      map[string]interface{} // parsed settings JSON; nil when empty
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 	CustomerName  string
 	CategoryName  string
 	CategoryColor string
@@ -42,6 +45,7 @@ type TimeProjectDetail struct {
 
 const timeProjectDetailSelect = `SELECT tp.id, tp.customer_id, tp.category_id, tp.name, COALESCE(tp.description, ''),
        tp.status, COALESCE(tp.color, ''), tp.hourly_rate, COALESCE(tp.settings, ''),
+       tp.created_at, tp.updated_at,
        COALESCE(co.name, ''), COALESCE(tpc.name, ''), COALESCE(tpc.color, ''),
        (SELECT COALESCE(SUM(duration_minutes), 0) / 60.0 FROM time_worklogs WHERE project_id = tp.id) as total_hours
 FROM time_projects tp
@@ -53,7 +57,7 @@ func scanTimeProjectDetail(scan func(dest ...any) error) (TimeProjectDetail, err
 	var settingsStr sql.NullString
 	var totalHours sql.NullFloat64
 	err := scan(&p.ID, &p.CustomerID, &p.CategoryID, &p.Name, &p.Description,
-		&p.Status, &p.Color, &p.HourlyRate, &settingsStr, &p.CustomerName,
+		&p.Status, &p.Color, &p.HourlyRate, &settingsStr, &p.CreatedAt, &p.UpdatedAt, &p.CustomerName,
 		&p.CategoryName, &p.CategoryColor, &totalHours)
 	if err != nil {
 		return p, err

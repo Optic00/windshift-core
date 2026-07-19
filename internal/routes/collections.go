@@ -23,6 +23,7 @@ func RegisterCollectionRoutes(deps *Deps) {
 	api.HandleH("DELETE /collections/{id}", auth(http.HandlerFunc(deps.Collections.Collection.Delete)))
 
 	// Board configuration endpoints
+	api.HandleH("GET /collections/{id}/board-configuration/bootstrap", auth(http.HandlerFunc(deps.Collections.BoardConfig.GetBootstrap)))
 	api.HandleH("GET /collections/{id}/board-configuration", auth(http.HandlerFunc(deps.Collections.BoardConfig.GetByCollection)))
 	api.HandleH("POST /collections/{id}/board-configuration", auth(http.HandlerFunc(deps.Collections.BoardConfig.CreateForCollection)))
 	api.HandleH("PUT /collections/{collectionId}/board-configuration/{configId}", auth(http.HandlerFunc(deps.Collections.BoardConfig.UpdateForCollection)))

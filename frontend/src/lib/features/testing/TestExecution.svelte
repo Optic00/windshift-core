@@ -14,6 +14,7 @@
   import { getStatusBadgeCSS, getStatusLabel, getStatusButtonStyle } from '../../utils/statusColors.js';
   import { t } from '../../stores/i18n.svelte.js';
   import DescriptionText from '../../components/DescriptionText.svelte';
+  import { loadTestRunDetail } from './testRunDetailData.js';
 
   let testRun = $state(null);
   let testCases = $state([]);
@@ -50,8 +51,7 @@
 
   onMount(async () => {
     if (runId) {
-      await loadTestRun(runId);
-      await loadWorkspaceItems();
+      await Promise.all([loadTestRun(runId), loadWorkspaceItems()]);
     }
   });
 
@@ -70,55 +70,15 @@
     try {
       loading = true;
 
-      // Load test run details
-      testRun = await api.tests.testRuns.get(workspaceId, runId);
-      if (!testRun) {
-        throw new Error('Test run not found');
-      }
-
-      // Load test cases for this run's test plan
-      const testSet = await api.tests.testSets.get(workspaceId, testRun.set_id);
-      if (!testSet) {
-        throw new Error('Test set not found');
-      }
-
-      const loadedTestCases = await api.tests.testSets.getTestCases(workspaceId, testRun.set_id);
-
-      // Ensure we have an array
-      if (!Array.isArray(loadedTestCases)) {
-        console.error('getTestCases did not return an array:', loadedTestCases);
-        testCases = [];
-        return;
-      }
-
-      // Load test steps for each test case
-      // Create a new array with steps to trigger proper reactivity
-      const testCasesWithSteps = [];
-      for (let testCase of loadedTestCases) {
-        try {
-          const steps = await api.tests.testCases.steps.getAll(workspaceId, testCase.id);
-          const testCaseWithSteps = {
-            ...testCase,
-            test_steps: Array.isArray(steps) ? steps : []
-          };
-          testCasesWithSteps.push(testCaseWithSteps);
-        } catch (error) {
-          console.error(`Failed to load steps for test case ${testCase.id}:`, error);
-          testCasesWithSteps.push({
-            ...testCase,
-            test_steps: []
-          });
-        }
-      }
-
-      // Update the testCases array all at once to trigger proper reactivity
-      testCases = testCasesWithSteps;
+      const detail = await loadTestRunDetail(api, workspaceId, runId);
+      testRun = detail.run;
+      testCases = detail.testCases;
+      testResults = {};
+      stepResults = {};
 
       // Initialize results
       initializeResults();
-
-      // Load existing step results from database
-      await loadExistingResults();
+      applyExistingResults(detail.stepResults, detail.results);
 
     } catch (error) {
       console.error('Failed to load test run:', error);
@@ -168,53 +128,31 @@
     });
   }
 
-  async function loadExistingResults() {
-    try {
-      // Load step results from the database. Backend keys the response by
-      // `${testCaseID}_${stepID}` so the same step in two different test
-      // cases stays distinct; we remap to local step.id keys here (mirrors
-      // TestRunDetail.svelte). Reading `item_id` (not `defect_id`) matches
-      // the field the backend emits.
-      const existingStepResults = await api.tests.testRuns.getStepResults(workspaceId, runId);
-
-      testCases.forEach(testCase => {
-        (testCase.test_steps || []).forEach(step => {
-          const compositeKey = `${testCase.id}_${step.id}`;
-          const existingResult = existingStepResults[compositeKey];
-          if (!existingResult) return;
-          stepResults[step.id] = {
-            status: existingResult.status || 'not_run',
-            actual_result: existingResult.actual_result || '',
-            notes: existingResult.notes || '',
-            item_id: existingResult.item_id ?? null
-          };
-        });
+  function applyExistingResults(existingStepResults, resultRows) {
+    // Backend keys step results by `${testCaseID}_${stepID}`. Remap to the
+    // globally unique step id used by the execution UI.
+    testCases.forEach(testCase => {
+      (testCase.test_steps || []).forEach(step => {
+        const existingResult = existingStepResults[`${testCase.id}_${step.id}`];
+        if (!existingResult) return;
+        stepResults[step.id] = {
+          status: existingResult.status || 'not_run',
+          actual_result: existingResult.actual_result || '',
+          notes: existingResult.notes || '',
+          item_id: existingResult.item_id ?? null
+        };
       });
+    });
+    stepResults = { ...stepResults };
 
-      // Trigger reactivity
-      stepResults = { ...stepResults };
-
-      // Load per-test-case result rows so we know the test_result.id to attach
-      // screenshots to. The row is created when the run starts, so it always
-      // exists by the time we get here.
-      try {
-        const resultRows = await api.tests.testRuns.getResults(workspaceId, runId);
-        if (Array.isArray(resultRows)) {
-          for (const row of resultRows) {
-            testResults[row.test_case_id] = {
-              ...(testResults[row.test_case_id] ?? {}),
-              id: row.id,
-              status: row.status || testResults[row.test_case_id]?.status || 'not_run',
-            };
-          }
-          testResults = { ...testResults };
-        }
-      } catch (resultErr) {
-        console.error('Failed to load test_result rows for attachments:', resultErr);
-      }
-    } catch (error) {
-      console.error('Failed to load existing step results:', error);
+    for (const row of resultRows) {
+      testResults[row.test_case_id] = {
+        ...(testResults[row.test_case_id] ?? {}),
+        id: row.id,
+        status: row.status || testResults[row.test_case_id]?.status || 'not_run',
+      };
     }
+    testResults = { ...testResults };
   }
 
   function setInitialTestCasePosition() {
@@ -459,7 +397,11 @@
     <Spinner size="lg" />
   </div>
 {:else if testRun && currentCase}
-  <div class="flex min-h-screen" style="background-color: var(--ds-surface-raised);">
+  <div
+    class="flex min-h-screen"
+    style="background-color: var(--ds-surface-raised);"
+    data-testid="test-execution"
+  >
     <!-- Left Sidebar - Test Cases (Collapsible) -->
     <div class="{sidebarCollapsed ? 'w-14' : 'w-64'} border-r flex flex-col transition-all duration-200" style="border-color: var(--ds-border); background-color: var(--ds-surface-raised);">
       <!-- Header -->
@@ -504,6 +446,7 @@
             {@const isCollapsedActive = currentCaseIndex === index}
             <button
               type="button"
+              data-testid="test-execution-case"
               class="appearance-none bg-transparent border-none font-[inherit] text-[inherit] text-left w-full m-0 cursor-pointer mb-2 p-1 rounded-lg transition-all"
               style={isCollapsedActive ? 'background: var(--ds-surface); box-shadow: 0 1px 3px rgba(0,0,0,0.1), 0 1px 2px rgba(0,0,0,0.06);' : ''}
               onmouseenter={(e) => { if (!isCollapsedActive) e.currentTarget.style.background = 'var(--ds-background-neutral-hovered)'; }}
@@ -526,6 +469,7 @@
             {@const isExpandedActive = currentCaseIndex === index}
             <button
               type="button"
+              data-testid="test-execution-case"
               class="appearance-none bg-transparent font-[inherit] text-[inherit] text-left w-full m-0 cursor-pointer p-3 mb-2 rounded-lg border transition-all"
               style={isExpandedActive ? 'border-color: var(--ds-interactive); background: var(--ds-surface); box-shadow: 0 1px 3px rgba(0,0,0,0.1), 0 1px 2px rgba(0,0,0,0.06);' : 'border-color: var(--ds-border);'}
               onmouseenter={(e) => { if (!isExpandedActive) e.currentTarget.style.background = 'var(--ds-background-neutral-hovered)'; }}

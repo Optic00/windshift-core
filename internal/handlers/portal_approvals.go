@@ -11,6 +11,8 @@ import (
 	"windshift/internal/services"
 )
 
+var errPortalApprovalActorUnauthorized = errors.New("portal approval actor is not authenticated")
+
 // Portal-side approval endpoints. Portal customers and internal users can
 // decide on approvals where they're in the active pool. Authentication is
 // handled upstream by RequirePortalAuth; these handlers pull the active actor
@@ -157,6 +159,19 @@ type portalApprovalActor struct {
 // their own; if they also have a linked portal-customer row, both identities are
 // kept so pooled approvals addressed to either row appear in the portal view.
 func (h *PortalHandler) requirePortalApprovalActor(w http.ResponseWriter, r *http.Request) (portalApprovalActor, bool) {
+	actor, err := h.portalApprovalActorFromRequest(r)
+	if errors.Is(err, errPortalApprovalActorUnauthorized) {
+		respondUnauthorized(w, r)
+		return portalApprovalActor{}, false
+	}
+	if err != nil {
+		respondInternalError(w, r, err)
+		return portalApprovalActor{}, false
+	}
+	return actor, true
+}
+
+func (h *PortalHandler) portalApprovalActorFromRequest(r *http.Request) (portalApprovalActor, error) {
 	internalUserID, customerID := h.getAuthFromContext(r)
 	actor := portalApprovalActor{userID: internalUserID, customerID: customerID}
 	if internalUserID != nil && customerID == nil {
@@ -164,15 +179,13 @@ func (h *PortalHandler) requirePortalApprovalActor(w http.ResponseWriter, r *htt
 		if err == nil && cid > 0 {
 			actor.customerID = &cid
 		} else if err != nil && !errors.Is(err, services.ErrPortalCustomerNotFound) {
-			respondInternalError(w, r, err)
-			return portalApprovalActor{}, false
+			return portalApprovalActor{}, err
 		}
 	}
 	if actor.userID == nil && actor.customerID == nil {
-		respondUnauthorized(w, r)
-		return portalApprovalActor{}, false
+		return portalApprovalActor{}, errPortalApprovalActorUnauthorized
 	}
-	return actor, true
+	return actor, nil
 }
 
 func (h *PortalHandler) getApprovalsForPortalActor(ctx context.Context, actor portalApprovalActor, status string) ([]*models.ApprovalRequest, error) {

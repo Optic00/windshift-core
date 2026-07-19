@@ -1,12 +1,19 @@
 <script>
   import { Bell, Eye, Inbox } from '@lucide/svelte';
   import { homepageStore, workspacesStore } from '../../stores';
+  import { notifications, notificationActions } from '../../stores/notifications.js';
   import { navigate } from '../../router.js';
 
   const MAX_ENTRIES_PER_WORKSPACE = 5;
   const MAX_WORKSPACES = 5;
 
-  let notifications = $derived(homepageStore.notifications);
+  let recentNotifications = $derived.by(() => {
+    const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
+    return $notifications.filter((notification) => {
+      if (!notification.read) return true;
+      return new Date(notification.timestamp).getTime() >= dayAgo;
+    });
+  });
   let watchedItems = $derived(homepageStore.watchedItems);
   let loading = $derived(homepageStore.loading);
 
@@ -17,8 +24,9 @@
   let groups = $derived.by(() => {
     const entries = [];
 
-    for (const n of notifications) {
-      const m = n.action_url?.match(/^\/workspaces\/(\d+)\//);
+    for (const n of recentNotifications) {
+      const actionUrl = n.actionUrl || n.action_url;
+      const m = actionUrl?.match(/^\/workspaces\/(\d+)\//);
       if (!m) continue;
       entries.push({
         id: `n-${n.id}`,
@@ -28,7 +36,7 @@
         source: 'notification',
         title: n.message || n.title || 'Notification',
         subtitle: null,
-        link: n.action_url,
+        link: actionUrl,
         read: n.read,
       });
     }
@@ -74,7 +82,7 @@
 
   function open(entry) {
     if (entry?.source === 'notification' && !entry.read) {
-      homepageStore.markNotificationRead(entry.notificationId);
+      notificationActions.markAsRead(entry.notificationId);
     }
     if (entry?.link) navigate(entry.link);
   }

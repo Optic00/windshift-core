@@ -26,6 +26,22 @@ func NewItemRepository(db database.Database) *ItemRepository {
 	return &ItemRepository{db: db}
 }
 
+// GetDetailPanelAvailability reports whether the item detail surface has SCM
+// context or agent runs to show. Keeping this query in the repository preserves
+// the handler boundary while allowing both flags to share one database round trip.
+func (r *ItemRepository) GetDetailPanelAvailability(workspaceID, itemID int) (scmAvailable, hasAgentRuns bool, err error) {
+	err = r.db.QueryRow(`
+		SELECT
+			EXISTS(
+				SELECT 1 FROM workspace_repositories wr
+				JOIN workspace_scm_connections wsc ON wsc.id = wr.workspace_scm_connection_id
+				WHERE wsc.workspace_id = ? AND wr.is_active = true AND wsc.enabled = true
+			),
+			EXISTS(SELECT 1 FROM agent_runs WHERE item_id = ?)
+	`, workspaceID, itemID).Scan(&scmAvailable, &hasAgentRuns)
+	return scmAvailable, hasAgentRuns, err
+}
+
 const itemBaseColumns = `id, workspace_id, workspace_item_number, item_type_id, title, description, status_id,
        priority_id, due_date, start_date, end_date, is_task, iteration_id, project_id, inherit_project,
        time_project_id, assignee_id, creator_id, creator_portal_customer_id, custom_field_values, parent_id, related_work_item_id,
@@ -1850,15 +1866,17 @@ func (r *ItemRepository) ClearRelatedWorkItem(itemID int) error {
 }
 
 // GetHistoryWithApprovals returns item history plus approval decision events as a single chronological feed.
-func (r *ItemRepository) GetHistoryWithApprovals(itemID int) ([]models.ItemHistory, error) {
+func (r *ItemRepository) GetHistoryWithApprovals(itemID int, includeAgentOwner bool) ([]models.ItemHistory, error) {
 	query := `
 		SELECT
 			ih.id, ih.item_id, ih.user_id, ih.changed_at, ih.field_name, ih.old_value, ih.new_value,
 			COALESCE(u.first_name || ' ' || u.last_name, u.username, '') as user_name,
 			COALESCE(u.email, '') as user_email,
-			COALESCE(u.is_agent, FALSE) AS is_agent
+			COALESCE(u.is_agent, FALSE) AS is_agent,
+			COALESCE(NULLIF(TRIM(COALESCE(owner.first_name, '') || ' ' || COALESCE(owner.last_name, '')), ''), owner.username, '') AS agent_owner_name
 		FROM item_history ih
 		LEFT JOIN users u ON ih.user_id = u.id
+		LEFT JOIN users owner ON owner.id = u.agent_owner_user_id
 		WHERE ih.item_id = ?
 		UNION ALL
 		SELECT
@@ -1871,10 +1889,12 @@ func (r *ItemRepository) GetHistoryWithApprovals(itemID int) ([]models.ItemHisto
 			d.comment AS new_value,
 			COALESCE(u.first_name || ' ' || u.last_name, u.username, 'System') AS user_name,
 			COALESCE(u.email, '') AS user_email,
-			COALESCE(u.is_agent, FALSE) AS is_agent
+			COALESCE(u.is_agent, FALSE) AS is_agent,
+			COALESCE(NULLIF(TRIM(COALESCE(owner.first_name, '') || ' ' || COALESCE(owner.last_name, '')), ''), owner.username, '') AS agent_owner_name
 		FROM approval_decisions d
 		JOIN approval_requests ar ON ar.id = d.approval_request_id
 		LEFT JOIN users u ON u.id = d.actor_user_id
+		LEFT JOIN users owner ON owner.id = u.agent_owner_user_id
 		WHERE ar.item_id = ?
 		ORDER BY changed_at DESC
 	`
@@ -1888,8 +1908,11 @@ func (r *ItemRepository) GetHistoryWithApprovals(itemID int) ([]models.ItemHisto
 	history := []models.ItemHistory{}
 	for rows.Next() {
 		var entry models.ItemHistory
-		if err := rows.Scan(&entry.ID, &entry.ItemID, &entry.UserID, &entry.ChangedAt, &entry.FieldName, &entry.OldValue, &entry.NewValue, &entry.UserName, &entry.UserEmail, &entry.IsAgent); err != nil {
+		if err := rows.Scan(&entry.ID, &entry.ItemID, &entry.UserID, &entry.ChangedAt, &entry.FieldName, &entry.OldValue, &entry.NewValue, &entry.UserName, &entry.UserEmail, &entry.IsAgent, &entry.AgentOwnerName); err != nil {
 			return nil, err
+		}
+		if !includeAgentOwner {
+			entry.AgentOwnerName = ""
 		}
 		history = append(history, entry)
 	}

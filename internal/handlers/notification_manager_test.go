@@ -205,3 +205,46 @@ func TestNotificationManagerConcurrentCreateReadUpdate(t *testing.T) {
 		t.Fatalf("final page: len=%d err=%v", len(page), err)
 	}
 }
+
+func TestNotificationManagerMarkAllAsReadUpdatesDatabaseAndWarmCache(t *testing.T) {
+	db := newNotificationManagerTestDB(t)
+	manager := newNotificationManagerForTest(t, db)
+
+	if _, err := manager.AddNotifications(testNotifications(1, 3)); err != nil {
+		t.Fatalf("seed notifications: %v", err)
+	}
+	if _, err := manager.AddNotifications(testNotifications(2, 1)); err != nil {
+		t.Fatalf("seed other user notification: %v", err)
+	}
+	if page, err := manager.GetUserNotifications(1, 50, 0); err != nil || len(page) != 3 {
+		t.Fatalf("warm cache: len=%d err=%v", len(page), err)
+	}
+
+	if err := manager.MarkAllAsRead(1); err != nil {
+		t.Fatalf("mark all as read: %v", err)
+	}
+
+	var unread int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM notifications WHERE user_id = 1 AND read = false`).Scan(&unread); err != nil {
+		t.Fatalf("count unread notifications: %v", err)
+	}
+	if unread != 0 {
+		t.Fatalf("unread notifications = %d, want 0", unread)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM notifications WHERE user_id = 2 AND read = false`).Scan(&unread); err != nil {
+		t.Fatalf("count other user unread notifications: %v", err)
+	}
+	if unread != 1 {
+		t.Fatalf("other user unread notifications = %d, want 1", unread)
+	}
+
+	page, err := manager.GetUserNotifications(1, 50, 0)
+	if err != nil {
+		t.Fatalf("read cached notifications: %v", err)
+	}
+	for _, notification := range page {
+		if !notification.Read {
+			t.Fatalf("cached notification %d is unread", notification.ID)
+		}
+	}
+}

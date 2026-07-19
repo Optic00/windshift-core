@@ -98,28 +98,38 @@ func (h *OnCallHandler) canViewTeamOnCall(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return false
 	}
-	hasGlobal, err := h.permissionService.HasGlobalPermission(user.ID, models.PermissionTeamsManage)
-	if err == nil && hasGlobal {
-		return true
-	}
-	isAdmin, err := h.teamRepo.IsTeamAdmin(teamID, user.ID)
+	allowed, err := h.hasTeamOnCallViewAccess(user.ID, teamID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return false
 	}
-	if isAdmin {
-		return true
-	}
-	isMember, err := h.teamRepo.IsTeamMember(teamID, user.ID)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return false
-	}
-	if isMember {
+	if allowed {
 		return true
 	}
 	respondForbidden(w, r)
 	return false
+}
+
+// hasTeamOnCallViewAccess performs the read permission check without writing a
+// response, allowing schedule listings to omit current assignments for users
+// who could previously see schedule metadata but not the current roster.
+func (h *OnCallHandler) hasTeamOnCallViewAccess(userID, teamID int) (bool, error) {
+	hasGlobal, err := h.permissionService.HasGlobalPermission(userID, models.PermissionTeamsManage)
+	if err == nil && hasGlobal {
+		return true, nil
+	}
+	isAdmin, err := h.teamRepo.IsTeamAdmin(teamID, userID)
+	if err != nil {
+		return false, err
+	}
+	if isAdmin {
+		return true, nil
+	}
+	isMember, err := h.teamRepo.IsTeamMember(teamID, userID)
+	if err != nil {
+		return false, err
+	}
+	return isMember, nil
 }
 
 // resolveSchedule parses a schedule ID from the URL parameter named paramName,
@@ -229,7 +239,7 @@ func validateScheduleRequest(w http.ResponseWriter, r *http.Request, req models.
 
 // ListSchedules returns all on-call schedules for a team.
 func (h *OnCallHandler) ListSchedules(w http.ResponseWriter, r *http.Request) {
-	_, ok := RequireAuth(w, r)
+	user, ok := RequireAuth(w, r)
 	if !ok {
 		return
 	}
@@ -247,6 +257,17 @@ func (h *OnCallHandler) ListSchedules(w http.ResponseWriter, r *http.Request) {
 
 	if schedules == nil {
 		schedules = []models.OnCallSchedule{}
+	}
+	includeCurrent, err := h.hasTeamOnCallViewAccess(user.ID, teamID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	if includeCurrent {
+		now := time.Now()
+		for i := range schedules {
+			schedules[i].CurrentOnCall = h.onCallService.CurrentOnCallForSchedule(&schedules[i], now)
+		}
 	}
 	respondJSONOK(w, schedules)
 }

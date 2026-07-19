@@ -17,6 +17,7 @@ func RegisterWorkspaceRoutes(deps *Deps) {
 	api.HandleH("GET /workspaces", auth(http.HandlerFunc(deps.Workspaces.Workspace.GetAll)))
 	api.HandleH("POST /workspaces", auth(http.HandlerFunc(deps.Workspaces.Workspace.Create)))
 	api.HandleH("GET /workspaces/personal", auth(http.HandlerFunc(deps.Workspaces.Workspace.GetOrCreatePersonalWorkspace)))
+	api.HandleH("GET /workspaces/{id}/bootstrap", auth(http.HandlerFunc(deps.Workspaces.Bootstrap.Get)))
 	api.HandleH("GET /workspaces/{id}", auth(http.HandlerFunc(deps.Workspaces.Workspace.Get)))
 	api.HandleH("PUT /workspaces/{id}", auth(http.HandlerFunc(deps.Workspaces.Workspace.Update)))
 	api.HandleH("DELETE /workspaces/{id}", auth(http.HandlerFunc(deps.Workspaces.Workspace.Delete)))

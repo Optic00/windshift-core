@@ -15,6 +15,10 @@ export const notifications = {
     fetchAPI(`/notifications/${id}/read`, {
       method: 'PATCH',
     }),
+  markAllAsRead: () =>
+    fetchAPI('/notifications/read-all', {
+      method: 'PATCH',
+    }),
   // Mark every unseen notification as seen. Distinct from markAsRead: the
   // backend keeps `read = false` so the email batcher still fires; only the
   // tray-side "new since you last looked" cue should drop.

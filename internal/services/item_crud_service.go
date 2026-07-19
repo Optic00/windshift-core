@@ -564,6 +564,33 @@ func (s *ItemCRUDService) ListWithQLContext(ctx context.Context, params ListWith
 	})
 }
 
+// ListDistinctWorkspaceIDsWithQLContext evaluates a CQL expression against
+// the caller's accessible workspaces and returns only the workspace IDs that
+// have matching items. This supports metadata views that need workspace-scoped
+// catalogs without transferring every matching item first.
+func (s *ItemCRUDService) ListDistinctWorkspaceIDsWithQLContext(
+	ctx context.Context,
+	qlQuery string,
+	workspaceIDs []int,
+	userID int,
+) ([]int, error) {
+	if len(workspaceIDs) == 0 || strings.TrimSpace(qlQuery) == "" {
+		return []int{}, nil
+	}
+
+	qlSQL, qlArgs, err := s.evaluateQLContext(ctx, qlQuery, cql.UserContext(userID))
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.FindDistinctWorkspaceIDsContext(ctx, ItemListParams{
+		WorkspaceIDs: workspaceIDs,
+		Filters: ItemFilters{
+			QLQuery: qlSQL,
+			QLArgs:  qlArgs,
+		},
+	})
+}
+
 // GetWithEffectiveProject retrieves an item with effective project calculated
 // This is the most comprehensive Get method, used by the handler
 // deadcode-keep: called by core-tests/internal/services/item_crud_service_test.go

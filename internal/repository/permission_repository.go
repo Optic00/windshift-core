@@ -35,6 +35,14 @@ type GroupGlobalGrant struct {
 	GrantedAt    string `json:"granted_at"`
 }
 
+// UserEffectiveGlobalGrant is the compact effective-global-permission shape
+// consumed by the permission manager. Direct and active-group grants are
+// deduplicated by (user_id, permission_id).
+type UserEffectiveGlobalGrant struct {
+	UserID       int `json:"user_id"`
+	PermissionID int `json:"permission_id"`
+}
+
 // ListAll returns every permission ordered by scope then name.
 // The result is nil (not an empty slice) when the catalog is empty —
 // callers that serialize it directly rely on the historical "null" output.
@@ -253,6 +261,42 @@ func (r *PermissionRepository) ListGroupGlobalGrants() ([]GroupGlobalGrant, erro
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate group global grants: %w", err)
+	}
+	return grants, nil
+}
+
+// ListEffectiveUserGlobalGrants returns every user's effective global grants
+// in one query. This intentionally excludes workspace permissions: the admin
+// permission matrix only renders global assignments.
+func (r *PermissionRepository) ListEffectiveUserGlobalGrants() ([]UserEffectiveGlobalGrant, error) {
+	rows, err := r.db.Query(`
+		SELECT grants.user_id, grants.permission_id
+		FROM (
+			SELECT ugp.user_id, ugp.permission_id
+			FROM user_global_permissions ugp
+			UNION
+			SELECT gm.user_id, ggp.permission_id
+			FROM group_members gm
+			JOIN groups g ON g.id = gm.group_id AND g.is_active = true
+			JOIN group_global_permissions ggp ON ggp.group_id = gm.group_id
+		) grants
+		ORDER BY grants.user_id, grants.permission_id
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("list effective user global grants: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	grants := make([]UserEffectiveGlobalGrant, 0)
+	for rows.Next() {
+		var grant UserEffectiveGlobalGrant
+		if scanErr := rows.Scan(&grant.UserID, &grant.PermissionID); scanErr != nil {
+			return nil, fmt.Errorf("scan effective user global grant: %w", scanErr)
+		}
+		grants = append(grants, grant)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate effective user global grants: %w", err)
 	}
 	return grants, nil
 }

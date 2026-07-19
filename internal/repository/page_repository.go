@@ -714,6 +714,9 @@ func (r *PageRepository) WouldCreatePageCycleTx(tx database.Tx, pageID, newParen
 const pageRevisionColumns = `id, page_id, revision_number, title, slug, content, content_hash,
 	excerpt, parent_id, path, depth, change_summary, change_type, created_by, created_at`
 
+const pageRevisionColumnsAliased = `pr.id, pr.page_id, pr.revision_number, pr.title, pr.slug, pr.content, pr.content_hash,
+	pr.excerpt, pr.parent_id, pr.path, pr.depth, pr.change_summary, pr.change_type, pr.created_by, pr.created_at`
+
 func scanPageRevision(s rowScanner) (*models.PageRevision, error) {
 	var rev models.PageRevision
 	var parentID sql.NullInt64
@@ -727,6 +730,38 @@ func scanPageRevision(s rowScanner) (*models.PageRevision, error) {
 	if parentID.Valid {
 		v := int(parentID.Int64)
 		rev.ParentID = &v
+	}
+	return &rev, nil
+}
+
+func scanPageRevisionWithAuthor(s rowScanner) (*models.PageRevision, error) {
+	var rev models.PageRevision
+	var parentID, authorID sql.NullInt64
+	var authorFirst, authorLast, authorUsername sql.NullString
+	var authorActive sql.NullBool
+	if err := s.Scan(
+		&rev.ID, &rev.PageID, &rev.RevisionNumber, &rev.Title, &rev.Slug, &rev.Content, &rev.ContentHash,
+		&rev.Excerpt, &parentID, &rev.Path, &rev.Depth, &rev.ChangeSummary, &rev.ChangeType,
+		&rev.CreatedBy, &rev.CreatedAt,
+		&authorID, &authorFirst, &authorLast, &authorUsername, &authorActive,
+	); err != nil {
+		return nil, err
+	}
+	if parentID.Valid {
+		v := int(parentID.Int64)
+		rev.ParentID = &v
+	}
+	if authorID.Valid {
+		name := strings.TrimSpace(authorFirst.String + " " + authorLast.String)
+		if name == "" {
+			name = authorUsername.String
+		}
+		rev.Author = &models.PageRevisionAuthor{
+			ID:       int(authorID.Int64),
+			Name:     name,
+			Username: authorUsername.String,
+			IsActive: authorActive.Valid && authorActive.Bool,
+		}
 	}
 	return &rev, nil
 }
@@ -800,10 +835,12 @@ func (r *PageRepository) ListRevisions(pageID, limit, offset int) ([]models.Page
 		offset = 0
 	}
 	rows, err := r.db.Query(`
-		SELECT `+pageRevisionColumns+`
-		FROM page_revisions
-		WHERE page_id = ?
-		ORDER BY revision_number DESC
+		SELECT `+pageRevisionColumnsAliased+`,
+		       u.id, u.first_name, u.last_name, u.username, COALESCE(u.is_active, FALSE)
+		FROM page_revisions pr
+		LEFT JOIN users u ON u.id = pr.created_by
+		WHERE pr.page_id = ?
+		ORDER BY pr.revision_number DESC
 		LIMIT ? OFFSET ?
 	`, pageID, limit, offset)
 	if err != nil {
@@ -813,7 +850,7 @@ func (r *PageRepository) ListRevisions(pageID, limit, offset int) ([]models.Page
 
 	var out []models.PageRevision
 	for rows.Next() {
-		rev, scanErr := scanPageRevision(rows)
+		rev, scanErr := scanPageRevisionWithAuthor(rows)
 		if scanErr != nil {
 			return nil, fmt.Errorf("scan revision: %w", scanErr)
 		}

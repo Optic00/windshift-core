@@ -3,7 +3,7 @@
   import { Plus } from '@lucide/svelte';
   import { currentRoute } from '../router.js';
   import { timerStore } from '../stores/timerStore.svelte.js';
-  import { workspacesStore, aiStore } from '../stores';
+  import { workspacesStore, aiStore, homepageStore } from '../stores';
   import { startNotificationPoller, stopNotificationPoller } from '../stores/notifications.js';
   import { resetAuthenticatedShellState } from '../services/authenticatedShellBootstrap.js';
   import { registerMobileServiceWorker } from './pushClient.js';
@@ -44,6 +44,7 @@
 
     return () => {
       stopNotificationPoller();
+      homepageStore.reset();
       resetAuthenticatedShellState();
     };
   });

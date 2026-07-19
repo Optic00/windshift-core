@@ -18,6 +18,7 @@ type OnCallSchedule struct {
 	TeamName      string                   `json:"team_name,omitempty"`
 	Layers        []OnCallScheduleLayer    `json:"layers,omitempty"`
 	Overrides     []OnCallScheduleOverride `json:"overrides,omitempty"`
+	CurrentOnCall *CurrentOnCallResponse   `json:"current_on_call,omitempty"`
 }
 
 // OnCallScheduleRequest represents the API request for creating/updating a schedule

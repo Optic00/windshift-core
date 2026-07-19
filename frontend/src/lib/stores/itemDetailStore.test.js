@@ -5,6 +5,8 @@ vi.mock('../api.js', () => ({
     items: {
       get: vi.fn(),
       getByKey: vi.fn(),
+      getDetailSummary: vi.fn(),
+      getDetailSummaryByKey: vi.fn(),
       getChildren: vi.fn(),
       getAncestors: vi.fn(),
       getAll: vi.fn(),
@@ -32,6 +34,7 @@ vi.mock('../api.js', () => ({
     workspaces: {
       get: vi.fn(),
       getAll: vi.fn(),
+      getBootstrap: vi.fn(),
     },
     linkTypes: {
       getAll: vi.fn(),
@@ -76,6 +79,19 @@ const { workspaceDataStore } = await import('./workspaceDataStore.svelte.js');
 
 function mockSuccessfulRelatedLoads() {
   api.workspaces.get.mockResolvedValue({ id: 1, configuration_set_id: null });
+  api.workspaces.getBootstrap.mockImplementation(async (id) => ({
+    workspace: { id, configuration_set_id: null },
+    homepage_layout: { sections: [], widgets: [] },
+    statuses: [],
+    status_categories: [],
+    users: [],
+    milestones: [],
+    iterations: [],
+    projects: [],
+    item_types: [],
+    priorities: [],
+    custom_field_definitions: [],
+  }));
   api.linkTypes.getAll.mockResolvedValue([]);
   api.links.getForItem.mockResolvedValue({ outgoing: [], incoming: [] });
   api.customFields.getAll.mockResolvedValue({ data: [] });
@@ -93,6 +109,26 @@ function mockSuccessfulRelatedLoads() {
   api.actions.getAll.mockResolvedValue([]);
 }
 
+function detailSummary(item, overrides = {}) {
+  return {
+    item,
+    links: { outgoing: [], incoming: [] },
+    link_types: [],
+    request_type_fields: [],
+    transitions: { available_transitions: [], pending_approval: null },
+    watching: false,
+    children: [],
+    ancestors: [],
+    current_item_type: null,
+    current_hierarchy_level: null,
+    available_sub_issue_types: [],
+    priorities: [],
+    screen_context: { edit: null, view: null },
+    manual_actions: [],
+    ...overrides,
+  };
+}
+
 describe('itemDetailStore.loadItem request graph', () => {
   beforeEach(() => {
     itemDetailStore.reset();
@@ -101,7 +137,7 @@ describe('itemDetailStore.loadItem request graph', () => {
     mockSuccessfulRelatedLoads();
   });
 
-  it('reuses the full key lookup response instead of fetching the item twice', async () => {
+  it('loads a key-addressed item and its above-the-fold context in one summary request', async () => {
     const resolvedItem = {
       id: 42,
       workspace_id: 1,
@@ -110,27 +146,26 @@ describe('itemDetailStore.loadItem request graph', () => {
       item_type_id: null,
       request_type_id: null,
     };
-    api.items.getByKey.mockResolvedValue(resolvedItem);
+    api.items.getDetailSummaryByKey.mockResolvedValue(detailSummary(resolvedItem));
 
     await itemDetailStore.loadItem('WS', 7, { workspaceKey: 'WS', itemNumber: 7 });
 
-    expect(api.items.getByKey).toHaveBeenCalledWith(
+    expect(api.items.getDetailSummaryByKey).toHaveBeenCalledWith(
       'WS',
       7,
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     );
+    expect(api.items.getByKey).not.toHaveBeenCalled();
     expect(api.items.get).not.toHaveBeenCalled();
-    expect(api.getDiagrams).toHaveBeenCalledWith(42, {
-      signal: expect.any(AbortSignal),
-    });
-    expect(itemDetailStore.diagramsLoaded).toBe(true);
+    expect(api.getDiagrams).not.toHaveBeenCalled();
+    expect(itemDetailStore.diagramsLoaded).toBe(false);
     expect(itemDetailStore.item).toMatchObject(resolvedItem);
     expect(itemDetailStore.itemId).toBe(42);
   });
 
   it('aborts a superseded item load and keeps only the latest result', async () => {
     let firstSignal;
-    api.items.get.mockImplementation((id, { signal }) => {
+    api.items.getDetailSummary.mockImplementation((id, { signal }) => {
       if (id === 101) {
         firstSignal = signal;
         return new Promise((_resolve, reject) => {
@@ -141,14 +176,16 @@ describe('itemDetailStore.loadItem request graph', () => {
           );
         });
       }
-      return Promise.resolve({
-        id,
-        workspace_id: 1,
-        title: 'Latest item',
-        parent_id: null,
-        item_type_id: null,
-        request_type_id: null,
-      });
+      return Promise.resolve(
+        detailSummary({
+          id,
+          workspace_id: 1,
+          title: 'Latest item',
+          parent_id: null,
+          item_type_id: null,
+          request_type_id: null,
+        })
+      );
     });
 
     const firstLoad = itemDetailStore.loadItem(1, 101);
@@ -161,7 +198,7 @@ describe('itemDetailStore.loadItem request graph', () => {
     expect(itemDetailStore.error).toBeNull();
   });
 
-  it('reuses initialized workspace references and loads diagrams', async () => {
+  it('reuses initialized workspace references and keeps diagrams deferred', async () => {
     workspaceDataStore.workspaceId = 1;
     workspaceDataStore.workspace = { id: 1, configuration_set_id: null };
     workspaceDataStore.customFieldDefinitions = [{ id: 7, name: 'Shared field' }];
@@ -171,15 +208,22 @@ describe('itemDetailStore.loadItem request graph', () => {
     workspaceDataStore.projects = [{ id: 12, name: 'Shared project' }];
     workspaceDataStore.itemTypes = [{ id: 9, name: 'Shared type', hierarchy_level: 0 }];
     workspaceDataStore.initialized = true;
-    api.items.get.mockResolvedValue({
-      id: 42,
-      workspace_id: 1,
-      title: 'Shared references',
-      parent_id: null,
-      item_type_id: 9,
-      request_type_id: null,
-    });
-    api.hierarchyLevels.getAll.mockResolvedValue([{ level: 0 }]);
+    api.items.getDetailSummary.mockResolvedValue(
+      detailSummary(
+        {
+          id: 42,
+          workspace_id: 1,
+          title: 'Shared references',
+          parent_id: null,
+          item_type_id: 9,
+          request_type_id: null,
+        },
+        {
+          current_item_type: { id: 9, name: 'Shared type', hierarchy_level: 0 },
+          current_hierarchy_level: { level: 0 },
+        }
+      )
+    );
 
     await itemDetailStore.loadItem(1, 42);
 
@@ -190,10 +234,14 @@ describe('itemDetailStore.loadItem request graph', () => {
     expect(api.priorities.getAll).not.toHaveBeenCalled();
     expect(api.itemTypes.getAll).not.toHaveBeenCalled();
     expect(api.time.projects.getByWorkspace).not.toHaveBeenCalled();
-    expect(api.getDiagrams).toHaveBeenCalledWith(42, {
-      signal: expect.any(AbortSignal),
-    });
-    expect(itemDetailStore.diagramsLoaded).toBe(true);
+    expect(api.items.getAvailableStatusTransitions).not.toHaveBeenCalled();
+    expect(api.items.getWatchStatus).not.toHaveBeenCalled();
+    expect(api.items.getChildren).not.toHaveBeenCalled();
+    expect(api.hierarchyLevels.getAll).not.toHaveBeenCalled();
+    expect(api.screens.get).not.toHaveBeenCalled();
+    expect(api.actions.getAll).not.toHaveBeenCalled();
+    expect(api.getDiagrams).not.toHaveBeenCalled();
+    expect(itemDetailStore.diagramsLoaded).toBe(false);
     expect(itemDetailStore.customFieldDefinitions).toEqual([{ id: 7, name: 'Shared field' }]);
     expect(itemDetailStore.milestones).toEqual([{ id: 8, name: 'Shared milestone' }]);
     expect(itemDetailStore.iterations).toEqual([{ id: 10, name: 'Shared iteration' }]);

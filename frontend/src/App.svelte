@@ -211,6 +211,22 @@
     // Initialize theme store (sets up system preference detection)
     themeStore.init();
 
+    const defaultTheme = {
+      nav_background_color_light: '#ffffff',
+      nav_text_color_light: '#374151',
+      nav_background_color_dark: '#1f2937',
+      nav_text_color_dark: '#f3f4f6'
+    };
+
+    // Public pages have no authenticated theme to load. Applying defaults
+    // locally avoids a guaranteed 401 request on portals, public forms, and
+    // the login shell.
+    if (!$authStore.isAuthenticated) {
+      themeStore.setActiveTheme(defaultTheme);
+      applyNavColors(defaultTheme);
+      return;
+    }
+
     try {
       const activeTheme = await api.themes.getActive({ timeout: BOOTSTRAP_TIMEOUT_MS });
       // Store the active theme in the theme store
@@ -222,12 +238,6 @@
         console.error('Failed to load active theme:', error);
       }
       // Apply default theme if loading fails
-      const defaultTheme = {
-        nav_background_color_light: '#ffffff',
-        nav_text_color_light: '#374151',
-        nav_background_color_dark: '#1f2937',
-        nav_text_color_dark: '#f3f4f6'
-      };
       themeStore.setActiveTheme(defaultTheme);
       applyNavColors(defaultTheme);
     }

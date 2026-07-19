@@ -175,17 +175,15 @@
   }
 
   // Skip rendering the Approvals section entirely when the item has no
-  // approval activity (current or historical). Pre-fetch the count so we
-  // don't flash an empty card on mount; ApprovalsTimeline re-fetches the
-  // full timeline when shown.
-  let approvalCount = $state(null);
+  // approval activity (current or historical). Keep the fetched list so the
+  // timeline can render it without downloading the same payload again.
+  let approvalRequests = $state(null);
 
-  async function loadApprovalCount(id) {
+  async function loadApprovalRequests(id) {
     try {
-      const reqs = await api.approvals.forItem(id);
-      approvalCount = (reqs ?? []).length;
+      approvalRequests = (await api.approvals.forItem(id)) ?? [];
     } catch {
-      approvalCount = 0;
+      approvalRequests = [];
     }
   }
 
@@ -195,14 +193,14 @@
     const id = item?.id;
     void item?.status_id;
     if (id) {
-      loadApprovalCount(id);
+      loadApprovalRequests(id);
     } else {
-      approvalCount = null;
+      approvalRequests = null;
     }
   });
 
   let showApprovalsSection = $derived(
-    !!pendingApproval || (approvalCount != null && approvalCount > 0)
+    !!pendingApproval || (approvalRequests != null && approvalRequests.length > 0)
   );
 
   // Scheduling section collapse state
@@ -661,9 +659,10 @@
             <ApprovalsTimeline
               itemId={item.id}
               canCancel={canEdit}
-              ondecisionMade={() => {
+              initialRequests={approvalRequests}
+              ondecisionMade={(requests) => {
+                approvalRequests = requests;
                 onapprovalsChanged?.();
-                loadApprovalCount(item.id);
               }}
             />
           </div>

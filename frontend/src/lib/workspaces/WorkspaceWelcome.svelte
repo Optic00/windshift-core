@@ -6,6 +6,7 @@
   import {
     useGradientStyles,
     loadWorkspaceGradient,
+    hydrateWorkspaceGradientLayout,
     workspaceGradientIndex,
     applyToAllViews as applyToAllViewsStore,
     workspaceBackgroundImageUrl
@@ -359,6 +360,7 @@
       };
 
       await api.workspaces.updateHomepageLayout(workspaceId, layout);
+      hydrateWorkspaceGradientLayout(workspaceId, layout);
     } catch (error) {
       console.error('Failed to save homepage layout:', error);
       errorToast(t('dialogs.alerts.failedToSaveLayout'));
