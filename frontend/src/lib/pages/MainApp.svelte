@@ -52,6 +52,8 @@
   import { clearWorkspaceGradient } from '../stores/workspaceGradient.svelte.js';
   import { useEventListener } from 'runed';
   import { toHotkeyString } from '../utils/keyboardShortcuts.js';
+  import { LazyComponentLoader } from '../utils/lazyComponentLoader.svelte.js';
+  import { hasSessionExpired } from '../utils/lazyLoadRecovery.js';
   import MainSidebar from '../layout/MainSidebar.svelte';
   import { terminalStore } from '../stores/terminalStore.svelte.js';
 
@@ -149,10 +151,8 @@
     };
   });
 
-  // Lazy loaded components registry
-  let componentRegistry = $state(new Map());
-  let loadingRoutes = $state(new Set());
   let lastSpaceTime = 0;
+  let sessionRevalidationPromise = null;
   const DOUBLE_SPACE_THRESHOLD = 300; // milliseconds
 
   // Security and other late-mounted consumers can await the shell feature
@@ -221,6 +221,37 @@
     'chat-panel': () => import('../features/chat/ChatPanel.svelte'),
     'terminal-panel': () => import('../features/terminal/TerminalPanel.svelte')
   };
+
+  const lazyComponents = new LazyComponentLoader(componentLoaders, {
+    onError: (view, error) => {
+      console.error(`Failed to load component for ${view}:`, error);
+      void recoverFromLazyLoadFailure();
+    },
+  });
+
+  async function recoverFromLazyLoadFailure() {
+    if (!authStore.isAuthenticated) return;
+
+    sessionRevalidationPromise ??= hasSessionExpired(api.auth.getCurrentUser);
+    const sessionExpired = await sessionRevalidationPromise;
+    sessionRevalidationPromise = null;
+
+    if (sessionExpired) {
+      // fetchAPI also clears auth on a 401. Keep this explicit so the recovery
+      // contract remains correct if the session check implementation changes.
+      authStore.clearAuth();
+      showCommandPalette = false;
+      closeCreateModal();
+      showChatPanel = false;
+    }
+  }
+
+  function closeCreateModal() {
+    showCreateModal = false;
+    createModalInitialType = 'work-item';
+    createModalSkipNavigate = false;
+    createModalWorkspaceId = null;
+  }
 
   // Route configuration for lazy-loaded components (metadata only)
   const routeConfig = {
@@ -874,39 +905,23 @@
 
   // Generic lazy loader function for all routes
   async function loadComponentForRoute(view) {
-    const loader = componentLoaders[view];
-    if (!loader) return;
+    return lazyComponents.load(view);
+  }
 
-    // Skip if already loading or loaded
-    if (loadingRoutes.has(view) || componentRegistry.has(view)) return;
-
-    // Create new Set with added view (triggers Svelte 5 reactivity)
-    loadingRoutes = new Set(loadingRoutes).add(view);
-
-    try {
-      const module = await loader();
-      // Create new Map with added component (triggers Svelte 5 reactivity)
-      componentRegistry = new Map(componentRegistry).set(view, module.default);
-    } catch (error) {
-      console.error(`Failed to load component for ${view}:`, error);
-    } finally {
-      // Create new Set without the view (triggers Svelte 5 reactivity)
-      const newLoadingRoutes = new Set(loadingRoutes);
-      newLoadingRoutes.delete(view);
-      loadingRoutes = newLoadingRoutes;
-    }
+  function retryComponentForRoute(view) {
+    return lazyComponents.retry(view);
   }
 
   // Helper to get component for current view (supports matchViews)
   function getComponentForView(view) {
     // Direct match
-    if (componentRegistry.has(view)) {
-      return componentRegistry.get(view);
+    if (lazyComponents.getComponent(view)) {
+      return lazyComponents.getComponent(view);
     }
 
     const { key } = resolveRouteConfig(view);
-    if (key && componentRegistry.has(key)) {
-      return componentRegistry.get(key);
+    if (key && lazyComponents.getComponent(key)) {
+      return lazyComponents.getComponent(key);
     }
 
     return null;
@@ -914,14 +929,23 @@
 
   // Helper to check if component is loading
   function isComponentLoading(view) {
-    if (loadingRoutes.has(view)) return true;
+    if (lazyComponents.isLoading(view)) return true;
 
     const { key } = resolveRouteConfig(view);
-    if (key && loadingRoutes.has(key)) {
+    if (key && lazyComponents.isLoading(key)) {
       return true;
     }
 
     return false;
+  }
+
+  function getComponentLoadError(view) {
+    if (lazyComponents.getError(view)) return lazyComponents.getError(view);
+
+    const { key } = resolveRouteConfig(view);
+    if (key) return lazyComponents.getError(key);
+
+    return null;
   }
 
   // Get props for current route's component
@@ -963,6 +987,7 @@
 {#snippet lazyLoadedComponent(view, props)}
   {@const component = getComponentForView(view)}
   {@const loading = isComponentLoading(view)}
+  {@const loadError = getComponentLoadError(view)}
   {@const routeEntry = resolveRouteConfig(view)}
   {@const config = routeEntry.config}
   {@const loaderKey = routeEntry.key || view}
@@ -972,8 +997,10 @@
   {:else if component}
     {@const LazyComponent = component}
     <LazyComponent {...props} />
+  {:else if loadError}
+    {@render errorState(config?.errorMsg || 'Failed to load component', () => retryComponentForRoute(loaderKey))}
   {:else}
-    {@render errorState(config?.errorMsg || 'Failed to load component', () => loadComponentForRoute(loaderKey))}
+    {@render loadingState(config?.loadingMsg || 'Loading...')}
   {/if}
 {/snippet}
 
@@ -1196,6 +1223,7 @@
 {#if true}
   {@const commandPaletteComponent = getComponentForView('command-palette')}
   {@const commandPaletteLoading = isComponentLoading('command-palette')}
+  {@const commandPaletteError = getComponentLoadError('command-palette')}
 
   {#if commandPaletteLoading}
     <ModalBackdrop show={true} opacity={0.4} blur={8} extraFilter="saturate(120%)" zIndex={60} align="top" paddingTop="pt-[20vh]" closeOnClick={false} closeOnEscape={false} transition={false}>
@@ -1210,6 +1238,18 @@
       bind:isOpen={showCommandPalette}
       onclose={() => showCommandPalette = false}
     />
+  {:else if commandPaletteError && showCommandPalette}
+    <!-- shortcut-guard-exempt: retrying a failed lazy import is a recovery action, not a form submission. -->
+    <ModalBackdrop show={true} opacity={0.4} zIndex={60} closeOnClick={false} onclose={() => showCommandPalette = false}>
+      <div class="rounded-xl p-6 text-center" role="alert" style="background-color: var(--ds-surface-raised); color: var(--ds-text);">
+        <p class="font-semibold">Failed to load Search</p>
+        <p class="mt-1 text-sm" style="color: var(--ds-text-subtle);">Check your connection, then try again.</p>
+        <div class="mt-4 flex justify-center gap-2">
+          <Button variant="secondary" onclick={() => showCommandPalette = false}>{t('common.close')}</Button>
+          <Button variant="primary" onclick={() => retryComponentForRoute('command-palette')}>{t('nav.retry')}</Button>
+        </div>
+      </div>
+    </ModalBackdrop>
   {/if}
 {/if}
 
@@ -1217,6 +1257,7 @@
 {#if true}
   {@const createModalComponent = getComponentForView('create-modal')}
   {@const createModalLoading = isComponentLoading('create-modal')}
+  {@const createModalError = getComponentLoadError('create-modal')}
 
   {#if createModalLoading}
     <ModalBackdrop show={true} opacity={0.4} closeOnClick={false} closeOnEscape={false} transition={false}>
@@ -1232,13 +1273,20 @@
       initialType={createModalInitialType}
       initialWorkspaceId={createModalWorkspaceId}
       skipNavigate={createModalSkipNavigate}
-      onclose={() => {
-        showCreateModal = false;
-        createModalInitialType = 'work-item';
-        createModalSkipNavigate = false;
-        createModalWorkspaceId = null;
-      }}
+      onclose={closeCreateModal}
     />
+  {:else if createModalError && showCreateModal}
+    <!-- shortcut-guard-exempt: retrying a failed lazy import is a recovery action, not a form submission. -->
+    <ModalBackdrop show={true} opacity={0.4} closeOnClick={false} onclose={closeCreateModal}>
+      <div class="rounded-xl p-6 text-center" role="alert" data-testid="create-modal-load-error" style="background-color: var(--ds-surface-raised); color: var(--ds-text);">
+        <p class="font-semibold">Failed to load Create Form</p>
+        <p class="mt-1 text-sm" style="color: var(--ds-text-subtle);">Check your connection, then try again.</p>
+        <div class="mt-4 flex justify-center gap-2">
+          <Button variant="secondary" onclick={closeCreateModal}>{t('common.close')}</Button>
+          <Button variant="primary" onclick={() => retryComponentForRoute('create-modal')}>{t('nav.retry')}</Button>
+        </div>
+      </div>
+    </ModalBackdrop>
   {/if}
 {/if}
 
