@@ -779,9 +779,17 @@
     </section>
 
     <!-- Splits at 2xl rather than xl: the StatCard tiles inside each panel need
-         more room than the old icon-less summary strip did. -->
-    <section class="mb-8 grid grid-cols-1 gap-6 2xl:grid-cols-2" aria-label={t('analytics.throughput.title')}>
-      <article class="min-w-0">
+         more room than the old icon-less summary strip did. Each panel spans a
+         header row and a card row of a shared subgrid, so the two cards start
+         at the same y even when one subtitle wraps and the other does not. -->
+    <section
+      class="mb-8 grid grid-cols-1 gap-6 2xl:grid-cols-2 2xl:grid-rows-[auto_1fr]"
+      aria-label={t('analytics.throughput.title')}
+    >
+      <article
+        class="min-w-0 2xl:grid 2xl:row-span-2 2xl:grid-rows-subgrid 2xl:items-start 2xl:gap-0"
+        data-testid="analytics-throughput-panel"
+      >
         <SectionHeader
           title={t('analytics.throughput.title')}
           subtitle={t('analytics.throughput.description')}
@@ -825,7 +833,10 @@
         </Card>
       </article>
 
-      <article class="min-w-0">
+      <article
+        class="min-w-0 2xl:grid 2xl:row-span-2 2xl:grid-rows-subgrid 2xl:items-start 2xl:gap-0"
+        data-testid="analytics-aging-panel"
+      >
         <SectionHeader
           title={t('analytics.aging.title')}
           subtitle={t('analytics.aging.description')}
@@ -868,13 +879,16 @@
     </section>
 
     {#if aging?.total_items}
-      <section class="mb-8 grid grid-cols-1 gap-6 xl:grid-cols-2" aria-label={t('analytics.aging.byStatus')}>
-        <article class="min-w-0">
+      <section
+        class="mb-8 grid grid-cols-1 gap-6 xl:grid-cols-2 xl:grid-rows-[auto_1fr]"
+        aria-label={t('analytics.aging.byStatus')}
+      >
+        <article class="min-w-0 xl:grid xl:row-span-2 xl:grid-rows-subgrid xl:items-start xl:gap-0">
           <SectionHeader title={t('analytics.aging.byStatus')} />
           <DataTable columns={agingByStatusColumns} data={agingByStatus} keyField="rowKey" />
         </article>
 
-        <article class="min-w-0">
+        <article class="min-w-0 xl:grid xl:row-span-2 xl:grid-rows-subgrid xl:items-start xl:gap-0">
           <SectionHeader title={t('analytics.aging.oldest')} />
           <DataTable
             columns={oldestItemColumns}
