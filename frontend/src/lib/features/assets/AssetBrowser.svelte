@@ -741,7 +741,7 @@
   <div class="flex-1 flex flex-col overflow-hidden">
     <!-- Header with search -->
     <div class="px-4 h-[80px] flex items-center gap-4" style="border-bottom: 1px solid var(--ds-border);">
-      <div class="flex-1 relative max-w-lg flex items-center gap-2">
+      <div class="flex-1 min-w-0 relative flex items-center gap-2">
         <div class="flex-1 relative">
           <IconSearch class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2" style="color: var(--ds-icon);" />
           <input
@@ -776,7 +776,6 @@
           />
         {/if}
       </div>
-      <div class="flex-1"></div>
       {#if selectedSetId}
         {#if isAdmin}
           <Button onclick={() => { showImportWizard = true; }} variant="default" class="whitespace-nowrap">
@@ -1105,4 +1104,3 @@
 {#if selectedAsset}
   <AssetRelationshipGraph bind:isOpen={showRelationshipGraph} assetId={selectedAsset.id} />
 {/if}
-
