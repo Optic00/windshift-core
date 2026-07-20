@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/svelte';
+import { render, screen } from '@testing-library/svelte';
 import { describe, expect, test, vi } from 'vitest';
 
 vi.mock('../../stores/i18n.svelte.js', () => ({
@@ -11,15 +11,13 @@ vi.mock('../../stores/toasts.svelte.js', () => ({
 
 import AttachmentDiagramList from './AttachmentDiagramList.svelte';
 
-describe('AttachmentDiagramList deferred diagrams', () => {
-  test('offers to load diagrams only until their deferred request completes', async () => {
-    const onloadDiagrams = vi.fn();
-    const view = render(AttachmentDiagramList, { onloadDiagrams });
+describe('AttachmentDiagramList diagrams', () => {
+  test('renders existing diagrams without a generic load control', () => {
+    render(AttachmentDiagramList, {
+      diagrams: [{ id: 5, name: 'Architecture', type: 'excalidraw' }],
+    });
 
-    await fireEvent.click(screen.getByTestId('load-item-diagrams'));
-    expect(onloadDiagrams).toHaveBeenCalledOnce();
-
-    await view.rerender({ onloadDiagrams, diagramsLoaded: true });
+    expect(screen.getByText('Architecture')).toBeInTheDocument();
     expect(screen.queryByTestId('load-item-diagrams')).not.toBeInTheDocument();
   });
 });
