@@ -85,6 +85,12 @@
     tick().then(() => triggerElement?.focus());
   }
 
+  function optionId(opt, index) {
+    if (!id) return `select-option-${index}`;
+    const safeValue = String(opt.value).replace(/[^A-Za-z0-9_-]/g, '-');
+    return `${id}-option-${safeValue}`;
+  }
+
   function scrollToHighlighted() {
     tick().then(() => {
       if (!listboxElement) return;
@@ -192,7 +198,7 @@
     bind:this={listboxElement}
     role="listbox"
     tabindex="-1"
-    aria-activedescendant={highlightedIndex >= 0 ? `select-option-${highlightedIndex}` : undefined}
+    aria-activedescendant={highlightedIndex >= 0 ? optionId(options[highlightedIndex], highlightedIndex) : undefined}
     onkeydown={handleListboxKeydown}
     class="rounded border shadow-lg max-h-60 overflow-y-auto z-[60] focus:outline-none"
     style="background-color: var(--ds-surface-raised); border-color: var(--ds-border);
@@ -203,7 +209,7 @@
       {@const isSelected = String(opt.value) === String(value)}
       {@const isHighlighted = highlightedIndex === index}
       <div
-        id="select-option-{index}"
+        id={optionId(opt, index)}
         data-option-id={opt.value}
         role="option"
         tabindex="-1"

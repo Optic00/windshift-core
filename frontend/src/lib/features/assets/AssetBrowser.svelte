@@ -668,7 +668,7 @@
   <div class="w-64 flex flex-col" style="border-right: 1px solid var(--ds-border); background: var(--ds-surface-raised);">
     <!-- Set selector -->
     <div class="px-4 h-[80px] flex items-center" style="border-bottom: 1px solid var(--ds-border);">
-      <Select bind:value={selectedSetId} class="w-full" options={assetSets.length === 0 ? [{ value: null, label: 'No asset sets available', disabled: true }] : assetSets.map(set => ({ value: set.id, label: set.name }))} />
+      <Select id="asset-set-select" bind:value={selectedSetId} class="w-full" options={assetSets.length === 0 ? [{ value: null, label: 'No asset sets available', disabled: true }] : assetSets.map(set => ({ value: set.id, label: set.name }))} />
     </div>
 
     <!-- Category tree -->
