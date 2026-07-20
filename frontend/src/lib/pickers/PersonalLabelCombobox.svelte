@@ -23,6 +23,7 @@
     labels: providedLabels = null,
     loading: providedLoading = false,
     onOpen = null,
+    onClose = null,
     onSelect = () => {},
     onCancel = () => {}
   } = $props();
@@ -153,6 +154,7 @@
   getValue={(label) => label?.id}
   getLabel={(label) => label?.name ?? ''}
   onOpen={() => onOpen?.()}
+  onClose={() => onClose?.()}
   onChange={handleChange}
   onCancel={handleCancel}
 >

@@ -72,6 +72,7 @@
 
     // Event callbacks
     onOpen = () => {},
+    onClose = () => {},
     onSelect = () => {},
     onCancel = () => {},
     onChange = () => {}
@@ -347,11 +348,15 @@
     }
   }
 
-  // Handle dropdown close without selection (single-select only)
+  // Notify callers whenever the dropdown closes. Preserve the legacy
+  // single-select cancellation callback for closes without a selection.
   let wasOpen = $state(false);
   $effect(() => {
-    if (wasOpen && !$open && !$selected && !multiple) {
-      onCancel();
+    if (wasOpen && !$open) {
+      onClose();
+      if (!$selected && !multiple) {
+        onCancel();
+      }
     }
     if (!wasOpen && $open) {
       highlightedIndex = 0;

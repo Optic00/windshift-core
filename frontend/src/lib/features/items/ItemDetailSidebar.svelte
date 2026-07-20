@@ -969,6 +969,7 @@
                 placeholder={t('items.selectOrCreateLabels') || 'Select or create labels...'}
                 disabled={!canEdit || !isSystemFieldEditable('labels')}
                 onSelect={savePersonalLabels}
+                onClose={() => (editingPersonalLabels = false)}
                 onCancel={() => (editingPersonalLabels = false)}
               />
             </div>
