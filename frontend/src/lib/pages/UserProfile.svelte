@@ -287,6 +287,7 @@
 			},
 			{
 				id: 'tokens',
+				testid: `agent-manage-tokens-${agent.id}`,
 				title: expandedAgent === agent.id ? 'Hide tokens' : 'Manage tokens',
 				icon: Key,
 				onClick: () => toggleAgentTokens(agent.id),

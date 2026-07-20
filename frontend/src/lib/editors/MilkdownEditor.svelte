@@ -1,7 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import { useEventListener } from 'runed';
-  import { Editor, rootCtx, defaultValueCtx, editorViewOptionsCtx, editorViewCtx } from '@milkdown/kit/core';
+  import { Editor, rootCtx, defaultValueCtx, editorViewOptionsCtx, editorViewCtx, serializerCtx } from '@milkdown/kit/core';
   import { commonmark, toggleStrongCommand, toggleEmphasisCommand, wrapInBulletListCommand, wrapInOrderedListCommand, toggleInlineCodeCommand } from '@milkdown/kit/preset/commonmark';
   import { gfm, toggleStrikethroughCommand } from '@milkdown/kit/preset/gfm';
   import { listener, listenerCtx } from '@milkdown/kit/plugin/listener';
@@ -160,6 +160,12 @@
         state.schema.text(mentionText + ' ')
       );
       dispatch(tr);
+
+      // The listener plugin normally mirrors document changes back into the
+      // bindable Markdown value. Under a busy event loop, however, a submit
+      // can observe the old @query before that listener callback runs. Keep
+      // programmatic mention insertion atomic from the form's perspective.
+      content = ctx.get(serializerCtx)(tr.doc);
     });
 
     closeMentionPicker();

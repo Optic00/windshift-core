@@ -183,12 +183,16 @@ function createWorkspacesStore() {
 
     // Update an existing workspace in the store
     updateWorkspace(id, updates) {
-      workspaces.update((ws) => ws.map((w) => (w.id === id ? { ...w, ...updates } : w)));
+      const workspaceId = String(id);
+      workspaces.update((ws) =>
+        ws.map((w) => (String(w.id) === workspaceId ? { ...w, ...updates } : w))
+      );
     },
 
     // Remove a workspace from the store
     remove(id) {
-      workspaces.update((ws) => ws.filter((w) => w.id !== id));
+      const workspaceId = String(id);
+      workspaces.update((ws) => ws.filter((w) => String(w.id) !== workspaceId));
     },
 
     // Clear the store

@@ -182,6 +182,8 @@
 
     try {
       await api.workspaces.delete(workspaceId);
+      workspacesStore.remove(workspaceId);
+      currentWorkspace.clear();
       successToast(t('workspaceSettings.deletedSuccessfully', { name: workspace.name }));
       setTimeout(() => {
         navigate('/workspaces');

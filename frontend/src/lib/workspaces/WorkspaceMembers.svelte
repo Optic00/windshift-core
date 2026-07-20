@@ -438,14 +438,16 @@
       {error}
     </div>
   {:else}
-    <DataTable
-      {columns}
-      data={paginatedAssignments}
-      keyField="row_key"
-      emptyMessage="No members or groups yet. Add users or groups to this workspace to grant access."
-      emptyIcon={Shield}
-      actionItems={getAssignmentActionItems}
-    >
+    <div data-testid="workspace-member-assignments">
+      <DataTable
+        {columns}
+        data={paginatedAssignments}
+        keyField="row_key"
+        emptyMessage="No members or groups yet. Add users or groups to this workspace to grant access."
+        emptyIcon={Shield}
+        actionItems={getAssignmentActionItems}
+        rowAttrs={(item) => ({ 'data-testid': `workspace-member-${item.row_key}` })}
+      >
       {#snippet principal(item)}
         <div class="flex items-center gap-3">
           {#if item.type === 'group'}
@@ -483,7 +485,8 @@
           {/each}
         </div>
       {/snippet}
-    </DataTable>
+      </DataTable>
+    </div>
 
     {#if filteredAssignments.length > 0}
       <Pagination
