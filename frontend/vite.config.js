@@ -2,6 +2,7 @@ import { svelte } from '@sveltejs/vite-plugin-svelte';
 import tailwindcss from '@tailwindcss/vite';
 import { visualizer } from 'rollup-plugin-visualizer';
 import { defineConfig } from 'vite';
+import { excalidrawAssetsPlugin } from './scripts/excalidraw-assets.js';
 
 // When PLUGIN_DEV_PORTS is set (e.g. "ldap-config=5561,saml-config=5562,..."),
 // add proxy rules that route plugin asset requests to individual Vite dev servers
@@ -30,6 +31,7 @@ export default defineConfig({
   plugins: [
     svelte(), // Uses svelte.config.js for preprocessors
     tailwindcss(),
+    excalidrawAssetsPlugin(),
     ...(enableBundleAnalyzer
       ? [
           visualizer({

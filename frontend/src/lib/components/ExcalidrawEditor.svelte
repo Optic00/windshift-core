@@ -3,16 +3,28 @@
   import { mountReactComponent } from '../composables/react-wrapper.js';
   import React from 'react';
   import "@excalidraw/excalidraw/index.css";
+  import {
+    configureExcalidrawAssets,
+    prepareExcalidrawInitialData,
+  } from './excalidrawSetup.js';
 
   let { initialData = null, onChange = () => {}, theme = 'light' } = $props();
 
   let container;
   let excalidrawRef;
   let reactComponent;
+  let destroyed = false;
 
   onMount(async () => {
+    // Excalidraw otherwise falls back to esm.sh, which is deliberately blocked
+    // by Windshift's same-origin font CSP.
+    configureExcalidrawAssets();
+
     // Dynamically import Excalidraw to avoid SSR issues
     const { Excalidraw } = await import('@excalidraw/excalidraw');
+    if (destroyed) return;
+
+    const editorInitialData = prepareExcalidrawInitialData(initialData);
 
     // Create React component
     const ExcalidrawComponent = (props) => {
@@ -21,13 +33,7 @@
         excalidrawAPI: (api) => {
           excalidrawRef = api;
         },
-        initialData: initialData || {
-          elements: [],
-          appState: {
-            viewBackgroundColor: theme === 'dark' ? '#1e1e1e' : '#ffffff'
-          },
-          scrollToContent: true
-        },
+        initialData: editorInitialData,
         onChange: (elements, appState, files) => {
           const sceneData = {
             elements: elements,
@@ -57,6 +63,7 @@
   });
 
   onDestroy(() => {
+    destroyed = true;
     if (reactComponent) {
       reactComponent.destroy();
     }
