@@ -2,16 +2,14 @@
   import Modal from './Modal.svelte';
   import ModalHeader from './ModalHeader.svelte';
   import DialogFooter from './DialogFooter.svelte';
+  import LinkItemSearchResult from './LinkItemSearchResult.svelte';
   import BasePicker from '../pickers/BasePicker.svelte';
   import PagePicker from '../pickers/PagePicker.svelte';
-  import { FileText } from '@lucide/svelte';
-  import { itemTypeIconMap } from '../utils/icons.js';
   import { api } from '../api.js';
   import { t } from '../stores/i18n.svelte.js';
   import { useEventListener, useDebounce } from 'runed';
   import { untrack } from 'svelte';
 
-  const iconMap = itemTypeIconMap;
   const TEST_LINK_TYPE_ID = 1;
 
   let {
@@ -276,10 +274,10 @@
           getLabel={(item) => item.name}
         />
         {#if isTestLinkTypeSelected}
-          <p class="text-xs text-blue-600">{t('items.linkToTestCase')}</p>
+          <p class="text-xs" style="color: var(--ds-text-info);">{t('items.linkToTestCase')}</p>
         {/if}
         {#if isPageLinkTypeSelected}
-          <p class="text-xs text-blue-600">{t('items.linkToPage')}</p>
+          <p class="text-xs" style="color: var(--ds-text-info);">{t('items.linkToPage')}</p>
         {/if}
       </div>
 
@@ -306,7 +304,8 @@
             </div>
             <button
               type="button"
-              class="text-red-600 hover:text-red-800 text-xs cursor-pointer"
+              class="text-xs cursor-pointer hover:underline"
+              style="color: var(--ds-text-danger);"
               onclick={clearTarget}
             >
               {t('common.clear')}
@@ -330,8 +329,8 @@
               bind:value={searchQuery}
               onkeydown={handleKeyDown}
               placeholder={searchPlaceholder}
-              class="w-full px-3 py-2 text-sm border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-400"
-              style="border-color: var(--ds-border); background-color: var(--ds-surface-raised); color: var(--ds-text);"
+              class="w-full px-3 py-2 text-sm border rounded bg-[var(--ds-background-input)] text-[var(--ds-text)] placeholder:text-[var(--ds-text-subtlest)] focus:outline-none focus:ring-1 focus:ring-[var(--ds-border-focused)] focus:border-[var(--ds-border-focused)] disabled:text-[var(--ds-text-disabled)] disabled:cursor-not-allowed"
+              style="border-color: var(--ds-border);"
               disabled={searchDisabled}
             />
 
@@ -343,7 +342,7 @@
 
             {#if searching}
               <div class="absolute right-3 top-2.5">
-                <div class="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+                <div class="w-4 h-4 border-2 rounded-full animate-spin" style="border-color: var(--ds-border-focused); border-top-color: transparent;"></div>
               </div>
             {/if}
 
@@ -351,56 +350,16 @@
                  Modal.svelte's `overflow-hidden` content wrapper. -->
             {#if searchResults.length > 0}
               <div
-                class="z-[70] border rounded shadow-lg max-h-48 overflow-y-auto"
-                style="{dropdownStyle} border-color: var(--ds-border); background-color: var(--ds-surface-raised);"
+                class="z-[70] border rounded max-h-48 overflow-y-auto"
+                style="{dropdownStyle} border-color: var(--ds-border-bold); background-color: var(--ds-surface-overlay); box-shadow: var(--ds-shadow-raised);"
               >
                 {#each searchResults as result, index}
-                  {@const isHighlighted = highlightedIndex === index}
-                  {@const itemTypeIcon = result.item_type_icon}
-                  {@const itemTypeColor = result.item_type_color}
-                  <button
-                    type="button"
-                    data-testid="link-search-result"
-                    data-result-type={result.type || 'item'}
-                    data-result-id={result.id}
-                    class="w-full text-left px-3 py-2 cursor-pointer border-b last:border-b-0 transition-colors"
-                    style="color: var(--ds-text); border-color: var(--ds-border); {isHighlighted ? 'background-color: var(--ds-background-neutral-hovered);' : ''}"
-                    onmouseenter={() => highlightedIndex = index}
-                    onclick={() => handleSelectItem(result)}
-                  >
-                    <div class="flex items-center gap-2">
-                      <!-- Item type icon -->
-                      {#if itemTypeIcon && iconMap[itemTypeIcon]}
-                        {@const ItemTypeIconComponent = iconMap[itemTypeIcon]}
-                        <div
-                          class="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0"
-                          style="background-color: {itemTypeColor || '#6b7280'}20; color: {itemTypeColor || '#6b7280'};"
-                        >
-                        <ItemTypeIconComponent class="w-3 h-3" />
-                        </div>
-                      {:else}
-                        <div
-                          class="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0"
-                          style="background-color: #6b728020; color: #6b7280;"
-                        >
-                          <FileText class="w-3 h-3" />
-                        </div>
-                      {/if}
-                      <div class="flex-1 min-w-0">
-                        <div class="font-medium text-sm truncate">{result.title}</div>
-                        <div class="text-xs" style="color: var(--ds-text-subtle);">
-                          {#if result.type === 'test_case'}
-                            {result.description || `Test Case #${result.id}`}
-                          {:else}
-                            {result.workspace_name || 'Workspace'} · ID {result.id}
-                          {/if}
-                        </div>
-                      </div>
-                      <span class="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded-full flex-shrink-0 {result.type === 'test_case' ? 'bg-purple-100 text-purple-600' : 'bg-gray-100 text-gray-600'}">
-                        {result.type === 'test_case' ? t('items.testCase') : t('items.workItem')}
-                      </span>
-                    </div>
-                  </button>
+                  <LinkItemSearchResult
+                    {result}
+                    highlighted={highlightedIndex === index}
+                    onhighlight={() => highlightedIndex = index}
+                    onselect={() => handleSelectItem(result)}
+                  />
                 {/each}
               </div>
             {/if}

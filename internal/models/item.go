@@ -305,12 +305,16 @@ type LinkableItem struct {
 	Title       string `json:"title"`
 	Description string `json:"description"`
 	// For work items
-	WorkspaceID   *int   `json:"workspace_id,omitempty"`
-	WorkspaceName string `json:"workspace_name,omitempty"`
-	Status        string `json:"status,omitempty"`
-	Priority      string `json:"priority,omitempty"`
-	ItemTypeID    *int   `json:"item_type_id,omitempty"`
-	ItemTypeName  string `json:"item_type_name,omitempty"`
+	WorkspaceID         *int   `json:"workspace_id,omitempty"`
+	WorkspaceName       string `json:"workspace_name,omitempty"`
+	WorkspaceKey        string `json:"workspace_key,omitempty"`
+	WorkspaceItemNumber *int   `json:"workspace_item_number,omitempty"`
+	Status              string `json:"status,omitempty"`
+	Priority            string `json:"priority,omitempty"`
+	ItemTypeID          *int   `json:"item_type_id,omitempty"`
+	ItemTypeName        string `json:"item_type_name,omitempty"`
+	ItemTypeIcon        string `json:"item_type_icon,omitempty"`
+	ItemTypeColor       string `json:"item_type_color,omitempty"`
 	// For assets
 	AssetSetID        *int   `json:"asset_set_id,omitempty"`
 	AssetSetName      string `json:"asset_set_name,omitempty"`

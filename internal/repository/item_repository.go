@@ -1272,10 +1272,14 @@ func (r *ItemRepository) SearchLinkableItems(query string, workspaceIDs, itemTyp
 			COALESCE(i.description, '') AS description,
 			i.workspace_id,
 			w.name AS workspace_name,
+			w.key AS workspace_key,
+			i.workspace_item_number,
 			COALESCE(s.name, '') AS status_name,
 			COALESCE(p.name, '') AS priority_name,
 			i.item_type_id,
-			COALESCE(it.name, '') AS item_type_name
+			COALESCE(it.name, '') AS item_type_name,
+			COALESCE(it.icon, '') AS item_type_icon,
+			COALESCE(it.color, '') AS item_type_color
 		FROM items i
 		LEFT JOIN workspaces w ON i.workspace_id = w.id
 		LEFT JOIN statuses s ON i.status_id = s.id
@@ -1296,14 +1300,14 @@ func (r *ItemRepository) SearchLinkableItems(query string, workspaceIDs, itemTyp
 	items := []models.LinkableItem{}
 	for rows.Next() {
 		var item models.LinkableItem
-		var description, workspaceName, statusName, priorityName, itemTypeName sql.NullString
-		var workspaceID, itemTypeID sql.NullInt64
+		var description, workspaceName, workspaceKey, statusName, priorityName, itemTypeName, itemTypeIcon, itemTypeColor sql.NullString
+		var workspaceID, workspaceItemNumber, itemTypeID sql.NullInt64
 
 		if err := rows.Scan(
 			&item.ID, &item.Title, &description,
-			&workspaceID, &workspaceName,
+			&workspaceID, &workspaceName, &workspaceKey, &workspaceItemNumber,
 			&statusName, &priorityName,
-			&itemTypeID, &itemTypeName,
+			&itemTypeID, &itemTypeName, &itemTypeIcon, &itemTypeColor,
 		); err != nil {
 			return nil, err
 		}
@@ -1314,6 +1318,11 @@ func (r *ItemRepository) SearchLinkableItems(query string, workspaceIDs, itemTyp
 			item.WorkspaceID = &v
 		}
 		item.WorkspaceName = workspaceName.String
+		item.WorkspaceKey = workspaceKey.String
+		if workspaceItemNumber.Valid {
+			v := int(workspaceItemNumber.Int64)
+			item.WorkspaceItemNumber = &v
+		}
 		item.Status = statusName.String
 		item.Priority = priorityName.String
 		if itemTypeID.Valid {
@@ -1321,6 +1330,8 @@ func (r *ItemRepository) SearchLinkableItems(query string, workspaceIDs, itemTyp
 			item.ItemTypeID = &v
 		}
 		item.ItemTypeName = itemTypeName.String
+		item.ItemTypeIcon = itemTypeIcon.String
+		item.ItemTypeColor = itemTypeColor.String
 		item.Type = "item"
 		items = append(items, item)
 	}
