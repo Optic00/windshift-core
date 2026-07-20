@@ -438,7 +438,8 @@ func (s *CommentService) Get(commentID int) (*CommentWithDetails, error) {
 // service. Agent-owner attribution is permission-filtered by the caller.
 func (s *CommentService) GetFeedByItemID(itemID int, includeAgentOwner bool) ([]models.Comment, error) {
 	rows, err := s.db.Query(`
-		SELECT c.id, c.item_id, c.author_id, c.portal_customer_id, c.content, c.is_private, c.created_at, c.updated_at,
+		SELECT c.id, c.item_id, c.author_id, c.portal_customer_id, c.content, c.is_private,
+		       c.created_at AS feed_created_at, c.updated_at,
 		       COALESCE(NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), ''), pc.name, 'Unknown User') AS author_name,
 		       COALESCE(u.email, pc.email) AS author_email, u.avatar_url,
 		       'human' AS source, COALESCE(u.is_agent, FALSE) AS is_agent,
