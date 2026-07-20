@@ -114,7 +114,7 @@
   {#if $open}
     <div
       use:melt={$content}
-      class="notification-dropdown w-96 rounded shadow-xl max-h-[500px] overflow-hidden"
+      class="notification-dropdown z-[60] w-96 rounded shadow-xl max-h-[500px] overflow-hidden"
       style="background-color: var(--ds-surface-overlay); border: 1px solid var(--ds-border); color: var(--ds-text);"
       in:fly={{ x: -10, duration: 200, easing: quintOut }}
       out:fly={{ x: -10, duration: 150 }}
