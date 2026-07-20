@@ -104,7 +104,7 @@
   });
 </script>
 
-<div class="min-h-screen" style="background-color: var(--ds-surface);">
+<div data-testid="global-search-page" class="min-h-screen" style="background-color: var(--ds-surface);">
   <div class="p-6">
     <PageHeader icon={Search} title={t('search.title')} subtitle={t('search.subtitle')} />
 
@@ -164,6 +164,7 @@
         data={tableData}
         columns={workItemColumns}
         keyField="id"
+        rowAttrs={(item) => ({ 'data-testid': `global-search-result-${item.id}` })}
         emptyMessage={t('search.noSearchResults')}
         emptyDescription={t('search.configureFilter')}
         emptyIcon={Search}

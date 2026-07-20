@@ -114,6 +114,7 @@
           style="color: var(--ds-icon-subtle);"
         />
         <input
+          data-testid="work-item-search-input"
           type="text"
           value={searchQuery}
           oninput={(e) => onupdatesearch?.(e.currentTarget.value)}
