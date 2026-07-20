@@ -290,36 +290,18 @@ func (s *WorkspaceService) KeyExists(key string) (bool, error) {
 	return s.repo.KeyExists(strings.ToUpper(key))
 }
 
-// GetStatuses retrieves statuses available for a workspace via its configuration set.
-// If the workspace has a config set with a workflow that defines transitions, only
-// statuses reachable as from_status_id or to_status_id of those transitions are returned.
-// Otherwise (no config set, no workflow, or no transitions), all statuses are returned.
+// GetStatuses retrieves statuses available through the workspace's effective
+// workflows. This follows the same fallback chain used for item transitions:
+// item-type override, configuration-set workflow, then the global default
+// workflow. A status is returned only when at least one applicable workflow
+// references it. Personal workspaces are not workflow-bound and retain access
+// to the full status catalog.
 func (s *WorkspaceService) GetStatuses(workspaceID int) ([]models.Status, error) {
-	rows, err := s.db.Query(`
-		SELECT DISTINCT s.id, s.name, s.description, s.category_id, s.is_default,
-		       sc.name as category_name, sc.color as category_color, sc.is_completed
-		FROM statuses s
-		JOIN status_categories sc ON s.category_id = sc.id
-		WHERE NOT EXISTS (
-			SELECT 1 FROM workspace_configuration_sets wcs
-			JOIN configuration_sets cs ON wcs.configuration_set_id = cs.id
-			JOIN workflow_transitions wt ON wt.workflow_id = cs.workflow_id
-			WHERE wcs.workspace_id = ?
-		)
-		OR EXISTS (
-			SELECT 1 FROM workspace_configuration_sets wcs
-			JOIN configuration_sets cs ON wcs.configuration_set_id = cs.id
-			JOIN workflow_transitions wt ON wt.workflow_id = cs.workflow_id
-			WHERE wcs.workspace_id = ?
-			  AND (wt.from_status_id = s.id OR wt.to_status_id = s.id)
-		)
-		ORDER BY s.category_id, s.name
-	`, workspaceID, workspaceID)
+	statuses, err := s.GetStatusesForWorkspaces([]int{workspaceID})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get workspace statuses: %w", err)
 	}
-	defer rows.Close()
-	return scanWorkspaceStatuses(rows)
+	return statuses, nil
 }
 
 // GetStatusesForWorkspaces returns the union of statuses available to any of
@@ -338,30 +320,38 @@ func (s *WorkspaceService) GetStatusesForWorkspaces(workspaceIDs []int) ([]model
 	}
 
 	rows, err := s.db.Query(fmt.Sprintf(`
+		WITH target_workspaces AS (
+			SELECT id, is_personal
+			FROM workspaces
+			WHERE id IN (%s)
+		), effective_workflows AS (
+			SELECT target.id AS workspace_id,
+			       target.is_personal,
+			       COALESCE(
+			         csit.workflow_id,
+			         cs.workflow_id,
+			         (SELECT id FROM workflows WHERE is_default = true ORDER BY id LIMIT 1)
+			       ) AS workflow_id
+			FROM target_workspaces target
+			LEFT JOIN workspace_configuration_sets wcs ON wcs.workspace_id = target.id
+			LEFT JOIN configuration_sets cs ON cs.id = wcs.configuration_set_id
+			LEFT JOIN configuration_set_item_types csit ON csit.configuration_set_id = cs.id
+		), available_statuses AS (
+			SELECT wt.from_status_id AS status_id
+			FROM effective_workflows ew
+			JOIN workflow_transitions wt ON wt.workflow_id = ew.workflow_id
+			WHERE wt.from_status_id IS NOT NULL
+			UNION
+			SELECT wt.to_status_id AS status_id
+			FROM effective_workflows ew
+			JOIN workflow_transitions wt ON wt.workflow_id = ew.workflow_id
+		)
 		SELECT DISTINCT s.id, s.name, s.description, s.category_id, s.is_default,
 		       sc.name as category_name, sc.color as category_color, sc.is_completed
 		FROM statuses s
 		JOIN status_categories sc ON s.category_id = sc.id
-		WHERE EXISTS (
-			SELECT 1
-			FROM workspaces target
-			WHERE target.id IN (%s)
-			  AND (
-				NOT EXISTS (
-					SELECT 1 FROM workspace_configuration_sets wcs
-					JOIN configuration_sets cs ON wcs.configuration_set_id = cs.id
-					JOIN workflow_transitions wt ON wt.workflow_id = cs.workflow_id
-					WHERE wcs.workspace_id = target.id
-				)
-				OR EXISTS (
-					SELECT 1 FROM workspace_configuration_sets wcs
-					JOIN configuration_sets cs ON wcs.configuration_set_id = cs.id
-					JOIN workflow_transitions wt ON wt.workflow_id = cs.workflow_id
-					WHERE wcs.workspace_id = target.id
-					  AND (wt.from_status_id = s.id OR wt.to_status_id = s.id)
-				)
-			  )
-		)
+		WHERE s.id IN (SELECT status_id FROM available_statuses)
+		   OR EXISTS (SELECT 1 FROM target_workspaces WHERE is_personal = true)
 		ORDER BY s.category_id, s.name
 	`, strings.Join(placeholders, ",")), args...)
 	if err != nil {

@@ -58,7 +58,7 @@ To run the design system viewer:
 cd frontend && npm run ds:dev
 ```
 
-For a standalone Go build that includes test utilities:
+For a standalone development build:
 
 ```bash
 make dev-build
@@ -94,8 +94,8 @@ The project uses `gofmt`, `goimports`, and `staticcheck`. Lint configuration liv
 make lint
 ```
 
-To reproduce the blocking GitHub workflows locally, including clean dependency
-installation, tests, vulnerability/signature checks, and production builds:
+To reproduce the blocking public-repository workflows locally, including clean
+dependency installation, vulnerability/signature checks, and production builds:
 
 ```bash
 make ci             # both workflows
@@ -118,8 +118,10 @@ Please open all pull requests on [Codeberg](https://codeberg.org/realigned/winds
 
 1. Push your branch and open a PR against `main`.
 2. CI will run automatically:
-   - **Go**: lint + unit tests
-   - **Frontend**: lint, tests, bundle size check
+   - **Go**: lint, vulnerability checks, and production build
+   - **Frontend**: lint, type checks, and bundle size check
+   - **Private tests**: maintained and run from the adjacent `core-tests`
+     repository, which overlays its suites onto a core checkout
    - **PR title lint** and **merge-conflict check**
 3. Describe *what* changed and *why*. Reference related issues if applicable.
 

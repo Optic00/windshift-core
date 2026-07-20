@@ -9,8 +9,10 @@ npm ci         # use ci, not install — respects the lockfile
 npm run dev    # vite dev server
 npm run build  # production build (what release.sh runs)
 npm run check  # biome lint + format check
-npm run test   # vitest
 ```
+
+Frontend tests and their Vitest configuration live in the private adjacent
+`core-tests` repository and are overlaid onto a core checkout by its runner.
 
 ## Supply-chain hardening
 

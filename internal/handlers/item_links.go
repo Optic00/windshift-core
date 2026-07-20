@@ -509,7 +509,7 @@ func (h *ItemLinkHandler) SearchLinkableItems(w http.ResponseWriter, r *http.Req
 
 	// Search test cases
 	if itemType == "" || itemType == "test_case" {
-		testCases, err := h.searchTestCases(query, limit, accessibleWorkspaceIDs)
+		testCases, err := h.searchTestCases(user.ID, query, limit)
 		if err != nil {
 			respondInternalError(w, r, err)
 			return
@@ -540,7 +540,45 @@ func (h *ItemLinkHandler) searchWorkItems(query string, limit int, accessibleWor
 	return repository.NewItemRepository(h.db).SearchLinkableItems(query, accessibleWorkspaceIDs, typeIDs, limit)
 }
 
-func (h *ItemLinkHandler) searchTestCases(query string, limit int, accessibleWorkspaceIDs []int) ([]models.LinkableItem, error) {
+func (h *ItemLinkHandler) searchTestCases(userID int, query string, limit int) ([]models.LinkableItem, error) {
+	if h.permissionService == nil {
+		return []models.LinkableItem{}, nil
+	}
+
+	// Test cases have their own permission domain. Derive the candidate
+	// workspace set from matching cases, then retain only workspaces where the
+	// caller has test.view. item.view must never make a case discoverable.
+	searchTerm := "%" + query + "%"
+	rows, err := h.db.Query(`
+		SELECT DISTINCT workspace_id
+		FROM test_cases
+		WHERE title LIKE ? OR preconditions LIKE ?
+	`, searchTerm, searchTerm)
+	if err != nil {
+		return nil, err
+	}
+	var candidateWorkspaceIDs []int
+	for rows.Next() {
+		var workspaceID int
+		if err := rows.Scan(&workspaceID); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		candidateWorkspaceIDs = append(candidateWorkspaceIDs, workspaceID)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	_ = rows.Close()
+
+	accessibleWorkspaceIDs := make([]int, 0, len(candidateWorkspaceIDs))
+	for _, workspaceID := range candidateWorkspaceIDs {
+		allowed, err := h.permissionService.HasWorkspacePermission(userID, workspaceID, models.PermissionTestView)
+		if err == nil && allowed {
+			accessibleWorkspaceIDs = append(accessibleWorkspaceIDs, workspaceID)
+		}
+	}
 	if len(accessibleWorkspaceIDs) == 0 {
 		return []models.LinkableItem{}, nil
 	}
@@ -555,12 +593,11 @@ func (h *ItemLinkHandler) searchTestCases(query string, limit int, accessibleWor
 		LIMIT ?
 	`, placeholders)
 
-	searchTerm := "%" + query + "%"
 	args := make([]interface{}, 0, 3+len(wsArgs))
 	args = append(args, searchTerm, searchTerm)
 	args = append(args, wsArgs...)
 	args = append(args, limit)
-	rows, err := h.db.Query(sqlQuery, args...)
+	rows, err = h.db.Query(sqlQuery, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -716,18 +753,13 @@ func (h *ItemLinkHandler) GetFieldLinks(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Filter by what the user can view — covers items (via workspace keys),
-	// test_cases (workspace lookup), and assets (set lookup).
+	// Filter every endpoint through its own permission domain. In particular,
+	// test cases require test.view rather than ordinary item visibility.
 	user := utils.GetCurrentUser(r)
 	if user != nil {
-		accessibleKeys, err := GetAccessibleWorkspaceKeys(user, h.db, h.permissionService)
-		if err != nil {
-			respondInternalError(w, r, err)
-			return
-		}
-		accessibleWsIDs := h.linkSvc.AccessibleWorkspaceIDs(user.ID)
-		accessibleSetIDs := h.linkSvc.AccessibleAssetSetIDs(user.ID)
-		links = h.linkSvc.FilterLinksByAccess(links, accessibleKeys, accessibleWsIDs, accessibleSetIDs)
+		links = h.linkSvc.FilterLinksForUser(user.ID, links)
+	} else {
+		links = []models.ItemLink{}
 	}
 
 	respondJSONOK(w, links)

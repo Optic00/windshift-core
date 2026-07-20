@@ -14,12 +14,11 @@ BINARY_WINDOWS=$(BINARY_NAME).exe
 
 # Build flags
 LDFLAGS=-ldflags="-s -w"
-BUILD_TAGS=-tags="!test"
 
 # Directories
 FRONTEND_DIR=frontend
 
-.PHONY: all build build-linux build-windows clean deps frontend help hooks lint schema-migration-guard-test performance-regressions dev-build release openapi openapi-check coding-agent-image dev-tools install-golangci-lint install-govulncheck install-deadcode ci-tools-check ci-go ci-frontend ci
+.PHONY: all build build-linux build-windows clean deps frontend help hooks lint dev-build release openapi openapi-check coding-agent-image dev-tools install-golangci-lint install-govulncheck install-deadcode ci-tools-check ci-go ci-frontend ci
 
 # Tooling. swag is a tool dependency tracked in go.mod (see `tool` directive),
 # so the version is pinned and CI / dev installs always agree. `go tool swag`
@@ -35,20 +34,20 @@ NPM_VERSION := 11.16.0
 # Default target
 all: clean frontend build
 
-# Build production binary (excludes all test code)
+# Build production binary
 build:
 	@echo "Building production binary..."
-	$(GOBUILD) $(BUILD_TAGS) $(LDFLAGS) -o $(BINARY_NAME) -v
+	$(GOBUILD) $(LDFLAGS) -o $(BINARY_NAME) -v
 
 # Build for Linux
 build-linux:
 	@echo "Building for Linux..."
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GOBUILD) $(BUILD_TAGS) $(LDFLAGS) -o $(BINARY_UNIX) -v
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(BINARY_UNIX) -v
 
 # Build for Windows
 build-windows:
 	@echo "Building for Windows..."
-	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 $(GOBUILD) $(BUILD_TAGS) $(LDFLAGS) -o $(BINARY_WINDOWS) -v
+	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(BINARY_WINDOWS) -v
 
 # Build frontend
 frontend:
@@ -113,7 +112,6 @@ ci-frontend: ci-tools-check
 	cd $(FRONTEND_DIR) && npm audit signatures --min-release-age=0
 	cd $(FRONTEND_DIR) && npm run check
 	cd $(FRONTEND_DIR) && npm run typecheck
-	cd $(FRONTEND_DIR) && npm run test:coverage
 	cd $(FRONTEND_DIR) && npm run build
 
 ci: ci-go ci-frontend
@@ -163,16 +161,6 @@ lint:
 	@golangci-lint run --timeout=5m
 	@bash scripts/check-layering.sh
 	@bash scripts/check-handler-db-access.sh
-	@$(MAKE) -s schema-migration-guard-test
-
-schema-migration-guard-test:
-	@bash scripts/check-schema-migration-pairing_test.sh
-
-# Enforce generous benchmark ceilings for the high-cardinality paths hardened
-# in WI-613 and WI-614. This catches architectural regressions while leaving
-# ample headroom for normal shared-runner variance.
-performance-regressions:
-	@bash scripts/check-performance-regressions.sh
 
 # Install git hooks
 hooks:
@@ -199,7 +187,7 @@ help:
 	@echo "=================="
 	@echo ""
 	@echo "Production builds:"
-	@echo "  make build          - Build production binary (excludes test code)"
+	@echo "  make build          - Build production binary"
 	@echo "  make build-linux    - Cross-compile for Linux"
 	@echo "  make build-windows  - Cross-compile for Windows"
 	@echo "  make release        - Full production release build"
@@ -207,8 +195,6 @@ help:
 	@echo "Development:"
 	@echo "  make dev-build      - Development binary"
 	@echo "  make lint           - Run static analysis"
-	@echo "  make schema-migration-guard-test - Test the fresh-schema/migration pairing guard"
-	@echo "  make performance-regressions - Enforce WI-613/WI-614 benchmark ceilings"
 	@echo "  make deps           - Update dependencies"
 	@echo "  make ci             - Run the blocking Go + frontend CI checks locally"
 	@echo "  make ci-go          - Run the blocking Go CI checks locally"

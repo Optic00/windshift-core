@@ -272,6 +272,7 @@
           unassignedLabel={t('items.chooseRelationshipType')}
           getValue={(item) => item.id}
           getLabel={(item) => item.name}
+          optionTestid={(opt) => `link-type-option-${opt.value}`}
         />
         {#if isTestLinkTypeSelected}
           <p class="text-xs" style="color: var(--ds-text-info);">{t('items.linkToTestCase')}</p>

@@ -16,6 +16,15 @@ cx
 *.test
 /data/
 
+# Test sources live in the adjacent private core-tests repository and are
+# overlaid onto this checkout by its runners.
+*_test.go
+*_test.sh
+*.test.js
+*.test.ts
+*.spec.js
+*.spec.ts
+
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
 
@@ -147,9 +156,7 @@ scripts/*
 !scripts/check-layering.sh
 !scripts/check-handler-db-access.sh
 !scripts/report-handler-db-access.sh
-!scripts/check-performance-regressions.sh
 !scripts/check-schema-migration-pairing.sh
-!scripts/check-schema-migration-pairing_test.sh
 !scripts/audit_coverage_inventory.py
 !scripts/.layering-baseline
 !scripts/.handler-db-access-allowlist

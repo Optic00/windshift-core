@@ -14,47 +14,64 @@ var statusCmd = &cobra.Command{
 
 var statusListCmd = &cobra.Command{
 	Use:   "ls",
-	Short: "List available statuses",
-	Long: `List statuses available for items.
+	Short: "List workspace-available statuses",
+	Long: `List statuses available to items in the selected workspace.
 
-If workspace is specified, shows only statuses for that workspace.
-Otherwise, shows all statuses in the system.
+By default this command requires a selected workspace and returns only
+statuses referenced by workflows applicable in that workspace. These are
+distinct from system statuses, which form the global catalog but may not be
+usable by any workflow in the selected workspace.
+
+Use --system explicitly to inspect the global status catalog. System output is
+labeled as system scope and must not be treated as workspace move targets.
 
 Examples:
-  ws status ls                            # List all statuses
-  ws status ls -w PROJ                    # List statuses for workspace PROJ`,
+	ws status ls                            # Statuses for the configured workspace
+	ws status ls -w PROJ                    # Statuses available in workspace PROJ
+	ws status ls --system                   # Global system status catalog`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client, err := NewClient()
 		if err != nil {
 			return err
 		}
 
-		var statuses []Status
-
-		// Check if workspace is specified
-		wsKey := cfg.GetEffectiveWorkspace()
-		if wsKey != "" {
-			var wsID int
-			wsID, err = client.ResolveWorkspaceID(wsKey)
-			if err != nil {
-				return fmt.Errorf("failed to resolve workspace: %w", err)
+		result := &StatusListResult{Scope: "system", Statuses: []Status{}}
+		if statusListSystem {
+			if cmd.Flags().Changed("workspace") {
+				return fmt.Errorf("--system cannot be combined with --workspace")
 			}
-			statuses, err = client.GetWorkspaceStatuses(wsID)
+			result.Statuses, err = client.ListStatuses()
 			if err != nil {
-				return fmt.Errorf("failed to list workspace statuses: %w", err)
+				return fmt.Errorf("failed to list system statuses: %w", err)
 			}
 		} else {
-			statuses, err = client.ListStatuses()
+			wsKey := cfg.GetEffectiveWorkspace()
+			if wsKey == "" {
+				return fmt.Errorf("workspace is required for status listing: use -w, configure defaults.workspace_key, or pass --system for the global catalog")
+			}
+			wsID, resolveErr := client.ResolveWorkspaceID(wsKey)
+			if resolveErr != nil {
+				return fmt.Errorf("failed to resolve workspace: %w", resolveErr)
+			}
+			workspace, workspaceErr := client.GetWorkspace(wsID)
+			if workspaceErr != nil {
+				return fmt.Errorf("failed to get workspace: %w", workspaceErr)
+			}
+			result.Scope = "workspace"
+			result.Workspace = &StatusListWorkspace{ID: workspace.ID, Key: workspace.Key, Name: workspace.Name}
+			result.Statuses, err = client.GetWorkspaceStatuses(wsID)
 			if err != nil {
-				return fmt.Errorf("failed to list statuses: %w", err)
+				return fmt.Errorf("failed to list workspace statuses: %w", err)
 			}
 		}
 
 		output := NewOutput()
-		output.Print(statuses)
+		output.Print(result)
 		return nil
 	},
 }
+
+var statusListSystem bool
 
 var itemTypeCmd = &cobra.Command{
 	Use:   "item-type",
@@ -136,6 +153,7 @@ Examples:
 func init() {
 	rootCmd.AddCommand(statusCmd)
 	statusCmd.AddCommand(statusListCmd)
+	statusListCmd.Flags().BoolVar(&statusListSystem, "system", false, "list the global system status catalog instead of workspace-available statuses")
 
 	rootCmd.AddCommand(itemTypeCmd)
 	itemTypeCmd.AddCommand(itemTypeListCmd)

@@ -31,14 +31,16 @@ type NotificationManager interface {
 
 // NotificationEvent represents an event that should trigger notifications
 type NotificationEvent struct {
-	EventType    string                 // e.g., "item.created", "comment.added"
-	WorkspaceID  int                    // Workspace where event occurred
-	ActorUserID  int                    // User who triggered the event
-	ItemID       int                    // Work item ID (for action URL)
-	AssigneeID   *int                   // Current assignee (if applicable)
-	CreatorID    *int                   // Item creator (if applicable)
-	Title        string                 // Event title
-	TemplateData map[string]interface{} // Data for template substitution
+	EventType                     string                 // e.g., "item.created", "comment.added"
+	WorkspaceID                   int                    // Workspace where event occurred
+	ActorUserID                   int                    // User who triggered the event
+	ItemID                        int                    // Work item ID (for action URL)
+	AssigneeID                    *int                   // Current assignee (if applicable)
+	CreatorID                     *int                   // Item creator (if applicable)
+	Title                         string                 // Event title
+	TemplateData                  map[string]interface{} // Data for template substitution
+	ReferencedWorkspaceID         int                    // Optional secondary workspace whose content appears in TemplateData
+	ReferencedWorkspacePermission string                 // Permission required to receive secondary-entity data
 }
 
 // RuleCache stores cached notification rules for fast lookup
@@ -799,6 +801,12 @@ func (ns *NotificationService) determineRecipients(event *NotificationEvent, rul
 		if !ns.canViewWorkspace(userID, event.WorkspaceID) {
 			continue
 		}
+		if event.ReferencedWorkspacePermission != "" {
+			if event.ReferencedWorkspaceID <= 0 ||
+				!ns.canUseWorkspacePermission(userID, event.ReferencedWorkspaceID, event.ReferencedWorkspacePermission) {
+				continue
+			}
+		}
 		recipients = append(recipients, userID)
 	}
 
@@ -872,10 +880,14 @@ func (ns *NotificationService) agentOrUnknownUsers(userIDs []int) map[int]bool {
 // permission on the workspace. A nil permService (test wiring) means we
 // fall back to "allow" so legacy paths keep working.
 func (ns *NotificationService) canViewWorkspace(userID, workspaceID int) bool {
+	return ns.canUseWorkspacePermission(userID, workspaceID, models.PermissionItemView)
+}
+
+func (ns *NotificationService) canUseWorkspacePermission(userID, workspaceID int, permission string) bool {
 	if ns.permService == nil {
 		return true
 	}
-	ok, err := ns.permService.HasWorkspacePermission(userID, workspaceID, models.PermissionItemView)
+	ok, err := ns.permService.HasWorkspacePermission(userID, workspaceID, permission)
 	if err != nil {
 		slog.Warn("permission check failed during recipient filtering; denying",
 			slog.String("component", "notifications"),

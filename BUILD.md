@@ -159,7 +159,6 @@ cmd\ws\ws.exe workspace list
 Production builds use these Go build flags:
 
 - `-ldflags "-s -w"` - Strip debug information and reduce binary size
-- `-tags="!test"` - Exclude test code from production binaries
 - Version information embedded at build time
 
 ## Troubleshooting
@@ -200,13 +199,12 @@ Run `make help` to see all available targets:
 - `make release` - Full production release build
 
 **Development builds:**
-- `make dev-build` - Development binary (includes test utils)
+- `make dev-build` - Development binary
 - `make dev` - Full development cycle
 
 **Testing:**
-- `make test` - Run all unit tests
-- `make test-coverage` - Run tests with coverage report
-- `make test-verbose` - Run tests with verbose output
+- Test sources and runners live in the adjacent private `core-tests`
+  repository. Use `../core-tests/overlay.sh .` for the Go suites.
 
 **Utilities:**
 - `make frontend` - Build frontend only

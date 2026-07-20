@@ -57,6 +57,8 @@ func (o *Output) printTable(data interface{}) {
 		o.printWorkspaceDetailTable(w, v)
 	case []Status:
 		o.printStatusesTable(w, v)
+	case *StatusListResult:
+		o.printStatusListTable(w, v)
 	case []ItemType:
 		o.printItemTypesTable(w, v)
 	case []TestCase:
@@ -158,6 +160,8 @@ func (o *Output) printCSV(data interface{}) {
 		o.printWorkspaceCSV(w, v)
 	case []Status:
 		o.printStatusesCSV(w, v)
+	case *StatusListResult:
+		o.printStatusListCSV(w, v)
 	case []ItemType:
 		o.printItemTypesCSV(w, v)
 	case []TestCase:
@@ -273,6 +277,35 @@ func (o *Output) printStatusesCSV(w *csv.Writer, statuses []Status) {
 			isCompleted = "yes"
 		}
 		_ = w.Write([]string{fmt.Sprintf("%d", s.ID), s.Name, s.CategoryName, isDefault, isCompleted})
+	}
+}
+
+func (o *Output) printStatusListCSV(w *csv.Writer, result *StatusListResult) {
+	workspaceKey, workspaceName := "", ""
+	if result.Workspace != nil {
+		workspaceKey = result.Workspace.Key
+		workspaceName = result.Workspace.Name
+	}
+	_ = w.Write([]string{"SCOPE", "WORKSPACE_KEY", "WORKSPACE_NAME", "ID", "NAME", "CATEGORY", "DEFAULT", "COMPLETED"})
+	for _, status := range result.Statuses {
+		isDefault := ""
+		if status.IsDefault {
+			isDefault = "yes"
+		}
+		isCompleted := ""
+		if status.IsCompleted {
+			isCompleted = "yes"
+		}
+		_ = w.Write([]string{
+			result.Scope,
+			workspaceKey,
+			workspaceName,
+			fmt.Sprintf("%d", status.ID),
+			status.Name,
+			status.CategoryName,
+			isDefault,
+			isCompleted,
+		})
 	}
 }
 
@@ -523,6 +556,15 @@ func (o *Output) printStatusesTable(w *tabwriter.Writer, statuses []Status) {
 		}
 		_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\n", s.ID, s.Name, s.CategoryName, isDefault, isCompleted)
 	}
+}
+
+func (o *Output) printStatusListTable(w *tabwriter.Writer, result *StatusListResult) {
+	_, _ = fmt.Fprintf(w, "Scope:\t%s\n", result.Scope)
+	if result.Workspace != nil {
+		_, _ = fmt.Fprintf(w, "Workspace:\t%s (%s)\n", result.Workspace.Name, result.Workspace.Key)
+	}
+	_, _ = fmt.Fprintln(w)
+	o.printStatusesTable(w, result.Statuses)
 }
 
 func (o *Output) printItemTypesTable(w *tabwriter.Writer, types []ItemType) {

@@ -239,13 +239,13 @@ func (h *AssetHandler) GetAssetLinks(w http.ResponseWriter, r *http.Request) {
 	// hydrated title nor the link's existence leaks across workspaces.
 	outgoing := make([]models.ItemLink, 0, len(outgoingLinks))
 	for _, link := range outgoingLinks {
-		if h.canAccessEntity(link.TargetType, link.TargetID, wsSet, canViewCached) {
+		if h.canAccessEntity(currentUser.ID, link.TargetType, link.TargetID, wsSet, canViewCached) {
 			outgoing = append(outgoing, link)
 		}
 	}
 	incoming := make([]models.ItemLink, 0, len(incomingLinks))
 	for _, link := range incomingLinks {
-		if h.canAccessEntity(link.SourceType, link.SourceID, wsSet, canViewCached) {
+		if h.canAccessEntity(currentUser.ID, link.SourceType, link.SourceID, wsSet, canViewCached) {
 			incoming = append(incoming, link)
 		}
 	}
@@ -320,7 +320,7 @@ func (h *AssetHandler) CreateAssetLink(w http.ResponseWriter, r *http.Request) {
 	for _, id := range accessibleWS {
 		wsSet[id] = true
 	}
-	targetViewable := h.canAccessEntity(req.TargetType, req.TargetID, wsSet, func(setID int) bool {
+	targetViewable := h.canAccessEntity(currentUser.ID, req.TargetType, req.TargetID, wsSet, func(setID int) bool {
 		allowed, err := h.canViewSet(currentUser.ID, setID)
 		return err == nil && allowed
 	})
@@ -626,7 +626,7 @@ func (h *AssetHandler) GetAssetRelationshipGraph(w http.ResponseWriter, r *http.
 			nKey := makeKey(n.entityType, n.entityID)
 
 			// Permission check
-			if !h.canAccessEntity(n.entityType, n.entityID, wsSet, canViewCached) {
+			if !h.canAccessEntity(currentUser.ID, n.entityType, n.entityID, wsSet, canViewCached) {
 				continue
 			}
 
@@ -671,7 +671,7 @@ func (h *AssetHandler) GetAssetRelationshipGraph(w http.ResponseWriter, r *http.
 }
 
 // canAccessEntity checks if the user can view an entity based on its type.
-func (h *AssetHandler) canAccessEntity(entityType string, entityID int, wsSet map[int]bool, canViewSet func(int) bool) bool {
+func (h *AssetHandler) canAccessEntity(userID int, entityType string, entityID int, wsSet map[int]bool, canViewSet func(int) bool) bool {
 	switch entityType {
 	case "item":
 		wsID, err := repository.NewItemRepository(h.db).GetWorkspaceID(entityID)
@@ -687,13 +687,13 @@ func (h *AssetHandler) canAccessEntity(entityType string, entityID int, wsSet ma
 		}
 		return canViewSet(setID)
 	case "test_case":
-		// Test cases use workspace permissions
 		var wsID int
 		err := h.db.QueryRow("SELECT workspace_id FROM test_cases WHERE id = ?", entityID).Scan(&wsID)
-		if err != nil {
+		if err != nil || h.permissionService == nil {
 			return false
 		}
-		return wsSet[wsID]
+		allowed, err := h.permissionService.HasWorkspacePermission(userID, wsID, models.PermissionTestView)
+		return err == nil && allowed
 	}
 	return false
 }

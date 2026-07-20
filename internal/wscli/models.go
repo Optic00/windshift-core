@@ -198,6 +198,21 @@ type Status struct {
 	IsCompleted   bool   `json:"is_completed"`
 }
 
+// StatusListResult makes the discovery scope explicit. Workspace-scoped
+// status output is safe to use for item transitions in that workspace;
+// system scope is only the global status catalog.
+type StatusListResult struct {
+	Scope     string               `json:"scope"`
+	Workspace *StatusListWorkspace `json:"workspace,omitempty"`
+	Statuses  []Status             `json:"statuses"`
+}
+
+type StatusListWorkspace struct {
+	ID   int    `json:"id"`
+	Key  string `json:"key"`
+	Name string `json:"name"`
+}
+
 type StatusSummary struct {
 	ID            int    `json:"id"`
 	Name          string `json:"name,omitempty"`
