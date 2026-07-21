@@ -79,6 +79,37 @@ dry_run_or_exec() {
     fi
 }
 
+ensure_node_runtime() {
+    local version_file="$SCRIPT_DIR/.nvmrc"
+    [ -f "$version_file" ] || return 0
+
+    local required_version current_version
+    required_version=$(tr -d '[:space:]' < "$version_file")
+    [ -n "$required_version" ] || die "Node version file is empty: $version_file"
+
+    current_version=""
+    if command -v node >/dev/null 2>&1; then
+        current_version=$(node --version 2>/dev/null || true)
+        current_version="${current_version#v}"
+    fi
+
+    if [ "$current_version" = "$required_version" ]; then
+        return 0
+    fi
+
+    if [ "${WINDSHIFT_RELEASE_NODE_BOOTSTRAPPED:-}" = "$required_version" ]; then
+        die "mise failed to activate Node $required_version (active: ${current_version:-unavailable})"
+    fi
+
+    if ! command -v mise >/dev/null 2>&1; then
+        die "Node $required_version is required (active: ${current_version:-unavailable}). Install mise or activate the version from .nvmrc."
+    fi
+
+    log_info "Active Node is ${current_version:-unavailable}; restarting with Node $required_version via mise..."
+    exec env WINDSHIFT_RELEASE_NODE_BOOTSTRAPPED="$required_version" \
+        mise x "node@$required_version" -- "$SCRIPT_DIR/release.sh" "$@"
+}
+
 # =============================================================================
 # Version Management
 # =============================================================================
@@ -277,7 +308,7 @@ build_frontend() {
         cd frontend
         export VITE_APP_VERSION_CODE="$VERSION"
         export VITE_APP_VERSION_NAME="$RELEASE_NAME"
-        npm ci --silent
+        npm ci
         run_frontend_supply_chain_checks
         npm run build
     )
@@ -1040,6 +1071,11 @@ Release Notes:
 
     ## Bug Fixes
     - Fixed issue #123
+
+Node Runtime:
+  The script reads .nvmrc and automatically restarts through mise when the
+  active Node version differs. Install mise if the required version is not
+  already active.
 EOF
 }
 
@@ -1103,6 +1139,10 @@ main() {
     if [ ! -f "main.go" ]; then
         die "This script must be run from the project root directory"
     fi
+
+    case "$COMMAND" in
+        build|push|release) ensure_node_runtime "$@" ;;
+    esac
 
     case "$COMMAND" in
         build)   cmd_build ;;
