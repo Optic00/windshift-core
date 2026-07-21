@@ -17728,7 +17728,7 @@
     },
     "/workspaces/{id}/pages/search": {
       "get": {
-        "description": "Returns non-archived pages in the workspace whose title matches the q substring and that the caller can view. Bodies are omitted; fetch via GET .../pages/{pageId}.",
+        "description": "Returns visible, non-archived pages whose title or Markdown body contains the q substring. Bodies are omitted; fetch via GET .../pages/{pageId}.",
         "parameters": [
           {
             "description": "Workspace ID",
@@ -17740,7 +17740,7 @@
             }
           },
           {
-            "description": "Title search substring",
+            "description": "Title or content search substring",
             "in": "query",
             "name": "q",
             "required": true,
@@ -17814,7 +17814,7 @@
             "BearerAuth": []
           }
         ],
-        "summary": "Search pages by title",
+        "summary": "Search pages by keyword",
         "tags": [
           "pages"
         ]

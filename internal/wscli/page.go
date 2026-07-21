@@ -91,11 +91,11 @@ var pageSearchLimit int
 
 var pageSearchCmd = &cobra.Command{
 	Use:   "search <query>",
-	Short: "Search pages by title in the current workspace",
-	Long: `Title search over pages the caller can view in the configured
+	Short: "Search pages by keyword in the current workspace",
+	Long: `Keyword search over pages the caller can view in the configured
 workspace. Multiple arguments are joined into a single query string.
-Matching is a case-insensitive substring on the page title. Results omit
-the page body — fetch it with ws page get <id>.
+Matching is a case-insensitive substring on the page title or Markdown body.
+Results omit the page body — fetch a match with ws page get <id>.
 
 A workspace must be configured via -w, $WS_WORKSPACE, or
 defaults.workspace_key in ws.toml.

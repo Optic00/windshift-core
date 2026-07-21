@@ -698,10 +698,10 @@ func (s *PageService) ListTreeMeta(workspaceID int, includeArchived bool) ([]mod
 	return s.pages.ListWorkspaceTreeMeta(workspaceID, includeArchived)
 }
 
-// SearchByTitle delegates to the repository's title-substring search.
-// Permission filtering happens at the handler layer via ListVisiblePageIDs.
-func (s *PageService) SearchByTitle(workspaceID int, query string, limit int) ([]models.Page, error) {
-	return s.pages.SearchByTitle(workspaceID, query, limit)
+// SearchByKeyword delegates to the repository's title-and-body substring
+// search. Permission filtering happens at the handler layer.
+func (s *PageService) SearchByKeyword(workspaceID int, query string, limit int) ([]models.Page, error) {
+	return s.pages.SearchByKeyword(workspaceID, query, limit)
 }
 
 // BuildPageTree turns a flat ordered page list (typically from ListTree)

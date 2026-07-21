@@ -400,11 +400,10 @@ func (r *PageRepository) ArchiveTx(tx database.Tx, pageID, archivedBy int) error
 	return nil
 }
 
-// SearchByTitle returns non-archived pages in the workspace whose title
-// matches a case-insensitive substring of query, ordered by title. Results
-// are capped at limit. The caller must filter the result through per-page
-// ACLs before returning to a user — workspace scoping alone isn't enough.
-func (r *PageRepository) SearchByTitle(workspaceID int, query string, limit int) ([]models.Page, error) {
+// SearchByKeyword returns non-archived pages in the workspace whose title or
+// Markdown body contains query, case-insensitively. Title matches sort first.
+// The caller must apply per-page ACLs before returning results to a user.
+func (r *PageRepository) SearchByKeyword(workspaceID int, query string, limit int) ([]models.Page, error) {
 	if limit <= 0 {
 		limit = 20
 	}
@@ -421,12 +420,18 @@ func (r *PageRepository) SearchByTitle(workspaceID int, query string, limit int)
 		FROM pages
 		WHERE workspace_id = ?
 		  AND archived_at IS NULL
-		  AND LOWER(title) LIKE LOWER(?) ESCAPE '\'
-		ORDER BY title ASC, id ASC
+		  AND (
+		    LOWER(title) LIKE LOWER(?) ESCAPE '\'
+		    OR LOWER(content) LIKE LOWER(?) ESCAPE '\'
+		  )
+		ORDER BY
+		  CASE WHEN LOWER(title) LIKE LOWER(?) ESCAPE '\' THEN 0 ELSE 1 END,
+		  title ASC,
+		  id ASC
 		LIMIT ?
-	`, workspaceID, like, limit)
+	`, workspaceID, like, like, like, limit)
 	if err != nil {
-		return nil, fmt.Errorf("search pages by title: %w", err)
+		return nil, fmt.Errorf("search pages by keyword: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 

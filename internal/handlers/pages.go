@@ -206,11 +206,9 @@ func (h *PageHandler) GetTree(w http.ResponseWriter, r *http.Request) {
 	respondJSONOK(w, pageTreeResponse{Pages: filtered, Tree: tree})
 }
 
-// Search returns workspace pages whose title matches q (substring,
-// case-insensitive). Drives the page-picker in the link dialog. Returns
-// only pages the user may view; per-page ACLs are honored. The response
-// shape stays minimal (id, title, workspace_id, parent_id, path) — the
-// picker doesn't need the full page payload.
+// Search returns workspace pages whose title or Markdown body contains q,
+// case-insensitively. It drives the page picker and returns only pages the
+// user may view. The response stays metadata-only.
 func (h *PageHandler) Search(w http.ResponseWriter, r *http.Request) {
 	workspaceID, ok := requireIDParam(w, r, "workspaceId")
 	if !ok {
@@ -224,7 +222,7 @@ func (h *PageHandler) Search(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("q")
 	limit, _ := parseOffsetPagination(r, 20, 50)
 
-	pages, err := h.service.SearchByTitle(workspaceID, query, limit)
+	pages, err := h.service.SearchByKeyword(workspaceID, query, limit)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return

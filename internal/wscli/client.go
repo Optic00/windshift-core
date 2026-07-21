@@ -1267,7 +1267,7 @@ func (c *Client) ListPages(workspaceID int) ([]Page, error) {
 	return resp.Items, nil
 }
 
-// SearchPages performs a title search over pages the caller can view in a
+// SearchPages performs a title-and-content search over pages the caller can view in a
 // workspace via GET /rest/api/v1/workspaces/{id}/pages/search. limit <= 0
 // falls back to the server default. Results omit the page body.
 func (c *Client) SearchPages(workspaceID int, query string, limit int) ([]Page, error) {

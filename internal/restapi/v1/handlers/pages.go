@@ -178,20 +178,17 @@ func (h *PageHandler) List(w http.ResponseWriter, r *http.Request) {
 
 // Search handles GET /rest/api/v1/workspaces/{id}/pages/search
 //
-// Search returns non-archived pages in the workspace whose title matches the
-// q substring and that the caller can view. Title-only match, reusing the
-// same service search + per-page visibility logic as the cookie-auth surface
-// (handlers/pages.go). Page bodies are omitted — this is a discovery
-// endpoint; fetch a body via GET .../pages/{pageId}. The slim shape matches
-// the page list endpoint so the CLI shares its rendering.
+// Search returns visible, non-archived pages whose title or Markdown body
+// contains the q substring. Bodies are omitted from the discovery response;
+// fetch a match via GET .../pages/{pageId}.
 //
-// @Summary      Search pages by title
-// @Description  Returns non-archived pages in the workspace whose title matches the q substring and that the caller can view. Bodies are omitted; fetch via GET .../pages/{pageId}.
+// @Summary      Search pages by keyword
+// @Description  Returns visible, non-archived pages whose title or Markdown body contains the q substring. Bodies are omitted; fetch via GET .../pages/{pageId}.
 // @Tags         pages
 // @Produce      json
 // @Security     BearerAuth
 // @Param        id     path      int     true   "Workspace ID"
-// @Param        q      query     string  true   "Title search substring"
+// @Param        q      query     string  true   "Title or content search substring"
 // @Param        limit  query     int     false  "Maximum results to return (default 20, max 100)"
 // @Success      200    {object}  handlers.pageListResponse
 // @Failure      400    {object}  handlers.ErrorResponse  "Invalid workspace ID"
@@ -210,7 +207,7 @@ func (h *PageHandler) Search(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
-	pages, err := h.service.SearchByTitle(wsID, query, parseSearchLimit(r))
+	pages, err := h.service.SearchByKeyword(wsID, query, parseSearchLimit(r))
 	if err != nil {
 		h.RespondInternalError(w, r)
 		return

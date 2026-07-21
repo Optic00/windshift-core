@@ -387,7 +387,7 @@ Examples:
 			dir = filepath.Dir(discoveredProjectConfig)
 		}
 		path := filepath.Join(dir, "WINDSHIFT.md")
-		if err := writeWindshiftMD(client, wsCtx, path); err != nil {
+		if err := writeWindshiftMD(client, wsCtx, cfg.StatusAliases, path); err != nil {
 			return err
 		}
 		_, _ = fmt.Fprintf(stdout, "Wrote %s\n", path)
