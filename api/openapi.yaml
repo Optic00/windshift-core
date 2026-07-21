@@ -1176,6 +1176,8 @@ components:
           type: string
         id:
           type: integer
+        is_global:
+          type: boolean
         name:
           type: string
         position:
@@ -1190,6 +1192,8 @@ components:
           items:
             type: string
           type: array
+        workspace_id:
+          type: integer
       type: object
     handlers.MilestoneStatusBreakdownResponse:
       properties:
@@ -1765,6 +1769,23 @@ components:
           type: integer
         template_id:
           type: integer
+      type: object
+    handlers.testRunDetailResponse:
+      properties:
+        results:
+          items:
+            $ref: '#/components/schemas/handlers.testResultWithCaseTitle'
+          type: array
+        run:
+          $ref: '#/components/schemas/models.TestRun'
+        step_results:
+          additionalProperties:
+            $ref: '#/components/schemas/windshift_internal_restapi_v1_handlers.testRunStepResultResponse'
+          type: object
+        test_cases:
+          items:
+            $ref: '#/components/schemas/models.TestCase'
+          type: array
       type: object
     handlers.timeProjectResponse:
       properties:
@@ -3112,6 +3133,23 @@ components:
           items:
             type: string
           type: array
+      type: object
+    windshift_internal_restapi_v1_handlers.testRunStepResultResponse:
+      properties:
+        actual_result:
+          type: string
+        executed_at:
+          type: string
+        item_id:
+          type: integer
+        notes:
+          type: string
+        status:
+          type: string
+        step_id:
+          type: integer
+        test_case_id:
+          type: integer
       type: object
   securitySchemes:
     BearerAuth:
@@ -8087,13 +8125,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/restapi.ErrorResponse'
+                $ref: '#/components/schemas/handlers.ErrorResponse'
           description: Unauthorized
         "500":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/restapi.ErrorResponse'
+                $ref: '#/components/schemas/handlers.ErrorResponse'
           description: Internal Server Error
       security:
       - BearerAuth: []
@@ -8122,19 +8160,19 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/restapi.ErrorResponse'
+                $ref: '#/components/schemas/handlers.ErrorResponse'
           description: Bad Request
         "401":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/restapi.ErrorResponse'
+                $ref: '#/components/schemas/handlers.ErrorResponse'
           description: Unauthorized
         "404":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/restapi.ErrorResponse'
+                $ref: '#/components/schemas/handlers.ErrorResponse'
           description: Not Found
       security:
       - BearerAuth: []
@@ -13553,6 +13591,53 @@ paths:
       summary: Reorder steps on a test case
       tags:
       - tests
+  /workspaces/{workspaceId}/test-cases/count:
+    get:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: integer
+                type: object
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:read scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Workspace not found or caller lacks test.view
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Count test cases in a workspace
+      tags:
+      - tests
   /workspaces/{workspaceId}/test-cases/reorder:
     put:
       description: Body is `{"folder_id":<id|null>, "test_case_ids":[...]}` — the
@@ -15650,6 +15735,57 @@ paths:
       security:
       - BearerAuth: []
       summary: Update an existing test run (name / assignee)
+      tags:
+      - tests
+  /workspaces/{workspaceId}/test-runs/{id}/detail:
+    get:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test run ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.testRunDetailResponse'
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:read scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test run not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Get a complete test-run detail snapshot
       tags:
       - tests
   /workspaces/{workspaceId}/test-runs/{id}/end:

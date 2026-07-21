@@ -150,12 +150,18 @@ func scanCustomerOrganisation(scanner interface {
 	Scan(dest ...any) error
 }) (models.CustomerOrganisation, error) {
 	var c models.CustomerOrganisation
-	var avatarURL, cfvStr sql.NullString
+	var email, description, avatarURL, cfvStr sql.NullString
 	if err := scanner.Scan(
-		&c.ID, &c.Name, &c.Email, &c.Description, &c.Active,
+		&c.ID, &c.Name, &email, &description, &c.Active,
 		&avatarURL, &cfvStr, &c.CreatedAt, &c.UpdatedAt,
 	); err != nil {
 		return c, err
+	}
+	if email.Valid {
+		c.Email = email.String
+	}
+	if description.Valid {
+		c.Description = description.String
 	}
 	if avatarURL.Valid {
 		c.AvatarURL = avatarURL.String

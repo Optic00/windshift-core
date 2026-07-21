@@ -476,6 +476,7 @@ func (es *EmailScheduler) processChannel(ctx context.Context, ch channelInfo) bo
 			// Watermark advanced past the offender — the counter restarts on the
 			// next message. last_error (set above) keeps the channel flagged
 			// unhealthy until a clean poll clears it.
+			healthErrorCount = 0
 			failedMessageUID = 0
 			failedMessageUIDValidity = 0
 			failedMessageCount = 0

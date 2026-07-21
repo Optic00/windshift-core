@@ -441,6 +441,7 @@ func RegisterRoutes(deps restapi.Deps) {
 	v1.HandleWithMiddleware("PUT /workspaces/{workspaceId}/test-folders/reorder", testMgmtHandler.ReorderTestFolders, bearerAuth.RequirePermission("tests:write"))
 
 	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-cases", testMgmtHandler.ListTestCases, bearerAuth.RequirePermission("tests:read"))
+	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-cases/count", testMgmtHandler.GetTestCaseCount, bearerAuth.RequirePermission("tests:read"))
 	v1.HandleWithMiddleware("POST /workspaces/{workspaceId}/test-cases", testMgmtHandler.CreateTestCase, bearerAuth.RequirePermission("tests:write"))
 	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-cases/{id}", testMgmtHandler.GetTestCase, bearerAuth.RequirePermission("tests:read"))
 	v1.HandleWithMiddleware("PUT /workspaces/{workspaceId}/test-cases/{id}", testMgmtHandler.UpdateTestCase, bearerAuth.RequirePermission("tests:write"))
@@ -494,6 +495,7 @@ func RegisterRoutes(deps restapi.Deps) {
 	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-runs", testMgmtHandler.ListTestRuns, bearerAuth.RequirePermission("tests:read"))
 	v1.HandleWithMiddleware("POST /workspaces/{workspaceId}/test-runs", testMgmtHandler.CreateTestRun, bearerAuth.RequirePermission("tests:write"))
 	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-runs/{id}", testMgmtHandler.GetTestRun, bearerAuth.RequirePermission("tests:read"))
+	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-runs/{id}/detail", testMgmtHandler.GetTestRunDetail, bearerAuth.RequirePermission("tests:read"))
 	v1.HandleWithMiddleware("PUT /workspaces/{workspaceId}/test-runs/{id}", testMgmtHandler.UpdateTestRun, bearerAuth.RequirePermission("tests:write"))
 	v1.HandleWithMiddleware("DELETE /workspaces/{workspaceId}/test-runs/{id}", testMgmtHandler.DeleteTestRun, bearerAuth.RequirePermission("tests:write"))
 	v1.HandleWithMiddleware("POST /workspaces/{workspaceId}/test-runs/{id}/end", testMgmtHandler.EndTestRun, bearerAuth.RequirePermission("tests:write"))

@@ -103,6 +103,23 @@ type testResultWithCaseTitle struct {
 	TestCaseTitle string `json:"test_case_title"`
 }
 
+type testRunStepResultResponse struct {
+	StepID       int        `json:"step_id"`
+	TestCaseID   int        `json:"test_case_id"`
+	Status       string     `json:"status"`
+	ActualResult string     `json:"actual_result"`
+	Notes        string     `json:"notes"`
+	ItemID       *int       `json:"item_id"`
+	ExecutedAt   *time.Time `json:"executed_at"`
+}
+
+type testRunDetailResponse struct {
+	Run         *models.TestRun                      `json:"run"`
+	TestCases   []models.TestCase                    `json:"test_cases"`
+	Results     []testResultWithCaseTitle            `json:"results"`
+	StepResults map[string]testRunStepResultResponse `json:"step_results"`
+}
+
 // --- workspace + test-permission helper ---
 
 // requireTestWorkspace authenticates the caller, parses {workspaceId}
@@ -253,6 +270,32 @@ func (h *TestManagementHandler) ListTestCases(w http.ResponseWriter, r *http.Req
 		return
 	}
 	h.RespondOK(w, testCases)
+}
+
+// GetTestCaseCount handles GET /rest/api/v1/workspaces/{workspaceId}/test-cases/count.
+//
+// @Summary      Count test cases in a workspace
+// @Tags         tests
+// @Produce      json
+// @Security     BearerAuth
+// @Param        workspaceId  path      int  true  "Workspace ID"
+// @Success      200          {object}  map[string]int
+// @Failure      401          {object}  handlers.ErrorResponse
+// @Failure      403          {object}  handlers.ErrorResponse  "Token lacks the tests:read scope"
+// @Failure      404          {object}  handlers.ErrorResponse  "Workspace not found or caller lacks test.view"
+// @Failure      500          {object}  handlers.ErrorResponse
+// @Router       /workspaces/{workspaceId}/test-cases/count [get]
+func (h *TestManagementHandler) GetTestCaseCount(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := h.requireTestWorkspace(w, r, models.PermissionTestView)
+	if !ok {
+		return
+	}
+	count, err := h.caseSvc.CountAll(workspaceID)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.RespondOK(w, map[string]int{"count": count})
 }
 
 // GetTestCase handles GET /rest/api/v1/workspaces/{workspaceId}/test-cases/{id}
@@ -510,6 +553,83 @@ func (h *TestManagementHandler) GetTestRun(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	h.RespondOK(w, run)
+}
+
+// GetTestRunDetail handles GET /rest/api/v1/workspaces/{workspaceId}/test-runs/{id}/detail.
+//
+// @Summary      Get a complete test-run detail snapshot
+// @Tags         tests
+// @Produce      json
+// @Security     BearerAuth
+// @Param        workspaceId  path      int  true  "Workspace ID"
+// @Param        id           path      int  true  "Test run ID"
+// @Success      200          {object}  handlers.testRunDetailResponse
+// @Failure      401          {object}  handlers.ErrorResponse
+// @Failure      403          {object}  handlers.ErrorResponse  "Token lacks the tests:read scope"
+// @Failure      404          {object}  handlers.ErrorResponse  "Test run not found in this workspace"
+// @Failure      500          {object}  handlers.ErrorResponse
+// @Router       /workspaces/{workspaceId}/test-runs/{id}/detail [get]
+func (h *TestManagementHandler) GetTestRunDetail(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := h.requireTestWorkspace(w, r, models.PermissionTestView)
+	if !ok {
+		return
+	}
+	runID, ok := h.ParsePathID(w, r, "id", "test run ID")
+	if !ok {
+		return
+	}
+	run, err := h.runSvc.GetByID(runID, workspaceID)
+	if errors.Is(err, repository.ErrNotFound) {
+		h.RespondNotFound(w, r)
+		return
+	}
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	testCases, err := h.runRepo.FindCasesWithStepsForRun(runID, workspaceID)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	resultRows, err := h.runRepo.FindResultsWithTestCase(runID, workspaceID)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	stepRows, err := h.runRepo.FindStepResultsForRun(runID, workspaceID)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+
+	results := make([]testResultWithCaseTitle, 0, len(resultRows))
+	for _, row := range resultRows {
+		results = append(results, testResultWithCaseTitle{
+			TestResult:    row.TestResult,
+			TestCaseTitle: row.TestCaseTitle,
+		})
+	}
+	stepResults := make(map[string]testRunStepResultResponse, len(stepRows))
+	for _, row := range stepRows {
+		key := fmt.Sprintf("%d_%d", row.TestCaseID, row.StepID)
+		stepResults[key] = testRunStepResultResponse{
+			StepID:       row.StepID,
+			TestCaseID:   row.TestCaseID,
+			Status:       row.Status,
+			ActualResult: row.ActualResult,
+			Notes:        row.Notes,
+			ItemID:       row.ItemID,
+			ExecutedAt:   row.ExecutedAt,
+		}
+	}
+
+	h.RespondOK(w, testRunDetailResponse{
+		Run:         run,
+		TestCases:   testCases,
+		Results:     results,
+		StepResults: stepResults,
+	})
 }
 
 // CreateTestRun handles POST /rest/api/v1/workspaces/{workspaceId}/test-runs

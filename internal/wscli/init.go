@@ -204,8 +204,7 @@ func runProjectInit() error {
 	}
 	_, _ = fmt.Fprintln(stdout, "Updated ws.toml")
 
-	updateAgentsFile("AGENTS.md")
-	updateAgentsFile("CLAUDE.md")
+	updateAgentsFiles()
 
 	_, _ = fmt.Fprintf(stdout, "\nProject initialized for workspace %s (%s)\n", workspace.Key, workspace.Name)
 	if projectAgentName != "" {
@@ -449,27 +448,48 @@ func generateDefaultAliases(statuses []Status) map[string]string {
 	return aliases
 }
 
-func updateAgentsFile(filename string) {
-	content, err := os.ReadFile(filename) //nolint:gosec // G304 — filename is a hardcoded literal
-	if err != nil {
-		// File doesn't exist, skip
-		return
+func updateAgentsFiles() {
+	files := []struct {
+		name  string
+		read  func() ([]byte, error)
+		write func([]byte) error
+	}{
+		{
+			name: "AGENTS.md",
+			read: func() ([]byte, error) {
+				return os.ReadFile("AGENTS.md")
+			},
+			write: func(content []byte) error {
+				return os.WriteFile("AGENTS.md", content, 0o600)
+			},
+		},
+		{
+			name: "CLAUDE.md",
+			read: func() ([]byte, error) {
+				return os.ReadFile("CLAUDE.md")
+			},
+			write: func(content []byte) error {
+				return os.WriteFile("CLAUDE.md", content, 0o600)
+			},
+		},
 	}
+	addition := []byte("\n\n## Windshift Integration\n\nSee [WINDSHIFT.md](./WINDSHIFT.md) for task management commands.\n")
 
-	// Check if already has Windshift reference
-	if strings.Contains(string(content), "WINDSHIFT.md") {
-		return
+	for _, file := range files {
+		content, err := file.read()
+		if err != nil {
+			// File doesn't exist, skip.
+			continue
+		}
+		if strings.Contains(string(content), "WINDSHIFT.md") {
+			continue
+		}
+		if err := file.write(append(content, addition...)); err != nil {
+			_, _ = fmt.Fprintf(stdout, "Warning: Could not update %s: %s\n", file.name, err)
+			continue
+		}
+		_, _ = fmt.Fprintf(stdout, "Updated %s with Windshift reference\n", file.name)
 	}
-
-	// Append Windshift section
-	addition := "\n\n## Windshift Integration\n\nSee [WINDSHIFT.md](./WINDSHIFT.md) for task management commands.\n"
-
-	if err := os.WriteFile(filename, append(content, []byte(addition)...), 0o600); err != nil { //nolint:gosec // G703: filename is hardcoded at call site
-		_, _ = fmt.Fprintf(stdout, "Warning: Could not update %s: %s\n", filename, err)
-		return
-	}
-
-	_, _ = fmt.Fprintf(stdout, "Updated %s with Windshift reference\n", filename)
 }
 
 func init() {
