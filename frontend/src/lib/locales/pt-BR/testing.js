@@ -330,7 +330,7 @@ export default {
     duration: 'Duration',
     failedToLoadSummary: 'Failed to load test summary',
     noResultsForExport: 'No results available for export',
-    stepsNotExecuted: '{count} step(s) were not individually executed',
+    stepsNotExecuted: '{count} etapas não foram executadas individualmente',
   },
 
   testCase: {

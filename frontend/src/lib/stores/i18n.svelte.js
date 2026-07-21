@@ -5,10 +5,12 @@
  * - Multiple locales with lazy loading
  * - RTL support for Arabic
  * - String interpolation with {param} syntax
- * - Pluralization with _one, _other suffixes
+ * - Pluralization with locale-aware suffix rules (_zero, _one, _two, _few, _many, _other)
  * - Backend error code translation
  * - localStorage persistence
  */
+
+import { getPluralCategory, negotiateLocale } from './i18n-utils.js';
 
 const STORAGE_KEY = 'windshift-locale';
 const DEFAULT_LOCALE = 'en';
@@ -62,8 +64,14 @@ function interpolate(str, params = {}) {
 
 function getTranslationValue(source, key, params = {}) {
   if (params.count !== undefined) {
-    const pluralKey = params.count === 1 ? `${key}_one` : `${key}_other`;
-    return getNestedValue(source, pluralKey) ?? getNestedValue(source, key);
+    const category = getPluralCategory(locale, params.count);
+    const pluralKey = `${key}_${category}`;
+    const otherKey = `${key}_other`;
+    return (
+      getNestedValue(source, pluralKey) ??
+      getNestedValue(source, otherKey) ??
+      getNestedValue(source, key)
+    );
   }
 
   return getNestedValue(source, key);
@@ -191,10 +199,7 @@ async function init() {
 
   // Only fall back to browser language when no preference was explicitly saved
   if (!hasSavedPreference && typeof navigator !== 'undefined') {
-    const browserLang = navigator.language?.split('-')[0];
-    if (browserLang && SUPPORTED_LOCALES.some((l) => l.code === browserLang)) {
-      initialLocale = browserLang;
-    }
+    initialLocale = negotiateLocale(navigator.language, SUPPORTED_LOCALES, DEFAULT_LOCALE);
   }
 
   await loadTranslations(initialLocale);

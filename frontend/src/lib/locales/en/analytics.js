@@ -109,6 +109,7 @@ export default {
       slowest: 'Longest delivery times',
       completedDate: 'First completed',
       duration: 'Delivery time',
+      missingHistory: '{count} currently completed items were excluded because their completion history is missing.',
       missingHistory_one:
         '1 currently completed item was excluded because its completion history is missing.',
       missingHistory_other:

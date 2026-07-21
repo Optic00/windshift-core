@@ -77,7 +77,7 @@
     e?.preventDefault?.();
     const name = formName.trim();
     if (!name) {
-      errorToast(t('common.nameRequired') || 'Name is required');
+      errorToast(t('validation.nameRequired') || 'Name is required');
       return;
     }
     const payload = {

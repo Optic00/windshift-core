@@ -145,6 +145,7 @@ export default {
     loadingMore: '正在加载更多...',
     remaining: '剩余',
     showingOfTotal: '显示 {count} / {total}',
+    showingXofY: '显示第 {from}–{to} 项，共 {total} 项',
 
     noResults: '未找到结果',
     noData: '暂无数据',

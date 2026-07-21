@@ -154,6 +154,7 @@ export default {
     loadingMore: 'Cargando más...',
     remaining: 'restantes',
     showingOfTotal: 'Mostrando {count} de {total}',
+    showingXofY: 'Mostrando {from}–{to} de {total}',
 
     // Results
     noResults: 'No se encontraron resultados',

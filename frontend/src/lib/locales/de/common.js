@@ -138,6 +138,7 @@ export default {
     loadingMore: 'Wird geladen...',
     remaining: 'verbleibend',
     showingOfTotal: '{count} von {total} angezeigt',
+    showingXofY: '{from}–{to} von {total} werden angezeigt',
     noResults: 'Keine Ergebnisse gefunden',
     noData: 'Keine Daten',
     noItems: 'Keine Einträge',

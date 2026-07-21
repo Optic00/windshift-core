@@ -481,7 +481,7 @@
                   {ass.status_id ? statusName(ass.status_id) : 'Unconfigured status'}
                 </div>
                 <div class="text-xs" style="color: var(--ds-text-subtle);">
-                  {ass.steps.length} step(s) · {ass.step_mode}
+                  {ass.steps.length} {ass.steps.length === 1 ? 'step' : 'steps'} · {ass.step_mode}
                 </div>
               </div>
               <Button

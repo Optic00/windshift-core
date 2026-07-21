@@ -415,6 +415,9 @@ export default {
     selectAnAssetSet: 'Select an Asset Set',
     selectAnAssetSetDesc: 'Choose an asset set from the dropdown above to view and manage assets.',
     default: 'Default',
+    assetTag: 'Asset Tag',
+    preview: 'Preview',
+    serialNumber: 'Serial Number',
 
     // Tabs
     types: 'Types',

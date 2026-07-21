@@ -22,7 +22,7 @@ export default {
     deleteTestCase: 'Eliminar caso de prueba',
     deleteTestPlan: 'Eliminar plan de prueba',
     deleteTestPlanConfirm:
-      'Esta seguro de que desea eliminar este plan de prueba? Esta accion no se puede deshacer.',
+      '¿Está seguro de que desea eliminar este plan de prueba? Esta acción no se puede deshacer.',
     addTestPlan: 'Agregar plan de prueba',
     createFirstTestPlan: 'Cree su primer plan de prueba para organizar los casos de prueba',
     lastRun: 'Ultima ejecucion',
@@ -74,14 +74,14 @@ export default {
     backToTestRuns: 'Volver a ejecuciones de prueba',
     finishTestExecution: 'Finalizar ejecucion de prueba',
     finishConfirmMessage:
-      'Esta seguro de que desea finalizar esta ejecucion de prueba? Esto marcara la ejecucion como completada.',
+      '¿Está seguro de que desea finalizar esta ejecución de prueba? Esto marcará la ejecución como completada.',
     failedToFinish: 'No se pudo finalizar la ejecucion de prueba. Intente nuevamente.',
     unknownItem: 'Elemento desconocido',
     // Test Cases page
     addTestCase: 'Agregar caso de prueba',
     editTestCase: 'Editar caso de prueba',
     deleteTestCaseConfirm:
-      'Esta seguro de que desea eliminar este caso de prueba? Esta accion no se puede deshacer.',
+      '¿Está seguro de que desea eliminar este caso de prueba? Esta acción no se puede deshacer.',
     noTestCasesFound: 'No se encontraron casos de prueba',
     noTestCasesWithLabel:
       'No se encontraron casos de prueba con el filtro de etiqueta seleccionado.',
@@ -107,7 +107,7 @@ export default {
     topLevelFolder: 'Carpeta de nivel superior',
     subfoldersNestingNote: 'Las subcarpetas solo pueden anidarse un nivel de profundidad.',
     deleteFolderConfirm:
-      'Esta seguro de que desea eliminar esta carpeta? Esta accion no se puede deshacer.',
+      '¿Está seguro de que desea eliminar esta carpeta? Esta acción no se puede deshacer.',
     estimatedDuration: 'Duracion estimada',
     preconditionsPlaceholder:
       'Describa las condiciones que deben cumplirse antes de ejecutar este caso de prueba...',
@@ -143,7 +143,7 @@ export default {
     addTestStep: 'Agregar paso de prueba',
     editTestStep: 'Editar paso de prueba',
     deleteTestStep: 'Eliminar paso de prueba',
-    deleteStepConfirm: 'Esta seguro de que desea eliminar este paso de prueba?',
+    deleteStepConfirm: '¿Está seguro de que desea eliminar este paso de prueba?',
     updateStep: 'Actualizar paso',
     noTestStepsYet: 'Aun no hay pasos de prueba',
     addFirstTestStep: 'Agregue su primer paso de prueba para definir el procedimiento de prueba.',
@@ -165,7 +165,7 @@ export default {
     selectAssigneeOptional: 'Seleccionar responsable (opcional)',
     createRun: 'Crear ejecucion',
     deleteTestRun: 'Eliminar ejecucion de prueba',
-    deleteRunConfirm: 'Esta seguro de que desea eliminar "{name}"?',
+    deleteRunConfirm: '¿Está seguro de que desea eliminar "{name}"?',
     failedToDeleteRun: 'No se pudo eliminar la ejecucion de prueba',
     failedToCreateRun: 'No se pudo crear la ejecucion de prueba',
     noTestRunsYet: 'Aun no hay ejecuciones de prueba',
@@ -189,7 +189,7 @@ export default {
     createTemplate: 'Crear plantilla',
     deleteTemplate: 'Eliminar plantilla',
     deleteTemplateConfirm:
-      'Esta seguro de que desea eliminar "{name}"? Esto no eliminara las ejecuciones de prueba existentes creadas a partir de esta plantilla.',
+      '¿Está seguro de que desea eliminar "{name}"? Esto no eliminará las ejecuciones de prueba existentes creadas a partir de esta plantilla.',
     noTemplatesYet: 'Aun no hay plantillas',
     createTemplatesHint:
       'Cree plantillas para iniciar rapidamente ejecuciones de prueba con configuraciones predefinidas',
@@ -248,7 +248,7 @@ export default {
     setNamePlaceholder: 'ej., Plan de prueba del Sprint 5',
     createSet: 'Crear conjunto',
     deleteTestSet: 'Eliminar conjunto de prueba',
-    deleteSetConfirm: 'Esta seguro de que desea eliminar "{name}"?',
+    deleteSetConfirm: '¿Está seguro de que desea eliminar "{name}"?',
     noTestPlansYet: 'Aun no hay planes de prueba',
     createTestPlanToOrganize: 'Cree un plan de prueba para organizar y ejecutar casos de prueba.',
     milestoneOptional: 'Hito (opcional)',
@@ -334,7 +334,7 @@ export default {
     duration: 'Duration',
     failedToLoadSummary: 'Failed to load test summary',
     noResultsForExport: 'No results available for export',
-    stepsNotExecuted: '{count} step(s) were not individually executed',
+    stepsNotExecuted: '{count} pasos no se ejecutaron individualmente',
   },
 
   testCase: {

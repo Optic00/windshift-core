@@ -109,7 +109,7 @@
 			const into = (r.created_in_ws || 0) + (r.updated_in_ws || 0) + (r.deleted_in_ws || 0);
 			const out = (r.created_in_td || 0) + (r.updated_in_td || 0) + (r.deleted_in_td || 0);
 			syncMsg = r.ok
-				? `Synced — ${into} change(s) in, ${out} out`
+				? `Synced — ${into} ${into === 1 ? 'change' : 'changes'} in, ${out} out`
 				: `Synced with issues: ${r.error || 'unknown error'}`;
 			await load();
 		} catch (e) {

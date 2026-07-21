@@ -1010,7 +1010,7 @@
             onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-danger-subtle)'}
             onmouseleave={(e) => e.currentTarget.style.backgroundColor = ''}
             disabled={!canConfigure || (!boardConfig && columns.length === 0)}
-            title={!canConfigure ? t('workspace.accessDeniedDescription') : ''}
+            title={!canConfigure ? t('workspaceSettings.accessDeniedDescription') : ''}
           >
             {t('settings.boardConfig.resetToDefault')}
           </button>
@@ -1024,7 +1024,7 @@
               onclick={saveConfiguration}
               disabled={!canConfigure || saving}
               loading={saving}
-              title={!canConfigure ? t('workspace.accessDeniedDescription') : ''}
+              title={!canConfigure ? t('workspaceSettings.accessDeniedDescription') : ''}
             >
               {saving ? t('common.saving') : t('common.saveChanges')}
             </Button>

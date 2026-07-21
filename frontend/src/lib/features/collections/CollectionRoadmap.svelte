@@ -931,7 +931,7 @@
                 bind:this={settingsButton}
                 onclick={() => settingsOpen = !settingsOpen}
                 disabled={!canConfigure}
-                title={!canConfigure ? t('workspace.accessDeniedDescription') : ''}
+                title={!canConfigure ? t('workspaceSettings.accessDeniedDescription') : ''}
                 class="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 style="color: var(--ds-text); background-color: var(--ctx-surface, var(--ds-surface));"
               >
@@ -1038,7 +1038,7 @@
             style="background-color: var(--ds-accent-blue-subtle); color: var(--ds-text-info);"
             onclick={() => settingsOpen = true}
             disabled={!canConfigure}
-            title={!canConfigure ? t('workspace.accessDeniedDescription') : ''}
+            title={!canConfigure ? t('workspaceSettings.accessDeniedDescription') : ''}
           >
             {t('collections.roadmapSettings')}
           </button>

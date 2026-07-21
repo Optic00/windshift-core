@@ -142,6 +142,13 @@ export default {
     enableEmail: 'Enable Email Channel',
     emailIsActive: 'Email channel is active and processing emails',
     emailIsInactive: 'Email channel is currently disabled',
+    enableWebhook: 'Enable Webhook',
+    webhookIsActive: 'Webhook is active',
+    webhookIsInactive: 'Webhook is currently disabled',
+    enableSmtp: 'Enable SMTP',
+    smtpIsActive: 'SMTP is active',
+    smtpIsInactive: 'SMTP is currently disabled',
+    failedToLoad: 'Failed to load channel',
 
     // Webhook Configuration
     webhookConfiguration: 'Webhook Configuration',
@@ -212,6 +219,7 @@ export default {
     itemTypeRequired: 'Item type is required',
     selectItemType: 'Select item type...',
     selectWorkspaceFirst: 'Select a workspace first',
+    workspaceFieldResolution: 'Workspace field resolution',
     processingOptions: 'Processing Options',
     mailbox: 'Mailbox',
     mailboxHelp: 'The folder to poll for new emails',
@@ -301,6 +309,7 @@ export default {
       newItem: 'New item {key}',
       commentOn: 'Comment on {key}',
       noEmails: 'No emails processed yet',
+      noResults: 'No email log entries found',
       previous: 'Previous',
       next: 'Next',
       page: 'Page {page} of {total}',
@@ -311,6 +320,8 @@ export default {
     title: 'Portal',
     subtitle: 'Customer portal settings',
     portalTitle: 'Portal Title',
+    selectWorkspace: 'Select workspace',
+    workspaceFieldResolution: 'Workspace field resolution',
 
     // Magic link authentication
     signInTitle: 'Sign in to your account',
@@ -338,6 +349,7 @@ export default {
 
     // Loading states
     loading: 'Loading portal...',
+    notFound: 'Portal not found',
     signInToAccess: 'Sign in to access the portal and submit requests',
     checkingAuth: 'Checking authentication...',
 
@@ -403,7 +415,7 @@ export default {
     failedToRunReport: 'Failed to run report',
     fieldRequired: '{field} is required',
     noFieldsConfigured: 'No form fields configured yet. Use "Configure fields" on the report card to add some.',
-    resultsCount: '{total} result(s)',
+    resultsCount: '{total} results',
     editCriteria: 'Edit criteria',
     noAssetsFound: 'No assets match the criteria.',
     noFormFieldsConfigured: 'This report has no form fields configured yet.',
@@ -501,6 +513,8 @@ export default {
       addRequestType: 'Add Request Type',
       confirmDeleteRequestType:
         'Are you sure you want to delete this request type? This cannot be undone.',
+      confirmDeleteAssetReport:
+        'Are you sure you want to delete this asset report? This cannot be undone.',
       // Knowledge base section
       docmostKnowledgeBase: 'Docmost Knowledge Base',
       docmostDescription:
@@ -634,6 +648,10 @@ export default {
   // Form Builder translations
   forms: {
     title: 'Forms',
+    routing: {
+      title: 'Routing',
+      save: 'Save routing',
+    },
     createForm: 'Create Form',
     deleteForm: 'Delete Form',
     confirmDeleteForm: 'Are you sure you want to delete "{name}"? This action cannot be undone.',
@@ -686,6 +704,7 @@ export default {
   hub: {
     loading: 'Loading hub...',
     error: 'Error loading hub',
+    section: 'Section',
     inbox: 'Inbox',
     inboxDescription: 'Requests from all portals',
     backToHub: 'Back to Hub',

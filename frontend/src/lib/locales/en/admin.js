@@ -261,6 +261,7 @@ export default {
       searchPlaceholder: 'Search configuration sets...',
       loading: 'Loading configuration sets...',
       noConfigSets: 'No configuration sets yet',
+      importSuccess: 'Configuration set imported successfully',
       getStarted: 'Get started by creating your first configuration set.',
       createFirst: 'Create First Configuration Set',
       noWorkspacesAvailable: 'No workspaces available',

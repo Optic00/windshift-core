@@ -16,7 +16,7 @@ export default {
     noItemsAvailable: 'No hay elementos disponibles',
     selectAsset: 'Seleccionar activo',
     noTag: 'Sin etiqueta',
-    showingOfTotal: 'Mostrando {showing} de {total}',
+    showingOfTotal: 'Mostrando {shown} de {total}',
     selectUser: 'Seleccionar usuario',
     searchUsers: 'Buscar usuarios...',
     users: 'Usuarios',

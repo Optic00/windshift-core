@@ -303,8 +303,10 @@ export default {
         'Configuration set updated successfully. All work items are already using statuses from the new workflow.',
       failedToSave: 'Failed to save: {error}',
       failedToDelete: 'Failed to delete: {error}',
+      shutdownFailed: 'Failed to shut down the application',
       failedToUpdate: 'Failed to update: {error}',
       failedToLoad: 'Failed to load: {error}',
+      stopTimerFailed: 'Failed to stop the timer',
       failedToCreate: 'Failed to create: {error}',
       failedToUpload: 'Failed to upload: {error}',
       failedToGeneratePdf: 'Failed to generate PDF. Please try again.',
@@ -323,7 +325,11 @@ export default {
       failedToCreateLabel: 'Failed to create label: {error}',
       failedToSaveLayout: 'Failed to save layout changes',
       statusInUseByTransitions:
-        'Cannot delete "{name}" because it is being used in {count} workflow transition(s). To delete this status, go to Workflow Management, remove all transitions that use this status, then try deleting the status again.',
+        'Cannot delete "{name}" because it is used in {count} workflow transitions. To delete this status, go to Workflow Management, remove all transitions that use this status, then try deleting the status again.',
+      statusInUseByTransitions_one:
+        'Cannot delete "{name}" because it is used in {count} workflow transition. To delete this status, go to Workflow Management, remove all transitions that use this status, then try deleting the status again.',
+      statusInUseByTransitions_other:
+        'Cannot delete "{name}" because it is used in {count} workflow transitions. To delete this status, go to Workflow Management, remove all transitions that use this status, then try deleting the status again.',
     },
   },
 
@@ -419,12 +425,21 @@ export default {
     fullWidth: 'Full width',
     chart: {
       items: 'items',
+      noDataAvailable: 'No data available',
     },
     completionChart: {
+      title: 'Completion Chart',
       emptyMessage: 'No completion data available',
     },
     createdChart: {
+      title: 'Created Chart',
       emptyMessage: 'No creation data available',
+    },
+    recentItems: {
+      loadingText: 'Loading recent items...',
+      emptyTitle: 'No recent items',
+      emptySubtitle: 'Recently viewed items will appear here',
+      loadError: 'Failed to load recent items',
     },
     milestoneProgress: {
       emptyTitle: 'No milestones',

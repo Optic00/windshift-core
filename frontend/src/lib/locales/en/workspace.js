@@ -38,6 +38,7 @@ export default {
       subtitle: 'Manage portal customers and organisations',
       addCustomer: 'Add Customer',
       unassignedCustomers: 'Unassigned Customers',
+      customerCount: '{count} customers',
       customerCount_one: '{count} customer',
       customerCount_other: '{count} customers',
       failedToLoadCustomers: 'Failed to load customers',
@@ -168,6 +169,7 @@ export default {
     estimated: 'estimated',
     includeChildItems: 'Include child items',
     rollupTruncated: 'Limited to first {max} child items',
+    rollupItemCount: 'rolled up across {count} items',
     rollupItemCount_one: 'rolled up across {count} item',
     rollupItemCount_other: 'rolled up across {count} items',
 
@@ -403,6 +405,7 @@ export default {
     collectionDescription: 'Description',
     noQuery: 'No query',
     noFiltersApplied: 'No filters applied',
+    selectType: 'Select type',
 
     // Workspace association
     associateWorkspace: 'Associate Workspace',
@@ -542,8 +545,10 @@ export default {
     // Board card dependency hover summary
     blockedBy: 'Blocked by',
     blocking: 'Blocking',
+    blockersCount: '{count} blockers',
     blockersCount_one: '{count} blocker',
     blockersCount_other: '{count} blockers',
+    blockingCount: '{count} blocking',
     blockingCount_one: '{count} blocking',
     blockingCount_other: '{count} blocking',
   },

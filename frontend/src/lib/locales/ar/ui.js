@@ -16,7 +16,7 @@ export default {
     noItemsAvailable: 'لا توجد عناصر متاحة',
     selectAsset: 'اختيار أصل',
     noTag: 'بدون وسم',
-    showingOfTotal: 'عرض {showing} من {total}',
+    showingOfTotal: 'عرض {shown} من {total}',
     selectUser: 'اختيار مستخدم',
     searchUsers: 'البحث عن مستخدمين...',
     users: 'المستخدمون',

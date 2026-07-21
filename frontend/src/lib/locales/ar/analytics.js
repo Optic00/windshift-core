@@ -19,7 +19,7 @@ export default {
     from: 'من',
     to: 'إلى',
     daysValue: '{value} يوم',
-    items_one: 'عنصر واحد',
+    items_one: '{count} عنصر',
     items_other: '{count} عناصر',
     range: {
       last30Days: 'آخر 30 يومًا',

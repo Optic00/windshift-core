@@ -110,6 +110,7 @@ export default {
     title: 'Screens',
     subtitle: 'Define field layouts for issues and projects',
     screen: 'Screen',
+    screens: '{count} screens',
     screens_one: '{count} screen',
     screens_other: '{count} screens',
     createScreen: 'Create Screen',

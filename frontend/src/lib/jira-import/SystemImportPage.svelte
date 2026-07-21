@@ -305,7 +305,8 @@
                         </span>
                       {/if}
                       <span class="text-xs" style="color: var(--ds-text-subtle);">
-                        {job.imported_workspace_count || 0} workspace(s), {job.imported_item_count || 0} item(s)
+                        {job.imported_workspace_count || 0} {(job.imported_workspace_count || 0) === 1 ? 'workspace' : 'workspaces'},
+                        {job.imported_item_count || 0} {(job.imported_item_count || 0) === 1 ? 'item' : 'items'}
                       </span>
                     </div>
                   </td>
@@ -369,7 +370,10 @@
           </div>
           <div>
             <p class="text-xs font-medium uppercase" style="color: var(--ds-text-subtle);">Imported scope</p>
-            <p style="color: var(--ds-text);">{deleteJob.imported_workspace_count || 0} workspace(s), {deleteJob.imported_item_count || 0} item(s)</p>
+            <p style="color: var(--ds-text);">
+              {deleteJob.imported_workspace_count || 0} {(deleteJob.imported_workspace_count || 0) === 1 ? 'workspace' : 'workspaces'},
+              {deleteJob.imported_item_count || 0} {(deleteJob.imported_item_count || 0) === 1 ? 'item' : 'items'}
+            </p>
           </div>
         </div>
 

@@ -138,6 +138,7 @@ export default {
     loading: 'Loading...',
     saving: 'Saving...',
     deleting: 'Deleting...',
+    submitting: 'Submitting...',
     processing: 'Processing...',
     uploading: 'Uploading...',
     downloading: 'Downloading...',
@@ -155,6 +156,7 @@ export default {
     loadingMore: 'Loading more...',
     remaining: 'remaining',
     showingOfTotal: 'Showing {count} of {total}',
+    showingXofY: 'Showing {from}–{to} of {total}',
 
     // Results
     noResults: 'No results found',
@@ -181,6 +183,11 @@ export default {
     now: 'Now',
     never: 'Never',
     always: 'Always',
+    deleted: 'Deleted',
+    dismiss: 'Dismiss',
+    error: 'Error',
+    notFound: 'Not Found',
+    workspace: 'Workspace',
 
     // Additional common terms
     none: 'None',
@@ -261,8 +268,11 @@ export default {
     // Generic
     UNKNOWN: 'An unknown error occurred.',
     generic: 'Something went wrong. Please try again.',
+    failedToCreate: 'Failed to create',
     failedToSave: 'Failed to save',
     failedToDelete: 'Failed to delete',
+    failedToLoad: 'Failed to load',
+    failedToUpdate: 'Failed to update',
   },
 
   // Validation messages
@@ -282,6 +292,7 @@ export default {
     emailTaken: 'This email is already in use',
     usernameTaken: 'This username is already taken',
     slugInvalid: 'Only lowercase letters, numbers, and hyphens allowed',
+    nameRequired: 'Name is required',
     fillRequired: 'Please fill in all required fields',
   },
 

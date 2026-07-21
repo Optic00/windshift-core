@@ -90,7 +90,7 @@ export default {
     discardCancel: 'Keep editing',
     archiveTitle: 'Archive "{title}"?',
     archiveMessage:
-      'This archives the page and every child page. Phase 1 has no undo for this action.',
+      'This archives the page and every child page. This action cannot be undone.',
     archiveConfirm: 'Archive',
 
     // Archived pages list (admin-only full-page view opened from the sidebar header)

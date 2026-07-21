@@ -155,6 +155,7 @@ export default {
     loadingMore: 'جاري تحميل المزيد...',
     remaining: 'متبقي',
     showingOfTotal: 'عرض {count} من {total}',
+    showingXofY: 'عرض {from}–{to} من أصل {total}',
 
     // Results
     noResults: 'لم يتم العثور على نتائج',
