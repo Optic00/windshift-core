@@ -11,91 +11,58 @@
   <a href="https://windshift.sh/docs"><img src="https://img.shields.io/badge/docs-windshift.sh-2e7dbd?style=flat-square" alt="Documentation"></a>
 </p>
 
----
+<p align="center">
+  <strong>Self-hosted work management that adapts to your team.</strong><br>
+  Plan projects, shape workflows, and keep delivery moving without giving up control of your data.
+</p>
 
-## Overview
+<p align="center">
+  <img src=".github/assets/screenshots/hero-board.webp" alt="A Windshift board showing work moving from open to in progress and done" width="100%">
+</p>
 
-Windshift is a comprehensive highly optimized work management platform that combines task tracking, workflow automation, and team collaboration in a single self-hosted application. Built with Go and Svelte, it offers enterprise-grade features while remaining easy to deploy and maintain.
+## One place for the work that matters
 
-## Screenshots
+Windshift brings planning, tracking, and collaboration into a fast, flexible workspace. Start with a straightforward board, then add the structure your team needs: custom workflows, nested work items, milestones, saved searches, dashboards, and more.
 
-<table>
-  <tr>
-    <td width="50%"><img src=".github/assets/screenshots/hero-board.webp" alt="Kanban board"></td>
-    <td width="50%"><img src=".github/assets/screenshots/hero-dashboard.webp" alt="Dashboard"></td>
-  </tr>
-  <tr>
-    <td align="center"><sub><b>Boards</b> — drag, rank, filter</sub></td>
-    <td align="center"><sub><b>Dashboards</b> — widgets for every surface</sub></td>
-  </tr>
-  <tr>
-    <td width="50%"><img src=".github/assets/screenshots/milestone-detail.webp" alt="Milestone detail"></td>
-    <td width="50%"><img src=".github/assets/screenshots/hero-tree.webp" alt="Hierarchy tree"></td>
-  </tr>
-  <tr>
-    <td align="center"><sub><b>Milestones</b> — plan and track delivery</sub></td>
-    <td align="center"><sub><b>Hierarchy</b> — nest work to any depth</sub></td>
-  </tr>
-</table>
+It ships as a single Go binary with the Svelte frontend built in. SQLite keeps the first deployment simple, while PostgreSQL is available for teams that need it.
 
-## Features
+## Highlights
 
-**Work Management**
-- Workspaces and Task Management with custom fields and workflows
-- Configurable statuses, priorities, screens and item types
-- Rich text descriptions with mentions and attachments
-- Recurring tasks with flexible scheduling
+- **Plan from every angle** — use boards, backlogs, hierarchy views, milestones, iterations, and dashboards.
+- **Make the workflow yours** — configure item types, statuses, fields, screens, priorities, and recurring work.
+- **Keep context close** — add rich descriptions, comments, mentions, attachments, collections, and knowledge pages.
+- **Collaborate beyond the team** — share public boards and accept external requests through a customer portal.
+- **Connect your tools** — integrate GitHub, Gitea or Forgejo, import Jira projects, and send email or webhook notifications.
+- **Go beyond issue tracking** — enable test management, time tracking and billing, or asset management when you need them.
 
-**Collaboration**
-- Comments with activity tracking
-- Email and webhook notifications
-- Customer portal for external submissions
-- Public boards for external stakeholders
-- Team workspaces with role-based access
+Authentication options include local sessions, WebAuthn/FIDO2, and SSO through OIDC providers such as Pocket ID and Authentik.
 
-**Integrations**
-- SSO/OIDC authentication (PocketID, Authentik, etc.)
-- WebAuthn/FIDO2 passwordless login
-- SCM integration (GitHub, Gitea)
-- Jira project import
+## Get started
 
-**Additional Modules**
-- Test management (cases, runs, results)
-- Time tracking with project billing and customer management
-- Asset management / CMDB
-- Collections and saved searches
+[Download the latest release](https://windshift.sh/download), then follow the [quick start guide](https://windshift.sh/docs/01-getting-started/02-quick-start). Windshift is designed to run comfortably on anything from a Raspberry Pi to a dedicated server.
 
-## Getting started
+Want to build from source? See [BUILD.md](BUILD.md). For local development and contribution guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Download the Windshift binaries from https://windshift.sh/download — you can find the quick start guide [here](https://windshift.sh/docs/01-getting-started/02-quick-start).
+## Contributing
 
-## Help wanted
+This GitHub repository is a read-only mirror of [the Windshift repository on Codeberg](https://codeberg.org/realigned/windshift-core). Code contributions should be opened on Codeberg; bug reports and feedback are welcome through GitHub Issues and Discussions.
 
-**Important**: If you are viewing this on Github, this repository is a push mirror for https://codeberg.org/realigned/windshift-core. Code contributions can only be made on Codeberg.
+We are especially interested in early bug reports and real-world feedback about OIDC providers.
 
-If you would like to contribute to this project, we are looking for help in the following areas:
+## Tech stack
 
-#### Early bug reports
-Let us know if you encounter any bug or uncertainties about a feature via Github Issues.
-
-#### OIDC Providers
-If you can connect Windshift to an OIDC Provider, let us know how it goes via Discussion. Both positive and negative feedback helps us here. We have tested OIDC with PocketID from our side.
-
-## Tech Stack
-
-- **Backend**: Go 1.25+
-- **Frontend**: Svelte 5, Vite, Tailwind CSS
-- **Database**: SQLite (default) or PostgreSQL
-- **Authentication**: Sessions, JWT, WebAuthn, OIDC
-
-Windshift is built on a minimalist philosophy: a lean frontend and backend while maintaining a large set of features. We try to keep the memory and resource consumption as low as possible. You can run Windshift on a Raspberry Pi easily.
+- **Backend:** Go
+- **Frontend:** Svelte, Vite, and Tailwind CSS
+- **Database:** SQLite by default, with PostgreSQL support
+- **Authentication:** Sessions, JWT, WebAuthn, and OIDC
 
 ## Documentation
 
-- [BUILD.md](BUILD.md) — Build instructions
-- [CONTRIBUTING.md](CONTRIBUTING.md) — Contributing guide
-- [LOGGING.md](LOGGING.md) — Logging configuration
+- [Build instructions](BUILD.md)
+- [Contributing guide](CONTRIBUTING.md)
+- [Logging configuration](LOGGING.md)
+- [Product documentation](https://windshift.sh/docs)
 
 ## License
 
-See [LICENSE](LICENSE) for details.
+Windshift is available under the [GNU Affero General Public License v3.0](LICENSE).
