@@ -13,6 +13,7 @@
     disabled = false,
     multiple = true,
     allowClear = false,
+    items = null,
     class: className = '',
     onChange = () => {},
     onSelect = () => {},
@@ -21,12 +22,15 @@
 
   const resolvedPlaceholder = $derived(placeholder || t('pickers.selectWorkspaces'));
 
-  let workspaces = $state([]);
+  let loadedWorkspaces = $state([]);
+  let workspaces = $derived(items ?? loadedWorkspaces);
   let loading = $state(false);
   let error = $state(null);
 
   onMount(async () => {
-    await loadWorkspaces();
+    if (items === null) {
+      await loadWorkspaces();
+    }
   });
 
   async function loadWorkspaces() {
@@ -37,11 +41,11 @@
       error = null;
       const allWorkspaces = await api.workspaces.getAll() || [];
       // Filter out personal workspaces for dropdown
-      workspaces = allWorkspaces.filter(w => !w.is_personal);
+      loadedWorkspaces = allWorkspaces.filter(w => !w.is_personal);
     } catch (err) {
       console.error('Failed to load workspaces:', err);
       error = err.message || 'Failed to load workspaces';
-      workspaces = [];
+      loadedWorkspaces = [];
     } finally {
       loading = false;
     }

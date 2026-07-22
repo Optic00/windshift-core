@@ -20,10 +20,10 @@
   // Initialize form with useForm composable
   const form = useForm({
     initialValues: {
-      name: '',
-      description: '',
-      target_date: '',
-      status: 'planning'
+      name: formData.name || '',
+      description: formData.description || '',
+      target_date: formData.target_date || '',
+      status: formData.status || 'planning'
     },
     schema: {
       name: validators.required('Name is required'),

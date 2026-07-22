@@ -13,12 +13,17 @@
       workspace_id: null
     }),
     categoryId = $bindable(null),
-    nameInputRef = $bindable(null)
+    nameInputRef = $bindable(null),
+    categories = null,
   } = $props();
 
   onMount(() => {
-    collectionCategoriesStore.init();
+    if (categories === null) {
+      collectionCategoriesStore.init();
+    }
   });
+
+  let availableCategories = $derived(categories ?? $collectionCategoriesStore);
 
   export function validate() {
     return formData.name.trim() !== '';
@@ -76,7 +81,7 @@
   <div class="flex flex-wrap items-center gap-2 pt-2 border-t" style="border-color: var(--ds-border);">
     <ChipPicker
       value={categoryId}
-      items={[{ id: null, name: t('createModal.noCategory') }, ...$collectionCategoriesStore]}
+      items={[{ id: null, name: t('createModal.noCategory') }, ...availableCategories]}
       getValue={(c) => c.id}
       getLabel={(c) => c.name}
       icon={FolderOpen}

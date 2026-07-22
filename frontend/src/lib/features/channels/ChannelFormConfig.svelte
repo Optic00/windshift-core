@@ -18,7 +18,8 @@
       logo_url: '',
       success_message: '',
       redirect_url: ''
-    })
+    }),
+    workspaces = null,
   } = $props();
 
   const themes = [
@@ -98,6 +99,7 @@
     <div>
       <WorkspacePicker
         bind:value={formData.workspace_ids}
+        items={workspaces}
         label="{t('channel.targetWorkspaces')} *"
         placeholder={t('channel.searchWorkspaces')}
       />

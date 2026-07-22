@@ -8,6 +8,7 @@
   import { t } from '../stores/i18n.svelte.js';
   import Button from '../components/Button.svelte';
   import ModalBackdrop from '../components/ModalBackdrop.svelte';
+  import CreateFormFrame from '../forms/CreateFormFrame.svelte';
   import ChipPicker from '../pickers/ChipPicker.svelte';
   import { getShortcut, matchesShortcut, getDisplayString } from '../utils/keyboardShortcuts.js';
   import { errorToast } from '../stores/toasts.svelte.js';
@@ -399,10 +400,8 @@
 
 <!-- shortcut-guard-exempt: Cmd+Enter submit is handled via svelte:window onkeydown (matchesShortcut) above, outside the ModalBackdrop block the guard scans. -->
 <ModalBackdrop bind:show={isOpen} opacity={0.4} align="top" paddingTop="pt-16" scrollable zIndex={60} closeOnClick={false} onclose={close}>
-    <!-- Modal -->
-    <div class="rounded-xl shadow-2xl w-full max-w-lg mx-4 mb-8 flex flex-col" style="background-color: var(--ds-surface-raised);">
-      <!-- Compact Header -->
-      <div class="flex items-center gap-2 px-4 py-3 border-b" style="border-color: var(--ds-border);">
+    <CreateFormFrame>
+      {#snippet header()}
         <!-- Type Selector FIRST (independent of workspace) -->
         {#if !workItemFormStore.parentItem && !compactMode}
           <ChipPicker
@@ -490,10 +489,9 @@
         >
           <X size={16} />
         </button>
-      </div>
+      {/snippet}
 
-      <!-- Body -->
-      <div class="px-4 py-3">
+      {#snippet body()}
         {#if selectedType === 'work-item'}
           <WorkItemForm
             bind:nameInputRef={nameInputRef}
@@ -518,10 +516,9 @@
             bind:nameInputRef={nameInputRef}
           />
         {/if}
-      </div>
+      {/snippet}
 
-      <!-- Footer -->
-      <div class="flex items-center justify-end px-4 py-3 border-t" style="border-color: var(--ds-border);">
+      {#snippet footer()}
         <Button
           id="create-modal-submit"
           onclick={handleSubmit}
@@ -532,6 +529,6 @@
         >
           {t('createModal.create')} {currentTypeName}
         </Button>
-      </div>
-    </div>
+      {/snippet}
+    </CreateFormFrame>
 </ModalBackdrop>

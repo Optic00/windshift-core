@@ -1,0 +1,9 @@
+/* Optional customer branding for public and embedded surfaces.
+   Components set only --ds-brand-color; this shared scope derives the
+   interactive semantic tokens in one place. */
+.ds-brand-scope {
+  --ds-interactive: var(--ds-brand-color);
+  --ds-interactive-hovered: color-mix(in srgb, var(--ds-brand-color) 88%, #000);
+  --ds-interactive-pressed: color-mix(in srgb, var(--ds-brand-color) 82%, #000);
+  --ds-border-focused: var(--ds-brand-color);
+}

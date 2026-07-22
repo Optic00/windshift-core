@@ -1,5 +1,14 @@
 <script>
   import { onMount } from 'svelte';
+  import AlertBox from '../lib/components/AlertBox.svelte';
+  import Button from '../lib/components/Button.svelte';
+  import Checkbox from '../lib/components/Checkbox.svelte';
+  import Input from '../lib/components/Input.svelte';
+  import Label from '../lib/components/Label.svelte';
+  import NativeSelect from '../lib/components/NativeSelect.svelte';
+  import Progress from '../lib/components/Progress.svelte';
+  import Spinner from '../lib/components/Spinner.svelte';
+  import Textarea from '../lib/components/Textarea.svelte';
 
   let {
     baseUrl,
@@ -23,8 +32,10 @@
   let error = $state('');
   let success = $state('');
   let values = $state({ title: '', description: '', custom_fields: {} });
+  let steps = $state([1]);
+  let currentStep = $state(1);
 
-  let brandColor = $derived(channel?.brand_color || '#14b8a6');
+  let brandColor = $derived(channel?.brand_color || null);
   let effectiveTheme = $derived(
     theme === 'dark' ||
       channel?.theme === 'dark' ||
@@ -35,6 +46,12 @@
       : 'light'
   );
   let selectedForm = $derived(forms.find((form) => form.id === selectedFormId));
+  let currentFields = $derived(
+    fields.filter((field) => (field.step_number || 1) === currentStep)
+  );
+  let currentStepIndex = $derived(steps.indexOf(currentStep));
+  let isFirstStep = $derived(currentStepIndex === 0);
+  let isLastStep = $derived(currentStepIndex === steps.length - 1);
 
   onMount(() => {
     selectedFormId = formId ? Number(formId) : null;
@@ -108,6 +125,11 @@
   function applyDetail(detail) {
     fields = detail.fields || [];
     customFieldDefinitions = detail.custom_field_definitions || [];
+    const stepNumbers = [...new Set(fields.map((field) => field.step_number || 1))].sort(
+      (a, b) => a - b
+    );
+    steps = stepNumbers.length > 0 ? stepNumbers : [1];
+    currentStep = steps[0];
     values = initialValues(fields);
     loadedDetailFormId = detail.form_id;
   }
@@ -192,8 +214,8 @@
     }
   }
 
-  function validate() {
-    for (const field of fields) {
+  function validate(fieldsToValidate = fields) {
+    for (const field of fieldsToValidate) {
       if (!field.is_required) continue;
       const value = valueFor(field);
       if (
@@ -207,6 +229,22 @@
       }
     }
     return true;
+  }
+
+  function goToNextStep() {
+    error = '';
+    if (!validate(currentFields)) return;
+    if (!isLastStep) currentStep = steps[currentStepIndex + 1];
+  }
+
+  function goToPreviousStep() {
+    error = '';
+    if (!isFirstStep) currentStep = steps[currentStepIndex - 1];
+  }
+
+  function handleFormSubmit() {
+    if (isLastStep) submit();
+    else goToNextStep();
   }
 
   async function submit() {
@@ -235,24 +273,31 @@
   }
 </script>
 
-<div class="wsf-root" data-theme={effectiveTheme} style={`--wsf-brand: ${brandColor}`}>
+<div
+  class="wsf-root"
+  class:ds-brand-scope={Boolean(brandColor)}
+  data-theme={effectiveTheme}
+  style={brandColor ? `--ds-brand-color: ${brandColor}` : undefined}
+>
   <div class="wsf-card">
     {#if loading}
-      <div class="wsf-loading">Loading form…</div>
+      <div class="wsf-loading"><Spinner size="md" /></div>
     {:else if error && !selectedFormId}
-      <div class="wsf-notice wsf-notice-error">{error}</div>
+      <AlertBox variant="error" message={error} />
     {:else if !selectedFormId}
       {#if channel?.name}<h2 class="wsf-title">{channel.name}</h2>{/if}
       <div class="wsf-description">Choose a form to continue.</div>
       {#each forms as form}
         <div class="wsf-field">
-          <button class="wsf-button wsf-button-secondary" type="button" onclick={() => (selectedFormId = form.id)}>
+          <Button variant="default" fullWidth onclick={() => (selectedFormId = form.id)}>
             {form.name}
-          </button>
+          </Button>
         </div>
       {/each}
     {:else if success}
-      <div id="wsf-success" class="wsf-notice wsf-notice-success">{success}</div>
+      <div id="wsf-success">
+        <AlertBox variant="success" message={success} />
+      </div>
     {:else}
       {#if selectedForm}
         <h2 class="wsf-title">{selectedForm.name}</h2>
@@ -260,70 +305,70 @@
       {/if}
 
       {#if fieldsLoading}
-        <div class="wsf-loading">Loading fields…</div>
+        <div class="wsf-loading"><Spinner size="md" /></div>
       {:else}
-        {#if error}<div class="wsf-notice wsf-notice-error">{error}</div>{/if}
-        <form onsubmit={(event) => { event.preventDefault(); submit(); }}>
-          {#each fields as field}
+        {#if error}<AlertBox variant="error" message={error} class="wsf-error" />{/if}
+        <form onsubmit={(event) => { event.preventDefault(); handleFormSubmit(); }}>
+          {#if steps.length > 1}
+            <div class="wsf-progress">
+              <div class="wsf-progress-label">
+                <span>Step {currentStepIndex + 1} of {steps.length}</span>
+                <span>{Math.round(((currentStepIndex + 1) / steps.length) * 100)}%</span>
+              </div>
+              <Progress value={currentStepIndex + 1} max={steps.length} size="sm" />
+            </div>
+          {/if}
+          {#each currentFields as field}
             {@const kind = fieldKind(field)}
             <div class="wsf-field">
               {#if kind === 'checkbox'}
-                <label class="wsf-checkbox">
-                  <input
-                    id={`wsf-${field.field_identifier}`}
-                    type="checkbox"
-                    checked={Boolean(valueFor(field))}
-                    onchange={(event) => setValue(field, event.currentTarget.checked)}
-                  />
-                  <span>{labelFor(field)} {#if field.is_required}<span class="wsf-required">*</span>{/if}</span>
-                </label>
+                <Checkbox
+                  checked={Boolean(valueFor(field))}
+                  label={`${labelFor(field)}${field.is_required ? ' *' : ''}`}
+                  onchange={(checked) => setValue(field, checked)}
+                />
               {:else}
-                <label class="wsf-label" for={`wsf-${field.field_identifier}`}>
-                  {labelFor(field)} {#if field.is_required}<span class="wsf-required">*</span>{/if}
-                </label>
+                <Label
+                  for={`wsf-${field.field_identifier}`}
+                  required={field.is_required}
+                  color="default"
+                  class="wsf-label"
+                >
+                  {labelFor(field)}
+                </Label>
                 {#if kind === 'textarea'}
-                  <textarea
-                    class="wsf-textarea"
+                  <Textarea
                     id={`wsf-${field.field_identifier}`}
                     value={valueFor(field)}
+                    rows={4}
+                    required={field.is_required}
                     oninput={(event) => setValue(field, event.currentTarget.value)}
-                  ></textarea>
+                  />
                 {:else if kind === 'select'}
-                  <select
-                    class="wsf-select"
+                  <NativeSelect
                     id={`wsf-${field.field_identifier}`}
                     value={valueFor(field)}
-                    onchange={(event) => setValue(field, selectValue(field, event.currentTarget.value))}
-                  >
-                    <option value="">Select…</option>
-                    {#each optionsFor(field) as option}
-                      <option value={option.value}>{option.label}</option>
-                    {/each}
-                  </select>
+                    options={optionsFor(field)}
+                    placeholder="Select…"
+                    required={field.is_required}
+                    onchange={(value) => setValue(field, selectValue(field, value))}
+                  />
                 {:else if kind === 'multiselect'}
-                  <select
-                    class="wsf-select"
+                  <NativeSelect
                     id={`wsf-${field.field_identifier}`}
+                    value={valueFor(field)}
+                    options={optionsFor(field)}
                     multiple
-                    onchange={(event) =>
-                      setValue(
-                        field,
-                        [...event.currentTarget.selectedOptions].map((option) =>
-                          selectValue(field, option.value)
-                        )
-                      )}
-                  >
-                    {#each optionsFor(field) as option}
-                      <option value={option.value}>{option.label}</option>
-                    {/each}
-                  </select>
+                    required={field.is_required}
+                    onchange={(value) => setValue(field, value.map((entry) => selectValue(field, entry)))}
+                  />
                 {:else}
-                  <input
-                    class="wsf-input"
+                  <Input
                     id={`wsf-${field.field_identifier}`}
                     type={kind === 'email' ? 'email' : kind === 'date' ? 'date' : kind === 'number' ? 'number' : 'text'}
                     step={kind === 'number' ? 'any' : undefined}
                     value={valueFor(field)}
+                    required={field.is_required}
                     oninput={(event) =>
                       setValue(
                         field,
@@ -338,9 +383,18 @@
             </div>
           {/each}
           <div class="wsf-actions">
-            <button id="wsf-submit" class="wsf-button" type="submit" disabled={submitting}>
-              {submitting ? 'Submitting…' : selectedForm?.config?.submit_button_text || 'Submit'}
-            </button>
+            {#if !isFirstStep}
+              <Button variant="default" onclick={goToPreviousStep}>Back</Button>
+            {/if}
+            <Button id="wsf-submit" variant="primary" type="submit" disabled={submitting} loading={submitting}>
+              {#if submitting}
+                Submitting…
+              {:else if isLastStep}
+                {selectedForm?.config?.submit_button_text || 'Submit'}
+              {:else}
+                Next
+              {/if}
+            </Button>
           </div>
         </form>
       {/if}

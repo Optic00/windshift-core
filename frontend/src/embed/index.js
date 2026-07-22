@@ -1,6 +1,28 @@
 import { mount, unmount } from 'svelte';
+import AlertBox from '../lib/components/AlertBox.svelte';
+import Button from '../lib/components/Button.svelte';
+import Checkbox from '../lib/components/Checkbox.svelte';
+import Input from '../lib/components/Input.svelte';
+import Label from '../lib/components/Label.svelte';
+import NativeSelect from '../lib/components/NativeSelect.svelte';
+import Progress from '../lib/components/Progress.svelte';
+import Spinner from '../lib/components/Spinner.svelte';
+import Textarea from '../lib/components/Textarea.svelte';
+import designSystemStyles from './design-system.css?inline';
 import FormsEmbed from './FormsEmbed.svelte';
 import { embedStyles } from './styles.js';
+
+export const components = Object.freeze({
+  AlertBox,
+  Button,
+  Checkbox,
+  Input,
+  Label,
+  NativeSelect,
+  Progress,
+  Spinner,
+  Textarea,
+});
 
 function normalizeBaseUrl(baseUrl) {
   if (!baseUrl) return window.location.origin;
@@ -22,23 +44,47 @@ function parseDatasetJSON(value, fallback = {}) {
   }
 }
 
-export function mountForm(element, options = {}) {
+function createMountTarget(element) {
   if (!element) {
-    throw new Error('WindshiftForms.mount requires a target element');
-  }
-  if (!options.slug) {
-    throw new Error('WindshiftForms.mount requires a form channel slug');
+    throw new Error('WindshiftForms requires a target element');
   }
 
   const shadowRoot = element.shadowRoot || element.attachShadow({ mode: 'open' });
   shadowRoot.replaceChildren();
 
   const style = document.createElement('style');
-  style.textContent = embedStyles;
+  style.textContent = `${designSystemStyles}\n${embedStyles}`;
   shadowRoot.appendChild(style);
 
   const target = document.createElement('div');
   shadowRoot.appendChild(target);
+
+  return { shadowRoot, target };
+}
+
+export function mountComponent(element, componentName, props = {}) {
+  const Component = components[componentName];
+  if (!Component) {
+    throw new Error(`Unknown Windshift Forms component: ${componentName}`);
+  }
+
+  const { shadowRoot, target } = createMountTarget(element);
+  const app = mount(Component, { target, props });
+
+  return {
+    unmount: () => {
+      unmount(app);
+      shadowRoot.replaceChildren();
+    },
+  };
+}
+
+export function mountForm(element, options = {}) {
+  if (!options.slug) {
+    throw new Error('WindshiftForms.mount requires a form channel slug');
+  }
+
+  const { shadowRoot, target } = createMountTarget(element);
 
   const app = mount(FormsEmbed, {
     target,
@@ -59,7 +105,7 @@ export function mountForm(element, options = {}) {
 
 export { mountForm as mount };
 
-const api = { mount: mountForm };
+const api = { mount: mountForm, mountComponent, components };
 
 function autoMountFromScript(script) {
   if (!script) return;

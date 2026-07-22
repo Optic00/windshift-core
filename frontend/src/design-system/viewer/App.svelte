@@ -63,8 +63,13 @@
   import FieldSelectorPage from './pages/FieldSelectorPage.svelte'
   import MentionPickerPage from './pages/MentionPickerPage.svelte'
 
-  let currentPage = $state('board-example')
+  let currentPage = $state(window.location.hash.slice(1) || 'board-example')
   let colorMode = $state('light')
+
+  function selectPage(pageId) {
+    currentPage = pageId
+    window.history.replaceState(null, '', `#${pageId}`)
+  }
 
   function toggleColorMode() {
     colorMode = colorMode === 'light' ? 'dark' : 'light'
@@ -198,7 +203,7 @@
               {@const NavigationIcon = item.icon}
               <li>
                 <button
-                  onclick={() => currentPage = item.id}
+                  onclick={() => selectPage(item.id)}
                   class="w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors"
                   style={currentPage === item.id
                     ? 'background-color: var(--ds-surface-selected); color: var(--ds-text);'

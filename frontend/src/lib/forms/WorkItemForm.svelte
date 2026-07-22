@@ -18,11 +18,12 @@
   import { Milestone as MilestoneIcon } from '@lucide/svelte';
 
   let {
-    nameInputRef = $bindable(null)
+    nameInputRef = $bindable(null),
+    formStore = workItemFormStore,
   } = $props();
 
   // Use the store
-  const store = workItemFormStore;
+  let store = $derived(formStore);
 
   // Track priority object for display (not persisted)
   let selectedPriorityObj = $state(null);

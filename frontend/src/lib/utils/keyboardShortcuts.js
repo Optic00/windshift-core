@@ -176,6 +176,10 @@ const shortcuts = {
   collections: {
     add: { key: 'a' },
   },
+  quickAdd: {
+    create: { key: 'Enter' },
+    cancel: { key: 'Escape' },
+  },
   groups: {
     add: { key: 'a' },
   },

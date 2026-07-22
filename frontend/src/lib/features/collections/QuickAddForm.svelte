@@ -1,8 +1,16 @@
 <script>
   import { Plus, X, Package, ChevronDown } from '@lucide/svelte';
+  import Button from '../../components/Button.svelte';
   import { t } from '../../stores/i18n.svelte.js';
   import { itemTypeIconMap, workspaceIconMap } from '../../utils/icons.js';
+  import {
+    getDisplayString,
+    getShortcut,
+    matchesShortcut,
+  } from '../../utils/keyboardShortcuts.js';
   const iconMap = { ...workspaceIconMap, ...itemTypeIconMap };
+  const createShortcut = getShortcut('quickAdd', 'create');
+  const cancelShortcut = getShortcut('quickAdd', 'cancel');
 
   let {
     parentId,
@@ -23,10 +31,10 @@
   let showItemTypeDropdown = $state(false);
 
   function handleKeydown(e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (matchesShortcut(e, createShortcut)) {
       e.preventDefault();
       onCreate(parentId);
-    } else if (e.key === 'Escape') {
+    } else if (matchesShortcut(e, cancelShortcut)) {
       onCancel(parentId);
     }
   }
@@ -65,25 +73,25 @@
     <div class="flex items-center gap-2" class:flex-wrap={!compact}>
       <!-- Workspace Selector -->
       <div class="relative">
-        <button
-          type="button"
+        <Button
+          variant="default"
+          size="small"
           onclick={() => {
             showWorkspaceDropdown = !showWorkspaceDropdown;
             showItemTypeDropdown = false;
           }}
-          class="{compact ? 'w-7 h-7' : 'w-8 h-8'} rounded-md flex items-center justify-center border overflow-hidden transition-all hover:scale-105"
-          style="{selectedWorkspace?.avatar_url ? '' : `background-color: ${selectedWorkspace?.color || 'var(--ds-interactive)'};`} border-color: var(--ds-border); box-sizing: border-box;"
+          class={compact ? '!size-7 !p-0' : '!size-[34px] !p-0'}
           title={selectedWorkspace?.name || 'Select workspace'}
         >
           {#if selectedWorkspace?.avatar_url}
-            <img src={selectedWorkspace.avatar_url} alt="{selectedWorkspace.name} avatar" class="w-full h-full object-cover" />
+            <img src={selectedWorkspace.avatar_url} alt="{selectedWorkspace.name} avatar" class="w-5 h-5 rounded object-cover" />
           {:else if selectedWorkspace?.icon}
             {@const WsIcon = iconMap[selectedWorkspace.icon] || Package}
-            <WsIcon class="{compact ? 'w-3 h-3' : 'w-3.5 h-3.5'} text-white" />
+            <WsIcon class="w-4 h-4" style="color: {selectedWorkspace?.color || 'var(--ds-icon)'};" />
           {:else}
-            <Package class="{compact ? 'w-3 h-3' : 'w-3.5 h-3.5'} text-white" />
+            <Package class="w-4 h-4" style="color: var(--ds-icon);" />
           {/if}
-        </button>
+        </Button>
 
         {#if showWorkspaceDropdown}
           <div
@@ -121,32 +129,32 @@
       {#if formState.availableTypes?.length > 0}
         <div class="relative">
           {#if compact}
-            <button
-              type="button"
+            <Button
+              variant="default"
+              size="small"
               onclick={() => {
                 showItemTypeDropdown = !showItemTypeDropdown;
                 showWorkspaceDropdown = false;
               }}
-              class="w-7 h-7 rounded-md flex items-center justify-center border overflow-hidden transition-all hover:scale-105"
-              style="background-color: {selectedItemType?.color || 'var(--ds-surface)'}; border-color: var(--ds-border);"
+              class="!size-7 !p-0"
               title={selectedItemType?.name || 'Select type'}
             >
               {#if selectedItemType}
                 {@const SelectedTypeIcon = iconMap[selectedItemType.icon] || Package}
-                <SelectedTypeIcon class="w-3 h-3 text-white" />
+                <SelectedTypeIcon class="w-4 h-4" style="color: {selectedItemType.color};" />
               {:else}
-                <Package class="w-3 h-3" style="color: var(--ds-text-subtle);" />
+                <Package class="w-4 h-4" style="color: var(--ds-icon);" />
               {/if}
-            </button>
+            </Button>
           {:else}
-            <button
-              type="button"
+            <Button
+              variant="default"
+              size="small"
               onclick={() => {
                 showItemTypeDropdown = !showItemTypeDropdown;
                 showWorkspaceDropdown = false;
               }}
-              class="h-8 px-2.5 rounded-md flex items-center gap-1.5 border text-sm leading-none transition-all hover:scale-105"
-              style="border-color: var(--ds-border); color: var(--ds-text); box-sizing: border-box;"
+              class="!px-2.5"
               title={selectedItemType?.name || 'Select type'}
             >
               {#if selectedItemType}
@@ -162,7 +170,7 @@
                 <span style="color: var(--ds-text-subtle);">{t('collections.selectType')}</span>
               {/if}
               <ChevronDown class="w-3.5 h-3.5" style="color: var(--ds-text-subtle);" />
-            </button>
+            </Button>
           {/if}
 
           {#if showItemTypeDropdown}
@@ -196,55 +204,45 @@
 
       <!-- Create Button -->
       {#if compact}
-        <button
-          type="button"
+        <!-- shortcut-guard-exempt: Enter is handled by the quick-add textarea; the compact icon-only layout intentionally omits its visible hint. -->
+        <Button
+          variant="primary"
+          size="small"
+          icon={Plus}
           onclick={() => onCreate(parentId)}
-          class="w-7 h-7 rounded-md font-medium text-white transition-colors flex items-center justify-center"
-          style="background-color: var(--ds-interactive);"
-          onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-interactive-hovered)'}
-          onmouseleave={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-interactive)'}
+          class="!size-7 !p-0"
           title={t('common.create')}
-        >
-          <Plus class="w-3.5 h-3.5" />
-        </button>
+        />
       {:else}
-        <button
-          type="button"
+        <Button
+          variant="primary"
+          size="small"
+          keyboardHint={getDisplayString(createShortcut)}
           onclick={() => onCreate(parentId)}
-          class="h-8 px-3 rounded-md text-sm leading-none font-medium text-white transition-colors flex items-center gap-1"
-          style="background-color: var(--ds-interactive); box-sizing: border-box;"
-          onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-interactive-hovered)'}
-          onmouseleave={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-interactive)'}
         >
-          <Plus class="w-3.5 h-3.5" />
           {t('common.create')}
-        </button>
+        </Button>
       {/if}
 
       <!-- Cancel Button -->
       {#if compact}
-        <button
-          type="button"
+        <Button
+          variant="ghost"
+          size="small"
+          icon={X}
           onclick={() => onCancel(parentId)}
-          class="w-7 h-7 rounded-md transition-colors flex items-center justify-center"
-          style="color: var(--ds-text-subtle);"
-          onmouseenter={(e) => e.currentTarget.style.color = 'var(--ds-text)'}
-          onmouseleave={(e) => e.currentTarget.style.color = 'var(--ds-text-subtle)'}
+          class="!size-7 !p-0"
           title={t('common.cancel')}
-        >
-          <X class="w-3.5 h-3.5" />
-        </button>
+        />
       {:else}
-        <button
-          type="button"
+        <Button
+          variant="ghost"
+          size="small"
+          keyboardHint={getDisplayString(cancelShortcut)}
           onclick={() => onCancel(parentId)}
-          class="h-8 px-2 rounded-md text-sm transition-colors"
-          style="color: var(--ds-text-subtle);"
-          onmouseenter={(e) => e.currentTarget.style.color = 'var(--ds-text)'}
-          onmouseleave={(e) => e.currentTarget.style.color = 'var(--ds-text-subtle)'}
         >
           {t('common.cancel')}
-        </button>
+        </Button>
       {/if}
     </div>
   </div>
