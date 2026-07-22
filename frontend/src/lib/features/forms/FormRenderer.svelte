@@ -19,6 +19,7 @@
     formSlug = '',
     formId = null,
     formConfig = null,
+    attachmentConfig = null,
     initialDetail = null,
     brandColor = null,
     isDarkMode = false,
@@ -50,6 +51,7 @@
   // Form data
   let formData = $state({ title: '', description: '' });
   let customFieldValues = $state({});
+  let attachments = $state([]);
 
   // The sole-form bootstrap already contains its complete render data. For a
   // multi-form channel, selection uses one complete-detail request.
@@ -183,6 +185,11 @@
     }
   }
 
+  function handleAttachmentChange(event) {
+    attachments = Array.from(event.currentTarget.files || []);
+    error = null;
+  }
+
   async function handleSubmit() {
     try {
       for (const step of steps) {
@@ -194,6 +201,19 @@
       submitting = true;
       error = null;
 
+      if (attachmentConfig?.enabled) {
+        const maxFiles = attachmentConfig.max_files || 5;
+        if (attachments.length > maxFiles) {
+          error = `You can attach at most ${maxFiles} files.`;
+          return;
+        }
+        const oversized = attachments.find(file => file.size > attachmentConfig.max_file_size);
+        if (oversized) {
+          error = `${oversized.name} exceeds the attachment size limit.`;
+          return;
+        }
+      }
+
       const submissionData = {
         request_type_id: formId,
         title: formData.title,
@@ -202,8 +222,8 @@
       };
 
       const result = submitForm
-        ? await submitForm(submissionData)
-        : await api.forms.submit(formSlug, submissionData);
+        ? await submitForm(submissionData, attachments)
+        : await api.forms.submit(formSlug, submissionData, attachments);
 
       success = true;
       successMessage = result.success_message || 'Thank you for your submission!';
@@ -358,6 +378,30 @@
             {/if}
           </div>
         {/each}
+
+        {#if isLastStep && attachmentConfig?.enabled}
+          <div>
+            <Label for="form-attachments" class="mb-1.5" color="default">Attachments</Label>
+            <input
+              id="form-attachments"
+              data-testid="public-form-attachments"
+              type="file"
+              multiple
+              accept={attachmentConfig.allowed_mime_types?.join(',') || undefined}
+              onchange={handleAttachmentChange}
+            />
+            <p class="mt-1 text-xs" style="color: var(--ds-text-subtle);">
+              Up to {attachmentConfig.max_files || 5} files, {Math.floor(attachmentConfig.max_file_size / 1048576)} MB each.
+            </p>
+            {#if attachments.length > 0}
+              <ul data-testid="public-form-attachment-list" class="mt-2 space-y-1 text-xs" style="color: var(--ds-text-subtle);">
+                {#each attachments as attachment}
+                  <li>{attachment.name}</li>
+                {/each}
+              </ul>
+            {/if}
+          </div>
+        {/if}
       </div>
 
       <div class="mt-6 flex items-center justify-between border-t pt-4" style="border-color: var(--ds-border);">

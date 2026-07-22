@@ -6,9 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"windshift/internal/auth"
@@ -24,19 +27,32 @@ import (
 // formSubmissionMaxBytes caps the public form submission body. A submission
 // can carry a description plus custom-field values, so it gets 1 MiB of
 // headroom while still bounding per-request memory on this public endpoint.
-const formSubmissionMaxBytes = 1 << 20
+const (
+	formSubmissionMaxBytes       = 1 << 20
+	publicFormMultipartMaxBytes  = 32 << 20
+	publicFormMaxAttachmentCount = 5
+	publicFormMaxAttachmentBytes = 5 << 20
+)
+
+type PublicFormAttachmentConfig struct {
+	Enabled          bool     `json:"enabled"`
+	MaxFileSize      int64    `json:"max_file_size"`
+	MaxFiles         int      `json:"max_files"`
+	AllowedMimeTypes []string `json:"allowed_mime_types,omitempty"`
+}
 
 // PublicFormChannel is the public, sanitized channel configuration used by
 // both the granular compatibility endpoint and the aggregate bootstrap.
 type PublicFormChannel struct {
-	ChannelID      int    `json:"channel_id"`
-	Name           string `json:"name"`
-	Slug           string `json:"slug"`
-	Theme          string `json:"theme"`
-	BrandColor     string `json:"brand_color"`
-	LogoURL        string `json:"logo_url"`
-	SuccessMessage string `json:"success_message"`
-	RedirectURL    string `json:"redirect_url"`
+	ChannelID      int                        `json:"channel_id"`
+	Name           string                     `json:"name"`
+	Slug           string                     `json:"slug"`
+	Theme          string                     `json:"theme"`
+	BrandColor     string                     `json:"brand_color"`
+	LogoURL        string                     `json:"logo_url"`
+	SuccessMessage string                     `json:"success_message"`
+	RedirectURL    string                     `json:"redirect_url"`
+	Attachments    PublicFormAttachmentConfig `json:"attachments"`
 }
 
 type PublicFormInfo struct {
@@ -73,6 +89,13 @@ type FormHandler struct {
 	portalService        *services.PortalService
 	channelService       *services.ChannelService
 	eventCoordinator     *services.EventCoordinator
+	itemAttachments      *services.ItemAttachmentService
+}
+
+// SetItemAttachmentService enables the trusted item-attachment path used only
+// after SubmitForm has validated the channel/request type and created its item.
+func (h *FormHandler) SetItemAttachmentService(service *services.ItemAttachmentService) {
+	h.itemAttachments = service
 }
 
 // SetEventCoordinator wires the shared item-created side-effect pipeline.
@@ -196,6 +219,125 @@ func (h *FormHandler) publicFormChannel(slug string, result *channelResult) Publ
 		LogoURL:        result.config.FormLogoURL,
 		SuccessMessage: result.config.FormSuccessMessage,
 		RedirectURL:    safeRedirectURL,
+		Attachments:    h.publicFormAttachmentConfig(),
+	}
+}
+
+func (h *FormHandler) publicFormAttachmentConfig() PublicFormAttachmentConfig {
+	config := PublicFormAttachmentConfig{MaxFiles: publicFormMaxAttachmentCount}
+	if h.itemAttachments == nil {
+		return config
+	}
+	policy, err := h.itemAttachments.UploadPolicy()
+	if err != nil {
+		slog.Warn("failed to load public form attachment policy", slog.String("component", "forms"), slog.Any("error", err))
+		return config
+	}
+	config.Enabled = policy.Enabled
+	config.MaxFileSize = policy.MaxFileSize
+	if config.MaxFileSize > publicFormMaxAttachmentBytes {
+		config.MaxFileSize = publicFormMaxAttachmentBytes
+	}
+	config.AllowedMimeTypes = policy.AllowedMimeTypes
+	return config
+}
+
+type publicFormSubmission struct {
+	RequestTypeID *int                   `json:"request_type_id"`
+	Title         string                 `json:"title"`
+	Description   string                 `json:"description"`
+	CustomFields  map[string]interface{} `json:"custom_fields"`
+}
+
+func (h *FormHandler) parsePublicFormSubmission(w http.ResponseWriter, r *http.Request) (publicFormSubmission, []services.ItemAttachmentUploadInput, bool) {
+	var submission publicFormSubmission
+	mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if !strings.HasPrefix(mediaType, "multipart/") {
+		r.Body = http.MaxBytesReader(w, r.Body, formSubmissionMaxBytes)
+		if err := json.NewDecoder(r.Body).Decode(&submission); err != nil {
+			if isRequestBodyTooLarge(err) {
+				respondRequestTooLarge(w, r)
+			} else {
+				respondBadRequest(w, r, "Invalid submission")
+			}
+			return submission, nil, false
+		}
+		return submission, nil, true
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, publicFormMultipartMaxBytes)
+	if err := r.ParseMultipartForm(1 << 20); err != nil { //nolint:gosec // body is bounded by MaxBytesReader above
+		if isRequestBodyTooLarge(err) {
+			respondRequestTooLarge(w, r)
+		} else {
+			respondBadRequest(w, r, "Invalid multipart submission")
+		}
+		return submission, nil, false
+	}
+	if r.MultipartForm != nil {
+		defer func() { _ = r.MultipartForm.RemoveAll() }()
+	}
+	if err := json.Unmarshal([]byte(r.FormValue("submission")), &submission); err != nil {
+		respondBadRequest(w, r, "Invalid submission")
+		return submission, nil, false
+	}
+	fileHeaders := r.MultipartForm.File["attachments"]
+	if len(fileHeaders) > publicFormMaxAttachmentCount {
+		respondValidationError(w, r, fmt.Sprintf("at most %d attachments are allowed", publicFormMaxAttachmentCount))
+		return submission, nil, false
+	}
+	if len(fileHeaders) > 0 && h.itemAttachments == nil {
+		respondServiceUnavailable(w, r, "Attachments are not enabled on this server")
+		return submission, nil, false
+	}
+	attachmentConfig := h.publicFormAttachmentConfig()
+	if len(fileHeaders) > 0 && !attachmentConfig.Enabled {
+		respondServiceUnavailable(w, r, "Attachments are not enabled on this server")
+		return submission, nil, false
+	}
+	attachments := make([]services.ItemAttachmentUploadInput, 0, len(fileHeaders))
+	for _, header := range fileHeaders {
+		if header.Size > attachmentConfig.MaxFileSize {
+			respondValidationError(w, r, fmt.Sprintf("attachment %s exceeds the %d byte size limit", header.Filename, attachmentConfig.MaxFileSize))
+			return submission, nil, false
+		}
+		file, err := header.Open()
+		if err != nil {
+			respondBadRequest(w, r, "Failed to read attachment")
+			return submission, nil, false
+		}
+		data, readErr := io.ReadAll(file)
+		_ = file.Close()
+		if readErr != nil {
+			respondBadRequest(w, r, "Failed to read attachment")
+			return submission, nil, false
+		}
+		if int64(len(data)) > attachmentConfig.MaxFileSize {
+			respondValidationError(w, r, fmt.Sprintf("attachment %s exceeds the %d byte size limit", header.Filename, attachmentConfig.MaxFileSize))
+			return submission, nil, false
+		}
+		input := services.ItemAttachmentUploadInput{
+			OriginalFilename: header.Filename,
+			FileData:         data,
+			FileSize:         int64(len(data)),
+		}
+		if err := h.itemAttachments.ValidatePublicFormAttachment(input); err != nil {
+			h.respondPublicFormAttachmentError(w, r, err)
+			return submission, nil, false
+		}
+		attachments = append(attachments, input)
+	}
+	return submission, attachments, true
+}
+
+func (h *FormHandler) respondPublicFormAttachmentError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, services.ErrItemAttachmentDisabled):
+		respondServiceUnavailable(w, r, "Attachments are not enabled on this server")
+	case errors.Is(err, services.ErrItemAttachmentInvalid):
+		respondValidationError(w, r, err.Error())
+	default:
+		respondInternalError(w, r, err)
 	}
 }
 
@@ -398,21 +540,9 @@ func (h *FormHandler) SubmitForm(w http.ResponseWriter, r *http.Request) {
 	channel := chResult.channel
 	config := chResult.config
 
-	// Parse submission
-	r.Body = http.MaxBytesReader(w, r.Body, formSubmissionMaxBytes)
-	var submission struct {
-		RequestTypeID *int                   `json:"request_type_id"`
-		Title         string                 `json:"title"`
-		Description   string                 `json:"description"`
-		CustomFields  map[string]interface{} `json:"custom_fields"`
-	}
-
-	if err = json.NewDecoder(r.Body).Decode(&submission); err != nil {
-		if isRequestBodyTooLarge(err) {
-			respondRequestTooLarge(w, r)
-			return
-		}
-		respondBadRequest(w, r, "Invalid submission")
+	// Parse either the legacy JSON contract or multipart JSON + attachments.
+	submission, attachments, ok := h.parsePublicFormSubmission(w, r)
+	if !ok {
 		return
 	}
 
@@ -437,6 +567,7 @@ func (h *FormHandler) SubmitForm(w http.ResponseWriter, r *http.Request) {
 		respondBadRequest(w, r, "Request type not found or inactive")
 		return
 	}
+
 	if rtChannelID != channel.ID {
 		respondBadRequest(w, r, "Request type does not belong to this form channel")
 		return
@@ -538,6 +669,21 @@ func (h *FormHandler) SubmitForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	for i := range attachments {
+		attachments[i].ItemID = int(itemID)
+		if authenticatedUserID != nil {
+			attachments[i].UploaderID = *authenticatedUserID
+		}
+		if _, uploadErr := h.itemAttachments.UploadPublicFormAttachment(attachments[i]); uploadErr != nil {
+			if rollbackErr := h.itemAttachments.RollbackPublicFormItem(int(itemID)); rollbackErr != nil {
+				respondInternalError(w, r, fmt.Errorf("upload public form attachment: %v; rollback item: %w", uploadErr, rollbackErr))
+				return
+			}
+			h.respondPublicFormAttachmentError(w, r, uploadErr)
+			return
+		}
+	}
+
 	if h.eventCoordinator != nil {
 		fullItem, fetchErr := repository.NewItemRepository(h.db).FindByIDWithDetailsContext(ctx, int(itemID))
 		if fetchErr != nil {
@@ -559,9 +705,10 @@ func (h *FormHandler) SubmitForm(w http.ResponseWriter, r *http.Request) {
 	// Build response with per-form config overrides
 	const defaultSuccessMessage = "Submission received successfully"
 	response := map[string]interface{}{
-		"success":         true,
-		"item_id":         itemID,
-		"success_message": defaultSuccessMessage,
+		"success":          true,
+		"item_id":          itemID,
+		"success_message":  defaultSuccessMessage,
+		"attachment_count": len(attachments),
 	}
 
 	// Per-form config overrides (rtConfig parsed earlier in the handler).

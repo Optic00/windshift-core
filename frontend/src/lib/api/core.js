@@ -98,10 +98,10 @@ function createApiError(response, responseText) {
  */
 async function performFetchAPI(endpoint, options = {}) {
   const { timeout: requestedTimeout = 0, signal: callerSignal, ...fetchOptions } = options;
-  const headers = {
-    'Content-Type': 'application/json',
-    ...fetchOptions.headers,
-  };
+  const isFormData = typeof FormData !== 'undefined' && fetchOptions.body instanceof FormData;
+  const headers = isFormData
+    ? { ...fetchOptions.headers }
+    : { 'Content-Type': 'application/json', ...fetchOptions.headers };
 
   const timeoutMs = Number(requestedTimeout);
   const hasTimeout = Number.isFinite(timeoutMs) && timeoutMs > 0;

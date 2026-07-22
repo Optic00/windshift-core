@@ -104,7 +104,7 @@
 {#if attachments.length > 0 || diagrams.length > 0}
   <div class="space-y-1">
     {#each attachments as attachment}
-      <div class="flex items-center gap-2 py-1 px-2 -mx-2 rounded group hover:bg-[var(--ds-background-neutral-hovered)] transition-colors">
+      <div data-testid="item-attachment" class="flex items-center gap-2 py-1 px-2 -mx-2 rounded group hover:bg-[var(--ds-background-neutral-hovered)] transition-colors">
         {#if attachment.has_thumbnail}
           <button
             type="button"

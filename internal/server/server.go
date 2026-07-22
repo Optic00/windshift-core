@@ -1139,6 +1139,7 @@ func (s *Server) initialize() error {
 		if err := attachmentSettingsService.Initialize(cfg.AttachmentPath); err != nil {
 			slog.Warn("failed to initialize attachment settings", "error", err)
 		}
+		formHandler.SetItemAttachmentService(services.NewItemAttachmentService(s.db, cfg.AttachmentPath, permService))
 		attachmentSettingsHandler = handlers.NewAttachmentSettingsHandler(attachmentSettingsService, logger.NewAuditor(s.db))
 	} else {
 		slog.Info("attachments disabled (no attachment path specified)")
