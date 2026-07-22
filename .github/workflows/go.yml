@@ -86,22 +86,31 @@ jobs:
           set -e
 
           if [ -n "$OUTPUT" ]; then
-            echo "found=true" >> $GITHUB_OUTPUT
-            # Escape for GitHub Actions
-            OUTPUT="${OUTPUT//'%'/'%25'}"
-            OUTPUT="${OUTPUT//$'\n'/'%0A'}"
-            OUTPUT="${OUTPUT//$'\r'/'%0D'}"
-            echo "output=$OUTPUT" >> $GITHUB_OUTPUT
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            # Emit the (PR-controlled) analysis text as a multiline output using
+            # a random delimiter. Never interpolate it into a later step's
+            # `script:` — a crafted filename could otherwise break out of the JS
+            # template literal (Actions script injection). The comment step
+            # reads it via the environment instead.
+            delimiter="ghadelim_$(openssl rand -hex 12)"
+            {
+              echo "output<<${delimiter}"
+              echo "$OUTPUT"
+              echo "${delimiter}"
+            } >> "$GITHUB_OUTPUT"
           else
-            echo "found=false" >> $GITHUB_OUTPUT
+            echo "found=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Comment on PR with deadcode findings
         if: steps.deadcode.outputs.found == 'true'
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd  # v8.0.0
+        env:
+          # Pass untrusted analysis text as data, not as inlined script source.
+          DEADCODE_OUTPUT: ${{ steps.deadcode.outputs.output }}
         with:
           script: |
-            const output = `${{ steps.deadcode.outputs.output }}`.replace(/%0A/g, '\n').replace(/%0D/g, '\r').replace(/%25/g, '%');
+            const output = process.env.DEADCODE_OUTPUT;
             const body = `## 🔍 Deadcode Analysis
 
             <details>
