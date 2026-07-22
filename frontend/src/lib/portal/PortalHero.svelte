@@ -29,20 +29,20 @@
     if (safeUrl) {
       return `background: linear-gradient(rgba(0,0,0,0.4), rgba(0,0,0,0.4)), url("${safeUrl}") center/cover no-repeat;`;
     }
-    // Use selected gradient, or fall back to first gradient with a value (index 1) if "None" (index 0) is selected
     const gradientValue = gradients[portalStore.selectedGradient]?.value;
     if (gradientValue) {
       return `background: ${gradientValue};`;
     }
-    // Fall back to first gradient with a value (index 1 = "Blue to Purple")
     return `background: ${gradients[1].value};`;
   });
 </script>
 
-<!-- Hero Section with Gradient or Background Image -->
-<div class="hero-gradient {portalStore.isDarkMode ? 'dark-mode' : ''} {portalStore.hasBackgroundImage ? 'has-image' : ''}" style="{backgroundStyle()}">
-  <div class="hero-content max-w-7xl mx-auto px-6 pt-24 pb-12 text-center">
-    <!-- Search Box -->
+<!-- Branded hero and knowledge search -->
+<div
+  class="hero-gradient {portalStore.isDarkMode ? 'dark-mode' : ''} {portalStore.hasBackgroundImage ? 'has-image' : ''}"
+  style={backgroundStyle()}
+>
+  <div class="hero-content max-w-6xl mx-auto px-4 sm:px-6 py-12 sm:py-14 text-center">
     <div class="max-w-2xl mx-auto relative">
       <form onsubmit={handleSearch} class="relative">
         <div class="relative">
@@ -180,40 +180,30 @@
 </div>
 
 <style>
-  /* Hero gradient background */
   .hero-gradient {
     width: 100%;
     position: relative;
   }
 
-  /* Add subtle pattern overlay for depth (only for gradients, not images) */
   .hero-gradient:not(.has-image)::before {
     content: '';
     position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
+    inset: 0;
     background-image:
       radial-gradient(circle at 20% 50%, rgba(255, 255, 255, 0.1) 0%, transparent 50%),
       radial-gradient(circle at 80% 80%, rgba(255, 255, 255, 0.1) 0%, transparent 50%);
     pointer-events: none;
   }
 
-  /* Dark mode overlay - dims the gradient (not needed for images as they have built-in overlay) */
   .hero-gradient.dark-mode:not(.has-image)::after {
     content: '';
     position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
+    inset: 0;
     background-color: rgba(0, 0, 0, 0.4);
     pointer-events: none;
     z-index: 0;
   }
 
-  /* Ensure content appears above the gradient overlay */
   .hero-content {
     position: relative;
     z-index: 1;

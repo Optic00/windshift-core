@@ -10,7 +10,6 @@
   import Spinner from '../components/Spinner.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import Button from '../components/Button.svelte';
-  import GlassButton from '../components/GlassButton.svelte';
   import PortalHeader from '../portal/PortalHeader.svelte';
   import PortalHero from '../portal/PortalHero.svelte';
   import PortalFooter from '../portal/PortalFooter.svelte';
@@ -35,11 +34,10 @@
   const AlertCircleIcon = AlertCircle;
 
   // Store
-  import { portalStore, gradients } from '../stores/portal.svelte.js';
+  import { portalStore } from '../stores/portal.svelte.js';
   import { portalAuthStore } from '../stores/portalAuth.svelte.js';
   import { api } from '../api.js';
   import { navigate } from '../router.js';
-  import { safeCssUrl } from '../utils/sanitize';
 
   // Modal states (kept local since they are component-specific)
   // Request-type fields editing has moved inline into PortalCustomizePanel —
@@ -57,21 +55,6 @@
   let selectedAssetReportForFields = $state(null);
   let showAssetReportForm = $state(false);
   let selectedAssetReportForForm = $state(null);
-
-  // Compute background style - image takes priority over gradient (same as PortalHero).
-  // backgroundImageUrl is admin-controlled, so it's validated via safeCssUrl
-  // to prevent CSS injection via quote/paren breakouts in the inline style.
-  const backgroundStyle = $derived(() => {
-    const safeUrl = safeCssUrl(portalStore.backgroundImageUrl);
-    if (safeUrl) {
-      return `background: linear-gradient(rgba(0,0,0,0.4), rgba(0,0,0,0.4)), url("${safeUrl}") center/cover no-repeat;`;
-    }
-    const gradientValue = gradients[portalStore.selectedGradient]?.value;
-    if (gradientValue) {
-      return `background: ${gradientValue};`;
-    }
-    return `background: ${gradients[1].value};`;
-  });
 
   // Magic link token: prefer URL fragment (#token=...), which never reaches the
   // server and isn't sent in Referer headers, falling back to the legacy
@@ -465,45 +448,36 @@
     {:else if isUserAuthenticated}
       <!-- AUTHENTICATED: Show full portal -->
       <div class="flex-1 flex flex-col">
-        <!-- Header (settings + profile) -->
-        <PortalHeader />
-
         <!-- Edit Mode Top Bar -->
         {#if portalStore.isEditing}
-          <div class="fixed top-0 left-0 right-0 z-[60] h-10" style="background-color: #fefce8; border-bottom: 1px solid #fde68a;">
-            <div class="max-w-7xl mx-auto px-6 flex items-center justify-between h-full">
-              <span class="text-base font-semibold" style="color: #92400e;">Editing</span>
+          <div class="relative z-[60] h-10" style="background-color: #fefce8; border-bottom: 1px solid #fde68a;">
+            <div class="max-w-6xl mx-auto px-4 sm:px-6 flex items-center justify-between h-full">
+              <span class="text-sm font-semibold" style="color: #92400e;">Editing portal</span>
               <Button variant="primary" size="small" icon={Check} onclick={() => portalStore.toggleEditing()}>
                 Done
               </Button>
             </div>
           </div>
-          <!-- Spacer to push flow content down -->
-          <div class="h-10"></div>
         {/if}
 
-        <!-- Hero Section (shown in normal portal view) -->
+        <!-- Stable portal navigation -->
+        <PortalHeader />
+
+        <!-- Branded search hero on the portal home. -->
         {#if !portalStore.showMyRequests && !portalStore.showMyApprovals && !portalStore.showMyDrafts && !isProfileRoute}
-          <div>
-            <PortalHero />
-          </div>
-        {:else}
-          <!-- Gradient backdrop for fixed header in list views -->
-          <div class="hero-gradient {portalStore.isDarkMode ? 'dark-mode' : ''} {portalStore.backgroundImageUrl ? 'has-image' : ''}" style="{backgroundStyle()}; min-height: 80px;"></div>
+          <PortalHero />
         {/if}
 
-        <!-- Content Area Below Hero -->
-        <div class="flex-1" style="background-color: var(--ds-surface-raised);">
-          <div class="max-w-7xl mx-auto px-6 py-16">
+        <!-- Portal work area -->
+        <main class="flex-1" style="background-color: var(--ds-surface);">
+          <div class="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
             {#if isProfileRoute}
               <PortalProfile />
             {:else if portalStore.showMyApprovals}
               <PortalMyApprovals />
             {:else if portalStore.showMyDrafts}
-              <PortalPasskeyBanner />
               <PortalMyDrafts onresume={handleResumeDraft} />
             {:else if portalStore.showMyRequests}
-              <PortalPasskeyBanner />
               <PortalMyRequests />
             {:else}
               <PortalPasskeyBanner />
@@ -513,7 +487,7 @@
               />
             {/if}
           </div>
-        </div>
+        </main>
 
         <!-- Footer -->
         <PortalFooter />
@@ -597,29 +571,74 @@
         />
       {/if}
     {:else}
-      <!-- NOT AUTHENTICATED: Show login prompt only -->
+      <!-- NOT AUTHENTICATED: a focused portal entry, not a marketing hero. -->
       <div class="flex-1 flex flex-col">
         <PortalHeader />
-        <div class="hero-gradient {portalStore.isDarkMode ? 'dark-mode' : ''} {portalStore.backgroundImageUrl ? 'has-image' : ''}" style="{backgroundStyle()}">
-          <div class="hero-content max-w-7xl mx-auto px-6 py-20 text-center">
-            <h1 class="text-6xl font-bold mb-6 text-white">
-              {portalStore.editableTitle}
-            </h1>
-            {#if portalStore.editableDescription}
-              <p class="text-2xl text-white/90 mb-12 max-w-3xl mx-auto">
-                {portalStore.editableDescription}
-              </p>
-            {/if}
-            <!-- Login prompt -->
-            <div class="max-w-md mx-auto">
-              <p class="text-white/80 mb-6">{t('portal.signInToAccess')}</p>
-              <GlassButton id="portal-sign-in" variant="cta" onclick={() => portalStore.showLoginDialog = true}>
-                {t('auth.signIn')}
-              </GlassButton>
+        <main class="flex-1 flex items-center" style="background-color: var(--ds-surface);">
+          <div class="w-full max-w-6xl mx-auto px-4 sm:px-6 py-16 sm:py-24">
+            <div class="grid lg:grid-cols-[minmax(0,1fr)_24rem] gap-10 lg:gap-20 items-center">
+              <div
+                class="max-w-2xl {(portalStore.hasBackgroundImage || portalStore.hasGradient)
+                  ? 'rounded-xl p-7 sm:p-10'
+                  : ''}"
+                style={(portalStore.hasBackgroundImage || portalStore.hasGradient)
+                  ? portalStore.headerBackgroundStyle
+                  : ''}
+              >
+                <div
+                  class="text-xs font-semibold uppercase tracking-[0.16em] mb-4"
+                  style="color: {(portalStore.hasBackgroundImage || portalStore.hasGradient)
+                    ? 'rgba(255,255,255,0.78)'
+                    : 'var(--ds-text-subtle)'};"
+                >
+                  Customer portal
+                </div>
+                <h1
+                  class="text-4xl sm:text-5xl font-semibold tracking-tight mb-5"
+                  style="color: {(portalStore.hasBackgroundImage || portalStore.hasGradient)
+                    ? '#ffffff'
+                    : 'var(--ds-text)'};"
+                >
+                  {portalStore.editableTitle}
+                </h1>
+                {#if portalStore.editableDescription}
+                  <p
+                    class="text-lg sm:text-xl leading-relaxed max-w-xl"
+                    style="color: {(portalStore.hasBackgroundImage || portalStore.hasGradient)
+                      ? 'rgba(255,255,255,0.88)'
+                      : 'var(--ds-text-subtle)'};"
+                  >
+                    {portalStore.editableDescription}
+                  </p>
+                {/if}
+              </div>
+
+              <div
+                class="border rounded-lg p-6 sm:p-8"
+                style="background-color: var(--ds-surface-card); border-color: var(--ds-border);"
+              >
+                <h2 class="text-lg font-semibold mb-2" style="color: var(--ds-text);">
+                  Access your requests
+                </h2>
+                <p class="text-sm leading-relaxed mb-6" style="color: var(--ds-text-subtle);">
+                  {t('portal.signInToAccess')}
+                </p>
+                <button
+                  id="portal-sign-in"
+                  type="button"
+                  onclick={() => (portalStore.showLoginDialog = true)}
+                  class="w-full h-10 rounded-md px-4 text-sm font-semibold text-white transition-opacity hover:opacity-90"
+                  style="background-color: var(--ds-interactive, #2563eb);"
+                >
+                  {t('auth.signIn')}
+                </button>
+                <p class="text-xs mt-4" style="color: var(--ds-text-subtle);">
+                  No password required for customer access.
+                </p>
+              </div>
             </div>
           </div>
-        </div>
-        <div class="flex-1" style="background-color: var(--ds-surface-raised);"></div>
+        </main>
         <PortalFooter />
       </div>
     {/if}
@@ -658,43 +677,3 @@
     </ModalBackdrop>
   {/if}
 </div>
-
-<style>
-  /* Hero gradient background */
-  .hero-gradient {
-    width: 100%;
-    position: relative;
-  }
-
-  /* Add subtle pattern overlay for depth (only for gradients, not images) */
-  .hero-gradient:not(.has-image)::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-image:
-      radial-gradient(circle at 20% 50%, rgba(255, 255, 255, 0.1) 0%, transparent 50%),
-      radial-gradient(circle at 80% 80%, rgba(255, 255, 255, 0.1) 0%, transparent 50%);
-    pointer-events: none;
-  }
-
-  /* Dark mode overlay - dims the gradient (not needed for images as they have built-in overlay) */
-  .hero-gradient.dark-mode:not(.has-image)::after {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: rgba(0, 0, 0, 0.4);
-    pointer-events: none;
-    z-index: 0;
-  }
-
-  .hero-content {
-    position: relative;
-    z-index: 1;
-  }
-</style>

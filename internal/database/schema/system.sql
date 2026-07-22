@@ -84,6 +84,8 @@ CREATE TABLE IF NOT EXISTS api_tokens (
 	expires_at DATETIME NULL,
 	last_used_at DATETIME NULL,
 	is_temporary BOOLEAN DEFAULT false,
+	oauth_client_id TEXT,
+	oauth_resource TEXT,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -108,6 +110,7 @@ CREATE TABLE IF NOT EXISTS oauth_clients (
 	client_secret_hash TEXT,             -- bcrypt; null for public clients
 	redirect_uris TEXT NOT NULL DEFAULT '[]',
 	allowed_scopes TEXT NOT NULL DEFAULT '[]',
+	resource_uri TEXT,
 	enabled BOOLEAN NOT NULL DEFAULT 1,
 	created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -132,6 +135,7 @@ CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
 	code_challenge TEXT,
 	code_challenge_method TEXT,          -- 'S256' only (plain PKCE is rejected at /authorize and /token)
 	state TEXT,
+	resource_uri TEXT,
 	expires_at DATETIME NOT NULL,
 	consumed_at DATETIME,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -153,6 +157,7 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
 	user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
 	agent_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
 	scopes TEXT NOT NULL DEFAULT '[]',
+	resource_uri TEXT,
 	expires_at DATETIME NOT NULL,
 	revoked_at DATETIME,
 	rotated_to_id INTEGER REFERENCES oauth_refresh_tokens(id) ON DELETE SET NULL,

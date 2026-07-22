@@ -339,9 +339,11 @@ func expandLegacyScopes(scopes []string) []string {
 
 // tokenCacheEntry is the value stored in the token validation cache.
 type tokenCacheEntry struct {
-	User      models.User     `json:"user"`
-	APIToken  models.APIToken `json:"api_token"`
-	ExpiresAt *time.Time      `json:"expires_at,omitempty"`
+	User          models.User     `json:"user"`
+	APIToken      models.APIToken `json:"api_token"`
+	OAuthClientID string          `json:"oauth_client_id,omitempty"`
+	OAuthResource string          `json:"oauth_resource,omitempty"`
+	ExpiresAt     *time.Time      `json:"expires_at,omitempty"`
 }
 
 // tokenCacheKey returns a SHA-256 hex digest of the raw token for use as a cache key.
@@ -444,6 +446,8 @@ func (tm *TokenManager) ValidateToken(token string) (*models.User, *models.APITo
 					go tm.updateLastUsed(entry.APIToken.ID)
 					user := entry.User
 					apiToken := entry.APIToken
+					apiToken.OAuthClientID = entry.OAuthClientID
+					apiToken.OAuthResource = entry.OAuthResource
 					return &user, &apiToken, nil
 				}
 			}
@@ -458,7 +462,8 @@ func (tm *TokenManager) ValidateToken(token string) (*models.User, *models.APITo
 	// Use CURRENT_TIMESTAMP which works in both SQLite and PostgreSQL
 	rows, err := tm.db.Query(`
 		SELECT t.id, t.user_id, t.name, t.token_hash, t.token_prefix, t.permissions,
-		       t.is_temporary, t.expires_at, t.last_used_at, t.created_at, t.updated_at,
+		       t.is_temporary, t.oauth_client_id, t.oauth_resource,
+		       t.expires_at, t.last_used_at, t.created_at, t.updated_at,
 		       u.id, u.email, u.username, u.first_name, u.last_name, u.is_active
 		FROM api_tokens t
 		JOIN users u ON t.user_id = u.id
@@ -474,10 +479,12 @@ func (tm *TokenManager) ValidateToken(token string) (*models.User, *models.APITo
 		var apiToken models.APIToken
 		var user models.User
 		var expiresAt, lastUsedAt sql.NullTime
+		var oauthClientID, oauthResource sql.NullString
 
 		err := rows.Scan(
 			&apiToken.ID, &apiToken.UserID, &apiToken.Name, &apiToken.Token,
 			&apiToken.TokenPrefix, &apiToken.Permissions, &apiToken.IsTemporary,
+			&oauthClientID, &oauthResource,
 			&expiresAt, &lastUsedAt, &apiToken.CreatedAt, &apiToken.UpdatedAt,
 			&user.ID, &user.Email, &user.Username, &user.FirstName,
 			&user.LastName, &user.IsActive,
@@ -501,6 +508,8 @@ func (tm *TokenManager) ValidateToken(token string) (*models.User, *models.APITo
 		if expiresAt.Valid {
 			apiToken.ExpiresAt = &expiresAt.Time
 		}
+		apiToken.OAuthClientID = oauthClientID.String
+		apiToken.OAuthResource = oauthResource.String
 		if lastUsedAt.Valid {
 			apiToken.LastUsedAt = &lastUsedAt.Time
 		}
@@ -513,9 +522,11 @@ func (tm *TokenManager) ValidateToken(token string) (*models.User, *models.APITo
 		// Populate cache
 		if tm.cache != nil {
 			entry := tokenCacheEntry{
-				User:      user,
-				APIToken:  apiToken,
-				ExpiresAt: apiToken.ExpiresAt,
+				User:          user,
+				APIToken:      apiToken,
+				OAuthClientID: apiToken.OAuthClientID,
+				OAuthResource: apiToken.OAuthResource,
+				ExpiresAt:     apiToken.ExpiresAt,
 			}
 			if data, err := json.Marshal(entry); err == nil {
 				tm.cache.Set(cacheKey, data)                                       //nolint:errcheck // best-effort cache population
@@ -576,10 +587,14 @@ func (tm *TokenManager) CreateToken(userID int, request models.APITokenCreate) (
 	// Insert token into database using RETURNING clause (supported by both SQLite 3.35+ and PostgreSQL)
 	var tokenID int64
 	err = tm.db.QueryRow(`
-		INSERT INTO api_tokens (user_id, name, token_hash, token_prefix, permissions, expires_at, is_temporary)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO api_tokens (
+			user_id, name, token_hash, token_prefix, permissions, expires_at,
+			is_temporary, oauth_client_id, oauth_resource
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		RETURNING id
-	`, userID, request.Name, tokenHash, tokenPrefix, string(permissionsJSON), request.ExpiresAt, request.IsTemporary).Scan(&tokenID)
+	`, userID, request.Name, tokenHash, tokenPrefix, string(permissionsJSON), request.ExpiresAt,
+		request.IsTemporary, nullIfEmpty(request.OAuthClientID), nullIfEmpty(request.OAuthResource)).Scan(&tokenID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create token: %w", err)
 	}
@@ -589,11 +604,20 @@ func (tm *TokenManager) CreateToken(userID int, request models.APITokenCreate) (
 	if err != nil {
 		return nil, err
 	}
+	apiToken.OAuthClientID = request.OAuthClientID
+	apiToken.OAuthResource = request.OAuthResource
 
 	return &models.APITokenResponse{
 		Token:    token, // Only returned on creation
 		APIToken: *apiToken,
 	}, nil
+}
+
+func nullIfEmpty(value string) interface{} {
+	if value == "" {
+		return nil
+	}
+	return value
 }
 
 // GetTokenByID retrieves a token by ID (without the actual token value)

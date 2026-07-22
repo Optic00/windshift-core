@@ -107,9 +107,9 @@ type listItemsOut struct {
 func init() {
 	Register(Default, Tool[listItemsArgs]{
 		Name:        "list_items",
-		Description: "List work items in one or all accessible workspaces, with optional filters and CQL.",
+		Description: "List work items in one or all accessible workspaces. Filter by status, milestone, iteration, assignee, priority, labels, and more with CQL.",
 		Scopes:      []string{auth.ScopeItemsRead},
-		Run: func(_ context.Context, env *Env, args listItemsArgs) (any, error) {
+		Run: func(ctx context.Context, env *Env, args listItemsArgs) (any, error) {
 			var wsIDs []int
 			if args.WorkspaceID != nil && *args.WorkspaceID > 0 {
 				if !env.HasWorkspaceAccess(*args.WorkspaceID) {
@@ -181,6 +181,9 @@ func init() {
 			if err != nil {
 				return nil, err
 			}
+			if err := repository.NewMilestoneAttachRepository(env.DB).LoadForItemsContext(ctx, items); err != nil {
+				return nil, err
+			}
 
 			out := listItemsOut{Items: make([]itemSummaryDTO, 0, len(items)), Total: total}
 			for _, item := range items {
@@ -244,7 +247,7 @@ func init() {
 		Name:        "search_items",
 		Description: "Full-text search for work items by title or description across accessible workspaces.",
 		Scopes:      []string{auth.ScopeItemsRead},
-		Run: func(_ context.Context, env *Env, args searchItemsArgs) (any, error) {
+		Run: func(ctx context.Context, env *Env, args searchItemsArgs) (any, error) {
 			if strings.TrimSpace(args.Query) == "" {
 				return map[string]string{"error": "query is required"}, nil
 			}
@@ -272,6 +275,9 @@ func init() {
 			}
 			items, total, err := services.NewItemCRUDService(env.DB).Search(args.Query, searchWS, services.PaginationParams{Limit: limit})
 			if err != nil {
+				return nil, err
+			}
+			if err := repository.NewMilestoneAttachRepository(env.DB).LoadForItemsContext(ctx, items); err != nil {
 				return nil, err
 			}
 			out := listItemsOut{Items: make([]itemSummaryDTO, 0, len(items)), Total: total}

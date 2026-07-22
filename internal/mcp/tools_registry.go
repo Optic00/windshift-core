@@ -27,6 +27,10 @@ func (ms *MCPServer) registerAITools() {
 			Name:        entry.Name,
 			Description: entry.Description,
 			InputSchema: entry.Schema,
+			Annotations: toolAnnotations(entry),
+			Meta: mcp.Meta{
+				"required_scopes": append([]string(nil), entry.Scopes...),
+			},
 		}, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			user := userFromContext(ctx)
 			if user == nil {
@@ -65,6 +69,23 @@ func (ms *MCPServer) registerAITools() {
 				Content: []mcp.Content{&mcp.TextContent{Text: string(b)}},
 			}, nil
 		})
+	}
+}
+
+func toolAnnotations(entry aitools.Entry) *mcp.ToolAnnotations {
+	readOnly := true
+	destructive := false
+	for _, scope := range entry.Scopes {
+		if !strings.HasSuffix(scope, ":read") {
+			readOnly = false
+		}
+		if strings.HasSuffix(scope, ":delete") {
+			destructive = true
+		}
+	}
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint:    readOnly,
+		DestructiveHint: &destructive,
 	}
 }
 

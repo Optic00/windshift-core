@@ -46,6 +46,48 @@ type Migration struct {
 // this Catalog in subsequent commits.
 var Catalog = []Migration{
 	{
+		Version: "20260721_mcp_oauth_resource_binding",
+		Name:    "Bind MCP OAuth clients and tokens to their resource audience",
+		CheckSQLite: `SELECT CASE WHEN
+			(SELECT COUNT(*) FROM pragma_table_info('api_tokens') WHERE name IN ('oauth_client_id', 'oauth_resource')) = 2
+			AND (SELECT COUNT(*) FROM pragma_table_info('oauth_clients') WHERE name = 'resource_uri') = 1
+			AND (SELECT COUNT(*) FROM pragma_table_info('oauth_authorization_codes') WHERE name = 'resource_uri') = 1
+			AND (SELECT COUNT(*) FROM pragma_table_info('oauth_refresh_tokens') WHERE name = 'resource_uri') = 1
+			THEN 1 ELSE 0 END`,
+		CheckPostgres: `SELECT CASE WHEN
+			(SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='api_tokens' AND column_name IN ('oauth_client_id', 'oauth_resource')) = 2
+			AND (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='oauth_clients' AND column_name='resource_uri') = 1
+			AND (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='oauth_authorization_codes' AND column_name='resource_uri') = 1
+			AND (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='oauth_refresh_tokens' AND column_name='resource_uri') = 1
+			THEN 1 ELSE 0 END`,
+		SQLite: `
+			ALTER TABLE api_tokens ADD COLUMN oauth_client_id TEXT;
+			ALTER TABLE api_tokens ADD COLUMN oauth_resource TEXT;
+			ALTER TABLE oauth_clients ADD COLUMN resource_uri TEXT;
+			ALTER TABLE oauth_authorization_codes ADD COLUMN resource_uri TEXT;
+			ALTER TABLE oauth_refresh_tokens ADD COLUMN resource_uri TEXT;
+			UPDATE api_tokens
+			SET oauth_client_id = (
+				SELECT rt.client_id FROM oauth_refresh_tokens rt
+				WHERE rt.api_token_id = api_tokens.id LIMIT 1
+			)
+			WHERE EXISTS (
+				SELECT 1 FROM oauth_refresh_tokens rt WHERE rt.api_token_id = api_tokens.id
+			);
+		`,
+		Postgres: `
+			ALTER TABLE api_tokens ADD COLUMN oauth_client_id TEXT;
+			ALTER TABLE api_tokens ADD COLUMN oauth_resource TEXT;
+			ALTER TABLE oauth_clients ADD COLUMN resource_uri TEXT;
+			ALTER TABLE oauth_authorization_codes ADD COLUMN resource_uri TEXT;
+			ALTER TABLE oauth_refresh_tokens ADD COLUMN resource_uri TEXT;
+			UPDATE api_tokens t
+			SET oauth_client_id = rt.client_id
+			FROM oauth_refresh_tokens rt
+			WHERE rt.api_token_id = t.id;
+		`,
+	},
+	{
 		Version: "20260716_milestone_scope_guard",
 		Name:    "Enforce global and workspace milestone scope consistency",
 		// Fresh databases enforce this invariant with a named table CHECK.

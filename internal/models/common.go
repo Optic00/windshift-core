@@ -90,6 +90,12 @@ type APIToken struct {
 	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
+	// OAuthClientID and OAuthResource are internal token-binding metadata.
+	// They stay empty for user-created PATs and are never exposed through token
+	// management APIs. MCP uses them to reject OAuth tokens minted for another
+	// resource while preserving the existing PAT fallback.
+	OAuthClientID string `json:"-"`
+	OAuthResource string `json:"-"`
 	// Joined fields
 	UserEmail string `json:"user_email,omitempty"`
 	UserName  string `json:"user_name,omitempty"`
@@ -97,11 +103,13 @@ type APIToken struct {
 
 // APITokenCreate represents the request for creating an API token
 type APITokenCreate struct {
-	Name        string     `json:"name"`
-	UserID      *int       `json:"user_id,omitempty"` // Optional: admins can create tokens for other users
-	Permissions []string   `json:"permissions"`
-	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
-	IsTemporary bool       `json:"-"` // Internal-only: hide ephemeral server-minted tokens from user/admin token lists
+	Name          string     `json:"name"`
+	UserID        *int       `json:"user_id,omitempty"` // Optional: admins can create tokens for other users
+	Permissions   []string   `json:"permissions"`
+	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
+	IsTemporary   bool       `json:"-"` // Internal-only: hide ephemeral server-minted tokens from user/admin token lists
+	OAuthClientID string     `json:"-"` // Internal-only: OAuth client that requested this token
+	OAuthResource string     `json:"-"` // Internal-only: RFC 8707 resource audience
 }
 
 // APITokenResponse represents the response when creating an API token

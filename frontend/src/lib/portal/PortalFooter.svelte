@@ -4,13 +4,20 @@
   import { portalStore } from '../stores/portal.svelte.js';
   import { t } from '../stores/i18n.svelte.js';
   import { safeHref } from '../utils/sanitize';
+
+  let hasFooterContent = $derived(
+    portalStore.footerColumns.some(
+      (column) => column.title || column.links.some((link) => link.text && link.url)
+    )
+  );
 </script>
 
 <!-- Footer -->
 <footer class="border-t mt-auto" style="background-color: var(--ds-surface-raised); border-color: var(--ds-border);">
-  <div class="w-full px-6 py-8">
-    <div class="max-w-7xl mx-auto">
+  <div class="w-full px-4 sm:px-6 {portalStore.isEditing || hasFooterContent ? 'py-8' : 'py-4'}">
+    <div class="max-w-6xl mx-auto">
       <!-- 3-Column Footer Layout -->
+      {#if portalStore.isEditing || hasFooterContent}
       <div class="grid grid-cols-1 md:grid-cols-3 gap-8 mb-6">
         {#each portalStore.footerColumns as column, columnIndex}
           <div>
@@ -89,9 +96,10 @@
           </div>
         {/each}
       </div>
+      {/if}
 
       <!-- "Powered by {APP_NAME}" - Not configurable -->
-      <div class="border-t pt-3 text-center" style="border-color: var(--ds-border);">
+      <div class="{portalStore.isEditing || hasFooterContent ? 'border-t pt-3' : ''} text-center" style="border-color: var(--ds-border);">
         <p class="text-xs" style="color: var(--ds-text-subtle);">
           Powered by <a href="https://windshift.sh" target="_blank" rel="noopener noreferrer" class="hover:underline" style="color: var(--ds-text-subtle);">{APP_NAME}</a>
         </p>

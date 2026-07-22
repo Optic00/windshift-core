@@ -1,3 +1,4 @@
+import { SvelteMap } from 'svelte/reactivity';
 import { api } from '../api.js';
 import { BaseCacheStore } from './BaseCacheStore.svelte.js';
 
@@ -11,6 +12,11 @@ const TTL_MS = 10 * 60 * 1000; // 10 minutes
  * Survives view switches (singleton store, not component-local).
  */
 class StatusTransitionStore extends BaseCacheStore {
+  // Transition lookups happen directly while board menus and drop targets
+  // render. Keep this cache reactive so an asynchronous preload immediately
+  // refreshes those consumers instead of waiting for an unrelated item update.
+  _cache = new SvelteMap();
+
   _cacheKey(itemTypeId, statusId) {
     return `${itemTypeId}:${statusId}`;
   }

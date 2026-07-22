@@ -19,34 +19,34 @@
 
 {#if $portalAuthStore.showPasskeyBanner}
   <div
-    class="max-w-2xl mx-auto rounded-lg border p-4 mb-6 flex items-start gap-3"
-    style="background-color: var(--ds-info-subtle, #eff6ff); border-color: var(--ds-info, #93c5fd);"
+    class="rounded-lg border px-4 py-3 mb-6 flex items-center gap-3"
+    style="background-color: var(--ds-surface-card); border-color: var(--ds-border);"
     data-testid="portal-passkey-banner"
   >
     <div
-      class="rounded-full p-2 flex-shrink-0"
-      style="background-color: var(--ds-info, #3b82f6); color: white;"
+      class="rounded-md p-2 flex-shrink-0"
+      style="background-color: var(--ds-info-subtle, #eff6ff); color: var(--ds-text-link);"
     >
       <KeyRound class="w-4 h-4" />
     </div>
-    <div class="flex-1 min-w-0">
-      <div class="text-sm font-medium" style="color: var(--ds-text);">
-        {t('portal.passkeyBannerTitle') || 'Skip the email next time'}
+    <div class="flex-1 min-w-0 sm:flex sm:items-center sm:gap-4">
+      <div class="flex-1 min-w-0">
+        <div class="text-sm font-medium" style="color: var(--ds-text);">
+          {t('portal.passkeyBannerTitle') || 'Skip the email next time'}
+        </div>
+        <div class="text-xs sm:text-sm mt-0.5" style="color: var(--ds-text-subtle);">
+          {t('portal.passkeyBannerBody') ||
+            'Set up a passkey for faster, phishing-resistant sign-in.'}
+        </div>
       </div>
-      <div class="text-sm mt-0.5" style="color: var(--ds-text-subtle);">
-        {t('portal.passkeyBannerBody') ||
-          'Set up a passkey for faster, phishing-resistant sign-in.'}
-      </div>
-      <div class="mt-3 flex items-center gap-3">
-        <button
-          type="button"
-          class="text-sm font-medium hover:underline"
-          style="color: var(--ds-text-link);"
-          onclick={goSetup}
-        >
-          {t('portal.passkeyBannerCta') || 'Set up passkey'}
-        </button>
-      </div>
+      <button
+        type="button"
+        class="mt-2 sm:mt-0 text-sm font-medium whitespace-nowrap hover:underline"
+        style="color: var(--ds-text-link);"
+        onclick={goSetup}
+      >
+        {t('portal.passkeyBannerCta') || 'Set up passkey'}
+      </button>
     </div>
     <button
       type="button"

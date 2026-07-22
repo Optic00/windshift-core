@@ -34,4 +34,16 @@ func RegisterOAuthRoutes(deps *Deps) {
 	// would skip limiting entirely and remove brute-force protection on
 	// client_secret + code. OAuthTokenLimiter is always IP-keyed.
 	api.HandleH("POST /oauth/token", deps.OAuthTokenLimiter.Limit(http.HandlerFunc(deps.Users.OAuth.Token)))
+
+	if !deps.Users.OAuth.MCPDiscoveryEnabled() {
+		return
+	}
+
+	// MCP clients discover these endpoints from the Bearer challenge emitted
+	// by /mcp. Dynamic registration is rate-limited with the same dedicated,
+	// IP-keyed limiter as the token endpoint.
+	api.HandleH("POST /oauth/register", deps.OAuthTokenLimiter.Limit(http.HandlerFunc(deps.Users.OAuth.RegisterDynamicClient)))
+	deps.Mux.Handle("GET /.well-known/oauth-protected-resource", http.HandlerFunc(deps.Users.OAuth.ProtectedResourceMetadata))
+	deps.Mux.Handle("GET /.well-known/oauth-protected-resource/mcp", http.HandlerFunc(deps.Users.OAuth.ProtectedResourceMetadata))
+	deps.Mux.Handle("GET /.well-known/oauth-authorization-server", http.HandlerFunc(deps.Users.OAuth.AuthorizationServerMetadata))
 }

@@ -77,18 +77,32 @@ type OAuthHandler struct {
 	tokenManager      *auth.TokenManager
 	apiToken          *APITokenHandler
 	permissionService *services.PermissionService
+	issuerURL         string
+	mcpResourceURI    string
+	mcpMetadataURI    string
+}
+
+// OAuthServerConfig identifies this Windshift deployment on the OAuth wire.
+// IssuerURL is the externally visible BASE_URL, including any context path.
+type OAuthServerConfig struct {
+	IssuerURL  string
+	MCPEnabled bool
 }
 
 // NewOAuthHandler wires the handler. All deps are required; the routes
 // refuse to register otherwise (see routes/admin.go).
-func NewOAuthHandler(db database.Database, ah *AgentHandler, tm *auth.TokenManager, ath *APITokenHandler, ps *services.PermissionService) *OAuthHandler {
-	return &OAuthHandler{
+func NewOAuthHandler(db database.Database, ah *AgentHandler, tm *auth.TokenManager, ath *APITokenHandler, ps *services.PermissionService, cfg ...OAuthServerConfig) *OAuthHandler {
+	h := &OAuthHandler{
 		db:                db,
 		agent:             ah,
 		tokenManager:      tm,
 		apiToken:          ath,
 		permissionService: ps,
 	}
+	if len(cfg) > 0 {
+		h.configureOAuthServer(cfg[0])
+	}
+	return h
 }
 
 // AuthorizeInfoResponse is the SPA consent page's view of an /authorize
@@ -102,6 +116,7 @@ type AuthorizeInfoResponse struct {
 	State               string   `json:"state"`
 	CodeChallenge       string   `json:"code_challenge,omitempty"`
 	CodeChallengeMethod string   `json:"code_challenge_method,omitempty"`
+	Resource            string   `json:"resource,omitempty"`
 }
 
 // AuthorizeInfo answers the consent page's "what is this request?" query.
@@ -118,6 +133,7 @@ func (h *OAuthHandler) AuthorizeInfo(w http.ResponseWriter, r *http.Request) {
 	state := q.Get("state")
 	codeChallenge := q.Get("code_challenge")
 	codeChallengeMethod := q.Get("code_challenge_method")
+	resource := q.Get("resource")
 
 	if responseType != "code" {
 		respondBadRequest(w, r, "response_type must be 'code'")
@@ -135,6 +151,11 @@ func (h *OAuthHandler) AuthorizeInfo(w http.ResponseWriter, r *http.Request) {
 
 	if !redirectURIAllowed(client.RedirectURIs, redirectURI) {
 		respondBadRequest(w, r, "redirect_uri does not match a registered URI for this client")
+		return
+	}
+	resource, err = h.validateOAuthResource(client, resource)
+	if err != nil {
+		respondBadRequest(w, r, err.Error())
 		return
 	}
 
@@ -172,6 +193,7 @@ func (h *OAuthHandler) AuthorizeInfo(w http.ResponseWriter, r *http.Request) {
 		State:               state,
 		CodeChallenge:       codeChallenge,
 		CodeChallengeMethod: codeChallengeMethod,
+		Resource:            resource,
 	})
 }
 
@@ -187,6 +209,7 @@ type AuthorizeApproveRequest struct {
 	State               string `json:"state"`
 	CodeChallenge       string `json:"code_challenge,omitempty"`
 	CodeChallengeMethod string `json:"code_challenge_method,omitempty"`
+	Resource            string `json:"resource,omitempty"`
 }
 
 // AuthorizeApproveResponse tells the SPA where to send the browser next.
@@ -220,6 +243,11 @@ func (h *OAuthHandler) AuthorizeApprove(w http.ResponseWriter, r *http.Request) 
 	}
 	if !redirectURIAllowed(client.RedirectURIs, req.RedirectURI) {
 		respondBadRequest(w, r, "redirect_uri does not match a registered URI for this client")
+		return
+	}
+	resource, err := h.validateOAuthResource(client, req.Resource)
+	if err != nil {
+		respondBadRequest(w, r, err.Error())
 		return
 	}
 
@@ -275,10 +303,10 @@ func (h *OAuthHandler) AuthorizeApprove(w http.ResponseWriter, r *http.Request) 
 	if _, err := h.db.ExecWrite(`
 		INSERT INTO oauth_authorization_codes (
 			code, client_id, user_id, agent_id, redirect_uri, scopes,
-			code_challenge, code_challenge_method, state, expires_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			code_challenge, code_challenge_method, state, resource_uri, expires_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, code, client.ClientID, user.ID, agent.ID, req.RedirectURI, string(scopesJSON),
-		codeChallenge, codeChallengeMethod, req.State, expires); err != nil {
+		codeChallenge, codeChallengeMethod, req.State, nullStringOrEmpty(resource), expires); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
@@ -287,6 +315,7 @@ func (h *OAuthHandler) AuthorizeApprove(w http.ResponseWriter, r *http.Request) 
 		"client_id": client.ClientID,
 		"scopes":    granted,
 		"agent_id":  agent.ID,
+		"resource":  resource,
 	})
 
 	respondJSONOK(w, AuthorizeApproveResponse{
@@ -320,6 +349,10 @@ func (h *OAuthHandler) AuthorizeDeny(w http.ResponseWriter, r *http.Request) {
 	}
 	if !redirectURIAllowed(client.RedirectURIs, req.RedirectURI) {
 		respondBadRequest(w, r, "redirect_uri does not match a registered URI for this client")
+		return
+	}
+	if _, err := h.validateOAuthResource(client, req.Resource); err != nil {
+		respondBadRequest(w, r, err.Error())
 		return
 	}
 
@@ -418,6 +451,7 @@ func (h *OAuthHandler) tokenAuthorizationCode(w http.ResponseWriter, r *http.Req
 	code := params.Get("code")
 	redirectURI := params.Get("redirect_uri")
 	codeVerifier := params.Get("code_verifier")
+	resource := params.Get("resource")
 
 	if clientID == "" || code == "" || redirectURI == "" {
 		writeOAuthTokenError(w, http.StatusBadRequest, oauthErrInvalidRequest,
@@ -445,6 +479,11 @@ func (h *OAuthHandler) tokenAuthorizationCode(w http.ResponseWriter, r *http.Req
 	if authCode.RedirectURI != redirectURI {
 		writeOAuthTokenError(w, http.StatusBadRequest, oauthErrInvalidGrant,
 			"redirect_uri does not match the value used in /authorize")
+		return
+	}
+	resource, err = matchStoredOAuthResource(authCode.ResourceURI, resource)
+	if err != nil {
+		writeOAuthTokenError(w, http.StatusBadRequest, oauthErrInvalidGrant, err.Error())
 		return
 	}
 
@@ -475,7 +514,7 @@ func (h *OAuthHandler) tokenAuthorizationCode(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	resp, err := h.mintAccessAndRefresh(client, authCode.UserID, authCode.AgentID, scopes)
+	resp, err := h.mintAccessAndRefresh(client, authCode.UserID, authCode.AgentID, scopes, resource)
 	if err != nil {
 		writeOAuthTokenError(w, http.StatusInternalServerError, oauthErrServerError, err.Error())
 		return
@@ -486,6 +525,7 @@ func (h *OAuthHandler) tokenAuthorizationCode(w http.ResponseWriter, r *http.Req
 		"user_id":    authCode.UserID,
 		"agent_id":   authCode.AgentID,
 		"scopes":     scopes,
+		"resource":   resource,
 	})
 
 	respondJSONOK(w, resp)
@@ -499,6 +539,7 @@ func (h *OAuthHandler) tokenRefreshToken(w http.ResponseWriter, r *http.Request,
 	clientID := params.Get("client_id")
 	clientSecret := params.Get("client_secret")
 	refreshPlain := params.Get("refresh_token")
+	resource := params.Get("resource")
 
 	if clientID == "" || refreshPlain == "" {
 		writeOAuthTokenError(w, http.StatusBadRequest, oauthErrInvalidRequest,
@@ -527,6 +568,11 @@ func (h *OAuthHandler) tokenRefreshToken(w http.ResponseWriter, r *http.Request,
 			"refresh_token was issued to a different client")
 		return
 	}
+	resource, err = matchStoredOAuthResource(row.ResourceURI, resource)
+	if err != nil {
+		writeOAuthTokenError(w, http.StatusBadRequest, oauthErrInvalidGrant, err.Error())
+		return
+	}
 
 	// Replay detection — an already-revoked token presented again means the
 	// chain is compromised. Cascade-revoke everything reachable via
@@ -553,7 +599,7 @@ func (h *OAuthHandler) tokenRefreshToken(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	resp, err := h.mintAccessAndRefresh(client, row.UserID, row.AgentID, scopes)
+	resp, err := h.mintAccessAndRefresh(client, row.UserID, row.AgentID, scopes, resource)
 	if err != nil {
 		writeOAuthTokenError(w, http.StatusInternalServerError, oauthErrServerError, err.Error())
 		return
@@ -583,6 +629,7 @@ func (h *OAuthHandler) tokenRefreshToken(w http.ResponseWriter, r *http.Request,
 		"new_refresh_id": newID,
 		"user_id":        row.UserID,
 		"agent_id":       row.AgentID,
+		"resource":       resource,
 	})
 
 	respondJSONOK(w, resp)
@@ -644,16 +691,18 @@ type oauthTokenResponse struct {
 // (30d), inserting a row into oauth_refresh_tokens that points at the
 // access token's api_tokens row. Used by both the authorization-code and
 // refresh-token grant paths.
-func (h *OAuthHandler) mintAccessAndRefresh(client *oauthClientRow, userID, agentID int, scopes []string) (*oauthTokenResponse, error) {
+func (h *OAuthHandler) mintAccessAndRefresh(client *oauthClientRow, userID, agentID int, scopes []string, resource string) (*oauthTokenResponse, error) {
 	// Mint the `crw_…` access token. Bound to the agent (not the human
 	// user) so audit logs and Windshift's per-actor accounting attribute
 	// the actions to the OAuth client identity, not the human directly.
 	expiresAt := time.Now().Add(oauthAccessTTL)
 	tokenName := fmt.Sprintf("oauth-%s", client.Slug)
 	tr, err := h.tokenManager.CreateToken(agentID, models.APITokenCreate{
-		Name:        tokenName,
-		Permissions: scopes,
-		ExpiresAt:   &expiresAt,
+		Name:          tokenName,
+		Permissions:   scopes,
+		ExpiresAt:     &expiresAt,
+		OAuthClientID: client.ClientID,
+		OAuthResource: resource,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to mint access token: %w", err)
@@ -673,10 +722,10 @@ func (h *OAuthHandler) mintAccessAndRefresh(client *oauthClientRow, userID, agen
 	if _, err := h.db.ExecWrite(`
 		INSERT INTO oauth_refresh_tokens (
 			token_hash, api_token_id, client_id, user_id, agent_id,
-			scopes, expires_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?)
+			scopes, resource_uri, expires_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`, refreshHash, tr.APIToken.ID, client.ClientID, userID, agentID,
-		string(scopesJSON), time.Now().Add(oauthRefreshTTL)); err != nil {
+		string(scopesJSON), nullStringOrEmpty(resource), time.Now().Add(oauthRefreshTTL)); err != nil {
 		// Best-effort: revoke the just-minted access token so we don't
 		// leave a live credential stranded if the refresh insert fails.
 		_ = h.tokenManager.AdminRevokeToken(tr.APIToken.ID)
@@ -732,21 +781,23 @@ func (h *OAuthHandler) consumeAuthorizationCode(code string) (*oauthAuthCodeRow,
 		codeChallengeMethod sql.NullString
 		consumedAt          sql.NullTime
 		state               sql.NullString
+		resourceURI         sql.NullString
 	)
 	err := h.db.QueryRow(`
 		SELECT id, code, client_id, user_id, agent_id, redirect_uri, scopes,
-			code_challenge, code_challenge_method, state, expires_at, consumed_at
+			code_challenge, code_challenge_method, state, resource_uri, expires_at, consumed_at
 		FROM oauth_authorization_codes
 		WHERE code = ?
 	`, code).Scan(&row.ID, &row.Code, &row.ClientID, &row.UserID, &row.AgentID,
 		&row.RedirectURI, &row.Scopes, &codeChallenge, &codeChallengeMethod,
-		&state, &row.ExpiresAt, &consumedAt)
+		&state, &resourceURI, &row.ExpiresAt, &consumedAt)
 	if err != nil {
 		return nil, err
 	}
 	row.CodeChallenge = codeChallenge.String
 	row.CodeChallengeMethod = codeChallengeMethod.String
 	row.State = state.String
+	row.ResourceURI = resourceURI.String
 
 	if consumedAt.Valid {
 		return nil, fmt.Errorf("authorization code has already been consumed")
@@ -777,17 +828,19 @@ func (h *OAuthHandler) lookupRefreshToken(plain string) (*oauthRefreshTokenRow, 
 	row := &oauthRefreshTokenRow{}
 	var revokedAt sql.NullTime
 	var rotatedToID sql.NullInt64
+	var resourceURI sql.NullString
 	err := h.db.QueryRow(`
 		SELECT id, token_hash, api_token_id, client_id, user_id, agent_id,
-			scopes, expires_at, revoked_at, rotated_to_id
+			scopes, resource_uri, expires_at, revoked_at, rotated_to_id
 		FROM oauth_refresh_tokens
 		WHERE token_hash = ?
 	`, hashHex).Scan(&row.ID, &row.TokenHash, &row.APITokenID, &row.ClientID,
-		&row.UserID, &row.AgentID, &row.Scopes, &row.ExpiresAt, &revokedAt, &rotatedToID)
+		&row.UserID, &row.AgentID, &row.Scopes, &resourceURI, &row.ExpiresAt, &revokedAt, &rotatedToID)
 	if err != nil {
 		return nil, err
 	}
 	row.RevokedAt = revokedAt
+	row.ResourceURI = resourceURI.String
 	if rotatedToID.Valid {
 		v := int(rotatedToID.Int64)
 		row.RotatedToID = &v
@@ -857,6 +910,7 @@ type oauthClientRow struct {
 	ClientSecretHash string
 	RedirectURIs     []string
 	AllowedScopes    []string
+	ResourceURI      string
 	Enabled          bool
 }
 
@@ -868,14 +922,15 @@ func (h *OAuthHandler) lookupEnabledClientByClientID(clientID string) (*oauthCli
 	}
 	c := &oauthClientRow{}
 	var secretHash sql.NullString
+	var resourceURI sql.NullString
 	var redirectsJSON, scopesJSON string
 	err := h.db.QueryRow(`
 		SELECT id, slug, display_name, client_id, client_type, client_secret_hash,
-			redirect_uris, allowed_scopes, enabled
+			redirect_uris, allowed_scopes, resource_uri, enabled
 		FROM oauth_clients
 		WHERE client_id = ?
 	`, clientID).Scan(&c.ID, &c.Slug, &c.DisplayName, &c.ClientID, &c.ClientType,
-		&secretHash, &redirectsJSON, &scopesJSON, &c.Enabled)
+		&secretHash, &redirectsJSON, &scopesJSON, &resourceURI, &c.Enabled)
 	if err != nil {
 		return nil, err
 	}
@@ -884,6 +939,7 @@ func (h *OAuthHandler) lookupEnabledClientByClientID(clientID string) (*oauthCli
 	}
 	c.HasSecret = secretHash.Valid && secretHash.String != ""
 	c.ClientSecretHash = secretHash.String
+	c.ResourceURI = resourceURI.String
 	if redirectsJSON != "" {
 		_ = json.Unmarshal([]byte(redirectsJSON), &c.RedirectURIs)
 	}
@@ -905,6 +961,7 @@ type oauthAuthCodeRow struct {
 	CodeChallenge       string
 	CodeChallengeMethod string
 	State               string
+	ResourceURI         string
 	ExpiresAt           time.Time
 }
 
@@ -917,6 +974,7 @@ type oauthRefreshTokenRow struct {
 	UserID      int
 	AgentID     int
 	Scopes      string // JSON
+	ResourceURI string
 	ExpiresAt   time.Time
 	RevokedAt   sql.NullTime
 	RotatedToID *int

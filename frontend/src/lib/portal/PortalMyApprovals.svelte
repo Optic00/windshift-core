@@ -1,10 +1,10 @@
 <script>
-  import { X, Clock, ShieldCheck, Check, MessageSquare } from '@lucide/svelte';
+  import { ArrowLeft, Clock, ShieldCheck, Check, MessageSquare, X } from '@lucide/svelte';
   import Spinner from '../components/Spinner.svelte';
   import Badge from '../components/Badge.svelte';
   import Textarea from '../components/Textarea.svelte';
   import Button from '../components/Button.svelte';
-  import EmptyState from '../components/EmptyState.svelte';
+  import PageHeader from '../layout/PageHeader.svelte';
   import { portalStore } from '../stores/portal.svelte.js';
   import { portalAuthStore } from '../stores/portalAuth.svelte.js';
   import { authStore } from '../stores';
@@ -85,12 +85,22 @@
 
     <!-- Approval Detail View -->
     <div class="space-y-4">
-      <!-- Header card -->
-      <div class="p-6 rounded" style="background-color: var(--ds-surface-card); border: 1px solid var(--ds-border);">
-        <div class="flex items-start justify-between mb-4">
+      <button
+        type="button"
+        onclick={() => portalStore.closeApprovalDetail()}
+        class="inline-flex items-center gap-2 text-sm font-medium mb-2 hover:underline"
+        style="color: var(--ds-text-link);"
+        id="portal-approval-close"
+      >
+        <ArrowLeft class="w-4 h-4" />
+        Back to approvals
+      </button>
+
+      <div class="pb-6 border-b" style="border-color: var(--ds-border);">
+        <div class="flex items-start justify-between">
           <div class="flex-1 min-w-0">
             <div class="flex items-center gap-2 mb-2">
-              <span class="text-sm font-medium" style="color: var(--ds-text);">
+              <span class="text-sm font-mono" style="color: var(--ds-text-subtle);">
                 Approval #{req.id}
               </span>
               <Badge size="sm" variant={statusVariant(req.status)}>
@@ -102,15 +112,6 @@
               {#if req.completed_at} · Closed {formatDateTimeLocale(req.completed_at)}{/if}
             </div>
           </div>
-          <button
-            onclick={() => portalStore.closeApprovalDetail()}
-            class="p-2 rounded hover:bg-black/5 transition-colors"
-            style="color: var(--ds-text-subtle);"
-            aria-label="Close approval"
-            id="portal-approval-close"
-          >
-            <X class="w-5 h-5" />
-          </button>
         </div>
       </div>
 
@@ -243,23 +244,33 @@
     </div>
   {:else}
     <!-- Inbox List -->
+    <PageHeader
+      title="My approvals"
+      subtitle="Review requests that are waiting for your decision."
+    />
     {#if portalStore.loadingApprovals}
       <div class="flex justify-center py-12">
         <Spinner size="lg" />
       </div>
     {:else if portalStore.myApprovals.length === 0}
-      <EmptyState
-        icon={ShieldCheck}
-        title="Nothing to approve"
-        description="No approval requests are waiting on your decision."
-      />
+      <div class="max-w-xl py-8 border-t" style="border-color: var(--ds-border);">
+        <div class="flex items-start gap-3">
+          <ShieldCheck class="w-5 h-5 mt-0.5" style="color: var(--ds-text-subtle);" />
+          <div>
+            <h2 class="text-base font-medium" style="color: var(--ds-text);">Nothing to approve</h2>
+            <p class="text-sm mt-1" style="color: var(--ds-text-subtle);">
+              No approval requests are waiting for your decision.
+            </p>
+          </div>
+        </div>
+      </div>
     {:else}
-      <div class="space-y-4" data-testid="portal-approvals-list">
+      <div class="border rounded-md overflow-hidden" style="border-color: var(--ds-border); background-color: var(--ds-surface-card);" data-testid="portal-approvals-list">
         {#each portalStore.myApprovals as approval (approval.id)}
           <button
             onclick={() => portalStore.viewApproval(approval)}
-            class="w-full p-4 rounded text-left transition-all hover:shadow-md"
-            style="background-color: var(--ds-surface-card); border: 1px solid var(--ds-border);"
+            class="w-full p-4 border-b last:border-b-0 text-left transition-colors hover:bg-black/[0.025]"
+            style="border-color: var(--ds-border);"
             data-testid="portal-approval-row"
             id={`portal-approval-row-${approval.id}`}
           >

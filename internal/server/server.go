@@ -1326,6 +1326,14 @@ func (s *Server) initialize() error {
 
 	// Create portal auth middleware (accepts both internal and portal sessions)
 	portalAuthMiddleware := middleware.NewPortalAuthMiddleware(sessionManager, portalSessionManager, cfg.UseProxy, additionalProxyList)
+	oauthHandler := handlers.NewOAuthHandler(
+		s.db,
+		agentHandler,
+		tokenManager,
+		apiTokenHandler,
+		permService,
+		handlers.OAuthServerConfig{IssuerURL: baseURL, MCPEnabled: cfg.MCPEnabled},
+	)
 
 	// Build route dependencies
 	routeDeps := &routes.Deps{
@@ -1425,7 +1433,7 @@ func (s *Server) initialize() error {
 			APIToken:      apiTokenHandler,
 			Agent:         agentHandler,
 			CLIAuth:       handlers.NewCLIAuthHandler(repository.NewCLIAuthRepository(s.db), logger.NewAuditor(s.db), agentHandler, tokenManager, apiTokenHandler, permService),
-			OAuth:         handlers.NewOAuthHandler(s.db, agentHandler, tokenManager, apiTokenHandler, permService),
+			OAuth:         oauthHandler,
 		},
 		Admin: routes.AdminHandlers{
 			SecuritySettings: securitySettingsHandler,
@@ -1584,8 +1592,12 @@ func (s *Server) initialize() error {
 	// MCP Server (Model Context Protocol) — opt-in via --mcp or MCP_ENABLED=true
 	if cfg.MCPEnabled {
 		mcpServer := mcpserver.NewMCPServer(mcpserver.Deps{
-			DB:                    s.db,
-			TokenManager:          tokenManager,
+			DB:           s.db,
+			TokenManager: tokenManager,
+			Auth: mcpserver.AuthConfig{
+				ResourceURI:         oauthHandler.MCPResourceURI(),
+				ResourceMetadataURI: oauthHandler.MCPProtectedResourceMetadataURI(),
+			},
 			PermissionService:     permService,
 			TimePermissionService: timePermissionService,
 			TimerService:          timerService,

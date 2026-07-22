@@ -32,6 +32,24 @@ func withContextPath(next http.Handler, contextPath string) http.Handler {
 			return
 		}
 
+		// RFC 8414 inserts an authorization server issuer path after the
+		// well-known prefix instead of before it. RFC 9728 clients may apply
+		// the same path-aware fallback to a protected resource. Map those two
+		// standardized discovery forms into the internal route tree while all
+		// ordinary Windshift routes remain strictly context-prefixed.
+		if internalPath, ok := contextPathWellKnownRoute(r.URL.Path, contextPath); ok {
+			r2 := r.Clone(r.Context())
+			r2.URL.Path = internalPath
+			r2.URL.RawPath = ""
+			r2.Header = r.Header.Clone()
+			r2.Header.Set(contextPathHeader, contextPath)
+			if r2.Header.Get("X-Forwarded-Prefix") == "" {
+				r2.Header.Set("X-Forwarded-Prefix", contextPath)
+			}
+			next.ServeHTTP(&contextPathResponseWriter{ResponseWriter: w, contextPath: contextPath}, r2)
+			return
+		}
+
 		if !strings.HasPrefix(r.URL.Path, contextPath+"/") {
 			http.NotFound(w, r)
 			return
@@ -58,6 +76,17 @@ func withContextPath(next http.Handler, contextPath string) http.Handler {
 		// carry the context-path prefix.
 		next.ServeHTTP(&contextPathResponseWriter{ResponseWriter: w, contextPath: contextPath}, r2)
 	})
+}
+
+func contextPathWellKnownRoute(path, contextPath string) (string, bool) {
+	switch path {
+	case "/.well-known/oauth-authorization-server" + contextPath:
+		return "/.well-known/oauth-authorization-server", true
+	case "/.well-known/oauth-protected-resource" + contextPath + "/mcp":
+		return "/.well-known/oauth-protected-resource/mcp", true
+	default:
+		return "", false
+	}
 }
 
 // contextPathResponseWriter prefixes the context path onto root-relative

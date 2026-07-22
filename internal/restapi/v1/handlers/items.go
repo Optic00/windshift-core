@@ -298,6 +298,10 @@ func (h *ItemHandler) List(w http.ResponseWriter, r *http.Request) {
 		h.RespondInternalError(w, r)
 		return
 	}
+	if err := repository.NewMilestoneAttachRepository(h.DB).LoadForItemsContext(r.Context(), items); err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
 
 	h.maskProjectNames(user.ID, items)
 

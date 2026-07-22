@@ -1,7 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import { dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter';
-  import { Plus, Trash2, X, Package } from '@lucide/svelte';
+  import { ChevronRight, Plus, Trash2, X, Package } from '@lucide/svelte';
   import { portalStore, iconMap } from '../stores/portal.svelte.js';
   import { t } from '../stores/i18n.svelte.js';
   import { confirm } from '../composables/useConfirm.js';
@@ -116,7 +116,7 @@
 </script>
 
 <!-- Portal Sections -->
-<div class="space-y-12">
+<div class="space-y-10">
   {#each portalStore.portalSections as section, sectionIndex}
     {@const sectionRequestTypes = portalStore.getSectionRequestTypes(section, portalStore.isEditing || (portalStore.showCustomizePanel && portalStore.activeSection === 'request-types'))}
     {@const sectionAssetReports = portalStore.getSectionAssetReports(section, portalStore.isEditing || (portalStore.showCustomizePanel && portalStore.activeSection === 'asset-reports'))}
@@ -186,7 +186,7 @@
                   if (e.key === 'Escape') cancelEditingSection();
                 }}
                 onblur={saveSection}
-                class="text-2xl font-semibold mb-2 bg-transparent border-b-2 focus:outline-none w-full"
+                class="text-xl font-medium mb-1 bg-transparent border-b-2 focus:outline-none w-full"
                 style:border-color="var(--ds-border-focused)"
                 style="color: var(--ds-text);"
                 placeholder="Section title (click to edit)"
@@ -195,7 +195,7 @@
             {:else if section.title}
               <button
                 onclick={() => startEditingSection(section.id, 'title')}
-                class="text-2xl font-semibold mb-2 text-left w-full hover:opacity-70 transition-opacity"
+                class="text-xl font-medium mb-1 text-left w-full hover:opacity-70 transition-opacity"
                 style="color: var(--ds-text);"
               >
                 {section.title}
@@ -210,7 +210,7 @@
               </button>
             {/if}
           {:else if section.title}
-            <h2 class="text-2xl font-semibold mb-2" style="color: var(--ds-text);">
+            <h2 class="text-xl font-medium mb-1" style="color: var(--ds-text);">
               {section.title}
             </h2>
           {/if}
@@ -227,7 +227,7 @@
                   if (e.key === 'Escape') cancelEditingSection();
                 }}
                 onblur={saveSection}
-                class="text-sm mb-6 bg-transparent border-b focus:outline-none w-full"
+                class="text-sm mb-4 bg-transparent border-b focus:outline-none w-full"
                 style:border-color="var(--ds-border-focused)"
                 style="color: var(--ds-text-subtle);"
                 placeholder="Subtitle (optional, click to edit)"
@@ -236,21 +236,21 @@
             {:else}
               <button
                 onclick={() => startEditingSection(section.id, 'subtitle')}
-                class="text-sm mb-6 text-left w-full hover:opacity-70 transition-opacity"
+                class="text-sm mb-4 text-left w-full hover:opacity-70 transition-opacity"
                 style="color: var(--ds-text-subtle);"
               >
                 {section.subtitle || '(Click to add subtitle)'}
               </button>
             {/if}
           {:else if section.subtitle}
-            <p class="text-sm mb-6" style="color: var(--ds-text-subtle);">
+            <p class="text-sm mb-4" style="color: var(--ds-text-subtle);">
               {section.subtitle}
             </p>
           {/if}
 
           <!-- Request Types Grid / Drop Zone -->
           <div
-            class="mt-6 {isDropTarget ? 'min-h-32' : ''} rounded transition-all"
+            class="mt-5 {isDropTarget ? 'min-h-32' : ''} rounded transition-all"
             class:border-2={isDraggingItem && isDropTarget}
             class:border-dashed={isDraggingItem && isDropTarget}
             style="{isDraggingItem && isDropTarget ? `border-color: ${dropZoneStates.get(section.id)?.isOver ? 'var(--ds-status-info-solid)' : 'var(--ds-border)'}; background-color: ${dropZoneStates.get(section.id)?.isOver ? 'var(--ds-status-info-bg)' : 'transparent'}; padding: 0.5rem;` : ''}"
@@ -258,7 +258,7 @@
             data-section-id={section.id}
           >
             {#if gridItems.length > 0}
-              <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {#each gridItems as entry (entry.kind + ':' + entry.item.id)}
                   {@const Icon = iconMap[entry.item.icon] || Package}
                   {@const isAssetForm = entry.kind === 'asset-form'}
@@ -266,7 +266,7 @@
                     type="button"
                     data-testid={isAssetForm ? 'portal-asset-form-card' : 'portal-request-type-card'}
                     id={isAssetForm ? `portal-asset-form-${entry.item.id}` : undefined}
-                    class="appearance-none font-[inherit] text-[inherit] text-left w-full m-0 rounded p-6 border hover:shadow-md transition-shadow cursor-pointer relative group"
+                    class="appearance-none font-[inherit] text-[inherit] text-left w-full m-0 rounded-md p-4 border transition-colors cursor-pointer relative group hover:border-[var(--ds-border-focused)]"
                     style="background-color: var(--ds-surface-card); border-color: var(--ds-border);"
                     onclick={() => isAssetForm ? onOpenAssetReportForm(entry.item) : onOpenRequestForm(entry.item)}
                   >
@@ -299,25 +299,33 @@
                         <X class="w-3 h-3" />
                       </span>
                     {/if}
-                    <div class="w-12 h-12 rounded mb-4 flex items-center justify-center" style="background-color: {entry.item.color || '#6b7280'};">
-                      <Icon size={24} color="white" />
+                    <div class="flex items-start gap-3.5 pr-5">
+                      <div
+                        class="w-9 h-9 rounded-md flex items-center justify-center flex-none"
+                        style="color: {entry.item.color || 'var(--ds-text-subtle)'}; background-color: color-mix(in srgb, {entry.item.color || 'var(--ds-text-subtle)'} 12%, transparent);"
+                      >
+                        <Icon size={18} />
+                      </div>
+                      <div class="min-w-0 flex-1">
+                        <div class="text-sm font-medium leading-5 flex items-center gap-2" style="color: var(--ds-text);">
+                          {entry.item.name}
+                          {#if !entry.item.is_active}
+                            <span
+                              class="px-1.5 py-0.5 text-[10px] font-medium rounded"
+                              style="background-color: var(--ds-background-neutral); color: var(--ds-text-subtle);"
+                            >
+                              INACTIVE
+                            </span>
+                          {/if}
+                        </div>
+                        {#if entry.item.description}
+                          <p class="text-sm mt-1.5 line-clamp-2 leading-5" style="color: var(--ds-text-subtle);">
+                            {entry.item.description}
+                          </p>
+                        {/if}
+                      </div>
+                      <ChevronRight class="w-4 h-4 mt-2 flex-none" style="color: var(--ds-text-subtle);" />
                     </div>
-                    <div class="font-medium mb-2 flex items-center gap-2" style="color: var(--ds-text);">
-                      {entry.item.name}
-                      {#if !entry.item.is_active}
-                        <span
-                          class="px-1.5 py-0.5 text-[10px] font-medium rounded"
-                          style="background-color: {portalStore.isDarkMode ? 'rgba(156, 163, 175, 0.2)' : '#f3f4f6'}; color: {portalStore.isDarkMode ? '#9ca3af' : '#6b7280'};"
-                        >
-                          INACTIVE
-                        </span>
-                      {/if}
-                    </div>
-                    {#if entry.item.description}
-                      <p class="text-sm" style="color: var(--ds-text-subtle);">
-                        {entry.item.description}
-                      </p>
-                    {/if}
                   </button>
                 {/each}
               </div>

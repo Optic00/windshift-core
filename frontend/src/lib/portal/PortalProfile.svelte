@@ -15,6 +15,7 @@
   import Button from '../components/Button.svelte';
   import AlertBox from '../components/AlertBox.svelte';
   import ModalBackdrop from '../components/ModalBackdrop.svelte';
+  import PageHeader from '../layout/PageHeader.svelte';
 
   let credentials = $state([]);
   let loadingCredentials = $state(false);
@@ -134,7 +135,7 @@
   }
 </script>
 
-<div class="max-w-3xl mx-auto px-4 py-8">
+<div class="max-w-4xl">
   <button
     onclick={backToPortal}
     class="flex items-center gap-2 text-sm mb-6 hover:underline"
@@ -144,17 +145,15 @@
     {t('portal.backToPortal') || 'Back to portal'}
   </button>
 
-  <h1 class="text-3xl font-bold mb-1" style="color: var(--ds-text);">
-    {t('portal.profileTitle') || 'Profile'}
-  </h1>
-  <p class="text-sm mb-8" style="color: var(--ds-text-subtle);">
-    {t('portal.profileSubtitle') || 'Manage how you sign in to this portal.'}
-  </p>
+  <PageHeader
+    title={t('portal.profileTitle') || 'Profile'}
+    subtitle={t('portal.profileSubtitle') || 'Manage how you sign in to this portal.'}
+  />
 
   <!-- Profile section -->
   <section
-    class="rounded-lg border p-6 mb-8"
-    style="background-color: var(--ds-surface-card); border-color: var(--ds-border);"
+    class="pt-7 mt-7 border-t"
+    style="border-color: var(--ds-border);"
   >
     <h2 class="text-lg font-semibold mb-4" style="color: var(--ds-text);">
       {t('portal.profileSection') || 'Account'}
@@ -179,10 +178,10 @@
 
   <!-- Security / passkeys section -->
   <section
-    class="rounded-lg border p-6"
-    style="background-color: var(--ds-surface-card); border-color: var(--ds-border);"
+    class="pt-8 mt-8 border-t"
+    style="border-color: var(--ds-border);"
   >
-    <div class="flex items-start justify-between gap-4 mb-1">
+    <div class="flex flex-col sm:flex-row sm:items-start justify-between gap-4 mb-1">
       <div>
         <h2 class="text-lg font-semibold flex items-center gap-2" style="color: var(--ds-text);">
           <ShieldCheck class="w-5 h-5" />
@@ -227,11 +226,14 @@
         {t('common.loading') || 'Loading…'}
       </p>
     {:else if credentials.length === 0}
-      <div class="mt-6 py-8 text-center border-2 border-dashed rounded" style="border-color: var(--ds-border);">
-        <KeyRound class="w-8 h-8 mx-auto mb-2" style="color: var(--ds-text-subtle);" />
-        <p class="text-sm" style="color: var(--ds-text-subtle);">
-          {t('portal.noPasskeys') || 'No passkeys yet.'}
-        </p>
+      <div class="mt-6 py-5 flex items-start gap-3">
+        <KeyRound class="w-5 h-5 mt-0.5" style="color: var(--ds-text-subtle);" />
+        <div>
+          <h3 class="font-medium" style="color: var(--ds-text);">No passkeys yet</h3>
+          <p class="text-sm mt-1" style="color: var(--ds-text-subtle);">
+            Add a passkey to sign in without waiting for an email link.
+          </p>
+        </div>
       </div>
     {:else}
       <ul class="mt-4 divide-y" style="border-color: var(--ds-border);" data-testid="portal-passkey-list">

@@ -1,5 +1,5 @@
 <script>
-  import { X, Mail, User, Lock, Building2, KeyRound } from '@lucide/svelte';
+  import { X, Mail, Lock, KeyRound } from '@lucide/svelte';
   import { portalStore } from '../stores/portal.svelte.js';
   import { portalAuthStore } from '../stores/portalAuth.svelte.js';
   import { authStore } from '../stores';
@@ -7,6 +7,7 @@
   import { isWebAuthnSupported } from '../utils/webauthn-utils.js';
   import Button from '../components/Button.svelte';
   import AlertBox from '../components/AlertBox.svelte';
+  import ModalBackdrop from '../components/ModalBackdrop.svelte';
 
   let { onloginsuccess } = $props();
 
@@ -15,6 +16,7 @@
   let loginMode = $state('magic'); // 'magic' or 'internal'
   let internalError = $state('');
   let passkeySupported = $state(false);
+  let hasPortalVisual = $derived(portalStore.hasBackgroundImage || portalStore.hasGradient);
 
   // Browser support is decided client-side only; default to false during SSR.
   $effect(() => {
@@ -105,147 +107,87 @@
     authStore.clearError();
   }
 
-  function handleBackdropClick(e) {
-    if (e.target === e.currentTarget) {
-      closeModal();
-    }
-  }
-
-  function handleKeydown(e) {
-    if (e.key === 'Escape') {
-      closeModal();
-    }
-  }
-
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
-
 {#if portalStore.showLoginDialog}
-  <!-- Modal Backdrop -->
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <div
-    class="fixed inset-0 z-50 flex items-center justify-center p-4"
-    style="background-color: rgba(0, 0, 0, 0.4); backdrop-filter: blur(8px);"
-    role="presentation"
-    onclick={handleBackdropClick}
+  <ModalBackdrop
+    show={portalStore.showLoginDialog}
+    opacity={0.38}
+    blur={2}
+    ariaLabelledBy="portal-login-title"
+    onclose={closeModal}
   >
-    <!-- Modal Content -->
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
-      class="w-full max-w-md rounded-2xl shadow-2xl overflow-hidden"
-      style="background-color: {portalStore.isDarkMode ? '#1e293b' : '#ffffff'};"
-      onclick={(e) => e.stopPropagation()}
+      class="w-full max-w-md rounded-lg border shadow-xl overflow-hidden"
+      style="background-color: var(--ds-surface-card); border-color: var(--ds-border);"
     >
       {#if $portalAuthStore.emailSent}
-        <!-- Email Sent Confirmation - Gradient Header -->
-        <div
-          class="px-8 py-12 text-white text-center relative"
-          style="{portalStore.headerBackgroundStyle}"
-        >
-          <div class="absolute top-4 right-4">
-            <button
-              type="button"
-              onclick={closeModal}
-              class="p-2 rounded hover:bg-white/10 transition-all"
-            >
+        <div class="p-6 sm:p-7">
+          <div
+            class="-mx-6 sm:-mx-7 -mt-6 sm:-mt-7 px-6 sm:px-7 py-5 flex items-start justify-between gap-4 mb-6 border-b"
+            style="{hasPortalVisual ? portalStore.headerBackgroundStyle : 'background-color: var(--ds-surface-card);'} border-color: {hasPortalVisual ? 'rgba(255,255,255,0.18)' : 'var(--ds-border)'};"
+          >
+            <div class="flex items-start gap-3">
+              <div class="w-9 h-9 rounded-md flex items-center justify-center" style="background-color: {hasPortalVisual ? 'rgba(255,255,255,0.14)' : 'var(--ds-background-neutral)'}; color: {hasPortalVisual ? '#ffffff' : 'var(--ds-text)'};">
+                <Mail class="w-4 h-4" />
+              </div>
+              <div>
+                <h2 id="portal-login-title" class="text-xl font-semibold" style="color: {hasPortalVisual ? '#ffffff' : 'var(--ds-text)'};">{t('portal.checkYourEmail')}</h2>
+                <p class="text-sm mt-1" style="color: {hasPortalVisual ? 'rgba(255,255,255,0.82)' : 'var(--ds-text-subtle)'};">{t('portal.magicLinkSent')}</p>
+              </div>
+            </div>
+            <button type="button" onclick={closeModal} class="modal-close" style="color: {hasPortalVisual ? 'rgba(255,255,255,0.88)' : 'var(--ds-text-subtle)'};" aria-label="Close">
               <X class="w-5 h-5" />
             </button>
           </div>
-
-          <div class="flex justify-center mb-4">
-            <div class="w-16 h-16 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center">
-              <Mail class="w-8 h-8 text-white" />
-            </div>
-          </div>
-          <h2 class="text-2xl font-bold">{t('portal.checkYourEmail')}</h2>
-          <p class="text-white/80 mt-2">{t('portal.magicLinkSent')}</p>
-        </div>
-
-        <!-- Confirmation Content -->
-        <div class="px-8 py-6 text-center">
-          <p class="text-sm mb-6" style="color: {portalStore.isDarkMode ? '#94a3b8' : '#6b7280'};">
+          <p class="text-sm mb-5" style="color: var(--ds-text-subtle);">
             {t('portal.linkExpiresIn')}
           </p>
           <button
             onclick={() => { portalAuthStore.resetEmailSent(); email = ''; }}
-            class="text-sm font-medium transition-colors hover:underline"
+            class="text-sm font-medium hover:underline"
             style="color: var(--ds-text-link);"
           >
             {t('portal.useAnotherEmail')}
           </button>
         </div>
-
       {:else if loginMode === 'magic'}
-        <!-- Magic Link Login Form - Gradient Header -->
-        <div
-          class="px-8 py-12 text-white text-center relative"
-          style="{portalStore.headerBackgroundStyle}"
-        >
-          <div class="absolute top-4 right-4">
-            <button
-              type="button"
-              onclick={closeModal}
-              class="p-2 rounded hover:bg-white/10 transition-all"
-            >
+        <div class="p-6 sm:p-7">
+          <div
+            class="-mx-6 sm:-mx-7 -mt-6 sm:-mt-7 px-6 sm:px-7 py-5 flex items-start justify-between gap-4 mb-6 border-b"
+            style="{hasPortalVisual ? portalStore.headerBackgroundStyle : 'background-color: var(--ds-surface-card);'} border-color: {hasPortalVisual ? 'rgba(255,255,255,0.18)' : 'var(--ds-border)'};"
+          >
+            <div>
+              <h2 id="portal-login-title" class="text-xl font-semibold" style="color: {hasPortalVisual ? '#ffffff' : 'var(--ds-text)'};">{t('portal.signInTitle')}</h2>
+              <p class="text-sm mt-1 leading-relaxed" style="color: {hasPortalVisual ? 'rgba(255,255,255,0.82)' : 'var(--ds-text-subtle)'};">{t('portal.signInDescription')}</p>
+            </div>
+            <button type="button" onclick={closeModal} class="modal-close" style="color: {hasPortalVisual ? 'rgba(255,255,255,0.88)' : 'var(--ds-text-subtle)'};" aria-label="Close">
               <X class="w-5 h-5" />
             </button>
           </div>
 
-          <div class="flex justify-center mb-4">
-            <div class="w-16 h-16 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center">
-              <User class="w-8 h-8 text-white" />
-            </div>
-          </div>
-          <h2 class="text-2xl font-bold">{t('portal.signInTitle')}</h2>
-          <p class="text-white/80 mt-2">{t('portal.signInDescription')}</p>
-        </div>
-
-        <!-- Form Content -->
-        <div class="px-8 py-6">
           {#if $portalAuthStore.error}
             <AlertBox variant="error" message={$portalAuthStore.error} class="mb-4" />
           {/if}
 
-          {#if passkeySupported}
-            <Button
-              variant="secondary"
-              type="button"
-              fullWidth={true}
-              loading={$portalAuthStore.loading}
-              disabled={$portalAuthStore.loading}
-              onclick={handlePasskeyLogin}
-              dataTestid="portal-passkey-login"
-            >
-              <KeyRound class="w-4 h-4 mr-2" />
-              {t('portal.signInWithPasskey') || 'Sign in with passkey'}
-            </Button>
-
-            <div class="my-4 flex items-center gap-3 text-xs uppercase tracking-wide" style="color: {portalStore.isDarkMode ? '#94a3b8' : '#9ca3af'};">
-              <span class="flex-1 h-px" style="background-color: {portalStore.isDarkMode ? '#475569' : '#e5e7eb'};"></span>
-              <span>{t('portal.orSignInWithEmail') || 'or sign in with email'}</span>
-              <span class="flex-1 h-px" style="background-color: {portalStore.isDarkMode ? '#475569' : '#e5e7eb'};"></span>
-            </div>
-          {/if}
-
           <form onsubmit={handleMagicLinkSubmit} class="space-y-4">
             <div>
-              <label for="email" class="block text-sm font-medium mb-2" style="color: {portalStore.isDarkMode ? '#e2e8f0' : '#374151'};">
+              <label for="email" class="block text-sm font-medium mb-2" style="color: var(--ds-text);">
                 {t('common.email')}
               </label>
               <div class="relative">
                 <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Mail class="h-4 w-4" style="color: {portalStore.isDarkMode ? '#64748b' : '#9ca3af'};" />
+                  <Mail class="h-4 w-4" style="color: var(--ds-text-subtle);" />
                 </div>
                 <input
                   id="email"
+                  data-autofocus
                   type="email"
                   bind:value={email}
                   placeholder={t('portal.enterEmail')}
                   required
-                  class="block w-full pl-10 pr-3 py-2.5 rounded leading-5 focus:outline-none focus:ring-2 focus:ring-offset-0 transition-all"
-                  style="background-color: {portalStore.isDarkMode ? '#334155' : '#f9fafb'}; color: {portalStore.isDarkMode ? '#e2e8f0' : '#111827'}; border: 1px solid {portalStore.isDarkMode ? '#475569' : '#e5e7eb'};"
+                  class="block w-full pl-10 pr-3 py-2.5 rounded-md border leading-5 focus:outline-none focus:ring-2"
+                  style="background-color: var(--ds-surface); color: var(--ds-text); border-color: var(--ds-border);"
                   disabled={$portalAuthStore.loading}
                 />
               </div>
@@ -266,82 +208,89 @@
             </Button>
           </form>
 
-          <p class="mt-6 text-center text-sm" style="color: {portalStore.isDarkMode ? '#94a3b8' : '#6b7280'};">
+          <p class="mt-4 text-xs" style="color: var(--ds-text-subtle);">
             {t('portal.noAccountNeeded')}
           </p>
 
-          <!-- Internal login option -->
-          <div class="mt-6 pt-4 border-t" style="border-color: {portalStore.isDarkMode ? '#475569' : '#e5e7eb'};">
+          {#if passkeySupported}
+            <div class="my-5 flex items-center gap-3 text-xs" style="color: var(--ds-text-subtle);">
+              <span class="flex-1 h-px" style="background-color: var(--ds-border);"></span>
+              <span>or</span>
+              <span class="flex-1 h-px" style="background-color: var(--ds-border);"></span>
+            </div>
+            <Button
+              variant="secondary"
+              type="button"
+              fullWidth={true}
+              loading={$portalAuthStore.loading}
+              disabled={$portalAuthStore.loading}
+              onclick={handlePasskeyLogin}
+              dataTestid="portal-passkey-login"
+            >
+              <KeyRound class="w-4 h-4 mr-2" />
+              {t('portal.signInWithPasskey') || 'Sign in with passkey'}
+            </Button>
+          {/if}
+
+          <div class="mt-6 pt-4 border-t" style="border-color: var(--ds-border);">
             <button
               onclick={switchToInternal}
-              class="w-full flex items-center justify-center gap-2 text-sm transition-colors hover:underline"
-              style="color: {portalStore.isDarkMode ? '#94a3b8' : '#6b7280'};"
+              class="text-sm hover:underline"
+              style="color: var(--ds-text-subtle);"
             >
-              <Building2 class="w-4 h-4" />
               {t('portal.internalSignIn')}
             </button>
           </div>
         </div>
-
       {:else}
-        <!-- Internal Login Form - Gradient Header -->
-        <div
-          class="px-8 py-12 text-white text-center relative"
-          style="{portalStore.headerBackgroundStyle}"
-        >
-          <div class="absolute top-4 right-4">
-            <button
-              type="button"
-              onclick={closeModal}
-              class="p-2 rounded hover:bg-white/10 transition-all"
-            >
+        <div class="p-6 sm:p-7">
+          <div
+            class="-mx-6 sm:-mx-7 -mt-6 sm:-mt-7 px-6 sm:px-7 py-5 flex items-start justify-between gap-4 mb-6 border-b"
+            style="{hasPortalVisual ? portalStore.headerBackgroundStyle : 'background-color: var(--ds-surface-card);'} border-color: {hasPortalVisual ? 'rgba(255,255,255,0.18)' : 'var(--ds-border)'};"
+          >
+            <div>
+              <div class="text-xs font-semibold uppercase tracking-[0.14em] mb-2" style="color: {hasPortalVisual ? 'rgba(255,255,255,0.72)' : 'var(--ds-text-subtle)'};">Windshift staff</div>
+              <h2 id="portal-login-title" class="text-xl font-semibold" style="color: {hasPortalVisual ? '#ffffff' : 'var(--ds-text)'};">{t('portal.internalSignIn')}</h2>
+            </div>
+            <button type="button" onclick={closeModal} class="modal-close" style="color: {hasPortalVisual ? 'rgba(255,255,255,0.88)' : 'var(--ds-text-subtle)'};" aria-label="Close">
               <X class="w-5 h-5" />
             </button>
           </div>
 
-          <div class="flex justify-center mb-4">
-            <div class="w-16 h-16 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center">
-              <Building2 class="w-8 h-8 text-white" />
-            </div>
-          </div>
-          <h2 class="text-2xl font-bold">{t('portal.internalSignIn')}</h2>
-        </div>
-
-        <!-- Form Content -->
-        <div class="px-8 py-6">
           {#if internalError}
             <AlertBox variant="error" message={internalError} class="mb-4" />
           {/if}
 
           <form onsubmit={handleInternalSubmit} class="space-y-4">
             <div>
-              <label for="internal-email" class="block text-sm font-medium mb-2" style="color: {portalStore.isDarkMode ? '#e2e8f0' : '#374151'};">
+              <label for="internal-email" class="block text-sm font-medium mb-2" style="color: var(--ds-text);">
                 {t('common.email')}
               </label>
               <div class="relative">
                 <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Mail class="h-4 w-4" style="color: {portalStore.isDarkMode ? '#64748b' : '#9ca3af'};" />
+                  <Mail class="h-4 w-4" style="color: var(--ds-text-subtle);" />
                 </div>
                 <input
                   id="internal-email"
+                  data-autofocus
                   type="text"
                   bind:value={email}
                   placeholder={t('portal.enterEmail')}
                   required
-                  class="block w-full pl-10 pr-3 py-2.5 rounded leading-5 focus:outline-none focus:ring-2 focus:ring-offset-0 transition-all"
-                  style="background-color: {portalStore.isDarkMode ? '#334155' : '#f9fafb'}; color: {portalStore.isDarkMode ? '#e2e8f0' : '#111827'}; border: 1px solid {portalStore.isDarkMode ? '#475569' : '#e5e7eb'};"
+                  class="block w-full pl-10 pr-3 py-2.5 rounded-md border leading-5 focus:outline-none focus:ring-2"
+                  style="background-color: var(--ds-surface); color: var(--ds-text); border-color: var(--ds-border);"
                   disabled={authStore.loading}
                 />
               </div>
             </div>
 
             <div>
-              <label for="password" class="block text-sm font-medium mb-2" style="color: {portalStore.isDarkMode ? '#e2e8f0' : '#374151'};">
+              <label for="password" class="block text-sm font-medium mb-2" style="color: var(--ds-text);">
                 {t('portal.password')}
               </label>
               <div class="relative">
                 <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Lock class="h-4 w-4" style="color: {portalStore.isDarkMode ? '#64748b' : '#9ca3af'};" />
+                  <Lock class="h-4 w-4" style="color: var(--ds-text-subtle);" />
                 </div>
                 <input
                   id="password"
@@ -349,8 +298,8 @@
                   bind:value={password}
                   placeholder={t('portal.enterPassword')}
                   required
-                  class="block w-full pl-10 pr-3 py-2.5 rounded leading-5 focus:outline-none focus:ring-2 focus:ring-offset-0 transition-all"
-                  style="background-color: {portalStore.isDarkMode ? '#334155' : '#f9fafb'}; color: {portalStore.isDarkMode ? '#e2e8f0' : '#111827'}; border: 1px solid {portalStore.isDarkMode ? '#475569' : '#e5e7eb'};"
+                  class="block w-full pl-10 pr-3 py-2.5 rounded-md border leading-5 focus:outline-none focus:ring-2"
+                  style="background-color: var(--ds-surface); color: var(--ds-text); border-color: var(--ds-border);"
                   disabled={authStore.loading}
                 />
               </div>
@@ -367,12 +316,11 @@
             </Button>
           </form>
 
-          <!-- Back to magic link option -->
-          <div class="mt-6 pt-4 border-t" style="border-color: {portalStore.isDarkMode ? '#475569' : '#e5e7eb'};">
+          <div class="mt-6 pt-4 border-t" style="border-color: var(--ds-border);">
             <button
               onclick={switchToMagicLink}
-              class="w-full flex items-center justify-center gap-2 text-sm transition-colors hover:underline"
-              style="color: {portalStore.isDarkMode ? '#94a3b8' : '#6b7280'};"
+              class="flex items-center gap-2 text-sm hover:underline"
+              style="color: var(--ds-text-subtle);"
             >
               <Mail class="w-4 h-4" />
               {t('portal.backToMagicLink')}
@@ -381,5 +329,19 @@
         </div>
       {/if}
     </div>
-  </div>
+  </ModalBackdrop>
 {/if}
+
+<style>
+  .modal-close {
+    flex: none;
+    padding: 0.375rem;
+    border-radius: 0.375rem;
+    color: var(--ds-text-subtle);
+    transition: background-color 120ms ease;
+  }
+
+  .modal-close:hover {
+    background-color: var(--ds-background-neutral);
+  }
+</style>

@@ -18,6 +18,7 @@ import (
 type Deps struct {
 	DB                    database.Database
 	TokenManager          *auth.TokenManager
+	Auth                  AuthConfig
 	PermissionService     *services.PermissionService
 	TimePermissionService *services.TimePermissionService
 	TimerService          *services.TimerService
@@ -62,7 +63,7 @@ func NewMCPServer(deps Deps) *MCPServer {
 		},
 	)
 
-	ms.handler = bearerAuthMiddleware(deps.TokenManager, streamHandler)
+	ms.handler = bearerAuthMiddlewareWithConfig(deps.TokenManager, deps.Auth, streamHandler)
 
 	return ms
 }

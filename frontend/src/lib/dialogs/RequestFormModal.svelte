@@ -10,7 +10,7 @@
   import AlertBox from '../components/AlertBox.svelte';
   import Label from '../components/Label.svelte';
   import PortalModal from './PortalModal.svelte';
-  import { ChevronLeft, ChevronRight, Package, X, Check } from '@lucide/svelte';
+  import { ChevronLeft, ChevronRight, Package, X } from '@lucide/svelte';
   import BasePicker from '../pickers/BasePicker.svelte';
   import { t } from '../stores/i18n.svelte.js';
 
@@ -58,6 +58,7 @@
   let totalSteps = $derived(steps.length);
   let isLastStep = $derived(currentStep === Math.max(...steps));
   let isFirstStep = $derived(currentStep === Math.min(...steps));
+  let hasPortalVisual = $derived(portalStore.hasBackgroundImage || portalStore.hasGradient);
 
 
   // Load fields when modal opens
@@ -413,61 +414,49 @@
     bodyClass=""
     onClose={handleClose}
   >
-    <!-- Gradient Header with Integrated Stepper -->
+    <!-- Compact task header -->
     {@const RequestTypeIcon = iconMap[requestType?.icon] || Package}
     <div
-      class="px-8 pt-8 pb-6 text-white text-center relative"
-      style="{portalStore.headerBackgroundStyle}"
+      class="px-5 sm:px-6 py-5 border-b flex items-start gap-3 relative"
+      style="{hasPortalVisual
+        ? portalStore.headerBackgroundStyle
+        : 'background-color: var(--ds-surface-card);'} border-color: {hasPortalVisual
+        ? 'rgba(255,255,255,0.18)'
+        : 'var(--ds-border)'};"
     >
-      <!-- Close button -->
+      <div
+        class="w-9 h-9 rounded-md flex items-center justify-center flex-none"
+        style="background-color: {hasPortalVisual ? 'rgba(255,255,255,0.14)' : 'var(--ds-background-neutral)'}; color: {hasPortalVisual ? '#ffffff' : 'var(--ds-text-subtle)'};"
+      >
+        <RequestTypeIcon class="w-[18px] h-[18px]" />
+      </div>
+      <div class="min-w-0 flex-1 pr-8">
+        <h2 class="text-lg font-semibold leading-6" style="color: {hasPortalVisual ? '#ffffff' : 'var(--ds-text)'};">{requestType?.name}</h2>
+        {#if requestType?.description}
+          <p class="mt-1 text-sm leading-5" style="color: {hasPortalVisual ? 'rgba(255,255,255,0.82)' : 'var(--ds-text-subtle)'};">{requestType.description}</p>
+        {/if}
+        {#if totalSteps > 1}
+          <div class="mt-3 flex items-center gap-3">
+            <span class="text-xs font-medium" style="color: {hasPortalVisual ? 'rgba(255,255,255,0.82)' : 'var(--ds-text-subtle)'};">
+              Step {steps.indexOf(currentStep) + 1} of {totalSteps}
+            </span>
+            <div class="h-1 flex-1 max-w-32 rounded-full overflow-hidden" style="background-color: {hasPortalVisual ? 'rgba(255,255,255,0.28)' : 'var(--ds-background-neutral)'};">
+              <div
+                class="h-full rounded-full transition-all"
+                style="width: {((steps.indexOf(currentStep) + 1) / totalSteps) * 100}%; background-color: {hasPortalVisual ? '#ffffff' : 'var(--ds-interactive, #2563eb)'};"
+              ></div>
+            </div>
+          </div>
+        {/if}
+      </div>
       <button
         onclick={handleClose}
-        class="absolute top-4 right-4 p-2 rounded-full hover:bg-white/20 transition-all"
+        class="absolute top-4 right-4 p-1.5 rounded-md transition-colors"
+        style="color: {hasPortalVisual ? 'rgba(255,255,255,0.88)' : 'var(--ds-text-subtle)'};"
         aria-label="Close"
       >
         <X class="w-5 h-5" />
       </button>
-
-      <!-- Icon -->
-      <div class="flex justify-center mb-3">
-        <div class="w-14 h-14 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center">
-          <RequestTypeIcon class="w-7 h-7 text-white" />
-        </div>
-      </div>
-
-      <!-- Title -->
-      <h2 class="text-xl font-bold">{requestType?.name}</h2>
-      {#if requestType?.description}
-        <p class="text-white/80 mt-1 text-sm">{requestType.description}</p>
-      {/if}
-
-      <!-- Integrated Stepper (white theme for gradient background) -->
-      {#if totalSteps > 1}
-        <div class="mt-6 flex items-center justify-center gap-2">
-          {#each steps as step, index}
-            {@const isCompleted = index + 1 < currentStep}
-            {@const isCurrent = index + 1 === currentStep}
-            <div class="flex items-center">
-              <div
-                class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-all"
-                style="background: {isCurrent || isCompleted ? 'white' : 'rgba(255,255,255,0.3)'}; color: {isCurrent || isCompleted ? '#667eea' : 'white'};"
-              >
-                {#if isCompleted}
-                  <Check class="w-4 h-4" />
-                {:else}
-                  {index + 1}
-                {/if}
-              </div>
-              {#if index < steps.length - 1}
-                <div
-                  class="w-8 h-0.5 mx-1"
-                  style="background: {isCompleted ? 'white' : 'rgba(255,255,255,0.3)'};"
-                ></div>
-              {/if}
-            </div>
-          {/each}
-        </div>
-      {/if}
     </div>
 
     <!-- Form Body -->
@@ -480,7 +469,7 @@
         <AlertBox variant="success" message={t('requestForm.requestSubmittedSuccess')} />
       </div>
     {:else}
-      <div class="px-6 py-4 max-h-[50vh] overflow-y-auto">
+      <div class="px-5 sm:px-6 py-5 sm:py-6 max-h-[60vh] overflow-y-auto">
         {#if error}
           <AlertBox variant="error" message={error} class="mb-4" />
         {/if}
@@ -488,17 +477,17 @@
         {#if resumedDraft && portalSlug}
           <div
             data-testid="request-form-draft-resume-banner"
-            class="mb-4 p-3 rounded border flex items-center justify-between gap-3"
-            style="background-color: {isDarkMode ? 'rgba(245, 158, 11, 0.1)' : '#fffbeb'}; border-color: {isDarkMode ? 'rgba(245, 158, 11, 0.3)' : '#fde68a'};"
+            class="mb-5 pb-4 border-b flex items-center justify-between gap-3"
+            style="border-color: var(--ds-border);"
           >
-            <p class="text-sm" style="color: {isDarkMode ? '#fcd34d' : '#92400e'};">
+            <p class="text-sm" style="color: var(--ds-text-subtle);">
               {t('portal.draftResumeBanner')}
             </p>
             <button
               type="button"
               onclick={startFreshFromDraft}
-              class="text-sm font-medium underline whitespace-nowrap"
-              style="color: {isDarkMode ? '#fcd34d' : '#92400e'};"
+              class="text-sm font-medium hover:underline whitespace-nowrap"
+              style="color: var(--ds-text-link);"
             >
               {t('portal.draftStartFresh')}
             </button>
@@ -648,8 +637,8 @@
                with customer null; a portal customer populates `customer` with
                user null. Handle both, plus the standalone authStore. -->
           {#if isLastStep && ((authStore.isAuthenticated && authStore.currentUser) || ($portalAuthStore.isAuthenticated && ($portalAuthStore.user || $portalAuthStore.customer)))}
-            <div class="p-3 rounded border" style="background-color: {isDarkMode ? 'rgba(59, 130, 246, 0.1)' : '#eff6ff'}; border-color: {isDarkMode ? 'rgba(59, 130, 246, 0.3)' : '#bfdbfe'};">
-              <p class="text-sm" style="color: {isDarkMode ? '#93c5fd' : '#1e40af'};">
+            <div class="pt-4 border-t" style="border-color: var(--ds-border);">
+              <p class="text-xs" style="color: var(--ds-text-subtle);">
                 {#if authStore.isAuthenticated && authStore.currentUser}
                   {t('requestForm.submittingAs', { name: `${authStore.currentUser?.first_name} ${authStore.currentUser?.last_name}`, email: authStore.currentUser?.email })}
                 {:else if $portalAuthStore.isAuthenticated && $portalAuthStore.user}
@@ -665,7 +654,7 @@
 
       <!-- Footer with Navigation Buttons (fixed at bottom) -->
       <div
-        class="px-6 py-4 border-t flex items-center justify-between"
+        class="px-5 sm:px-6 py-4 border-t flex items-center justify-between gap-3"
         style="border-color: {isDarkMode ? '#475569' : '#e5e7eb'};"
       >
         <div>
@@ -689,14 +678,16 @@
               {savingDraft ? t('portal.draftSaving') : t('portal.draftSaved')}
             </span>
           {/if}
-          <Button
-            onclick={handleClose}
-            variant="default"
-            size="medium"
-            disabled={submitting}
-          >
-            {t('common.cancel')}
-          </Button>
+          <div class="hidden sm:block">
+            <Button
+              onclick={handleClose}
+              variant="default"
+              size="medium"
+              disabled={submitting}
+            >
+              {t('common.cancel')}
+            </Button>
+          </div>
           {#if isLastStep}
             <Button
               dataTestid="request-form-submit"

@@ -17,6 +17,12 @@ var csrfExemptPaths = map[string]bool{
 	// Redeems a one-time code minted by /cli/auth/approve; the code itself
 	// is the CSRF defense (state round-trip + single-use guard).
 	"/api/cli/auth/exchange": true,
+	// OAuth client registration and token exchange are public protocol
+	// endpoints called server-to-server without browser Origin headers. Neither
+	// uses session cookies: registration creates a constrained public client,
+	// while token exchange requires a single-use code or refresh token.
+	"/api/oauth/register": true,
+	"/api/oauth/token":    true,
 }
 
 // csrfExemptPrefixes lists API path prefixes for machine-to-machine control

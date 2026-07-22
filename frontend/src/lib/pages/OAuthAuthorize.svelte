@@ -37,6 +37,7 @@
 		state: string,
 		code_challenge?: string,
 		code_challenge_method?: string,
+		resource?: string,
 	}} */ (null));
 	let infoLoading = $state(true);
 	let infoError = $state('');
@@ -53,6 +54,7 @@
 				state: params.state || '',
 				code_challenge: params.code_challenge || '',
 				code_challenge_method: params.code_challenge_method || '',
+				resource: params.resource || '',
 			});
 		} catch (err) {
 			console.error('OAuth /info failed', err);
@@ -71,6 +73,7 @@
 			state: info.state,
 			code_challenge: info.code_challenge || '',
 			code_challenge_method: info.code_challenge_method || '',
+			resource: info.resource || '',
 		};
 	}
 

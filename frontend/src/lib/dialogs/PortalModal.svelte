@@ -13,7 +13,7 @@
     subtitle = '',
     showHeader = true,
     backdropOpacity = 0.4,
-    backdropBlur = 'blur(8px)',
+    backdropBlur = 'blur(2px)',
     onClose = null,
     header = undefined,
     children = undefined
@@ -60,8 +60,8 @@
     <!-- Modal content -->
     <div class="relative flex items-center justify-center w-full h-full pointer-events-none">
       <div
-        class={`w-full ${maxWidth} rounded-2xl shadow-2xl overflow-hidden pointer-events-auto`}
-        style={`background-color: ${isDarkMode ? '#1e293b' : '#ffffff'};`}
+        class={`w-full ${maxWidth} rounded-lg border shadow-xl overflow-hidden pointer-events-auto`}
+        style={`background-color: ${isDarkMode ? '#1e293b' : '#ffffff'}; border-color: var(--ds-border);`}
       >
       {#if showHeader}
         <div

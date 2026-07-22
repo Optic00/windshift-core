@@ -66,6 +66,18 @@
     }
   });
 
+  // Some callers conditionally render the entire ModalBackdrop. In that case
+  // the component is destroyed in the same update that closes it, before the
+  // effect above can observe `show === false`. Restore the trigger on teardown
+  // as well so both persistent and conditionally rendered dialogs behave the
+  // same for keyboard users.
+  $effect(() => {
+    return () => {
+      previouslyFocusedElement?.focus?.();
+      previouslyFocusedElement = null;
+    };
+  });
+
   function getFocusableElements() {
     if (!backdropRef) return [];
     return Array.from(backdropRef.querySelectorAll(focusableSelector)).filter((el) => {
