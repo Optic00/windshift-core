@@ -172,7 +172,11 @@
       {@const badge = statusBadge(req.status)}
       {@const inPool = isInActivePool(req)}
       {@const myStep = activeStep(req)}
-      <div class="border rounded-lg" style="border-color: var(--ds-border); background: var(--ds-surface-raised);">
+      <div
+        class="border rounded-lg"
+        style="border-color: var(--ds-border); background: var(--ds-surface-raised);"
+        data-testid={`approval-request-${req.id}`}
+      >
         <button type="button" class="w-full flex items-center justify-between p-3 text-left"
                 onclick={() => toggleExpand(req.id)}>
           <div class="flex items-center gap-3 min-w-0">
@@ -195,7 +199,12 @@
             <!-- Step list -->
             <div class="space-y-2">
               {#each req.step_instances ?? [] as si (si.id)}
-                <div class="flex items-start gap-3 p-2 rounded" style="background: var(--ds-surface);">
+                <div
+                  class="flex items-start gap-3 p-2 rounded"
+                  style="background: var(--ds-surface);"
+                  data-testid={`approval-step-${si.id}`}
+                  data-step-status={si.status}
+                >
                   <div class="text-xs font-mono w-6 text-center" style="color: var(--ds-text-subtle);">
                     {si.display_order + 1}
                   </div>

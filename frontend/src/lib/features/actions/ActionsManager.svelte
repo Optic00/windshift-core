@@ -135,7 +135,7 @@
   {:else}
     <div class="actions-list space-y-3">
       {#each actions as action}
-        <div class="action-card p-4 border rounded-lg">
+        <div class="action-card p-4 border rounded-lg" data-testid={`action-card-${action.id}`}>
           <div class="flex items-center justify-between">
             <div class="flex-1">
               <div class="flex items-center gap-3">
@@ -169,6 +169,7 @@
                 class="p-2 rounded-md action-button"
                 onclick={() => handleTest(action)}
                 title={t('actions.test.run')}
+                data-testid="action-test"
               >
                 <Play class="h-5 w-5" />
               </button>
@@ -176,6 +177,7 @@
                 class="p-2 rounded-md action-button"
                 onclick={() => handleViewLogs(action)}
                 title={t('actions.viewLogs')}
+                data-testid="action-view-logs"
               >
                 <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -185,6 +187,7 @@
                 class="p-2 rounded-md action-button"
                 onclick={() => handleToggle(action)}
                 title={action.is_enabled ? t('actions.disable') : t('actions.enable')}
+                data-testid="action-toggle"
               >
                 {#if action.is_enabled}
                   <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

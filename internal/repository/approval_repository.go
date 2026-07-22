@@ -393,14 +393,16 @@ func (r *ApprovalRepository) findRequestRowInChannel(ctx context.Context, reques
 	var req models.ApprovalRequest
 	var fromStatus sql.NullInt64
 	query := `
-		SELECT ar.id, ar.item_id, ar.approval_set_status_id, ar.status_id, ar.from_status_id,
+		SELECT ar.id, ar.item_id, i.workspace_id, ar.approval_set_status_id, ar.status_id, ar.from_status_id,
 		       ar.triggered_by_user_id, ar.status, ar.created_at, ar.completed_at
-		FROM approval_requests ar WHERE ar.id = ?
+		FROM approval_requests ar
+		JOIN items i ON i.id = ar.item_id
+		WHERE ar.id = ?
 	`
 	args := []interface{}{requestID}
 	if channelID != nil {
 		query = `
-			SELECT ar.id, ar.item_id, ar.approval_set_status_id, ar.status_id, ar.from_status_id,
+			SELECT ar.id, ar.item_id, i.workspace_id, ar.approval_set_status_id, ar.status_id, ar.from_status_id,
 			       ar.triggered_by_user_id, ar.status, ar.created_at, ar.completed_at
 			FROM approval_requests ar
 			JOIN items i ON i.id = ar.item_id
@@ -409,7 +411,7 @@ func (r *ApprovalRepository) findRequestRowInChannel(ctx context.Context, reques
 		args = append(args, *channelID)
 	}
 	err := r.db.QueryRowContext(ctx, query, args...).Scan(
-		&req.ID, &req.ItemID, &req.ApprovalSetStatusID, &req.StatusID,
+		&req.ID, &req.ItemID, &req.WorkspaceID, &req.ApprovalSetStatusID, &req.StatusID,
 		&fromStatus, &req.TriggeredByUserID, &req.Status, &req.CreatedAt, &req.CompletedAt,
 	)
 	if err != nil {
@@ -442,14 +444,16 @@ func (r *ApprovalRepository) loadRequestByIDInChannelInTx(ctx context.Context, t
 	var req models.ApprovalRequest
 	var fromStatus sql.NullInt64
 	query := `
-		SELECT ar.id, ar.item_id, ar.approval_set_status_id, ar.status_id, ar.from_status_id,
+		SELECT ar.id, ar.item_id, i.workspace_id, ar.approval_set_status_id, ar.status_id, ar.from_status_id,
 		       ar.triggered_by_user_id, ar.status, ar.created_at, ar.completed_at
-		FROM approval_requests ar WHERE ar.id = ?
+		FROM approval_requests ar
+		JOIN items i ON i.id = ar.item_id
+		WHERE ar.id = ?
 	`
 	args := []interface{}{requestID}
 	if channelID != nil {
 		query = `
-			SELECT ar.id, ar.item_id, ar.approval_set_status_id, ar.status_id, ar.from_status_id,
+			SELECT ar.id, ar.item_id, i.workspace_id, ar.approval_set_status_id, ar.status_id, ar.from_status_id,
 			       ar.triggered_by_user_id, ar.status, ar.created_at, ar.completed_at
 			FROM approval_requests ar
 			JOIN items i ON i.id = ar.item_id
@@ -458,7 +462,7 @@ func (r *ApprovalRepository) loadRequestByIDInChannelInTx(ctx context.Context, t
 		args = append(args, *channelID)
 	}
 	err := tx.QueryRowContext(ctx, query, args...).Scan(
-		&req.ID, &req.ItemID, &req.ApprovalSetStatusID, &req.StatusID,
+		&req.ID, &req.ItemID, &req.WorkspaceID, &req.ApprovalSetStatusID, &req.StatusID,
 		&fromStatus, &req.TriggeredByUserID, &req.Status, &req.CreatedAt, &req.CompletedAt,
 	)
 	if err != nil {

@@ -35,11 +35,11 @@
   function open(req) {
     // Open the item detail view; the Approvals tab on that view will surface
     // the request and the decide buttons.
-    navigate(`/items/${req.item_id}`);
+    navigate(`/workspaces/${req.workspace_id}/items/${req.item_id}`);
   }
 </script>
 
-<div class="p-6 max-w-5xl mx-auto">
+<div class="p-6 max-w-5xl mx-auto" data-testid="approvals-inbox">
   <PageHeader
     icon={IconRubberStamp}
     title="My Approvals"
@@ -52,6 +52,7 @@
         variant={statusFilter === f ? 'primary' : 'default'}
         size="small"
         onclick={() => statusFilter = f}
+        dataTestid={`approvals-filter-${f}`}
       >
         {f}
       </Button>
@@ -73,26 +74,28 @@
   {:else}
     <div class="space-y-3" data-testid="approvals-mine-list">
       {#each requests as req (req.id)}
-        <Card padding="spacious">
-          <div class="flex items-center justify-between gap-3">
-            <div class="flex-1 min-w-0">
-              <div class="flex items-center gap-2 mb-1">
-                <span class="text-sm font-medium" style="color: var(--ds-text);">
-                  Approval #{req.id}
-                </span>
-                <Badge size="sm" variant={req.status === 'pending' ? 'warning' : 'neutral'}>
-                  {req.status}
-                </Badge>
+        <div data-testid={`approval-inbox-row-${req.id}`}>
+          <Card padding="spacious">
+            <div class="flex items-center justify-between gap-3">
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 mb-1">
+                  <span class="text-sm font-medium" style="color: var(--ds-text);">
+                    Approval #{req.id}
+                  </span>
+                  <Badge size="sm" variant={req.status === 'pending' ? 'warning' : 'neutral'}>
+                    {req.status}
+                  </Badge>
+                </div>
+                <div class="text-xs" style="color: var(--ds-text-subtle);">
+                  Item #{req.item_id} · Opened {formatDateTimeLocale(req.created_at)}
+                </div>
               </div>
-              <div class="text-xs" style="color: var(--ds-text-subtle);">
-                Item #{req.item_id} · Opened {formatDateTimeLocale(req.created_at)}
-              </div>
+              <Button variant="default" size="small" onclick={() => open(req)} dataTestid="approval-inbox-open">
+                Open item
+              </Button>
             </div>
-            <Button variant="default" size="small" onclick={() => open(req)}>
-              Open item
-            </Button>
-          </div>
-        </Card>
+          </Card>
+        </div>
       {/each}
     </div>
   {/if}

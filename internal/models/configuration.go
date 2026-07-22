@@ -704,6 +704,7 @@ type ApprovalStep struct {
 type ApprovalRequest struct {
 	ID                  int                    `json:"id"`
 	ItemID              int                    `json:"item_id"`
+	WorkspaceID         int                    `json:"workspace_id"`
 	ApprovalSetStatusID int                    `json:"approval_set_status_id"`
 	StatusID            int                    `json:"status_id"`
 	FromStatusID        *int                   `json:"from_status_id,omitempty"` // snapshot of prior status; revert target on cancel

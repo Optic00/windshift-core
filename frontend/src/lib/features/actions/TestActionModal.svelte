@@ -88,17 +88,19 @@
         placeholder={t('actions.test.itemPlaceholder')}
         {loading}
         onSearchChange={handleSearchChange}
+        searchTestid="action-test-item-search"
+        optionTestid={(option) => `action-test-item-${option.value}`}
       />
     </FormField>
 
     {#if error}
-      <div class="mb-4 p-3 rounded text-sm" style="background: var(--ds-error-subtle); color: var(--ds-error);">
+      <div data-testid="action-test-error" class="mb-4 p-3 rounded text-sm" style="background: var(--ds-error-subtle); color: var(--ds-error);">
         {error}
       </div>
     {/if}
 
     <div class="flex justify-end gap-3">
-      <Button variant="ghost" onclick={onclose}>
+      <Button variant="ghost" onclick={onclose} dataTestid="action-test-cancel">
         {t('common.cancel')}
       </Button>
       <Button
@@ -106,6 +108,7 @@
         onclick={handleExecute}
         disabled={!selectedItemId || executing}
         loading={executing}
+        dataTestid="action-test-execute"
       >
         {t('actions.test.execute')}
       </Button>

@@ -95,14 +95,14 @@
     onClose={onclose}
   />
 
-  <div class="p-6">
+  <div class="p-6" data-testid="action-execution-trace">
     {#if steps.length === 0}
       <EmptyState icon={AlertTriangle} title={t('actions.trace.noSteps')} />
     {:else}
       <div class="timeline">
         {#each steps as step, index}
           {@const StatusIcon = getStatusIcon(step.status)}
-          <div class="timeline-item">
+          <div class="timeline-item" data-testid={`action-trace-step-${step.node_id}`}>
             <!-- Timeline connector -->
             <div class="timeline-connector">
               <div

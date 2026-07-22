@@ -69,7 +69,7 @@
   }
 </script>
 
-<div class="action-logs h-full flex flex-col">
+<div class="action-logs h-full flex flex-col" data-testid="action-logs">
   <!-- Header with back button -->
   <div class="flex items-center gap-4 p-4 border-b header">
     <Button variant="ghost" icon={ArrowLeft} onclick={onBack} />
@@ -94,6 +94,7 @@
         emptyIcon={Clock}
         pagination={true}
         pageSize={25}
+        rowAttrs={(item) => ({ 'data-testid': `action-log-row-${item.id}` })}
       >
         <!-- Status slot with icon -->
         {#snippet status(item)}
@@ -153,6 +154,7 @@
             size="sm"
             onclick={() => showDetails(item)}
             title={t('actions.logs.viewDetails')}
+            dataTestid="action-log-details"
           >
             <Eye class="w-4 h-4" />
           </Button>

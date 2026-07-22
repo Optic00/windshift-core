@@ -60,7 +60,12 @@
   });
 </script>
 
-<div class="public-board" style="background-color: var(--ds-surface); color: var(--ds-text); min-height: 100vh; display: flex; flex-direction: column;">
+<div
+  class="public-board"
+  style="background-color: var(--ds-surface); color: var(--ds-text); min-height: 100vh; display: flex; flex-direction: column;"
+  data-testid="public-board-page"
+  data-ready={!loading}
+>
   <!-- Header -->
   <header class="public-board-header" style="background-color: var(--ds-surface-raised); border-bottom: 1px solid var(--ds-border); padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; gap: 16px;">
     <div style="display: flex; align-items: center; gap: 12px;">
@@ -90,14 +95,14 @@
   <!-- Content -->
   <main style="flex: 1; overflow-x: auto; padding: 20px 24px;">
     {#if loading}
-      <div style="display: flex; align-items: center; justify-content: center; height: 60vh;">
+      <div data-testid="public-board-loading" style="display: flex; align-items: center; justify-content: center; height: 60vh;">
         <div style="text-align: center;">
           <div class="spinner" style="width: 32px; height: 32px; border: 3px solid var(--ds-border); border-top-color: #2874BB; border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 12px;"></div>
           <p style="color: var(--ds-text-subtle); font-size: 14px;">Loading board...</p>
         </div>
       </div>
     {:else if error === 'not_found'}
-      <div style="display: flex; align-items: center; justify-content: center; height: 60vh;">
+      <div data-testid="public-board-not-found" style="display: flex; align-items: center; justify-content: center; height: 60vh;">
         <div style="text-align: center;">
           <IconClipboardList class="w-10 h-10 mx-auto mb-4" style="color: var(--ds-icon-disabled);" />
           <h2 style="font-size: 20px; font-weight: 600; margin: 0 0 8px;">Board not found</h2>
@@ -105,7 +110,7 @@
         </div>
       </div>
     {:else if error}
-      <div style="display: flex; align-items: center; justify-content: center; height: 60vh;">
+      <div data-testid="public-board-error" style="display: flex; align-items: center; justify-content: center; height: 60vh;">
         <div style="text-align: center;">
           <IconAlertTriangle class="w-10 h-10 mx-auto mb-4" style="color: var(--ds-icon-danger);" />
           <h2 style="font-size: 20px; font-weight: 600; margin: 0 0 8px;">Something went wrong</h2>
@@ -115,7 +120,12 @@
     {:else if board}
       <div class="board-columns" style="display: flex; gap: 16px; min-height: calc(100vh - 160px);">
         {#each board.columns as column}
-          <div class="board-column" style="min-width: 280px; max-width: 320px; flex: 1; display: flex; flex-direction: column;">
+          <div
+            class="board-column"
+            style="min-width: 280px; max-width: 320px; flex: 1; display: flex; flex-direction: column;"
+            data-testid="public-board-column"
+            data-column-name={column.name}
+          >
             <!-- Column header -->
             <div style="padding: 10px 12px; margin-bottom: 8px; border-radius: 8px 8px 0 0; display: flex; align-items: center; justify-content: space-between; background-color: var(--ds-surface-raised); border: 1px solid var(--ds-border); border-bottom: 3px solid {column.color || 'var(--ds-border)'};">
               <div style="display: flex; align-items: center; gap: 8px;">
@@ -142,6 +152,8 @@
                   onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectedItemKey = card.key; } }}
                   role="button"
                   tabindex="0"
+                  data-testid="public-board-card"
+                  data-item-key={card.key}
                 >
                   <!-- Key -->
                   {#if showField('key')}

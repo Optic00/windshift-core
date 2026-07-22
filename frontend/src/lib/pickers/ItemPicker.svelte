@@ -26,6 +26,8 @@
     keepOpenOnFooterTab = false,
     onSearchChange = null,
     searchDebounce = 300,
+    searchTestid = undefined,
+    optionTestid = null,
     onOpen = null,
     onSelect = null,
     onCancel = null
@@ -67,6 +69,8 @@
   getLabel={finalConfig.getLabel}
   serverSearch={!!onSearchChange}
   {searchDebounce}
+  {searchTestid}
+  {optionTestid}
   onSearchChange={(query) => onSearchChange?.(query)}
   onOpen={() => onOpen?.()}
   onSelect={(item) => onSelect?.(item)}

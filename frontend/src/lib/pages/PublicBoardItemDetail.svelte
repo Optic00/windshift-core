@@ -61,9 +61,10 @@
       <p class="text-xs" style="color: var(--ds-text-subtle);">Something went wrong. Please try again.</p>
     </div>
   {:else if item}
-    <ModalHeader title={item.title} subtitle={item.key} onClose={onclose} />
+    <div data-testid="public-board-item-detail" data-item-key={item.key}>
+      <ModalHeader title={item.title} subtitle={item.key} onClose={onclose} />
 
-    <div class="flex overflow-hidden" style="min-height: 60vh; max-height: 70vh;">
+      <div class="flex overflow-hidden" style="min-height: 60vh; max-height: 70vh;">
       <!-- Left column: Description + Comments -->
       <div class="flex-1 min-w-0 overflow-y-auto pt-5 pb-5 px-6">
         <!-- Description -->
@@ -95,7 +96,7 @@
           {:else}
             <div class="flex flex-col gap-4">
               {#each item.comments as comment}
-                <div class="flex gap-2.5">
+                <div class="flex gap-2.5" data-testid="public-board-comment">
                   <!-- Avatar -->
                   {#if comment.author_avatar}
                     <img src={comment.author_avatar} alt={comment.author_name} class="w-7 h-7 rounded-full object-cover flex-shrink-0" />
@@ -229,6 +230,7 @@
             </div>
           </div>
         {/if}
+      </div>
       </div>
     </div>
   {/if}
