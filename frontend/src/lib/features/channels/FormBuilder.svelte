@@ -346,6 +346,7 @@
           size="small"
           icon={IconDeviceFloppy}
           disabled={saving}
+          dataTestid="form-builder-save-btn"
         >
           {saving ? t('common.saving') : t('common.save')}
         </Button>
@@ -436,6 +437,17 @@
             <div class="flex items-center gap-3">
               <input type="checkbox" bind:checked={formBuilderStore.formConfig.require_auth} class="rounded" />
               <Label color="default">{t('forms.settings.requireAuth')}</Label>
+            </div>
+
+            <div class="flex items-center gap-3">
+              <input
+                id="form-allow-attachments"
+                data-testid="form-allow-attachments"
+                type="checkbox"
+                bind:checked={formBuilderStore.formConfig.allow_attachments}
+                class="rounded"
+              />
+              <Label for="form-allow-attachments" color="default">{t('forms.settings.allowAttachments')}</Label>
             </div>
 
             <div>

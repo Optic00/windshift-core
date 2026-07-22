@@ -582,6 +582,7 @@ export default {
     settings: {
       title: 'Form Settings',
       requireAuth: 'Require authentication',
+      allowAttachments: 'السماح بالمرفقات',
       submitButton: 'Submit Button Text',
       successMessage: 'Success Message',
       successMessagePlaceholder: 'Thank you for your submission!',

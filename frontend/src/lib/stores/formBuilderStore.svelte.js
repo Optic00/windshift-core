@@ -26,6 +26,7 @@ class FormBuilderStore {
   // === Per-form Config ===
   formConfig = $state({
     require_auth: false,
+    allow_attachments: false,
     success_message: '',
     submit_button_text: 'Submit',
     redirect_url: '',
@@ -177,6 +178,7 @@ class FormBuilderStore {
           const config = typeof form.config === 'string' ? JSON.parse(form.config) : form.config;
           this.formConfig = {
             require_auth: config.require_auth || false,
+            allow_attachments: config.allow_attachments === true,
             success_message: config.success_message || '',
             submit_button_text: config.submit_button_text || 'Submit',
             redirect_url: config.redirect_url || '',
@@ -322,6 +324,7 @@ class FormBuilderStore {
   resetFormConfig() {
     this.formConfig = {
       require_auth: false,
+      allow_attachments: false,
       success_message: '',
       submit_button_text: 'Submit',
       redirect_url: '',

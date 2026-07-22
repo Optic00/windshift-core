@@ -521,6 +521,7 @@ export default {
     settings: {
       title: 'Form Settings',
       requireAuth: 'Require authentication',
+      allowAttachments: '允许附件',
       submitButton: 'Submit Button Text',
       successMessage: 'Success Message',
       successMessagePlaceholder: 'Thank you for your submission!',

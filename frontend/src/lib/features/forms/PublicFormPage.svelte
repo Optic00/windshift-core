@@ -148,7 +148,7 @@
               formSlug={slug}
               formId={selectedFormId}
               formConfig={selectedForm?.config}
-              attachmentConfig={channel?.attachments}
+              attachmentConfig={selectedForm?.config?.allow_attachments ? channel?.attachments : null}
               initialDetail={selectedFormDetail}
               {brandColor}
               {isDarkMode}

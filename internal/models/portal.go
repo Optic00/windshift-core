@@ -226,6 +226,7 @@ type ContactRole struct {
 // RequestTypeConfig represents per-form configuration for a request type used as a form
 type RequestTypeConfig struct {
 	RequireAuth      bool   `json:"require_auth"`
+	AllowAttachments bool   `json:"allow_attachments"`
 	SuccessMessage   string `json:"success_message,omitempty"`
 	SubmitButtonText string `json:"submit_button_text,omitempty"`
 	RedirectURL      string `json:"redirect_url,omitempty"`

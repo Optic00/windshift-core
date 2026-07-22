@@ -589,6 +589,10 @@ func (h *FormHandler) SubmitForm(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if len(attachments) > 0 && !rtConfig.AllowAttachments {
+		respondValidationError(w, r, "Attachments are not enabled for this form")
+		return
+	}
 
 	// Get auth info (may be nil for anonymous submissions)
 	authenticatedUserID, portalCustomerID := h.getAuthFromContext(r)
