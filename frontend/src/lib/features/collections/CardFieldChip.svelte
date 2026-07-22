@@ -1,5 +1,6 @@
 <script>
-  import { Clock, CornerLeftUp } from '@lucide/svelte';
+  import { CalendarDays, Clock, CornerLeftUp } from '@lucide/svelte';
+  import Chip from '../../components/Chip.svelte';
   import { formatDate, formatDateShort, formatStatusAge } from '../../utils/dateFormatter.js';
   import { resolveOptionLabel } from '../../utils/optionUtils.js';
   import { durationToString } from '../../utils/timeUtils.js';
@@ -19,10 +20,6 @@
     customFieldDefinitions = [],
     users = [],
   } = $props();
-
-  // Shared chip presentation.
-  const CHIP_CLASS = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]';
-  const CHIP_STYLE = 'background: var(--ds-surface); color: var(--ds-text-subtle);';
 
   let customFieldId = $derived(
     cardField.field_type === 'custom'
@@ -66,139 +63,136 @@
   {#if cardField.field_identifier === 'priority' && item.priority_id}
     {@const prio = priorities.find(p => p.id === item.priority_id)}
     {#if prio}
-      <span class="{CHIP_CLASS} font-medium" style="background: {prio.color}20; color: {prio.color};">
+      <Chip appearance="metadata" dotColor={prio.color} title="Priority">
         {prio.name}
-      </span>
+      </Chip>
     {/if}
   {:else if cardField.field_identifier === 'due_date' && item.due_date}
-    <span class={CHIP_CLASS} style={CHIP_STYLE}>
+    <Chip appearance="metadata" icon={CalendarDays} title="Due date">
       {formatDateShort(item.due_date)}
-    </span>
+    </Chip>
   {:else if cardField.field_identifier === 'start_date' && item.start_date}
-    <span class={CHIP_CLASS} style={CHIP_STYLE} title="Start date">
+    <Chip appearance="metadata" icon={CalendarDays} title="Start date">
       Start: {formatDateShort(item.start_date)}
-    </span>
+    </Chip>
   {:else if cardField.field_identifier === 'end_date' && item.end_date}
-    <span class={CHIP_CLASS} style={CHIP_STYLE} title="End date">
+    <Chip appearance="metadata" icon={CalendarDays} title="End date">
       End: {formatDateShort(item.end_date)}
-    </span>
+    </Chip>
   {:else if cardField.field_identifier === 'story_points' && item.story_points != null}
-    <span class={CHIP_CLASS} style={CHIP_STYLE} title="Story points">
+    <Chip appearance="metadata" title="Story points">
       {item.story_points} pts
-    </span>
+    </Chip>
   {:else if cardField.field_identifier === 'estimate' && item.estimate_minutes != null}
-    <span class={CHIP_CLASS} style={CHIP_STYLE} title="Estimate">
+    <Chip appearance="metadata" title="Estimate">
       {durationToString(item.estimate_minutes, { withDays: true })}
-    </span>
+    </Chip>
   {:else if cardField.field_identifier === 'milestone' && (item.milestones?.length ?? 0) > 0}
     {#each item.milestones as ms (ms.id)}
-      <span class={CHIP_CLASS} style={CHIP_STYLE}>
-        <span class="w-2 h-2 rounded-full flex-shrink-0" style="background-color: {ms.category_color || '#6b7280'};"></span>
+      <Chip appearance="metadata" dotColor={ms.category_color || '#6b7280'} title="Milestone">
         {ms.name}
-      </span>
+      </Chip>
     {/each}
   {:else if cardField.field_identifier === 'iteration' && item.iteration_id}
     {@const iter = iterations.find(i => i.id === item.iteration_id)}
     {#if iter}
-      <span class={CHIP_CLASS} style={CHIP_STYLE}>
+      <Chip appearance="metadata" title="Iteration">
         {iter.name}
-      </span>
+      </Chip>
     {/if}
   {:else if cardField.field_identifier === 'labels' && item.label_ids?.length > 0}
     {#each item.label_ids.slice(0, 3) as labelId}
       {@const lbl = labels.find(l => l.id === labelId)}
       {#if lbl}
-        <span class="{CHIP_CLASS} text-white font-medium" style="background-color: {lbl.color || '#6b7280'};">
+        <Chip appearance="metadata" dotColor={lbl.color || '#6b7280'} title="Label">
           {lbl.name}
-        </span>
+        </Chip>
       {/if}
     {/each}
     {#if item.label_ids.length > 3}
-      <span class={CHIP_CLASS} style={CHIP_STYLE}>
+      <Chip appearance="metadata" title="Additional labels">
         +{item.label_ids.length - 3}
-      </span>
+      </Chip>
     {/if}
   {:else if cardField.field_identifier === 'status' && item.status_id}
     {@const st = statuses.find(s => s.id === item.status_id)}
     {#if st}
-      <span class={CHIP_CLASS} style={CHIP_STYLE}>
-        <span class="w-2 h-2 rounded-full flex-shrink-0" style="background-color: {st.color || st.category_color || '#6b7280'};"></span>
+      <Chip appearance="metadata" dotColor={st.color || st.category_color || '#6b7280'} title="Status">
         {st.name}
-      </span>
+      </Chip>
     {/if}
   {:else if cardField.field_identifier === 'created_at' && item.created_at}
-    <span class={CHIP_CLASS} style={CHIP_STYLE}>
+    <Chip appearance="metadata" icon={CalendarDays} title="Created">
       {formatDateShort(item.created_at)}
-    </span>
+    </Chip>
   {:else if cardField.field_identifier === 'project' && item.project_id}
     {@const proj = projects.find(p => p.id === item.project_id)}
     {#if proj}
-      <span class={CHIP_CLASS} style={CHIP_STYLE}>
+      <Chip appearance="metadata" title="Project">
         {proj.name}
-      </span>
+      </Chip>
     {/if}
   {:else if cardField.field_identifier === 'parent' && item.parent_id}
     {@const parentKey = item.parent_workspace_item_number != null && item.workspace_key
       ? `${item.workspace_key}-${item.parent_workspace_item_number}`
       : null}
-    <span
-      class="{CHIP_CLASS} max-w-[12rem]"
-      style={CHIP_STYLE}
+    <Chip
+      appearance="metadata"
+      icon={CornerLeftUp}
+      class="max-w-[12rem]"
       title={item.parent_title || parentKey || 'Parent'}
     >
-      <CornerLeftUp class="w-3 h-3 flex-shrink-0" />
       {#if parentKey}
         <span class="font-mono flex-shrink-0">{parentKey}</span>
       {/if}
       {#if item.parent_title}
         <span class="truncate">{item.parent_title}</span>
       {/if}
-    </span>
+    </Chip>
   {:else if cardField.field_identifier === 'time_in_status' && item.status_since}
     {@const age = formatStatusAge(item.status_since)}
     {#if age}
-      <span
-        class={CHIP_CLASS}
-        style={CHIP_STYLE}
+      <Chip
+        appearance="metadata"
+        icon={Clock}
         title="In current status since {formatDate(item.status_since)}"
       >
-        <Clock class="w-3 h-3 flex-shrink-0" />
         {age}
-      </span>
+      </Chip>
     {/if}
   {/if}
 {:else if cardField.field_type === 'custom'}
   {#if customFieldDef && customFieldValue != null}
     {#if customFieldDef.field_type === 'date'}
-      <span class={CHIP_CLASS} style={CHIP_STYLE}>
+      <Chip appearance="metadata" icon={CalendarDays} title={customFieldDef.name}>
         {formatDateShort(customFieldValue)}
-      </span>
+      </Chip>
     {:else if (customFieldDef.field_type === 'select' || customFieldDef.field_type === 'multiselect') && customFieldDef.options}
-      <span class={CHIP_CLASS} style={CHIP_STYLE}>
+      <Chip appearance="metadata" title={customFieldDef.name}>
         {resolveOptionLabel(customFieldDef.options, customFieldValue) || customFieldValue}
-      </span>
+      </Chip>
     {:else if customFieldDef.field_type === 'checkbox'}
-      <span class={CHIP_CLASS} style={CHIP_STYLE}>
+      <Chip appearance="metadata" title={customFieldDef.name}>
         {/** @type {any} */ (customFieldValue) === true || String(customFieldValue) === 'true' || customFieldValue === '1' ? '✓' : '✗'}
-      </span>
+      </Chip>
     {:else if customFieldDef.field_type === 'number'}
-      <span class={CHIP_CLASS} style={CHIP_STYLE}>
+      <Chip appearance="metadata" title={customFieldDef.name}>
         {parseFloat(String(customFieldValue))}
-      </span>
+      </Chip>
     {:else if customFieldDef.field_type === 'user' && customFieldUserNames.length > 0}
-      <span class={CHIP_CLASS} style={CHIP_STYLE} title={customFieldDef.name}>
+      <Chip appearance="metadata" title={customFieldDef.name}>
         {customFieldUserNames[0]}
-      </span>
+      </Chip>
     {:else if customFieldDef.field_type === 'multi_user' && customFieldUserNames.length > 0}
-      <span class={CHIP_CLASS} style={CHIP_STYLE} title={customFieldDef.name}>
+      <Chip appearance="metadata" title={customFieldDef.name}>
         {customFieldUserNames[0]}{#if customFieldUserNames.length > 1} +{customFieldUserNames.length - 1}{/if}
-      </span>
+      </Chip>
     {:else if customFieldDef.field_type === 'url' && String(customFieldValue).trim()}
-      <span class={CHIP_CLASS} style={CHIP_STYLE} title={customFieldValue}>
+      <Chip appearance="metadata" title={customFieldValue}>
         {String(customFieldValue).length > 30 ? String(customFieldValue).slice(0, 30) + '…' : customFieldValue}
-      </span>
+      </Chip>
     {:else if customFieldDef.field_type === 'asset'}
-      <span class={CHIP_CLASS} style={CHIP_STYLE}>
+      <Chip appearance="metadata" title={customFieldDef.name}>
         {#if typeof customFieldValue === 'object' && customFieldValue}
           {@const a = /** @type {any} */ (customFieldValue)}
           {#if Array.isArray(a)}
@@ -209,15 +203,15 @@
         {:else}
           #{customFieldValue}
         {/if}
-      </span>
+      </Chip>
     {:else if typeof customFieldValue === 'string' && customFieldValue.length > 40}
-      <span class={CHIP_CLASS} style={CHIP_STYLE} title={customFieldValue}>
+      <Chip appearance="metadata" title={customFieldValue}>
         {customFieldValue.slice(0, 40)}…
-      </span>
+      </Chip>
     {:else}
-      <span class={CHIP_CLASS} style={CHIP_STYLE}>
+      <Chip appearance="metadata" title={customFieldDef.name}>
         {customFieldValue}
-      </span>
+      </Chip>
     {/if}
   {/if}
 {/if}

@@ -9,6 +9,7 @@
     className = '',
     class: classProp = '',
     size = 'medium',
+    dataTestid = undefined,
     on_input = undefined,
     on_keydown = undefined
   } = $props();
@@ -46,6 +47,7 @@
     bind:value
     placeholder={placeholder || t('common.search')}
     {disabled}
+    data-testid={dataTestid}
     class="pl-10 pr-4 {sizeClasses[size]} rounded border w-full transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
     style="background-color: var(--ctx-surface-raised, var(--ds-background-input)); border-color: var(--ctx-border, var(--ds-border)); color: var(--ds-text); backdrop-filter: var(--ctx-backdrop, none);"
     oninput={handleInput}

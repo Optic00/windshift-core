@@ -1,5 +1,5 @@
 <script>
-  import Toggle from '$lib/components/Toggle.svelte';
+  import Toggle from '../../../lib/components/Toggle.svelte';
 
   let toggle1 = $state(false);
   let toggle2 = $state(true);

@@ -7,7 +7,8 @@
     name = '',           // Full name for initials fallback
     firstName = '',      // First name (alternative to name)
     lastName = '',       // Last name (alternative to name)
-    size = 'md',         // 'xs' (w-6), 'sm' (w-8), 'md' (w-10), 'lg' (w-12), 'xl' (w-16), '2xl' (w-20)
+    title = undefined,   // Optional native tooltip
+    size = 'md',         // '2xs' (w-5), 'xs' (w-6), 'sm' (w-8), 'md' (w-10), 'lg' (w-12), 'xl' (w-16), '2xl' (w-20)
     variant = 'primary', // 'primary', 'neutral', 'blue', 'green', 'purple', 'teal', 'orange'
     rounded = 'full',    // 'full', 'lg', 'md', 'sm'
     ring = false,        // Add ring/border
@@ -33,6 +34,7 @@
 
   // Size classes with text sizing
   const sizeClasses = {
+    '2xs': 'w-5 h-5 text-[9px]',
     xs: 'w-6 h-6 text-[10px]',
     sm: 'w-8 h-8 text-xs',
     md: 'w-10 h-10 text-sm',
@@ -79,6 +81,7 @@
       <img
         {src}
         alt={computedAlt}
+        {title}
         class="{baseClasses} object-cover"
       />
     </button>
@@ -86,16 +89,17 @@
     <img
       {src}
       alt={computedAlt}
+      {title}
       class="{baseClasses} object-cover"
     />
   {/if}
 {:else}
   {#if onclick}
-    <button type="button" class="appearance-none bg-transparent border-none p-0 m-0 font-[inherit] text-[inherit] cursor-pointer {baseClasses}" style={variantStyles[variant]} onclick={onclick}>
+    <button type="button" class="appearance-none bg-transparent border-none p-0 m-0 font-[inherit] text-[inherit] cursor-pointer {baseClasses}" style={variantStyles[variant]} {title} onclick={onclick}>
       {initials}
     </button>
   {:else}
-    <div class={baseClasses} style={variantStyles[variant]}>
+    <div class={baseClasses} style={variantStyles[variant]} {title}>
       {initials}
     </div>
   {/if}

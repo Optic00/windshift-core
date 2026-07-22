@@ -1,6 +1,6 @@
 <script>
   import Chip from '../../../lib/components/Chip.svelte';
-  import { Tag, User, Folder, Star, Flag, Circle } from '@lucide/svelte';
+  import { CalendarDays, Tag, User, Folder, Star, Flag, Circle } from '@lucide/svelte';
 
   let chips = $state(['Frontend', 'Backend', 'Design']);
 
@@ -62,6 +62,19 @@
 <Chip color="green" icon={User}>Assignee</Chip>
 <Chip color="purple" icon={Folder}>Category</Chip>`}
     </pre>
+  </section>
+
+  <!-- Metadata -->
+  <section>
+    <h2 class="text-lg font-semibold mb-4" style="color: var(--ds-text);">Card metadata</h2>
+    <p class="mb-3 text-sm" style="color: var(--ds-text-subtle);">
+      Use the quieter metadata appearance for compact, read-only fields. Reserve color for a small identifying dot.
+    </p>
+    <div class="flex flex-wrap gap-2">
+      <Chip appearance="metadata" dotColor="#dc2626">High</Chip>
+      <Chip appearance="metadata" dotColor="#8b5cf6">Design</Chip>
+      <Chip appearance="metadata" icon={CalendarDays}>Jul 24</Chip>
+    </div>
   </section>
 
   <!-- Removable -->
@@ -136,6 +149,18 @@
             <td class="py-2 pr-4 font-mono text-xs">'blue' | 'green' | 'purple' | 'teal' | 'gray' | 'red' | 'yellow' | 'orange'</td>
             <td class="py-2 pr-4 font-mono text-xs">'blue'</td>
             <td class="py-2" style="color: var(--ds-text-subtle);">Chip color</td>
+          </tr>
+          <tr class="border-b" style="border-color: var(--ds-border);">
+            <td class="py-2 pr-4 font-mono text-xs">appearance</td>
+            <td class="py-2 pr-4 font-mono text-xs">'soft' | 'metadata'</td>
+            <td class="py-2 pr-4 font-mono text-xs">'soft'</td>
+            <td class="py-2" style="color: var(--ds-text-subtle);">Visual treatment for tags or compact read-only metadata</td>
+          </tr>
+          <tr class="border-b" style="border-color: var(--ds-border);">
+            <td class="py-2 pr-4 font-mono text-xs">dotColor</td>
+            <td class="py-2 pr-4 font-mono text-xs">string | null</td>
+            <td class="py-2 pr-4 font-mono text-xs">null</td>
+            <td class="py-2" style="color: var(--ds-text-subtle);">Optional identifying color dot</td>
           </tr>
           <tr class="border-b" style="border-color: var(--ds-border);">
             <td class="py-2 pr-4 font-mono text-xs">icon</td>

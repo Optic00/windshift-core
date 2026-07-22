@@ -10,24 +10,23 @@
   import { getCollection, checkItemVisibility } from './collectionService.js';
   import { RIGHTMOST_COLUMN_LIMIT, buildDisplayColumns } from './boardColumns.js';
   import { infoToast, successToast, warningToast } from '../../stores/toasts.svelte.js';
-  import { Plus, ChevronDown, ChevronLeft, ChevronRight, MoreHorizontal, Layers, ArrowDownUp } from '@lucide/svelte';
+  import { Plus, ChevronDown, ChevronRight, MoreHorizontal, Layers, ArrowDownUp } from '@lucide/svelte';
   import ItemPicker from '../../pickers/ItemPicker.svelte';
   import { buildIterationPickerConfig } from '../iterations/iterationPickerUtils.js';
   import { itemTypeIconMap } from '../../utils/icons.js';
   import { draggable, dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter';
   import { attachClosestEdge, extractClosestEdge } from '@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge';
   import ItemDetail from '../items/ItemDetail.svelte';
-  import DropIndicator from '../../layout/DropIndicator.svelte';
   import ViewHeader from '../../layout/ViewHeader.svelte';
   import StaticViewBackground from '../../layout/StaticViewBackground.svelte';
   import Button from '../../components/Button.svelte';
   import SearchInput from '../../components/SearchInput.svelte';
   import SubFilterBar from './SubFilterBar.svelte';
-  import CardFieldChip from './CardFieldChip.svelte';
-  import DependencySummary from './DependencySummary.svelte';
+  import BoardColumn from './BoardColumn.svelte';
+  import BoardEmptyState from './BoardEmptyState.svelte';
+  import BoardItemCard from './BoardItemCard.svelte';
   import ItemKey from '../items/ItemKey.svelte';
   import CollectionViewSwitcher from './CollectionViewSwitcher.svelte';
-  import Tooltip from '../../components/Tooltip.svelte';
   import DropdownMenu from '../../layout/DropdownMenu.svelte';
   import { backlogStore, workspaceDataStore, workspacesStore, statusTransitionStore } from '../../stores/index.js';
   import { useWorkItemPoller } from '../../composables/useWorkItemPoller.svelte.js';
@@ -1578,62 +1577,23 @@
                         </span>
                       </button>
                     {:else}
-                    <div
-                      class="relative rounded border shadow-sm transition-colors"
-                      style="{styles.columnStyle(12)} {quickAddState[quickAddKey]?.show ? 'z-index: 30;' : ''}"
-                      data-testid="board-column"
-                      data-status-column
-                      data-status-column-key={`${lane.id}-${column.id}-${column.status_ids[0]}`}
-                      data-swimlane-parent-id={selectedGroupByItemType && lane.parent ? lane.parent.id : ''}
-                      data-status-id={column.status_ids[0]}
+                    <BoardColumn
+                      {column}
+                      itemCount={columnTotal}
+                      wipCount={allColumnItems.length}
+                      visibleItemCount={columnItems.length}
+                      hiddenItemCount={hiddenColumnItemCount}
+                      {isOverWip}
+                      statusColumnKey={`${lane.id}-${column.id}-${column.status_ids[0]}`}
+                      swimlaneParentId={selectedGroupByItemType && lane.parent ? lane.parent.id : ''}
+                      statusId={column.status_ids[0]}
+                      quickAddOpen={quickAddState[quickAddKey]?.show}
+                      columnStyle={styles.columnStyle(12)}
+                      textStyle={styles.glassTextStyle}
+                      subtleTextStyle={styles.glassSubtleTextStyle}
+                      onadd={() => initQuickAdd(column.id, column.status_ids[0], quickAddKey, lane.parent?.id ?? null)}
+                      oncollapse={() => toggleColumnCollapse(column.id)}
                     >
-                      <div class="p-4 border-b border-t-4" style="border-bottom-color: var(--ctx-border, var(--ds-border)); border-top-color: {column.color};">
-                        <div class="flex items-center justify-between">
-                          <h3 class="font-semibold" data-testid="column-header" style={styles.glassTextStyle}>{column.name}</h3>
-                          <div class="flex items-center gap-0.5">
-                            <button
-                              onclick={() => initQuickAdd(column.id, column.status_ids[0], quickAddKey, lane.parent?.id ?? null)}
-                              class="p-1 rounded transition-colors"
-                              style="color: var(--ds-text-subtle);"
-                              onmouseenter={(e) => e.currentTarget.style.color = 'var(--ds-text)'}
-                              onmouseleave={(e) => e.currentTarget.style.color = 'var(--ds-text-subtle)'}
-                              title={t('collections.addCard')}
-                            >
-                              <Plus class="w-4 h-4" />
-                            </button>
-                            <button
-                              onclick={() => toggleColumnCollapse(column.id)}
-                              class="p-1 rounded transition-colors"
-                              style="color: var(--ds-text-subtle);"
-                              onmouseenter={(e) => e.currentTarget.style.color = 'var(--ds-text)'}
-                              onmouseleave={(e) => e.currentTarget.style.color = 'var(--ds-text-subtle)'}
-                              title={t('collections.collapseColumn')}
-                              aria-label={t('collections.collapseColumn')}
-                              aria-expanded="true"
-                            >
-                              <ChevronLeft class="w-4 h-4" />
-                            </button>
-                          </div>
-                        </div>
-                        <div class="flex items-center justify-between">
-                          <span class="text-sm" style={styles.glassSubtleTextStyle}>
-                            {#if hiddenColumnItemCount > 0}
-                              {columnItems.length} of {columnTotal} {t('items.item')}
-                            {:else}
-                              {columnTotal} {t('items.item')}
-                            {/if}
-                          </span>
-                          {#if column.wip_limit}
-                            <span class="text-xs px-2 py-0.5 rounded"
-                                  style={isOverWip
-                                    ? 'background-color: var(--ds-danger-subtle); color: var(--ds-text-danger);'
-                                    : 'background-color: var(--ds-background-neutral, #091e420f); color: var(--ds-text-subtle, #6b778c);'}>
-                              WIP: {allColumnItems.length}/{column.wip_limit}
-                            </span>
-                          {/if}
-                        </div>
-                      </div>
-                      <div class="p-4 min-h-32">
                         {#if quickAddState[quickAddKey]?.show}
                           <div class="mb-3">
                             <QuickAddForm
@@ -1648,11 +1608,7 @@
                           </div>
                         {/if}
                         {#if columnItems.length === 0 && !quickAddState[quickAddKey]?.show}
-                          <!-- Empty column state -->
-                          <div class="text-center py-8" style={styles.glassSubtleTextStyle}>
-                            <Plus class="w-8 h-8 mx-auto mb-2" />
-                            <p class="text-sm">{t('items.noItems')}</p>
-                          </div>
+                          <BoardEmptyState textStyle={styles.glassSubtleTextStyle} />
                         {:else}
                           {#if hiddenColumnItemCount > 0}
                             <p class="text-xs mb-3" style={styles.glassSubtleTextStyle}>
@@ -1660,117 +1616,32 @@
                             </p>
                           {/if}
                           <div class="space-y-1">
-                            {#each columnItems as item, index (item.id)}
+                            {#each columnItems as item (item.id)}
                               {@const moveMenuItems = getMoveMenuItems(item)}
-                              <!-- Item card with edge-based drop detection -->
-                              <div
-                                class="relative border rounded px-3 py-3 board-card"
-                                style:box-shadow="var(--ds-shadow-raised)"
-                                style="{styles.cardStyle(4)}"
-                                data-item-card
-                                data-item-id={item.id}
-                                data-swimlane-parent-id={selectedGroupByItemType && lane.parent ? lane.parent.id : ''}
-                                role="button"
-                                tabindex="0"
-                                onclick={event => openItem(item.id, event)}
-                                onkeydown={event => (event.key === 'Enter' || event.key === ' ') && openItem(item.id, event)}
-                              >
-                                <!-- Drop indicator -->
-                                {#if dragState.get(item.id)?.closestEdge}
-                                  <DropIndicator edge={dragState.get(item.id)?.closestEdge} />
-                                {/if}
-
-                                <div class="cursor-grab active:cursor-grabbing">
-                                  <!-- Content -->
-                                  <div class="min-w-0">
-                                    <div class="flex items-start gap-2 mb-2">
-                                      <!-- Title - allows wrapping -->
-                                      <h4 class="text-sm leading-snug break-words flex-1 min-w-0" style={styles.glassTextStyle}>
-                                        {item.title}
-                                      </h4>
-                                      <div class="shrink-0 -mt-1 -mr-1 opacity-80 transition-opacity board-card-menu">
-                                        <DropdownMenu
-                                          items={moveMenuItems.length > 0 ? moveMenuItems : [{ id: `no-moves-${item.id}`, type: 'text', text: 'No available moves' }]}
-                                          placement="bottom-end"
-                                          maxWidth="max-w-xs"
-                                          triggerIcon={MoreHorizontal}
-                                          triggerClass="p-1 rounded hover:bg-[var(--ds-background-neutral-hovered)] focus:ring-2 focus:ring-[var(--ds-border-focused)]"
-                                          triggerStyle="color: var(--ds-text-subtle);"
-                                          iconOnly
-                                          showChevron={false}
-                                          triggerTestid={`board-card-move-menu-${item.id}`}
-                                        />
-                                      </div>
-                                    </div>
-
-                                    <!-- Configured card fields -->
-                                    {#if cardFields.length > 0}
-                                      <div class="flex flex-wrap gap-1.5 mt-1 mb-1.5">
-                                        {#each cardFields as cardField}
-                                          <CardFieldChip
-                                            {cardField}
-                                            {item}
-                                            {priorities}
-                                            {statuses}
-                                            {iterations}
-                                            {projects}
-                                            labels={wdsLabels}
-                                            {customFieldDefinitions}
-                                            {users}
-                                          />
-                                        {/each}
-                                      </div>
-                                    {/if}
-
-                                    <!-- Bottom row: Icon, Key, Assignee avatar -->
-                                    <div class="flex items-center gap-2 min-h-5">
-                                      {#if item.item_type_id && itemTypes.length > 0}
-                                        {@const itemType = itemTypes.find(type => type.id === item.item_type_id)}
-                                        {#if itemType}
-                                          {@const TypeIcon = itemTypeIconMap[itemType.icon] || itemTypeIconMap.FileText}
-                                          <div
-                                            class="w-4 h-4 rounded flex items-center justify-center text-white text-xs flex-shrink-0"
-                                            style="background-color: {itemType.color};"
-                                            title={itemType.name}
-                                          >
-                                            <TypeIcon class="w-3 h-3" />
-                                          </div>
-                                        {/if}
-                                      {/if}
-                                      <ItemKey {item} {workspace} />
-                                      <!-- Dependency/blocker hover summary -->
-                                      <DependencySummary
-                                        {item}
-                                        links={dependencyLinksByItem[item.id] ?? []}
-                                      />
-                                      <span class="flex-1"></span>
-                                      {#if item.assignee_id}
-                                        {@const assignee = users.find(u => u.id === item.assignee_id)}
-                                        {#if assignee}
-                                          <div class="w-5 h-5 rounded-full bg-blue-500 flex items-center justify-center text-white text-[9px] font-medium flex-shrink-0"
-                                               title="{assignee.first_name} {assignee.last_name}">
-                                            {(assignee.first_name?.[0] || '') + (assignee.last_name?.[0] || '')}
-                                          </div>
-                                        {/if}
-                                      {/if}
-                                      {#if false && statuses.find(s => s.id === item.status_id)}
-                                        {@const itemStatusObj = statuses.find(s => s.id === item.status_id)}
-                                        <Tooltip content={itemStatusObj.name} placement="top">
-                                          <div
-                                            class="w-4 h-4 rounded flex-shrink-0"
-                                            style="background-color: {itemStatusObj.category_color};"
-                                          ></div>
-                                        </Tooltip>
-                                      {/if}
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
+                              <BoardItemCard
+                                {item}
+                                {workspace}
+                                {itemTypes}
+                                {cardFields}
+                                {priorities}
+                                {statuses}
+                                {iterations}
+                                {projects}
+                                labels={wdsLabels}
+                                {customFieldDefinitions}
+                                {users}
+                                dependencyLinks={dependencyLinksByItem[item.id] ?? []}
+                                {moveMenuItems}
+                                closestEdge={dragState.get(item.id)?.closestEdge}
+                                swimlaneParentId={selectedGroupByItemType && lane.parent ? lane.parent.id : ''}
+                                cardStyle={styles.cardStyle(4)}
+                                textStyle={styles.glassTextStyle}
+                                onopen={openItem}
+                              />
                             {/each}
                           </div>
                         {/if}
-                      </div>
-                    </div>
+                    </BoardColumn>
                     {/if}
                   {/each}
                 </div>
@@ -1824,19 +1695,6 @@
 {/if}
 
 <style>
-  /* Board card hover: uses !important to override inline background-color from cardStyle */
-  .board-card {
-    transition: background-color 140ms ease-in-out, box-shadow 140ms ease-in-out;
-  }
-  .board-card:hover {
-    background-color: var(--ds-surface-raised-hovered) !important;
-  }
-
-  /* During drag, reduce opacity of non-dragged items slightly */
-  :global(body.is-dragging) [data-item-card] {
-    transition: opacity 0.2s ease;
-  }
-
   /* Collapsed board column: write the column name vertically so the narrow
      strip can still show it without overflowing. */
   .board-column-collapsed-name {

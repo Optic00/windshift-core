@@ -9,6 +9,7 @@
     glass = false,         // Glassmorphism effect
     href = null,           // If provided, renders as <a>
     onclick = null,        // Click handler
+    dataTestid = undefined,
     rounded = 'lg',        // 'none', 'sm', 'md', 'lg', 'xl'
     class: className = '',
     style: userStyle = '',
@@ -68,7 +69,7 @@
 </script>
 
 {#if href}
-  <a {href} class={baseClasses} style={computedStyle} class:glass onclick={onclick}>
+  <a {href} class={baseClasses} style={computedStyle} class:glass data-testid={dataTestid} onclick={onclick}>
     {#if hasStructure}
       {#if header}
         <div class="px-4 py-3 border-b" style="border-color: var(--ds-border);">
@@ -90,7 +91,7 @@
 {:else}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class={baseClasses} style={computedStyle} class:glass onclick={onclick}>
+  <div class={baseClasses} style={computedStyle} class:glass data-testid={dataTestid} onclick={onclick}>
     {#if hasStructure}
       {#if header}
         <div class="px-4 py-3 border-b" style="border-color: var(--ds-border);">

@@ -1,7 +1,15 @@
 <script>
   import LinkComponent from '../../components/Link.svelte';
 
-  let { item, workspace = null, style = "color: var(--ds-text-subtle);", href = null, onClick = null } = $props();
+  let {
+    item,
+    workspace = null,
+    size = 'default',
+    style = "color: var(--ds-text-subtle);",
+    href = null,
+    onClick = null,
+    class: className = '',
+  } = $props();
 
   let displayKey = $derived((() => {
     const key = item.workspace_key || workspace?.key;
@@ -9,7 +17,12 @@
   })());
 
   let interactive = $derived(!!(href || onClick));
-  let classes = $derived(`text-xs font-mono flex-shrink-0 whitespace-nowrap${interactive ? ' hover:underline cursor-pointer' : ''}`);
+  let sizeClass = $derived(
+    size === 'compact' ? 'text-[10px] leading-4 tracking-[0.02em]' : 'text-xs',
+  );
+  let classes = $derived(
+    `${sizeClass} font-mono flex-shrink-0 whitespace-nowrap${interactive ? ' hover:underline cursor-pointer' : ''} ${className}`,
+  );
 </script>
 
 {#if href}
