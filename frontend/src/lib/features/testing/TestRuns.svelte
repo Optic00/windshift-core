@@ -225,6 +225,7 @@
     if (!run.ended_at) {
       items.push({
         id: 'continue',
+        testid: `test-run-continue-${run.id}`,
         type: 'regular',
         icon: IconPlayerPlay,
         title: t('testing.continueExecution'),
@@ -236,6 +237,7 @@
     // Add "View" option
     items.push({
       id: 'view',
+      testid: `test-run-view-${run.id}`,
       type: 'regular',
       icon: IconEye,
       title: run.ended_at ? t('testing.viewResults') : t('testing.viewDetails'),
@@ -391,10 +393,11 @@
       data={allTestRuns}
       keyField="id"
       actionItems={buildRunDropdownItems}
+      actionTriggerTestid={(run) => `test-run-actions-${run.id}`}
+      rowAttrs={(run) => ({ 'data-testid': `test-run-row-${run.id}` })}
       emptyMessage={t('testing.noTestRunsYet')}
       emptyDescription={t('testing.createTestRunToExecute')}
       emptyIcon={IconPlayerPlay}
     />
   </div>
 </div>
-

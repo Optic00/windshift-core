@@ -14,6 +14,7 @@
     emptyDescription = '',
     emptyIcon = null,
     actionItems = null,
+    actionTriggerTestid = null,
     onRowClick = null,
     selectedItemId = null,
     pagination = false,
@@ -212,6 +213,7 @@
                         maxWidth="max-w-48"
                         showChevron={false}
                         iconOnly={true}
+                        triggerTestid={actionTriggerTestid ? actionTriggerTestid(item) : ''}
                       />
                     </div>
                   {:else if column.slot && slotProps[column.slot]}

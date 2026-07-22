@@ -234,6 +234,7 @@
         <Button
           onclick={goBack}
           icon={IconArrowLeft}
+          dataTestid="test-steps-back"
         >
           {t('testing.backToTestCases')}
         </Button>
@@ -245,6 +246,7 @@
             size="medium"
             keyboardHint="A"
             hotkeyConfig={{ key: toHotkeyString('testSteps', 'addStep'), guard: () => !showStepForm }}
+            dataTestid="test-step-create-button"
           >
             {t('testing.addTestStep')}
           </Button>
@@ -269,7 +271,7 @@
             <!-- Action Column -->
             <div>
               <Label color="default" class="mb-2" required>{t('testing.action')}</Label>
-              <div id="step-action-input" class="border rounded overflow-hidden" style="border-color: var(--ds-border); min-height: 80px;">
+              <div id="step-action-input" data-testid="test-step-action" class="border rounded overflow-hidden" style="border-color: var(--ds-border); min-height: 80px;">
                 <MilkdownEditor
                   bind:content={stepFormData.action}
                   placeholder={t('testing.actionPlaceholder')}
@@ -283,7 +285,7 @@
             <!-- Data Column -->
             <div>
               <Label color="default" class="mb-2">{t('testing.data')}</Label>
-              <div class="border rounded overflow-hidden" style="border-color: var(--ds-border); min-height: 80px;">
+              <div data-testid="test-step-data" class="border rounded overflow-hidden" style="border-color: var(--ds-border); min-height: 80px;">
                 <MilkdownEditor
                   bind:content={stepFormData.data}
                   placeholder={t('testing.dataPlaceholder')}
@@ -297,7 +299,7 @@
             <!-- Expected Result Column -->
             <div>
               <Label color="default" class="mb-2" required>{t('testing.expectedResult')}</Label>
-              <div class="border rounded overflow-hidden" style="border-color: var(--ds-border); min-height: 80px;">
+              <div data-testid="test-step-expected" class="border rounded overflow-hidden" style="border-color: var(--ds-border); min-height: 80px;">
                 <MilkdownEditor
                   bind:content={stepFormData.expected}
                   placeholder={t('testing.expectedPlaceholder')}
@@ -324,6 +326,7 @@
               disabled={!stepFormData.action.trim() || !stepFormData.expected.trim()}
               size="medium"
               keyboardHint="⌘ ↵"
+              dataTestid="test-step-submit"
             >
               {editingStep ? t('testing.updateStep') : t('testing.addStep')}
             </Button>
@@ -341,6 +344,7 @@
       emptyDescription={t('testing.addFirstTestStep')}
       emptyIcon={IconClipboardList}
       actionItems={buildStepDropdownItems}
+      rowAttrs={(step) => ({ 'data-testid': `test-step-row-${step.id}` })}
     >
       {#snippet step_number(step)}
         <span style="color: var(--ds-text-link); font-weight: 500;">

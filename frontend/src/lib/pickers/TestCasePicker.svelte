@@ -64,6 +64,7 @@
 
 <BasePicker
   bind:value
+  id="test-case-picker"
   items={filteredTestCases}
   {loading}
   {error}
@@ -76,6 +77,7 @@
   getLabel={(tc) => tc?.title ?? ''}
   onSelect={handleSelect}
   onCancel={handleCancel}
+  optionTestid={(option) => `test-case-picker-option-${option.value}`}
 >
   {#snippet itemSnippet({ item: testCase, isSelected })}
     <div class="flex items-center gap-3 flex-1 min-w-0">

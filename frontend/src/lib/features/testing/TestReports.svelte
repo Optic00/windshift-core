@@ -166,7 +166,7 @@
   }
 </script>
 
-<div class="min-h-screen flex flex-col" style="background-color: var(--ds-surface-raised);">
+<div class="min-h-screen flex flex-col" style="background-color: var(--ds-surface-raised);" data-testid="test-reports">
   <!-- Tab Navigation - Always at top -->
   <div class="px-6">
     <TabNav {tabs} {basePath} defaultTab="test-runs" />
@@ -223,7 +223,7 @@
           <IconClock class="w-4 h-4" style="color: var(--ds-text-subtle);" />
           <span class="text-xs font-medium uppercase tracking-wide" style="color: var(--ds-text-subtle);">{t('testing.totalTests')}</span>
         </div>
-        <div class="text-2xl font-bold" style="color: var(--ds-text);">
+        <div class="text-2xl font-bold" style="color: var(--ds-text);" data-testid="test-report-total">
           {reportData.overall.total_tests}
         </div>
         <DescriptionText as="div">
@@ -237,7 +237,7 @@
           <IconCircleCheck class="w-4 h-4" style="color: var(--ds-text-subtle);" />
           <span class="text-xs font-medium uppercase tracking-wide" style="color: var(--ds-text-subtle);">{t('testing.passed')}</span>
         </div>
-        <div class="text-2xl font-bold" style="color: var(--ds-text);">
+        <div class="text-2xl font-bold" style="color: var(--ds-text);" data-testid="test-report-passed">
           {reportData.overall.passed}
         </div>
       </div>
@@ -248,7 +248,7 @@
           <IconCircleX class="w-4 h-4" style="color: var(--ds-text-subtle);" />
           <span class="text-xs font-medium uppercase tracking-wide" style="color: var(--ds-text-subtle);">{t('testing.failed')}</span>
         </div>
-        <div class="text-2xl font-bold" style="color: var(--ds-text);">
+        <div class="text-2xl font-bold" style="color: var(--ds-text);" data-testid="test-report-failed">
           {reportData.overall.failed}
         </div>
       </div>
@@ -259,7 +259,7 @@
           <IconAlertTriangle class="w-4 h-4" style="color: var(--ds-text-subtle);" />
           <span class="text-xs font-medium uppercase tracking-wide" style="color: var(--ds-text-subtle);">{t('testing.blocked')}</span>
         </div>
-        <div class="text-2xl font-bold" style="color: var(--ds-text);">
+        <div class="text-2xl font-bold" style="color: var(--ds-text);" data-testid="test-report-blocked">
           {reportData.overall.blocked}
         </div>
       </div>
@@ -270,7 +270,7 @@
           <IconPlayerSkipForward class="w-4 h-4" style="color: var(--ds-text-subtle);" />
           <span class="text-xs font-medium uppercase tracking-wide" style="color: var(--ds-text-subtle);">{t('testing.skipped')}</span>
         </div>
-        <div class="text-2xl font-bold" style="color: var(--ds-text);">
+        <div class="text-2xl font-bold" style="color: var(--ds-text);" data-testid="test-report-skipped">
           {reportData.overall.skipped}
         </div>
       </div>
@@ -281,7 +281,7 @@
           <IconTrendingUp class="w-4 h-4" style="color: var(--ds-text-subtle);" />
           <span class="text-xs font-medium uppercase tracking-wide" style="color: var(--ds-text-subtle);">{t('testing.passRate')}</span>
         </div>
-        <div class="text-2xl font-bold" style="color: var(--ds-text);">
+        <div class="text-2xl font-bold" style="color: var(--ds-text);" data-testid="test-report-pass-rate">
           {reportData.overall.pass_rate.toFixed(1)}%
         </div>
       </div>
@@ -339,10 +339,10 @@
             emptyMessage={t('testing.noFailuresToShow')}
           >
             {#snippet test_case_link(item)}
-              <a href="{workspaceTestBase}/cases/{item.test_case_id}" style="color: var(--ds-text-link);" class="hover:underline">{item.test_case_title}</a>
+              <a href="{workspaceTestBase}/cases/{item.test_case_id}" data-testid={`test-report-failure-case-${item.test_case_id}`} style="color: var(--ds-text-link);" class="hover:underline">{item.test_case_title}</a>
             {/snippet}
             {#snippet run_link(item)}
-              <a href="{workspaceTestBase}/runs/{item.run_id}?from=reports" style="color: var(--ds-text-link);" class="hover:underline">{item.run_name}</a>
+              <a href="{workspaceTestBase}/runs/{item.run_id}?from=reports" data-testid={`test-report-failure-run-${item.run_id}`} style="color: var(--ds-text-link);" class="hover:underline">{item.run_name}</a>
             {/snippet}
           </DataTable>
         {:else}

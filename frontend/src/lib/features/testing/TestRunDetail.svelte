@@ -231,7 +231,7 @@
   }
 </script>
 
-<div class="min-h-screen flex flex-col p-6" style="background-color: var(--ds-surface-raised);">
+<div class="min-h-screen flex flex-col p-6" style="background-color: var(--ds-surface-raised);" data-testid="test-run-detail">
   <div class="flex-1 -mx-6 -mb-6 px-10 py-6">
     {#if loading}
       <div class="flex items-center justify-center py-12">
@@ -265,6 +265,15 @@
 
         <div class="flex items-center gap-3">
           {#if testRun.ended_at}
+            <Button
+              onclick={executeRun}
+              variant="default"
+              size="medium"
+              icon={IconPlayerPlay}
+              dataTestid="test-run-rerun"
+            >
+              {t('testing.startExecution')}
+            </Button>
             <Button
               onclick={exportResults}
               variant="primary"
@@ -306,7 +315,7 @@
               <!-- Test Results Display -->
               <div class="space-y-4">
                 {#each testResults as result}
-                  <div class="border rounded p-4" style="border-color: var(--ds-border);">
+                  <div data-testid={`test-run-result-${result.test_case_id}`} class="border rounded p-4" style="border-color: var(--ds-border);">
                     <div class="flex items-center justify-between mb-3">
                       <h3 class="font-medium" style="color: var(--ds-text);">
                         {result.test_case_title}
@@ -344,7 +353,7 @@
                           <div class="space-y-3">
                             {#each result.test_steps as step, index}
                               {@const stepResult = result.stepResults[step.id]}
-                              <div class="border rounded p-3" style="border-color: var(--ds-border); background-color: var(--ds-surface);">
+                              <div data-testid={`test-run-step-result-${step.id}`} class="border rounded p-3" style="border-color: var(--ds-border); background-color: var(--ds-surface);">
                                 <div class="flex items-center gap-2 text-sm mb-2">
                                   <span class="w-2 h-2 rounded-full" style="background-color: {getStepStatusStyle(stepResult?.status || 'not_run')};"></span>
                                   <span class="font-medium" style="color: var(--ds-text);">{t('testing.stepNumber', { number: index + 1 })}: {getStatusLabel(stepResult?.status || 'not_run')}</span>
@@ -364,7 +373,7 @@
                                 {#if stepResult?.actual_result}
                                   <div class="mt-2">
                                     <div class="text-xs font-medium mb-1" style="color: var(--ds-text);">{t('testing.actualResult')}:</div>
-                                    <div class="text-xs p-2 rounded" style="background-color: var(--ds-background-neutral); color: var(--ds-text-subtle);">
+                                    <div data-testid={`test-run-step-actual-${step.id}`} class="text-xs p-2 rounded" style="background-color: var(--ds-background-neutral); color: var(--ds-text-subtle);">
                                       {stepResult.actual_result}
                                     </div>
                                   </div>
@@ -373,7 +382,7 @@
                                 {#if stepResult?.notes}
                                   <div class="mt-2">
                                     <div class="text-xs font-medium mb-1" style="color: var(--ds-text);">{t('common.notes')}:</div>
-                                    <div class="text-xs p-2 rounded" style="background-color: var(--ds-background-neutral); color: var(--ds-text-subtle);">
+                                    <div data-testid={`test-run-step-notes-${step.id}`} class="text-xs p-2 rounded" style="background-color: var(--ds-background-neutral); color: var(--ds-text-subtle);">
                                       {stepResult.notes}
                                     </div>
                                   </div>

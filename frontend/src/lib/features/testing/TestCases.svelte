@@ -821,6 +821,7 @@
           size="medium"
           keyboardHint={getShortcutDisplay('testCases', 'addTestCase')}
           hotkeyConfig={{ key: toHotkeyString('testCases', 'addTestCase'), guard: () => !showCaseForm && !showFolderForm }}
+          dataTestid="test-case-create-button"
         >
           {t('testing.addTestCase')}
         </Button>
@@ -971,6 +972,7 @@
                 class="hover:bg-[var(--ds-surface)] transition-colors draggable-test-case"
                 style="border-top: 1px solid var(--ds-border);"
                 data-test-case-id={testCase.id}
+                data-testid={`test-case-row-${testCase.id}`}
                 use:makeDraggable={{ testCase }}
                 ondblclick={() => showEditCaseForm(testCase)}
               >
@@ -1028,6 +1030,7 @@
                   <div class="flex gap-2 items-center justify-end">
                     <a
                       href={`/workspaces/${workspaceId}/tests/cases/${testCase.id}/steps`}
+                      data-testid={`test-case-steps-${testCase.id}`}
                       class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded transition-colors"
                       style="background-color: var(--ds-background-neutral); color: var(--ds-text);"
                       onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'}
@@ -1166,6 +1169,7 @@
           bind:value={caseFormData.title}
           required
           size="small"
+          dataTestid="test-case-title"
         />
       </div>
 
@@ -1210,6 +1214,7 @@
           rows={3}
           placeholder={t('testing.preconditionsPlaceholder')}
           size="small"
+          data-testid="test-case-preconditions"
         />
       </div>
 
@@ -1234,6 +1239,7 @@
           type="submit"
           variant="primary"
           keyboardHint="↵"
+          dataTestid="test-case-submit"
         >
           {editingCase ? t('common.save') : t('common.create')}
         </Button>

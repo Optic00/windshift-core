@@ -314,6 +314,7 @@
     return [
       {
         id: 'manage-tests',
+        testid: `test-set-manage-${set.id}`,
         title: t('testing.tests'),
         onClick: () => manageSetTests(set)
       },
@@ -351,6 +352,7 @@
           variant="primary"
           size="medium"
           keyboardHint="A"
+          dataTestid="test-set-create-button"
         >
           {t('testing.addTestPlan')}
         </Button>
@@ -375,7 +377,7 @@
       <div class="space-y-4">
         <div>
           <Label color="default" class="mb-2">{t('common.name')}</Label>
-          <Input bind:value={formData.name} required />
+          <Input bind:value={formData.name} required dataTestid="test-set-name" />
         </div>
 
         <div>
@@ -393,7 +395,7 @@
               </Button>
             {/if}
           </div>
-          <Textarea bind:value={formData.description} rows={3} />
+          <Textarea bind:value={formData.description} rows={3} data-testid="test-set-description" />
         </div>
 
         <div>
@@ -419,6 +421,7 @@
           onclick={handleSubmit}
           disabled={!formData.name.trim()}
           keyboardHint={submitHint}
+          dataTestid="test-set-submit"
         >
           {editingSet ? t('common.save') : t('common.create')}
         </Button>
@@ -481,6 +484,7 @@
             <div class="max-h-80 overflow-y-auto" style="background-color: var(--ds-surface);">
               {#each setTestCases as tc (tc.id)}
                 <div
+                  data-testid={`test-set-case-${tc.id}`}
                   class="flex justify-between items-center px-3 py-2.5 border-b transition-colors"
                   style="border-color: var(--ds-border);"
                 >
@@ -512,6 +516,7 @@
         <Button
           variant="ghost"
           onclick={() => showTestCaseSelector = false}
+          dataTestid="test-set-manage-done"
         >
           {t('common.done')}
         </Button>
@@ -520,6 +525,7 @@
           onclick={handleStartRun}
           disabled={setTestCases.length === 0}
           icon={IconPlayerPlay}
+          dataTestid="test-set-start-run"
         >
           {t('testing.startRun')}
         </Button>
@@ -534,10 +540,11 @@
       data={filteredTestSets}
       keyField="id"
       actionItems={testSetActions}
+      actionTriggerTestid={(set) => `test-set-actions-${set.id}`}
+      rowAttrs={(set) => ({ 'data-testid': `test-set-row-${set.id}` })}
       emptyMessage={t('testing.noTestPlansYet')}
       emptyDescription={t('testing.createFirstTestPlan')}
       emptyIcon={IconPackage}
     />
   </div>
 </div>
-

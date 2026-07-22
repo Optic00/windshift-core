@@ -401,6 +401,9 @@
     class="flex min-h-screen"
     style="background-color: var(--ds-surface-raised);"
     data-testid="test-execution"
+    data-run-id={runId}
+    data-current-case-id={currentCase?.id}
+    data-current-step-id={currentStep?.id}
   >
     <!-- Left Sidebar - Test Cases (Collapsible) -->
     <div class="{sidebarCollapsed ? 'w-14' : 'w-64'} border-r flex flex-col transition-all duration-200" style="border-color: var(--ds-border); background-color: var(--ds-surface-raised);">
@@ -410,6 +413,7 @@
           <div class="flex items-center gap-2 min-w-0">
             <button
               onclick={goBack}
+              data-testid="test-execution-back"
               class="p-1 rounded cursor-pointer flex-shrink-0"
               style="color: var(--ds-icon);"
               onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'}
@@ -446,7 +450,8 @@
             {@const isCollapsedActive = currentCaseIndex === index}
             <button
               type="button"
-              data-testid="test-execution-case"
+              data-testid={`test-execution-case-${testCase.id}`}
+              data-progress={progress.percent}
               class="appearance-none bg-transparent border-none font-[inherit] text-[inherit] text-left w-full m-0 cursor-pointer mb-2 p-1 rounded-lg transition-all"
               style={isCollapsedActive ? 'background: var(--ds-surface); box-shadow: 0 1px 3px rgba(0,0,0,0.1), 0 1px 2px rgba(0,0,0,0.06);' : ''}
               onmouseenter={(e) => { if (!isCollapsedActive) e.currentTarget.style.background = 'var(--ds-background-neutral-hovered)'; }}
@@ -469,7 +474,8 @@
             {@const isExpandedActive = currentCaseIndex === index}
             <button
               type="button"
-              data-testid="test-execution-case"
+              data-testid={`test-execution-case-${testCase.id}`}
+              data-progress={progress.percent}
               class="appearance-none bg-transparent font-[inherit] text-[inherit] text-left w-full m-0 cursor-pointer p-3 mb-2 rounded-lg border transition-all"
               style={isExpandedActive ? 'border-color: var(--ds-interactive); background: var(--ds-surface); box-shadow: 0 1px 3px rgba(0,0,0,0.1), 0 1px 2px rgba(0,0,0,0.06);' : 'border-color: var(--ds-border);'}
               onmouseenter={(e) => { if (!isExpandedActive) e.currentTarget.style.background = 'var(--ds-background-neutral-hovered)'; }}
@@ -502,6 +508,7 @@
             size="small"
             class="w-full"
             title={t('testing.finishExecution')}
+            dataTestid="test-execution-finish-sidebar"
           >
             <IconCheck class="w-4 h-4" />
           </Button>
@@ -511,6 +518,7 @@
             variant="primary"
             size="medium"
             class="w-full"
+            dataTestid="test-execution-finish-sidebar"
           >
             {t('testing.finishExecution')}
           </Button>
@@ -558,6 +566,7 @@
               {#each currentCase.test_steps as step, index}
                 <button
                   onclick={() => goToStep(index)}
+                  data-testid={`test-execution-step-${step.id}`}
                   class="flex-1 h-2 rounded transition cursor-pointer"
                   style="background-color: {currentStepIndex === index ? 'var(--ds-progress-fill)' : 'var(--ds-progress-track)'};"
                   onmouseenter={(e) => { if (currentStepIndex !== index) e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'; }}
@@ -623,6 +632,7 @@
               <div class="flex gap-3 mb-4">
                 <button
                   onclick={() => markStepStatus(currentStep.id, 'passed')}
+                  data-testid="test-execution-status-passed"
                   class="flex items-center gap-2 px-4 py-2 rounded transition cursor-pointer"
                   style={getStatusButtonStyle('passed', stepResults[currentStep.id]?.status === 'passed')}
                   onmouseenter={(e) => { if (stepResults[currentStep.id]?.status !== 'passed') e.currentTarget.style.backgroundColor = 'var(--ds-status-success-bg)'; }}
@@ -634,6 +644,7 @@
 
                 <button
                   onclick={() => markStepStatus(currentStep.id, 'failed')}
+                  data-testid="test-execution-status-failed"
                   class="flex items-center gap-2 px-4 py-2 rounded transition cursor-pointer"
                   style={getStatusButtonStyle('failed', stepResults[currentStep.id]?.status === 'failed')}
                   onmouseenter={(e) => { if (stepResults[currentStep.id]?.status !== 'failed') e.currentTarget.style.backgroundColor = 'var(--ds-status-danger-bg)'; }}
@@ -645,6 +656,7 @@
 
                 <button
                   onclick={() => markStepStatus(currentStep.id, 'blocked')}
+                  data-testid="test-execution-status-blocked"
                   class="flex items-center gap-2 px-4 py-2 rounded transition cursor-pointer"
                   style={getStatusButtonStyle('blocked', stepResults[currentStep.id]?.status === 'blocked')}
                   onmouseenter={(e) => { if (stepResults[currentStep.id]?.status !== 'blocked') e.currentTarget.style.backgroundColor = 'var(--ds-status-warning-bg)'; }}
@@ -656,6 +668,7 @@
 
                 <button
                   onclick={() => markStepStatus(currentStep.id, 'skipped')}
+                  data-testid="test-execution-status-skipped"
                   class="flex items-center gap-2 px-4 py-2 rounded transition cursor-pointer"
                   style={getStatusButtonStyle('skipped', stepResults[currentStep.id]?.status === 'skipped')}
                   onmouseenter={(e) => { if (stepResults[currentStep.id]?.status !== 'skipped') e.currentTarget.style.backgroundColor = 'var(--ds-status-neutral-bg)'; }}
@@ -671,7 +684,7 @@
                 <Label color="default" class="mb-2">{t('testing.actual')}</Label>
                 {#if testResults[currentCase.id]?.id}
                   {#key currentStep.id}
-                    <div class="border rounded overflow-hidden" style="border-color: var(--ds-border); min-height: 80px;">
+                    <div data-testid="test-execution-actual-result" class="border rounded overflow-hidden" style="border-color: var(--ds-border); min-height: 80px;">
                       <MilkdownEditor
                         content={stepResults[currentStep.id]?.actual_result || ''}
                         entityType="test_result"
@@ -688,6 +701,7 @@
                     oninput={(e) => updateStepResult(currentStep.id, 'actual_result', e.target.value)}
                     rows={3}
                     placeholder={t('testing.actualResultPlaceholder')}
+                    data-testid="test-execution-actual-result"
                   />
                 {/if}
               </div>
@@ -697,7 +711,7 @@
                 <Label color="default" class="mb-2">{t('common.notes')}</Label>
                 {#if testResults[currentCase.id]?.id}
                   {#key `notes-${currentStep.id}`}
-                    <div class="border rounded overflow-hidden" style="border-color: var(--ds-border); min-height: 60px;">
+                    <div data-testid="test-execution-notes" class="border rounded overflow-hidden" style="border-color: var(--ds-border); min-height: 60px;">
                       <MilkdownEditor
                         content={stepResults[currentStep.id]?.notes || ''}
                         entityType="test_result"
@@ -714,6 +728,7 @@
                     oninput={(e) => updateStepResult(currentStep.id, 'notes', e.target.value)}
                     rows={2}
                     placeholder={t('testing.notesPlaceholder')}
+                    data-testid="test-execution-notes"
                   />
                 {/if}
               </div>
@@ -780,7 +795,7 @@
 
               <!-- Quick Navigation -->
               <div class="flex justify-between items-center pt-4 border-t" style="border-color: var(--ds-border);">
-                <span class="text-sm px-2 py-1 rounded" style={getStatusBadgeCSS(stepResults[currentStep.id]?.status || 'not_run')}>
+                <span data-testid="test-execution-current-status" class="text-sm px-2 py-1 rounded" style={getStatusBadgeCSS(stepResults[currentStep.id]?.status || 'not_run')}>
                   {t('common.status')}: {getStatusLabel(stepResults[currentStep.id]?.status || 'not_run')}
                 </span>
                 
@@ -801,6 +816,7 @@
                     size="medium"
                     icon={IconChevronRight}
                     iconPosition="right"
+                    dataTestid="test-execution-finish-current"
                   >
                     {t('testing.finishExecution')}
                   </Button>
