@@ -3,6 +3,10 @@ import { api } from '../api.js';
 import { BaseCacheStore } from './BaseCacheStore.svelte.js';
 
 const TTL_MS = 10 * 60 * 1000; // 10 minutes
+// Keep the per-item fallback comfortably below the server's per-user request
+// cap. The workspace matrix normally makes this path unnecessary, but global
+// collections have no single workspace matrix to preload.
+const MAX_CONCURRENT_PAIR_FETCHES = 4;
 
 /**
  * Caches available status transitions by (itemTypeId, statusId) instead of per-item.
@@ -111,13 +115,20 @@ class StatusTransitionStore extends BaseCacheStore {
 
     if (representatives.size === 0) return;
 
-    // Fetch all uncached pairs concurrently, deduplicating in-flight requests
-    const fetchPromises = [];
-    for (const [key, item] of representatives) {
-      fetchPromises.push(this._fetchForItem(key, item));
-    }
-
-    await Promise.all(fetchPromises);
+    // Fetch missing pairs through a small worker pool. Global collections do
+    // not have one workspace matrix to preload, so an unbounded Promise.all
+    // here can exceed the server's per-user concurrency limit while the rest
+    // of the board is loading.
+    const entries = [...representatives];
+    let nextIndex = 0;
+    const fetchNext = async () => {
+      while (nextIndex < entries.length) {
+        const [key, item] = entries[nextIndex++];
+        await this._fetchForItem(key, item);
+      }
+    };
+    const workerCount = Math.min(MAX_CONCURRENT_PAIR_FETCHES, entries.length);
+    await Promise.all(Array.from({ length: workerCount }, () => fetchNext()));
   }
 
   /** @private */
