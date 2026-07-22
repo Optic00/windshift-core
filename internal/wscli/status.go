@@ -88,9 +88,21 @@ var itemTypeListCmd = &cobra.Command{
 			return err
 		}
 
-		itemTypes, err := client.ListItemTypes()
-		if err != nil {
-			return fmt.Errorf("failed to list item types: %w", err)
+		var itemTypes []ItemType
+		if wsKey := cfg.GetEffectiveWorkspace(); wsKey != "" {
+			wsID, resolveErr := client.ResolveWorkspaceID(wsKey)
+			if resolveErr != nil {
+				return fmt.Errorf("failed to resolve workspace: %w", resolveErr)
+			}
+			itemTypes, err = client.GetWorkspaceItemTypes(wsID)
+			if err != nil {
+				return fmt.Errorf("failed to list workspace item types: %w", err)
+			}
+		} else {
+			itemTypes, err = client.ListItemTypes()
+			if err != nil {
+				return fmt.Errorf("failed to list item types: %w", err)
+			}
 		}
 
 		output := NewOutput()

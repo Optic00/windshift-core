@@ -315,7 +315,8 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 			SELECT p.id FROM priorities p
 			INNER JOIN configuration_set_priorities csp ON p.id = csp.priority_id
 			INNER JOIN workspace_configuration_sets wcs ON csp.configuration_set_id = wcs.configuration_set_id
-			WHERE p.is_default = true AND wcs.workspace_id = ?
+			WHERE wcs.workspace_id = ?
+			ORDER BY p.is_default DESC, p.sort_order, p.id
 			LIMIT 1
 		`, params.WorkspaceID).Scan(&defaultPriorityID)
 		if err != nil {
@@ -324,6 +325,15 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 		}
 		if err == nil {
 			priorityID = &defaultPriorityID
+		}
+	}
+	if priorityID != nil {
+		allowed, err := validation.IsPriorityAllowedInWorkspace(db, params.WorkspaceID, *priorityID)
+		if err != nil {
+			return 0, fmt.Errorf("failed to validate workspace priority: %w", err)
+		}
+		if !allowed {
+			return 0, &validation.ValidationError{Field: "priority_id", Message: "Priority is not allowed in this workspace"}
 		}
 	}
 

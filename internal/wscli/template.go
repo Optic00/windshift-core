@@ -47,7 +47,7 @@ var taskTemplateListCmd = &cobra.Command{
 		}
 		typeID := 0
 		if templateListType != "" {
-			typeID, err = resolveItemTypeID(client, templateListType)
+			typeID, err = resolveItemTypeID(client, templateListType, &wsID)
 			if err != nil {
 				return err
 			}

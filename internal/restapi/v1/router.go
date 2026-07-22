@@ -179,6 +179,7 @@ func RegisterRoutes(deps restapi.Deps) {
 	v1.HandleWithMiddleware("GET /workspaces/{id}/statuses", workspaceHandler.GetStatuses, bearerAuth.RequirePermission("workspaces:read"), router.RequireNumericID)
 	v1.HandleWithMiddleware("GET /workspaces/{id}/statuses/completed", workspaceHandler.ListCompletedStatuses, bearerAuth.RequirePermission("workspaces:read"), router.RequireNumericID)
 	v1.HandleWithMiddleware("GET /workspaces/{id}/item-types", workspaceHandler.GetItemTypes, bearerAuth.RequirePermission("workspaces:read"), router.RequireNumericID)
+	v1.HandleWithMiddleware("GET /workspaces/{id}/workflows", workspaceHandler.GetWorkflows, bearerAuth.RequirePermission("workspaces:read"), router.RequireNumericID)
 	v1.HandleWithMiddleware("GET /workspaces/{id}/priorities", workspaceHandler.GetPriorities, bearerAuth.RequirePermission("workspaces:read"), router.RequireNumericID)
 	v1.HandleWithMiddleware("GET /workspaces/{id}/assignable-users", userHandler.GetAssignableForWorkspace, bearerAuth.RequirePermission("users:read"), router.RequireNumericID)
 

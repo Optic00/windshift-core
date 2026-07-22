@@ -812,6 +812,50 @@ func (s *WorkflowService) List() ([]WorkflowResult, error) {
 	return workflows, nil
 }
 
+// ListForWorkspace returns the distinct workflows effective for a workspace's
+// configured item types. Item-type overrides take precedence over the
+// configuration-set workflow, which in turn falls back to the global default.
+// Personal workspaces have no workflow restrictions and return an empty list.
+func (s *WorkflowService) ListForWorkspace(workspaceID int) ([]WorkflowResult, error) {
+	rows, err := s.db.Query(`
+		WITH effective_workflows AS (
+			SELECT DISTINCT COALESCE(
+				csit.workflow_id,
+				cs.workflow_id,
+				(SELECT id FROM workflows WHERE is_default = true ORDER BY id LIMIT 1)
+			) AS workflow_id
+			FROM workspaces target
+			LEFT JOIN workspace_configuration_sets wcs ON wcs.workspace_id = target.id
+			LEFT JOIN configuration_sets cs ON cs.id = wcs.configuration_set_id
+			LEFT JOIN configuration_set_item_types csit ON csit.configuration_set_id = cs.id
+			WHERE target.id = ? AND target.is_personal = false
+		)
+		SELECT w.id, w.name, w.description, w.is_default, w.created_at, w.updated_at
+		FROM workflows w
+		JOIN effective_workflows ew ON ew.workflow_id = w.id
+		ORDER BY w.name
+	`, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list workspace workflows: %w", err)
+	}
+	defer rows.Close()
+
+	workflows := []WorkflowResult{}
+	for rows.Next() {
+		var wf WorkflowResult
+		var description sql.NullString
+		if err := rows.Scan(&wf.ID, &wf.Name, &description, &wf.IsDefault, &wf.CreatedAt, &wf.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan workspace workflow: %w", err)
+		}
+		wf.Description = description.String
+		workflows = append(workflows, wf)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate workspace workflows: %w", err)
+	}
+	return workflows, nil
+}
+
 // GetByID retrieves a workflow by ID.
 func (s *WorkflowService) GetByID(id int) (*WorkflowResult, error) {
 	var wf WorkflowResult

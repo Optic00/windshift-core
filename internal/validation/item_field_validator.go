@@ -329,6 +329,17 @@ func (v *ItemFieldValidator) ValidateAndApplyUpdates(
 		}
 		item.WorkspaceID = newWorkspaceID
 	}
+	_, priorityChanged := updateData["priority_id"]
+	_, workspaceChanged := updateData["workspace_id"]
+	if (priorityChanged || workspaceChanged) && item.PriorityID != nil {
+		allowed, err := IsPriorityAllowedInWorkspace(v.db, item.WorkspaceID, *item.PriorityID)
+		if err != nil {
+			return fmt.Errorf("failed to validate workspace priority: %w", err)
+		}
+		if !allowed {
+			return &ValidationError{Field: "priority_id", Message: "Priority is not allowed in this workspace"}
+		}
+	}
 
 	// Assignee ID validation
 	if err := v.ValidateNullableUserID(updateData, "assignee_id", &item.AssigneeID, "Assignee user"); err != nil {

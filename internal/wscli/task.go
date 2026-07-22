@@ -280,7 +280,7 @@ Examples:
 
 		// Set optional fields
 		if createType != "" {
-			typeID, err := resolveItemTypeID(client, createType)
+			typeID, err := resolveItemTypeID(client, createType, &wsID)
 			if err != nil {
 				return err
 			}
@@ -523,6 +523,13 @@ Examples:
 		if err != nil {
 			return fmt.Errorf("failed to resolve item: %w", err)
 		}
+		var itemForScope *Item
+		if !clearMilestone {
+			itemForScope, err = client.GetItem(itemID, "")
+			if err != nil {
+				return fmt.Errorf("failed to get item: %w", err)
+			}
+		}
 
 		// With multi-milestone the typed request carries milestone_ids as a
 		// pointer-to-slice: nil = "leave alone", non-nil empty slice =
@@ -540,15 +547,7 @@ Examples:
 			if len(args) < 2 {
 				return fmt.Errorf("milestone argument required (or use --clear to remove)")
 			}
-			var wsID *int
-			if wsKey := cfg.GetEffectiveWorkspace(); wsKey != "" {
-				id, err := client.ResolveWorkspaceID(wsKey)
-				if err != nil {
-					return fmt.Errorf("failed to resolve workspace: %w", err)
-				}
-				wsID = &id
-			}
-			id, err := client.ResolveMilestoneID(args[1], wsID)
+			id, err := client.ResolveMilestoneID(args[1], &itemForScope.WorkspaceID)
 			if err != nil {
 				return fmt.Errorf("failed to resolve milestone: %w", err)
 			}
@@ -736,6 +735,14 @@ Examples:
 		if err != nil {
 			return fmt.Errorf("failed to resolve item: %w", err)
 		}
+		needsWorkspaceContext := cmd.Flags().Changed("type") || cmd.Flags().Changed("iteration")
+		var itemForScope *Item
+		if needsWorkspaceContext {
+			itemForScope, err = client.GetItem(itemID, "")
+			if err != nil {
+				return fmt.Errorf("failed to get item: %w", err)
+			}
+		}
 
 		req := ItemUpdateRequest{}
 		hasChanges := false
@@ -795,15 +802,7 @@ Examples:
 			hasChanges = true
 		}
 		if cmd.Flags().Changed("iteration") {
-			var wsID *int
-			if wsKey := cfg.GetEffectiveWorkspace(); wsKey != "" {
-				id, err := client.ResolveWorkspaceID(wsKey)
-				if err != nil {
-					return fmt.Errorf("failed to resolve workspace: %w", err)
-				}
-				wsID = &id
-			}
-			id, err := client.ResolveIterationID(editIteration, wsID)
+			id, err := client.ResolveIterationID(editIteration, &itemForScope.WorkspaceID)
 			if err != nil {
 				return fmt.Errorf("failed to resolve iteration: %w", err)
 			}
@@ -831,7 +830,7 @@ Examples:
 			}
 		}
 		if typeChanged {
-			typeID, err := resolveItemTypeID(client, editType)
+			typeID, err := resolveItemTypeID(client, editType, &itemForScope.WorkspaceID)
 			if err != nil {
 				return err
 			}
@@ -869,7 +868,7 @@ func parseDateFlag(flagName, value string) (*time.Time, error) {
 
 // resolveItemTypeID resolves an item type given as a numeric ID or a name.
 // Names match case-insensitively, exact first, then unique substring.
-func resolveItemTypeID(client *Client, input string) (int, error) {
+func resolveItemTypeID(client *Client, input string, workspaceID *int) (int, error) {
 	if id, err := strconv.Atoi(input); err == nil {
 		if id <= 0 {
 			return 0, fmt.Errorf("item type ID must be positive")
@@ -877,7 +876,13 @@ func resolveItemTypeID(client *Client, input string) (int, error) {
 		return id, nil
 	}
 
-	types, err := client.ListItemTypes()
+	var types []ItemType
+	var err error
+	if workspaceID != nil {
+		types, err = client.GetWorkspaceItemTypes(*workspaceID)
+	} else {
+		types, err = client.ListItemTypes()
+	}
 	if err != nil {
 		return 0, fmt.Errorf("failed to list item types: %w", err)
 	}

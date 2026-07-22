@@ -321,6 +321,16 @@ func (c *Client) ListItemTypes() ([]ItemType, error) {
 	return types, nil
 }
 
+// GetWorkspaceItemTypes lists the item types enabled for a workspace's
+// configuration set.
+func (c *Client) GetWorkspaceItemTypes(workspaceID int) ([]ItemType, error) {
+	var types []ItemType
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/workspaces/%d/item-types", workspaceID), &types); err != nil {
+		return nil, err
+	}
+	return types, nil
+}
+
 // ListPriorities lists all priorities
 func (c *Client) ListPriorities() ([]Priority, error) {
 	var priorities []Priority
@@ -343,6 +353,16 @@ func (c *Client) GetWorkspacePriorities(workspaceID int) ([]Priority, error) {
 func (c *Client) ListWorkflows() ([]Workflow, error) {
 	var workflows []Workflow
 	if err := c.GET("/rest/api/v1/workflows", &workflows); err != nil {
+		return nil, err
+	}
+	return workflows, nil
+}
+
+// GetWorkspaceWorkflows lists the distinct workflows effective for a
+// workspace's configured item types.
+func (c *Client) GetWorkspaceWorkflows(workspaceID int) ([]Workflow, error) {
+	var workflows []Workflow
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/workspaces/%d/workflows", workspaceID), &workflows); err != nil {
 		return nil, err
 	}
 	return workflows, nil

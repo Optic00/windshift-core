@@ -186,12 +186,12 @@ func fetchWorkspaceContext(client *Client, wsID int) (*WorkspaceContext, error) 
 		return nil, fmt.Errorf("failed to get statuses: %w", err)
 	}
 
-	itemTypes, err := client.ListItemTypes()
+	itemTypes, err := client.GetWorkspaceItemTypes(wsID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get item types: %w", err)
 	}
 
-	workflows, err := client.ListWorkflows()
+	workflows, err := client.GetWorkspaceWorkflows(wsID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get workflows: %w", err)
 	}

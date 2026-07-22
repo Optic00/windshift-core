@@ -10,6 +10,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/validation"
 )
 
 // ItemValidationParams contains parameters for validating item creation
@@ -68,39 +69,7 @@ func IsItemTypeAllowedInWorkspace(db database.Database, workspaceID, itemTypeID 
 // configuration set, or whose configuration set has no explicit priority
 // assignments, use the default global priority catalog.
 func IsPriorityAllowedInWorkspace(db database.Database, workspaceID, priorityID int) (bool, error) {
-	var priorityExists bool
-	if err := db.QueryRow(
-		"SELECT EXISTS(SELECT 1 FROM priorities WHERE id = ?)",
-		priorityID,
-	).Scan(&priorityExists); err != nil {
-		return false, fmt.Errorf("failed to check priority existence: %w", err)
-	}
-	if !priorityExists {
-		return false, nil
-	}
-
-	var configSetID *int
-	err := db.QueryRow(
-		"SELECT configuration_set_id FROM workspace_configuration_sets WHERE workspace_id = ?",
-		workspaceID,
-	).Scan(&configSetID)
-	if errors.Is(err, sql.ErrNoRows) || configSetID == nil {
-		return true, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("failed to query workspace config set: %w", err)
-	}
-
-	var allowed bool
-	if err := db.QueryRow(
-		`SELECT
-			NOT EXISTS(SELECT 1 FROM configuration_set_priorities WHERE configuration_set_id = ?)
-			OR EXISTS(SELECT 1 FROM configuration_set_priorities WHERE configuration_set_id = ? AND priority_id = ?)`,
-		*configSetID, *configSetID, priorityID,
-	).Scan(&allowed); err != nil {
-		return false, fmt.Errorf("failed to check priority in config set: %w", err)
-	}
-	return allowed, nil
+	return validation.IsPriorityAllowedInWorkspace(db, workspaceID, priorityID)
 }
 
 // ValidateItemCreation validates all parameters for creating an item

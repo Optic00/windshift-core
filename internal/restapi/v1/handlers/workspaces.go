@@ -505,6 +505,47 @@ func (h *WorkspaceHandler) GetItemTypes(w http.ResponseWriter, r *http.Request) 
 	h.RespondOK(w, result)
 }
 
+// GetWorkflows handles GET /rest/api/v1/workspaces/{id}/workflows
+//
+// @Summary      List workflows effective for a workspace
+// @Description  Returns the distinct workflows selected by the workspace configuration set and its item-type overrides.
+// @Tags         workspaces, workflows
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id   path      int  true  "Workspace ID"
+// @Success      200  {array}   handlers.WorkflowResponse
+// @Failure      400  {object}  handlers.ErrorResponse  "Invalid workspace ID"
+// @Failure      401  {object}  handlers.ErrorResponse
+// @Failure      403  {object}  handlers.ErrorResponse  "Token lacks the workspaces:read scope"
+// @Failure      404  {object}  handlers.ErrorResponse  "Workspace not found or not visible to caller"
+// @Failure      500  {object}  handlers.ErrorResponse
+// @Router       /workspaces/{id}/workflows [get]
+func (h *WorkspaceHandler) GetWorkflows(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := h.RequireWorkspaceViewAccess(w, r)
+	if !ok {
+		return
+	}
+
+	results, err := services.NewWorkflowService(h.db).ListForWorkspace(workspaceID)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+
+	workflows := make([]WorkflowResponse, 0, len(results))
+	for _, wf := range results {
+		workflows = append(workflows, WorkflowResponse{
+			ID:          wf.ID,
+			Name:        wf.Name,
+			Description: wf.Description,
+			IsDefault:   wf.IsDefault,
+			CreatedAt:   wf.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			UpdatedAt:   wf.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		})
+	}
+	h.RespondOK(w, workflows)
+}
+
 // GetPriorities handles GET /rest/api/v1/workspaces/{id}/priorities
 //
 // @Summary      List priorities configured for a workspace
