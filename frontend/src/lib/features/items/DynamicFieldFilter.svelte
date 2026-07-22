@@ -19,6 +19,7 @@
       values: [] // For IN operator
     },
     compact = false,
+    testIdPrefix = null,
     onchange = undefined,
     onremove = undefined,
     onexecute = undefined,
@@ -281,12 +282,13 @@
 </script>
 
 <div
+  data-testid={testIdPrefix || undefined}
   class={compact ? "flex flex-col gap-2" : "flex items-start gap-2 p-2.5 rounded border"}
   style={compact ? "" : "background-color: var(--ds-surface-raised); border-color: var(--ds-border);"}
 >
   <!-- Header row: Field Selector + Remove button (compact) -->
   <div class={compact ? "flex items-start gap-2 w-full" : "flex-1 min-w-0"} style={compact ? "" : "max-width: 250px;"}>
-    <div class={compact ? "flex-1" : ""}>
+    <div data-testid={testIdPrefix ? `${testIdPrefix}-field` : undefined} class={compact ? "flex-1" : ""}>
       <FieldSelector
         selectedField={filter.field}
         placeholder="Choose field..."
@@ -300,7 +302,7 @@
     <!-- Operator + Value row -->
     <div class={compact ? "flex gap-2 w-full" : "contents"}>
       <!-- Operator Selector -->
-      <div class={compact ? "flex-shrink-0" : ""} style={compact ? "width: 90px;" : "min-width: 150px;"}>
+      <div data-testid={testIdPrefix ? `${testIdPrefix}-operator` : undefined} class={compact ? "flex-shrink-0" : ""} style={compact ? "width: 90px;" : "min-width: 150px;"}>
         <BasePicker
           value={filter.operator}
           items={operatorOptions}
@@ -321,7 +323,7 @@
       </div>
 
       <!-- Value Input -->
-      <div class={compact ? "flex-1 min-w-0" : "flex-1"} style={compact ? "" : "min-width: 200px;"}>
+      <div data-testid={testIdPrefix ? `${testIdPrefix}-value` : undefined} class={compact ? "flex-1 min-w-0" : "flex-1"} style={compact ? "" : "min-width: 200px;"}>
       {#if isMultiValueOperator(filter.operator)}
         <!-- Multi-value selector for IN/NOT IN -->
         {#if filter.field.id === 'iteration'}
@@ -532,6 +534,7 @@
       {filter.field?.label || 'Enter Value'}
     </h3>
     <input
+      data-testid={testIdPrefix ? `${testIdPrefix}-value-input` : undefined}
       type="text"
       bind:value={tempTextValue}
       placeholder="Enter value..."
@@ -541,7 +544,7 @@
     <div class="flex justify-end gap-2 mt-4">
       <Button variant="ghost" size="sm" onclick={clearTextValue}>Clear</Button>
       <Button variant="ghost" size="sm" onclick={closeTextModal}>Cancel</Button>
-      <Button variant="primary" size="sm" onclick={applyTextValue}>Apply</Button>
+      <Button dataTestid={testIdPrefix ? `${testIdPrefix}-apply-value` : undefined} variant="primary" size="sm" onclick={applyTextValue}>Apply</Button>
     </div>
   </div>
 </Modal>

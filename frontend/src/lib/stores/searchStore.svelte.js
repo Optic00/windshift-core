@@ -344,6 +344,18 @@ export function createWorkItemSearchStore() {
   function restoreFromURL() {
     const params = new URLSearchParams(window.location.search);
 
+    // A restore can happen more than once while SearchPage stays mounted
+    // (browser Back/Forward after syncToURL's pushState). Reset first so a
+    // parameter removed by the history entry also disappears from the UI.
+    searchQuery.set('');
+    selectedWorkspaces.set([]);
+    selectedStatuses.set([]);
+    selectedPriorities.set([]);
+    dynamicFilters.set([]);
+    rawQlQuery.set('');
+    rawMode.set(false);
+    qlError.set(null);
+
     // Raw mode (`?raw=…` is canonical; `?ql=…` is accepted for backwards compat).
     const rawParam = params.get('raw') ?? params.get('ql');
     if (rawParam) {

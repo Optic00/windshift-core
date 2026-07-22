@@ -799,7 +799,10 @@ export class QLBuilder {
     // Search filter
     if (filters.search?.trim()) {
       const searchTerm = filters.search.trim();
-      conditions.push(`(title ~ "${searchTerm}" OR description ~ "${searchTerm}")`);
+      const formattedSearch = QLBuilder.formatValue(searchTerm, 'text');
+      conditions.push(
+        `(title ~ ${formattedSearch} OR description ~ ${formattedSearch} OR key = ${formattedSearch})`
+      );
     }
 
     // Dynamic field filters

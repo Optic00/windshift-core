@@ -1,12 +1,13 @@
 <script>
   import { onMount } from 'svelte';
-  import { Search } from '@lucide/svelte';
+  import { AlertCircle, Search } from '@lucide/svelte';
   import { t } from '../stores/i18n.svelte.js';
   import PageHeader from '../layout/PageHeader.svelte';
   import Card from '../components/Card.svelte';
   import DataTable from '../components/DataTable.svelte';
   import Pagination from '../components/Pagination.svelte';
   import EmptyState from '../components/EmptyState.svelte';
+  import Button from '../components/Button.svelte';
   import QlQueryBar from '../features/shared/QlQueryBar.svelte';
   import WorkItemFilterPanel from '../features/items/WorkItemFilterPanel.svelte';
   import { createWorkItemSearchStore } from '../stores/searchStore.svelte.js';
@@ -46,13 +47,32 @@
   let currentPage = $state(1);
   let itemsPerPage = $state(/** @type {number} */ (50));
 
-  onMount(async () => {
-    await store.loadReferenceData();
-    store.restoreFromURL();
-    if (storeState.hasFilters) {
-      await store.executeSearch({ page: currentPage, limit: itemsPerPage });
+  onMount(() => {
+    async function restoreAndSearch() {
+      currentPage = 1;
+      store.restoreFromURL();
+      await store.executeSearch({ page: 1, limit: itemsPerPage });
     }
+
+    function handleHistoryNavigation() {
+      void restoreAndSearch();
+    }
+
+    window.addEventListener('popstate', handleHistoryNavigation);
+    // Hydrate synchronously before yielding to reference-data requests. This
+    // prevents a fast first keystroke from being overwritten when those
+    // requests finish, while executeSearch still waits for workspace names.
+    store.restoreFromURL();
+    void store.loadReferenceData().then(() =>
+      store.executeSearch({ page: 1, limit: itemsPerPage })
+    );
+
+    return () => window.removeEventListener('popstate', handleHistoryNavigation);
   });
+
+  function retrySearch() {
+    return store.executeSearch({ page: currentPage, limit: itemsPerPage });
+  }
 
   const {
     handleUpdateWorkspaces,
@@ -120,6 +140,7 @@
       />
 
       <WorkItemFilterPanel
+        testIdPrefix="global-search"
         {workspaces}
         {allStatuses}
         {allPriorities}
@@ -140,40 +161,69 @@
     </div>
 
     {#if loadingItems}
-      <Card rounded="xl" shadow padding="loose" class="text-center">
+      <div data-testid="global-search-loading">
+        <Card rounded="xl" shadow padding="loose" class="text-center">
         <div class="animate-pulse" style="color: var(--ds-text-subtle);">{t('common.loading')}</div>
-      </Card>
+        </Card>
+      </div>
+    {:else if qlError}
+      <div data-testid="global-search-error">
+        <Card rounded="xl" shadow padding="loose">
+          <div class="flex items-start gap-3">
+            <AlertCircle class="w-5 h-5 flex-shrink-0 mt-0.5" style="color: var(--ds-text-danger);" />
+            <div class="min-w-0 flex-1">
+              <p class="font-medium" style="color: var(--ds-text-danger);">{t('common.error')}</p>
+              <p class="mt-1 text-sm break-words" style="color: var(--ds-text-subtle);">{qlError}</p>
+              <Button
+                dataTestid="global-search-retry"
+                variant="secondary"
+                size="sm"
+                onclick={retrySearch}
+                class="mt-3"
+              >
+                {t('common.retry')}
+              </Button>
+            </div>
+          </div>
+        </Card>
+      </div>
     {:else if workItems.length === 0 && hasFilters}
-      <Card rounded="xl" shadow>
-        <EmptyState
-          icon={Search}
-          title={t('search.noSearchResults')}
-          description={t('search.configureFilter')}
-        />
-      </Card>
+      <div data-testid="global-search-empty-results">
+        <Card rounded="xl" shadow>
+          <EmptyState
+            icon={Search}
+            title={t('search.noSearchResults')}
+            description={t('search.configureFilter')}
+          />
+        </Card>
+      </div>
     {:else if workItems.length === 0}
-      <Card rounded="xl" shadow>
-        <EmptyState
-          icon={Search}
-          title={t('search.title')}
-          description={t('search.searchPlaceholder')}
-        />
-      </Card>
+      <div data-testid="global-search-prompt">
+        <Card rounded="xl" shadow>
+          <EmptyState
+            icon={Search}
+            title={t('search.title')}
+            description={t('search.searchPlaceholder')}
+          />
+        </Card>
+      </div>
     {:else}
-      <DataTable
-        data={tableData}
-        columns={workItemColumns}
-        keyField="id"
-        rowAttrs={(item) => ({ 'data-testid': `global-search-result-${item.id}` })}
-        emptyMessage={t('search.noSearchResults')}
-        emptyDescription={t('search.configureFilter')}
-        emptyIcon={Search}
-        actionItems={buildItemActions}
-        onRowClick={viewItem}
-      />
+      <div data-testid="global-search-results">
+        <DataTable
+          data={tableData}
+          columns={workItemColumns}
+          keyField="id"
+          rowAttrs={(item) => ({ 'data-testid': `global-search-result-${item.id}` })}
+          emptyMessage={t('search.noSearchResults')}
+          emptyDescription={t('search.configureFilter')}
+          emptyIcon={Search}
+          actionItems={buildItemActions}
+          onRowClick={viewItem}
+        />
+      </div>
 
       {#if itemsPagination && itemsPagination.total > 0}
-        <div class="mt-6">
+        <div data-testid="global-search-pagination" class="mt-6">
           <Pagination
             currentPage={itemsPagination.page}
             totalItems={itemsPagination.total}

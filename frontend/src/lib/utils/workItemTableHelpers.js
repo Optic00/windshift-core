@@ -14,7 +14,7 @@ export function decorateWorkItems(workItems, workspaces) {
     const workspace = workspaces.find((w) => w.id === item.workspace_id);
     return {
       ...item,
-      display_key: `${workspace?.key || 'WORK'}-${item.id}`,
+      display_key: `${workspace?.key || 'WORK'}-${item.workspace_item_number || item.id}`,
       workspace_name: workspace?.name || 'Unknown',
     };
   });

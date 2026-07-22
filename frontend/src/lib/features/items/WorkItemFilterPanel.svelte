@@ -19,6 +19,8 @@
     disabled = false,
     /** 'modal' for compact contexts (sidebar), 'inline' for wide pages. */
     searchInputMode = 'modal',
+    /** Optional scope for page-specific E2E selectors. */
+    testIdPrefix = null,
     onupdateworkspaces = null,
     onupdatestatuses = null,
     onupdatepriorities = null,
@@ -29,6 +31,10 @@
 
   let showSearchModal = $state(false);
   let tempSearchQuery = $state('');
+
+  function testId(suffix, fallback) {
+    return testIdPrefix ? `${testIdPrefix}-${suffix}` : fallback;
+  }
 
   function handleWorkspacesChange(newValue) {
     onupdateworkspaces?.(newValue);
@@ -100,7 +106,7 @@
   </div>
 {/if}
 <div
-  data-testid="work-item-filter-panel"
+  data-testid={testId('filters', 'work-item-filter-panel')}
   class:pointer-events-none={disabled}
   class:opacity-50={disabled}
   aria-disabled={disabled ? 'true' : undefined}
@@ -114,7 +120,7 @@
           style="color: var(--ds-icon-subtle);"
         />
         <input
-          data-testid="work-item-search-input"
+          data-testid={testId('query', 'work-item-search-input')}
           type="text"
           value={searchQuery}
           oninput={(e) => onupdatesearch?.(e.currentTarget.value)}
@@ -130,6 +136,7 @@
         />
         {#if searchQuery}
           <button
+            data-testid={testId('clear-query')}
             onclick={() => {
               onupdatesearch?.('');
               onexecutesearch?.();
@@ -177,7 +184,7 @@
 
   <!-- Filter pickers -->
   <div class="space-y-4">
-    <div>
+    <div data-testid={testId('workspace-filter')}>
       <span class="block text-xs font-medium mb-1.5" style="color: var(--ds-text-subtle);">
         {t('collections.workspaces')}
       </span>
@@ -188,11 +195,12 @@
         placeholder={t('collections.selectWorkspaces')}
         getValue={(item) => item?.id}
         getLabel={(item) => item?.name ?? ''}
+        optionTestid={(option) => testId(`workspace-option-${option.value}`)}
         onChange={handleWorkspacesChange}
       />
     </div>
 
-    <div>
+    <div data-testid={testId('status-filter')}>
       <span class="block text-xs font-medium mb-1.5" style="color: var(--ds-text-subtle);">
         {t('collections.status')}
       </span>
@@ -203,11 +211,12 @@
         placeholder={t('collections.selectStatuses')}
         getValue={(item) => item?.id}
         getLabel={(item) => item?.name ?? ''}
+        optionTestid={(option) => testId(`status-option-${option.value}`)}
         onChange={handleStatusesChange}
       />
     </div>
 
-    <div>
+    <div data-testid={testId('priority-filter')}>
       <span class="block text-xs font-medium mb-1.5" style="color: var(--ds-text-subtle);">
         {t('collections.priority')}
       </span>
@@ -218,6 +227,7 @@
         placeholder={t('collections.selectPriorities')}
         getValue={(item) => item?.id}
         getLabel={(item) => item?.name ?? ''}
+        optionTestid={(option) => testId(`priority-option-${option.value}`)}
         onChange={handlePrioritiesChange}
       />
     </div>
@@ -226,13 +236,16 @@
       <DynamicFieldFilter
         {filter}
         compact={true}
+        testIdPrefix={testId(`dynamic-filter-${index}`)}
         onchange={(data) => handleDynamicFilterChange(index, data)}
         onremove={() => removeDynamicFilter(index)}
         onexecute={handleDynamicFilterExecute}
       />
     {/each}
 
+    <!-- shortcut-guard-exempt: contextual filter-row action; no global shortcut -->
     <Button
+      dataTestid={testId('add-dynamic-filter')}
       variant="ghost"
       size="sm"
       icon={Plus}

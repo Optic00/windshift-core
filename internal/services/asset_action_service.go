@@ -963,7 +963,7 @@ func (as *AssetActionService) executeNotifyUser(node *models.AssetActionNode, ct
 	message := as.substituteVariables(config.Message, ctx)
 	title := as.substituteVariables(config.Title, ctx)
 
-	recipientCount, err := as.notificationService.NotifyUsersForAsset(
+	deliveredUserIDs, err := as.notificationService.NotifyUsersForAsset(
 		userIDs,
 		ctx.Event.SetID,
 		ctx.Event.AssetID,
@@ -979,7 +979,8 @@ func (as *AssetActionService) executeNotifyUser(node *models.AssetActionNode, ct
 	}
 
 	stepResult.Output = map[string]interface{}{
-		"recipient_count": recipientCount,
+		"recipient_count": len(deliveredUserIDs),
+		"recipient_ids":   deliveredUserIDs,
 		"title":           title,
 		"message":         message,
 	}

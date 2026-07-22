@@ -285,9 +285,9 @@ func (ns *NotificationService) NotifyUsers(userIDs []int, workspaceID, itemID, a
 // retain view access to the asset's set. Asset actions cannot use the
 // workspace notification-rule pipeline, and silently skipping this check
 // would disclose asset-derived titles/messages to arbitrary configured IDs.
-func (ns *NotificationService) NotifyUsersForAsset(userIDs []int, setID, assetID, actorUserID int, notifType, title, message string, includeLink bool, checker AssetSetPermissionChecker) (int, error) {
+func (ns *NotificationService) NotifyUsersForAsset(userIDs []int, setID, assetID, actorUserID int, notifType, title, message string, includeLink bool, checker AssetSetPermissionChecker) ([]int, error) {
 	if checker == nil {
-		return 0, fmt.Errorf("asset notification blocked: asset permission checker not configured")
+		return nil, fmt.Errorf("asset notification blocked: asset permission checker not configured")
 	}
 	actionURL := ""
 	if includeLink {
@@ -299,9 +299,9 @@ func (ns *NotificationService) NotifyUsersForAsset(userIDs []int, setID, assetID
 	return ns.notifyUsersAtURL(userIDs, actorUserID, notifType, title, message, actionURL, authorize)
 }
 
-func (ns *NotificationService) notifyUsersAtURL(userIDs []int, actorUserID int, notifType, title, message, actionURL string, authorize func(int) (bool, error)) (int, error) {
+func (ns *NotificationService) notifyUsersAtURL(userIDs []int, actorUserID int, notifType, title, message, actionURL string, authorize func(int) (bool, error)) ([]int, error) {
 	if ns.notificationManager == nil {
-		return 0, fmt.Errorf("notification manager not configured")
+		return nil, fmt.Errorf("notification manager not configured")
 	}
 	skipAsAgent := map[int]bool{}
 	if ns.db != nil {
@@ -309,6 +309,7 @@ func (ns *NotificationService) notifyUsersAtURL(userIDs []int, actorUserID int, 
 	}
 	seen := make(map[int]bool, len(userIDs))
 	notifications := make([]models.Notification, 0, len(userIDs))
+	deliveredUserIDs := make([]int, 0, len(userIDs))
 	now := time.Now()
 	for _, uid := range userIDs {
 		if uid <= 0 || uid == actorUserID || seen[uid] || skipAsAgent[uid] {
@@ -318,7 +319,7 @@ func (ns *NotificationService) notifyUsersAtURL(userIDs []int, actorUserID int, 
 		if authorize != nil {
 			allowed, err := authorize(uid)
 			if err != nil {
-				return 0, fmt.Errorf("authorize notification recipient %d: %w", uid, err)
+				return nil, fmt.Errorf("authorize notification recipient %d: %w", uid, err)
 			}
 			if !allowed {
 				continue
@@ -333,14 +334,15 @@ func (ns *NotificationService) notifyUsersAtURL(userIDs []int, actorUserID int, 
 			Read:      false,
 			ActionURL: actionURL,
 		})
+		deliveredUserIDs = append(deliveredUserIDs, uid)
 	}
 	if len(notifications) == 0 {
-		return 0, nil
+		return []int{}, nil
 	}
 	if _, err := ns.notificationManager.AddNotifications(notifications); err != nil {
-		return 0, fmt.Errorf("add notifications for %d users: %w", len(notifications), err)
+		return nil, fmt.Errorf("add notifications for %d users: %w", len(notifications), err)
 	}
-	return len(notifications), nil
+	return deliveredUserIDs, nil
 }
 
 // CreateNotification stores a single notification through the notification

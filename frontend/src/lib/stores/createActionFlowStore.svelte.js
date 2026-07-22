@@ -44,8 +44,22 @@ export function createActionFlowStore({
   function normalizeNodeConfig(nodeType, config) {
     const normalized = { ...(config || {}) };
 
+    if (
+      nodeType === 'notify_user' &&
+      !normalized.recipients?.length &&
+      Number(normalized.user_id) > 0
+    ) {
+      normalized.recipient_type = 'specific';
+      normalized.recipients = [String(normalized.user_id)];
+    }
+
     if (nodeType === 'notify_user' && normalized.recipient_type && !normalized.recipients?.length) {
-      normalized.recipients = [normalized.recipient_type];
+      normalized.recipients =
+        normalized.recipient_type === 'specific' ? [] : [normalized.recipient_type];
+    }
+
+    if (nodeType === 'notify_user') {
+      delete normalized.user_id;
     }
 
     // Output field names are validated against a trimmed value, so trim before
@@ -79,6 +93,15 @@ export function createActionFlowStore({
   // render in the friendly editor controls. Runs once on load, not on save.
   function hydrateNodeConfig(nodeType, config) {
     const hydrated = { ...(config || {}) };
+
+    if (
+      nodeType === 'notify_user' &&
+      !hydrated.recipients?.length &&
+      Number(hydrated.user_id) > 0
+    ) {
+      hydrated.recipient_type = 'specific';
+      hydrated.recipients = [String(hydrated.user_id)];
+    }
 
     // Legacy notify_user configs stored specific user IDs in `recipients`
     // without a `recipient_type`. Without this, the recipient select falls back
