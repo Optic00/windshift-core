@@ -2,7 +2,7 @@
 
 Thanks for your interest in contributing! See the [README](README.md) for a project overview.
 
-> **Note:** The GitHub repository is a read-only push mirror. All development and contributions happen on [Codeberg](https://codeberg.org/realigned/windshift-core). Please fork, clone, and open pull requests there.
+> **Note:** Development and contributions happen here on GitHub. Please fork, clone, and open pull requests against this repository. A [backup mirror on Codeberg](https://codeberg.org/realigned/windshift-core) exists but is not the place to contribute.
 
 ## Prerequisites
 
@@ -15,7 +15,7 @@ Thanks for your interest in contributing! See the [README](README.md) for a proj
 
 ```bash
 # Clone the repo
-git clone https://codeberg.org/realigned/windshift-core.git && cd windshift-core/core
+git clone https://github.com/Windshiftapp/core.git && cd core
 
 # Select the CI Node version and install frontend dependencies
 nvm use # or configure mise/asdf from .nvmrc
@@ -114,7 +114,7 @@ npm run format      # auto-format
 ```
 ## Submitting a Pull Request
 
-Please open all pull requests on [Codeberg](https://codeberg.org/realigned/windshift-core).
+Please open all pull requests here on [GitHub](https://github.com/Windshiftapp/core).
 
 1. Push your branch and open a PR against `main`.
 2. CI will run automatically:
