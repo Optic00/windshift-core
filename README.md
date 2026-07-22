@@ -49,18 +49,16 @@ Code contributions, bug reports, and feedback are all welcome here on GitHub. Op
 
 We are especially interested in early bug reports and real-world feedback about OIDC providers.
 
-### A note on where the project lives
+### Where development happens
 
-For a period, Windshift was developed primarily on Codeberg, with this GitHub
-repository serving as a read-only push mirror and pull requests directed to
-Codeberg. That arrangement didn't hold up: the push mirroring proved
-unreliable, so **GitHub is once again the primary home for development and
-pull requests.**
+Windshift used to be developed on Codeberg. This GitHub repository was a
+read-only push mirror, and pull requests went to Codeberg. The push mirroring
+from Codeberg to GitHub often failed, so we moved back. GitHub is now the main
+repository for development and pull requests.
 
-Codeberg is kept only as an occasional backup mirror and no longer accepts
-contributions. If you have an open pull request on Codeberg, or previously
-cloned from there, please re-target your work at this GitHub repository. Sorry
-for the churn — thanks for bearing with us.
+Codeberg is now only a backup and does not accept contributions. If you have an
+open pull request on Codeberg, or you cloned the project from there, please move
+your work to this GitHub repository.
 
 ## Tech stack
 
