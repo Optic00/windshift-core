@@ -426,7 +426,7 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	if expand.Transitions {
 		if item.StatusID != nil {
-			if transitions, err := h.workflowSvc.GetTransitionsFromStatus(*item.StatusID); err == nil {
+			if transitions, err := h.workflowSvc.GetTransitionsForItem(item.WorkspaceID, item.ItemTypeID, *item.StatusID); err == nil {
 				response.Transitions = dto.MapServiceTransitionsToResponse(transitions)
 			}
 		} else {
@@ -526,7 +526,7 @@ func (h *ItemHandler) GetByKeyAndNumber(w http.ResponseWriter, r *http.Request) 
 	}
 	if expand.Transitions {
 		if item.StatusID != nil {
-			if transitions, err := h.workflowSvc.GetTransitionsFromStatus(*item.StatusID); err == nil {
+			if transitions, err := h.workflowSvc.GetTransitionsForItem(item.WorkspaceID, item.ItemTypeID, *item.StatusID); err == nil {
 				response.Transitions = dto.MapServiceTransitionsToResponse(transitions)
 			}
 		} else {
@@ -1229,7 +1229,7 @@ func (h *ItemHandler) GetTransitions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	transitions, err := h.workflowSvc.GetTransitionsFromStatus(*item.StatusID)
+	transitions, err := h.workflowSvc.GetTransitionsForItem(item.WorkspaceID, item.ItemTypeID, *item.StatusID)
 	if err != nil {
 		h.RespondInternalError(w, r)
 		return

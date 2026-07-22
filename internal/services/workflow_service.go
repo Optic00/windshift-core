@@ -926,3 +926,39 @@ func (s *WorkflowService) GetTransitionsFromStatus(statusID int) ([]WorkflowTran
 
 	return s.scanTransitions(rows)
 }
+
+// GetTransitionsForItem retrieves the transitions available from an item's
+// current status in its effective workspace/item-type workflow. Statuses are
+// global records and may be shared by several workflows, so filtering only by
+// status ID can leak transitions that the item can never perform.
+func (s *WorkflowService) GetTransitionsForItem(
+	workspaceID int, itemTypeID *int, statusID int,
+) ([]WorkflowTransitionResult, error) {
+	workflowID, err := s.GetWorkflowIDForItem(workspaceID, itemTypeID)
+	if err != nil {
+		return nil, err
+	}
+	if workflowID == nil {
+		return []WorkflowTransitionResult{}, nil
+	}
+
+	rows, err := s.db.Query(`
+		SELECT wt.id, wt.from_status_id, wt.to_status_id,
+		       fs.name as from_status_name, ts.name as to_status_name,
+		       fsc.name as from_category_name, fsc.color as from_category_color,
+		       tsc.name as to_category_name, tsc.color as to_category_color
+		FROM workflow_transitions wt
+		LEFT JOIN statuses fs ON wt.from_status_id = fs.id
+		JOIN statuses ts ON wt.to_status_id = ts.id
+		LEFT JOIN status_categories fsc ON fs.category_id = fsc.id
+		JOIN status_categories tsc ON ts.category_id = tsc.id
+		WHERE wt.workflow_id = ? AND wt.from_status_id = ?
+		ORDER BY wt.display_order
+	`, *workflowID, statusID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get item workflow transitions: %w", err)
+	}
+	defer rows.Close()
+
+	return s.scanTransitions(rows)
+}
