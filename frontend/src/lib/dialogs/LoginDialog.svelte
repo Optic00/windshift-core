@@ -212,7 +212,10 @@
 
 {#if isOpen}
 <!-- Full-screen login overlay that cannot be dismissed -->
-<div class="fixed inset-0 bg-[var(--ds-surface)] flex items-center justify-center z-50">
+<div
+  class="fixed inset-0 bg-[var(--ds-surface)] flex items-center justify-center z-50"
+  data-testid="login-dialog"
+>
   <div class="bg-[var(--ds-surface-raised)] rounded shadow-xl max-w-md w-full mx-4">
   <div class="p-6">
     <!-- Header -->

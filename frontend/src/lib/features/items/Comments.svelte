@@ -277,7 +277,9 @@
 
 <div class="comments-section" data-testid="comments-section">
 	{#if error}
-		<AlertBox variant="error" message={error} class="mb-4" />
+		<div data-testid="comments-error">
+			<AlertBox variant="error" message={error} class="mb-4" />
+		</div>
 	{/if}
 
 	<!-- Sort Toggle + new-comments badge -->
@@ -439,17 +441,20 @@
 				/>
 			</div>
 			<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div class="flex-1" onkeydown={handleCommentKeydown}>
-				<MilkdownEditor
-					bind:this={editorRef}
-					bind:content={newCommentContent}
-					placeholder={t('comments.writePlaceholder')}
-					showToolbar={true}
-					hideToolbarUntilFocus={true}
-					compact={true}
-					{itemId}
-					{isPersonalWorkspace}
-				/>
+			<div class="flex-1" onkeydown={handleCommentKeydown}>
+				<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+				<div data-testid="comment-editor" onclick={() => editorRef?.focus()}>
+					<MilkdownEditor
+						bind:this={editorRef}
+						bind:content={newCommentContent}
+						placeholder={t('comments.writePlaceholder')}
+						showToolbar={true}
+						hideToolbarUntilFocus={true}
+						compact={true}
+						{itemId}
+						{isPersonalWorkspace}
+					/>
+				</div>
 				<div class="flex items-center justify-between mt-3">
 					<div class="flex items-center gap-4">
 						<div class="text-xs" style="color: var(--ds-text-subtle);">
@@ -464,9 +469,11 @@
 							/>
 						{/if}
 					</div>
+					<!-- shortcut-guard-exempt: Cmd/Ctrl+Enter is handled by the form-scoped handleCommentKeydown handler. -->
 					<Button
 						variant="primary"
 						size="small"
+						dataTestid="comment-submit"
 						onclick={submitComment}
 						disabled={isSubmitting || !newCommentContent.trim()}
 						keyboardHint={getDisplayString(submitShortcut)}

@@ -59,6 +59,7 @@
             <!-- svelte-ignore a11y_autofocus -->
             <input
               type="text"
+              data-testid="item-title-input"
               bind:value={editTitle}
               onkeydown={handleKeydown}
               class="w-full text-2xl font-semibold bg-transparent border-0 py-1 focus:outline-none break-words"
@@ -88,6 +89,7 @@
 
         <button
           onclick={startEditingTitle}
+          data-testid="item-title-edit"
           class="text-2xl font-semibold pr-4 py-1 rounded transition-colors text-left cursor-pointer w-full title-button break-words"
           style="color: var(--ds-text); word-wrap: break-word; overflow-wrap: break-word;"
           title={t('items.clickToEditTitle')}
