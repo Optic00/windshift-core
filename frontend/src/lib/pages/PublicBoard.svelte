@@ -118,6 +118,14 @@
         </div>
       </div>
     {:else if board}
+      {#if board.truncated}
+        <div
+          data-testid="public-board-truncated"
+          style="margin-bottom: 16px; padding: 10px 12px; border: 1px solid var(--ds-border-warning, #ca8a04); border-radius: 6px; background: var(--ds-background-warning, #fef9c3); color: var(--ds-text-warning, #854d0e); font-size: 13px;"
+        >
+          Showing the newest {board.loaded_items} of {board.total_items} matching items. Column counts are partial because this public board is limited to {board.item_limit} cards.
+        </div>
+      {/if}
       <div class="board-columns" style="display: flex; gap: 16px; min-height: calc(100vh - 160px);">
         {#each board.columns as column}
           <div
@@ -161,7 +169,14 @@
                   {/if}
 
                   <!-- Title -->
-                  <div style="font-size: 13px; font-weight: 500; line-height: 1.4; margin-bottom: 8px;">{card.title}</div>
+                  {#if showField('title')}
+                    <div
+                      data-testid="public-board-card-title"
+                      style="font-size: 13px; font-weight: 500; line-height: 1.4; margin-bottom: 8px;"
+                    >
+                      {card.title}
+                    </div>
+                  {/if}
 
                   <!-- Meta row -->
                   <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
@@ -172,6 +187,16 @@
                         title={card.priority_name}
                       >
                         {card.priority_name}
+                      </span>
+                    {/if}
+
+                    <!-- Status -->
+                    {#if showField('status') && card.status_name}
+                      <span
+                        data-testid="public-board-card-status"
+                        style="font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--ds-surface-sunken); color: var(--ds-text-subtle);"
+                      >
+                        {card.status_name}
                       </span>
                     {/if}
 

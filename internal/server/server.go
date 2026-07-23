@@ -629,6 +629,14 @@ func (s *Server) initialize() error {
 	pagePermissionService := services.NewPagePermissionService(s.db, permService)
 	itemLinkHandler.SetPagePermissionChecker(pagePermissionService)
 	pageHandler := handlers.NewPageHandler(pageService, pagePermissionService, permService, logger.NewAuditor(s.db))
+	pageDiagramService := services.NewPageDiagramService(
+		s.db,
+		cfg.AttachmentPath,
+		pageHandler.PageApplicationService(),
+		pagePermissionService,
+		permService,
+	)
+	pageHandler.SetPageDiagramService(pageDiagramService)
 	knowledgeRetrieval := services.NewKnowledgeRetrievalService(s.db, pagePermissionService)
 	knowledgeSearchHandler := handlers.NewKnowledgeSearchHandler(knowledgeRetrieval)
 	pageLabelHandler := handlers.NewPageLabelHandler(pageLabelRepo, pagePermissionService, logger.NewAuditor(s.db))
@@ -1225,7 +1233,17 @@ func (s *Server) initialize() error {
 
 	// LLM connection manager and AI handler
 	llmConnHandler := handlers.NewLLMConnectionHandler(llmManager, logger.NewAuditor(s.db), llmModelCache, llmModelRefresher)
-	aiHandler := handlers.NewAIHandler(s.db, llmManager, permService, timePermissionService, timerService, promptStore, s.actionService)
+	aiHandler := handlers.NewAIHandler(
+		s.db,
+		llmManager,
+		permService,
+		timePermissionService,
+		timerService,
+		promptStore,
+		s.actionService,
+		pageHandler.PageApplicationService(),
+		pageDiagramService,
+	)
 	shellBootstrapHandler := handlers.NewShellBootstrapHandler(
 		featuresHandler,
 		setupHandler,
@@ -1591,6 +1609,7 @@ func (s *Server) initialize() error {
 		ItemUpdateApplicationService:   itemHandler.ItemUpdateApplicationService(),
 		ItemDeletionApplicationService: itemHandler.ItemDeletionApplicationService(),
 		PageApplicationService:         pageHandler.PageApplicationService(),
+		PageDiagramService:             pageDiagramService,
 	}, v1.RegisterRoutes)
 
 	// MCP Server (Model Context Protocol) — opt-in via --mcp or MCP_ENABLED=true
@@ -1608,6 +1627,7 @@ func (s *Server) initialize() error {
 			CommentService:         commentService,
 			ItemDeletionService:    itemHandler.ItemDeletionApplicationService(),
 			PageApplicationService: pageHandler.PageApplicationService(),
+			PageDiagramService:     pageDiagramService,
 			ActionService:          s.actionService,
 		})
 		mux.Handle("GET /mcp", mcpServer.Handler())

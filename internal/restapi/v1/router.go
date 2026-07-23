@@ -97,8 +97,31 @@ func RegisterRoutes(deps restapi.Deps) {
 	collectionHandler := handlers.NewCollectionHandler(db, permissionService)
 	actionHandler := handlers.NewActionHandler(db, permissionService, deps.ActionService)
 	attachmentHandler := handlers.NewAttachmentHandler(db, permissionService, deps.AttachmentPath)
+	pagePermissionService := services.NewPagePermissionService(db, permissionService)
+	pageApplicationService := deps.PageApplicationService
+	if pageApplicationService == nil {
+		pageApplicationService = services.NewPageApplicationService(
+			services.NewPageService(db),
+			pagePermissionService,
+		)
+	}
 	pageHandler := handlers.NewPageHandler(db, permissionService)
-	pageHandler.SetPageApplicationService(deps.PageApplicationService)
+	pageHandler.SetPageApplicationService(pageApplicationService)
+	pageDiagramService := deps.PageDiagramService
+	if pageDiagramService == nil {
+		pageDiagramService = services.NewPageDiagramService(
+			db,
+			deps.AttachmentPath,
+			pageApplicationService,
+			pagePermissionService,
+			permissionService,
+		)
+	}
+	pageDiagramHandler := handlers.NewPageDiagramHandler(
+		handlers.NewBaseHandler(db, permissionService),
+		pageDiagramService,
+		pageApplicationService.PageService(),
+	)
 	pageLabelHandler := handlers.NewPageLabelHandler(db, permissionService)
 	agentSkillHandler := handlers.NewAgentSkillHandler(db, permissionService)
 	diagramHandler := handlers.NewDiagramHandler(db, permissionService)
@@ -107,7 +130,6 @@ func RegisterRoutes(deps restapi.Deps) {
 	testMgmtHandler := handlers.NewTestManagementHandler(db, permissionService)
 	recurrenceHandler := handlers.NewRecurrenceHandler(db, permissionService)
 
-	pagePermissionService := services.NewPagePermissionService(db, permissionService)
 	pageAttachmentUploadHandler := handlers.NewPageAttachmentUploadHandler(
 		handlers.NewBaseHandler(db, permissionService),
 		services.NewPageAttachmentUploadService(db, deps.AttachmentPath, permissionService, pagePermissionService),
@@ -326,6 +348,10 @@ func RegisterRoutes(deps restapi.Deps) {
 	v1.HandleWithMiddleware("POST /workspaces/{id}/pages/{pageId}/permissions", pageHandler.GrantPermission, bearerAuth.RequirePermission("pages:write"), router.RequireNumericID)
 	v1.HandleWithMiddleware("DELETE /workspaces/{id}/pages/{pageId}/permissions/{permissionId}", pageHandler.RevokePermission, bearerAuth.RequirePermission("pages:write"), router.RequireNumericID)
 	v1.HandleWithMiddleware("PATCH /workspaces/{id}/pages/{pageId}/inheritance", pageHandler.SetInheritance, bearerAuth.RequirePermission("pages:write"), router.RequireNumericID)
+	v1.HandleWithMiddleware("GET /workspaces/{id}/pages/{pageId}/diagrams", pageDiagramHandler.List, bearerAuth.RequirePermission("pages:read"), router.RequireNumericID)
+	v1.HandleWithMiddleware("POST /workspaces/{id}/pages/{pageId}/diagrams", pageDiagramHandler.Create, bearerAuth.RequirePermission("pages:write"), router.RequireNumericID)
+	v1.HandleWithMiddleware("GET /workspaces/{id}/pages/{pageId}/diagrams/{attachmentId}", pageDiagramHandler.Get, bearerAuth.RequirePermission("pages:read"), router.RequireNumericID)
+	v1.HandleWithMiddleware("PUT /workspaces/{id}/pages/{pageId}/diagrams/{attachmentId}", pageDiagramHandler.Update, bearerAuth.RequirePermission("pages:write"), router.RequireNumericID)
 	// Bearer-authenticated page-attachment upload (the cookie-auth
 	// /api/attachments/upload route rejects crw_ tokens). Uses the shared
 	// upload service so validation/storage/audit stay in one place.

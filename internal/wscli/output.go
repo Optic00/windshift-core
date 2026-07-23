@@ -111,6 +111,10 @@ func (o *Output) printTable(data interface{}) {
 		o.printPagePermissionsTable(w, v)
 	case *PagePermission:
 		o.printPagePermissionDetailTable(w, v)
+	case []PageDiagram:
+		o.printPageDiagramsTable(w, v)
+	case *PageDiagram:
+		o.printPageDiagramDetailTable(w, v)
 	case []LinkType:
 		o.printLinkTypesTable(w, v)
 	case *ItemLink:
@@ -210,6 +214,10 @@ func (o *Output) printCSV(data interface{}) {
 		o.printPagePermissionsCSV(w, v)
 	case *PagePermission:
 		o.printPagePermissionCSV(w, v)
+	case []PageDiagram:
+		o.printPageDiagramsCSV(w, v)
+	case *PageDiagram:
+		o.printPageDiagramCSV(w, v)
 	case []LinkType:
 		o.printLinkTypesCSV(w, v)
 	case *ItemLink:
@@ -1067,6 +1075,26 @@ func (o *Output) printPagePermissionDetailTable(w *tabwriter.Writer, p *PagePerm
 	}
 }
 
+func (o *Output) printPageDiagramsTable(w *tabwriter.Writer, diagrams []PageDiagram) {
+	_, _ = fmt.Fprintln(w, "ATTACHMENT\tPAGE\tNAME\tKIND\tCONTENT HASH")
+	_, _ = fmt.Fprintln(w, "----------\t----\t----\t----\t------------")
+	for i := range diagrams {
+		d := &diagrams[i]
+		_, _ = fmt.Fprintf(w, "%d\t%d\t%s\t%s\t%s\n", d.AttachmentID, d.PageID, d.Name, d.Kind, d.ContentHash)
+	}
+}
+
+func (o *Output) printPageDiagramDetailTable(w *tabwriter.Writer, d *PageDiagram) {
+	_, _ = fmt.Fprintf(w, "Attachment:\t%d\n", d.AttachmentID)
+	_, _ = fmt.Fprintf(w, "Page:\t%d\n", d.PageID)
+	_, _ = fmt.Fprintf(w, "Name:\t%s\n", d.Name)
+	_, _ = fmt.Fprintf(w, "Kind:\t%s\n", d.Kind)
+	_, _ = fmt.Fprintf(w, "Content hash:\t%s\n", d.ContentHash)
+	if d.RevisionNumber > 0 {
+		_, _ = fmt.Fprintf(w, "Revision:\t%d\n", d.RevisionNumber)
+	}
+}
+
 func (o *Output) printPagesCSV(w *csv.Writer, pages []Page) {
 	_ = w.Write([]string{"ID", "TITLE", "SLUG", "DEPTH", "PARENT_ID", "UPDATED"})
 	for i := range pages {
@@ -1165,6 +1193,28 @@ func (o *Output) writePagePermissionCSVRow(w *csv.Writer, p *PagePermission) {
 		grantedBy = fmt.Sprintf("%d", *p.GrantedBy)
 	}
 	_ = w.Write([]string{fmt.Sprintf("%d", p.ID), fmt.Sprintf("%d", p.PageID), p.PrincipalType, fmt.Sprintf("%d", p.PrincipalID), p.PermissionLevel, grantedBy})
+}
+
+func (o *Output) printPageDiagramsCSV(w *csv.Writer, diagrams []PageDiagram) {
+	_ = w.Write([]string{"ATTACHMENT_ID", "PAGE_ID", "NAME", "KIND", "CONTENT_HASH"})
+	for i := range diagrams {
+		o.writePageDiagramCSVRow(w, &diagrams[i])
+	}
+}
+
+func (o *Output) printPageDiagramCSV(w *csv.Writer, d *PageDiagram) {
+	_ = w.Write([]string{"ATTACHMENT_ID", "PAGE_ID", "NAME", "KIND", "CONTENT_HASH"})
+	o.writePageDiagramCSVRow(w, d)
+}
+
+func (o *Output) writePageDiagramCSVRow(w *csv.Writer, d *PageDiagram) {
+	_ = w.Write([]string{
+		fmt.Sprintf("%d", d.AttachmentID),
+		fmt.Sprintf("%d", d.PageID),
+		d.Name,
+		d.Kind,
+		d.ContentHash,
+	})
 }
 
 // ============================================

@@ -82,8 +82,14 @@
   }
 </script>
 
-<figure class="mermaid-block" class:readonly>
-  <div class="mermaid-block__canvas" bind:this={host} aria-label={t('editors.diagramOpen')}>
+<figure class="mermaid-block" class:readonly data-testid="page-mermaid-block">
+  <div
+    class="mermaid-block__canvas"
+    bind:this={host}
+    aria-label={t('editors.diagramOpen')}
+    data-testid="page-mermaid-canvas"
+    data-status={status}
+  >
     {#if status === 'rendering' || status === 'idle'}
       <div class="mermaid-block__placeholder">
         <Loader2 size={18} class="spin" />

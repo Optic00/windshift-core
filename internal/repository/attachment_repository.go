@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"windshift/internal/database"
 )
@@ -25,6 +26,22 @@ type AttachmentThumbnailRecord struct {
 	WorkspaceID   int
 	ThumbnailPath string
 	HasThumbnail  bool
+}
+
+// PageAttachmentRecord is the persistence projection used by PageDiagram and
+// Page-scoped bearer reads. PageID and WorkspaceID are selected through the
+// owning page so callers cannot confuse a numerically colliding item row.
+type PageAttachmentRecord struct {
+	ID               int
+	PageID           int
+	WorkspaceID      int
+	Filename         string
+	OriginalFilename string
+	FilePath         string
+	MimeType         string
+	FileSize         int64
+	UploadedBy       *int
+	CreatedAt        time.Time
 }
 
 // AttachmentRepository owns attachment metadata lookups.
@@ -80,6 +97,37 @@ func (r *AttachmentRepository) GetItemThumbnailRecord(id int) (*AttachmentThumbn
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get attachment thumbnail: %w", err)
+	}
+	return &rec, nil
+}
+
+// GetPageAttachmentRecord returns attachment metadata only when the row is
+// explicitly page-scoped and owned by the requested Page.
+func (r *AttachmentRepository) GetPageAttachmentRecord(pageID, attachmentID int) (*PageAttachmentRecord, error) {
+	var rec PageAttachmentRecord
+	var uploadedBy sql.NullInt64
+	err := r.db.QueryRow(`
+		SELECT a.id, p.id, p.workspace_id, a.filename, a.original_filename,
+		       a.file_path, a.mime_type, a.file_size, a.uploaded_by, a.created_at
+		FROM attachments a
+		JOIN pages p ON p.id = a.item_id
+		WHERE a.id = ?
+		  AND p.id = ?
+		  AND a.entity_type = 'page'
+	`, attachmentID, pageID).Scan(
+		&rec.ID, &rec.PageID, &rec.WorkspaceID, &rec.Filename,
+		&rec.OriginalFilename, &rec.FilePath, &rec.MimeType, &rec.FileSize,
+		&uploadedBy, &rec.CreatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get page attachment %d for page %d: %w", attachmentID, pageID, err)
+	}
+	if uploadedBy.Valid {
+		id := int(uploadedBy.Int64)
+		rec.UploadedBy = &id
 	}
 	return &rec, nil
 }

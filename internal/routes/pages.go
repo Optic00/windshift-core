@@ -29,6 +29,10 @@ func RegisterPageRoutes(deps *Deps) {
 	api.HandleH("POST /workspaces/{workspaceId}/pages/{pageId}/permissions", auth(http.HandlerFunc(deps.Pages.Page.GrantPermission)))
 	api.HandleH("DELETE /workspaces/{workspaceId}/pages/{pageId}/permissions/{permissionId}", auth(http.HandlerFunc(deps.Pages.Page.RevokePermission)))
 	api.HandleH("PATCH /workspaces/{workspaceId}/pages/{pageId}/inheritance", auth(http.HandlerFunc(deps.Pages.Page.SetInheritance)))
+	api.HandleH("GET /workspaces/{workspaceId}/pages/{pageId}/diagrams", auth(http.HandlerFunc(deps.Pages.Page.ListDiagrams)))
+	api.HandleH("POST /workspaces/{workspaceId}/pages/{pageId}/diagrams", auth(http.HandlerFunc(deps.Pages.Page.CreateDiagram)))
+	api.HandleH("GET /workspaces/{workspaceId}/pages/{pageId}/diagrams/{attachmentId}", auth(http.HandlerFunc(deps.Pages.Page.GetDiagram)))
+	api.HandleH("PUT /workspaces/{workspaceId}/pages/{pageId}/diagrams/{attachmentId}", auth(http.HandlerFunc(deps.Pages.Page.UpdateDiagram)))
 
 	if deps.Pages.KnowledgeSearch != nil {
 		api.HandleH("GET /workspaces/{workspaceId}/knowledge/search", auth(http.HandlerFunc(deps.Pages.KnowledgeSearch.Search)))

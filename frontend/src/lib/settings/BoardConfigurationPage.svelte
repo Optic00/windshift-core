@@ -27,6 +27,7 @@
 
   let workspace = $state(null);
   let currentCollectionName = $state('Default');
+  let isPublicCollection = $state(false);
   let publicSlug = $state(null);
   let loading = $state(true);
   let saving = $state(false);
@@ -39,6 +40,18 @@
   let cardFields = $state([]);
   let showRightmostColumnLast50 = $state(false);
   let customFieldDefinitions = $state([]);
+
+  const PUBLIC_BOARD_CARD_FIELDS = new Set([
+    'key',
+    'title',
+    'status',
+    'priority',
+    'assignee',
+    'item_type',
+    'story_points',
+    'due_date',
+    'labels',
+  ]);
 
   // DnD state
   let statusDragState = $state(new Map());
@@ -106,7 +119,8 @@
       statuses = data.statuses;
       customFieldDefinitions = data.customFieldDefinitions;
       currentCollectionName = data.collection?.name || 'Default';
-      publicSlug = data.collection?.is_public && data.collection?.public_slug
+      isPublicCollection = data.collection?.is_public === true;
+      publicSlug = isPublicCollection && data.collection?.public_slug
         ? data.collection.public_slug
         : null;
       boardConfig = data.boardConfiguration;
@@ -119,7 +133,10 @@
         backlogStatusIDs = boardConfig.backlog_status_ids?.length > 0
           ? boardConfig.backlog_status_ids
           : statuses.filter(s => !s.is_default && !s.is_completed).map(s => s.id);
-        cardFields = boardConfig.card_fields || [];
+        cardFields = (boardConfig.card_fields || []).filter(
+          field => !isPublicCollection ||
+            (field.field_type === 'system' && PUBLIC_BOARD_CARD_FIELDS.has(field.field_identifier))
+        );
         showRightmostColumnLast50 = Boolean(boardConfig.show_rightmost_column_last_50);
       } else {
         columns = [];
@@ -440,10 +457,14 @@
 
   // --- Card Fields ---
 
-  const systemFieldOptions = CARD_SELECTABLE_FIELDS.map(f => ({
-    identifier: f.identifier,
-    label: f.name
-  }));
+  let systemFieldOptions = $derived(
+    CARD_SELECTABLE_FIELDS
+      .filter(f => !isPublicCollection || PUBLIC_BOARD_CARD_FIELDS.has(f.identifier))
+      .map(f => ({
+        identifier: f.identifier,
+        label: f.name
+      }))
+  );
 
   let selectedCardFieldIds = $derived(new Set(cardFields.map(f => f.field_identifier)));
 
@@ -452,7 +473,9 @@
   );
 
   let availableCustomFields = $derived(
-    (customFieldDefinitions || []).filter(f => !selectedCardFieldIds.has(`custom_field_${f.id}`))
+    isPublicCollection
+      ? []
+      : (customFieldDefinitions || []).filter(f => !selectedCardFieldIds.has(`custom_field_${f.id}`))
   );
 
   function addCardField(identifier, fieldType) {

@@ -27,11 +27,6 @@ import (
 // not preserved — the seed is one-shot, matching how Excalidraw's own
 // mermaid panel behaves and avoiding dual-write complexity.
 
-const (
-	diagramKindMermaid    = "mermaid"
-	diagramKindExcalidraw = "excalidraw"
-)
-
 type diagramSummaryDTO struct {
 	ID        int    `json:"id"`
 	ItemID    int    `json:"item_id"`
@@ -82,44 +77,13 @@ type deleteDiagramArgs struct {
 // string to persist in diagram_data plus a kind label. Exactly one of the
 // two inputs must be set; both empty or both populated is a tool error.
 func buildDiagramData(mermaid string, excalidraw json.RawMessage) (data, kind string, err error) {
-	mermaidSet := strings.TrimSpace(mermaid) != ""
-	excalidrawSet := len(excalidraw) > 0 && string(excalidraw) != "null"
-	switch {
-	case mermaidSet && excalidrawSet:
-		return "", "", errors.New("provide either mermaid or excalidraw, not both")
-	case mermaidSet:
-		wrapper, mErr := json.Marshal(map[string]string{
-			"type":   diagramKindMermaid,
-			"source": strings.TrimSpace(mermaid),
-		})
-		if mErr != nil {
-			return "", "", fmt.Errorf("encode mermaid wrapper: %w", mErr)
-		}
-		return string(wrapper), diagramKindMermaid, nil
-	case excalidrawSet:
-		// json.RawMessage is already valid JSON because it came through the
-		// adapter's Unmarshal. Reject the explicit `null` literal above.
-		return string(excalidraw), diagramKindExcalidraw, nil
-	default:
-		return "", "", errors.New("provide either mermaid or excalidraw")
-	}
+	return services.BuildDiagramPayload(mermaid, excalidraw)
 }
 
 // detectKind classifies an existing diagram_data string. Used in responses so
 // callers can tell whether a row is still a seed or has been converted.
 func detectKind(data string) string {
-	if data == "" {
-		return diagramKindExcalidraw
-	}
-	var probe struct {
-		Type   string `json:"type"`
-		Source string `json:"source"`
-	}
-	if err := json.Unmarshal([]byte(data), &probe); err == nil &&
-		probe.Type == diagramKindMermaid && probe.Source != "" {
-		return diagramKindMermaid
-	}
-	return diagramKindExcalidraw
+	return services.DetectDiagramKind([]byte(data))
 }
 
 func diagramToSummary(d *models.ItemDiagram) diagramSummaryDTO {

@@ -9,7 +9,10 @@
     customUploadFn = null, downloadUrlBase = '/api/attachments', deferImageUploads = false,
     onDeferredImageUpload = null,
     enableDiagrams = false,
-    workspaceId = null
+    workspaceId = null,
+    expectedContentHash = '',
+    onBeforeDiagramOpen = async () => {},
+    onDiagramPersisted = (_payload) => {}
   } = $props();
 
   let MilkdownEditor = $state(null);
@@ -105,6 +108,9 @@
     {onDeferredImageUpload}
     {enableDiagrams}
     {workspaceId}
+    {expectedContentHash}
+    {onBeforeDiagramOpen}
+    {onDiagramPersisted}
   />
 {:else}
   <!-- Skeleton placeholder while loading -->

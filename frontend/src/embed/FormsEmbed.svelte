@@ -30,6 +30,7 @@
   let fieldsLoading = $state(false);
   let submitting = $state(false);
   let error = $state('');
+  let authenticationRequired = $state(false);
   let success = $state('');
   let values = $state({ title: '', description: '', custom_fields: {} });
   let steps = $state([1]);
@@ -65,7 +66,10 @@
   async function request(path, options = {}) {
     const response = await fetch(`${baseUrl}/api${path}`, {
       ...options,
-      credentials: 'omit',
+      // Same-origin widgets may use the browser's Windshift session. Browsers
+      // still omit credentials for cross-origin widgets, whose authenticated
+      // mode is intentionally unsupported by the integration UI.
+      credentials: 'same-origin',
       headers: {
         Accept: 'application/json',
         ...(options.body ? { 'Content-Type': 'application/json' } : {}),
@@ -92,6 +96,7 @@
     try {
       loading = true;
       error = '';
+      authenticationRequired = false;
       const bootstrap = await request(`/forms/${encodeURIComponent(slug)}/bootstrap`);
       channel = bootstrap.channel;
       forms = bootstrap.forms || [];
@@ -110,6 +115,7 @@
     try {
       fieldsLoading = true;
       error = '';
+      authenticationRequired = false;
       const detail = await request(
         `/forms/${encodeURIComponent(slug)}/forms/${encodeURIComponent(selectedFormId)}/detail`
       );
@@ -222,7 +228,8 @@
         value === undefined ||
         value === null ||
         value === '' ||
-        (Array.isArray(value) && value.length === 0)
+        (Array.isArray(value) && value.length === 0) ||
+        (fieldKind(field) === 'checkbox' && value !== true)
       ) {
         error = `${labelFor(field)} is required`;
         return false;
@@ -265,6 +272,7 @@
       success = result?.success_message || 'Thank you for your submission!';
       onSuccess(result);
     } catch (err) {
+      authenticationRequired = err.status === 403;
       error = err.message || 'Unable to submit form';
       onError(err);
     } finally {
@@ -307,7 +315,17 @@
       {#if fieldsLoading}
         <div class="wsf-loading"><Spinner size="md" /></div>
       {:else}
-        {#if error}<AlertBox variant="error" message={error} class="wsf-error" />{/if}
+        {#if authenticationRequired}
+          <div class="wsf-error" data-testid="form-auth-required">
+            <AlertBox
+              variant="warning"
+              message="This form requires a Windshift sign-in. Sign in in this browser, then retry from the hosted form."
+            />
+            <a href={baseUrl || '/'} target="_blank" rel="noreferrer">Open Windshift to sign in</a>
+          </div>
+        {:else if error}
+          <AlertBox variant="error" message={error} class="wsf-error" />
+        {/if}
         <form onsubmit={(event) => { event.preventDefault(); handleFormSubmit(); }}>
           {#if steps.length > 1}
             <div class="wsf-progress">

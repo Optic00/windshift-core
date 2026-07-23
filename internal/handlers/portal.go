@@ -199,8 +199,10 @@ func (h *PortalHandler) getPortalCustomerOrgID(ctx context.Context, portalCustom
 	return &result
 }
 
-// portalVisibilityContext holds the computed visibility context used for filtering
-// request types, asset reports, and other portal resources by visibility rules.
+// portalVisibilityContext holds the audience context used by normal portal
+// endpoints. Management/customization endpoints are separate authenticated
+// surfaces; being a channel manager must not change what the public portal
+// lists or accepts.
 type portalVisibilityContext struct {
 	userGroupIDs  []int
 	customerOrgID *int
@@ -209,15 +211,10 @@ type portalVisibilityContext struct {
 
 // getPortalVisibilityContext builds the visibility context needed for filtering
 // portal resources. It resolves the user's group memberships, portal customer
-// organisation ID, and admin status in a single call, eliminating the identical
-// block of code previously duplicated in GetRequestTypes and GetAssetReports.
-//
-// Admin status is scoped to the specific portal channel: a user is an admin
-// for this portal if they are a system admin OR a channel manager for this
-// channel (via channel_managers). Before scoping to the channel, the check
-// granted admin to anyone with channels.manage globally — a permission that
-// does not exist — so the branch was effectively dead code beyond system
-// admins, while intent was to allow channel managers to preview.
+// organisation ID. isAdmin intentionally remains false: callers on this public
+// surface must use the same audience contract for list, fields, drafts, and
+// submission. The frontend switches to channel-management APIs explicitly
+// while the customization panel is open.
 func (h *PortalHandler) getPortalVisibilityContext(ctx context.Context, r *http.Request, channelID int) portalVisibilityContext {
 	vc := portalVisibilityContext{
 		userGroupIDs: h.getInternalUserGroupIDs(ctx, r),
@@ -238,37 +235,6 @@ func (h *PortalHandler) getPortalVisibilityContext(ctx context.Context, r *http.
 			if err == nil && portalSession != nil && portalSession.ChannelID != nil && *portalSession.ChannelID == channelID {
 				vc.customerOrgID = h.getPortalCustomerOrgID(ctx, portalSession.PortalCustomerID)
 			}
-		}
-	}
-
-	// Check if this is an admin viewing for customization (has internal session)
-	if session := h.internalSessionFromRequest(r); session != nil {
-		var isAdmin bool
-		err := h.db.QueryRowContext(ctx, `
-				SELECT EXISTS(
-					SELECT 1 FROM user_global_permissions ugp
-					JOIN permissions p ON ugp.permission_id = p.id
-					WHERE ugp.user_id = ? AND p.permission_key = 'system.admin'
-				) OR EXISTS(
-					SELECT 1 FROM group_members gm
-					JOIN groups g ON g.id = gm.group_id
-					JOIN group_global_permissions ggp ON ggp.group_id = gm.group_id
-					JOIN permissions p ON p.id = ggp.permission_id
-					WHERE gm.user_id = ? AND p.permission_key = 'system.admin' AND g.is_active = true
-				) OR EXISTS(
-					SELECT 1 FROM channel_managers cm
-					WHERE cm.channel_id = ?
-					AND ((cm.manager_type = 'user' AND cm.manager_id = ?)
-						 OR (cm.manager_type = 'group' AND cm.manager_id IN (
-							 SELECT gm.group_id
-							 FROM group_members gm
-							 JOIN groups g ON g.id = gm.group_id
-							 WHERE gm.user_id = ? AND g.is_active = true
-						 )))
-				)
-			`, session.UserID, session.UserID, channelID, session.UserID, session.UserID).Scan(&isAdmin)
-		if err == nil && isAdmin {
-			vc.isAdmin = true
 		}
 	}
 
@@ -499,9 +465,8 @@ func (h *PortalHandler) loadPortalData(ctx context.Context, channel models.Chann
 	return response, nil
 }
 
-// GetRequestTypes returns request types for a portal, filtered by visibility
-// For admin users viewing in customize mode, returns all request types
-// For portal customers and regular users, filters by visibility rules
+// GetRequestTypes returns request types for a normal portal view, filtered by
+// the same visibility rules as field loading, drafts, and submission.
 func (h *PortalHandler) GetRequestTypes(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
 
@@ -573,13 +538,10 @@ func (h *PortalHandler) loadPortalRequestTypes(ctx context.Context, channelID in
 		if err := applyRequestTypeVisibility(&rt, visibilityGroupIDs, visibilityOrgIDs); err != nil {
 			slog.Error("hiding request type with invalid visibility configuration",
 				slog.String("component", "portal"), slog.Int("request_type_id", rt.ID), slog.Any("error", err))
-			if !vc.isAdmin {
-				continue
-			}
+			continue
 		}
 
-		// Admin users see all request types; others see only visible ones
-		if vc.isAdmin || rt.IsVisibleTo(vc.userGroupIDs, vc.customerOrgID) {
+		if rt.IsVisibleTo(vc.userGroupIDs, vc.customerOrgID) {
 			requestTypes = append(requestTypes, rt)
 		}
 	}
@@ -805,7 +767,7 @@ func (h *PortalHandler) SubmitToPortal(w http.ResponseWriter, r *http.Request) {
 	// submitted, so the saved state is no longer interesting. Best-effort:
 	// failure here doesn't affect the successful submission.
 	if submission.RequestTypeID != nil {
-		h.deleteDraftAfterSubmit(ctx, *submission.RequestTypeID, repository.DraftIdentity{
+		h.deleteDraftAfterSubmit(ctx, channel.ID, *submission.RequestTypeID, repository.DraftIdentity{
 			PortalCustomerID: portalCustomerID,
 			UserID:           authenticatedUserID,
 		})

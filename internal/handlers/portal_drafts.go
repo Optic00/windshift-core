@@ -153,7 +153,24 @@ func (h *PortalHandler) GetMyDrafts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSONOK(w, summaries)
+	_, portalCustomerID := h.getAuthFromContext(r)
+	userGroupIDs := h.getInternalUserGroupIDs(ctx, r)
+	var customerOrgID *int
+	if portalCustomerID != nil {
+		customerOrgID = h.getPortalCustomerOrgID(ctx, *portalCustomerID)
+	}
+	visible := make([]repository.PortalRequestDraftSummary, 0, len(summaries))
+	for _, summary := range summaries {
+		requestType, loadErr := h.getRequestTypeWithVisibility(ctx, summary.RequestTypeID)
+		if loadErr != nil || requestType.ChannelID != channel.ID {
+			continue
+		}
+		if requestType.IsVisibleTo(userGroupIDs, customerOrgID) {
+			visible = append(visible, summary)
+		}
+	}
+
+	respondJSONOK(w, visible)
 }
 
 // GetDraftByRequestType returns the caller's draft for a single request type
@@ -221,11 +238,10 @@ func (h *PortalHandler) DeleteDraft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok := h.resolveDraftRequestType(ctx, w, r, channel.ID, requestTypeID); !ok {
-		return
-	}
-
-	if err := h.draftRepo.DeleteByIdentity(ctx, requestTypeID, identity); err != nil {
+	// Deletion is deliberately independent of the request type's current
+	// active/visibility state. The draft itself is owner- and channel-scoped,
+	// so a customer can remove stale data after access to its form is revoked.
+	if err := h.draftRepo.DeleteByIdentity(ctx, channel.ID, requestTypeID, identity); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			respondNotFound(w, r, "draft")
 			return
@@ -240,13 +256,13 @@ func (h *PortalHandler) DeleteDraft(w http.ResponseWriter, r *http.Request) {
 // SubmitToPortal once the item is successfully created. Errors are logged via
 // the underlying repository return; the submission already succeeded so we do
 // not surface failures to the client.
-func (h *PortalHandler) deleteDraftAfterSubmit(ctx context.Context, requestTypeID int, identity repository.DraftIdentity) {
+func (h *PortalHandler) deleteDraftAfterSubmit(ctx context.Context, channelID, requestTypeID int, identity repository.DraftIdentity) {
 	if h.draftRepo == nil {
 		return
 	}
 	dctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	_ = h.draftRepo.DeleteByIdentity(dctx, requestTypeID, identity)
+	_ = h.draftRepo.DeleteByIdentity(dctx, channelID, requestTypeID, identity)
 }
 
 func draftResponse(d *repository.PortalRequestDraft) map[string]interface{} {

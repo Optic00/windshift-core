@@ -32,7 +32,10 @@
     customUploadFn = null, downloadUrlBase = '/api/attachments', deferImageUploads = false,
     onDeferredImageUpload = null,
     enableDiagrams = false,
-    workspaceId = null
+    workspaceId = null,
+    expectedContentHash = '',
+    onBeforeDiagramOpen = async () => {},
+    onDiagramPersisted = (_payload) => {}
   } = $props();
 
   // Diagram modal state — only meaningful when enableDiagrams=true.
@@ -372,8 +375,9 @@
     return nodes;
   }
 
-  function openDiagramCreate() {
+  async function openDiagramCreate() {
     if (readonly || !enableDiagrams) return;
+    await onBeforeDiagramOpen();
     diagramModal = { open: true, mode: 'create', attachmentId: null, name: '', getPos: null };
   }
 
@@ -396,22 +400,10 @@
     return true;
   }
 
-  function handleDiagramSaved({ attachmentId, name }) {
+  function handleDiagramSaved({ attachmentId, name, contentHash, pageContent }) {
     if (!editor) return;
-    if (diagramModal.mode === 'edit' && typeof diagramModal.getPos === 'function') {
-      const pos = diagramModal.getPos();
-      if (typeof pos === 'number') {
-        editor.action((ctx) => {
-          const view = ctx.get(editorViewCtx);
-          const tr = view.state.tr.setNodeMarkup(pos, undefined, { attachmentId, name });
-          view.dispatch(tr);
-        });
-        return;
-      }
-    }
-    // Create mode — insert a fenced excalidraw block at the cursor.
-    const fenced = '\n```excalidraw\n' + JSON.stringify({ attachmentId, name }) + '\n```\n';
-    editor.action(insert(fenced));
+    editor.action(replaceAll(pageContent || ''));
+    onDiagramPersisted({ attachmentId, name, contentHash, pageContent });
   }
 
   onMount(async () => {
@@ -516,8 +508,9 @@
   // node view stays presentational.
   $effect(() => {
     if (!editorElement || !enableDiagrams) return;
-    const handler = (e) => {
+    const handler = async (e) => {
       const { attachmentId, name, getPos } = e.detail || {};
+      await onBeforeDiagramOpen();
       diagramModal = { open: true, mode: 'edit', attachmentId, name: name || '', getPos };
     };
     editorElement.addEventListener('excalidraw:edit', handler);
@@ -647,6 +640,19 @@
       });
     }
   });
+
+  // Page permissions load after the document, so a diagram node view can be
+  // created while the editor is provisionally readonly. Re-run ProseMirror's
+  // state update when the prop changes so custom node views receive the new
+  // `view.editable` value even though the document itself did not change.
+  $effect(() => {
+    readonly;
+    if (!editor) return;
+    editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      view.updateState(view.state);
+    });
+  });
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -738,7 +744,9 @@
     mode={diagramModal.mode}
     initialAttachmentId={diagramModal.attachmentId}
     initialName={diagramModal.name}
+    {workspaceId}
     pageId={entityType === 'page' ? entityId : null}
+    {expectedContentHash}
     onSaved={handleDiagramSaved}
   />
 {/if}

@@ -7,13 +7,19 @@
   import { errorToast } from '../../stores/toasts.svelte.js';
   import { confirm } from '../../composables/useConfirm.js';
   import { portal } from '../../actions/portal.js';
+  import {
+    pageDiagramSceneFingerprint,
+    preparePageDiagramScene,
+  } from './pageDiagramScene.js';
 
   let {
     open = $bindable(false),
     mode = 'create',                  // 'create' | 'edit'
     initialAttachmentId = null,
     initialName = '',
+    workspaceId,
     pageId,
+    expectedContentHash = '',
     onSaved = (_payload) => {},
   } = $props();
 
@@ -23,8 +29,9 @@
   let loadingSeed = $state(false);
   let saving = $state(false);
   let hasChanges = $state(false);
+  let loadError = $state('');
   let lastLoadedId = null;
-  let initialElementCount = 0;
+  let editorBaselineFingerprint = null;
 
   $effect(() => {
     if (!open) {
@@ -32,8 +39,9 @@
       lastLoadedId = null;
       initialData = null;
       hasChanges = false;
+      loadError = '';
       diagramName = '';
-      initialElementCount = 0;
+      editorBaselineFingerprint = null;
       return;
     }
     diagramName = initialName || t('editors.diagramUntitled');
@@ -42,58 +50,79 @@
       void loadAttachment(initialAttachmentId);
     } else if (mode === 'create') {
       initialData = { elements: [], appState: {}, files: {}, scrollToContent: true };
-      initialElementCount = 0;
+      editorBaselineFingerprint = null;
     }
   });
 
   async function loadAttachment(id) {
     loadingSeed = true;
+    loadError = '';
+    editorBaselineFingerprint = null;
     try {
       const res = await fetch(`/api/attachments/${id}/download`, { credentials: 'same-origin' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const scene = await res.json();
-      initialData = {
-        elements: scene.elements || [],
-        appState: scene.appState || {},
-        files: scene.files || {},
-        scrollToContent: true,
-      };
-      initialElementCount = (scene.elements || []).length;
+      initialData = await preparePageDiagramScene(await res.json());
     } catch (err) {
       console.error('Failed to load diagram for edit:', err);
       errorToast(t('editors.diagramLoadError'));
-      initialData = { elements: [], appState: {}, files: {}, scrollToContent: true };
-      initialElementCount = 0;
+      loadError = err?.message || t('editors.diagramLoadError');
+      initialData = null;
     } finally {
       loadingSeed = false;
     }
   }
 
-  // Driven by scene-element count rather than onChange-event count: Excalidraw
-  // fires several change events during mount (initial scene, theme apply,
-  // resize observer) which would falsely flag hasChanges if we trusted them.
   function handleEditorChange(sceneData) {
-    const count = sceneData?.elements?.length ?? 0;
-    hasChanges = count !== initialElementCount;
+    const fingerprint = pageDiagramSceneFingerprint(sceneData);
+    // Excalidraw normalizes the loaded scene while mounting. Treat its first
+    // emitted state as the baseline, then compare complete scene content.
+    if (editorBaselineFingerprint === null) {
+      editorBaselineFingerprint = fingerprint;
+      hasChanges = false;
+      return;
+    }
+    hasChanges = fingerprint !== editorBaselineFingerprint;
   }
 
   async function handleSave() {
-    if (!editorComponent || !pageId) return;
+    if (!editorComponent || !workspaceId || !pageId) return;
     saving = true;
     try {
       const sceneData = editorComponent.getSceneData();
-      const blob = new Blob([JSON.stringify(sceneData)], { type: 'application/json' });
-      const form = new FormData();
-      const filename = `diagram-${Date.now()}.json`;
-      form.append('file', blob, filename);
-      form.append('entity_type', 'page');
-      form.append('entity_id', String(pageId));
-      const resp = await api.attachments.upload(form);
-      const attachmentId = resp?.attachment?.id;
+      const name = diagramName.trim() || t('editors.diagramUntitled');
+      const request = {
+        name,
+        excalidraw: sceneData,
+        expectedContentHash,
+      };
+      const resp =
+        mode === 'edit' && initialAttachmentId
+          ? await api.pages.updateDiagram(
+              workspaceId,
+              pageId,
+              initialAttachmentId,
+              request
+            )
+          : await api.pages.createDiagram(workspaceId, pageId, {
+              ...request,
+              placement: 'end',
+            });
+      const attachmentId = resp?.attachment_id;
       if (!Number.isInteger(attachmentId)) {
-        throw new Error('Upload response missing attachment id');
+        throw new Error('Diagram response missing attachment id');
       }
-      onSaved({ attachmentId, name: diagramName.trim() || t('editors.diagramUntitled') });
+      // The shared service has already mutated the Page. Reload its canonical
+      // Markdown so the editor mirrors the exact server placement/fence and
+      // does not issue a redundant autosave.
+      const updatedPage = await api.pages.getPage(workspaceId, pageId);
+      onSaved({
+        attachmentId,
+        name: resp?.name || name,
+        // Keep the hash and Markdown from the same read. Another writer may
+        // have updated the Page after the diagram mutation completed.
+        contentHash: updatedPage?.content_hash || resp?.content_hash || '',
+        pageContent: updatedPage?.content || '',
+      });
       open = false;
     } catch (err) {
       console.error('Failed to save diagram:', err);
@@ -150,12 +179,12 @@
           {/if}
         </div>
         <div class="flex items-center space-x-2 shrink-0">
-          <Button variant="default" disabled={saving} onclick={handleClose}>
+          <Button variant="default" disabled={saving} onclick={handleClose} dataTestid="page-diagram-cancel">
             {t('common.cancel')}
           </Button>
           <Button
             variant="primary"
-            disabled={saving || loadingSeed}
+            disabled={saving || loadingSeed || !!loadError}
             loading={saving}
             onclick={handleSave}
             dataTestid="page-diagram-save"
@@ -168,6 +197,10 @@
         {#if loadingSeed}
           <div class="w-full h-full flex items-center justify-center">
             <span class="text-sm" style="color: var(--ds-text-muted);">{t('common.loading')}</span>
+          </div>
+        {:else if loadError}
+          <div class="w-full h-full flex items-center justify-center" data-testid="page-diagram-load-error">
+            <span class="text-sm" style="color: var(--ds-text-danger);">{loadError}</span>
           </div>
         {:else}
           <ExcalidrawEditor

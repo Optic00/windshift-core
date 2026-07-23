@@ -700,6 +700,8 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		TimerService:           h.timerService,
 		CommentService:         services.NewCommentService(h.db),
 		ActionService:          h.actionService,
+		PageApplicationService: h.pageApplicationService,
+		PageDiagramService:     h.pageDiagramService,
 	})
 
 	// Determine current date in user's timezone

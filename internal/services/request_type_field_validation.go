@@ -11,6 +11,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/validation"
 )
 
@@ -53,6 +54,73 @@ type RequestTypeValidationResult struct {
 	// the form. Callers that need a title (every item create) use this to
 	// decide between trusting submission.Title vs. rendering a title template.
 	TitleFieldInForm bool
+}
+
+type virtualRequestField struct {
+	fieldType string
+	options   string
+	required  bool
+}
+
+func normalizeVirtualFieldValue(fieldID string, field virtualRequestField, raw interface{}) (interface{}, error) {
+	switch field.fieldType {
+	case "text":
+		value, ok := raw.(string)
+		if !ok {
+			return nil, fmt.Errorf("field %s must be text", fieldID)
+		}
+		normalized := sanitize.PlainTextField.Sanitize(value)
+		if field.required && IsBlankSubmittedField(normalized) {
+			return nil, fmt.Errorf("field %s is required", fieldID)
+		}
+		return normalized, nil
+	case "textarea":
+		value, ok := raw.(string)
+		if !ok {
+			return nil, fmt.Errorf("field %s must be text", fieldID)
+		}
+		normalized := sanitize.RichText.Sanitize(value)
+		if field.required && IsBlankSubmittedField(normalized) {
+			return nil, fmt.Errorf("field %s is required", fieldID)
+		}
+		return normalized, nil
+	case "checkbox":
+		value, ok := raw.(bool)
+		if !ok {
+			return nil, fmt.Errorf("field %s must be a checkbox value", fieldID)
+		}
+		if field.required && !value {
+			return nil, fmt.Errorf("field %s must be checked", fieldID)
+		}
+		return value, nil
+	case "select":
+		if IsBlankSubmittedField(raw) {
+			return raw, nil
+		}
+		var configured []interface{}
+		if field.options == "" {
+			return nil, fmt.Errorf("field %s has no configured options", fieldID)
+		}
+		if err := json.Unmarshal([]byte(field.options), &configured); err != nil {
+			return nil, fmt.Errorf("field %s has invalid options: %w", fieldID, err)
+		}
+		for _, option := range configured {
+			value := option
+			if object, ok := option.(map[string]interface{}); ok {
+				configuredValue, exists := object["value"]
+				if !exists {
+					continue
+				}
+				value = configuredValue
+			}
+			if reflect.DeepEqual(value, raw) {
+				return raw, nil
+			}
+		}
+		return nil, fmt.Errorf("field %s contains an invalid option", fieldID)
+	default:
+		return nil, fmt.Errorf("field %s has unsupported virtual type %q", fieldID, field.fieldType)
+	}
 }
 
 // AllowedCreateScreenCustomFieldIdentifiers resolves the custom fields that
@@ -168,19 +236,25 @@ func ValidateAndSeparateRequestFields(ctx context.Context, db database.Database,
 		return nil, fmt.Errorf("resolve request type create-screen fields: %w", err)
 	}
 
-	virtualFieldIDs := make(map[string]bool)
+	virtualFields := make(map[string]virtualRequestField)
 	configuredCustomFieldIDs := make(map[string]bool)
-	rows, err := db.QueryContext(ctx, `SELECT field_identifier, field_type, is_required FROM request_type_fields WHERE request_type_id = ? ORDER BY display_order`, *requestTypeID)
+	rows, err := db.QueryContext(ctx, `
+		SELECT field_identifier, field_type, is_required,
+		       COALESCE(virtual_field_type, ''), COALESCE(virtual_field_options, '')
+		FROM request_type_fields
+		WHERE request_type_id = ?
+		ORDER BY display_order
+	`, *requestTypeID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load request type fields: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
-		var fieldID, fieldType string
+		var fieldID, fieldType, virtualFieldType, virtualFieldOptions string
 		var isRequired bool
-		if err := rows.Scan(&fieldID, &fieldType, &isRequired); err != nil {
-			continue
+		if err := rows.Scan(&fieldID, &fieldType, &isRequired, &virtualFieldType, &virtualFieldOptions); err != nil {
+			return nil, fmt.Errorf("scan request type field: %w", err)
 		}
 		if fieldType == "custom" {
 			if _, allowed := allowedCustomFieldIDs[fieldID]; !allowed {
@@ -190,7 +264,11 @@ func ValidateAndSeparateRequestFields(ctx context.Context, db database.Database,
 
 		switch fieldType {
 		case "virtual":
-			virtualFieldIDs[fieldID] = true
+			virtualFields[fieldID] = virtualRequestField{
+				fieldType: virtualFieldType,
+				options:   virtualFieldOptions,
+				required:  isRequired,
+			}
 		case "custom":
 			configuredCustomFieldIDs[fieldID] = true
 		}
@@ -212,7 +290,11 @@ func ValidateAndSeparateRequestFields(ctx context.Context, db database.Database,
 				if fieldID == "description" && description == "" {
 					return nil, fmt.Errorf("description is required")
 				}
-			case "custom", "virtual":
+			case "custom":
+				if customFields == nil || IsBlankSubmittedField(customFields[fieldID]) {
+					return nil, fmt.Errorf("field %s is required", fieldID)
+				}
+			case "virtual":
 				if customFields == nil || IsBlankSubmittedField(customFields[fieldID]) {
 					return nil, fmt.Errorf("field %s is required", fieldID)
 				}
@@ -229,10 +311,13 @@ func ValidateAndSeparateRequestFields(ctx context.Context, db database.Database,
 	result.VirtualFieldValues = make(map[string]interface{})
 	result.CustomFieldValues = make(map[string]interface{})
 	for fieldID, value := range customFields {
-		switch {
-		case virtualFieldIDs[fieldID]:
-			result.VirtualFieldValues[fieldID] = value
-		case configuredCustomFieldIDs[fieldID]:
+		if virtualField, ok := virtualFields[fieldID]; ok {
+			normalized, err := normalizeVirtualFieldValue(fieldID, virtualField, value)
+			if err != nil {
+				return nil, err
+			}
+			result.VirtualFieldValues[fieldID] = normalized
+		} else if configuredCustomFieldIDs[fieldID] {
 			result.CustomFieldValues[fieldID] = value
 		}
 	}

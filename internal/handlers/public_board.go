@@ -17,6 +17,53 @@ import (
 	"windshift/internal/services"
 )
 
+const publicBoardItemLimit = 500
+
+var publicBoardCardFieldAllowlist = map[string]struct{}{
+	"key":          {},
+	"title":        {},
+	"status":       {},
+	"priority":     {},
+	"assignee":     {},
+	"item_type":    {},
+	"story_points": {},
+	"due_date":     {},
+	"labels":       {},
+}
+
+func validatePublicBoardCardFields(fields []models.ListColumn) error {
+	for _, field := range fields {
+		if field.FieldType != "system" {
+			return fmt.Errorf("card field %q is not approved for public boards", field.FieldIdentifier)
+		}
+		if _, allowed := publicBoardCardFieldAllowlist[field.FieldIdentifier]; !allowed {
+			return fmt.Errorf("card field %q is not supported on public boards", field.FieldIdentifier)
+		}
+	}
+	return nil
+}
+
+func filterPublicBoardCardFields(fields []models.ListColumn) []models.ListColumn {
+	filtered := make([]models.ListColumn, 0, len(fields))
+	for _, field := range fields {
+		if field.FieldType != "system" {
+			continue
+		}
+		if _, allowed := publicBoardCardFieldAllowlist[field.FieldIdentifier]; allowed {
+			filtered = append(filtered, field)
+		}
+	}
+	return filtered
+}
+
+func rewritePublicAttachmentURLs(content, slug string) string {
+	return strings.ReplaceAll(
+		content,
+		"/api/attachments/",
+		fmt.Sprintf("/api/public/board/%s/attachments/", slug),
+	)
+}
+
 // PublicBoardHandler serves read-only public board views
 type PublicBoardHandler struct {
 	db                database.Database
@@ -62,9 +109,13 @@ type publicBoardResponse struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
 	} `json:"collection"`
-	Columns    []publicColumn      `json:"columns"`
-	CardFields []models.ListColumn `json:"card_fields,omitempty"`
-	UpdatedAt  string              `json:"updated_at"`
+	Columns     []publicColumn      `json:"columns"`
+	CardFields  []models.ListColumn `json:"card_fields,omitempty"`
+	TotalItems  int                 `json:"total_items"`
+	LoadedItems int                 `json:"loaded_items"`
+	Truncated   bool                `json:"truncated"`
+	ItemLimit   int                 `json:"item_limit"`
+	UpdatedAt   string              `json:"updated_at"`
 }
 
 type publicComment struct {
@@ -161,16 +212,14 @@ func (h *PublicBoardHandler) GetPublicBoardItem(w http.ResponseWriter, r *http.R
 	labels := h.loadSingleItemLabels(itemID)
 
 	// Load public comments (non-private only)
-	comments, err := h.loadPublicComments(itemID)
+	comments, err := h.loadPublicComments(itemID, slug)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
 
 	// Rewrite attachment URLs for public access
-	description = strings.ReplaceAll(description,
-		"/api/attachments/",
-		fmt.Sprintf("/api/public/board/%s/attachments/", slug))
+	description = rewritePublicAttachmentURLs(description, slug)
 
 	detail := publicItemDetail{
 		Key:            key,
@@ -251,6 +300,7 @@ func (h *PublicBoardHandler) GetPublicBoard(w http.ResponseWriter, r *http.Reque
 		// Parse card_fields
 		if cardFieldsJSON.Valid && cardFieldsJSON.String != "" {
 			_ = json.Unmarshal([]byte(cardFieldsJSON.String), &cardFields)
+			cardFields = filterPublicBoardCardFields(cardFields)
 		}
 
 		// Parse backlog status IDs (items in these statuses won't appear on the board)
@@ -296,10 +346,10 @@ func (h *PublicBoardHandler) GetPublicBoard(w http.ResponseWriter, r *http.Reque
 
 	// Execute the collection's QL query to get items
 	crudService := services.NewItemCRUDService(h.db)
-	items, _, err := crudService.ListWithQL(services.ListWithQLParams{
+	items, totalItems, err := crudService.ListWithQL(services.ListWithQLParams{
 		CollectionID: collectionID,
 		WorkspaceIDs: scopedWorkspaceIDs,
-		Pagination:   services.PaginationParams{Limit: 500},
+		Pagination:   services.PaginationParams{Limit: publicBoardItemLimit},
 		SortBy:       "created_at",
 		SortAsc:      false,
 	})
@@ -362,9 +412,13 @@ func (h *PublicBoardHandler) GetPublicBoard(w http.ResponseWriter, r *http.Reque
 	}
 
 	resp := publicBoardResponse{
-		Columns:    responseColumns,
-		CardFields: cardFields,
-		UpdatedAt:  updatedAt,
+		Columns:     responseColumns,
+		CardFields:  cardFields,
+		TotalItems:  totalItems,
+		LoadedItems: len(items),
+		Truncated:   totalItems > len(items),
+		ItemLimit:   publicBoardItemLimit,
+		UpdatedAt:   updatedAt,
 	}
 	resp.Collection.Name = collectionName
 	resp.Collection.Description = collectionDescription
@@ -567,6 +621,7 @@ func (h *PublicBoardHandler) loadItemLabels(items []models.Item) map[int][]publi
 func (h *PublicBoardHandler) buildEmptyResponse(name, desc string, columns []boardColumnInfo, cardFields []models.ListColumn, updatedAt string) publicBoardResponse {
 	resp := publicBoardResponse{
 		CardFields: cardFields,
+		ItemLimit:  publicBoardItemLimit,
 		UpdatedAt:  updatedAt,
 	}
 	resp.Collection.Name = name
@@ -608,7 +663,7 @@ func (h *PublicBoardHandler) loadSingleItemLabels(itemID int) []publicLabel {
 	return labels
 }
 
-func (h *PublicBoardHandler) loadPublicComments(itemID int) ([]publicComment, error) {
+func (h *PublicBoardHandler) loadPublicComments(itemID int, slug string) ([]publicComment, error) {
 	rows, err := h.db.Query(`
 		SELECT COALESCE(u.first_name || ' ' || u.last_name, pc.name, 'Unknown'),
 		       COALESCE(u.avatar_url, ''),
@@ -630,6 +685,7 @@ func (h *PublicBoardHandler) loadPublicComments(itemID int) ([]publicComment, er
 		if err := rows.Scan(&c.AuthorName, &c.AuthorAvatar, &c.Content, &c.CreatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan comment: %w", err)
 		}
+		c.Content = rewritePublicAttachmentURLs(c.Content, slug)
 		comments = append(comments, c)
 	}
 	if err := rows.Err(); err != nil {

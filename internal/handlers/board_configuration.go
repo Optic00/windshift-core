@@ -96,6 +96,26 @@ func (h *BoardConfigurationHandler) checkCollectionWriteAccess(w http.ResponseWr
 	return true
 }
 
+func (h *BoardConfigurationHandler) validatePublicCollectionCardFields(w http.ResponseWriter, r *http.Request, collectionID int, fields []models.ListColumn) bool {
+	collection, err := h.collections.GetByID(collectionID)
+	if errors.Is(err, repository.ErrNotFound) {
+		respondNotFound(w, r, "collection")
+		return false
+	}
+	if err != nil {
+		respondInternalError(w, r, err)
+		return false
+	}
+	if !collection.IsPublic {
+		return true
+	}
+	if err := validatePublicBoardCardFields(fields); err != nil {
+		respondValidationError(w, r, err.Error())
+		return false
+	}
+	return true
+}
+
 // checkBoardConfigWriteAccess looks up the collection/workspace associated
 // with a board config and verifies the user has WRITE access.
 func (h *BoardConfigurationHandler) checkBoardConfigWriteAccess(w http.ResponseWriter, r *http.Request, configID int) bool {
@@ -454,6 +474,9 @@ func (h *BoardConfigurationHandler) CreateForCollection(w http.ResponseWriter, r
 		if !h.checkCollectionWriteAccess(w, r, collID) {
 			return
 		}
+		if !h.validatePublicCollectionCardFields(w, r, collID, req.CardFields) {
+			return
+		}
 		collectionID = &collID
 	}
 
@@ -491,12 +514,19 @@ func (h *BoardConfigurationHandler) UpdateForCollection(w http.ResponseWriter, r
 	if !h.checkBoardConfigWriteAccess(w, r, configID) {
 		return
 	}
+	collectionID, _, ok := h.loadBoardConfigScope(w, r, configID)
+	if !ok {
+		return
+	}
 
 	req, ok := decodeJSON[models.BoardConfigurationRequest](w, r)
 	if !ok {
 		return
 	}
 	sanitizeBoardColumnRequests(req.Columns)
+	if collectionID != nil && !h.validatePublicCollectionCardFields(w, r, *collectionID, req.CardFields) {
+		return
+	}
 
 	slog.Info("updating board configuration", "config_id", configID, "columns_count", len(req.Columns), "backlog_status_ids", req.BacklogStatusIDs)
 

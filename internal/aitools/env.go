@@ -52,6 +52,8 @@ type Env struct {
 	// pipeline. MCP receives the production instance used by both HTTP
 	// surfaces; chat embeddings may use the nil-safe fallback in pages.go.
 	PageApplicationService *services.PageApplicationService
+	// PageDiagramService owns immutable Page-diagram attachment mutations.
+	PageDiagramService *services.PageDiagramService
 	// ActionService is the optional cache-invalidation hook for tools that
 	// create or mutate actions. Nil-safe: tools must check before calling
 	// InvalidateWorkspaceCache so they degrade to "next periodic refresh"

@@ -70,9 +70,10 @@ type pageCreateRequest struct {
 // yet on v1; the cookie surface has it). Allowing it here would let an
 // editor flip the flag via a normal save.
 type pageUpdateRequest struct {
-	Title    *string                 `json:"title,omitempty"`
-	Metadata *map[string]interface{} `json:"metadata,omitempty"`
-	Content  *string                 `json:"content,omitempty"`
+	Title               *string                 `json:"title,omitempty"`
+	Metadata            *map[string]interface{} `json:"metadata,omitempty"`
+	Content             *string                 `json:"content,omitempty"`
+	ExpectedContentHash *string                 `json:"expected_content_hash,omitempty"`
 }
 
 type pageMoveRequest struct {
@@ -369,7 +370,12 @@ func (h *PageHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	in := services.PageApplicationUpdateInput{ID: pageID, Title: req.Title, Content: req.Content}
+	in := services.PageApplicationUpdateInput{
+		ID:                  pageID,
+		Title:               req.Title,
+		Content:             req.Content,
+		ExpectedContentHash: req.ExpectedContentHash,
+	}
 	if req.Metadata != nil {
 		metadata := marshalPageMetadata(*req.Metadata)
 		in.Metadata = &metadata
@@ -844,6 +850,8 @@ func (h *PageHandler) respondPageServiceError(w http.ResponseWriter, r *http.Req
 		h.RespondError(w, r, restapi.NewAPIError(http.StatusConflict, restapi.ErrCodeValidationFailed, "page tree depth limit exceeded"))
 	case errors.Is(err, services.ErrPageSlugConflict):
 		h.RespondError(w, r, restapi.NewAPIError(http.StatusConflict, restapi.ErrCodeValidationFailed, "slug conflicts with an existing sibling page"))
+	case errors.Is(err, services.ErrPageContentConflict):
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusConflict, restapi.ErrCodeValidationFailed, "page content changed since it was read"))
 	case errors.Is(err, services.ErrPageRevisionMismatch):
 		h.RespondNotFound(w, r)
 	case errors.Is(err, services.ErrPageMetadataInvalid):

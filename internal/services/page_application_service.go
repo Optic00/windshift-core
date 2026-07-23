@@ -25,10 +25,11 @@ var ErrPageNoChanges = errors.New("no page fields to update")
 // PageApplicationUpdateInput is the transport-neutral partial page-update
 // shape. Nil fields retain their persisted values.
 type PageApplicationUpdateInput struct {
-	ID       int
-	Title    *string
-	Content  *string
-	Metadata *json.RawMessage
+	ID                  int
+	Title               *string
+	Content             *string
+	Metadata            *json.RawMessage
+	ExpectedContentHash *string
 }
 
 // PageApplicationService owns the permission-aware page mutation pipeline
@@ -97,10 +98,11 @@ func (s *PageApplicationService) Update(actor AuditActor, workspaceID int, in Pa
 		content = *in.Content
 	}
 	updated, err := s.pages.Update(actor.UserID, UpdatePageInput{
-		ID:       in.ID,
-		Title:    title,
-		Content:  content,
-		Metadata: in.Metadata,
+		ID:                  in.ID,
+		Title:               title,
+		Content:             content,
+		Metadata:            in.Metadata,
+		ExpectedContentHash: in.ExpectedContentHash,
 	})
 	if err != nil {
 		return nil, err

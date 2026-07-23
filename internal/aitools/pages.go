@@ -37,9 +37,10 @@ type createPageArgs struct {
 }
 
 type updatePageArgs struct {
-	PageID  int     `json:"page_id" jsonschema:"Page ID to update"`
-	Title   *string `json:"title,omitempty" jsonschema:"New title; omit to keep current title"`
-	Content *string `json:"content,omitempty" jsonschema:"New Markdown content; omit to keep current content"`
+	PageID              int     `json:"page_id" jsonschema:"Page ID to update"`
+	Title               *string `json:"title,omitempty" jsonschema:"New title; omit to keep current title"`
+	Content             *string `json:"content,omitempty" jsonschema:"New Markdown content; omit to keep current content"`
+	ExpectedContentHash *string `json:"expected_content_hash,omitempty" jsonschema:"Optional content hash returned by get_page; stale hashes reject the update"`
 }
 
 type movePageArgs struct {
@@ -91,6 +92,7 @@ type pageDTO struct {
 	ParentID    *int   `json:"parent_id,omitempty"`
 	Title       string `json:"title"`
 	Slug        string `json:"slug"`
+	ContentHash string `json:"content_hash"`
 	Path        string `json:"path"`
 	Depth       int    `json:"depth"`
 	URL         string `json:"url"`
@@ -255,7 +257,12 @@ func init() {
 			if args.Title == nil && args.Content == nil {
 				return map[string]string{"error": "no fields to update"}, nil
 			}
-			updated, err := pageApplicationService(env).Update(pageAuditActor(env), page.WorkspaceID, services.PageApplicationUpdateInput{ID: page.ID, Title: args.Title, Content: args.Content})
+			updated, err := pageApplicationService(env).Update(pageAuditActor(env), page.WorkspaceID, services.PageApplicationUpdateInput{
+				ID:                  page.ID,
+				Title:               args.Title,
+				Content:             args.Content,
+				ExpectedContentHash: args.ExpectedContentHash,
+			})
 			if err != nil {
 				return pageMutationToolError(err), nil
 			}
@@ -390,7 +397,17 @@ func init() {
 }
 
 func pageToDTO(page *models.Page) pageDTO {
-	return pageDTO{ID: page.ID, WorkspaceID: page.WorkspaceID, ParentID: page.ParentID, Title: page.Title, Slug: page.Slug, Path: page.Path, Depth: page.Depth, URL: fmt.Sprintf("/workspaces/%d/pages/%d", page.WorkspaceID, page.ID)}
+	return pageDTO{
+		ID:          page.ID,
+		WorkspaceID: page.WorkspaceID,
+		ParentID:    page.ParentID,
+		Title:       page.Title,
+		Slug:        page.Slug,
+		ContentHash: page.ContentHash,
+		Path:        page.Path,
+		Depth:       page.Depth,
+		URL:         fmt.Sprintf("/workspaces/%d/pages/%d", page.WorkspaceID, page.ID),
+	}
 }
 
 func loadAuthorizedPage(env *Env, pageSvc *services.PageService, pageID int, op string) (*models.Page, bool, error) {
@@ -455,6 +472,8 @@ func pageMutationToolError(err error) map[string]string {
 		return map[string]string{"error": "page not found"}
 	case errors.Is(err, services.ErrPageNoChanges):
 		return map[string]string{"error": "no fields to update"}
+	case errors.Is(err, services.ErrPageContentConflict):
+		return map[string]string{"error": "page content changed since it was read"}
 	default:
 		return map[string]string{"error": err.Error()}
 	}

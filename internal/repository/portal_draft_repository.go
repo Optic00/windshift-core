@@ -196,6 +196,7 @@ func (r *PortalDraftRepository) ListByIdentityForChannel(
 // ErrNotFound if there was no row to delete.
 func (r *PortalDraftRepository) DeleteByIdentity(
 	ctx context.Context,
+	channelID int,
 	requestTypeID int,
 	identity DraftIdentity,
 ) error {
@@ -204,8 +205,8 @@ func (r *PortalDraftRepository) DeleteByIdentity(
 		return err
 	}
 
-	q := fmt.Sprintf(`DELETE FROM portal_request_drafts WHERE request_type_id = ? AND %s = ?`, identityCol)
-	res, err := r.db.ExecWriteContext(ctx, q, requestTypeID, identityVal)
+	q := fmt.Sprintf(`DELETE FROM portal_request_drafts WHERE channel_id = ? AND request_type_id = ? AND %s = ?`, identityCol)
+	res, err := r.db.ExecWriteContext(ctx, q, channelID, requestTypeID, identityVal)
 	if err != nil {
 		return fmt.Errorf("delete portal draft: %w", err)
 	}

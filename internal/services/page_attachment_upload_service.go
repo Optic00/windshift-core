@@ -20,7 +20,9 @@ import (
 	"time"
 
 	"windshift/internal/database"
+	"windshift/internal/fileserve"
 	"windshift/internal/models"
+	"windshift/internal/repository"
 
 	"golang.org/x/image/draw"
 )
@@ -163,6 +165,27 @@ func (s *PageAttachmentUploadService) UploadPageAttachment(in PageAttachmentUplo
 			CreatedAt:        time.Now(),
 		},
 	}, nil
+}
+
+// DeleteUploadedPageAttachment compensates a failed higher-level mutation.
+// It is intentionally not exposed as a user-facing delete operation: live and
+// historical Page revisions may still reference successful diagram uploads.
+func (s *PageAttachmentUploadService) DeleteUploadedPageAttachment(pageID, attachmentID int) error {
+	rec, err := repository.NewAttachmentRepository(s.db).GetPageAttachmentRecord(pageID, attachmentID)
+	if err != nil {
+		return err
+	}
+	if err := fileserve.RemoveUnderRoot(s.attachmentPath, rec.FilePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove page attachment file: %w", err)
+	}
+	rows, err := s.attachmentService.DeleteRecord(attachmentID)
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return repository.ErrNotFound
+	}
+	return nil
 }
 
 func (s *PageAttachmentUploadService) authorizePageEdit(userID, pageID int) error {

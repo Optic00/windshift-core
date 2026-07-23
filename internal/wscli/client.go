@@ -1331,6 +1331,50 @@ func (c *Client) UpdatePage(workspaceID, pageID int, req PageUpdateRequest) (*Pa
 	return &page, nil
 }
 
+// ListPageDiagrams returns every diagram fence currently embedded in a Page.
+func (c *Client) ListPageDiagrams(workspaceID, pageID int) ([]PageDiagram, error) {
+	var envelope struct {
+		Items []PageDiagram `json:"items"`
+	}
+	path := fmt.Sprintf("/rest/api/v1/workspaces/%d/pages/%d/diagrams", workspaceID, pageID)
+	if err := c.GET(path, &envelope); err != nil {
+		return nil, err
+	}
+	return envelope.Items, nil
+}
+
+// GetPageDiagram fetches an embedded Page diagram by attachment ID.
+func (c *Client) GetPageDiagram(workspaceID, pageID, attachmentID int) (*PageDiagram, error) {
+	var diagram PageDiagram
+	path := fmt.Sprintf("/rest/api/v1/workspaces/%d/pages/%d/diagrams/%d", workspaceID, pageID, attachmentID)
+	if err := c.GET(path, &diagram); err != nil {
+		return nil, err
+	}
+	return &diagram, nil
+}
+
+// CreatePageDiagram uploads an immutable diagram attachment and inserts its
+// Markdown fence into the Page.
+func (c *Client) CreatePageDiagram(workspaceID, pageID int, req PageDiagramCreateRequest) (*PageDiagram, error) {
+	var diagram PageDiagram
+	path := fmt.Sprintf("/rest/api/v1/workspaces/%d/pages/%d/diagrams", workspaceID, pageID)
+	if err := c.POST(path, req, &diagram); err != nil {
+		return nil, err
+	}
+	return &diagram, nil
+}
+
+// UpdatePageDiagram creates a replacement attachment and atomically replaces
+// the matching fence in the Page.
+func (c *Client) UpdatePageDiagram(workspaceID, pageID, attachmentID int, req PageDiagramUpdateRequest) (*PageDiagram, error) {
+	var diagram PageDiagram
+	path := fmt.Sprintf("/rest/api/v1/workspaces/%d/pages/%d/diagrams/%d", workspaceID, pageID, attachmentID)
+	if err := c.PUT(path, req, &diagram); err != nil {
+		return nil, err
+	}
+	return &diagram, nil
+}
+
 // MovePage reparents a page. Pass parentID=nil to move to the workspace
 // root. prevSiblingID / nextSiblingID place the page at a specific position
 // among its siblings; pass nil for both to let the server pick.

@@ -125,8 +125,7 @@
       {/if}
 
       <div
-        class="mt-2.5 flex min-h-6 items-center gap-2 border-t pt-2"
-        style="border-color: var(--ds-border);"
+        class="mt-2.5 flex min-h-6 items-center gap-2 pt-2"
         data-testid={`board-card-footer-${item.id}`}
       >
         <span class="inline-flex shrink-0 items-center gap-1.5">

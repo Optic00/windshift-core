@@ -1,6 +1,7 @@
 <script>
   import { Pencil, AlertTriangle, Loader2 } from '@lucide/svelte';
   import { t } from '../stores/i18n.svelte.js';
+  import { preparePageDiagramScene } from '../features/pages/pageDiagramScene.js';
 
   let {
     attachmentId,
@@ -30,7 +31,7 @@
         return;
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const scene = await res.json();
+      const scene = await preparePageDiagramScene(await res.json());
       const { exportToSvg } = await import('@excalidraw/excalidraw');
       const svg = await exportToSvg({
         elements: scene.elements || [],
@@ -65,7 +66,13 @@
   }
 </script>
 
-<figure class="excalidraw-block" class:readonly data-excalidraw-block data-status={status}>
+<figure
+  class="excalidraw-block"
+  class:readonly
+  data-excalidraw-block
+  data-status={status}
+  data-testid="page-diagram-block"
+>
   <div
     class="excalidraw-block__canvas"
     bind:this={svgHost}
@@ -74,6 +81,7 @@
     role="button"
     tabindex={readonly ? -1 : 0}
     aria-label={name || t('editors.diagramOpen')}
+    data-testid="page-diagram-canvas"
   >
     {#if status === 'loading' || status === 'idle'}
       <div class="excalidraw-block__placeholder">
@@ -92,7 +100,7 @@
     {/if}
   </div>
   <figcaption class="excalidraw-block__caption">
-    <span class="excalidraw-block__name">{name || t('editors.diagramUntitled')}</span>
+    <span class="excalidraw-block__name" data-testid="page-diagram-caption">{name || t('editors.diagramUntitled')}</span>
     {#if !readonly}
       <button
         type="button"

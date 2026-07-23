@@ -1538,6 +1538,13 @@ components:
         title:
           type: string
       type: object
+    handlers.pageDiagramListResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/services.PageDiagram'
+          type: array
+      type: object
     handlers.pageGrantPermissionRequest:
       properties:
         permission_level:
@@ -1631,6 +1638,8 @@ components:
     handlers.pageUpdateRequest:
       properties:
         content:
+          type: string
+        expected_content_hash:
           type: string
         metadata:
           additionalProperties: true
@@ -3052,6 +3061,25 @@ components:
         total_pages:
           type: integer
       type: object
+    services.PageDiagram:
+      properties:
+        attachment_id:
+          type: integer
+        content_hash:
+          type: string
+        created_at:
+          type: string
+        kind:
+          type: string
+        name:
+          type: string
+        page_id:
+          type: integer
+        payload:
+          type: object
+        revision_number:
+          type: integer
+      type: object
     services.TestRunDetail:
       properties:
         results:
@@ -3151,6 +3179,30 @@ components:
           items:
             type: string
           type: array
+      type: object
+    windshift_internal_restapi_v1_handlers.pageDiagramCreateRequest:
+      properties:
+        excalidraw:
+          type: object
+        expected_content_hash:
+          type: string
+        mermaid:
+          type: string
+        name:
+          type: string
+        placement:
+          type: string
+      type: object
+    windshift_internal_restapi_v1_handlers.pageDiagramUpdateRequest:
+      properties:
+        excalidraw:
+          type: object
+        expected_content_hash:
+          type: string
+        mermaid:
+          type: string
+        name:
+          type: string
       type: object
   securitySchemes:
     BearerAuth:
@@ -11414,6 +11466,239 @@ paths:
       summary: Upload an attachment to a workspace knowledge page
       tags:
       - pages
+  /workspaces/{id}/pages/{pageId}/diagrams:
+    get:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      - description: Page ID
+        in: path
+        name: pageId
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.pageDiagramListResponse'
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks pages:read
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Page not found or page.view denied
+      security:
+      - BearerAuth: []
+      summary: List diagrams embedded in a Page
+      tags:
+      - page-diagrams
+    post:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      - description: Page ID
+        in: path
+        name: pageId
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/windshift_internal_restapi_v1_handlers.pageDiagramCreateRequest'
+        description: Diagram payload and placement
+        required: true
+        x-originalParamName: body
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/services.PageDiagram'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid scene, name, or placement
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks pages:write
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Page not found or page.edit denied
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Stale content hash
+      security:
+      - BearerAuth: []
+      summary: Create and embed a Page diagram
+      tags:
+      - page-diagrams
+  /workspaces/{id}/pages/{pageId}/diagrams/{attachmentId}:
+    get:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      - description: Page ID
+        in: path
+        name: pageId
+        required: true
+        schema:
+          type: integer
+      - description: Page attachment ID
+        in: path
+        name: attachmentId
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/services.PageDiagram'
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks pages:read
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Diagram not found, wrong Page, or page.view denied
+      security:
+      - BearerAuth: []
+      summary: Get an embedded Page diagram
+      tags:
+      - page-diagrams
+    put:
+      description: Creates a new immutable attachment and replaces the one matching
+        Page fence. No delete endpoint is exposed because Page history retains older
+        references.
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      - description: Page ID
+        in: path
+        name: pageId
+        required: true
+        schema:
+          type: integer
+      - description: Current Page attachment ID
+        in: path
+        name: attachmentId
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/windshift_internal_restapi_v1_handlers.pageDiagramUpdateRequest'
+        description: Replacement payload
+        required: true
+        x-originalParamName: body
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/services.PageDiagram'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid scene
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks pages:write
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Diagram not found, wrong Page, or page.edit denied
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Stale content hash or ambiguous reference
+      security:
+      - BearerAuth: []
+      summary: Replace an embedded Page diagram
+      tags:
+      - page-diagrams
   /workspaces/{id}/pages/{pageId}/history:
     get:
       description: Returns revisions newest-first. Supports `limit` (default 50, max

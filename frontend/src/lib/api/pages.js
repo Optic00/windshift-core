@@ -29,10 +29,21 @@ export const pages = {
    * server rejects it as an unknown field shape and an editor without
    * admin would otherwise be able to flip inheritance via a normal save.
    */
-  updatePage: (workspaceId, pageId, { title, content, metadata = undefined }) =>
+  updatePage: (
+    workspaceId,
+    pageId,
+    { title, content, metadata = undefined, expectedContentHash = undefined }
+  ) =>
     fetchAPI(`/workspaces/${workspaceId}/pages/${pageId}`, {
       method: 'PUT',
-      body: JSON.stringify({ title, content, ...(metadata === undefined ? {} : { metadata }) }),
+      body: JSON.stringify({
+        title,
+        content,
+        ...(metadata === undefined ? {} : { metadata }),
+        ...(expectedContentHash === undefined
+          ? {}
+          : { expected_content_hash: expectedContentHash }),
+      }),
     }),
 
   /** Archive a page (and every descendant). */
@@ -76,6 +87,51 @@ export const pages = {
   restoreRevision: (workspaceId, pageId, revisionId) =>
     fetchAPI(`/workspaces/${workspaceId}/pages/${pageId}/history/${revisionId}/restore`, {
       method: 'POST',
+    }),
+
+  /** Create an immutable diagram attachment and atomically insert its Page fence. */
+  createDiagram: (
+    workspaceId,
+    pageId,
+    {
+      name,
+      mermaid = undefined,
+      excalidraw = undefined,
+      placement = 'end',
+      expectedContentHash = undefined,
+    }
+  ) =>
+    fetchAPI(`/workspaces/${workspaceId}/pages/${pageId}/diagrams`, {
+      method: 'POST',
+      body: JSON.stringify({
+        name,
+        ...(mermaid ? { mermaid } : {}),
+        ...(excalidraw ? { excalidraw } : {}),
+        placement,
+        ...(expectedContentHash ? { expected_content_hash: expectedContentHash } : {}),
+      }),
+    }),
+
+  /** Replace one Page diagram through the shared immutable lifecycle. */
+  updateDiagram: (
+    workspaceId,
+    pageId,
+    attachmentId,
+    {
+      name = undefined,
+      mermaid = undefined,
+      excalidraw = undefined,
+      expectedContentHash = undefined,
+    }
+  ) =>
+    fetchAPI(`/workspaces/${workspaceId}/pages/${pageId}/diagrams/${attachmentId}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        ...(name ? { name } : {}),
+        ...(mermaid ? { mermaid } : {}),
+        ...(excalidraw ? { excalidraw } : {}),
+        ...(expectedContentHash ? { expected_content_hash: expectedContentHash } : {}),
+      }),
     }),
 
   /** Read-only effective permissions + own ACL rows. */

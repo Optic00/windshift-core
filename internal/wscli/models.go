@@ -733,8 +733,37 @@ type PageCreateRequest struct {
 // no inherit_permissions field — that toggle is an admin-only operation
 // with its own endpoint and would not be accepted by the server here.
 type PageUpdateRequest struct {
-	Title   *string `json:"title,omitempty"`
-	Content *string `json:"content,omitempty"`
+	Title               *string `json:"title,omitempty"`
+	Content             *string `json:"content,omitempty"`
+	ExpectedContentHash *string `json:"expected_content_hash,omitempty"`
+}
+
+// PageDiagram is an immutable attachment-backed Excalidraw or Mermaid diagram
+// embedded in a Page's Markdown.
+type PageDiagram struct {
+	PageID         int             `json:"page_id"`
+	AttachmentID   int             `json:"attachment_id"`
+	Name           string          `json:"name"`
+	Kind           string          `json:"kind"`
+	Payload        json.RawMessage `json:"payload,omitempty"`
+	ContentHash    string          `json:"content_hash,omitempty"`
+	RevisionNumber int             `json:"revision_number,omitempty"`
+	CreatedAt      time.Time       `json:"created_at,omitempty"`
+}
+
+type PageDiagramCreateRequest struct {
+	Name                string          `json:"name"`
+	Mermaid             string          `json:"mermaid,omitempty"`
+	Excalidraw          json.RawMessage `json:"excalidraw,omitempty"`
+	Placement           string          `json:"placement"`
+	ExpectedContentHash *string         `json:"expected_content_hash,omitempty"`
+}
+
+type PageDiagramUpdateRequest struct {
+	Name                string          `json:"name,omitempty"`
+	Mermaid             string          `json:"mermaid,omitempty"`
+	Excalidraw          json.RawMessage `json:"excalidraw,omitempty"`
+	ExpectedContentHash *string         `json:"expected_content_hash,omitempty"`
 }
 
 // PageMoveRequest is the body for POST /workspaces/:id/pages/:pageId/move.

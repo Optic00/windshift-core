@@ -132,6 +132,7 @@ func (ms *MCPServer) buildEnv(user *models.User) (*aitools.Env, error) {
 		CommentService:         ms.deps.CommentService,
 		ItemDeletionService:    ms.deps.ItemDeletionService,
 		PageApplicationService: ms.deps.PageApplicationService,
+		PageDiagramService:     ms.deps.PageDiagramService,
 		ActionService:          ms.deps.ActionService,
 	}, nil
 }

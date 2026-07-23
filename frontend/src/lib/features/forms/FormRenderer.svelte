@@ -35,6 +35,7 @@
   let loading = $state(true);
   let submitting = $state(false);
   let error = $state(null);
+  let authenticationRequired = $state(false);
   let success = $state(false);
   let successMessage = $state('');
   let redirectUrl = $state('');
@@ -73,6 +74,7 @@
 
   function applyDetail(detail) {
     error = null;
+    authenticationRequired = false;
     success = false;
     fields = detail.fields || [];
     customFieldDefinitions = detail.custom_field_definitions || [];
@@ -104,6 +106,7 @@
     try {
       loading = true;
       error = null;
+      authenticationRequired = false;
       success = false;
 
       const detail = await loadPublicFormDetail(activeSlug, activeFormId);
@@ -151,7 +154,11 @@
         }
       } else if (field.field_type === 'virtual') {
         const value = customFieldValues[field.field_identifier];
-        if (field.virtual_field_type !== 'checkbox' && (value === undefined || value === null || value === '')) {
+        if (
+          (field.virtual_field_type === 'checkbox' && value !== true) ||
+          (field.virtual_field_type !== 'checkbox' &&
+            (value === undefined || value === null || value === ''))
+        ) {
           error = `${getFieldLabel(field)} is required`;
           return false;
         }
@@ -200,6 +207,7 @@
 
       submitting = true;
       error = null;
+      authenticationRequired = false;
 
       if (attachmentConfig?.enabled) {
         const maxFiles = attachmentConfig.max_files || 5;
@@ -238,6 +246,7 @@
       }
     } catch (err) {
       console.error('Failed to submit form:', err);
+      authenticationRequired = err.status === 403;
       error = err.message || 'Failed to submit form';
     } finally {
       submitting = false;
@@ -264,7 +273,15 @@
     </div>
   {:else}
     <form onsubmit={(e) => { e.preventDefault(); isLastStep ? handleSubmit() : goToNextStep(); }}>
-      {#if error}
+      {#if authenticationRequired}
+        <div class="mb-4" data-testid="form-auth-required">
+          <AlertBox
+            variant="warning"
+            message="This form requires a Windshift sign-in. Sign in in this browser, then return here and submit again."
+          />
+          <a class="mt-2 inline-block text-sm underline" href={toExternal('/')}>Open Windshift to sign in</a>
+        </div>
+      {:else if error}
         <AlertBox variant="error" message={error} class="mb-4" />
       {/if}
 
@@ -411,7 +428,13 @@
           <div></div>
         {/if}
 
-        <Button type="submit" variant="primary" disabled={submitting} loading={submitting}>
+        <Button
+          type="submit"
+          variant="primary"
+          dataTestid="public-form-submit"
+          disabled={submitting}
+          loading={submitting}
+        >
           {isLastStep ? submitButtonText : 'Next'}
         </Button>
       </div>

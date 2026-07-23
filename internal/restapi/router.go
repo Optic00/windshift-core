@@ -56,6 +56,8 @@ type Deps struct {
 	// PageApplicationService is the permission-aware mutation/audit pipeline
 	// shared by cookie, REST v1, and MCP page operations.
 	PageApplicationService *services.PageApplicationService
+	// PageDiagramService owns Page-scoped diagram attachment mutations.
+	PageDiagramService *services.PageDiagramService
 	// AssetPermissionService gates the v1 asset surface against the
 	// per-set role model. Shared with the cookie-auth handler so both
 	// surfaces consult one role-check pipeline. The v1 router constructs

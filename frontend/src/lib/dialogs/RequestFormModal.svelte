@@ -295,10 +295,11 @@
         }
       } else if (field.field_type === 'virtual') {
         const value = customFieldValues[field.field_identifier];
-        // Checkbox fields with false are valid (only truly empty is invalid)
-        if (field.virtual_field_type === 'checkbox') {
-          // Checkbox is always valid (false is a valid value)
-        } else if (value === undefined || value === null || value === '') {
+        if (
+          (field.virtual_field_type === 'checkbox' && value !== true) ||
+          (field.virtual_field_type !== 'checkbox' &&
+            (value === undefined || value === null || value === ''))
+        ) {
           error = t('requestForm.fieldRequired', { field: getFieldLabel(field) });
           return false;
         }

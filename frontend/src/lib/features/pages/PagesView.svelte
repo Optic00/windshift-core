@@ -60,6 +60,11 @@
   let historyDrawerOpen = $state(false);
   let titleInputEl = $state(null);
   let pageEffectiveLevel = $state('');
+  let pagePermissionsLoaded = $state(false);
+  let canEditPage = $derived(
+    pagePermissionsLoaded &&
+      (pageEffectiveLevel === 'edit' || pageEffectiveLevel === 'admin')
+  );
   let appearanceSaving = $state(false);
   let pickerIcon = $state('Plus');
   let pickerColor = $state('#3b82f6');
@@ -73,6 +78,11 @@
   let saveTimer = null;
   // True while the serialized queue is actively writing a snapshot.
   let saveInFlight = false;
+  // The latest server-confirmed hash for each page saved during this view's
+  // lifetime. A second snapshot may be queued while the first is in flight;
+  // resolving the hash at write time keeps that serialized follow-up from
+  // conflicting with our own immediately preceding save.
+  const contentHashByPageId = new Map();
 
   const pageAutosaveQueue = createPageAutosaveQueue(
     persistSaveSnapshot,
@@ -207,6 +217,7 @@
       saveStatus = 'idle';
       pageLinks = [];
       pageEffectiveLevel = '';
+      pagePermissionsLoaded = false;
     }
   });
 
@@ -231,6 +242,7 @@
       const page = await api.pages.getPage(workspaceId, id);
       if (requestSeq !== loadPageRequestSeq) return;
       selectedPage = page;
+      contentHashByPageId.set(page.id, page.content_hash);
       draftTitle = page.title;
       draftContent = page.content;
       pickerIcon = page.metadata?.icon || 'Plus';
@@ -238,6 +250,7 @@
       dirty = false;
       saveStatus = 'idle';
       pageEffectiveLevel = '';
+      pagePermissionsLoaded = false;
       // Run in parallel: linked work items / permissions are independent
       // of the page payload, and the link-types list is cached for the session.
       void loadPageLinks(id);
@@ -248,6 +261,7 @@
       error = err?.message || t('pages.errorLoadPage');
       selectedPage = null;
       pageEffectiveLevel = '';
+      pagePermissionsLoaded = false;
     } finally {
       if (requestSeq === loadPageRequestSeq) loadingPage = false;
     }
@@ -258,10 +272,15 @@
       const perms = await api.pages.getPermissions(workspaceId, id);
       if (selectedPage?.id === id) {
         pageEffectiveLevel = perms?.effective_level || '';
+        if (pageEffectiveLevel !== 'edit' && pageEffectiveLevel !== 'admin') {
+          mode = 'read';
+        }
       }
     } catch (err) {
       console.error('failed to load page permissions', err);
       if (selectedPage?.id === id) pageEffectiveLevel = '';
+    } finally {
+      if (selectedPage?.id === id) pagePermissionsLoaded = true;
     }
   }
 
@@ -329,6 +348,7 @@
       previousTitle: selectedPage.title,
       title: draftTitle,
       content: draftContent,
+      expectedContentHash: selectedPage.content_hash,
     };
     return pageAutosaveQueue.enqueue(snapshot.pageId, snapshot);
   }
@@ -344,7 +364,10 @@
       const updated = await api.pages.updatePage(targetWorkspaceId, targetId, {
         title: snapshot.title,
         content: snapshot.content,
+        expectedContentHash:
+          contentHashByPageId.get(targetId) ?? snapshot.expectedContentHash,
       });
+      contentHashByPageId.set(targetId, updated.content_hash);
       // Only fold the response back into local state if we're still on
       // the same page; a fast-switching user has already moved on.
       if (selectedPage?.id === targetId) {
@@ -421,6 +444,23 @@
     }
   }
 
+  function onDiagramPersisted({ contentHash, pageContent }) {
+    if (!selectedPage) return;
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+    draftContent = pageContent;
+    selectedPage = {
+      ...selectedPage,
+      content: pageContent,
+      content_hash: contentHash,
+    };
+    contentHashByPageId.set(selectedPage.id, contentHash);
+    dirty = false;
+    saveStatus = 'saved';
+  }
+
   function onTitleInput(event) {
     if (!selectedPage) return;
     draftTitle = event.target.value;
@@ -456,7 +496,10 @@
         title: draftTitle,
         content: draftContent,
         metadata,
+        expectedContentHash:
+          contentHashByPageId.get(targetPageId) ?? selectedPage.content_hash,
       });
+      contentHashByPageId.set(targetPageId, updated.content_hash);
       if (selectedPage?.id === updated.id) {
         selectedPage = mergePageUpdate(selectedPage, updated, draftContent);
         pickerIcon = updated.metadata?.icon || 'Plus';
@@ -579,9 +622,9 @@
   });
 </script>
 
-<main class="page-pane">
+<main class="page-pane" data-testid="pages-view">
   {#if error}
-    <div class="error" role="alert">{error}</div>
+    <div class="error" role="alert" data-testid="page-error">{error}</div>
   {/if}
 
   {#if !selectedPage && !loadingPage}
@@ -613,10 +656,11 @@
             oninput={onTitleInput}
             onkeydown={onTitleKeydown}
             placeholder={t('pages.titlePlaceholder')}
+            disabled={!canEditPage}
           />
         </div>
         <div class="actions">
-          {#if statusLabel && mode === 'edit'}
+          {#if statusLabel && mode === 'edit' && canEditPage}
             <span
               class="save-status"
               class:save-status--error={saveStatus === 'error'}
@@ -643,17 +687,19 @@
             aria-label={t('pages.modeAria')}
             data-testid="page-mode-toggle"
           >
-            <button
-              type="button"
-              class="mode-toggle__btn"
-              class:active={mode === 'edit'}
-              aria-pressed={mode === 'edit'}
-              onclick={() => (mode = 'edit')}
-              data-testid="page-mode-edit"
-            >
-              <Pencil size={14} />
-              <span>{t('pages.modeEdit')}</span>
-            </button>
+            {#if canEditPage}
+              <button
+                type="button"
+                class="mode-toggle__btn"
+                class:active={mode === 'edit'}
+                aria-pressed={mode === 'edit'}
+                onclick={() => (mode = 'edit')}
+                data-testid="page-mode-edit"
+              >
+                <Pencil size={14} />
+                <span>{t('pages.modeEdit')}</span>
+              </button>
+            {/if}
             <button
               type="button"
               class="mode-toggle__btn"
@@ -678,7 +724,7 @@
         </div>
       </div>
       <div class="label-row" data-testid="page-label-row">
-        {#if mode === 'edit'}
+        {#if mode === 'edit' && canEditPage}
           <div class="appearance-actions" aria-label="Page icon">
             <IconSelector
               bind:selectedIcon={pickerIcon}
@@ -717,7 +763,7 @@
               aria-hidden="true"
             ></span>
             {label.name}
-            {#if mode === 'edit'}
+            {#if mode === 'edit' && canEditPage}
               <button
                 type="button"
                 class="label-chip__remove"
@@ -730,7 +776,7 @@
             {/if}
           </span>
         {/each}
-        {#if mode === 'edit'}
+        {#if mode === 'edit' && canEditPage}
           <PageLabelPicker
             {workspaceId}
             selectedIds={selectedLabelIds}
@@ -745,11 +791,14 @@
             bind:content={draftContent}
             placeholder={t('pages.editorPlaceholder')}
             showToolbar={true}
-            readonly={mode === 'read'}
+            readonly={mode === 'read' || !canEditPage}
             entityType="page"
             entityId={selectedPage.id}
             enableDiagrams={true}
             {workspaceId}
+            expectedContentHash={selectedPage.content_hash}
+            onBeforeDiagramOpen={flushSave}
+            {onDiagramPersisted}
             onContentChange={onContentInput}
           />
         </div>

@@ -72,6 +72,7 @@ func (h *KnowledgeSearchHandler) Search(w http.ResponseWriter, r *http.Request) 
 type PageHandler struct {
 	service           *services.PageService
 	application       *services.PageApplicationService
+	pageDiagrams      *services.PageDiagramService
 	pageAuth          *services.PagePermissionService
 	permissionService *services.PermissionService
 }
@@ -91,6 +92,12 @@ func NewPageHandler(service *services.PageService, pageAuth *services.PagePermis
 // pipeline so REST v1 and MCP can use the exact production instance.
 func (h *PageHandler) PageApplicationService() *services.PageApplicationService {
 	return h.application
+}
+
+// SetPageDiagramService connects the cookie-auth Page editor to the same
+// attachment-backed lifecycle used by REST v1, MCP, and AI tools.
+func (h *PageHandler) SetPageDiagramService(service *services.PageDiagramService) {
+	h.pageDiagrams = service
 }
 
 // --- response payloads ---
@@ -137,9 +144,10 @@ type createPageRequest struct {
 // would let editors break inheritance via a normal save, and Go's zero
 // value would set it to false whenever clients omitted it.
 type updatePageRequest struct {
-	Title    string           `json:"title"`
-	Content  string           `json:"content"`
-	Metadata *json.RawMessage `json:"metadata"`
+	Title               string           `json:"title"`
+	Content             string           `json:"content"`
+	Metadata            *json.RawMessage `json:"metadata"`
+	ExpectedContentHash *string          `json:"expected_content_hash,omitempty"`
 }
 
 type movePageRequest struct {
@@ -355,10 +363,11 @@ func (h *PageHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	updated, err := h.application.Update(services.NewAuditActorFromRequest(r, user, nil, "cookie"), workspaceID, services.PageApplicationUpdateInput{
-		ID:       pageID,
-		Title:    &req.Title,
-		Content:  &req.Content,
-		Metadata: req.Metadata,
+		ID:                  pageID,
+		Title:               &req.Title,
+		Content:             &req.Content,
+		Metadata:            req.Metadata,
+		ExpectedContentHash: req.ExpectedContentHash,
 	})
 	if err != nil {
 		h.respondServiceError(w, r, err)
@@ -778,6 +787,8 @@ func (h *PageHandler) respondServiceError(w http.ResponseWriter, r *http.Request
 		respondConflict(w, r, "page tree depth limit exceeded")
 	case errors.Is(err, services.ErrPageSlugConflict):
 		respondConflict(w, r, "slug conflicts with an existing sibling page")
+	case errors.Is(err, services.ErrPageContentConflict):
+		respondConflict(w, r, "page content changed since it was read")
 	case errors.Is(err, services.ErrPageRevisionMismatch):
 		respondNotFound(w, r, "Revision")
 	default:

@@ -80,6 +80,7 @@ var (
 	ErrPageCycle            = errors.New("move would create a cycle")
 	ErrPageDepthExceeded    = errors.New("page tree depth limit exceeded")
 	ErrPageSlugConflict     = errors.New("slug conflicts with an existing sibling page")
+	ErrPageContentConflict  = errors.New("page content changed since it was read")
 	ErrPageRevisionMismatch = errors.New("revision does not belong to the target page")
 	ErrPageMetadataInvalid  = errors.New("page metadata must be a JSON object")
 )
@@ -196,10 +197,11 @@ func (s *PageService) GetByID(id int) (*models.Page, error) {
 // are absent for the same reason: reordering goes through Move /
 // SetFracIndex so a normal save cannot clear an existing ordering.
 type UpdatePageInput struct {
-	ID       int
-	Title    string
-	Content  string
-	Metadata *json.RawMessage
+	ID                  int
+	Title               string
+	Content             string
+	Metadata            *json.RawMessage
+	ExpectedContentHash *string
 }
 
 // Update overwrites a page's title/content and recomputes the derived
@@ -230,6 +232,9 @@ func (s *PageService) Update(actorID int, in UpdatePageInput) (*models.Page, err
 				return nil, ErrPageNotFound
 			}
 			return nil, err
+		}
+		if in.ExpectedContentHash != nil && existing.ContentHash != *in.ExpectedContentHash {
+			return nil, ErrPageContentConflict
 		}
 
 		newSlug := existing.Slug

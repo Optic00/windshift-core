@@ -223,6 +223,7 @@ let editableSearchHint = $state('Search for articles, guides, and answers to com
 // Request types state
 let requestTypes = $state([]);
 let loadingRequestTypes = $state(false);
+let requestTypesLoadId = 0;
 
 // Asset reports state
 let assetReports = $state([]);
@@ -291,7 +292,6 @@ let pendingRequestType = $state(null);
 let isInitialLoad = true;
 let saveTimeout = null;
 let searchTimeout = null;
-let isLoadingRequestTypes = false;
 
 /**
  * Load portal data by slug
@@ -360,7 +360,7 @@ async function loadPortal(slug) {
  * Toggle editing mode
  */
 function toggleEditing() {
-  const wasUsingManagerReports = isEditing || showCustomizePanel;
+  const wasUsingManagementData = isEditing || showCustomizePanel;
   const wasEditing = isEditing;
   isEditing = !isEditing;
 
@@ -374,9 +374,10 @@ function toggleEditing() {
     saveCustomizations();
   }
 
-  const usesManagerReports = isEditing || showCustomizePanel;
-  if (portalData?.channel_id && usesManagerReports !== wasUsingManagerReports) {
-    void loadAssetReports({ forCustomization: usesManagerReports });
+  const usesManagementData = isEditing || showCustomizePanel;
+  if (portalData?.channel_id && usesManagementData !== wasUsingManagementData) {
+    void loadAssetReports({ forCustomization: usesManagementData });
+    void loadRequestTypes({ forCustomization: usesManagementData });
   }
 }
 
@@ -614,27 +615,33 @@ async function saveKnowledgeBaseConfig() {
  * Load request types
  * Uses portal endpoint to properly handle portal customer authentication
  */
-async function loadRequestTypes() {
+async function loadRequestTypes({ forCustomization = isEditing || showCustomizePanel } = {}) {
   if (!portalData || !currentSlug) return;
-  if (isLoadingRequestTypes) return;
 
+  const loadId = ++requestTypesLoadId;
   try {
-    isLoadingRequestTypes = true;
     loadingRequestTypes = true;
-    // Use portal endpoint instead of channel endpoint for proper auth handling.
-    // The endpoint now returns field_count inline, so internal users no longer
-    // fan out one getFields() request per request type.
-    const types = await api.requestTypes.getForPortal(currentSlug);
+    // Do not leave manager-only definitions visible while returning to the
+    // audience view, or audience DTOs visible as editable definitions while
+    // the management request is being authorized.
+    requestTypes = [];
+    const types = forCustomization
+      ? await api.requestTypes.getForChannel(portalData.channel_id)
+      : await api.requestTypes.getForPortal(currentSlug);
 
+    if (loadId !== requestTypesLoadId) return;
     // Surface the count only for internal users (preserves prior behavior where
     // portal customers don't see field counts). Internal users may be
     // authenticated via either auth store.
     requestTypes = normalizeRequestTypes(types);
   } catch (err) {
+    if (loadId !== requestTypesLoadId) return;
+    requestTypes = [];
     console.error('Failed to load request types:', err);
   } finally {
-    loadingRequestTypes = false;
-    isLoadingRequestTypes = false;
+    if (loadId === requestTypesLoadId) {
+      loadingRequestTypes = false;
+    }
   }
 }
 
@@ -1184,6 +1191,7 @@ function closeAllMenus() {
 // Reset store (for cleanup)
 function reset() {
   assetReportsLoadId++;
+  requestTypesLoadId++;
   portalData = null;
   loading = true;
   error = null;
@@ -1487,11 +1495,12 @@ export const portalStore = {
     isEditing = value;
   },
   set showCustomizePanel(value) {
-    const wasUsingManagerReports = isEditing || showCustomizePanel;
+    const wasUsingManagementData = isEditing || showCustomizePanel;
     showCustomizePanel = Boolean(value);
-    const usesManagerReports = isEditing || showCustomizePanel;
-    if (portalData?.channel_id && usesManagerReports !== wasUsingManagerReports) {
-      void loadAssetReports({ forCustomization: usesManagerReports });
+    const usesManagementData = isEditing || showCustomizePanel;
+    if (portalData?.channel_id && usesManagementData !== wasUsingManagementData) {
+      void loadAssetReports({ forCustomization: usesManagementData });
+      void loadRequestTypes({ forCustomization: usesManagementData });
     }
   },
   set showMyRequests(value) {
