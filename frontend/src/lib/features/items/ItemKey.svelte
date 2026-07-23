@@ -8,6 +8,7 @@
     style = "color: var(--ds-text-subtle);",
     href = null,
     onClick = null,
+    monospace = true,
     class: className = '',
   } = $props();
 
@@ -21,7 +22,7 @@
     size === 'compact' ? 'text-[10px] leading-4 tracking-[0.02em]' : 'text-xs',
   );
   let classes = $derived(
-    `${sizeClass} font-mono flex-shrink-0 whitespace-nowrap${interactive ? ' hover:underline cursor-pointer' : ''} ${className}`,
+    `${sizeClass}${monospace ? ' font-mono' : ''} flex-shrink-0 whitespace-nowrap${interactive ? ' hover:underline cursor-pointer' : ''} ${className}`,
   );
 </script>
 

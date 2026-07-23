@@ -1,7 +1,6 @@
 <script>
   import { CalendarDays, MoreHorizontal } from '@lucide/svelte';
   import Avatar from '../../components/Avatar.svelte';
-  import Chip from '../../components/Chip.svelte';
   import DropIndicator from '../../layout/DropIndicator.svelte';
   import DropdownMenu from '../../layout/DropdownMenu.svelte';
   import { formatDateShort } from '../../utils/dateFormatter.js';
@@ -53,9 +52,6 @@
         ),
     ),
   );
-  const hasFooter = $derived(
-    showsDueDate || Boolean(item.assignee_id) || dependencyLinks.length > 0,
-  );
 
   const avatarVariants = ['blue', 'teal', 'purple', 'green', 'orange'];
 
@@ -91,15 +87,11 @@
 
   <div class="cursor-grab active:cursor-grabbing">
     <div class="min-w-0">
-      <div class="flex min-h-5 items-center gap-1.5">
-        <ItemKey
-          {item}
-          {workspace}
-          size="compact"
-          style="color: var(--ds-text-subtlest);"
-        />
-        <span class="flex-1"></span>
-        <div class="board-card-menu -mr-1 shrink-0 transition-opacity">
+      <div class="flex items-start gap-2">
+        <h4 class="min-w-0 flex-1 break-words text-sm font-medium leading-5" style={textStyle}>
+          {item.title}
+        </h4>
+        <div class="board-card-menu -mr-1 -mt-1 shrink-0 transition-opacity">
           <DropdownMenu
             items={resolvedMoveMenuItems}
             placement="bottom-end"
@@ -114,18 +106,8 @@
         </div>
       </div>
 
-      <h4 class="mt-1 min-w-0 break-words text-sm font-medium leading-5" style={textStyle}>
-        {item.title}
-      </h4>
-
-      {#if itemType || bodyCardFields.length > 0}
+      {#if bodyCardFields.length > 0}
         <div class="mt-2 flex flex-wrap gap-1.5">
-          {#if itemType}
-            {@const TypeIcon = itemTypeIconMap[itemType.icon] || itemTypeIconMap.FileText}
-            <Chip appearance="metadata" icon={TypeIcon} title="Item type">
-              {itemType.name}
-            </Chip>
-          {/if}
           {#each bodyCardFields as cardField}
             <CardFieldChip
               {cardField}
@@ -142,38 +124,57 @@
         </div>
       {/if}
 
-      {#if hasFooter}
-        <div
-          class="mt-2.5 flex min-h-6 items-center gap-2 border-t pt-2"
-          style="border-color: var(--ds-border);"
-        >
-          {#if showsDueDate}
+      <div
+        class="mt-2.5 flex min-h-6 items-center gap-2 border-t pt-2"
+        style="border-color: var(--ds-border);"
+        data-testid={`board-card-footer-${item.id}`}
+      >
+        <span class="inline-flex shrink-0 items-center gap-1.5">
+          {#if itemType}
+            {@const TypeIcon = itemTypeIconMap[itemType.icon] || itemTypeIconMap.FileText}
             <span
-              class="inline-flex items-center gap-1 text-[11px] leading-4"
-              style="color: var(--ds-text-subtle);"
-              title="Due date"
+              class="flex h-4 w-4 shrink-0 items-center justify-center rounded text-white"
+              style="background-color: {itemType.color};"
+              title={itemType.name}
+              data-testid={`board-card-type-icon-${item.id}`}
             >
-              <CalendarDays class="h-3 w-3 shrink-0" />
-              {formatDateShort(item.due_date)}
+              <TypeIcon class="h-3 w-3" />
             </span>
           {/if}
-          <DependencySummary {item} links={dependencyLinks} />
-          <span class="flex-1"></span>
-          {#if item.assignee_id}
-            {@const assignee = users.find((user) => user.id === item.assignee_id)}
-            {#if assignee}
-              <Avatar
-                src={assignee.avatar_url || item.assignee_avatar}
-                firstName={assignee.first_name}
-                lastName={assignee.last_name}
-                size="2xs"
-                variant={avatarVariant(assignee.id)}
-                title="{assignee.first_name} {assignee.last_name}"
-              />
-            {/if}
+          <ItemKey
+            {item}
+            {workspace}
+            size="compact"
+            monospace={false}
+            style="color: var(--ds-text-subtlest);"
+          />
+        </span>
+        {#if showsDueDate}
+          <span
+            class="inline-flex items-center gap-1 text-[11px] leading-4"
+            style="color: var(--ds-text-subtle);"
+            title="Due date"
+          >
+            <CalendarDays class="h-3 w-3 shrink-0" />
+            {formatDateShort(item.due_date)}
+          </span>
+        {/if}
+        <DependencySummary {item} links={dependencyLinks} />
+        <span class="flex-1"></span>
+        {#if item.assignee_id}
+          {@const assignee = users.find((user) => user.id === item.assignee_id)}
+          {#if assignee}
+            <Avatar
+              src={assignee.avatar_url || item.assignee_avatar}
+              firstName={assignee.first_name}
+              lastName={assignee.last_name}
+              size="2xs"
+              variant={avatarVariant(assignee.id)}
+              title="{assignee.first_name} {assignee.last_name}"
+            />
           {/if}
-        </div>
-      {/if}
+        {/if}
+      </div>
     </div>
   </div>
 </div>
