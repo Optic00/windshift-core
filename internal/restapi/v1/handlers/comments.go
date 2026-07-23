@@ -29,26 +29,22 @@ func NewCommentHandler(db database.Database, permissionService *services.Permiss
 	}
 }
 
-// checkCommentEditPermission verifies the user is the comment author or has workspace edit permission.
+// checkCommentEditPermission verifies the user is the comment author or holds
+// the dedicated comment.edit_others permission. General item edit access does
+// not grant ownership override.
 // Returns false and writes an error response on failure.
 func (h *CommentHandler) checkCommentEditPermission(w http.ResponseWriter, r *http.Request, commentID, userID int) bool {
-	authorID, err := h.commentService.GetAuthorID(commentID)
+	comment, err := h.commentService.Get(commentID)
 	if err != nil {
 		h.RespondNotFound(w, r)
 		return false
 	}
 
-	if authorID != nil && *authorID == userID {
+	if comment.AuthorID != nil && *comment.AuthorID == userID {
 		return true
 	}
 
-	workspaceID, err := h.commentService.GetWorkspaceIDForComment(commentID)
-	if err != nil {
-		h.RespondInternalError(w, r)
-		return false
-	}
-
-	canEdit, permErr := h.Perms.CanEditWorkspace(userID, workspaceID)
+	canEdit, permErr := h.PermissionService.HasWorkspacePermission(userID, comment.WorkspaceID, models.PermissionCommentEditOthers)
 	if permErr != nil || !canEdit {
 		h.RespondNotFound(w, r)
 		return false
@@ -136,7 +132,7 @@ func (h *CommentHandler) requireEditableComment(w http.ResponseWriter, r *http.R
 // Update handles PUT /rest/api/v1/comments/{id}
 //
 // @Summary      Update a comment
-// @Description  The caller must be the comment author or hold edit permission on the comment's workspace.
+// @Description  The caller must be the comment author or hold comment.edit_others on the comment's workspace.
 // @Tags         comments
 // @Accept       json
 // @Produce      json
@@ -193,7 +189,7 @@ func (h *CommentHandler) Update(w http.ResponseWriter, r *http.Request) {
 // Delete handles DELETE /rest/api/v1/comments/{id}
 //
 // @Summary      Delete a comment
-// @Description  The caller must be the comment author or hold edit permission on the comment's workspace.
+// @Description  The caller must be the comment author or hold comment.edit_others on the comment's workspace.
 // @Tags         comments
 // @Security     BearerAuth
 // @Param        id   path  int  true  "Comment ID"

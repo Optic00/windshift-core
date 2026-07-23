@@ -650,6 +650,17 @@ const (
 	ActionPageLabelUpdate = "page_label.update"
 	ActionPageLabelDelete = "page_label.delete"
 
+	// Knowledge page lifecycle and ACL management.
+	ActionPageCreate           = "page.create"
+	ActionPageUpdate           = "page.update"
+	ActionPageMove             = "page.move"
+	ActionPageArchive          = "page.archive"
+	ActionPageRestore          = "page.restore"
+	ActionPagePermissionGrant  = "page.permission_grant"
+	ActionPagePermissionRevoke = "page.permission_revoke"
+	ActionPageInheritanceSet   = "page.inheritance_set"
+	ActionPageUnarchive        = "page.unarchive"
+
 	// Asset management
 	ActionAssetCreate = "asset.create"
 	ActionAssetUpdate = "asset.update"
@@ -793,6 +804,7 @@ const (
 	ResourcePortalCustomer       = "portal_customer"
 	ResourceLabel                = "label"
 	ResourceItemTemplate         = "item_template"
+	ResourcePage                 = "page"
 	ResourcePageLabel            = "page_label"
 	ResourceAsset                = "asset"
 	ResourceAssetType            = "asset_type"

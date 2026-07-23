@@ -130,6 +130,8 @@ func (ms *MCPServer) buildEnv(user *models.User) (*aitools.Env, error) {
 		TimePermService:        ms.deps.TimePermissionService,
 		TimerService:           ms.deps.TimerService,
 		CommentService:         ms.deps.CommentService,
+		ItemDeletionService:    ms.deps.ItemDeletionService,
+		PageApplicationService: ms.deps.PageApplicationService,
 		ActionService:          ms.deps.ActionService,
 	}, nil
 }

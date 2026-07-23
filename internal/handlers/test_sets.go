@@ -8,25 +8,29 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
-	"windshift/internal/sanitize"
+	"windshift/internal/services"
 	"windshift/internal/utils"
 )
 
 type TestSetHandler struct {
-	repo             *repository.TestSetRepository
-	workspaceChecker *repository.WorkspaceResourceRepository
-	auditor          *logger.Auditor
+	service *services.TestSetService
+	auditor *logger.Auditor
 }
 
-func NewTestSetHandlerWithPool(
-	repo *repository.TestSetRepository,
-	workspaceChecker *repository.WorkspaceResourceRepository,
-	auditor *logger.Auditor,
-) *TestSetHandler {
-	return &TestSetHandler{
-		repo:             repo,
-		workspaceChecker: workspaceChecker,
-		auditor:          auditor,
+func NewTestSetHandlerWithPool(service *services.TestSetService, auditor *logger.Auditor) *TestSetHandler {
+	return &TestSetHandler{service: service, auditor: auditor}
+}
+
+func (h *TestSetHandler) writeServiceError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, services.ErrTestSetMilestoneNotFound):
+		respondValidationError(w, r, err.Error())
+	case errors.Is(err, services.ErrTestSetCaseNotFound):
+		respondNotFound(w, r, "test_case")
+	case errors.Is(err, repository.ErrNotFound):
+		respondNotFound(w, r, "test_set")
+	default:
+		respondInternalError(w, r, err)
 	}
 }
 
@@ -35,199 +39,118 @@ func (h *TestSetHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-
-	sets, err := h.repo.FindAllWithStats(workspaceID)
+	sets, err := h.service.List(workspaceID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
-
 	respondJSONOK(w, sets)
 }
 
 func (h *TestSetHandler) Get(w http.ResponseWriter, r *http.Request) {
-	workspaceID, ok := requireIDParam(w, r, "workspaceId")
+	workspaceID, setID, ok := requireTestSetPath(w, r)
 	if !ok {
 		return
 	}
-
-	id, ok := requireIDParam(w, r, "id")
-	if !ok {
-		return
-	}
-
-	set, err := h.repo.FindByID(id, workspaceID)
-	if errors.Is(err, repository.ErrNotFound) {
-		respondNotFound(w, r, "test_set")
-		return
-	}
+	set, err := h.service.Get(setID, workspaceID)
 	if err != nil {
-		respondInternalError(w, r, err)
+		h.writeServiceError(w, r, err)
 		return
 	}
-
 	respondJSONOK(w, set)
 }
 
-// decodeTestSetWrite extracts the workspace ID, current user, decoded+sanitized TestSet.
-// Returns false if any step fails (an error response will already have been written).
-func (h *TestSetHandler) decodeTestSetWrite(w http.ResponseWriter, r *http.Request) (int, *models.User, models.TestSet, bool) {
+func (h *TestSetHandler) decodeWrite(w http.ResponseWriter, r *http.Request) (int, *models.User, models.TestSet, bool) {
 	workspaceID, ok := requireIDParam(w, r, "workspaceId")
 	if !ok {
 		return 0, nil, models.TestSet{}, false
 	}
-
-	user := utils.GetCurrentUser(r)
-
 	set, ok := decodeJSON[models.TestSet](w, r)
 	if !ok {
 		return 0, nil, models.TestSet{}, false
 	}
-
-	set.Name = sanitize.PlainTextField.Sanitize(set.Name)
-	set.Description = sanitize.Comment.Sanitize(set.Description)
-
-	if set.MilestoneID != nil {
-		exists, err := h.repo.MilestoneUsableInWorkspace(*set.MilestoneID, workspaceID)
-		if err != nil {
-			respondInternalError(w, r, err)
-			return 0, nil, models.TestSet{}, false
-		}
-		if !exists {
-			respondValidationError(w, r, "Milestone not found in workspace")
-			return 0, nil, models.TestSet{}, false
-		}
-	}
-
-	return workspaceID, user, set, true
+	return workspaceID, utils.GetCurrentUser(r), set, true
 }
 
 func (h *TestSetHandler) Create(w http.ResponseWriter, r *http.Request) {
-	workspaceID, user, set, ok := h.decodeTestSetWrite(w, r)
+	workspaceID, user, input, ok := h.decodeWrite(w, r)
 	if !ok {
 		return
 	}
-
-	id, createdAt, err := h.repo.Create(workspaceID, &set)
+	set, err := h.service.Create(workspaceID, input)
 	if err != nil {
-		respondInternalError(w, r, err)
+		h.writeServiceError(w, r, err)
 		return
 	}
-
-	set.ID = id
-	set.WorkspaceID = workspaceID
-	set.CreatedAt = createdAt
-	set.UpdatedAt = createdAt
-
 	if user != nil {
-		h.auditor.Log(r, user, logger.ActionTestSetCreate, logger.ResourceTestSet, &id, set.Name)
+		h.auditor.Log(r, user, logger.ActionTestSetCreate, logger.ResourceTestSet, &set.ID, set.Name)
 	}
-
 	respondJSONCreated(w, set)
 }
 
 func (h *TestSetHandler) Update(w http.ResponseWriter, r *http.Request) {
-	workspaceID, user, set, ok := h.decodeTestSetWrite(w, r)
+	workspaceID, user, input, ok := h.decodeWrite(w, r)
 	if !ok {
 		return
 	}
-
-	id, ok := requireIDParam(w, r, "id")
+	setID, ok := requireIDParam(w, r, "id")
 	if !ok {
 		return
 	}
-
-	updatedAt, err := h.repo.Update(id, workspaceID, &set)
-	if errors.Is(err, repository.ErrNotFound) {
-		respondNotFound(w, r, "test_set")
-		return
-	}
+	set, err := h.service.Update(setID, workspaceID, input)
 	if err != nil {
-		respondInternalError(w, r, err)
+		h.writeServiceError(w, r, err)
 		return
 	}
-
-	set.ID = id
-	set.WorkspaceID = workspaceID
-	set.UpdatedAt = updatedAt
-
 	if user != nil {
-		h.auditor.Log(r, user, logger.ActionTestSetUpdate, logger.ResourceTestSet, &id, set.Name)
+		h.auditor.Log(r, user, logger.ActionTestSetUpdate, logger.ResourceTestSet, &setID, set.Name)
 	}
-
 	respondJSONOK(w, set)
 }
 
 func (h *TestSetHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	workspaceID, ok := requireIDParam(w, r, "workspaceId")
-	if !ok {
-		return
-	}
-	id, ok := requireIDParam(w, r, "id")
+	workspaceID, setID, ok := requireTestSetPath(w, r)
 	if !ok {
 		return
 	}
 	user := utils.GetCurrentUser(r)
-
-	if !verifyResourceInWorkspace(h.workspaceChecker, w, r, "test_sets", id, workspaceID, "test_set") {
+	if err := h.service.Delete(setID, workspaceID); err != nil {
+		h.writeServiceError(w, r, err)
 		return
 	}
-
-	if err := h.repo.Delete(id, workspaceID); err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			respondNotFound(w, r, "test_set")
-			return
-		}
-		respondInternalError(w, r, err)
-		return
-	}
-
 	if user != nil {
-		h.auditor.Log(r, user, logger.ActionTestSetDelete, logger.ResourceTestSet, &id, "")
+		h.auditor.Log(r, user, logger.ActionTestSetDelete, logger.ResourceTestSet, &setID, "")
 	}
-
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// requireTestSetInWorkspace parses workspaceId+id and verifies the test_set
-// belongs to the workspace. Returns workspaceID, setID, ok.
-func (h *TestSetHandler) requireTestSetInWorkspace(w http.ResponseWriter, r *http.Request) (workspaceID, setID int, ok bool) {
+func requireTestSetPath(w http.ResponseWriter, r *http.Request) (workspaceID, setID int, ok bool) {
 	workspaceID, ok = requireIDParam(w, r, "workspaceId")
 	if !ok {
-		return
+		return 0, 0, false
 	}
 	setID, ok = requireIDParam(w, r, "id")
-	if !ok {
-		return
-	}
-	if !verifyResourceInWorkspace(h.workspaceChecker, w, r, "test_sets", setID, workspaceID, "test_set") {
-		ok = false
-		return
-	}
-	return workspaceID, setID, true
+	return workspaceID, setID, ok
 }
 
 func (h *TestSetHandler) GetTestCases(w http.ResponseWriter, r *http.Request) {
-	workspaceID, setID, ok := h.requireTestSetInWorkspace(w, r)
+	workspaceID, setID, ok := requireTestSetPath(w, r)
 	if !ok {
 		return
 	}
-
-	testCases, err := h.repo.FindTestCases(setID, workspaceID)
+	testCases, err := h.service.ListCases(setID, workspaceID)
 	if err != nil {
-		respondInternalError(w, r, err)
+		h.writeServiceError(w, r, err)
 		return
 	}
-
 	respondJSONOK(w, testCases)
 }
 
 func (h *TestSetHandler) AddTestCase(w http.ResponseWriter, r *http.Request) {
-	workspaceID, setID, ok := h.requireTestSetInWorkspace(w, r)
+	workspaceID, setID, ok := requireTestSetPath(w, r)
 	if !ok {
 		return
 	}
-
 	var request struct {
 		TestCaseID int `json:"test_case_id"`
 	}
@@ -235,50 +158,38 @@ func (h *TestSetHandler) AddTestCase(w http.ResponseWriter, r *http.Request) {
 		respondBadRequest(w, r, "Invalid request body")
 		return
 	}
-
-	// Verify test case belongs to same workspace
-	if !verifyResourceInWorkspace(h.workspaceChecker, w, r, "test_cases", request.TestCaseID, workspaceID, "test_case") {
+	if err := h.service.AddCase(setID, request.TestCaseID, workspaceID); err != nil {
+		h.writeServiceError(w, r, err)
 		return
 	}
-
-	if err := h.repo.AddTestCase(setID, request.TestCaseID); err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-
 	w.WriteHeader(http.StatusCreated)
 }
 
 func (h *TestSetHandler) RemoveTestCase(w http.ResponseWriter, r *http.Request) {
-	_, setID, ok := h.requireTestSetInWorkspace(w, r)
+	workspaceID, setID, ok := requireTestSetPath(w, r)
 	if !ok {
 		return
 	}
-
 	testCaseID, ok := requireIDParam(w, r, "testCaseId")
 	if !ok {
 		return
 	}
-
-	if err := h.repo.RemoveTestCase(setID, testCaseID); err != nil {
-		respondInternalError(w, r, err)
+	if err := h.service.RemoveCase(setID, testCaseID, workspaceID); err != nil {
+		h.writeServiceError(w, r, err)
 		return
 	}
-
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *TestSetHandler) GetRuns(w http.ResponseWriter, r *http.Request) {
-	workspaceID, setID, ok := h.requireTestSetInWorkspace(w, r)
+	workspaceID, setID, ok := requireTestSetPath(w, r)
 	if !ok {
 		return
 	}
-
-	runs, err := h.repo.FindRuns(setID, workspaceID)
+	runs, err := h.service.ListRuns(setID, workspaceID)
 	if err != nil {
-		respondInternalError(w, r, err)
+		h.writeServiceError(w, r, err)
 		return
 	}
-
 	respondJSONOK(w, runs)
 }

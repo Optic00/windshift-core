@@ -1,0 +1,374 @@
+package services
+
+import (
+	"errors"
+	"time"
+	"unicode/utf8"
+
+	"windshift/internal/models"
+	"windshift/internal/repository"
+	"windshift/internal/sanitize"
+
+	"github.com/teambition/rrule-go"
+)
+
+// ErrRecurrenceConflict reports that an item already has a recurrence rule.
+var ErrRecurrenceConflict = errors.New("recurrence rule already exists for this item")
+
+// RecurrenceValidationKind lets transports preserve their own error envelopes
+// while sharing the recurrence validation rules.
+type RecurrenceValidationKind string
+
+const (
+	RecurrenceMissingField RecurrenceValidationKind = "missing_field"
+	RecurrenceInvalidInput RecurrenceValidationKind = "invalid_input"
+)
+
+// RecurrenceValidationError is a user-facing validation failure.
+type RecurrenceValidationError struct {
+	Kind    RecurrenceValidationKind
+	Message string
+}
+
+func (e *RecurrenceValidationError) Error() string { return e.Message }
+
+// AsRecurrenceValidationError unwraps recurrence validation failures.
+func AsRecurrenceValidationError(err error) (*RecurrenceValidationError, bool) {
+	var validationErr *RecurrenceValidationError
+	ok := errors.As(err, &validationErr)
+	return validationErr, ok
+}
+
+// RecurrenceGenerator is the scheduler boundary used for on-demand generation.
+type RecurrenceGenerator interface {
+	ForceGenerate(ruleID int) (int, error)
+}
+
+// RecurrenceService owns transport-neutral recurrence behavior.
+type RecurrenceService struct {
+	repo      *repository.RecurrenceRepository
+	generator RecurrenceGenerator
+}
+
+// NewRecurrenceService creates a recurrence application service.
+func NewRecurrenceService(repo *repository.RecurrenceRepository, generator RecurrenceGenerator) *RecurrenceService {
+	return &RecurrenceService{repo: repo, generator: generator}
+}
+
+// RecurrenceInstances contains one page of generated instances.
+type RecurrenceInstances struct {
+	Items []*models.RecurrenceInstance
+	Total int
+}
+
+// RecurrencePreview is the normalized result of previewing an RRULE.
+type RecurrencePreview struct {
+	RRule       string
+	DtStart     time.Time
+	Occurrences []time.Time
+}
+
+// Get returns the rule attached to itemID.
+func (s *RecurrenceService) Get(itemID int) (*models.RecurrenceRule, error) {
+	return s.repo.GetByTemplateItemID(itemID)
+}
+
+// Create validates and persists a recurrence rule for an item.
+func (s *RecurrenceService) Create(itemID, workspaceID, userID int, req models.CreateRecurrenceRequest) (*models.RecurrenceRule, error) {
+	if existing, err := s.repo.GetByTemplateItemID(itemID); err == nil && existing != nil {
+		return nil, ErrRecurrenceConflict
+	} else if err != nil && !errors.Is(err, repository.ErrNotFound) {
+		return nil, err
+	}
+
+	rule, err := buildRecurrenceRule(itemID, workspaceID, userID, req)
+	if err != nil {
+		return nil, err
+	}
+	ruleID, err := s.repo.Create(rule)
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.GetByID(ruleID)
+}
+
+// Update applies a partial update and returns the persisted rule.
+func (s *RecurrenceService) Update(itemID int, req models.UpdateRecurrenceRequest) (*models.RecurrenceRule, error) {
+	rule, err := s.repo.GetByTemplateItemID(itemID)
+	if err != nil {
+		return nil, err
+	}
+	if err := applyRecurrenceUpdate(rule, req); err != nil {
+		return nil, err
+	}
+	if err := s.repo.Update(rule); err != nil {
+		return nil, err
+	}
+	return s.repo.GetByID(rule.ID)
+}
+
+// Delete removes the rule attached to itemID.
+func (s *RecurrenceService) Delete(itemID int) error {
+	rule, err := s.repo.GetByTemplateItemID(itemID)
+	if err != nil {
+		return err
+	}
+	return s.repo.Delete(rule.ID)
+}
+
+// ListInstances returns generated instances and their total count.
+func (s *RecurrenceService) ListInstances(itemID, limit, offset int) (*RecurrenceInstances, error) {
+	rule, err := s.repo.GetByTemplateItemID(itemID)
+	if err != nil {
+		return nil, err
+	}
+	instances, err := s.repo.GetInstancesByRuleID(rule.ID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	total, err := s.repo.CountInstancesByRuleID(rule.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &RecurrenceInstances{Items: instances, Total: total}, nil
+}
+
+// ForceGenerate triggers immediate generation for the rule attached to itemID.
+func (s *RecurrenceService) ForceGenerate(itemID int) (int, error) {
+	rule, err := s.repo.GetByTemplateItemID(itemID)
+	if err != nil {
+		return 0, err
+	}
+	if s.generator == nil {
+		return 0, errors.New("recurrence generator is not configured")
+	}
+	return s.generator.ForceGenerate(rule.ID)
+}
+
+// ListByWorkspace returns every recurrence rule in a workspace.
+func (s *RecurrenceService) ListByWorkspace(workspaceID int) ([]*models.RecurrenceRule, error) {
+	return s.repo.ListByWorkspace(workspaceID)
+}
+
+// Preview validates an RRULE and returns a bounded occurrence list.
+func (s *RecurrenceService) Preview(req models.RRulePreviewRequest) (*RecurrencePreview, error) {
+	if err := sanitizePreviewRequest(&req); err != nil {
+		return nil, err
+	}
+	if req.RRule == "" {
+		return nil, recurrenceMissing("rrule is required")
+	}
+	if req.DtStart == "" {
+		return nil, recurrenceMissing("dtstart is required")
+	}
+
+	dtstart, err := parseRecurrenceDate(req.DtStart)
+	if err != nil {
+		return nil, recurrenceInvalid("Invalid dtstart format (use RFC3339 or YYYY-MM-DD)")
+	}
+	ruleOpt, err := rrule.StrToROption(req.RRule)
+	if err != nil {
+		return nil, recurrenceInvalid("Invalid RRULE format: " + err.Error())
+	}
+	ruleOpt.Dtstart = dtstart
+	rule, err := rrule.NewRRule(*ruleOpt)
+	if err != nil {
+		return nil, recurrenceInvalid("Failed to create RRULE: " + err.Error())
+	}
+
+	count := 10
+	if req.Count > 0 && req.Count <= 50 {
+		count = req.Count
+	}
+	occurrences := make([]time.Time, 0, count)
+	iterator := rule.Iterator()
+	for len(occurrences) < count {
+		occurrence, ok := iterator()
+		if !ok {
+			break
+		}
+		occurrences = append(occurrences, occurrence)
+	}
+	return &RecurrencePreview{RRule: req.RRule, DtStart: dtstart, Occurrences: occurrences}, nil
+}
+
+func buildRecurrenceRule(itemID, workspaceID, userID int, req models.CreateRecurrenceRequest) (*models.RecurrenceRule, error) {
+	if err := sanitizeCreateRecurrenceRequest(&req); err != nil {
+		return nil, err
+	}
+	if req.RRule == "" {
+		return nil, recurrenceMissing("rrule is required")
+	}
+	if _, err := rrule.StrToROption(req.RRule); err != nil {
+		return nil, recurrenceInvalid("Invalid RRULE format: " + err.Error())
+	}
+	if req.DtStart == "" {
+		return nil, recurrenceMissing("dtstart is required")
+	}
+	dtstart, err := parseRecurrenceDate(req.DtStart)
+	if err != nil {
+		return nil, recurrenceInvalid("Invalid dtstart format (use RFC3339 or YYYY-MM-DD)")
+	}
+
+	var dtend *time.Time
+	if req.DtEnd != nil && *req.DtEnd != "" {
+		parsed, err := parseRecurrenceDate(*req.DtEnd)
+		if err != nil {
+			return nil, recurrenceInvalid("Invalid dtend format")
+		}
+		dtend = &parsed
+	}
+
+	timezone := "UTC"
+	if req.Timezone != "" {
+		timezone = req.Timezone
+	}
+	leadTimeDays := valueOr(req.LeadTimeDays, 14)
+	copyAssignee := valueOr(req.CopyAssignee, true)
+	copyPriority := valueOr(req.CopyPriority, true)
+	copyCustomFields := valueOr(req.CopyCustomFields, true)
+	copyDescription := valueOr(req.CopyDescription, true)
+	createdBy := userID
+
+	return &models.RecurrenceRule{
+		TemplateItemID:   itemID,
+		WorkspaceID:      workspaceID,
+		RRule:            req.RRule,
+		DtStart:          dtstart,
+		DtEnd:            dtend,
+		Timezone:         timezone,
+		LeadTimeDays:     leadTimeDays,
+		CopyAssignee:     copyAssignee,
+		CopyPriority:     copyPriority,
+		CopyCustomFields: copyCustomFields,
+		CopyDescription:  copyDescription,
+		StatusOnCreate:   req.StatusOnCreate,
+		IsActive:         true,
+		CreatedBy:        &createdBy,
+	}, nil
+}
+
+func applyRecurrenceUpdate(rule *models.RecurrenceRule, req models.UpdateRecurrenceRequest) error {
+	if err := sanitizeUpdateRecurrenceRequest(&req); err != nil {
+		return err
+	}
+	if req.RRule != nil {
+		if _, err := rrule.StrToROption(*req.RRule); err != nil {
+			return recurrenceInvalid("Invalid RRULE format: " + err.Error())
+		}
+		rule.RRule = *req.RRule
+	}
+	if req.DtStart != nil {
+		dtstart, err := parseRecurrenceDate(*req.DtStart)
+		if err != nil {
+			return recurrenceInvalid("Invalid dtstart format")
+		}
+		rule.DtStart = dtstart
+	}
+	if req.DtEnd != nil {
+		if *req.DtEnd == "" {
+			rule.DtEnd = nil
+		} else {
+			dtend, err := parseRecurrenceDate(*req.DtEnd)
+			if err != nil {
+				return recurrenceInvalid("Invalid dtend format")
+			}
+			rule.DtEnd = &dtend
+		}
+	}
+	if req.Timezone != nil {
+		rule.Timezone = *req.Timezone
+	}
+	if req.LeadTimeDays != nil {
+		rule.LeadTimeDays = *req.LeadTimeDays
+	}
+	if req.CopyAssignee != nil {
+		rule.CopyAssignee = *req.CopyAssignee
+	}
+	if req.CopyPriority != nil {
+		rule.CopyPriority = *req.CopyPriority
+	}
+	if req.CopyCustomFields != nil {
+		rule.CopyCustomFields = *req.CopyCustomFields
+	}
+	if req.CopyDescription != nil {
+		rule.CopyDescription = *req.CopyDescription
+	}
+	if req.StatusOnCreate != nil {
+		rule.StatusOnCreate = req.StatusOnCreate
+	}
+	if req.IsActive != nil {
+		rule.IsActive = *req.IsActive
+	}
+	return nil
+}
+
+func sanitizeCreateRecurrenceRequest(req *models.CreateRecurrenceRequest) error {
+	if err := validateRRuleLength(req.RRule); err != nil {
+		return err
+	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.RRule, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.Timezone, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.DtStart, Policy: sanitize.ShortIdentifier},
+	)
+	if req.DtEnd != nil {
+		sanitize.Apply(req.DtEnd, sanitize.ShortIdentifier)
+	}
+	return nil
+}
+
+func sanitizeUpdateRecurrenceRequest(req *models.UpdateRecurrenceRequest) error {
+	if req.RRule != nil {
+		if err := validateRRuleLength(*req.RRule); err != nil {
+			return err
+		}
+	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: req.RRule, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: req.Timezone, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: req.DtStart, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: req.DtEnd, Policy: sanitize.ShortIdentifier},
+	)
+	return nil
+}
+
+func sanitizePreviewRequest(req *models.RRulePreviewRequest) error {
+	if err := validateRRuleLength(req.RRule); err != nil {
+		return err
+	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.RRule, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.DtStart, Policy: sanitize.ShortIdentifier},
+	)
+	return nil
+}
+
+func validateRRuleLength(value string) error {
+	if utf8.RuneCountInString(value) > sanitize.ShortIdentifierMaxRunes {
+		return recurrenceInvalid("rrule exceeds the maximum length")
+	}
+	return nil
+}
+
+func parseRecurrenceDate(value string) (time.Time, error) {
+	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+		return parsed, nil
+	}
+	return time.Parse("2006-01-02", value)
+}
+
+func recurrenceMissing(message string) error {
+	return &RecurrenceValidationError{Kind: RecurrenceMissingField, Message: message}
+}
+
+func recurrenceInvalid(message string) error {
+	return &RecurrenceValidationError{Kind: RecurrenceInvalidInput, Message: message}
+}
+
+func valueOr[T any](value *T, fallback T) T {
+	if value != nil {
+		return *value
+	}
+	return fallback
+}

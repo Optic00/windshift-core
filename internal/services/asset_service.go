@@ -73,6 +73,7 @@ type AuditActor struct {
 	IPAddress      string
 	UserAgent      string
 	AuthMethod     string
+	Source         string
 	APITokenID     int
 	APITokenPrefix string
 	APITokenName   string
@@ -884,12 +885,15 @@ func (s *AssetService) emitAudit(actor AuditActor, action string, resourceID *in
 // collision so route-specific context (e.g. csv_import totals) isn't
 // clobbered by the actor stamp.
 func mergeAuditDetails(extra map[string]interface{}, actor AuditActor) map[string]interface{} {
-	if actor.AuthMethod == "" && actor.APITokenID == 0 && len(extra) == 0 {
+	if actor.AuthMethod == "" && actor.Source == "" && actor.APITokenID == 0 && len(extra) == 0 {
 		return nil
 	}
 	merged := make(map[string]interface{}, len(extra)+4)
 	if actor.AuthMethod != "" {
 		merged["auth_method"] = actor.AuthMethod
+	}
+	if actor.Source != "" {
+		merged["source"] = actor.Source
 	}
 	if actor.APITokenID != 0 {
 		merged["api_token_id"] = actor.APITokenID

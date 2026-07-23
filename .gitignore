@@ -173,6 +173,7 @@ blog/
 !/docs/
 /docs/*
 !/docs/0.8.2-performance-regression-gates.md
+!/docs/cross-surface-authorization-contracts.md
 /.codehamr
 /.agents/skills/donate-trace
 /skills-lock.json

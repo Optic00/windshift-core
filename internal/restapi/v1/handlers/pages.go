@@ -12,6 +12,7 @@ import (
 	"windshift/internal/repository"
 	"windshift/internal/restapi"
 	"windshift/internal/restapi/v1/dto"
+	"windshift/internal/restapi/v1/middleware"
 	"windshift/internal/services"
 )
 
@@ -21,8 +22,9 @@ import (
 // and emits the public DTO shape.
 type PageHandler struct {
 	BaseHandler
-	service  *services.PageService
-	pageAuth *services.PagePermissionService
+	service     *services.PageService
+	application *services.PageApplicationService
+	pageAuth    *services.PagePermissionService
 }
 
 // NewPageHandler constructs a v1 PageHandler. HATEOAS links are derived
@@ -37,8 +39,19 @@ func NewPageHandler(db database.Database, permissionService *services.Permission
 	return &PageHandler{
 		BaseHandler: NewBaseHandler(db, permissionService),
 		service:     svc,
+		application: services.NewPageApplicationService(svc, pageAuth),
 		pageAuth:    pageAuth,
 	}
+}
+
+// SetPageApplicationService wires the production instance shared with the
+// cookie and MCP adapters.
+func (h *PageHandler) SetPageApplicationService(application *services.PageApplicationService) {
+	if application == nil {
+		return
+	}
+	h.application = application
+	h.service = application.PageService()
 }
 
 // --- request payloads ---
@@ -311,23 +324,7 @@ func (h *PageHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.canCreatePage(user.ID, wsID) {
-		h.RespondNotFound(w, r)
-		return
-	}
-	if req.ParentID != nil {
-		canEditParent, perr := h.pageAuth.Can(user.ID, wsID, *req.ParentID, services.PageOpEdit)
-		if perr != nil {
-			h.RespondInternalError(w, r)
-			return
-		}
-		if !canEditParent {
-			h.RespondNotFound(w, r)
-			return
-		}
-	}
-
-	page, err := h.service.Create(user.ID, services.CreatePageInput{
+	page, err := h.application.Create(h.auditActor(r, user), services.CreatePageInput{
 		WorkspaceID: wsID,
 		ParentID:    req.ParentID,
 		Title:       req.Title,
@@ -363,39 +360,21 @@ func (h *PageHandler) Create(w http.ResponseWriter, r *http.Request) {
 // @Failure      500     {object}  handlers.ErrorResponse
 // @Router       /workspaces/{id}/pages/{pageId} [put]
 func (h *PageHandler) Update(w http.ResponseWriter, r *http.Request) {
-	wsID, pageID, user, ok := h.requireWorkspacePageEdit(w, r)
+	wsID, pageID, user, ok := h.requireWorkspacePageTarget(w, r)
 	if !ok {
 		return
 	}
-	_ = wsID
 	var req pageUpdateRequest
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
 
-	existing, err := h.service.GetByID(pageID)
-	if err != nil {
-		h.RespondNotFound(w, r)
-		return
-	}
-
-	in := services.UpdatePageInput{
-		ID:      pageID,
-		Title:   existing.Title,
-		Content: existing.Content,
-	}
+	in := services.PageApplicationUpdateInput{ID: pageID, Title: req.Title, Content: req.Content}
 	if req.Metadata != nil {
 		metadata := marshalPageMetadata(*req.Metadata)
 		in.Metadata = &metadata
 	}
-	if req.Title != nil {
-		in.Title = *req.Title
-	}
-	if req.Content != nil {
-		in.Content = *req.Content
-	}
-
-	updated, err := h.service.Update(user.ID, in)
+	updated, err := h.application.Update(h.auditActor(r, user), wsID, in)
 	if err != nil {
 		h.respondPageServiceError(w, r, err)
 		return
@@ -426,7 +405,7 @@ func (h *PageHandler) Update(w http.ResponseWriter, r *http.Request) {
 // @Failure      500     {object}  handlers.ErrorResponse
 // @Router       /workspaces/{id}/pages/{pageId}/move [post]
 func (h *PageHandler) Move(w http.ResponseWriter, r *http.Request) {
-	wsID, pageID, user, ok := h.requireWorkspacePageEdit(w, r)
+	wsID, pageID, user, ok := h.requireWorkspacePageTarget(w, r)
 	if !ok {
 		return
 	}
@@ -434,18 +413,7 @@ func (h *PageHandler) Move(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
-	if req.ParentID != nil {
-		canEditParent, err := h.pageAuth.Can(user.ID, wsID, *req.ParentID, services.PageOpEdit)
-		if err != nil {
-			h.RespondInternalError(w, r)
-			return
-		}
-		if !canEditParent {
-			h.RespondNotFound(w, r)
-			return
-		}
-	}
-	moved, err := h.service.Move(user.ID, pageID, req.ParentID, req.PrevSiblingID, req.NextSiblingID)
+	moved, err := h.application.Move(h.auditActor(r, user), wsID, pageID, req.ParentID, req.PrevSiblingID, req.NextSiblingID)
 	if err != nil {
 		h.respondPageServiceError(w, r, err)
 		return
@@ -474,31 +442,11 @@ func (h *PageHandler) Move(w http.ResponseWriter, r *http.Request) {
 // @Failure      500     {object}  handlers.ErrorResponse
 // @Router       /workspaces/{id}/pages/{pageId} [delete]
 func (h *PageHandler) Archive(w http.ResponseWriter, r *http.Request) {
-	wsID, pageID, user, ok := h.requireWorkspacePageAdmin(w, r)
+	wsID, pageID, user, ok := h.requireWorkspacePageTarget(w, r)
 	if !ok {
 		return
 	}
-	hasDelete, err := h.PermissionService.HasWorkspacePermission(user.ID, wsID, "page.delete")
-	if err != nil {
-		h.RespondInternalError(w, r)
-		return
-	}
-	if !hasDelete {
-		h.RespondNotFound(w, r)
-		return
-	}
-	if err := h.service.ArchiveChecked(user.ID, pageID, func(subtree []models.Page) error {
-		for _, d := range subtree {
-			can, cerr := h.pageAuth.Can(user.ID, wsID, d.ID, services.PageOpAdmin)
-			if cerr != nil {
-				return cerr
-			}
-			if !can {
-				return services.ErrPageNotFound
-			}
-		}
-		return nil
-	}); err != nil {
+	if _, err := h.application.Archive(h.auditActor(r, user), wsID, pageID); err != nil {
 		h.respondPageServiceError(w, r, err)
 		return
 	}
@@ -604,7 +552,7 @@ func (h *PageHandler) GetRevision(w http.ResponseWriter, r *http.Request) {
 // @Failure      500         {object}  handlers.ErrorResponse
 // @Router       /workspaces/{id}/pages/{pageId}/history/{revisionId}/restore [post]
 func (h *PageHandler) RestoreRevision(w http.ResponseWriter, r *http.Request) {
-	_, pageID, user, ok := h.resolveWorkspacePageOp(w, r, services.PageOpRestore)
+	wsID, pageID, user, ok := h.requireWorkspacePageTarget(w, r)
 	if !ok {
 		return
 	}
@@ -612,7 +560,7 @@ func (h *PageHandler) RestoreRevision(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	page, err := h.service.Restore(user.ID, pageID, revisionID)
+	page, err := h.application.Restore(h.auditActor(r, user), wsID, pageID, revisionID)
 	if err != nil {
 		h.respondPageServiceError(w, r, err)
 		return
@@ -694,7 +642,7 @@ func (h *PageHandler) GetPermissions(w http.ResponseWriter, r *http.Request) {
 // @Failure      500     {object}  handlers.ErrorResponse
 // @Router       /workspaces/{id}/pages/{pageId}/permissions [post]
 func (h *PageHandler) GrantPermission(w http.ResponseWriter, r *http.Request) {
-	_, pageID, user, ok := h.resolveWorkspacePageOp(w, r, services.PageOpAdmin)
+	wsID, pageID, user, ok := h.requireWorkspacePageTarget(w, r)
 	if !ok {
 		return
 	}
@@ -706,7 +654,7 @@ func (h *PageHandler) GrantPermission(w http.ResponseWriter, r *http.Request) {
 		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeMissingField, "principal_type, principal_id, and permission_level are required"))
 		return
 	}
-	row, err := h.service.GrantPermission(user.ID, pageID, req.PrincipalType, req.PrincipalID, req.PermissionLevel)
+	row, err := h.application.GrantPermission(h.auditActor(r, user), wsID, pageID, req.PrincipalType, req.PrincipalID, req.PermissionLevel)
 	if err != nil {
 		h.respondPageServiceError(w, r, err)
 		return
@@ -731,7 +679,7 @@ func (h *PageHandler) GrantPermission(w http.ResponseWriter, r *http.Request) {
 // @Failure      500           {object}  handlers.ErrorResponse
 // @Router       /workspaces/{id}/pages/{pageId}/permissions/{permissionId} [delete]
 func (h *PageHandler) RevokePermission(w http.ResponseWriter, r *http.Request) {
-	_, pageID, user, ok := h.resolveWorkspacePageOp(w, r, services.PageOpAdmin)
+	wsID, pageID, user, ok := h.requireWorkspacePageTarget(w, r)
 	if !ok {
 		return
 	}
@@ -739,7 +687,7 @@ func (h *PageHandler) RevokePermission(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.service.RevokePermission(user.ID, pageID, permissionID); err != nil {
+	if err := h.application.RevokePermission(h.auditActor(r, user), wsID, pageID, permissionID); err != nil {
 		h.respondPageServiceError(w, r, err)
 		return
 	}
@@ -767,7 +715,7 @@ func (h *PageHandler) RevokePermission(w http.ResponseWriter, r *http.Request) {
 // @Failure      500     {object}  handlers.ErrorResponse
 // @Router       /workspaces/{id}/pages/{pageId}/inheritance [patch]
 func (h *PageHandler) SetInheritance(w http.ResponseWriter, r *http.Request) {
-	_, pageID, user, ok := h.resolveWorkspacePageOp(w, r, services.PageOpAdmin)
+	wsID, pageID, user, ok := h.requireWorkspacePageTarget(w, r)
 	if !ok {
 		return
 	}
@@ -775,7 +723,7 @@ func (h *PageHandler) SetInheritance(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
-	page, err := h.service.SetInheritPermissions(user.ID, pageID, req.InheritPermissions)
+	page, err := h.application.SetInheritance(h.auditActor(r, user), wsID, pageID, req.InheritPermissions)
 	if err != nil {
 		h.respondPageServiceError(w, r, err)
 		return
@@ -823,16 +771,6 @@ func (h *PageHandler) requireWorkspacePageView(w http.ResponseWriter, r *http.Re
 	return h.requireWorkspacePageOp(w, r, services.PageOpView)
 }
 
-func (h *PageHandler) requireWorkspacePageEdit(w http.ResponseWriter, r *http.Request) (workspaceID, pageID int, user *userCtx, ok bool) {
-	wsID, pID, u, can := h.resolveWorkspacePageOp(w, r, services.PageOpEdit)
-	return wsID, pID, u, can
-}
-
-func (h *PageHandler) requireWorkspacePageAdmin(w http.ResponseWriter, r *http.Request) (workspaceID, pageID int, user *userCtx, ok bool) {
-	wsID, pID, u, can := h.resolveWorkspacePageOp(w, r, services.PageOpAdmin)
-	return wsID, pID, u, can
-}
-
 // userCtx is a tiny carrier for the auth user so the helpers can return a
 // single struct alongside ids without leaking middleware types.
 type userCtx struct {
@@ -870,19 +808,32 @@ func (h *PageHandler) requireWorkspacePageOp(w http.ResponseWriter, r *http.Requ
 	return wsID, pID, can
 }
 
-func (h *PageHandler) canCreatePage(userID, workspaceID int) bool {
-	for _, key := range []string{"page.create", "page.admin", "workspace.admin"} {
-		if has, err := h.PermissionService.HasWorkspacePermission(userID, workspaceID, key); err == nil && has {
-			return true
-		}
+// requireWorkspacePageTarget performs only bearer authentication and path
+// parsing. PageApplicationService owns mutation-specific domain permission
+// checks; this adapter owns their 404 rendering.
+func (h *PageHandler) requireWorkspacePageTarget(w http.ResponseWriter, r *http.Request) (workspaceID, pageID int, user *models.User, ok bool) {
+	user, ok = h.RequireAuth(w, r)
+	if !ok {
+		return
 	}
-	return false
+	workspaceID, ok = h.ParsePathID(w, r, "id", "workspace ID")
+	if !ok {
+		return
+	}
+	pageID, ok = h.ParsePathID(w, r, "pageId", "page ID")
+	return
+}
+
+func (h *PageHandler) auditActor(r *http.Request, user *models.User) services.AuditActor {
+	return services.NewAuditActorFromRequest(r, user, middleware.GetAPIToken(r.Context()), "bearer")
 }
 
 func (h *PageHandler) respondPageServiceError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
-	case errors.Is(err, services.ErrPageNotFound):
+	case errors.Is(err, services.ErrPageNotFound), errors.Is(err, services.ErrPageParentNotFound), errors.Is(err, services.ErrPageMutationForbidden):
 		h.RespondNotFound(w, r)
+	case errors.Is(err, services.ErrPageNoChanges):
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeMissingField, "at least one page field is required"))
 	case errors.Is(err, services.ErrPageTitleRequired):
 		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeMissingField, "title is required"))
 	case errors.Is(err, services.ErrPageParentMismatch):

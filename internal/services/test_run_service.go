@@ -1,26 +1,63 @@
 package services
 
 import (
+	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 )
+
+// ErrTestRunItemNotFound identifies an item link that is missing or belongs to
+// a different workspace. Handlers use it to preserve resource-specific 404s.
+var ErrTestRunItemNotFound = errors.New("test run item not found")
+
+// ErrInvalidTestResultStatus identifies an unsupported case or step status.
+var ErrInvalidTestResultStatus = errors.New("invalid status: must be passed, failed, blocked, skipped, or not_run")
 
 // TestRunService handles test run business logic
 type TestRunService struct {
-	db   database.Database
-	repo *repository.TestRunRepository
+	db       database.Database
+	repo     *repository.TestRunRepository
+	itemRepo *repository.ItemRepository
 }
 
 // NewTestRunService creates a new test run service
 func NewTestRunService(db database.Database) *TestRunService {
 	return &TestRunService{
-		db:   db,
-		repo: repository.NewTestRunRepository(db),
+		db:       db,
+		repo:     repository.NewTestRunRepository(db),
+		itemRepo: repository.NewItemRepository(db),
 	}
+}
+
+// TestRunResultWithCaseTitle is the shared test-result response shape.
+type TestRunResultWithCaseTitle struct {
+	models.TestResult
+	TestCaseTitle string `json:"test_case_title"`
+}
+
+// TestRunStepResult is the shared step-result response shape.
+type TestRunStepResult struct {
+	StepID       int        `json:"step_id"`
+	TestCaseID   int        `json:"test_case_id"`
+	Status       string     `json:"status"`
+	ActualResult string     `json:"actual_result"`
+	Notes        string     `json:"notes"`
+	ItemID       *int       `json:"item_id"`
+	ExecutedAt   *time.Time `json:"executed_at"`
+}
+
+// TestRunDetail is the complete read model shared by both HTTP surfaces.
+type TestRunDetail struct {
+	Run         *models.TestRun              `json:"run"`
+	TestCases   []models.TestCase            `json:"test_cases"`
+	Results     []TestRunResultWithCaseTitle `json:"results"`
+	StepResults map[string]TestRunStepResult `json:"step_results"`
 }
 
 // TestRunListFilters contains filter parameters for listing test runs
@@ -48,6 +85,29 @@ func (s *TestRunService) GetByID(id, workspaceID int) (*models.TestRun, error) {
 	return s.repo.FindByID(id, workspaceID)
 }
 
+// GetDetail returns a complete test-run execution snapshot.
+func (s *TestRunService) GetDetail(id, workspaceID int) (*TestRunDetail, error) {
+	run, err := s.repo.FindByID(id, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	testCases, err := s.repo.FindCasesWithStepsForRun(id, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	results, err := s.ListResults(id, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	stepResults, err := s.ListStepResults(id, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	return &TestRunDetail{
+		Run: run, TestCases: testCases, Results: results, StepResults: stepResults,
+	}, nil
+}
+
 // TestRunCreateRequest contains data for creating a test run
 type TestRunCreateRequest struct {
 	Name       string
@@ -71,6 +131,7 @@ func (s *TestRunService) validateAssignee(assigneeID *int) error {
 
 // Create creates a new test run and initializes results for all test cases in the set
 func (s *TestRunService) Create(workspaceID int, req TestRunCreateRequest) (*models.TestRun, error) {
+	req.Name = sanitize.PlainTextField.Sanitize(req.Name)
 	// Verify test set belongs to workspace
 	if req.SetID > 0 {
 		var count int
@@ -147,7 +208,7 @@ func (s *TestRunService) Update(id, workspaceID int, req TestRunUpdateRequest) (
 		return nil, err
 	}
 
-	run.Name = req.Name
+	run.Name = sanitize.PlainTextField.Sanitize(req.Name)
 	run.AssigneeID = req.AssigneeID
 
 	return database.WithTxResult(s.db, func(tx database.Tx) (*models.TestRun, error) {
@@ -186,14 +247,45 @@ type TestResultUpdateRequest struct {
 	Notes        string
 }
 
+// TestStepResultUpdateRequest contains data for creating or updating a step result.
+type TestStepResultUpdateRequest struct {
+	Status       string
+	ActualResult string
+	Notes        string
+	ItemID       *int
+}
+
+// ListResults returns every per-case result for a workspace-scoped run.
+func (s *TestRunService) ListResults(runID, workspaceID int) ([]TestRunResultWithCaseTitle, error) {
+	if _, err := s.repo.FindByID(runID, workspaceID); err != nil {
+		return nil, err
+	}
+	rows, err := s.repo.FindResultsWithTestCase(runID, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]TestRunResultWithCaseTitle, 0, len(rows))
+	for _, row := range rows {
+		results = append(results, TestRunResultWithCaseTitle{
+			TestResult: row.TestResult, TestCaseTitle: row.TestCaseTitle,
+		})
+	}
+	return results, nil
+}
+
 // UpdateResult updates a test result. runID scopes the update — if the
 // result doesn't belong to that run, the repo returns ErrNotFound and the
 // handler renders 404.
-func (s *TestRunService) UpdateResult(runID, resultID int, req TestResultUpdateRequest) error {
+func (s *TestRunService) UpdateResult(workspaceID, runID, resultID int, req TestResultUpdateRequest) (*models.TestResult, error) {
+	if _, err := s.repo.FindByID(runID, workspaceID); err != nil {
+		return nil, err
+	}
 	// Validate status
 	if !isValidTestResultStatus(req.Status) {
-		return fmt.Errorf("invalid status: must be passed, failed, blocked, skipped, or not_run")
+		return nil, ErrInvalidTestResultStatus
 	}
+	req.ActualResult = sanitize.RichText.Sanitize(req.ActualResult)
+	req.Notes = sanitize.RichText.Sanitize(req.Notes)
 
 	now := time.Now()
 	result := &models.TestResult{
@@ -204,9 +296,148 @@ func (s *TestRunService) UpdateResult(runID, resultID int, req TestResultUpdateR
 		ExecutedAt:   &now,
 	}
 
-	return database.WithTx(s.db, func(tx database.Tx) error {
+	if err := database.WithTx(s.db, func(tx database.Tx) error {
 		return s.repo.UpdateResult(tx, runID, result)
-	})
+	}); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// ListStepResults returns step results keyed by test-case and step ID.
+func (s *TestRunService) ListStepResults(runID, workspaceID int) (map[string]TestRunStepResult, error) {
+	if _, err := s.repo.FindByID(runID, workspaceID); err != nil {
+		return nil, err
+	}
+	rows, err := s.repo.FindStepResultsForRun(runID, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	results := make(map[string]TestRunStepResult, len(rows))
+	for _, row := range rows {
+		key := fmt.Sprintf("%d_%d", row.TestCaseID, row.StepID)
+		results[key] = TestRunStepResult{
+			StepID: row.StepID, TestCaseID: row.TestCaseID, Status: row.Status,
+			ActualResult: row.ActualResult, Notes: row.Notes, ItemID: row.ItemID,
+			ExecutedAt: row.ExecutedAt,
+		}
+	}
+	return results, nil
+}
+
+// UpdateStepResult upserts a step result and derives the parent case status.
+func (s *TestRunService) UpdateStepResult(workspaceID, runID, stepID int, req TestStepResultUpdateRequest) error {
+	if !isValidTestResultStatus(req.Status) {
+		return ErrInvalidTestResultStatus
+	}
+	if req.ItemID != nil {
+		itemWorkspaceID, err := s.itemRepo.GetWorkspaceID(*req.ItemID)
+		if err != nil || itemWorkspaceID != workspaceID {
+			return ErrTestRunItemNotFound
+		}
+	}
+	testResultID, err := s.repo.FindTestResultIDForStep(runID, stepID, workspaceID)
+	if err != nil {
+		return err
+	}
+	existingID, findErr := s.repo.FindStepResultID(testResultID, stepID)
+	input := repository.StepResultInput{
+		TestResultID: testResultID,
+		StepID:       stepID,
+		Status:       req.Status,
+		ActualResult: sanitize.RichText.Sanitize(req.ActualResult),
+		Notes:        sanitize.RichText.Sanitize(req.Notes),
+		ItemID:       req.ItemID,
+	}
+	switch {
+	case errors.Is(findErr, repository.ErrNotFound):
+		err = s.repo.CreateStepResult(input)
+	case findErr == nil:
+		err = s.repo.UpdateStepResult(existingID, input)
+	default:
+		err = findErr
+	}
+	if err != nil {
+		return err
+	}
+	if err := s.updateCaseStatusFromSteps(testResultID); err != nil {
+		slog.Warn("failed to update test case status", slog.Any("error", err), slog.Int("test_result_id", testResultID))
+	}
+	return nil
+}
+
+func (s *TestRunService) updateCaseStatusFromSteps(testResultID int) error {
+	statuses, err := s.repo.FindStepResultStatuses(testResultID)
+	if err != nil || len(statuses) == 0 {
+		return err
+	}
+
+	finalStatus := "not_run"
+	allPassed := true
+	hasFailed, hasBlocked, hasSkipped := false, false, false
+	for _, status := range statuses {
+		switch status {
+		case "failed":
+			hasFailed, allPassed = true, false
+		case "blocked":
+			hasBlocked, allPassed = true, false
+		case "skipped":
+			hasSkipped, allPassed = true, false
+		case "not_run":
+			allPassed = false
+		}
+	}
+	switch {
+	case hasFailed:
+		finalStatus = "failed"
+	case hasBlocked:
+		finalStatus = "blocked"
+	case hasSkipped:
+		finalStatus = "skipped"
+	case allPassed:
+		finalStatus = "passed"
+	}
+	return s.repo.SetTestResultStatus(testResultID, finalStatus)
+}
+
+// LinkResultItem links an item after enforcing workspace ownership on both records.
+func (s *TestRunService) LinkResultItem(workspaceID, resultID, itemID int) error {
+	itemWorkspaceID, err := s.itemRepo.GetWorkspaceID(itemID)
+	if err != nil || itemWorkspaceID != workspaceID {
+		return ErrTestRunItemNotFound
+	}
+	owned, err := s.repo.TestResultBelongsToWorkspace(resultID, workspaceID)
+	if err != nil {
+		return err
+	}
+	if !owned {
+		return repository.ErrNotFound
+	}
+	return s.repo.LinkResultToItem(resultID, itemID)
+}
+
+// UnlinkResultItem removes an item link from a workspace-owned test result.
+func (s *TestRunService) UnlinkResultItem(workspaceID, resultID, itemID int) error {
+	owned, err := s.repo.TestResultBelongsToWorkspace(resultID, workspaceID)
+	if err != nil {
+		return err
+	}
+	if !owned {
+		return repository.ErrNotFound
+	}
+	return s.repo.UnlinkResultFromItem(resultID, itemID)
+}
+
+// ListResultItems returns items linked to a workspace-owned test result.
+func (s *TestRunService) ListResultItems(workspaceID, resultID int) ([]models.Item, error) {
+	owned, err := s.repo.TestResultBelongsToWorkspace(resultID, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	if !owned {
+		return nil, repository.ErrNotFound
+	}
+	return s.itemRepo.ListItemsLinkedToTestResult(resultID, workspaceID)
 }
 
 // Helper functions

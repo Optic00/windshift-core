@@ -2,6 +2,7 @@ package aitools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -420,26 +421,29 @@ func init() {
 			if err != nil {
 				return map[string]string{"error": err.Error()}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
 			}
-			crudSvc := services.NewItemCRUDService(env.DB)
-			item, err := crudSvc.GetByID(itemID)
-			if err != nil {
-				return map[string]string{"error": "item not found"}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
+			deletionService := env.ItemDeletionService
+			if deletionService == nil {
+				deletionService = services.NewItemDeletionApplicationService(env.DB, env.PermService)
 			}
-			if !env.HasWorkspaceAccess(item.WorkspaceID) {
-				return map[string]string{"error": "item not found"}, nil
-			}
-			ok, err := env.PermService.HasWorkspacePermission(env.UserID, item.WorkspaceID, models.PermissionItemDelete)
+			result, err := deletionService.Delete(services.ItemDeletionRequest{
+				ItemID:        itemID,
+				ActorUserID:   env.UserID,
+				ActorUsername: env.Username,
+				Mode:          services.ItemDeletionCascade,
+				CanAccessWorkspace: func(workspaceID int) (bool, error) {
+					return env.HasWorkspaceAccess(workspaceID), nil
+				},
+			})
 			if err != nil {
+				if errors.Is(err, repository.ErrNotFound) {
+					return map[string]string{"error": "item not found"}, nil
+				}
+				if errors.Is(err, services.ErrItemDeletionForbidden) {
+					return map[string]string{"error": "permission denied"}, nil
+				}
 				return nil, err
 			}
-			if !ok {
-				return map[string]string{"error": "permission denied"}, nil
-			}
-			result, err := crudSvc.Delete(itemID)
-			if err != nil {
-				return nil, err
-			}
-			env.AuditWrite(logger.ResourceItem, itemID, "delete_item", item.Title)
+			env.AuditWrite(logger.ResourceItem, itemID, "delete_item", result.Item.Title)
 			return map[string]any{"deleted": true, "deleted_count": result.DeletedCount}, nil
 		},
 	})

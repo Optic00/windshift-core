@@ -607,10 +607,9 @@ func (s *Server) initialize() error {
 	// Test management handlers
 	testFolderHandler := handlers.NewTestFolderHandler(services.NewTestFolderService(s.db), logger.NewAuditor(s.db))
 	testCaseHandler := handlers.NewTestCaseHandlerWithPool(services.NewTestCaseService(s.db), logger.NewAuditor(s.db))
-	workspaceResourceRepo := repository.NewWorkspaceResourceRepository(s.db)
-	testSetHandler := handlers.NewTestSetHandlerWithPool(repository.NewTestSetRepository(s.db), workspaceResourceRepo, logger.NewAuditor(s.db))
-	testRunTemplateHandler := handlers.NewTestRunTemplateHandlerWithPool(repository.NewTestRunTemplateRepository(s.db), workspaceResourceRepo)
-	testRunHandler := handlers.NewTestRunHandlerWithPool(services.NewTestRunService(s.db), repository.NewTestRunRepository(s.db), repository.NewItemRepository(s.db), logger.NewAuditor(s.db))
+	testSetHandler := handlers.NewTestSetHandlerWithPool(services.NewTestSetService(s.db), logger.NewAuditor(s.db))
+	testRunTemplateHandler := handlers.NewTestRunTemplateHandlerWithPool(services.NewTestRunTemplateService(s.db))
+	testRunHandler := handlers.NewTestRunHandlerWithPool(services.NewTestRunService(s.db), logger.NewAuditor(s.db))
 	testSummaryHandler := handlers.NewTestSummaryHandlerWithPool(repository.NewTestSummaryRepository(s.db))
 
 	// Link management handlers
@@ -1578,16 +1577,20 @@ func (s *Server) initialize() error {
 
 	// REST API v1
 	restapi.SetupRoutes(restapi.Deps{
-		Mux:                    mux,
-		DB:                     s.db,
-		TokenManager:           tokenManager,
-		PermissionService:      permService,
-		ActionService:          s.actionService,
-		AttachmentPath:         cfg.AttachmentPath,
-		ItemLinkService:        itemLinkHandler.LinkService(),
-		AssetPermissionService: assetHandler.AssetPermissionService(),
-		AssetService:           assetHandler.AssetService(),
-		CommentService:         commentService,
+		Mux:                            mux,
+		DB:                             s.db,
+		TokenManager:                   tokenManager,
+		PermissionService:              permService,
+		ActionService:                  s.actionService,
+		AttachmentPath:                 cfg.AttachmentPath,
+		ItemLinkService:                itemLinkHandler.LinkService(),
+		AssetPermissionService:         assetHandler.AssetPermissionService(),
+		AssetService:                   assetHandler.AssetService(),
+		CommentService:                 commentService,
+		ItemCreationService:            itemHandler.ItemCreationService(),
+		ItemUpdateApplicationService:   itemHandler.ItemUpdateApplicationService(),
+		ItemDeletionApplicationService: itemHandler.ItemDeletionApplicationService(),
+		PageApplicationService:         pageHandler.PageApplicationService(),
 	}, v1.RegisterRoutes)
 
 	// MCP Server (Model Context Protocol) — opt-in via --mcp or MCP_ENABLED=true
@@ -1599,11 +1602,13 @@ func (s *Server) initialize() error {
 				ResourceURI:         oauthHandler.MCPResourceURI(),
 				ResourceMetadataURI: oauthHandler.MCPProtectedResourceMetadataURI(),
 			},
-			PermissionService:     permService,
-			TimePermissionService: timePermissionService,
-			TimerService:          timerService,
-			CommentService:        commentService,
-			ActionService:         s.actionService,
+			PermissionService:      permService,
+			TimePermissionService:  timePermissionService,
+			TimerService:           timerService,
+			CommentService:         commentService,
+			ItemDeletionService:    itemHandler.ItemDeletionApplicationService(),
+			PageApplicationService: pageHandler.PageApplicationService(),
+			ActionService:          s.actionService,
 		})
 		mux.Handle("GET /mcp", mcpServer.Handler())
 		mux.Handle("POST /mcp", mcpServer.Handler())

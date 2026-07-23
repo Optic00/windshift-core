@@ -79,7 +79,9 @@ func RegisterRoutes(deps restapi.Deps) {
 	// embedders that haven't wired Deps yet still boot.
 
 	// Initialize handlers
-	itemHandler := handlers.NewItemHandler(db, permissionService, deps.CommentService)
+	itemHandler := handlers.NewItemHandler(db, permissionService, deps.CommentService, deps.ItemCreationService)
+	itemHandler.SetItemUpdateApplicationService(deps.ItemUpdateApplicationService)
+	itemHandler.SetItemDeletionApplicationService(deps.ItemDeletionApplicationService)
 	workspaceHandler := handlers.NewWorkspaceHandler(db, permissionService)
 	statusHandler := handlers.NewStatusHandler(db, permissionService)
 	workflowHandler := handlers.NewWorkflowHandler(db, permissionService)
@@ -96,6 +98,7 @@ func RegisterRoutes(deps restapi.Deps) {
 	actionHandler := handlers.NewActionHandler(db, permissionService, deps.ActionService)
 	attachmentHandler := handlers.NewAttachmentHandler(db, permissionService, deps.AttachmentPath)
 	pageHandler := handlers.NewPageHandler(db, permissionService)
+	pageHandler.SetPageApplicationService(deps.PageApplicationService)
 	pageLabelHandler := handlers.NewPageLabelHandler(db, permissionService)
 	agentSkillHandler := handlers.NewAgentSkillHandler(db, permissionService)
 	diagramHandler := handlers.NewDiagramHandler(db, permissionService)

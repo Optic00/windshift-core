@@ -44,6 +44,14 @@ type Env struct {
 	TimerService    *services.TimerService
 	CommentService  *services.CommentService
 	ApprovalService *services.ApprovalService
+	// ItemDeletionService is the fully wired user-facing destructive pipeline.
+	// MCP receives the instance shared with cookie and REST v1; chat embeddings
+	// may leave it nil and tools construct a side-effect-light fallback.
+	ItemDeletionService *services.ItemDeletionApplicationService
+	// PageApplicationService is the shared permission-aware page mutation
+	// pipeline. MCP receives the production instance used by both HTTP
+	// surfaces; chat embeddings may use the nil-safe fallback in pages.go.
+	PageApplicationService *services.PageApplicationService
 	// ActionService is the optional cache-invalidation hook for tools that
 	// create or mutate actions. Nil-safe: tools must check before calling
 	// InvalidateWorkspaceCache so they degrade to "next periodic refresh"
@@ -55,7 +63,6 @@ type Env struct {
 // Resource* constant for (their HTTP surfaces don't write central audit rows
 // yet). Kept here so every aitools call site spells them identically.
 const (
-	resourcePage        = "page"
 	resourceDiagram     = "diagram"
 	resourceItemLink    = "item_link"
 	resourceTimeWorklog = "time_worklog"

@@ -21,9 +21,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -43,16 +41,13 @@ import (
 // services / repos it wraps are the same ones the cookie surface uses.
 type TestManagementHandler struct {
 	BaseHandler
-	caseSvc          *services.TestCaseService
-	folderSvc        *services.TestFolderService
-	runSvc           *services.TestRunService
-	setRepo          *repository.TestSetRepository
-	runRepo          *repository.TestRunRepository
-	runTemplateRepo  *repository.TestRunTemplateRepository
-	summaryRepo      *repository.TestSummaryRepository
-	itemRepo         *repository.ItemRepository
-	workspaceChecker *repository.WorkspaceResourceRepository
-	auditor          *logger.Auditor
+	caseSvc        *services.TestCaseService
+	folderSvc      *services.TestFolderService
+	runSvc         *services.TestRunService
+	setSvc         *services.TestSetService
+	runTemplateSvc *services.TestRunTemplateService
+	summaryRepo    *repository.TestSummaryRepository
+	auditor        *logger.Auditor
 }
 
 // NewTestManagementHandler wires the v1 test-management handler. db /
@@ -60,24 +55,17 @@ type TestManagementHandler struct {
 func NewTestManagementHandler(db database.Database, permissionService *services.PermissionService) *TestManagementHandler {
 	caseSvc := services.NewTestCaseService(db)
 	runSvc := services.NewTestRunService(db)
-	setRepo := repository.NewTestSetRepository(db)
-	runRepo := repository.NewTestRunRepository(db)
-	runTemplateRepo := repository.NewTestRunTemplateRepository(db)
-	workspaceChecker := repository.NewWorkspaceResourceRepository(db)
 	auditor := logger.NewAuditor(db)
 
 	return &TestManagementHandler{
-		BaseHandler:      NewBaseHandler(db, permissionService),
-		caseSvc:          caseSvc,
-		folderSvc:        services.NewTestFolderService(db),
-		runSvc:           runSvc,
-		setRepo:          setRepo,
-		runRepo:          runRepo,
-		runTemplateRepo:  runTemplateRepo,
-		summaryRepo:      repository.NewTestSummaryRepository(db),
-		itemRepo:         repository.NewItemRepository(db),
-		workspaceChecker: workspaceChecker,
-		auditor:          auditor,
+		BaseHandler:    NewBaseHandler(db, permissionService),
+		caseSvc:        caseSvc,
+		folderSvc:      services.NewTestFolderService(db),
+		runSvc:         runSvc,
+		setSvc:         services.NewTestSetService(db),
+		runTemplateSvc: services.NewTestRunTemplateService(db),
+		summaryRepo:    repository.NewTestSummaryRepository(db),
+		auditor:        auditor,
 	}
 }
 
@@ -94,30 +82,6 @@ type testResultUpdateRequest struct {
 	Status       string `json:"status"`
 	ActualResult string `json:"actual_result"`
 	Notes        string `json:"notes"`
-}
-
-// testResultWithCaseTitle matches the cookie GetResults response so MCP
-// and `ws test result` keep working unchanged after the repoint.
-type testResultWithCaseTitle struct {
-	models.TestResult
-	TestCaseTitle string `json:"test_case_title"`
-}
-
-type testRunStepResultResponse struct {
-	StepID       int        `json:"step_id"`
-	TestCaseID   int        `json:"test_case_id"`
-	Status       string     `json:"status"`
-	ActualResult string     `json:"actual_result"`
-	Notes        string     `json:"notes"`
-	ItemID       *int       `json:"item_id"`
-	ExecutedAt   *time.Time `json:"executed_at"`
-}
-
-type testRunDetailResponse struct {
-	Run         *models.TestRun                      `json:"run"`
-	TestCases   []models.TestCase                    `json:"test_cases"`
-	Results     []testResultWithCaseTitle            `json:"results"`
-	StepResults map[string]testRunStepResultResponse `json:"step_results"`
 }
 
 // --- workspace + test-permission helper ---
@@ -154,19 +118,6 @@ func (h *TestManagementHandler) requireTestWorkspaceUser(w http.ResponseWriter, 
 	return workspaceID, user, true
 }
 
-func (h *TestManagementHandler) requireV1ResourceInWorkspace(w http.ResponseWriter, r *http.Request, table string, resourceID, workspaceID int) bool {
-	exists, err := h.workspaceChecker.ExistsInWorkspace(table, resourceID, workspaceID)
-	if err != nil {
-		h.RespondInternalError(w, r)
-		return false
-	}
-	if !exists {
-		h.RespondNotFound(w, r)
-		return false
-	}
-	return true
-}
-
 func (h *TestManagementHandler) requireV1TestSetInWorkspace(w http.ResponseWriter, r *http.Request, permission string) (workspaceID, setID int, ok bool) {
 	workspaceID, ok = h.requireTestWorkspace(w, r, permission)
 	if !ok {
@@ -176,7 +127,12 @@ func (h *TestManagementHandler) requireV1TestSetInWorkspace(w http.ResponseWrite
 	if !ok {
 		return 0, 0, false
 	}
-	if !h.requireV1ResourceInWorkspace(w, r, "test_sets", setID, workspaceID) {
+	if _, err := h.setSvc.Get(setID, workspaceID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			h.RespondNotFound(w, r)
+		} else {
+			h.RespondInternalError(w, r)
+		}
 		return 0, 0, false
 	}
 	return workspaceID, setID, true
@@ -191,7 +147,13 @@ func (h *TestManagementHandler) requireV1RunTemplateInWorkspace(w http.ResponseW
 	if !ok {
 		return 0, 0, false
 	}
-	if !h.requireV1ResourceInWorkspace(w, r, "test_run_templates", templateID, workspaceID) {
+	exists, err := h.runTemplateSvc.Exists(templateID, workspaceID)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return 0, 0, false
+	}
+	if !exists {
+		h.RespondNotFound(w, r)
 		return 0, 0, false
 	}
 	return workspaceID, templateID, true
@@ -397,7 +359,7 @@ func (h *TestManagementHandler) ListTestSets(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	sets, err := h.setRepo.FindAllWithStats(workspaceID)
+	sets, err := h.setSvc.List(workspaceID)
 	if err != nil {
 		h.RespondInternalError(w, r)
 		return
@@ -429,7 +391,7 @@ func (h *TestManagementHandler) GetTestSet(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	set, err := h.setRepo.FindByID(id, workspaceID)
+	set, err := h.setSvc.Get(id, workspaceID)
 	if errors.Is(err, repository.ErrNotFound) {
 		h.RespondNotFound(w, r)
 		return
@@ -465,7 +427,7 @@ func (h *TestManagementHandler) GetTestSetCases(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
-	testCases, err := h.setRepo.FindTestCases(setID, workspaceID)
+	testCases, err := h.setSvc.ListCases(setID, workspaceID)
 	if errors.Is(err, repository.ErrNotFound) {
 		h.RespondNotFound(w, r)
 		return
@@ -563,7 +525,7 @@ func (h *TestManagementHandler) GetTestRun(w http.ResponseWriter, r *http.Reques
 // @Security     BearerAuth
 // @Param        workspaceId  path      int  true  "Workspace ID"
 // @Param        id           path      int  true  "Test run ID"
-// @Success      200          {object}  handlers.testRunDetailResponse
+// @Success      200          {object}  services.TestRunDetail
 // @Failure      401          {object}  handlers.ErrorResponse
 // @Failure      403          {object}  handlers.ErrorResponse  "Token lacks the tests:read scope"
 // @Failure      404          {object}  handlers.ErrorResponse  "Test run not found in this workspace"
@@ -578,7 +540,7 @@ func (h *TestManagementHandler) GetTestRunDetail(w http.ResponseWriter, r *http.
 	if !ok {
 		return
 	}
-	run, err := h.runSvc.GetByID(runID, workspaceID)
+	detail, err := h.runSvc.GetDetail(runID, workspaceID)
 	if errors.Is(err, repository.ErrNotFound) {
 		h.RespondNotFound(w, r)
 		return
@@ -587,49 +549,7 @@ func (h *TestManagementHandler) GetTestRunDetail(w http.ResponseWriter, r *http.
 		h.RespondInternalError(w, r)
 		return
 	}
-	testCases, err := h.runRepo.FindCasesWithStepsForRun(runID, workspaceID)
-	if err != nil {
-		h.RespondInternalError(w, r)
-		return
-	}
-	resultRows, err := h.runRepo.FindResultsWithTestCase(runID, workspaceID)
-	if err != nil {
-		h.RespondInternalError(w, r)
-		return
-	}
-	stepRows, err := h.runRepo.FindStepResultsForRun(runID, workspaceID)
-	if err != nil {
-		h.RespondInternalError(w, r)
-		return
-	}
-
-	results := make([]testResultWithCaseTitle, 0, len(resultRows))
-	for _, row := range resultRows {
-		results = append(results, testResultWithCaseTitle{
-			TestResult:    row.TestResult,
-			TestCaseTitle: row.TestCaseTitle,
-		})
-	}
-	stepResults := make(map[string]testRunStepResultResponse, len(stepRows))
-	for _, row := range stepRows {
-		key := fmt.Sprintf("%d_%d", row.TestCaseID, row.StepID)
-		stepResults[key] = testRunStepResultResponse{
-			StepID:       row.StepID,
-			TestCaseID:   row.TestCaseID,
-			Status:       row.Status,
-			ActualResult: row.ActualResult,
-			Notes:        row.Notes,
-			ItemID:       row.ItemID,
-			ExecutedAt:   row.ExecutedAt,
-		}
-	}
-
-	h.RespondOK(w, testRunDetailResponse{
-		Run:         run,
-		TestCases:   testCases,
-		Results:     results,
-		StepResults: stepResults,
-	})
+	h.RespondOK(w, detail)
 }
 
 // CreateTestRun handles POST /rest/api/v1/workspaces/{workspaceId}/test-runs
@@ -658,7 +578,6 @@ func (h *TestManagementHandler) CreateTestRun(w http.ResponseWriter, r *http.Req
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
-	req.Name = sanitize.PlainTextField.Sanitize(req.Name)
 	run, err := h.runSvc.Create(workspaceID, services.TestRunCreateRequest{
 		Name:       req.Name,
 		TemplateID: req.TemplateID,
@@ -715,7 +634,7 @@ func (h *TestManagementHandler) EndTestRun(w http.ResponseWriter, r *http.Reques
 // @Security     BearerAuth
 // @Param        workspaceId  path      int  true  "Workspace ID"
 // @Param        id           path      int  true  "Test run ID"
-// @Success      200          {array}   handlers.testResultWithCaseTitle
+// @Success      200          {array}   services.TestRunResultWithCaseTitle
 // @Failure      400          {object}  handlers.ErrorResponse  "Invalid workspace or run ID"
 // @Failure      401          {object}  handlers.ErrorResponse
 // @Failure      403          {object}  handlers.ErrorResponse  "Token lacks the tests:read scope"
@@ -731,26 +650,14 @@ func (h *TestManagementHandler) GetTestRunResults(w http.ResponseWriter, r *http
 	if !ok {
 		return
 	}
-	exists, err := h.runSvc.Exists(runID, workspaceID)
+	results, err := h.runSvc.ListResults(runID, workspaceID)
 	if err != nil {
-		h.RespondInternalError(w, r)
+		if errors.Is(err, repository.ErrNotFound) {
+			h.RespondNotFound(w, r)
+		} else {
+			h.RespondInternalError(w, r)
+		}
 		return
-	}
-	if !exists {
-		h.RespondNotFound(w, r)
-		return
-	}
-	rows, err := h.runRepo.FindResultsWithTestCase(runID, workspaceID)
-	if err != nil {
-		h.RespondInternalError(w, r)
-		return
-	}
-	results := make([]testResultWithCaseTitle, 0, len(rows))
-	for _, row := range rows {
-		results = append(results, testResultWithCaseTitle{
-			TestResult:    row.TestResult,
-			TestCaseTitle: row.TestCaseTitle,
-		})
 	}
 	h.RespondOK(w, results)
 }
@@ -787,25 +694,12 @@ func (h *TestManagementHandler) UpdateTestRunResult(w http.ResponseWriter, r *ht
 	if !ok {
 		return
 	}
-	exists, err := h.runSvc.Exists(runID, workspaceID)
-	if err != nil {
-		h.RespondInternalError(w, r)
-		return
-	}
-	if !exists {
-		h.RespondNotFound(w, r)
-		return
-	}
 	var req testResultUpdateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "Invalid request body"))
 		return
 	}
-	// Match the cookie surface's XSS handling: SanitizeDescription
-	// preserves the <br /> markers MilkdownEditor emits for blank lines.
-	req.ActualResult = sanitize.RichText.Sanitize(req.ActualResult)
-	req.Notes = sanitize.RichText.Sanitize(req.Notes)
-	if err := h.runSvc.UpdateResult(runID, resultID, services.TestResultUpdateRequest{
+	if _, err := h.runSvc.UpdateResult(workspaceID, runID, resultID, services.TestResultUpdateRequest{
 		Status:       req.Status,
 		ActualResult: req.ActualResult,
 		Notes:        req.Notes,
@@ -847,24 +741,9 @@ func (h *TestManagementHandler) ExecuteTestRunTemplate(w http.ResponseWriter, r 
 	if !ok {
 		return
 	}
-	template, err := h.runTemplateRepo.FindCore(templateID, workspaceID)
-	if errors.Is(err, repository.ErrNotFound) {
-		h.RespondNotFound(w, r)
-		return
-	}
+	run, err := h.runTemplateSvc.Execute(templateID, workspaceID)
 	if err != nil {
-		h.RespondInternalError(w, r)
-		return
-	}
-	runCount, err := h.runTemplateRepo.CountExecutions(templateID, workspaceID)
-	if err != nil {
-		h.RespondInternalError(w, r)
-		return
-	}
-	runName := template.Name + " - Run " + strconv.Itoa(runCount+1)
-	run, err := h.runTemplateRepo.Execute(workspaceID, templateID, template.SetID, runName)
-	if err != nil {
-		h.RespondInternalError(w, r)
+		h.respondRunTemplateServiceError(w, r, err)
 		return
 	}
 	h.RespondCreated(w, run)
@@ -1154,19 +1033,6 @@ func (h *TestManagementHandler) decodeV1TestSetWrite(w http.ResponseWriter, r *h
 	if !h.DecodeBodyOrRespond(w, r, &set) {
 		return 0, nil, models.TestSet{}, false
 	}
-	set.Name = sanitize.PlainTextField.Sanitize(set.Name)
-	set.Description = sanitize.Comment.Sanitize(set.Description)
-	if set.MilestoneID != nil {
-		exists, err := h.setRepo.MilestoneUsableInWorkspace(*set.MilestoneID, workspaceID)
-		if err != nil {
-			h.RespondInternalError(w, r)
-			return 0, nil, models.TestSet{}, false
-		}
-		if !exists {
-			h.respondV1Validation(w, r, "Milestone not found in workspace")
-			return 0, nil, models.TestSet{}, false
-		}
-	}
 	return workspaceID, user, set, true
 }
 
@@ -1179,54 +1045,26 @@ func (h *TestManagementHandler) decodeV1RunTemplateWrite(w http.ResponseWriter, 
 	if !h.DecodeBodyOrRespond(w, r, &template) {
 		return 0, models.TestRunTemplate{}, false
 	}
-	if template.SetID > 0 && !h.requireV1ResourceInWorkspace(w, r, "test_sets", template.SetID, workspaceID) {
-		return 0, models.TestRunTemplate{}, false
-	}
 	return workspaceID, template, true
 }
 
-func (h *TestManagementHandler) updateV1TestCaseStatusFromSteps(testResultID int) error {
-	stepStatuses, err := h.runRepo.FindStepResultStatuses(testResultID)
-	if err != nil {
-		return err
-	}
-	if len(stepStatuses) == 0 {
-		return nil
-	}
-
-	var finalStatus string
-	hasBlocked := false
-	hasFailed := false
-	hasSkipped := false
-	allPassed := true
-	for _, status := range stepStatuses {
-		switch status {
-		case "failed":
-			hasFailed = true
-			allPassed = false
-		case "blocked":
-			hasBlocked = true
-			allPassed = false
-		case "skipped":
-			hasSkipped = true
-			allPassed = false
-		case "not_run":
-			allPassed = false
-		}
-	}
+func (h *TestManagementHandler) respondTestSetServiceError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
-	case hasFailed:
-		finalStatus = "failed"
-	case hasBlocked:
-		finalStatus = "blocked"
-	case hasSkipped:
-		finalStatus = "skipped"
-	case allPassed:
-		finalStatus = "passed"
+	case errors.Is(err, services.ErrTestSetMilestoneNotFound):
+		h.respondV1Validation(w, r, err.Error())
+	case errors.Is(err, services.ErrTestSetCaseNotFound), errors.Is(err, repository.ErrNotFound):
+		h.RespondNotFound(w, r)
 	default:
-		finalStatus = "not_run"
+		h.RespondInternalError(w, r)
 	}
-	return h.runRepo.SetTestResultStatus(testResultID, finalStatus)
+}
+
+func (h *TestManagementHandler) respondRunTemplateServiceError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, services.ErrTestRunTemplateSetNotFound) || errors.Is(err, repository.ErrNotFound) {
+		h.RespondNotFound(w, r)
+		return
+	}
+	h.RespondInternalError(w, r)
 }
 
 type v1TestLabelInput struct {
@@ -1942,17 +1780,13 @@ func (h *TestManagementHandler) CreateTestSet(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	id, createdAt, err := h.setRepo.Create(workspaceID, &set)
+	created, err := h.setSvc.Create(workspaceID, set)
 	if err != nil {
-		h.RespondInternalError(w, r)
+		h.respondTestSetServiceError(w, r, err)
 		return
 	}
-	set.ID = id
-	set.WorkspaceID = workspaceID
-	set.CreatedAt = createdAt
-	set.UpdatedAt = createdAt
-	h.auditor.Log(r, user, logger.ActionTestSetCreate, logger.ResourceTestSet, &id, set.Name)
-	h.RespondCreated(w, set)
+	h.auditor.Log(r, user, logger.ActionTestSetCreate, logger.ResourceTestSet, &created.ID, created.Name)
+	h.RespondCreated(w, created)
 }
 
 // UpdateTestSet handles PUT /rest/api/v1/workspaces/{workspaceId}/test-sets/{id}
@@ -1981,20 +1815,13 @@ func (h *TestManagementHandler) UpdateTestSet(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	updatedAt, err := h.setRepo.Update(id, workspaceID, &set)
-	if errors.Is(err, repository.ErrNotFound) {
-		h.RespondNotFound(w, r)
-		return
-	}
+	updated, err := h.setSvc.Update(id, workspaceID, set)
 	if err != nil {
-		h.RespondInternalError(w, r)
+		h.respondTestSetServiceError(w, r, err)
 		return
 	}
-	set.ID = id
-	set.WorkspaceID = workspaceID
-	set.UpdatedAt = updatedAt
-	h.auditor.Log(r, user, logger.ActionTestSetUpdate, logger.ResourceTestSet, &id, set.Name)
-	h.RespondOK(w, set)
+	h.auditor.Log(r, user, logger.ActionTestSetUpdate, logger.ResourceTestSet, &id, updated.Name)
+	h.RespondOK(w, updated)
 }
 
 // DeleteTestSet handles DELETE /rest/api/v1/workspaces/{workspaceId}/test-sets/{id}
@@ -2021,15 +1848,8 @@ func (h *TestManagementHandler) DeleteTestSet(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	if !h.requireV1ResourceInWorkspace(w, r, "test_sets", id, workspaceID) {
-		return
-	}
-	if err := h.setRepo.Delete(id, workspaceID); err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			h.RespondNotFound(w, r)
-			return
-		}
-		h.RespondInternalError(w, r)
+	if err := h.setSvc.Delete(id, workspaceID); err != nil {
+		h.respondTestSetServiceError(w, r, err)
 		return
 	}
 	h.auditor.Log(r, user, logger.ActionTestSetDelete, logger.ResourceTestSet, &id, "")
@@ -2065,11 +1885,8 @@ func (h *TestManagementHandler) AddTestSetCase(w http.ResponseWriter, r *http.Re
 	if !h.DecodeBodyOrRespond(w, r, &request) {
 		return
 	}
-	if !h.requireV1ResourceInWorkspace(w, r, "test_cases", request.TestCaseID, workspaceID) {
-		return
-	}
-	if err := h.setRepo.AddTestCase(setID, request.TestCaseID); err != nil {
-		h.RespondInternalError(w, r)
+	if err := h.setSvc.AddCase(setID, request.TestCaseID, workspaceID); err != nil {
+		h.respondTestSetServiceError(w, r, err)
 		return
 	}
 	h.RespondCreated(w, nil)
@@ -2092,7 +1909,7 @@ func (h *TestManagementHandler) AddTestSetCase(w http.ResponseWriter, r *http.Re
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-sets/{id}/test-cases/{testCaseId} [delete]
 func (h *TestManagementHandler) RemoveTestSetCase(w http.ResponseWriter, r *http.Request) {
-	_, setID, ok := h.requireV1TestSetInWorkspace(w, r, models.PermissionTestManage)
+	workspaceID, setID, ok := h.requireV1TestSetInWorkspace(w, r, models.PermissionTestManage)
 	if !ok {
 		return
 	}
@@ -2100,8 +1917,8 @@ func (h *TestManagementHandler) RemoveTestSetCase(w http.ResponseWriter, r *http
 	if !ok {
 		return
 	}
-	if err := h.setRepo.RemoveTestCase(setID, testCaseID); err != nil {
-		h.RespondInternalError(w, r)
+	if err := h.setSvc.RemoveCase(setID, testCaseID, workspaceID); err != nil {
+		h.respondTestSetServiceError(w, r, err)
 		return
 	}
 	h.RespondNoContent(w)
@@ -2127,7 +1944,7 @@ func (h *TestManagementHandler) ListTestSetRuns(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
-	runs, err := h.setRepo.FindRuns(setID, workspaceID)
+	runs, err := h.setSvc.ListRuns(setID, workspaceID)
 	if err != nil {
 		h.RespondInternalError(w, r)
 		return
@@ -2254,7 +2071,7 @@ func (h *TestManagementHandler) ListTestPlanCases(w http.ResponseWriter, r *http
 	if !ok {
 		return
 	}
-	testCases, err := h.setRepo.FindTestCases(setID, workspaceID)
+	testCases, err := h.setSvc.ListCases(setID, workspaceID)
 	if err != nil {
 		h.RespondInternalError(w, r)
 		return
@@ -2342,7 +2159,7 @@ func (h *TestManagementHandler) ListTestRunTemplates(w http.ResponseWriter, r *h
 	if !ok {
 		return
 	}
-	templates, err := h.runTemplateRepo.FindAll(workspaceID)
+	templates, err := h.runTemplateSvc.List(workspaceID)
 	if err != nil {
 		h.RespondInternalError(w, r)
 		return
@@ -2371,16 +2188,12 @@ func (h *TestManagementHandler) CreateTestRunTemplate(w http.ResponseWriter, r *
 	if !ok {
 		return
 	}
-	id, createdAt, err := h.runTemplateRepo.Create(workspaceID, &template)
+	created, err := h.runTemplateSvc.Create(workspaceID, template)
 	if err != nil {
-		h.RespondInternalError(w, r)
+		h.respondRunTemplateServiceError(w, r, err)
 		return
 	}
-	template.ID = id
-	template.WorkspaceID = workspaceID
-	template.CreatedAt = createdAt
-	template.UpdatedAt = createdAt
-	h.RespondCreated(w, template)
+	h.RespondCreated(w, created)
 }
 
 // GetTestRunTemplate handles GET /rest/api/v1/workspaces/{workspaceId}/test-run-templates/{id}
@@ -2407,13 +2220,9 @@ func (h *TestManagementHandler) GetTestRunTemplate(w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
-	template, err := h.runTemplateRepo.FindByID(id, workspaceID)
-	if errors.Is(err, repository.ErrNotFound) {
-		h.RespondNotFound(w, r)
-		return
-	}
+	template, err := h.runTemplateSvc.Get(id, workspaceID)
 	if err != nil {
-		h.RespondInternalError(w, r)
+		h.respondRunTemplateServiceError(w, r, err)
 		return
 	}
 	h.RespondOK(w, template)
@@ -2445,19 +2254,12 @@ func (h *TestManagementHandler) UpdateTestRunTemplate(w http.ResponseWriter, r *
 	if !ok {
 		return
 	}
-	updatedAt, err := h.runTemplateRepo.Update(id, workspaceID, &template)
-	if errors.Is(err, repository.ErrNotFound) {
-		h.RespondNotFound(w, r)
-		return
-	}
+	updated, err := h.runTemplateSvc.Update(id, workspaceID, template)
 	if err != nil {
-		h.RespondInternalError(w, r)
+		h.respondRunTemplateServiceError(w, r, err)
 		return
 	}
-	template.ID = id
-	template.WorkspaceID = workspaceID
-	template.UpdatedAt = updatedAt
-	h.RespondOK(w, template)
+	h.RespondOK(w, updated)
 }
 
 // DeleteTestRunTemplate handles DELETE /rest/api/v1/workspaces/{workspaceId}/test-run-templates/{id}
@@ -2484,12 +2286,8 @@ func (h *TestManagementHandler) DeleteTestRunTemplate(w http.ResponseWriter, r *
 	if !ok {
 		return
 	}
-	if err := h.runTemplateRepo.Delete(id, workspaceID); err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			h.RespondNotFound(w, r)
-			return
-		}
-		h.RespondInternalError(w, r)
+	if err := h.runTemplateSvc.Delete(id, workspaceID); err != nil {
+		h.respondRunTemplateServiceError(w, r, err)
 		return
 	}
 	h.RespondNoContent(w)
@@ -2515,9 +2313,9 @@ func (h *TestManagementHandler) ListTestRunTemplateExecutions(w http.ResponseWri
 	if !ok {
 		return
 	}
-	runs, err := h.runTemplateRepo.FindExecutions(templateID, workspaceID)
+	runs, err := h.runTemplateSvc.ListExecutions(templateID, workspaceID)
 	if err != nil {
-		h.RespondInternalError(w, r)
+		h.respondRunTemplateServiceError(w, r, err)
 		return
 	}
 	h.RespondOK(w, runs)
@@ -2556,7 +2354,6 @@ func (h *TestManagementHandler) UpdateTestRun(w http.ResponseWriter, r *http.Req
 	if !h.DecodeBodyOrRespond(w, r, &input) {
 		return
 	}
-	input.Name = sanitize.PlainTextField.Sanitize(input.Name)
 	if _, err := h.runSvc.Update(id, workspaceID, services.TestRunUpdateRequest{Name: input.Name, AssigneeID: input.AssigneeID}); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			h.RespondNotFound(w, r)
@@ -2630,32 +2427,14 @@ func (h *TestManagementHandler) GetTestRunStepResults(w http.ResponseWriter, r *
 	if !ok {
 		return
 	}
-	exists, err := h.runSvc.Exists(runID, workspaceID)
+	stepResults, err := h.runSvc.ListStepResults(runID, workspaceID)
 	if err != nil {
-		h.RespondInternalError(w, r)
-		return
-	}
-	if !exists {
-		h.RespondNotFound(w, r)
-		return
-	}
-	rows, err := h.runRepo.FindStepResultsForRun(runID, workspaceID)
-	if err != nil {
-		h.RespondInternalError(w, r)
-		return
-	}
-	stepResults := make(map[string]interface{}, len(rows))
-	for _, row := range rows {
-		compositeKey := fmt.Sprintf("%d_%d", row.TestCaseID, row.StepID)
-		stepResults[compositeKey] = map[string]interface{}{
-			"step_id":       row.StepID,
-			"test_case_id":  row.TestCaseID,
-			"status":        row.Status,
-			"actual_result": row.ActualResult,
-			"notes":         row.Notes,
-			"item_id":       row.ItemID,
-			"executed_at":   row.ExecutedAt,
+		if errors.Is(err, repository.ErrNotFound) {
+			h.RespondNotFound(w, r)
+		} else {
+			h.RespondInternalError(w, r)
 		}
+		return
 	}
 	h.RespondOK(w, stepResults)
 }
@@ -2701,47 +2480,18 @@ func (h *TestManagementHandler) UpdateTestRunStepResult(w http.ResponseWriter, r
 	if !h.DecodeBodyOrRespond(w, r, &update) {
 		return
 	}
-	update.ActualResult = sanitize.RichText.Sanitize(update.ActualResult)
-	update.Notes = sanitize.RichText.Sanitize(update.Notes)
-	if update.ItemID != nil {
-		itemWorkspaceID, err := h.itemRepo.GetWorkspaceID(*update.ItemID)
-		if err != nil || itemWorkspaceID != workspaceID {
+	if err := h.runSvc.UpdateStepResult(workspaceID, runID, stepID, services.TestStepResultUpdateRequest{
+		Status: update.Status, ActualResult: update.ActualResult, Notes: update.Notes, ItemID: update.ItemID,
+	}); err != nil {
+		switch {
+		case errors.Is(err, repository.ErrNotFound), errors.Is(err, services.ErrTestRunItemNotFound):
 			h.RespondNotFound(w, r)
-			return
+		case errors.Is(err, services.ErrInvalidTestResultStatus):
+			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, err.Error()))
+		default:
+			h.RespondInternalError(w, r)
 		}
-	}
-	testResultID, err := h.runRepo.FindTestResultIDForStep(runID, stepID, workspaceID)
-	if errors.Is(err, repository.ErrNotFound) {
-		h.RespondNotFound(w, r)
 		return
-	}
-	if err != nil {
-		h.RespondInternalError(w, r)
-		return
-	}
-	existingID, findErr := h.runRepo.FindStepResultID(testResultID, stepID)
-	input := repository.StepResultInput{
-		TestResultID: testResultID,
-		StepID:       stepID,
-		Status:       update.Status,
-		ActualResult: update.ActualResult,
-		Notes:        update.Notes,
-		ItemID:       update.ItemID,
-	}
-	switch {
-	case errors.Is(findErr, repository.ErrNotFound):
-		err = h.runRepo.CreateStepResult(input)
-	case findErr == nil:
-		err = h.runRepo.UpdateStepResult(existingID, input)
-	default:
-		err = findErr
-	}
-	if err != nil {
-		h.RespondInternalError(w, r)
-		return
-	}
-	if err := h.updateV1TestCaseStatusFromSteps(testResultID); err != nil {
-		slog.Warn("failed to update test case status", slog.Any("error", err), slog.Int("test_result_id", testResultID))
 	}
 	h.RespondOK(w, map[string]string{"status": "success"})
 }
@@ -2899,18 +2649,12 @@ func (h *TestManagementHandler) LinkTestResultItem(w http.ResponseWriter, r *htt
 	if !h.DecodeBodyOrRespond(w, r, &data) {
 		return
 	}
-	itemWorkspaceID, err := h.itemRepo.GetWorkspaceID(data.ItemID)
-	if err != nil || itemWorkspaceID != workspaceID {
-		h.RespondNotFound(w, r)
-		return
-	}
-	owned, err := h.runRepo.TestResultBelongsToWorkspace(resultID, workspaceID)
-	if err != nil || !owned {
-		h.RespondNotFound(w, r)
-		return
-	}
-	if err := h.runRepo.LinkResultToItem(resultID, data.ItemID); err != nil {
-		h.RespondInternalError(w, r)
+	if err := h.runSvc.LinkResultItem(workspaceID, resultID, data.ItemID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) || errors.Is(err, services.ErrTestRunItemNotFound) {
+			h.RespondNotFound(w, r)
+		} else {
+			h.RespondInternalError(w, r)
+		}
 		return
 	}
 	h.RespondCreated(w, map[string]bool{"success": true})
@@ -2945,13 +2689,12 @@ func (h *TestManagementHandler) UnlinkTestResultItem(w http.ResponseWriter, r *h
 	if !ok {
 		return
 	}
-	owned, err := h.runRepo.TestResultBelongsToWorkspace(resultID, workspaceID)
-	if err != nil || !owned {
-		h.RespondNotFound(w, r)
-		return
-	}
-	if err := h.runRepo.UnlinkResultFromItem(resultID, itemID); err != nil {
-		h.RespondInternalError(w, r)
+	if err := h.runSvc.UnlinkResultItem(workspaceID, resultID, itemID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			h.RespondNotFound(w, r)
+		} else {
+			h.RespondInternalError(w, r)
+		}
 		return
 	}
 	h.RespondNoContent(w)
@@ -2981,14 +2724,13 @@ func (h *TestManagementHandler) ListTestResultItems(w http.ResponseWriter, r *ht
 	if !ok {
 		return
 	}
-	owned, err := h.runRepo.TestResultBelongsToWorkspace(resultID, workspaceID)
-	if err != nil || !owned {
-		h.RespondNotFound(w, r)
-		return
-	}
-	items, err := h.itemRepo.ListItemsLinkedToTestResult(resultID, workspaceID)
+	items, err := h.runSvc.ListResultItems(workspaceID, resultID)
 	if err != nil {
-		h.RespondInternalError(w, r)
+		if errors.Is(err, repository.ErrNotFound) {
+			h.RespondNotFound(w, r)
+		} else {
+			h.RespondInternalError(w, r)
+		}
 		return
 	}
 	h.RespondOK(w, items)

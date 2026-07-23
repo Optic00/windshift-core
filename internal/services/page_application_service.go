@@ -1,0 +1,272 @@
+package services
+
+import (
+	"encoding/json"
+	"errors"
+
+	"windshift/internal/logger"
+	"windshift/internal/models"
+)
+
+// ErrPageMutationForbidden is returned when a caller can address the
+// workspace but lacks a workspace-level permission required by a page
+// mutation. HTTP adapters existence-mask it; tools may render an explicit
+// permission denial.
+var ErrPageMutationForbidden = errors.New("page mutation forbidden")
+
+// ErrPageParentNotFound masks a missing or inaccessible destination parent
+// while allowing non-HTTP adapters to keep their more specific message.
+var ErrPageParentNotFound = errors.New("parent page not found")
+
+// ErrPageNoChanges is returned when a partial update supplies no mutable
+// fields.
+var ErrPageNoChanges = errors.New("no page fields to update")
+
+// PageApplicationUpdateInput is the transport-neutral partial page-update
+// shape. Nil fields retain their persisted values.
+type PageApplicationUpdateInput struct {
+	ID       int
+	Title    *string
+	Content  *string
+	Metadata *json.RawMessage
+}
+
+// PageApplicationService owns the permission-aware page mutation pipeline
+// shared by cookie HTTP, REST v1, and agent tools. PageService remains the
+// transaction/domain implementation; this layer composes authorization,
+// partial-update behavior, and post-commit audit emission.
+type PageApplicationService struct {
+	pages    *PageService
+	pageAuth *PagePermissionService
+}
+
+// NewPageApplicationService constructs the shared page mutation pipeline.
+func NewPageApplicationService(pages *PageService, pageAuth *PagePermissionService) *PageApplicationService {
+	return &PageApplicationService{pages: pages, pageAuth: pageAuth}
+}
+
+// PageService returns the underlying domain service for read-only adapters.
+func (s *PageApplicationService) PageService() *PageService {
+	return s.pages
+}
+
+// Create validates workspace/parent permissions, creates the page, and emits
+// one committed audit row.
+func (s *PageApplicationService) Create(actor AuditActor, in CreatePageInput) (*models.Page, error) {
+	allowed, err := s.canCreate(actor.UserID, in.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	if !allowed {
+		return nil, ErrPageMutationForbidden
+	}
+	if in.ParentID != nil {
+		if err := s.requirePageOp(actor.UserID, in.WorkspaceID, *in.ParentID, PageOpEdit); err != nil {
+			if errors.Is(err, ErrPageNotFound) {
+				return nil, ErrPageParentNotFound
+			}
+			return nil, err
+		}
+	}
+	page, err := s.pages.Create(actor.UserID, in)
+	if err != nil {
+		return nil, err
+	}
+	s.emitAudit(actor, logger.ActionPageCreate, page.ID, page.Title, nil)
+	return page, nil
+}
+
+// Update applies a partial title/content/metadata update after page.edit.
+func (s *PageApplicationService) Update(actor AuditActor, workspaceID int, in PageApplicationUpdateInput) (*models.Page, error) {
+	if in.Title == nil && in.Content == nil && in.Metadata == nil {
+		return nil, ErrPageNoChanges
+	}
+	if err := s.requirePageOp(actor.UserID, workspaceID, in.ID, PageOpEdit); err != nil {
+		return nil, err
+	}
+	existing, err := s.pages.GetByID(in.ID)
+	if err != nil {
+		return nil, err
+	}
+	title := existing.Title
+	content := existing.Content
+	if in.Title != nil {
+		title = *in.Title
+	}
+	if in.Content != nil {
+		content = *in.Content
+	}
+	updated, err := s.pages.Update(actor.UserID, UpdatePageInput{
+		ID:       in.ID,
+		Title:    title,
+		Content:  content,
+		Metadata: in.Metadata,
+	})
+	if err != nil {
+		return nil, err
+	}
+	s.emitAudit(actor, logger.ActionPageUpdate, updated.ID, updated.Title, nil)
+	return updated, nil
+}
+
+// Move reparents/reorders a page after checking edit access on both the page
+// and its destination parent.
+func (s *PageApplicationService) Move(actor AuditActor, workspaceID, pageID int, parentID, prevSiblingID, nextSiblingID *int) (*models.Page, error) {
+	if err := s.requirePageOp(actor.UserID, workspaceID, pageID, PageOpEdit); err != nil {
+		return nil, err
+	}
+	if parentID != nil {
+		if err := s.requirePageOp(actor.UserID, workspaceID, *parentID, PageOpEdit); err != nil {
+			if errors.Is(err, ErrPageNotFound) {
+				return nil, ErrPageParentNotFound
+			}
+			return nil, err
+		}
+	}
+	moved, err := s.pages.Move(actor.UserID, pageID, parentID, prevSiblingID, nextSiblingID)
+	if err != nil {
+		return nil, err
+	}
+	s.emitAudit(actor, logger.ActionPageMove, moved.ID, moved.Title, nil)
+	return moved, nil
+}
+
+// Archive checks root admin, workspace delete, and every live descendant
+// against the same locked subtree that PageService archives.
+func (s *PageApplicationService) Archive(actor AuditActor, workspaceID, pageID int) (*models.Page, error) {
+	if err := s.requirePageOp(actor.UserID, workspaceID, pageID, PageOpAdmin); err != nil {
+		return nil, err
+	}
+	hasDelete, err := s.pageAuth.HasWorkspacePermissionFor(actor.UserID, workspaceID, models.PermissionPageDelete)
+	if err != nil {
+		return nil, err
+	}
+	if !hasDelete {
+		return nil, ErrPageMutationForbidden
+	}
+	page, err := s.pages.GetByID(pageID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.pages.ArchiveChecked(actor.UserID, pageID, func(subtree []models.Page) error {
+		for i := range subtree {
+			if err := s.requirePageOp(actor.UserID, workspaceID, subtree[i].ID, PageOpAdmin); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	s.emitAudit(actor, logger.ActionPageArchive, page.ID, page.Title, nil)
+	return page, nil
+}
+
+// Restore applies a revision after the page restore policy succeeds.
+func (s *PageApplicationService) Restore(actor AuditActor, workspaceID, pageID, revisionID int) (*models.Page, error) {
+	if err := s.requirePageOp(actor.UserID, workspaceID, pageID, PageOpRestore); err != nil {
+		return nil, err
+	}
+	restored, err := s.pages.Restore(actor.UserID, pageID, revisionID)
+	if err != nil {
+		return nil, err
+	}
+	s.emitAudit(actor, logger.ActionPageRestore, restored.ID, restored.Title, map[string]interface{}{"revision_id": revisionID})
+	return restored, nil
+}
+
+// GrantPermission adds an ACL row after page.admin.
+func (s *PageApplicationService) GrantPermission(actor AuditActor, workspaceID, pageID int, principalType string, principalID int, level string) (*models.PagePermission, error) {
+	if err := s.requirePageOp(actor.UserID, workspaceID, pageID, PageOpAdmin); err != nil {
+		return nil, err
+	}
+	row, err := s.pages.GrantPermission(actor.UserID, pageID, principalType, principalID, level)
+	if err != nil {
+		return nil, err
+	}
+	s.emitAudit(actor, logger.ActionPagePermissionGrant, pageID, "", map[string]interface{}{
+		"permission_id":    row.ID,
+		"principal_type":   row.PrincipalType,
+		"principal_id":     row.PrincipalID,
+		"permission_level": row.PermissionLevel,
+	})
+	return row, nil
+}
+
+// RevokePermission removes an ACL row after page.admin.
+func (s *PageApplicationService) RevokePermission(actor AuditActor, workspaceID, pageID, permissionID int) error {
+	if err := s.requirePageOp(actor.UserID, workspaceID, pageID, PageOpAdmin); err != nil {
+		return err
+	}
+	if err := s.pages.RevokePermission(actor.UserID, pageID, permissionID); err != nil {
+		return err
+	}
+	s.emitAudit(actor, logger.ActionPagePermissionRevoke, pageID, "", map[string]interface{}{"permission_id": permissionID})
+	return nil
+}
+
+// SetInheritance changes the ACL inheritance flag after page.admin.
+func (s *PageApplicationService) SetInheritance(actor AuditActor, workspaceID, pageID int, inherit bool) (*models.Page, error) {
+	if err := s.requirePageOp(actor.UserID, workspaceID, pageID, PageOpAdmin); err != nil {
+		return nil, err
+	}
+	page, err := s.pages.SetInheritPermissions(actor.UserID, pageID, inherit)
+	if err != nil {
+		return nil, err
+	}
+	s.emitAudit(actor, logger.ActionPageInheritanceSet, page.ID, page.Title, map[string]interface{}{"inherit_permissions": inherit})
+	return page, nil
+}
+
+// Unarchive restores one page after the archived-page restore policy succeeds.
+func (s *PageApplicationService) Unarchive(actor AuditActor, workspaceID, pageID int) (*models.Page, error) {
+	if err := s.requirePageOp(actor.UserID, workspaceID, pageID, PageOpRestore); err != nil {
+		return nil, err
+	}
+	page, err := s.pages.Unarchive(actor.UserID, pageID)
+	if err != nil {
+		return nil, err
+	}
+	s.emitAudit(actor, logger.ActionPageUnarchive, page.ID, page.Title, nil)
+	return page, nil
+}
+
+func (s *PageApplicationService) canCreate(userID, workspaceID int) (bool, error) {
+	for _, key := range []string{models.PermissionPageCreate, models.PermissionPageAdmin, models.PermissionWorkspaceAdmin} {
+		has, err := s.pageAuth.HasWorkspacePermissionFor(userID, workspaceID, key)
+		if err != nil {
+			return false, err
+		}
+		if has {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (s *PageApplicationService) requirePageOp(userID, workspaceID, pageID int, op string) error {
+	allowed, err := s.pageAuth.Can(userID, workspaceID, pageID, op)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return ErrPageNotFound
+	}
+	return nil
+}
+
+func (s *PageApplicationService) emitAudit(actor AuditActor, action string, pageID int, pageTitle string, extra map[string]interface{}) {
+	id := pageID
+	_ = logger.LogAudit(s.pages.db, logger.AuditEvent{
+		UserID:       actor.UserID,
+		Username:     actor.Username,
+		IPAddress:    actor.IPAddress,
+		UserAgent:    actor.UserAgent,
+		ActionType:   action,
+		ResourceType: logger.ResourcePage,
+		ResourceID:   &id,
+		ResourceName: pageTitle,
+		Details:      mergeAuditDetails(extra, actor),
+		Success:      true,
+	})
+}

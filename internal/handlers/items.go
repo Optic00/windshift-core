@@ -34,6 +34,9 @@ type ItemHandler struct {
 	activityTracker     *services.ActivityTracker
 	idResolver          *services.IDResolverService
 	itemCRUD            *services.ItemCRUDService
+	itemCreation        *services.ItemCreationService
+	itemUpdate          *services.ItemUpdateApplicationService
+	itemDeletion        *services.ItemDeletionApplicationService
 	mentionService      *services.MentionService // Mention service for processing @mentions (optional, can be nil)
 	notificationService interface {
 		EmitEvent(event *services.NotificationEvent)
@@ -69,15 +72,25 @@ func NewItemHandler(db database.Database, permissionService *services.Permission
 		itemCache = nil
 	}
 
+	hierarchyService := services.NewHierarchyService(db)
+	itemUpdate := services.NewItemUpdateApplicationService(db, permissionService)
+	itemUpdate.SetActivityTracker(activityTracker)
+	itemUpdate.SetCache(itemCache, hierarchyService)
+	itemDeletion := services.NewItemDeletionApplicationService(db, permissionService)
+	itemDeletion.SetCache(itemCache, hierarchyService)
+
 	return &ItemHandler{
 		db:                  db,
-		hierarchyService:    services.NewHierarchyService(db),
+		hierarchyService:    hierarchyService,
 		permissionService:   permissionService,
 		authz:               authz.New(db, permissionService),
 		itemCache:           itemCache,
 		activityTracker:     activityTracker,
 		idResolver:          services.NewIDResolverService(db),
 		itemCRUD:            services.NewItemCRUDService(db),
+		itemCreation:        services.NewItemCreationService(db, permissionService),
+		itemUpdate:          itemUpdate,
+		itemDeletion:        itemDeletion,
 		notificationService: notificationService,
 		transitionMatrix:    services.NewTransitionMatrixService(db),
 		bulkUpdate:          services.NewItemUpdateService(db).WithPermissionService(permissionService),
@@ -140,6 +153,7 @@ func (h *ItemHandler) SetWebhookSender(sender *webhook.WebhookSender) {
 // SetMentionService sets the mention service for processing @mentions
 func (h *ItemHandler) SetMentionService(mentionService *services.MentionService) {
 	h.mentionService = mentionService
+	h.itemUpdate.SetMentionService(mentionService)
 }
 
 // SetActionService sets the action service for automation workflows
@@ -152,6 +166,28 @@ func (h *ItemHandler) SetActionService(actionService interface {
 // SetEventCoordinator sets the event coordinator for centralized side effects
 func (h *ItemHandler) SetEventCoordinator(ec *services.EventCoordinator) {
 	h.eventCoordinator = ec
+	h.itemCreation.SetEmitter(ec)
+	h.itemUpdate.SetEmitter(ec)
+	h.itemDeletion.SetEmitter(ec)
+}
+
+// ItemCreationService exposes the fully wired user-facing creation pipeline so
+// REST v1 can use the same validation, persistence, and side effects.
+func (h *ItemHandler) ItemCreationService() *services.ItemCreationService {
+	return h.itemCreation
+}
+
+// ItemUpdateApplicationService exposes the fully wired user-facing update
+// pipeline so REST v1 gets the same committed-item side effects as the cookie
+// surface.
+func (h *ItemHandler) ItemUpdateApplicationService() *services.ItemUpdateApplicationService {
+	return h.itemUpdate
+}
+
+// ItemDeletionApplicationService exposes the fully wired user-facing deletion
+// pipeline for REST v1 and MCP.
+func (h *ItemHandler) ItemDeletionApplicationService() *services.ItemDeletionApplicationService {
+	return h.itemDeletion
 }
 
 // SetIssueSyncService sets the issue sync service for pushing status changes to GitHub
@@ -721,243 +757,117 @@ func (h *ItemHandler) GetBatch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
-	slog.Debug("item create request received")
-	createStart := time.Now()
-
-	item, ok := decodeJSON[itemCreateRequest](w, r)
+	input, ok := decodeJSON[itemCreateRequest](w, r)
 	if !ok {
 		return
 	}
-	slog.Debug("item decoded", slog.Int("workspace_id", item.WorkspaceID), slog.String("title", item.Title))
-
-	// Require authentication
 	user, ok := RequireAuth(w, r)
 	if !ok {
 		return
 	}
-	slog.Debug("user authenticated", slog.String("username", user.Username))
-
-	creatorID := user.ID
-
-	// Check if user has permission to create items in this workspace
-	slog.Debug("checking permissions")
-	canEdit, err := h.canEditItem(user.ID, item.WorkspaceID)
+	canEdit, err := h.canEditItem(user.ID, input.WorkspaceID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
-	slog.Debug("permission check complete", slog.Bool("can_edit", canEdit))
 	if !canEdit {
 		respondNotFound(w, r, "Item")
 		return
 	}
 
-	// Sanitize user input to prevent XSS
-	item.Title = sanitize.PlainTextField.Sanitize(item.Title)
-	item.Description = sanitize.RichText.Sanitize(item.Description)
-
-	// Convert item type ID to *int for validation
-	var itemTypeIDPtr *int
-	if item.ItemTypeID != nil {
-		itemTypeIDPtr = item.ItemTypeID
-	}
-
-	// Convert parent ID to *int for validation
-	var parentIDPtr *int
-	if item.ParentID != nil {
-		parentIDPtr = item.ParentID
-	}
-
-	// Convert related work item ID to *int
-	var relatedWorkItemIDPtr *int
-	if item.RelatedWorkItemID != nil {
-		relatedWorkItemIDPtr = item.RelatedWorkItemID
-	}
-
-	// Use centralized validation
-	validationResult := services.ValidateItemCreation(h.db, services.ItemValidationParams{
-		WorkspaceID:       item.WorkspaceID,
-		Title:             item.Title,
-		ItemTypeID:        itemTypeIDPtr,
-		ParentID:          parentIDPtr,
-		StatusID:          item.StatusID,
-		IsTask:            item.IsTask,
-		RelatedWorkItemID: relatedWorkItemIDPtr,
-		UserID:            user.ID,
-		PermService:       h.permissionService,
-	})
-
-	if !validationResult.Valid {
-		respondValidationError(w, r, validationResult.Error)
-		return
-	}
-
-	// Set default project inheritance based on parent relationship
-	if item.ProjectID == nil && !item.InheritProject {
-		if item.ParentID != nil && *item.ParentID != 0 {
-			// Has parent: default to inherit
-			item.InheritProject = true
-		}
-		// If no parent: leave as NULL (none) and InheritProject = false
-	}
-
-	// Normalize parent ID (nil if 0)
-	if item.ParentID != nil && *item.ParentID == 0 {
-		item.ParentID = nil
-	}
-
-	validationTime := time.Since(createStart)
-
-	// Convert custom field values to JSON. Validate + dedupe option ids
-	// before marshaling so the stored JSON is canonical (no duplicate
-	// multiselect entries, no out-of-range ids).
-	var customFieldValuesJSON string
-	if item.CustomFieldValues != nil {
-		if err := validation.ValidateAndNormalizeCustomFieldValues(h.db, item.CustomFieldValues); err != nil {
-			respondValidationError(w, r, err.Error())
-			return
-		}
-		var customFieldValuesBytes []byte
-		customFieldValuesBytes, err = json.Marshal(item.CustomFieldValues)
-		if err != nil {
-			respondValidationError(w, r, "Invalid custom field values")
-			return
-		}
-		customFieldValuesJSON = string(customFieldValuesBytes)
-	}
-
-	// Use centralized CreateItem service
-	createServiceStart := time.Now()
-	id, err := services.CreateItem(h.db, services.ItemCreationParams{
-		WorkspaceID:           item.WorkspaceID,
-		Title:                 item.Title,
-		Description:           item.Description,
-		StatusID:              item.StatusID,   // Direct ID (nil = use workflow initial status)
-		PriorityID:            item.PriorityID, // Direct ID (nil = use default priority)
-		ItemTypeID:            itemTypeIDPtr,
-		IsTask:                item.IsTask,
-		ParentID:              item.ParentID,
-		MilestoneIDs:          item.MilestoneIDs,
-		IterationID:           item.IterationID,
-		ProjectID:             item.ProjectID,
-		InheritProject:        item.InheritProject,
-		TimeProjectID:         item.TimeProjectID,
-		AssigneeID:            item.AssigneeID,
-		CreatorID:             &creatorID,
-		DueDate:               item.DueDate,
-		StartDate:             item.StartDate,
-		EndDate:               item.EndDate,
-		RelatedWorkItemID:     relatedWorkItemIDPtr,
-		StoryPoints:           item.StoryPoints,
-		EstimateMinutes:       item.EstimateMinutes,
-		CustomFieldValuesJSON: customFieldValuesJSON,
-		ValidatingUserID:      user.ID,
-		PermService:           h.permissionService,
+	result, err := h.itemCreation.Create(user.ID, user.Username, services.ItemCreateInput{
+		WorkspaceID:       input.WorkspaceID,
+		Title:             input.Title,
+		Description:       input.Description,
+		StatusID:          input.StatusID,
+		PriorityID:        input.PriorityID,
+		ItemTypeID:        input.ItemTypeID,
+		DueDate:           input.DueDate,
+		StartDate:         input.StartDate,
+		EndDate:           input.EndDate,
+		IsTask:            input.IsTask,
+		IterationID:       input.IterationID,
+		ProjectID:         input.ProjectID,
+		InheritProject:    input.InheritProject,
+		TimeProjectID:     input.TimeProjectID,
+		AssigneeID:        input.AssigneeID,
+		ParentID:          input.ParentID,
+		RelatedWorkItemID: input.RelatedWorkItemID,
+		StoryPoints:       input.StoryPoints,
+		EstimateMinutes:   input.EstimateMinutes,
+		CustomFieldValues: input.CustomFieldValues,
+		MilestoneIDs:      input.MilestoneIDs,
 	})
 	if err != nil {
-		var transitionRejection *services.TransitionRejection
+		var creationErr *services.ItemCreationValidationError
+		var transitionErr *services.TransitionRejection
 		var validationErr *validation.ValidationError
-		if errors.Is(err, services.ErrMissingItemType) || errors.Is(err, services.ErrInvalidItemType) || errors.Is(err, services.ErrProjectNotFound) || errors.As(err, &transitionRejection) || errors.As(err, &validationErr) {
+		if errors.Is(err, services.ErrMissingItemType) ||
+			errors.Is(err, services.ErrInvalidItemType) ||
+			errors.Is(err, services.ErrProjectNotFound) ||
+			errors.As(err, &creationErr) ||
+			errors.As(err, &transitionErr) ||
+			errors.As(err, &validationErr) {
 			respondValidationError(w, r, err.Error())
 			return
 		}
-		slog.Error("failed to create item", slog.Any("error", err))
 		respondInternalError(w, r, err)
 		return
 	}
-	createServiceTime := time.Since(createServiceStart)
 
-	// Profiling: post-insert query
-	postQueryStart := time.Now()
-
-	// Return the created item with all joined details. This deliberately
-	// populates the response with more fields than the original reduced SELECT
-	// (e.g. AssigneeName, CreatorName, IterationName) — strictly additive for
-	// API consumers, and consolidates against a single repository query.
-	// effective_project is NOT calculated here for performance; clients should
-	// use GET /api/items/{id} if they need effective project data.
-	itemRepo := repository.NewItemRepository(h.db)
-	createdPtr, err := itemRepo.FindByIDWithDetails(int(id))
-	selectQueryTime := time.Since(postQueryStart)
-	if err != nil {
-		slog.Error("failed to query created item", slog.Int64("item_id", id), slog.Any("error", err))
-		respondInternalError(w, r, err)
-		return
+	// Preserve the nil-coordinator compatibility path used by lightweight
+	// embedders. Production and REST v1 share the configured coordinator
+	// through ItemCreationService and therefore emit exactly once there.
+	if h.eventCoordinator == nil {
+		h.emitItemCreatedFallback(result.Item, user)
 	}
-	createdItem := *createdPtr
 
-	// Emit side effects via EventCoordinator (notifications, webhooks, action events)
-	notifyStart := time.Now()
-	if h.eventCoordinator != nil {
-		h.eventCoordinator.EmitItemCreated(&createdItem, user.ID, user.Username)
-	} else {
-		// Fallback to individual services if EventCoordinator not set
-		if h.notificationService != nil {
-			itemKey := fmt.Sprintf("%s-%d", createdItem.WorkspaceKey, createdItem.WorkspaceItemNumber)
-			h.notificationService.EmitEvent(&services.NotificationEvent{
-				EventType:   models.EventItemCreated,
-				WorkspaceID: createdItem.WorkspaceID,
-				ActorUserID: user.ID,
-				ItemID:      createdItem.ID,
-				AssigneeID:  createdItem.AssigneeID,
-				CreatorID:   &user.ID,
-				Title:       "New Item Created",
-				TemplateData: map[string]interface{}{
-					"item.title":     createdItem.Title,
-					"item.key":       itemKey,
-					"item.id":        createdItem.ID,
-					"user.name":      user.Username,
-					"workspace.name": createdItem.WorkspaceName,
-					"workspace.key":  createdItem.WorkspaceKey,
-				},
-			})
-		}
-		if h.actionService != nil {
-			h.actionService.EmitActionEvent(&models.ActionEvent{
-				EventType:   models.ActionTriggerItemCreated,
-				WorkspaceID: createdItem.WorkspaceID,
-				ItemID:      createdItem.ID,
-				ActorUserID: user.ID,
-				NewValues: map[string]interface{}{
-					"title":        createdItem.Title,
-					"status_id":    createdItem.StatusID,
-					"item_type_id": createdItem.ItemTypeID,
-					"assignee_id":  createdItem.AssigneeID,
-					"creator_id":   createdItem.CreatorID,
-					"priority_id":  createdItem.PriorityID,
-				},
-			})
-		}
-		if h.webhookSender != nil {
-			h.webhookSender.DispatchEvent("item.created", &createdItem)
-		}
-	}
-	notifyTime := time.Since(notifyStart)
-
-	// Profiling: log timing summary (all times in milliseconds for easy parsing)
-	totalTime := time.Since(createStart)
-	measuredTime := validationTime + createServiceTime + selectQueryTime + notifyTime
-	gapTime := totalTime - measuredTime // Time spent in scheduler/unmeasured code
-	slog.Debug("item creation performance",
-		slog.Int("item_id", createdItem.ID),
-		slog.Group("timings_ms",
-			slog.Float64("validation", float64(validationTime.Microseconds())/1000.0),
-			slog.Float64("create_service", float64(createServiceTime.Microseconds())/1000.0),
-			slog.Float64("query", float64(selectQueryTime.Microseconds())/1000.0),
-			slog.Float64("notify", float64(notifyTime.Microseconds())/1000.0),
-			slog.Float64("gap", float64(gapTime.Microseconds())/1000.0),
-			slog.Float64("total", float64(totalTime.Microseconds())/1000.0),
-		))
-
-	// Strip names of time projects the creator has no access to (incl. the
-	// inherited effective project), matching the masked read paths. Mask a
-	// copy so the webhook goroutine's view of createdItem isn't mutated.
-	maskedCreated := []models.Item{createdItem}
+	maskedCreated := []models.Item{*result.Item}
 	h.maskInaccessibleProjectNames(user.ID, maskedCreated)
-
 	respondJSONCreated(w, maskedCreated[0])
 }
 
+func (h *ItemHandler) emitItemCreatedFallback(item *models.Item, user *models.User) {
+	if h.notificationService != nil {
+		itemKey := fmt.Sprintf("%s-%d", item.WorkspaceKey, item.WorkspaceItemNumber)
+		h.notificationService.EmitEvent(&services.NotificationEvent{
+			EventType:   models.EventItemCreated,
+			WorkspaceID: item.WorkspaceID,
+			ActorUserID: user.ID,
+			ItemID:      item.ID,
+			AssigneeID:  item.AssigneeID,
+			CreatorID:   &user.ID,
+			Title:       "New Item Created",
+			TemplateData: map[string]interface{}{
+				"item.title":     item.Title,
+				"item.key":       itemKey,
+				"item.id":        item.ID,
+				"user.name":      user.Username,
+				"workspace.name": item.WorkspaceName,
+				"workspace.key":  item.WorkspaceKey,
+			},
+		})
+	}
+	if h.actionService != nil {
+		h.actionService.EmitActionEvent(&models.ActionEvent{
+			EventType:   models.ActionTriggerItemCreated,
+			WorkspaceID: item.WorkspaceID,
+			ItemID:      item.ID,
+			ActorUserID: user.ID,
+			NewValues: map[string]interface{}{
+				"title":        item.Title,
+				"status_id":    item.StatusID,
+				"item_type_id": item.ItemTypeID,
+				"assignee_id":  item.AssigneeID,
+				"creator_id":   item.CreatorID,
+				"priority_id":  item.PriorityID,
+			},
+		})
+	}
+	if h.webhookSender != nil {
+		h.webhookSender.DispatchEvent("item.created", item)
+	}
+}
 func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// Parse request and validate item ID
 	id, ok := requireIDParam(w, r, "id")
@@ -1014,21 +924,10 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Track item edit activity
-	if h.activityTracker != nil {
-		if err = h.activityTracker.TrackItemActivity(user.ID, id, services.ActivityEdit); err != nil {
-			slog.Warn("failed to track item edit activity", slog.Int("user_id", user.ID), slog.Int("item_id", id), slog.Any("error", err))
-			// Don't fail the request, just log the error
-		}
-	}
-
-	// Call update service to handle all business logic
-	updateService := services.NewItemUpdateService(h.db).WithPermissionService(h.permissionService)
-	result, err := updateService.UpdateItem(services.UpdateItemRequest{
-		ItemID:     id,
-		UpdateData: updateData,
-		UserID:     user.ID,
-	})
+	// Run the shared user-facing update pipeline. REST v1 uses this same
+	// service instance so committed-item events, mentions, activity, and cache
+	// invalidation do not depend on the transport.
+	result, err := h.itemUpdate.Update(user.ID, user.Username, id, updateData)
 
 	if err != nil {
 		// Check if it's a validation error (anywhere in the wrap chain — the
@@ -1050,15 +949,6 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 	originalItem := result.OriginalItem
 	updatedItem := result.Item
 
-	// Invalidate the cached effective project for this item and its descendants
-	// when a project-affecting field changed. The cache keys only on item ID and
-	// stores the resolved project, so a change to project_id / inherit_project /
-	// parent_id here would otherwise leave this item and every descendant that
-	// inherits from it serving a stale effective project for up to the cache TTL.
-	if h.itemCache != nil && projectResolutionChanged(originalItem, updatedItem) {
-		h.invalidateEffectiveProjectSubtree(updatedItem.ID)
-	}
-
 	w.Header().Set("Content-Type", "application/json")
 
 	// Check if assignee changed (compare originalItem with updatedItem)
@@ -1072,12 +962,10 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 		assigneeChanged = true
 	}
 
-	// Emit side effects via EventCoordinator (notifications, webhooks, action events)
-	// The coding-agent binding trigger (WI-88) fires inside
-	// ItemUpdateService.UpdateItem, shared by every update surface.
-	if h.eventCoordinator != nil {
-		h.eventCoordinator.EmitItemUpdated(originalItem, updatedItem, result.StatusChanged, assigneeChanged, user.ID, result.FieldChanges, user.Username)
-	} else {
+	// The shared application service emits through EventCoordinator. Preserve
+	// the legacy individual-service fallback for lightweight embeddings that
+	// do not install a coordinator.
+	if h.eventCoordinator == nil {
 		// Fallback to individual services if EventCoordinator not set
 		if h.notificationService != nil {
 			var statusName string
@@ -1198,21 +1086,6 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}(r.Context())
 	}
 
-	// Process @mentions in description if it changed
-	if h.mentionService != nil && originalItem.Description != updatedItem.Description {
-		if err := h.mentionService.ProcessMentions(services.ProcessMentionsParams{
-			SourceType:  "item_description",
-			SourceID:    updatedItem.ID,
-			Content:     updatedItem.Description,
-			ItemID:      updatedItem.ID,
-			WorkspaceID: updatedItem.WorkspaceID,
-			ActorUserID: user.ID,
-		}); err != nil {
-			slog.Warn("failed to process description mentions", slog.Int("item_id", updatedItem.ID), slog.Any("error", err))
-			// Don't fail the request if mention processing fails
-		}
-	}
-
 	// Strip names of time projects the editor has no access to (incl. the
 	// inherited effective project), matching the masked read paths. Mask a
 	// copy so async consumers of updatedItem aren't mutated.
@@ -1237,21 +1110,14 @@ func (h *ItemHandler) maskInaccessibleProjectNamesContext(ctx context.Context, u
 // change an item's (or its descendants') effective project: the direct project,
 // the inherit flag, or the parent link.
 func projectResolutionChanged(original, updated *models.Item) bool {
-	if original.InheritProject != updated.InheritProject {
-		return true
-	}
-	if !intPtrEqual(original.ProjectID, updated.ProjectID) {
-		return true
-	}
-	if !intPtrEqual(original.ParentID, updated.ParentID) {
-		return true
-	}
-	return false
+	return original.InheritProject != updated.InheritProject ||
+		!intPtrEqual(original.ProjectID, updated.ProjectID) ||
+		!intPtrEqual(original.ParentID, updated.ParentID)
 }
 
 // invalidateEffectiveProjectSubtree drops the cached hierarchy entry for an item
-// and all of its descendants, since each descendant may resolve its effective
-// project through this item.
+// and all descendants. Bulk updates use this handler-level helper; single-item
+// user-facing updates run the same invalidation inside their application service.
 func (h *ItemHandler) invalidateEffectiveProjectSubtree(itemID int) {
 	_ = h.itemCache.InvalidateItemHierarchy(itemID, nil)
 	if h.hierarchyService == nil {
@@ -1272,93 +1138,69 @@ func (h *ItemHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-
-	// Require authentication
 	user, ok := RequireAuth(w, r)
 	if !ok {
 		return
 	}
 
-	// Get item details before deletion (for permission check and notifications)
-	repo := repository.NewItemRepository(h.db)
-	item, err := repo.FindByID(id)
-	if err != nil {
-		if err == repository.ErrNotFound {
-			respondNotFound(w, r, "item")
-			return
-		}
-		respondInternalError(w, r, err)
-		return
-	}
-
-	// Check permission
-	canDelete, err := h.canDeleteItem(user.ID, item.WorkspaceID)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	if !canDelete {
-		respondNotFound(w, r, "Item")
-		return
-	}
-
-	// Capture ancestor IDs before deletion for cache invalidation
-	var ancestorIDs []int
-	if h.itemCache != nil && h.hierarchyService != nil {
-		if ancestors, aErr := h.hierarchyService.GetAncestors(id); aErr == nil {
-			for _, a := range ancestors {
-				ancestorIDs = append(ancestorIDs, a.ID)
-			}
-		}
-	}
-
-	if err := services.NewItemCRUDService(h.db).DeleteSingle(id); err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-
-	logAuditWithDetails(h.db, r, user, logger.ActionItemDelete, logger.ResourceItem, &id, item.Title, map[string]interface{}{
-		"workspace_id": item.WorkspaceID,
-		"item_type_id": item.ItemTypeID,
-		"parent_id":    item.ParentID,
-		"status_id":    item.StatusID,
-		"assignee_id":  item.AssigneeID,
-		"creator_id":   item.CreatorID,
+	result, err := h.itemDeletion.Delete(services.ItemDeletionRequest{
+		ItemID:        id,
+		ActorUserID:   user.ID,
+		ActorUsername: user.Username,
+		Mode:          services.ItemDeletionSingle,
 	})
-
-	// Invalidate item hierarchy and workspace project caches
-	if h.itemCache != nil {
-		_ = h.itemCache.InvalidateItemHierarchy(id, ancestorIDs)
-		_ = h.itemCache.InvalidateWorkspaceProjects(item.WorkspaceID)
+	if h.respondItemDeletionError(w, r, err) {
+		return
 	}
 
-	// Emit side effects via EventCoordinator (notifications, webhooks)
-	if h.eventCoordinator != nil {
-		h.eventCoordinator.EmitItemDeleted(item, user.ID, 0, user.Username)
-	} else {
-		// Fallback to individual services if EventCoordinator not set
-		if h.notificationService != nil {
-			h.notificationService.EmitEvent(&services.NotificationEvent{
-				EventType:   models.EventItemDeleted,
-				WorkspaceID: item.WorkspaceID,
-				ActorUserID: user.ID,
-				ItemID:      id,
-				AssigneeID:  item.AssigneeID,
-				CreatorID:   item.CreatorID,
-				Title:       "Item Deleted",
-				TemplateData: map[string]interface{}{
-					"item.title": item.Title,
-					"item.id":    id,
-					"user.name":  user.Username,
-				},
-			})
-		}
-		if h.webhookSender != nil {
-			h.webhookSender.DispatchEvent("item.deleted", item)
-		}
+	logAuditWithDetails(h.db, r, user, logger.ActionItemDelete, logger.ResourceItem, &id, result.Item.Title, map[string]interface{}{
+		"workspace_id": result.Item.WorkspaceID,
+		"item_type_id": result.Item.ItemTypeID,
+		"parent_id":    result.Item.ParentID,
+		"status_id":    result.Item.StatusID,
+		"assignee_id":  result.Item.AssigneeID,
+		"creator_id":   result.Item.CreatorID,
+	})
+	if h.eventCoordinator == nil {
+		h.emitItemDeletedFallback(result.Item, user, result.DescendantCount)
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *ItemHandler) respondItemDeletionError(w http.ResponseWriter, r *http.Request, err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, repository.ErrNotFound) || errors.Is(err, services.ErrItemDeletionForbidden) {
+		respondNotFound(w, r, "item")
+		return true
+	}
+	respondInternalError(w, r, err)
+	return true
+}
+
+func (h *ItemHandler) emitItemDeletedFallback(item *models.Item, user *models.User, descendantCount int) {
+	if h.notificationService != nil {
+		h.notificationService.EmitEvent(&services.NotificationEvent{
+			EventType:   models.EventItemDeleted,
+			WorkspaceID: item.WorkspaceID,
+			ActorUserID: user.ID,
+			ItemID:      item.ID,
+			AssigneeID:  item.AssigneeID,
+			CreatorID:   item.CreatorID,
+			Title:       "Item Deleted",
+			TemplateData: map[string]interface{}{
+				"item.title":  item.Title,
+				"item.id":     item.ID,
+				"user.name":   user.Username,
+				"descendants": descendantCount,
+			},
+		})
+	}
+	if h.webhookSender != nil {
+		h.webhookSender.DispatchEvent("item.deleted", item)
+	}
 }
 
 // GetDeleteInfo returns information needed before deleting an item (descendant count, parent info)
@@ -1552,96 +1394,33 @@ func (h *ItemHandler) DeleteCascade(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-
-	// Require authentication
 	user, ok := RequireAuth(w, r)
 	if !ok {
 		return
 	}
 
-	// Get item details before deletion (for permission check and notifications)
-	repo := repository.NewItemRepository(h.db)
-	item, err := repo.FindByID(id)
-	if err != nil {
-		if err == repository.ErrNotFound {
-			respondNotFound(w, r, "item")
-			return
-		}
-		respondInternalError(w, r, err)
-		return
-	}
-
-	// Check permission
-	canDelete, err := h.canDeleteItem(user.ID, item.WorkspaceID)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	if !canDelete {
-		respondNotFound(w, r, "Item")
-		return
-	}
-
-	// Capture ancestor IDs before deletion for cache invalidation
-	var ancestorIDs []int
-	if h.itemCache != nil && h.hierarchyService != nil {
-		if ancestors, aErr := h.hierarchyService.GetAncestors(id); aErr == nil {
-			for _, a := range ancestors {
-				ancestorIDs = append(ancestorIDs, a.ID)
-			}
-		}
-	}
-
-	// Use the CRUD service for cascade delete
-	crudService := services.NewItemCRUDService(h.db)
-	result, err := crudService.Delete(id)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-
-	logAuditWithDetails(h.db, r, user, logger.ActionItemDeleteCascade, logger.ResourceItem, &id, item.Title, map[string]interface{}{
-		"workspace_id":     item.WorkspaceID,
-		"item_type_id":     item.ItemTypeID,
-		"parent_id":        item.ParentID,
-		"status_id":        item.StatusID,
-		"assignee_id":      item.AssigneeID,
-		"creator_id":       item.CreatorID,
-		"deleted_count":    result.DeletedCount,
-		"descendant_count": result.DeletedCount - 1,
+	result, err := h.itemDeletion.Delete(services.ItemDeletionRequest{
+		ItemID:        id,
+		ActorUserID:   user.ID,
+		ActorUsername: user.Username,
+		Mode:          services.ItemDeletionCascade,
 	})
-
-	// Invalidate item hierarchy and workspace project caches
-	if h.itemCache != nil {
-		_ = h.itemCache.InvalidateItemHierarchy(id, ancestorIDs)
-		_ = h.itemCache.InvalidateWorkspaceProjects(item.WorkspaceID)
+	if h.respondItemDeletionError(w, r, err) {
+		return
 	}
 
-	// Emit side effects via EventCoordinator (notifications, webhooks)
-	if h.eventCoordinator != nil {
-		h.eventCoordinator.EmitItemDeleted(item, user.ID, result.DeletedCount-1, user.Username)
-	} else {
-		// Fallback to individual services if EventCoordinator not set
-		if h.notificationService != nil {
-			h.notificationService.EmitEvent(&services.NotificationEvent{
-				EventType:   models.EventItemDeleted,
-				WorkspaceID: item.WorkspaceID,
-				ActorUserID: user.ID,
-				ItemID:      id,
-				AssigneeID:  item.AssigneeID,
-				CreatorID:   item.CreatorID,
-				Title:       "Item Deleted",
-				TemplateData: map[string]interface{}{
-					"item.title":  item.Title,
-					"item.id":     id,
-					"user.name":   user.Username,
-					"descendants": result.DeletedCount - 1,
-				},
-			})
-		}
-		if h.webhookSender != nil {
-			h.webhookSender.DispatchEvent("item.deleted", item)
-		}
+	logAuditWithDetails(h.db, r, user, logger.ActionItemDeleteCascade, logger.ResourceItem, &id, result.Item.Title, map[string]interface{}{
+		"workspace_id":     result.Item.WorkspaceID,
+		"item_type_id":     result.Item.ItemTypeID,
+		"parent_id":        result.Item.ParentID,
+		"status_id":        result.Item.StatusID,
+		"assignee_id":      result.Item.AssigneeID,
+		"creator_id":       result.Item.CreatorID,
+		"deleted_count":    result.DeletedCount,
+		"descendant_count": result.DescendantCount,
+	})
+	if h.eventCoordinator == nil {
+		h.emitItemDeletedFallback(result.Item, user, result.DescendantCount)
 	}
 
 	respondJSONOK(w, map[string]interface{}{

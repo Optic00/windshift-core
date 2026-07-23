@@ -2481,20 +2481,6 @@
         },
         "type": "object"
       },
-      "handlers.rrulePreviewRequest": {
-        "properties": {
-          "count": {
-            "type": "integer"
-          },
-          "dtstart": {
-            "type": "string"
-          },
-          "rrule": {
-            "type": "string"
-          }
-        },
-        "type": "object"
-      },
       "handlers.rrulePreviewResponse": {
         "properties": {
           "dtstart": {
@@ -2604,42 +2590,6 @@
         },
         "type": "object"
       },
-      "handlers.testResultWithCaseTitle": {
-        "properties": {
-          "actual_result": {
-            "type": "string"
-          },
-          "created_at": {
-            "type": "string"
-          },
-          "executed_at": {
-            "type": "string"
-          },
-          "id": {
-            "type": "integer"
-          },
-          "notes": {
-            "type": "string"
-          },
-          "run_id": {
-            "type": "integer"
-          },
-          "status": {
-            "description": "\"passed\", \"failed\", \"blocked\", \"skipped\", \"not_run\"",
-            "type": "string"
-          },
-          "test_case_id": {
-            "type": "integer"
-          },
-          "test_case_title": {
-            "type": "string"
-          },
-          "updated_at": {
-            "type": "string"
-          }
-        },
-        "type": "object"
-      },
       "handlers.testRunCreateRequest": {
         "properties": {
           "assignee_id": {
@@ -2653,32 +2603,6 @@
           },
           "template_id": {
             "type": "integer"
-          }
-        },
-        "type": "object"
-      },
-      "handlers.testRunDetailResponse": {
-        "properties": {
-          "results": {
-            "items": {
-              "$ref": "#/components/schemas/handlers.testResultWithCaseTitle"
-            },
-            "type": "array"
-          },
-          "run": {
-            "$ref": "#/components/schemas/models.TestRun"
-          },
-          "step_results": {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/windshift_internal_restapi_v1_handlers.testRunStepResultResponse"
-            },
-            "type": "object"
-          },
-          "test_cases": {
-            "items": {
-              "$ref": "#/components/schemas/models.TestCase"
-            },
-            "type": "array"
           }
         },
         "type": "object"
@@ -3992,6 +3916,21 @@
         },
         "type": "object"
       },
+      "models.RRulePreviewRequest": {
+        "properties": {
+          "count": {
+            "description": "Number of occurrences to preview (default 10)",
+            "type": "integer"
+          },
+          "dtstart": {
+            "type": "string"
+          },
+          "rrule": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "models.RecurrenceInstance": {
         "properties": {
           "created_at": {
@@ -4518,6 +4457,94 @@
         },
         "type": "object"
       },
+      "services.TestRunDetail": {
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/services.TestRunResultWithCaseTitle"
+            },
+            "type": "array"
+          },
+          "run": {
+            "$ref": "#/components/schemas/models.TestRun"
+          },
+          "step_results": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/services.TestRunStepResult"
+            },
+            "type": "object"
+          },
+          "test_cases": {
+            "items": {
+              "$ref": "#/components/schemas/models.TestCase"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "services.TestRunResultWithCaseTitle": {
+        "properties": {
+          "actual_result": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "executed_at": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "notes": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "integer"
+          },
+          "status": {
+            "description": "\"passed\", \"failed\", \"blocked\", \"skipped\", \"not_run\"",
+            "type": "string"
+          },
+          "test_case_id": {
+            "type": "integer"
+          },
+          "test_case_title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "services.TestRunStepResult": {
+        "properties": {
+          "actual_result": {
+            "type": "string"
+          },
+          "executed_at": {
+            "type": "string"
+          },
+          "item_id": {
+            "type": "integer"
+          },
+          "notes": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "step_id": {
+            "type": "integer"
+          },
+          "test_case_id": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
       "windshift_internal_restapi_v1_handlers.AuditLogStreamResponse": {
         "properties": {
           "entries": {
@@ -4578,32 +4605,6 @@
               "type": "string"
             },
             "type": "array"
-          }
-        },
-        "type": "object"
-      },
-      "windshift_internal_restapi_v1_handlers.testRunStepResultResponse": {
-        "properties": {
-          "actual_result": {
-            "type": "string"
-          },
-          "executed_at": {
-            "type": "string"
-          },
-          "item_id": {
-            "type": "integer"
-          },
-          "notes": {
-            "type": "string"
-          },
-          "status": {
-            "type": "string"
-          },
-          "step_id": {
-            "type": "integer"
-          },
-          "test_case_id": {
-            "type": "integer"
           }
         },
         "type": "object"
@@ -6820,7 +6821,7 @@
     },
     "/comments/{id}": {
       "delete": {
-        "description": "The caller must be the comment author or hold edit permission on the comment's workspace.",
+        "description": "The caller must be the comment author or hold comment.edit_others on the comment's workspace.",
         "parameters": [
           {
             "description": "Comment ID",
@@ -6983,7 +6984,7 @@
         ]
       },
       "put": {
-        "description": "The caller must be the comment author or hold edit permission on the comment's workspace.",
+        "description": "The caller must be the comment author or hold comment.edit_others on the comment's workspace.",
         "parameters": [
           {
             "description": "Comment ID",
@@ -9686,7 +9687,7 @@
         ],
         "responses": {
           "204": {
-            "description": "Recurrence rule deleted"
+            "description": "No Content"
           },
           "400": {
             "content": {
@@ -9696,7 +9697,7 @@
                 }
               }
             },
-            "description": "Invalid item ID"
+            "description": "Bad Request"
           },
           "401": {
             "content": {
@@ -9716,7 +9717,7 @@
                 }
               }
             },
-            "description": "Token lacks the items:write scope"
+            "description": "Forbidden"
           },
           "404": {
             "content": {
@@ -9726,7 +9727,7 @@
                 }
               }
             },
-            "description": "Item or recurrence rule not found"
+            "description": "Not Found"
           },
           "500": {
             "content": {
@@ -9750,7 +9751,6 @@
         ]
       },
       "get": {
-        "description": "Returns the item's recurrence rule, or JSON null when the item has no recurrence configured.",
         "parameters": [
           {
             "description": "Item ID",
@@ -9781,7 +9781,7 @@
                 }
               }
             },
-            "description": "Invalid item ID"
+            "description": "Bad Request"
           },
           "401": {
             "content": {
@@ -9801,7 +9801,7 @@
                 }
               }
             },
-            "description": "Token lacks the items:read scope"
+            "description": "Forbidden"
           },
           "404": {
             "content": {
@@ -9811,7 +9811,7 @@
                 }
               }
             },
-            "description": "Item not found or not visible to caller"
+            "description": "Not Found"
           },
           "500": {
             "content": {
@@ -9835,7 +9835,6 @@
         ]
       },
       "post": {
-        "description": "Creates a new recurrence rule for the item. Returns 409 if a rule already exists.",
         "parameters": [
           {
             "description": "Item ID",
@@ -9855,7 +9854,7 @@
               }
             }
           },
-          "description": "Recurrence rule to create",
+          "description": "Recurrence rule",
           "required": true,
           "x-originalParamName": "body"
         },
@@ -9878,7 +9877,7 @@
                 }
               }
             },
-            "description": "Invalid request body or validation error"
+            "description": "Bad Request"
           },
           "401": {
             "content": {
@@ -9898,7 +9897,7 @@
                 }
               }
             },
-            "description": "Token lacks the items:write scope"
+            "description": "Forbidden"
           },
           "404": {
             "content": {
@@ -9908,7 +9907,7 @@
                 }
               }
             },
-            "description": "Item not found or not visible to caller"
+            "description": "Not Found"
           },
           "409": {
             "content": {
@@ -9918,7 +9917,7 @@
                 }
               }
             },
-            "description": "A recurrence rule already exists for this item"
+            "description": "Conflict"
           },
           "500": {
             "content": {
@@ -9942,7 +9941,6 @@
         ]
       },
       "put": {
-        "description": "Partial update of the recurrence rule attached to the item. Only fields present in the body are changed.",
         "parameters": [
           {
             "description": "Item ID",
@@ -9985,7 +9983,7 @@
                 }
               }
             },
-            "description": "Invalid request body or validation error"
+            "description": "Bad Request"
           },
           "401": {
             "content": {
@@ -10005,7 +10003,7 @@
                 }
               }
             },
-            "description": "Token lacks the items:write scope"
+            "description": "Forbidden"
           },
           "404": {
             "content": {
@@ -10015,7 +10013,7 @@
                 }
               }
             },
-            "description": "Item or recurrence rule not found"
+            "description": "Not Found"
           },
           "500": {
             "content": {
@@ -10041,7 +10039,6 @@
     },
     "/items/{id}/recurrence/generate": {
       "post": {
-        "description": "Triggers immediate generation of recurrence instances due up to the rule's lead-time horizon, bypassing the periodic scheduler.",
         "parameters": [
           {
             "description": "Item ID",
@@ -10072,7 +10069,7 @@
                 }
               }
             },
-            "description": "Invalid item ID"
+            "description": "Bad Request"
           },
           "401": {
             "content": {
@@ -10092,7 +10089,7 @@
                 }
               }
             },
-            "description": "Token lacks the items:write scope"
+            "description": "Forbidden"
           },
           "404": {
             "content": {
@@ -10102,7 +10099,7 @@
                 }
               }
             },
-            "description": "Item or recurrence rule not found"
+            "description": "Not Found"
           },
           "500": {
             "content": {
@@ -10120,7 +10117,7 @@
             "BearerAuth": []
           }
         ],
-        "summary": "Force-generate instances for a recurrence rule",
+        "summary": "Force-generate recurrence instances",
         "tags": [
           "recurrence"
         ]
@@ -10128,7 +10125,6 @@
     },
     "/items/{id}/recurrence/instances": {
       "get": {
-        "description": "Paginated list of instances generated from the item's recurrence rule. `page` (default 1) and `limit` (1-100, default 50) query parameters control paging, matching the rest of the v1 surface.",
         "parameters": [
           {
             "description": "Item ID",
@@ -10140,7 +10136,7 @@
             }
           },
           {
-            "description": "Page number (1-based, default 1)",
+            "description": "Page number",
             "in": "query",
             "name": "page",
             "schema": {
@@ -10148,7 +10144,7 @@
             }
           },
           {
-            "description": "Page size (1-100, default 50)",
+            "description": "Page size",
             "in": "query",
             "name": "limit",
             "schema": {
@@ -10175,7 +10171,7 @@
                 }
               }
             },
-            "description": "Invalid item ID"
+            "description": "Bad Request"
           },
           "401": {
             "content": {
@@ -10195,7 +10191,7 @@
                 }
               }
             },
-            "description": "Token lacks the items:read scope"
+            "description": "Forbidden"
           },
           "404": {
             "content": {
@@ -10205,7 +10201,7 @@
                 }
               }
             },
-            "description": "Item or recurrence rule not found"
+            "description": "Not Found"
           },
           "500": {
             "content": {
@@ -10223,7 +10219,7 @@
             "BearerAuth": []
           }
         ],
-        "summary": "List generated instances for a recurrence rule",
+        "summary": "List generated recurrence instances",
         "tags": [
           "recurrence"
         ]
@@ -12086,16 +12082,15 @@
     },
     "/recurrence-rules/preview": {
       "post": {
-        "description": "Validates an iCalendar RRULE and returns the first N occurrences (default 10, max 50) from a given dtstart. Pure validation — no rule or item is created.",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/handlers.rrulePreviewRequest"
+                "$ref": "#/components/schemas/models.RRulePreviewRequest"
               }
             }
           },
-          "description": "RRULE to preview",
+          "description": "RRULE preview",
           "required": true,
           "x-originalParamName": "body"
         },
@@ -12118,7 +12113,7 @@
                 }
               }
             },
-            "description": "Invalid request body or validation error"
+            "description": "Bad Request"
           },
           "401": {
             "content": {
@@ -12138,7 +12133,7 @@
                 }
               }
             },
-            "description": "Token lacks the items:read scope"
+            "description": "Forbidden"
           },
           "500": {
             "content": {
@@ -20088,6 +20083,97 @@
         ]
       }
     },
+    "/workspaces/{id}/workflows": {
+      "get": {
+        "description": "Returns the distinct workflows selected by the workspace configuration set and its item-type overrides.",
+        "parameters": [
+          {
+            "description": "Workspace ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/handlers.WorkflowResponse"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid workspace ID"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Token lacks the workspaces:read scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Workspace not found or not visible to caller"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List workflows effective for a workspace",
+        "tags": [
+          "workspaces",
+          "workflows"
+        ]
+      }
+    },
     "/workspaces/{workspaceId}/test-cases": {
       "get": {
         "description": "Optional `folder_id` query parameter filters to a single folder; pass `null` to retrieve top-level cases. `all=true` includes archived cases.",
@@ -25148,7 +25234,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/handlers.testRunDetailResponse"
+                  "$ref": "#/components/schemas/services.TestRunDetail"
                 }
               }
             },
@@ -25322,7 +25408,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "$ref": "#/components/schemas/handlers.testResultWithCaseTitle"
+                    "$ref": "#/components/schemas/services.TestRunResultWithCaseTitle"
                   },
                   "type": "array"
                 }

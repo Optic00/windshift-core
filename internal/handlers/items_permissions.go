@@ -44,16 +44,6 @@ func (h *ItemHandler) canEditItem(userID, workspaceID int) (bool, error) {
 	return h.authz.CanEditWorkspace(userID, workspaceID)
 }
 
-// canDeleteItem checks if a user can delete an item in a specific workspace
-func (h *ItemHandler) canDeleteItem(userID, workspaceID int) (bool, error) {
-	if h.permissionService == nil {
-		// Fail closed: deny access if permission service is unavailable
-		slog.Error("permission service unavailable, denying delete access", slog.String("component", "items_permissions"))
-		return false, nil
-	}
-	return h.authz.HasWorkspacePermission(userID, workspaceID, models.PermissionItemDelete)
-}
-
 // filterItemsByPermissions filters a list of items based on user's workspace view permissions
 func (h *ItemHandler) filterItemsByPermissions(userID int, items []models.Item) ([]models.Item, error) {
 	if h.permissionService == nil {

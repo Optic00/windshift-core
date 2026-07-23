@@ -11,6 +11,7 @@ import (
 
 	"windshift/internal/cql"
 	"windshift/internal/database"
+	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/restapi"
@@ -25,21 +26,28 @@ type ItemHandler struct {
 	BaseHandler
 	itemRepo     *repository.ItemRepository
 	itemCRUD     *services.ItemCRUDService
-	itemUpdate   *services.ItemUpdateService
+	itemCreation *services.ItemCreationService
+	itemUpdate   *services.ItemUpdateApplicationService
+	itemDeletion *services.ItemDeletionApplicationService
 	commentSvc   *services.CommentService
 	workflowSvc  *services.WorkflowService
 	conditionSvc *services.ConditionService
 	approvalSvc  *services.ApprovalService
 	permSvc      *services.PermissionService
+	auditor      *logger.Auditor
 }
 
 // NewItemHandler creates a new item handler. commentService is shared with the
 // cookie-auth handler so item comments created through the bearer-token surface
 // fire the same notifications/mentions/webhooks (WI-434); when nil a bare
 // service is created that persists comments but skips side effects.
-func NewItemHandler(db database.Database, permissionService *services.PermissionService, commentService *services.CommentService) *ItemHandler {
+func NewItemHandler(db database.Database, permissionService *services.PermissionService, commentService *services.CommentService, creationServices ...*services.ItemCreationService) *ItemHandler {
 	if commentService == nil {
 		commentService = services.NewCommentService(db)
+	}
+	itemCreation := services.NewItemCreationService(db, permissionService)
+	if len(creationServices) > 0 && creationServices[0] != nil {
+		itemCreation = creationServices[0]
 	}
 	workflowSvc := services.NewWorkflowService(db)
 	leaveRepo := repository.NewLeaveRepository(db)
@@ -47,12 +55,31 @@ func NewItemHandler(db database.Database, permissionService *services.Permission
 		BaseHandler:  NewBaseHandler(db, permissionService),
 		itemRepo:     repository.NewItemRepository(db),
 		itemCRUD:     services.NewItemCRUDService(db),
-		itemUpdate:   services.NewItemUpdateService(db).WithPermissionService(permissionService),
+		itemCreation: itemCreation,
+		itemUpdate:   services.NewItemUpdateApplicationService(db, permissionService),
+		itemDeletion: services.NewItemDeletionApplicationService(db, permissionService),
 		commentSvc:   commentService,
 		workflowSvc:  workflowSvc,
 		conditionSvc: services.NewConditionService(db, permissionService, services.NewScriptEngine()),
 		approvalSvc:  services.NewApprovalService(db, leaveRepo, workflowSvc),
 		permSvc:      permissionService,
+		auditor:      logger.NewAuditor(db),
+	}
+}
+
+// SetItemUpdateApplicationService installs the fully wired user-facing update
+// pipeline shared with the cookie-auth handler.
+func (h *ItemHandler) SetItemUpdateApplicationService(service *services.ItemUpdateApplicationService) {
+	if service != nil {
+		h.itemUpdate = service
+	}
+}
+
+// SetItemDeletionApplicationService installs the fully wired user-facing
+// deletion pipeline shared with the cookie-auth handler and MCP.
+func (h *ItemHandler) SetItemDeletionApplicationService(service *services.ItemDeletionApplicationService) {
+	if service != nil {
+		h.itemDeletion = service
 	}
 }
 
@@ -561,13 +588,10 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-
 	var req dto.ItemCreateRequest
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
-
-	// Validate required fields
 	if req.WorkspaceID == 0 {
 		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeMissingField, "workspace_id is required"))
 		return
@@ -576,133 +600,67 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeMissingField, "title is required"))
 		return
 	}
-
-	// Check workspace permission
 	canEdit, err := h.Perms.CanEditWorkspace(user.ID, req.WorkspaceID)
 	if err != nil || !canEdit {
 		h.RespondError(w, r, restapi.ErrInsufficientPermission)
 		return
 	}
 
-	// Check item type is allowed in workspace config set
-	if req.ItemTypeID != nil && *req.ItemTypeID != 0 {
-		allowed, checkErr := services.IsItemTypeAllowedInWorkspace(h.DB, req.WorkspaceID, *req.ItemTypeID)
-		if checkErr != nil {
-			h.RespondInternalError(w, r)
-			return
-		}
-		if !allowed {
-			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, "Item type is not allowed in this workspace"))
-			return
-		}
-	}
-
-	// Sanitize user input to prevent XSS
-	req.Title = sanitize.PlainTextField.Sanitize(req.Title)
-	req.Description = sanitize.RichText.Sanitize(req.Description)
-
-	// Centralized creation validation (parent hierarchy, cross-workspace
-	// parent visibility, task status rules) — mirrors the cookie-auth create
-	// path. Permission-shaped parent failures surface as "Parent item not
-	// found" so existence isn't leaked.
-	validationResult := services.ValidateItemCreation(h.DB, services.ItemValidationParams{
-		WorkspaceID: req.WorkspaceID,
-		Title:       req.Title,
-		ItemTypeID:  req.ItemTypeID,
-		ParentID:    req.ParentID,
-		StatusID:    req.StatusID,
-		IsTask:      req.IsTask,
-		UserID:      user.ID,
-		PermService: h.permSvc,
-	})
-	if !validationResult.Valid {
-		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, validationResult.Error))
-		return
-	}
-
-	// Convert custom field values to JSON
-	var customFieldValuesJSON string
-	if req.CustomFields != nil {
-		// Vet option ids (select/multiselect) + sanitize text/textarea
-		// values, mirroring the cookie-auth create handler.
-		if err := validation.ValidateAndNormalizeCustomFieldValues(h.DB, req.CustomFields); err != nil {
-			var verr *validation.ValidationError
-			if errors.As(err, &verr) {
-				h.RespondError(w, r, restapi.NewAPIError(
-					http.StatusBadRequest,
-					restapi.ErrCodeValidationFailed,
-					verr.Message,
-				).WithDetails(map[string]string{"field": verr.Field}))
-				return
-			}
-			h.RespondInternalError(w, r)
-			return
-		}
-		var customFieldValuesBytes []byte
-		customFieldValuesBytes, err = json.Marshal(req.CustomFields)
-		if err != nil {
-			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "Invalid custom field values"))
-			return
-		}
-		customFieldValuesJSON = string(customFieldValuesBytes)
-	}
-
-	// Use centralized CreateItem service
-	// StatusID and PriorityID can be nil - the service will resolve from workflow/defaults
-	var enforcedTemplate services.MandatoryTemplateInfo
-	itemID, err := services.CreateItem(h.DB, services.ItemCreationParams{
-		WorkspaceID:           req.WorkspaceID,
-		Title:                 req.Title,
-		Description:           req.Description,
-		StatusID:              req.StatusID,   // nil = use workflow initial status
-		PriorityID:            req.PriorityID, // nil = use default priority
-		ItemTypeID:            req.ItemTypeID,
-		IsTask:                req.IsTask,
-		ParentID:              req.ParentID,
-		MilestoneIDs:          req.MilestoneIDs,
-		IterationID:           req.IterationID,
-		ProjectID:             req.ProjectID,
-		AssigneeID:            req.AssigneeID,
-		CreatorID:             &user.ID,
-		DueDate:               req.DueDate,
-		StartDate:             req.StartDate,
-		EndDate:               req.EndDate,
-		CustomFieldValuesJSON: customFieldValuesJSON,
-		ValidatingUserID:      user.ID,
-		PermService:           h.permSvc,
-		MandatoryTemplateOut:  &enforcedTemplate,
+	result, err := h.itemCreation.Create(user.ID, user.Username, services.ItemCreateInput{
+		WorkspaceID:       req.WorkspaceID,
+		Title:             req.Title,
+		Description:       req.Description,
+		StatusID:          req.StatusID,
+		PriorityID:        req.PriorityID,
+		ItemTypeID:        req.ItemTypeID,
+		DueDate:           req.DueDate,
+		StartDate:         req.StartDate,
+		EndDate:           req.EndDate,
+		IsTask:            req.IsTask,
+		IterationID:       req.IterationID,
+		ProjectID:         req.ProjectID,
+		AssigneeID:        req.AssigneeID,
+		ParentID:          req.ParentID,
+		CustomFieldValues: req.CustomFields,
+		MilestoneIDs:      req.MilestoneIDs,
 	})
 	if err != nil {
-		var transitionRejection *services.TransitionRejection
-		var validationErr *validation.ValidationError
-		if errors.Is(err, services.ErrMissingItemType) || errors.Is(err, services.ErrInvalidItemType) || errors.Is(err, services.ErrProjectNotFound) || errors.As(err, &transitionRejection) || errors.As(err, &validationErr) {
-			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, err.Error()))
-			return
-		}
-		h.RespondInternalError(w, r)
+		h.respondItemCreationError(w, r, err)
 		return
 	}
 
-	// Load full item details for response
-	fullItem, err := h.itemRepo.FindByIDWithDetails(int(itemID))
-	if err != nil {
-		h.RespondInternalError(w, r)
-		return
-	}
-
-	h.maskProjectNamesOne(user.ID, fullItem)
-
-	baseURL := getBaseURL(r)
-	response := dto.MapItemToResponse(fullItem, baseURL)
-	if enforcedTemplate.TemplateID != 0 {
+	h.maskProjectNamesOne(user.ID, result.Item)
+	response := dto.MapItemToResponse(result.Item, getBaseURL(r))
+	if result.MandatoryTemplate.TemplateID != 0 {
 		response.EnforcedTemplate = &dto.EnforcedTemplateSummary{
-			TemplateID: enforcedTemplate.TemplateID,
-			Name:       enforcedTemplate.Name,
-			Applied:    enforcedTemplate.Applied,
+			TemplateID: result.MandatoryTemplate.TemplateID,
+			Name:       result.MandatoryTemplate.Name,
+			Applied:    result.MandatoryTemplate.Applied,
 		}
 	}
-
 	h.RespondCreated(w, response)
+}
+
+func (h *ItemHandler) respondItemCreationError(w http.ResponseWriter, r *http.Request, err error) {
+	var creationErr *services.ItemCreationValidationError
+	var transitionErr *services.TransitionRejection
+	var validationErr *validation.ValidationError
+	switch {
+	case errors.As(err, &validationErr):
+		h.RespondError(w, r, restapi.NewAPIError(
+			http.StatusBadRequest,
+			restapi.ErrCodeValidationFailed,
+			validationErr.Message,
+		).WithDetails(map[string]string{"field": validationErr.Field}))
+	case errors.As(err, &creationErr),
+		errors.As(err, &transitionErr),
+		errors.Is(err, services.ErrMissingItemType),
+		errors.Is(err, services.ErrInvalidItemType),
+		errors.Is(err, services.ErrProjectNotFound):
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, err.Error()))
+	default:
+		h.RespondInternalError(w, r)
+	}
 }
 
 // Update handles PUT /rest/api/v1/items/{id}
@@ -829,12 +787,7 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 		updateData["custom_field_values"] = req.CustomFields
 	}
 
-	// Use ItemUpdateService for update with history tracking
-	result, err := h.itemUpdate.UpdateItem(services.UpdateItemRequest{
-		ItemID:     itemID,
-		UpdateData: updateData,
-		UserID:     user.ID,
-	})
+	result, err := h.itemUpdate.Update(user.ID, user.Username, itemID, updateData)
 	if err != nil {
 		// Validation errors (e.g. milestone_id refers to a non-existent
 		// milestone) must surface as 400 with the field name, not 500.
@@ -1049,18 +1002,40 @@ func (h *ItemHandler) Transition(w http.ResponseWriter, r *http.Request) {
 // @Failure      500  {object}  handlers.ErrorResponse
 // @Router       /items/{id} [delete]
 func (h *ItemHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	item, _, ok := h.requireItemAccess(w, r, false, h.Perms.CanEditWorkspace)
+	user, ok := h.RequireAuth(w, r)
+	if !ok {
+		return
+	}
+	itemID, ok := h.ParsePathID(w, r, "id", "item ID")
 	if !ok {
 		return
 	}
 
-	// Use ItemCRUDService for cascade delete (handles descendants, links, history, etc.)
-	_, err := h.itemCRUD.Delete(item.ID)
+	result, err := h.itemDeletion.Delete(services.ItemDeletionRequest{
+		ItemID:        itemID,
+		ActorUserID:   user.ID,
+		ActorUsername: user.Username,
+		Mode:          services.ItemDeletionCascade,
+	})
 	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) || errors.Is(err, services.ErrItemDeletionForbidden) {
+			h.RespondError(w, r, restapi.ErrItemNotFound)
+			return
+		}
 		h.RespondInternalError(w, r)
 		return
 	}
 
+	h.auditor.LogWithDetails(r, user, logger.ActionItemDeleteCascade, logger.ResourceItem, &itemID, result.Item.Title, map[string]interface{}{
+		"workspace_id":     result.Item.WorkspaceID,
+		"item_type_id":     result.Item.ItemTypeID,
+		"parent_id":        result.Item.ParentID,
+		"status_id":        result.Item.StatusID,
+		"assignee_id":      result.Item.AssigneeID,
+		"creator_id":       result.Item.CreatorID,
+		"deleted_count":    result.DeletedCount,
+		"descendant_count": result.DescendantCount,
+	})
 	h.RespondNoContent(w)
 }
 

@@ -228,20 +228,6 @@ type visibilityInput struct {
 	OrgIDs   []int `json:"org_ids"`
 }
 
-// verifyResourceInWorkspace checks that a row with the given ID exists in the
-// specified table and belongs to the given workspace. Returns true if found,
-// or writes a 404 and returns false. The table parameter is validated by the
-// repository against an allow-list — passing an unknown table fails the
-// check rather than silently 404'ing.
-func verifyResourceInWorkspace(checker *repository.WorkspaceResourceRepository, w http.ResponseWriter, r *http.Request, table string, resourceID, workspaceID int, resourceLabel string) bool {
-	exists, err := checker.ExistsInWorkspace(table, resourceID, workspaceID)
-	if err != nil || !exists {
-		respondNotFound(w, r, resourceLabel)
-		return false
-	}
-	return true
-}
-
 // PaginationParams holds parsed pagination values.
 type PaginationParams struct {
 	Page   int

@@ -15,14 +15,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"time"
 
 	"windshift/internal/auth"
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
-	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
 
@@ -496,14 +494,12 @@ func init() {
 			if target == nil {
 				return testToolError(fmt.Sprintf("test case %d not found in run %d", args.TestCaseID, args.RunID)), nil
 			}
-			// Match the v1 surface's XSS handling for result text fields.
-			actual := sanitize.RichText.Sanitize(args.ActualResult)
-			notes := sanitize.RichText.Sanitize(args.Notes)
-			if err := runSvc.UpdateResult(args.RunID, target.ID, services.TestResultUpdateRequest{
+			updatedFields, err := runSvc.UpdateResult(wsID, args.RunID, target.ID, services.TestResultUpdateRequest{
 				Status:       args.Status,
-				ActualResult: actual,
-				Notes:        notes,
-			}); err != nil {
+				ActualResult: args.ActualResult,
+				Notes:        args.Notes,
+			})
+			if err != nil {
 				if errors.Is(err, repository.ErrNotFound) {
 					return testToolError("test result not found"), nil
 				}
@@ -512,11 +508,10 @@ func init() {
 			env.AuditWrite(resourceTestResult, target.ID, "record_test_result",
 				fmt.Sprintf("%s: %s", target.TestCaseTitle, args.Status))
 			updated := target.TestResult
-			updated.Status = args.Status
-			updated.ActualResult = actual
-			updated.Notes = notes
-			now := time.Now()
-			updated.ExecutedAt = &now
+			updated.Status = updatedFields.Status
+			updated.ActualResult = updatedFields.ActualResult
+			updated.Notes = updatedFields.Notes
+			updated.ExecutedAt = updatedFields.ExecutedAt
 			return map[string]any{
 				"success": true,
 				"result":  testResultToDTO(&updated, target.TestCaseTitle),
@@ -533,17 +528,17 @@ func init() {
 // `ws test run start <set>`): the run name defaults to "<set name> - Run".
 func startTestRunFromSet(env *Env, args startTestRunArgs) (any, error) {
 	setID := *args.SetID
-	setRepo := repository.NewTestSetRepository(env.DB)
-	wsID, err := setRepo.GetWorkspaceID(setID)
+	setSvc := services.NewTestSetService(env.DB)
+	wsID, err := setSvc.GetWorkspaceID(setID)
 	if err != nil || !hasTestPermission(env, wsID, models.PermissionTestExecute) {
 		return testToolError("test set not found"), nil //nolint:nilerr // 404-style JSON error, never reveal existence
 	}
 	if args.WorkspaceID != nil && *args.WorkspaceID > 0 && *args.WorkspaceID != wsID {
 		return testToolError("test set not found"), nil
 	}
-	name := sanitize.PlainTextField.Sanitize(args.Name)
+	name := args.Name
 	if name == "" {
-		set, err := setRepo.FindByID(setID, wsID)
+		set, err := setSvc.Get(setID, wsID)
 		if err != nil {
 			return testToolError("test set not found"), nil //nolint:nilerr // 404-style JSON error
 		}
@@ -565,28 +560,18 @@ func startTestRunFromSet(env *Env, args startTestRunArgs) (any, error) {
 // the run name is auto-generated as "<template name> - Run <N>".
 func startTestRunFromTemplate(env *Env, args startTestRunArgs) (any, error) {
 	templateID := *args.TemplateID
-	templateRepo := repository.NewTestRunTemplateRepository(env.DB)
+	templateSvc := services.NewTestRunTemplateService(env.DB)
 	wsID, ok := resolveTestEntityWorkspace(env, args.WorkspaceID, models.PermissionTestExecute, func(wsID int) (bool, error) {
-		_, err := templateRepo.FindCore(templateID, wsID)
-		if errors.Is(err, repository.ErrNotFound) {
-			return false, nil
-		}
-		return err == nil, err
+		return templateSvc.Exists(templateID, wsID)
 	})
 	if !ok {
 		return testToolError("test run template not found"), nil
 	}
-	template, err := templateRepo.FindCore(templateID, wsID)
+	run, err := templateSvc.Execute(templateID, wsID)
 	if err != nil {
-		return testToolError("test run template not found"), nil //nolint:nilerr // 404-style JSON error
-	}
-	runCount, err := templateRepo.CountExecutions(templateID, wsID)
-	if err != nil {
-		return nil, err
-	}
-	runName := template.Name + " - Run " + strconv.Itoa(runCount+1)
-	run, err := templateRepo.Execute(wsID, templateID, template.SetID, runName)
-	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return testToolError("test run template not found"), nil //nolint:nilerr // 404-style JSON error
+		}
 		return nil, err
 	}
 	env.AuditWrite(logger.ResourceTestRun, run.ID, "start_test_run", run.Name)

@@ -8,7 +8,11 @@ import (
 	"time"
 
 	"windshift/internal/auth"
+	"windshift/internal/logger"
+	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
+	"windshift/internal/services"
 )
 
 // oneYearAgoCutoff returns a dialect-appropriate SQL fragment that evaluates
@@ -26,9 +30,18 @@ func oneYearAgoCutoff(driver string) string {
 // list_milestones
 // ----------------------------------------------------------------------------
 
+type createMilestoneArgs struct {
+	WorkspaceID int    `json:"workspace_id" jsonschema:"Workspace to create the milestone in"`
+	Name        string `json:"name" jsonschema:"Milestone name"`
+	Description string `json:"description,omitempty" jsonschema:"Milestone description (TipTap JSON or plain text)"`
+	TargetDate  string `json:"target_date,omitempty" jsonschema:"Target date in YYYY-MM-DD format"`
+	Status      string `json:"status,omitempty" jsonschema:"Initial status: planning, in-progress, completed, or cancelled (default planning)"` //nolint:misspell // British spelling matches the persisted planning status
+	CategoryID  *int   `json:"category_id,omitempty" jsonschema:"Milestone category ID"`
+}
+
 type listMilestonesArgs struct {
 	WorkspaceID   int    `json:"workspace_id,omitempty" jsonschema:"Filter to a specific workspace"`
-	Status        string `json:"status,omitempty" jsonschema:"Filter by status: planning, in-progress, completed, canceled"`
+	Status        string `json:"status,omitempty" jsonschema:"Filter by status: planning, in-progress, completed, cancelled"` //nolint:misspell // British spelling matches the persisted planning status
 	IncludeGlobal *bool  `json:"include_global,omitempty" jsonschema:"Include cross-workspace milestones (default true)"`
 }
 
@@ -47,13 +60,39 @@ type listMilestonesOut struct {
 	Milestones []milestoneDTO `json:"milestones"`
 }
 
+func milestoneToDTO(m *services.MilestoneResult) milestoneDTO {
+	result := milestoneDTO{
+		ID:            m.ID,
+		Name:          m.Name,
+		Description:   m.Description,
+		Status:        m.Status,
+		TargetDate:    m.TargetDate,
+		CategoryName:  m.CategoryName,
+		WorkspaceName: m.WorkspaceName,
+	}
+	if m.WorkspaceID != nil {
+		result.WorkspaceID = *m.WorkspaceID
+	}
+	return result
+}
+
 // ----------------------------------------------------------------------------
 // list_iterations
 // ----------------------------------------------------------------------------
 
+type createIterationArgs struct {
+	WorkspaceID int    `json:"workspace_id" jsonschema:"Workspace to create the iteration in"`
+	Name        string `json:"name" jsonschema:"Iteration name"`
+	Description string `json:"description,omitempty" jsonschema:"Iteration description (TipTap JSON or plain text)"`
+	StartDate   string `json:"start_date" jsonschema:"Start date in YYYY-MM-DD format"`
+	EndDate     string `json:"end_date" jsonschema:"End date in YYYY-MM-DD format"`
+	Status      string `json:"status,omitempty" jsonschema:"Initial status: planned, active, completed, or cancelled (default planned)"` //nolint:misspell // British spelling matches the persisted planning status
+	TypeID      *int   `json:"type_id,omitempty" jsonschema:"Iteration type ID"`
+}
+
 type listIterationsArgs struct {
 	WorkspaceID   int    `json:"workspace_id,omitempty" jsonschema:"Filter to a specific workspace"`
-	Status        string `json:"status,omitempty" jsonschema:"Filter by status: planned, active, completed, canceled"`
+	Status        string `json:"status,omitempty" jsonschema:"Filter by status: planned, active, completed, cancelled"` //nolint:misspell // British spelling matches the persisted planning status
 	IncludeGlobal *bool  `json:"include_global,omitempty" jsonschema:"Include cross-workspace iterations (default true)"`
 }
 
@@ -71,6 +110,23 @@ type iterationDTO struct {
 
 type listIterationsOut struct {
 	Iterations []iterationDTO `json:"iterations"`
+}
+
+func iterationToDTO(iter *services.IterationResult) iterationDTO {
+	result := iterationDTO{
+		ID:            iter.ID,
+		Name:          iter.Name,
+		Description:   iter.Description,
+		Status:        iter.Status,
+		StartDate:     iter.StartDate,
+		EndDate:       iter.EndDate,
+		TypeName:      iter.TypeName,
+		WorkspaceName: iter.WorkspaceName,
+	}
+	if iter.WorkspaceID != nil {
+		result.WorkspaceID = *iter.WorkspaceID
+	}
+	return result
 }
 
 // ----------------------------------------------------------------------------
@@ -126,6 +182,62 @@ type listRecentActivityOut struct {
 }
 
 func init() {
+	Register(Default, Tool[createMilestoneArgs]{
+		Name:        "create_milestone",
+		Description: "Create a milestone in an accessible workspace.",
+		Scopes:      []string{auth.ScopeItemsWrite},
+		Run: func(_ context.Context, env *Env, args createMilestoneArgs) (any, error) {
+			if strings.TrimSpace(args.Name) == "" {
+				return map[string]string{"error": "name is required"}, nil
+			}
+			if !env.HasWorkspaceAccess(args.WorkspaceID) {
+				return map[string]string{"error": "workspace not found"}, nil
+			}
+			canEdit, err := env.PermService.HasWorkspacePermission(env.UserID, args.WorkspaceID, models.PermissionItemEdit)
+			if err != nil {
+				return nil, err
+			}
+			if !canEdit {
+				return map[string]string{"error": "workspace not found"}, nil
+			}
+			if args.TargetDate != "" {
+				if _, err := time.Parse("2006-01-02", args.TargetDate); err != nil {
+					return map[string]string{"error": "invalid target_date format, use YYYY-MM-DD"}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
+				}
+			}
+
+			name := args.Name
+			description := args.Description
+			sanitize.ApplyAllWithWarnings(
+				sanitize.Pair{Target: &name, Policy: sanitize.PlainTextField, Label: "Name"},
+				sanitize.Pair{Target: &description, Policy: sanitize.RichText, Label: "Description"},
+			)
+			if strings.TrimSpace(name) == "" {
+				return map[string]string{"error": "name is required"}, nil
+			}
+
+			var targetDate *string
+			if args.TargetDate != "" {
+				targetDate = &args.TargetDate
+			}
+			workspaceID := args.WorkspaceID
+			milestone, err := services.NewPlanningService(env.DB).CreateMilestone(services.CreateMilestoneParams{
+				Name:        name,
+				Description: description,
+				TargetDate:  targetDate,
+				Status:      args.Status,
+				CategoryID:  args.CategoryID,
+				IsGlobal:    false,
+				WorkspaceID: &workspaceID,
+			})
+			if err != nil {
+				return map[string]string{"error": fmt.Sprintf("create failed: %s", err.Error())}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
+			}
+			env.AuditWrite(logger.ResourceMilestone, milestone.ID, "create_milestone", milestone.Name)
+			return milestoneToDTO(milestone), nil
+		},
+	})
+
 	Register(Default, Tool[listMilestonesArgs]{
 		Name:        "list_milestones",
 		Description: "List milestones the user can see, with optional workspace, status and global-include filters.",
@@ -189,6 +301,71 @@ func init() {
 				return nil, err
 			}
 			return out, nil
+		},
+	})
+
+	Register(Default, Tool[createIterationArgs]{
+		Name:        "create_iteration",
+		Description: "Create an iteration in an accessible workspace.",
+		Scopes:      []string{auth.ScopeItemsWrite},
+		Run: func(_ context.Context, env *Env, args createIterationArgs) (any, error) {
+			if strings.TrimSpace(args.Name) == "" {
+				return map[string]string{"error": "name is required"}, nil
+			}
+			if strings.TrimSpace(args.StartDate) == "" {
+				return map[string]string{"error": "start_date is required"}, nil
+			}
+			if strings.TrimSpace(args.EndDate) == "" {
+				return map[string]string{"error": "end_date is required"}, nil
+			}
+			if !env.HasWorkspaceAccess(args.WorkspaceID) {
+				return map[string]string{"error": "workspace not found"}, nil
+			}
+			canEdit, err := env.PermService.HasWorkspacePermission(env.UserID, args.WorkspaceID, models.PermissionItemEdit)
+			if err != nil {
+				return nil, err
+			}
+			if !canEdit {
+				return map[string]string{"error": "workspace not found"}, nil
+			}
+			startDate, err := time.Parse("2006-01-02", args.StartDate)
+			if err != nil {
+				return map[string]string{"error": "invalid start_date format, use YYYY-MM-DD"}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
+			}
+			endDate, err := time.Parse("2006-01-02", args.EndDate)
+			if err != nil {
+				return map[string]string{"error": "invalid end_date format, use YYYY-MM-DD"}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
+			}
+			if endDate.Before(startDate) {
+				return map[string]string{"error": "end_date must be on or after start_date"}, nil
+			}
+
+			name := args.Name
+			description := args.Description
+			sanitize.ApplyAllWithWarnings(
+				sanitize.Pair{Target: &name, Policy: sanitize.PlainTextField, Label: "Name"},
+				sanitize.Pair{Target: &description, Policy: sanitize.RichText, Label: "Description"},
+			)
+			if strings.TrimSpace(name) == "" {
+				return map[string]string{"error": "name is required"}, nil
+			}
+
+			workspaceID := args.WorkspaceID
+			iteration, err := services.NewPlanningService(env.DB).CreateIteration(services.CreateIterationParams{
+				Name:        name,
+				Description: description,
+				StartDate:   args.StartDate,
+				EndDate:     args.EndDate,
+				Status:      args.Status,
+				TypeID:      args.TypeID,
+				IsGlobal:    false,
+				WorkspaceID: &workspaceID,
+			})
+			if err != nil {
+				return map[string]string{"error": fmt.Sprintf("create failed: %s", err.Error())}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
+			}
+			env.AuditWrite(logger.ResourceIteration, iteration.ID, "create_iteration", iteration.Name)
+			return iterationToDTO(iteration), nil
 		},
 	})
 

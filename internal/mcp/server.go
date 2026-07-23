@@ -16,13 +16,15 @@ import (
 
 // Deps holds the dependencies needed by the MCP server.
 type Deps struct {
-	DB                    database.Database
-	TokenManager          *auth.TokenManager
-	Auth                  AuthConfig
-	PermissionService     *services.PermissionService
-	TimePermissionService *services.TimePermissionService
-	TimerService          *services.TimerService
-	CommentService        *services.CommentService
+	DB                     database.Database
+	TokenManager           *auth.TokenManager
+	Auth                   AuthConfig
+	PermissionService      *services.PermissionService
+	TimePermissionService  *services.TimePermissionService
+	TimerService           *services.TimerService
+	CommentService         *services.CommentService
+	ItemDeletionService    *services.ItemDeletionApplicationService
+	PageApplicationService *services.PageApplicationService
 	// ActionService is the optional cache-invalidation hook used by the
 	// create_action tool. Nil-safe — when unset, newly created actions
 	// fire after the next periodic cache refresh instead of immediately.

@@ -41,6 +41,21 @@ type Deps struct {
 	// a bare service when nil so embedders that haven't wired this yet still
 	// persist comments, but those comments won't fire notifications.
 	CommentService *services.CommentService
+	// ItemCreationService is the fully wired user-facing creation pipeline.
+	// Sharing it with the cookie handler keeps normalization, validation,
+	// persistence, and committed-item side effects identical across surfaces.
+	ItemCreationService *services.ItemCreationService
+	// ItemUpdateApplicationService is the fully wired user-facing update
+	// pipeline. Sharing it keeps activity tracking, cache invalidation,
+	// committed-item events, and mention processing identical across surfaces.
+	ItemUpdateApplicationService *services.ItemUpdateApplicationService
+	// ItemDeletionApplicationService is the fully wired destructive pipeline.
+	// It owns the exact item.delete permission, cascade result, cache
+	// invalidation, and committed delete event shared by REST v1 and MCP.
+	ItemDeletionApplicationService *services.ItemDeletionApplicationService
+	// PageApplicationService is the permission-aware mutation/audit pipeline
+	// shared by cookie, REST v1, and MCP page operations.
+	PageApplicationService *services.PageApplicationService
 	// AssetPermissionService gates the v1 asset surface against the
 	// per-set role model. Shared with the cookie-auth handler so both
 	// surfaces consult one role-check pipeline. The v1 router constructs

@@ -3,62 +3,31 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
-	"log/slog"
 	"net/http"
 	"strconv"
-	"time"
 
 	"windshift/internal/logger"
-	"windshift/internal/models"
 	"windshift/internal/repository"
-	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 )
 
 type TestRunHandler struct {
-	service     *services.TestRunService
-	testRunRepo *repository.TestRunRepository
-	itemRepo    *repository.ItemRepository
-	auditor     *logger.Auditor
-}
-
-type testRunResultResponse struct {
-	models.TestResult
-	TestCaseTitle string `json:"test_case_title"`
-}
-
-type testRunStepResultResponse struct {
-	StepID       int        `json:"step_id"`
-	TestCaseID   int        `json:"test_case_id"`
-	Status       string     `json:"status"`
-	ActualResult string     `json:"actual_result"`
-	Notes        string     `json:"notes"`
-	ItemID       *int       `json:"item_id"`
-	ExecutedAt   *time.Time `json:"executed_at"`
+	service *services.TestRunService
+	auditor *logger.Auditor
 }
 
 // TestRunDetailResponse is the complete read model shared by execution and
 // completed-run detail screens.
-type TestRunDetailResponse struct {
-	Run         *models.TestRun                      `json:"run"`
-	TestCases   []models.TestCase                    `json:"test_cases"`
-	Results     []testRunResultResponse              `json:"results"`
-	StepResults map[string]testRunStepResultResponse `json:"step_results"`
-}
+type TestRunDetailResponse = services.TestRunDetail
 
 func NewTestRunHandlerWithPool(
 	service *services.TestRunService,
-	testRunRepo *repository.TestRunRepository,
-	itemRepo *repository.ItemRepository,
 	auditor *logger.Auditor,
 ) *TestRunHandler {
 	return &TestRunHandler{
-		service:     service,
-		testRunRepo: testRunRepo,
-		itemRepo:    itemRepo,
-		auditor:     auditor,
+		service: service,
+		auditor: auditor,
 	}
 }
 
@@ -126,7 +95,7 @@ func (h *TestRunHandler) GetDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	run, err := h.service.GetByID(runID, workspaceID)
+	detail, err := h.service.GetDetail(runID, workspaceID)
 	if errors.Is(err, repository.ErrNotFound) {
 		respondNotFound(w, r, "test_run")
 		return
@@ -136,49 +105,7 @@ func (h *TestRunHandler) GetDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	testCases, err := h.testRunRepo.FindCasesWithStepsForRun(runID, workspaceID)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	resultRows, err := h.testRunRepo.FindResultsWithTestCase(runID, workspaceID)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	stepRows, err := h.testRunRepo.FindStepResultsForRun(runID, workspaceID)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-
-	results := make([]testRunResultResponse, 0, len(resultRows))
-	for _, row := range resultRows {
-		results = append(results, testRunResultResponse{
-			TestResult:    row.TestResult,
-			TestCaseTitle: row.TestCaseTitle,
-		})
-	}
-	stepResults := make(map[string]testRunStepResultResponse, len(stepRows))
-	for _, row := range stepRows {
-		key := fmt.Sprintf("%d_%d", row.TestCaseID, row.StepID)
-		stepResults[key] = testRunStepResultResponse{
-			StepID:       row.StepID,
-			TestCaseID:   row.TestCaseID,
-			Status:       row.Status,
-			ActualResult: row.ActualResult,
-			Notes:        row.Notes,
-			ItemID:       row.ItemID,
-			ExecutedAt:   row.ExecutedAt,
-		}
-	}
-
-	respondJSONOK(w, TestRunDetailResponse{
-		Run:         run,
-		TestCases:   testCases,
-		Results:     results,
-		StepResults: stepResults,
-	})
+	respondJSONOK(w, detail)
 }
 
 func (h *TestRunHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -199,8 +126,6 @@ func (h *TestRunHandler) Create(w http.ResponseWriter, r *http.Request) {
 		respondValidationError(w, r, "Invalid JSON")
 		return
 	}
-
-	input.Name = sanitize.PlainTextField.Sanitize(input.Name)
 
 	run, err := h.service.Create(workspaceID, services.TestRunCreateRequest{
 		Name:       input.Name,
@@ -264,8 +189,6 @@ func (h *TestRunHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	input.Name = sanitize.PlainTextField.Sanitize(input.Name)
-
 	_, err := h.service.Update(id, workspaceID, services.TestRunUpdateRequest{
 		Name:       input.Name,
 		AssigneeID: input.AssigneeID,
@@ -317,23 +240,10 @@ func (h *TestRunHandler) GetResults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	type ResultWithTestCase struct {
-		models.TestResult
-		TestCaseTitle string `json:"test_case_title"`
-	}
-
-	rows, err := h.testRunRepo.FindResultsWithTestCase(runID, workspaceID)
+	results, err := h.service.ListResults(runID, workspaceID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
-	}
-
-	results := make([]ResultWithTestCase, 0, len(rows))
-	for _, row := range rows {
-		results = append(results, ResultWithTestCase{
-			TestResult:    row.TestResult,
-			TestCaseTitle: row.TestCaseTitle,
-		})
 	}
 
 	respondJSONOK(w, results)
@@ -355,17 +265,6 @@ func (h *TestRunHandler) UpdateResult(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify test run belongs to workspace
-	exists, err := h.service.Exists(runID, workspaceID)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	if !exists {
-		respondNotFound(w, r, "test_run")
-		return
-	}
-
 	var input struct {
 		Status       string `json:"status"`
 		ActualResult string `json:"actual_result"`
@@ -376,13 +275,7 @@ func (h *TestRunHandler) UpdateResult(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Sanitize user input to prevent XSS. Use SanitizeDescription (preserves
-	// <br /> blank-line markers emitted by MilkdownEditor) rather than
-	// SanitizeCommentContent (which strips all HTML including <br>).
-	input.ActualResult = sanitize.RichText.Sanitize(input.ActualResult)
-	input.Notes = sanitize.RichText.Sanitize(input.Notes)
-
-	if err := h.service.UpdateResult(runID, resultID, services.TestResultUpdateRequest{
+	if _, err := h.service.UpdateResult(workspaceID, runID, resultID, services.TestResultUpdateRequest{
 		Status:       input.Status,
 		ActualResult: input.ActualResult,
 		Notes:        input.Notes,
@@ -445,66 +338,25 @@ func (h *TestRunHandler) UpdateStepResult(w http.ResponseWriter, r *http.Request
 		Notes        string `json:"notes"`
 		ItemID       *int   `json:"item_id,omitempty"`
 	}
-	var err error
-	if err = json.NewDecoder(r.Body).Decode(&update); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
 		respondValidationError(w, r, "Invalid JSON")
 		return
 	}
 
-	// Sanitize user input to prevent XSS. SanitizeDescription preserves
-	// <br /> blank-line markers from MilkdownEditor; SanitizeCommentContent
-	// would strip them along with all other HTML.
-	update.ActualResult = sanitize.RichText.Sanitize(update.ActualResult)
-	update.Notes = sanitize.RichText.Sanitize(update.Notes)
-
-	// Verify item belongs to same workspace if provided
-	if update.ItemID != nil {
-		itemWsID, err := h.itemRepo.GetWorkspaceID(*update.ItemID)
-		if err != nil || itemWsID != workspaceID {
+	if err := h.service.UpdateStepResult(workspaceID, runID, stepID, services.TestStepResultUpdateRequest{
+		Status: update.Status, ActualResult: update.ActualResult, Notes: update.Notes, ItemID: update.ItemID,
+	}); err != nil {
+		switch {
+		case errors.Is(err, services.ErrTestRunItemNotFound):
 			respondNotFound(w, r, "item")
-			return
-		}
-	}
-
-	testResultID, err := h.testRunRepo.FindTestResultIDForStep(runID, stepID, workspaceID)
-	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
+		case errors.Is(err, repository.ErrNotFound):
 			respondNotFound(w, r, "test_result")
-		} else {
+		case errors.Is(err, services.ErrInvalidTestResultStatus):
+			respondValidationError(w, r, err.Error())
+		default:
 			respondInternalError(w, r, err)
 		}
 		return
-	}
-
-	existingID, findErr := h.testRunRepo.FindStepResultID(testResultID, stepID)
-
-	input := repository.StepResultInput{
-		TestResultID: testResultID,
-		StepID:       stepID,
-		Status:       update.Status,
-		ActualResult: update.ActualResult,
-		Notes:        update.Notes,
-		ItemID:       update.ItemID,
-	}
-
-	switch {
-	case errors.Is(findErr, repository.ErrNotFound):
-		err = h.testRunRepo.CreateStepResult(input)
-	case findErr == nil:
-		err = h.testRunRepo.UpdateStepResult(existingID, input)
-	default:
-		err = findErr
-	}
-
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-
-	// Update the parent test case status based on step results
-	err = h.updateTestCaseStatus(testResultID)
-	if err != nil {
-		slog.Warn("failed to update test case status", slog.Any("error", err), slog.Int("test_result_id", testResultID))
 	}
 
 	w.WriteHeader(http.StatusOK)
@@ -518,79 +370,13 @@ func (h *TestRunHandler) GetStepResults(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	rows, err := h.testRunRepo.FindStepResultsForRun(runID, workspaceID)
+	stepResults, err := h.service.ListStepResults(runID, workspaceID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
 
-	stepResults := make(map[string]interface{}, len(rows))
-	for _, row := range rows {
-		compositeKey := fmt.Sprintf("%d_%d", row.TestCaseID, row.StepID)
-		stepResults[compositeKey] = map[string]interface{}{
-			"step_id":       row.StepID,
-			"test_case_id":  row.TestCaseID,
-			"status":        row.Status,
-			"actual_result": row.ActualResult,
-			"notes":         row.Notes,
-			"item_id":       row.ItemID,
-			"executed_at":   row.ExecutedAt,
-		}
-	}
-
 	respondJSONOK(w, stepResults)
-}
-
-// updateTestCaseStatus updates the test case status based on its step results
-func (h *TestRunHandler) updateTestCaseStatus(testResultID int) error {
-	stepStatuses, err := h.testRunRepo.FindStepResultStatuses(testResultID)
-	if err != nil {
-		return err
-	}
-
-	// If no step results exist, leave test case as not_run
-	if len(stepStatuses) == 0 {
-		return nil
-	}
-
-	// Determine overall test case status based on step results
-	var finalStatus string
-	hasBlocked := false
-	hasFailed := false
-	hasSkipped := false
-	allPassed := true
-
-	for _, status := range stepStatuses {
-		switch status {
-		case "failed":
-			hasFailed = true
-			allPassed = false
-		case "blocked":
-			hasBlocked = true
-			allPassed = false
-		case "skipped":
-			hasSkipped = true
-			allPassed = false
-		case "not_run":
-			allPassed = false
-		}
-	}
-
-	// Priority: failed > blocked > skipped > passed
-	switch {
-	case hasFailed:
-		finalStatus = "failed"
-	case hasBlocked:
-		finalStatus = "blocked"
-	case hasSkipped:
-		finalStatus = "skipped"
-	case allPassed:
-		finalStatus = "passed"
-	default:
-		finalStatus = "not_run"
-	}
-
-	return h.testRunRepo.SetTestResultStatus(testResultID, finalStatus)
 }
 
 // Delete removes a test run and all associated results
@@ -634,21 +420,13 @@ func (h *TestRunHandler) LinkItemToTestResult(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Verify item belongs to same workspace
-	itemWsID, err := h.itemRepo.GetWorkspaceID(data.ItemID)
-	if err != nil || itemWsID != workspaceID {
+	if err := h.service.LinkResultItem(workspaceID, resultID, data.ItemID); errors.Is(err, services.ErrTestRunItemNotFound) {
 		respondNotFound(w, r, "item")
 		return
-	}
-
-	// Verify test result belongs to workspace (via test_runs)
-	owned, err := h.testRunRepo.TestResultBelongsToWorkspace(resultID, workspaceID)
-	if err != nil || !owned {
+	} else if errors.Is(err, repository.ErrNotFound) {
 		respondNotFound(w, r, "test_result")
 		return
-	}
-
-	if err := h.testRunRepo.LinkResultToItem(resultID, data.ItemID); err != nil {
+	} else if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
@@ -674,13 +452,10 @@ func (h *TestRunHandler) UnlinkItemFromTestResult(w http.ResponseWriter, r *http
 		return
 	}
 
-	owned, err := h.testRunRepo.TestResultBelongsToWorkspace(resultID, workspaceID)
-	if err != nil || !owned {
+	if err := h.service.UnlinkResultItem(workspaceID, resultID, itemID); errors.Is(err, repository.ErrNotFound) {
 		respondNotFound(w, r, "test_result")
 		return
-	}
-
-	if err := h.testRunRepo.UnlinkResultFromItem(resultID, itemID); err != nil {
+	} else if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
@@ -700,9 +475,13 @@ func (h *TestRunHandler) GetTestResultItems(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	items, err := h.itemRepo.ListItemsLinkedToTestResult(resultID, workspaceID)
+	items, err := h.service.ListResultItems(workspaceID, resultID)
 	if err != nil {
-		respondInternalError(w, r, err)
+		if errors.Is(err, repository.ErrNotFound) {
+			respondNotFound(w, r, "test_result")
+		} else {
+			respondInternalError(w, r, err)
+		}
 		return
 	}
 
