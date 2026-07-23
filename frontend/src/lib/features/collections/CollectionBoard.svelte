@@ -338,13 +338,16 @@
     if (collectionId || workspaceId) {
       loadBoardConfig();
     }
+    // Always scope the cache to the active view. Passing null clears a previous
+    // workspace scope before a global collection starts loading its own
+    // per-workspace matrices.
+    untrack(() => statusTransitionStore.initialize(workspaceId));
     // Preload the whole (item_type, status) transition matrix once per view in
     // a single request, instead of one /items/{id}/available-status-transitions
     // per unique pair. Keyed on the view, not the item set.
     if (workspaceId) {
       untrack(() => {
         loadWorkspaceBoardState(viewSignature, workspaceId);
-        statusTransitionStore.initialize(workspaceId);
         statusTransitionStore.preloadForWorkspace(workspaceId);
       });
     }

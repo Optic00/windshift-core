@@ -3,9 +3,10 @@ import { api } from '../api.js';
 import { BaseCacheStore } from './BaseCacheStore.svelte.js';
 
 const TTL_MS = 10 * 60 * 1000; // 10 minutes
-// Keep the per-item fallback comfortably below the server's per-user request
-// cap. The workspace matrix normally makes this path unnecessary, but global
-// collections have no single workspace matrix to preload.
+// Keep matrix and legacy per-item fallback preloads comfortably below the
+// server's per-user request cap. Global collections can span many workspaces,
+// so their workspace matrices must be bounded too.
+const MAX_CONCURRENT_MATRIX_FETCHES = 4;
 const MAX_CONCURRENT_PAIR_FETCHES = 4;
 
 /**
@@ -23,6 +24,16 @@ class StatusTransitionStore extends BaseCacheStore {
 
   _cacheKey(itemTypeId, statusId) {
     return `${itemTypeId}:${statusId}`;
+  }
+
+  _workspaceCacheKey(workspaceId) {
+    return `ws:${workspaceId}`;
+  }
+
+  _hasFreshWorkspaceMatrix(workspaceId) {
+    if (!workspaceId) return false;
+    const entry = this._cache.get(this._workspaceCacheKey(workspaceId));
+    return Boolean(entry && Date.now() - entry.fetchedAt <= TTL_MS);
   }
 
   /**
@@ -54,8 +65,9 @@ class StatusTransitionStore extends BaseCacheStore {
    * requests into one. In-flight requests for the same workspace are deduped.
    */
   async preloadForWorkspace(workspaceId) {
-    if (!workspaceId) return;
-    const pendingKey = `ws:${workspaceId}`;
+    if (!workspaceId) return false;
+    const pendingKey = this._workspaceCacheKey(workspaceId);
+    if (this._hasFreshWorkspaceMatrix(workspaceId)) return true;
     if (this._pending.has(pendingKey)) return this._pending.get(pendingKey);
     const generation = this._generation;
     const scopedWorkspaceId = this.workspaceId;
@@ -63,17 +75,20 @@ class StatusTransitionStore extends BaseCacheStore {
     const promise = (async () => {
       try {
         const result = await api.workspaces.getTransitionMatrix(workspaceId);
-        if (generation !== this._generation || scopedWorkspaceId !== this.workspaceId) return;
+        if (generation !== this._generation || scopedWorkspaceId !== this.workspaceId) return false;
         const matrix = result?.transitions || {};
         const fetchedAt = Date.now();
         for (const [key, transitions] of Object.entries(matrix)) {
           this._cache.set(key, { transitions: transitions || [], fetchedAt });
         }
+        this._cache.set(pendingKey, { transitions: [], fetchedAt });
+        return true;
       } catch (err) {
         console.error(
           `StatusTransitionStore: failed to preload matrix for workspace ${workspaceId}`,
           err
         );
+        return false;
       } finally {
         if (this._pending.get(pendingKey) === promise) this._pending.delete(pendingKey);
       }
@@ -91,11 +106,29 @@ class StatusTransitionStore extends BaseCacheStore {
   async preloadForItems(items) {
     if (!items || items.length === 0) return;
 
-    // If a workspace-wide matrix preload is in flight, defer to it — it will
-    // populate every pair, leaving this call a no-op (avoids racing the matrix
-    // with per-pair fetches on first board load).
-    const wsPending = this.workspaceId ? this._pending.get(`ws:${this.workspaceId}`) : null;
-    if (wsPending) await wsPending;
+    if (this.workspaceId) {
+      // If a workspace-wide matrix preload is in flight, defer to it — it will
+      // populate every pair, leaving this call a no-op (avoids racing the matrix
+      // with per-pair fetches on first board load).
+      const wsPending = this._pending.get(this._workspaceCacheKey(this.workspaceId));
+      if (wsPending) await wsPending;
+    } else {
+      // Global collections have no route-level workspaceId, but every returned
+      // item still identifies its owning workspace. Load one matrix per unique
+      // workspace instead of falling back to one request per type/status pair.
+      const workspaceIds = [
+        ...new Set(items.map((item) => Number(item.workspace_id)).filter(Boolean)),
+      ];
+      let nextWorkspaceIndex = 0;
+      const fetchNextMatrix = async () => {
+        while (nextWorkspaceIndex < workspaceIds.length) {
+          const workspaceId = workspaceIds[nextWorkspaceIndex++];
+          await this.preloadForWorkspace(workspaceId);
+        }
+      };
+      const matrixWorkerCount = Math.min(MAX_CONCURRENT_MATRIX_FETCHES, workspaceIds.length);
+      await Promise.all(Array.from({ length: matrixWorkerCount }, () => fetchNextMatrix()));
+    }
 
     // Group items by unique (itemTypeId, statusId), pick one representative per group
     const representatives = new Map();
@@ -106,6 +139,10 @@ class StatusTransitionStore extends BaseCacheStore {
       // Skip if already cached and not expired
       const existing = this._cache.get(key);
       if (existing && Date.now() - existing.fetchedAt <= TTL_MS) continue;
+
+      // A successfully loaded workspace matrix is authoritative, including
+      // absent pairs (personal or unconfigured workspaces have no moves).
+      if (this._hasFreshWorkspaceMatrix(item.workspace_id)) continue;
 
       // Skip if we already picked a representative for this pair
       if (representatives.has(key)) continue;
