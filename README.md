@@ -45,20 +45,9 @@ Want to build from source? See [BUILD.md](BUILD.md). For local development and c
 
 ## Contributing
 
-Code contributions, bug reports, and feedback are all welcome here on GitHub. Open pull requests against `main`; use GitHub Issues and Discussions for bug reports and feedback. We also keep a [backup mirror on Codeberg](https://codeberg.org/realigned/windshift-core), but development happens on GitHub.
+Code contributions, bug reports, and feedback are all welcome here on GitHub. Open pull requests against `main`; use GitHub Issues and Discussions for bug reports and feedback.
 
 We are especially interested in early bug reports and real-world feedback about OIDC providers.
-
-### Where development happens
-
-Windshift used to be developed on Codeberg. This GitHub repository was a
-read-only push mirror, and pull requests went to Codeberg. The push mirroring
-from Codeberg to GitHub often failed, so we moved back. GitHub is now the main
-repository for development and pull requests.
-
-Codeberg is now only a backup and does not accept contributions. If you have an
-open pull request on Codeberg, or you cloned the project from there, please move
-your work to this GitHub repository.
 
 ## Tech stack
 

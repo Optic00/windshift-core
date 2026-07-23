@@ -2,7 +2,7 @@
 
 Thanks for your interest in contributing! See the [README](README.md) for a project overview.
 
-> **Note:** Development and contributions happen here on GitHub. Please fork, clone, and open pull requests against this repository. A [backup mirror on Codeberg](https://codeberg.org/realigned/windshift-core) exists but is not the place to contribute.
+> **Note:** Development and contributions happen here on GitHub. Please fork, clone, and open pull requests against this repository.
 
 ## Prerequisites
 
