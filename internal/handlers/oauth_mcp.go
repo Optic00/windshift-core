@@ -90,8 +90,11 @@ type dynamicClientRegistrationResponse struct {
 }
 
 // RegisterDynamicClient implements a constrained RFC 7591 registration
-// endpoint for MCP clients. It creates public clients only: authorization-code
-// plus refresh-token grants, S256 PKCE, and HTTPS or loopback callbacks.
+// endpoint for public OAuth clients. It creates public clients only:
+// authorization-code plus refresh-token grants, S256 PKCE, and HTTPS or
+// loopback callbacks. Registration does not select a protected-resource
+// audience; clients that need one (such as MCP clients) bind it on the
+// authorization request via RFC 8707's resource parameter.
 func (h *OAuthHandler) RegisterDynamicClient(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, oauthRegistrationMaxBytes)
 	var req dynamicClientRegistrationRequest
@@ -117,15 +120,15 @@ func (h *OAuthHandler) RegisterDynamicClient(w http.ResponseWriter, r *http.Requ
 	}
 	displayName := strings.TrimSpace(req.ClientName)
 	if displayName == "" {
-		displayName = "MCP client"
+		displayName = "OAuth client"
 	}
-	slug := "mcp-" + strings.TrimPrefix(clientID, "wsoc_")[:16]
+	slug := "oauth-" + strings.TrimPrefix(clientID, "wsoc_")[:16]
 	redirectsJSON, _ := json.Marshal(req.RedirectURIs)
 	allowedScopes := nonAdminOAuthScopes()
 	scopesJSON, _ := json.Marshal(allowedScopes)
 
 	err = repository.NewOAuthClientRepository(h.db).CreateDynamicPublicClient(
-		slug, displayName, clientID, string(redirectsJSON), string(scopesJSON), h.mcpResourceURI,
+		slug, displayName, clientID, string(redirectsJSON), string(scopesJSON), "",
 	)
 	if err != nil {
 		if errors.Is(err, repository.ErrDuplicateEntry) {
