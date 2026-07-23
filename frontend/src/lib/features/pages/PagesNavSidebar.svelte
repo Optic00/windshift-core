@@ -420,6 +420,12 @@
   }
 
   function selectPage(id) {
+    // Selecting a page opens its own subtree so its direct children are
+    // immediately available. Descendant subtrees keep their existing state.
+    if ((childCountById.get(id) || 0) > 0 && !expandedIds.has(id)) {
+      expandedIds = new Set(expandedIds).add(id);
+      persistExpanded();
+    }
     navigate(`/workspaces/${workspaceId}/pages/${id}`);
   }
 
@@ -808,7 +814,12 @@
           {:else}
             <span class="chevron chevron--placeholder" aria-hidden="true"></span>
           {/if}
-          <button class="page-button" type="button" onclick={() => selectPage(page.id)}>
+          <button
+            class="page-button"
+            type="button"
+            onclick={() => selectPage(page.id)}
+            data-testid="page-tree-page"
+          >
             {#if PageIcon}
               <PageIcon size={14} class="page-button__icon" style="color: {pageColor};" aria-hidden="true" />
             {/if}
