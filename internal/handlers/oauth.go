@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -38,6 +39,8 @@ const (
 	// bounding the per-request memory/CPU an unauthenticated caller can spend.
 	oauthTokenRequestMaxBytes = 64 << 10
 )
+
+var errOAuthRefreshAlreadyRedeemed = errors.New("refresh token already redeemed")
 
 // Standard RFC 6749 §5.2 error codes used in /token + redirect-back error
 // query strings. Strings are part of the wire contract — don't rename.
@@ -579,7 +582,11 @@ func (h *OAuthHandler) tokenRefreshToken(w http.ResponseWriter, r *http.Request,
 	// rotated_to_id from this row, including the new tokens the attacker
 	// might already hold.
 	if row.RevokedAt.Valid {
-		h.cascadeRevokeRefreshChain(row.ID)
+		if err := h.cascadeRevokeRefreshChain(r.Context(), row.ID); err != nil {
+			writeOAuthTokenError(w, http.StatusInternalServerError, oauthErrServerError,
+				"failed to revoke compromised refresh-token family")
+			return
+		}
 		h.auditClient(r, client, "oauth.token.refresh_replay", map[string]interface{}{
 			"refresh_id": row.ID,
 		})
@@ -599,40 +606,36 @@ func (h *OAuthHandler) tokenRefreshToken(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	resp, err := h.mintAccessAndRefresh(client, row.UserID, row.AgentID, scopes, resource)
+	rotation, err := h.rotateRefreshToken(r.Context(), client, row, scopes, resource)
+	if errors.Is(err, errOAuthRefreshAlreadyRedeemed) {
+		// Another request claimed this token after our initial lookup. Treat
+		// the losing redemption as replay and revoke the complete family.
+		if revokeErr := h.cascadeRevokeRefreshChain(r.Context(), row.ID); revokeErr != nil {
+			writeOAuthTokenError(w, http.StatusInternalServerError, oauthErrServerError,
+				"failed to revoke compromised refresh-token family")
+			return
+		}
+		h.auditClient(r, client, "oauth.token.refresh_replay", map[string]interface{}{
+			"refresh_id": row.ID,
+		})
+		writeOAuthTokenError(w, http.StatusBadRequest, oauthErrInvalidGrant,
+			"refresh_token has been revoked")
+		return
+	}
 	if err != nil {
 		writeOAuthTokenError(w, http.StatusInternalServerError, oauthErrServerError, err.Error())
 		return
 	}
 
-	// Rotate: the just-presented refresh is marked revoked + rotated_to the
-	// new id. The new id was returned by mintAccessAndRefresh; we need to
-	// look it up to write rotated_to_id (small extra query — could be
-	// folded into mintAccessAndRefresh later).
-	newRefreshHash := hashRefreshToken(resp.RefreshToken)
-	var newID int
-	if err := h.db.QueryRow(
-		`SELECT id FROM oauth_refresh_tokens WHERE token_hash = ?`, newRefreshHash,
-	).Scan(&newID); err == nil {
-		_, _ = h.db.ExecWrite(
-			`UPDATE oauth_refresh_tokens SET revoked_at = CURRENT_TIMESTAMP, rotated_to_id = ? WHERE id = ?`,
-			newID, row.ID,
-		)
-	}
-
-	// Revoke the old access token alongside the rotation so a leaked old
-	// access token doesn't keep working past its natural 1h.
-	_ = h.tokenManager.AdminRevokeToken(row.APITokenID)
-
 	h.auditClient(r, client, "oauth.token.refresh", map[string]interface{}{
 		"old_refresh_id": row.ID,
-		"new_refresh_id": newID,
+		"new_refresh_id": rotation.NewRefreshID,
 		"user_id":        row.UserID,
 		"agent_id":       row.AgentID,
 		"resource":       resource,
 	})
 
-	respondJSONOK(w, resp)
+	respondJSONOK(w, rotation.Response)
 }
 
 // findOrCreateClientAgent returns the per-(client, user) agent that all
@@ -738,6 +741,123 @@ func (h *OAuthHandler) mintAccessAndRefresh(client *oauthClientRow, userID, agen
 		ExpiresIn:    int(oauthAccessTTL.Seconds()),
 		RefreshToken: refreshPlain,
 		Scope:        strings.Join(scopes, " "),
+	}, nil
+}
+
+type oauthRefreshRotation struct {
+	Response     *oauthTokenResponse
+	NewRefreshID int
+}
+
+// rotateRefreshToken atomically claims the presented refresh token, creates
+// its replacement credential pair, links the lineage, and expires the old
+// access token. No credential is returned unless every write commits.
+func (h *OAuthHandler) rotateRefreshToken(ctx context.Context, client *oauthClientRow, old *oauthRefreshTokenRow, scopes []string, resource string) (*oauthRefreshRotation, error) {
+	tx, err := h.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin refresh rotation: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	claim, err := tx.ExecWriteContext(ctx, `
+		UPDATE oauth_refresh_tokens
+		SET revoked_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND revoked_at IS NULL
+	`, old.ID)
+	if err != nil {
+		return nil, fmt.Errorf("claim refresh token: %w", err)
+	}
+	affected, err := claim.RowsAffected()
+	if err != nil {
+		return nil, fmt.Errorf("check refresh-token claim: %w", err)
+	}
+	if affected != 1 {
+		return nil, errOAuthRefreshAlreadyRedeemed
+	}
+
+	accessExpiresAt := time.Now().Add(oauthAccessTTL)
+	tokenName := fmt.Sprintf("oauth-%s", client.Slug)
+	access, err := h.tokenManager.CreateTokenInTx(tx, old.AgentID, models.APITokenCreate{
+		Name:          tokenName,
+		Permissions:   scopes,
+		ExpiresAt:     &accessExpiresAt,
+		OAuthClientID: client.ClientID,
+		OAuthResource: resource,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("mint replacement access token: %w", err)
+	}
+
+	refreshPlain, err := generateOAuthRefreshToken()
+	if err != nil {
+		return nil, fmt.Errorf("generate replacement refresh token: %w", err)
+	}
+	scopesJSON, err := json.Marshal(scopes)
+	if err != nil {
+		return nil, fmt.Errorf("marshal replacement scopes: %w", err)
+	}
+	var newRefreshID int
+	if err := tx.QueryRowContext(ctx, `
+		INSERT INTO oauth_refresh_tokens (
+			token_hash, api_token_id, client_id, user_id, agent_id,
+			scopes, resource_uri, expires_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		RETURNING id
+	`, hashRefreshToken(refreshPlain), access.APIToken.ID, client.ClientID,
+		old.UserID, old.AgentID, string(scopesJSON), nullStringOrEmpty(resource),
+		time.Now().Add(oauthRefreshTTL)).Scan(&newRefreshID); err != nil {
+		return nil, fmt.Errorf("record replacement refresh token: %w", err)
+	}
+
+	link, err := tx.ExecWriteContext(ctx, `
+		UPDATE oauth_refresh_tokens
+		SET rotated_to_id = ?
+		WHERE id = ? AND revoked_at IS NOT NULL AND rotated_to_id IS NULL
+	`, newRefreshID, old.ID)
+	if err != nil {
+		return nil, fmt.Errorf("link refresh-token rotation: %w", err)
+	}
+	linked, err := link.RowsAffected()
+	if err != nil {
+		return nil, fmt.Errorf("check refresh-token link: %w", err)
+	}
+	if linked != 1 {
+		return nil, fmt.Errorf("link refresh-token rotation: expected one row, updated %d", linked)
+	}
+
+	// Keep the api_tokens row so its ON DELETE CASCADE cannot erase the old
+	// refresh row and defeat replay detection. Expiry makes the bearer token
+	// unusable while preserving the refresh lineage for later replay checks.
+	expire, err := tx.ExecWriteContext(ctx, `
+		UPDATE api_tokens
+		SET expires_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, old.APITokenID)
+	if err != nil {
+		return nil, fmt.Errorf("expire rotated access token: %w", err)
+	}
+	expired, err := expire.RowsAffected()
+	if err != nil {
+		return nil, fmt.Errorf("check rotated access-token expiry: %w", err)
+	}
+	if expired != 1 {
+		return nil, fmt.Errorf("expire rotated access token: expected one row, updated %d", expired)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit refresh rotation: %w", err)
+	}
+	h.tokenManager.InvalidateTokens([]int{old.APITokenID})
+
+	return &oauthRefreshRotation{
+		Response: &oauthTokenResponse{
+			AccessToken:  access.Token,
+			TokenType:    "Bearer",
+			ExpiresIn:    int(oauthAccessTTL.Seconds()),
+			RefreshToken: refreshPlain,
+			Scope:        strings.Join(scopes, " "),
+		},
+		NewRefreshID: newRefreshID,
 	}, nil
 }
 
@@ -855,11 +975,17 @@ func (h *OAuthHandler) lookupRefreshToken(plain string) (*oauthRefreshTokenRow, 
 //
 // Also revokes the api_tokens that those refresh rows point at, so leaked
 // access tokens get cut off at the same time.
-func (h *OAuthHandler) cascadeRevokeRefreshChain(startID int) {
-	// Walk the chain forward, collecting ids + api_token_ids.
+func (h *OAuthHandler) cascadeRevokeRefreshChain(ctx context.Context, startID int) error {
+	tx, err := h.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin refresh-family revocation: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Walk the chain forward, locking each refresh row and collecting the
+	// corresponding access-token ids for expiry.
 	var (
 		visited     = map[int]struct{}{}
-		ids         = []int{}
 		apiTokenIDs = []int{}
 		queue       = []int{startID}
 	)
@@ -870,16 +996,38 @@ func (h *OAuthHandler) cascadeRevokeRefreshChain(startID int) {
 			continue
 		}
 		visited[current] = struct{}{}
-		ids = append(ids, current)
+
+		// Lock this row before reading its successor. A concurrent redemption
+		// must update the same row to claim it, so it either loses to this
+		// revocation or commits its successor before this update returns. In
+		// the latter case the SELECT below observes and follows that successor.
+		locked, err := tx.ExecWriteContext(ctx, `
+			UPDATE oauth_refresh_tokens
+			SET revoked_at = COALESCE(revoked_at, CURRENT_TIMESTAMP)
+			WHERE id = ?
+		`, current)
+		if err != nil {
+			return fmt.Errorf("lock refresh-token family row %d: %w", current, err)
+		}
+		affected, err := locked.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("check refresh-token family row %d: %w", current, err)
+		}
+		if affected == 0 {
+			continue
+		}
 
 		var apiTokenID int
 		var rotatedTo sql.NullInt64
-		err := h.db.QueryRow(
+		err = tx.QueryRowContext(ctx,
 			`SELECT api_token_id, rotated_to_id FROM oauth_refresh_tokens WHERE id = ?`,
 			current,
 		).Scan(&apiTokenID, &rotatedTo)
-		if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
 			continue
+		}
+		if err != nil {
+			return fmt.Errorf("load refresh-token family row %d: %w", current, err)
 		}
 		apiTokenIDs = append(apiTokenIDs, apiTokenID)
 		if rotatedTo.Valid {
@@ -887,14 +1035,20 @@ func (h *OAuthHandler) cascadeRevokeRefreshChain(startID int) {
 		}
 	}
 
-	for _, id := range ids {
-		_, _ = h.db.ExecWrite(
-			`UPDATE oauth_refresh_tokens SET revoked_at = CURRENT_TIMESTAMP WHERE id = ? AND revoked_at IS NULL`, id,
-		)
-	}
 	for _, tid := range apiTokenIDs {
-		_ = h.tokenManager.AdminRevokeToken(tid)
+		if _, err := tx.ExecWriteContext(ctx, `
+			UPDATE api_tokens
+			SET expires_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+			WHERE id = ?
+		`, tid); err != nil {
+			return fmt.Errorf("expire refresh-family access token %d: %w", tid, err)
+		}
 	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit refresh-family revocation: %w", err)
+	}
+	h.tokenManager.InvalidateTokens(apiTokenIDs)
+	return nil
 }
 
 // oauthClientRow is the in-memory shape we use for client lookups inside

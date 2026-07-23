@@ -552,8 +552,23 @@ func (tm *TokenManager) ValidateToken(token string) (*models.User, *models.APITo
 
 // CreateToken creates a new API token for a user
 func (tm *TokenManager) CreateToken(userID int, request models.APITokenCreate) (*models.APITokenResponse, error) {
+	return tm.createToken(tm.db, userID, request)
+}
+
+// CreateTokenInTx creates an API token inside an existing transaction. It is
+// used when issuing the token is only one part of a larger credential update
+// that must either commit in full or leave no usable credentials behind.
+func (tm *TokenManager) CreateTokenInTx(tx database.Tx, userID int, request models.APITokenCreate) (*models.APITokenResponse, error) {
+	return tm.createToken(tx, userID, request)
+}
+
+type tokenRowStore interface {
+	QueryRow(query string, args ...interface{}) *sql.Row
+}
+
+func (tm *TokenManager) createToken(store tokenRowStore, userID int, request models.APITokenCreate) (*models.APITokenResponse, error) {
 	var userActive bool
-	if err := tm.db.QueryRow(`SELECT COALESCE(is_active, false) FROM users WHERE id = ?`, userID).Scan(&userActive); err != nil {
+	if err := store.QueryRow(`SELECT COALESCE(is_active, false) FROM users WHERE id = ?`, userID).Scan(&userActive); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("user not found")
 		}
@@ -586,7 +601,7 @@ func (tm *TokenManager) CreateToken(userID int, request models.APITokenCreate) (
 
 	// Insert token into database using RETURNING clause (supported by both SQLite 3.35+ and PostgreSQL)
 	var tokenID int64
-	err = tm.db.QueryRow(`
+	err = store.QueryRow(`
 		INSERT INTO api_tokens (
 			user_id, name, token_hash, token_prefix, permissions, expires_at,
 			is_temporary, oauth_client_id, oauth_resource
@@ -600,7 +615,7 @@ func (tm *TokenManager) CreateToken(userID int, request models.APITokenCreate) (
 	}
 
 	// Get the created token details
-	apiToken, err := tm.GetTokenByID(int(tokenID))
+	apiToken, err := getTokenByID(store, int(tokenID))
 	if err != nil {
 		return nil, err
 	}
@@ -622,7 +637,11 @@ func nullIfEmpty(value string) interface{} {
 
 // GetTokenByID retrieves a token by ID (without the actual token value)
 func (tm *TokenManager) GetTokenByID(id int) (*models.APIToken, error) {
-	row := tm.db.QueryRow(`
+	return getTokenByID(tm.db, id)
+}
+
+func getTokenByID(store tokenRowStore, id int) (*models.APIToken, error) {
+	row := store.QueryRow(`
 		SELECT t.id, t.user_id, t.name, t.token_prefix, t.permissions, t.is_temporary,
 		       t.expires_at, t.last_used_at, t.created_at, t.updated_at,
 		       u.email, u.username
