@@ -377,6 +377,28 @@ func (r *PageRepository) SetFracIndexTx(tx database.Tx, pageID int, fracIndex st
 	return nil
 }
 
+// ClearFracIndexesTx temporarily removes pages from the scoped frac_index
+// unique index before a sibling set is re-sequenced. Callers must assign final
+// keys in the same transaction so the temporary NULL values are never
+// committed.
+func (r *PageRepository) ClearFracIndexesTx(tx database.Tx, pageIDs []int) error {
+	if len(pageIDs) == 0 {
+		return nil
+	}
+
+	placeholders := make([]string, len(pageIDs))
+	args := make([]interface{}, len(pageIDs))
+	for i, pageID := range pageIDs {
+		placeholders[i] = "?"
+		args[i] = pageID
+	}
+	query := "UPDATE pages SET frac_index = NULL WHERE id IN (" + strings.Join(placeholders, ",") + ")"
+	if _, err := tx.Exec(query, args...); err != nil {
+		return fmt.Errorf("clear page frac_index values: %w", err)
+	}
+	return nil
+}
+
 // ArchiveTx flags a page (and only this row — descendants are archived by the
 // service in a separate pass) as archived. Idempotent: re-archiving a page
 // updates archived_at and archived_by to the latest call.

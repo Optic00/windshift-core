@@ -1070,6 +1070,20 @@ func (s *PageService) resolveSiblingFracIndex(
 		// values too) in their current display order. Mixed NULL +
 		// non-NULL groups can interleave in ways that would collide with
 		// freshly minted keys, so a full rewrite is the only safe option.
+		//
+		// Clear the whole active sibling set first. The scoped unique
+		// index is checked after every UPDATE, so assigning a0 to a legacy
+		// NULL row would otherwise collide with a later sibling that still
+		// owns its old a0 key. Include the moving page when this is an
+		// in-parent reorder; MoveTx assigns its final key below.
+		siblingIDs := make([]int, 0, len(siblings))
+		for i := range siblings {
+			siblingIDs = append(siblingIDs, siblings[i].ID)
+		}
+		if err := s.pages.ClearFracIndexesTx(tx, siblingIDs); err != nil {
+			return nil, fmt.Errorf("clear sibling frac_index values before backfill: %w", err)
+		}
+
 		var lastKey string
 		for i := range siblings {
 			if siblings[i].ID == movedPageID {
