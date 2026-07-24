@@ -160,11 +160,13 @@ func (s *TransitionMatrixService) load(ctx context.Context, workspaceID int) (*W
 
 // loadItemTypeWorkflows resolves personal-workspace behavior, applicability,
 // item-type overrides, configuration defaults, and the global fallback in one
-// set query. Only item types linked to the assigned configuration are emitted.
+// set query. A workspace with an explicit item-type catalog emits only those
+// types; an unconfigured workspace (or a configuration with no type mappings)
+// emits the global catalog, matching WorkspaceService.GetItemTypes.
 func (s *TransitionMatrixService) loadItemTypeWorkflows(ctx context.Context, workspaceID int) (resolved map[int]int, isPersonal bool, err error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT w.is_personal,
-		       csit.item_type_id,
+		       it.id AS item_type_id,
 		       CASE WHEN w.is_personal THEN NULL
 		            ELSE COALESCE(
 		              csit.workflow_id,
@@ -175,9 +177,23 @@ func (s *TransitionMatrixService) loadItemTypeWorkflows(ctx context.Context, wor
 		FROM workspaces w
 		LEFT JOIN workspace_configuration_sets wcs ON wcs.workspace_id = w.id
 		LEFT JOIN configuration_sets cs ON cs.id = wcs.configuration_set_id
-		LEFT JOIN configuration_set_item_types csit ON csit.configuration_set_id = cs.id
+		LEFT JOIN item_types it ON
+		  NOT EXISTS (
+		    SELECT 1
+		    FROM configuration_set_item_types configured_type
+		    WHERE configured_type.configuration_set_id = cs.id
+		  )
+		  OR EXISTS (
+		    SELECT 1
+		    FROM configuration_set_item_types configured_type
+		    WHERE configured_type.configuration_set_id = cs.id
+		      AND configured_type.item_type_id = it.id
+		  )
+		LEFT JOIN configuration_set_item_types csit
+		  ON csit.configuration_set_id = cs.id
+		 AND csit.item_type_id = it.id
 		WHERE w.id = ?
-		ORDER BY csit.item_type_id
+		ORDER BY it.id
 	`, workspaceID)
 	if err != nil {
 		return nil, false, fmt.Errorf("load transition-matrix workflow mappings: %w", err)
