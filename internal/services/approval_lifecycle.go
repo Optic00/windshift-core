@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"windshift/internal/database"
@@ -154,7 +155,8 @@ type DecideOptions struct {
 //
 // decision must be one of: ApprovalDecisionApprove, ApprovalDecisionReject,
 // ApprovalDecisionComment. (Delegate / cancel / refresh-approvers are separate
-// methods so each can carry its own validation.)
+// methods so each can carry its own validation.) The comment is optional for
+// approve/reject and required for a comment decision.
 func (s *ApprovalService) Decide(ctx context.Context, requestID, actorUserID int, decision, comment string, opts DecideOptions) (*models.ApprovalDecision, *models.ApprovalRequest, error) {
 	return s.decideAs(ctx, requestID, actorFromUser(actorUserID), decision, comment, opts)
 }
@@ -170,8 +172,14 @@ func (s *ApprovalService) DecideAsCustomer(ctx context.Context, requestID, actor
 
 func (s *ApprovalService) decideAs(ctx context.Context, requestID int, actor approvalActor, decision, comment string, opts DecideOptions) (*models.ApprovalDecision, *models.ApprovalRequest, error) {
 	switch decision {
-	case models.ApprovalDecisionApprove, models.ApprovalDecisionReject, models.ApprovalDecisionComment:
-		// ok
+	case models.ApprovalDecisionApprove, models.ApprovalDecisionReject:
+		// ok — the comment is optional reasoning alongside the outcome.
+	case models.ApprovalDecisionComment:
+		// A comment decision carries no outcome, so an empty body would record
+		// a blank entry on the timeline and notify the pool for nothing.
+		if strings.TrimSpace(comment) == "" {
+			return nil, nil, fmt.Errorf("a comment decision requires a comment")
+		}
 	default:
 		return nil, nil, fmt.Errorf("invalid decision %q", decision)
 	}

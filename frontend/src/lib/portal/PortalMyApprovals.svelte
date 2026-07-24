@@ -209,7 +209,7 @@
             <Button
               variant="default"
               icon={MessageSquare}
-              disabled={portalStore.decidingApproval}
+              disabled={portalStore.decidingApproval || portalStore.approvalComment.trim() === ''}
               onclick={() => portalStore.decideApproval('comment')}
               dataTestid="portal-approval-comment-submit"
             >

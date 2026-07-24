@@ -273,8 +273,10 @@
                           dataTestid="approval-decision-reject">
                     Reject
                   </Button>
-                  <Button variant="default" icon={MessageSquare} disabled={acting}
-                          onclick={() => decide(req, 'comment')}>
+                  <Button variant="default" icon={MessageSquare}
+                          disabled={acting || comment.trim() === ''}
+                          onclick={() => decide(req, 'comment')}
+                          dataTestid="approval-decision-comment-submit">
                     Comment
                   </Button>
                 </div>
