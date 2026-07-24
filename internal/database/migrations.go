@@ -46,6 +46,66 @@ type Migration struct {
 // this Catalog in subsequent commits.
 var Catalog = []Migration{
 	{
+		// idx_pages_frac_index_scoped originally scoped uniqueness over
+		// every row, archived included. But archived pages leave the live
+		// sibling ordering (ListChildren filters archived_at IS NULL) and
+		// the move backfill re-mints keys only for live siblings, so an
+		// archived row still owning an old key collides when the backfill
+		// re-sequences the group. Rebuild the index to exclude archived
+		// rows, matching idx_pages_workspace_root_slug. No Check so it
+		// always runs; the DROP + CREATE is idempotent and stamped once.
+		// The pre-pass NULLs any live/live duplicate keys (keep lowest id)
+		// so the UNIQUE rebuild can't trip over legacy data.
+		Version:       "20260724_pages_frac_index_exclude_archived",
+		Name:          "Exclude archived pages from pages.frac_index uniqueness",
+		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_pages_frac_index_scoped' AND sql LIKE '%archived_at%'",
+		CheckPostgres: "SELECT COUNT(*) FROM pg_indexes WHERE schemaname=current_schema() AND indexname='idx_pages_frac_index_scoped' AND indexdef LIKE '%archived_at%'",
+		SQLite: `
+			UPDATE pages SET frac_index = NULL
+			WHERE frac_index IS NOT NULL
+			  AND archived_at IS NULL
+			  AND id IN (
+				SELECT p1.id FROM pages p1
+				WHERE p1.frac_index IS NOT NULL
+				  AND p1.archived_at IS NULL
+				  AND EXISTS (
+					SELECT 1 FROM pages p2
+					WHERE p2.frac_index = p1.frac_index
+					  AND p2.archived_at IS NULL
+					  AND p2.workspace_id = p1.workspace_id
+					  AND COALESCE(p2.parent_id, -1) = COALESCE(p1.parent_id, -1)
+					  AND p2.id < p1.id
+				  )
+			  );
+			DROP INDEX IF EXISTS idx_pages_frac_index_scoped;
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_frac_index_scoped
+				ON pages(workspace_id, COALESCE(parent_id, -1), frac_index)
+				WHERE frac_index IS NOT NULL AND archived_at IS NULL;
+		`,
+		Postgres: `
+			UPDATE pages SET frac_index = NULL
+			WHERE frac_index IS NOT NULL
+			  AND archived_at IS NULL
+			  AND id IN (
+				SELECT p1.id FROM pages p1
+				WHERE p1.frac_index IS NOT NULL
+				  AND p1.archived_at IS NULL
+				  AND EXISTS (
+					SELECT 1 FROM pages p2
+					WHERE p2.frac_index = p1.frac_index
+					  AND p2.archived_at IS NULL
+					  AND p2.workspace_id = p1.workspace_id
+					  AND COALESCE(p2.parent_id, -1) = COALESCE(p1.parent_id, -1)
+					  AND p2.id < p1.id
+				  )
+			  );
+			DROP INDEX IF EXISTS idx_pages_frac_index_scoped;
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_frac_index_scoped
+				ON pages(workspace_id, COALESCE(parent_id, -1), frac_index)
+				WHERE frac_index IS NOT NULL AND archived_at IS NULL;
+		`,
+	},
+	{
 		Version: "20260721_mcp_oauth_resource_binding",
 		Name:    "Bind MCP OAuth clients and tokens to their resource audience",
 		CheckSQLite: `SELECT CASE WHEN

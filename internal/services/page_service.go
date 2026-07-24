@@ -607,6 +607,17 @@ func (s *PageService) Unarchive(actorID, pageID int) (*models.Page, error) {
 		if page.ArchivedAt == nil {
 			return page, nil
 		}
+		// While archived the page held no slot in the live frac_index key
+		// space (idx_pages_frac_index_scoped excludes archived rows), so a
+		// live sibling may have since minted the key this page still owns.
+		// Clear it now, while the row is still archived and out of the
+		// index, so re-entering the index below can't hit a unique
+		// collision. A NULL frac_index sorts to the end and is backfilled
+		// on the next reorder, matching how legacy pre-drag-and-drop pages
+		// are treated.
+		if err := s.pages.ClearFracIndexesTx(tx, []int{page.ID}); err != nil {
+			return nil, fmt.Errorf("clear frac_index on unarchive: %w", err)
+		}
 		if err := s.pages.UpdateTx(tx, repository.UpdateInput{
 			ID:                 page.ID,
 			Title:              page.Title,

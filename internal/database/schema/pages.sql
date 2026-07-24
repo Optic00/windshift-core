@@ -48,10 +48,14 @@ CREATE INDEX IF NOT EXISTS idx_pages_workspace_parent_rank ON pages(workspace_id
 -- parent_id) so each sibling set has its own key space. COALESCE makes
 -- NULL parent_id (root pages) collate as a sibling set in its own
 -- right, since both SQLite and PostgreSQL treat NULL = NULL as false
--- inside unique constraints.
+-- inside unique constraints. Archived pages are excluded: they leave the
+-- live sibling ordering (ListChildren filters archived_at IS NULL) and the
+-- move backfill re-mints keys only for live siblings, so an archived row
+-- still holding an old key must not occupy that key space or the backfill
+-- collides on re-sequence.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_frac_index_scoped
     ON pages(workspace_id, COALESCE(parent_id, -1), frac_index)
-    WHERE frac_index IS NOT NULL;
+    WHERE frac_index IS NOT NULL AND archived_at IS NULL;
 -- UNIQUE(workspace_id, parent_id, slug) above is bypassed for root pages
 -- because parent_id IS NULL collates as NOT EQUAL to itself in both
 -- SQLite and PostgreSQL. This partial unique index plugs that gap for
