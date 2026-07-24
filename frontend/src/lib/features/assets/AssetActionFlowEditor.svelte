@@ -31,7 +31,34 @@
   ];
 
   let assetCustomFields = $state([]);
+  let assetTypes = $state([]);
+  let assetStatuses = $state([]);
   let users = $state([]);
+  let taxonomyLoadToken = 0;
+
+  $effect(() => {
+    const setId = action?.set_id;
+    if (!setId) {
+      taxonomyLoadToken += 1;
+      assetTypes = [];
+      assetStatuses = [];
+      return;
+    }
+    const token = ++taxonomyLoadToken;
+    Promise.all([
+      api.assetTypes.getAll(setId),
+      api.assetStatuses.getAll(setId),
+    ]).then(([types, statuses]) => {
+      if (token !== taxonomyLoadToken) return;
+      assetTypes = types || [];
+      assetStatuses = statuses || [];
+    }).catch(() => {
+      if (token !== taxonomyLoadToken) return;
+      assetTypes = [];
+      assetStatuses = [];
+    });
+  });
+
   $effect(() => {
     api.customFields.getAll().then((result) => {
       assetCustomFields = (result?.data || []).map((field) => ({
@@ -168,26 +195,26 @@
 
     {#if store.triggerType === 'asset_status_changed'}
       <div>
-        <div class="block text-xs font-medium mb-1">From Status ID (optional)</div>
-        <input
-          type="number"
-          class="w-full px-3 py-2 border rounded-md text-sm config-input"
+        <label for="asset-trigger-from-status" class="block text-xs font-medium mb-1">From Status (optional)</label>
+        <Select
+          id="asset-trigger-from-status"
+          options={[{ value: '', label: 'Any status' }, ...assetStatuses.map(status => ({ value: status.id, label: status.name }))]}
           value={selectedNode.data?.config?.from_status_id || ''}
-          oninput={(e) =>
+          onchange={(value) =>
             store.updateNodeConfig(selectedNode.id, {
-              from_status_id: parseInt(e.currentTarget.value) || null,
+              from_status_id: parseInt(value) || null,
             })}
         />
       </div>
       <div>
-        <div class="block text-xs font-medium mb-1">To Status ID (optional)</div>
-        <input
-          type="number"
-          class="w-full px-3 py-2 border rounded-md text-sm config-input"
+        <label for="asset-trigger-to-status" class="block text-xs font-medium mb-1">To Status (optional)</label>
+        <Select
+          id="asset-trigger-to-status"
+          options={[{ value: '', label: 'Any status' }, ...assetStatuses.map(status => ({ value: status.id, label: status.name }))]}
           value={selectedNode.data?.config?.to_status_id || ''}
-          oninput={(e) =>
+          onchange={(value) =>
             store.updateNodeConfig(selectedNode.id, {
-              to_status_id: parseInt(e.currentTarget.value) || null,
+              to_status_id: parseInt(value) || null,
             })}
         />
       </div>
@@ -195,14 +222,14 @@
 
     {#if store.triggerType !== 'manual'}
       <div>
-        <div class="block text-xs font-medium mb-1">Asset Type ID (optional filter)</div>
-        <input
-          type="number"
-          class="w-full px-3 py-2 border rounded-md text-sm config-input"
+        <label for="asset-trigger-type-filter" class="block text-xs font-medium mb-1">Asset Type (optional filter)</label>
+        <Select
+          id="asset-trigger-type-filter"
+          options={[{ value: '', label: 'Any type' }, ...assetTypes.map(type => ({ value: type.id, label: type.name }))]}
           value={selectedNode.data?.config?.asset_type_id || ''}
-          oninput={(e) =>
+          onchange={(value) =>
             store.updateNodeConfig(selectedNode.id, {
-              asset_type_id: parseInt(e.currentTarget.value) || null,
+              asset_type_id: parseInt(value) || null,
             })}
         />
       </div>
@@ -247,14 +274,14 @@
       <Button variant="ghost" size="small" onclick={handleDeleteNode}>Delete Node</Button>
     {:else if selectedNode.type === 'set_status'}
       <div>
-        <div class="block text-xs font-medium mb-1">Status ID</div>
-        <input
-          type="number"
-          class="w-full px-3 py-2 border rounded-md text-sm config-input"
+        <label for="asset-action-set-status" class="block text-xs font-medium mb-1">Status</label>
+        <Select
+          id="asset-action-set-status"
+          options={[{ value: '', label: 'Select status' }, ...assetStatuses.map(status => ({ value: status.id, label: status.name }))]}
           value={selectedNode.data?.config?.status_id || ''}
-          oninput={(e) =>
+          onchange={(value) =>
             store.updateNodeConfig(selectedNode.id, {
-              status_id: parseInt(e.currentTarget.value) || 0,
+              status_id: parseInt(value) || 0,
             })}
         />
       </div>

@@ -227,6 +227,9 @@ func (h *MilestoneHandler) Create(w http.ResponseWriter, r *http.Request) {
 		WorkspaceID: milestone.WorkspaceID,
 	})
 	if err != nil {
+		if respondPlanningValidationError(w, r, err) {
+			return
+		}
 		respondInternalError(w, r, err)
 		return
 	}
@@ -296,6 +299,9 @@ func (h *MilestoneHandler) Update(w http.ResponseWriter, r *http.Request) {
 		WorkspaceID: workspaceID,
 	})
 	if err != nil {
+		if respondPlanningValidationError(w, r, err) {
+			return
+		}
 		if strings.Contains(err.Error(), "not found") {
 			respondNotFound(w, r, "milestone")
 			return

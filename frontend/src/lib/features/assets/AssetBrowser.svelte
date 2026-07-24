@@ -20,6 +20,7 @@
   import AssetImportWizard from './import/AssetImportWizard.svelte';
   import AssetSubFilterBar from './AssetSubFilterBar.svelte';
   import CustomFieldRenderer from '../items/CustomFieldRenderer.svelte';
+  import { retainValuesForType } from './assetFormValues.js';
   import { toHotkeyString } from '../../utils/keyboardShortcuts.js';
   import { formatDateSimple } from '../../utils/dateFormatter.js';
   import { fetchAssetCategories, fetchAssetStatuses, flattenCategories } from './shared/assetSetUtils.js';
@@ -298,6 +299,12 @@
     try {
       const fields = await api.assetTypes.getFields(typeId);
       selectedTypeFields = fields || [];
+      if (editingAsset && Number(assetFormData.asset_type_id) === Number(typeId)) {
+        assetFormData.custom_field_values = retainValuesForType(
+          assetFormData.custom_field_values,
+          selectedTypeFields,
+        );
+      }
     } catch (error) {
       console.error('Failed to load type fields:', error);
       selectedTypeFields = [];

@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Workspace is a container for Items and Pages plus their configuration.
 // "Project" in Windshift refers exclusively to time-tracking projects
@@ -176,6 +179,61 @@ type Iteration struct {
 	TypeName      string `json:"type_name,omitempty"`
 	TypeColor     string `json:"type_color,omitempty"`
 	WorkspaceName string `json:"workspace_name,omitempty"`
+}
+
+// NullableIntPatch distinguishes an omitted JSON field from an explicit null.
+// This is required for nullable foreign keys such as iteration.type_id.
+type NullableIntPatch struct {
+	Present bool
+	Value   *int
+}
+
+func (p *NullableIntPatch) UnmarshalJSON(data []byte) error {
+	p.Present = true
+	if string(data) == "null" {
+		p.Value = nil
+		return nil
+	}
+	var value int
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	p.Value = &value
+	return nil
+}
+
+// IterationPatch is the presence-aware update contract shared by the legacy
+// and v1 adapters. Empty description is a valid clear, null type_id is a valid
+// clear, and omitted fields preserve their stored values.
+type IterationPatch struct {
+	Name        *string          `json:"name,omitempty"`
+	Description *string          `json:"description,omitempty"`
+	StartDate   *string          `json:"start_date,omitempty"`
+	EndDate     *string          `json:"end_date,omitempty"`
+	Status      *string          `json:"status,omitempty"`
+	TypeID      NullableIntPatch `json:"type_id,omitempty" swaggertype:"integer" extensions:"x-nullable"`
+}
+
+func (p IterationPatch) Apply(existing Iteration) Iteration {
+	if p.Name != nil {
+		existing.Name = *p.Name
+	}
+	if p.Description != nil {
+		existing.Description = *p.Description
+	}
+	if p.StartDate != nil {
+		existing.StartDate = *p.StartDate
+	}
+	if p.EndDate != nil {
+		existing.EndDate = *p.EndDate
+	}
+	if p.Status != nil {
+		existing.Status = *p.Status
+	}
+	if p.TypeID.Present {
+		existing.TypeID = p.TypeID.Value
+	}
+	return existing
 }
 
 // BoardConfiguration represents a board layout configuration for a collection

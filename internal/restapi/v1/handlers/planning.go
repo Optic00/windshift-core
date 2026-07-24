@@ -22,6 +22,19 @@ type MilestoneHandler struct {
 	itemCRUD        *services.ItemCRUDService
 }
 
+func (b *BaseHandler) respondPlanningMutationError(w http.ResponseWriter, r *http.Request, err error) bool {
+	validationErr, ok := services.AsPlanningValidationError(err)
+	if !ok {
+		return false
+	}
+	b.RespondError(w, r, restapi.NewAPIError(
+		http.StatusBadRequest,
+		restapi.ErrCodeValidationFailed,
+		validationErr.Error(),
+	).WithDetails(map[string]any{"field": validationErr.Field}))
+	return true
+}
+
 func NewMilestoneHandler(db database.Database, permissionService *services.PermissionService) *MilestoneHandler {
 	return &MilestoneHandler{
 		BaseHandler:     NewBaseHandler(db, permissionService),
@@ -230,6 +243,9 @@ func (h *MilestoneHandler) Create(w http.ResponseWriter, r *http.Request) {
 		IsGlobal:    true,
 	})
 	if err != nil {
+		if h.respondPlanningMutationError(w, r, err) {
+			return
+		}
 		h.RespondInternalError(w, r)
 		return
 	}
@@ -346,6 +362,9 @@ func (h *MilestoneHandler) Update(w http.ResponseWriter, r *http.Request) {
 		WorkspaceID: workspaceID,
 	})
 	if err != nil {
+		if h.respondPlanningMutationError(w, r, err) {
+			return
+		}
 		h.RespondInternalError(w, r)
 		return
 	}
@@ -776,6 +795,9 @@ func (h *MilestoneHandler) CreateInWorkspace(w http.ResponseWriter, r *http.Requ
 		WorkspaceID: &wsID,
 	})
 	if err != nil {
+		if h.respondPlanningMutationError(w, r, err) {
+			return
+		}
 		h.RespondInternalError(w, r)
 		return
 	}
@@ -870,6 +892,9 @@ func (h *MilestoneHandler) UpdateInWorkspace(w http.ResponseWriter, r *http.Requ
 		WorkspaceID: &wsID,
 	})
 	if err != nil {
+		if h.respondPlanningMutationError(w, r, err) {
+			return
+		}
 		h.RespondInternalError(w, r)
 		return
 	}
@@ -1053,6 +1078,8 @@ type IterationCreateRequest struct {
 	IsGlobal    bool   `json:"is_global,omitempty"`
 	WorkspaceID *int   `json:"workspace_id,omitempty"`
 }
+
+type IterationUpdateRequest = models.IterationPatch
 
 func toIterationResponse(iter *services.IterationResult) IterationResponse {
 	return IterationResponse{
@@ -1252,6 +1279,9 @@ func (h *IterationHandler) Create(w http.ResponseWriter, r *http.Request) {
 		WorkspaceID: nil,
 	})
 	if err != nil {
+		if h.respondPlanningMutationError(w, r, err) {
+			return
+		}
 		h.RespondInternalError(w, r)
 		return
 	}
@@ -1270,7 +1300,7 @@ func (h *IterationHandler) Create(w http.ResponseWriter, r *http.Request) {
 // @Produce      json
 // @Security     BearerAuth
 // @Param        id    path      int                              true  "Iteration ID"
-// @Param        body  body      handlers.IterationCreateRequest  true  "Fields to update"
+// @Param        body  body      handlers.IterationUpdateRequest  true  "Fields to update"
 // @Success      200   {object}  handlers.IterationResponse
 // @Failure      400   {object}  handlers.ErrorResponse  "Invalid iteration ID or request body"
 // @Failure      401   {object}  handlers.ErrorResponse
@@ -1286,26 +1316,42 @@ func (h *IterationHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req IterationCreateRequest
+	var req IterationUpdateRequest
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	existing, err := h.planningService.GetIteration(id)
+	if err != nil {
+		h.RespondNotFound(w, r)
+		return
+	}
+	merged := req.Apply(models.Iteration{
+		Name:        existing.Name,
+		Description: existing.Description,
+		StartDate:   existing.StartDate,
+		EndDate:     existing.EndDate,
+		Status:      existing.Status,
+		TypeID:      existing.TypeID,
+	})
 	warnings := sanitize.ApplyAllWithWarnings(
-		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
-		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
+		sanitize.Pair{Target: &merged.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &merged.Description, Policy: sanitize.RichText, Label: "Description"},
 	)
 
 	iter, err := h.planningService.UpdateIteration(services.UpdateIterationParams{
 		ID:          id,
-		Name:        req.Name,
-		Description: req.Description,
-		StartDate:   req.StartDate,
-		EndDate:     req.EndDate,
-		Status:      req.Status,
-		TypeID:      req.TypeID,
+		Name:        merged.Name,
+		Description: merged.Description,
+		StartDate:   merged.StartDate,
+		EndDate:     merged.EndDate,
+		Status:      merged.Status,
+		TypeID:      merged.TypeID,
 		WorkspaceID: workspaceID,
 	})
 	if err != nil {
+		if h.respondPlanningMutationError(w, r, err) {
+			return
+		}
 		if errors.Is(err, services.ErrIterationCompletionRequired) || errors.Is(err, services.ErrIterationLifecycleConflict) {
 			h.RespondError(w, r, restapi.NewAPIError(http.StatusConflict, restapi.ErrCodeConflict, err.Error()))
 			return
@@ -1467,6 +1513,9 @@ func (h *IterationHandler) CreateInWorkspace(w http.ResponseWriter, r *http.Requ
 		WorkspaceID: &wsID,
 	})
 	if err != nil {
+		if h.respondPlanningMutationError(w, r, err) {
+			return
+		}
 		h.RespondInternalError(w, r)
 		return
 	}
@@ -1516,7 +1565,7 @@ func (h *IterationHandler) GetInWorkspace(w http.ResponseWriter, r *http.Request
 // @Security     BearerAuth
 // @Param        id           path      int                              true  "Workspace ID"
 // @Param        iterationId  path      int                              true  "Iteration ID"
-// @Param        body         body      handlers.IterationCreateRequest  true  "Fields to update"
+// @Param        body         body      handlers.IterationUpdateRequest  true  "Fields to update"
 // @Success      200          {object}  handlers.IterationResponse
 // @Failure      400          {object}  handlers.ErrorResponse  "Invalid workspace ID, iteration ID, or request body"
 // @Failure      401          {object}  handlers.ErrorResponse
@@ -1535,28 +1584,39 @@ func (h *IterationHandler) UpdateInWorkspace(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	var req IterationCreateRequest
+	var req IterationUpdateRequest
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	merged := req.Apply(models.Iteration{
+		Name:        iter.Name,
+		Description: iter.Description,
+		StartDate:   iter.StartDate,
+		EndDate:     iter.EndDate,
+		Status:      iter.Status,
+		TypeID:      iter.TypeID,
+	})
 	warnings := sanitize.ApplyAllWithWarnings(
-		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
-		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
+		sanitize.Pair{Target: &merged.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &merged.Description, Policy: sanitize.RichText, Label: "Description"},
 	)
 
 	// WorkspaceID scopes the SQL UPDATE to this workspace as defense-in-depth
 	// beyond the URL match above.
 	updated, err := h.planningService.UpdateIteration(services.UpdateIterationParams{
 		ID:          iter.ID,
-		Name:        req.Name,
-		Description: req.Description,
-		StartDate:   req.StartDate,
-		EndDate:     req.EndDate,
-		Status:      req.Status,
-		TypeID:      req.TypeID,
+		Name:        merged.Name,
+		Description: merged.Description,
+		StartDate:   merged.StartDate,
+		EndDate:     merged.EndDate,
+		Status:      merged.Status,
+		TypeID:      merged.TypeID,
 		WorkspaceID: &wsID,
 	})
 	if err != nil {
+		if h.respondPlanningMutationError(w, r, err) {
+			return
+		}
 		if errors.Is(err, services.ErrIterationCompletionRequired) || errors.Is(err, services.ErrIterationLifecycleConflict) {
 			h.RespondError(w, r, restapi.NewAPIError(http.StatusConflict, restapi.ErrCodeConflict, err.Error()))
 			return

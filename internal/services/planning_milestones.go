@@ -29,10 +29,10 @@ var ErrInvalidPlanningScope = errors.New("invalid planning scope")
 
 func validatePlanningScope(isGlobal bool, workspaceID *int) error {
 	if isGlobal && workspaceID != nil {
-		return fmt.Errorf("%w: global planning objects cannot have a workspace", ErrInvalidPlanningScope)
+		return planningValidationErrorWithCause("workspace_id", "global planning objects cannot have a workspace", ErrInvalidPlanningScope)
 	}
 	if !isGlobal && workspaceID == nil {
-		return fmt.Errorf("%w: local planning objects require a workspace", ErrInvalidPlanningScope)
+		return planningValidationErrorWithCause("workspace_id", "local planning objects require a workspace", ErrInvalidPlanningScope)
 	}
 	return nil
 }
@@ -488,12 +488,11 @@ type CreateMilestoneParams struct {
 
 // CreateMilestone creates a new milestone.
 func (s *PlanningService) CreateMilestone(params CreateMilestoneParams) (*MilestoneResult, error) {
-	if err := validatePlanningScope(params.IsGlobal, params.WorkspaceID); err != nil {
-		return nil, err
+	if params.Status == "" {
+		params.Status = "planning"
 	}
-	status := params.Status
-	if status == "" {
-		status = "planning"
+	if err := s.validateMilestoneMutation(params); err != nil {
+		return nil, err
 	}
 
 	// New milestones land at the end of their scope's manual order. Position
@@ -510,7 +509,7 @@ func (s *PlanningService) CreateMilestone(params CreateMilestoneParams) (*Milest
 	err = s.db.QueryRow(`
 		INSERT INTO milestones (name, description, target_date, status, category_id, is_global, workspace_id, external_key, position)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
-	`, params.Name, params.Description, params.TargetDate, status, params.CategoryID, params.IsGlobal, params.WorkspaceID, params.ExternalKey, position).Scan(&id)
+	`, params.Name, params.Description, params.TargetDate, params.Status, params.CategoryID, params.IsGlobal, params.WorkspaceID, params.ExternalKey, position).Scan(&id)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create milestone: %w", err)
 	}
@@ -545,6 +544,9 @@ func (s *PlanningService) FindMilestoneByExternalKey(workspaceID int, externalKe
 // milestone to "in-progress" or "completed" without disturbing the other
 // fields. Returns a "not found" error when no row matches the scope.
 func (s *PlanningService) SetMilestoneStatus(milestoneID, workspaceID int, status string) error {
+	if !validMilestoneStatus(status) {
+		return planningValidationError("status", milestoneStatusValidationMessage)
+	}
 	res, err := s.db.ExecWrite(`
 		UPDATE milestones
 		SET status = ?, updated_at = CURRENT_TIMESTAMP
@@ -604,6 +606,17 @@ type UpdateMilestoneParams struct {
 // UpdateMilestone updates an existing milestone within its declared scope.
 // is_global / workspace_id cannot be changed via this method.
 func (s *PlanningService) UpdateMilestone(params UpdateMilestoneParams) (*MilestoneResult, error) {
+	if err := s.validateMilestoneMutation(CreateMilestoneParams{
+		Name:        params.Name,
+		Description: params.Description,
+		TargetDate:  params.TargetDate,
+		Status:      params.Status,
+		CategoryID:  params.CategoryID,
+		IsGlobal:    params.WorkspaceID == nil,
+		WorkspaceID: params.WorkspaceID,
+	}); err != nil {
+		return nil, err
+	}
 	var (
 		res sql.Result
 		err error

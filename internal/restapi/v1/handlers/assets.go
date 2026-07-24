@@ -400,9 +400,10 @@ func (h *AssetHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// snapshot the service needs (set_id, status_id, asset_type_id) from
 	// that so we don't re-roundtrip the DB.
 	snap := repository.AssetUpdateSnapshot{
-		SetID:       row.SetID,
-		StatusID:    row.StatusID,
-		AssetTypeID: row.AssetTypeID,
+		SetID:                 row.SetID,
+		StatusID:              row.StatusID,
+		AssetTypeID:           row.AssetTypeID,
+		CustomFieldValuesJSON: row.CustomFieldValues,
 	}
 	asset, err := h.assetService.UpdateAsset(
 		services.NewAuditActorFromRequest(r, user, middleware.GetAPIToken(r.Context()), "bearer"),

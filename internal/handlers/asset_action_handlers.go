@@ -170,6 +170,12 @@ func (h *AssetActionHandler) CreateAction(w http.ResponseWriter, r *http.Request
 		respondValidationError(w, r, msg)
 		return
 	}
+	if h.actionService != nil {
+		if err := h.actionService.ValidateTaxonomyReferences(setID, req.TriggerConfig, req.Nodes); err != nil {
+			respondValidationError(w, r, err.Error())
+			return
+		}
+	}
 
 	if err := actionutil.ValidateFlowAcyclic[
 		models.AssetActionNode, *models.AssetActionNode,
@@ -300,6 +306,12 @@ func (h *AssetActionHandler) UpdateAction(w http.ResponseWriter, r *http.Request
 	if msg := validateAssetActionKinds(action.TriggerType, effectiveNodes); msg != "" {
 		respondValidationError(w, r, msg)
 		return
+	}
+	if h.actionService != nil {
+		if err := h.actionService.ValidateTaxonomyReferences(setID, action.TriggerConfig, effectiveNodes); err != nil {
+			respondValidationError(w, r, err.Error())
+			return
+		}
 	}
 
 	if req.Nodes != nil {

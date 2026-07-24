@@ -200,6 +200,9 @@ func (h *IterationHandler) Create(w http.ResponseWriter, r *http.Request) {
 		WorkspaceID: iteration.WorkspaceID,
 	})
 	if err != nil {
+		if respondPlanningValidationError(w, r, err) {
+			return
+		}
 		respondInternalError(w, r, err)
 		return
 	}
@@ -236,35 +239,19 @@ func (h *IterationHandler) Update(w http.ResponseWriter, r *http.Request) {
 		workspaceID = &ws
 	}
 
-	iteration, ok := decodeJSON[models.Iteration](w, r)
+	patch, ok := decodeJSON[models.IterationPatch](w, r)
 	if !ok {
 		return
 	}
 
-	// Fetch existing iteration to support partial updates of body-level fields.
+	// Merge only fields present in the payload. Empty description and null
+	// type_id are explicit values; omission preserves the stored value.
 	existing, err := h.planningService.GetIteration(id)
 	if err != nil {
 		respondNotFound(w, r, "iteration")
 		return
 	}
-	if iteration.Name == "" {
-		iteration.Name = existing.Name
-	}
-	if iteration.StartDate == "" {
-		iteration.StartDate = existing.StartDate
-	}
-	if iteration.EndDate == "" {
-		iteration.EndDate = existing.EndDate
-	}
-	if iteration.Status == "" {
-		iteration.Status = existing.Status
-	}
-	if iteration.TypeID == nil {
-		iteration.TypeID = existing.TypeID
-	}
-	if iteration.Description == "" {
-		iteration.Description = existing.Description
-	}
+	iteration := patch.Apply(iterationResultToModel(existing))
 
 	if !validateIterationFields(w, r, &iteration, false) {
 		return
@@ -286,6 +273,9 @@ func (h *IterationHandler) Update(w http.ResponseWriter, r *http.Request) {
 		WorkspaceID: workspaceID,
 	})
 	if err != nil {
+		if respondPlanningValidationError(w, r, err) {
+			return
+		}
 		if errors.Is(err, services.ErrIterationCompletionRequired) || errors.Is(err, services.ErrIterationLifecycleConflict) {
 			respondConflict(w, r, err.Error())
 			return

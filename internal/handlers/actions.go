@@ -103,13 +103,20 @@ func (h *ActionsHandler) HasCapabilityOfType(workspaceID, capabilityID int, capa
 // details.errors so older clients still see something useful.
 func (h *ActionsHandler) validateActionDefinition(w http.ResponseWriter, r *http.Request, workspaceID int, def actioncatalog.ActionDefinition) bool {
 	errs := actioncatalog.Validate(actioncatalog.Default(), def, workspaceID, h)
-	if len(errs) == 0 {
-		return true
+	if len(errs) > 0 {
+		apiErr := restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, errs[0].Message).
+			WithDetails(map[string]any{"errors": errs})
+		restapi.RespondError(w, r, apiErr)
+		return false
 	}
-	apiErr := restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, errs[0].Message).
-		WithDetails(map[string]any{"errors": errs})
-	restapi.RespondError(w, r, apiErr)
-	return false
+	if h.actionService != nil {
+		if err := h.actionService.ValidateAssetTaxonomyReferences(def.Nodes); err != nil {
+			apiErr := restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, err.Error())
+			restapi.RespondError(w, r, apiErr)
+			return false
+		}
+	}
+	return true
 }
 
 // requireAction fetches an action by ID and verifies workspace ownership.

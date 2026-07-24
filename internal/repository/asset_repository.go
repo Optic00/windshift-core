@@ -276,15 +276,33 @@ func (r *AssetRepository) DeleteSet(setID int) error {
 	return tx.Commit()
 }
 
-// HardDeleteSet deletes a set row only, without cascading to child data.
-// Callers relying on foreign-key constraints for integrity should prefer DeleteSet.
+// HardDeleteSet deletes a set and relies on foreign-key cascades for its owned
+// rows. Polymorphic item_links cannot carry an asset foreign key, so links in
+// either direction are removed explicitly in the same transaction first.
 func (r *AssetRepository) HardDeleteSet(setID int) error {
-	result, err := r.db.ExecWrite("DELETE FROM asset_management_sets WHERE id = ?", setID)
+	tx, err := r.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin asset set deletion: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.Exec(`
+		DELETE FROM item_links
+		WHERE (source_type = 'asset' AND source_id IN (SELECT id FROM assets WHERE set_id = ?))
+		   OR (target_type = 'asset' AND target_id IN (SELECT id FROM assets WHERE set_id = ?))
+	`, setID, setID); err != nil {
+		return fmt.Errorf("failed to delete asset set links: %w", err)
+	}
+
+	result, err := tx.Exec("DELETE FROM asset_management_sets WHERE id = ?", setID)
 	if err != nil {
 		return fmt.Errorf("failed to delete asset set: %w", err)
 	}
 	if rows, _ := result.RowsAffected(); rows == 0 {
 		return ErrNotFound
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit asset set deletion: %w", err)
 	}
 	return nil
 }
@@ -1272,12 +1290,39 @@ func (r *AssetRepository) ReplaceAssetTypeFields(typeID int, fields []AssetTypeF
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	rows, err := tx.Query(`
+		SELECT atf.custom_field_id, cfd.name
+		FROM asset_type_fields atf
+		JOIN custom_field_definitions cfd ON cfd.id = atf.custom_field_id
+		WHERE atf.asset_type_id = ?
+	`, typeID)
+	if err != nil {
+		return fmt.Errorf("failed to load existing type fields: %w", err)
+	}
+	existingKeys := make(map[int]string)
+	for rows.Next() {
+		var fieldID int
+		var fieldName string
+		if err := rows.Scan(&fieldID, &fieldName); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("failed to scan existing type field: %w", err)
+		}
+		existingKeys[fieldID] = fieldName
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("failed to iterate existing type fields: %w", err)
+	}
+	_ = rows.Close()
+
 	if _, err := tx.Exec("DELETE FROM asset_type_fields WHERE asset_type_id = ?", typeID); err != nil {
 		return fmt.Errorf("failed to delete existing type fields: %w", err)
 	}
 
+	retained := make(map[int]struct{}, len(fields))
 	now := time.Now()
 	for _, f := range fields {
+		retained[f.CustomFieldID] = struct{}{}
 		if _, err := tx.Exec(`
 			INSERT INTO asset_type_fields (asset_type_id, custom_field_id, is_required, display_order, created_at)
 			VALUES (?, ?, ?, ?, ?)
@@ -1286,7 +1331,84 @@ func (r *AssetRepository) ReplaceAssetTypeFields(typeID int, fields []AssetTypeF
 		}
 	}
 
+	removedKeys := make(map[string]struct{})
+	for fieldID, fieldName := range existingKeys {
+		if _, ok := retained[fieldID]; ok {
+			continue
+		}
+		removedKeys[fmt.Sprintf("%d", fieldID)] = struct{}{}
+		removedKeys[fieldName] = struct{}{}
+		removedKeys[strings.ToLower(fieldName)] = struct{}{}
+	}
+	if len(removedKeys) > 0 {
+		if err := pruneRemovedAssetTypeValues(tx, typeID, removedKeys, now); err != nil {
+			return err
+		}
+	}
+
 	return tx.Commit()
+}
+
+func pruneRemovedAssetTypeValues(tx database.Tx, typeID int, removedKeys map[string]struct{}, updatedAt time.Time) error {
+	rows, err := tx.Query(`
+		SELECT id, custom_field_values
+		FROM assets
+		WHERE asset_type_id = ? AND custom_field_values IS NOT NULL
+	`, typeID)
+	if err != nil {
+		return fmt.Errorf("failed to load assets for custom-field pruning: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	type prunedAsset struct {
+		id     int
+		values string
+	}
+	var updates []prunedAsset
+	for rows.Next() {
+		var assetID int
+		var raw string
+		if err := rows.Scan(&assetID, &raw); err != nil {
+			return fmt.Errorf("failed to scan asset custom fields: %w", err)
+		}
+		values := map[string]interface{}{}
+		if raw == "" {
+			continue
+		}
+		if err := json.Unmarshal([]byte(raw), &values); err != nil {
+			return fmt.Errorf("failed to decode custom fields for asset %d: %w", assetID, err)
+		}
+		changed := false
+		for key := range values {
+			if _, remove := removedKeys[key]; remove {
+				delete(values, key)
+				changed = true
+			}
+		}
+		if !changed {
+			continue
+		}
+		encoded, err := json.Marshal(values)
+		if err != nil {
+			return fmt.Errorf("failed to encode custom fields for asset %d: %w", assetID, err)
+		}
+		updates = append(updates, prunedAsset{id: assetID, values: string(encoded)})
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("failed to iterate assets for custom-field pruning: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("failed to close assets custom-field rows: %w", err)
+	}
+	for _, update := range updates {
+		if _, err := tx.Exec(
+			"UPDATE assets SET custom_field_values = ?, updated_at = ? WHERE id = ?",
+			update.values, updatedAt, update.id,
+		); err != nil {
+			return fmt.Errorf("failed to prune custom fields for asset %d: %w", update.id, err)
+		}
+	}
+	return nil
 }
 
 // scanAssetTypeRow scans a full asset type row (with nullable description and set_name)
@@ -1854,18 +1976,19 @@ func (r *AssetRepository) FindAssetFullByID(assetID int) (*AssetRow, error) {
 
 // AssetUpdateSnapshot is what UpdateAsset needs from the existing row to detect status changes.
 type AssetUpdateSnapshot struct {
-	SetID       int
-	StatusID    sql.NullInt64
-	AssetTypeID int
+	SetID                 int
+	StatusID              sql.NullInt64
+	AssetTypeID           int
+	CustomFieldValuesJSON sql.NullString
 }
 
 // GetAssetUpdateSnapshot returns the fields needed by UpdateAsset before applying changes.
 func (r *AssetRepository) GetAssetUpdateSnapshot(assetID int) (*AssetUpdateSnapshot, error) {
 	var snap AssetUpdateSnapshot
 	err := r.db.QueryRow(
-		`SELECT set_id, status_id, asset_type_id FROM assets WHERE id = ?`,
+		`SELECT set_id, status_id, asset_type_id, custom_field_values FROM assets WHERE id = ?`,
 		assetID,
-	).Scan(&snap.SetID, &snap.StatusID, &snap.AssetTypeID)
+	).Scan(&snap.SetID, &snap.StatusID, &snap.AssetTypeID, &snap.CustomFieldValuesJSON)
 	if err != nil {
 		return nil, notFoundOrWrap(err, "failed to fetch asset snapshot")
 	}

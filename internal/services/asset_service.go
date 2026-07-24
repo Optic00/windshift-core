@@ -627,8 +627,16 @@ func (s *AssetService) UpdateAsset(actor AuditActor, assetID int, oldSnap reposi
 	enforceRequired := customFieldValues != nil
 	if typeChanged {
 		if toValidate == nil {
-			toValidate = loadStoredCustomFieldValues(in.CustomFieldValuesJSON)
+			stored := in.CustomFieldValuesJSON
+			if stored == nil && oldSnap.CustomFieldValuesJSON.Valid {
+				stored = &oldSnap.CustomFieldValuesJSON.String
+			}
+			toValidate = loadStoredCustomFieldValues(stored)
 		}
+		if err := s.retainCustomFieldsForType(in.AssetTypeID, toValidate); err != nil {
+			return nil, err
+		}
+		customFieldValues = toValidate
 		enforceRequired = true
 	}
 	if err := s.ValidateCustomFieldsSchema(in.AssetTypeID, toValidate, CustomFieldsValidationOpts{EnforceRequired: enforceRequired}); err != nil {
@@ -682,6 +690,35 @@ func (s *AssetService) UpdateAsset(actor AuditActor, assetID int, oldSnap reposi
 	}
 	m := repository.AssetRowToModel(*row)
 	return &m, nil
+}
+
+// retainCustomFieldsForType removes values that are not declared on the target
+// type. It is used only during an explicit type change: compatible values are
+// retained, incompatible values are pruned, and the subsequent required-field
+// validation tells the caller which new values must be supplied.
+func (s *AssetService) retainCustomFieldsForType(assetTypeID int, values map[string]interface{}) error {
+	if len(values) == 0 {
+		return nil
+	}
+	fields, err := s.repo.FindAssetTypeFields(assetTypeID)
+	if err != nil {
+		return fmt.Errorf("load asset type fields: %w", err)
+	}
+	allowed := make(map[string]struct{}, len(fields)*3)
+	for _, field := range fields {
+		allowed[fmt.Sprintf("%d", field.CustomFieldID)] = struct{}{}
+		allowed[field.FieldName] = struct{}{}
+		allowed[strings.ToLower(field.FieldName)] = struct{}{}
+	}
+	for key := range values {
+		if _, ok := allowed[key]; ok {
+			continue
+		}
+		if _, ok := allowed[strings.ToLower(key)]; !ok {
+			delete(values, key)
+		}
+	}
+	return nil
 }
 
 // DeleteAsset resolves the title via GetAssetSetAndTitle (so the audit
@@ -946,11 +983,10 @@ func buildCSVRow(headers, record []string, customFieldByName map[string]string) 
 	return row
 }
 
-// loadStoredCustomFieldValues unmarshals the persisted CFV column the
-// handler re-encoded onto in.CustomFieldValuesJSON for a partial
-// update. Returns nil for nil / empty / unparseable JSON — callers
-// fall back to "empty map" semantics, which the validator then runs
-// against the new type's required-field set.
+// loadStoredCustomFieldValues unmarshals a persisted or request-supplied CFV
+// column. Returns nil for nil / empty / unparseable JSON — callers fall back
+// to "empty map" semantics, which the validator then runs against the new
+// type's required-field set.
 func loadStoredCustomFieldValues(stored *string) map[string]interface{} {
 	if stored == nil || *stored == "" {
 		return nil

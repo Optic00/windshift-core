@@ -80,6 +80,63 @@ func NewAssetActionService(db database.Database, config ActionServiceConfig, cha
 	return service
 }
 
+// ValidateTaxonomyReferences rejects asset-action definitions that point at a
+// type or status outside the action's set. Execution repeats the ownership
+// checks so definitions cannot become unsafe if taxonomy data changes later.
+func (as *AssetActionService) ValidateTaxonomyReferences(setID int, triggerConfig string, nodes []models.AssetActionNode) error {
+	repo := repository.NewAssetRepository(as.db)
+	if triggerConfig != "" {
+		var config models.AssetTriggerConfig
+		if err := json.Unmarshal([]byte(triggerConfig), &config); err != nil {
+			return fmt.Errorf("trigger_config: %w", err)
+		}
+		if config.AssetTypeID != nil {
+			belongs, err := repo.AssetTypeBelongsToSet(*config.AssetTypeID, setID)
+			if err != nil {
+				return fmt.Errorf("validate trigger asset_type_id: %w", err)
+			}
+			if !belongs {
+				return fmt.Errorf("trigger asset_type_id %d does not belong to asset set %d", *config.AssetTypeID, setID)
+			}
+		}
+		for field, statusID := range map[string]*int{
+			"from_status_id": config.FromStatusID,
+			"to_status_id":   config.ToStatusID,
+		} {
+			if statusID == nil {
+				continue
+			}
+			belongs, err := repo.StatusBelongsToSet(*statusID, setID)
+			if err != nil {
+				return fmt.Errorf("validate trigger %s: %w", field, err)
+			}
+			if !belongs {
+				return fmt.Errorf("trigger %s %d does not belong to asset set %d", field, *statusID, setID)
+			}
+		}
+	}
+	for i, node := range nodes {
+		if node.NodeType != models.AssetNodeSetStatus {
+			continue
+		}
+		var config models.SetStatusNodeConfig
+		if err := json.Unmarshal([]byte(node.NodeConfig), &config); err != nil {
+			return fmt.Errorf("nodes[%d].node_config: %w", i, err)
+		}
+		if config.StatusID <= 0 {
+			return fmt.Errorf("nodes[%d].node_config.status_id must be positive", i)
+		}
+		belongs, err := repo.StatusBelongsToSet(config.StatusID, setID)
+		if err != nil {
+			return fmt.Errorf("validate nodes[%d] status_id: %w", i, err)
+		}
+		if !belongs {
+			return fmt.Errorf("nodes[%d].node_config.status_id %d does not belong to asset set %d", i, config.StatusID, setID)
+		}
+	}
+	return nil
+}
+
 // SetNotificationService sets the notification service for notify_user actions
 func (as *AssetActionService) SetNotificationService(ns *NotificationService) {
 	as.notificationService = ns

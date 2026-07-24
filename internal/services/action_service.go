@@ -122,6 +122,70 @@ type ActionService struct {
 	errors          int64
 }
 
+// ValidateAssetTaxonomyReferences rejects action node configurations whose
+// asset taxonomy IDs do not belong to their declared set. Executors repeat
+// these checks at write time as defense in depth; this method keeps invalid
+// definitions from being persisted in the first place.
+func (as *ActionService) ValidateAssetTaxonomyReferences(nodes []models.ActionNode) error {
+	repo := repository.NewAssetRepository(as.db)
+	for i, node := range nodes {
+		switch node.NodeType {
+		case models.ActionNodeCreateAsset:
+			var config models.CreateAssetNodeConfig
+			if err := json.Unmarshal([]byte(node.NodeConfig), &config); err != nil {
+				return fmt.Errorf("nodes[%d].node_config: parse create_asset config: %w", i, err)
+			}
+			if err := validateAssetTaxonomyForSet(repo, config.AssetSetID, config.AssetTypeID, config.CategoryID, config.StatusID); err != nil {
+				return fmt.Errorf("nodes[%d].node_config: %w", i, err)
+			}
+		case models.ActionNodeUpdateAsset:
+			var config models.UpdateAssetNodeConfig
+			if err := json.Unmarshal([]byte(node.NodeConfig), &config); err != nil {
+				return fmt.Errorf("nodes[%d].node_config: parse update_asset config: %w", i, err)
+			}
+			if err := validateAssetTaxonomyForSet(repo, config.AssetSetID, config.AssetTypeID, nil, nil); err != nil {
+				return fmt.Errorf("nodes[%d].node_config: %w", i, err)
+			}
+		}
+	}
+	return nil
+}
+
+func validateAssetTaxonomyForSet(repo *repository.AssetRepository, setID, typeID int, categoryID, statusID *int) error {
+	if setID <= 0 {
+		return fmt.Errorf("asset_set_id must be positive")
+	}
+	if typeID <= 0 {
+		return fmt.Errorf("asset_type_id must be positive")
+	}
+	belongs, err := repo.AssetTypeBelongsToSet(typeID, setID)
+	if err != nil {
+		return fmt.Errorf("validate asset_type_id: %w", err)
+	}
+	if !belongs {
+		return fmt.Errorf("asset_type_id %d does not belong to asset_set_id %d", typeID, setID)
+	}
+	if categoryID != nil {
+		belongs, err = repo.CategoryBelongsToSet(*categoryID, setID)
+		if err != nil {
+			return fmt.Errorf("validate category_id: %w", err)
+		}
+		if !belongs {
+			return fmt.Errorf("category_id %d does not belong to asset_set_id %d", *categoryID, setID)
+		}
+	}
+	if statusID != nil {
+		belongs, err = repo.StatusBelongsToSet(*statusID, setID)
+		if err != nil {
+			return fmt.Errorf("validate status_id: %w", err)
+		}
+		if !belongs {
+			return fmt.Errorf("status_id %d does not belong to asset_set_id %d", *statusID, setID)
+		}
+	}
+	return nil
+}
+
 // NewActionService creates a new action service
 func NewActionService(db database.Database, config ActionServiceConfig, chainStore *ExecutionChainStore) *ActionService {
 	if chainStore == nil {

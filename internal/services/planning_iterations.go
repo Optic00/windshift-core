@@ -50,6 +50,12 @@ func scanIterationRow(sc iterationScanner) (IterationResult, error) {
 	}
 
 	iter.Description = description.String
+	if start, parseErr := parseDate(iter.StartDate); parseErr == nil {
+		iter.StartDate = start.Format("2006-01-02")
+	}
+	if end, parseErr := parseDate(iter.EndDate); parseErr == nil {
+		iter.EndDate = end.Format("2006-01-02")
+	}
 	iter.TypeName = typeName.String
 	iter.TypeColor = typeColor.String
 	iter.WorkspaceName = workspaceName.String
@@ -265,19 +271,18 @@ type CreateIterationParams struct {
 
 // CreateIteration creates a new iteration.
 func (s *PlanningService) CreateIteration(params CreateIterationParams) (*IterationResult, error) {
-	if err := validatePlanningScope(params.IsGlobal, params.WorkspaceID); err != nil {
-		return nil, err
+	if params.Status == "" {
+		params.Status = "planned"
 	}
-	status := params.Status
-	if status == "" {
-		status = "planned"
+	if err := s.validateIterationMutation(params); err != nil {
+		return nil, err
 	}
 
 	var id int64
 	err := s.db.QueryRow(`
 		INSERT INTO iterations (name, description, start_date, end_date, status, type_id, is_global, workspace_id)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
-	`, params.Name, params.Description, params.StartDate, params.EndDate, status, params.TypeID, params.IsGlobal, params.WorkspaceID).Scan(&id)
+	`, params.Name, params.Description, params.StartDate, params.EndDate, params.Status, params.TypeID, params.IsGlobal, params.WorkspaceID).Scan(&id)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create iteration: %w", err)
 	}
@@ -302,6 +307,18 @@ type UpdateIterationParams struct {
 
 // UpdateIteration updates an existing iteration within its declared scope.
 func (s *PlanningService) UpdateIteration(params UpdateIterationParams) (*IterationResult, error) {
+	if err := s.validateIterationMutation(CreateIterationParams{
+		Name:        params.Name,
+		Description: params.Description,
+		StartDate:   params.StartDate,
+		EndDate:     params.EndDate,
+		Status:      params.Status,
+		TypeID:      params.TypeID,
+		IsGlobal:    params.WorkspaceID == nil,
+		WorkspaceID: params.WorkspaceID,
+	}); err != nil {
+		return nil, err
+	}
 	currentStatus, err := s.iterationStatusInScope(params.ID, params.WorkspaceID)
 	if err != nil {
 		return nil, err
