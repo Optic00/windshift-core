@@ -341,6 +341,7 @@
             <div class="wsf-field">
               {#if kind === 'checkbox'}
                 <Checkbox
+                  id={`wsf-${field.field_identifier}`}
                   checked={Boolean(valueFor(field))}
                   label={`${labelFor(field)}${field.is_required ? ' *' : ''}`}
                   onchange={(checked) => setValue(field, checked)}

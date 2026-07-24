@@ -46,6 +46,7 @@
 
   let currentPage = $state(1);
   let itemsPerPage = $state(/** @type {number} */ (50));
+  let explicitSearchVersion = 0;
 
   onMount(() => {
     async function restoreAndSearch() {
@@ -63,14 +64,17 @@
     // prevents a fast first keystroke from being overwritten when those
     // requests finish, while executeSearch still waits for workspace names.
     store.restoreFromURL();
-    void store.loadReferenceData().then(() =>
-      store.executeSearch({ page: 1, limit: itemsPerPage })
-    );
+    const startupSearchVersion = explicitSearchVersion;
+    void store.loadReferenceData().then(() => {
+      if (explicitSearchVersion !== startupSearchVersion) return;
+      return store.executeSearch({ page: 1, limit: itemsPerPage });
+    });
 
     return () => window.removeEventListener('popstate', handleHistoryNavigation);
   });
 
   function retrySearch() {
+    explicitSearchVersion += 1;
     return store.executeSearch({ page: currentPage, limit: itemsPerPage });
   }
 
@@ -80,9 +84,9 @@
     handleUpdatePriorities,
     handleUpdateSearch,
     handleUpdateDynamicFilters,
-    handleExecuteQL,
+    handleExecuteQL: executeSearch,
     handleEnterRawMode,
-    handleResetToBuilder,
+    handleResetToBuilder: resetToBuilder,
     handleQueryChange,
   } = createWorkItemSearchHandlers(store, {
     getRawMode: () => rawMode,
@@ -91,6 +95,16 @@
       currentPage = 1;
     },
   });
+
+  async function handleExecuteQL() {
+    explicitSearchVersion += 1;
+    await executeSearch();
+  }
+
+  async function handleResetToBuilder() {
+    explicitSearchVersion += 1;
+    await resetToBuilder();
+  }
 
   let workItemColumns = $derived(
     buildWorkItemColumns({

@@ -64,7 +64,7 @@
       if (token !== loadToken) return;
       loadedMilestones = response || [];
     } catch (err) {
-      if (token !== loadToken) return;
+      if (token !== loadToken || err?.name === 'AbortError') return;
       console.error('Failed to load milestones:', err);
       loadedMilestones = [];
     } finally {

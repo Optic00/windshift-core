@@ -82,7 +82,8 @@
 		{
 			id: 'agents',
 			label: 'Agents',
-			icon: Bot
+			icon: Bot,
+			testid: 'profile-tab-agents'
 		},
 		{
 			id: 'connected-accounts',

@@ -88,30 +88,32 @@
 </script>
 
 {#if MilkdownEditor}
-  <MilkdownEditor
-    bind:this={editorInstance}
-    bind:content
-    {placeholder}
-    {readonly}
-    {showToolbar}
-    {hideToolbarUntilFocus}
-    {itemId}
-    {entityType}
-    {entityId}
-    {onImageInsert}
-    {onContentChange}
-    {isPersonalWorkspace}
-    {compact}
-    {customUploadFn}
-    {downloadUrlBase}
-    {deferImageUploads}
-    {onDeferredImageUpload}
-    {enableDiagrams}
-    {workspaceId}
-    {expectedContentHash}
-    {onBeforeDiagramOpen}
-    {onDiagramPersisted}
-  />
+  {#key readonly}
+    <MilkdownEditor
+      bind:this={editorInstance}
+      bind:content
+      {placeholder}
+      {readonly}
+      {showToolbar}
+      {hideToolbarUntilFocus}
+      {itemId}
+      {entityType}
+      {entityId}
+      {onImageInsert}
+      {onContentChange}
+      {isPersonalWorkspace}
+      {compact}
+      {customUploadFn}
+      {downloadUrlBase}
+      {deferImageUploads}
+      {onDeferredImageUpload}
+      {enableDiagrams}
+      {workspaceId}
+      {expectedContentHash}
+      {onBeforeDiagramOpen}
+      {onDiagramPersisted}
+    />
+  {/key}
 {:else}
   <!-- Skeleton placeholder while loading -->
   <div

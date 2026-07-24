@@ -1,5 +1,6 @@
 <script>
   let {
+    id = undefined,
     checked = $bindable(false),
     disabled = false,
     size = 'medium',           // 'small' | 'medium'
@@ -31,11 +32,12 @@
 >
   <span class="checkbox-box {currentSize.box} {hint ? 'mt-0.5' : ''}" class:checked class:disabled>
     <input
+      {id}
       type="checkbox"
       {checked}
       {disabled}
       onchange={handleChange}
-      class="sr-only"
+      class="checkbox-input"
     />
     {#if checked}
       <svg class="checkmark {currentSize.checkmark}" viewBox="0 0 12 12" fill="none">
@@ -61,6 +63,7 @@
   }
 
   .checkbox-box {
+    position: relative;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -69,6 +72,22 @@
     background-color: var(--ds-background-input);
     transition: all 150ms ease;
     flex-shrink: 0;
+  }
+
+  .checkbox-input {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    cursor: inherit;
+    opacity: 0;
+  }
+
+  .checkbox-box:has(.checkbox-input:focus-visible) {
+    outline: 2px solid var(--ds-border-focused);
+    outline-offset: 2px;
   }
 
   .checkbox-box:not(.disabled):hover {

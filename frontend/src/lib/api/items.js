@@ -234,7 +234,8 @@ export const items = {
   getWatchStatus: (id, requestOptions = {}) => fetchAPI(`/items/${id}/watch`, requestOptions),
 
   // Personal tasks relationship
-  getPersonalTasks: (itemId) => fetchAPI(`/items/${itemId}/personal-tasks`),
+  getPersonalTasks: (itemId, requestOptions = {}) =>
+    fetchAPI(`/items/${itemId}/personal-tasks`, requestOptions),
   unlinkPersonalTask: (itemId) =>
     fetchAPI(`/items/${itemId}/related-work-item`, {
       method: 'DELETE',

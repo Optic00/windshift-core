@@ -83,7 +83,9 @@ import Button from '../../components/Button.svelte';
     // Full reconcile (reconnect/server reload): reload the item AND comments.
     // Comments is a separate component, so loadData() alone would leave it stale.
     onReconcile: () => {
-      loadData().catch((err) => console.error('SSE reconcile failed:', err));
+      if (!itemDetailStore.loading) {
+        loadData().catch((err) => console.error('SSE reconcile failed:', err));
+      }
       window.dispatchEvent(new CustomEvent('item-comments-changed', { detail: { itemId } }));
       window.dispatchEvent(new CustomEvent('item-scm-links-changed', { detail: { itemId } }));
     },
@@ -101,6 +103,11 @@ import Button from '../../components/Button.svelte';
     // (which would 404) and showing stale data.
     onDeleted: () => itemDetailStore.markDeleted(),
   });
+
+  // Abort store-owned requests before the browser tears down the document.
+  // Component destruction can happen too late for fetch to retain AbortError
+  // semantics during a full page navigation.
+  useEventListener(() => window, 'pagehide', () => itemDetailStore.reset());
 
   // Close the detail when the open item is deleted elsewhere (SSE `deleted`, or
   // a 404 discovered by the poll fallback). Force hasChanges=false so a deleted

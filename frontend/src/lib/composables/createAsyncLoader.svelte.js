@@ -17,6 +17,10 @@ export function createAsyncLoader(fetchFn) {
     try {
       data = (await fetchFn()) || [];
     } catch (e) {
+      // Navigation and superseded requests abort in-flight fetches by design.
+      // The owning component is either gone or about to load newer data, so an
+      // AbortError is neither a user-visible loader error nor a console error.
+      if (e?.name === 'AbortError') return;
       console.error('Failed to load data:', e);
       error = e.message || 'Failed to load data';
       data = [];

@@ -113,13 +113,12 @@
   let displayedTasks = $derived(showCompleted ? personalTasks : openTasks);
 
   // Load personal tasks for this work item
-  async function loadPersonalTasks() {
-    if (!itemId) return;
-
+  async function loadPersonalTasks(currentItemId, signal) {
     try {
       loading = true;
       error = null;
-      const tasks = await api.items.getPersonalTasks(itemId);
+      const tasks = await api.items.getPersonalTasks(currentItemId, { signal });
+      if (signal.aborted) return;
       personalTasks = tasks || [];
 
       // On first load, auto-expand if there are tasks, otherwise use saved preference
@@ -132,12 +131,12 @@
         }
       }
     } catch (err) {
-      if (err?.name === 'AbortError') return;
+      if (signal.aborted || err?.name === 'AbortError') return;
       console.error('Failed to load personal tasks:', err);
       error = err.message;
       personalTasks = [];
     } finally {
-      loading = false;
+      if (!signal.aborted) loading = false;
     }
   }
 
@@ -209,18 +208,20 @@
 
   onMount(() => {
     workspacesStore.loadPersonalWorkspace();
-    loadPersonalTasks();
     // Load showCompleted preference
     showCompleted = loadShowCompletedState();
   });
 
-  // Reload when itemId changes
+  // Load once per item and cancel work that belongs to the previous route.
   $effect(() => {
-    if (itemId) {
-      // Reset the hasInitiallyLoaded flag when itemId changes
-      hasInitiallyLoaded = false;
-      loadPersonalTasks();
-    }
+    const currentItemId = itemId;
+    if (!currentItemId) return;
+
+    hasInitiallyLoaded = false;
+    const controller = new AbortController();
+    void loadPersonalTasks(currentItemId, controller.signal);
+
+    return () => controller.abort();
   });
 </script>
 

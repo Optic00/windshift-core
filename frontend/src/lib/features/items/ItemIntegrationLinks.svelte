@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { api } from '../../api.js';
   import { ExternalLink, Plus, RefreshCw, Trash2, ChevronDown, ChevronRight, Loader2, Link2 } from '@lucide/svelte';
   import Button from '../../components/Button.svelte';
@@ -22,21 +22,26 @@
   let hasProviders = $state(false);
   let hasConnection = $state(false);
   let checkingStatus = $state(true);
+  const loadController = new AbortController();
 
   onMount(async () => {
-    await checkStatus();
-    await loadLinks();
+    await checkStatus(loadController.signal);
+    if (!loadController.signal.aborted) {
+      await loadLinks(loadController.signal);
+    }
   });
 
-  async function checkStatus() {
+  onDestroy(() => loadController.abort());
+
+  async function checkStatus(signal) {
     try {
-      const available = await api.userIntegrations.getAvailableProviders() || [];
+      const available = await api.userIntegrations.getAvailableProviders({ signal }) || [];
       const linkableProviders = available.filter((provider) =>
         LINKABLE_PROVIDER_TYPES.has(provider.provider_type?.toLowerCase())
       );
       hasProviders = linkableProviders.length > 0;
       if (hasProviders) {
-        const connections = await api.userIntegrations.getConnections() || [];
+        const connections = await api.userIntegrations.getConnections({ signal }) || [];
         const connectedProviderIds = new Set(
           connections.map((connection) => connection.integration_provider_id)
         );
@@ -52,13 +57,13 @@
     }
   }
 
-  export async function loadLinks() {
+  export async function loadLinks(signal) {
     if (!itemId) return;
     loading = true;
     error = null;
 
     try {
-      links = await api.itemIntegrationLinks.get(itemId) || [];
+      links = await api.itemIntegrationLinks.get(itemId, signal ? { signal } : undefined) || [];
     } catch (err) {
       if (err?.name === 'AbortError') return;
       console.error('Failed to load integration links:', err);

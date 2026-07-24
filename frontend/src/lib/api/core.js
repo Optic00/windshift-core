@@ -11,6 +11,20 @@ export const API_BASE = '/api';
 // Ensure the clock-drift warning toast fires at most once per session
 let driftWarningShown = false;
 
+// Chromium does not consistently report fetches cancelled by a document
+// navigation as AbortError. Track the page lifecycle explicitly so callers do
+// not mistake unload cancellation for a connectivity failure. `pageshow`
+// restores the flag when a document returns from the back-forward cache.
+let documentUnloading = false;
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', () => {
+    documentUnloading = true;
+  });
+  window.addEventListener('pageshow', () => {
+    documentUnloading = false;
+  });
+}
+
 // In-flight GET ownership is scoped to the authenticated browser session.
 // Settled responses are never retained here: this removes duplicate concurrent
 // network work without turning live endpoints into a cache.
@@ -160,8 +174,8 @@ async function performFetchAPI(endpoint, options = {}) {
     // reporting a spurious connectivity failure during reload/unload.
     if (
       err instanceof TypeError &&
-      typeof document !== 'undefined' &&
-      document.visibilityState === 'hidden'
+      (documentUnloading ||
+        (typeof document !== 'undefined' && document.visibilityState === 'hidden'))
     ) {
       throw new DOMException('The document was unloaded', 'AbortError');
     }

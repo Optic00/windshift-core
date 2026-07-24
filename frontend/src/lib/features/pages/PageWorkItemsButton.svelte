@@ -6,8 +6,7 @@
   import { t } from '../../stores/i18n.svelte.js';
   import { errorToast } from '../../stores/toasts.svelte.js';
   import StatusBadge from '../../components/StatusBadge.svelte';
-  import { useDebounce } from 'runed';
-  import { untrack } from 'svelte';
+  import { onDestroy } from 'svelte';
 
   /**
    * Top-right popover on a page detail showing the work items linked to
@@ -44,49 +43,61 @@
   let searching = $state(false);
   let highlightedIndex = $state(-1);
   let submitting = $state(false);
+  let searchTimer;
+  let searchVersion = 0;
 
   $effect(() => {
     if (!$open) {
-      mode = 'list';
-      searchQuery = '';
-      searchResults = [];
-      highlightedIndex = -1;
+      resetSearch();
     }
   });
 
-  const runSearch = useDebounce(async (q) => {
+  onDestroy(() => {
+    clearTimeout(searchTimer);
+    searchVersion += 1;
+  });
+
+  function resetSearch(nextMode = 'list') {
+    clearTimeout(searchTimer);
+    searchVersion += 1;
+    mode = nextMode;
+    searchQuery = '';
+    searchResults = [];
+    highlightedIndex = -1;
+    searching = false;
+  }
+
+  function handleSearchInput(event) {
+    const q = event.currentTarget.value;
+    searchQuery = q;
+    clearTimeout(searchTimer);
+    const version = ++searchVersion;
+
+    if (q.trim().length < 2) {
+      searchResults = [];
+      highlightedIndex = -1;
+      searching = false;
+      return;
+    }
+
+    searching = true;
+    searchTimer = setTimeout(() => searchItems(q.trim(), version), 250);
+  }
+
+  async function searchItems(q, version) {
     try {
-      searching = true;
       const results = await api.links.search(q, 'item', 10);
+      if (version !== searchVersion) return;
       searchResults = Array.isArray(results) ? results : [];
       highlightedIndex = searchResults.length > 0 ? 0 : -1;
     } catch (err) {
+      if (version !== searchVersion) return;
       console.error('work-item search failed', err);
       searchResults = [];
     } finally {
-      searching = false;
+      if (version === searchVersion) searching = false;
     }
-  }, 250);
-
-  // Reactive search. Mirror the LinkItemModal pattern: untrack() the debounce
-  // call so we don't subscribe to its internal $state and loop.
-  $effect(() => {
-    const q = (searchQuery || '').trim();
-    if (mode !== 'add') {
-      untrack(() => runSearch.cancel?.());
-      searchResults = [];
-      highlightedIndex = -1;
-      return;
-    }
-    if (q.length >= 2) {
-      untrack(() => runSearch(q));
-    } else {
-      untrack(() => runSearch.cancel?.());
-      searchResults = [];
-      highlightedIndex = -1;
-      searching = false;
-    }
-  });
+  }
 
   async function linkItem(item) {
     if (!pageLinkTypeId || submitting) return;
@@ -100,9 +111,7 @@
         target_id: pageId,
       });
       onlinkCreated(link);
-      mode = 'list';
-      searchQuery = '';
-      searchResults = [];
+      resetSearch();
     } catch (err) {
       errorToast(err?.message || t('pages.workItemsErrorLink'));
     } finally {
@@ -122,9 +131,7 @@
   function handleSearchKeyDown(e) {
     if (e.key === 'Escape') {
       e.preventDefault();
-      mode = 'list';
-      searchQuery = '';
-      searchResults = [];
+      resetSearch();
       return;
     }
     if (searchResults.length === 0) return;
@@ -164,7 +171,7 @@
         <button
           type="button"
           class="add-btn"
-          onclick={() => (mode = 'add')}
+          onclick={() => resetSearch('add')}
           data-testid="page-work-items-add"
         >
           <Plus size={14} />
@@ -175,7 +182,7 @@
         <button
           type="button"
           class="add-btn"
-          onclick={() => (mode = 'list')}
+          onclick={() => resetSearch()}
           data-testid="page-work-items-add-cancel"
         >
           <X size={14} />
@@ -188,7 +195,8 @@
       <div class="search-row">
         <input
           type="text"
-          bind:value={searchQuery}
+          value={searchQuery}
+          oninput={handleSearchInput}
           onkeydown={handleSearchKeyDown}
           placeholder={t('pages.addWorkItemSearchPlaceholder')}
           class="search-input"

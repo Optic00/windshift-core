@@ -6,8 +6,9 @@ export const integrationProviders = createCrudClient('/admin/integration-provide
 
 // User integration connections
 export const userIntegrations = {
-  getConnections: () => fetchAPI('/users/me/integration-connections'),
-  getAvailableProviders: () => fetchAPI('/users/me/integration-connections/available'),
+  getConnections: (options) => fetchAPI('/users/me/integration-connections', options),
+  getAvailableProviders: (options) =>
+    fetchAPI('/users/me/integration-connections/available', options),
   disconnect: (providerId) =>
     fetchAPI(`/users/me/integration-connections/${providerId}`, {
       method: 'DELETE',
@@ -29,7 +30,7 @@ export const todoistSync = {
 
 // Item integration links
 export const itemIntegrationLinks = {
-  get: (itemId) => fetchAPI(`/items/${itemId}/integration-links`),
+  get: (itemId, options) => fetchAPI(`/items/${itemId}/integration-links`, options),
   create: (itemId, data) =>
     fetchAPI(`/items/${itemId}/integration-links`, {
       method: 'POST',

@@ -107,6 +107,11 @@
 
   // Loading state
   let loading = $state(true);
+  let assetTypesRequestSeq = 0;
+  let assetCategoriesRequestSeq = 0;
+  let assetStatusesRequestSeq = 0;
+  let allCustomFieldsRequestSeq = 0;
+  let selectedTypeFieldsRequestSeq = 0;
 
   onMount(async () => {
     await loadAssetSets();
@@ -160,24 +165,29 @@
 
   async function loadAssetTypes() {
     if (!selectedSetId) return;
+    const setId = selectedSetId;
+    const requestSeq = ++assetTypesRequestSeq;
     try {
-      const types = await api.assetTypes.getAll(selectedSetId);
+      const types = await api.assetTypes.getAll(setId);
+      if (requestSeq !== assetTypesRequestSeq || selectedSetId !== setId) return;
       assetTypes = (types || []).filter(t => t.is_active);
-      loadAllCustomFields();
+      void loadAllCustomFields(setId, assetTypes);
     } catch (error) {
+      if (requestSeq !== assetTypesRequestSeq || selectedSetId !== setId) return;
       console.error('Failed to load asset types:', error);
     }
   }
 
-  async function loadAllCustomFields() {
-    if (assetTypes.length === 0) {
+  async function loadAllCustomFields(setId = selectedSetId, types = assetTypes) {
+    const requestSeq = ++allCustomFieldsRequestSeq;
+    if (types.length === 0) {
       allCustomFields = [];
       return;
     }
     try {
       const seenFieldIds = new Set();
       const fields = [];
-      for (const type of assetTypes) {
+      for (const type of types) {
         const typeFields = await api.assetTypes.getFields(type.id);
         for (const f of (typeFields || [])) {
           if (!seenFieldIds.has(f.custom_field_id)) {
@@ -186,19 +196,29 @@
           }
         }
       }
+      if (requestSeq !== allCustomFieldsRequestSeq || selectedSetId !== setId) return;
       allCustomFields = fields;
     } catch (error) {
+      if (requestSeq !== allCustomFieldsRequestSeq || selectedSetId !== setId) return;
       console.error('Failed to load custom fields for filter:', error);
       allCustomFields = [];
     }
   }
 
   async function loadAssetCategories() {
-    assetCategories = await fetchAssetCategories(selectedSetId);
+    const setId = selectedSetId;
+    const requestSeq = ++assetCategoriesRequestSeq;
+    const categories = await fetchAssetCategories(setId);
+    if (requestSeq !== assetCategoriesRequestSeq || selectedSetId !== setId) return;
+    assetCategories = categories;
   }
 
   async function loadStatuses() {
-    statuses = await fetchAssetStatuses(selectedSetId);
+    const setId = selectedSetId;
+    const requestSeq = ++assetStatusesRequestSeq;
+    const nextStatuses = await fetchAssetStatuses(setId);
+    if (requestSeq !== assetStatusesRequestSeq || selectedSetId !== setId) return;
+    statuses = nextStatuses;
   }
 
   async function loadAssets() {
@@ -296,8 +316,13 @@
   });
 
   async function loadTypeFields(typeId) {
+    const requestSeq = ++selectedTypeFieldsRequestSeq;
     try {
       const fields = await api.assetTypes.getFields(typeId);
+      if (
+        requestSeq !== selectedTypeFieldsRequestSeq ||
+        Number(assetFormData.asset_type_id) !== Number(typeId)
+      ) return;
       selectedTypeFields = fields || [];
       if (editingAsset && Number(assetFormData.asset_type_id) === Number(typeId)) {
         assetFormData.custom_field_values = retainValuesForType(
@@ -306,6 +331,10 @@
         );
       }
     } catch (error) {
+      if (
+        requestSeq !== selectedTypeFieldsRequestSeq ||
+        Number(assetFormData.asset_type_id) !== Number(typeId)
+      ) return;
       console.error('Failed to load type fields:', error);
       selectedTypeFields = [];
     }

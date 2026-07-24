@@ -7,8 +7,8 @@
   import PagePicker from '../pickers/PagePicker.svelte';
   import { api } from '../api.js';
   import { t } from '../stores/i18n.svelte.js';
-  import { useEventListener, useDebounce } from 'runed';
-  import { untrack } from 'svelte';
+  import { useEventListener } from 'runed';
+  import { onDestroy } from 'svelte';
 
   const TEST_LINK_TYPE_ID = 1;
 
@@ -36,6 +36,8 @@
   let searching = $state(false);
   let highlightedIndex = $state(-1);
   let inputRef = $state(null);
+  let searchTimer;
+  let searchVersion = 0;
 
   // Dropdown coordinates. The results dropdown is rendered as `position:
   // fixed` rather than `absolute` so it escapes the modal's `overflow-hidden`
@@ -77,73 +79,77 @@
   let searchDisabled = $derived(!formData.link_type_id);
   let canSubmit = $derived(formData.link_type_id && formData.target_id);
 
-  const runSearch = useDebounce(async (/** @type {string} */ query, /** @type {string} */ searchType) => {
-    try {
-      searching = true;
-      const results = await api.links.search(query, searchType, 10);
-      const items = Array.isArray(results) ? results : [];
-      searchResults = searchType === 'item'
-        ? items.filter(item => item.id !== currentItemId)
-        : items;
-      highlightedIndex = searchResults.length > 0 ? 0 : -1;
-    } catch (error) {
-      console.error('Search failed:', error);
-      searchResults = [];
-      highlightedIndex = -1;
-    } finally {
-      searching = false;
-    }
-  }, 300);
+  onDestroy(() => {
+    clearTimeout(searchTimer);
+    searchVersion += 1;
+  });
 
-  // Reactive search when query changes.
-  // runed's useDebounce holds its scheduling state in a $state, so calling
-  // the debounced wrapper (or .cancel()) from inside an $effect subscribes
-  // the effect to that internal state and re-runs forever. untrack() the
-  // calls so we only react to our own inputs.
-  $effect(() => {
-    const trimmedQuery = (searchQuery || '').trim();
-    const searchType = isTestLinkTypeSelected ? 'test_case' : 'item';
+  function clearSearch({ clearQuery = false } = {}) {
+    clearTimeout(searchTimer);
+    searchVersion += 1;
+    if (clearQuery) searchQuery = '';
+    searchResults = [];
+    highlightedIndex = -1;
+    searching = false;
+  }
 
-    // The Page link type swaps the search box for PagePicker — skip the
-    // inline runSearch entirely so we don't fire item-search requests
-    // while the user types into the page picker.
-    if (isPageLinkTypeSelected) {
-      untrack(() => runSearch.cancel());
+  function handleSearchInput(event) {
+    const query = event.currentTarget.value;
+    searchQuery = query;
+    clearTimeout(searchTimer);
+    const version = ++searchVersion;
+    const trimmedQuery = query.trim();
+
+    if (isPageLinkTypeSelected || trimmedQuery.length < 2 || !formData.link_type_id) {
       searchResults = [];
       highlightedIndex = -1;
       searching = false;
       return;
     }
 
-    if (trimmedQuery.length >= 2 && formData.link_type_id) {
-      untrack(() => runSearch(trimmedQuery, searchType));
-    } else {
-      untrack(() => runSearch.cancel());
+    const searchType = isTestLinkTypeSelected ? 'test_case' : 'item';
+    searching = true;
+    searchTimer = setTimeout(() => searchItems(trimmedQuery, searchType, version), 300);
+  }
+
+  async function searchItems(query, searchType, version) {
+    try {
+      const results = await api.links.search(query, searchType, 10);
+      if (version !== searchVersion) return;
+      const items = Array.isArray(results) ? results : [];
+      searchResults = searchType === 'item'
+        ? items.filter(item => item.id !== currentItemId)
+        : items;
+      highlightedIndex = searchResults.length > 0 ? 0 : -1;
+    } catch (error) {
+      if (version !== searchVersion) return;
+      console.error('Search failed:', error);
       searchResults = [];
       highlightedIndex = -1;
-      searching = false;
+    } finally {
+      if (version === searchVersion) searching = false;
     }
-  });
+  }
 
   // Reset target when link type changes
+  let previousSearchLinkTypeId;
   $effect(() => {
+    const currentLinkTypeId = selectedLinkTypeId;
     const isTestLink = selectedLinkTypeId === TEST_LINK_TYPE_ID;
     const isPageLink = isPageLinkTypeSelected;
+    if (currentLinkTypeId !== previousSearchLinkTypeId) {
+      previousSearchLinkTypeId = currentLinkTypeId;
+      clearSearch({ clearQuery: true });
+    }
     if (!isTestLink && formData.target_type === 'test_case') {
       formData.target_id = null;
       formData.target_title = '';
       formData.target_type = 'item';
-      searchQuery = '';
-      searchResults = [];
-      highlightedIndex = -1;
     }
     if (!isPageLink && formData.target_type === 'page') {
       formData.target_id = null;
       formData.target_title = '';
       formData.target_type = 'item';
-      searchQuery = '';
-      searchResults = [];
-      highlightedIndex = -1;
     }
   });
 
@@ -175,11 +181,9 @@
       handleSelectItem(searchResults[highlightedIndex]);
     } else if (e.key === 'Escape') {
       e.stopPropagation(); // Prevent modal close
-      searchResults = [];
-      highlightedIndex = -1;
+      clearSearch();
     } else if (e.key === 'Tab') {
-      searchResults = [];
-      highlightedIndex = -1;
+      clearSearch();
     }
   }
 
@@ -187,9 +191,7 @@
     formData.target_id = item.id;
     formData.target_title = item.title;
     formData.target_type = item.type || (isTestLinkTypeSelected ? 'test_case' : 'item');
-    searchQuery = '';
-    searchResults = [];
-    highlightedIndex = -1;
+    clearSearch({ clearQuery: true });
   }
 
   function handleSelectPage(page) {
@@ -197,8 +199,7 @@
     formData.target_id = page.id;
     formData.target_title = page.title;
     formData.target_type = 'page';
-    searchResults = [];
-    highlightedIndex = -1;
+    clearSearch({ clearQuery: true });
   }
 
   function clearTarget() {
@@ -209,9 +210,7 @@
       : isTestLinkTypeSelected
         ? 'test_case'
         : 'item';
-    searchQuery = '';
-    searchResults = [];
-    highlightedIndex = -1;
+    clearSearch({ clearQuery: true });
   }
 
   function handleSubmit() {
@@ -233,9 +232,7 @@
       target_title: '',
       target_type: 'item'
     };
-    searchQuery = '';
-    searchResults = [];
-    highlightedIndex = -1;
+    clearSearch({ clearQuery: true });
     isOpen = false;
     oncancel?.();
   }
@@ -327,7 +324,8 @@
               id="link-target-search"
               bind:this={inputRef}
               type="text"
-              bind:value={searchQuery}
+              value={searchQuery}
+              oninput={handleSearchInput}
               onkeydown={handleKeyDown}
               placeholder={searchPlaceholder}
               class="w-full px-3 py-2 text-sm border rounded bg-[var(--ds-background-input)] text-[var(--ds-text)] placeholder:text-[var(--ds-text-subtlest)] focus:outline-none focus:ring-1 focus:ring-[var(--ds-border-focused)] focus:border-[var(--ds-border-focused)] disabled:text-[var(--ds-text-disabled)] disabled:cursor-not-allowed"

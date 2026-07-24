@@ -642,15 +642,16 @@
   });
 
   // Page permissions load after the document, so a diagram node view can be
-  // created while the editor is provisionally readonly. Re-run ProseMirror's
-  // state update when the prop changes so custom node views receive the new
-  // `view.editable` value even though the document itself did not change.
+  // created while the editor is provisionally readonly. ProseMirror does not
+  // update custom node views when only `view.editable` changes, so replace the
+  // node-view map with an equivalent copy to make it rebuild those views using
+  // the current permission state.
   $effect(() => {
     readonly;
     if (!editor) return;
     editor.action((ctx) => {
       const view = ctx.get(editorViewCtx);
-      view.updateState(view.state);
+      view.setProps({ nodeViews: { ...(view.props.nodeViews || {}) } });
     });
   });
 </script>

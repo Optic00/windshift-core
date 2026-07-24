@@ -24,6 +24,8 @@ type PermissionService struct {
 	cache           *bigcache.BigCache
 	db              database.Database
 	mu              sync.RWMutex
+	cacheCommitMu   sync.RWMutex
+	cacheGeneration atomic.Uint64
 	workspaceAccess *workspaceAccessCache
 
 	// Cache statistics
@@ -145,18 +147,50 @@ func (ps *PermissionService) effectivePermissionSnapshot(userID int) (*models.Us
 	}
 
 	atomic.AddInt64(&ps.misses, 1)
-	cached, err = ps.buildUserPermissionCache(userID)
+	cached, err = ps.buildAndStoreUserPermissionCache(userID)
 	if err != nil {
 		atomic.AddInt64(&ps.errors, 1)
 		return nil, err
 	}
-	if err := ps.storeUserPermissionCache(userID, cached); err != nil {
-		slog.Warn("failed to store effective permission snapshot",
-			slog.String("component", "permissions"),
-			slog.Int("user_id", userID),
-			slog.Any("error", err))
-	}
 	return cached, nil
+}
+
+// buildAndStoreUserPermissionCache prevents a snapshot that started before an
+// invalidation from being written back after the invalidation completed.
+// Permission builds intentionally happen outside the commit lock so unrelated
+// reads remain concurrent; the generation check makes the final write linear.
+func (ps *PermissionService) buildAndStoreUserPermissionCache(userID int) (*models.UserPermissionCache, error) {
+	for {
+		generation := ps.cacheGeneration.Load()
+		cached, err := ps.buildUserPermissionCache(userID)
+		if err != nil {
+			return nil, err
+		}
+		stored, err := ps.storeUserPermissionCacheIfCurrent(userID, cached, generation)
+		if err != nil {
+			slog.Warn("failed to store effective permission snapshot",
+				slog.String("component", "permissions"),
+				slog.Int("user_id", userID),
+				slog.Any("error", err))
+			return cached, nil
+		}
+		if stored {
+			return cached, nil
+		}
+	}
+}
+
+func (ps *PermissionService) storeUserPermissionCacheIfCurrent(
+	userID int,
+	cached *models.UserPermissionCache,
+	generation uint64,
+) (bool, error) {
+	ps.cacheCommitMu.RLock()
+	defer ps.cacheCommitMu.RUnlock()
+	if generation != ps.cacheGeneration.Load() {
+		return false, nil
+	}
+	return true, ps.storeUserPermissionCache(userID, cached)
 }
 
 // HasGlobalPermission checks if user has a specific global permission
@@ -387,14 +421,11 @@ func (ps *PermissionService) getUserPermissionCache(userID int) (*models.UserPer
 
 // loadUserPermissionAndCheckGlobal loads user permissions from DB and checks global permission
 func (ps *PermissionService) loadUserPermissionAndCheckGlobal(userID int, permission string) (bool, error) {
-	cached, err := ps.buildUserPermissionCache(userID)
+	cached, err := ps.buildAndStoreUserPermissionCache(userID)
 	if err != nil {
 		atomic.AddInt64(&ps.errors, 1)
 		return false, err
 	}
-
-	// Store in cache
-	_ = ps.storeUserPermissionCache(userID, cached)
 
 	// Check if user is system admin
 	if cached.IsSystemAdmin {
@@ -409,14 +440,11 @@ func (ps *PermissionService) loadUserPermissionAndCheckGlobal(userID int, permis
 func (ps *PermissionService) loadUserPermissionAndCheckMultiple(userID, workspaceID int, permissions []string) (map[string]bool, error) {
 	result := make(map[string]bool)
 
-	cached, err := ps.buildUserPermissionCache(userID)
+	cached, err := ps.buildAndStoreUserPermissionCache(userID)
 	if err != nil {
 		atomic.AddInt64(&ps.errors, 1)
 		return result, err
 	}
-
-	// Store in cache
-	_ = ps.storeUserPermissionCache(userID, cached)
 
 	// Check if user is system admin
 	if cached.IsSystemAdmin {
@@ -456,12 +484,11 @@ func (ps *PermissionService) GetGroupMemberships(userID int) ([]int, error) {
 
 	// Cache miss — build cache and return group memberships
 	atomic.AddInt64(&ps.misses, 1)
-	cached, err = ps.buildUserPermissionCache(userID)
+	cached, err = ps.buildAndStoreUserPermissionCache(userID)
 	if err != nil {
 		atomic.AddInt64(&ps.errors, 1)
 		return nil, err
 	}
-	_ = ps.storeUserPermissionCache(userID, cached)
 	return cached.GroupMemberships, nil
 }
 
@@ -489,6 +516,9 @@ func (ps *PermissionService) GetUserEffectivePermissions(userID int) (*models.Us
 // any agents, their caches are invalidated as well so the delegation stays
 // consistent after a permission mutation on the owner.
 func (ps *PermissionService) InvalidateUserCache(userID int) error {
+	ps.cacheCommitMu.Lock()
+	defer ps.cacheCommitMu.Unlock()
+	ps.cacheGeneration.Add(1)
 	cacheKey := ps.getCacheKey(userID)
 	err := ps.cache.Delete(cacheKey)
 	ps.invalidateOwnedAgents(userID)
@@ -710,6 +740,9 @@ func (ps *PermissionService) OnPermissionSetChanged(permissionSetID int) error {
 // its last assignment is removed for a workspace).
 func (ps *PermissionService) OnEveryoneAccessChanged() {
 	if ps.cache != nil {
+		ps.cacheCommitMu.Lock()
+		defer ps.cacheCommitMu.Unlock()
+		ps.cacheGeneration.Add(1)
 		if err := ps.cache.Reset(); err != nil {
 			slog.Error("Failed to reset permission cache after everyone-access change",
 				slog.String("component", "permissions"),
@@ -1409,12 +1442,8 @@ func (ps *PermissionService) WarmCache() {
 
 // preWarmUserCache loads and caches permissions for a specific user
 func (ps *PermissionService) preWarmUserCache(userID int) error {
-	cached, err := ps.buildUserPermissionCache(userID)
-	if err != nil {
-		return err
-	}
-
-	return ps.storeUserPermissionCache(userID, cached)
+	_, err := ps.buildAndStoreUserPermissionCache(userID)
+	return err
 }
 
 // getRecentlyActiveUsers returns user IDs who were active in the specified duration

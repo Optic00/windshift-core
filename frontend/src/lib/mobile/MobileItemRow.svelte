@@ -36,6 +36,7 @@
 </script>
 
 <button
+  id={`mobile-item-row-${itemId}`}
   class="row"
   data-testid="mobile-item-row"
   onclick={() => navigate(`/m/items/${itemId}`)}

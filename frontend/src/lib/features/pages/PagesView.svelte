@@ -228,6 +228,7 @@
     pagesFocusTitle.tick;
     if (!pagesFocusTitle.pageId) return;
     if (!selectedPage || pagesFocusTitle.pageId !== selectedPage.id) return;
+    if (!canEditPage) return;
     if (!titleInputEl) return;
     titleInputEl.focus();
     titleInputEl.select();
