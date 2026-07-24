@@ -196,7 +196,12 @@ html[data-color-mode="light"] {
      ================================================================= */
   --ds-glass-bg: rgba(255, 255, 255, 0.7);
   --ds-glass-bg-subtle: rgba(255, 255, 255, 0.5);
-  --ds-glass-border: rgba(255, 255, 255, 0.3);
+  /* Glass surfaces in light mode are a white wash (0.7 alpha), and they stack:
+     a board swimlane, its column and its cards are three layers of it. A white
+     border disappears against that, so the light theme edges glass with the
+     same ink as --ds-border instead (dark mode keeps a white hairline, which
+     reads fine on its dark surfaces). */
+  --ds-glass-border: rgba(9, 30, 66, 0.16);
   --ds-glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
   --ds-glow-nav: 0 0 12px rgba(40, 116, 187, 0.2);
   --ds-glow-primary: 0 0 20px rgba(40, 116, 187, 0.25);

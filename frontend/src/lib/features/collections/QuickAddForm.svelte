@@ -290,7 +290,9 @@
       <span class="flex-1"></span>
     {/if}
 
-    <!-- Cancel Button -->
+    <!-- Cancel Button. The ghost variant inherits --ctx-text, which a gradient
+         background sets to white for the view chrome — inside this card the
+         surface stays light, so pin it to the card's own text color. -->
     {#if compact}
       <Button
         variant="ghost"
@@ -298,6 +300,7 @@
         icon={X}
         onclick={() => onCancel(parentId)}
         class="!size-7 !p-0"
+        style="color: var(--ds-text);"
         dataTestid="quick-add-cancel"
         title={t('common.cancel')}
       />
@@ -307,6 +310,7 @@
         size="small"
         onclick={() => onCancel(parentId)}
         class="!h-6 !px-2 !text-xs"
+        style="color: var(--ds-text);"
         dataTestid="quick-add-cancel"
         title="{t('common.cancel')} ({getDisplayString(cancelShortcut)})"
       >
