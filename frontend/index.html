@@ -54,11 +54,12 @@
             }
             #windshift-boot [hidden] { display: none; }
             @keyframes windshift-boot-spin { to { transform: rotate(360deg); } }
-            @media (prefers-color-scheme: dark) {
-              #windshift-boot { border-color: #454f59; background: #1d2125; color: #f7f8f9; }
-              #windshift-boot p { color: #b6c2cf; }
-              #windshift-boot .boot-spinner { border-color: #454f59; border-top-color: #579dff; }
-            }
+            /* Keyed off the mode the inline script below resolves (stored
+               preference first, OS only as the fallback) — not the raw OS
+               setting, which renders a dark box for a light-mode user. */
+            html[data-color-mode="dark"] #windshift-boot { border-color: #454f59; background: #1d2125; color: #f7f8f9; }
+            html[data-color-mode="dark"] #windshift-boot p { color: #b6c2cf; }
+            html[data-color-mode="dark"] #windshift-boot .boot-spinner { border-color: #454f59; border-top-color: #579dff; }
             @media (prefers-reduced-motion: reduce) { #windshift-boot .boot-spinner { animation: none; } }
     </style>
     <script>
