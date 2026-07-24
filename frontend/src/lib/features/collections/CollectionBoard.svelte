@@ -136,9 +136,28 @@
   useEventListener(() => window, 'refresh-work-items', handleRefreshWorkItems);
 
   // Quick-add functions
-  function initQuickAdd(columnId, statusId, quickAddKey = columnId, parentId = null) {
-    const availableTypes = (itemTypes || []).slice().sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+
+  // Cards created in a swimlane are parented to the lane's item, and the API
+  // requires a child to sit exactly one hierarchy level below its parent. Offer
+  // only those types instead of letting the user pick one the create call will
+  // reject. Lanes without a parent (the "unassigned" lane, or no grouping) keep
+  // the full list.
+  function quickAddTypesFor(parentItem) {
+    const parentType = parentItem?.item_type_id
+      ? (itemTypes || []).find(type => type.id === parentItem.item_type_id)
+      : null;
+    const candidates = parentType
+      ? (itemTypes || []).filter(
+          type => (type.hierarchy_level ?? 0) === (parentType.hierarchy_level ?? 0) + 1
+        )
+      : (itemTypes || []);
+    return candidates.slice().sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+  }
+
+  function initQuickAdd(columnId, statusId, quickAddKey = columnId, parentItem = null) {
+    const availableTypes = quickAddTypesFor(parentItem);
     if (availableTypes.length === 0) return;
+    const parentId = parentItem?.id ?? null;
 
     let preselectedWorkspaceId = workspaceId ? parseInt(workspaceId) : (workspaces.length === 1 ? workspaces[0].id : null);
 
@@ -1473,6 +1492,10 @@
           {#each boardSwimlanes as lane (lane.id)}
             {@const laneExpanded = isSwimlaneExpanded(lane.id)}
             {@const LaneTypeIcon = selectedGroupByItemType ? (itemTypeIconMap[selectedGroupByItemType.icon] || itemTypeIconMap.FileText) : null}
+            <!-- No type can legally be created under this lane's item (the lane
+                 groups by the lowest hierarchy level), so the column loses its
+                 add affordance rather than opening a form that cannot submit. -->
+            {@const laneQuickAddTypes = quickAddTypesFor(lane.parent ?? null)}
             <section
               class={selectedGroupByItemType ? 'rounded-lg border overflow-hidden' : ''}
               style={selectedGroupByItemType ? `${styles.glassStyle?.(10) ?? ''} border-color: var(--ctx-border, var(--ds-border));` : ''}
@@ -1569,7 +1592,9 @@
                       columnStyle={styles.columnStyle(12)}
                       textStyle={styles.glassTextStyle}
                       subtleTextStyle={styles.glassSubtleTextStyle}
-                      onadd={() => initQuickAdd(column.id, column.status_ids[0], quickAddKey, lane.parent?.id ?? null)}
+                      onadd={laneQuickAddTypes.length > 0
+                        ? () => initQuickAdd(column.id, column.status_ids[0], quickAddKey, lane.parent ?? null)
+                        : null}
                       oncollapse={() => toggleColumnCollapse(column.id)}
                     >
                         {#if quickAddState[quickAddKey]?.show}
