@@ -73,6 +73,7 @@
 <div
   class="board-card relative rounded-[4px] border px-3 py-2.5"
   style={cardStyle}
+  data-testid={`board-item-${item.id}`}
   data-item-card
   data-item-id={item.id}
   data-swimlane-parent-id={swimlaneParentId}

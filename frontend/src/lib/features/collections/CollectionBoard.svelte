@@ -28,7 +28,7 @@
   import ItemKey from '../items/ItemKey.svelte';
   import CollectionViewSwitcher from './CollectionViewSwitcher.svelte';
   import DropdownMenu from '../../layout/DropdownMenu.svelte';
-  import { backlogStore, workspaceDataStore, workspacesStore, statusTransitionStore } from '../../stores/index.js';
+  import { backlogStore, workspaceDataStore, workspacesStore } from '../../stores/index.js';
   import { useWorkItemPoller } from '../../composables/useWorkItemPoller.svelte.js';
   import { agentRuns } from '../../stores/agentRuns.svelte.js';
   import { getVisibleColor, hexToRgb } from '../../utils/colorUtils.js';
@@ -121,8 +121,6 @@
             // Item has no status, add it to backlog (at the end)
             collectionStore.backlogItems = [...collectionStore.backlogItems, newItem];
           }
-          // Preload transitions for the new item before setting up drag and drop
-          await statusTransitionStore.preloadForItems([newItem]);
           // Re-setup drag and drop for the new item
           setTimeout(() => {
             setupDragAndDrop();
@@ -231,7 +229,6 @@
       // can be added directly without an immediate GET of the same item.
       const fullItem = newItem;
       collectionStore.items = [...collectionStore.items, fullItem];
-      await statusTransitionStore.preloadForItems([fullItem]);
       setTimeout(() => setupDragAndDrop(), 100);
 
       // Toast feedback
@@ -338,27 +335,16 @@
     if (collectionId || workspaceId) {
       loadBoardConfig();
     }
-    // Always scope the cache to the active view. Passing null clears a previous
-    // workspace scope before a global collection starts loading its own
-    // per-workspace matrices.
-    untrack(() => statusTransitionStore.initialize(workspaceId));
-    // Preload the whole (item_type, status) transition matrix once per view in
-    // a single request, instead of one /items/{id}/available-status-transitions
-    // per unique pair. Keyed on the view, not the item set.
     if (workspaceId) {
       untrack(() => {
         loadWorkspaceBoardState(viewSignature, workspaceId);
-        statusTransitionStore.preloadForWorkspace(workspaceId);
       });
     }
   });
 
-  // Preload dependency links when the loaded item set changes. preloadForItems
-  // is a cheap fallback: it defers to the in-flight matrix preload above and
-  // only fetches pairs the matrix didn't cover.
+  // Preload dependency links when the loaded item set changes.
   $effect(() => {
     if (collectionStore.items.length > 0 && !collectionStore.loading) {
-      statusTransitionStore.preloadForItems([...collectionStore.items, ...collectionStore.backlogItems]);
       // untrack: the cache read inside loadDependencyLinksForItems would
       // otherwise subscribe this effect to dependencyLinksByItem and re-run it
       // every time links resolve.
@@ -909,33 +895,30 @@
         const targetStatusId = column.status_ids[0];
         const targetStatus = statuses.find(status => status.id === targetStatusId);
         const targetName = targetStatus?.name || column.name;
-        const canMove = isValidTransition(item.id, item.status_id, targetStatusId);
-
         return {
           id: `move-${item.id}-${targetStatusId}`,
-          title: canMove ? targetName : `${targetName} — not allowed`,
+          title: targetName,
           iconDot: true,
           iconColor: column.color || targetStatus?.category_color || targetStatus?.color || 'var(--ds-text-subtle)',
-          onClick: canMove ? () => moveItemToStatus(item, targetStatusId, targetName) : undefined,
-          class: canMove ? '' : 'opacity-50 cursor-not-allowed pointer-events-none'
+          onClick: () => moveItemToStatus(item, targetStatusId, targetName)
         };
       });
   }
 
   async function moveItemToStatus(item, targetStatusId, targetName) {
-    if (!isValidTransition(item.id, item.status_id, targetStatusId)) {
-      warningToast(t('collections.transition_failed'));
-      return;
-    }
-
+    const previousStatusId = item.status_id;
+    updateLocalItemStatus(item.id, targetStatusId);
     try {
-      await api.items.transition(item.id, targetStatusId);
+      const transitionedItem = await api.items.transition(item.id, targetStatusId);
+      mergeLocalItem(item.id, transitionedItem);
       boardAnnouncement = `Moved ${item.title} to ${targetName}`;
       successToast(boardAnnouncement);
       reloadCollection();
     } catch (err) {
+      updateLocalItemStatus(item.id, previousStatusId);
       console.error('Status transition failed:', err);
       warningToast(t('collections.transition_failed'));
+      reloadCollection();
     }
   }
 
@@ -1019,16 +1002,6 @@
             return false;
           }
 
-          // If items are in different status columns, validate the transition
-          const sourceStatus = getStatusByItemId(data.item.id);
-          const targetStatus = getStatusByItemId(itemId);
-
-          if (sourceStatus && targetStatus && sourceStatus.id !== targetStatus.id) {
-            // Different statuses - check if transition is valid
-            return isValidTransition(data.item.id, sourceStatus.id, targetStatus.id);
-          }
-
-          // Same status or no status info - allow reordering
           return true;
         },
         getData: ({ input, element }) => {
@@ -1092,13 +1065,10 @@
         onDragEnter: ({ source }) => {
           const data = /** @type {any} */ (source.data);
           if (data.type === 'work-item') {
-            if (isValidTransition(data.item.id, data.item.status_id, statusId)) {
-              // Valid drop - use inset shadow for highlight (preserve column border colors)
-              element.style.boxShadow = 'inset 0 0 0 2px var(--ds-border-focused)';
-            } else {
-              // Invalid drop - use inset shadow for highlight (preserve column border colors)
-              element.style.boxShadow = 'inset 0 0 0 2px var(--ds-border-danger)';
-            }
+            // The server is authoritative for workflow validation. Highlight
+            // every status target and let the optimistic drop roll back if the
+            // transition is rejected.
+            element.style.boxShadow = 'inset 0 0 0 2px var(--ds-border-focused)';
           }
         },
         onDragLeave: () => {
@@ -1121,18 +1091,17 @@
               warnUnsupportedCombinedBoardMove();
               return;
             }
-            if (!isSameStatus && !isValidTransition(data.item.id, data.item.status_id, statusId)) {
-              warningToast(t('collections.transition_failed'));
-              return;
-            }
-
+            const previousStatusId = data.item.status_id;
+            if (!isSameStatus) updateLocalItemStatus(data.item.id, statusId);
             try {
               let droppedItem = data.item;
               if (!isSameStatus) {
                 droppedItem = await api.items.transition(data.item.id, statusId);
+                mergeLocalItem(data.item.id, droppedItem);
               }
               await updateItemParentForLane(droppedItem, targetLaneParentId);
             } catch (err) {
+              if (!isSameStatus) updateLocalItemStatus(data.item.id, previousStatusId);
               console.error('Board drop failed:', err);
               if (!err?.swimlaneMoveFailed) {
                 warningToast(t('collections.transition_failed'));
@@ -1164,13 +1133,17 @@
     return statuses.find(s => s.id === item.status_id);
   }
 
-  // Check if a status transition is valid for an item (synchronous, uses cached store data)
-  function isValidTransition(itemId, fromStatusId, toStatusId) {
-    if (!fromStatusId || !toStatusId) return false;
-    if (fromStatusId === toStatusId) return true;
-    const item = items.find(i => i.id === itemId)
-      || backlogItems.find(i => i.id === itemId);
-    return statusTransitionStore.isValidTransition(item?.item_type_id ?? null, fromStatusId, toStatusId);
+  function updateLocalItemStatus(itemId, statusId) {
+    collectionStore.items = collectionStore.items.map(item =>
+      item.id === itemId ? { ...item, status_id: statusId } : item
+    );
+  }
+
+  function mergeLocalItem(itemId, updatedItem) {
+    if (!updatedItem) return;
+    collectionStore.items = collectionStore.items.map(item =>
+      item.id === itemId ? { ...item, ...updatedItem } : item
+    );
   }
 
   async function updateItemStatus(itemId, newStatus) {
@@ -1221,30 +1194,20 @@
         return;
       }
 
-      if (!isSameStatus && !isValidTransition(draggedItem.id, currentStatusId, targetStatusId)) {
-        warningToast(t('collections.transition_failed'));
-        reloadCollection();
-        return;
-      }
-
       // If changing status, update the status first
       if (!isSameStatus) {
+        updateLocalItemStatus(draggedItem.id, targetStatusId);
         try {
           const transitionedItem = await api.items.transition(draggedItem.id, targetStatusId);
           draggedItem = { ...draggedItem, ...transitionedItem, status_id: targetStatusId };
+          mergeLocalItem(draggedItem.id, draggedItem);
         } catch (err) {
+          updateLocalItemStatus(draggedItem.id, currentStatusId);
           console.error('Status transition failed:', err);
           warningToast(t('collections.transition_failed'));
           reloadCollection();
           return;
         }
-
-        // Update store directly for the status change
-        collectionStore.items = collectionStore.items.map(item =>
-          item.id === draggedItem.id
-            ? { ...item, status_id: targetStatusId }
-            : item
-        );
       }
 
       draggedItem = await updateItemParentForLane(draggedItem, targetLaneParentId);

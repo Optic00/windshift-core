@@ -88,11 +88,6 @@ export { securityStore } from './securityStore.svelte.js';
 // ssoStore.initStatus(), ssoStore.startLogin(), ssoStore.loadProviders()
 // Manages SSO status, provider configuration, and external account linking
 export { ssoStore } from './sso.svelte.js';
-// Status transition store
-// Access via: statusTransitionStore.get(itemTypeId, statusId), statusTransitionStore.isValidTransition(...)
-// Methods: statusTransitionStore.initialize(wsId), preloadForItems(items), invalidateAll(), reset()
-// Caches status transitions by (itemTypeId, statusId) to avoid per-item API calls
-export { statusTransitionStore } from './statusTransitionStore.svelte.js';
 // Terminal store
 // Access via: terminalStore.visible, terminalStore.splitPercent, terminalStore.tabs
 // Methods: terminalStore.toggle(), terminalStore.show(), terminalStore.hide(), terminalStore.writeToTerminal(text)
