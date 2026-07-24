@@ -108,10 +108,11 @@
     if (event.detail?.itemId) {
       try {
         const newItem = await api.items.get(event.detail.itemId);
-        // When viewing a collection, accept items from any workspace (the collection defines scope).
-        // Otherwise fall back to current-workspace check.
+        // When viewing a collection, items from any workspace can qualify, so ask
+        // the API whether this one passes the collection filters. Otherwise fall
+        // back to the current-workspace check.
         const belongsToView = collectionId
-          ? true
+          ? await checkItemVisibility(newItem.id, { collection_id: collectionId })
           : Number(newItem.workspace_id) === Number(workspaceId);
         if (belongsToView) {
           if (newItem.status_id) {
@@ -208,33 +209,42 @@
 
       const newItem = await api.items.create(payload);
 
+      // The item can be created into a workspace the current view does not show
+      // (the quick-add form lets you pick any workspace). Only place it on the
+      // board when it actually belongs to this view, otherwise it appears now
+      // and vanishes on the next reload.
+      let belongsToView = true;
       if (collectionId) {
         const collection = await getCollection(collectionId);
         if (collection) {
-          const filters = { collection_id: collectionId };
-          const isVisible = await checkItemVisibility(newItem.id, filters);
-          if (!isVisible) {
-            const selectedWorkspace = workspaces.find(w => w.id === state.workspaceId);
-            const workspaceName = selectedWorkspace?.name || 'another workspace';
-            infoToast(`Card created in ${workspaceName} but won't appear here due to collection filters`, 'Card created successfully');
-          }
+          belongsToView = await checkItemVisibility(newItem.id, { collection_id: collectionId });
         }
+      } else if (workspaceId) {
+        belongsToView = Number(newItem.workspace_id) === Number(workspaceId);
+      }
+
+      if (!belongsToView) {
+        const selectedWorkspace = workspaces.find(w => w.id === state.workspaceId);
+        const workspaceName = selectedWorkspace?.name || 'another workspace';
+        const reason = collectionId ? 'collection filters' : 'the current workspace filter';
+        infoToast(`Card created in ${workspaceName} but won't appear here due to ${reason}`, 'Card created successfully');
       }
 
       try {
         localStorage.setItem('board-quickadd-last-item-type-id', String(state.itemTypeId));
       } catch (e) { /* ignore storage errors */ }
 
-      // The create endpoint returns the complete permission-masked item, so it
-      // can be added directly without an immediate GET of the same item.
-      const fullItem = newItem;
-      collectionStore.items = [...collectionStore.items, fullItem];
-      setTimeout(() => setupDragAndDrop(), 100);
+      if (belongsToView) {
+        // The create endpoint returns the complete permission-masked item, so it
+        // can be added directly without an immediate GET of the same item.
+        collectionStore.items = [...collectionStore.items, newItem];
+        setTimeout(() => setupDragAndDrop(), 100);
 
-      // Toast feedback
-      showCreatedItemToast(fullItem);
-      if (collectionStore.itemsHasMore) {
-        warningToast('The board has more items than can be displayed. Use "Load More" to see all items.');
+        // Toast feedback
+        showCreatedItemToast(newItem);
+        if (collectionStore.itemsHasMore) {
+          warningToast('The board has more items than can be displayed. Use "Load More" to see all items.');
+        }
       }
 
       cancelQuickAdd(quickAddKey);
@@ -761,6 +771,7 @@
     return [
       {
         id: 'group-none',
+        testid: 'board-group-by-none',
         title: 'No swimlanes',
         subtitle: 'Show every item as a normal card',
         badge: groupByItemTypeId ? '' : 'Selected',
@@ -786,6 +797,7 @@
         const TypeIcon = itemTypeIconMap[type.icon] || itemTypeIconMap.FileText;
         return {
           id: `group-type-${type.id}`,
+          testid: `board-group-by-type-${type.id}`,
           title: type.name,
           subtitle: 'Use these items as swimlanes',
           icon: TypeIcon,

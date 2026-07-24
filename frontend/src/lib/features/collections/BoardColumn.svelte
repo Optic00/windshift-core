@@ -43,6 +43,7 @@
             type="button"
             onclick={onadd}
             class="rounded p-1 text-[var(--ds-text-subtle)] transition-colors hover:text-[var(--ds-text)]"
+            data-testid={`board-column-add-${column.id}`}
             title={t('collections.addCard')}
             aria-label={t('collections.addCard')}
           >
