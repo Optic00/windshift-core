@@ -241,6 +241,175 @@ check_gh_cli() {
     fi
 }
 
+# =============================================================================
+# Preflight credential checks
+#
+# Credential failures used to surface only at the step that consumed them: an
+# expired 1Password session after a full multi-platform build, or a GHCR push
+# denial after every Docker layer had already been built. Both cost a complete
+# rebuild. Everything credential-shaped is therefore verified — and, for
+# 1Password, refreshed — before the first build step runs.
+# =============================================================================
+
+# The DMG build is the only consumer of the 1Password-backed APPLE_PASSWORD.
+desktop_build_is_active() {
+    [ "$SKIP_DESKTOP" != true ] && [ "$(uname)" = "Darwin" ]
+}
+
+preflight_1password() {
+    # $1: whether this command builds the DMG at all (push does not).
+    [ "$1" = true ] || return 0
+    desktop_build_is_active || return 0
+
+    # Only the op-backed path needs a session: an inline APPLE_PASSWORD, or a
+    # config without APPLE_PASSWORD_OP_REF, never touches 1Password.
+    if [ -n "${APPLE_PASSWORD:-}" ] || [ -z "${APPLE_PASSWORD_OP_REF:-}" ]; then
+        return 0
+    fi
+
+    command -v op >/dev/null 2>&1 \
+        || die "APPLE_PASSWORD_OP_REF is set but 1Password CLI (op) is not installed."
+
+    if ! op whoami >/dev/null 2>&1; then
+        log_warn "1Password session expired or not signed in."
+        [ -t 0 ] || die "No TTY available to run 'op signin'. Sign in first, or export APPLE_PASSWORD directly."
+
+        log_info "Running 'op signin'..."
+        local signin_env
+        signin_env=$(op signin) \
+            || die "1Password sign-in failed — run 'op signin' manually and retry."
+        eval "$signin_env"
+    fi
+
+    # Resolve the secret now instead of at notarization time, so a wrong or
+    # renamed item ID also fails here rather than after the build.
+    APPLE_PASSWORD=$(op item get "$APPLE_PASSWORD_OP_REF" --fields label=password --reveal) \
+        || die "Failed to read APPLE_PASSWORD from 1Password (item: $APPLE_PASSWORD_OP_REF)."
+    [ -n "$APPLE_PASSWORD" ] \
+        || die "1Password returned an empty password for item: $APPLE_PASSWORD_OP_REF"
+    export APPLE_PASSWORD
+
+    log_success "1Password session OK (APPLE_PASSWORD resolved)"
+}
+
+# Emits the ghcr.io username and secret on two lines, straight from the store
+# `docker push` itself reads, so the probe tests the real credential rather
+# than assuming it was seeded from `gh auth token`.
+read_ghcr_credential() {
+    local config="${DOCKER_CONFIG:-$HOME/.docker}/config.json"
+    [ -f "$config" ] || return 1
+
+    local helper
+    helper=$(jq -r '.credHelpers["ghcr.io"] // .credsStore // empty' "$config") || return 1
+
+    if [ -n "$helper" ]; then
+        command -v "docker-credential-$helper" >/dev/null 2>&1 || return 1
+        local out
+        out=$(echo "ghcr.io" | "docker-credential-$helper" get 2>/dev/null) || return 1
+        jq -r '.Username // empty, .Secret // empty' <<<"$out"
+        return 0
+    fi
+
+    # No helper: credentials sit inline as base64("user:token").
+    local b64 decoded
+    b64=$(jq -r '.auths["ghcr.io"].auth // empty' "$config") || return 1
+    [ -n "$b64" ] || return 1
+    decoded=$(printf '%s' "$b64" | base64 -d 2>/dev/null) || return 1
+    printf '%s\n%s\n' "${decoded%%:*}" "${decoded#*:}"
+}
+
+# 0 = push allowed, 1 = authenticated but not authorized, 2 = indeterminate.
+# Opens a blob upload session and immediately cancels it; nothing is published.
+ghcr_push_probe() {
+    local repo="$1" user="$2" secret="$3"
+
+    local token
+    token=$(curl -s -u "$user:$secret" \
+        "https://ghcr.io/token?service=ghcr.io&scope=repository:${repo}:pull,push" \
+        | jq -r '.token // empty') || return 2
+    [ -n "$token" ] || return 2
+
+    local headers location
+    headers=$(curl -s -D - -o /dev/null -X POST \
+        -H "Authorization: Bearer $token" \
+        "https://ghcr.io/v2/${repo}/blobs/uploads/") || return 2
+
+    location=$(printf '%s' "$headers" | grep -i '^location:' | tr -d '\r' | cut -d' ' -f2-)
+    [ -n "$location" ] || return 1
+
+    # Release the session we just opened. GHCR expires abandoned uploads anyway,
+    # so a failure here must not fail the release.
+    curl -s -o /dev/null -X DELETE -H "Authorization: Bearer $token" "$location" || true
+    return 0
+}
+
+# Fallback when the registry cannot be probed: inspect the gh token's scopes.
+# Only conclusive when the Docker login was seeded from `gh auth token`, so
+# this warns rather than aborts.
+preflight_ghcr_scope_fallback() {
+    if ! command -v gh >/dev/null 2>&1; then
+        log_warn "Cannot verify GHCR push access (need jq, curl or gh) — continuing."
+        return 0
+    fi
+
+    if gh auth status 2>&1 | grep -q "write:packages"; then
+        log_success "GitHub token lists the write:packages scope"
+        return 0
+    fi
+
+    log_warn "GitHub token does not list the 'write:packages' scope."
+    log_warn "  If the ghcr.io Docker login was seeded from 'gh auth token', the push WILL fail."
+    log_warn "  Fix: gh auth refresh -h github.com -s write:packages"
+    log_warn "       gh auth token | docker login ghcr.io -u <github-username> --password-stdin"
+}
+
+preflight_ghcr() {
+    local repo="${GHCR_REGISTRY#ghcr.io/}"
+
+    if ! command -v jq >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+        preflight_ghcr_scope_fallback
+        return 0
+    fi
+
+    local creds
+    if ! creds=$(read_ghcr_credential); then
+        die "No ghcr.io credential found in Docker's credential store. Log in with:
+    gh auth refresh -h github.com -s write:packages
+    gh auth token | docker login ghcr.io -u <github-username> --password-stdin"
+    fi
+
+    local user secret
+    { read -r user; read -r secret; } <<<"$creds"
+    if [ -z "$user" ] || [ -z "$secret" ]; then
+        preflight_ghcr_scope_fallback
+        return 0
+    fi
+
+    local rc=0
+    ghcr_push_probe "$repo" "$user" "$secret" || rc=$?
+    case "$rc" in
+        0) log_success "GHCR push access OK (as $user)" ;;
+        1) die "GHCR denied push to ${GHCR_REGISTRY} for user '$user'.
+   The credential is valid but is missing the 'write:packages' scope. Fix with:
+     gh auth refresh -h github.com -s write:packages
+     gh auth token | docker login ghcr.io -u $user --password-stdin" ;;
+        *) log_warn "Could not reach the GHCR token API to verify push access — continuing." ;;
+    esac
+}
+
+# need_ghcr:    whether this command pushes Docker images.
+# need_desktop: whether this command builds (and notarizes) the DMG.
+preflight_auth() {
+    local need_ghcr="$1" need_desktop="$2"
+
+    log_step "0/9" "Preflight: verifying credentials..."
+    preflight_1password "$need_desktop"
+    if [ "$need_ghcr" = true ]; then
+        preflight_ghcr
+    fi
+    log_success "Preflight checks passed"
+}
+
 run_frontend_supply_chain_checks() {
     if [ "$SKIP_SECURITY_CHECKS" = true ]; then
         log_warn "Skipping frontend supply-chain checks (--skip-security-checks)"
@@ -547,7 +716,9 @@ build_desktop_mac() {
     check_desktop_dependencies
 
     # Resolve Apple app-specific password from 1Password if configured.
-    # APPLE_PASSWORD_OP_REF is the 1Password item ID.
+    # APPLE_PASSWORD_OP_REF is the 1Password item ID. preflight_1password
+    # normally resolves and exports this before any build runs; this stays as a
+    # fallback for callers that reach this step without preflight.
     if [ -z "${APPLE_PASSWORD:-}" ] && [ -n "${APPLE_PASSWORD_OP_REF:-}" ]; then
         if ! command -v op >/dev/null 2>&1; then
             die "APPLE_PASSWORD_OP_REF is set but 1Password CLI (op) is not installed."
@@ -886,6 +1057,7 @@ create_github_release() {
 cmd_build() {
     check_dependencies
     determine_version
+    preflight_auth false true
 
     rm -rf dist/
 
@@ -924,6 +1096,8 @@ cmd_push() {
         echo
         [[ $REPLY =~ ^[Yy]$ ]] || exit 1
     fi
+
+    preflight_auth true false
 
     rm -rf dist/
 
@@ -982,6 +1156,8 @@ cmd_release() {
         [[ $REPLY =~ ^[Yy]$ ]] || exit 1
     fi
 
+    preflight_auth true true
+
     rm -rf dist/
 
     run_go_vulnerability_check
@@ -1034,6 +1210,11 @@ Options:
   --skip-security-checks  Skip npm signature/audit and govulncheck release checks
   -y, --yes               Skip confirmation prompts
   -h, --help              Show this help
+
+Every command runs a credential preflight (step 0/9) before the first build:
+GHCR push access is probed for 'push' and 'release', and an expired 1Password
+session is refreshed via 'op signin' whenever the DMG will be built. Bad
+credentials therefore fail in seconds rather than after a full build.
 
 Desktop signing (optional, only consulted when running on macOS):
   APPLE_SIGNING_IDENTITY  Developer ID Application cert name in your keychain
