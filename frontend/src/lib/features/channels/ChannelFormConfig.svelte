@@ -78,8 +78,11 @@
 
 <div class="pt-6 border-t" style="border-color: var(--ds-border);">
   <h4 class="text-sm font-semibold mb-4" style="color: var(--ds-text);">{t('channel.formConfiguration')}</h4>
+  <DescriptionText>
+    Channel settings define the shared public URL, branding, and default success behavior for every form in this channel.
+  </DescriptionText>
 
-  <div class="space-y-4">
+  <div class="mt-4 space-y-4">
     <div>
       <Label color="default" required class="mb-2">
         {t('channel.formSlug')} <span class="text-xs font-normal" style="color: var(--ds-text-subtle);">({t('channel.formSlugHelp')})</span>
@@ -103,6 +106,9 @@
         label="{t('channel.targetWorkspaces')} *"
         placeholder={t('channel.searchWorkspaces')}
       />
+      <DescriptionText>
+        Forms can target only these workspaces. Each form chooses one target workspace of its own.
+      </DescriptionText>
     </div>
 
     <div>

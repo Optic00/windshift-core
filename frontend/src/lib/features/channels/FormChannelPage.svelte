@@ -151,11 +151,20 @@
   {#snippet children(tabId)}
     {#if tabId === 'forms'}
       <div class="px-16 py-8">
+        <div class="mx-auto mb-6 max-w-2xl rounded-xl border p-4" style="border-color: var(--ds-border); background: var(--ds-background-neutral);">
+          <h2 class="text-sm font-semibold" style="color: var(--ds-text);">Forms in this channel</h2>
+          <p class="mt-1 text-sm" style="color: var(--ds-text-subtle);">
+            This channel hosts one or more public forms. Each form has its own fields and submission settings, and creates a work item in its configured target workspace.
+          </p>
+        </div>
         <FormBuilder
           {channelId}
+          channelSlug={formChannelFormData.slug}
+          channelBrandColor={formChannelFormData.brand_color}
           channelWorkspaceIds={formChannelFormData.workspace_ids}
           onBack={() => navigate('/admin/channels')}
           onCreateForm={() => showCreateModal = true}
+          onOpenSettings={() => activeTab = 'settings'}
           embedded={false}
         />
       </div>

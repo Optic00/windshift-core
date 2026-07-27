@@ -153,6 +153,9 @@
           required
           placeholder={t('forms.formNamePlaceholder')}
         />
+        <DescriptionText>
+          The public-facing name people use to choose this form.
+        </DescriptionText>
       </div>
 
       <div>
@@ -183,6 +186,9 @@
           getValue={(item) => item.id}
           getLabel={(item) => item.name}
         />
+        <DescriptionText>
+          Every response to this form creates a work item in this workspace.
+        </DescriptionText>
       </div>
 
       <div>
@@ -201,7 +207,7 @@
           </DescriptionText>
         {:else}
           <DescriptionText>
-            {t('portal.submissionsCreateItemType')}
+            This determines the workflow, fields, and item type created by each response.
           </DescriptionText>
         {/if}
       </div>

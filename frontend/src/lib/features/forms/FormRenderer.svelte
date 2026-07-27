@@ -1,19 +1,27 @@
 <script>
   import { untrack } from 'svelte';
+  import { CheckCircle2, ExternalLink, RotateCcw } from '@lucide/svelte';
   import { api } from '../../api.js';
   import { t } from '../../stores/i18n.svelte.js';
-  import CustomFieldRenderer from '../items/CustomFieldRenderer.svelte';
   import Spinner from '../../components/Spinner.svelte';
   import Label from '../../components/Label.svelte';
   import AlertBox from '../../components/AlertBox.svelte';
   import Button from '../../components/Button.svelte';
-  import Checkbox from '../../components/Checkbox.svelte';
-  import Input from '../../components/Input.svelte';
-  import NativeSelect from '../../components/NativeSelect.svelte';
   import Progress from '../../components/Progress.svelte';
-  import Textarea from '../../components/Textarea.svelte';
   import { toExternal } from '../../runtime/contextPath.js';
   import { loadPublicFormDetail } from './publicFormData.js';
+  import FormFields from './FormFields.svelte';
+  import {
+    buildFormSteps,
+    clampFormStep,
+    initializeFormValues,
+    validateFormStep,
+  } from './formModel.js';
+  import {
+    clearPublicFormDraft,
+    loadPublicFormDraft,
+    savePublicFormDraft,
+  } from './publicFormDrafts.js';
 
   let {
     formSlug = '',
@@ -25,37 +33,51 @@
     isDarkMode = false,
     initialValues = null,
     submitForm = null,
+    authenticationRequired = false,
+    embed = false,
+    preview = false,
+    returnPath = '',
     onSubmitted = () => {},
   } = $props();
 
   let submitButtonText = $derived(formConfig?.submit_button_text || 'Submit');
-
   let fields = $state([]);
   let customFieldDefinitions = $state([]);
+  let activeDetail = $state(null);
   let loading = $state(true);
   let submitting = $state(false);
   let error = $state(null);
-  let authenticationRequired = $state(false);
+  let submissionRequiresAuth = $state(false);
   let success = $state(false);
   let successMessage = $state('');
   let redirectUrl = $state('');
   let loadSequence = 0;
 
-  // Multi-step
   let steps = $state([1]);
   let currentStep = $state(1);
-  let currentStepFields = $derived(fields.filter(f => (f.step_number || 1) === currentStep));
   let totalSteps = $derived(steps.length);
   let isLastStep = $derived(currentStep === Math.max(...steps));
   let isFirstStep = $derived(currentStep === Math.min(...steps));
 
-  // Form data
   let formData = $state({ title: '', description: '' });
   let customFieldValues = $state({});
   let attachments = $state([]);
 
-  // The sole-form bootstrap already contains its complete render data. For a
-  // multi-form channel, selection uses one complete-detail request.
+  let draftReady = $state(false);
+  let resumedDraft = $state(null);
+  let draftStatus = $state('');
+  let draftStatusTimer = null;
+  let needsAuthentication = $derived(
+    !preview && (authenticationRequired || submissionRequiresAuth)
+  );
+  let hostedFormPath = $derived(`/forms/${encodeURIComponent(formSlug)}/${formId}`);
+  let signInReturnPath = $derived(
+    returnPath || (typeof window !== 'undefined' ? `${window.location.pathname}${window.location.search}` : hostedFormPath)
+  );
+  let signInUrl = $derived(
+    toExternal(`/login?return_to=${encodeURIComponent(signInReturnPath)}`)
+  );
+
   $effect(() => {
     const activeSlug = formSlug;
     const activeFormId = formId;
@@ -72,41 +94,75 @@
     });
   });
 
+  $effect(() => {
+    const snapshot = {
+      title: formData.title,
+      description: formData.description,
+      custom_fields: JSON.parse(JSON.stringify(customFieldValues)),
+      current_step: currentStep,
+    };
+    if (!draftReady || preview || success || typeof localStorage === 'undefined') return;
+
+    draftStatus = 'saving';
+    const timer = setTimeout(() => {
+      const saved = savePublicFormDraft(localStorage, formSlug, formId, snapshot);
+      draftStatus = saved ? 'saved' : '';
+      if (saved) {
+        if (draftStatusTimer) clearTimeout(draftStatusTimer);
+        draftStatusTimer = setTimeout(() => {
+          draftStatus = '';
+          draftStatusTimer = null;
+        }, 1800);
+      }
+    }, 300);
+
+    return () => clearTimeout(timer);
+  });
+
+  $effect(() => {
+    return () => {
+      if (draftStatusTimer) clearTimeout(draftStatusTimer);
+    };
+  });
+
   function applyDetail(detail) {
+    draftReady = false;
+    activeDetail = detail;
     error = null;
-    authenticationRequired = false;
+    submissionRequiresAuth = false;
     success = false;
     fields = detail.fields || [];
     customFieldDefinitions = detail.custom_field_definitions || [];
+    steps = buildFormSteps(fields);
 
-    const stepNumbers = [...new Set(fields.map(f => f.step_number || 1))].sort((a, b) => a - b);
-    steps = stepNumbers.length > 0 ? stepNumbers : [1];
-    currentStep = Math.min(...steps);
+    let values = initializeFormValues(fields, initialValues);
+    let nextStep = steps[0];
+    resumedDraft = null;
 
-    formData = {
-      title: initialValues?.title || '',
-      description: initialValues?.description || '',
-    };
-    customFieldValues = {};
-    fields.forEach(field => {
-      if (field.field_type === 'custom' || field.field_type === 'virtual') {
-        if (initialValues?.custom_fields?.[field.field_identifier] !== undefined) {
-          customFieldValues[field.field_identifier] = initialValues.custom_fields[field.field_identifier];
-        } else if (field.field_type === 'virtual' && field.virtual_field_type === 'checkbox') {
-          customFieldValues[field.field_identifier] = false;
-        } else {
-          customFieldValues[field.field_identifier] = '';
-        }
+    if (!preview && !initialValues && typeof localStorage !== 'undefined') {
+      const draft = loadPublicFormDraft(localStorage, formSlug, formId);
+      if (draft) {
+        values = initializeFormValues(fields, draft);
+        nextStep = clampFormStep(steps, draft.current_step);
+        resumedDraft = draft;
       }
-    });
+    }
+
+    formData = values.formData;
+    customFieldValues = values.customFieldValues;
+    currentStep = nextStep;
+    attachments = [];
     loading = false;
+    queueMicrotask(() => {
+      draftReady = true;
+    });
   }
 
   async function loadFields(activeSlug, activeFormId, sequence) {
     try {
       loading = true;
       error = null;
-      authenticationRequired = false;
+      submissionRequiresAuth = false;
       success = false;
 
       const detail = await loadPublicFormDetail(activeSlug, activeFormId);
@@ -121,75 +177,28 @@
     }
   }
 
-  function getFieldLabel(field) {
-    return field.display_name || field.field_label || field.field_name || field.field_identifier;
-  }
-
-  function getCustomFieldDefinition(fieldId) {
-    return customFieldDefinitions.find(f => f.id.toString() === fieldId);
-  }
-
-  function hasFieldInCurrentStep(fieldIdentifier) {
-    return currentStepFields.some(f => f.field_identifier === fieldIdentifier);
-  }
-
   function validateCurrentStep() {
-    for (const field of currentStepFields) {
-      if (!field.is_required) continue;
-
-      if (field.field_type === 'default') {
-        if (field.field_identifier === 'title' && !formData.title.trim()) {
-          error = `${getFieldLabel(field)} is required`;
-          return false;
-        }
-        if (field.field_identifier === 'description' && !formData.description.trim()) {
-          error = `${getFieldLabel(field)} is required`;
-          return false;
-        }
-      } else if (field.field_type === 'custom') {
-        const value = customFieldValues[field.field_identifier];
-        if (value === undefined || value === null || value === '') {
-          error = `${getFieldLabel(field)} is required`;
-          return false;
-        }
-      } else if (field.field_type === 'virtual') {
-        const value = customFieldValues[field.field_identifier];
-        if (
-          (field.virtual_field_type === 'checkbox' && value !== true) ||
-          (field.virtual_field_type !== 'checkbox' &&
-            (value === undefined || value === null || value === ''))
-        ) {
-          error = `${getFieldLabel(field)} is required`;
-          return false;
-        }
-      }
-    }
-    return true;
+    const message = validateFormStep({
+      fields,
+      step: currentStep,
+      formData,
+      customFieldValues,
+    });
+    error = message || null;
+    return !message;
   }
 
   function goToNextStep() {
     error = null;
     if (!validateCurrentStep()) return;
     const currentIndex = steps.indexOf(currentStep);
-    if (currentIndex < steps.length - 1) {
-      currentStep = steps[currentIndex + 1];
-    }
+    if (currentIndex < steps.length - 1) currentStep = steps[currentIndex + 1];
   }
 
   function goToPrevStep() {
     error = null;
     const currentIndex = steps.indexOf(currentStep);
-    if (currentIndex > 0) {
-      currentStep = steps[currentIndex - 1];
-    }
-  }
-
-  function parseSelectOptions(optionsJson) {
-    try {
-      return JSON.parse(optionsJson) || [];
-    } catch {
-      return [];
-    }
+    if (currentIndex > 0) currentStep = steps[currentIndex - 1];
   }
 
   function handleAttachmentChange(event) {
@@ -197,7 +206,24 @@
     error = null;
   }
 
+  function startFresh() {
+    if (typeof localStorage !== 'undefined') {
+      clearPublicFormDraft(localStorage, formSlug, formId);
+    }
+    resumedDraft = null;
+    if (activeDetail) applyDetail(activeDetail);
+  }
+
+  function submitAnother() {
+    success = false;
+    successMessage = '';
+    redirectUrl = '';
+    if (activeDetail) applyDetail(activeDetail);
+  }
+
   async function handleSubmit() {
+    if (preview || needsAuthentication) return;
+
     try {
       for (const step of steps) {
         currentStep = step;
@@ -207,7 +233,7 @@
 
       submitting = true;
       error = null;
-      authenticationRequired = false;
+      submissionRequiresAuth = false;
 
       if (attachmentConfig?.enabled) {
         const maxFiles = attachmentConfig.max_files || 5;
@@ -215,7 +241,7 @@
           error = `You can attach at most ${maxFiles} files.`;
           return;
         }
-        const oversized = attachments.find(file => file.size > attachmentConfig.max_file_size);
+        const oversized = attachments.find((file) => file.size > attachmentConfig.max_file_size);
         if (oversized) {
           error = `${oversized.name} exceeds the attachment size limit.`;
           return;
@@ -233,10 +259,13 @@
         ? await submitForm(submissionData, attachments)
         : await api.forms.submit(formSlug, submissionData, attachments);
 
+      draftReady = false;
+      if (typeof localStorage !== 'undefined') {
+        clearPublicFormDraft(localStorage, formSlug, formId);
+      }
       success = true;
       successMessage = result.success_message || 'Thank you for your submission!';
       redirectUrl = result.redirect_url || '';
-
       onSubmitted(result);
 
       if (redirectUrl) {
@@ -246,7 +275,7 @@
       }
     } catch (err) {
       console.error('Failed to submit form:', err);
-      authenticationRequired = err.status === 403;
+      submissionRequiresAuth = err.status === 403;
       error = err.message || 'Failed to submit form';
     } finally {
       submitting = false;
@@ -263,25 +292,90 @@
       <Spinner />
     </div>
   {:else if success}
-    <div class="py-8">
-      <AlertBox variant="success" message={successMessage} />
+    <div class="py-8 text-center" data-testid="public-form-success">
+      <div
+        class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full"
+        style="background: color-mix(in srgb, var(--ds-text-success) 12%, transparent); color: var(--ds-text-success);"
+      >
+        <CheckCircle2 class="h-7 w-7" />
+      </div>
+      <h3 class="text-xl font-semibold" style="color: var(--ds-text);">Response received</h3>
+      <p class="mx-auto mt-2 max-w-md text-sm" style="color: var(--ds-text-subtle);">{successMessage}</p>
+      <div class="mt-6 flex flex-wrap justify-center gap-2">
+        <Button
+          type="button"
+          variant="default"
+          icon={RotateCcw}
+          dataTestid="public-form-submit-another"
+          onclick={submitAnother}
+        >
+          Submit another response
+        </Button>
+        {#if redirectUrl}
+          <Button
+            type="button"
+            variant="primary"
+            icon={ExternalLink}
+            dataTestid="public-form-success-continue"
+            onclick={() => {
+              window.location.href = toExternal(redirectUrl);
+            }}
+          >
+            Continue
+          </Button>
+        {/if}
+      </div>
       {#if redirectUrl}
-        <p class="mt-3 text-center text-sm" style="color: var(--ds-text-subtle);">
-          Redirecting...
-        </p>
+        <p class="mt-3 text-xs" style="color: var(--ds-text-subtle);">Redirecting shortly…</p>
       {/if}
     </div>
+  {:else if needsAuthentication}
+    <div class="py-8 text-center" data-testid="form-auth-required">
+      <div class="mx-auto max-w-md">
+        <AlertBox
+          variant="warning"
+          message={embed
+            ? 'This form requires a Windshift sign-in and cannot be completed inside an embed.'
+            : 'Sign in to continue. Your saved progress will be restored when you return.'}
+        />
+        <a
+          data-testid="public-form-auth-action"
+          class="mt-4 inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-semibold text-white"
+          style="background: var(--ds-interactive);"
+          href={embed ? toExternal(hostedFormPath) : signInUrl}
+          target={embed ? '_blank' : undefined}
+        >
+          {embed ? 'Open hosted form' : 'Sign in and return'}
+          <ExternalLink class="h-4 w-4" />
+        </a>
+      </div>
+    </div>
   {:else}
-    <form onsubmit={(e) => { e.preventDefault(); isLastStep ? handleSubmit() : goToNextStep(); }}>
-      {#if authenticationRequired}
-        <div class="mb-4" data-testid="form-auth-required">
-          <AlertBox
-            variant="warning"
-            message="This form requires a Windshift sign-in. Sign in in this browser, then return here and submit again."
-          />
-          <a class="mt-2 inline-block text-sm underline" href={toExternal('/')}>Open Windshift to sign in</a>
-        </div>
-      {:else if error}
+    {#if preview}
+      <div class="mb-4">
+        <AlertBox variant="info" message="Preview mode — submissions are disabled." />
+      </div>
+    {:else if resumedDraft}
+      <div
+        data-testid="public-form-draft-resume"
+        class="mb-4 flex items-center justify-between gap-3 rounded-lg border p-3"
+        style="border-color: var(--ds-border); background: var(--ds-background-neutral);"
+      >
+        <p class="text-sm" style="color: var(--ds-text-subtle);">Your saved progress was restored.</p>
+        <button
+          type="button"
+          data-testid="public-form-draft-start-fresh"
+          class="text-sm font-medium hover:underline"
+          style="color: var(--ds-text-link);"
+          onclick={startFresh}
+        >
+          Start fresh
+        </button>
+      </div>
+    {/if}
+
+    <form onsubmit={(event) => { event.preventDefault(); isLastStep ? handleSubmit() : goToNextStep(); }}>
+      {#if error}
         <AlertBox variant="error" message={error} class="mb-4" />
       {/if}
 
@@ -295,147 +389,67 @@
         </div>
       {/if}
 
-      <div class="space-y-4">
-        {#if hasFieldInCurrentStep('title')}
-          {@const titleField = currentStepFields.find(f => f.field_identifier === 'title')}
-          <div>
-            <Label for="form-title" required={titleField.is_required} class="mb-1.5" color="default">
-              {titleField.display_name || t('requestForm.title')}
-            </Label>
-            <Input
-              id="form-title"
-              bind:value={formData.title}
-              placeholder={t('requestForm.enterTitle')}
-              required={titleField.is_required}
-            />
-            {#if titleField.description}
-              <p class="mt-1 text-xs" style="color: var(--ds-text-subtle);">{titleField.description}</p>
-            {/if}
-          </div>
-        {/if}
+      <FormFields
+        {fields}
+        {customFieldDefinitions}
+        {currentStep}
+        bind:formData
+        bind:customFieldValues
+        {isDarkMode}
+        idPrefix="form"
+      />
 
-        {#if hasFieldInCurrentStep('description')}
-          {@const descField = currentStepFields.find(f => f.field_identifier === 'description')}
-          <div>
-            <Label for="form-description" required={descField.is_required} class="mb-1.5" color="default">
-              {descField.display_name || t('requestForm.description')}
-            </Label>
-            <Textarea
-              id="form-description"
-              bind:value={formData.description}
-              rows={4}
-              placeholder={t('requestForm.describeRequest')}
-              required={descField.is_required}
-            />
-            {#if descField.description}
-              <p class="mt-1 text-xs" style="color: var(--ds-text-subtle);">{descField.description}</p>
-            {/if}
-          </div>
-        {/if}
-
-        {#each currentStepFields.filter(f => f.field_type === 'custom') as field}
-          {@const fieldDef = getCustomFieldDefinition(field.field_identifier)}
-          {#if fieldDef}
-            <div>
-              <Label required={field.is_required} class="mb-1.5" color="default">
-                {field.display_name || fieldDef.name}
-              </Label>
-              <CustomFieldRenderer
-                field={fieldDef}
-                value={customFieldValues[field.field_identifier]}
-                onChange={(val) => { customFieldValues[field.field_identifier] = val; }}
-                readonly={false}
-                required={field.is_required}
-                {isDarkMode}
-              />
-              {#if field.description}
-                <p class="mt-1 text-xs" style="color: var(--ds-text-subtle);">{field.description}</p>
-              {/if}
-            </div>
+      {#if isLastStep && attachmentConfig?.enabled}
+        <div class="mt-4">
+          <Label for="form-attachments" class="mb-1.5" color="default">Attachments</Label>
+          <input
+            id="form-attachments"
+            data-testid="public-form-attachments"
+            type="file"
+            multiple
+            accept={attachmentConfig.allowed_mime_types?.join(',') || undefined}
+            onchange={handleAttachmentChange}
+          />
+          <p class="mt-1 text-xs" style="color: var(--ds-text-subtle);">
+            Up to {attachmentConfig.max_files || 5} files, {Math.floor(attachmentConfig.max_file_size / 1048576)} MB each.
+          </p>
+          {#if attachments.length > 0}
+            <ul data-testid="public-form-attachment-list" class="mt-2 space-y-1 text-xs" style="color: var(--ds-text-subtle);">
+              {#each attachments as attachment}
+                <li>{attachment.name}</li>
+              {/each}
+            </ul>
           {/if}
-        {/each}
-
-        {#each currentStepFields.filter(f => f.field_type === 'virtual') as field}
-          {@const fieldId = `form-${field.field_identifier}`}
-          <div>
-            {#if field.virtual_field_type === 'checkbox'}
-              <Checkbox
-                bind:checked={customFieldValues[field.field_identifier]}
-                label={getFieldLabel(field)}
-              />
-            {:else}
-              <Label for={fieldId} required={field.is_required} class="mb-1.5" color="default">
-                {getFieldLabel(field)}
-              </Label>
-              {#if field.virtual_field_type === 'textarea'}
-                <Textarea
-                  id={fieldId}
-                  bind:value={customFieldValues[field.field_identifier]}
-                  rows={3}
-                  required={field.is_required}
-                />
-              {:else if field.virtual_field_type === 'select'}
-                <NativeSelect
-                  id={fieldId}
-                  bind:value={customFieldValues[field.field_identifier]}
-                  options={parseSelectOptions(field.virtual_field_options)}
-                  placeholder={t('requestForm.selectOption')}
-                  required={field.is_required}
-                />
-              {:else}
-                <Input
-                  id={fieldId}
-                  bind:value={customFieldValues[field.field_identifier]}
-                  required={field.is_required}
-                />
-              {/if}
-            {/if}
-            {#if field.description}
-              <p class="mt-1 text-xs" style="color: var(--ds-text-subtle);">{field.description}</p>
-            {/if}
-          </div>
-        {/each}
-
-        {#if isLastStep && attachmentConfig?.enabled}
-          <div>
-            <Label for="form-attachments" class="mb-1.5" color="default">Attachments</Label>
-            <input
-              id="form-attachments"
-              data-testid="public-form-attachments"
-              type="file"
-              multiple
-              accept={attachmentConfig.allowed_mime_types?.join(',') || undefined}
-              onchange={handleAttachmentChange}
-            />
-            <p class="mt-1 text-xs" style="color: var(--ds-text-subtle);">
-              Up to {attachmentConfig.max_files || 5} files, {Math.floor(attachmentConfig.max_file_size / 1048576)} MB each.
-            </p>
-            {#if attachments.length > 0}
-              <ul data-testid="public-form-attachment-list" class="mt-2 space-y-1 text-xs" style="color: var(--ds-text-subtle);">
-                {#each attachments as attachment}
-                  <li>{attachment.name}</li>
-                {/each}
-              </ul>
-            {/if}
-          </div>
-        {/if}
-      </div>
+        </div>
+      {/if}
 
       <div class="mt-6 flex items-center justify-between border-t pt-4" style="border-color: var(--ds-border);">
-        {#if !isFirstStep}
-          <Button type="button" variant="default" onclick={goToPrevStep}>Back</Button>
-        {:else}
-          <div></div>
-        {/if}
+        <div class="flex items-center gap-3">
+          {#if !isFirstStep}
+            <Button
+              type="button"
+              variant="default"
+              dataTestid="public-form-back-step"
+              onclick={goToPrevStep}
+            >
+              Back
+            </Button>
+          {/if}
+          {#if !preview && draftStatus}
+            <span class="text-xs" data-testid="public-form-draft-status" style="color: var(--ds-text-subtle);">
+              {draftStatus === 'saving' ? 'Saving draft…' : 'Draft saved'}
+            </span>
+          {/if}
+        </div>
 
         <Button
           type="submit"
           variant="primary"
           dataTestid="public-form-submit"
-          disabled={submitting}
+          disabled={submitting || (preview && isLastStep)}
           loading={submitting}
         >
-          {isLastStep ? submitButtonText : 'Next'}
+          {isLastStep ? (preview ? 'Preview only' : submitButtonText) : 'Next'}
         </Button>
       </div>
     </form>

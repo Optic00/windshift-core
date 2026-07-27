@@ -5,7 +5,7 @@
   import {
     IconGripVertical, IconTrash, IconAsterisk, IconSearch, IconPlus, IconDeviceFloppy,
     IconSettings, IconArrowLeft, IconTextSize, IconForms, IconCheckbox, IconSelect, IconAlignBoxLeftTop,
-    IconPencil
+    IconPencil, IconEye, IconExternalLink
   } from '@tabler/icons-svelte-runes';
   import { t } from '../../stores/i18n.svelte.js';
   import { api } from '../../api.js';
@@ -21,15 +21,34 @@
   import BasePicker from '../../pickers/BasePicker.svelte';
   import IconSelector from '../../pickers/IconSelector.svelte';
   import DescriptionText from '../../components/DescriptionText.svelte';
+  import CopyButton from '../../components/CopyButton.svelte';
+  import { publicBaseURL } from '../../runtime/contextPath.js';
   import FormFieldPalette from './FormFieldPalette.svelte';
+  import FormPreviewModal from './FormPreviewModal.svelte';
 
-  let { channelId, channelWorkspaceIds = [], onBack = () => {}, onCreateForm = null, embedded = true } = $props();
+  let {
+    channelId,
+    channelSlug = '',
+    channelWorkspaceIds = [],
+    channelBrandColor = '#14b8a6',
+    onBack = () => {},
+    onCreateForm = null,
+    onOpenSettings = () => {},
+    embedded = true,
+  } = $props();
 
   let saving = $state(false);
   let savingRouting = $state(false);
   let showSettings = $state(false);
+  let showPreview = $state(false);
   let setupCleanups = [];
   let expandedFields = $state(new Set());
+  let previewCustomFieldDefinitions = $state([]);
+  let directFormUrl = $derived(
+    formBuilderStore.editingForm && channelSlug
+      ? `${publicBaseURL()}/forms/${channelSlug}/${formBuilderStore.editingForm.id}`
+      : ''
+  );
 
   // Routing-metadata editing (workspace / item type / identity).
   let availableWorkspaces = $state([]);
@@ -46,17 +65,29 @@
   onMount(async () => {
     await formBuilderStore.loadForms(channelId);
     try {
-      const [allWorkspaces, allConfigSets] = await Promise.all([
+      const [allWorkspaces, allConfigSets, customFields] = await Promise.all([
         api.workspaces.getAll(),
         api.configurationSets.getAll(),
+        api.customFields.getAll(),
       ]);
       configSets = allConfigSets?.configuration_sets || [];
+      previewCustomFieldDefinitions = customFields?.data || [];
       availableWorkspaces = (channelWorkspaceIds && channelWorkspaceIds.length > 0)
         ? allWorkspaces.filter(ws => channelWorkspaceIds.includes(ws.id))
         : allWorkspaces;
     } catch (err) {
       console.error('Failed to load workspaces for routing:', err);
     }
+  });
+
+  onMount(() => {
+    function warnBeforeUnload(event) {
+      if (!formBuilderStore.hasUnsavedChanges) return;
+      event.preventDefault();
+      event.returnValue = '';
+    }
+    window.addEventListener('beforeunload', warnBeforeUnload);
+    return () => window.removeEventListener('beforeunload', warnBeforeUnload);
   });
 
   // Reload selectable item types when the routing workspace changes, scoped to
@@ -218,6 +249,9 @@
       saving = true;
       await formBuilderStore.saveFormFields();
       await formBuilderStore.saveFormConfig();
+      if (formBuilderStore.hasUnsavedRoutingChanges) {
+        await formBuilderStore.saveRoutingMetadata();
+      }
       successToast(t('common.saved'));
     } catch (err) {
       errorToast(err.message || t('common.error'));
@@ -226,8 +260,17 @@
     }
   }
 
-  function handleBack() {
+  async function handleBack() {
     if (formBuilderStore.showFieldEditor) {
+      if (formBuilderStore.hasUnsavedChanges) {
+        const discard = await confirm({
+          title: 'Discard unsaved form changes?',
+          message: 'Your field and per-form setting changes have not been saved.',
+          confirmText: 'Discard changes',
+          variant: 'danger',
+        });
+        if (!discard) return;
+      }
       formBuilderStore.cancelFieldEditor();
     } else {
       onBack();
@@ -327,10 +370,48 @@
             {t('forms.title')}
           {/if}
         </h3>
+        {#if formBuilderStore.showFieldEditor}
+          <p class="text-xs" style="color: {formBuilderStore.hasUnsavedChanges ? 'var(--ds-text-warning)' : 'var(--ds-text-subtle)'};">
+            {formBuilderStore.hasUnsavedChanges
+              ? 'Unsaved changes'
+              : 'All changes saved'}
+          </p>
+        {/if}
       </div>
     </div>
     {#if formBuilderStore.showFieldEditor}
       <div class="flex items-center gap-2">
+        <Button
+          onclick={() => showPreview = true}
+          variant="default"
+          size="small"
+          icon={IconEye}
+          dataTestid="form-builder-preview-btn"
+        >
+          {t('common.preview')}
+        </Button>
+        {#if directFormUrl}
+          <CopyButton text={directFormUrl} size="sm" label="Copy link" />
+          <Button
+            onclick={() => window.open(directFormUrl, '_blank', 'noopener')}
+            variant="default"
+            size="small"
+            icon={IconExternalLink}
+            dataTestid="form-builder-open-btn"
+          >
+            {t('channel.openForm')}
+          </Button>
+        {:else}
+          <Button
+            onclick={onOpenSettings}
+            variant="default"
+            size="small"
+            icon={IconExternalLink}
+            dataTestid="form-builder-configure-slug-btn"
+          >
+            Set public URL
+          </Button>
+        {/if}
         <Button
           onclick={() => showSettings = !showSettings}
           variant="default"
@@ -368,7 +449,10 @@
           <!-- Per-form Settings -->
           <div class="max-w-xl mx-auto space-y-4">
             <!-- Routing metadata: identity + where submissions are created -->
-            <h4 class="text-sm font-semibold" style="color: var(--ds-text);">{t('forms.routing.title', 'Routing')}</h4>
+            <h4 class="text-sm font-semibold" style="color: var(--ds-text);">{t('forms.routing.title')}</h4>
+            <DescriptionText>
+              Each response creates a work item in the selected target workspace using the selected item type.
+            </DescriptionText>
 
             <div>
               <Label color="default" required class="mb-2">{t('forms.formName')}</Label>
@@ -433,10 +517,16 @@
             <hr style="border-color: var(--ds-border);" />
 
             <h4 class="text-sm font-semibold" style="color: var(--ds-text);">{t('forms.settings.title')}</h4>
+            <DescriptionText>
+              These settings apply only to this form. Branding and the public URL are channel settings.
+            </DescriptionText>
 
             <div class="flex items-center gap-3">
-              <input type="checkbox" bind:checked={formBuilderStore.formConfig.require_auth} class="rounded" />
-              <Label color="default">{t('forms.settings.requireAuth')}</Label>
+              <input id="form-require-auth" type="checkbox" bind:checked={formBuilderStore.formConfig.require_auth} class="rounded" />
+              <div>
+                <Label for="form-require-auth" color="default">{t('forms.settings.requireAuth')}</Label>
+                <DescriptionText>Only signed-in Windshift users can submit this form.</DescriptionText>
+              </div>
             </div>
 
             <div class="flex items-center gap-3">
@@ -458,11 +548,13 @@
             <div>
               <Label color="default" class="mb-2">{t('forms.settings.successMessage')}</Label>
               <Input bind:value={formBuilderStore.formConfig.success_message} placeholder={t('forms.settings.successMessagePlaceholder')} />
+              <DescriptionText>Shown after a response is accepted.</DescriptionText>
             </div>
 
             <div>
               <Label color="default" class="mb-2">{t('forms.settings.redirectUrl')}</Label>
               <Input bind:value={formBuilderStore.formConfig.redirect_url} placeholder="https://example.com/thank-you" />
+              <DescriptionText>Optional HTTPS destination opened after a successful response.</DescriptionText>
             </div>
 
             <Button onclick={() => showSettings = false} variant="default" size="small">
@@ -525,31 +617,37 @@
                     <!-- Edit toggle -->
                     <button
                       onclick={() => toggleFieldExpanded(fieldKey)}
-                      class="p-1 rounded transition-colors"
+                      data-testid={`form-field-edit-${index}`}
+                      class="flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors"
                       style="color: {isExpanded ? 'var(--ds-interactive)' : 'var(--ds-text-disabled)'};"
                       title="Edit label and help text"
                     >
                       <IconPencil class="w-4 h-4" />
+                      Edit
                     </button>
 
                     <!-- Required toggle -->
                     <button
                       onclick={() => formBuilderStore.toggleFieldRequired(index)}
-                      class="p-1 rounded transition-colors"
+                      data-testid={`form-field-required-${index}`}
+                      class="flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors"
                       style="color: {field.is_required ? 'var(--ds-text-danger)' : 'var(--ds-text-disabled)'};"
                       title={field.is_required ? t('forms.builder.required') : t('forms.builder.optional')}
                     >
                       <IconAsterisk class="w-4 h-4" />
+                      {field.is_required ? t('forms.builder.required') : t('forms.builder.optional')}
                     </button>
 
                     <!-- Remove button -->
                     <button
                       onclick={() => formBuilderStore.removeField(index)}
-                      class="p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-[var(--ds-background-danger-hovered)]"
+                      data-testid={`form-field-remove-${index}`}
+                      class="flex items-center gap-1 rounded px-2 py-1 text-xs hover:bg-[var(--ds-background-danger-hovered)]"
                       style="color: var(--ds-text-danger);"
                       title={t('common.remove')}
                     >
                       <IconTrash class="w-4 h-4" />
+                      {t('common.remove')}
                     </button>
                   </div>
 
@@ -694,3 +792,13 @@
     </div>
   {/if}
 </div>
+
+<FormPreviewModal
+  bind:isOpen={showPreview}
+  form={formBuilderStore.editingForm}
+  fields={formBuilderStore.formFields}
+  customFieldDefinitions={previewCustomFieldDefinitions}
+  formConfig={formBuilderStore.formConfig}
+  brandColor={channelBrandColor}
+  onClose={() => showPreview = false}
+/>

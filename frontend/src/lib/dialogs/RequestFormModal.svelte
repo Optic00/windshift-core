@@ -4,15 +4,18 @@
   import { portalAuthStore } from '../stores/portalAuth.svelte.js';
   import { portalStore, iconMap } from '../stores/portal.svelte.js';
   import Button from '../components/Button.svelte';
-  import CustomFieldRenderer from '../features/items/CustomFieldRenderer.svelte';
   import Spinner from '../components/Spinner.svelte';
-  import Textarea from '../components/Textarea.svelte';
   import AlertBox from '../components/AlertBox.svelte';
-  import Label from '../components/Label.svelte';
   import PortalModal from './PortalModal.svelte';
   import { ChevronLeft, ChevronRight, Package, X } from '@lucide/svelte';
-  import BasePicker from '../pickers/BasePicker.svelte';
   import { t } from '../stores/i18n.svelte.js';
+  import FormFields from '../features/forms/FormFields.svelte';
+  import {
+    buildFormSteps,
+    clampFormStep,
+    initializeFormValues,
+    validateFormStep,
+  } from '../features/forms/formModel.js';
 
   let {
     isOpen = $bindable(false),
@@ -53,8 +56,6 @@
   let draftJustSaved = $state(false);
   let draftSavedTimer = null;
 
-  // Computed: fields for current step
-  let currentStepFields = $derived(fields.filter(f => (f.step_number || 1) === currentStep));
   let totalSteps = $derived(steps.length);
   let isLastStep = $derived(currentStep === Math.max(...steps));
   let isFirstStep = $derived(currentStep === Math.min(...steps));
@@ -101,9 +102,8 @@
       }
 
       // Calculate steps from field data
-      const stepNumbers = [...new Set(fields.map(f => f.step_number || 1))].sort((a, b) => a - b);
-      steps = stepNumbers.length > 0 ? stepNumbers : [1];
-      currentStep = Math.min(...steps);
+      steps = buildFormSteps(fields);
+      currentStep = steps[0];
 
       // Load custom field definitions for rendering
       // Use portal API if on portal (only returns fields used by this portal)
@@ -114,18 +114,9 @@
         customFieldDefinitions = (await api.customFields.getAll())?.data || [];
       }
 
-      // Initialize custom field values (for both custom and virtual fields)
-      customFieldValues = {};
-      fields.forEach(field => {
-        if (field.field_type === 'custom' || field.field_type === 'virtual') {
-          // For checkbox virtual fields, initialize to false
-          if (field.field_type === 'virtual' && field.virtual_field_type === 'checkbox') {
-            customFieldValues[field.field_identifier] = false;
-          } else {
-            customFieldValues[field.field_identifier] = '';
-          }
-        }
-      });
+      const initialValues = initializeFormValues(fields);
+      formData = initialValues.formData;
+      customFieldValues = initialValues.customFieldValues;
 
       // Auto-resume any saved draft for this request type. Only the portal
       // path has drafts — internal usage of this modal opens fresh.
@@ -147,21 +138,14 @@
         resumedDraft = null;
         return;
       }
-      formData.title = draft.title || '';
-      formData.description = draft.description || '';
-      // Merge draft values onto the freshly-initialized customFieldValues so
-      // fields the draft doesn't mention keep their default (e.g. unchecked
-      // checkbox stays false, not undefined).
-      if (draft.custom_field_values && typeof draft.custom_field_values === 'object') {
-        for (const [k, v] of Object.entries(draft.custom_field_values)) {
-          customFieldValues[k] = v;
-        }
-      }
-      // Clamp the saved step back into the current step layout — the request
-      // type may have been edited since the draft was created.
-      const validSteps = steps.length > 0 ? steps : [1];
-      const savedStep = Number(draft.current_step) || validSteps[0];
-      currentStep = validSteps.includes(savedStep) ? savedStep : validSteps[0];
+      const restored = initializeFormValues(fields, {
+        title: draft.title,
+        description: draft.description,
+        custom_fields: draft.custom_field_values,
+      });
+      formData = restored.formData;
+      customFieldValues = restored.customFieldValues;
+      currentStep = clampFormStep(steps, draft.current_step);
       resumedDraft = draft;
     } catch (err) {
       // A missing draft already returns null; anything that reaches here is a
@@ -234,79 +218,24 @@
     }
     // Reset form state to a pristine first-step view, but keep the loaded
     // fields metadata (no need to re-fetch).
-    formData = { title: '', description: '' };
-    const reset = {};
-    fields.forEach(field => {
-      if (field.field_type === 'custom' || field.field_type === 'virtual') {
-        if (field.field_type === 'virtual' && field.virtual_field_type === 'checkbox') {
-          reset[field.field_identifier] = false;
-        } else {
-          reset[field.field_identifier] = '';
-        }
-      }
-    });
-    customFieldValues = reset;
-    currentStep = steps.length ? Math.min(...steps) : 1;
+    const reset = initializeFormValues(fields);
+    formData = reset.formData;
+    customFieldValues = reset.customFieldValues;
+    currentStep = steps[0] || 1;
     resumedDraft = null;
     error = null;
   }
 
-  function isFieldRequired(fieldIdentifier) {
-    const field = fields.find(f => f.field_identifier === fieldIdentifier);
-    return field ? field.is_required : false;
-  }
-
-  function hasField(fieldIdentifier) {
-    return fields.some(f => f.field_identifier === fieldIdentifier);
-  }
-
-  function hasFieldInCurrentStep(fieldIdentifier) {
-    return currentStepFields.some(f => f.field_identifier === fieldIdentifier);
-  }
-
-  function getCustomFieldDefinition(fieldId) {
-    return customFieldDefinitions.find(f => f.id.toString() === fieldId);
-  }
-
-  function getFieldLabel(field) {
-    return field.display_name || field.field_label || field.field_name || field.field_identifier;
-  }
-
   function validateCurrentStep() {
-    // Validate fields in current step
-    for (const field of currentStepFields) {
-      if (!field.is_required) continue;
-
-      if (field.field_type === 'default') {
-        if (field.field_identifier === 'title' && !formData.title.trim()) {
-          error = t('requestForm.fieldRequired', { field: getFieldLabel(field) });
-          return false;
-        }
-        if (field.field_identifier === 'description' && !formData.description.trim()) {
-          error = t('requestForm.fieldRequired', { field: getFieldLabel(field) });
-          return false;
-        }
-      } else if (field.field_type === 'custom') {
-        const value = customFieldValues[field.field_identifier];
-        if (value === undefined || value === null || value === '') {
-          const fieldDef = getCustomFieldDefinition(field.field_identifier);
-          error = t('requestForm.fieldRequired', { field: field.display_name || fieldDef?.name || 'Field' });
-          return false;
-        }
-      } else if (field.field_type === 'virtual') {
-        const value = customFieldValues[field.field_identifier];
-        if (
-          (field.virtual_field_type === 'checkbox' && value !== true) ||
-          (field.virtual_field_type !== 'checkbox' &&
-            (value === undefined || value === null || value === ''))
-        ) {
-          error = t('requestForm.fieldRequired', { field: getFieldLabel(field) });
-          return false;
-        }
-      }
-    }
-
-    return true;
+    const message = validateFormStep({
+      fields,
+      step: currentStep,
+      formData,
+      customFieldValues,
+      requiredMessage: (label) => t('requestForm.fieldRequired', { field: label }),
+    });
+    error = message || null;
+    return !message;
   }
 
   function goToNextStep() {
@@ -397,13 +326,6 @@
     onclose();
   }
 
-  function parseSelectOptions(optionsJson) {
-    try {
-      return JSON.parse(optionsJson) || [];
-    } catch {
-      return [];
-    }
-  }
 </script>
 
 {#if isOpen && requestType}
@@ -496,141 +418,15 @@
         {/if}
 
         <div class="space-y-4">
-        <!-- Default Fields -->
-        {#if hasFieldInCurrentStep('title')}
-          {@const titleField = currentStepFields.find(f => f.field_identifier === 'title')}
-          <div>
-            <Label for="request-title" required={titleField.is_required} class="mb-2">
-              {titleField.display_name || t('requestForm.title')}
-            </Label>
-            <input
-              id="request-title"
-              bind:value={formData.title}
-              type="text"
-              class="w-full px-4 py-3 rounded border focus:outline-none focus:ring-2 focus:ring-blue-500"
-              style="background-color: {isDarkMode ? '#1e293b' : '#ffffff'}; color: {isDarkMode ? '#e2e8f0' : '#111827'}; border-color: {isDarkMode ? '#475569' : '#d1d5db'};"
-              placeholder={t('requestForm.enterTitle')}
-              required={titleField.is_required}
-            />
-            {#if titleField.description}
-              <p class="text-xs mt-1" style="color: {isDarkMode ? '#94a3b8' : '#6b7280'};">
-                {titleField.description}
-              </p>
-            {/if}
-          </div>
-        {/if}
-
-        {#if hasFieldInCurrentStep('description')}
-          {@const descField = currentStepFields.find(f => f.field_identifier === 'description')}
-          <div>
-            <Label for="request-description" required={descField.is_required} class="mb-2">
-              {descField.display_name || t('requestForm.description')}
-            </Label>
-            <Textarea
-              id="request-description"
-              bind:value={formData.description}
-              rows={4}
-              class="w-full"
-              style="background-color: {isDarkMode ? '#1e293b' : '#ffffff'}; color: {isDarkMode ? '#e2e8f0' : '#111827'}; border-color: {isDarkMode ? '#475569' : '#d1d5db'};"
-              placeholder={t('requestForm.describeRequest')}
-              required={descField.is_required}
-            />
-            {#if descField.description}
-              <p class="text-xs mt-1" style="color: {isDarkMode ? '#94a3b8' : '#6b7280'};">
-                {descField.description}
-              </p>
-            {/if}
-          </div>
-        {/if}
-
-        <!-- Custom Fields -->
-        {#each currentStepFields.filter(f => f.field_type === 'custom') as field}
-          {@const fieldDef = getCustomFieldDefinition(field.field_identifier)}
-          {#if fieldDef}
-            <div>
-              {#if field.display_name || field.description}
-                <Label required={field.is_required} class="mb-2">
-                  {field.display_name || fieldDef.name}
-                </Label>
-                {#if field.description}
-                  <p class="text-xs mb-2" style="color: {isDarkMode ? '#94a3b8' : '#6b7280'};">
-                    {field.description}
-                  </p>
-                {/if}
-                <CustomFieldRenderer
-                  field={{ ...fieldDef, is_required: field.is_required, name: '' }}
-                  value={customFieldValues[field.field_identifier]}
-                  readonly={false}
-                  onChange={(val) => customFieldValues[field.field_identifier] = val}
-                  milestones={[]}
-                  {isDarkMode}
-                />
-              {:else}
-                <CustomFieldRenderer
-                  field={{ ...fieldDef, is_required: field.is_required }}
-                  value={customFieldValues[field.field_identifier]}
-                  readonly={false}
-                  onChange={(val) => customFieldValues[field.field_identifier] = val}
-                  milestones={[]}
-                  {isDarkMode}
-                />
-              {/if}
-            </div>
-          {/if}
-        {/each}
-
-        <!-- Virtual Fields -->
-        {#each currentStepFields.filter(f => f.field_type === 'virtual') as field}
-          <div>
-            <Label required={field.is_required} class="mb-2">
-              {getFieldLabel(field)}
-            </Label>
-            {#if field.description}
-              <p class="text-xs mb-2" style="color: {isDarkMode ? '#94a3b8' : '#6b7280'};">
-                {field.description}
-              </p>
-            {/if}
-
-            {#if field.virtual_field_type === 'text'}
-              <input
-                type="text"
-                bind:value={customFieldValues[field.field_identifier]}
-                class="w-full px-4 py-3 rounded border focus:outline-none focus:ring-2 focus:ring-blue-500"
-                style="background-color: {isDarkMode ? '#1e293b' : '#ffffff'}; color: {isDarkMode ? '#e2e8f0' : '#111827'}; border-color: {isDarkMode ? '#475569' : '#d1d5db'};"
-                placeholder={field.display_name || field.field_name}
-              />
-            {:else if field.virtual_field_type === 'textarea'}
-              <Textarea
-                bind:value={customFieldValues[field.field_identifier]}
-                rows={4}
-                class="w-full"
-                style="background-color: {isDarkMode ? '#1e293b' : '#ffffff'}; color: {isDarkMode ? '#e2e8f0' : '#111827'}; border-color: {isDarkMode ? '#475569' : '#d1d5db'};"
-                placeholder={field.display_name || field.field_name}
-              />
-            {:else if field.virtual_field_type === 'select'}
-              <BasePicker
-                bind:value={customFieldValues[field.field_identifier]}
-                items={parseSelectOptions(field.virtual_field_options)}
-                placeholder={t('requestForm.selectOption')}
-                showUnassigned={true}
-                unassignedLabel={t('requestForm.selectOption')}
-                getValue={(option) => option.value}
-                getLabel={(option) => option.label}
-              />
-            {:else if field.virtual_field_type === 'checkbox'}
-              <label class="flex items-center gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  bind:checked={customFieldValues[field.field_identifier]}
-                  class="h-5 w-5 rounded border-gray-300 focus:ring-2 focus:ring-blue-500"
-                />
-                <span class="text-sm" style="color: {isDarkMode ? '#e2e8f0' : '#374151'};">
-                  {field.display_name || field.field_name}
-                </span>
-              </label>
-            {/if}
-          </div>
-        {/each}
+          <FormFields
+            {fields}
+            {customFieldDefinitions}
+            {currentStep}
+            bind:formData
+            bind:customFieldValues
+            {isDarkMode}
+            idPrefix="request"
+          />
 
           <!-- Submitting as info (only on last step, only when we know who).
                portalAuthStore has two authenticated shapes: an internal user

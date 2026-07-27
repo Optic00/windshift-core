@@ -176,6 +176,8 @@ blog/
 !/docs/0.8.2-performance-regression-gates.md
 !/docs/cross-surface-authorization-contracts.md
 !/docs/jira-service-management-import.md
+!/docs/WI-531-public-forms-backend-api-audit.md
+!/docs/WI-523-public-forms-completion.md
 !/docs/xray-jira-test-case-import.md
 /.codehamr
 /.agents/skills/donate-trace

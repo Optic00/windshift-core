@@ -463,6 +463,7 @@
       <Button
         variant="primary"
         type="submit"
+        dataTestid="login-submit"
         fullWidth={true}
         loading={$authStore.loading}
         disabled={$authStore.loading || !emailOrUsername.trim() || !password}

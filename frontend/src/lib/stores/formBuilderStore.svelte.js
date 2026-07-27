@@ -19,6 +19,9 @@ class FormBuilderStore {
   editingForm = $state(null);
   formFields = $state([]);
   showFieldEditor = $state(false);
+  savedFieldsSnapshot = $state('');
+  savedConfigSnapshot = $state('');
+  savedRoutingSnapshot = $state('');
 
   // === Available Fields ===
   availableFields = $state([]);
@@ -86,6 +89,19 @@ class FormBuilderStore {
       () => this.availableFieldsFiltered,
       () => this.fieldSearchQuery
     );
+  }
+
+  get hasUnsavedChanges() {
+    if (!this.showFieldEditor) return false;
+    return (
+      JSON.stringify(this.formFields) !== this.savedFieldsSnapshot ||
+      JSON.stringify(this.formConfig) !== this.savedConfigSnapshot ||
+      this.hasUnsavedRoutingChanges
+    );
+  }
+
+  get hasUnsavedRoutingChanges() {
+    return JSON.stringify(this.routingMeta) !== this.savedRoutingSnapshot;
   }
 
   // === Data Loading ===
@@ -189,6 +205,7 @@ class FormBuilderStore {
       } else {
         this.resetFormConfig();
       }
+      this.markBuilderSaved();
     } catch (err) {
       console.error('Failed to load form fields:', err);
       this.formFields = [];
@@ -199,6 +216,7 @@ class FormBuilderStore {
   async saveFormFields() {
     try {
       await api.requestTypes.updateFields(this.channelId, this.editingForm.id, this.formFields);
+      this.savedFieldsSnapshot = JSON.stringify(this.formFields);
     } catch (err) {
       console.error('Failed to save form fields:', err);
       throw err;
@@ -208,6 +226,7 @@ class FormBuilderStore {
   async saveFormConfig() {
     try {
       await api.requestTypes.updateConfig(this.editingForm.id, this.formConfig);
+      this.savedConfigSnapshot = JSON.stringify(this.formConfig);
     } catch (err) {
       console.error('Failed to save form config:', err);
       throw err;
@@ -233,6 +252,7 @@ class FormBuilderStore {
       this.forms = this.forms.map((f) =>
         f.id === this.editingForm.id ? { ...f, ...this.routingMeta } : f
       );
+      this.savedRoutingSnapshot = JSON.stringify(this.routingMeta);
       return updated;
     } catch (err) {
       console.error('Failed to save routing metadata:', err);
@@ -342,6 +362,12 @@ class FormBuilderStore {
     };
   }
 
+  markBuilderSaved() {
+    this.savedFieldsSnapshot = JSON.stringify(this.formFields);
+    this.savedConfigSnapshot = JSON.stringify(this.formConfig);
+    this.savedRoutingSnapshot = JSON.stringify(this.routingMeta);
+  }
+
   cancelFieldEditor() {
     this.showFieldEditor = false;
     this.editingForm = null;
@@ -349,6 +375,9 @@ class FormBuilderStore {
     this.availableFields = [];
     this.fieldSearchQuery = '';
     this.clearDragState();
+    this.savedFieldsSnapshot = '';
+    this.savedConfigSnapshot = '';
+    this.savedRoutingSnapshot = '';
     this.resetFormConfig();
     this.resetRoutingMeta();
   }
@@ -361,6 +390,9 @@ class FormBuilderStore {
     this.formFields = [];
     this.showFieldEditor = false;
     this.availableFields = [];
+    this.savedFieldsSnapshot = '';
+    this.savedConfigSnapshot = '';
+    this.savedRoutingSnapshot = '';
     this.fieldSearchQuery = '';
     this.draggedField = null;
     this.fieldDragState = new Map();

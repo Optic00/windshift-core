@@ -7,6 +7,7 @@
   import { APP_NAME } from './lib/constants.js';
   import { themeStore } from './lib/stores/theme.svelte.js';
   import { i18n, SUPPORTED_LOCALES } from './lib/stores/i18n.svelte.js';
+  import { safeLoginReturnPath } from './lib/utils/loginReturnPath.js';
   import LazyRootDialog from './lib/components/LazyRootDialog.svelte';
   import LazyRootView from './lib/components/LazyRootView.svelte';
 
@@ -381,7 +382,12 @@
     componentProps={{
       onsuccess: () => {
         showLoginDialog = false;
-        maybeRedirectToMobile();
+        const returnTo = safeLoginReturnPath(window.location.search);
+        if (returnTo) {
+          navigate(returnTo);
+        } else {
+          maybeRedirectToMobile();
+        }
       },
     }}
   />
