@@ -53,6 +53,7 @@ var validDashboardWidgetTypes = map[string]bool{
 	"watched-items":       true,
 	"recent-workspaces":   true,
 	"assigned-to-me":      true,
+	"personal-tasks":      true,
 }
 
 const (
@@ -122,8 +123,8 @@ func (h *UserPreferencesHandler) UpdateDashboardLayout(w http.ResponseWriter, r 
 			respondValidationError(w, r, fmt.Sprintf("Invalid widget type: %s", widget.Type))
 			return
 		}
-		if widget.Width < 1 || widget.Width > 3 {
-			respondValidationError(w, r, fmt.Sprintf("Invalid widget width: %d (must be 1-3)", widget.Width))
+		if widget.Width < 1 || widget.Width > 12 {
+			respondValidationError(w, r, fmt.Sprintf("Invalid widget width: %d (must be 1-12)", widget.Width))
 			return
 		}
 		if widget.ID == "" {
