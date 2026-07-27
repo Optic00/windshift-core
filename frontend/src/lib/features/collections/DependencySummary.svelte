@@ -4,14 +4,7 @@
   import Tooltip from '../../components/Tooltip.svelte';
   import { splitDependencies, dependencyKey } from './dependencySummary.js';
 
-  // Lightweight dependency/blocker hover summary for board cards.
-  //
-  // Pulls counts + linked item titles from the item's existing links, scoped
-  // to the "Depends On" link type (see dependencySummary.js for the
-  // direction semantics). The summary only renders when the item has at
-  // least one such link, so cards stay clean otherwise. The hover popover
-  // reuses the shared Tooltip component. The first pass is intentionally
-  // counts + a short title list; a full graph is out of scope (see page:16).
+  // Board-card hover summary for Depends On links, rendered only when present.
   let {
     item,
     links = [],

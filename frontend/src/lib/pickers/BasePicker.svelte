@@ -136,13 +136,9 @@
   const filteredItems = $derived.by(() => {
     if (serverSearch) return items;
 
-    // Combobox mode echoes the selected item's label into $inputValue purely
-    // for display. Don't treat that display text as a live search filter until
-    // the user actually types (touchedInput) — otherwise a pre-selected
-    // single-select whose items lack the default `name` search field (e.g.
-    // milestone status, {value,label} vs searchFields=['name']) filters out
-    // every option the moment its dropdown opens (WI-428). Popover mode owns
-    // its own search term, which is cleared on open, so it needs no such guard.
+    // Ignore displayed selected labels until typing begins; otherwise preselected
+    // items lacking default search fields can filter every option. Popovers own
+    // a cleared search term.
     if (!popoverMode && !$touchedInput) return items;
 
     const query = popoverMode ? popoverSearchTerm : $inputValue;
@@ -150,9 +146,7 @@
 
     const search = query.toLowerCase();
     return items.filter(item =>
-      // Always match against the visible label so a picker whose items lack the
-      // default `name` search field (e.g. milestone status, {value,label} vs
-      // searchFields=['name']) can still be filtered by typing what's shown.
+      // Always match visible labels, even without the default name field.
       getLabel(item)?.toString().toLowerCase().includes(search) ||
       searchFields.some(field => {
         const fieldValue = typeof field === 'function' ? field(item) : item[field];
@@ -361,8 +355,7 @@
     if (!wasOpen && $open) {
       highlightedIndex = 0;
       onOpen();
-      // Remember what had focus before we move it into the portalled dropdown,
-      // so a Tab that closes the menu can return there (WI-455).
+      // Remember focus before entering the portalled dropdown.
       activeElementBeforeOpen = document.activeElement;
       if (popoverMode) {
         popoverSearchTerm = '';
@@ -372,13 +365,8 @@
     wasOpen = $open;
   });
 
-  // Return focus to the element that had it before the (portalled) dropdown
-  // opened — the trigger, which lives inside the owning dialog — so the next Tab
-  // continues inside the modal instead of escaping behind it (WI-455). The rAF
-  // lets the menu unmount first: while open, focus sits on the portalled search
-  // input/list, and a synchronous focus() is undone when Svelte tears that node
-  // down, dropping focus to <body>. Skip if that element is gone or sits inside
-  // the menu being closed.
+  // Restore focus after unmount so portalled menus cannot drop Tab navigation
+  // outside the owning dialog.
   function restoreFocusToTrigger() {
     const target = activeElementBeforeOpen;
     if (target instanceof HTMLElement && !menuRef?.contains(target)) {
@@ -437,23 +425,14 @@
   // Search input inside popover dropdown
   let searchInputRef = $state(null);
 
-  // The element that was focused just before the dropdown opened. The menu is
-  // portalled to <body>; when the user Tabs out of it we restore focus here so
-  // the next Tab is routed by the owning dialog's focus trap instead of
-  // escaping behind a modal overlay such as the create-item modal (WI-455).
+  // Restore prior focus when leaving the portalled menu to keep dialog Tab flow.
   let activeElementBeforeOpen = null;
 
   // Reference to dropdown menu for scrolling
   let menuRef = $state(null);
 
-  // Only scroll the highlighted option into view for KEYBOARD navigation.
-  // Mouse hover also moves the highlight (option onmouseenter), but the pointer
-  // is already on that item so there is nothing to scroll — and calling
-  // scrollIntoView on hover fires a scroll that closes the open combobox menu
-  // (the dropdown vanishes the instant the cursor reaches an option, so a
-  // programmatic click then lands on whatever is behind it). The original code
-  // also indexed menuRef.children (the search box / listbox wrappers) rather
-  // than the option elements, so it scrolled the wrong node entirely.
+  // Scroll only keyboard highlights: hover scrolling closes the menu. Query
+  // option nodes directly rather than menu wrapper children.
   let highlightViaKeyboard = false;
 
   $effect(() => {

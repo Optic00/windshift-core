@@ -1,24 +1,10 @@
 /**
- * Resolve the screen id to use for an item in a given context.
+ * Resolves a mode-specific screen: item-type override, item-type create,
+ * config-set mode, then config-set create. Returns null when unconfigured.
  *
- * Fallback chain (most specific to least), where M is the requested mode
- * (`'create' | 'edit' | 'view'`):
- *   1. item-type override for mode M
- *   2. item-type override for create  (create_screen acts as the item-type's
- *      canonical screen if no mode-specific override exists)
- *   3. config-set default for mode M
- *   4. config-set default for create  (universal fallback — admins typically
- *      configure ONE screen and want it used everywhere)
- *
- * Returns null if nothing is configured at any level. Callers decide what
- * to do with null (typically: a hardcoded last-resort screen id, or skip
- * the screen filter entirely).
- *
- * @param {object|null|undefined} configSet  Configuration set with optional
- *   `create_screen_id`, `edit_screen_id`, `view_screen_id`, and
- *   `item_type_configs[]` (each with the same three optional fields).
- * @param {number|null|undefined} itemTypeId  Item type to look up an override for.
- * @param {'create'|'edit'|'view'} mode  The screen context.
+ * @param {object|null|undefined} configSet
+ * @param {number|null|undefined} itemTypeId
+ * @param {'create'|'edit'|'view'} mode
  * @returns {number|null}
  */
 export function resolveScreenId(configSet, itemTypeId, mode) {

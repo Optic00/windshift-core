@@ -86,10 +86,7 @@ Examples:
 			return nil
 		}
 
-		// Resolve the destination path. We need the server's filename for the
-		// default-CWD and directory-target cases, so download into a temp file
-		// first, then rename. This also avoids leaving a half-written file at
-		// the final destination if the transfer fails mid-stream.
+		// Download to a temporary file before resolving and renaming the destination.
 		destDir := "."
 		destName := ""
 		if attachmentDownloadOutput != "" {
@@ -143,25 +140,8 @@ Examples:
 	},
 }
 
-// maxItemAttachmentUpload mirrors the http.MaxBytesReader cap the upload route
-// applies to the whole request body
-// (internal/restapi/v1/handlers/item_attachments.go). Checking it client-side
-// turns an oversized file into an actionable message instead of the
-// "failed to parse form data" 400 the server emits once it truncates the body.
-//
-// This is the route's hard ceiling, not the admin-configurable limit. The
-// cookie-auth upload path applies the same 32 MB cap, so CLI and web UI agree
-// — note that the configurable default (50 MB) is above it and therefore
-// unreachable on either surface.
-//
-// Everything else an admin can configure — a *smaller* max file size, an
-// allowed-MIME-type list, the global enable switch — plus the fixed extension
-// blocklist and content/extension sniffing, is enforced server-side only. The
-// CLI deliberately does not mirror those: they are server state with no v1
-// endpoint to read them from, and a stale local copy would reject files the
-// server would have accepted. They come back as a 400 (or 503 when uploads are
-// disabled) carrying a human-readable reason, which translateItemAttachmentError
-// passes through verbatim.
+// maxItemAttachmentUpload mirrors the route's fixed multipart request cap.
+// Configurable limits and MIME validation remain server-side to avoid stale CLI policy.
 const maxItemAttachmentUpload = 32 << 20
 
 var attachmentUploadCmd = &cobra.Command{
@@ -207,8 +187,7 @@ Examples:
 		for _, path := range paths {
 			att, err := uploadOneAttachment(client, itemID, path)
 			if err != nil {
-				// Report what did land so a partial batch is recoverable —
-				// the user can re-run with just the remaining files.
+				// Report completed uploads so the remainder can be retried.
 				if len(uploaded) > 0 {
 					NewOutput().Print(uploaded)
 				}
@@ -253,13 +232,11 @@ func checkUploadableFiles(paths []string) error {
 		if info.Size() == 0 {
 			return fmt.Errorf("cannot upload %s: file is empty", path)
 		}
-		// The 32 MB cap applies to the encoded request, not the raw file, so
-		// compare against the file plus its multipart envelope.
+		// The request cap includes the multipart envelope.
 		if total := info.Size() + multipartEnvelopeSize(filepath.Base(path)); total > maxItemAttachmentUpload {
 			return fmt.Errorf("cannot upload %s: %d bytes exceeds the upload endpoint's %d MB request limit", path, info.Size(), maxItemAttachmentUpload>>20)
 		}
-		// Stat succeeding does not mean we can read the bytes; open now so a
-		// permission problem surfaces here rather than mid-batch.
+		// Verify readability before the batch starts.
 		f, err := os.Open(path) //nolint:gosec // G304: path supplied by the user on the command line, intentional
 		if err != nil {
 			return fmt.Errorf("cannot upload %s: %w", path, err)

@@ -1,12 +1,5 @@
-// Package logo renders the Windshift mark in the terminal.
-//
-// The web mark is a flowing radial swirl; in the terminal we approximate it
-// with box-drawing characters (concentric curves around a centered dot) and
-// apply a horizontal foreground gradient so it reads as "branded" rather than
-// monochrome. Two variants:
-//
-//   - Full     — 5×7 mark plus a WINDSHIFT wordmark for splash / empty states.
-//   - Compact  — single glyph "◐" plus the word "Windshift" for the header bar.
+// Package logo renders gradient terminal approximations of the Windshift mark:
+// a 5×7 splash variant and compact header glyph.
 package logo
 
 import (
@@ -18,9 +11,7 @@ import (
 	"windshift/internal/tui/styles"
 )
 
-// markLines is the splash-size mark. 5 rows × 7 cols. The curves wrap a
-// central dot to suggest the radial swirl in the web logo without trying to
-// be a faithful ANSI reproduction (which would be illegible at this size).
+// markLines is a legible 5×7 terminal approximation of the web swirl.
 var markLines = []string{
 	" ╭───╮ ",
 	"╱ ╭─╮ ╲",

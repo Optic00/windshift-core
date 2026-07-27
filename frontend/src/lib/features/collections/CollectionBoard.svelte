@@ -64,9 +64,7 @@
   let selectedItemId = $state(null);
   let searchQuery = $state('');
 
-  // Dependency/blocker hover summary: lazily-fetched item links cached per
-  // item so re-renders (drag, filtering) don't refetch. Keyed by item id →
-  // merged outgoing+incoming link list.
+  // Cached outgoing and incoming links for dependency hover summaries.
   let dependencyLinksByItem = $state({});
   let dependencyLinksToken = 0; // guards against stale async when items change
   const DEPENDENCY_LINK_CHUNK = 200; // ids per batched /links/batch request (server cap 500)
@@ -87,13 +85,10 @@
   let excludeRightmostSwimlaneParents = $state(false);
   let swimlaneCollapsed = $state({});
 
-  // Collapsible board columns — which column ids are collapsed to a narrow
-  // strip. Persisted per-board (workspace/collection scope) like the
-  // swimlane/group-by prefs above.
+  // Per-board collapsed-column preferences.
   let collapsedColumns = $state({});
 
-  // Board sort mode: 'rank' (manual frac_index order, drag-to-reorder enabled)
-  // or 'bubble' (recently-active cards rise to the top, rank reorder disabled).
+  // Rank enables manual ordering; bubble prioritizes recent activity.
   let sortMode = $state('rank');
 
   // Edge-based drag state
@@ -108,9 +103,7 @@
     if (event.detail?.itemId) {
       try {
         const newItem = await api.items.get(event.detail.itemId);
-        // When viewing a collection, items from any workspace can qualify, so ask
-        // the API whether this one passes the collection filters. Otherwise fall
-        // back to the current-workspace check.
+        // Collection membership may span workspaces; verify it server-side.
         const belongsToView = collectionId
           ? await checkItemVisibility(newItem.id, { collection_id: collectionId })
           : Number(newItem.workspace_id) === Number(workspaceId);
@@ -137,11 +130,7 @@
 
   // Quick-add functions
 
-  // Cards created in a swimlane are parented to the lane's item, and the API
-  // requires a child to sit exactly one hierarchy level below its parent. Offer
-  // only those types instead of letting the user pick one the create call will
-  // reject. Lanes without a parent (the "unassigned" lane, or no grouping) keep
-  // the full list.
+  // Children in a swimlane must be exactly one hierarchy level below its parent.
   function quickAddTypesFor(parentItem) {
     const parentType = parentItem?.item_type_id
       ? (itemTypes || []).find(type => type.id === parentItem.item_type_id)
@@ -324,17 +313,10 @@
     backlogStore.setCount(workspaceId, collectionStore.backlogPagination?.total ?? collectionStore.backlogItems.length);
   });
 
-  // Drop cached item links when the viewed collection/workspace changes so a
-  // fresh board doesn't show stale dependency summaries from a previous view.
-  // This runs synchronously (before any in-flight link fetch resolves), and the
-  // fetch is token-guarded, so a stale request from the prior view can't write
-  // back after the wipe.
+  // Reset dependency links when the viewed board changes.
   let viewSignature = $derived(`${collectionId ?? ''}|${workspaceId ?? ''}`);
   $effect(() => {
-    // Re-runs whenever the viewed collection/workspace changes. Board config
-    // depends only on collection/workspace, not on the item set — loading it
-    // here (instead of in the items effect below) stops a redundant
-    // getBoardConfiguration request on every item array update.
+    // Board configuration depends on the view, not the loaded item set.
     viewSignature;
     dependencyLinksByItem = {};
     allIterations = [];
@@ -351,15 +333,10 @@
         excludeRightmostSwimlaneParents = savedExcludeRightmost === 'true';
       }
     } catch (e) { /* ignore storage errors */ }
-    // Restore per-board view preferences here (not in onMount)
-    // because MainApp reuses this component instance while updating the
-    // workspaceId/collectionId props — restoring only on mount would carry
-    // the previous board's collapsed columns or sort mode into the next one.
+    // MainApp reuses this component across boards, so restore per-view preferences here.
     collapsedColumns = loadCollapsedColumns();
     sortMode = loadSortMode();
-    // The store owns pagination, so it must know the active mode before
-    // choosing which items belong on page one. Avoid tracking store state in
-    // this view-only preference effect; changing boards is its sole trigger.
+    // Set sort mode before the store selects page-one items.
     untrack(() => collectionStore.setBoardSortMode(sortMode));
     if (collectionId || workspaceId) {
       loadBoardConfig();
@@ -374,26 +351,18 @@
   // Preload dependency links when the loaded item set changes.
   $effect(() => {
     if (collectionStore.items.length > 0 && !collectionStore.loading) {
-      // untrack: the cache read inside loadDependencyLinksForItems would
-      // otherwise subscribe this effect to dependencyLinksByItem and re-run it
-      // every time links resolve.
+      // Avoid subscribing this effect to cache writes.
       untrack(() => loadDependencyLinksForItems(collectionStore.items));
     }
   });
 
-  // Fetch item links for the dependency/blocker hover summary, caching per
-  // item id. Only items we haven't already loaded links for are requested,
-  // so re-renders after drag/filter/sort stay cheap. Outgoing + incoming are
-  // merged the same way the item-detail store does so the link shape matches
-  // what DependencySummary expects.
+  // Fetch and cache merged links for dependency summaries.
   async function loadDependencyLinksForItems(items) {
     const toFetch = items.filter((i) => i?.id != null && !dependencyLinksByItem[i.id]);
     if (toFetch.length === 0) return;
     const token = ++dependencyLinksToken;
     const ids = toFetch.map((i) => i.id);
-    // One batched request per chunk instead of one per card — a board render
-    // used to fire N concurrent /items/{id}/links requests. Chunk under the
-    // server's 500-id cap.
+    // Batch below the server's 500-ID cap.
     const chunks = [];
     for (let i = 0; i < ids.length; i += DEPENDENCY_LINK_CHUNK) {
       chunks.push(ids.slice(i, i + DEPENDENCY_LINK_CHUNK));
@@ -737,13 +706,8 @@
       : columnItems;
   }
 
-  // Total item count for a column header. When the store split-fetched a
-  // capped rightmost column, only the latest RIGHTMOST_COLUMN_LIMIT of its
-  // items are loaded, so the loaded count undercounts — use the server-side
-  // total instead. Swimlane boards keep client-derived per-lane counts (the
-  // server total is board-wide, not per lane). Skipped while quick-search or
-  // the iteration filter narrows the visible set — those filter the loaded
-  // items, so loaded counts are the honest numbers.
+  // Use server totals for split-fetched capped rightmost columns, except
+  // swimlanes or active filters where loaded counts are authoritative.
   function getColumnTotal(columnIndex, allColumnItems) {
     const useServerTotal =
       collectionStore.rightmostCap &&

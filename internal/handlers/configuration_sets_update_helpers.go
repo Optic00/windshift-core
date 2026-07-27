@@ -9,12 +9,8 @@ import (
 	"windshift/internal/repository"
 )
 
-// respondIntraSetWorkflowConflictIfNeeded checks whether the items in the
-// retained workspaces are compatible with the new workflow, and if not,
-// responds 409 with an aggregate analysis across *all* retained workspaces.
-// Used for the intra-config-set workflow swap path: a single migration call
-// must cover every workspace still attached, since updating workflow_id
-// halfway through would orphan the not-yet-migrated workspaces.
+// respondIntraSetWorkflowConflictIfNeeded aggregates retained workspaces so a
+// workflow swap cannot orphan unmigrated items.
 func (h *ConfigurationSetHandler) respondIntraSetWorkflowConflictIfNeeded(
 	w http.ResponseWriter, r *http.Request, //nolint:unparam // r kept for symmetry with respondMigrationConflictIfNeeded
 	configSetID int, retainedWorkspaceIDs []int, newWorkflowID *int,
@@ -23,10 +19,7 @@ func (h *ConfigurationSetHandler) respondIntraSetWorkflowConflictIfNeeded(
 		return false
 	}
 
-	// Reuse the per-workspace analyzer over each retained workspace and merge
-	// by (status_id, item_type_id). Counts sum across workspaces; the
-	// suggested target is whichever the analyzer proposes — they all see the
-	// same target workflow, so suggestions agree.
+	// Merge per-workspace status migrations by status and item type.
 	type key struct {
 		statusID   int  // 0 means NULL
 		itemTypeID *int // nil means "no per-item-type filter"
@@ -95,10 +88,7 @@ func (h *ConfigurationSetHandler) respondIntraSetWorkflowConflictIfNeeded(
 	return true
 }
 
-// resolveEffectiveWorkflowID returns the workflow_id that will actually govern
-// items after a configuration_set update — either the explicit value supplied
-// by the caller, or the global default workflow when nil. Returns (nil, nil)
-// when neither is available; the caller decides whether that's an error.
+// resolveEffectiveWorkflowID prefers an explicit workflow, then the default.
 func (h *ConfigurationSetHandler) resolveEffectiveWorkflowID(explicit *int) (*int, error) {
 	if explicit != nil {
 		return explicit, nil
@@ -115,16 +105,8 @@ func (h *ConfigurationSetHandler) resolveEffectiveWorkflowID(explicit *int) (*in
 	return &v, nil
 }
 
-// respondMigrationConflictIfNeeded runs the four migration analyzers for a
-// single workspace moving from sourceConfigSetID to targetConfigSetID. If any
-// dimension requires migration, it writes a 409 Conflict with the analysis
-// payload and returns true; the caller should then return immediately.
-//
-// When overrideTargetWorkflowID is non-nil, status migration is analyzed
-// against that workflow instead of the workflow currently persisted on the
-// target config set. This is used by Update() to detect intra-config-set
-// workflow swaps where the new workflow_id is in the request body but has not
-// yet been written to the database.
+// respondMigrationConflictIfNeeded returns migration analysis for one workspace.
+// An override workflow supports pending intra-config-set workflow swaps.
 func (h *ConfigurationSetHandler) respondMigrationConflictIfNeeded(
 	w http.ResponseWriter, r *http.Request, //nolint:unparam // r kept for symmetry with HTTP-handler-style helpers
 	workspaceID, sourceConfigSetID, targetConfigSetID int,

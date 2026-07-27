@@ -16,14 +16,8 @@ import (
 	"windshift/internal/utils"
 )
 
-// sanitizeAssetReport gates the user-facing fields on an asset report
-// payload. Name + Description render in the portal report list and
-// audit log; CQLQuery is query text whose comparison operators are
-// load-bearing, so it is length-capped only; the Config blob is JSON —
-// HTML stripping would corrupt it, so it is validated (size +
-// well-formed JSON) and rejected instead of scrubbed; Icon / Color /
-// column identifiers are identifier-shaped. Writes a validation error
-// and returns false when Config is rejected.
+// sanitizeAssetReport applies field policies and validates Config as JSON rather
+// than corrupting it by scrubbing. Invalid Config writes a validation error.
 func sanitizeAssetReport(w http.ResponseWriter, r *http.Request, ar *models.AssetReport) bool {
 	sanitize.ApplyAll(
 		sanitize.Pair{Target: &ar.Name, Policy: sanitize.PlainTextField},
@@ -44,14 +38,8 @@ func sanitizeAssetReport(w http.ResponseWriter, r *http.Request, ar *models.Asse
 	return true
 }
 
-// sanitizeAssetReportFields gates the per-row form-mode fields.
-// DisplayName + Description render as label/help copy in the portal
-// form; FieldIdentifier + FieldType + VirtualFieldType are
-// identifier-shaped; VirtualFieldOptions is the JSON option list the
-// portal select JSON.parses — HTML stripping would corrupt it, so it
-// is validated (size + well-formed JSON) and rejected instead of
-// scrubbed. Writes a validation error and returns false when an
-// option list is rejected.
+// sanitizeAssetReportFields applies per-row policies and validates JSON options
+// rather than scrubbing them. Invalid options write a validation error.
 func sanitizeAssetReportFields(w http.ResponseWriter, r *http.Request, fields []models.AssetReportField) bool {
 	for i := range fields {
 		sanitize.ApplyAll(

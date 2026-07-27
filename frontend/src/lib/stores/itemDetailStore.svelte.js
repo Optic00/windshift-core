@@ -1,8 +1,3 @@
-/**
- * Store for managing Item Detail state.
- * Uses Svelte 5 class-based reactive state pattern.
- * Centralizes item data, editing states, modals, and related data loading.
- */
 import { api } from '../api.js';
 import { buildDetailScreenFieldConfig, resolveEffectiveScreenIds } from '../utils/screenFields.js';
 import { workspaceDataStore } from './workspaceDataStore.svelte.js';
@@ -111,9 +106,7 @@ class ItemDetailStore {
   loading = $state(true);
   error = $state(null);
   saving = $state(false);
-  // Set when the open item no longer exists (deleted elsewhere — discovered via
-  // the SSE `deleted` event or a 404 on refresh). The detail view watches this
-  // and closes/navigates away instead of showing stale data (WI-484).
+  // The detail view closes when an SSE deletion or refresh 404 sets this.
   notFound = $state(false);
 
   // Workspace
@@ -136,12 +129,7 @@ class ItemDetailStore {
   currentHierarchyLevel = $state(null);
   availableSubIssueTypes = $state([]);
 
-  // Screen configuration (cached per workspace).
-  // workspaceScreenFields / workspaceScreenSystemFields hold the *visibility*
-  // union (edit ∪ view); editableScreenFieldIds / editableScreenSystemFields
-  // are the *editable* subset (edit-screen only). When both are null, all
-  // visible fields are editable (i.e., the legacy single-screen path is
-  // active and there's no view-vs-edit separation in play).
+  // Null editable fields preserve the legacy path: all visible fields are editable.
   customFieldDefinitions = $state([]);
   workspaceScreenFields = $state([]);
   workspaceScreenSystemFields = $state([]);
@@ -172,9 +160,7 @@ class ItemDetailStore {
   customers = $state([]);
   workItems = $state([]);
   workspaces = $state([]);
-  // Child-item rollup for the Time Tracking tab "Include child items" toggle.
-  // timeRollup is null until the user opts in; it caches the API response
-  // for the current item view so toggling on/off doesn't refetch.
+  // Cache the optional child-item rollup for the current item.
   includeChildItems = $state(false);
   timeRollup = $state(null);
   timeRollupLoading = $state(false);
@@ -188,8 +174,7 @@ class ItemDetailStore {
   // Modals
   showDeleteDialog = $state(false);
   showLinkModal = $state(false);
-  // Preselect the link type when the add-link modal opens — set by callers
-  // that pre-select a type (e.g. the Pages section's Add button).
+  // Callers may preselect the link type before opening this modal.
   linkModalPreselectTypeId = $state(null);
   showTestCaseModal = $state(false);
   selectedTestCaseId = $state(null);
@@ -207,9 +192,6 @@ class ItemDetailStore {
 
   // === Derived Values (getters) ===
 
-  /**
-   * Get status options based on loaded transitions.
-   */
   get statusOptions() {
     if (this.availableStatusTransitions.length > 0) {
       return this.availableStatusTransitions.map((transition) => ({
@@ -222,9 +204,6 @@ class ItemDetailStore {
     return this.loadingStatusTransitions ? [{ value: '', label: 'Loading...' }] : [];
   }
 
-  /**
-   * Get filtered link types (excluding test link type for item-to-item linking).
-   */
   get filteredLinkTypes() {
     return this.linkTypes;
   }
@@ -305,9 +284,7 @@ class ItemDetailStore {
       const wsId = effectiveWorkspaceId || itemData.workspace_id;
       this.workspaceId = wsId;
 
-      // The item summary deliberately references, rather than duplicates, the
-      // workspace catalog snapshot. Start both requests together when the
-      // workspace is known and share MainApp's in-flight bootstrap.
+      // Share MainApp's in-flight workspace bootstrap.
       workspaceInitPromise ??= workspaceDataStore.initialize(wsId);
       await workspaceInitPromise;
       if (token !== this.#loadToken) return;
@@ -388,12 +365,7 @@ class ItemDetailStore {
     }
   }
 
-  /**
-   * Lightweight background refresh for an already-open item detail view.
-   * Unlike loadItem(), this only fetches the item record and merges it into
-   * current state so agent-driven status/comment-adjacent updates appear
-   * without clobbering any field the local user is actively editing.
-   */
+  // Refresh the item without overwriting fields being edited locally.
   async refreshCurrentItem() {
     if (!this.itemId || this.loading || this.saving) return;
 
@@ -423,8 +395,7 @@ class ItemDetailStore {
         }
       }
     } catch (err) {
-      // A 404 means the item was deleted out from under us. Surface it so the
-      // view can close instead of silently keeping stale data (WI-484).
+      // A deleted item must close rather than remain stale.
       if (err?.status === 404) {
         this.markDeleted();
         return;
@@ -433,18 +404,11 @@ class ItemDetailStore {
     }
   }
 
-  /**
-   * Mark the open item as gone (deleted elsewhere). Idempotent; the detail view
-   * reacts to `notFound` by closing/navigating away.
-   */
   markDeleted() {
     this.notFound = true;
   }
 
-  /**
-   * Load worklogs only when the Time tab is opened. Calls are single-flighted
-   * per item so the route effect and a fast tab click cannot duplicate work.
-   */
+  // Single-flight per-item worklog loading prevents duplicate tab requests.
   async loadWorklogs({ force = false } = {}) {
     if (!this.itemId) return;
     const itemId = this.itemId;
@@ -485,10 +449,7 @@ class ItemDetailStore {
     return promise;
   }
 
-  /**
-   * Load picker data used only by TimeLogModal. These broad global lists no
-   * longer block every item open and are shared after their first use.
-   */
+  // Load TimeLogModal-only picker data lazily and once.
   async loadTimeModalData() {
     if (this.#timeModalDataLoaded) return;
     if (this.#timeModalDataPromise) return this.#timeModalDataPromise;
@@ -535,10 +496,7 @@ class ItemDetailStore {
     if (this.includeChildItems) this.loadTimeRollup({ force: true });
   }
 
-  /**
-   * Fetch the rolled-up estimate / logged minutes across the current item
-   * and its descendants. Cached; pass { force: true } to refetch.
-   */
+  // Fetch and cache the current item's descendant time rollup.
   async loadTimeRollup({ force = false } = {}) {
     if (!this.itemId) return;
     if (this.timeRollup && !force) return;
@@ -553,9 +511,6 @@ class ItemDetailStore {
     }
   }
 
-  /**
-   * Load child items.
-   */
   async loadChildItems(requestOptions = {}) {
     if (!this.itemId) return;
     try {
@@ -582,10 +537,7 @@ class ItemDetailStore {
     }
   }
 
-  /**
-   * Refresh only the generic item links. Used by link mutations and SSE link
-   * events so they do not restart the entire item-detail bootstrap.
-   */
+  // Link mutations and SSE link events refresh only links, not the full view.
   async loadLinks() {
     if (!this.itemId) return;
     this.#linksController?.abort();
@@ -610,9 +562,6 @@ class ItemDetailStore {
     }
   }
 
-  /**
-   * Load diagrams for the item.
-   */
   async loadDiagrams({ force = false } = {}) {
     const itemId = this.item?.id;
     if (!itemId) return [];
@@ -686,10 +635,6 @@ class ItemDetailStore {
     }
   }
 
-  /**
-   * Re-fetch available transitions (and pending-approval state). Call after a
-   * decision finalizes so the picker reflects the new gating.
-   */
   async refreshAvailableTransitions() {
     await this.#loadAvailableStatusTransitions();
   }
@@ -814,9 +759,6 @@ class ItemDetailStore {
 
   // === Editing Methods ===
 
-  /**
-   * Start editing a field.
-   */
   startEditing(field) {
     if (field.startsWith('custom_field_')) {
       const fieldId = field.replace('custom_field_', '');
@@ -835,9 +777,6 @@ class ItemDetailStore {
     }
   }
 
-  /**
-   * Cancel editing a field.
-   */
   cancelEditing(field) {
     if (field.startsWith('custom_field_')) {
       const fieldId = field.replace('custom_field_', '');
@@ -852,9 +791,6 @@ class ItemDetailStore {
     }
   }
 
-  /**
-   * Save a field value.
-   */
   async saveField(field, directValue = null, assigneeName = null, iterationName = null) {
     if (this.saving) return;
 
@@ -882,9 +818,7 @@ class ItemDetailStore {
           this.cancelEditing('status');
           return;
         }
-        // Status changes must go through the transition endpoint so workflow
-        // rules (validators, conditions) are enforced. The item update endpoint
-        // rejects status_id.
+        // Status changes must use the transition endpoint for workflow validation.
         const updatedItem = await api.items.transition(this.item.id, newStatusId);
         this.item = { ...this.item, ...updatedItem };
         this.hasChanges = true;
@@ -1255,9 +1189,6 @@ class ItemDetailStore {
 
   // === Reset ===
 
-  /**
-   * Full reset.
-   */
   reset() {
     this.#loadToken += 1;
     this.#loadController?.abort();

@@ -1,34 +1,23 @@
-/**
- * Theme store for managing dark/light mode preferences
- *
- * Supports three modes:
- * - 'light': Always use light theme
- * - 'dark': Always use dark theme
- * - 'system': Follow OS preference (default)
- */
+/** Theme preference store for light, dark, and system modes. */
 
 const STORAGE_KEY = 'windshift-color-mode';
 
-// Create reactive state using Svelte 5 runes
+// Reactive theme state.
 let colorMode = $state('system'); // 'light' | 'dark' | 'system'
 let systemPreference = $state('light'); // detected OS preference
 let activeTheme = $state(null); // current theme from backend
 
-// Derived: actual theme to apply
+// Resolved applied theme.
 const resolvedTheme = $derived(colorMode === 'system' ? systemPreference : colorMode);
 
-/**
- * Apply theme to document
- */
+/** Apply the resolved mode to the document. */
 function applyTheme(theme) {
   if (typeof document !== 'undefined') {
     document.documentElement.dataset.colorMode = theme;
   }
 }
 
-/**
- * Apply nav colors based on current theme
- */
+/** Apply current-theme navigation colors. */
 function applyNavColors() {
   if (typeof document === 'undefined' || !activeTheme) return;
 
@@ -45,12 +34,7 @@ function applyNavColors() {
   );
 }
 
-/**
- * Initialize theme store
- * - Reads from localStorage
- * - Sets up system preference detection
- * - Applies initial theme
- */
+/** Initialize persisted mode, system preference, and applied theme. */
 function init() {
   // Read stored preference
   if (typeof localStorage !== 'undefined') {

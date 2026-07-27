@@ -980,21 +980,9 @@ func (s *PageService) resolveParent(tx database.Tx, workspaceID int, parentID *i
 	return &parent.ID, parentPath, parent.Depth, nil
 }
 
-// resolveSiblingFracIndex computes the frac_index the moved page should
-// receive given prev/next sibling IDs that bracket the drop position.
-//
-// When the caller supplied no anchors and the parent is unchanged, returns
-// nil (no frac_index write) to preserve the page's current position in
-// its existing sibling set. When the caller supplied no anchors AND the
-// parent is changing, the moved page is appended to the end of the new
-// parent's children — without this, the page would carry its old key
-// into the new sibling set and land in a visually arbitrary position
-// (and potentially collide on the per-sibling-set uniqueness invariant).
-//
-// When neighbors have NULL frac_index (pages predating drag-and-drop),
-// they are backfilled with monotonically-increasing keys in their
-// current display order before KeyBetween is consulted, so subsequent
-// reorders against the same group have well-defined endpoints.
+// resolveSiblingFracIndex computes a moved page's sibling ordering key. Unanchored
+// same-parent moves preserve order; parent changes append. Legacy null keys are
+// backfilled before reordering.
 func (s *PageService) resolveSiblingFracIndex(
 	tx database.Tx,
 	workspaceID int,
@@ -1013,8 +1001,7 @@ func (s *PageService) resolveSiblingFracIndex(
 		return nil, fmt.Errorf("list new parent children: %w", err)
 	}
 
-	// A neighbor pointed at the page being moved is meaningless — it
-	// cannot be its own anchor. Treat as nil so KeyBetween still runs.
+	// A page cannot anchor its own move.
 	if prevSiblingID != nil && *prevSiblingID == movedPageID {
 		prevSiblingID = nil
 	}
@@ -1038,15 +1025,9 @@ func (s *PageService) resolveSiblingFracIndex(
 		}
 	}
 
-	// Append-to-end on a parent-changing move with no anchors: anchor
-	// the new page after the current last sibling (or as the lone child
-	// if the new parent is empty). The backfill branch below already
-	// handles a sibling set with NULL keys; once that runs, the
-	// per-sibling-set last key is known and the second pass below
-	// (prevKey / nextKey computation) produces a fresh key to its right.
+	// Unanchored parent changes append after the current last sibling.
 	if prevSiblingID == nil && nextSiblingID == nil {
-		// No non-moved siblings → the moved page is the lone child;
-		// pick a deterministic starting key.
+		// A lone child gets a deterministic starting key.
 		if len(siblingByID) == 0 {
 			key, kerr := repository.KeyBetween("", "")
 			if kerr != nil {

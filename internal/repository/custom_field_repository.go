@@ -362,22 +362,10 @@ func (r *CustomFieldRepository) DriverName() string {
 	return r.db.GetDriverName()
 }
 
-// CountRowsUsingField returns how many records currently hold a value for the
-// given custom field, across all three storage surfaces: items, assets, and the
-// portal custom_field_values table. It backs the pre-delete in-use guard in
-// CustomFieldHandler.Delete (mirrors the item-type guard) so a field still
-// holding live data can't be deleted out from under it.
-//
-// For items/assets it reuses the exact cross-driver matcher the async scrubber
-// trusts (see ListRowsWithCustomFieldsPageByKey): the field key is the
-// stringified field ID and values are stored as JSON keyed by it, so a row is
-// "using" the field iff its custom_field_values text mentions `"<id>"`. The
-// CAST(... AS TEXT) is required so the LIKE works on both SQLite (TEXT column)
-// and Postgres (JSONB column — a bare LIKE errors with "jsonb ~~"). Matching the
-// scrubber's prefilter keeps the guard and the cleanup in agreement: we block a
-// delete iff the cleanup would have had something to scrub. The prefilter can
-// over-count if a user value literally contains the quoted substring `"<id>"`,
-// but over-blocking is the safe failure mode for a delete guard.
+// CountRowsUsingField powers the delete guard across item, asset, and portal
+// values. Its quoted-ID text prefilter matches the async scrubber and casts for
+// SQLite/Postgres compatibility. It may over-count literal values, which safely
+// blocks deletion rather than risking live-data loss.
 func (r *CustomFieldRepository) CountRowsUsingField(fieldID int) (int, error) {
 	fieldKey := strconv.Itoa(fieldID)
 	likePattern := `%"` + fieldKey + `"%`
@@ -398,9 +386,7 @@ func (r *CustomFieldRepository) CountRowsUsingField(fieldID int) (int, error) {
 		total += count
 	}
 
-	// Portal/org values live in a separate custom_field_values table keyed by a
-	// real column. The table may not exist on every deployment; tolerate a query
-	// error as "nothing here", the same convention the portal scrubber uses.
+	// Optional portal storage follows the scrubber's missing-table convention.
 	var portalCount int
 	if err := r.db.QueryRow(
 		`SELECT COUNT(*) FROM custom_field_values

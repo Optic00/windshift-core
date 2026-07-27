@@ -4,13 +4,7 @@ import { errorToast, infoToast, warningToast } from '../../stores/toasts.svelte.
 import { BUCKET } from '../buckets.js';
 import { createCommand } from '../types.js';
 
-/**
- * Time tracking navigation and actions.
- *
- * Phase 0 audit fix: previous `time-reports` pointed at `/reports` and
- * `time-projects` at `/projects`. Real routes are `/time/worklogs` and
- * `/time/projects` (router.js). Stale routes dropped here.
- */
+/** Time navigation and actions using canonical worklogs and projects routes. */
 export function timeProvider(ctx) {
   const { t, activeTimer } = ctx;
 

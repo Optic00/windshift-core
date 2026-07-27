@@ -8,36 +8,9 @@ import (
 	"time"
 )
 
-// backfillLegacyDatetimeFormat rewrites every DATETIME column value to the
-// SQLite-parsable UTC format produced by _time_format=sqlite + _timezone=UTC.
-// Runs two passes per column:
-//
-//   - **Legacy Go-String() format**: rows from the modernc.org/sqlite
-//     pre-_time_format default, e.g.
-//     "2026-05-15 23:13:34.623059 +0200 CEST m=+3772.605125585". SQLite's
-//     DATE/STRFTIME/julianday return NULL on these — they broke GROUP BY DATE
-//     (test reports trend → 500), DATE-range filters (review completed-items
-//     → silently empty), and duration sorts (action execution logs julianday
-//     → NULLs).
-//   - **Non-UTC offset rows**: anything ending in an explicit ±HH:MM offset
-//     other than +00:00. Without normalization, lex ordering on stored TEXT
-//     disagrees with chronological ordering — '+0' < '+2' in ASCII, so a row
-//     written at 14:00 CEST (+02:00) lex-sorts AFTER a row written at 14:00
-//     UTC (+00:00) even though it happened TWO HOURS EARLIER.
-//
-// Both passes parse with Go's time.Parse, call .UTC(), and re-format using
-// the canonical SQLite-friendly format. Idempotent: rows already in UTC
-// don't match either filter.
-//
-// Detection markers chosen to be selective and never collide with other
-// formats the driver writes:
-//   - legacy: contains " m=+" (Go monotonic-clock suffix)
-//   - non-UTC: GLOB-matches "...±HH:MM" tail AND that tail != "+00:00"
-//
-// Scope: every DATETIME / TIMESTAMP column in every user table, discovered
-// dynamically via sqlite_master + pragma_table_info. Skips sqlite_* internal
-// tables. Postgres callers do not exercise this code path — pq + the
-// session timezone=UTC + TIMESTAMPTZ schema handle UTC correctly natively.
+// backfillLegacyDatetimeFormat normalizes user-table DATETIME and TIMESTAMP
+// values to SQLite's UTC format. It repairs legacy Go timestamps and non-UTC
+// offsets, is idempotent, and skips SQLite internal tables.
 func backfillLegacyDatetimeFormat(db *sql.DB) error {
 	columns, err := discoverDatetimeColumns(db)
 	if err != nil {
@@ -48,9 +21,7 @@ func backfillLegacyDatetimeFormat(db *sql.DB) error {
 	for _, c := range columns {
 		fixed, err := backfillColumn(db, c.table, c.column)
 		if err != nil {
-			// Don't abort the whole loop on one bad column — log and
-			// continue. A single missing/renamed column shouldn't block
-			// startup.
+			// One bad column must not block startup.
 			slog.Warn("datetime backfill failed for column",
 				slog.String("component", "database"),
 				slog.String("table", c.table),

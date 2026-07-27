@@ -129,10 +129,7 @@ func (h *RunnerControlHandler) Claim(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
-	// Enforce the pool's max-concurrency quota before handing out work
-	// (WI-147). Soft cap: count + claim aren't atomic, so a burst of
-	// concurrent claimers can overshoot by at most their count — acceptable
-	// for a fairness/back-pressure bound.
+	// Soft pool cap: concurrent count and claim can briefly overshoot.
 	if maxRuns > 0 {
 		running, err := h.runs.CountRunningForPool(r.Context(), inst.PoolCapabilityID)
 		if err != nil {
@@ -144,26 +141,12 @@ func (h *RunnerControlHandler) Claim(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Round-robin assignment (WI-514): the server, not the runner, decides
-	// which live runner gets the next run. The pull-based model let the
-	// most-recently-registered runner always win the poll, so the last runner
-	// added was effectively the only one used. NextRunner rotates through
-	// the pool's live runners so each gets a turn before any repeats. Only
-	// "fair" runs — those for which the round-robin picks THIS caller — are
-	// handed out; an out-of-turn runner gets nothing (200, job null) and the
-	// chosen runner picks the run up on its own next poll.
-	//
-	// Flow: nextRunner = the runner whose turn it is. If that is the caller,
-	// assign the next queued run to it and rotate. Otherwise (caller is
-	// out of turn) return job=null; if the chosen runner is offline by the
-	// next tick, NextRunner will have moved past it (offline runners aren't
-	// returned by ListLiveInstancesForPool), so the turn isn't stuck.
+	// Server-side round robin prevents a fast or newly registered poller from
+	// monopolizing work; out-of-turn runners receive job=null.
 	next, err := h.registry.NextRunner(r.Context(), inst.PoolCapabilityID)
 	if err != nil {
 		if errors.Is(err, services.ErrNoLiveRunner) {
-			// No live runner can take work (pool empty, or all stale).
-			// Fail closed: don't hand the run to a caller the reaper is
-			// about to revoke.
+			// Do not assign work to a runner the reaper may revoke.
 			respondJSONOK(w, services.ClaimResponse{Job: nil})
 			return
 		}
@@ -172,25 +155,18 @@ func (h *RunnerControlHandler) Claim(w http.ResponseWriter, r *http.Request) {
 	}
 	var run *models.AgentRun
 	if next.ID == inst.ID {
-		// This runner's turn: assign the next queued run to it. NextRunner
-		// already rotated, so a concurrent claimer is offered the next runner.
-		// A nil run means the queue was drained between NextRunner and the
-		// claim — the turn is consumed and the caller idles until more work.
+		// The turn is consumed even if another claimer drained the queue.
 		run, err = h.runs.ClaimQueuedForRunner(r.Context(), inst.PoolCapabilityID, inst.ID, h.now())
 		if err != nil {
 			respondInternalError(w, r, err)
 			return
 		}
 	}
-	// next.ID != inst.ID: not this runner's turn. The job is offered to the
-	// chosen runner on its own next poll; the caller idles this cycle.
 	if run == nil {
 		respondJSONOK(w, services.ClaimResponse{Job: nil})
 		return
 	}
-	// One log + one run event per claim: together with the "queued" event
-	// this makes the queued→running hop traceable from both the server log
-	// and the run's own event stream (a stalled run is one missing event).
+	// Log and event together make queued-to-running transitions traceable.
 	slog.Info("runner claimed agent run",
 		slog.Int("run_id", run.ID),
 		slog.Int("pool_id", inst.PoolCapabilityID),
@@ -297,8 +273,7 @@ func (h *RunnerControlHandler) Result(w http.ResponseWriter, r *http.Request) {
 		sanitize.Pair{Target: &req.Branch, Policy: sanitize.ShortIdentifier},
 		sanitize.Pair{Target: &req.BaseCommit, Policy: sanitize.ShortIdentifier},
 	)
-	// Per-repo results (WI-449) are identifier-shaped too; sanitize each before
-	// any reaches the PR hook as a branch ref / repo slug.
+	// Sanitize repository identifiers before the PR hook consumes them.
 	var resultRepos []services.RunnerRepoResult
 	for i := range req.Repos {
 		sanitize.ApplyAll(
@@ -317,10 +292,7 @@ func (h *RunnerControlHandler) Result(w http.ResponseWriter, r *http.Request) {
 		respondBadRequest(w, r, "status must be a terminal agent-run state")
 		return
 	}
-	// Prefer the RunService path: it finalizes, emits the terminal event, and
-	// fires the post-run hook (PR creation + ItemSCMLink writeback) with the
-	// branch/base-commit the runner reported — same as a local run. Fall back
-	// to a plain repo finalize when the harness's RunService isn't wired.
+	// RunService preserves normal finalization and post-run-hook behavior.
 	if h.runSvc != nil {
 		if err := h.runSvc.FinalizeRemote(r.Context(), runID, services.RunnerResult{
 			Status:      status,
@@ -343,10 +315,7 @@ func (h *RunnerControlHandler) Result(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Compare-and-swap finalize (WI-168): only stamp the terminal status if
-	// the run is still running, and only emit the terminal event when this
-	// call actually performed the transition — a replayed/late Result on an
-	// already-finalized run is a no-op, not a rewrite.
+	// Finalize only a running run so late results cannot rewrite history.
 	transitioned, err := h.runs.FinalizeRunning(r.Context(), runID, status, services.RedactString(req.Error), h.now())
 	if err != nil {
 		respondInternalError(w, r, err)
@@ -360,10 +329,7 @@ func (h *RunnerControlHandler) Result(w http.ResponseWriter, r *http.Request) {
 	respondJSONOK(w, map[string]any{"ok": true})
 }
 
-// Heartbeat renews the runner's lease and returns control signals: the run
-// ids the runner should abort (orchestrator-requested cancellations) and the
-// runner pool's current queue depth (the autoscaling signal).
-// POST /runner/heartbeat.
+// Heartbeat renews a runner lease and returns abort IDs and queue depth.
 func (h *RunnerControlHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 	inst, ok := h.requireRunner(w, r)
 	if !ok {
@@ -406,13 +372,8 @@ func (h *RunnerControlHandler) requireRunner(w http.ResponseWriter, r *http.Requ
 	return inst, true
 }
 
-// ownsRun enforces that the run exists, was claimed by this runner, and is
-// still running. Returns false (after writing a response) otherwise.
-//
-// The running-state gate (WI-168) stops a runner credential from emitting
-// events or rewriting the verdict of a run that has already finalized (or was
-// canceled by the orchestrator): such a run is no longer the runner's to
-// mutate, so historical runs it once claimed can't be retriggered.
+// ownsRun requires a running run claimed by this runner, preventing historical
+// runs from receiving events or revised verdicts.
 func (h *RunnerControlHandler) ownsRun(w http.ResponseWriter, r *http.Request, inst *models.RunnerInstance, runID int) bool {
 	run, err := h.runs.Get(r.Context(), runID)
 	if err != nil {

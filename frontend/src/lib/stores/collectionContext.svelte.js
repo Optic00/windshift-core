@@ -83,13 +83,8 @@ class CollectionStore {
   itemsHasMore = $state(false);
   itemsLoadingMore = $state(false);
 
-  // Split-fetch state for board views whose rightmost column is capped
-  // (show_rightmost_column_last_50): { statusIds, total } or null. When
-  // set, `items` holds the paged non-rightmost set (tracked by
-  // itemsPagination) merged with the latest RIGHTMOST_COLUMN_LIMIT
-  // rightmost-column items, and `total` is the server-side count of the
-  // rightmost column. Keeps completed items from eating the page budget
-  // of columns that actually render in full.
+  // Split-fetch metadata for capped rightmost columns. Keep their latest items
+  // separate so completed work cannot consume full-column page budgets.
   rightmostCap = $state(null);
 
   // Backlog pagination

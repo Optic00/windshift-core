@@ -13,19 +13,9 @@ import (
 
 var errPortalApprovalActorUnauthorized = errors.New("portal approval actor is not authenticated")
 
-// Portal-side approval endpoints. Portal customers and internal users can
-// decide on approvals where they're in the active pool. Authentication is
-// handled upstream by RequirePortalAuth; these handlers pull the active actor
-// via getAuthFromContext.
-//
-// The active-pool snapshot is the gate (just like /api/approvals/{id}/decide
-// after slice 4 loosened item.view): if the actor isn't in the pool,
-// ApprovalService returns "actor is not an active approver" → 4xx.
+// Portal approval access is limited to active approver pools.
 
-// GetMyApprovals lists pending approvals where the authenticated portal actor
-// is in the active pool.
-//
-// GET /portal/{slug}/approvals/mine
+// GetMyApprovals lists an actor's pending portal approvals.
 func (h *PortalHandler) GetMyApprovals(w http.ResponseWriter, r *http.Request) {
 	if h.approvalService == nil {
 		respondServiceUnavailable(w, r, "approvals not configured")
@@ -56,11 +46,7 @@ func (h *PortalHandler) GetMyApprovals(w http.ResponseWriter, r *http.Request) {
 	respondJSONOK(w, requests)
 }
 
-// GetApproval returns a single approval request for the authenticated portal
-// actor. Visibility gate: the actor must be in the snapshot pool of any step on
-// the request.
-//
-// GET /portal/{slug}/approvals/{id}
+// GetApproval returns an approval visible to the portal actor.
 func (h *PortalHandler) GetApproval(w http.ResponseWriter, r *http.Request) {
 	if h.approvalService == nil {
 		respondServiceUnavailable(w, r, "approvals not configured")
@@ -101,9 +87,7 @@ type portalDecideRequest struct {
 	Comment  string `json:"comment,omitempty"`
 }
 
-// DecideAsPortalCustomer records a decision from a portal actor.
-//
-// POST /portal/{slug}/approvals/{id}/decide
+// DecideAsPortalCustomer records a portal actor's decision.
 func (h *PortalHandler) DecideAsPortalCustomer(w http.ResponseWriter, r *http.Request) {
 	if h.approvalService == nil {
 		respondServiceUnavailable(w, r, "approvals not configured")
@@ -135,8 +119,7 @@ func (h *PortalHandler) DecideAsPortalCustomer(w http.ResponseWriter, r *http.Re
 	if !decodeChannelRequest(w, r, &body, false) {
 		return
 	}
-	// Portal decision comments surface on the same approval timeline as
-	// the internal Decide path. Mirror the policy.
+	// Portal comments share the internal approval-timeline policy.
 	warnings := sanitize.ApplyAllWithWarnings(
 		sanitize.Pair{Target: &body.Comment, Policy: sanitize.RichText, Label: "Comment"},
 	)
@@ -181,10 +164,8 @@ type portalApprovalActor struct {
 	customerID *int
 }
 
-// requirePortalApprovalActor resolves every approval identity available to the
-// active portal request. Internal users are valid portal approval actors on
-// their own; if they also have a linked portal-customer row, both identities are
-// kept so pooled approvals addressed to either row appear in the portal view.
+// requirePortalApprovalActor retains linked user and customer identities so
+// approvals addressed to either active-pool entry remain visible.
 func (h *PortalHandler) requirePortalApprovalActor(w http.ResponseWriter, r *http.Request) (portalApprovalActor, bool) {
 	actor, err := h.portalApprovalActorFromRequest(r)
 	if errors.Is(err, errPortalApprovalActorUnauthorized) {
@@ -245,8 +226,7 @@ func (h *PortalHandler) getApprovalsForPortalActor(ctx context.Context, actor po
 	return out, nil
 }
 
-// portalActorCanViewRequest returns true if either actor identity is in any
-// step's approver pool — same gate as the internal userCanViewRequest helper.
+// portalActorCanViewRequest checks the active approver pool.
 func portalActorCanViewRequest(actor portalApprovalActor, req *models.ApprovalRequest) bool {
 	for _, si := range req.StepInstances {
 		for _, app := range si.Approvers {

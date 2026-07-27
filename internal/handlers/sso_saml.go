@@ -369,20 +369,9 @@ func (h *SSOHandler) samlAssertionToClaims(info *sso.SAMLAssertionInfo, provider
 		claims.Username = strings.Split(claims.Email, "@")[0]
 	}
 
-	// SAML has no standard email_verified claim, so trust in the asserted email
-	// is derived from provider configuration rather than hard-coded. The
-	// account-linking guard in FindOrCreateUser links a new SSO identity to a
-	// pre-existing account by matching email only when EmailVerified &&
-	// EmailVerifiedProvided; unconditionally forcing both true would let a SAML
-	// IdP that can assert an arbitrary email silently take over an existing
-	// account, bypassing the provider's RequireVerifiedEmail control.
-	//
-	// RequireVerifiedEmail (default true) is the operator's assertion that this
-	// IdP's email attribute is authoritative. When set, we treat SAML email as
-	// verified (enterprise IdP is the source of truth). When the operator has
-	// explicitly turned it off for a loosely-governed IdP, we report the email
-	// as provided-but-unverified so login still succeeds but email-based
-	// auto-linking to an existing account is refused.
+	// SAML lacks a standard verified-email claim. Provider configuration decides
+	// whether email can auto-link an existing account, preventing an untrusted IdP
+	// assertion from taking one over.
 	claims.EmailVerifiedProvided = true
 	claims.EmailVerified = provider.RequireVerifiedEmail
 
@@ -402,17 +391,11 @@ func getFirstSAMLAttribute(info *sso.SAMLAssertionInfo, names ...string) string 
 	return ""
 }
 
-// nativeRedirectURI is the sole custom-scheme callback the desktop/native SSO
-// flow (WI-446) is allowed to use. Keep this an exact-match allowlist: the
-// native branch hands a session back to whatever handles this scheme, so
-// anything looser would risk delivering credentials to an attacker-registered
-// scheme handler. The token never rides in the URL — only a one-time code that
-// is redeemed at /api/auth/native/exchange.
+// nativeRedirectURI is the sole exact-match native callback. It receives only
+// a one-time exchange code, never a session token.
 const nativeRedirectURI = "windshift://oauth/callback"
 
-// isValidNativeRedirectURI reports whether uri is the exact registered native
-// callback. Unlike isValidRedirectURI (relative paths only), this permits the
-// windshift:// custom scheme — but only that one literal value.
+// isValidNativeRedirectURI permits only the registered native callback.
 func isValidNativeRedirectURI(uri string) bool {
 	return uri == nativeRedirectURI
 }

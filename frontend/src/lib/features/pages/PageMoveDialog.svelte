@@ -6,16 +6,8 @@
   import { api } from '../../api.js';
   import { t } from '../../stores/i18n.svelte.js';
 
-  /**
-   * "Move to…" dialog for reparenting a page. Computes valid destinations
-   * by excluding the page itself, every descendant, and the current
-   * parent — the backend cycle check is the source of truth, but
-   * filtering up front avoids guaranteed-error round-trips and a
-   * confusing "already there" no-op option.
-   *
-   * Descendant detection uses the materialized path returned by
-   * /pages/tree, so it survives without an extra request per row.
-   */
+  /** Page reparenting dialog. It excludes self, descendants, and current parent
+   * from tree-path candidates while the backend remains the cycle authority. */
   let {
     isOpen = $bindable(false),
     workspaceId,
@@ -28,12 +20,7 @@
   let saving = $state(false);
   let error = $state('');
 
-  /**
-   * `pickedParentId` mirrors the picker's bound value (null when the
-   * user picks "Workspace root", a page id otherwise). It alone can't
-   * distinguish "root picked" from "nothing picked yet" — both surface
-   * as null — so we track `selectionMade` separately via onSelect.
-   */
+  /** Root and no selection both bind as null, so selectionMade disambiguates. */
   let pickedParentId = $state(null);
   let selectionMade = $state(false);
 

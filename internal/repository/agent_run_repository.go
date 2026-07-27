@@ -312,21 +312,9 @@ func (r *AgentRunRepository) CancelQueued(ctx context.Context, id int, now time.
 	return n > 0, nil
 }
 
-// ClaimQueuedForRunner atomically claims the oldest queued run targeted at the
-// given pool, transitioning it queued→running and stamping the claiming runner
-// (nextRunnerID) + started_at. It is the DB-as-queue primitive a remote runner
-// polls: the agent_runs table itself is the queue (Initiative WI-141).
-//
-// Which runner gets the next queued run is decided by the caller's round-robin
-// (RunnerRegistryService.NextRunner, WI-514), not by poll timing; this method
-// just executes the assignment for the chosen runner. The pool is still served
-// in FIFO order, since every runner is offered the head of the same queue.
-//
-// Atomicity uses the same status-guarded CAS as MarkRunning: pick a candidate,
-// then UPDATE ... WHERE id=? AND status='queued'. If a racing runner won the
-// row first, the guarded update affects zero rows and we retry with the next
-// candidate. This needs no FOR UPDATE / SKIP LOCKED, so it behaves identically
-// on SQLite and Postgres. Returns (nil, nil) when no queued run is available.
+// ClaimQueuedForRunner atomically assigns the oldest pool run and marks it
+// running. Caller-selected round-robin chooses the runner; status CAS preserves
+// FIFO behavior across SQLite and Postgres.
 func (r *AgentRunRepository) ClaimQueuedForRunner(ctx context.Context, poolID, nextRunnerID int, now time.Time) (*models.AgentRun, error) {
 	const maxAttempts = 16
 	for attempt := 0; attempt < maxAttempts; attempt++ {
@@ -438,13 +426,8 @@ func (r *AgentRunRepository) RequestCancel(ctx context.Context, runID int, now t
 	return nil
 }
 
-// ForceCancelRunning transitions a running run straight to canceled, regardless
-// of its runner. It is the admin escape hatch for a phantom run — a runner that
-// lost its terminal report (or whose claim response never arrived) keeps the run
-// 'running' forever and never observes the cooperative cancel flag, so without
-// this it only clears via the 8h max-duration backstop. CAS on status='running'
-// so it can't clobber a run that finished in the meantime. Returns whether a row
-// transitioned.
+// ForceCancelRunning is the admin escape hatch for a phantom running run.
+// Its status CAS cannot clobber a concurrent terminal transition.
 func (r *AgentRunRepository) ForceCancelRunning(ctx context.Context, runID int, now time.Time) (bool, error) {
 	res, err := r.db.ExecWriteContext(ctx, `
 		UPDATE agent_runs
@@ -518,15 +501,8 @@ func (r *AgentRunRepository) ReapStaleRuns(ctx context.Context, staleBefore, now
 	return int(n), nil
 }
 
-// ReapOrphanedLocalRuns fails every non-terminal LOCAL run (runner_id IS
-// NULL, target_pool_id IS NULL) — the boot-time reconciliation for in-process
-// runs (WI-332). Local runs live in the orchestrator's in-memory queue and
-// in-flight registry, so any local run still queued/running in the DB at
-// startup belonged to a previous process that crashed or was killed before
-// finalizing; no worker will ever pick it up again, and both reapers skip
-// local runs by design. Must be called before the new RunService starts
-// accepting work, while every local non-terminal row is by definition
-// orphaned. Returns the number reconciled.
+// ReapOrphanedLocalRuns reconciles local queued/running rows before startup.
+// Their in-memory workers died with the prior process, so they cannot complete.
 func (r *AgentRunRepository) ReapOrphanedLocalRuns(ctx context.Context, now time.Time) (int, error) {
 	res, err := r.db.ExecWriteContext(ctx, `
 		UPDATE agent_runs

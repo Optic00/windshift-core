@@ -19,16 +19,9 @@ import (
 
 var slugRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$`)
 
-// sanitizeCollection gates the user-facing fields on a collection
-// payload. Name renders in the collections list + board headers;
-// Description is Milkdown rich text; QLQuery is CQL query text whose
-// comparison operators are load-bearing, so it is length-capped only
-// (matching CQLQuery on asset reports); FilterState is the saved-filter
-// JSON blob — HTML stripping would corrupt it, so it is validated
-// (size + well-formed JSON) and rejected instead of scrubbed.
-// PublicSlug stays untouched here — slugRegex already confines it
-// whenever it is non-empty. Writes a validation error and returns
-// false when FilterState is rejected.
+// sanitizeCollection applies field-specific text policies. FilterState is
+// validated rather than scrubbed because it is saved JSON; invalid values write
+// a validation error. PublicSlug is constrained separately by slugRegex.
 func sanitizeCollection(w http.ResponseWriter, r *http.Request, c *models.Collection) bool {
 	sanitize.ApplyAll(
 		sanitize.Pair{Target: &c.Name, Policy: sanitize.PlainTextField},
@@ -58,10 +51,7 @@ func NewCollectionHandler(db database.Database, permissionService *services.Perm
 	}
 }
 
-// requireCollectionOwner authenticates the user, verifies the collection
-// exists, and checks that the authenticated user is its creator.
-// Returns the authenticated user and true on success, or writes an HTTP error
-// and returns nil/false on failure.
+// requireCollectionOwner authenticates and verifies creator ownership.
 func (h *CollectionHandler) requireCollectionOwner(w http.ResponseWriter, r *http.Request, collectionID int) (*models.User, bool) {
 	currentUser, ok := RequireAuth(w, r)
 	if !ok {

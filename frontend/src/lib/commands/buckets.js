@@ -1,12 +1,5 @@
-/**
- * Command buckets — the coarse grouping that drives display order in the
- * command palette. Within a bucket, commands are ordered by text score and
- * then by insertion order from their provider.
- *
- * Order here is the *default* display order. `bucketOrder()` may promote
- * search-results above global-navigation when the query looks like an item
- * key (e.g. `ABC-123`).
- */
+/** Command-palette display buckets. Item-key queries promote search results
+ * above global navigation; commands within a bucket use score then insertion order. */
 
 /** @type {Readonly<Record<string, string>>} */
 export const BUCKET = Object.freeze({
@@ -37,14 +30,7 @@ const DEFAULT_ORDER = [
 
 const ITEM_KEY_RE = /^[A-Z][A-Z0-9]*-\d+$/i;
 
-/**
- * Return the rank index (lower = earlier) for a bucket given the query.
- * Item-key-shaped queries promote search-results above global-navigation.
- *
- * @param {string} bucket
- * @param {string} query
- * @returns {number}
- */
+/** Return a query-aware bucket rank (lower appears earlier). */
 export function bucketRank(bucket, query) {
   let order = DEFAULT_ORDER;
   if (query && ITEM_KEY_RE.test(query.trim())) {

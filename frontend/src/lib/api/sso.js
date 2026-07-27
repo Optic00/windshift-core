@@ -6,13 +6,8 @@ export const sso = {
   // Public endpoints (no auth required)
   getStatus: () => fetchAPI('/sso/status'),
 
-  // Start SSO login (returns redirect URL)
-  //
-  // `redirectURI` is the relative path to return to after the IdP round-trip
-  // (e.g. the current route). It is forwarded as `redirect_uri` so the backend
-  // can replay it from the OIDC state row. The backend re-validates via
-  // isValidRedirectURI, but we sanitize here too so we never send an absolute
-  // or cross-origin value over the wire.
+  // Build an SSO login URL with a relative return path; sanitize locally before
+  // the backend revalidates OIDC state.
   startLogin: (slug, providerType = 'oidc', rememberMe = false, redirectURI = '') => {
     const params = new URLSearchParams();
     if (rememberMe) params.append('remember_me', 'true');
@@ -21,7 +16,7 @@ export const sso = {
       if (sanitized) params.append('redirect_uri', sanitized);
     }
     const query = params.toString();
-    // SAML and OIDC have different login URL patterns
+    // SAML and OIDC use distinct login paths.
     const basePath =
       providerType === 'saml' ? `/api/sso/${slug}/saml/login` : `/api/sso/login/${slug}`;
     return `${basePath}${query ? `?${query}` : ''}`;

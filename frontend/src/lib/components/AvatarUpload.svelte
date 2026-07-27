@@ -1,17 +1,6 @@
 <script>
-  /**
-   * AvatarUpload - reusable avatar upload control.
-   *
-   * Mirrors the workspace avatar pattern in WorkspaceLookAndFeel. Wraps
-   * api.attachments.upload with the agreed entity category, an
-   * attachmentStatus.enabled gate, image-MIME validation, and toast
-   * feedback. The fallback rendering shows a colored tile with the
-   * supplied icon component when no avatar is present.
-   *
-   * Backend categories must mirror this list: workspace_avatar,
-   * team_avatar, customer_avatar, etc. — adding a new one requires
-   * a corresponding case in internal/handlers/attachment.go.
-   */
+  /** Reusable image-avatar upload control with availability/MIME checks and
+   * fallback tile. Categories require matching backend attachment support. */
   import { Camera, Trash2, Package } from '@lucide/svelte';
   import { api } from '../api.js';
   import { attachmentStatus } from '../stores';

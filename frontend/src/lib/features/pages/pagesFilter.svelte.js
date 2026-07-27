@@ -1,10 +1,5 @@
-// pagesFilter holds the per-workspace label filter for the pages sidebar.
-// The state is session-only (no persistence): switching workspaces resets it,
-// matching the writing-first defaults used for the editor mode toggle.
-//
-// Lives in a separate module so PagesNavSidebar.svelte and the (future)
-// in-page filter button can share state without prop drilling. Mirrors the
-// pagesTreeRefresh / pagesFocusTitle pattern.
+// pagesFilter shares session-only per-workspace sidebar labels without prop
+// drilling; workspace changes reset writing-first defaults.
 
 let activeWorkspaceId = $state(/** @type {number | null} */ (null));
 let labelIds = $state(/** @type {Set<number>} */ (new Set()));
@@ -21,10 +16,7 @@ export const pagesFilter = {
   get activeWorkspaceId() {
     return activeWorkspaceId;
   },
-  /**
-   * Set of label ids currently being filtered. Caller treats this as
-   * read-only — use the toggle/clear methods to mutate.
-   */
+  /** Read-only filtered label IDs; mutate through toggle/clear. */
   get labelIds() {
     return labelIds;
   },

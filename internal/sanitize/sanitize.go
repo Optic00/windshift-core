@@ -1,34 +1,8 @@
-// Package sanitize is the single home for input-sanitization policies
-// across the app. Every service that accepts user-supplied text should
-// route through these intent-named policies; the goal is that picking
-// the right policy is the obvious thing — wrong choices read wrong.
+// Package sanitize provides shared, stateless input policies.
 //
-// Policies are named by *what kind of field they sanitize*, not by the
-// underlying primitive. PlainTextField (titles, labels) and RichText
-// (descriptions, notes) have very different shapes, so collapsing them
-// would lose the contract; what we centralize is the policy library
-// itself so a new entity-handling service doesn't reinvent the bundle.
-//
-// # Length caps
-//
-// Each policy enforces a maximum length. The schema is unbounded TEXT
-// everywhere, the frontend has near-zero maxlength attributes — these
-// caps are the PRIMARY length defense in the stack, not defense-in-depth
-// on top of the DB. Numbers are picked from how the field is rendered:
-//
-//   - PlainTextField — 256 runes. Titles + names surface across the
-//     frontend in board cards, breadcrumbs, picker chips, browser tabs;
-//     pathological lengths break layout. 256 is roomy enough for any
-//     legitimate human-written title without breaking the renderers.
-//   - ShortIdentifier — 100 runes. Asset tags, slugs, codes. Intentionally
-//     tighter than PlainTextField because these are identifier-shaped:
-//     "LAP-001", URL slugs, link-type names.
-//   - RichText / LongDocument / Comment — 256 KiB each. The unified
-//     "any long-form user text" cap. Comfortably accommodates rich
-//     descriptions, wiki-style pages, and long discussion comments
-//     without enabling DOS via unbounded payloads.
-//
-// Every policy is stateless and safe for concurrent use.
+// Policies are selected by field type. Their length caps are the primary
+// request-size defense: plain text is 256 runes, identifiers 100, and long
+// text 256 KiB.
 package sanitize
 
 import (
@@ -118,16 +92,8 @@ func ApplyAllWithWarnings(pairs ...Pair) []string {
 	return warnings
 }
 
-// describeMutation classifies a sanitize-time change into the
-// user-facing warning copy the frontend will toast. Three buckets:
-//
-//   - Truncated (output shorter than input, no HTML markers in input)
-//   - HTML stripped (input had < / > / & markers, output differs)
-//   - Both (truncated + HTML stripped)
-//
-// HTML detection is a heuristic (presence of HTML markers in input);
-// false-positives just downgrade to the generic "was modified" copy
-// rather than mislabel the change.
+// describeMutation returns a user-facing truncation/HTML-removal warning.
+// Marker-based HTML detection is heuristic and falls back to generic copy.
 func describeMutation(before, after, label string) string {
 	beforeRunes := utf8.RuneCountInString(before)
 	afterRunes := utf8.RuneCountInString(after)
@@ -197,15 +163,8 @@ var (
 		p.AllowElements("br")
 		return p
 	}()
-	// Dangerous URL schemes in Markdown links: [text](javascript:...)
-	// or ![alt](data:...). Matches both link and image syntax,
-	// case-insensitive. The URL body alternates between a single-level
-	// paren group `\([^)]*\)` and any non-paren character to swallow
-	// payloads like `javascript:alert(1)` without stopping at the
-	// inner `)` and leaving the markdown link's closing `)` as
-	// residue. Two levels of nesting won't fully match — that's fine,
-	// the outer `)` still terminates the match and the cleaner
-	// replaces what it found.
+	// Match dangerous Markdown link/image schemes, including single-level
+	// parentheses in payloads such as javascript:alert(1).
 	dangerousMarkdownURLRegex = regexp.MustCompile(`(?i)(!?\[[^\]]*\])\(\s*(javascript|vbscript|data)\s*:(?:\([^)]*\)|[^)])*\)`)
 )
 

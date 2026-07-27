@@ -4,16 +4,9 @@ import { desktopStartSso } from '../desktop/bridge.svelte.js';
 import { toExternal } from '../runtime/contextPath.js';
 import { isTauri } from '../utils/isTauri.js';
 
-/**
- * SSO Store - manages Single Sign-On status and configuration
- *
- * This store handles:
- * - Public SSO status (for login page)
- * - Admin SSO provider management
- * - User external account management
- */
+/** SSO store for public status, provider administration, and user accounts. */
 function createSSOStore() {
-  // Public SSO status (fetched without auth)
+  // Public unauthenticated SSO status.
   const status = writable({
     enabled: false,
     providerName: null,
@@ -24,19 +17,19 @@ function createSSOStore() {
   const statusLoading = writable(true);
   const statusError = writable(null);
 
-  // Admin: SSO providers list
+  // Admin provider list.
   const providers = writable([]);
   const providersLoading = writable(false);
   const providersError = writable(null);
 
-  // User: External accounts
+  // User external accounts.
   const externalAccounts = writable([]);
   const externalAccountsLoading = writable(false);
 
-  // Cache for email verification status (to avoid repeated API calls)
+  // Cached email-verification status.
   let verificationStatusCache = null;
 
-  // Combined derived store for easy subscription
+  // Combined subscription store.
   const combined = derived(
     [
       status,

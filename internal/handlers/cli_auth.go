@@ -83,13 +83,8 @@ type ApproveRequest struct {
 	Scopes      []string `json:"scopes"`
 }
 
-// sanitizeApproveRequest scrubs the user-facing fields on the consent
-// payload. Hostname surfaces in token names + audit details, FirstName /
-// LastName seed the agent profile; State is identifier-shaped (opaque
-// random from the CLI). CallbackURL goes through the strict loopback
-// validator (which also length-caps it — a sanitize policy would silently
-// rewrite a redirect target) and AgentName through sanitizeAgentName
-// instead.
+// sanitizeApproveRequest applies field policies to consent metadata. Callback
+// URLs use strict validation rather than rewriting redirect targets.
 func sanitizeApproveRequest(req *ApproveRequest) {
 	sanitize.ApplyAll(
 		sanitize.Pair{Target: &req.State, Policy: sanitize.ShortIdentifier},

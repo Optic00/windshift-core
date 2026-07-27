@@ -1178,21 +1178,9 @@ func (h *ActionsHandler) ListWorkspaceCapabilities(w http.ResponseWriter, r *htt
 	respondJSONOK(w, sanitizeCapabilitiesForWorkspace(caps))
 }
 
-// sanitizeCapabilitiesForWorkspace strips potentially sensitive material from
-// http_client capability configs before exposing them via the workspace
-// listing endpoint. Specifically:
-//   - docker_environment env var names remain visible but every value is
-//     replaced so an admin-provisioned token cannot leak to action authors;
-//   - default_headers loses any key matching IsSensitiveHeaderName so a
-//     legacy inline Authorization token never reaches a workspace-admin view;
-//   - secret_header_refs maps every entry to a 1 sentinel so the workspace
-//     side learns which header names are present without seeing the
-//     credential IDs (which would let a hostile workspace admin probe
-//     other workspaces' credentials).
-//
-// The admin endpoint (ListCapabilities / GetCapability) returns the
-// unsanitized config; system admins legitimately need to see the refs to
-// manage them.
+// sanitizeCapabilitiesForWorkspace redacts environment values, sensitive
+// headers, and credential IDs from workspace views. System-admin endpoints
+// retain the full configuration for credential management.
 func sanitizeCapabilitiesForWorkspace(caps []*models.ActionCapability) []*models.ActionCapability {
 	if len(caps) == 0 {
 		return caps
@@ -1228,9 +1216,7 @@ func sanitizeCapabilitiesForWorkspace(caps []*models.ActionCapability) []*models
 		}
 		var cfg models.HTTPClientConfig
 		if err := json.Unmarshal([]byte(c.Config), &cfg); err != nil {
-			// Fail closed. A malformed legacy config cannot be selectively
-			// scrubbed, so returning it verbatim could disclose an inline token
-			// to workspace action authors.
+			// A malformed config cannot be safely scrubbed.
 			cp := *c
 			cp.Config = "{}"
 			out = append(out, &cp)
@@ -1242,9 +1228,7 @@ func sanitizeCapabilitiesForWorkspace(caps []*models.ActionCapability) []*models
 				if models.IsSensitiveHeaderName(k) {
 					continue
 				}
-				// Workspace action authors need to know which defaults exist,
-				// not their literal values. Redact every value so a legacy token
-				// under an unusual header name cannot bypass name heuristics.
+				// Expose header names but never their literal values.
 				cleaned[k] = "[REDACTED]"
 			}
 			cfg.DefaultHeaders = cleaned

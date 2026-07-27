@@ -78,42 +78,20 @@ export const agentBindings = {
       body: JSON.stringify(body),
     }),
 
-  /**
-   * Round-trip a prompt through the binding's LLM connection and return the
-   * model's reply, plus — when the binding is repo-backed — a snapshot of the
-   * cloned worktree's project root:
-   *   { prompt, answer, repo?: { repo_slug, base_ref, entries: [{name, is_dir}], error? } }
-   * A blank prompt uses a server default. 502 means the provider/connection
-   * failed; 400 means the binding has no LLM connection. The repo block is
-   * reported inline (its own `error`) so a working model reply still returns
-   * even when the SCM/clone leg is broken; `repo` is absent for bindings with
-   * no repo configured.
-   */
+  /** Test a binding's LLM, optionally including its cloned-root snapshot. A
+   * repo error does not discard a working reply; blank prompts use a default. */
   testLLM: (workspaceId, id, prompt) =>
     fetchAPI(`/workspaces/${workspaceId}/agent-bindings/${id}/test-llm`, {
       method: 'POST',
       body: JSON.stringify(prompt ? { prompt } : {}),
     }),
 
-  /**
-   * Provision a real, ephemeral coding-agent container run for the binding —
-   * the same machinery a work-item assignment drives, but with no work item and
-   * a read-only prompt, marked so it can never push a branch or open a PR. Use
-   * it to verify the full chain end-to-end: model reachable + repo checked out +
-   * the agent can read its files. Returns { run_id }; watch it via the agentRuns
-   * events endpoints. 400 = binding has no repo; 409 = runner not configured on
-   * this server; 404 = no such binding.
-   */
+  /** Run an ephemeral read-only binding check: no work item, branch, or PR. */
   testRun: (workspaceId, id) =>
     fetchAPI(`/workspaces/${workspaceId}/agent-bindings/${id}/test-run`, {
       method: 'POST',
     }),
 
-  /**
-   * List the acting-identity options the workspace admin may pick:
-   * owned agent users + allowlisted centralized service users (when the
-   * WI-87 master flag is on). The chokepoint re-validates at create
-   * time; this just keeps the picker honest.
-   */
+  /** List candidate identities; creation revalidates this advisory picker. */
   getCandidates: (workspaceId) => fetchAPI(`/workspaces/${workspaceId}/agent-binding-candidates`),
 };

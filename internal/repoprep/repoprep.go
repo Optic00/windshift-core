@@ -1,14 +1,6 @@
-// Package repoprep prepares a per-run source checkout for the coding-agent
-// runner and pushes the run branch back. It is the single repo-preparation
-// component both the local in-process worker and the standalone triage binary
-// invoke, so local and remote prepare repos identically (WI-205 / page 35).
-//
-// The isolation primitive is a per-run CLONE WITH ITS OWN OBJECT STORE, not a
-// git worktree sharing the cache's objects. The host-local bare clone per
-// (workspace, repo) is only a fetch accelerator the preparer clones from — it
-// is never bind-mounted or aliased (no alternates, no hardlinks) into a
-// container. A compromised agent can therefore corrupt only its own throwaway
-// checkout, and in-container git still works because the run owns its objects.
+// Package repoprep prepares isolated per-run clones and pushes their branches.
+// Local and remote runners share it; bare caches accelerate fetches but are never
+// shared with agent containers.
 package repoprep
 
 import (
@@ -27,32 +19,17 @@ import (
 	"windshift/internal/redact"
 )
 
-// RepoSpec identifies a source repository to prepare. (WorkspaceID, RepoSlug)
-// scopes the bare-clone cache; bindings surface these from configuration.
-// RemoteURL is the tokenless fetch/push target; Token, when set, is injected
-// via a per-invocation GIT_ASKPASS helper so it never lands in argv or
-// .git/config.
+// RepoSpec identifies a cache-scoped repository and its tokenless remote.
+// Token authentication uses per-invocation GIT_ASKPASS.
 type RepoSpec struct {
 	WorkspaceID int
 	RepoSlug    string // "owner/name" — must not contain ".." or be absolute
 	RemoteURL   string // tokenless HTTPS URL
 	BaseRef     string // default "main"
 	Token       string // optional OAuth/PAT; askpass-injected, never embedded
-	// ContinueBranch, when set, makes this a CONTINUATION run: instead of cutting
-	// a fresh agent-runs/run-{id} branch from BaseRef, Prepare fetches this
-	// existing remote branch (a PR head), checks the run out on it under its own
-	// name, and the run pushes commits back to it — so an existing PR grows rather
-	// than a competing one opening. BaseRef is ignored when this is set. The push
-	// stays non-force: if the remote branch advanced during the run the push is
-	// rejected (never force-push someone's branch).
+	// ContinueBranch reuses a PR head; pushes remain non-force.
 	ContinueBranch string
-	// DestDir, when set, overrides where the per-run checkout is materialized
-	// (WI-449). Empty uses the default <root>/<workspace>/<slug>/runs/<runID>
-	// — the single-repo layout, unchanged. A multi-repo run sets this to a
-	// sibling dir under a shared per-run workspace root (e.g.
-	// <root>/.workspaces/run-7/core-tests) so the agent sees every bound repo
-	// checked out side by side. The bare object cache stays at its
-	// per-(workspace,slug) location regardless, so cloning is still cached.
+	// DestDir places multi-repo checkouts side by side; cache location is unchanged.
 	DestDir string
 }
 
@@ -162,13 +139,8 @@ func validateRepoSlug(slug string) error {
 	return nil
 }
 
-// Prepare ensures the (workspace,repo) bare cache exists, fetches the base ref
-// into it, then clones the cache into a per-run checkout with COPIED objects
-// (no hardlinks, no alternates) and checks out the run branch at the base
-// commit. Concurrent Prepares for the same repo serialize on a per-repo mutex
-// so fetch and clone never race. The returned checkout's origin is reset to the
-// real (tokenless) RemoteURL so it looks like a normal clone and Push targets
-// the real remote, not the cache.
+// Prepare fetches the cache and clones copied objects into a per-run checkout.
+// Per-repository serialization prevents fetch/clone races; origin is the real remote.
 func (p *Preparer) Prepare(ctx context.Context, spec RepoSpec, runID int) (*Prepared, error) {
 	if spec.WorkspaceID == 0 {
 		return nil, errors.New("repoprep: WorkspaceID is required")
@@ -234,16 +206,7 @@ func (p *Preparer) Prepare(ctx context.Context, spec RepoSpec, runID int) (*Prep
 		return nil, fmt.Errorf("mkdir runs dir: %w", err)
 	}
 
-	// --no-hardlinks forces git to COPY objects out of the cache rather than
-	// hardlink them, so the run owns an independent object store. A local
-	// clone never uses alternates (only --shared would), so nothing in dest
-	// references the cache after this returns.
-	//
-	// The source is the trusted host-local bare cache, so this clone uses git's
-	// "file" transport — which the default https-only hardening blocks. Permit
-	// file for this one local-source clone (ext/tar stay disabled; the remote
-	// clone/fetch above still run https-only), mirroring PushBranch's local
-	// fetch from the per-run checkout.
+	// Copy cache objects and permit file transport only for this trusted local clone.
 	if err := p.runGitLocalSource(ctx, "", "clone", "--no-hardlinks", cacheDir, dest); err != nil {
 		return nil, fmt.Errorf("clone cache -> checkout: %w", err)
 	}
@@ -267,11 +230,7 @@ func (p *Preparer) Prepare(ctx context.Context, spec RepoSpec, runID int) (*Prep
 	}, nil
 }
 
-// Push pushes the run branch from the per-run checkout to origin (the real
-// remote). The token is injected via askpass; an empty token assumes ambient
-// credentials (or, later, a git-proxy that needs none). It pushes exactly the
-// single run branch — never anything else. It delegates to PushBranch so the
-// in-process and separate-process (triage binary) push paths are identical.
+// Push delivers only the run branch to its real remote through PushBranch.
 func (p *Preparer) Push(ctx context.Context, pr *Prepared, token string) error {
 	if pr == nil {
 		return errors.New("repoprep: nil prepared checkout")
@@ -592,16 +551,8 @@ func gitOutputEnv(ctx context.Context, gitBinary string, allowFileURL bool, dir 
 		"-c", "protocol.ext.allow=never",
 		"-c", "protocol.file.allow=" + fileAllow,
 		"-c", "protocol.tar.allow=never",
-		// Neutralize agent-controllable repo-local config that can execute code
-		// or hijack credentials when the host runs git inside the agent-mutated
-		// checkout (security Phase 1, WI-238). Command-line `-c` has the highest
-		// config precedence, so these override any value the agent wrote into
-		// the checkout's .git/config:
-		//   - core.hooksPath=/dev/null  → agent-written .git/hooks/* never run
-		//     (pre-push, post-checkout, etc.).
-		//   - credential.helper=        → reset the helper list to empty so no
-		//     agent-named helper binary is executed (askpass still answers auth).
-		//   - core.fsmonitor=           → no agent-named fsmonitor hook process.
+		// Command-line config overrides agent-controlled hooks, credential helpers,
+		// and fsmonitor processes in mutated checkouts.
 		"-c", "core.hooksPath=/dev/null",
 		"-c", "credential.helper=",
 		"-c", "core.fsmonitor=",
@@ -612,17 +563,9 @@ func gitOutputEnv(ctx context.Context, gitBinary string, allowFileURL bool, dir 
 	if dir != "" {
 		cmd.Dir = dir
 	}
-	// Isolate from inherited and agent-mutated git config: ignore the system
-	// config (NOSYSTEM) and pin the global config to /dev/null so neither the
-	// host user's ~/.gitconfig nor an injected global is read. Repo-local config
-	// is still read by git, but the dangerous keys are overridden above.
-	//
-	// A caller may override the global config via GIT_CONFIG_GLOBAL in extraEnv:
-	// PushBranch points it at a throwaway config carrying only safe.directory,
-	// the one scope git's early dubious-ownership check honors in a spawned
-	// upload-pack (see PushBranch). Honor that override here — and strip any
-	// inherited GIT_CONFIG_GLOBAL first, because glibc/musl getenv returns the
-	// first match, so a duplicate left earlier in the slice would win.
+	// Ignore system and inherited global config; callers may supply an isolated
+	// safe.directory config. Remove inherited globals because duplicate env keys
+	// can resolve to the first value.
 	globalConfig := "/dev/null"
 	for _, e := range extraEnv {
 		if v, ok := strings.CutPrefix(e, "GIT_CONFIG_GLOBAL="); ok {
@@ -646,8 +589,7 @@ func gitOutputEnv(ctx context.Context, gitBinary string, allowFileURL bool, dir 
 	cmd.Env = append(cmd.Env, extraEnv...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		// Scrub any embedded credential before it reaches the caller, which
-		// may log or persist it.
+		// Never return credentials to callers that may log or persist errors.
 		joined := strings.Join(args, " ")
 		return redact.String(string(out)), fmt.Errorf("git %s: %w (out=%q)", joined, err, redact.String(strings.TrimSpace(string(out))))
 	}

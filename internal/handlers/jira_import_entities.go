@@ -719,14 +719,9 @@ func customFieldDisplayValues(value any) []string {
 	return values
 }
 
-// sanitizeJiraImportStrings applies a conservative plain-text sanitize +
-// length cap (sanitize.PlainTextField) to every string inside a Jira-derived
-// custom-field value, recursing through the map/slice shapes the importer
-// builds (component metadata, affects-version metadata, asset references,
-// multiselect display labels). These are external display strings, not
-// user-authored option sets, so a uniform plain-text bound is the policy.
-// Maps are mutated in place; non-string scalars pass through untouched, so
-// the pass is an idempotent no-op on already-clean values.
+// sanitizeJiraImportStrings recursively plain-text-sanitizes external display
+// strings in importer map/slice shapes. It mutates maps, preserves scalars, and
+// is idempotent for clean values.
 func sanitizeJiraImportStrings(value any) any {
 	switch v := value.(type) {
 	case string:
@@ -1117,14 +1112,8 @@ func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, works
 		estimateMinutes = &minutes
 	}
 
-	// Imported Jira values are untrusted external content — every string
-	// in the bag gets a conservative plain-text sanitize + length cap
-	// before persisting: select/multiselect display labels, date/milestone
-	// raw fallbacks, the "_jira_*" metadata (component names/descriptions,
-	// asset-field labels, version metadata) and asset-reference titles.
-	// text/textarea fields are excluded here so the type-correct pass below
-	// (PlainTextField vs RichText with its larger cap, WI-319) applies
-	// instead of the 256-rune plain-text cap.
+	// Plain-text-sanitize untrusted imported values except text/textarea fields,
+	// which receive their type-correct policy below.
 	fieldTypes, err := validation.CustomFieldTypes(h.db, customFieldValues)
 	if err != nil {
 		return fmt.Errorf("failed to resolve custom field types: %w", err)

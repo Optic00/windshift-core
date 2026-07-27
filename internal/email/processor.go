@@ -162,21 +162,12 @@ func (p *Processor) ProcessEmail(
 	return result, nil
 }
 
-// dedupKeyFor returns the stable per-channel dedup key for an email. When
-// MessageID is non-empty we use its stable bare form so a server re-delivery
-// (same Message-ID, new UID) still matches, including rows written before IDs
-// were canonicalized for threading. When it's empty we synthesize a
-// channel-scoped key from UIDVALIDITY+UID — IMAP guarantees uniqueness of
-// (uidvalidity, uid) within a mailbox, so this distinguishes Message-ID-less
-// emails from each other and survives normal polling. A UIDVALIDITY reset or
-// mailbox restore will change the synth key and cause the message to be
-// reprocessed; that is acceptable because we can't tell synthetically-keyed
-// emails apart across UID-space resets.
+// dedupKeyFor uses stable bare Message-IDs or channel-scoped UIDVALIDITY/UID
+// keys. UID resets can reprocess Message-ID-less mail, which cannot otherwise
+// be distinguished across UID spaces.
 func dedupKeyFor(email *ParsedEmail, channelID int, uidValidity uint32) string {
 	if email.MessageID != "" {
-		// Older releases stored the ENVELOPE form (without angle brackets) as
-		// dedup_key. Keep that stable while message_id itself is canonicalized
-		// for correct SMTP threading and reply lookup.
+		// Preserve legacy bare keys while canonicalizing Message-ID elsewhere.
 		return bareMessageID(email.MessageID)
 	}
 	return fmt.Sprintf("synth:%d:%d:%d", channelID, uidValidity, email.UID)

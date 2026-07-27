@@ -11,14 +11,8 @@
   import { formatDateSimple } from '../../utils/dateFormatter.js';
   import { pagesTreeRefresh } from './pagesTreeRefresh.svelte.js';
 
-  /**
-   * Admin-only archived-pages list, mounted at /workspaces/:id/pages/archived.
-   * Rendered as a full-page view (not a modal) so admins can scan large
-   * archive sets, sort columns, and unarchive without losing the sidebar
-   * tree context. The backend endpoint already enforces admin (system or
-   * workspace) and returns 404 otherwise, so a deep-linked non-admin
-   * lands on an empty list rather than an error screen.
-   */
+  /** Full-page admin archive list with sorting and unarchive actions. The
+   * backend enforces admin access and returns 404 to unauthorized deep links. */
   let { workspaceId } = $props();
 
   let rows = $state(/** @type {any[]} */ ([]));
@@ -57,7 +51,7 @@
       await api.pages.unarchive(workspaceId, row.id);
       successToast(t('pages.archivedUnarchiveOK', { title: row.title }));
       rows = rows.filter((r) => r.id !== row.id);
-      // Refresh the sidebar tree so the unarchived page shows up there
+      // Restore the page to the sidebar tree.
       // for any sibling tab that has the tree loaded.
       pagesTreeRefresh.bump();
     } catch (err) {

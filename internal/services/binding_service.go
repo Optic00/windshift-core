@@ -81,11 +81,7 @@ var ErrBindingInstructionsTooLong = errors.New("binding service: instructions ex
 // maxBindingInstructionsLen caps CreateBindingRequest.Instructions.
 const maxBindingInstructionsLen = 8000
 
-// ErrBindingBudgetExceeded is returned (and swallowed at log level) by
-// MaybeStartRunForAssignee when a binding has already started its
-// configured max_runs_per_day for the current UTC day. The binding
-// remains valid; new runs simply wait until the rolling 24h window
-// reopens.
+// ErrBindingBudgetExceeded means a binding reached its UTC daily run limit.
 var ErrBindingBudgetExceeded = errors.New("binding service: max_runs_per_day budget exceeded for today")
 
 // Re-run trigger sentinels (the manual "Re-run" button on the item agent log).
@@ -101,39 +97,20 @@ var (
 	ErrRerunNoBinding = errors.New("binding service: the last run has no active agent binding to re-run")
 )
 
-// SCMCredentialResolver is the surface BindingService needs from
-// scm.CredentialResolver: given a workspace SCM connection id, return the
-// access token + provider type + (for self-hosted) base URL. Kept as an
-// interface so production wires scm.CredentialResolver while tests can
-// supply a fake.
-//
-// ResolveForRunAsUser is the user-principal variant (WI-275): on
-// OAuth-method connections it resolves the given user's personal token
-// (ErrTriggerUserSCMNotConnected wrapped in the error chain when the user
-// has none — no fallback to the workspace credential); on PAT / GitHub App
-// connections it behaves exactly like ResolveForRun. ResolveForRun remains
-// for callers without a user principal (legacy runs with no recorded
-// triggering user).
+// SCMCredentialResolver resolves run credentials. The user variant uses a
+// triggering user's OAuth token without falling back to workspace credentials;
+// PAT and GitHub App resolution is unchanged.
 type SCMCredentialResolver interface {
 	ResolveForRun(ctx context.Context, connectionID int) (token string, providerType string, baseURL string, err error)
 	ResolveForRunAsUser(ctx context.Context, connectionID, userID int) (token string, providerType string, baseURL string, err error)
 }
 
-// ErrTriggerUserSCMNotConnected is returned (wrapped) when a run on an
-// OAuth-method SCM connection cannot start because the triggering user has
-// not connected their own SCM account. The run is recorded as failed so the
-// trigger is visible in the runs UI; there is deliberately no fallback to
-// the workspace connection credential — code changes must not ride the
-// connecting admin's identity (WI-275).
+// ErrTriggerUserSCMNotConnected prevents runs from using another user's SCM
+// identity when the triggering user lacks an OAuth connection.
 var ErrTriggerUserSCMNotConnected = errors.New("binding service: triggering user has no connected SCM account for this connection")
 
-// LLMRuntimeResolver returns the provider runtime config for a connection and
-// runs one-shot test prompts against it. Create uses ConnectionRuntime to
-// validate a chosen llm_connection_id (it only resolves enabled connections),
-// the run path uses it to derive the agent's model, and TestLLM uses
-// PromptConnection to round-trip a prompt through the provider. LLM
-// connections are global, not workspace-scoped: any enabled connection may
-// back any workspace's binding.
+// LLMRuntimeResolver validates enabled global connections, resolves run models,
+// and runs one-shot provider tests.
 type LLMRuntimeResolver interface {
 	ConnectionRuntime(ctx context.Context, connectionID int) (*llm.ConnectionRuntimeConfig, error)
 	PromptConnection(ctx context.Context, connectionID int, prompt string) (string, error)
@@ -145,11 +122,7 @@ type AgentRunContextResolver interface {
 	AgentRunContext(ctx context.Context, workspaceID, itemID int) (repository.AgentRunContext, error)
 }
 
-// RunnerPoolLister lists the runner_pool capabilities a workspace may dispatch
-// to (enabled + applies-to-all OR explicitly scoped). Create uses it to
-// validate a binding's chosen target_pool_id. Satisfied by
-// repository.ActionRepository; an interface so tests can fake it and the
-// service doesn't depend on the whole action stack.
+// RunnerPoolLister validates runner pools available to a workspace.
 type RunnerPoolLister interface {
 	ListCapabilitiesForWorkspace(workspaceID int, capType string) ([]*models.ActionCapability, error)
 }
@@ -174,21 +147,14 @@ var ErrBindingNotFound = errors.New("binding service: binding not found")
 // handler maps it to a 400.
 var ErrBindingInvalidPool = errors.New("binding service: target pool is not a runner pool available to this workspace")
 
-// ErrBindingRunnerImageRequiresPool is returned by Create when runner_image is
-// set on a binding with no target pool. A custom image is only honored on the
-// remote (pool) runner; the local in-process runner uses its fixed image, so
-// allowing it there would silently no-op (WI-450). The handler maps it to a 400.
+// ErrBindingRunnerImageRequiresPool rejects custom images without a remote pool.
 var ErrBindingRunnerImageRequiresPool = errors.New("binding service: runner_image requires a target pool (custom images run only on remote pool runners)")
 
 // ErrBindingInvalidRunnerImage is returned by Create when runner_image is not a
 // syntactically valid container image reference. The handler maps it to a 400.
 var ErrBindingInvalidRunnerImage = errors.New("binding service: runner_image is not a valid container image reference")
 
-// runnerImageRE is a permissive OCI image-reference check: an optional
-// registry host (with optional port), a path of name components, and an
-// optional :tag and/or @sha256:digest. It is deliberately strict enough to
-// reject shell metacharacters and whitespace (the value is passed as a single
-// container-runtime argument) without trying to be a full reference grammar.
+// runnerImageRE permits safe OCI-style image references without shell syntax.
 var runnerImageRE = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*(?::[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?(?:@sha256:[a-f0-9]{64})?$`)
 
 // validateRunnerImage trims and validates a custom runner image reference.
@@ -209,15 +175,8 @@ func validateRunnerImage(image string) (string, error) {
 // none — short enough to be cheap, open enough to prove the model replies.
 const DefaultLLMTestPrompt = "Reply in one short sentence to confirm you are reachable."
 
-// BindingService owns the workspace_agent_bindings lifecycle from the
-// orchestrator's side: workspace-admin CRUD goes through Create / Delete
-// (Create validates the acting identity via the WI-87 chokepoint), and
-// the assignee-change trigger goes through MaybeStartRunForAssignee.
-//
-// Re-validating a binding's acting identity at every run start is left
-// out by design: the WI-87 gate enforces at CREATE time, and flipping the
-// global flag off doesn't auto-purge existing bindings. Operators who
-// want stricter behavior delete the affected rows explicitly.
+// BindingService owns workspace agent bindings and their run triggers. Acting
+// identities are validated at creation; operators remove bindings to revoke them.
 type BindingService struct {
 	repo          *repository.WorkspaceAgentBindingRepository
 	identity      *AgentActingIdentityService
@@ -240,12 +199,8 @@ type ContinuationTarget struct {
 	HeadBranch string
 }
 
-// ItemPRContinuationResolver resolves the continuation target for an item's
-// most-recently-updated open linked PR, or nil when the item has none. It is the
-// seam the @mention trigger uses to decide "continue the existing PR" vs "start
-// a fresh run". Implemented in the server wiring because it needs both DB access
-// and an scm.Provider (to read the PR's head branch), which the services package
-// cannot import. Optional on BindingService — nil disables mention-continuation.
+// ItemPRContinuationResolver finds an item's open PR continuation target.
+// It is optional because server wiring supplies the SCM dependency.
 type ItemPRContinuationResolver interface {
 	ContinuationForItem(ctx context.Context, itemID int) (*ContinuationTarget, error)
 }
@@ -629,15 +584,8 @@ func (s *BindingService) UpdateBinding(ctx context.Context, req UpdateBindingReq
 	return updated, nil
 }
 
-// UpdateAgentConfig rewrites a binding's prompt-shaping configuration —
-// custom instructions and skill attachments — in place (WI-258). Bindings
-// are otherwise create/delete-only; this narrow update exists so admins can
-// iterate on personas and skills without recreating the binding (which
-// would churn its id and history). Scoped by workspace.
-// UpdateAgentConfig rewrites a binding's prompt-shaping config. runnerImage is
-// presence-aware (WI-450): nil leaves the binding's current image untouched (so
-// a client that omits the key does not clear it), while a non-nil value sets it
-// — "" clears the override back to the runner's default.
+// UpdateAgentConfig updates workspace-scoped prompt settings. A nil runner image
+// preserves the current value; an empty non-nil value clears the override.
 func (s *BindingService) UpdateAgentConfig(ctx context.Context, workspaceID, bindingID int, instructions string, runnerImage *string, skillIDs []int) error {
 	if len(instructions) > maxBindingInstructionsLen {
 		return ErrBindingInstructionsTooLong
@@ -652,10 +600,7 @@ func (s *BindingService) UpdateAgentConfig(ctx context.Context, workspaceID, bin
 	if binding.WorkspaceID != workspaceID {
 		return ErrBindingNotFound
 	}
-	// Validate the runner image up front when one was supplied. A custom image
-	// is honored only on the remote (pool) runner, so it requires the binding to
-	// target a pool; the target pool is fixed at create, so the loaded binding's
-	// TargetPoolID is authoritative here (WI-450).
+	// Custom images require the binding's fixed remote pool.
 	var newRunnerImage string
 	if runnerImage != nil {
 		newRunnerImage, err = validateRunnerImage(*runnerImage)
@@ -683,10 +628,7 @@ func (s *BindingService) UpdateAgentConfig(ctx context.Context, workspaceID, bin
 	return s.skills.ReplaceBindingSkills(ctx, bindingID, workspaceID, skillIDs)
 }
 
-// validateTargetPool confirms poolID is an enabled runner_pool capability the
-// workspace may dispatch to. It reuses the same workspace-scoping the action
-// stack enforces (applies-to-all OR explicitly scoped), so a binding can't pin
-// a pool the workspace isn't allowed to use.
+// validateTargetPool confirms a workspace can dispatch to a runner pool.
 func (s *BindingService) validateTargetPool(workspaceID, poolID int) error {
 	if s.pools == nil {
 		return ErrBindingInvalidPool
@@ -715,15 +657,8 @@ func (s *BindingService) Delete(ctx context.Context, id, workspaceID int) (int64
 	return s.repo.Delete(ctx, id, workspaceID)
 }
 
-// TestLLM round-trips a prompt through the binding's LLM connection and
-// returns the model's reply, so a workspace admin can confirm the agent's
-// model actually responds before assigning real work. The workspace scope is
-// required (an admin of workspace A must not probe a binding in workspace B by
-// guessing its id). A blank prompt falls back to DefaultLLMTestPrompt.
-//
-// Note this exercises the provider directly, not the coding-agent's llm-proxy
-// path — it validates the connection (key + model reachable), which is a
-// superset of what a run needs but doesn't itself spin up a container.
+// TestLLM verifies a workspace-scoped binding's provider connection directly.
+// Blank prompts use DefaultLLMTestPrompt.
 func (s *BindingService) TestLLM(ctx context.Context, bindingID, workspaceID int, prompt string) (string, error) {
 	binding, err := s.repo.Get(ctx, bindingID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -763,32 +698,14 @@ var ErrBindingRunnerNotConfigured = errors.New("binding service: coding-agent ru
 // very deployment remote pools exist for.
 var ErrBindingTestRunRemotePool = errors.New("binding service: test runs are not supported for bindings that target a remote runner pool")
 
-// DefaultTestRunPrompt is the one-shot prompt a binding "test run" hands the
-// agent. It is deliberately read-only — list the project root and report a few
-// entries — so simulating an assignment proves the full chain (LLM reachable +
-// repo checked out + the agent can see its files) without mutating anything.
+// DefaultTestRunPrompt verifies model and repository access without mutation.
 const DefaultTestRunPrompt = "This is a connectivity test, not a real task. " +
 	"List the files and folders in the root of your working directory and reply " +
 	"with up to 5 of their names so we can confirm the repository is checked out " +
 	"correctly. Do not modify, create, commit, or push anything."
 
-// StartTestRun provisions a real coding-agent container run for the binding —
-// the same machinery a work-item assignment drives — but with no work item and
-// a read-only test prompt, and marked Ephemeral so it can never push a branch
-// or open a PR. It is the full-cycle counterpart of TestLLM: where TestLLM only
-// proves the model answers, this proves the model is reachable through the
-// run-scoped proxy, the SCM connection clones the right repo into a worktree,
-// and the agent can actually read the checked-out files.
-//
-// Returns the new run id immediately (the run executes asynchronously); callers
-// watch it via the agent-runs events endpoints. Workspace-scoped like TestLLM.
-// Requires a repo-backed binding (ErrBindingNoRepo otherwise), a binding on the
-// local in-process runtime (ErrBindingTestRunRemotePool otherwise), and a
-// configured runner (ErrBindingRunnerNotConfigured otherwise).
-//
-// triggeredByUserID is the admin starting the test; on OAuth connections the
-// clone authenticates with their personal token (WI-275) —
-// ErrTriggerUserSCMNotConnected when they have none.
+// StartTestRun asynchronously verifies a local, repo-backed binding end to end.
+// It uses an ephemeral read-only run and the triggering user's OAuth token.
 func (s *BindingService) StartTestRun(ctx context.Context, bindingID, workspaceID, triggeredByUserID int) (int, error) {
 	binding, err := s.repo.Get(ctx, bindingID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -809,9 +726,7 @@ func (s *BindingService) StartTestRun(ctx context.Context, bindingID, workspaceI
 	if s.runs == nil {
 		return 0, ErrBindingRunnerNotConfigured
 	}
-	// Test runs execute on the local in-process runtime (they refuse remote
-	// pools above). On an orchestration-only server there is no local runner,
-	// so fail before doing any prep rather than queuing a run nothing claims.
+	// Do not queue test runs when local execution is unavailable.
 	if !s.runs.LocalExecutionEnabled() {
 		return 0, ErrBindingRunnerNotConfigured
 	}
@@ -819,17 +734,13 @@ func (s *BindingService) StartTestRun(ctx context.Context, bindingID, workspaceI
 		return 0, errors.New("binding service: scm credential resolver not configured")
 	}
 
-	// itemID 0 → buildRunEnv emits the workspace context without an item join,
-	// and the run is persisted with a NULL item_id.
+	// Item ID zero builds workspace-only context and persists NULL item_id.
 	env, err := s.buildRunEnv(ctx, workspaceID, 0)
 	if err != nil {
 		return 0, err
 	}
 
-	// Repo prep inputs, derived exactly as the live trigger does: the clone URL
-	// comes from the trusted SCM connection + slug, and the token rides on
-	// RepoSpec for askpass injection (never embedded in the URL). The
-	// credential principal is the admin starting the test (WI-275).
+	// Derive the trusted clone URL; askpass receives the triggering user's token.
 	token, providerType, baseURL, err := s.scmCreds.ResolveForRunAsUser(ctx, *binding.SCMConnectionID, triggeredByUserID)
 	if err != nil {
 		if errors.Is(err, ErrTriggerUserSCMNotConnected) {
@@ -868,8 +779,7 @@ func (s *BindingService) StartTestRun(ctx context.Context, bindingID, workspaceI
 	}
 	req.Env["GIT_TERMINAL_PROMPT"] = "0"
 
-	// The agent reaches the model only through the run-scoped llm-proxy, which
-	// needs the per-run token + LLM grant (applied at claim from Token/Grants).
+	// Grant the run-scoped LLM proxy token.
 	if binding.LLMConnectionID != nil && s.llmRuntime != nil {
 		llmCfg, lerr := s.llmRuntime.ConnectionRuntime(ctx, *binding.LLMConnectionID)
 		if lerr != nil {
@@ -904,18 +814,8 @@ func startFailureReason(what string, err error) string {
 	return "could not resolve the binding's " + what + " at start time: " + RedactString(err.Error())
 }
 
-// MaybeStartRunForAssignee is the assignee-change trigger. Hot path: if
-// the assignee did not actually change or no binding matches the new
-// assignee, this is a no-op (one indexed lookup). Otherwise it builds a
-// RunRequest from the binding and dispatches via RunService.Start.
-//
-// The signature takes *int for old/new assignee so callers don't have to
-// special-case nil (item created without assignee, then assigned later).
-//
-// triggeredByUserID is the user performing the assignment; on OAuth SCM
-// connections their personal token is the run's git credential (WI-275).
-// When they have no connected account the run is recorded as failed (so
-// the refusal is visible) and ErrTriggerUserSCMNotConnected is returned.
+// MaybeStartRunForAssignee starts a matching agent binding after assignment.
+// OAuth clones use the assigning user's token; a missing connection records a failure.
 func (s *BindingService) MaybeStartRunForAssignee(ctx context.Context, workspaceID, itemID int, oldAssignee, newAssignee *int, triggeredByUserID int) error {
 	if newAssignee == nil {
 		return nil
@@ -940,25 +840,9 @@ func (s *BindingService) MaybeStartRunForAssignee(ctx context.Context, workspace
 	return s.startRunForBinding(ctx, binding, workspaceID, itemID, triggeredByUserID, &models.RunTrigger{Kind: "assignee"})
 }
 
-// MaybeStartRunsForMentions is the comment-@mention trigger (WI-264): every
-// mentioned user that is a binding's acting user gets a run on the commented
-// item — a lighter nudge than assignment, with no assignee or status change.
-// Callers invoke it on comment CREATE only; comment edits never re-trigger.
-//
-// Per-mention guards:
-//   - self-mention: a mention of the comment author themselves is skipped,
-//     so an agent commenting "@itself" cannot loop. Agents mentioning OTHER
-//     agents do trigger (indirect cycles are the operator's configuration
-//     responsibility, mirrored from the assignee trigger's posture).
-//   - dedup: a binding that already has a queued or running run on this item
-//     is skipped — a repeat mention while the agent works is a nudge, not a
-//     second job. A mention in a later comment, after the run finishes,
-//     triggers again.
-//   - budget: MaxRunsPerDay applies exactly as in the assignee trigger.
-//
-// Distinct agents mentioned in one comment each get their own run. Failures
-// are isolated per mention (one agent's refusal must not block the others);
-// they are joined into the returned error for the caller to log-and-swallow.
+// MaybeStartRunsForMentions starts bound agents mentioned on a new comment.
+// It skips self-mentions, active duplicates, and over-budget bindings; failures
+// are isolated and joined for the caller.
 func (s *BindingService) MaybeStartRunsForMentions(ctx context.Context, workspaceID, itemID int, mentionedUserIDs []int, commentAuthorID int, commentBody string, commentID int) error {
 	if len(mentionedUserIDs) == 0 {
 		return nil
@@ -1077,15 +961,8 @@ func (s *BindingService) enabledSkillsForBinding(ctx context.Context, binding *m
 	return skills
 }
 
-// applyContinuation sets the trigger's continuation fields when the binding's
-// item has an open linked PR in the binding's own repo, so the run lands
-// commits on that PR instead of cutting a fresh branch. Shared by the triggers
-// that should grow an existing PR rather than fork a new one — @mention and the
-// manual Re-run. (The assignee-change trigger deliberately does NOT continue: a
-// re-assignment starts fresh work.) It is a no-op (leaving a normal fresh-run
-// trigger) when no resolver is wired, the binding has no repo, the item has no
-// open PR, the PR is in a different repo than the binding writes to, or
-// resolution errors — none of which should block the run.
+// applyContinuation reuses an open PR in a bound repository for mentions and
+// reruns. Missing, foreign, or unresolved PRs fall back to a fresh run.
 func (s *BindingService) applyContinuation(ctx context.Context, trigger *models.RunTrigger, binding *models.WorkspaceAgentBinding, itemID int, userIDs ...int) {
 	if s.continuations == nil || !binding.HasRepo() {
 		return
@@ -1115,9 +992,7 @@ func (s *BindingService) applyContinuation(ctx context.Context, trigger *models.
 	if target == nil || target.HeadBranch == "" {
 		return
 	}
-	// Write scope: only continue a PR in a repo this binding's credentials can
-	// push to. A PR in a repo the binding doesn't bind would push back somewhere
-	// it has no business writing (WI-449: any bound repo, not just the primary).
+	// Continue only a repository bound for this agent's push access.
 	if !binding.HasRepoSlug(target.RepoSlug) {
 		s.logger.Printf("binding service: item=%d open PR is in %q but binding=%d binds none of its repos — starting fresh run", itemID, target.RepoSlug, binding.ID)
 		return
@@ -1391,15 +1266,8 @@ type PRCommentStartResult struct {
 	Reason   string
 }
 
-// StartPRCommentContinuation starts a continuation run for a PR-comment trigger.
-// The agent is the binding that most recently ran the item (the
-// most-recently-active rule); the run lands commits on the PR's head branch and
-// the post-run hook comments on the PR rather than opening a new one.
-//
-// started=false with a nil error is the normal "nothing to do" outcome — no
-// agent has worked this item, the PR is in a different repo than that agent
-// writes, a run is already active, or the binding's budget is spent. None of
-// those are caller-actionable errors; the poller just moves on.
+// StartPRCommentContinuation continues an item's most recently active binding.
+// A false nil result means no actionable continuation can start.
 func (s *BindingService) StartPRCommentContinuation(ctx context.Context, in PRCommentContinuation) (bool, error) {
 	result, err := s.StartPRCommentContinuationDetailed(ctx, in)
 	return result.Started, err
@@ -1443,8 +1311,7 @@ func (s *BindingService) StartPRCommentContinuationDetailed(ctx context.Context,
 	if err != nil {
 		return PRCommentStartResult{}, fmt.Errorf("load binding %d: %w", bindingID, err)
 	}
-	// Write scope: only continue a PR in a repo this binding binds (WI-449:
-	// any bound repo, not just the primary).
+	// Continue only repositories bound for this agent's push access.
 	if !binding.HasRepo() || !binding.HasRepoSlug(in.RepoSlug) {
 		return PRCommentStartResult{Terminal: true, Reason: "The PR owner no longer has push access to this repository."}, nil
 	}
@@ -1487,16 +1354,8 @@ func (s *BindingService) StartPRCommentContinuationDetailed(ctx context.Context,
 	return PRCommentStartResult{Started: true, RunID: runID}, nil
 }
 
-// RerunForItem manually re-triggers the agent that last worked an item — the
-// "Re-run" button on the item's agent log. It derives the agent from the most
-// recent run that carried a binding and reuses that binding's full
-// configuration (repo / token / grants / prompt) via startRunForBinding, the
-// same path the assignee and @mention triggers use. triggeredByUserID is the
-// human who clicked; they become the run's SCM principal (WI-275).
-//
-// started=false with a nil error means a run is already queued or in progress
-// for this item — the re-run is a no-op rather than a stacked second job
-// (mirrors the @mention dedup, WI-264). The caller keeps its button disabled.
+// RerunForItem restarts the binding from an item's latest run using the caller's
+// SCM identity. A false nil result means an active run already exists.
 func (s *BindingService) RerunForItem(ctx context.Context, itemID, triggeredByUserID int) (started bool, err error) {
 	if s.runs == nil {
 		return false, ErrRerunUnavailable
@@ -1543,19 +1402,9 @@ func (s *BindingService) RerunForItem(ctx context.Context, itemID, triggeredByUs
 	return true, nil
 }
 
-// bindingTokenAndGrants derives the per-run token spec and access-layer
-// grants from a binding, shared by the local Start path and the remote claim
-// enrichment (WI-195). Returns (nil, nil) when the binding mints no token (no
-// acting user, or no token service configured) — grants are meaningful only
-// when bound to a token. The git grant's Ref is left empty here; the claim
-// path fills it (the worktree branch locally, the run-branch namespace
-// remotely). triggeredByUserID is stamped into the git grant as the
-// credential principal the git proxy resolves on OAuth connections (WI-275);
-// 0 keeps the connection-level credential. withSkillsRead appends the
-// agent-skills:read scope when the binding pins explicit scopes that predate
-// the skills feature — a run whose prompt indexes skills must be able to
-// fetch them (WI-258); empty scopes already expand to the default set, which
-// includes it.
+// bindingTokenAndGrants derives token-bound access grants for local starts and
+// remote claims. Claims receive branch refs later; explicit legacy scopes gain
+// agent-skills:read when needed.
 func (s *BindingService) bindingTokenAndGrants(b *models.WorkspaceAgentBinding, itemID, triggeredByUserID int, withSkillsRead bool) (*TokenSpec, *models.RunGrants) {
 	if b.ActingUserID <= 0 || !s.runs.HasTokens() {
 		return nil, nil
@@ -1710,18 +1559,8 @@ func (s *BindingService) buildRunEnv(ctx context.Context, workspaceID, itemID in
 	return env, nil
 }
 
-// applyLLMModelEnv sets the model id and resolved vision capability for the
-// agent container. The agent reaches the provider exclusively through the
-// run-scoped llm-proxy, so no raw provider key, base URL, provider type, or API
-// format is ever injected into the (untrusted) container — those stay
-// server-side in ProxyLLM, which the agent calls with its per-run token
-// (WI-238). LLM_BASE_URL + LLM_API_KEY (the run token) are layered on at claim
-// time by applyLLMProxyEnv.
-//
-// LLM_SUPPORTS_VISION is the capability gate (WI-491): the agent registers the
-// view_image tool only when it is true, so a no-vision model never has image
-// bytes injected into its context. The value is already resolved on the runtime
-// config (model capability + per-connection override) by ConnectionRuntime.
+// applyLLMModelEnv exposes model and resolved vision support only. Provider
+// credentials and routing remain behind the run-scoped LLM proxy.
 func applyLLMModelEnv(env map[string]string, cfg *llm.ConnectionRuntimeConfig) {
 	if cfg == nil {
 		return
@@ -1730,15 +1569,7 @@ func applyLLMModelEnv(env map[string]string, cfg *llm.ConnectionRuntimeConfig) {
 	env["LLM_SUPPORTS_VISION"] = strconv.FormatBool(cfg.SupportsVision)
 }
 
-// deriveCloneURL constructs an https git remote from the trusted SCM
-// connection record and the binding's slug. GitHub bindings use
-// github.com unless the connection's baseURL declares a GitHub
-// Enterprise host. Gitea bindings always derive the host from the
-// connection's baseURL.
-//
-// The returned URL has no embedded credentials; auth is layered on
-// later via a per-clone GIT_ASKPASS helper so the token never appears
-// in argv or .git/config (WI-137).
+// deriveCloneURL builds a credential-free HTTPS remote from trusted SCM data.
 func deriveCloneURL(providerType, baseURL, slug string) (string, error) {
 	if !validRepoSlug.MatchString(slug) {
 		return "", ErrBindingInvalidRepoSlug

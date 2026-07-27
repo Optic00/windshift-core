@@ -1,10 +1,4 @@
-/**
- * Preset background images for workspace customization
- * Each preset has an id, name, category, url, and thumbnail
- *
- * Images are sourced from Unsplash (free to use)
- * Using smaller sizes for thumbnails and optimized sizes for backgrounds
- */
+/** Unsplash workspace-background presets with optimized thumbnails. */
 
 export const backgroundCategories = [
   { id: 'abstract', name: 'Abstract' },

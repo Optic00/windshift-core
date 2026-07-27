@@ -193,28 +193,10 @@ type cloudRouting struct {
 	viaGateway      bool   // chosen routing, for logging only
 }
 
-// cloudRoutingProbe decides whether to call Jira via the operator's site URL
-// (works for legacy unscoped API tokens) or via the api.atlassian.com gateway
-// (required for scoped Atlassian API tokens — see
-// https://support.atlassian.com/atlassian-account/docs/manage-api-tokens-for-your-atlassian-account/).
-//
-// Why the routing matters: a scoped token sent to <site>.atlassian.net is
-// silently downgraded to anonymous by Atlassian — endpoints that allow
-// anonymous reads return data, permission-filtered endpoints return empty
-// arrays, and only the /myself endpoint surfaces the 401. The wizard's
-// project list then looks empty with no actionable error. Routing via
-// api.atlassian.com/ex/jira/{cloudId}/ presents the token correctly.
-//
-// Algorithm: fetch the public /_edge/tenant_info to learn the cloudId, then
-// hit /rest/api/3/myself on the gateway. A 200 confirms scoped-token
-// routing works for this caller; anything else (including 401, which is
-// what a legacy token sees on the gateway) falls back to the site URL,
-// which works for legacy tokens.
-//
-// The probe is best-effort: if /_edge/tenant_info fails or returns an
-// unparseable response, we fall back to the site URL. That preserves the
-// pre-probe behavior for instances where the well-known endpoint isn't
-// reachable (private network, weird proxy, etc.).
+// cloudRoutingProbe selects the gateway for scoped tokens and the site URL for
+// legacy tokens. Scoped tokens sent to a site URL appear anonymous, so it probes
+// gateway /myself after discovering the cloud ID. Any discovery or probe failure
+// falls back to the site URL, preserving legacy and private-network behavior.
 func cloudRoutingProbe(siteURL, authHeader string, httpClient *http.Client) cloudRouting {
 	siteRouting := cloudRouting{
 		platformBase:    siteURL + "/rest/api/3",

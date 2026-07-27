@@ -1,14 +1,8 @@
-/**
- * Data + helpers for the /api-docs renderer. Pure functions; no Svelte
- * components live here so it's easy to unit-test and reuse.
- */
+/** Pure reusable data helpers for the /api-docs renderer. */
 
 const HTTP_METHODS = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options'];
 
-/**
- * Fetch the embedded OpenAPI spec from the running binary. Public route;
- * no auth required.
- */
+/** Fetch the public embedded OpenAPI spec. */
 export async function loadSpec(url = '/rest/api/v1/openapi.json') {
   const res = await fetch(url, { headers: { Accept: 'application/json' } });
   if (!res.ok) {
@@ -17,10 +11,7 @@ export async function loadSpec(url = '/rest/api/v1/openapi.json') {
   return res.json();
 }
 
-/**
- * Resolve a JSON-Pointer like "#/components/schemas/Item" against the spec.
- * Returns the resolved object, or null if the ref is malformed or missing.
- */
+/** Resolve a local JSON Pointer or return null. */
 export function resolveRef(spec, ref) {
   if (!ref || typeof ref !== 'string' || !ref.startsWith('#/')) return null;
   const segments = ref.slice(2).split('/');
@@ -32,14 +23,7 @@ export function resolveRef(spec, ref) {
   return cur ?? null;
 }
 
-/**
- * Group operations by tag. Returns an array of:
- *   { tag, operations: [{ tag, path, method, operation, id }, ...] }
- *
- * The order of tags is the order they first appear in the spec's paths so
- * that the rendered sidebar matches the structure of the original spec.
- * Operations within a tag stay in path order, then method order.
- */
+/** Group operations by first-seen tag, preserving path and method order. */
 export function groupOperationsByTag(spec) {
   if (!spec?.paths) return [];
   const tagOrder = [];

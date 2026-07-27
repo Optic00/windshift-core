@@ -136,31 +136,15 @@ func (h *RunnerBrokerHandler) GetSecret(w http.ResponseWriter, r *http.Request) 
 	respondJSON(w, http.StatusOK, map[string]any{"value": plaintext})
 }
 
-// ProxyLLM reverse-proxies a running job's model API calls to the LLM
-// connection it is granted, injecting the real provider credential
-// server-side so the key never reaches the runner. /llm-proxy/{run}/{path...}.
-//
-// Token-quota metering (grants.LLM.QuotaTokens) is a follow-up; this slice
-// establishes key-injecting, run-scoped proxying. Only anthropic and
-// openai-compatible auth conventions are handled; other providers need an
-// added case.
-// unbindStreamDeadlines lifts the server's per-request read/write deadlines for
-// a long-lived proxied stream. The broker's http.Server sets ReadTimeout (15s)
-// and WriteTimeout (30s) as slow-loris protection for ordinary JSON endpoints,
-// but those are hard wall-clock deadlines that do NOT reset on streaming
-// activity: a 30s WriteTimeout severs any LLM SSE response — or a large git
-// transfer — the moment it runs past 30s, which the coding agent observes as an
-// HTTP/2 "INTERNAL_ERROR; received from peer" mid-stream. Streaming proxy
-// handlers opt out here; the upstream transport's ResponseHeaderTimeout and the
-// request context still bound the work. Best-effort: SetWriteDeadline returns
-// http.ErrNotSupported on a ResponseWriter that cannot carry a deadline, which
-// is harmless (the broker's writer can).
+// unbindStreamDeadlines removes server wall-clock deadlines for streaming.
+// Upstream timeouts and the request context still bound the work.
 func unbindStreamDeadlines(w http.ResponseWriter) {
 	rc := http.NewResponseController(w)
 	_ = rc.SetReadDeadline(time.Time{})
 	_ = rc.SetWriteDeadline(time.Time{})
 }
 
+// ProxyLLM injects a run-scoped provider credential without exposing it to the runner.
 func (h *RunnerBrokerHandler) ProxyLLM(w http.ResponseWriter, r *http.Request) {
 	if h.tokens == nil || h.runs == nil || h.llmConns == nil {
 		respondServiceUnavailable(w, r, "coding-agent harness is disabled on this server")

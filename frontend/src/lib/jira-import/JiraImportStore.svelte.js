@@ -269,13 +269,8 @@ export const jiraImport = {
     connectionState.deploymentType = type;
   },
 
-  // Project methods. loadProjects returns the lightweight metadata list
-  // immediately (no counts) and kicks off the count fetch in the background;
-  // toggling openIssuesOnly only re-fires counts, not the full project list.
-  //
-  // Errors are stored as a structured object so the UI can branch on `.code`
-  // (e.g. JIRA_AUTH_FAILED → show "Reconnect" CTA, JIRA_RATE_LIMITED → wait).
-  // Callers should check `projects.error` before advancing the wizard.
+  // Load project metadata once and refresh counts independently. Structured
+  // errors let the wizard branch on codes before advancing.
   async loadProjects() {
     if (!connectionState.connectionId) return;
 

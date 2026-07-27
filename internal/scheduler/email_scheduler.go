@@ -359,16 +359,9 @@ func (es *EmailScheduler) processChannel(ctx context.Context, ch channelInfo) bo
 
 	slog.Info("fetched new emails", "channel_id", ch.ID, "count", len(messages))
 
-	// Process messages in UID order and bail at the first failure so we never
-	// advance past a message we haven't successfully handled. Advancing over a
-	// gap would permanently lose the failed UID (next poll searches UID > last,
-	// which skips it), so a stuck message is retried on subsequent polls. To
-	// keep one bad message from wedging the channel forever, processChannel
-	// counts retries for that exact UID and UIDVALIDITY epoch and, once
-	// maxDeliveryAttempts is reached, drops it past the watermark (see below).
-	// Seed maxUID from sinceUID (not state.LastUID) so a UIDVALIDITY reset
-	// persists: after a reset sinceUID==0 and we want LastUID to reflect the
-	// new UID space even if processing stops at the first message.
+	// Process in UID order and stop at failures so watermark advancement cannot
+	// lose mail. Retry each UID/UIDVALIDITY until the poison-message limit; seed
+	// maxUID from sinceUID so UIDVALIDITY resets persist.
 	maxUID := sinceUID
 	processedCount := 0
 	errorCount := 0
@@ -411,14 +404,8 @@ func (es *EmailScheduler) processChannel(ctx context.Context, ch channelInfo) bo
 			"comment_id", result.CommentID,
 		)
 
-		// Post-processing. Failures here are logged but don't block UID advancement:
-		// dedup is by UID tracking (not \Seen flag), so a failed MarkAsRead just
-		// leaves the message visually unread, not double-processed.
-		//
-		// Skip post-processing for ActionAlreadyExists. The message is a
-		// re-fetch (e.g. after UIDVALIDITY reset or a mailbox restore) of one
-		// we've already turned into an item/comment; deleting or flagging the
-		// restored copy would destroy mailbox state operators expect to keep.
+		// Post-processing failures do not block UID advancement. Do not alter
+		// re-fetched ActionAlreadyExists mail after resets or restores.
 		if result.Action != email.ActionAlreadyExists {
 			if decryptedConfig.EmailMarkAsRead {
 				if err := client.MarkAsRead(msg.UID); err != nil {
@@ -445,15 +432,8 @@ func (es *EmailScheduler) processChannel(ctx context.Context, ch channelInfo) bo
 		}
 	}
 
-	// Consecutive-failure / poison-message handling. errorCount > 0 means the
-	// loop broke at offenderUID. Because the watermark didn't advance, the same
-	// lowest-UID message is refetched first on every poll. Poison retry state is
-	// keyed to that UID plus UIDVALIDITY, independently from error_count (the
-	// channel-health counter, which also includes connect/fetch failures). When
-	// this exact message has been stuck long enough, we advance the
-	// watermark past it so the channel keeps making progress instead of wedging
-	// forever. The drop is surfaced to admins via the channel's last_error plus
-	// the failed scheduler_run this tick records (processChannel returns false).
+	// Track poison retries per UID/UIDVALIDITY separately from channel health.
+	// After the limit, advance past the offender and surface the drop to admins.
 	healthErrorCount := 0
 	failedMessageUID := 0
 	failedMessageUIDValidity := uint32(0)
@@ -473,9 +453,7 @@ func (es *EmailScheduler) processChannel(ctx context.Context, ch channelInfo) bo
 			}
 			lastBatchError = fmt.Sprintf("dropped poison message uid=%d after %d failed attempts: %s",
 				offenderUID, failedMessageCount, lastBatchError)
-			// Watermark advanced past the offender — the counter restarts on the
-			// next message. last_error (set above) keeps the channel flagged
-			// unhealthy until a clean poll clears it.
+			// Restart tracking for the next UID; last_error remains until a clean poll.
 			healthErrorCount = 0
 			failedMessageUID = 0
 			failedMessageUIDValidity = 0

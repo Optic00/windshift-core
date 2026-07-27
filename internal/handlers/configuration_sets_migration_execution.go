@@ -27,19 +27,11 @@ func sanitizeStatusMappings(mappings []models.StatusMigrationMapping) {
 	}
 }
 
-// defaultValueNodeBudget caps the total number of JSON nodes (strings,
-// array elements, object entries, scalars) retained from a single
-// DefaultValue. Legitimate defaults are a scalar or a small array of
-// option ids; 256 nodes is far beyond anything the migration UI emits.
+// defaultValueNodeBudget bounds migration default-value JSON structure.
 const defaultValueNodeBudget = 256
 
-// sanitizeJSONValue recursively bounds the free-form strings inside a
-// decoded JSON value: every string (including object keys) gets the
-// PlainTextField scrub, arrays and objects are walked, and a shared node
-// budget caps the total structure retained. Without the recursion a
-// client could bypass the string-typed scrub by wrapping the same
-// free-form text in an array or object (e.g. ["<multi-MB string>"]).
-// Numbers, bools, and nulls are bounded by construction and pass through.
+// sanitizeJSONValue recursively sanitizes strings and keys under a shared node
+// budget, preventing nested values from bypassing input bounds.
 func sanitizeJSONValue(v interface{}, budget *int) interface{} {
 	if *budget <= 0 {
 		return nil

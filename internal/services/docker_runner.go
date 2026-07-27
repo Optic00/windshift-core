@@ -195,20 +195,11 @@ func (r *DockerRunner) Run(ctx context.Context, input RunInput, emit EventSink) 
 	}
 }
 
-// drainPipe reads lines from r and pushes them onto the sink as the given
-// event type. JSON-parseable lines pass through verbatim; non-JSON lines
-// are wrapped as {"line":"<raw>"} so consumers always see a JSON document.
-//
-// Returns nil when the stream was scanned cleanly to EOF. When the scanner
-// stops early (bufio.ErrTooLong on an oversized line, or a read error), the
-// remainder of the stream is still drained to EOF — see drainRest — and the
-// scan error is returned so the caller can fail the run instead of reporting
-// success with silently missing output.
+// drainPipe forwards JSON or wraps raw lines. Scanner failures still drain the
+// stream, then return an error so missing output cannot report success.
 func drainPipe(rd io.Reader, eventType string, emit EventSink) error {
 	scanner := bufio.NewScanner(rd)
-	// Containers can emit long lines (logged tool output, stack traces).
-	// Bump the buffer well above the default 64KB but bound it so a
-	// runaway producer can't pin memory.
+	// Permit tool output and stack traces without unbounded memory use.
 	const maxLine = 1 << 20 // 1 MiB
 	scanner.Buffer(make([]byte, 64*1024), maxLine)
 	for scanner.Scan() {

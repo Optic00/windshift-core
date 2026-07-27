@@ -192,10 +192,7 @@ func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResul
 		return nil, fmt.Errorf("failed to create comment: %w", err)
 	}
 
-	// 3b. Bump the item's recency so it floats to the top of the board's Bubble
-	// Mode sort. Every comment entry point (internal, v1, email, portal, agent)
-	// flows through here, so this is the single choke point. Best-effort: a
-	// failed bump must not fail the comment write.
+	// Comments update Bubble Mode recency best-effort at this shared entry point.
 	if err := repository.NewItemRepository(s.db).TouchActivity(s.db, params.ItemID, now); err != nil {
 		slog.Warn("failed to bump item last_active_at on comment",
 			slog.String("component", "comment_service"),
@@ -218,15 +215,8 @@ func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResul
 
 	// Steps 5-8: notifications, mentions, webhooks, and email replies (skipped when SuppressNotifications is true)
 	if !params.SuppressNotifications {
-		// 4b. Auto-subscribe the commenter so they're notified of replies
-		// (GitHub/Jira-style "follow on comment"). Without this a user who
-		// joins a thread by commenting never learns of later replies unless
-		// they happen to be the assignee/creator. AddWatch is an idempotent
-		// upsert keyed on (user_id, item_id), so repeat comments are cheap and
-		// a previously-unwatched item is re-followed. ActorUserID 0 means a
-		// portal customer with no user row to watch with — skip those.
-		// Agents are watched too but never receive notifications: the recipient
-		// fan-out filters is_agent users (notification_service.agentOrUnknownUsers).
+		// Idempotently follow internal commenters for reply notifications. Portal
+		// customers have no user watch; agent recipients are filtered downstream.
 		if s.activityTracker != nil && params.ActorUserID > 0 {
 			if err := s.activityTracker.AddWatch(params.ActorUserID, params.ItemID, "Commented on item"); err != nil {
 				slog.Warn("failed to auto-subscribe commenter to item",
@@ -304,13 +294,8 @@ func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResul
 			}
 		}
 
-		// 6b. Coding-agent @mention trigger (WI-264). Create-only by
-		// construction: this hook lives here and not in ProcessMentions,
-		// which also runs on comment EDITS — adding an @ by editing must
-		// not re-trigger. Portal-customer comments (ActorUserID 0) are
-		// skipped: the trigger needs a real user as the run's credential
-		// principal (WI-275). Failures are logged, never surfaced — a
-		// refused run must not block the comment.
+		// Create-only agent mention triggers require an internal credential principal;
+		// logged trigger failures never block comments.
 		if s.agentMentionTrigger != nil && s.mentionService != nil && params.ActorUserID > 0 {
 			if ids, err := s.mentionService.ResolveMentionedUserIDs(params.Content); err != nil {
 				slog.Warn("failed to resolve mentions for agent trigger",
@@ -319,14 +304,8 @@ func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResul
 					slog.Any("error", err),
 				)
 			} else if len(ids) > 0 {
-				// Background context: the run outlives the comment request,
-				// and a client disconnect must not abort run admission.
-				//
-				// Resolve mentions from the original body (above) but feed the
-				// run instruction the SANITIZED, capped content — the same text
-				// the stored comment shows. Passing params.Content here let a
-				// commenter smuggle oversized/unsafe prompt payloads into
-				// agent_runs.trigger_json that diverged from the visible comment.
+				// Admission outlives client disconnects; use stored sanitized content so
+				// agent instructions cannot diverge from the visible comment.
 				if err := s.agentMentionTrigger.MaybeStartRunsForMentions(context.Background(), item.WorkspaceID, params.ItemID, ids, params.ActorUserID, sanitizedContent, int(commentID)); err != nil {
 					slog.Warn("coding-agent mention trigger failed",
 						slog.String("component", "comment_service"),

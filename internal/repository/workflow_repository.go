@@ -488,23 +488,10 @@ func transitionKey(fromStatusID sql.NullInt64, toStatusID int) string {
 	return fmt.Sprintf("nil:%d", toStatusID)
 }
 
-// CancelApprovalRequestsForTransitions hard-deletes approval_requests pinned to
-// approval_set_statuses whose approve_transition_id or deny_transition_id is in
-// transitionIDs. Returns the deleted request ids so the caller can record a
-// single audit_logs entry after the surrounding transaction commits.
-//
-// Why hard-delete: approval_requests.approval_set_status_id is ON DELETE
-// RESTRICT, so the CASCADE-delete chain from workflow_transitions →
-// approval_set_statuses → approval_requests would otherwise fail with
-// SQLITE_CONSTRAINT_FOREIGNKEY (1811). The soft-archive model on
-// approval_set_statuses (is_active=0) keeps RESTRICT-FKs even for completed
-// requests, so there is no purely-reconfiguration way out. We sacrifice the
-// per-request approval_decisions trail (it CASCADEs away with the request) in
-// exchange for letting admins edit the workflow; the durable record is the
-// audit_logs row the caller writes.
-//
-// Exported because the Jira importer cancels blocking approval requests inside
-// its own workflow-replacement transaction.
+// CancelApprovalRequestsForTransitions hard-deletes requests blocking removed
+// approval transitions. RESTRICT foreign keys otherwise prevent workflow edits;
+// callers record the deleted IDs in the durable audit log. Exported for the
+// Jira importer's workflow-replacement transaction.
 func CancelApprovalRequestsForTransitions(tx database.Tx, transitionIDs []int) ([]int, error) {
 	if len(transitionIDs) == 0 {
 		return nil, nil

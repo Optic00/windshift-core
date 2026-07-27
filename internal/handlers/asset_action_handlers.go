@@ -36,13 +36,8 @@ func validateAssetActionKinds(triggerType models.AssetActionTriggerType, nodes [
 	return ""
 }
 
-// sanitizeAssetActionFlow gates the user-supplied flow-graph strings.
-// NodeConfig is a free-form JSON blob persisted verbatim and echoed on
-// every action GET — HTML stripping would corrupt it, so it is
-// validated (size + well-formed JSON) and rejected instead of
-// scrubbed. Edge type + handles are identifier-shaped strings stored
-// and echoed verbatim. Writes a validation error and returns false
-// when a node config is rejected.
+// sanitizeAssetActionFlow validates persisted JSON node configs rather than
+// scrubbing them, and sanitizes identifier-shaped edge fields.
 func sanitizeAssetActionFlow(w http.ResponseWriter, r *http.Request, nodes []models.AssetActionNode, edges []models.AssetActionEdge) bool {
 	for i := range nodes {
 		if err := sanitize.ValidateJSONPayload("node_config", nodes[i].NodeConfig); err != nil {

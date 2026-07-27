@@ -16,10 +16,7 @@ import (
 	"windshift/internal/utils"
 )
 
-// sanitizeRequestType applies the canonical sanitize policies to the
-// free-form fields on a request type payload (Name, Description, Icon,
-// Color, TitleTemplate). Returns labeled warnings the handler surfaces
-// on the response.
+// sanitizeRequestType sanitizes request-type fields and returns warnings.
 func sanitizeRequestType(rt *models.RequestType) []string {
 	return sanitize.ApplyAllWithWarnings(
 		sanitize.Pair{Target: &rt.Name, Policy: sanitize.PlainTextField, Label: "Name"},
@@ -30,12 +27,8 @@ func sanitizeRequestType(rt *models.RequestType) []string {
 	)
 }
 
-// sanitizeRequestTypeFields scrubs the per-row portal-customization
-// fields the form picker exposes. DisplayName + Description override
-// the field's stock label/help text in the portal; both render as
-// plain copy near the form input. JSON pointers on RequestTypeField
-// are *string, so missing values stay missing rather than getting
-// silently created.
+// sanitizeRequestTypeFields sanitizes portal field overrides without
+// materializing optional string-pointer values.
 func sanitizeRequestTypeFields(fields []models.RequestTypeField) []string {
 	var warnings []string
 	for i := range fields {
@@ -103,9 +96,8 @@ func channelSupportsAssetReports(channel *models.Channel) bool {
 	return channel != nil && channel.Direction == "inbound" && channel.Type == "portal"
 }
 
-// effectiveRequestTypeWorkspace resolves the runtime routing target. Legacy
-// request types with a NULL workspace_id use the channel's first workspace;
-// management validation must use that same target instead of skipping checks.
+// effectiveRequestTypeWorkspace preserves the legacy first-served-workspace
+// fallback so validation matches runtime routing.
 func effectiveRequestTypeWorkspace(served []int, pinned *int) (int, bool) {
 	if pinned != nil {
 		return *pinned, true
@@ -116,7 +108,7 @@ func effectiveRequestTypeWorkspace(served []int, pinned *int) (int, bool) {
 	return served[0], true
 }
 
-// GetAllForChannel returns all request types for a specific channel
+// GetAllForChannel returns a channel's request types.
 func (h *RequestTypeHandler) GetAllForChannel(w http.ResponseWriter, r *http.Request) {
 	channelID, ok := requireIDParam(w, r, "channel_id")
 	if !ok {
@@ -144,7 +136,7 @@ func (h *RequestTypeHandler) GetAllForChannel(w http.ResponseWriter, r *http.Req
 	respondJSONOK(w, requestTypes)
 }
 
-// Get returns a specific request type by ID
+// Get returns a request type by ID.
 func (h *RequestTypeHandler) Get(w http.ResponseWriter, r *http.Request) {
 	id, ok := requireIDParam(w, r, "id")
 	if !ok {
@@ -166,8 +158,7 @@ func (h *RequestTypeHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Gate by manager scope on the owning channel. See bughunt2.md Run 6
-	// finding #4.
+	// Do not disclose request types outside the owning channel's manager scope.
 	canManage, err := h.channelService.UserCanManage(r.Context(), user.ID, rt.ChannelID)
 	if err != nil {
 		respondInternalError(w, r, err)
@@ -181,9 +172,8 @@ func (h *RequestTypeHandler) Get(w http.ResponseWriter, r *http.Request) {
 	respondJSONOK(w, rt)
 }
 
-// channelServedWorkspaceIDs returns the workspace list used by the owning
-// channel's immutable type. Mixing portal/form lists lets an irrelevant JSON
-// key satisfy validation even though the public runtime never reads it.
+// channelServedWorkspaceIDs uses only the owning channel type's workspace list.
+// Mixing portal and form lists could validate a workspace the runtime ignores.
 func (h *RequestTypeHandler) channelServedWorkspaceIDs(ctx context.Context, channelID int) ([]int, error) {
 	channel, err := h.channelService.GetByID(ctx, channelID)
 	if err != nil {
@@ -226,10 +216,8 @@ func (h *RequestTypeHandler) availableFieldsForRequestType(ctx context.Context, 
 	return availableCreateFields(h.screenRepo, workspaceID, rt.ItemTypeID)
 }
 
-// validateRequestTypeRouting first verifies the owning channel is an inbound
-// portal/form channel, then, when the request type pins a workspace, enforces
-// that the channel serves it and its configuration allows the item type. A nil
-// workspace preserves the legacy fallback to the channel's first workspace.
+// validateRequestTypeRouting requires an inbound portal/form channel, a served
+// workspace, and an item type allowed there; nil keeps the legacy fallback.
 func (h *RequestTypeHandler) validateRequestTypeRouting(w http.ResponseWriter, r *http.Request, channelID int, rt *models.RequestType) bool {
 	served, err := h.channelServedWorkspaceIDs(r.Context(), channelID)
 	if err != nil {
@@ -277,7 +265,7 @@ func (h *RequestTypeHandler) validateRequestTypeRouting(w http.ResponseWriter, r
 	return true
 }
 
-// Create creates a new request type
+// Create creates a request type.
 func (h *RequestTypeHandler) Create(w http.ResponseWriter, r *http.Request) {
 	channelID, ok := requireIDParam(w, r, "channel_id")
 	if !ok {
@@ -374,15 +362,9 @@ func (h *RequestTypeHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}{rt, warnings})
 }
 
-// Update updates an existing request type. The route is
-// PUT /channels/{channel_id}/request-types/{id}; channelMgmt middleware gates
-// access and the SQL UPDATE is constrained by channel_id so a request type
-// belonging to another channel cannot be touched. Body-supplied channel_id is
-// ignored (it comes from the URL). workspace_id IS mutable: a supplied value
-// retargets the request type, and an omitted value preserves the existing
-// workspace (so callers that don't manage routing can't accidentally clear
-// it). A pinned workspace must be served by the channel and must allow the
-// item type.
+// Update changes a request type within its URL-scoped channel. Omitted
+// workspace_id preserves routing; a supplied workspace must be served and allow
+// the item type.
 func (h *RequestTypeHandler) Update(w http.ResponseWriter, r *http.Request) {
 	channelID, ok := requireIDParam(w, r, "channel_id")
 	if !ok {
@@ -424,9 +406,7 @@ func (h *RequestTypeHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// workspace_id is now mutable, but omitting it must not clear the existing
-	// routing target. When the body carries no workspace_id, preserve the
-	// stored value before validating/persisting.
+	// Preserve routing when callers omit the mutable workspace_id.
 	if rt.WorkspaceID == nil {
 		_, existingWorkspaceID, err := h.repo.GetItemTypeAndWorkspace(id)
 		if err != nil && !errors.Is(err, repository.ErrNotFound) {
@@ -501,9 +481,7 @@ func (h *RequestTypeHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}{rt, warnings})
 }
 
-// Delete deletes a request type. Route is DELETE /channels/{channel_id}/request-types/{id};
-// channelMgmt middleware gates and the DELETE is constrained by channel_id so a
-// request type belonging to another channel cannot be deleted via this URL.
+// Delete removes a request type from its URL-scoped channel.
 func (h *RequestTypeHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	channelID, ok := requireIDParam(w, r, "channel_id")
 	if !ok {
@@ -547,7 +525,7 @@ func (h *RequestTypeHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// GetFields returns all fields for a request type
+// GetFields returns a request type's fields.
 func (h *RequestTypeHandler) GetFields(w http.ResponseWriter, r *http.Request) {
 	requestTypeID, ok := requireIDParam(w, r, "id")
 	if !ok {
@@ -587,9 +565,7 @@ func (h *RequestTypeHandler) GetFields(w http.ResponseWriter, r *http.Request) {
 	respondJSONOK(w, fields)
 }
 
-// UpdateFields rewrites the field schema for a request type. Route is
-// PUT /channels/{channel_id}/request-types/{id}/fields; gated by channelMgmt
-// and constrained to request types that belong to the URL-supplied channel.
+// UpdateFields replaces fields for a request type in its URL-scoped channel.
 func (h *RequestTypeHandler) UpdateFields(w http.ResponseWriter, r *http.Request) {
 	channelID, ok := requireIDParam(w, r, "channel_id")
 	if !ok {
@@ -600,7 +576,6 @@ func (h *RequestTypeHandler) UpdateFields(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Verify request type exists in this channel before mutating any fields.
 	rt, err := h.repo.GetByID(requestTypeID)
 	if errors.Is(err, repository.ErrNotFound) || (err == nil && rt.ChannelID != channelID) {
 		respondNotFound(w, r, "request_type")
@@ -615,13 +590,7 @@ func (h *RequestTypeHandler) UpdateFields(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	// Per-row Display name + Description override the field's stock label
-	// and help text in the portal — both render as plain copy near the
-	// form input. Warnings are stamped but the legacy response shape of
-	// UpdateFields (delegating to GetFields) doesn't include them yet;
-	// sanitize at decode is the primary guard, the surfaced warnings
-	// will land when UpdateFields gets its own dedicated response in a
-	// future slice.
+	// The legacy GetFields response cannot surface sanitization warnings.
 	_ = sanitizeRequestTypeFields(fields)
 	available, err := h.availableFieldsForRequestType(r.Context(), rt)
 	if err != nil {
@@ -649,13 +618,11 @@ func (h *RequestTypeHandler) UpdateFields(w http.ResponseWriter, r *http.Request
 		)
 	}
 
-	// Return the updated fields
 	h.GetFields(w, r)
 }
 
-// GetAvailableFields returns all fields available for a request type based on its item type and workspace.
-// Resolves fields via: workspace → workspace_configuration_sets → configuration_set_item_types → create_screen → screen_fields.
-// Falls back to default fields (title, description) when workspace_id is not set or no screen is found.
+// GetAvailableFields resolves the request type's create-screen fields,
+// falling back to title and description when no screen applies.
 func (h *RequestTypeHandler) GetAvailableFields(w http.ResponseWriter, r *http.Request) {
 	requestTypeID, ok := requireIDParam(w, r, "id")
 	if !ok {
@@ -693,9 +660,7 @@ func (h *RequestTypeHandler) GetAvailableFields(w http.ResponseWriter, r *http.R
 	respondJSONOK(w, fields)
 }
 
-// UpdateVisibility updates only the visibility settings for a request type.
-// Route is PUT /channels/{channel_id}/request-types/{id}/visibility — gated by
-// channelMgmt and scoped by channel_id in the SQL.
+// UpdateVisibility updates a URL-scoped request type's visibility.
 func (h *RequestTypeHandler) UpdateVisibility(w http.ResponseWriter, r *http.Request) {
 	channelID, ok := requireIDParam(w, r, "channel_id")
 	if !ok {

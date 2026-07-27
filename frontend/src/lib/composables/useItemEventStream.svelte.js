@@ -4,32 +4,11 @@ import { itemLiveUpdates } from '../stores/itemLiveUpdates.svelte.js';
 const DEBOUNCE_MS = 250;
 
 /**
- * Subscribe to one item's server-sent event stream and dispatch targeted
- * reloads (WI-484). Opens an EventSource to /items/{id}/events (built through
- * the context-path helper, since EventSource is not one of the globals the
- * frontend translation layer patches) and maps each event `kind` to a handler.
+ * Subscribes to an item's event stream and batches targeted reloads. A reconnect
+ * performs one full reconcile; the initial connection does not duplicate the
+ * initial load. Polling remains the fallback while disconnected.
  *
- * Event-kind → action matrix:
- *   reconnected/reload → onReconcile (full reload after a connection gap or an
- *                                    explicit server reload request)
- *   status           → onItem       (item record + transitions)
- *   updated/created  → onItem + onChildren (own fields, and child list since a
- *                                    parent is published "updated" on child change)
- *   comment          → onComment
- *   link             → onLinks      (targeted generic + SCM link refresh)
- *   deleted          → onDeleted
- *
- * Events are coalesced over a short debounce so a burst (e.g. a status change
- * that emits several events) triggers each reload once. A `reconcile` in the
- * batch supersedes the targeted reloads.
- *
- * The first healthy connection does not reconcile: it overlaps the initial
- * item load and would immediately duplicate that entire request graph. Every
- * connection after an error/reconnect does reconcile so events missed during
- * the gap are recovered. While disconnected, `connected` is false so the
- * components' pollers resume as the fallback.
- *
- * @param {() => (number|string|null|undefined)} getItemId reactive item id
+ * @param {() => (number|string|null|undefined)} getItemId
  * @param {{ onReconcile?: Function, onItem?: Function, onChildren?: Function, onComment?: Function, onLinks?: Function, onDeleted?: Function }} handlers
  * @returns {{ readonly connected: boolean }}
  */

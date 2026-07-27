@@ -162,12 +162,8 @@ func ParseSCIMFilter(filter, resourceType string) (*SCIMFilterResult, error) {
 	}, nil
 }
 
-// parseSCIMBool parses a SCIM boolean filter value. Only "true" and "false"
-// (case-insensitive) are accepted; any other input — including "yes", "1", or
-// "banana" — must return an "invalid filter" error so the caller can map it
-// to a SCIM 400 invalidFilter response. Silently treating non-boolean inputs
-// as false produces a successful 200 with the wrong rows and hides client
-// bugs.
+// parseSCIMBool accepts only true or false so invalid filters return SCIM 400
+// rather than successful results with incorrect rows.
 func parseSCIMBool(value string) (bool, error) {
 	switch strings.ToLower(value) {
 	case "true":
@@ -179,19 +175,9 @@ func parseSCIMBool(value string) (bool, error) {
 	}
 }
 
-// splitTopLevelAnd splits a SCIM filter on case-insensitive " and " when the
-// match occurs at parenthesis depth zero and outside any double-quoted string
-// literal. The previous implementation used a plain regex which happily split
-// inside quoted values, breaking filters like
-//
-//	userName eq "Research and Development"
-//	meta.resourceType eq "Group" and displayName eq "A and B"
-//
-// This helper is a one-pass lexer over bytes: it tracks paren depth, whether
-// we are inside a quoted string, and honors `\"` / `\\` escapes inside the
-// quotes per RFC 7644 §3.4.2.2. It is intentionally narrow — splitting on
-// `and` at the top level is enough to feed the existing per-term parser; we
-// do not (yet) need a full SCIM grammar.
+// splitTopLevelAnd recognizes case-insensitive top-level `and` outside quoted
+// strings and parentheses. Its narrow byte lexer honors quoted escapes without
+// implementing a full SCIM grammar.
 func splitTopLevelAnd(filter string) []string {
 	if filter == "" {
 		return nil

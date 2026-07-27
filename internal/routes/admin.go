@@ -2,7 +2,7 @@ package routes
 
 import "net/http"
 
-// RegisterAdminRoutes registers admin-related routes (audit, security, themes, plugins, jira import).
+// RegisterAdminRoutes registers admin routes.
 func RegisterAdminRoutes(deps *Deps) {
 	api := deps.API
 	auth := deps.AuthMiddleware.RequireAuth
@@ -119,7 +119,7 @@ func RegisterAdminRoutes(deps *Deps) {
 		api.HandleH("GET /shell-bootstrap", auth(http.HandlerFunc(deps.Admin.ShellBootstrap.Get)))
 	}
 
-	// Jira Import endpoints
+	// Jira import.
 	api.HandleH("GET /admin/jira-import/connections", admin(http.HandlerFunc(deps.Admin.JiraImport.GetConnections)))
 	api.HandleH("DELETE /admin/jira-import/connections/{connectionId}", admin(http.HandlerFunc(deps.Admin.JiraImport.DeleteConnection)))
 	api.HandleH("POST /admin/jira-import/connect", admin(http.HandlerFunc(deps.Admin.JiraImport.Connect)))

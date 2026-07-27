@@ -1,16 +1,6 @@
 <script>
-	// Unified admin page for both directions of OAuth-shaped integrations.
-	//
-	// Outbound: Windshift acts as the OAuth *client* against external apps
-	//           (Notion, Confluence, etc). Backed by `integration_providers`.
-	//
-	// Inbound:  Windshift acts as the OAuth *server*; third-party apps
-	//           authorize Windshift users to mint per-user API tokens.
-	//           Backed by `oauth_clients`.
-	//
-	// They model the same protocol from opposite sides, so they live in one
-	// place but get distinct tabs (and distinct managers underneath) so the
-	// admin form for each stays tight to its concept.
+	// OAuth integrations share a page: outbound providers connect Windshift to
+	// external apps, while inbound clients authorize apps to mint user tokens.
 
 	import Tabs from '../components/Tabs.svelte';
 	import IntegrationProviderManager from './IntegrationProviderManager.svelte';

@@ -10,14 +10,8 @@ import (
 	"windshift/internal/sanitize"
 )
 
-// sanitizeDashboardLayout scrubs the user-facing fields on a dashboard
-// layout payload. Section Title + Subtitle render as headings on the
-// personal dashboard; section/widget ids are client-generated
-// identifier-shaped strings echoed back in validation errors.
-// Section WidgetIDs are the same identifier class (they reference
-// Widget.ID values), so each element gets ShortIdentifier and the
-// slice is capped at dashboardMaxWidgets — a section can never
-// legitimately reference more widgets than the layout may contain.
+// sanitizeDashboardLayout applies text policies to headings and identifier
+// policies to client-generated IDs. Widget IDs are capped by layout capacity.
 func sanitizeDashboardLayout(layout *models.UserDashboardLayout) {
 	for i := range layout.Sections {
 		section := &layout.Sections[i]

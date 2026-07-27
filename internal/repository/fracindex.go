@@ -494,20 +494,9 @@ func MoveItemBetween(db database.Database, itemID int, prevID, nextID *int) (str
 	return "", fmt.Errorf("move item %d failed after %d frac_index retries: %w", itemID, FracIndexMaxRetries, lastErr)
 }
 
-// chooseMoveFracIndex returns a globally unique frac_index that still sorts
-// within the caller's requested view-local bounds. Board and backlog reorders
-// pass neighbors from a filtered subset (status column, iteration section,
-// etc.), while items.frac_index is globally unique. A naive KeyBetween(prev,
-// next) can therefore deterministically produce a key already held by an item
-// outside that subset (for example prev=a0, next=nil -> a1, but a1 is in a
-// different board column). In that case retrying the same bounds will collide
-// forever.
-//
-// To avoid that, use the immediate global row just inside the requested bound
-// as the opposite bound. The open interval between an item and its immediate
-// global neighbor contains no existing frac_index, so KeyBetween cannot collide
-// deterministically. The chosen key remains valid for the filtered view because
-// it is still inside the caller's original open interval.
+// chooseMoveFracIndex finds a globally unique key within filtered-view bounds.
+// It uses the nearest global neighbor to avoid deterministic collisions with
+// items outside the view while preserving the requested open interval.
 func chooseMoveFracIndex(tx database.Tx, itemID int, prev, next, driver string) (string, error) {
 	if prev == "" && next == "" {
 		maxKey, found, err := readGlobalBoundaryFracIndexForUpdate(tx, itemID, "DESC", driver)

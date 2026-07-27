@@ -1,11 +1,6 @@
 <script>
-  // Coding-agent harness — global allowlist editor (WI-87).
-  //
-  // Loads agentSecurity.listAllowlist() + the user and workspace
-  // catalogs once on mount so we can render names instead of bare ids,
-  // then exposes add + remove. Remove goes through the shared
-  // ConfirmWithReasonDialog because the backend DELETE requires a
-  // non-empty reason for audit-logging.
+  // Global coding-agent allowlist editor with named catalogs and audit-reasoned
+  // removal.
 
   import { onMount } from 'svelte';
   import { Loader2, Plus, Trash2 } from '@lucide/svelte';

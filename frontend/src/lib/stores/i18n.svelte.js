@@ -1,21 +1,12 @@
-/**
- * Internationalization (i18n) store for managing translations
- *
- * Supports:
- * - Multiple locales with lazy loading
- * - RTL support for Arabic
- * - String interpolation with {param} syntax
- * - Pluralization with locale-aware suffix rules (_zero, _one, _two, _few, _many, _other)
- * - Backend error code translation
- * - localStorage persistence
- */
+/** Reactive i18n store with lazy locales, RTL, interpolation, pluralization,
+ * backend-error translation, and persisted selection. */
 
 import { getPluralCategory, negotiateLocale } from './i18n-utils.js';
 
 const STORAGE_KEY = 'windshift-locale';
 const DEFAULT_LOCALE = 'en';
 
-// Supported locales configuration
+// Supported locale metadata.
 export const SUPPORTED_LOCALES = [
   { code: 'en', name: 'English', direction: 'ltr' },
   { code: 'de', name: 'Deutsch', direction: 'ltr' },
@@ -25,35 +16,25 @@ export const SUPPORTED_LOCALES = [
   { code: 'zh-CN', name: '简体中文', direction: 'ltr' },
 ];
 
-// Reactive state using Svelte 5 runes
+// Reactive locale state.
 let locale = $state(DEFAULT_LOCALE);
 let translations = $state({});
 let fallbackTranslations = $state({});
 let loading = $state(false);
 
-// Derived state
+// Derived direction state.
 const direction = $derived(SUPPORTED_LOCALES.find((l) => l.code === locale)?.direction || 'ltr');
 
 const isRTL = $derived(direction === 'rtl');
 
-/**
- * Get a nested value from an object using dot notation
- * @param {object} obj - Object to traverse
- * @param {string} path - Dot-notated path (e.g., 'common.save')
- * @returns {string|undefined}
- */
+/** Read a dot-notated value from an object. */
 function getNestedValue(obj, path) {
   return path.split('.').reduce((current, key) => {
     return current && typeof current === 'object' ? current[key] : undefined;
   }, obj);
 }
 
-/**
- * Interpolate parameters into a string
- * @param {string} str - String with {param} placeholders
- * @param {object} params - Parameters to interpolate
- * @returns {string}
- */
+/** Interpolate {param} placeholders. */
 function interpolate(str, params = {}) {
   if (!str || typeof str !== 'string') return str;
 

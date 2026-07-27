@@ -195,12 +195,8 @@
     return m;
   });
 
-  // Effective expanded set used for visibility. When a label or title
-  // filter is active, ancestors of every match are virtually expanded so
-  // the user actually sees their hits — but `expandedIds` itself is not
-  // mutated, so the user's saved collapse state returns once the filter
-  // clears. `visibleIds` already includes ancestors via the existing
-  // path walk in `labelVisibleIds` / `titleMatchIds`.
+  // Filters virtually expand matching ancestors without changing saved collapse
+  // state, which returns when the filter clears.
   let effectiveExpanded = $derived.by(() => {
     if (visibleIds === null) return expandedIds;
     const out = new Set(expandedIds);
@@ -217,14 +213,8 @@
     return false;
   }
 
-  // The rows that actually get a DOM node. Previously every page rendered
-  // an <li> and collapsed / filtered-out subtrees were only display:none,
-  // so 1000+ pages meant 1000+ live DOM nodes regardless of expand state.
-  // By filtering to the visible set here, collapsed subtrees and
-  // filter-excluded rows are never added to the DOM at all — the row count
-  // tracks what's on screen, not the workspace total. DnD wiring
-  // (querySelectorAll('[data-page-row]')) only ever sees these rows, which
-  // is correct: you can only drag/drop rows that are rendered.
+  // Render only visible rows, avoiding hidden subtree DOM nodes and ensuring
+  // drag/drop sees only draggable rows.
   let visibleRows = $derived.by(() => {
     const out = [];
     for (const page of pages) {

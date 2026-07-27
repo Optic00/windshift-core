@@ -27,19 +27,11 @@
   import { mergePageUpdate } from './pageState.js';
   import { agentRuns } from '../../stores/agentRuns.svelte.js';
 
-  /**
-   * Workspace knowledge-pages view: right pane only (the tree + new-page
-   * + actions live in PagesNavSidebar, which replaces the workspace
-   * sidebar while the user is on a /pages route). Owns the title +
-   * Markdown editor and the toolbar's `...` menu. Saves auto-flush on
-   * a short debounce — there is no explicit Save button.
-   */
+  /** Right-pane knowledge-page editor with sidebar-owned tree/actions and
+   * debounced autosave instead of an explicit Save button. */
   let { workspaceId, pageId = null } = $props();
 
-  // Wait this long after the last keystroke before pushing the save.
-  // 1.2s is long enough to coalesce a burst of typing into a single
-  // request but short enough that a user who alt-tabs mid-sentence
-  // won't lose noticeable work.
+  // Coalesce typing without noticeably delaying autosave.
   const AUTOSAVE_DEBOUNCE_MS = 1200;
 
   let selectedId = $state(null);

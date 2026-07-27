@@ -113,26 +113,16 @@ type RunTrigger struct {
 	// AuthorID is the user who wrote the triggering comment (0 if none).
 	AuthorID int `json:"author_id,omitempty"`
 
-	// Continuation target. When ContinueHeadBranch is set the run does NOT cut a
-	// fresh agent-runs/run-{id} branch: it checks out this existing PR head
-	// branch and pushes commits back to it, so the existing PR grows rather than
-	// a competing one opening (review-iteration, resume, build-on-another-agent's
-	// PR — all the same mechanism). ContinuePRNumber/ContinueRepoSlug identify the
-	// PR for the post-run hook (which comments instead of opening a PR) and for
-	// the SCM-comment poller's per-PR idempotency. The head branch is resolved
-	// once when the trigger is built and persisted here, so both the local and
-	// remote (queue→claim) paths read it without another SCM round-trip.
+	// Continuations reuse the resolved PR head branch, so runs extend rather than
+	// compete with its PR. Persisted PR fields support post-run comments and
+	// poller idempotency across local and remote claim paths.
 	ContinuePRNumber   int    `json:"continue_pr_number,omitempty"`
 	ContinueRepoSlug   string `json:"continue_repo_slug,omitempty"`
 	ContinueHeadBranch string `json:"continue_head_branch,omitempty"`
-	// ContinueCommentID is the SCM (not Windshift) comment id that triggered a
-	// poller-driven continuation, 0 otherwise. Persisted so the poller's
-	// per-comment idempotency survives restarts and never re-fires the same
-	// comment. Distinct from CommentID, which is a Windshift comment.
+	// ContinueCommentID is the SCM trigger comment, persisted for restart-safe
+	// poller idempotency and distinct from Windshift CommentID.
 	ContinueCommentID int64 `json:"continue_comment_id,omitempty"`
-	// ContinueEventID is the durable agent_pr_review_events row that admitted
-	// this continuation. It lets the post-run hook deliver exactly one terminal
-	// PR response and lets polling/webhooks deduplicate through the same ledger.
+	// ContinueEventID provides one terminal PR response and shared deduplication.
 	ContinueEventID int64 `json:"continue_event_id,omitempty"`
 }
 

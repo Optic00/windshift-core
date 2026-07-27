@@ -9,36 +9,15 @@ import (
 	"windshift/internal/sanitize"
 )
 
-// ValidateAndNormalizeCustomFieldValues vets a cfv map against the
-// current custom_fields schema:
-//
-//   - For select fields: value must be a numeric id that exists in the
-//     field's option set. String-encoded numbers are accepted (e.g. "3").
-//   - For multiselect fields: value must be an array; each element must
-//     be a known option id. Duplicate ids are removed (order-preserving).
-//   - For text/textarea fields: string values are run through the
-//     sanitize policies (PlainTextField / RichText — matching how the
-//     frontend renders them) so unbounded or HTML-bearing payloads never
-//     reach the database.
-//   - For other field types: values are left untouched.
-//   - cfv keys that do not match an existing custom field are left
-//     untouched — they accumulate harmlessly until the async cleanup job
-//     (see scheduler.CFVCleanupScheduler) runs.
-//
-// The function mutates the cfv map in place and returns a ValidationError
-// on the first invalid value it finds (so the caller's 400 response
-// surfaces a clear, single problem).
-//
-// This is the single source of truth for cfv shape on writes — both the
-// items create handler and the update validator route through it.
+// ValidateAndNormalizeCustomFieldValues mutates CFV values to match field
+// definitions. It validates choices, deduplicates multiselects, sanitizes text,
+// and returns the first invalid value; unknown keys await async cleanup.
 func ValidateAndNormalizeCustomFieldValues(db database.Database, cfv map[string]interface{}) error {
 	if len(cfv) == 0 {
 		return nil
 	}
 
-	// Bulk-load every custom field referenced by the cfv map. Single query
-	// keeps the validation O(1) round-trip regardless of how many fields
-	// the cfv touches.
+	// Load referenced fields in one query.
 	fields, err := loadFieldsForCFV(db, cfv)
 	if err != nil {
 		return fmt.Errorf("load custom fields for validation: %w", err)
@@ -47,9 +26,7 @@ func ValidateAndNormalizeCustomFieldValues(db database.Database, cfv map[string]
 	for fieldKey, raw := range cfv {
 		def, ok := fields[fieldKey]
 		if !ok {
-			// Unknown field id — left in cfv. The async cleanup
-			// scheduler is responsible for removing these so this
-			// path stays cheap on the hot write path.
+			// Unknown keys are removed asynchronously.
 			continue
 		}
 		switch def.FieldType {
@@ -70,11 +47,7 @@ func ValidateAndNormalizeCustomFieldValues(db database.Database, cfv map[string]
 	return nil
 }
 
-// SanitizeCustomFieldTextValues runs only the text/textarea sanitize
-// pass over a cfv map, mutating it in place. For write paths that
-// bypass ValidateAndNormalizeCustomFieldValues because their values
-// were already shape-checked elsewhere (forms/portal request-type
-// submissions) but still carry raw user text.
+// SanitizeCustomFieldTextValues sanitizes text fields for prevalidated writes.
 func SanitizeCustomFieldTextValues(db database.Database, cfv map[string]interface{}) error {
 	if len(cfv) == 0 {
 		return nil
@@ -96,12 +69,7 @@ func SanitizeCustomFieldTextValues(db database.Database, cfv map[string]interfac
 	return nil
 }
 
-// CustomFieldTypes resolves the field_type for each numeric cfv key that
-// matches an existing custom field definition, using the same bulk loader
-// the validators use. Keys without a matching definition are absent from
-// the result. Lets write paths branch on field type (e.g. to pre-shape a
-// multiselect value, or to leave text/textarea entries to the type-correct
-// sanitize pass) without duplicating the definitions query.
+// CustomFieldTypes bulk-resolves field types for known numeric CFV keys.
 func CustomFieldTypes(db database.Database, cfv map[string]interface{}) (map[string]string, error) {
 	fields, err := loadFieldsForCFV(db, cfv)
 	if err != nil {
@@ -114,11 +82,7 @@ func CustomFieldTypes(db database.Database, cfv map[string]interface{}) (map[str
 	return types, nil
 }
 
-// sanitizeTextValue applies the rendering-matched sanitize policy to a
-// text/textarea custom-field value: PlainTextField for single-line text
-// (rendered inline in cards / detail rows), RichText for textarea
-// (multi-line body content). Non-string values pass through untouched —
-// type-shape enforcement is not this function's job.
+// sanitizeTextValue applies the matching text policy; non-strings pass through.
 func sanitizeTextValue(fieldType string, raw interface{}) interface{} {
 	s, ok := raw.(string)
 	if !ok {
@@ -204,10 +168,7 @@ func validateSelectValue(fieldKey string, def *models.CustomFieldDefinition, raw
 	return nil
 }
 
-// validateAndDedupeMultiselect insists raw is an array (or a single value
-// the JSON decoder turned into a non-array). It checks every element
-// against the option set and returns a new []int containing each accepted
-// id at most once, preserving first-seen order.
+// validateAndDedupeMultiselect validates option IDs and preserves first-seen order.
 func validateAndDedupeMultiselect(fieldKey string, def *models.CustomFieldDefinition, raw interface{}) ([]int, error) {
 	if raw == nil {
 		return nil, nil
@@ -263,10 +224,7 @@ func optionIDSet(def *models.CustomFieldDefinition) (map[int]bool, error) {
 	return set, nil
 }
 
-// coerceOptionID accepts the option-id forms JSON can produce: float64
-// (from JSON numbers), int (from Go-side construction), and numeric
-// strings (legacy clients). Returns false for any other type so the
-// caller can reject the request with a clear message.
+// coerceOptionID accepts JSON numbers, Go ints, and legacy numeric strings.
 func coerceOptionID(v interface{}) (int, bool) {
 	switch x := v.(type) {
 	case float64:
@@ -285,10 +243,7 @@ func coerceOptionID(v interface{}) (int, bool) {
 	return 0, false
 }
 
-// coerceToSlice tolerates the two JSON-decoded array shapes the caller
-// might pass: []interface{} (from json.Unmarshal of a JSON array) and
-// []int (rare, from Go-side construction in tests). Anything else is an
-// error.
+// coerceToSlice accepts JSON-decoded arrays and Go-side []int values.
 func coerceToSlice(v interface{}) ([]interface{}, error) {
 	switch x := v.(type) {
 	case []interface{}:

@@ -28,13 +28,8 @@
     return item[field] ?? null;
   }
 
-  // InlineFieldEditor only ever wraps simple string/date/select edits whose
-  // payload is `{ [field]: value }` (or a custom_field_values merge). Field-
-  // specific orchestration (status transitions, optimistic updates, edit
-  // lifecycle, joined display names) lives in itemDetailStore.saveField for
-  // the sidebar and in ListCellRenderer.handleItemUpdate for inline pickers.
-  // Keep this component a thin pass-through and don't reintroduce a
-  // field-mapping switch here.
+  // Keep simple field/custom-value updates here; field-specific orchestration
+  // belongs to itemDetailStore and ListCellRenderer.
   async function handleSave(detail) {
     const { value } = detail;
     if (saving) return;

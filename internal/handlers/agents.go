@@ -168,31 +168,14 @@ func (h *AgentHandler) CreateOwnedAgent(ownerID int, isAdmin bool, req CreateAge
 // provisioning is non-zero.
 var ErrOAuthClientDisabledOrMissing = errors.New("oauth client is disabled or does not exist")
 
-// CreateOAuthAgent provisions an agent that's bound 1:1 to an OAuth client
-// for a given user. Distinct from CreateOwnedAgent because:
-//
-//   - It does NOT consult `allow_user_managed_agents` — that policy gates
-//     the human-facing "create agent" UI and CLI onboarding, neither of
-//     which the OAuth flow is. Conflating the two meant non-admin OAuth
-//     would fail entirely on instances where the policy was disabled, while
-//     admin OAuth bypassed the policy silently — privilege-dependent
-//     behavior that defeated the policy's intent.
-//   - It does NOT consult `max_agents_per_user`. OAuth agents are 1:1 per
-//     (client, user); the natural bound is enabled_oauth_clients × users,
-//     and a per-user cap would silently break the Nth OAuth integration.
-//   - It writes `agent_provenance = 'oauth'` and `oauth_client_id =
-//     oauthClientID`. Together with the schema CHECK constraints, this
-//     means the only way a user row can claim oauth-provenance is via this
-//     code path against a real, enabled client — direct SQL or future code
-//     paths can't forge the label.
+// CreateOAuthAgent provisions one OAuth-provenance agent per client and user.
+// It bypasses self-service limits but requires an enabled client.
 func (h *AgentHandler) CreateOAuthAgent(ownerID, oauthClientID int, req CreateAgentRequest) (*models.User, error) {
 	if err := utils.Validate(req); err != nil {
 		return nil, fmt.Errorf("invalid agent request: %w", err)
 	}
 
-	// Defense in depth: re-confirm the client exists and is enabled. The
-	// OAuth flow already verified this at code-exchange time but a
-	// disable-then-approve race is possible.
+	// Recheck the client to close a disable-after-consent race.
 	var enabled bool
 	err := h.db.QueryRow(`SELECT enabled FROM oauth_clients WHERE id = ?`, oauthClientID).Scan(&enabled)
 	if errors.Is(err, sql.ErrNoRows) {

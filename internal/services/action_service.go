@@ -36,11 +36,8 @@ type LLMConnectionResolver interface {
 	Resolve(connectionID int) (llm.Client, error)
 }
 
-// AssetSetPermissionChecker checks per-asset-set RBAC. Asset sets have their
-// own role-based permission model independent of workspace membership, so a
-// workspace admin is NOT automatically allowed to write into an asset set.
-// Permission keys are the strings used by handlers/asset_handler.go:
-// "asset.view", "asset.create", "asset.edit", etc.
+// AssetSetPermissionChecker enforces asset-set RBAC, which is independent of
+// workspace membership.
 type AssetSetPermissionChecker interface {
 	HasAssetSetPermission(userID, setID int, permissionKey string) (bool, error)
 }
@@ -741,11 +738,7 @@ func (as *ActionService) executeAction(action *models.Action, event *models.Acti
 		log.EffectiveActorUserID = &effectiveActorID
 	}
 
-	// SCM lifecycle triggers (PR linked/merged) are emitted by the background
-	// sync loop and have no authenticated human actor. Without an override
-	// the action cannot perform workspace mutations, so fail fast with a
-	// clear audit message instead of letting permission checks reject it
-	// opaquely downstream.
+	// SCM sync triggers need an actor override for workspace mutations.
 	if (action.TriggerType == models.ActionTriggerSCMPRLinked || action.TriggerType == models.ActionTriggerSCMPRMerged) && effectiveActorID <= 0 {
 		log.Status = models.ActionStatusFailed
 		log.ErrorMessage = "SCM trigger requires an actor_user_id override because the sync loop has no authenticated user"
@@ -1438,11 +1431,7 @@ func (as *ActionService) executeSetFieldCustom(ctx *models.ExecutionContext, ste
 		return err
 	}
 
-	// Substituted variables can carry user content — route the value
-	// through the WI-319 choke point before persisting: select/multiselect
-	// values are validated against the field's option set and text/textarea
-	// values sanitized (same path as the interactive item write surfaces).
-	// A validation failure fails this node instead of writing the raw value.
+	// Validate options and sanitize substituted user content before persisting.
 	fieldKey := strconv.Itoa(config.CustomFieldID)
 	cfv := map[string]interface{}{fieldKey: value}
 	fieldTypes, err := validation.CustomFieldTypes(as.db, cfv)
@@ -1533,12 +1522,8 @@ func parseActionMultiselectValue(value string) interface{} {
 	return out
 }
 
-// executeSetStatus executes a set_status node. The transition is routed
-// through WorkflowService.PerformTransition so workflow validity is enforced
-// and history is recorded. Condition-mode / validator-mode rules are still
-// skipped here — the effective actor's workspace-level item.edit permission
-// is the authorization gate; transition condition rules are a separate
-// user-interaction concern that doesn't apply to automation.
+// executeSetStatus uses WorkflowService for validity and history. Automations
+// skip interaction conditions but require the effective actor's item.edit access.
 func (as *ActionService) executeSetStatus(node *models.ActionNode, ctx *models.ExecutionContext, stepResult *models.StepResult) error {
 	var config models.SetStatusNodeConfig
 	if err := json.Unmarshal([]byte(node.NodeConfig), &config); err != nil {
@@ -1610,11 +1595,8 @@ func (as *ActionService) executeSetStatusID(statusID int, ctx *models.ExecutionC
 	return nil
 }
 
-// executeTransitionItem transitions whichever item is currently in the
-// execution context (set by an iterator like related_items, or falling back
-// to the trigger event's item). Permission failures and already-matching
-// statuses are recorded as skips rather than errors so an iterator's other
-// items still get processed.
+// executeTransitionItem uses the iterator item or trigger item. Skips do not
+// abort remaining iterator items.
 func (as *ActionService) executeTransitionItem(node *models.ActionNode, ctx *models.ExecutionContext, stepResult *models.StepResult) error {
 	var config models.TransitionItemNodeConfig
 	if err := json.Unmarshal([]byte(node.NodeConfig), &config); err != nil {
@@ -2051,12 +2033,8 @@ func (as *ActionService) evaluateCondition(value interface{}, operator, compareV
 	}
 }
 
-// compareNumericOrString applies numCmp when BOTH sides parse as float, strCmp
-// when NEITHER side does, and returns false on a mixed numeric/non-numeric pair.
-// The mixed case used to fall through to lexicographic compare, which made
-// `evaluateCondition("high", "gt", "5")` return true (because 'h' > '5'
-// lexically) — a silent wrong answer for templates whose numeric custom field
-// happens to hold a label.
+// compareNumericOrString compares only homogeneous numeric or string pairs;
+// mixed pairs are false to avoid misleading lexical comparisons.
 func compareNumericOrString(a, b string, numCmp func(float64, float64) bool, strCmp func(string, string) bool) bool {
 	aNum, aErr := strconv.ParseFloat(a, 64)
 	bNum, bErr := strconv.ParseFloat(b, 64)
@@ -2153,12 +2131,8 @@ func (as *ActionService) cleanupActionContainers(results []models.StepResult) {
 	}
 }
 
-// authorizeAssetMutation enforces asset-set RBAC before a create_asset /
-// update_asset node writes. The actor is the effective actor (see
-// ExecutionContext.EffectiveActorID) — either the action's configured actor
-// override or the triggering user. An actor of 0 (no user context) is denied
-// because we cannot prove authority. If no permission checker is wired, the
-// check is refused closed rather than silently skipped.
+// authorizeAssetMutation requires an identified effective actor and asset-set
+// RBAC, failing closed when authorization is unavailable.
 func (as *ActionService) authorizeAssetMutation(actorUserID, setID int, permissionKey string) error {
 	if actorUserID <= 0 {
 		return fmt.Errorf("asset mutation requires an identified actor (set %d)", setID)
@@ -2176,11 +2150,8 @@ func (as *ActionService) authorizeAssetMutation(actorUserID, setID int, permissi
 	return nil
 }
 
-// authorizeWorkspaceMutation enforces workspace-scoped RBAC before a node
-// mutates items. The effective actor must hold the given permission on the
-// target workspace. If no permission service is wired, the check is refused
-// closed rather than silently skipped — the alternative would let an
-// impersonated identity take actions it could not perform interactively.
+// authorizeWorkspaceMutation requires effective-actor workspace access and
+// fails closed when authorization is unavailable.
 func (as *ActionService) authorizeWorkspaceMutation(actorUserID, workspaceID int, permissionKey string) error {
 	if actorUserID <= 0 {
 		return fmt.Errorf("workspace mutation requires an identified actor (workspace %d)", workspaceID)
@@ -2689,13 +2660,8 @@ func (as *ActionService) ExecuteActionManually(action *models.Action, itemID, ac
 	return nil
 }
 
-// resolveCapability fetches and validates a capability by ID for the given
-// workspace. Beyond the existence + enabled + type checks, it gates access on
-// the capability's workspace scope: capabilities with applies_to_all_workspaces
-// can be used anywhere, otherwise the workspace must appear in the
-// action_capability_workspaces join table. workspaceID == 0 disables the
-// scope gate (used for admin-side hand-resolution); production callers always
-// pass the executing action's workspace.
+// resolveCapability requires an enabled matching type and workspace scope.
+// workspaceID zero bypasses scope only for admin-side resolution.
 func (as *ActionService) resolveCapability(workspaceID, capabilityID int, expectedType models.CapabilityType) (*models.ActionCapability, error) {
 	capability, err := as.repo.GetCapabilityByID(capabilityID)
 	if err != nil {
@@ -2835,10 +2801,7 @@ func (as *ActionService) executeAIAgent(node *models.ActionNode, ctx *models.Exe
 	}
 	userMessage := strings.Join(inputParts, "\n\n")
 
-	// Prepend the untrusted-input guardrail so action authors don't need to
-	// remember to include it themselves. Do not substitute execution variables
-	// into the system prompt: item/comment/HTTP fields are untrusted and must
-	// stay in the wrapped user-message input fields, not be promoted to system.
+	// Keep untrusted execution values in wrapped user input, never system prompts.
 	systemPrompt := aiAgentUntrustedInputGuardrail + "\n\n" + config.Prompt
 
 	// Build tool definitions from referenced capabilities. Each tool capability
@@ -3209,21 +3172,9 @@ func (as *ActionService) executeHTTPRequest(node *models.ActionNode, ctx *models
 	return nil
 }
 
-// buildHTTPHeadersWithCredentials resolves all credential references on an
-// http_client capability and returns the final request headers map ready to
-// pass into doHTTPRequest. Layering order (later wins):
-//  1. capability.DefaultHeaders (non-sensitive literals)
-//  2. capability.Auth (decrypts the referenced credential, applies scheme)
-//  3. capability.SecretHeaderRefs (per-header credential lookups)
-//  4. caller-supplied per-request headers (the action node's Headers map, or
-//     the agent tool's headers arg), except that they may not override a
-//     credential-backed header
-//
-// Sensitive caller-supplied header names are rejected here — node validation
-// is the primary gate, but the runtime double-checks so a future code path
-// that bypasses validation can't slip a raw token through.
-//
-// Returns a freshly allocated map so caller-side header maps are not mutated.
+// buildHTTPHeadersWithCredentials merges defaults, auth, credential references,
+// then caller headers. Caller headers cannot override credential-backed fields or
+// supply sensitive names; the returned map never mutates caller input.
 func (as *ActionService) buildHTTPHeadersWithCredentials(ctx context.Context, httpConfig *models.HTTPClientConfig, callerHeaders map[string]string, workspaceID, capabilityID int) (map[string]string, error) {
 	merged := make(map[string]string, len(httpConfig.DefaultHeaders)+len(callerHeaders)+len(httpConfig.SecretHeaderRefs)+1)
 	headerKeys := make(map[string]string, len(httpConfig.DefaultHeaders)+len(callerHeaders)+len(httpConfig.SecretHeaderRefs)+1)
@@ -3249,12 +3200,9 @@ func (as *ActionService) buildHTTPHeadersWithCredentials(ctx context.Context, ht
 		return nil
 	}
 
-	// 1) default headers (non-sensitive literals).
 	for k, v := range httpConfig.DefaultHeaders {
 		if models.IsSensitiveHeaderName(k) {
-			// Validation should have caught this at save time. Drop silently
-			// at runtime as a belt-and-suspenders guard rather than letting
-			// a legacy inline token slip out.
+			// Runtime defense for legacy inline secrets.
 			continue
 		}
 		if err := setHeader(k, v, true); err != nil {
@@ -3262,7 +3210,6 @@ func (as *ActionService) buildHTTPHeadersWithCredentials(ctx context.Context, ht
 		}
 	}
 
-	// 2) auth ref.
 	if httpConfig.Auth != nil && httpConfig.Auth.CredentialID > 0 {
 		if as.credentialService == nil {
 			return nil, fmt.Errorf("http capability %d references a credential but no credential service is wired", capabilityID)
@@ -3392,12 +3339,8 @@ func matchURLPattern(rawURL, pattern string) bool {
 	return matched
 }
 
-// doHTTPRequest performs an HTTP request with the given parameters.
-// allowedPatterns is the URL allowlist from the caller's capability — it is
-// re-checked on every redirect hop to prevent a compliant initial URL from
-// bouncing to an arbitrary target. A scoped http.Client with a dialer that
-// rejects loopback / private / link-local addresses also defends against DNS
-// rebinding to internal services (169.254.169.254, 127.0.0.1, etc.).
+// doHTTPRequest enforces the URL allowlist on every redirect and blocks
+// loopback, private, and link-local destinations to prevent SSRF and rebinding.
 func doHTTPRequest(ctx context.Context, method, targetURL, body string, headers, defaultHeaders map[string]string, timeoutSecs int, allowedPatterns []string) (string, error) {
 	if timeoutSecs <= 0 {
 		timeoutSecs = 30
@@ -3447,10 +3390,7 @@ func doHTTPRequest(ctx context.Context, method, targetURL, body string, headers,
 // errDisallowedRedirect is returned when a redirect targets a URL outside the allowlist.
 var errDisallowedRedirect = errors.New("redirect URL not in allowlist")
 
-// newSSRFSafeClient returns an http.Client configured for server-side requests
-// to admin-allowed URLs: it enforces the allowlist on every redirect and blocks
-// dials to loopback/private/link-local addresses so a DNS record that resolves
-// to 127.0.0.1 or 169.254.169.254 cannot be used to pivot internally.
+// newSSRFSafeClient enforces redirect allowlists and public-only destinations.
 func newSSRFSafeClient(timeout time.Duration, allowedPatterns []string) *http.Client {
 	dialer := &net.Dialer{
 		Timeout:   10 * time.Second,

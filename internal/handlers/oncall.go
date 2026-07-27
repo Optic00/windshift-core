@@ -13,9 +13,7 @@ import (
 	"windshift/internal/services"
 )
 
-// sanitizeScheduleRequest scrubs the user-facing fields on a schedule
-// payload. Name + Description render in oncall directories + rotation
-// pickers; Timezone is the IANA zone identifier.
+// sanitizeScheduleRequest sanitizes schedule fields.
 func sanitizeScheduleRequest(req *models.OnCallScheduleRequest) {
 	sanitize.ApplyAll(
 		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
@@ -24,9 +22,7 @@ func sanitizeScheduleRequest(req *models.OnCallScheduleRequest) {
 	)
 }
 
-// sanitizeLayerRequest scrubs the rotation-layer payload. Name labels
-// the layer in the rotation editor; rotation_type and handoff_time are
-// short identifier-shaped strings.
+// sanitizeLayerRequest sanitizes rotation-layer fields.
 func sanitizeLayerRequest(req *models.OnCallScheduleLayerRequest) {
 	sanitize.ApplyAll(
 		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
@@ -39,8 +35,7 @@ func sanitizeLayerRequest(req *models.OnCallScheduleLayerRequest) {
 	}
 }
 
-// sanitizeEscalationPolicy scrubs the policy payload. Name + Description
-// render in policy directories + the escalation chain editor.
+// sanitizeEscalationPolicy sanitizes escalation-policy fields.
 func sanitizeEscalationPolicy(req *models.OnCallEscalationPolicyRequest) {
 	sanitize.ApplyAll(
 		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
@@ -48,7 +43,6 @@ func sanitizeEscalationPolicy(req *models.OnCallEscalationPolicyRequest) {
 	)
 }
 
-// OnCallHandler handles HTTP requests for on-call schedule management
 type OnCallHandler struct {
 	onCallRepo        *repository.OnCallRepository
 	teamRepo          *repository.TeamRepository
@@ -56,7 +50,6 @@ type OnCallHandler struct {
 	permissionService *services.PermissionService
 }
 
-// NewOnCallHandler creates a new on-call handler
 func NewOnCallHandler(onCallRepo *repository.OnCallRepository, teamRepo *repository.TeamRepository, onCallService *services.OnCallService, permissionService *services.PermissionService) *OnCallHandler {
 	return &OnCallHandler{
 		onCallRepo:        onCallRepo,
@@ -66,8 +59,7 @@ func NewOnCallHandler(onCallRepo *repository.OnCallRepository, teamRepo *reposit
 	}
 }
 
-// canManageTeamOnCall checks whether the current user can manage on-call for the given team.
-// Returns true if the user has global teams.manage permission or is a team admin.
+// canManageTeamOnCall permits global team managers and team admins.
 func (h *OnCallHandler) canManageTeamOnCall(w http.ResponseWriter, r *http.Request, teamID int) bool {
 	user, ok := RequireAuth(w, r)
 	if !ok {
@@ -89,10 +81,7 @@ func (h *OnCallHandler) canManageTeamOnCall(w http.ResponseWriter, r *http.Reque
 	return false
 }
 
-// canViewTeamOnCall is the read-side counterpart of canManageTeamOnCall.
-// Permits anyone who can manage the team plus any direct or group-resolved
-// team member. Used to gate read-only on-call info that would otherwise leak
-// names/emails of team members across team boundaries.
+// canViewTeamOnCall permits managers and team members to view roster data.
 func (h *OnCallHandler) canViewTeamOnCall(w http.ResponseWriter, r *http.Request, teamID int) bool {
 	user, ok := RequireAuth(w, r)
 	if !ok {
@@ -110,9 +99,7 @@ func (h *OnCallHandler) canViewTeamOnCall(w http.ResponseWriter, r *http.Request
 	return false
 }
 
-// hasTeamOnCallViewAccess performs the read permission check without writing a
-// response, allowing schedule listings to omit current assignments for users
-// who could previously see schedule metadata but not the current roster.
+// hasTeamOnCallViewAccess checks roster access without writing a response.
 func (h *OnCallHandler) hasTeamOnCallViewAccess(userID, teamID int) (bool, error) {
 	hasGlobal, err := h.permissionService.HasGlobalPermission(userID, models.PermissionTeamsManage)
 	if err == nil && hasGlobal {
@@ -132,9 +119,7 @@ func (h *OnCallHandler) hasTeamOnCallViewAccess(userID, teamID int) (bool, error
 	return isMember, nil
 }
 
-// resolveSchedule parses a schedule ID from the URL parameter named paramName,
-// fetches the schedule, checks manage permission, and writes the appropriate
-// HTTP error when anything fails. Returns the schedule and true on success.
+// resolveSchedule loads and authorizes management of a schedule.
 func (h *OnCallHandler) resolveSchedule(w http.ResponseWriter, r *http.Request, paramName string) (*models.OnCallSchedule, bool) {
 	id, ok := requireIDParam(w, r, paramName)
 	if !ok {
@@ -158,12 +143,8 @@ func (h *OnCallHandler) resolveSchedule(w http.ResponseWriter, r *http.Request, 
 	return schedule, true
 }
 
-// resolveLayerForSchedule parses a layer ID from the URL parameter named
-// paramName and verifies the layer belongs to the given schedule. Callers must
-// have already authorized management of that schedule via resolveSchedule.
-// Returns the layer ID and true on success; on a missing or foreign layer it
-// writes 404 (never revealing that the layer exists under another schedule) and
-// returns false.
+// resolveLayerForSchedule verifies a layer belongs to an authorized schedule.
+// Foreign layers return 404 to avoid disclosing their existence.
 func (h *OnCallHandler) resolveLayerForSchedule(w http.ResponseWriter, r *http.Request, paramName string, schedule *models.OnCallSchedule) (int, bool) {
 	layerID, ok := requireIDParam(w, r, paramName)
 	if !ok {
@@ -181,9 +162,6 @@ func (h *OnCallHandler) resolveLayerForSchedule(w http.ResponseWriter, r *http.R
 	}
 
 	if layer.ScheduleID != schedule.ID {
-		// The layer exists but belongs to a different schedule the caller may
-		// not manage. Return 404 rather than 403 to avoid confirming its
-		// existence across the team boundary.
 		respondNotFound(w, r, "Layer")
 		return 0, false
 	}
@@ -191,10 +169,7 @@ func (h *OnCallHandler) resolveLayerForSchedule(w http.ResponseWriter, r *http.R
 	return layerID, true
 }
 
-// resolvePolicy parses an escalation-policy ID from the URL parameter named
-// paramName, fetches the policy, checks manage permission, and writes the
-// appropriate HTTP error when anything fails. Returns the policy and true on
-// success.
+// resolvePolicy loads and authorizes management of an escalation policy.
 func (h *OnCallHandler) resolvePolicy(w http.ResponseWriter, r *http.Request, paramName string) (*models.OnCallEscalationPolicy, bool) {
 	id, ok := requireIDParam(w, r, paramName)
 	if !ok {
@@ -218,9 +193,7 @@ func (h *OnCallHandler) resolvePolicy(w http.ResponseWriter, r *http.Request, pa
 	return policy, true
 }
 
-// validateScheduleRequest checks that required fields on an OnCallScheduleRequest
-// are present. It writes a validation error response and returns false when a
-// check fails.
+// validateScheduleRequest validates required schedule fields.
 func validateScheduleRequest(w http.ResponseWriter, r *http.Request, req models.OnCallScheduleRequest) bool {
 	if strings.TrimSpace(req.Name) == "" {
 		respondValidationError(w, r, "name is required")
@@ -232,10 +205,6 @@ func validateScheduleRequest(w http.ResponseWriter, r *http.Request, req models.
 	}
 	return true
 }
-
-// ---------------------------------------------------------------------------
-// Schedule CRUD
-// ---------------------------------------------------------------------------
 
 // ListSchedules returns all on-call schedules for a team.
 func (h *OnCallHandler) ListSchedules(w http.ResponseWriter, r *http.Request) {
@@ -386,10 +355,6 @@ func (h *OnCallHandler) DeleteSchedule(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// ---------------------------------------------------------------------------
-// Layer Management
-// ---------------------------------------------------------------------------
-
 // AddLayer adds a rotation layer to a schedule.
 func (h *OnCallHandler) AddLayer(w http.ResponseWriter, r *http.Request) {
 	schedule, ok := h.resolveSchedule(w, r, "id")
@@ -497,15 +462,8 @@ func (h *OnCallHandler) SetLayerMembers(w http.ResponseWriter, r *http.Request) 
 	respondJSONOK(w, map[string]string{"status": "ok"})
 }
 
-// ---------------------------------------------------------------------------
-// Overrides
-// ---------------------------------------------------------------------------
-
 // CreateOverride creates a manual override for a schedule.
 func (h *OnCallHandler) CreateOverride(w http.ResponseWriter, r *http.Request) {
-	// resolveSchedule both fetches the schedule by URL id and gates on
-	// canManageTeamOnCall — i.e. the caller must hold global teams.manage
-	// or be a team-admin on the schedule's team.
 	schedule, ok := h.resolveSchedule(w, r, "id")
 	if !ok {
 		return
@@ -520,9 +478,7 @@ func (h *OnCallHandler) CreateOverride(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Reason renders on the schedule timeline + audit log. StartTime/
-	// EndTime are ISO 8601 (identifier-shaped); the time.Parse below
-	// rejects anything malformed.
+	// Timestamp fields are sanitized before RFC3339 validation.
 	sanitize.ApplyAll(
 		sanitize.Pair{Target: &req.Reason, Policy: sanitize.RichText},
 		sanitize.Pair{Target: &req.StartTime, Policy: sanitize.ShortIdentifier},
@@ -549,10 +505,7 @@ func (h *OnCallHandler) CreateOverride(w http.ResponseWriter, r *http.Request) {
 	respondJSONCreated(w, map[string]int{"id": id})
 }
 
-// DeleteOverride removes a schedule override. Permission gate: load the
-// override's parent schedule and require canManageTeamOnCall on its team.
-// This is the only handler that takes an override id directly (no schedule
-// id in the URL), so we look the override up to find the team.
+// DeleteOverride authorizes against the override's parent schedule.
 func (h *OnCallHandler) DeleteOverride(w http.ResponseWriter, r *http.Request) {
 	if _, ok := RequireAuth(w, r); !ok {
 		return
@@ -589,14 +542,7 @@ func (h *OnCallHandler) DeleteOverride(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// ---------------------------------------------------------------------------
-// Current On-Call
-// ---------------------------------------------------------------------------
-
-// GetCurrentOnCall returns who is currently on call for a schedule.
-// Read-side gate: any team member (direct or via a mapped group) plus the
-// usual manage path. Without this gate any authenticated user could
-// enumerate the on-call roster (names + emails) for any team in the org.
+// GetCurrentOnCall returns a schedule's roster to authorized team members.
 func (h *OnCallHandler) GetCurrentOnCall(w http.ResponseWriter, r *http.Request) {
 	scheduleID, ok := requireIDParam(w, r, "id")
 	if !ok {
@@ -626,15 +572,7 @@ func (h *OnCallHandler) GetCurrentOnCall(w http.ResponseWriter, r *http.Request)
 	respondJSONOK(w, result)
 }
 
-// ---------------------------------------------------------------------------
-// Swap Requests
-// ---------------------------------------------------------------------------
-
-// CreateSwapRequest creates a shift swap request between two on-call members.
-// The requester must be a member of the schedule's team (direct or via a
-// mapped group); the target user must also be a member, so a swap can't drag
-// in someone who isn't on the team. Without these gates, any authenticated
-// user could spam swap requests against any team's schedule, naming any user.
+// CreateSwapRequest creates a shift swap between members of one team.
 func (h *OnCallHandler) CreateSwapRequest(w http.ResponseWriter, r *http.Request) {
 	user, ok := RequireAuth(w, r)
 	if !ok {
@@ -656,8 +594,6 @@ func (h *OnCallHandler) CreateSwapRequest(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Requester must be on the team (membership covers both direct and group
-	// members; canViewTeamOnCall accepts admins too).
 	if !h.canViewTeamOnCall(w, r, schedule.TeamID) {
 		return
 	}
@@ -666,23 +602,19 @@ func (h *OnCallHandler) CreateSwapRequest(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	// Both timestamps are ISO 8601 — defensive scrub keeps any HTML
-	// markers out of the validation error echoed back to the caller.
+	// Sanitize timestamps before validation errors can echo them.
 	sanitize.ApplyAll(
 		sanitize.Pair{Target: &req.SwapStart, Policy: sanitize.ShortIdentifier},
 		sanitize.Pair{Target: &req.SwapEnd, Policy: sanitize.ShortIdentifier},
 	)
 
-	// Target user must also be on the team. Otherwise a swap could redirect
-	// on-call to an arbitrary user the team has no relationship with.
 	targetIsMember, err := h.teamRepo.IsTeamMember(schedule.TeamID, req.TargetUserID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
 	if !targetIsMember {
-		// Fall back to admin check in case the swap target is a team admin
-		// without an explicit membership row in the unusual case.
+		// Team admins may not have an explicit membership row.
 		targetIsAdmin, adminErr := h.teamRepo.IsTeamAdmin(schedule.TeamID, req.TargetUserID)
 		if adminErr != nil {
 			respondInternalError(w, r, adminErr)
@@ -766,10 +698,6 @@ func (h *OnCallHandler) RespondSwapRequest(w http.ResponseWriter, r *http.Reques
 
 	respondJSONOK(w, map[string]string{"status": status})
 }
-
-// ---------------------------------------------------------------------------
-// Escalation Policies
-// ---------------------------------------------------------------------------
 
 // ListPolicies returns all escalation policies for a team.
 func (h *OnCallHandler) ListPolicies(w http.ResponseWriter, r *http.Request) {
@@ -919,10 +847,6 @@ func (h *OnCallHandler) SetRules(w http.ResponseWriter, r *http.Request) {
 	respondJSONOK(w, map[string]string{"status": "ok"})
 }
 
-// ---------------------------------------------------------------------------
-// Incidents
-// ---------------------------------------------------------------------------
-
 // ListIncidents returns active incidents, optionally filtered by policy.
 func (h *OnCallHandler) ListIncidents(w http.ResponseWriter, r *http.Request) {
 	_, ok := RequireAuth(w, r)
@@ -952,11 +876,8 @@ func (h *OnCallHandler) ListIncidents(w http.ResponseWriter, r *http.Request) {
 	respondJSONOK(w, incidents)
 }
 
-// resolveIncidentForManage parses an incident ID from the URL parameter named
-// paramName, loads the incident, resolves its owning team via its escalation
-// policy, and checks manage permission on that team. Returns the incident ID
-// and true on success; writes the appropriate error and returns false
-// otherwise. Uses 404 for a missing incident/policy to avoid leaking existence.
+// resolveIncidentForManage authorizes through the incident's policy team.
+// Missing incidents or policies return 404 to avoid leaking existence.
 func (h *OnCallHandler) resolveIncidentForManage(w http.ResponseWriter, r *http.Request, paramName string) (int, bool) {
 	id, ok := requireIDParam(w, r, paramName)
 	if !ok {

@@ -140,14 +140,8 @@
     return 'var(--ds-text-subtle)';
   }
 
-  // Render one run event as a transcript line, or null to drop it. The runner
-  // wraps the windshift-agent's NDJSON in "stdout" events; the inner payload's
-  // own `type` is the agent's event vocabulary. We surface the canonical final
-  // `message` and tool calls, and DROP the streaming `content` deltas — the
-  // agent emits the final answer both ways (agent.go: content stream + a final
-  // message), so rendering both is what double-printed the reply. Server-level
-  // lifecycle/status events are conveyed by the status badge, not the
-  // transcript.
+  // Render canonical agent messages and tool calls. Drop streaming content
+  // duplicates and lifecycle events, which the status badge already conveys.
   function eventText(ev) {
     if (ev.type === 'lifecycle') return null;
     let payload;
@@ -158,24 +152,24 @@
     }
     switch (payload.type) {
       case 'message':
-        // The canonical final assistant message.
+        // Canonical final assistant message.
         return typeof payload.text === 'string' ? payload.text : null;
       case 'content':
-        // Streaming deltas — duplicate of `message`; drop to avoid doubling.
+        // Duplicate streaming delta.
         return null;
       case 'tool_start':
-        // Show the command compactly: "$ ls -1 /workspace" for bash, else the tool.
+        // Show bash commands compactly; otherwise the tool name.
         return payload.args?.cmd ? `$ ${payload.args.cmd}` : `→ ${payload.tool || 'tool'}`;
       case 'tool_done':
-        return null; // output is large + already implied by the next message
+        return null; // Large output is implied by the next message.
       case 'error':
         return payload.message ? `⚠ ${payload.message}` : null;
       case 'lifecycle':
       case 'starting':
       case 'session_idle':
-        return null; // status-level, not transcript content
+        return null; // Status-level, not transcript content.
       default:
-        // Unknown shape: surface a text/message field if present, else drop.
+        // Surface known text from unknown shapes when available.
         return typeof (payload.text ?? payload.message ?? payload.line) === 'string'
           ? (payload.text ?? payload.message ?? payload.line)
           : null;

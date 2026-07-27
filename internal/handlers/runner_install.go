@@ -35,11 +35,8 @@ func NewRunnerInstallHandler(baseURL string) *RunnerInstallHandler {
 	return &RunnerInstallHandler{baseURL: baseURL}
 }
 
-// runnerImageTag returns the ghcr tag matching this server's build, so the
-// generated install command can never hit the :latest-does-not-exist trap on
-// unreleased mains (WI-309/WI-314). Release builds are stamped vX.Y.Z and the
-// docker workflow publishes the semver tag without the leading v; dev builds
-// fall back to :main, the branch tag that always exists.
+// runnerImageTag uses release semver tags or main for dev builds, avoiding
+// nonexistent latest tags.
 func runnerImageTag() string {
 	if version.Version == "" || version.Version == "dev" {
 		return "main"
@@ -47,13 +44,8 @@ func runnerImageTag() string {
 	return strings.TrimPrefix(version.Version, "v")
 }
 
-// apiBaseURLFor is the public orchestrator base INCLUDING the mandatory /api
-// suffix — the exact WS_API_URL a runner must use. Falls back to the request
-// host when no base URL is configured (any real deployment sits behind TLS).
-// The fallback host is allowlist-validated before being embedded: the script
-// is piped straight into bash, so a forged Host header must not be able to
-// inject shell syntax. Shared with the mint-token endpoint (WI-309), which
-// emits the same URL inside the copy-paste install command.
+// apiBaseURLFor returns WS_API_URL with /api. Host fallback is allowlisted
+// before entering a shell-piped install script and is shared with token minting.
 func apiBaseURLFor(baseURL string, r *http.Request) string {
 	base := strings.TrimRight(baseURL, "/")
 	if base == "" {

@@ -36,33 +36,21 @@
   let isWatching = $state(false);
   let watchBusy = $state(false);
 
-  // Personal-workspace (workflow-less) items get no available status
-  // transitions from the backend, which left the workflow status picker
-  // disabled and made a personal task impossible to complete on the PWA. This
-  // mirrors the PWA's own PersonalView / the desktop personal-task view: a
-  // plain Done checkbox that toggles status_id between Open (1) and Done (3)
-  // via the existing transition endpoint, which already permits any transition
-  // for a workflow-less (personal) workspace. See WI-537.
-  // Statuses are global (workspace-agnostic), so 1/3 are stable ids.
+  // Workflow-less personal tasks use the permitted transition endpoint to toggle
+  // globally stable Open/Done IDs, matching desktop and PWA personal views.
   const PERSONAL_STATUS_OPEN = 1;
   const PERSONAL_STATUS_DONE = 3;
   let personalTaskCount = $state(0);
   let startingTimer = $state(false);
   let children = $state([]);
   let ancestors = $state([]);
-  // Item types one hierarchy level below this item's type — the set allowed as
-  // children. Computed the same way the desktop itemDetailStore does
-  // (#loadItemTypeData). Empty for the lowest level, which hides the
-  // "Add sub-item" affordance (mirrors the desktop's createChild gate).
+  // One-level-deeper item types allowed as children; empty hides Add sub-item.
   let availableSubIssueTypes = $state([]);
   let createChildOpen = $state(false);
-  // Bumped on every itemId change so in-flight loads for a previous item can't
-  // write stale state when the user navigates item → item (e.g. tapping a
-  // sub-item) without the component remounting.
+  // Prevent prior-item loads from writing stale state during in-place navigation.
   let loadToken = 0;
 
-  // The item summary carries only the cheap availability flags for these
-  // panels. SCM bodies and agent logs still mount and load lazily on expand.
+  // Load SCM bodies and agent logs only when their available panels expand.
   let scmAvailable = $state(false);
   let hasAgentRuns = $state(false);
   let scmOpen = $state(false);

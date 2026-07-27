@@ -1,23 +1,6 @@
-// Package actioncatalog is the single source of truth for what kinds of
-// triggers and nodes a workspace-scoped Action can contain. The metadata
-// (label, description, category, iterator flag, output handles) plus a
-// JSON Schema for the node-config struct are registered here and consumed
-// by three different surfaces:
-//
-//   - the v1 REST catalog endpoint (/rest/api/v1/workspaces/{id}/action-catalog),
-//     which agents and external tooling hit to discover what they can build;
-//   - the four MCP / in-app tools in internal/aitools/actions.go, which give
-//     the LLM the same discovery + validate + create flow without going
-//     through HTTP;
-//   - the frontend palette in ActionFlowEditor.svelte, which renders the
-//     server-driven labels and uses the schemas to bootstrap default config
-//     when a node is dropped onto the canvas.
-//
-// The runtime executor (internal/services/action_service.go) still routes
-// on the string node-type, so adding a new node type means (a) defining its
-// constant + config struct in internal/models, (b) registering it here, and
-// (c) wiring its executor branch. The TestNodeTypeCatalogCoverage drift
-// detector in catalog_test.go fails CI when (a) and (b) disagree.
+// Package actioncatalog registers action triggers and nodes for REST, MCP,
+// and the frontend palette. New node types need a model, a registration, and
+// an executor; TestNodeTypeCatalogCoverage detects model/catalog drift.
 package actioncatalog
 
 import (
@@ -29,9 +12,7 @@ import (
 	"windshift/internal/models"
 )
 
-// NodeCategory groups node types into coarse buckets the UI uses to
-// section the palette. The categories are stable strings the frontend can
-// switch on; they're not enums to keep new categories ergonomic to add.
+// NodeCategory groups palette entries.
 const (
 	CategoryFlow        = "flow"        // trigger
 	CategoryMutation    = "mutation"    // set_field, set_status, transition_item, add_comment
@@ -52,14 +33,9 @@ type NodeTypeMetadata struct {
 	Label       string                `json:"label"`
 	Description string                `json:"description"`
 	Category    string                `json:"category"`
-	// ConfigSchema is the JSON Schema document for this node's NodeConfig
-	// JSON blob. Always non-nil — node types whose config is the empty
-	// object get a permissive `{"type":"object"}` schema so clients still
-	// see the shape uniformly.
+	// ConfigSchema is always non-nil, including empty node configs.
 	ConfigSchema *jsonschema.Schema `json:"config_schema"`
-	// IsIterator mirrors ActionNodeType.IsIterator so the frontend can
-	// render iterator-body affordances (drop zones, body containment) off
-	// a single field instead of switching on the type string.
+	// IsIterator enables iterator-body UI affordances.
 	IsIterator bool `json:"is_iterator"`
 	// Outputs lists the edge-source handle names a node emits. For most
 	// nodes this is ["default"]; condition nodes emit ["true", "false"];

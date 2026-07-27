@@ -5,16 +5,8 @@
   import { t } from '../../stores/i18n.svelte.js';
   import LazyMilkdownEditor from '../../editors/LazyMilkdownEditor.svelte';
 
-  /**
-   * Chrome-free, print/PDF-optimized render of a single knowledge page.
-   * Mounted standalone by App.svelte (no app shell / sidebars) on the
-   * `/workspaces/:id/pages/:pageId/print` route — typically opened in a
-   * new tab from the page kebab. Reuses the read-only Milkdown renderer so
-   * fidelity (diagrams, mentions, code highlighting) matches the read view,
-   * then layers smart page-break CSS (see the stylesheet below) so the document flows
-   * cleanly across paper pages. Auto-opens the browser print dialog once
-   * content + diagrams have settled.
-   */
+  /** Standalone print/PDF page preserving read-only Milkdown fidelity and
+   * auto-opening print after content and diagrams settle. */
   let { workspaceId, pageId } = $props();
 
   let page = $state(null);
@@ -25,14 +17,11 @@
   // Fire window.print() at most once from the readiness gate.
   let autoPrinted = false;
 
-  // Saved so beforeprint/afterprint + onDestroy can flip the document to
-  // light colors for printing and then restore the user's theme.
+  // Restore the user's theme and title after printing.
   let savedColorMode = null;
   let savedTitle = null;
 
-  // Print engines (and headless PDF) otherwise inherit the app's dark
-  // theme, producing a dark sheet. Force light just for the print, then
-  // restore. Pairs with the CSS light overrides as a belt-and-braces.
+  // Force light mode so browser and headless prints avoid dark sheets.
   function forceLightForPrint() {
     const root = document.documentElement;
     savedColorMode = root.dataset.colorMode ?? null;
@@ -64,8 +53,7 @@
       await waitForRenderReady();
       if (!autoPrinted) {
         autoPrinted = true;
-        // Double rAF: ensure the final content is laid out + painted
-        // before the synchronous print() snapshot.
+        // Print after the final layout and paint.
         requestAnimationFrame(() => requestAnimationFrame(() => window.print()));
       }
     }
@@ -78,15 +66,8 @@
     if (savedTitle !== null) document.title = savedTitle;
   });
 
-  /**
-   * Resolve once the rendered document is print-ready, or after a hard
-   * deadline so a stuck asset can't block printing forever. We wait for:
-   *   1. the read-only Milkdown body to be populated (its replaceAll
-   *      effect runs only after the lazy editor bundle imports),
-   *   2. every excalidraw diagram block to settle (data-status leaves
-   *      idle/loading), and every <img> to finish loading,
-   *   3. web fonts to be ready.
-   */
+  /** Wait for the body, diagrams, images, and fonts, bounded so stuck assets
+   * cannot block printing indefinitely. */
   function waitForRenderReady() {
     const MAX_WAIT_MS = 4000;
     const POLL_MS = 100;

@@ -1,13 +1,7 @@
 import { BUCKET } from '../buckets.js';
 import { createCommand } from '../types.js';
 
-/**
- * "Go to <workspace>" quick navigation for up to 8 workspaces.
- *
- * Phase 0 audit fix: previous implementation showed all workspaces including
- * inactive ones. The sidebar dropdown hides inactive workspaces; we match
- * that behavior here so the palette doesn't surface deactivated workspaces.
- */
+/** Quick navigation for up to eight active or personal workspaces. */
 export function workspacesProvider(ctx) {
   const { workspaces, t } = ctx;
   const active = (workspaces || []).filter((ws) => ws.is_personal || ws.active !== false);

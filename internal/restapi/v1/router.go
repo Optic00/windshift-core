@@ -1,52 +1,8 @@
-// Package v1 provides REST API version 1 endpoints and routing.
+// Package v1 provides scoped bearer-token REST endpoints.
 //
-// # Auth boundary
-//
-// This package is the only surface that accepts API bearer tokens
-// (Authorization: Bearer crw_*). The cookie-auth surface (/api/*,
-// internal/middleware/auth.go) explicitly rejects bearer tokens — that
-// would be a back door around the per-route token-scope checks below.
-//
-// Auth method by surface:
-//   - /rest/api/v1/* (here): Authorization: Bearer crw_* — scope-checked.
-//   - /api/* (cookie-auth): Cookie / X-Session-Token. No bearer.
-//   - /api/internal/* (sidecar RPC): X-Internal-Service-Auth shared secret.
-//
-// # Routing convention
-//
-// New routes should follow the rules below so that token scopes,
-// in-handler permission checks, and the user/workspace permission model
-// stay aligned across the surface.
-//
-// Workspace-content resources (items, milestones, iterations, projects,
-// comments) live at /workspaces/{id}/<resource>[...]. They are gated by:
-//   - bearerAuth.RequirePermission("items:<read|write|delete>") at the route
-//   - BaseHandler.RequireWorkspace<View|Edit>Access in the handler
-//
-// The URL constraint plus the in-handler check together guarantee a token
-// can only reach resources in workspaces where the user holds the matching
-// PermissionItem<View|Edit>. Global mirror routes for the same resources
-// (e.g. /milestones, /iterations, /projects) remain available for cross-
-// workspace use cases (search, dashboards) but their handlers must look up
-// the resource's scope and apply the workspace check for workspace-scoped
-// rows; see requireMilestoneAccessByID etc. in handlers/planning.go for
-// the canonical pattern.
-//
-// Workspace-config resources (statuses, item-types, priorities, custom-
-// fields) live at /workspaces/{id}/<resource> for read, gated by
-// bearerAuth.RequirePermission("workspaces:read") + RequireWorkspaceViewAccess.
-// Mutations are admin-only and sit on global routes.
-//
-// Truly global resources (workflows, status-categories, users) keep their
-// global URLs and dedicated scopes (workflows:read, statuses:read,
-// users:read).
-//
-// System-admin bypass intentionally does not apply to token-scope checks.
-// PermissionService.HasWorkspacePermission and HasGlobalPermission auto-
-// satisfy admins, so the in-handler check is bypassed; the bearer-token
-// scope check still requires the scope to be present on the token. This
-// is defense-in-depth: a token issued for a specific bot should not
-// inherit owner privileges by accident.
+// Only /rest/api/v1 accepts crw_* bearer tokens; /api uses session auth and
+// /api/internal uses the sidecar secret. Routes must enforce token scope and
+// resource access. System admins never bypass token scopes.
 package v1
 
 import (
@@ -71,12 +27,7 @@ func RegisterRoutes(deps restapi.Deps) {
 	// Create rate limiter (1000 requests per minute)
 	rateLimiter := middleware.NewRateLimiter(1000)
 
-	// ItemHandler / CommentHandler share the fully-wired CommentService from
-	// Deps (notifications, mentions, webhooks, etc.) so comments created via
-	// the bearer-token surface fire the same notifications as the web UI
-	// (WI-434). The constructors tolerate a nil Deps.CommentService by falling
-	// back to a bare service (persists comments, skips side effects) so
-	// embedders that haven't wired Deps yet still boot.
+	// Reuse the fully wired comment service so v1 comments retain side effects.
 
 	// Initialize handlers
 	itemHandler := handlers.NewItemHandler(db, permissionService, deps.CommentService, deps.ItemCreationService)

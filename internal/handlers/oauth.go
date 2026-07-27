@@ -659,14 +659,8 @@ func (h *OAuthHandler) findOrCreateClientAgent(user *models.User, client *oauthC
 		FirstName: client.DisplayName,
 		LastName:  fmt.Sprintf("for %s", firstNonEmpty(user.Username, fmt.Sprintf("user-%d", user.ID))),
 	}
-	// CreateOAuthAgent (vs CreateOwnedAgent) carves OAuth-issued agents out
-	// of the user-managed agents policy: 'allow_user_managed_agents' gates
-	// the human-facing "create agent" UI, NOT third-party OAuth integrations.
-	// Conflating them meant non-admin OAuth would 4xx on instances where the
-	// policy is off, while admins silently bypassed it — privilege-dependent
-	// behavior that defeated the policy's intent. CreateOAuthAgent persists
-	// agent_provenance='oauth' + oauth_client_id, which the schema CHECK
-	// constraints require to coexist.
+	// OAuth agents bypass the human-facing user-managed-agent policy and persist
+	// required oauth provenance/client fields through CreateOAuthAgent.
 	created, createErr := h.agent.CreateOAuthAgent(user.ID, client.ID, createReq)
 	if createErr != nil {
 		switch {

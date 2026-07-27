@@ -416,23 +416,18 @@
             content = markdown;
             if (onContentChange) onContentChange(markdown);
           });
-          // Detect the @-mention trigger on every document change, not just on
-          // keyup. Mobile soft keyboards (Gboard, iOS) routinely don't emit
-          // keydown/keyup for character input, so the keyup handler below never
-          // fires and the picker never opens on phones (WI-431). `updated`
-          // fires on any content change regardless of input method.
-          // checkForMentionTrigger only reads state, so overlapping with keyup
-          // on desktop is harmless.
+          // Detect mentions on all changes: mobile keyboards may omit keyup.
+          // Overlap with desktop keyup is safe because the check only reads state.
           ctx.get(listenerCtx).updated((updateCtx) => {
             if (readonly) return;
             try {
               const view = updateCtx.get(editorViewCtx);
               if (view) checkForMentionTrigger(view);
             } catch {
-              // Editor view not ready yet (e.g. initial value load) — ignore.
+              // Ignore an editor view not yet ready.
             }
           });
-          // Use set instead of update to handle case where context may not be initialized
+          // Context may not be initialized for update.
           ctx.set(editorViewOptionsCtx, {
             editable: () => !readonly,
             attributes: {
@@ -442,14 +437,8 @@
             // Handle DOM events for mention detection
             handleDOMEvents: {
               keydown: (_view, event) => {
-                // ProseMirror's own keydown handler calls preventDefault() on a
-                // bare Escape. That makes Escape-to-close bail in any enclosing
-                // modal whose handler guards on `defaultPrevented` (e.g. the
-                // item-detail modal). Returning true here skips ProseMirror's
-                // keydown handler entirely, so Escape bubbles un-prevented and
-                // the modal closes. When the mention picker is open, Escape
-                // should dismiss the picker instead, so leave that to the
-                // normal editor handling.
+                // Bypass ProseMirror's bare-Escape prevention so enclosing
+                // modals close; let the open mention picker handle Escape.
                 if (event.key === 'Escape' && !mentionPickerOpen) {
                   return true;
                 }

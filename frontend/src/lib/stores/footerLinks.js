@@ -1,13 +1,5 @@
-/**
- * Footer link helpers shared by hub and portal stores.
- *
- * Both stores keep a `footerColumns` array of `{ title, links: [{text, url}] }`
- * and persist edits via a `saveCustomizations()` call. The state lives at
- * module scope under Svelte 5 `$state`, so the caller passes a `setColumns`
- * updater that mutates its own variable.
- *
- * Returns: { addFooterLink, removeFooterLink, updateColumnTitle, updateFooterLink }
- */
+/** Shared hub/portal footer-column mutators. Callers supply state updates and
+ * persistence for `{ title, links: [{text, url}] }` columns. */
 export function createFooterLinkHelpers({ setColumns, saveCustomizations }) {
   function addFooterLink(columnIndex) {
     setColumns((columns) =>

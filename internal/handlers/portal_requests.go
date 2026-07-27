@@ -10,29 +10,9 @@ import (
 	"windshift/internal/sanitize"
 )
 
-// resolvePortalRequest is a shared preamble for handlers that operate on a
-// specific portal request. It parses the item ID, resolves the channel from
-// the slug, authenticates the caller, and authorizes access — accepting either
-// of two roles:
-//
-//  1. Owner: the caller created the request (internal user or portal customer).
-//  2. Active approver: the caller is in an is_active=true approver row of a
-//     pending step on this request. This mirrors the documented exception in
-//     /api/approvals/{id}/decide — an approver added explicitly to a step
-//     must be able to read the request they're deciding on, even when they're
-//     not the original requester.
-//
-// Approver-derived access is read-only at the data layer: it permits reading
-// detail/comments and adding a comment on the request thread (which is what
-// external reviewers expect when asking the requester for clarification),
-// but mutating endpoints that create or transform the request itself (e.g.
-// SubmitToPortal) must not use this helper.
-//
-// Active-pool membership is a snapshot: once the step closes (is_active=0) or
-// the request is no longer pending, approver-derived access disappears.
-//
-// On failure writes the appropriate HTTP error response and returns ok=false.
-// Callers must defer cancel() when ok is true.
+// resolvePortalRequest authorizes a request owner or active approver.
+// Approver access permits reading and commenting only and ends with the pending
+// approval step. On success callers must defer cancel.
 func (h *PortalHandler) resolvePortalRequest(w http.ResponseWriter, r *http.Request) (itemID int, internalUserID *int, portalCustomerID *int, ctx context.Context, cancel context.CancelFunc, ok bool) { //nolint:gocritic // multiple results needed for this complex guard
 	slug := r.PathValue("slug")
 	itemIDStr := r.PathValue("itemId")

@@ -17,25 +17,14 @@ import (
 	"windshift/internal/services/actiontemplates"
 )
 
-// emitActionAudit writes an audit row for an agent-driven action mutation
-// through the shared Env.audit choke point (see env.go). It keeps the
-// HTTP-parity action types (automation.create / automation.update) and the
-// workspace_id detail the action audit trail has always carried; everything
-// else (source tagging, best-effort error handling) is the shared mechanism.
+// emitActionAudit records agent-driven action mutations through Env.audit.
 func emitActionAudit(env *Env, actionType string, workspaceID, actionID int, actionName string) {
 	env.audit(actionType, logger.ResourceAutomation, actionID, actionName, map[string]interface{}{
 		"workspace_id": workspaceID,
 	})
 }
 
-// ----------------------------------------------------------------------------
-// Shared types
-// ----------------------------------------------------------------------------
-
-// catalogNodeDTO is the per-node payload returned by describe_action_catalog.
-// It mirrors actioncatalog.NodeTypeMetadata but uses json.RawMessage for the
-// schema so the LLM sees the JSON Schema document inline rather than a
-// reflected Go struct.
+// catalogNodeDTO exposes each node's JSON Schema directly to the LLM.
 type catalogNodeDTO struct {
 	Type         models.ActionNodeType `json:"type"`
 	Label        string                `json:"label"`
@@ -66,11 +55,7 @@ type catalogOut struct {
 	Capabilities []catalogCapabilityDTO `json:"capabilities"`
 }
 
-// actionDefinitionArg is the agent-facing shape for an action graph. It
-// uses pointer schema metadata via jsonschema tags so the LLM sees the
-// expected fields inline. The actual config schema for each node lives in
-// the catalog — agents are expected to discover it via describe_action_catalog
-// before they construct a definition.
+// actionDefinitionArg exposes an action graph; node schemas come from the catalog.
 type actionDefinitionArg struct {
 	Name          string                   `json:"name" jsonschema:"Human-readable action name"`
 	Description   string                   `json:"description,omitempty" jsonschema:"Optional description"`
@@ -182,9 +167,6 @@ func findExistingEquivalentAction(repo *repository.ActionRepository, workspaceID
 	return nil, nil
 }
 
-// capabilityResolverForEnv reuses the ActionRepository to check capability
-// scope. Wrapped so the validator can stay decoupled from the repository
-// type.
 type capabilityResolverForEnv struct {
 	repo *repository.ActionRepository
 }
@@ -207,17 +189,9 @@ func (c capabilityResolverForEnv) HasCapabilityOfType(workspaceID, capabilityID 
 	return err == nil && scoped
 }
 
-// ----------------------------------------------------------------------------
-// describe_action_catalog
-// ----------------------------------------------------------------------------
-
 type describeActionCatalogArgs struct {
 	WorkspaceID int `json:"workspace_id" jsonschema:"Workspace ID to scope the capabilities list to. Triggers and node types are workspace-independent."`
 }
-
-// ----------------------------------------------------------------------------
-// validate_action
-// ----------------------------------------------------------------------------
 
 type validateActionArgs struct {
 	WorkspaceID int                 `json:"workspace_id" jsonschema:"Workspace the action would belong to"`
@@ -227,10 +201,6 @@ type validateActionArgs struct {
 type validateActionOut struct {
 	Errors actioncatalog.ValidationErrors `json:"errors"`
 }
-
-// ----------------------------------------------------------------------------
-// create_action
-// ----------------------------------------------------------------------------
 
 type createActionArgs struct {
 	WorkspaceID int                 `json:"workspace_id" jsonschema:"Workspace to create the action in. Caller must have action.manage on this workspace."`
@@ -248,10 +218,6 @@ type createActionOut struct {
 	NodeCount     int                      `json:"node_count"`
 	EdgeCount     int                      `json:"edge_count"`
 }
-
-// ----------------------------------------------------------------------------
-// get_action
-// ----------------------------------------------------------------------------
 
 type getActionArgs struct {
 	WorkspaceID int `json:"workspace_id" jsonschema:"Workspace the action lives in. Mismatches return 'action not found' (no cross-workspace probing)."`
@@ -285,19 +251,11 @@ type getActionOut struct {
 	Edges         []actionEdgeOut          `json:"edges"`
 }
 
-// ----------------------------------------------------------------------------
-// update_action
-// ----------------------------------------------------------------------------
-
 type updateActionArgs struct {
 	WorkspaceID int                 `json:"workspace_id" jsonschema:"Workspace the action lives in. Must match the action's stored workspace; mismatches return 'workspace not found' to avoid leaking that a cross-workspace id exists."`
 	ActionID    int                 `json:"action_id" jsonschema:"ID of the action to replace"`
 	Action      actionDefinitionArg `json:"action" jsonschema:"Full replacement graph. Updates are not partial — call get_action first to read the existing graph, mutate, and send the complete definition back. Anything you omit is deleted."`
 }
-
-// ----------------------------------------------------------------------------
-// list_action_templates
-// ----------------------------------------------------------------------------
 
 type listActionTemplatesArgs struct{}
 
@@ -313,10 +271,6 @@ type templateDTO struct {
 type listActionTemplatesOut struct {
 	Templates []templateDTO `json:"templates"`
 }
-
-// ----------------------------------------------------------------------------
-// Registration
-// ----------------------------------------------------------------------------
 
 func init() {
 	Register(Default, Tool[describeActionCatalogArgs]{
@@ -648,9 +602,6 @@ func init() {
 	})
 }
 
-// marshalSchema turns an in-memory *jsonschema.Schema into the JSON bytes
-// the catalog payload exposes. Kept as a helper because three callers
-// shape almost-identical responses.
 func marshalSchema(s *jsonschema.Schema) (json.RawMessage, error) {
 	if s == nil {
 		return json.RawMessage(`{}`), nil

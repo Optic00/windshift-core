@@ -1,8 +1,3 @@
-/**
- * Store for managing Time Entry state.
- * Uses Svelte 5 class-based reactive state pattern.
- * Centralizes worklogs, filters, and modal state.
- */
 import { api } from '../api.js';
 import { formatDateWithOptions } from '../utils/dateFormatter.js';
 
@@ -40,41 +35,26 @@ class TimeEntryStore {
 
   // === Derived Values ===
 
-  /**
-   * Get active projects.
-   */
   get activeProjects() {
     return this.projects.filter((p) => p.status === 'Active');
   }
 
-  /**
-   * Get projects filtered by customer.
-   */
   get filteredProjects() {
     return this.filters.customer_id
       ? this.activeProjects.filter((p) => p.customer_id === parseInt(this.filters.customer_id, 10))
       : this.activeProjects;
   }
 
-  /**
-   * Get filtered worklogs based on current filters.
-   */
   get filteredWorklogs() {
     return this.worklogs;
   }
 
-  /**
-   * Get total duration of filtered worklogs.
-   */
   get totalDuration() {
     return this.worklogs.reduce((sum, w) => sum + w.duration_minutes, 0);
   }
 
   // === Initialization ===
 
-  /**
-   * Initialize the store and load all data.
-   */
   async init() {
     this.loading = true;
     try {
@@ -153,23 +133,14 @@ class TimeEntryStore {
 
   // === Filter Management ===
 
-  /**
-   * Set a filter value.
-   */
   setFilter(key, value) {
     this.filters[key] = value;
   }
 
-  /**
-   * Apply filters and reload worklogs.
-   */
   async applyFilters() {
     await this.loadWorklogs();
   }
 
-  /**
-   * Clear all filters.
-   */
   clearFilters() {
     this.filters = {
       customer_id: '',
@@ -182,9 +153,6 @@ class TimeEntryStore {
 
   // === Worklog CRUD ===
 
-  /**
-   * Create a new worklog.
-   */
   async createWorklog(data) {
     try {
       await api.time.worklogs.create(data);
@@ -195,9 +163,6 @@ class TimeEntryStore {
     }
   }
 
-  /**
-   * Update an existing worklog.
-   */
   async updateWorklog(id, data) {
     try {
       await api.time.worklogs.update(id, data);
@@ -208,9 +173,6 @@ class TimeEntryStore {
     }
   }
 
-  /**
-   * Delete a worklog.
-   */
   async deleteWorklog(worklog) {
     try {
       await api.time.worklogs.delete(worklog.id);
@@ -221,9 +183,6 @@ class TimeEntryStore {
     }
   }
 
-  /**
-   * Save worklog (create or update based on editingWorklog).
-   */
   async saveWorklog(data) {
     if (this.editingWorklog) {
       await this.updateWorklog(this.editingWorklog.id, data);
@@ -235,47 +194,29 @@ class TimeEntryStore {
 
   // === Modal Controls ===
 
-  /**
-   * Open time log modal for creating new entry.
-   */
   openTimeLogModal() {
     this.editingWorklog = null;
     this.showTimeLogModal = true;
   }
 
-  /**
-   * Open time log modal for editing existing entry.
-   */
   editWorklog(worklog) {
     this.editingWorklog = worklog;
     this.showTimeLogModal = true;
   }
 
-  /**
-   * Close time log modal.
-   */
   closeTimeLogModal() {
     this.showTimeLogModal = false;
     this.editingWorklog = null;
   }
 
-  /**
-   * Show onboarding wizard.
-   */
   openOnboarding() {
     this.showOnboarding = true;
   }
 
-  /**
-   * Close onboarding wizard.
-   */
   closeOnboarding() {
     this.showOnboarding = false;
   }
 
-  /**
-   * Handle onboarding completion.
-   */
   async handleOnboardingCompleted() {
     await Promise.all([this.loadCustomers(), this.loadProjects()]);
     this.showOnboarding = false;
@@ -283,9 +224,6 @@ class TimeEntryStore {
 
   // === Utility Methods ===
 
-  /**
-   * Format time from unix timestamp.
-   */
   formatTime(unixTimestamp) {
     const date = new Date(unixTimestamp * 1000);
     return formatDateWithOptions(date, {
@@ -295,9 +233,6 @@ class TimeEntryStore {
     });
   }
 
-  /**
-   * Format duration in minutes to human-readable string.
-   */
   formatDuration(minutes) {
     const hours = Math.floor(minutes / 60);
     const mins = minutes % 60;
@@ -306,9 +241,6 @@ class TimeEntryStore {
     return `${hours}h ${mins}m`;
   }
 
-  /**
-   * Check if a project is over budget.
-   */
   isProjectOverBudget(worklog) {
     if (!worklog.project_max_hours || worklog.project_max_hours <= 0) return false;
     return (worklog.project_total_hours || 0) > worklog.project_max_hours;

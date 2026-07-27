@@ -1804,24 +1804,9 @@ func (h *SCIMHandler) applyGroupPatchOp(r *http.Request, snapshot *models.TeamGr
 	return []attrChange{{Op: opLower, Path: op.Path, NewValue: "<unsupported>"}}, nil
 }
 
-// handleSCIMUserDeactivation cascades an owner's SCIM deactivation to any
-// agents they own: flips those agents inactive and revokes all api_tokens held
-// by the owner or their agents. Emits per-row audit entries mirroring the
-// admin deactivation path, plus a baked-in notification to every active system
-// admin so integrations can be re-pointed.
-//
-// trigger identifies which SCIM endpoint caused the cascade (one of
-// "scim_delete", "scim_replace", "scim_patch") so operators can correlate the
-// audit trail back to the IdP request pattern.
-//
-// scimManaged tells the admin notification whether the target user was
-// actually provisioned via SCIM. A false value flags an anomaly worth
-// calling out (a SCIM request deactivated a locally-managed user), which
-// the copy surfaces so admins can investigate rather than assume routine
-// IdP churn.
-//
-// Callers guard the active→inactive transition; this function always cascades
-// (no-op if nothing is owned/active).
+// handleSCIMUserDeactivation deactivates owned agents, revokes related tokens,
+// and records the offboarding impact. trigger identifies the IdP operation;
+// scimManaged flags unexpected deactivation of a locally managed user.
 func (h *SCIMHandler) handleSCIMUserDeactivation(r *http.Request, userID int, username, trigger string, scimManaged bool) {
 	cascade, err := h.deactivateCascade(userID)
 	if err != nil {
@@ -1844,7 +1829,6 @@ func (h *SCIMHandler) handleSCIMUserDeactivation(r *http.Request, userID int, us
 		slog.Any("deactivated_agent_ids", cascade.AgentIDs),
 		slog.Int("revoked_api_tokens", len(cascade.RevokedAPITokens)))
 
-	// Aggregate audit row: one per cascade event. Carries the full impact set.
 	h.logSCIMAuditEvent(r, logger.ActionSCIMUserAgentImpact, logger.ResourceUser, &userID, username,
 		map[string]interface{}{
 			"trigger":               trigger,
@@ -1852,8 +1836,7 @@ func (h *SCIMHandler) handleSCIMUserDeactivation(r *http.Request, userID int, us
 			"revoked_api_tokens":    len(cascade.RevokedAPITokens),
 		}, true, "")
 
-	// Per-agent and per-token rows so security can reconstruct what died
-	// alongside the SCIM offboarding. Mirrors the admin deactivation pattern.
+	// Per-resource audit rows preserve the offboarding trail.
 	for _, aid := range cascade.AgentIDs {
 		agentID := aid
 		h.logSCIMAuditEvent(r, logger.ActionAgentDeactivate, logger.ResourceUser, &agentID, "",

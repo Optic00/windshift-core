@@ -1,15 +1,3 @@
-/**
- * Português Brasil (pt-BR) - Traduções de Canais, Notificações, Portal e Formulários de Solicitação
- *
- * Este módulo contém traduções para:
- * - notifications: Interface de notificações e verificação de e-mail
- * - channels: Gerenciamento de canais e configurações de integração
- * - channel: Configuração de canal (portal, webhook, e-mail)
- * - portal: Configurações do portal do cliente e tipos de solicitação
- * - requestForm: Formulário de envio de solicitação do portal
- * - requestTypeFields: Configuração de campos para tipos de solicitação
- */
-
 export default {
   notifications: {
     title: 'Notificações',

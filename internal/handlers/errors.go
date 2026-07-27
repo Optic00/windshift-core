@@ -96,14 +96,9 @@ func respondInternalError(w http.ResponseWriter, r *http.Request, err error) {
 	restapi.RespondError(w, r, restapi.ErrInternalError)
 }
 
-// respondJiraUpstreamError returns 502 Bad Gateway with a stable code/message
-// pair the frontend can branch on for upstream Jira failures.
-//
-// We intentionally avoid 401 because the frontend's fetchAPI treats every 401
-// as "Windshift session expired" and force-logs the user out — a revoked Jira
-// token is an *upstream* problem, not a session one. 502 captures that
-// distinction and lets the wizard show a "Reconnect" CTA without touching
-// the user's Windshift auth.
+// respondJiraUpstreamError uses stable 502 codes. It must not return 401,
+// which fetchAPI interprets as a Windshift-session expiry rather than a Jira
+// reconnection problem.
 func respondJiraUpstreamError(w http.ResponseWriter, r *http.Request, err error) {
 	code := "JIRA_UPSTREAM_ERROR"
 	message := "Jira request failed."

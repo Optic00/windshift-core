@@ -10,32 +10,18 @@ import (
 	"windshift/internal/repository"
 )
 
-// defaultIteratorMaxItems caps the per-iterator emission count when the node
-// config doesn't override it. Prevents a misconfigured `descendants` iterator
-// on a pathological tree from running thousands of transitions.
+// defaultIteratorMaxItems bounds unconfigured iterator fan-out.
 const defaultIteratorMaxItems = 1000
 
-// maxStepsPerFlow caps the total node executions a single action invocation
-// may perform, including iterator bodies summed across iterations. Per-iterator
-// caps (defaultIteratorMaxItems) only protect a single level — a 1000-item
-// outer iterator wrapping a 1000-item inner iterator multiplies to 1M body
-// executions, which the cascade-depth guard does not catch (those are within
-// one action, not across actions). Bail at this budget instead.
+// maxStepsPerFlow bounds total execution, including multiplicative nested
+// iterator bodies that per-iterator limits cannot contain.
 const maxStepsPerFlow = 10_000
 
-// errStepBudgetExceeded is returned when an action invocation tries to execute
-// more nodes than maxStepsPerFlow allows. The caller marks the action
-// execution failed and records this error on the trace.
+// errStepBudgetExceeded fails and traces action invocations over the budget.
 var errStepBudgetExceeded = fmt.Errorf("action step budget exceeded (%d): nested iterator likely fanned out beyond safe bounds", maxStepsPerFlow)
 
-// iteratorBodyNodes computes the set of nodes that form an iterator's body —
-// all nodes reachable from the iterator's outgoing edges. The engine runs
-// this subgraph once per emitted item with ctx.Item swapped, then marks the
-// body as executed in the outer loop.
-//
-// v1 constraint: a body node's incoming edges must all originate from
-// iterator-body nodes (no joining back from outside). The runtime trusts the
-// validator at action-creation time and doesn't re-check here.
+// iteratorBodyNodes finds nodes reachable from iterator edges for each emitted
+// item. It trusts creation-time validation that no outside edges join the body.
 func iteratorBodyNodes(iteratorNodeID int, edges []models.ActionEdge) map[int]bool {
 	body := map[int]bool{}
 	queue := []int{}

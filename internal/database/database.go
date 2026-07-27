@@ -150,17 +150,8 @@ type DB struct {
 	writeConn *sql.DB // Dedicated single connection for writes
 }
 
-// NewDB opens a SQLite database at dataSourceName and configures it for
-// concurrent use: WAL journaling, a 5s busy timeout, foreign keys, and an
-// immediate-locking txlock, plus a dedicated single-connection write pool so
-// writes serialize without blocking reads.
-//
-// readConns sizes the read pool (idle = readConns/10, min 1). writeConns sizes
-// the write pool; the write pool is kept fully warm (max == idle == writeConns)
-// so writers don't pay reconnect cost. Pass 1 for writeConns to preserve the
-// SQLite single-writer invariant.
-//
-// last review: ser, 280426
+// NewDB opens SQLite with WAL, required pragmas, and separate read/write pools.
+// Use one write connection to preserve SQLite's single-writer invariant.
 func NewDB(dataSourceName string, readConns, writeConns int) (*DB, error) {
 	// Add SQLite-specific connection parameters for better concurrency handling
 	// Check if DSN already has parameters (for shared in-memory test databases)
@@ -174,25 +165,7 @@ func NewDB(dataSourceName string, readConns, writeConns int) (*DB, error) {
 		"&_journal_mode=WAL" +
 		"&_foreign_keys=on" +
 		"&_txlock=immediate" +
-		// modernc.org/sqlite defaults to time.Time.String() when binding
-		// time.Time params (e.g. "2026-05-15 23:13:34.6 +0200 CEST m=+..."),
-		// which SQLite's DATE/STRFTIME/julianday can't parse — they return
-		// NULL and any consumer scanning into a non-nullable Go string
-		// blows up. _time_format=sqlite switches the bind side to
-		// "2006-01-02 15:04:05.999999999-07:00", which SQLite's date
-		// functions handle natively. Existing rows with the legacy format
-		// are normalized on startup by backfillLegacyDatetimeFormat.
-		//
-		// _timezone=UTC was added to the modernc driver in v1.46+, which
-		// post-dates our pinned v1.44.3 — silently ignored today, but kept
-		// so a future driver bump enables it for free. The actual UTC
-		// enforcement lives in toUTCArgs (sqlite.go): every time.Time
-		// param is .UTC()'d at the wrapper boundary before reaching the
-		// driver. Without UTC normalization, a row written at 14:00 CEST
-		// (+02:00) lex-sorts AFTER a row written at 14:00 UTC (+00:00)
-		// even though it happened TWO HOURS EARLIER, because '+0' < '+2'
-		// in ASCII. backfillLegacyDatetimeFormat rewrites pre-existing
-		// offset-bearing rows to UTC too.
+		// Use SQLite-parsable UTC timestamps; startup repairs legacy rows.
 		"&_time_format=sqlite" +
 		"&_timezone=UTC" +
 		"&_pragma=synchronous(NORMAL)" +
@@ -284,17 +257,10 @@ func (db *DB) Close() error {
 	return err2
 }
 
-// Initialize creates the schema on a fresh database and runs idempotent
-// migrations on an existing one. Safe to call on every startup.
-// last review: ser, 280426
-// FIXME(human-review): This SQLite startup path is a very large migration/bootstrap
-// god function and mirrors substantial logic in postgres.go. Split bootstrap,
-// idempotent migrations, legacy shims, and default data into reviewable units.
+// Initialize creates the schema and runs idempotent migrations.
+// FIXME(human-review): Split bootstrap, migrations, shims, and default data.
 func (db *DB) Initialize() error {
-	// Bootstrap the schema_migrations registry before any other DDL runs.
-	// Idempotent; works against fresh, existing, and partially-migrated DBs.
-	// Paired with the same DDL in schema/system.sql so fresh installs that
-	// run system.sql first get an identical table.
+	// Bootstrap the migration registry before other DDL.
 	if _, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			version    TEXT PRIMARY KEY,

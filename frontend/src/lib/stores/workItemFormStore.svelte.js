@@ -1,8 +1,4 @@
-/**
- * Store for managing Work Item Form state.
- * Uses Svelte 5 class-based reactive state pattern.
- * Centralizes form data, validation, data loading, and selection persistence.
- */
+// Centralized reactive state for the work-item create form.
 import { api } from '../api.js';
 import {
   isCreateSystemFieldAutoManaged,
@@ -19,8 +15,7 @@ const STORAGE_KEYS = {
   itemType: 'vertex_create_modal_item_type',
 };
 
-// System fields that are auto-managed or rendered in fixed locations and should
-// not be duplicated in the create form's generated field sections.
+// System fields managed or rendered outside generated form sections.
 const EXCLUDED_SYSTEM_FIELDS = ['status'];
 const FIXED_SYSTEM_FIELDS = ['title', 'description'];
 
@@ -78,22 +73,13 @@ class WorkItemFormStore {
   availableItemTypes = $state([]);
   itemTypesLoaded = $state(false);
 
-  // === Work item templates (WI-438) ===
-  // templateOptions: selectable templates valid for the current type (type-
-  // targeted + global). mandatoryTemplate: the active mandatory template the
-  // current type enforces (or null) — when set, its body is auto-applied and
-  // the picker is locked. templateApplyNonce forces the Milkdown editor to
-  // re-mount when a body is written into formData.description (the editable
-  // editor does not sync external content changes otherwise).
+  // Templates for the selected type; mandatory bodies lock the picker.
   templateOptions = $state([]);
   mandatoryTemplate = $state(null);
   selectedTemplateId = $state(null);
   templatesLoading = $state(false);
   templateApplyNonce = $state(0);
-  // Key of the (workspace:item_type) template fetch currently in flight. Used
-  // only to dedup concurrent identical fetches — NOT to permanently cache a
-  // loaded key. See loadTemplatesForCurrentType for why permanent caching is
-  // wrong here.
+  // Deduplicates only the current template fetch.
   #templatesInFlightKey = null;
 
   allCustomFields = $state([]);
@@ -610,12 +596,7 @@ class WorkItemFormStore {
     this.loadTemplatesForCurrentType();
   }
 
-  /**
-   * Load the work item templates valid for the current (workspace, item type).
-   * Populates the selectable picker options and, when the type enforces an
-   * active mandatory template, auto-applies its body into the description and
-   * locks the picker. No-op until both workspace and item type are known.
-   */
+  // Load selectable and mandatory templates for the current workspace and type.
   async loadTemplatesForCurrentType() {
     const workspaceId = this.formData.workspace_id;
     const itemTypeId = this.formData.item_type_id;
@@ -627,14 +608,7 @@ class WorkItemFormStore {
       return;
     }
     const key = `${workspaceId}:${itemTypeId}`;
-    // Dedup only against a fetch already in flight for the same key — never
-    // permanently cache a resolved key. The create modal sets item_type_id
-    // several times during init (first available type → stored type → config
-    // default), so a permanent cache would record an *empty* load for a type
-    // and then refuse to re-fetch it. A mandatory template added (or any
-    // template created) for that type after init must still be picked up when
-    // the user later selects the type (WI-438); a permanent cache silently
-    // dropped it and left the picker unlocked.
+    // Never cache resolved keys: templates can change while the modal is open.
     if (this.#templatesInFlightKey === key) return;
     this.#templatesInFlightKey = key;
 
@@ -651,9 +625,7 @@ class WorkItemFormStore {
       this.mandatoryTemplate = mandatory;
       if (mandatory) {
         this.selectedTemplateId = mandatory.id;
-        // Only fill an empty description — mirrors the server's "apply only when
-        // empty" rule (services.CreateItem) so a slow async load can't clobber
-        // text the user typed after switching type. The picker still locks.
+        // Never overwrite description text entered during the async load.
         if (!this.formData.description?.trim()) {
           this.formData.description = mandatory.description_body || '';
           this.templateApplyNonce += 1;
@@ -666,8 +638,7 @@ class WorkItemFormStore {
       this.templateOptions = [];
       this.mandatoryTemplate = null;
     } finally {
-      // Only clear the in-flight marker if it still points at this fetch — a
-      // newer type change may already have started its own fetch.
+      // Preserve a newer fetch marker.
       if (this.#templatesInFlightKey === key) this.#templatesInFlightKey = null;
       this.templatesLoading = false;
     }

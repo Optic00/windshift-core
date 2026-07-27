@@ -8,15 +8,8 @@ import (
 	"windshift/internal/tui/styles"
 )
 
-// framePane wraps pre-sized pane content in a rounded border with the title
-// embedded in the top edge — the board's ltui-style pane chrome:
-//
-//	╭─ Work items · 12 ────────╮
-//	│ …                        │
-//	╰──────────────────────────╯
-//
-// w and h are the OUTER dimensions; content is rendered into (w-2)×(h-2).
-// The focused pane's border uses the focus color.
+// framePane renders titled rounded pane chrome. w/h are outer dimensions;
+// content uses (w-2)×(h-2), and focused panes use the focus border.
 func framePane(s *styles.Styles, title, content string, w, h int, focused bool) string {
 	if w < 4 || h < 3 {
 		return content
@@ -32,7 +25,7 @@ func framePane(s *styles.Styles, title, content string, w, h int, focused bool) 
 	}
 	bc := lipgloss.NewStyle().Foreground(borderColor)
 
-	// Top edge with embedded title: ╭─ title ─…─╮
+	// Top edge embeds the title.
 	var top string
 	if title != "" {
 		t := " " + title + " "
@@ -50,8 +43,7 @@ func framePane(s *styles.Styles, title, content string, w, h int, focused bool) 
 		top = bc.Render("╭" + strings.Repeat("─", innerW) + "╮")
 	}
 
-	// Body rows, clamped/padded to the inner box. MaxWidth truncates (it
-	// never wraps — wrapping would break the frame); padding is manual.
+	// Clamp without wrapping so the frame geometry remains intact.
 	lines := strings.Split(content, "\n")
 	if len(lines) > innerH {
 		lines = lines[:innerH]

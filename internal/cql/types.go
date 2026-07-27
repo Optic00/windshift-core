@@ -1,39 +1,6 @@
-// Package cql implements Windshift Query Language (QL) - a JQL-like query language for Windshift
-//
-// Supported Fields:
-//   - workspace, workspaceId, workspaceKey
-//   - status, priority
-//   - title, description
-//   - key (item key in format "WK-123")
-//   - created, updated
-//   - assignee, creator
-//   - milestone, milestoneName
-//   - project, projectName, timeProject, inheritProject
-//   - itemType, itemTypeName
-//   - parent, hasChildren, childrenCount, descendantsCount
-//   - isTask, rank, id
-//   - Custom fields: cf_fieldname or custom.fieldname (e.g., cf_sprint, custom.epicLink)
-//
-// Supported Operators:
-//   - Comparison: =, !=, <, <=, >, >=, ~  (contains)
-//   - Logical: AND, OR, NOT
-//   - Set membership: IN, NOT IN
-//
-// Supported Functions:
-//   - currentUser(), now(), startOfDay(), endOfDay()
-//   - currentCustomer() - Returns the current portal customer's ID (for portal asset reports)
-//   - currentOrganisation() - Returns the current portal customer's organisation ID (for portal asset reports)
-//   - childrenOf("ql query") - Find all descendants of items matching the query
-//   - linkedOf("link_label", "ql query") - Find items linked via the specified link type
-//
-// Examples:
-//   - workspace = "My Project" AND status = "open"
-//   - priority IN ("high", "critical") AND assignee = 5
-//   - cf_sprint = "Sprint 1" AND status != "done"
-//   - custom.epicLink = "PROJ-123" AND milestone = 1
-//   - created >= "2024-01-01" AND updated < now()
-//   - childrenOf("priority = high") - Find all descendants of high priority items
-//   - linkedOf("blocks", "status = open") - Find items blocked by open items
+// Package cql implements Windshift Query Language, a JQL-like query language.
+// It supports item, asset, and custom-field filters; comparisons, logical and
+// membership operators; and context, hierarchy, and link functions.
 //
 //nolint:misspell // CQL function name uses British spelling
 package cql

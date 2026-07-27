@@ -455,22 +455,13 @@ func (h *AuthHandler) rejectPasswordLogin(w http.ResponseWriter, r *http.Request
 	respondUnauthorized(w, r)
 }
 
-// logFailedLogin records an audit log entry for a failed login attempt.
-//
-// The attempted identifier is logged as a truncated SHA-256 hash rather
-// than cleartext. This prevents an audit-log reader from harvesting the
-// usernames/emails that have been tried (real or guessed), while still
-// letting them correlate retries against the same identifier across rows.
-// Hash length is short enough (16 hex chars / 64 bits) to avoid bloating
-// audit details but long enough to make collisions effectively impossible
-// for the volume of failed logins a single deployment sees.
+// logFailedLogin records a truncated SHA-256 identifier tag, preserving retry
+// correlation without exposing attempted usernames or emails in audit logs.
 func (h *AuthHandler) logFailedLogin(r *http.Request, emailOrUsername string) {
 	h.auditor.LogFailure(r, nil, logger.ActionLoginFailure, logger.ResourceUser, nil, hashIdentifier(emailOrUsername), "invalid credentials", nil)
 }
 
-// hashIdentifier returns a stable, non-reversible tag for an attempted
-// login identifier. Lowercased to make username + email-with-different-
-// casing collide so retries cluster correctly.
+// hashIdentifier returns a stable case-insensitive, non-reversible audit tag.
 func hashIdentifier(s string) string {
 	if s == "" {
 		return ""

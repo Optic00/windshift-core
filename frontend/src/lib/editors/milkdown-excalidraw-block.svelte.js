@@ -3,18 +3,9 @@ import { mount, unmount } from 'svelte';
 import ExcalidrawBlockView from './ExcalidrawBlockView.svelte';
 import MermaidBlockView from './MermaidBlockView.svelte';
 
-// Round-trips a fenced code block with language `excalidraw`. The block body
-// is a single-line JSON object: {"attachmentId":N,"name":"..."}. Storing only
-// the attachment ID keeps per-page revisions tiny and lets the diagram live
-// in the existing attachments table.
-//
-// Milkdown's parser picks the first NodeSchema whose parseMarkdown.match()
-// returns true, and the schema is iterated in registration order — commonmark
-// registers code_block before us, so a naive match on `{type:'code', lang}`
-// would lose to the generic code_block. To win cleanly, a tiny remark
-// transformer rewrites matching `code` nodes to `type:'excalidraw'` before
-// the schema-match step; on the way back out, toMarkdown emits a normal
-// `code` node so remark stringifies it as a standard fence.
+// Round-trip `excalidraw` fences as attachment-ID JSON. A remark transform
+// rewrites matching code nodes before commonmark claims them; serialization
+// restores standard fences.
 
 const excalidrawRemark = defineRemark('excalidraw-fence', () => () => (tree) => {
   visit(tree, (node) => {
@@ -71,8 +62,7 @@ export const excalidrawNode = defineNode('excalidraw', () => ({
     },
   ],
   parseMarkdown: {
-    // Matches only the rewritten mdast nodes produced by `excalidrawRemark`,
-    // so we never clash with commonmark's code_block runner.
+    // Match only transformed nodes, never commonmark code blocks.
     match: (node) => node.type === 'excalidraw',
     runner: (state, node, type) => {
       state.addNode(type, {
@@ -141,14 +131,8 @@ export const excalidrawView = defineView(excalidrawNode, () => {
   };
 });
 
-// ─── Mermaid fence block ──────────────────────────────────────────────
-// Same architecture as the excalidraw block above — a remark transformer
-// rewrites `code lang=mermaid` mdast nodes to a custom `mermaid` type so
-// commonmark's code_block runner never claims them, then the schema's
-// parseMarkdown.match keys off the new type. Read-only: the source lives
-// inline in the markdown and round-trips back out as a standard mermaid
-// fence. Rendering happens client-side via mermaid.js, mounted from a
-// Svelte node view that defers the (~180KB) mermaid import to first use.
+// Mermaid fences are transformed before commonmark claims them, round-trip as
+// inline source, and lazy-load Mermaid in the client node view.
 
 const mermaidRemark = defineRemark('mermaid-fence', () => () => (tree) => {
   visit(tree, (node) => {

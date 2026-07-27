@@ -36,28 +36,8 @@ func EffectiveVision(visionMode string, modelSupportsVision bool) bool {
 	}
 }
 
-// Vision capability resolution.
-//
-// Provider /models catalogs do not reliably report whether a model accepts
-// image input. OpenRouter is the exception — its architecture.input_modalities
-// lists "image" for multimodal models — but every other OpenAI-compatible
-// catalog (OpenAI, Gemini, Z.AI, local) omits the signal entirely. So vision
-// support is resolved from two sources:
-//
-//  1. An authoritative catalog signal when present (OpenRouter modalities),
-//     set at parse time on ModelInfo.SupportsVision.
-//  2. A curated capability map (below) applied as a fallback for models the
-//     catalog didn't mark — see EnrichModelsVision.
-//
-// The map is best-effort and necessarily lags new model releases; that is
-// exactly why a per-connection override (provider_config vision_mode, auto/on/
-// off) exists to correct it without a code change. Keep entries conservative:
-// a false negative is recoverable via the override, a false positive feeds
-// image bytes to a blind model.
-//
-// Matching is case-insensitive substring over the model id. OpenRouter
-// namespaces ids as "vendor/model" (e.g. "anthropic/claude-sonnet-4"), so a
-// substring naturally matches both the bare and namespaced forms.
+// Vision support uses catalog modalities when available, then a conservative
+// case-insensitive model-ID fallback. Connections can override that fallback.
 var visionModelSubstrings = []string{
 	// OpenAI
 	"gpt-4o", "gpt-4.1", "gpt-4-turbo", "gpt-4-vision", "gpt-5", "chatgpt-4o",

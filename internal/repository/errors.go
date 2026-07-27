@@ -26,20 +26,8 @@ var (
 	ErrChannelSlugConflict = errors.New("channel public slug is already in use")
 )
 
-// notFoundOrWrap maps a row-scan error to a repository sentinel: sql.ErrNoRows
-// becomes ErrNotFound, and any other error is wrapped with context. It collapses
-// the repeated two-branch idiom
-//
-//	if errors.Is(err, sql.ErrNoRows) {
-//		return ErrNotFound
-//	}
-//	if err != nil {
-//		return fmt.Errorf("context: %w", err)
-//	}
-//
-// into a single call inside the caller's `if err != nil` guard. Only use it where
-// a missing row genuinely means "not found"; callers that treat absence as a soft
-// nil/zero (returning nil, nil) must keep their own branch.
+// notFoundOrWrap maps missing rows to ErrNotFound and wraps other errors.
+// Use only when absence is an error, not a soft nil/zero result.
 func notFoundOrWrap(err error, context string) error {
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound

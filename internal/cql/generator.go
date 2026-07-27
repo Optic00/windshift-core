@@ -21,9 +21,8 @@ type SQLGenerator struct {
 	legacyNameKeyFallback bool           // Also read legacy custom_field_values keyed by field name
 }
 
-// NewSQLGenerator creates a new SQL generator for outer queries (work items).
-// customFieldMap may be nil; when nil the generator falls back to name-based
-// JSON extraction (legacy behavior).
+// NewSQLGenerator creates an outer work-item query generator. A nil field map
+// uses legacy name-based JSON extraction.
 func NewSQLGenerator(workspaceMap map[string]int, customFieldMap CustomFieldMap, dbDriver string) *SQLGenerator {
 	return &SQLGenerator{
 		workspaceMap:       workspaceMap,
@@ -35,8 +34,8 @@ func NewSQLGenerator(workspaceMap map[string]int, customFieldMap CustomFieldMap,
 	}
 }
 
-// NewInnerSQLGenerator creates a new SQL generator for inner/nested queries (work items).
-// Uses "inner_" prefix for table aliases to avoid collision with outer query.
+// NewInnerSQLGenerator creates a nested work-item generator with noncolliding
+// table aliases.
 func NewInnerSQLGenerator(workspaceMap map[string]int, customFieldMap CustomFieldMap, dbDriver string) *SQLGenerator {
 	return &SQLGenerator{
 		workspaceMap:       workspaceMap,
@@ -48,9 +47,8 @@ func NewInnerSQLGenerator(workspaceMap map[string]int, customFieldMap CustomFiel
 	}
 }
 
-// NewAssetSQLGenerator creates a new SQL generator for asset queries. The
-// assetCustomFieldMap covers asset-side custom fields; the itemCustomFieldMap
-// is used by inner item queries spawned from linkedOf().
+// NewAssetSQLGenerator creates an asset generator; linkedOf inner queries use
+// itemCustomFieldMap.
 func NewAssetSQLGenerator(setMap map[string]int, assetCustomFieldMap, itemCustomFieldMap CustomFieldMap, dbDriver string) *SQLGenerator {
 	return &SQLGenerator{
 		setMap:             setMap,
@@ -62,32 +60,24 @@ func NewAssetSQLGenerator(setMap map[string]int, assetCustomFieldMap, itemCustom
 	}
 }
 
-// EnableLegacyCustomFieldNameFallback makes mapped cf_<name> lookups prefer the
-// canonical numeric key but fall back to the field-name key. Keep this disabled
-// for low-level generator tests and index-shape checks; enable it at API
-// evaluator boundaries to support older/name-keyed custom_field_values rows.
+// EnableLegacyCustomFieldNameFallback reads name-keyed values when the numeric
+// key is absent, for older custom_field_values rows.
 func (g *SQLGenerator) EnableLegacyCustomFieldNameFallback() {
 	g.legacyNameKeyFallback = true
 }
 
-// jsonExtract returns the DB-appropriate expression for extracting a field from a JSON column.
-// Returns a parameterized SQL expression and its arguments to prevent injection.
+// jsonExtract returns a parameterized DB-specific JSON expression.
 func (g *SQLGenerator) jsonExtract(column, field string) (expr string, args []interface{}) {
 	if g.dbDriver == "postgres" {
 		return fmt.Sprintf("%s->>?", column), []interface{}{field}
 	}
-	// SQLite 3.38+: ->> always returns TEXT (like PostgreSQL), avoiding type mismatch
-	// issues where json_extract returns INTEGER for numbers but TEXT for strings.
-	// NULLIF guards against empty-string data which causes "malformed JSON" errors.
+	// NULLIF prevents malformed-JSON errors from legacy empty strings.
 	path := fmt.Sprintf("$.\"%s\"", field) //nolint:gocritic // JSON path requires quoted field name
 	return fmt.Sprintf("NULLIF(%s, '') ->> '%s'", column, path), nil
 }
 
-// jsonExtractLiteralKey returns the DB-appropriate JSON extraction expression
-// with the numeric field ID inlined directly into the SQL. Safe because the ID
-// comes from a trusted DB scan (custom_field_definitions.id), never user input.
-// Inlining lets the Postgres planner match the per-field expression indexes
-// created in handlers/custom_fields.go (idx_cf_items_<id>).
+// jsonExtractLiteralKey inlines a trusted field ID so Postgres can use its
+// per-field expression index.
 func (g *SQLGenerator) jsonExtractLiteralKey(column string, fieldID int) string {
 	if g.dbDriver == "postgres" {
 		return fmt.Sprintf("%s->>'%d'", column, fieldID)
@@ -130,10 +120,7 @@ func (g *SQLGenerator) generateNode(node *ASTNode) (sql string, args []interface
 	}
 }
 
-// generateNullCheck emits SQL for `<field> IS NULL` / `IS NOT NULL`. For most
-// fields this is a direct rewrite. For non-scalar custom-field kinds, the
-// stored value isn't a simple column — translate to (NOT) EXISTS against the
-// matching subquery.
+// generateNullCheck rewrites non-scalar custom fields as (NOT) EXISTS.
 func (g *SQLGenerator) generateNullCheck(node *ASTNode) (sql string, args []interface{}, err error) {
 	negated := strings.EqualFold(node.Operator, "IS NOT NULL")
 	if node.Left.Type == NodeIdentifier {
@@ -141,9 +128,7 @@ func (g *SQLGenerator) generateNullCheck(node *ASTNode) (sql string, args []inte
 			switch info.Kind {
 			case CFKindMultiselect:
 				column := g.customFieldColumn()
-				// Multiselect IS NULL/NOT NULL is a "field has at least one
-				// element" check — no bound value needed, so use a SELECT 1
-				// over the array iterator with no WHERE clause.
+				// Multiselect nullness means whether the array has an element.
 				expr := g.multiselectAnyValueExpression(column, info)
 				if negated {
 					return expr, nil, nil
@@ -227,8 +212,7 @@ func (g *SQLGenerator) generateBinaryOp(node *ASTNode) (sql string, args []inter
 	}
 }
 
-// getNameFieldForIDField returns the corresponding name field for an ID field
-// Returns the name field and true if this is a reference field, or empty string and false if not
+// getNameFieldForIDField returns a reference name field, when available.
 func (g *SQLGenerator) getNameFieldForIDField(fieldName string) (string, bool) {
 	lowerField := strings.ToLower(fieldName)
 
@@ -248,11 +232,10 @@ func (g *SQLGenerator) getNameFieldForIDField(fieldName string) (string, bool) {
 	}
 }
 
-// generateLabelComparison generates SQL for label field comparisons using EXISTS subqueries
+// generateLabelComparison uses EXISTS for many-to-many labels.
 func (g *SQLGenerator) generateLabelComparison(node *ASTNode) (sql string, args []interface{}, err error) {
 	prefix := g.aliasPrefix
 
-	// Get the value from the right side
 	rightValue := node.Right.Value
 
 	switch node.Operator {
@@ -270,7 +253,7 @@ func (g *SQLGenerator) generateLabelComparison(node *ASTNode) (sql string, args 
 	}
 }
 
-// generateLabelInExpression generates SQL for label IN/NOT IN expressions using EXISTS subqueries
+// generateLabelInExpression uses EXISTS for label IN expressions.
 func (g *SQLGenerator) generateLabelInExpression(node *ASTNode) (sql string, args []interface{}, err error) {
 	prefix := g.aliasPrefix
 
@@ -294,8 +277,7 @@ func (g *SQLGenerator) generateLabelInExpression(node *ASTNode) (sql string, arg
 	return sql, args, nil
 }
 
-// isLabelField reports whether the CQL field name refers to item labels.
-// The UI field picker exposes `labels` while older queries use `label`.
+// isLabelField accepts the current `labels` and legacy `label` aliases.
 func isLabelField(fieldName string) bool {
 	switch strings.ToLower(fieldName) {
 	case "label", "labels":
@@ -304,9 +286,7 @@ func isLabelField(fieldName string) bool {
 	return false
 }
 
-// isMilestoneField reports whether a CQL field name identifies a milestone
-// scalar (id) or name field. Used to route the comparison through EXISTS
-// against the item_milestones junction.
+// isMilestoneField identifies fields evaluated through item_milestones.
 func isMilestoneField(fieldName string) bool {
 	switch strings.ToLower(fieldName) {
 	case "milestone", "milestone_id", "milestoneid", "milestonename":
@@ -315,10 +295,7 @@ func isMilestoneField(fieldName string) bool {
 	return false
 }
 
-// generateMilestoneComparison generates SQL for milestone field comparisons.
-// Items have many milestones via item_milestones; "milestone = X" matches
-// items where X is one of the milestones (existence check), not where X is
-// the only milestone.
+// generateMilestoneComparison matches any item_milestones row.
 func (g *SQLGenerator) generateMilestoneComparison(node *ASTNode) (sql string, args []interface{}, err error) {
 	prefix := g.aliasPrefix
 	byName := strings.EqualFold(node.Left.Value, "milestonename")
@@ -335,10 +312,7 @@ func (g *SQLGenerator) generateMilestoneComparison(node *ASTNode) (sql string, a
 		return "", nil, fmt.Errorf("unsupported right-hand side for milestone comparison")
 	}
 
-	// For the generic "milestone" field, a string value compares by name and a
-	// numeric value by id — mirroring the milestone IN behavior, so a filter
-	// like `milestone = '0.8.2'` matches the milestone called "0.8.2" rather
-	// than silently comparing the string against the numeric milestone_id.
+	// Generic milestone strings match names; numbers match IDs.
 	if !byName && strings.EqualFold(node.Left.Value, "milestone") {
 		switch node.Right.Type {
 		case NodeLiteral:
@@ -402,9 +376,7 @@ func (g *SQLGenerator) generateMilestoneInExpression(node *ASTNode) (sql string,
 		return "", nil, errors.New("IN expression requires a list of values")
 	}
 
-	// If the field is the generic "milestone" and all values are strings, treat
-	// as name comparison — the UI emits milestone IN with names rather than IDs
-	// for multi-select pickers. Mixed types are ambiguous and rejected.
+	// Generic milestone strings match names; mixed string/ID lists are rejected.
 	if !byName && strings.EqualFold(node.Field.Value, "milestone") {
 		allString, allNumeric := true, true
 		for _, v := range node.Values.Arguments {
@@ -459,22 +431,17 @@ func (g *SQLGenerator) generateMilestoneInExpression(node *ASTNode) (sql string,
 
 // generateComparison generates SQL for comparison operations
 func (g *SQLGenerator) generateComparison(node *ASTNode) (sql string, args []interface{}, err error) {
-	// Special handling for label field — uses EXISTS subqueries for many-to-many.
-	// Accept both `label` (canonical) and `labels` (UI plural) as aliases.
+	// Labels use a many-to-many EXISTS query.
 	if node.Left.Type == NodeIdentifier && isLabelField(node.Left.Value) {
 		return g.generateLabelComparison(node)
 	}
 
-	// Milestones moved to a junction table (item_milestones); items no longer
-	// have a single milestone_id column. Route milestone comparisons through
-	// EXISTS subqueries against the junction.
+	// Milestones use the item_milestones junction.
 	if node.Left.Type == NodeIdentifier && isMilestoneField(node.Left.Value) {
 		return g.generateMilestoneComparison(node)
 	}
 
-	// Per-kind dispatch for custom fields whose stored shape differs from a plain
-	// scalar — reference objects, multiselect arrays, linking rows in item_links.
-	// Scalar/Boolean kinds and unresolved names fall through to the generic path.
+	// Non-scalar custom fields need storage-shape-specific SQL.
 	if node.Left.Type == NodeIdentifier {
 		if info, ok := g.lookupCustomFieldInfo(node.Left.Value); ok {
 			switch info.Kind {
@@ -503,10 +470,7 @@ func (g *SQLGenerator) generateComparison(node *ASTNode) (sql string, args []int
 		}
 	}
 
-	// If comparing case-insensitive field with an unquoted identifier (e.g., "status = Inactive"),
-	// treat the right side as a string value directly, not a column name.
-	// This must happen before generateNode(node.Right) because generateNode would try to
-	// map the identifier as a field name and fail.
+	// Unquoted case-insensitive values are literals, not field names.
 	var rightSQL string
 	var rightArgs []interface{}
 	if isCaseInsensitiveField && node.Right.Type == NodeIdentifier {
@@ -519,14 +483,11 @@ func (g *SQLGenerator) generateComparison(node *ASTNode) (sql string, args []int
 		}
 	}
 
-	// Capture left-side args before merging with right; used to duplicate the
-	// left expression in NULL-safe rewrites (e.g. NULL-tolerant != on custom
-	// fields) where we need to bind the same JSON-key argument twice.
+	// Preserve left args for rewrites that duplicate the expression.
 	leftOnlyArgs := append([]interface{}(nil), leftArgs...)
 	leftArgs = append(leftArgs, rightArgs...)
 
-	// Smart reference field handling: if comparing an ID field with a string value,
-	// automatically use the corresponding name field instead
+	// String reference values compare against the corresponding name field.
 	isReferenceFieldComparison := false
 	if node.Left.Type == NodeIdentifier && node.Right.Type == NodeLiteral && node.Right.DataType == STRING {
 		if nameField, isReferenceField := g.getNameFieldForIDField(node.Left.Value); isReferenceField {
@@ -540,9 +501,7 @@ func (g *SQLGenerator) generateComparison(node *ASTNode) (sql string, args []int
 		}
 	}
 
-	// Detect custom field comparison so we can apply type casting and NULL-safe
-	// semantics below. Done after reference-field rewriting so reference fields
-	// are not double-classified.
+	// Detect custom fields after reference-field rewriting.
 	isCustomFieldComparison := false
 	if !isReferenceFieldComparison && node.Left.Type == NodeIdentifier {
 		fieldLower := strings.ToLower(node.Left.Value)
@@ -551,12 +510,8 @@ func (g *SQLGenerator) generateComparison(node *ASTNode) (sql string, args []int
 		}
 	}
 
-	// On Postgres, the per-field expression index for `date` is built as
-	// CAST(custom_field_values->>'<id>' AS TEXT) (see handlers/custom_fields.go
-	// buildCreateIndexSQL). Wrap the extract here so the planner can match the
-	// index — otherwise the date filter scans the table even when an index
-	// exists. SQLite indexes also wrap in CAST, but its CAST for STRING below
-	// covers the same shape.
+	// Match Postgres date expression indexes; SQLite's string cast below matches
+	// its equivalent index shape.
 	if isCustomFieldComparison && g.dbDriver == "postgres" && node.Left.Type == NodeIdentifier {
 		if info, ok := g.lookupCustomFieldInfo(node.Left.Value); ok && info.FieldType == "date" {
 			leftSQL = fmt.Sprintf("CAST(%s AS TEXT)", leftSQL)
@@ -578,11 +533,7 @@ func (g *SQLGenerator) generateComparison(node *ASTNode) (sql string, args []int
 				leftSQL = fmt.Sprintf("CAST(%s AS TEXT)", leftSQL)
 			}
 		case BOOLEAN:
-			// Postgres ->> on a JSON boolean returns text "true"/"false"; rewrite
-			// the int bound arg to match. SQLite ->> on a JSON boolean returns
-			// INTEGER 1/0 (despite the SQLite 3.38 "->> always returns TEXT"
-			// docs, booleans surface as integers — verified empirically), so for
-			// SQLite the int64 bound arg already round-trips correctly.
+			// Postgres JSON booleans are text; SQLite values remain integer-compatible.
 			if g.dbDriver == "postgres" && len(leftArgs) > len(leftOnlyArgs) {
 				rightIdx := len(leftOnlyArgs)
 				if v, ok := leftArgs[rightIdx].(int64); ok {

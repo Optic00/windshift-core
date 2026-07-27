@@ -29,9 +29,7 @@ import (
 
 const importErrorCap = 100
 
-// newCSVReaderSkippingBOM wraps r in a buffered reader that skips a leading
-// UTF-8 BOM (common in Excel / Numbers CSV exports) before the csv.Reader
-// sees it — otherwise the first header is garbled with `\ufeff`.
+// newCSVReaderSkippingBOM strips a leading UTF-8 BOM from spreadsheet exports.
 func newCSVReaderSkippingBOM(r io.Reader, delim rune) *csv.Reader {
 	br := bufio.NewReader(r)
 	if b, err := br.Peek(3); err == nil && len(b) == 3 && b[0] == 0xEF && b[1] == 0xBB && b[2] == 0xBF {
@@ -43,8 +41,6 @@ func newCSVReaderSkippingBOM(r io.Reader, delim rune) *csv.Reader {
 	reader.TrimLeadingSpace = true
 	return reader
 }
-
-// --- Request/Response types ---
 
 // CSVUploadResponse is returned after uploading a CSV file for preview.
 type CSVUploadResponse struct {
@@ -98,8 +94,6 @@ type AssetImportJobResponse struct {
 	CompletedAt  *time.Time           `json:"completed_at,omitempty"`
 }
 
-// --- Upload Handler ---
-
 // UploadCSV handles POST /asset-sets/{setId}/import/upload
 func (h *AssetHandler) UploadCSV(w http.ResponseWriter, r *http.Request) {
 	_, _, ok := h.requireSetAdminAccess(w, r)
@@ -112,11 +106,9 @@ func (h *AssetHandler) UploadCSV(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Limit request body size at the HTTP level before parsing
 	r.Body = http.MaxBytesReader(w, r.Body, 50<<20)
 
-	// Parse multipart form (max 50MB)
-	// #nosec G120 -- the body is already capped by MaxBytesReader above; the int arg is the in-memory threshold, not the upper bound
+	// #nosec G120 -- MaxBytesReader caps the body; this is only the in-memory threshold.
 	if err := r.ParseMultipartForm(50 << 20); err != nil {
 		respondBadRequest(w, r, "Failed to parse form data")
 		return
@@ -129,7 +121,6 @@ func (h *AssetHandler) UploadCSV(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	// Validate file extension — only CSV and TSV files are accepted
 	ext := strings.ToLower(filepath.Ext(header.Filename))
 	if ext != ".csv" && ext != ".tsv" {
 		respondValidationError(w, r, "Only CSV and TSV files are accepted")
@@ -139,10 +130,9 @@ func (h *AssetHandler) UploadCSV(w http.ResponseWriter, r *http.Request) {
 	hasHeader := r.FormValue("has_header") != "false"
 	delimiterStr := r.FormValue("delimiter")
 
-	// Sanitize filename - strip directory components
+	// Discard client-supplied directory components.
 	safeFilename := filepath.Base(header.Filename)
 
-	// Generate unique upload ID and storage path
 	uploadID := uuid.New().String()
 	importsBase := filepath.Join(h.attachmentPath, "imports")
 	importDir, err := securejoin.SecureJoin(importsBase, uploadID)
@@ -173,7 +163,6 @@ func (h *AssetHandler) UploadCSV(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Auto-detect delimiter if not provided
 	delimiter := ','
 	if delimiterStr != "" {
 		switch delimiterStr {
@@ -192,7 +181,6 @@ func (h *AssetHandler) UploadCSV(w http.ResponseWriter, r *http.Request) {
 		delimiter = h.detectDelimiter(destPath)
 	}
 
-	// Parse preview rows
 	headers, previewRows, totalRows, err := h.parseCSVPreview(destPath, delimiter, hasHeader, 5)
 	if err != nil {
 		// Clean up on error
@@ -218,8 +206,6 @@ func (h *AssetHandler) UploadCSV(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// --- Start Import Handler ---
-
 // StartImport handles POST /asset-sets/{setId}/import/start
 func (h *AssetHandler) StartImport(w http.ResponseWriter, r *http.Request) {
 	currentUser, setID, ok := h.requireSetAdminAccess(w, r)
@@ -241,7 +227,6 @@ func (h *AssetHandler) StartImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate asset type belongs to this set
 	typeSetID, err := h.repo.GetAssetTypeSetID(req.AssetTypeID)
 	if errors.Is(err, repository.ErrNotFound) {
 		respondValidationError(w, r, "Asset type not found")
@@ -256,10 +241,7 @@ func (h *AssetHandler) StartImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The category/status maps are caller-supplied (name -> id). Validate every
-	// referenced id belongs to this set so an import cannot plant foreign-set
-	// taxonomy FKs (whose names/colors would then render to set viewers). The
-	// normal create/update path enforces the same via validateResourceBelongsToSet.
+	// Reject foreign-set taxonomy IDs to prevent cross-set data disclosure.
 	for name, id := range req.CategoryMap {
 		if !h.validateResourceBelongsToSet(w, r, "asset_categories", id, setID, "Category "+name) {
 			return
@@ -271,7 +253,6 @@ func (h *AssetHandler) StartImport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Locate the uploaded file
 	importsBase := filepath.Join(h.attachmentPath, "imports")
 	importDir, err := securejoin.SecureJoin(importsBase, req.UploadID)
 	if err != nil {
@@ -279,7 +260,6 @@ func (h *AssetHandler) StartImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Find the CSV file in the upload directory
 	entries, err := os.ReadDir(importDir)
 	if err != nil {
 		respondBadRequest(w, r, "Upload not found - please re-upload the file")
@@ -291,7 +271,6 @@ func (h *AssetHandler) StartImport(w http.ResponseWriter, r *http.Request) {
 	}
 	filePath := filepath.Join(importDir, entries[0].Name())
 
-	// Create job
 	jobID := uuid.New().String()
 	configJSON, err := json.Marshal(req)
 	if err != nil {
@@ -304,7 +283,6 @@ func (h *AssetHandler) StartImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Audit log
 	_ = logger.LogAudit(h.db, logger.AuditEvent{
 		UserID:       currentUser.ID,
 		Username:     currentUser.Username,
@@ -320,7 +298,6 @@ func (h *AssetHandler) StartImport(w http.ResponseWriter, r *http.Request) {
 		Success: true,
 	})
 
-	// Start background import
 	go h.executeCSVImport(jobID, setID, req, filePath, currentUser.ID)
 
 	respondJSONCreated(w, map[string]string{
@@ -328,8 +305,6 @@ func (h *AssetHandler) StartImport(w http.ResponseWriter, r *http.Request) {
 		"message": "Import started successfully",
 	})
 }
-
-// --- Job Status Handlers ---
 
 // GetImportJob handles GET /asset-sets/{setId}/import/jobs/{jobId}
 func (h *AssetHandler) GetImportJob(w http.ResponseWriter, r *http.Request) {
@@ -374,7 +349,7 @@ func (h *AssetHandler) GetImportJobs(w http.ResponseWriter, r *http.Request) {
 	respondJSONOK(w, jobs)
 }
 
-// importJobRowToResponse converts a repository ImportJobRow into the API response shape.
+// importJobRowToResponse converts an import job row to its API response.
 func importJobRowToResponse(jobID string, row *repository.ImportJobRow) AssetImportJobResponse {
 	resp := AssetImportJobResponse{
 		JobID:  jobID,
@@ -405,8 +380,6 @@ func importJobRowToResponse(jobID string, row *repository.ImportJobRow) AssetImp
 	return resp
 }
 
-// --- Background Import Execution ---
-
 func (h *AssetHandler) executeCSVImport(jobID string, setID int, req StartAssetImportRequest, filePath string, userID int) {
 	defer func() {
 		if rec := recover(); rec != nil {
@@ -419,7 +392,6 @@ func (h *AssetHandler) executeCSVImport(jobID string, setID int, req StartAssetI
 
 	h.updateImportJobStatus(jobID, "running", "initializing", nil, "")
 
-	// Open CSV file
 	f, err := os.Open(filePath) //nolint:gosec // filePath from trusted internal import job state
 	if err != nil {
 		h.updateImportJobStatus(jobID, "failed", "", nil, fmt.Sprintf("Failed to open CSV file: %v", err))
@@ -445,7 +417,6 @@ func (h *AssetHandler) executeCSVImport(jobID string, setID int, req StartAssetI
 
 	reader := newCSVReaderSkippingBOM(f, delimiter)
 
-	// Skip header row if present
 	if req.HasHeader {
 		if _, err := reader.Read(); err != nil {
 			h.updateImportJobStatus(jobID, "failed", "", nil, "Failed to read CSV header")
@@ -453,16 +424,13 @@ func (h *AssetHandler) executeCSVImport(jobID string, setID int, req StartAssetI
 		}
 	}
 
-	// Get default status for this set
 	defaultStatusID, _ := h.repo.GetDefaultStatus(setID)
 
 	progress := &AssetImportProgress{
 		Phase: "importing",
 	}
 
-	// Single-pass import: count and process rows together so the reported
-	// total always equals imported + failed (no silent skipping of malformed
-	// rows during a pre-count pass).
+	// Count and process together so total always equals imported plus failed.
 	batchSize := 100
 	rowNum := 0
 	errorsTruncated := false
@@ -505,18 +473,13 @@ func (h *AssetHandler) executeCSVImport(jobID string, setID int, req StartAssetI
 	progress.Phase = "completed"
 	h.updateImportJobStatus(jobID, "completed", "completed", progress, "")
 
-	// Clean up temp file
 	importDir := filepath.Dir(filePath)
 	if err := os.RemoveAll(importDir); err != nil { //nolint:gosec // filePath from trusted internal import job state
 		slog.Error("Failed to clean up import temp files", "dir", importDir, "error", err)
 	}
 }
 
-// ReconcileInterruptedImports marks any running/queued import jobs as failed
-// and rolls back partial inserts from those jobs. Called at server startup —
-// any job left in a running state is an orphan from a previous process that
-// crashed or was killed mid-import, so assets it inserted must be removed
-// before the job is marked failed.
+// ReconcileInterruptedImports rolls back and fails jobs orphaned by a restart.
 func (h *AssetHandler) ReconcileInterruptedImports() (int, error) {
 	jobIDs, err := h.repo.ListInterruptedImportJobIDs()
 	if err != nil {
@@ -558,7 +521,6 @@ func (h *AssetHandler) importCSVRow(record []string, setID int, req StartAssetIm
 		assetTag = sanitize.PlainTextField.Sanitize(getCol(req.Mappings.AssetTag))
 	}
 
-	// Resolve category
 	var categoryID *int
 	if req.Mappings.CategoryID >= 0 {
 		catName := getCol(req.Mappings.CategoryID)
@@ -569,7 +531,6 @@ func (h *AssetHandler) importCSVRow(record []string, setID int, req StartAssetIm
 		}
 	}
 
-	// Resolve status
 	var statusID *int
 	if req.Mappings.StatusID >= 0 {
 		statusName := getCol(req.Mappings.StatusID)
@@ -583,15 +544,12 @@ func (h *AssetHandler) importCSVRow(record []string, setID int, req StartAssetIm
 		statusID = defaultStatusID
 	}
 
-	// Build and validate an explicit custom-field map for every row. Required
-	// fields must still be enforced when no custom columns are mapped or all
-	// mapped cells are blank.
+	// Validate every row so required custom fields cannot be bypassed.
 	cfValues := make(map[string]interface{})
 	for fieldKey, colIdx := range req.Mappings.CustomFields {
 		val := getCol(colIdx)
 		if val != "" {
 			sanitized := sanitize.PlainTextField.Sanitize(val)
-			// Resolve text values to option IDs for select/multiselect fields
 			resolved := h.resolveImportFieldValue(fieldKey, sanitized)
 			cfValues[fieldKey] = resolved
 		}
@@ -627,8 +585,7 @@ func (h *AssetHandler) importCSVRow(record []string, setID int, req StartAssetIm
 	return err
 }
 
-// resolveImportFieldValue looks up a custom field definition and converts text values
-// to option IDs for select/multiselect fields. Returns the original value for other types.
+// resolveImportFieldValue maps select labels to option IDs.
 func (h *AssetHandler) resolveImportFieldValue(fieldKey, textValue string) interface{} {
 	fieldID, err := strconv.Atoi(fieldKey)
 	if err != nil {
@@ -649,7 +606,6 @@ func (h *AssetHandler) resolveImportFieldValue(fieldKey, textValue string) inter
 		return textValue
 	}
 
-	// Build label -> ID map
 	labelToID := make(map[string]int, len(opts.Items))
 	for _, item := range opts.Items {
 		labelToID[item.Label] = item.ID
@@ -662,7 +618,6 @@ func (h *AssetHandler) resolveImportFieldValue(fieldKey, textValue string) inter
 		return textValue
 	}
 
-	// multiselect: split comma-separated values
 	parts := strings.Split(textValue, ",")
 	var ids []int
 	for _, part := range parts {
@@ -676,8 +631,6 @@ func (h *AssetHandler) resolveImportFieldValue(fieldKey, textValue string) inter
 	}
 	return textValue
 }
-
-// --- Job Status Update Helpers ---
 
 func (h *AssetHandler) updateImportJobStatus(jobID, status, phase string, progress *AssetImportProgress, errorMessage string) {
 	progressJSON := "{}"
@@ -712,8 +665,6 @@ func (h *AssetHandler) updateImportJobProgress(jobID string, progress *AssetImpo
 		slog.Error("Failed to update import job progress", "jobID", jobID, "error", err)
 	}
 }
-
-// --- Suggest Fields & Create Type ---
 
 // SuggestFieldsRequest is the request body for suggesting fields from CSV columns.
 type SuggestFieldsRequest struct {
@@ -768,7 +719,6 @@ func (h *AssetHandler) SuggestFieldsFromCSV(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Locate the uploaded file
 	importsBase := filepath.Join(h.attachmentPath, "imports")
 	importDir, err := securejoin.SecureJoin(importsBase, req.UploadID)
 	if err != nil {
@@ -783,7 +733,6 @@ func (h *AssetHandler) SuggestFieldsFromCSV(w http.ResponseWriter, r *http.Reque
 	}
 	filePath := filepath.Join(importDir, entries[0].Name())
 
-	// Parse delimiter
 	delimiter := ','
 	if req.Delimiter != "" {
 		switch req.Delimiter {
@@ -800,7 +749,6 @@ func (h *AssetHandler) SuggestFieldsFromCSV(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	// Parse CSV with more rows for better sampling
 	headers, previewRows, _, err := h.parseCSVPreview(filePath, delimiter, req.HasHeader, 20)
 	if err != nil {
 		respondBadRequest(w, r, fmt.Sprintf("Failed to parse CSV: %v", err))
@@ -809,7 +757,6 @@ func (h *AssetHandler) SuggestFieldsFromCSV(w http.ResponseWriter, r *http.Reque
 
 	var suggestions []SuggestedField
 	for colIdx, header := range headers {
-		// Collect sample values for this column
 		var samples []string
 		seen := make(map[string]bool)
 		for _, row := range previewRows {
@@ -826,7 +773,6 @@ func (h *AssetHandler) SuggestFieldsFromCSV(w http.ResponseWriter, r *http.Reque
 		suggestedType, options := inferFieldType(samples)
 		suggestedName := cleanHeaderName(header)
 
-		// Cap sample values for response
 		displaySamples := samples
 		if len(displaySamples) > 5 {
 			displaySamples = displaySamples[:5]
@@ -872,7 +818,6 @@ func (h *AssetHandler) CreateTypeFromImport(w http.ResponseWriter, r *http.Reque
 		req.Color = "#6b7280"
 	}
 
-	// Validate field types
 	allowedTypes := map[string]bool{
 		"text": true, "textarea": true, "number": true, "date": true, "select": true,
 	}
@@ -887,7 +832,6 @@ func (h *AssetHandler) CreateTypeFromImport(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	// Build repo input
 	fieldInputs := make([]repository.ImportTypeFieldInput, 0, len(req.Fields))
 	for _, f := range req.Fields {
 		var optionsJSON *string
@@ -921,7 +865,6 @@ func (h *AssetHandler) CreateTypeFromImport(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Build API response fields list
 	fields := make([]models.AssetTypeField, len(results))
 	for i, res := range results {
 		req := req.Fields[i]
@@ -1051,10 +994,8 @@ func cleanHeaderName(header string) string {
 	if s == "" {
 		return s
 	}
-	// Replace underscores and hyphens with spaces
 	s = strings.ReplaceAll(s, "_", " ")
 	s = strings.ReplaceAll(s, "-", " ")
-	// Title-case each word
 	words := strings.Fields(s)
 	for i, w := range words {
 		if w != "" {
@@ -1065,8 +1006,6 @@ func cleanHeaderName(header string) string {
 	}
 	return strings.Join(words, " ")
 }
-
-// --- CSV Helpers ---
 
 func (h *AssetHandler) detectDelimiter(filePath string) rune {
 	f, err := os.Open(filePath) //nolint:gosec // G304 — filePath sanitized via securejoin.SecureJoin
@@ -1082,7 +1021,6 @@ func (h *AssetHandler) detectDelimiter(filePath string) rune {
 	}
 	sample := string(buf[:n])
 
-	// Count occurrences of common delimiters in first few lines
 	lines := strings.SplitN(sample, "\n", 5)
 	if len(lines) == 0 {
 		return ','
@@ -1093,7 +1031,6 @@ func (h *AssetHandler) detectDelimiter(filePath string) rune {
 	bestScore := 0
 
 	for _, d := range delimiters {
-		// Check if delimiter appears consistently across lines
 		counts := make([]int, 0, len(lines))
 		for _, line := range lines {
 			line = strings.TrimSpace(line)
@@ -1107,7 +1044,6 @@ func (h *AssetHandler) detectDelimiter(filePath string) rune {
 			continue
 		}
 
-		// Good delimiter: appears multiple times and consistently
 		if counts[0] > 0 {
 			consistent := true
 			for i := 1; i < len(counts); i++ {
@@ -1148,7 +1084,6 @@ func (h *AssetHandler) parseCSVPreview(filePath string, delimiter rune, hasHeade
 		}
 	}
 
-	// Read preview rows
 	totalRows = 0
 	for {
 		record, readErr := reader.Read()
@@ -1165,7 +1100,6 @@ func (h *AssetHandler) parseCSVPreview(filePath string, delimiter rune, hasHeade
 			previewRows = append(previewRows, record)
 		}
 
-		// If no header, generate column names from first row
 		if !hasHeader && headers == nil {
 			headers = make([]string, len(record))
 			for i := range record {
@@ -1191,7 +1125,6 @@ var (
 // detectHeaderMismatch checks if the user's hasHeader setting likely doesn't match the CSV content.
 func detectHeaderMismatch(headers []string, previewRows [][]string, hasHeader bool) string {
 	if hasHeader {
-		// Check if the "headers" look like data (numeric or date values)
 		if len(headers) == 0 {
 			return ""
 		}
@@ -1208,7 +1141,6 @@ func detectHeaderMismatch(headers []string, previewRows [][]string, hasHeader bo
 		return ""
 	}
 
-	// hasHeader=false: check if the first preview row looks like headers
 	if len(previewRows) == 0 {
 		return ""
 	}
@@ -1233,7 +1165,6 @@ func detectHeaderMismatch(headers []string, previewRows [][]string, hasHeader bo
 		return "The first row looks like it contains column headers. You may want to check 'First row contains column headers' and re-upload."
 	}
 
-	// Check if first row is mostly short non-numeric while subsequent rows have more numeric/longer values
 	if len(previewRows) >= 2 && float64(shortNonNumeric)/float64(len(firstRow)) > 0.5 {
 		dataRowNumeric := 0
 		dataRowTotal := 0

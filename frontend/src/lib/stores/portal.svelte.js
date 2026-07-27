@@ -264,14 +264,12 @@ let loadingComments = $state(false);
 let newCommentContent = $state('');
 let addingComment = $state(false);
 
-// Drafts state — saved in-progress request forms, scoped to this portal's
-// channel for the authenticated identity (portal customer or internal user).
+// Drafts are scoped to this portal and authenticated identity.
 let showMyDrafts = $state(false);
 let myDrafts = $state([]);
 let loadingDrafts = $state(false);
 
-// My Approvals state — surfaces approvals where the active customer (or an
-// internal user with a portal_customers.user_id link) is in the active pool.
+// Approvals assigned to the active customer or linked internal user.
 let showMyApprovals = $state(false);
 let myApprovals = $state([]);
 let loadingApprovals = $state(false);
@@ -279,10 +277,7 @@ let selectedApproval = $state(null);
 let loadingApprovalDetail = $state(false);
 let approvalComment = $state('');
 let decidingApproval = $state(false);
-// Item context for the approval being viewed. The portal request endpoint
-// returns 200 for either the request creator or an active approver — the
-// approver path is what makes it useful here, since approvers viewing
-// somebody else's request are the whole reason this exists.
+// Request context for the selected approval.
 let selectedApprovalRequest = $state(null);
 
 // Pending request type (for opening form after login)
@@ -523,10 +518,7 @@ function parseDocmostShareLink(link) {
  * Save customizations (debounced)
  */
 async function saveCustomizations() {
-  // Internal users authenticated via the main app OR via the portal route's
-  // own session (portalAuth.checkAuth populates `user` with isInternal=true)
-  // must both be able to save. Portal customers stay blocked: they have
-  // portalAuthStore.isAuthenticated but isInternal=false.
+  // Allow internal main-app and portal sessions, never portal customers.
   const canCustomize =
     authStore.isAuthenticated || (portalAuthStore.isAuthenticated && portalAuthStore.isInternal);
   if (!portalData?.channel_id || !canCustomize) return;
@@ -621,18 +613,14 @@ async function loadRequestTypes({ forCustomization = isEditing || showCustomizeP
   const loadId = ++requestTypesLoadId;
   try {
     loadingRequestTypes = true;
-    // Do not leave manager-only definitions visible while returning to the
-    // audience view, or audience DTOs visible as editable definitions while
-    // the management request is being authorized.
+    // Clear stale data while switching response shape.
     requestTypes = [];
     const types = forCustomization
       ? await api.requestTypes.getForChannel(portalData.channel_id)
       : await api.requestTypes.getForPortal(currentSlug);
 
     if (loadId !== requestTypesLoadId) return;
-    // Surface the count only for internal users (preserves prior behavior where
-    // portal customers don't see field counts). Internal users may be
-    // authenticated via either auth store.
+    // Field counts are internal-only.
     requestTypes = normalizeRequestTypes(types);
   } catch (err) {
     if (loadId !== requestTypesLoadId) return;
@@ -679,9 +667,7 @@ async function loadAssetReports({ forCustomization = isEditing || showCustomizeP
   const loadId = ++assetReportsLoadId;
   try {
     loadingAssetReports = true;
-    // Do not leave manager-only definitions visible while an audience reload
-    // is in flight, or public DTOs visible as editable definitions while the
-    // manager request is being authorized.
+    // Clear stale data while switching response shape.
     assetReports = [];
     hasAssetSets = false;
 

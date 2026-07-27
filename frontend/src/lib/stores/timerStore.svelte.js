@@ -1,7 +1,3 @@
-/**
- * Timer Store - Svelte 5 Runes Pattern
- * Manages active timer state, duration tracking, and server sync.
- */
 import { api } from '../api.js';
 
 class TimerStore {
@@ -20,9 +16,6 @@ class TimerStore {
 
   // === Derived Values ===
 
-  /**
-   * Formatted timer duration (HH:MM:SS)
-   */
   get durationFormatted() {
     const hours = Math.floor(this.duration / 3600);
     const minutes = Math.floor((this.duration % 3600) / 60);
@@ -37,32 +30,20 @@ class TimerStore {
     return this.durationFormatted;
   }
 
-  /**
-   * Whether a new timer can be started
-   */
   get canStart() {
     return !this.activeTimer && !this.syncing;
   }
 
-  /**
-   * Whether the active timer can be stopped
-   */
   get canStop() {
     return !!this.activeTimer && !this.syncing;
   }
 
-  /**
-   * Check if there's an active timer running
-   */
   get hasActive() {
     return this.activeTimer !== null;
   }
 
   // === Timer Interval Management ===
 
-  /**
-   * Start the timer interval to update duration every second
-   */
   #startTimerInterval(startTimeUTC) {
     const startTime = Number(startTimeUTC);
     if (!Number.isFinite(startTime)) {
@@ -90,9 +71,6 @@ class TimerStore {
     this.#timerInterval = setInterval(updateDuration, 1000);
   }
 
-  /**
-   * Stop the timer interval
-   */
   #stopTimerInterval() {
     if (this.#timerInterval) {
       clearInterval(this.#timerInterval);
@@ -104,9 +82,6 @@ class TimerStore {
 
   // === Sync Interval Management ===
 
-  /**
-   * Start the sync interval (every 30 seconds)
-   */
   #startSyncInterval() {
     if (this.#syncInterval) return; // Already running
 
@@ -115,9 +90,6 @@ class TimerStore {
     }, 30000);
   }
 
-  /**
-   * Stop the sync interval
-   */
   #stopSyncInterval() {
     if (this.#syncInterval) {
       clearInterval(this.#syncInterval);
@@ -202,10 +174,6 @@ class TimerStore {
     }
   }
 
-  /**
-   * Sync timer state with server
-   * This fetches the current active timer from the server
-   */
   async sync() {
     const syncVersion = this.#stateVersion;
 
@@ -236,10 +204,6 @@ class TimerStore {
     }
   }
 
-  /**
-   * Initialize timer store
-   * This should be called when the app starts to sync with any existing active timer
-   */
   async initialize() {
     if (this.#initializePromise) return this.#initializePromise;
     const request = this.sync().finally(() => {
@@ -257,17 +221,11 @@ class TimerStore {
     return this.activeTimer;
   }
 
-  /**
-   * Cleanup function - stops all intervals
-   */
   cleanup() {
     this.#stopTimerInterval();
     this.#stopSyncInterval();
   }
 
-  /**
-   * Reset store to initial state
-   */
   reset() {
     this.cleanup();
     this.#initializePromise = null;

@@ -450,9 +450,7 @@ func (h *AttachmentHandler) authorizeUploadEntity(w http.ResponseWriter, r *http
 
 // Upload handles file upload to an item
 func (h *AttachmentHandler) Upload(w http.ResponseWriter, r *http.Request) {
-	// FIXME(human-review): This handler mixes entity resolution, permissions, validation,
-	// filesystem writes, thumbnailing, DB writes, and response shaping in one very large
-	// method. Split by entity type / storage concern once the auth rules below are clarified.
+	// FIXME(human-review): Split this handler by authorization and storage concern.
 	slog.Debug("upload request received", slog.String("component", "attachments"))
 
 	if !h.IsEnabled() {
@@ -461,10 +459,10 @@ func (h *AttachmentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Limit request body size at the HTTP level before parsing
+	// Cap the request before parsing.
 	r.Body = http.MaxBytesReader(w, r.Body, 32<<20)
 
-	// Parse form data (32MB max)
+	// Parse the capped form.
 	slog.Debug("parsing multipart form", slog.String("component", "attachments"))
 	// #nosec G120 -- the body is already capped by MaxBytesReader above; the int arg is the in-memory threshold, not the upper bound
 	err := r.ParseMultipartForm(32 << 20)
@@ -474,8 +472,7 @@ func (h *AttachmentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get entity info from form
-	// Support both old (item_id) and new (entity_type + entity_id) parameters
+	// Accept legacy item_id and current entity parameters.
 	entityIDStr := r.FormValue("entity_id")
 	if entityIDStr == "" {
 		entityIDStr = r.FormValue("item_id") // Backwards compatibility
@@ -483,7 +480,7 @@ func (h *AttachmentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	entityType := r.FormValue("entity_type")
 	category := r.FormValue("category")
 
-	// Determine entity type from category for backwards compatibility
+	// Derive a missing entity type for legacy clients.
 	if entityType == "" {
 		switch category {
 		case "avatar":
@@ -1005,13 +1002,8 @@ func (h *AttachmentHandler) GetByItem(w http.ResponseWriter, r *http.Request) {
 	respondJSONOK(w, response)
 }
 
-// authorizeAttachmentRead gates read access to an attachment (Download and
-// Thumbnail) based on its entity_type. itemID is the attachment's item_id
-// column (nil when NULL). Returns true if the caller may serve the bytes;
-// otherwise it has already written the response and the caller must return.
-//
-// All denials respond 404 (no existence disclosure); genuine internal errors
-// respond 500. See WI-46 for why every entity_type is handled explicitly.
+// authorizeAttachmentRead gates download/thumbnail access by entity type.
+// Denials return 404 to avoid disclosure; callers return after a false result.
 func (h *AttachmentHandler) authorizeAttachmentRead(w http.ResponseWriter, r *http.Request, entityType string, itemID *int) bool {
 	switch entityType {
 	case "test_case":
@@ -1027,19 +1019,14 @@ func (h *AttachmentHandler) authorizeAttachmentRead(w http.ResponseWriter, r *ht
 		}
 		return h.authorizeTestResultAttachmentAccess(w, r, *itemID, models.PermissionTestView)
 	case "item", "":
-		// Empty entity_type covers legacy rows inserted before the column
-		// existed; they're all item attachments. Item-typed rows must have a
-		// non-NULL item_id per WI-46; a NULL here means a corrupt or
-		// invariant-violating row and must not be served.
+		// Empty legacy types are items; missing item IDs are corrupt and never served.
 		if itemID == nil {
 			respondNotFound(w, r, "attachment")
 			return false
 		}
 		return CheckItemPermissionAsActor(w, r, repository.NewItemRepository(h.db), h.permissionService, h.approvalService, *itemID, models.PermissionItemView)
 	case "page":
-		// Workspace knowledge pages: gate downloads on page.view via the
-		// PagePermissionService so per-page ACLs are honored. Falls back to
-		// workspace page.view if the service isn't wired (degraded mode).
+		// Honor per-page ACLs, falling back to workspace page.view in degraded mode.
 		if itemID == nil {
 			respondNotFound(w, r, "attachment")
 			return false
@@ -1168,20 +1155,11 @@ func (h *AttachmentHandler) Download(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", attachment.MimeType)
 	w.Header().Set("Content-Length", strconv.FormatInt(attachment.FileSize, 10))
 
-	// SECURITY: Add security headers to prevent attacks
-	// Prevent browsers from MIME-sniffing the response
+	// Prevent MIME sniffing and embedding.
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	// Prevent embedding in iframes
 	w.Header().Set("X-Frame-Options", "DENY")
-	// Control how the file is displayed/downloaded.
-	//
-	// SECURITY: use an ALLOWLIST of non-executable types for inline display
-	// rather than a denylist of dangerous ones. A denylist inevitably misses
-	// renderable/script-capable types (e.g. application/xhtml+xml, image/svg+xml
-	// variants, MathML), and MIME values are not always server-verified — the
-	// Jira importer, for one, stores the remote-declared Content-Type. Anything
-	// not explicitly known-safe is forced to download under a locked-down CSP so
-	// it cannot execute in the app origin even if a browser would render it.
+	// Inline only allowlisted types; MIME may be remote-declared. Other files
+	// download with a restrictive CSP to prevent app-origin execution.
 	if isInlineSafeMimeType(attachment.MimeType) {
 		w.Header().Set("Content-Disposition", fileserve.ContentDisposition("inline", attachment.OriginalFilename))
 	} else {
@@ -1223,15 +1201,8 @@ func (h *AttachmentHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Authorize per entity_type. Every branch decides explicitly; a NULL
-	// item_id on an item-like row is treated as 404 (the WI-46 invariant
-	// should make this unreachable). Branding/avatar attachments are
-	// refused via this endpoint — their lifecycle is owned by the parent
-	// entity (workspace/team/customer/portal/hub update flows already
-	// orphan the old URL when a new asset is uploaded). The lone exception
-	// is "avatar" (user profile picture), which we allow the original
-	// uploader to delete since there's no parent record beyond the
-	// users.avatar_url string pointer.
+	// Authorize each entity type explicitly. Missing item IDs return 404;
+	// parent-owned branding avatars are refused, except uploader-owned profiles.
 	switch details.EntityType {
 	case "item", "":
 		if details.ItemID == nil {

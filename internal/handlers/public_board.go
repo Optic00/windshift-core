@@ -579,15 +579,8 @@ func (h *PublicBoardHandler) getAllActiveWorkspaceIDs() ([]int, error) {
 	return ids, nil
 }
 
-// resolveCollectionWorkspaceIDs returns the workspace IDs to scope a public
-// collection's QL evaluation against. If the collection has a non-null
-// workspace_id, the scope is just that workspace — otherwise the public
-// board falls back to every active workspace (the original "global public
-// collection" behavior).
-//
-// Without this scoping, a workspace-scoped collection whose QL happens to
-// match items in other workspaces would expose those items publicly. See
-// bughunt2.md Run 6 finding #5.
+// resolveCollectionWorkspaceIDs scopes a collection to its home workspace, or
+// all active workspaces when global, to prevent public cross-workspace exposure.
 func (h *PublicBoardHandler) resolveCollectionWorkspaceIDs(collectionID int) ([]int, error) {
 	var wsID sql.NullInt64
 	err := h.db.QueryRow(`SELECT workspace_id FROM collections WHERE id = ?`, collectionID).Scan(&wsID)
@@ -699,9 +692,7 @@ func (h *PublicBoardHandler) loadPublicComments(itemID int, slug string) ([]publ
 
 // DownloadAttachment serves an image attachment for a public board item
 func (h *PublicBoardHandler) DownloadAttachment(w http.ResponseWriter, r *http.Request) {
-	// Access is derived from mutable public-board state (published flag, slug,
-	// and collection membership). Never let a browser or shared proxy reuse
-	// bytes after any of those authorization inputs have been revoked.
+	// Publication and membership are mutable authorization inputs; never cache.
 	w.Header().Set("Cache-Control", "no-store")
 
 	slug := r.PathValue("slug")
@@ -728,9 +719,7 @@ func (h *PublicBoardHandler) DownloadAttachment(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Fetch attachment. Public boards may only expose item attachments; other
-	// attachment rows also store their scoped entity in item_id for legacy
-	// reasons, so entity_type must be checked before treating item_id as an item.
+	// Require an item attachment; legacy rows reuse item_id for other entities.
 	var itemID sql.NullInt64
 	var entityType sql.NullString
 	var filePath, mimeType, originalFilename string
@@ -744,19 +733,17 @@ func (h *PublicBoardHandler) DownloadAttachment(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Attachment must be a work-item attachment.
 	if !itemID.Valid || (entityType.String != "" && entityType.String != "item") {
 		respondNotFound(w, r, "attachment")
 		return
 	}
 
-	// Only allow image MIME types, reject SVG (can contain scripts)
+	// SVG is excluded because it can execute scripts.
 	if !strings.HasPrefix(mimeType, "image/") || mimeType == "image/svg+xml" {
 		respondNotFound(w, r, "attachment")
 		return
 	}
 
-	// Verify item belongs to this public collection
 	belongs, err := h.itemBelongsToCollection(int(itemID.Int64), collectionID)
 	if err != nil {
 		respondInternalError(w, r, err)
@@ -767,15 +754,7 @@ func (h *PublicBoardHandler) DownloadAttachment(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Open the file confined to the storage root. fileserve.OpenUnderRoot uses
-	// os.Root (Go 1.24+), which rejects parent-dir traversal and refuses to
-	// follow symlinks that escape the root, so even if a malicious row in the
-	// attachments table or a symlink planted in the storage volume tries to
-	// point at /etc/passwd, the read stays confined to h.attachmentPath. This
-	// matters because the volume can be operator-managed (Docker bind-mount)
-	// and we don't want to rely on the DB or filesystem being uncompromised.
-	// Any failure (outside-root, not-exist, symlink escape, permission) is
-	// hidden behind a 404.
+	// Confine reads to storage root and hide traversal or symlink failures as 404.
 	file, err := fileserve.OpenUnderRoot(h.attachmentPath, filePath)
 	if err != nil {
 		respondNotFound(w, r, "attachment")
@@ -783,7 +762,6 @@ func (h *PublicBoardHandler) DownloadAttachment(w http.ResponseWriter, r *http.R
 	}
 	defer func() { _ = file.Close() }()
 
-	// Security headers
 	w.Header().Set("Content-Type", mimeType)
 	w.Header().Set("Content-Length", strconv.FormatInt(fileSize, 10))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -793,9 +771,7 @@ func (h *PublicBoardHandler) DownloadAttachment(w http.ResponseWriter, r *http.R
 	_, _ = io.Copy(w, file)
 }
 
-// itemBelongsToCollection checks whether the given item ID appears in the
-// results of the collection's QL query, scoped to the collection's home
-// workspace (or all active workspaces if the collection is workspace-less).
+// itemBelongsToCollection checks the collection's workspace-scoped QL result.
 func (h *PublicBoardHandler) itemBelongsToCollection(itemID, collectionID int) (bool, error) {
 	scopedWorkspaceIDs, err := h.resolveCollectionWorkspaceIDs(collectionID)
 	if err != nil {

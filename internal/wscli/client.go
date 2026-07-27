@@ -377,15 +377,7 @@ func (c *Client) GetWorkflowTransitions(workflowID int) ([]Transition, error) {
 	return transitions, nil
 }
 
-// ============================================
-// Test Management API Methods
-// ============================================
-//
-// Test routes live on /rest/api/v1 (gated by tests:read / tests:write)
-// since WI-68 mirrored the read + run-lifecycle slice off the legacy
-// cookie surface. Full catalog CRUD (folders, case writes, set writes,
-// labels) is still cookie-only; reach it through the SPA / admin tools
-// until a follow-up ticket lifts it to v1.
+// Test run and read routes use REST v1; catalog writes remain cookie-only.
 
 // ListTestCases lists test cases in a workspace
 func (c *Client) ListTestCases(workspaceID int, folderID string) ([]TestCase, error) {
@@ -546,21 +538,11 @@ func (c *Client) DeleteComment(commentID int) error {
 	return c.DELETE(fmt.Sprintf("/rest/api/v1/comments/%d", commentID))
 }
 
-// ============================================
-// Diagram Methods
-// ============================================
-//
-// Diagram routes live on /rest/api/v1 (gated by items:read / items:write)
-// since WI-71 mirrored them off the legacy cookie surface. The handler
-// accepts {name, diagram_data} where diagram_data is opaque text —
-// either an Excalidraw scene JSON or a {type:"mermaid",source:...} seed
-// wrapper that the frontend expands on first open.
+// Diagram REST routes accept opaque Excalidraw or Mermaid seed data.
 
 // ListDiagrams returns all diagrams for an item.
 func (c *Client) ListDiagrams(itemID int) ([]Diagram, error) {
-	// v1 list endpoints wrap the array in {"items":[...]} for forward
-	// compatibility with pagination metadata; unwrap that here so callers
-	// keep receiving a plain slice.
+	// Unwrap the v1 envelope to preserve the slice return type.
 	var envelope struct {
 		Items []Diagram `json:"items"`
 	}
@@ -606,50 +588,23 @@ func (c *Client) DeleteDiagram(id int) error {
 	return c.DELETE(fmt.Sprintf("/rest/api/v1/diagrams/%d", id))
 }
 
-// ============================================
-// Attachment Methods
-// ============================================
-//
-// Both endpoints live on the public REST v1 surface. The legacy
-// /api/attachments/{id}/download route explicitly rejects bearer tokens
-// (cookie-auth only), so the CLI must use /rest/api/v1/*.
+// Attachment methods use bearer-compatible REST v1 endpoints.
 
-// UploadPageAttachment uploads a file as an attachment on a workspace
-// knowledge page via POST /rest/api/v1/workspaces/{wsID}/pages/{pageID}/attachments.
-// The response is the legacy attachment-upload envelope: a JSON object
-// with `attachment.{id,filename,...}`. Returns the parsed attachment so
-// callers can build the embed URL `/api/attachments/{id}/download`.
-//
-// The server gate is `pages:write` + per-page `page.edit` (Editor role
-// on the workspace satisfies that by default). A 404 from the server
-// means either the page id does not exist or the caller lacks edit
-// permission — page handlers never distinguish the two on purpose.
+// UploadPageAttachment uploads through the page REST v1 endpoint. Its 404
+// deliberately hides whether a page is missing or inaccessible.
 func (c *Client) UploadPageAttachment(workspaceID, pageID int, originalFilename string, body io.Reader) (*Attachment, error) {
 	path := fmt.Sprintf("/rest/api/v1/workspaces/%d/pages/%d/attachments", workspaceID, pageID)
 	return c.uploadAttachment(path, originalFilename, body)
 }
 
-// UploadItemAttachment uploads a file as an attachment on a work item via
-// POST /rest/api/v1/items/{itemID}/attachments. Same legacy envelope as the
-// page route, so it shares uploadAttachment.
-//
-// The server gate is `items:write` + `item.edit` in the item's workspace
-// (Editor role by default). A 404 means either the item does not exist or
-// the caller lacks edit permission — the handler never distinguishes the
-// two, so callers must not present it as "the item exists but…".
-//
-// The route caps the request body at 32 MB via http.MaxBytesReader; callers
-// should pre-check size (see maxItemAttachmentUpload) so an oversized file
-// fails with a useful message rather than a multipart parse error.
+// UploadItemAttachment shares the page upload envelope. Its 404 hides item
+// existence; callers pre-check the route's 32 MB limit.
 func (c *Client) UploadItemAttachment(itemID int, originalFilename string, body io.Reader) (*Attachment, error) {
 	path := fmt.Sprintf("/rest/api/v1/items/%d/attachments", itemID)
 	return c.uploadAttachment(path, originalFilename, body)
 }
 
-// uploadAttachment posts body as the `file` part of a multipart form to path
-// and decodes the shared attachment-upload envelope. The whole body is
-// buffered in memory — both call sites cap uploads well below any level
-// where streaming would matter.
+// uploadAttachment buffers a bounded multipart upload and decodes its envelope.
 func (c *Client) uploadAttachment(path, originalFilename string, body io.Reader) (*Attachment, error) {
 	var buf bytes.Buffer
 	mp := multipart.NewWriter(&buf)
@@ -870,11 +825,7 @@ func (c *Client) DeleteMilestone(id int) error {
 	return c.DELETE(fmt.Sprintf("/rest/api/v1/milestones/%d", id))
 }
 
-// Workspace-scoped milestone methods. These hit /rest/api/v1/workspaces/{id}/milestones[...]
-// instead of the global routes; tokens scoped to one workspace can use them
-// without needing global milestone access. The workspace is encoded in the
-// URL — request bodies should not also carry workspace_id (the server ignores
-// it on these routes).
+// Workspace milestone routes support workspace-scoped tokens; URLs own scope.
 
 // ListMilestonesInWorkspace lists milestones belonging to a single workspace.
 func (c *Client) ListMilestonesInWorkspace(workspaceID int, filters map[string]string) (*PaginatedResponse[Milestone], error) {
@@ -984,14 +935,8 @@ func (c *Client) ResolveMilestoneID(nameOrID string, workspaceID *int) (int, err
 	return 0, fmt.Errorf("milestone not found: %s", nameOrID)
 }
 
-// SearchItems performs a full-text search over items the caller can view
-// via GET /rest/api/v1/search/items. limit <= 0 falls back to the server
-// default page size.
-// SearchItems searches items via the v1 search endpoint. When asCQL is true the
-// query is sent as an explicit CQL filter (`ql`), so the server reports parse
-// errors instead of falling back to full-text; otherwise it is sent as a
-// full-text term (`q`) that the server auto-detects as CQL when it parses as a
-// structured filter.
+// SearchItems sends explicit CQL as ql; otherwise q permits server detection.
+// Non-positive limits use the server default.
 func (c *Client) SearchItems(query string, limit int, asCQL bool) (*PaginatedResponse[Item], error) {
 	params := url.Values{}
 	if asCQL {
@@ -1020,13 +965,7 @@ func (c *Client) GetItemHistory(itemID int) ([]History, error) {
 	return history, nil
 }
 
-// ============================================
-// Item Label Methods
-// ============================================
-//
-// Workspace-scoped work-item labels (catalog under /workspaces/{id}/labels,
-// per-item attachments under /items/{id}/labels). Fully separate from the
-// page-label system. Gated by items:read / items:write.
+// Work-item labels are separate from workspace page labels.
 
 // ListLabels returns every item label defined in a workspace.
 func (c *Client) ListLabels(workspaceID int) ([]Label, error) {
@@ -1495,12 +1434,7 @@ func (c *Client) SetPageInheritance(workspaceID, pageID int, inherit bool) (*Pag
 	return &page, nil
 }
 
-// ============================================
-// Page Labels API Methods
-// ============================================
-//
-// Workspace-scoped labels that attach to pages only. Fully separate from
-// the work-item label system; never share rows or endpoints.
+// Page labels are separate from work-item labels.
 
 // ListPageLabels returns every page label in the workspace.
 func (c *Client) ListPageLabels(workspaceID int) ([]PageLabel, error) {

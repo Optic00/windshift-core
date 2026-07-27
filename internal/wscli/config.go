@@ -117,14 +117,8 @@ func loadConfigFile(path string) {
 	}
 }
 
-// validateAliasValue rejects obviously malformed alias values (e.g. multiple
-// aliases packed into one TOML value). Returns an empty string when the value
-// is acceptable, otherwise a human-readable reason.
-//
-// Numeric IDs are the canonical form. Bare names (e.g. "Done") are accepted
-// because ResolveStatusWithFallback handles the lookup. Anything containing
-// "," or "=" is almost certainly a hand-edit mistake of the form
-// `done = "Done, progress=In Progress"` — those are rejected loudly.
+// validateAliasValue rejects likely packed TOML aliases. Numeric IDs and names
+// are valid; comma/equal-sign values are reported as hand-edit mistakes.
 func validateAliasValue(key, value string) string {
 	if strings.ContainsAny(value, ",=") {
 		return fmt.Sprintf("status_aliases.%s = %q looks malformed (contains , or =) — split into separate keys", key, value)

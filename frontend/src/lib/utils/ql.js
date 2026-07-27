@@ -1,43 +1,18 @@
 import { authStore } from '../stores/auth.svelte.js';
 
-// QL (Query Language) - A JQL-like query language for work item filtering
-//
-// Syntax Examples:
-// - workspace = "My Project"
-// - status IN (open, in_progress)
-// - priority = high AND status != completed
-// - workspace IN ("Proj A", "Proj B") AND (status = open OR priority = critical)
-// - title ~ "bug" AND created >= "2024-01-01"
-// - assignee = currentUser() AND status != completed
-// - childrenOf("priority = high") - Find all descendants of high priority items
-// - linkedOf("blocks", "status = open") - Find items blocked by open items
-//
-// Supported Fields:
-// - workspace, status, priority, title, description, created, updated, assignee, creator
-//
-// Supported Operators:
-// - =, !=, <, <=, >, >=, ~, IN, NOT IN
-// - AND, OR, NOT
-// - Parentheses for grouping
-//
-// Supported Functions:
-// - currentUser(), now(), startOfDay(), endOfDay()
-// - childrenOf("ql_query") - Find all descendants (recursive) of items matching the query
-// - linkedOf("link_label", "ql_query") - Find items linked via the specified link type
-//   Examples: linkedOf("blocks", "priority = high") - items blocked by high priority items
-//             linkedOf("is blocked by", "status = open") - items blocking open items
+// QL is a JQL-like filter language. It supports comparisons, boolean
+// expressions, IN clauses, and functions such as currentUser(), childrenOf(),
+// and linkedOf().
 
 /**
  * Token types for QL parsing
  */
 export const TokenType = {
-  // Literals
   IDENTIFIER: 'IDENTIFIER',
   STRING: 'STRING',
   NUMBER: 'NUMBER',
   DATE: 'DATE',
 
-  // Operators
   EQUALS: 'EQUALS', // =
   NOT_EQUALS: 'NOT_EQUALS', // !=, <>
   LESS_THAN: 'LESS_THAN', // <
@@ -48,17 +23,14 @@ export const TokenType = {
   IN: 'IN', // IN
   NOT_IN: 'NOT_IN', // NOT IN
 
-  // Logical operators
   AND: 'AND',
   OR: 'OR',
   NOT: 'NOT',
 
-  // Punctuation
   LPAREN: 'LPAREN', // (
   RPAREN: 'RPAREN', // )
   COMMA: 'COMMA', // ,
 
-  // Special
   EOF: 'EOF',
   FUNCTION: 'FUNCTION',
 };
@@ -366,14 +338,6 @@ export class QLParser {
     }
     this.error(message);
   }
-
-  // Grammar:
-  // expression → or_expression
-  // or_expression → and_expression ( "OR" and_expression )*
-  // and_expression → not_expression ( "AND" not_expression )*
-  // not_expression → "NOT" comparison | comparison
-  // comparison → primary ( operator primary )*
-  // primary → identifier | literal | function_call | "(" expression ")"
 
   parse() {
     const ast = this.expression();
@@ -766,7 +730,7 @@ export class QLBuilder {
   static buildQuery(filters) {
     const conditions = [];
 
-    // Workspace filter (use workspace name field, not workspaceId which expects numeric IDs)
+    // Workspace uses names; status and priority use numeric IDs.
     if (filters.workspaces && filters.workspaces.length > 0) {
       if (filters.workspaces.length === 1) {
         conditions.push(`workspace = "${filters.workspaces[0]}"`);
@@ -776,7 +740,6 @@ export class QLBuilder {
       }
     }
 
-    // Status filter (use numeric IDs)
     if (filters.statuses && filters.statuses.length > 0) {
       const statusIds = filters.statuses.filter((id) => id !== null && id !== undefined);
       if (statusIds.length === 1) {
@@ -786,7 +749,6 @@ export class QLBuilder {
       }
     }
 
-    // Priority filter (use numeric IDs)
     if (filters.priorities && filters.priorities.length > 0) {
       const priorityIds = filters.priorities.filter((id) => id !== null && id !== undefined);
       if (priorityIds.length === 1) {
@@ -796,7 +758,6 @@ export class QLBuilder {
       }
     }
 
-    // Search filter
     if (filters.search?.trim()) {
       const searchTerm = filters.search.trim();
       const formattedSearch = QLBuilder.formatValue(searchTerm, 'text');
@@ -805,7 +766,6 @@ export class QLBuilder {
       );
     }
 
-    // Dynamic field filters
     if (filters.dynamicFields && filters.dynamicFields.length > 0) {
       filters.dynamicFields.forEach((filter) => {
         if (filter.field && (filter.value || (filter.values && filter.values.length > 0))) {
@@ -831,15 +791,12 @@ export class QLBuilder {
     // Wrap field ID in backticks to handle names with spaces (e.g. cf_Time Estimate)
     const fieldId = `\`${field.id}\``;
 
-    // Handle IN/NOT IN operators with multiple values
     if ((operator === 'IN' || operator === 'NOT IN') && values && values.length > 0) {
       const valuesList = values.map((v) => QLBuilder.formatValue(v, field.type)).join(', ');
       return `${fieldId} ${operator} (${valuesList})`;
     }
 
-    // Handle IN/NOT IN operators with single text value (comma-separated)
     if ((operator === 'IN' || operator === 'NOT IN') && value) {
-      // Parse comma-separated values from the text input
       const valueList = value
         .split(',')
         .map((v) => v.trim())
@@ -853,17 +810,14 @@ export class QLBuilder {
       return null; // Empty value list
     }
 
-    // Handle single value operators
     if (!value && value !== 0 && value !== false) return null;
 
     const formattedValue = QLBuilder.formatValue(value, field.type);
 
-    // Special handling for text contains operator
     if (operator === '~') {
       return `${fieldId} ~ ${formattedValue}`;
     }
 
-    // Standard comparison operators
     return `${fieldId} ${operator} ${formattedValue}`;
   }
 
@@ -887,17 +841,8 @@ export class QLBuilder {
         return String(value);
 
       case 'date':
-        // Date filters are emitted as YYYY-MM-DD (no time component). The
-        // server interprets this as a UTC calendar date. For DATE columns
-        // this round-trips exactly; for TIMESTAMP columns the comparison is
-        // anchored at UTC midnight, which is the cross-TZ-stable convention
-        // we've settled on (other timezones would shift results based on
-        // where the request originated).
-        //
-        // When given a JS Date object, format using UTC accessors so the
-        // calendar date the caller picked is preserved across timezones.
-        // (HTML <input type="date"> already passes a YYYY-MM-DD string and
-        // takes the string fallback path below.)
+        // Emit UTC YYYY-MM-DD so DATE values round-trip and TIMESTAMP filters
+        // remain timezone-stable. Use UTC accessors for Date inputs.
         if (value instanceof Date) {
           const year = value.getUTCFullYear();
           const month = String(value.getUTCMonth() + 1).padStart(2, '0');
@@ -929,19 +874,9 @@ export class QLBuilder {
     }
   }
 
-  // Best-effort parse of a CQL string into builder state. Recognizes workspace
-  // equality/IN, status_id equality/IN, priority_id equality/IN, `title ~`,
-  // and custom field clauses (cf_name / `cf_name` / custom.name) for the
-  // standard comparison operators and IN / NOT IN.
-  //
-  // NOT, nested groups, and arbitrary OR mixing are not reconstructed and
-  // will be dropped. The `dropped` flag on the result is true when the parsed
-  // clauses don't account for the whole query string.
-  //
-  // options.customFields: optional catalog of {id, type, name} used to resolve
-  // the field type for recovered custom-field rows. When omitted, types are
-  // inferred from the value form (quoted → text, number → number, true/false →
-  // boolean, IN list → enum).
+  // Best-effort parser for workspace, status, priority, title, and custom
+  // field clauses. Unsupported NOT, nested, or mixed-OR expressions set
+  // `dropped`; custom-field types come from options.customFields when present.
   static tryParseToBuilder(queryString, options = {}) {
     if (!queryString?.trim()) return null;
 
@@ -1006,13 +941,7 @@ export class QLBuilder {
       if (!Number.isNaN(id)) result.priorities = [id];
     }
 
-    // Name-based status / priority clauses (e.g. `status = "Open"`,
-    // `priority IN ("High", "Low")`). The builder emits the *_id form, but
-    // hand-written or imported CQL may reference these fields by name — resolve
-    // the names back to ids via the supplied catalogs so the query still
-    // round-trips into the builder instead of falling back to raw mode. These
-    // patterns run after the *_id clauses are consumed, and `status`/`priority`
-    // without `_id` can't re-match the already-stripped id clauses.
+    // Resolve hand-written or imported name clauses after consuming *_id forms.
     const resolveNamesToIds = (names, catalog) => {
       const ids = [];
       for (const raw of names) {
@@ -1057,10 +986,7 @@ export class QLBuilder {
     const title = consume(/title\s*~\s*"([^"]+)"/i);
     if (title) result.search = title[1];
 
-    // Custom field clauses. Match `cf_x` / `custom.x` (with or without
-    // backticks) against the supported operators. We loop because there may be
-    // many. Order matters: try IN/NOT IN first (multi-arg, parens), then ~,
-    // then comparison operators.
+    // Parse custom fields in IN/NOT IN, contains, then comparison order.
     const fieldPattern =
       '(?:`(cf_[^`]+|custom\\.[^`]+)`|\\b(cf_[a-zA-Z0-9_ -]+|custom\\.[a-zA-Z0-9_ -]+)\\b)';
     const inRe = new RegExp(`${fieldPattern}\\s+(NOT\\s+IN|IN)\\s*\\(([^)]+)\\)`, 'i');
@@ -1217,10 +1143,6 @@ export class QLBuilder {
     };
   }
 }
-
-// Example usage:
-// const ql = new QLEvaluator(workspaces);
-// const filtered = ql.filter(items, 'workspace IN ("Project A", "Project B") AND priority = "high"');
 
 /**
  * Asset QL Evaluator - executes QL AST against assets in memory
@@ -1455,7 +1377,3 @@ export class AssetQLBuilder {
     return conditions.join(' AND ');
   }
 }
-
-// Example usage for assets:
-// const assetQl = new AssetQLEvaluator(assetSets);
-// const filteredAssets = assetQl.filter(assets, 'type = "Laptop" AND status = "Active"');

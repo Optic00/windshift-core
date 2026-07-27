@@ -88,12 +88,7 @@ func (am *AuthMiddleware) tryAuthenticate(r *http.Request) authResult {
 		// Fall through to try other auth methods
 	}
 
-	// API bearer tokens (crw_*) are no longer accepted on the cookie-auth
-	// surface. The dedicated v1 surface at /rest/api/v1/* is the only place
-	// they authenticate; routing them here would bypass the per-route token
-	// scope checks the v1 router applies. Reject explicitly so callers see a
-	// clear "use the v1 API" message rather than the generic session-not-found
-	// path that would otherwise fire below.
+	// Only v1 accepts crw_* tokens; accepting them here bypasses token scopes.
 	authHeader := r.Header.Get("Authorization")
 	if strings.HasPrefix(authHeader, "Bearer ") {
 		token := strings.TrimPrefix(authHeader, "Bearer ")
@@ -102,9 +97,7 @@ func (am *AuthMiddleware) tryAuthenticate(r *http.Request) authResult {
 		}
 	}
 
-	// Try session cookie. Session tokens are intentionally not accepted via
-	// Authorization: Bearer; that header is reserved for scoped API tokens on
-	// /rest/api/v1/*.
+	// Cookie and session-header auth are the only session-token transports.
 	token, err := am.sessionManager.GetSessionFromRequest(r)
 	if err != nil {
 		// No session found

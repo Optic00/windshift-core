@@ -1,11 +1,6 @@
 <script>
-	// /oauth/authorize?... — the consent screen for the generic OAuth 2.0
-	// server. A third-party app redirected the browser here; on Allow we POST
-	// to /api/oauth/authorize/approve, get back a redirect_to URL with a
-	// fresh `code`, and bounce the browser to it. On Deny we POST /deny and
-	// bounce with `error=access_denied`.
-	//
-	// Pairs with internal/handlers/oauth.go.
+	// Generic OAuth consent: approve redirects with a fresh code; denial returns
+	// error=access_denied.
 
 	import { onMount } from 'svelte';
 	import { Lock, AlertTriangle } from '@lucide/svelte';

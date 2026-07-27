@@ -13,18 +13,8 @@ import (
 	"windshift/internal/models"
 )
 
-// refShort strips the conventional "v" tag prefix or "release/" branch
-// prefix from a ref name so an action's upsert_key template can produce
-// the same value for both a tag and the branch it was cut from. Examples:
-//
-//	("tag", "v2.0")          -> "2.0"
-//	("tag", "release-v2.0")  -> "release-v2.0" (no v prefix to strip)
-//	("branch", "release/2.0")-> "2.0"
-//	("branch", "main")       -> "main"
-//
-// Conservative: only the canonical leading "v" + digit and "release/"
-// prefixes are stripped. Anything else passes through unchanged so the
-// caller can rely on this being safe even for unusual names.
+// refShort normalizes canonical v<digit> tags and release/ branches for
+// shared upsert keys; unusual refs pass through unchanged.
 func refShort(refType, refName string) string {
 	switch refType {
 	case "tag":
@@ -42,18 +32,14 @@ func refShort(refType, refName string) string {
 	}
 }
 
-// matchGlob applies the per-repo milestone tag/branch pattern. Returns
-// false for the empty pattern so a misconfigured repo simply emits no
-// events rather than firing on every ref.
+// matchGlob treats empty or malformed patterns as no match.
 func matchGlob(pattern, name string) bool {
 	if pattern == "" {
 		return false
 	}
 	ok, err := filepath.Match(pattern, name)
 	if err != nil {
-		// filepath.Match only returns an error for malformed patterns;
-		// treat that as a no-match (caller has already logged the bad
-		// pattern via the upstream repo settings UI).
+		// Malformed patterns must not fire on a ref.
 		return false
 	}
 	return ok

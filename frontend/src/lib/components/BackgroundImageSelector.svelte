@@ -13,8 +13,8 @@
     onRemoveImage = () => {},
     onUploadImage = () => {},
     uploading = false,
-    uploadCategory = 'portal_background',
-    label = null
+    label = null,
+    presetAspectRatio = '4 / 3'
   } = $props();
 
   let showUploadSection = $state(false);
@@ -80,8 +80,8 @@
     {#each getPresetsByCategory(localSelectedCategory) as preset}
       <button
         onclick={() => onSelectImage(preset.url)}
-        class="group relative aspect-[4/3] rounded-lg overflow-hidden transition-all hover:scale-105"
-        style={currentImageUrl === preset.url ? 'box-shadow: 0 0 0 2px var(--ds-border-focused);' : ''}
+        class="group relative rounded-lg overflow-hidden transition-all hover:scale-105"
+        style={`aspect-ratio: ${presetAspectRatio};${currentImageUrl === preset.url ? ' box-shadow: 0 0 0 2px var(--ds-border-focused);' : ''}`}
         title={preset.name}
       >
         <img

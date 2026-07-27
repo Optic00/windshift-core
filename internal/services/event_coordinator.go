@@ -394,24 +394,10 @@ func resolveActorName(actorUserID int, actorUsername []string) string {
 	return fmt.Sprintf("User #%d", actorUserID)
 }
 
-// ============================================================================
-// Approval events
-// ============================================================================
-//
-// Two delivery patterns:
-//
-//   - Rule-based broadcast (ec.notificationService.EmitEvent) — used for events
-//     whose audience is dynamic (assignee, creator, watchers). Subject to
-//     workspace notification_rules; a no-op if no matching rule is configured.
-//   - Direct delivery (ec.notificationService.NotifyUsers) — used when we
-//     already have a resolved recipient list (the approver pool snapshot).
-//     Bypasses rules so step approvers always get pinged.
-//
-// Webhooks come along for free via ec.webhookDispatcher; no extra wiring beyond
-// dispatching the relevant payload from each Emit call.
+// Approval events use rule-based broadcasts for dynamic audiences and direct
+// delivery for resolved approver pools. Emit calls also dispatch webhooks.
 
-// EmitApprovalRequested fires when a new approval request is opened. Broadcast
-// to assignee/creator/watchers via the rule pipeline.
+// EmitApprovalRequested notifies assignees, creators, and watchers by rule.
 func (ec *EventCoordinator) EmitApprovalRequested(req *models.ApprovalRequest, item *models.Item, actorUserID int, actorUsername ...string) {
 	if req == nil || item == nil {
 		return

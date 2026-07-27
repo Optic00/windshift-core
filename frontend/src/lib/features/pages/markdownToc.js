@@ -1,17 +1,5 @@
-/**
- * Parse ATX-style headings from raw Markdown source into a flat list of
- * { level, text, slug, line } entries, ignoring `#` characters that appear
- * inside fenced code blocks. Phase 2 deliverable for the in-page TOC; the
- * mirror logic for rendered-DOM scroll matching lives in PagesView.svelte.
- *
- * `slug` is a stable, URL-safe slug suitable for window.location.hash so
- * deep-links survive renames as long as the heading text is unchanged.
- *
- * The parser is intentionally tolerant of malformed Markdown: any line
- * that doesn't match the heading pattern is skipped, and code-fence state
- * is reset at end-of-input so an unterminated fence doesn't swallow the
- * rest of the document silently.
- */
+/** Parse ATX headings into stable hash-link entries, ignoring fenced code.
+ * Malformed lines are skipped, including after an unterminated fence. */
 export function parseMarkdownHeadings(source) {
   if (!source) return [];
   const lines = source.split('\n');
@@ -20,7 +8,7 @@ export function parseMarkdownHeadings(source) {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    // Toggle fenced code block state. ``` and ~~~ are both valid.
+    // Both ``` and ~~~ delimit fenced code.
     if (/^\s*(```|~~~)/.test(line)) {
       inFence = !inFence;
       continue;
@@ -43,11 +31,7 @@ export function parseMarkdownHeadings(source) {
   return out;
 }
 
-/**
- * Slugify a heading into a URL-safe anchor id. Matches what the editor
- * DOM lookup uses so TOC clicks can find the corresponding rendered
- * heading by text without needing a backend round-trip.
- */
+/** Slugify a heading to match the editor's rendered-DOM lookup. */
 export function slugify(text) {
   return text
     .toLowerCase()

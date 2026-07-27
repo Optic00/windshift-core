@@ -44,25 +44,16 @@ const (
 	defaultReaperInterval   = 60 * time.Second
 	defaultReaperStaleAfter = models.RunnerLivenessWindow
 
-	// defaultQueuedStallAfter is how long a remote-pool run may sit queued
-	// (unclaimed) before each sweep flags it. Claims poll every ~2s, so a
-	// healthy pool claims within seconds; minutes of queued means no live
-	// runner, a full concurrency quota, or a dead pool.
+	// Remote claims normally arrive in seconds; longer queues indicate no runner,
+	// exhausted capacity, or a dead pool.
 	defaultQueuedStallAfter = 3 * time.Minute
 
-	// defaultMaxRunDuration is the max-run-duration backstop (WI-331): a run
-	// still 'running' after this long is failed regardless of its runner's
-	// heartbeat. Heartbeat-based reaping only catches a *dead* runner; a
-	// healthy runner whose terminal report was lost (or whose claim response
-	// never arrived) keeps the phantom run alive forever, permanently eating
-	// a pool-concurrency slot and the binding's per-item dedup. Generous on
-	// purpose — real agent runs finish in minutes, so hours of 'running'
-	// means the verdict is never coming.
+	// Fail long-running phantom runs even with heartbeats, freeing capacity and
+	// per-item dedup when terminal reports are lost.
 	defaultMaxRunDuration = 8 * time.Hour
 )
 
-// NewRunnerLeaseReaper builds the reaper with sensible defaults. The caller
-// wires Start/Stop into the server lifecycle.
+// NewRunnerLeaseReaper builds a reaper for server lifecycle wiring.
 func NewRunnerLeaseReaper(runs *repository.AgentRunRepository, runners *repository.RunnerRepository) *RunnerLeaseReaper {
 	return &RunnerLeaseReaper{
 		runs:             runs,

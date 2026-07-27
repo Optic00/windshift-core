@@ -1,11 +1,5 @@
-// pagesFocusTitle is a transient signal that tells PagesView to focus
-// (and select) the title input the next time it renders the page with the
-// matching id. Set when the sidebar creates a new page from the + button
-// so the user can type the real title immediately without an extra click.
-//
-// `pageId` is the id we want focused; `tick` lets PagesView's $effect run
-// even when the user clicks + repeatedly with the same selected page (the
-// id would match the previous focus target).
+// pagesFocusTitle requests title focus for new pages. tick retriggers the
+// effect when repeated requests target the same page ID.
 
 let pageId = $state(null);
 let tick = $state(0);
@@ -21,7 +15,7 @@ export const pagesFocusTitle = {
     pageId = id;
     tick += 1;
   },
-  /** Clear after the focus has been honored so a remount doesn't refocus. */
+  /** Clear after focus so remounts do not refocus. */
   clear() {
     pageId = null;
   },

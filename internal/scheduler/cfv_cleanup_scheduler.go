@@ -17,35 +17,15 @@ import (
 	"windshift/internal/repository"
 )
 
-// Job types stored in pending_custom_field_cleanups.job_type. The queue
-// started life handling only field_scrub; option_removal (WI-419) and
-// index_build (WI-416) were added to move other heavy custom-field maintenance
-// off the admin request thread. A legacy row with an empty job_type is treated
-// as field_scrub.
+// Job types for deferred custom-field maintenance; empty legacy values scrub fields.
 const (
 	jobFieldScrub    = "field_scrub"    // strip a deleted field's key from cfv JSON
 	jobOptionRemoval = "option_removal" // strip removed select/multiselect option ids
 	jobIndexBuild    = "index_build"    // build a Postgres cf index CONCURRENTLY
 )
 
-// CFVCleanupScheduler drains the pending_custom_field_cleanups queue — the
-// async worker for heavy custom-field maintenance that would otherwise block
-// an admin request for as long as the workspace has items/assets (potentially
-// millions of rows). Each row's job_type selects the work:
-//   - field_scrub: a deleted field's key is removed from cfv JSON.
-//   - option_removal: removed select/multiselect option ids are stripped from
-//     items, assets, and portal custom_field_values.
-//   - index_build: a Postgres custom-field index is built CONCURRENTLY.
-//
-// The scheduler:
-//   - Ticks every minute (cheap query when the queue is empty).
-//   - Picks the oldest pending job, marks it 'running'.
-//   - Processes it in batches keyed by row id (bounded memory).
-//   - Marks the job 'done' (or 'failed' on error) with row counts.
-//
-// Best-effort semantics: a crashed process leaves the job in 'running';
-// the next tick re-claims any row stuck in 'running' for longer than
-// staleThreshold so cleanup eventually completes.
+// CFVCleanupScheduler batches deferred field scrubs, option removal, and
+// Postgres index builds. It reclaims stale running jobs after a process crash.
 type CFVCleanupScheduler struct {
 	db      database.Database
 	runRepo *repository.SchedulerRunRepository
@@ -194,14 +174,8 @@ func (s *CFVCleanupScheduler) requeueStaleRunning() error {
 	return err
 }
 
-// claimNextJob picks the oldest pending row and flips it to 'running'.
-// The (status, created_at) index makes this a constant-time lookup.
-// Returns claimed=false when the queue is empty.
-//
-// On SQLite there are no row locks, so a separate process generation could
-// theoretically claim the same row. We use a UPDATE ... WHERE status=
-// 'pending' guard so only one transition succeeds; second caller sees
-// 'no row updated' and tries the next one.
+// claimNextJob claims the oldest pending row. Its status-guarded update makes
+// SQLite and Postgres claims safe without row locks.
 func (s *CFVCleanupScheduler) claimNextJob() (job claimedJob, claimed bool, err error) {
 	var jobType sql.NullString
 	var payload sql.NullString
@@ -315,10 +289,7 @@ type optionRemovalPayload struct {
 	RemovedIDs []int  `json:"removed_ids"`
 }
 
-// processOptionRemoval strips the given removed select/multiselect option ids
-// from items, assets, and portal custom_field_values. Each surface is iterated
-// in keyset-paginated batches (bounded memory). Re-running is idempotent —
-// removing an already-absent id is a no-op — so at-least-once delivery is safe.
+// processOptionRemoval strips deleted options in idempotent, keyset-paginated batches.
 func (s *CFVCleanupScheduler) processOptionRemoval(payload string) (int, error) {
 	var p optionRemovalPayload
 	if err := json.Unmarshal([]byte(payload), &p); err != nil {
@@ -516,11 +487,8 @@ type indexBuildPayload struct {
 	IndexName   string `json:"index_name"`
 }
 
-// processIndexBuild builds a Postgres custom-field index CONCURRENTLY off the
-// request thread. It first drops any leftover index of the same name — a failed
-// or interrupted CREATE INDEX CONCURRENTLY leaves an INVALID index behind, so
-// the unconditional DROP makes a retry self-healing. The job is skipped if the
-// field's index record is gone (the field was deleted between enqueue and now).
+// processIndexBuild concurrently builds a Postgres index and drops invalid
+// leftovers first, making retries self-healing.
 func (s *CFVCleanupScheduler) processIndexBuild(payload string) (int, error) {
 	var p indexBuildPayload
 	if err := json.Unmarshal([]byte(payload), &p); err != nil {

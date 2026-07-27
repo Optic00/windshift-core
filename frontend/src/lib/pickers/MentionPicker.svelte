@@ -37,10 +37,7 @@
     if (shouldLoad) untrack(() => void loadUsers());
   });
 
-  // Measure the rendered menu after each content change so the clamp below is
-  // accurate. The list height changes as results load and as the query narrows
-  // it, so re-run whenever those change. The picker is a transient popup, so a
-  // plain post-render measure is enough — no ResizeObserver needed.
+  // Re-measure after result changes so the transient menu clamp stays accurate.
   $effect(() => {
     if (!open || !containerElement) return;
     // Touch the reactive deps that change the menu's size.
@@ -51,21 +48,9 @@
     menuHeight = containerElement.offsetHeight;
   });
 
-  // Clamp the requested cursor position so the whole menu stays within the
-  // *visible* viewport, with a small margin from each edge (WI-431).
-  //
-  // Two things make the raw ProseMirror cursor coords unusable on mobile:
-  //  - On a narrow screen the cursor sits near the right edge, pushing a
-  //    fixed-position menu off the right side.
-  //  - When the on-screen keyboard is open the visible area shrinks, but
-  //    window.innerHeight stays the full window height. The mobile chat
-  //    composer is pinned to the bottom, so the cursor lands near the visible
-  //    bottom and an unclamped (or innerHeight-clamped) menu renders *behind
-  //    the keyboard* — invisible and unreachable. visualViewport reports the
-  //    real visible box (size + offset), so we clamp against that.
-  //
-  // The menu re-renders on every keystroke (position changes as you type), so
-  // reading the viewport at compute time is enough — no resize listeners.
+  // Clamp against visualViewport so narrow screens and mobile keyboards cannot
+  // place the fixed menu outside the visible viewport. Recompute while typing;
+  // no resize listener is needed.
   const EDGE_MARGIN = 8;
   const FALLBACK_W = 320; // .mention-picker max-width, before it is measured
   const FALLBACK_H = 300; // .mention-picker max-height, before it is measured
@@ -88,16 +73,8 @@
     };
   });
 
-  // Handle keyboard events using runed.
-  //
-  // Capture phase is required: the editor (ProseMirror) attaches its own
-  // bubble-phase keydown handler on its content element, which sits *below*
-  // document in the tree, so a bubble-phase document listener would fire
-  // last — after ProseMirror has already moved the cursor (Arrow keys) or
-  // inserted a newline (Enter). That cursor move then fires keyup ->
-  // checkForMentionTrigger, breaking the @-pattern and closing the picker.
-  // Capturing here lets us intercept and stopPropagation before ProseMirror
-  // ever sees these keys.
+  // Capture before ProseMirror handles arrows or Enter and invalidates the
+  // active @-pattern.
   useEventListener(
     () => document,
     'keydown',

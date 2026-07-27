@@ -1,27 +1,6 @@
-// Command windshift-triage is the runner-private repo-preparation helper. It is
-// the only thing that touches git and the bare-clone cache, invoked as a
-// subprocess by both the local in-process worker and the remote windshift-
-// runner so local and remote prepare repos byte-identically (WI-205 / page 35).
-//
-// Two subcommands, both emitting a single JSON object on stdout:
-//
-//	windshift-triage prepare \
-//	  --root <cache-root> --workspace-id <n> --repo owner/name \
-//	  --remote-url <tokenless-url> --base-ref main --run-id <n> \
-//	  [--token-file <path>] [--git-transport askpass|proxy]
-//	  -> {"checkout_path":"...","branch":"agent-runs/run-<n>","base_commit":"<sha>"}
-//
-//	windshift-triage push \
-//	  --dest <checkout> --branch agent-runs/run-<n> \
-//	  [--token-file <path>] [--git-transport askpass|proxy] [--proxy-url <url>]
-//	  [--skip-if-head <base-sha>]
-//	  -> {"head_sha":"<sha>","skipped":false}
-//	     ({"head_sha":"","skipped":true} when the head still equals
-//	     --skip-if-head: a commit-less run pushes nothing)
-//
-// Privilege separation is the point: the agent container never execs this and
-// never sees the cache or SCM credentials; the orchestrator never inlines its
-// filesystem reach.
+// Command windshift-triage prepares and pushes runner checkouts.
+// It emits JSON for both subcommands and is the only process that accesses the
+// clone cache or SCM credentials; agent containers never execute it.
 package main
 
 import (
@@ -99,11 +78,7 @@ func runPrepare(args []string) error {
 	if err := chownCheckoutForAgent(pr.Path); err != nil {
 		return fmt.Errorf("chown checkout for agent uid: %w", err)
 	}
-	// Multi-repo (WI-449): the agent's /workspace is the PARENT dir holding the
-	// sibling checkouts, not this single checkout. chownCheckoutForAgent only
-	// chowned this repo's subdir; without also handing the parent to the agent
-	// uid, the pinned uid=1000 agent can't `cd /workspace` (root-owned). Chown
-	// just the parent dir entry (the subdirs are already chowned recursively).
+	// Multi-repo runs also need their workspace parent owned by the agent.
 	if *destDir != "" {
 		if err := chownDirForAgent(filepath.Dir(*destDir)); err != nil {
 			return fmt.Errorf("chown workspace parent for agent uid: %w", err)
@@ -116,21 +91,8 @@ func runPrepare(args []string) error {
 	})
 }
 
-// chownCheckoutForAgent hands the prepared checkout to the pinned agent uid:
-// every job container runs --user=1000:1000 (baselineSandboxArgs), but the
-// checkout is created with the runner process's own uid — root on a
-// production runner host — so without this the tree is unwritable from
-// inside the container and the agent's first git operation fails (WI-388).
-// A non-root runner (local dev) can't chown and doesn't need to: the run
-// container is spawned by the same uid that owns the checkout there — that
-// case is skipped, every other failure is fatal so the run fails fast with a
-// clear error instead of an opaque in-container EACCES.
-// chownDirForAgent hands a single directory entry to the pinned agent uid so
-// the uid=1000 agent container can traverse into it (WI-449). Used for the
-// multi-repo workspace PARENT dir that becomes /workspace — only the dir itself
-// needs chowning (the repo checkouts beneath it are chowned recursively by
-// chownCheckoutForAgent). Non-recursive. A non-root runner can't chown and
-// doesn't need to (the agent runs as the same uid that owns the tree).
+// chownDirForAgent makes a workspace directory traversable by the agent user.
+// Local non-root runners keep ownership because their agent uses the same UID.
 func chownDirForAgent(dir string) error {
 	const agentUID, agentGID = 1000, 1000
 	if err := os.Lchown(dir, agentUID, agentGID); err != nil {

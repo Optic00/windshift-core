@@ -212,29 +212,15 @@ func (bs *BriefingScheduler) generateAllBriefings(stop <-chan struct{}) {
 	}
 	wg.Wait()
 
-	// Surface aggregate failures to scheduler_runs. A panic-recovery path returns
-	// false too, so the success metric stays honest even when individual users
-	// hit LLM errors or DB hiccups.
+	// Recovered panics count as failures in the scheduler result.
 	if failures > 0 {
 		runErr = fmt.Errorf("%d of %d daily briefings failed", failures, usersProcessed)
 	}
 }
 
-// generateBriefingForUser returns true on success (or when nothing needs doing).
-// It returns false only when the actual generation step (LLM call or storage)
-// failed, so the caller can roll up failures into the scheduler_run record.
-//
-// lookups holds the global id→name reference maps, loaded once per tick and
-// shared across all users (the maps are workspace-global, not per-user).
-// nowUTC is the tick's reference instant, injected for testability.
-//
-// Cross-instance dedup (WI-418): before invoking the LLM the method takes a
-// leased claim on the (userID, date) row via ClaimBriefing. Only the instance
-// that wins the claim generates; every other concurrently-ticking instance
-// gets ErrBriefingAlreadyRunning and returns success ("nothing to do"). The
-// claim is released on every exit path so a crashed holder's lease (10m)
-// self-heals before the next tick.
-// last review: ser, 300526
+// generateBriefingForUser returns false only for generation or storage failure.
+// Shared lookups and the tick time are injected. A leased per-user/day claim
+// deduplicates instances and self-heals after a crashed holder.
 func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, lookups *repository.NameMaps, itemRepo *repository.ItemRepository, workspaceRepo *repository.WorkspaceRepository, u models.User, regenerate bool, nowUTC time.Time) bool {
 	userID := u.ID
 	firstName := u.FirstName
@@ -243,11 +229,7 @@ func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, looku
 		timezone = "UTC"
 	}
 
-	// Compute "today" / "yesterday" + their day boundaries in the *user's*
-	// timezone, not the server's. The previous server-local calculation meant a
-	// user in PT could get yesterday's briefing repeated after their local
-	// midnight, or could miss their own Sunday-evening activity because the 24h
-	// window was anchored at server midnight UTC.
+	// Compute briefing boundaries in the user's timezone, not the server's.
 	loc, err := time.LoadLocation(timezone)
 	if err != nil || loc == nil {
 		loc = time.UTC
@@ -257,9 +239,7 @@ func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, looku
 	yesterdayStart := todayStart.AddDate(0, 0, -1)
 	today := todayStart.Format("2006-01-02")
 
-	// Atomic cross-instance claim. With regenerate disabled this is also the
-	// "already generated today" short-circuit; with regenerate enabled it still
-	// ensures only one instance generates per (user, date) at a time.
+	// Claim atomically deduplicates this user's daily generation.
 	claimed, err := bs.aiRepo.ClaimBriefing(userID, today, nowUTC, regenerate)
 	if err != nil {
 		if errors.Is(err, repository.ErrBriefingAlreadyRunning) {
@@ -270,13 +250,7 @@ func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, looku
 		slog.Warn("briefing: failed to claim generation lock", slog.Int("user_id", userID), slog.Any("error", err))
 		return false
 	}
-	// Release the lease on every exit. The storeBriefing paths clear the lock
-	// themselves via their UPSERT, so guard the deferred release with `stored`
-	// to avoid a redundant write on those paths — while still covering the
-	// early returns AND a panic mid-generation. The caller recovers panics, so
-	// without this defer a panic between the claim and storeBriefing would leave
-	// the row leased until it self-heals 10m later. claimed is always true here
-	// (the failure branches above returned), but the guard keeps it explicit.
+	// Release unpersisted claims on every exit, including panic recovery.
 	stored := false
 	defer func() {
 		if claimed && !stored {

@@ -223,32 +223,15 @@ func automationAuditActor(db database.Database, userID int, source string) Audit
 	return actor
 }
 
-// CustomFieldsValidationOpts toggles required-field enforcement.
-// EnforceRequired is on for creates (the caller has to satisfy the
-// asset type's required-field set up front) and for updates that
-// replace the custom_field_values map. Partial updates that don't
-// touch custom_field_values leave it off.
+// CustomFieldsValidationOpts controls required-field validation for creates and
+// full replacements; partial updates leave it disabled.
 type CustomFieldsValidationOpts struct {
 	EnforceRequired bool
 }
 
-// ValidateCustomFieldsSchema enforces the asset type's custom-field
-// schema against the supplied values. Three checks run in order:
-//
-//  1. Unknown keys (keys not declared on the type) are rejected.
-//  2. Each supplied value is type-checked against the declared
-//     field_type (text / textarea / number / boolean / date / select
-//     / multiselect / user). Select/multiselect values are checked
-//     against the field's Options whitelist. Text/textarea values are
-//     sanitized IN PLACE (PlainTextField / RichText — matching how
-//     they render) so the values map comes out write-safe; callers
-//     that pre-encoded a JSON payload must re-encode after this call.
-//  3. When opts.EnforceRequired is set, every required field on the
-//     type must be present (non-empty) in values.
-//
-// Both legacy field-id-string keys ("12") and lower-cased field-name
-// keys ("hostname") are accepted, matching the UI + CSV import
-// conventions.
+// ValidateCustomFieldsSchema rejects unknown or invalid values, sanitizes text
+// in place, and optionally requires all mandatory fields. It accepts legacy ID
+// keys and case-insensitive field names.
 func (s *AssetService) ValidateCustomFieldsSchema(assetTypeID int, values map[string]interface{}, opts CustomFieldsValidationOpts) error {
 	if len(values) == 0 && !opts.EnforceRequired {
 		return nil
@@ -260,8 +243,7 @@ func (s *AssetService) ValidateCustomFieldsSchema(assetTypeID int, values map[st
 	return validateCustomFieldsSchemaCore(fields, values, opts)
 }
 
-// validateCustomFieldsSchemaCore runs the schema validation using an already
-// loaded field list. Mutates values in place for text/textarea sanitization.
+// validateCustomFieldsSchemaCore validates an already-loaded field list in place.
 func validateCustomFieldsSchemaCore(fields []models.AssetTypeField, values map[string]interface{}, opts CustomFieldsValidationOpts) error {
 	if len(values) == 0 && !opts.EnforceRequired {
 		return nil
@@ -1143,15 +1125,8 @@ func (s *AssetService) ImportAssetsCSV(actor AuditActor, setID, assetTypeID int,
 	return summary, nil
 }
 
-// emitAudit writes a success-row to the audit trail. Best-effort — the
-// underlying logger.LogAudit already swallows + slog-warns marshal
-// failures, and an audit-write failure should never fail the mutation
-// it's recording.
-//
-// Bearer-token attribution (auth_method / api_token_id / api_token_prefix
-// / api_token_name) is folded into Details so a single token's footprint
-// is queryable from the audit table even when the same user has
-// minted many.
+// emitAudit best-effort records successful mutations. Details include token
+// attribution so each token's footprint remains queryable.
 func (s *AssetService) emitAudit(actor AuditActor, action string, resourceID *int, resourceName string, extra map[string]interface{}) {
 	details := mergeAuditDetails(extra, actor)
 	_ = logger.LogAudit(s.db, logger.AuditEvent{

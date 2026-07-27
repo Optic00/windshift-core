@@ -11,34 +11,19 @@ import (
 	"windshift/internal/repoprep"
 )
 
-// This file is the in-process (local) transport for the unified runner
-// model (Initiative WI-141, decision #7). RunService itself implements
-// OrchestratorClient: the worker pool started in NewRunService runs the
-// same claim -> execute -> report loop a remote agent runs, but Claim /
-// Emit / Report resolve to direct calls on RunService rather than HTTPS.
-//
-// The orchestrator-side state machine that used to live inline in
-// RunService.execute (admission, mark-running, worktree prep, token mint,
-// finalize, worktree cleanup, post-run hook) lives here now, split across
-// claimNext (everything up to handing the job to the runner) and Report
-// (everything after the runner returns).
+// RunService is the local OrchestratorClient: its workers run the same
+// claim/execute/report loop as remote agents through direct calls. claimNext
+// prepares a run; Report finalizes it and cleans up.
 var _ OrchestratorClient = (*RunService)(nil)
 
-// queuedJob is one admitted-pending run handed from Start to the worker
-// pool through the in-process queue.
+// queuedJob is an admitted run sent from Start to a local worker.
 type queuedJob struct {
 	runID int
 	req   RunRequest
 }
 
-// claimState is the per-run bookkeeping kept between claim and Report so
-// Report can finalize, clean up the worktree(s), and build PostRunInfo
-// without re-deriving anything.
-//
-// repos + checkouts are parallel slices, primary first (WI-449). path/branch/
-// baseCommit mirror the PRIMARY checkout so the existing single-repo finalize
-// and PR-hook paths keep working unchanged. workspaceRoot is the multi-repo
-// parent dir to clean up ("" for a single-repo run, which owns no parent dir).
+// claimState retains claim-to-report bookkeeping. Repos and checkouts are
+// primary-first; scalar refs mirror the primary checkout for legacy paths.
 type claimState struct {
 	req           RunRequest
 	repos         []*repoprep.RepoSpec
@@ -51,8 +36,7 @@ type claimState struct {
 	cancel        context.CancelFunc
 }
 
-// runRepos returns the run's repos primary-first: req.Repos when set, else the
-// deprecated single req.Repo as a one-element slice (WI-449).
+// runRepos returns Repos or the legacy single Repo, primary first.
 func runRepos(req RunRequest) []*repoprep.RepoSpec {
 	if len(req.Repos) > 0 {
 		return req.Repos
@@ -317,23 +301,9 @@ func (s *RunService) Report(ctx context.Context, runID int, result RunnerResult)
 		}
 	}
 
-	// Host-side push of the run branch (WI-238). The windshift-agent holds no
-	// SCM credential and does not push; the orchestrator owns delivery, the
-	// same way the remote TriageRunner pushes runner-side before reporting. A
-	// push failure downgrades the run to failed so the PR hook does not try to
-	// open a PR for a branch that never reached the remote.
-	//
-	// A commit-less run is a legitimate success with nothing to deliver (the
-	// agent answered via a work-item comment, or found nothing to change):
-	// skip the push and clear the branch below so the PR hook sees "no
-	// branch" instead of the remote growing an empty branch and the PR
-	// create call 422-ing.
-	// Per-repo host-side push of each run branch (WI-238, WI-449). Each bound
-	// repo is pushed independently: a commit-less repo is skipped (no_changes)
-	// while its siblings still deliver; any push ERROR downgrades the whole run
-	// to failed so the PR hook never opens a PR for a branch that never landed.
-	// pushedRepos carries the per-repo outcome to PostRunInfo (Branch empty =
-	// no_changes / not pushed).
+	// The orchestrator pushes because agents lack SCM credentials. Each repo is
+	// delivered independently; no-commit repos are skipped, while a push failure
+	// fails the run so the PR hook cannot open an unpushed branch.
 	var pushedRepos []PostRunRepo
 	if status == models.AgentRunStatusSucceeded && st != nil && !st.ephemeral && len(st.checkouts) > 0 && s.preparer != nil {
 		for i, pw := range st.checkouts {
@@ -353,9 +323,7 @@ func (s *RunService) Report(ctx context.Context, runID int, result RunnerResult)
 			pushedRepos = append(pushedRepos, rr)
 		}
 	}
-	// The primary repo (index 0) backs the deprecated scalar Branch/BaseCommit
-	// on PostRunInfo. noChanges (primary unchanged) clears them, matching the
-	// pre-WI-449 single-repo contract the PR hook still falls back to.
+	// Legacy scalar branch fields mirror the primary repo's no-change outcome.
 	noChanges := len(pushedRepos) > 0 && pushedRepos[0].Branch == ""
 
 	s.finalize(runID, status, result.Error)

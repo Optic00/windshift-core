@@ -75,7 +75,6 @@ func RegisterUserRoutes(deps *Deps) {
 	api.HandleH("POST /users/{userId}/credentials/ssh", auth(http.HandlerFunc(deps.Users.Credential.CreateSSHKey)))
 	api.HandleH("DELETE /users/{userId}/credentials/{credentialId}", auth(http.HandlerFunc(deps.Users.Credential.RemoveCredential)))
 
-	// API Token endpoints
 	api.HandleH("POST /api-tokens", auth(deps.AuthRateLimiter.Limit(http.HandlerFunc(deps.Users.APIToken.CreateToken))))
 	api.HandleH("GET /api-tokens", auth(http.HandlerFunc(deps.Users.APIToken.GetUserTokens)))
 	api.HandleH("GET /api-tokens/policy", auth(http.HandlerFunc(deps.Users.APIToken.GetAPIKeyPolicy)))
@@ -83,8 +82,7 @@ func RegisterUserRoutes(deps *Deps) {
 	api.HandleH("DELETE /api-tokens/{id}", auth(http.HandlerFunc(deps.Users.APIToken.RevokeToken)))
 	api.HandleH("GET /api-tokens/validate", auth(http.HandlerFunc(deps.Users.APIToken.ValidateToken)))
 
-	// User-managed agents (profile-scoped). Service users stay on the
-	// admin-only POST /users flow.
+	// Profile agents exclude admin-created service users.
 	if deps.Users.Agent != nil {
 		api.HandleH("GET /me/agents", auth(http.HandlerFunc(deps.Users.Agent.List)))
 		api.HandleH("POST /me/agents", auth(deps.AuthRateLimiter.Limit(http.HandlerFunc(deps.Users.Agent.Create))))
@@ -92,11 +90,7 @@ func RegisterUserRoutes(deps *Deps) {
 		api.HandleH("DELETE /me/agents/{id}", auth(http.HandlerFunc(deps.Users.Agent.Delete)))
 	}
 
-	// CLI onboarding flow used by `ws init` to mint a per-machine bot account
-	// + token without the user copy-pasting anything. Capabilities is public
-	// so the CLI can decide between the automatic and manual paths before it
-	// has any credentials. Approve/Deny require a logged-in user. Exchange is
-	// public but proves knowledge of the one-time code returned to the CLI.
+	// Public CLI discovery and exchange use a one-time code; approval needs a session.
 	if deps.Users.CLIAuth != nil {
 		api.HandleH("GET /cli/capabilities", http.HandlerFunc(deps.Users.CLIAuth.Capabilities))
 		api.HandleH("POST /cli/auth/approve", auth(deps.AuthRateLimiter.Limit(http.HandlerFunc(deps.Users.CLIAuth.Approve))))

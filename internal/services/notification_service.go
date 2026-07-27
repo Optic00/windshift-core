@@ -682,20 +682,9 @@ func (ns *NotificationService) refreshRuleCache() error {
 	return nil
 }
 
-// getConfigSetForWorkspace resolves the notification configuration set for a
-// workspace, mirroring the workflow resolver's fallback chain
-// (WorkflowService.GetWorkflowIDForItem): use the workspace's assigned config
-// set, otherwise fall back to the default set's scheme.
-//
-//   - Personal workspaces never notify — return 0 (skip), matching the
-//     workflow resolver's is_personal early-return.
-//   - A workspace with an assigned config set uses it as-is. If that set's
-//     scheme has no rules (or none linked), no notification fires — that is the
-//     supported way to express "no notifications", so the fallback must NOT
-//     override it.
-//   - A workspace with no assigned config set falls back to the default set.
-//     DefaultConfigSetID is 0 only when no is_default row exists, which resolves
-//     to "no rules" (skip) — the safe degrade.
+// getConfigSetForWorkspace skips personal workspaces, then uses the assigned
+// set or default. An assigned set with no rules intentionally suppresses
+// notifications and must not fall back.
 func (ns *NotificationService) getConfigSetForWorkspace(workspaceID int) (int, error) {
 	ns.cacheMu.RLock()
 	defer ns.cacheMu.RUnlock()

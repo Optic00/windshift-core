@@ -1,10 +1,4 @@
-/**
- * Server clock offset detection and correction.
- *
- * Compares the Date header from HTTP responses against the client clock
- * to compute a rolling offset, so all frontend "now" references stay
- * consistent with server-stamped timestamps.
- */
+/** Rolling server-clock offset from HTTP Date headers for consistent frontend now. */
 
 const SAMPLE_COUNT = 5;
 export const DRIFT_THRESHOLD_MS = 60_000;

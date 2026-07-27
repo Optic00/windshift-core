@@ -1,13 +1,3 @@
-/**
- * Português Brasil (pt-BR) - Traduções de autenticação e usuários
- *
- * Este módulo contém traduções para:
- * - auth: Login, logout, redefinição de senha e fluxos de autenticação
- * - users: Gerenciamento de usuários, perfis e configurações de conta
- * - security: Configurações de segurança, tokens de API e credenciais
- * - portalLogin: Interface de login específica do portal
- */
-
 export default {
   auth: {
     login: 'Entrar',

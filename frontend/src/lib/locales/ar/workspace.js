@@ -1,17 +1,3 @@
-/**
- * Arabic (ar) - Workspace-related translations
- * RTL language
- *
- * This module contains the following sections:
- * - workspaces: Workspace management translations
- * - items: Work items (issues, tasks, etc.) translations
- * - comments: Comment-related translations
- * - todo: Personal tasks and todo list translations
- * - collectionTree: Tree view translations
- * - collections: Saved queries and filters translations
- * - links: Item links translations
- */
-
 export default {
   workspaces: {
     title: 'مساحات العمل',

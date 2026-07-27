@@ -6,20 +6,8 @@
   import { t } from '../../stores/i18n.svelte.js';
   import { errorToast } from '../../stores/toasts.svelte.js';
 
-  /**
-   * Workspace page-label picker popover.
-   *
-   * Used in two places:
-   *   1. `PagesView` page header — attach/detach labels to the current page
-   *      (allowCreate=true so editors can mint a new label inline).
-   *   2. `PagesNavSidebar` filter row — multi-select existing labels to filter
-   *      the tree (allowCreate=false so the filter UI doesn't bloat the label
-   *      list with one-off labels).
-   *
-   * Emits `onToggle` for every checkbox flip and `onCreate` after a successful
-   * create. Both callbacks receive the full label object. The parent owns the
-   * selectedIds set so it can persist (chip row) or just filter (sidebar).
-   */
+  /** Page-label picker for page editing and sidebar filtering. The parent owns
+   * selection; callbacks receive full labels. Sidebar callers disable creation. */
 
   let {
     workspaceId,

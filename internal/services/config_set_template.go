@@ -2,19 +2,9 @@ package services
 
 import "time"
 
-// Configuration-set template (export/import) types.
-//
-// The on-disk JSON format for `windshift.configuration-set` exports.
-// Versioned via SchemaVersion + Kind so v2 can extend (e.g. workspace-level
-// templates) without breaking the v1 reader.
-//
-// All references between sections use names (or, for users, emails) — never
-// database IDs. Import resolves names against the target instance: global
-// shared entities (statuses, item types, priorities, custom fields, status
-// categories, screens) match by name and are auto-created if missing; bundle-
-// owned entities (workflow, condition set, approval set, configuration set)
-// are always created fresh; identity refs (users, roles, groups) must already
-// exist on the target and surface as ErrUnresolvedReferences if not.
+// Versioned `windshift.configuration-set` export/import types. References use
+// names or emails, never IDs: shared entities are reused or created, bundle
+// entities are created fresh, and missing identities return ErrUnresolvedReferences.
 
 const (
 	ConfigSetTemplateSchemaVersion = 1
@@ -36,10 +26,7 @@ type ConfigSetExportBy struct {
 	Instance string `json:"instance,omitempty"`
 }
 
-// ConfigSetTplPayload bundles every entity the configuration set transitively
-// depends on. Order in this struct matches the strict creation order used by
-// the importer — custom fields first because conditions/approvals/screens
-// reference them.
+// ConfigSetTplPayload order matches importer creation dependencies.
 type ConfigSetTplPayload struct {
 	ConfigurationSet ConfigSetTplConfigSet      `json:"configuration_set"`
 	StatusCategories []ConfigSetTplStatusCat    `json:"status_categories,omitempty"`
@@ -61,15 +48,12 @@ type ConfigSetTplConfigSet struct {
 	DefaultItemTypeName     string `json:"default_item_type_name,omitempty"`
 }
 
-// ConfigSetTplStatusCat references a status_category by name. Categories are
-// system-seeded (`is_completed` carries semantics), so import fails fast if
-// the named category does not exist on the target.
+// ConfigSetTplStatusCat names a required system-seeded status category.
 type ConfigSetTplStatusCat struct {
 	Name string `json:"name"`
 }
 
-// ConfigSetTplCustomField is the full embedded definition. Imported with
-// system_default=false; matched by name on import (re-used if found).
+// ConfigSetTplCustomField is matched by name and imported non-system-default.
 type ConfigSetTplCustomField struct {
 	Name                           string `json:"name"`
 	FieldType                      string `json:"field_type"`

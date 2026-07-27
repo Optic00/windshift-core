@@ -9,9 +9,7 @@ import (
 	"strings"
 	"time"
 
-	// Register the lib/pq driver so sql.Open("postgres", ...) below works
-	// regardless of which top-level package imported us. (Previously the
-	// driver was only pulled in transitively via internal/logbook.)
+	// Register the PostgreSQL driver.
 	_ "github.com/lib/pq"
 )
 
@@ -171,18 +169,7 @@ type schemaFile struct {
 // NewPostgresDB creates a new PostgreSQL database connection.
 // maxConns sizes the pool (idle pool = maxConns/2, min 1).
 func NewPostgresDB(connectionString string, maxConns int) (Database, error) {
-	// Force the lib/pq session timezone to UTC unless the caller explicitly
-	// set one in the DSN. With session timezone = UTC:
-	//
-	//   • bound time.Time values are written as their UTC wall-clock — no
-	//     more "stored CEST, read back as UTC" drift on TIMESTAMP cols;
-	//   • TIMESTAMPTZ reads come back in UTC consistently regardless of
-	//     where the Postgres server is configured;
-	//   • cross-deployment lex ordering of timestamp-bearing TEXT columns
-	//     (e.g. JSON fields) stays correct.
-	//
-	// Pairs with _timezone=UTC on the SQLite DSN so both engines share the
-	// same convention — every timestamp on disk is UTC.
+	// Default the session timezone to UTC for consistent timestamp handling.
 	connectionString = ensurePostgresTimezoneUTC(connectionString)
 
 	// Open connection
@@ -201,12 +188,7 @@ func NewPostgresDB(connectionString string, maxConns int) (Database, error) {
 	}
 	db.SetMaxOpenConns(maxConns)
 	db.SetMaxIdleConns(idle)
-	// Recycle connections so the pool never holds a connection open against the
-	// server indefinitely. Without these, idle connections (up to MaxIdleConns)
-	// stay reserved forever and are never returned to Postgres — which, combined
-	// with an over-large MaxOpenConns, manifests as "sorry, too many clients
-	// already". ConnMaxLifetime caps total age; ConnMaxIdleTime drains the idle
-	// pool back to the server during quiet periods.
+	// Recycle connections so idle pools do not exhaust the server.
 	db.SetConnMaxLifetime(30 * time.Minute)
 	db.SetConnMaxIdleTime(5 * time.Minute)
 
@@ -216,12 +198,7 @@ func NewPostgresDB(connectionString string, maxConns int) (Database, error) {
 	}, nil
 }
 
-// ensurePostgresTimezoneUTC appends a timezone=UTC parameter to dsn unless
-// the caller has already pinned one. Works for both URL-style DSNs
-// ("postgresql://...?sslmode=disable") and keyword-value DSNs
-// ("host=... user=... dbname=..."). Case-insensitive check on "timezone" so
-// a user-supplied "TimeZone=Europe/Berlin" or "timezone=America/Denver" is
-// respected — we only add the default when nothing is set.
+// ensurePostgresTimezoneUTC defaults URL and keyword DSNs to UTC.
 func ensurePostgresTimezoneUTC(dsn string) string {
 	if strings.Contains(strings.ToLower(dsn), "timezone=") {
 		return dsn
@@ -244,13 +221,8 @@ func ensurePostgresTimezoneUTC(dsn string) string {
 	return dsn + " timezone=UTC"
 }
 
-// ConvertPlaceholders converts SQLite-style ? placeholders to PostgreSQL-style $1, $2, etc.
-// Exported so it can be used by transaction wrappers.
-//
-// The walker skips characters inside single-quoted strings (handling the
-// doubled-single-quote escape), double-quoted identifiers, line comments
-// (-- to EOL), block comments (slash-star to star-slash), and the JSONB
-// operators ?| ?& ??. Only a bare ? outside those contexts is converted to $N.
+// ConvertPlaceholders converts bare SQLite ? placeholders to PostgreSQL $N.
+// It preserves quoted strings, identifiers, comments, and JSONB operators.
 func ConvertPlaceholders(query string) string {
 	var result strings.Builder
 	result.Grow(len(query) + 16)
@@ -1077,13 +1049,8 @@ func (p *PostgresDB) Initialize() error {
 			}
 		}
 
-		// Polymorphic approver pool: portal_customer_id on approval_step_approvers
-		// + actor_portal_customer_id on approval_decisions. Drop NOT NULL on
-		// approval_step_approvers.user_id since it now alternates with
-		// portal_customer_id. The CHECK constraint goes up only if the table
-		// was created with the new schema; for existing dbs we add it after
-		// the column lands so historical data (all user_id, no customers) doesn't
-		// violate it.
+		// Support user or portal-customer approvers. Add the exclusive-identity
+		// constraint after columns so existing user-only rows remain valid.
 		var apprPortalCol int
 		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='approval_step_approvers' AND column_name='portal_customer_id'`).Scan(&apprPortalCol); err == nil && apprPortalCol == 0 {
 			if _, err = p.db.Exec(`ALTER TABLE approval_step_approvers ADD COLUMN portal_customer_id INTEGER REFERENCES portal_customers(id) ON DELETE RESTRICT`); err != nil {

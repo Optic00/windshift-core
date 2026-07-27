@@ -109,22 +109,9 @@ func pgTriggerCheck(trigger string) string {
 	)
 }
 
-// init builds the canonical migration ordering. The baseline marker comes
-// first so every install gets stamped on its very first run. Inline
-// CREATE TABLE blocks come next because column-add migrations downstream
-// FK-reference them (e.g. users.oauth_client_id → oauth_clients.id at
-// column-add 0035). Schema re-runs are deferred to a follow-up PR; for
-// now the legacy existing-install paths still execute them, and the
-// catalog stamps any effect they leave behind via the per-table column-
-// add migrations.
-//
-// We deliberately do NOT reset Catalog at the top of init(): migrations.go
-// declares date-prefixed entries (e.g. "20260515_...") in the package-level
-// `var Catalog = []Migration{...}` literal, which Go evaluates before any
-// init() runs. Resetting here would silently discard them — that bug ate
-// three legitimate migrations before it was caught. Append-only keeps both
-// declaration styles working; the migrations.go literal entries run first,
-// the catalog.go groupings run after.
+// init appends migrations in dependency order: baseline, tables, then dependent
+// columns and indexes. Do not reset Catalog: migrations.go initializes dated
+// entries before init, and append-only preserves both declaration styles.
 func init() {
 	Catalog = append(Catalog, baselineMigration())
 	Catalog = append(Catalog, inlineTableMigrations()...)
@@ -140,19 +127,8 @@ func init() {
 	Catalog = append(Catalog, driftFixMigrations()...)
 }
 
-// baselineMigration stamps schema_migrations with a "this database has
-// completed first-time bootstrap" marker. Body is empty on both backends
-// so the runner stamps without running any DDL. Useful for tooling that
-// wants to distinguish a freshly-rolled-out install from one that has
-// never run any catalog migrations.
-//
-// Note: the matching atomic-bootstrap refactor (wrap fresh schema + seed
-// + baseline insert in a single transaction so a seed failure rolls back
-// the schema files) is deferred. Doing so requires threading a tx through
-// the ~450-line initializeDefaultData function and its Postgres twin —
-// large scope for what's effectively a quality-of-recovery improvement.
-// On a failed first install, operators still need to manually drop the
-// half-created DB. Tracked as a follow-up.
+// baselineMigration stamps a fresh install without DDL. Bootstrap is not yet
+// atomic, so operators must drop a database left by a failed first install.
 func baselineMigration() Migration {
 	return Migration{
 		Version: "0000_baseline",
@@ -160,9 +136,7 @@ func baselineMigration() Migration {
 	}
 }
 
-// columnAddMigrations is every legacy column-add migration from the
-// migrations / pgMigrations slices, paired by what they do. Order matches
-// the legacy slices so existing-install behavior is unchanged.
+// columnAddMigrations preserves legacy column-add ordering.
 func columnAddMigrations() []Migration {
 	return []Migration{
 		{
@@ -1857,14 +1831,8 @@ func miscMigrations() []Migration {
 			`,
 		},
 		{
-			// Commenters are now auto-subscribed as item watchers
-			// (CommentService.Create), and fresh installs seed
-			// comment.created with notify_watchers = true. Existing
-			// installs were seeded with notify_watchers = false, so the
-			// auto-subscribe would be inert there — flip those rules on so
-			// follow-up replies actually reach thread participants.
-			// Check returns 1 (skip) once no comment.created rule is still
-			// at the old default; 0 (run) while any remains.
+			// Older comment.created rules disabled new commenter watches; enable them
+			// so follow-up replies reach participants. Check skips once all are fixed.
 			Version:       "comment_created_notify_watchers",
 			Name:          "comment.created notify_watchers = true (follow-on-comment)",
 			CheckSQLite:   "SELECT CASE WHEN EXISTS(SELECT 1 FROM notification_event_rules WHERE event_type = 'comment.created' AND notify_watchers = 0) THEN 0 ELSE 1 END",

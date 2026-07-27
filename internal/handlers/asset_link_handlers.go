@@ -16,10 +16,7 @@ import (
 	"windshift/internal/repository"
 )
 
-// requireAssetAccess authenticates the user, extracts the asset ID from the "id" route
-// param, looks up the asset's set, and checks permission using the provided checker.
-// Returns the user, asset ID, and true on success; writes the appropriate error
-// response and returns false on failure.
+// requireAssetAccess authenticates and authorizes an asset through its set.
 func (h *AssetHandler) requireAssetAccess(w http.ResponseWriter, r *http.Request, checkPerm func(userID, setID int) (bool, error)) (*models.User, int, bool) {
 	currentUser, ok := RequireAuth(w, r)
 	if !ok {
@@ -55,38 +52,26 @@ func (h *AssetHandler) requireAssetAccess(w http.ResponseWriter, r *http.Request
 	return currentUser, assetID, true
 }
 
-// requireAssetViewAccess authenticates the user, extracts the asset ID from the "id" route
-// param, looks up the asset's set, and checks view permission.
 func (h *AssetHandler) requireAssetViewAccess(w http.ResponseWriter, r *http.Request) (*models.User, int, bool) {
 	return h.requireAssetAccess(w, r, h.canViewSet)
 }
 
-// requireAssetEditAccess authenticates the user, extracts the asset ID from the "id" route
-// param, looks up the asset's set, and checks edit permission.
 func (h *AssetHandler) requireAssetEditAccess(w http.ResponseWriter, r *http.Request) (*models.User, int, bool) {
 	return h.requireAssetAccess(w, r, h.canEditSet)
 }
 
-// requireAssetDeleteAccess authenticates the user, extracts the asset ID from the "id" route
-// param, looks up the asset's set, and checks delete permission.
 func (h *AssetHandler) requireAssetDeleteAccess(w http.ResponseWriter, r *http.Request) (*models.User, int, bool) {
 	return h.requireAssetAccess(w, r, h.canDeleteAsset)
 }
 
-// GetAssetLinks returns all links for an asset (incoming and outgoing)
+// GetAssetLinks returns an asset's incoming and outgoing links.
 func (h *AssetHandler) GetAssetLinks(w http.ResponseWriter, r *http.Request) {
 	currentUser, assetID, ok := h.requireAssetViewAccess(w, r)
 	if !ok {
 		return
 	}
 
-	// Accessibility filter: viewing the source asset must not disclose the
-	// titles (or even existence) of linked items/assets/test cases the caller
-	// cannot otherwise see. Build the same accessible-workspace set + cached
-	// set-view checks the relationship graph uses, then drop any link whose
-	// *other* endpoint is not viewable. Without this a user who can edit one
-	// asset set could plant a link to an arbitrary cross-workspace entity and
-	// read its title back here.
+	// Filter inaccessible endpoints to avoid leaking linked-entity metadata.
 	accessibleWS, err := GetAccessibleWorkspaceIDs(&models.User{ID: currentUser.ID}, h.db, h.permissionService)
 	if err != nil {
 		respondInternalError(w, r, err)
@@ -109,8 +94,6 @@ func (h *AssetHandler) GetAssetLinks(w http.ResponseWriter, r *http.Request) {
 		return allowed
 	}
 
-	// Get outgoing links (where this asset is the source). Item titles are
-	// hydrated via ItemRepository.GetTitles after the main scan.
 	outgoingQuery := `
 		SELECT il.id, il.link_type_id, il.source_type, il.source_id, il.target_type, il.target_id,
 		       il.created_by, il.created_at,
@@ -172,8 +155,6 @@ func (h *AssetHandler) GetAssetLinks(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Get incoming links (where this asset is the target). Item titles are
-	// hydrated via ItemRepository.GetTitles after the main scan.
 	incomingQuery := `
 		SELECT il.id, il.link_type_id, il.source_type, il.source_id, il.target_type, il.target_id,
 		       il.created_by, il.created_at,
@@ -235,8 +216,7 @@ func (h *AssetHandler) GetAssetLinks(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Drop links whose other endpoint the caller cannot view, so neither the
-	// hydrated title nor the link's existence leaks across workspaces.
+	// Do not expose inaccessible links or their titles.
 	outgoing := make([]models.ItemLink, 0, len(outgoingLinks))
 	for _, link := range outgoingLinks {
 		if h.canAccessEntity(currentUser.ID, link.TargetType, link.TargetID, wsSet, canViewCached) {
@@ -258,14 +238,14 @@ func (h *AssetHandler) GetAssetLinks(w http.ResponseWriter, r *http.Request) {
 	respondJSONOK(w, response)
 }
 
-// CreateAssetLinkRequest represents the request body for creating an asset link
+// CreateAssetLinkRequest creates an asset link.
 type CreateAssetLinkRequest struct {
 	LinkTypeID int    `json:"link_type_id"`
 	TargetType string `json:"target_type"` // item, asset, test_case
 	TargetID   int    `json:"target_id"`
 }
 
-// CreateAssetLink creates a link from an asset to another entity
+// CreateAssetLink creates an asset link.
 func (h *AssetHandler) CreateAssetLink(w http.ResponseWriter, r *http.Request) {
 	currentUser, assetID, ok := h.requireAssetEditAccess(w, r)
 	if !ok {
@@ -277,20 +257,17 @@ func (h *AssetHandler) CreateAssetLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate target type
 	validTargetTypes := map[string]bool{"item": true, "asset": true, "test_case": true}
 	if !validTargetTypes[req.TargetType] {
 		respondValidationError(w, r, "Invalid target_type. Must be 'item', 'asset', or 'test_case'")
 		return
 	}
 
-	// Prevent self-links
 	if req.TargetType == "asset" && req.TargetID == assetID {
 		respondValidationError(w, r, "Cannot create link to self")
 		return
 	}
 
-	// Verify link type exists and is active
 	var linkTypeActive bool
 	err := h.db.QueryRow("SELECT active FROM link_types WHERE id = ?", req.LinkTypeID).Scan(&linkTypeActive)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -306,11 +283,7 @@ func (h *AssetHandler) CreateAssetLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Authorize the target: editing one asset set must not let a user plant a
-	// link to (and later disclose the title of) an entity in a workspace/set
-	// they cannot view. canAccessEntity also returns false for a nonexistent
-	// target, giving us existence validation for free. 404 (not 403) avoids
-	// leaking whether the target exists.
+	// Hide inaccessible and nonexistent targets behind 404.
 	accessibleWS, err := GetAccessibleWorkspaceIDs(&models.User{ID: currentUser.ID}, h.db, h.permissionService)
 	if err != nil {
 		respondInternalError(w, r, err)
@@ -329,7 +302,6 @@ func (h *AssetHandler) CreateAssetLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check uniqueness before insert
 	var linkExists bool
 	_ = h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM item_links WHERE link_type_id = ? AND source_type = 'asset' AND source_id = ? AND target_type = ? AND target_id = ?)",
 		req.LinkTypeID, assetID, req.TargetType, req.TargetID).Scan(&linkExists)

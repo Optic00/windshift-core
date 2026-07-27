@@ -81,13 +81,8 @@ func (h *EmailTemplateHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Subject + Description run through sanitize — Subject renders verbatim
-	// in mail clients (no HTML allowed there) and Description surfaces in
-	// the admin UI. HTMLBody + TextBody are intentionally NOT sanitized:
-	// the entire point of an email template is to author HTML / plain
-	// text for outbound mail, and stripping HTML here would break every
-	// legitimate template. Authoring an email template is an admin-only
-	// trusted-author surface.
+	// Sanitize rendered subject/description, but preserve template bodies: this
+	// admin-only trusted surface intentionally authors outbound HTML/text.
 	warnings := sanitize.ApplyAllWithWarnings(
 		sanitize.Pair{Target: &req.Subject, Policy: sanitize.PlainTextField, Label: "Subject"},
 		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},

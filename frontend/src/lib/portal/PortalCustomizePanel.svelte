@@ -400,7 +400,6 @@
           onRemoveImage={() => portalStore.removeBackgroundImage()}
           onUploadImage={(files) => portalStore.handleBackgroundUpload(files)}
           uploading={portalStore.uploadingBackground}
-          uploadCategory="portal_background"
         />
 
         <!-- Logo Upload -->

@@ -12,18 +12,8 @@
   import { IconX, IconHistory, IconRestore } from '@tabler/icons-svelte-runes';
   import { loadPageHistory, pageRevisionAuthorName } from './pageHistoryData.js';
 
-  /**
-   * Right-side slide-in drawer that lists the revision history for a
-   * page. Each row can expand inline to render the revision's body
-   * (read-only Milkdown), and revisions other than the active one
-   * carry a Restore button that POSTs to the existing
-   * /history/{revId}/restore endpoint and asks the parent to reload.
-   *
-   * Mounted persistently next to PagesView's editor — the drawer
-   * toggles via the `open` prop rather than mounting / unmounting on
-   * every open. That preserves the loaded history + per-revision
-   * preview state across opens of the same page.
-   */
+  /** Persistent page-revision drawer with read-only previews and restore. It
+   * toggles via `open` to preserve loaded history and preview state. */
   let {
     workspaceId,
     pageId = null,
@@ -39,9 +29,7 @@
   let error = $state('');
   let expandedRevisionId = $state(/** @type {number|null} */ (null));
   let pendingRestoreId = $state(/** @type {number|null} */ (null));
-  // Reload when the drawer opens against a new page, or transitions
-  // from closed → open. Skipping the load while closed keeps the
-  // history request out of the hot path for users who never open it.
+  // Load only when opened for a new page.
   let lastLoadedFor = $state(/** @type {{wsId:any,pageId:any}|null} */ (null));
   $effect(() => {
     if (!open || pageId == null) return;

@@ -15,23 +15,8 @@ import (
 	"windshift/internal/utils"
 )
 
-// sanitizeConfigSetTemplate bounds every user-supplied string in an uploaded
-// configuration-set bundle. Policies mirror the live CRUD handlers for the
-// same columns (config set / screen / workflow / condition-set / approval-set
-// descriptions are RichText; custom-field names are ShortIdentifier with a
-// Comment description) so a sanitized bundle round-trips the way direct API
-// writes would. Name-shaped cross-references get the same policy as their
-// defining entity so by-name resolution inside the bundle stays intact.
-// Enum-shaped machine tokens (field_type, quorum_mode, logic_mode, ...) get
-// ShortIdentifier: legitimate values ("and", "sequential", "script") pass
-// through untouched while a bundle can no longer persist unbounded text into
-// columns the live CRUD handlers allowlist. Custom-field Options is a JSON
-// blob (select/linking/asset configs json.Unmarshal it downstream) — HTML
-// stripping would corrupt it, so it is validated (size + well-formed JSON)
-// and rejected instead of scrubbed; writes a validation error and returns
-// false when an option blob is rejected. The free-form per-condition
-// Config blob is byte-bounded (see sanitizeConfigSetCondition); deep
-// validation still belongs to the live condition editor.
+// sanitizeConfigSetTemplate applies the same field policies as live CRUD.
+// JSON option blobs are size-validated, not scrubbed, to preserve their shape.
 func sanitizeConfigSetTemplate(w http.ResponseWriter, r *http.Request, tpl *services.ConfigSetTemplate) bool {
 	if tpl.ExportedBy != nil {
 		sanitizeConfigSetExportBy(tpl.ExportedBy)

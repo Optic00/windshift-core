@@ -1,22 +1,6 @@
 <script>
-  // Renders a yellow warning banner when conditions and approvals overlap on
-  // the same workflow_transitions row. The component fetches the per-transition
-  // governance whenever `transitionId` changes and decides which side of the
-  // story to tell based on `perspective`:
-  //
-  //   - 'approval': editing an approval set; warn if `conditions` is non-empty
-  //                 for the configured approve/deny transition. Wording focuses
-  //                 on "the conditions you've already set will be silently
-  //                 bypassed when this approval finalises."
-  //   - 'condition': editing a condition set; warn if `approval_drivers` is
-  //                  non-empty for the transition the user is attaching
-  //                  conditions to. Wording focuses on "this transition is
-  //                  driven by an approval — your conditions only apply to
-  //                  direct user attempts (which the approval will block)."
-  //
-  // The component is designed to be visible in both places so the override is
-  // never silent — admins see it whether they configured the condition first
-  // and the approval second, or the other way around.
+  // Warn when conditions and approval drivers share a transition. Each editor
+  // fetches governance for its transition so either configuration order is clear.
 
   import { onMount } from 'svelte';
   import { t } from '../stores/i18n.svelte.js';
@@ -55,10 +39,8 @@
   const conditionTouches = $derived(governance?.conditions ?? []);
   const approvalDrivers = $derived(governance?.approval_drivers ?? []);
 
-  // From the approval-set editor: warn iff conditions exist on the transition
-  // we just configured as approve/deny.
-  // From the condition-set editor: warn iff approval drivers exist on the
-  // transition we're adding conditions to.
+  // Warn about existing conditions from approval editors and approval drivers
+  // from condition editors.
   const shouldWarn = $derived(
     perspective === 'approval'
       ? conditionTouches.length > 0

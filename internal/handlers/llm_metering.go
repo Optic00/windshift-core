@@ -15,17 +15,10 @@ import (
 	"windshift/internal/repository"
 )
 
-// LLM usage metering (WI-493).
-//
-// The agent is the untrusted party and only decodes completion_tokens, so the
-// trustworthy capture point is the broker. ProxyLLM tees the SSE response and
-// parses the terminal `usage` chunk (the agent sets stream_options.include_usage,
-// so it is always present), then records token counts + computed cost per call.
-// This is the metering the unenforced RunGrants.LLM.QuotaTokens follow-up needs.
+// Broker-side LLM metering is authoritative: ProxyLLM parses terminal SSE usage
+// chunks and records token counts/cost, not untrusted agent reports.
 
-// maxMeterLineBytes caps the per-line scan buffer. SSE `data:` lines are small;
-// a line longer than this can't be the compact usage chunk, so we stop
-// accumulating it rather than let a pathological stream grow memory unbounded.
+// maxMeterLineBytes prevents pathological SSE lines from growing memory unbounded.
 const maxMeterLineBytes = 1 << 20 // 1 MiB
 
 // sseUsage is the parsed usage tail of a streamed chat completion. Cost is set

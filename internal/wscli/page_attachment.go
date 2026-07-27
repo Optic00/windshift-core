@@ -10,42 +10,15 @@ import (
 	"strings"
 )
 
-// Page-attachment import for `ws page create/edit --upload-assets`.
-//
-// Lives in its own file (not in attachment.go) so the existing
-// work-item attachment surface stays untouched per the design
-// constraint. The split also matches the per-noun layout the rest of
-// the package uses (page.go, page_label.go, task.go, comment.go).
-//
-// Flow when --upload-assets is set:
-//  1. Scan the markdown for `![alt](path)` references that resolve to
-//     a local file (extractImageRefs).
-//  2. For each match, upload the file as a page attachment via
-//     Client.UploadPageAttachment.
-//  3. Rewrite the markdown to replace each ref's path with the new
-//     attachment download URL (rewriteImageRefs).
-//  4. Submit the rewritten markdown.
-//
-// Only image syntax `![](url)` is rewritten; plain link syntax
-// `[](url)` is intentionally left alone so a markdown link to a local
-// document doesn't silently get uploaded as an attachment. Reference-
-// style images and inline HTML `<img>` are also skipped — defer if
-// users ask for them.
+// Page attachments for `ws page create/edit --upload-assets`: upload local
+// inline Markdown images, rewrite their URLs, then submit. Plain links,
+// reference images, and HTML images are intentionally left untouched.
 
-// imageRefRegex matches `![alt](path)`. The `alt` group is captured for
-// completeness even though we only consume the path; nested brackets in
-// alt text aren't supported, matching the limit of most markdown
-// renderers. The path group is everything between the first `(` after
-// `]` and the matching `)` — titles like `![alt](path "title")` are
-// rare in imported documents and are not parsed here (the title text
-// would be kept inside the path group and cause the existence check
-// below to fail, which falls through to "skipped — file not found").
+// imageRefRegex matches simple inline images; titled paths fall through as
+// skipped files.
 var imageRefRegex = regexp.MustCompile(`!\[([^\]]*)\]\(([^)]+)\)`)
 
-// localImageRef is one image reference resolved against the source
-// markdown's directory. uploadedURL is filled in after the upload step
-// runs; an empty value means the ref was scanned but no upload was
-// attempted (skip cases) or the upload failed.
+// localImageRef tracks an image reference and its upload outcome.
 type localImageRef struct {
 	original    string // exact substring in the source markdown, e.g. "![hero](./img.png)"
 	altText     string
@@ -55,11 +28,7 @@ type localImageRef struct {
 	skipReason  string // populated when we deliberately did not upload
 }
 
-// extractImageRefs walks the markdown and returns one entry per image
-// reference whose target resolves to a regular file on disk relative to
-// baseDir. References pointing at remote URLs, absolute paths, data:
-// URIs, or non-existent files are also returned but with skipReason set
-// — the caller surfaces a summary so the user can see what happened.
+// extractImageRefs resolves local images and records skipped references.
 func extractImageRefs(markdown, baseDir string) []localImageRef {
 	matches := imageRefRegex.FindAllStringSubmatchIndex(markdown, -1)
 	refs := make([]localImageRef, 0, len(matches))
@@ -117,22 +86,14 @@ func rewriteImageRefs(markdown string, refs []localImageRef) string {
 			continue
 		}
 		replacement := fmt.Sprintf("![%s](%s)", ref.altText, ref.uploadedURL)
-		// Replace ALL occurrences so the (rare) case of the same
-		// `![alt](path)` literal appearing twice in the document is
-		// handled — using n=1 would only swap the first.
+		// Replace every identical image reference.
 		out = strings.ReplaceAll(out, ref.original, replacement)
 	}
 	return out
 }
 
-// uploadAndRewrite uploads each resolvable image ref to the given page
-// and returns the rewritten markdown plus a one-line summary fit to
-// print at the end of `ws page create/edit`.
-//
-// Errors from a single upload bubble up — partial state in the form of
-// previously-uploaded attachments may remain on the page; the
-// orchestration call site is expected to surface this and suggest the
-// user re-run `ws page edit … --file … --upload-assets` to retry.
+// uploadAndRewrite uploads resolvable images and returns rewritten Markdown and
+// a summary. Errors preserve prior uploads; callers surface the retry command.
 func uploadAndRewrite(client *Client, workspaceID, pageID int, markdown, baseDir string, progress io.Writer) (rewritten, summary string, err error) {
 	refs := extractImageRefs(markdown, baseDir)
 	if len(refs) == 0 {

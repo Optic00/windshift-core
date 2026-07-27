@@ -398,13 +398,8 @@ func (h *IntegrationOAuthHandler) GetAvailableProviders(w http.ResponseWriter, r
 
 // Helper methods
 
-// getRedirectURI returns the canonical OAuth callback URL for the given
-// provider slug. It is ALWAYS built from the configured baseURL — never from
-// request headers like Host or X-Forwarded-Host, which can be spoofed by any
-// caller (or any proxy hop that doesn't strip them). If baseURL is unset,
-// OAuth flows are treated as misconfigured and an error is surfaced so the
-// caller can respond 503 rather than silently generating a redirect through
-// an attacker-controlled host.
+// getRedirectURI uses configured baseURL only, never spoofable request headers.
+// Missing baseURL is a 503-worthy OAuth misconfiguration.
 func (h *IntegrationOAuthHandler) getRedirectURI(slug string) (string, error) {
 	if h.baseURL == "" {
 		return "", fmt.Errorf("integration OAuth is not configured: baseURL is unset")

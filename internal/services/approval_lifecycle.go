@@ -334,15 +334,8 @@ func (s *ApprovalService) emitDecisionEvents(decision *models.ApprovalDecision, 
 	}
 }
 
-// advanceRequestAfterStep drives request-level state when a step terminates.
-// Returns the ID of a newly-started step instance (sequential mode advance),
-// or nil if no new step started.
-//
-// Sequential mode: on step approve, start the next step (or finalize if last);
-// on step reject, finalize the request as rejected.
-// Parallel mode: on step approve, finalize as approved iff every step is
-// approved; on step reject, finalize as rejected and skip any still-pending
-// peer steps in the same tx.
+// advanceRequestAfterStep starts sequential successors or finalizes requests.
+// Parallel rejection skips peers; parallel approval waits for every step.
 func (s *ApprovalService) advanceRequestAfterStep(ctx context.Context, tx database.Tx, req *models.ApprovalRequest, stepInstance *models.ApprovalStepInstance, stepStatus string, actorUserID int, itemRepo *repository.ItemRepository) (*int, error) {
 	ass, err := s.templateRepo.FindStatusByIDInTx(ctx, tx, req.ApprovalSetStatusID)
 	if err != nil {
@@ -400,10 +393,8 @@ func (s *ApprovalService) finalizeRequest(ctx context.Context, tx database.Tx, r
 		return fmt.Errorf("finalize request: %w", err)
 	}
 
-	// item_history.user_id is NOT NULL with an FK to users — when the actor is
-	// the system (e.g. sweeper-driven auto_reject), fall back to the requestor
-	// so the history attribution stays valid. The audit decision row still
-	// carries actor=NULL for the true "system" provenance.
+	// History requires a user, so system decisions use the requestor; audit
+	// decisions retain nil actor provenance.
 	historyActor := actorUserID
 	if historyActor == 0 {
 		historyActor = req.TriggeredByUserID
@@ -422,15 +413,8 @@ func (s *ApprovalService) finalizeRequest(ctx context.Context, tx database.Tx, r
 	return nil
 }
 
-// evaluateParallelRequestState handles request-level state transitions for
-// parallel-mode approvals. Called once per terminating step instance.
-//
-//   - On any step rejection: finalize the request as rejected, skip every
-//     still-pending peer step in the same tx (status='skipped').
-//   - On step approval: finalize as approved iff every step instance has
-//     reached status='approved'. Otherwise no-op (the other steps continue).
-//
-// stepInstance is the just-decided step (already updated to stepStatus).
+// evaluateParallelRequestState rejects and skips peers on any rejection; it
+// approves only when every step has terminated successfully.
 func (s *ApprovalService) evaluateParallelRequestState(ctx context.Context, tx database.Tx, req *models.ApprovalRequest, ass *models.ApprovalSetStatus, stepInstance *models.ApprovalStepInstance, stepStatus string, actorUserID int, itemRepo *repository.ItemRepository) error {
 	if stepStatus == models.ApprovalStepStatusRejected {
 		if err := s.runtimeRepo.SkipPendingPeerSteps(ctx, tx, req.ID, stepInstance.ID); err != nil {
@@ -557,22 +541,6 @@ func (s *ApprovalService) Cancel(ctx context.Context, requestID, actorUserID int
 	return nil
 }
 
-// ----------------------------------------------------------------------------
-// Escalate / Delegate / RefreshApprovers
-// ----------------------------------------------------------------------------
-
-// Escalate applies the configured escalation policy to a step instance.
-// Called by the sweeper (actorUserID = 0, system) on timeout, or by an admin
-// via POST /approvals/{id}/steps/{step_id}/escalate.
-//
-// Behavior depends on approval_steps.escalation_action:
-//   - "reassign" (default): swap the approver pool to escalation_target_*,
-//     write an audit row, increment escalation_count, re-arm escalation_due_at
-//     if max_escalations is NULL or escalation_count < max_escalations.
-//   - "skip_step": mark step status='escalated', advance the request as if the
-//     step had approved.
-//   - "auto_reject": mark step status='rejected', finalize the request as
-//     rejected and fire the configured deny transition.
-//
-// Idempotent: if the step is no longer pending (already decided / escalated by
-// another worker), Escalate is a no-op.
+// Escalate handles timeout or admin escalation. Reassignment updates the
+// approver pool and re-arms its deadline; skip and reject advance or reject the
+// request. No longer-pending steps are no-ops.

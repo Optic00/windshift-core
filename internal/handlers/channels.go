@@ -1133,13 +1133,8 @@ func (h *ChannelHandler) updateChannelActivity(ctx context.Context, channelID in
 	_ = h.service.UpdateLastActivity(ctx, channelID)
 }
 
-// channelSlugRegex matches the shape the frontend enforces for portal/form
-// slugs: lowercase alphanumerics with optional internal hyphens, 3-64 chars,
-// no leading/trailing hyphen. (collections.go has its own copy with the
-// same rules — kept separate so the channel-slug constraint can evolve
-// without affecting collection slugs.) Slugs land in public URLs, so
-// anything outside this set would either fail to route or invite escaping
-// bugs in the routing layer.
+// channelSlugRegex accepts routable public portal/form slugs: lowercase 3–64
+// alphanumerics with internal hyphens. It evolves independently from collections.
 var channelSlugRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$`)
 
 // slugFormatOK reports whether s is a valid portal/form slug.

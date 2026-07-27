@@ -19,7 +19,7 @@
 
   let unreadCount = $state(0);
 
-  // Create popover with portal to body to escape sidebar stacking context
+  // Portal above the sidebar stacking context.
   const {
     elements: { trigger, content },
     states: { open }
@@ -31,7 +31,7 @@
     portal: 'body'
   });
 
-  // Subscribe to notifications store
+  // Track unread notifications.
   let unsubscribe;
   onMount(() => {
     unsubscribe = notifications.subscribe(items => {
@@ -39,14 +39,8 @@
     });
   });
 
-  // Auto mark-all-as-seen after the tray has been open for 5s. Runs once per
-  // open — closing and reopening arms a fresh timer. Cancelled on early close
-  // so a quick glance doesn't immediately drop the new-since-glance cue.
-  //
-  // Bughunt #11: this used to call markAllAsRead, which silently suppressed
-  // email batching (the scheduler only sends rows with read = false). Seeing
-  // is separate from acknowledging — the email digest still fires unless the
-  // user explicitly marks read.
+  // Mark seen after a sustained open, but never read: email batching still
+  // depends on unread rows. Closing early cancels the timer.
   let autoSeenTimer;
   let unsubscribeOpen = open.subscribe((isOpen) => {
     clearTimeout(autoSeenTimer);

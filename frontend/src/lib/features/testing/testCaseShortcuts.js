@@ -1,12 +1,6 @@
 export const STEPS_SHORTCUT_ALPHABET = '1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
-/**
- * Create fixed-width shortcut codes for a list of test cases.
- *
- * Most lists use a single key (1-9, 0, then A-Z). If the list is larger than
- * the available one-key alphabet, every code grows to the same width so no
- * code can be mistaken for the prefix of another one.
- */
+/** Create fixed-width test-case shortcuts so no code prefixes another. */
 export function createStepsShortcutCodes(count) {
   if (!Number.isInteger(count) || count <= 0) return [];
 

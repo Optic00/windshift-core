@@ -12,13 +12,8 @@ function buildViewUrl(workspaceId, view, collectionId) {
   return `/workspaces/${workspaceId}${prefix}/${view}`;
 }
 
-/**
- * Workspace view navigation. Emits whenever the user is inside a workspace
- * (workspaceId set) — including iterations/milestones/analytics/test pages,
- * which the previous WORKSPACE_CONTEXT_VIEWS gate silently excluded. Phase 0
- * audit fix: removes the `dashboard` keyword from the overview command so
- * it stops polluting `board` searches.
- */
+/** Workspace navigation for every workspace route, without the overview
+ * dashboard keyword that polluted board searches. */
 export function workspaceNavigationProvider(ctx) {
   const { workspaceId, workspace, collectionId, route, modules } = ctx;
   if (!workspaceId) return [];

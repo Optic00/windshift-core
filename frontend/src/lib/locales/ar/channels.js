@@ -1,16 +1,3 @@
-/**
- * Arabic (ar) - Channels, Notifications, Portal, and Request Form translations
- * RTL language
- *
- * This module contains translations for:
- * - notifications: Notification UI and email verification
- * - channels: Channel management and integration settings
- * - channel: Channel configuration (portal, webhook, email)
- * - portal: Customer portal settings and request types
- * - requestForm: Portal request submission form
- * - requestTypeFields: Field configuration for request types
- */
-
 export default {
   notifications: {
     title: 'الإشعارات',

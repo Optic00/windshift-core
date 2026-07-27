@@ -198,13 +198,8 @@ func (h *JiraImportHandler) importJobWorkspaces(jobID string) []ImportedWorkspac
 	return workspaces
 }
 
-// sanitizeStartImportRequest scrubs the user-supplied strings on the import
-// payload. Jira keys/IDs/types are identifier-shaped; the Jira-side names
-// render in the wizard + job summaries and become workspace / item-type /
-// status / milestone names on import. ConnectionID is UUID-shaped but its
-// shape is never validated, and it is persisted, audit-logged, and echoed
-// back via job listings — bound it like the analyzer handlers do. The
-// numeric Windshift IDs are ints and stay untouched.
+// sanitizeStartImportRequest bounds persisted/rendered Jira identifiers and
+// names; numeric Windshift IDs remain untouched.
 func sanitizeStartImportRequest(req *StartImportRequest) {
 	sanitize.Apply(&req.ConnectionID, sanitize.ShortIdentifier)
 	for i := range req.ProjectKeys {

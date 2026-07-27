@@ -11,15 +11,8 @@ import (
 	"windshift/internal/models"
 )
 
-// registerAITools registers every tool from the shared aitools registry
-// with the MCP server. We use the SDK's raw AddTool path (Server.AddTool,
-// not the generic mcp.AddTool) so we can pass the JSON Schema we already
-// computed in the registry instead of having the SDK derive it from a
-// typed In parameter. This keeps the schema source of truth on the
-// aitools side: both surfaces see exactly the same schema bytes.
-//
-// The trade-off is that we do unmarshalling and validation ourselves;
-// good enough for now since the registry produces well-formed schemas.
+// registerAITools uses raw AddTool so MCP and aitools share registry-generated
+// JSON Schema bytes; handlers unmarshal registry-validated arguments directly.
 func (ms *MCPServer) registerAITools() {
 	for _, e := range aitools.Default.All() {
 		entry := e // capture per iteration
@@ -36,14 +29,8 @@ func (ms *MCPServer) registerAITools() {
 			if user == nil {
 				return errNoAuth(), nil
 			}
-			// Enforce the tool's declared token scopes (Entry.Scopes).
-			// mcp:access (checked by the auth middleware) only opens the
-			// surface; without this check a default-mint token could reach
-			// tools its scope set excludes on the REST surface (e.g.
-			// delete_item without items:delete, create_action without
-			// actions:write). The in-product chat adapter never goes
-			// through here — cookie sessions carry no token, so its
-			// behavior is unchanged.
+			// mcp:access opens MCP only; declared scopes still gate each tool.
+			// In-product cookie-session chat does not use this token path.
 			if res, ok := ms.checkToolScopes(ctx, entry); !ok {
 				return res, nil
 			}

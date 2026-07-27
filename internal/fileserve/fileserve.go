@@ -1,11 +1,5 @@
-// Package fileserve holds small, dependency-free helpers for safely serving
-// files stored on disk: opening a stored path confined to a configured root
-// (defeating symlink and ".." escapes) and formatting Content-Disposition
-// header values that can't be broken by hostile filenames.
-//
-// It is shared by the cookie-auth handlers (internal/handlers) and the
-// bearer-token v1 handlers (internal/restapi/v1/handlers) so both surfaces
-// resolve attachment paths and headers identically.
+// Package fileserve safely confines stored files and formats safe disposition
+// headers for cookie-auth and bearer-token handlers.
 package fileserve
 
 import (
@@ -21,23 +15,9 @@ import (
 // location inside the configured storage root.
 var ErrOutsideRoot = errors.New("path is outside the configured storage root")
 
-// OpenUnderRoot opens storedPath confined to root using os.OpenRoot (Go 1.24+).
-// os.Root rejects parent-directory traversal and refuses to follow symlinks
-// that escape the root, so even a malicious row in the database or a symlink
-// planted in the storage volume cannot read outside root.
-//
-// storedPath may be:
-//   - absolute and inside root (legacy rows written when the root was an
-//     absolute path), or
-//   - relative to the current working directory but inside root (the default /
-//     e2e setup where the root itself is a relative path), or
-//   - relative to root (e.g. "items/123/file.png", as written by email
-//     ingestion).
-//
-// The returned *os.File is independent of the underlying os.Root, which is
-// closed before returning. Callers own closing the file. Returns ErrOutsideRoot
-// when the path escapes root, or the underlying os error (e.g. os.ErrNotExist)
-// when the open itself fails.
+// OpenUnderRoot resolves legacy absolute, CWD-relative, and root-relative paths
+// through os.Root, rejecting traversal and escaping symlinks. Callers close the
+// returned file; escapes return ErrOutsideRoot.
 func OpenUnderRoot(root, storedPath string) (*os.File, error) {
 	if root == "" {
 		return nil, ErrOutsideRoot
@@ -54,11 +34,7 @@ func OpenUnderRoot(root, storedPath string) (*os.File, error) {
 	return r.Open(rel)
 }
 
-// RemoveUnderRoot removes storedPath confined to root, mirroring OpenUnderRoot's
-// resolution and confinement: a stored path that escapes root is refused with
-// ErrOutsideRoot rather than followed (defense against a malicious row or a
-// planted symlink), and a missing file surfaces as os.ErrNotExist. Only the
-// named file is removed — side files such as thumbnails are left untouched.
+// RemoveUnderRoot mirrors OpenUnderRoot confinement and removes only the named file.
 func RemoveUnderRoot(root, storedPath string) error {
 	if root == "" {
 		return ErrOutsideRoot
@@ -75,11 +51,8 @@ func RemoveUnderRoot(root, storedPath string) error {
 	return r.Remove(rel)
 }
 
-// relWithinRoot resolves storedPath to a path relative to root, rejecting any
-// candidate that lands outside root. It mirrors the historical resolution
-// order (try the path as written first, then joined under root) so existing
-// rows keep resolving, while guaranteeing the result is a clean root-relative
-// path safe to hand to os.Root.Open.
+// relWithinRoot preserves historical path resolution while requiring a safe
+// root-relative result for os.Root.
 func relWithinRoot(root, storedPath string) (string, error) {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
@@ -90,8 +63,6 @@ func relWithinRoot(root, storedPath string) (string, error) {
 	if filepath.IsAbs(storedPath) {
 		candidates = []string{storedPath}
 	} else {
-		// As-written (relative to CWD) covers rows stored when the root was a
-		// relative path; joined-under-root covers truly root-relative rows.
 		candidates = []string{storedPath, filepath.Join(root, storedPath)}
 	}
 

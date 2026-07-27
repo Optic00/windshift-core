@@ -18,52 +18,24 @@ import (
 	"windshift/internal/models"
 )
 
-// AgentRunner drives the windshift-agent subprocess in JSONL RPC mode (or any other
-// JSONL stdin/stdout process — the fake-agent fixture used by the tests is
-// the same shape). Lifecycle for one run:
-//
-//  1. Start the subprocess via exec.CommandContext.
-//  2. Write the initial prompt as one JSONL command on stdin.
-//  3. Stream NDJSON events from stdout through the EventSink. Each line
-//     is forwarded verbatim if it's valid JSON, otherwise wrapped as
-//     {"line": "<raw>"} so consumers can rely on JSON-shaped payloads.
-//  4. When an event with type == IdleEventType arrives (default
-//     "session_idle"), the runner sends an abort command and closes
-//     stdin so the subprocess exits cleanly.
-//  5. On ctx cancel mid-stream, the same abort+close path runs and the
-//     run is recorded as canceled. If the subprocess hasn't exited after
-//     ShutdownGrace, the context's CommandContext kills it.
-//
-// AgentRunner doesn't know whether the subprocess is the windshift-agent binary, a
-// shell script, or a docker invocation that wraps either — Command +
-// Args carry the whole story. Production wires `docker run -i --rm
-// <image>` with the right env; tests wire a Go-binary fake-agent.
+// AgentRunner runs a JSONL subprocess. It sends the initial prompt, forwards
+// JSON events, and aborts on idle or context cancellation. Command and Args
+// support the production container and test fixtures alike.
 type AgentRunner struct {
-	// Command + Args build the subprocess invocation. Command is the
-	// executable (e.g. "docker" or "/path/to/fake-agent"); Args are the
-	// arguments. Both are required.
+	// Command and Args build the subprocess invocation.
 	Command string
 	Args    []string
 
-	// Env is forwarded into the subprocess. Production layers in
-	// per-run env (LLM API keys, GH_TOKEN) via RunInput.Env; the runner
-	// merges those over Env at spawn time.
+	// Env is merged with per-run environment at spawn time.
 	Env map[string]string
 
-	// InitialPrompt is the user message the runner writes to stdin
-	// immediately after the subprocess starts. Required for the run to
-	// make any progress; an empty value is a configuration bug.
+	// InitialPrompt is written immediately after startup.
 	InitialPrompt string
 
-	// IdleEventType is the event-type string the runner looks for to
-	// know the agent has finished and it should send abort. Defaults to
-	// "session_idle". The JSONL contract spells out the event vocabulary;
-	// tests can override this to match the fake-agent script.
+	// IdleEventType triggers graceful shutdown; defaults to "session_idle".
 	IdleEventType string
 
-	// ShutdownGrace bounds how long the runner waits for the subprocess
-	// to exit after abort+stdin-close. Defaults to 10 seconds. Past
-	// that, exec.CommandContext takes over and kills the process.
+	// ShutdownGrace bounds graceful shutdown before the context kills the process.
 	ShutdownGrace time.Duration
 }
 
@@ -370,15 +342,8 @@ func baselineSandboxArgs(cfg sandboxConfig) []string {
 	return args
 }
 
-// buildDockerArgs assembles the full docker-run argv for a single agent
-// run. Pure function over the runner config + RunInput so it can be
-// unit-tested without a live docker daemon. The flags it emits are
-// security-critical; the unit tests assert their presence.
-//
-// envFilePath, when non-empty, is added as `--env-file <path>` so env
-// values (which may include WS_TOKEN) do not appear in the docker
-// argv. Run() always supplies a real path; tests may pass "" to assert
-// the conditional.
+// buildDockerArgs creates security-critical docker args without a daemon. An
+// env file keeps values such as WS_TOKEN out of argv; tests may omit it.
 func (r *DockerAgentRunner) buildDockerArgs(input RunInput, envFilePath string) []string {
 	args := []string{"run", "-i", "--rm"}
 	args = append(args, baselineSandboxArgs(sandboxConfig{
@@ -387,11 +352,7 @@ func (r *DockerAgentRunner) buildDockerArgs(input RunInput, envFilePath string) 
 		Memory:    r.Memory,
 		CPUs:      r.CPUs,
 	})...)
-	// /home/agent is the agent user's home; agent + ws state lives there at
-	// runtime. Specific to the coding-agent image, so it is added on top of the
-	// shared baseline rather than inside it. mode=1777 for the same reason as
-	// /tmp above: the default root-owned 0750 tmpfs is unwritable by uid 1000,
-	// so $HOME (e.g. ~/.config) couldn't be created under --read-only.
+	// The coding-agent home needs a uid-1000-writable tmpfs under --read-only.
 	args = append(args, "--tmpfs=/home/agent:rw,nosuid,nodev,size=512m,mode=1777")
 
 	if envFilePath != "" {
@@ -577,18 +538,9 @@ func (o *agentOutcome) observe(t string, parsed map[string]any) {
 	}
 }
 
-// drainAgentStdout reads NDJSON events from stdout and forwards each to the
-// sink. JSON-parseable lines pass through verbatim; non-JSON lines are
-// wrapped as {"line": "<raw>"}. When the parsed event's "type" matches
-// idleEvent, sawIdle is signaled (non-blocking — only the first idle
-// event needs to wake the orchestrator). sawContractEvent records whether
-// at least one typed JSONL event arrived — the discriminator between a real
-// agent and a wrong image that just prints text and exits (WI-312).
-//
-// Returns nil on a clean scan to EOF. If the scanner stops early (oversized
-// line / read error), the rest of the stream is still drained to EOF so the
-// pipe never backs up, and the error is returned so the runner can mark the
-// event stream as degraded instead of silently completing.
+// drainAgentStdout forwards NDJSON or wraps raw lines, signals the first idle
+// event, and records typed contract events to reject text-only images. Scanner
+// failures still drain the pipe, then return an error for degraded handling.
 func drainAgentStdout(rd io.Reader, idleEvent string, emit EventSink, sawIdle chan<- struct{}, sawContractEvent *atomic.Bool, outcome *agentOutcome) error {
 	scanner := bufio.NewScanner(rd)
 	scanner.Buffer(make([]byte, 64*1024), maxAgentLine)
@@ -620,11 +572,7 @@ func drainAgentStdout(rd io.Reader, idleEvent string, emit EventSink, sawIdle ch
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		// The line scanner is dead, so the idle event can no longer be
-		// observed — wake the orchestrator now so it runs the abort path
-		// (otherwise it would sit in its select until ctx cancel while we
-		// block below draining toward an EOF that needs the subprocess to
-		// exit first).
+		// Wake the abort path before draining after scanner failure.
 		select {
 		case sawIdle <- struct{}{}:
 		default:

@@ -1,15 +1,6 @@
-// Package services hosts the coding-agent harness orchestration.
-//
-// RunService is the per-process owner of agent_runs lifecycle: admission
-// control, async dispatch onto a goroutine worker, event persistence, and
-// terminal status finalization. The actual container spawn is delegated to
-// a Runner (see runner.go in later phases) so the service is testable
-// without docker.
-//
-// This is the Phase 1 walking-skeleton implementation (WI-84). Per-user
-// and per-workspace semaphores, worktree management, token minting, SSE,
-// and binding-driven trigger paths are intentionally absent — they land in
-// WI-85 / WI-86 / WI-88 / WI-89.
+// Package services hosts coding-agent harness orchestration. RunService owns
+// per-process run admission, dispatch, events, and finalization; Runners spawn
+// containers independently for testability.
 package services
 
 import (
@@ -108,25 +99,9 @@ func (f RunnerFunc) Run(ctx context.Context, input RunInput, emit EventSink) Run
 // look the binding up without re-running the assignee match. The binding
 // trigger sets it; manual run starts leave it 0.
 
-// RunRequest is the minimum payload required to start a run.
-//
-// Repo is optional: when set, RunService asks the repoprep.Preparer to
-// prepare a per-run checkout before the runner sees the run; when nil, the runner
-// runs without a /workspace mount.
-//
-// Token is optional: when set, RunService mints a short-lived `ws` API
-// token via RunTokenService and forwards it to the container as
-// $WS_TOKEN. The minted token expires by TTL; the orchestrator does not
-// revoke it on run completion (cleanup happens via the token cleanup
-// sweeper on api_tokens.expires_at).
-//
-// Env is forwarded verbatim into the runner's environment. Orchestrator-
-// owned keys (WS_TOKEN, AGENT_RUN_ID) win over caller-supplied values to
-// avoid mixed-identity confusion.
-//
-// Binding, acting-identity resolution, and llm_connection selection get
-// bolted on in later phases (WI-87 / WI-88); for now the caller resolves
-// those itself and hands the result in via Token + Env.
+// RunRequest starts a run with optional checkouts, a TTL-bound ws token, and
+// runner environment. Orchestrator-owned environment keys override caller values
+// to preserve the run identity.
 type RunRequest struct {
 	WorkspaceID int
 	ItemID      *int
@@ -687,18 +662,10 @@ func (s *RunService) RecordFailedStart(ctx context.Context, req RunRequest, reas
 	return runID, nil
 }
 
-// validateRemoteSCMRefs constrains the branch + base commit a remote runner
-// reports for run runID before they reach the post-run PR hook (WI-197,
-// finding 6). A non-empty branch must equal the run's canonical push ref
-// (agent-runs/run-<id>) — the same ref the git-proxy gates pushes to — so a PR
-// head can only ever be that branch; any other value is dropped together with
-// the base commit, since opening a PR from an unverified ref is exactly what
-// this guards against. A non-empty base commit must be a git object id (40- or
-// 64-char hex); a malformed one is dropped on its own, leaving a valid branch
-// intact. An empty branch/base is legitimate (the agent produced nothing to
-// push) and passes through — the hook treats an empty branch as "no PR". Every
-// rejection is logged and emitted as a warning event so the anomaly is visible
-// on the run timeline.
+// validateRemoteSCMRefs permits only a run's canonical push branch and full
+// 40/64-character base object IDs before the PR hook. Invalid branches drop
+// both refs; invalid bases drop only the base. Empty refs mean no PR; rejected
+// values are logged and added to the run timeline.
 func (s *RunService) validateRemoteSCMRefs(ctx context.Context, runID int, branch, baseCommit string) (validBranch, validBase string) {
 	if branch != "" {
 		expected := fmt.Sprintf("agent-runs/run-%d", runID)
@@ -721,9 +688,7 @@ func (s *RunService) validateRemoteSCMRefs(ctx context.Context, runID int, branc
 	return branch, baseCommit
 }
 
-// isGitObjectID reports whether s is a full git object id: 40 hex chars
-// (SHA-1) or 64 (SHA-256). Abbreviated ids are rejected — the runner reports
-// the full rev-parse output, so anything shorter is anomalous.
+// isGitObjectID accepts only full SHA-1 or SHA-256 object IDs.
 func isGitObjectID(s string) bool {
 	if len(s) != 40 && len(s) != 64 {
 		return false
@@ -738,9 +703,7 @@ func isGitObjectID(s string) bool {
 	return true
 }
 
-// clipForEvent bounds an untrusted runner-reported value before it is written
-// to a log line or persisted as an event payload, so a hostile runner can't
-// inflate either with a multi-megabyte string.
+// clipForEvent bounds untrusted runner values before logging or persistence.
 func clipForEvent(s string) string {
 	const maxLen = 120
 	if len(s) > maxLen {
@@ -749,15 +712,9 @@ func clipForEvent(s string) string {
 	return s
 }
 
-// mintTokenAndGrants mints the per-run ws token and persists the run's
-// access-layer grants bound to it, returning the plaintext token for
-// $WS_TOKEN. Shared by the local claim preamble (claimNext) and the remote
-// claim enrichment (PrepareRemoteClaim) so both prepare a run identically
-// (WI-195, findings 1 & 7). grants may be nil (no brokered access). ref, when
-// non-empty, sets the git grant's single pushable ref — the prepared worktree
-// branch for local runs, the run-branch namespace for remote runs. Grant
-// persistence is best-effort: a failure leaves the run without grants, which
-// the brokers treat as deny — safe, just no brokered access.
+// mintTokenAndGrants shares identical local/remote token setup. Optional Git
+// grants allow only their prepared ref; grant persistence failure safely denies
+// brokered access.
 func (s *RunService) mintTokenAndGrants(ctx context.Context, runID int, spec TokenSpec, grants *models.RunGrants, refByRepo map[string]string) (string, error) {
 	minted, err := s.tokens.Mint(ctx, MintRequest(spec))
 	if err != nil {
@@ -767,9 +724,7 @@ func (s *RunService) mintTokenAndGrants(ctx context.Context, runID int, spec Tok
 		`{"phase":"token_minted","token_id":%d,"expires_at":%q}`,
 		minted.TokenID, minted.ExpiresAt.Format(time.RFC3339)))
 	if grants != nil {
-		// Fill each repo's push ref (the branch the run may push) from the
-		// per-repo branch map, copying so the caller's grants aren't mutated
-		// (WI-449). A repo with no ref stays read-only (clone/fetch, no push).
+		// Copy grants before assigning per-repo push refs; missing refs stay read-only.
 		g := *grants
 		if len(g.GitRepos) > 0 {
 			repos := make([]models.GitGrant, len(g.GitRepos))

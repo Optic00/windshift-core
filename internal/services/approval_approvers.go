@@ -113,19 +113,8 @@ func quorumThreshold(step *models.ApprovalStep, poolSize int) int {
 	}
 }
 
-// ----------------------------------------------------------------------------
-// Approver resolution + on-leave handling
-// ----------------------------------------------------------------------------
-
-// resolvedApprover is one entry produced by resolveApproverSource. Exactly
-// one of UserID / PortalCustomerID is set:
-//   - UserID > 0: an internal user (the historical case)
-//   - PortalCustomerID > 0: a portal customer (creator polymorphism today;
-//     a future "participant" custom field type would feed this too)
-//
-// SubstitutedForUserID applies only when on-leave handling swapped a user
-// for their substitute. Customers don't have leave periods in v1 so this
-// stays nil for portal-customer rows.
+// resolvedApprover identifies either an internal user or portal customer.
+// SubstitutedForUserID records on-leave substitutions for users only.
 type resolvedApprover struct {
 	UserID               int
 	PortalCustomerID     int
@@ -136,11 +125,8 @@ type resolvedApprover struct {
 
 func (r resolvedApprover) isCustomer() bool { return r.PortalCustomerID > 0 }
 
-// resolveAndSnapshotApprovers resolves the configured approver_source for a step,
-// applies on-leave handling (use_substitute / skip / keep) per UserLeavePeriod,
-// and writes the snapshot rows to approval_step_approvers. If the resolved pool
-// is empty, the step is left with no approvers — slice 9 will escalate;
-// for now Decide returns "user is not an active approver" until manual intervention.
+// resolveAndSnapshotApprovers applies leave handling and writes approver snapshots.
+// Empty pools await escalation; Decide rejects non-active approvers.
 func (s *ApprovalService) resolveAndSnapshotApprovers(ctx context.Context, tx database.Tx, stepInstanceID int, step models.ApprovalStep, item *models.Item, triggeredByUserID int) error {
 	rawUsers, err := s.resolveApproverSource(ctx, tx, step, item, triggeredByUserID)
 	if err != nil {

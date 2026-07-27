@@ -143,14 +143,8 @@ export function customFieldsFromScreen(screen) {
   return (screen?.fields || []).filter((field) => field.field_type === 'custom');
 }
 
-/**
- * Resolve item-detail visibility/editability from edit and view screens.
- *
- * Windshift uses inline editing in the normal detail sidebar. A field that is
- * editable therefore also needs to be visible, so visibility is edit ∪ view;
- * fields present only on the view screen stay read-only, while editable custom
- * fields/system fields are keyed by their effective field identifiers.
- */
+/** Resolve inline-detail visibility as edit ∪ view; view-only fields remain
+ * read-only, while edit fields use effective identifiers. */
 export function buildDetailScreenFieldConfig(editScreen, viewScreen = null) {
   const sameScreen = !viewScreen || viewScreen.id === editScreen?.id;
   const editCustom = customFieldsFromScreen(editScreen);

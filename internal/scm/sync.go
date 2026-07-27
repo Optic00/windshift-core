@@ -467,16 +467,8 @@ func shouldEmitPRMergeEvent(pr PullRequest, lastSyncedAt, now time.Time) bool {
 	return shouldRunSmartCommits(pr, lastSyncedAt, now)
 }
 
-// iteratePullRequests fetches PRs from the provider page-by-page (sorted by
-// updated desc) and invokes fn for each PR in turn. It stops when any of:
-//   - a page returns fewer than syncPRsPerPage results (last page),
-//   - the running count reaches maxPRs,
-//   - lastSyncedAt is non-zero and the next PR's UpdatedAt is older than
-//     lastSyncedAt - syncPRLookback (we've walked back past the change window),
-//   - ctx is canceled.
-//
-// On first sync (lastSyncedAt is zero) there is no time cutoff; only the
-// maxPRs cap and last-page detection bound the walk.
+// iteratePullRequests walks descending update pages until the last page, cap,
+// lookback cutoff, or cancellation. First syncs omit the time cutoff.
 func iteratePullRequests(ctx context.Context, provider Provider, owner, repo string, lastSyncedAt time.Time, maxPRs int, fn func(PullRequest)) error {
 	var cutoff time.Time
 	if !lastSyncedAt.IsZero() {

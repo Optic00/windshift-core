@@ -16,15 +16,11 @@ import (
 	"windshift/internal/restapi"
 )
 
-// multipartMemoryThreshold is the boundary ParseMultipartForm uses to decide
-// whether to keep a part in memory vs spill to a temp file on disk. Set
-// intentionally low so the mime/multipart layer does not buffer large uploads
-// in RAM; our own streaming writer then copies straight to the final storage
-// location without re-buffering the whole file.
+// multipartMemoryThreshold spills large parts to disk before streaming them to
+// final storage without re-buffering whole files.
 const multipartMemoryThreshold = 1 << 20 // 1 MiB
 
-// storedUpload captures the outcome of writing a user upload to the storage
-// directory in streaming fashion.
+// storedUpload is a streaming upload result.
 type storedUpload struct {
 	Path     string
 	MimeType string
@@ -32,14 +28,8 @@ type storedUpload struct {
 	Size     int64
 }
 
-// writeUploadToStorage streams a multipart file to disk under dstDir, hashing
-// and content-sniffing along the way. It validates the extension up front,
-// checks the sniffed MIME against the extension and the configured allowlist,
-// and enforces the size limit from settings.
-//
-// The written file has a random hex filename (plus the original extension)
-// and is only renamed into place after validation succeeds; failures leave
-// nothing behind. dstDir must already exist with mode 0o750.
+// writeUploadToStorage streams, hashes, and MIME-validates uploads within
+// configured limits. Random temporary files become final only after validation.
 func writeUploadToStorage(
 	src io.Reader,
 	originalFilename string,
@@ -58,15 +48,13 @@ func writeUploadToStorage(
 	storedName := hex.EncodeToString(randomBytes) + ext
 	finalPath := filepath.Join(dstDir, storedName)
 
-	// Write to a sibling .tmp file first so a mid-stream abort or validation
-	// failure never produces a half-written file at finalPath.
+	// Keep partial or invalid uploads out of finalPath.
 	tmpPath := finalPath + ".tmp"
 	out, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // G304/G703: tmpPath = dstDir + hex-random filename, caller-provided dstDir is storagePath+validated-UUIDs
 	if err != nil {
 		return nil, fmt.Errorf("open upload tempfile: %w", err)
 	}
-	// On any return path other than success, remove the tempfile. We set
-	// `success` at the very end.
+	// Remove the temporary file unless finalization succeeds.
 	success := false
 	defer func() {
 		_ = out.Close()

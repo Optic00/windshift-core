@@ -584,13 +584,8 @@ func (h *PortalHandler) SubmitToPortal(w http.ResponseWriter, r *http.Request) {
 	// Get auth info from context (middleware already validated)
 	authenticatedUserID, portalCustomerID := h.getAuthFromContext(r)
 
-	// For portal customers, grant channel access. In manual-registration
-	// mode the auto-grant is suppressed — only admin-managed customers with
-	// pre-existing access can submit. Without this gate, a customer with
-	// any portal session who reached this route (e.g. via cross-portal
-	// session reuse before the binding check was added, or via a future
-	// regression) would silently gain access to a manual-mode portal.
-	// Internal users don't need portal customer records - they're tracked via user_id.
+	// Manual-registration portals require pre-existing customer access; other
+	// modes grant it on submission. Internal users use user_id instead.
 	if portalCustomerID != nil {
 		switch {
 		case config.PortalRegistrationMode != "" && config.PortalRegistrationMode != "open" && config.PortalRegistrationMode != "manual":

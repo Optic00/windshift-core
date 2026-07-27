@@ -8,31 +8,15 @@ import (
 	"windshift/internal/models"
 )
 
-// pageChunkMaxBytes caps the byte size of a single chunk. Sections larger
-// than this are split on paragraph boundaries so search snippets stay
-// focused and future embedding models don't hit context limits.
+// pageChunkMaxBytes bounds search snippets and embedding contexts.
 const pageChunkMaxBytes = 2048
 
-// pageChunkMinBytes keeps tiny trailing fragments from becoming their own
-// chunk. Anything below this is appended to the previous chunk instead of
-// emitted standalone.
+// pageChunkMinBytes merges tiny trailing fragments into the prior chunk.
 const pageChunkMinBytes = 128
 
-// chunkPageMarkdown splits Markdown source into ordered chunks suitable for
-// full-text search snippets and (future) embeddings. The splitter is
-// deterministic and never panics — invalid Markdown just produces fewer,
-// larger chunks. byte_start/byte_end are offsets into the original source.
-//
-// Splitting strategy:
-//
-//  1. Walk the source line-by-line, tracking current heading_path
-//     (e.g. "Top > Sub").
-//  2. Whenever a new ATX heading (#, ##, ...) appears, close the current
-//     section and start a new one.
-//  3. If a section exceeds pageChunkMaxBytes, break it on the previous
-//     blank line; if there isn't one, hard-wrap at the limit.
-//  4. Trailing fragments under pageChunkMinBytes merge into the prior
-//     chunk to avoid scattershot single-line entries.
+// chunkPageMarkdown deterministically splits Markdown into heading-aware,
+// source-offset chunks. Oversized sections break at paragraphs where possible;
+// malformed Markdown yields fewer, larger chunks.
 func chunkPageMarkdown(content string) []chunkSpec {
 	if content == "" {
 		return nil
@@ -95,7 +79,7 @@ func chunkPageMarkdown(content string) []chunkSpec {
 	}
 	flush(cursor)
 
-	// Post-pass: split oversize sections, merge undersize trailers.
+	// Rebalance oversized sections and undersized trailers.
 	return rebalanceChunks(sections)
 }
 
@@ -145,8 +129,7 @@ func rebalanceChunks(in []chunkSpec) []chunkSpec {
 		out = append(out, splitOversizeChunk(c)...)
 	}
 
-	// Merge undersize trailing chunk into its predecessor so single-line
-	// stragglers don't become their own row.
+	// Avoid standalone trailing fragments.
 	if len(out) >= 2 {
 		last := out[len(out)-1]
 		prev := out[len(out)-2]
@@ -168,8 +151,7 @@ func splitOversizeChunk(c chunkSpec) []chunkSpec {
 	body := c.Content
 	startOffset := c.ByteStart
 	for len(body) > pageChunkMaxBytes {
-		// Prefer breaking at the last blank line before the limit; fall
-		// back to last newline; finally hard-wrap at the byte limit.
+		// Prefer paragraph, then line, then byte-limit boundaries.
 		cut := strings.LastIndex(body[:pageChunkMaxBytes], "\n\n")
 		if cut < 0 {
 			cut = strings.LastIndex(body[:pageChunkMaxBytes], "\n")
@@ -186,8 +168,7 @@ func splitOversizeChunk(c chunkSpec) []chunkSpec {
 		})
 		body = body[cut:]
 		startOffset += cut
-		// Skip leading newlines on the continuation so the next chunk
-		// starts on real content.
+		// The continuation starts on content.
 		body = strings.TrimLeft(body, "\n")
 	}
 	if strings.TrimSpace(body) != "" {
@@ -201,10 +182,7 @@ func splitOversizeChunk(c chunkSpec) []chunkSpec {
 	return out
 }
 
-// buildPageChunks converts chunkSpecs into model rows ready for
-// PageRepository.InsertChunkTx. revisionNumber is the revision_number on the
-// page row at the moment the chunks were produced so search results can
-// reference a specific snapshot.
+// buildPageChunks creates revision-bound rows for PageRepository.InsertChunkTx.
 func buildPageChunks(page *models.Page, revisionNumber int, specs []chunkSpec) []models.PageChunk {
 	out := make([]models.PageChunk, 0, len(specs))
 	for i, s := range specs {
@@ -225,9 +203,7 @@ func buildPageChunks(page *models.Page, revisionNumber int, specs []chunkSpec) [
 	return out
 }
 
-// estimateTokens is a rough token estimate; precision matters only for
-// pgvector budgeting which is not enabled in Phase 1. ~4 bytes/token is a
-// reasonable average for English Markdown.
+// estimateTokens uses a ~4-byte-per-token budgeting estimate.
 func estimateTokens(content string) int {
 	if content == "" {
 		return 0

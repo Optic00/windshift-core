@@ -599,17 +599,8 @@ type ConditionScriptConfig struct {
 	TimeoutMs int    `json:"timeout_ms,omitempty"`
 }
 
-// ============================================================================
-// Approvals
-// ============================================================================
-//
-// Approvals are the asynchronous sibling of condition_sets: when an item enters
-// a designated status, an approval request is opened that one or more approvers
-// must decide. The decision drives one of two configured transitions
-// (approve_transition_id / deny_transition_id). Those two transitions cannot be
-// invoked directly by users — only by ApprovalService. Every other transition
-// on the status works normally; leaving the status via a non-gated transition
-// cancels the pending request, and re-entering opens a fresh one.
+// Approvals open asynchronous requests on configured statuses. ApprovalService
+// alone drives approve/deny transitions; leaving cancels and re-entry reopens.
 
 // FieldRef is a generic reference to either a regular item field or a custom field.
 // Used by approvals today and by conditions/validators after the migration in slice 10.

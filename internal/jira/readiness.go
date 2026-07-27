@@ -68,17 +68,9 @@ func ClassifyField(s FieldMappingSuggestion, usageCount int) Finding {
 	}
 }
 
-// supportedADFNodes are the ADF node types the importer's ADF→Markdown
-// converter (ConvertADFToMarkdownWithUsers in field_mapper.go) renders with
-// full fidelity. Anything outside this set is flattened to its text content,
-// losing the original structure/formatting — so its presence is a lossy
-// signal. Keep this in sync with convertADFNode's switch (and its
-// helpers convertADFTable/TaskList/Panel/Expand/Media).
-//
-// This includes the structural child nodes of supported containers
-// (listItem, tableRow, tableCell/tableHeader, taskItem) which the converter
-// walks positionally rather than by type: they carry no information of their
-// own, so ScanADF must not flag them as lossy when their parent is supported.
+// supportedADFNodes are rendered faithfully by the ADF-to-Markdown converter;
+// other nodes are flattened and flagged as lossy. Include container children
+// walked positionally so supported structures are not falsely flagged.
 var supportedADFNodes = map[string]bool{
 	// Document + block structure.
 	"doc":          true,

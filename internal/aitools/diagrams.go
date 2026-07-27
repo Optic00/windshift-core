@@ -14,18 +14,9 @@ import (
 	"windshift/internal/services"
 )
 
-// Storage contract: item_diagrams.diagram_data is opaque TEXT. Existing rows
-// hold a JSON-serialized Excalidraw scene ({elements, appState, files}).
-// Agent-facing tools may also write a tiny seed wrapper:
-//
-//	{"type":"mermaid","source":"graph TD; A-->B"}
-//
-// DiagramModal.svelte detects the wrapper on open, calls
-// parseMermaidToExcalidraw + convertToExcalidrawElements client-side, and
-// uses the result as the editor's initialData. Saving the editor replaces
-// the wrapper with the converted Excalidraw scene; the source string is
-// not preserved — the seed is one-shot, matching how Excalidraw's own
-// mermaid panel behaves and avoiding dual-write complexity.
+// item_diagrams.diagram_data stores Excalidraw JSON or a one-shot Mermaid
+// seed wrapper. The editor converts and replaces seeds on first save, avoiding
+// dual source/scene persistence.
 
 type diagramSummaryDTO struct {
 	ID        int    `json:"id"`

@@ -1,17 +1,8 @@
 import { api } from '../../../api.js';
 import { actionFlowStore } from '../../../stores/actionFlowStore.svelte.js';
 
-/**
- * Reactive `assetTypeFields` for the asset config panels.
- *
- * Tracks `selectedNode.data.config.asset_type_id` via the supplied getter and
- * fetches the field list whenever it changes; returns an object whose `fields`
- * getter exposes the current array.
- *
- * Usage:
- *   const assetFields = useAssetTypeFields(() => selectedNode?.data?.config?.asset_type_id);
- *   // template: assetFields.fields
- */
+/** Fetch reactive asset-type fields from the supplied ID getter. Late requests
+ * cannot overwrite newer selections. */
 export function useAssetTypeFields(getAssetTypeId) {
   let assetTypeFields = $state([]);
   let requestToken = 0;
@@ -42,10 +33,7 @@ export function useAssetTypeFields(getAssetTypeId) {
   };
 }
 
-/**
- * Apply an asset-type change to the action flow store, resetting field_mappings
- * (always) plus any caller-supplied keys (e.g. Create resets category/status).
- */
+/** Set an asset type and reset mappings plus caller-selected fields. */
 export function applyAssetTypeChange(
   nodeId,
   rawValue,
@@ -60,9 +48,7 @@ export function applyAssetTypeChange(
   });
 }
 
-/**
- * Persist a field-mappings change against the selected node.
- */
+/** Persist mappings for a selected node. */
 export function applyMappingsChange(nodeId, mappings, flowStore = actionFlowStore) {
   flowStore.updateNodeConfig(nodeId, { field_mappings: mappings });
 }

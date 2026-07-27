@@ -1,11 +1,5 @@
-/**
- * Reactive registry for route-level component imports.
- *
- * A failed key remains failed until retry() is called. This is important when
- * load() is invoked from a Svelte effect: clearing only the loading flag after
- * a rejection would cause the effect to immediately start the same import
- * again.
- */
+/** Reactive route-component import registry. Failed keys remain failed until
+ * retry(), preventing effects from immediately repeating rejected imports. */
 export class LazyComponentLoader {
   components = $state(new Map());
   loadingKeys = $state(new Set());

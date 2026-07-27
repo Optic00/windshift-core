@@ -1049,18 +1049,9 @@ var Catalog = []Migration{
 			VALUES ('Page', 'Work item references a knowledge page', 'references page', 'referenced by', '#0ea5e9', true, true, '["item","page"]', NOW(), NOW())`,
 	},
 	{
-		// frac_index was originally declared UNIQUE globally, but the
-		// generator (KeyBetween) only intends per-sibling-set
-		// uniqueness — KeyBetween("","") deterministically returns "a0",
-		// so two independent sibling sets would both attempt that key
-		// on first reorder and collide. Scope the index by
-		// (workspace_id, parent_id) instead. Before swapping the index
-		// we resolve any duplicate keys that may have crept in: keep
-		// the lowest-id row per (workspace_id, parent_id, frac_index)
-		// and NULL the others so the next drag-and-drop in that group
-		// backfills cleanly. COALESCE(parent_id,-1) treats root pages
-		// as their own sibling set (both backends consider NULL=NULL
-		// false inside a UNIQUE index).
+		// Scope frac_index uniqueness to page siblings: KeyBetween can generate the
+		// same first key independently. Null duplicate rows for later backfill;
+		// COALESCE makes root pages one sibling set on both backends.
 		Version:       "20260522_pages_frac_index_scoped",
 		Name:          "Scope pages.frac_index uniqueness to (workspace_id, parent_id)",
 		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_pages_frac_index_scoped'",
@@ -1170,13 +1161,8 @@ var Catalog = []Migration{
 		`,
 	},
 	{
-		// agent_runs records one execution of the coding-agent harness:
-		// admission → container spawn → exit. agent_run_events captures the
-		// per-run stdio / lifecycle stream that the orchestrator reads from
-		// the agent's JSONL RPC mode and forwards to the SSE hub. binding_id is the FK
-		// back to the workspace_agent_binding that triggered the run (NULL
-		// for manually-started runs); the (binding_id, created_at) index
-		// supports per-binding budget enforcement (WI-134).
+		// agent_runs records harness lifecycle; agent_run_events holds JSONL/SSE
+		// streams. binding_id is optional for manual runs and indexed for budgets.
 		Version:       "20260529_agent_runs",
 		Name:          "Create agent_runs + agent_run_events for the coding-agent harness",
 		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='agent_runs'",
@@ -1249,16 +1235,8 @@ var Catalog = []Migration{
 		`,
 	},
 	{
-		// Agent acting-identity gate (see Coding Agent Harness — Design §7
-		// and WI-87). Two pieces:
-		//   1) system_settings row toggling whether workspace admins may
-		//      bind agent runs to centralized service users at all.
-		//   2) An allowlist of (user_id, workspace_id) pairs that *can*
-		//      be picked when the flag is on. workspace_id=NULL grants
-		//      the user as an acting identity across every workspace.
-		// The chokepoint that consults both lives in
-		// internal/services/agent_acting_identity_service.go; mutations
-		// flow through the global-admin handlers (audit-logged).
+		// Gate centralized acting identities with a global setting and scoped/global
+		// user allowlist. The service chokepoint and audited admin handlers enforce both.
 		Version:       "20260529_agent_security_allowlist",
 		Name:          "Create agent acting-identity allowlist + security setting",
 		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='global_agent_acting_user_allowlist'",
@@ -1312,14 +1290,8 @@ var Catalog = []Migration{
 		`,
 	},
 	{
-		// workspace_agent_bindings is the workspace-admin-managed link from
-		// an acting user (the binding's identity, validated by the WI-87
-		// chokepoint at create time) to the run-shape RunService needs
-		// when an item is assigned to that user. See WI-88 / the Coding
-		// Agent Harness — Design plan.
-		//
-		// One binding per (workspace, acting_user) — the lookup BindingService
-		// does at assignee-change time is intentionally O(1) on this index.
+		// workspace_agent_bindings links a validated acting identity to its workspace
+		// run shape. The unique workspace/user index supports O(1) assignment lookup.
 		Version:       "20260529_workspace_agent_bindings",
 		Name:          "Create workspace_agent_bindings",
 		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='workspace_agent_bindings'",
@@ -1373,13 +1345,8 @@ var Catalog = []Migration{
 		`,
 	},
 	{
-		// WI-90 broadens bindings to know which SCM connection the
-		// orchestrator should authenticate against when fetching the
-		// repo and opening PRs. workspace_scm_connections rows are
-		// shared with the rest of the SCM machinery; the FK lets the
-		// connection go away (ON DELETE SET NULL) without orphaning
-		// the binding row — the trigger just skips the SCM step when
-		// the column is NULL.
+		// Bindings optionally use shared SCM connections for checkout/PRs; deleted
+		// connections null the reference so triggers skip SCM without orphaning.
 		Version:       "20260529_workspace_agent_bindings_scm_connection",
 		Name:          "Add scm_connection_id to workspace_agent_bindings",
 		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('workspace_agent_bindings') WHERE name='scm_connection_id'",
@@ -1685,21 +1652,8 @@ var Catalog = []Migration{
 		`,
 	},
 	{
-		// active_timers "only one running timer per user" was enforced solely by
-		// a TOCTOU check (HasActiveTimerForUser → CreateTimer, two statements, no
-		// txn) in TimerService.StartTimer, so concurrent starts could create
-		// multiple running timers. Make the user_id index UNIQUE so the DB is the
-		// backstop; the repo maps the resulting constraint violation to
-		// ErrTimerAlreadyRunning (WI-298). Before swapping the index we delete all
-		// but the latest active timer per user so any pre-existing duplicates
-		// don't block the UNIQUE index creation.
-		//
-		// The schema (system{,_postgres}.sql) creates idx_active_timers_user_id as
-		// a plain index; this migration drops it and recreates it UNIQUE. The
-		// Check reports the effect present once the index is already unique, so it
-		// is idempotent on installs that already have it (incl. fresh installs
-		// whose schema bootstrap will adopt the UNIQUE form on SQLite but not on
-		// Postgres — this migration unifies both).
+		// UNIQUE(user_id) closes concurrent timer-start races. Keep only the latest
+		// existing timer before replacing the legacy index; checks make this idempotent.
 		Version: "20260610_active_timers_unique_user",
 		Name:    "Enforce one active timer per user via UNIQUE(user_id)",
 		CheckSQLite: `SELECT COUNT(*) FROM pragma_index_list('active_timers')
@@ -2139,15 +2093,8 @@ var Catalog = []Migration{
 		`,
 	},
 	{
-		// WI-515: manual sort order for milestones (drag-and-drop reorder).
-		// position is scoped per (is_global, workspace_id, category_id);
-		// new milestones get MaxPosition(scope) + 1000 (mirrors test
-		// folders). The column-add is guarded by a column-exists check, but
-		// because the body also backfills, we additionally guard the backfill
-		// on position = 0 so a re-run after a manual reorder (which would
-		// leave some rows at 0 only if they were never reordered) is a no-op
-		// for already-ordered scopes. Fresh installs get the column from the
-		// schema concat and stamp without running the body.
+		// Add scope-specific drag-order positions. Backfill only default-zero rows
+		// so re-runs preserve manual ordering; fresh schemas already include it.
 		Version:       "20260624_milestones_position",
 		Name:          "Add milestones.position for drag-and-drop reorder",
 		CheckSQLite:   sqliteColumnCheck("milestones", "position"),

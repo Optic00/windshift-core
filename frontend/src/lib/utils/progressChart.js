@@ -1,10 +1,4 @@
-/**
- * Shared SVG progress-chart helpers for IterationDetail / MilestoneDetail.
- *
- * Both detail pages render an identical donut chart (status breakdown) and
- * status-category toggle list. Constants and pure helpers live here; the
- * progress data fetch + the surrounding template stay per-page.
- */
+/** Shared pure donut-chart helpers for iteration and milestone detail views. */
 
 export const PROGRESS_CHART_RADIUS = 48;
 export const PROGRESS_CHART_CIRCUMFERENCE = 2 * Math.PI * PROGRESS_CHART_RADIUS;

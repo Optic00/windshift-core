@@ -7,27 +7,8 @@
   import { getStatusCategory } from '../../utils/statusColors.js';
 
   /**
-   * WorkItemRow - A reusable component for displaying work items in list views
-   *
-   * @prop {Object} item - The work item object (id, title, workspace_id, workspace_key, workspace_item_number, item_type_id, status_id, priority_id)
-   * @prop {Object} workspace - Optional workspace object for key lookup (fallback if item.workspace_key is missing)
-   * @prop {Array} itemTypes - Array of item types for icon lookup (optional)
-   * @prop {Array} statuses - Array of statuses for status lookup (optional)
-   * @prop {Array} priorities - Array of priorities for priority lookup (optional)
-   * @prop {Array} statusCategories - Array of status categories for color lookup (optional)
-   * @prop {string} href - Optional link URL (defaults to /workspaces/{workspace_id}/items/{id})
-   * @prop {Function} onclick - Optional click handler (for modal pattern, disables href)
-   * @prop {boolean} showIcon - Show item type icon (default: true)
-   * @prop {boolean} showKey - Show item key (default: true)
-   * @prop {boolean} showWorkspace - Show workspace name (default: false)
-   * @prop {boolean} showTimestamp - Show timestamp (default: false)
-   * @prop {boolean} showStatus - Show status badge (default: false)
-   * @prop {boolean} showPriority - Show priority badge (default: false)
-   * @prop {string|Date} timestamp - The timestamp to display
-   * @prop {Function} formatTimestamp - Optional custom formatter for timestamp
-   * @prop {boolean} compact - Use compact styling (default: false)
-   * @prop {Snippet} leading - Content to render before icon (e.g., drag handle, checkbox)
-   * @prop {Snippet} trailing - Content to render after title (e.g., custom badges, actions)
+   * Reusable list-row props. Lookup arrays enrich the item; leading and trailing
+   * snippets add controls. `onclick` replaces navigation when supplied.
    */
   let {
     item,

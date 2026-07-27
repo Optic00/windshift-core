@@ -1,14 +1,8 @@
 import { BUCKET } from '../buckets.js';
 import { createCommand } from '../types.js';
 
-/**
- * Surface a launcher entry that opens the "recently viewed work items"
- * sub-palette. It lives in the top RECENT bucket so that, with an empty
- * query, it is the first entry when the palette opens. Activating it does not
- * navigate — CommandPalette intercepts `submenu: 'recent'` and switches the
- * palette into its recent-items mode (the `execute` no-op only satisfies the
- * dev-time createCommand validation and is never called).
- */
+/** Add the top-ranked launcher for CommandPalette's intercepted recent-items
+ * sub-palette; execute is a validation-only no-op. */
 export function recentlyViewedProvider(ctx) {
   const { t } = ctx;
   return [

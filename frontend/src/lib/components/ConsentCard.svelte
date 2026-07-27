@@ -1,12 +1,5 @@
 <script>
-	// Shared consent card used by both /cli/authorize and /oauth/authorize.
-	// Renders a centered card with a header (icon + title + subtitle), a slot
-	// for flow-specific content (identity panel, agent panel, etc.), the
-	// scopes list, an inline error display, and the Allow/Deny button row.
-	//
-	// Both flows have the same visual language below the headline so users
-	// see one consistent "an external thing wants to act on my behalf" UX
-	// regardless of which transport is in use.
+	// Shared CLI/OAuth consent shell for flow content, scopes, errors, and choices.
 
 	import { Check } from '@lucide/svelte';
 	import Button from './Button.svelte';
@@ -14,10 +7,7 @@
 	let {
 		icon: Icon = null,
 		title = 'Authorize',
-		// Plain-text subtitle. Rendered safely via Svelte's default escaping.
-		// For richer markup (a bolded client/host name in the middle of a
-		// sentence) callers should pass the `subtitleSnippet` snippet instead;
-		// `subtitle` is still respected if no snippet is supplied.
+		// Plain text is escaped; use subtitleSnippet for rich markup.
 		subtitle = '',
 		subtitleSnippet = null,
 		scopes = /** @type {string[]} */ ([]),

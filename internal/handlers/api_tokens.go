@@ -121,15 +121,8 @@ func (ath *APITokenHandler) CreateToken(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	// Determine which user ID to use for token creation.
-	//
-	// Rules:
-	//   1. Caller can always mint a token for themselves.
-	//   2. A system admin may mint a token for any agent (service users
-	//      included).
-	//   3. A non-admin may mint a token only for an agent they own (the new
-	//      user-managed-agents flow).
-	// Anything else is a 403 + audit.
+	// Callers mint for themselves; admins may mint for any agent, and non-admins
+	// only for owned agents. Other requests are forbidden and audited.
 	targetUserID := user.ID
 	if request.UserID != nil && *request.UserID != user.ID {
 		isSystemAdmin, err := ath.permissionService.IsSystemAdmin(user.ID)

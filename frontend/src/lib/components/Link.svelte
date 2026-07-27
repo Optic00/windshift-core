@@ -1,16 +1,6 @@
 <script>
 
-  /**
-   * A proper link component that uses <a> tags for semantic HTML
-   * while maintaining SPA navigation behavior.
-   *
-   * Supports:
-   * - Right-click "Open in New Tab"
-   * - Ctrl/Cmd+click to open in new tab
-   * - URL preview in browser status bar
-   * - Proper accessibility and keyboard navigation
-   * - Optional onClick for modal/custom behavior while preserving link benefits
-   */
+  /** Semantic link preserving browser navigation and optional custom clicks. */
 
   let {
     href = '',
@@ -28,11 +18,7 @@
     ...rest
   } = $props();
 
-  // Modifier-key filter: let the browser handle new-tab / new-window / download
-  // variants natively (cmd+click on mac, ctrl+click elsewhere, shift, alt,
-  // middle-click) by skipping the custom onClick entirely. Also bails if the
-  // anchor has an explicit target (e.g. _blank), or if something upstream has
-  // already prevented the default.
+  // Preserve native modified, non-primary, targeted, and prevented clicks.
   function handleClick(event) {
     if (disabled) {
       event.preventDefault();

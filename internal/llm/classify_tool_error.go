@@ -54,30 +54,15 @@ func (c ToolErrorClass) HighSignal() bool {
 	return c == ToolErrorUnknownTool || c == ToolErrorInvalidArgs
 }
 
-// Classify maps one tool call's result string to a ToolErrorClass. It accepts
-// the raw result from either surface, which carry failures in different shapes:
-//
-//   - Coding agent (windshift-agent): the subprocess bakes failure text into
-//     the tool_done.output as plain-text sentinels — "(unknown tool: …)" and
-//     "(tool arguments were not valid JSON: …)" (see internal/tools/bash.go in
-//     that repo). Other output is treated as success for flagging purposes,
-//     since an execution error and a success both count the same (neither
-//     flags, and either clears a prior invalid_args).
-//
-//   - AI chat: the aitools registry signals soft errors with a JSON body
-//     carrying an "error" field — {"error":"unknown tool"} /
-//     {"error":"invalid arguments"} / {"error":"<exec err>"} — and intentional
-//     skips with {"skipped":true,…} (see internal/handlers/ai_tools.go and the
-//     skipped*ToolResult helpers in agent.go).
-//
-// Pure function — safe to call without locking.
+// Classify normalizes coding-agent text sentinels and AI-chat JSON soft errors.
+// Execution errors count like success for misuse flagging; intentional skips are
+// excluded. It is pure and safe without locking.
 func Classify(toolName, output string) ToolErrorClass {
 	trimmed := strings.TrimSpace(output)
 	if trimmed == "" {
 		return ToolErrorNone
 	}
 
-	// Coding-agent plain-text sentinels.
 	if strings.HasPrefix(trimmed, "(unknown tool:") {
 		return ToolErrorUnknownTool
 	}
@@ -85,7 +70,6 @@ func Classify(toolName, output string) ToolErrorClass {
 		return ToolErrorInvalidArgs
 	}
 
-	// AI-chat JSON soft-error / skip convention.
 	if strings.HasPrefix(trimmed, "{") {
 		var body struct {
 			Error   string `json:"error"`

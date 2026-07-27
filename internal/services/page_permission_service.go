@@ -10,30 +10,16 @@ import (
 	"windshift/internal/repository"
 )
 
-// PagePermissionService evaluates Confluence-style page permissions.
-//
-// Evaluation order (Phase 1, grant-only model):
-//
-//  1. system.admin → always allowed.
-//  2. workspace.admin or page.admin on the workspace → admin-equivalent
-//     (view + edit + admin).
-//  3. Walk from the page upward, collecting ACL rows until inherit_permissions
-//     = false breaks the chain. If the effective ACL is non-empty, access
-//     requires a matching principal at the required level. If the ACL is
-//     empty (the common case), workspace role grants decide via the
-//     standard PermissionService.
-//
-// Phase 1 has no deny rows; the dialog UI to manage ACLs lands in Phase 2.
-// Cache invalidation will land alongside the ACL editor — for now the
-// evaluator is uncached, which is fast enough at workspace-tree scale.
+// PagePermissionService evaluates grant-only, uncached page ACLs. System,
+// workspace, and page admins bypass live-page ACLs; otherwise inherited ACLs
+// govern restricted pages and workspace roles govern open pages.
 type PagePermissionService struct {
 	db    database.Database
 	perm  *PermissionService
 	pages *repository.PageRepository
 }
 
-// NewPagePermissionService wires the evaluator against the shared
-// PermissionService (used for workspace/system permission checks).
+// NewPagePermissionService creates a page-permission evaluator.
 func NewPagePermissionService(db database.Database, perm *PermissionService) *PagePermissionService {
 	return &PagePermissionService{
 		db:    db,
@@ -50,30 +36,19 @@ const (
 	PageOpRestore = "restore"
 )
 
-// HasWorkspacePermissionFor exposes a workspace-level permission check
-// through the same evaluator that handlers already hold. Used by the page
-// HTTP handler for permission keys that don't depend on a specific page
-// (page.create, page.delete).
+// HasWorkspacePermissionFor checks a workspace-level page permission.
 func (s *PagePermissionService) HasWorkspacePermissionFor(userID, workspaceID int, key string) (bool, error) {
 	return s.perm.HasWorkspacePermission(userID, workspaceID, key)
 }
 
-// IsSystemAdmin exposes the system-admin check the page handler needs when
-// gating workspace-wide admin surfaces (e.g. the archived-pages list)
-// without going through Can on a specific pageID.
+// IsSystemAdmin checks access to workspace-wide admin surfaces.
 func (s *PagePermissionService) IsSystemAdmin(userID int) (bool, error) {
 	return s.perm.IsSystemAdmin(userID)
 }
 
-// Can reports whether userID may perform op on pageID in the given
-// workspace. workspaceID must match the page's workspace; cross-workspace
-// calls return false (rather than ErrPageNotFound) so handlers can map to
-// 404 without leaking page existence.
-//
-// Archived pages have a separate policy: mutations (edit, admin) always
-// return false, and view is granted only to system.admin or
-// workspace.admin. Live pages flow through the normal admin / ACL / role
-// fallback chain.
+// Can reports whether userID may perform op on pageID. Cross-workspace and
+// missing pages return false to avoid leaking existence. Archived pages allow
+// view and restore only to system or workspace admins.
 func (s *PagePermissionService) Can(userID, workspaceID, pageID int, op string) (bool, error) {
 	if !isValidPageOp(op) {
 		return false, fmt.Errorf("invalid page op %q", op)
@@ -139,14 +114,8 @@ func (s *PagePermissionService) Can(userID, workspaceID, pageID int, op string) 
 	}
 
 	if len(acl) > 0 {
-		// Restricted page: ACL must contain a matching principal at the
-		// required level. Workspace-role permissions do NOT confer the
-		// requested op on a restricted page — that's the whole point of
-		// breaking inheritance — but they DO establish that the caller
-		// is a workspace member. An ACL grant on a user who never joined
-		// the workspace (e.g. a stale row left over after removing them)
-		// must not be a back door, so we require workspace.page.view as
-		// the membership floor on top of the ACL match.
+		// Restricted pages need a matching ACL and page.view membership so stale
+		// ACL rows cannot grant access after a user leaves the workspace.
 		matched, err := s.matchesACL(subjectID, workspaceID, acl, op)
 		if err != nil || !matched {
 			return matched, err
@@ -154,10 +123,7 @@ func (s *PagePermissionService) Can(userID, workspaceID, pageID int, op string) 
 		return s.perm.HasWorkspacePermission(userID, workspaceID, models.PermissionPageView)
 	}
 
-	// Inheritance broken with no explicit grants → admin-only. The admin
-	// checks above already returned true for system.admin / workspace.admin
-	// / page.admin, so reaching here on a deny-by-default page means the
-	// caller cannot pass.
+	// Empty ACL with inheritance disabled is admin-only; admins returned above.
 	if !page.InheritPermissions {
 		return false, nil
 	}
@@ -166,30 +132,9 @@ func (s *PagePermissionService) Can(userID, workspaceID, pageID int, op string) 
 	return s.perm.HasWorkspacePermission(userID, workspaceID, workspacePermKeyForOp(op))
 }
 
-// ListVisiblePageIDs returns the subset of pageIDs the user can view.
-// Optimized for tree rendering, which checks ~tens to hundreds of pages
-// per workspace per request.
-//
-// The batched evaluator preserves Can(..., PageOpView)'s semantics:
-//
-//   - userID == 0 → all false (denied).
-//   - cross-workspace or missing page → false.
-//   - archived page → visible only to system.admin or workspace.admin.
-//   - system.admin / workspace.admin / workspace.page.admin → all live pages
-//     visible.
-//   - otherwise, walk inheritance chain to assemble the effective ACL; a
-//     restricted page (ACL present) requires a matching ACL row AND the
-//     workspace's page.view permission as a membership floor; a page with
-//     inheritance broken and no ACL is admin-only; an open page falls back
-//     to workspace page.view.
-//
-// Implementation notes — savings vs. the per-page Can loop:
-//
-//   - admin checks (system, workspace.admin, page.admin, page.view) are
-//     evaluated once per call instead of once per page.
-//   - user→groups and user→workspace-roles lookups happen once.
-//   - pages, ancestor inherit flags, and page_permissions rows are each
-//     bulk-loaded in a single query covering every page and every ancestor.
+// ListVisiblePageIDs batch-evaluates view permission for tree rendering. It
+// preserves Can's archived, ACL, inheritance, membership-floor, and
+// cross-workspace semantics while bulk-loading pages, ancestors, and ACLs.
 func (s *PagePermissionService) ListVisiblePageIDs(userID, workspaceID int, pageIDs []int) (map[int]bool, error) {
 	out := make(map[int]bool, len(pageIDs))
 	if len(pageIDs) == 0 {
@@ -231,8 +176,7 @@ func (s *PagePermissionService) ListVisiblePageIDs(userID, workspaceID int, page
 			continue
 		}
 		if p.ArchivedAt != nil {
-			// Archived pages: page-level ACLs do NOT apply; only system or
-			// workspace admin can view (mirrors Can's archived branch).
+			// Archived-page ACLs do not apply; only system or workspace admins view.
 			if isSysAdmin || hasWsAdmin {
 				out[p.ID] = true
 			}
@@ -315,10 +259,7 @@ func (s *PagePermissionService) ListVisiblePageIDs(userID, workspaceID int, page
 	return out, nil
 }
 
-// loadPagePermissionsByPage bulk-loads page_permissions rows for the given
-// page ids and groups them by page_id. The result mirrors what
-// collectEffectiveACL would scan per-page; pages without rows are absent
-// from the map (callers must treat that as "no rows").
+// loadPagePermissionsByPage bulk-loads ACLs, omitting pages without rows.
 func (s *PagePermissionService) loadPagePermissionsByPage(ids []int) (map[int][]models.PagePermission, error) {
 	if len(ids) == 0 {
 		return map[int][]models.PagePermission{}, nil
@@ -358,11 +299,8 @@ func (s *PagePermissionService) loadPagePermissionsByPage(ids []int) (map[int][]
 	return out, rows.Err()
 }
 
-// collectACLInMemory mirrors collectEffectiveACL's chain-walk but operates
-// against pre-loaded inheritance flags and per-page ACL rows so it issues no
-// queries. The page's own ACL is always included; if the page inherits, walk
-// ancestors closest-first and stop after the first ancestor that breaks
-// inheritance (or is missing — fail-closed).
+// collectACLInMemory builds an effective ACL from preloaded rows, stopping
+// closest-first at a missing or non-inheriting ancestor (fail-closed).
 func collectACLInMemory(p models.Page, inheritFlags map[int]bool, aclsByPage map[int][]models.PagePermission) []models.PagePermission {
 	out := append([]models.PagePermission(nil), aclsByPage[p.ID]...)
 	if !p.InheritPermissions {
@@ -408,11 +346,8 @@ func matchesACLInMemory(userID int, groupIDs, roleIDs []int, acl []models.PagePe
 	return false
 }
 
-// collectEffectiveACL walks from the page upward through its ancestors
-// (using the materialized path), gathering every page_permissions row
-// until inherit_permissions = false breaks the chain or we reach the root.
-// The walk is closest-ancestor-first; the breaking ancestor's own ACL is
-// included before the chain stops.
+// collectEffectiveACL gathers page and ancestor ACLs closest-first, including
+// the first non-inheriting ancestor.
 func (s *PagePermissionService) collectEffectiveACL(page *models.Page) ([]models.PagePermission, error) {
 	// Always include the page's own ACL rows.
 	ids := []int{page.ID}
@@ -483,11 +418,8 @@ func (s *PagePermissionService) collectEffectiveACL(page *models.Page) ([]models
 	return out, rows.Err()
 }
 
-// loadAncestorInheritFlags fetches the inherit_permissions column for the
-// given page ids in a single query. Returns a map keyed by page id so
-// collectEffectiveACL can decide whether to keep walking the chain.
-// Missing ids are absent from the result (collectEffectiveACL treats that
-// as "stop", fail-closed).
+// loadAncestorInheritFlags bulk-loads inheritance flags. Missing pages remain
+// absent so ACL collection stops fail-closed.
 func (s *PagePermissionService) loadAncestorInheritFlags(ids []int) (map[int]bool, error) {
 	if len(ids) == 0 {
 		return map[int]bool{}, nil
@@ -618,12 +550,8 @@ func (s *PagePermissionService) userGroupIDs(userID int) ([]int, error) {
 	return out, rows.Err()
 }
 
-// userWorkspaceRoleIDs returns every role the user effectively holds in
-// the workspace, from BOTH direct user→role assignments and indirect
-// group→role assignments (i.e. role granted to a group the user is a
-// member of). Without the group arm, an ACL row that grants a role would
-// fail to match a user who reaches that role only via their group — a
-// silent divergence from PermissionService's cache build.
+// userWorkspaceRoleIDs returns direct and group-derived workspace roles to
+// match PermissionService's effective permissions.
 func (s *PagePermissionService) userWorkspaceRoleIDs(userID, workspaceID int) ([]int, error) {
 	rows, err := s.db.Query(`
 		SELECT role_id FROM user_workspace_roles

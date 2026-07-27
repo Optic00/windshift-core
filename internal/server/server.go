@@ -746,15 +746,11 @@ func (s *Server) initialize() error {
 	userPreferencesHandler := handlers.NewUserPreferencesHandler(userPreferencesService)
 	homepageHandler := handlers.NewHomepageHandler(repository.NewWorkspaceRepository(s.db), repository.NewItemRepository(s.db), s.activityTracker, permService, userPreferencesService)
 
-	// Notification handlers
 	notificationHandler := handlers.NewNotificationHandler(s.notificationManager, s.notificationService)
 	emailTemplateHandler := handlers.NewEmailTemplateHandler(repository.NewEmailTemplateRepository(s.db), logger.NewAuditor(s.db))
 
-	// Web Push: store subscriptions + fan notifications out to them. The
-	// dispatcher is wired into the notification manager so every created
-	// notification (assignments, mentions, comments, …) triggers a push.
-	// VAPID keys are resolved env > persisted > auto-generated, so push works
-	// out of the box on a fresh deployment with no operator configuration.
+	// Push dispatches every notification; VAPID config resolves env, persisted,
+	// then generated keys.
 	pushCfg := services.ResolveVAPIDConfig(s.db, cfg.Push, slog.Default())
 	pushService := services.NewPushService(s.db, pushCfg)
 	pushHandler := handlers.NewPushHandler(pushService)
@@ -778,29 +774,17 @@ func (s *Server) initialize() error {
 	userSCMTokenHandler := handlers.NewUserSCMTokenHandler(repository.NewUserSCMTokenRepository(s.db), scmProviderHandler.GetEncryption())
 	milestoneHandler := handlers.NewMilestoneHandler(services.NewPlanningService(s.db), permService, scm.NewCredentialResolver(s.db, scmProviderHandler.GetEncryption()), logger.NewAuditor(s.db))
 
-	// WI-87/88/89/90 coding-agent harness stack. The acting-identity
-	// chokepoint (WI-87) is constructed first; both the workspace-binding
-	// service and the admin AgentSecurity handler share its repo handle.
-	// When CodingAgent.Enabled is set, the harness boots an orchestration-only
-	// RunService (WI-89): RunTokenService → AgentPRService (WI-90, opens draft
-	// PRs on GitHub or Gitea via scm.Provider). It queues runs, enriches remote
-	// claims, and finalizes remote results — but executes nothing on this host.
-	// All runs are dispatched to remote runner pools (windshift-runner). Without
-	// the flag the harness stays in observer mode — bindings can still be
-	// created, the trigger logs but no run starts.
+	// The optional coding-agent harness queues and finalizes remote runner-pool
+	// work; disabled mode retains bindings without starting runs.
 	agentSecurityRepo := repository.NewAgentSecurityRepository(s.db)
 	agentIdentitySvc, _ := services.NewAgentActingIdentityService(services.NewUserReadService(s.db), agentSecurityRepo)
 	agentBindingRepo := repository.NewWorkspaceAgentBindingRepository(s.db)
 	scmCredResolver := scm.NewCredentialResolver(s.db, scmProviderHandler.GetEncryption())
 
-	// Shared AI prompt store: embedded defaults overridable from cfg.LLM.PromptsDir
-	// (AI_PROMPTS_DIR). Built here so the coding-agent harness and the AI handlers
-	// below resolve the same overridable prompts.
+	// AI handlers and agents share embedded or configured prompt overrides.
 	promptStore := llm.NewPromptStore(cfg.LLM.PromptsDir)
 
-	// Load LLM provider definitions before coding-agent bindings are wired: the
-	// binding trigger resolves per-binding llm_connection_id rows into agent runtime
-	// env, and that requires the same provider registry the AI handlers use.
+	// Bindings and AI handlers share the provider registry.
 	if cfg.LLM.ProvidersFile != "" {
 		if err := llm.LoadProviders(cfg.LLM.ProvidersFile); err != nil {
 			slog.Error("failed to load custom LLM providers file, falling back to built-in defaults", "path", cfg.LLM.ProvidersFile, "error", err)
@@ -834,38 +818,28 @@ func (s *Server) initialize() error {
 			)
 		}
 	}
-	// Kept on the Server so Shutdown can drain in-flight local runs instead
-	// of leaving them to be killed mid-flight with their rows stuck
-	// non-terminal (WI-332).
+	// Retain the service so shutdown can drain local runs.
 	s.codingRunService = codingRunSvc
 
 	agentAPIURL := cfg.CodingAgent.WSAPIURL
 	if agentAPIURL == "" {
-		// The agent-facing URL convention INCLUDES the mandatory /api suffix
-		// (see apiBaseURLFor); the broker URLs handed to agent containers
-		// (LLM_BASE_URL, git-proxy) are built directly on it. Falling back to
-		// the bare BASE_URL would send the agent's chat-completion POSTs to a
-		// path only the SPA catch-all matches — a 405 on every model call.
+		// Agent broker URLs require the API suffix, not the SPA base URL.
 		agentAPIURL = strings.TrimRight(baseURL, "/") + "/api"
 	}
 	agentSkillRepo := repository.NewWorkspaceAgentSkillRepository(s.db)
 	bindingSvc, _ := services.NewBindingService(services.BindingServiceOptions{
-		Repo:       agentBindingRepo,
-		Identity:   agentIdentitySvc,
-		Runs:       codingRunSvc,
-		SCMCreds:   &scmCredsAdapter{cr: scmCredResolver},
-		LLMRuntime: llmManager,
-		RunContext: agentBindingRepo,
-		Pools:      repository.NewActionRepository(s.db),
-		Skills:     agentSkillRepo,
-		// @mention on an item with an open linked PR continues that PR instead of
-		// opening a competing one (WI-426).
+		Repo:          agentBindingRepo,
+		Identity:      agentIdentitySvc,
+		Runs:          codingRunSvc,
+		SCMCreds:      &scmCredsAdapter{cr: scmCredResolver},
+		LLMRuntime:    llmManager,
+		RunContext:    agentBindingRepo,
+		Pools:         repository.NewActionRepository(s.db),
+		Skills:        agentSkillRepo,
 		Continuations: &itemPRContinuationResolver{db: s.db, cr: scmCredResolver},
 		APIURL:        agentAPIURL,
 	})
-	// Let the run service enrich remote claims from the binding (WI-195): a
-	// remote runner's claim mints the per-run token + grants the same way the
-	// local path does. Wired post-construction to break the service cycle.
+	// Wire remote-claim enrichment after construction to break the service cycle.
 	if codingRunSvc != nil && bindingSvc != nil {
 		codingRunSvc.SetBindingInputsResolver(bindingSvc)
 	}
@@ -2183,12 +2157,8 @@ func (s *Server) runSCMLinkRefresh(scmSyncService *scm.SyncService) {
 	}
 }
 
-// runSCMOAuthStateCleanup periodically deletes expired OAuth state. Email
-// states also restore a channel that was temporarily disabled for reconnect.
-// Postgres has a stored function for SCM state but
-// nothing in the code or schema schedules it; SQLite has a probabilistic
-// AFTER INSERT trigger that fires on ~1% of inserts. A unified Go-side
-// periodic covers both backends and bounds table growth on Postgres.
+// runSCMOAuthStateCleanup expires OAuth state and restores reconnecting email
+// channels across both database backends.
 func (s *Server) runSCMOAuthStateCleanup() {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
@@ -2219,11 +2189,7 @@ func (s *Server) runSCMOAuthStateCleanup() {
 	}
 }
 
-// restoreExpiredEmailOAuthChannels re-enables only channels whose current
-// configuration is still ingestion-ready. A reconnect can change OAuth
-// identity and clear its old tokens before the browser flow completes; blindly
-// restoring that row on expiry would leave an enabled channel that can never
-// poll successfully.
+// restoreExpiredEmailOAuthChannels restores only currently ingestion-ready channels.
 func (s *Server) restoreExpiredEmailOAuthChannels(ctx context.Context) error {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT DISTINCT channel_id
@@ -2301,22 +2267,12 @@ func (s *Server) runIssueSync(issueSyncService *scm.IssueSyncService) {
 	}
 }
 
-// scmCredsAdapter wraps scm.CredentialResolver into the interfaces the
-// coding-agent services expect, so the services layer doesn't have to
-// import scm directly (which would create a cycle).
+// scmCredsAdapter avoids a services-to-scm import cycle.
 type scmCredsAdapter struct {
 	cr *scm.CredentialResolver
 }
 
-// ResolveForRun implements services.SCMCredentialResolver — used by
-// BindingService to embed an access token in the remote URL at run-start
-// time so both `git fetch` and the agent's `git push` authenticate
-// transparently. Resolution order matches what the scm.Provider would
-// pick for HTTP traffic: OAuth access token → personal access token →
-// GitHub App installation token (minted on demand via the App's JWT
-// flow). Works for GitHub OAuth, GitHub PAT, GitHub App, Gitea OAuth,
-// and Gitea PAT identically; the URL form `oauth2:<token>@host/...` is
-// provider-agnostic on the git side.
+// ResolveForRun resolves SCM credentials for run-start Git authentication.
 func (a *scmCredsAdapter) ResolveForRun(ctx context.Context, connectionID int) (token, providerType, baseURL string, err error) {
 	creds, err := a.cr.GetCredentialsByConnectionID(ctx, connectionID)
 	if err != nil {
@@ -2325,15 +2281,8 @@ func (a *scmCredsAdapter) ResolveForRun(ctx context.Context, connectionID int) (
 	return a.tokenFromCreds(ctx, connectionID, creds)
 }
 
-// ResolveForRunAsUser implements the user-principal variant of
-// services.SCMCredentialResolver (WI-275): credentials are resolved with
-// scm.CredentialResolver.GetCredentialsForUser, so an OAuth-method
-// connection yields the triggering user's personal token — or fails with
-// services.ErrTriggerUserSCMNotConnected in the chain when the user has
-// not connected an account (deliberately no fallback to the workspace
-// credential). PAT and GitHub App connections resolve identically to
-// ResolveForRun because GetCredentialsForUser falls back to the
-// impersonal connection-level credential for those auth methods.
+// ResolveForRunAsUser requires a triggering user's OAuth token while retaining
+// PAT and GitHub App connection-level resolution.
 func (a *scmCredsAdapter) ResolveForRunAsUser(ctx context.Context, connectionID, userID int) (token, providerType, baseURL string, err error) {
 	creds, err := a.cr.GetCredentialsForUser(ctx, connectionID, userID)
 	if err != nil {
@@ -2345,10 +2294,7 @@ func (a *scmCredsAdapter) ResolveForRunAsUser(ctx context.Context, connectionID,
 	return a.tokenFromCreds(ctx, connectionID, creds)
 }
 
-// tokenFromCreds picks the git-auth token out of resolved credentials.
-// Resolution order matches what the scm.Provider would pick for HTTP
-// traffic: OAuth access token → personal access token → GitHub App
-// installation token (minted on demand via the App's JWT flow).
+// tokenFromCreds selects OAuth, PAT, then GitHub App credentials.
 func (a *scmCredsAdapter) tokenFromCreds(ctx context.Context, connectionID int, creds *scm.ProviderCredentials) (token, providerType, baseURL string, err error) {
 	switch {
 	case creds.OAuthAccessToken != "":
@@ -2356,12 +2302,7 @@ func (a *scmCredsAdapter) tokenFromCreds(ctx context.Context, connectionID int, 
 	case creds.PersonalAccessToken != "":
 		token = creds.PersonalAccessToken
 	case creds.GitHubAppID != "" && creds.GitHubAppPrivateKey != "" && creds.GitHubAppInstallationID != "":
-		// GitHub App-backed connection: mint a short-lived installation
-		// access token via the App JWT flow. scm.GitHubProvider does
-		// the cryptography; we just feed it the provider config and ask
-		// for a token. Note: installation tokens expire after ~1h; the
-		// per-run lifetime is well within that, so we don't bother
-		// caching or refreshing.
+		// Per-run GitHub App tokens need no cache or refresh.
 		t, terr := a.mintGitHubAppToken(ctx, creds)
 		if terr != nil {
 			return "", "", "", fmt.Errorf("mint GitHub App installation token: %w", terr)
@@ -2607,17 +2548,8 @@ func (r *itemPRContinuationResolver) ContinuationForItemAsUser(ctx context.Conte
 	return nil, nil
 }
 
-// bootCodingAgentRunService builds the orchestration-only WI-89 + WI-90
-// RunService when cfg.CodingAgent.Enabled is set: initialPrompt is the static
-// coding-agent operational prompt the remote runner hands the agent as its
-// first message (per-binding suffixes append to it); the per-run token minter and
-// the post-run hook that opens a draft PR (via either GitHub or Gitea,
-// transparently) and writes back an item_scm_links row. The service queues
-// runs, enriches remote claims (PrepareRemoteClaim), and finalizes remote
-// results (FinalizeRemote) — but runs no in-process worker pool, so no agent
-// executes on the orchestrator host. All runs are dispatched to remote runner
-// pools (windshift-runner). Returns an error for any misconfig so the rest of
-// the server still comes up with the harness disabled.
+// bootCodingAgentRunService configures token minting, PR hooks, and remote-run
+// orchestration without an in-process worker. Errors leave the harness disabled.
 func bootCodingAgentRunService(
 	db database.Database,
 	tm *auth.TokenManager,
@@ -2630,10 +2562,7 @@ func bootCodingAgentRunService(
 		return nil, fmt.Errorf("coding-agent token service: %w", err)
 	}
 
-	// PR-creation post-run hook. cr is the same CredentialResolver
-	// BindingService uses for URL embedding; binding lookups go through
-	// the shared bindings repo so the hook sees the exact row the
-	// trigger fired on. It fires for remote runs via FinalizeRemote.
+	// The post-run hook shares binding and SCM resolution with run startup.
 	prSvc, err := services.NewAgentPRService(services.AgentPRServiceOptions{
 		Bindings:  bindings,
 		OpenPR:    openPRViaCredentialResolver(cr),
@@ -2645,12 +2574,7 @@ func bootCodingAgentRunService(
 	}
 
 	runRepo := repository.NewAgentRunRepository(db)
-	// Boot reconciliation (WI-332): local runs exist only in a previous
-	// process's in-memory queue, so any local run still queued/running in the
-	// DB was orphaned by a crash or kill and no worker will ever pick it up
-	// again. Fail them before the new service starts accepting work. (With the
-	// in-process loop removed, no new local runs are created — this only clears
-	// rows left over from an older build.)
+	// Fail queued local runs orphaned by a previous in-process worker.
 	if n, recErr := runRepo.ReapOrphanedLocalRuns(context.Background(), time.Now().UTC()); recErr != nil {
 		slog.Warn("coding-agent: reconcile orphaned local runs",
 			slog.String("component", "coding-agent"),
@@ -2662,7 +2586,6 @@ func bootCodingAgentRunService(
 			slog.Int("count", n),
 		)
 	}
-	// Orchestration-only: no Runner, so NewRunService starts no worker pool.
 	runSvc, err := services.NewRunService(runRepo, services.RunServiceOptions{
 		Tokens:        tokens,
 		PostRunHook:   prSvc,

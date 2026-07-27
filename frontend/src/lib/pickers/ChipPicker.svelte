@@ -93,13 +93,8 @@
     }
   });
 
-  // Close the menu and return focus to the in-modal trigger. While the menu is
-  // open, focus sits on the portalled list/search input (rendered under <body>,
-  // outside the dialog's focus trap). If we just close, Svelte tears that
-  // focused node down and focus falls to <body> — so the user's next Tab starts
-  // from behind the modal and escapes it (WI-455, e.g. selecting an assignee).
-  // Restoring focus to the trigger keeps the next Tab inside the dialog. The rAF
-  // lets the menu unmount first so the focus call isn't undone by the teardown.
+  // Restore trigger focus after portalled-menu teardown to keep Tab inside the
+  // owning dialog.
   function closeAndRestoreFocus() {
     $open = false;
     requestAnimationFrame(() => triggerRef?.focus());
