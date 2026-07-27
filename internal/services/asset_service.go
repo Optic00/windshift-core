@@ -11,7 +11,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"time"
 
 	"windshift/internal/database"
@@ -79,6 +79,27 @@ type AuditActor struct {
 	APITokenName   string
 }
 
+// AssetAutomationContext preserves cascade metadata when an automation node
+// routes a mutation through the same AssetService boundary as interactive
+// writes. Zero values describe an ordinary user-initiated mutation.
+type AssetAutomationContext struct {
+	TriggeredByAction bool
+	ExecutionChainID  string
+	CascadeDepth      int
+	SourceApplication string
+}
+
+// AssetMutationPatch describes the fields an automation node changes. The
+// service reloads all untouched values and validates the complete resulting
+// asset through UpdateAsset before persisting it.
+type AssetMutationPatch struct {
+	Title             *string
+	Description       *string
+	AssetTag          *string
+	StatusID          *int
+	CustomFieldValues map[string]interface{}
+}
+
 // NewAuditActorFromRequest extracts the audit fields from a request +
 // authenticated user. Convenience shared by both surfaces. authMethod
 // is "cookie" or "bearer" (handlers know which they are); apiToken is
@@ -137,7 +158,8 @@ type AssetService struct {
 	// NotificationService — aren't available at startup-init time). Nil
 	// means automation events are silently skipped, which is intentional
 	// for very early boot and tests that don't exercise automation.
-	actionService atomic.Pointer[AssetActionService]
+	actionServiceMu sync.RWMutex
+	actionService   AssetActionEventEmitter
 }
 
 // NewAssetService constructs an AssetService backed by the given asset
@@ -149,12 +171,56 @@ func NewAssetService(db database.Database, repo *repository.AssetRepository) *As
 
 // SetActionService attaches an AssetActionService for automation event
 // emission. Safe to call once after boot; subsequent calls overwrite.
-func (s *AssetService) SetActionService(a *AssetActionService) {
-	s.actionService.Store(a)
+func (s *AssetService) SetActionService(a AssetActionEventEmitter) {
+	s.actionServiceMu.Lock()
+	s.actionService = a
+	s.actionServiceMu.Unlock()
 }
 
-func (s *AssetService) actions() *AssetActionService {
-	return s.actionService.Load()
+func (s *AssetService) actions() AssetActionEventEmitter {
+	s.actionServiceMu.RLock()
+	defer s.actionServiceMu.RUnlock()
+	return s.actionService
+}
+
+func applyAssetAutomationContext(event *models.AssetActionEvent, context AssetAutomationContext) {
+	event.TriggeredByAction = context.TriggeredByAction
+	event.ExecutionChainID = context.ExecutionChainID
+	event.CascadeDepth = context.CascadeDepth
+	event.SourceApplication = context.SourceApplication
+}
+
+func assetCreatedEvent(inSetID, assetID, actorUserID, assetTypeID int, statusID, categoryID *int, title, description, assetTag string, customFieldValues map[string]interface{}) *models.AssetActionEvent {
+	newValues := map[string]interface{}{
+		"title":         title,
+		"description":   description,
+		"asset_tag":     assetTag,
+		"asset_type_id": assetTypeID,
+	}
+	if statusID != nil {
+		newValues["status_id"] = *statusID
+	}
+	if categoryID != nil {
+		newValues["category_id"] = *categoryID
+	}
+	for key, value := range customFieldValues {
+		newValues[key] = value
+	}
+	return &models.AssetActionEvent{
+		EventType:   models.AssetTriggerAssetCreated,
+		SetID:       inSetID,
+		AssetID:     assetID,
+		ActorUserID: actorUserID,
+		NewValues:   newValues,
+	}
+}
+
+func automationAuditActor(db database.Database, userID int, source string) AuditActor {
+	actor := AuditActor{UserID: userID, Source: source}
+	if userID > 0 {
+		_ = db.QueryRow(`SELECT username FROM users WHERE id = ?`, userID).Scan(&actor.Username)
+	}
+	return actor
 }
 
 // CustomFieldsValidationOpts toggles required-field enforcement.
@@ -570,6 +636,15 @@ func isEmptyCustomFieldValue(v interface{}) bool {
 // All required fields declared on the asset type must be present in
 // customFieldValues (EnforceRequired is on for creates).
 func (s *AssetService) CreateAsset(actor AuditActor, in repository.CreateAssetInput, customFieldValues map[string]interface{}) (*models.Asset, error) {
+	return s.CreateAssetWithContext(actor, in, customFieldValues, AssetAutomationContext{})
+}
+
+// CreateAssetWithContext runs the canonical create pipeline while preserving
+// automation cascade metadata on the emitted asset-created event.
+func (s *AssetService) CreateAssetWithContext(actor AuditActor, in repository.CreateAssetInput, customFieldValues map[string]interface{}, context AssetAutomationContext) (*models.Asset, error) {
+	if err := s.validateAssetTaxonomy(in.SetID, in.AssetTypeID, in.CategoryID, in.StatusID); err != nil {
+		return nil, err
+	}
 	if err := s.ValidateCustomFieldsSchema(in.AssetTypeID, customFieldValues, CustomFieldsValidationOpts{EnforceRequired: true}); err != nil {
 		return nil, err
 	}
@@ -584,23 +659,29 @@ func (s *AssetService) CreateAsset(actor AuditActor, in repository.CreateAssetIn
 		}
 	}
 	sanitizeAssetText(&in.Title, &in.Description, &in.AssetTag)
+	if strings.TrimSpace(in.Title) == "" {
+		return nil, &AssetValidationError{Msg: "title is required"}
+	}
 	assetID, err := s.repo.CreateAsset(in)
 	if err != nil {
 		return nil, fmt.Errorf("create asset: %w", err)
 	}
 	s.emitAudit(actor, logger.ActionAssetCreate, &assetID, in.Title, nil)
 	if a := s.actions(); a != nil {
-		a.EmitAssetActionEvent(&models.AssetActionEvent{
-			EventType:   models.AssetTriggerAssetCreated,
-			SetID:       in.SetID,
-			AssetID:     assetID,
-			ActorUserID: actor.UserID,
-			NewValues: map[string]interface{}{
-				"title":         in.Title,
-				"asset_type_id": in.AssetTypeID,
-				"status_id":     in.StatusID,
-			},
-		})
+		event := assetCreatedEvent(
+			in.SetID,
+			assetID,
+			actor.UserID,
+			in.AssetTypeID,
+			in.StatusID,
+			in.CategoryID,
+			in.Title,
+			in.Description,
+			in.AssetTag,
+			customFieldValues,
+		)
+		applyAssetAutomationContext(event, context)
+		a.EmitAssetActionEvent(event)
 	}
 	row, err := s.repo.FindAssetFullByID(assetID)
 	if err != nil {
@@ -610,12 +691,56 @@ func (s *AssetService) CreateAsset(actor AuditActor, in repository.CreateAssetIn
 	return &m, nil
 }
 
+// InsertImportedAsset persists one async-import row and synchronously dispatches
+// its asset-created automation event. Synchronous dispatch deliberately applies
+// backpressure so a large import cannot overflow the ordinary event queue.
+func (s *AssetService) InsertImportedAsset(in repository.ImportAssetRowInput) (int, error) {
+	assetID, err := s.repo.InsertImportedAsset(in)
+	if err != nil {
+		return 0, err
+	}
+	if a := s.actions(); a != nil {
+		customFieldValues := loadStoredCustomFieldValues(in.CustomFieldValuesJSON)
+		event := assetCreatedEvent(
+			in.SetID,
+			assetID,
+			in.CreatedBy,
+			in.AssetTypeID,
+			in.StatusID,
+			in.CategoryID,
+			in.Title,
+			in.Description,
+			in.AssetTag,
+			customFieldValues,
+		)
+		if processor, ok := a.(interface {
+			ProcessImportedAssetEvent(*models.AssetActionEvent) error
+		}); ok {
+			if err := processor.ProcessImportedAssetEvent(event); err != nil {
+				return assetID, fmt.Errorf("dispatch imported asset event: %w", err)
+			}
+		} else {
+			a.EmitAssetActionEvent(event)
+		}
+	}
+	return assetID, nil
+}
+
 // UpdateAsset writes the (partial) update, validates the custom-field
 // schema, emits the audit event, and emits asset_updated +
 // asset_status_changed automation events when applicable. oldSnap (read
 // from repo.GetAssetUpdateSnapshot before the call) is used to detect
 // the status transition.
 func (s *AssetService) UpdateAsset(actor AuditActor, assetID int, oldSnap repository.AssetUpdateSnapshot, in repository.UpdateAssetInput, customFieldValues map[string]interface{}) (*models.Asset, error) {
+	return s.UpdateAssetWithContext(actor, assetID, oldSnap, in, customFieldValues, AssetAutomationContext{})
+}
+
+// UpdateAssetWithContext runs the canonical update pipeline while preserving
+// automation cascade metadata on emitted update and status-change events.
+func (s *AssetService) UpdateAssetWithContext(actor AuditActor, assetID int, oldSnap repository.AssetUpdateSnapshot, in repository.UpdateAssetInput, customFieldValues map[string]interface{}, context AssetAutomationContext) (*models.Asset, error) {
+	if err := s.validateAssetTaxonomy(oldSnap.SetID, in.AssetTypeID, in.CategoryID, in.StatusID); err != nil {
+		return nil, err
+	}
 	// Type change: any persisted custom field that's incompatible with
 	// the new type would slip through if we only validated the supplied
 	// values map (which the caller may have omitted on a partial-update
@@ -646,6 +771,9 @@ func (s *AssetService) UpdateAsset(actor AuditActor, assetID int, oldSnap reposi
 		return nil, err
 	}
 	sanitizeAssetText(&in.Title, &in.Description, &in.AssetTag)
+	if strings.TrimSpace(in.Title) == "" {
+		return nil, &AssetValidationError{Msg: "title is required"}
+	}
 	if err := s.repo.UpdateAsset(assetID, in); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return nil, err
@@ -663,16 +791,18 @@ func (s *AssetService) UpdateAsset(actor AuditActor, assetID int, oldSnap reposi
 			newSID = *in.StatusID
 		}
 		if oldSID != newSID {
-			a.EmitAssetActionEvent(&models.AssetActionEvent{
+			event := &models.AssetActionEvent{
 				EventType:   models.AssetTriggerAssetStatusChanged,
 				SetID:       oldSnap.SetID,
 				AssetID:     assetID,
 				ActorUserID: actor.UserID,
 				OldValues:   map[string]interface{}{"status_id": oldSID},
 				NewValues:   map[string]interface{}{"status_id": newSID},
-			})
+			}
+			applyAssetAutomationContext(event, context)
+			a.EmitAssetActionEvent(event)
 		}
-		a.EmitAssetActionEvent(&models.AssetActionEvent{
+		event := &models.AssetActionEvent{
 			EventType:   models.AssetTriggerAssetUpdated,
 			SetID:       oldSnap.SetID,
 			AssetID:     assetID,
@@ -682,7 +812,9 @@ func (s *AssetService) UpdateAsset(actor AuditActor, assetID int, oldSnap reposi
 				"asset_type_id": in.AssetTypeID,
 				"status_id":     in.StatusID,
 			},
-		})
+		}
+		applyAssetAutomationContext(event, context)
+		a.EmitAssetActionEvent(event)
 	}
 	row, err := s.repo.FindAssetFullByID(assetID)
 	if err != nil {
@@ -690,6 +822,96 @@ func (s *AssetService) UpdateAsset(actor AuditActor, assetID int, oldSnap reposi
 	}
 	m := repository.AssetRowToModel(*row)
 	return &m, nil
+}
+
+// MutateAsset applies an automation patch to a freshly loaded asset and then
+// routes the complete result through UpdateAssetWithContext. This keeps
+// set_field and set_status aligned with interactive validation, auditing, and
+// event behavior.
+func (s *AssetService) MutateAsset(actor AuditActor, assetID int, patch AssetMutationPatch, context AssetAutomationContext) (*models.Asset, error) {
+	row, err := s.repo.FindAssetFullByID(assetID)
+	if err != nil {
+		return nil, err
+	}
+	current := repository.AssetRowToModel(*row)
+	title := current.Title
+	description := current.Description
+	assetTag := current.AssetTag
+	statusID := current.StatusID
+	customFields := current.CustomFieldValues
+	if customFields == nil {
+		customFields = make(map[string]interface{})
+	}
+	if patch.Title != nil {
+		title = *patch.Title
+	}
+	if patch.Description != nil {
+		description = *patch.Description
+	}
+	if patch.AssetTag != nil {
+		assetTag = *patch.AssetTag
+	}
+	if patch.StatusID != nil {
+		statusID = patch.StatusID
+	}
+	if patch.CustomFieldValues != nil {
+		customFields = patch.CustomFieldValues
+	}
+	customFields, err = s.CoerceAndValidateCustomFieldValues(current.AssetTypeID, customFields)
+	if err != nil {
+		return nil, err
+	}
+	snap, err := s.repo.GetAssetUpdateSnapshot(assetID)
+	if err != nil {
+		return nil, err
+	}
+	return s.UpdateAssetWithContext(
+		actor,
+		assetID,
+		*snap,
+		repository.UpdateAssetInput{
+			AssetTypeID: current.AssetTypeID,
+			CategoryID:  current.CategoryID,
+			StatusID:    statusID,
+			Title:       title,
+			Description: description,
+			AssetTag:    assetTag,
+		},
+		customFields,
+		context,
+	)
+}
+
+func (s *AssetService) validateAssetTaxonomy(setID, assetTypeID int, categoryID, statusID *int) error {
+	if assetTypeID <= 0 {
+		return &AssetValidationError{Msg: "asset_type_id is required"}
+	}
+	belongs, err := s.repo.AssetTypeBelongsToSet(assetTypeID, setID)
+	if err != nil {
+		return fmt.Errorf("validate asset type: %w", err)
+	}
+	if !belongs {
+		return &AssetValidationError{Msg: fmt.Sprintf("asset_type_id %d does not belong to asset set %d", assetTypeID, setID)}
+	}
+	if categoryID != nil {
+		belongs, err = s.repo.CategoryBelongsToSet(*categoryID, setID)
+		if err != nil {
+			return fmt.Errorf("validate asset category: %w", err)
+		}
+		if !belongs {
+			return &AssetValidationError{Msg: fmt.Sprintf("category_id %d does not belong to asset set %d", *categoryID, setID)}
+		}
+	}
+	if statusID != nil {
+		belongs, err = s.repo.StatusBelongsToSet(*statusID, setID)
+		if err != nil {
+			return fmt.Errorf("validate asset status: %w", err)
+		}
+		if !belongs {
+			return &AssetValidationError{Msg: fmt.Sprintf("status_id %d does not belong to asset set %d", *statusID, setID)}
+		}
+	}
+	return nil
 }
 
 // retainCustomFieldsForType removes values that are not declared on the target
@@ -850,7 +1072,7 @@ func (s *AssetService) ImportAssetsCSV(actor AuditActor, setID, assetTypeID int,
 		description := row.description
 		assetTag := row.assetTag
 		sanitizeAssetText(&title, &description, &assetTag)
-		if _, err := s.repo.CreateAsset(repository.CreateAssetInput{
+		assetID, err := s.repo.CreateAsset(repository.CreateAssetInput{
 			SetID:                 setID,
 			AssetTypeID:           assetTypeID,
 			CategoryID:            defaults.CategoryID,
@@ -861,9 +1083,38 @@ func (s *AssetService) ImportAssetsCSV(actor AuditActor, setID, assetTypeID int,
 			CustomFieldValuesJSON: cfJSON,
 			CreatedBy:             actor.UserID,
 			CreatedAt:             time.Now().UTC(),
-		}); err != nil {
+		})
+		if err != nil {
 			summary.ErrorRows++
 			continue
+		}
+		if a := s.actions(); a != nil {
+			event := assetCreatedEvent(
+				setID,
+				assetID,
+				actor.UserID,
+				assetTypeID,
+				rowStatusID,
+				defaults.CategoryID,
+				title,
+				description,
+				assetTag,
+				coerced,
+			)
+			if processor, ok := a.(interface {
+				ProcessImportedAssetEvent(*models.AssetActionEvent) error
+			}); ok {
+				if err := processor.ProcessImportedAssetEvent(event); err != nil {
+					slog.Error(
+						"failed to process imported asset automation event",
+						slog.String("component", "assets"),
+						slog.Int("asset_id", assetID),
+						slog.Any("error", err),
+					)
+				}
+			} else {
+				a.EmitAssetActionEvent(event)
+			}
 		}
 		summary.CreatedRows++
 	}

@@ -386,7 +386,7 @@ func (h *AssetActionHandler) DeleteAction(w http.ResponseWriter, r *http.Request
 
 // ToggleAction enables or disables an asset action
 func (h *AssetActionHandler) ToggleAction(w http.ResponseWriter, r *http.Request) {
-	_, setID, ok := h.requireSetAdminAccess(w, r)
+	currentUser, setID, ok := h.requireSetAdminAccess(w, r)
 	if !ok {
 		return
 	}
@@ -425,6 +425,21 @@ func (h *AssetActionHandler) ToggleAction(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
+	}
+
+	if currentUser != nil {
+		h.auditor.LogWithDetails(
+			r,
+			currentUser,
+			logger.ActionAutomationToggle,
+			logger.ResourceAutomation,
+			&actionID,
+			updatedAction.Name,
+			map[string]interface{}{
+				"old_is_enabled": action.IsEnabled,
+				"is_enabled":     updatedAction.IsEnabled,
+			},
+		)
 	}
 
 	respondJSONOK(w, updatedAction)
@@ -487,13 +502,13 @@ func (h *AssetActionHandler) ExecuteAction(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	err = h.actionService.ExecuteActionManually(action, req.AssetID, currentUser.ID)
+	result, err := h.actionService.ExecuteActionManuallyWithResult(action, req.AssetID, currentUser.ID)
 	if err != nil {
 		respondInternalError(w, r, fmt.Errorf("failed to execute action: %w", err))
 		return
 	}
 
-	respondJSONOK(w, map[string]string{"status": "completed"})
+	respondJSONOK(w, result)
 }
 
 // GetActionLogs gets execution logs for an asset action

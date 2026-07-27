@@ -16,6 +16,10 @@
   import UserPicker from '../../pickers/UserPicker.svelte';
   import { api } from '../../api.js';
   import { t } from '../../stores/i18n.svelte.js';
+  import {
+    assetActionConditionFields,
+    loadAssetActionCustomFields,
+  } from './assetActionVariables.js';
 
   let { action, onSave, onCancel } = $props();
 
@@ -35,6 +39,11 @@
   let assetStatuses = $state([]);
   let users = $state([]);
   let taxonomyLoadToken = 0;
+  let fieldLoadToken = 0;
+
+  let scopedAssetTypeId = $derived(
+    assetActionFlowStore.nodes.find((node) => node.type === 'trigger')?.data?.config?.asset_type_id,
+  );
 
   $effect(() => {
     const setId = action?.set_id;
@@ -60,15 +69,17 @@
   });
 
   $effect(() => {
-    api.customFields.getAll().then((result) => {
-      assetCustomFields = (result?.data || []).map((field) => ({
-        id: String(field.id),
-        name: field.name,
-        type: field.field_type,
-        description: field.description || '',
-        isCustom: true,
-      }));
+    const typeId = scopedAssetTypeId;
+    const token = ++fieldLoadToken;
+    if (!typeId) {
+      assetCustomFields = [];
+      return;
+    }
+    loadAssetActionCustomFields(api, typeId).then((result) => {
+      if (token !== fieldLoadToken) return;
+      assetCustomFields = result;
     }).catch(() => {
+      if (token !== fieldLoadToken) return;
       assetCustomFields = [];
     });
   });
@@ -151,12 +162,7 @@
     { value: 'manual', label: 'Manual' },
   ];
 
-  const conditionFields = [
-    { value: 'title', label: 'Title' },
-    { value: 'asset_tag', label: 'Asset Tag' },
-    { value: 'type_name', label: 'Type Name' },
-    { value: 'status_name', label: 'Status Name' },
-  ];
+  const conditionFields = assetActionConditionFields;
 
   const conditionOperators = [
     { value: 'eq', label: 'Equals' },
@@ -220,20 +226,20 @@
       </div>
     {/if}
 
-    {#if store.triggerType !== 'manual'}
-      <div>
-        <label for="asset-trigger-type-filter" class="block text-xs font-medium mb-1">Asset Type (optional filter)</label>
-        <Select
-          id="asset-trigger-type-filter"
-          options={[{ value: '', label: 'Any type' }, ...assetTypes.map(type => ({ value: type.id, label: type.name }))]}
-          value={selectedNode.data?.config?.asset_type_id || ''}
-          onchange={(value) =>
-            store.updateNodeConfig(selectedNode.id, {
-              asset_type_id: parseInt(value) || null,
-            })}
-        />
-      </div>
-    {/if}
+    <div>
+      <label for="asset-trigger-type-filter" class="block text-xs font-medium mb-1">
+        Asset Type {store.triggerType === 'manual' ? '(field scope)' : '(optional filter)'}
+      </label>
+      <Select
+        id="asset-trigger-type-filter"
+        options={[{ value: '', label: 'Any type' }, ...assetTypes.map(type => ({ value: type.id, label: type.name }))]}
+        value={selectedNode.data?.config?.asset_type_id || ''}
+        onchange={(value) =>
+          store.updateNodeConfig(selectedNode.id, {
+            asset_type_id: parseInt(value) || null,
+          })}
+      />
+    </div>
   {/snippet}
 
   {#snippet nodeConfig(selectedNode, store, handleDeleteNode)}

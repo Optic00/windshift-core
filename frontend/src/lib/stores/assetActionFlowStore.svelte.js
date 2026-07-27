@@ -11,7 +11,7 @@ export const assetActionFlowStore = createActionFlowStore({
     },
     set_field: { field_name: '', field_display_name: '', value: '' },
     set_status: { status_id: 0 },
-    condition: { field_name: 'title', operator: 'eq', value: '' },
+    condition: { field_name: 'asset_title', operator: 'eq', value: '' },
     notify_user: {
       recipient_type: 'specific',
       recipients: [],

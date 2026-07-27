@@ -611,7 +611,7 @@ func (h *AssetHandler) importCSVRow(record []string, setID int, req StartAssetIm
 		customFieldValuesJSON = &s
 	}
 
-	return h.repo.InsertImportedAsset(repository.ImportAssetRowInput{
+	_, err = h.assetService.InsertImportedAsset(repository.ImportAssetRowInput{
 		SetID:                 setID,
 		AssetTypeID:           req.AssetTypeID,
 		CategoryID:            categoryID,
@@ -624,6 +624,7 @@ func (h *AssetHandler) importCSVRow(record []string, setID int, req StartAssetIm
 		CreatedBy:             userID,
 		CreatedAt:             time.Now(),
 	})
+	return err
 }
 
 // resolveImportFieldValue looks up a custom field definition and converts text values

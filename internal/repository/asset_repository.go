@@ -2310,16 +2310,18 @@ type ImportAssetRowInput struct {
 }
 
 // InsertImportedAsset inserts a single asset row during CSV import.
-func (r *AssetRepository) InsertImportedAsset(in ImportAssetRowInput) error {
-	_, err := r.db.ExecWrite(`
+func (r *AssetRepository) InsertImportedAsset(in ImportAssetRowInput) (int, error) {
+	var id int
+	err := r.db.QueryRow(`
 		INSERT INTO assets (set_id, asset_type_id, category_id, status_id, title, description, asset_tag, custom_field_values, import_job_id, created_by, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		RETURNING id
 	`, in.SetID, in.AssetTypeID, in.CategoryID, in.StatusID, in.Title, in.Description, in.AssetTag,
-		in.CustomFieldValuesJSON, in.ImportJobID, in.CreatedBy, in.CreatedAt, in.CreatedAt)
+		in.CustomFieldValuesJSON, in.ImportJobID, in.CreatedBy, in.CreatedAt, in.CreatedAt).Scan(&id)
 	if err != nil {
-		return fmt.Errorf("failed to insert imported asset: %w", err)
+		return 0, fmt.Errorf("failed to insert imported asset: %w", err)
 	}
-	return nil
+	return id, nil
 }
 
 // GetCustomFieldTypeAndOptions reads a custom field definition's field_type and options JSON.

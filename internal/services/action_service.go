@@ -2354,28 +2354,25 @@ func (as *ActionService) executeUpdateAsset(node *models.ActionNode, ctx *models
 		assetCustomFields[mapping.TargetFieldID] = sourceValue
 	}
 
-	// This executor writes the complete custom-field object directly, so apply
-	// the same schema/type/required checks as the normal asset update surface.
-	// Validation also sanitizes text and textarea values in place.
-	if err := as.validateAssetCustomFields(asset.AssetTypeID, assetCustomFields, true); err != nil {
-		return fmt.Errorf("invalid asset custom_field_values: %w", err)
+	assetRepo := repository.NewAssetRepository(as.db)
+	assetService := NewAssetService(as.db, assetRepo)
+	assetService.SetActionService(as.assetActionService)
+	updated, err := assetService.MutateAsset(
+		automationAuditActor(as.db, ctx.EffectiveActorID, "workspace_action"),
+		assetID,
+		AssetMutationPatch{CustomFieldValues: assetCustomFields},
+		AssetAutomationContext{
+			TriggeredByAction: true,
+			ExecutionChainID:  ctx.ChainID,
+			CascadeDepth:      ctx.Event.CascadeDepth + 1,
+			SourceApplication: "workspace",
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("mutate asset custom fields: %w", err)
 	}
 	for k := range newValues {
-		newValues[k] = assetCustomFields[k]
-	}
-
-	// Serialize updated custom_field_values
-	updatedJSON, err := json.Marshal(assetCustomFields)
-	if err != nil {
-		return fmt.Errorf("failed to serialize asset custom_field_values: %w", err)
-	}
-
-	// Update the asset
-	_, err = as.db.ExecWrite(`
-		UPDATE assets SET custom_field_values = ?, updated_at = ? WHERE id = ?
-	`, string(updatedJSON), time.Now(), assetID)
-	if err != nil {
-		return fmt.Errorf("failed to update asset: %w", err)
+		newValues[k] = updated.CustomFieldValues[k]
 	}
 
 	// Populate step result output
@@ -2393,33 +2390,7 @@ func (as *ActionService) executeUpdateAsset(node *models.ActionNode, ctx *models
 		slog.Any("mappings", len(config.FieldMappings)),
 	)
 
-	// Emit asset action event for cross-application cascade
-	if as.assetActionService != nil {
-		as.assetActionService.EmitAssetActionEvent(&models.AssetActionEvent{
-			EventType:         models.AssetTriggerAssetUpdated,
-			SetID:             asset.SetID,
-			AssetID:           assetID,
-			ActorUserID:       ctx.EffectiveActorID,
-			OldValues:         oldValues,
-			NewValues:         newValues,
-			TriggeredByAction: true,
-			ExecutionChainID:  ctx.ChainID,
-			CascadeDepth:      ctx.Event.CascadeDepth + 1,
-			SourceApplication: "workspace",
-		})
-	}
-
 	return nil
-}
-
-// validateAssetCustomFields applies the asset-side schema checks and text
-// sanitization to action-generated values before they are written directly.
-func (as *ActionService) validateAssetCustomFields(assetTypeID int, values map[string]interface{}, enforceRequired bool) error {
-	return NewAssetService(as.db, repository.NewAssetRepository(as.db)).ValidateCustomFieldsSchema(
-		assetTypeID,
-		values,
-		CustomFieldsValidationOpts{EnforceRequired: enforceRequired},
-	)
 }
 
 // executeCreateAsset executes a create_asset node
@@ -2525,45 +2496,33 @@ func (as *ActionService) executeCreateAsset(node *models.ActionNode, ctx *models
 		assetCustomFields[mapping.TargetFieldID] = sourceValue
 	}
 
-	// Apply the same full schema/type/required validation as the normal asset
-	// create surface. This also sanitizes text and textarea values in place.
-	if err := as.validateAssetCustomFields(config.AssetTypeID, assetCustomFields, true); err != nil {
-		return fmt.Errorf("invalid custom_field_values: %w", err)
-	}
-
-	// Serialize custom_field_values
-	customFieldsJSON, err := json.Marshal(assetCustomFields)
+	assetService := NewAssetService(as.db, assetRepo)
+	assetService.SetActionService(as.assetActionService)
+	created, err := assetService.CreateAssetWithContext(
+		automationAuditActor(as.db, ctx.EffectiveActorID, "workspace_action"),
+		repository.CreateAssetInput{
+			SetID:       config.AssetSetID,
+			AssetTypeID: config.AssetTypeID,
+			CategoryID:  config.CategoryID,
+			StatusID:    config.StatusID,
+			Title:       title,
+			Description: description,
+			AssetTag:    assetTag,
+			CreatedBy:   ctx.EffectiveActorID,
+			CreatedAt:   time.Now(),
+		},
+		assetCustomFields,
+		AssetAutomationContext{
+			TriggeredByAction: true,
+			ExecutionChainID:  ctx.ChainID,
+			CascadeDepth:      ctx.Event.CascadeDepth + 1,
+			SourceApplication: "workspace",
+		},
+	)
 	if err != nil {
-		return fmt.Errorf("failed to serialize custom_field_values: %w", err)
+		return fmt.Errorf("create asset through mutation service: %w", err)
 	}
-
-	// Use the configured status or resolve the set's actual default status.
-	statusID := config.StatusID
-	if statusID == nil {
-		statusID, err = assetRepo.GetDefaultStatus(config.AssetSetID)
-		if err != nil {
-			return fmt.Errorf("get default asset status: %w", err)
-		}
-	}
-
-	// Insert the new asset, retaining the effective actor as its creator.
-	now := time.Now()
-	customFieldsJSONString := string(customFieldsJSON)
-	assetID, err := assetRepo.CreateAsset(repository.CreateAssetInput{
-		SetID:                 config.AssetSetID,
-		AssetTypeID:           config.AssetTypeID,
-		CategoryID:            config.CategoryID,
-		StatusID:              statusID,
-		Title:                 title,
-		Description:           description,
-		AssetTag:              assetTag,
-		CustomFieldValuesJSON: &customFieldsJSONString,
-		CreatedBy:             ctx.EffectiveActorID,
-		CreatedAt:             now,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create asset: %w", err)
-	}
+	assetID := created.ID
 
 	// Populate step result output
 	stepResult.Output = map[string]interface{}{
@@ -2581,20 +2540,6 @@ func (as *ActionService) executeCreateAsset(node *models.ActionNode, ctx *models
 		slog.Int("asset_id", assetID),
 		slog.Int("item_id", itemID),
 	)
-
-	// Emit asset action event for cross-application cascade
-	if as.assetActionService != nil {
-		as.assetActionService.EmitAssetActionEvent(&models.AssetActionEvent{
-			EventType:         models.AssetTriggerAssetCreated,
-			SetID:             config.AssetSetID,
-			AssetID:           assetID,
-			ActorUserID:       ctx.EffectiveActorID,
-			TriggeredByAction: true,
-			ExecutionChainID:  ctx.ChainID,
-			CascadeDepth:      ctx.Event.CascadeDepth + 1,
-			SourceApplication: "workspace",
-		})
-	}
 
 	return nil
 }
