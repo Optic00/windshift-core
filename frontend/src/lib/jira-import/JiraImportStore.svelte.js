@@ -4,6 +4,36 @@
 import { api } from '../api.js';
 import { createWizardNavigation } from '../utils/wizardNavigation.js';
 
+function defaultJiraWizardSteps(includeXray = false) {
+  const steps = [
+    { id: 'connect', label: 'Connect', completed: false },
+    { id: 'projects', label: 'Projects', completed: false },
+  ];
+  if (includeXray) {
+    steps.push({ id: 'xray', label: 'Xray', completed: false });
+  }
+  steps.push(
+    { id: 'mapping', label: 'Mapping', completed: false },
+    { id: 'preview', label: 'Preview', completed: false },
+    { id: 'import', label: 'Import', completed: false }
+  );
+  return steps;
+}
+
+function wizardStepIndex(stepId) {
+  return wizardState.steps.findIndex((step) => step.id === stepId);
+}
+
+function markWizardStepComplete(stepId) {
+  const index = wizardStepIndex(stepId);
+  if (index >= 0) wizardState.steps[index].completed = true;
+}
+
+function goToWizardStep(stepId) {
+  const index = wizardStepIndex(stepId);
+  if (index >= 0) wizardState.currentStep = index;
+}
+
 // toProjectError normalizes whatever shape fetchAPI threw into a stable
 // { message, code, status } the wizard renders. The `code` is the upstream
 // classification (JIRA_AUTH_FAILED / JIRA_FORBIDDEN / JIRA_RATE_LIMITED /
@@ -63,13 +93,31 @@ let analysisState = $state({
   error: null,
 });
 
+// Xray choices are intentionally ephemeral. Jira connections remain reusable,
+// while the Xray Cloud client secret is held only for this wizard/import.
+let xrayState = $state({
+  available: false,
+  detectionStatus: 'not_detected',
+  totalTests: 0,
+  projects: [],
+  testIssueTypeIds: [],
+  requiresCredential: false,
+  importTests: false,
+  region: 'global',
+  clientId: '',
+  clientSecret: '',
+});
+
 // Mappings state
 let mappingsState = $state({
-  workspaces: [], // { jiraKey, jiraName, windshiftId, createNew, newWorkspaceName, newWorkspaceKey }
+  workspaces: [], // { jiraKey, jiraName, createNew, newWorkspaceName, newWorkspaceKey, workspaceKeyCollisionFound, keyAliasAcknowledged }
   issueTypes: [], // { jiraIds[], jiraName, isSubtask, hierarchyLevel, windshiftId, createNew } - deduplicated by name
   statuses: [], // { jiraIds[], jiraName, categoryKey, categoryName, color, windshiftId, createNew } - deduplicated by name
   customFields: [], // { jiraId, jiraName, windshiftType, action, windshiftId }
   versions: [], // { jiraId, jiraName, projectKey, released, releaseDate, createNew }
+  serviceManagement: {
+    importOrganizations: false,
+  },
 });
 
 // Import state
@@ -87,13 +135,7 @@ let importState = $state({
 // Wizard state
 let wizardState = $state({
   currentStep: 0,
-  steps: [
-    { id: 'connect', label: 'Connect', completed: false },
-    { id: 'projects', label: 'Projects', completed: false },
-    { id: 'mapping', label: 'Mapping', completed: false },
-    { id: 'preview', label: 'Preview', completed: false },
-    { id: 'import', label: 'Import', completed: false },
-  ],
+  steps: defaultJiraWizardSteps(),
 });
 
 // Export reactive getters
@@ -113,6 +155,9 @@ export const jiraImport = {
   },
   get analysis() {
     return analysisState;
+  },
+  get xray() {
+    return xrayState;
   },
   get mappings() {
     return mappingsState;
@@ -185,7 +230,7 @@ export const jiraImport = {
     connectionState.deploymentType = connection.deployment_type || 'cloud';
     connectionState.instanceInfo = { display_name: connection.instance_name };
     connectionState.isConnected = true;
-    wizardState.steps[0].completed = true;
+    markWizardStepComplete('connect');
   },
 
   // Connection methods
@@ -208,7 +253,7 @@ export const jiraImport = {
       connectionState.apiToken = token;
       connectionState.deploymentType = deploymentType;
       connectionState.isConnected = true;
-      wizardState.steps[0].completed = true;
+      markWizardStepComplete('connect');
 
       return { success: true };
     } catch (err) {
@@ -335,8 +380,8 @@ export const jiraImport = {
         projectsState.openIssuesOnly
       );
       analysisState.result = result;
-      wizardState.steps[1].completed = true;
-      wizardState.steps[2].completed = true;
+      markWizardStepComplete('projects');
+      this.configureXray(result.xray);
 
       // Initialize mappings from analysis
       this.initializeMappings(result);
@@ -350,6 +395,27 @@ export const jiraImport = {
     }
   },
 
+  configureXray(xrayAnalysis) {
+    const detected = xrayAnalysis?.detection_status === 'detected' && xrayAnalysis.total_tests > 0;
+    xrayState.available = detected;
+    xrayState.detectionStatus = xrayAnalysis?.detection_status || 'not_detected';
+    xrayState.totalTests = xrayAnalysis?.total_tests || 0;
+    xrayState.projects = xrayAnalysis?.projects || [];
+    xrayState.testIssueTypeIds = xrayAnalysis?.test_issue_type_ids || [];
+    xrayState.requiresCredential = xrayAnalysis?.requires_credential === true;
+    xrayState.importTests = false;
+    xrayState.region = 'global';
+    xrayState.clientId = '';
+    xrayState.clientSecret = '';
+
+    const completed = new Map(wizardState.steps.map((step) => [step.id, step.completed]));
+    wizardState.steps = defaultJiraWizardSteps(detected).map((step) => ({
+      ...step,
+      completed: completed.get(step.id) || false,
+    }));
+    goToWizardStep('projects');
+  },
+
   initializeMappings(analysis) {
     // Initialize workspace mappings
     mappingsState.workspaces = analysis.projects.map((p) => ({
@@ -359,7 +425,9 @@ export const jiraImport = {
       windshiftId: null,
       createNew: true,
       newWorkspaceName: p.name,
-      newWorkspaceKey: p.key,
+      newWorkspaceKey: p.suggested_workspace_key || p.key,
+      workspaceKeyCollisionFound: p.workspace_key_collision === true,
+      keyAliasAcknowledged: false,
     }));
 
     // Deduplicate issue types by name (keep all Jira IDs for mapping during import)
@@ -421,7 +489,13 @@ export const jiraImport = {
       notes: f.notes,
       action: f.can_map ? 'create' : 'skip', // 'create', 'map', 'skip'
       windshiftId: null,
+      assetSchemaId: f.windshift_field_type === 'asset' ? 'auto' : null,
     }));
+    mappingsState.serviceManagement = {
+      // Customer organizations are global Windshift entities, so importing
+      // them always requires an explicit operator choice.
+      importOrganizations: false,
+    };
   },
 
   // Mapping setters
@@ -429,6 +503,13 @@ export const jiraImport = {
     const mapping = mappingsState.workspaces.find((m) => m.jiraKey === jiraKey);
     if (mapping) {
       Object.assign(mapping, config);
+    }
+  },
+
+  setWorkspaceKeyAliasAcknowledged(jiraKey, acknowledged) {
+    const mapping = mappingsState.workspaces.find((m) => m.jiraKey === jiraKey);
+    if (mapping?.workspaceKeyCollisionFound) {
+      mapping.keyAliasAcknowledged = acknowledged;
     }
   },
 
@@ -456,8 +537,22 @@ export const jiraImport = {
     }
   },
 
+  setAssetFieldSchema(jiraId, assetSchemaId) {
+    const mapping = mappingsState.customFields.find((m) => m.jiraId === jiraId);
+    if (mapping?.windshiftType === 'asset') {
+      mapping.assetSchemaId = assetSchemaId;
+    }
+  },
+
+  setImportServiceManagementOrganizations(enabled) {
+    mappingsState.serviceManagement.importOrganizations = enabled;
+  },
+
   // Navigation
   ...createWizardNavigation(() => wizardState),
+  goToStepId(stepId) {
+    goToWizardStep(stepId);
+  },
 
   // Validation
   canProceed() {
@@ -467,8 +562,20 @@ export const jiraImport = {
         return connectionState.isConnected;
       case 'projects':
         return projectsState.selected.length > 0;
+      case 'xray':
+        return (
+          !xrayState.importTests ||
+          !xrayState.requiresCredential ||
+          (xrayState.clientId.trim() !== '' && xrayState.clientSecret.trim() !== '')
+        );
       case 'mapping':
-        return analysisState.result !== null; // Can proceed once analysis is done
+        return (
+          analysisState.result !== null &&
+          mappingsState.workspaces.every(
+            (mapping) =>
+              !mapping.workspaceKeyCollisionFound || mapping.keyAliasAcknowledged === true
+          )
+        );
       case 'preview':
         return true;
       case 'import':
@@ -488,7 +595,11 @@ export const jiraImport = {
 
     return {
       projectCount: projectsState.selected.length,
-      issueCount: analysisState.result.total_issues,
+      issueCount: Math.max(
+        0,
+        analysisState.result.total_issues - (xrayState.importTests ? xrayState.totalTests : 0)
+      ),
+      testCaseCount: xrayState.importTests ? xrayState.totalTests : 0,
       issueTypeCount: mappingsState.issueTypes.length,
       statusCount: mappingsState.statuses.length,
       fieldCount: mappingsState.customFields.filter((f) => f.action !== 'skip').length,
@@ -534,11 +645,18 @@ export const jiraImport = {
         project_keys: projectsState.selected,
         open_issues_only: projectsState.openIssuesOnly,
         mappings: mappingsState,
+        xray: {
+          import_tests: xrayState.available && xrayState.importTests,
+          region: xrayState.region,
+          client_id: xrayState.importTests ? xrayState.clientId : '',
+          client_secret: xrayState.importTests ? xrayState.clientSecret : '',
+          test_issue_type_ids: xrayState.testIssueTypeIds,
+        },
       });
 
       importState.jobId = response.job_id;
-      wizardState.steps[3].completed = true;
-      wizardState.currentStep = 4; // Move to import step
+      markWizardStepComplete('preview');
+      goToWizardStep('import');
 
       // Start polling for job status
       this.pollJobStatus();
@@ -550,7 +668,7 @@ export const jiraImport = {
       importState.error = e.message || 'Failed to start import';
       importState.errorCode = e.code || e.errorCode || null;
       importState.conflictingImports = e.details?.conflicting_imports || [];
-      wizardState.currentStep = 4; // Surface start failures in the visible import step
+      goToWizardStep('import'); // Surface start failures in the visible import step
       return { success: false, error: importState.error, code: importState.errorCode };
     } finally {
       importState.isImporting = false;
@@ -569,7 +687,7 @@ export const jiraImport = {
 
         if (status.status === 'completed') {
           importState.result = status;
-          wizardState.steps[4].completed = true;
+          markWizardStepComplete('import');
           return; // Stop polling
         } else if (status.status === 'failed') {
           importState.error = status.error_message || 'Import failed';
@@ -617,12 +735,28 @@ export const jiraImport = {
       error: null,
     };
 
+    xrayState = {
+      available: false,
+      detectionStatus: 'not_detected',
+      totalTests: 0,
+      projects: [],
+      testIssueTypeIds: [],
+      requiresCredential: false,
+      importTests: false,
+      region: 'global',
+      clientId: '',
+      clientSecret: '',
+    };
+
     mappingsState = {
       workspaces: [],
       issueTypes: [],
       statuses: [],
       customFields: [],
       versions: [],
+      serviceManagement: {
+        importOrganizations: false,
+      },
     };
 
     importState = {
@@ -638,7 +772,7 @@ export const jiraImport = {
 
     wizardState = {
       currentStep: 0,
-      steps: wizardState.steps.map((s) => ({ ...s, completed: false })),
+      steps: defaultJiraWizardSteps(),
     };
   },
 };

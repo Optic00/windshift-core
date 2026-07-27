@@ -19,6 +19,7 @@ export default {
     steps: {
       connect: 'Conectar',
       projects: 'Proyectos',
+      xray: 'Xray',
       mapping: 'Mapeo',
       preview: 'Vista previa',
       import: 'Importar',

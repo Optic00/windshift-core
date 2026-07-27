@@ -17,6 +17,7 @@ import (
 	"windshift/internal/restapi"
 	"windshift/internal/sanitize"
 	"windshift/internal/utils"
+	"windshift/internal/xray"
 
 	"github.com/google/uuid"
 )
@@ -139,8 +140,28 @@ func (h *JiraImportHandler) GetImportJobs(w http.ResponseWriter, r *http.Request
 }
 
 func (h *JiraImportHandler) importJobEntityCounts(jobID string) (workspaceCount, itemCount int) {
-	if err := h.db.QueryRow(`SELECT COUNT(*) FROM jira_import_id_mappings WHERE job_id = ? AND entity_type = 'workspace'`, jobID).Scan(&workspaceCount); err != nil {
-		slog.Warn("Failed to count Jira import workspace mappings", slog.String("component", "jira"), slog.String("job_id", jobID), slog.Any("error", err))
+	rows, err := h.db.Query(`
+		SELECT metadata_json
+		FROM jira_import_id_mappings
+		WHERE job_id = ? AND entity_type = 'workspace'
+	`, jobID)
+	if err != nil {
+		slog.Warn("Failed to count created Jira import workspaces", slog.String("component", "jira"), slog.String("job_id", jobID), slog.Any("error", err))
+	} else {
+		for rows.Next() {
+			var metadata sql.NullString
+			if err := rows.Scan(&metadata); err != nil {
+				slog.Warn("Failed to scan Jira import workspace metadata", slog.String("component", "jira"), slog.String("job_id", jobID), slog.Any("error", err))
+				continue
+			}
+			if jiraImportMappingWasCreated(metadata) {
+				workspaceCount++
+			}
+		}
+		if err := rows.Err(); err != nil {
+			slog.Warn("Failed to iterate Jira import workspace metadata", slog.String("component", "jira"), slog.String("job_id", jobID), slog.Any("error", err))
+		}
+		_ = rows.Close()
 	}
 	if err := h.db.QueryRow(`SELECT COUNT(*) FROM jira_import_id_mappings WHERE job_id = ? AND entity_type = 'item'`, jobID).Scan(&itemCount); err != nil {
 		slog.Warn("Failed to count Jira import item mappings", slog.String("component", "jira"), slog.String("job_id", jobID), slog.Any("error", err))
@@ -189,6 +210,13 @@ func sanitizeStartImportRequest(req *StartImportRequest) {
 	for i := range req.ProjectKeys {
 		sanitize.Apply(&req.ProjectKeys[i], sanitize.ShortIdentifier)
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Xray.Region, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.Xray.ClientID, Policy: sanitize.ShortIdentifier},
+	)
+	for i := range req.Xray.TestIssueTypeIDs {
+		sanitize.Apply(&req.Xray.TestIssueTypeIDs[i], sanitize.ShortIdentifier)
+	}
 	m := &req.Mappings
 	for i := range m.Workspaces {
 		sanitize.ApplyAll(
@@ -235,6 +263,72 @@ func sanitizeStartImportRequest(req *StartImportRequest) {
 	}
 }
 
+func (h *JiraImportHandler) validateJiraWorkspaceMappings(req StartImportRequest) error {
+	rows, err := h.db.Query(`SELECT key FROM workspaces`)
+	if err != nil {
+		return fmt.Errorf("load existing workspace keys: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	existingKeys := make(map[string]struct{})
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return fmt.Errorf("scan existing workspace key: %w", err)
+		}
+		existingKeys[normalizeJiraProjectKey(key)] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate existing workspace keys: %w", err)
+	}
+
+	mappingsByJiraKey := make(map[string]WorkspaceMapping, len(req.Mappings.Workspaces))
+	for _, mapping := range req.Mappings.Workspaces {
+		jiraKey := normalizeJiraProjectKey(mapping.JiraKey)
+		if jiraKey == "" {
+			continue
+		}
+		if _, duplicate := mappingsByJiraKey[jiraKey]; duplicate {
+			return fmt.Errorf("jira project %s has more than one workspace mapping", jiraKey)
+		}
+		mappingsByJiraKey[jiraKey] = mapping
+	}
+
+	targetKeys := make(map[string]string, len(req.ProjectKeys))
+	for _, requestedKey := range req.ProjectKeys {
+		jiraKey := normalizeJiraProjectKey(requestedKey)
+		mapping, ok := mappingsByJiraKey[jiraKey]
+		if !ok {
+			return fmt.Errorf("jira project %s is missing a workspace mapping", jiraKey)
+		}
+		if !mapping.CreateNew || mapping.WindshiftID != nil {
+			return fmt.Errorf("jira project %s must create a new workspace; existing workspaces cannot be reused", jiraKey)
+		}
+		if strings.TrimSpace(mapping.NewWorkspaceName) == "" {
+			return fmt.Errorf("jira project %s requires a workspace name", jiraKey)
+		}
+
+		targetKey := normalizeJiraProjectKey(mapping.NewWorkspaceKey)
+		if targetKey == "" {
+			return fmt.Errorf("jira project %s requires a workspace key", jiraKey)
+		}
+		if _, exists := existingKeys[targetKey]; exists {
+			return fmt.Errorf("workspace key %s is already in use; analyze the projects again to assign a new Jira alias", targetKey)
+		}
+		if otherJiraKey, duplicate := targetKeys[targetKey]; duplicate {
+			return fmt.Errorf("jira projects %s and %s cannot use the same workspace key %s", otherJiraKey, jiraKey, targetKey)
+		}
+		targetKeys[targetKey] = jiraKey
+
+		_, originalKeyExists := existingKeys[jiraKey]
+		aliasRequired := originalKeyExists || targetKey != jiraKey
+		if aliasRequired && !mapping.KeyAliasAcknowledged {
+			return fmt.Errorf("acknowledge that Jira project %s will use workspace key alias %s", jiraKey, targetKey)
+		}
+	}
+	return nil
+}
+
 // StartImport handles POST /api/admin/jira-import/start
 // Starts a background import job and returns immediately with the job ID
 func (h *JiraImportHandler) StartImport(w http.ResponseWriter, r *http.Request) {
@@ -247,6 +341,54 @@ func (h *JiraImportHandler) StartImport(w http.ResponseWriter, r *http.Request) 
 	if req.ConnectionID == "" || len(req.ProjectKeys) == 0 {
 		respondValidationError(w, r, "connection_id and project_keys are required")
 		return
+	}
+	if err := h.validateJiraWorkspaceMappings(req); err != nil {
+		respondValidationError(w, r, err.Error())
+		return
+	}
+	if req.Xray.ImportTests {
+		var deploymentType sql.NullString
+		if err := h.db.QueryRow(`
+			SELECT deployment_type FROM jira_import_connections WHERE id = ?
+		`, req.ConnectionID).Scan(&deploymentType); err != nil {
+			respondValidationError(w, r, "Jira connection was not found")
+			return
+		}
+		isDataCenter := deploymentType.Valid && deploymentType.String == "datacenter"
+		if !isDataCenter {
+			if strings.TrimSpace(req.Xray.ClientID) == "" || strings.TrimSpace(req.Xray.ClientSecret) == "" {
+				respondValidationError(w, r, "Xray Cloud client ID and client secret are required")
+				return
+			}
+			switch req.Xray.Region {
+			case "", "global":
+				req.Xray.Region = "global"
+			case "us", "eu", "au":
+			default:
+				respondValidationError(w, r, "Xray Cloud region must be global, us, eu, or au")
+				return
+			}
+			xrayClient, err := xray.NewCloudClient(xray.CloudConfig{
+				ClientID:     req.Xray.ClientID,
+				ClientSecret: req.Xray.ClientSecret,
+				Region:       req.Xray.Region,
+			})
+			if err != nil {
+				respondValidationError(w, r, err.Error())
+				return
+			}
+			if err := xrayClient.Validate(r.Context()); err != nil {
+				slog.Debug("Xray Cloud credential validation failed",
+					slog.String("component", "jira"),
+					slog.Any("error", err))
+				respondError(w, r, restapi.NewAPIError(
+					http.StatusBadRequest,
+					"XRAY_AUTH_FAILED",
+					"Xray Cloud credentials could not be validated.",
+				))
+				return
+			}
+		}
 	}
 
 	if !req.ForceReimport {
@@ -270,13 +412,9 @@ func (h *JiraImportHandler) StartImport(w http.ResponseWriter, r *http.Request) 
 	// Generate a new job ID
 	jobID := generateUUID()
 
-	// Store the configuration as JSON
-	configJSON, err := json.Marshal(map[string]interface{}{
-		"project_keys":     req.ProjectKeys,
-		"open_issues_only": req.OpenIssuesOnly,
-		"mappings":         req.Mappings,
-		"force_reimport":   req.ForceReimport,
-	})
+	// Store only the durable, non-secret configuration. The Xray Cloud client
+	// ID and secret exist solely in the in-memory request used by this job.
+	configJSON, err := jiraImportJobConfigJSON(req)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -311,11 +449,24 @@ func (h *JiraImportHandler) StartImport(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Start the import in a background goroutine
-	go h.executeImport(jobID, req)
+	go h.executeImport(jobID, req) //nolint:gosec // G118: an import job must outlive its initiating HTTP request.
 
 	respondJSONOK(w, StartImportResponse{
 		JobID:   jobID,
 		Message: "Import started successfully",
+	})
+}
+
+func jiraImportJobConfigJSON(req StartImportRequest) ([]byte, error) {
+	return json.Marshal(map[string]interface{}{
+		"project_keys":     req.ProjectKeys,
+		"open_issues_only": req.OpenIssuesOnly,
+		"mappings":         req.Mappings,
+		"xray": map[string]interface{}{
+			"import_tests": req.Xray.ImportTests,
+			"region":       req.Xray.Region,
+		},
+		"force_reimport": req.ForceReimport,
 	})
 }
 
@@ -575,6 +726,53 @@ type deleteImportedDataRequest struct {
 	ConfirmDeleteImportedData bool   `json:"confirm_delete_imported_data"`
 }
 
+func jiraImportMappingWasCreated(metadata sql.NullString) bool {
+	if !metadata.Valid || strings.TrimSpace(metadata.String) == "" {
+		return false
+	}
+	var values map[string]interface{}
+	if json.Unmarshal([]byte(metadata.String), &values) != nil {
+		return false
+	}
+	created, ok := values["was_created"].(bool)
+	return ok && created
+}
+
+func jiraImportMappingMetadata(metadata sql.NullString) map[string]interface{} {
+	if !metadata.Valid || strings.TrimSpace(metadata.String) == "" {
+		return nil
+	}
+	var values map[string]interface{}
+	if json.Unmarshal([]byte(metadata.String), &values) != nil {
+		return nil
+	}
+	return values
+}
+
+func jiraImportMappingMetadataInt(metadata sql.NullString, key string) (int, bool) {
+	value, ok := jiraImportMappingMetadata(metadata)[key]
+	if !ok {
+		return 0, false
+	}
+	switch typed := value.(type) {
+	case float64:
+		return int(typed), true
+	case int:
+		return typed, true
+	default:
+		return 0, false
+	}
+}
+
+func jiraImportMappingMetadataBool(metadata sql.NullString, key string) (result, ok bool) {
+	value, exists := jiraImportMappingMetadata(metadata)[key]
+	if !exists {
+		return false, false
+	}
+	result, ok = value.(bool)
+	return result, ok
+}
+
 // DeleteImportedData handles DELETE /api/admin/jira-import/jobs/{jobId}/data
 // Deletes all entities created during an import job for re-import purposes
 func (h *JiraImportHandler) DeleteImportedData(w http.ResponseWriter, r *http.Request) {
@@ -611,7 +809,7 @@ func (h *JiraImportHandler) DeleteImportedData(w http.ResponseWriter, r *http.Re
 
 	// Get all mappings for this job, ordered for proper deletion
 	rows, err := h.db.Query(`
-		SELECT entity_type, windshift_id
+		SELECT entity_type, windshift_id, metadata_json
 		FROM jira_import_id_mappings
 		WHERE job_id = ?
 		ORDER BY
@@ -620,22 +818,29 @@ func (h *JiraImportHandler) DeleteImportedData(w http.ResponseWriter, r *http.Re
 				WHEN 'worklog' THEN 2
 				WHEN 'comment' THEN 3
 				WHEN 'attachment' THEN 4
-				WHEN 'item' THEN 5
-				WHEN 'asset' THEN 6
-				WHEN 'asset_type' THEN 7
-				WHEN 'asset_set' THEN 8
-				WHEN 'board_configuration' THEN 9
-				WHEN 'collection' THEN 10
-				WHEN 'iteration' THEN 11
-				WHEN 'milestone' THEN 12
-				WHEN 'configuration_set' THEN 13
-				WHEN 'workflow' THEN 14
-				WHEN 'custom_field' THEN 15
-				WHEN 'status' THEN 16
-				WHEN 'item_type' THEN 17
-				WHEN 'time_project' THEN 18
-				WHEN 'workspace' THEN 19
-				ELSE 20
+				WHEN 'test_case' THEN 5
+				WHEN 'item' THEN 6
+				WHEN 'portal_customer_channel' THEN 7
+				WHEN 'portal_customer_role' THEN 8
+				WHEN 'request_type' THEN 9
+				WHEN 'portal_customer' THEN 10
+				WHEN 'customer_organisation' THEN 11
+				WHEN 'portal' THEN 12
+				WHEN 'asset' THEN 13
+				WHEN 'asset_type' THEN 14
+				WHEN 'asset_set' THEN 15
+				WHEN 'board_configuration' THEN 16
+				WHEN 'collection' THEN 17
+				WHEN 'iteration' THEN 18
+				WHEN 'milestone' THEN 19
+				WHEN 'configuration_set' THEN 20
+				WHEN 'workflow' THEN 21
+				WHEN 'custom_field' THEN 22
+				WHEN 'status' THEN 23
+				WHEN 'item_type' THEN 24
+				WHEN 'time_project' THEN 25
+				WHEN 'workspace' THEN 26
+				ELSE 27
 			END
 	`, jobID)
 	if err != nil {
@@ -645,13 +850,14 @@ func (h *JiraImportHandler) DeleteImportedData(w http.ResponseWriter, r *http.Re
 	defer func() { _ = rows.Close() }()
 
 	type mapping struct {
-		entityType  string
-		windshiftID int
+		entityType   string
+		windshiftID  int
+		metadataJSON sql.NullString
 	}
 	var mappings []mapping
 	for rows.Next() {
 		var m mapping
-		if err = rows.Scan(&m.entityType, &m.windshiftID); err != nil {
+		if err = rows.Scan(&m.entityType, &m.windshiftID, &m.metadataJSON); err != nil {
 			slog.Warn("Failed to scan mapping", slog.String("component", "jira"), slog.Any("error", err))
 			continue
 		}
@@ -665,12 +871,91 @@ func (h *JiraImportHandler) DeleteImportedData(w http.ResponseWriter, r *http.Re
 	// Delete entities in order (most dependent first)
 	deleted := make(map[string]int)
 	for _, m := range mappings {
+		// Provenance is a destructive-operation boundary: unknown, malformed, or
+		// explicitly reused mappings must never authorize deletion. A reused portal
+		// customer is the one exception to the early skip because cleanup may need
+		// to restore its previous organisation assignment below.
+		if m.entityType != "portal_customer" && !jiraImportMappingWasCreated(m.metadataJSON) {
+			continue
+		}
+
 		var tableName string
 		switch m.entityType {
 		case "item":
 			tableName = "items"
+		case "test_case":
+			tableName = "test_cases"
 		case "workspace":
 			tableName = "workspaces"
+		case "request_type":
+			if !jiraImportMappingWasCreated(m.metadataJSON) ||
+				shouldSkipReusedJiraImportEntityDelete(h.db, jobID, m.entityType, m.windshiftID) {
+				continue
+			}
+			tableName = "request_types"
+		case "portal_customer_channel":
+			if !jiraImportMappingWasCreated(m.metadataJSON) {
+				continue
+			}
+			channelID, ok := jiraImportMappingMetadataInt(m.metadataJSON, "channel_id")
+			if !ok {
+				continue
+			}
+			if _, err = h.db.ExecWrite(`
+				DELETE FROM portal_customer_channels
+				WHERE portal_customer_id = ? AND channel_id = ?
+			`, m.windshiftID, channelID); err != nil {
+				slog.Error("Failed to delete imported portal customer channel access", slog.String("component", "jira"), slog.Int("portalCustomerID", m.windshiftID), slog.Any("error", err))
+			} else {
+				deleted[m.entityType]++
+			}
+			continue
+		case "portal_customer_role":
+			if !jiraImportMappingWasCreated(m.metadataJSON) {
+				continue
+			}
+			roleID, ok := jiraImportMappingMetadataInt(m.metadataJSON, "contact_role_id")
+			if !ok {
+				continue
+			}
+			if _, err = h.db.ExecWrite(`
+				DELETE FROM portal_customer_roles
+				WHERE portal_customer_id = ? AND contact_role_id = ?
+			`, m.windshiftID, roleID); err != nil {
+				slog.Error("Failed to delete imported portal customer role", slog.String("component", "jira"), slog.Int("portalCustomerID", m.windshiftID), slog.Any("error", err))
+			} else {
+				deleted[m.entityType]++
+			}
+			continue
+		case "portal_customer":
+			if !jiraImportMappingWasCreated(m.metadataJSON) {
+				if assigned, _ := jiraImportMappingMetadataBool(m.metadataJSON, "organization_was_assigned"); assigned {
+					previousID, _ := jiraImportMappingMetadataInt(m.metadataJSON, "previous_customer_organisation_id")
+					if previousID > 0 {
+						_, _ = h.db.ExecWrite(`
+							UPDATE portal_customers SET customer_organisation_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+						`, previousID, m.windshiftID)
+					} else {
+						_, _ = h.db.ExecWrite(`
+							UPDATE portal_customers SET customer_organisation_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+						`, m.windshiftID)
+					}
+				}
+				continue
+			}
+			tableName = "portal_customers"
+		case "customer_organisation":
+			if !jiraImportMappingWasCreated(m.metadataJSON) ||
+				shouldSkipReusedJiraImportEntityDelete(h.db, jobID, m.entityType, m.windshiftID) {
+				continue
+			}
+			tableName = "customer_organisations"
+		case "portal":
+			if !jiraImportMappingWasCreated(m.metadataJSON) ||
+				shouldSkipReusedJiraImportEntityDelete(h.db, jobID, m.entityType, m.windshiftID) {
+				continue
+			}
+			tableName = "channels"
 		case "asset":
 			tableName = "assets"
 		case "asset_type":
@@ -690,7 +975,7 @@ func (h *JiraImportHandler) DeleteImportedData(w http.ResponseWriter, r *http.Re
 		case "milestone":
 			tableName = "milestones"
 		case "custom_field":
-			tableName = "custom_fields"
+			tableName = "custom_field_definitions"
 		case "board_configuration":
 			tableName = "board_configurations"
 		case "collection":
@@ -790,12 +1075,18 @@ func (h *JiraImportHandler) DeleteImportedData(w http.ResponseWriter, r *http.Re
 		slog.Error("Failed to delete mappings", slog.String("component", "jira"), slog.Any("error", err))
 	}
 
+	resultJSON, marshalErr := json.Marshal(map[string]interface{}{"deleted": deleted})
+	if marshalErr != nil {
+		slog.Warn("failed to encode Jira import deletion result", slog.String("component", "jira"), slog.String("job_id", jobID), slog.Any("error", marshalErr))
+		resultJSON = []byte(`{"deleted":{}}`)
+	}
+
 	// Update job status to indicate data was deleted
 	if _, err := h.db.ExecWrite(`
 		UPDATE jira_import_jobs
 		SET status = 'data_deleted', result_json = ?
 		WHERE id = ?
-	`, fmt.Sprintf(`{"deleted": %v}`, deleted), jobID); err != nil {
+	`, string(resultJSON), jobID); err != nil {
 		slog.Warn("failed to update job status after data deletion", slog.String("component", "jira"), slog.String("job_id", jobID), slog.Any("error", err))
 	}
 
@@ -908,11 +1199,28 @@ func (h *JiraImportHandler) GetPreviousImports(w http.ResponseWriter, r *http.Re
 
 // recordMapping records an entity mapping in the database
 func (h *JiraImportHandler) recordMapping(jobID, entityType, jiraID, jiraKey string, windshiftID int, metadata map[string]interface{}) {
-	metadataJSON := "{}"
-	if metadata != nil {
-		if data, err := json.Marshal(metadata); err == nil {
-			metadataJSON = string(data)
-		}
+	mappingMetadata := make(map[string]interface{}, len(metadata)+1)
+	for key, value := range metadata {
+		mappingMetadata[key] = value
+	}
+	if _, ok := mappingMetadata["was_created"]; !ok {
+		mappingMetadata["was_created"] = jiraImportMappingActionWasCreated(mappingMetadata)
+	}
+	var existingMetadataJSON string
+	if err := h.db.QueryRow(`
+		SELECT metadata_json FROM jira_import_id_mappings
+		WHERE job_id = ? AND entity_type = ? AND jira_id = ?
+	`, jobID, entityType, jiraID).Scan(&existingMetadataJSON); err == nil &&
+		jiraImportMappingWasCreated(sql.NullString{String: existingMetadataJSON, Valid: true}) {
+		// A retry may observe and reuse a record created earlier by this same
+		// import job. Preserve the original ownership bit so cleanup still
+		// removes that record instead of leaking it as "pre-existing".
+		mappingMetadata["was_created"] = true
+	}
+
+	metadataJSON := `{"was_created":true}`
+	if data, err := json.Marshal(mappingMetadata); err == nil {
+		metadataJSON = string(data)
 	}
 
 	_, err := h.db.ExecWrite(`
@@ -924,6 +1232,16 @@ func (h *JiraImportHandler) recordMapping(jobID, entityType, jiraID, jiraKey str
 	`, jobID, entityType, jiraID, jiraKey, windshiftID, metadataJSON)
 	if err != nil {
 		slog.Error("Failed to record mapping", slog.String("component", "jira"), slog.Any("error", err))
+	}
+}
+
+func jiraImportMappingActionWasCreated(metadata map[string]interface{}) bool {
+	action, _ := metadata["action"].(string)
+	switch action {
+	case "map", "reuse_existing", "reuse_existing_mapping", "reuse_workspace_default", "update_existing":
+		return false
+	default:
+		return true
 	}
 }
 

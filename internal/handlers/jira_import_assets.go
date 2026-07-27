@@ -30,8 +30,9 @@ func (h *JiraImportHandler) importJiraAssets(ctx context.Context, jobID string, 
 		return
 	}
 
+	setNames := jiraAssetSetNames(schemas)
 	for _, schema := range schemas {
-		setID, ok := h.ensureJiraAssetSet(jobID, schema, createdByUserID)
+		setID, ok := h.ensureJiraAssetSet(jobID, schema, setNames[schema.ID], createdByUserID)
 		if !ok {
 			continue
 		}
@@ -42,15 +43,47 @@ func (h *JiraImportHandler) importJiraAssets(ctx context.Context, jobID string, 
 	}
 }
 
-func (h *JiraImportHandler) ensureJiraAssetSet(jobID string, schema jira.AssetObjectSchema, createdByUserID int) (int, bool) {
-	name := strings.TrimSpace(schema.Name)
-	if name == "" {
-		name = strings.TrimSpace(schema.ObjectSchemaKey)
+func jiraAssetSetNames(schemas []jira.AssetObjectSchema) map[string]string {
+	baseNameCounts := make(map[string]int, len(schemas))
+	for _, schema := range schemas {
+		baseNameCounts[jiraAssetSchemaBaseName(schema)]++
 	}
-	if name == "" {
-		name = "Jira Assets " + schema.ID
+
+	names := make(map[string]string, len(schemas))
+	usedNames := make(map[string]struct{}, len(schemas))
+	for _, schema := range schemas {
+		baseName := jiraAssetSchemaBaseName(schema)
+		if baseNameCounts[baseName] > 1 {
+			identity := strings.TrimSpace(schema.ObjectSchemaKey)
+			if identity == "" {
+				identity = schema.ID
+			}
+			baseName += " (" + identity + ")"
+		}
+		name := "Jira Assets: " + baseName
+		if _, exists := usedNames[name]; exists {
+			name += " [" + schema.ID + "]"
+		}
+		usedNames[name] = struct{}{}
+		names[schema.ID] = name
 	}
-	name = "Jira Assets: " + name
+	return names
+}
+
+func jiraAssetSchemaBaseName(schema jira.AssetObjectSchema) string {
+	if name := strings.TrimSpace(schema.Name); name != "" {
+		return name
+	}
+	if key := strings.TrimSpace(schema.ObjectSchemaKey); key != "" {
+		return key
+	}
+	return "Jira Assets " + schema.ID
+}
+
+func (h *JiraImportHandler) ensureJiraAssetSet(jobID string, schema jira.AssetObjectSchema, name string, createdByUserID int) (int, bool) {
+	if strings.TrimSpace(name) == "" {
+		name = "Jira Assets: " + jiraAssetSchemaBaseName(schema)
+	}
 
 	action := "reuse_existing"
 	var setID int
@@ -136,32 +169,16 @@ type jiraIssueAssetReference struct {
 	AssetTag string
 }
 
-func (h *JiraImportHandler) singleImportedJiraAssetSetID(jobID string) (int, bool) {
-	rows, err := h.db.Query(`
-		SELECT DISTINCT windshift_id
+func (h *JiraImportHandler) importedJiraAssetSetID(jobID, schemaID string) (int, bool) {
+	var setID int
+	err := h.db.QueryRow(`
+		SELECT windshift_id
 		FROM jira_import_id_mappings
-		WHERE job_id = ? AND entity_type = 'asset_set'
-	`, jobID)
-	if err != nil {
-		return 0, false
-	}
-	defer func() { _ = rows.Close() }()
-
-	setID := 0
-	count := 0
-	for rows.Next() {
-		if err := rows.Scan(&setID); err != nil {
-			return 0, false
-		}
-		count++
-		if count > 1 {
-			return 0, false
-		}
-	}
-	if rows.Err() != nil || count != 1 {
-		return 0, false
-	}
-	return setID, true
+		WHERE job_id = ? AND entity_type = 'asset_set' AND jira_id = ?
+		ORDER BY id
+		LIMIT 1
+	`, jobID, strings.TrimSpace(schemaID)).Scan(&setID)
+	return setID, err == nil && setID > 0
 }
 
 func (h *JiraImportHandler) resolveJiraIssueAssetReferences(jobID string, value any) []jiraIssueAssetReference {
@@ -202,8 +219,10 @@ func jiraIssueAssetCandidates(value any) []jiraIssueAssetCandidate {
 			}
 		case map[string]interface{}:
 			candidate := jiraIssueAssetCandidate{
-				ID:    firstStringKey(x, "id", "objectId", "objectID"),
-				Key:   firstStringKey(x, "objectKey", "key", "globalId", "workspaceId"),
+				// Cloud issue payloads include both id="<workspace UUID>:<id>"
+				// and objectId="<id>". Asset import mappings use the latter.
+				ID:    firstStringKey(x, "objectId", "objectID", "id"),
+				Key:   firstStringKey(x, "objectKey", "key", "globalId"),
 				Label: firstStringKey(x, "label", "name", "displayValue", "value"),
 			}
 			if candidate.ID != "" || candidate.Key != "" {

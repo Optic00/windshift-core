@@ -17,6 +17,7 @@ export default {
     steps: {
       connect: 'Verbinden',
       projects: 'Projekte',
+      xray: 'Xray',
       mapping: 'Zuordnung',
       preview: 'Vorschau',
       import: 'Import',

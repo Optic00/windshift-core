@@ -197,6 +197,7 @@
         {#each customers as customer (customer.id)}
           <div
             data-customer-id={customer.id}
+            data-testid="portal-customer-row"
             class="p-4 hover:bg-opacity-50 transition-colors"
             style="background-color: transparent;"
           >

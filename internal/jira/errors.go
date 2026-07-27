@@ -13,4 +13,5 @@ var (
 	ErrAssetsNotAvailable = errors.New("jira assets API not available")
 	ErrInvalidURL         = errors.New("invalid Jira instance URL")
 	ErrConnectionFailed   = errors.New("failed to connect to Jira")
+	ErrReadOnlyViolation  = errors.New("jira import attempted a non-read-only request")
 )

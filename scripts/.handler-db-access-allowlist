@@ -15,11 +15,14 @@ internal/handlers/integration_item_links.go
 internal/handlers/integration_oauth.go
 internal/handlers/item_links.go
 internal/handlers/items.go
+internal/handlers/jira_analyzer.go
 internal/handlers/jira_connector.go
 internal/handlers/jira_import_assets.go
 internal/handlers/jira_import_boards.go
 internal/handlers/jira_import_entities.go
 internal/handlers/jira_import_execution.go
+internal/handlers/jira_import_service_management.go
+internal/handlers/jira_import_xray.go
 internal/handlers/jira_importer.go
 internal/handlers/ldap.go
 internal/handlers/notification.go

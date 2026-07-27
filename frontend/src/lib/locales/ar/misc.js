@@ -19,6 +19,7 @@ export default {
     steps: {
       connect: 'الاتصال',
       projects: 'المشاريع',
+      xray: 'Xray',
       mapping: 'التعيين',
       preview: 'المعاينة',
       import: 'الاستيراد',

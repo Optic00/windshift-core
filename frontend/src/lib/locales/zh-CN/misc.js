@@ -11,6 +11,7 @@ export default {
     steps: {
       connect: '连接',
       projects: '项目',
+      xray: 'Xray',
       mapping: '映射',
       preview: '预览',
       import: '导入',

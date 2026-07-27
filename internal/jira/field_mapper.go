@@ -116,7 +116,7 @@ var jiraFieldTypeMap = map[string]WindshiftFieldType{
 
 	// Service Management fields
 	"com.atlassian.servicedesk:sd-request-participants":   FieldTypeMultiselect,
-	"com.atlassian.servicedesk:vp-origin":                 FieldTypeText,
+	"com.atlassian.servicedesk:vp-origin":                 FieldTypeUnmapped,
 	"com.atlassian.servicedesk:sd-customer-organizations": FieldTypeMultiselect,
 
 	// Assets/Insight fields
@@ -161,7 +161,11 @@ func MapJiraFieldToWindshift(field JiraCustomField) FieldMappingSuggestion {
 		suggestion.WindshiftFieldType = windshiftType
 		if windshiftType == FieldTypeUnmapped {
 			suggestion.CanMap = false
-			suggestion.Notes = "This field type cannot be directly mapped and will be skipped"
+			if fieldTypeKey == "com.atlassian.servicedesk:vp-origin" {
+				suggestion.Notes = "Imported as the item's first-class portal request type"
+			} else {
+				suggestion.Notes = "This field type cannot be directly mapped and will be skipped"
+			}
 		}
 		return suggestion
 	}

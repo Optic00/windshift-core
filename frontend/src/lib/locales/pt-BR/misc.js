@@ -18,6 +18,7 @@ export default {
     steps: {
       connect: 'Conectar',
       projects: 'Projetos',
+      xray: 'Xray',
       mapping: 'Mapeamento',
       preview: 'Pré-visualização',
       import: 'Importar',

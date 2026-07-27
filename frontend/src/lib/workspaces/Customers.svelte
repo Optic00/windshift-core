@@ -342,7 +342,13 @@
   }
 </script>
 
-<div class="flex min-h-screen" style="background-color: var(--ds-surface);">
+<div
+  class="flex min-h-screen"
+  style="background-color: var(--ds-surface);"
+  data-testid="portal-customers-page"
+  data-ready={!loading && !error}
+  data-total-customers={portalCustomers.length}
+>
   <!-- Sidebar Navigation -->
   <CustomerOrganisationNavigation
     organisations={filteredOrganisations}

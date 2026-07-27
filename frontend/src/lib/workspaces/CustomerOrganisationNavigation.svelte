@@ -54,6 +54,7 @@
     <!-- Unassigned -->
     <button
       data-org-id="null"
+      data-testid="customer-organization-unassigned"
       onclick={() => onSelect(null)}
       class="w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-3 {dragOverOrgId === null ? 'ring-2 ring-blue-400' : ''}"
       style={getButtonStyle(null, selectedOrgId === null, dragOverOrgId === null)}
@@ -73,6 +74,7 @@
       {@const isDragOver = dragOverOrgId === org.id}
       <button
         data-org-id={org.id}
+        data-testid="customer-organization"
         onclick={() => onSelect(org.id)}
         class="w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-3 {isDragOver ? 'ring-2 ring-blue-400' : ''}"
         style={getButtonStyle(org.id, isActive, isDragOver)}

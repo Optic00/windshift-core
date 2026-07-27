@@ -699,7 +699,12 @@
     <AssetRelationshipGraph bind:isOpen={showRelationshipGraph} assetId={directAsset.id} />
   {/if}
 {:else}
-<div class="flex h-full min-h-screen" style="background: var(--ds-surface);">
+<div
+  class="flex h-full min-h-screen"
+  data-testid="asset-browser"
+  data-total-assets={totalAssets}
+  style="background: var(--ds-surface);"
+>
   <!-- Left sidebar: Category tree -->
   <div class="w-64 flex flex-col" style="border-right: 1px solid var(--ds-border); background: var(--ds-surface-raised);">
     <!-- Set selector -->
@@ -882,6 +887,11 @@
           {currentPage}
           totalItems={totalAssets}
           onPageChange={handlePageChange}
+          rowAttrs={(asset) => ({
+            'data-testid': 'asset-row',
+            'data-asset-id': asset.id,
+            'data-asset-tag': asset.asset_tag || ''
+          })}
         >
           {#snippet type(item)}
             <div class="flex items-center gap-2">

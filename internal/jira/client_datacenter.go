@@ -15,17 +15,23 @@ import (
 
 // dataCenterClient implements the Client interface for Jira Data Center/Server
 type dataCenterClient struct {
-	baseURL    string // Uses /rest/api/2 for Data Center
-	agileURL   string
-	authHeader string
-	httpClient *http.Client
-	limiter    *rate.Limiter
+	baseURL        string // Uses /rest/api/2 for Data Center
+	agileURL       string
+	serviceDeskURL string
+	xrayURL        string
+	authHeader     string
+	httpClient     *http.Client
+	limiter        *rate.Limiter
 }
 
 // do performs an HTTP request with rate limiting
 //
 //nolint:unparam // method is always "GET" currently but kept for future flexibility
 func (c *dataCenterClient) do(ctx context.Context, method, reqURL string, body interface{}) (*http.Response, error) {
+	if err := validateReadOnlyRequest(method, reqURL); err != nil {
+		return nil, err
+	}
+
 	if err := c.limiter.Wait(ctx); err != nil {
 		return nil, err
 	}
@@ -176,6 +182,90 @@ func (c *dataCenterClient) GetProject(ctx context.Context, projectKey string) (*
 		return nil, err
 	}
 	return &project, nil
+}
+
+func (c *dataCenterClient) ListServiceDesks(ctx context.Context) ([]JiraServiceDesk, error) {
+	var result []JiraServiceDesk
+	for start := 0; ; {
+		var page JiraServiceDeskPage[JiraServiceDesk]
+		reqURL := fmt.Sprintf("%s/servicedesk?start=%d&limit=100", c.serviceDeskURL, start)
+		if err := c.doJSON(ctx, http.MethodGet, reqURL, nil, &page); err != nil {
+			return nil, err
+		}
+		result = append(result, page.Values...)
+		if page.IsLastPage || len(page.Values) == 0 {
+			return result, nil
+		}
+		start += len(page.Values)
+	}
+}
+
+func (c *dataCenterClient) ListServiceDeskRequestTypes(ctx context.Context, serviceDeskID string) ([]JiraServiceDeskRequestType, error) {
+	var result []JiraServiceDeskRequestType
+	for start := 0; ; {
+		var page JiraServiceDeskPage[JiraServiceDeskRequestType]
+		reqURL := fmt.Sprintf("%s/servicedesk/%s/requesttype?start=%d&limit=100",
+			c.serviceDeskURL, url.PathEscape(serviceDeskID), start)
+		if err := c.doJSON(ctx, http.MethodGet, reqURL, nil, &page); err != nil {
+			return nil, err
+		}
+		result = append(result, page.Values...)
+		if page.IsLastPage || len(page.Values) == 0 {
+			return result, nil
+		}
+		start += len(page.Values)
+	}
+}
+
+func (c *dataCenterClient) ListServiceDeskRequestComments(ctx context.Context, issueKey string) ([]JiraServiceDeskComment, error) {
+	var result []JiraServiceDeskComment
+	for start := 0; ; {
+		var page JiraServiceDeskPage[JiraServiceDeskComment]
+		reqURL := fmt.Sprintf("%s/request/%s/comment?start=%d&limit=100",
+			c.serviceDeskURL, url.PathEscape(issueKey), start)
+		if err := c.doJSON(ctx, http.MethodGet, reqURL, nil, &page); err != nil {
+			return nil, err
+		}
+		result = append(result, page.Values...)
+		if page.IsLastPage || len(page.Values) == 0 {
+			return result, nil
+		}
+		start += len(page.Values)
+	}
+}
+
+func (c *dataCenterClient) ListServiceDeskOrganizations(ctx context.Context, serviceDeskID string) ([]JiraServiceDeskOrganization, error) {
+	var result []JiraServiceDeskOrganization
+	for start := 0; ; {
+		var page JiraServiceDeskPage[JiraServiceDeskOrganization]
+		reqURL := fmt.Sprintf("%s/servicedesk/%s/organization?start=%d&limit=100",
+			c.serviceDeskURL, url.PathEscape(serviceDeskID), start)
+		if err := c.doJSON(ctx, http.MethodGet, reqURL, nil, &page); err != nil {
+			return nil, err
+		}
+		result = append(result, page.Values...)
+		if page.IsLastPage || len(page.Values) == 0 {
+			return result, nil
+		}
+		start += len(page.Values)
+	}
+}
+
+func (c *dataCenterClient) ListServiceDeskOrganizationUsers(ctx context.Context, organizationID string) ([]JiraUser, error) {
+	var result []JiraUser
+	for start := 0; ; {
+		var page JiraServiceDeskPage[JiraUser]
+		reqURL := fmt.Sprintf("%s/organization/%s/user?start=%d&limit=100",
+			c.serviceDeskURL, url.PathEscape(organizationID), start)
+		if err := c.doJSON(ctx, http.MethodGet, reqURL, nil, &page); err != nil {
+			return nil, err
+		}
+		result = append(result, page.Values...)
+		if page.IsLastPage || len(page.Values) == 0 {
+			return result, nil
+		}
+		start += len(page.Values)
+	}
 }
 
 // ================================================================

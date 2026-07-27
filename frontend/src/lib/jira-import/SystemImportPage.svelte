@@ -139,7 +139,8 @@
   <!-- Page Header -->
   <PageHeader title="System Import" subtitle="Import data from Jira Cloud and other external systems" icon={Cloud}>
     {#snippet actions()}
-      <Button variant="primary" onclick={() => openWizard()} keyboardHint={getShortcutDisplay('systemImport', 'add')} hotkeyConfig={{ key: toHotkeyString('systemImport', 'add'), guard: () => !showWizard }}>
+      <!-- shortcut-guard-exempt: the configured systemImport.add hotkey and its visible hint are declared on this button -->
+      <Button dataTestid="jira-import-new" variant="primary" onclick={() => openWizard()} keyboardHint={getShortcutDisplay('systemImport', 'add')} hotkeyConfig={{ key: toHotkeyString('systemImport', 'add'), guard: () => !showWizard }}>
         <Plus size={16} class="mr-2" />
         New Import
       </Button>
@@ -147,7 +148,7 @@
   </PageHeader>
 
   <!-- Saved Connections Section -->
-  <div class="rounded-lg border" style="border-color: var(--ds-border); background: var(--ds-surface-raised);">
+  <div data-testid="jira-import-connections" class="rounded-lg border" style="border-color: var(--ds-border); background: var(--ds-surface-raised);">
     <div class="px-6 py-4 border-b" style="border-color: var(--ds-border);">
       <div class="flex items-center gap-2">
         <Link size={18} style="color: var(--ds-text-subtle);" />
@@ -175,7 +176,7 @@
       {:else}
         <div class="space-y-3">
           {#each savedConnections.items as connection}
-            <div class="p-4 rounded-lg border flex items-center justify-between"
+            <div data-testid={`jira-import-connection-${connection.id}`} class="p-4 rounded-lg border flex items-center justify-between"
                  style="border-color: var(--ds-border); background: var(--ds-surface);">
               <div class="flex items-center gap-4">
                 <div class="w-10 h-10 rounded-lg flex items-center justify-center"
@@ -207,7 +208,7 @@
                 </div>
               </div>
               <div class="flex items-center gap-2">
-                <Button variant="secondary" size="small" onclick={() => openWizard(connection.id)}>
+                <Button dataTestid="jira-import-connection-start" variant="secondary" size="small" onclick={() => openWizard(connection.id)}>
                   <PlayCircle size={14} class="mr-1" />
                   Start Import
                 </Button>
@@ -221,7 +222,7 @@
   </div>
 
   <!-- Import History Section -->
-  <div class="rounded-lg border" style="border-color: var(--ds-border); background: var(--ds-surface-raised);">
+  <div data-testid="jira-import-history" class="rounded-lg border" style="border-color: var(--ds-border); background: var(--ds-surface-raised);">
     <div class="px-6 py-4 border-b" style="border-color: var(--ds-border);">
       <div class="flex items-center gap-2">
         <Clock size={18} style="color: var(--ds-text-subtle);" />
@@ -268,12 +269,18 @@
             <tbody>
               {#each importJobs.items as job}
                 {@const StatusIcon = getStatusIcon(job.status)}
-                <tr style="border-bottom: 1px solid var(--ds-border);">
+                <tr
+                  data-testid="jira-import-history-row"
+                  data-job-id={job.id}
+                  data-imported-comments={job.progress?.imported_comments || 0}
+                  data-imported-attachments={job.progress?.imported_attachments || 0}
+                  style="border-bottom: 1px solid var(--ds-border);"
+                >
                   <td class="py-3 px-4">
                     <div class="flex items-center gap-2">
                       <StatusIcon size={16} style="color: {getStatusColor(job.status)};"
                                   class={job.status === 'running' ? 'animate-spin' : ''} />
-                      <span class="text-sm capitalize" style="color: {getStatusColor(job.status)};">
+                      <span data-testid="jira-import-history-status" class="text-sm capitalize" style="color: {getStatusColor(job.status)};">
                         {job.status.replace('_', ' ')}
                       </span>
                     </div>
@@ -304,7 +311,7 @@
                           Projects: {job.project_keys.join(', ')}
                         </span>
                       {/if}
-                      <span class="text-xs" style="color: var(--ds-text-subtle);">
+                      <span data-testid="jira-import-history-counts" class="text-xs" style="color: var(--ds-text-subtle);">
                         {job.imported_workspace_count || 0} {(job.imported_workspace_count || 0) === 1 ? 'workspace' : 'workspaces'},
                         {job.imported_item_count || 0} {(job.imported_item_count || 0) === 1 ? 'item' : 'items'}
                       </span>

@@ -194,6 +194,20 @@ func (h *JiraImportHandler) GetConnections(w http.ResponseWriter, r *http.Reques
 func (h *JiraImportHandler) DeleteConnection(w http.ResponseWriter, r *http.Request) {
 	connectionID := r.PathValue("connectionId")
 
+	var jobCount int
+	if err := h.db.QueryRow(`
+		SELECT COUNT(*)
+		FROM jira_import_jobs
+		WHERE connection_id = ?
+	`, connectionID).Scan(&jobCount); err != nil {
+		respondInternalError(w, r, fmt.Errorf("failed to check Jira import history: %w", err))
+		return
+	}
+	if jobCount > 0 {
+		respondConflict(w, r, "Cannot delete a Jira connection while import jobs reference it. Delete imported data and retain the connection to preserve import provenance.")
+		return
+	}
+
 	result, err := h.db.ExecWrite(`
 		DELETE FROM jira_import_connections WHERE id = ?
 	`, connectionID)
@@ -268,7 +282,8 @@ func (h *JiraImportHandler) getClientForConnection(_ context.Context, connection
 
 // getUserIDFromContext extracts the user ID from request context
 func getUserIDFromContext(r *http.Request) *int {
-	if userID, ok := r.Context().Value("user_id").(int); ok {
+	if user := utils.GetCurrentUser(r); user != nil {
+		userID := user.ID
 		return &userID
 	}
 	return nil

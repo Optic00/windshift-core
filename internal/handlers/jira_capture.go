@@ -56,6 +56,11 @@ func newRecordingClient(inner jira.Client, captureDir string) *recordingClient {
 		filepath.Join(captureDir, "jira_sprints.jsonl"),
 		filepath.Join(captureDir, "jira_issue_comments.jsonl"),
 		filepath.Join(captureDir, "jira_issue_worklogs.jsonl"),
+		filepath.Join(captureDir, "jira_service_desks.jsonl"),
+		filepath.Join(captureDir, "jira_service_desk_request_types.jsonl"),
+		filepath.Join(captureDir, "jira_service_desk_request_comments.jsonl"),
+		filepath.Join(captureDir, "jira_service_desk_organizations.jsonl"),
+		filepath.Join(captureDir, "jira_service_desk_organization_users.jsonl"),
 	}
 	for _, path := range rc.jsonlPaths {
 		if err := os.WriteFile(path, nil, 0o600); err != nil { //nolint:gosec // path built from operator-supplied dir
@@ -175,6 +180,58 @@ func (r *recordingClient) ListProjects(ctx context.Context) ([]jira.JiraProject,
 
 func (r *recordingClient) GetProject(ctx context.Context, projectKey string) (*jira.JiraProject, error) {
 	return r.inner.GetProject(ctx, projectKey)
+}
+
+func (r *recordingClient) ListServiceDesks(ctx context.Context) ([]jira.JiraServiceDesk, error) {
+	resp, err := r.inner.ListServiceDesks(ctx)
+	if err == nil {
+		r.appendJSONL("jira_service_desks.jsonl", resp)
+	}
+	return resp, err
+}
+
+func (r *recordingClient) ListServiceDeskRequestTypes(ctx context.Context, serviceDeskID string) ([]jira.JiraServiceDeskRequestType, error) {
+	resp, err := r.inner.ListServiceDeskRequestTypes(ctx, serviceDeskID)
+	if err == nil {
+		r.appendJSONL("jira_service_desk_request_types.jsonl", map[string]any{
+			"service_desk_id": serviceDeskID,
+			"response":        resp,
+		})
+	}
+	return resp, err
+}
+
+func (r *recordingClient) ListServiceDeskRequestComments(ctx context.Context, issueKey string) ([]jira.JiraServiceDeskComment, error) {
+	resp, err := r.inner.ListServiceDeskRequestComments(ctx, issueKey)
+	if err == nil {
+		r.appendJSONL("jira_service_desk_request_comments.jsonl", map[string]any{
+			"issue_key": issueKey,
+			"response":  resp,
+		})
+	}
+	return resp, err
+}
+
+func (r *recordingClient) ListServiceDeskOrganizations(ctx context.Context, serviceDeskID string) ([]jira.JiraServiceDeskOrganization, error) {
+	resp, err := r.inner.ListServiceDeskOrganizations(ctx, serviceDeskID)
+	if err == nil {
+		r.appendJSONL("jira_service_desk_organizations.jsonl", map[string]any{
+			"service_desk_id": serviceDeskID,
+			"response":        resp,
+		})
+	}
+	return resp, err
+}
+
+func (r *recordingClient) ListServiceDeskOrganizationUsers(ctx context.Context, organizationID string) ([]jira.JiraUser, error) {
+	resp, err := r.inner.ListServiceDeskOrganizationUsers(ctx, organizationID)
+	if err == nil {
+		r.appendJSONL("jira_service_desk_organization_users.jsonl", map[string]any{
+			"organization_id": organizationID,
+			"response":        resp,
+		})
+	}
+	return resp, err
 }
 
 func (r *recordingClient) ListIssueTypes(ctx context.Context) ([]jira.JiraIssueType, error) {

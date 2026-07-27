@@ -1,0 +1,11 @@
+{
+  "cloudUrl": "https://your-site.atlassian.net",
+  "email": "jira-account@example.com",
+  "apiToken": "replace-with-a-jira-cloud-api-token",
+  "projectKeys": ["PROJECT_KEY"],
+  "xray": {
+    "region": "global",
+    "clientId": "replace-with-an-xray-client-id",
+    "clientSecret": "replace-with-an-xray-client-secret"
+  }
+}

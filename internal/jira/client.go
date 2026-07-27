@@ -27,6 +27,13 @@ type Client interface {
 	ListProjects(ctx context.Context) ([]JiraProject, error)
 	GetProject(ctx context.Context, projectKey string) (*JiraProject, error)
 
+	// Jira Service Management
+	ListServiceDesks(ctx context.Context) ([]JiraServiceDesk, error)
+	ListServiceDeskRequestTypes(ctx context.Context, serviceDeskID string) ([]JiraServiceDeskRequestType, error)
+	ListServiceDeskRequestComments(ctx context.Context, issueKey string) ([]JiraServiceDeskComment, error)
+	ListServiceDeskOrganizations(ctx context.Context, serviceDeskID string) ([]JiraServiceDeskOrganization, error)
+	ListServiceDeskOrganizationUsers(ctx context.Context, organizationID string) ([]JiraUser, error)
+
 	// Issue Types & Fields
 	ListIssueTypes(ctx context.Context) ([]JiraIssueType, error)
 	GetProjectIssueTypes(ctx context.Context, projectKey string) ([]JiraIssueType, error)
@@ -88,12 +95,13 @@ type Config struct {
 
 // cloudClient implements the Client interface for Jira Cloud
 type cloudClient struct {
-	baseURL    string
-	assetsURL  string
-	agileURL   string
-	authHeader string
-	httpClient *http.Client
-	limiter    *rate.Limiter
+	baseURL        string
+	assetsURL      string
+	agileURL       string
+	serviceDeskURL string
+	authHeader     string
+	httpClient     *http.Client
+	limiter        *rate.Limiter
 }
 
 // NewClient creates a new Jira API client.
@@ -151,23 +159,26 @@ func NewClient(cfg Config) (Client, error) {
 	// Return appropriate client based on deployment type
 	if cfg.DeploymentType == DeploymentDataCenter {
 		return &dataCenterClient{
-			baseURL:    baseURL + "/rest/api/2", // Data Center uses API v2
-			agileURL:   baseURL + "/rest/agile/1.0",
-			authHeader: authHeader,
-			httpClient: httpClient,
-			limiter:    limiter,
+			baseURL:        baseURL + "/rest/api/2", // Data Center uses API v2
+			agileURL:       baseURL + "/rest/agile/1.0",
+			serviceDeskURL: baseURL + "/rest/servicedeskapi",
+			xrayURL:        baseURL + "/rest/raven/2.0/api",
+			authHeader:     authHeader,
+			httpClient:     httpClient,
+			limiter:        limiter,
 		}, nil
 	}
 
 	// Cloud: probe to pick site URL vs api.atlassian.com gateway.
 	routing := cloudRoutingProbe(baseURL, authHeader, httpClient)
 	return &cloudClient{
-		baseURL:    routing.platformBase, // /rest/api/3 already appended by probe
-		assetsURL:  routing.assetsBase,
-		agileURL:   routing.agileBase,
-		authHeader: authHeader,
-		httpClient: httpClient,
-		limiter:    limiter,
+		baseURL:        routing.platformBase, // /rest/api/3 already appended by probe
+		assetsURL:      routing.assetsBase,
+		agileURL:       routing.agileBase,
+		serviceDeskURL: routing.serviceDeskBase,
+		authHeader:     authHeader,
+		httpClient:     httpClient,
+		limiter:        limiter,
 	}, nil
 }
 
@@ -175,10 +186,11 @@ func NewClient(cfg Config) (Client, error) {
 // already include their respective REST path prefix so the caller can
 // concatenate sub-paths directly.
 type cloudRouting struct {
-	platformBase string // .../rest/api/3
-	agileBase    string // .../rest/agile/1.0
-	assetsBase   string // .../rest/assets/1.0  (always site URL; gateway path differs)
-	viaGateway   bool   // chosen routing, for logging only
+	platformBase    string // .../rest/api/3
+	agileBase       string // .../rest/agile/1.0
+	assetsBase      string // legacy .../rest/assets/1.0 or gateway .../workspace/{id}/v1
+	serviceDeskBase string // .../rest/servicedeskapi
+	viaGateway      bool   // chosen routing, for logging only
 }
 
 // cloudRoutingProbe decides whether to call Jira via the operator's site URL
@@ -205,10 +217,11 @@ type cloudRouting struct {
 // reachable (private network, weird proxy, etc.).
 func cloudRoutingProbe(siteURL, authHeader string, httpClient *http.Client) cloudRouting {
 	siteRouting := cloudRouting{
-		platformBase: siteURL + "/rest/api/3",
-		agileBase:    siteURL + "/rest/agile/1.0",
-		assetsBase:   siteURL + "/rest/assets/1.0",
-		viaGateway:   false,
+		platformBase:    siteURL + "/rest/api/3",
+		agileBase:       siteURL + "/rest/agile/1.0",
+		assetsBase:      siteURL + "/rest/assets/1.0",
+		serviceDeskBase: siteURL + "/rest/servicedeskapi",
+		viaGateway:      false,
 	}
 
 	cloudID, err := discoverCloudID(siteURL, httpClient)
@@ -234,16 +247,70 @@ func cloudRoutingProbe(siteURL, authHeader string, httpClient *http.Client) clou
 		slog.String("component", "jira"),
 		slog.String("cloud_id", cloudID),
 	)
-	return cloudRouting{
-		platformBase: gatewayBase + "/rest/api/3",
-		agileBase:    gatewayBase + "/rest/agile/1.0",
-		// Assets endpoint path on the gateway uses /jsm/assets/workspace/...
-		// rather than /rest/assets/1.0. Routing for Assets is intentionally
-		// left on the site URL until the importer actually consumes Assets
-		// data — touching it now without a test surface would be guesswork.
-		assetsBase: siteURL + "/rest/assets/1.0",
-		viaGateway: true,
+	assetsBase, assetsErr := discoverAssetsWorkspaceBase(gatewayBase, authHeader, httpClient)
+	if assetsErr != nil {
+		slog.Info("Jira cloud routing: Assets workspace is unavailable",
+			slog.String("component", "jira"),
+			slog.Any("error", assetsErr),
+		)
 	}
+	return cloudRouting{
+		platformBase:    gatewayBase + "/rest/api/3",
+		agileBase:       gatewayBase + "/rest/agile/1.0",
+		assetsBase:      assetsBase,
+		serviceDeskBase: gatewayBase + "/rest/servicedeskapi",
+		viaGateway:      true,
+	}
+}
+
+// discoverAssetsWorkspaceBase resolves the site-scoped Assets API base used by
+// scoped Cloud tokens. Jira Service Management exposes the workspace identifier
+// through a read-only discovery endpoint before the Assets API can be called.
+func discoverAssetsWorkspaceBase(gatewayBase, authHeader string, httpClient *http.Client) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		gatewayBase+"/rest/servicedeskapi/assets/workspace?start=0&limit=100",
+		http.NoBody,
+	)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", authHeader)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := httpClient.Do(req) //nolint:gosec // gatewayBase is derived from Atlassian's cloud ID
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("assets workspace discovery HTTP %d", resp.StatusCode)
+	}
+
+	var page struct {
+		Values []struct {
+			WorkspaceID string `json:"workspaceId"`
+			ID          string `json:"id"`
+		} `json:"values"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
+		return "", err
+	}
+	if len(page.Values) == 0 {
+		return "", ErrAssetsNotAvailable
+	}
+	workspaceID := page.Values[0].WorkspaceID
+	if workspaceID == "" {
+		workspaceID = page.Values[0].ID
+	}
+	if workspaceID == "" {
+		return "", fmt.Errorf("%w: workspace response has no identifier", ErrAssetsNotAvailable)
+	}
+	return gatewayBase + "/jsm/assets/workspace/" + url.PathEscape(workspaceID) + "/v1", nil
 }
 
 // discoverCloudID calls the public /_edge/tenant_info well-known endpoint,
@@ -301,6 +368,10 @@ func gatewayAuthProbe(gatewayBase, authHeader string, httpClient *http.Client) b
 
 // do performs an HTTP request with rate limiting
 func (c *cloudClient) do(ctx context.Context, method, reqURL string, body interface{}) (*http.Response, error) {
+	if err := validateReadOnlyRequest(method, reqURL); err != nil {
+		return nil, err
+	}
+
 	// Wait for rate limiter
 	if err := c.limiter.Wait(ctx); err != nil {
 		return nil, err
@@ -326,6 +397,48 @@ func (c *cloudClient) do(ctx context.Context, method, reqURL string, body interf
 	}
 
 	return c.httpClient.Do(req) //nolint:gosec // G704: URL constructed from configured Jira base URL
+}
+
+// validateReadOnlyRequest prevents the Jira importer from ever mutating the
+// source instance. Jira exposes a few query operations as POST endpoints, so
+// those exact paths are allowed while every other non-GET method is denied.
+func validateReadOnlyRequest(method, reqURL string) error {
+	switch method {
+	case http.MethodGet, http.MethodHead:
+		return nil
+	case http.MethodPost:
+		parsed, err := url.Parse(reqURL)
+		if err != nil {
+			return fmt.Errorf("%w: invalid request URL: %v", ErrReadOnlyViolation, err)
+		}
+		for _, suffix := range []string{
+			"/rest/api/3/search/jql",
+			"/rest/api/3/issue/bulkfetch",
+			"/rest/assets/1.0/object/navlist/aql",
+		} {
+			if strings.HasSuffix(parsed.Path, suffix) {
+				return nil
+			}
+		}
+		if isAssetsWorkspaceAQLPath(parsed.Path) {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: %s %s", ErrReadOnlyViolation, method, reqURL)
+}
+
+func isAssetsWorkspaceAQLPath(path string) bool {
+	const marker = "/jsm/assets/workspace/"
+	index := strings.Index(path, marker)
+	if index < 0 {
+		return false
+	}
+	parts := strings.Split(strings.Trim(path[index+len(marker):], "/"), "/")
+	return len(parts) == 4 &&
+		parts[0] != "" &&
+		parts[1] == "v1" &&
+		parts[2] == "object" &&
+		parts[3] == "aql"
 }
 
 // setHeaders sets common headers for Jira API requests
@@ -479,6 +592,155 @@ func (c *cloudClient) GetProject(ctx context.Context, projectKey string) (*JiraP
 		return nil, err
 	}
 	return &project, nil
+}
+
+// ListServiceDesks lists every Jira Service Management portal visible to the
+// importing account.
+func (c *cloudClient) ListServiceDesks(ctx context.Context) ([]JiraServiceDesk, error) {
+	var result []JiraServiceDesk
+	for start := 0; ; {
+		reqURL := fmt.Sprintf("%s/servicedesk?start=%d&limit=100", c.serviceDeskURL, start)
+		resp, err := c.do(ctx, http.MethodGet, reqURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode != http.StatusOK {
+			responseErr := c.handleErrorResponse(resp)
+			_ = resp.Body.Close()
+			return nil, responseErr
+		}
+		var page JiraServiceDeskPage[JiraServiceDesk]
+		decodeErr := json.NewDecoder(resp.Body).Decode(&page)
+		_ = resp.Body.Close()
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		result = append(result, page.Values...)
+		if page.IsLastPage || len(page.Values) == 0 {
+			return result, nil
+		}
+		start += len(page.Values)
+	}
+}
+
+// ListServiceDeskRequestTypes returns the complete customer-facing request
+// type catalog for one service desk.
+func (c *cloudClient) ListServiceDeskRequestTypes(ctx context.Context, serviceDeskID string) ([]JiraServiceDeskRequestType, error) {
+	var result []JiraServiceDeskRequestType
+	for start := 0; ; {
+		reqURL := fmt.Sprintf("%s/servicedesk/%s/requesttype?start=%d&limit=100",
+			c.serviceDeskURL, url.PathEscape(serviceDeskID), start)
+		resp, err := c.do(ctx, http.MethodGet, reqURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode != http.StatusOK {
+			responseErr := c.handleErrorResponse(resp)
+			_ = resp.Body.Close()
+			return nil, responseErr
+		}
+		var page JiraServiceDeskPage[JiraServiceDeskRequestType]
+		decodeErr := json.NewDecoder(resp.Body).Decode(&page)
+		_ = resp.Body.Close()
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		result = append(result, page.Values...)
+		if page.IsLastPage || len(page.Values) == 0 {
+			return result, nil
+		}
+		start += len(page.Values)
+	}
+}
+
+// ListServiceDeskRequestComments returns JSM's public/internal visibility
+// metadata for every comment on a customer request.
+func (c *cloudClient) ListServiceDeskRequestComments(ctx context.Context, issueKey string) ([]JiraServiceDeskComment, error) {
+	var result []JiraServiceDeskComment
+	for start := 0; ; {
+		reqURL := fmt.Sprintf("%s/request/%s/comment?start=%d&limit=100",
+			c.serviceDeskURL, url.PathEscape(issueKey), start)
+		resp, err := c.do(ctx, http.MethodGet, reqURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode != http.StatusOK {
+			responseErr := c.handleErrorResponse(resp)
+			_ = resp.Body.Close()
+			return nil, responseErr
+		}
+		var page JiraServiceDeskPage[JiraServiceDeskComment]
+		decodeErr := json.NewDecoder(resp.Body).Decode(&page)
+		_ = resp.Body.Close()
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		result = append(result, page.Values...)
+		if page.IsLastPage || len(page.Values) == 0 {
+			return result, nil
+		}
+		start += len(page.Values)
+	}
+}
+
+// ListServiceDeskOrganizations returns organizations associated with one JSM
+// service desk.
+func (c *cloudClient) ListServiceDeskOrganizations(ctx context.Context, serviceDeskID string) ([]JiraServiceDeskOrganization, error) {
+	var result []JiraServiceDeskOrganization
+	for start := 0; ; {
+		reqURL := fmt.Sprintf("%s/servicedesk/%s/organization?start=%d&limit=100",
+			c.serviceDeskURL, url.PathEscape(serviceDeskID), start)
+		resp, err := c.do(ctx, http.MethodGet, reqURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode != http.StatusOK {
+			responseErr := c.handleErrorResponse(resp)
+			_ = resp.Body.Close()
+			return nil, responseErr
+		}
+		var page JiraServiceDeskPage[JiraServiceDeskOrganization]
+		decodeErr := json.NewDecoder(resp.Body).Decode(&page)
+		_ = resp.Body.Close()
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		result = append(result, page.Values...)
+		if page.IsLastPage || len(page.Values) == 0 {
+			return result, nil
+		}
+		start += len(page.Values)
+	}
+}
+
+// ListServiceDeskOrganizationUsers returns every customer in a JSM
+// organization.
+func (c *cloudClient) ListServiceDeskOrganizationUsers(ctx context.Context, organizationID string) ([]JiraUser, error) {
+	var result []JiraUser
+	for start := 0; ; {
+		reqURL := fmt.Sprintf("%s/organization/%s/user?start=%d&limit=100",
+			c.serviceDeskURL, url.PathEscape(organizationID), start)
+		resp, err := c.do(ctx, http.MethodGet, reqURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode != http.StatusOK {
+			responseErr := c.handleErrorResponse(resp)
+			_ = resp.Body.Close()
+			return nil, responseErr
+		}
+		var page JiraServiceDeskPage[JiraUser]
+		decodeErr := json.NewDecoder(resp.Body).Decode(&page)
+		_ = resp.Body.Close()
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		result = append(result, page.Values...)
+		if page.IsLastPage || len(page.Values) == 0 {
+			return result, nil
+		}
+		start += len(page.Values)
+	}
 }
 
 // ================================================================
@@ -1260,7 +1522,14 @@ func (c *cloudClient) GetUserEmail(ctx context.Context, accountID string) (strin
 
 // ListObjectSchemas lists all object schemas in Assets
 func (c *cloudClient) ListObjectSchemas(ctx context.Context) ([]AssetObjectSchema, error) {
-	resp, err := c.do(ctx, "GET", c.assetsURL+"/objectschema/list", nil)
+	if c.assetsURL == "" {
+		return nil, ErrAssetsNotAvailable
+	}
+	if strings.Contains(c.assetsURL, "/jsm/assets/workspace/") {
+		return c.listCurrentObjectSchemas(ctx)
+	}
+
+	resp, err := c.do(ctx, http.MethodGet, c.assetsURL+"/objectschema/list", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1280,6 +1549,56 @@ func (c *cloudClient) ListObjectSchemas(ctx context.Context) ([]AssetObjectSchem
 		return nil, err
 	}
 	return result.ObjectSchemas, nil
+}
+
+func (c *cloudClient) listCurrentObjectSchemas(ctx context.Context) ([]AssetObjectSchema, error) {
+	const pageSize = 100
+	var schemas []AssetObjectSchema
+	for startAt := 0; ; {
+		query := url.Values{}
+		query.Set("startAt", fmt.Sprintf("%d", startAt))
+		query.Set("maxResults", fmt.Sprintf("%d", pageSize))
+		query.Set("includeCounts", "true")
+		resp, err := c.do(
+			ctx,
+			http.MethodGet,
+			c.assetsURL+"/objectschema/list?"+query.Encode(),
+			nil,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		if resp.StatusCode == http.StatusNotFound {
+			_ = resp.Body.Close()
+			return nil, ErrAssetsNotAvailable
+		}
+		if resp.StatusCode != http.StatusOK {
+			responseErr := c.handleErrorResponse(resp)
+			_ = resp.Body.Close()
+			return nil, responseErr
+		}
+
+		var page struct {
+			Values     []AssetObjectSchema `json:"values"`
+			StartAt    int                 `json:"startAt"`
+			MaxResults int                 `json:"maxResults"`
+			Total      int                 `json:"total"`
+			IsLast     bool                `json:"isLast"`
+			Last       bool                `json:"last"`
+		}
+		decodeErr := json.NewDecoder(resp.Body).Decode(&page)
+		_ = resp.Body.Close()
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		schemas = append(schemas, page.Values...)
+		next := page.StartAt + len(page.Values)
+		if page.IsLast || page.Last || len(page.Values) == 0 || (page.Total > 0 && next >= page.Total) {
+			return schemas, nil
+		}
+		startAt = next
+	}
 }
 
 // GetObjectSchema gets a single object schema by ID
@@ -1336,11 +1655,16 @@ func (c *cloudClient) GetObjectTypeAttributes(ctx context.Context, objectTypeID 
 	if err := json.NewDecoder(resp.Body).Decode(&attrs); err != nil {
 		return nil, err
 	}
+	normalizeAssetDefaultTypes(attrs)
 	return attrs, nil
 }
 
 // SearchObjects searches for objects in a schema
 func (c *cloudClient) SearchObjects(ctx context.Context, opts ObjectSearchOptions) (*ObjectSearchResult, error) {
+	if strings.Contains(c.assetsURL, "/jsm/assets/workspace/") {
+		return c.searchCurrentObjects(ctx, opts)
+	}
+
 	// Build the request body for object search
 	reqBody := map[string]interface{}{
 		"objectSchemaId":    opts.ObjectSchemaID,
@@ -1370,6 +1694,91 @@ func (c *cloudClient) SearchObjects(ctx context.Context, opts ObjectSearchOption
 		return nil, err
 	}
 	return &result, nil
+}
+
+func (c *cloudClient) searchCurrentObjects(ctx context.Context, opts ObjectSearchOptions) (*ObjectSearchResult, error) {
+	page := opts.Page
+	if page < 1 {
+		page = 1
+	}
+	pageSize := opts.PageSize
+	if pageSize < 1 {
+		pageSize = 100
+	}
+	startAt := (page - 1) * pageSize
+
+	clauses := []string{
+		"objectSchemaId = " + quoteAssetsAQLID(opts.ObjectSchemaID),
+	}
+	if opts.ObjectTypeID != "" {
+		clauses = append(clauses, "objectTypeId = "+quoteAssetsAQLID(opts.ObjectTypeID))
+	}
+	if strings.TrimSpace(opts.IQL) != "" {
+		clauses = append(clauses, "("+strings.TrimSpace(opts.IQL)+")")
+	}
+
+	query := url.Values{}
+	query.Set("startAt", fmt.Sprintf("%d", startAt))
+	query.Set("maxResults", fmt.Sprintf("%d", pageSize))
+	query.Set("includeAttributes", fmt.Sprintf("%t", opts.IncludeAttributes))
+	reqBody := map[string]string{"qlQuery": strings.Join(clauses, " AND ")}
+
+	resp, err := c.do(
+		ctx,
+		http.MethodPost,
+		c.assetsURL+"/object/aql?"+query.Encode(),
+		reqBody,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.handleErrorResponse(resp)
+	}
+
+	var current struct {
+		Values               []AssetObject          `json:"values"`
+		ObjectTypeAttributes []AssetObjectAttribute `json:"objectTypeAttributes"`
+		MaxResults           int                    `json:"maxResults"`
+		StartAt              int                    `json:"startAt"`
+		Total                int                    `json:"total"`
+		IsLast               bool                   `json:"isLast"`
+		HasMoreResults       bool                   `json:"hasMoreResults"`
+		Last                 bool                   `json:"last"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&current); err != nil {
+		return nil, err
+	}
+	normalizeAssetDefaultTypes(current.ObjectTypeAttributes)
+	return &ObjectSearchResult{
+		ObjectEntries:        current.Values,
+		ObjectTypeAttributes: current.ObjectTypeAttributes,
+		PageNumber:           page,
+		PageSize:             current.MaxResults,
+		TotalFilterCount:     current.Total,
+		StartIndex:           current.StartAt,
+		ToIndex:              current.StartAt + len(current.Values),
+		IsLast:               current.IsLast || current.Last || !current.HasMoreResults,
+	}, nil
+}
+
+func quoteAssetsAQLID(value string) string {
+	if value != "" && strings.IndexFunc(value, func(r rune) bool {
+		return r < '0' || r > '9'
+	}) == -1 {
+		return value
+	}
+	escaped := strings.ReplaceAll(strings.ReplaceAll(value, `\`, `\\`), `"`, `\"`)
+	return `"` + escaped + `"`
+}
+
+func normalizeAssetDefaultTypes(attributes []AssetObjectAttribute) {
+	for index := range attributes {
+		if attributes[index].DefaultType != nil {
+			attributes[index].DefaultTypeID = attributes[index].DefaultType.ID
+		}
+	}
 }
 
 // GetObjectCount gets the total number of objects in a schema

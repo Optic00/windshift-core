@@ -202,6 +202,57 @@ func dedupeNonEmpty(in []string) []string {
 	return out
 }
 
+type jiraWorkspaceKeyPlan struct {
+	Key       string
+	Collision bool
+}
+
+func (h *JiraImportHandler) planJiraWorkspaceKeys(projectKeys []string) (map[string]jiraWorkspaceKeyPlan, error) {
+	rows, err := h.db.Query(`SELECT key FROM workspaces`)
+	if err != nil {
+		return nil, fmt.Errorf("load existing workspace keys: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	occupied := make(map[string]struct{})
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, fmt.Errorf("scan existing workspace key: %w", err)
+		}
+		occupied[strings.ToUpper(strings.TrimSpace(key))] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate existing workspace keys: %w", err)
+	}
+
+	plans := make(map[string]jiraWorkspaceKeyPlan, len(projectKeys))
+	for _, projectKey := range projectKeys {
+		jiraKey := strings.ToUpper(strings.TrimSpace(projectKey))
+		if jiraKey == "" {
+			continue
+		}
+		if _, alreadyPlanned := plans[jiraKey]; alreadyPlanned {
+			continue
+		}
+		targetKey := jiraKey
+		_, collision := occupied[targetKey]
+		if collision {
+			base := "JIRA_" + jiraKey
+			targetKey = base
+			for suffix := 2; ; suffix++ {
+				if _, exists := occupied[targetKey]; !exists {
+					break
+				}
+				targetKey = fmt.Sprintf("%s_%d", base, suffix)
+			}
+		}
+		plans[jiraKey] = jiraWorkspaceKeyPlan{Key: targetKey, Collision: collision}
+		occupied[targetKey] = struct{}{}
+	}
+	return plans, nil
+}
+
 // Analyze handles POST /api/admin/jira-import/analyze
 func (h *JiraImportHandler) Analyze(w http.ResponseWriter, r *http.Request) {
 	req, ok := decodeJSON[JiraAnalyzeRequest](w, r)
@@ -215,6 +266,12 @@ func (h *JiraImportHandler) Analyze(w http.ResponseWriter, r *http.Request) {
 
 	if req.ConnectionID == "" || len(req.ProjectKeys) == 0 {
 		respondValidationError(w, r, "connection_id and project_keys are required")
+		return
+	}
+
+	workspaceKeyPlans, err := h.planJiraWorkspaceKeys(req.ProjectKeys)
+	if err != nil {
+		respondInternalError(w, r, err)
 		return
 	}
 
@@ -237,15 +294,23 @@ func (h *JiraImportHandler) Analyze(w http.ResponseWriter, r *http.Request) {
 	// Track unique issue types and statuses across all projects
 	issueTypeMap := make(map[string]JiraIssueTypeInfo)
 	statusMap := make(map[string]JiraStatusInfo)
+	issueTypesByProject := make(map[string][]jira.JiraIssueType, len(req.ProjectKeys))
 
 	// Collect project IDs for the custom fields API
 	projectIDs := make([]string, 0, len(req.ProjectKeys))
+	serviceDesks, serviceDeskErr := client.ListServiceDesks(ctx)
+	if serviceDeskErr != nil {
+		slog.Debug("Jira Service Management discovery unavailable", slog.String("component", "jira"), slog.Any("error", serviceDeskErr))
+	}
 
 	// Analyze each project
 	for _, projectKey := range req.ProjectKeys {
+		workspacePlan := workspaceKeyPlans[normalizeJiraProjectKey(projectKey)]
 		projectAnalysis := JiraProjectAnalysis{
-			Key:        projectKey,
-			IssueTypes: make([]string, 0),
+			Key:                   projectKey,
+			IssueTypes:            make([]string, 0),
+			WorkspaceKeyCollision: workspacePlan.Collision,
+			SuggestedWorkspaceKey: workspacePlan.Key,
 		}
 
 		// Get project details
@@ -256,6 +321,47 @@ func (h *JiraImportHandler) Analyze(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		projectAnalysis.Name = project.Name
+		if strings.EqualFold(project.ProjectType, "service_desk") {
+			var serviceDesk *jira.JiraServiceDesk
+			for idx := range serviceDesks {
+				if serviceDesks[idx].ProjectID == project.ID || strings.EqualFold(serviceDesks[idx].ProjectKey, project.Key) {
+					serviceDesk = &serviceDesks[idx]
+					break
+				}
+			}
+			if serviceDesk != nil {
+				jsmAnalysis := JiraServiceManagementProjectAnalysis{
+					ProjectKey:    project.Key,
+					ServiceDeskID: serviceDesk.ID,
+					Organizations: make([]JiraCustomerOrganizationInfo, 0),
+				}
+				if requestTypes, requestTypeErr := client.ListServiceDeskRequestTypes(ctx, serviceDesk.ID); requestTypeErr == nil {
+					jsmAnalysis.RequestTypeCount = len(requestTypes)
+				} else {
+					slog.Debug("Failed to discover Jira request types", slog.String("component", "jira"), slog.String("project", project.Key), slog.Any("error", requestTypeErr))
+				}
+				if organizations, organizationErr := client.ListServiceDeskOrganizations(ctx, serviceDesk.ID); organizationErr == nil {
+					jsmAnalysis.OrganizationCount = len(organizations)
+					for _, organization := range organizations {
+						customerCount := 0
+						if customers, customerErr := client.ListServiceDeskOrganizationUsers(ctx, organization.ID); customerErr == nil {
+							customerCount = len(customers)
+							jsmAnalysis.OrganizationMembers += customerCount
+						} else {
+							slog.Debug("Failed to discover Jira organization customers", slog.String("component", "jira"), slog.String("organization", organization.ID), slog.Any("error", customerErr))
+						}
+						jsmAnalysis.Organizations = append(jsmAnalysis.Organizations, JiraCustomerOrganizationInfo{
+							JiraID:        organization.ID,
+							Name:          organization.Name,
+							CustomerCount: customerCount,
+						})
+					}
+				} else {
+					slog.Debug("Failed to discover Jira customer organizations", slog.String("component", "jira"), slog.String("project", project.Key), slog.Any("error", organizationErr))
+				}
+				result.ServiceManagementProjects = append(result.ServiceManagementProjects, jsmAnalysis)
+			}
+		}
 		// Only include company-managed projects for field search (team-managed projects don't support this API)
 		if !project.Simplified && project.Style != "next-gen" {
 			projectIDs = append(projectIDs, project.ID)
@@ -274,6 +380,7 @@ func (h *JiraImportHandler) Analyze(w http.ResponseWriter, r *http.Request) {
 		var issueTypes []jira.JiraIssueType
 		issueTypes, err = client.GetProjectIssueTypes(ctx, projectKey)
 		if err == nil {
+			issueTypesByProject[projectKey] = append([]jira.JiraIssueType(nil), issueTypes...)
 			for _, it := range issueTypes {
 				projectAnalysis.IssueTypes = append(projectAnalysis.IssueTypes, it.Name)
 				if _, exists := issueTypeMap[it.ID]; !exists {
@@ -347,6 +454,7 @@ func (h *JiraImportHandler) Analyze(w http.ResponseWriter, r *http.Request) {
 	for _, s := range statusMap {
 		result.Statuses = append(result.Statuses, s)
 	}
+	result.Xray = analyzeXrayTests(ctx, client, issueTypesByProject, req.OpenIssuesOnly)
 
 	// Get custom fields - try project-specific endpoint first, then fall back to all fields
 	customFields, err := client.GetProjectFields(ctx, projectIDs)
@@ -394,6 +502,7 @@ func (h *JiraImportHandler) Analyze(w http.ResponseWriter, r *http.Request) {
 					}
 					userMap[issue.Fields.Assignee.AccountID] = JiraUserSummary{
 						AccountID:   issue.Fields.Assignee.AccountID,
+						AccountType: issue.Fields.Assignee.AccountType,
 						Email:       issue.Fields.Assignee.EmailAddress,
 						DisplayName: issue.Fields.Assignee.DisplayName,
 						AvatarURL:   avatarURL,
@@ -409,6 +518,7 @@ func (h *JiraImportHandler) Analyze(w http.ResponseWriter, r *http.Request) {
 					}
 					userMap[issue.Fields.Reporter.AccountID] = JiraUserSummary{
 						AccountID:   issue.Fields.Reporter.AccountID,
+						AccountType: issue.Fields.Reporter.AccountType,
 						Email:       issue.Fields.Reporter.EmailAddress,
 						DisplayName: issue.Fields.Reporter.DisplayName,
 						AvatarURL:   avatarURL,
@@ -424,6 +534,7 @@ func (h *JiraImportHandler) Analyze(w http.ResponseWriter, r *http.Request) {
 					}
 					userMap[issue.Fields.Creator.AccountID] = JiraUserSummary{
 						AccountID:   issue.Fields.Creator.AccountID,
+						AccountType: issue.Fields.Creator.AccountType,
 						Email:       issue.Fields.Creator.EmailAddress,
 						DisplayName: issue.Fields.Creator.DisplayName,
 						AvatarURL:   avatarURL,
@@ -436,6 +547,10 @@ func (h *JiraImportHandler) Analyze(w http.ResponseWriter, r *http.Request) {
 	// Convert user map to slice and try to match with existing Windshift users
 	userRepo := repository.NewUserRepository(h.db)
 	for _, user := range userMap {
+		if jiraIsPortalCustomer(user.AccountID, user.AccountType) {
+			result.Users = append(result.Users, user)
+			continue
+		}
 		if user.Email != "" {
 			// Try to find matching Windshift user by email
 			userID, err := userRepo.GetIDByEmail(user.Email)
@@ -449,10 +564,13 @@ func (h *JiraImportHandler) Analyze(w http.ResponseWriter, r *http.Request) {
 	// Try to get asset schemas (may not be available)
 	assetSchemas, err := client.ListObjectSchemas(ctx)
 	if err == nil {
+		setNames := jiraAssetSetNames(assetSchemas)
 		for _, schema := range assetSchemas {
 			result.AssetSchemas = append(result.AssetSchemas, JiraAssetSchemaInfo{
 				ID:          schema.ID,
+				Key:         schema.ObjectSchemaKey,
 				Name:        schema.Name,
+				SetName:     setNames[schema.ID],
 				Description: schema.Description,
 				ObjectCount: schema.ObjectCount,
 				TypeCount:   schema.ObjectTypeCount,
@@ -490,10 +608,13 @@ func (h *JiraImportHandler) GetAssetSchemas(w http.ResponseWriter, r *http.Reque
 	}
 
 	schemaInfos := make([]JiraAssetSchemaInfo, len(schemas))
+	setNames := jiraAssetSetNames(schemas)
 	for i, s := range schemas {
 		schemaInfos[i] = JiraAssetSchemaInfo{
 			ID:          s.ID,
+			Key:         s.ObjectSchemaKey,
 			Name:        s.Name,
+			SetName:     setNames[s.ID],
 			Description: s.Description,
 			ObjectCount: s.ObjectCount,
 			TypeCount:   s.ObjectTypeCount,

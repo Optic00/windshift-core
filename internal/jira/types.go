@@ -38,6 +38,54 @@ type JiraProject struct {
 	Style       string            `json:"style"` // classic or next-gen
 }
 
+// JiraServiceDesk identifies a Jira Service Management portal and its backing
+// Jira project.
+type JiraServiceDesk struct {
+	ID          string `json:"id"`
+	ProjectID   string `json:"projectId"`
+	ProjectName string `json:"projectName"`
+	ProjectKey  string `json:"projectKey"`
+}
+
+// JiraServiceDeskRequestType is a customer-facing request type exposed in a
+// Jira Service Management portal.
+type JiraServiceDeskRequestType struct {
+	ID                string   `json:"id"`
+	Name              string   `json:"name"`
+	Description       string   `json:"description"`
+	HelpText          string   `json:"helpText"`
+	IssueTypeID       string   `json:"issueTypeId"`
+	ServiceDeskID     string   `json:"serviceDeskId"`
+	PortalID          string   `json:"portalId"`
+	GroupIDs          []string `json:"groupIds"`
+	RestrictionStatus string   `json:"restrictionStatus"`
+}
+
+// JiraServiceDeskOrganization is a customer organization associated with a
+// Jira Service Management service desk.
+type JiraServiceDeskOrganization struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	UUID        string `json:"uuid"`
+	SCIMManaged bool   `json:"scimManaged"`
+}
+
+// JiraServiceDeskPage is the common paginated envelope used by the JSM API.
+type JiraServiceDeskPage[T any] struct {
+	Size       int  `json:"size"`
+	Start      int  `json:"start"`
+	Limit      int  `json:"limit"`
+	IsLastPage bool `json:"isLastPage"`
+	Values     []T  `json:"values"`
+}
+
+// JiraServiceDeskComment carries the JSM-specific visibility metadata that is
+// absent from Jira Platform issue comment payloads.
+type JiraServiceDeskComment struct {
+	ID     string `json:"id"`
+	Public bool   `json:"public"`
+}
+
 // JiraIssueType represents a Jira issue type
 type JiraIssueType struct {
 	ID             string `json:"id"`
@@ -198,8 +246,9 @@ type JiraPriority struct {
 // Data Center uses Name or Key as the unique identifier
 type JiraUser struct {
 	AccountID    string            `json:"accountId"` // Cloud identifier
-	Name         string            `json:"name"`      // Data Center identifier (username)
-	Key          string            `json:"key"`       // Data Center identifier (user key)
+	AccountType  string            `json:"accountType"`
+	Name         string            `json:"name"` // Data Center identifier (username)
+	Key          string            `json:"key"`  // Data Center identifier (user key)
 	EmailAddress string            `json:"emailAddress"`
 	DisplayName  string            `json:"displayName"`
 	Active       bool              `json:"active"`
@@ -293,6 +342,9 @@ type JiraComment struct {
 	Created      string      `json:"created"`
 	Updated      string      `json:"updated"`
 	UpdateAuthor *JiraUser   `json:"updateAuthor"`
+	// ServiceDeskPublic is populated from the JSM request comment endpoint.
+	// A false value means an agent-only internal note.
+	ServiceDeskPublic *bool `json:"-"`
 	// Visibility scopes a comment to a role/group. Jira Cloud emits
 	// {"type":"group","value":"..."} (or "role"); Data Center uses the same
 	// shape. Windshift only models a private/internal toggle, so any
@@ -436,21 +488,27 @@ type AssetIcon struct {
 
 // AssetObjectAttribute represents an attribute definition for an object type
 type AssetObjectAttribute struct {
-	ID                  string `json:"id"`
-	Name                string `json:"name"`
-	Label               bool   `json:"label"`
-	Type                int    `json:"type"` // 0=Default, 1=ObjectRef, 2=User, 3=Confluence, etc.
-	TypeValue           string `json:"typeValue,omitempty"`
-	DefaultTypeID       int    `json:"defaultTypeId,omitempty"` // For type=0: 0=Text, 1=Integer, 2=Boolean, etc.
-	Description         string `json:"description"`
-	Editable            bool   `json:"editable"`
-	Hidden              bool   `json:"hidden"`
-	IncludeChildObjects bool   `json:"includeChildObjectTypes"`
-	UniqueAttribute     bool   `json:"uniqueAttribute"`
-	MinimumCardinality  int    `json:"minimumCardinality"`
-	MaximumCardinality  int    `json:"maximumCardinality"`
-	Removable           bool   `json:"removable"`
-	Position            int    `json:"position"`
+	ID                  string            `json:"id"`
+	Name                string            `json:"name"`
+	Label               bool              `json:"label"`
+	Type                int               `json:"type"` // 0=Default, 1=ObjectRef, 2=User, 3=Confluence, etc.
+	TypeValue           string            `json:"typeValue,omitempty"`
+	DefaultTypeID       int               `json:"defaultTypeId,omitempty"` // For type=0: 0=Text, 1=Integer, 2=Boolean, etc.
+	DefaultType         *AssetDefaultType `json:"defaultType,omitempty"`
+	Description         string            `json:"description"`
+	Editable            bool              `json:"editable"`
+	Hidden              bool              `json:"hidden"`
+	IncludeChildObjects bool              `json:"includeChildObjectTypes"`
+	UniqueAttribute     bool              `json:"uniqueAttribute"`
+	MinimumCardinality  int               `json:"minimumCardinality"`
+	MaximumCardinality  int               `json:"maximumCardinality"`
+	Removable           bool              `json:"removable"`
+	Position            int               `json:"position"`
+}
+
+type AssetDefaultType struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
 }
 
 // AssetObject represents an object instance in Assets
@@ -477,10 +535,14 @@ type AssetObjectAttributeValue struct {
 
 // AssetAttributeValue represents a single value for an attribute
 type AssetAttributeValue struct {
-	Value          interface{}  `json:"value"`
-	DisplayValue   string       `json:"displayValue"`
-	SearchValue    string       `json:"searchValue"`
-	ReferencedType int          `json:"referencedType,omitempty"`
+	Value        interface{} `json:"value"`
+	DisplayValue string      `json:"displayValue"`
+	SearchValue  string      `json:"searchValue"`
+	// Jira Cloud currently returns a boolean here, while older Assets
+	// responses used a numeric reference type. The importer does not depend on
+	// this metadata, so retain either representation without rejecting the
+	// containing asset.
+	ReferencedType any          `json:"referencedType,omitempty"`
 	User           *JiraUser    `json:"user,omitempty"`
 	Status         *AssetStatus `json:"status,omitempty"`
 }

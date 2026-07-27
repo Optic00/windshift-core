@@ -60,6 +60,7 @@ scripts/*/.env
 .env.development.local
 .env.test.local
 .env.production.local
+.jira-import-e2e.local.json
 
 # Frontend dependencies
 frontend/node_modules/
@@ -174,6 +175,8 @@ blog/
 /docs/*
 !/docs/0.8.2-performance-regression-gates.md
 !/docs/cross-surface-authorization-contracts.md
+!/docs/jira-service-management-import.md
+!/docs/xray-jira-test-case-import.md
 /.codehamr
 /.agents/skills/donate-trace
 /skills-lock.json
