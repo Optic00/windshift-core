@@ -68,6 +68,14 @@ export const mainNavItems = [
     permission: 'canAccessAssets',
   },
   {
+    id: 'channel-management',
+    icon: IconLifebuoy,
+    labelKey: 'nav.channels',
+    href: '/manage/channels',
+    activeViews: ['channel-manager'],
+    permission: 'canManageChannels',
+  },
+  {
     id: 'portal-hub',
     icon: IconLifebuoy,
     labelKey: 'nav.portalHub',

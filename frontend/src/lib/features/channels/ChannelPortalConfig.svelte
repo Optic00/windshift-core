@@ -90,7 +90,11 @@
 
     <div>
       <Label color="default" class="mb-2">{t('channel.portalTitle')}</Label>
-      <Input bind:value={formData.title} placeholder="Support Portal" />
+      <Input
+        bind:value={formData.title}
+        placeholder="Support Portal"
+        dataTestid="channel-portal-title"
+      />
     </div>
 
     <div class="pt-4 mt-4 border-t" style="border-color: var(--ds-border);">

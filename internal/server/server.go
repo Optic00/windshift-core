@@ -1251,6 +1251,7 @@ func (s *Server) initialize() error {
 		aiHandler,
 		assetHandler,
 		hubHandler,
+		channelService,
 	)
 
 	// Briefing scheduler (generates daily briefings for all users)

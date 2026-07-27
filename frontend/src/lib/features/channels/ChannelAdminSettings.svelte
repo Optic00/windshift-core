@@ -53,6 +53,7 @@
       onclick={onSave}
       variant="primary"
       disabled={saving}
+      dataTestid="channel-save"
     >
       {saving ? t('common.saving') : t('channel.saveChanges')}
     </Button>

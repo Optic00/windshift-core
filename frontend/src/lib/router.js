@@ -85,6 +85,7 @@ const routes = {
   '/collections/:id': 'collections-edit',
   '/notifications': 'notifications',
   '/search': 'search',
+  '/manage/channels': 'channel-manager',
   '/channels': 'hub',
   '/channels/inbox': 'hub-inbox',
   '/admin/channels': 'admin',

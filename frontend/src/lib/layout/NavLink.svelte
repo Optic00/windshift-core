@@ -27,6 +27,7 @@
 <Tooltip content="{label}{tooltipSuffix}" placement="right" disabled={expanded}>
   {#if href}
     <a
+      {id}
       {href}
       class="{baseClasses} {variantClasses}"
       aria-current={isActive ? 'page' : undefined}

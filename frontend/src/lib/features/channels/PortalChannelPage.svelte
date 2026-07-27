@@ -5,6 +5,7 @@
   import { api } from '../../api.js';
   import { t } from '../../stores/i18n.svelte.js';
   import { errorToast, successToast } from '../../stores/toasts.svelte.js';
+  import { isSystemAdmin } from '../../stores/permissions.svelte.js';
   import { channelCategoriesStore } from '../../stores/channelCategories.js';
   import ChannelAdminShell from './ChannelAdminShell.svelte';
   import ChannelAdminSettings from './ChannelAdminSettings.svelte';
@@ -112,10 +113,12 @@
     }
   }
 
-  const tabs = [
+  let tabs = $derived([
     { id: 'settings', label: () => t('channel.configuration'), icon: IconSettings },
-    { id: 'managers', label: () => t('channel.managers'), icon: IconUsers },
-  ];
+    ...($isSystemAdmin
+      ? [{ id: 'managers', label: () => t('channel.managers'), icon: IconUsers }]
+      : []),
+  ]);
 </script>
 
 <ChannelAdminShell
@@ -135,7 +138,7 @@
           bind:formData={portalFormData}
         />
       </ChannelAdminSettings>
-    {:else if tabId === 'managers'}
+    {:else if tabId === 'managers' && $isSystemAdmin}
       <div class="px-16 py-8">
         <ChannelManagersTab
           channelId={channel.id}

@@ -1,12 +1,17 @@
 package handlers
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 
 	"windshift/internal/models"
 	"windshift/internal/services"
 )
+
+type channelManagementCapability interface {
+	ManagesChannels(context.Context, int) (bool, error)
+}
 
 // ShellBootstrapHandler composes the capability snapshots needed by the
 // authenticated application shell. Keeping this as one request prevents every
@@ -18,6 +23,7 @@ type ShellBootstrapHandler struct {
 	ai          *AIHandler
 	assets      *AssetHandler
 	hub         *HubHandler
+	channels    channelManagementCapability
 }
 
 type ShellBootstrapResponse struct {
@@ -27,6 +33,7 @@ type ShellBootstrapResponse struct {
 	AI               AIStatusResponse           `json:"ai"`
 	HasAssetSets     bool                       `json:"has_asset_sets"`
 	HasActivePortals bool                       `json:"has_active_portals"`
+	ManagesChannels  bool                       `json:"manages_channels"`
 }
 
 func NewShellBootstrapHandler(
@@ -36,10 +43,11 @@ func NewShellBootstrapHandler(
 	ai *AIHandler,
 	assets *AssetHandler,
 	hub *HubHandler,
+	channels channelManagementCapability,
 ) *ShellBootstrapHandler {
 	return &ShellBootstrapHandler{
 		features: features, setup: setup, attachments: attachments,
-		ai: ai, assets: assets, hub: hub,
+		ai: ai, assets: assets, hub: hub, channels: channels,
 	}
 }
 
@@ -86,6 +94,14 @@ func (h *ShellBootstrapHandler) Get(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("shell bootstrap: portal availability unavailable", "user_id", user.ID, "error", err)
 		} else {
 			response.HasActivePortals = hasPortals
+		}
+	}
+	if h.channels != nil {
+		managesChannels, err := h.channels.ManagesChannels(r.Context(), user.ID)
+		if err != nil {
+			slog.Warn("shell bootstrap: channel management availability unavailable", "user_id", user.ID, "error", err)
+		} else {
+			response.ManagesChannels = managesChannels
 		}
 	}
 

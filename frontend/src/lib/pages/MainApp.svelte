@@ -180,6 +180,7 @@
     'assets': () => import('../features/assets/AssetBrowser.svelte'),
     'asset-detail': () => import('../features/assets/AssetBrowser.svelte'),
     'asset-settings': () => import('../features/assets/AssetManager.svelte'),
+    'channel-manager': () => import('../features/channels/ManagerChannels.svelte'),
     'workspace-board': () => import('../features/collections/CollectionBoard.svelte'),
     'workspace-board-config': () => import('../settings/BoardConfigurationPage.svelte'),
     'workspace-backlog': () => import('../features/collections/CollectionBacklog.svelte'),
@@ -356,6 +357,11 @@
       loadingMsg: 'Loading Assets...',
       errorMsg: 'Failed to load Assets',
       wrapper: 'surface-full'
+    },
+    'channel-manager': {
+      loadingMsg: 'Loading Channels...',
+      errorMsg: 'Failed to load Channels',
+      wrapper: 'surface-padded'
     },
     'asset-detail': {
       loadingMsg: 'Loading Asset...',
@@ -699,6 +705,7 @@
           permissionStore.setLogbookAvailable(bootstrap.features?.logbook_available === true);
           permissionStore.setHasAssetSets(bootstrap.has_asset_sets === true);
           permissionStore.setHasActivePortals(bootstrap.has_active_portals === true);
+          permissionStore.setManagesChannels(bootstrap.manages_channels === true);
         } catch (err) {
           capabilitiesStore.failHydration();
           console.warn('Failed to load shell capabilities:', err);

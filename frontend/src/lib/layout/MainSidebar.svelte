@@ -172,6 +172,7 @@
     <!-- Main Nav Links -->
     {#each filteredMainNav as item (item.id)}
       <NavLink
+        id="nav-{item.id}"
         icon={item.icon}
         label={t(item.labelKey)}
         href={item.href}
@@ -238,6 +239,7 @@
     <!-- Bottom Nav Links -->
     {#each filteredBottomNav as item (item.id)}
       <NavLink
+        id="nav-{item.id}"
         icon={item.icon}
         label={t(item.labelKey)}
         href={item.href}

@@ -11,6 +11,7 @@
   import DescriptionText from '../../components/DescriptionText.svelte';
   import Toggle from '../../components/Toggle.svelte';
   import { publicBaseURL } from '../../runtime/contextPath.js';
+  import { isSystemAdmin } from '../../stores/permissions.svelte.js';
 
   let {
     channelId,
@@ -57,7 +58,7 @@
   let oauthIsConnected = $derived(formData.oauth_connected && !oauthIdentityChanged);
 
   async function startOAuthFlow() {
-    if (!channelId) return;
+    if (!$isSystemAdmin || !channelId) return;
 
     if (!formData.oauth_client_id) {
       onToast('Please enter OAuth client ID');
@@ -256,12 +257,14 @@
                   {formData.oauth_email}
                 </div>
               </div>
-              <Button variant="ghost" size="small" onclick={startOAuthFlow} disabled={loading}>
-                {t('channel.reconnect')}
-              </Button>
+              {#if $isSystemAdmin}
+                <Button variant="ghost" size="small" onclick={startOAuthFlow} disabled={loading}>
+                  {t('channel.reconnect')}
+                </Button>
+              {/if}
             </div>
           </div>
-        {:else if formData.oauth_client_id}
+        {:else if formData.oauth_client_id && $isSystemAdmin}
           <div class="p-4 rounded-lg border" style="background: var(--ds-surface-raised); border-color: var(--ds-border);">
             <div class="flex items-center justify-between">
               <div>

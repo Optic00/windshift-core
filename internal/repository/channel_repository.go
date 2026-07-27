@@ -109,7 +109,7 @@ func (r *ChannelRepository) FindAll(ctx context.Context, userID int, isAdmin boo
 			          WHERE gm.user_id = ? AND g.is_active = true
 			      ))
 			  )
-		)`)
+		) AND COALESCE(c.is_default, false) = false`)
 		args = append(args, userID, userID)
 	}
 
@@ -192,6 +192,34 @@ func (r *ChannelRepository) UserCanManage(ctx context.Context, userID, channelID
 	`, channelID, userID, userID).Scan(&found)
 	if err != nil {
 		return false, fmt.Errorf("failed to check channel manager: %w", err)
+	}
+	return found, nil
+}
+
+// UserManagesAny reports whether userID directly manages, or belongs to an
+// active group that manages, at least one non-default channel. Default channels
+// are intentionally excluded because non-admin managers cannot operate them.
+func (r *ChannelRepository) UserManagesAny(ctx context.Context, userID int) (bool, error) {
+	var found bool
+	err := r.db.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1
+			FROM channel_managers cm
+			JOIN channels c ON c.id = cm.channel_id
+			WHERE COALESCE(c.is_default, false) = false
+			  AND (
+			      (cm.manager_type = 'user' AND cm.manager_id = ?)
+			   OR (cm.manager_type = 'group' AND cm.manager_id IN (
+			          SELECT gm.group_id
+			          FROM group_members gm
+			          JOIN groups g ON g.id = gm.group_id
+			          WHERE gm.user_id = ? AND g.is_active = true
+			      ))
+			  )
+		)
+	`, userID, userID).Scan(&found)
+	if err != nil {
+		return false, fmt.Errorf("failed to check channel manager availability: %w", err)
 	}
 	return found, nil
 }

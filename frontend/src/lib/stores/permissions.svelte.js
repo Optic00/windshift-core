@@ -16,6 +16,7 @@ function createPermissionStore() {
   const error = writable(null);
   const hasAssetSets = writable(false);
   const hasActivePortals = writable(false);
+  const managesChannels = writable(false);
   const logbookAvailable = writable(false);
   let allPermissionsLoaded = false;
   let allPermissionsLoadPromise = null;
@@ -72,6 +73,14 @@ function createPermissionStore() {
     return $keys.has('asset.manage');
   });
 
+  const canManageChannels = derived(
+    [authStore, managesChannels],
+    ([$authStore, $managesChannels]) => {
+      if (!$authStore.currentUser) return false;
+      return $managesChannels;
+    }
+  );
+
   // Create a combined derived store for easy subscription
   const combined = derived(
     [
@@ -87,6 +96,7 @@ function createPermissionStore() {
       canAccessPortalHub,
       canAccessLogbook,
       canManageAssets,
+      canManageChannels,
     ],
     ([
       $permissions,
@@ -101,6 +111,7 @@ function createPermissionStore() {
       $canAccessPortalHub,
       $canAccessLogbook,
       $canManageAssets,
+      $canManageChannels,
     ]) => ({
       permissions: $permissions,
       userPermissions: $userPermissions,
@@ -114,6 +125,7 @@ function createPermissionStore() {
       canAccessPortalHub: $canAccessPortalHub,
       canAccessLogbook: $canAccessLogbook,
       canManageAssets: $canManageAssets,
+      canManageChannels: $canManageChannels,
     })
   );
 
@@ -164,6 +176,12 @@ function createPermissionStore() {
       return value;
     },
 
+    get canManageChannels() {
+      let value;
+      canManageChannels.subscribe((v) => (value = v))();
+      return value;
+    },
+
     // Set whether asset sets exist
     setHasAssetSets(value) {
       hasAssetSets.set(value);
@@ -172,6 +190,11 @@ function createPermissionStore() {
     // Set whether active portals exist
     setHasActivePortals(value) {
       hasActivePortals.set(value);
+    },
+
+    // Set whether the current user manages at least one channel
+    setManagesChannels(value) {
+      managesChannels.set(value);
     },
 
     // Set whether logbook service is available
@@ -271,6 +294,7 @@ function createPermissionStore() {
       permissions.set([]);
       userPermissions.set(new Set());
       userPermissionKeys.set(new Set());
+      managesChannels.set(false);
       loading.set(false);
       error.set(null);
     },

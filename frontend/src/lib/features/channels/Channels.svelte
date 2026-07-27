@@ -163,8 +163,14 @@
       });
     }
 
-    if (!channel.is_default && !isPluginOwned(channel)) {
-      items.push({ title: 'Delete', icon: IconTrash, onClick: () => deleteChannel(channel), color: 'var(--ds-text-danger)' });
+    if ($isSystemAdmin && !channel.is_default && !isPluginOwned(channel)) {
+      items.push({
+        title: 'Delete',
+        icon: IconTrash,
+        onClick: () => deleteChannel(channel),
+        color: 'var(--ds-text-danger)',
+        testid: 'channel-delete',
+      });
     }
 
     return items;
@@ -563,7 +569,9 @@
         emptyDescription={channelSearch ? t('channels.noChannels') : t('channels.noChannels')}
         emptyIcon={IconLifebuoy}
         actionItems={getChannelActionItems}
+        actionTriggerTestid={(channel) => `channel-actions-${channel.id}`}
         onRowClick={handleRowClick}
+        rowAttrs={(channel) => ({ 'data-testid': `admin-channel-row-${channel.id}` })}
       >
         {#snippet name(item)}
           {@const ChannelIcon = getChannelTypeIcon(item.type)}

@@ -9,6 +9,7 @@
   import Spinner from '../../components/Spinner.svelte';
   import DescriptionText from '../../components/DescriptionText.svelte';
   import Toggle from '../../components/Toggle.svelte';
+  import { isSystemAdmin } from '../../stores/permissions.svelte.js';
 
   let {
     channelId,
@@ -30,7 +31,7 @@
   let loading = $state(false);
 
   async function testSmtpSettings() {
-    if (loading) return;
+    if (!$isSystemAdmin || loading) return;
     if (!channelId || !formData.host || !formData.from_email) {
       testResult = { success: false, message: t('channel.smtpHostAndFromRequired') };
       return;
@@ -175,32 +176,34 @@
     </div>
   </div>
 
-  <!-- Test SMTP Section -->
-  <div class="mt-6 pt-6 border-t" style="border-color: var(--ds-border);">
-    <h5 class="text-sm font-semibold mb-4" style="color: var(--ds-text);">{t('channel.testSmtp')}</h5>
-    <div class="space-y-4">
-      <div>
-        <Label color="default" class="mb-2">{t('channel.testEmailAddress')}</Label>
-        <Input type="email" bind:value={testEmail} placeholder={t('channel.testEmailPlaceholder')} />
-      </div>
-      <Button onclick={testSmtpSettings} variant="secondary" disabled={!formData.host || !formData.from_email || loading}>
-        {t('channel.sendTestEmail')}
-      </Button>
-    </div>
-
-    {#if testResult}
-      {#if testResult.loading}
-        <div class="mt-4 flex items-center gap-2 text-sm" style="color: var(--ds-text-subtle);">
-          <Spinner size="sm" />
-          <span>{testResult.message}</span>
+  {#if $isSystemAdmin}
+    <!-- Test SMTP Section -->
+    <div class="mt-6 pt-6 border-t" style="border-color: var(--ds-border);">
+      <h5 class="text-sm font-semibold mb-4" style="color: var(--ds-text);">{t('channel.testSmtp')}</h5>
+      <div class="space-y-4">
+        <div>
+          <Label color="default" class="mb-2">{t('channel.testEmailAddress')}</Label>
+          <Input type="email" bind:value={testEmail} placeholder={t('channel.testEmailPlaceholder')} />
         </div>
-      {:else}
-        <AlertBox
-          variant={testResult.success ? 'success' : 'error'}
-          message={testResult.message}
-          class="mt-4"
-        />
+        <Button onclick={testSmtpSettings} variant="secondary" disabled={!formData.host || !formData.from_email || loading}>
+          {t('channel.sendTestEmail')}
+        </Button>
+      </div>
+
+      {#if testResult}
+        {#if testResult.loading}
+          <div class="mt-4 flex items-center gap-2 text-sm" style="color: var(--ds-text-subtle);">
+            <Spinner size="sm" />
+            <span>{testResult.message}</span>
+          </div>
+        {:else}
+          <AlertBox
+            variant={testResult.success ? 'success' : 'error'}
+            message={testResult.message}
+            class="mt-4"
+          />
+        {/if}
       {/if}
-    {/if}
-  </div>
+    </div>
+  {/if}
 </div>

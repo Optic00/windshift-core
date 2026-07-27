@@ -178,9 +178,10 @@ func (h *ChannelHandler) invalidateWebhookSubscriptions() {
 
 // requireChannelManageAccess is defense-in-depth on top of the
 // RequireChannelManagement route middleware: writes 401 when unauthenticated,
-// 404 when the user is not a manager (matches the existence-hiding rule from
-// CheckItemPermission in base.go), or 500 on lookup error. Returns the user on
-// success so callers can reuse it for audit logging.
+// 403 when the authenticated user is not a manager, or 500 on lookup error.
+// The route middleware already limits this per-record decision to users with
+// at least one channel-management assignment. Returns the user on success so
+// callers can reuse it for audit logging.
 func (h *ChannelHandler) requireChannelManageAccess(ctx context.Context, w http.ResponseWriter, r *http.Request, channelID int) (*models.User, bool) {
 	user, ok := RequireAuth(w, r)
 	if !ok {
@@ -192,7 +193,7 @@ func (h *ChannelHandler) requireChannelManageAccess(ctx context.Context, w http.
 		return nil, false
 	}
 	if !canManage {
-		respondNotFound(w, r, "channel")
+		respondForbidden(w, r)
 		return nil, false
 	}
 	return user, true
@@ -1316,6 +1317,7 @@ func (h *ChannelHandler) UpdateChannelConfig(w http.ResponseWriter, r *http.Requ
 
 	// Merge existing config with new config to preserve unmodified fields
 	var mergedConfig map[string]interface{}
+	var storedConfig models.ChannelConfig
 
 	// Unmarshal existing config into map
 	if existingConfigJSON != "" {
@@ -1328,6 +1330,10 @@ func (h *ChannelHandler) UpdateChannelConfig(w http.ResponseWriter, r *http.Requ
 		}
 		if mergedConfig == nil {
 			respondConflict(w, r, "Stored channel configuration is not a JSON object; repair it before applying a partial update")
+			return
+		}
+		if err = json.Unmarshal([]byte(existingConfigJSON), &storedConfig); err != nil {
+			respondConflict(w, r, "Stored channel configuration has invalid field types; repair it before applying a partial update")
 			return
 		}
 	} else {
@@ -1493,14 +1499,20 @@ func (h *ChannelHandler) UpdateChannelConfig(w http.ResponseWriter, r *http.Requ
 	// or GetPortal. Personal workspaces are off-limits for public ingest
 	// since they're a single-user scratch space.
 	var targetWorkspaceIDs []int
+	var storedTargetWorkspaceIDs []int
 	switch channel.Type {
 	case "portal":
 		targetWorkspaceIDs = append(targetWorkspaceIDs, finalConfig.PortalWorkspaceIDs...)
+		storedTargetWorkspaceIDs = append(storedTargetWorkspaceIDs, storedConfig.PortalWorkspaceIDs...)
 	case "form":
 		targetWorkspaceIDs = append(targetWorkspaceIDs, finalConfig.FormWorkspaceIDs...)
+		storedTargetWorkspaceIDs = append(storedTargetWorkspaceIDs, storedConfig.FormWorkspaceIDs...)
 	case "email":
 		if finalConfig.EmailWorkspaceID > 0 {
 			targetWorkspaceIDs = append(targetWorkspaceIDs, finalConfig.EmailWorkspaceID)
+		}
+		if storedConfig.EmailWorkspaceID > 0 {
+			storedTargetWorkspaceIDs = append(storedTargetWorkspaceIDs, storedConfig.EmailWorkspaceID)
 		}
 	}
 	if len(targetWorkspaceIDs) > 0 {
@@ -1521,12 +1533,19 @@ func (h *ChannelHandler) UpdateChannelConfig(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		if !isAdmin {
+			alreadyConnected := make(map[int]struct{}, len(storedTargetWorkspaceIDs))
+			for _, workspaceID := range storedTargetWorkspaceIDs {
+				alreadyConnected[workspaceID] = struct{}{}
+			}
 			seen := make(map[int]struct{}, len(all))
 			for _, workspaceID := range all {
 				if _, duplicate := seen[workspaceID]; duplicate {
 					continue
 				}
 				seen[workspaceID] = struct{}{}
+				if _, existing := alreadyConnected[workspaceID]; existing {
+					continue
+				}
 				allowed, permErr := h.permissionService.HasWorkspacePermission(user.ID, workspaceID, models.PermissionWorkspaceAdmin)
 				if permErr != nil {
 					respondInternalError(w, r, permErr)

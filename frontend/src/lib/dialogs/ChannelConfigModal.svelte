@@ -3,6 +3,7 @@
   import { api } from '../api.js';
   import { channelCategoriesStore } from '../stores/channelCategories.js';
   import { t } from '../stores/i18n.svelte.js';
+  import { isSystemAdmin } from '../stores/permissions.svelte.js';
   import Modal from './Modal.svelte';
   import Button from '../components/Button.svelte';
   import Input from '../components/Input.svelte';
@@ -581,7 +582,7 @@
             </button>
           {/if}
 
-          {#if !isPluginOwned(channel)}
+          {#if $isSystemAdmin && !isPluginOwned(channel)}
             <button
               onclick={() => activeTab = 'managers'}
               class="relative py-3 text-sm font-medium transition-colors {
@@ -686,7 +687,7 @@
           {/if}
         {:else if activeTab === 'forms'}
           <FormBuilder channelId={channel.id} channelWorkspaceIds={formBuilderWorkspaceIds} onBack={() => activeTab = 'configuration'} />
-        {:else if activeTab === 'managers'}
+        {:else if activeTab === 'managers' && $isSystemAdmin}
           <ChannelManagersTab
             channelId={channel.id}
             channelName={channel.name}

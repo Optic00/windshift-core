@@ -124,6 +124,22 @@ func (s *ChannelService) UserCanManage(ctx context.Context, userID, channelID in
 	return s.repo.UserCanManage(ctx, userID, channelID)
 }
 
+// ManagesChannels reports whether the user should see the channel-management
+// surface. System admins always can; other users need a direct or active-group
+// assignment to at least one non-default channel.
+func (s *ChannelService) ManagesChannels(ctx context.Context, userID int) (bool, error) {
+	if s.permissionService != nil {
+		isAdmin, err := s.permissionService.IsSystemAdminContext(ctx, userID)
+		if err != nil {
+			return false, fmt.Errorf("check system administrator: %w", err)
+		}
+		if isAdmin {
+			return true, nil
+		}
+	}
+	return s.repo.UserManagesAny(ctx, userID)
+}
+
 // UserIsSystemAdmin exposes the shared permission decision to channel-adjacent
 // handlers that must re-authorize an unauthenticated callback state.
 func (s *ChannelService) UserIsSystemAdmin(userID int) (bool, error) {

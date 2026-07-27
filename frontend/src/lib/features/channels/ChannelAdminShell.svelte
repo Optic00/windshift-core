@@ -61,6 +61,7 @@
       <nav class="flex gap-6 border-b" style="border-color: var(--ds-border);">
         {#each tabs as tab}
           <button
+            data-testid="channel-tab-{tab.id}"
             onclick={() => activeTab = tab.id}
             class="relative py-3 text-sm font-medium transition-colors {
               activeTab === tab.id
