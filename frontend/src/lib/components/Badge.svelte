@@ -17,7 +17,8 @@
     size = 'sm',          // 'xs' | 'sm' | 'md'
     icon: Icon = null,    // Optional Lucide icon component
     class: className = '',
-    children
+    children,
+    ...rest
   } = $props();
 
   const sizeClasses = $derived({
@@ -44,6 +45,7 @@
 <span
   class={cn('inline-flex items-center gap-1 rounded-full font-medium', sizeClasses, className)}
   style={variantStyles}
+  {...rest}
 >
   {#if Icon}
     <Icon class={iconSize} />

@@ -1,6 +1,6 @@
 <script>
   import { navigate } from '../router.js';
-  import { formatDueDate, getDueBadgeClass } from '../utils/dateFormatter.js';
+  import DueMark from '../widgets/dashboard/DueMark.svelte';
   import StatusPill from '../components/StatusPill.svelte';
 
   /**
@@ -59,9 +59,7 @@
     {#if timestamp}
       <span class="ts">{timestamp}</span>
     {/if}
-    {#if dueDate}
-      <span class={`due ${getDueBadgeClass(dueDate)}`}>{formatDueDate(dueDate)}</span>
-    {/if}
+    <DueMark {dueDate} />
   </div>
 </button>
 
@@ -132,12 +130,4 @@
     font-family: var(--font-mono, ui-monospace, monospace);
   }
 
-  .due {
-    display: inline-flex;
-    align-items: center;
-    border-radius: var(--radius-full, 9999px);
-    padding: 1px 8px;
-    font-size: 0.6875rem;
-    font-weight: var(--font-semibold, 600);
-  }
 </style>

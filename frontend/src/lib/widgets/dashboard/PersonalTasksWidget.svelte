@@ -3,7 +3,16 @@
   import { authStore, workspacesStore } from '../../stores';
   import { api } from '../../api.js';
   import DashboardItemRow from './DashboardItemRow.svelte';
-  import { completedSinceCutoff, normalizeTaskResponse, openTask } from './taskWidgetState.js';
+  import {
+    completedSinceCutoff,
+    normalizeTaskResponse,
+    openTask,
+    resolveRowCount,
+    resolveDensity,
+    rowCountToLimit,
+  } from './taskWidgetState.js';
+
+  let { config = {} } = $props();
 
   let tasks = $state([]);
   let loading = $state(false);
@@ -13,6 +22,9 @@
 
   const currentUserId = $derived($authStore?.currentUser?.id ?? null);
   const personalWorkspaceId = $derived($workspacesStore.personalWorkspace?.id ?? null);
+  const rowCount = $derived(resolveRowCount(config, 12));
+  const density = $derived(resolveDensity(config));
+  const fetchLimit = $derived(rowCountToLimit(rowCount));
 
   $effect(() => {
     if (currentUserId && !personalWorkspaceId) {
@@ -20,7 +32,7 @@
     }
 
     const loadKey = currentUserId && personalWorkspaceId
-      ? `${currentUserId}:${personalWorkspaceId}`
+      ? `${currentUserId}:${personalWorkspaceId}:${rowCount}`
       : null;
     if (loadKey && loadKey !== lastLoadKey) {
       lastLoadKey = loadKey;
@@ -38,14 +50,14 @@
     try {
       const response = await api.items.getAll({
         ql: `workspace_id = ${workspaceId}`,
-        limit: 30,
+        limit: fetchLimit,
         order_by: 'updated_at',
         // Hide tasks completed more than the default window ago, matching the
         // per-workspace TodoList done-range default.
         completed_since: completedSinceCutoff(),
       });
       if (v !== version) return;
-      tasks = normalizeTaskResponse(response);
+      tasks = normalizeTaskResponse(response, rowCount);
     } catch (err) {
       if (v !== version) return;
       console.error('Failed to load personal tasks:', err);
@@ -85,6 +97,7 @@
           priorityName={task.priority_name}
           priorityColor={task.priority_color}
           dueDate={task.dueDate}
+          {density}
           onclick={() => openTask(task)}
         />
       </li>

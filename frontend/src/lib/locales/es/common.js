@@ -314,4 +314,15 @@ export default {
     configureFilter: 'Configure el filtro para ver elementos',
     createToStart: 'Cree {item} para comenzar',
   },
+  dueDate: {
+    noDueDate: 'Sin fecha de vencimiento',
+    dueToday: 'Vence hoy',
+    dueTomorrow: 'Vence mañana',
+    dueYesterday: 'Venció ayer',
+    dueInDays: 'Vence en {days} días',
+    overdueByDays: 'Vencido hace {days} días',
+    overdueTooltip: 'Vencido hace {days} días — vencía el {date}',
+    dueSoonTooltip: 'Vence en {days} días — {date}',
+    dueLaterTooltip: 'Vence el {date}',
+  },
 };

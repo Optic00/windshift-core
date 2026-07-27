@@ -1,7 +1,7 @@
 <script>
   import { Calendar, CalendarDays, Flag, RefreshCw } from '@lucide/svelte';
   import { api } from '../api.js';
-  import { formatDueDate, getDueBadgeClass } from '../utils/dateFormatter.js';
+  import DueMark from './dashboard/DueMark.svelte';
   import WidgetState from './WidgetState.svelte';
   import { t } from '../stores/i18n.svelte.js';
   import { normalizeDate, getDoneStatusIds } from './doneStatusHelper.js';
@@ -192,7 +192,7 @@
                 </div>
               </div>
             </div>
-            <span class="text-xs font-medium whitespace-nowrap px-2 py-0.5 rounded {getDueBadgeClass(entry.deadline)}">{formatDueDate(entry.deadline)}</span>
+            <DueMark dueDate={entry.deadline} />
           </div>
         {/each}
       </div>

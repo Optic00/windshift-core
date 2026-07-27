@@ -16,7 +16,8 @@ export const dashboardWidgetRegistry = [
     description: 'AI-generated summary of what matters to you today',
     category: dashboardWidgetCategories.ACTIVITY,
     icon: 'Sparkles',
-    defaultWidth: 3,
+    defaultWidth: 12,
+    minWidth: 6,
   },
   {
     type: 'your-activity',
@@ -24,7 +25,8 @@ export const dashboardWidgetRegistry = [
     description: 'Items you recently viewed, edited, or commented on',
     category: dashboardWidgetCategories.ACTIVITY,
     icon: 'Clock',
-    defaultWidth: 2,
+    defaultWidth: 8,
+    minWidth: 4,
   },
   {
     type: 'whats-new',
@@ -32,7 +34,8 @@ export const dashboardWidgetRegistry = [
     description: 'Latest notifications and unread updates',
     category: dashboardWidgetCategories.ACTIVITY,
     icon: 'Bell',
-    defaultWidth: 1,
+    defaultWidth: 4,
+    minWidth: 3,
   },
 
   // Work items
@@ -42,7 +45,8 @@ export const dashboardWidgetRegistry = [
     description: 'Items from your personal todo list',
     category: dashboardWidgetCategories.WORK,
     icon: 'ListChecks',
-    defaultWidth: 1,
+    defaultWidth: 6,
+    minWidth: 3,
   },
   {
     type: 'assigned-to-me',
@@ -50,7 +54,8 @@ export const dashboardWidgetRegistry = [
     description: 'Open items assigned to you across all workspaces',
     category: dashboardWidgetCategories.WORK,
     icon: 'CheckSquare',
-    defaultWidth: 2,
+    defaultWidth: 6,
+    minWidth: 3,
   },
   {
     type: 'watched-items',
@@ -58,7 +63,8 @@ export const dashboardWidgetRegistry = [
     description: 'Items you are following',
     category: dashboardWidgetCategories.WORK,
     icon: 'Eye',
-    defaultWidth: 1,
+    defaultWidth: 4,
+    minWidth: 3,
   },
   {
     type: 'upcoming-milestones',
@@ -66,7 +72,8 @@ export const dashboardWidgetRegistry = [
     description: 'Milestones with approaching target dates',
     category: dashboardWidgetCategories.WORK,
     icon: 'Target',
-    defaultWidth: 3,
+    defaultWidth: 12,
+    minWidth: 4,
   },
 
   // Navigation
@@ -76,7 +83,8 @@ export const dashboardWidgetRegistry = [
     description: 'Workspaces you recently visited',
     category: dashboardWidgetCategories.NAVIGATION,
     icon: 'Briefcase',
-    defaultWidth: 2,
+    defaultWidth: 8,
+    minWidth: 3,
   },
   {
     type: 'quick-access',
@@ -84,7 +92,8 @@ export const dashboardWidgetRegistry = [
     description: 'Quick links to workspaces you can reach',
     category: dashboardWidgetCategories.NAVIGATION,
     icon: 'Grip',
-    defaultWidth: 1,
+    defaultWidth: 4,
+    minWidth: 3,
   },
 ];
 
@@ -98,7 +107,12 @@ export function getDashboardWidgetsByCategory(category) {
 
 export function getDashboardWidgetDefaultWidth(type) {
   const widget = getDashboardWidgetMetadata(type);
-  return widget ? widget.defaultWidth : 3;
+  return widget ? widget.defaultWidth : 12;
+}
+
+export function getDashboardWidgetMinWidth(type) {
+  const widget = getDashboardWidgetMetadata(type);
+  return widget?.minWidth ?? 3;
 }
 
 /**
@@ -117,7 +131,7 @@ export function buildDefaultDashboardLayout() {
     {
       id: 'default-work',
       title: 'Work',
-      subtitle: 'Items assigned to you',
+      subtitle: 'Your personal list and items assigned to you',
       display_order: 1,
       widget_ids: ['default-personal-tasks', 'default-assigned-to-me'],
     },
@@ -130,12 +144,12 @@ export function buildDefaultDashboardLayout() {
     },
   ];
 
-  const widget = (id, type, sectionId, position) => ({
+  const widget = (id, type, sectionId, position, width) => ({
     id,
     type,
     section_id: sectionId,
     position,
-    width: getDashboardWidgetDefaultWidth(type),
+    width: width ?? getDashboardWidgetDefaultWidth(type),
     config: {},
   });
 
@@ -143,8 +157,8 @@ export function buildDefaultDashboardLayout() {
     widget('default-daily-briefing', 'daily-briefing', 'default-your-day', 0),
     widget('default-your-activity', 'your-activity', 'default-your-day', 1),
     widget('default-whats-new', 'whats-new', 'default-your-day', 2),
-    widget('default-personal-tasks', 'personal-tasks', 'default-work', 0),
-    widget('default-assigned-to-me', 'assigned-to-me', 'default-work', 1),
+    widget('default-personal-tasks', 'personal-tasks', 'default-work', 0, 6),
+    widget('default-assigned-to-me', 'assigned-to-me', 'default-work', 1, 6),
     widget('default-recent-workspaces', 'recent-workspaces', 'default-workspaces', 0),
     widget('default-quick-access', 'quick-access', 'default-workspaces', 1),
   ];

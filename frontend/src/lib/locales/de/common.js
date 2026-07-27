@@ -272,4 +272,15 @@ export default {
     configureFilter: 'Filter konfigurieren, um Einträge zu sehen',
     createToStart: '{item} erstellen, um zu beginnen',
   },
+  dueDate: {
+    noDueDate: 'Kein Fälligkeitsdatum',
+    dueToday: 'Heute fällig',
+    dueTomorrow: 'Morgen fällig',
+    dueYesterday: 'Gestern fällig',
+    dueInDays: 'Fällig in {days} Tagen',
+    overdueByDays: 'Seit {days} Tagen überfällig',
+    overdueTooltip: 'Seit {days} Tagen überfällig — war fällig am {date}',
+    dueSoonTooltip: 'Fällig in {days} Tagen — {date}',
+    dueLaterTooltip: 'Fällig am {date}',
+  },
 };

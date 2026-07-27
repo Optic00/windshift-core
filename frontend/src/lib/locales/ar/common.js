@@ -315,4 +315,15 @@ export default {
     configureFilter: 'قم بتكوين الفلتر لرؤية العناصر',
     createToStart: 'أنشئ {item} للبدء',
   },
+  dueDate: {
+    noDueDate: 'لا يوجد تاريخ استحقاق',
+    dueToday: 'يستحق اليوم',
+    dueTomorrow: 'يستحق غدًا',
+    dueYesterday: 'استحق أمس',
+    dueInDays: 'يستحق خلال {days} أيام',
+    overdueByDays: 'متأخر بـ {days} أيام',
+    overdueTooltip: 'متأخر بـ {days} أيام — كان مستحقًا في {date}',
+    dueSoonTooltip: 'يستحق خلال {days} أيام — {date}',
+    dueLaterTooltip: 'يستحق في {date}',
+  },
 };

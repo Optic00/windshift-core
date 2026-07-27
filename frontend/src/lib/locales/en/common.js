@@ -325,4 +325,15 @@ export default {
     configureFilter: 'Configure filter to see items',
     createToStart: 'Create {item} to get started',
   },
+  dueDate: {
+    noDueDate: 'No due date',
+    dueToday: 'Due today',
+    dueTomorrow: 'Due tomorrow',
+    dueYesterday: 'Due yesterday',
+    dueInDays: 'Due in {days} days',
+    overdueByDays: 'Overdue by {days} days',
+    overdueTooltip: 'Overdue by {days} days — was due {date}',
+    dueSoonTooltip: 'Due in {days} days — {date}',
+    dueLaterTooltip: 'Due {date}',
+  },
 };

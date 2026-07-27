@@ -3,7 +3,7 @@
  * Centralized date formatting functions to avoid duplication across components
  */
 
-import { i18n } from '../stores/i18n.svelte.js';
+import { i18n, t } from '../stores/i18n.svelte.js';
 import { serverNow } from './serverClock.js';
 
 /**
@@ -289,7 +289,7 @@ export function formatStatusAge(since) {
  * @returns {string} Formatted due date text (e.g., "Due today", "Overdue by 3 days")
  */
 export function formatDueDate(dueDate) {
-  if (!dueDate) return 'No due date';
+  if (!dueDate) return t('dueDate.noDueDate');
 
   const d = dueDate instanceof Date ? dueDate : new Date(dueDate);
   const now = serverNow();
@@ -297,28 +297,66 @@ export function formatDueDate(dueDate) {
   const days = Math.round(diffMs / 86400000);
 
   if (days > 7) return d.toLocaleDateString(getAppLocale(), { month: 'short', day: 'numeric' });
-  if (days > 1) return `Due in ${days} days`;
-  if (days === 1) return 'Due tomorrow';
-  if (days === 0) return 'Due today';
-  if (days === -1) return 'Due yesterday';
-  return `Overdue by ${Math.abs(days)} days`;
+  if (days > 1) return t('dueDate.dueInDays', { days });
+  if (days === 1) return t('dueDate.dueTomorrow');
+  if (days === 0) return t('dueDate.dueToday');
+  if (days === -1) return t('dueDate.dueYesterday');
+  return t('dueDate.overdueByDays', { days: Math.abs(days) });
 }
 
 /**
- * Get CSS class for due date badge based on urgency
+ * Compact due-date label carrying only the triage order (e.g. "68d", "3w").
  * @param {Date|string} dueDate - Due date
- * @returns {string} Tailwind CSS classes for the badge
+ * @returns {string} Compact day/week count
  */
-export function getDueBadgeClass(dueDate) {
-  if (!dueDate) return 'bg-gray-100 text-gray-600';
+export function formatDueCompact(dueDate) {
+  const d = dueDate instanceof Date ? dueDate : new Date(dueDate);
+  const now = serverNow();
+  const days = Math.abs(Math.round((d.getTime() - now.getTime()) / 86400000));
+  if (days < 14) return `${days}d`;
+  return `${Math.floor(days / 7)}w`;
+}
+
+/**
+ * Severity bucket for a due date: drives icon and Badge variant.
+ * @param {Date|string} dueDate - Due date
+ * @returns {'overdue'|'soon'|'later'|null}
+ */
+export function getDueSeverity(dueDate) {
+  if (!dueDate) return null;
 
   const d = dueDate instanceof Date ? dueDate : new Date(dueDate);
   const now = serverNow();
   const diff = d.getTime() - now.getTime();
 
-  if (diff < 0) return 'bg-rose-100 text-rose-700';
-  if (diff <= 2 * 86400000) return 'bg-amber-100 text-amber-700';
-  return 'bg-blue-50 text-blue-700';
+  if (diff < 0) return 'overdue';
+  if (diff <= 2 * 86400000) return 'soon';
+  return 'later';
+}
+
+/**
+ * Full-sentence due tooltip text (e.g. "Overdue by 68 days — was due 20 May 2026").
+ * @param {Date|string} dueDate - Due date
+ * @returns {string} Localised tooltip sentence
+ */
+export function formatDueTooltip(dueDate) {
+  const d = dueDate instanceof Date ? dueDate : new Date(dueDate);
+  const date = d.toLocaleDateString(getAppLocale(), {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+  const severity = getDueSeverity(dueDate);
+
+  if (severity === 'overdue') {
+    const days = Math.abs(Math.round((d.getTime() - serverNow().getTime()) / 86400000));
+    return t('dueDate.overdueTooltip', { days, date });
+  }
+  if (severity === 'soon') {
+    const days = Math.round((d.getTime() - serverNow().getTime()) / 86400000);
+    return t('dueDate.dueSoonTooltip', { days, date });
+  }
+  return t('dueDate.dueLaterTooltip', { date });
 }
 
 /**
