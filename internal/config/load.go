@@ -269,7 +269,31 @@ func postgresEnv() database.PostgresEnv {
 		User:     firstNonEmpty(os.Getenv("POSTGRES_USER"), "windshift"),
 		Password: os.Getenv("POSTGRES_PASSWORD"),
 		Database: firstNonEmpty(os.Getenv("POSTGRES_DB"), "windshift"),
+		SSLMode:  postgresSSLMode(),
 	}
+}
+
+// postgresSSLMode resolves POSTGRES_SSLMODE for the split-variable Postgres
+// path. Validated here rather than left to the driver: a typo like "required"
+// otherwise surfaces only as an opaque `pq: unsupported sslmode` at first
+// connect, which reads like a server problem rather than a config one.
+//
+// Deployments using POSTGRES_CONNECTION_STRING put sslmode in the URL instead
+// and never reach this.
+func postgresSSLMode() string {
+	raw := os.Getenv("POSTGRES_SSLMODE")
+	mode := strings.ToLower(strings.TrimSpace(raw))
+	if mode == "" {
+		return database.DefaultPostgresSSLMode
+	}
+	switch mode {
+	case "disable", "allow", "prefer", "require", "verify-ca", "verify-full":
+		return mode
+	}
+	slog.Error("FATAL: POSTGRES_SSLMODE must be one of disable, allow, prefer, require, verify-ca, verify-full",
+		"sslmode", raw)
+	os.Exit(1)
+	return ""
 }
 
 func normalizeContextPath(raw string) string {
