@@ -90,7 +90,8 @@ export function assignedToMeQuery(userId, limit = 30) {
  * @param {number | 'all'} [maxItems]
  */
 export function normalizeTaskResponse(response, maxItems = 6) {
-  const raw = Array.isArray(response) ? response : /** @type {any} */ (response?.items ?? []);
+  const wrapped = /** @type {any} */ (response);
+  const raw = Array.isArray(response) ? response : (wrapped?.items ?? []);
   const active = raw
     .filter((i) => i?.id)
     .map((i) => ({
