@@ -1620,6 +1620,30 @@
         },
         "type": "object"
       },
+      "handlers.IterationUpdateRequest": {
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "end_date": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "start_date": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "type_id": {
+            "nullable": true,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
       "handlers.MilestoneCreateRequest": {
         "properties": {
           "category_id": {
@@ -1791,6 +1815,28 @@
           },
           "item_count": {
             "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "handlers.MilestoneUpdateRequest": {
+        "properties": {
+          "category_id": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "description": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "target_date": {
+            "nullable": true,
+            "type": "string"
           }
         },
         "type": "object"
@@ -10864,7 +10910,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/handlers.IterationCreateRequest"
+                "$ref": "#/components/schemas/handlers.IterationUpdateRequest"
               }
             }
           },
@@ -11577,7 +11623,7 @@
         ]
       },
       "put": {
-        "description": "Updates a milestone in place. Scope (global vs workspace-scoped) is taken from the persisted row, not the request body — milestones cannot be retargeted between scopes.",
+        "description": "Updates a milestone in place. Omitted fields keep their current value; explicit null clears target_date and category_id. Scope (global vs workspace-scoped) is taken from the persisted row, not the request body — milestones cannot be retargeted between scopes.",
         "parameters": [
           {
             "description": "Milestone ID",
@@ -11593,7 +11639,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/handlers.MilestoneCreateRequest"
+                "$ref": "#/components/schemas/handlers.MilestoneUpdateRequest"
               }
             }
           },
@@ -15738,7 +15784,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/handlers.IterationCreateRequest"
+                "$ref": "#/components/schemas/handlers.IterationUpdateRequest"
               }
             }
           },
@@ -16832,7 +16878,7 @@
         ]
       },
       "put": {
-        "description": "Updates a workspace-scoped milestone. The milestone cannot be retargeted to another workspace via the body — workspace ownership is taken from the URL.",
+        "description": "Updates a workspace-scoped milestone. Omitted fields keep their current value; explicit null clears target_date and category_id. The milestone cannot be retargeted to another workspace via the body — workspace ownership is taken from the URL.",
         "parameters": [
           {
             "description": "Workspace ID",
@@ -16857,7 +16903,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/handlers.MilestoneCreateRequest"
+                "$ref": "#/components/schemas/handlers.MilestoneUpdateRequest"
               }
             }
           },

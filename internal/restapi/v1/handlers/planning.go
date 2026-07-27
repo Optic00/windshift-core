@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"windshift/internal/database"
 	"windshift/internal/models"
@@ -70,6 +71,11 @@ type MilestoneCreateRequest struct {
 	Status      string `json:"status,omitempty"`
 	CategoryID  *int   `json:"category_id,omitempty"`
 }
+
+// MilestoneUpdateRequest is the body for the milestone PUT endpoints. Every
+// field is optional: absent fields keep their persisted value, so a caller can
+// change one attribute without re-sending the whole milestone.
+type MilestoneUpdateRequest = models.MilestonePatch
 
 // sortOrderFromPagination translates the pagination SortAsc flag into the
 // "asc"/"desc" string the service layer expects.
@@ -311,16 +317,79 @@ func (h *MilestoneHandler) requireMilestoneAccessByID(w http.ResponseWriter, r *
 	return user.ID, id, wsID, true
 }
 
+// storedMilestoneTargetDate turns a persisted target date into the value a
+// patch carries forward for the fields the caller left out. MilestoneResult
+// keeps the raw column string, which the driver hands back as a full timestamp
+// ("2026-07-14T00:00:00Z"), while the planning validator only accepts
+// YYYY-MM-DD — so re-supplying it verbatim would reject the update. An empty
+// string is the stored NULL and means "no date".
+func storedMilestoneTargetDate(stored string) *string {
+	if stored == "" {
+		return nil
+	}
+	if parsed, err := time.Parse(time.RFC3339, stored); err == nil {
+		date := parsed.Format("2006-01-02")
+		return &date
+	}
+	return &stored
+}
+
+// applyMilestoneUpdate decodes a partial update, merges it over the persisted
+// milestone and writes the result. UpdateMilestone always sets every column, so
+// fields the caller omitted have to be re-supplied from current — otherwise a
+// single-field PUT would blank the rest of the milestone. workspaceID scopes the
+// SQL UPDATE to the milestone's owning workspace (nil for global); the WHERE
+// clause refuses cross-scope edits, so milestones cannot be retargeted here.
+func (h *MilestoneHandler) applyMilestoneUpdate(w http.ResponseWriter, r *http.Request, current *services.MilestoneResult, workspaceID *int) {
+	var req MilestoneUpdateRequest
+	if !h.DecodeBodyOrRespond(w, r, &req) {
+		return
+	}
+
+	merged := req.Apply(models.Milestone{
+		Name:        current.Name,
+		Description: current.Description,
+		TargetDate:  storedMilestoneTargetDate(current.TargetDate),
+		Status:      current.Status,
+		CategoryID:  current.CategoryID,
+	})
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &merged.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &merged.Description, Policy: sanitize.RichText, Label: "Description"},
+	)
+
+	updated, err := h.planningService.UpdateMilestone(services.UpdateMilestoneParams{
+		ID:          current.ID,
+		Name:        merged.Name,
+		Description: merged.Description,
+		TargetDate:  merged.TargetDate,
+		Status:      merged.Status,
+		CategoryID:  merged.CategoryID,
+		WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		if h.respondPlanningMutationError(w, r, err) {
+			return
+		}
+		h.RespondInternalError(w, r)
+		return
+	}
+
+	resp := toMilestoneResponse(updated)
+	resp.Warnings = warnings
+	h.RespondOK(w, resp)
+}
+
 // Update handles PUT /rest/api/v1/milestones/{id}
 //
 // @Summary      Update a milestone
-// @Description  Updates a milestone in place. Scope (global vs workspace-scoped) is taken from the persisted row, not the request body — milestones cannot be retargeted between scopes.
+// @Description  Updates a milestone in place. Omitted fields keep their current value; explicit null clears target_date and category_id. Scope (global vs workspace-scoped) is taken from the persisted row, not the request body — milestones cannot be retargeted between scopes.
 // @Tags         milestones
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
 // @Param        id    path      int                              true  "Milestone ID"
-// @Param        body  body      handlers.MilestoneCreateRequest  true  "Fields to update"
+// @Param        body  body      handlers.MilestoneUpdateRequest  true  "Fields to update"
 // @Success      200   {object}  handlers.MilestoneResponse
 // @Failure      400   {object}  handlers.ErrorResponse  "Invalid milestone ID or request body"
 // @Failure      401   {object}  handlers.ErrorResponse
@@ -334,44 +403,13 @@ func (h *MilestoneHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req MilestoneCreateRequest
-	if !h.DecodeBodyOrRespond(w, r, &req) {
-		return
-	}
-	warnings := sanitize.ApplyAllWithWarnings(
-		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
-		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
-	)
-
-	var updateTargetDate *string
-	if req.TargetDate != "" {
-		updateTargetDate = &req.TargetDate
-	}
-
-	// WorkspaceID scopes the SQL UPDATE to the resolved milestone's owning
-	// workspace (nil for global). UpdateMilestoneParams refuses cross-scope
-	// edits via its WHERE clause, so this also defends against a milestone
-	// being retargeted between scopes via concurrent modification.
-	m, err := h.planningService.UpdateMilestone(services.UpdateMilestoneParams{
-		ID:          id,
-		Name:        req.Name,
-		Description: req.Description,
-		TargetDate:  updateTargetDate,
-		Status:      req.Status,
-		CategoryID:  req.CategoryID,
-		WorkspaceID: workspaceID,
-	})
+	current, err := h.planningService.GetMilestone(id)
 	if err != nil {
-		if h.respondPlanningMutationError(w, r, err) {
-			return
-		}
-		h.RespondInternalError(w, r)
+		h.RespondNotFound(w, r)
 		return
 	}
 
-	resp := toMilestoneResponse(m)
-	resp.Warnings = warnings
-	h.RespondOK(w, resp)
+	h.applyMilestoneUpdate(w, r, current, workspaceID)
 }
 
 // Delete handles DELETE /rest/api/v1/milestones/{id}
@@ -840,14 +878,14 @@ func (h *MilestoneHandler) GetInWorkspace(w http.ResponseWriter, r *http.Request
 // UpdateInWorkspace handles PUT /rest/api/v1/workspaces/{id}/milestones/{milestoneId}
 //
 // @Summary      Update a workspace milestone
-// @Description  Updates a workspace-scoped milestone. The milestone cannot be retargeted to another workspace via the body — workspace ownership is taken from the URL.
+// @Description  Updates a workspace-scoped milestone. Omitted fields keep their current value; explicit null clears target_date and category_id. The milestone cannot be retargeted to another workspace via the body — workspace ownership is taken from the URL.
 // @Tags         workspaces, milestones
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
 // @Param        id           path      int                              true  "Workspace ID"
 // @Param        milestoneId  path      int                              true  "Milestone ID"
-// @Param        body         body      handlers.MilestoneCreateRequest  true  "Fields to update"
+// @Param        body         body      handlers.MilestoneUpdateRequest  true  "Fields to update"
 // @Success      200          {object}  handlers.MilestoneResponse
 // @Failure      400          {object}  handlers.ErrorResponse  "Invalid workspace ID, milestone ID, or request body"
 // @Failure      401          {object}  handlers.ErrorResponse
@@ -866,42 +904,9 @@ func (h *MilestoneHandler) UpdateInWorkspace(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	var req MilestoneCreateRequest
-	if !h.DecodeBodyOrRespond(w, r, &req) {
-		return
-	}
-	warnings := sanitize.ApplyAllWithWarnings(
-		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
-		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
-	)
-
-	var updateTargetDate *string
-	if req.TargetDate != "" {
-		updateTargetDate = &req.TargetDate
-	}
-
-	// WorkspaceID in the UpdateMilestoneParams scopes the SQL UPDATE to this
-	// workspace as a defense-in-depth check beyond the URL match above.
-	updated, err := h.planningService.UpdateMilestone(services.UpdateMilestoneParams{
-		ID:          m.ID,
-		Name:        req.Name,
-		Description: req.Description,
-		TargetDate:  updateTargetDate,
-		Status:      req.Status,
-		CategoryID:  req.CategoryID,
-		WorkspaceID: &wsID,
-	})
-	if err != nil {
-		if h.respondPlanningMutationError(w, r, err) {
-			return
-		}
-		h.RespondInternalError(w, r)
-		return
-	}
-
-	resp := toMilestoneResponse(updated)
-	resp.Warnings = warnings
-	h.RespondOK(w, resp)
+	// Passing wsID scopes the SQL UPDATE to this workspace as a defense-in-depth
+	// check beyond the URL match resolveWorkspaceMilestone already made.
+	h.applyMilestoneUpdate(w, r, m, &wsID)
 }
 
 // DeleteInWorkspace handles DELETE /rest/api/v1/workspaces/{id}/milestones/{milestoneId}

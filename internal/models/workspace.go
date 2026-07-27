@@ -2,6 +2,7 @@ package models
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -200,6 +201,63 @@ func (p *NullableIntPatch) UnmarshalJSON(data []byte) error {
 	}
 	p.Value = &value
 	return nil
+}
+
+// NullableStringPatch is the string counterpart of NullableIntPatch, for
+// nullable columns such as milestone.target_date. An empty string reads as a
+// clear too, since a blank date is never a meaningful stored value.
+type NullableStringPatch struct {
+	Present bool
+	Value   *string
+}
+
+func (p *NullableStringPatch) UnmarshalJSON(data []byte) error {
+	p.Present = true
+	if string(data) == "null" {
+		p.Value = nil
+		return nil
+	}
+	var value string
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	if strings.TrimSpace(value) == "" {
+		p.Value = nil
+		return nil
+	}
+	p.Value = &value
+	return nil
+}
+
+// MilestonePatch is the presence-aware update contract for milestones. Empty
+// description is a valid clear, null (or blank) target_date and null
+// category_id are valid clears, and omitted fields preserve their stored
+// values.
+type MilestonePatch struct {
+	Name        *string             `json:"name,omitempty"`
+	Description *string             `json:"description,omitempty"`
+	TargetDate  NullableStringPatch `json:"target_date,omitempty" swaggertype:"string" extensions:"x-nullable"`
+	Status      *string             `json:"status,omitempty"`
+	CategoryID  NullableIntPatch    `json:"category_id,omitempty" swaggertype:"integer" extensions:"x-nullable"`
+}
+
+func (p MilestonePatch) Apply(existing Milestone) Milestone {
+	if p.Name != nil {
+		existing.Name = *p.Name
+	}
+	if p.Description != nil {
+		existing.Description = *p.Description
+	}
+	if p.TargetDate.Present {
+		existing.TargetDate = p.TargetDate.Value
+	}
+	if p.Status != nil {
+		existing.Status = *p.Status
+	}
+	if p.CategoryID.Present {
+		existing.CategoryID = p.CategoryID.Value
+	}
+	return existing
 }
 
 // IterationPatch is the presence-aware update contract shared by the legacy
