@@ -92,6 +92,8 @@ func (s *MentionService) ResolveMentionedUserIDs(content string) ([]int, error) 
 }
 
 // resolveUserIdentifier looks up a user by username or display name
+// ser: last review on July 27
+// FIXME: why is this here? displayName lookup especially is unsafe as two users can share the same displayName
 func (s *MentionService) resolveUserIdentifier(identifier string) (userID int, displayName string, err error) {
 	var firstName, lastName string
 
