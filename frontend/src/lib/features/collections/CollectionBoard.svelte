@@ -1518,10 +1518,13 @@
                     {#if isColumnCollapsed(column.id)}
                       <!-- Collapsed column: narrow vertical strip showing the rotated
                            column name and item count. Clicking it re-expands. It keeps
-                           its status drop target so items can still be dropped here. -->
+                           its status drop target so items can still be dropped here.
+                           pt-5 puts the expand chevron on the same baseline as the
+                           collapse chevron in BoardColumn's header (border-t-4 + p-4 +
+                           the button's p-1). -->
                       <button
                         type="button"
-                        class="relative rounded border shadow-sm flex flex-col items-center justify-between gap-2 py-3 px-1 text-center cursor-pointer transition-colors"
+                        class="relative rounded border shadow-sm flex flex-col items-center justify-between gap-2 pt-5 pb-3 px-1 text-center cursor-pointer transition-colors"
                         style="{styles.columnStyle(12)} border-top: 4px solid {column.color};"
                         data-testid="board-column"
                         data-status-column
