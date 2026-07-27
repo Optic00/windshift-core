@@ -249,23 +249,25 @@
     {@render children?.()}
   </div>
 
-  <!-- Resize handle (right edge) -->
-  <button
-    class="widget-resize-handle"
-    data-testid="widget-resize-handle"
-    role="slider"
-    tabindex="0"
-    aria-label={t('widgets.resizeAriaLabel')}
-    aria-valuemin={minWidth}
-    aria-valuemax={TOTAL_COLUMNS}
-    aria-valuenow={displayColumns}
-    aria-valuetext={t('widgets.resizeColumnsValue', { count: displayColumns })}
-    onmousedown={onResizeStart}
-    ondblclick={onResizeHandleDblClick}
-    onkeydown={handleSliderKeydown}
-  >
-    <span class="widget-resize-grip" aria-hidden="true"></span>
-  </button>
+  <!-- Resize handle (right edge) — exposed only in edit mode -->
+  {#if isEditing}
+    <button
+      class="widget-resize-handle"
+      data-testid="widget-resize-handle"
+      role="slider"
+      tabindex="0"
+      aria-label={t('widgets.resizeAriaLabel')}
+      aria-valuemin={minWidth}
+      aria-valuemax={TOTAL_COLUMNS}
+      aria-valuenow={displayColumns}
+      aria-valuetext={t('widgets.resizeColumnsValue', { count: displayColumns })}
+      onmousedown={onResizeStart}
+      ondblclick={onResizeHandleDblClick}
+      onkeydown={handleSliderKeydown}
+    >
+      <span class="widget-resize-grip" aria-hidden="true"></span>
+    </button>
+  {/if}
 
   {#if isResizing}
     <div class="widget-resize-guide" data-testid="widget-resize-guide">
