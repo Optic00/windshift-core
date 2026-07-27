@@ -3,22 +3,38 @@
   import { authStore } from '../../stores';
   import { api } from '../../api.js';
   import DashboardItemRow from './DashboardItemRow.svelte';
-  import { assignedToMeQuery, normalizeTaskResponse, openTask } from './taskWidgetState.js';
+  import {
+    assignedToMeQuery,
+    normalizeTaskResponse,
+    openTask,
+    resolveRowCount,
+    resolveDensity,
+    rowCountToLimit,
+  } from './taskWidgetState.js';
+
+  let { config = {} } = $props();
 
   let tasks = $state([]);
   let loading = $state(false);
   let errored = $state(false);
   let lastUserId = null;
+  let lastLoadKey = null;
   let version = 0;
 
   const currentUserId = $derived($authStore?.currentUser?.id ?? null);
+  const rowCount = $derived(resolveRowCount(config, 12));
+  const density = $derived(resolveDensity(config));
+  const fetchLimit = $derived(rowCountToLimit(rowCount));
+  const loadKey = $derived(`${currentUserId}:${rowCount}`);
 
   $effect(() => {
-    if (currentUserId && currentUserId !== lastUserId) {
+    if (currentUserId && (currentUserId !== lastUserId || loadKey !== lastLoadKey)) {
       lastUserId = currentUserId;
+      lastLoadKey = loadKey;
       load();
     } else if (!currentUserId && lastUserId !== null) {
       lastUserId = null;
+      lastLoadKey = null;
       tasks = [];
     }
   });
@@ -28,9 +44,9 @@
     loading = true;
     errored = false;
     try {
-      const response = await api.items.getAll(assignedToMeQuery(currentUserId));
+      const response = await api.items.getAll(assignedToMeQuery(currentUserId, fetchLimit));
       if (v !== version) return;
-      tasks = normalizeTaskResponse(response);
+      tasks = normalizeTaskResponse(response, rowCount);
     } catch (err) {
       if (v !== version) return;
       console.error('Failed to load assigned items:', err);
@@ -70,6 +86,7 @@
           priorityName={task.priority_name}
           priorityColor={task.priority_color}
           dueDate={task.dueDate}
+          {density}
           onclick={() => openTask(task)}
         />
       </li>

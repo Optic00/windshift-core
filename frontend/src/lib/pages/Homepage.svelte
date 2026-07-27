@@ -165,6 +165,10 @@
     homepageStore.updateWidgetWidth(widgetId, newWidth);
   }
 
+  function updateWidgetConfig(widgetId, configChanges) {
+    homepageStore.updateWidgetConfig(widgetId, configChanges);
+  }
+
   // --- Drag and drop ---
 
   let dragSetupKey = $derived(isCustomizeMode ? customizationCategory : null);
@@ -402,15 +406,18 @@
               data-section-id={section.id}
             >
               {#if sectionWidgets.length > 0}
-                <div class="grid grid-cols-3 gap-4">
+                <div class="grid grid-cols-12 gap-4">
                   {#each sectionWidgets as widget (widget.id)}
                     <WidgetWrapper
                       title={getWidgetTitle(widget.type)}
                       widgetId={widget.id}
+                      widgetType={widget.type}
                       width={widget.width}
+                      config={widget.config ?? {}}
                       isEditing={isCustomizeMode || isEditMode}
                       onremove={() => removeWidget(widget.id)}
                       onwidthchange={(newWidth) => updateWidgetWidth(widget.id, newWidth)}
+                      onconfigchange={(changes) => updateWidgetConfig(widget.id, changes)}
                     >
                       {#if widget.type === 'daily-briefing'}
                         <DailyBriefingWidget />
@@ -427,9 +434,9 @@
                       {:else if widget.type === 'recent-workspaces'}
                         <RecentWorkspacesWidget />
                       {:else if widget.type === 'assigned-to-me'}
-                        <AssignedToMeWidget />
+                        <AssignedToMeWidget config={widget.config ?? {}} />
                       {:else if widget.type === 'personal-tasks'}
-                        <PersonalTasksWidget />
+                        <PersonalTasksWidget config={widget.config ?? {}} />
                       {:else}
                         <div class="text-center py-8 text-sm" style="color: var(--ds-text-subtle);">
                           Unknown widget type: {widget.type}

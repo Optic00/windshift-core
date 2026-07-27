@@ -2,7 +2,7 @@
   import { CheckSquare } from '@lucide/svelte';
   import { authStore } from '../stores';
   import { api } from '../api.js';
-  import { formatDueDate, getDueBadgeClass } from '../utils/dateFormatter.js';
+  import DueMark from './dashboard/DueMark.svelte';
   import WidgetState from './WidgetState.svelte';
   import { t } from '../stores/i18n.svelte.js';
 
@@ -118,9 +118,7 @@
             </p>
           </div>
           <div class="flex flex-col items-end gap-1 text-xs">
-            <span class={`inline-flex items-center rounded-full px-2 py-0.5 font-semibold ${getDueBadgeClass(task.dueDate)}`}>
-              {formatDueDate(task.dueDate)}
-            </span>
+            <DueMark dueDate={task.dueDate} />
             {#if task.priority_name}
               <span class="uppercase tracking-wide text-[0.65rem]" style="color: var(--ds-text-subtle);">
                 {task.priority_name}

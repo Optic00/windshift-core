@@ -99,7 +99,15 @@ class HomepageStore {
   applyLayout(layout, revision = '') {
     if (layout && Array.isArray(layout.sections) && layout.sections.length > 0) {
       this.sections = [...layout.sections].sort((a, b) => a.display_order - b.display_order);
-      this.widgets = Array.isArray(layout.widgets) ? [...layout.widgets] : [];
+      const widgets = Array.isArray(layout.widgets) ? [...layout.widgets] : [];
+      // Migrate legacy 3-column widths (1..3) to the 12-column grid (x4).
+      // A layout where every width fits in the old range must be legacy.
+      if (widgets.length > 0 && widgets.every((w) => typeof w.width === 'number' && w.width <= 3)) {
+        for (const w of widgets) {
+          w.width = w.width * 4;
+        }
+      }
+      this.widgets = widgets;
     } else {
       const defaults = buildDefaultDashboardLayout();
       this.sections = defaults.sections;
@@ -220,6 +228,13 @@ class HomepageStore {
 
   updateWidgetWidth(widgetId, newWidth) {
     this.widgets = this.widgets.map((w) => (w.id === widgetId ? { ...w, width: newWidth } : w));
+    this.debouncedSaveLayout();
+  }
+
+  updateWidgetConfig(widgetId, configChanges) {
+    this.widgets = this.widgets.map((w) =>
+      w.id === widgetId ? { ...w, config: { ...(w.config ?? {}), ...configChanges } } : w
+    );
     this.debouncedSaveLayout();
   }
 

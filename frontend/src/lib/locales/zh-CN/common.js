@@ -288,4 +288,15 @@ export default {
     configureFilter: '配置筛选器以查看项目',
     createToStart: '创建 {item} 以开始使用',
   },
+  dueDate: {
+    noDueDate: '无截止日期',
+    dueToday: '今天到期',
+    dueTomorrow: '明天到期',
+    dueYesterday: '昨天到期',
+    dueInDays: '{days} 天后到期',
+    overdueByDays: '已逾期 {days} 天',
+    overdueTooltip: '已逾期 {days} 天 — 原定于 {date}',
+    dueSoonTooltip: '{days} 天后到期 — {date}',
+    dueLaterTooltip: '{date} 到期',
+  },
 };
