@@ -920,13 +920,7 @@ func (s *BindingService) promptSuffixForBinding(binding *models.WorkspaceAgentBi
 	return b.String()
 }
 
-// renderInstruction renders the run's free-form instruction — the body of the
-// @mentioning comment that triggered the run — as a prompt section the agent
-// treats as its directive for what to do. Returns "" when the trigger carries
-// no instruction (e.g. a bare assignment change), so the static prompt stands
-// alone. The comment is quoted verbatim and the agent is pointed at the item
-// and its other comments for context, so a terse instruction ("fix the typo")
-// does not strand it without the surrounding detail.
+// renderInstruction quotes the triggering directive and directs terse requests to item context.
 func renderInstruction(trigger *models.RunTrigger) string {
 	if !trigger.HasInstruction() {
 		return ""

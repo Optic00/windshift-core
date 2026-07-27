@@ -213,13 +213,7 @@ func (ns *NotificationScheduler) processPendingNotifications() {
 					slog.String("user_email", userEmail),
 					slog.Any("error", rollbackErr),
 				)
-				// Surface the wedge: pre-mark left sent_at set, rollback couldn't
-				// clear it, so the next tick's `WHERE sent_at IS NULL` would skip
-				// these rows forever. Tagging last_send_failed makes them findable
-				// (`SELECT * FROM notifications WHERE last_send_failed = true`) so
-				// an operator can investigate; we deliberately don't auto-retry
-				// here because we can't tell whether the SMTP send actually went
-				// out before the rollback failed (would-be C3 territory).
+				// Mark rollback failures for operators rather than retrying an ambiguously delivered email.
 				if markErr := ns.notifSvc.MarkNotificationsSendFailed(batch.NotificationIDs); markErr != nil {
 					slog.Error("failed to mark notifications as send-failed; rows are silently wedged",
 						slog.String("component", "scheduler"),

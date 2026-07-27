@@ -82,13 +82,7 @@ func queueBuffer(capacity int) int {
 	return b
 }
 
-// claimNext pulls the next admitted job off the queue and runs the
-// orchestrator-side preamble (mark running, worktree prep, token mint),
-// returning a ClaimedJob whose Ctx is the per-run context the worker
-// drives the runner with. A job whose preamble fails is finalized in place
-// and the loop moves on to the next. It returns nil only when the service
-// is shutting down, at which point any still-queued runs are drained as
-// canceled. This is the in-process realization of OrchestratorClient.Claim.
+// claimNext admits queued work; preamble failures finalize in place, and shutdown drains queued runs.
 func (s *RunService) claimNext() *ClaimedJob {
 	for {
 		var job queuedJob

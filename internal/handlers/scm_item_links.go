@@ -192,13 +192,7 @@ func (h *SCMItemLinksHandler) GetItemSCMLinks(w http.ResponseWriter, r *http.Req
 
 	respondJSONOK(w, links)
 
-	// Fire background refresh for OAuth PR links if the user is authenticated.
-	// Detach from the request context: r.Context() is canceled the moment
-	// ServeHTTP returns (which is immediately, since the response is already
-	// flushed above), so a child of it would be canceled before the provider
-	// round-trip completes — leaving OAuth-connection links (the only kind
-	// refreshed on-view; both background schedulers skip OAuth) permanently
-	// stale. WithoutCancel keeps request-scoped values but drops cancellation.
+	// Preserve request values but detach cancellation so the OAuth refresh can finish after the response.
 	if hasOAuthPRLinks {
 		if user := utils.GetCurrentUser(r); user != nil {
 			detached := context.WithoutCancel(r.Context())

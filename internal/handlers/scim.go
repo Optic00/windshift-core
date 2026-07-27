@@ -1592,13 +1592,8 @@ func (h *SCIMHandler) groupToSCIM(group *models.TeamGroup, members []models.SCIM
 	}
 }
 
-// applyUserPatchOp applies a single SCIM PATCH operation to the user identified
-// by snapshot.ID. It mutates the snapshot in place so subsequent ops see the
-// previously-applied values, and returns the set of attribute changes it made
-// (for audit logging). Unknown paths emit an "<unsupported>" breadcrumb in the
-// returned changes slice instead of a SCIM error, so an IdP pushing an attribute
-// we don't support (e.g. phoneNumbers) succeeds as an audited no-op rather than
-// failing the whole PATCH — but still leaves a trail operators can grep.
+// applyUserPatchOp mutates the snapshot for subsequent operations and returns audit changes.
+// Unsupported attributes succeed as audited no-ops rather than failing the complete PATCH.
 func (h *SCIMHandler) applyUserPatchOp(snapshot *models.User, op models.SCIMPatchOp) ([]attrChange, error) {
 	opLower := strings.ToLower(op.Op)
 	userID := snapshot.ID

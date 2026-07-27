@@ -596,13 +596,7 @@ func gitOutputEnv(ctx context.Context, gitBinary string, allowFileURL bool, dir 
 	return string(out), nil
 }
 
-// mkdirTempPreferring creates a temp dir under preferredRoot when set, falling
-// back to the system temp location. The orchestrator passes a subdir of the
-// worktree root: that is always a writable, exec-capable volume when the
-// runner is configured, whereas in a scratch deploy /tmp is either absent
-// entirely or a tmpfs Docker mounted noexec by default — and the askpass
-// helper must be executable by git. An empty preferredRoot keeps the plain
-// os.MkdirTemp behavior.
+// mkdirTempPreferring uses the exec-capable worktree root for Git askpass, falling back to system temp.
 func mkdirTempPreferring(preferredRoot, pattern string) (string, error) {
 	if preferredRoot == "" {
 		return os.MkdirTemp("", pattern)

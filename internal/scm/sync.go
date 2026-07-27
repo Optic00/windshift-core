@@ -592,13 +592,7 @@ func (s *SyncService) processPullRequest(ctx context.Context, provider Provider,
 // parsing is needed.
 var prCommentTriggerRE = regexp.MustCompile(`(?i)` + regexp.QuoteMeta(models.DefaultAgentTriggerToken) + `\b`)
 
-// pollPRCommentTriggers polls one open PR's comments and starts a continuation
-// run for each new comment that asks the agent to continue (contains the trigger
-// token, is not one the agent itself posted). A per-PR high-water comment id
-// makes each tick process only new comments; on first sight the high-water mark
-// is established WITHOUT firing, so a backlog of old "@agent" comments is not
-// replayed. Every layer here is part of the loop guard — see the four layers in
-// models.AgentCommentMarker / DefaultAgentTriggerToken and the cursor.
+// pollPRCommentTriggers starts only new non-agent continuation requests; first poll seeds the cursor.
 func (s *SyncService) pollPRCommentTriggers(ctx context.Context, provider Provider, owner, repo string, pr PullRequest, repoID, workspaceID int, itemIDs []int) {
 	if s.continuationStarter == nil {
 		return // poller not wired (e.g. coding-agent harness disabled)

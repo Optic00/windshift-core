@@ -475,13 +475,7 @@ func (h *SCMProviderHandler) storeUserOAuthToken(ctx context.Context, userID, pr
 	return err
 }
 
-// getOAuthRedirectURI returns the canonical OAuth callback URL for the
-// given provider slug. It is ALWAYS built from the configured baseURL —
-// never from request headers like Host or X-Forwarded-Host, which can be
-// spoofed by any caller (or any proxy hop that doesn't strip them). If
-// baseURL is unset, OAuth flows are treated as misconfigured and an
-// error is surfaced so the caller can respond 503 rather than silently
-// generating a redirect through an attacker-controlled host.
+// getOAuthRedirectURI uses only the configured baseURL; request hosts are untrusted.
 func (h *SCMProviderHandler) getOAuthRedirectURI(slug string) (string, error) {
 	if h.baseURL == "" {
 		return "", fmt.Errorf("scm OAuth is not configured: server baseURL is unset")

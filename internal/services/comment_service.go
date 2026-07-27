@@ -113,13 +113,7 @@ func (s *CommentService) SetAgentMentionTrigger(trigger AgentMentionTrigger) {
 	s.agentMentionTrigger = trigger
 }
 
-// Create creates a new comment with all associated side effects:
-// activity tracking, notifications, mentions, and webhooks.
-// Comment-table SQL lives here and nowhere else: every comment write in the
-// codebase (internal, v1, portal, GitHub sync, email, import, agent) goes
-// through CommentService, so the after-commit item-change publish (WI-483)
-// cannot be bypassed. A guard test fails if a direct comments-table write
-// appears outside this file.
+// All comment writes use CommentService so side effects and post-commit item changes cannot be bypassed.
 const (
 	insertCommentAuthorSQL = `INSERT INTO comments (item_id, author_id, content, is_private, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING id`
 	insertCommentPortalSQL = `INSERT INTO comments (item_id, portal_customer_id, content, is_private, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING id`

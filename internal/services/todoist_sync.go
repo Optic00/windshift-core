@@ -449,13 +449,7 @@ func inScope(cfg models.TodoistSyncConfig, projectID string) bool {
 	return true
 }
 
-// stateFromTodoist projects an inbound Todoist task to the canonical taskState.
-// Todoist content is external input, so title and description are sanitized
-// here at the ingress boundary — the same policies the item handlers apply
-// (PlainTextField for the title, RichText for the description). Because every
-// inbound value passes through this one function, the sanitized form is what
-// gets written to Windshift items AND what gets snapshotted, so the reconciler
-// never repeatedly tries to "restore" a raw/unsafe remote value.
+// stateFromTodoist sanitizes external content before persistence and reconciliation snapshots.
 func stateFromTodoist(td todoist.Item) taskState {
 	due := ""
 	if td.Due != nil {

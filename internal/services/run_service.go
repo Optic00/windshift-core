@@ -498,13 +498,7 @@ func (s *RunService) Start(ctx context.Context, req RunRequest) (int, error) {
 	return runID, nil
 }
 
-// invokePostRunHook fires the post-run callback if one is configured.
-// Errors are swallowed-with-log; a misbehaving hook must not affect the
-// run's recorded status. A 90s ctx caps how long the hook can stall the
-// worker before the worker goroutine returns — generous enough that the
-// AgentPRService open-PR path can retry a transient SCM failure (a few
-// bounded attempts with backoff) instead of leaving the pushed branch
-// without a PR.
+// invokePostRunHook isolates hook failures and bounds worker delay while allowing SCM retries.
 func (s *RunService) invokePostRunHook(info PostRunInfo) {
 	if s.postRunHook == nil {
 		return

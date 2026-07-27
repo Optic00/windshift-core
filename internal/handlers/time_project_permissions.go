@@ -51,13 +51,7 @@ func (h *TimeProjectPermissionHandler) requireProjectViewAccess(w http.ResponseW
 	return projectID, true
 }
 
-// requireGrantAuthority authenticates the user, extracts the project ID from the "id" route
-// param, and checks that the user holds real authority to grant/revoke project access. That
-// means global project.manage OR a direct/group manager assignment on this specific project —
-// deliberately NOT the "no managers configured → open to all" default, which would otherwise
-// let any authenticated user seize control of an unmanaged project by inserting themselves as
-// its first manager (WI-288). Returns the project ID, user, and true on success; writes the
-// appropriate error response and returns false on failure.
+// requireGrantAuthority requires explicit global or project-manager authority; unmanaged projects are not open grants.
 func (h *TimeProjectPermissionHandler) requireGrantAuthority(w http.ResponseWriter, r *http.Request) (int, *models.User, bool) {
 	projectID, ok := requireIDParam(w, r, "id")
 	if !ok {

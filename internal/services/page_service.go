@@ -908,13 +908,7 @@ func (s *PageService) SetInheritPermissions(actorID, pageID int, inherit bool) (
 	})
 }
 
-// validateGrantPrincipal verifies the principal exists (and is_active
-// where applicable) inside the same transaction as the grant. We
-// deliberately do NOT also check workspace membership here — membership
-// can drop independently, and the runtime evaluator already requires
-// workspace.page.view as a floor for ACL matches. This validation just
-// catches dead-on-arrival grants (typo'd ids, deleted users) so the audit
-// row points at a real entity.
+// validateGrantPrincipal verifies active principals in the grant transaction; runtime evaluation enforces membership.
 func (s *PageService) validateGrantPrincipal(tx database.Tx, principalType string, principalID int) error {
 	var query string
 	switch principalType {

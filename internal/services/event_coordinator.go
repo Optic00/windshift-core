@@ -472,13 +472,7 @@ func (ec *EventCoordinator) EmitApprovalStepStarted(req *models.ApprovalRequest,
 	}
 }
 
-// notifyPortalCustomersOfApprovalStep sends a magic-link "approval requested"
-// email to each portal customer in the active pool. The portal slug is
-// resolved from the item's submission channel; if the channel has no
-// portal_slug configured, the email is skipped (logged at warn). Internal
-// users linked via portal_customers.user_id still get the email — they can
-// reach /api/approvals/{id}/decide directly without the link, but the email
-// gives them a single unified entry point.
+// notifyPortalCustomersOfApprovalStep emails active portal approvers; missing portal slugs are logged and skipped.
 func (ec *EventCoordinator) notifyPortalCustomersOfApprovalStep(req *models.ApprovalRequest, customerIDs []int, item *models.Item, itemKey string) {
 	if ec.magicLinkService == nil || len(customerIDs) == 0 {
 		return

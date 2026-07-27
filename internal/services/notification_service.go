@@ -804,13 +804,7 @@ func (ns *NotificationService) determineRecipients(event *NotificationEvent, rul
 	return recipients
 }
 
-// agentOrUnknownUsers returns the subset of userIDs that must be excluded from
-// notifications because they are agent / service-user rows (is_agent = true) or
-// have no readable user row. It replaces a per-recipient is_agent query with a
-// single batched lookup. Fail-closed, matching the previous per-user behavior:
-// any id the query can't positively confirm as a non-agent human — a row
-// flagged is_agent, an id with no row, or a total query failure — is returned
-// as "skip", so an unreadable user never receives a notification.
+// agentOrUnknownUsers batch-loads notification exclusions and fails closed for non-human or unreadable users.
 func (ns *NotificationService) agentOrUnknownUsers(userIDs []int) map[int]bool {
 	skip := make(map[int]bool, len(userIDs))
 	if len(userIDs) == 0 {

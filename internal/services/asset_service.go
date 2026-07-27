@@ -22,13 +22,7 @@ import (
 	"windshift/internal/utils"
 )
 
-// sanitizeAssetText runs the asset-text input policy in one call:
-// PlainTextField on the title, RichText on the description (HTML except
-// <br /> stripped, dangerous Markdown URLs filtered, length-capped),
-// ShortIdentifier on the asset tag (tighter 100-rune cap matching the
-// db column shape for identifier-like fields). Both the cookie-auth
-// and bearer-auth surfaces flow through this so the input policy lives
-// in exactly one place.
+// sanitizeAssetText centralizes title, description, and tag policies for both authenticated surfaces.
 func sanitizeAssetText(title, description, assetTag *string) {
 	sanitize.ApplyAll(
 		sanitize.Pair{Target: title, Policy: sanitize.PlainTextField},

@@ -522,12 +522,7 @@ func (w *WebhookSender) subscriptionIndex(ctx context.Context) (*subscriptionInd
 	return index, nil
 }
 
-// matchesScope checks if the item matches the webhook's scope configuration.
-// "collections" scope is intentionally treated as never-matching: the prior
-// implementation read the collection's QL query but didn't execute it, so it
-// effectively returned true for any item. Disabling the scope until a proper
-// QL evaluator is wired is the safer default — better to under-deliver than
-// to fire webhooks for unintended items.
+// Collection scope never matches until a QL evaluator is wired, preventing unintended delivery.
 // TODO(channel-bughunt #11): wire collection QL evaluation and restore.
 func (w *WebhookSender) matchesScope(ctx context.Context, config *models.ChannelConfig, item *models.Item) bool {
 	_ = ctx

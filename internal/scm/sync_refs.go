@@ -95,13 +95,7 @@ func (s *SyncService) markRefProcessed(ctx context.Context, repoID int, refType,
 	return err
 }
 
-// syncTagsAndReleases lists tags matching the repo's tag pattern, emits
-// an ActionEvent for each newly seen one with prev_tag computed from the
-// chronologically preceding matching tag, and marks them processed.
-//
-// Type-asserts the provider for RefProvider; providers that don't
-// implement it (older fakes or providers without tag support) are a
-// silent no-op for this path.
+// syncTagsAndReleases emits new matching tags with chronological prev_tag; providers without tag support no-op.
 func (s *SyncService) syncTagsAndReleases(ctx context.Context, provider Provider, owner, repo string, repoID, workspaceID int) error {
 	rp, ok := provider.(RefProvider)
 	if !ok {

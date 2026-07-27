@@ -403,13 +403,7 @@ func (v *ItemFieldValidator) ValidateAndApplyUpdates(
 				}
 			}
 
-			// Reject parent changes that would create a hierarchy cycle
-			// (e.g. moving an item under its own descendant). Only meaningful
-			// on updates of an existing item — item.ID == 0 means the item
-			// hasn't been persisted yet, so it can't have descendants. The
-			// check is gated on a wired-in cycle checker; user-facing callers
-			// must set one via WithCycleChecker, internal callers that don't
-			// mutate parent_id may omit it.
+			// Existing items need a wired cycle checker before parent changes can be validated.
 			if item.ID != 0 {
 				if v.cycleChecker == nil {
 					return &ValidationError{Field: "parent_id", Message: "parent_id changes require a cycle-checked caller"}

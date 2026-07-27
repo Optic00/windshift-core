@@ -12,13 +12,7 @@ import (
 	"windshift/internal/database"
 )
 
-// windshiftExport is the post-import snapshot written alongside
-// jira_responses.json when JIRA_CAPTURE_PAYLOADS is set. The diff harness
-// (scripts/jira_import_diff.py) consumes both files to detect fidelity
-// regressions per the Phase 0 plan in docs/jira-import-remediation-plan.md.
-//
-// Field order is intentional: encoding/json emits struct fields in declaration
-// order, so this struct also fixes the JSON key order for diff-friendliness.
+// windshiftExport is the deterministic post-import snapshot consumed by the capture diff harness.
 type windshiftExport struct {
 	JobID         string                `json:"job_id"`
 	GeneratedAt   string                `json:"generated_at"`
