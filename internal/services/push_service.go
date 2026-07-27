@@ -8,8 +8,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -97,6 +100,100 @@ const maxPushBodyLen = 140
 // List and deliver so the "active" invariant (revoked_at IS NULL) is defined
 // once rather than duplicated per query.
 const activeSubsWhere = "WHERE user_id = ? AND revoked_at IS NULL"
+
+// ErrInvalidEndpoint rejects a subscription endpoint that fails SSRF
+// validation (non-HTTPS, credentials, or a non-public destination).
+var ErrInvalidEndpoint = errors.New("invalid push endpoint")
+
+// endpointValidationTimeout bounds the DNS lookup performed while validating
+// an endpoint hostname so a slow resolver can't stall the subscribe handler.
+const endpointValidationTimeout = 3 * time.Second
+
+// lookupEndpointIPs resolves a hostname for endpoint validation. It is a
+// variable so tests can stub DNS without touching the network.
+var lookupEndpointIPs = func(ctx context.Context, host string) ([]net.IP, error) {
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	ips := make([]net.IP, 0, len(addrs))
+	for _, addr := range addrs {
+		ips = append(ips, addr.IP)
+	}
+	return ips, nil
+}
+
+// blockedEndpointCIDRs covers non-public ranges that net.IP's helpers don't
+// classify on their own: CGNAT shared space, IETF protocol assignments,
+// benchmarking, and the reserved class-E block.
+var blockedEndpointCIDRs = func() []*net.IPNet {
+	cidrs := []string{"100.64.0.0/10", "192.0.0.0/24", "198.18.0.0/15", "240.0.0.0/4"}
+	nets := make([]*net.IPNet, 0, len(cidrs))
+	for _, cidr := range cidrs {
+		_, ipNet, err := net.ParseCIDR(cidr)
+		if err == nil {
+			nets = append(nets, ipNet)
+		}
+	}
+	return nets
+}()
+
+// isPublicEndpointIP reports whether ip is a globally routable unicast
+// address a push service could legitimately live on.
+func isPublicEndpointIP(ip net.IP) bool {
+	if ip4 := ip.To4(); ip4 != nil {
+		ip = ip4
+	}
+	if !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLoopback() ||
+		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsMulticast() || ip.IsUnspecified() {
+		return false
+	}
+	for _, blocked := range blockedEndpointCIDRs {
+		if blocked.Contains(ip) {
+			return false
+		}
+	}
+	return true
+}
+
+// validatePushEndpoint enforces the SSRF policy for subscription endpoints:
+// absolute HTTPS URL, no embedded credentials, valid port, and a destination
+// (IP literal or every resolved address) that is publicly routable.
+func validatePushEndpoint(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Opaque != "" {
+		return fmt.Errorf("%w: must be an absolute https URL without credentials", ErrInvalidEndpoint)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("%w: missing host", ErrInvalidEndpoint)
+	}
+	if port := u.Port(); port != "" {
+		n, err := strconv.Atoi(port)
+		if err != nil || n < 1 || n > 65535 {
+			return fmt.Errorf("%w: invalid port", ErrInvalidEndpoint)
+		}
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if !isPublicEndpointIP(ip) {
+			return fmt.Errorf("%w: %s is not a public address", ErrInvalidEndpoint, host)
+		}
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), endpointValidationTimeout)
+	defer cancel()
+	ips, err := lookupEndpointIPs(ctx, host)
+	if err != nil || len(ips) == 0 {
+		return fmt.Errorf("%w: cannot resolve %s", ErrInvalidEndpoint, host)
+	}
+	for _, ip := range ips {
+		if !isPublicEndpointIP(ip) {
+			return fmt.Errorf("%w: %s resolves to a non-public address", ErrInvalidEndpoint, host)
+		}
+	}
+	return nil
+}
 
 // PushSubscriptionInfo is the non-sensitive view of a stored subscription
 // returned to the owning user (keys are never exposed back to the client).
@@ -226,10 +323,20 @@ func newPushService(db database.Database, cfg config.PushConfig, serviceCfg Push
 	}
 	workerCtx, workerCancel := context.WithCancel(context.Background()) //nolint:gosec // retained and called by CloseContext
 	service := &PushService{
-		db:           db,
-		cfg:          cfg,
-		serviceCfg:   serviceCfg,
-		httpClient:   &http.Client{Timeout: serviceCfg.HTTPTimeout},
+		db:         db,
+		cfg:        cfg,
+		serviceCfg: serviceCfg,
+		httpClient: &http.Client{
+			Timeout: serviceCfg.HTTPTimeout,
+			// Redirects re-run the endpoint SSRF policy so a validated
+			// endpoint cannot bounce delivery to an internal address.
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if len(via) >= 5 {
+					return errors.New("too many redirects")
+				}
+				return validatePushEndpoint(req.URL.String())
+			},
+		},
 		send:         sender,
 		queue:        make(chan pushJob, serviceCfg.QueueSize),
 		workerCtx:    workerCtx,
@@ -254,6 +361,9 @@ func (s *PushService) PublicKey() string { return s.cfg.VAPIDPublicKey }
 // an existing endpoint (e.g. after key rotation) refreshes its keys, reattaches
 // it to the current user, and clears any revoked marker.
 func (s *PushService) Subscribe(userID int, endpoint, authKey, p256dhKey, userAgent string) error {
+	if err := validatePushEndpoint(endpoint); err != nil {
+		return err
+	}
 	_, err := s.db.ExecWrite(`
 		INSERT INTO push_subscriptions (user_id, endpoint, auth_key, p256dh_key, user_agent, created_at, last_used_at)
 		VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -390,9 +500,9 @@ func (s *PushService) dispatch(ctx context.Context, notification models.Notifica
 	// /workspaces/<id>/items/<itemId>) — rewrite it to /m/items/<itemId> so
 	// tapping a push notification doesn't drop the user onto the desktop item
 	// page, which is borderline unusable on a phone.
-	url := mobileActionURL(notification.ActionURL)
-	if url == "" {
-		url = "/m/notifications"
+	actionURL := mobileActionURL(notification.ActionURL)
+	if actionURL == "" {
+		actionURL = "/m/notifications"
 	}
 
 	lock, _ := s.userLocks.LoadOrStore(notification.UserID, &sync.Mutex{})
@@ -407,7 +517,7 @@ func (s *PushService) dispatch(ctx context.Context, notification models.Notifica
 		Title: notification.Title,
 		Body:  body,
 		Type:  notification.Type,
-		URL:   url,
+		URL:   actionURL,
 	})
 }
 

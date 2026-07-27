@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -61,6 +62,10 @@ func (h *PushHandler) Subscribe(w http.ResponseWriter, r *http.Request) {
 	// User agent comes from the request header, not the client body, so a label
 	// can't be spoofed and we don't have to trust client-supplied device names.
 	if err := h.service.Subscribe(user.ID, req.Endpoint, req.Keys.Auth, req.Keys.P256dh, r.UserAgent()); err != nil {
+		if errors.Is(err, services.ErrInvalidEndpoint) {
+			respondBadRequest(w, r, "invalid subscription endpoint")
+			return
+		}
 		respondInternalError(w, r, err)
 		return
 	}
