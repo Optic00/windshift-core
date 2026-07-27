@@ -45,6 +45,11 @@ type v1ItemsPage struct {
 	Pagination v1PaginationMeta `json:"pagination"`
 }
 
+type v1CommentsPage struct {
+	Data       []v1CommentResponse `json:"data"`
+	Pagination v1PaginationMeta    `json:"pagination"`
+}
+
 type v1UserSummary struct {
 	ID        int    `json:"id"`
 	Email     string `json:"email"`

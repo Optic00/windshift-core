@@ -13,6 +13,10 @@ type ItemUpdatedEmitter interface {
 	EmitItemUpdated(original, updated *models.Item, statusChanged, assigneeChanged bool, actorUserID int, fieldChanges []HistoryEntry, actorUsername ...string)
 }
 
+type contextualItemUpdatedEmitter interface {
+	EmitItemUpdatedWithContext(original, updated *models.Item, statusChanged, assigneeChanged bool, actorUserID int, fieldChanges []HistoryEntry, actionContext ActionContext, actorUsername ...string)
+}
+
 // ItemUpdateApplicationService owns the transport-neutral user-facing update
 // pipeline. The lower-level ItemUpdateService remains usable by internal
 // workflows that deliberately manage their own side effects.
@@ -98,6 +102,48 @@ func (s *ItemUpdateApplicationService) Update(actorUserID int, actorUsername str
 	}
 
 	return result, nil
+}
+
+// AddMilestoneWithContext atomically adds one milestone without replacing
+// concurrent attachments. Duplicate deliveries are no-ops: they produce no
+// history, live refresh, automation event, notification, or webhook.
+func (s *ItemUpdateApplicationService) AddMilestoneWithContext(
+	actorUserID int,
+	actorUsername string,
+	itemID int,
+	milestoneID int,
+	actionContext ActionContext,
+) (*UpdateItemResult, bool, error) {
+	result, changed, err := s.update.AddMilestone(UpdateItemRequest{
+		ItemID: itemID,
+		UserID: actorUserID,
+	}, milestoneID)
+	if err != nil || !changed {
+		return result, changed, err
+	}
+	if contextual, ok := s.emitter.(contextualItemUpdatedEmitter); ok {
+		contextual.EmitItemUpdatedWithContext(
+			result.OriginalItem,
+			result.Item,
+			false,
+			false,
+			actorUserID,
+			result.FieldChanges,
+			actionContext,
+			actorUsername,
+		)
+	} else if s.emitter != nil {
+		s.emitter.EmitItemUpdated(
+			result.OriginalItem,
+			result.Item,
+			false,
+			false,
+			actorUserID,
+			result.FieldChanges,
+			actorUsername,
+		)
+	}
+	return result, true, nil
 }
 
 func itemProjectResolutionChanged(original, updated *models.Item) bool {

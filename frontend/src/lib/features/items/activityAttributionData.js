@@ -1,6 +1,6 @@
 /** Load comments whose agent-owner attribution is already permission-filtered server-side. */
-export function loadAttributedComments(apiClient, itemId) {
-  return apiClient.getComments(itemId);
+export function loadAttributedComments(apiClient, itemId, params = {}) {
+  return apiClient.getComments(itemId, params);
 }
 
 /** Load item history whose agent-owner attribution is already permission-filtered server-side. */

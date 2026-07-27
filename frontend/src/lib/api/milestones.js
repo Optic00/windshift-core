@@ -28,9 +28,10 @@ export const milestones = {
   getTestStatisticsMany: (ids = []) =>
     fetchAPI(`/milestones/test-statistics?ids=${[...new Set(ids)].join(',')}`),
   getProgress: (id) => fetchAPI(`/milestones/${id}/progress`),
-  release: (id, data) =>
+  release: (id, data, idempotencyKey) =>
     fetchAPI(`/milestones/${id}/release`, {
       method: 'POST',
+      headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
       body: JSON.stringify(data),
     }),
   // Reorder is scope-specific: global milestones at /global/milestones/reorder,

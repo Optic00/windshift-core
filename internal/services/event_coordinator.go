@@ -158,6 +158,16 @@ func (ec *EventCoordinator) emitItemCreatedInternal(item *models.Item, actorUser
 
 // EmitItemUpdated emits events for an updated item.
 func (ec *EventCoordinator) EmitItemUpdated(original, updated *models.Item, statusChanged, assigneeChanged bool, actorUserID int, fieldChanges []HistoryEntry, actorUsername ...string) {
+	ec.emitItemUpdatedInternal(original, updated, statusChanged, assigneeChanged, actorUserID, fieldChanges, nil, actorUsername...)
+}
+
+// EmitItemUpdatedWithContext preserves automation cascade provenance while
+// sharing the notification, action, and webhook pipeline with user updates.
+func (ec *EventCoordinator) EmitItemUpdatedWithContext(original, updated *models.Item, statusChanged, assigneeChanged bool, actorUserID int, fieldChanges []HistoryEntry, actionContext ActionContext, actorUsername ...string) {
+	ec.emitItemUpdatedInternal(original, updated, statusChanged, assigneeChanged, actorUserID, fieldChanges, &actionContext, actorUsername...)
+}
+
+func (ec *EventCoordinator) emitItemUpdatedInternal(original, updated *models.Item, statusChanged, assigneeChanged bool, actorUserID int, fieldChanges []HistoryEntry, actionContext *ActionContext, actorUsername ...string) {
 	actorName := resolveActorName(actorUserID, actorUsername)
 
 	// Construct the item key (e.g., "TST-1")
@@ -233,7 +243,7 @@ func (ec *EventCoordinator) EmitItemUpdated(original, updated *models.Item, stat
 	// Emit action events for automation
 	if ec.actionService != nil {
 		if statusChanged {
-			ec.actionService.EmitActionEvent(&models.ActionEvent{
+			event := &models.ActionEvent{
 				EventType:   models.ActionTriggerStatusTransition,
 				WorkspaceID: updated.WorkspaceID,
 				ItemID:      updated.ID,
@@ -247,7 +257,9 @@ func (ec *EventCoordinator) EmitItemUpdated(original, updated *models.Item, stat
 					"assignee_id": updated.AssigneeID,
 					"creator_id":  updated.CreatorID,
 				},
-			})
+			}
+			applyActionContext(event, actionContext)
+			ec.actionService.EmitActionEvent(event)
 		} else {
 			// Build OldValues/NewValues dynamically from field changes
 			oldVals := make(map[string]interface{})
@@ -256,14 +268,16 @@ func (ec *EventCoordinator) EmitItemUpdated(original, updated *models.Item, stat
 				oldVals[fc.FieldName] = fc.OldValue
 				newVals[fc.FieldName] = fc.NewValue
 			}
-			ec.actionService.EmitActionEvent(&models.ActionEvent{
+			event := &models.ActionEvent{
 				EventType:   models.ActionTriggerItemUpdated,
 				WorkspaceID: updated.WorkspaceID,
 				ItemID:      updated.ID,
 				ActorUserID: actorUserID,
 				OldValues:   oldVals,
 				NewValues:   newVals,
-			})
+			}
+			applyActionContext(event, actionContext)
+			ec.actionService.EmitActionEvent(event)
 		}
 	}
 
@@ -278,6 +292,16 @@ func (ec *EventCoordinator) EmitItemUpdated(original, updated *models.Item, stat
 		// Always dispatch item.updated for any update
 		ec.webhookDispatcher.DispatchEvent("item.updated", updated)
 	}
+}
+
+func applyActionContext(event *models.ActionEvent, actionContext *ActionContext) {
+	if actionContext == nil {
+		return
+	}
+	event.TriggeredByAction = actionContext.TriggeredByAction
+	event.ExecutionChainID = actionContext.ExecutionChainID
+	event.CascadeDepth = actionContext.CascadeDepth
+	event.SourceApplication = actionContext.SourceApplication
 }
 
 // EmitItemDeleted emits events for a deleted item.

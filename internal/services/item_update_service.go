@@ -1,9 +1,11 @@
 package services
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -233,6 +235,125 @@ func (s *ItemUpdateService) UpdateItem(req UpdateItemRequest) (*UpdateItemResult
 		StatusChanged: statusChanged,
 		FieldChanges:  history,
 	}, nil
+}
+
+// AddMilestone atomically adds one milestone to an item while preserving the
+// rest of the set. It returns changed=false for a duplicate attachment so
+// retries do not repeat history or downstream effects.
+func (s *ItemUpdateService) AddMilestone(req UpdateItemRequest, milestoneID int) (*UpdateItemResult, bool, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to start transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	originalItem, err := s.loadItemInTx(tx, req.ItemID)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to load item: %w", err)
+	}
+	rows, err := tx.Query(`
+		SELECT milestone_id
+		FROM item_milestones
+		WHERE item_id = ?
+		ORDER BY milestone_id
+	`, req.ItemID)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to read existing item milestones: %w", err)
+	}
+	var oldIDs []int
+	alreadyAttached := false
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return nil, false, fmt.Errorf("failed to scan existing item milestone: %w", err)
+		}
+		oldIDs = append(oldIDs, id)
+		alreadyAttached = alreadyAttached || id == milestoneID
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, false, fmt.Errorf("failed to iterate existing item milestones: %w", err)
+	}
+	_ = rows.Close()
+
+	if alreadyAttached {
+		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			return nil, false, fmt.Errorf("failed to close duplicate milestone transaction: %w", err)
+		}
+		current, loadErr := s.loadItemWithJoins(req.ItemID)
+		if loadErr != nil {
+			return nil, false, fmt.Errorf("failed to load unchanged item: %w", loadErr)
+		}
+		return &UpdateItemResult{OriginalItem: originalItem, Item: current}, false, nil
+	}
+
+	newIDs := append(append([]int(nil), oldIDs...), milestoneID)
+	sort.Ints(newIDs)
+	if err := validation.ValidatePlanningAssignments(
+		tx,
+		originalItem.WorkspaceID,
+		newIDs,
+		originalItem.IterationID,
+	); err != nil {
+		return nil, false, fmt.Errorf("validation failed: %w", err)
+	}
+
+	now := time.Now()
+	insertResult, err := tx.Exec(`
+		INSERT INTO item_milestones (item_id, milestone_id, created_at)
+		VALUES (?, ?, ?)
+		ON CONFLICT(item_id, milestone_id) DO NOTHING
+	`, req.ItemID, milestoneID, now)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to attach milestone %d: %w", milestoneID, err)
+	}
+	rowsAffected, err := insertResult.RowsAffected()
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to inspect milestone attachment: %w", err)
+	}
+	if rowsAffected == 0 {
+		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			return nil, false, fmt.Errorf("failed to close concurrent duplicate transaction: %w", err)
+		}
+		current, loadErr := s.loadItemWithJoins(req.ItemID)
+		if loadErr != nil {
+			return nil, false, fmt.Errorf("failed to load concurrently updated item: %w", loadErr)
+		}
+		return &UpdateItemResult{OriginalItem: originalItem, Item: current}, false, nil
+	}
+	if _, err := tx.Exec(`
+		UPDATE items
+		SET updated_at = ?, last_active_at = ?
+		WHERE id = ?
+	`, now, now, req.ItemID); err != nil {
+		return nil, false, fmt.Errorf("failed to update item activity time: %w", err)
+	}
+	history := []HistoryEntry{{
+		ItemID:    req.ItemID,
+		UserID:    req.UserID,
+		FieldName: "milestones",
+		OldValue:  joinIntsCSV(oldIDs),
+		NewValue:  joinIntsCSV(newIDs),
+		ChangedAt: now,
+	}}
+	if err := s.recordItemHistory(tx, history); err != nil {
+		return nil, false, fmt.Errorf("failed to record history: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, false, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	updatedItem, err := s.loadItemWithJoins(req.ItemID)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to load updated item: %w", err)
+	}
+	PublishItemChange(updatedItem.ID, ItemChangeUpdated)
+	return &UpdateItemResult{
+		OriginalItem: originalItem,
+		Item:         updatedItem,
+		FieldChanges: history,
+	}, true, nil
 }
 
 func hasAnyItemUpdateField(updateData map[string]interface{}, fields ...string) bool {

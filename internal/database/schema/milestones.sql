@@ -33,6 +33,11 @@ CREATE TABLE IF NOT EXISTS milestones (
 CREATE TABLE IF NOT EXISTS milestone_releases (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	milestone_id INTEGER NOT NULL REFERENCES milestones(id) ON DELETE CASCADE,
+	idempotency_key TEXT,
+	state TEXT NOT NULL DEFAULT 'created',
+	last_error TEXT,
+	lease_token TEXT,
+	lease_expires_at DATETIME,
 	tag_name TEXT NOT NULL,
 	name TEXT,
 	body TEXT,
@@ -66,6 +71,9 @@ CREATE INDEX IF NOT EXISTS idx_milestones_target_date ON milestones(target_date)
 CREATE INDEX IF NOT EXISTS idx_milestones_workspace_id ON milestones(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_milestones_is_global ON milestones(is_global);
 CREATE INDEX IF NOT EXISTS idx_milestone_releases_milestone_id ON milestone_releases(milestone_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_milestone_releases_idempotency
+	ON milestone_releases(milestone_id, idempotency_key)
+	WHERE idempotency_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_item_milestones_item_id ON item_milestones(item_id);
 CREATE INDEX IF NOT EXISTS idx_item_milestones_milestone_id ON item_milestones(milestone_id);
 -- Partial unique index: one external_key per workspace, but NULLs are unconstrained.

@@ -97,6 +97,11 @@ func (h *CommentHandler) GetComments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	options, ok := parseCommentFeedOptions(w, r)
+	if !ok {
+		return
+	}
+
 	var err error
 
 	// Require authentication
@@ -130,13 +135,88 @@ func (h *CommentHandler) GetComments(w http.ResponseWriter, r *http.Request) {
 	}
 
 	includeAgentOwner := canViewAgentOwnerAttribution(h.permissionService, user.ID)
-	comments, err := h.commentService.GetFeedByItemID(itemID, includeAgentOwner)
+	page, err := h.commentService.GetFeedByItemID(itemID, includeAgentOwner, options)
 	if err != nil {
 		respondInternalError(w, r, fmt.Errorf("failed to fetch comments: %w", err))
 		return
 	}
 
-	respondJSONOK(w, comments)
+	var total *int
+	if options.Before == nil && options.Since == nil {
+		count, err := h.commentService.CountFeedByItemID(itemID)
+		if err != nil {
+			respondInternalError(w, r, fmt.Errorf("failed to count comments: %w", err))
+			return
+		}
+		total = &count
+	}
+	respondJSONOK(w, struct {
+		Comments []models.Comment `json:"comments"`
+		HasMore  bool             `json:"has_more"`
+		Total    *int             `json:"total,omitempty"`
+	}{
+		Comments: page.Comments,
+		HasMore:  page.HasMore,
+		Total:    total,
+	})
+}
+
+func parseCommentFeedOptions(w http.ResponseWriter, r *http.Request) (services.CommentFeedOptions, bool) {
+	options := services.CommentFeedOptions{Limit: services.DefaultCommentFeedLimit}
+	query := r.URL.Query()
+
+	if rawLimit := query.Get("limit"); rawLimit != "" {
+		limit, err := strconv.Atoi(rawLimit)
+		if err != nil || limit < 1 || limit > services.MaxCommentFeedLimit {
+			respondValidationError(w, r, fmt.Sprintf("limit must be between 1 and %d", services.MaxCommentFeedLimit))
+			return services.CommentFeedOptions{}, false
+		}
+		options.Limit = limit
+	}
+
+	before, hasBefore, ok := parseCommentFeedCursor(w, r, "before")
+	if !ok {
+		return services.CommentFeedOptions{}, false
+	}
+	since, hasSince, ok := parseCommentFeedCursor(w, r, "since")
+	if !ok {
+		return services.CommentFeedOptions{}, false
+	}
+	if hasBefore && hasSince {
+		respondValidationError(w, r, "before and since cursors cannot be combined")
+		return services.CommentFeedOptions{}, false
+	}
+	if hasBefore {
+		options.Before = &before
+	}
+	if hasSince {
+		options.Since = &since
+	}
+	return options, true
+}
+
+func parseCommentFeedCursor(w http.ResponseWriter, r *http.Request, name string) (services.CommentFeedCursor, bool, bool) {
+	rawTime := r.URL.Query().Get(name)
+	rawID := r.URL.Query().Get(name + "_id")
+	if rawTime == "" && rawID == "" {
+		return services.CommentFeedCursor{}, false, true
+	}
+	if rawTime == "" || rawID == "" {
+		respondValidationError(w, r, fmt.Sprintf("%s and %s_id must be provided together", name, name))
+		return services.CommentFeedCursor{}, false, false
+	}
+
+	createdAt, err := time.Parse(time.RFC3339Nano, rawTime)
+	if err != nil {
+		respondValidationError(w, r, fmt.Sprintf("%s must be an RFC3339 timestamp", name))
+		return services.CommentFeedCursor{}, false, false
+	}
+	id, err := strconv.Atoi(rawID)
+	if err != nil || id == 0 {
+		respondValidationError(w, r, fmt.Sprintf("%s_id must be a non-zero integer", name))
+		return services.CommentFeedCursor{}, false, false
+	}
+	return services.CommentFeedCursor{CreatedAt: createdAt, ID: id}, true, true
 }
 
 // CreateComment handles POST /api/items/{id}/comments

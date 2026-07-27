@@ -506,9 +506,18 @@ func (c *Client) ExecuteRunTemplate(workspaceID, templateID int) (*TestRun, erro
 
 // GetComments lists comments on an item
 func (c *Client) GetComments(itemID int) ([]Comment, error) {
-	var comments []Comment
-	if err := c.GET(fmt.Sprintf("/rest/api/v1/items/%d/comments", itemID), &comments); err != nil {
-		return nil, err
+	const pageSize = 100
+	comments := make([]Comment, 0)
+	for page := 1; ; page++ {
+		var response PaginatedResponse[Comment]
+		path := fmt.Sprintf("/rest/api/v1/items/%d/comments?page=%d&limit=%d", itemID, page, pageSize)
+		if err := c.GET(path, &response); err != nil {
+			return nil, err
+		}
+		comments = append(comments, response.Data...)
+		if page >= response.Pagination.TotalPages || len(response.Data) == 0 {
+			break
+		}
 	}
 	return comments, nil
 }

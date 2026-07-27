@@ -27,11 +27,15 @@ type MilestoneCommitAttacher interface {
 // stays primitive so the interface adds no scm-package types to the
 // services-package surface.
 type MilestoneCommitAttachInput struct {
-	WorkspaceID     int
-	WorkspaceRepoID int
-	MilestoneID     int
-	BaseRef         string
-	HeadRef         string
+	WorkspaceID       int
+	WorkspaceRepoID   int
+	MilestoneID       int
+	BaseRef           string
+	HeadRef           string
+	ActorUserID       int
+	ExecutionChainID  string
+	CascadeDepth      int
+	SourceApplication string
 }
 
 // MilestoneCommitAttachResult is the summary the executor records in
@@ -280,11 +284,15 @@ func (e *CreateMilestoneExecutor) runCommitIssueAttach(ctx *models.ExecutionCont
 		return
 	}
 	result, err := e.attacher.AttachCommitIssues(context.Background(), MilestoneCommitAttachInput{
-		WorkspaceID:     ctx.Event.WorkspaceID,
-		WorkspaceRepoID: repoID,
-		MilestoneID:     milestoneID,
-		BaseRef:         prevRef,
-		HeadRef:         headRef,
+		WorkspaceID:       ctx.Event.WorkspaceID,
+		WorkspaceRepoID:   repoID,
+		MilestoneID:       milestoneID,
+		BaseRef:           prevRef,
+		HeadRef:           headRef,
+		ActorUserID:       ctx.EffectiveActorID,
+		ExecutionChainID:  ctx.ChainID,
+		CascadeDepth:      ctx.Event.CascadeDepth + 1,
+		SourceApplication: "workspace",
 	})
 	if err != nil {
 		stepResult.Output["attach_commit_issues_error"] = err.Error()

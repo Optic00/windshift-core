@@ -36,6 +36,34 @@ type HandleCommentParams struct {
 	IsPrivate        bool
 }
 
+const (
+	DefaultCommentFeedLimit = 25
+	MaxCommentFeedLimit     = 100
+)
+
+// CommentFeedCursor identifies one row in the merged comments/approval feed.
+// IDs are signed because approval decision comments use negative IDs.
+type CommentFeedCursor struct {
+	CreatedAt time.Time
+	ID        int
+}
+
+// CommentFeedOptions controls bounded reads from the merged comment feed.
+// Before pages toward older rows. Since reads only rows newer than the cursor.
+type CommentFeedOptions struct {
+	Limit  int
+	Before *CommentFeedCursor
+	Since  *CommentFeedCursor
+}
+
+// CommentFeedPage is a bounded slice of the merged comment feed. HasMore
+// applies in the requested direction: older for default/before reads and newer
+// for since reads.
+type CommentFeedPage struct {
+	Comments []models.Comment
+	HasMore  bool
+}
+
 // AgentMentionTrigger is the coding-agent harness's interest in new
 // comments (WI-264): @mentions of a binding's acting user start a run on
 // the commented item. Kept as an interface so CommentService stays
@@ -405,43 +433,74 @@ func (s *CommentService) Get(commentID int) (*CommentWithDetails, error) {
 	return &comment, nil
 }
 
-// GetFeedByItemID returns the cookie-auth comment feed for an item. In
+// GetFeedByItemID returns a bounded cookie-auth comment feed for an item. In
 // addition to ordinary comments it projects approval decision comments into
 // the same model so every HTTP surface reads comment data through this
-// service. Agent-owner attribution is permission-filtered by the caller.
-func (s *CommentService) GetFeedByItemID(itemID int, includeAgentOwner bool) ([]models.Comment, error) {
-	rows, err := s.db.Query(`
-		SELECT c.id, c.item_id, c.author_id, c.portal_customer_id, c.content, c.is_private,
-		       c.created_at AS feed_created_at, c.updated_at,
-		       COALESCE(NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), ''), pc.name, 'Unknown User') AS author_name,
-		       COALESCE(u.email, pc.email) AS author_email, u.avatar_url,
-		       'human' AS source, COALESCE(u.is_agent, FALSE) AS is_agent,
-		       COALESCE(NULLIF(TRIM(COALESCE(owner.first_name, '') || ' ' || COALESCE(owner.last_name, '')), ''), owner.username, '') AS agent_owner_name
-		FROM comments c
-		LEFT JOIN users u ON c.author_id = u.id
-		LEFT JOIN users owner ON owner.id = u.agent_owner_user_id
-		LEFT JOIN portal_customers pc ON c.portal_customer_id = pc.id
-		WHERE c.item_id = ?
-		UNION ALL
-		SELECT -d.id, ar.item_id, d.actor_user_id, NULL, d.comment, FALSE,
-		       d.created_at AS feed_created_at, d.created_at,
-		       COALESCE(NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), ''), 'Unknown User') AS author_name,
-		       u.email AS author_email, u.avatar_url,
-		       'approval' AS source, COALESCE(u.is_agent, FALSE) AS is_agent,
-		       COALESCE(NULLIF(TRIM(COALESCE(owner.first_name, '') || ' ' || COALESCE(owner.last_name, '')), ''), owner.username, '') AS agent_owner_name
-		FROM approval_decisions d
-		JOIN approval_requests ar ON ar.id = d.approval_request_id
-		LEFT JOIN users u ON u.id = d.actor_user_id
-		LEFT JOIN users owner ON owner.id = u.agent_owner_user_id
-		WHERE ar.item_id = ? AND d.comment IS NOT NULL AND d.comment <> ''
-		ORDER BY feed_created_at DESC
-	`, itemID, itemID)
+// service. Cursor filtering and limiting happen outside the UNION so approval
+// rows participate in one stable ordering. Agent-owner attribution is
+// permission-filtered by the caller.
+func (s *CommentService) GetFeedByItemID(itemID int, includeAgentOwner bool, options CommentFeedOptions) (*CommentFeedPage, error) {
+	limit := options.Limit
+	if limit <= 0 {
+		limit = DefaultCommentFeedLimit
+	}
+	if limit > MaxCommentFeedLimit {
+		limit = MaxCommentFeedLimit
+	}
+
+	query := `
+		SELECT feed_id, item_id, author_id, portal_customer_id, content, is_private,
+		       feed_created_at, updated_at, author_name, author_email, avatar_url,
+		       source, is_agent, agent_owner_name
+		FROM (
+			SELECT c.id AS feed_id, c.item_id, c.author_id, c.portal_customer_id, c.content, c.is_private,
+			       c.created_at AS feed_created_at, c.updated_at,
+			       COALESCE(NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), ''), pc.name, 'Unknown User') AS author_name,
+			       COALESCE(u.email, pc.email) AS author_email, u.avatar_url,
+			       'human' AS source, COALESCE(u.is_agent, FALSE) AS is_agent,
+			       COALESCE(NULLIF(TRIM(COALESCE(owner.first_name, '') || ' ' || COALESCE(owner.last_name, '')), ''), owner.username, '') AS agent_owner_name
+			FROM comments c
+			LEFT JOIN users u ON c.author_id = u.id
+			LEFT JOIN users owner ON owner.id = u.agent_owner_user_id
+			LEFT JOIN portal_customers pc ON c.portal_customer_id = pc.id
+			WHERE c.item_id = ?
+			UNION ALL
+			SELECT -d.id AS feed_id, ar.item_id, d.actor_user_id, NULL, d.comment, FALSE,
+			       d.created_at AS feed_created_at, d.created_at AS updated_at,
+			       COALESCE(NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), ''), 'Unknown User') AS author_name,
+			       u.email AS author_email, u.avatar_url,
+			       'approval' AS source, COALESCE(u.is_agent, FALSE) AS is_agent,
+			       COALESCE(NULLIF(TRIM(COALESCE(owner.first_name, '') || ' ' || COALESCE(owner.last_name, '')), ''), owner.username, '') AS agent_owner_name
+			FROM approval_decisions d
+			JOIN approval_requests ar ON ar.id = d.approval_request_id
+			LEFT JOIN users u ON u.id = d.actor_user_id
+			LEFT JOIN users owner ON owner.id = u.agent_owner_user_id
+			WHERE ar.item_id = ? AND d.comment IS NOT NULL AND d.comment <> ''
+		) AS feed
+	`
+	args := []interface{}{itemID, itemID}
+	order := "DESC"
+	switch {
+	case options.Before != nil:
+		query += ` WHERE (feed_created_at < ? OR (feed_created_at = ? AND feed_id < ?))`
+		args = append(args, options.Before.CreatedAt, options.Before.CreatedAt, options.Before.ID)
+	case options.Since != nil:
+		query += ` WHERE (feed_created_at > ? OR (feed_created_at = ? AND feed_id > ?))`
+		args = append(args, options.Since.CreatedAt, options.Since.CreatedAt, options.Since.ID)
+		// Return the earliest unseen rows first. If a burst exceeds the limit,
+		// advancing the since cursor cannot skip the rows still to be fetched.
+		order = "ASC"
+	}
+	query += fmt.Sprintf(" ORDER BY feed_created_at %s, feed_id %s LIMIT ?", order, order)
+	args = append(args, limit+1)
+
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("get comment feed for item %d: %w", itemID, err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	var comments []models.Comment
+	comments := make([]models.Comment, 0, limit+1)
 	for rows.Next() {
 		var comment models.Comment
 		var authorID, portalCustomerID sql.NullInt64
@@ -472,7 +531,30 @@ func (s *CommentService) GetFeedByItemID(itemID int, includeAgentOwner bool) ([]
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("read comment feed for item %d: %w", itemID, err)
 	}
-	return comments, nil
+	hasMore := len(comments) > limit
+	if hasMore {
+		comments = comments[:limit]
+	}
+	return &CommentFeedPage{Comments: comments, HasMore: hasMore}, nil
+}
+
+// CountFeedByItemID counts ordinary comments and approval decision comments in
+// the merged item feed.
+func (s *CommentService) CountFeedByItemID(itemID int) (int, error) {
+	var total int
+	err := s.db.QueryRow(`
+		SELECT
+			(SELECT COUNT(*) FROM comments WHERE item_id = ?)
+			+
+			(SELECT COUNT(*)
+			 FROM approval_decisions d
+			 JOIN approval_requests ar ON ar.id = d.approval_request_id
+			 WHERE ar.item_id = ? AND d.comment IS NOT NULL AND d.comment <> '')
+	`, itemID, itemID).Scan(&total)
+	if err != nil {
+		return 0, fmt.Errorf("count comment feed for item %d: %w", itemID, err)
+	}
+	return total, nil
 }
 
 // Update updates a comment's content
@@ -622,6 +704,71 @@ func (s *CommentService) GetByItemID(itemID int) ([]models.Comment, error) {
 		comments = []models.Comment{}
 	}
 
+	return comments, nil
+}
+
+// GetByItemIDPaginated retrieves one offset-based page for the public v1 API.
+func (s *CommentService) GetByItemIDPaginated(itemID, limit, offset int, sortAsc bool) ([]models.Comment, int, error) {
+	order := "DESC"
+	if sortAsc {
+		order = "ASC"
+	}
+
+	var total int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM comments WHERE item_id = ?`, itemID).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count comments for item %d: %w", itemID, err)
+	}
+
+	rows, err := s.db.Query(fmt.Sprintf(`
+		SELECT c.id, c.item_id, c.author_id, c.portal_customer_id, c.content, c.is_private, c.created_at, c.updated_at,
+		       COALESCE(NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), ''), pc.name) AS author_name,
+		       COALESCE(u.email, pc.email) AS author_email
+		FROM comments c
+		LEFT JOIN users u ON c.author_id = u.id
+		LEFT JOIN portal_customers pc ON c.portal_customer_id = pc.id
+		WHERE c.item_id = ?
+		ORDER BY c.created_at %s, c.id %s
+		LIMIT ? OFFSET ?
+	`, order, order), itemID, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("fetch comment page for item %d: %w", itemID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	comments, err := scanComments(rows)
+	if err != nil {
+		return nil, 0, fmt.Errorf("read comment page for item %d: %w", itemID, err)
+	}
+	return comments, total, nil
+}
+
+func scanComments(rows *sql.Rows) ([]models.Comment, error) {
+	comments := make([]models.Comment, 0)
+	for rows.Next() {
+		var comment models.Comment
+		var authorID, portalCustomerID sql.NullInt64
+		var authorName, authorEmail sql.NullString
+		if err := rows.Scan(
+			&comment.ID, &comment.ItemID, &authorID, &portalCustomerID, &comment.Content, &comment.IsPrivate,
+			&comment.CreatedAt, &comment.UpdatedAt, &authorName, &authorEmail,
+		); err != nil {
+			return nil, err
+		}
+		if authorID.Valid {
+			id := int(authorID.Int64)
+			comment.AuthorID = &id
+		}
+		if portalCustomerID.Valid {
+			id := int(portalCustomerID.Int64)
+			comment.PortalCustomerID = &id
+		}
+		comment.AuthorName = authorName.String
+		comment.AuthorEmail = authorEmail.String
+		comments = append(comments, comment)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return comments, nil
 }
 

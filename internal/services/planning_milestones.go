@@ -1,7 +1,10 @@
 package services
 
 import (
+	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -160,6 +163,7 @@ type MilestoneReleaseResult struct {
 }
 
 var ErrSCMRepositoryNotLinked = errors.New("SCM repository is not linked to the selected connection")
+var ErrMilestoneReleaseInProgress = errors.New("milestone release is already in progress")
 
 // LinkedSCMRepository is the canonical repository identity resolved from a
 // workspace connection. Release callers use the stored name rather than a
@@ -248,8 +252,8 @@ func (s *PlanningService) ListMilestones(params MilestoneListParams) ([]Mileston
 		LEFT JOIN workspaces w ON m.workspace_id = w.id
 		LEFT JOIN (
 			SELECT * FROM milestone_releases
-			WHERE id IN (
-				SELECT MAX(id) FROM milestone_releases GROUP BY milestone_id
+			WHERE state = 'created' AND id IN (
+				SELECT MAX(id) FROM milestone_releases WHERE state = 'created' GROUP BY milestone_id
 			)
 		) mr ON mr.milestone_id = m.id
 		WHERE 1=1`
@@ -357,8 +361,8 @@ func (s *PlanningService) GetMilestone(id int) (*MilestoneResult, error) {
 		LEFT JOIN workspaces w ON m.workspace_id = w.id
 		LEFT JOIN (
 			SELECT * FROM milestone_releases
-			WHERE id IN (
-				SELECT MAX(id) FROM milestone_releases GROUP BY milestone_id
+			WHERE state = 'created' AND id IN (
+				SELECT MAX(id) FROM milestone_releases WHERE state = 'created' GROUP BY milestone_id
 			)
 		) mr ON mr.milestone_id = m.id
 		WHERE m.id = ?
@@ -654,7 +658,7 @@ func (s *PlanningService) ListMilestoneReleases(milestoneID int) ([]MilestoneRel
 		       target_commitish, scm_connection_id, scm_repository,
 		       scm_release_id, scm_release_url, created_by, created_at
 		FROM milestone_releases
-		WHERE milestone_id = ?
+		WHERE milestone_id = ? AND state = 'created'
 		ORDER BY created_at DESC
 	`, milestoneID)
 	if err != nil {
@@ -715,6 +719,7 @@ func (s *PlanningService) ListMilestoneReleases(milestoneID int) ([]MilestoneRel
 // ReleaseMilestoneParams contains parameters for releasing a milestone.
 type ReleaseMilestoneParams struct {
 	ID              int
+	IdempotencyKey  string
 	TagName         string
 	Name            string
 	Body            string
@@ -728,30 +733,195 @@ type ReleaseMilestoneParams struct {
 	CreatedBy       *int
 }
 
-// ReleaseMilestone inserts a release record and marks the milestone as completed.
-func (s *PlanningService) ReleaseMilestone(params ReleaseMilestoneParams) (*MilestoneResult, error) {
-	_, err := s.db.ExecWrite(`
-		INSERT INTO milestone_releases (
-			milestone_id, tag_name, name, body, is_draft, is_prerelease,
-			target_commitish, scm_connection_id, scm_repository, scm_release_id,
-			scm_release_url, created_by
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, params.ID, params.TagName, params.Name, params.Body, params.IsDraft, params.IsPrerelease,
-		params.TargetCommitish, params.SCMConnectionID, params.SCMRepository, params.SCMReleaseID,
-		params.SCMReleaseURL, params.CreatedBy)
-	if err != nil {
-		return nil, fmt.Errorf("failed to insert milestone release: %w", err)
-	}
+// MilestoneReleaseAttempt is a durable claim for one idempotent release
+// request. New attempts may call CreateRelease immediately. Reclaimed attempts
+// must first list the provider's releases and reconcile by tag because a prior
+// request may have timed out after the provider accepted it.
+type MilestoneReleaseAttempt struct {
+	ID             int
+	LeaseToken     string
+	AlreadyCreated bool
+	NeedsReconcile bool
+}
 
-	_, err = s.db.ExecWrite(`
-		UPDATE milestones SET status = 'completed', updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?
-	`, params.ID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to update milestone status: %w", err)
+func newMilestoneReleaseLeaseToken() (string, error) {
+	var token [16]byte
+	if _, err := rand.Read(token[:]); err != nil {
+		return "", fmt.Errorf("generate milestone release lease token: %w", err)
 	}
+	return hex.EncodeToString(token[:]), nil
+}
 
+// BeginMilestoneRelease persists or reclaims a release attempt before any
+// remote side effect. The unique idempotency key suppresses duplicate requests,
+// while the lease prevents concurrent retries from both reaching the provider.
+func (s *PlanningService) BeginMilestoneRelease(ctx context.Context, params ReleaseMilestoneParams) (*MilestoneReleaseAttempt, error) {
+	if strings.TrimSpace(params.IdempotencyKey) == "" {
+		return nil, planningValidationError("idempotency_key", "idempotency key is required")
+	}
+	leaseToken, err := newMilestoneReleaseLeaseToken()
+	if err != nil {
+		return nil, err
+	}
+	leaseExpiresAt := time.Now().UTC().Add(5 * time.Minute)
+
+	return database.WithTxResult(s.db, func(tx database.Tx) (*MilestoneReleaseAttempt, error) {
+		result, err := tx.ExecWriteContext(ctx, `
+			INSERT INTO milestone_releases (
+				milestone_id, idempotency_key, state, lease_token, lease_expires_at,
+				tag_name, name, body, is_draft, is_prerelease, target_commitish,
+				scm_connection_id, scm_repository, created_by
+			) VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT DO NOTHING
+		`, params.ID, params.IdempotencyKey, leaseToken, leaseExpiresAt,
+			params.TagName, params.Name, params.Body, params.IsDraft, params.IsPrerelease,
+			params.TargetCommitish, params.SCMConnectionID, params.SCMRepository, params.CreatedBy)
+		if err != nil {
+			return nil, fmt.Errorf("failed to persist pending milestone release: %w", err)
+		}
+		inserted, err := result.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("failed to inspect pending milestone release: %w", err)
+		}
+
+		var attemptID int
+		var state string
+		if err := tx.QueryRowContext(ctx, `
+			SELECT id, state
+			FROM milestone_releases
+			WHERE milestone_id = ? AND idempotency_key = ?
+		`, params.ID, params.IdempotencyKey).Scan(&attemptID, &state); err != nil {
+			return nil, fmt.Errorf("failed to load milestone release attempt: %w", err)
+		}
+		if state == "created" {
+			return &MilestoneReleaseAttempt{ID: attemptID, AlreadyCreated: true}, nil
+		}
+		if inserted > 0 {
+			return &MilestoneReleaseAttempt{ID: attemptID, LeaseToken: leaseToken}, nil
+		}
+
+		claim, err := tx.ExecWriteContext(ctx, `
+			UPDATE milestone_releases
+			SET state = 'pending', last_error = NULL, lease_token = ?, lease_expires_at = ?,
+			    updated_at = CURRENT_TIMESTAMP
+			WHERE id = ? AND state <> 'created'
+			  AND (lease_token IS NULL OR lease_expires_at IS NULL OR lease_expires_at <= CURRENT_TIMESTAMP)
+		`, leaseToken, leaseExpiresAt, attemptID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to reclaim milestone release attempt: %w", err)
+		}
+		claimed, err := claim.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("failed to inspect milestone release claim: %w", err)
+		}
+		if claimed == 0 {
+			return nil, ErrMilestoneReleaseInProgress
+		}
+		return &MilestoneReleaseAttempt{
+			ID:             attemptID,
+			LeaseToken:     leaseToken,
+			NeedsReconcile: true,
+		}, nil
+	})
+}
+
+// MarkMilestoneReleaseUncertain records that the provider may have accepted
+// the request and releases the local lease. The next retry reconciles by tag
+// before attempting another remote create.
+func (s *PlanningService) MarkMilestoneReleaseUncertain(ctx context.Context, attemptID int, leaseToken, message string) error {
+	_, err := s.db.ExecWriteContext(ctx, `
+		UPDATE milestone_releases
+		SET state = 'reconciliation-required', last_error = ?,
+		    lease_token = NULL, lease_expires_at = NULL, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND lease_token = ? AND state <> 'created'
+	`, message, attemptID, leaseToken)
+	if err != nil {
+		return fmt.Errorf("failed to mark milestone release for reconciliation: %w", err)
+	}
+	return nil
+}
+
+// CompleteMilestoneRelease atomically records the remote identity and marks
+// the milestone completed. Either both local effects commit or neither does.
+func (s *PlanningService) CompleteMilestoneRelease(ctx context.Context, attemptID int, leaseToken string, params ReleaseMilestoneParams) (*MilestoneResult, error) {
+	err := database.WithTx(s.db, func(tx database.Tx) error {
+		result, err := tx.ExecWriteContext(ctx, `
+			UPDATE milestone_releases
+			SET state = 'created', scm_release_id = ?, scm_release_url = ?,
+			    last_error = NULL, lease_token = NULL, lease_expires_at = NULL,
+			    updated_at = CURRENT_TIMESTAMP
+			WHERE id = ? AND lease_token = ? AND state = 'pending'
+		`, params.SCMReleaseID, params.SCMReleaseURL, attemptID, leaseToken)
+		if err != nil {
+			return fmt.Errorf("failed to finalize milestone release: %w", err)
+		}
+		updated, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("failed to inspect milestone release finalization: %w", err)
+		}
+		if updated == 0 {
+			return fmt.Errorf("milestone release attempt is no longer owned")
+		}
+		result, err = tx.ExecWriteContext(ctx, `
+			UPDATE milestones SET status = 'completed', updated_at = CURRENT_TIMESTAMP
+			WHERE id = ?
+		`, params.ID)
+		if err != nil {
+			return fmt.Errorf("failed to update milestone status: %w", err)
+		}
+		updated, err = result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("failed to inspect milestone status update: %w", err)
+		}
+		if updated == 0 {
+			return fmt.Errorf("milestone not found: %d", params.ID)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
 	return s.GetMilestone(params.ID)
+}
+
+// ReleaseMilestone is retained for in-process callers that already possess
+// release metadata. Its local insert and milestone status transition are
+// transactional.
+func (s *PlanningService) ReleaseMilestone(params ReleaseMilestoneParams) (*MilestoneResult, error) {
+	err := database.WithTx(s.db, func(tx database.Tx) error {
+		_, err := tx.ExecWrite(`
+			INSERT INTO milestone_releases (
+				milestone_id, idempotency_key, state, tag_name, name, body,
+				is_draft, is_prerelease, target_commitish, scm_connection_id,
+				scm_repository, scm_release_id, scm_release_url, created_by
+			) VALUES (?, ?, 'created', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, params.ID, nullablePlanningString(params.IdempotencyKey), params.TagName, params.Name,
+			params.Body, params.IsDraft, params.IsPrerelease, params.TargetCommitish,
+			params.SCMConnectionID, params.SCMRepository, params.SCMReleaseID,
+			params.SCMReleaseURL, params.CreatedBy)
+		if err != nil {
+			return fmt.Errorf("failed to insert milestone release: %w", err)
+		}
+		_, err = tx.ExecWrite(`
+			UPDATE milestones SET status = 'completed', updated_at = CURRENT_TIMESTAMP
+			WHERE id = ?
+		`, params.ID)
+		if err != nil {
+			return fmt.Errorf("failed to update milestone status: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.GetMilestone(params.ID)
+}
+
+func nullablePlanningString(value string) interface{} {
+	if value == "" {
+		return nil
+	}
+	return value
 }
 
 // DeleteMilestone deletes a milestone.
@@ -839,13 +1009,33 @@ func (s *PlanningService) GetMilestoneTestStatisticsBatch(milestoneIDs, workspac
 		LEFT JOIN test_sets ts ON ts.milestone_id = m.id`+testSetWorkspaceClause+`
 		LEFT JOIN (
 			SELECT
-				set_id,
+				runs.set_id,
 				COUNT(*) as total_runs,
-				SUM(CASE WHEN ended_at IS NOT NULL THEN 1 ELSE 0 END) as successful_runs,
-				SUM(CASE WHEN ended_at IS NULL THEN 1 ELSE 0 END) as failed_runs,
-				0 as in_progress_runs
-			FROM test_runs
-			GROUP BY set_id
+				SUM(CASE
+					WHEN runs.ended_at IS NOT NULL
+					 AND COALESCE(results.result_count, 0) > 0
+					 AND COALESCE(results.non_success_count, 0) = 0
+					THEN 1 ELSE 0
+				END) as successful_runs,
+				SUM(CASE
+					WHEN runs.ended_at IS NOT NULL
+					 AND (
+						COALESCE(results.result_count, 0) = 0
+						OR COALESCE(results.non_success_count, 0) > 0
+					 )
+					THEN 1 ELSE 0
+				END) as failed_runs,
+				SUM(CASE WHEN runs.ended_at IS NULL THEN 1 ELSE 0 END) as in_progress_runs
+			FROM test_runs runs
+			LEFT JOIN (
+				SELECT
+					run_id,
+					COUNT(*) as result_count,
+					SUM(CASE WHEN status IN ('passed', 'skipped') THEN 0 ELSE 1 END) as non_success_count
+				FROM test_results
+				GROUP BY run_id
+			) results ON results.run_id = runs.id
+			GROUP BY runs.set_id
 		) run_stats ON ts.id = run_stats.set_id
 		LEFT JOIN (
 			SELECT

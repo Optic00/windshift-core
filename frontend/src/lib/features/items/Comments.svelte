@@ -20,6 +20,8 @@
 	import { Shield, Bot } from '@lucide/svelte';
 	import { agentOwnerName, loadAttributedComments } from './activityAttributionData.js';
 
+	const COMMENT_PAGE_SIZE = 25;
+
 	// Get shortcut configuration (use same as description save)
 	const submitShortcut = getShortcut('description', 'save');
 
@@ -31,6 +33,9 @@
 	let error = $state('');
 	let editorRef;
 	let isInternalComment = $state(false);
+	let hasMore = $state(false);
+	let isLoadingMore = $state(false);
+	let totalCount = $state(0);
 
 	// Editing state
 	let editingCommentId = $state(null);
@@ -57,7 +62,8 @@
 		return [...comments].sort((a, b) => {
 			const dateA = new Date(a.created_at).getTime();
 			const dateB = new Date(b.created_at).getTime();
-			return sortOrder === 'oldest' ? dateA - dateB : dateB - dateA;
+			const position = dateA - dateB || a.id - b.id;
+			return sortOrder === 'oldest' ? position : -position;
 		});
 	});
 
@@ -76,14 +82,14 @@
 	// Poll for new comments while viewing the item. Adaptive cadence via
 	// activityStore (30s active / 5m idle / hidden tab). Demoted while the item's
 	// SSE stream is healthy (WI-484); resumes automatically if it drops.
-	usePoller(() => loadComments(), { enabled: () => !itemLiveUpdates.isLive(itemId) });
+	usePoller(() => pollForNewComments(), { enabled: () => !itemLiveUpdates.isLive(itemId) });
 
 	// Instant path: a new 'comment' or 'mention' notification for the item
 	// currently open triggers a refresh without waiting for the next tick.
 	const unsubscribeFromBus = subscribeToNewNotifications((n) => {
 		if (n.type !== 'comment' && n.type !== 'mention') return;
 		if (!notificationTargetsThisItem(n)) return;
-		loadComments();
+		pollForNewComments();
 	});
 	onDestroy(() => unsubscribeFromBus?.());
 
@@ -94,7 +100,7 @@
 	useEventListener(() => window, 'reload-item-detail', (/** @type {CustomEvent<{itemId?: number|string}>} */ event) => {
 		const id = event?.detail?.itemId;
 		if (id == null || String(id) !== String(itemId)) return;
-		loadComments();
+		pollForNewComments();
 	});
 
 	// SSE comment events (WI-484) reach Comments via this lightweight event from
@@ -103,7 +109,7 @@
 	useEventListener(() => window, 'item-comments-changed', (/** @type {CustomEvent<{itemId?: number|string}>} */ event) => {
 		const id = event?.detail?.itemId;
 		if (id == null || String(id) !== String(itemId)) return;
-		loadComments();
+		pollForNewComments();
 	});
 
 	function notificationTargetsThisItem(n) {
@@ -114,19 +120,19 @@
 	}
 
 	/**
-	 * Merge-load comments. The initial load replaces state; subsequent polls
-	 * dedupe by id, update edited rows, and append any new ones without
-	 * clobbering in-progress edits or the draft box.
+	 * Initial load of the newest comment page.
 	 */
 	async function loadComments({ initial = false } = {}) {
-		let next;
+		let response;
 		try {
-			next = (await loadAttributedComments(api, itemId)) || [];
+			response = await loadAttributedComments(api, itemId, { limit: COMMENT_PAGE_SIZE });
 		} catch (err) {
 			if (initial) {
 				console.error('Failed to load comments:', err);
 				error = t('comments.failedToLoad');
 				comments = [];
+				hasMore = false;
+				totalCount = 0;
 				onCommentsLoaded?.({ count: 0 });
 			} else {
 				console.warn('Comments poll failed:', err);
@@ -134,27 +140,85 @@
 			return;
 		}
 
-		if (initial) {
-			comments = next;
-			onCommentsLoaded?.({ count: comments.length });
+		comments = response?.comments || [];
+		hasMore = Boolean(response?.has_more);
+		totalCount = Number.isInteger(response?.total) ? response.total : comments.length;
+		onCommentsLoaded?.({ count: totalCount });
+	}
+
+	/**
+	 * Fetch only rows newer than the newest one already held. Merging by ID
+	 * preserves loaded older pages, the draft box, and any in-progress editor.
+	 */
+	async function pollForNewComments() {
+		const newest = feedBoundary(comments, 'newest');
+		let response;
+		try {
+			response = await loadAttributedComments(api, itemId, {
+				limit: COMMENT_PAGE_SIZE,
+				...(newest ? { since: newest.created_at, sinceId: newest.id } : {})
+			});
+		} catch (err) {
+			console.warn('Comments poll failed:', err);
 			return;
 		}
 
-		const existingIds = new Set(comments.map((c) => c.id));
+		const next = response?.comments || [];
+		const existingIds = new Set(comments.map((comment) => comment.id));
+		const added = next.filter((comment) => !existingIds.has(comment.id));
 		const currentUserId = authStore.currentUser?.id;
+		const arrived = added.filter((comment) => comment.author_id !== currentUserId).length;
 
-		// Count new comments from other authors so we can badge them.
-		let arrived = 0;
-		for (const c of next) {
-			if (!existingIds.has(c.id) && c.author_id !== currentUserId) arrived++;
+		comments = mergeCommentRows(comments, next);
+		if (!newest) {
+			hasMore = Boolean(response?.has_more);
+			totalCount = Number.isInteger(response?.total) ? response.total : comments.length;
+		} else {
+			totalCount += added.length;
 		}
-
-		// Server is truth — picks up edits and deletes. The sort is derived from
-		// created_at so ordering is stable. Local-only state (editingCommentId,
-		// newCommentContent) is tracked separately and isn't touched.
-		comments = next;
 		if (arrived > 0) newCount += arrived;
-		onCommentsLoaded?.({ count: comments.length });
+		onCommentsLoaded?.({ count: totalCount });
+	}
+
+	async function loadMoreComments() {
+		if (isLoadingMore || !hasMore) return;
+		const oldest = feedBoundary(comments, 'oldest');
+		if (!oldest) return;
+
+		isLoadingMore = true;
+		error = '';
+		try {
+			const response = await loadAttributedComments(api, itemId, {
+				limit: COMMENT_PAGE_SIZE,
+				before: oldest.created_at,
+				beforeId: oldest.id
+			});
+			comments = mergeCommentRows(comments, response?.comments || []);
+			hasMore = Boolean(response?.has_more);
+			onCommentsLoaded?.({ count: totalCount });
+		} catch (err) {
+			console.error('Failed to load older comments:', err);
+			error = t('comments.failedToLoad');
+		} finally {
+			isLoadingMore = false;
+		}
+	}
+
+	function mergeCommentRows(current, incoming) {
+		const byId = new Map(current.map((comment) => [comment.id, comment]));
+		for (const comment of incoming) byId.set(comment.id, comment);
+		return [...byId.values()];
+	}
+
+	function feedBoundary(rows, direction) {
+		if (rows.length === 0) return null;
+		return rows.reduce((boundary, candidate) => {
+			const boundaryTime = new Date(boundary.created_at).getTime();
+			const candidateTime = new Date(candidate.created_at).getTime();
+			const comparison = candidateTime - boundaryTime || candidate.id - boundary.id;
+			if (direction === 'newest' ? comparison > 0 : comparison < 0) return candidate;
+			return boundary;
+		});
 	}
 
 	async function submitComment() {
@@ -170,13 +234,15 @@
 				is_private: isInternalComment
 			});
 
-			comments = [...comments, newComment];
+			const alreadyLoaded = comments.some((comment) => comment.id === newComment.id);
+			comments = mergeCommentRows(comments, [newComment]);
+			if (!alreadyLoaded) totalCount++;
 			newCommentContent = '';
 			editorRef?.clear();
 			isInternalComment = false; // Reset toggle after posting
 			newCount = 0; // User engaged — clear the "new comments" badge.
 			// Update comment count
-			onCommentsLoaded?.({ count: comments.length });
+			onCommentsLoaded?.({ count: totalCount });
 		} catch (err) {
 			console.error('Failed to create comment:', err);
 			error = t('comments.failedToCreate');
@@ -208,8 +274,9 @@
 		try {
 			await api.deleteComment(commentId);
 			comments = comments.filter(c => c.id !== commentId);
+			totalCount = Math.max(0, totalCount - 1);
 			// Update comment count
-			onCommentsLoaded?.({ count: comments.length });
+			onCommentsLoaded?.({ count: totalCount });
 		} catch (err) {
 			console.error('Failed to delete comment:', err);
 			error = t('comments.failedToDelete');
@@ -301,6 +368,7 @@
 			{#if comments.length > 1}
 				<button
 					onclick={toggleSortOrder}
+					data-testid="comments-sort-toggle"
 					class="flex items-center gap-1.5 text-xs px-2 py-1 rounded transition-colors hover:bg-[var(--ds-bg-subtle)]"
 					style="color: var(--ds-text-subtle);"
 				>
@@ -310,6 +378,20 @@
 					{sortOrder === 'oldest' ? t('comments.oldestFirst') : t('comments.newestFirst')}
 				</button>
 			{/if}
+		</div>
+	{/if}
+
+	{#if hasMore}
+		<div class="flex justify-center mb-4">
+			<Button
+				variant="secondary"
+				size="small"
+				dataTestid="comments-load-more"
+				onclick={loadMoreComments}
+				disabled={isLoadingMore}
+			>
+				{isLoadingMore ? t('common.loading') : t('common.loadMore')}
+			</Button>
 		</div>
 	{/if}
 

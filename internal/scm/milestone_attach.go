@@ -21,8 +21,9 @@ import (
 // resolution, RefProvider.CompareCommits, ItemKeyDetector) all live
 // here. services imports scm only via the interface, so no cycle.
 type MilestoneAttacher struct {
-	sync   *SyncService
-	attach *repository.MilestoneAttachRepository
+	sync        *SyncService
+	attach      *repository.MilestoneAttachRepository
+	itemUpdater *services.ItemUpdateApplicationService
 }
 
 // NewMilestoneAttacher returns an attacher ready to register with the
@@ -30,6 +31,14 @@ type MilestoneAttacher struct {
 // AttachCommitIssues returns a clear error if called on a zero-value.
 func NewMilestoneAttacher(sync *SyncService, attach *repository.MilestoneAttachRepository) *MilestoneAttacher {
 	return &MilestoneAttacher{sync: sync, attach: attach}
+}
+
+// WithItemUpdater routes attachments through the shared item mutation and
+// effect pipeline. It is required for AttachCommitIssues; attach remains only
+// as a compatibility dependency for package-level repository tests.
+func (m *MilestoneAttacher) WithItemUpdater(updater *services.ItemUpdateApplicationService) *MilestoneAttacher {
+	m.itemUpdater = updater
+	return m
 }
 
 // AttachCommitIssues walks commits in (base, head], extracts item keys,
@@ -42,7 +51,7 @@ func NewMilestoneAttacher(sync *SyncService, attach *repository.MilestoneAttachR
 // so the create_milestone action can still report success.
 func (m *MilestoneAttacher) AttachCommitIssues(ctx context.Context, in services.MilestoneCommitAttachInput) (services.MilestoneCommitAttachResult, error) {
 	var result services.MilestoneCommitAttachResult
-	if m.sync == nil || m.attach == nil {
+	if m.sync == nil || m.itemUpdater == nil {
 		return result, errors.New("milestone attacher missing deps")
 	}
 
@@ -104,10 +113,21 @@ func (m *MilestoneAttacher) AttachCommitIssues(ctx context.Context, in services.
 			if _, dup := attached[itemID]; dup {
 				continue
 			}
-			if err := m.attach.AddItemMilestone(itemID, in.MilestoneID); err != nil &&
-				!errors.Is(err, repository.ErrDuplicateEntry) {
+			_, _, err = m.itemUpdater.AddMilestoneWithContext(
+				in.ActorUserID,
+				"",
+				itemID,
+				in.MilestoneID,
+				services.ActionContext{
+					TriggeredByAction: true,
+					ExecutionChainID:  in.ExecutionChainID,
+					CascadeDepth:      in.CascadeDepth,
+					SourceApplication: in.SourceApplication,
+				},
+			)
+			if err != nil {
 				commitFailed = true
-				slog.Error("milestone attach: add item_milestones",
+				slog.Error("milestone attach: mutate item milestones",
 					slog.String("component", "scm"),
 					slog.Int("item_id", itemID),
 					slog.Int("milestone_id", in.MilestoneID),

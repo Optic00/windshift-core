@@ -46,6 +46,32 @@ type Migration struct {
 // this Catalog in subsequent commits.
 var Catalog = []Migration{
 	{
+		Version:       "20260727_milestone_release_attempts",
+		Name:          "Add durable idempotent milestone release attempts",
+		CheckSQLite:   sqliteIndexCheck("uq_milestone_releases_idempotency"),
+		CheckPostgres: pgIndexCheck("uq_milestone_releases_idempotency"),
+		SQLite: `
+			ALTER TABLE milestone_releases ADD COLUMN idempotency_key TEXT;
+			ALTER TABLE milestone_releases ADD COLUMN state TEXT NOT NULL DEFAULT 'created';
+			ALTER TABLE milestone_releases ADD COLUMN last_error TEXT;
+			ALTER TABLE milestone_releases ADD COLUMN lease_token TEXT;
+			ALTER TABLE milestone_releases ADD COLUMN lease_expires_at DATETIME;
+			CREATE UNIQUE INDEX uq_milestone_releases_idempotency
+				ON milestone_releases(milestone_id, idempotency_key)
+				WHERE idempotency_key IS NOT NULL;
+		`,
+		Postgres: `
+			ALTER TABLE milestone_releases ADD COLUMN idempotency_key TEXT;
+			ALTER TABLE milestone_releases ADD COLUMN state TEXT NOT NULL DEFAULT 'created';
+			ALTER TABLE milestone_releases ADD COLUMN last_error TEXT;
+			ALTER TABLE milestone_releases ADD COLUMN lease_token TEXT;
+			ALTER TABLE milestone_releases ADD COLUMN lease_expires_at TIMESTAMPTZ;
+			CREATE UNIQUE INDEX uq_milestone_releases_idempotency
+				ON milestone_releases(milestone_id, idempotency_key)
+				WHERE idempotency_key IS NOT NULL;
+		`,
+	},
+	{
 		// idx_pages_frac_index_scoped originally scoped uniqueness over
 		// every row, archived included. But archived pages leave the live
 		// sibling ordering (ListChildren filters archived_at IS NULL) and

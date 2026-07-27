@@ -66,7 +66,16 @@ export const deleteDiagram = (diagramId) =>
   });
 
 // Comment API functions
-export const getComments = (itemId) => fetchAPI(`/items/${itemId}/comments`);
+export const getComments = (itemId, params = {}) => {
+  const searchParams = new URLSearchParams();
+  if (params.limit) searchParams.set('limit', params.limit);
+  if (params.before) searchParams.set('before', params.before);
+  if (params.beforeId) searchParams.set('before_id', params.beforeId);
+  if (params.since) searchParams.set('since', params.since);
+  if (params.sinceId) searchParams.set('since_id', params.sinceId);
+  const query = searchParams.toString();
+  return fetchAPI(`/items/${itemId}/comments${query ? `?${query}` : ''}`);
+};
 export const createComment = (itemId, data) =>
   fetchAPI(`/items/${itemId}/comments`, {
     method: 'POST',

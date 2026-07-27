@@ -181,18 +181,20 @@ func (c *Client) getWorkItems(workspaceID int) ([]WorkItem, bool, error) {
 }
 
 func (c *Client) getComments(itemID int) ([]Comment, error) {
-	// v1's comments list endpoint isn't paginated for items; it returns a bare
-	// array. If a future v1 release wraps it in {data,pagination} we'll need
-	// to swap the decoder here.
-	var raw []v1CommentResponse
-	if err := c.doGet(fmt.Sprintf("/rest/api/v1/items/%d/comments?expand=author", itemID), authBearer, &raw); err != nil {
-		return nil, err
+	out := make([]Comment, 0, 64)
+	for page := 1; ; page++ {
+		var resp v1CommentsPage
+		path := fmt.Sprintf("/rest/api/v1/items/%d/comments?expand=author&page=%d&limit=100", itemID, page)
+		if err := c.doGet(path, authBearer, &resp); err != nil {
+			return nil, err
+		}
+		for _, c2 := range resp.Data {
+			out = append(out, commentFromV1(c2))
+		}
+		if len(resp.Data) == 0 || page >= resp.Pagination.TotalPages {
+			return out, nil
+		}
 	}
-	out := make([]Comment, 0, len(raw))
-	for _, c2 := range raw {
-		out = append(out, commentFromV1(c2))
-	}
-	return out, nil
 }
 
 func (c *Client) getStatuses(workspaceID int) ([]Status, error) {

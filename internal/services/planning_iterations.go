@@ -480,15 +480,17 @@ type IterationBurndownData struct {
 	DataPoints  []BurndownDataPoint `json:"data_points"`
 }
 
-// GetIterationBurndown calculates burndown data for an iteration by replaying item history.
+// GetIterationBurndown reconstructs daily membership and status from history.
+// TotalItems is the number of distinct visible items that belonged to the
+// iteration on at least one reported day. The ideal line is based on the
+// end-of-first-day commitment and is intentionally unaffected by later scope
+// additions or removals, making scope change visible instead of rewriting the
+// original plan.
 func (s *PlanningService) GetIterationBurndown(iterationID int, workspaceIDs []int) (*IterationBurndownData, error) {
-	// Get iteration details
 	iter, err := s.GetIteration(iterationID)
 	if err != nil {
 		return nil, err
 	}
-
-	// Parse dates
 	startDate, err := parseDate(iter.StartDate)
 	if err != nil {
 		return nil, fmt.Errorf("invalid start date: %w", err)
@@ -498,222 +500,234 @@ func (s *PlanningService) GetIterationBurndown(iterationID int, workspaceIDs []i
 		return nil, fmt.Errorf("invalid end date: %w", err)
 	}
 
-	// Get all items in this iteration with their current status category
+	type historicalItemState struct {
+		createdAt   time.Time
+		iterationID sql.NullInt64
+		statusID    sql.NullInt64
+	}
 	workspaceClause, workspaceArgs := planningWorkspaceFilter("i.workspace_id", workspaceIDs)
-	itemArgs := make([]interface{}, 0, 1+len(workspaceArgs))
-	itemArgs = append(itemArgs, iterationID)
+	iterationValue := fmt.Sprintf("%d", iterationID)
+	itemArgs := make([]interface{}, 0, 3+len(workspaceArgs))
+	itemArgs = append(itemArgs, iterationID, iterationValue, iterationValue)
 	itemArgs = append(itemArgs, workspaceArgs...)
 	rows, err := s.db.Query(`
-		SELECT i.id, COALESCE(sc.is_completed, false) as is_completed
+		SELECT i.id, i.iteration_id, i.status_id, i.created_at
 		FROM items i
-		LEFT JOIN statuses st ON i.status_id = st.id
-		LEFT JOIN status_categories sc ON st.category_id = sc.id
-		WHERE i.iteration_id = ?`+workspaceClause+`
+		WHERE (
+			i.iteration_id = ?
+			OR EXISTS (
+				SELECT 1 FROM item_history ih
+				WHERE ih.item_id = i.id
+				  AND ih.field_name = 'iteration_id'
+				  AND (ih.old_value = ? OR ih.new_value = ?)
+			)
+		)`+workspaceClause+`
 	`, itemArgs...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get iteration items: %w", err)
+		return nil, fmt.Errorf("failed to get historical iteration items: %w", err)
 	}
 	defer rows.Close()
 
-	// Build map of item IDs to their current completed state
-	itemStates := make(map[int]bool) // itemID -> isCompleted
+	itemStates := make(map[int]*historicalItemState)
 	for rows.Next() {
-		var itemID int
-		var isCompleted bool
-		if err = rows.Scan(&itemID, &isCompleted); err != nil {
-			continue
+		var (
+			itemID       int
+			createdValue interface{}
+			state        historicalItemState
+		)
+		if err := rows.Scan(&itemID, &state.iterationID, &state.statusID, &createdValue); err != nil {
+			return nil, fmt.Errorf("failed to scan historical iteration item: %w", err)
 		}
-		itemStates[itemID] = isCompleted
+		createdAt, ok := analyticsDBTime(createdValue)
+		if !ok {
+			return nil, fmt.Errorf("failed to parse creation time for item %d", itemID)
+		}
+		state.createdAt = createdAt
+		itemStates[itemID] = &state
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate iteration items: %w", err)
+		return nil, fmt.Errorf("failed to iterate historical iteration items: %w", err)
 	}
-
-	totalItems := len(itemStates)
-	if totalItems == 0 {
-		// Return empty data if no items
+	if len(itemStates) == 0 {
 		return &IterationBurndownData{
 			IterationID: iterationID,
 			StartDate:   iter.StartDate,
 			EndDate:     iter.EndDate,
-			TotalItems:  0,
 			DataPoints:  []BurndownDataPoint{},
 		}, nil
 	}
 
-	// Get all status changes for items in this iteration within the date range
-	// We need to work backwards from current state using history
-	historyArgs := make([]interface{}, 0, 2+len(workspaceArgs))
-	historyArgs = append(historyArgs, iterationID, startDate.Format("2006-01-02"))
+	type historyChange struct {
+		itemID    int
+		changedAt time.Time
+		fieldName string
+		oldValue  sql.NullString
+		newValue  sql.NullString
+	}
+	historyArgs := make([]interface{}, 0, 4+len(workspaceArgs))
+	historyArgs = append(historyArgs, startDate, iterationID, iterationValue, iterationValue)
 	historyArgs = append(historyArgs, workspaceArgs...)
 	historyRows, err := s.db.Query(`
-		SELECT ih.item_id, ih.changed_at, ih.old_value, ih.new_value
+		SELECT ih.item_id, ih.changed_at, ih.field_name, ih.old_value, ih.new_value
 		FROM item_history ih
-		JOIN items i ON ih.item_id = i.id
-		WHERE i.iteration_id = ?
-		  AND ih.field_name = 'status_id'
-		  AND ih.changed_at >= ?`+workspaceClause+`
-		ORDER BY ih.changed_at DESC
+		JOIN items i ON i.id = ih.item_id
+		WHERE ih.field_name IN ('iteration_id', 'status_id')
+		  AND ih.changed_at >= ?
+		  AND (
+			i.iteration_id = ?
+			OR EXISTS (
+				SELECT 1 FROM item_history membership
+				WHERE membership.item_id = i.id
+				  AND membership.field_name = 'iteration_id'
+				  AND (membership.old_value = ? OR membership.new_value = ?)
+			)
+		  )`+workspaceClause+`
+		ORDER BY ih.changed_at ASC, ih.id ASC
 	`, historyArgs...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get item history: %w", err)
+		return nil, fmt.Errorf("failed to get iteration membership history: %w", err)
 	}
 	defer historyRows.Close()
 
-	// Collect all status change events
-	type statusChange struct {
-		ItemID    int
-		ChangedAt time.Time
-		OldValue  sql.NullString
-		NewValue  sql.NullString
-	}
-	var changes []statusChange
-
+	var changes []historyChange
 	for historyRows.Next() {
-		var c statusChange
-		var changedAtStr string
-		if err = historyRows.Scan(&c.ItemID, &changedAtStr, &c.OldValue, &c.NewValue); err != nil {
-			continue
+		var change historyChange
+		var changedValue interface{}
+		if err := historyRows.Scan(
+			&change.itemID, &changedValue, &change.fieldName, &change.oldValue, &change.newValue,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan iteration history: %w", err)
 		}
-		// Parse the datetime
-		c.ChangedAt, _ = time.Parse("2006-01-02 15:04:05", changedAtStr)
-		if c.ChangedAt.IsZero() {
-			c.ChangedAt, _ = time.Parse(time.RFC3339, changedAtStr)
+		changedAt, ok := analyticsDBTime(changedValue)
+		if !ok {
+			return nil, fmt.Errorf("failed to parse iteration history time for item %d", change.itemID)
 		}
-		changes = append(changes, c)
+		change.changedAt = changedAt
+		changes = append(changes, change)
 	}
 	if err := historyRows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate item history: %w", err)
+		return nil, fmt.Errorf("failed to iterate iteration history: %w", err)
 	}
 
-	// Get status_id -> is_completed mapping
-	statusCompletedMap := make(map[int]bool)
+	parseNullableID := func(value sql.NullString) sql.NullInt64 {
+		if !value.Valid || value.String == "" {
+			return sql.NullInt64{}
+		}
+		var id int64
+		if _, scanErr := fmt.Sscanf(value.String, "%d", &id); scanErr != nil {
+			return sql.NullInt64{}
+		}
+		return sql.NullInt64{Int64: id, Valid: true}
+	}
+	applyValue := func(state *historicalItemState, fieldName string, value sql.NullString) {
+		switch fieldName {
+		case "iteration_id":
+			state.iterationID = parseNullableID(value)
+		case "status_id":
+			state.statusID = parseNullableID(value)
+		}
+	}
+
+	// Rewind current state to immediately before the iteration start. This
+	// includes carry-over changes made after the iteration ended.
+	for i := len(changes) - 1; i >= 0; i-- {
+		if state := itemStates[changes[i].itemID]; state != nil {
+			applyValue(state, changes[i].fieldName, changes[i].oldValue)
+		}
+	}
+
+	statusCompleted := make(map[int64]bool)
 	statusRows, err := s.db.Query(`
-		SELECT s.id, COALESCE(sc.is_completed, false)
-		FROM statuses s
-		LEFT JOIN status_categories sc ON s.category_id = sc.id
+		SELECT st.id, COALESCE(sc.is_completed, false)
+		FROM statuses st
+		LEFT JOIN status_categories sc ON sc.id = st.category_id
 	`)
-	if err == nil {
-		defer statusRows.Close()
-		for statusRows.Next() {
-			var statusID int
-			var isCompleted bool
-			if err := statusRows.Scan(&statusID, &isCompleted); err == nil {
-				statusCompletedMap[statusID] = isCompleted
-			}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get burndown statuses: %w", err)
+	}
+	defer statusRows.Close()
+	for statusRows.Next() {
+		var statusID int64
+		var completed bool
+		if err := statusRows.Scan(&statusID, &completed); err != nil {
+			return nil, fmt.Errorf("failed to scan burndown status: %w", err)
 		}
-		if err := statusRows.Err(); err != nil {
-			return nil, fmt.Errorf("failed to iterate statuses: %w", err)
-		}
+		statusCompleted[statusID] = completed
+	}
+	if err := statusRows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate burndown statuses: %w", err)
 	}
 
-	// Helper to check if a status_id string represents a completed status
-	isStatusCompleted := func(statusIDStr string) bool {
-		if statusIDStr == "" {
-			return false
-		}
-		var statusID int
-		if _, err := fmt.Sscanf(statusIDStr, "%d", &statusID); err != nil {
-			return false
-		}
-		return statusCompletedMap[statusID]
-	}
-
-	// Build daily data points
-	var dataPoints []BurndownDataPoint
-	today := time.Now().Truncate(24 * time.Hour)
+	now := time.Now().UTC()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	effectiveEndDate := endDate
-	if today.Before(endDate) {
+	if today.Before(effectiveEndDate) {
 		effectiveEndDate = today
 	}
-
-	totalDays := int(endDate.Sub(startDate).Hours()/24) + 1
-
-	// Start with current state and work backwards through history to build daily snapshots
-	// Clone current state for simulation
-	dayStates := make(map[int]bool)
-	for id, completed := range itemStates {
-		dayStates[id] = completed
+	if effectiveEndDate.Before(startDate) {
+		return &IterationBurndownData{
+			IterationID: iterationID,
+			StartDate:   iter.StartDate,
+			EndDate:     iter.EndDate,
+			DataPoints:  []BurndownDataPoint{},
+		}, nil
 	}
 
-	// Build data for each day from end to start
-	type dayData struct {
-		date      string
-		remaining int
-		completed int
-	}
-	var dailyData []dayData
-
-	for d := effectiveEndDate; !d.Before(startDate); d = d.AddDate(0, 0, -1) {
-		dateStr := d.Format("2006-01-02")
-
-		// Apply any history changes that happened after this day (reverse them)
-		for _, c := range changes {
-			changeDate := c.ChangedAt.Truncate(24 * time.Hour)
-			if changeDate.Equal(d.AddDate(0, 0, 1)) || changeDate.After(d.AddDate(0, 0, 1)) {
-				// This change happened after our current day, so reverse it
-				// (set the item to its old state)
-				if _, exists := dayStates[c.ItemID]; exists {
-					dayStates[c.ItemID] = isStatusCompleted(c.OldValue.String)
-				}
+	var dataPoints []BurndownDataPoint
+	everMembers := make(map[int]struct{})
+	changeIndex := 0
+	for day := startDate; !day.After(effectiveEndDate); day = day.AddDate(0, 0, 1) {
+		dayEnd := day.AddDate(0, 0, 1)
+		for changeIndex < len(changes) && changes[changeIndex].changedAt.Before(dayEnd) {
+			change := changes[changeIndex]
+			if state := itemStates[change.itemID]; state != nil {
+				applyValue(state, change.fieldName, change.newValue)
 			}
+			changeIndex++
 		}
 
-		// Filter changes to only those not yet processed
-		var remainingChanges []statusChange
-		for _, c := range changes {
-			changeDate := c.ChangedAt.Truncate(24 * time.Hour)
-			if changeDate.Before(d.AddDate(0, 0, 1)) {
-				remainingChanges = append(remainingChanges, c)
+		remaining, completed := 0, 0
+		for itemID, state := range itemStates {
+			if !state.createdAt.Before(dayEnd) ||
+				!state.iterationID.Valid ||
+				int(state.iterationID.Int64) != iterationID {
+				continue
 			}
-		}
-		changes = remainingChanges
-
-		// Count completed and remaining
-		completed := 0
-		for _, isCompleted := range dayStates {
-			if isCompleted {
+			everMembers[itemID] = struct{}{}
+			if state.statusID.Valid && statusCompleted[state.statusID.Int64] {
 				completed++
+			} else {
+				remaining++
 			}
 		}
-		remaining := totalItems - completed
-
-		dailyData = append(dailyData, dayData{
-			date:      dateStr,
-			remaining: remaining,
-			completed: completed,
+		dataPoints = append(dataPoints, BurndownDataPoint{
+			Date:      day.Format("2006-01-02"),
+			Remaining: remaining,
+			Completed: completed,
 		})
 	}
 
-	// Reverse to get chronological order
-	for i := len(dailyData) - 1; i >= 0; i-- {
-		dd := dailyData[i]
-		dayIndex := 0
-		d, _ := parseDate(dd.date)
-		dayIndex = int(d.Sub(startDate).Hours() / 24)
-
-		// Calculate ideal remaining for this day
-		ideal := totalItems
+	committedItems := 0
+	if len(dataPoints) > 0 {
+		committedItems = dataPoints[0].Remaining + dataPoints[0].Completed
+	}
+	totalDays := int(endDate.Sub(startDate).Hours()/24) + 1
+	for i := range dataPoints {
+		ideal := committedItems
 		if totalDays > 1 {
-			ideal = totalItems - (dayIndex * totalItems / (totalDays - 1))
+			ideal = committedItems - (i * committedItems / (totalDays - 1))
 			if ideal < 0 {
 				ideal = 0
 			}
 		}
-
-		dataPoints = append(dataPoints, BurndownDataPoint{
-			Date:      dd.date,
-			Remaining: dd.remaining,
-			Completed: dd.completed,
-			Ideal:     ideal,
-		})
+		dataPoints[i].Ideal = ideal
 	}
 
 	return &IterationBurndownData{
 		IterationID: iterationID,
 		StartDate:   iter.StartDate,
 		EndDate:     iter.EndDate,
-		TotalItems:  totalItems,
+		TotalItems:  len(everMembers),
 		DataPoints:  dataPoints,
 	}, nil
 }

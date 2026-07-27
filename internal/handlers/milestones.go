@@ -1,6 +1,9 @@
 package handlers
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -15,19 +18,37 @@ import (
 )
 
 type MilestoneHandler struct {
-	permissionService  *services.PermissionService
-	planningService    *services.PlanningService
-	credentialResolver *scm.CredentialResolver
-	auditor            *logger.Auditor
+	permissionService      *services.PermissionService
+	planningService        *services.PlanningService
+	resolveReleaseProvider func(context.Context, int, int) (milestoneReleaseProvider, error)
+	auditor                *logger.Auditor
+}
+
+type milestoneReleaseProvider interface {
+	CreateRelease(context.Context, string, string, scm.CreateReleaseOptions) (*scm.Release, error)
+	ListReleases(context.Context, string, string) ([]scm.Release, error)
 }
 
 func NewMilestoneHandler(planningService *services.PlanningService, permissionService *services.PermissionService, credentialResolver *scm.CredentialResolver, auditor *logger.Auditor) *MilestoneHandler {
-	return &MilestoneHandler{
-		permissionService:  permissionService,
-		planningService:    planningService,
-		credentialResolver: credentialResolver,
-		auditor:            auditor,
+	handler := &MilestoneHandler{
+		permissionService: permissionService,
+		planningService:   planningService,
+		auditor:           auditor,
 	}
+	if credentialResolver != nil {
+		handler.resolveReleaseProvider = func(ctx context.Context, connectionID, userID int) (milestoneReleaseProvider, error) {
+			provider, err := credentialResolver.GetProviderForUser(ctx, connectionID, userID)
+			if err != nil {
+				return nil, err
+			}
+			releaseProvider, ok := provider.(scm.ReleaseProvider)
+			if !ok {
+				return nil, errors.New("SCM provider does not support releases")
+			}
+			return releaseProvider, nil
+		}
+	}
+	return handler
 }
 
 func (h *MilestoneHandler) GetAll(w http.ResponseWriter, r *http.Request) {
@@ -674,11 +695,12 @@ func (h *MilestoneHandler) Release(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If a connection_id was provided, verify the user also has access to that connection's workspace
+	// Resolve every local dependency before persisting the attempt. No provider
+	// side effect may occur until the durable idempotency row exists.
 	var scmConnectionID *int
 	var scmRepository *string
-	var scmReleaseID *string
-	var scmReleaseURL *string
+	var releaseProvider milestoneReleaseProvider
+	var owner, repository string
 
 	if req.ConnectionID > 0 {
 		connectionWorkspaceID, wsErr := h.planningService.GetSCMConnectionWorkspaceID(req.ConnectionID)
@@ -699,58 +721,39 @@ func (h *MilestoneHandler) Release(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		repositoryName := linkedRepository.RepositoryName
+		parts := strings.SplitN(repositoryName, "/", 2)
+		if len(parts) != 2 {
+			respondValidationError(w, r, "repository must be in 'owner/repo' format")
+			return
+		}
+		owner, repository = parts[0], parts[1]
+		cid := req.ConnectionID
+		scmConnectionID = &cid
+		scmRepository = &repositoryName
 
-		if h.credentialResolver != nil {
-			// Load the SCM provider
-			provider, provErr := h.credentialResolver.GetProviderForUser(r.Context(), req.ConnectionID, user.ID)
+		if h.resolveReleaseProvider != nil {
+			provider, provErr := h.resolveReleaseProvider(r.Context(), req.ConnectionID, user.ID)
 			if provErr != nil {
 				respondBadRequest(w, r, "Failed to load SCM provider: "+provErr.Error())
 				return
 			}
-
-			// Ensure the provider supports releases
-			releaseProvider, supportsReleases := provider.(scm.ReleaseProvider)
-			if !supportsReleases {
-				respondBadRequest(w, r, "This SCM provider does not support releases")
-				return
-			}
-
-			// Parse "owner/repo"
-			parts := strings.SplitN(repositoryName, "/", 2)
-			if len(parts) != 2 {
-				respondValidationError(w, r, "repository must be in 'owner/repo' format")
-				return
-			}
-			owner, repo := parts[0], parts[1]
-
-			// Create the release on the SCM provider
-			release, releaseErr := releaseProvider.CreateRelease(r.Context(), owner, repo, scm.CreateReleaseOptions{
-				TagName:         req.TagName,
-				TargetCommitish: req.TargetCommitish,
-				Name:            req.Name,
-				Body:            req.Body,
-				IsDraft:         req.IsDraft,
-				IsPrerelease:    req.IsPrerelease,
-			})
-			if releaseErr != nil {
-				respondBadRequest(w, r, "Failed to create SCM release: "+releaseErr.Error())
-				return
-			}
-
-			cid := req.ConnectionID
-			scmConnectionID = &cid
-			repoStr := repositoryName
-			scmRepository = &repoStr
-			scmReleaseID = &release.ID
-			scmReleaseURL = &release.URL
+			releaseProvider = provider
 		}
 	}
 
 	createdBy := user.ID
+	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if len(idempotencyKey) > 200 {
+		respondValidationError(w, r, "Idempotency-Key must be at most 200 characters")
+		return
+	}
+	if idempotencyKey == "" {
+		idempotencyKey = milestoneReleaseFallbackKey(id, user.ID, req, scmRepository)
+	}
 
-	// Persist the release record and mark milestone as completed
-	result, err := h.planningService.ReleaseMilestone(services.ReleaseMilestoneParams{
+	params := services.ReleaseMilestoneParams{
 		ID:              id,
+		IdempotencyKey:  idempotencyKey,
 		TagName:         req.TagName,
 		Name:            req.Name,
 		Body:            req.Body,
@@ -759,11 +762,65 @@ func (h *MilestoneHandler) Release(w http.ResponseWriter, r *http.Request) {
 		TargetCommitish: req.TargetCommitish,
 		SCMConnectionID: scmConnectionID,
 		SCMRepository:   scmRepository,
-		SCMReleaseID:    scmReleaseID,
-		SCMReleaseURL:   scmReleaseURL,
 		CreatedBy:       &createdBy,
-	})
+	}
+	attempt, err := h.planningService.BeginMilestoneRelease(r.Context(), params)
 	if err != nil {
+		if errors.Is(err, services.ErrMilestoneReleaseInProgress) {
+			respondConflict(w, r, "This release request is already in progress")
+			return
+		}
+		respondInternalError(w, r, err)
+		return
+	}
+	if attempt.AlreadyCreated {
+		result, getErr := h.planningService.GetMilestone(id)
+		if getErr != nil {
+			respondInternalError(w, r, getErr)
+			return
+		}
+		respondJSONOK(w, h.milestoneResultToModel(result, user.ID))
+		return
+	}
+
+	if releaseProvider != nil {
+		var release *scm.Release
+		if attempt.NeedsReconcile {
+			releases, listErr := releaseProvider.ListReleases(r.Context(), owner, repository)
+			if listErr != nil {
+				_ = h.planningService.MarkMilestoneReleaseUncertain(r.Context(), attempt.ID, attempt.LeaseToken, listErr.Error())
+				respondBadRequest(w, r, "Failed to reconcile SCM release: "+listErr.Error())
+				return
+			}
+			for i := range releases {
+				if releases[i].TagName == req.TagName {
+					release = &releases[i]
+					break
+				}
+			}
+		}
+		if release == nil {
+			release, err = releaseProvider.CreateRelease(r.Context(), owner, repository, scm.CreateReleaseOptions{
+				TagName:         req.TagName,
+				TargetCommitish: req.TargetCommitish,
+				Name:            req.Name,
+				Body:            req.Body,
+				IsDraft:         req.IsDraft,
+				IsPrerelease:    req.IsPrerelease,
+			})
+			if err != nil {
+				_ = h.planningService.MarkMilestoneReleaseUncertain(r.Context(), attempt.ID, attempt.LeaseToken, err.Error())
+				respondBadRequest(w, r, "Failed to create SCM release: "+err.Error())
+				return
+			}
+		}
+		params.SCMReleaseID = &release.ID
+		params.SCMReleaseURL = &release.URL
+	}
+
+	result, err := h.planningService.CompleteMilestoneRelease(r.Context(), attempt.ID, attempt.LeaseToken, params)
+	if err != nil {
+		_ = h.planningService.MarkMilestoneReleaseUncertain(r.Context(), attempt.ID, attempt.LeaseToken, err.Error())
 		respondInternalError(w, r, err)
 		return
 	}
@@ -771,4 +828,18 @@ func (h *MilestoneHandler) Release(w http.ResponseWriter, r *http.Request) {
 	milestone := h.milestoneResultToModel(result, user.ID)
 	h.auditor.Log(r, user, logger.ActionMilestoneRelease, logger.ResourceMilestone, &id, milestone.Name)
 	respondJSONOK(w, milestone)
+}
+
+func milestoneReleaseFallbackKey(milestoneID, userID int, req releaseRequest, repository *string) string {
+	repositoryName := ""
+	if repository != nil {
+		repositoryName = *repository
+	}
+	canonical := fmt.Sprintf(
+		"%d\n%d\n%d\n%s\n%s\n%s\n%s\n%t\n%t\n%s",
+		milestoneID, userID, req.ConnectionID, repositoryName, req.TagName,
+		req.Name, req.Body, req.IsDraft, req.IsPrerelease, req.TargetCommitish,
+	)
+	sum := sha256.Sum256([]byte(canonical))
+	return "auto-" + hex.EncodeToString(sum[:])
 }

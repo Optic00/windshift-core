@@ -1044,10 +1044,12 @@ func (s *Server) initialize() error {
 	//     by external_key (with optional release attach + commit-issue
 	//     attachment via the scm.MilestoneAttacher adapter).
 	scmSyncService.SetActionEvents(s.actionService)
+	milestoneItemUpdater := services.NewItemUpdateApplicationService(s.db, permService)
+	milestoneItemUpdater.SetEmitter(eventCoordinator)
 	milestoneAttacher := scm.NewMilestoneAttacher(
 		scmSyncService,
 		repository.NewMilestoneAttachRepository(s.db),
-	)
+	).WithItemUpdater(milestoneItemUpdater)
 	s.actionService.RegisterNodeExecutor(
 		services.NewCreateMilestoneExecutor(services.NewPlanningService(s.db), s.actionService).
 			WithCommitAttacher(milestoneAttacher),

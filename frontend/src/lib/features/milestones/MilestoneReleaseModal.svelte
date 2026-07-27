@@ -36,6 +36,7 @@
   let targetCommitish = $state('');
   let isDraft = $state(false);
   let isPrerelease = $state(false);
+  let idempotencyKey = $state(null);
 
   function sanitizeTagName(name) {
     return 'v' + (name ?? '')
@@ -152,7 +153,8 @@
         payload.repository_id = repositories.find(repo => repo.repository_name === selectedRepository)?.id;
       }
 
-      const updatedMilestone = await api.milestones.release(milestone.id, payload);
+      idempotencyKey ??= crypto.randomUUID();
+      const updatedMilestone = await api.milestones.release(milestone.id, payload, idempotencyKey);
       successToast(
         updatedMilestone.latest_release?.scm_release_url
           ? `Release created at ${updatedMilestone.latest_release.scm_release_url}`

@@ -408,7 +408,7 @@ func (h *ItemHandler) GetBatch(w http.ResponseWriter, r *http.Request) {
 // Get handles GET /rest/api/v1/items/{id}
 //
 // @Summary      Get an item by ID
-// @Description  Returns 404 (not 403) when the item exists but isn't visible to the caller — item existence is never leaked.
+// @Description  Returns 404 (not 403) when the item exists but isn't visible to the caller — item existence is never leaked. When `expand=comments` is requested, the response embeds the 25 newest comments; use the comments link for additional pages.
 // @Tags         items
 // @Produce      json
 // @Security     BearerAuth
@@ -441,7 +441,7 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 	// Handle expand parameter
 	expand := restapi.ParseExpand(r)
 	if expand.Comments {
-		if comments, err := h.commentSvc.GetByItemID(itemID); err == nil {
+		if comments, _, err := h.commentSvc.GetByItemIDPaginated(itemID, services.DefaultCommentFeedLimit, 0, false); err == nil {
 			response.Comments = dto.MapCommentsToResponse(comments)
 		}
 	}
@@ -473,7 +473,7 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 // the form embedding clients should persist instead of the volatile numeric id.
 //
 // @Summary      Get an item by workspace key and per-workspace number
-// @Description  Resolves an item by its stable (workspace_key, workspace_item_number) pair. Returns 404 (not 403) when the item exists but isn't visible to the caller — item existence is never leaked.
+// @Description  Resolves an item by its stable (workspace_key, workspace_item_number) pair. Returns 404 (not 403) when the item exists but isn't visible to the caller — item existence is never leaked. When `expand=comments` is requested, the response embeds the 25 newest comments; use the comments link for additional pages.
 // @Tags         items
 // @Produce      json
 // @Security     BearerAuth
@@ -541,7 +541,7 @@ func (h *ItemHandler) GetByKeyAndNumber(w http.ResponseWriter, r *http.Request) 
 
 	expand := restapi.ParseExpand(r)
 	if expand.Comments {
-		if comments, err := h.commentSvc.GetByItemID(itemID); err == nil {
+		if comments, _, err := h.commentSvc.GetByItemIDPaginated(itemID, services.DefaultCommentFeedLimit, 0, false); err == nil {
 			response.Comments = dto.MapCommentsToResponse(comments)
 		}
 	}
@@ -1048,9 +1048,8 @@ func (h *ItemHandler) Delete(w http.ResponseWriter, r *http.Request) {
 // @Param        id     path      int     true   "Item ID"
 // @Param        page   query     int     false  "Page number (1-based)"
 // @Param        limit  query     int     false  "Items per page (max 100)"
-// @Param        sort   query     string  false  "Sort field"
-// @Param        order  query     string  false  "Sort order: asc or desc"
-// @Success      200    {array}   dto.CommentResponse
+// @Param        order  query     string  false  "Sort order by creation time: asc or desc"
+// @Success      200    {object}  handlers.PaginatedResponse{data=[]dto.CommentResponse}
 // @Failure      400    {object}  handlers.ErrorResponse  "Invalid item ID"
 // @Failure      401    {object}  handlers.ErrorResponse
 // @Failure      403    {object}  handlers.ErrorResponse  "Token lacks the items:read scope"
@@ -1063,14 +1062,20 @@ func (h *ItemHandler) GetComments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	comments, err := h.commentSvc.GetByItemID(item.ID)
+	pagination := h.ParsePagination(r)
+	comments, total, err := h.commentSvc.GetByItemIDPaginated(
+		item.ID,
+		pagination.Limit,
+		pagination.Offset,
+		pagination.SortAsc,
+	)
 	if err != nil {
 		h.RespondInternalError(w, r)
 		return
 	}
 
 	response := dto.MapCommentsToResponse(comments)
-	h.RespondOK(w, response)
+	h.RespondPaginated(w, response, pagination, total)
 }
 
 // CreateComment handles POST /rest/api/v1/items/{id}/comments
