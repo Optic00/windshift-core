@@ -35,6 +35,17 @@ ws link ls <KEY-123>                      # Linked items, pages, and tests
 Include the item key in commit subjects when the commit belongs to tracked
 work, for example: `fix: handle empty input ({{.Workspace.Key}}-123)`.
 
+## Attachments
+
+Attach screenshots, logs, or generated files to an item rather than pasting
+them into a comment.
+
+```bash
+ws attachment upload <KEY-123> shot.png [more.png ...]  # Attach local files
+ws attachment list <KEY-123>                            # Attachment IDs and sizes
+ws attachment download <attachment-id> [--to <path>]    # Fetch one back
+```
+
 ## Workspace workflow
 {{if .StatusAliases}}
 Status aliases configured for this repository:
