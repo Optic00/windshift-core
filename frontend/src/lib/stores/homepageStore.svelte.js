@@ -9,6 +9,8 @@ import {
   getDashboardWidgetDefaultWidth,
 } from '../services/dashboardWidgetRegistry.js';
 import { formatDateSimple, formatDateWithOptions } from '../utils/dateFormatter.js';
+import { t } from './i18n.svelte.js';
+import { errorToast } from './toasts.svelte.js';
 
 const ONBOARDING_STORAGE_KEY = 'windshift-dashboard-onboarding-dismissed';
 const HOMEPAGE_SNAPSHOT_REUSE_MS = 5_000;
@@ -138,6 +140,7 @@ class HomepageStore {
       this.layoutRevision = '';
     } catch (err) {
       console.error('Failed to save dashboard layout:', err);
+      errorToast(t('toast.layoutSaveFailed'));
     } finally {
       this._savePending = false;
       if (this._pendingSaveQueued) {

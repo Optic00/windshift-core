@@ -230,6 +230,7 @@ export default {
     updated: 'Updated successfully',
     copied: 'Copied to clipboard',
     failed: 'Operation failed',
+    layoutSaveFailed: 'Dashboard changes could not be saved. Your edits will be lost on reload.',
   },
 
   // Backend error codes

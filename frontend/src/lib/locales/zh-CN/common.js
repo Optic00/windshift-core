@@ -208,6 +208,7 @@ export default {
     updated: '更新成功',
     copied: '已复制到剪贴板',
     failed: '操作失败',
+    layoutSaveFailed: '无法保存仪表板更改。重新加载后您的编辑将丢失。',
   },
 
   errors: {

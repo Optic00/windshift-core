@@ -202,6 +202,7 @@ export default {
     updated: 'Atualizado com sucesso',
     copied: 'Copiado para a área de transferência',
     failed: 'Operação falhou',
+    layoutSaveFailed: 'Não foi possível salvar as alterações do painel. Suas edições serão perdidas ao recarregar.',
   },
   errors: {
     UNAUTHORIZED: 'Autenticação necessária. Por favor, faça login.',

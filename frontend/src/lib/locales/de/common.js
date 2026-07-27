@@ -202,6 +202,7 @@ export default {
     updated: 'Erfolgreich aktualisiert',
     copied: 'In Zwischenablage kopiert',
     failed: 'Vorgang fehlgeschlagen',
+    layoutSaveFailed: 'Dashboard-Änderungen konnten nicht gespeichert werden. Ihre Bearbeitungen gehen beim Neuladen verloren.',
   },
   errors: {
     UNAUTHORIZED: 'Authentifizierung erforderlich. Bitte melden Sie sich an.',

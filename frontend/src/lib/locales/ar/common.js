@@ -224,6 +224,7 @@ export default {
     updated: 'تم التحديث بنجاح',
     copied: 'تم النسخ إلى الحافظة',
     failed: 'فشلت العملية',
+    layoutSaveFailed: 'تعذّر حفظ تغييرات لوحة التحكم. ستُفقد تعديلاتك عند إعادة التحميل.',
   },
 
   // Backend error codes

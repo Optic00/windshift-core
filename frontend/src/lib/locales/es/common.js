@@ -223,6 +223,7 @@ export default {
     updated: 'Actualizado correctamente',
     copied: 'Copiado al portapapeles',
     failed: 'Operación fallida',
+    layoutSaveFailed: 'No se pudieron guardar los cambios del panel. Tus ediciones se perderán al recargar.',
   },
 
   // Backend error codes
