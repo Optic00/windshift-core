@@ -143,14 +143,25 @@ Examples:
 	},
 }
 
-// maxItemAttachmentUpload mirrors the http.MaxBytesReader cap the upload
-// route applies to the whole request body
+// maxItemAttachmentUpload mirrors the http.MaxBytesReader cap the upload route
+// applies to the whole request body
 // (internal/restapi/v1/handlers/item_attachments.go). Checking it client-side
 // turns an oversized file into an actionable message instead of the
 // "failed to parse form data" 400 the server emits once it truncates the body.
 //
-// The server may also enforce a smaller per-instance limit from attachment
-// settings; that one comes back as a clear 400 and is left to the API.
+// This is the route's hard ceiling, not the admin-configurable limit. The
+// cookie-auth upload path applies the same 32 MB cap, so CLI and web UI agree
+// — note that the configurable default (50 MB) is above it and therefore
+// unreachable on either surface.
+//
+// Everything else an admin can configure — a *smaller* max file size, an
+// allowed-MIME-type list, the global enable switch — plus the fixed extension
+// blocklist and content/extension sniffing, is enforced server-side only. The
+// CLI deliberately does not mirror those: they are server state with no v1
+// endpoint to read them from, and a stale local copy would reject files the
+// server would have accepted. They come back as a 400 (or 503 when uploads are
+// disabled) carrying a human-readable reason, which translateItemAttachmentError
+// passes through verbatim.
 const maxItemAttachmentUpload = 32 << 20
 
 var attachmentUploadCmd = &cobra.Command{
@@ -158,11 +169,18 @@ var attachmentUploadCmd = &cobra.Command{
 	Short: "Upload one or more files to a work item",
 	Long: `Upload local files as attachments on a work item.
 
-Every file is checked (exists, readable, within the server's 32 MB
-per-request limit) before the first upload is attempted, so a typo in the
-last path does not leave you with a partial batch. Files upload in the
-order given; if one fails mid-batch the command reports which files did
-land and exits non-zero.
+Every file is checked (exists, readable, within the upload endpoint's
+32 MB request limit) before the first upload is attempted, so a typo in
+the last path does not leave you with a partial batch. Files upload in
+the order given; if one fails mid-batch the command reports which files
+did land and exits non-zero.
+
+Your server enforces further restrictions that this command cannot check
+up front: an administrator-configured size limit and allowed MIME types,
+a fixed blocklist of executable extensions (.exe, .sh, .js, .svg, ...),
+a requirement that files have an extension matching their actual content,
+and a global switch that can turn attachments off entirely. Those are
+reported with the server's own explanation.
 
 Examples:
   ws attachment upload PROJ-45 mockup.png
@@ -238,7 +256,7 @@ func checkUploadableFiles(paths []string) error {
 		// The 32 MB cap applies to the encoded request, not the raw file, so
 		// compare against the file plus its multipart envelope.
 		if total := info.Size() + multipartEnvelopeSize(filepath.Base(path)); total > maxItemAttachmentUpload {
-			return fmt.Errorf("cannot upload %s: %d bytes exceeds the server's %d MB per-file limit", path, info.Size(), maxItemAttachmentUpload>>20)
+			return fmt.Errorf("cannot upload %s: %d bytes exceeds the upload endpoint's %d MB request limit", path, info.Size(), maxItemAttachmentUpload>>20)
 		}
 		// Stat succeeding does not mean we can read the bytes; open now so a
 		// permission problem surfaces here rather than mid-batch.
