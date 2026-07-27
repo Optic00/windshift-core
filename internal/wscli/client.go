@@ -625,6 +625,32 @@ func (c *Client) DeleteDiagram(id int) error {
 // means either the page id does not exist or the caller lacks edit
 // permission — page handlers never distinguish the two on purpose.
 func (c *Client) UploadPageAttachment(workspaceID, pageID int, originalFilename string, body io.Reader) (*Attachment, error) {
+	path := fmt.Sprintf("/rest/api/v1/workspaces/%d/pages/%d/attachments", workspaceID, pageID)
+	return c.uploadAttachment(path, originalFilename, body)
+}
+
+// UploadItemAttachment uploads a file as an attachment on a work item via
+// POST /rest/api/v1/items/{itemID}/attachments. Same legacy envelope as the
+// page route, so it shares uploadAttachment.
+//
+// The server gate is `items:write` + `item.edit` in the item's workspace
+// (Editor role by default). A 404 means either the item does not exist or
+// the caller lacks edit permission — the handler never distinguishes the
+// two, so callers must not present it as "the item exists but…".
+//
+// The route caps the request body at 32 MB via http.MaxBytesReader; callers
+// should pre-check size (see maxItemAttachmentUpload) so an oversized file
+// fails with a useful message rather than a multipart parse error.
+func (c *Client) UploadItemAttachment(itemID int, originalFilename string, body io.Reader) (*Attachment, error) {
+	path := fmt.Sprintf("/rest/api/v1/items/%d/attachments", itemID)
+	return c.uploadAttachment(path, originalFilename, body)
+}
+
+// uploadAttachment posts body as the `file` part of a multipart form to path
+// and decodes the shared attachment-upload envelope. The whole body is
+// buffered in memory — both call sites cap uploads well below any level
+// where streaming would matter.
+func (c *Client) uploadAttachment(path, originalFilename string, body io.Reader) (*Attachment, error) {
 	var buf bytes.Buffer
 	mp := multipart.NewWriter(&buf)
 	part, err := mp.CreateFormFile("file", originalFilename)
@@ -638,7 +664,7 @@ func (c *Client) UploadPageAttachment(workspaceID, pageID int, originalFilename 
 		return nil, fmt.Errorf("multipart close: %w", err)
 	}
 
-	reqURL := fmt.Sprintf("%s/rest/api/v1/workspaces/%d/pages/%d/attachments", c.baseURL, workspaceID, pageID)
+	reqURL := c.baseURL + path
 	if debugHTTP {
 		_, _ = fmt.Fprintf(stderr, "[ws-debug] POST %s upload=%s bytes=%d\n", reqURL, originalFilename, buf.Len())
 	}
