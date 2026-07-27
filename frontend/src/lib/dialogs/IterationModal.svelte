@@ -9,6 +9,7 @@
   import Textarea from '../components/Textarea.svelte';
   import Label from '../components/Label.svelte';
   import { t } from '../stores/i18n.svelte.js';
+  import { canChangePlanningScope } from '../utils/planningScope.js';
 
   let {
     iteration = null,
@@ -49,6 +50,8 @@
   }
 
   async function handleSave() {
+    if (saving) return;
+
     error = '';
 
     // Validation
@@ -85,11 +88,12 @@
       dataToSave.workspace_id = workspaceId ? parseInt(workspaceId) : null;
     }
 
+    saving = true;
     try {
-      saving = true;
-      onsave(dataToSave);
+      await onsave(dataToSave);
     } catch (err) {
       error = err.message || t('iterations.failedToSaveIteration');
+    } finally {
       saving = false;
     }
   }
@@ -103,7 +107,7 @@
     }
   }
 
-  let canToggleGlobal = $derived(canManageGlobal && (!iteration || iteration.is_global));
+  let canToggleGlobal = $derived(canChangePlanningScope(canManageGlobal, iteration));
 </script>
 
 <Modal

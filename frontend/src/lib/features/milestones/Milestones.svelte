@@ -36,6 +36,10 @@
   import PageHeader from '../../layout/PageHeader.svelte';
   import { useEventListener } from 'runed';
   import { loadMilestoneTestStatistics } from './milestoneStatisticsData.js';
+  import {
+    canChangePlanningScope,
+    preservePlanningScope
+  } from '../../utils/planningScope.js';
 
   // Props for workspace-scoped view (optional)
   let { workspaceId = null } = $props();
@@ -186,10 +190,13 @@
   async function saveMilestone() {
     try {
       // Convert empty strings to null for optional date fields
-      const dataToSave = {
-        ...formData,
-        target_date: formData.target_date || null
-      };
+      const dataToSave = preservePlanningScope(
+        {
+          ...formData,
+          target_date: formData.target_date || null
+        },
+        editingMilestone
+      );
       if (dataToSave.is_global) {
         dataToSave.workspace_id = null;
       }
@@ -838,14 +845,16 @@
                     </div>
                   {/if}
                 </div>
-                <button
-                  type="button"
-                  class="px-3 py-1.5 text-sm rounded border transition-colors"
-                  style="border-color: var(--ds-border); color: var(--ds-interactive);"
-                  onclick={toggleScope}
-                >
-                  {t('milestones.switchTo', { scope: formData.is_global ? t('milestones.local') : t('milestones.global') })}
-                </button>
+                {#if canChangePlanningScope(canManageGlobal, editingMilestone)}
+                  <button
+                    type="button"
+                    class="px-3 py-1.5 text-sm rounded border transition-colors"
+                    style="border-color: var(--ds-border); color: var(--ds-interactive);"
+                    onclick={toggleScope}
+                  >
+                    {t('milestones.switchTo', { scope: formData.is_global ? t('milestones.local') : t('milestones.global') })}
+                  </button>
+                {/if}
               </div>
             </div>
           </div>

@@ -10,6 +10,7 @@
   import DataTable from '../../components/DataTable.svelte';
   import Button from '../../components/Button.svelte';
   import IterationModal from '../../dialogs/IterationModal.svelte';
+  import { preservePlanningScope } from '../../utils/planningScope.js';
   import IterationNavigation from './IterationNavigation.svelte';
   import { formatDateShort } from '../../utils/dateFormatter.js';
   import { api } from '../../api.js';
@@ -120,7 +121,10 @@
   async function handleSave(data) {
     try {
       if (editingIteration) {
-        await api.iterations.update(editingIteration.id, data);
+        await api.iterations.update(
+          editingIteration.id,
+          preservePlanningScope(data, editingIteration)
+        );
       } else {
         await api.iterations.create(data);
       }
@@ -456,4 +460,3 @@
     oncancel={handleCancel}
   />
 {/if}
-
