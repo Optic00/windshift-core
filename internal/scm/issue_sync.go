@@ -705,6 +705,12 @@ func (s *IssueSyncService) syncComments(ctx context.Context, provider IssueProvi
 		commentsChanged = true
 	}
 
+	if commentsChanged {
+		if err := repository.NewItemRepository(s.db).TouchActivity(tx, itemID, time.Now()); err != nil {
+			slog.Error("bump item activity for synced comments", "item_id", itemID, "error", err)
+			return
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		slog.Error("commit comment sync tx", "issue_number", issueNumber, "error", err)
 		return

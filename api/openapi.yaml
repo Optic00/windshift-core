@@ -7901,6 +7901,93 @@ paths:
       summary: Get many items by id
       tags:
       - items
+  /items/changes:
+    get:
+      description: Returns item upsert/delete events for one visible workspace. Omit
+        since to obtain a cursor before a full load. Keep passing the first page's
+        watermark as through while paging.
+      parameters:
+      - description: Workspace ID
+        in: query
+        name: workspace_id
+        required: true
+        schema:
+          type: integer
+      - description: Exclusive change cursor
+        in: query
+        name: since
+        schema:
+          type: string
+      - description: Inclusive snapshot watermark
+        in: query
+        name: through
+        schema:
+          type: string
+      - description: Changes per page (max 500)
+        in: query
+        name: limit
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  changes:
+                    items:
+                      properties:
+                        change_type:
+                          type: string
+                        item_id:
+                          type: integer
+                      type: object
+                    type: array
+                  has_more:
+                    type: boolean
+                  next_cursor:
+                    type: string
+                  reset_required:
+                    type: boolean
+                  watermark:
+                    type: string
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/windshift_internal_restapi_v1_handlers.ErrorResponse'
+          description: Invalid query parameter
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/windshift_internal_restapi_v1_handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/windshift_internal_restapi_v1_handlers.ErrorResponse'
+          description: Token lacks the items:read scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/windshift_internal_restapi_v1_handlers.ErrorResponse'
+          description: Workspace not found or not visible to caller
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/windshift_internal_restapi_v1_handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List ordered item changes
+      tags:
+      - items
   /iterations:
     get:
       description: Paginated list of iterations across all scopes (global and workspace-scoped).

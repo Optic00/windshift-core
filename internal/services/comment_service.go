@@ -195,10 +195,16 @@ func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResul
 		updatedAt = *params.UpdatedAt
 	}
 
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin comment transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	var commentID int64
 	if params.PortalCustomerID != nil && params.AuthorID == 0 {
 		// Portal customer without linked user — insert with portal_customer_id
-		err = s.db.QueryRow(insertCommentPortalSQL,
+		err = tx.QueryRow(insertCommentPortalSQL,
 			params.ItemID, *params.PortalCustomerID, sanitizedContent, params.IsPrivate, now, updatedAt).Scan(&commentID)
 	} else {
 		// Internal user or portal customer with linked user; AuthorID == 0 with no
@@ -207,20 +213,17 @@ func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResul
 		if params.AuthorID != 0 {
 			authorID = params.AuthorID
 		}
-		err = s.db.QueryRow(insertCommentAuthorSQL,
+		err = tx.QueryRow(insertCommentAuthorSQL,
 			params.ItemID, authorID, sanitizedContent, params.IsPrivate, now, updatedAt).Scan(&commentID)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to create comment: %w", err)
 	}
-
-	// Comments update Bubble Mode recency best-effort at this shared entry point.
-	if err := repository.NewItemRepository(s.db).TouchActivity(s.db, params.ItemID, now); err != nil {
-		slog.Warn("failed to bump item last_active_at on comment",
-			slog.String("component", "comment_service"),
-			slog.Int("item_id", params.ItemID),
-			slog.Any("error", err),
-		)
+	if err := repository.NewItemRepository(s.db).TouchActivity(tx, params.ItemID, now); err != nil {
+		return nil, fmt.Errorf("failed to record comment activity: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("failed to commit comment: %w", err)
 	}
 
 	// 4. Track activity (if activityTracker != nil)
@@ -562,22 +565,31 @@ func (s *CommentService) Update(commentID int, content string, userID int) (*mod
 	// Sanitize content (strips HTML tags + dangerous Markdown URLs)
 	sanitizedContent := sanitize.Comment.Sanitize(content)
 
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin comment transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	// Check if comment exists. Portal-authored comments have a NULL author_id,
 	// so existence must not depend on scanning author_id into a non-null int.
-	var exists bool
-	err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM comments WHERE id = ?)", commentID).Scan(&exists)
+	var itemID int
+	err = tx.QueryRow("SELECT item_id FROM comments WHERE id = ?", commentID).Scan(&itemID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("comment not found: %d", commentID)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to check comment: %w", err)
-	}
-	if !exists {
-		return nil, fmt.Errorf("comment not found: %d", commentID)
 	}
 
 	// Update the comment
 	now := time.Now()
-	_, err = s.db.ExecWrite(updateCommentSQL, sanitizedContent, now, commentID)
+	_, err = tx.ExecWrite(updateCommentSQL, sanitizedContent, now, commentID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update comment: %w", err)
+	}
+	if err := repository.NewItemRepository(s.db).TouchActivity(tx, itemID, now); err != nil {
+		return nil, fmt.Errorf("failed to record comment activity: %w", err)
 	}
 
 	// Fetch and return the updated comment
@@ -585,7 +597,7 @@ func (s *CommentService) Update(commentID int, content string, userID int) (*mod
 	var authorName, authorEmail sql.NullString
 	var authorIDNull, portalCustomerID sql.NullInt64
 
-	err = s.db.QueryRow(`
+	err = tx.QueryRow(`
 		SELECT c.id, c.item_id, c.author_id, c.portal_customer_id, c.content, c.is_private, c.created_at, c.updated_at,
 		       COALESCE(NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), ''), pc.name) AS author_name,
 		       COALESCE(u.email, pc.email) AS author_email
@@ -616,6 +628,9 @@ func (s *CommentService) Update(commentID int, content string, userID int) (*mod
 	if authorEmail.Valid {
 		comment.AuthorEmail = authorEmail.String
 	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("failed to commit comment update: %w", err)
+	}
 
 	// Live-update publish (WI-483): the comment edit committed.
 	PublishItemChange(comment.ItemID, ItemChangeComment)
@@ -625,11 +640,17 @@ func (s *CommentService) Update(commentID int, content string, userID int) (*mod
 
 // Delete removes a comment
 func (s *CommentService) Delete(commentID int) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin comment transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	// Capture the parent item id BEFORE the destructive write (this doubles as
 	// the existence check) so we can refresh the item's comment list afterwards
 	// (WI-483).
 	var itemID int
-	err := s.db.QueryRow("SELECT item_id FROM comments WHERE id = ?", commentID).Scan(&itemID)
+	err = tx.QueryRow("SELECT item_id FROM comments WHERE id = ?", commentID).Scan(&itemID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("comment not found: %d", commentID)
@@ -637,9 +658,16 @@ func (s *CommentService) Delete(commentID int) error {
 		return fmt.Errorf("failed to check comment: %w", err)
 	}
 
-	_, err = s.db.ExecWrite(deleteCommentSQL, commentID)
+	_, err = tx.ExecWrite(deleteCommentSQL, commentID)
 	if err != nil {
 		return fmt.Errorf("failed to delete comment: %w", err)
+	}
+	now := time.Now()
+	if err := repository.NewItemRepository(s.db).TouchActivity(tx, itemID, now); err != nil {
+		return fmt.Errorf("failed to record comment activity: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit comment deletion: %w", err)
 	}
 
 	// Live-update publish (WI-483): the delete committed.
