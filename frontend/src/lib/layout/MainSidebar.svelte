@@ -1,5 +1,5 @@
 <script>
-  import { currentRoute, navigate, isWorkspaceRoute } from '../router.js';
+  import { currentRoute, isWorkspaceRoute } from '../router.js';
   import { permissionStore, uiStore, workspacesStore } from '../stores';
   import { t } from '../stores/i18n.svelte.js';
   import { aiStore } from '../stores/aiStore.svelte.js';
@@ -77,7 +77,7 @@
           avatarUrl: hasAvatar ? workspace.avatar_url : null,
           title: workspace.name,
           subtitle: workspace.description,
-          onClick: () => navigateToWorkspace(workspace.id)
+          href: `/workspaces/${workspace.id}`
         };
       });
 
@@ -108,7 +108,7 @@
       subtitle: t('nav.manageWorkspacesSubtitle'),
       color: 'var(--ds-text-link)',
       class: 'font-medium',
-      onClick: () => navigate('/workspaces')
+      href: '/workspaces'
     });
 
     return items;
@@ -125,10 +125,6 @@
 
   function showCreateDropdown() {
     onShowCreateModal();
-  }
-
-  function navigateToWorkspace(workspaceId) {
-    navigate(`/workspaces/${workspaceId}`);
   }
 </script>
 

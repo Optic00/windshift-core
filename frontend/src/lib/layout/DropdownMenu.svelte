@@ -75,7 +75,7 @@
         } else {
           const container = document.querySelector('[data-menu-container]');
           if (container) {
-            const firstItem = container.querySelector('button[data-menu-item]');
+            const firstItem = container.querySelector('[data-menu-item]');
             if (firstItem) /** @type {HTMLElement} */ (firstItem).focus({ preventScroll: true });
           }
         }
@@ -100,7 +100,7 @@
   }
 
   function handleMenuKeydown(e) {
-    const focusableItems = [...e.currentTarget.querySelectorAll('button[data-menu-item]')];
+    const focusableItems = [...e.currentTarget.querySelectorAll('[data-menu-item]')];
     const currentIndex = focusableItems.indexOf(document.activeElement);
 
     if (e.key === 'ArrowDown') {
@@ -133,8 +133,9 @@
   }
 
   function handleItemClick(itemData, event) {
-    // Stop event from bubbling to prevent it from reaching modal overlays
-    if (event) {
+    // Action items must not reach modal overlays. Links keep bubbling so the
+    // app router can intercept plain clicks while modified clicks stay native.
+    if (event && !itemData.href) {
       event.stopPropagation();
     }
 
@@ -237,7 +238,7 @@
                   e.preventDefault();
                   const container = /** @type {HTMLElement} */ (e.target).closest('[data-menu-container]');
                   if (container) {
-                    const firstItem = container.querySelector('button[data-menu-item]');
+                    const firstItem = container.querySelector('[data-menu-item]');
                     if (firstItem) /** @type {HTMLElement} */ (firstItem).focus();
                   }
                   return;
@@ -313,11 +314,15 @@
           {/if}
         {:else if itemData.type === 'group'}
           {#each itemData.items as groupItem (groupItem.id)}
-            <button
+            <svelte:element
+              this={groupItem.href ? 'a' : 'button'}
+              href={groupItem.href || undefined}
+              type={groupItem.href ? undefined : 'button'}
               data-menu-item
               data-testid={groupItem.testid || undefined}
               data-id={groupItem.id ?? undefined}
               role="menuitem"
+              tabindex="0"
               onclick={(e) => handleItemClick(groupItem, e)}
               class="flex items-center w-full px-4 py-3 text-sm transition-all duration-200 cursor-pointer {groupItem.class || 'group'}"
               style="color: {groupItem.color || 'var(--ds-text)'};"
@@ -362,15 +367,19 @@
               {#if groupItem.badge}
                 <span class="text-xs px-2 py-1 rounded-full" style="color: var(--ds-text-subtlest); background-color: var(--ds-background-neutral);">{groupItem.badge}</span>
               {/if}
-            </button>
+            </svelte:element>
           {/each}
         {:else}
           <!-- Regular item -->
-          <button
+          <svelte:element
+            this={itemData.href ? 'a' : 'button'}
+            href={itemData.href || undefined}
+            type={itemData.href ? undefined : 'button'}
             data-menu-item
             data-testid={itemData.testid || undefined}
             data-id={itemData.id ?? undefined}
             role="menuitem"
+            tabindex="0"
             onclick={(e) => handleItemClick(itemData, e)}
             class="flex items-center w-full px-4 py-3 text-sm transition-all duration-200 cursor-pointer {itemData.class || ''}"
             style="color: {itemData.color || 'var(--ds-text)'}; {itemData.style || ''}"
@@ -416,7 +425,7 @@
             {#if itemData.badge}
               <span class="ml-auto text-xs {itemData.badgeClass || ''}" style="{itemData.badgeStyle || (itemData.badgeClass ? '' : 'color: var(--ds-text-subtlest);')}">{itemData.badge}</span>
             {/if}
-          </button>
+          </svelte:element>
         {/if}
       {/each}
     </div>

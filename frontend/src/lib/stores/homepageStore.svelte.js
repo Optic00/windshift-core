@@ -5,8 +5,13 @@
  */
 import { api } from '../api.js';
 import {
+  getDashboardResizeBounds,
+  resizeDashboardWidgetRow,
+} from '../services/dashboardGridLayout.js';
+import {
   buildDefaultDashboardLayout,
   getDashboardWidgetDefaultWidth,
+  getDashboardWidgetMinWidth,
 } from '../services/dashboardWidgetRegistry.js';
 import { formatDateSimple, formatDateWithOptions } from '../utils/dateFormatter.js';
 import { t } from './i18n.svelte.js';
@@ -230,8 +235,31 @@ class HomepageStore {
   }
 
   updateWidgetWidth(widgetId, newWidth) {
-    this.widgets = this.widgets.map((w) => (w.id === widgetId ? { ...w, width: newWidth } : w));
+    const widget = this.widgets.find((candidate) => candidate.id === widgetId);
+    if (!widget) return null;
+    const sectionWidgets = this.getWidgetsForSection(widget.section_id);
+    const resized = resizeDashboardWidgetRow(
+      sectionWidgets,
+      widgetId,
+      newWidth,
+      getDashboardWidgetMinWidth
+    );
+    if (resized.widgets !== sectionWidgets) {
+      const updates = new Map(resized.widgets.map((candidate) => [candidate.id, candidate]));
+      this.widgets = this.widgets.map((candidate) => updates.get(candidate.id) ?? candidate);
+    }
     this.debouncedSaveLayout();
+    return resized.width;
+  }
+
+  getWidgetResizeBounds(widgetId) {
+    const widget = this.widgets.find((candidate) => candidate.id === widgetId);
+    if (!widget) return null;
+    return getDashboardResizeBounds(
+      this.getWidgetsForSection(widget.section_id),
+      widgetId,
+      getDashboardWidgetMinWidth
+    );
   }
 
   updateWidgetConfig(widgetId, configChanges) {

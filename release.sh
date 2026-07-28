@@ -630,7 +630,7 @@ PORT=8080
 
 # Database - Choose one:
 # SQLite (default)
-DATABASE_PATH=windshift.db
+DB_PATH=windshift.db
 
 # PostgreSQL (uncomment to use)
 # POSTGRES_CONNECTION_STRING=postgresql://user:password@localhost:5432/windshift?sslmode=disable
@@ -874,7 +874,7 @@ write_release_provenance() {
             echo ""
             echo "Resolved base image digests at build time"
             echo "-----------------------------------------"
-            for image in node:25-alpine golang:1.26.3-alpine golang:1.26-bookworm node:lts-slim; do
+            for image in node:24.18.0-alpine golang:1.26.3-alpine golang:1.26-bookworm node:lts-slim; do
                 docker buildx imagetools inspect "$image" 2>/dev/null | grep -E 'Name:|Digest:' || true
             done
         fi

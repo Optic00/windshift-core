@@ -46,13 +46,13 @@ services:
       # Optional VAPID "sub" contact (mailto: or https:). Defaults to BASE_URL.
       - VAPID_SUBJECT=${VAPID_SUBJECT:-}
       # --- PostgreSQL (uncomment when using postgres service) ---
-      # - DB_DRIVER=postgres
-      # - DB_HOST=postgres
-      # - DB_PORT=5432
-      # - DB_USER=windshift
-      # - DB_PASSWORD=${POSTGRES_PASSWORD}
-      # - DB_NAME=windshift
-      # - DB_SSLMODE=disable
+      # - DB_TYPE=postgres
+      # - POSTGRES_HOST=postgres
+      # - POSTGRES_PORT=5432
+      # - POSTGRES_USER=windshift
+      # - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      # - POSTGRES_DB=windshift
+      # - POSTGRES_SSLMODE=disable
       # PostgreSQL connection budget:
       # replicas × (MAX_READ_CONNS + 5 when SSH is enabled) + headroom
       # must not exceed PostgreSQL max_connections. Windshift validates this

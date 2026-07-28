@@ -1,5 +1,4 @@
 <script>
-  import { onMount } from 'svelte';
   import { useResizeObserver } from 'runed';
   import { ArrowLeft, ArrowRight, FileText, LockKeyhole } from '@lucide/svelte';
   import { currentRoute, navigate } from '../../router.js';
@@ -18,13 +17,19 @@
   let selectedFormDetail = $state(null);
   let loading = $state(true);
   let error = $state(null);
+  let routeLoadVersion = 0;
 
   let isDarkMode = $derived(channel?.theme === 'dark' || (channel?.theme === 'auto' && window.matchMedia?.('(prefers-color-scheme: dark)').matches));
   let brandColor = $derived(channel?.brand_color || '#14b8a6');
   let logoUrl = $derived(channel?.logo_url || '');
 
-  onMount(async () => {
-    await loadFormChannel();
+  // The router keeps this root component mounted while switching between the
+  // channel list and individual form URLs. Treat route params as authoritative
+  // so browser Back/Forward follows the URL instead of stale local selection.
+  $effect(() => {
+    const routeSlug = slug;
+    const routeFormId = requestedFormId;
+    void loadFormChannel(routeSlug, routeFormId);
   });
 
   // Tell the parent window (widget.js iframe host) how tall we are so it can
@@ -49,23 +54,26 @@
     return Number.isSafeInteger(parsed) ? parsed : NaN;
   }
 
-  async function loadFormChannel() {
+  async function loadFormChannel(routeSlug, routeFormId) {
+    const version = ++routeLoadVersion;
     try {
       loading = true;
       error = null;
 
-      const bootstrap = await loadPublicFormBootstrap(slug);
+      const bootstrap = await loadPublicFormBootstrap(routeSlug);
+      if (version !== routeLoadVersion) return;
 
       channel = bootstrap.channel;
       forms = bootstrap.forms || [];
+      selectedFormId = null;
       selectedFormDetail = null;
 
-      if (requestedFormId !== null) {
-        if (!Number.isSafeInteger(requestedFormId) || !forms.some(form => form.id === requestedFormId)) {
+      if (routeFormId !== null) {
+        if (!Number.isSafeInteger(routeFormId) || !forms.some(form => form.id === routeFormId)) {
           throw new Error('Form not found');
         }
-        selectedFormId = requestedFormId;
-        if (bootstrap.form_detail?.form_id === requestedFormId) {
+        selectedFormId = routeFormId;
+        if (bootstrap.form_detail?.form_id === routeFormId) {
           selectedFormDetail = bootstrap.form_detail;
         }
       } else if (forms.length === 1) {
@@ -74,10 +82,11 @@
         selectedFormDetail = bootstrap.form_detail || null;
       }
     } catch (err) {
+      if (version !== routeLoadVersion) return;
       console.error('Failed to load form channel:', err);
       error = err.message || 'Form not found';
     } finally {
-      loading = false;
+      if (version === routeLoadVersion) loading = false;
     }
   }
 

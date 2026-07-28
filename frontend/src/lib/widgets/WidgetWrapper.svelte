@@ -13,6 +13,8 @@
     isEditing = false,
     width = $bindable(getDashboardWidgetDefaultWidth(widgetType)),
     config = $bindable({}),
+    resizeMinWidth = null,
+    resizeMaxWidth = null,
     onremove = null,
     onwidthchange = null,
     onconfigchange = null,
@@ -20,7 +22,9 @@
   } = $props();
 
   const TOTAL_COLUMNS = 12;
-  const minWidth = $derived(getDashboardWidgetMinWidth(widgetType) || 3);
+  const registryMinWidth = $derived(getDashboardWidgetMinWidth(widgetType) || 3);
+  const minWidth = $derived(resizeMinWidth ?? registryMinWidth);
+  const maxWidth = $derived(resizeMaxWidth ?? TOTAL_COLUMNS);
   const defaultWidth = $derived(getDashboardWidgetDefaultWidth(widgetType) || 12);
 
   function handleRemove(event) {
@@ -30,9 +34,9 @@
   }
 
   function setWidth(newWidth) {
-    const clamped = Math.min(TOTAL_COLUMNS, Math.max(minWidth, newWidth));
-    width = clamped;
-    onwidthchange?.(clamped);
+    const clamped = Math.min(maxWidth, Math.max(minWidth, newWidth));
+    const resolved = onwidthchange?.(clamped);
+    width = Number.isFinite(resolved) ? resolved : clamped;
   }
 
   // --- Resize presets (WI-831) ---
@@ -42,7 +46,7 @@
     { label: t('widgets.widthHalf'), value: 6 },
     { label: t('widgets.widthTwoThirds'), value: 8 },
     { label: t('widgets.widthFull'), value: 12 },
-  ].filter((p) => p.value >= minWidth));
+  ].filter((p) => p.value >= minWidth && p.value <= maxWidth));
 
   const presetItems = $derived(presets.map((p) => ({
     title: p.label,
@@ -121,11 +125,11 @@
     const colWidth = grid.getBoundingClientRect().width / TOTAL_COLUMNS;
     if (colWidth <= 0) return;
     const deltaCols = Math.round((e.clientX - resizeStartX) / colWidth);
-    const next = Math.min(TOTAL_COLUMNS, Math.max(minWidth, resizeStartWidth + deltaCols));
+    const next = Math.min(maxWidth, Math.max(minWidth, resizeStartWidth + deltaCols));
     liveColumns = next;
     if (next !== width) {
-      width = next;
-      onwidthchange?.(next);
+      const resolved = onwidthchange?.(next);
+      width = Number.isFinite(resolved) ? resolved : next;
     }
   }
 
@@ -157,7 +161,7 @@
         next = minWidth;
         break;
       case 'End':
-        next = TOTAL_COLUMNS;
+        next = maxWidth;
         break;
       default:
         return;
@@ -258,7 +262,7 @@
       tabindex="0"
       aria-label={t('widgets.resizeAriaLabel')}
       aria-valuemin={minWidth}
-      aria-valuemax={TOTAL_COLUMNS}
+      aria-valuemax={maxWidth}
       aria-valuenow={displayColumns}
       aria-valuetext={t('widgets.resizeColumnsValue', { count: displayColumns })}
       onmousedown={onResizeStart}

@@ -36,6 +36,7 @@
 	let hasMore = $state(false);
 	let isLoadingMore = $state(false);
 	let totalCount = $state(0);
+	let reconciliationVersion = 0;
 
 	// Editing state
 	let editingCommentId = $state(null);
@@ -109,7 +110,7 @@
 	useEventListener(() => window, 'item-comments-changed', (/** @type {CustomEvent<{itemId?: number|string}>} */ event) => {
 		const id = event?.detail?.itemId;
 		if (id == null || String(id) !== String(itemId)) return;
-		pollForNewComments();
+		reconcileLoadedComments();
 	});
 
 	function notificationTargetsThisItem(n) {
@@ -180,6 +181,64 @@
 		onCommentsLoaded?.({ count: totalCount });
 	}
 
+	/**
+	 * Re-fetch the same newest window the viewer has already loaded. Unlike the
+	 * created-at `since` cursor, this observes edits and rows that disappeared
+	 * after deletion. Paging to the current depth preserves the user's explicit
+	 * Load more state without reverting to an unbounded thread fetch.
+	 */
+	async function reconcileLoadedComments() {
+		const version = ++reconciliationVersion;
+		let targetCount = Math.max(COMMENT_PAGE_SIZE, comments.length);
+		const previousTotalCount = totalCount;
+		const previousNewest = feedBoundary(comments, 'newest');
+		const existingIds = new Set(comments.map((comment) => comment.id));
+		const fresh = [];
+		let cursor = null;
+		let firstResponse = null;
+		let lastResponse = null;
+
+		try {
+			while (fresh.length < targetCount) {
+				const isFirstPage = firstResponse === null;
+				const response = await loadAttributedComments(api, itemId, {
+					limit: Math.min(100, targetCount - fresh.length),
+					...(cursor ? { before: cursor.created_at, beforeId: cursor.id } : {})
+				});
+				if (version !== reconciliationVersion) return;
+				firstResponse ??= response;
+				lastResponse = response;
+				if (isFirstPage && Number.isInteger(response?.total)) {
+					targetCount += Math.max(0, response.total - previousTotalCount);
+				}
+				const page = response?.comments || [];
+				fresh.push(...page);
+				if (!response?.has_more || page.length === 0) break;
+				cursor = feedBoundary(page, 'oldest');
+			}
+		} catch (err) {
+			if (version !== reconciliationVersion) return;
+			console.warn('Comments reconciliation failed:', err);
+			return;
+		}
+
+		const added = fresh.filter((comment) => !existingIds.has(comment.id));
+		const currentUserId = authStore.currentUser?.id;
+		const arrived = added.filter((comment) =>
+			comment.author_id !== currentUserId &&
+			(!previousNewest || compareFeedRows(comment, previousNewest) > 0)
+		).length;
+		comments = mergeCommentRows([], fresh);
+		totalCount = Number.isInteger(firstResponse?.total) ? firstResponse.total : comments.length;
+		hasMore = Boolean(lastResponse?.has_more);
+		if (editingCommentId && !comments.some((comment) => comment.id === editingCommentId)) {
+			editingCommentId = null;
+			editingContent = '';
+		}
+		if (arrived > 0) newCount += arrived;
+		onCommentsLoaded?.({ count: totalCount });
+	}
+
 	async function loadMoreComments() {
 		if (isLoadingMore || !hasMore) return;
 		const oldest = feedBoundary(comments, 'oldest');
@@ -213,12 +272,16 @@
 	function feedBoundary(rows, direction) {
 		if (rows.length === 0) return null;
 		return rows.reduce((boundary, candidate) => {
-			const boundaryTime = new Date(boundary.created_at).getTime();
-			const candidateTime = new Date(candidate.created_at).getTime();
-			const comparison = candidateTime - boundaryTime || candidate.id - boundary.id;
+			const comparison = compareFeedRows(candidate, boundary);
 			if (direction === 'newest' ? comparison > 0 : comparison < 0) return candidate;
 			return boundary;
 		});
+	}
+
+	function compareFeedRows(left, right) {
+		const leftTime = new Date(left.created_at).getTime();
+		const rightTime = new Date(right.created_at).getTime();
+		return leftTime - rightTime || left.id - right.id;
 	}
 
 	async function submitComment() {

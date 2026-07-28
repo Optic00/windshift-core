@@ -162,7 +162,7 @@
   }
 
   function updateWidgetWidth(widgetId, newWidth) {
-    homepageStore.updateWidgetWidth(widgetId, newWidth);
+    return homepageStore.updateWidgetWidth(widgetId, newWidth);
   }
 
   function updateWidgetConfig(widgetId, configChanges) {
@@ -408,12 +408,15 @@
               {#if sectionWidgets.length > 0}
                 <div class="grid grid-cols-12 gap-4">
                   {#each sectionWidgets as widget (widget.id)}
+                    {@const resizeBounds = homepageStore.getWidgetResizeBounds(widget.id)}
                     <WidgetWrapper
                       title={getWidgetTitle(widget.type)}
                       widgetId={widget.id}
                       widgetType={widget.type}
                       width={widget.width}
                       config={widget.config ?? {}}
+                      resizeMinWidth={resizeBounds?.minWidth}
+                      resizeMaxWidth={resizeBounds?.maxWidth}
                       isEditing={isCustomizeMode || isEditMode}
                       onremove={() => removeWidget(widget.id)}
                       onwidthchange={(newWidth) => updateWidgetWidth(widget.id, newWidth)}

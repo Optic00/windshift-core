@@ -1,12 +1,12 @@
 # Multi-stage build for Windshift server
 
 # Stage 1: Build frontend
-FROM node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4 AS frontend-builder
+FROM node:24.18.0-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd AS frontend-builder
 
 WORKDIR /build
 
 # Copy package files first for better layer caching
-COPY frontend/package*.json ./
+COPY frontend/package*.json frontend/.npmrc ./
 
 # Install dependencies (npm ci is faster and more reliable for CI)
 RUN npm ci
