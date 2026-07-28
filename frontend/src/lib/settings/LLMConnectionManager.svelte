@@ -12,6 +12,7 @@
   import Lozenge from '../components/Lozenge.svelte';
   import DataTable from '../components/DataTable.svelte';
   import { successToast, errorToast } from '../stores/toasts.svelte.js';
+  import { aiStore } from '../stores/aiStore.svelte.js';
   import Select from '../components/Select.svelte';
   import BasePicker from '../pickers/BasePicker.svelte';
   import { confirm } from '../composables/useConfirm.js';
@@ -224,6 +225,15 @@
     return llmCapabilitiesForConnection(connectionId).filter((cap) => cap.is_enabled !== false);
   }
 
+  // Adding, editing or deleting a connection can flip whether any enabled
+  // connection exists at all, and that is what gates the AI chat entry points
+  // shell-wide. The shell hydrates AI status once at boot and the admin area is
+  // a view inside it, so nothing remounts — without this refresh chat stays
+  // hidden until the user reloads the browser.
+  async function reloadAfterConnectionChange() {
+    await Promise.all([loadConnections(), loadActionCapabilities(), aiStore.reload()]);
+  }
+
   function capabilityUsageLabel(caps) {
     if (caps.length === 1) return `1 enabled action capability: ${caps[0].name}`;
     return `${caps.length} enabled action capabilities: ${caps.map((cap) => cap.name).join(', ')}`;
@@ -259,7 +269,7 @@
     try {
       await api.llmConnections.delete(conn.id);
       successToast('AI connection deleted');
-      await Promise.all([loadConnections(), loadActionCapabilities()]);
+      await reloadAfterConnectionChange();
     } catch (err) {
       errorToast(err.message || 'Failed to delete connection');
     }
@@ -292,7 +302,7 @@
       await api.llmConnections.create({ ...form, provider_config: composeProviderConfig() });
       successToast('AI connection created');
       showCreateModal = false;
-      await Promise.all([loadConnections(), loadActionCapabilities()]);
+      await reloadAfterConnectionChange();
     } catch (err) {
       errorToast(err.message || 'Failed to create connection');
     } finally {
@@ -308,7 +318,7 @@
       await api.llmConnections.update(editingConnection.id, { ...form, provider_config: composeProviderConfig() });
       successToast('AI connection updated');
       showEditModal = false;
-      await Promise.all([loadConnections(), loadActionCapabilities()]);
+      await reloadAfterConnectionChange();
     } catch (err) {
       errorToast(err.message || 'Failed to update connection');
     } finally {
@@ -344,7 +354,7 @@
 <div class="space-y-4">
   <PageHeader title="AI Connections" subtitle="Configure AI model providers for intelligent features">
     {#snippet actions()}
-      <Button variant="primary" onclick={openCreate} icon={Plus}>
+      <Button id="llm-connection-add" variant="primary" onclick={openCreate} icon={Plus}>
         Add Connection
       </Button>
     {/snippet}
@@ -407,6 +417,7 @@
             class="p-1.5 rounded hover:opacity-80"
             style="color: var(--ds-text-subtle);"
             title="Test connection"
+            data-testid="llm-connection-test"
             disabled={testingConnectionId === conn.id}
             onclick={() => testConnection(conn.id)}
           >
@@ -420,6 +431,7 @@
             class="p-1.5 rounded hover:opacity-80"
             style="color: var(--ds-text-subtle);"
             title="Edit"
+            data-testid="llm-connection-edit"
             onclick={() => openEdit(conn)}
           >
             <Edit size={14} />
@@ -428,6 +440,7 @@
             class="p-1.5 rounded hover:opacity-80"
             style="color: var(--ds-text-danger);"
             title="Delete"
+            data-testid="llm-connection-delete"
             onclick={() => deleteConnection(conn)}
           >
             <Trash2 size={14} />
@@ -452,7 +465,7 @@
         {@render connectionForm()}
         <div class="flex justify-end gap-2 pt-2 border-t" style="border-color: var(--ds-border);">
           <Button variant="secondary" onclick={() => showCreateModal = false} keyboardHint="Esc">Cancel</Button>
-          <Button variant="primary" onclick={handleCreate} loading={saving} disabled={!form.name || !form.provider_type || !form.model} keyboardHint={submitHint}>
+          <Button id="llm-connection-create-submit" variant="primary" onclick={handleCreate} loading={saving} disabled={!form.name || !form.provider_type || !form.model} keyboardHint={submitHint}>
             Create
           </Button>
         </div>
@@ -505,7 +518,7 @@
 
         <div class="flex justify-end gap-2 pt-2 border-t" style="border-color: var(--ds-border);">
           <Button variant="secondary" onclick={() => showEditModal = false} keyboardHint="Esc">Cancel</Button>
-          <Button variant="primary" onclick={handleUpdate} loading={saving} disabled={!form.name || !form.provider_type || !form.model} keyboardHint={submitHint}>
+          <Button id="llm-connection-save-submit" variant="primary" onclick={handleUpdate} loading={saving} disabled={!form.name || !form.provider_type || !form.model} keyboardHint={submitHint}>
             Save
           </Button>
         </div>

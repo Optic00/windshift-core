@@ -593,6 +593,7 @@
           {/each}
           {#if canCreateCurrentInput()}
             <div role="button" tabindex="0"
+                 data-testid="picker-create-option"
                  class="px-4 py-3 cursor-pointer border-t hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors duration-150 flex items-center gap-2"
                  style="border-color: var(--ds-border); color: var(--ds-interactive);"
                  onclick={handleCreateOption}

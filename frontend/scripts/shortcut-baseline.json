@@ -499,7 +499,7 @@
       "message": "Modal contains a confirming DialogFooter but does not pass onSubmit, so Enter/Cmd+Enter will not submit."
     },
     {
-      "signature": "src/lib/settings/LLMConnectionManager.svelte:add-create-button-without-shortcut:<Button variant=\"primary\" onclick={openCreate} icon={Plus}> Add Connection",
+      "signature": "src/lib/settings/LLMConnectionManager.svelte:add-create-button-without-shortcut:<Button id=\"llm-connection-add\" variant=\"primary\" onclick={openCreate} icon={Plus}> Add Connection",
       "count": 1,
       "file": "src/lib/settings/LLMConnectionManager.svelte",
       "rule": "add-create-button-without-shortcut",
