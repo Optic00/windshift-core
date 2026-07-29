@@ -130,7 +130,10 @@ type pagePermissionsOut struct {
 
 func init() {
 	Register(Default, Tool[searchKnowledgeArgs]{
-		Name: "search_knowledge",
+		Name:   "search_knowledge",
+		Group:  CapabilityKnowledgeDiagrams,
+		Access: AccessRead,
+		Risk:   RiskLow,
 		Description: "Search workspace knowledge pages by free-text query. Returns " +
 			"permission-filtered snippets with title, heading path, and URL. " +
 			"Call this before answering questions about internal docs, procedures, " +
@@ -159,6 +162,9 @@ func init() {
 
 	Register(Default, Tool[getPageArgs]{
 		Name:        "get_page",
+		Group:       CapabilityKnowledgeDiagrams,
+		Access:      AccessRead,
+		Risk:        RiskLow,
 		Description: "Fetch a single workspace knowledge page by id. Returns the title, Markdown content, and excerpt if the caller can view it.",
 		Scopes:      []string{auth.ScopePagesRead},
 		Run: func(_ context.Context, env *Env, args getPageArgs) (any, error) {
@@ -197,6 +203,9 @@ func init() {
 
 	Register(Default, Tool[listPagesArgs]{
 		Name:        "list_pages",
+		Group:       CapabilityKnowledgeDiagrams,
+		Access:      AccessRead,
+		Risk:        RiskLow,
 		Description: "List workspace knowledge pages (optionally scoped to a parent). Returns only pages the caller can view.",
 		Scopes:      []string{auth.ScopePagesRead},
 		Run: func(_ context.Context, env *Env, args listPagesArgs) (any, error) {
@@ -227,6 +236,9 @@ func init() {
 
 	Register(Default, Tool[createPageArgs]{
 		Name:        "create_page",
+		Group:       CapabilityKnowledgeDiagrams,
+		Access:      AccessWrite,
+		Risk:        RiskMedium,
 		Description: "Create a workspace knowledge page. Requires workspace page.create/page.admin/workspace.admin and parent edit access when parent_id is set.",
 		Scopes:      []string{auth.ScopePagesWrite},
 		Run: func(_ context.Context, env *Env, args createPageArgs) (any, error) {
@@ -246,6 +258,9 @@ func init() {
 
 	Register(Default, Tool[updatePageArgs]{
 		Name:        "update_page",
+		Group:       CapabilityKnowledgeDiagrams,
+		Access:      AccessWrite,
+		Risk:        RiskMedium,
 		Description: "Update a page title and/or Markdown content. Requires edit access to the page.",
 		Scopes:      []string{auth.ScopePagesWrite},
 		Run: func(_ context.Context, env *Env, args updatePageArgs) (any, error) {
@@ -272,6 +287,9 @@ func init() {
 
 	Register(Default, Tool[movePageArgs]{
 		Name:        "move_page",
+		Group:       CapabilityKnowledgeDiagrams,
+		Access:      AccessWrite,
+		Risk:        RiskMedium,
 		Description: "Move or reorder a page. Requires edit access to the moved page and destination parent.",
 		Scopes:      []string{auth.ScopePagesWrite},
 		Run: func(_ context.Context, env *Env, args movePageArgs) (any, error) {
@@ -290,6 +308,9 @@ func init() {
 
 	Register(Default, Tool[archivePageArgs]{
 		Name:        "archive_page",
+		Group:       CapabilityKnowledgeDiagrams,
+		Access:      AccessDestructive,
+		Risk:        RiskHigh,
 		Description: "Archive a page and its subtree. Requires page.admin on every subtree page and workspace page.delete.",
 		Scopes:      []string{auth.ScopePagesDelete},
 		Run: func(_ context.Context, env *Env, args archivePageArgs) (any, error) {
@@ -308,6 +329,9 @@ func init() {
 
 	Register(Default, Tool[restorePageRevisionArgs]{
 		Name:        "restore_page_revision",
+		Group:       CapabilityKnowledgeDiagrams,
+		Access:      AccessWrite,
+		Risk:        RiskMedium,
 		Description: "Restore a page's title/content from a revision. Also unarchives the page when the target is archived.",
 		Scopes:      []string{auth.ScopePagesWrite},
 		Run: func(_ context.Context, env *Env, args restorePageRevisionArgs) (any, error) {
@@ -326,6 +350,9 @@ func init() {
 
 	Register(Default, Tool[getPagePermissionsArgs]{
 		Name:        "get_page_permissions",
+		Group:       CapabilityKnowledgeDiagrams,
+		Access:      AccessRead,
+		Risk:        RiskLow,
 		Description: "Read a page's inherit flag, current caller effective level, and explicit ACL rows.",
 		Scopes:      []string{auth.ScopePagesRead},
 		Run: func(_ context.Context, env *Env, args getPagePermissionsArgs) (any, error) {
@@ -344,6 +371,9 @@ func init() {
 
 	Register(Default, Tool[grantPagePermissionArgs]{
 		Name:        "grant_page_permission",
+		Group:       CapabilityKnowledgeDiagrams,
+		Access:      AccessAdmin,
+		Risk:        RiskHigh,
 		Description: "Grant a user, group, or role view/edit/admin access on a page. Requires page.admin.",
 		Scopes:      []string{auth.ScopePagesWrite},
 		Run: func(_ context.Context, env *Env, args grantPagePermissionArgs) (any, error) {
@@ -362,6 +392,9 @@ func init() {
 
 	Register(Default, Tool[revokePagePermissionArgs]{
 		Name:        "revoke_page_permission",
+		Group:       CapabilityKnowledgeDiagrams,
+		Access:      AccessAdmin,
+		Risk:        RiskHigh,
 		Description: "Revoke a page ACL row. Requires page.admin.",
 		Scopes:      []string{auth.ScopePagesWrite},
 		Run: func(_ context.Context, env *Env, args revokePagePermissionArgs) (any, error) {
@@ -379,6 +412,9 @@ func init() {
 
 	Register(Default, Tool[setPageInheritanceArgs]{
 		Name:        "set_page_inheritance",
+		Group:       CapabilityKnowledgeDiagrams,
+		Access:      AccessAdmin,
+		Risk:        RiskHigh,
 		Description: "Enable or disable permission inheritance on a page. Requires page.admin.",
 		Scopes:      []string{auth.ScopePagesWrite},
 		Run: func(_ context.Context, env *Env, args setPageInheritanceArgs) (any, error) {

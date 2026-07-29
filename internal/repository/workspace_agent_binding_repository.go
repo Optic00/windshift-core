@@ -14,12 +14,30 @@ import (
 
 // WorkspaceAgentBindingRepository persists workspace_agent_bindings rows.
 type WorkspaceAgentBindingRepository struct {
-	db database.Database
+	db workspaceAgentBindingStore
+}
+
+type workspaceAgentBindingStore interface {
+	Query(query string, args ...interface{}) (*sql.Rows, error)
+	QueryRow(query string, args ...interface{}) *sql.Row
+	Exec(query string, args ...interface{}) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
+	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+	ExecWrite(query string, args ...interface{}) (sql.Result, error)
+	ExecWriteContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
 }
 
 // NewWorkspaceAgentBindingRepository constructs a new repository.
 func NewWorkspaceAgentBindingRepository(db database.Database) *WorkspaceAgentBindingRepository {
 	return &WorkspaceAgentBindingRepository{db: db}
+}
+
+// NewWorkspaceAgentBindingRepositoryTx binds repository writes to an existing
+// transaction. Agent Studio uses this to create an acting identity, its default
+// workspace role, and the Draft profile atomically.
+func NewWorkspaceAgentBindingRepositoryTx(tx database.Tx) *WorkspaceAgentBindingRepository {
+	return &WorkspaceAgentBindingRepository{db: tx}
 }
 
 // AgentRunContext returns the workspace key and workspace-scoped item number
@@ -66,9 +84,33 @@ func (r *WorkspaceAgentBindingRepository) Insert(ctx context.Context, b *models.
 	if b.TokenTTLMinutes <= 0 {
 		b.TokenTTLMinutes = 60
 	}
+	if b.ProfileType == "" {
+		if b.TargetPoolID == nil {
+			b.ProfileType = models.AgentProfileLegacy
+		} else {
+			b.ProfileType = models.AgentProfileCoding
+		}
+	}
+	if b.Lifecycle == "" {
+		b.Lifecycle = models.AgentLifecycleReady
+	}
+	if b.ProfileVersion <= 0 {
+		b.ProfileVersion = 1
+	}
+	if b.IdentityClass == "" {
+		if b.ActingUserKind == "agent" {
+			b.IdentityClass = models.AgentIdentityUserOwned
+		} else {
+			b.IdentityClass = models.AgentIdentityCentralized
+		}
+	}
 	scopesJSON, err := json.Marshal(b.TokenScopes)
 	if err != nil {
 		return 0, fmt.Errorf("marshal token scopes: %w", err)
+	}
+	capabilityGroupsJSON, err := json.Marshal(b.CapabilityGroups)
+	if err != nil {
+		return 0, fmt.Errorf("marshal capability groups: %w", err)
 	}
 	// Persist the primary repo onto the deprecated scalar columns (rollback
 	// net for one release) — synthesized from b.Repos when the caller set the
@@ -83,12 +125,15 @@ func (r *WorkspaceAgentBindingRepository) Insert(ctx context.Context, b *models.
 	var id int64
 	err = r.db.QueryRowContext(ctx, `
 		INSERT INTO workspace_agent_bindings
-			(workspace_id, acting_user_id, acting_user_kind, repo_slug, repo_base_ref,
+			(workspace_id, acting_user_id, acting_user_kind,
+			 profile_type, lifecycle, profile_version, identity_class, purpose, capability_groups_json,
+			 repo_slug, repo_base_ref,
 			 llm_connection_id, scm_connection_id, target_pool_id, token_scopes_json, token_ttl_minutes, max_runs_per_day, instructions, runner_image, created_by_user_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		RETURNING id
 	`,
 		b.WorkspaceID, b.ActingUserID, b.ActingUserKind,
+		b.ProfileType, b.Lifecycle, b.ProfileVersion, b.IdentityClass, b.Purpose, string(capabilityGroupsJSON),
 		nullStringArg(b.RepoSlug), nullStringArg(b.RepoBaseRef),
 		nullIntArg(b.LLMConnectionID), nullIntArg(b.SCMConnectionID), nullIntArg(b.TargetPoolID),
 		string(scopesJSON), b.TokenTTLMinutes, b.MaxRunsPerDay,
@@ -188,7 +233,12 @@ func (r *WorkspaceAgentBindingRepository) ListForWorkspace(ctx context.Context, 
 // assignee-change trigger calls this in the hot path and absence is the
 // expected case.
 func (r *WorkspaceAgentBindingRepository) FindByActingUser(ctx context.Context, workspaceID, actingUserID int) (*models.WorkspaceAgentBinding, error) {
-	row := r.db.QueryRowContext(ctx, bindingSelectSQL+` WHERE workspace_id = ? AND acting_user_id = ?`, workspaceID, actingUserID)
+	row := r.db.QueryRowContext(
+		ctx,
+		bindingSelectSQL+` WHERE workspace_id = ? AND acting_user_id = ? AND lifecycle = 'ready'`,
+		workspaceID,
+		actingUserID,
+	)
 	b, err := scanBinding(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -202,12 +252,124 @@ func (r *WorkspaceAgentBindingRepository) FindByActingUser(ctx context.Context, 
 	return b, nil
 }
 
+// SetLifecycle changes only persisted lifecycle state. Runtime-affecting
+// configuration methods own profile-version increments; validating a Draft
+// and marking it Ready does not create another definition version.
+func (r *WorkspaceAgentBindingRepository) SetLifecycle(ctx context.Context, id, workspaceID int, lifecycle models.AgentLifecycle) (int64, error) {
+	res, err := r.db.ExecWriteContext(ctx, `
+		UPDATE workspace_agent_bindings
+		SET lifecycle = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND workspace_id = ? AND lifecycle <> 'archived'
+	`, lifecycle, id, workspaceID)
+	if err != nil {
+		return 0, fmt.Errorf("set binding lifecycle: %w", err)
+	}
+	return res.RowsAffected()
+}
+
+// MigrateLegacyToRunner is the one explicit runtime transition allowed by
+// Agent Studio. It preserves the profile, identity, history, repositories,
+// and attribution while moving a grandfathered local binding onto an
+// authorized runner pool. Standard and Coding profiles never match this
+// update and remain immutable.
+func (r *WorkspaceAgentBindingRepository) MigrateLegacyToRunner(ctx context.Context, id, workspaceID, poolID int) (int64, error) {
+	res, err := r.db.ExecWriteContext(ctx, `
+		UPDATE workspace_agent_bindings
+		SET profile_type = 'coding',
+		    target_pool_id = ?,
+		    lifecycle = 'draft',
+		    profile_version = profile_version + 1,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND workspace_id = ?
+		  AND profile_type = 'legacy' AND lifecycle <> 'archived'
+	`, poolID, id, workspaceID)
+	if err != nil {
+		return 0, fmt.Errorf("migrate Legacy binding to runner: %w", err)
+	}
+	return res.RowsAffected()
+}
+
+// ConnectCodingRunner authorizes the first remote pool for a Coding Draft.
+// Existing pool assignments are immutable so changing execution authority
+// cannot be smuggled through a profile edit.
+func (r *WorkspaceAgentBindingRepository) ConnectCodingRunner(ctx context.Context, id, workspaceID, poolID int) (int64, error) {
+	res, err := r.db.ExecWriteContext(ctx, `
+		UPDATE workspace_agent_bindings
+		SET target_pool_id = ?,
+		    lifecycle = 'draft',
+		    profile_version = profile_version + 1,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND workspace_id = ?
+		  AND profile_type = 'coding'
+		  AND target_pool_id IS NULL
+		  AND lifecycle <> 'archived'
+	`, poolID, id, workspaceID)
+	if err != nil {
+		return 0, fmt.Errorf("connect Coding profile runner: %w", err)
+	}
+	return res.RowsAffected()
+}
+
+// Archive makes a profile unavailable without deleting its stable binding or
+// acting-identity references. The identity snapshot keeps historical cards and
+// bylines renderable even if the user row is later tombstoned.
+func (r *WorkspaceAgentBindingRepository) Archive(ctx context.Context, id, workspaceID, archivedByUserID int) (int64, error) {
+	res, err := r.db.ExecWriteContext(ctx, `
+		UPDATE workspace_agent_bindings
+		SET lifecycle = 'archived',
+		    archived_at = CURRENT_TIMESTAMP,
+		    archived_by_user_id = ?,
+		    last_known_name = COALESCE((
+		      SELECT CASE
+		        WHEN TRIM(COALESCE(first_name, '') || ' ' || COALESCE(last_name, '')) <> ''
+		          THEN TRIM(COALESCE(first_name, '') || ' ' || COALESCE(last_name, ''))
+		        ELSE username
+		      END
+		      FROM users WHERE users.id = workspace_agent_bindings.acting_user_id
+		    ), last_known_name),
+		    last_known_handle = COALESCE((
+		      SELECT username FROM users WHERE users.id = workspace_agent_bindings.acting_user_id
+		    ), last_known_handle),
+		    last_known_avatar = COALESCE((
+		      SELECT avatar_url FROM users WHERE users.id = workspace_agent_bindings.acting_user_id
+		    ), last_known_avatar),
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND workspace_id = ? AND lifecycle <> 'archived'
+	`, archivedByUserID, id, workspaceID)
+	if err != nil {
+		return 0, fmt.Errorf("archive binding: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+// Restore returns an archived profile to Draft so current dependencies and
+// permissions must be validated before it can accept new work again.
+func (r *WorkspaceAgentBindingRepository) Restore(ctx context.Context, id, workspaceID int) (int64, error) {
+	res, err := r.db.ExecWriteContext(ctx, `
+		UPDATE workspace_agent_bindings
+		SET lifecycle = 'draft',
+		    archived_at = NULL,
+		    archived_by_user_id = NULL,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND workspace_id = ? AND lifecycle = 'archived'
+	`, id, workspaceID)
+	if err != nil {
+		return 0, fmt.Errorf("restore binding: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 // UpdateInstructions rewrites a binding's custom instructions, scoped by
 // workspace (WI-258).
 func (r *WorkspaceAgentBindingRepository) UpdateInstructions(ctx context.Context, id, workspaceID int, instructions string) error {
 	_, err := r.db.ExecWriteContext(ctx, `
 		UPDATE workspace_agent_bindings
-		SET instructions = ?, updated_at = CURRENT_TIMESTAMP
+		SET instructions = ?,
+		    lifecycle = CASE WHEN lifecycle = 'archived' THEN lifecycle ELSE 'draft' END,
+		    profile_version = profile_version + 1,
+		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = ? AND workspace_id = ?
 	`, instructions, id, workspaceID)
 	if err != nil {
@@ -227,6 +389,10 @@ func (r *WorkspaceAgentBindingRepository) UpdateConfig(ctx context.Context, b *m
 	if err != nil {
 		return fmt.Errorf("marshal token scopes: %w", err)
 	}
+	capabilitiesJSON, err := json.Marshal(b.CapabilityGroups)
+	if err != nil {
+		return fmt.Errorf("marshal capability groups: %w", err)
+	}
 	repos := bindingReposToPersist(b)
 	// Re-mirror the primary onto the scalar columns (or clear them when no repo).
 	b.RepoSlug, b.RepoBaseRef, b.SCMConnectionID = "", "", nil
@@ -239,13 +405,16 @@ func (r *WorkspaceAgentBindingRepository) UpdateConfig(ctx context.Context, b *m
 		UPDATE workspace_agent_bindings
 		SET llm_connection_id = ?, scm_connection_id = ?, repo_slug = ?, repo_base_ref = ?,
 		    token_scopes_json = ?, token_ttl_minutes = ?, max_runs_per_day = ?,
-		    instructions = ?, updated_at = CURRENT_TIMESTAMP
+		    instructions = ?, capability_groups_json = ?,
+		    lifecycle = CASE WHEN lifecycle = 'archived' THEN lifecycle ELSE 'draft' END,
+		    profile_version = profile_version + 1,
+		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = ? AND workspace_id = ?
 	`,
 		nullIntArg(b.LLMConnectionID), nullIntArg(b.SCMConnectionID),
 		nullStringArg(b.RepoSlug), nullStringArg(b.RepoBaseRef),
 		string(scopesJSON), b.TokenTTLMinutes, b.MaxRunsPerDay,
-		b.Instructions, b.ID, b.WorkspaceID,
+		b.Instructions, string(capabilitiesJSON), b.ID, b.WorkspaceID,
 	); err != nil {
 		return fmt.Errorf("update binding config: %w", err)
 	}
@@ -413,10 +582,25 @@ func scanBindingRepo(scanner bindingRowScanner) (models.BindingRepo, error) {
 
 const bindingSelectSQL = `
 	SELECT id, workspace_id, acting_user_id, acting_user_kind,
+	       profile_type, lifecycle, profile_version, identity_class,
+	       purpose, capability_groups_json,
 	       repo_slug, repo_base_ref,
 	       llm_connection_id, scm_connection_id, target_pool_id,
 	       token_scopes_json, token_ttl_minutes, max_runs_per_day,
-	       instructions, runner_image, created_by_user_id, created_at, updated_at
+	       instructions, runner_image, created_by_user_id,
+	       archived_at, archived_by_user_id,
+	       last_known_name, last_known_handle, last_known_avatar,
+	       COALESCE((
+	         SELECT CASE
+	           WHEN TRIM(COALESCE(first_name, '') || ' ' || COALESCE(last_name, '')) <> ''
+	             THEN TRIM(COALESCE(first_name, '') || ' ' || COALESCE(last_name, ''))
+	           ELSE username
+	         END
+	         FROM users WHERE users.id = workspace_agent_bindings.acting_user_id
+	       ), last_known_name, ''),
+	       COALESCE((SELECT username FROM users WHERE users.id = workspace_agent_bindings.acting_user_id), last_known_handle, ''),
+	       COALESCE((SELECT avatar_url FROM users WHERE users.id = workspace_agent_bindings.acting_user_id), last_known_avatar, ''),
+	       created_at, updated_at
 	FROM workspace_agent_bindings
 `
 
@@ -435,13 +619,20 @@ func scanBindingRows(rows *sql.Rows) (*models.WorkspaceAgentBinding, error) {
 func scanBindingFrom(scanner bindingRowScanner) (*models.WorkspaceAgentBinding, error) {
 	b := &models.WorkspaceAgentBinding{}
 	var repoSlug, repoBaseRef, runnerImage sql.NullString
-	var llmConn, scmConn, targetPool sql.NullInt64
-	var scopesJSON string
+	var llmConn, scmConn, targetPool, archivedBy sql.NullInt64
+	var archivedAt sql.NullTime
+	var scopesJSON, capabilityGroupsJSON string
 	if err := scanner.Scan(
 		&b.ID, &b.WorkspaceID, &b.ActingUserID, &b.ActingUserKind,
+		&b.ProfileType, &b.Lifecycle, &b.ProfileVersion, &b.IdentityClass,
+		&b.Purpose, &capabilityGroupsJSON,
 		&repoSlug, &repoBaseRef,
 		&llmConn, &scmConn, &targetPool, &scopesJSON, &b.TokenTTLMinutes, &b.MaxRunsPerDay,
-		&b.Instructions, &runnerImage, &b.CreatedByUserID, &b.CreatedAt, &b.UpdatedAt,
+		&b.Instructions, &runnerImage, &b.CreatedByUserID,
+		&archivedAt, &archivedBy,
+		&b.LastKnownName, &b.LastKnownHandle, &b.LastKnownAvatar,
+		&b.DisplayName, &b.Handle, &b.AvatarURL,
+		&b.CreatedAt, &b.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
@@ -468,6 +659,16 @@ func scanBindingFrom(scanner bindingRowScanner) (*models.WorkspaceAgentBinding, 
 	}
 	if scopesJSON != "" {
 		_ = json.Unmarshal([]byte(scopesJSON), &b.TokenScopes)
+	}
+	if capabilityGroupsJSON != "" {
+		_ = json.Unmarshal([]byte(capabilityGroupsJSON), &b.CapabilityGroups)
+	}
+	if archivedAt.Valid {
+		b.ArchivedAt = &archivedAt.Time
+	}
+	if archivedBy.Valid {
+		v := int(archivedBy.Int64)
+		b.ArchivedByUserID = &v
 	}
 	return b, nil
 }

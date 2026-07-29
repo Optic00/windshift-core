@@ -16,7 +16,7 @@
     IconPencil as Pencil,
   } from '@tabler/icons-svelte-runes';
   import { workspaceIconMap } from '../utils/icons.js';
-  import { workspaceViewItems, workspaceOnlyViews, testNavigationItems, workspaceSettingsItems, workspaceSettingsViews, workspaceSettingsRoute } from '../navigation/workspaceNavigation.js';
+  import { workspaceViewItems, workspacePrimaryViews, workspaceOnlyViews, testNavigationItems, workspaceSettingsItems, workspaceSettingsViews, workspaceSettingsRoute } from '../navigation/workspaceNavigation.js';
   import { navItemStyle, onNavMouseEnter, onNavMouseLeave } from '../navigation/navItemStyle.js';
   import { navigate, currentRoute } from '../router.js';
   import { currentWorkspace, workspacePermissions } from '../stores';
@@ -106,7 +106,9 @@
   let lastCollectionId = undefined; // Plain variable to prevent infinite loop in $effect
 
   // Workspace view registries live in navigation/workspaceNavigation.js
-  const workspaceOnlyViewIds = new Set(workspaceOnlyViews.map(view => view.id));
+  const workspaceOnlyViewIds = new Set(
+    [...workspacePrimaryViews, ...workspaceOnlyViews].map(view => view.id)
+  );
   const workspaceTestViewIds = new Set([
     'test-cases',
     'test-case-detail',
@@ -387,6 +389,11 @@
   function isSettingsActive() {
     return SETTINGS_VIEWS.includes($currentRoute.view);
   }
+
+  function isWorkspaceViewActive(view) {
+    return view.activeViews?.includes($currentRoute.view)
+      || $currentRoute.view === `workspace-${view.id}`;
+  }
 </script>
 
 {#snippet resizeHandle()}
@@ -454,6 +461,7 @@
   <Tooltip content={item.tooltip || item.label} placement="right">
     <a
       href={item.href}
+      data-testid={item.testId}
       class="w-full text-left cursor-pointer px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 workspace-nav-item no-underline"
       style={navItemStyle(item.isActive)}
       onmouseenter={(e) => onNavMouseEnter(e, item.isActive)}
@@ -470,6 +478,7 @@
   <Tooltip content={item.label} placement="right">
     <a
       href={item.href}
+      data-testid={item.testId}
       class="w-10 h-10 rounded flex items-center justify-center transition-colors no-underline"
       style={navItemStyle(item.isActive)}
       onmouseenter={(e) => onNavMouseEnter(e, item.isActive)}
@@ -512,6 +521,10 @@
 
         {#each workspaceViewItems as view}
           {@render collapsedNavIcon({ href: getNavigationUrl(view.id), label: view.label, icon: view.icon, isActive: $currentRoute.view === `workspace-${view.id}` })}
+        {/each}
+
+        {#each workspacePrimaryViews as view}
+          {@render collapsedNavIcon({ href: getNavigationUrl(view.id), label: view.label, icon: view.icon, testId: view.testId, isActive: isWorkspaceViewActive(view) })}
         {/each}
 
         {#if $moduleSettings.test_management_enabled && canViewTests && !currentCollectionId}
@@ -614,6 +627,10 @@
 
       {#each workspaceViewItems as view}
         {@render navLink({ href: getNavigationUrl(view.id), label: view.label, tooltip: view.tooltip, icon: view.icon, isActive: $currentRoute.view === `workspace-${view.id}` })}
+      {/each}
+
+      {#each workspacePrimaryViews as view}
+        {@render navLink({ href: getNavigationUrl(view.id), label: view.label, tooltip: view.tooltip, icon: view.icon, testId: view.testId, isActive: isWorkspaceViewActive(view) })}
       {/each}
 
       {#if currentCollectionId}

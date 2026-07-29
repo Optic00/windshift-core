@@ -1,6 +1,10 @@
 package routes
 
-import "net/http"
+import (
+	"net/http"
+
+	"windshift/internal/handlers"
+)
 
 // RegisterAIRoutes registers AI-powered feature routes.
 func RegisterAIRoutes(deps *Deps) {
@@ -8,9 +12,17 @@ func RegisterAIRoutes(deps *Deps) {
 	auth := deps.AuthMiddleware.RequireAuth
 	admin := deps.PermissionMiddleware.RequireSystemAdmin()
 
+	api.HandleH("GET /agent-studio/openapi.yaml", auth(http.HandlerFunc(handlers.AgentStudioOpenAPIYAML)))
+
 	// AI feature endpoints (user) - rate limited to protect expensive LLM calls
 	api.HandleH("GET /ai/status", auth(http.HandlerFunc(deps.AI.AI.Status)))
 	api.HandleH("POST /ai/chat", auth(deps.AIRateLimiter.Limit(http.HandlerFunc(deps.AI.AI.Chat))))
+	api.HandleH("GET /ai/sessions", auth(http.HandlerFunc(deps.AI.AI.ListAgentSessions)))
+	api.HandleH("GET /ai/sessions/general", auth(http.HandlerFunc(deps.AI.AI.GetGeneralSession)))
+	api.HandleH("GET /ai/sessions/{id}/messages", auth(http.HandlerFunc(deps.AI.AI.ListAgentMessages)))
+	api.HandleH("POST /ai/sessions/{id}/archive", auth(http.HandlerFunc(deps.AI.AI.ArchiveAgentSession)))
+	api.HandleH("GET /workspaces/{workspaceId}/available-standard-agents", auth(http.HandlerFunc(deps.AI.AI.ListAvailableStandardAgents)))
+	api.HandleH("POST /workspaces/{workspaceId}/agent-sessions", auth(http.HandlerFunc(deps.AI.AI.CreateStandardSession)))
 	api.HandleH("GET /ai/daily-briefing", auth(http.HandlerFunc(deps.AI.AI.GetDailyBriefing)))
 	api.HandleH("GET /ai/plan-my-day", auth(deps.AIRateLimiter.Limit(http.HandlerFunc(deps.AI.AI.PlanMyDay))))
 	api.HandleH("POST /ai/items/{id}/catch-me-up", auth(deps.AIRateLimiter.Limit(http.HandlerFunc(deps.AI.AI.CatchMeUp))))

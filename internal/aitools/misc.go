@@ -184,6 +184,9 @@ type listRecentActivityOut struct {
 func init() {
 	Register(Default, Tool[createMilestoneArgs]{
 		Name:        "create_milestone",
+		Group:       CapabilityPlanningActivity,
+		Access:      AccessWrite,
+		Risk:        RiskMedium,
 		Description: "Create a milestone in an accessible workspace.",
 		Scopes:      []string{auth.ScopeItemsWrite},
 		Run: func(_ context.Context, env *Env, args createMilestoneArgs) (any, error) {
@@ -240,6 +243,9 @@ func init() {
 
 	Register(Default, Tool[listMilestonesArgs]{
 		Name:        "list_milestones",
+		Group:       CapabilityPlanningActivity,
+		Access:      AccessRead,
+		Risk:        RiskLow,
 		Description: "List milestones the user can see, with optional workspace, status and global-include filters.",
 		Scopes:      []string{auth.ScopeMilestonesRead}, // cross-workspace list — matches v1 GET /milestones
 		Run: func(_ context.Context, env *Env, args listMilestonesArgs) (any, error) {
@@ -306,6 +312,9 @@ func init() {
 
 	Register(Default, Tool[createIterationArgs]{
 		Name:        "create_iteration",
+		Group:       CapabilityPlanningActivity,
+		Access:      AccessWrite,
+		Risk:        RiskMedium,
 		Description: "Create an iteration in an accessible workspace.",
 		Scopes:      []string{auth.ScopeItemsWrite},
 		Run: func(_ context.Context, env *Env, args createIterationArgs) (any, error) {
@@ -371,6 +380,9 @@ func init() {
 
 	Register(Default, Tool[listIterationsArgs]{
 		Name:        "list_iterations",
+		Group:       CapabilityPlanningActivity,
+		Access:      AccessRead,
+		Risk:        RiskLow,
 		Description: "List iterations (sprints, PIs, releases) the user can see.",
 		Scopes:      []string{auth.ScopeIterationsRead}, // cross-workspace list — matches v1 GET /iterations
 		Run: func(_ context.Context, env *Env, args listIterationsArgs) (any, error) {
@@ -449,6 +461,9 @@ func init() {
 
 	Register(Default, Tool[listCustomFieldsArgs]{
 		Name:        "list_custom_fields",
+		Group:       CapabilityPlanningActivity,
+		Access:      AccessRead,
+		Risk:        RiskLow,
 		Description: "List available custom field definitions. Use this to discover what custom fields exist before filtering items with cf_<name> in the filter parameter of list_items.",
 		Scopes:      []string{auth.ScopeCustomFieldsRead},
 		Run: func(_ context.Context, env *Env, _ listCustomFieldsArgs) (any, error) {
@@ -476,6 +491,9 @@ func init() {
 
 	Register(Default, Tool[listRecentActivityArgs]{
 		Name:        "list_recent_activity",
+		Group:       CapabilityPlanningActivity,
+		Access:      AccessRead,
+		Risk:        RiskLow,
 		Description: "List recent changes and comments across accessible workspaces. Useful for understanding what happened recently.",
 		Scopes:      []string{auth.ScopeItemsRead}, // activity is item history — matches v1 GET /items/{id}/history
 		Run: func(_ context.Context, env *Env, args listRecentActivityArgs) (any, error) {

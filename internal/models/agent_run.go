@@ -20,7 +20,9 @@ const (
 // on the fixed runner image); action_container + ci_task run an admin-chosen
 // image on the same runner substrate (WI-146).
 const (
+	JobKindGeneralAgent    = "general_agent"
 	JobKindCodingAgent     = "coding_agent"
+	JobKindStandardAgent   = "standard_agent"
 	JobKindActionContainer = "action_container"
 	JobKindCITask          = "ci_task"
 )
@@ -81,6 +83,10 @@ type AgentRun struct {
 	// (action_container / ci_task), empty for coding_agent.
 	JobKind  string `json:"job_kind,omitempty"`
 	JobImage string `json:"job_image,omitempty"`
+	// IsEphemeral marks private verification runs. Remote and local execution
+	// may read repositories and call the configured model, but must not push,
+	// create a PR, or invoke any post-run mutation hook.
+	IsEphemeral bool `json:"is_ephemeral,omitempty"`
 	// TriggeredByUserID is who caused the run: the user whose assignment
 	// fired the binding trigger, or the admin who started a test run. On
 	// OAuth SCM connections this user's personal token is the credential
@@ -88,6 +94,21 @@ type AgentRun struct {
 	// queued before the column existed — those use the connection-level
 	// credential.
 	TriggeredByUserID *int `json:"triggered_by_user_id,omitempty"`
+	// Standard-agent identity and lineage are immutable execution snapshots.
+	// ActingUserID is the profile identity whose permissions every tool uses;
+	// RootInitiatorUserID is the human at the start of an agent chain;
+	// ImmediateTriggerUserID is the human/agent that directly queued this run.
+	ActingUserID           *int   `json:"acting_user_id,omitempty"`
+	RootInitiatorUserID    *int   `json:"root_initiator_user_id,omitempty"`
+	ImmediateTriggerUserID *int   `json:"immediate_trigger_user_id,omitempty"`
+	ParentRunID            *int   `json:"parent_run_id,omitempty"`
+	ChainDepth             int    `json:"chain_depth,omitempty"`
+	SessionID              string `json:"session_id,omitempty"`
+	ProfileVersion         int    `json:"profile_version,omitempty"`
+	// GrantsJSON contains only admitted capability/tool names. ProfileSnapshotJSON
+	// contains the immutable Standard profile inputs used by the run.
+	GrantsJSON          string `json:"grants_json,omitempty"`
+	ProfileSnapshotJSON string `json:"profile_snapshot_json,omitempty"`
 	// Trigger is the run's trigger context + free-form instruction, persisted
 	// as JSON (agent_runs.trigger_json). Holding it in one JSON blob keeps new
 	// instruction shapes migration-free. Nil for runs created before the

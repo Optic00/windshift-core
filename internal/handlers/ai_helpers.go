@@ -59,7 +59,6 @@ func extendWriteDeadline(w http.ResponseWriter) {
 
 // respondLLMError logs an LLM call failure and writes a structured 503 response.
 func respondLLMError(w http.ResponseWriter, r *http.Request, err error) {
-	slog.Error("LLM chat completion failed", slog.Any("error", err))
-	msg := "AI service error: " + err.Error()
-	respondServiceUnavailable(w, r, msg)
+	slog.Error("LLM chat completion failed", slog.String("error_type", fmt.Sprintf("%T", err)))
+	respondServiceUnavailable(w, r, "The AI service could not complete this request.")
 }

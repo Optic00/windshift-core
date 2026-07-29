@@ -84,6 +84,7 @@ func RegisterAdminRoutes(deps *Deps) {
 	api.HandleH("GET /admin/audit-logs/since", admin(http.HandlerFunc(deps.Admin.AuditLog.StreamAuditLogsSince)))
 	api.HandleH("GET /admin/audit-logs/action-types", admin(http.HandlerFunc(deps.Admin.AuditLog.GetAuditLogActionTypes)))
 	api.HandleH("GET /admin/audit-logs/resource-types", admin(http.HandlerFunc(deps.Admin.AuditLog.GetAuditLogResourceTypes)))
+	api.HandleH("GET /admin/audit-logs/{id}/agent-transcript", admin(http.HandlerFunc(deps.Admin.AuditLog.GetAgentTranscript)))
 
 	// OAuth client management (admin-only). Backs the generic OAuth 2.0
 	// authorization-code-with-PKCE server: admins register third-party apps

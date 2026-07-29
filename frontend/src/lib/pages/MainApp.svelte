@@ -32,12 +32,10 @@
   import OAuthAuthorize from './OAuthAuthorize.svelte';
   import Channels from '../features/channels/Channels.svelte';
   import Customers from '../workspaces/Customers.svelte';
-  import TeamsList from '../teams/TeamsList.svelte';
-  import TeamDetail from '../teams/TeamDetail.svelte';
   import Hub from '../layout/Hub.svelte';
   import Footer from '../layout/Footer.svelte';
   import {
-    Layers3, BarChart3, Sheet, Target, User, Notebook, GitBranch, MapPin, Shield, Home, CheckSquare, MoreHorizontal, Inbox, SquareKanban, FolderOpen
+    Layers3, BarChart3, Sheet, Target, User, Notebook, GitBranch, MapPin, Shield, Home, CheckSquare, MoreHorizontal, Inbox, SquareKanban, FolderOpen, Menu
   } from '@lucide/svelte';
   import GlobalConfirmDialog from '../dialogs/GlobalConfirmDialog.svelte';
   import FloatingTimer from '../features/time/FloatingTimer.svelte';
@@ -64,6 +62,7 @@
   let createModalSkipNavigate = $state(false);
   let createModalWorkspaceId = $state(null);
   let showEmailVerificationBanner = $state(false);
+  let mobileWorkspaceNavOpen = $state(false);
 
   // Terminal panel state
   let terminalState = $derived($terminalStore);
@@ -202,6 +201,9 @@
     'workspace-milestones': () => import('../features/milestones/Milestones.svelte'),
     'workspace-actions': () => import('../features/actions/ActionsSettings.svelte'),
     'workspace-analytics': () => import('../features/analytics/WorkspaceAnalytics.svelte'),
+    'workspace-agents': () => import('../features/agents/AgentCatalog.svelte'),
+    'workspace-agent-create': () => import('../features/agents/AgentCreate.svelte'),
+    'workspace-agent-profile': () => import('../features/agents/AgentProfile.svelte'),
     'command-palette': () => import('../layout/CommandPalette.svelte'),
     'create-modal': () => import('../dialogs/CreateModal.svelte'),
     'homepage': () => import('./Homepage.svelte'),
@@ -486,6 +488,28 @@
       errorMsg: 'Failed to load Analytics',
       wrapper: 'surface-full',
       getProps: (route) => ({ workspaceId: route.params.id })
+    },
+    'workspace-agents': {
+      loadingMsg: 'Loading Agents...',
+      errorMsg: 'Failed to load Agents',
+      wrapper: 'surface-full',
+      getProps: (route) => ({ workspaceId: route.params.id })
+    },
+    'workspace-agent-create': {
+      loadingMsg: 'Opening Agent Studio...',
+      errorMsg: 'Failed to open Agent Studio',
+      wrapper: 'surface-full',
+      getProps: (route) => ({ workspaceId: route.params.id })
+    },
+    'workspace-agent-profile': {
+      loadingMsg: 'Loading Agent...',
+      errorMsg: 'Failed to load Agent',
+      wrapper: 'surface-full',
+      getProps: (route) => ({
+        workspaceId: route.params.id,
+        agentId: route.params.agentId,
+        tab: route.query?.tab,
+      })
     },
     'command-palette': {
       trigger: 'showCommandPalette'
@@ -1039,12 +1063,37 @@
 
     <!-- Main Content Area with Sidebar Layout -->
     <div
-      class="flex flex-1 transition-[margin] duration-200 ease-out"
+      class="authenticated-content flex flex-1 transition-[margin] duration-200 ease-out"
+      class:has-mobile-context-nav={showWorkspaceNav}
       style={!$uiStore.reviewFullscreen ? `margin-left: ${$uiStore.navExpanded ? '200px' : '64px'}` : ''}
     >
       <!-- Left Sidebar for Workspace/Admin Navigation -->
       {#if showWorkspaceNav}
-        <div out:slide={{ duration: 200, axis: 'x' }}>
+        <Button
+          class="mobile-workspace-nav-trigger"
+          variant="default"
+          size="small"
+          icon={Menu}
+          title={mobileWorkspaceNavOpen ? 'Close workspace navigation' : 'Open workspace navigation'}
+          dataTestid="mobile-workspace-nav-trigger"
+          onclick={() => mobileWorkspaceNavOpen = !mobileWorkspaceNavOpen}
+        >
+          Workspace
+        </Button>
+        {#if mobileWorkspaceNavOpen}
+          <button
+            type="button"
+            class="mobile-workspace-nav-backdrop"
+            aria-label="Close workspace navigation"
+            data-testid="mobile-workspace-nav-backdrop"
+            onclick={() => mobileWorkspaceNavOpen = false}
+          ></button>
+        {/if}
+        <div
+          class="workspace-context-nav"
+          class:mobile-open={mobileWorkspaceNavOpen}
+          out:slide={{ duration: 200, axis: 'x' }}
+        >
           <WorkspaceNavigation workspaceId={$currentRoute.path?.startsWith('/personal') ? $workspacesStore.personalWorkspace?.id : $currentRoute.params.id} />
         </div>
       {:else if showCollectionNav}
@@ -1105,15 +1154,6 @@
       </div>
     {:else if view === 'organizations' || view === 'organization-contact-detail'}
       <Customers />
-
-    {:else if view === 'teams-list'}
-      <div class="p-6" style="background-color: var(--ds-surface);">
-        <TeamsList />
-      </div>
-    {:else if view === 'team-detail'}
-      <div class="p-6" style="background-color: var(--ds-surface);">
-        <TeamDetail teamId={$currentRoute.params.id} section={$currentRoute.params.section || 'overview'} />
-      </div>
 
     {:else if view === 'notifications'}
       <NotificationsPage />
@@ -1218,7 +1258,7 @@
     
     <!-- Footer with proper sidebar margin -->
     <footer
-      class="transition-transform duration-200 ease-out {!$uiStore.reviewFullscreen ? 'ml-16' : ''}"
+      class="authenticated-footer transition-transform duration-200 ease-out {!$uiStore.reviewFullscreen ? 'ml-16' : ''}"
       style={!$uiStore.reviewFullscreen ? `transform: translateX(${$uiStore.navExpanded ? '136px' : '0px'})` : ''}
     >
       <Footer />
@@ -1321,7 +1361,7 @@
   {#if ChatPanelComponent}
     <ChatPanelComponent
       bind:isOpen={showChatPanel}
-      onclose={() => { showChatPanel = false; chatStore.clearHistory(); }}
+      onclose={() => { showChatPanel = false; }}
     />
   {/if}
 {/if}
@@ -1334,6 +1374,58 @@
   :global(html) {
     --nav-bg-color: var(--ds-surface-raised);
     --nav-text-color: var(--ds-text);
+  }
+
+  :global(.mobile-workspace-nav-trigger),
+  .mobile-workspace-nav-backdrop {
+    display: none;
+  }
+
+  @media (max-width: 767px) {
+    .authenticated-content {
+      margin-left: 4rem !important;
+      min-width: 0;
+    }
+
+    .authenticated-content.has-mobile-context-nav {
+      padding-top: 3.5rem;
+    }
+
+    .workspace-context-nav {
+      position: fixed;
+      z-index: 45;
+      top: 0;
+      bottom: 0;
+      left: 4rem;
+      transform: translateX(-100%);
+      transition: transform var(--duration-normal, 200ms) var(--ease-smooth, ease);
+    }
+
+    .workspace-context-nav.mobile-open {
+      transform: translateX(0);
+    }
+
+    :global(.mobile-workspace-nav-trigger) {
+      display: inline-flex;
+      position: fixed;
+      z-index: 50;
+      top: 0.75rem;
+      left: 4.75rem;
+    }
+
+    .mobile-workspace-nav-backdrop {
+      display: block;
+      position: fixed;
+      z-index: 30;
+      inset: 0 0 0 4rem;
+      border: 0;
+      background: color-mix(in srgb, var(--ds-blanket, #091e42) 54%, transparent);
+    }
+
+    .authenticated-footer {
+      margin-left: 4rem !important;
+      transform: none !important;
+    }
   }
 
   /* Themed navigation styles */

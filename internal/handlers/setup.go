@@ -235,9 +235,15 @@ func (h *SetupHandler) ModuleSettings() (models.ModuleSettings, error) {
 		return models.ModuleSettings{}, err
 	}
 
+	workspaceManagedAgents, err := h.getSettingBool("workspace_managed_agents")
+	if err != nil {
+		return models.ModuleSettings{}, err
+	}
+
 	return models.ModuleSettings{
-		TimeTrackingEnabled:   timeTracking,
-		TestManagementEnabled: testManagement,
+		TimeTrackingEnabled:    timeTracking,
+		TestManagementEnabled:  testManagement,
+		WorkspaceManagedAgents: workspaceManagedAgents,
 	}, nil
 }
 
@@ -261,6 +267,7 @@ func (h *SetupHandler) UpdateModuleSettings(w http.ResponseWriter, r *http.Reque
 	}{
 		{"time_tracking_enabled", true}, // Always enabled
 		{"test_management_enabled", settings.TestManagementEnabled},
+		{"workspace_managed_agents", settings.WorkspaceManagedAgents},
 	}
 
 	tx, err := h.DB.Begin()
@@ -297,8 +304,9 @@ func (h *SetupHandler) UpdateModuleSettings(w http.ResponseWriter, r *http.Reque
 		ResourceType: logger.ResourceModule,     // Using existing constant
 		ResourceName: "Module Settings",
 		Details: map[string]interface{}{
-			"time_tracking_enabled":   settings.TimeTrackingEnabled,
-			"test_management_enabled": settings.TestManagementEnabled,
+			"time_tracking_enabled":    settings.TimeTrackingEnabled,
+			"test_management_enabled":  settings.TestManagementEnabled,
+			"workspace_managed_agents": settings.WorkspaceManagedAgents,
 		},
 		Success: true,
 	})

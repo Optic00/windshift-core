@@ -1,11 +1,13 @@
 <script>
   import { fly } from 'svelte/transition';
-  import { IconMessage, IconX, IconLoader2, IconSend, IconChevronDown, IconRefresh } from '@tabler/icons-svelte-runes';
+  import { IconArchive, IconMessage, IconX, IconLoader2, IconSend, IconPlus, IconRefresh } from '@tabler/icons-svelte-runes';
   import { useEventListener } from 'runed';
   import MilkdownEditor from '../../editors/LazyMilkdownEditor.svelte';
   import ChatToolTrace from './ChatToolTrace.svelte';
   import { chatStore } from '../../stores/chatStore.svelte.js';
+  import { workspacePermissions } from '../../stores';
   import { currentRoute } from '../../router.js';
+  import Button from '../../components/Button.svelte';
   import Select from '../../components/Select.svelte';
   import EmptyState from '../../components/EmptyState.svelte';
   import { buildChatContext } from './chatContext.js';
@@ -42,6 +44,39 @@
   let dragStartBottom = $state(0);
 
   const isInteracting = $derived(isResizing || isDragging);
+  const workspaceId = $derived.by(() => {
+    if (!$currentRoute.path?.startsWith('/workspaces/')) return 0;
+    return Number($currentRoute.params?.id) || 0;
+  });
+  const canUseStandard = $derived(
+    workspaceId > 0 && workspacePermissions.canEdit(workspaceId)
+  );
+  const conversationValue = $derived(
+    chatStore.sessionType === 'standard' ? `session:${chatStore.sessionId}` : 'general'
+  );
+  const activeStandardAgent = $derived(
+    chatStore.availableAgents.find((agent) => agent.id === chatStore.agentProfileId) || null
+  );
+  const conversationOptions = $derived.by(() => {
+    const options = [{ value: 'general', label: 'General' }];
+    if (!canUseStandard) return options;
+    for (const session of chatStore.sessions) {
+      const agent = chatStore.availableAgents.find(
+        (candidate) => candidate.id === session.agent_profile_id
+      );
+      options.push({
+        value: `session:${session.id}`,
+        label: session.title || agent?.name || 'Standard agent chat',
+      });
+    }
+    for (const agent of chatStore.availableAgents) {
+      options.push({
+        value: `new:${agent.id}`,
+        label: `New chat · ${agent.name || `@${agent.handle}`}`,
+      });
+    }
+    return options;
+  });
 
   function startResize(event, type) {
     isResizing = true;
@@ -118,6 +153,7 @@
   $effect(() => {
     if (isOpen) {
       chatStore.loadConnections();
+      chatStore.prepareWorkspaceOptions(workspaceId, canUseStandard);
     }
   });
 
@@ -153,7 +189,7 @@
 
   function send() {
     const text = inputText.trim();
-    if (!text || chatStore.loading) return;
+    if (!text || chatStore.loading || chatStore.conversationLoading) return;
     inputText = '';
     chatStore.sendMessage(text, buildContext());
     // Reset textarea height
@@ -234,7 +270,7 @@
         <h2 class="text-sm font-semibold" style="color: var(--ds-text);">AI Chat</h2>
       </div>
       <div class="flex items-center gap-2">
-        {#if chatStore.connections.length > 1}
+        {#if chatStore.sessionType === 'general' && chatStore.connections.length > 1}
           <Select
             value={chatStore.connectionId}
             onchange={(v) => { chatStore.connectionId = parseInt(v) || 0; }}
@@ -242,20 +278,58 @@
             options={[{ value: 0, label: 'Default' }, ...chatStore.connections.map(c => ({ value: c.id, label: c.name }))]}
           />
         {/if}
-        <button
+        <Button
+          variant="ghost"
+          size="small"
+          icon={IconX}
+          title="Close chat"
           onclick={handleClose}
-          class="p-1 rounded transition-colors"
-          style="color: var(--ds-text-subtle);"
-          onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'}
-          onmouseleave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
-          aria-label="Close chat"
-        >
-          <IconX size={20} stroke={1.5} />
-        </button>
+          dataTestid="agent-chat-close"
+          class="!px-2"
+        />
       </div>
     </div>
 
-    {#if activeConnection}
+    {#if canUseStandard && conversationOptions.length > 1}
+      <div class="flex items-center gap-2 border-b px-4 py-2" style="border-color: var(--ds-border);">
+        <Select
+          id="agent-chat-conversation"
+          value={conversationValue}
+          onchange={(value) => chatStore.selectConversation(value, workspaceId)}
+          size="small"
+          class="min-w-0 flex-1"
+          options={conversationOptions}
+          disabled={chatStore.loading || chatStore.conversationLoading}
+        />
+        {#if chatStore.sessionType === 'standard'}
+          <Button
+            variant="ghost"
+            size="small"
+            icon={IconPlus}
+            title="New chat with this agent"
+            onclick={() => chatStore.startStandardConversation(workspaceId)}
+            dataTestid="agent-chat-new"
+            class="!px-2"
+          />
+          <Button
+            variant="ghost"
+            size="small"
+            icon={IconArchive}
+            title="Archive this chat"
+            onclick={() => chatStore.archiveCurrentSession()}
+            dataTestid="agent-chat-archive"
+            class="!px-2"
+          />
+        {/if}
+      </div>
+    {/if}
+
+    {#if chatStore.sessionType === 'standard'}
+      <div class="px-4 py-1.5 border-b text-xs" style="border-color: var(--ds-border); color: var(--ds-text-subtlest);">
+        {activeStandardAgent?.name || 'Standard agent'}
+        <span style="color: var(--ds-text-disabled);"> · fixed profile model and grants</span>
+      </div>
+    {:else if activeConnection}
       <div class="px-4 py-1.5 border-b text-xs" style="border-color: var(--ds-border); color: var(--ds-text-subtlest);">
         {activeConnection.model}
         {#if chatStore.connections.length > 1}
@@ -275,7 +349,9 @@
         <div class="flex items-center justify-center h-full">
           <EmptyState
             icon={IconMessage}
-            title="Ask anything about your workspaces and items."
+            title={chatStore.sessionType === 'standard'
+              ? `Start a private chat with ${activeStandardAgent?.name || 'this agent'}.`
+              : 'Ask anything about your workspaces and items.'}
           />
         </div>
       {:else}
@@ -344,18 +420,19 @@
           rows="1"
           class="flex-1 resize-none rounded-lg px-3 py-2 text-sm border focus:outline-none focus:ring-1"
           style="background-color: var(--ds-surface); border-color: var(--ds-border); color: var(--ds-text); --tw-ring-color: var(--ds-border-focused);"
-          disabled={chatStore.loading}
+          disabled={chatStore.loading || chatStore.conversationLoading}
+          data-testid="agent-chat-input"
         ></textarea>
-        <button
+        <Button
           onclick={send}
-          disabled={chatStore.loading || !inputText.trim()}
-          class="p-2 rounded-lg transition-colors flex-shrink-0"
-          class:opacity-50={chatStore.loading || !inputText.trim()}
-          style="background-color: var(--ds-interactive); color: var(--ds-text-inverse);"
-          aria-label="Send message"
-        >
-          <IconSend size={16} stroke={1.5} />
-        </button>
+          disabled={chatStore.loading || chatStore.conversationLoading || !inputText.trim()}
+          variant="primary"
+          size="small"
+          icon={IconSend}
+          title="Send message"
+          dataTestid="agent-chat-send"
+          class="!px-2.5 !py-2"
+        />
       </div>
     </div>
   </div>

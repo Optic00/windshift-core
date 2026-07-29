@@ -23,13 +23,22 @@ export const ai = {
     ),
   acceptDependencies: (iterationId, suggestions) =>
     post(`/ai/iterations/${iterationId}/accept-dependencies`, { suggestions }),
-  chat: (message, connectionId, history, context) =>
+  chat: (message, connectionId, sessionId, context) =>
     post('/ai/chat', {
       message,
       ...(connectionId ? { connection_id: connectionId } : {}),
-      ...(history?.length ? { history } : {}),
+      ...(sessionId ? { session_id: sessionId } : {}),
       ...(context && Object.keys(context).length ? { context } : {}),
     }),
+  getGeneralSession: () => get('/ai/sessions/general'),
+  listSessions: (includeArchived = false) =>
+    get(`/ai/sessions${includeArchived ? '?include_archived=true' : ''}`),
+  getSessionMessages: (sessionId) => get(`/ai/sessions/${sessionId}/messages`),
+  archiveSession: (sessionId) => post(`/ai/sessions/${sessionId}/archive`),
+  listAvailableStandardAgents: (workspaceId) =>
+    get(`/workspaces/${workspaceId}/available-standard-agents`),
+  createStandardSession: (workspaceId, data) =>
+    post(`/workspaces/${workspaceId}/agent-sessions`, data),
   dailyBriefing: () => get('/ai/daily-briefing'),
 };
 
@@ -81,6 +90,14 @@ export const runnerPools = {
     get(`/admin/action-capabilities/${capabilityId}/runner-instances`),
   revokeInstance: (capabilityId, instanceId) =>
     del(`/admin/action-capabilities/${capabilityId}/runner-instances/${instanceId}`),
+  listWorkspaceTokens: (workspaceId, poolId) =>
+    get(`/workspaces/${workspaceId}/agent-runner-pools/${poolId}/tokens`),
+  mintWorkspaceToken: (workspaceId, poolId, data = {}) =>
+    post(`/workspaces/${workspaceId}/agent-runner-pools/${poolId}/tokens`, data),
+  revokeWorkspaceToken: (workspaceId, poolId, tokenId) =>
+    del(`/workspaces/${workspaceId}/agent-runner-pools/${poolId}/tokens/${tokenId}`),
+  listWorkspaceInstances: (workspaceId, poolId) =>
+    get(`/workspaces/${workspaceId}/agent-runner-pools/${poolId}/instances`),
 };
 
 // actionCredentials: workspace-aware credential store referenced by HTTP

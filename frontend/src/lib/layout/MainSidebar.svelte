@@ -128,7 +128,7 @@
   }
 </script>
 
-<nav class="{$uiStore.navExpanded ? 'w-[200px]' : 'w-16'} shadow-lg border-r flex flex-col py-4 fixed h-full z-40 themed-nav transition-all duration-200 overflow-x-hidden" style="border-color: var(--ds-border);" aria-label="Main navigation">
+<nav class="main-sidebar {$uiStore.navExpanded ? 'w-[200px]' : 'w-16'} shadow-lg border-r flex flex-col py-4 fixed h-full z-40 themed-nav transition-all duration-200 overflow-x-hidden" style="border-color: var(--ds-border);" aria-label="Main navigation">
   <!-- Logo -->
   <Tooltip content="Windshift" placement="right" disabled={$uiStore.navExpanded}>
     <a
@@ -255,3 +255,11 @@
     </Tooltip>
   </div>
 </nav>
+
+<style>
+  @media (max-width: 767px) {
+    .main-sidebar {
+      width: 4rem;
+    }
+  }
+</style>

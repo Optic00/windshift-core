@@ -34,6 +34,9 @@ type findUsersOut struct {
 func init() {
 	Register(Default, Tool[findUsersArgs]{
 		Name:        "find_users",
+		Group:       CapabilityUsersApprovals,
+		Access:      AccessRead,
+		Risk:        RiskLow,
 		Scopes:      []string{auth.ScopeUsersRead},
 		Description: "Find users by name (case-insensitive substring match; system admins can also match on email). Pass workspace_id to restrict the search to that workspace's members. Returns at most 20 matches — narrow the query if the person you want is missing.",
 		Run: func(_ context.Context, env *Env, args findUsersArgs) (any, error) {

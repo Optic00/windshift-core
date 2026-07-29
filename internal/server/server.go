@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"windshift/internal/aitools"
 	"windshift/internal/auth"
 	"windshift/internal/config"
 	"windshift/internal/database"
@@ -43,6 +44,7 @@ import (
 	"windshift/internal/scm"
 	"windshift/internal/services"
 	"windshift/internal/smtp"
+	"windshift/internal/standardagent"
 	"windshift/internal/utils"
 	"windshift/internal/webauthn"
 	"windshift/internal/webhook"
@@ -72,6 +74,7 @@ type Server struct {
 	todoistSyncScheduler      *scheduler.TodoistSyncScheduler
 	runnerLeaseReaper         *scheduler.RunnerLeaseReaper
 	codingRunService          *services.RunService
+	standardAgentDispatcher   *standardagent.Dispatcher
 	workflowService           *services.WorkflowService
 	actionService             *services.ActionService
 	assetActionService        *services.AssetActionService
@@ -827,17 +830,26 @@ func (s *Server) initialize() error {
 		agentAPIURL = strings.TrimRight(baseURL, "/") + "/api"
 	}
 	agentSkillRepo := repository.NewWorkspaceAgentSkillRepository(s.db)
+	standardCapabilityGroups := aitools.StandardCapabilityGroups(aitools.Default)
+	standardCapabilityKeys := make([]string, 0, len(standardCapabilityGroups))
+	for _, group := range standardCapabilityGroups {
+		standardCapabilityKeys = append(standardCapabilityKeys, string(group.Key))
+	}
 	bindingSvc, _ := services.NewBindingService(services.BindingServiceOptions{
-		Repo:          agentBindingRepo,
-		Identity:      agentIdentitySvc,
-		Runs:          codingRunSvc,
-		SCMCreds:      &scmCredsAdapter{cr: scmCredResolver},
-		LLMRuntime:    llmManager,
-		RunContext:    agentBindingRepo,
-		Pools:         repository.NewActionRepository(s.db),
-		Skills:        agentSkillRepo,
-		Continuations: &itemPRContinuationResolver{db: s.db, cr: scmCredResolver},
-		APIURL:        agentAPIURL,
+		DB:                       s.db,
+		Repo:                     agentBindingRepo,
+		Identity:                 agentIdentitySvc,
+		Permissions:              permService,
+		Prompts:                  promptStore,
+		StandardCapabilityGroups: standardCapabilityKeys,
+		Runs:                     codingRunSvc,
+		SCMCreds:                 &scmCredsAdapter{cr: scmCredResolver},
+		LLMRuntime:               llmManager,
+		RunContext:               agentBindingRepo,
+		Pools:                    repository.NewActionRepository(s.db),
+		Skills:                   agentSkillRepo,
+		Continuations:            &itemPRContinuationResolver{db: s.db, cr: scmCredResolver},
+		APIURL:                   agentAPIURL,
 	})
 	// Wire remote-claim enrichment after construction to break the service cycle.
 	if codingRunSvc != nil && bindingSvc != nil {
@@ -845,6 +857,7 @@ func (s *Server) initialize() error {
 	}
 	agentBindingHandler := handlers.NewWorkspaceAgentBindingHandler(bindingSvc, agentIdentitySvc, permService, logger.NewAuditor(s.db))
 	agentBindingHandler.SetSkillsRepo(agentSkillRepo)
+	agentBindingHandler.SetPromptStore(promptStore)
 	agentBindingHandler.SetInitialPrompt(promptStore.Get(llm.PromptCodingAgentInitial))
 	agentSkillHandler := handlers.NewAgentSkillHandler(agentSkillRepo, permService, logger.NewAuditor(s.db))
 	agentRunHandler := handlers.NewAgentRunHandler(repository.NewAgentRunRepository(s.db), codingRunSvc, permService, repository.NewItemRepository(s.db), bindingSvc)
@@ -854,9 +867,12 @@ func (s *Server) initialize() error {
 	// CodingAgent.Enabled is off).
 	runnerRegistry := services.NewRunnerRegistryService(repository.NewRunnerRepository(s.db), nil)
 	runnerControlHandler := handlers.NewRunnerControlHandler(runnerRegistry, repository.NewAgentRunRepository(s.db), codingRunSvc, repository.NewActionRepository(s.db), nil, baseURL)
+	agentBindingHandler.SetRunnerOnboarding(runnerRegistry, baseURL)
 	// Agent presence for assignment pickers (WI-272): binding → pool →
 	// heartbeat-fresh runner count, surfaced as online/offline/local/unbound.
-	userHandler.SetAgentPresenceService(services.NewAgentPresenceService(agentBindingRepo, repository.NewRunnerRepository(s.db)))
+	agentPresenceService := services.NewAgentPresenceService(agentBindingRepo, repository.NewRunnerRepository(s.db))
+	userHandler.SetAgentPresenceService(agentPresenceService)
+	agentBindingHandler.SetPresenceService(agentPresenceService)
 	workspaceBootstrapHandler := handlers.NewWorkspaceBootstrapHandler(workspaceHandler, userHandler, milestoneHandler, iterationHandler, timeProjectHandler)
 	// Secretless access layer (WI-144): brokers a granted credential to a
 	// running job without it ever living on the runner host.
@@ -1019,6 +1035,36 @@ func (s *Server) initialize() error {
 	commentHandler.SetApprovalService(approvalService)
 	s.actionService.SetApprovalService(approvalService)
 	workspaceRoleHandler.SetApprovalService(approvalService)
+
+	// Standard profiles execute in-process through the canonical aitools
+	// registry. Wiring is intentionally late because their final comments and
+	// approval tools use the fully configured application services above.
+	if bindingSvc != nil {
+		standardDispatcher, err := standardagent.New(standardagent.Options{
+			DB:                     s.db,
+			Runs:                   repository.NewAgentRunRepository(s.db),
+			Bindings:               agentBindingRepo,
+			LLMs:                   llmManager,
+			Permissions:            permService,
+			TimePermissions:        timePermissionService,
+			Timers:                 timerService,
+			Comments:               commentService,
+			Approvals:              approvalService,
+			Notifications:          s.notificationService,
+			ActionService:          s.actionService,
+			PageApplicationService: pageHandler.PageApplicationService(),
+			PageDiagramService:     pageDiagramService,
+			Registry:               aitools.Default,
+		})
+		if err != nil {
+			return fmt.Errorf("construct Standard agent runtime: %w", err)
+		}
+		bindingSvc.SetStandardRunDispatcher(standardDispatcher)
+		s.standardAgentDispatcher = standardDispatcher
+		if err := standardDispatcher.Resume(context.Background()); err != nil {
+			return fmt.Errorf("resume Standard agent runtime: %w", err)
+		}
+	}
 
 	// Background sweeper drives time-based escalation for pending approval steps.
 	s.approvalEscalationSweeper = services.NewApprovalEscalationSweeper(s.db, approvalService, services.DefaultApprovalEscalationSweeperConfig())
@@ -1219,6 +1265,15 @@ func (s *Server) initialize() error {
 		s.actionService,
 		pageHandler.PageApplicationService(),
 		pageDiagramService,
+	)
+	aiHandler.SetConversationDependencies(commentService, approvalService)
+	conversationRepo := repository.NewAgentConversationRepository(s.db)
+	if _, err := conversationRepo.FailInterruptedRuns(context.Background()); err != nil {
+		return fmt.Errorf("repair interrupted agent conversations: %w", err)
+	}
+	auditLogHandler.SetAgentTranscriptRepositories(
+		conversationRepo,
+		repository.NewAgentRunRepository(s.db),
 	)
 	shellBootstrapHandler := handlers.NewShellBootstrapHandler(
 		featuresHandler,
@@ -1889,6 +1944,13 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.pluginScheduleScheduler != nil {
 		slog.Info("stopping plugin schedule scheduler")
 		s.pluginScheduleScheduler.Stop()
+	}
+
+	if s.standardAgentDispatcher != nil {
+		slog.Info("draining Standard agent runtime")
+		if err := s.standardAgentDispatcher.Close(ctx); err != nil {
+			slog.Warn("Standard agent runtime did not drain in time", "error", err)
+		}
 	}
 
 	if s.notificationService != nil {

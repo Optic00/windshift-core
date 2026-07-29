@@ -42,6 +42,9 @@ type setItemLabelsOut struct {
 func init() {
 	Register(Default, Tool[listLabelsArgs]{
 		Name:        "list_labels",
+		Group:       CapabilityPlanningActivity,
+		Access:      AccessRead,
+		Risk:        RiskLow,
 		Description: "List all labels in a workspace.",
 		Scopes:      []string{auth.ScopeItemsRead},
 		Run: func(_ context.Context, env *Env, args listLabelsArgs) (any, error) {
@@ -62,6 +65,9 @@ func init() {
 
 	Register(Default, Tool[setItemLabelsArgs]{
 		Name:        "set_item_labels",
+		Group:       CapabilityPlanningActivity,
+		Access:      AccessWrite,
+		Risk:        RiskMedium,
 		Description: "Set labels on a work item (replaces existing labels). Identifies the item by numeric ID or key (e.g. PROJ-42).",
 		Scopes:      []string{auth.ScopeItemsWrite},
 		Run: func(_ context.Context, env *Env, args setItemLabelsArgs) (any, error) {

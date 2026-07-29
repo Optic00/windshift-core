@@ -1,0 +1,3 @@
+Triage incoming work items into clear, actionable records.
+
+Inspect the work item and related workspace context, identify missing information, suggest or apply appropriate classification when authorized, and leave a concise comment explaining important decisions. Preserve the reporter's intent and call out uncertainty instead of guessing.

@@ -12,16 +12,24 @@ import (
 var defaultPromptsFS embed.FS
 
 const (
-	PromptPlanMyDay          = "plan_my_day"
-	PromptCatchMeUp          = "catch_me_up"
-	PromptFindSimilar        = "find_similar"
-	PromptDecompose          = "decompose"
-	PromptReleaseNotes       = "release_notes"
-	PromptDependencyAnalysis = "dependency_analysis"
-	PromptAIChat             = "ai_chat"
-	PromptDailyBriefing      = "daily_briefing"
-	PromptSummarizeTestPlan  = "summarize_test_plan"
-	PromptCodingAgentInitial = "coding_agent_initial"
+	PromptPlanMyDay                = "plan_my_day"
+	PromptCatchMeUp                = "catch_me_up"
+	PromptFindSimilar              = "find_similar"
+	PromptDecompose                = "decompose"
+	PromptReleaseNotes             = "release_notes"
+	PromptDependencyAnalysis       = "dependency_analysis"
+	PromptAIChat                   = "ai_chat"
+	PromptDailyBriefing            = "daily_briefing"
+	PromptSummarizeTestPlan        = "summarize_test_plan"
+	PromptCodingAgentInitial       = "coding_agent_initial"
+	PromptAgentWorkspaceGuide      = "agent_workspace_guide"
+	PromptAgentWorkItemTriage      = "agent_work_item_triage"
+	PromptAgentDeliveryCoordinator = "agent_delivery_coordinator"
+	PromptAgentSoftwareEngineer    = "agent_software_engineer"
+	PromptAgentCodeReviewer        = "agent_code_reviewer"
+	PromptAgentQATestEngineer      = "agent_qa_test_engineer"
+	PromptAgentReleaseManager      = "agent_release_manager"
+	PromptAgentBlank               = "agent_blank"
 )
 
 var allPromptNames = []string{
@@ -35,6 +43,14 @@ var allPromptNames = []string{
 	PromptDailyBriefing,
 	PromptSummarizeTestPlan,
 	PromptCodingAgentInitial,
+	PromptAgentWorkspaceGuide,
+	PromptAgentWorkItemTriage,
+	PromptAgentDeliveryCoordinator,
+	PromptAgentSoftwareEngineer,
+	PromptAgentCodeReviewer,
+	PromptAgentQATestEngineer,
+	PromptAgentReleaseManager,
+	PromptAgentBlank,
 }
 
 // PromptStore holds AI system prompts, loaded from embedded defaults with

@@ -30,6 +30,11 @@ type AIHandler struct {
 	actionService          *services.ActionService
 	pageApplicationService *services.PageApplicationService
 	pageDiagramService     *services.PageDiagramService
+	conversations          *repository.AgentConversationRepository
+	agentBindings          *repository.WorkspaceAgentBindingRepository
+	commentService         *services.CommentService
+	approvalService        *services.ApprovalService
+	chatLLMs               chatLLMResolver
 }
 
 // NewAIHandler creates a new AI handler.
@@ -54,7 +59,15 @@ func NewAIHandler(
 		actionService:          actionService,
 		pageApplicationService: pageApplicationService,
 		pageDiagramService:     pageDiagramService,
+		conversations:          repository.NewAgentConversationRepository(db),
+		agentBindings:          repository.NewWorkspaceAgentBindingRepository(db),
+		chatLLMs:               llmManager,
 	}
+}
+
+func (h *AIHandler) SetConversationDependencies(comments *services.CommentService, approvals *services.ApprovalService) {
+	h.commentService = comments
+	h.approvalService = approvals
 }
 
 // PlanMyDayResponse is the response for the Plan My Day endpoint.

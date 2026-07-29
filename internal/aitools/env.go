@@ -14,8 +14,9 @@ import (
 // to tag audit-log entries so cookie-auth writes (HTTP handlers) can be
 // distinguished from agent-driven writes (chat / MCP).
 const (
-	SourceAIChat = "ai_chat"
-	SourceMCP    = "mcp"
+	SourceAIChat        = "ai_chat"
+	SourceMCP           = "mcp"
+	SourceStandardAgent = "standard_agent"
 )
 
 // Env provides tools their caller, services, and readable workspaces. Tools
@@ -26,6 +27,9 @@ type Env struct {
 	Username               string // Cached at Env-construction time for audit logs
 	Source                 string // SourceAIChat | SourceMCP — for audit trail
 	AccessibleWorkspaceIDs []int
+	// AuditDetails contains adapter-supplied correlation identifiers only.
+	// Raw tool arguments and results must never be placed here.
+	AuditDetails map[string]interface{}
 
 	PermService     *services.PermissionService
 	TimePermService *services.TimePermissionService
@@ -81,6 +85,9 @@ func (e *Env) AuditWrite(entityType string, entityID int, toolName, summary stri
 func (e *Env) audit(actionType, resourceType string, resourceID int, resourceName string, details map[string]interface{}) {
 	if details == nil {
 		details = map[string]interface{}{}
+	}
+	for key, value := range e.AuditDetails {
+		details[key] = value
 	}
 	source := e.Source
 	if source == "" {

@@ -5,6 +5,31 @@ import (
 	"time"
 )
 
+type AgentProfileType string
+
+const (
+	AgentProfileStandard AgentProfileType = "standard"
+	AgentProfileCoding   AgentProfileType = "coding"
+	AgentProfileLegacy   AgentProfileType = "legacy"
+)
+
+type AgentLifecycle string
+
+const (
+	AgentLifecycleDraft    AgentLifecycle = "draft"
+	AgentLifecycleReady    AgentLifecycle = "ready"
+	AgentLifecyclePaused   AgentLifecycle = "paused"
+	AgentLifecycleArchived AgentLifecycle = "archived"
+)
+
+type AgentIdentityClass string
+
+const (
+	AgentIdentityUserOwned        AgentIdentityClass = "user_owned"
+	AgentIdentityCentralized      AgentIdentityClass = "centralized_service"
+	AgentIdentityWorkspaceManaged AgentIdentityClass = "workspace_managed"
+)
+
 // WorkspaceAgentBinding links a workspace + acting user to the run-shape
 // RunService needs when an item is assigned to that user. The acting-
 // identity kind is stamped at create time by the WI-87 chokepoint and
@@ -21,10 +46,27 @@ import (
 // a free-form remote URL, so a workspace admin cannot point runs at
 // arbitrary hosts (SSRF) or git remote helpers (RCE via ext::).
 type WorkspaceAgentBinding struct {
-	ID             int    `json:"id"`
-	WorkspaceID    int    `json:"workspace_id"`
-	ActingUserID   int    `json:"acting_user_id"`
-	ActingUserKind string `json:"acting_user_kind"`
+	ID             int                `json:"id"`
+	WorkspaceID    int                `json:"workspace_id"`
+	ActingUserID   int                `json:"acting_user_id"`
+	ActingUserKind string             `json:"acting_user_kind"`
+	ProfileType    AgentProfileType   `json:"profile_type"`
+	Lifecycle      AgentLifecycle     `json:"lifecycle"`
+	ProfileVersion int                `json:"profile_version"`
+	IdentityClass  AgentIdentityClass `json:"identity_class"`
+	Purpose        string             `json:"purpose,omitempty"`
+	// CapabilityGroups stores optional Standard-agent groups. The mandatory
+	// Read and comment preset is registry policy and is never persisted as an
+	// editable selection.
+	CapabilityGroups []string   `json:"capability_groups,omitempty"`
+	ArchivedAt       *time.Time `json:"archived_at,omitempty"`
+	ArchivedByUserID *int       `json:"archived_by_user_id,omitempty"`
+	LastKnownName    string     `json:"last_known_name,omitempty"`
+	LastKnownHandle  string     `json:"last_known_handle,omitempty"`
+	LastKnownAvatar  string     `json:"last_known_avatar,omitempty"`
+	DisplayName      string     `json:"name,omitempty"`
+	Handle           string     `json:"handle,omitempty"`
+	AvatarURL        string     `json:"avatar_url,omitempty"`
 	// RepoSlug/RepoBaseRef/SCMConnectionID are the legacy single-repo scalar
 	// fields. Superseded by Repos (WI-449); kept one release as deprecated
 	// mirrors of the primary repo so straggler readers still work. New code

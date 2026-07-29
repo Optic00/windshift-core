@@ -19,10 +19,10 @@ const (
 // WI-272) so "offline" in the UI and "dead" to the reaper never disagree.
 const RunnerLivenessWindow = 90 * time.Second
 
-// RunnerRegistrationToken is a reusable, pool-scoped, revocable token an
-// operator bakes into a runner deployment. A runner presents it to register
-// and exchanges it for a per-instance RunnerInstance credential. Revoking it
-// stops new registrations without evicting already-registered runners.
+// RunnerRegistrationToken is a single-use, pool-scoped, revocable token. A
+// runner presents it once to register and exchanges it for a per-instance
+// RunnerInstance credential. Revoking it before consumption stops that
+// registration without evicting already-registered runners.
 type RunnerRegistrationToken struct {
 	ID               int        `json:"id"`
 	PoolCapabilityID int        `json:"pool_capability_id"`

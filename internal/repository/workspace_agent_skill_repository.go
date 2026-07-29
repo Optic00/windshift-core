@@ -23,12 +23,30 @@ var ErrSkillPageNotInWorkspace = errors.New("workspace agent skill: one or more 
 // WorkspaceAgentSkillRepository persists the per-workspace agent-skills
 // library (WI-258) and the binding↔skill attachments.
 type WorkspaceAgentSkillRepository struct {
-	db database.Database
+	db workspaceAgentSkillStore
+}
+
+type workspaceAgentSkillStore interface {
+	Query(query string, args ...interface{}) (*sql.Rows, error)
+	QueryRow(query string, args ...interface{}) *sql.Row
+	Exec(query string, args ...interface{}) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
+	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+	ExecWrite(query string, args ...interface{}) (sql.Result, error)
+	ExecWriteContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
 }
 
 // NewWorkspaceAgentSkillRepository constructs a new repository.
 func NewWorkspaceAgentSkillRepository(db database.Database) *WorkspaceAgentSkillRepository {
 	return &WorkspaceAgentSkillRepository{db: db}
+}
+
+// NewWorkspaceAgentSkillRepositoryTx binds skill attachments to an existing
+// transaction so Agent Studio profile creation cannot leave partial knowledge
+// configuration behind.
+func NewWorkspaceAgentSkillRepositoryTx(tx database.Tx) *WorkspaceAgentSkillRepository {
+	return &WorkspaceAgentSkillRepository{db: tx}
 }
 
 const skillSelectSQL = `

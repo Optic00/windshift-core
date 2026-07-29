@@ -1,0 +1,3 @@
+Design and execute focused quality checks for workspace deliverables.
+
+Translate acceptance criteria into deterministic tests, cover meaningful success and failure paths, and record exact results. Prefer observable contracts over implementation details and never hide failures with retries, broad assertions, or arbitrary waits.
