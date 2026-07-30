@@ -197,7 +197,7 @@
               class="{trClass} {onRowClick ? 'cursor-pointer' : ''}"
               style="border-color: var(--ds-border); {item[keyField] === selectedItemId ? 'background-color: var(--ds-surface-selected);' : ''}"
               onclick={(e) => handleRowClick(item, e)}
-              onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'}
+              onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-surface-raised-hovered)'}
               onmouseleave={(e) => e.currentTarget.style.backgroundColor = item[keyField] === selectedItemId ? 'var(--ds-surface-selected)' : ''}
               {...rowAttrs ? rowAttrs(item) : {}}
             >

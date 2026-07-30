@@ -573,7 +573,7 @@
                  onclick={() => { if (!disabledByMax) selectOption(opt); }}
                  onmouseenter={() => { highlightViaKeyboard = false; highlightedIndex = index; }}
                  class="px-4 py-3 cursor-pointer border-b last:border-b-0 transition-colors duration-150"
-                 style="border-color: var(--ds-border); {disabledByMax ? 'opacity: 0.4; pointer-events: none;' : ''} {itemSelected ? 'background-color: var(--ds-background-selected); color: var(--ds-text);' : isHighlighted ? 'background-color: var(--ds-background-neutral-hovered); color: var(--ds-text);' : 'color: var(--ds-text);'}">
+                 style="border-color: var(--ds-border); {disabledByMax ? 'opacity: 0.4; pointer-events: none;' : ''} {itemSelected ? 'background-color: var(--ds-background-selected); color: var(--ds-text);' : isHighlighted ? 'background-color: var(--ds-surface-raised-hovered); color: var(--ds-text);' : 'color: var(--ds-text);'}">
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-3 flex-1 min-w-0">
                   {#if opt.isUnassigned}
