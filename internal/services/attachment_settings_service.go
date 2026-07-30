@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
-	"path/filepath"
 
 	"windshift/internal/database"
 	"windshift/internal/models"
@@ -160,19 +160,52 @@ func (s *AttachmentSettingsService) GetStatus() (*AttachmentStatus, error) {
 	status.Enabled = enabled
 	status.AttachmentPath = attachmentPath
 
-	// Check if path is writable (if it exists)
-	if attachmentPath != "" {
-		info, err := os.Stat(attachmentPath)
-		if err == nil && info.IsDir() {
-			// Try to create a test file to verify write permissions
-			testFile := filepath.Join(attachmentPath, ".write-test")
-			if f, err := os.Create(testFile); err == nil { //nolint:gosec // G304 — testFile from controlled filepath.Join
-				_ = f.Close()
-				_ = os.Remove(testFile)
-				status.Writable = true
-			}
-		}
+	if attachmentPath == "" {
+		return status, nil
 	}
+
+	info, err := os.Stat(attachmentPath)
+	if err != nil {
+		slog.Warn("attachment storage path stat failed",
+			slog.String("component", "attachments"),
+			slog.String("path", attachmentPath),
+			slog.Any("error", err))
+		return status, nil
+	}
+	if !info.IsDir() {
+		slog.Warn("attachment storage path is not a directory",
+			slog.String("component", "attachments"),
+			slog.String("path", attachmentPath))
+		return status, nil
+	}
+
+	// Use a unique file so concurrent status requests cannot race over a shared
+	// probe or overwrite a user-created file with the same name.
+	testFile, err := os.CreateTemp(attachmentPath, ".windshift-write-test-*")
+	if err != nil {
+		slog.Warn("attachment storage path write probe failed",
+			slog.String("component", "attachments"),
+			slog.String("path", attachmentPath),
+			slog.Any("error", err))
+		return status, nil
+	}
+	testFilePath := testFile.Name()
+	if err := testFile.Close(); err != nil {
+		_ = os.Remove(testFilePath)
+		slog.Warn("attachment storage path write probe close failed",
+			slog.String("component", "attachments"),
+			slog.String("path", attachmentPath),
+			slog.Any("error", err))
+		return status, nil
+	}
+	if err := os.Remove(testFilePath); err != nil {
+		slog.Warn("attachment storage path write probe cleanup failed",
+			slog.String("component", "attachments"),
+			slog.String("path", attachmentPath),
+			slog.Any("error", err))
+		return status, nil
+	}
+	status.Writable = true
 
 	return status, nil
 }

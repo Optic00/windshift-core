@@ -2,8 +2,16 @@ import { api } from '../api.js';
 
 // Create reactive attachment status state
 let enabled = $state(true); // Default to true, will be updated on load
+let configured = $state(true);
+let writable = $state(true);
 let loaded = $state(false);
 let loading = $state(false);
+
+function applyStatus(status) {
+  configured = status?.enabled === true;
+  writable = status?.writable === true;
+  enabled = configured && writable;
+}
 
 // Load attachment status from API (only if not already loaded)
 async function load() {
@@ -14,12 +22,12 @@ async function load() {
 
   try {
     const status = await api.attachmentSettings.getStatus();
-    enabled = status.enabled && status.writable;
+    applyStatus(status);
     loaded = true;
   } catch (error) {
     console.error('Failed to load attachment status:', error);
     // Default to disabled if we can't get status
-    enabled = false;
+    applyStatus(null);
     loaded = true;
   } finally {
     loading = false;
@@ -35,7 +43,7 @@ async function reload() {
 
 function hydrate(status) {
   if (!status) return;
-  enabled = status.enabled === true && status.writable === true;
+  applyStatus(status);
   loaded = true;
   loading = false;
 }
@@ -43,6 +51,16 @@ function hydrate(status) {
 export const attachmentStatus = {
   get enabled() {
     return enabled;
+  },
+  get configured() {
+    return configured;
+  },
+  get writable() {
+    return writable;
+  },
+  get unavailableReason() {
+    if (enabled) return null;
+    return configured ? 'unwritable' : 'disabled';
   },
   get loaded() {
     return loaded;

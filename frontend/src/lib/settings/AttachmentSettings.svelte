@@ -8,6 +8,7 @@
   import Lozenge from '../components/Lozenge.svelte';
   import Label from '../components/Label.svelte';
   import { successToast } from '../stores/toasts.svelte.js';
+  import { attachmentStatus } from '../stores/attachmentStatus.svelte.js';
   import Toggle from '../components/Toggle.svelte';
   import { t } from '../stores/i18n.svelte.js';
   import DescriptionText from '../components/DescriptionText.svelte';
@@ -97,10 +98,12 @@
   async function loadStatus() {
     try {
       status = await api.attachmentSettings.getStatus();
+      attachmentStatus.hydrate(status);
     } catch (err) {
       if (err.status === 404) {
         // Attachment status endpoint doesn't exist when attachments are not configured
         status = null;
+        attachmentStatus.hydrate({ enabled: false, writable: false });
       } else {
         console.error('Failed to load attachment status:', err);
       }
@@ -124,8 +127,9 @@
 
       successToast(t('settings.attachments.settingsSavedSuccess'));
 
-      // Reload settings to get updated values
-      await loadSettings();
+      // Keep both the form and the shared attachment capability snapshot in
+      // sync so attachment consumers update without a browser reload.
+      await Promise.all([loadSettings(), loadStatus()]);
 
     } catch (err) {
       console.error('Failed to save settings:', err);

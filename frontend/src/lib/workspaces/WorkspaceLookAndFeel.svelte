@@ -50,6 +50,12 @@
 
   const iconMap = workspaceIconMap;
 
+  function attachmentUnavailableMessage() {
+    return attachmentStatus.unavailableReason === 'unwritable'
+      ? t('settings.attachments.pathStatusUnknown')
+      : t('workspaceSettings.attachmentsRequired');
+  }
+
   // Background: image takes priority over gradient
   const hasBackgroundImage = $derived(backgroundImageUrl !== null && backgroundImageUrl !== '');
   const hasGradient = $derived(!hasBackgroundImage && selectedGradient > 0 && gradients[selectedGradient]?.value);
@@ -149,7 +155,7 @@
     if (!files || files.length === 0) return;
 
     if (!attachmentStatus.enabled) {
-      errorToast(t('workspaceSettings.attachmentsRequired'));
+      errorToast(attachmentUnavailableMessage());
       return;
     }
 
@@ -234,7 +240,7 @@
     if (!files?.length) return;
 
     if (!attachmentStatus.enabled) {
-      errorToast(t('workspaceSettings.attachmentsRequired'));
+      errorToast(attachmentUnavailableMessage());
       return;
     }
 
@@ -410,7 +416,7 @@
               </Button>
               {#if !attachmentStatus.enabled}
                 <p class="text-xs mt-1" style="color: var(--ds-text-warning);">
-                  {t('workspaceSettings.attachmentsRequired')}
+                  {attachmentUnavailableMessage()}
                 </p>
               {/if}
             </div>
