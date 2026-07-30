@@ -26,6 +26,8 @@ import (
 // deliberately modest.
 const briefingConcurrency = 8
 
+const dailyBriefingMaxTokens = 5000
+
 // BriefingScheduler generates daily briefings for all users in the background.
 type BriefingScheduler struct {
 	db              database.Database
@@ -417,14 +419,7 @@ func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, looku
 	ctx, cancel := context.WithTimeout(context.Background(), llm.DefaultRequestTimeout)
 	defer cancel()
 
-	resp, err := llmClient.ChatCompletion(ctx, llm.ChatCompletionRequest{
-		Messages: []llm.Message{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: userPrompt},
-		},
-		Temperature: 0.3,
-		MaxTokens:   900,
-	})
+	resp, err := llmClient.ChatCompletion(ctx, dailyBriefingCompletionRequest(systemPrompt, userPrompt))
 
 	durationMs := time.Since(start).Milliseconds()
 
@@ -449,6 +444,17 @@ func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, looku
 		slog.Int64("duration_ms", durationMs),
 	)
 	return true
+}
+
+func dailyBriefingCompletionRequest(systemPrompt, userPrompt string) llm.ChatCompletionRequest {
+	return llm.ChatCompletionRequest{
+		Messages: []llm.Message{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: userPrompt},
+		},
+		Temperature: 0.3,
+		MaxTokens:   dailyBriefingMaxTokens,
+	}
 }
 
 // resolveLookup returns a human-readable value for the given history field/raw
