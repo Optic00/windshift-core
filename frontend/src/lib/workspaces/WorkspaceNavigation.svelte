@@ -102,6 +102,7 @@
   let currentCollectionId = $state(null); // Track by ID instead of name
   let currentCollectionName = $state('Default'); // For display
   let collectionDropdownItems = $state([]);
+  let testsExpanded = $state(true);
   let workspaceToolsExpanded = $state(true);
   let lastCollectionId = undefined; // Plain variable to prevent infinite loop in $effect
 
@@ -284,6 +285,10 @@
 
   function toggleWorkspaceToolsSection() {
     workspaceToolsExpanded = !workspaceToolsExpanded;
+  }
+
+  function toggleTestsSection() {
+    testsExpanded = !testsExpanded;
   }
 
   function selectCollection(collection) {
@@ -627,12 +632,28 @@
 
       {#if $moduleSettings.test_management_enabled && canViewTests && !currentCollectionId}
         <div class="mt-4 pt-4 border-t space-y-1" style="border-color: var(--ds-border);">
-          <div class="text-xs font-semibold uppercase tracking-wide" style="color: var(--ds-text-subtle);">
-            Tests
-          </div>
-          {#each testNavigationItems as view}
-            {@render navLink({ href: getTestNavigationUrl(view.id), label: view.label, tooltip: view.tooltip, icon: view.icon, isActive: activeTestNavId === view.id })}
-          {/each}
+          <button
+            type="button"
+            class="w-full flex items-center justify-between text-xs font-semibold uppercase tracking-wide transition-colors"
+            style="color: var(--ds-text-subtle);"
+            aria-controls="workspace-tests-navigation"
+            aria-expanded={testsExpanded}
+            data-testid="workspace-tests-toggle"
+            onmouseenter={(e) => e.currentTarget.style.color = 'var(--ds-text)'}
+            onmouseleave={(e) => e.currentTarget.style.color = 'var(--ds-text-subtle)'}
+            onclick={toggleTestsSection}
+          >
+            <span>Tests</span>
+            <ChevronDown class={`w-4 h-4 transition-transform ${testsExpanded ? 'rotate-180' : ''}`} />
+          </button>
+
+          {#if testsExpanded}
+            <div id="workspace-tests-navigation" class="space-y-1" data-testid="workspace-tests-navigation">
+              {#each testNavigationItems as view}
+                {@render navLink({ href: getTestNavigationUrl(view.id), label: view.label, tooltip: view.tooltip, icon: view.icon, isActive: activeTestNavId === view.id })}
+              {/each}
+            </div>
+          {/if}
         </div>
       {/if}
 
