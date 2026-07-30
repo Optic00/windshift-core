@@ -321,6 +321,7 @@ func (h *JiraImportHandler) Analyze(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		projectAnalysis.Name = project.Name
+		projectAnalysis.IsTeamManaged = project.Simplified || project.Style == "next-gen"
 		if strings.EqualFold(project.ProjectType, "service_desk") {
 			var serviceDesk *jira.JiraServiceDesk
 			for idx := range serviceDesks {

@@ -125,6 +125,66 @@ type JiraFieldSchema struct {
 	CustomID int    `json:"customId"` // Numeric custom field ID
 }
 
+// CustomFieldConfigurationClient is an optional Jira Cloud capability for
+// reading the configuration behind a custom field. Jira Data Center does not
+// expose an equivalent stable REST contract, and Cloud credentials commonly
+// lack the required Jira-admin permission, so callers must treat
+// ErrCustomFieldConfigurationNotAvailable as a fidelity finding rather than a
+// fatal import error.
+type CustomFieldConfigurationClient interface {
+	GetCustomFieldConfiguration(
+		ctx context.Context,
+		fieldID string,
+		includeOptions bool,
+	) (*JiraCustomFieldConfiguration, error)
+}
+
+// JiraCustomFieldConfiguration preserves Jira's context-dependent field
+// contract. Windshift custom fields are global, so importers union configured
+// options for editability and retain the source contexts/defaults as
+// provenance instead of pretending the narrower Jira applicability is
+// enforced locally.
+type JiraCustomFieldConfiguration struct {
+	FieldID                   string                   `json:"field_id"`
+	Contexts                  []JiraCustomFieldContext `json:"contexts"`
+	DefaultsUnavailableReason string                   `json:"defaults_unavailable_reason,omitempty"`
+}
+
+// JiraCustomFieldContext is one Jira field context with its project and issue
+// type applicability, configured options, and defaults.
+type JiraCustomFieldContext struct {
+	ID                       string                         `json:"id"`
+	Name                     string                         `json:"name"`
+	Description              string                         `json:"description,omitempty"`
+	IsGlobal                 bool                           `json:"is_global"`
+	IsAnyIssueType           bool                           `json:"is_any_issue_type"`
+	ProjectIDs               []string                       `json:"project_ids,omitempty"`
+	IssueTypeIDs             []string                       `json:"issue_type_ids,omitempty"`
+	Options                  []JiraCustomFieldContextOption `json:"options,omitempty"`
+	OptionsUnavailableReason string                         `json:"options_unavailable_reason,omitempty"`
+	Defaults                 []JiraCustomFieldDefaultValue  `json:"defaults,omitempty"`
+}
+
+// JiraCustomFieldContextOption is a configured option. ParentOptionID is set
+// for cascading children; Disabled is retained even though Windshift currently
+// has no disabled-choice state.
+type JiraCustomFieldContextOption struct {
+	ID             string `json:"id"`
+	Value          string `json:"value"`
+	ParentOptionID string `json:"parent_option_id,omitempty"`
+	Disabled       bool   `json:"disabled,omitempty"`
+}
+
+// JiraCustomFieldDefaultValue is intentionally polymorphic. Jira emits
+// different value objects for text, numbers, users, versions, Forge fields,
+// and choices; preserving Value losslessly keeps that provenance useful even
+// when Windshift has no global custom-field default model.
+type JiraCustomFieldDefaultValue struct {
+	IssueTypeID    string      `json:"issue_type_id,omitempty"`
+	IsAnyIssueType bool        `json:"is_any_issue_type"`
+	Value          interface{} `json:"value"`
+}
+
 // JiraStatus represents a Jira status
 type JiraStatus struct {
 	ID             string              `json:"id"`
@@ -275,33 +335,76 @@ type JiraIssue struct {
 
 // JiraIssueFields contains the fields of a Jira issue
 type JiraIssueFields struct {
-	Summary      string                 `json:"summary"`
-	Description  interface{}            `json:"description"` // Can be string or ADF
-	IssueType    *JiraIssueType         `json:"issuetype"`
-	Project      *JiraProject           `json:"project"`
-	Status       *JiraStatus            `json:"status"`
-	Priority     *JiraPriority          `json:"priority"`
-	Assignee     *JiraUser              `json:"assignee"`
-	Reporter     *JiraUser              `json:"reporter"`
-	Creator      *JiraUser              `json:"creator"`
-	Created      string                 `json:"created"`
-	Updated      string                 `json:"updated"`
-	Resolved     string                 `json:"resolutiondate"`
-	DueDate      string                 `json:"duedate"`
-	Labels       []string               `json:"labels"`
-	Components   []JiraComponent        `json:"components"`
-	FixVersions  []JiraVersion          `json:"fixVersions"`
-	Versions     []JiraVersion          `json:"versions"` // Affects versions
-	Parent       *JiraIssue             `json:"parent"`
-	Subtasks     []JiraIssue            `json:"subtasks"`
-	IssueLinks   []JiraIssueLink        `json:"issuelinks"`
-	Attachment   []JiraAttachment       `json:"attachment"`
-	Comment      *JiraCommentContainer  `json:"comment"`
-	Worklog      *JiraWorklogContainer  `json:"worklog"`
-	TimeTracking *JiraTimeTracking      `json:"timetracking"`
-	Sprint       interface{}            `json:"sprint"` // Can be object or customfield
-	Epic         *JiraIssue             `json:"epic"`   // Epic link for stories
-	CustomFields map[string]interface{} `json:"-"`      // Populated separately
+	Summary      string                  `json:"summary"`
+	Description  interface{}             `json:"description"` // Can be string or ADF
+	IssueType    *JiraIssueType          `json:"issuetype"`
+	Project      *JiraProject            `json:"project"`
+	Status       *JiraStatus             `json:"status"`
+	Priority     *JiraPriority           `json:"priority"`
+	Assignee     *JiraUser               `json:"assignee"`
+	Reporter     *JiraUser               `json:"reporter"`
+	Creator      *JiraUser               `json:"creator"`
+	Created      string                  `json:"created"`
+	Updated      string                  `json:"updated"`
+	Resolved     string                  `json:"resolutiondate"`
+	DueDate      string                  `json:"duedate"`
+	Labels       []string                `json:"labels"`
+	Components   []JiraComponent         `json:"components"`
+	FixVersions  []JiraVersion           `json:"fixVersions"`
+	Versions     []JiraVersion           `json:"versions"` // Affects versions
+	Parent       *JiraIssue              `json:"parent"`
+	Subtasks     []JiraIssue             `json:"subtasks"`
+	IssueLinks   []JiraIssueLink         `json:"issuelinks"`
+	Attachment   []JiraAttachment        `json:"attachment"`
+	Comment      *JiraCommentContainer   `json:"comment"`
+	Worklog      *JiraWorklogContainer   `json:"worklog"`
+	TimeTracking *JiraTimeTracking       `json:"timetracking"`
+	Watches      *JiraWatchSummary       `json:"watches"`
+	Votes        *JiraVoteSummary        `json:"votes"`
+	Security     *JiraIssueSecurityLevel `json:"security"`
+	Sprint       interface{}             `json:"sprint"` // Can be object or customfield
+	Epic         *JiraIssue              `json:"epic"`   // Epic link for stories
+	CustomFields map[string]interface{}  `json:"-"`      // Populated separately
+	// Watchers is populated from the paged issue-watchers endpoint. The issue
+	// payload contains only Watches.Count and never the identities needed for
+	// first-class Windshift item_watches rows.
+	Watchers                   []JiraUser `json:"-"`
+	WatcherIdentitiesAvailable bool       `json:"-"`
+	WatcherFetchError          string     `json:"-"`
+}
+
+// IssueWatchersClient is the optional per-issue watcher capability shared by
+// Jira Cloud and Data Center. Jira can withhold watcher identities even when
+// it exposes a count; callers preserve that distinction in import metadata.
+type IssueWatchersClient interface {
+	GetIssueWatchers(ctx context.Context, issueKey string) (*JiraIssueWatchers, error)
+}
+
+type JiraWatchSummary struct {
+	Self       string `json:"self"`
+	WatchCount int    `json:"watchCount"`
+	IsWatching bool   `json:"isWatching"`
+}
+
+type JiraIssueWatchers struct {
+	Self       string     `json:"self"`
+	WatchCount int        `json:"watchCount"`
+	IsWatching bool       `json:"isWatching"`
+	Watchers   []JiraUser `json:"watchers"`
+}
+
+type JiraVoteSummary struct {
+	Self     string     `json:"self"`
+	Votes    int        `json:"votes"`
+	HasVoted bool       `json:"hasVoted"`
+	Voters   []JiraUser `json:"voters,omitempty"`
+}
+
+type JiraIssueSecurityLevel struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Self        string `json:"self"`
 }
 
 // UnmarshalJSON implements custom unmarshalling for JiraIssueFields.

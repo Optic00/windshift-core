@@ -143,11 +143,69 @@ func (s *CommentService) SetAgentMentionTrigger(trigger AgentMentionTrigger) {
 
 // All comment writes use CommentService so side effects and post-commit item changes cannot be bypassed.
 const (
-	insertCommentAuthorSQL = `INSERT INTO comments (item_id, author_id, content, is_private, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING id`
-	insertCommentPortalSQL = `INSERT INTO comments (item_id, portal_customer_id, content, is_private, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING id`
-	updateCommentSQL       = `UPDATE comments SET content = ?, updated_at = ? WHERE id = ?`
-	deleteCommentSQL       = `DELETE FROM comments WHERE id = ?`
+	insertCommentAuthorSQL   = `INSERT INTO comments (item_id, author_id, content, is_private, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING id`
+	insertCommentPortalSQL   = `INSERT INTO comments (item_id, portal_customer_id, content, is_private, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING id`
+	updateCommentSQL         = `UPDATE comments SET content = ?, updated_at = ? WHERE id = ?`
+	updateImportedCommentSQL = `UPDATE comments
+		SET item_id = ?, author_id = NULLIF(?, 0), portal_customer_id = ?,
+		    content = ?, is_private = ?,
+		    created_at = COALESCE(?, created_at),
+		    updated_at = COALESCE(?, updated_at)
+		WHERE id = ?`
+	deleteCommentSQL = `DELETE FROM comments WHERE id = ?`
 )
+
+// UpdateImportedCommentParams is the complete mutable contract for a comment
+// being reconciled from an external system. It intentionally bypasses
+// notifications and mentions while retaining the comment write chokepoint and
+// publishing the committed item change.
+type UpdateImportedCommentParams struct {
+	CommentID        int
+	ItemID           int
+	AuthorID         int
+	PortalCustomerID *int
+	Content          string
+	IsPrivate        bool
+	CreatedAt        *time.Time
+	UpdatedAt        *time.Time
+}
+
+func (s *CommentService) UpdateImported(params UpdateImportedCommentParams) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin imported comment update: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.Exec(
+		updateImportedCommentSQL,
+		params.ItemID,
+		params.AuthorID,
+		params.PortalCustomerID,
+		sanitize.Comment.Sanitize(params.Content),
+		params.IsPrivate,
+		params.CreatedAt,
+		params.UpdatedAt,
+		params.CommentID,
+	)
+	if err != nil {
+		return fmt.Errorf("update imported comment: %w", err)
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return fmt.Errorf("imported comment %d no longer exists", params.CommentID)
+	}
+	activityAt := time.Now()
+	if params.UpdatedAt != nil {
+		activityAt = *params.UpdatedAt
+	}
+	if err := repository.NewItemRepository(s.db).TouchActivity(tx, params.ItemID, activityAt); err != nil {
+		return fmt.Errorf("touch imported comment item activity: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit imported comment update: %w", err)
+	}
+	PublishItemChange(params.ItemID, ItemChangeUpdated)
+	return nil
+}
 
 // CreateInTx inserts a comment row inside an existing transaction and returns
 // its id, with NO side-effects (no notifications, activity bump, or publish).

@@ -542,7 +542,7 @@ func buildFindings(t *projectScanTally, fields map[string]jira.FieldMappingSugge
 	for name, n := range t.linkTypeUsage {
 		findings = append(findings, jira.Finding{
 			Entity: "Issue links: " + name, Category: "links", Severity: jira.SeverityClean,
-			Reason: "Link type and direction are preserved for links between imported issues; links to issues outside the selected projects are dropped.", UsageCount: n,
+			Reason: "Link type and direction are preserved between imported issues; links to Jira issues outside the selected projects become durable item-facing integration links.", UsageCount: n,
 		})
 	}
 

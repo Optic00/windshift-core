@@ -1,5 +1,7 @@
 package jira
 
+import "strings"
+
 // readiness.go classifies how faithfully a Jira instance migrates into
 // Windshift. It is a pure layer on top of field_mapper.go — no I/O — so the
 // handler can feed it sampled issue data and the test suite can exercise the
@@ -64,6 +66,12 @@ func ClassifyField(s FieldMappingSuggestion, usageCount int) Finding {
 	if s.PreserveRaw {
 		sev = SeverityLossy
 		reason = "No proven native Windshift shape; the complete Jira value is preserved as JSON text."
+	}
+	if s.WindshiftFieldType == FieldTypeDate &&
+		(strings.Contains(strings.ToLower(s.JiraFieldType), "datetime") ||
+			strings.Contains(s.Notes, "time-of-day editing is lossy")) {
+		sev = SeverityLossy
+		reason = "Jira datetime values retain their timestamp, but Windshift exposes calendar-date editing and rendering."
 	}
 	if s.Notes != "" {
 		reason += " " + s.Notes

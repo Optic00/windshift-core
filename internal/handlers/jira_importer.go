@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -392,12 +394,17 @@ func (h *JiraImportHandler) StartImport(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	planFingerprint, err := jiraImportPlanFingerprint(req)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	conflicts, err := h.findConflictingJiraImports(req, planFingerprint)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
 	if !req.ForceReimport {
-		conflicts, err := h.findConflictingJiraImports(req)
-		if err != nil {
-			respondInternalError(w, r, err)
-			return
-		}
 		if len(conflicts) > 0 {
 			err := restapi.NewAPIError(http.StatusConflict, "JIRA_IMPORT_CONFLICT", "One or more selected Jira projects have already been imported. Delete the previous import data or explicitly force a re-import.").WithDetails(map[string]interface{}{
 				"conflicting_imports": conflicts,
@@ -415,7 +422,7 @@ func (h *JiraImportHandler) StartImport(w http.ResponseWriter, r *http.Request) 
 
 	// Store only the durable, non-secret configuration. The Xray Cloud client
 	// ID and secret exist solely in the in-memory request used by this job.
-	configJSON, err := jiraImportJobConfigJSON(req)
+	configJSON, err := jiraImportJobConfigJSON(req, conflicts...)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -458,11 +465,25 @@ func (h *JiraImportHandler) StartImport(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-func jiraImportJobConfigJSON(req StartImportRequest) ([]byte, error) {
+func jiraImportJobConfigJSON(req StartImportRequest, conflicts ...jiraImportConflict) ([]byte, error) {
+	fingerprint, err := jiraImportPlanFingerprint(req)
+	if err != nil {
+		return nil, err
+	}
+	configurationDrift := false
+	for _, conflict := range conflicts {
+		if conflict.ConfigurationDrift {
+			configurationDrift = true
+			break
+		}
+	}
 	return json.Marshal(map[string]interface{}{
-		"project_keys":     req.ProjectKeys,
-		"open_issues_only": req.OpenIssuesOnly,
-		"mappings":         req.Mappings,
+		"project_keys":        req.ProjectKeys,
+		"open_issues_only":    req.OpenIssuesOnly,
+		"mappings":            req.Mappings,
+		"plan_fingerprint":    fingerprint,
+		"configuration_drift": configurationDrift,
+		"previous_imports":    conflicts,
 		"xray": map[string]interface{}{
 			"import_tests": req.Xray.ImportTests,
 			"region":       req.Xray.Region,
@@ -472,14 +493,29 @@ func jiraImportJobConfigJSON(req StartImportRequest) ([]byte, error) {
 }
 
 type jiraImportConflict struct {
-	JobID       string     `json:"job_id"`
-	Status      string     `json:"status"`
-	ProjectKeys []string   `json:"project_keys"`
-	CreatedAt   time.Time  `json:"created_at"`
-	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	JobID                   string     `json:"job_id"`
+	Status                  string     `json:"status"`
+	ProjectKeys             []string   `json:"project_keys"`
+	PreviousPlanFingerprint string     `json:"previous_plan_fingerprint,omitempty"`
+	ConfigurationDrift      bool       `json:"configuration_drift"`
+	CreatedAt               time.Time  `json:"created_at"`
+	CompletedAt             *time.Time `json:"completed_at,omitempty"`
 }
 
-func (h *JiraImportHandler) findConflictingJiraImports(req StartImportRequest) ([]jiraImportConflict, error) {
+func (h *JiraImportHandler) findConflictingJiraImports(
+	req StartImportRequest,
+	fingerprints ...string,
+) ([]jiraImportConflict, error) {
+	fingerprint := ""
+	if len(fingerprints) > 0 {
+		fingerprint = fingerprints[0]
+	} else {
+		var err error
+		fingerprint, err = jiraImportPlanFingerprint(req)
+		if err != nil {
+			return nil, err
+		}
+	}
 	requested := projectKeySet(req.ProjectKeys)
 	if len(requested) == 0 || req.ConnectionID == "" {
 		return nil, nil
@@ -511,11 +547,14 @@ func (h *JiraImportHandler) findConflictingJiraImports(req StartImportRequest) (
 			continue
 		}
 		conflict := jiraImportConflict{
-			JobID:       jobID,
-			Status:      status,
-			ProjectKeys: projectKeys,
-			CreatedAt:   createdAt,
+			JobID:                   jobID,
+			Status:                  status,
+			ProjectKeys:             projectKeys,
+			PreviousPlanFingerprint: jiraImportPlanFingerprintFromConfig(configJSON),
+			CreatedAt:               createdAt,
 		}
+		conflict.ConfigurationDrift = conflict.PreviousPlanFingerprint == "" ||
+			conflict.PreviousPlanFingerprint != fingerprint
 		if completedAt.Valid {
 			conflict.CompletedAt = &completedAt.Time
 		}
@@ -525,6 +564,108 @@ func (h *JiraImportHandler) findConflictingJiraImports(req StartImportRequest) (
 		return nil, err
 	}
 	return conflicts, nil
+}
+
+func jiraImportPlanFingerprintFromConfig(configJSON string) string {
+	var stored struct {
+		ProjectKeys     []string          `json:"project_keys"`
+		OpenIssuesOnly  bool              `json:"open_issues_only"`
+		Mappings        ImportMappings    `json:"mappings"`
+		Xray            XrayImportOptions `json:"xray"`
+		PlanFingerprint string            `json:"plan_fingerprint"`
+	}
+	if err := json.Unmarshal([]byte(configJSON), &stored); err != nil {
+		return ""
+	}
+	if stored.PlanFingerprint != "" {
+		return stored.PlanFingerprint
+	}
+	fingerprint, err := jiraImportPlanFingerprint(StartImportRequest{
+		ProjectKeys:    stored.ProjectKeys,
+		OpenIssuesOnly: stored.OpenIssuesOnly,
+		Mappings:       stored.Mappings,
+		Xray:           stored.Xray,
+	})
+	if err != nil {
+		return ""
+	}
+	return fingerprint
+}
+
+func jiraImportPlanFingerprint(req StartImportRequest) (string, error) {
+	projectKeys := make([]string, 0, len(req.ProjectKeys))
+	for key := range projectKeySet(req.ProjectKeys) {
+		projectKeys = append(projectKeys, key)
+	}
+	sort.Strings(projectKeys)
+
+	mappings := req.Mappings
+	mappings.Workspaces = append([]WorkspaceMapping(nil), mappings.Workspaces...)
+	for i := range mappings.Workspaces {
+		mappings.Workspaces[i].IssueCount = 0
+		mappings.Workspaces[i].KeyAliasAcknowledged = false
+	}
+	sort.Slice(mappings.Workspaces, func(i, j int) bool {
+		return normalizeJiraProjectKey(mappings.Workspaces[i].JiraKey) <
+			normalizeJiraProjectKey(mappings.Workspaces[j].JiraKey)
+	})
+
+	mappings.IssueTypes = append([]IssueTypeMapping(nil), mappings.IssueTypes...)
+	for i := range mappings.IssueTypes {
+		mappings.IssueTypes[i].JiraIDs = append([]string(nil), mappings.IssueTypes[i].JiraIDs...)
+		sort.Strings(mappings.IssueTypes[i].JiraIDs)
+	}
+	sort.Slice(mappings.IssueTypes, func(i, j int) bool {
+		left := strings.Join(mappings.IssueTypes[i].JiraIDs, ",") + "\x00" + mappings.IssueTypes[i].JiraName
+		right := strings.Join(mappings.IssueTypes[j].JiraIDs, ",") + "\x00" + mappings.IssueTypes[j].JiraName
+		return left < right
+	})
+
+	mappings.Statuses = append([]StatusMapping(nil), mappings.Statuses...)
+	for i := range mappings.Statuses {
+		mappings.Statuses[i].JiraIDs = append([]string(nil), mappings.Statuses[i].JiraIDs...)
+		sort.Strings(mappings.Statuses[i].JiraIDs)
+	}
+	sort.Slice(mappings.Statuses, func(i, j int) bool {
+		left := strings.Join(mappings.Statuses[i].JiraIDs, ",") + "\x00" + mappings.Statuses[i].JiraName
+		right := strings.Join(mappings.Statuses[j].JiraIDs, ",") + "\x00" + mappings.Statuses[j].JiraName
+		return left < right
+	})
+
+	mappings.CustomFields = append([]CustomFieldMapping(nil), mappings.CustomFields...)
+	sort.Slice(mappings.CustomFields, func(i, j int) bool {
+		return mappings.CustomFields[i].JiraID < mappings.CustomFields[j].JiraID
+	})
+	mappings.Versions = append([]VersionMapping(nil), mappings.Versions...)
+	sort.Slice(mappings.Versions, func(i, j int) bool {
+		left := normalizeJiraProjectKey(mappings.Versions[i].ProjectKey) + "\x00" + mappings.Versions[i].JiraID
+		right := normalizeJiraProjectKey(mappings.Versions[j].ProjectKey) + "\x00" + mappings.Versions[j].JiraID
+		return left < right
+	})
+
+	testIssueTypeIDs := append([]string(nil), req.Xray.TestIssueTypeIDs...)
+	sort.Strings(testIssueTypeIDs)
+	plan := struct {
+		ProjectKeys    []string          `json:"project_keys"`
+		OpenIssuesOnly bool              `json:"open_issues_only"`
+		Mappings       ImportMappings    `json:"mappings"`
+		Xray           XrayImportOptions `json:"xray"`
+	}{
+		ProjectKeys:    projectKeys,
+		OpenIssuesOnly: req.OpenIssuesOnly,
+		Mappings:       mappings,
+		Xray: XrayImportOptions{
+			ImportTests:      req.Xray.ImportTests,
+			Region:           req.Xray.Region,
+			TestIssueTypeIDs: testIssueTypeIDs,
+		},
+	}
+	data, err := json.Marshal(plan)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	return fmt.Sprintf("sha256:%x", sum), nil
 }
 
 func extractJiraImportProjectKeys(configJSON string) []string {
@@ -774,6 +915,83 @@ func jiraImportMappingMetadataBool(metadata sql.NullString, key string) (result,
 	return result, ok
 }
 
+func jiraImportMappingMetadataString(metadata sql.NullString, key string) (string, bool) {
+	value, ok := jiraImportMappingMetadata(metadata)[key]
+	if !ok {
+		return "", false
+	}
+	result, ok := value.(string)
+	return result, ok && strings.TrimSpace(result) != ""
+}
+
+type previousJiraImportMapping struct {
+	ID          int
+	JobID       string
+	WindshiftID int
+	Metadata    sql.NullString
+}
+
+func (h *JiraImportHandler) findPreviousJiraImportMapping(
+	currentJobID, entityType, jiraID string,
+) (*previousJiraImportMapping, error) {
+	var mapping previousJiraImportMapping
+	err := h.db.QueryRow(`
+		SELECT m.id, m.job_id, m.windshift_id, m.metadata_json
+		FROM jira_import_id_mappings m
+		JOIN jira_import_jobs previous_job ON previous_job.id = m.job_id
+		JOIN jira_import_jobs current_job ON current_job.id = ?
+		WHERE m.job_id <> current_job.id
+		  AND previous_job.connection_id = current_job.connection_id
+		  AND previous_job.status <> 'data_deleted'
+		  AND m.entity_type = ?
+		  AND m.jira_id = ?
+		ORDER BY COALESCE(previous_job.completed_at, previous_job.created_at) DESC, m.id DESC
+		LIMIT 1
+	`, currentJobID, entityType, jiraID).Scan(
+		&mapping.ID,
+		&mapping.JobID,
+		&mapping.WindshiftID,
+		&mapping.Metadata,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &mapping, nil
+}
+
+// transferJiraImportMappingOwnership moves cleanup responsibility from the
+// previous import to the current re-import. This prevents deleting an older
+// job from removing an item that a newer upsert now owns, while preserving the
+// existing Windshift ID.
+func (h *JiraImportHandler) transferJiraImportMappingOwnership(
+	mapping *previousJiraImportMapping,
+	currentJobID string,
+) (bool, error) {
+	if mapping == nil {
+		return false, nil
+	}
+	metadata := jiraImportMappingMetadata(mapping.Metadata)
+	if metadata == nil {
+		metadata = make(map[string]interface{})
+	}
+	wasCreated := jiraImportMappingWasCreated(mapping.Metadata)
+	metadata["was_created"] = false
+	metadata["superseded_by_job_id"] = currentJobID
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		return false, err
+	}
+	if _, err := h.db.ExecWrite(`
+		UPDATE jira_import_id_mappings SET metadata_json = ? WHERE id = ?
+	`, string(encoded), mapping.ID); err != nil {
+		return false, err
+	}
+	return wasCreated, nil
+}
+
 // DeleteImportedData handles DELETE /api/admin/jira-import/jobs/{jobId}/data
 // Deletes all entities created during an import job for re-import purposes
 func (h *JiraImportHandler) DeleteImportedData(w http.ResponseWriter, r *http.Request) {
@@ -828,21 +1046,23 @@ func (h *JiraImportHandler) DeleteImportedData(w http.ResponseWriter, r *http.Re
 				WHEN 'customer_organisation' THEN 11
 				WHEN 'portal' THEN 12
 				WHEN 'asset' THEN 13
-				WHEN 'asset_type' THEN 14
-				WHEN 'asset_set' THEN 15
-				WHEN 'board_configuration' THEN 16
-				WHEN 'collection' THEN 17
-				WHEN 'iteration' THEN 18
-				WHEN 'milestone' THEN 19
-				WHEN 'configuration_set' THEN 20
-				WHEN 'screen' THEN 21
-				WHEN 'workflow' THEN 22
-				WHEN 'custom_field' THEN 23
-				WHEN 'status' THEN 24
-				WHEN 'item_type' THEN 25
-				WHEN 'time_project' THEN 26
-				WHEN 'workspace' THEN 27
-				ELSE 28
+				WHEN 'asset_category' THEN 14
+				WHEN 'asset_status' THEN 15
+				WHEN 'asset_type' THEN 16
+				WHEN 'asset_set' THEN 17
+				WHEN 'board_configuration' THEN 18
+				WHEN 'collection' THEN 19
+				WHEN 'iteration' THEN 20
+				WHEN 'milestone' THEN 21
+				WHEN 'configuration_set' THEN 22
+				WHEN 'screen' THEN 23
+				WHEN 'workflow' THEN 24
+				WHEN 'custom_field' THEN 25
+				WHEN 'status' THEN 26
+				WHEN 'item_type' THEN 27
+				WHEN 'time_project' THEN 28
+				WHEN 'workspace' THEN 29
+				ELSE 30
 			END
 	`, jobID)
 	if err != nil {
@@ -960,6 +1180,10 @@ func (h *JiraImportHandler) DeleteImportedData(w http.ResponseWriter, r *http.Re
 			tableName = "channels"
 		case "asset":
 			tableName = "assets"
+		case "asset_category":
+			tableName = "asset_categories"
+		case "asset_status":
+			tableName = "asset_statuses"
 		case "asset_type":
 			if shouldSkipReusedJiraImportEntityDelete(h.db, jobID, "asset_type", m.windshiftID) {
 				continue
@@ -991,6 +1215,39 @@ func (h *JiraImportHandler) DeleteImportedData(w http.ResponseWriter, r *http.Re
 			tableName = "comments"
 		case "link":
 			tableName = "item_links"
+		case "external_issue_link":
+			if jiraImportMappingWasCreated(m.metadataJSON) {
+				if linkID, ok := jiraImportMappingMetadataString(m.metadataJSON, "integration_link_id"); ok {
+					if _, deleteErr := h.db.ExecWrite(`DELETE FROM item_integration_links WHERE id = ?`, linkID); deleteErr != nil {
+						slog.Error("Failed to delete imported Jira external issue link",
+							slog.String("component", "jira"),
+							slog.String("linkID", linkID),
+							slog.Any("error", deleteErr))
+					} else {
+						deleted[m.entityType]++
+					}
+				}
+			}
+			continue
+		case "watch":
+			userID, ok := jiraImportMappingMetadataInt(m.metadataJSON, "user_id")
+			if !ok {
+				continue
+			}
+			if _, err = h.db.ExecWrite(`
+				UPDATE item_watches
+				SET is_active = false, updated_at = CURRENT_TIMESTAMP
+				WHERE user_id = ? AND item_id = ?
+			`, userID, m.windshiftID); err != nil {
+				slog.Error("Failed to remove imported Jira issue watch",
+					slog.String("component", "jira"),
+					slog.Int("userID", userID),
+					slog.Int("itemID", m.windshiftID),
+					slog.Any("error", err))
+			} else {
+				deleted[m.entityType]++
+			}
+			continue
 		case "worklog":
 			tableName = "time_worklogs"
 		case "iteration":

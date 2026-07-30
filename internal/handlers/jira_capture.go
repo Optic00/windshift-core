@@ -56,6 +56,8 @@ func newRecordingClient(inner jira.Client, captureDir string) *recordingClient {
 		filepath.Join(captureDir, "jira_sprints.jsonl"),
 		filepath.Join(captureDir, "jira_issue_comments.jsonl"),
 		filepath.Join(captureDir, "jira_issue_worklogs.jsonl"),
+		filepath.Join(captureDir, "jira_issue_watchers.jsonl"),
+		filepath.Join(captureDir, "jira_custom_field_configurations.jsonl"),
 		filepath.Join(captureDir, "jira_service_desks.jsonl"),
 		filepath.Join(captureDir, "jira_service_desk_request_types.jsonl"),
 		filepath.Join(captureDir, "jira_service_desk_request_comments.jsonl"),
@@ -316,10 +318,42 @@ func (r *recordingClient) GetIssue(ctx context.Context, issueKey string, expand 
 	return r.inner.GetIssue(ctx, issueKey, expand)
 }
 
+func (r *recordingClient) GetIssueWatchers(ctx context.Context, issueKey string) (*jira.JiraIssueWatchers, error) {
+	capable, ok := r.inner.(jira.IssueWatchersClient)
+	if !ok {
+		return nil, fmt.Errorf("jira issue watchers capability unavailable")
+	}
+	resp, err := capable.GetIssueWatchers(ctx, issueKey)
+	if err == nil && resp != nil {
+		r.appendJSONL("jira_issue_watchers.jsonl", map[string]any{"issue_key": issueKey, "response": resp})
+	}
+	return resp, err
+}
+
 func (r *recordingClient) GetIssueComments(ctx context.Context, issueKey string, startAt, maxResults int) (*jira.JiraCommentContainer, error) {
 	resp, err := r.inner.GetIssueComments(ctx, issueKey, startAt, maxResults)
 	if err == nil && resp != nil {
 		r.appendJSONL("jira_issue_comments.jsonl", map[string]any{"issue_key": issueKey, "response": resp})
+	}
+	return resp, err
+}
+
+func (r *recordingClient) GetCustomFieldConfiguration(
+	ctx context.Context,
+	fieldID string,
+	includeOptions bool,
+) (*jira.JiraCustomFieldConfiguration, error) {
+	capable, ok := r.inner.(jira.CustomFieldConfigurationClient)
+	if !ok {
+		return nil, jira.ErrCustomFieldConfigurationNotAvailable
+	}
+	resp, err := capable.GetCustomFieldConfiguration(ctx, fieldID, includeOptions)
+	if err == nil && resp != nil {
+		r.appendJSONL("jira_custom_field_configurations.jsonl", map[string]any{
+			"field_id":        fieldID,
+			"include_options": includeOptions,
+			"response":        resp,
+		})
 	}
 	return resp, err
 }

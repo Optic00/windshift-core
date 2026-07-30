@@ -155,6 +155,7 @@ type JiraProjectAnalysis struct {
 	HasVersions           bool     `json:"has_versions"`
 	VersionCount          int      `json:"version_count"`
 	HasSprints            bool     `json:"has_sprints"`
+	IsTeamManaged         bool     `json:"is_team_managed"`
 	WorkspaceKeyCollision bool     `json:"workspace_key_collision"`
 	SuggestedWorkspaceKey string   `json:"suggested_workspace_key"`
 }

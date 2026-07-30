@@ -1,7 +1,6 @@
 package jira
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"golang.org/x/time/rate"
 )
@@ -22,40 +22,18 @@ type dataCenterClient struct {
 	authHeader     string
 	httpClient     *http.Client
 	limiter        *rate.Limiter
+	retryWait      func(context.Context, time.Duration) error
+	retryAttempts  int
 }
 
 // do performs an HTTP request with rate limiting
 //
 //nolint:unparam // method is always "GET" currently but kept for future flexibility
 func (c *dataCenterClient) do(ctx context.Context, method, reqURL string, body interface{}) (*http.Response, error) {
-	if err := validateReadOnlyRequest(method, reqURL); err != nil {
-		return nil, err
-	}
-
-	if err := c.limiter.Wait(ctx); err != nil {
-		return nil, err
-	}
-
-	var bodyReader io.Reader
-	if body != nil {
-		bodyBytes, err := json.Marshal(body)
-		if err != nil {
-			return nil, err
-		}
-		bodyReader = bytes.NewReader(bodyBytes)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, method, reqURL, bodyReader)
-	if err != nil {
-		return nil, err
-	}
-
-	c.setHeaders(req)
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-
-	return c.httpClient.Do(req) //nolint:gosec // G704: intentional HTTP client for admin-configured Jira URLs
+	return doReadOnlyJiraRequest(
+		ctx, c.httpClient, c.limiter, c.authHeader, method, reqURL, body,
+		c.retryAttempts, c.retryWait,
+	)
 }
 
 // setHeaders sets common headers for Jira API requests
@@ -460,6 +438,14 @@ func (c *dataCenterClient) GetIssue(ctx context.Context, issueKey string, expand
 		return nil, err
 	}
 	return &issue, nil
+}
+
+func (c *dataCenterClient) GetIssueWatchers(ctx context.Context, issueKey string) (*JiraIssueWatchers, error) {
+	var result JiraIssueWatchers
+	if err := c.doJSON(ctx, "GET", c.baseURL+"/issue/"+url.PathEscape(issueKey)+"/watchers", nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 func (c *dataCenterClient) GetIssueComments(ctx context.Context, issueKey string, startAt, maxResults int) (*JiraCommentContainer, error) {

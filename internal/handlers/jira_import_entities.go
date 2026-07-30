@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -924,7 +925,7 @@ func affectedVersionOptionValues(issue *jira.JiraIssue, field *jiraAffectsVersio
 }
 
 // importIssue imports a single Jira issue as a Windshift work item
-func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, workspaceID int, issue *jira.JiraIssue, statusMap, itemTypeMap, userMap map[string]int, usernameMap map[string]string, portalCustomerMap, versionMap, iterationMap, customFieldIDMap map[string]int, choiceOptionIDs map[string]map[string]int, timeProjectID *int, affectsVersionField *jiraAffectsVersionCustomField, customFieldMappings []CustomFieldMapping, jsmImport *jiraServiceManagementImport, client jira.Client, progress *ImportProgress) error {
+func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, workspaceID int, issue *jira.JiraIssue, statusMap, itemTypeMap, userMap map[string]int, usernameMap map[string]string, portalCustomerMap, versionMap, iterationMap, customFieldIDMap map[string]int, choiceOptionIDs map[string]map[string]int, timeProjectID *int, affectsVersionField *jiraAffectsVersionCustomField, customFieldMappings []CustomFieldMapping, jsmImport *jiraServiceManagementImport, client jira.Client, progress *ImportProgress, reimport ...bool) error {
 	mentionResolver := jira.MentionResolver(func(accountID string) string {
 		return usernameMap[accountID]
 	})
@@ -1079,6 +1080,58 @@ func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, works
 	if creator := jiraUserIdentityMetadata(issue.Fields.Creator); len(creator) > 0 {
 		customFieldValues["_jira_creator"] = creator
 	}
+	if assignee := jiraUserIdentityMetadata(issue.Fields.Assignee); len(assignee) > 0 {
+		customFieldValues["_jira_assignee"] = assignee
+	}
+	if issue.Fields.Watches != nil {
+		customFieldValues["_jira_watcher_count"] = issue.Fields.Watches.WatchCount
+	}
+	customFieldValues["_jira_watcher_identities_available"] = issue.Fields.WatcherIdentitiesAvailable
+	if issue.Fields.WatcherFetchError != "" {
+		customFieldValues["_jira_watcher_fetch_error"] = issue.Fields.WatcherFetchError
+	}
+	if len(issue.Fields.Watchers) > 0 {
+		watchers := make([]map[string]any, 0, len(issue.Fields.Watchers))
+		for idx := range issue.Fields.Watchers {
+			if identity := jiraUserIdentityMetadata(&issue.Fields.Watchers[idx]); len(identity) > 0 {
+				if _, mapped := userMap[issue.Fields.Watchers[idx].GetIdentifier()]; mapped {
+					identity["mapped"] = true
+				} else {
+					identity["mapped"] = false
+				}
+				watchers = append(watchers, identity)
+			}
+		}
+		if len(watchers) > 0 {
+			customFieldValues["_jira_watchers"] = watchers
+		}
+	}
+	if issue.Fields.Votes != nil {
+		votes := map[string]any{
+			"count":     issue.Fields.Votes.Votes,
+			"has_voted": issue.Fields.Votes.HasVoted,
+		}
+		if len(issue.Fields.Votes.Voters) > 0 {
+			voters := make([]map[string]any, 0, len(issue.Fields.Votes.Voters))
+			for idx := range issue.Fields.Votes.Voters {
+				if identity := jiraUserIdentityMetadata(&issue.Fields.Votes.Voters[idx]); len(identity) > 0 {
+					voters = append(voters, identity)
+				}
+			}
+			if len(voters) > 0 {
+				votes["voters"] = voters
+			}
+		}
+		customFieldValues["_jira_votes"] = votes
+	}
+	if issue.Fields.Security != nil {
+		customFieldValues["_jira_security_level"] = map[string]string{
+			"id":          issue.Fields.Security.ID,
+			"name":        issue.Fields.Security.Name,
+			"description": issue.Fields.Security.Description,
+			"self":        issue.Fields.Security.Self,
+		}
+	}
 	if jiraRequestType != "" {
 		customFieldValues["_jira_request_type_id"] = jiraRequestType
 	}
@@ -1180,7 +1233,7 @@ func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, works
 
 	// Create the work item using centralized service (handles workspace_item_number, frac_index, etc.)
 	// The summary gets the same title sanitize the normal item-create path applies.
-	itemID, err := services.CreateItem(h.db, services.ItemCreationParams{
+	itemParams := services.ItemCreationParams{
 		WorkspaceID:             workspaceID,
 		Title:                   sanitize.PlainTextField.Sanitize(issue.Fields.Summary),
 		Description:             description,
@@ -1205,9 +1258,38 @@ func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, works
 		// A bulk import of issues pre-assigned to an agent user must not
 		// start one agent run per imported item.
 		SkipAssigneeTrigger: true,
-	})
+	}
+	var itemID int64
+	var previousItemMapping *previousJiraImportMapping
+	upsertExisting := len(reimport) > 0 && reimport[0]
+	if upsertExisting && issue.ID != "" {
+		previousItemMapping, err = h.findPreviousJiraImportMapping(jobID, "item", issue.ID)
+		if err != nil {
+			return fmt.Errorf("find previous Jira item mapping: %w", err)
+		}
+		if previousItemMapping != nil {
+			var previousWorkspaceID int
+			if lookupErr := h.db.QueryRow(`
+				SELECT workspace_id FROM items WHERE id = ?
+			`, previousItemMapping.WindshiftID).Scan(&previousWorkspaceID); lookupErr != nil {
+				if !errors.Is(lookupErr, sql.ErrNoRows) {
+					return fmt.Errorf("load previous Jira item: %w", lookupErr)
+				}
+				previousItemMapping = nil
+			} else if previousWorkspaceID != workspaceID {
+				// A changed project→workspace mapping is a deliberate fork, not
+				// an update of the old workspace's item.
+				previousItemMapping = nil
+			}
+		}
+	}
+	if previousItemMapping != nil {
+		itemID, err = h.updateImportedJiraItem(previousItemMapping.WindshiftID, itemParams)
+	} else {
+		itemID, err = services.CreateItem(h.db, itemParams)
+	}
 	if err != nil {
-		return fmt.Errorf("failed to create item: %w", err)
+		return fmt.Errorf("failed to create or update item: %w", err)
 	}
 
 	// Build metadata for the mapping (includes parent key for later linking)
@@ -1262,8 +1344,21 @@ func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, works
 		meta["issue_links"] = links
 	}
 
+	if previousItemMapping != nil {
+		ownsItem, transferErr := h.transferJiraImportMappingOwnership(previousItemMapping, jobID)
+		if transferErr != nil {
+			return fmt.Errorf("transfer Jira item mapping ownership: %w", transferErr)
+		}
+		meta["action"] = "update_existing"
+		meta["was_created"] = ownsItem
+		meta["reimported_from_job_id"] = previousItemMapping.JobID
+	}
 	// Record the mapping
 	h.recordMapping(jobID, "item", issue.ID, issue.Key, int(itemID), meta)
+
+	if err := h.importIssueWatchers(jobID, int(itemID), issue, userMap); err != nil {
+		return fmt.Errorf("import Jira issue watchers: %w", err)
+	}
 
 	// Attach Jira labels (top-level Fields.Labels, distinct from labels-typed
 	// custom fields). Workspace-scoped — same name in different workspaces is
@@ -1305,6 +1400,166 @@ func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, works
 	h.importWorklogs(jobID, int(itemID), issue, userMap, mentionResolver, timeProjectID, progress)
 
 	return nil
+}
+
+func (h *JiraImportHandler) importIssueWatchers(
+	jobID string,
+	itemID int,
+	issue *jira.JiraIssue,
+	userMap map[string]int,
+) error {
+	if issue == nil || len(issue.Fields.Watchers) == 0 {
+		return nil
+	}
+	itemRepo := repository.NewItemRepository(h.db)
+	stableIssueID := issue.ID
+	if stableIssueID == "" {
+		stableIssueID = issue.Key
+	}
+	for idx := range issue.Fields.Watchers {
+		accountID := issue.Fields.Watchers[idx].GetIdentifier()
+		userID, mapped := userMap[accountID]
+		if !mapped || accountID == "" {
+			continue
+		}
+		externalID := stableIssueID + ":" + accountID
+		previousMapping, err := h.findPreviousJiraImportMapping(jobID, "watch", externalID)
+		if err != nil {
+			return fmt.Errorf("find previous watch mapping for %s: %w", accountID, err)
+		}
+		wasWatching, err := itemRepo.IsWatching(userID, itemID)
+		if err != nil {
+			return err
+		}
+		if err := itemRepo.Watch(userID, itemID); err != nil {
+			return err
+		}
+		wasCreated := !wasWatching
+		metadata := map[string]interface{}{
+			"user_id":     userID,
+			"account_id":  accountID,
+			"was_created": wasCreated,
+		}
+		if previousMapping != nil && previousMapping.WindshiftID == itemID {
+			ownsWatch, transferErr := h.transferJiraImportMappingOwnership(previousMapping, jobID)
+			if transferErr != nil {
+				return fmt.Errorf("transfer Jira watch mapping ownership: %w", transferErr)
+			}
+			metadata["was_created"] = ownsWatch
+			metadata["reimported_from_job_id"] = previousMapping.JobID
+		}
+		h.recordMapping(jobID, "watch", externalID, issue.Key, itemID, metadata)
+	}
+	return nil
+}
+
+func (h *JiraImportHandler) updateImportedJiraItem(
+	itemID int,
+	params services.ItemCreationParams,
+) (int64, error) {
+	if err := validation.ValidatePlanningAssignments(h.db, params.WorkspaceID, params.MilestoneIDs, params.IterationID); err != nil {
+		return 0, err
+	}
+	var priorityID interface{}
+	if strings.TrimSpace(params.Priority) != "" {
+		var resolvedPriorityID int
+		if err := h.db.QueryRow(`
+			SELECT id FROM priorities WHERE LOWER(name) = LOWER(?) ORDER BY id LIMIT 1
+		`, params.Priority).Scan(&resolvedPriorityID); err == nil {
+			priorityID = resolvedPriorityID
+		}
+	}
+	updatedAt := time.Now()
+	if params.UpdatedAt != nil {
+		updatedAt = *params.UpdatedAt
+	}
+	var createdAt interface{}
+	if params.CreatedAt != nil {
+		createdAt = *params.CreatedAt
+	}
+
+	tx, err := h.db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("begin Jira item upsert: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	fracIndex, err := repository.GenerateFracIndexForNewItem(tx)
+	if err != nil {
+		return 0, fmt.Errorf("generate Jira re-import fractional index: %w", err)
+	}
+	result, err := tx.Exec(`
+		UPDATE items
+		SET title = ?,
+		    description = ?,
+		    status_id = COALESCE(?, status_id),
+		    item_type_id = COALESCE(?, item_type_id),
+		    priority_id = COALESCE(?, priority_id),
+		    iteration_id = ?,
+		    time_project_id = ?,
+		    assignee_id = ?,
+		    reporter_id = ?,
+		    creator_id = ?,
+		    creator_portal_customer_id = ?,
+		    channel_id = ?,
+		    request_type_id = ?,
+		    due_date = ?,
+		    story_points = ?,
+		    estimate_minutes = ?,
+		    custom_field_values = ?,
+		    frac_index = ?,
+		    created_at = COALESCE(?, created_at),
+		    updated_at = ?
+		WHERE id = ? AND workspace_id = ?
+	`,
+		params.Title,
+		params.Description,
+		params.StatusID,
+		params.ItemTypeID,
+		priorityID,
+		params.IterationID,
+		params.TimeProjectID,
+		params.AssigneeID,
+		params.ReporterID,
+		params.CreatorID,
+		params.CreatorPortalCustomerID,
+		params.ChannelID,
+		params.RequestTypeID,
+		params.DueDate,
+		params.StoryPoints,
+		params.EstimateMinutes,
+		nullString(params.CustomFieldValuesJSON),
+		fracIndex,
+		createdAt,
+		updatedAt,
+		itemID,
+		params.WorkspaceID,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("update imported Jira item: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("inspect imported Jira item update: %w", err)
+	}
+	if affected != 1 {
+		return 0, fmt.Errorf("imported Jira item %d no longer exists in workspace %d", itemID, params.WorkspaceID)
+	}
+	if _, err := tx.Exec(`DELETE FROM item_milestones WHERE item_id = ?`, itemID); err != nil {
+		return 0, fmt.Errorf("replace Jira item milestones: %w", err)
+	}
+	for _, milestoneID := range params.MilestoneIDs {
+		if _, err := tx.Exec(`
+			INSERT INTO item_milestones (item_id, milestone_id, created_at)
+			VALUES (?, ?, CURRENT_TIMESTAMP)
+		`, itemID, milestoneID); err != nil {
+			return 0, fmt.Errorf("attach Jira milestone %d: %w", milestoneID, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit Jira item upsert: %w", err)
+	}
+	services.PublishItemChange(itemID, services.ItemChangeUpdated)
+	return int64(itemID), nil
 }
 
 // ================================================================
@@ -1450,22 +1705,52 @@ func (h *JiraImportHandler) importComments(jobID string, itemID int, issue *jira
 		isPrivate := (comment.ServiceDeskPublic != nil && !*comment.ServiceDeskPublic) ||
 			(comment.Visibility != nil && (comment.Visibility.Type != "" || comment.Visibility.Value != ""))
 
-		result, err := commentSvc.Create(services.CreateCommentParams{
-			ItemID:           itemID,
-			AuthorID:         authorID,
-			PortalCustomerID: portalCustomerID,
-			Content:          content,
-			ActorUserID:      authorID,
-			IsPrivate:        isPrivate,
-			CreatedAt:        createdAt,
-			UpdatedAt:        updatedAt, // preserve Jira's original updated timestamp
-		})
-		if err != nil {
+		var commentID int
+		var importErr error
+		var previousMapping *previousJiraImportMapping
+		if comment.ID != "" {
+			previousMapping, _ = h.findPreviousJiraImportMapping(jobID, "comment", comment.ID)
+		}
+		if previousMapping != nil {
+			var exists bool
+			if lookupErr := h.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM comments WHERE id = ?)`, previousMapping.WindshiftID).Scan(&exists); lookupErr != nil || !exists {
+				previousMapping = nil
+			}
+		}
+		if previousMapping != nil {
+			importErr = commentSvc.UpdateImported(services.UpdateImportedCommentParams{
+				CommentID:        previousMapping.WindshiftID,
+				ItemID:           itemID,
+				AuthorID:         authorID,
+				PortalCustomerID: portalCustomerID,
+				Content:          content,
+				IsPrivate:        isPrivate,
+				CreatedAt:        createdAt,
+				UpdatedAt:        updatedAt,
+			})
+			commentID = previousMapping.WindshiftID
+		} else {
+			var result *services.CreateCommentResult
+			result, importErr = commentSvc.Create(services.CreateCommentParams{
+				ItemID:           itemID,
+				AuthorID:         authorID,
+				PortalCustomerID: portalCustomerID,
+				Content:          content,
+				ActorUserID:      authorID,
+				IsPrivate:        isPrivate,
+				CreatedAt:        createdAt,
+				UpdatedAt:        updatedAt, // preserve Jira's original updated timestamp
+			})
+			if importErr == nil {
+				commentID = int(result.CommentID)
+			}
+		}
+		if importErr != nil {
 			slog.Error("Failed to import comment",
 				slog.String("component", "jira"),
 				slog.String("issue", issue.Key),
 				slog.String("commentID", comment.ID),
-				slog.Any("error", err))
+				slog.Any("error", importErr))
 			continue
 		}
 
@@ -1476,11 +1761,19 @@ func (h *JiraImportHandler) importComments(jobID string, itemID int, issue *jira
 		if createdAt != nil {
 			commentMeta["created"] = createdAt.UTC().Format(time.RFC3339)
 		}
-		if comment.Author != nil && comment.Author.GetIdentifier() != "" {
-			commentMeta["author_account_id"] = comment.Author.GetIdentifier()
+		if author := jiraUserIdentityMetadata(comment.Author); len(author) > 0 {
+			commentMeta["author"] = author
+			if accountID := comment.Author.GetIdentifier(); accountID != "" {
+				commentMeta["author_account_id"] = accountID
+			}
+		} else {
+			commentMeta["author_resolution"] = "anonymous_import_fallback"
 		}
-		if comment.UpdateAuthor != nil && comment.UpdateAuthor.GetIdentifier() != "" {
-			commentMeta["update_author_account_id"] = comment.UpdateAuthor.GetIdentifier()
+		if updateAuthor := jiraUserIdentityMetadata(comment.UpdateAuthor); len(updateAuthor) > 0 {
+			commentMeta["update_author"] = updateAuthor
+			if accountID := comment.UpdateAuthor.GetIdentifier(); accountID != "" {
+				commentMeta["update_author_account_id"] = accountID
+			}
 		}
 		if isPrivate {
 			commentMeta["is_private"] = true
@@ -1493,7 +1786,20 @@ func (h *JiraImportHandler) importComments(jobID string, itemID int, issue *jira
 			commentMeta["jira_service_desk_public"] = *comment.ServiceDeskPublic
 		}
 
-		h.recordMapping(jobID, "comment", comment.ID, issue.Key, int(result.CommentID), commentMeta)
+		if previousMapping != nil {
+			ownsComment, transferErr := h.transferJiraImportMappingOwnership(previousMapping, jobID)
+			if transferErr != nil {
+				slog.Warn("Failed to transfer Jira comment mapping ownership",
+					slog.String("component", "jira"),
+					slog.String("commentID", comment.ID),
+					slog.Any("error", transferErr))
+			} else {
+				commentMeta["action"] = "update_existing"
+				commentMeta["was_created"] = ownsComment
+				commentMeta["reimported_from_job_id"] = previousMapping.JobID
+			}
+		}
+		h.recordMapping(jobID, "comment", comment.ID, issue.Key, commentID, commentMeta)
 		if progress != nil {
 			progress.ImportedComments++
 		}
@@ -1593,11 +1899,22 @@ func (h *JiraImportHandler) importIssueLinks(jobID string) {
 					WHERE job_id = ? AND entity_type = 'item' AND jira_key = ?
 				`, jobID, inwardKey).Scan(&sourceID)
 				if errors.Is(err, sql.ErrNoRows) {
-					slog.Warn("Dropping inward link from non-imported issue",
-						slog.String("component", "jira"),
-						slog.String("source", inwardKey),
-						slog.String("target", info.sourceKey),
-						slog.String("typeName", typeName))
+					if externalErr := h.importExternalJiraIssueLink(
+						jobID,
+						info.sourceID,
+						info.sourceKey,
+						inwardKey,
+						typeName,
+						"inward",
+						link,
+					); externalErr != nil {
+						slog.Warn("Failed to preserve inward link from non-imported issue",
+							slog.String("component", "jira"),
+							slog.String("source", inwardKey),
+							slog.String("target", info.sourceKey),
+							slog.String("typeName", typeName),
+							slog.Any("error", externalErr))
+					}
 				} else if err != nil {
 					slog.Warn("Failed to look up inward link source",
 						slog.String("component", "jira"),
@@ -1614,13 +1931,22 @@ func (h *JiraImportHandler) importIssueLinks(jobID string) {
 				WHERE job_id = ? AND entity_type = 'item' AND jira_key = ?
 			`, jobID, outwardKey).Scan(&targetID)
 			if errors.Is(err, sql.ErrNoRows) {
-				// Target wasn't part of this import. Same external-reference
-				// limitation as above — log so the drop is observable.
-				slog.Warn("Dropping outward link to non-imported issue",
-					slog.String("component", "jira"),
-					slog.String("source", info.sourceKey),
-					slog.String("target", outwardKey),
-					slog.String("typeName", typeName))
+				if externalErr := h.importExternalJiraIssueLink(
+					jobID,
+					info.sourceID,
+					info.sourceKey,
+					outwardKey,
+					typeName,
+					"outward",
+					link,
+				); externalErr != nil {
+					slog.Warn("Failed to preserve outward link to non-imported issue",
+						slog.String("component", "jira"),
+						slog.String("source", info.sourceKey),
+						slog.String("target", outwardKey),
+						slog.String("typeName", typeName),
+						slog.Any("error", externalErr))
+				}
 				continue
 			} else if err != nil {
 				continue
@@ -1641,6 +1967,15 @@ func (h *JiraImportHandler) importIssueLinks(jobID string) {
 			}
 
 			// Create item link via service (handles duplicate check)
+			mappingID := fmt.Sprintf("%s-%s-%s", info.sourceKey, typeName, outwardKey)
+			previousMapping, previousErr := h.findPreviousJiraImportMapping(jobID, "link", mappingID)
+			if previousErr != nil {
+				slog.Warn("Failed to find prior Jira item-link mapping",
+					slog.String("component", "jira"),
+					slog.String("mappingID", mappingID),
+					slog.Any("error", previousErr))
+				previousMapping = nil
+			}
 			linkID, err := linkSvc.CreateLink(services.CreateItemLinkParams{
 				LinkTypeID: linkTypeID,
 				SourceType: "item",
@@ -1658,10 +1993,148 @@ func (h *JiraImportHandler) importIssueLinks(jobID string) {
 			}
 
 			if linkID > 0 {
-				h.recordMapping(jobID, "link", fmt.Sprintf("%s-%s-%s", info.sourceKey, typeName, outwardKey), "", int(linkID), nil)
+				h.recordMapping(jobID, "link", mappingID, "", int(linkID), map[string]any{"action": "create"})
+				continue
+			}
+			if previousMapping != nil {
+				var exists bool
+				if lookupErr := h.db.QueryRow(`
+					SELECT EXISTS(SELECT 1 FROM item_links WHERE id = ?)
+				`, previousMapping.WindshiftID).Scan(&exists); lookupErr == nil && exists {
+					ownsLink, transferErr := h.transferJiraImportMappingOwnership(previousMapping, jobID)
+					if transferErr != nil {
+						slog.Warn("Failed to transfer Jira item-link mapping ownership",
+							slog.String("component", "jira"),
+							slog.String("mappingID", mappingID),
+							slog.Any("error", transferErr))
+					} else {
+						h.recordMapping(jobID, "link", mappingID, "", previousMapping.WindshiftID, map[string]any{
+							"action":                 "reuse_existing_mapping",
+							"was_created":            ownsLink,
+							"reimported_from_job_id": previousMapping.JobID,
+						})
+					}
+				}
 			}
 		}
 	}
+}
+
+func (h *JiraImportHandler) importExternalJiraIssueLink(
+	jobID string,
+	itemID int,
+	itemKey, externalKey, typeName, direction string,
+	sourceMetadata map[string]interface{},
+) error {
+	externalKey = strings.TrimSpace(externalKey)
+	if itemID <= 0 || externalKey == "" {
+		return nil
+	}
+	var connectionID, instanceURL string
+	var instanceName sql.NullString
+	var createdBy sql.NullInt64
+	if err := h.db.QueryRow(`
+		SELECT j.connection_id, c.instance_url, c.instance_name, j.created_by
+		FROM jira_import_jobs j
+		JOIN jira_import_connections c ON c.id = j.connection_id
+		WHERE j.id = ?
+	`, jobID).Scan(&connectionID, &instanceURL, &instanceName, &createdBy); err != nil {
+		return fmt.Errorf("load Jira external-link provenance: %w", err)
+	}
+	providerID := "jira-import-" + connectionID
+	providerName := strings.TrimSpace(instanceName.String)
+	if providerName == "" {
+		providerName = "Jira"
+	}
+	providerConfig, err := json.Marshal(map[string]interface{}{
+		"base_url":      strings.TrimRight(instanceURL, "/"),
+		"connection_id": connectionID,
+		"managed_by":    "jira_import",
+	})
+	if err != nil {
+		return fmt.Errorf("encode Jira provider configuration: %w", err)
+	}
+	if _, err := h.db.ExecWrite(`
+		INSERT INTO integration_providers (
+			id, slug, name, provider_type, enabled, provider_config, created_at, updated_at
+		)
+		VALUES (?, ?, ?, 'jira', true, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		ON CONFLICT(id) DO UPDATE SET
+			name = excluded.name,
+			enabled = true,
+			provider_config = excluded.provider_config,
+			updated_at = CURRENT_TIMESTAMP
+	`, providerID, providerID, providerName, string(providerConfig)); err != nil {
+		return fmt.Errorf("ensure Jira integration provider: %w", err)
+	}
+
+	externalURL := strings.TrimRight(instanceURL, "/") + "/browse/" + url.PathEscape(externalKey)
+	relation := strings.TrimSpace(typeName)
+	if direction == "outward" {
+		if phrase, _ := sourceMetadata["outward"].(string); strings.TrimSpace(phrase) != "" {
+			relation = strings.TrimSpace(phrase)
+		}
+	} else if phrase, _ := sourceMetadata["inward"].(string); strings.TrimSpace(phrase) != "" {
+		relation = strings.TrimSpace(phrase)
+	}
+	title := externalKey
+	if relation != "" {
+		title = relation + ": " + externalKey
+	}
+	linkMetadata, err := json.Marshal(map[string]interface{}{
+		"jira_issue_key":  externalKey,
+		"local_issue_key": itemKey,
+		"jira_link_type":  typeName,
+		"direction":       direction,
+		"source":          "jira_import",
+	})
+	if err != nil {
+		return fmt.Errorf("encode Jira external link metadata: %w", err)
+	}
+
+	var existingID string
+	queryErr := h.db.QueryRow(`
+		SELECT id FROM item_integration_links
+		WHERE item_id = ? AND integration_provider_id = ? AND external_id = ?
+	`, strconv.Itoa(itemID), providerID, externalKey).Scan(&existingID)
+	wasCreated := errors.Is(queryErr, sql.ErrNoRows)
+	if queryErr != nil && !wasCreated {
+		return fmt.Errorf("find existing Jira external link: %w", queryErr)
+	}
+	linkID := existingID
+	if linkID == "" {
+		linkID = uuid.NewString()
+	}
+	linkedBy := "jira-import"
+	if createdBy.Valid {
+		linkedBy = strconv.FormatInt(createdBy.Int64, 10)
+	}
+	if _, err := h.db.ExecWrite(`
+		INSERT INTO item_integration_links (
+			id, item_id, integration_provider_id, external_id, external_url,
+			title, icon, link_type, link_metadata, linked_by, created_at, updated_at
+		)
+		VALUES (?, ?, ?, ?, ?, ?, 'ExternalLink', 'jira_issue', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		ON CONFLICT(item_id, integration_provider_id, external_id) DO UPDATE SET
+			external_url = excluded.external_url,
+			title = excluded.title,
+			link_metadata = excluded.link_metadata,
+			updated_at = CURRENT_TIMESTAMP
+	`, linkID, strconv.Itoa(itemID), providerID, externalKey, externalURL,
+		sanitize.PlainTextField.Sanitize(title), string(linkMetadata), linkedBy); err != nil {
+		return fmt.Errorf("upsert Jira external issue link: %w", err)
+	}
+	h.recordMapping(jobID, "external_issue_link",
+		itemKey+":"+direction+":"+typeName+":"+externalKey,
+		externalKey,
+		itemID,
+		map[string]interface{}{
+			"integration_link_id": linkID,
+			"provider_id":         providerID,
+			"was_created":         wasCreated,
+		},
+	)
+	return nil
 }
 
 // ensureLinkType finds or creates a link type matching the Jira link type
@@ -1773,23 +2246,70 @@ func (h *JiraImportHandler) importWorklogs(jobID string, itemID int, issue *jira
 		}
 
 		var worklogID int64
-		err := h.db.QueryRow(`
-			INSERT INTO time_worklogs (project_id, customer_id, user_id, item_id, description, date, start_time, end_time, duration_minutes, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
-		`, *timeProjectID, customerID, userID, itemID, description, date.Unix(), started.Unix(), end.Unix(), durationMinutes, createdAt, updatedAt).Scan(&worklogID)
-		if err != nil {
+		var importErr error
+		previousMapping, lookupErr := h.findPreviousJiraImportMapping(jobID, "worklog", worklog.ID)
+		if lookupErr != nil {
+			slog.Warn("Failed to find prior Jira worklog mapping",
+				slog.String("component", "jira"),
+				slog.String("worklogID", worklog.ID),
+				slog.Any("error", lookupErr))
+			previousMapping = nil
+		}
+		if previousMapping != nil {
+			var exists bool
+			if lookupErr := h.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM time_worklogs WHERE id = ?)`, previousMapping.WindshiftID).Scan(&exists); lookupErr != nil || !exists {
+				previousMapping = nil
+			}
+		}
+		if previousMapping != nil {
+			_, importErr = h.db.ExecWrite(`
+				UPDATE time_worklogs
+				SET project_id = ?, customer_id = ?, user_id = ?, item_id = ?,
+				    description = ?, date = ?, start_time = ?, end_time = ?,
+				    duration_minutes = ?, created_at = ?, updated_at = ?
+				WHERE id = ?
+			`, *timeProjectID, customerID, userID, itemID, description, date.Unix(),
+				started.Unix(), end.Unix(), durationMinutes, createdAt, updatedAt,
+				previousMapping.WindshiftID)
+			worklogID = int64(previousMapping.WindshiftID)
+		} else {
+			importErr = h.db.QueryRow(`
+				INSERT INTO time_worklogs (project_id, customer_id, user_id, item_id, description, date, start_time, end_time, duration_minutes, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+			`, *timeProjectID, customerID, userID, itemID, description, date.Unix(), started.Unix(), end.Unix(), durationMinutes, createdAt, updatedAt).Scan(&worklogID)
+		}
+		if importErr != nil {
 			slog.Error("Failed to import Jira worklog",
 				slog.String("component", "jira"),
 				slog.String("issue", issue.Key),
 				slog.String("worklogID", worklog.ID),
-				slog.Any("error", err))
+				slog.Any("error", importErr))
 			continue
 		}
 
-		h.recordMapping(jobID, "worklog", worklog.ID, issue.Key, int(worklogID), map[string]any{
+		worklogMeta := map[string]any{
 			"time_spent_seconds": worklog.TimeSpentSeconds,
 			"started":            started.UTC().Format(time.RFC3339),
-		})
+		}
+		if author := jiraUserIdentityMetadata(worklog.Author); len(author) > 0 {
+			worklogMeta["author"] = author
+		} else {
+			worklogMeta["author_resolution"] = "anonymous"
+		}
+		if previousMapping != nil {
+			ownsWorklog, transferErr := h.transferJiraImportMappingOwnership(previousMapping, jobID)
+			if transferErr != nil {
+				slog.Warn("Failed to transfer Jira worklog mapping ownership",
+					slog.String("component", "jira"),
+					slog.String("worklogID", worklog.ID),
+					slog.Any("error", transferErr))
+			} else {
+				worklogMeta["action"] = "update_existing"
+				worklogMeta["was_created"] = ownsWorklog
+				worklogMeta["reimported_from_job_id"] = previousMapping.JobID
+			}
+		}
+		h.recordMapping(jobID, "worklog", worklog.ID, issue.Key, int(worklogID), worklogMeta)
 		if progress != nil {
 			progress.ImportedWorklogs++
 		}
@@ -1830,6 +2350,49 @@ func (h *JiraImportHandler) importAttachments(ctx context.Context, jobID string,
 		}
 
 		progress.TotalAttachments++
+
+		previousMapping, lookupErr := h.findPreviousJiraImportMapping(jobID, "attachment", attachment.ID)
+		if lookupErr != nil {
+			slog.Warn("Failed to find prior Jira attachment mapping",
+				slog.String("component", "jira"),
+				slog.String("attachmentID", attachment.ID),
+				slog.Any("error", lookupErr))
+			previousMapping = nil
+		}
+		if previousMapping != nil {
+			var mimeType, originalFilename string
+			var exists bool
+			if lookupErr := h.db.QueryRow(`
+				SELECT EXISTS(SELECT 1 FROM attachments WHERE id = ?)
+			`, previousMapping.WindshiftID).Scan(&exists); lookupErr != nil || !exists {
+				previousMapping = nil
+			} else if lookupErr := h.db.QueryRow(`
+				SELECT mime_type, original_filename FROM attachments WHERE id = ?
+			`, previousMapping.WindshiftID).Scan(&mimeType, &originalFilename); lookupErr == nil {
+				if _, updateErr := h.db.ExecWrite(`
+					UPDATE attachments SET item_id = ?, entity_type = 'item' WHERE id = ?
+				`, itemID, previousMapping.WindshiftID); updateErr == nil {
+					ownsAttachment, transferErr := h.transferJiraImportMappingOwnership(previousMapping, jobID)
+					if transferErr == nil {
+						metadata := jiraImportMappingMetadata(previousMapping.Metadata)
+						if metadata == nil {
+							metadata = make(map[string]interface{})
+						}
+						metadata["action"] = "reuse_existing_mapping"
+						metadata["was_created"] = ownsAttachment
+						metadata["reimported_from_job_id"] = previousMapping.JobID
+						h.recordMapping(jobID, "attachment", attachment.ID, issue.Key, previousMapping.WindshiftID, metadata)
+						mediaRefs[attachment.ID] = jira.MediaAttachment{
+							ID:               previousMapping.WindshiftID,
+							MimeType:         mimeType,
+							OriginalFilename: originalFilename,
+						}
+						progress.ImportedAttachments++
+						continue
+					}
+				}
+			}
+		}
 
 		// Download the attachment
 		reader, _, err := client.DownloadAttachment(ctx, attachment.Content)

@@ -179,6 +179,10 @@ func MapJiraFieldToWindshift(field JiraCustomField) FieldMappingSuggestion {
 		} else {
 			addJiraChoiceMappingNote(&suggestion)
 		}
+		if jiraFieldIsDateTime(field) {
+			suggestion.Notes = strings.TrimSpace(suggestion.Notes +
+				" Jira datetime values retain their RFC3339 timestamp in storage, but Windshift's date field renders calendar-date semantics; time-of-day editing is lossy.")
+		}
 		return suggestion
 	}
 
@@ -226,6 +230,10 @@ func MapJiraFieldToWindshift(field JiraCustomField) FieldMappingSuggestion {
 			suggestion.Notes = "App-owned Jira value has no proven native shape and will be preserved as JSON text."
 		}
 		addJiraChoiceMappingNote(&suggestion)
+		if jiraFieldIsDateTime(field) {
+			suggestion.Notes = strings.TrimSpace(suggestion.Notes +
+				" Jira datetime values retain their RFC3339 timestamp in storage, but Windshift's date field renders calendar-date semantics; time-of-day editing is lossy.")
+		}
 		return suggestion
 	}
 
@@ -252,6 +260,14 @@ func addJiraChoiceMappingNote(suggestion *FieldMappingSuggestion) {
 	}
 	const note = " Populated option labels will be normalized to stable Windshift option IDs before issue import."
 	suggestion.Notes = strings.TrimSpace(suggestion.Notes + note)
+}
+
+func jiraFieldIsDateTime(field JiraCustomField) bool {
+	if field.Schema == nil {
+		return false
+	}
+	return strings.EqualFold(field.Schema.Type, "datetime") ||
+		strings.EqualFold(field.Schema.Custom, "com.atlassian.jira.plugin.system.customfieldtypes:datetime")
 }
 
 // StatusCategoryColorMap maps Jira status category colors to hex codes

@@ -2,7 +2,8 @@
 
 Verification date: 2026-07-30
 
-Primary work items: WI-225, WI-226, WI-229, and WI-234.
+Primary work items: WI-225, WI-226, WI-229, WI-232, WI-233, WI-234,
+WI-235, and WI-236.
 
 ## Conclusion
 
@@ -13,13 +14,15 @@ were structural rather than isolated missing type aliases:
 1. **Closed by the WI-226 0.8.4 fidelity pass:** custom fields unknown to the
    hard-coded allowlist were removed before the wizard could inspect or
    preserve them;
-2. **Closed for populated values by the WI-226 0.8.4 fidelity pass:** select
+2. **Closed by the WI-226 0.8.4 fidelity pass:** select
    and multiselect definitions were created without Jira options while
    imported item values were stored as display strings, although Windshift
-   choice fields use numeric option IDs. Configured but unused Jira options
-   remain part of the context/configuration follow-up;
-3. **Open:** custom-field contexts, defaults, applicability, requiredness, and
-   context-specific options are not imported;
+   choice fields use numeric option IDs. Both observed and configured-but-unused
+   Jira options now receive stable Windshift option IDs;
+3. **Closed with an explicit model boundary:** custom-field contexts, defaults,
+   project/issue-type applicability, disabled options, and cascading parent
+   relationships are preserved in import metadata. Windshift fields remain
+   global, so source applicability is reported rather than falsely enforced;
 4. **Closed by WI-229:** the workflow importer did not read a Jira workflow
    graph and created every non-self status pair as a transition;
 5. **Closed conservatively by WI-229:** Jira workflow conditions, validators,
@@ -39,7 +42,7 @@ were structural rather than isolated missing type aliases:
 This document originally established that WI-229 was substantively
 unimplemented. The 0.8.4 implementation described below closes the workflow
 graph and company-managed screen slices while retaining this audit as the
-baseline for the remaining custom-field and rule-conversion work.
+baseline for the remaining rule-conversion model boundaries.
 
 ## 0.8.4 WI-229 implementation
 
@@ -85,7 +88,8 @@ widening the base Jira client contract:
 This implementation did not itself close the custom-field slices in WI-225.
 The subsequent WI-226 0.8.4 implementation below closes unknown field
 visibility, populated choice option/value normalization, and raw preservation.
-Contexts, defaults, and configured-but-unused options remain follow-up work.
+The subsequent WI-226 pass also imports contexts, defaults, applicability, and
+configured-but-unused options as described below.
 
 ## 0.8.4 WI-226 custom-field fidelity implementation
 
@@ -114,6 +118,15 @@ a value and importing a valid, editable Windshift custom field:
   marks opaque JSON preservation as lossy rather than clean, and completed job
   results include custom-field source identity, target identity, option counts,
   and preservation metadata.
+- Jira Cloud configuration reads retain every context, its project and
+  issue-type applicability, defaults, disabled options, and cascading parent
+  relationships. Fields that reject the option or default endpoint retain the
+  rest of their configuration and report only that unavailable slice.
+- Jira contexts cannot be enforced by Windshift's global custom-field model.
+  They are therefore retained on the field mapping and used to bind fields only
+  to applicable imported project screens; the job report states the boundary.
+- Jira datetime values retain RFC3339 text, while readiness and the final
+  report identify Windshift's date-only editing model as lossy.
 
 The opt-in read-only live contract check was run against both projects in the
 saved Storymap Premium configuration:
@@ -123,13 +136,39 @@ saved Storymap Premium configuration:
   and populated labels were discovered for 9 of 32 choice fields.
 - `SP`: 85 project fields, including 47 plugin types outside the explicit
   mapping table; all remained visible and 19 received raw-preservation
-  mappings. Its four issues did not populate the 22 applicable choice fields,
-  which correctly produced no invented options.
+  mappings. Its four issues did not populate the 22 applicable choice fields.
+  The live configuration read nevertheless imported 22 contexts, 110
+  configured options, and 18 defaults. Two watched issues exposed two
+  importable watcher identities.
 
-Remaining custom-field configuration work is explicit: fetch Jira contexts,
-defaults, and configured options that are not observed on imported issues;
-preserve project/issue-type applicability even though Windshift fields are
-global; and make datetime precision loss visible as a dedicated conversion.
+## 0.8.4 follow-up hardening
+
+The final live/browser pass closed five concrete gaps without widening the
+intentional Jira/Windshift model boundaries:
+
+- Jira Cloud initial workflow transitions may include a link with an empty
+  source reference. Initial transitions are source-less by definition, so the
+  client now ignores their source links while continuing to reject unknown
+  sources on directed transitions. This keeps Jira Service Management `Create`
+  transitions authoritative instead of falling the entire project back to
+  status membership.
+- Team-managed projects are importable from the wizard. Their issue data,
+  hierarchy, observed custom fields, and other supported entities use the same
+  import path; the mapping UI and job report explicitly state that Jira does
+  not expose company-managed workflow/screen schemes for those projects, so
+  Windshift creates conservative configuration.
+- Every durable import configuration now carries a deterministic SHA-256 plan
+  fingerprint over normalized scope and mappings. Connection identity,
+  force-reimport control flow, volatile issue counts, acknowledgement state,
+  and Xray secrets do not affect the fingerprint. Conflict responses identify
+  configuration drift, and forced re-import results retain the current
+  fingerprint plus prior import evidence.
+- Cloud and Data Center read requests retry Jira `429` and `503` responses up
+  to three times. `Retry-After` is honored when present; otherwise a bounded
+  exponential delay is used. Request bodies are recreated for Jira's allowed
+  read-only POST endpoints.
+- Readiness describes out-of-scope Jira issue references as durable integration
+  links, matching execution rather than the obsolete dropped-link behavior.
 
 ## 0.8.4 Jira Rank and durable issue-key implementation
 
@@ -165,7 +204,68 @@ item through the declared Jira Key custom field. The read-only Storymap Premium
 check confirms that project `SP` accepts the Rank-ordered JQL without requiring
 the fallback.
 
-## Verified baseline behavior
+## 0.8.4 durable re-import, identity, and content
+
+Forced re-import is now an update operation keyed by the stable Jira issue ID:
+
+- an existing imported item keeps its Windshift ID and workspace item number;
+  mutable fields are reconciled and its native fractional index is regenerated
+  in the new Jira Rank sequence;
+- comment and worklog rows update by stable Jira IDs; attachment mappings and
+  immutable files are reused; internal-link and cleanup ownership moves to the
+  newest job so deleting an older import cannot remove current data;
+- links to issues outside the selected scope become item-facing Jira
+  integration links with browse URLs and relation metadata;
+- the conflict response remains the safety gate. The wizard offers an explicit
+  **Re-import and update** action rather than overloading a normal import.
+
+User collection covers creator, reporter, assignee, comment/update authors,
+attachment and worklog authors, user fields, ADF mentions, voters, and
+watchers. Watcher identities become native `item_watches`. Hidden-email
+accounts retain deterministic synthetic identities. Deleted and anonymous
+people use the shared fallback user where a foreign key is required while
+their display identity remains in item/entity mapping metadata.
+
+The WI-232 content contract is verified end to end: paged comments and
+worklogs are completed; JSM comment visibility fails closed; restricted Jira
+visibility becomes a private Windshift comment with its original scope
+retained; supported ADF blocks convert to Markdown; and description/comment
+media nodes link to the imported attachment.
+
+## 0.8.4 Assets and collaboration fidelity
+
+Jira Assets schemas, types, attributes, and objects continue to import as
+Windshift asset sets, types, fields, and assets. The final fidelity pass adds:
+
+- all Jira object types—including abstract nodes—as a native asset-category
+  hierarchy, with concrete objects assigned to the matching category;
+- Jira object-reference attributes as typed asset fields, resolved after all
+  objects are created so forward references work;
+- Jira user attributes as typed user fields using the same deterministic Jira
+  identity mapping;
+- Jira object statuses as Windshift asset statuses;
+- raw display preservation and an explicit job finding for references that
+  cannot be resolved.
+
+For the remaining WI-236 collaboration features:
+
+- votes and available voter identities are retained as item metadata because
+  Windshift has no voting model;
+- issue-security levels are retained as metadata and deliberately do not
+  broaden or rewrite workspace access;
+- project roles and permission schemes are explicitly unsupported because
+  Windshift role/grant semantics are not equivalent;
+- JSM request types, request participants, portals, organizations, and portal
+  customers use their native Windshift models;
+- SLA values are preserved, while calendars, goals, pause conditions, and
+  running timers are reported as unsupported runtime semantics.
+
+Every completed job returns `fidelity_findings` with a code, severity,
+disposition, explanation, and count where applicable. Unsupported and
+permission-unavailable behavior is therefore visible without granting broader
+access or inventing source semantics.
+
+## Original verified baseline behavior (historical)
 
 ### Custom fields
 
@@ -532,8 +632,8 @@ Report counts and source identities for:
 - screens, tabs flattened, fields hidden/required, and context assignments;
 - APIs forbidden or unavailable.
 
-The final job should persist the plan fingerprint and report so a re-import can
-detect configuration drift.
+The final job persists the normalized plan fingerprint and prior-import
+comparison so a re-import exposes configuration drift.
 
 ## Delivery slices
 

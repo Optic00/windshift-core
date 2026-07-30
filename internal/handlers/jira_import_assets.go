@@ -31,6 +31,7 @@ func (h *JiraImportHandler) importJiraAssets(ctx context.Context, jobID string, 
 	}
 
 	setNames := jiraAssetSetNames(schemas)
+	var pendingReferences []jiraPendingAssetReference
 	for _, schema := range schemas {
 		setID, ok := h.ensureJiraAssetSet(jobID, schema, setNames[schema.ID], createdByUserID)
 		if !ok {
@@ -38,9 +39,21 @@ func (h *JiraImportHandler) importJiraAssets(ctx context.Context, jobID string, 
 		}
 		typeMap := h.ensureJiraAssetTypes(ctx, jobID, client, setID, schema)
 		for objectTypeID, importedType := range typeMap {
-			h.importJiraAssetObjectsForType(ctx, jobID, client, setID, importedType.AssetTypeID, schema.ID, objectTypeID, importedType.AttributeFieldIDs)
+			pendingReferences = append(pendingReferences, h.importJiraAssetObjectsForType(
+				ctx,
+				jobID,
+				client,
+				setID,
+				importedType.AssetTypeID,
+				importedType.CategoryID,
+				schema.ID,
+				objectTypeID,
+				importedType.Attributes,
+				importedType.AttributeFieldIDs,
+			)...)
 		}
 	}
+	h.resolveJiraAssetReferences(jobID, pendingReferences)
 }
 
 func jiraAssetSetNames(schemas []jira.AssetObjectSchema) map[string]string {
@@ -159,7 +172,18 @@ func (h *JiraImportHandler) grantJiraAssetSetAdmin(setID, userID int) {
 
 type jiraAssetTypeImport struct {
 	AssetTypeID       int
+	CategoryID        int
+	Attributes        map[string]jira.AssetObjectAttribute
 	AttributeFieldIDs map[string]int
+}
+
+type jiraPendingAssetReference struct {
+	AssetID     int
+	SetID       int
+	FieldID     int
+	AttributeID string
+	Multiple    bool
+	Values      []jira.AssetAttributeValue
 }
 
 type jiraIssueAssetReference struct {
@@ -314,6 +338,7 @@ func (h *JiraImportHandler) ensureJiraAssetTypes(ctx context.Context, jobID stri
 		return result
 	}
 
+	categoryIDs := h.ensureJiraAssetTypeCategories(jobID, setID, objectTypes)
 	for _, objectType := range objectTypes {
 		if objectType.AbstractObjectType {
 			continue
@@ -323,6 +348,7 @@ func (h *JiraImportHandler) ensureJiraAssetTypes(ctx context.Context, jobID stri
 			continue
 		}
 		attrFieldIDs := make(map[string]int)
+		attrsByID := make(map[string]jira.AssetObjectAttribute)
 
 		attrs, err := client.GetObjectTypeAttributes(ctx, objectType.ID)
 		if err != nil {
@@ -330,15 +356,118 @@ func (h *JiraImportHandler) ensureJiraAssetTypes(ctx context.Context, jobID stri
 			continue
 		}
 		for _, attr := range attrs {
-			fieldID, ok := h.ensureJiraAssetAttributeField(objectType, attr)
+			attrsByID[attr.ID] = attr
+			fieldID, ok := h.ensureJiraAssetAttributeField(jobID, setID, objectType, attr)
 			if ok {
 				h.linkJiraAssetTypeField(assetTypeID, fieldID, attr)
 				attrFieldIDs[attr.ID] = fieldID
 			}
 		}
-		result[objectType.ID] = jiraAssetTypeImport{AssetTypeID: assetTypeID, AttributeFieldIDs: attrFieldIDs}
+		result[objectType.ID] = jiraAssetTypeImport{
+			AssetTypeID:       assetTypeID,
+			CategoryID:        categoryIDs[objectType.ID],
+			Attributes:        attrsByID,
+			AttributeFieldIDs: attrFieldIDs,
+		}
 	}
 	return result
+}
+
+func (h *JiraImportHandler) ensureJiraAssetTypeCategories(
+	jobID string,
+	setID int,
+	objectTypes []jira.AssetObjectType,
+) map[string]int {
+	result := make(map[string]int, len(objectTypes))
+	pending := append([]jira.AssetObjectType{}, objectTypes...)
+	for len(pending) > 0 {
+		next := make([]jira.AssetObjectType, 0, len(pending))
+		progress := false
+		for _, objectType := range pending {
+			parentID := 0
+			if objectType.ParentObjectTypeID != "" {
+				var parentReady bool
+				parentID, parentReady = result[objectType.ParentObjectTypeID]
+				if !parentReady {
+					next = append(next, objectType)
+					continue
+				}
+			}
+			categoryID, ok := h.ensureJiraAssetTypeCategory(jobID, setID, parentID, objectType)
+			if ok {
+				result[objectType.ID] = categoryID
+			}
+			progress = true
+		}
+		if progress {
+			pending = next
+			continue
+		}
+		// A missing or cyclic Jira parent must not drop the remaining object
+		// types. Preserve them as roots and retain the unresolved parent ID in
+		// mapping metadata for the fidelity report.
+		for _, objectType := range next {
+			categoryID, ok := h.ensureJiraAssetTypeCategory(jobID, setID, 0, objectType)
+			if ok {
+				result[objectType.ID] = categoryID
+			}
+		}
+		break
+	}
+	return result
+}
+
+func (h *JiraImportHandler) ensureJiraAssetTypeCategory(
+	jobID string,
+	setID, parentID int,
+	objectType jira.AssetObjectType,
+) (int, bool) {
+	name := strings.TrimSpace(objectType.Name)
+	if name == "" {
+		name = "Jira Object Type " + objectType.ID
+	}
+	var parent any
+	if parentID > 0 {
+		parent = parentID
+	}
+	action := "reuse_existing"
+	var categoryID int
+	err := h.db.QueryRow(`
+		SELECT id FROM asset_categories
+		WHERE set_id = ? AND name = ?
+		  AND ((parent_id IS NULL AND ? IS NULL) OR parent_id = ?)
+		ORDER BY id LIMIT 1
+	`, setID, name, parent, parent).Scan(&categoryID)
+	if errors.Is(err, sql.ErrNoRows) {
+		repo := repository.NewAssetRepository(h.db)
+		var parentPtr *int
+		if parentID > 0 {
+			parentPtr = &parentID
+		}
+		categoryID, _, err = repo.CreateAssetCategory(repository.CreateAssetCategoryInput{
+			SetID:       setID,
+			Name:        name,
+			Description: strings.TrimSpace(objectType.Description),
+			ParentID:    parentPtr,
+		})
+		if err == nil {
+			action = "create"
+		}
+	}
+	if err != nil {
+		slog.Warn("Failed to ensure Jira asset type category",
+			slog.String("component", "jira"),
+			slog.String("objectTypeID", objectType.ID),
+			slog.Any("error", err))
+		return 0, false
+	}
+	h.recordMapping(jobID, "asset_category", objectType.ID, name, categoryID, map[string]any{
+		"asset_set_id":               setID,
+		"jira_parent_object_type_id": objectType.ParentObjectTypeID,
+		"abstract":                   objectType.AbstractObjectType,
+		"action":                     action,
+	})
+	return categoryID, true
 }
 
 func (h *JiraImportHandler) ensureJiraAssetType(jobID string, setID int, objectType jira.AssetObjectType) (int, bool) {
@@ -368,14 +497,23 @@ func (h *JiraImportHandler) ensureJiraAssetType(jobID string, setID int, objectT
 	return typeID, true
 }
 
-func (h *JiraImportHandler) ensureJiraAssetAttributeField(objectType jira.AssetObjectType, attr jira.AssetObjectAttribute) (int, bool) {
+func (h *JiraImportHandler) ensureJiraAssetAttributeField(jobID string, setID int, objectType jira.AssetObjectType, attr jira.AssetObjectAttribute) (int, bool) {
 	name := strings.TrimSpace(attr.Name)
 	if name == "" || attr.Hidden {
 		return 0, false
 	}
 	fieldName := fmt.Sprintf("Jira Assets %s: %s", strings.TrimSpace(objectType.Name), name)
 	fieldType := jiraAssetAttributeFieldType(attr)
+	options := ""
+	if fieldType == "asset" {
+		optionsBytes, _ := json.Marshal(map[string]any{
+			"asset_set_id": setID,
+			"multi":        attr.MaximumCardinality != 1,
+		})
+		options = string(optionsBytes)
+	}
 
+	action := "reuse_existing"
 	var fieldID int
 	err := h.db.QueryRow(`SELECT id FROM custom_field_definitions WHERE LOWER(name) = LOWER(?) AND field_type = ?`, fieldName, fieldType).Scan(&fieldID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -384,14 +522,24 @@ func (h *JiraImportHandler) ensureJiraAssetAttributeField(objectType jira.AssetO
 			INSERT INTO custom_field_definitions (name, field_type, description, required, options, display_order,
 			                                      applies_to_portal_customers, applies_to_customer_organisations,
 			                                      created_at, updated_at)
-			VALUES (?, ?, ?, ?, '', ?, false, false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING id
-		`, fieldName, fieldType, strings.TrimSpace(attr.Description), attr.MinimumCardinality > 0, attr.Position).Scan(&newID)
+			VALUES (?, ?, ?, ?, ?, ?, false, false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING id
+		`, fieldName, fieldType, strings.TrimSpace(attr.Description), attr.MinimumCardinality > 0, options, attr.Position).Scan(&newID)
 		fieldID = int(newID)
+		if err == nil {
+			action = "create"
+		}
 	}
 	if err != nil {
 		slog.Warn("Failed to ensure Jira asset attribute field", slog.String("component", "jira"), slog.String("attributeID", attr.ID), slog.Any("error", err))
 		return 0, false
 	}
+	h.recordMapping(jobID, "custom_field", attr.ID, fieldName, fieldID, map[string]any{
+		"asset_attribute": true,
+		"asset_set_id":    setID,
+		"object_type_id":  objectType.ID,
+		"jira_type":       attr.Type,
+		"action":          action,
+	})
 	return fieldID, true
 }
 
@@ -408,8 +556,16 @@ func (h *JiraImportHandler) linkJiraAssetTypeField(assetTypeID, fieldID int, att
 	}
 }
 
-func (h *JiraImportHandler) importJiraAssetObjectsForType(ctx context.Context, jobID string, client jira.Client, setID, assetTypeID int, schemaID, objectTypeID string, attributeFields map[string]int) {
-	statusID := h.ensureJiraAssetDefaultStatus(setID)
+func (h *JiraImportHandler) importJiraAssetObjectsForType(
+	ctx context.Context,
+	jobID string,
+	client jira.Client,
+	setID, assetTypeID, categoryID int,
+	schemaID, objectTypeID string,
+	attributes map[string]jira.AssetObjectAttribute,
+	attributeFields map[string]int,
+) []jiraPendingAssetReference {
+	var pending []jiraPendingAssetReference
 	for page := 1; ; page++ {
 		result, err := client.SearchObjects(ctx, jira.ObjectSearchOptions{
 			ObjectSchemaID:    schemaID,
@@ -420,33 +576,84 @@ func (h *JiraImportHandler) importJiraAssetObjectsForType(ctx context.Context, j
 		})
 		if err != nil {
 			slog.Warn("Failed to search Jira asset objects", slog.String("component", "jira"), slog.String("schemaID", schemaID), slog.String("objectTypeID", objectTypeID), slog.Int("page", page), slog.Any("error", err))
-			return
+			return pending
 		}
 		if result == nil || len(result.ObjectEntries) == 0 {
-			return
+			return pending
 		}
 		for _, object := range result.ObjectEntries {
-			h.importJiraAssetObject(jobID, setID, assetTypeID, statusID, attributeFields, object)
+			pending = append(pending, h.importJiraAssetObject(
+				ctx,
+				jobID,
+				client,
+				setID,
+				assetTypeID,
+				categoryID,
+				attributes,
+				attributeFields,
+				object,
+			)...)
 		}
 		if result.IsLast || len(result.ObjectEntries) < jiraAssetsPageSize {
-			return
+			return pending
 		}
 	}
 }
 
-func (h *JiraImportHandler) importJiraAssetObject(jobID string, setID, assetTypeID, statusID int, attributeFields map[string]int, object jira.AssetObject) {
+func (h *JiraImportHandler) importJiraAssetObject(
+	ctx context.Context,
+	jobID string,
+	client jira.Client,
+	setID, assetTypeID, categoryID int,
+	attributes map[string]jira.AssetObjectAttribute,
+	attributeFields map[string]int,
+	object jira.AssetObject,
+) []jiraPendingAssetReference {
 	if object.ID == "" {
-		return
+		return nil
 	}
 	if existingID := h.existingImportedJiraAsset(jobID, object.ID); existingID > 0 {
 		h.recordMapping(jobID, "asset", object.ID, object.ObjectKey, existingID, map[string]any{"action": "reuse_existing_mapping"})
-		return
+		return nil
 	}
 
 	customValues := make(map[string]any)
+	statusID := h.ensureJiraAssetDefaultStatus(setID)
+	userMap := h.ensureJiraAssetAttributeUsers(ctx, jobID, client, object)
+	var pendingAttributes []jiraPendingAssetReference
 	for _, attr := range object.Attributes {
 		fieldID := attributeFields[attr.ObjectTypeAttributeID]
 		if fieldID == 0 {
+			continue
+		}
+		definition := attributes[attr.ObjectTypeAttributeID]
+		for _, raw := range attr.ObjectAttributeValues {
+			if raw.Status != nil {
+				if mappedStatusID := h.ensureJiraAssetStatus(jobID, setID, *raw.Status); mappedStatusID > 0 {
+					statusID = mappedStatusID
+				}
+				break
+			}
+		}
+		switch jiraAssetAttributeFieldType(definition) {
+		case "asset":
+			if rawValue, ok := jiraAssetAttributeValue(attr); ok {
+				customValues["_jira_asset_attribute_"+attr.ObjectTypeAttributeID] = rawValue
+			}
+			pendingAttributes = append(pendingAttributes, jiraPendingAssetReference{
+				SetID:       setID,
+				FieldID:     fieldID,
+				AttributeID: attr.ObjectTypeAttributeID,
+				Multiple:    definition.MaximumCardinality != 1,
+				Values:      attr.ObjectAttributeValues,
+			})
+			continue
+		case "user":
+			if value, ok := jiraAssetUserAttributeValue(attr, userMap); ok {
+				customValues[strconv.Itoa(fieldID)] = value
+			} else if rawValue, rawOK := jiraAssetAttributeValue(attr); rawOK {
+				customValues["_jira_asset_attribute_"+attr.ObjectTypeAttributeID] = rawValue
+			}
 			continue
 		}
 		if value, ok := jiraAssetAttributeValue(attr); ok {
@@ -466,7 +673,7 @@ func (h *JiraImportHandler) importJiraAssetObject(jobID string, setID, assetType
 	}
 	if err := services.NewAssetService(h.db, repository.NewAssetRepository(h.db)).SanitizeCustomFieldTextValues(assetTypeID, customValues); err != nil {
 		slog.Warn("Failed to sanitize Jira asset custom field values", slog.String("component", "jira"), slog.String("objectID", object.ID), slog.Any("error", err))
-		return
+		return nil
 	}
 
 	customJSON := "{}"
@@ -498,19 +705,223 @@ func (h *JiraImportHandler) importJiraAssetObject(jobID string, setID, assetType
 	}
 	var assetID int64
 	err := h.db.QueryRow(`
-		INSERT INTO assets (set_id, asset_type_id, status_id, title, description, asset_tag, custom_field_values, import_job_id, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), COALESCE(?, CURRENT_TIMESTAMP)) RETURNING id
-	`, setID, assetTypeID, status, title, description, assetTag, customJSON, jobID, createdAt, updatedAt).Scan(&assetID)
+		INSERT INTO assets (set_id, asset_type_id, category_id, status_id, title, description, asset_tag, custom_field_values, import_job_id, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), COALESCE(?, CURRENT_TIMESTAMP)) RETURNING id
+	`, setID, assetTypeID, nullablePositiveInt(categoryID), status, title, description, assetTag, customJSON, jobID, createdAt, updatedAt).Scan(&assetID)
 	if err != nil {
 		slog.Warn("Failed to import Jira asset object", slog.String("component", "jira"), slog.String("objectID", object.ID), slog.String("objectKey", object.ObjectKey), slog.Any("error", err))
-		return
+		return nil
 	}
 
 	h.recordMapping(jobID, "asset", object.ID, object.ObjectKey, int(assetID), map[string]any{
 		"asset_set_id":  setID,
 		"asset_type_id": assetTypeID,
+		"category_id":   categoryID,
 		"label":         object.Label,
 	})
+	for idx := range pendingAttributes {
+		pendingAttributes[idx].AssetID = int(assetID)
+	}
+	return pendingAttributes
+}
+
+func nullablePositiveInt(value int) any {
+	if value > 0 {
+		return value
+	}
+	return nil
+}
+
+func (h *JiraImportHandler) ensureJiraAssetAttributeUsers(
+	ctx context.Context,
+	jobID string,
+	client jira.Client,
+	object jira.AssetObject,
+) map[string]int {
+	var users []JiraUserSummary
+	seen := make(map[string]bool)
+	for _, attr := range object.Attributes {
+		for _, raw := range attr.ObjectAttributeValues {
+			addJiraUserSummaryFromUser(raw.User, nil, &users, seen)
+		}
+	}
+	if len(users) == 0 {
+		return nil
+	}
+	userMap, _, err := h.ensureUsers(ctx, jobID, users, client)
+	if err != nil {
+		slog.Warn("Failed to ensure Jira Assets user attributes",
+			slog.String("component", "jira"),
+			slog.String("objectID", object.ID),
+			slog.Any("error", err))
+		return nil
+	}
+	return userMap
+}
+
+func jiraAssetUserAttributeValue(attr jira.AssetObjectAttributeValue, userMap map[string]int) (any, bool) {
+	for _, raw := range attr.ObjectAttributeValues {
+		if raw.User == nil {
+			continue
+		}
+		if userID := userMap[raw.User.GetIdentifier()]; userID > 0 {
+			return userID, true
+		}
+	}
+	return nil, false
+}
+
+func (h *JiraImportHandler) ensureJiraAssetStatus(jobID string, setID int, status jira.AssetStatus) int {
+	name := strings.TrimSpace(status.Name)
+	if name == "" {
+		return 0
+	}
+	action := "reuse_existing"
+	var statusID int
+	err := h.db.QueryRow(`
+		SELECT id FROM asset_statuses WHERE set_id = ? AND LOWER(name) = LOWER(?)
+		ORDER BY id LIMIT 1
+	`, setID, name).Scan(&statusID)
+	if errors.Is(err, sql.ErrNoRows) {
+		color := "#22c55e"
+		switch status.Category {
+		case 0:
+			color = "#ef4444"
+		case 2:
+			color = "#f59e0b"
+		}
+		var newID int64
+		err = h.db.QueryRow(`
+			INSERT INTO asset_statuses
+			       (set_id, name, color, description, is_default, display_order, created_at, updated_at)
+			VALUES (?, ?, ?, ?, false, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+			RETURNING id
+		`, setID, name, color, strings.TrimSpace(status.Description), status.Category).Scan(&newID)
+		statusID = int(newID)
+		if err == nil {
+			action = "create"
+		}
+	}
+	if err != nil {
+		slog.Warn("Failed to ensure Jira asset status",
+			slog.String("component", "jira"),
+			slog.String("jiraStatusID", status.ID),
+			slog.Any("error", err))
+		return 0
+	}
+	jiraStatusID := status.ID
+	if jiraStatusID == "" {
+		jiraStatusID = name
+	}
+	h.recordMapping(jobID, "asset_status", jiraStatusID, name, statusID, map[string]any{
+		"asset_set_id": setID,
+		"category":     status.Category,
+		"action":       action,
+	})
+	return statusID
+}
+
+func (h *JiraImportHandler) resolveJiraAssetReferences(
+	jobID string,
+	pending []jiraPendingAssetReference,
+) {
+	for _, reference := range pending {
+		refs := make([]jiraIssueAssetReference, 0, len(reference.Values))
+		seen := make(map[int]struct{}, len(reference.Values))
+		for _, raw := range reference.Values {
+			candidate := jiraAssetAttributeReferenceCandidate(raw)
+			resolved, ok := h.resolveJiraIssueAssetReference(jobID, candidate)
+			if !ok || resolved.SetID != reference.SetID {
+				continue
+			}
+			if _, exists := seen[resolved.AssetID]; exists {
+				continue
+			}
+			seen[resolved.AssetID] = struct{}{}
+			refs = append(refs, resolved)
+		}
+		if len(refs) < len(reference.Values) {
+			h.recordMapping(
+				jobID,
+				"fidelity_finding",
+				fmt.Sprintf("asset:%d:attribute:%s", reference.AssetID, reference.AttributeID),
+				"Unresolved Jira Assets references",
+				reference.AssetID,
+				map[string]any{
+					"code":           "jira_asset_reference_unresolved",
+					"severity":       "warning",
+					"disposition":    "preserved_raw",
+					"source_count":   len(reference.Values),
+					"resolved_count": len(refs),
+					"asset_id":       reference.AssetID,
+					"attribute_id":   reference.AttributeID,
+					"was_created":    false,
+				},
+			)
+		}
+		if len(refs) == 0 {
+			continue
+		}
+		var rawJSON string
+		if err := h.db.QueryRow(`
+			SELECT COALESCE(custom_field_values, '{}') FROM assets WHERE id = ?
+		`, reference.AssetID).Scan(&rawJSON); err != nil {
+			continue
+		}
+		values := make(map[string]any)
+		if err := json.Unmarshal([]byte(rawJSON), &values); err != nil {
+			values = make(map[string]any)
+		}
+		fieldKey := strconv.Itoa(reference.FieldID)
+		if reference.Multiple {
+			mapped := make([]map[string]any, 0, len(refs))
+			for _, ref := range refs {
+				mapped = append(mapped, assetCustomFieldValue(ref))
+			}
+			values[fieldKey] = mapped
+		} else {
+			values[fieldKey] = assetCustomFieldValue(refs[0])
+		}
+		encoded, err := json.Marshal(values)
+		if err != nil {
+			continue
+		}
+		if _, err := h.db.ExecWrite(`
+			UPDATE assets SET custom_field_values = ?, updated_at = updated_at WHERE id = ?
+		`, string(encoded), reference.AssetID); err != nil {
+			slog.Warn("Failed to resolve Jira Assets object reference",
+				slog.String("component", "jira"),
+				slog.Int("assetID", reference.AssetID),
+				slog.String("attributeID", reference.AttributeID),
+				slog.Any("error", err))
+		}
+	}
+}
+
+func jiraAssetAttributeReferenceCandidate(raw jira.AssetAttributeValue) jiraIssueAssetCandidate {
+	candidate := jiraIssueAssetCandidate{
+		Key:   strings.TrimSpace(raw.SearchValue),
+		Label: strings.TrimSpace(raw.DisplayValue),
+	}
+	switch value := raw.Value.(type) {
+	case map[string]interface{}:
+		candidate.ID = firstStringKey(value, "objectId", "objectID", "id")
+		if key := firstStringKey(value, "objectKey", "key", "globalId"); key != "" {
+			candidate.Key = key
+		}
+		if label := firstStringKey(value, "label", "name", "displayValue", "value"); label != "" {
+			candidate.Label = label
+		}
+	case string:
+		candidate.ID = strings.TrimSpace(value)
+	case float64:
+		candidate.ID = strconv.FormatInt(int64(value), 10)
+	case int:
+		candidate.ID = strconv.Itoa(value)
+	case int64:
+		candidate.ID = strconv.FormatInt(value, 10)
+	}
+	return candidate
 }
 
 func (h *JiraImportHandler) existingImportedJiraAsset(jobID, objectID string) int {
@@ -525,12 +936,21 @@ func (h *JiraImportHandler) existingImportedJiraAsset(jobID, objectID string) in
 }
 
 func jiraAssetAttributeFieldType(attr jira.AssetObjectAttribute) string {
-	if attr.Type != 0 {
+	switch attr.Type {
+	case 1:
+		return "asset"
+	case 2:
+		return "user"
+	case 0:
+		// Continue below for Jira's built-in scalar types.
+	default:
 		return "textarea"
 	}
 	switch attr.DefaultTypeID {
 	case 1, 3:
 		return "number"
+	case 2:
+		return "boolean"
 	case 4, 5:
 		return "date"
 	default:

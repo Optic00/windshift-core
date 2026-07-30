@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -103,6 +104,8 @@ type cloudClient struct {
 	authHeader     string
 	httpClient     *http.Client
 	limiter        *rate.Limiter
+	retryWait      func(context.Context, time.Duration) error
+	retryAttempts  int
 }
 
 // NewClient creates a new Jira API client.
@@ -351,35 +354,112 @@ func gatewayAuthProbe(gatewayBase, authHeader string, httpClient *http.Client) b
 
 // do performs an HTTP request with rate limiting
 func (c *cloudClient) do(ctx context.Context, method, reqURL string, body interface{}) (*http.Response, error) {
+	return doReadOnlyJiraRequest(
+		ctx, c.httpClient, c.limiter, c.authHeader, method, reqURL, body,
+		c.retryAttempts, c.retryWait,
+	)
+}
+
+const (
+	defaultJiraRetryAttempts = 3
+	jiraRetryBaseDelay       = 250 * time.Millisecond
+	jiraRetryMaxDelay        = 5 * time.Second
+)
+
+func doReadOnlyJiraRequest(
+	ctx context.Context,
+	httpClient *http.Client,
+	limiter *rate.Limiter,
+	authHeader string,
+	method string,
+	reqURL string,
+	body interface{},
+	retryAttempts int,
+	retryWait func(context.Context, time.Duration) error,
+) (*http.Response, error) {
 	if err := validateReadOnlyRequest(method, reqURL); err != nil {
 		return nil, err
 	}
-
-	// Wait for rate limiter
-	if err := c.limiter.Wait(ctx); err != nil {
-		return nil, err
-	}
-
-	var bodyReader io.Reader
+	var bodyBytes []byte
 	if body != nil {
-		bodyBytes, err := json.Marshal(body)
+		var err error
+		bodyBytes, err = json.Marshal(body)
 		if err != nil {
 			return nil, err
 		}
-		bodyReader = bytes.NewReader(bodyBytes)
+	}
+	if retryAttempts <= 0 {
+		retryAttempts = defaultJiraRetryAttempts
+	}
+	if retryWait == nil {
+		retryWait = waitForJiraRetry
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, reqURL, bodyReader)
-	if err != nil {
-		return nil, err
-	}
+	for attempt := 0; ; attempt++ {
+		if err := limiter.Wait(ctx); err != nil {
+			return nil, err
+		}
+		var bodyReader io.Reader
+		if bodyBytes != nil {
+			bodyReader = bytes.NewReader(bodyBytes)
+		}
+		req, err := http.NewRequestWithContext(ctx, method, reqURL, bodyReader)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", authHeader)
+		req.Header.Set("Accept", "application/json")
+		if bodyBytes != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		resp, err := httpClient.Do(req) //nolint:gosec // G704: URL constructed from configured Jira base URL
+		if err != nil {
+			return nil, err
+		}
+		if !jiraResponseIsRetryable(resp.StatusCode) || attempt >= retryAttempts {
+			return resp, nil
+		}
 
-	c.setHeaders(req)
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+		delay := jiraRetryDelay(resp.Header.Get("Retry-After"), attempt, time.Now())
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		_ = resp.Body.Close()
+		if err := retryWait(ctx, delay); err != nil {
+			return nil, err
+		}
 	}
+}
 
-	return c.httpClient.Do(req) //nolint:gosec // G704: URL constructed from configured Jira base URL
+func jiraResponseIsRetryable(status int) bool {
+	return status == http.StatusTooManyRequests || status == http.StatusServiceUnavailable
+}
+
+func jiraRetryDelay(retryAfter string, attempt int, now time.Time) time.Duration {
+	retryAfter = strings.TrimSpace(retryAfter)
+	if seconds, err := strconv.Atoi(retryAfter); err == nil && seconds >= 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	if retryAt, err := http.ParseTime(retryAfter); err == nil {
+		if delay := retryAt.Sub(now); delay > 0 {
+			return delay
+		}
+		return 0
+	}
+	delay := jiraRetryBaseDelay * time.Duration(1<<min(attempt, 4))
+	if delay > jiraRetryMaxDelay {
+		return jiraRetryMaxDelay
+	}
+	return delay
+}
+
+func waitForJiraRetry(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 // validateReadOnlyRequest prevents the Jira importer from ever mutating the
@@ -880,6 +960,220 @@ func (c *cloudClient) GetProjectFields(ctx context.Context, projectIDs []string)
 	return allFields, nil
 }
 
+type cloudFlexibleID string
+
+func (id *cloudFlexibleID) UnmarshalJSON(data []byte) error {
+	var text string
+	if err := json.Unmarshal(data, &text); err == nil {
+		*id = cloudFlexibleID(text)
+		return nil
+	}
+	var number json.Number
+	if err := json.Unmarshal(data, &number); err != nil {
+		return err
+	}
+	*id = cloudFlexibleID(number.String())
+	return nil
+}
+
+type cloudCustomFieldContext struct {
+	ID             cloudFlexibleID `json:"id"`
+	Name           string          `json:"name"`
+	Description    string          `json:"description"`
+	IsGlobal       bool            `json:"isGlobalContext"`
+	IsAnyIssueType bool            `json:"isAnyIssueType"`
+}
+
+type cloudCustomFieldProjectMapping struct {
+	ContextID       cloudFlexibleID `json:"contextId"`
+	ProjectID       string          `json:"projectId"`
+	IsGlobalContext bool            `json:"isGlobalContext"`
+}
+
+type cloudCustomFieldIssueTypeMapping struct {
+	ContextID      cloudFlexibleID `json:"contextId"`
+	IssueTypeID    string          `json:"issueTypeId"`
+	IsAnyIssueType bool            `json:"isAnyIssueType"`
+}
+
+type cloudCustomFieldOption struct {
+	ID       cloudFlexibleID `json:"id"`
+	Value    string          `json:"value"`
+	OptionID cloudFlexibleID `json:"optionId"`
+	Disabled bool            `json:"disabled"`
+}
+
+type cloudCustomFieldContextDefaults struct {
+	ContextID     cloudFlexibleID `json:"contextId"`
+	DefaultValues []struct {
+		IssueTypeID    string      `json:"issueTypeId"`
+		IsAnyIssueType bool        `json:"isAnyIssueType"`
+		Value          interface{} `json:"value"`
+	} `json:"defaultValues"`
+}
+
+func cloudPageValues[T any](ctx context.Context, c *cloudClient, endpoint string) ([]T, error) {
+	values := make([]T, 0)
+	startAt := 0
+	for {
+		separator := "?"
+		if strings.Contains(endpoint, "?") {
+			separator = "&"
+		}
+		pageURL := fmt.Sprintf("%s%sstartAt=%d&maxResults=100", endpoint, separator, startAt)
+		resp, err := c.do(ctx, http.MethodGet, pageURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode != http.StatusOK {
+			apiErr := c.handleErrorResponse(resp)
+			_ = resp.Body.Close()
+			return nil, apiErr
+		}
+		var page struct {
+			Values     []T  `json:"values"`
+			IsLast     bool `json:"isLast"`
+			Total      int  `json:"total"`
+			MaxResults int  `json:"maxResults"`
+			StartAt    int  `json:"startAt"`
+		}
+		decodeErr := json.NewDecoder(resp.Body).Decode(&page)
+		_ = resp.Body.Close()
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		values = append(values, page.Values...)
+		if page.IsLast || len(page.Values) == 0 || (page.Total > 0 && len(values) >= page.Total) {
+			return values, nil
+		}
+		startAt += len(page.Values)
+	}
+}
+
+// GetCustomFieldConfiguration reads every context, project/issue-type mapping,
+// default, and (for choice fields) option exposed by Jira Cloud. The endpoints
+// require Jira configuration permissions, so callers deliberately consume this
+// through the optional CustomFieldConfigurationClient capability.
+func (c *cloudClient) GetCustomFieldConfiguration(
+	ctx context.Context,
+	fieldID string,
+	includeOptions bool,
+) (*JiraCustomFieldConfiguration, error) {
+	fieldID = strings.TrimSpace(fieldID)
+	if fieldID == "" {
+		return nil, fmt.Errorf("%w: field ID is required", ErrCustomFieldConfigurationNotAvailable)
+	}
+	fieldPath := c.baseURL + "/field/" + url.PathEscape(fieldID) + "/context"
+	contexts, err := cloudPageValues[cloudCustomFieldContext](ctx, c, fieldPath)
+	if err != nil {
+		return nil, fmt.Errorf("%w: contexts for %s: %v", ErrCustomFieldConfigurationNotAvailable, fieldID, err)
+	}
+	projectMappings, err := cloudPageValues[cloudCustomFieldProjectMapping](ctx, c, fieldPath+"/projectmapping")
+	if err != nil {
+		return nil, fmt.Errorf("%w: project mappings for %s: %v", ErrCustomFieldConfigurationNotAvailable, fieldID, err)
+	}
+	issueTypeMappings, err := cloudPageValues[cloudCustomFieldIssueTypeMapping](ctx, c, fieldPath+"/issuetypemapping")
+	if err != nil {
+		return nil, fmt.Errorf("%w: issue-type mappings for %s: %v", ErrCustomFieldConfigurationNotAvailable, fieldID, err)
+	}
+	defaultGroups, err := cloudPageValues[cloudCustomFieldContextDefaults](ctx, c, fieldPath+"/defaultValues")
+	defaultsUnavailableReason := ""
+	if err != nil {
+		// Jira rejects this endpoint for several app-owned and picker fields.
+		// Context and applicability remain authoritative even when the field's
+		// default-value contract cannot be read.
+		defaultGroups = nil
+		defaultsUnavailableReason = err.Error()
+	}
+
+	result := &JiraCustomFieldConfiguration{
+		FieldID:                   fieldID,
+		Contexts:                  make([]JiraCustomFieldContext, 0, len(contexts)),
+		DefaultsUnavailableReason: defaultsUnavailableReason,
+	}
+	contextIndexes := make(map[string]int, len(contexts))
+	for _, source := range contexts {
+		contextID := string(source.ID)
+		contextIndexes[contextID] = len(result.Contexts)
+		result.Contexts = append(result.Contexts, JiraCustomFieldContext{
+			ID:             contextID,
+			Name:           source.Name,
+			Description:    source.Description,
+			IsGlobal:       source.IsGlobal,
+			IsAnyIssueType: source.IsAnyIssueType,
+		})
+	}
+	for _, mapping := range projectMappings {
+		index, ok := contextIndexes[string(mapping.ContextID)]
+		if !ok {
+			continue
+		}
+		if mapping.IsGlobalContext {
+			result.Contexts[index].IsGlobal = true
+		} else if mapping.ProjectID != "" {
+			result.Contexts[index].ProjectIDs = append(result.Contexts[index].ProjectIDs, mapping.ProjectID)
+		}
+	}
+	for _, mapping := range issueTypeMappings {
+		index, ok := contextIndexes[string(mapping.ContextID)]
+		if !ok {
+			continue
+		}
+		if mapping.IsAnyIssueType {
+			result.Contexts[index].IsAnyIssueType = true
+		} else if mapping.IssueTypeID != "" {
+			result.Contexts[index].IssueTypeIDs = append(result.Contexts[index].IssueTypeIDs, mapping.IssueTypeID)
+		}
+	}
+	for _, group := range defaultGroups {
+		index, ok := contextIndexes[string(group.ContextID)]
+		if !ok {
+			continue
+		}
+		for _, value := range group.DefaultValues {
+			result.Contexts[index].Defaults = append(result.Contexts[index].Defaults, JiraCustomFieldDefaultValue{
+				IssueTypeID:    value.IssueTypeID,
+				IsAnyIssueType: value.IsAnyIssueType,
+				Value:          value.Value,
+			})
+		}
+	}
+	if includeOptions {
+		for index := range result.Contexts {
+			contextID := result.Contexts[index].ID
+			options, optionErr := cloudPageValues[cloudCustomFieldOption](
+				ctx,
+				c,
+				fieldPath+"/"+url.PathEscape(contextID)+"/option",
+			)
+			if optionErr != nil {
+				// Not every field that Windshift represents as a select is backed
+				// by Jira's custom-field option model (group pickers are a common
+				// example). Keep the context/default/applicability contract and
+				// report only the option slice as unavailable.
+				result.Contexts[index].OptionsUnavailableReason = optionErr.Error()
+				continue
+			}
+			for _, option := range options {
+				result.Contexts[index].Options = append(result.Contexts[index].Options, JiraCustomFieldContextOption{
+					ID:             string(option.ID),
+					Value:          option.Value,
+					ParentOptionID: string(option.OptionID),
+					Disabled:       option.Disabled,
+				})
+			}
+		}
+	}
+	for index := range result.Contexts {
+		sort.Strings(result.Contexts[index].ProjectIDs)
+		sort.Strings(result.Contexts[index].IssueTypeIDs)
+	}
+	sort.SliceStable(result.Contexts, func(i, j int) bool {
+		return result.Contexts[i].ID < result.Contexts[j].ID
+	})
+	return result, nil
+}
+
 // ================================================================
 // Status Methods
 // ================================================================
@@ -1106,17 +1400,19 @@ func (c *cloudClient) GetProjectWorkflowConfiguration(
 			if len(transition.Rules) > 0 && string(transition.Rules) != "null" && string(transition.Rules) != "{}" {
 				configured.ConditionCount++
 			}
-			for _, link := range transition.Links {
-				fromStatusID, exists := statusIDsByReference[link.FromStatusReference]
-				if !exists {
-					return nil, fmt.Errorf(
-						"jira workflow %q transition %q references unknown source status %q",
-						source.Name,
-						transition.Name,
-						link.FromStatusReference,
-					)
+			if configured.Type != JiraWorkflowTransitionInitial {
+				for _, link := range transition.Links {
+					fromStatusID, exists := statusIDsByReference[link.FromStatusReference]
+					if !exists {
+						return nil, fmt.Errorf(
+							"jira workflow %q transition %q references unknown source status %q",
+							source.Name,
+							transition.Name,
+							link.FromStatusReference,
+						)
+					}
+					configured.FromStatusIDs = append(configured.FromStatusIDs, fromStatusID)
 				}
-				configured.FromStatusIDs = append(configured.FromStatusIDs, fromStatusID)
 			}
 			workflow.Transitions = append(workflow.Transitions, configured)
 		}
@@ -1489,6 +1785,28 @@ func (c *cloudClient) GetIssue(ctx context.Context, issueKey string, expand []st
 		return nil, err
 	}
 	return &issue, nil
+}
+
+// GetIssueWatchers returns the identities behind an issue's watcher count.
+// Jira can reject this request when the importing principal lacks the
+// "View Watchers and Voters" permission; callers preserve that distinction
+// instead of treating an unavailable list as an empty list.
+func (c *cloudClient) GetIssueWatchers(ctx context.Context, issueKey string) (*JiraIssueWatchers, error) {
+	resp, err := c.do(ctx, "GET", c.baseURL+"/issue/"+url.PathEscape(issueKey)+"/watchers", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.handleErrorResponse(resp)
+	}
+
+	var result JiraIssueWatchers
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 func (c *cloudClient) GetIssueComments(ctx context.Context, issueKey string, startAt, maxResults int) (*JiraCommentContainer, error) {

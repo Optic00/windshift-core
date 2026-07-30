@@ -348,10 +348,7 @@ export const jiraImport = {
   },
 
   selectAllProjects() {
-    // Only select company-managed projects (exclude team-managed)
-    projectsState.selected = projectsState.available
-      .filter((p) => !p.is_team_managed)
-      .map((p) => p.key);
+    projectsState.selected = projectsState.available.map((p) => p.key);
   },
 
   deselectAllProjects() {
@@ -423,6 +420,7 @@ export const jiraImport = {
       newWorkspaceKey: p.suggested_workspace_key || p.key,
       workspaceKeyCollisionFound: p.workspace_key_collision === true,
       keyAliasAcknowledged: false,
+      isTeamManaged: p.is_team_managed === true,
     }));
 
     // Deduplicate issue types by name (keep all Jira IDs for mapping during import)
@@ -627,7 +625,7 @@ export const jiraImport = {
   },
 
   // Start the import process
-  async startImport() {
+  async startImport(forceReimport = false) {
     if (!connectionState.connectionId || projectsState.selected.length === 0) return;
 
     importState.isImporting = true;
@@ -640,6 +638,7 @@ export const jiraImport = {
         connection_id: connectionState.connectionId,
         project_keys: projectsState.selected,
         open_issues_only: projectsState.openIssuesOnly,
+        force_reimport: forceReimport,
         mappings: mappingsState,
         xray: {
           import_tests: xrayState.available && xrayState.importTests,

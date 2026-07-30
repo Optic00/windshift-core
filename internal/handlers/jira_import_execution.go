@@ -209,15 +209,18 @@ func (h *JiraImportHandler) executeImportWithClientContext(ctx context.Context, 
 
 	h.importJiraAssets(ctx, jobID, client, createdByUserID)
 
-	issueKeysByProject, assetFieldSetIDs, assetFieldsByProject, choiceLabelsByField := h.preflightJiraCustomFields(
+	fieldConfigurations := loadJiraCustomFieldConfigurations(ctx, client, req.Mappings.CustomFields)
+	issueKeysByProject, assetFieldSetIDs, applicableFieldsByProject, choiceLabelsByField := h.preflightJiraCustomFields(
 		ctx, jobID, client, req.ProjectKeys, req.OpenIssuesOnly, req.Mappings.CustomFields,
 	)
+	mergeJiraConfiguredChoiceLabels(choiceLabelsByField, fieldConfigurations)
 	customFieldIDMap, choiceOptionIDs, err := h.ensureCustomFields(
 		ctx,
 		jobID,
 		req.Mappings.CustomFields,
 		assetFieldSetIDs,
 		choiceLabelsByField,
+		fieldConfigurations,
 	)
 	if err != nil {
 		slog.Error("Failed to ensure custom fields", slog.String("component", "jira"), slog.Any("error", err))
@@ -287,7 +290,7 @@ func (h *JiraImportHandler) executeImportWithClientContext(ctx context.Context, 
 				slog.Any("error", err))
 		}
 		if err = h.bindJiraImportFieldsToWorkspace(
-			jobID, workspaceID, projectKey, customFieldIDMap, req.Mappings.CustomFields, assetFieldsByProject[projectKey],
+			jobID, workspaceID, projectKey, customFieldIDMap, req.Mappings.CustomFields, applicableFieldsByProject[projectKey],
 		); err != nil {
 			slog.Error("Failed to bind Jira import fields to workspace screens",
 				slog.String("component", "jira"),
@@ -395,6 +398,7 @@ func (h *JiraImportHandler) executeImportWithClientContext(ctx context.Context, 
 						slog.String("issue", fetchResult.Issues[idx].Key),
 						slog.Any("error", err))
 				}
+				h.completeIssueWatchers(ctx, &fetchResult.Issues[idx], client)
 				if jsmImport != nil {
 					if err := h.annotateJiraServiceDeskCommentVisibility(ctx, &fetchResult.Issues[idx], client); err != nil {
 						slog.Warn("Failed to load Jira Service Management comment visibility",
@@ -427,6 +431,14 @@ func (h *JiraImportHandler) executeImportWithClientContext(ctx context.Context, 
 				addJiraUserSummaryFromUser(issue.Fields.Assignee, knownIdentityMap, &usersToProcess, usersSeen)
 				addJiraUserSummaryFromUser(issue.Fields.Reporter, knownIdentityMap, &usersToProcess, usersSeen)
 				addJiraUserSummaryFromUser(issue.Fields.Creator, knownIdentityMap, &usersToProcess, usersSeen)
+				for watcherIdx := range issue.Fields.Watchers {
+					addJiraUserSummaryFromUser(&issue.Fields.Watchers[watcherIdx], knownIdentityMap, &usersToProcess, usersSeen)
+				}
+				if issue.Fields.Votes != nil {
+					for voterIdx := range issue.Fields.Votes.Voters {
+						addJiraUserSummaryFromUser(&issue.Fields.Votes.Voters[voterIdx], knownIdentityMap, &usersToProcess, usersSeen)
+					}
+				}
 				collectUsersFromADF(issue.Fields.Description, knownIdentityMap, &usersToProcess, usersSeen)
 				if issue.Fields.Comment != nil {
 					for _, comment := range issue.Fields.Comment.Comments {
@@ -527,7 +539,7 @@ func (h *JiraImportHandler) executeImportWithClientContext(ctx context.Context, 
 					}
 					continue
 				}
-				err := h.importIssue(ctx, jobID, workspaceID, &issue, statusMap, itemTypeMap, userMap, usernameMap, portalCustomerMap, versionMap, iterationMap, customFieldIDMap, choiceOptionIDs, timeProjectID, affectsVersionField, req.Mappings.CustomFields, jsmImport, client, progress)
+				err := h.importIssue(ctx, jobID, workspaceID, &issue, statusMap, itemTypeMap, userMap, usernameMap, portalCustomerMap, versionMap, iterationMap, customFieldIDMap, choiceOptionIDs, timeProjectID, affectsVersionField, req.Mappings.CustomFields, jsmImport, client, progress, req.ForceReimport)
 				if err != nil {
 					slog.Error("Failed to import issue", slog.String("component", "jira"), slog.String("issue", issue.Key), slog.Any("error", err))
 					progress.FailedIssues++
@@ -554,6 +566,14 @@ func (h *JiraImportHandler) executeImportWithClientContext(ctx context.Context, 
 	h.updateJobStatus(jobID, "completed", "completed", progress, "")
 }
 
+type jiraImportFidelityFinding struct {
+	Code        string `json:"code"`
+	Severity    string `json:"severity"`
+	Disposition string `json:"disposition"`
+	Summary     string `json:"summary"`
+	Count       int    `json:"count,omitempty"`
+}
+
 func (h *JiraImportHandler) persistJiraImportResult(jobID string, progress *ImportProgress) {
 	type configurationEntity struct {
 		SourceID   string                 `json:"source_id"`
@@ -561,16 +581,25 @@ func (h *JiraImportHandler) persistJiraImportResult(jobID string, progress *Impo
 		TargetID   int                    `json:"target_id"`
 		Metadata   map[string]interface{} `json:"metadata"`
 	}
+	planFingerprint, configurationDrift, previousImports := h.jiraImportPlanResult(jobID)
 	result := struct {
-		Summary      *ImportProgress       `json:"summary"`
-		CustomFields []configurationEntity `json:"custom_fields"`
-		Workflows    []configurationEntity `json:"workflows"`
-		Screens      []configurationEntity `json:"screens"`
+		Summary            *ImportProgress             `json:"summary"`
+		PlanFingerprint    string                      `json:"plan_fingerprint,omitempty"`
+		ConfigurationDrift bool                        `json:"configuration_drift"`
+		PreviousImports    []jiraImportConflict        `json:"previous_imports,omitempty"`
+		CustomFields       []configurationEntity       `json:"custom_fields"`
+		Workflows          []configurationEntity       `json:"workflows"`
+		Screens            []configurationEntity       `json:"screens"`
+		Findings           []jiraImportFidelityFinding `json:"fidelity_findings"`
 	}{
-		Summary:      progress,
-		CustomFields: []configurationEntity{},
-		Workflows:    []configurationEntity{},
-		Screens:      []configurationEntity{},
+		Summary:            progress,
+		PlanFingerprint:    planFingerprint,
+		ConfigurationDrift: configurationDrift,
+		PreviousImports:    previousImports,
+		CustomFields:       []configurationEntity{},
+		Workflows:          []configurationEntity{},
+		Screens:            []configurationEntity{},
+		Findings:           h.jiraImportFidelityFindings(jobID),
 	}
 	rows, err := h.db.Query(`
 		SELECT entity_type, jira_id, jira_key, windshift_id, metadata_json
@@ -637,6 +666,283 @@ func (h *JiraImportHandler) persistJiraImportResult(jobID string, progress *Impo
 	}
 }
 
+func (h *JiraImportHandler) jiraImportPlanResult(jobID string) (
+	fingerprint string,
+	configurationDrift bool,
+	previousImports []jiraImportConflict,
+) {
+	var configJSON string
+	if err := h.db.QueryRow(`
+		SELECT config_json FROM jira_import_jobs WHERE id = ?
+	`, jobID).Scan(&configJSON); err != nil {
+		return "", false, nil
+	}
+	var config struct {
+		PlanFingerprint    string               `json:"plan_fingerprint"`
+		ConfigurationDrift bool                 `json:"configuration_drift"`
+		PreviousImports    []jiraImportConflict `json:"previous_imports"`
+	}
+	if json.Unmarshal([]byte(configJSON), &config) != nil {
+		return "", false, nil
+	}
+	return config.PlanFingerprint, config.ConfigurationDrift, config.PreviousImports
+}
+
+func (h *JiraImportHandler) jiraImportFidelityFindings(jobID string) []jiraImportFidelityFinding {
+	findings := []jiraImportFidelityFinding{
+		{
+			Code:        "jira_project_roles_not_imported",
+			Severity:    "warning",
+			Disposition: "unsupported",
+			Summary:     "Jira project roles are not copied because Windshift workspace roles and grants have different permission semantics.",
+		},
+		{
+			Code:        "jira_permission_schemes_not_imported",
+			Severity:    "warning",
+			Disposition: "unsupported",
+			Summary:     "Jira permission schemes are not converted into Windshift permissions; existing Windshift access controls remain authoritative.",
+		},
+	}
+	if _, drift, previousImports := h.jiraImportPlanResult(jobID); drift {
+		findings = append(findings, jiraImportFidelityFinding{
+			Code:        "jira_import_plan_changed",
+			Severity:    "warning",
+			Disposition: "converted",
+			Summary:     "The selected Jira scope or mapping plan changed since a previous import; the current plan fingerprint and prior imports are retained for review.",
+			Count:       len(previousImports),
+		})
+	}
+
+	itemRows, err := h.db.Query(`
+		SELECT COALESCE(i.custom_field_values, '{}')
+		FROM jira_import_id_mappings m
+		JOIN items i ON i.id = m.windshift_id
+		WHERE m.job_id = ? AND m.entity_type = 'item'
+	`, jobID)
+	if err == nil {
+		defer func() { _ = itemRows.Close() }()
+		voteCount := 0
+		securityCount := 0
+		watcherUnavailableCount := 0
+		for itemRows.Next() {
+			var raw string
+			if scanErr := itemRows.Scan(&raw); scanErr != nil {
+				continue
+			}
+			var values map[string]any
+			if json.Unmarshal([]byte(raw), &values) != nil {
+				continue
+			}
+			if _, ok := values["_jira_votes"]; ok {
+				voteCount++
+			}
+			if _, ok := values["_jira_security_level"]; ok {
+				securityCount++
+			}
+			if _, ok := values["_jira_watcher_fetch_error"]; ok {
+				watcherUnavailableCount++
+			}
+		}
+		_ = itemRows.Err()
+		if voteCount > 0 {
+			findings = append(findings, jiraImportFidelityFinding{
+				Code:        "jira_votes_preserved",
+				Severity:    "info",
+				Disposition: "preserved_metadata",
+				Summary:     "Jira votes and available voter identities were preserved as item metadata because Windshift has no voting model.",
+				Count:       voteCount,
+			})
+		}
+		if securityCount > 0 {
+			findings = append(findings, jiraImportFidelityFinding{
+				Code:        "jira_issue_security_preserved",
+				Severity:    "warning",
+				Disposition: "preserved_metadata",
+				Summary:     "Jira issue-security levels were preserved as item metadata and were not translated into broader Windshift workspace access.",
+				Count:       securityCount,
+			})
+		}
+		if watcherUnavailableCount > 0 {
+			findings = append(findings, jiraImportFidelityFinding{
+				Code:        "jira_watcher_identities_unavailable",
+				Severity:    "warning",
+				Disposition: "unavailable",
+				Summary:     "Jira exposed watcher counts but did not allow the importer to read all watcher identities.",
+				Count:       watcherUnavailableCount,
+			})
+		}
+	}
+
+	mappingRows, err := h.db.Query(`
+		SELECT entity_type, jira_key, metadata_json
+		FROM jira_import_id_mappings
+		WHERE job_id = ? AND entity_type IN ('custom_field', 'fidelity_finding')
+		ORDER BY entity_type, jira_id
+	`, jobID)
+	if err != nil {
+		return findings
+	}
+	defer func() { _ = mappingRows.Close() }()
+	rawFieldCount := 0
+	dateTimeCount := 0
+	slaCount := 0
+	for mappingRows.Next() {
+		var entityType, sourceName string
+		var metadataJSON sql.NullString
+		if scanErr := mappingRows.Scan(&entityType, &sourceName, &metadataJSON); scanErr != nil {
+			continue
+		}
+		metadata := jiraImportMappingMetadata(metadataJSON)
+		if entityType == "fidelity_finding" {
+			findings = append(findings, jiraImportFidelityFinding{
+				Code:        metadataString(metadata, "code"),
+				Severity:    metadataString(metadata, "severity"),
+				Disposition: metadataString(metadata, "disposition"),
+				Summary:     sourceName,
+				Count:       metadataInt(metadata, "source_count") - metadataInt(metadata, "resolved_count"),
+			})
+			continue
+		}
+		if preserved, _ := metadata["preserve_raw"].(bool); preserved {
+			rawFieldCount++
+		}
+		jiraType := strings.ToLower(metadataString(metadata, "jira_field_type"))
+		if strings.Contains(jiraType, "datetime") {
+			dateTimeCount++
+		}
+		if strings.Contains(jiraType, "sla") || strings.Contains(strings.ToLower(sourceName), "sla") {
+			slaCount++
+		}
+	}
+	if err := mappingRows.Err(); err != nil {
+		return findings
+	}
+	if rawFieldCount > 0 {
+		findings = append(findings, jiraImportFidelityFinding{
+			Code:        "jira_custom_fields_preserved_raw",
+			Severity:    "warning",
+			Disposition: "preserved_raw",
+			Summary:     "App-owned or complex Jira custom fields were preserved as raw JSON rather than converted to a guessed native type.",
+			Count:       rawFieldCount,
+		})
+	}
+	if dateTimeCount > 0 {
+		findings = append(findings, jiraImportFidelityFinding{
+			Code:        "jira_datetime_editing_lossy",
+			Severity:    "warning",
+			Disposition: "lossy",
+			Summary:     "Jira datetime values retain their timestamp text, but Windshift currently edits them through a date-only field model.",
+			Count:       dateTimeCount,
+		})
+	}
+	if slaCount > 0 {
+		findings = append(findings, jiraImportFidelityFinding{
+			Code:        "jira_service_sla_state_preserved",
+			Severity:    "warning",
+			Disposition: "preserved_raw",
+			Summary:     "Jira Service Management SLA values were preserved, but calendars, goals, pause conditions, and running timers were not recreated.",
+			Count:       slaCount,
+		})
+	}
+	return findings
+}
+
+func metadataString(metadata map[string]interface{}, key string) string {
+	value, _ := metadata[key].(string)
+	return value
+}
+
+func metadataInt(metadata map[string]interface{}, key string) int {
+	value, _ := numericMetadataInt(metadata[key])
+	return value
+}
+
+type jiraCustomFieldConfigurationCapture struct {
+	configuration     *jira.JiraCustomFieldConfiguration
+	unavailableReason string
+}
+
+func loadJiraCustomFieldConfigurations(
+	ctx context.Context,
+	client jira.Client,
+	mappings []CustomFieldMapping,
+) map[string]jiraCustomFieldConfigurationCapture {
+	captures := make(map[string]jiraCustomFieldConfigurationCapture)
+	capable, supported := client.(jira.CustomFieldConfigurationClient)
+	for _, mapping := range mappings {
+		if mapping.Action == "skip" || mapping.JiraID == "" {
+			continue
+		}
+		includeOptions := mapping.WindshiftType == string(jira.FieldTypeSelect) ||
+			mapping.WindshiftType == string(jira.FieldTypeMultiselect)
+		if !supported {
+			captures[mapping.JiraID] = jiraCustomFieldConfigurationCapture{
+				unavailableReason: jira.ErrCustomFieldConfigurationNotAvailable.Error(),
+			}
+			continue
+		}
+		configuration, err := capable.GetCustomFieldConfiguration(ctx, mapping.JiraID, includeOptions)
+		if err != nil {
+			slog.Warn("Jira custom-field configuration was unavailable",
+				slog.String("component", "jira"),
+				slog.String("jiraFieldID", mapping.JiraID),
+				slog.Any("error", err))
+			captures[mapping.JiraID] = jiraCustomFieldConfigurationCapture{
+				unavailableReason: err.Error(),
+			}
+			continue
+		}
+		captures[mapping.JiraID] = jiraCustomFieldConfigurationCapture{configuration: configuration}
+	}
+	return captures
+}
+
+func mergeJiraConfiguredChoiceLabels(
+	labelsByField map[string][]string,
+	captures map[string]jiraCustomFieldConfigurationCapture,
+) {
+	for fieldID, capture := range captures {
+		configuration := capture.configuration
+		if configuration == nil {
+			continue
+		}
+		labelsByKey := make(map[string]string)
+		for _, label := range labelsByField[fieldID] {
+			label = strings.TrimSpace(label)
+			if label != "" {
+				labelsByKey[strings.ToLower(label)] = label
+			}
+		}
+		for _, context := range configuration.Contexts {
+			optionValues := make(map[string]string, len(context.Options))
+			for _, option := range context.Options {
+				optionValues[option.ID] = strings.TrimSpace(option.Value)
+			}
+			for _, option := range context.Options {
+				label := strings.TrimSpace(option.Value)
+				if parent := optionValues[option.ParentOptionID]; parent != "" {
+					label = parent + " / " + label
+				}
+				if label == "" {
+					continue
+				}
+				key := strings.ToLower(label)
+				if _, exists := labelsByKey[key]; !exists {
+					labelsByKey[key] = label
+				}
+			}
+		}
+		labels := make([]string, 0, len(labelsByKey))
+		for _, label := range labelsByKey {
+			labels = append(labels, label)
+		}
+		sort.Slice(labels, func(i, j int) bool {
+			return strings.ToLower(labels[i]) < strings.ToLower(labels[j])
+		})
+		labelsByField[fieldID] = labels
+	}
+}
+
 // preflightJiraCustomFields resolves configuration that must exist before any
 // work item is written: Jira custom-field → Assets schema relationships and
 // the complete set of populated select/multiselect labels in the import scope.
@@ -655,11 +961,11 @@ func (h *JiraImportHandler) preflightJiraCustomFields(
 ) (
 	issueKeysByProject map[string][]string,
 	resolved map[string]int,
-	assetFieldsByProject map[string]map[string]bool,
+	applicableFieldsByProject map[string]map[string]bool,
 	choiceLabelsByField map[string][]string,
 ) {
 	issueKeysByProject = make(map[string][]string, len(projectKeys))
-	assetFieldsByProject = make(map[string]map[string]bool, len(projectKeys))
+	applicableFieldsByProject = make(map[string]map[string]bool, len(projectKeys))
 	assetMappings := make([]CustomFieldMapping, 0)
 	choiceMappings := make([]CustomFieldMapping, 0)
 	fieldIDs := make([]string, 0)
@@ -673,8 +979,6 @@ func (h *JiraImportHandler) preflightJiraCustomFields(
 			assetMappings = append(assetMappings, mapping)
 		case string(jira.FieldTypeSelect), string(jira.FieldTypeMultiselect):
 			choiceMappings = append(choiceMappings, mapping)
-		default:
-			continue
 		}
 		if !seenFieldIDs[mapping.JiraID] {
 			seenFieldIDs[mapping.JiraID] = true
@@ -688,12 +992,12 @@ func (h *JiraImportHandler) preflightJiraCustomFields(
 		if projectErr == nil && project != nil && !project.Simplified && project.Style != "next-gen" {
 			if fields, fieldsErr := client.GetProjectFields(ctx, []string{project.ID}); fieldsErr == nil {
 				for _, field := range fields {
-					for _, mapping := range assetMappings {
+					for _, mapping := range mappings {
 						if field.ID == mapping.JiraID {
-							if assetFieldsByProject[projectKey] == nil {
-								assetFieldsByProject[projectKey] = make(map[string]bool)
+							if applicableFieldsByProject[projectKey] == nil {
+								applicableFieldsByProject[projectKey] = make(map[string]bool)
 							}
-							assetFieldsByProject[projectKey][mapping.JiraID] = true
+							applicableFieldsByProject[projectKey][mapping.JiraID] = true
 						}
 					}
 				}
@@ -710,7 +1014,7 @@ func (h *JiraImportHandler) preflightJiraCustomFields(
 		issueKeysByProject[projectKey] = keys
 	}
 	if len(fieldIDs) == 0 {
-		return issueKeysByProject, map[string]int{}, assetFieldsByProject, map[string][]string{}
+		return issueKeysByProject, map[string]int{}, applicableFieldsByProject, map[string][]string{}
 	}
 
 	setCandidates := make(map[string]map[int]struct{}, len(assetMappings))
@@ -732,14 +1036,17 @@ func (h *JiraImportHandler) preflightJiraCustomFields(
 				continue
 			}
 			for _, issue := range result.Issues {
+				for _, mapping := range mappings {
+					if _, present := issue.Fields.CustomFields[mapping.JiraID]; !present {
+						continue
+					}
+					if applicableFieldsByProject[projectKey] == nil {
+						applicableFieldsByProject[projectKey] = make(map[string]bool)
+					}
+					applicableFieldsByProject[projectKey][mapping.JiraID] = true
+				}
 				for _, mapping := range assetMappings {
 					value := issue.Fields.CustomFields[mapping.JiraID]
-					if value != nil {
-						if assetFieldsByProject[projectKey] == nil {
-							assetFieldsByProject[projectKey] = make(map[string]bool)
-						}
-						assetFieldsByProject[projectKey][mapping.JiraID] = true
-					}
 					for _, ref := range h.resolveJiraIssueAssetReferences(jobID, value) {
 						if ref.SetID == 0 {
 							continue
@@ -798,7 +1105,7 @@ func (h *JiraImportHandler) preflightJiraCustomFields(
 		})
 		choiceLabelsByField[fieldID] = labels
 	}
-	return issueKeysByProject, resolved, assetFieldsByProject, choiceLabelsByField
+	return issueKeysByProject, resolved, applicableFieldsByProject, choiceLabelsByField
 }
 
 func (h *JiraImportHandler) bindJiraImportFieldsToWorkspace(
@@ -816,11 +1123,11 @@ func (h *JiraImportHandler) bindJiraImportFieldsToWorkspace(
 		fieldIDs = append(fieldIDs, fieldID)
 	}
 	for _, mapping := range mappings {
-		if mapping.WindshiftType != string(jira.FieldTypeAsset) || !applicableFields[mapping.JiraID] {
+		if mapping.Action == "skip" || !applicableFields[mapping.JiraID] {
 			continue
 		}
 		fieldID := customFieldIDMap[mapping.JiraID]
-		if fieldID == 0 || h.customFieldType(fieldID) != string(jira.FieldTypeAsset) {
+		if fieldID == 0 {
 			continue
 		}
 		if _, exists := seen[fieldID]; exists {
@@ -1040,6 +1347,46 @@ func (h *JiraImportHandler) completePagedIssueContainers(ctx context.Context, is
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
+}
+
+func (h *JiraImportHandler) completeIssueWatchers(ctx context.Context, issue *jira.JiraIssue, client jira.Client) {
+	if issue == nil || issue.Key == "" {
+		return
+	}
+	if issue.Fields.Watches != nil && issue.Fields.Watches.WatchCount == 0 {
+		issue.Fields.WatcherIdentitiesAvailable = true
+		issue.Fields.Watchers = nil
+		return
+	}
+	watcherClient, ok := client.(jira.IssueWatchersClient)
+	if !ok {
+		if issue.Fields.Watches != nil && issue.Fields.Watches.WatchCount > 0 {
+			issue.Fields.WatcherFetchError = "watcher identities are unavailable from this Jira client"
+		}
+		return
+	}
+	watchers, err := watcherClient.GetIssueWatchers(ctx, issue.Key)
+	if err != nil {
+		issue.Fields.WatcherFetchError = err.Error()
+		slog.Warn("Failed to load Jira issue watcher identities",
+			slog.String("component", "jira"),
+			slog.String("issue", issue.Key),
+			slog.Any("error", err))
+		return
+	}
+	if watchers == nil {
+		issue.Fields.WatcherFetchError = "Jira returned an empty watcher response"
+		return
+	}
+	issue.Fields.WatcherIdentitiesAvailable = true
+	issue.Fields.Watchers = watchers.Watchers
+	if issue.Fields.Watches == nil {
+		issue.Fields.Watches = &jira.JiraWatchSummary{
+			Self:       watchers.Self,
+			WatchCount: watchers.WatchCount,
+			IsWatching: watchers.IsWatching,
+		}
+	}
 }
 
 func (h *JiraImportHandler) completeIssueComments(ctx context.Context, issue *jira.JiraIssue, client jira.Client) error {
@@ -2427,10 +2774,15 @@ func (h *JiraImportHandler) ensureCustomFields(
 	mappings []CustomFieldMapping,
 	assetFieldSetIDs map[string]int,
 	choiceLabelsByField map[string][]string,
+	configurationCaptures ...map[string]jiraCustomFieldConfigurationCapture,
 ) (fieldIDs map[string]int, choiceOptionIDs map[string]map[string]int, err error) {
 	fieldIDs = make(map[string]int)
 	choiceOptionIDs = make(map[string]map[string]int)
 	now := time.Now()
+	var capturedConfigurations map[string]jiraCustomFieldConfigurationCapture
+	if len(configurationCaptures) > 0 {
+		capturedConfigurations = configurationCaptures[0]
+	}
 
 	for _, m := range mappings {
 		if m.Action == "skip" || m.JiraID == "" || isJiraStoryPointsField(m) || isJiraSprintField(m) ||
@@ -2477,13 +2829,15 @@ func (h *JiraImportHandler) ensureCustomFields(
 				choiceOptionIDs[m.JiraID] = optionIDs
 			}
 			fieldIDs[m.JiraID] = *m.WindshiftID
-			h.recordMapping(jobID, "custom_field", m.JiraID, m.JiraName, *m.WindshiftID, map[string]any{
+			metadata := map[string]any{
 				"action":          "map",
 				"option_count":    len(choiceOptionIDs[m.JiraID]),
 				"preserve_raw":    m.PreserveRaw,
 				"jira_field_type": m.JiraType,
 				"windshift_type":  fieldType,
-			})
+			}
+			addJiraCustomFieldConfigurationMetadata(metadata, capturedConfigurations[m.JiraID])
+			h.recordMapping(jobID, "custom_field", m.JiraID, m.JiraName, *m.WindshiftID, metadata)
 			continue
 		}
 
@@ -2565,17 +2919,62 @@ func (h *JiraImportHandler) ensureCustomFields(
 			choiceOptionIDs[m.JiraID] = optionIDs
 		}
 		fieldIDs[m.JiraID] = fieldID
-		h.recordMapping(jobID, "custom_field", m.JiraID, name, fieldID, map[string]any{
+		metadata := map[string]any{
 			"action":          "create_or_reuse",
 			"jira_field_type": m.JiraType,
 			"windshift_type":  fieldType,
 			"was_created":     wasCreated,
 			"option_count":    len(choiceOptionIDs[m.JiraID]),
 			"preserve_raw":    m.PreserveRaw,
-		})
+		}
+		addJiraCustomFieldConfigurationMetadata(metadata, capturedConfigurations[m.JiraID])
+		h.recordMapping(jobID, "custom_field", m.JiraID, name, fieldID, metadata)
 	}
 
 	return fieldIDs, choiceOptionIDs, nil
+}
+
+func addJiraCustomFieldConfigurationMetadata(
+	metadata map[string]any,
+	capture jiraCustomFieldConfigurationCapture,
+) {
+	if metadata == nil {
+		return
+	}
+	if capture.configuration == nil {
+		metadata["configuration_status"] = "unavailable"
+		if capture.unavailableReason != "" {
+			metadata["configuration_unavailable_reason"] = capture.unavailableReason
+		}
+		return
+	}
+	metadata["configuration_status"] = "preserved"
+	metadata["contexts"] = capture.configuration.Contexts
+	metadata["context_count"] = len(capture.configuration.Contexts)
+	if capture.configuration.DefaultsUnavailableReason != "" {
+		metadata["defaults_unavailable_reason"] = capture.configuration.DefaultsUnavailableReason
+	}
+	optionCount := 0
+	optionUnavailableContextCount := 0
+	disabledOptionCount := 0
+	defaultCount := 0
+	for _, context := range capture.configuration.Contexts {
+		optionCount += len(context.Options)
+		defaultCount += len(context.Defaults)
+		if context.OptionsUnavailableReason != "" {
+			optionUnavailableContextCount++
+		}
+		for _, option := range context.Options {
+			if option.Disabled {
+				disabledOptionCount++
+			}
+		}
+	}
+	metadata["configured_option_count"] = optionCount
+	metadata["option_unavailable_context_count"] = optionUnavailableContextCount
+	metadata["disabled_option_count"] = disabledOptionCount
+	metadata["default_count"] = defaultCount
+	metadata["applicability_enforcement"] = "preserved_only_global_windshift_field"
 }
 
 // ensureJiraIssueKeyCustomField provides an item-facing, queryable home for

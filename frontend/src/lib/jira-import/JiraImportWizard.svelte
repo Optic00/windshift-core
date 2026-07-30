@@ -528,17 +528,16 @@
             <div class="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-96 overflow-y-auto">
               {#each filteredProjects as project}
                 {@const isSelected = projects.selected.includes(project.key)}
-                {@const isDisabled = project.is_team_managed}
                 <button
                   type="button"
                   data-testid={`jira-import-project-${project.key}`}
                   data-project-type={project.project_type}
                   data-team-managed={project.is_team_managed ? 'true' : 'false'}
+                  data-configuration-mode={project.is_team_managed ? 'conservative' : 'authoritative'}
                   data-issue-count={project.issue_count ?? ''}
                   class="p-4 rounded-lg border text-left transition-all"
-                  style="border-color: {isSelected ? 'var(--ds-border-focused)' : 'var(--ds-border)'}; background: {isSelected ? 'var(--ds-background-selected)' : 'transparent'}; opacity: {isDisabled ? '0.5' : '1'};"
-                  onclick={() => !isDisabled && jiraImport.toggleProject(project.key)}
-                  disabled={isDisabled}
+                  style="border-color: {isSelected ? 'var(--ds-border-focused)' : 'var(--ds-border)'}; background: {isSelected ? 'var(--ds-background-selected)' : 'transparent'};"
+                  onclick={() => jiraImport.toggleProject(project.key)}
                 >
                   <div class="flex items-start gap-3">
                     <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -546,8 +545,7 @@
                     <div onclick={(e) => e.stopPropagation()} class="mt-1">
                       <Checkbox
                         checked={isSelected}
-                        disabled={isDisabled}
-                        onchange={() => !isDisabled && jiraImport.toggleProject(project.key)}
+                        onchange={() => jiraImport.toggleProject(project.key)}
                         size="small"
                       />
                     </div>
@@ -559,7 +557,7 @@
                         <span class="font-medium truncate" style="color: var(--ds-text);">
                           {project.name}
                         </span>
-                        {#if isDisabled}
+                        {#if project.is_team_managed}
                           <span class="text-xs px-1.5 py-0.5 rounded" style="background: var(--ds-background-warning-subtle); color: var(--ds-text-warning);">
                             {t('jiraImport.projects.teamManaged')}
                           </span>
@@ -741,6 +739,21 @@
                     <p class="mt-2 text-xs" style="color: var(--ds-text-subtle);">
                       Windshift workspace key: <strong>{mapping.newWorkspaceKey}</strong>
                     </p>
+                  {/if}
+                  {#if mapping.isTeamManaged}
+                    <div
+                      class="mt-3"
+                      data-testid={`jira-import-team-managed-limits-${mapping.jiraKey}`}
+                    >
+                      <AlertBox variant="warning">
+                        <p class="text-sm">
+                          Issue data and observed custom fields will import. Jira does not expose
+                          company-managed workflow and screen schemes for this team-managed project,
+                          so Windshift will create a conservative initial workflow and default screens
+                          and report that configuration boundary.
+                        </p>
+                      </AlertBox>
+                    </div>
                   {/if}
                 </div>
               {/each}
@@ -1279,14 +1292,19 @@
                     <div>
                       <p class="font-medium" style="color: var(--ds-text);">Previous Jira import data exists</p>
                       <p class="text-sm mt-1" style="color: var(--ds-text-subtle);">
-                        Close this wizard, use Import History to delete the previous import data, then start the import again. This protects against accidentally duplicating projects and deleting multiple workspaces without review.
+                        Re-import updates issues matched by their stable Jira ID, reuses imported comments, worklogs, and attachments, and keeps Jira Rank order. You can still close the wizard and delete the previous import data from Import History for a clean replacement.
                       </p>
                     </div>
                   </div>
                   {#if importData.conflictingImports?.length}
                     <div class="space-y-2">
                       {#each importData.conflictingImports as conflict}
-                        <div class="rounded border px-3 py-2" style="border-color: var(--ds-border); background: var(--ds-surface-raised);">
+                        <div
+                          class="rounded border px-3 py-2"
+                          data-testid={`jira-import-conflict-${conflict.job_id}`}
+                          data-configuration-drift={conflict.configuration_drift ? 'true' : 'false'}
+                          style="border-color: var(--ds-border); background: var(--ds-surface-raised);"
+                        >
                           <div class="flex items-center justify-between gap-3">
                             <span class="font-mono text-xs" style="color: var(--ds-text);">{conflict.job_id}</span>
                             <span class="text-xs capitalize" style="color: var(--ds-text-subtle);">{conflict.status?.replace('_', ' ')}</span>
@@ -1294,12 +1312,24 @@
                           {#if conflict.project_keys?.length}
                             <p class="text-xs mt-1" style="color: var(--ds-text-subtle);">Projects: {conflict.project_keys.join(', ')}</p>
                           {/if}
+                          {#if conflict.configuration_drift}
+                            <p class="text-xs mt-1" style="color: var(--ds-text-warning);">
+                              The selected scope or mapping configuration has changed since this import.
+                            </p>
+                          {/if}
                         </div>
                       {/each}
                     </div>
                   {/if}
                 </div>
                 <div class="flex justify-center gap-3">
+                  <Button
+                    variant="primary"
+                    dataTestid="jira-import-force-reimport"
+                    onclick={() => jiraImport.startImport(true)}
+                  >
+                    Re-import and update
+                  </Button>
                   <Button variant="secondary" onclick={handleClose}>Close and manage imports</Button>
                   <Button variant="ghost" onclick={() => jiraImport.goToStepId('preview')}>Back to preview</Button>
                 </div>
