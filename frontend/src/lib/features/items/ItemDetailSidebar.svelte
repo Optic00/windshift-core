@@ -1292,7 +1292,7 @@
           {@const currentValue = isEditing ? editCustomFieldValues[screenField.field_identifier] : storedValue}
           {#if fieldDef}
             {@const fieldEditable = isCustomFieldEditable(fieldDef.id)}
-            <div class="mb-3">
+            <div class="mb-3" data-testid={`item-custom-field-${fieldDef.id}`}>
               {#if isEditing}
                 <CustomFieldRenderer
                   field={fieldDef}
@@ -1356,7 +1356,7 @@
             {@const currentValue = isEditing ? editCustomFieldValues[screenField.field_identifier] : storedValue}
             {#if fieldDef}
               {@const fieldEditable = isCustomFieldEditable(fieldDef.id)}
-              <div class="mb-3">
+              <div class="mb-3" data-testid={`item-custom-field-${fieldDef.id}`}>
                 {#if fieldDef.field_type === 'linking'}
                   <div class="px-2 py-1.5">
                     <Text variant="subtle" size="sm" class="mb-1">{fieldDef.name}</Text>
@@ -1385,6 +1385,23 @@
                     onStartEdit={() => startEditingCustomField(screenField.field_identifier)}
                     onCancel={() => oncancelEdit?.({ field: `custom_field_${screenField.field_identifier}` })}
                   />
+                {:else if ['user', 'multi_user', 'asset'].includes(fieldDef.field_type)}
+                  <div class="w-full flex items-center justify-between px-2 text-sm">
+                    <Text variant="subtle" size="sm">{fieldDef.name}</Text>
+                    <div class="min-w-0 text-right">
+                      <CustomFieldRenderer
+                        field={fieldDef}
+                        value={currentValue}
+                        readonly={true}
+                        disabled={!canEdit || !fieldEditable}
+                        noPadding={true}
+                        {milestones}
+                        {iterations}
+                        itemId={item?.id}
+                        onStartEdit={() => startEditingCustomField(screenField.field_identifier)}
+                      />
+                    </div>
+                  </div>
                 {:else}
                   <button
                     onclick={() => startEditingCustomField(screenField.field_identifier)}
