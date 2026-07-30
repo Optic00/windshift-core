@@ -379,19 +379,20 @@ func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, looku
 		}
 	}
 
-	// Build the data block
+	// Build the data block with open work first. Recent activity is supporting
+	// context, not the briefing's main subject.
 	var contextParts []string
+	if len(itemLines) > 0 {
+		contextParts = append(contextParts, "### Open Items (primary context)\n"+strings.Join(itemLines, "\n"))
+	}
 	if len(activityLines) > 0 {
-		contextParts = append(contextParts, "### Recent Changes (last 24h)\n"+strings.Join(activityLines, "\n"))
+		contextParts = append(contextParts, "### Recent Changes (supporting context; do not recap exhaustively)\n"+strings.Join(activityLines, "\n"))
 	}
 	if len(commentLines) > 0 {
-		contextParts = append(contextParts, "### Recent Comments (last 24h)\n"+strings.Join(commentLines, "\n"))
-	}
-	if len(itemLines) > 0 {
-		contextParts = append(contextParts, "### Your Open Items\n"+strings.Join(itemLines, "\n"))
+		contextParts = append(contextParts, "### Recent Comments (supporting context; include only when actionable)\n"+strings.Join(commentLines, "\n"))
 	}
 	if len(worklogLines) > 0 {
-		contextParts = append(contextParts, "### Yesterday's Worklogs\n"+strings.Join(worklogLines, "\n"))
+		contextParts = append(contextParts, "### Yesterday's Worklogs (background only)\n"+strings.Join(worklogLines, "\n"))
 	}
 
 	slog.Info("briefing: context gathered",
@@ -422,7 +423,7 @@ func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, looku
 			{Role: "user", Content: userPrompt},
 		},
 		Temperature: 0.3,
-		MaxTokens:   2048,
+		MaxTokens:   900,
 	})
 
 	durationMs := time.Since(start).Milliseconds()

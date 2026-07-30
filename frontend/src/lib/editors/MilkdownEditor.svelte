@@ -896,23 +896,33 @@
   :global(.milkdown-editor .ProseMirror h1) {
     font-size: 1.35rem;
     font-weight: 700;
-    margin: 0.75rem 0 0.5rem;
+    margin: 1.5rem 0 0.75rem;
   }
 
   :global(.milkdown-editor .ProseMirror h2) {
     font-size: 1.2rem;
     font-weight: 600;
-    margin: 0.75rem 0 0.5rem;
+    margin: 1.25rem 0 0.625rem;
   }
 
   :global(.milkdown-editor .ProseMirror h3) {
     font-size: 1.05rem;
     font-weight: 600;
-    margin: 0.5rem 0 0.25rem;
+    margin: 1rem 0 0.5rem;
   }
 
   :global(.milkdown-editor .ProseMirror p) {
+    margin: 0.5rem 0;
+  }
+
+  :global(.milkdown-editor .ProseMirror li p) {
     margin: 0.25rem 0;
+  }
+
+  :global(.milkdown-editor .ProseMirror > h1:first-child),
+  :global(.milkdown-editor .ProseMirror > h2:first-child),
+  :global(.milkdown-editor .ProseMirror > h3:first-child) {
+    margin-top: 0;
   }
 
   /* Preserve blank lines from remarkPreserveEmptyLinePlugin */
@@ -925,7 +935,7 @@
   :global(.milkdown-editor .ProseMirror ul),
   :global(.milkdown-editor .ProseMirror ol) {
     padding-left: 1.5rem;
-    margin: 0.25rem 0;
+    margin: 0.5rem 0;
   }
 
   :global(.milkdown-editor .ProseMirror ul) {
@@ -943,7 +953,7 @@
   :global(.milkdown-editor .ProseMirror blockquote) {
     border-left: 4px solid var(--ds-border);
     padding-left: 1rem;
-    margin: 0.25rem 0;
+    margin: 0.75rem 0;
     font-style: italic;
     color: var(--ds-text-subtle);
   }
@@ -962,7 +972,7 @@
     padding: 1rem;
     border-radius: 0.375rem;
     overflow-x: auto;
-    margin: 0.25rem 0;
+    margin: 0.75rem 0;
     border: 1px solid var(--ds-border);
   }
 
@@ -976,7 +986,7 @@
     padding: 1rem;
     border-radius: 0.375rem;
     overflow-x: auto;
-    margin: 0.25rem 0;
+    margin: 0.75rem 0;
     border: 1px solid var(--ds-border);
     font-size: 0.875rem;
     color: var(--shiki-light);
@@ -1037,7 +1047,7 @@
     border-collapse: collapse;
     table-layout: auto;
     width: 100%;
-    margin: 0.25rem 0;
+    margin: 0.75rem 0;
     overflow: hidden;
   }
 

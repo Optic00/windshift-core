@@ -88,16 +88,24 @@
   .briefing-content :global(.milkdown-editor .ProseMirror h2) {
     font-size: 0.875rem;
     font-weight: 600;
-    margin: 0.75rem 0 0.25rem;
+    margin: 1.125rem 0 0.5rem;
   }
   .briefing-content :global(.milkdown-editor .ProseMirror h3) {
     font-size: 0.8125rem;
     font-weight: 600;
-    margin: 0.5rem 0 0.25rem;
+    margin: 1rem 0 0.375rem;
+  }
+  .briefing-content :global(.milkdown-editor .ProseMirror > h1:first-child),
+  .briefing-content :global(.milkdown-editor .ProseMirror > h2:first-child),
+  .briefing-content :global(.milkdown-editor .ProseMirror > h3:first-child) {
+    margin-top: 0;
   }
   .briefing-content :global(.milkdown-editor .ProseMirror p) {
     font-size: 0.8125rem;
     line-height: 1.55;
+    margin: 0.5rem 0;
+  }
+  .briefing-content :global(.milkdown-editor .ProseMirror li p) {
     margin: 0.25rem 0;
   }
   .briefing-content :global(.milkdown-editor .ProseMirror li) {
@@ -107,7 +115,7 @@
   .briefing-content :global(.milkdown-editor .ProseMirror ul),
   .briefing-content :global(.milkdown-editor .ProseMirror ol) {
     font-size: 0.8125rem;
-    margin: 0.25rem 0;
+    margin: 0.5rem 0;
     padding-left: 1.25rem;
   }
   .briefing-content :global(strong) {
