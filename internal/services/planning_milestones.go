@@ -164,6 +164,7 @@ type MilestoneReleaseResult struct {
 
 var ErrSCMRepositoryNotLinked = errors.New("SCM repository is not linked to the selected connection")
 var ErrMilestoneReleaseInProgress = errors.New("milestone release is already in progress")
+var ErrMilestoneReleaseIdempotencyConflict = errors.New("milestone release idempotency key was already used with different parameters")
 
 // LinkedSCMRepository is the canonical repository identity resolved from a
 // workspace connection. Release callers use the stored name rather than a
@@ -744,6 +745,44 @@ type MilestoneReleaseAttempt struct {
 	NeedsReconcile bool
 }
 
+type storedMilestoneReleaseRequest struct {
+	TagName         string
+	Name            sql.NullString
+	Body            sql.NullString
+	IsDraft         bool
+	IsPrerelease    bool
+	TargetCommitish sql.NullString
+	SCMConnectionID sql.NullInt64
+	SCMRepository   sql.NullString
+	CreatedBy       sql.NullInt64
+}
+
+func milestoneReleaseRequestMatches(params ReleaseMilestoneParams, stored storedMilestoneReleaseRequest) bool {
+	return params.TagName == stored.TagName &&
+		stored.Name.Valid && params.Name == stored.Name.String &&
+		stored.Body.Valid && params.Body == stored.Body.String &&
+		params.IsDraft == stored.IsDraft &&
+		params.IsPrerelease == stored.IsPrerelease &&
+		stored.TargetCommitish.Valid && params.TargetCommitish == stored.TargetCommitish.String &&
+		nullableIntMatches(params.SCMConnectionID, stored.SCMConnectionID) &&
+		nullableStringMatches(params.SCMRepository, stored.SCMRepository) &&
+		nullableIntMatches(params.CreatedBy, stored.CreatedBy)
+}
+
+func nullableIntMatches(value *int, stored sql.NullInt64) bool {
+	if value == nil {
+		return !stored.Valid
+	}
+	return stored.Valid && int(stored.Int64) == *value
+}
+
+func nullableStringMatches(value *string, stored sql.NullString) bool {
+	if value == nil {
+		return !stored.Valid
+	}
+	return stored.Valid && stored.String == *value
+}
+
 func newMilestoneReleaseLeaseToken() (string, error) {
 	var token [16]byte
 	if _, err := rand.Read(token[:]); err != nil {
@@ -786,12 +825,34 @@ func (s *PlanningService) BeginMilestoneRelease(ctx context.Context, params Rele
 
 		var attemptID int
 		var state string
+		var storedRequest storedMilestoneReleaseRequest
 		if err := tx.QueryRowContext(ctx, `
-			SELECT id, state
-			FROM milestone_releases
-			WHERE milestone_id = ? AND idempotency_key = ?
-		`, params.ID, params.IdempotencyKey).Scan(&attemptID, &state); err != nil {
+				SELECT id, state, tag_name, name, body, is_draft, is_prerelease,
+				       target_commitish, scm_connection_id, scm_repository, created_by
+				FROM milestone_releases
+				WHERE milestone_id = ? AND idempotency_key = ?
+			`, params.ID, params.IdempotencyKey).Scan(
+			&attemptID,
+			&state,
+			&storedRequest.TagName,
+			&storedRequest.Name,
+			&storedRequest.Body,
+			&storedRequest.IsDraft,
+			&storedRequest.IsPrerelease,
+			&storedRequest.TargetCommitish,
+			&storedRequest.SCMConnectionID,
+			&storedRequest.SCMRepository,
+			&storedRequest.CreatedBy,
+		); err != nil {
 			return nil, fmt.Errorf("failed to load milestone release attempt: %w", err)
+		}
+		if inserted == 0 && !milestoneReleaseRequestMatches(params, storedRequest) {
+			return nil, fmt.Errorf(
+				"%w: milestone %d and key %q",
+				ErrMilestoneReleaseIdempotencyConflict,
+				params.ID,
+				params.IdempotencyKey,
+			)
 		}
 		if state == "created" {
 			return &MilestoneReleaseAttempt{ID: attemptID, AlreadyCreated: true}, nil

@@ -399,44 +399,28 @@ func (h *JiraImportHandler) StartImport(w http.ResponseWriter, r *http.Request) 
 		respondInternalError(w, r, err)
 		return
 	}
-	conflicts, err := h.findConflictingJiraImports(req, planFingerprint)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	if !req.ForceReimport {
-		if len(conflicts) > 0 {
-			err := restapi.NewAPIError(http.StatusConflict, "JIRA_IMPORT_CONFLICT", "One or more selected Jira projects have already been imported. Delete the previous import data or explicitly force a re-import.").WithDetails(map[string]interface{}{
-				"conflicting_imports": conflicts,
-			})
-			respondError(w, r, err)
-			return
-		}
-	}
 
 	// Get user ID from context
 	userID := getUserIDFromContext(r)
 
-	// Generate a new job ID
-	jobID := generateUUID()
-
-	// Store only the durable, non-secret configuration. The Xray Cloud client
-	// ID and secret exist solely in the in-memory request used by this job.
-	configJSON, err := jiraImportJobConfigJSON(req, conflicts...)
+	enqueueResult, err := h.enqueueJiraImport(req, planFingerprint, userID)
 	if err != nil {
+		var conflictErr *jiraImportConflictError
+		if errors.As(err, &conflictErr) {
+			apiErr := restapi.NewAPIError(
+				http.StatusConflict,
+				"JIRA_IMPORT_CONFLICT",
+				conflictErr.Message,
+			).WithDetails(map[string]interface{}{
+				"conflicting_imports": conflictErr.Conflicts,
+			})
+			respondError(w, r, apiErr)
+			return
+		}
 		respondInternalError(w, r, err)
 		return
 	}
-
-	// Create the import job in the database
-	_, err = h.db.ExecWrite(`
-		INSERT INTO jira_import_jobs (id, connection_id, status, scope, config_json, created_by)
-		VALUES (?, ?, 'queued', 'work_items', ?, ?)
-	`, jobID, req.ConnectionID, string(configJSON), userID)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
+	jobID := enqueueResult.JobID
 
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
@@ -463,6 +447,72 @@ func (h *JiraImportHandler) StartImport(w http.ResponseWriter, r *http.Request) 
 		JobID:   jobID,
 		Message: "Import started successfully",
 	})
+}
+
+type jiraImportEnqueueResult struct {
+	JobID     string
+	Conflicts []jiraImportConflict
+}
+
+type jiraImportConflictError struct {
+	Message   string
+	Conflicts []jiraImportConflict
+}
+
+func (e *jiraImportConflictError) Error() string {
+	return e.Message
+}
+
+func (h *JiraImportHandler) enqueueJiraImport(
+	req StartImportRequest,
+	planFingerprint string,
+	userID *int,
+) (*jiraImportEnqueueResult, error) {
+	jobID := generateUUID()
+	jobRepository := repository.NewJiraImportJobRepository(h.db)
+	var result *jiraImportEnqueueResult
+	err := jobRepository.WithLockedConnection(req.ConnectionID, func(jobs repository.JiraImportJobStore) error {
+		conflicts, err := findConflictingJiraImportsWithQuery(jobs, req, planFingerprint)
+		if err != nil {
+			return err
+		}
+		activeConflicts := make([]jiraImportConflict, 0, len(conflicts))
+		for _, conflict := range conflicts {
+			if conflict.Status == "queued" || conflict.Status == "running" {
+				activeConflicts = append(activeConflicts, conflict)
+			}
+		}
+		if len(activeConflicts) > 0 {
+			return &jiraImportConflictError{
+				Message:   "One or more selected Jira projects already have an import queued or running.",
+				Conflicts: activeConflicts,
+			}
+		}
+		if !req.ForceReimport && len(conflicts) > 0 {
+			return &jiraImportConflictError{
+				Message:   "One or more selected Jira projects have already been imported. Delete the previous import data or explicitly force a re-import.",
+				Conflicts: conflicts,
+			}
+		}
+
+		// Store only the durable, non-secret configuration. The Xray Cloud
+		// client ID and secret remain solely in the in-memory request.
+		configJSON, err := jiraImportJobConfigJSON(req, conflicts...)
+		if err != nil {
+			return err
+		}
+		if err := jobs.Insert(repository.JiraImportJobInsert{
+			ID:           jobID,
+			ConnectionID: req.ConnectionID,
+			ConfigJSON:   string(configJSON),
+			CreatedBy:    userID,
+		}); err != nil {
+			return err
+		}
+		result = &jiraImportEnqueueResult{JobID: jobID, Conflicts: conflicts}
+		return nil
+	})
+	return result, err
 }
 
 func jiraImportJobConfigJSON(req StartImportRequest, conflicts ...jiraImportConflict) ([]byte, error) {
@@ -502,7 +552,12 @@ type jiraImportConflict struct {
 	CompletedAt             *time.Time `json:"completed_at,omitempty"`
 }
 
-func (h *JiraImportHandler) findConflictingJiraImports(
+type jiraImportCandidateLister interface {
+	ListCandidates(connectionID string) ([]repository.JiraImportJobRecord, error)
+}
+
+func findConflictingJiraImportsWithQuery(
+	jobs jiraImportCandidateLister,
 	req StartImportRequest,
 	fingerprints ...string,
 ) ([]jiraImportConflict, error) {
@@ -521,47 +576,28 @@ func (h *JiraImportHandler) findConflictingJiraImports(
 		return nil, nil
 	}
 
-	rows, err := h.db.Query(`
-		SELECT id, status, config_json, created_at, completed_at
-		FROM jira_import_jobs
-		WHERE connection_id = ?
-		  AND scope = 'work_items'
-		  AND status <> 'data_deleted'
-		ORDER BY created_at DESC
-	`, req.ConnectionID)
+	candidates, err := jobs.ListCandidates(req.ConnectionID)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
 
 	var conflicts []jiraImportConflict
-	for rows.Next() {
-		var jobID, status, configJSON string
-		var createdAt time.Time
-		var completedAt sql.NullTime
-		if err := rows.Scan(&jobID, &status, &configJSON, &createdAt, &completedAt); err != nil {
-			return nil, err
-		}
-		projectKeys := extractJiraImportProjectKeys(configJSON)
+	for _, candidate := range candidates {
+		projectKeys := extractJiraImportProjectKeys(candidate.ConfigJSON)
 		if !projectKeysOverlap(requested, projectKeys) {
 			continue
 		}
 		conflict := jiraImportConflict{
-			JobID:                   jobID,
-			Status:                  status,
+			JobID:                   candidate.ID,
+			Status:                  candidate.Status,
 			ProjectKeys:             projectKeys,
-			PreviousPlanFingerprint: jiraImportPlanFingerprintFromConfig(configJSON),
-			CreatedAt:               createdAt,
+			PreviousPlanFingerprint: jiraImportPlanFingerprintFromConfig(candidate.ConfigJSON),
+			CreatedAt:               candidate.CreatedAt,
 		}
 		conflict.ConfigurationDrift = conflict.PreviousPlanFingerprint == "" ||
 			conflict.PreviousPlanFingerprint != fingerprint
-		if completedAt.Valid {
-			conflict.CompletedAt = &completedAt.Time
-		}
+		conflict.CompletedAt = candidate.CompletedAt
 		conflicts = append(conflicts, conflict)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
 	}
 	return conflicts, nil
 }

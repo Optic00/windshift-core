@@ -766,6 +766,10 @@ func (h *MilestoneHandler) Release(w http.ResponseWriter, r *http.Request) {
 	}
 	attempt, err := h.planningService.BeginMilestoneRelease(r.Context(), params)
 	if err != nil {
+		if errors.Is(err, services.ErrMilestoneReleaseIdempotencyConflict) {
+			respondConflict(w, r, "Idempotency-Key was already used for a different milestone release request")
+			return
+		}
 		if errors.Is(err, services.ErrMilestoneReleaseInProgress) {
 			respondConflict(w, r, "This release request is already in progress")
 			return
