@@ -53,7 +53,7 @@
   import { useEventListener } from 'runed';
   import { toHotkeyString } from '../utils/keyboardShortcuts.js';
   import { LazyComponentLoader } from '../utils/lazyComponentLoader.svelte.js';
-  import { hasSessionExpired } from '../utils/lazyLoadRecovery.js';
+  import { hasSessionExpired, reloadIfBuildChanged } from '../utils/lazyLoadRecovery.js';
   import MainSidebar from '../layout/MainSidebar.svelte';
   import { terminalStore } from '../stores/terminalStore.svelte.js';
 
@@ -244,7 +244,13 @@
       showCommandPalette = false;
       closeCreateModal();
       showChatPanel = false;
+      return;
     }
+
+    // The session is fine, so the chunk itself is gone: a deploy replaced every
+    // hashed filename this tab knows about. Reload onto the new build rather
+    // than leaving the requested view stuck on its error state.
+    await reloadIfBuildChanged();
   }
 
   function closeCreateModal() {
