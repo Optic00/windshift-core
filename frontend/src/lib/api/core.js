@@ -1,3 +1,4 @@
+import { toLogical } from '../runtime/contextPath.js';
 import {
   getClockOffset,
   getSampleCount,
@@ -7,6 +8,7 @@ import {
 
 // Use relative path for API calls - Vite proxy will handle dev, production uses same origin
 export const API_BASE = '/api';
+export const ADMIN_UI_MUTATION_EVENT = 'windshift:admin-ui-mutation';
 
 // Ensure the clock-drift warning toast fires at most once per session
 let driftWarningShown = false;
@@ -52,6 +54,21 @@ function inFlightGETKey(endpoint, options) {
   if (optionKeys.some((key) => key !== 'method')) return null;
 
   return `${apiRequestSessionKey}|${normalizeGETEndpoint(endpoint)}`;
+}
+
+function isAdminUIPath() {
+  if (typeof window === 'undefined') return false;
+  const pathname = toLogical(window.location.pathname);
+  return pathname === '/admin' || pathname.startsWith('/admin/');
+}
+
+function notifyAdminUIMutation(endpoint, method) {
+  if (!isAdminUIPath()) return;
+  window.dispatchEvent(
+    new CustomEvent(ADMIN_UI_MUTATION_EVENT, {
+      detail: { endpoint, method },
+    })
+  );
 }
 
 /** Replace the in-flight ownership scope after authentication changes. */
@@ -246,16 +263,20 @@ async function performFetchAPI(endpoint, options = {}) {
       throw apiError;
     }
 
-    if (response.status === 204) {
-      return null;
+    let result = null;
+    if (response.status !== 204) {
+      const contentType = response.headers.get('content-type');
+      if (contentType?.includes('application/json')) {
+        result = await response.json();
+      }
     }
 
-    const contentType = response.headers.get('content-type');
-    if (contentType?.includes('application/json')) {
-      return await response.json();
+    const method = String(fetchOptions.method || 'GET').toUpperCase();
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+      notifyAdminUIMutation(endpoint, method);
     }
 
-    return null;
+    return result;
   } catch (error) {
     if (timedOut) throw timeoutError();
     throw error;

@@ -5,7 +5,6 @@
   import { t } from '../stores/i18n.svelte.js';
   import { errorToast, successToast } from '../stores/toasts.svelte.js';
   import { logbookStore } from '../stores/logbook.svelte.js';
-  import { aiStore } from '../stores/aiStore.svelte.js';
   import Spinner from '../components/Spinner.svelte';
   import Select from '../components/Select.svelte';
   import {
@@ -127,10 +126,6 @@
     try {
       const result = await api.aiFeatures.updateConfig(config);
       config = result.config ?? config;
-      // Disabling or re-enabling ai_chat changes chat_enabled in the shell's AI
-      // status, which the shell only hydrates at boot — refresh it so the chat
-      // entry points appear or disappear without a browser reload.
-      await aiStore.reload();
       successToast(t('settings.aiFeatures.saveSuccess'));
     } catch (err) {
       errorToast(t('settings.aiFeatures.saveFailed'));

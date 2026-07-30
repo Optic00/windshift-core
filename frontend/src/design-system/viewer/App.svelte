@@ -4,6 +4,7 @@
   // Composition Examples
   import BoardExample from './pages/BoardExample.svelte'
   import FormExample from './pages/FormExample.svelte'
+  import IconNavigationLab from './pages/IconNavigationLab.svelte'
 
   // Token Pages
   import Colors from './pages/Colors.svelte'
@@ -82,6 +83,7 @@
       items: [
         { id: 'board-example', label: 'Board', icon: LayoutDashboard },
         { id: 'form-example', label: 'Form', icon: ClipboardPenLine },
+        { id: 'icon-navigation-lab', label: 'Icon navigation lab', icon: Grid },
       ]
     },
     {
@@ -243,6 +245,8 @@
       <BoardExample />
     {:else if currentPage === 'form-example'}
       <FormExample />
+    {:else if currentPage === 'icon-navigation-lab'}
+      <IconNavigationLab />
     {:else if currentPage === 'colors'}
       <Colors />
     {:else if currentPage === 'typography'}

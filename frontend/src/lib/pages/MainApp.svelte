@@ -5,16 +5,16 @@
   import { authStore, permissionStore, uiStore, currentWorkspace, workspacesStore, workspacePermissions, ssoStore, workspaceDataStore, activityStore, collectionStore, homepageStore } from '../stores';
   import EmailVerificationBanner from '../features/notifications/EmailVerificationBanner.svelte';
   import { moduleSettings } from '../stores/moduleSettings.js';
-  import { attachmentStatus } from '../stores/attachmentStatus.svelte.js';
   import { aiStore } from '../stores/aiStore.svelte.js';
   import { chatStore } from '../stores/chatStore.svelte.js';
-  import { logbookStore } from '../stores/logbook.svelte.js';
   import { capabilitiesStore } from '../stores/capabilities.svelte.js';
   import { startNotificationPoller, stopNotificationPoller } from '../stores/notifications.js';
   import { resetAuthenticatedShellState, runAuthenticatedShellBootstrap } from '../services/authenticatedShellBootstrap.js';
+  import { hydrateAuthenticatedShellUI, refreshAuthenticatedShellUI } from '../services/authenticatedShellUI.js';
   import { desktopBridge } from '../desktop/bridge.svelte.js';
   import { initDesktopFocusRefresh } from '../utils/desktopFocusRefresh.svelte.js';
   import { api } from '../api.js';
+  import { ADMIN_UI_MUTATION_EVENT } from '../api/core.js';
   import { t } from '../stores/i18n.svelte.js';
   import NotFound from './NotFound.svelte';
   import Workspaces from '../workspaces/Workspaces.svelte';
@@ -153,7 +153,36 @@
 
   let lastSpaceTime = 0;
   let sessionRevalidationPromise = null;
+  let adminUIRefreshTimer = null;
+  let adminUIRefreshPromise = null;
+  let adminUIRefreshQueued = false;
   const DOUBLE_SPACE_THRESHOLD = 300; // milliseconds
+  const ADMIN_UI_REFRESH_DEBOUNCE_MS = 75;
+
+  async function runAdminUIRefresh() {
+    if (adminUIRefreshPromise) {
+      adminUIRefreshQueued = true;
+      return adminUIRefreshPromise;
+    }
+
+    do {
+      adminUIRefreshQueued = false;
+      adminUIRefreshPromise = refreshAuthenticatedShellUI();
+      try {
+        await adminUIRefreshPromise;
+      } finally {
+        adminUIRefreshPromise = null;
+      }
+    } while (adminUIRefreshQueued);
+  }
+
+  function scheduleAdminUIRefresh() {
+    if (adminUIRefreshTimer) clearTimeout(adminUIRefreshTimer);
+    adminUIRefreshTimer = setTimeout(() => {
+      adminUIRefreshTimer = null;
+      void runAdminUIRefresh();
+    }, ADMIN_UI_REFRESH_DEBOUNCE_MS);
+  }
 
   // Security and other late-mounted consumers can await the shell feature
   // snapshot instead of racing it with a second /api/features request.
@@ -703,15 +732,7 @@
       async () => {
         try {
           const bootstrap = await api.shellBootstrap.get();
-          moduleSettings.hydrate(bootstrap.module_settings);
-          attachmentStatus.hydrate(bootstrap.attachment_status);
-          aiStore.hydrate(bootstrap.ai);
-          capabilitiesStore.hydrate(bootstrap.features);
-          logbookStore.hydrateAvailability(bootstrap.features?.logbook_available);
-          permissionStore.setLogbookAvailable(bootstrap.features?.logbook_available === true);
-          permissionStore.setHasAssetSets(bootstrap.has_asset_sets === true);
-          permissionStore.setHasActivePortals(bootstrap.has_active_portals === true);
-          permissionStore.setManagesChannels(bootstrap.manages_channels === true);
+          hydrateAuthenticatedShellUI(bootstrap);
         } catch (err) {
           capabilitiesStore.failHydration();
           console.warn('Failed to load shell capabilities:', err);
@@ -798,15 +819,18 @@
       homepageStore.invalidateSnapshot();
     }
 
+    window.addEventListener(ADMIN_UI_MUTATION_EVENT, scheduleAdminUIRefresh);
     window.addEventListener('refresh-workspaces', handleRefreshWorkspaces);
     window.addEventListener('refresh-workspace-data', handleRefreshWorkspaceData);
     window.addEventListener('refresh-work-items', handleRefreshWorkItems);
 
     return () => {
       window.removeEventListener('show-create-modal', handleShowCreateModal);
+      window.removeEventListener(ADMIN_UI_MUTATION_EVENT, scheduleAdminUIRefresh);
       window.removeEventListener('refresh-workspaces', handleRefreshWorkspaces);
       window.removeEventListener('refresh-workspace-data', handleRefreshWorkspaceData);
       window.removeEventListener('refresh-work-items', handleRefreshWorkItems);
+      if (adminUIRefreshTimer) clearTimeout(adminUIRefreshTimer);
     };
   });
 

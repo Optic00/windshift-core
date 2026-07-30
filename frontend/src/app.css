@@ -2,6 +2,7 @@
 @import "@fontsource/inter/latin.css";
 @import "@xterm/xterm/css/xterm.css";
 @import "./design-system/index.css";
+@source not "./design-system/viewer";
 @custom-variant dark (&:where([data-color-mode="dark"], [data-color-mode="dark"] *));
 
 @theme {

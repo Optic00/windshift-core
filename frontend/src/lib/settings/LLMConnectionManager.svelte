@@ -12,7 +12,6 @@
   import Lozenge from '../components/Lozenge.svelte';
   import DataTable from '../components/DataTable.svelte';
   import { successToast, errorToast } from '../stores/toasts.svelte.js';
-  import { aiStore } from '../stores/aiStore.svelte.js';
   import Select from '../components/Select.svelte';
   import BasePicker from '../pickers/BasePicker.svelte';
   import { confirm } from '../composables/useConfirm.js';
@@ -225,13 +224,8 @@
     return llmCapabilitiesForConnection(connectionId).filter((cap) => cap.is_enabled !== false);
   }
 
-  // Adding, editing or deleting a connection can flip whether any enabled
-  // connection exists at all, and that is what gates the AI chat entry points
-  // shell-wide. The shell hydrates AI status once at boot and the admin area is
-  // a view inside it, so nothing remounts — without this refresh chat stays
-  // hidden until the user reloads the browser.
   async function reloadAfterConnectionChange() {
-    await Promise.all([loadConnections(), loadActionCapabilities(), aiStore.reload()]);
+    await Promise.all([loadConnections(), loadActionCapabilities()]);
   }
 
   function capabilityUsageLabel(caps) {
