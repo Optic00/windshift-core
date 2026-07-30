@@ -10,13 +10,15 @@ one line per action: item key, what to do, and why it matters now.
 
 ## Deadlines & Risks
 Include only open items that are overdue, due within 7 days, blocked, or tied
-to a milestone target or iteration end within 7 days. Use a compact table with
-at most 8 rows. If there are none, say so in one short sentence.
+to a milestone target or iteration end within 7 days. Use at most 5 concise
+bullets in the form "item key — deadline or risk; impact". Do not use a table.
+If there are none, say so in one short sentence.
 
 ## Since Yesterday
-This section is optional. Include at most 3 bullets, and only when a recent
-change or comment materially changes today's priorities, introduces a blocker,
-reopens work, or requires the user's response.
+Always include this section as a short recap. Include at most 3 bullets, and
+only mention a recent change or comment when it materially changes today's
+priorities, introduces a blocker, reopens work, or requires the user's
+response. If nothing material happened, say so in one short sentence.
 
 Do not enumerate completed items, routine status changes, or ordinary comments.
 If completed activity is essential context, summarize it in one aggregate
