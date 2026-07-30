@@ -790,6 +790,24 @@ func (db *DB) Initialize() error {
 			}
 		}
 
+		recurrenceSettings := []struct {
+			key, value, valueType, description string
+		}{
+			{"recurrence_volume_diagnostic_enabled", "true", "boolean", "Enable recurrence rule volume warnings in system diagnostics"},
+			{"recurrence_volume_warning_threshold", "80", "integer", "Recurrence rules per workspace that trigger an administrator warning"},
+		}
+		for _, setting := range recurrenceSettings {
+			var count int
+			if err := db.QueryRow(`SELECT COUNT(*) FROM system_settings WHERE key = ?`, setting.key).Scan(&count); err == nil && count == 0 {
+				if _, err := db.Exec(
+					`INSERT INTO system_settings (key, value, value_type, description, category) VALUES (?, ?, ?, ?, 'diagnostics')`,
+					setting.key, setting.value, setting.valueType, setting.description,
+				); err != nil {
+					slog.Warn("recurrence diagnostic setting migration failed", slog.String("component", "database"), slog.String("key", setting.key), slog.Any("error", err))
+				}
+			}
+		}
+
 		// Add ai_chat_enabled system setting if it doesn't exist
 		var aiChatCount int
 		if err := db.QueryRow(`SELECT COUNT(*) FROM system_settings WHERE key = 'ai_chat_enabled'`).Scan(&aiChatCount); err == nil && aiChatCount == 0 {
@@ -1418,6 +1436,8 @@ func (db *DB) initializeDefaultData() error {
 		{"calendar_feed_enabled", "true", "boolean", "Allow users to generate ICS calendar feed URLs", "security"},
 		{"plugin_cli_exec_enabled", "false", "boolean", "Allow plugins to execute CLI commands", "security"},
 		{"max_custom_field_indexes_per_table", "20", "integer", "Maximum number of custom field indexes per table", "performance"},
+		{"recurrence_volume_diagnostic_enabled", "true", "boolean", "Enable recurrence rule volume warnings in system diagnostics", "diagnostics"},
+		{"recurrence_volume_warning_threshold", "80", "integer", "Recurrence rules per workspace that trigger an administrator warning", "diagnostics"},
 	}
 
 	for _, setting := range systemSettings {

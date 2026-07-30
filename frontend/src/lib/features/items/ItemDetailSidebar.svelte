@@ -621,6 +621,7 @@
         <DropdownMenu
           triggerText=""
           triggerIcon={MoreHorizontal}
+          triggerTestid="item-detail-actions-menu"
           triggerClass="flex items-center justify-center p-1.5 rounded-md transition-colors"
           triggerStyle="color: var(--ds-text-subtle);"
           items={dropdownItems}
@@ -1111,6 +1112,7 @@
     {#if recurrenceRule}
     <div class="mb-3">
       <div
+        data-testid="item-recurrence-summary"
         class="w-full flex items-center justify-between px-2 py-1.5 text-sm transition-colors rounded group"
         role="button"
         tabindex="0"

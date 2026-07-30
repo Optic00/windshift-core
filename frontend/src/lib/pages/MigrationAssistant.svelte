@@ -24,6 +24,9 @@
     // apply_workflow_to_config_set, instructing the server to update the
     // target configuration set's workflow_id atomically with the migration.
     applyWorkflowId = null,
+    // Optional proposed item-type configs for an intra-set removal. The server
+    // applies them atomically with the item remaps.
+    applyItemTypeConfigs = null,
     onclose = null
   } = $props();
 
@@ -74,7 +77,9 @@
       to_item_type_name: migration.suggested_item_type_name || '',
       item_count: migration.item_count,
       requires_migration: migration.requires_migration,
-      available_targets: migration.available_targets || analysis.available_item_types || []
+      available_targets: Array.isArray(migration.available_targets)
+        ? migration.available_targets
+        : analysis.available_item_types || []
     }));
     customFieldMappings = (analysis.custom_field_migrations || []).map(migration => ({
       field_id: migration.field_id,
@@ -94,6 +99,10 @@
       requires_migration: migration.requires_migration,
       available_targets: analysis.available_priorities || []
     }));
+
+    if (itemTypeMappings.some(mapping => mapping.requires_migration)) activeTab = 'itemType';
+    else if (customFieldMappings.some(mapping => mapping.requires_default)) activeTab = 'fields';
+    else if (priorityMappings.some(mapping => mapping.requires_migration)) activeTab = 'priority';
   }
 
   // Compute tab counts
@@ -144,7 +153,9 @@
           to_item_type_name: migration.suggested_item_type_name || '',
           item_count: migration.item_count,
           requires_migration: migration.requires_migration,
-          available_targets: migration.available_targets || migrationAnalysis.available_item_types || []
+          available_targets: Array.isArray(migration.available_targets)
+            ? migration.available_targets
+            : migrationAnalysis.available_item_types || []
         }));
 
         customFieldMappings = (migrationAnalysis.custom_field_migrations || []).map(migration => ({
@@ -241,10 +252,13 @@
           // where items created concurrently could end up orphaned. For the
           // intra-set workflow-change flow there is no swap to make (source
           // and target are the same config set), so suppress this flag.
-          attach_after_migration: !applyWorkflowId,
+          attach_after_migration: !applyWorkflowId && applyItemTypeConfigs == null,
           // For intra-set workflow change: atomically write the new workflow_id
           // to the target configuration set inside the migration transaction.
           ...(applyWorkflowId ? { apply_workflow_to_config_set: applyWorkflowId } : {}),
+          ...(applyItemTypeConfigs != null
+            ? { apply_item_type_configs_to_config_set: applyItemTypeConfigs }
+            : {}),
           status_mappings: statusMappings
             .filter(mapping => mapping.to_status_id)
             .map(mapping => ({
@@ -405,6 +419,9 @@
 
   // Check if any tab has pending migrations
   let hasPendingMigrations = $derived(statusCount > 0 || itemTypeCount > 0 || fieldCount > 0 || priorityCount > 0);
+  let hasUnmappableItemTypes = $derived(itemTypeMappings.some(mapping =>
+    mapping.requires_migration && mapping.available_targets.length === 0
+  ));
 </script>
 
 <Modal
@@ -412,7 +429,7 @@
   maxWidth="max-w-4xl"
   onclose={() => closeAssistant(true)}
 >
-  <div class="max-h-[90vh] overflow-hidden flex flex-col">
+  <div data-testid="migration-assistant" class="max-h-[90vh] overflow-hidden flex flex-col">
     <div class="px-6 py-4 border-b" style="border-color: var(--ds-border);">
       <div class="flex items-center justify-between">
         <h2 class="text-xl font-semibold" style="color: var(--ds-text);">
@@ -462,6 +479,7 @@
               <!-- Tabs for each dimension -->
               <div class="flex border-b" style="border-color: var(--ds-border);">
                 <button
+                  data-testid="migration-tab-item-types"
                   class="px-4 py-2 text-sm font-medium flex items-center gap-2 border-b-2 -mb-px transition-colors"
                   class:border-blue-500={activeTab === 'itemType'}
                   class:text-blue-600={activeTab === 'itemType'}
@@ -476,6 +494,7 @@
                   {/if}
                 </button>
                 <button
+                  data-testid="migration-tab-fields"
                   class="px-4 py-2 text-sm font-medium flex items-center gap-2 border-b-2 -mb-px transition-colors"
                   class:border-blue-500={activeTab === 'fields'}
                   class:text-blue-600={activeTab === 'fields'}
@@ -490,6 +509,7 @@
                   {/if}
                 </button>
                 <button
+                  data-testid="migration-tab-status"
                   class="px-4 py-2 text-sm font-medium flex items-center gap-2 border-b-2 -mb-px transition-colors"
                   class:border-blue-500={activeTab === 'status'}
                   class:text-blue-600={activeTab === 'status'}
@@ -504,6 +524,7 @@
                   {/if}
                 </button>
                 <button
+                  data-testid="migration-tab-priority"
                   class="px-4 py-2 text-sm font-medium flex items-center gap-2 border-b-2 -mb-px transition-colors"
                   class:border-blue-500={activeTab === 'priority'}
                   class:text-blue-600={activeTab === 'priority'}
@@ -529,7 +550,11 @@
                 {:else}
                   <div class="space-y-4">
                     {#each itemTypeMappings as mapping}
-                      <div class="rounded p-4" style="background-color: var(--ds-surface-raised);">
+                      <div
+                        data-testid={`migration-item-type-${mapping.from_item_type_id ?? 'none'}`}
+                        class="rounded p-4"
+                        style="background-color: var(--ds-surface-raised);"
+                      >
                         <div class="flex items-center justify-between">
                           <div class="flex-1">
                             <div class="flex items-center space-x-3">
@@ -538,22 +563,34 @@
                               </Badge>
                               <ArrowRight size={16} style="color: var(--ds-text-subtle);" />
                               {#if mapping.requires_migration}
-                                <div class="w-48">
-                                  <BasePicker
-                                    bind:value={mapping.to_item_type_id}
-                                    items={mapping.available_targets}
-                                    placeholder={t('migrationAssistant.selectTargetType')}
-                                    showUnassigned={true}
-                                    unassignedLabel={t('migrationAssistant.selectTargetType')}
-                                    getValue={(type) => type.id}
-                                    getLabel={(type) => type.name}
-                                    onSelect={(type) => {
-                                      if (type) {
-                                        updateItemTypeMapping(mapping.from_item_type_id, type.id, type.name);
-                                      }
-                                    }}
-                                  />
-                                </div>
+                                {#if mapping.available_targets.length === 0}
+                                  <div
+                                    data-testid={`migration-item-type-no-target-${mapping.from_item_type_id ?? 'none'}`}
+                                    class="text-sm font-medium"
+                                    style="color: var(--ds-text-danger);"
+                                  >
+                                    No item type is available at the same hierarchy level.
+                                  </div>
+                                {:else}
+                                  <div class="w-48">
+                                    <BasePicker
+                                      id={`migration-item-type-target-${mapping.from_item_type_id ?? 'none'}`}
+                                      bind:value={mapping.to_item_type_id}
+                                      items={mapping.available_targets}
+                                      placeholder={t('migrationAssistant.selectTargetType')}
+                                      showUnassigned={true}
+                                      unassignedLabel={t('migrationAssistant.selectTargetType')}
+                                      getValue={(type) => type.id}
+                                      getLabel={(type) => type.name}
+                                      optionTestid={(option) => `migration-item-type-option-${mapping.from_item_type_id ?? 'none'}-${option.value ?? 'none'}`}
+                                      onSelect={(type) => {
+                                        if (type) {
+                                          updateItemTypeMapping(mapping.from_item_type_id, type.id, type.name);
+                                        }
+                                      }}
+                                    />
+                                  </div>
+                                {/if}
                               {:else}
                                 <Badge variant="success" size="sm">
                                   {mapping.to_item_type_name || t('migrationAssistant.compatible')}
@@ -756,6 +793,7 @@
         onCancel={() => closeAssistant(true)}
         onConfirm={executeMigration}
         confirmLabel={t('migrationAssistant.executeMigration')}
+        confirmDisabled={hasUnmappableItemTypes}
         loading={isMigrating}
         loadingLabel={t('migrationAssistant.migrating')}
       />

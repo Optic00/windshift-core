@@ -4,9 +4,12 @@
   import { parseRRule, buildRRule, rruleToText, DAY_NAMES, DAY_LABELS, FREQ_LABELS } from './rruleUtils.js';
   import { errorToast } from '../stores/toasts.svelte.js';
   import Button from '../components/Button.svelte';
+  import Card from '../components/Card.svelte';
+  import FormField from '../components/FormField.svelte';
+  import Input from '../components/Input.svelte';
+  import Select from '../components/Select.svelte';
   import Toggle from '../components/Toggle.svelte';
-  import Lozenge from '../components/Lozenge.svelte';
-  import { Save, Trash2, X, RefreshCw, Eye } from '@lucide/svelte';
+  import { Save, Trash2, X, Eye } from '@lucide/svelte';
 
   let {
     itemId,
@@ -94,6 +97,12 @@
 
   // Human-readable summary
   const summary = $derived(rruleToText(currentRRule));
+  const frequencyOptions = Object.entries(FREQ_LABELS).map(([value, label]) => ({ value, label }));
+  const statusSelectOptions = $derived([
+    { value: null, label: t('common.none') },
+    ...statusOptions.map(status => ({ value: status.id, label: status.label })),
+  ]);
+  const controlSize = $derived(compact ? 'small' : 'medium');
 
   // Saving state
   let saving = $state(false);
@@ -186,224 +195,204 @@
   });
 </script>
 
-<div class="space-y-6">
-  <!-- Summary -->
-  {#if summary}
-    <div class="p-3 rounded-lg" style="background: var(--ds-background-neutral);">
-      <div class="text-sm font-medium" style="color: var(--ds-text);">{summary}</div>
+<div class="space-y-5" data-testid="recurrence-editor">
+  <Card variant="flat" padding="compact" dataTestid="recurrence-editor-summary">
+    <div class="flex items-center justify-between gap-4">
+      <div class="min-w-0">
+        <div class="text-xs font-medium mb-1" style="color: var(--ds-text-subtle);">
+          {t('recurrence.rule')}
+        </div>
+        <div class="text-sm font-medium truncate" style="color: var(--ds-text);">{summary}</div>
+      </div>
+      <div class="flex items-center gap-2 shrink-0">
+        <span class="text-sm" style="color: var(--ds-text-subtle);">{t('recurrence.active')}</span>
+        <Toggle bind:checked={isActive} size="small" />
+      </div>
     </div>
-  {/if}
+  </Card>
 
-  <!-- Active Toggle -->
-  <div class="flex items-center justify-between">
-    <span class="text-sm font-medium" style="color: var(--ds-text);">{t('recurrence.active')}</span>
-    <Toggle bind:checked={isActive} size="small" />
-  </div>
-
-  <!-- Frequency -->
-  <div>
-    <label for="recurrence-frequency" class="block text-sm font-medium mb-1.5" style="color: var(--ds-text-subtle);">{t('recurrence.frequency')}</label>
-    <select
-      id="recurrence-frequency"
-      bind:value={frequency}
-      class="w-full px-3 py-2 text-sm border rounded-md focus:outline-none focus:ring-2"
-      style="border-color: var(--ds-border); background: var(--ds-surface-raised); color: var(--ds-text); --tw-ring-color: var(--ds-border-focused);"
-    >
-      {#each Object.entries(FREQ_LABELS) as [value, label]}
-        <option {value}>{label}</option>
-      {/each}
-    </select>
-  </div>
-
-  <!-- Interval -->
-  <div>
-    <label for="recurrence-interval" class="block text-sm font-medium mb-1.5" style="color: var(--ds-text-subtle);">{t('recurrence.interval')}</label>
-    <div class="flex items-center gap-2">
-      <input
-        id="recurrence-interval"
-        type="number"
-        min="1"
-        max="365"
-        bind:value={interval}
-        class="w-20 px-3 py-2 text-sm border rounded-md focus:outline-none focus:ring-2"
-        style="border-color: var(--ds-border); background: var(--ds-surface-raised); color: var(--ds-text); --tw-ring-color: var(--ds-border-focused);"
+  <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-4">
+    <FormField label={t('recurrence.frequency')} id="recurrence-frequency" class="mb-0">
+      <Select
+        id="recurrence-frequency"
+        bind:value={frequency}
+        options={frequencyOptions}
+        size={controlSize}
       />
-      <span class="text-sm" style="color: var(--ds-text-subtle);">{intervalUnit}</span>
-    </div>
+    </FormField>
+
+    <FormField label={t('recurrence.interval')} id="recurrence-interval" class="mb-0">
+      <div class="flex items-center gap-2">
+        <Input
+          id="recurrence-interval"
+          type="number"
+          min="1"
+          max="365"
+          bind:value={interval}
+          size={controlSize}
+          class="max-w-24"
+        />
+        <span class="text-sm" style="color: var(--ds-text-subtle);">{intervalUnit}</span>
+      </div>
+    </FormField>
   </div>
 
-  <!-- Weekly: Day of week chips -->
   {#if frequency === 'WEEKLY'}
-    <div>
-      <div class="block text-sm font-medium mb-1.5" style="color: var(--ds-text-subtle);">{t('recurrence.daysOfWeek')}</div>
-      <div class="flex flex-wrap gap-1.5">
+    <FormField label={t('recurrence.daysOfWeek')} class="mb-0">
+      <div class="flex flex-wrap gap-2">
         {#each DAY_NAMES as day}
-          <button
-            type="button"
-            class="px-3 py-1.5 text-xs font-medium rounded-full border transition-colors"
-            style="{byDay.includes(day) ? 'background: var(--ds-interactive); color: white; border-color: var(--ds-interactive);' : 'background: var(--ds-surface-raised); color: var(--ds-text); border-color: var(--ds-border);'}"
+          <Button
+            variant={byDay.includes(day) ? 'selected' : 'default'}
+            size="small"
             onclick={() => toggleDay(day)}
           >
             {DAY_LABELS[day]}
-          </button>
+          </Button>
         {/each}
       </div>
-    </div>
+    </FormField>
   {/if}
 
-  <!-- Monthly: Day of month -->
   {#if frequency === 'MONTHLY'}
-    <div>
-      <label for="recurrence-day-of-month" class="block text-sm font-medium mb-1.5" style="color: var(--ds-text-subtle);">{t('recurrence.dayOfMonth')}</label>
-      <input
+    <FormField label={t('recurrence.dayOfMonth')} id="recurrence-day-of-month" class="mb-0">
+      <Input
         id="recurrence-day-of-month"
         type="number"
         min="1"
         max="31"
         bind:value={byMonthDay}
-        class="w-20 px-3 py-2 text-sm border rounded-md focus:outline-none focus:ring-2"
-        style="border-color: var(--ds-border); background: var(--ds-surface-raised); color: var(--ds-text); --tw-ring-color: var(--ds-border-focused);"
+        size={controlSize}
+        class="max-w-24"
       />
-    </div>
+    </FormField>
   {/if}
 
-  <!-- Start Date -->
-  <div>
-    <label for="recurrence-start-date" class="block text-sm font-medium mb-1.5" style="color: var(--ds-text-subtle);">{t('recurrence.startDate')}</label>
-    <input
+  <FormField label={t('recurrence.startDate')} id="recurrence-start-date" class="mb-0">
+    <Input
       id="recurrence-start-date"
       type="date"
       bind:value={dtStart}
-      class="w-full px-3 py-2 text-sm border rounded-md focus:outline-none focus:ring-2"
-      style="border-color: var(--ds-border); background: var(--ds-surface-raised); color: var(--ds-text); --tw-ring-color: var(--ds-border-focused);"
+      size={controlSize}
     />
-  </div>
+  </FormField>
 
-  <!-- End Condition -->
-  <div>
-    <div class="block text-sm font-medium mb-1.5" style="color: var(--ds-text-subtle);">{t('recurrence.endCondition')}</div>
-    <div class="space-y-2">
-      <label class="flex items-center gap-2 cursor-pointer">
-        <input type="radio" bind:group={endType} value="never" class="text-sm" />
-        <span class="text-sm" style="color: var(--ds-text);">{t('recurrence.never')}</span>
-      </label>
-      <label class="flex items-center gap-2 cursor-pointer">
-        <input type="radio" bind:group={endType} value="date" class="text-sm" />
-        <span class="text-sm" style="color: var(--ds-text);">{t('recurrence.onDate')}</span>
-        {#if endType === 'date'}
-          <input
-            type="date"
-            bind:value={endDate}
-            class="ml-2 px-2 py-1 text-sm border rounded focus:outline-none focus:ring-2"
-            style="border-color: var(--ds-border); background: var(--ds-surface-raised); color: var(--ds-text); --tw-ring-color: var(--ds-border-focused);"
-          />
-        {/if}
-      </label>
-      <label class="flex items-center gap-2 cursor-pointer">
-        <input type="radio" bind:group={endType} value="count" class="text-sm" />
-        <span class="text-sm" style="color: var(--ds-text);">{t('recurrence.afterOccurrences')}</span>
-        {#if endType === 'count'}
-          <input
-            type="number"
-            min="1"
-            max="999"
-            bind:value={count}
-            class="ml-2 w-20 px-2 py-1 text-sm border rounded focus:outline-none focus:ring-2"
-            style="border-color: var(--ds-border); background: var(--ds-surface-raised); color: var(--ds-text); --tw-ring-color: var(--ds-border-focused);"
-          />
-          <span class="text-sm" style="color: var(--ds-text-subtle);">{t('recurrence.occurrences')}</span>
-        {/if}
-      </label>
-    </div>
-  </div>
+  <FormField label={t('recurrence.endCondition')} class="mb-0">
+    <Card variant="outlined" padding="compact">
+      <div class="space-y-3">
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input id="recurrence-end-never" type="radio" bind:group={endType} value="never" />
+          <span class="text-sm" style="color: var(--ds-text);">{t('recurrence.never')}</span>
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input id="recurrence-end-date-option" type="radio" bind:group={endType} value="date" />
+          <span class="text-sm" style="color: var(--ds-text);">{t('recurrence.onDate')}</span>
+          {#if endType === 'date'}
+            <Input
+              id="recurrence-end-date"
+              type="date"
+              bind:value={endDate}
+              size="small"
+              class="ml-auto max-w-48"
+            />
+          {/if}
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input id="recurrence-end-count-option" type="radio" bind:group={endType} value="count" />
+          <span class="text-sm" style="color: var(--ds-text);">{t('recurrence.afterOccurrences')}</span>
+          {#if endType === 'count'}
+            <Input
+              id="recurrence-count"
+              type="number"
+              min="1"
+              max="999"
+              bind:value={count}
+              size="small"
+              class="ml-auto max-w-24"
+            />
+            <span class="text-sm" style="color: var(--ds-text-subtle);">{t('recurrence.occurrences')}</span>
+          {/if}
+        </label>
+      </div>
+    </Card>
+  </FormField>
 
   {#if !compact}
-  <!-- Preview -->
-  <div>
-    <div class="flex items-center justify-between mb-1.5">
-      <div class="text-sm font-medium" style="color: var(--ds-text-subtle);">{t('recurrence.preview')}</div>
-      <Button variant="ghost" size="small" icon={Eye} onclick={loadPreview} disabled={previewLoading}>
-        {previewLoading ? t('recurrence.previewLoading') : t('recurrence.preview')}
-      </Button>
-    </div>
-    {#if previewDates.length > 0}
-      <div class="space-y-1 p-3 rounded-lg" style="background: var(--ds-surface-sunken);">
-        {#each previewDates as date, i}
-          <div class="text-sm flex items-center gap-2" style="color: var(--ds-text);">
-            <span class="w-5 text-right" style="color: var(--ds-text-subtle);">{i + 1}.</span>
-            <span>{formatPreviewDate(date)}</span>
-          </div>
-        {/each}
-      </div>
-    {/if}
-    {#if previewError}
-      <div class="text-sm mt-1" style="color: var(--ds-text-danger);">{previewError}</div>
-    {/if}
-  </div>
-
-  <!-- Divider -->
-  <div class="border-t" style="border-color: var(--ds-border);"></div>
-
-  <!-- Copy Settings -->
-  <div>
-    <div class="block text-sm font-medium mb-3" style="color: var(--ds-text-subtle);">{t('recurrence.copySettings')}</div>
-    <div class="space-y-3">
-      <Toggle bind:checked={copyAssignee} size="small" label={t('recurrence.copyAssignee')} />
-      <Toggle bind:checked={copyPriority} size="small" label={t('recurrence.copyPriority')} />
-      <Toggle bind:checked={copyCustomFields} size="small" label={t('recurrence.copyCustomFields')} />
-      <Toggle bind:checked={copyDescription} size="small" label={t('recurrence.copyDescription')} />
-    </div>
-  </div>
-
-  <!-- Lead Time -->
-  <div>
-    <label for="recurrence-lead-time" class="block text-sm font-medium mb-1.5" style="color: var(--ds-text-subtle);">{t('recurrence.leadTime')}</label>
-    <input
-      id="recurrence-lead-time"
-      type="number"
-      min="1"
-      max="365"
-      bind:value={leadTimeDays}
-      class="w-24 px-3 py-2 text-sm border rounded-md focus:outline-none focus:ring-2"
-      style="border-color: var(--ds-border); background: var(--ds-surface-raised); color: var(--ds-text); --tw-ring-color: var(--ds-border-focused);"
-    />
-  </div>
-
-  <!-- Status on Create -->
-  {#if statusOptions.length > 0}
-    <div>
-      <label for="recurrence-status-on-create" class="block text-sm font-medium mb-1.5" style="color: var(--ds-text-subtle);">{t('recurrence.statusOnCreate')}</label>
-      <select
-        id="recurrence-status-on-create"
-        bind:value={statusOnCreate}
-        class="w-full px-3 py-2 text-sm border rounded-md focus:outline-none focus:ring-2"
-        style="border-color: var(--ds-border); background: var(--ds-surface-raised); color: var(--ds-text); --tw-ring-color: var(--ds-border-focused);"
-      >
-        <option value={null}>{t('common.none')}</option>
-        {#each statusOptions as status}
-          <option value={status.id}>{status.label}</option>
-        {/each}
-      </select>
-    </div>
-  {/if}
-
-  <!-- Actions -->
-  <div class="flex items-center justify-between pt-2">
-    <div>
-      {#if existingRule}
-        <Button variant="danger" size="small" icon={Trash2} onclick={handleDelete}>
-          {t('recurrence.deleteRule')}
+    <Card variant="outlined" padding="default">
+      <div class="flex items-center justify-between gap-3 mb-3">
+        <div class="text-sm font-medium" style="color: var(--ds-text);">{t('recurrence.preview')}</div>
+        <Button variant="default" size="small" icon={Eye} onclick={loadPreview} disabled={previewLoading}>
+          {previewLoading ? t('recurrence.previewLoading') : t('recurrence.preview')}
         </Button>
+      </div>
+      {#if previewDates.length > 0}
+        <div class="space-y-1">
+          {#each previewDates as date, i}
+            <div class="text-sm flex items-center gap-2" style="color: var(--ds-text);">
+              <span class="w-5 text-right" style="color: var(--ds-text-subtle);">{i + 1}.</span>
+              <span>{formatPreviewDate(date)}</span>
+            </div>
+          {/each}
+        </div>
       {/if}
+      {#if previewError}
+        <div class="text-sm mt-2" style="color: var(--ds-text-danger);">{previewError}</div>
+      {/if}
+    </Card>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <Card variant="outlined" padding="default">
+        <div class="text-sm font-medium mb-3" style="color: var(--ds-text);">
+          {t('recurrence.copySettings')}
+        </div>
+        <div class="space-y-3">
+          <Toggle bind:checked={copyAssignee} size="small" label={t('recurrence.copyAssignee')} />
+          <Toggle bind:checked={copyPriority} size="small" label={t('recurrence.copyPriority')} />
+          <Toggle bind:checked={copyCustomFields} size="small" label={t('recurrence.copyCustomFields')} />
+          <Toggle bind:checked={copyDescription} size="small" label={t('recurrence.copyDescription')} />
+        </div>
+      </Card>
+
+      <Card variant="outlined" padding="default">
+        <FormField label={t('recurrence.leadTime')} id="recurrence-lead-time">
+          <Input
+            id="recurrence-lead-time"
+            type="number"
+            min="1"
+            max="365"
+            bind:value={leadTimeDays}
+            size="small"
+            class="max-w-28"
+          />
+        </FormField>
+        {#if statusOptions.length > 0}
+          <FormField label={t('recurrence.statusOnCreate')} id="recurrence-status-on-create" class="mb-0">
+            <Select
+              id="recurrence-status-on-create"
+              bind:value={statusOnCreate}
+              options={statusSelectOptions}
+              size="small"
+            />
+          </FormField>
+        {/if}
+      </Card>
     </div>
-    <div class="flex items-center gap-2">
-      <Button variant="default" size="small" icon={X} onclick={() => oncancel?.()}>
-        {t('common.cancel')}
-      </Button>
-      <Button variant="primary" size="small" icon={Save} onclick={handleSave} disabled={saving}>
-        {saving ? t('common.saving') : t('common.save')}
-      </Button>
+
+    <div class="flex items-center justify-between pt-4 border-t" style="border-color: var(--ds-border);">
+      <div>
+        {#if existingRule}
+          <Button variant="danger" size="small" icon={Trash2} onclick={handleDelete} dataTestid="recurrence-editor-delete">
+            {t('recurrence.deleteRule')}
+          </Button>
+        {/if}
+      </div>
+      <div class="flex items-center gap-2">
+        <Button variant="default" size="small" icon={X} onclick={() => oncancel?.()} dataTestid="recurrence-editor-cancel">
+          {t('common.cancel')}
+        </Button>
+        <Button variant="primary" size="small" icon={Save} onclick={handleSave} disabled={saving} dataTestid="recurrence-editor-save">
+          {saving ? t('common.saving') : t('common.save')}
+        </Button>
+      </div>
     </div>
-  </div>
   {/if}
 </div>

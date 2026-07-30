@@ -20,6 +20,7 @@
   import Label from '../components/Label.svelte';
   import Checkbox from '../components/Checkbox.svelte';
   import DescriptionText from '../components/DescriptionText.svelte';
+  import MigrationAssistant from '../pages/MigrationAssistant.svelte';
 
   // Tab configuration
   let activeTab = $state('general');
@@ -29,6 +30,11 @@
   let configSet = $state(null);
   let loading = $state(true);
   let saving = $state(false);
+  let showMigrationAssistant = $state(false);
+  let migrationAnalysis = $state(null);
+  let migrationApplyWorkflowId = $state(null);
+  let migrationApplyItemTypeConfigs = $state(null);
+  let pendingSavePayload = $state(null);
 
   // Reference data
   let workflows = $state([]);
@@ -66,15 +72,15 @@
   // (it automatically includes all unassigned workspaces)
   const tabs = $derived(formData.is_default
     ? [
-        { id: 'general', label: t('settings.configSets.basicInfo') },
-        { id: 'priorities', label: t('priorities.title') },
-        { id: 'item-types', label: t('settings.configSets.itemTypes') }
+        { id: 'general', label: t('settings.configSets.basicInfo'), testid: 'config-set-tab-general' },
+        { id: 'priorities', label: t('priorities.title'), testid: 'config-set-tab-priorities' },
+        { id: 'item-types', label: t('settings.configSets.itemTypes'), testid: 'config-set-tab-item-types' }
       ]
     : [
-        { id: 'general', label: t('settings.configSets.basicInfo') },
-        { id: 'priorities', label: t('priorities.title') },
-        { id: 'item-types', label: t('settings.configSets.itemTypes') },
-        { id: 'workspaces', label: t('settings.configSets.workspaces') }
+        { id: 'general', label: t('settings.configSets.basicInfo'), testid: 'config-set-tab-general' },
+        { id: 'priorities', label: t('priorities.title'), testid: 'config-set-tab-priorities' },
+        { id: 'item-types', label: t('settings.configSets.itemTypes'), testid: 'config-set-tab-item-types' },
+        { id: 'workspaces', label: t('settings.configSets.workspaces'), testid: 'config-set-tab-workspaces' }
       ]
   );
 
@@ -229,13 +235,69 @@
         isNewMode = false;
         navigate(`/admin/configuration-sets/${created.id}`);
       } else {
-        const updated = await api.configurationSets.update(configSetId, payload);
-        configSet = updated;
+        try {
+          const updated = await api.configurationSets.update(configSetId, payload);
+          configSet = updated;
+        } catch (error) {
+          if (isMigrationRequired(error)) {
+            openMigrationAssistant(error.body.analysis, payload);
+            return;
+          }
+          throw error;
+        }
       }
 
       originalFormData = JSON.parse(JSON.stringify(formData));
     } catch (error) {
       console.error('Failed to save configuration set:', error);
+      errorToast(t('dialogs.alerts.failedToSave', { error: error.message || JSON.stringify(error) }));
+    } finally {
+      saving = false;
+    }
+  }
+
+  function isMigrationRequired(error) {
+    return error?.status === 409 && error?.body?.error === 'migration_required';
+  }
+
+  function openMigrationAssistant(analysis, payload) {
+    pendingSavePayload = payload;
+    migrationAnalysis = analysis;
+    migrationApplyWorkflowId = analysis.requires_status_migration &&
+      payload.workflow_id &&
+      payload.workflow_id !== configSet?.workflow_id
+        ? payload.workflow_id
+        : null;
+    migrationApplyItemTypeConfigs = analysis.requires_item_type_migration
+      ? payload.item_type_configs
+      : null;
+    showMigrationAssistant = true;
+  }
+
+  async function handleMigrationAssistantClose(data) {
+    showMigrationAssistant = false;
+    migrationAnalysis = null;
+    migrationApplyWorkflowId = null;
+    migrationApplyItemTypeConfigs = null;
+
+    if (!data?.success || data?.cancelled || !pendingSavePayload) {
+      pendingSavePayload = null;
+      return;
+    }
+
+    const payload = pendingSavePayload;
+    pendingSavePayload = null;
+    try {
+      saving = true;
+      const updated = await api.configurationSets.update(configSetId, payload);
+      configSet = updated;
+      originalFormData = JSON.parse(JSON.stringify(formData));
+    } catch (error) {
+      if (isMigrationRequired(error)) {
+        openMigrationAssistant(error.body.analysis, payload);
+        return;
+      }
+      console.error('Failed to finish saving configuration set after migration:', error);
       errorToast(t('dialogs.alerts.failedToSave', { error: error.message || JSON.stringify(error) }));
     } finally {
       saving = false;
@@ -294,7 +356,7 @@
           <Button variant="ghost" onclick={goBack}>
             {t('common.cancel')}
           </Button>
-          <Button variant="primary" onclick={save} disabled={saving || !hasUnsavedChanges}>
+          <Button dataTestid="config-set-save" variant="primary" onclick={save} disabled={saving || !hasUnsavedChanges}>
             {saving ? t('common.saving') : t('common.save')}
           </Button>
         </div>
@@ -532,3 +594,15 @@
       {/if}
     </div>
 </div>
+
+<MigrationAssistant
+  configurationSet={configSet}
+  targetConfigurationSet={configSet}
+  isVisible={showMigrationAssistant}
+  workspaceId={migrationAnalysis?.affected_workspaces?.[0] ?? null}
+  comprehensive={true}
+  preloadedAnalysis={migrationAnalysis}
+  applyWorkflowId={migrationApplyWorkflowId}
+  applyItemTypeConfigs={migrationApplyItemTypeConfigs}
+  onclose={handleMigrationAssistantClose}
+/>

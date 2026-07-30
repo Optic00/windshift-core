@@ -513,6 +513,7 @@
                 <!-- Summary -->
                 <div class="flex-1 min-w-0">
                   <LinkComponent
+                    data-testid="tree-item-{item.id}"
                     href={collectionId && workspaceId
                       ? `/workspaces/${workspaceId}/collections/${collectionId}/items/${item.id}`
                       : `/workspaces/${workspaceId || item.workspace_id}/items/${item.id}`}

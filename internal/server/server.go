@@ -1460,6 +1460,8 @@ func (s *Server) initialize() error {
 				s.webhookSender,
 				transitionMatrixService,
 				bulkOperationMetrics,
+				repository.NewRecurrenceRepository(s.db),
+				repository.NewSystemSettingRepository(s.db),
 			),
 			AgentSecurity: handlers.NewAgentSecurityHandler(
 				agentSecurityRepo,

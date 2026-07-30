@@ -157,6 +157,9 @@
         });
 
       } catch (error) {
+        if (error?.name === 'AbortError') {
+          return;
+        }
         console.error('Failed to build hierarchy path:', error);
         // Fallback to simple breadcrumb
         newBreadcrumbs.push({
@@ -664,6 +667,7 @@
                 <ItemCard compact>
                   <!-- Title -->
                   <button
+                    data-testid="map-backbone-item-{backboneItem.id}"
                     onclick={() => navigateToItem(backboneItem)}
                     class="text-sm mb-2 leading-snug text-left w-full line-clamp-2 transition-colors"
                     style="{styles.glassTextStyle}"
@@ -704,6 +708,7 @@
                         <Tooltip content={t('collections.drillDown')}>
                           {#snippet children()}
                             <button
+                              data-testid="map-drill-down-{backboneItem.id}"
                               onclick={() => drillDown(backboneItem.id)}
                               class="p-1.5 rounded-full transition-colors group"
                               style="color: var(--ds-interactive);"

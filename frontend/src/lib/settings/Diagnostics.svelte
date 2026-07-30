@@ -11,6 +11,7 @@
   import LLMHealthSection from './diagnostics/LLMHealthSection.svelte';
   import RunnerPoolsSection from './diagnostics/RunnerPoolsSection.svelte';
   import DatabasePoolsSection from './diagnostics/DatabasePoolsSection.svelte';
+  import RecurrenceVolumeSection from './diagnostics/RecurrenceVolumeSection.svelte';
 
   const tabs = [
     { id: 'clock', label: 'Server clock' },
@@ -21,6 +22,7 @@
     { id: 'llm-health', label: 'AI / LLM' },
     { id: 'runner-pools', label: 'Runner pools' },
     { id: 'database-pools', label: 'Database pools' },
+    { id: 'recurrence-volume', label: 'Recurrence' },
   ];
 
   const subtab = $derived($currentRoute.query?.subtab || 'clock');
@@ -30,7 +32,7 @@
   <div class="space-y-6" data-testid="diagnostics-page">
     <SectionHeader
       title="Diagnostics"
-      subtitle="Operational signals from the running system. Read-only — no actions taken from this page."
+      subtitle="Operational signals from the running system. Diagnostic warning thresholds can be adjusted without changing hard safety limits."
     />
 
     <TabNav {tabs} basePath="/admin/diagnostics" defaultTab="clock" />
@@ -52,6 +54,8 @@
         <RunnerPoolsSection />
       {:else if subtab === 'database-pools'}
         <DatabasePoolsSection />
+      {:else if subtab === 'recurrence-volume'}
+        <RecurrenceVolumeSection />
       {/if}
     </div>
   </div>

@@ -102,6 +102,7 @@
     data={rows}
     keyField="id"
     {loading}
+    rowAttrs={(row) => ({ 'data-testid': `archived-page-row-${row.id}` })}
     emptyMessage={t('pages.archivedEmpty')}
     emptyIcon={IconArchive}
   >

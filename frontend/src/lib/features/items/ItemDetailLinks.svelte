@@ -487,6 +487,7 @@
           {#each childItems as childItem}
             {@const childItemType = itemTypes.find(type => type.id === childItem.item_type_id)}
             <div
+              data-testid={`item-child-card-${childItem.id}`}
               class="group flex items-center justify-between px-4 py-3 rounded-lg border transition-colors relative"
               style="background-color: var(--ds-surface-raised); border-color: var(--ds-border);"
               data-child-item-card

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -484,9 +485,11 @@ func (h *ConfigurationSetHandler) analyzeItemTypeMigration(workspaceID, sourceCo
 	}
 
 	// Build map by normalized name for suggestion matching
-	targetByName := make(map[string]models.ItemTypeTarget)
+	targetByNameAndLevel := make(map[string]models.ItemTypeTarget)
+	targetsByLevel := make(map[int][]models.ItemTypeTarget)
 	for _, t := range targetItemTypes {
-		targetByName[strings.ToLower(t.Name)] = t
+		targetByNameAndLevel[fmt.Sprintf("%d:%s", t.HierarchyLevel, strings.ToLower(t.Name))] = t
+		targetsByLevel[t.HierarchyLevel] = append(targetsByLevel[t.HierarchyLevel], t)
 	}
 
 	// Count items by type in workspace
@@ -503,10 +506,20 @@ func (h *ConfigurationSetHandler) analyzeItemTypeMigration(workspaceID, sourceCo
 		typeName := tc.TypeName
 		itemCount := tc.ItemCount
 
+		mappingTargets := availableTargets
+		sourceLevel := 0
+		if typeID != 0 {
+			if err := h.db.QueryRow(`SELECT hierarchy_level FROM item_types WHERE id = ?`, typeID).Scan(&sourceLevel); err == nil {
+				mappingTargets = append([]models.ItemTypeTarget{}, targetsByLevel[sourceLevel]...)
+			} else {
+				mappingTargets = []models.ItemTypeTarget{}
+			}
+		}
+
 		migration := models.ItemTypeMigrationInfo{
 			CurrentItemTypeName: typeName,
 			ItemCount:           itemCount,
-			AvailableTargets:    availableTargets,
+			AvailableTargets:    mappingTargets,
 		}
 
 		if typeID == 0 {
@@ -520,15 +533,15 @@ func (h *ConfigurationSetHandler) analyzeItemTypeMigration(workspaceID, sourceCo
 			migration.SuggestedItemTypeID = &target.ID
 			migration.SuggestedItemTypeName = target.Name
 			migration.RequiresMigration = false
-		} else if target, exists := targetByName[strings.ToLower(typeName)]; exists {
+		} else if target, exists := targetByNameAndLevel[fmt.Sprintf("%d:%s", sourceLevel, strings.ToLower(typeName))]; exists {
 			// Match by name
 			migration.SuggestedItemTypeID = &target.ID
 			migration.SuggestedItemTypeName = target.Name
 			migration.RequiresMigration = false
-		} else if typeID == 0 && len(availableTargets) > 0 {
+		} else if typeID == 0 && len(mappingTargets) > 0 {
 			// No type set - suggest first available
-			migration.SuggestedItemTypeID = &availableTargets[0].ID
-			migration.SuggestedItemTypeName = availableTargets[0].Name
+			migration.SuggestedItemTypeID = &mappingTargets[0].ID
+			migration.SuggestedItemTypeName = mappingTargets[0].Name
 			migration.RequiresMigration = true
 			requiresMigration = true
 		} else if typeID != 0 {

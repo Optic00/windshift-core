@@ -113,6 +113,14 @@ func (h *ConfigurationSetHandler) Update(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	// Narrowing this configuration set's explicit item-type allow-list can
+	// strand items in every workspace currently attached to it. Require an
+	// intra-set item-type migration first; the returned targets are constrained
+	// to the removed type's hierarchy level.
+	if h.respondIntraSetItemTypeConflictIfNeeded(w, r, id, oldWorkspaceIDs, cs.ItemTypeConfigs) {
+		return
+	}
+
 	// Detect intra-config-set workflow change. Workspaces that stay attached
 	// to this config set need a status migration when the default workflow
 	// itself changes — otherwise items can be left on status_ids that are

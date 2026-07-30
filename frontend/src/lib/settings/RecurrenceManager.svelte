@@ -4,11 +4,12 @@
   import { confirm } from '../composables/useConfirm.js';
   import { errorToast } from '../stores/toasts.svelte.js';
   import { api } from '../api.js';
-  import { Trash2, Search, Repeat } from '@lucide/svelte';
+  import { Trash2, Repeat } from '@lucide/svelte';
   import Button from '../components/Button.svelte';
-  import EmptyState from '../components/EmptyState.svelte';
-  import Panel from '../components/Panel.svelte';
+  import DataTable from '../components/DataTable.svelte';
   import Lozenge from '../components/Lozenge.svelte';
+  import SearchInput from '../components/SearchInput.svelte';
+  import StateDisplay from '../components/StateDisplay.svelte';
   import { rruleToText } from '../editors/rruleUtils.js';
   import RecurrenceDetail from './RecurrenceDetail.svelte';
 
@@ -23,10 +24,18 @@
     searchQuery.trim() === ''
       ? rules
       : rules.filter(r =>
-          r.template_item_title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          r.template_title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
           rruleToText(r.rrule)?.toLowerCase().includes(searchQuery.toLowerCase())
         )
   );
+
+  const ruleColumns = $derived([
+    { key: 'template_title', label: t('recurrence.templateItem'), slot: 'template' },
+    { key: 'rrule', label: t('recurrence.rule'), render: (rule) => rruleToText(rule.rrule) },
+    { key: 'instance_count', label: t('recurrence.instances'), render: (rule) => String(rule.instance_count ?? 0) },
+    { key: 'is_active', label: t('common.status'), slot: 'status' },
+    { key: 'actions', label: t('common.actions') },
+  ]);
 
   onMount(async () => {
     await loadData();
@@ -73,95 +82,70 @@
       errorToast(error?.message || t('errors.UNKNOWN'));
     }
   }
+
+  function buildRuleActions(rule) {
+    return [
+      {
+        id: 'delete',
+        type: 'regular',
+        icon: Trash2,
+        title: t('common.delete'),
+        testid: 'recurrence-rule-delete',
+        color: 'var(--ds-text-danger)',
+        onClick: () => deleteRule(rule),
+      },
+    ];
+  }
 </script>
 
 {#if selectedRuleId}
   <RecurrenceDetail {workspaceId} ruleId={selectedRuleId} onback={handleBack} />
 {:else}
 
-<!-- Search Bar -->
-<div class="mb-6">
-  <div class="relative max-w-md">
-    <Search class="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4" style="color: var(--ds-icon-subtle);" />
-    <input
-      type="text"
-      placeholder={t('recurrence.searchPlaceholder')}
+  <div data-testid="recurrence-manager" class="space-y-4">
+    <SearchInput
       bind:value={searchQuery}
-      class="w-full pl-9 pr-4 py-2 border rounded text-sm focus:outline-none focus:ring-2"
-      style="border-color: var(--ds-border); background-color: var(--ds-surface-raised); color: var(--ds-text);"
+      placeholder={t('recurrence.searchPlaceholder')}
+      dataTestid="recurrence-search"
+      class="max-w-md"
     />
-  </div>
-</div>
 
-{#if loading}
-  <Panel padding="spacious" class="text-center">
-    <div class="animate-pulse" style="color: var(--ds-text-subtle);">{t('common.loading')}</div>
-  </Panel>
-{:else if filteredRules.length === 0 && searchQuery.trim() === ''}
-  <Panel padding="spacious">
-    <EmptyState
-      icon={Repeat}
-      title={t('recurrence.empty')}
-      description={t('recurrence.emptyDesc')}
-    />
-  </Panel>
-{:else if filteredRules.length === 0}
-  <Panel padding="spacious">
-    <EmptyState
-      icon={Search}
-      title={t('search.noSearchResults')}
-      description={t('recurrence.noMatchingResults')}
-    />
-  </Panel>
-{:else}
-  <div class="space-y-3">
-    {#each filteredRules as rule (rule.id)}
-      <Panel padding="spacious" hoverable>
-        <div class="flex items-center justify-between">
-          <button
-            class="flex-1 min-w-0 text-left cursor-pointer"
-            onclick={() => viewRule(rule)}
+    {#if loading}
+      <div class="rounded-lg border" style="border-color: var(--ds-border); background: var(--ds-surface-raised);">
+        <StateDisplay type="loading" message={t('common.loading')} />
+      </div>
+    {:else}
+      <DataTable
+        columns={ruleColumns}
+        data={filteredRules}
+        keyField="id"
+        emptyIcon={Repeat}
+        emptyMessage={searchQuery.trim() ? t('search.noSearchResults') : t('recurrence.empty')}
+        emptyDescription={searchQuery.trim() ? t('recurrence.noMatchingResults') : t('recurrence.emptyDesc')}
+        onRowClick={viewRule}
+        actionItems={buildRuleActions}
+        actionTriggerTestid={(rule) => `recurrence-rule-actions-${rule.template_item_id}`}
+        rowAttrs={(rule) => ({ 'data-testid': `recurrence-rule-row-${rule.template_item_id}` })}
+      >
+        {#snippet template(rule)}
+          <Button
+            variant="link"
+            dataTestid="recurrence-rule-open"
+            onclick={(event) => {
+              event.stopPropagation();
+              viewRule(rule);
+            }}
           >
-            <div class="flex items-center gap-3 mb-2">
-              <h3 class="text-lg font-medium" style="color: var(--ds-text);">
-                {rule.template_item_title || `Item #${rule.template_item_id}`}
-              </h3>
-              <Lozenge
-                color={rule.is_active ? 'green' : 'neutral'}
-                text={rule.is_active ? t('recurrence.active') : t('recurrence.inactive')}
-              />
-            </div>
-
-            <div class="flex items-center gap-4 text-sm">
-              <div class="flex items-center gap-1.5">
-                <span style="color: var(--ds-text-subtle);">{t('recurrence.rule')}:</span>
-                <span class="font-medium" style="color: var(--ds-text);">
-                  {rruleToText(rule.rrule)}
-                </span>
-              </div>
-              {#if rule.instance_count != null}
-                <div class="flex items-center gap-1.5">
-                  <span style="color: var(--ds-text-subtle);">{t('recurrence.instances')}:</span>
-                  <Lozenge color="blue" text={String(rule.instance_count)} />
-                </div>
-              {/if}
-            </div>
-          </button>
-
-          <div class="flex items-center gap-2 ml-4 flex-shrink-0">
-            <Button
-              variant="danger-ghost"
-              size="small"
-              icon={Trash2}
-              onclick={() => deleteRule(rule)}
-            >
-              {t('common.delete')}
-            </Button>
-          </div>
-        </div>
-      </Panel>
-    {/each}
+            {rule.template_title || `Item #${rule.template_item_id}`}
+          </Button>
+        {/snippet}
+        {#snippet status(rule)}
+          <Lozenge
+            color={rule.is_active ? 'green' : 'neutral'}
+            text={rule.is_active ? t('recurrence.active') : t('recurrence.inactive')}
+          />
+        {/snippet}
+      </DataTable>
+    {/if}
   </div>
-{/if}
-
 {/if}

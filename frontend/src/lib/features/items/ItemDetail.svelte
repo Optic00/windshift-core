@@ -795,6 +795,7 @@ import Button from '../../components/Button.svelte';
         id: 'add-recurrence',
         type: 'regular',
         icon: Repeat,
+        testid: 'item-recurrence-add',
         title: t('recurrence.addRecurrence'),
         onClick: handleSetupRecurrence
       });

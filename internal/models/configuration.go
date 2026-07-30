@@ -332,7 +332,7 @@ type ItemTypeMigrationInfo struct {
 	RequiresMigration     bool             `json:"requires_migration"`
 	SuggestedItemTypeID   *int             `json:"suggested_item_type_id,omitempty"`
 	SuggestedItemTypeName string           `json:"suggested_item_type_name,omitempty"`
-	AvailableTargets      []ItemTypeTarget `json:"available_targets,omitempty"`
+	AvailableTargets      []ItemTypeTarget `json:"available_targets"`
 }
 
 // ItemTypeTarget represents an available target item type for migration
@@ -455,6 +455,13 @@ type ComprehensiveMigrationRequest struct {
 	// When set, status mappings are validated against this workflow rather
 	// than the workflow currently persisted on the config set.
 	ApplyWorkflowToConfigSet *int `json:"apply_workflow_to_config_set,omitempty"`
+
+	// ApplyItemTypeConfigsToConfigSet, when non-nil, replaces the target
+	// configuration set's item-type allow-list in the same transaction as the
+	// item migrations. This is the intra-set item-type-removal path: it avoids
+	// a gap in which newly-created items could continue using a removed type
+	// between migration execution and the follow-up configuration-set update.
+	ApplyItemTypeConfigsToConfigSet *[]ItemTypeConfig `json:"apply_item_type_configs_to_config_set,omitempty"`
 }
 
 // SelectOption represents a single option in a select/multiselect custom field

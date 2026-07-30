@@ -4,10 +4,163 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"sort"
 
 	"windshift/internal/models"
 	"windshift/internal/repository"
 )
+
+// respondIntraSetItemTypeConflictIfNeeded protects workspaces already using a
+// configuration set when its explicit item-type allow-list is narrowed. Items
+// using a removed type must be remapped before the new list can be applied.
+// Targets are limited to the same hierarchy level so the migration cannot
+// silently invalidate parent/child relationships.
+func (h *ConfigurationSetHandler) respondIntraSetItemTypeConflictIfNeeded(
+	w http.ResponseWriter, r *http.Request,
+	configSetID int, workspaceIDs []int, proposedConfigs []models.ItemTypeConfig,
+) bool {
+	migrations, availableTargets, totalAffected, err := h.analyzeItemTypesAgainstConfigs(workspaceIDs, proposedConfigs)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return true
+	}
+	if len(migrations) == 0 {
+		return false
+	}
+
+	var configSetName string
+	if err := h.db.QueryRow(`SELECT name FROM configuration_sets WHERE id = ?`, configSetID).Scan(&configSetName); err != nil {
+		respondInternalError(w, r, err)
+		return true
+	}
+
+	analysis := models.ComprehensiveMigrationAnalysis{
+		OldConfigSetID:            configSetID,
+		OldConfigSetName:          configSetName,
+		NewConfigSetID:            configSetID,
+		NewConfigSetName:          configSetName,
+		AffectedWorkspaces:        append([]int{}, workspaceIDs...),
+		TotalAffectedItems:        totalAffected,
+		ItemTypeMigrations:        migrations,
+		AvailableItemTypes:        availableTargets,
+		RequiresMigration:         true,
+		RequiresItemTypeMigration: true,
+	}
+
+	respondJSON(w, http.StatusConflict, map[string]interface{}{
+		"error":    "migration_required",
+		"message":  "Migration is required before item types can be removed from this configuration set",
+		"analysis": analysis,
+	})
+	return true
+}
+
+// analyzeItemTypesAgainstConfigs returns one migration row for every item type
+// used by workspaceIDs that the proposed explicit allow-list would exclude.
+// An empty proposed list retains the existing "accept all item types" meaning.
+func (h *ConfigurationSetHandler) analyzeItemTypesAgainstConfigs(
+	workspaceIDs []int, proposedConfigs []models.ItemTypeConfig,
+) ([]models.ItemTypeMigrationInfo, []models.ItemTypeTarget, int, error) {
+	if len(workspaceIDs) == 0 || len(proposedConfigs) == 0 {
+		return nil, nil, 0, nil
+	}
+
+	allTypes := make(map[int]models.ItemTypeTarget)
+	rows, err := h.db.Query(`
+		SELECT id, name, icon, color, hierarchy_level
+		FROM item_types
+		ORDER BY CASE WHEN hierarchy_level = -1 THEN 1 ELSE 0 END, hierarchy_level, sort_order, id
+	`)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var target models.ItemTypeTarget
+		if err := rows.Scan(&target.ID, &target.Name, &target.Icon, &target.Color, &target.HierarchyLevel); err != nil {
+			return nil, nil, 0, err
+		}
+		allTypes[target.ID] = target
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, 0, err
+	}
+
+	allowed := make(map[int]struct{}, len(proposedConfigs))
+	targetsByLevel := make(map[int][]models.ItemTypeTarget)
+	availableTargets := make([]models.ItemTypeTarget, 0, len(proposedConfigs))
+	for _, config := range proposedConfigs {
+		target, ok := allTypes[config.ItemTypeID]
+		if !ok {
+			continue
+		}
+		if _, duplicate := allowed[target.ID]; duplicate {
+			continue
+		}
+		allowed[target.ID] = struct{}{}
+		targetsByLevel[target.HierarchyLevel] = append(targetsByLevel[target.HierarchyLevel], target)
+		availableTargets = append(availableTargets, target)
+	}
+
+	type aggregate struct {
+		name  string
+		count int
+	}
+	affected := make(map[int]aggregate)
+	itemRepo := repository.NewItemRepository(h.db)
+	for _, workspaceID := range workspaceIDs {
+		counts, err := itemRepo.ListItemTypeCountsForWorkspace(workspaceID)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+		for _, count := range counts {
+			if _, remainsAllowed := allowed[count.TypeID]; remainsAllowed {
+				continue
+			}
+			current := affected[count.TypeID]
+			current.name = count.TypeName
+			current.count += count.ItemCount
+			affected[count.TypeID] = current
+		}
+	}
+
+	sourceIDs := make([]int, 0, len(affected))
+	for sourceID := range affected {
+		sourceIDs = append(sourceIDs, sourceID)
+	}
+	sort.Ints(sourceIDs)
+
+	migrations := make([]models.ItemTypeMigrationInfo, 0, len(sourceIDs))
+	totalAffected := 0
+	for _, sourceID := range sourceIDs {
+		count := affected[sourceID]
+		migration := models.ItemTypeMigrationInfo{
+			CurrentItemTypeName: count.name,
+			ItemCount:           count.count,
+			RequiresMigration:   true,
+		}
+		if sourceID == 0 {
+			// Untyped legacy items have no hierarchy contract, so any proposed
+			// type is a valid target.
+			migration.AvailableTargets = availableTargets
+		} else {
+			id := sourceID
+			migration.CurrentItemTypeID = &id
+			if source, ok := allTypes[sourceID]; ok {
+				migration.AvailableTargets = append([]models.ItemTypeTarget{}, targetsByLevel[source.HierarchyLevel]...)
+			}
+		}
+		if len(migration.AvailableTargets) > 0 {
+			suggested := migration.AvailableTargets[0]
+			migration.SuggestedItemTypeID = &suggested.ID
+			migration.SuggestedItemTypeName = suggested.Name
+		}
+		migrations = append(migrations, migration)
+		totalAffected += count.count
+	}
+
+	return migrations, availableTargets, totalAffected, nil
+}
 
 // respondIntraSetWorkflowConflictIfNeeded aggregates retained workspaces so a
 // workflow swap cannot orphan unmigrated items.

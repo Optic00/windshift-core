@@ -15,6 +15,14 @@ import (
 // ErrRecurrenceConflict reports that an item already has a recurrence rule.
 var ErrRecurrenceConflict = errors.New("recurrence rule already exists for this item")
 
+// ErrRecurrenceWorkspaceLimit reports that a workspace has reached the hard
+// recurrence-rule quota.
+var ErrRecurrenceWorkspaceLimit = errors.New("workspace recurrence rule limit reached")
+
+// MaxRecurrenceRulesPerWorkspace is enforced for every recurrence creation
+// surface.
+const MaxRecurrenceRulesPerWorkspace = 100
+
 // RecurrenceValidationKind lets transports preserve their own error envelopes
 // while sharing the recurrence validation rules.
 type RecurrenceValidationKind string
@@ -75,17 +83,17 @@ func (s *RecurrenceService) Get(itemID int) (*models.RecurrenceRule, error) {
 
 // Create validates and persists a recurrence rule for an item.
 func (s *RecurrenceService) Create(itemID, workspaceID, userID int, req models.CreateRecurrenceRequest) (*models.RecurrenceRule, error) {
-	if existing, err := s.repo.GetByTemplateItemID(itemID); err == nil && existing != nil {
-		return nil, ErrRecurrenceConflict
-	} else if err != nil && !errors.Is(err, repository.ErrNotFound) {
-		return nil, err
-	}
-
 	rule, err := buildRecurrenceRule(itemID, workspaceID, userID, req)
 	if err != nil {
 		return nil, err
 	}
-	ruleID, err := s.repo.Create(rule)
+	ruleID, err := s.repo.CreateWithinWorkspaceLimit(rule, MaxRecurrenceRulesPerWorkspace)
+	if errors.Is(err, repository.ErrRecurrenceRuleExists) {
+		return nil, ErrRecurrenceConflict
+	}
+	if errors.Is(err, repository.ErrRecurrenceRuleLimitReached) {
+		return nil, ErrRecurrenceWorkspaceLimit
+	}
 	if err != nil {
 		return nil, err
 	}

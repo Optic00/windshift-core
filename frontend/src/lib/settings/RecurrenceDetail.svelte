@@ -8,9 +8,11 @@
   import RecurrenceEditor from '../editors/RecurrenceEditor.svelte';
   import Button from '../components/Button.svelte';
   import Lozenge from '../components/Lozenge.svelte';
-  import Card from '../components/Card.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import DataTable from '../components/DataTable.svelte';
+  import StateDisplay from '../components/StateDisplay.svelte';
+  import Tabs from '../components/Tabs.svelte';
+  import PageHeader from '../layout/PageHeader.svelte';
   import { ArrowLeft, Repeat, Zap, FileText } from '@lucide/svelte';
 
   let { workspaceId, ruleId, onback } = $props();
@@ -18,12 +20,27 @@
   let rule = $state(null);
   let loading = $state(true);
   let activeTab = $state('settings');
+  let instancesPage = $state(1);
 
   // Instances
   let instances = $state([]);
   let instancesPagination = $state({ limit: 20, offset: 0, total: 0 });
   let loadingInstances = $state(false);
   let generating = $state(false);
+
+  const tabs = $derived([
+    {
+      id: 'settings',
+      label: t('recurrence.settingsTab'),
+      testid: 'recurrence-settings-tab',
+    },
+    {
+      id: 'instances',
+      label: t('recurrence.instancesTab'),
+      badge: instancesPagination.total > 0 ? String(instancesPagination.total) : null,
+      testid: 'recurrence-instances-tab',
+    },
+  ]);
 
   onMount(() => {
     loadRule();
@@ -132,145 +149,91 @@
     { key: 'instance_item_id', label: t('recurrence.templateItem'), render: (i) => i.instance_item_id ? `Item #${i.instance_item_id}` : '-' },
   ];
 
-  function handleInstancePageChange(newOffset) {
-    instancesPagination.offset = newOffset;
+  function handleInstancePageChange(page) {
+    instancesPage = page;
+    instancesPagination.offset = (page - 1) * instancesPagination.limit;
     loadInstances();
   }
 </script>
 
-<div class="flex flex-col">
-  <!-- Header -->
-  <div class="pb-4 mb-4 border-b" style="border-color: var(--ds-border);">
-    <div class="flex items-center gap-3 mb-4">
-      <button
+<div class="flex flex-col" data-testid="recurrence-detail">
+  {#if loading}
+    <StateDisplay type="loading" message={t('common.loading')} />
+  {:else if !rule}
+    <EmptyState icon={Repeat} title={t('common.notFound')} description={t('recurrence.empty')} />
+  {:else}
+    <div class="flex items-start gap-3">
+      <Button
+        variant="ghost"
+        size="small"
+        icon={ArrowLeft}
         onclick={goBack}
-        class="p-1.5 rounded-md transition-colors"
-        style="color: var(--ds-text-subtle);"
-        onmouseenter={(e) => { e.currentTarget.style.background = 'var(--ds-background-neutral-hovered)'; e.currentTarget.style.color = 'var(--ds-text)'; }}
-        onmouseleave={(e) => { e.currentTarget.style.background = ''; e.currentTarget.style.color = 'var(--ds-text-subtle)'; }}
-      >
-        <ArrowLeft class="w-5 h-5" />
-      </button>
-      <div>
-        <h1 class="text-xl font-semibold" style="color: var(--ds-text);">
-          {#if rule}
-            {rule.template_item_title || `Item #${rule.template_item_id}`}
-          {:else}
-            {t('recurrence.title')}
-          {/if}
-        </h1>
-        {#if rule}
-          <div class="flex items-center gap-2 mt-1">
-            <span class="text-sm" style="color: var(--ds-text-subtle);">{rruleToText(rule.rrule)}</span>
+        dataTestid="recurrence-detail-back"
+        title={t('common.back')}
+        class="mt-0.5 px-2"
+      />
+      <div class="min-w-0 flex-1">
+        <PageHeader
+          title={rule.template_title || `Item #${rule.template_item_id}`}
+          subtitle={rruleToText(rule.rrule)}
+        >
+          {#snippet actions()}
             <Lozenge
               color={rule.is_active ? 'green' : 'neutral'}
               text={rule.is_active ? t('recurrence.active') : t('recurrence.inactive')}
             />
-          </div>
-        {/if}
+          {/snippet}
+        </PageHeader>
       </div>
     </div>
 
-    <!-- Tabs -->
-    <div class="flex gap-1">
-      <button
-        class="px-4 py-2 text-sm font-medium rounded-t-md transition-colors"
-        style={activeTab === 'settings' ? 'background: var(--ds-surface); color: var(--ds-text); border: 1px solid var(--ds-border); border-bottom: none;' : 'color: var(--ds-text-subtle);'}
-        onclick={() => switchTab('settings')}
-      >
-        {t('recurrence.settingsTab')}
-      </button>
-      <button
-        class="px-4 py-2 text-sm font-medium rounded-t-md transition-colors"
-        style={activeTab === 'instances' ? 'background: var(--ds-surface); color: var(--ds-text); border: 1px solid var(--ds-border); border-bottom: none;' : 'color: var(--ds-text-subtle);'}
-        onclick={() => switchTab('instances')}
-      >
-        {t('recurrence.instancesTab')}
-        {#if instancesPagination.total > 0}
-          <span class="ml-1.5 px-1.5 py-0.5 text-xs rounded-full" style="background: var(--ds-background-neutral); color: var(--ds-text-subtle);">
-            {instancesPagination.total}
-          </span>
-        {/if}
-      </button>
-    </div>
-  </div>
-
-  <!-- Content -->
-  <div>
-    {#if loading}
-      <div class="text-center py-12 animate-pulse" style="color: var(--ds-text-subtle);">{t('common.loading')}</div>
-    {:else if !rule}
-      <EmptyState icon={Repeat} title={t('common.notFound')} description={t('recurrence.empty')} />
-    {:else if activeTab === 'settings'}
-      <div class="max-w-xl">
-        <RecurrenceEditor
-          itemId={rule.template_item_id}
-          existingRule={rule}
-          onsave={handleSave}
-          oncancel={goBack}
-          ondelete={handleDelete}
-        />
-      </div>
-    {:else if activeTab === 'instances'}
-      <!-- Instances Tab -->
-      <div class="space-y-4">
-        <div class="flex items-center justify-between">
-          <h3 class="text-sm font-medium" style="color: var(--ds-text-subtle);">
-            {t('recurrence.instances')}
-          </h3>
-          <Button
-            variant="default"
-            size="small"
-            icon={Zap}
-            onclick={handleForceGenerate}
-            disabled={generating}
-          >
-            {generating ? t('recurrence.generating') : t('recurrence.forceGenerate')}
-          </Button>
+    <Tabs {tabs} bind:activeTab onTabChange={({ tab }) => switchTab(tab)}>
+      {#if activeTab === 'settings'}
+        <div class="max-w-2xl">
+          <RecurrenceEditor
+            itemId={rule.template_item_id}
+            existingRule={rule}
+            onsave={handleSave}
+            oncancel={goBack}
+            ondelete={handleDelete}
+          />
         </div>
+      {:else if activeTab === 'instances'}
+        <div class="space-y-4" data-testid="recurrence-instances-panel">
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-medium" style="color: var(--ds-text-subtle);">
+              {t('recurrence.instances')}
+            </h3>
+            <Button
+              variant="default"
+              size="small"
+              icon={Zap}
+              onclick={handleForceGenerate}
+              disabled={generating}
+            >
+              {generating ? t('recurrence.generating') : t('recurrence.forceGenerate')}
+            </Button>
+          </div>
 
-        {#if loadingInstances}
-          <div class="text-center py-8 animate-pulse" style="color: var(--ds-text-subtle);">{t('common.loading')}</div>
-        {:else if instances.length === 0}
-          <Card rounded="xl" shadow padding="generous">
-            <EmptyState
-              icon={FileText}
-              title={t('recurrence.noInstances')}
-              description={t('recurrence.noInstances')}
+          {#if loadingInstances}
+            <StateDisplay type="loading" message={t('common.loading')} />
+          {:else}
+            <DataTable
+              columns={instanceColumns}
+              data={instances}
+              keyField="id"
+              emptyIcon={FileText}
+              emptyMessage={t('recurrence.noInstances')}
+              emptyDescription={t('recurrence.noInstances')}
+              pagination
+              pageSize={instancesPagination.limit}
+              bind:currentPage={instancesPage}
+              totalItems={instancesPagination.total}
+              onPageChange={handleInstancePageChange}
             />
-          </Card>
-        {:else}
-          <!-- Instances table -->
-          <DataTable columns={instanceColumns} data={instances} keyField="id" />
-
-          <!-- Pagination -->
-          {#if instancesPagination.total > instancesPagination.limit}
-            <div class="flex items-center justify-between text-sm" style="color: var(--ds-text-subtle);">
-              <span>
-                Showing {instancesPagination.offset + 1}-{Math.min(instancesPagination.offset + instancesPagination.limit, instancesPagination.total)} of {instancesPagination.total}
-              </span>
-              <div class="flex gap-2">
-                <Button
-                  variant="default"
-                  size="small"
-                  disabled={instancesPagination.offset === 0}
-                  onclick={() => handleInstancePageChange(Math.max(0, instancesPagination.offset - instancesPagination.limit))}
-                >
-                  Previous
-                </Button>
-                <Button
-                  variant="default"
-                  size="small"
-                  disabled={instancesPagination.offset + instancesPagination.limit >= instancesPagination.total}
-                  onclick={() => handleInstancePageChange(instancesPagination.offset + instancesPagination.limit)}
-                >
-                  Next
-                </Button>
-              </div>
-            </div>
           {/if}
-        {/if}
-      </div>
-    {/if}
-  </div>
+        </div>
+      {/if}
+    </Tabs>
+  {/if}
 </div>

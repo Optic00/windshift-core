@@ -205,8 +205,16 @@ func (h *ConfigurationSetHandler) ExecuteComprehensiveMigration(w http.ResponseW
 	}
 
 	// Target item types: must be members of the target config set's allow-list,
-	// or any item_type if the target has no explicit list ("accept all").
-	allowedItemTypes, err := h.allowedItemTypesForConfigSet(req.NewConfigurationSetID)
+	// or any item_type if the target has no explicit list ("accept all"). The
+	// intra-set removal flow validates against the proposed list that will be
+	// applied atomically below rather than the list currently persisted.
+	var allowedItemTypes map[int]struct{}
+	var err error
+	if req.ApplyItemTypeConfigsToConfigSet != nil {
+		allowedItemTypes, err = h.allowedItemTypesForConfigs(*req.ApplyItemTypeConfigsToConfigSet)
+	} else {
+		allowedItemTypes, err = h.allowedItemTypesForConfigSet(req.NewConfigurationSetID)
+	}
 	if err != nil {
 		respondInternalError(w, r, fmt.Errorf("failed to load target item types: %w", err))
 		return
@@ -214,6 +222,55 @@ func (h *ConfigurationSetHandler) ExecuteComprehensiveMigration(w http.ResponseW
 	for _, mapping := range req.ItemTypeMappings {
 		if !inIntSet(allowedItemTypes, mapping.ToItemTypeID) {
 			respondBadRequest(w, r, fmt.Sprintf("Target item type ID %d is not allowed by the target configuration set", mapping.ToItemTypeID))
+			return
+		}
+		if mapping.FromItemTypeID != nil {
+			sameLevel, err := h.itemTypesShareHierarchyLevel(*mapping.FromItemTypeID, mapping.ToItemTypeID)
+			if err != nil {
+				respondBadRequest(w, r, err.Error())
+				return
+			}
+			if !sameLevel {
+				respondBadRequest(w, r, fmt.Sprintf(
+					"Target item type ID %d must use the same hierarchy level as source item type ID %d",
+					mapping.ToItemTypeID, *mapping.FromItemTypeID,
+				))
+				return
+			}
+		}
+	}
+
+	// When this call also narrows the configuration set's allow-list, require
+	// a mapping for every currently-used type that would become disallowed.
+	// This prevents a forged or stale wizard request from applying the config
+	// change while leaving items behind on removed types.
+	if req.ApplyItemTypeConfigsToConfigSet != nil {
+		required, _, _, err := h.analyzeItemTypesAgainstConfigs(req.WorkspaceIDs, *req.ApplyItemTypeConfigsToConfigSet)
+		if err != nil {
+			respondInternalError(w, r, fmt.Errorf("failed to validate proposed item type configuration: %w", err))
+			return
+		}
+		provided := make(map[int]struct{}, len(req.ItemTypeMappings))
+		providedNil := false
+		for _, mapping := range req.ItemTypeMappings {
+			if mapping.FromItemTypeID == nil {
+				providedNil = true
+				continue
+			}
+			provided[*mapping.FromItemTypeID] = struct{}{}
+		}
+		for _, migration := range required {
+			if migration.CurrentItemTypeID == nil {
+				if providedNil {
+					continue
+				}
+			} else if _, ok := provided[*migration.CurrentItemTypeID]; ok {
+				continue
+			}
+			respondJSON(w, http.StatusConflict, map[string]interface{}{
+				"error":   "item_type_migration_incomplete",
+				"message": fmt.Sprintf("A migration mapping is required for item type %q", migration.CurrentItemTypeName),
+			})
 			return
 		}
 	}
@@ -363,6 +420,17 @@ func (h *ConfigurationSetHandler) ExecuteComprehensiveMigration(w http.ResponseW
 		}
 	}
 
+	// 7. Optional atomic item-type allow-list replacement. Item remaps above
+	// and this configuration change commit together, so there is no successful
+	// state in which migrated items still depend on a removed type.
+	if req.ApplyItemTypeConfigsToConfigSet != nil {
+		configRepo := repository.NewConfigurationSetRepository(h.db)
+		if err = configRepo.SaveItemTypeConfigs(tx, req.NewConfigurationSetID, *req.ApplyItemTypeConfigsToConfigSet); err != nil {
+			respondInternalError(w, r, fmt.Errorf("failed to apply configuration set item types: %w", err))
+			return
+		}
+	}
+
 	// Commit the transaction
 	if err = tx.Commit(); err != nil {
 		respondInternalError(w, r, err)
@@ -370,8 +438,9 @@ func (h *ConfigurationSetHandler) ExecuteComprehensiveMigration(w http.ResponseW
 	}
 
 	// Invalidate permission caches for any workspaces whose config set changed.
-	// Also invalidate when only the workflow was swapped, since downstream
-	// permission checks consume workflow state via the config set lookup.
+	// Also invalidate when the workflow or item-type list was changed, since
+	// downstream permission and validation checks consume configuration-set
+	// state.
 	if h.permissionService != nil {
 		seen := make(map[int]struct{}, len(swappedWorkspaceIDs))
 		for _, wsID := range swappedWorkspaceIDs {
@@ -381,7 +450,7 @@ func (h *ConfigurationSetHandler) ExecuteComprehensiveMigration(w http.ResponseW
 			seen[wsID] = struct{}{}
 			_ = h.permissionService.InvalidateWorkspaceMemberCaches(wsID)
 		}
-		if req.ApplyWorkflowToConfigSet != nil {
+		if req.ApplyWorkflowToConfigSet != nil || req.ApplyItemTypeConfigsToConfigSet != nil {
 			affected, _ := repository.NewConfigurationSetRepository(h.db).ListWorkspaceIDsForConfigSet(req.NewConfigurationSetID)
 			for _, wsID := range affected {
 				if _, ok := seen[wsID]; ok {
@@ -408,16 +477,18 @@ func (h *ConfigurationSetHandler) ExecuteComprehensiveMigration(w http.ResponseW
 			"details":                    stats,
 			"attached":                   req.AttachAfterMigration,
 			"workflow_applied":           req.ApplyWorkflowToConfigSet != nil,
+			"item_types_applied":         req.ApplyItemTypeConfigsToConfigSet != nil,
 		})
 	}
 
 	response := map[string]interface{}{
-		"success":          true,
-		"message":          fmt.Sprintf("Successfully migrated %d items", totalMigrated),
-		"migrated_items":   totalMigrated,
-		"details":          stats,
-		"attached":         req.AttachAfterMigration,
-		"workflow_applied": req.ApplyWorkflowToConfigSet != nil,
+		"success":            true,
+		"message":            fmt.Sprintf("Successfully migrated %d items", totalMigrated),
+		"migrated_items":     totalMigrated,
+		"details":            stats,
+		"attached":           req.AttachAfterMigration,
+		"workflow_applied":   req.ApplyWorkflowToConfigSet != nil,
+		"item_types_applied": req.ApplyItemTypeConfigsToConfigSet != nil,
 	}
 
 	respondJSONOK(w, response)
@@ -499,6 +570,51 @@ func (h *ConfigurationSetHandler) allowedItemTypesForConfigSet(configSetID int) 
 		return nil, err
 	}
 	return allowed, nil
+}
+
+// allowedItemTypesForConfigs resolves a proposed item-type configuration list.
+// As with persisted configuration sets, an empty list means "accept all".
+func (h *ConfigurationSetHandler) allowedItemTypesForConfigs(configs []models.ItemTypeConfig) (map[int]struct{}, error) {
+	if len(configs) == 0 {
+		rows, err := h.db.Query(`SELECT id FROM item_types`)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = rows.Close() }()
+		allowed := make(map[int]struct{})
+		for rows.Next() {
+			var id int
+			if err := rows.Scan(&id); err != nil {
+				return nil, err
+			}
+			allowed[id] = struct{}{}
+		}
+		return allowed, rows.Err()
+	}
+
+	allowed := make(map[int]struct{}, len(configs))
+	for _, config := range configs {
+		var exists bool
+		if err := h.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM item_types WHERE id = ?)`, config.ItemTypeID).Scan(&exists); err != nil {
+			return nil, err
+		}
+		if !exists {
+			return nil, fmt.Errorf("proposed item type ID %d does not exist", config.ItemTypeID)
+		}
+		allowed[config.ItemTypeID] = struct{}{}
+	}
+	return allowed, nil
+}
+
+func (h *ConfigurationSetHandler) itemTypesShareHierarchyLevel(sourceID, targetID int) (bool, error) {
+	var sourceLevel, targetLevel int
+	if err := h.db.QueryRow(`SELECT hierarchy_level FROM item_types WHERE id = ?`, sourceID).Scan(&sourceLevel); err != nil {
+		return false, fmt.Errorf("source item type ID %d does not exist", sourceID)
+	}
+	if err := h.db.QueryRow(`SELECT hierarchy_level FROM item_types WHERE id = ?`, targetID).Scan(&targetLevel); err != nil {
+		return false, fmt.Errorf("target item type ID %d does not exist", targetID)
+	}
+	return sourceLevel == targetLevel, nil
 }
 
 // allowedPrioritiesForConfigSet mirrors allowedItemTypesForConfigSet for

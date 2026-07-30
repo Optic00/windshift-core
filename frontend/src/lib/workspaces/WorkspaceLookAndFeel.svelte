@@ -293,6 +293,7 @@
   <StaticViewBackground
     backgroundStyle={backgroundStyle()}
     class="look-and-feel-wrapper"
+    testid="workspace-look-and-feel"
   >
   <div class="space-y-6 max-w-4xl">
     <!-- Header -->
@@ -320,6 +321,7 @@
               style={selectedGradient === index && !hasBackgroundImage ? 'box-shadow: 0 0 0 2px var(--ds-border-focused); outline-offset: 2px;' : ''}
               title={gradient.name}
               data-testid={`gradient-swatch-${index}`}
+              aria-pressed={selectedGradient === index && !hasBackgroundImage}
             >
               {#if index === 0}
                 <div class="w-full h-full flex items-center justify-center" style="background-color: var(--ds-background-neutral);">

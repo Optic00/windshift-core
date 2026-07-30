@@ -15,6 +15,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/scheduler"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 	"windshift/internal/webhook"
@@ -41,6 +42,8 @@ type DiagnosticsHandler struct {
 	webhookSender    *webhook.WebhookSender
 	transitionMatrix *services.TransitionMatrixService
 	bulkOperations   *services.BulkOperationMetrics
+	recurrenceRepo   *repository.RecurrenceRepository
+	settingsRepo     *repository.SystemSettingRepository
 }
 
 // NewDiagnosticsHandler creates a new diagnostics handler.
@@ -60,6 +63,8 @@ func NewDiagnosticsHandler(
 	webhookSender *webhook.WebhookSender,
 	transitionMatrix *services.TransitionMatrixService,
 	bulkOperations *services.BulkOperationMetrics,
+	recurrenceRepo *repository.RecurrenceRepository,
+	settingsRepo *repository.SystemSettingRepository,
 ) *DiagnosticsHandler {
 	return &DiagnosticsHandler{
 		sessionManager:   sessionManager,
@@ -77,7 +82,162 @@ func NewDiagnosticsHandler(
 		webhookSender:    webhookSender,
 		transitionMatrix: transitionMatrix,
 		bulkOperations:   bulkOperations,
+		recurrenceRepo:   recurrenceRepo,
+		settingsRepo:     settingsRepo,
 	}
+}
+
+const (
+	recurrenceVolumeDiagnosticEnabledKey = "recurrence_volume_diagnostic_enabled"
+	recurrenceVolumeWarningThresholdKey  = "recurrence_volume_warning_threshold"
+	recurrenceVolumeDefaultThreshold     = 80
+)
+
+type recurrenceVolumeWorkspace struct {
+	repository.RecurrenceWorkspaceVolume
+	Warning    bool `json:"warning"`
+	AtCapacity bool `json:"at_capacity"`
+}
+
+type recurrenceVolumeSnapshot struct {
+	DiagnosticEnabled bool                        `json:"diagnostic_enabled"`
+	WarningThreshold  int                         `json:"warning_threshold"`
+	HardLimit         int                         `json:"hard_limit"`
+	SchedulerBatch    int                         `json:"scheduler_batch_size"`
+	TotalRules        int                         `json:"total_rules"`
+	ActiveRules       int                         `json:"active_rules"`
+	DueRules          int                         `json:"due_rules"`
+	BatchBacklogged   bool                        `json:"batch_backlogged"`
+	Healthy           bool                        `json:"healthy"`
+	Workspaces        []recurrenceVolumeWorkspace `json:"workspaces"`
+}
+
+type recurrenceVolumeSettingsRequest struct {
+	DiagnosticEnabled bool `json:"diagnostic_enabled"`
+	WarningThreshold  int  `json:"warning_threshold"`
+}
+
+func (h *DiagnosticsHandler) recurrenceVolumeSettings() (enabled bool, threshold int, err error) {
+	enabled = true
+	threshold = recurrenceVolumeDefaultThreshold
+	if value, ok, err := h.settingsRepo.GetValue(recurrenceVolumeDiagnosticEnabledKey); err != nil {
+		return false, 0, err
+	} else if ok {
+		enabled = strings.EqualFold(value, "true")
+	}
+	if value, ok, err := h.settingsRepo.GetValue(recurrenceVolumeWarningThresholdKey); err != nil {
+		return false, 0, err
+	} else if ok {
+		if parsed, parseErr := strconv.Atoi(value); parseErr == nil &&
+			parsed >= 1 && parsed <= services.MaxRecurrenceRulesPerWorkspace {
+			threshold = parsed
+		}
+	}
+	return enabled, threshold, nil
+}
+
+// GetRecurrenceVolume returns persisted recurrence cardinality and the
+// administrator-controlled warning state.
+//
+// GET /api/admin/diagnostics/recurrence-volume
+func (h *DiagnosticsHandler) GetRecurrenceVolume(w http.ResponseWriter, r *http.Request) {
+	enabled, threshold, err := h.recurrenceVolumeSettings()
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	volumes, err := h.recurrenceRepo.ListWorkspaceVolumes()
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	dueRules, err := h.recurrenceRepo.CountRulesDueForGeneration()
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+
+	snapshot := recurrenceVolumeSnapshot{
+		DiagnosticEnabled: enabled,
+		WarningThreshold:  threshold,
+		HardLimit:         services.MaxRecurrenceRulesPerWorkspace,
+		SchedulerBatch:    scheduler.DefaultRecurrenceBatchSize,
+		DueRules:          dueRules,
+		BatchBacklogged:   dueRules > scheduler.DefaultRecurrenceBatchSize,
+		Healthy:           true,
+		Workspaces:        make([]recurrenceVolumeWorkspace, 0, len(volumes)),
+	}
+	for _, volume := range volumes {
+		workspace := recurrenceVolumeWorkspace{
+			RecurrenceWorkspaceVolume: volume,
+			Warning:                   enabled && volume.RuleCount >= threshold,
+			AtCapacity:                volume.RuleCount >= services.MaxRecurrenceRulesPerWorkspace,
+		}
+		snapshot.TotalRules += volume.RuleCount
+		snapshot.ActiveRules += volume.ActiveCount
+		if workspace.Warning {
+			snapshot.Healthy = false
+		}
+		snapshot.Workspaces = append(snapshot.Workspaces, workspace)
+	}
+	if enabled && snapshot.BatchBacklogged {
+		snapshot.Healthy = false
+	}
+	respondJSONOK(w, snapshot)
+}
+
+// UpdateRecurrenceVolumeSettings updates the diagnostic only; the hard quota
+// is intentionally not administrator-configurable.
+//
+// PUT /api/admin/diagnostics/recurrence-volume
+func (h *DiagnosticsHandler) UpdateRecurrenceVolumeSettings(w http.ResponseWriter, r *http.Request) {
+	req, ok := decodeJSON[recurrenceVolumeSettingsRequest](w, r)
+	if !ok {
+		return
+	}
+	if req.WarningThreshold < 1 || req.WarningThreshold > services.MaxRecurrenceRulesPerWorkspace {
+		respondValidationError(w, r, fmt.Sprintf(
+			"warning_threshold must be between 1 and %d",
+			services.MaxRecurrenceRulesPerWorkspace,
+		))
+		return
+	}
+	if err := h.settingsRepo.Upsert(
+		recurrenceVolumeDiagnosticEnabledKey,
+		strconv.FormatBool(req.DiagnosticEnabled),
+		"boolean",
+		"Enable recurrence rule volume warnings in system diagnostics",
+		"diagnostics",
+	); err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	if err := h.settingsRepo.Upsert(
+		recurrenceVolumeWarningThresholdKey,
+		strconv.Itoa(req.WarningThreshold),
+		"integer",
+		"Recurrence rules per workspace that trigger an administrator warning",
+		"diagnostics",
+	); err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+
+	if user := utils.GetCurrentUser(r); user != nil {
+		h.auditor.LogWithDetails(
+			r,
+			user,
+			logger.ActionDiagnosticsRecurrenceVolumeUpdate,
+			logger.ResourceDiagnostics,
+			nil,
+			"recurrence_volume",
+			map[string]interface{}{
+				"diagnostic_enabled": req.DiagnosticEnabled,
+				"warning_threshold":  req.WarningThreshold,
+			},
+		)
+	}
+	respondJSONOK(w, req)
 }
 
 // GetBulkOperations returns bounded bulk-edit and iteration-completion

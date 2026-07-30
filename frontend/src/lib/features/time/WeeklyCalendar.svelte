@@ -1032,6 +1032,7 @@
                         style="top: {top}px; height: {height}px;"
                         class:calendar-item-personal={workItem.is_personal}
                         class:calendar-item-work={!workItem.is_personal}
+                        data-testid={`calendar-scheduled-item-${workItem.id}`}
                         draggable="true"
                         ondragstart={(e) => {
                           isDragging = true;
@@ -1106,6 +1107,7 @@
                         class="mx-1 mt-1 rounded p-2 group/item cursor-grab"
                         class:calendar-item-personal={workItem.is_personal}
                         class:calendar-item-work={!workItem.is_personal}
+                        data-testid={`calendar-scheduled-item-${workItem.id}`}
                         draggable="true"
                         ondragstart={(e) => {
                           isDragging = true;

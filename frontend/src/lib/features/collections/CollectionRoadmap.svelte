@@ -1079,6 +1079,7 @@
                 {@const scheduled = itemHasDate(item)}
                 {@const TypeIcon = typeInfo.icon}
                 <button
+                  data-testid="roadmap-item-{item.id}"
                   class="flex items-center gap-1.5 w-full text-left group/tree-row"
                   style="height: {ROW_HEIGHT}px; padding-left: calc(8px + {getIndentLevel(item.treeLevel)}); padding-right: 8px; border-bottom: 1px solid var(--ds-border-subtle, var(--ds-border));"
                   onclick={() => openItem(item.id)}

@@ -10,6 +10,23 @@ import (
 	"windshift/internal/models"
 )
 
+var (
+	// ErrRecurrenceRuleExists reports that an item already owns a rule.
+	ErrRecurrenceRuleExists = errors.New("recurrence rule already exists")
+	// ErrRecurrenceRuleLimitReached reports that a workspace is at its hard cap.
+	ErrRecurrenceRuleLimitReached = errors.New("recurrence rule limit reached")
+)
+
+// RecurrenceWorkspaceVolume is one workspace's persisted recurrence-rule
+// cardinality for system diagnostics.
+type RecurrenceWorkspaceVolume struct {
+	WorkspaceID int    `json:"workspace_id"`
+	Name        string `json:"name"`
+	Key         string `json:"key"`
+	RuleCount   int    `json:"rule_count"`
+	ActiveCount int    `json:"active_count"`
+}
+
 // RecurrenceRepository provides data access methods for recurrence rules and instances
 type RecurrenceRepository struct {
 	db database.Database
@@ -142,8 +159,16 @@ func (r *RecurrenceRepository) GetRulesNeedingGeneration(limit int) ([]*models.R
 
 // Create creates a new recurrence rule
 func (r *RecurrenceRepository) Create(rule *models.RecurrenceRule) (int, error) {
+	return createRecurrenceRule(r.db, rule)
+}
+
+type recurrenceRuleCreator interface {
+	QueryRow(query string, args ...interface{}) *sql.Row
+}
+
+func createRecurrenceRule(db recurrenceRuleCreator, rule *models.RecurrenceRule) (int, error) {
 	var id int64
-	err := r.db.QueryRow(`
+	err := db.QueryRow(`
 		INSERT INTO recurrence_rules (
 			template_item_id, workspace_id, rrule, dtstart, dtend, timezone,
 			lead_time_days, copy_assignee, copy_priority, copy_custom_fields,
@@ -160,6 +185,105 @@ func (r *RecurrenceRepository) Create(rule *models.RecurrenceRule) (int, error) 
 	}
 
 	return int(id), nil
+}
+
+// CreateWithinWorkspaceLimit atomically checks item uniqueness and the
+// workspace rule cap before inserting. The no-op workspace update acquires a
+// per-workspace write/row lock on both SQLite and PostgreSQL so concurrent
+// creates cannot both observe the same pre-limit count.
+func (r *RecurrenceRepository) CreateWithinWorkspaceLimit(rule *models.RecurrenceRule, limit int) (int, error) {
+	return database.WithTxResult(r.db, func(tx database.Tx) (int, error) {
+		if _, err := tx.Exec(`UPDATE workspaces SET id = id WHERE id = ?`, rule.WorkspaceID); err != nil {
+			return 0, fmt.Errorf("lock recurrence workspace: %w", err)
+		}
+
+		var itemRuleCount int
+		if err := tx.QueryRow(
+			`SELECT COUNT(*) FROM recurrence_rules WHERE template_item_id = ?`,
+			rule.TemplateItemID,
+		).Scan(&itemRuleCount); err != nil {
+			return 0, fmt.Errorf("count recurrence rules for item: %w", err)
+		}
+		if itemRuleCount > 0 {
+			return 0, ErrRecurrenceRuleExists
+		}
+
+		var workspaceRuleCount int
+		if err := tx.QueryRow(
+			`SELECT COUNT(*) FROM recurrence_rules WHERE workspace_id = ?`,
+			rule.WorkspaceID,
+		).Scan(&workspaceRuleCount); err != nil {
+			return 0, fmt.Errorf("count recurrence rules for workspace: %w", err)
+		}
+		if workspaceRuleCount >= limit {
+			return 0, ErrRecurrenceRuleLimitReached
+		}
+
+		return createRecurrenceRule(tx, rule)
+	})
+}
+
+// CountByWorkspace returns the number of recurrence rules in one workspace.
+func (r *RecurrenceRepository) CountByWorkspace(workspaceID int) (int, error) {
+	var count int
+	if err := r.db.QueryRow(
+		`SELECT COUNT(*) FROM recurrence_rules WHERE workspace_id = ?`,
+		workspaceID,
+	).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count recurrence rules for workspace: %w", err)
+	}
+	return count, nil
+}
+
+// ListWorkspaceVolumes returns workspaces with recurrence rules, ordered by
+// descending volume for the administrator diagnostics surface.
+func (r *RecurrenceRepository) ListWorkspaceVolumes() ([]RecurrenceWorkspaceVolume, error) {
+	rows, err := r.db.Query(`
+		SELECT w.id, w.name, w.key, COUNT(rr.id),
+		       SUM(CASE WHEN rr.is_active = true THEN 1 ELSE 0 END)
+		FROM workspaces w
+		JOIN recurrence_rules rr ON rr.workspace_id = w.id
+		GROUP BY w.id, w.name, w.key
+		ORDER BY COUNT(rr.id) DESC, w.id ASC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("list recurrence workspace volumes: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	volumes := make([]RecurrenceWorkspaceVolume, 0)
+	for rows.Next() {
+		var volume RecurrenceWorkspaceVolume
+		if err := rows.Scan(
+			&volume.WorkspaceID,
+			&volume.Name,
+			&volume.Key,
+			&volume.RuleCount,
+			&volume.ActiveCount,
+		); err != nil {
+			return nil, fmt.Errorf("scan recurrence workspace volume: %w", err)
+		}
+		volumes = append(volumes, volume)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate recurrence workspace volumes: %w", err)
+	}
+	return volumes, nil
+}
+
+// CountRulesDueForGeneration returns active rules currently eligible for a
+// scheduler pass.
+func (r *RecurrenceRepository) CountRulesDueForGeneration() (int, error) {
+	var count int
+	if err := r.db.QueryRow(`
+		SELECT COUNT(*)
+		FROM recurrence_rules
+		WHERE is_active = true
+		  AND (next_generation_check IS NULL OR next_generation_check <= ?)
+	`, time.Now()).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count recurrence rules due for generation: %w", err)
+	}
+	return count, nil
 }
 
 // Update updates a recurrence rule

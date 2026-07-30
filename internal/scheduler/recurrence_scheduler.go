@@ -14,6 +14,10 @@ import (
 	"github.com/teambition/rrule-go"
 )
 
+// DefaultRecurrenceBatchSize is the maximum number of due rules processed by
+// one scheduler pass. Diagnostics use the same value when reporting backlog.
+const DefaultRecurrenceBatchSize = 100
+
 // RecurrenceScheduler handles periodic generation of recurring task instances
 type RecurrenceScheduler struct {
 	db              database.Database
@@ -42,7 +46,7 @@ func NewRecurrenceScheduler(db database.Database, workflowService *services.Work
 		stopChan:        make(chan struct{}),
 		running:         false,
 		checkInterval:   5 * time.Minute,
-		batchSize:       100,
+		batchSize:       DefaultRecurrenceBatchSize,
 	}
 }
 

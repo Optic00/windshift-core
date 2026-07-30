@@ -532,6 +532,7 @@ const (
 	// Admin diagnostics / retention maintenance
 	ActionDiagnosticsWebhookDeliveriesPurge = "diagnostics.webhook_deliveries.purge"
 	ActionDiagnosticsSchedulerRunsPurge     = "diagnostics.scheduler_runs.purge"
+	ActionDiagnosticsRecurrenceVolumeUpdate = "diagnostics.recurrence_volume.update"
 
 	// LLM Connections
 	ActionLLMConnectionCreate = "llm_connection.create"

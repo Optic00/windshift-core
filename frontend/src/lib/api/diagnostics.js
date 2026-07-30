@@ -166,3 +166,26 @@ export function getRunnerPools() {
 export function getDatabasePools() {
   return fetchAPI('/admin/diagnostics/database-pool');
 }
+
+/**
+ * Global recurrence-rule cardinality and scheduler queue pressure.
+ *
+ * @returns {Promise<object>}
+ */
+export function getRecurrenceVolume() {
+  return fetchAPI('/admin/diagnostics/recurrence-volume');
+}
+
+/**
+ * Update the recurrence-volume warning diagnostic. The hard workspace quota
+ * is intentionally not configurable.
+ *
+ * @param {{diagnostic_enabled: boolean, warning_threshold: number}} settings
+ * @returns {Promise<object>}
+ */
+export function updateRecurrenceVolumeSettings(settings) {
+  return fetchAPI('/admin/diagnostics/recurrence-volume', {
+    method: 'PUT',
+    body: JSON.stringify(settings),
+  });
+}

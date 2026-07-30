@@ -6,6 +6,8 @@
     label = null,
     labelPosition = 'right',   // 'left' | 'right'
     onchange = null,
+    id = undefined,
+    dataTestid = undefined,
     class: className = ''
   } = $props();
 
@@ -31,6 +33,8 @@
   >
     <button
       type="button"
+      {id}
+      data-testid={dataTestid}
       role="switch"
       aria-checked={checked}
       aria-label={label}
@@ -49,6 +53,8 @@
 {:else}
   <button
     type="button"
+    {id}
+    data-testid={dataTestid}
     role="switch"
     aria-checked={checked}
     aria-label="Toggle"
