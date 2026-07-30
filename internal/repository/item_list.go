@@ -374,7 +374,7 @@ func (r *ItemRepository) buildWhereClause(params ItemListParams) (whereClause st
 	}
 
 	if params.Filters.MaxLevel != nil {
-		whereClause += " AND COALESCE(it.hierarchy_level, 0) <= ?"
+		whereClause += " AND COALESCE(it.hierarchy_level, 0) >= 0 AND COALESCE(it.hierarchy_level, 0) <= ?"
 		args = append(args, *params.Filters.MaxLevel)
 	}
 

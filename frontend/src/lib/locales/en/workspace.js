@@ -232,6 +232,19 @@ export default {
     failedToUpdateParent: 'Failed to update parent',
     failedToRemoveParent: 'Failed to remove parent',
     clickToCopyKey: 'Click to copy key to clipboard',
+    hierarchyMismatchTitle: 'This item no longer fits its parent',
+    hierarchyMismatchDescription:
+      '{type} is configured at Level {currentLevel}, while its existing parent is also at Level {parentLevel}. The link is preserved, but reparenting now requires a Level {requiredLevel} parent. Choose a Level {compatibleLevel} item type to work with the current parent level.',
+    chooseCompatibleType: 'Choose compatible type',
+    parentPickerMismatchTitle: 'The current hierarchy configuration is different from this saved link',
+    parentPickerMismatchDescription:
+      '{type} now accepts Level {requiredLevel} parents. Your existing parent is Level {currentParentLevel}; to choose another parent at that level, first use a Level {compatibleLevel} item type.',
+    compatibleTypeHint:
+      'A Level {compatibleLevel} type fits the current Level {parentLevel} parent. Existing links stay in place when you change type.',
+    hierarchyLevelLabel: 'Hierarchy Level {level}',
+    genericSubtaskLevelLabel: 'Generic Sub-task · any parent level',
+    genericSubtaskParentHint: 'Generic Sub-tasks can be moved below any regular hierarchy item.',
+    fitsCurrentParent: 'Fits current parent',
 
     // Item Detail Description
     enterDescription: 'Enter description...',

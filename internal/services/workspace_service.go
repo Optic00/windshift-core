@@ -400,7 +400,7 @@ func (s *WorkspaceService) GetItemTypes(workspaceID int) ([]ItemTypeResult, erro
 			JOIN configuration_set_item_types csit ON wcs.configuration_set_id = csit.configuration_set_id
 			WHERE wcs.workspace_id = ? AND csit.item_type_id = it.id
 		)
-		ORDER BY it.hierarchy_level, it.sort_order, it.name
+		ORDER BY CASE WHEN it.hierarchy_level = -1 THEN 1 ELSE 0 END, it.hierarchy_level, it.sort_order, it.name
 	`, workspaceID, workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get workspace item types: %w", err)

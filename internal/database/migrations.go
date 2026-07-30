@@ -2236,6 +2236,60 @@ var Catalog = []Migration{
 		CheckPostgres: pgColumnCheck("actions", "template_key"),
 		Postgres:      "ALTER TABLE actions ADD COLUMN IF NOT EXISTS template_key TEXT",
 	},
+	{
+		Version: "20260730_generic_subtask_hierarchy_level",
+		Name:    "Make the default Sub-task type level-independent and rename fixed level 4",
+		CheckSQLite: `
+			SELECT CASE WHEN
+				EXISTS (
+					SELECT 1 FROM item_types
+					WHERE name = 'Sub-task' AND is_default = true AND hierarchy_level = 4
+				)
+				OR EXISTS (
+					SELECT 1 FROM hierarchy_levels
+					WHERE level = 4 AND name = 'Sub-task'
+				)
+			THEN 0 ELSE 1 END
+		`,
+		SQLite: `
+			UPDATE item_types
+			SET hierarchy_level = -1,
+			    description = 'Small work item below any regular hierarchy level',
+			    updated_at = CURRENT_TIMESTAMP
+			WHERE name = 'Sub-task' AND is_default = true AND hierarchy_level = 4;
+
+			UPDATE hierarchy_levels
+			SET name = 'Activity',
+			    description = 'Discrete activity within a task',
+			    updated_at = CURRENT_TIMESTAMP
+			WHERE level = 4 AND name = 'Sub-task';
+		`,
+		CheckPostgres: `
+			SELECT CASE WHEN
+				EXISTS (
+					SELECT 1 FROM item_types
+					WHERE name = 'Sub-task' AND is_default = true AND hierarchy_level = 4
+				)
+				OR EXISTS (
+					SELECT 1 FROM hierarchy_levels
+					WHERE level = 4 AND name = 'Sub-task'
+				)
+			THEN 0 ELSE 1 END
+		`,
+		Postgres: `
+			UPDATE item_types
+			SET hierarchy_level = -1,
+			    description = 'Small work item below any regular hierarchy level',
+			    updated_at = CURRENT_TIMESTAMP
+			WHERE name = 'Sub-task' AND is_default = true AND hierarchy_level = 4;
+
+			UPDATE hierarchy_levels
+			SET name = 'Activity',
+			    description = 'Discrete activity within a task',
+			    updated_at = CURRENT_TIMESTAMP
+			WHERE level = 4 AND name = 'Sub-task';
+		`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {

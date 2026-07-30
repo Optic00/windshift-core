@@ -33,6 +33,11 @@
   import { agentRuns } from '../../stores/agentRuns.svelte.js';
   import { getVisibleColor, hexToRgb } from '../../utils/colorUtils.js';
   import { showCreatedItemToast } from '../../utils/createdItemToast.js';
+  import {
+    childItemTypesForParent,
+    isGenericSubtaskType,
+    sortItemTypesByHierarchy,
+  } from '../../utils/hierarchy.js';
 
   // Props
   let { workspaceId, collectionId = null } = $props();
@@ -136,10 +141,8 @@
       ? (itemTypes || []).find(type => type.id === parentItem.item_type_id)
       : null;
     const candidates = parentType
-      ? (itemTypes || []).filter(
-          type => (type.hierarchy_level ?? 0) === (parentType.hierarchy_level ?? 0) + 1
-        )
-      : (itemTypes || []);
+      ? childItemTypesForParent(itemTypes, parentType)
+      : (itemTypes || []).filter((type) => !isGenericSubtaskType(type));
     return candidates.slice().sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
   }
 
@@ -749,7 +752,7 @@
   ]);
 
   let groupByMenuItems = $derived.by(() => {
-    const sortedTypes = (itemTypes || []).slice().sort((a, b) => (a.hierarchy_level ?? 999) - (b.hierarchy_level ?? 999) || (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.name.localeCompare(b.name));
+    const sortedTypes = sortItemTypesByHierarchy(itemTypes);
     const rightmostColumnName = rightmostBoardColumn?.name || 'rightmost column';
     return [
       {

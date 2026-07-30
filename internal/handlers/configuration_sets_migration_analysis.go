@@ -451,7 +451,7 @@ func (h *ConfigurationSetHandler) analyzeItemTypeMigration(workspaceID, sourceCo
 		FROM configuration_set_item_types csit
 		JOIN item_types it ON csit.item_type_id = it.id
 		WHERE csit.configuration_set_id = ?
-		ORDER BY it.hierarchy_level, it.sort_order
+		ORDER BY CASE WHEN it.hierarchy_level = -1 THEN 1 ELSE 0 END, it.hierarchy_level, it.sort_order
 	`, targetConfigSetID)
 	if err == nil {
 		defer func() { _ = rows.Close() }()
@@ -469,7 +469,7 @@ func (h *ConfigurationSetHandler) analyzeItemTypeMigration(workspaceID, sourceCo
 		rows, err = h.db.Query(`
 			SELECT id, name, icon, color, hierarchy_level
 			FROM item_types
-			ORDER BY hierarchy_level, sort_order
+			ORDER BY CASE WHEN hierarchy_level = -1 THEN 1 ELSE 0 END, hierarchy_level, sort_order
 		`)
 		if err == nil {
 			defer func() { _ = rows.Close() }()

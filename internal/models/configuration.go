@@ -7,6 +7,11 @@ import (
 	"time"
 )
 
+// HierarchyLevelGenericSubtask is the sentinel used by item types that may be
+// attached below any regular hierarchy level. Generic subtasks are terminal
+// leaves: they require a parent and cannot themselves parent another item.
+const HierarchyLevelGenericSubtask = -1
+
 // ConfigurationSet represents a configuration set for workspaces
 type ConfigurationSet struct {
 	ID                      int       `json:"id"`

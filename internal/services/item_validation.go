@@ -104,6 +104,10 @@ func ValidateItemCreation(db database.Database, params ItemValidationParams) *It
 		if !result.Valid {
 			return result
 		}
+	} else if params.ItemTypeID != nil && *params.ItemTypeID != 0 {
+		if err := validation.ValidateParentForItemType(db, *params.ItemTypeID, nil); err != nil {
+			return &ItemValidationResult{Valid: false, Error: err.Error()}
+		}
 	}
 
 	// Validate related_work_item_id if provided
@@ -146,37 +150,10 @@ func validateParentHierarchy(db database.Database, parentID, itemTypeID *int, wo
 		}
 	}
 
-	_, parentItemTypeHierarchyLevel, err := repo.GetItemTypeAndHierarchyLevel(*parentID)
-	if errors.Is(err, repository.ErrNotFound) {
-		return &ItemValidationResult{Valid: false, Error: "Parent item not found"}
-	}
-	if err != nil {
-		return &ItemValidationResult{Valid: false, Error: fmt.Sprintf("Failed to validate parent: %v", err)}
-	}
-
 	// Validate hierarchy relationship if item type is specified
 	if itemTypeID != nil && *itemTypeID != 0 {
-		var itemTypeHierarchyLevel int
-		var itemTypeName string
-		err := db.QueryRow(`
-			SELECT hierarchy_level, name FROM item_types
-			WHERE id = ?
-		`, *itemTypeID).Scan(&itemTypeHierarchyLevel, &itemTypeName)
-
-		if errors.Is(err, sql.ErrNoRows) {
-			return &ItemValidationResult{Valid: false, Error: "Item type not found"}
-		}
-		if err != nil {
-			return &ItemValidationResult{Valid: false, Error: fmt.Sprintf("Failed to validate item type: %v", err)}
-		}
-
-		// Check if child hierarchy level is exactly one more than parent
-		if itemTypeHierarchyLevel != parentItemTypeHierarchyLevel+1 {
-			return &ItemValidationResult{
-				Valid: false,
-				Error: fmt.Sprintf("Item type '%s' (hierarchy level %d) cannot be a child of an item at hierarchy level %d",
-					itemTypeName, itemTypeHierarchyLevel, parentItemTypeHierarchyLevel),
-			}
+		if err := validation.ValidateParentForItemType(db, *itemTypeID, parentID); err != nil {
+			return &ItemValidationResult{Valid: false, Error: err.Error()}
 		}
 	}
 

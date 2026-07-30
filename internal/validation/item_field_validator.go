@@ -354,6 +354,11 @@ func (v *ItemFieldValidator) ValidateAndApplyUpdates(
 	// Parent ID validation (with hierarchy level checking)
 	if parentIDValue, ok := updateData["parent_id"]; ok {
 		if parentIDValue == nil {
+			if item.ItemTypeID != nil {
+				if err := ValidateParentForItemType(v.db, *item.ItemTypeID, nil); err != nil {
+					return err
+				}
+			}
 			item.ParentID = nil
 		} else {
 			var newParentID int
@@ -419,7 +424,7 @@ func (v *ItemFieldValidator) ValidateAndApplyUpdates(
 
 			// Validate hierarchy levels if item has an item type
 			if item.ItemTypeID != nil {
-				if err := v.ValidateHierarchyLevels(item.ID, *item.ItemTypeID, newParentID); err != nil {
+				if err := ValidateParentForItemType(v.db, *item.ItemTypeID, &newParentID); err != nil {
 					return err
 				}
 			}
@@ -648,42 +653,7 @@ func (v *ItemFieldValidator) EntityExists(tableName string, id int) (bool, error
 // ValidateHierarchyLevels validates that parent-child hierarchy levels are correct
 // Child hierarchy level must be exactly one more than parent hierarchy level
 func (v *ItemFieldValidator) ValidateHierarchyLevels(itemID, itemTypeID, parentID int) error {
-	// Get the item's current item type hierarchy level
-	var itemTypeHierarchyLevel int
-	var itemTypeName string
-	err := v.db.QueryRow(`
-		SELECT it.hierarchy_level, it.name
-		FROM item_types it
-		WHERE it.id = ?
-	`, itemTypeID).Scan(&itemTypeHierarchyLevel, &itemTypeName)
-	if err != nil {
-		return fmt.Errorf("failed to get item type hierarchy level: %w", err)
-	}
-
-	// Get the parent's item type hierarchy level
-	var parentItemTypeHierarchyLevel int
-	err = v.db.QueryRow(`
-		SELECT it.hierarchy_level
-		FROM item_types it
-		JOIN items i ON i.item_type_id = it.id
-		WHERE i.id = ?
-	`, parentID).Scan(&parentItemTypeHierarchyLevel)
-	if err != nil {
-		return fmt.Errorf("failed to get parent item type hierarchy level: %w", err)
-	}
-
-	// Check if child hierarchy level is exactly one more than parent
-	if itemTypeHierarchyLevel != parentItemTypeHierarchyLevel+1 {
-		return &ValidationError{
-			Field: "parent_id",
-			Message: fmt.Sprintf(
-				"Item type '%s' (hierarchy level %d) cannot be a child of an item at hierarchy level %d",
-				itemTypeName, itemTypeHierarchyLevel, parentItemTypeHierarchyLevel,
-			),
-		}
-	}
-
-	return nil
+	return ValidateParentForItemType(v.db, itemTypeID, &parentID)
 }
 
 // IsPersonalWorkspace checks if a workspace is a personal workspace
@@ -814,9 +784,13 @@ func (v *ItemFieldValidator) ValidateCreateRequest(item *models.Item) error {
 
 		// Validate hierarchy levels
 		if item.ItemTypeID != nil {
-			if err := v.ValidateHierarchyLevels(0, *item.ItemTypeID, *item.ParentID); err != nil {
+			if err := ValidateParentForItemType(v.db, *item.ItemTypeID, item.ParentID); err != nil {
 				return err
 			}
+		}
+	} else if item.ItemTypeID != nil {
+		if err := ValidateParentForItemType(v.db, *item.ItemTypeID, nil); err != nil {
+			return err
 		}
 	}
 

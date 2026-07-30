@@ -1440,7 +1440,7 @@ func (db *DB) initializeDefaultData() error {
 		{1, "Epic", "Large work item that can be broken down into stories"},
 		{2, "Story", "User story or feature that delivers value"},
 		{3, "Task", "Individual work item or technical task"},
-		{4, "Sub-task", "Small piece of work within a larger task"},
+		{4, "Activity", "Discrete activity within a task"},
 	}
 
 	for _, hl := range hierarchyLevels {
@@ -1467,7 +1467,7 @@ func (db *DB) initializeDefaultData() error {
 		{"Story", "User story delivering value to end users", "BookOpen", "#059669", 2, 1},
 		{"Task", "Development or operational task", "CheckSquare", "#dc2626", 3, 1},
 		{"Bug", "Software defect that needs fixing", "Bug", "#ea580c", 3, 2},
-		{"Sub-task", "Small work item within a larger task", "Minus", "#6b7280", 4, 1},
+		{"Sub-task", "Small work item below any regular hierarchy level", "Minus", "#6b7280", -1, 1},
 	}
 
 	for _, itemType := range defaultItemTypes {

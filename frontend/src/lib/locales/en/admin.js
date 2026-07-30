@@ -654,9 +654,13 @@ export default {
       icon: 'Icon',
       color: 'Color',
       hierarchyLevel: 'Hierarchy Level',
+      genericSubtaskLevel: 'Generic Sub-task (any parent level)',
       nameRequired: 'Name is required',
       failedToSave: 'Failed to save item type:',
       noItemTypes: 'No item types configured yet.',
+      hierarchyChangeWarningTitle: 'Existing items will keep their links',
+      hierarchyChangeWarningDescription:
+        'Changing from Level {fromLevel} to Level {toLevel} does not move existing items. Future parent and child choices will be calculated from Level {toLevel}; users may need to choose a compatible item type before reparenting legacy items.',
     },
 
     // Hierarchy Levels

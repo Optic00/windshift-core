@@ -1366,6 +1366,17 @@ func (h *ItemHandler) ReparentChildren(w http.ResponseWriter, r *http.Request) {
 
 	// Update parent_id for all direct children
 	for _, child := range children {
+		if child.ItemTypeID != nil {
+			if err := validation.ValidateParentForItemType(tx, *child.ItemTypeID, req.NewParentID); err != nil {
+				var validationErr *validation.ValidationError
+				if errors.As(err, &validationErr) {
+					respondValidationError(w, r, validationErr.Error())
+					return
+				}
+				respondInternalError(w, r, err)
+				return
+			}
+		}
 		if err := repo.UpdateParent(tx, child.ID, req.NewParentID); err != nil {
 			respondInternalError(w, r, err)
 			return

@@ -154,7 +154,7 @@ func (h *HierarchyService) GetRoot(itemID int) (*models.Item, error) {
 	repo := repository.NewItemRepository(h.db)
 	current := itemID
 	for depth := 0; depth < maxHierarchyDepth; depth++ {
-		parentID, err := repo.GetParentID(current)
+		parentID, hierarchyLevel, err := repo.GetParentIDAndHierarchyLevel(current)
 		if errors.Is(err, repository.ErrNotFound) {
 			if depth == 0 {
 				return nil, nil
@@ -164,7 +164,7 @@ func (h *HierarchyService) GetRoot(itemID int) (*models.Item, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to walk hierarchy: %w", err)
 		}
-		if parentID == nil {
+		if parentID == nil || (hierarchyLevel != nil && *hierarchyLevel == 0) {
 			return repo.FindByIDWithDetails(current)
 		}
 		current = *parentID

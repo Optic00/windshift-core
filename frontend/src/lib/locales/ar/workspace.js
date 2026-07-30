@@ -200,6 +200,8 @@ export default {
     changeParent: 'تغيير الأصل',
     searchForParentItem: 'البحث عن عنصر أصلي...',
     showingItemsFromLevel: 'يتم عرض العناصر من المستوى الهرمي {level} فقط',
+    genericSubtaskLevelLabel: 'مهمة فرعية عامة · أي مستوى أصل',
+    genericSubtaskParentHint: 'يمكن نقل المهام الفرعية العامة تحت أي عنصر عادي في التسلسل الهرمي.',
     oneLevelAbove: 'مستوى واحد فوق {name}',
     searchParentAcrossWorkspaces: 'البحث عن عنصر أصلي عبر مساحات العمل',
     removeParent: 'إزالة الأصل',
@@ -207,6 +209,17 @@ export default {
     failedToUpdateParent: 'فشل تحديث الأصل',
     failedToRemoveParent: 'فشل إزالة الأصل',
     clickToCopyKey: 'انقر لنسخ المفتاح إلى الحافظة',
+    hierarchyMismatchTitle: 'لم يعد هذا العنصر متوافقًا مع العنصر الأصلي',
+    hierarchyMismatchDescription:
+      'تم تكوين {type} في المستوى {currentLevel}، بينما العنصر الأصلي الحالي في المستوى {parentLevel} أيضًا. يتم الاحتفاظ بالرابط، لكن تغيير الأصل يتطلب الآن عنصرًا من المستوى {requiredLevel}. اختر نوع عنصر من المستوى {compatibleLevel} للعمل مع مستوى الأصل الحالي.',
+    chooseCompatibleType: 'اختيار نوع متوافق',
+    parentPickerMismatchTitle: 'يختلف تكوين التسلسل الهرمي الحالي عن هذا الرابط المحفوظ',
+    parentPickerMismatchDescription:
+      'يقبل {type} الآن عناصر أصلية من المستوى {requiredLevel}. العنصر الأصلي الحالي في المستوى {currentParentLevel}؛ لاختيار أصل آخر من هذا المستوى، استخدم أولاً نوع عنصر من المستوى {compatibleLevel}.',
+    compatibleTypeHint:
+      'يتوافق نوع من المستوى {compatibleLevel} مع العنصر الأصلي الحالي في المستوى {parentLevel}. تبقى الروابط الحالية عند تغيير النوع.',
+    hierarchyLevelLabel: 'المستوى الهرمي {level}',
+    fitsCurrentParent: 'متوافق مع الأصل الحالي',
     enterDescription: 'أدخل الوصف...',
     clickToEditDescription: 'انقر لتعديل الوصف',
     clickToAddDescription: 'انقر لإضافة وصف',

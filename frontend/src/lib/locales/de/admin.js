@@ -644,6 +644,10 @@ export default {
       nameRequired: 'Name ist erforderlich',
       failedToSave: 'Vorgangstyp konnte nicht gespeichert werden:',
       noItemTypes: 'Noch keine Vorgangstypen konfiguriert.',
+      genericSubtaskLevel: 'Generischer Untervorgang (jede übergeordnete Ebene)',
+      hierarchyChangeWarningTitle: 'Bestehende Einträge behalten ihre Verknüpfungen',
+      hierarchyChangeWarningDescription:
+        'Beim Wechsel von Ebene {fromLevel} zu Ebene {toLevel} werden bestehende Einträge nicht verschoben. Künftige Auswahlmöglichkeiten für übergeordnete und untergeordnete Einträge werden anhand von Ebene {toLevel} berechnet; für ältere Einträge muss vor einer neuen Zuordnung möglicherweise ein kompatibler Typ gewählt werden.',
     },
     hierarchyLevels: {
       title: 'Hierarchieebenen',

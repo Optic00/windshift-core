@@ -1005,6 +1005,29 @@ func (r *ItemRepository) GetParentID(itemID int) (*int, error) {
 	return nullIntPtr(parentID), nil
 }
 
+// GetParentIDAndHierarchyLevel returns the stored parent and the current
+// item's configured hierarchy level. A nil level represents an untyped item.
+// Upward hierarchy walks use level 0 as their logical root boundary even when
+// legacy data still has a parent_id above it.
+func (r *ItemRepository) GetParentIDAndHierarchyLevel(itemID int) (parentID, hierarchyLevel *int, err error) {
+	var parent, level sql.NullInt64
+	err = r.db.QueryRow(`
+		SELECT i.parent_id, it.hierarchy_level
+		FROM items i
+		LEFT JOIN item_types it ON i.item_type_id = it.id
+		WHERE i.id = ?
+	`, itemID).Scan(&parent, &level)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("get parent and hierarchy level: %w", err)
+	}
+	assignNullableInt(&parentID, parent)
+	assignNullableInt(&hierarchyLevel, level)
+	return parentID, hierarchyLevel, nil
+}
+
 // GetParentIDTx returns the parent_id for an item using the supplied
 // transaction, locking the row with FOR UPDATE on Postgres so a concurrent
 // writer cannot change the parent between the cycle check and the subsequent

@@ -197,6 +197,9 @@ func (h *ItemDetailHandler) load(ctx context.Context, user *models.User, item *m
 				}
 			}
 			if response.CurrentItemType != nil {
+				if response.CurrentItemType.HierarchyLevel == models.HierarchyLevelGenericSubtask {
+					return nil
+				}
 				for i := range hierarchyLevels {
 					if hierarchyLevels[i].Level == response.CurrentItemType.HierarchyLevel {
 						selected := hierarchyLevels[i]
@@ -207,7 +210,8 @@ func (h *ItemDetailHandler) load(ctx context.Context, user *models.User, item *m
 				if response.CurrentHierarchyLevel != nil {
 					next := response.CurrentHierarchyLevel.Level + 1
 					for _, itemType := range itemTypes {
-						if itemType.HierarchyLevel == next {
+						if itemType.HierarchyLevel == next ||
+							itemType.HierarchyLevel == models.HierarchyLevelGenericSubtask {
 							response.AvailableSubIssueTypes = append(response.AvailableSubIssueTypes, itemType)
 						}
 					}

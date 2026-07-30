@@ -200,6 +200,8 @@ export default {
     changeParent: 'Cambiar principal',
     searchForParentItem: 'Buscar elemento principal...',
     showingItemsFromLevel: 'Solo se muestran elementos del nivel jerárquico {level}',
+    genericSubtaskLevelLabel: 'Subtarea genérica · cualquier nivel principal',
+    genericSubtaskParentHint: 'Las subtareas genéricas se pueden mover bajo cualquier elemento jerárquico normal.',
     oneLevelAbove: 'un nivel arriba de {name}',
     searchParentAcrossWorkspaces: 'Buscar elemento principal en todos los espacios de trabajo',
     removeParent: 'Eliminar principal',
@@ -207,6 +209,17 @@ export default {
     failedToUpdateParent: 'Error al actualizar el principal',
     failedToRemoveParent: 'Error al eliminar el principal',
     clickToCopyKey: 'Haga clic para copiar la clave al portapapeles',
+    hierarchyMismatchTitle: 'Este elemento ya no encaja con su principal',
+    hierarchyMismatchDescription:
+      '{type} está configurado en el nivel {currentLevel}, mientras que su principal existente también está en el nivel {parentLevel}. El vínculo se conserva, pero cambiar el principal ahora requiere uno del nivel {requiredLevel}. Elija un tipo de elemento del nivel {compatibleLevel} para mantener el nivel principal actual.',
+    chooseCompatibleType: 'Elegir tipo compatible',
+    parentPickerMismatchTitle: 'La configuración jerárquica actual difiere de este vínculo guardado',
+    parentPickerMismatchDescription:
+      '{type} ahora acepta principales del nivel {requiredLevel}. El principal existente está en el nivel {currentParentLevel}; para elegir otro principal de ese nivel, use primero un tipo de elemento del nivel {compatibleLevel}.',
+    compatibleTypeHint:
+      'Un tipo del nivel {compatibleLevel} encaja con el principal actual del nivel {parentLevel}. Los vínculos existentes se conservan al cambiar el tipo.',
+    hierarchyLevelLabel: 'Nivel jerárquico {level}',
+    fitsCurrentParent: 'Compatible con el principal actual',
     enterDescription: 'Ingrese la descripción...',
     clickToEditDescription: 'Haga clic para editar la descripción',
     clickToAddDescription: 'Haga clic para agregar una descripción',

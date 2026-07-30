@@ -25,6 +25,7 @@
   import { getStatusCategory } from '../../utils/statusColors.js';
   import CollectionViewSwitcher from './CollectionViewSwitcher.svelte';
   import QuickAddForm from './QuickAddForm.svelte';
+  import { childItemTypesForParent } from '../../utils/hierarchy.js';
 
   let { workspaceId, collectionId = null } = $props();
 
@@ -357,10 +358,7 @@
       return true;
     }
 
-    // Check if there are any item types at the next hierarchy level
-    const childTypes = itemTypes.filter(type =>
-      type.hierarchy_level === parentType.hierarchy_level + 1
-    );
+    const childTypes = childItemTypesForParent(itemTypes, parentType);
 
     return childTypes.length > 0;
   }
@@ -379,10 +377,8 @@
     if (parentItem && parentItem.item_type_id) {
       const parentType = getItemTypeInfo(parentItem.item_type_id);
       if (parentType) {
-        // Find item types that are one level below the parent
-        availableTypes = itemTypes.filter(type =>
-          type.hierarchy_level === parentType.hierarchy_level + 1
-        ).sort((a, b) => a.sort_order - b.sort_order);
+        availableTypes = childItemTypesForParent(itemTypes, parentType)
+          .sort((a, b) => a.sort_order - b.sort_order);
       }
     }
 

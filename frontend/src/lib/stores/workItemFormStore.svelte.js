@@ -1,5 +1,6 @@
 // Centralized reactive state for the work-item create form.
 import { api } from '../api.js';
+import { isGenericSubtaskType, sortItemTypesByHierarchy } from '../utils/hierarchy.js';
 import {
   isCreateSystemFieldAutoManaged,
   isCreateSystemFieldRenderable,
@@ -438,6 +439,10 @@ class WorkItemFormStore {
     // Apply restricted item types if set (child item creation)
     if (this.restrictedItemTypes?.length > 0) {
       baseTypes = this.restrictedItemTypes;
+    } else if (!this.parentItem) {
+      // A level -1 generic sub-task is invalid without a parent. The API also
+      // enforces this, but hiding it prevents an avoidable failed submission.
+      baseTypes = baseTypes.filter((type) => !isGenericSubtaskType(type));
     }
 
     // Apply config set item type restrictions
@@ -446,9 +451,7 @@ class WorkItemFormStore {
       baseTypes = baseTypes.filter((t) => allowedItemTypeIds.includes(t.id));
     }
 
-    this.availableItemTypes = baseTypes.sort(
-      (a, b) => a.hierarchy_level - b.hierarchy_level || a.sort_order - b.sort_order
-    );
+    this.availableItemTypes = sortItemTypesByHierarchy(baseTypes);
 
     // Auto-select first item type if current is invalid
     if (

@@ -641,6 +641,10 @@ export default {
       nameRequired: 'الاسم مطلوب',
       failedToSave: 'فشل في حفظ نوع العنصر:',
       noItemTypes: 'لم يتم تكوين أنواع عناصر بعد.',
+      genericSubtaskLevel: 'مهمة فرعية عامة (أي مستوى أصل)',
+      hierarchyChangeWarningTitle: 'ستحتفظ العناصر الحالية بروابطها',
+      hierarchyChangeWarningDescription:
+        'لا يؤدي التغيير من المستوى {fromLevel} إلى المستوى {toLevel} إلى نقل العناصر الحالية. سيتم حساب خيارات العناصر الأصلية والفرعية المستقبلية انطلاقًا من المستوى {toLevel}؛ وقد يحتاج المستخدمون إلى اختيار نوع متوافق قبل تغيير أصل العناصر القديمة.',
     },
     hierarchyLevels: {
       title: 'مستويات التسلسل الهرمي',

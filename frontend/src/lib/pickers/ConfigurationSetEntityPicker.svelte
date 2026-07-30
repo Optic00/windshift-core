@@ -3,6 +3,7 @@
   import { itemTypeIconMap, priorityIconMap } from '../utils/icons.js';
   import { t } from '../stores/i18n.svelte.js';
   import { confirm } from '../composables/useConfirm.js';
+  import { isGenericSubtaskType } from '../utils/hierarchy.js';
 
   // Entity type determines rendering behavior
   let {
@@ -75,6 +76,7 @@
   <div class="relative">
     <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style="color: var(--ds-icon-subtle);" />
     <input
+      data-testid={`${entityType}-search`}
       type="text"
       placeholder={t('pickers.searchEntities', { entities: getEntityLabelPlural() })}
       bind:value={searchQuery}
@@ -95,7 +97,11 @@
     {:else}
       <div class="border rounded-lg" style="border-color: var(--ds-border);">
         {#each assignedEntities as entity, i}
-          <div class="flex items-center justify-between p-3" style="background-color: var(--ds-surface);{i > 0 ? ' border-top: 1px solid var(--ds-border);' : ''}">
+          <div
+            data-testid={`${entityType}-assigned-${entity.id}`}
+            class="flex items-center justify-between p-3"
+            style="background-color: var(--ds-surface);{i > 0 ? ' border-top: 1px solid var(--ds-border);' : ''}"
+          >
             <div class="flex items-center gap-3 min-w-0">
               {#if entityType === 'priorities' || entityType === 'item-types'}
                 <div
@@ -125,12 +131,15 @@
                   </div>
                 {:else if entityType === 'item-types' && entity.hierarchy_level !== undefined}
                   <div class="text-xs" style="color: var(--ds-text-subtle);">
-                    {t('pickers.level')} {entity.hierarchy_level}
+                    {isGenericSubtaskType(entity)
+                      ? t('items.genericSubtaskLevelLabel')
+                      : `${t('pickers.level')} ${entity.hierarchy_level}`}
                   </div>
                 {/if}
               </div>
             </div>
             <button
+              data-testid={`${entityType}-remove-${entity.id}`}
               type="button"
               onclick={() => removeEntity(entity.id)}
               class="p-1 rounded hover-danger transition-colors flex-shrink-0"
@@ -162,7 +171,11 @@
       <div class="border rounded-lg max-h-60 overflow-y-auto" style="border-color: var(--ds-border);">
         {#each availableEntities as entity, i}
           {@const otherAssignment = entityAssignments[entity.id]}
-          <div class="flex items-center justify-between p-3" style="background-color: var(--ds-surface);{i > 0 ? ' border-top: 1px solid var(--ds-border);' : ''}">
+          <div
+            data-testid={`${entityType}-available-${entity.id}`}
+            class="flex items-center justify-between p-3"
+            style="background-color: var(--ds-surface);{i > 0 ? ' border-top: 1px solid var(--ds-border);' : ''}"
+          >
             <div class="flex items-center gap-3 min-w-0 flex-1">
               {#if entityType === 'priorities' || entityType === 'item-types'}
                 <div
@@ -192,7 +205,9 @@
                   </div>
                 {:else if entityType === 'item-types' && entity.hierarchy_level !== undefined}
                   <div class="text-xs" style="color: var(--ds-text-subtle);">
-                    {t('pickers.level')} {entity.hierarchy_level}
+                    {isGenericSubtaskType(entity)
+                      ? t('items.genericSubtaskLevelLabel')
+                      : `${t('pickers.level')} ${entity.hierarchy_level}`}
                   </div>
                 {/if}
               </div>
@@ -204,6 +219,7 @@
               {/if}
             </div>
             <button
+              data-testid={`${entityType}-add-${entity.id}`}
               type="button"
               onclick={() => addEntity(entity.id)}
               class="p-1 rounded hover:bg-blue-50 transition-colors flex-shrink-0 ml-2"

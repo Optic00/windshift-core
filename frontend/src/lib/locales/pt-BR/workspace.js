@@ -200,6 +200,8 @@ export default {
     changeParent: 'Alterar Pai',
     searchForParentItem: 'Buscar item pai...',
     showingItemsFromLevel: 'Exibindo apenas itens do nível hierárquico {level}',
+    genericSubtaskLevelLabel: 'Subtarefa genérica · qualquer nível pai',
+    genericSubtaskParentHint: 'Subtarefas genéricas podem ser movidas para baixo de qualquer item hierárquico regular.',
     oneLevelAbove: 'um nível acima de {name}',
     searchParentAcrossWorkspaces: 'Buscar item pai em todos os workspaces',
     removeParent: 'Remover pai',
@@ -207,6 +209,17 @@ export default {
     failedToUpdateParent: 'Falha ao atualizar pai',
     failedToRemoveParent: 'Falha ao remover pai',
     clickToCopyKey: 'Clique para copiar a chave para a área de transferência',
+    hierarchyMismatchTitle: 'Este item não corresponde mais ao item pai',
+    hierarchyMismatchDescription:
+      '{type} está configurado no nível {currentLevel}, enquanto o pai existente também está no nível {parentLevel}. O vínculo é preservado, mas alterar o pai agora exige um item do nível {requiredLevel}. Escolha um tipo de item do nível {compatibleLevel} para manter o nível pai atual.',
+    chooseCompatibleType: 'Escolher tipo compatível',
+    parentPickerMismatchTitle: 'A configuração atual da hierarquia difere deste vínculo salvo',
+    parentPickerMismatchDescription:
+      '{type} agora aceita pais do nível {requiredLevel}. O pai existente está no nível {currentParentLevel}; para escolher outro pai desse nível, primeiro use um tipo de item do nível {compatibleLevel}.',
+    compatibleTypeHint:
+      'Um tipo do nível {compatibleLevel} é compatível com o pai atual do nível {parentLevel}. Os vínculos existentes permanecem ao alterar o tipo.',
+    hierarchyLevelLabel: 'Nível hierárquico {level}',
+    fitsCurrentParent: 'Compatível com o pai atual',
     enterDescription: 'Digite a descrição...',
     clickToEditDescription: 'Clique para editar a descrição',
     clickToAddDescription: 'Clique para adicionar descrição',

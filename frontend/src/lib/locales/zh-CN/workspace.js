@@ -201,6 +201,8 @@ export default {
     changeParent: '更改父事项',
     searchForParentItem: '搜索父事项...',
     showingItemsFromLevel: '仅显示层级 {level} 的事项',
+    genericSubtaskLevelLabel: '通用子任务 · 任意父级层级',
+    genericSubtaskParentHint: '通用子任务可以移动到任意常规层级事项下。',
     oneLevelAbove: '{name} 的上一级',
     searchParentAcrossWorkspaces: '跨工作区搜索父事项',
     removeParent: '移除父事项',
@@ -208,6 +210,17 @@ export default {
     failedToUpdateParent: '更新父事项失败',
     failedToRemoveParent: '移除父事项失败',
     clickToCopyKey: '点击复制键到剪贴板',
+    hierarchyMismatchTitle: '此事项与其父事项的层级已不再匹配',
+    hierarchyMismatchDescription:
+      '{type} 现配置为第 {currentLevel} 层，而现有父事项也位于第 {parentLevel} 层。现有链接会被保留，但重新设置父事项时只能选择第 {requiredLevel} 层。请选择第 {compatibleLevel} 层的事项类型以继续使用当前父层级。',
+    chooseCompatibleType: '选择兼容类型',
+    parentPickerMismatchTitle: '当前层级配置与已保存的链接不一致',
+    parentPickerMismatchDescription:
+      '{type} 现在只能接受第 {requiredLevel} 层的父事项。现有父事项位于第 {currentParentLevel} 层；如需选择同层级的其他父事项，请先使用第 {compatibleLevel} 层的事项类型。',
+    compatibleTypeHint:
+      '第 {compatibleLevel} 层的类型与当前第 {parentLevel} 层父事项匹配。更改类型时会保留现有链接。',
+    hierarchyLevelLabel: '层级 {level}',
+    fitsCurrentParent: '匹配当前父事项',
     enterDescription: '输入描述...',
     clickToEditDescription: '点击编辑描述',
     clickToAddDescription: '点击添加描述',

@@ -66,7 +66,7 @@ func (s *ConfigReadService) ListItemTypes() ([]ItemTypeResult, error) {
 	rows, err := s.db.Query(`
 		SELECT id, name, description, icon, color, hierarchy_level, sort_order, is_default
 		FROM item_types
-		ORDER BY hierarchy_level, sort_order, name
+		ORDER BY CASE WHEN hierarchy_level = -1 THEN 1 ELSE 0 END, hierarchy_level, sort_order, name
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list item types: %w", err)

@@ -77,7 +77,7 @@ func (s *ItemTypeChangeService) Analyze(item *models.Item, targetTypeID int) (*I
 	if err := s.validateItemTypeAllowedForWorkspace(item.WorkspaceID, targetTypeID); err != nil {
 		return nil, err
 	}
-	if err := s.validateItemTypeHierarchyCompatibility(item, target.HierarchyLevel); err != nil {
+	if err := s.validateItemTypeHierarchyCompatibility(item, targetTypeID); err != nil {
 		return nil, err
 	}
 
@@ -317,26 +317,16 @@ func (s *ItemTypeChangeService) validateItemTypeAllowedForWorkspace(workspaceID,
 	return nil
 }
 
-func (s *ItemTypeChangeService) validateItemTypeHierarchyCompatibility(item *models.Item, targetLevel int) error {
-	itemRepo := repository.NewItemRepository(s.db)
-	if item.ParentID != nil {
-		parentLevel, err := itemRepo.GetItemHierarchyLevel(*item.ParentID)
-		if err != nil {
-			return err
-		}
-		if parentLevel != nil && targetLevel != *parentLevel+1 {
-			return &validation.ValidationError{Field: "target_item_type_id", Message: "Item type is not compatible with the current parent hierarchy"}
+func (s *ItemTypeChangeService) validateItemTypeHierarchyCompatibility(item *models.Item, targetTypeID int) error {
+	err := validation.ValidateItemTypePlacement(s.db, item.ID, targetTypeID, item.ParentID)
+	var placementErr *validation.ValidationError
+	if errors.As(err, &placementErr) {
+		return &validation.ValidationError{
+			Field:   "target_item_type_id",
+			Message: placementErr.Message,
 		}
 	}
-
-	incompatibleChildren, err := itemRepo.CountChildrenWithHierarchyLevelNot(item.ID, targetLevel+1)
-	if err != nil {
-		return err
-	}
-	if incompatibleChildren > 0 {
-		return &validation.ValidationError{Field: "target_item_type_id", Message: "Item type is not compatible with existing child hierarchy"}
-	}
-	return nil
+	return err
 }
 
 func (s *ItemTypeChangeService) listWorkflowStatuses(workflowID int) ([]StatusChangeInfo, error) {

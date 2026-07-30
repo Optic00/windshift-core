@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { api } from '../api.js';
   import { t } from '../stores/i18n.svelte.js';
+  import { errorToast } from '../stores/toasts.svelte.js';
   import { confirm } from '../composables/useConfirm.js';
   import { Plus, Edit, Trash2, FileText } from '@lucide/svelte';
   import { itemTypeIconMap, itemTypeIconOptions } from '../utils/icons.js';
@@ -15,15 +16,22 @@
   import Textarea from '../components/Textarea.svelte';
   import Input from '../components/Input.svelte';
   import Lozenge from '../components/Lozenge.svelte';
+  import AlertBox from '../components/AlertBox.svelte';
   import IconSelector from '../pickers/IconSelector.svelte';
   import { toHotkeyString } from '../utils/keyboardShortcuts.js';
   import './settings-form.css';
+  import {
+    GENERIC_SUBTASK_HIERARCHY_LEVEL,
+    isGenericSubtaskType,
+    sortItemTypesByHierarchy,
+  } from '../utils/hierarchy.js';
 
   let itemTypes = $state([]);
   let hierarchyLevels = $state([]);
   let isLoading = $state(true);
   let error = $state(null);
   let editingId = $state(null);
+  let originalHierarchyLevel = $state(null);
   let showCreateForm = $state(false);
 
   // Form data
@@ -49,12 +57,7 @@
       error = null;
       itemTypes = await api.itemTypes.getAll();
       // Group by hierarchy level for better display
-      itemTypes = itemTypes.sort((a, b) => {
-        if (a.hierarchy_level !== b.hierarchy_level) {
-          return a.hierarchy_level - b.hierarchy_level;
-        }
-        return a.sort_order - b.sort_order;
-      });
+      itemTypes = sortItemTypesByHierarchy(itemTypes);
     } catch (err) {
       error = 'Failed to load item types: ' + err.message;
     } finally {
@@ -81,6 +84,7 @@
       sort_order: getNextSortOrder(defaultHierarchyLevel)
     };
     editingId = null;
+    originalHierarchyLevel = null;
     showCreateForm = true;
   }
 
@@ -94,12 +98,14 @@
       sort_order: itemType.sort_order
     };
     editingId = itemType.id;
+    originalHierarchyLevel = itemType.hierarchy_level;
     showCreateForm = true;
   }
 
   function cancelEdit() {
     showCreateForm = false;
     editingId = null;
+    originalHierarchyLevel = null;
     formData = {
       name: '',
       description: '',
@@ -120,10 +126,16 @@
     formData.sort_order = getNextSortOrder(formData.hierarchy_level);
   }
 
+  let hierarchyLevelChanged = $derived(
+    editingId !== null &&
+    originalHierarchyLevel !== null &&
+    Number(formData.hierarchy_level) !== Number(originalHierarchyLevel)
+  );
+
   async function saveItemType() {
     try {
       if (!formData.name.trim()) {
-        error = t('settings.itemTypes.nameRequired');
+        errorToast(t('settings.itemTypes.nameRequired'));
         return;
       }
 
@@ -138,7 +150,7 @@
       error = null;
       window.dispatchEvent(new CustomEvent('refresh-workspace-data'));
     } catch (err) {
-      error = t('settings.itemTypes.failedToSave') + ' ' + err.message;
+      errorToast(t('settings.itemTypes.failedToSave') + ' ' + err.message);
     }
   }
 
@@ -163,9 +175,23 @@
   }
 
   function getHierarchyLevelName(level) {
+    if (Number(level) === GENERIC_SUBTASK_HIERARCHY_LEVEL) {
+      return t('settings.itemTypes.genericSubtaskLevel');
+    }
     const hierarchyLevel = hierarchyLevels.find(hl => hl.level === level);
     return hierarchyLevel ? `Level ${level} - ${hierarchyLevel.name}` : `Level ${level}`;
   }
+
+  let hierarchyLevelOptions = $derived([
+    ...hierarchyLevels.map(level => ({
+      value: level.level,
+      label: `${level.name} (Level ${level.level})`
+    })),
+    {
+      value: GENERIC_SUBTASK_HIERARCHY_LEVEL,
+      label: t('settings.itemTypes.genericSubtaskLevel')
+    }
+  ]);
 
   // Column definitions for DataTable
   const itemTypeColumns = $derived([
@@ -204,6 +230,7 @@
       {
         id: 'edit',
         type: 'regular',
+        testid: 'item-type-edit',
         icon: Edit,
         title: t('common.edit'),
         hoverClass: 'hover-bg',
@@ -233,6 +260,7 @@
       icon={Plus}
       onclick={startCreate}
       disabled={isLoading}
+      dataTestid="item-type-add"
       keyboardHint="A"
       hotkeyConfig={{ key: toHotkeyString('itemTypes', 'add'), guard: () => !showCreateForm }}
     >
@@ -255,6 +283,11 @@
     emptyMessage={t('settings.itemTypes.noItemTypes') || 'No work item types configured yet.'}
     emptyIcon={FileText}
     actionItems={buildItemTypeDropdownItems}
+    actionTriggerTestid={(itemType) => `item-type-actions-${itemType.id}`}
+    rowAttrs={(itemType) => ({
+      'data-testid': `item-type-row-${itemType.id}`,
+      'data-hierarchy-level': itemType.hierarchy_level
+    })}
   >
     {#snippet icon(itemType)}
       {@const ItemTypeIcon = itemTypeIconMap[itemType.icon] || FileText}
@@ -266,7 +299,10 @@
     {/snippet}
 
     {#snippet hierarchy_level(itemType)}
-      <Lozenge color="blue" text={getHierarchyLevelName(itemType.hierarchy_level)} />
+      <Lozenge
+        color={isGenericSubtaskType(itemType) ? 'gray' : 'blue'}
+        text={getHierarchyLevelName(itemType.hierarchy_level)}
+      />
     {/snippet}
 
     {#snippet configuration_set_names(itemType)}
@@ -318,7 +354,7 @@
               bind:value={formData.hierarchy_level}
               onchange={onHierarchyLevelChange}
               required
-              options={hierarchyLevels.map(level => ({ value: level.level, label: `${level.name} (Level ${level.level})` }))}
+              options={hierarchyLevelOptions}
             />
           </div>
 
@@ -333,6 +369,20 @@
             />
           </div>
         </div>
+
+        {#if hierarchyLevelChanged}
+          <AlertBox variant="warning" class="mb-4">
+            <div data-testid="admin-hierarchy-change-warning">
+              <p class="font-medium">{t('settings.itemTypes.hierarchyChangeWarningTitle')}</p>
+              <p class="mt-1" style="color: var(--ds-text-subtle);">
+                {t('settings.itemTypes.hierarchyChangeWarningDescription', {
+                  fromLevel: originalHierarchyLevel,
+                  toLevel: formData.hierarchy_level
+                })}
+              </p>
+            </div>
+          </AlertBox>
+        {/if}
 
         <div class="form-group">
           <IconSelector
@@ -353,4 +403,3 @@
       confirmLabel={editingId ? t('common.update') : t('common.create')}
     />
   </Modal>
-

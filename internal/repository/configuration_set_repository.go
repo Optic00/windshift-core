@@ -471,7 +471,7 @@ func (r *ConfigurationSetRepository) loadItemTypeConfigs(configSetID int) ([]mod
 		LEFT JOIN condition_sets cset ON csit.condition_set_id = cset.id
 		LEFT JOIN approval_sets aset ON csit.approval_set_id = aset.id
 		WHERE csit.configuration_set_id = ?
-		ORDER BY it.hierarchy_level, it.sort_order`
+		ORDER BY CASE WHEN it.hierarchy_level = -1 THEN 1 ELSE 0 END, it.hierarchy_level, it.sort_order`
 
 	rows, err := r.db.Query(query, configSetID)
 	if err != nil {

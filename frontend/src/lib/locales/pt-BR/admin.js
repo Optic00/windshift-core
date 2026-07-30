@@ -640,6 +640,10 @@ export default {
       nameRequired: 'O nome é obrigatório',
       failedToSave: 'Falha ao salvar tipo de item:',
       noItemTypes: 'Nenhum tipo de item configurado ainda.',
+      genericSubtaskLevel: 'Subtarefa genérica (qualquer nível pai)',
+      hierarchyChangeWarningTitle: 'Os itens existentes manterão seus vínculos',
+      hierarchyChangeWarningDescription:
+        'Alterar do nível {fromLevel} para o nível {toLevel} não move os itens existentes. As futuras opções de pais e filhos serão calculadas a partir do nível {toLevel}; talvez seja necessário escolher um tipo compatível antes de alterar o pai de itens legados.',
     },
     hierarchyLevels: {
       title: 'Níveis de Hierarquia',

@@ -687,7 +687,7 @@ func (s *ConfigSetExportService) exportItemTypesByName(ctx context.Context, name
 		       COALESCE(hierarchy_level, 0), COALESCE(sort_order, 0)
 		FROM item_types
 		WHERE name IN (%s)
-		ORDER BY hierarchy_level, sort_order, name
+		ORDER BY CASE WHEN hierarchy_level = -1 THEN 1 ELSE 0 END, hierarchy_level, sort_order, name
 	`, placeholders)
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {

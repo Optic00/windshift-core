@@ -548,6 +548,10 @@ export default {
       nameRequired: '名称为必填项',
       failedToSave: '保存事项类型失败：',
       noItemTypes: '尚未配置事项类型。',
+      genericSubtaskLevel: '通用子任务（任意父级层级）',
+      hierarchyChangeWarningTitle: '现有事项将保留其链接',
+      hierarchyChangeWarningDescription:
+        '从第 {fromLevel} 层更改为第 {toLevel} 层不会移动现有事项。今后的父事项和子事项选项将以第 {toLevel} 层为基准计算；在重新设置旧事项的父事项之前，用户可能需要先选择兼容的事项类型。',
     },
     hierarchyLevels: {
       title: '层级',

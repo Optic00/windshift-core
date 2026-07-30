@@ -123,6 +123,10 @@ type ItemCreationParams struct {
 	// bulk paths (e.g. the Jira importer) where pre-assigned items must not
 	// each start an agent run.
 	SkipAssigneeTrigger bool
+	// AllowUnparentedGenericSubtask permits the Jira importer's two-phase
+	// insert-then-link flow to stage a level -1 item before its source parent
+	// has been imported. No interactive or automation caller should set it.
+	AllowUnparentedGenericSubtask bool
 	// ValidatingUserID and PermService enable project-assignment access control.
 	// When ValidatingUserID > 0 and PermService is non-nil, CreateItem rejects a
 	// ProjectID / TimeProjectID the user may not view (returning ErrProjectNotFound,
@@ -242,6 +246,14 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 
 	if params.ItemTypeID == nil {
 		return 0, ErrMissingItemType
+	}
+	if err := validation.ValidateGenericSubtaskBoundary(
+		db,
+		*params.ItemTypeID,
+		params.ParentID,
+		params.AllowUnparentedGenericSubtask,
+	); err != nil {
+		return 0, err
 	}
 
 	// Apply a mandatory work item template (WI-438). Every create path funnels

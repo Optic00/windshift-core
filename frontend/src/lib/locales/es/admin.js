@@ -640,6 +640,10 @@ export default {
       nameRequired: 'El nombre es obligatorio',
       failedToSave: 'Error al guardar el tipo de elemento:',
       noItemTypes: 'Aún no hay tipos de elementos configurados.',
+      genericSubtaskLevel: 'Subtarea genérica (cualquier nivel principal)',
+      hierarchyChangeWarningTitle: 'Los elementos existentes conservarán sus vínculos',
+      hierarchyChangeWarningDescription:
+        'Cambiar del nivel {fromLevel} al nivel {toLevel} no mueve los elementos existentes. Las futuras opciones de principales y secundarios se calcularán desde el nivel {toLevel}; puede ser necesario elegir un tipo compatible antes de cambiar el principal de elementos heredados.',
     },
     hierarchyLevels: {
       title: 'Niveles de jerarquía',

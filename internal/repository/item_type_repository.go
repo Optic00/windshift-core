@@ -45,7 +45,7 @@ func (r *ItemTypeRepository) List(configurationSetID *int) ([]models.ItemType, e
 			" WHERE csit.configuration_set_id = ?"
 		args = append(args, *configurationSetID)
 	}
-	query += " ORDER BY it.hierarchy_level, it.sort_order, it.name"
+	query += " ORDER BY CASE WHEN it.hierarchy_level = -1 THEN 1 ELSE 0 END, it.hierarchy_level, it.sort_order, it.name"
 
 	rows, err := r.db.Query(query, args...)
 	if err != nil {

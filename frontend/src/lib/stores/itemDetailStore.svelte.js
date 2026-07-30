@@ -1,4 +1,5 @@
 import { api } from '../api.js';
+import { childItemTypesForParent } from '../utils/hierarchy.js';
 import { buildDetailScreenFieldConfig, resolveEffectiveScreenIds } from '../utils/screenFields.js';
 import { workspaceDataStore } from './workspaceDataStore.svelte.js';
 
@@ -688,12 +689,10 @@ class ItemDetailStore {
         }
       }
 
-      // Find available sub-issue types (next level down)
-      if (this.currentItemType && this.currentHierarchyLevel) {
-        const nextLevel = this.currentHierarchyLevel.level + 1;
-        this.availableSubIssueTypes = this.itemTypes.filter(
-          (type) => type.hierarchy_level === nextLevel
-        );
+      // Find available child types, including the level-independent generic
+      // sub-task sentinel beneath every regular hierarchy item.
+      if (this.currentItemType) {
+        this.availableSubIssueTypes = childItemTypesForParent(this.itemTypes, this.currentItemType);
       } else {
         this.availableSubIssueTypes = [];
       }

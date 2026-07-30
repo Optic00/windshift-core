@@ -204,6 +204,8 @@ export default {
     changeParent: 'Übergeordneten Eintrag ändern',
     searchForParentItem: 'Nach übergeordnetem Eintrag suchen...',
     showingItemsFromLevel: 'Zeige nur Einträge der Hierarchieebene {level}',
+    genericSubtaskLevelLabel: 'Generischer Untervorgang · jede übergeordnete Ebene',
+    genericSubtaskParentHint: 'Generische Untervorgänge können unter jeden regulären Hierarchieeintrag verschoben werden.',
     oneLevelAbove: 'eine Ebene über {name}',
     searchParentAcrossWorkspaces: 'Nach übergeordnetem Eintrag in allen Arbeitsbereichen suchen',
     removeParent: 'Übergeordneten Eintrag entfernen',
@@ -211,6 +213,17 @@ export default {
     failedToUpdateParent: 'Übergeordneter Eintrag konnte nicht aktualisiert werden',
     failedToRemoveParent: 'Übergeordneter Eintrag konnte nicht entfernt werden',
     clickToCopyKey: 'Klicken, um Schlüssel in die Zwischenablage zu kopieren',
+    hierarchyMismatchTitle: 'Dieser Eintrag passt nicht mehr zu seinem übergeordneten Eintrag',
+    hierarchyMismatchDescription:
+      '{type} ist auf Ebene {currentLevel} konfiguriert, der bestehende übergeordnete Eintrag liegt ebenfalls auf Ebene {parentLevel}. Die Verknüpfung bleibt erhalten, aber eine neue Zuordnung erfordert nun einen übergeordneten Eintrag auf Ebene {requiredLevel}. Wählen Sie einen Eintragstyp der Ebene {compatibleLevel}, um die aktuelle übergeordnete Ebene beizubehalten.',
+    chooseCompatibleType: 'Kompatiblen Typ wählen',
+    parentPickerMismatchTitle: 'Die aktuelle Hierarchiekonfiguration weicht von dieser gespeicherten Verknüpfung ab',
+    parentPickerMismatchDescription:
+      '{type} akzeptiert jetzt übergeordnete Einträge der Ebene {requiredLevel}. Der bestehende übergeordnete Eintrag liegt auf Ebene {currentParentLevel}. Um einen anderen Eintrag dieser Ebene zu wählen, verwenden Sie zuerst einen Eintragstyp der Ebene {compatibleLevel}.',
+    compatibleTypeHint:
+      'Ein Typ der Ebene {compatibleLevel} passt zum aktuellen übergeordneten Eintrag der Ebene {parentLevel}. Bestehende Verknüpfungen bleiben beim Typwechsel erhalten.',
+    hierarchyLevelLabel: 'Hierarchieebene {level}',
+    fitsCurrentParent: 'Passt zum aktuellen übergeordneten Eintrag',
     enterDescription: 'Beschreibung eingeben...',
     clickToEditDescription: 'Klicken, um Beschreibung zu bearbeiten',
     clickToAddDescription: 'Klicken, um Beschreibung hinzuzufügen',

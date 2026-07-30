@@ -130,14 +130,17 @@ func (r *ItemRepository) GetDescendantsWithMaxDepthContext(ctx context.Context, 
 func (r *ItemRepository) GetAncestors(itemID int) ([]*models.Item, error) {
 	rows, err := r.db.Query(`
 		WITH RECURSIVE ancestors AS (
-			SELECT id, parent_id, 0 as level
-			FROM items
-			WHERE id = ?
-			UNION ALL
-			SELECT i.id, i.parent_id, a.level + 1
+			SELECT i.id, i.parent_id, 0 as level, it.hierarchy_level
 			FROM items i
+			LEFT JOIN item_types it ON i.item_type_id = it.id
+			WHERE i.id = ?
+			UNION ALL
+			SELECT i.id, i.parent_id, a.level + 1, it.hierarchy_level
+			FROM items i
+			LEFT JOIN item_types it ON i.item_type_id = it.id
 			INNER JOIN ancestors a ON i.id = a.parent_id
 			WHERE a.level < ?
+			  AND COALESCE(a.hierarchy_level, -999) != 0
 		)
 		SELECT i.id, i.workspace_id, i.workspace_item_number, i.item_type_id, i.title, i.description,
 		       i.status_id, i.priority_id, i.due_date, i.is_task, i.iteration_id,
@@ -185,7 +188,7 @@ func (r *ItemRepository) GetAncestorsForHierarchyContext(ctx context.Context, it
 			       i.assignee_id, i.creator_id, i.custom_field_values, i.parent_id,
 			       i.created_at, i.updated_at,
 			       w.name as workspace_name, w.key as workspace_key, it.name as item_type_name, it.color as item_type_color, it.icon as item_type_icon,
-			       0 as level
+			       0 as level, it.hierarchy_level
 			FROM items i
 			JOIN workspaces w ON i.workspace_id = w.id
 			LEFT JOIN item_types it ON i.item_type_id = it.id
@@ -197,12 +200,13 @@ func (r *ItemRepository) GetAncestorsForHierarchyContext(ctx context.Context, it
 			       p.assignee_id, p.creator_id, p.custom_field_values, p.parent_id,
 			       p.created_at, p.updated_at,
 			       w.name as workspace_name, w.key as workspace_key, it.name as item_type_name, it.color as item_type_color, it.icon as item_type_icon,
-			       a.level + 1 as level
+			       a.level + 1 as level, it.hierarchy_level
 			FROM items p
 			JOIN workspaces w ON p.workspace_id = w.id
 			LEFT JOIN item_types it ON p.item_type_id = it.id
 			JOIN ancestors a ON p.id = a.parent_id
 			WHERE a.level < ?
+			  AND COALESCE(a.hierarchy_level, -999) != 0
 		)
 		SELECT id, workspace_id, workspace_item_number, item_type_id, title, description, is_task,
 		       assignee_id, creator_id, custom_field_values, parent_id,
@@ -490,17 +494,19 @@ func (r *ItemRepository) ResolveEffectiveProject(itemID int) (*EffectiveProjectR
 		WITH RECURSIVE effective_projects AS (
 			-- Base case: the item itself
 			SELECT
-				id,
-				project_id,
-				inherit_project,
-				parent_id,
+				i.id,
+				i.project_id,
+				i.inherit_project,
+				i.parent_id,
+				it.hierarchy_level,
 				CASE
-					WHEN inherit_project = true THEN NULL
-					ELSE project_id
+					WHEN i.inherit_project = true THEN NULL
+					ELSE i.project_id
 				END as effective_project_id,
 				0 as depth
-			FROM items
-			WHERE id = ?
+			FROM items i
+			LEFT JOIN item_types it ON i.item_type_id = it.id
+			WHERE i.id = ?
 
 			UNION ALL
 
@@ -510,6 +516,7 @@ func (r *ItemRepository) ResolveEffectiveProject(itemID int) (*EffectiveProjectR
 				ep.project_id,
 				ep.inherit_project,
 				i.parent_id,
+				it.hierarchy_level,
 				CASE
 					WHEN i.project_id IS NOT NULL AND i.inherit_project = false THEN i.project_id
 					ELSE ep.effective_project_id
@@ -517,8 +524,10 @@ func (r *ItemRepository) ResolveEffectiveProject(itemID int) (*EffectiveProjectR
 				ep.depth + 1
 			FROM effective_projects ep
 			JOIN items i ON ep.parent_id = i.id
+			LEFT JOIN item_types it ON i.item_type_id = it.id
 			WHERE ep.effective_project_id IS NULL
 			  AND ep.inherit_project = true
+			  AND COALESCE(ep.hierarchy_level, -999) != 0
 			  AND ep.depth < 10
 		)
 		SELECT

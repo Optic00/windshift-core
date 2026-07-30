@@ -1257,7 +1257,8 @@ func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, works
 		UpdatedAt:               updatedAt,
 		// A bulk import of issues pre-assigned to an agent user must not
 		// start one agent run per imported item.
-		SkipAssigneeTrigger: true,
+		SkipAssigneeTrigger:           true,
+		AllowUnparentedGenericSubtask: true,
 	}
 	var itemID int64
 	var previousItemMapping *previousJiraImportMapping
@@ -1624,6 +1625,47 @@ func (h *JiraImportHandler) linkParents(jobID string) {
 				slog.String("parentKey", link.parentKey),
 				slog.Int("childID", link.childID))
 			continue
+		}
+
+		// Jira's hierarchy level -1 is Windshift's generic-subtask sentinel.
+		// Validate that special edge before using the import-only direct write:
+		// generic subtasks may sit below any regular item, but not below another
+		// generic subtask.
+		var childItemTypeID, childHierarchyLevel int
+		if err := h.db.QueryRow(`
+			SELECT it.id, it.hierarchy_level
+			FROM items child
+			JOIN item_types it ON child.item_type_id = it.id
+			WHERE child.id = ?
+		`, link.childID).Scan(&childItemTypeID, &childHierarchyLevel); err != nil {
+			slog.Error("Failed to load imported child hierarchy level",
+				slog.String("component", "jira"),
+				slog.Int("childID", link.childID),
+				slog.Any("error", err))
+			continue
+		}
+		if childHierarchyLevel == models.HierarchyLevelGenericSubtask {
+			if err := validation.ValidateParentForItemType(
+				h.db,
+				childItemTypeID,
+				&parentID,
+			); err != nil {
+				slog.Error("Rejected invalid Jira generic sub-task parent",
+					slog.String("component", "jira"),
+					slog.Int("childID", link.childID),
+					slog.Int("parentID", parentID),
+					slog.Any("error", err))
+				continue
+			}
+			wouldCycle, err := services.NewHierarchyService(h.db).WouldCreateCycle(link.childID, parentID)
+			if err != nil || wouldCycle {
+				slog.Error("Rejected cyclic Jira generic sub-task parent",
+					slog.String("component", "jira"),
+					slog.Int("childID", link.childID),
+					slog.Int("parentID", parentID),
+					slog.Any("error", err))
+				continue
+			}
 		}
 
 		// Update the child item's parent_id directly.
