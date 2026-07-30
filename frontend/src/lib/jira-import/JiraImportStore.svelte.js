@@ -482,6 +482,7 @@ export const jiraImport = {
       windshiftType: f.windshift_field_type,
       canMap: f.can_map,
       notes: f.notes,
+      preserveRaw: f.preserve_raw === true,
       action: f.can_map ? 'create' : 'skip', // 'create', 'map', 'skip'
       windshiftId: null,
       assetSchemaId: f.windshift_field_type === 'asset' ? 'auto' : null,

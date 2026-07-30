@@ -384,6 +384,26 @@ func (c *dataCenterClient) GetProjectWorkflowScheme(ctx context.Context, project
 	}, nil
 }
 
+// GetProjectWorkflowConfiguration reports that Jira Data Center's standard
+// REST API does not expose the configured workflow graph used by this importer.
+// Status membership remains available through GetProjectIssueTypeStatuses.
+func (c *dataCenterClient) GetProjectWorkflowConfiguration(
+	context.Context,
+	string,
+	[]string,
+) (*JiraProjectWorkflowConfiguration, error) {
+	return nil, ErrWorkflowConfigurationNotAvailable
+}
+
+func (c *dataCenterClient) GetProjectScreenConfiguration(
+	context.Context,
+	string,
+	string,
+	[]string,
+) (*JiraProjectScreenConfiguration, error) {
+	return nil, ErrScreenConfigurationNotAvailable
+}
+
 // GetProjectIssueTypeStatuses gets issue types with their available statuses for a project
 func (c *dataCenterClient) GetProjectIssueTypeStatuses(ctx context.Context, projectKey string) ([]JiraIssueTypeWithStatuses, error) {
 	var result []JiraIssueTypeWithStatuses

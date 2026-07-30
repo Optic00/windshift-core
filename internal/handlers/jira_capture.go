@@ -262,6 +262,48 @@ func (r *recordingClient) GetProjectWorkflowScheme(ctx context.Context, projectK
 	return r.inner.GetProjectWorkflowScheme(ctx, projectKey)
 }
 
+func (r *recordingClient) GetProjectWorkflowConfiguration(
+	ctx context.Context,
+	projectID string,
+	issueTypeIDs []string,
+) (*jira.JiraProjectWorkflowConfiguration, error) {
+	capable, ok := r.inner.(jira.WorkflowConfigurationClient)
+	if !ok {
+		return nil, jira.ErrWorkflowConfigurationNotAvailable
+	}
+	resp, err := capable.GetProjectWorkflowConfiguration(ctx, projectID, issueTypeIDs)
+	if err == nil {
+		r.appendJSONL("jira_project_workflow_configuration.jsonl", map[string]any{
+			"project_id":     projectID,
+			"issue_type_ids": issueTypeIDs,
+			"response":       resp,
+		})
+	}
+	return resp, err
+}
+
+func (r *recordingClient) GetProjectScreenConfiguration(
+	ctx context.Context,
+	projectID string,
+	projectKey string,
+	issueTypeIDs []string,
+) (*jira.JiraProjectScreenConfiguration, error) {
+	capable, ok := r.inner.(jira.ScreenConfigurationClient)
+	if !ok {
+		return nil, jira.ErrScreenConfigurationNotAvailable
+	}
+	resp, err := capable.GetProjectScreenConfiguration(ctx, projectID, projectKey, issueTypeIDs)
+	if err == nil {
+		r.appendJSONL("jira_project_screen_configuration.jsonl", map[string]any{
+			"project_id":     projectID,
+			"project_key":    projectKey,
+			"issue_type_ids": issueTypeIDs,
+			"response":       resp,
+		})
+	}
+	return resp, err
+}
+
 func (r *recordingClient) GetProjectIssueTypeStatuses(ctx context.Context, projectKey string) ([]jira.JiraIssueTypeWithStatuses, error) {
 	return r.inner.GetProjectIssueTypeStatuses(ctx, projectKey)
 }

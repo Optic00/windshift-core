@@ -60,6 +60,7 @@ type FieldMappingSuggestion struct {
 	CanMap             bool               `json:"can_map"`
 	Notes              string             `json:"notes,omitempty"`
 	Options            []string           `json:"options,omitempty"` // For select fields
+	PreserveRaw        bool               `json:"preserve_raw,omitempty"`
 }
 
 // jiraFieldTypeMap maps Jira field type keys to Windshift field types
@@ -124,8 +125,10 @@ var jiraFieldTypeMap = map[string]WindshiftFieldType{
 	"com.atlassian.jira.plugins.cmdb:cmdb-object-cftype":                           FieldTypeAsset,
 }
 
-// IsKnownFieldType returns true if the field's custom type is in our mapping table
-// Fields with unknown types (e.g., third-party extensions) should be filtered out
+// IsKnownFieldType reports whether a field has an explicit plugin-type mapping.
+// Unknown plugin keys must still be offered by SuggestFieldMappings because
+// Jira's schema type can often provide a safe native or raw-preservation
+// fallback.
 func IsKnownFieldType(field JiraCustomField) bool {
 	if field.Schema == nil || field.Schema.Custom == "" {
 		return false
@@ -159,13 +162,22 @@ func MapJiraFieldToWindshift(field JiraCustomField) FieldMappingSuggestion {
 	// Look up in the mapping table
 	if windshiftType, ok := jiraFieldTypeMap[fieldTypeKey]; ok {
 		suggestion.WindshiftFieldType = windshiftType
+		if field.Schema != nil && field.Schema.Type == "array" && field.Schema.Items == "user" {
+			suggestion.WindshiftFieldType = FieldTypeMultiUser
+			suggestion.Notes = "Jira schema items=user; values map to Windshift users."
+		}
 		if windshiftType == FieldTypeUnmapped {
 			suggestion.CanMap = false
-			if fieldTypeKey == "com.atlassian.servicedesk:vp-origin" {
+			switch fieldTypeKey {
+			case "com.atlassian.servicedesk:vp-origin":
 				suggestion.Notes = "Imported as the item's first-class portal request type"
-			} else {
+			case "com.pyxis.greenhopper.jira:gh-lexo-rank":
+				suggestion.Notes = "Used to order issue creation; Windshift fractional indexes are generated in Jira Rank order"
+			default:
 				suggestion.Notes = "This field type cannot be directly mapped and will be skipped"
 			}
+		} else {
+			addJiraChoiceMappingNote(&suggestion)
 		}
 		return suggestion
 	}
@@ -175,39 +187,52 @@ func MapJiraFieldToWindshift(field JiraCustomField) FieldMappingSuggestion {
 		switch field.Schema.Type {
 		case "string":
 			suggestion.WindshiftFieldType = FieldTypeText
+			suggestion.Notes = "Inferred from Jira schema type string."
 		case "number":
 			suggestion.WindshiftFieldType = FieldTypeNumber
+			suggestion.Notes = "Inferred from Jira schema type number."
 		case "date", "datetime":
 			suggestion.WindshiftFieldType = FieldTypeDate
+			suggestion.Notes = "Inferred from Jira schema; datetime precision may be reduced by Windshift date rendering."
 		case "user":
 			suggestion.WindshiftFieldType = FieldTypeUser
+			suggestion.Notes = "Inferred from Jira schema type user."
 		case "array":
 			// Array type depends on items
 			switch field.Schema.Items {
-			case "option":
+			case "option", "option2", "option-with-child":
 				suggestion.WindshiftFieldType = FieldTypeMultiselect
+				suggestion.Notes = "Inferred from Jira schema array of option values."
 			case "user":
 				suggestion.WindshiftFieldType = FieldTypeMultiUser
-				suggestion.Notes = "Multi-user field will be stored as an array of user IDs"
+				suggestion.Notes = "Inferred from Jira schema; values map to Windshift users."
 			case "string":
 				suggestion.WindshiftFieldType = FieldTypeMultiselect
+				suggestion.Notes = "Inferred from Jira schema array items=string."
 			default:
 				suggestion.WindshiftFieldType = FieldTypeTextarea
-				suggestion.Notes = "Complex array field will be stored as JSON text"
+				suggestion.PreserveRaw = true
+				suggestion.Notes = "Complex Jira array has no native equivalent and will be preserved as JSON text."
 			}
 		case "option":
 			suggestion.WindshiftFieldType = FieldTypeSelect
+			suggestion.Notes = "Inferred from Jira schema type option."
+		case "option2", "option-with-child":
+			suggestion.WindshiftFieldType = FieldTypeSelect
+			suggestion.Notes = "Jira option structure is flattened to its display path."
 		default:
-			// Unknown type, default to text
-			suggestion.WindshiftFieldType = FieldTypeText
-			suggestion.Notes = "Unknown Jira field type, defaulting to text"
+			suggestion.WindshiftFieldType = FieldTypeTextarea
+			suggestion.PreserveRaw = true
+			suggestion.Notes = "App-owned Jira value has no proven native shape and will be preserved as JSON text."
 		}
+		addJiraChoiceMappingNote(&suggestion)
 		return suggestion
 	}
 
-	// Default fallback
-	suggestion.WindshiftFieldType = FieldTypeText
-	suggestion.Notes = "Could not determine field type, defaulting to text"
+	// Preserve rather than hide a field whose definition has no usable schema.
+	suggestion.WindshiftFieldType = FieldTypeTextarea
+	suggestion.PreserveRaw = true
+	suggestion.Notes = "Jira did not expose a usable schema; populated values will be preserved as JSON text."
 	return suggestion
 }
 
@@ -215,13 +240,18 @@ func MapJiraFieldToWindshift(field JiraCustomField) FieldMappingSuggestion {
 func SuggestFieldMappings(fields []JiraCustomField) []FieldMappingSuggestion {
 	suggestions := make([]FieldMappingSuggestion, 0, len(fields))
 	for _, field := range fields {
-		// Skip fields with unknown types (e.g., third-party extensions like ari:cloud:ecosystem::extension/...)
-		if !IsKnownFieldType(field) {
-			continue
-		}
 		suggestions = append(suggestions, MapJiraFieldToWindshift(field))
 	}
 	return suggestions
+}
+
+func addJiraChoiceMappingNote(suggestion *FieldMappingSuggestion) {
+	if suggestion == nil ||
+		(suggestion.WindshiftFieldType != FieldTypeSelect && suggestion.WindshiftFieldType != FieldTypeMultiselect) {
+		return
+	}
+	const note = " Populated option labels will be normalized to stable Windshift option IDs before issue import."
+	suggestion.Notes = strings.TrimSpace(suggestion.Notes + note)
 }
 
 // StatusCategoryColorMap maps Jira status category colors to hex codes

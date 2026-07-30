@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -396,6 +397,7 @@ func validateReadOnlyRequest(method, reqURL string) error {
 		for _, suffix := range []string{
 			"/rest/api/3/search/jql",
 			"/rest/api/3/issue/bulkfetch",
+			"/rest/api/3/workflows",
 			"/rest/assets/1.0/object/navlist/aql",
 		} {
 			if strings.HasSuffix(parsed.Path, suffix) {
@@ -959,6 +961,445 @@ func (c *cloudClient) GetProjectWorkflowScheme(ctx context.Context, projectKey s
 		Name:     projectKey + " Workflow",
 		Statuses: statuses,
 	}, nil
+}
+
+type cloudWorkflowReadRequest struct {
+	ProjectAndIssueTypes []cloudWorkflowProjectIssueType `json:"projectAndIssueTypes"`
+}
+
+type cloudWorkflowProjectIssueType struct {
+	ProjectID   string `json:"projectId"`
+	IssueTypeID string `json:"issueTypeId"`
+}
+
+type cloudWorkflowReadResponse struct {
+	Statuses  []cloudWorkflowStatus `json:"statuses"`
+	Workflows []cloudWorkflow       `json:"workflows"`
+}
+
+type cloudWorkflowStatus struct {
+	ID              string `json:"id"`
+	StatusReference string `json:"statusReference"`
+}
+
+type cloudWorkflow struct {
+	ID          string                    `json:"id"`
+	Name        string                    `json:"name"`
+	Description string                    `json:"description"`
+	Statuses    []cloudWorkflowStatusRef  `json:"statuses"`
+	Transitions []cloudWorkflowTransition `json:"transitions"`
+}
+
+type cloudWorkflowStatusRef struct {
+	StatusReference string `json:"statusReference"`
+}
+
+type cloudWorkflowTransition struct {
+	ID                string                        `json:"id"`
+	Name              string                        `json:"name"`
+	Description       string                        `json:"description"`
+	Type              string                        `json:"type"`
+	ToStatusReference string                        `json:"toStatusReference"`
+	Links             []cloudWorkflowTransitionLink `json:"links"`
+	Validators        []json.RawMessage             `json:"validators"`
+	Actions           []json.RawMessage             `json:"actions"`
+	Triggers          []json.RawMessage             `json:"triggers"`
+	Conditions        []json.RawMessage             `json:"conditions"`
+	Rules             json.RawMessage               `json:"rules"`
+}
+
+type cloudWorkflowTransitionLink struct {
+	FromStatusReference string `json:"fromStatusReference"`
+}
+
+// GetProjectWorkflowConfiguration reads the workflow selected for every
+// project/issue-type pair. Calls are intentionally made one issue type at a
+// time: the Jira response identifies workflows but does not echo the pair that
+// selected each workflow, so batching several pairs would make that mapping
+// ambiguous when a project uses multiple workflows.
+func (c *cloudClient) GetProjectWorkflowConfiguration(
+	ctx context.Context,
+	projectID string,
+	issueTypeIDs []string,
+) (*JiraProjectWorkflowConfiguration, error) {
+	result := &JiraProjectWorkflowConfiguration{
+		IssueTypeWorkflowIDs: make(map[string]string, len(issueTypeIDs)),
+	}
+	workflowsByID := make(map[string]JiraWorkflowConfiguration)
+
+	for _, issueTypeID := range issueTypeIDs {
+		req := cloudWorkflowReadRequest{
+			ProjectAndIssueTypes: []cloudWorkflowProjectIssueType{{
+				ProjectID:   projectID,
+				IssueTypeID: issueTypeID,
+			}},
+		}
+		resp, err := c.do(ctx, http.MethodPost, c.baseURL+"/workflows", req)
+		if err != nil {
+			return nil, err
+		}
+
+		var payload cloudWorkflowReadResponse
+		if resp.StatusCode != http.StatusOK {
+			err = c.handleErrorResponse(resp)
+			_ = resp.Body.Close()
+			return nil, err
+		}
+		err = json.NewDecoder(resp.Body).Decode(&payload)
+		_ = resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("decode Jira workflow configuration for issue type %s: %w", issueTypeID, err)
+		}
+		if len(payload.Workflows) != 1 {
+			return nil, fmt.Errorf(
+				"jira workflow configuration for issue type %s returned %d workflows",
+				issueTypeID,
+				len(payload.Workflows),
+			)
+		}
+
+		source := payload.Workflows[0]
+		statusIDsByReference := make(map[string]string, len(payload.Statuses))
+		for _, status := range payload.Statuses {
+			statusIDsByReference[status.StatusReference] = status.ID
+		}
+
+		workflow := JiraWorkflowConfiguration{
+			ID:          source.ID,
+			Name:        source.Name,
+			Description: source.Description,
+			StatusIDs:   make([]string, 0, len(source.Statuses)),
+			Transitions: make([]JiraConfiguredWorkflowTransition, 0, len(source.Transitions)),
+		}
+		for _, status := range source.Statuses {
+			statusID, ok := statusIDsByReference[status.StatusReference]
+			if !ok {
+				return nil, fmt.Errorf(
+					"jira workflow %q references unknown status %q",
+					source.Name,
+					status.StatusReference,
+				)
+			}
+			workflow.StatusIDs = append(workflow.StatusIDs, statusID)
+		}
+		for _, transition := range source.Transitions {
+			toStatusID, ok := statusIDsByReference[transition.ToStatusReference]
+			if !ok {
+				return nil, fmt.Errorf(
+					"jira workflow %q transition %q references unknown target status %q",
+					source.Name,
+					transition.Name,
+					transition.ToStatusReference,
+				)
+			}
+			configured := JiraConfiguredWorkflowTransition{
+				ID:             transition.ID,
+				Name:           transition.Name,
+				Description:    transition.Description,
+				Type:           JiraConfiguredWorkflowTransitionType(transition.Type),
+				ToStatusID:     toStatusID,
+				ValidatorCount: len(transition.Validators),
+				ActionCount:    len(transition.Actions),
+				TriggerCount:   len(transition.Triggers),
+				ConditionCount: len(transition.Conditions),
+			}
+			if len(transition.Rules) > 0 && string(transition.Rules) != "null" && string(transition.Rules) != "{}" {
+				configured.ConditionCount++
+			}
+			for _, link := range transition.Links {
+				fromStatusID, exists := statusIDsByReference[link.FromStatusReference]
+				if !exists {
+					return nil, fmt.Errorf(
+						"jira workflow %q transition %q references unknown source status %q",
+						source.Name,
+						transition.Name,
+						link.FromStatusReference,
+					)
+				}
+				configured.FromStatusIDs = append(configured.FromStatusIDs, fromStatusID)
+			}
+			workflow.Transitions = append(workflow.Transitions, configured)
+		}
+
+		result.IssueTypeWorkflowIDs[issueTypeID] = workflow.ID
+		workflowsByID[workflow.ID] = workflow
+	}
+
+	workflowIDs := make([]string, 0, len(workflowsByID))
+	for workflowID := range workflowsByID {
+		workflowIDs = append(workflowIDs, workflowID)
+	}
+	sort.Strings(workflowIDs)
+	for _, workflowID := range workflowIDs {
+		result.Workflows = append(result.Workflows, workflowsByID[workflowID])
+	}
+	return result, nil
+}
+
+type cloudPage[T any] struct {
+	StartAt    int  `json:"startAt"`
+	MaxResults int  `json:"maxResults"`
+	Total      int  `json:"total"`
+	IsLast     bool `json:"isLast"`
+	Values     []T  `json:"values"`
+}
+
+type cloudIssueTypeScreenSchemeProject struct {
+	IssueTypeScreenScheme struct {
+		ID string `json:"id"`
+	} `json:"issueTypeScreenScheme"`
+	ProjectIDs []string `json:"projectIds"`
+}
+
+type cloudIssueTypeScreenSchemeMapping struct {
+	IssueTypeID             string `json:"issueTypeId"`
+	IssueTypeScreenSchemeID string `json:"issueTypeScreenSchemeId"`
+	ScreenSchemeID          string `json:"screenSchemeId"`
+}
+
+type cloudScreenScheme struct {
+	ID          json.Number      `json:"id"`
+	Name        string           `json:"name"`
+	Description string           `json:"description"`
+	Screens     cloudScreenTypes `json:"screens"`
+}
+
+type cloudScreenTypes struct {
+	Default json.Number `json:"default"`
+	Create  json.Number `json:"create"`
+	Edit    json.Number `json:"edit"`
+	View    json.Number `json:"view"`
+}
+
+type cloudScreen struct {
+	ID          json.Number `json:"id"`
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+}
+
+type cloudScreenTab struct {
+	ID   json.Number `json:"id"`
+	Name string      `json:"name"`
+}
+
+type cloudScreenField struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+func (c *cloudClient) getJSON(ctx context.Context, requestURL string, target any) error {
+	resp, err := c.do(ctx, http.MethodGet, requestURL, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return c.handleErrorResponse(resp)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
+		return fmt.Errorf("decode Jira response from %s: %w", requestURL, err)
+	}
+	return nil
+}
+
+func jiraNumberString(value json.Number) string {
+	if value == "" || value == "0" {
+		return ""
+	}
+	return value.String()
+}
+
+// GetProjectScreenConfiguration follows Jira's company-managed configuration
+// chain from project to issue-type screen scheme, screen schemes, screens,
+// tabs, and fields.
+func (c *cloudClient) GetProjectScreenConfiguration(
+	ctx context.Context,
+	projectID string,
+	projectKey string,
+	issueTypeIDs []string,
+) (*JiraProjectScreenConfiguration, error) {
+	projectQuery := url.Values{}
+	projectQuery.Add("projectId", projectID)
+	projectQuery.Set("maxResults", "100")
+	var projectSchemes cloudPage[cloudIssueTypeScreenSchemeProject]
+	if err := c.getJSON(
+		ctx,
+		c.baseURL+"/issuetypescreenscheme/project?"+projectQuery.Encode(),
+		&projectSchemes,
+	); err != nil {
+		return nil, err
+	}
+	if len(projectSchemes.Values) != 1 || projectSchemes.Values[0].IssueTypeScreenScheme.ID == "" {
+		return nil, fmt.Errorf(
+			"%w: Jira project %s resolved to %d issue type screen schemes",
+			ErrScreenConfigurationNotAvailable,
+			projectKey,
+			len(projectSchemes.Values),
+		)
+	}
+	issueTypeScreenSchemeID := projectSchemes.Values[0].IssueTypeScreenScheme.ID
+
+	mappingQuery := url.Values{}
+	mappingQuery.Add("issueTypeScreenSchemeId", issueTypeScreenSchemeID)
+	mappingQuery.Set("maxResults", "100")
+	var mappingsPage cloudPage[cloudIssueTypeScreenSchemeMapping]
+	if err := c.getJSON(
+		ctx,
+		c.baseURL+"/issuetypescreenscheme/mapping?"+mappingQuery.Encode(),
+		&mappingsPage,
+	); err != nil {
+		return nil, err
+	}
+	if !mappingsPage.IsLast && mappingsPage.Total > len(mappingsPage.Values) {
+		return nil, fmt.Errorf(
+			"%w: issue type screen scheme %s has more than 100 mappings",
+			ErrScreenConfigurationNotAvailable,
+			issueTypeScreenSchemeID,
+		)
+	}
+
+	screenSchemeIDByIssueType := make(map[string]string)
+	defaultScreenSchemeID := ""
+	for _, mapping := range mappingsPage.Values {
+		if mapping.IssueTypeScreenSchemeID != issueTypeScreenSchemeID {
+			continue
+		}
+		if mapping.IssueTypeID == "default" {
+			defaultScreenSchemeID = mapping.ScreenSchemeID
+			continue
+		}
+		screenSchemeIDByIssueType[mapping.IssueTypeID] = mapping.ScreenSchemeID
+	}
+
+	screenSchemeIDs := make(map[string]bool)
+	for _, issueTypeID := range issueTypeIDs {
+		screenSchemeID := screenSchemeIDByIssueType[issueTypeID]
+		if screenSchemeID == "" {
+			screenSchemeID = defaultScreenSchemeID
+		}
+		if screenSchemeID == "" {
+			return nil, fmt.Errorf(
+				"%w: no screen scheme mapping for Jira issue type %s",
+				ErrScreenConfigurationNotAvailable,
+				issueTypeID,
+			)
+		}
+		screenSchemeIDByIssueType[issueTypeID] = screenSchemeID
+		screenSchemeIDs[screenSchemeID] = true
+	}
+
+	screenSchemes := make(map[string]cloudScreenScheme, len(screenSchemeIDs))
+	for screenSchemeID := range screenSchemeIDs {
+		screenSchemeQuery := url.Values{}
+		screenSchemeQuery.Add("id", screenSchemeID)
+		screenSchemeQuery.Set("maxResults", "100")
+		var page cloudPage[cloudScreenScheme]
+		if err := c.getJSON(ctx, c.baseURL+"/screenscheme?"+screenSchemeQuery.Encode(), &page); err != nil {
+			return nil, err
+		}
+		if len(page.Values) != 1 {
+			return nil, fmt.Errorf(
+				"%w: Jira screen scheme %s returned %d definitions",
+				ErrScreenConfigurationNotAvailable,
+				screenSchemeID,
+				len(page.Values),
+			)
+		}
+		screenSchemes[screenSchemeID] = page.Values[0]
+	}
+
+	result := &JiraProjectScreenConfiguration{
+		IssueTypeScreens: make(map[string]JiraIssueTypeScreens, len(issueTypeIDs)),
+	}
+	screenIDs := make(map[string]bool)
+	for _, issueTypeID := range issueTypeIDs {
+		scheme := screenSchemes[screenSchemeIDByIssueType[issueTypeID]]
+		defaultID := jiraNumberString(scheme.Screens.Default)
+		effective := JiraIssueTypeScreens{
+			CreateScreenID: jiraNumberString(scheme.Screens.Create),
+			EditScreenID:   jiraNumberString(scheme.Screens.Edit),
+			ViewScreenID:   jiraNumberString(scheme.Screens.View),
+		}
+		if effective.CreateScreenID == "" {
+			effective.CreateScreenID = defaultID
+		}
+		if effective.EditScreenID == "" {
+			effective.EditScreenID = defaultID
+		}
+		if effective.ViewScreenID == "" {
+			effective.ViewScreenID = defaultID
+		}
+		if effective.CreateScreenID == "" || effective.EditScreenID == "" || effective.ViewScreenID == "" {
+			return nil, fmt.Errorf(
+				"%w: Jira screen scheme %s lacks an effective create/edit/view screen",
+				ErrScreenConfigurationNotAvailable,
+				screenSchemeIDByIssueType[issueTypeID],
+			)
+		}
+		result.IssueTypeScreens[issueTypeID] = effective
+		screenIDs[effective.CreateScreenID] = true
+		screenIDs[effective.EditScreenID] = true
+		screenIDs[effective.ViewScreenID] = true
+	}
+
+	sortedScreenIDs := make([]string, 0, len(screenIDs))
+	for screenID := range screenIDs {
+		sortedScreenIDs = append(sortedScreenIDs, screenID)
+	}
+	sort.Strings(sortedScreenIDs)
+	for _, screenID := range sortedScreenIDs {
+		screenQuery := url.Values{}
+		screenQuery.Add("id", screenID)
+		screenQuery.Set("maxResults", "100")
+		var screensPage cloudPage[cloudScreen]
+		if err := c.getJSON(ctx, c.baseURL+"/screens?"+screenQuery.Encode(), &screensPage); err != nil {
+			return nil, err
+		}
+		if len(screensPage.Values) != 1 {
+			return nil, fmt.Errorf(
+				"%w: Jira screen %s returned %d definitions",
+				ErrScreenConfigurationNotAvailable,
+				screenID,
+				len(screensPage.Values),
+			)
+		}
+		sourceScreen := screensPage.Values[0]
+		screen := JiraScreenConfiguration{
+			ID:          screenID,
+			Name:        sourceScreen.Name,
+			Description: sourceScreen.Description,
+		}
+
+		tabsQuery := url.Values{}
+		tabsQuery.Set("projectKey", projectKey)
+		var tabs []cloudScreenTab
+		if err := c.getJSON(
+			ctx,
+			c.baseURL+"/screens/"+url.PathEscape(screenID)+"/tabs?"+tabsQuery.Encode(),
+			&tabs,
+		); err != nil {
+			return nil, err
+		}
+		screen.TabCount = len(tabs)
+		for _, tab := range tabs {
+			fieldsQuery := url.Values{}
+			fieldsQuery.Set("projectKey", projectKey)
+			var fields []cloudScreenField
+			if err := c.getJSON(
+				ctx,
+				c.baseURL+"/screens/"+url.PathEscape(screenID)+"/tabs/"+
+					url.PathEscape(jiraNumberString(tab.ID))+"/fields?"+fieldsQuery.Encode(),
+				&fields,
+			); err != nil {
+				return nil, err
+			}
+			for _, field := range fields {
+				screen.Fields = append(screen.Fields, JiraScreenField(field))
+			}
+		}
+		result.Screens = append(result.Screens, screen)
+	}
+	return result, nil
 }
 
 // GetProjectIssueTypeStatuses gets issue types with their available statuses for a project

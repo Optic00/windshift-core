@@ -3,6 +3,7 @@
 package jira
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"time"
@@ -156,6 +157,110 @@ type JiraWorkflowTransition struct {
 	Name       string      `json:"name"`
 	FromStatus *JiraStatus `json:"from"`
 	ToStatus   *JiraStatus `json:"to"`
+}
+
+// WorkflowConfigurationClient is an optional Jira client capability. Jira
+// Cloud exposes the configured workflow graph through a read-only bulk API;
+// older Jira products and limited-permission credentials may only expose
+// status membership through Client.GetProjectIssueTypeStatuses.
+type WorkflowConfigurationClient interface {
+	GetProjectWorkflowConfiguration(
+		ctx context.Context,
+		projectID string,
+		issueTypeIDs []string,
+	) (*JiraProjectWorkflowConfiguration, error)
+}
+
+// JiraProjectWorkflowConfiguration contains the authoritative workflow chosen
+// by Jira for each requested project/issue-type pair.
+type JiraProjectWorkflowConfiguration struct {
+	IssueTypeWorkflowIDs map[string]string
+	Workflows            []JiraWorkflowConfiguration
+	// RulesComplete is true only when the source API proves that every
+	// configured condition/validator is represented in Transitions. Jira
+	// Cloud's current bulk workflow read omits condition trees, so its value is
+	// false and imported non-initial edges require an operator review lock.
+	RulesComplete bool
+}
+
+// JiraWorkflowConfiguration is a source workflow definition. StatusIDs and
+// transition endpoints contain Jira status IDs, not Windshift database IDs.
+type JiraWorkflowConfiguration struct {
+	ID          string
+	Name        string
+	Description string
+	StatusIDs   []string
+	Transitions []JiraConfiguredWorkflowTransition
+}
+
+// JiraConfiguredWorkflowTransitionType is the topology Jira assigns to a
+// transition. Global transitions are expanded into explicit directed edges
+// during import because Windshift stores directed and initial transitions.
+type JiraConfiguredWorkflowTransitionType string
+
+const (
+	JiraWorkflowTransitionInitial  JiraConfiguredWorkflowTransitionType = "INITIAL"
+	JiraWorkflowTransitionDirected JiraConfiguredWorkflowTransitionType = "DIRECTED"
+	JiraWorkflowTransitionGlobal   JiraConfiguredWorkflowTransitionType = "GLOBAL"
+)
+
+// JiraConfiguredWorkflowTransition describes a transition returned by Jira's
+// workflow configuration API. Rule counts are retained so unsupported guarded
+// transitions can be reported and handled conservatively by the importer.
+type JiraConfiguredWorkflowTransition struct {
+	ID             string
+	Name           string
+	Description    string
+	Type           JiraConfiguredWorkflowTransitionType
+	FromStatusIDs  []string
+	ToStatusID     string
+	ValidatorCount int
+	ActionCount    int
+	TriggerCount   int
+	ConditionCount int
+}
+
+// ScreenConfigurationClient is an optional Jira client capability for
+// company-managed issue-type screen schemes and their configured fields.
+type ScreenConfigurationClient interface {
+	GetProjectScreenConfiguration(
+		ctx context.Context,
+		projectID string,
+		projectKey string,
+		issueTypeIDs []string,
+	) (*JiraProjectScreenConfiguration, error)
+}
+
+// JiraProjectScreenConfiguration contains effective create/edit/view screens
+// per Jira issue type plus the deduplicated source screen definitions.
+type JiraProjectScreenConfiguration struct {
+	IssueTypeScreens map[string]JiraIssueTypeScreens
+	Screens          []JiraScreenConfiguration
+}
+
+// JiraIssueTypeScreens contains effective Jira screen IDs after applying both
+// the issue-type default and the operation-level default screen.
+type JiraIssueTypeScreens struct {
+	CreateScreenID string
+	EditScreenID   string
+	ViewScreenID   string
+}
+
+// JiraScreenConfiguration is a Jira screen with tabs flattened in source
+// order. Windshift does not have a tab model, so TabCount is retained as
+// fidelity metadata.
+type JiraScreenConfiguration struct {
+	ID          string
+	Name        string
+	Description string
+	TabCount    int
+	Fields      []JiraScreenField
+}
+
+// JiraScreenField is one ordered field in a Jira screen.
+type JiraScreenField struct {
+	ID   string
+	Name string
 }
 
 // JiraIssue represents a Jira issue

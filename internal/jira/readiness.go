@@ -32,11 +32,9 @@ type Finding struct {
 }
 
 // fieldTypeSeverity maps a resolved Windshift field type to its migration
-// fidelity. The importer now writes custom-field *values* (not just the
-// definitions) during issue import, so every recognized type lands cleanly:
-// user/multi_user resolve to Windshift users, asset fields resolve to objects
-// imported into Windshift asset sets, and the scalar/option types carry their
-// values through. Only types with no Windshift mapping at all are blocked.
+// fidelity. Native scalar, user, asset, and option mappings land cleanly.
+// Opaque app-owned structures are deliberately preserved as JSON text and are
+// classified separately by ClassifyField.
 func fieldTypeSeverity(t WindshiftFieldType) (severity Severity, reason string) {
 	switch t {
 	case FieldTypeUnmapped:
@@ -55,6 +53,18 @@ func fieldTypeSeverity(t WindshiftFieldType) (severity Severity, reason string) 
 // plus its observed usage into a Finding.
 func ClassifyField(s FieldMappingSuggestion, usageCount int) Finding {
 	sev, reason := fieldTypeSeverity(s.WindshiftFieldType)
+	switch s.JiraFieldType {
+	case "com.pyxis.greenhopper.jira:gh-lexo-rank":
+		sev = SeverityClean
+		reason = "Jira Rank controls import order; Windshift generates increasing fractional indexes in that order."
+	case "com.atlassian.servicedesk:vp-origin":
+		sev = SeverityClean
+		reason = "Jira Request Type maps to the item's first-class portal request type."
+	}
+	if s.PreserveRaw {
+		sev = SeverityLossy
+		reason = "No proven native Windshift shape; the complete Jira value is preserved as JSON text."
+	}
 	if s.Notes != "" {
 		reason += " " + s.Notes
 	}

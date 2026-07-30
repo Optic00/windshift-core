@@ -206,6 +206,7 @@ type ImportJobStatus struct {
 	Status       string                 `json:"status"`
 	Phase        string                 `json:"phase,omitempty"`
 	Progress     map[string]interface{} `json:"progress,omitempty"`
+	Result       map[string]interface{} `json:"result,omitempty"`
 	ErrorMessage string                 `json:"error_message,omitempty"`
 	StartedAt    *time.Time             `json:"started_at,omitempty"`
 	CompletedAt  *time.Time             `json:"completed_at,omitempty"`
@@ -302,6 +303,7 @@ type CustomFieldMapping struct {
 	Notes         string `json:"notes,omitempty"`
 	Action        string `json:"action"` // 'create', 'map', 'skip'
 	WindshiftID   *int   `json:"windshiftId,omitempty"`
+	PreserveRaw   bool   `json:"preserveRaw,omitempty"`
 	// AssetSchemaID controls Jira Assets field mapping. "auto" infers the
 	// single asset set from all populated issue values, "text" preserves
 	// display values without a native relationship, and a Jira object schema

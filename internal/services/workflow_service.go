@@ -946,9 +946,9 @@ func (s *WorkflowService) GetTransitions(workflowID int) ([]WorkflowTransitionRe
 	return s.scanTransitions(rows)
 }
 
-// GetTransitionsFromStatus retrieves available transitions from a given status ID.
-// This queries transitions where from_status_id matches the given status OR from_status_id IS NULL (initial transitions).
-// Used by the V1 API to show available status transitions for an item.
+// GetTransitionsFromStatus retrieves directed transitions from a given status
+// ID. NULL from-status rows define item creation and are not available moves
+// from an existing item.
 func (s *WorkflowService) GetTransitionsFromStatus(statusID int) ([]WorkflowTransitionResult, error) {
 	rows, err := s.db.Query(`
 		SELECT wt.id, wt.from_status_id, wt.to_status_id,
@@ -960,7 +960,7 @@ func (s *WorkflowService) GetTransitionsFromStatus(statusID int) ([]WorkflowTran
 		JOIN statuses ts ON wt.to_status_id = ts.id
 		LEFT JOIN status_categories fsc ON fs.category_id = fsc.id
 		JOIN status_categories tsc ON ts.category_id = tsc.id
-		WHERE wt.from_status_id = ? OR wt.from_status_id IS NULL
+		WHERE wt.from_status_id = ?
 		ORDER BY wt.display_order
 	`, statusID)
 	if err != nil {

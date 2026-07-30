@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 
 	"windshift/internal/jira"
 )
@@ -146,7 +147,9 @@ func newProjectScanTally() *projectScanTally {
 func (h *JiraImportHandler) scanProject(ctx context.Context, client jira.Client, projectKey string, openOnly bool, sampleSize int, fields map[string]jira.FieldMappingSuggestion) (readiness JiraProjectReadiness, attachmentBytes int64) {
 	pr := JiraProjectReadiness{Key: projectKey, Name: projectKey}
 
-	if project, err := client.GetProject(ctx, projectKey); err == nil && project != nil {
+	var project *jira.JiraProject
+	if fetched, err := client.GetProject(ctx, projectKey); err == nil && fetched != nil {
+		project = fetched
 		pr.Name = project.Name
 	}
 
@@ -167,8 +170,231 @@ func (h *JiraImportHandler) scanProject(ctx context.Context, client jira.Client,
 	pr.SampledIssues = tally.sampled
 
 	pr.Findings = buildFindings(tally, fields, hasSprints)
+	pr.Findings = append(pr.Findings, h.jiraConfigurationReadinessFindings(
+		ctx,
+		client,
+		project,
+		projectKey,
+		fields,
+	)...)
 	pr.Score, _ = jira.ScoreFindings(pr.Findings)
 	return pr, tally.attachmentBytes
+}
+
+func (h *JiraImportHandler) jiraConfigurationReadinessFindings(
+	ctx context.Context,
+	client jira.Client,
+	project *jira.JiraProject,
+	projectKey string,
+	fields map[string]jira.FieldMappingSuggestion,
+) []jira.Finding {
+	if project == nil {
+		return []jira.Finding{{
+			Entity:   "Workflow and screen configuration",
+			Category: "configuration",
+			Severity: jira.SeverityLossy,
+			Reason:   "The Jira project metadata could not be read, so workflow and screen configuration fidelity could not be assessed.",
+		}}
+	}
+	issueTypes, err := client.GetProjectIssueTypes(ctx, projectKey)
+	if err != nil {
+		return []jira.Finding{{
+			Entity:   "Workflow and screen configuration",
+			Category: "configuration",
+			Severity: jira.SeverityLossy,
+			Reason:   "The project's Jira issue types could not be read, so workflow and screen configuration fidelity could not be assessed.",
+		}}
+	}
+	issueTypeIDs := make([]string, 0, len(issueTypes))
+	for _, issueType := range issueTypes {
+		issueTypeIDs = append(issueTypeIDs, issueType.ID)
+	}
+	sort.Strings(issueTypeIDs)
+
+	findings := make([]jira.Finding, 0, 6)
+	workflowClient, workflowCapable := client.(jira.WorkflowConfigurationClient)
+	if !workflowCapable {
+		findings = append(findings, jiraWorkflowUnavailableFinding())
+	} else if config, configErr := workflowClient.GetProjectWorkflowConfiguration(
+		ctx,
+		project.ID,
+		issueTypeIDs,
+	); configErr != nil || config == nil {
+		findings = append(findings, jiraWorkflowUnavailableFinding())
+	} else {
+		transitionCount := 0
+		nonInitialTransitionCount := 0
+		guardedCount := 0
+		loopCount := 0
+		actionCount := 0
+		triggerCount := 0
+		for _, workflow := range config.Workflows {
+			transitionCount += len(workflow.Transitions)
+			for _, transition := range workflow.Transitions {
+				if transition.Type != jira.JiraWorkflowTransitionInitial {
+					nonInitialTransitionCount++
+				}
+				if transition.ValidatorCount > 0 || transition.ConditionCount > 0 {
+					guardedCount++
+				}
+				switch transition.Type {
+				case jira.JiraWorkflowTransitionDirected:
+					for _, fromStatusID := range transition.FromStatusIDs {
+						if fromStatusID == transition.ToStatusID {
+							loopCount++
+						}
+					}
+				case jira.JiraWorkflowTransitionGlobal:
+					loopCount++
+				}
+				actionCount += transition.ActionCount
+				triggerCount += transition.TriggerCount
+			}
+		}
+		findings = append(findings, jira.Finding{
+			Entity:     "Workflow graph and issue-type assignments",
+			Category:   "workflow",
+			Severity:   jira.SeverityClean,
+			Reason:     "Jira's configured workflow identities, status graph, initial/global/directed topology, and per-issue-type assignments are available for import.",
+			UsageCount: max(transitionCount, 1),
+		})
+		if !config.RulesComplete && nonInitialTransitionCount > 0 {
+			findings = append(findings, jira.Finding{
+				Entity:     "Workflow transition activation",
+				Category:   "workflow_rule",
+				Severity:   jira.SeverityBlocked,
+				Reason:     "Jira's current workflow read API does not expose configured condition trees. The graph imports, but every non-initial edge receives a generated Windshift validator lock until an operator reviews the source rules.",
+				UsageCount: nonInitialTransitionCount,
+			})
+		}
+		if guardedCount > 0 {
+			findings = append(findings, jira.Finding{
+				Entity:     "Workflow conditions and validators",
+				Category:   "workflow_rule",
+				Severity:   jira.SeverityBlocked,
+				Reason:     "Jira transitions with exposed conditions or validators retain their topology but stay behind a generated review lock because Jira rule semantics do not safely map to the Windshift condition model.",
+				UsageCount: guardedCount,
+			})
+		}
+		if actionCount+triggerCount > 0 {
+			findings = append(findings, jira.Finding{
+				Entity:     "Workflow post-functions and triggers",
+				Category:   "workflow_rule",
+				Severity:   jira.SeverityLossy,
+				Reason:     "Transition topology imports, but Jira post-functions/actions and triggers have no portable Windshift equivalent and are recorded only as import fidelity metadata.",
+				UsageCount: actionCount + triggerCount,
+			})
+		}
+		if loopCount > 0 {
+			findings = append(findings, jira.Finding{
+				Entity:     "Workflow loop transitions",
+				Category:   "workflow_rule",
+				Severity:   jira.SeverityBlocked,
+				Reason:     "Windshift treats a same-status update as a no-op before transition rules execute. Jira loop transitions are omitted so their conditions, post-functions, or triggers cannot be bypassed.",
+				UsageCount: loopCount,
+			})
+		}
+	}
+
+	screenClient, screenCapable := client.(jira.ScreenConfigurationClient)
+	if !screenCapable {
+		findings = append(findings, jiraScreenUnavailableFinding(project))
+		return findings
+	}
+	screenConfig, screenErr := screenClient.GetProjectScreenConfiguration(
+		ctx,
+		project.ID,
+		projectKey,
+		issueTypeIDs,
+	)
+	if screenErr != nil || screenConfig == nil {
+		findings = append(findings, jiraScreenUnavailableFinding(project))
+		return findings
+	}
+
+	fieldCount := 0
+	unsupportedFieldCount := 0
+	flattenedTabCount := 0
+	for _, screen := range screenConfig.Screens {
+		fieldCount += len(screen.Fields)
+		if screen.TabCount > 1 {
+			flattenedTabCount += screen.TabCount
+		}
+		for _, field := range screen.Fields {
+			if !jiraScreenFieldIsImportable(field.ID, fields) {
+				unsupportedFieldCount++
+			}
+		}
+	}
+	findings = append(findings,
+		jira.Finding{
+			Entity:     "Create/edit/view screens",
+			Category:   "screen",
+			Severity:   jira.SeverityClean,
+			Reason:     "Jira issue-type screen schemes and operation-specific create/edit/view field order are available for Windshift screen assignments.",
+			UsageCount: max(fieldCount, 1),
+		},
+		jira.Finding{
+			Entity:     "Jira field configuration",
+			Category:   "screen",
+			Severity:   jira.SeverityLossy,
+			Reason:     "Screen membership and field order import, but Jira hidden/required field-configuration rules are not exposed by the screen APIs and are not inferred; only Windshift's required title invariant is applied.",
+			UsageCount: max(len(screenConfig.Screens), 1),
+		},
+	)
+	if flattenedTabCount > 0 {
+		findings = append(findings, jira.Finding{
+			Entity:     "Screen tabs",
+			Category:   "screen",
+			Severity:   jira.SeverityLossy,
+			Reason:     "Windshift has no screen-tab model; fields from multiple Jira tabs are flattened in tab and field order.",
+			UsageCount: flattenedTabCount,
+		})
+	}
+	if unsupportedFieldCount > 0 {
+		findings = append(findings, jira.Finding{
+			Entity:     "Screen fields without an imported field",
+			Category:   "screen",
+			Severity:   jira.SeverityLossy,
+			Reason:     "Jira screen entries with no Windshift system-field mapping or imported custom-field definition are omitted from the imported screen.",
+			UsageCount: unsupportedFieldCount,
+		})
+	}
+	return findings
+}
+
+func jiraWorkflowUnavailableFinding() jira.Finding {
+	return jira.Finding{
+		Entity:   "Configured workflow graph",
+		Category: "workflow",
+		Severity: jira.SeverityLossy,
+		Reason:   "The configured Jira workflow graph is unavailable with this deployment or credential. The importer creates a deterministic initial status but does not invent directed transitions.",
+	}
+}
+
+func jiraScreenUnavailableFinding(project *jira.JiraProject) jira.Finding {
+	reason := "The Jira issue-type screen configuration is unavailable with this deployment or credential, so Windshift screens cannot be reconstructed."
+	if project != nil && (project.Simplified || project.Style == "next-gen") {
+		reason = "This is a team-managed Jira project; Jira's company-managed screen scheme APIs do not expose its layout, so Windshift screens cannot be reconstructed."
+	}
+	return jira.Finding{
+		Entity:   "Create/edit/view screens",
+		Category: "screen",
+		Severity: jira.SeverityLossy,
+		Reason:   reason,
+	}
+}
+
+func jiraScreenFieldIsImportable(
+	jiraFieldID string,
+	fields map[string]jira.FieldMappingSuggestion,
+) bool {
+	switch jiraFieldID {
+	case "summary", "description", "status", "priority", "assignee", "duedate", "fixVersions", "labels":
+		return true
+	}
+	suggestion, ok := fields[jiraFieldID]
+	return ok && suggestion.WindshiftFieldType != jira.FieldTypeUnmapped
 }
 
 // sampleIssues pages through a project's issues (newest first) up to limit,
@@ -291,7 +517,7 @@ func buildFindings(t *projectScanTally, fields map[string]jira.FieldMappingSugge
 			Entity:     "Core issue fields",
 			Category:   "core",
 			Severity:   jira.SeverityClean,
-			Reason:     "Summary, description text, status (by category), issue type, priority, due/created/updated dates, and assignee/reporter/creator import 1:1.",
+			Reason:     "Summary, description text, status (by category), issue type, priority, due/created/updated dates, assignee/reporter/creator, and the searchable original Jira key import 1:1.",
 			UsageCount: t.sampled,
 		})
 	}

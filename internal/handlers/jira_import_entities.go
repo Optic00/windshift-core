@@ -536,7 +536,12 @@ func jiraIssueAssetReferencesForSet(refs []jiraIssueAssetReference, setID int) [
 	return matching
 }
 
-func extractCustomFieldValue(mapping CustomFieldMapping, fields *jira.JiraIssueFields, userMap, versionMap map[string]int) (any, bool) {
+func extractCustomFieldValueWithOptions(
+	mapping CustomFieldMapping,
+	fields *jira.JiraIssueFields,
+	userMap, versionMap map[string]int,
+	choiceOptionIDs map[string]int,
+) (any, bool) {
 	if mapping.Action == "skip" || isJiraStoryPointsField(mapping) || isJiraSprintField(mapping) {
 		return nil, false
 	}
@@ -546,6 +551,13 @@ func extractCustomFieldValue(mapping CustomFieldMapping, fields *jira.JiraIssueF
 	value, exists := fields.CustomFields[mapping.JiraID]
 	if !exists || value == nil {
 		return nil, false
+	}
+	if mapping.PreserveRaw {
+		data, err := json.Marshal(value)
+		if err != nil {
+			return nil, false
+		}
+		return string(data), true
 	}
 
 	switch mapping.WindshiftType {
@@ -599,12 +611,33 @@ func extractCustomFieldValue(mapping CustomFieldMapping, fields *jira.JiraIssueF
 		}
 	case "select":
 		if s := customFieldDisplayValue(value); s != "" {
-			return s, true
+			if choiceOptionIDs == nil {
+				return s, true
+			}
+			optionID := choiceOptionIDs[strings.ToLower(strings.TrimSpace(s))]
+			if optionID > 0 {
+				return optionID, true
+			}
 		}
 	case "multiselect":
 		values := customFieldDisplayValues(value)
 		if len(values) > 0 {
-			return values, true
+			if choiceOptionIDs == nil {
+				return values, true
+			}
+			optionIDs := make([]int, 0, len(values))
+			seen := make(map[int]bool)
+			for _, label := range values {
+				optionID := choiceOptionIDs[strings.ToLower(strings.TrimSpace(label))]
+				if optionID <= 0 || seen[optionID] {
+					continue
+				}
+				seen[optionID] = true
+				optionIDs = append(optionIDs, optionID)
+			}
+			if len(optionIDs) > 0 {
+				return optionIDs, true
+			}
 		}
 	case "milestone":
 		if id := customFieldIDValue(value); id != "" {
@@ -891,7 +924,7 @@ func affectedVersionOptionValues(issue *jira.JiraIssue, field *jiraAffectsVersio
 }
 
 // importIssue imports a single Jira issue as a Windshift work item
-func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, workspaceID int, issue *jira.JiraIssue, statusMap, itemTypeMap, userMap map[string]int, usernameMap map[string]string, portalCustomerMap, versionMap, iterationMap, customFieldIDMap map[string]int, timeProjectID *int, affectsVersionField *jiraAffectsVersionCustomField, customFieldMappings []CustomFieldMapping, jsmImport *jiraServiceManagementImport, client jira.Client, progress *ImportProgress) error {
+func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, workspaceID int, issue *jira.JiraIssue, statusMap, itemTypeMap, userMap map[string]int, usernameMap map[string]string, portalCustomerMap, versionMap, iterationMap, customFieldIDMap map[string]int, choiceOptionIDs map[string]map[string]int, timeProjectID *int, affectsVersionField *jiraAffectsVersionCustomField, customFieldMappings []CustomFieldMapping, jsmImport *jiraServiceManagementImport, client jira.Client, progress *ImportProgress) error {
 	mentionResolver := jira.MentionResolver(func(accountID string) string {
 		return usernameMap[accountID]
 	})
@@ -1009,6 +1042,9 @@ func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, works
 	customFieldValues := make(map[string]interface{})
 	customFieldValues["_jira_issue_id"] = issue.ID
 	customFieldValues["_jira_issue_key"] = issue.Key
+	if jiraKeyFieldID := customFieldIDMap[jiraIssueKeyFieldSourceID]; jiraKeyFieldID > 0 && issue.Key != "" {
+		customFieldValues[strconv.Itoa(jiraKeyFieldID)] = issue.Key
+	}
 	if issue.Self != "" {
 		customFieldValues["_jira_self"] = issue.Self
 	}
@@ -1098,7 +1134,13 @@ func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, works
 			}
 			continue
 		}
-		if v, ok := extractCustomFieldValue(mapping, &issue.Fields, userMap, versionMap); ok {
+		if v, ok := extractCustomFieldValueWithOptions(
+			mapping,
+			&issue.Fields,
+			userMap,
+			versionMap,
+			choiceOptionIDs[mapping.JiraID],
+		); ok {
 			customFieldValues[strconv.Itoa(fieldID)] = v
 		}
 	}

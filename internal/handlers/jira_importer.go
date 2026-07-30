@@ -61,6 +61,12 @@ func (h *JiraImportHandler) GetJobStatus(w http.ResponseWriter, r *http.Request)
 			response.Progress = progress
 		}
 	}
+	if resultJSON.Valid {
+		var result map[string]interface{}
+		if err := json.Unmarshal([]byte(resultJSON.String), &result); err == nil {
+			response.Result = result
+		}
+	}
 
 	respondJSONOK(w, response)
 }
@@ -829,13 +835,14 @@ func (h *JiraImportHandler) DeleteImportedData(w http.ResponseWriter, r *http.Re
 				WHEN 'iteration' THEN 18
 				WHEN 'milestone' THEN 19
 				WHEN 'configuration_set' THEN 20
-				WHEN 'workflow' THEN 21
-				WHEN 'custom_field' THEN 22
-				WHEN 'status' THEN 23
-				WHEN 'item_type' THEN 24
-				WHEN 'time_project' THEN 25
-				WHEN 'workspace' THEN 26
-				ELSE 27
+				WHEN 'screen' THEN 21
+				WHEN 'workflow' THEN 22
+				WHEN 'custom_field' THEN 23
+				WHEN 'status' THEN 24
+				WHEN 'item_type' THEN 25
+				WHEN 'time_project' THEN 26
+				WHEN 'workspace' THEN 27
+				ELSE 28
 			END
 	`, jobID)
 	if err != nil {
@@ -1001,6 +1008,8 @@ func (h *JiraImportHandler) DeleteImportedData(w http.ResponseWriter, r *http.Re
 			_, _ = h.db.ExecWrite("DELETE FROM configuration_set_screens WHERE configuration_set_id = ?", m.windshiftID)
 			_, _ = h.db.ExecWrite("DELETE FROM configuration_set_priorities WHERE configuration_set_id = ?", m.windshiftID)
 			tableName = "configuration_sets"
+		case "screen":
+			tableName = "screens"
 		case "workflow":
 			// Wrap the transition delete in a tx so we can cancel approval
 			// requests pinned to the doomed transitions first — otherwise the

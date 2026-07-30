@@ -271,8 +271,9 @@ func scanWorkflowTransitions(rows *sql.Rows) ([]models.WorkflowTransition, error
 	return transitions, nil
 }
 
-// ListAvailableTransitions returns the transitions a workflow allows out of a
-// given status (including from-anywhere transitions with a NULL from-status).
+// ListAvailableTransitions returns directed transitions a workflow allows out
+// of a given status. NULL from-status rows are creation-only initial
+// transitions and must never appear as moves from an existing item.
 // The result is never nil.
 func (r *WorkflowRepository) ListAvailableTransitions(workflowID, statusID int) ([]models.WorkflowTransition, error) {
 	query := `
@@ -282,7 +283,7 @@ func (r *WorkflowRepository) ListAvailableTransitions(workflowID, statusID int) 
 		LEFT JOIN statuses fs ON wt.from_status_id = fs.id
 		JOIN statuses ts ON wt.to_status_id = ts.id
 		JOIN workflows w ON wt.workflow_id = w.id
-		WHERE wt.workflow_id = ? AND (wt.from_status_id = ? OR wt.from_status_id IS NULL)
+		WHERE wt.workflow_id = ? AND wt.from_status_id = ?
 		ORDER BY wt.display_order ASC`
 
 	rows, err := r.db.Query(query, workflowID, statusID)
