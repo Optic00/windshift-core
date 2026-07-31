@@ -16,6 +16,7 @@ import (
 	"windshift/internal/auth"
 	"windshift/internal/config"
 	"windshift/internal/database"
+	"windshift/internal/health"
 	"windshift/internal/logger"
 	"windshift/internal/middleware"
 	"windshift/internal/server"
@@ -51,6 +52,22 @@ func printBanner() {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		target := health.DefaultProbeTarget(os.Getenv("PORT"), os.Getenv("WINDSHIFT_CONTEXT_PATH"))
+		if len(os.Args) > 2 {
+			target = os.Args[2]
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err := health.Probe(ctx, target)
+		cancel()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	// Setup signal handling for graceful shutdown
 	shutdownChan := make(chan os.Signal, 1)
 	signal.Notify(shutdownChan, os.Interrupt, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)

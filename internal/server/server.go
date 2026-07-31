@@ -26,6 +26,7 @@ import (
 	"windshift/internal/email"
 	"windshift/internal/emailutil"
 	"windshift/internal/handlers"
+	"windshift/internal/health"
 	"windshift/internal/ldap"
 	"windshift/internal/llm"
 	"windshift/internal/logger"
@@ -381,6 +382,9 @@ func (s *Server) initialize() error {
 	}
 
 	mux := http.NewServeMux()
+	healthHandler := health.NewHandler(s.db.GetDB())
+	mux.HandleFunc("GET /healthz", healthHandler.Liveness)
+	mux.HandleFunc("GET /readyz", healthHandler.Readiness)
 
 	// Initialize notification manager
 	nmCfg := handlers.DefaultNotificationManagerConfig()

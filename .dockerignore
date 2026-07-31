@@ -1,0 +1,27 @@
+# Strict build-context allowlist. The Dockerfile needs only the Go module,
+# application source, embedded assets, and frontend build inputs.
+*
+!go.mod
+!go.sum
+!main.go
+!api/
+!api/**
+!assets/
+!assets/**
+!internal/
+!internal/**
+!frontend/
+!frontend/package.json
+!frontend/package-lock.json
+!frontend/.npmrc
+!frontend/index.html
+!frontend/jsconfig.json
+!frontend/svelte.config.js
+!frontend/vite.config.js
+!frontend/vite.embed.config.js
+!frontend/public/
+!frontend/public/**
+!frontend/scripts/
+!frontend/scripts/**
+!frontend/src/
+!frontend/src/**
