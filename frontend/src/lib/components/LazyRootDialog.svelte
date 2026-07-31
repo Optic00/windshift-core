@@ -1,4 +1,8 @@
 <script>
+  import Button from './Button.svelte';
+  import ModalBackdrop from './ModalBackdrop.svelte';
+  import Spinner from './Spinner.svelte';
+
   let {
     loader,
     componentProps = {},
@@ -14,33 +18,57 @@
 </script>
 
 {#await loadPromise}
-  <div
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/20"
-    role="status"
-    data-testid="root-dialog-loading"
+  <ModalBackdrop
+    show={true}
+    opacity={0.4}
+    closeOnClick={false}
+    closeOnEscape={false}
+    transition={false}
+    ariaLabelledBy="root-dialog-loading-label"
   >
-    <div class="rounded-lg bg-white px-6 py-5 text-center shadow-lg">
-      <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-3"></div>
-      <p class="text-sm text-gray-600">Loading {label}…</p>
+    <div
+      class="rounded-xl px-6 py-5 text-center"
+      style="background-color: var(--ds-surface-raised); color: var(--ds-text); box-shadow: var(--ds-shadow-raised);"
+      role="status"
+      data-testid="root-dialog-loading"
+    >
+      <Spinner class="mx-auto mb-3" />
+      <p id="root-dialog-loading-label" class="text-sm" style="color: var(--ds-text-subtle);">
+        Loading {label}…
+      </p>
     </div>
-  </div>
+  </ModalBackdrop>
 {:then loadedModule}
   {@const Component = loadedModule.default}
   <Component {...componentProps} bind:isOpen />
 {:catch}
-  <div
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/20 px-6"
-    role="alert"
-    data-testid="root-dialog-error"
+  <ModalBackdrop
+    show={true}
+    opacity={0.4}
+    closeOnClick={false}
+    closeOnEscape={false}
+    transition={false}
+    ariaLabelledBy="root-dialog-error-title"
   >
-    <div class="max-w-sm rounded-lg bg-white px-6 py-5 text-center shadow-lg">
-      <h1 class="text-lg font-semibold mb-2">Unable to load {label}</h1>
-      <p class="text-sm text-gray-600 mb-4">Check your connection, then try again.</p>
-      <button
-        type="button"
-        class="min-h-11 px-5 py-2 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700"
+    <div
+      class="mx-2 max-w-sm rounded-xl px-6 py-5 text-center"
+      style="background-color: var(--ds-surface-raised); color: var(--ds-text); box-shadow: var(--ds-shadow-raised);"
+      role="alert"
+      data-testid="root-dialog-error"
+    >
+      <h1 id="root-dialog-error-title" class="mb-2 text-lg font-semibold">
+        Unable to load {label}
+      </h1>
+      <p class="mb-4 text-sm" style="color: var(--ds-text-subtle);">
+        Check your connection, then try again.
+      </p>
+      <!-- shortcut-guard-exempt: retrying a failed lazy import is a recovery action, not a form submission. -->
+      <Button
+        variant="primary"
+        size="large"
+        dataTestid="root-dialog-retry"
         onclick={() => retryVersion++}
-      >Try again</button>
+      >Try again</Button>
     </div>
-  </div>
+  </ModalBackdrop>
 {/await}

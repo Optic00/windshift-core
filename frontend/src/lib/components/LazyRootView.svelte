@@ -1,4 +1,7 @@
 <script>
+  import Button from './Button.svelte';
+  import Spinner from './Spinner.svelte';
+
   let { loader, componentProps = {}, label = 'view' } = $props();
   let retryVersion = $state(0);
 
@@ -11,12 +14,13 @@
 {#await loadPromise}
   <div
     class="flex flex-1 min-h-[40vh] items-center justify-center"
+    style="color: var(--ds-text);"
     role="status"
     data-testid="root-view-loading"
   >
     <div class="text-center">
-      <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-3"></div>
-      <p class="text-sm text-gray-600">Loading {label}…</p>
+      <Spinner class="mx-auto mb-3" />
+      <p class="text-sm" style="color: var(--ds-text-subtle);">Loading {label}…</p>
     </div>
   </div>
 {:then loadedModule}
@@ -25,17 +29,22 @@
 {:catch}
   <div
     class="flex flex-1 min-h-[40vh] items-center justify-center px-6"
+    style="color: var(--ds-text);"
     role="alert"
     data-testid="root-view-error"
   >
     <div class="text-center max-w-sm">
       <h1 class="text-lg font-semibold mb-2">Unable to load {label}</h1>
-      <p class="text-sm text-gray-600 mb-4">Check your connection, then try again.</p>
-      <button
-        type="button"
-        class="min-h-11 px-5 py-2 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700"
+      <p class="mb-4 text-sm" style="color: var(--ds-text-subtle);">
+        Check your connection, then try again.
+      </p>
+      <!-- shortcut-guard-exempt: retrying a failed lazy import is a recovery action, not a form submission. -->
+      <Button
+        variant="primary"
+        size="large"
+        dataTestid="root-view-retry"
         onclick={() => retryVersion++}
-      >Try again</button>
+      >Try again</Button>
     </div>
   </div>
 {/await}
