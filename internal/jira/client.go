@@ -6,10 +6,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +19,7 @@ import (
 
 	"windshift/internal/utils"
 
+	"github.com/microcosm-cc/bluemonday"
 	"golang.org/x/time/rate"
 )
 
@@ -535,7 +538,7 @@ func (c *cloudClient) handleErrorResponse(resp *http.Response) error {
 	if readErr != nil {
 		return fmt.Errorf("failed to read Jira error response body: %w", readErr)
 	}
-	snippet := truncateBody(body)
+	snippet := summarizeJiraErrorBody(body)
 
 	switch resp.StatusCode {
 	case http.StatusUnauthorized:
@@ -555,20 +558,40 @@ func (c *cloudClient) handleErrorResponse(resp *http.Response) error {
 	}
 }
 
-// truncateBody trims a Jira response body to a length safe for inclusion in
-// error strings and logs. Jira HTML error pages can be huge; the first ~512
-// bytes contain the diagnostic message in every case we've seen.
-func truncateBody(b []byte) string {
-	const maxLen = 512
+// summarizeJiraErrorBody makes an upstream error response useful in the UI
+// and logs. Enterprise reverse proxies commonly return an HTML error page
+// whose actual diagnostic follows a large script or style block. Strip that
+// boilerplate before applying a generous safety bound so the useful message
+// is not lost merely because it appeared late in the document.
+func summarizeJiraErrorBody(b []byte) string {
+	const maxRunes = 16 * 1024
 	s := strings.TrimSpace(string(b))
 	if s == "" {
 		return "(empty response body)"
 	}
-	if len(s) > maxLen {
-		return s[:maxLen] + "…(truncated)"
+
+	lower := strings.ToLower(s)
+	if strings.Contains(lower, "<!doctype html") || strings.Contains(lower, "<html") {
+		title := ""
+		if match := jiraHTMLTitlePattern.FindStringSubmatch(s); len(match) == 2 {
+			title = bluemonday.StrictPolicy().Sanitize(match[1])
+		}
+		s = strings.TrimSpace(title + " " + bluemonday.StrictPolicy().Sanitize(s))
+		s = html.UnescapeString(s)
+		s = strings.Join(strings.Fields(s), " ")
+		if s == "" {
+			return "(empty HTML response body)"
+		}
+	}
+
+	runes := []rune(s)
+	if len(runes) > maxRunes {
+		return string(runes[:maxRunes]) + "…(truncated)"
 	}
 	return s
 }
+
+var jiraHTMLTitlePattern = regexp.MustCompile(`(?is)<title(?:\s[^>]*)?>(.*?)</title\s*>`)
 
 // ================================================================
 // Connection Methods

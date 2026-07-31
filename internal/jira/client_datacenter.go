@@ -51,7 +51,7 @@ func (c *dataCenterClient) handleErrorResponse(resp *http.Response) error {
 	if readErr != nil {
 		return fmt.Errorf("failed to read Jira error response body: %w", readErr)
 	}
-	snippet := truncateBody(body)
+	snippet := summarizeJiraErrorBody(body)
 
 	switch resp.StatusCode {
 	case http.StatusUnauthorized:
@@ -91,11 +91,25 @@ func (c *dataCenterClient) doJSON(ctx context.Context, method, reqURL string, bo
 
 // TestConnection tests if the credentials are valid.
 //
-// See the matching comment in client.go: probe /serverInfo first so a
-// scope-limited PAT (which may not have read:me but still has read:project
-// and friends) is accepted, and treat /myself as best-effort enrichment for
-// the display name only.
+// Jira Data Center's /serverInfo endpoint may be available anonymously, so it
+// cannot prove that a PAT is valid. Require /myself first, then use
+// /serverInfo for instance metadata.
 func (c *dataCenterClient) TestConnection(ctx context.Context) (*JiraInstanceInfo, error) {
+	userResp, err := c.do(ctx, "GET", c.baseURL+"/myself", nil)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrConnectionFailed, err)
+	}
+	defer func() { _ = userResp.Body.Close() }()
+
+	if userResp.StatusCode != http.StatusOK {
+		return nil, c.handleErrorResponse(userResp)
+	}
+
+	var user JiraUser
+	if err := json.NewDecoder(userResp.Body).Decode(&user); err != nil {
+		return nil, fmt.Errorf("decode myself: %w", err)
+	}
+
 	serverResp, err := c.do(ctx, "GET", c.baseURL+"/serverInfo", nil)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrConnectionFailed, err)
@@ -123,15 +137,8 @@ func (c *dataCenterClient) TestConnection(ctx context.Context) (*JiraInstanceInf
 	if info.URL == "" {
 		info.URL = c.baseURL
 	}
-
-	if userResp, userErr := c.do(ctx, "GET", c.baseURL+"/myself", nil); userErr == nil {
-		defer func() { _ = userResp.Body.Close() }()
-		if userResp.StatusCode == http.StatusOK {
-			var user JiraUser
-			if decodeErr := json.NewDecoder(userResp.Body).Decode(&user); decodeErr == nil && user.DisplayName != "" {
-				info.DisplayName = user.DisplayName
-			}
-		}
+	if user.DisplayName != "" {
+		info.DisplayName = user.DisplayName
 	}
 
 	if info.DisplayName == "" {
