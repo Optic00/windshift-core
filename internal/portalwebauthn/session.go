@@ -63,12 +63,18 @@ func (s *SessionStore) SaveAuthenticationSession(portalCustomerID *int, sessionD
 	return s.saveSession(portalCustomerID, sessionData, "authentication")
 }
 
-// One-time-use retrieval. portalCustomerID filter is applied only when non-nil.
+// getSession atomically retrieves and deletes (one-time use) a session. The
+// read and delete execute as a single DELETE ... RETURNING statement so that,
+// under concurrent access, exactly one caller can observe the row: all others
+// see sql.ErrNoRows because the row was already deleted. The previous
+// SELECT-then-DELETE let multiple goroutines read the same challenge before any
+// delete committed, allowing a one-time challenge to be consumed repeatedly.
+// portalCustomerID filter is applied only when non-nil.
 func (s *SessionStore) getSession(sessionID, sessionType string, portalCustomerID *int) (*webauthn.SessionData, error) {
 	var sessionJSON string
 	var expiresAt time.Time
 
-	query := `SELECT session_data, expires_at FROM portal_webauthn_sessions WHERE id = ? AND session_type = ?`
+	query := `DELETE FROM portal_webauthn_sessions WHERE id = ? AND session_type = ? RETURNING session_data, expires_at`
 	args := []any{sessionID, sessionType}
 	if portalCustomerID != nil {
 		query += ` AND portal_customer_id = ?`
@@ -83,22 +89,8 @@ func (s *SessionStore) getSession(sessionID, sessionType string, portalCustomerI
 		return nil, fmt.Errorf("failed to get session: %w", err)
 	}
 
-	deleteQuery := `DELETE FROM portal_webauthn_sessions WHERE id = ? AND session_type = ?`
-	deleteArgs := []any{sessionID, sessionType}
-	if portalCustomerID != nil {
-		deleteQuery += ` AND portal_customer_id = ?`
-		deleteArgs = append(deleteArgs, *portalCustomerID)
-	}
-
 	if time.Now().After(expiresAt) {
-		_, _ = s.db.ExecWrite(deleteQuery, deleteArgs...)
 		return nil, fmt.Errorf("session expired")
-	}
-	if _, err := s.db.ExecWrite(deleteQuery, deleteArgs...); err != nil {
-		slog.Warn("failed to delete portal webauthn session after retrieval",
-			slog.String("component", "portal_webauthn"),
-			slog.Any("error", err),
-			slog.String("session_id", sessionID))
 	}
 
 	var sessionData webauthn.SessionData

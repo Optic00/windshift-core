@@ -104,17 +104,21 @@ func authenticationSessionType(authSessionID int) string {
 	return "authentication:" + strconv.Itoa(authSessionID)
 }
 
-// getSession retrieves and deletes (one-time use) a session that matches the
-// given id, session_type, and — when userID is non-nil — user_id. Filtering on
-// all three columns prevents cross-type and cross-user reuse of a session id.
+// getSession atomically retrieves and deletes (one-time use) a session that
+// matches the given id, session_type, and — when userID is non-nil — user_id.
+// The read and delete execute as a single DELETE ... RETURNING statement so
+// that, under concurrent access, exactly one caller can observe the row: all
+// others see sql.ErrNoRows because the row was already deleted. The previous
+// SELECT-then-DELETE let multiple goroutines read the same challenge before any
+// delete committed, allowing a one-time challenge to be consumed repeatedly.
 func (s *SessionStore) getSession(sessionID, sessionType string, userID *int) (*webauthn.SessionData, error) {
 	var sessionJSON string
 	var expiresAt time.Time
 
 	query := `
-		SELECT session_data, expires_at
-		FROM webauthn_sessions
-		WHERE id = ? AND session_type = ?`
+		DELETE FROM webauthn_sessions
+		WHERE id = ? AND session_type = ?
+		RETURNING session_data, expires_at`
 	args := []any{sessionID, sessionType}
 	if userID != nil {
 		query += ` AND user_id = ?`
@@ -130,21 +134,8 @@ func (s *SessionStore) getSession(sessionID, sessionType string, userID *int) (*
 		return nil, fmt.Errorf("failed to get session: %w", err)
 	}
 
-	deleteQuery := `DELETE FROM webauthn_sessions WHERE id = ? AND session_type = ?`
-	deleteArgs := []any{sessionID, sessionType}
-	if userID != nil {
-		deleteQuery += ` AND user_id = ?`
-		deleteArgs = append(deleteArgs, *userID)
-	}
-
 	if time.Now().After(expiresAt) {
-		_, _ = s.db.ExecWrite(deleteQuery, deleteArgs...)
 		return nil, fmt.Errorf("session expired")
-	}
-
-	if _, err := s.db.ExecWrite(deleteQuery, deleteArgs...); err != nil {
-		// Session was retrieved successfully; cleanup failure is non-fatal.
-		slog.Warn("failed to delete webauthn session after retrieval", slog.Any("error", err), slog.String("session_id", sessionID))
 	}
 
 	var sessionData webauthn.SessionData
