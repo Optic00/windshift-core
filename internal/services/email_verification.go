@@ -60,7 +60,7 @@ func (s *EmailVerificationService) GenerateVerificationToken(userID int) (string
 		SET email_verification_token = ?, email_verification_expires = ?, updated_at = ?
 		WHERE id = ?
 	`
-	result, err := s.db.ExecWrite(query, token, expiresAt, time.Now(), userID)
+	result, err := s.db.ExecWrite(query, hashTokenAtRest(token), expiresAt, time.Now(), userID)
 	if err != nil {
 		return "", fmt.Errorf("failed to store verification token: %w", err)
 	}
@@ -101,7 +101,7 @@ func (s *EmailVerificationService) VerifyEmail(token string) (*models.User, erro
 
 	var user models.User
 	var expiresAt *time.Time
-	err := s.db.QueryRow(query, token).Scan(
+	err := s.db.QueryRow(query, hashTokenAtRest(token)).Scan(
 		&user.ID, &user.Email, &user.Username, &user.FirstName, &user.LastName,
 		&user.IsActive, &user.AvatarURL, &user.EmailVerified, &expiresAt,
 	)

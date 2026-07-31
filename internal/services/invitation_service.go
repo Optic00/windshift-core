@@ -74,7 +74,7 @@ func (s *InvitationService) GenerateInvitation(userID int) (string, error) {
 		INSERT INTO user_invitations (user_id, token, expires_at, created_at)
 		VALUES (?, ?, ?, ?)
 	`
-	if _, err := s.db.ExecWrite(query, userID, token, expiresAt, now); err != nil {
+	if _, err := s.db.ExecWrite(query, userID, hashTokenAtRest(token), expiresAt, now); err != nil {
 		return "", fmt.Errorf("failed to store invitation token: %w", err)
 	}
 
@@ -120,7 +120,7 @@ func (s *InvitationService) VerifyInvitation(token string) (*models.User, error)
 	var usedAt sql.NullTime
 	var user models.User
 
-	err := s.db.QueryRow(query, token).Scan(
+	err := s.db.QueryRow(query, hashTokenAtRest(token)).Scan(
 		&invitationID, &userID, &expiresAt, &usedAt,
 		&user.Email, &user.Username, &user.FirstName, &user.LastName, &user.IsActive,
 	)
@@ -181,7 +181,7 @@ func (s *InvitationService) AcceptInvitation(token, password string) error {
 
 		// Mark invitation as used
 		inviteQuery := `UPDATE user_invitations SET used_at = ? WHERE token = ?`
-		if _, err := tx.Exec(inviteQuery, time.Now(), token); err != nil {
+		if _, err := tx.Exec(inviteQuery, time.Now(), hashTokenAtRest(token)); err != nil {
 			return fmt.Errorf("failed to mark invitation as used: %w", err)
 		}
 		return nil
