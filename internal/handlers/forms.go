@@ -16,6 +16,7 @@ import (
 
 	"windshift/internal/auth"
 	"windshift/internal/database"
+	"windshift/internal/logger"
 	"windshift/internal/middleware"
 	"windshift/internal/models"
 	"windshift/internal/repository"
@@ -90,6 +91,7 @@ type FormHandler struct {
 	channelService       *services.ChannelService
 	eventCoordinator     *services.EventCoordinator
 	itemAttachments      *services.ItemAttachmentService
+	auditor              *logger.Auditor
 }
 
 // SetItemAttachmentService enables the trusted item-attachment path used only
@@ -112,6 +114,7 @@ func NewFormHandler(db database.Database, sessionManager *auth.SessionManager, p
 		ipExtractor:          ipExtractor,
 		portalService:        services.NewPortalService(db),
 		channelService:       channelService,
+		auditor:              logger.NewAuditor(db),
 	}
 }
 
@@ -827,5 +830,8 @@ func (h *FormHandler) UpdateRequestTypeConfig(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	if user != nil {
+		h.auditor.Log(r, user, logger.ActionRequestTypeConfigUpdate, logger.ResourceRequestTypeConfig, &id, "")
+	}
 	respondJSONOK(w, rtConfig)
 }

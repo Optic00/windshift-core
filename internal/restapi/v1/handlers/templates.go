@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"windshift/internal/database"
+	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/restapi"
@@ -185,6 +186,7 @@ func (h *TemplateHandler) CreateInWorkspace(w http.ResponseWriter, r *http.Reque
 		h.respondTemplateWriteError(w, r, err)
 		return
 	}
+	h.Auditor.Log(r, user, logger.ActionTemplateCreate, logger.ResourceItemTemplate, &created.ID, created.Name)
 	h.RespondCreated(w, created)
 }
 
@@ -310,6 +312,7 @@ func (h *TemplateHandler) UpdateInWorkspace(w http.ResponseWriter, r *http.Reque
 		h.RespondInternalError(w, r)
 		return
 	}
+	h.Auditor.Log(r, user, logger.ActionTemplateUpdate, logger.ResourceItemTemplate, &templateID, result.Name)
 	h.RespondOK(w, result)
 }
 
@@ -328,6 +331,10 @@ func (h *TemplateHandler) UpdateInWorkspace(w http.ResponseWriter, r *http.Reque
 // @Failure      500  {object}  handlers.ErrorResponse
 // @Router       /workspaces/{id}/templates/{templateId} [delete]
 func (h *TemplateHandler) DeleteInWorkspace(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.RequireAuth(w, r)
+	if !ok {
+		return
+	}
 	wsID, templateID, ok := h.resolveWorkspaceTemplateAccess(w, r, h.Perms.CanAdminWorkspace)
 	if !ok {
 		return
@@ -345,6 +352,7 @@ func (h *TemplateHandler) DeleteInWorkspace(w http.ResponseWriter, r *http.Reque
 		h.RespondInternalError(w, r)
 		return
 	}
+	h.Auditor.Log(r, user, logger.ActionTemplateDelete, logger.ResourceItemTemplate, &templateID, existing.Name)
 	h.RespondNoContent(w)
 }
 

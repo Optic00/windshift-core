@@ -238,6 +238,7 @@ func (h *MilestoneHandler) Create(w http.ResponseWriter, r *http.Request) {
 	milestone.Description = sanitize.Comment.Sanitize(milestone.Description)
 
 	// Use service to create milestone
+	auditActor := services.NewAuditActorFromRequest(r, user, nil, "cookie")
 	result, err := h.planningService.CreateMilestone(services.CreateMilestoneParams{
 		Name:        milestone.Name,
 		Description: milestone.Description,
@@ -246,6 +247,7 @@ func (h *MilestoneHandler) Create(w http.ResponseWriter, r *http.Request) {
 		CategoryID:  milestone.CategoryID,
 		IsGlobal:    milestone.IsGlobal,
 		WorkspaceID: milestone.WorkspaceID,
+		AuditActor:  &auditActor,
 	})
 	if err != nil {
 		if respondPlanningValidationError(w, r, err) {
@@ -256,7 +258,6 @@ func (h *MilestoneHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	createdMilestone := h.milestoneResultToModel(result, user.ID)
-	h.auditor.Log(r, user, logger.ActionMilestoneCreate, logger.ResourceMilestone, &createdMilestone.ID, createdMilestone.Name)
 	respondJSONCreated(w, createdMilestone)
 }
 
@@ -310,6 +311,7 @@ func (h *MilestoneHandler) Update(w http.ResponseWriter, r *http.Request) {
 	milestone.Name = sanitize.PlainTextField.Sanitize(milestone.Name)
 	milestone.Description = sanitize.Comment.Sanitize(milestone.Description)
 
+	auditActor := services.NewAuditActorFromRequest(r, user, nil, "cookie")
 	result, err := h.planningService.UpdateMilestone(services.UpdateMilestoneParams{
 		ID:          id,
 		Name:        milestone.Name,
@@ -318,6 +320,7 @@ func (h *MilestoneHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Status:      milestone.Status,
 		CategoryID:  milestone.CategoryID,
 		WorkspaceID: workspaceID,
+		AuditActor:  &auditActor,
 	})
 	if err != nil {
 		if respondPlanningValidationError(w, r, err) {
@@ -332,7 +335,6 @@ func (h *MilestoneHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	updatedMilestone := h.milestoneResultToModel(result, user.ID)
-	h.auditor.Log(r, user, logger.ActionMilestoneUpdate, logger.ResourceMilestone, &updatedMilestone.ID, updatedMilestone.Name)
 	respondJSONOK(w, updatedMilestone)
 }
 
@@ -379,7 +381,8 @@ func (h *MilestoneHandler) Reorder(w http.ResponseWriter, r *http.Request) {
 		scope = services.MilestoneScope{IsGlobal: true, CategoryID: req.CategoryID}
 	}
 
-	if err := h.planningService.ReorderMilestones(scope, req.OrderedIDs); err != nil {
+	auditActor := services.NewAuditActorFromRequest(r, user, nil, "cookie")
+	if err := h.planningService.ReorderMilestones(scope, req.OrderedIDs, auditActor); err != nil {
 		if errors.Is(err, services.ErrInvalidMilestoneReorder) {
 			respondValidationError(w, r, err.Error())
 			return
@@ -388,7 +391,6 @@ func (h *MilestoneHandler) Reorder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.auditor.Log(r, user, logger.ActionMilestoneUpdate, logger.ResourceMilestone, nil, "reorder")
 	respondJSONOK(w, map[string]interface{}{"ok": true})
 }
 
@@ -399,12 +401,12 @@ func (h *MilestoneHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Use service to delete milestone
-	if err := h.planningService.DeleteMilestone(id); err != nil {
+	auditActor := services.NewAuditActorFromRequest(r, user, nil, "cookie")
+	if err := h.planningService.DeleteMilestone(id, auditActor); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
 
-	h.auditor.Log(r, user, logger.ActionMilestoneDelete, logger.ResourceMilestone, &id, "")
 	w.WriteHeader(http.StatusNoContent)
 }
 

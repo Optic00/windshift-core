@@ -5,9 +5,11 @@ import (
 	"net/http"
 
 	"windshift/internal/database"
+	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/restapi"
+	"windshift/internal/restapi/v1/middleware"
 	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
@@ -150,6 +152,10 @@ func (h *LabelHandler) CreateInWorkspace(w http.ResponseWriter, r *http.Request)
 		h.RespondInternalError(w, r)
 		return
 	}
+	if user := middleware.GetUser(r.Context()); user != nil {
+		labelID := label.ID
+		h.Auditor.Log(r, user, logger.ActionLabelCreate, logger.ResourceLabel, &labelID, label.Name)
+	}
 	h.RespondCreated(w, label)
 }
 
@@ -265,6 +271,9 @@ func (h *LabelHandler) UpdateInWorkspace(w http.ResponseWriter, r *http.Request)
 		h.RespondInternalError(w, r)
 		return
 	}
+	if user := middleware.GetUser(r.Context()); user != nil {
+		h.Auditor.Log(r, user, logger.ActionLabelUpdate, logger.ResourceLabel, &labelID, updated.Name)
+	}
 	h.RespondOK(w, updated)
 }
 
@@ -300,6 +309,9 @@ func (h *LabelHandler) DeleteInWorkspace(w http.ResponseWriter, r *http.Request)
 	if err := h.repo.Delete(labelID); err != nil {
 		h.RespondInternalError(w, r)
 		return
+	}
+	if user := middleware.GetUser(r.Context()); user != nil {
+		h.Auditor.Log(r, user, logger.ActionLabelDelete, logger.ResourceLabel, &labelID, existing.Name)
 	}
 	h.RespondNoContent(w)
 }

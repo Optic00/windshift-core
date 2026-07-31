@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"windshift/internal/database"
+	"windshift/internal/logger"
 	"windshift/internal/repository"
 )
 
@@ -489,6 +490,7 @@ type CreateMilestoneParams struct {
 	IsGlobal    bool
 	WorkspaceID *int
 	ExternalKey *string
+	AuditActor  *AuditActor
 }
 
 // CreateMilestone creates a new milestone.
@@ -519,7 +521,15 @@ func (s *PlanningService) CreateMilestone(params CreateMilestoneParams) (*Milest
 		return nil, fmt.Errorf("failed to create milestone: %w", err)
 	}
 
-	return s.GetMilestone(int(id))
+	created, err := s.GetMilestone(int(id))
+	if err != nil {
+		return nil, err
+	}
+	if params.AuditActor != nil {
+		resourceID := created.ID
+		emitServiceAudit(s.db, *params.AuditActor, logger.ActionMilestoneCreate, logger.ResourceMilestone, &resourceID, created.Name, nil)
+	}
+	return created, nil
 }
 
 // FindMilestoneByExternalKey returns the milestone with the given
@@ -606,6 +616,7 @@ type UpdateMilestoneParams struct {
 	Status      string
 	CategoryID  *int
 	WorkspaceID *int // nil = global milestone
+	AuditActor  *AuditActor
 }
 
 // UpdateMilestone updates an existing milestone within its declared scope.
@@ -649,7 +660,15 @@ func (s *PlanningService) UpdateMilestone(params UpdateMilestoneParams) (*Milest
 	if n == 0 {
 		return nil, fmt.Errorf("milestone not found: %d", params.ID)
 	}
-	return s.GetMilestone(params.ID)
+	updated, err := s.GetMilestone(params.ID)
+	if err != nil {
+		return nil, err
+	}
+	if params.AuditActor != nil {
+		resourceID := updated.ID
+		emitServiceAudit(s.db, *params.AuditActor, logger.ActionMilestoneUpdate, logger.ResourceMilestone, &resourceID, updated.Name, nil)
+	}
+	return updated, nil
 }
 
 // ListMilestoneReleases fetches all releases for a given milestone, ordered by created_at DESC.
@@ -985,11 +1004,24 @@ func nullablePlanningString(value string) interface{} {
 	return value
 }
 
-// DeleteMilestone deletes a milestone.
-func (s *PlanningService) DeleteMilestone(id int) error {
+// DeleteMilestone deletes a milestone. HTTP adapters may supply an audit actor;
+// internal automation/import callers omit it and rely on their own execution
+// trail instead of manufacturing a user-driven audit event.
+func (s *PlanningService) DeleteMilestone(id int, auditActors ...AuditActor) error {
+	var resourceName string
+	if len(auditActors) > 0 {
+		existing, err := s.GetMilestone(id)
+		if err != nil {
+			return err
+		}
+		resourceName = existing.Name
+	}
 	_, err := s.db.ExecWrite("DELETE FROM milestones WHERE id = ?", id)
 	if err != nil {
 		return fmt.Errorf("failed to delete milestone: %w", err)
+	}
+	if actor := optionalAuditActor(auditActors); actor != nil {
+		emitServiceAudit(s.db, *actor, logger.ActionMilestoneDelete, logger.ResourceMilestone, &id, resourceName, nil)
 	}
 	return nil
 }
@@ -1243,7 +1275,7 @@ type MilestoneScope struct {
 // future inserts. Any id in orderedIDs that isn't in scope is ignored (its
 // UPDATE matches 0 rows); the caller is responsible for supplying a complete,
 // in-scope ordering. Mirrors the test-folder Reorder pattern.
-func (s *PlanningService) ReorderMilestones(scope MilestoneScope, orderedIDs []int) error {
+func (s *PlanningService) ReorderMilestones(scope MilestoneScope, orderedIDs []int, auditActors ...AuditActor) error {
 	if len(orderedIDs) == 0 {
 		return nil
 	}
@@ -1288,7 +1320,7 @@ func (s *PlanningService) ReorderMilestones(scope MilestoneScope, orderedIDs []i
 		}
 	}
 
-	return database.WithTx(s.db, func(tx database.Tx) error {
+	if err := database.WithTx(s.db, func(tx database.Tx) error {
 		now := time.Now()
 		for i, id := range orderedIDs {
 			position := (i + 1) * milestonePositionStep
@@ -1301,5 +1333,16 @@ func (s *PlanningService) ReorderMilestones(scope MilestoneScope, orderedIDs []i
 			}
 		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	if actor := optionalAuditActor(auditActors); actor != nil {
+		emitServiceAudit(s.db, *actor, logger.ActionMilestoneReorder, logger.ResourceMilestone, nil, "", map[string]interface{}{
+			"ordered_ids":  orderedIDs,
+			"is_global":    scope.IsGlobal,
+			"workspace_id": scope.WorkspaceID,
+			"category_id":  scope.CategoryID,
+		})
+	}
+	return nil
 }

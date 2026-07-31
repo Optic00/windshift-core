@@ -16,14 +16,12 @@ import (
 type IterationHandler struct {
 	permissionService *services.PermissionService
 	planningService   *services.PlanningService
-	auditor           *logger.Auditor
 }
 
-func NewIterationHandler(planningService *services.PlanningService, permissionService *services.PermissionService, auditor *logger.Auditor) *IterationHandler {
+func NewIterationHandler(planningService *services.PlanningService, permissionService *services.PermissionService, _ ...*logger.Auditor) *IterationHandler {
 	return &IterationHandler{
 		permissionService: permissionService,
 		planningService:   planningService,
-		auditor:           auditor,
 	}
 }
 
@@ -189,6 +187,7 @@ func (h *IterationHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Use service to create iteration
+	auditActor := services.NewAuditActorFromRequest(r, user, nil, "cookie")
 	result, err := h.planningService.CreateIteration(services.CreateIterationParams{
 		Name:        iteration.Name,
 		Description: iteration.Description,
@@ -198,6 +197,7 @@ func (h *IterationHandler) Create(w http.ResponseWriter, r *http.Request) {
 		TypeID:      iteration.TypeID,
 		IsGlobal:    iteration.IsGlobal,
 		WorkspaceID: iteration.WorkspaceID,
+		AuditActor:  &auditActor,
 	})
 	if err != nil {
 		if respondPlanningValidationError(w, r, err) {
@@ -210,7 +210,6 @@ func (h *IterationHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// Convert service result to model for response
 	createdIteration := iterationResultToModel(result)
 
-	h.auditor.Log(r, user, logger.ActionIterationCreate, logger.ResourceIteration, &createdIteration.ID, createdIteration.Name)
 	respondJSONCreated(w, createdIteration)
 }
 
@@ -262,6 +261,7 @@ func (h *IterationHandler) Update(w http.ResponseWriter, r *http.Request) {
 	iteration.Name = sanitize.PlainTextField.Sanitize(iteration.Name)
 	iteration.Description = sanitize.Comment.Sanitize(iteration.Description)
 
+	auditActor := services.NewAuditActorFromRequest(r, user, nil, "cookie")
 	result, err := h.planningService.UpdateIteration(services.UpdateIterationParams{
 		ID:          id,
 		Name:        iteration.Name,
@@ -271,6 +271,7 @@ func (h *IterationHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Status:      iteration.Status,
 		TypeID:      iteration.TypeID,
 		WorkspaceID: workspaceID,
+		AuditActor:  &auditActor,
 	})
 	if err != nil {
 		if respondPlanningValidationError(w, r, err) {
@@ -289,7 +290,6 @@ func (h *IterationHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	updatedIteration := iterationResultToModel(result)
-	h.auditor.Log(r, user, logger.ActionIterationUpdate, logger.ResourceIteration, &updatedIteration.ID, updatedIteration.Name)
 	respondJSONOK(w, updatedIteration)
 }
 
@@ -321,12 +321,12 @@ func (h *IterationHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Use service to delete iteration
-	if err := h.planningService.DeleteIteration(id); err != nil {
+	auditActor := services.NewAuditActorFromRequest(r, user, nil, "cookie")
+	if err := h.planningService.DeleteIteration(id, auditActor); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
 
-	h.auditor.Log(r, user, logger.ActionIterationDelete, logger.ResourceIteration, &id, "")
 	w.WriteHeader(http.StatusNoContent)
 }
 

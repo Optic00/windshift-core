@@ -293,8 +293,8 @@ func (h *SetupHandler) UpdateModuleSettings(w http.ResponseWriter, r *http.Reque
 		Username:     user.Username,
 		IPAddress:    h.getClientIP(r),
 		UserAgent:    r.UserAgent(),
-		ActionType:   logger.ActionModuleEnable, // Using existing constant
-		ResourceType: logger.ResourceModule,     // Using existing constant
+		ActionType:   logger.ActionModuleSettingsUpdate,
+		ResourceType: logger.ResourceModule,
 		ResourceName: "Module Settings",
 		Details: map[string]interface{}{
 			"time_tracking_enabled":   settings.TimeTrackingEnabled,

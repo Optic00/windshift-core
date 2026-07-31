@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/scheduler"
@@ -20,9 +21,9 @@ type RecurrenceHandler struct {
 }
 
 // NewRecurrenceHandler creates a recurrence handler.
-func NewRecurrenceHandler(recurrenceRepo *repository.RecurrenceRepository, itemRepo *repository.ItemRepository, sched *scheduler.RecurrenceScheduler, permissionService *services.PermissionService) *RecurrenceHandler {
+func NewRecurrenceHandler(recurrenceRepo *repository.RecurrenceRepository, itemRepo *repository.ItemRepository, sched *scheduler.RecurrenceScheduler, permissionService *services.PermissionService, auditor *logger.Auditor) *RecurrenceHandler {
 	return &RecurrenceHandler{
-		service:           services.NewRecurrenceService(recurrenceRepo, sched),
+		service:           services.NewRecurrenceService(recurrenceRepo, sched, auditor),
 		itemRepo:          itemRepo,
 		permissionService: permissionService,
 	}
@@ -94,7 +95,7 @@ func (h *RecurrenceHandler) CreateRecurrence(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	rule, err := h.service.Create(item.ID, item.WorkspaceID, user.ID, req)
+	rule, err := h.service.Create(item.ID, item.WorkspaceID, user.ID, req, services.NewAuditActorFromRequest(r, user, nil, "cookie"))
 	if errors.Is(err, services.ErrRecurrenceConflict) {
 		respondConflict(w, r, "Recurrence rule already exists for this item")
 		return
@@ -115,7 +116,7 @@ func (h *RecurrenceHandler) CreateRecurrence(w http.ResponseWriter, r *http.Requ
 
 // UpdateRecurrence updates a recurrence rule.
 func (h *RecurrenceHandler) UpdateRecurrence(w http.ResponseWriter, r *http.Request) {
-	item, _, ok := h.requireItem(w, r, models.PermissionItemEdit)
+	item, user, ok := h.requireItem(w, r, models.PermissionItemEdit)
 	if !ok {
 		return
 	}
@@ -123,7 +124,7 @@ func (h *RecurrenceHandler) UpdateRecurrence(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	rule, err := h.service.Update(item.ID, req)
+	rule, err := h.service.Update(item.ID, req, services.NewAuditActorFromRequest(r, user, nil, "cookie"))
 	if errors.Is(err, repository.ErrNotFound) {
 		respondNotFound(w, r, "recurrence_rule")
 		return
@@ -140,11 +141,11 @@ func (h *RecurrenceHandler) UpdateRecurrence(w http.ResponseWriter, r *http.Requ
 
 // DeleteRecurrence deletes a recurrence rule.
 func (h *RecurrenceHandler) DeleteRecurrence(w http.ResponseWriter, r *http.Request) {
-	item, _, ok := h.requireItem(w, r, models.PermissionItemEdit)
+	item, user, ok := h.requireItem(w, r, models.PermissionItemEdit)
 	if !ok {
 		return
 	}
-	err := h.service.Delete(item.ID)
+	err := h.service.Delete(item.ID, services.NewAuditActorFromRequest(r, user, nil, "cookie"))
 	if errors.Is(err, repository.ErrNotFound) {
 		respondNotFound(w, r, "recurrence_rule")
 		return
@@ -195,11 +196,11 @@ func cookieRecurrencePagination(r *http.Request) (limit, offset int) {
 
 // ForceGenerate forces immediate generation for a rule.
 func (h *RecurrenceHandler) ForceGenerate(w http.ResponseWriter, r *http.Request) {
-	item, _, ok := h.requireItem(w, r, models.PermissionItemEdit)
+	item, user, ok := h.requireItem(w, r, models.PermissionItemEdit)
 	if !ok {
 		return
 	}
-	count, err := h.service.ForceGenerate(item.ID)
+	count, err := h.service.ForceGenerate(item.ID, services.NewAuditActorFromRequest(r, user, nil, "cookie"))
 	if errors.Is(err, repository.ErrNotFound) {
 		respondNotFound(w, r, "recurrence_rule")
 		return

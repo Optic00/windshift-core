@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/services"
@@ -20,6 +21,7 @@ type WebhookHandler struct {
 	webhookSender     *webhook.WebhookSender
 	permissionService *services.PermissionService
 	channelService    *services.ChannelService
+	auditor           *logger.Auditor
 }
 
 // NewWebhookHandler creates a new webhook handler
@@ -29,6 +31,7 @@ func NewWebhookHandler(
 	webhookSender *webhook.WebhookSender,
 	permissionService *services.PermissionService,
 	channelService *services.ChannelService,
+	auditor *logger.Auditor,
 ) *WebhookHandler {
 	return &WebhookHandler{
 		channelRepo:       channelRepo,
@@ -36,6 +39,7 @@ func NewWebhookHandler(
 		webhookSender:     webhookSender,
 		permissionService: permissionService,
 		channelService:    channelService,
+		auditor:           auditor,
 	}
 }
 
@@ -118,6 +122,8 @@ func (h *WebhookHandler) TriggerWebhook(w http.ResponseWriter, r *http.Request) 
 		respondBadRequest(w, r, err.Error())
 		return
 	}
+
+	h.auditor.LogWithDetails(r, user, logger.ActionWebhookTrigger, logger.ResourceWebhook, &webhookID, "", map[string]interface{}{"item_id": request.ItemID})
 
 	respondJSONOK(w, map[string]interface{}{
 		"success": true,

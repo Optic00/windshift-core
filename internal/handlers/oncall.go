@@ -7,11 +7,21 @@ import (
 	"strings"
 	"time"
 
+	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/sanitize"
 	"windshift/internal/services"
+	"windshift/internal/utils"
 )
+
+type OnCallHandler struct {
+	onCallRepo        *repository.OnCallRepository
+	teamRepo          *repository.TeamRepository
+	onCallService     *services.OnCallService
+	permissionService *services.PermissionService
+	auditor           *logger.Auditor
+}
 
 // sanitizeScheduleRequest sanitizes schedule fields.
 func sanitizeScheduleRequest(req *models.OnCallScheduleRequest) {
@@ -20,6 +30,12 @@ func sanitizeScheduleRequest(req *models.OnCallScheduleRequest) {
 		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText},
 		sanitize.Pair{Target: &req.Timezone, Policy: sanitize.ShortIdentifier},
 	)
+}
+
+func (h *OnCallHandler) auditMutation(r *http.Request, action, resource string, resourceID *int, resourceName string, details map[string]interface{}) {
+	if user := utils.GetCurrentUser(r); user != nil {
+		h.auditor.LogWithDetails(r, user, action, resource, resourceID, resourceName, details)
+	}
 }
 
 // sanitizeLayerRequest sanitizes rotation-layer fields.
@@ -43,19 +59,13 @@ func sanitizeEscalationPolicy(req *models.OnCallEscalationPolicyRequest) {
 	)
 }
 
-type OnCallHandler struct {
-	onCallRepo        *repository.OnCallRepository
-	teamRepo          *repository.TeamRepository
-	onCallService     *services.OnCallService
-	permissionService *services.PermissionService
-}
-
-func NewOnCallHandler(onCallRepo *repository.OnCallRepository, teamRepo *repository.TeamRepository, onCallService *services.OnCallService, permissionService *services.PermissionService) *OnCallHandler {
+func NewOnCallHandler(onCallRepo *repository.OnCallRepository, teamRepo *repository.TeamRepository, onCallService *services.OnCallService, permissionService *services.PermissionService, auditor *logger.Auditor) *OnCallHandler {
 	return &OnCallHandler{
 		onCallRepo:        onCallRepo,
 		teamRepo:          teamRepo,
 		onCallService:     onCallService,
 		permissionService: permissionService,
+		auditor:           auditor,
 	}
 }
 
@@ -275,6 +285,7 @@ func (h *OnCallHandler) CreateSchedule(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
+	h.auditMutation(r, logger.ActionOnCallScheduleCreate, logger.ResourceOnCallSchedule, &id, schedule.Name, map[string]interface{}{"team_id": teamID})
 
 	respondJSONCreated(w, schedule)
 }
@@ -336,6 +347,7 @@ func (h *OnCallHandler) UpdateSchedule(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
+	h.auditMutation(r, logger.ActionOnCallScheduleUpdate, logger.ResourceOnCallSchedule, &schedule.ID, updated.Name, map[string]interface{}{"team_id": schedule.TeamID})
 
 	respondJSONOK(w, updated)
 }
@@ -351,6 +363,7 @@ func (h *OnCallHandler) DeleteSchedule(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
+	h.auditMutation(r, logger.ActionOnCallScheduleDelete, logger.ResourceOnCallSchedule, &schedule.ID, schedule.Name, map[string]interface{}{"team_id": schedule.TeamID})
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -387,6 +400,7 @@ func (h *OnCallHandler) AddLayer(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
+	h.auditMutation(r, logger.ActionOnCallLayerCreate, logger.ResourceOnCallLayer, &id, req.Name, map[string]interface{}{"schedule_id": schedule.ID})
 
 	respondJSONCreated(w, map[string]int{"id": id})
 }
@@ -413,6 +427,7 @@ func (h *OnCallHandler) UpdateLayer(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
+	h.auditMutation(r, logger.ActionOnCallLayerUpdate, logger.ResourceOnCallLayer, &layerID, req.Name, map[string]interface{}{"schedule_id": schedule.ID})
 
 	respondJSONOK(w, map[string]string{"status": "ok"})
 }
@@ -433,6 +448,7 @@ func (h *OnCallHandler) DeleteLayer(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
+	h.auditMutation(r, logger.ActionOnCallLayerDelete, logger.ResourceOnCallLayer, &layerID, "", map[string]interface{}{"schedule_id": schedule.ID})
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -458,6 +474,8 @@ func (h *OnCallHandler) SetLayerMembers(w http.ResponseWriter, r *http.Request) 
 		respondInternalError(w, r, err)
 		return
 	}
+
+	h.auditMutation(r, logger.ActionOnCallSetLayerMembers, logger.ResourceOnCallLayer, &layerID, "", map[string]interface{}{"schedule_id": schedule.ID, "user_ids": req.UserIDs})
 
 	respondJSONOK(w, map[string]string{"status": "ok"})
 }
@@ -501,6 +519,9 @@ func (h *OnCallHandler) CreateOverride(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
+	h.auditMutation(r, logger.ActionOnCallOverrideCreate, logger.ResourceOnCallOverride, &id, "", map[string]interface{}{
+		"schedule_id": schedule.ID, "user_id": req.UserID, "override_user_id": req.OverrideUserID,
+	})
 
 	respondJSONCreated(w, map[string]int{"id": id})
 }
@@ -538,6 +559,7 @@ func (h *OnCallHandler) DeleteOverride(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
+	h.auditMutation(r, logger.ActionOnCallOverrideDelete, logger.ResourceOnCallOverride, &overrideID, "", map[string]interface{}{"schedule_id": override.ScheduleID})
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -752,6 +774,7 @@ func (h *OnCallHandler) CreatePolicy(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
+	h.auditMutation(r, logger.ActionOnCallPolicyCreate, logger.ResourceOnCallPolicy, &id, req.Name, map[string]interface{}{"team_id": teamID})
 
 	respondJSONCreated(w, map[string]int{"id": id})
 }
@@ -808,6 +831,7 @@ func (h *OnCallHandler) UpdatePolicy(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
+	h.auditMutation(r, logger.ActionOnCallPolicyUpdate, logger.ResourceOnCallPolicy, &policy.ID, req.Name, map[string]interface{}{"team_id": policy.TeamID})
 
 	respondJSONOK(w, map[string]string{"status": "ok"})
 }
@@ -823,6 +847,7 @@ func (h *OnCallHandler) DeletePolicy(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
+	h.auditMutation(r, logger.ActionOnCallPolicyDelete, logger.ResourceOnCallPolicy, &policy.ID, policy.Name, map[string]interface{}{"team_id": policy.TeamID})
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -843,6 +868,7 @@ func (h *OnCallHandler) SetRules(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
+	h.auditMutation(r, logger.ActionOnCallPolicySetRules, logger.ResourceOnCallPolicy, &policy.ID, policy.Name, map[string]interface{}{"team_id": policy.TeamID, "rule_count": len(req.Rules)})
 
 	respondJSONOK(w, map[string]string{"status": "ok"})
 }

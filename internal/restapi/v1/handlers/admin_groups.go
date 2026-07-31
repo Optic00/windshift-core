@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"windshift/internal/database"
+	"windshift/internal/logger"
 	"windshift/internal/repository"
 	"windshift/internal/restapi"
 	"windshift/internal/sanitize"
@@ -143,6 +144,7 @@ func (h *AdminGroupHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.Auditor.Log(r, user, logger.ActionGroupCreate, logger.ResourceGroup, &id, req.Name)
 	h.RespondCreated(w, AdminGroupResponse{
 		ID:          id,
 		Name:        req.Name,
@@ -170,7 +172,7 @@ func (h *AdminGroupHandler) Create(w http.ResponseWriter, r *http.Request) {
 // @Failure      500   {object}  handlers.ErrorResponse
 // @Router       /admin/groups/{id} [put]
 func (h *AdminGroupHandler) Update(w http.ResponseWriter, r *http.Request) {
-	_, ok := h.RequireAuth(w, r)
+	user, ok := h.RequireAuth(w, r)
 	if !ok {
 		return
 	}
@@ -204,6 +206,7 @@ func (h *AdminGroupHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.Auditor.Log(r, user, logger.ActionGroupUpdate, logger.ResourceGroup, &id, "")
 	h.RespondNoContent(w)
 }
 
@@ -222,7 +225,7 @@ func (h *AdminGroupHandler) Update(w http.ResponseWriter, r *http.Request) {
 // @Failure      500  {object}  handlers.ErrorResponse
 // @Router       /admin/groups/{id} [delete]
 func (h *AdminGroupHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	_, ok := h.RequireAuth(w, r)
+	user, ok := h.RequireAuth(w, r)
 	if !ok {
 		return
 	}
@@ -241,5 +244,6 @@ func (h *AdminGroupHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.Auditor.Log(r, user, logger.ActionGroupDelete, logger.ResourceGroup, &id, "")
 	h.RespondNoContent(w)
 }

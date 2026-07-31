@@ -563,6 +563,7 @@ func (s *Server) initialize() error {
 		permService,
 		services.NewItemCRUDService(s.db),
 		services.NewWorkspaceService(s.db),
+		logger.NewAuditor(s.db),
 	)
 	testCoverageHandler := handlers.NewTestCoverageHandler(repository.NewTestCoverageRepository(s.db), permService)
 	publicBoardHandler := handlers.NewPublicBoardHandler(s.db, permService, cfg.AttachmentPath)
@@ -646,7 +647,7 @@ func (s *Server) initialize() error {
 	pageLabelHandler := handlers.NewPageLabelHandler(pageLabelRepo, pagePermissionService, logger.NewAuditor(s.db))
 
 	// Recurrence handler
-	recurrenceHandler := handlers.NewRecurrenceHandler(repository.NewRecurrenceRepository(s.db), repository.NewItemRepository(s.db), s.recurrenceScheduler, permService)
+	recurrenceHandler := handlers.NewRecurrenceHandler(repository.NewRecurrenceRepository(s.db), repository.NewItemRepository(s.db), s.recurrenceScheduler, permService, logger.NewAuditor(s.db))
 
 	// Actions handler
 	actionsHandler := handlers.NewActionsHandler(
@@ -684,7 +685,7 @@ func (s *Server) initialize() error {
 	onCallService := services.NewOnCallService(s.db, onCallRepo, leaveRepo)
 	teamHandler := handlers.NewTeamHandler(teamRepo, leaveRepo, permService, logger.NewAuditor(s.db))
 	leaveHandler := handlers.NewLeaveHandler(leaveRepo, repository.NewUserRepository(s.db), permService)
-	onCallHandler := handlers.NewOnCallHandler(onCallRepo, teamRepo, onCallService, permService)
+	onCallHandler := handlers.NewOnCallHandler(onCallRepo, teamRepo, onCallService, permService, logger.NewAuditor(s.db))
 	s.actionService.SetTeamService(teamService)
 
 	milestoneCategoryConfig := services.NewMilestoneCategoryConfig()
@@ -1086,7 +1087,7 @@ func (s *Server) initialize() error {
 	smtpSender.SetEncryption(scmProviderHandler.GetEncryption())
 
 	// Webhook handler
-	webhookHandler := handlers.NewWebhookHandler(repository.NewChannelRepository(s.db), repository.NewItemRepository(s.db), webhookSender, permService, channelService)
+	webhookHandler := handlers.NewWebhookHandler(repository.NewChannelRepository(s.db), repository.NewItemRepository(s.db), webhookSender, permService, channelService, logger.NewAuditor(s.db))
 	portalHandler := handlers.NewPortalHandler(s.db, sessionManager, portalSessionManager, ipExtractor, cfg.AttachmentPath)
 	portalHandler.SetApprovalService(approvalService)
 	portalHandler.SetEventCoordinator(eventCoordinator)

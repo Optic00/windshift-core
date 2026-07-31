@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"windshift/internal/database"
+	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/restapi"
@@ -208,6 +209,7 @@ func (h *PageLabelHandler) CreateLabel(w http.ResponseWriter, r *http.Request) {
 		h.RespondInternalError(w, r)
 		return
 	}
+	h.Auditor.Log(r, user, logger.ActionPageLabelCreate, logger.ResourcePageLabel, &label.ID, label.Name)
 	h.RespondCreated(w, label)
 }
 
@@ -300,6 +302,7 @@ func (h *PageLabelHandler) UpdateLabel(w http.ResponseWriter, r *http.Request) {
 		h.RespondInternalError(w, r)
 		return
 	}
+	h.Auditor.Log(r, &models.User{ID: user.ID, Username: user.Username}, logger.ActionPageLabelUpdate, logger.ResourcePageLabel, &labelID, updated.Name)
 	h.RespondOK(w, updated)
 }
 
@@ -342,6 +345,7 @@ func (h *PageLabelHandler) DeleteLabel(w http.ResponseWriter, r *http.Request) {
 		h.RespondInternalError(w, r)
 		return
 	}
+	h.Auditor.Log(r, &models.User{ID: user.ID, Username: user.Username}, logger.ActionPageLabelDelete, logger.ResourcePageLabel, &labelID, existing.Name)
 	h.RespondNoContent(w)
 }
 

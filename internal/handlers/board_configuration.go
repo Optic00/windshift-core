@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/sanitize"
@@ -20,6 +21,7 @@ type BoardConfigurationHandler struct {
 	permissionService *services.PermissionService
 	items             *services.ItemCRUDService
 	workspaces        *services.WorkspaceService
+	auditor           *logger.Auditor
 }
 
 func NewBoardConfigurationHandler(
@@ -28,10 +30,11 @@ func NewBoardConfigurationHandler(
 	permissionService *services.PermissionService,
 	items *services.ItemCRUDService,
 	workspaces *services.WorkspaceService,
+	auditor *logger.Auditor,
 ) *BoardConfigurationHandler {
 	return &BoardConfigurationHandler{
 		repo: repo, collections: collections, permissionService: permissionService,
-		items: items, workspaces: workspaces,
+		items: items, workspaces: workspaces, auditor: auditor,
 	}
 }
 
@@ -500,6 +503,10 @@ func (h *BoardConfigurationHandler) CreateForCollection(w http.ResponseWriter, r
 	columns, _ := h.repo.GetColumnsWithStatuses(configID)
 	config.Columns = columns
 
+	user := utils.GetCurrentUser(r)
+	if user != nil {
+		h.auditor.Log(r, user, logger.ActionBoardConfigCreate, logger.ResourceBoardConfiguration, &configID, "")
+	}
 	respondJSONCreated(w, config)
 }
 
@@ -545,6 +552,10 @@ func (h *BoardConfigurationHandler) UpdateForCollection(w http.ResponseWriter, r
 	columns, _ := h.repo.GetColumnsWithStatuses(configID)
 	config.Columns = columns
 
+	user := utils.GetCurrentUser(r)
+	if user != nil {
+		h.auditor.Log(r, user, logger.ActionBoardConfigUpdate, logger.ResourceBoardConfiguration, &configID, "")
+	}
 	respondJSONOK(w, config)
 }
 
@@ -566,6 +577,10 @@ func (h *BoardConfigurationHandler) DeleteForCollection(w http.ResponseWriter, r
 		return
 	}
 
+	user := utils.GetCurrentUser(r)
+	if user != nil {
+		h.auditor.Log(r, user, logger.ActionBoardConfigDelete, logger.ResourceBoardConfiguration, &configID, "")
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

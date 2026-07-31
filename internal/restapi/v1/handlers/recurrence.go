@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"windshift/internal/database"
+	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/restapi"
@@ -27,7 +28,7 @@ func NewRecurrenceHandler(db database.Database, permissionService *services.Perm
 	generator := scheduler.NewRecurrenceScheduler(db, services.NewWorkflowService(db))
 	return &RecurrenceHandler{
 		BaseHandler: NewBaseHandler(db, permissionService),
-		service:     services.NewRecurrenceService(repository.NewRecurrenceRepository(db), generator),
+		service:     services.NewRecurrenceService(repository.NewRecurrenceRepository(db), generator, logger.NewAuditor(db)),
 		itemRepo:    repository.NewItemRepository(db),
 	}
 }
@@ -131,7 +132,7 @@ func (h *RecurrenceHandler) CreateRecurrence(w http.ResponseWriter, r *http.Requ
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
-	rule, err := h.service.Create(item.ID, item.WorkspaceID, user.ID, req)
+	rule, err := h.service.Create(item.ID, item.WorkspaceID, user.ID, req, h.AuditActor(r, user))
 	if errors.Is(err, services.ErrRecurrenceConflict) {
 		h.RespondError(w, r, restapi.NewAPIError(http.StatusConflict, restapi.ErrCodeConflict, "Recurrence rule already exists for this item"))
 		return
@@ -171,7 +172,7 @@ func (h *RecurrenceHandler) CreateRecurrence(w http.ResponseWriter, r *http.Requ
 // @Failure      500  {object}  handlers.ErrorResponse
 // @Router       /items/{id}/recurrence [put]
 func (h *RecurrenceHandler) UpdateRecurrence(w http.ResponseWriter, r *http.Request) {
-	item, _, ok := h.requireItem(w, r, models.PermissionItemEdit)
+	item, user, ok := h.requireItem(w, r, models.PermissionItemEdit)
 	if !ok {
 		return
 	}
@@ -179,7 +180,7 @@ func (h *RecurrenceHandler) UpdateRecurrence(w http.ResponseWriter, r *http.Requ
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
-	rule, err := h.service.Update(item.ID, req)
+	rule, err := h.service.Update(item.ID, req, h.AuditActor(r, user))
 	if errors.Is(err, repository.ErrNotFound) {
 		h.RespondError(w, r, restapi.ErrNotFound)
 		return
@@ -194,7 +195,7 @@ func (h *RecurrenceHandler) UpdateRecurrence(w http.ResponseWriter, r *http.Requ
 	h.RespondOK(w, rule)
 }
 
-// DeleteRecurrence handles DELETE /rest/api/v1/items/{id}/recurrence.
+// DeleteRecurrence deletes the recurrence rule for an item.
 //
 // @Summary      Delete a recurrence rule
 // @Tags         recurrence
@@ -208,11 +209,11 @@ func (h *RecurrenceHandler) UpdateRecurrence(w http.ResponseWriter, r *http.Requ
 // @Failure      500  {object}  handlers.ErrorResponse
 // @Router       /items/{id}/recurrence [delete]
 func (h *RecurrenceHandler) DeleteRecurrence(w http.ResponseWriter, r *http.Request) {
-	item, _, ok := h.requireItem(w, r, models.PermissionItemEdit)
+	item, user, ok := h.requireItem(w, r, models.PermissionItemEdit)
 	if !ok {
 		return
 	}
-	err := h.service.Delete(item.ID)
+	err := h.service.Delete(item.ID, h.AuditActor(r, user))
 	if errors.Is(err, repository.ErrNotFound) {
 		h.RespondError(w, r, restapi.ErrNotFound)
 		return
@@ -288,11 +289,11 @@ type recurrenceForceGenerateResponse struct {
 // @Failure      500  {object}  handlers.ErrorResponse
 // @Router       /items/{id}/recurrence/generate [post]
 func (h *RecurrenceHandler) ForceGenerate(w http.ResponseWriter, r *http.Request) {
-	item, _, ok := h.requireItem(w, r, models.PermissionItemEdit)
+	item, user, ok := h.requireItem(w, r, models.PermissionItemEdit)
 	if !ok {
 		return
 	}
-	count, err := h.service.ForceGenerate(item.ID)
+	count, err := h.service.ForceGenerate(item.ID, h.AuditActor(r, user))
 	if errors.Is(err, repository.ErrNotFound) {
 		h.RespondError(w, r, restapi.ErrNotFound)
 		return

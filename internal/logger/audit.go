@@ -392,8 +392,7 @@ const (
 	ActionThemeActivate = "theme.activate"
 
 	// Module settings
-	ActionModuleEnable  = "module.enable"
-	ActionModuleDisable = "module.disable"
+	ActionModuleSettingsUpdate = "module_settings.update"
 
 	// API Token management
 	ActionAPITokenCreate      = "api_token.create"
@@ -475,9 +474,10 @@ const (
 	ActionTimeProjectDelete = "time_project.delete"
 
 	// Milestone management
-	ActionMilestoneCreate = "milestone.create"
-	ActionMilestoneUpdate = "milestone.update"
-	ActionMilestoneDelete = "milestone.delete"
+	ActionMilestoneCreate  = "milestone.create"
+	ActionMilestoneUpdate  = "milestone.update"
+	ActionMilestoneDelete  = "milestone.delete"
+	ActionMilestoneReorder = "milestone.reorder"
 
 	// Milestone category management
 	ActionMilestoneCategoryCreate = "milestone_category.create"
@@ -488,11 +488,6 @@ const (
 	ActionCollectionCreate = "collection.create"
 	ActionCollectionUpdate = "collection.update"
 	ActionCollectionDelete = "collection.delete"
-
-	// Personal label management
-	ActionPersonalLabelCreate = "personal_label.create"
-	ActionPersonalLabelUpdate = "personal_label.update"
-	ActionPersonalLabelDelete = "personal_label.delete"
 
 	// Test case management
 	ActionTestCaseCreate = "test_case.create"
@@ -594,7 +589,6 @@ const (
 	ActionAutomationDelete           = "automation.delete"
 	ActionAutomationToggle           = "automation.toggle"
 	ActionAutomationSetActor         = "automation.set_actor" // Granted action.set_actor permission used to impersonate
-	ActionAutomationExecute          = "automation.execute"   // Every action execution (records trigger vs effective actor)
 	ActionAutomationCapabilityCreate = "automation_capability.create"
 	ActionAutomationCapabilityUpdate = "automation_capability.update"
 	ActionAutomationCapabilityDelete = "automation_capability.delete"
@@ -723,6 +717,8 @@ const (
 	ActionTeamDelete       = "team.delete"
 	ActionTeamAddMember    = "team.add_member"
 	ActionTeamRemoveMember = "team.remove_member"
+	ActionTeamAddGroup     = "team.add_group"
+	ActionTeamRemoveGroup  = "team.remove_group"
 
 	// Condition set management
 	ActionConditionSetCreate = "condition_set.create"
@@ -740,6 +736,42 @@ const (
 	ActionApprovalDelegate = "approval.delegate"
 	ActionApprovalRefresh  = "approval.refresh_approvers"
 	ActionApprovalEscalate = "approval.escalate"
+
+	// Recurrence rules
+	ActionRecurrenceCreate        = "recurrence.create"
+	ActionRecurrenceUpdate        = "recurrence.update"
+	ActionRecurrenceDelete        = "recurrence.delete"
+	ActionRecurrenceForceGenerate = "recurrence.force_generate"
+
+	// Team membership
+	ActionTeamUpdateMemberRole = "team.update_member_role"
+
+	// On-call administration (operational swap/incident user activity is kept
+	// in its domain history rather than the administrative audit log).
+	ActionOnCallScheduleCreate  = "oncall.schedule.create"
+	ActionOnCallScheduleUpdate  = "oncall.schedule.update"
+	ActionOnCallScheduleDelete  = "oncall.schedule.delete"
+	ActionOnCallLayerCreate     = "oncall.layer.create"
+	ActionOnCallLayerUpdate     = "oncall.layer.update"
+	ActionOnCallLayerDelete     = "oncall.layer.delete"
+	ActionOnCallSetLayerMembers = "oncall.layer.set_members"
+	ActionOnCallOverrideCreate  = "oncall.override.create"
+	ActionOnCallOverrideDelete  = "oncall.override.delete"
+	ActionOnCallPolicyCreate    = "oncall.policy.create"
+	ActionOnCallPolicyUpdate    = "oncall.policy.update"
+	ActionOnCallPolicyDelete    = "oncall.policy.delete"
+	ActionOnCallPolicySetRules  = "oncall.policy.set_rules"
+
+	// Board configuration
+	ActionBoardConfigCreate = "board_configuration.create"
+	ActionBoardConfigUpdate = "board_configuration.update"
+	ActionBoardConfigDelete = "board_configuration.delete"
+
+	// Webhook dispatch
+	ActionWebhookTrigger = "webhook.trigger"
+
+	// Public form administration
+	ActionRequestTypeConfigUpdate = "request_type_config.update"
 )
 
 // Resource type constants
@@ -774,7 +806,6 @@ const (
 	ResourceMilestone            = "milestone"
 	ResourceMilestoneCategory    = "milestone_category"
 	ResourceCollection           = "collection"
-	ResourcePersonalLabel        = "personal_label"
 	ResourceTestCase             = "test_case"
 	ResourceTestRun              = "test_run"
 	ResourceTestSet              = "test_set"
@@ -824,4 +855,12 @@ const (
 	ResourceConditionSet         = "condition_set"
 	ResourceApprovalSet          = "approval_set"
 	ResourceApprovalRequest      = "approval_request"
+	ResourceRecurrenceRule       = "recurrence_rule"
+	ResourceOnCallSchedule       = "oncall_schedule"
+	ResourceOnCallLayer          = "oncall_layer"
+	ResourceOnCallOverride       = "oncall_override"
+	ResourceOnCallPolicy         = "oncall_policy"
+	ResourceBoardConfiguration   = "board_configuration"
+	ResourceWebhook              = "webhook"
+	ResourceRequestTypeConfig    = "request_type_config"
 )

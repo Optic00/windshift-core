@@ -9,6 +9,7 @@ import (
 	"windshift/internal/models"
 	"windshift/internal/restapi"
 	"windshift/internal/restapi/v1/dto"
+	"windshift/internal/restapi/v1/middleware"
 	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
@@ -240,6 +241,7 @@ func (h *MilestoneHandler) Create(w http.ResponseWriter, r *http.Request) {
 		targetDate = &req.TargetDate
 	}
 
+	auditActor := h.AuditActor(r, user)
 	m, err := h.planningService.CreateMilestone(services.CreateMilestoneParams{
 		Name:        req.Name,
 		Description: req.Description,
@@ -247,6 +249,7 @@ func (h *MilestoneHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Status:      req.Status,
 		CategoryID:  req.CategoryID,
 		IsGlobal:    true,
+		AuditActor:  &auditActor,
 	})
 	if err != nil {
 		if h.respondPlanningMutationError(w, r, err) {
@@ -358,6 +361,12 @@ func (h *MilestoneHandler) applyMilestoneUpdate(w http.ResponseWriter, r *http.R
 		sanitize.Pair{Target: &merged.Description, Policy: sanitize.RichText, Label: "Description"},
 	)
 
+	user := middleware.GetUser(r.Context())
+	var auditActor *services.AuditActor
+	if user != nil {
+		actor := h.AuditActor(r, user)
+		auditActor = &actor
+	}
 	updated, err := h.planningService.UpdateMilestone(services.UpdateMilestoneParams{
 		ID:          current.ID,
 		Name:        merged.Name,
@@ -366,6 +375,7 @@ func (h *MilestoneHandler) applyMilestoneUpdate(w http.ResponseWriter, r *http.R
 		Status:      merged.Status,
 		CategoryID:  merged.CategoryID,
 		WorkspaceID: workspaceID,
+		AuditActor:  auditActor,
 	})
 	if err != nil {
 		if h.respondPlanningMutationError(w, r, err) {
@@ -426,12 +436,17 @@ func (h *MilestoneHandler) Update(w http.ResponseWriter, r *http.Request) {
 // @Failure      500  {object}  handlers.ErrorResponse
 // @Router       /milestones/{id} [delete]
 func (h *MilestoneHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	_, id, _, ok := h.requireMilestoneAccessByID(w, r, true)
+	userID, id, _, ok := h.requireMilestoneAccessByID(w, r, true)
 	if !ok {
 		return
 	}
 
-	err := h.planningService.DeleteMilestone(id)
+	user := middleware.GetUser(r.Context())
+	if user == nil || user.ID != userID {
+		h.RespondUnauthorized(w, r)
+		return
+	}
+	err := h.planningService.DeleteMilestone(id, h.AuditActor(r, user))
 	if err != nil {
 		h.RespondInternalError(w, r)
 		return
@@ -460,7 +475,12 @@ func (h *MilestoneHandler) applyMilestoneReorder(w http.ResponseWriter, r *http.
 	}
 	scope.CategoryID = req.CategoryID
 
-	if err := h.planningService.ReorderMilestones(scope, req.OrderedIDs); err != nil {
+	user := middleware.GetUser(r.Context())
+	if user == nil {
+		h.RespondUnauthorized(w, r)
+		return
+	}
+	if err := h.planningService.ReorderMilestones(scope, req.OrderedIDs, h.AuditActor(r, user)); err != nil {
 		if errors.Is(err, services.ErrInvalidMilestoneReorder) {
 			restapi.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, err.Error()))
 			return
@@ -823,6 +843,12 @@ func (h *MilestoneHandler) CreateInWorkspace(w http.ResponseWriter, r *http.Requ
 		targetDate = &req.TargetDate
 	}
 
+	user := middleware.GetUser(r.Context())
+	if user == nil {
+		h.RespondUnauthorized(w, r)
+		return
+	}
+	auditActor := h.AuditActor(r, user)
 	m, err := h.planningService.CreateMilestone(services.CreateMilestoneParams{
 		Name:        req.Name,
 		Description: req.Description,
@@ -831,6 +857,7 @@ func (h *MilestoneHandler) CreateInWorkspace(w http.ResponseWriter, r *http.Requ
 		CategoryID:  req.CategoryID,
 		IsGlobal:    false,
 		WorkspaceID: &wsID,
+		AuditActor:  &auditActor,
 	})
 	if err != nil {
 		if h.respondPlanningMutationError(w, r, err) {
@@ -934,7 +961,12 @@ func (h *MilestoneHandler) DeleteInWorkspace(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if err := h.planningService.DeleteMilestone(m.ID); err != nil {
+	user := middleware.GetUser(r.Context())
+	if user == nil {
+		h.RespondUnauthorized(w, r)
+		return
+	}
+	if err := h.planningService.DeleteMilestone(m.ID, h.AuditActor(r, user)); err != nil {
 		h.RespondInternalError(w, r)
 		return
 	}
@@ -1273,6 +1305,7 @@ func (h *IterationHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	auditActor := h.AuditActor(r, user)
 	iter, err := h.planningService.CreateIteration(services.CreateIterationParams{
 		Name:        req.Name,
 		Description: req.Description,
@@ -1282,6 +1315,7 @@ func (h *IterationHandler) Create(w http.ResponseWriter, r *http.Request) {
 		TypeID:      req.TypeID,
 		IsGlobal:    true,
 		WorkspaceID: nil,
+		AuditActor:  &auditActor,
 	})
 	if err != nil {
 		if h.respondPlanningMutationError(w, r, err) {
@@ -1343,6 +1377,12 @@ func (h *IterationHandler) Update(w http.ResponseWriter, r *http.Request) {
 		sanitize.Pair{Target: &merged.Description, Policy: sanitize.RichText, Label: "Description"},
 	)
 
+	user := middleware.GetUser(r.Context())
+	if user == nil {
+		h.RespondUnauthorized(w, r)
+		return
+	}
+	auditActor := h.AuditActor(r, user)
 	iter, err := h.planningService.UpdateIteration(services.UpdateIterationParams{
 		ID:          id,
 		Name:        merged.Name,
@@ -1352,6 +1392,7 @@ func (h *IterationHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Status:      merged.Status,
 		TypeID:      merged.TypeID,
 		WorkspaceID: workspaceID,
+		AuditActor:  &auditActor,
 	})
 	if err != nil {
 		if h.respondPlanningMutationError(w, r, err) {
@@ -1389,7 +1430,12 @@ func (h *IterationHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.planningService.DeleteIteration(id); err != nil {
+	user := middleware.GetUser(r.Context())
+	if user == nil {
+		h.RespondUnauthorized(w, r)
+		return
+	}
+	if err := h.planningService.DeleteIteration(id, h.AuditActor(r, user)); err != nil {
 		h.RespondInternalError(w, r)
 		return
 	}
@@ -1507,6 +1553,12 @@ func (h *IterationHandler) CreateInWorkspace(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	user := middleware.GetUser(r.Context())
+	if user == nil {
+		h.RespondUnauthorized(w, r)
+		return
+	}
+	auditActor := h.AuditActor(r, user)
 	iter, err := h.planningService.CreateIteration(services.CreateIterationParams{
 		Name:        req.Name,
 		Description: req.Description,
@@ -1516,6 +1568,7 @@ func (h *IterationHandler) CreateInWorkspace(w http.ResponseWriter, r *http.Requ
 		TypeID:      req.TypeID,
 		IsGlobal:    false,
 		WorkspaceID: &wsID,
+		AuditActor:  &auditActor,
 	})
 	if err != nil {
 		if h.respondPlanningMutationError(w, r, err) {
@@ -1608,6 +1661,12 @@ func (h *IterationHandler) UpdateInWorkspace(w http.ResponseWriter, r *http.Requ
 
 	// WorkspaceID scopes the SQL UPDATE to this workspace as defense-in-depth
 	// beyond the URL match above.
+	user := middleware.GetUser(r.Context())
+	if user == nil {
+		h.RespondUnauthorized(w, r)
+		return
+	}
+	auditActor := h.AuditActor(r, user)
 	updated, err := h.planningService.UpdateIteration(services.UpdateIterationParams{
 		ID:          iter.ID,
 		Name:        merged.Name,
@@ -1617,6 +1676,7 @@ func (h *IterationHandler) UpdateInWorkspace(w http.ResponseWriter, r *http.Requ
 		Status:      merged.Status,
 		TypeID:      merged.TypeID,
 		WorkspaceID: &wsID,
+		AuditActor:  &auditActor,
 	})
 	if err != nil {
 		if h.respondPlanningMutationError(w, r, err) {
@@ -1660,7 +1720,12 @@ func (h *IterationHandler) DeleteInWorkspace(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if err := h.planningService.DeleteIteration(iter.ID); err != nil {
+	user := middleware.GetUser(r.Context())
+	if user == nil {
+		h.RespondUnauthorized(w, r)
+		return
+	}
+	if err := h.planningService.DeleteIteration(iter.ID, h.AuditActor(r, user)); err != nil {
 		h.RespondInternalError(w, r)
 		return
 	}

@@ -5,10 +5,12 @@ import (
 	"net/http"
 
 	"windshift/internal/database"
+	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/repository/actionutil"
 	"windshift/internal/restapi"
+	"windshift/internal/restapi/v1/middleware"
 	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/services/actioncatalog"
@@ -368,6 +370,9 @@ func (h *ActionHandler) CreateAction(w http.ResponseWriter, r *http.Request) {
 		h.RespondInternalError(w, r)
 		return
 	}
+	if user := middleware.GetUser(r.Context()); user != nil {
+		h.Auditor.LogWithDetails(r, user, logger.ActionAutomationCreate, logger.ResourceAutomation, &created.ID, created.Name, map[string]interface{}{"workspace_id": workspaceID})
+	}
 	h.RespondCreated(w, actionResponse{Action: created, Warnings: warnings})
 }
 
@@ -438,6 +443,9 @@ func (h *ActionHandler) UpdateAction(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.RespondInternalError(w, r)
 		return
+	}
+	if user := middleware.GetUser(r.Context()); user != nil {
+		h.Auditor.LogWithDetails(r, user, logger.ActionAutomationUpdate, logger.ResourceAutomation, &updated.ID, updated.Name, map[string]interface{}{"workspace_id": workspaceID})
 	}
 	h.RespondOK(w, actionResponse{Action: updated, Warnings: warnings})
 }

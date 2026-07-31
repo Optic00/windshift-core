@@ -6,6 +6,7 @@ import (
 
 	"windshift/internal/auth"
 	"windshift/internal/database"
+	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/restapi"
 	"windshift/internal/services"
@@ -86,7 +87,7 @@ func (h *AdminAPITokenHandler) ListAll(w http.ResponseWriter, r *http.Request) {
 // @Failure      404  {object}  handlers.ErrorResponse  "Token not found"
 // @Router       /admin/api-tokens/{id} [delete]
 func (h *AdminAPITokenHandler) Revoke(w http.ResponseWriter, r *http.Request) {
-	_, ok := h.RequireAuth(w, r)
+	user, ok := h.RequireAuth(w, r)
 	if !ok {
 		return
 	}
@@ -101,5 +102,6 @@ func (h *AdminAPITokenHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.Auditor.Log(r, user, logger.ActionAPITokenAdminRevoke, logger.ResourceAPIToken, &id, "")
 	h.RespondNoContent(w)
 }

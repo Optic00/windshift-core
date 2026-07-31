@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"windshift/internal/logger"
 	"windshift/internal/repository"
 )
 
@@ -267,6 +268,7 @@ type CreateIterationParams struct {
 	TypeID      *int
 	IsGlobal    bool
 	WorkspaceID *int
+	AuditActor  *AuditActor
 }
 
 // CreateIteration creates a new iteration.
@@ -287,7 +289,15 @@ func (s *PlanningService) CreateIteration(params CreateIterationParams) (*Iterat
 		return nil, fmt.Errorf("failed to create iteration: %w", err)
 	}
 
-	return s.GetIteration(int(id))
+	created, err := s.GetIteration(int(id))
+	if err != nil {
+		return nil, err
+	}
+	if params.AuditActor != nil {
+		resourceID := created.ID
+		emitServiceAudit(s.db, *params.AuditActor, logger.ActionIterationCreate, logger.ResourceIteration, &resourceID, created.Name, nil)
+	}
+	return created, nil
 }
 
 // UpdateIterationParams contains parameters for updating an iteration.
@@ -303,6 +313,7 @@ type UpdateIterationParams struct {
 	Status      string
 	TypeID      *int
 	WorkspaceID *int // nil = global iteration
+	AuditActor  *AuditActor
 }
 
 // UpdateIteration updates an existing iteration within its declared scope.
@@ -357,7 +368,15 @@ func (s *PlanningService) UpdateIteration(params UpdateIterationParams) (*Iterat
 		// never overwrite that transition with stale data.
 		return nil, ErrIterationLifecycleConflict
 	}
-	return s.GetIteration(params.ID)
+	updated, err := s.GetIteration(params.ID)
+	if err != nil {
+		return nil, err
+	}
+	if params.AuditActor != nil {
+		resourceID := updated.ID
+		emitServiceAudit(s.db, *params.AuditActor, logger.ActionIterationUpdate, logger.ResourceIteration, &resourceID, updated.Name, nil)
+	}
+	return updated, nil
 }
 
 func (s *PlanningService) iterationStatusInScope(id int, workspaceID *int) (string, error) {
@@ -400,11 +419,23 @@ func validateIterationStatusTransition(current, next string) error {
 	return nil
 }
 
-// DeleteIteration deletes an iteration.
-func (s *PlanningService) DeleteIteration(id int) error {
+// DeleteIteration deletes an iteration and optionally records the user-driven
+// mutation once for any transport that supplied an actor.
+func (s *PlanningService) DeleteIteration(id int, auditActors ...AuditActor) error {
+	var resourceName string
+	if len(auditActors) > 0 {
+		existing, err := s.GetIteration(id)
+		if err != nil {
+			return err
+		}
+		resourceName = existing.Name
+	}
 	_, err := s.db.ExecWrite("DELETE FROM iterations WHERE id = ?", id)
 	if err != nil {
 		return fmt.Errorf("failed to delete iteration: %w", err)
+	}
+	if actor := optionalAuditActor(auditActors); actor != nil {
+		emitServiceAudit(s.db, *actor, logger.ActionIterationDelete, logger.ResourceIteration, &id, resourceName, nil)
 	}
 	return nil
 }

@@ -233,6 +233,12 @@ func (h *TeamHandler) Update(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
+	if user := utils.GetCurrentUser(r); user != nil {
+		h.auditor.LogWithDetails(r, user, logger.ActionTeamUpdate, logger.ResourceTeam, &id, team.Name, map[string]interface{}{
+			"description": team.Description,
+			"is_active":   team.IsActive,
+		})
+	}
 
 	respondJSONOK(w, team)
 }
@@ -360,6 +366,9 @@ func (h *TeamHandler) AddMembers(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if currentUser != nil {
+		h.auditor.LogWithDetails(r, currentUser, logger.ActionTeamAddMember, logger.ResourceTeam, &id, "", map[string]interface{}{"user_ids": req.UserIDs})
+	}
 	respondJSONOK(w, map[string]interface{}{
 		"message": "Members added successfully",
 	})
@@ -385,6 +394,10 @@ func (h *TeamHandler) RemoveMembers(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	user := utils.GetCurrentUser(r)
+	if user != nil {
+		h.auditor.LogWithDetails(r, user, logger.ActionTeamRemoveMember, logger.ResourceTeam, &id, "", map[string]interface{}{"user_ids": req.UserIDs})
+	}
 	respondJSONOK(w, map[string]interface{}{
 		"message": "Members removed successfully",
 	})
@@ -417,6 +430,10 @@ func (h *TeamHandler) UpdateMemberRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	user := utils.GetCurrentUser(r)
+	if user != nil {
+		h.auditor.LogWithDetails(r, user, logger.ActionTeamUpdateMemberRole, logger.ResourceTeam, &teamID, "", map[string]interface{}{"user_id": userID, "role": req.Role})
+	}
 	respondJSONOK(w, map[string]interface{}{
 		"message": "Member role updated successfully",
 	})
@@ -460,6 +477,7 @@ func (h *TeamHandler) AddGroups(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	h.auditor.LogWithDetails(r, currentUser, logger.ActionTeamAddGroup, logger.ResourceTeam, &id, "", map[string]interface{}{"group_ids": req.GroupIDs})
 
 	respondJSONOK(w, map[string]interface{}{
 		"message": "Groups added successfully",
@@ -484,6 +502,9 @@ func (h *TeamHandler) RemoveGroups(w http.ResponseWriter, r *http.Request) {
 			respondInternalError(w, r, err)
 			return
 		}
+	}
+	if user := utils.GetCurrentUser(r); user != nil {
+		h.auditor.LogWithDetails(r, user, logger.ActionTeamRemoveGroup, logger.ResourceTeam, &id, "", map[string]interface{}{"group_ids": req.GroupIDs})
 	}
 
 	respondJSONOK(w, map[string]interface{}{

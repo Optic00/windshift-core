@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"windshift/internal/database"
+	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/restapi"
 	"windshift/internal/restapi/v1/dto"
@@ -221,6 +222,7 @@ func (h *WorkspaceHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.Auditor.Log(r, user, logger.ActionWorkspaceCreate, logger.ResourceWorkspace, &result.Workspace.ID, result.Workspace.Name)
 	resp := toWorkspaceResponse(result.Workspace)
 	resp.Warnings = warnings
 	h.RespondCreated(w, resp)
@@ -289,6 +291,7 @@ func (h *WorkspaceHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.Auditor.Log(r, user, logger.ActionWorkspaceUpdate, logger.ResourceWorkspace, &ws.ID, ws.Name)
 	resp := toWorkspaceResponse(ws)
 	resp.Warnings = warnings
 	h.RespondOK(w, resp)
@@ -336,6 +339,7 @@ func (h *WorkspaceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.Auditor.Log(r, user, logger.ActionWorkspaceDelete, logger.ResourceWorkspace, &wsID, "")
 	h.RespondNoContent(w)
 }
 

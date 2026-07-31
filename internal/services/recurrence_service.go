@@ -6,6 +6,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/sanitize"
@@ -66,11 +67,16 @@ type RecurrenceGenerator interface {
 type RecurrenceService struct {
 	repo      *repository.RecurrenceRepository
 	generator RecurrenceGenerator
+	auditor   *logger.Auditor
 }
 
 // NewRecurrenceService creates a recurrence application service.
-func NewRecurrenceService(repo *repository.RecurrenceRepository, generator RecurrenceGenerator) *RecurrenceService {
-	return &RecurrenceService{repo: repo, generator: generator}
+func NewRecurrenceService(repo *repository.RecurrenceRepository, generator RecurrenceGenerator, auditors ...*logger.Auditor) *RecurrenceService {
+	service := &RecurrenceService{repo: repo, generator: generator}
+	if len(auditors) > 0 {
+		service.auditor = auditors[0]
+	}
+	return service
 }
 
 // RecurrenceInstances contains one page of generated instances.
@@ -92,7 +98,7 @@ func (s *RecurrenceService) Get(itemID int) (*models.RecurrenceRule, error) {
 }
 
 // Create validates and persists a recurrence rule for an item.
-func (s *RecurrenceService) Create(itemID, workspaceID, userID int, req models.CreateRecurrenceRequest) (*models.RecurrenceRule, error) {
+func (s *RecurrenceService) Create(itemID, workspaceID, userID int, req models.CreateRecurrenceRequest, auditActors ...AuditActor) (*models.RecurrenceRule, error) {
 	rule, err := buildRecurrenceRule(itemID, workspaceID, userID, req)
 	if err != nil {
 		return nil, err
@@ -107,11 +113,16 @@ func (s *RecurrenceService) Create(itemID, workspaceID, userID int, req models.C
 	if err != nil {
 		return nil, err
 	}
-	return s.repo.GetByID(ruleID)
+	created, err := s.repo.GetByID(ruleID)
+	if err != nil {
+		return nil, err
+	}
+	s.emitAudit(optionalAuditActor(auditActors), logger.ActionRecurrenceCreate, created, itemID, nil)
+	return created, nil
 }
 
 // Update applies a partial update and returns the persisted rule.
-func (s *RecurrenceService) Update(itemID int, req models.UpdateRecurrenceRequest) (*models.RecurrenceRule, error) {
+func (s *RecurrenceService) Update(itemID int, req models.UpdateRecurrenceRequest, auditActors ...AuditActor) (*models.RecurrenceRule, error) {
 	rule, err := s.repo.GetByTemplateItemID(itemID)
 	if err != nil {
 		return nil, err
@@ -122,16 +133,25 @@ func (s *RecurrenceService) Update(itemID int, req models.UpdateRecurrenceReques
 	if err := s.repo.Update(rule); err != nil {
 		return nil, err
 	}
-	return s.repo.GetByID(rule.ID)
+	updated, err := s.repo.GetByID(rule.ID)
+	if err != nil {
+		return nil, err
+	}
+	s.emitAudit(optionalAuditActor(auditActors), logger.ActionRecurrenceUpdate, updated, itemID, nil)
+	return updated, nil
 }
 
 // Delete removes the rule attached to itemID.
-func (s *RecurrenceService) Delete(itemID int) error {
+func (s *RecurrenceService) Delete(itemID int, auditActors ...AuditActor) error {
 	rule, err := s.repo.GetByTemplateItemID(itemID)
 	if err != nil {
 		return err
 	}
-	return s.repo.Delete(rule.ID)
+	if err := s.repo.Delete(rule.ID); err != nil {
+		return err
+	}
+	s.emitAudit(optionalAuditActor(auditActors), logger.ActionRecurrenceDelete, rule, itemID, nil)
+	return nil
 }
 
 // ListInstances returns generated instances and their total count.
@@ -152,7 +172,7 @@ func (s *RecurrenceService) ListInstances(itemID, limit, offset int) (*Recurrenc
 }
 
 // ForceGenerate triggers immediate generation for the rule attached to itemID.
-func (s *RecurrenceService) ForceGenerate(itemID int) (int, error) {
+func (s *RecurrenceService) ForceGenerate(itemID int, auditActors ...AuditActor) (int, error) {
 	rule, err := s.repo.GetByTemplateItemID(itemID)
 	if err != nil {
 		return 0, err
@@ -160,7 +180,35 @@ func (s *RecurrenceService) ForceGenerate(itemID int) (int, error) {
 	if s.generator == nil {
 		return 0, errors.New("recurrence generator is not configured")
 	}
-	return s.generator.ForceGenerate(rule.ID)
+	count, err := s.generator.ForceGenerate(rule.ID)
+	if err != nil {
+		return 0, err
+	}
+	s.emitAudit(optionalAuditActor(auditActors), logger.ActionRecurrenceForceGenerate, rule, itemID, map[string]interface{}{"instances_generated": count})
+	return count, nil
+}
+
+func (s *RecurrenceService) emitAudit(actor *AuditActor, action string, rule *models.RecurrenceRule, itemID int, details map[string]interface{}) {
+	if actor == nil || s.auditor == nil || rule == nil {
+		return
+	}
+	if details == nil {
+		details = map[string]interface{}{}
+	}
+	details["item_id"] = itemID
+	event := logger.AuditEvent{
+		UserID:       actor.UserID,
+		Username:     actor.Username,
+		IPAddress:    actor.IPAddress,
+		UserAgent:    actor.UserAgent,
+		ActionType:   action,
+		ResourceType: logger.ResourceRecurrenceRule,
+		ResourceID:   &rule.ID,
+		ResourceName: rule.RRule,
+		Details:      mergeAuditDetails(details, *actor),
+		Success:      true,
+	}
+	s.auditor.LogEvent(event)
 }
 
 // ListByWorkspace returns every recurrence rule in a workspace.
