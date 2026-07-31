@@ -387,7 +387,7 @@ func scanWorkspaceStatuses(rows *sql.Rows) ([]models.Status, error) {
 // If no config set exists, all item types are returned.
 func (s *WorkspaceService) GetItemTypes(workspaceID int) ([]ItemTypeResult, error) {
 	rows, err := s.db.Query(`
-		SELECT DISTINCT it.id, it.name, it.description, it.icon, it.color,
+		SELECT it.id, it.name, it.description, it.icon, it.color,
 		       it.hierarchy_level, it.sort_order, it.is_default
 		FROM item_types it
 		WHERE NOT EXISTS (
