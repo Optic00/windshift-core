@@ -1,4 +1,5 @@
 @import "tailwindcss" source(none);
+@import "../design-system/tokens/index.css";
 @import "../design-system/brand.css";
 
 @source "../lib/components/AlertBox.svelte";

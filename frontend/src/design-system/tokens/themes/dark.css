@@ -3,7 +3,8 @@
    Semantic token values for dark mode
    ================================================================= */
 
-html[data-color-mode="dark"] {
+html[data-color-mode="dark"],
+[data-ds-color-mode="dark"] {
   color-scheme: dark;
   /* =================================================================
      SURFACE COLORS

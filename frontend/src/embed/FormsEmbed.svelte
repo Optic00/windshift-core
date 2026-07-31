@@ -220,6 +220,15 @@
     }
   }
 
+  function setMultiValue(field, optionValue, checked) {
+    const resolvedValue = selectValue(field, optionValue);
+    const currentValue = Array.isArray(valueFor(field)) ? valueFor(field) : [];
+    const withoutValue = currentValue.filter(
+      (entry) => String(entry) !== String(resolvedValue)
+    );
+    setValue(field, checked ? [...withoutValue, resolvedValue] : withoutValue);
+  }
+
   function validate(fieldsToValidate = fields) {
     for (const field of fieldsToValidate) {
       if (!field.is_required) continue;
@@ -284,7 +293,7 @@
 <div
   class="wsf-root"
   class:ds-brand-scope={Boolean(brandColor)}
-  data-theme={effectiveTheme}
+  data-ds-color-mode={effectiveTheme}
   style={brandColor ? `--ds-brand-color: ${brandColor}` : undefined}
 >
   <div class="wsf-card">
@@ -309,7 +318,9 @@
     {:else}
       {#if selectedForm}
         <h2 class="wsf-title">{selectedForm.name}</h2>
-        {#if selectedForm.description}<p class="wsf-description">{selectedForm.description}</p>{/if}
+        <p class="wsf-description">
+          {selectedForm.description || 'Complete the fields below to send your request.'}
+        </p>
       {/if}
 
       {#if fieldsLoading}
@@ -373,14 +384,24 @@
                     onchange={(value) => setValue(field, selectValue(field, value))}
                   />
                 {:else if kind === 'multiselect'}
-                  <NativeSelect
+                  <div
                     id={`wsf-${field.field_identifier}`}
-                    value={valueFor(field)}
-                    options={optionsFor(field)}
-                    multiple
-                    required={field.is_required}
-                    onchange={(value) => setValue(field, value.map((entry) => selectValue(field, entry)))}
-                  />
+                    class="wsf-multiselect"
+                    role="group"
+                    aria-label={labelFor(field)}
+                  >
+                    {#each optionsFor(field) as option, optionIndex}
+                      <Checkbox
+                        id={`wsf-${field.field_identifier}-option-${optionIndex}`}
+                        checked={(Array.isArray(valueFor(field)) ? valueFor(field) : []).some(
+                          (entry) => String(entry) === String(selectValue(field, option.value))
+                        )}
+                        label={option.label}
+                        size="small"
+                        onchange={(checked) => setMultiValue(field, option.value, checked)}
+                      />
+                    {/each}
+                  </div>
                 {:else}
                   <Input
                     id={`wsf-${field.field_identifier}`}

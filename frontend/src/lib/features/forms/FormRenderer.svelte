@@ -1,6 +1,6 @@
 <script>
   import { untrack } from 'svelte';
-  import { CheckCircle2, ExternalLink, RotateCcw } from '@lucide/svelte';
+  import { ExternalLink, FileText, LogIn, Paperclip, RotateCcw } from '@lucide/svelte';
   import { api } from '../../api.js';
   import { t } from '../../stores/i18n.svelte.js';
   import Spinner from '../../components/Spinner.svelte';
@@ -62,10 +62,12 @@
   let formData = $state({ title: '', description: '' });
   let customFieldValues = $state({});
   let attachments = $state([]);
+  let attachmentInput = $state(null);
 
   let draftReady = $state(false);
   let resumedDraft = $state(null);
   let draftStatus = $state('');
+  let draftBaseline = $state('');
   let draftStatusTimer = null;
   let needsAuthentication = $derived(
     !preview && (authenticationRequired || submissionRequiresAuth)
@@ -102,12 +104,14 @@
       current_step: currentStep,
     };
     if (!draftReady || preview || success || typeof localStorage === 'undefined') return;
+    if (JSON.stringify(snapshot) === draftBaseline) return;
 
     draftStatus = 'saving';
     const timer = setTimeout(() => {
       const saved = savePublicFormDraft(localStorage, formSlug, formId, snapshot);
       draftStatus = saved ? 'saved' : '';
       if (saved) {
+        draftBaseline = JSON.stringify(snapshot);
         if (draftStatusTimer) clearTimeout(draftStatusTimer);
         draftStatusTimer = setTimeout(() => {
           draftStatus = '';
@@ -127,6 +131,11 @@
 
   function applyDetail(detail) {
     draftReady = false;
+    draftStatus = '';
+    if (draftStatusTimer) {
+      clearTimeout(draftStatusTimer);
+      draftStatusTimer = null;
+    }
     activeDetail = detail;
     error = null;
     submissionRequiresAuth = false;
@@ -152,6 +161,12 @@
     customFieldValues = values.customFieldValues;
     currentStep = nextStep;
     attachments = [];
+    draftBaseline = JSON.stringify({
+      title: formData.title,
+      description: formData.description,
+      custom_fields: JSON.parse(JSON.stringify(customFieldValues)),
+      current_step: currentStep,
+    });
     loading = false;
     queueMicrotask(() => {
       draftReady = true;
@@ -292,16 +307,14 @@
       <Spinner />
     </div>
   {:else if success}
-    <div class="py-8 text-center" data-testid="public-form-success">
-      <div
-        class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full"
-        style="background: color-mix(in srgb, var(--ds-text-success) 12%, transparent); color: var(--ds-text-success);"
-      >
-        <CheckCircle2 class="h-7 w-7" />
-      </div>
-      <h3 class="text-xl font-semibold" style="color: var(--ds-text);">Response received</h3>
-      <p class="mx-auto mt-2 max-w-md text-sm" style="color: var(--ds-text-subtle);">{successMessage}</p>
-      <div class="mt-6 flex flex-wrap justify-center gap-2">
+    <div data-testid="public-form-success">
+      <AlertBox variant="success">
+        <div>
+          <p class="font-medium" style="color: var(--ds-text);">Response received</p>
+          <p class="mt-0.5" style="color: var(--ds-text-subtle);">{successMessage}</p>
+        </div>
+      </AlertBox>
+      <div class="mt-4 flex flex-wrap gap-2">
         <Button
           type="button"
           variant="default"
@@ -326,28 +339,28 @@
         {/if}
       </div>
       {#if redirectUrl}
-        <p class="mt-3 text-xs" style="color: var(--ds-text-subtle);">Redirecting shortly…</p>
+        <p class="mt-2 text-xs" style="color: var(--ds-text-subtle);">Redirecting shortly…</p>
       {/if}
     </div>
   {:else if needsAuthentication}
-    <div class="py-8 text-center" data-testid="form-auth-required">
-      <div class="mx-auto max-w-md">
+    <div data-testid="form-auth-required">
+      <div>
         <AlertBox
           variant="warning"
           message={embed
             ? 'This form requires a Windshift sign-in and cannot be completed inside an embed.'
             : 'Sign in to continue. Your saved progress will be restored when you return.'}
         />
-        <a
-          data-testid="public-form-auth-action"
-          class="mt-4 inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-semibold text-white"
-          style="background: var(--ds-interactive);"
+        <Button
           href={embed ? toExternal(hostedFormPath) : signInUrl}
           target={embed ? '_blank' : undefined}
+          variant="primary"
+          icon={embed ? ExternalLink : LogIn}
+          dataTestid="public-form-auth-action"
+          class="mt-4"
         >
           {embed ? 'Open hosted form' : 'Sign in and return'}
-          <ExternalLink class="h-4 w-4" />
-        </a>
+        </Button>
       </div>
     </div>
   {:else}
@@ -404,19 +417,44 @@
           <Label for="form-attachments" class="mb-1.5" color="default">Attachments</Label>
           <input
             id="form-attachments"
+            bind:this={attachmentInput}
             data-testid="public-form-attachments"
             type="file"
             multiple
             accept={attachmentConfig.allowed_mime_types?.join(',') || undefined}
             onchange={handleAttachmentChange}
+            class="sr-only"
           />
+          <div class="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="default"
+              size="small"
+              icon={Paperclip}
+              onclick={() => attachmentInput?.click()}
+            >
+              Choose files
+            </Button>
+            <span class="text-xs" style="color: var(--ds-text-subtle);">
+              {attachments.length === 0
+                ? 'No files selected'
+                : `${attachments.length} ${attachments.length === 1 ? 'file' : 'files'} selected`}
+            </span>
+          </div>
           <p class="mt-1 text-xs" style="color: var(--ds-text-subtle);">
             Up to {attachmentConfig.max_files || 5} files, {Math.floor(attachmentConfig.max_file_size / 1048576)} MB each.
           </p>
           {#if attachments.length > 0}
-            <ul data-testid="public-form-attachment-list" class="mt-2 space-y-1 text-xs" style="color: var(--ds-text-subtle);">
+            <ul
+              data-testid="public-form-attachment-list"
+              class="mt-2 divide-y rounded border text-xs"
+              style="border-color: var(--ds-border); --tw-divide-color: var(--ds-border);"
+            >
               {#each attachments as attachment}
-                <li>{attachment.name}</li>
+                <li class="flex items-center gap-2 px-3 py-2" style="color: var(--ds-text);">
+                  <FileText class="h-4 w-4 shrink-0" style="color: var(--ds-icon);" />
+                  <span class="min-w-0 truncate">{attachment.name}</span>
+                </li>
               {/each}
             </ul>
           {/if}

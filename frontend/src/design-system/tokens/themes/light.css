@@ -5,7 +5,8 @@
 
 :root,
 html,
-html[data-color-mode="light"] {
+html[data-color-mode="light"],
+[data-ds-color-mode="light"] {
   /* =================================================================
      SURFACE COLORS
      Background colors for UI layers
