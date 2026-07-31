@@ -176,6 +176,7 @@ blog/
 !/docs/0.8.2-performance-regression-gates.md
 !/docs/0.8.4-release-bug-security-review.md
 !/docs/cross-surface-authorization-contracts.md
+!/docs/recurrence-scheduling-safeguards.md
 !/docs/jira-service-management-import.md
 !/docs/jira-import-fidelity-gap-analysis.md
 !/docs/WI-531-public-forms-backend-api-audit.md

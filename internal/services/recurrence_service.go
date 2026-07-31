@@ -2,6 +2,7 @@ package services
 
 import (
 	"errors"
+	"fmt"
 	"time"
 	"unicode/utf8"
 
@@ -22,6 +23,15 @@ var ErrRecurrenceWorkspaceLimit = errors.New("workspace recurrence rule limit re
 // MaxRecurrenceRulesPerWorkspace is enforced for every recurrence creation
 // surface.
 const MaxRecurrenceRulesPerWorkspace = 100
+
+// RecurrenceWorkspaceLimitMessage is the stable user-facing explanation
+// returned by every recurrence creation surface when a workspace is full.
+func RecurrenceWorkspaceLimitMessage() string {
+	return fmt.Sprintf(
+		"This workspace has reached the limit of %d recurrence rules",
+		MaxRecurrenceRulesPerWorkspace,
+	)
+}
 
 // RecurrenceValidationKind lets transports preserve their own error envelopes
 // while sharing the recurrence validation rules.

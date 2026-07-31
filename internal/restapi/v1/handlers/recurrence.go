@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -141,10 +140,7 @@ func (h *RecurrenceHandler) CreateRecurrence(w http.ResponseWriter, r *http.Requ
 		h.RespondError(w, r, restapi.NewAPIError(
 			http.StatusConflict,
 			restapi.ErrCodeConflict,
-			fmt.Sprintf(
-				"This workspace has reached the limit of %d recurrence rules",
-				services.MaxRecurrenceRulesPerWorkspace,
-			),
+			services.RecurrenceWorkspaceLimitMessage(),
 		))
 		return
 	}

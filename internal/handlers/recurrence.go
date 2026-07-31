@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -101,10 +100,7 @@ func (h *RecurrenceHandler) CreateRecurrence(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if errors.Is(err, services.ErrRecurrenceWorkspaceLimit) {
-		respondConflict(w, r, fmt.Sprintf(
-			"This workspace has reached the limit of %d recurrence rules",
-			services.MaxRecurrenceRulesPerWorkspace,
-		))
+		respondConflict(w, r, services.RecurrenceWorkspaceLimitMessage())
 		return
 	}
 	if respondRecurrenceValidation(w, r, err) {

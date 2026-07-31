@@ -43,7 +43,9 @@ Shared recurrence behavior includes identifier sanitization, RRULE/date
 validation, defaults, persistence, rule lookup, instance lookup/counting,
 bounded preview iteration, and scheduler dispatch. RRULE values longer than the
 identifier limit are rejected before sanitization so truncation cannot change
-their meaning.
+their meaning. The shared creation path also enforces the atomic workspace
+quota and common conflict response documented in
+[Recurrence scheduling safeguards](recurrence-scheduling-safeguards.md).
 
 ## Test-run execution inventory
 
