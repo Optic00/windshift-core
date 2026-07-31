@@ -29,6 +29,8 @@ services:
       - DB_PATH=/data/windshift.db
       - LOG_LEVEL=info
       - LOG_FORMAT=json
+      # Total process budget. Keep the container limit below in sync.
+      - WINDSHIFT_MEMORY_LIMIT_MB=${WINDSHIFT_MEMORY_LIMIT_MB:-2048}
       - DISABLE_PLUGINS=${DISABLE_PLUGINS:-false}
       - PLUGIN_DIR=/data/plugins
       - ENABLE_ADMIN_FALLBACK=${ENABLE_ADMIN_FALLBACK:-false}
@@ -79,6 +81,7 @@ services:
     tmpfs:
       - /tmp:exec,size=64M
     restart: unless-stopped
+    mem_limit: ${WINDSHIFT_CONTAINER_MEMORY_LIMIT:-2g}
     # --- Traefik labels (uncomment when using traefik service) ---
     # labels:
     #   - "traefik.enable=true"

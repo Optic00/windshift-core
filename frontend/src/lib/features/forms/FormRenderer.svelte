@@ -3,6 +3,7 @@
   import { ExternalLink, FileText, LogIn, Paperclip, RotateCcw } from '@lucide/svelte';
   import { api } from '../../api.js';
   import { t } from '../../stores/i18n.svelte.js';
+  import { authStore } from '../../stores';
   import Spinner from '../../components/Spinner.svelte';
   import Label from '../../components/Label.svelte';
   import AlertBox from '../../components/AlertBox.svelte';
@@ -103,12 +104,14 @@
       custom_fields: JSON.parse(JSON.stringify(customFieldValues)),
       current_step: currentStep,
     };
-    if (!draftReady || preview || success || typeof localStorage === 'undefined') return;
+    if (!draftReady || preview || success) return;
+    const { storage: draftStorage, userId: draftUserId } = resolveDraftStore();
+    if (!draftStorage) return;
     if (JSON.stringify(snapshot) === draftBaseline) return;
 
     draftStatus = 'saving';
     const timer = setTimeout(() => {
-      const saved = savePublicFormDraft(localStorage, formSlug, formId, snapshot);
+      const saved = savePublicFormDraft(draftStorage, formSlug, formId, snapshot, draftUserId);
       draftStatus = saved ? 'saved' : '';
       if (saved) {
         draftBaseline = JSON.stringify(snapshot);
@@ -129,6 +132,23 @@
     };
   });
 
+  function resolveDraftStore() {
+    // Authenticated drafts bind to the user identity and persist in
+    // localStorage so progress is restored after sign-in. Anonymous drafts
+    // use sessionStorage so they are scoped to the current tab and never
+    // survive into the next browser session on a shared device.
+    if (authStore.isAuthenticated) {
+      const userId = authStore.currentUser?.id;
+      if (userId != null && typeof localStorage !== 'undefined') {
+        return { storage: localStorage, userId };
+      }
+    }
+    if (typeof sessionStorage !== 'undefined') {
+      return { storage: sessionStorage, userId: null };
+    }
+    return { storage: null, userId: null };
+  }
+
   function applyDetail(detail) {
     draftReady = false;
     draftStatus = '';
@@ -148,8 +168,17 @@
     let nextStep = steps[0];
     resumedDraft = null;
 
-    if (!preview && !initialValues && typeof localStorage !== 'undefined') {
-      const draft = loadPublicFormDraft(localStorage, formSlug, formId);
+    // Purge any pre-0.8.4 anonymous draft left in localStorage under the
+    // legacy user-less key so locally persisted form values do not linger.
+    if (typeof localStorage !== 'undefined') {
+      clearPublicFormDraft(localStorage, formSlug, formId);
+    }
+
+    if (!preview && !initialValues) {
+      const { storage: draftStorage, userId: draftUserId } = resolveDraftStore();
+      const draft = draftStorage
+        ? loadPublicFormDraft(draftStorage, formSlug, formId, draftUserId)
+        : null;
       if (draft) {
         values = initializeFormValues(fields, draft);
         nextStep = clampFormStep(steps, draft.current_step);
@@ -222,8 +251,9 @@
   }
 
   function startFresh() {
-    if (typeof localStorage !== 'undefined') {
-      clearPublicFormDraft(localStorage, formSlug, formId);
+    const { storage: draftStorage, userId: draftUserId } = resolveDraftStore();
+    if (draftStorage) {
+      clearPublicFormDraft(draftStorage, formSlug, formId, draftUserId);
     }
     resumedDraft = null;
     if (activeDetail) applyDetail(activeDetail);
@@ -275,8 +305,9 @@
         : await api.forms.submit(formSlug, submissionData, attachments);
 
       draftReady = false;
-      if (typeof localStorage !== 'undefined') {
-        clearPublicFormDraft(localStorage, formSlug, formId);
+      const { storage: draftStorage, userId: draftUserId } = resolveDraftStore();
+      if (draftStorage) {
+        clearPublicFormDraft(draftStorage, formSlug, formId, draftUserId);
       }
       success = true;
       successMessage = result.success_message || 'Thank you for your submission!';

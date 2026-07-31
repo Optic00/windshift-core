@@ -28,9 +28,9 @@ func joinProviderPath(baseURL, apiPath string) string {
 }
 
 // newAdminConfiguredHTTPClient returns a client for URLs configured by a system
-// administrator. It is SSRF-safe by default (blocks loopback/private/metadata);
-// operators reach local/internal LLM endpoints with the global
-// --allow-local-connections switch, which utils.NewSSRFSafeHTTPClient honors.
+// administrator. Local/internal endpoints are reachable by default; operators
+// can restore loopback/private/metadata blocking with
+// --allow-local-connections=false.
 func newAdminConfiguredHTTPClient(timeout time.Duration) *http.Client {
 	if timeout == 0 {
 		timeout = DefaultRequestTimeout

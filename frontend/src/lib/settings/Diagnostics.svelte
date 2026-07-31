@@ -11,6 +11,7 @@
   import LLMHealthSection from './diagnostics/LLMHealthSection.svelte';
   import RunnerPoolsSection from './diagnostics/RunnerPoolsSection.svelte';
   import DatabasePoolsSection from './diagnostics/DatabasePoolsSection.svelte';
+  import CacheMemorySection from './diagnostics/CacheMemorySection.svelte';
   import RecurrenceVolumeSection from './diagnostics/RecurrenceVolumeSection.svelte';
 
   const tabs = [
@@ -22,6 +23,7 @@
     { id: 'llm-health', label: 'AI / LLM' },
     { id: 'runner-pools', label: 'Runner pools' },
     { id: 'database-pools', label: 'Database pools' },
+    { id: 'cache-memory', label: 'Cache memory' },
     { id: 'recurrence-volume', label: 'Recurrence' },
   ];
 
@@ -54,6 +56,8 @@
         <RunnerPoolsSection />
       {:else if subtab === 'database-pools'}
         <DatabasePoolsSection />
+      {:else if subtab === 'cache-memory'}
+        <CacheMemorySection />
       {:else if subtab === 'recurrence-volume'}
         <RecurrenceVolumeSection />
       {/if}

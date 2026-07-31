@@ -28,8 +28,8 @@ type ModelRefresher struct {
 }
 
 // NewModelRefresher constructs a ModelRefresher for admin-configured provider
-// catalog URLs. Private/loopback endpoints are blocked unless the global
-// --allow-local-connections switch is enabled.
+// catalog URLs. Private/loopback endpoints are reachable unless the global
+// --allow-local-connections switch is explicitly disabled.
 func NewModelRefresher(cache *ModelCache) *ModelRefresher {
 	return newModelRefresherWithClient(cache, newAdminConfiguredHTTPClient(30*time.Second))
 }

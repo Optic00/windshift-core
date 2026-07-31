@@ -63,9 +63,13 @@ const defaultDBRequestTimeout = 12 * time.Second
 
 func NewItemHandler(db database.Database, permissionService *services.PermissionService, activityTracker *services.ActivityTracker, notificationService interface {
 	EmitEvent(event *services.NotificationEvent)
-}) *ItemHandler {
+}, cacheSizeMB ...int) *ItemHandler {
 	// Initialize item cache service
-	itemCache, err := services.NewItemCacheService(db, services.DefaultItemCacheConfig())
+	cacheConfig := services.DefaultItemCacheConfig()
+	if len(cacheSizeMB) > 0 && cacheSizeMB[0] > 0 {
+		cacheConfig.MaxCacheSize = cacheSizeMB[0]
+	}
+	itemCache, err := services.NewItemCacheService(db, cacheConfig)
 	if err != nil {
 		slog.Warn("failed to initialize item cache, continuing without cache", slog.Any("error", err))
 		// Continue without cache, will fall back to direct queries

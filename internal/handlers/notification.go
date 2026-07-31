@@ -27,6 +27,7 @@ type NotificationManagerConfig struct {
 	FlushInterval time.Duration // Deprecated: read-state writes are synchronous
 	MaxBatchSize  int           // Maximum notifications per multi-row INSERT chunk
 	SyncInterval  time.Duration // Deprecated: cache entries are immutable DB views
+	MaxCacheSize  int           // Hard cache limit in MiB
 }
 
 // DefaultNotificationManagerConfig returns a config with sensible defaults.
@@ -35,6 +36,7 @@ func DefaultNotificationManagerConfig() NotificationManagerConfig {
 		FlushInterval: 30 * time.Second,
 		MaxBatchSize:  50,
 		SyncInterval:  2 * time.Minute,
+		MaxCacheSize:  123,
 	}
 }
 
@@ -105,13 +107,16 @@ type NotificationHandler struct {
 
 // NewNotificationManager creates a new notification manager with BigCache
 func NewNotificationManager(db database.Database, nmCfg NotificationManagerConfig) (*NotificationManager, error) {
-	cacheConfig := cacheutil.NewBigCacheConfig(cacheutil.BigCacheOptions{
-		TTL:          24 * time.Hour,
-		MaxCacheMB:   512,
-		MaxEntrySize: 64 * 1024,
+	if nmCfg.MaxCacheSize <= 0 {
+		nmCfg.MaxCacheSize = DefaultNotificationManagerConfig().MaxCacheSize
+	}
+	cache, err := cacheutil.New("notifications", cacheutil.BigCacheOptions{
+		TTL:               24 * time.Hour,
+		MaxCacheMB:        nmCfg.MaxCacheSize,
+		MaxEntrySize:      64 * 1024,
+		Shards:            16,
+		InitialCapacityMB: 4,
 	})
-
-	cache, err := bigcache.New(context.Background(), cacheConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create BigCache: %w", err)
 	}

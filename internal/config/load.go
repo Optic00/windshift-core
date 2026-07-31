@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,7 +31,7 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 		postgresConnShort     = flag.String("pg-conn", "", "PostgreSQL connection string (shorthand)")
 		attachmentPath        = flag.String("attachment-path", "", "Path to store attachments")
 		disableCSRF           = flag.Bool("no-csrf", false, "Disable CSRF protection (development only)")
-		allowLocalConnections = flag.Bool("allow-local-connections", false, "Allow server-side HTTP clients (SCM, Jira, LLM, webhooks) to reach loopback/private IPs — for self-hosted/internal endpoints")
+		allowLocalConnections = flag.Bool("allow-local-connections", true, "Allow server-side HTTP clients (SCM, Jira, LLM, webhooks) to reach loopback/private IPs; set to false to block local connections")
 		allowedHosts          = flag.String("allowed-hosts", "", "Comma-separated allowed hostnames for CSRF")
 		allowedPort           = flag.String("allowed-port", "", "Port for CORS/WebAuthn trusted origins")
 		useProxy              = flag.Bool("use-proxy", false, "Enable proxy mode (trust X-Forwarded-Proto from private IPs)")
@@ -59,6 +60,7 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 		enableCodingAgent     = flag.Bool("enable-coding-agent", false, "Enable the coding-agent harness")
 		llmProvidersFile      = flag.String("llm-providers", "", "Path to custom LLM providers JSON file")
 		aiPromptsDir          = flag.String("ai-prompts-dir", "", "Directory of custom AI prompt override files")
+		memoryLimitMB         = flag.Int("memory-limit-mb", DefaultMemoryLimitMB, "Total Windshift process memory budget in MiB")
 	)
 	flag.Parse()
 
@@ -149,6 +151,10 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 	if resolvedAIPromptsDir == "" {
 		resolvedAIPromptsDir = os.Getenv("AI_PROMPTS_DIR")
 	}
+	resolvedAllowLocalConnections := *allowLocalConnections
+	if os.Getenv("ALLOW_LOCAL_CONNECTIONS") != "" {
+		resolvedAllowLocalConnections = parseBoolEnv("ALLOW_LOCAL_CONNECTIONS")
+	}
 
 	// Auth: SSO_SECRET with SESSION_SECRET fallback. Fatal if both empty.
 	sessionSecret := firstNonEmpty(os.Getenv("SSO_SECRET"), os.Getenv("SESSION_SECRET"))
@@ -168,6 +174,20 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 	// to the BaseURL so the VAPID JWT carries a valid contact URL.
 	vapidSubject := firstNonEmpty(os.Getenv("VAPID_SUBJECT"), resolvedBaseURL)
 
+	resolvedMemoryLimitMB := *memoryLimitMB
+	if raw := os.Getenv("WINDSHIFT_MEMORY_LIMIT_MB"); raw != "" {
+		parsed, parseErr := strconv.Atoi(raw)
+		if parseErr != nil {
+			slog.Error("FATAL: WINDSHIFT_MEMORY_LIMIT_MB must be an integer number of MiB", "value", raw)
+			os.Exit(1)
+		}
+		resolvedMemoryLimitMB = parsed
+	}
+	if _, memoryErr := ResolveMemoryBudget(resolvedMemoryLimitMB); memoryErr != nil {
+		slog.Error("FATAL: invalid memory limit", "error", memoryErr)
+		os.Exit(1)
+	}
+
 	return Config{
 		Port:              port,
 		BaseURL:           resolvedBaseURL,
@@ -183,7 +203,7 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 		DisableCSRF:       *disableCSRF,
 		AllowInsecureHTTP: *allowInsecureHTTP || parseBoolEnv("ALLOW_INSECURE_HTTP"),
 
-		AllowLocalConnections: *allowLocalConnections || parseBoolEnv("ALLOW_LOCAL_CONNECTIONS"),
+		AllowLocalConnections: resolvedAllowLocalConnections,
 
 		DB: DBConfig{
 			PostgresConn:       pgConn,
@@ -243,6 +263,7 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 		Jira: JiraConfig{
 			CapturePayloadsDir: os.Getenv("JIRA_CAPTURE_PAYLOADS"),
 		},
+		Memory: MemoryConfig{LimitMB: resolvedMemoryLimitMB},
 
 		AttachmentPath:      attachPath,
 		EnableAdminFallback: adminFallbackEnabled,

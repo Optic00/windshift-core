@@ -30,7 +30,7 @@ const (
 // ActivityTrackerConfig represents configuration for the activity tracker
 type ActivityTrackerConfig struct {
 	TTL                    time.Duration `json:"ttl"`                      // Cache TTL, default: 24h
-	MaxCacheSize           int           `json:"max_cache_size"`           // Default: 128MB
+	MaxCacheSize           int           `json:"max_cache_size"`           // Default: 50MB
 	FlushInterval          time.Duration `json:"flush_interval"`           // Default: 5min
 	MaxWorkspaceVisits     int           `json:"max_workspace_visits"`     // Default: 10
 	MaxItemActivities      int           `json:"max_item_activities"`      // Default: 50 per type
@@ -42,7 +42,7 @@ type ActivityTrackerConfig struct {
 func DefaultActivityTrackerConfig() ActivityTrackerConfig {
 	return ActivityTrackerConfig{
 		TTL:                    24 * time.Hour,
-		MaxCacheSize:           128, // 128MB
+		MaxCacheSize:           50,
 		FlushInterval:          5 * time.Minute,
 		MaxWorkspaceVisits:     10,
 		MaxItemActivities:      50,
@@ -103,13 +103,13 @@ type UserActivityCache struct {
 // NewActivityTracker creates a new activity tracker with caching
 func NewActivityTracker(db database.Database, config ActivityTrackerConfig) (*ActivityTracker, error) {
 	// Configure BigCache
-	cacheConfig := cacheutil.NewBigCacheConfig(cacheutil.BigCacheOptions{
-		TTL:          config.TTL,
-		MaxCacheMB:   config.MaxCacheSize,
-		MaxEntrySize: 16384, // 16KB per entry (larger for activity data)
+	cache, err := cacheutil.New("activity", cacheutil.BigCacheOptions{
+		TTL:               config.TTL,
+		MaxCacheMB:        config.MaxCacheSize,
+		MaxEntrySize:      16384, // 16KB per entry (larger for activity data)
+		Shards:            32,
+		InitialCapacityMB: 4,
 	})
-
-	cache, err := bigcache.New(context.Background(), cacheConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create BigCache for activity tracker: %w", err)
 	}

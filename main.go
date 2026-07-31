@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -78,13 +79,23 @@ func main() {
 
 	// Initialize logger early
 	logger.Init(cfg.Logging.Level, cfg.Logging.Format)
+	memoryBudget, err := config.ResolveMemoryBudget(cfg.Memory.LimitMB)
+	if err != nil {
+		slog.Error("invalid memory configuration", "error", err)
+		os.Exit(1)
+	}
+	debug.SetMemoryLimit(memoryBudget.GoLimitBytes)
+	slog.Info("memory budget configured",
+		"process_limit_mb", memoryBudget.ProcessLimitMB,
+		"go_limit_bytes", memoryBudget.GoLimitBytes,
+		"cache_limit_mb", memoryBudget.CacheLimitMB)
 
-	// Apply the global SSRF-dialer override before any client is built. When on,
-	// server-side HTTP clients may reach loopback/private IPs (self-hosted SCM,
-	// Jira DC, local LLM gateways). Off by default; warn loudly when enabled.
+	// Apply the global SSRF-dialer setting before any client is built. Local and
+	// private endpoints are reachable by default for self-hosted services;
+	// operators can explicitly disable them to restore SSRF address blocking.
 	utils.SetAllowLocalConnections(cfg.AllowLocalConnections)
-	if cfg.AllowLocalConnections {
-		slog.Warn("ALLOW_LOCAL_CONNECTIONS is enabled: server-side HTTP clients may dial loopback/private addresses (SSRF protections relaxed)")
+	if !cfg.AllowLocalConnections {
+		slog.Info("local connections disabled: server-side HTTP clients will block loopback/private addresses")
 	}
 
 	// Print startup banner
@@ -158,7 +169,8 @@ func main() {
 			)
 			// nil tokenTracker: the SSH-minted temp tokens are short-lived
 			// (24h) and we don't need last-used-at tracking for them.
-			tokenManager := auth.NewTokenManager(sshDB, nil)
+			sshTokenCacheMB := memoryBudget.APITokenCacheMB / 2
+			tokenManager := auth.NewTokenManagerWithCacheBudget(sshDB, nil, "ssh_api_tokens", sshTokenCacheMB)
 
 			serverOptions := make([]ssh.Option, 0, 4)
 			serverOptions = append(serverOptions,

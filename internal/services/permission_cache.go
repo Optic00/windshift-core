@@ -47,7 +47,7 @@ type PermissionService struct {
 // PermissionCacheConfig represents configuration for the permission cache
 type PermissionCacheConfig struct {
 	TTL             time.Duration `json:"ttl"`               // Default: 15min
-	MaxCacheSize    int           `json:"max_cache_size"`    // Default: 256MB
+	MaxCacheSize    int           `json:"max_cache_size"`    // Default: 123MB
 	WarmupOnStartup bool          `json:"warmup_on_startup"` // Default: true
 	PreWarmActive   bool          `json:"pre_warm_active"`   // Default: true
 	BatchSize       int           `json:"batch_size"`        // Default: 100
@@ -58,7 +58,7 @@ type PermissionCacheConfig struct {
 func DefaultPermissionCacheConfig() PermissionCacheConfig {
 	return PermissionCacheConfig{
 		TTL:             15 * time.Minute,
-		MaxCacheSize:    256, // 256MB
+		MaxCacheSize:    123,
 		WarmupOnStartup: true,
 		PreWarmActive:   true,
 		BatchSize:       100,
@@ -68,13 +68,13 @@ func DefaultPermissionCacheConfig() PermissionCacheConfig {
 // NewPermissionService creates a new permission service with caching
 func NewPermissionService(db database.Database, config PermissionCacheConfig) (*PermissionService, error) {
 	// Configure BigCache
-	cacheConfig := cacheutil.NewBigCacheConfig(cacheutil.BigCacheOptions{
-		TTL:          config.TTL,
-		MaxCacheMB:   config.MaxCacheSize,
-		MaxEntrySize: 8192, // 8KB per entry (larger for permission data)
+	cache, err := cacheutil.New("permissions", cacheutil.BigCacheOptions{
+		TTL:               config.TTL,
+		MaxCacheMB:        config.MaxCacheSize,
+		MaxEntrySize:      8192, // 8KB per entry (larger for permission data)
+		Shards:            64,
+		InitialCapacityMB: 4,
 	})
-
-	cache, err := bigcache.New(context.Background(), cacheConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create BigCache for permissions: %w", err)
 	}

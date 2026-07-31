@@ -19,12 +19,9 @@ import (
 )
 
 const (
-	sessionValidationCacheMaxMB       = 32
 	sessionValidationCacheMaxEntry    = 8 * 1024
-	sessionValidationCacheMaxEntries  = 16 * 1024
-	sessionValidationCacheShardCount  = 256
 	sessionValidationCacheCleanWindow = time.Second
-	sessionValidationMutationLimit    = sessionValidationCacheMaxEntries
+	sessionValidationMutationLimit    = 16 * 1024
 )
 
 type cachedSessionValidation struct {
@@ -82,7 +79,7 @@ type SessionValidationCacheStats struct {
 	CacheDecodeFailures uint64
 }
 
-func newSessionValidator(ttl time.Duration) *sessionValidator {
+func newSessionValidator(ttl time.Duration, cacheSizeMB ...int) *sessionValidator {
 	validator := &sessionValidator{
 		ttl:             ttl,
 		tokenVersions:   make(map[string]uint64),
@@ -93,20 +90,23 @@ func newSessionValidator(ttl time.Duration) *sessionValidator {
 		return validator
 	}
 
-	config := cacheutil.NewBigCacheConfig(cacheutil.BigCacheOptions{
-		TTL:             ttl,
-		MaxCacheMB:      sessionValidationCacheMaxMB,
-		Shards:          sessionValidationCacheShardCount,
-		MaxEntrySize:    sessionValidationCacheMaxEntry,
-		MaxEntriesInWin: sessionValidationCacheMaxEntries,
-		CleanWindow:     sessionValidationCacheCleanWindow,
-	})
-	config.OnRemoveWithReason = func(_ string, _ []byte, reason bigcache.RemoveReason) {
-		if reason == bigcache.Expired || reason == bigcache.NoSpace {
-			validator.evictedEntries.Add(1)
-		}
+	maxCacheMB := 8
+	if len(cacheSizeMB) > 0 && cacheSizeMB[0] > 0 {
+		maxCacheMB = cacheSizeMB[0]
 	}
-	cache, err := bigcache.New(context.Background(), config)
+	cache, err := cacheutil.New("session_validation", cacheutil.BigCacheOptions{
+		TTL:               ttl,
+		MaxCacheMB:        maxCacheMB,
+		Shards:            16,
+		MaxEntrySize:      sessionValidationCacheMaxEntry,
+		InitialCapacityMB: 1,
+		CleanWindow:       sessionValidationCacheCleanWindow,
+		OnRemoveWithReason: func(_ string, _ []byte, reason bigcache.RemoveReason) {
+			if reason == bigcache.Expired || reason == bigcache.NoSpace {
+				validator.evictedEntries.Add(1)
+			}
+		},
+	})
 	if err != nil {
 		slog.Error("failed to initialize session validation cache; continuing without retained entries",
 			slog.Any("error", err))

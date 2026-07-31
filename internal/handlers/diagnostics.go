@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"windshift/internal/auth"
+	"windshift/internal/cacheutil"
+	"windshift/internal/config"
 	"windshift/internal/llm"
 	"windshift/internal/logger"
 	"windshift/internal/models"
@@ -44,6 +46,7 @@ type DiagnosticsHandler struct {
 	bulkOperations   *services.BulkOperationMetrics
 	recurrenceRepo   *repository.RecurrenceRepository
 	settingsRepo     *repository.SystemSettingRepository
+	memoryBudget     config.MemoryBudget
 }
 
 // NewDiagnosticsHandler creates a new diagnostics handler.
@@ -65,6 +68,7 @@ func NewDiagnosticsHandler(
 	bulkOperations *services.BulkOperationMetrics,
 	recurrenceRepo *repository.RecurrenceRepository,
 	settingsRepo *repository.SystemSettingRepository,
+	memoryBudget config.MemoryBudget,
 ) *DiagnosticsHandler {
 	return &DiagnosticsHandler{
 		sessionManager:   sessionManager,
@@ -84,7 +88,43 @@ func NewDiagnosticsHandler(
 		bulkOperations:   bulkOperations,
 		recurrenceRepo:   recurrenceRepo,
 		settingsRepo:     settingsRepo,
+		memoryBudget:     memoryBudget,
 	}
+}
+
+// GetCacheMemory returns the configured process budget and live BigCache
+// allocation/traffic counters for this replica.
+//
+// GET /api/admin/diagnostics/cache-memory
+func (h *DiagnosticsHandler) GetCacheMemory(w http.ResponseWriter, _ *http.Request) {
+	var memory runtime.MemStats
+	runtime.ReadMemStats(&memory)
+	caches := cacheutil.Snapshots()
+	var allocatedBytes int64
+	var maximumBytes int64
+	var evictions uint64
+	for _, cache := range caches {
+		allocatedBytes += cache.AllocatedCapacityBytes
+		maximumBytes += cache.MaximumCapacityBytes
+		evictions += cache.NoSpaceEvictions
+	}
+	heapUtilization := float64(0)
+	if h.memoryBudget.GoLimitBytes > 0 {
+		heapUtilization = float64(memory.HeapAlloc) / float64(h.memoryBudget.GoLimitBytes) * 100
+	}
+	respondJSONOK(w, map[string]any{
+		"budget":                 h.memoryBudget,
+		"heap_alloc_bytes":       memory.HeapAlloc,
+		"heap_in_use_bytes":      memory.HeapInuse,
+		"runtime_system_bytes":   memory.Sys,
+		"heap_limit_utilization": heapUtilization,
+		"allocated_cache_bytes":  allocatedBytes,
+		"maximum_cache_bytes":    maximumBytes,
+		"no_space_evictions":     evictions,
+		"caches":                 caches,
+		"healthy":                heapUtilization < 90,
+		"sampled_at":             time.Now().UTC(),
+	})
 }
 
 const (

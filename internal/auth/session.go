@@ -89,7 +89,7 @@ func NewSessionManager(db database.Database, useSecureCookies, useProxy bool, ad
 // NewSessionManagerWithValidationCacheTTL creates a session manager with a
 // bounded local validation cache. A non-positive TTL disables retained cache
 // entries while preserving in-flight request coalescing.
-func NewSessionManagerWithValidationCacheTTL(db database.Database, useSecureCookies, useProxy bool, additionalProxies []string, cookieSecret string, validationCacheTTL time.Duration) *SessionManager {
+func NewSessionManagerWithValidationCacheTTL(db database.Database, useSecureCookies, useProxy bool, additionalProxies []string, cookieSecret string, validationCacheTTL time.Duration, cacheSizeMB ...int) *SessionManager {
 	var opaqueKey []byte
 	if cookieSecret != "" {
 		opaqueKey = deriveKey(cookieSecret, "windshift-auth-opaque-values", 32)
@@ -101,7 +101,7 @@ func NewSessionManagerWithValidationCacheTTL(db database.Database, useSecureCook
 			"windshift-cookie-hash", "windshift-cookie-block"),
 		db:                db,
 		opaqueKey:         opaqueKey,
-		sessionValidation: newSessionValidator(validationCacheTTL),
+		sessionValidation: newSessionValidator(validationCacheTTL, cacheSizeMB...),
 	}
 }
 

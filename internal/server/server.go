@@ -94,6 +94,7 @@ type Server struct {
 	databaseDiagRepo          *repository.DatabaseDiagnosticsRepository
 	databasePoolMonitor       *services.DatabasePoolMonitor
 	channelService            *services.ChannelService
+	memoryBudget              config.MemoryBudget
 
 	// Rate limiters that need cleanup
 	loginRateLimiter    *middleware.RateLimiter
@@ -123,6 +124,10 @@ type Server struct {
 // New creates a new Server instance with the given configuration.
 // It initializes all services and handlers but does not start listening.
 func New(cfg Config) (*Server, error) {
+	memoryBudget, err := config.ResolveMemoryBudget(cfg.Memory.LimitMB)
+	if err != nil {
+		return nil, fmt.Errorf("resolve memory budget: %w", err)
+	}
 	s := &Server{
 		config:            cfg,
 		scmSyncStopChan:   make(chan struct{}),
@@ -130,6 +135,7 @@ func New(cfg Config) (*Server, error) {
 		magicLinkStopChan: make(chan struct{}),
 		cleanupStopChan:   make(chan struct{}),
 		jiraHostStopChan:  make(chan struct{}),
+		memoryBudget:      memoryBudget,
 	}
 
 	if err := s.initialize(); err != nil {
@@ -236,7 +242,7 @@ func (s *Server) initialize() error {
 	// Initialize permission service
 	permService, err := services.NewPermissionService(s.db, services.PermissionCacheConfig{
 		TTL:          15 * time.Minute,
-		MaxCacheSize: 512,
+		MaxCacheSize: s.memoryBudget.PermissionCacheMB,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to initialize permission service: %w", err)
@@ -249,7 +255,9 @@ func (s *Server) initialize() error {
 	s.channelService = channelService
 
 	// Initialize activity tracker
-	s.activityTracker, err = services.NewActivityTracker(s.db, services.DefaultActivityTrackerConfig())
+	activityConfig := services.DefaultActivityTrackerConfig()
+	activityConfig.MaxCacheSize = s.memoryBudget.ActivityCacheMB
+	s.activityTracker, err = services.NewActivityTracker(s.db, activityConfig)
 	if err != nil {
 		return fmt.Errorf("failed to initialize activity tracker: %w", err)
 	}
@@ -278,6 +286,7 @@ func (s *Server) initialize() error {
 		additionalProxyList,
 		cfg.Auth.SessionSecret,
 		cfg.Auth.SessionValidationCacheTTL,
+		s.memoryBudget.SessionCacheMB,
 	)
 
 	// Determine effective port for CORS
@@ -349,7 +358,11 @@ func (s *Server) initialize() error {
 	s.tokenTracker = services.NewTokenTracker(s.db, services.DefaultTokenTrackerConfig())
 
 	// Create token manager
-	tokenManager := auth.NewTokenManager(s.db, s.tokenTracker)
+	apiTokenCacheMB := s.memoryBudget.APITokenCacheMB
+	if cfg.SSH.Enabled {
+		apiTokenCacheMB /= 2
+	}
+	tokenManager := auth.NewTokenManager(s.db, s.tokenTracker, apiTokenCacheMB)
 	if cleaned, cleanupErr := tokenManager.CleanupExpiredTokens(); cleanupErr != nil {
 		slog.Warn("failed to cleanup expired api tokens on startup", "error", cleanupErr)
 	} else if cleaned > 0 {
@@ -388,6 +401,7 @@ func (s *Server) initialize() error {
 
 	// Initialize notification manager
 	nmCfg := handlers.DefaultNotificationManagerConfig()
+	nmCfg.MaxCacheSize = s.memoryBudget.NotificationCacheMB
 	if cfg.Notification.FlushInterval > 0 {
 		nmCfg.FlushInterval = cfg.Notification.FlushInterval
 	}
@@ -480,7 +494,7 @@ func (s *Server) initialize() error {
 	// Initialize handlers
 	transitionMatrixService := services.NewTransitionMatrixService(s.db)
 	bulkOperationMetrics := services.NewBulkOperationMetrics()
-	itemHandler := handlers.NewItemHandler(s.db, permService, s.activityTracker, s.notificationService)
+	itemHandler := handlers.NewItemHandler(s.db, permService, s.activityTracker, s.notificationService, s.memoryBudget.ItemCacheMB)
 	itemHandler.SetTransitionMatrixService(transitionMatrixService)
 	itemHandler.SetBulkOperationMetrics(bulkOperationMetrics)
 	itemHandler.SetDBRequestTimeout(s.config.DB.RequestTimeout)
@@ -578,7 +592,7 @@ func (s *Server) initialize() error {
 	agentHandler := handlers.NewAgentHandler(s.db, permService)
 
 	// SCIM handlers
-	scimTokenManager := auth.NewSCIMTokenManager(s.db)
+	scimTokenManager := auth.NewSCIMTokenManager(s.db, s.memoryBudget.SCIMTokenCacheMB)
 	scimAuthMiddleware := middleware.NewSCIMAuthMiddleware(scimTokenManager)
 	scimHandler := handlers.NewSCIMHandler(
 		repository.NewSCIMRepository(s.db),
@@ -1467,6 +1481,7 @@ func (s *Server) initialize() error {
 				bulkOperationMetrics,
 				repository.NewRecurrenceRepository(s.db),
 				repository.NewSystemSettingRepository(s.db),
+				s.memoryBudget,
 			),
 			AgentSecurity: handlers.NewAgentSecurityHandler(
 				agentSecurityRepo,

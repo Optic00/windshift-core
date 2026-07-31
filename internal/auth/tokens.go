@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
@@ -368,16 +367,30 @@ type TokenManager struct {
 }
 
 // NewTokenManager creates a new token manager
-func NewTokenManager(db database.Database, tokenTracker TokenUsageRecorder) *TokenManager {
-	cacheConfig := cacheutil.NewBigCacheConfig(cacheutil.BigCacheOptions{
-		TTL:          30 * time.Second,
-		MaxCacheMB:   32,
-		MaxEntrySize: 2048,
-		Shards:       256,
-		CleanWindow:  10 * time.Second,
-	})
+func NewTokenManager(db database.Database, tokenTracker TokenUsageRecorder, cacheSizeMB ...int) *TokenManager {
+	maxCacheMB := 8
+	if len(cacheSizeMB) > 0 && cacheSizeMB[0] > 0 {
+		maxCacheMB = cacheSizeMB[0]
+	}
+	return newTokenManager(db, tokenTracker, "api_tokens", maxCacheMB)
+}
 
-	cache, err := bigcache.New(context.Background(), cacheConfig)
+// NewTokenManagerWithCacheBudget creates a token manager with an explicitly
+// named cache. The SSH server uses this so its share of the aggregate token
+// budget remains independently visible in diagnostics.
+func NewTokenManagerWithCacheBudget(db database.Database, tokenTracker TokenUsageRecorder, cacheName string, maxCacheMB int) *TokenManager {
+	return newTokenManager(db, tokenTracker, cacheName, maxCacheMB)
+}
+
+func newTokenManager(db database.Database, tokenTracker TokenUsageRecorder, cacheName string, maxCacheMB int) *TokenManager {
+	cache, err := cacheutil.New(cacheName, cacheutil.BigCacheOptions{
+		TTL:               30 * time.Second,
+		MaxCacheMB:        maxCacheMB,
+		MaxEntrySize:      2048,
+		Shards:            16,
+		InitialCapacityMB: 1,
+		CleanWindow:       10 * time.Second,
+	})
 	if err != nil {
 		slog.Warn("failed to create token validation cache, continuing without cache", "error", err)
 	}

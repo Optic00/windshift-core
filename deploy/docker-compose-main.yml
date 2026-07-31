@@ -39,10 +39,12 @@ services:
       - MAX_READ_CONNS=${MAX_READ_CONNS:-30}
       - POSTGRES_REPLICA_COUNT=${POSTGRES_REPLICA_COUNT:-1}
       - POSTGRES_CONNECTION_HEADROOM=${POSTGRES_CONNECTION_HEADROOM:-10}
-      - ALLOW_LOCAL_CONNECTIONS=true
+      - ALLOW_LOCAL_CONNECTIONS=${ALLOW_LOCAL_CONNECTIONS:-true}
       - CODING_AGENT_ENABLED=true
       - LOG_LEVEL=info
       - LOG_FORMAT=json
+      # Total process budget. Keep the container limit below in sync.
+      - WINDSHIFT_MEMORY_LIMIT_MB=${WINDSHIFT_MEMORY_LIMIT_MB:-2048}
       # Web Push (VAPID). OPTIONAL — if unset, the server auto-generates a
       # keypair on first boot and persists it in the database, so push works
       # out of the box. Set these only to manage/rotate keys yourself (keep the
@@ -54,6 +56,7 @@ services:
       - VAPID_SUBJECT=${VAPID_SUBJECT:-}
     volumes:
       - windshift-data:/data
+    mem_limit: ${WINDSHIFT_CONTAINER_MEMORY_LIMIT:-2g}
     depends_on:
       db:
         condition: service_healthy

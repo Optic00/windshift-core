@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
@@ -37,16 +36,19 @@ type SCIMTokenManager struct {
 
 // NewSCIMTokenManager creates a new SCIM token manager
 // last review: ser
-func NewSCIMTokenManager(db database.Database) *SCIMTokenManager {
-	cacheConfig := cacheutil.NewBigCacheConfig(cacheutil.BigCacheOptions{
-		TTL:          30 * time.Second,
-		MaxCacheMB:   16,
-		MaxEntrySize: 1024,
-		Shards:       128,
-		CleanWindow:  10 * time.Second,
+func NewSCIMTokenManager(db database.Database, cacheSizeMB ...int) *SCIMTokenManager {
+	maxCacheMB := 4
+	if len(cacheSizeMB) > 0 && cacheSizeMB[0] > 0 {
+		maxCacheMB = cacheSizeMB[0]
+	}
+	cache, err := cacheutil.New("scim_tokens", cacheutil.BigCacheOptions{
+		TTL:               30 * time.Second,
+		MaxCacheMB:        maxCacheMB,
+		MaxEntrySize:      1024,
+		Shards:            8,
+		InitialCapacityMB: 1,
+		CleanWindow:       10 * time.Second,
 	})
-
-	cache, err := bigcache.New(context.Background(), cacheConfig)
 	if err != nil {
 		slog.Warn("failed to create SCIM token validation cache, continuing without cache", "error", err)
 	}

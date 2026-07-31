@@ -1,7 +1,6 @@
 package services
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -54,7 +53,7 @@ type ItemCacheService struct {
 type ItemCacheConfig struct {
 	HierarchyTTL    time.Duration `json:"hierarchy_ttl"`     // Default: 5min
 	ProjectTTL      time.Duration `json:"project_ttl"`       // Default: 15min
-	MaxCacheSize    int           `json:"max_cache_size"`    // Default: 512MB total
+	MaxCacheSize    int           `json:"max_cache_size"`    // Default: 196MB total
 	WarmupBatchSize int           `json:"warmup_batch_size"` // Default: 500
 	EnablePreWarm   bool          `json:"enable_pre_warm"`   // Default: true
 }
@@ -64,7 +63,7 @@ func DefaultItemCacheConfig() ItemCacheConfig {
 	return ItemCacheConfig{
 		HierarchyTTL:    5 * time.Minute,
 		ProjectTTL:      15 * time.Minute,
-		MaxCacheSize:    512, // 512MB total
+		MaxCacheSize:    196,
 		WarmupBatchSize: 500,
 		EnablePreWarm:   true,
 	}
@@ -73,29 +72,28 @@ func DefaultItemCacheConfig() ItemCacheConfig {
 // NewItemCacheService creates a new item cache service
 func NewItemCacheService(db database.Database, config ItemCacheConfig) (*ItemCacheService, error) {
 	// Configure hierarchy cache
-	hierarchyConfig := cacheutil.NewBigCacheConfig(cacheutil.BigCacheOptions{
-		TTL:             config.HierarchyTTL,
-		MaxCacheMB:      config.MaxCacheSize / 2, // Half for hierarchy
-		MaxEntrySize:    4096,                    // 4KB per entry
-		MaxEntriesInWin: 100000,                  // Support up to 100k items
-		CleanWindow:     1 * time.Minute,
+	hierarchyCacheMB := config.MaxCacheSize / 2
+	projectCacheMB := config.MaxCacheSize - hierarchyCacheMB
+	hierarchyCache, err := cacheutil.New("item_hierarchy", cacheutil.BigCacheOptions{
+		TTL:               config.HierarchyTTL,
+		MaxCacheMB:        hierarchyCacheMB,
+		Shards:            128,
+		MaxEntrySize:      4096, // 4KB per entry
+		InitialCapacityMB: 4,
+		CleanWindow:       1 * time.Minute,
 	})
-
-	hierarchyCache, err := bigcache.New(context.Background(), hierarchyConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create hierarchy cache: %w", err)
 	}
 
 	// Configure project cache
-	projectConfig := cacheutil.NewBigCacheConfig(cacheutil.BigCacheOptions{
-		TTL:             config.ProjectTTL,
-		MaxCacheMB:      config.MaxCacheSize / 2, // Half for projects
-		Shards:          256,
-		MaxEntrySize:    65536, // 64KB per entry (can be large for big workspaces)
-		MaxEntriesInWin: 10000, // Support up to 10k workspaces
+	projectCache, err := cacheutil.New("item_projects", cacheutil.BigCacheOptions{
+		TTL:               config.ProjectTTL,
+		MaxCacheMB:        projectCacheMB,
+		Shards:            16,
+		MaxEntrySize:      65536, // 64KB per entry (can be large for big workspaces)
+		InitialCapacityMB: 4,
 	})
-
-	projectCache, err := bigcache.New(context.Background(), projectConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create project cache: %w", err)
 	}

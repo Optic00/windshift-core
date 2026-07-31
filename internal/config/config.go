@@ -36,7 +36,9 @@ type Config struct {
 	// client/dialer reach loopback and private/RFC1918 destinations. It is the
 	// single switch operators flip to run self-hosted SCM (Gitea / GitHub
 	// Enterprise), Jira Data Center, or a local LLM gateway on a private
-	// network — instead of allowlisting each endpoint's CIDR. Off by default.
+	// network — instead of allowlisting each endpoint's CIDR. On by default;
+	// set the corresponding flag or environment variable to false to restore
+	// private-address blocking.
 	AllowLocalConnections bool
 
 	// Sub-configs grouped by concern
@@ -52,6 +54,7 @@ type Config struct {
 	Notification NotificationConfig
 	Push         PushConfig
 	Jira         JiraConfig
+	Memory       MemoryConfig
 
 	// Flat fields (no logical grouping)
 	AttachmentPath      string
@@ -65,6 +68,12 @@ type Config struct {
 	FrontendFiles embed.FS
 	ShutdownChan  chan os.Signal
 	SilentMode    bool
+}
+
+// MemoryConfig declares the intended total memory budget for one Windshift
+// process. The runtime heap target and cache allocations are derived from it.
+type MemoryConfig struct {
+	LimitMB int
 }
 
 // DBConfig holds database connection + pool configuration.

@@ -167,6 +167,11 @@ export function getDatabasePools() {
   return fetchAPI('/admin/diagnostics/database-pool');
 }
 
+/** Process memory budget and live cache allocation/eviction counters. */
+export function getCacheMemory() {
+  return fetchAPI('/admin/diagnostics/cache-memory');
+}
+
 /**
  * Global recurrence-rule cardinality and scheduler queue pressure.
  *

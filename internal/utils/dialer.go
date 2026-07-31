@@ -11,27 +11,21 @@ import (
 	"time"
 )
 
-// allowLocalConnections is the global "allow loopback/private destinations"
-// override consulted by every SSRF-safe dialer and client in this package. It
-// is off by default — server-side, config-driven HTTP clients block private
-// targets so a malicious/mistyped endpoint can't reach localhost, RFC1918
-// services, or the cloud metadata endpoint.
-//
-// Operators running self-hosted SCM (Gitea / GitHub Enterprise), Jira Data
-// Center, or a local LLM gateway on a private network — or developing against
-// localhost — flip it on once via the --allow-local-connections flag /
-// ALLOW_LOCAL_CONNECTIONS env (wired in cmd startup), instead of allowlisting
-// every endpoint's CIDR individually. It is a single process-wide switch, so it
-// is set once at startup before any request is served.
-var allowLocalConnections atomic.Bool
+// blockLocalConnections stores the inverse of the public
+// AllowLocalConnections setting so its zero value permits loopback/private
+// destinations. Operators can explicitly set --allow-local-connections=false
+// or ALLOW_LOCAL_CONNECTIONS=false to enable private-address SSRF blocking.
+// The setting is process-wide and is applied once at startup before any
+// request is served.
+var blockLocalConnections atomic.Bool
 
-// SetAllowLocalConnections sets the global override (see allowLocalConnections).
+// SetAllowLocalConnections sets the process-wide local-connection policy.
 // Call once at startup from the resolved config.
-func SetAllowLocalConnections(v bool) { allowLocalConnections.Store(v) }
+func SetAllowLocalConnections(v bool) { blockLocalConnections.Store(!v) }
 
 // AllowLocalConnections reports whether the global loopback/private override is
 // enabled.
-func AllowLocalConnections() bool { return allowLocalConnections.Load() }
+func AllowLocalConnections() bool { return !blockLocalConnections.Load() }
 
 // ErrBlockedSSRFAddr is returned by SafeNetDialer when the resolved IP
 // for a connection is in a non-public range (loopback, RFC1918, link-local,
@@ -59,9 +53,10 @@ func IsBlockedSSRFAddrWithAllowedCIDRs(ip net.IP, allowedCIDRs []*net.IPNet) boo
 	if ip == nil {
 		return true
 	}
-	// Global escape hatch for self-hosted/local deployments — supersedes the
-	// per-endpoint CIDR allowlists. Off by default.
-	if allowLocalConnections.Load() {
+	// The process-wide setting supersedes per-endpoint CIDR allowlists. Local
+	// destinations are allowed by default and blocked only when explicitly
+	// configured.
+	if AllowLocalConnections() {
 		return false
 	}
 	if isAlwaysBlockedSSRFAddr(ip) {
