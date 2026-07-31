@@ -53,16 +53,21 @@ func (h *JiraImportHandler) Connect(w http.ResponseWriter, r *http.Request) {
 		sanitize.Pair{Target: &req.Email, Policy: sanitize.ShortIdentifier},
 	)
 
-	// Validate required fields
-	if req.InstanceURL == "" || req.Email == "" || req.APIToken == "" {
-		respondValidationError(w, r, "instance_url, email, and api_token are required")
-		return
-	}
-
 	// Determine deployment type (default to cloud)
 	deploymentType := jira.DeploymentCloud
 	if req.DeploymentType == "datacenter" {
 		deploymentType = jira.DeploymentDataCenter
+	}
+
+	// Data Center PATs authenticate as Bearer tokens and do not need a
+	// username. Jira Cloud still requires the account email for Basic auth.
+	if req.InstanceURL == "" || req.APIToken == "" {
+		respondValidationError(w, r, "instance_url and api_token are required")
+		return
+	}
+	if deploymentType == jira.DeploymentCloud && req.Email == "" {
+		respondValidationError(w, r, "email is required for Jira Cloud")
+		return
 	}
 
 	// Create Jira client and test connection
@@ -85,7 +90,7 @@ func (h *JiraImportHandler) Connect(w http.ResponseWriter, r *http.Request) {
 		// session-expired interceptor and log the user out for a third-party error.
 		//
 		// Log the upstream message at warn so operators can see *why* Jira rejected
-		// the request (deprecated Basic auth, SSO required, email/token mismatch).
+		// the request (rejected auth scheme, SSO required, invalid token).
 		// instance_url + email + deployment go to the log; the API token never does.
 		slog.Warn("Jira connection test failed",
 			slog.String("component", "jira"),

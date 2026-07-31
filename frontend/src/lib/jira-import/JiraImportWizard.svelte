@@ -36,9 +36,7 @@
   let showNewConnectionForm = $state(false);
 
   // Computed labels based on deployment type
-  let emailLabel = $derived(deploymentType === 'datacenter' ? t('jiraImport.form.username') : t('jiraImport.form.email'));
-  let emailPlaceholder = $derived(deploymentType === 'datacenter' ? 'your.username' : 'your.email@company.com');
-  let tokenLabel = $derived(deploymentType === 'datacenter' ? t('jiraImport.form.password') : t('jiraImport.form.apiToken'));
+  let tokenLabel = $derived(deploymentType === 'datacenter' ? t('jiraImport.form.personalAccessToken') : t('jiraImport.form.apiToken'));
   let tokenHelpText = $derived(deploymentType === 'datacenter'
     ? t('jiraImport.form.tokenHelpDatacenter')
     : t('jiraImport.form.tokenHelpCloud'));
@@ -283,7 +281,9 @@
                       {isDataCenter ? t('jiraImport.deploymentType.datacenter') : t('jiraImport.deploymentType.cloud')}
                     </span>
                   </div>
-                  <p class="text-sm" style="color: var(--ds-text-subtle);">{connection.email}</p>
+                  {#if !isDataCenter && connection.email}
+                    <p class="text-sm" style="color: var(--ds-text-subtle);">{connection.email}</p>
+                  {/if}
                 </div>
               </div>
             </div>
@@ -325,7 +325,9 @@
                             {isDataCenter ? t('jiraImport.deploymentType.datacenter') : t('jiraImport.deploymentType.cloud')}
                           </span>
                         </div>
-                        <p class="text-sm" style="color: var(--ds-text-subtle);">{conn.email}</p>
+                        {#if !isDataCenter && conn.email}
+                          <p class="text-sm" style="color: var(--ds-text-subtle);">{conn.email}</p>
+                        {/if}
                       </div>
                       <ChevronRight size={16} style="color: var(--ds-text-subtle);" />
                     </div>
@@ -406,15 +408,17 @@
               />
             </FormField>
 
-            <FormField label={emailLabel} required>
-              <Input
-                bind:value={email}
-                dataTestid="jira-import-email"
-                type={deploymentType === 'datacenter' ? 'text' : 'email'}
-                placeholder={emailPlaceholder}
-                disabled={connection.isConnecting}
-              />
-            </FormField>
+            {#if deploymentType === 'cloud'}
+              <FormField label={t('jiraImport.form.email')} required>
+                <Input
+                  bind:value={email}
+                  dataTestid="jira-import-email"
+                  type="email"
+                  placeholder="your.email@company.com"
+                  disabled={connection.isConnecting}
+                />
+              </FormField>
+            {/if}
 
             <FormField label={tokenLabel} required>
               <div class="relative">
@@ -422,7 +426,7 @@
                   bind:value={apiToken}
                   dataTestid="jira-import-api-token"
                   type={showToken ? 'text' : 'password'}
-                  placeholder={deploymentType === 'datacenter' ? 'Your password or token' : 'Your Jira API token'}
+                  placeholder={deploymentType === 'datacenter' ? 'Your Jira personal access token' : 'Your Jira API token'}
                   disabled={connection.isConnecting}
                 />
                 <button
@@ -1452,7 +1456,8 @@
         isContinueLoading ||
         isLoadingSavedConnection ||
         isNavigating ||
-        (currentStepId === 'connect' && !connection.isConnected && (!jiraUrl || !email || !apiToken)) ||
+        (currentStepId === 'connect' && !connection.isConnected &&
+          (!jiraUrl || !apiToken || (deploymentType === 'cloud' && !email))) ||
         (currentStepId === 'projects' && projects.selected.length === 0) ||
         (currentStepId === 'xray' && !jiraImport.canProceed()) ||
         (currentStepId === 'mapping' && !jiraImport.canProceed())

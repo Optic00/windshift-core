@@ -88,8 +88,8 @@ type Client interface {
 // Config contains configuration for the Jira client
 type Config struct {
 	InstanceURL     string         // e.g., https://company.atlassian.net or https://jira.company.com
-	Email           string         // User email (Cloud) or username (Data Center) for Basic auth
-	APIToken        string         // API token or password
+	Email           string         // User email for Jira Cloud Basic authentication
+	APIToken        string         // Cloud API token or Data Center personal access token
 	DeploymentType  DeploymentType // cloud or datacenter (default: cloud)
 	RateLimitPerSec int            // Rate limit (default: 10 requests/second)
 	Timeout         time.Duration  // HTTP timeout (default: 30 seconds)
@@ -132,12 +132,10 @@ func NewClient(cfg Config) (Client, error) {
 		return nil, fmt.Errorf("%w: must use http or https", ErrInvalidURL)
 	}
 
-	// Create Basic auth header (email:token base64 encoded)
-	if cfg.Email == "" || cfg.APIToken == "" {
-		return nil, ErrInvalidCredentials
+	authHeader, err := jiraAuthHeader(cfg)
+	if err != nil {
+		return nil, err
 	}
-	authString := cfg.Email + ":" + cfg.APIToken
-	authHeader := "Basic " + base64.StdEncoding.EncodeToString([]byte(authString))
 
 	// Set defaults
 	timeout := cfg.Timeout
@@ -152,7 +150,7 @@ func NewClient(cfg Config) (Client, error) {
 	// The instance URL is operator-supplied and used as the base for every
 	// request (plus the pre-auth tenant_info probe and attachment downloads).
 	// Dial through the SSRF-safe dialer so a base URL — or a redirect — that
-	// resolves to a private/internal host cannot receive the Basic-auth
+	// resolves to a private/internal host cannot receive the Jira
 	// credential. Redirect-following is preserved; each hop is re-checked.
 	httpClient := &http.Client{
 		Timeout:   timeout,
@@ -184,6 +182,23 @@ func NewClient(cfg Config) (Client, error) {
 		httpClient:     httpClient,
 		limiter:        limiter,
 	}, nil
+}
+
+// jiraAuthHeader returns the authentication contract for each Jira
+// deployment. Data Center is PAT-only; Cloud uses the account email and API
+// token as Basic credentials.
+func jiraAuthHeader(cfg Config) (string, error) {
+	if cfg.APIToken == "" {
+		return "", ErrInvalidCredentials
+	}
+	if cfg.DeploymentType == DeploymentDataCenter {
+		return "Bearer " + cfg.APIToken, nil
+	}
+	if cfg.Email == "" {
+		return "", ErrInvalidCredentials
+	}
+	authString := cfg.Email + ":" + cfg.APIToken
+	return "Basic " + base64.StdEncoding.EncodeToString([]byte(authString)), nil
 }
 
 // cloudRouting holds the resolved base URLs for a Cloud client. All three

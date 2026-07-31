@@ -36,10 +36,10 @@ export default {
       email: 'عنوان البريد الإلكتروني',
       username: 'اسم المستخدم',
       apiToken: 'رمز API',
-      password: 'كلمة المرور أو رمز الوصول الشخصي',
+      personalAccessToken: 'رمز الوصول الشخصي',
       generateToken: 'إنشاء رمز',
       tokenHelpCloud: 'من إعدادات حسابك في Atlassian',
-      tokenHelpDatacenter: 'استخدم كلمة المرور أو رمز الوصول الشخصي من إعدادات ملفك الشخصي في Jira',
+      tokenHelpDatacenter: 'أنشئ رمز وصول شخصي في إعدادات ملفك الشخصي في Jira',
     },
     buttons: {
       connect: 'اتصال',
@@ -61,7 +61,7 @@ export default {
       credentialsHelpCloud:
         'أدخل بيانات اعتماد Jira Cloud الخاصة بك. يمكنك إنشاء رمز API من إعدادات حسابك في Atlassian.',
       credentialsHelpDatacenter:
-        'أدخل بيانات اعتماد Jira Data Center الخاصة بك. استخدم اسم المستخدم وكلمة المرور أو رمز الوصول الشخصي.',
+        'أدخل رمز وصول شخصي من إعدادات ملفك الشخصي في Jira Data Center.',
       reviewSummary:
         'راجع ملخص الاستيراد قبل المتابعة. قد تستغرق هذه العملية عدة دقائق للمشاريع الكبيرة.',
       noAttachments: 'لن يتم استيراد المرفقات',

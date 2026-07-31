@@ -238,10 +238,12 @@ export const jiraImport = {
     connectionState.isConnecting = true;
     connectionState.error = null;
 
+    const connectionEmail = deploymentType === 'datacenter' ? '' : email;
+
     try {
       const response = await api.jiraImport.testConnection({
         instance_url: url,
-        email: email,
+        email: connectionEmail,
         api_token: token,
         deployment_type: deploymentType,
       });
@@ -249,7 +251,7 @@ export const jiraImport = {
       connectionState.connectionId = response.connection_id;
       connectionState.instanceInfo = response.instance_info;
       connectionState.jiraUrl = url;
-      connectionState.email = email;
+      connectionState.email = connectionEmail;
       connectionState.apiToken = token;
       connectionState.deploymentType = deploymentType;
       connectionState.isConnected = true;

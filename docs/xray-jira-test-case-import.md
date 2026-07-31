@@ -213,9 +213,9 @@ GET https://<jira-host>/rest/raven/2.0/api/test/{testKey}/step
 ```
 
 Xray documents version 2.0 as the latest REST version and states that it uses
-Jira authentication. Basic authentication and Jira Data Center personal access
-tokens are supported. This means Windshift can reuse the credentials already
-stored for the Data Center Jira connection:
+Jira authentication. Windshift uses Jira Data Center personal access tokens for
+these requests, so it can reuse the PAT already stored for the Data Center Jira
+connection:
 
 - <https://getxraydocs.atlassian.net/wiki/spaces/XRAY600/pages/50595106/REST+API>
 - <https://getxraydocs.atlassian.net/wiki/spaces/XRAY640/pages/50070592/Test+Steps+-+REST>
@@ -595,7 +595,7 @@ At minimum, cover:
 
 - Cloud authentication, token refresh, batching at 100, pagination, rate
   limiting, GraphQL partial errors, and regional endpoints.
-- Data Center basic/PAT authentication, response-envelope variants, 404,
+- Data Center PAT authentication, response-envelope variants, 404,
   forbidden, and app-not-installed behavior.
 - issue types named `Test` and `Test Case` from another test-management product
   do not trigger the Xray prompt.

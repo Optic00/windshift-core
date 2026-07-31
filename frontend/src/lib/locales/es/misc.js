@@ -36,11 +36,11 @@ export default {
       email: 'Correo electrónico',
       username: 'Nombre de usuario',
       apiToken: 'Token de API',
-      password: 'Contraseña o Token de Acceso Personal',
+      personalAccessToken: 'Token de Acceso Personal',
       generateToken: 'Generar un token',
       tokenHelpCloud: 'desde la configuración de tu cuenta de Atlassian',
       tokenHelpDatacenter:
-        'Usa tu contraseña o un Token de Acceso Personal desde la configuración de tu perfil en Jira',
+        'Crea un Token de Acceso Personal en la configuración de tu perfil de Jira',
     },
     buttons: {
       connect: 'Conectar',
@@ -62,7 +62,7 @@ export default {
       credentialsHelpCloud:
         'Ingresa tus credenciales de Jira Cloud. Puedes generar un token de API desde la configuración de tu cuenta de Atlassian.',
       credentialsHelpDatacenter:
-        'Ingresa tus credenciales de Jira Data Center. Usa tu nombre de usuario y contraseña o un Token de Acceso Personal.',
+        'Ingresa un Token de Acceso Personal desde la configuración de tu perfil de Jira Data Center.',
       reviewSummary:
         'Revisa el resumen de importación antes de continuar. Esta operación puede tardar varios minutos para proyectos grandes.',
       noAttachments: 'No se importarán los archivos adjuntos',

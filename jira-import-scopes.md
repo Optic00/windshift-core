@@ -31,7 +31,8 @@ project switcher is empty there, scopes don't matter.
 
 Use a Personal Access Token (PAT). PATs have no scopes; the account
 needs **Browse Projects** + **View Issues** on each project, plus
-application access to Jira Software for board/sprint import.
+application access to Jira Software for board/sprint import. The importer
+sends the PAT as a Bearer token; no username or password is required.
 
 ## When something fails
 

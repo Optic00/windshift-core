@@ -305,12 +305,12 @@ export default {
   "jiraImport": {
     "form": {
       "tokenHelpCloud": "desde la configuración de su cuenta de Atlassian",
-      "tokenHelpDatacenter": "Use su contraseña o un Token de Acceso Personal desde la configuración de su perfil en Jira"
+      "tokenHelpDatacenter": "Cree un Token de Acceso Personal en la configuración de su perfil de Jira"
     },
     "messages": {
       "selectConnection": "Seleccione una conexión existente o crea una nueva",
       "credentialsHelpCloud": "Ingrese sus credenciales de Jira Cloud. Puedes generar un token de API desde la configuración de su cuenta de Atlassian.",
-      "credentialsHelpDatacenter": "Ingrese sus credenciales de Jira Data Center. Usa su nombre de usuario y contraseña o un Token de Acceso Personal.",
+      "credentialsHelpDatacenter": "Ingrese un Token de Acceso Personal desde la configuración de su perfil de Jira Data Center.",
       "reviewSummary": "Revise el resumen de importación antes de continuar. Esta operación puede tardar varios minutos para proyectos grandes."
     },
     "projects": {
@@ -401,4 +401,3 @@ export default {
     "modeValidatorDesc": "Muestra un error cuando se intente la transición"
   }
 };
-

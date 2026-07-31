@@ -13,8 +13,8 @@ import (
 // JiraConnectRequest represents a request to connect to Jira
 type JiraConnectRequest struct {
 	InstanceURL    string `json:"instance_url"`
-	Email          string `json:"email"`           // Email (Cloud) or username (Data Center)
-	APIToken       string `json:"api_token"`       // API token (Cloud) or password/token (Data Center)
+	Email          string `json:"email"`           // Required for Cloud; unused for Data Center PATs
+	APIToken       string `json:"api_token"`       // Cloud API token or Data Center PAT
 	DeploymentType string `json:"deployment_type"` // "cloud" or "datacenter" (default: "cloud")
 }
 
