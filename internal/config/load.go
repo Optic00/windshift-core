@@ -157,15 +157,11 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 		os.Exit(1)
 	}
 
-	// WebAuthn: RPID falls back to hostname in production; dev mode override
-	// happens inside the webauthn package (it knows devMode). RPName defaults
-	// to "Windshift" when WEBAUTHN_RP_NAME is unset.
-	rpID := os.Getenv("WEBAUTHN_RP_ID")
-	if rpID == "" {
-		if hostname, err := os.Hostname(); err == nil {
-			rpID = hostname
-		}
-	}
+	// WebAuthn: use the browser-visible BASE_URL hostname by default. This is
+	// especially important in containers, where os.Hostname() is normally an
+	// internal container ID that browsers can never use as a relying-party ID.
+	// Explicit WEBAUTHN_RP_ID remains available for split-host deployments.
+	rpID := resolveWebAuthnRPID(os.Getenv("WEBAUTHN_RP_ID"), resolvedBaseURL, os.Hostname)
 	rpName := firstNonEmpty(os.Getenv("WEBAUTHN_RP_NAME"), "Windshift")
 
 	// Web Push (VAPID). Both keys must be set to enable push; subject defaults
@@ -258,6 +254,25 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 		FrontendFiles: frontend,
 		ShutdownChan:  shutdownChan,
 	}
+}
+
+func resolveWebAuthnRPID(explicit, baseURL string, fallbackHostname func() (string, error)) string {
+	if explicit != "" {
+		return explicit
+	}
+
+	if parsed, err := url.Parse(baseURL); err == nil &&
+		(parsed.Scheme == "http" || parsed.Scheme == "https") &&
+		parsed.Hostname() != "" {
+		return parsed.Hostname()
+	}
+
+	if fallbackHostname != nil {
+		if hostname, err := fallbackHostname(); err == nil {
+			return hostname
+		}
+	}
+	return ""
 }
 
 // postgresEnv reads the POSTGRES_* family for use by database.BuildPostgresConnString.

@@ -108,8 +108,9 @@ type AuthConfig struct {
 // WebAuthnConfig holds WebAuthn relying-party identity.
 type WebAuthnConfig struct {
 	// RPID is the relying party ID (usually the hostname). In production it is
-	// resolved from WEBAUTHN_RP_ID with fallback to os.Hostname(). In
-	// development the webauthn package overrides this to "localhost".
+	// resolved from WEBAUTHN_RP_ID, then the BASE_URL hostname, with
+	// os.Hostname() as a final fallback. In development the webauthn package
+	// overrides this to "localhost".
 	RPID string
 	// RPName is the displayed RP name; defaults to "Windshift".
 	RPName string
