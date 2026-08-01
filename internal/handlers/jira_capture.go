@@ -63,6 +63,8 @@ func newRecordingClient(inner jira.Client, captureDir string) *recordingClient {
 		filepath.Join(captureDir, "jira_service_desk_request_comments.jsonl"),
 		filepath.Join(captureDir, "jira_service_desk_organizations.jsonl"),
 		filepath.Join(captureDir, "jira_service_desk_organization_users.jsonl"),
+		filepath.Join(captureDir, "jira_project_workflow_configuration.jsonl"),
+		filepath.Join(captureDir, "jira_project_screen_configuration.jsonl"),
 	}
 	for _, path := range rc.jsonlPaths {
 		if err := os.WriteFile(path, nil, 0o600); err != nil { //nolint:gosec // path built from operator-supplied dir

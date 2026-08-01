@@ -20,6 +20,22 @@ type Config struct {
 	isDevelopment bool
 }
 
+// InvalidRPIDError identifies a relying-party ID that cannot be used by the
+// WebAuthn implementation. Keeping this error typed lets the server disable
+// only the optional passkey surface for local installations with a hostname
+// such as "windshift", while still failing fast for unrelated configuration
+// errors.
+type InvalidRPIDError struct {
+	RPID string
+	Err  error
+}
+
+func (e *InvalidRPIDError) Error() string {
+	return fmt.Sprintf("WebAuthn RP ID %q is invalid: %v", e.RPID, e.Err)
+}
+
+func (e *InvalidRPIDError) Unwrap() error { return e.Err }
+
 // NewConfig creates a new WebAuthn configuration
 func NewConfig(rpID, rpName string, origins []string, isDev bool, allowedHosts, port string, enableHTTPS, useProxy bool) (*Config, error) {
 	c := &Config{
@@ -41,6 +57,9 @@ func NewConfig(rpID, rpName string, origins []string, isDev bool, allowedHosts, 
 	}
 	if c.RPName == "" {
 		c.RPName = "Windshift"
+	}
+	if err := protocol.ValidateRPID(c.RPID); err != nil {
+		return nil, &InvalidRPIDError{RPID: c.RPID, Err: err}
 	}
 
 	// If no origins provided, derive from configuration

@@ -515,7 +515,9 @@ func (h *JiraImportHandler) ensureJiraCollection(jobID, jiraID, jiraKey, name, d
 	}
 	metadata["action"] = action
 	metadata["workspace_id"] = workspaceID
-	h.recordMapping(jobID, "collection", jiraID, jiraKey, collectionID, metadata)
+	if err := h.recordMapping(jobID, "collection", jiraID, jiraKey, collectionID, metadata); err != nil {
+		return 0, false
+	}
 	return collectionID, true
 }
 
@@ -683,7 +685,9 @@ func (h *JiraImportHandler) ensureJiraBoardConfiguration(jobID string, board jir
 	metadata["action"] = action
 	metadata["collection_id"] = collectionID
 	metadata["column_count"] = len(columns)
-	h.recordMapping(jobID, "board_configuration", jiraID, board.Name, configID, metadata)
+	if err := h.recordMapping(jobID, "board_configuration", jiraID, board.Name, configID, metadata); err != nil {
+		return 0, false
+	}
 	return configID, true
 }
 

@@ -21,9 +21,12 @@ func RegisterAuthRoutes(deps *Deps) {
 	api.HandleH("POST /auth/resend-verification", deps.AuthRateLimiter.Limit(http.HandlerFunc(deps.Auth.Auth.ResendVerification)))
 	api.HandleH("GET /auth/verification-status", deps.EmailVerifyLimiter.Limit(http.HandlerFunc(deps.Auth.Auth.GetVerificationStatus)))
 
-	// WebAuthn (FIDO) authentication endpoints
-	api.HandleH("POST /auth/webauthn/login/start", deps.FIDORateLimiter.Limit(http.HandlerFunc(deps.Auth.WebAuthn.StartFIDOLoginNew)))
-	api.HandleH("POST /auth/webauthn/login/complete", deps.FIDORateLimiter.Limit(http.HandlerFunc(deps.Auth.WebAuthn.CompleteFIDOLoginNew)))
+	// WebAuthn (FIDO) authentication endpoints. The handler is optional because
+	// local installations may use a hostname that cannot be a WebAuthn RP ID.
+	if deps.Auth.WebAuthn != nil {
+		api.HandleH("POST /auth/webauthn/login/start", deps.FIDORateLimiter.Limit(http.HandlerFunc(deps.Auth.WebAuthn.StartFIDOLoginNew)))
+		api.HandleH("POST /auth/webauthn/login/complete", deps.FIDORateLimiter.Limit(http.HandlerFunc(deps.Auth.WebAuthn.CompleteFIDOLoginNew)))
+	}
 
 	// SSO (Single Sign-On) endpoints - Public with rate limiting
 	// Rate limiting prevents brute force attacks and DoS on SSO endpoints

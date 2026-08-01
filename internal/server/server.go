@@ -298,24 +298,9 @@ func (s *Server) initialize() error {
 	// Initialize WebAuthn — RPID/RPName are pre-resolved by config.Load;
 	// webauthn only overrides RPID when in development mode.
 	isDevelopment := cfg.DisableCSRF
-	rpID := cfg.WebAuthn.RPID
-	if isDevelopment {
-		rpID = ""
-	}
-	webAuthnConfig, err := webauthn.NewConfig(rpID, cfg.WebAuthn.RPName, nil, isDevelopment, cfg.AllowedHosts, effectivePort, enableHTTPS, cfg.UseProxy)
+	webAuthnConfig, portalWebAuthnConfig, err := initializeWebAuthnConfigs(cfg, isDevelopment, effectivePort, enableHTTPS)
 	if err != nil {
-		return fmt.Errorf("failed to initialize WebAuthn configuration: %w", err)
-	}
-	slog.Info("WebAuthn configuration initialized",
-		"rp_id", webAuthnConfig.RPID,
-		"rp_name", webAuthnConfig.RPName,
-		"development_mode", isDevelopment)
-
-	// Portal passkeys reuse the relying-party settings but require resident keys
-	// so customers can sign in passwordlessly (BeginDiscoverableLogin).
-	portalWebAuthnConfig, err := portalwebauthn.NewConfig(webAuthnConfig)
-	if err != nil {
-		return fmt.Errorf("failed to initialize portal WebAuthn configuration: %w", err)
+		return err
 	}
 
 	// Build options for user-keyed rate limiters (authenticated endpoints)
@@ -569,7 +554,10 @@ func (s *Server) initialize() error {
 	)
 	groupHandler := handlers.NewGroupHandler(repository.NewGroupRepository(s.db), permService, logger.NewAuditor(s.db))
 	credentialHandler := handlers.NewCredentialHandler(repository.NewCredentialRepository(s.db), logger.NewAuditor(s.db), permService, cfg.SSH.Enabled)
-	webAuthnHandler := handlers.NewWebAuthnHandler(s.db, permService, sessionManager, webAuthnConfig, ipExtractor)
+	var webAuthnHandler *handlers.WebAuthnHandler
+	if webAuthnConfig != nil {
+		webAuthnHandler = handlers.NewWebAuthnHandler(s.db, permService, sessionManager, webAuthnConfig, ipExtractor)
+	}
 	collectionHandler := handlers.NewCollectionHandler(s.db, permService)
 	boardConfigHandler := handlers.NewBoardConfigurationHandler(
 		repository.NewBoardConfigurationRepository(s.db),
@@ -741,7 +729,9 @@ func (s *Server) initialize() error {
 	}
 
 	authPolicyHandler := handlers.NewAuthPolicyHandlerWithFallback(s.db, cfg.EnableAdminFallback, logger.NewAuditor(s.db))
-	webAuthnHandler.SetAuthPolicyHandler(authPolicyHandler)
+	if webAuthnHandler != nil {
+		webAuthnHandler.SetAuthPolicyHandler(authPolicyHandler)
+	}
 
 	// Initialize auth handler
 	authHandler := handlers.NewAuthHandler(
@@ -1106,14 +1096,17 @@ func (s *Server) initialize() error {
 	portalHandler.SetApprovalService(approvalService)
 	portalHandler.SetEventCoordinator(eventCoordinator)
 	portalAuthHandler := handlers.NewPortalAuthHandler(repository.NewPortalAuthRepository(s.db), portalSessionManager, sessionManager, magicLinkService, ipExtractor)
-	portalWebAuthnHandler := handlers.NewPortalWebAuthnHandler(
-		portalSessionManager,
-		portalWebAuthnConfig,
-		portalwebauthn.NewSessionStore(s.db),
-		portalwebauthn.NewCredentialStore(s.db),
-		portalwebauthn.NewPortalLookupStore(s.db),
-		ipExtractor,
-	)
+	var portalWebAuthnHandler *handlers.PortalWebAuthnHandler
+	if portalWebAuthnConfig != nil {
+		portalWebAuthnHandler = handlers.NewPortalWebAuthnHandler(
+			portalSessionManager,
+			portalWebAuthnConfig,
+			portalwebauthn.NewSessionStore(s.db),
+			portalwebauthn.NewCredentialStore(s.db),
+			portalwebauthn.NewPortalLookupStore(s.db),
+			ipExtractor,
+		)
+	}
 	portalCustomersHandler := handlers.NewPortalCustomersHandler(s.db, permService, customerOrgPermissionService)
 	contactRoleConfig := services.NewContactRoleConfig()
 	contactRoleConfig.AuditEmit = enumAuditEmit
@@ -1738,6 +1731,51 @@ func (s *Server) initialize() error {
 	}
 
 	return nil
+}
+
+// initializeWebAuthnConfigs builds the internal and portal passkey
+// configurations. An invalid RP ID disables the optional passkey surface and
+// returns nil configurations so local installations with single-label
+// service names can still start normally. Other configuration errors remain
+// fatal because they indicate a broken WebAuthn setup rather than an
+// unsupported local hostname.
+func initializeWebAuthnConfigs(cfg Config, isDevelopment bool, effectivePort string, enableHTTPS bool) (internalConfig *webauthn.Config, portalConfig *portalwebauthn.Config, err error) {
+	rpID := cfg.WebAuthn.RPID
+	if isDevelopment {
+		rpID = ""
+	}
+
+	webAuthnConfig, err := webauthn.NewConfig(rpID, cfg.WebAuthn.RPName, nil, isDevelopment, cfg.AllowedHosts, effectivePort, enableHTTPS, cfg.UseProxy)
+	if err != nil {
+		var invalidRPIDErr *webauthn.InvalidRPIDError
+		if !errors.As(err, &invalidRPIDErr) {
+			return nil, nil, fmt.Errorf("failed to initialize WebAuthn configuration: %w", err)
+		}
+
+		// A single-label hostname is common in Docker, homelab DNS, and local
+		// test installations, but it cannot be used as an RP ID by the current
+		// WebAuthn implementation. Keep the application healthy and make the
+		// limitation actionable; passkeys remain available when the operator
+		// uses localhost, an IP address, or a dotted hostname.
+		slog.Warn("WebAuthn disabled because the configured RP ID is not valid; set BASE_URL or WEBAUTHN_RP_ID to localhost, an IP address, or a dotted hostname to enable passkeys",
+			"rp_id", invalidRPIDErr.RPID,
+			"error", invalidRPIDErr)
+		return nil, nil, nil
+	}
+
+	slog.Info("WebAuthn configuration initialized",
+		"rp_id", webAuthnConfig.RPID,
+		"rp_name", webAuthnConfig.RPName,
+		"development_mode", isDevelopment)
+
+	// Portal passkeys reuse the relying-party settings but require resident
+	// keys so customers can sign in passwordlessly (BeginDiscoverableLogin).
+	portalWebAuthnConfig, err := portalwebauthn.NewConfig(webAuthnConfig)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to initialize portal WebAuthn configuration: %w", err)
+	}
+
+	return webAuthnConfig, portalWebAuthnConfig, nil
 }
 
 func (s *Server) recoverUser(username string) {

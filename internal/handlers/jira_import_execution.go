@@ -168,6 +168,9 @@ func sortJiraIssuesByRequestedKeyOrder(issues []jira.JiraIssue, orderedKeys []st
 }
 
 func (h *JiraImportHandler) executeImportWithClientContext(ctx context.Context, jobID string, req StartImportRequest, client jira.Client, createdByUserID int) {
+	h.clearMappingFailure(jobID)
+	defer h.clearMappingFailure(jobID)
+
 	progress := &ImportProgress{
 		Phase:         "initializing",
 		TotalProjects: len(req.ProjectKeys),
@@ -208,6 +211,9 @@ func (h *JiraImportHandler) executeImportWithClientContext(ctx context.Context, 
 	}
 
 	h.importJiraAssets(ctx, jobID, client, createdByUserID)
+	if h.failOnMappingFailure(jobID, progress) {
+		return
+	}
 
 	fieldConfigurations := loadJiraCustomFieldConfigurations(ctx, client, req.Mappings.CustomFields)
 	issueKeysByProject, assetFieldSetIDs, applicableFieldsByProject, choiceLabelsByField := h.preflightJiraCustomFields(
@@ -236,6 +242,9 @@ func (h *JiraImportHandler) executeImportWithClientContext(ctx context.Context, 
 	if err != nil {
 		slog.Error("Failed to ensure Affects Version custom field", slog.String("component", "jira"), slog.Any("error", err))
 	}
+	if h.failOnMappingFailure(jobID, progress) {
+		return
+	}
 
 	// Process each project
 	for i, projectKey := range req.ProjectKeys {
@@ -262,6 +271,9 @@ func (h *JiraImportHandler) executeImportWithClientContext(ctx context.Context, 
 			slog.Error("Failed to ensure workspace", slog.String("component", "jira"), slog.String("project", projectKey), slog.Any("error", err))
 			continue
 		}
+		if h.failOnMappingFailure(jobID, progress) {
+			return
+		}
 
 		jsmImport, err := h.prepareJiraServiceManagementImport(
 			ctx, jobID, projectKey, workspaceID, itemTypeMap, client, createdByUserID,
@@ -273,6 +285,9 @@ func (h *JiraImportHandler) executeImportWithClientContext(ctx context.Context, 
 				slog.String("project", projectKey),
 				slog.Any("error", err))
 			continue
+		}
+		if h.failOnMappingFailure(jobID, progress) {
+			return
 		}
 
 		// Create workflows and configuration set for this project
@@ -296,6 +311,9 @@ func (h *JiraImportHandler) executeImportWithClientContext(ctx context.Context, 
 				slog.String("component", "jira"),
 				slog.String("project", projectKey),
 				slog.Any("error", err))
+		}
+		if h.failOnMappingFailure(jobID, progress) {
+			return
 		}
 
 		// Create milestones from version mappings for this project
@@ -322,6 +340,9 @@ func (h *JiraImportHandler) executeImportWithClientContext(ctx context.Context, 
 		if err != nil {
 			slog.Error("Failed to ensure Jira time project", slog.String("component", "jira"), slog.String("project", projectKey), slog.Any("error", err))
 			timeProjectID = nil
+		}
+		if h.failOnMappingFailure(jobID, progress) {
+			return
 		}
 
 		issueKeys, prefetched := issueKeysByProject[projectKey]
@@ -540,6 +561,9 @@ func (h *JiraImportHandler) executeImportWithClientContext(ctx context.Context, 
 					continue
 				}
 				err := h.importIssue(ctx, jobID, workspaceID, &issue, statusMap, itemTypeMap, userMap, usernameMap, portalCustomerMap, versionMap, iterationMap, customFieldIDMap, choiceOptionIDs, timeProjectID, affectsVersionField, req.Mappings.CustomFields, jsmImport, client, progress, req.ForceReimport)
+				if h.failOnMappingFailure(jobID, progress) {
+					return
+				}
 				if err != nil {
 					slog.Error("Failed to import issue", slog.String("component", "jira"), slog.String("issue", issue.Key), slog.Any("error", err))
 					progress.FailedIssues++
@@ -555,11 +579,23 @@ func (h *JiraImportHandler) executeImportWithClientContext(ctx context.Context, 
 		h.linkParents(jobID)
 
 		// After all issues imported for this project, import issue links
-		h.importIssueLinks(jobID)
+		if err := h.importIssueLinks(jobID); err != nil {
+			if h.failOnMappingFailure(jobID, progress) {
+				return
+			}
+			slog.Error("Failed to import Jira issue links", slog.String("component", "jira"), slog.Any("error", err))
+			return
+		}
+		if h.failOnMappingFailure(jobID, progress) {
+			return
+		}
 
 		progress.CompletedProjects = i + 1
 	}
 
+	if h.failOnMappingFailure(jobID, progress) {
+		return
+	}
 	// Mark job as completed
 	progress.Phase = "completed"
 	h.persistJiraImportResult(jobID, progress)
@@ -1189,14 +1225,16 @@ func (h *JiraImportHandler) bindJiraImportFieldsToWorkspace(
 		if ensureErr != nil {
 			return ensureErr
 		}
-		h.recordMapping(
+		if err := h.recordMapping(
 			jobID,
 			"screen",
 			fmt.Sprintf("asset-layout-%s-%s-%d", projectKey, contextName, sourceID),
 			name,
 			screenID,
 			map[string]any{"action": map[bool]string{true: "create", false: "reuse_existing"}[wasCreated]},
-		)
+		); err != nil {
+			return fmt.Errorf("record Jira import screen mapping: %w", err)
+		}
 		if _, err = h.db.ExecWrite(`
 			INSERT INTO configuration_set_screens (configuration_set_id, screen_id, context, created_at)
 			VALUES (?, ?, ?, CURRENT_TIMESTAMP)
@@ -1253,14 +1291,16 @@ func (h *JiraImportHandler) bindJiraImportFieldsToWorkspace(
 			if ensureErr != nil {
 				return ensureErr
 			}
-			h.recordMapping(
+			if err := h.recordMapping(
 				jobID,
 				"screen",
 				fmt.Sprintf("asset-item-layout-%s-%d-%s", projectKey, item.ID, override.column),
 				name,
 				screenID,
 				map[string]any{"action": map[bool]string{true: "create", false: "reuse_existing"}[wasCreated]},
-			)
+			); err != nil {
+				return fmt.Errorf("record Jira item screen mapping: %w", err)
+			}
 			query := fmt.Sprintf(`UPDATE configuration_set_item_types SET %s = ? WHERE id = ?`, override.column)
 			if _, err = h.db.ExecWrite(query, screenID, item.ID); err != nil {
 				return fmt.Errorf("assign item type Jira import screen: %w", err)
@@ -1668,7 +1708,7 @@ func (h *JiraImportHandler) ensureWorkflowsAndConfigSet(
 		if sourceID == "" {
 			sourceID = fmt.Sprintf("fallback-%s-%d", projectKey, groupIndex)
 		}
-		h.recordMapping(jobID, "workflow", sourceID, wfName, workflowID, map[string]any{
+		if err := h.recordMapping(jobID, "workflow", sourceID, wfName, workflowID, map[string]any{
 			"fidelity":                          fidelity,
 			"transition_count":                  len(edges),
 			"transition_rules_complete":         group.rulesComplete,
@@ -1677,7 +1717,9 @@ func (h *JiraImportHandler) ensureWorkflowsAndConfigSet(
 			"review_locked_transition_count":    countReviewLockedJiraEdges(edges),
 			"unsupported_transition_actions":    group.unsupportedActions,
 			"unsupported_transition_triggers":   group.unsupportedTriggers,
-		})
+		}); err != nil {
+			return fmt.Errorf("record Jira workflow mapping: %w", err)
+		}
 		workflows = append(workflows, createdWorkflow{
 			workflowID:     workflowID,
 			conditionSetID: conditionSetID,
@@ -1749,7 +1791,9 @@ func (h *JiraImportHandler) ensureWorkflowsAndConfigSet(
 		return fmt.Errorf("failed to commit configuration set: %w", err)
 	}
 
-	h.recordMapping(jobID, "configuration_set", fmt.Sprintf("cs-%s", projectKey), csName, configSetID, nil)
+	if err := h.recordMapping(jobID, "configuration_set", fmt.Sprintf("cs-%s", projectKey), csName, configSetID, nil); err != nil {
+		return fmt.Errorf("record Jira configuration set mapping: %w", err)
+	}
 
 	slog.Info("Created workflows and configuration set for import",
 		slog.String("component", "jira"),
@@ -2066,13 +2110,15 @@ func (h *JiraImportHandler) ensureJiraProjectScreens(
 		if wasCreated {
 			action = "create"
 		}
-		h.recordMapping(jobID, "screen", sourceScreen.ID, sourceScreen.Name, screenID, map[string]any{
+		if err := h.recordMapping(jobID, "screen", sourceScreen.ID, sourceScreen.Name, screenID, map[string]any{
 			"action":         action,
 			"tab_count":      sourceScreen.TabCount,
 			"tabs_flattened": sourceScreen.TabCount > 1,
 			"field_count":    len(sourceScreen.Fields),
 			"omitted_fields": omittedFields,
-		})
+		}); err != nil {
+			return fmt.Errorf("record Jira configured screen mapping: %w", err)
+		}
 	}
 
 	contextByIssueType := make(map[string]jiraImportedScreenContext)
@@ -2162,13 +2208,15 @@ func (h *JiraImportHandler) ensureJiraProjectScreens(
 		}
 	}
 
-	h.recordMapping(jobID, "screen_configuration", project.ID, projectKey, configSetID, map[string]any{
+	if err := h.recordMapping(jobID, "screen_configuration", project.ID, projectKey, configSetID, map[string]any{
 		"fidelity":              "authoritative_layout",
 		"screen_count":          len(config.Screens),
 		"issue_type_count":      len(contextByIssueType),
 		"default_context_usage": defaultCount,
 		"was_created":           false,
-	})
+	}); err != nil {
+		return fmt.Errorf("record Jira screen configuration mapping: %w", err)
+	}
 	return nil
 }
 
@@ -2310,12 +2358,14 @@ func (h *JiraImportHandler) ensureJiraIterations(ctx context.Context, jobID stri
 				continue
 			}
 			result[sprintID] = iterationID
-			h.recordMapping(jobID, "iteration", sprintID, sprint.Name, iterationID, map[string]any{
+			if err := h.recordMapping(jobID, "iteration", sprintID, sprint.Name, iterationID, map[string]any{
 				"jira_board_id":   board.ID,
 				"jira_board_name": board.Name,
 				"jira_state":      sprint.State,
 				"jira_goal":       sprint.Goal,
-			})
+			}); err != nil {
+				return nil, fmt.Errorf("record Jira iteration mapping: %w", err)
+			}
 		}
 	}
 	return result, nil
@@ -2436,11 +2486,13 @@ func (h *JiraImportHandler) ensureJiraTimeProject(jobID string, workspaceID int,
 	var existingWorkspaceProject sql.NullInt64
 	if err := h.db.QueryRow(`SELECT time_project_id FROM workspaces WHERE id = ?`, workspaceID).Scan(&existingWorkspaceProject); err == nil && existingWorkspaceProject.Valid {
 		id := int(existingWorkspaceProject.Int64)
-		h.recordMapping(jobID, "time_project", "project:"+projectKey+":worklogs", projectKey, id, map[string]any{
+		if err := h.recordMapping(jobID, "time_project", "project:"+projectKey+":worklogs", projectKey, id, map[string]any{
 			"workspace_id": workspaceID,
 			"action":       "reuse_workspace_default",
 			"was_created":  false,
-		})
+		}); err != nil {
+			return nil, fmt.Errorf("record Jira time project mapping: %w", err)
+		}
 		return &id, nil
 	}
 
@@ -2478,10 +2530,12 @@ func (h *JiraImportHandler) ensureJiraTimeProject(jobID string, workspaceID int,
 	if _, err := h.db.ExecWrite(`UPDATE workspaces SET time_project_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND time_project_id IS NULL`, projectID, workspaceID); err != nil {
 		return nil, err
 	}
-	h.recordMapping(jobID, "time_project", "project:"+projectKey+":worklogs", projectKey, projectID, map[string]any{
+	if err := h.recordMapping(jobID, "time_project", "project:"+projectKey+":worklogs", projectKey, projectID, map[string]any{
 		"workspace_id": workspaceID,
 		"was_created":  wasCreated,
-	})
+	}); err != nil {
+		return nil, fmt.Errorf("record Jira time project mapping: %w", err)
+	}
 	return &projectID, nil
 }
 
@@ -2526,10 +2580,12 @@ func (h *JiraImportHandler) ensureWorkspace(_ context.Context, jobID string, map
 	}
 
 	// Record the mapping
-	h.recordMapping(jobID, "workspace", mapping.JiraKey, mapping.JiraKey, result.Workspace.ID, map[string]any{
+	if err := h.recordMapping(jobID, "workspace", mapping.JiraKey, mapping.JiraKey, result.Workspace.ID, map[string]any{
 		"action":      "create",
 		"was_created": true,
-	})
+	}); err != nil {
+		return 0, fmt.Errorf("record Jira workspace mapping: %w", err)
+	}
 
 	return result.Workspace.ID, nil
 }
@@ -2754,7 +2810,9 @@ func (h *JiraImportHandler) ensureAffectsVersionCustomField(_ context.Context, j
 	if existingType != "" && existingType != fieldType {
 		meta["previous_windshift_type"] = existingType
 	}
-	h.recordMapping(jobID, "custom_field", jiraID, name, fieldID, meta)
+	if err := h.recordMapping(jobID, "custom_field", jiraID, name, fieldID, meta); err != nil {
+		return nil, fmt.Errorf("record Jira affects-version mapping: %w", err)
+	}
 	return &jiraAffectsVersionCustomField{FieldID: fieldID, OptionIDsByJiraID: optionIDsByJiraID, OptionLabelsByJiraID: optionLabelsByJiraID}, nil
 }
 
@@ -2837,7 +2895,9 @@ func (h *JiraImportHandler) ensureCustomFields(
 				"windshift_type":  fieldType,
 			}
 			addJiraCustomFieldConfigurationMetadata(metadata, capturedConfigurations[m.JiraID])
-			h.recordMapping(jobID, "custom_field", m.JiraID, m.JiraName, *m.WindshiftID, metadata)
+			if err := h.recordMapping(jobID, "custom_field", m.JiraID, m.JiraName, *m.WindshiftID, metadata); err != nil {
+				return nil, nil, fmt.Errorf("record Jira mapped custom field mapping: %w", err)
+			}
 			continue
 		}
 
@@ -2928,7 +2988,9 @@ func (h *JiraImportHandler) ensureCustomFields(
 			"preserve_raw":    m.PreserveRaw,
 		}
 		addJiraCustomFieldConfigurationMetadata(metadata, capturedConfigurations[m.JiraID])
-		h.recordMapping(jobID, "custom_field", m.JiraID, name, fieldID, metadata)
+		if err := h.recordMapping(jobID, "custom_field", m.JiraID, name, fieldID, metadata); err != nil {
+			return nil, nil, fmt.Errorf("record Jira custom field mapping: %w", err)
+		}
 	}
 
 	return fieldIDs, choiceOptionIDs, nil
@@ -3000,13 +3062,15 @@ func (h *JiraImportHandler) ensureJiraIssueKeyCustomField(jobID string) (int, er
 			if fieldType != string(jira.FieldTypeText) {
 				continue
 			}
-			h.recordMapping(jobID, "custom_field", jiraIssueKeyFieldSourceID, name, fieldID, map[string]any{
+			if err := h.recordMapping(jobID, "custom_field", jiraIssueKeyFieldSourceID, name, fieldID, map[string]any{
 				"action":          "reuse_existing",
 				"jira_field_type": "system:issue-key",
 				"windshift_type":  string(jira.FieldTypeText),
 				"was_created":     false,
 				"searchable":      true,
-			})
+			}); err != nil {
+				return 0, fmt.Errorf("record Jira issue-key mapping: %w", err)
+			}
 			return fieldID, nil
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
@@ -3027,13 +3091,15 @@ func (h *JiraImportHandler) ensureJiraIssueKeyCustomField(jobID string) (int, er
 			return 0, fmt.Errorf("create Jira Key custom field: %w", err)
 		}
 		fieldID = int(newID)
-		h.recordMapping(jobID, "custom_field", jiraIssueKeyFieldSourceID, name, fieldID, map[string]any{
+		if err := h.recordMapping(jobID, "custom_field", jiraIssueKeyFieldSourceID, name, fieldID, map[string]any{
 			"action":          "create",
 			"jira_field_type": "system:issue-key",
 			"windshift_type":  string(jira.FieldTypeText),
 			"was_created":     true,
 			"searchable":      true,
-		})
+		}); err != nil {
+			return 0, fmt.Errorf("record Jira issue-key mapping: %w", err)
+		}
 		return fieldID, nil
 	}
 	return 0, fmt.Errorf("could not allocate a text custom field for Jira Key")
@@ -3057,10 +3123,12 @@ func (h *JiraImportHandler) ensureMilestones(_ context.Context, jobID string, wo
 		err := h.db.QueryRow(`SELECT id FROM milestones WHERE name = ? AND workspace_id = ?`, m.JiraName, workspaceID).Scan(&existingID)
 		if err == nil {
 			result[m.JiraID] = existingID
-			h.recordMapping(jobID, "milestone", m.JiraID, m.JiraName, existingID, map[string]any{
+			if err := h.recordMapping(jobID, "milestone", m.JiraID, m.JiraName, existingID, map[string]any{
 				"action":      "reuse_existing",
 				"was_created": false,
-			})
+			}); err != nil {
+				return nil, fmt.Errorf("record Jira milestone mapping: %w", err)
+			}
 			continue
 		}
 
@@ -3088,10 +3156,12 @@ func (h *JiraImportHandler) ensureMilestones(_ context.Context, jobID string, wo
 		}
 
 		result[m.JiraID] = milestone.ID
-		h.recordMapping(jobID, "milestone", m.JiraID, m.JiraName, milestone.ID, map[string]any{
+		if err := h.recordMapping(jobID, "milestone", m.JiraID, m.JiraName, milestone.ID, map[string]any{
 			"action":      "create",
 			"was_created": true,
-		})
+		}); err != nil {
+			return nil, fmt.Errorf("record Jira milestone mapping: %w", err)
+		}
 	}
 
 	return result, nil
@@ -3133,10 +3203,12 @@ func (h *JiraImportHandler) ensureStatuses(_ context.Context, jobID string, mapp
 				result[jiraID] = existingID
 			}
 			if len(m.JiraIDs) > 0 {
-				h.recordMapping(jobID, "status", m.JiraIDs[0], m.JiraName, existingID, map[string]any{
+				if err := h.recordMapping(jobID, "status", m.JiraIDs[0], m.JiraName, existingID, map[string]any{
 					"action":      "reuse_existing",
 					"was_created": false,
-				})
+				}); err != nil {
+					return nil, fmt.Errorf("record Jira status mapping: %w", err)
+				}
 			}
 			continue
 		}
@@ -3159,10 +3231,12 @@ func (h *JiraImportHandler) ensureStatuses(_ context.Context, jobID string, mapp
 
 		// Record the mapping
 		if len(m.JiraIDs) > 0 {
-			h.recordMapping(jobID, "status", m.JiraIDs[0], m.JiraName, statusID, map[string]any{
+			if err := h.recordMapping(jobID, "status", m.JiraIDs[0], m.JiraName, statusID, map[string]any{
 				"action":      "create",
 				"was_created": true,
-			})
+			}); err != nil {
+				return nil, fmt.Errorf("record Jira status mapping: %w", err)
+			}
 		}
 	}
 
@@ -3193,10 +3267,12 @@ func (h *JiraImportHandler) ensureItemTypes(_ context.Context, jobID string, map
 				result[jiraID] = existingID
 			}
 			if len(m.JiraIDs) > 0 {
-				h.recordMapping(jobID, "item_type", m.JiraIDs[0], m.JiraName, existingID, map[string]any{
+				if err := h.recordMapping(jobID, "item_type", m.JiraIDs[0], m.JiraName, existingID, map[string]any{
 					"action":      "reuse_existing",
 					"was_created": false,
-				})
+				}); err != nil {
+					return nil, fmt.Errorf("record Jira item type mapping: %w", err)
+				}
 			}
 			continue
 		}
@@ -3221,10 +3297,12 @@ func (h *JiraImportHandler) ensureItemTypes(_ context.Context, jobID string, map
 
 		// Record the mapping
 		if len(m.JiraIDs) > 0 {
-			h.recordMapping(jobID, "item_type", m.JiraIDs[0], m.JiraName, itemTypeID, map[string]any{
+			if err := h.recordMapping(jobID, "item_type", m.JiraIDs[0], m.JiraName, itemTypeID, map[string]any{
 				"action":      "create",
 				"was_created": true,
-			})
+			}); err != nil {
+				return nil, fmt.Errorf("record Jira item type mapping: %w", err)
+			}
 		}
 	}
 

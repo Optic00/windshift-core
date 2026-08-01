@@ -68,10 +68,12 @@ func RegisterUserRoutes(deps *Deps) {
 
 	// User Credential endpoints
 	api.HandleH("GET /users/{userId}/credentials", auth(http.HandlerFunc(deps.Users.Credential.GetUserCredentials)))
-	api.HandleH("POST /users/{userId}/credentials/webauthn/register/start", auth(deps.FIDORateLimiter.Limit(http.HandlerFunc(deps.Auth.WebAuthn.StartFIDORegistrationNew))))
-	api.HandleH("POST /users/{userId}/credentials/webauthn/register/complete", auth(deps.FIDORateLimiter.Limit(http.HandlerFunc(deps.Auth.WebAuthn.CompleteFIDORegistrationNew))))
-	api.HandleH("GET /users/{userId}/credentials/webauthn", auth(http.HandlerFunc(deps.Auth.WebAuthn.GetWebAuthnCredentials)))
-	api.HandleH("DELETE /users/{userId}/credentials/webauthn/{credentialId}", auth(http.HandlerFunc(deps.Auth.WebAuthn.RemoveWebAuthnCredential)))
+	if deps.Auth.WebAuthn != nil {
+		api.HandleH("POST /users/{userId}/credentials/webauthn/register/start", auth(deps.FIDORateLimiter.Limit(http.HandlerFunc(deps.Auth.WebAuthn.StartFIDORegistrationNew))))
+		api.HandleH("POST /users/{userId}/credentials/webauthn/register/complete", auth(deps.FIDORateLimiter.Limit(http.HandlerFunc(deps.Auth.WebAuthn.CompleteFIDORegistrationNew))))
+		api.HandleH("GET /users/{userId}/credentials/webauthn", auth(http.HandlerFunc(deps.Auth.WebAuthn.GetWebAuthnCredentials)))
+		api.HandleH("DELETE /users/{userId}/credentials/webauthn/{credentialId}", auth(http.HandlerFunc(deps.Auth.WebAuthn.RemoveWebAuthnCredential)))
+	}
 	api.HandleH("POST /users/{userId}/credentials/ssh", auth(http.HandlerFunc(deps.Users.Credential.CreateSSHKey)))
 	api.HandleH("DELETE /users/{userId}/credentials/{credentialId}", auth(http.HandlerFunc(deps.Users.Credential.RemoveCredential)))
 

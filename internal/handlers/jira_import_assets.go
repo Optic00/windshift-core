@@ -123,11 +123,13 @@ func (h *JiraImportHandler) ensureJiraAssetSet(jobID string, schema jira.AssetOb
 		return 0, false
 	}
 
-	h.recordMapping(jobID, "asset_set", schema.ID, schema.ObjectSchemaKey, setID, map[string]any{
+	if err := h.recordMapping(jobID, "asset_set", schema.ID, schema.ObjectSchemaKey, setID, map[string]any{
 		"schema_name":  schema.Name,
 		"object_count": schema.ObjectCount,
 		"action":       action,
-	})
+	}); err != nil {
+		return 0, false
+	}
 	return setID, true
 }
 
@@ -461,12 +463,14 @@ func (h *JiraImportHandler) ensureJiraAssetTypeCategory(
 			slog.Any("error", err))
 		return 0, false
 	}
-	h.recordMapping(jobID, "asset_category", objectType.ID, name, categoryID, map[string]any{
+	if err := h.recordMapping(jobID, "asset_category", objectType.ID, name, categoryID, map[string]any{
 		"asset_set_id":               setID,
 		"jira_parent_object_type_id": objectType.ParentObjectTypeID,
 		"abstract":                   objectType.AbstractObjectType,
 		"action":                     action,
-	})
+	}); err != nil {
+		return 0, false
+	}
 	return categoryID, true
 }
 
@@ -493,7 +497,9 @@ func (h *JiraImportHandler) ensureJiraAssetType(jobID string, setID int, objectT
 		slog.Warn("Failed to ensure Jira asset type", slog.String("component", "jira"), slog.String("objectTypeID", objectType.ID), slog.Any("error", err))
 		return 0, false
 	}
-	h.recordMapping(jobID, "asset_type", objectType.ID, name, typeID, map[string]any{"asset_set_id": setID, "action": action})
+	if err := h.recordMapping(jobID, "asset_type", objectType.ID, name, typeID, map[string]any{"asset_set_id": setID, "action": action}); err != nil {
+		return 0, false
+	}
 	return typeID, true
 }
 
@@ -533,13 +539,15 @@ func (h *JiraImportHandler) ensureJiraAssetAttributeField(jobID string, setID in
 		slog.Warn("Failed to ensure Jira asset attribute field", slog.String("component", "jira"), slog.String("attributeID", attr.ID), slog.Any("error", err))
 		return 0, false
 	}
-	h.recordMapping(jobID, "custom_field", attr.ID, fieldName, fieldID, map[string]any{
+	if err := h.recordMapping(jobID, "custom_field", attr.ID, fieldName, fieldID, map[string]any{
 		"asset_attribute": true,
 		"asset_set_id":    setID,
 		"object_type_id":  objectType.ID,
 		"jira_type":       attr.Type,
 		"action":          action,
-	})
+	}); err != nil {
+		return 0, false
+	}
 	return fieldID, true
 }
 
@@ -613,7 +621,9 @@ func (h *JiraImportHandler) importJiraAssetObject(
 		return nil
 	}
 	if existingID := h.existingImportedJiraAsset(jobID, object.ID); existingID > 0 {
-		h.recordMapping(jobID, "asset", object.ID, object.ObjectKey, existingID, map[string]any{"action": "reuse_existing_mapping"})
+		if err := h.recordMapping(jobID, "asset", object.ID, object.ObjectKey, existingID, map[string]any{"action": "reuse_existing_mapping"}); err != nil {
+			return nil
+		}
 		return nil
 	}
 
@@ -713,12 +723,14 @@ func (h *JiraImportHandler) importJiraAssetObject(
 		return nil
 	}
 
-	h.recordMapping(jobID, "asset", object.ID, object.ObjectKey, int(assetID), map[string]any{
+	if err := h.recordMapping(jobID, "asset", object.ID, object.ObjectKey, int(assetID), map[string]any{
 		"asset_set_id":  setID,
 		"asset_type_id": assetTypeID,
 		"category_id":   categoryID,
 		"label":         object.Label,
-	})
+	}); err != nil {
+		return nil
+	}
 	for idx := range pendingAttributes {
 		pendingAttributes[idx].AssetID = int(assetID)
 	}
@@ -813,11 +825,13 @@ func (h *JiraImportHandler) ensureJiraAssetStatus(jobID string, setID int, statu
 	if jiraStatusID == "" {
 		jiraStatusID = name
 	}
-	h.recordMapping(jobID, "asset_status", jiraStatusID, name, statusID, map[string]any{
+	if err := h.recordMapping(jobID, "asset_status", jiraStatusID, name, statusID, map[string]any{
 		"asset_set_id": setID,
 		"category":     status.Category,
 		"action":       action,
-	})
+	}); err != nil {
+		return 0
+	}
 	return statusID
 }
 
@@ -841,7 +855,7 @@ func (h *JiraImportHandler) resolveJiraAssetReferences(
 			refs = append(refs, resolved)
 		}
 		if len(refs) < len(reference.Values) {
-			h.recordMapping(
+			if err := h.recordMapping(
 				jobID,
 				"fidelity_finding",
 				fmt.Sprintf("asset:%d:attribute:%s", reference.AssetID, reference.AttributeID),
@@ -857,7 +871,9 @@ func (h *JiraImportHandler) resolveJiraAssetReferences(
 					"attribute_id":   reference.AttributeID,
 					"was_created":    false,
 				},
-			)
+			); err != nil {
+				return
+			}
 		}
 		if len(refs) == 0 {
 			continue

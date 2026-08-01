@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 
 	"windshift/internal/database"
 	"windshift/internal/jira"
@@ -22,6 +23,8 @@ type JiraImportHandler struct {
 	db                 database.Database
 	encryption         *sso.SecretEncryption
 	capturePayloadsDir string // JIRA_CAPTURE_PAYLOADS (empty disables capture)
+	mappingFailuresMu  sync.Mutex
+	mappingFailures    map[string]error
 }
 
 // NewJiraImportHandler creates a new Jira import handler.
@@ -36,6 +39,7 @@ func NewJiraImportHandler(db database.Database, sessionSecret, capturePayloadsDi
 		db:                 db,
 		encryption:         sso.NewSecretEncryption(sessionSecret),
 		capturePayloadsDir: capturePayloadsDir,
+		mappingFailures:    make(map[string]error),
 	}
 }
 

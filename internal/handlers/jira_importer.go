@@ -998,11 +998,8 @@ func (h *JiraImportHandler) findPreviousJiraImportMapping(
 	return &mapping, nil
 }
 
-// transferJiraImportMappingOwnership moves cleanup responsibility from the
-// previous import to the current re-import. This prevents deleting an older
-// job from removing an item that a newer upsert now owns, while preserving the
-// existing Windshift ID.
-func (h *JiraImportHandler) transferJiraImportMappingOwnership(
+func transferJiraImportMappingOwnershipInStore(
+	store jiraImportMappingStore,
 	mapping *previousJiraImportMapping,
 	currentJobID string,
 ) (bool, error) {
@@ -1020,12 +1017,42 @@ func (h *JiraImportHandler) transferJiraImportMappingOwnership(
 	if err != nil {
 		return false, err
 	}
-	if _, err := h.db.ExecWrite(`
+	if _, err := store.ExecWrite(`
 		UPDATE jira_import_id_mappings SET metadata_json = ? WHERE id = ?
 	`, string(encoded), mapping.ID); err != nil {
 		return false, err
 	}
 	return wasCreated, nil
+}
+
+// recordMappingAndTransferOwnership makes the new mapping and the old
+// mapping's ownership handoff one database transaction. In particular, a
+// failed replacement mapping never leaves the previous import marked as
+// superseded and still responsible for cleanup.
+func (h *JiraImportHandler) recordMappingAndTransferOwnership(
+	jobID, entityType, jiraID, jiraKey string,
+	windshiftID int,
+	metadata map[string]interface{},
+	previous *previousJiraImportMapping,
+) error {
+	if previous == nil {
+		return h.recordMapping(jobID, entityType, jiraID, jiraKey, windshiftID, metadata)
+	}
+	tx, err := h.db.Begin()
+	if err != nil {
+		return h.rememberMappingFailure(jobID, fmt.Errorf("begin mapping ownership transaction: %w", err))
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := recordMappingInStore(tx, jobID, entityType, jiraID, jiraKey, windshiftID, metadata); err != nil {
+		return h.rememberMappingFailure(jobID, err)
+	}
+	if _, err := transferJiraImportMappingOwnershipInStore(tx, previous, jobID); err != nil {
+		return h.rememberMappingFailure(jobID, fmt.Errorf("transfer mapping ownership: %w", err))
+	}
+	if err := tx.Commit(); err != nil {
+		return h.rememberMappingFailure(jobID, fmt.Errorf("commit mapping ownership transaction: %w", err))
+	}
+	return nil
 }
 
 // DeleteImportedData handles DELETE /api/admin/jira-import/jobs/{jobId}/data
@@ -1494,8 +1521,64 @@ func (h *JiraImportHandler) GetPreviousImports(w http.ResponseWriter, r *http.Re
 	respondJSONOK(w, imports)
 }
 
-// recordMapping records an entity mapping in the database
-func (h *JiraImportHandler) recordMapping(jobID, entityType, jiraID, jiraKey string, windshiftID int, metadata map[string]interface{}) {
+type jiraImportMappingStore interface {
+	QueryRow(query string, args ...interface{}) *sql.Row
+	ExecWrite(query string, args ...interface{}) (sql.Result, error)
+}
+
+func (h *JiraImportHandler) rememberMappingFailure(jobID string, err error) error {
+	if err == nil {
+		return nil
+	}
+	h.mappingFailuresMu.Lock()
+	defer h.mappingFailuresMu.Unlock()
+	if h.mappingFailures == nil {
+		h.mappingFailures = make(map[string]error)
+	}
+	if _, exists := h.mappingFailures[jobID]; !exists {
+		h.mappingFailures[jobID] = err
+	}
+	return err
+}
+
+func (h *JiraImportHandler) mappingFailure(jobID string) error {
+	h.mappingFailuresMu.Lock()
+	defer h.mappingFailuresMu.Unlock()
+	return h.mappingFailures[jobID]
+}
+
+func (h *JiraImportHandler) clearMappingFailure(jobID string) {
+	h.mappingFailuresMu.Lock()
+	defer h.mappingFailuresMu.Unlock()
+	delete(h.mappingFailures, jobID)
+}
+
+func (h *JiraImportHandler) failOnMappingFailure(jobID string, progress *ImportProgress) bool {
+	err := h.mappingFailure(jobID)
+	if err == nil {
+		return false
+	}
+	if progress != nil {
+		progress.Phase = "failed"
+	}
+	h.updateJobStatus(jobID, "failed", "mapping", progress, fmt.Sprintf("Failed to persist Jira import mapping: %v", err))
+	return true
+}
+
+// recordMapping records an entity mapping in the database. Mapping failures
+// are retained for the owning job even when an older, best-effort importer
+// phase cannot return an error directly; the job coordinator then fails the
+// import before it can report completion.
+func (h *JiraImportHandler) recordMapping(jobID, entityType, jiraID, jiraKey string, windshiftID int, metadata map[string]interface{}) error {
+	if err := recordMappingInStore(h.db, jobID, entityType, jiraID, jiraKey, windshiftID, metadata); err != nil {
+		slog.Error("Failed to record mapping", slog.String("component", "jira"), slog.String("job_id", jobID),
+			slog.String("entity_type", entityType), slog.String("jira_id", jiraID), slog.Any("error", err))
+		return h.rememberMappingFailure(jobID, err)
+	}
+	return nil
+}
+
+func recordMappingInStore(store jiraImportMappingStore, jobID, entityType, jiraID, jiraKey string, windshiftID int, metadata map[string]interface{}) error {
 	mappingMetadata := make(map[string]interface{}, len(metadata)+1)
 	for key, value := range metadata {
 		mappingMetadata[key] = value
@@ -1504,32 +1587,34 @@ func (h *JiraImportHandler) recordMapping(jobID, entityType, jiraID, jiraKey str
 		mappingMetadata["was_created"] = jiraImportMappingActionWasCreated(mappingMetadata)
 	}
 	var existingMetadataJSON string
-	if err := h.db.QueryRow(`
+	err := store.QueryRow(`
 		SELECT metadata_json FROM jira_import_id_mappings
 		WHERE job_id = ? AND entity_type = ? AND jira_id = ?
-	`, jobID, entityType, jiraID).Scan(&existingMetadataJSON); err == nil &&
-		jiraImportMappingWasCreated(sql.NullString{String: existingMetadataJSON, Valid: true}) {
+	`, jobID, entityType, jiraID).Scan(&existingMetadataJSON)
+	if err == nil && jiraImportMappingWasCreated(sql.NullString{String: existingMetadataJSON, Valid: true}) {
 		// A retry may observe and reuse a record created earlier by this same
 		// import job. Preserve the original ownership bit so cleanup still
 		// removes that record instead of leaking it as "pre-existing".
 		mappingMetadata["was_created"] = true
+	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("load existing mapping provenance: %w", err)
 	}
 
-	metadataJSON := `{"was_created":true}`
-	if data, err := json.Marshal(mappingMetadata); err == nil {
-		metadataJSON = string(data)
+	data, err := json.Marshal(mappingMetadata)
+	if err != nil {
+		return fmt.Errorf("encode mapping provenance: %w", err)
 	}
 
-	_, err := h.db.ExecWrite(`
+	if _, err := store.ExecWrite(`
 		INSERT INTO jira_import_id_mappings (job_id, entity_type, jira_id, jira_key, windshift_id, metadata_json)
 		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT (job_id, entity_type, jira_id) DO UPDATE SET
 			windshift_id = excluded.windshift_id,
 			metadata_json = excluded.metadata_json
-	`, jobID, entityType, jiraID, jiraKey, windshiftID, metadataJSON)
-	if err != nil {
-		slog.Error("Failed to record mapping", slog.String("component", "jira"), slog.Any("error", err))
+	`, jobID, entityType, jiraID, jiraKey, windshiftID, string(data)); err != nil {
+		return fmt.Errorf("persist mapping provenance: %w", err)
 	}
+	return nil
 }
 
 func jiraImportMappingActionWasCreated(metadata map[string]interface{}) bool {

@@ -74,12 +74,13 @@ func (s *SessionStore) getSession(sessionID, sessionType string, portalCustomerI
 	var sessionJSON string
 	var expiresAt time.Time
 
-	query := `DELETE FROM portal_webauthn_sessions WHERE id = ? AND session_type = ? RETURNING session_data, expires_at`
+	query := `DELETE FROM portal_webauthn_sessions WHERE id = ? AND session_type = ?`
 	args := []any{sessionID, sessionType}
 	if portalCustomerID != nil {
 		query += ` AND portal_customer_id = ?`
 		args = append(args, *portalCustomerID)
 	}
+	query += ` RETURNING session_data, expires_at`
 
 	err := s.db.QueryRow(query, args...).Scan(&sessionJSON, &expiresAt)
 	if errors.Is(err, sql.ErrNoRows) {

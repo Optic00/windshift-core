@@ -1346,16 +1346,14 @@ func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, works
 	}
 
 	if previousItemMapping != nil {
-		ownsItem, transferErr := h.transferJiraImportMappingOwnership(previousItemMapping, jobID)
-		if transferErr != nil {
-			return fmt.Errorf("transfer Jira item mapping ownership: %w", transferErr)
-		}
 		meta["action"] = "update_existing"
-		meta["was_created"] = ownsItem
+		meta["was_created"] = jiraImportMappingWasCreated(previousItemMapping.Metadata)
 		meta["reimported_from_job_id"] = previousItemMapping.JobID
 	}
 	// Record the mapping
-	h.recordMapping(jobID, "item", issue.ID, issue.Key, int(itemID), meta)
+	if err := h.recordMappingAndTransferOwnership(jobID, "item", issue.ID, issue.Key, int(itemID), meta, previousItemMapping); err != nil {
+		return fmt.Errorf("record Jira item mapping: %w", err)
+	}
 
 	if err := h.importIssueWatchers(jobID, int(itemID), issue, userMap); err != nil {
 		return fmt.Errorf("import Jira issue watchers: %w", err)
@@ -1372,7 +1370,10 @@ func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, works
 	// Import attachments for this issue before comments/description media
 	// linking so the Jira attachment ids are mapped to Windshift attachments,
 	// letting ADF media nodes reference the imported files.
-	mediaRefs := h.importAttachments(ctx, jobID, int(itemID), issue, userMap, client, progress)
+	mediaRefs, err := h.importAttachments(ctx, jobID, int(itemID), issue, userMap, client, progress)
+	if err != nil {
+		return fmt.Errorf("import Jira attachments: %w", err)
+	}
 	var mediaResolver jira.MediaResolver
 	if len(mediaRefs) > 0 {
 		mediaResolver = jira.NewMediaResolver(mediaRefs)
@@ -1393,12 +1394,16 @@ func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, works
 	}
 
 	// Import comments for this issue
-	h.importComments(jobID, int(itemID), issue, userMap, portalCustomerMap, mentionResolver, mediaResolver, progress)
+	if err := h.importComments(jobID, int(itemID), issue, userMap, portalCustomerMap, mentionResolver, mediaResolver, progress); err != nil {
+		return fmt.Errorf("import Jira comments: %w", err)
+	}
 
 	// Import Jira worklogs into Windshift time tracking when the project has a
 	// time-project target. Jira exposes only the first page in the issue payload;
 	// import what we have and log if pagination would be needed.
-	h.importWorklogs(jobID, int(itemID), issue, userMap, mentionResolver, timeProjectID, progress)
+	if err := h.importWorklogs(jobID, int(itemID), issue, userMap, mentionResolver, timeProjectID, progress); err != nil {
+		return fmt.Errorf("import Jira worklogs: %w", err)
+	}
 
 	return nil
 }
@@ -1441,15 +1446,16 @@ func (h *JiraImportHandler) importIssueWatchers(
 			"account_id":  accountID,
 			"was_created": wasCreated,
 		}
+		ownershipMapping := previousMapping
 		if previousMapping != nil && previousMapping.WindshiftID == itemID {
-			ownsWatch, transferErr := h.transferJiraImportMappingOwnership(previousMapping, jobID)
-			if transferErr != nil {
-				return fmt.Errorf("transfer Jira watch mapping ownership: %w", transferErr)
-			}
-			metadata["was_created"] = ownsWatch
+			metadata["was_created"] = jiraImportMappingWasCreated(previousMapping.Metadata)
 			metadata["reimported_from_job_id"] = previousMapping.JobID
+		} else {
+			ownershipMapping = nil
 		}
-		h.recordMapping(jobID, "watch", externalID, issue.Key, itemID, metadata)
+		if err := h.recordMappingAndTransferOwnership(jobID, "watch", externalID, issue.Key, itemID, metadata, ownershipMapping); err != nil {
+			return fmt.Errorf("record Jira watch mapping: %w", err)
+		}
 	}
 	return nil
 }
@@ -1687,9 +1693,9 @@ func (h *JiraImportHandler) linkParents(jobID string) {
 // ================================================================
 
 // importComments imports comments from a Jira issue into Windshift
-func (h *JiraImportHandler) importComments(jobID string, itemID int, issue *jira.JiraIssue, userMap, portalCustomerMap map[string]int, mentionResolver jira.MentionResolver, mediaResolver jira.MediaResolver, progress *ImportProgress) {
+func (h *JiraImportHandler) importComments(jobID string, itemID int, issue *jira.JiraIssue, userMap, portalCustomerMap map[string]int, mentionResolver jira.MentionResolver, mediaResolver jira.MediaResolver, progress *ImportProgress) error {
 	if issue.Fields.Comment == nil || len(issue.Fields.Comment.Comments) == 0 {
-		return
+		return nil
 	}
 
 	// Create a CommentService without notification/webhook/mention services
@@ -1829,23 +1835,18 @@ func (h *JiraImportHandler) importComments(jobID string, itemID int, issue *jira
 		}
 
 		if previousMapping != nil {
-			ownsComment, transferErr := h.transferJiraImportMappingOwnership(previousMapping, jobID)
-			if transferErr != nil {
-				slog.Warn("Failed to transfer Jira comment mapping ownership",
-					slog.String("component", "jira"),
-					slog.String("commentID", comment.ID),
-					slog.Any("error", transferErr))
-			} else {
-				commentMeta["action"] = "update_existing"
-				commentMeta["was_created"] = ownsComment
-				commentMeta["reimported_from_job_id"] = previousMapping.JobID
-			}
+			commentMeta["action"] = "update_existing"
+			commentMeta["was_created"] = jiraImportMappingWasCreated(previousMapping.Metadata)
+			commentMeta["reimported_from_job_id"] = previousMapping.JobID
 		}
-		h.recordMapping(jobID, "comment", comment.ID, issue.Key, commentID, commentMeta)
+		if err := h.recordMappingAndTransferOwnership(jobID, "comment", comment.ID, issue.Key, commentID, commentMeta, previousMapping); err != nil {
+			return fmt.Errorf("record Jira comment mapping: %w", err)
+		}
 		if progress != nil {
 			progress.ImportedComments++
 		}
 	}
+	return nil
 }
 
 // ================================================================
@@ -1854,7 +1855,7 @@ func (h *JiraImportHandler) importComments(jobID string, itemID int, issue *jira
 
 // importIssueLinks creates item_links from Jira issue links stored in mapping metadata.
 // Must be called after all issues for a project are imported.
-func (h *JiraImportHandler) importIssueLinks(jobID string) {
+func (h *JiraImportHandler) importIssueLinks(jobID string) error {
 	// Query all item mappings with issue_links metadata
 	rows, err := h.db.Query(`
 		SELECT windshift_id, jira_key, metadata_json
@@ -1863,7 +1864,7 @@ func (h *JiraImportHandler) importIssueLinks(jobID string) {
 	`, jobID)
 	if err != nil {
 		slog.Error("Failed to query item mappings for link import", slog.String("component", "jira"), slog.Any("error", err))
-		return
+		return fmt.Errorf("query Jira item mappings for links: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -1905,7 +1906,7 @@ func (h *JiraImportHandler) importIssueLinks(jobID string) {
 	}
 	if err := rows.Err(); err != nil {
 		slog.Error("error iterating item mapping rows for link import", slog.String("component", "jira"), slog.Any("error", err))
-		return
+		return fmt.Errorf("iterate Jira item mappings for links: %w", err)
 	}
 
 	// Cache link type lookups
@@ -1950,6 +1951,9 @@ func (h *JiraImportHandler) importIssueLinks(jobID string) {
 						"inward",
 						link,
 					); externalErr != nil {
+						if mappingErr := h.mappingFailure(jobID); mappingErr != nil {
+							return mappingErr
+						}
 						slog.Warn("Failed to preserve inward link from non-imported issue",
 							slog.String("component", "jira"),
 							slog.String("source", inwardKey),
@@ -1982,6 +1986,9 @@ func (h *JiraImportHandler) importIssueLinks(jobID string) {
 					"outward",
 					link,
 				); externalErr != nil {
+					if mappingErr := h.mappingFailure(jobID); mappingErr != nil {
+						return mappingErr
+					}
 					slog.Warn("Failed to preserve outward link to non-imported issue",
 						slog.String("component", "jira"),
 						slog.String("source", info.sourceKey),
@@ -2035,7 +2042,9 @@ func (h *JiraImportHandler) importIssueLinks(jobID string) {
 			}
 
 			if linkID > 0 {
-				h.recordMapping(jobID, "link", mappingID, "", int(linkID), map[string]any{"action": "create"})
+				if err := h.recordMapping(jobID, "link", mappingID, "", int(linkID), map[string]any{"action": "create"}); err != nil {
+					return fmt.Errorf("record Jira item link mapping: %w", err)
+				}
 				continue
 			}
 			if previousMapping != nil {
@@ -2043,23 +2052,18 @@ func (h *JiraImportHandler) importIssueLinks(jobID string) {
 				if lookupErr := h.db.QueryRow(`
 					SELECT EXISTS(SELECT 1 FROM item_links WHERE id = ?)
 				`, previousMapping.WindshiftID).Scan(&exists); lookupErr == nil && exists {
-					ownsLink, transferErr := h.transferJiraImportMappingOwnership(previousMapping, jobID)
-					if transferErr != nil {
-						slog.Warn("Failed to transfer Jira item-link mapping ownership",
-							slog.String("component", "jira"),
-							slog.String("mappingID", mappingID),
-							slog.Any("error", transferErr))
-					} else {
-						h.recordMapping(jobID, "link", mappingID, "", previousMapping.WindshiftID, map[string]any{
-							"action":                 "reuse_existing_mapping",
-							"was_created":            ownsLink,
-							"reimported_from_job_id": previousMapping.JobID,
-						})
+					if err := h.recordMappingAndTransferOwnership(jobID, "link", mappingID, "", previousMapping.WindshiftID, map[string]any{
+						"action":                 "reuse_existing_mapping",
+						"was_created":            jiraImportMappingWasCreated(previousMapping.Metadata),
+						"reimported_from_job_id": previousMapping.JobID,
+					}, previousMapping); err != nil {
+						return fmt.Errorf("record Jira item link mapping: %w", err)
 					}
 				}
 			}
 		}
 	}
+	return nil
 }
 
 func (h *JiraImportHandler) importExternalJiraIssueLink(
@@ -2166,7 +2170,7 @@ func (h *JiraImportHandler) importExternalJiraIssueLink(
 		sanitize.PlainTextField.Sanitize(title), string(linkMetadata), linkedBy); err != nil {
 		return fmt.Errorf("upsert Jira external issue link: %w", err)
 	}
-	h.recordMapping(jobID, "external_issue_link",
+	if err := h.recordMapping(jobID, "external_issue_link",
 		itemKey+":"+direction+":"+typeName+":"+externalKey,
 		externalKey,
 		itemID,
@@ -2175,7 +2179,9 @@ func (h *JiraImportHandler) importExternalJiraIssueLink(
 			"provider_id":         providerID,
 			"was_created":         wasCreated,
 		},
-	)
+	); err != nil {
+		return fmt.Errorf("record Jira external issue link mapping: %w", err)
+	}
 	return nil
 }
 
@@ -2217,9 +2223,9 @@ func (h *JiraImportHandler) ensureLinkType(typeName string, linkData map[string]
 // Phase 6: Worklog Import
 // ================================================================
 
-func (h *JiraImportHandler) importWorklogs(jobID string, itemID int, issue *jira.JiraIssue, userMap map[string]int, mentionResolver jira.MentionResolver, timeProjectID *int, progress *ImportProgress) {
+func (h *JiraImportHandler) importWorklogs(jobID string, itemID int, issue *jira.JiraIssue, userMap map[string]int, mentionResolver jira.MentionResolver, timeProjectID *int, progress *ImportProgress) error {
 	if issue.Fields.Worklog == nil || len(issue.Fields.Worklog.Worklogs) == 0 || timeProjectID == nil {
-		return
+		return nil
 	}
 	if issue.Fields.Worklog.Total > len(issue.Fields.Worklog.Worklogs) {
 		slog.Warn("Jira issue worklog payload is paginated; importing visible worklogs only",
@@ -2236,7 +2242,7 @@ func (h *JiraImportHandler) importWorklogs(jobID string, itemID int, issue *jira
 			slog.String("issue", issue.Key),
 			slog.Int("timeProjectID", *timeProjectID),
 			slog.Any("error", err))
-		return
+		return nil
 	}
 
 	for _, worklog := range issue.Fields.Worklog.Worklogs {
@@ -2339,23 +2345,18 @@ func (h *JiraImportHandler) importWorklogs(jobID string, itemID int, issue *jira
 			worklogMeta["author_resolution"] = "anonymous"
 		}
 		if previousMapping != nil {
-			ownsWorklog, transferErr := h.transferJiraImportMappingOwnership(previousMapping, jobID)
-			if transferErr != nil {
-				slog.Warn("Failed to transfer Jira worklog mapping ownership",
-					slog.String("component", "jira"),
-					slog.String("worklogID", worklog.ID),
-					slog.Any("error", transferErr))
-			} else {
-				worklogMeta["action"] = "update_existing"
-				worklogMeta["was_created"] = ownsWorklog
-				worklogMeta["reimported_from_job_id"] = previousMapping.JobID
-			}
+			worklogMeta["action"] = "update_existing"
+			worklogMeta["was_created"] = jiraImportMappingWasCreated(previousMapping.Metadata)
+			worklogMeta["reimported_from_job_id"] = previousMapping.JobID
 		}
-		h.recordMapping(jobID, "worklog", worklog.ID, issue.Key, int(worklogID), worklogMeta)
+		if err := h.recordMappingAndTransferOwnership(jobID, "worklog", worklog.ID, issue.Key, int(worklogID), worklogMeta, previousMapping); err != nil {
+			return fmt.Errorf("record Jira worklog mapping: %w", err)
+		}
 		if progress != nil {
 			progress.ImportedWorklogs++
 		}
 	}
+	return nil
 }
 
 // ================================================================
@@ -2366,9 +2367,9 @@ func (h *JiraImportHandler) importWorklogs(jobID string, itemID int, issue *jira
 // returns a map from Jira attachment id → the Windshift attachment reference
 // (id, mime type, original filename) so ADF media nodes can be linked to the
 // imported attachment instead of left as a placeholder.
-func (h *JiraImportHandler) importAttachments(ctx context.Context, jobID string, itemID int, issue *jira.JiraIssue, userMap map[string]int, client jira.Client, progress *ImportProgress) map[string]jira.MediaAttachment {
+func (h *JiraImportHandler) importAttachments(ctx context.Context, jobID string, itemID int, issue *jira.JiraIssue, userMap map[string]int, client jira.Client, progress *ImportProgress) (map[string]jira.MediaAttachment, error) {
 	if len(issue.Fields.Attachment) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	// Get attachment storage path from settings
@@ -2377,12 +2378,12 @@ func (h *JiraImportHandler) importAttachments(ctx context.Context, jobID string,
 	if err != nil || attachmentPath == "" {
 		slog.Warn("Attachment settings not configured, skipping attachment import",
 			slog.String("component", "jira"), slog.String("issue", issue.Key))
-		return nil
+		return jiraNoAttachmentMediaRefs()
 	}
 	if err := ensureJiraAttachmentStorage(attachmentPath); err != nil {
 		slog.Error("Failed to prepare attachment storage",
 			slog.String("component", "jira"), slog.String("issue", issue.Key), slog.Any("error", err))
-		return nil
+		return map[string]jira.MediaAttachment{}, nil
 	}
 
 	mediaRefs := make(map[string]jira.MediaAttachment)
@@ -2414,16 +2415,14 @@ func (h *JiraImportHandler) importAttachments(ctx context.Context, jobID string,
 				if _, updateErr := h.db.ExecWrite(`
 					UPDATE attachments SET item_id = ?, entity_type = 'item' WHERE id = ?
 				`, itemID, previousMapping.WindshiftID); updateErr == nil {
-					ownsAttachment, transferErr := h.transferJiraImportMappingOwnership(previousMapping, jobID)
-					if transferErr == nil {
-						metadata := jiraImportMappingMetadata(previousMapping.Metadata)
-						if metadata == nil {
-							metadata = make(map[string]interface{})
-						}
-						metadata["action"] = "reuse_existing_mapping"
-						metadata["was_created"] = ownsAttachment
-						metadata["reimported_from_job_id"] = previousMapping.JobID
-						h.recordMapping(jobID, "attachment", attachment.ID, issue.Key, previousMapping.WindshiftID, metadata)
+					metadata := jiraImportMappingMetadata(previousMapping.Metadata)
+					if metadata == nil {
+						metadata = make(map[string]interface{})
+					}
+					metadata["action"] = "reuse_existing_mapping"
+					metadata["was_created"] = jiraImportMappingWasCreated(previousMapping.Metadata)
+					metadata["reimported_from_job_id"] = previousMapping.JobID
+					if mappingErr := h.recordMappingAndTransferOwnership(jobID, "attachment", attachment.ID, issue.Key, previousMapping.WindshiftID, metadata, previousMapping); mappingErr == nil {
 						mediaRefs[attachment.ID] = jira.MediaAttachment{
 							ID:               previousMapping.WindshiftID,
 							MimeType:         mimeType,
@@ -2431,6 +2430,8 @@ func (h *JiraImportHandler) importAttachments(ctx context.Context, jobID string,
 						}
 						progress.ImportedAttachments++
 						continue
+					} else {
+						return nil, fmt.Errorf("record Jira attachment mapping: %w", h.mappingFailure(jobID))
 					}
 				}
 			}
@@ -2543,7 +2544,9 @@ func (h *JiraImportHandler) importAttachments(ctx context.Context, jobID string,
 			}
 		}
 
-		h.recordMapping(jobID, "attachment", attachment.ID, issue.Key, int(attachmentID), attachmentMeta)
+		if err := h.recordMapping(jobID, "attachment", attachment.ID, issue.Key, int(attachmentID), attachmentMeta); err != nil {
+			return nil, fmt.Errorf("record Jira attachment mapping: %w", err)
+		}
 		progress.ImportedAttachments++
 
 		// Record the Jira→Windshift attachment reference so ADF media nodes
@@ -2556,7 +2559,11 @@ func (h *JiraImportHandler) importAttachments(ctx context.Context, jobID string,
 			}
 		}
 	}
-	return mediaRefs
+	return mediaRefs, nil
+}
+
+func jiraNoAttachmentMediaRefs() (map[string]jira.MediaAttachment, error) {
+	return nil, nil
 }
 
 func ensureJiraAttachmentStorage(attachmentPath string) error {

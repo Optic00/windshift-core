@@ -117,13 +117,13 @@ func (s *SessionStore) getSession(sessionID, sessionType string, userID *int) (*
 
 	query := `
 		DELETE FROM webauthn_sessions
-		WHERE id = ? AND session_type = ?
-		RETURNING session_data, expires_at`
+		WHERE id = ? AND session_type = ?`
 	args := []any{sessionID, sessionType}
 	if userID != nil {
 		query += ` AND user_id = ?`
 		args = append(args, *userID)
 	}
+	query += ` RETURNING session_data, expires_at`
 
 	err := s.db.QueryRow(query, args...).Scan(&sessionJSON, &expiresAt)
 
