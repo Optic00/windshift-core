@@ -45,6 +45,9 @@ var portalWebauthnSchema string
 //go:embed schema/milestones.sql
 var milestonesSchema string
 
+//go:embed schema/milestones_existing.sql
+var milestonesExistingSchema string
+
 //go:embed schema/iterations.sql
 var iterationsSchema string
 
@@ -575,7 +578,7 @@ func (db *DB) Initialize() error {
 		}
 
 		// Create milestone_releases table if it doesn't exist and drop legacy SCM columns from milestones
-		if _, err := db.Exec(milestonesSchema); err != nil {
+		if _, err := db.Exec(milestonesExistingSchema); err != nil {
 			slog.Warn("milestones migration failed", slog.String("component", "database"), slog.Any("error", err))
 		}
 

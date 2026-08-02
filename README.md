@@ -38,10 +38,15 @@ It ships as a single Go binary with the Svelte frontend built in. SQLite keeps t
 Authentication options include local sessions, WebAuthn/FIDO2, and SSO through OIDC providers such as Pocket ID and Authentik.
 
 For local and homelab deployments, `BASE_URL` may use `localhost`, an IP
-address, or a dotted local DNS name such as `windshift.home.arpa`. If it uses
-a single-label name such as `windshift`, Windshift still starts normally but
-disables passkey routes and logs the reason; use a supported hostname (or a
-compatible explicit `WEBAUTHN_RP_ID`) when passkeys are required.
+address, or a dotted local DNS name such as `windshift.home.arpa`. WebAuthn
+uses the hostname from that URL as its RP ID, without the scheme or port, so
+`http://localhost:7777` uses the valid RP ID `localhost`. HTTP on `localhost`
+is a WebAuthn development exception; HTTPS is required for other hostnames.
+
+If `BASE_URL` uses a single-label name such as `windshift`, Windshift still
+starts normally but disables passkey routes and logs the reason. Use a dotted
+hostname, `localhost`, an IP address, or a compatible explicit
+`WEBAUTHN_RP_ID` when passkeys are required.
 
 ## Get started
 

@@ -40,6 +40,9 @@ var portalDraftsSchemaPostgres string
 //go:embed schema/milestones_postgres.sql
 var milestonesSchemaPostgres string
 
+//go:embed schema/milestones_existing_postgres.sql
+var milestonesExistingSchemaPostgres string
+
 //go:embed schema/iterations_postgres.sql
 var iterationsSchemaPostgres string
 
@@ -704,7 +707,7 @@ func (p *PostgresDB) Initialize() error {
 		}
 
 		// Create milestone_releases table if it doesn't exist and drop legacy SCM columns from milestones
-		milestonesContent := strings.TrimSpace(milestonesSchemaPostgres)
+		milestonesContent := strings.TrimSpace(milestonesExistingSchemaPostgres)
 		if milestonesContent != "" {
 			if _, err = p.db.Exec(milestonesContent); err != nil {
 				slog.Warn("milestones postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
