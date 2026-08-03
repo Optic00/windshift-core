@@ -8,6 +8,7 @@
   import { themeStore } from './lib/stores/theme.svelte.js';
   import { i18n, SUPPORTED_LOCALES } from './lib/stores/i18n.svelte.js';
   import { safeLoginReturnPath } from './lib/utils/loginReturnPath.js';
+  import BrandedLoader from './lib/components/BrandedLoader.svelte';
   import LazyRootDialog from './lib/components/LazyRootDialog.svelte';
   import LazyRootView from './lib/components/LazyRootView.svelte';
 
@@ -298,17 +299,10 @@
     </div>
   <!-- Show loading screen during initial setup/session checks -->
   {:else if setupLoading}
-    <div class="min-h-screen flex items-center justify-center w-full">
-      <div class="text-center">
-        <div class="w-16 h-16 mx-auto mb-4">
-          <img src="windshift-3.svg" alt={APP_NAME} class="w-16 h-16 animate-pulse" />
-        </div>
-        <p class="text-gray-600">{startupSlow ? 'Still connecting to Windshift…' : 'Connecting to Windshift…'}</p>
-        {#if startupSlow}
-          <p class="text-sm text-gray-500 mt-1">This can take a moment on a slow connection.</p>
-        {/if}
-      </div>
-    </div>
+    <BrandedLoader
+      label={startupSlow ? 'Still connecting to Windshift…' : 'Connecting to Windshift…'}
+      detail={startupSlow ? 'This can take a moment on a slow connection.' : ''}
+    />
   <!-- Public board route - no authentication required -->
   {:else if $currentRoute.view === 'public-board'}
     <LazyRootView
@@ -348,10 +342,7 @@
     <!-- Show loading or login screen while waiting for auth -->
     <div class="flex-1 flex items-center justify-center">
       {#if $authStore.loading}
-        <div class="text-center">
-          <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p class="text-gray-600">Loading...</p>
-        </div>
+        <BrandedLoader fullViewport={false} />
       {:else if showLoginDialog}
         <!-- Login dialog will show, but we can show a minimal background -->
         <div class="text-center">

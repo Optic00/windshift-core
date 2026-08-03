@@ -18,49 +18,73 @@
     <title>Windshift - Work Management</title>
     <style>
       /* Static recovery UI for failures that happen before Svelte can mount.
-               It stays in normal document flow and never overlays application UI. */
-            #windshift-boot {
-              margin: 1.5rem;
-              padding: 1.25rem;
-              border: 1px solid #dfe1e6;
-              border-radius: 0.75rem;
-              background: #fff;
-              color: #172b4d;
-              font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-              text-align: center;
-            }
-            #windshift-boot .boot-spinner {
-              width: 2rem;
-              height: 2rem;
-              margin: 0 auto 0.75rem;
-              border: 3px solid #dfe1e6;
-              border-top-color: #0c66e4;
-              border-radius: 50%;
-              animation: windshift-boot-spin 1s linear infinite;
-            }
-            #windshift-boot p { margin: 0; color: #44546f; line-height: 1.5; }
-            #windshift-boot .boot-detail { margin-top: 0.35rem; font-size: 0.875rem; }
-            #windshift-boot button {
-              min-height: 2.75rem;
-              margin-top: 1rem;
-              padding: 0.65rem 1.25rem;
-              border: 0;
-              border-radius: 0.5rem;
-              background: #0c66e4;
-              color: #fff;
-              font: inherit;
-              font-weight: 600;
-              cursor: pointer;
-            }
-            #windshift-boot [hidden] { display: none; }
-            @keyframes windshift-boot-spin { to { transform: rotate(360deg); } }
-            /* Keyed off the mode the inline script below resolves (stored
-               preference first, OS only as the fallback) — not the raw OS
-               setting, which renders a dark box for a light-mode user. */
-            html[data-color-mode="dark"] #windshift-boot { border-color: #454f59; background: #1d2125; color: #f7f8f9; }
-            html[data-color-mode="dark"] #windshift-boot p { color: #b6c2cf; }
-            html[data-color-mode="dark"] #windshift-boot .boot-spinner { border-color: #454f59; border-top-color: #579dff; }
-            @media (prefers-reduced-motion: reduce) { #windshift-boot .boot-spinner { animation: none; } }
+         It stays in normal document flow and never overlays application UI. */
+      body {
+        margin: 0;
+      }
+      #windshift-boot {
+        display: grid;
+        min-height: 100dvh;
+        box-sizing: border-box;
+        place-items: center;
+        padding: 1.5rem;
+        background: #fff;
+        color: #172b4d;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        text-align: center;
+      }
+      #windshift-boot .boot-logo {
+        display: block;
+        width: 4rem;
+        height: 4rem;
+        margin: 0 auto 1rem;
+        animation: windshift-boot-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+      }
+      #windshift-boot p {
+        margin: 0;
+        color: #44546f;
+        font-size: 0.8125rem;
+        line-height: 1.5;
+      }
+      #windshift-boot .boot-detail {
+        margin-top: 0.35rem;
+        font-size: 0.875rem;
+      }
+      #windshift-boot button {
+        min-height: 2.75rem;
+        margin-top: 1rem;
+        padding: 0.65rem 1.25rem;
+        border: 0;
+        border-radius: 0.5rem;
+        background: #0c66e4;
+        color: #fff;
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      #windshift-boot [hidden] {
+        display: none;
+      }
+      @keyframes windshift-boot-pulse {
+        50% {
+          opacity: 0.5;
+        }
+      }
+      /* Keyed off the mode the inline script below resolves (stored
+         preference first, OS only as the fallback) — not the raw OS
+         setting, which renders a dark box for a light-mode user. */
+      html[data-color-mode="dark"] #windshift-boot {
+        background: #1d2125;
+        color: #f7f8f9;
+      }
+      html[data-color-mode="dark"] #windshift-boot p {
+        color: #b6c2cf;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #windshift-boot .boot-logo {
+          animation: none;
+        }
+      }
     </style>
     <script>
       // Flash prevention: apply theme before CSS loads
@@ -94,10 +118,14 @@
   <body>
     <div id="app">
       <div id="windshift-boot" role="status" aria-live="polite">
-        <div class="boot-spinner" aria-hidden="true"></div>
-        <p>Starting Windshift…</p>
-        <p id="windshift-boot-detail" class="boot-detail" hidden>This is taking longer than expected. Check your connection or server.</p>
-        <button id="windshift-boot-retry" type="button" hidden>Retry</button>
+        <div>
+          <img class="boot-logo" src="windshift-3.svg" alt="Windshift" />
+          <p>Starting Windshift…</p>
+          <p id="windshift-boot-detail" class="boot-detail" hidden>
+            This is taking longer than expected. Check your connection or server.
+          </p>
+          <button id="windshift-boot-retry" type="button" hidden>Retry</button>
+        </div>
       </div>
     </div>
     <script type="module" src="/src/main.js"></script>

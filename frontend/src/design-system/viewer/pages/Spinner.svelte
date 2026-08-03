@@ -1,4 +1,5 @@
 <script>
+  import BrandedLoader from '../../../lib/components/BrandedLoader.svelte'
   import Spinner from '../../../lib/components/Spinner.svelte'
 </script>
 
@@ -95,12 +96,7 @@
           class="h-64 rounded-lg flex items-center justify-center"
           style="background-color: var(--ds-surface-raised); border: 1px solid var(--ds-border);"
         >
-          <div class="text-center">
-            <div class="w-16 h-16 mx-auto mb-4">
-              <img src="/windshift-3.svg" alt="Windshift" class="w-16 h-16 animate-pulse" />
-            </div>
-            <p class="text-sm" style="color: var(--ds-text-subtle);">Loading...</p>
-          </div>
+          <BrandedLoader label="Loading…" fullViewport={false} />
         </div>
       </div>
 
