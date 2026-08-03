@@ -60,19 +60,19 @@
   // server and isn't sent in Referer headers, falling back to the legacy
   // ?token=... query string for in-flight emails sent before the fragment
   // switch. Approval-requested emails additionally carry a `next=` segment in
-  // the fragment that points at the specific approval; both are captured at
-  // mount and immediately stripped so they don't linger in browser history.
+  // the fragment that points at the specific approval. Capture and strip the
+  // fragment on mount and on hash navigation so a fresh link opened in the
+  // same tab after recovery is handled as another real login attempt.
   let hashToken = $state(/** @type {string|null} */ (null));
   let hashNext = $state(/** @type {string|null} */ (null));
-  if (typeof window !== 'undefined') {
+
+  function captureMagicLinkHash() {
+    if (typeof window === 'undefined') return;
+
     const tokenMatch = window.location.hash.match(/(?:^#|&)token=([^&]*)/);
-    if (tokenMatch && tokenMatch[1]) {
-      hashToken = decodeURIComponent(tokenMatch[1]);
-    }
+    hashToken = tokenMatch?.[1] ? decodeURIComponent(tokenMatch[1]) : null;
     const nextMatch = window.location.hash.match(/(?:^#|&)next=([^&]*)/);
-    if (nextMatch && nextMatch[1]) {
-      hashNext = decodeURIComponent(nextMatch[1]);
-    }
+    hashNext = nextMatch?.[1] ? decodeURIComponent(nextMatch[1]) : null;
     // svelte-ignore state_referenced_locally
     if (hashToken || hashNext) {
       const cleaned = window.location.hash
@@ -85,6 +85,8 @@
       );
     }
   }
+
+  captureMagicLinkHash();
   let verifyToken = $derived(hashToken || $currentRoute.query?.token);
 
   // Validate a `next` URL before redirecting to it: must be a same-origin
@@ -123,6 +125,8 @@
   );
 
   onMount(async () => {
+    window.addEventListener('hashchange', captureMagicLinkHash);
+
     const slug = $currentRoute.params?.slug;
     const [, userBootstrap] = await Promise.all([
       portalStore.loadPortal(slug),
@@ -137,6 +141,7 @@
   });
 
   onDestroy(() => {
+    window.removeEventListener('hashchange', captureMagicLinkHash);
     portalStore.reset();
     portalAuthStore.reset();
   });

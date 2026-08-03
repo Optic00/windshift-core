@@ -122,6 +122,7 @@
   triggerGap={expanded ? "gap-3" : ""}
   triggerAlignment={expanded ? "start" : "center"}
   showChevron={false}
+  triggerTestid="user-avatar-trigger"
   items={[
     ...((!minimal && authStore.currentUser) ? [{
       id: 'my-workspace',
@@ -154,6 +155,7 @@
     { type: 'divider' }] : []),
     {
       id: 'theme',
+      testid: 'theme-menu',
       type: 'accordion',
       icon: themeIcon,
       iconColor: '#8b5cf6',
@@ -161,6 +163,7 @@
       subItems: [
         {
           id: 'theme-light',
+          testid: 'theme-light',
           icon: Sun,
           title: t('components.userAvatar.themeLight'),
           selected: themeStore.colorMode === 'light',
@@ -169,6 +172,7 @@
         },
         {
           id: 'theme-dark',
+          testid: 'theme-dark',
           icon: Moon,
           title: t('components.userAvatar.themeDark'),
           selected: themeStore.colorMode === 'dark',
@@ -177,6 +181,7 @@
         },
         {
           id: 'theme-system',
+          testid: 'theme-system',
           icon: Monitor,
           title: t('components.userAvatar.themeSystem'),
           selected: themeStore.colorMode === 'system',

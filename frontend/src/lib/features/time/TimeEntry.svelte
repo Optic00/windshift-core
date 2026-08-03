@@ -155,6 +155,7 @@
       keyboardHint="A"
       hotkeyConfig={{ key: toHotkeyString('timeEntry', 'openLog'), guard: () => !showTimeLogModal }}
       title={t('time.entry.addTimeEntry')}
+      dataTestid="time-log-open"
     >
       {t('time.logTime')}
     </Button>

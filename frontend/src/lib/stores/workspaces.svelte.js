@@ -1,5 +1,6 @@
 import { derived, get, writable } from 'svelte/store';
 import { api } from '../api.js';
+import { isExpectedBackgroundSyncError } from '../utils/backgroundSync.js';
 
 // Current workspace store - automatically syncs with route
 function createCurrentWorkspaceStore() {
@@ -50,6 +51,7 @@ function createCurrentWorkspaceStore() {
         lastWorkspaceId = workspaceKey;
       } catch (error) {
         if (generation !== loadGeneration) return;
+        if (isExpectedBackgroundSyncError(error)) return;
         console.error('Failed to load workspace:', error);
         set(null);
         lastWorkspaceId = null;
@@ -121,6 +123,7 @@ function createWorkspacesStore() {
         })
         .catch((error) => {
           if (lifecycle !== lifecycleGeneration || generation !== listLoadGeneration) return [];
+          if (isExpectedBackgroundSyncError(error)) return [];
           console.error('Failed to load workspaces:', error);
           workspaces.set([]);
           loaded.set(true);
@@ -158,6 +161,7 @@ function createWorkspacesStore() {
           if (lifecycle !== lifecycleGeneration || generation !== personalLoadGeneration) {
             return null;
           }
+          if (isExpectedBackgroundSyncError(error)) return null;
           console.error('Failed to load personal workspace:', error);
           return null;
         })

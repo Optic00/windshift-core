@@ -93,7 +93,8 @@
 		{
 			id: 'labels',
 			label: t('users.labels.tabLabel') || 'Labels',
-			icon: Tag
+			icon: Tag,
+			testid: 'profile-tab-labels'
 		},
 		{
 			id: 'calendar-integration',

@@ -35,7 +35,8 @@
     workspaceId = null,
     expectedContentHash = '',
     onBeforeDiagramOpen = async () => {},
-    onDiagramPersisted = (_payload) => {}
+    onDiagramPersisted = (_payload) => {},
+    testId = null
   } = $props();
 
   // Diagram modal state — only meaningful when enableDiagrams=true.
@@ -716,7 +717,16 @@
     </div>
   {/if}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div bind:this={editorElement} class="milkdown-editor" class:readonly class:compact class:has-toolbar={toolbarVisible} onclick={handleClick}></div>
+  <div
+    bind:this={editorElement}
+    data-testid={testId}
+    data-ready={editor ? 'true' : 'false'}
+    class="milkdown-editor"
+    class:readonly
+    class:compact
+    class:has-toolbar={toolbarVisible}
+    onclick={handleClick}
+  ></div>
 </div>
 <input
   bind:this={fileInput}

@@ -400,7 +400,7 @@
 
 <!-- shortcut-guard-exempt: Cmd+Enter submit is handled via svelte:window onkeydown (matchesShortcut) above, outside the ModalBackdrop block the guard scans. -->
 <ModalBackdrop bind:show={isOpen} opacity={0.4} align="top" paddingTop="pt-16" scrollable zIndex={60} closeOnClick={false} onclose={close}>
-    <CreateFormFrame>
+    <CreateFormFrame dataTestid="create-modal">
       {#snippet header()}
         <!-- Type Selector FIRST (independent of workspace) -->
         {#if !workItemFormStore.parentItem && !compactMode}
@@ -478,6 +478,7 @@
         </span>
 
         <button
+          data-testid="create-modal-close"
           onclick={close}
           class="ml-auto p-1.5 rounded transition-colors"
           style="color: var(--ds-text-subtle);"

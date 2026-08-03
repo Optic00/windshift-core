@@ -770,7 +770,7 @@
           class:drop-on={isOver && !edge}
           class:dimmed
           data-page-row={page.id}
-          data-testid="page-tree-item"
+          data-testid={`page-tree-item-${page.id}`}
           data-page-id={page.id}
           data-expanded={hasChildren ? String(isExpanded) : undefined}
           style="padding-left: {1 + page.depth * 0.75}rem"

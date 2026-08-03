@@ -687,6 +687,7 @@
                     <div data-testid="test-execution-actual-result" class="border rounded overflow-hidden" style="border-color: var(--ds-border); min-height: 80px;">
                       <MilkdownEditor
                         content={stepResults[currentStep.id]?.actual_result || ''}
+                        testId="test-execution-actual-result-editor"
                         entityType="test_result"
                         entityId={testResults[currentCase.id].id}
                         showToolbar={true}
@@ -714,6 +715,7 @@
                     <div data-testid="test-execution-notes" class="border rounded overflow-hidden" style="border-color: var(--ds-border); min-height: 60px;">
                       <MilkdownEditor
                         content={stepResults[currentStep.id]?.notes || ''}
+                        testId="test-execution-notes-editor"
                         entityType="test_result"
                         entityId={testResults[currentCase.id].id}
                         showToolbar={true}

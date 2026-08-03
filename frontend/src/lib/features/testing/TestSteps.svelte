@@ -274,6 +274,7 @@
               <div id="step-action-input" data-testid="test-step-action" class="border rounded overflow-hidden" style="border-color: var(--ds-border); min-height: 80px;">
                 <MilkdownEditor
                   bind:content={stepFormData.action}
+                  testId="test-step-action-editor"
                   placeholder={t('testing.actionPlaceholder')}
                   showToolbar={true}
                   entityType="test_case"
@@ -288,6 +289,7 @@
               <div data-testid="test-step-data" class="border rounded overflow-hidden" style="border-color: var(--ds-border); min-height: 80px;">
                 <MilkdownEditor
                   bind:content={stepFormData.data}
+                  testId="test-step-data-editor"
                   placeholder={t('testing.dataPlaceholder')}
                   showToolbar={true}
                   entityType="test_case"
@@ -302,6 +304,7 @@
               <div data-testid="test-step-expected" class="border rounded overflow-hidden" style="border-color: var(--ds-border); min-height: 80px;">
                 <MilkdownEditor
                   bind:content={stepFormData.expected}
+                  testId="test-step-expected-editor"
                   placeholder={t('testing.expectedPlaceholder')}
                   showToolbar={true}
                   entityType="test_case"

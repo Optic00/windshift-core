@@ -40,7 +40,6 @@
   let highlightedIndex = $state(0);
   let inputElement = $state(null);
   let listRef = $state(null);
-  let triggerRef = $state(null);
 
   // Derive display value from current value
   let selectedItem = $derived(
@@ -93,16 +92,16 @@
     }
   });
 
-  // Restore trigger focus after portalled-menu teardown to keep Tab inside the
-  // owning dialog.
-  function closeAndRestoreFocus() {
+  // Melt restores focus to the trigger after closing. Let that single delayed
+  // focus operation own the hand-off: focusing here as well creates a race
+  // where a fast Tab reaches the next control before Melt moves focus back.
+  function closePicker() {
     $open = false;
-    requestAnimationFrame(() => triggerRef?.focus());
   }
 
   function handleSelect(item) {
     value = getValue(item);
-    closeAndRestoreFocus();
+    closePicker();
     onSelect(item);
   }
 
@@ -111,12 +110,12 @@
 
     // Tab is intentionally left to native handling: when closed it moves to the
     // next field (no trap, WI-445); when open the user selects with Enter rather
-    // than tabbing out. Focus is kept in the modal via closeAndRestoreFocus on
-    // select/Escape, not by intercepting Tab.
+    // than tabbing out. Melt restores focus to the trigger on select/Escape;
+    // Tab itself is not intercepted.
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
-      closeAndRestoreFocus();
+      closePicker();
       return;
     }
 
@@ -142,7 +141,6 @@
 
 <!-- Chip Trigger Button -->
 <button
-  bind:this={triggerRef}
   use:melt={$trigger}
   {disabled}
   data-testid={testId}
@@ -180,6 +178,7 @@
 {#if $open}
   <div
     use:melt={$content}
+    data-testid={testId ? `${testId}-dropdown` : undefined}
     class="z-[70] rounded-lg shadow-lg overflow-hidden"
     style="
       background-color: var(--ds-surface-raised);
@@ -194,6 +193,7 @@
         <input
           bind:this={inputElement}
           bind:value={searchTerm}
+          data-testid={testId ? `${testId}-search` : undefined}
           onkeydown={handleKeyDown}
           type="text"
           placeholder={t('pickers.search')}
@@ -212,6 +212,7 @@
     <!-- Items List -->
     <div
       bind:this={listRef}
+      data-testid={testId ? `${testId}-listbox` : undefined}
       class="max-h-48 overflow-y-auto"
       role="listbox"
       id={listboxId}
@@ -230,6 +231,7 @@
           {@const isHighlighted = highlightedIndex === index}
           <button
             type="button"
+            data-testid={testId ? `${testId}-option` : undefined}
             class="w-full flex items-center gap-2 px-3 py-2.5 text-left text-sm transition-colors"
             style="
               background-color: {isSelected ? 'var(--ds-background-selected)' : isHighlighted ? 'var(--ds-background-neutral-hovered)' : 'transparent'};

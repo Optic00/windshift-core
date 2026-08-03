@@ -180,7 +180,7 @@
         <button
           type="button"
           class="mention-option"
-          data-testid={`mention-option-${user.username}`}
+          data-testid="mention-option"
           class:highlighted={index === highlightedIndex}
           onclick={() => handleSelect(user)}
           onmouseenter={() => highlightedIndex = index}

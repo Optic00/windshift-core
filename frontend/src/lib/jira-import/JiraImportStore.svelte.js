@@ -634,6 +634,11 @@ export const jiraImport = {
     importState.error = null;
     importState.errorCode = null;
     importState.conflictingImports = [];
+    // Starting an import can spend significant time preparing Jira/Xray data.
+    // Move to the progress step immediately so the user sees causal feedback
+    // and cannot submit the same import again while that request is in flight.
+    markWizardStepComplete('preview');
+    goToWizardStep('import');
 
     try {
       const response = await api.jiraImport.startImport({
@@ -652,8 +657,6 @@ export const jiraImport = {
       });
 
       importState.jobId = response.job_id;
-      markWizardStepComplete('preview');
-      goToWizardStep('import');
 
       // Start polling for job status
       this.pollJobStatus();

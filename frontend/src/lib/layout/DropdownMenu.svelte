@@ -257,6 +257,7 @@
           {@const accordionExpanded = isAccordionExpanded(itemData)}
           <button
             data-menu-item
+            data-testid={itemData.testid || undefined}
             role="menuitem"
             aria-expanded={accordionExpanded}
             onclick={(e) => { e.stopPropagation(); toggleAccordion(itemData.id); }}
@@ -293,6 +294,7 @@
             {#each itemData.subItems as subItem (subItem.id)}
               <button
                 data-menu-item
+                data-testid={subItem.testid || undefined}
                 role="menuitemradio"
                 aria-checked={!!subItem.selected}
                 onclick={(e) => handleItemClick(subItem, e)}

@@ -1,5 +1,4 @@
 <script>
-  import { onMount } from 'svelte';
   import { Loader2, CheckCircle, XCircle } from '@lucide/svelte';
   import { portalAuthStore } from '../stores/portalAuth.svelte.js';
   import { t } from '../stores/i18n.svelte.js';
@@ -10,15 +9,18 @@
   let status = $state('verifying'); // verifying, success, error
   let errorMessage = $state('');
 
-  onMount(async () => {
-    if (!token) {
+  let verificationRun = 0;
+
+  async function verify(currentSlug, currentToken, run) {
+    if (!currentToken) {
       status = 'error';
       errorMessage = t('portal.invalidLink') || 'Invalid or missing token';
       onError?.(errorMessage, 'invalid', null);
       return;
     }
 
-    const result = await portalAuthStore.verifyMagicLink(slug, token);
+    const result = await portalAuthStore.verifyMagicLink(currentSlug, currentToken);
+    if (run !== verificationRun) return;
 
     if (result.success) {
       status = 'success';
@@ -35,6 +37,22 @@
       errorMessage = result.message || t('portal.verificationFailed') || 'Failed to verify link';
       onError?.(errorMessage, result.code, result.email);
     }
+  }
+
+  // A recovery link can be opened in the same tab while this component is
+  // still mounted. Verify each new token, and ignore a slower response from a
+  // prior token so it cannot overwrite the current attempt.
+  $effect(() => {
+    const currentSlug = slug;
+    const currentToken = token;
+    const run = ++verificationRun;
+    status = 'verifying';
+    errorMessage = '';
+    void verify(currentSlug, currentToken, run);
+
+    return () => {
+      if (verificationRun === run) verificationRun += 1;
+    };
   });
 </script>
 

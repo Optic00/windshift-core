@@ -388,15 +388,15 @@
     </div>
 
     <!-- Action info header -->
-    <div class="absolute top-4 left-4 z-10 flex items-start gap-2">
-      <div class="action-header px-3 py-2 rounded-lg border">
-        <div class="text-sm font-medium">{action?.name || newActionLabel}</div>
-        <div class="text-xs sidebar-subtitle">
+    <div class="absolute top-4 left-4 right-64 z-10 flex min-w-0 items-start gap-2">
+      <div class="action-header min-w-0 px-3 py-2 rounded-lg border">
+        <div class="truncate text-sm font-medium" title={action?.name || newActionLabel}>{action?.name || newActionLabel}</div>
+        <div class="truncate text-xs sidebar-subtitle">
           {triggerTypes.find(tt => tt.value === flowStore.triggerType)?.label || flowStore.triggerType || action?.trigger_type}
         </div>
       </div>
       <button
-        class="direction-toggle rounded-lg border p-2"
+        class="direction-toggle flex-shrink-0 rounded-lg border p-2"
         onclick={() => flowStore.toggleDirection()}
         title={flowStore.direction === 'horizontal' ? switchToVerticalLabel : switchToHorizontalLabel}
       >

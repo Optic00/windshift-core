@@ -26,6 +26,7 @@
   class="relative rounded border shadow-sm transition-colors"
   style="{columnStyle} {quickAddOpen ? 'z-index: 30;' : ''}"
   data-testid="board-column"
+  id={`board-column-status-${statusId}`}
   data-status-column
   data-status-column-key={statusColumnKey}
   data-swimlane-parent-id={swimlaneParentId}

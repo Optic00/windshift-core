@@ -19,6 +19,7 @@
 	import Tooltip from '../../components/Tooltip.svelte';
 	import { Shield, Bot } from '@lucide/svelte';
 	import { agentOwnerName, loadAttributedComments } from './activityAttributionData.js';
+	import { isExpectedBackgroundSyncError } from '../../utils/backgroundSync.js';
 
 	const COMMENT_PAGE_SIZE = 25;
 
@@ -128,6 +129,9 @@
 		try {
 			response = await loadAttributedComments(api, itemId, { limit: COMMENT_PAGE_SIZE });
 		} catch (err) {
+			// Navigation can unload the document while this request is in flight.
+			// That is expected lifecycle control flow, not a failed comment load.
+			if (isExpectedBackgroundSyncError(err)) return;
 			if (initial) {
 				console.error('Failed to load comments:', err);
 				error = t('comments.failedToLoad');
@@ -596,6 +600,7 @@
 						showToolbar={true}
 						hideToolbarUntilFocus={true}
 						compact={true}
+						testId="comment-composer"
 						{itemId}
 						{isPersonalWorkspace}
 					/>

@@ -791,6 +791,7 @@
         data-testid="analytics-throughput-panel"
       >
         <SectionHeader
+          testId="analytics-throughput-header"
           title={t('analytics.throughput.title')}
           subtitle={t('analytics.throughput.description')}
         />
@@ -838,6 +839,7 @@
         data-testid="analytics-aging-panel"
       >
         <SectionHeader
+          testId="analytics-aging-header"
           title={t('analytics.aging.title')}
           subtitle={t('analytics.aging.description')}
         />

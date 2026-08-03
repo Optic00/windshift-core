@@ -337,6 +337,7 @@
       <div class="flex items-end gap-2">
         <textarea
           bind:this={textareaEl}
+          data-testid="chat-input"
           bind:value={inputText}
           oninput={autoResize}
           onkeydown={handleTextareaKeydown}
@@ -347,6 +348,7 @@
           disabled={chatStore.loading}
         ></textarea>
         <button
+          data-testid="chat-send"
           onclick={send}
           disabled={chatStore.loading || !inputText.trim()}
           class="p-2 rounded-lg transition-colors flex-shrink-0"

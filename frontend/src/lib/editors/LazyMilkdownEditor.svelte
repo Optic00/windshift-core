@@ -12,7 +12,8 @@
     workspaceId = null,
     expectedContentHash = '',
     onBeforeDiagramOpen = async () => {},
-    onDiagramPersisted = (_payload) => {}
+    onDiagramPersisted = (_payload) => {},
+    testId = null
   } = $props();
 
   let MilkdownEditor = $state(null);
@@ -112,6 +113,7 @@
       {expectedContentHash}
       {onBeforeDiagramOpen}
       {onDiagramPersisted}
+      {testId}
     />
   {/key}
 {:else}

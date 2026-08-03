@@ -134,10 +134,12 @@
       size="small"
       class="flex-1"
     />
+    <!-- shortcut-guard-exempt: workspace-local label creation is a contextual action, not a global create surface. -->
     <Button
       variant="primary"
       size="small"
       icon={Plus}
+      dataTestid="personal-label-new"
       onclick={openCreate}
     >
       {t('users.labels.new') || 'New label'}

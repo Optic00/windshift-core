@@ -81,6 +81,10 @@ class WorkspaceDataStore {
       })
       .catch((err) => {
         if (this.workspaceId !== id) return;
+        // A navigation/reload aborts outstanding fetches as the document is
+        // torn down. That is expected control flow, not an initialization
+        // failure to surface in the UI or browser console.
+        if (isExpectedBackgroundSyncError(err)) return;
         this.error = err.message || 'Failed to load workspace data';
         console.error('WorkspaceDataStore: initialization failed', err);
       })
@@ -129,6 +133,7 @@ class WorkspaceDataStore {
       })
       .catch((err) => {
         if (this.workspaceId !== GLOBAL_SENTINEL) return;
+        if (isExpectedBackgroundSyncError(err)) return;
         this.error = err.message || 'Failed to load global data';
         console.error('WorkspaceDataStore: global initialization failed', err);
       })

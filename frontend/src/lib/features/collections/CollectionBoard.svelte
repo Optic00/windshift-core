@@ -1530,6 +1530,7 @@
                         class="relative rounded border shadow-sm flex flex-col items-center justify-between gap-2 pt-5 pb-3 px-1 text-center cursor-pointer transition-colors"
                         style="{styles.columnStyle(12)} border-top: 4px solid {column.color};"
                         data-testid="board-column"
+                        id={`board-column-status-${column.status_ids[0]}`}
                         data-status-column
                         data-status-column-key={`${lane.id}-${column.id}-${column.status_ids[0]}`}
                         data-swimlane-parent-id={selectedGroupByItemType && lane.parent ? lane.parent.id : ''}

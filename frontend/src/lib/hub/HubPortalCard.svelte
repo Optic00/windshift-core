@@ -41,6 +41,7 @@
 
 <a
   href={href || '#'}
+  data-testid={`hub-portal-card-${portal.slug || portal.id}`}
   class="portal-card group relative rounded-lg overflow-hidden cursor-pointer block no-underline w-full"
   class:border-2={hubStore.isEditing}
   class:border-dashed={hubStore.isEditing}
@@ -52,6 +53,7 @@
 >
   <!-- Gradient Header -->
   <div
+    data-testid={`hub-portal-card-gradient-${portal.slug || portal.id}`}
     class="h-24 relative"
     style="background: {headerBackground};"
   >

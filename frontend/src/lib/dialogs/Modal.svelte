@@ -18,6 +18,7 @@
     closeOnBackdropClick = true,
     onclose = null,
     onKeydown = null,
+    dataTestid = undefined,
     children
   } = $props();
 
@@ -154,6 +155,7 @@
     onfocusin={detectTextarea}
     role="dialog"
     aria-modal="true"
+    data-testid={dataTestid}
   >
     <!-- Modal with scale entrance animation -->
     <div

@@ -95,6 +95,7 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+.local/
 
 # Build artifacts
 dist/

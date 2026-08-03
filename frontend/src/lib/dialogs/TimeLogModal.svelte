@@ -163,6 +163,7 @@
 
 <Modal
   isOpen={true}
+  dataTestid="time-log-modal"
   onclose={handleCancel}
   maxWidth="max-w-2xl"
   onSubmit={handleSave}
@@ -179,6 +180,7 @@
       <div>
         <Label color="default" required={!defaultItemId} class="mb-2">{t('time.timeTrackingProject')}</Label>
         <BasePicker
+          id="time-log-project"
           bind:value={formData.project_id}
           items={projectOptions}
           placeholder={t('placeholders.searchProjects')}
@@ -286,6 +288,7 @@
       <div>
         <Label color="default" class="mb-2">{t('common.date')}</Label>
         <Input
+          id="time-log-date"
           type="date"
           bind:value={formData.date}
           size="small"
