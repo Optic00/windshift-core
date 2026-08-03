@@ -20,7 +20,7 @@
   }
 </script>
 
-<div class="trigger-node action-flow-node" class:selected>
+<div class="trigger-node action-flow-node" class:selected data-testid={`action-node-${data.nodeType || 'trigger'}`}>
   <div class="node-header">
     <Zap size={16} class="node-icon" />
     <span class="node-title">{title}</span>

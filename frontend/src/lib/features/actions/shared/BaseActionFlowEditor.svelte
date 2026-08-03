@@ -347,7 +347,7 @@
   </div>
 
   <!-- Svelte Flow Canvas -->
-  <div class="flex-1 relative" bind:this={flowContainer}>
+  <div class="flex-1 relative" bind:this={flowContainer} data-testid="action-editor-canvas">
     <SvelteFlow
       bind:nodes
       bind:edges

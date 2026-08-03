@@ -143,6 +143,7 @@
 <div
   class="base-action-node action-flow-node"
   class:selected
+  data-testid={`action-node-${data.nodeType || 'unknown'}`}
   style="--_accent: {colors.accent}; --_accent-subtle: {colors.subtle}; --_accent-subtler: {colors.subtler};"
 >
   <Handle type="target" position={positions.input} id="input" />

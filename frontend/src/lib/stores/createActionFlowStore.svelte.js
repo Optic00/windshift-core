@@ -195,6 +195,7 @@ export function createActionFlowStore({
             position: { x: node.position_x, y: node.position_y },
             deletable: !isTrigger,
             data: {
+              nodeType: node.node_type,
               nodeId: node.id,
               flowStore: store,
               ...(isTrigger ? { triggerType: action.trigger_type } : {}),
@@ -213,6 +214,7 @@ export function createActionFlowStore({
             position: { x: 100, y: 200 },
             deletable: false,
             data: {
+              nodeType: 'trigger',
               flowStore: store,
               triggerType: action.trigger_type,
               config: parseConfig(action.trigger_config),
@@ -311,6 +313,7 @@ export function createActionFlowStore({
           y: isVertical ? 300 + Math.random() * 200 : 100 + Math.random() * 300,
         },
         data: {
+          nodeType,
           flowStore: store,
           config: getDefaultConfig(nodeType),
           ...(includeStatuses ? { statuses } : {}),

@@ -165,6 +165,7 @@
   <div
     bind:this={containerElement}
     class="mention-picker"
+    data-testid="mention-picker"
     style="top: {clampedPosition.y}px; left: {clampedPosition.x}px;"
     role="listbox"
     id={listboxId}
@@ -179,6 +180,7 @@
         <button
           type="button"
           class="mention-option"
+          data-testid={`mention-option-${user.username}`}
           class:highlighted={index === highlightedIndex}
           onclick={() => handleSelect(user)}
           onmouseenter={() => highlightedIndex = index}
