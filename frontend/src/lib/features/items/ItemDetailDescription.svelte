@@ -184,6 +184,7 @@
     </div>
   {:else}
     <button
+      data-testid="item-description-empty"
       onclick={startEditingDescription}
       class="text-left w-full py-2 text-sm transition-colors cursor-pointer"
       style="color: var(--ds-text-subtle);"
@@ -325,11 +326,13 @@
     max-width: 0;
     opacity: 0;
     overflow: hidden;
+    transform: translateX(-0.25rem);
     white-space: nowrap;
-    transition: max-width 0.2s ease, opacity 0.2s ease;
+    transition: opacity 0.2s ease, transform 0.2s ease;
   }
   .action-btn:hover .action-label {
     max-width: 80px;
     opacity: 1;
+    transform: translateX(0);
   }
 </style>

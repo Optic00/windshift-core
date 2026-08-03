@@ -447,6 +447,7 @@
           diagrams={[]}
           onsavefield={handleSaveField}
           oncanceledit={handleCancelEdit}
+          onstartEditingDescription={() => { editingDescription = true; }}
           onattachmentUploadFiles={handleAttachmentUploadFiles}
           onattachmentDelete={handleAttachmentDelete}
         />
