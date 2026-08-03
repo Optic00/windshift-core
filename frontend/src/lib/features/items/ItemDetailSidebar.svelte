@@ -1382,8 +1382,14 @@
                     required={screenField.is_required}
                     onChange={(val) => {
                       editCustomFieldValues[screenField.field_identifier] = val;
-                      onsaveField?.({ field: `custom_field_${screenField.field_identifier}` });
+                      if (fieldDef.field_type !== 'text') {
+                        onsaveField?.({ field: `custom_field_${screenField.field_identifier}` });
+                      }
                     }}
+                    onCommit={(val) => onsaveField?.({
+                      field: `custom_field_${screenField.field_identifier}`,
+                      value: val,
+                    })}
                     onStartEdit={() => startEditingCustomField(screenField.field_identifier)}
                     onCancel={() => oncancelEdit?.({ field: `custom_field_${screenField.field_identifier}` })}
                   />
@@ -1407,6 +1413,7 @@
                 {:else}
                   <button
                     onclick={() => startEditingCustomField(screenField.field_identifier)}
+                    data-testid={`item-custom-field-edit-${fieldDef.id}`}
                     class="w-full flex items-center justify-between px-2 py-1.5 text-sm transition-colors rounded group"
                     onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'}
                     onmouseleave={(e) => e.currentTarget.style.backgroundColor = ''}

@@ -34,6 +34,14 @@
       ? (item.custom_field_values?.[customFieldId] ?? item.custom_field_values?.[String(customFieldId)])
       : null
   );
+  let itemLabels = $derived.by(() => {
+    if (Array.isArray(item.labels) && item.labels.length > 0) {
+      return item.labels;
+    }
+    return (item.label_ids || [])
+      .map((labelId) => labels.find((label) => label.id === labelId))
+      .filter(Boolean);
+  });
   // Resolve user-type custom field values to display names.
   let customFieldUserNames = $derived.by(() => {
     if (!customFieldDef || !customFieldValue) return [];
@@ -100,18 +108,15 @@
         {iter.name}
       </Chip>
     {/if}
-  {:else if cardField.field_identifier === 'labels' && item.label_ids?.length > 0}
-    {#each item.label_ids.slice(0, 3) as labelId}
-      {@const lbl = labels.find(l => l.id === labelId)}
-      {#if lbl}
-        <Chip appearance="metadata" dotColor={lbl.color || '#6b7280'} title="Label">
-          {lbl.name}
-        </Chip>
-      {/if}
+  {:else if cardField.field_identifier === 'labels' && itemLabels.length > 0}
+    {#each itemLabels.slice(0, 3) as label (label.id)}
+      <Chip appearance="metadata" dotColor={label.color || '#6b7280'} title="Label">
+        {label.name}
+      </Chip>
     {/each}
-    {#if item.label_ids.length > 3}
+    {#if itemLabels.length > 3}
       <Chip appearance="metadata" title="Additional labels">
-        +{item.label_ids.length - 3}
+        +{itemLabels.length - 3}
       </Chip>
     {/if}
   {:else if cardField.field_identifier === 'status' && item.status_id}

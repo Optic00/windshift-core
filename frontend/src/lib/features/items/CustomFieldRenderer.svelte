@@ -50,7 +50,7 @@
   }
 
   let {
-    field, value = $bindable(''), onChange = () => {}, milestones = [], iterations = [],
+    field, value = $bindable(''), onChange = () => {}, onCommit = null, milestones = [], iterations = [],
     isDarkMode = false, required = false, readonly = true, disabled = false,
     onStartEdit = null, onCancel = null, showSelectedInTrigger = true, autoOpenPickers = true,
     noPadding = false, itemId = null, users: providedUsers = null, fieldLinks = null,
@@ -212,7 +212,7 @@
   function handleKeydown(event) {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
-      // Trigger save by calling onChange with current value
+      onCommit?.(/** @type {HTMLInputElement} */ (event.currentTarget).value);
     } else if (event.key === 'Escape') {
       event.preventDefault();
       onCancel?.();
@@ -809,6 +809,7 @@
         <input
           type="text"
           {value}
+          data-testid={`custom-field-input-${field.id}`}
           oninput={(e) => onChange(/** @type {HTMLInputElement} */ (e.target).value)}
           class="w-full px-3 py-2 text-sm hover:bg-gray-50 focus:outline-none transition-colors bg-transparent border rounded"
           style="background-color: {isDarkMode ? '#1e293b' : 'var(--ds-background-input)'}; border-color: {isDarkMode ? '#475569' : 'var(--ds-border)'}; color: {isDarkMode ? '#e2e8f0' : 'var(--ds-text)'};"
