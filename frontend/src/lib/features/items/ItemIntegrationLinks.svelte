@@ -65,7 +65,7 @@
     try {
       links = await api.itemIntegrationLinks.get(itemId, signal ? { signal } : undefined) || [];
     } catch (err) {
-      if (err?.name === 'AbortError') return;
+      if (signal?.aborted || err?.name === 'AbortError' || err?.status === 404) return;
       console.error('Failed to load integration links:', err);
       error = t('integrations.failedToLoadLinks');
       links = [];

@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { useEventListener } from 'runed';
   import { api } from '../../api.js';
   import { GitMerge, GitBranch, GitCommit, ExternalLink, Plus, RefreshCw, Trash2, ChevronDown, ChevronRight, Loader2, GitBranchPlus, Link2 } from '@lucide/svelte';
@@ -20,6 +20,8 @@
   // SCM connection status
   let connectionStatus = $state(null);
   let checkingConnection = $state(true);
+  const loadController = new AbortController();
+  let delayedRefresh = null;
 
   // Segmented buckets for the dev panel
   const pullRequests = $derived(links.filter(l => l.link_type === 'pull_request'));
@@ -34,12 +36,17 @@
   );
 
   onMount(async () => {
-    await checkConnectionStatus();
-    if (connectionStatus?.connected) {
-      await loadLinks();
+    await checkConnectionStatus(loadController.signal);
+    if (!loadController.signal.aborted && connectionStatus?.connected) {
+      await loadLinks(loadController.signal);
     } else {
       loading = false;
     }
+  });
+
+  onDestroy(() => {
+    loadController.abort();
+    if (delayedRefresh) clearTimeout(delayedRefresh);
   });
 
   // Live updates (WI-484): the item-detail view that owns the SSE stream
@@ -49,19 +56,19 @@
   useEventListener(() => window, 'item-scm-links-changed', (/** @type {CustomEvent<{itemId?: number|string}>} */ event) => {
     const id = event?.detail?.itemId;
     if (id == null || String(id) !== String(itemId)) return;
-    if (connectionStatus?.connected) loadLinks();
+    if (connectionStatus?.connected) loadLinks(loadController.signal);
   });
 
-  async function checkConnectionStatus() {
+  async function checkConnectionStatus(signal) {
     if (!itemId) {
       checkingConnection = false;
       return;
     }
 
     try {
-      connectionStatus = await api.itemSCMLinks.getConnectionStatus(itemId);
+      connectionStatus = await api.itemSCMLinks.getConnectionStatus(itemId, { signal });
     } catch (err) {
-      if (err?.name === 'AbortError') return;
+      if (signal?.aborted || err?.name === 'AbortError' || err?.status === 404) return;
       console.error('Failed to check SCM connection status:', err);
       // If we can't check connection status, assume no repos configured
       connectionStatus = { has_repositories: false };
@@ -88,18 +95,18 @@
     });
   }
 
-  export async function loadLinks() {
+  export async function loadLinks(signal) {
     if (!itemId) return;
     loading = true;
     error = null;
 
     try {
-      links = await api.itemSCMLinks.get(itemId) || [];
+      links = await api.itemSCMLinks.get(itemId, signal ? { signal } : undefined) || [];
       // Re-fetch after short delay to pick up background OAuth refresh
       if (links.some(l => l.link_type === 'pull_request' && l.state !== 'merged')) {
-        setTimeout(async () => {
+        delayedRefresh = setTimeout(async () => {
           try {
-            const updated = await api.itemSCMLinks.get(itemId) || [];
+            const updated = await api.itemSCMLinks.get(itemId, { signal: loadController.signal }) || [];
             if (JSON.stringify(updated) !== JSON.stringify(links)) {
               links = updated;
             }
@@ -107,7 +114,7 @@
         }, 3000);
       }
     } catch (err) {
-      if (err?.name === 'AbortError') return;
+      if (signal?.aborted || err?.name === 'AbortError' || err?.status === 404) return;
       console.error('Failed to load SCM links:', err);
       error = t('scm.failedToLoadLinks');
       links = [];

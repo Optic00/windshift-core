@@ -79,7 +79,7 @@ import Button from '../../components/Button.svelte';
   // Maps each event kind to a targeted reload. Recovery after a connection gap
   // and explicit server reload events run a full loadData() reconciliation; the
   // initial healthy connection does not duplicate the route's bootstrap load.
-  useItemEventStream(() => itemId, {
+  const liveStream = useItemEventStream(() => itemId, {
     // Full reconcile (reconnect/server reload): reload the item AND comments.
     // Comments is a separate component, so loadData() alone would leave it stale.
     onReconcile: () => {
@@ -1302,6 +1302,8 @@ import Button from '../../components/Button.svelte';
   >
     <div
       bind:this={modalElement}
+      data-testid="item-detail"
+      data-live-updates={liveStream.connected ? 'connected' : 'disconnected'}
       class="flex flex-col relative w-full h-[85vh]"
     >
       {#if itemDetailStore.showTestCaseModal}
@@ -1349,15 +1351,17 @@ import Button from '../../components/Button.svelte';
         <!-- Re-key on the displayed item id (not the incoming prop) so the
              subtree only swaps once new data has landed, producing an atomic
              transition instead of a mid-load tear-down. -->
-        {#key itemDetailStore.item?.id ?? itemId}
-          <div
-            class="transition-opacity duration-200 ease-in-out flex flex-col flex-1 min-h-0 overflow-hidden"
-            class:opacity-90={itemDetailStore.transitioning}
-            class:opacity-100={!itemDetailStore.transitioning}
-          >
-            {@render contentSnippet()}
-          </div>
-        {/key}
+        {#if !itemDetailStore.notFound}
+          {#key itemDetailStore.item?.id ?? itemId}
+            <div
+              class="transition-opacity duration-200 ease-in-out flex flex-col flex-1 min-h-0 overflow-hidden"
+              class:opacity-90={itemDetailStore.transitioning}
+              class:opacity-100={!itemDetailStore.transitioning}
+            >
+              {@render contentSnippet()}
+            </div>
+          {/key}
+        {/if}
       {/if}
     </div>
   </Modal>
@@ -1365,19 +1369,23 @@ import Button from '../../components/Button.svelte';
 <!-- Full Page Container -->
 <div
   bind:this={modalElement}
+  data-testid="item-detail"
+  data-live-updates={liveStream.connected ? 'connected' : 'disconnected'}
   class="flex flex-col w-full h-full relative"
   style="background-color: var(--ds-surface-raised);"
 >
   <!-- Shared Content Component for Full Page -->
-  {#key itemDetailStore.item?.id ?? itemId}
-    <div
-      class="transition-opacity duration-200 ease-in-out"
-      class:opacity-90={itemDetailStore.transitioning}
-      class:opacity-100={!itemDetailStore.transitioning}
-    >
-      {@render contentSnippet()}
-    </div>
-  {/key}
+  {#if !itemDetailStore.notFound}
+    {#key itemDetailStore.item?.id ?? itemId}
+      <div
+        class="transition-opacity duration-200 ease-in-out"
+        class:opacity-90={itemDetailStore.transitioning}
+        class:opacity-100={!itemDetailStore.transitioning}
+      >
+        {@render contentSnippet()}
+      </div>
+    {/key}
+  {/if}
 </div>
 
 {#if !isModal}

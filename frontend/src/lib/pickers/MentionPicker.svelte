@@ -182,6 +182,7 @@
           class="mention-option"
           data-testid="mention-option"
           class:highlighted={index === highlightedIndex}
+          onmousedown={(event) => event.preventDefault()}
           onclick={() => handleSelect(user)}
           onmouseenter={() => highlightedIndex = index}
           role="option"

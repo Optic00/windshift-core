@@ -87,6 +87,10 @@ class ItemDetailStore {
   // from superseded calls when the user clicks rapidly through items.
   #loadToken = 0;
   #loadController = null;
+  #refreshToken = 0;
+  #refreshController = null;
+  #refreshInFlight = false;
+  #refreshPending = false;
   #linksController = null;
   #worklogsController = null;
   #worklogsPromise = null;
@@ -221,11 +225,16 @@ class ItemDetailStore {
    */
   async loadItem(workspaceId, itemId, options = {}) {
     this.#loadController?.abort();
+    this.#refreshController?.abort();
     this.#linksController?.abort();
     this.#worklogsController?.abort();
     this.#diagramsController?.abort();
     const controller = new AbortController();
     this.#loadController = controller;
+    this.#refreshController = null;
+    this.#refreshToken += 1;
+    this.#refreshInFlight = false;
+    this.#refreshPending = false;
     const requestOptions = { signal: controller.signal };
     const token = ++this.#loadToken;
     const isSwitch = this.item != null;
@@ -362,17 +371,35 @@ class ItemDetailStore {
         this.loadingWatchStatus = false;
         this.loadingChildItems = false;
         this.transitioning = false;
+        this.#runPendingRefresh();
       }
     }
   }
 
   // Refresh the item without overwriting fields being edited locally.
   async refreshCurrentItem() {
-    if (!this.itemId || this.loading || this.saving) return;
+    if (!this.itemId) return;
+    if (this.loading || this.saving || this.#refreshInFlight) {
+      this.#refreshPending = true;
+      return;
+    }
+
+    const itemId = this.itemId;
+    const controller = new AbortController();
+    const token = ++this.#refreshToken;
+    this.#refreshController = controller;
+    this.#refreshInFlight = true;
 
     try {
-      const nextItem = await api.items.get(this.itemId);
-      if (!nextItem || String(nextItem.id) !== String(this.itemId)) return;
+      // An SSE refresh must not share a pre-mutation GET that happens to still
+      // be in flight. Otherwise the event can be consumed while the UI is
+      // reconciled with the response captured before that mutation.
+      const nextItem = await api.items.get(itemId, {
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+      if (token !== this.#refreshToken || String(itemId) !== String(this.itemId)) return;
+      if (!nextItem || String(nextItem.id) !== String(itemId)) return;
 
       const previousStatusID = this.item?.status_id;
       const previousItemTypeID = this.item?.item_type_id;
@@ -396,16 +423,43 @@ class ItemDetailStore {
         }
       }
     } catch (err) {
+      if (token !== this.#refreshToken || isAbortError(err)) return;
       // A deleted item must close rather than remain stale.
       if (err?.status === 404) {
         this.markDeleted();
         return;
       }
       console.warn('Failed to refresh item detail:', err);
+    } finally {
+      if (token === this.#refreshToken) {
+        if (this.#refreshController === controller) this.#refreshController = null;
+        this.#refreshInFlight = false;
+        this.#runPendingRefresh();
+      }
     }
   }
 
+  #runPendingRefresh() {
+    if (!this.#refreshPending || this.loading || this.saving || this.#refreshInFlight) return;
+    this.#refreshPending = false;
+    queueMicrotask(() => this.refreshCurrentItem());
+  }
+
   markDeleted() {
+    // Tear down the rendered detail immediately so lazy panels abort their own
+    // requests before the deleted resource starts returning 404s.
+    this.#loadToken += 1;
+    this.#refreshToken += 1;
+    this.#loadController?.abort();
+    this.#refreshController?.abort();
+    this.#linksController?.abort();
+    this.#worklogsController?.abort();
+    this.#diagramsController?.abort();
+    this.#timeModalDataController?.abort();
+    this.item = null;
+    this.#refreshController = null;
+    this.#refreshInFlight = false;
+    this.#refreshPending = false;
     this.notFound = true;
   }
 
@@ -589,6 +643,10 @@ class ItemDetailStore {
       })
       .catch((err) => {
         if (isAbortError(err)) return this.diagrams;
+        if (err?.status === 404) {
+          this.markDeleted();
+          return this.diagrams;
+        }
         console.error('Failed to load diagrams:', err);
         if (this.item?.id === itemId) this.diagrams = [];
         return this.diagrams;
@@ -979,6 +1037,7 @@ class ItemDetailStore {
       throw err;
     } finally {
       this.saving = false;
+      this.#runPendingRefresh();
     }
   }
 
@@ -1190,12 +1249,17 @@ class ItemDetailStore {
 
   reset() {
     this.#loadToken += 1;
+    this.#refreshToken += 1;
+    this.#refreshPending = false;
     this.#loadController?.abort();
+    this.#refreshController?.abort();
     this.#linksController?.abort();
     this.#worklogsController?.abort();
     this.#diagramsController?.abort();
     this.#timeModalDataController?.abort();
     this.#loadController = null;
+    this.#refreshController = null;
+    this.#refreshInFlight = false;
     this.#linksController = null;
     this.#worklogsController = null;
     this.#worklogsPromise = null;

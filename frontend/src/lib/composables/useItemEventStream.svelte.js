@@ -60,7 +60,14 @@ export function useItemEventStream(getItemId, handlers = {}) {
     es.addEventListener('status', () => schedule('item'));
     es.addEventListener('updated', () => schedule('item', 'children'));
     es.addEventListener('created', () => schedule('item', 'children'));
-    es.addEventListener('deleted', () => schedule('deleted'));
+    es.addEventListener('deleted', () => {
+      // Deletion is authoritative and must tear down item-bound loaders before
+      // their in-flight requests start returning expected 404s.
+      if (timer) clearTimeout(timer);
+      timer = null;
+      pending.clear();
+      handlers.onDeleted?.();
+    });
     es.addEventListener('link', () => schedule('links'));
     // The browser auto-reconnects (honoring the server's retry hint). Until it
     // does, mark disconnected so the components' pollers resume as the fallback.

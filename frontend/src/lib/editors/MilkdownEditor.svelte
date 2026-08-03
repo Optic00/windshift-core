@@ -145,6 +145,7 @@
 
   function handleMentionSelect(user) {
     if (!editor || !mentionRange) return;
+    const range = mentionRange;
 
     // Format the mention text based on whether display name has spaces
     const displayName = `${user.first_name || ''} ${user.last_name || ''}`.trim();
@@ -159,17 +160,20 @@
 
       // Replace @query with @"Display Name" or @username
       const tr = state.tr.replaceWith(
-        mentionRange.from,
-        mentionRange.to,
+        range.from,
+        range.to,
         state.schema.text(mentionText + ' ')
       );
       dispatch(tr);
+      view.focus();
 
       // The listener plugin normally mirrors document changes back into the
       // bindable Markdown value. Under a busy event loop, however, a submit
       // can observe the old @query before that listener callback runs. Keep
       // programmatic mention insertion atomic from the form's perspective.
-      content = ctx.get(serializerCtx)(tr.doc);
+      const markdown = ctx.get(serializerCtx)(tr.doc);
+      content = markdown;
+      onContentChange?.(markdown);
     });
 
     closeMentionPicker();

@@ -138,7 +138,7 @@ export const workspaceSCM = {
 // Item SCM Links - PRs, branches, commits linked to items
 export const itemSCMLinks = {
   // Get all SCM links for an item
-  get: (itemId) => fetchAPI(`/items/${itemId}/scm-links`),
+  get: (itemId, options = {}) => fetchAPI(`/items/${itemId}/scm-links`, options),
 
   // Create a new SCM link for an item
   create: (itemId, data) =>
@@ -177,7 +177,8 @@ export const itemSCMLinks = {
     }),
 
   // Get SCM connection status for an item (whether user has connected their account)
-  getConnectionStatus: (itemId) => fetchAPI(`/items/${itemId}/scm-connection-status`),
+  getConnectionStatus: (itemId, options = {}) =>
+    fetchAPI(`/items/${itemId}/scm-connection-status`, options),
 };
 
 // Issue Sync - GitHub Issues sync configuration
