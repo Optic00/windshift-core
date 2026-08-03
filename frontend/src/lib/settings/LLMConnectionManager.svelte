@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { api } from '../api.js';
   import {
-    Plus, Edit, Trash2, TestTube, CheckCircle, XCircle, Power, PowerOff, Star, AlertTriangle, Eye, EyeOff
+    Plus, Edit, Trash2, TestTube, CheckCircle, Power, PowerOff, Star, AlertTriangle, Eye, EyeOff
   } from '@lucide/svelte';
   import Button from '../components/Button.svelte';
   import PageHeader from '../layout/PageHeader.svelte';
@@ -15,6 +15,7 @@
   import Select from '../components/Select.svelte';
   import BasePicker from '../pickers/BasePicker.svelte';
   import { confirm } from '../composables/useConfirm.js';
+  import { llmConnectionTestErrorMessage } from './llmConnectionErrors.js';
 
   let connections = $state([]);
   let providers = $state([]);
@@ -329,8 +330,7 @@
       testResult = { success: true, message: 'Connection successful' };
       successToast('Connection test passed');
     } catch (err) {
-      testResult = { success: false, message: err.message || 'Connection test failed' };
-      errorToast(err.message || 'Connection test failed');
+      errorToast(llmConnectionTestErrorMessage(err), 'Connection test failed');
     } finally {
       testingConnectionId = null;
     }
@@ -493,18 +493,13 @@
 
         {#if editingConnection}
           <div class="flex items-center gap-2 pt-2 border-t" style="border-color: var(--ds-border);">
-            <Button variant="secondary" onclick={() => testConnection(editingConnection.id)} loading={testingConnectionId === editingConnection?.id} icon={TestTube}>
+            <Button dataTestid="llm-connection-test-modal" variant="secondary" onclick={() => testConnection(editingConnection.id)} loading={testingConnectionId === editingConnection?.id} icon={TestTube}>
               Test Connection
             </Button>
             {#if testResult}
               <div class="flex items-center gap-1 text-xs">
-                {#if testResult.success}
-                  <CheckCircle size={14} style="color: var(--ds-icon-success);" />
-                  <span style="color: var(--ds-text-success);">{testResult.message}</span>
-                {:else}
-                  <XCircle size={14} style="color: var(--ds-text-danger);" />
-                  <span style="color: var(--ds-text-danger);">{testResult.message}</span>
-                {/if}
+                <CheckCircle size={14} style="color: var(--ds-icon-success);" />
+                <span style="color: var(--ds-text-success);">{testResult.message}</span>
               </div>
             {/if}
           </div>
