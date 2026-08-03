@@ -876,17 +876,20 @@
 
   // Collection store is self-activating via route subscription in constructor — no need to manually activate
 
-  // Redirect from workspace-detail to the configured default view
+  // Redirect from workspace-detail to the configured default view. The
+  // collection-scoped base URL maps to this same view, so carry the collection
+  // through — dropping it silently lands on the workspace board, which reads
+  // the workspace board configuration instead of the collection's.
   $effect(() => {
     if ($currentRoute.view === 'workspace-detail' && $currentWorkspace) {
       const wsId = $currentRoute.params?.id;
       if (wsId) {
         const defaultView = $currentWorkspace.default_view || 'board';
-        if (defaultView === 'overview') {
-          navigate(`/workspaces/${wsId}/overview`, { replace: true });
-        } else {
-          navigate(`/workspaces/${wsId}/${defaultView}`, { replace: true });
-        }
+        const collectionId = $currentRoute.params?.collectionId;
+        const base = collectionId
+          ? `/workspaces/${wsId}/collections/${collectionId}`
+          : `/workspaces/${wsId}`;
+        navigate(`${base}/${defaultView}`, { replace: true });
       }
     }
   });
