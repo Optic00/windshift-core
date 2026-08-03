@@ -785,8 +785,8 @@ func (h *PageHandler) respondServiceError(w http.ResponseWriter, r *http.Request
 		respondConflict(w, r, "move would create a cycle")
 	case errors.Is(err, services.ErrPageDepthExceeded):
 		respondConflict(w, r, "page tree depth limit exceeded")
-	case errors.Is(err, services.ErrPageSlugConflict):
-		respondConflict(w, r, "slug conflicts with an existing sibling page")
+	case errors.Is(err, services.ErrPageUniqueConflict):
+		respondConflict(w, r, "page conflicts with an existing page")
 	case errors.Is(err, services.ErrPageContentConflict):
 		respondConflict(w, r, "page content changed since it was read")
 	case errors.Is(err, services.ErrPageRevisionMismatch):

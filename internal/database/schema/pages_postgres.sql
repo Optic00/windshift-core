@@ -7,6 +7,9 @@ CREATE TABLE IF NOT EXISTS pages (
     workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     parent_id INTEGER REFERENCES pages(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
+    -- Display-only, derived from the title. Nothing resolves a page by slug:
+    -- every route addresses pages by numeric id. Deliberately NOT unique —
+    -- see the note above idx_pages_frac_index_scoped.
     slug TEXT NOT NULL,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     content TEXT NOT NULL DEFAULT '',
@@ -23,8 +26,7 @@ CREATE TABLE IF NOT EXISTS pages (
     depth INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    archived_at TIMESTAMPTZ,
-    UNIQUE(workspace_id, parent_id, slug)
+    archived_at TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS idx_pages_workspace ON pages(workspace_id);
@@ -35,6 +37,14 @@ CREATE INDEX IF NOT EXISTS idx_pages_path ON pages(path);
 CREATE INDEX IF NOT EXISTS idx_pages_content_hash ON pages(content_hash) WHERE content_hash != '';
 CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_workspace_home ON pages(workspace_id) WHERE is_home = true AND archived_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_pages_workspace_parent_rank ON pages(workspace_id, parent_id, rank) WHERE rank IS NOT NULL;
+-- Slug carries no uniqueness rule. It used to be constrained by
+-- UNIQUE(workspace_id, parent_id, slug) plus a partial index covering root
+-- pages, in anticipation of path-style page URLs. Those URLs were never
+-- built — pages are addressed by numeric id — so the constraints only ever
+-- produced 409s on create, move and unarchive, and forced a retry loop to
+-- pick a free slug on every write. Removed; do not reinstate without a
+-- reader that actually resolves pages by slug.
+--
 -- frac_index uniqueness is per sibling set, not global. KeyBetween("","")
 -- deterministically produces the same first key for every group, so a
 -- global UNIQUE(frac_index) would mean only one page in the whole table
@@ -50,14 +60,6 @@ CREATE INDEX IF NOT EXISTS idx_pages_workspace_parent_rank ON pages(workspace_id
 CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_frac_index_scoped
     ON pages(workspace_id, COALESCE(parent_id, -1), frac_index)
     WHERE frac_index IS NOT NULL AND archived_at IS NULL;
--- UNIQUE(workspace_id, parent_id, slug) above is bypassed for root pages
--- because parent_id IS NULL collates as NOT EQUAL to itself in both
--- SQLite and PostgreSQL. This partial unique index plugs that gap for
--- live (non-archived) root pages so concurrent inserts cannot race past
--- the service-level pickAvailableSlug check. Archived root pages may
--- still share a slug — once archived they're frozen and out of the
--- caller's address space.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_workspace_root_slug ON pages(workspace_id, slug) WHERE parent_id IS NULL AND archived_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_pages_fts ON pages USING GIN (to_tsvector('english', coalesce(title, '') || ' ' || coalesce(content, '') || ' ' || coalesce(excerpt, '')));
 
 CREATE TABLE IF NOT EXISTS page_revisions (

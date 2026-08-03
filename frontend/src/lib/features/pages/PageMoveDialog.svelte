@@ -5,6 +5,7 @@
   import BasePicker from '../../pickers/BasePicker.svelte';
   import { api } from '../../api.js';
   import { t } from '../../stores/i18n.svelte.js';
+  import { isSelfOrDescendant } from './pageHierarchy.js';
 
   /** Page reparenting dialog. It excludes self, descendants, and current parent
    * from tree-path candidates while the backend remains the cycle authority. */
@@ -41,14 +42,8 @@
     try {
       const resp = await api.pages.getTree(workspaceId);
       const all = resp.pages || [];
-      // A page p2 is a descendant of `page` iff its materialized path
-      // starts with the path that the children of `page` would have.
-      // Schema path format: "/a/b/c/" — descendants of page id N at path
-      // "/X/N/" have paths starting with "/X/N/".
-      const selfPrefix = `${page.path}${page.id}/`;
       candidates = all.filter((p) => {
-        if (p.id === page.id) return false;
-        if (p.path === selfPrefix || p.path.startsWith(selfPrefix)) return false;
+        if (isSelfOrDescendant(p, page)) return false;
         if (p.id === page.parent_id) return false; // already the parent
         return true;
       });

@@ -594,47 +594,6 @@ func (r *PageRepository) ListChildrenTx(tx database.Tx, workspaceID int, parentI
 	return out, rows.Err()
 }
 
-// GetAncestors returns all ancestors of a page (root first, direct parent
-// last), capped at MaxPageDepth so a stored cycle cannot loop the DB.
-// The original page is excluded from the result.
-func (r *PageRepository) GetAncestors(pageID int) ([]models.Page, error) {
-	rows, err := r.db.Query(`
-		WITH RECURSIVE ancestors AS (
-			SELECT `+pageColumns+`, 0 AS level
-			FROM pages
-			WHERE id = ?
-
-			UNION ALL
-
-			SELECT p.id, p.workspace_id, p.parent_id, p.title, p.slug, p.content, p.content_hash,
-			       p.excerpt, p.created_by, p.updated_by, p.archived_by, p.is_home, p.inherit_permissions,
-			       p.rank, p.frac_index, p.path, p.depth, p.created_at, p.updated_at, p.archived_at,
-			       a.level + 1 AS level
-			FROM pages p
-			JOIN ancestors a ON p.id = a.parent_id
-			WHERE a.level < ?
-		)
-		SELECT `+pageColumns+`
-		FROM ancestors
-		WHERE id != ?
-		ORDER BY level DESC
-	`, pageID, MaxPageDepth, pageID)
-	if err != nil {
-		return nil, fmt.Errorf("query ancestors: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	var out []models.Page
-	for rows.Next() {
-		page, scanErr := scanPage(rows)
-		if scanErr != nil {
-			return nil, fmt.Errorf("scan ancestor: %w", scanErr)
-		}
-		out = append(out, *page)
-	}
-	return out, rows.Err()
-}
-
 // ListSubtreeForArchiveTx returns the target page plus every descendant matched
 // by the materialized-path prefix. When forUpdate is true (Postgres), rows are
 // locked until the caller's transaction commits so permission checks performed
@@ -662,48 +621,6 @@ func (r *PageRepository) ListSubtreeForArchiveTx(tx database.Tx, page *models.Pa
 			return nil, fmt.Errorf("scan archive subtree: %w", scanErr)
 		}
 		out = append(out, *p)
-	}
-	return out, rows.Err()
-}
-
-// GetDescendants returns every descendant of a page up to maxDepth.
-// maxDepth <= 0 or > MaxPageDepth is clamped to MaxPageDepth.
-func (r *PageRepository) GetDescendants(pageID, maxDepth int) ([]models.Page, error) {
-	if maxDepth <= 0 || maxDepth > MaxPageDepth {
-		maxDepth = MaxPageDepth
-	}
-	rows, err := r.db.Query(`
-		WITH RECURSIVE descendants AS (
-			SELECT `+pageColumns+`, 1 AS sub_depth
-			FROM pages
-			WHERE parent_id = ?
-
-			UNION ALL
-
-			SELECT p.id, p.workspace_id, p.parent_id, p.title, p.slug, p.content, p.content_hash,
-			       p.excerpt, p.created_by, p.updated_by, p.archived_by, p.is_home, p.inherit_permissions,
-			       p.rank, p.frac_index, p.path, p.depth, p.created_at, p.updated_at, p.archived_at,
-			       d.sub_depth + 1
-			FROM pages p
-			JOIN descendants d ON p.parent_id = d.id
-			WHERE d.sub_depth < ?
-		)
-		SELECT `+pageColumns+`
-		FROM descendants
-		ORDER BY sub_depth ASC, COALESCE(frac_index, '') ASC, COALESCE(rank, '') ASC, title ASC, id ASC
-	`, pageID, maxDepth)
-	if err != nil {
-		return nil, fmt.Errorf("query descendants: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	var out []models.Page
-	for rows.Next() {
-		page, scanErr := scanPage(rows)
-		if scanErr != nil {
-			return nil, fmt.Errorf("scan descendant: %w", scanErr)
-		}
-		out = append(out, *page)
 	}
 	return out, rows.Err()
 }
