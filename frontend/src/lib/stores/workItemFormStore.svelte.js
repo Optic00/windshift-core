@@ -150,7 +150,9 @@ class WorkItemFormStore {
    */
   get selectedMilestones() {
     const ids = this.formData.milestone_ids || [];
-    return ids.map((id) => this.milestones.find((m) => m.id === id)).filter(Boolean);
+    return ids
+      .map((id) => this.milestones.find((milestone) => String(milestone.id) === String(id)))
+      .filter(Boolean);
   }
 
   /**

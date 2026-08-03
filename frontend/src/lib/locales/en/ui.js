@@ -163,6 +163,9 @@ export default {
     selectMilestones: 'Select milestones',
     noMilestone: 'No milestone',
     milestones: 'Milestones',
+    milestonesSelected: '{count} milestones selected',
+    milestonesSelected_one: '{count} milestone selected',
+    milestonesSelected_other: '{count} milestones selected',
     noMilestonesFound: 'No milestones found',
     showCompletedMilestones: 'Show completed',
 

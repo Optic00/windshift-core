@@ -515,31 +515,35 @@
         multiple={true}
         bind:value={store.formData.milestone_ids}
         workspaceId={store.selectedWorkspace?.id}
+        milestones={store.milestones}
+        loading={store.milestonesLoading}
         placeholder={t('createModal.noMilestone')}
       >
         {#snippet children()}
+          {@const selectedIds = Array.isArray(store.formData.milestone_ids) ? store.formData.milestone_ids : []}
           {@const selected = store.selectedMilestones}
           <!-- svelte-ignore a11y_no_static_element_interactions a11y_no_noninteractive_element_to_interactive_role -->
           <div
             role="button"
             tabindex="0"
+            data-testid="create-milestone-chip"
             class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-sm transition-colors"
-            style="background-color: var(--ds-surface); border: 1px solid var(--ds-border); color: {selected.length > 0 ? 'var(--ds-text)' : 'var(--ds-text-subtle)'};"
+            style="background-color: var(--ds-surface); border: 1px solid var(--ds-border); color: {selectedIds.length > 0 ? 'var(--ds-text)' : 'var(--ds-text-subtle)'};"
             onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'}
             onmouseleave={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-surface)'}
           >
-            {#if selected.length > 0 && selected[0].category_color}
+            {#if selectedIds.length === 1 && selected[0]?.category_color}
               <div class="w-2 h-2 rounded-full flex-shrink-0" style="background-color: {selected[0].category_color};"></div>
             {:else}
               <MilestoneIcon size={14} style="color: var(--ds-text-subtle); flex-shrink: 0;" />
             {/if}
             <span class="truncate max-w-[160px]">
-              {#if selected.length === 0}
+              {#if selectedIds.length === 0}
                 {t('createModal.milestoneField')}
-              {:else if selected.length === 1}
+              {:else if selectedIds.length === 1 && selected[0]?.name}
                 {selected[0].name}
               {:else}
-                {selected[0].name} +{selected.length - 1}
+                {t('pickers.milestonesSelected', { count: selectedIds.length })}
               {/if}
             </span>
             <ChevronDown size={12} style="color: var(--ds-text-subtle); flex-shrink: 0;" />
@@ -552,6 +556,8 @@
     {#if store.nonRequiredFullSystemFields.length > 0 || store.nonRequiredCustomFields.length > 0}
       <button
         onclick={() => showAdditionalFields = !showAdditionalFields}
+        aria-label={t('createModal.additionalFields')}
+        data-testid="create-additional-fields-toggle"
         class="inline-flex items-center px-2 py-1 rounded-full text-sm transition-colors"
         style="background-color: var(--ds-surface); border: 1px solid var(--ds-border); color: var(--ds-text-subtle);"
         onmouseover={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'}
@@ -586,16 +592,19 @@
         {/if}
       {/each}
       {#each store.nonRequiredCustomFields as field}
-        <CustomFieldRenderer
-          {field}
-          bind:value={store.customFieldValues[field.id]}
-          readonly={false}
-          onChange={(val) => store.customFieldValues[field.id] = val}
-          milestones={store.milestones}
-          iterations={store.iterations}
-          isDarkMode={false}
-          autoOpenPickers={false}
-        />
+        <div class="space-y-1">
+          <Label color="default">{field.name}</Label>
+          <CustomFieldRenderer
+            {field}
+            bind:value={store.customFieldValues[field.id]}
+            readonly={false}
+            onChange={(val) => store.customFieldValues[field.id] = val}
+            milestones={store.milestones}
+            iterations={store.iterations}
+            isDarkMode={false}
+            autoOpenPickers={false}
+          />
+        </div>
       {/each}
     </div>
   {/if}
@@ -671,6 +680,8 @@
               multiple={true}
               bind:value={store.formData.milestone_ids}
               workspaceId={store.selectedWorkspace?.id}
+              milestones={store.milestones}
+              loading={store.milestonesLoading}
               placeholder={t('createModal.noMilestone')}
             />
           </div>
