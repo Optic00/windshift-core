@@ -127,8 +127,9 @@ var ShortIdentifier Policy = PolicyFunc(shortIdentifier)
 
 // RichText — multi-line body content (descriptions, notes, test-step
 // actual results). Strips HTML except <br /> (Milkdown uses this to
-// preserve blank lines on round-trip), decodes HTML entities back to
-// plain text, neutralizes dangerous Markdown URL schemes
+// preserve blank lines on round-trip), preserves safe CommonMark
+// autolinks, decodes HTML entities back to plain text, neutralizes
+// dangerous Markdown URL schemes
 // (javascript:, vbscript:, data:), caps at 256 KiB. Fenced Markdown
 // code blocks are preserved verbatim so documentation can show HTML
 // snippets without the sanitizer eating them.
@@ -142,7 +143,8 @@ var RichText Policy = PolicyFunc(richText)
 var LongDocument Policy = PolicyFunc(longDocument)
 
 // Comment — user-submitted comment content (Markdown editor input).
-// Strips every HTML tag + neutralizes dangerous Markdown URLs.
+// Strips every HTML tag, preserves safe CommonMark autolinks, and
+// neutralizes dangerous Markdown URLs.
 // Caps at 256 KiB (matches RichText / LongDocument — one uniform
 // upper bound for any long-form user text).
 var Comment Policy = PolicyFunc(commentPolicy)
@@ -166,6 +168,10 @@ var (
 	// Match dangerous Markdown link/image schemes, including single-level
 	// parentheses in payloads such as javascript:alert(1).
 	dangerousMarkdownURLRegex = regexp.MustCompile(`(?i)(!?\[[^\]]*\])\(\s*(javascript|vbscript|data)\s*:(?:\([^)]*\)|[^)])*\)`)
+	// Milkdown serializes linked URLs as CommonMark autolinks. Protect only
+	// schemes the frontend permits; otherwise the HTML sanitizer mistakes
+	// the angle-bracket syntax for an HTML element and drops the link.
+	safeMarkdownAutolinkRegex = regexp.MustCompile("(?i)<(?:(?:https?://|mailto:|tel:|page:)[^\\x00-\\x20<>]*|[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9.-]+)>")
 )
 
 // stripAndCap is the common path for PlainTextField + ShortIdentifier:
@@ -214,10 +220,12 @@ func brAllowAndCap(input string, maxBytes int) string {
 		return ""
 	}
 	s, codeBlocks := extractFencedCodeBlocks(input)
+	s, autolinks := extractSafeMarkdownAutolinks(s)
 	s = sanitizeDecoded(s, brOnlyPolicy)
 	s = strings.ReplaceAll(s, "<br/>", "<br />")
 	s = strings.ReplaceAll(s, "<br>", "<br />")
 	s = markdownURLOnly(s)
+	s = restoreProtectedMarkdown(s, autolinks)
 	s = restoreFencedCodeBlocks(s, codeBlocks)
 	if maxBytes > 0 && len(s) > maxBytes {
 		s = s[:maxBytes]
@@ -233,8 +241,10 @@ func commentPolicy(s string) string {
 		return ""
 	}
 	out, codeBlocks := extractFencedCodeBlocks(s)
+	out, autolinks := extractSafeMarkdownAutolinks(out)
 	out = sanitizeDecoded(out, strictPolicy)
 	out = markdownURLOnly(out)
+	out = restoreProtectedMarkdown(out, autolinks)
 	out = restoreFencedCodeBlocks(out, codeBlocks)
 	if len(out) > LongTextMaxBytes {
 		out = out[:LongTextMaxBytes]
@@ -243,6 +253,45 @@ func commentPolicy(s string) string {
 }
 
 const codeBlockPlaceholderPrefix = "%%WINDSHIFT_CODE_BLOCK_"
+
+const autolinkPlaceholderPrefix = "%%WINDSHIFT_AUTOLINK_"
+
+type protectedMarkdown struct {
+	placeholder string
+	content     string
+}
+
+func extractSafeMarkdownAutolinks(input string) (string, []protectedMarkdown) {
+	if input == "" {
+		return input, nil
+	}
+
+	matches := safeMarkdownAutolinkRegex.FindAllStringIndex(input, -1)
+	if len(matches) == 0 {
+		return input, nil
+	}
+
+	var out strings.Builder
+	protected := make([]protectedMarkdown, 0, len(matches))
+	last := 0
+	for index, match := range matches {
+		content := input[match[0]:match[1]]
+		placeholder := markdownPlaceholder(autolinkPlaceholderPrefix, content, index, input)
+		protected = append(protected, protectedMarkdown{placeholder: placeholder, content: content})
+		out.WriteString(input[last:match[0]])
+		out.WriteString(placeholder)
+		last = match[1]
+	}
+	out.WriteString(input[last:])
+	return out.String(), protected
+}
+
+func restoreProtectedMarkdown(s string, protected []protectedMarkdown) string {
+	for _, value := range protected {
+		s = strings.ReplaceAll(s, value.placeholder, value.content)
+	}
+	return s
+}
 
 type fencedCodeBlock struct {
 	placeholder string
@@ -290,8 +339,12 @@ func extractFencedCodeBlocks(input string) (string, []fencedCodeBlock) {
 }
 
 func codeBlockPlaceholder(content string, index int, original string) string {
+	return markdownPlaceholder(codeBlockPlaceholderPrefix, content, index, original)
+}
+
+func markdownPlaceholder(prefix, content string, index int, original string) string {
 	sum := sha256.Sum256([]byte(content))
-	base := fmt.Sprintf("%s%d_%x%%", codeBlockPlaceholderPrefix, index, sum[:8])
+	base := fmt.Sprintf("%s%d_%x%%", prefix, index, sum[:8])
 	placeholder := base
 	for suffix := 1; strings.Contains(original, placeholder); suffix++ {
 		placeholder = fmt.Sprintf("%s_%d", base, suffix)
