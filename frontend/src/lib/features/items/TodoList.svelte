@@ -338,28 +338,39 @@
     {:else}
       <div class="flex flex-col gap-4">
         <!-- Completed-items range filter (caps the indefinitely-growing done list) -->
-        <div class="flex flex-wrap items-center gap-3 px-3 py-2 rounded-lg" style="background-color: var(--ds-surface-raised);">
-          <span class="text-xs font-medium" style="color: var(--ds-text-subtle);">{t('todo.doneFilterLabel')}</span>
-          <div class="flex items-center gap-1">
-            {#each RANGE_PRESETS as preset (preset.value)}
-              <Button
-                dataTestid={`done-range-${preset.value}`}
-                variant={completedRange === preset.value ? 'primary' : 'ghost'}
-                size="small"
-                onclick={() => selectRange(preset.value)}
-              >
-                {preset.label()}
-              </Button>
-            {/each}
+        <div class="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 px-4 py-3 rounded-lg" style="background-color: var(--ds-surface-raised);">
+          <div class="min-w-48">
+            <div class="text-sm font-medium" style="color: var(--ds-text);">{t('todo.doneFilterLabel')}</div>
+            <div class="mt-0.5 text-xs" style="color: var(--ds-text-subtle);">{t('todo.completedHistoryHint')}</div>
           </div>
-          <input
-            type="date"
-            data-testid="done-range-date"
-            value={customDate}
-            onchange={onCustomDateChange}
-            aria-label={t('todo.doneFilterLabel')}
-            class="date-input text-sm rounded border px-3 py-1.5 transition-colors bg-[var(--ds-background-input)] text-[var(--ds-text)] hover:border-[var(--ds-interactive)] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 {completedRange === 'custom' ? 'border-[var(--ds-interactive)]' : 'border-[var(--ds-border)]'}"
-          />
+          <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <div class="flex flex-wrap items-center gap-1" role="group" aria-label={t('todo.doneFilterLabel')}>
+              {#each RANGE_PRESETS as preset (preset.value)}
+                <Button
+                  dataTestid={`done-range-${preset.value}`}
+                  variant={completedRange === preset.value ? 'primary' : 'ghost'}
+                  size="small"
+                  onclick={() => selectRange(preset.value)}
+                >
+                  {preset.label()}
+                </Button>
+              {/each}
+            </div>
+            <div class="flex items-center gap-2">
+              <label for="done-range-date" class="text-xs font-medium" style="color: var(--ds-text-subtle);">
+                {t('todo.customDateLabel')}
+              </label>
+              <input
+                id="done-range-date"
+                type="date"
+                data-testid="done-range-date"
+                value={customDate}
+                onchange={onCustomDateChange}
+                aria-label={t('todo.customDateAriaLabel')}
+                class="date-input text-sm rounded border px-3 py-1.5 transition-colors bg-[var(--ds-background-input)] text-[var(--ds-text)] hover:border-[var(--ds-interactive)] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 {completedRange === 'custom' ? 'border-[var(--ds-interactive)]' : 'border-[var(--ds-border)]'}"
+              />
+            </div>
+          </div>
         </div>
 
         <!-- Personal Tasks Section -->
