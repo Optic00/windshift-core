@@ -56,6 +56,7 @@
   // DnD state
   let statusDragState = $state(new Map());
   let columnDragState = $state(new Map());
+  let cardFieldDragState = $state(new Map());
   let statusSearchQuery = $state('');
   let setupCleanups = [];
   let setupTimeout;
@@ -100,6 +101,9 @@
     // Track dependencies
     columns;
     statuses;
+    cardFields;
+    activeTab;
+    canConfigure;
     statusSearchQuery;
     if (!loading && typeof document !== 'undefined') {
       if (setupTimeout) clearTimeout(setupTimeout);
@@ -157,6 +161,7 @@
     setupCleanups = [];
     statusDragState = new Map();
     columnDragState = new Map();
+    cardFieldDragState = new Map();
   }
 
   function setupDragAndDrop() {
@@ -314,6 +319,64 @@
           }
           columnDragState.set(colIndex, { closestEdge: null });
           columnDragState = new Map(columnDragState);
+        }
+      });
+
+      setupCleanups.push(() => {
+        draggableCleanup();
+        dropTargetCleanup();
+      });
+    });
+
+    // --- Card fields (for card-field reordering) ---
+    /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('[data-card-field]')).forEach(element => {
+      if (!canConfigure) return;
+
+      const fieldIndex = parseInt(element.dataset.cardFieldIndex);
+      const fieldIdentifier = element.dataset.cardFieldIdentifier;
+      if (!fieldIdentifier || Number.isNaN(fieldIndex)) return;
+
+      cardFieldDragState.set(fieldIdentifier, { closestEdge: null });
+
+      const dragHandle = element.querySelector('[data-card-field-drag-handle]');
+      const draggableCleanup = draggable({
+        element,
+        dragHandle: dragHandle || element,
+        getInitialData: () => ({ fieldIndex, fieldIdentifier, type: 'card-field' }),
+        onDragStart: () => { element.style.opacity = '0.5'; },
+        onDrop: () => {
+          element.style.opacity = '';
+          cardFieldDragState.forEach((_, key) => {
+            cardFieldDragState.set(key, { closestEdge: null });
+          });
+          cardFieldDragState = new Map(cardFieldDragState);
+        }
+      });
+
+      const dropTargetCleanup = dropTargetForElements({
+        element,
+        canDrop: ({ source }) => {
+          const data = source.data;
+          if (data.type === 'card-field' && data.fieldIndex === fieldIndex) return false;
+          return data.type === 'card-field';
+        },
+        getData: ({ input, element }) => {
+          return attachClosestEdge({}, { input, element, allowedEdges: ['top', 'bottom'] });
+        },
+        onDragEnter: ({ self }) => {
+          cardFieldDragState.set(fieldIdentifier, { closestEdge: extractClosestEdge(self.data) });
+          cardFieldDragState = new Map(cardFieldDragState);
+        },
+        onDragLeave: () => {
+          cardFieldDragState.set(fieldIdentifier, { closestEdge: null });
+          cardFieldDragState = new Map(cardFieldDragState);
+        },
+        onDrop: ({ self, source }) => {
+          if (source.data.type === 'card-field') {
+            reorderCardFields(source.data.fieldIndex, fieldIndex, extractClosestEdge(self.data));
+          }
+          cardFieldDragState.set(fieldIdentifier, { closestEdge: null });
+          cardFieldDragState = new Map(cardFieldDragState);
         }
       });
 
@@ -493,13 +556,27 @@
     hasChanges = true;
   }
 
-  function reorderCardFields(fromIndex, toIndex) {
+  function reorderCardFields(fromIndex, toIndex, closestEdge) {
     if (fromIndex === toIndex) return;
+    const insertIndex = closestEdge === 'bottom' ? toIndex + 1 : toIndex;
+    const adjustedIndex = fromIndex < insertIndex ? insertIndex - 1 : insertIndex;
+    if (fromIndex === adjustedIndex) return;
+
     const newFields = [...cardFields];
     const [moved] = newFields.splice(fromIndex, 1);
-    newFields.splice(toIndex, 0, moved);
+    newFields.splice(adjustedIndex, 0, moved);
     cardFields = newFields.map((f, i) => ({ ...f, display_order: i }));
     hasChanges = true;
+  }
+
+  function handleCardFieldReorderKeydown(event, index) {
+    if (event.key === 'ArrowUp' && index > 0) {
+      event.preventDefault();
+      reorderCardFields(index, index - 1, 'top');
+    } else if (event.key === 'ArrowDown' && index < cardFields.length - 1) {
+      event.preventDefault();
+      reorderCardFields(index, index + 1, 'bottom');
+    }
   }
 
   function getCardFieldLabel(field) {
@@ -663,6 +740,7 @@
               {t('settings.boardConfig.backlog')}
             </button>
             <button
+              data-testid="board-config-card-fields-tab"
               class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
               class:border-transparent={activeTab !== 'cardFields'}
               style:color={activeTab === 'cardFields' ? 'var(--ds-interactive)' : 'var(--ds-text-subtle)'}
@@ -945,17 +1023,31 @@
 
             <!-- Selected card fields -->
             {#if cardFields.length > 0}
-              <div class="space-y-1 mb-6">
+              <div class="space-y-1 mb-6" data-testid="board-card-fields-list">
                 {#each cardFields as field, index (field.field_identifier)}
-                  <div class="flex items-center gap-2 px-3 py-2 rounded border transition-all"
-                       style="background: var(--ds-background-input); border-color: var(--ds-border);">
+                  <div
+                       data-testid={`board-card-field-row-${field.field_identifier}`}
+                       data-field-identifier={field.field_identifier}
+                       data-card-field
+                       data-card-field-index={index}
+                       data-card-field-identifier={field.field_identifier}
+                       class="relative flex items-center gap-2 px-3 py-2 rounded border transition-all"
+                       style="background: var(--ds-background-input); border-color: var(--ds-border); user-select: none;">
+                    {#if cardFieldDragState.get(field.field_identifier)?.closestEdge}
+                      <DropIndicator edge={cardFieldDragState.get(field.field_identifier)?.closestEdge} gap={4} />
+                    {/if}
                     <!-- Drag handles for reorder -->
                     <button
-                      class="flex-shrink-0 cursor-pointer"
-                      style="color: var(--ds-text-subtlest);"
-                      disabled={index === 0}
-                      onclick={() => reorderCardFields(index, index - 1)}
-                      title="Move up"
+                      type="button"
+                      data-card-field-drag-handle
+                      data-testid="board-card-field-drag-handle"
+                      class="flex-shrink-0 cursor-grab active:cursor-grabbing p-0.5 rounded"
+                      style="color: var(--ds-text-subtlest); touch-action: none;"
+                      disabled={!canConfigure}
+                      onkeydown={(event) => handleCardFieldReorderKeydown(event, index)}
+                      aria-label={`${t('settings.boardConfig.dragToReorder')}: ${getCardFieldLabel(field)}`}
+                      aria-keyshortcuts="ArrowUp ArrowDown"
+                      title={t('settings.boardConfig.dragToReorder')}
                     >
                       <GripVertical class="w-4 h-4" />
                     </button>
@@ -1044,6 +1136,7 @@
             </Button>
             <Button
               variant="primary"
+              dataTestid="board-config-save"
               onclick={saveConfiguration}
               disabled={!canConfigure || saving}
               loading={saving}
