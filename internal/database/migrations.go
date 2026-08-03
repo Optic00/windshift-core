@@ -78,8 +78,10 @@ var Catalog = []Migration{
 		// the move backfill re-mints keys only for live siblings, so an
 		// archived row still owning an old key collides when the backfill
 		// re-sequences the group. Rebuild the index to exclude archived
-		// rows, matching idx_pages_workspace_root_slug. No Check so it
-		// always runs; the DROP + CREATE is idempotent and stamped once.
+		// rows, matching what idx_pages_workspace_root_slug did at the time
+		// (that index was later dropped by
+		// 20260803_pages_drop_slug_uniqueness). No Check so it always runs;
+		// the DROP + CREATE is idempotent and stamped once.
 		// The pre-pass NULLs any live/live duplicate keys (keep lowest id)
 		// so the UNIQUE rebuild can't trip over legacy data.
 		Version:       "20260724_pages_frac_index_exclude_archived",
@@ -2288,6 +2290,76 @@ var Catalog = []Migration{
 			    description = 'Discrete activity within a task',
 			    updated_at = CURRENT_TIMESTAMP
 			WHERE level = 4 AND name = 'Sub-task';
+		`,
+	},
+	{
+		// Page slugs were constrained by UNIQUE(workspace_id, parent_id, slug)
+		// plus idx_pages_workspace_root_slug (covering root pages, which the
+		// composite constraint misses because NULL parent_id never equals
+		// itself). Nothing ever resolved a page by slug — every route
+		// addresses pages by numeric id — so the only effect was 409s on
+		// create/move/unarchive and a retry loop picking a free slug on
+		// every write. Drop both.
+		//
+		// This entry removes the named partial index on both backends and
+		// the table constraint on Postgres. SQLite cannot drop a table-level
+		// UNIQUE (its sqlite_autoindex_* has no name to DROP), so the
+		// equivalent table rebuild lives in the legacy DB.Initialize path
+		// alongside the approval_set_statuses rebuild — it needs PRAGMA
+		// foreign_keys toggling, which is a no-op inside the transaction
+		// this runner wraps the body in. The check below is index-only on
+		// SQLite so the two halves stamp independently.
+		Version:     "20260803_pages_drop_slug_uniqueness",
+		Name:        "Drop unused page slug uniqueness constraints",
+		CheckSQLite: `SELECT CASE WHEN EXISTS(SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_pages_workspace_root_slug') THEN 0 ELSE 1 END`,
+		SQLite:      `DROP INDEX IF EXISTS idx_pages_workspace_root_slug`,
+		// to_regclass rather than a ::regclass cast: the cast raises when the
+		// table is absent, and a check must be answerable on any install.
+		CheckPostgres: `
+			SELECT CASE WHEN
+				EXISTS (
+					SELECT 1 FROM pg_class c
+					JOIN pg_namespace n ON n.oid = c.relnamespace
+					WHERE c.relkind = 'i' AND c.relname = 'idx_pages_workspace_root_slug'
+					  AND n.nspname = current_schema()
+				)
+				OR EXISTS (
+					SELECT 1 FROM pg_constraint con
+					WHERE con.conrelid = to_regclass('pages')
+					  AND con.contype = 'u'
+					  AND (
+						SELECT array_agg(a.attname::text ORDER BY a.attname)
+						FROM unnest(con.conkey) k
+						JOIN pg_attribute a
+						  ON a.attrelid = con.conrelid AND a.attnum = k
+					  ) = ARRAY['parent_id', 'slug', 'workspace_id']
+				)
+			THEN 0 ELSE 1 END
+		`,
+		// The composite UNIQUE is auto-named by Postgres
+		// (pages_workspace_id_parent_id_slug_key), but an install restored
+		// from a dump could carry a different name. Resolve it by column
+		// set instead of trusting the generated name.
+		Postgres: `
+			DROP INDEX IF EXISTS idx_pages_workspace_root_slug;
+			DO $$
+			DECLARE target text;
+			BEGIN
+				SELECT con.conname INTO target
+				FROM pg_constraint con
+				WHERE con.conrelid = to_regclass('pages')
+				  AND con.contype = 'u'
+				  AND (
+					SELECT array_agg(a.attname::text ORDER BY a.attname)
+					FROM unnest(con.conkey) k
+					JOIN pg_attribute a
+					  ON a.attrelid = con.conrelid AND a.attnum = k
+				  ) = ARRAY['parent_id', 'slug', 'workspace_id']
+				LIMIT 1;
+				IF target IS NOT NULL THEN
+					EXECUTE format('ALTER TABLE pages DROP CONSTRAINT %I', target);
+				END IF;
+			END $$;
 		`,
 	},
 }

@@ -2,6 +2,7 @@
   import { onDestroy, untrack } from 'svelte';
   import { draggable, dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter';
   import { attachClosestEdge, extractClosestEdge } from '@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge';
+  import { isSelfOrDescendant } from './pageHierarchy.js';
   import { api } from '../../api.js';
   import { navigate, currentRoute } from '../../router.js';
   import { t } from '../../stores/i18n.svelte.js';
@@ -520,15 +521,12 @@
         canDrop: ({ source }) => {
           if (source.data.type !== 'page') return false;
           // Forbid dropping a page onto itself or any of its own descendants.
-          // Quick descendant check via the materialized `path` prefix that
-          // the backend returns on each PageNode.
           if (source.data.pageId === pageId) return false;
           const dragged = lookup.get(source.data.pageId);
-          if (dragged) {
-            const draggedPrefix = `${dragged.path}${dragged.id}/`;
-            if (page.path.startsWith(draggedPrefix)) return false;
-          }
-          return true;
+          // Source row not in the current tree slice: the self-check above
+          // is all we can enforce here, and the backend answers 409 on a
+          // cycle regardless.
+          return !dragged || !isSelfOrDescendant(page, dragged);
         },
         getData: ({ input, element: el }) =>
           attachClosestEdge({}, { input, element: el, allowedEdges: ['top', 'bottom'] }),

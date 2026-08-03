@@ -753,6 +753,119 @@ func (db *DB) Initialize() error {
 			slog.Warn("create uq_approval_set_statuses_active failed", slog.String("component", "database"), slog.Any("error", err))
 		}
 
+		// Drop the inline UNIQUE(workspace_id, parent_id, slug) on pages. The
+		// slug is display-only — nothing resolves a page by it — and the
+		// constraint's only effect was 409s plus a per-write retry loop that
+		// hunted for a free slug. The named half of the rule
+		// (idx_pages_workspace_root_slug) is dropped by catalog migration
+		// 20260803_pages_drop_slug_uniqueness; the table-level UNIQUE has no
+		// droppable name on SQLite, so it needs this rebuild.
+		//
+		// Same shape as the approval_set_statuses rebuild above, and the same
+		// reason it lives here rather than in the catalog: PRAGMA
+		// foreign_keys is a no-op inside a transaction, and the catalog
+		// runner wraps every body in one. FK enforcement must be off because
+		// DROP TABLE performs an implicit DELETE FROM, which would cascade
+		// into page_revisions, page_permissions, page_chunks and page_labels.
+		var hasOldPageSlugUnique int
+		_ = db.QueryRow(`
+			SELECT COUNT(*) FROM sqlite_master
+			WHERE type='index' AND tbl_name='pages'
+			  AND name LIKE 'sqlite_autoindex_pages_%'
+		`).Scan(&hasOldPageSlugUnique)
+		if hasOldPageSlugUnique > 0 {
+			if _, err := db.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+				slog.Warn("pages slug-unique rebuild: disable FK failed", slog.String("component", "database"), slog.Any("error", err))
+			}
+			tx, txErr := db.Begin()
+			if txErr != nil {
+				slog.Error("pages slug-unique rebuild: begin tx failed", slog.String("component", "database"), slog.Any("error", txErr))
+			} else {
+				// pages_new mirrors schema/pages.sql minus the UNIQUE. The
+				// self-FK names `pages`, which resolves to the old table at
+				// CREATE time and to this table itself after the rename —
+				// the procedure SQLite documents for constraint removal.
+				rebuildSteps := []string{
+					`CREATE TABLE pages_new (
+						id INTEGER PRIMARY KEY AUTOINCREMENT,
+						workspace_id INTEGER NOT NULL,
+						parent_id INTEGER,
+						title TEXT NOT NULL,
+						slug TEXT NOT NULL,
+						metadata TEXT NOT NULL DEFAULT '{}',
+						content TEXT NOT NULL DEFAULT '',
+						content_hash TEXT NOT NULL DEFAULT '',
+						excerpt TEXT NOT NULL DEFAULT '',
+						created_by INTEGER NOT NULL,
+						updated_by INTEGER,
+						archived_by INTEGER,
+						is_home BOOLEAN NOT NULL DEFAULT 0,
+						inherit_permissions BOOLEAN NOT NULL DEFAULT 1,
+						rank TEXT,
+						frac_index TEXT COLLATE BINARY,
+						path TEXT NOT NULL DEFAULT '/',
+						depth INTEGER NOT NULL DEFAULT 0,
+						created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+						updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+						archived_at DATETIME,
+						FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+						FOREIGN KEY (parent_id) REFERENCES pages(id) ON DELETE CASCADE,
+						FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE RESTRICT,
+						FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL,
+						FOREIGN KEY (archived_by) REFERENCES users(id) ON DELETE SET NULL
+					)`,
+					`INSERT INTO pages_new (
+						id, workspace_id, parent_id, title, slug, metadata, content,
+						content_hash, excerpt, created_by, updated_by, archived_by,
+						is_home, inherit_permissions, rank, frac_index, path, depth,
+						created_at, updated_at, archived_at
+					)
+					SELECT
+						id, workspace_id, parent_id, title, slug, metadata, content,
+						content_hash, excerpt, created_by, updated_by, archived_by,
+						is_home, inherit_permissions, rank, frac_index, path, depth,
+						created_at, updated_at, archived_at
+					FROM pages`,
+					`DROP TABLE pages`,
+					`ALTER TABLE pages_new RENAME TO pages`,
+					// DROP TABLE took every index with it; recreate the set
+					// from schema/pages.sql, minus the root-slug index.
+					`CREATE INDEX IF NOT EXISTS idx_pages_workspace ON pages(workspace_id)`,
+					`CREATE INDEX IF NOT EXISTS idx_pages_parent ON pages(parent_id)`,
+					`CREATE INDEX IF NOT EXISTS idx_pages_workspace_parent ON pages(workspace_id, parent_id)`,
+					`CREATE INDEX IF NOT EXISTS idx_pages_workspace_archived ON pages(workspace_id, archived_at)`,
+					`CREATE INDEX IF NOT EXISTS idx_pages_path ON pages(path)`,
+					`CREATE INDEX IF NOT EXISTS idx_pages_content_hash ON pages(content_hash) WHERE content_hash != ''`,
+					`CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_workspace_home ON pages(workspace_id) WHERE is_home = 1 AND archived_at IS NULL`,
+					`CREATE INDEX IF NOT EXISTS idx_pages_workspace_parent_rank ON pages(workspace_id, parent_id, rank) WHERE rank IS NOT NULL`,
+					`CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_frac_index_scoped
+						ON pages(workspace_id, COALESCE(parent_id, -1), frac_index)
+						WHERE frac_index IS NOT NULL AND archived_at IS NULL`,
+				}
+				rebuildOK := true
+				for _, q := range rebuildSteps {
+					if _, err := tx.Exec(q); err != nil {
+						// Error, not Warn: leaving the constraint in place
+						// means page writes now hit it without the retry
+						// loop that used to absorb collisions.
+						slog.Error("pages slug-unique rebuild step failed", slog.String("component", "database"), slog.String("sql", q), slog.Any("error", err))
+						rebuildOK = false
+						break
+					}
+				}
+				if rebuildOK {
+					if err := tx.Commit(); err != nil {
+						slog.Error("pages slug-unique rebuild: commit failed", slog.String("component", "database"), slog.Any("error", err))
+					}
+				} else {
+					_ = tx.Rollback()
+				}
+			}
+			if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+				slog.Warn("pages slug-unique rebuild: re-enable FK failed", slog.String("component", "database"), slog.Any("error", err))
+			}
+		}
+
 		// SAML column adds on sso_providers moved to catalog (samlMigrations).
 
 		// Create LDAP tables if they don't exist (for existing databases)

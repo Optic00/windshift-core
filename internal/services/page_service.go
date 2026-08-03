@@ -74,12 +74,16 @@ func (s *PageService) PreloadLabelsForPage(page *models.Page) error {
 // Service-level errors. Wraps repository errors so the handler layer can
 // map them to HTTP status codes without knowing repository internals.
 var (
-	ErrPageNotFound         = errors.New("page not found")
-	ErrPageTitleRequired    = errors.New("page title is required")
-	ErrPageParentMismatch   = errors.New("parent page belongs to a different workspace")
-	ErrPageCycle            = errors.New("move would create a cycle")
-	ErrPageDepthExceeded    = errors.New("page tree depth limit exceeded")
-	ErrPageSlugConflict     = errors.New("slug conflicts with an existing sibling page")
+	ErrPageNotFound       = errors.New("page not found")
+	ErrPageTitleRequired  = errors.New("page title is required")
+	ErrPageParentMismatch = errors.New("parent page belongs to a different workspace")
+	ErrPageCycle          = errors.New("move would create a cycle")
+	ErrPageDepthExceeded  = errors.New("page tree depth limit exceeded")
+	// ErrPageUniqueConflict covers any uniqueness rule the pages table still
+	// enforces: one home page per workspace (idx_pages_workspace_home) and
+	// one frac_index per sibling set (idx_pages_frac_index_scoped). Slugs
+	// used to be in this set and no longer are.
+	ErrPageUniqueConflict   = errors.New("page conflicts with an existing page")
 	ErrPageContentConflict  = errors.New("page content changed since it was read")
 	ErrPageRevisionMismatch = errors.New("revision does not belong to the target page")
 	ErrPageMetadataInvalid  = errors.New("page metadata must be a JSON object")
@@ -134,17 +138,11 @@ func (s *PageService) Create(actorID int, in CreatePageInput) (*models.Page, err
 			return nil, ErrPageDepthExceeded
 		}
 
-		baseSlug := makeSlug(title)
-		slug, slugErr := s.pickAvailableSlug(tx, in.WorkspaceID, parentID, baseSlug, 0)
-		if slugErr != nil {
-			return nil, slugErr
-		}
-
 		id, err := s.pages.CreateTx(tx, repository.CreateInput{
 			WorkspaceID:        in.WorkspaceID,
 			ParentID:           parentID,
 			Title:              title,
-			Slug:               slug,
+			Slug:               makeSlug(title),
 			Metadata:           metadata,
 			Content:            content,
 			ContentHash:        hash,
@@ -159,7 +157,7 @@ func (s *PageService) Create(actorID int, in CreatePageInput) (*models.Page, err
 		})
 		if err != nil {
 			if errors.Is(err, repository.ErrDuplicateEntry) {
-				return nil, ErrPageSlugConflict
+				return nil, ErrPageUniqueConflict
 			}
 			return nil, err
 		}
@@ -239,14 +237,7 @@ func (s *PageService) Update(actorID int, in UpdatePageInput) (*models.Page, err
 
 		newSlug := existing.Slug
 		if !strings.EqualFold(title, existing.Title) {
-			candidate := makeSlug(title)
-			if candidate != existing.Slug {
-				picked, slugErr := s.pickAvailableSlug(tx, existing.WorkspaceID, existing.ParentID, candidate, existing.ID)
-				if slugErr != nil {
-					return nil, slugErr
-				}
-				newSlug = picked
-			}
+			newSlug = makeSlug(title)
 		}
 
 		err = s.pages.UpdateTx(tx, repository.UpdateInput{
@@ -262,7 +253,7 @@ func (s *PageService) Update(actorID int, in UpdatePageInput) (*models.Page, err
 		})
 		if err != nil {
 			if errors.Is(err, repository.ErrDuplicateEntry) {
-				return nil, ErrPageSlugConflict
+				return nil, ErrPageUniqueConflict
 			}
 			if errors.Is(err, repository.ErrNotFound) {
 				return nil, ErrPageNotFound
@@ -367,13 +358,12 @@ func (s *PageService) Move(actorID, pageID int, newParentID, prevSiblingID, next
 			if errors.Is(err, repository.ErrNotFound) {
 				return nil, ErrPageNotFound
 			}
-			// Repo maps unique-violations (composite UNIQUE on
-			// workspace_id, parent_id, slug or the partial root-slug
-			// index) to ErrDuplicateEntry. Without translation here the
-			// handler hit its default 500 branch instead of the 409 the
-			// other slug-conflict paths already produced.
+			// A move can still collide on idx_pages_frac_index_scoped when
+			// the resolved key duplicates a live sibling's. Repo maps that
+			// to ErrDuplicateEntry; without translation here the handler
+			// takes its default 500 branch instead of a 409.
 			if errors.Is(err, repository.ErrDuplicateEntry) {
-				return nil, ErrPageSlugConflict
+				return nil, ErrPageUniqueConflict
 			}
 			return nil, err
 		}
@@ -563,7 +553,7 @@ func (s *PageService) Restore(actorID, pageID, revisionID int) (*models.Page, er
 			Unarchive:          page.ArchivedAt != nil,
 		}); err != nil {
 			if errors.Is(err, repository.ErrDuplicateEntry) {
-				return nil, ErrPageSlugConflict
+				return nil, ErrPageUniqueConflict
 			}
 			return nil, err
 		}
@@ -753,13 +743,6 @@ func BuildPageTree(pages []models.Page) []*models.PageNode {
 // parentID is nil), ordered by frac_index/rank/title.
 func (s *PageService) ListChildren(workspaceID int, parentID *int) ([]models.Page, error) {
 	return s.pages.ListChildren(workspaceID, parentID)
-}
-
-// ListDescendants returns every descendant of pageID up to the global
-// hierarchy depth cap. Used by the archive handler to verify admin
-// access on the whole subtree before triggering the cascade.
-func (s *PageService) ListDescendants(pageID int) ([]models.Page, error) {
-	return s.pages.GetDescendants(pageID, 0)
 }
 
 // ListOwnACL returns the ACL rows stored directly against a page (no
@@ -1113,50 +1096,13 @@ func (s *PageService) resolveSiblingFracIndex(
 	return &newKey, nil
 }
 
-// pickAvailableSlug returns a slug that does not collide with another
-// non-archived sibling. excludeID lets Update keep its own slug when the
-// title hasn't changed materially. Tries base, base-2, base-3, ... up to
-// 50 attempts before giving up.
-func (s *PageService) pickAvailableSlug(tx database.Tx, workspaceID int, parentID *int, base string, excludeID int) (string, error) {
-	if base == "" {
-		base = "page"
-	}
-	candidate := base
-	for attempt := 2; attempt < 50; attempt++ {
-		taken, err := slugInUseTx(tx, workspaceID, parentID, candidate, excludeID)
-		if err != nil {
-			return "", err
-		}
-		if !taken {
-			return candidate, nil
-		}
-		candidate = fmt.Sprintf("%s-%d", base, attempt)
-	}
-	return "", ErrPageSlugConflict
-}
-
-func slugInUseTx(tx database.Tx, workspaceID int, parentID *int, slug string, excludeID int) (bool, error) {
-	var n int
-	var err error
-	if parentID == nil {
-		err = tx.QueryRow(`
-			SELECT COUNT(*) FROM pages
-			WHERE workspace_id = ? AND parent_id IS NULL AND slug = ? AND id != ?
-		`, workspaceID, slug, excludeID).Scan(&n)
-	} else {
-		err = tx.QueryRow(`
-			SELECT COUNT(*) FROM pages
-			WHERE workspace_id = ? AND parent_id = ? AND slug = ? AND id != ?
-		`, workspaceID, *parentID, slug, excludeID).Scan(&n)
-	}
-	if err != nil {
-		return false, fmt.Errorf("check slug uniqueness: %w", err)
-	}
-	return n > 0, nil
-}
-
 var slugSpaceRe = regexp.MustCompile(`-+`)
 
+// makeSlug derives a page's display slug from its title. Slugs are not
+// unique and nothing resolves a page by one, so this is a pure function of
+// the title with no database round-trip. A title with no alphanumerics
+// (an emoji, say) reduces to "page" rather than the empty string, which
+// the NOT NULL column would accept but no caller wants to render.
 func makeSlug(title string) string {
 	var b strings.Builder
 	b.Grow(len(title))
@@ -1172,6 +1118,9 @@ func makeSlug(title string) string {
 	out = strings.Trim(out, "-")
 	if len(out) > 80 {
 		out = strings.TrimRight(out[:80], "-")
+	}
+	if out == "" {
+		return "page"
 	}
 	return out
 }

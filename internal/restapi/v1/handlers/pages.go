@@ -305,7 +305,7 @@ func (h *PageHandler) Get(w http.ResponseWriter, r *http.Request) {
 // @Failure      400   {object}  handlers.ErrorResponse  "Invalid request body or missing required field"
 // @Failure      401   {object}  handlers.ErrorResponse
 // @Failure      404   {object}  handlers.ErrorResponse  "Workspace or parent page not visible to caller, or caller lacks page.create"
-// @Failure      409   {object}  handlers.ErrorResponse  "Slug conflict with existing sibling or page-tree depth exceeded"
+// @Failure      409   {object}  handlers.ErrorResponse  "Page-tree depth exceeded or a uniqueness rule rejected the write"
 // @Failure      500   {object}  handlers.ErrorResponse
 // @Router       /workspaces/{id}/pages [post]
 func (h *PageHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -848,8 +848,8 @@ func (h *PageHandler) respondPageServiceError(w http.ResponseWriter, r *http.Req
 		h.RespondError(w, r, restapi.NewAPIError(http.StatusConflict, restapi.ErrCodeValidationFailed, "move would create a cycle"))
 	case errors.Is(err, services.ErrPageDepthExceeded):
 		h.RespondError(w, r, restapi.NewAPIError(http.StatusConflict, restapi.ErrCodeValidationFailed, "page tree depth limit exceeded"))
-	case errors.Is(err, services.ErrPageSlugConflict):
-		h.RespondError(w, r, restapi.NewAPIError(http.StatusConflict, restapi.ErrCodeValidationFailed, "slug conflicts with an existing sibling page"))
+	case errors.Is(err, services.ErrPageUniqueConflict):
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusConflict, restapi.ErrCodeValidationFailed, "page conflicts with an existing page"))
 	case errors.Is(err, services.ErrPageContentConflict):
 		h.RespondError(w, r, restapi.NewAPIError(http.StatusConflict, restapi.ErrCodeValidationFailed, "page content changed since it was read"))
 	case errors.Is(err, services.ErrPageRevisionMismatch):
