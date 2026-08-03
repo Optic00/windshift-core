@@ -136,10 +136,50 @@
   // Path builders
   function buildSmoothPath(pts) {
     if (pts.length < 2) return '';
+
+    const slopes = [];
+    for (let i = 0; i < pts.length - 1; i++) {
+      slopes.push((pts[i + 1].y - pts[i].y) / (pts[i + 1].x - pts[i].x));
+    }
+
+    // Average neighboring slopes, then constrain the tangents so the curve
+    // remains inside each pair of values instead of introducing false peaks.
+    const tangents = [slopes[0]];
+    for (let i = 1; i < pts.length - 1; i++) {
+      tangents.push((slopes[i - 1] + slopes[i]) / 2);
+    }
+    tangents.push(slopes[slopes.length - 1]);
+
+    for (let i = 0; i < slopes.length; i++) {
+      if (slopes[i] === 0) {
+        tangents[i] = 0;
+        tangents[i + 1] = 0;
+        continue;
+      }
+
+      const startRatio = tangents[i] / slopes[i];
+      const endRatio = tangents[i + 1] / slopes[i];
+      if (startRatio < 0) tangents[i] = 0;
+      if (endRatio < 0) tangents[i + 1] = 0;
+
+      const constrainedStart = tangents[i] / slopes[i];
+      const constrainedEnd = tangents[i + 1] / slopes[i];
+      const magnitude = constrainedStart ** 2 + constrainedEnd ** 2;
+      if (magnitude > 9) {
+        const scale = 3 / Math.sqrt(magnitude);
+        tangents[i] = scale * constrainedStart * slopes[i];
+        tangents[i + 1] = scale * constrainedEnd * slopes[i];
+      }
+    }
+
     let d = `M ${pts[0].x} ${pts[0].y}`;
     for (let i = 1; i < pts.length; i++) {
-      const cx = (pts[i - 1].x + pts[i].x) / 2;
-      d += ` Q ${cx} ${pts[i - 1].y} ${pts[i].x} ${pts[i].y}`;
+      const previous = pts[i - 1];
+      const current = pts[i];
+      const width = current.x - previous.x;
+      d += ` C ${previous.x + width / 3} ${previous.y + (tangents[i - 1] * width) / 3}`;
+      d += ` ${current.x - width / 3} ${current.y - (tangents[i] * width) / 3}`;
+      d += ` ${current.x} ${current.y}`;
     }
     return d;
   }
@@ -280,6 +320,7 @@
                 stroke-width={ld.strokeWidth ?? 2.5}
                 stroke-linecap="round" stroke-linejoin="round"
                 stroke-dasharray={ld.dashed ? '6,4' : 'none'}
+                data-testid="chart-series-{ld.key}"
               />
             {/if}
           {/each}

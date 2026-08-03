@@ -237,37 +237,30 @@
   const aging = $derived(analyticsData?.aging_wip || null);
   const deliveryTime = $derived(analyticsData?.delivery_time || null);
 
-  // Shared StatCard palettes so every metric tile uses design-system tokens.
+  // Shared StatCard palettes keep metric icons semantic without adding another
+  // framed surface inside the analytics cards.
   const NEUTRAL_TILE = {
-    bgColor: 'var(--ds-background-neutral)',
     iconColor: 'var(--ds-icon-subtle)',
   };
   const DANGER_TILE = {
-    bgColor: 'var(--ds-danger-subtle)',
     iconColor: 'var(--ds-icon-danger)',
   };
   const WARNING_TILE = {
-    bgColor: 'var(--ds-warning-subtle)',
     iconColor: 'var(--ds-icon-warning)',
   };
   const BLUE_TILE = {
-    bgColor: 'var(--ds-accent-blue-subtler)',
     iconColor: 'var(--ds-icon-accent-blue)',
   };
   const GREEN_TILE = {
-    bgColor: 'var(--ds-accent-green-subtler)',
     iconColor: 'var(--ds-icon-accent-green)',
   };
   const ORANGE_TILE = {
-    bgColor: 'var(--ds-accent-orange-subtler)',
     iconColor: 'var(--ds-icon-accent-orange)',
   };
   const TEAL_TILE = {
-    bgColor: 'var(--ds-accent-teal-subtler)',
     iconColor: 'var(--ds-icon-accent-teal)',
   };
   const PURPLE_TILE = {
-    bgColor: 'var(--ds-accent-purple-subtler)',
     iconColor: 'var(--ds-icon-accent-purple)',
   };
 
@@ -620,10 +613,10 @@
     {#each metrics as metric (metric.key)}
       <StatCard
         icon={metric.icon}
-        bgColor={metric.bgColor}
         iconColor={metric.iconColor}
         label={metric.label}
         value={metric.value}
+        appearance="minimal"
       />
     {/each}
   </div>
