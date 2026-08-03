@@ -79,6 +79,19 @@
     return formatDateWithOptions(date, { month: 'short', day: 'numeric' });
   }
 
+  // Optional dates are presented as chips. Open the browser's native calendar
+  // as soon as the chip mounts its input so setting a date remains a one-click
+  // interaction. The focused, visible input is the fallback when showPicker is
+  // unavailable or the browser declines the programmatic picker request.
+  function focusAndShowDatePicker(node) {
+    node.focus();
+    try {
+      node.showPicker?.();
+    } catch {
+      // Keep the focused input available for manual entry.
+    }
+  }
+
   // Reactive effects for data loading based on form state
 
   // Load workspace details when workspace changes
@@ -330,6 +343,8 @@
     {#if store.isFieldConfigured('due_date') && !store.isFieldRequired('due_date')}
       <button
         use:melt={$dueDateTrigger}
+        data-testid="create-due-date-chip"
+        data-value={store.formData.due_date}
         class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-sm transition-colors"
         style="background-color: var(--ds-surface); border: 1px solid var(--ds-border); color: {store.formData.due_date ? 'var(--ds-text)' : 'var(--ds-text-subtle)'};"
         onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'}
@@ -343,12 +358,14 @@
       {#if $dueDateOpen}
         <div
           use:melt={$dueDateContent}
-          class="z-50 rounded-lg shadow-lg p-3"
+          class="z-[70] rounded-lg shadow-lg p-3"
           style="background-color: var(--ds-surface-raised); border: 1px solid var(--ds-border);"
         >
           <input
             type="date"
+            data-testid="create-due-date-input"
             bind:value={store.formData.due_date}
+            use:focusAndShowDatePicker
             aria-label={t('createModal.dueDate')}
             class="w-full px-3 py-2 rounded border text-sm"
             style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
@@ -375,12 +392,13 @@
       {#if $startDateOpen}
         <div
           use:melt={$startDateContent}
-          class="z-50 rounded-lg shadow-lg p-3"
+          class="z-[70] rounded-lg shadow-lg p-3"
           style="background-color: var(--ds-surface-raised); border: 1px solid var(--ds-border);"
         >
           <input
             type="date"
             bind:value={store.formData.start_date}
+            use:focusAndShowDatePicker
             aria-label={t('common.startDate')}
             class="w-full px-3 py-2 rounded border text-sm"
             style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
@@ -407,12 +425,13 @@
       {#if $endDateOpen}
         <div
           use:melt={$endDateContent}
-          class="z-50 rounded-lg shadow-lg p-3"
+          class="z-[70] rounded-lg shadow-lg p-3"
           style="background-color: var(--ds-surface-raised); border: 1px solid var(--ds-border);"
         >
           <input
             type="date"
             bind:value={store.formData.end_date}
+            use:focusAndShowDatePicker
             aria-label={t('common.endDate')}
             class="w-full px-3 py-2 rounded border text-sm"
             style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
