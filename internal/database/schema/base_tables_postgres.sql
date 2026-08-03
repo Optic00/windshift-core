@@ -74,6 +74,26 @@ CREATE TRIGGER users_is_agent_immutable_trigger
 BEFORE UPDATE ON users
 FOR EACH ROW EXECUTE FUNCTION users_is_agent_immutable();
 
+-- OAuth agent provenance is fixed at account creation. Allowing either field
+-- to change later would break the audit trail tying the agent to its client.
+-- migration: trig_users_oauth_provenance_immutable_postgres
+CREATE OR REPLACE FUNCTION users_oauth_provenance_immutable() RETURNS TRIGGER AS $$
+BEGIN
+	IF COALESCE(NEW.agent_provenance, '') IS DISTINCT FROM COALESCE(OLD.agent_provenance, '') THEN
+		RAISE EXCEPTION 'agent_provenance is immutable';
+	END IF;
+	IF NEW.oauth_client_id IS DISTINCT FROM OLD.oauth_client_id THEN
+		RAISE EXCEPTION 'oauth_client_id is immutable';
+	END IF;
+	RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS users_oauth_provenance_immutable_trigger ON users;
+CREATE TRIGGER users_oauth_provenance_immutable_trigger
+BEFORE UPDATE ON users
+FOR EACH ROW EXECUTE FUNCTION users_oauth_provenance_immutable();
+
 -- Channel Categories table for organizing channels
 CREATE TABLE IF NOT EXISTS channel_categories (
 	id SERIAL PRIMARY KEY,

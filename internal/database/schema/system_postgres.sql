@@ -248,7 +248,10 @@ CREATE TABLE IF NOT EXISTS active_timers (
 CREATE INDEX IF NOT EXISTS idx_active_timers_workspace_id ON active_timers(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_active_timers_item_id ON active_timers(item_id);
 CREATE INDEX IF NOT EXISTS idx_active_timers_project_id ON active_timers(project_id);
-CREATE INDEX IF NOT EXISTS idx_active_timers_user_id ON active_timers(user_id);
+-- A user can have at most one active timer at a time; the UNIQUE index is the
+-- DB-level backstop for concurrent timer starts.
+-- migration: 20260610_active_timers_unique_user
+CREATE UNIQUE INDEX IF NOT EXISTS idx_active_timers_user_id ON active_timers(user_id);
 
 -- Themes table
 CREATE TABLE IF NOT EXISTS themes (
@@ -399,6 +402,8 @@ CREATE INDEX IF NOT EXISTS idx_user_item_activities_item_id ON user_item_activit
 CREATE INDEX IF NOT EXISTS idx_user_item_activities_last_viewed ON user_item_activities(last_activity_at);
 CREATE INDEX IF NOT EXISTS idx_item_watches_item_id ON item_watches(item_id);
 CREATE INDEX IF NOT EXISTS idx_item_watches_user_id ON item_watches(user_id);
+-- migration: idx_item_watches_user_active
+CREATE INDEX IF NOT EXISTS idx_item_watches_user_active ON item_watches(user_id, is_active);
 
 -- Request types and fields for portal/channel routing
 -- Note: request_types table is defined in request_types_postgres.sql

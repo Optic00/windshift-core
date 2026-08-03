@@ -19,6 +19,7 @@ import { errorToast } from './toasts.svelte.js';
 
 const ONBOARDING_STORAGE_KEY = 'windshift-dashboard-onboarding-dismissed';
 const HOMEPAGE_SNAPSHOT_REUSE_MS = 5_000;
+const DASHBOARD_GRID_COLUMNS = 12;
 
 class HomepageStore {
   // === Dashboard Data ===
@@ -107,9 +108,14 @@ class HomepageStore {
     if (layout && Array.isArray(layout.sections) && layout.sections.length > 0) {
       this.sections = [...layout.sections].sort((a, b) => a.display_order - b.display_order);
       const widgets = Array.isArray(layout.widgets) ? [...layout.widgets] : [];
-      // Migrate legacy 3-column widths (1..3) to the 12-column grid (x4).
-      // A layout where every width fits in the old range must be legacy.
-      if (widgets.length > 0 && widgets.every((w) => typeof w.width === 'number' && w.width <= 3)) {
+      // Migrate only unversioned legacy 3-column layouts. Compact widgets are
+      // valid on the 12-column grid, so their widths alone cannot identify an
+      // old layout once the explicit grid marker is present.
+      if (
+        layout.grid_columns !== DASHBOARD_GRID_COLUMNS &&
+        widgets.length > 0 &&
+        widgets.every((w) => typeof w.width === 'number' && w.width <= 3)
+      ) {
         for (const w of widgets) {
           w.width = w.width * 4;
         }
@@ -133,6 +139,7 @@ class HomepageStore {
 
     try {
       const layout = {
+        grid_columns: DASHBOARD_GRID_COLUMNS,
         sections: this.sections.map((s, idx) => ({ ...s, display_order: idx })),
         widgets: this.widgets.map((w, idx) => ({ ...w, position: idx })),
       };

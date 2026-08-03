@@ -157,8 +157,9 @@ type UserDashboardWidget struct {
 
 // UserDashboardLayout represents the complete personal dashboard layout
 type UserDashboardLayout struct {
-	Sections []UserDashboardSection `json:"sections"`
-	Widgets  []UserDashboardWidget  `json:"widgets"`
+	GridColumns int                    `json:"grid_columns,omitempty"`
+	Sections    []UserDashboardSection `json:"sections"`
+	Widgets     []UserDashboardWidget  `json:"widgets"`
 }
 
 // TeamGroup represents a user group for access control and organization

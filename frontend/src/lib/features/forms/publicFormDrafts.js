@@ -51,6 +51,33 @@ export function loadPublicFormDraft(storage, slug, formId, userId) {
   }
 }
 
+// Restore the draft that belongs to the active identity. When a public form
+// requires sign-in after editing has begun, hand the tab-scoped anonymous
+// draft to that user instead of losing it at the authentication boundary.
+// An existing user draft always wins so sign-in never overwrites progress
+// previously saved by that account.
+export function loadPublicFormDraftForIdentity({
+  anonymousStorage,
+  authenticatedStorage,
+  slug,
+  formId,
+  userId,
+}) {
+  if (userId != null) {
+    const authenticatedDraft = loadPublicFormDraft(authenticatedStorage, slug, formId, userId);
+    if (authenticatedDraft) return authenticatedDraft;
+  }
+
+  const anonymousDraft = loadPublicFormDraft(anonymousStorage, slug, formId);
+  if (!anonymousDraft || userId == null) return anonymousDraft;
+
+  const migrated = savePublicFormDraft(authenticatedStorage, slug, formId, anonymousDraft, userId);
+  if (migrated) {
+    clearPublicFormDraft(anonymousStorage, slug, formId);
+  }
+  return migrated || anonymousDraft;
+}
+
 export function savePublicFormDraft(storage, slug, formId, draft, userId) {
   if (!storage || !slug || !formId) return null;
   if (!hasDraftContent(draft)) {

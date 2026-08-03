@@ -20,7 +20,7 @@
   } from './formModel.js';
   import {
     clearPublicFormDraft,
-    loadPublicFormDraft,
+    loadPublicFormDraftForIdentity,
     savePublicFormDraft,
   } from './publicFormDrafts.js';
 
@@ -175,10 +175,14 @@
     }
 
     if (!preview && !initialValues) {
-      const { storage: draftStorage, userId: draftUserId } = resolveDraftStore();
-      const draft = draftStorage
-        ? loadPublicFormDraft(draftStorage, formSlug, formId, draftUserId)
-        : null;
+      const draftUserId = authStore.isAuthenticated ? authStore.currentUser?.id : null;
+      const draft = loadPublicFormDraftForIdentity({
+        anonymousStorage: typeof sessionStorage !== 'undefined' ? sessionStorage : null,
+        authenticatedStorage: typeof localStorage !== 'undefined' ? localStorage : null,
+        slug: formSlug,
+        formId,
+        userId: draftUserId,
+      });
       if (draft) {
         values = initializeFormValues(fields, draft);
         nextStep = clampFormStep(steps, draft.current_step);

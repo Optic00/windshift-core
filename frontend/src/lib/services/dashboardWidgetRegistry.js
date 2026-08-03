@@ -163,5 +163,5 @@ export function buildDefaultDashboardLayout() {
     widget('default-quick-access', 'quick-access', 'default-workspaces', 1),
   ];
 
-  return { sections, widgets };
+  return { grid_columns: 12, sections, widgets };
 }
