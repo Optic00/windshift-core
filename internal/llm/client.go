@@ -21,10 +21,10 @@ import (
 // and is intentionally independent of this value.
 const DefaultRequestTimeout = 5 * time.Minute
 
-// Client provides methods to interact with an OpenAI-compatible LLM API.
+// Client provides a provider-neutral interface to an LLM API.
 type Client interface {
-	// ChatCompletion sends a chat completion request and returns the response.
-	ChatCompletion(ctx context.Context, req ChatCompletionRequest) (*ChatCompletionResponse, error)
+	// Complete sends a normalized generation request and returns its result.
+	Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, error)
 	// Health checks if the LLM service is healthy.
 	Health(ctx context.Context) error
 	// Available returns true if the LLM service is configured.
@@ -60,13 +60,14 @@ func NewClient(cfg Config) Client {
 
 // httpClient implements Client using HTTP requests to an OpenAI-compatible API.
 type httpClient struct {
-	endpoint string
-	apiKey   string
-	http     *http.Client
+	endpoint         string
+	apiKey           string
+	completionTokens completionTokenNegotiator
+	http             *http.Client
 }
 
-func (c *httpClient) ChatCompletion(ctx context.Context, req ChatCompletionRequest) (*ChatCompletionResponse, error) {
-	body := baseChatBody(req, req.Model)
+func (c *httpClient) Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
+	body := baseChatBody(req, req.Model, c.completionTokens.parameter())
 
 	// llama.cpp takes a GBNF grammar for structured output.
 	if req.StructuredOutput != nil && len(req.StructuredOutput.Schema) > 0 {
@@ -79,7 +80,7 @@ func (c *httpClient) ChatCompletion(ctx context.Context, req ChatCompletionReque
 		}
 	}
 
-	return postChatCompletion(ctx, c.http, c.endpoint+"/v1/chat/completions", c.apiKey, body)
+	return c.completionTokens.post(ctx, c.http, c.endpoint+"/v1/chat/completions", c.apiKey, body)
 }
 
 func (c *httpClient) Health(ctx context.Context) error {
@@ -129,10 +130,21 @@ func NewProviderClient(cfg ConnectionConfig) Client {
 		baseURL = provider.BaseURL
 	}
 
-	switch provider.APIFormat {
-	case "anthropic":
+	contract := ProviderConfigAPIContract(cfg.ProviderConfig)
+	usesCatalogEndpoint := cfg.BaseURL == "" || strings.TrimRight(cfg.BaseURL, "/") == strings.TrimRight(provider.BaseURL, "/")
+	switch {
+	case provider.APIFormat == "anthropic":
 		return newAnthropicClient(baseURL, cfg.Model, cfg.APIKey, cfg.ProviderConfig, cfg.Timeout)
+	case contract == APIContractResponses:
+		return newOpenAIResponsesClient(baseURL, cfg.Model, cfg.APIKey, cfg.ProviderConfig, cfg.Timeout)
+	case contract == APIContractChatCompletions:
+		return newOpenAIClient(baseURL, cfg.Model, cfg.APIKey, cfg.ProviderConfig, cfg.Timeout, provider.ChatPath)
+	case provider.APIFormat == "openai-responses" && usesCatalogEndpoint:
+		return newOpenAIResponsesClient(baseURL, cfg.Model, cfg.APIKey, cfg.ProviderConfig, cfg.Timeout)
 	default:
+		// A custom base URL on an OpenAI connection may be LiteLLM or another
+		// OpenAI-compatible gateway. Preserve Chat Completions unless the
+		// connection explicitly opts into the Responses contract.
 		return newOpenAIClient(baseURL, cfg.Model, cfg.APIKey, cfg.ProviderConfig, cfg.Timeout, provider.ChatPath)
 	}
 }

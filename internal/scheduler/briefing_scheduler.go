@@ -419,7 +419,7 @@ func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, looku
 	ctx, cancel := context.WithTimeout(context.Background(), llm.DefaultRequestTimeout)
 	defer cancel()
 
-	resp, err := llmClient.ChatCompletion(ctx, dailyBriefingCompletionRequest(systemPrompt, userPrompt))
+	resp, err := llmClient.Complete(ctx, dailyBriefingCompletionRequest(systemPrompt, userPrompt))
 
 	durationMs := time.Since(start).Milliseconds()
 
@@ -446,8 +446,8 @@ func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, looku
 	return true
 }
 
-func dailyBriefingCompletionRequest(systemPrompt, userPrompt string) llm.ChatCompletionRequest {
-	return llm.ChatCompletionRequest{
+func dailyBriefingCompletionRequest(systemPrompt, userPrompt string) llm.CompletionRequest {
+	return llm.CompletionRequest{
 		Messages: []llm.Message{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: userPrompt},

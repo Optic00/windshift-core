@@ -393,7 +393,7 @@ func (s *IngestionService) classify(ctx context.Context, docID, title, content, 
 
 	slog.Debug("classify prompt", slog.String("doc_id", docID), slog.String("title", title), slog.Int("content_len", len(truncated)), slog.String("content_preview", contentPreview(truncated, 200)))
 
-	resp, err := s.articleClient.ChatCompletion(ctx, llm.ChatCompletionRequest{
+	resp, err := s.articleClient.Complete(ctx, llm.CompletionRequest{
 		Messages: []llm.Message{
 			{
 				Role: "system",
@@ -442,7 +442,7 @@ func (s *IngestionService) cleanContent(ctx context.Context, docID, title, conte
 
 	slog.Debug("clean content prompt", slog.String("doc_id", docID), slog.String("title", title), slog.Int("content_len", len(truncated)), slog.String("content_preview", contentPreview(truncated, 200)))
 
-	resp, err := s.articleClient.ChatCompletion(ctx, llm.ChatCompletionRequest{
+	resp, err := s.articleClient.Complete(ctx, llm.CompletionRequest{
 		Messages: []llm.Message{
 			{
 				Role: "system",
@@ -554,7 +554,7 @@ func (s *IngestionService) generateArticle(ctx context.Context, docID, title, co
 
 	slog.Debug("generate article prompt", slog.String("doc_id", docID), slog.String("title", title), slog.String("content_type", contentType), slog.Int("content_len", len(truncated)), slog.String("content_preview", contentPreview(truncated, 200)))
 
-	resp, err := s.articleClient.ChatCompletion(ctx, llm.ChatCompletionRequest{
+	resp, err := s.articleClient.Complete(ctx, llm.CompletionRequest{
 		Messages: []llm.Message{
 			{
 				Role:    "system",

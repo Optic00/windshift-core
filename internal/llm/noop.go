@@ -6,7 +6,7 @@ import "context"
 // All methods return ErrNotConfigured.
 type noopClient struct{}
 
-func (c *noopClient) ChatCompletion(_ context.Context, _ ChatCompletionRequest) (*ChatCompletionResponse, error) {
+func (c *noopClient) Complete(_ context.Context, _ CompletionRequest) (*CompletionResponse, error) {
 	return nil, ErrNotConfigured
 }
 

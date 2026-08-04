@@ -23,7 +23,7 @@ func NewInternalLLMProxy(llmManager *llm.ConnectionManager, secret string) http.
 			return
 		}
 
-		var req llm.ChatCompletionRequest
+		var req llm.CompletionRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeLLMProxyError(w, http.StatusBadRequest, "invalid request body")
 			return
@@ -38,7 +38,7 @@ func NewInternalLLMProxy(llmManager *llm.ConnectionManager, secret string) http.
 			return
 		}
 
-		resp, err := client.ChatCompletion(r.Context(), req)
+		resp, err := client.Complete(r.Context(), req)
 		if err != nil {
 			slog.Error("LLM proxy: chat completion failed", "error", err)
 			writeLLMProxyError(w, http.StatusBadGateway, "LLM request failed")

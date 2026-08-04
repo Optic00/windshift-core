@@ -604,7 +604,7 @@ func (m *ConnectionManager) PromptConnection(ctx context.Context, connectionID i
 	log.Info("llm test prompt: sending to provider")
 
 	start := time.Now()
-	resp, err := rc.client.ChatCompletion(ctx, ChatCompletionRequest{
+	resp, err := rc.client.Complete(ctx, CompletionRequest{
 		Messages:  []Message{{Role: "user", Content: prompt}},
 		MaxTokens: 256,
 	})

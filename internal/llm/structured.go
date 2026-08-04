@@ -33,16 +33,16 @@ func stripMarkdownCodeBlock(s string) string {
 // ErrNoResponse is returned when the LLM returns no choices.
 var ErrNoResponse = errors.New("LLM returned no response")
 
-// ChatCompletionStructured calls ChatCompletion and parses the JSON response.
+// CompleteStructured calls Complete and parses the JSON response.
 // On parse failure, it retries once before returning an error.
 // T must be a struct type that matches the JSON Schema in req.StructuredOutput.
-func ChatCompletionStructured[T any](
+func CompleteStructured[T any](
 	ctx context.Context,
 	client Client,
-	req ChatCompletionRequest,
+	req CompletionRequest,
 ) (*T, error) {
 	for attempt := 0; attempt < 2; attempt++ {
-		resp, err := client.ChatCompletion(ctx, req)
+		resp, err := client.Complete(ctx, req)
 		if err != nil {
 			return nil, err
 		}

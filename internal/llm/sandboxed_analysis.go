@@ -38,7 +38,7 @@ func RunSandboxedAnalysis[T any](
 
 	userMessage := WrapUntrustedData(req.Input)
 
-	chatReq := ChatCompletionRequest{
+	chatReq := CompletionRequest{
 		Messages: []Message{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: userMessage},
@@ -55,7 +55,7 @@ func RunSandboxedAnalysis[T any](
 		}
 	}
 
-	result, err := ChatCompletionStructured[T](ctx, client, chatReq)
+	result, err := CompleteStructured[T](ctx, client, chatReq)
 	if err != nil {
 		return nil, fmt.Errorf("sandboxed analysis failed: %w", err)
 	}

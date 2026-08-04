@@ -52,6 +52,13 @@ type Message struct {
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"` // for role="tool" messages
 	Name       string     `json:"name,omitempty"`         // function name for role="tool" messages
+
+	// ProviderState carries opaque, provider-owned continuation data between
+	// calls in one in-memory agent run. It is deliberately excluded from JSON:
+	// callers reason about normalized messages while a wire adapter can retain
+	// details such as OpenAI Responses reasoning items that must be replayed on
+	// the next tool turn.
+	ProviderState json.RawMessage `json:"-"`
 }
 
 // ToolDefinition describes a tool the LLM can call.
@@ -65,6 +72,7 @@ type FunctionDef struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	Parameters  json.RawMessage `json:"parameters"`
+	Strict      bool            `json:"strict,omitempty"`
 }
 
 // ToolCall represents an LLM's request to call a tool.
@@ -109,8 +117,10 @@ type StructuredOutputConfig struct {
 	Strict     bool            `json:"strict,omitempty"`
 }
 
-// ChatCompletionRequest is the request body for /v1/chat/completions.
-type ChatCompletionRequest struct {
+// CompletionRequest is Windshift's provider-neutral generation contract.
+// Provider adapters translate it to their native wire format (OpenAI
+// Responses, OpenAI-compatible Chat Completions, or Anthropic Messages).
+type CompletionRequest struct {
 	Model            string                  `json:"model,omitempty"`
 	Messages         []Message               `json:"messages"`
 	Temperature      float64                 `json:"temperature,omitempty"`
@@ -121,14 +131,23 @@ type ChatCompletionRequest struct {
 	ToolChoice interface{}      `json:"tool_choice,omitempty"` // "auto", "none", or {"type":"function","function":{"name":"..."}}
 }
 
-// ChatCompletionResponse is the response from /v1/chat/completions.
-type ChatCompletionResponse struct {
+// ChatCompletionRequest remains as a source-compatible alias for consumers of
+// Windshift's OpenAI-compatible proxy endpoint. New internal code should use
+// CompletionRequest.
+type ChatCompletionRequest = CompletionRequest
+
+// CompletionResponse is Windshift's normalized generation result.
+type CompletionResponse struct {
 	ID      string   `json:"id"`
 	Object  string   `json:"object"`
 	Created int64    `json:"created"`
 	Choices []Choice `json:"choices"`
 	Usage   Usage    `json:"usage"`
 }
+
+// ChatCompletionResponse is the compatibility name used by the proxy wire
+// contract. Provider adapters return CompletionResponse internally.
+type ChatCompletionResponse = CompletionResponse
 
 // Choice represents a single completion choice.
 type Choice struct {

@@ -102,7 +102,7 @@ func newAnthropicClient(baseURL, model, apiKey, providerConfig string, timeout t
 	}
 }
 
-func (c *anthropicClient) ChatCompletion(ctx context.Context, req ChatCompletionRequest) (*ChatCompletionResponse, error) {
+func (c *anthropicClient) Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
 	// Extract system message and convert messages to Anthropic format
 	var systemPrompt string
 	var messages []anthropicMessage
@@ -287,7 +287,7 @@ func (c *anthropicClient) ChatCompletion(ctx context.Context, req ChatCompletion
 		finishReason = "tool_calls"
 	}
 
-	return &ChatCompletionResponse{
+	return &CompletionResponse{
 		ID:     result.ID,
 		Object: "chat.completion",
 		Choices: []Choice{{
@@ -309,7 +309,7 @@ func (c *anthropicClient) ChatCompletion(ctx context.Context, req ChatCompletion
 
 func (c *anthropicClient) Health(ctx context.Context) error {
 	// Try a minimal completion to verify the connection works
-	_, err := c.ChatCompletion(ctx, ChatCompletionRequest{
+	_, err := c.Complete(ctx, CompletionRequest{
 		Messages:  []Message{{Role: "user", Content: "hi"}},
 		MaxTokens: 1,
 	})

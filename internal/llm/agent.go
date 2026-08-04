@@ -94,7 +94,7 @@ func RunAgent(ctx context.Context, client Client, cfg AgentConfig, userMessage s
 			toolChoice = nil
 		}
 
-		resp, err := client.ChatCompletion(ctx, ChatCompletionRequest{
+		resp, err := client.Complete(ctx, CompletionRequest{
 			Messages:    messages,
 			Tools:       tools,
 			ToolChoice:  toolChoice,

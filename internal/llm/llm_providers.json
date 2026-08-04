@@ -3,7 +3,7 @@
     {
       "type": "openai",
       "name": "OpenAI",
-      "api_format": "openai",
+      "api_format": "openai-responses",
       "base_url": "https://api.openai.com",
       "models_endpoint": "/v1/models",
       "models_auth_scheme": "bearer",

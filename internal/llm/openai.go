@@ -9,14 +9,16 @@ import (
 	"time"
 )
 
-// openaiClient implements Client for OpenAI-compatible APIs (OpenAI, Z.AI, local).
+// openaiClient implements Client for Chat Completions-compatible APIs such as
+// OpenRouter, Z.AI, local models, and opaque gateways.
 type openaiClient struct {
-	endpoint       string
-	chatPath       string
-	model          string
-	apiKey         string
-	providerConfig string
-	http           *http.Client
+	endpoint         string
+	chatPath         string
+	model            string
+	apiKey           string
+	providerConfig   string
+	completionTokens completionTokenNegotiator
+	http             *http.Client
 }
 
 // newOpenAIClient creates a client for OpenAI-compatible endpoints.
@@ -36,8 +38,8 @@ func newOpenAIClient(baseURL, model, apiKey, providerConfig string, timeout time
 	}
 }
 
-func (c *openaiClient) ChatCompletion(ctx context.Context, req ChatCompletionRequest) (*ChatCompletionResponse, error) {
-	body := baseChatBody(req, c.model)
+func (c *openaiClient) Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
+	body := baseChatBody(req, c.model, c.completionTokens.parameter())
 
 	// OpenAI-compatible APIs take a response_format block for structured output.
 	if req.StructuredOutput != nil && len(req.StructuredOutput.Schema) > 0 {
@@ -57,16 +59,19 @@ func (c *openaiClient) ChatCompletion(ctx context.Context, req ChatCompletionReq
 		return nil, err
 	}
 
-	return postChatCompletion(ctx, c.http, joinProviderPath(c.endpoint, c.chatPath), c.apiKey, body)
+	return c.completionTokens.post(ctx, c.http, joinProviderPath(c.endpoint, c.chatPath), c.apiKey, body)
 }
 
 func (c *openaiClient) Health(ctx context.Context) error {
 	// Try a minimal completion to verify the connection works
-	_, err := c.ChatCompletion(ctx, ChatCompletionRequest{
+	_, err := c.Complete(ctx, CompletionRequest{
 		Messages:  []Message{{Role: "user", Content: "hi"}},
 		MaxTokens: 1,
 	})
 	if err != nil {
+		if isCompletionTokenLimitError(err) {
+			return nil
+		}
 		return fmt.Errorf("%w: %w", ErrConnectionFailed, err)
 	}
 	return nil

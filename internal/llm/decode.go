@@ -8,9 +8,9 @@ import (
 	"net/http"
 )
 
-// decodeCompletionResponse reads an HTTP response and decodes it into a ChatCompletionResponse.
+// decodeCompletionResponse reads an HTTP response and decodes it into a CompletionResponse.
 // It handles common error status codes (503 Service Unavailable, non-200) before attempting JSON decode.
-func decodeCompletionResponse(resp *http.Response) (*ChatCompletionResponse, error) {
+func decodeCompletionResponse(resp *http.Response) (*CompletionResponse, error) {
 	if resp.StatusCode == http.StatusServiceUnavailable {
 		return nil, ErrServiceNotReady
 	}
@@ -22,7 +22,7 @@ func decodeCompletionResponse(resp *http.Response) (*ChatCompletionResponse, err
 		return nil, fmt.Errorf("%w: status %d - %s", ErrAPIError, resp.StatusCode, string(respBody))
 	}
 
-	var result ChatCompletionResponse
+	var result CompletionResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}

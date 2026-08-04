@@ -9,7 +9,14 @@ import (
 // providerConfigVisionModeKey is the reserved provider_config key holding the
 // per-connection vision override. It is windshift-private — see
 // reservedProviderConfigKeys.
-const providerConfigVisionModeKey = "vision_mode"
+const (
+	providerConfigVisionModeKey  = "vision_mode"
+	providerConfigAPIContractKey = "api_contract"
+
+	APIContractAuto            = "auto"
+	APIContractResponses       = "responses"
+	APIContractChatCompletions = "chat_completions"
+)
 
 // reservedProviderConfigKeys are provider_config keys that windshift interprets
 // itself and must NOT be merged into the outbound provider request body. The
@@ -17,7 +24,8 @@ const providerConfigVisionModeKey = "vision_mode"
 // key like vision_mode would be sent to OpenAI/OpenRouter as an unknown request
 // field and could be rejected.
 var reservedProviderConfigKeys = map[string]bool{
-	providerConfigVisionModeKey: true,
+	providerConfigVisionModeKey:  true,
+	providerConfigAPIContractKey: true,
 }
 
 // ValidateProviderConfig verifies the per-connection provider_config blob.
@@ -45,7 +53,52 @@ func ValidateProviderConfig(raw string) error {
 			return fmt.Errorf("provider_config.vision_mode must be one of auto, on, off")
 		}
 	}
+	if rawContract, ok := cfg[providerConfigAPIContractKey]; ok {
+		var contract string
+		if err := json.Unmarshal(rawContract, &contract); err != nil {
+			return fmt.Errorf("provider_config.api_contract must be a string")
+		}
+		if !isValidAPIContract(strings.ToLower(strings.TrimSpace(contract))) {
+			return fmt.Errorf("provider_config.api_contract must be one of auto, responses, chat_completions")
+		}
+	}
 	return nil
+}
+
+// ProviderConfigAPIContract returns the requested generation wire contract.
+// Auto lets the provider catalog choose while keeping custom OpenAI-compatible
+// gateways on Chat Completions for backward compatibility.
+func ProviderConfigAPIContract(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return APIContractAuto
+	}
+	var cfg map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		return APIContractAuto
+	}
+	rawContract, ok := cfg[providerConfigAPIContractKey]
+	if !ok {
+		return APIContractAuto
+	}
+	var contract string
+	if err := json.Unmarshal(rawContract, &contract); err != nil {
+		return APIContractAuto
+	}
+	contract = strings.ToLower(strings.TrimSpace(contract))
+	if !isValidAPIContract(contract) {
+		return APIContractAuto
+	}
+	return contract
+}
+
+func isValidAPIContract(contract string) bool {
+	switch contract {
+	case APIContractAuto, APIContractResponses, APIContractChatCompletions:
+		return true
+	default:
+		return false
+	}
 }
 
 // ProviderConfigVisionMode extracts the vision override from a provider_config

@@ -241,7 +241,7 @@ func (h *AIHandler) CatchMeUp(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), llm.DefaultRequestTimeout)
 	defer cancel()
 
-	resp, err := llmClient.ChatCompletion(ctx, llm.ChatCompletionRequest{
+	resp, err := llmClient.Complete(ctx, llm.CompletionRequest{
 		Messages: []llm.Message{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: userPrompt},
@@ -322,7 +322,7 @@ Find similar items.`, itemKey, item.Title, currentDesc, strings.Join(candidateLi
 	ctx, cancel := context.WithTimeout(r.Context(), llm.DefaultRequestTimeout)
 	defer cancel()
 
-	result, err := llm.ChatCompletionStructured[FindSimilarResponse](ctx, llmClient, llm.ChatCompletionRequest{
+	result, err := llm.CompleteStructured[FindSimilarResponse](ctx, llmClient, llm.CompletionRequest{
 		Messages: []llm.Message{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: userPrompt},
@@ -424,7 +424,7 @@ func (h *AIHandler) DecomposeItem(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), llm.DefaultRequestTimeout)
 	defer cancel()
 
-	result, err := llm.ChatCompletionStructured[DecomposeResponse](ctx, llmClient, llm.ChatCompletionRequest{
+	result, err := llm.CompleteStructured[DecomposeResponse](ctx, llmClient, llm.CompletionRequest{
 		Messages: []llm.Message{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: userPrompt},
