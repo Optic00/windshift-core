@@ -265,6 +265,25 @@ func (h *RequestTypeHandler) validateRequestTypeRouting(w http.ResponseWriter, r
 	return true
 }
 
+// validateRequestTypeBasics validates the fields shared by create and update.
+func (h *RequestTypeHandler) validateRequestTypeBasics(w http.ResponseWriter, r *http.Request, rt *models.RequestType) bool {
+	if strings.TrimSpace(rt.Name) == "" {
+		respondValidationError(w, r, "Request type name is required")
+		return false
+	}
+	if rt.ItemTypeID == 0 {
+		respondValidationError(w, r, "Item type ID is required")
+		return false
+	}
+
+	itemTypeExists, err := h.itemTypeRepo.Exists(rt.ItemTypeID)
+	if err != nil || !itemTypeExists {
+		respondValidationError(w, r, "Item type not found")
+		return false
+	}
+	return true
+}
+
 // Create creates a request type.
 func (h *RequestTypeHandler) Create(w http.ResponseWriter, r *http.Request) {
 	channelID, ok := requireIDParam(w, r, "channel_id")
@@ -280,18 +299,7 @@ func (h *RequestTypeHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	rt.ChannelID = channelID
 
-	if strings.TrimSpace(rt.Name) == "" {
-		respondValidationError(w, r, "Request type name is required")
-		return
-	}
-	if rt.ItemTypeID == 0 {
-		respondValidationError(w, r, "Item type ID is required")
-		return
-	}
-
-	itemTypeExists, err := h.itemTypeRepo.Exists(rt.ItemTypeID)
-	if err != nil || !itemTypeExists {
-		respondValidationError(w, r, "Item type not found")
+	if !h.validateRequestTypeBasics(w, r, &rt) {
 		return
 	}
 	if !h.validateRequestTypeRouting(w, r, rt.ChannelID, &rt) {
@@ -391,18 +399,7 @@ func (h *RequestTypeHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	warnings := sanitizeRequestType(&rt)
 
-	if strings.TrimSpace(rt.Name) == "" {
-		respondValidationError(w, r, "Request type name is required")
-		return
-	}
-	if rt.ItemTypeID == 0 {
-		respondValidationError(w, r, "Item type ID is required")
-		return
-	}
-
-	itemTypeExists, err := h.itemTypeRepo.Exists(rt.ItemTypeID)
-	if err != nil || !itemTypeExists {
-		respondValidationError(w, r, "Item type not found")
+	if !h.validateRequestTypeBasics(w, r, &rt) {
 		return
 	}
 
