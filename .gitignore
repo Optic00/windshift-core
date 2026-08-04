@@ -187,3 +187,4 @@ blog/
 /.agents/skills/donate-trace
 /skills-lock.json
 /cmd/ws/ws
+/playground
