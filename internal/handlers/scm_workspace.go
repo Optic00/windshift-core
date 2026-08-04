@@ -382,6 +382,40 @@ func (h *SCMWorkspaceHandler) DeleteWorkspaceSCMConnection(w http.ResponseWriter
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// validateWorkspaceConnectionAccess verifies that a connection belongs to the
+// requested workspace and that the workspace may use its provider. It writes
+// the endpoint's existing error response when validation fails.
+func (h *SCMWorkspaceHandler) validateWorkspaceConnectionAccess(w http.ResponseWriter, r *http.Request, workspaceID, connID int) bool {
+	connWorkspaceID, providerID, err := h.repo.GetConnectionWorkspaceAndProvider(connID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			respondNotFound(w, r, "connection")
+		} else {
+			respondInternalError(w, r, err)
+		}
+		return false
+	}
+
+	if connWorkspaceID != workspaceID {
+		respondNotFound(w, r, "connection")
+		return false
+	}
+
+	if h.providerHandler != nil {
+		allowed, err := h.providerHandler.IsWorkspaceAllowedForProvider(providerID, workspaceID)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return false
+		}
+		if !allowed {
+			respondForbidden(w, r)
+			return false
+		}
+	}
+
+	return true
+}
+
 // ListAvailableRepositories lists repositories from the SCM provider
 func (h *SCMWorkspaceHandler) ListAvailableRepositories(w http.ResponseWriter, r *http.Request) {
 	workspaceID, ok := requireIDParam(w, r, "id")
@@ -393,34 +427,8 @@ func (h *SCMWorkspaceHandler) ListAvailableRepositories(w http.ResponseWriter, r
 		return
 	}
 
-	// Get connection and verify ownership
-	connWorkspaceID, providerID, err := h.repo.GetConnectionWorkspaceAndProvider(connID)
-	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			respondNotFound(w, r, "connection")
-		} else {
-			respondInternalError(w, r, err)
-		}
+	if !h.validateWorkspaceConnectionAccess(w, r, workspaceID, connID) {
 		return
-	}
-
-	if connWorkspaceID != workspaceID {
-		respondNotFound(w, r, "connection")
-		return
-	}
-
-	// Strict enforcement: check if workspace is still allowed to use this provider
-	if h.providerHandler != nil {
-		var allowed bool
-		allowed, err = h.providerHandler.IsWorkspaceAllowedForProvider(providerID, workspaceID)
-		if err != nil {
-			respondInternalError(w, r, err)
-			return
-		}
-		if !allowed {
-			respondForbidden(w, r)
-			return
-		}
 	}
 
 	// Get provider with user-level credentials (falls back to workspace/provider for PAT/GitHub App)
@@ -573,34 +581,8 @@ func (h *SCMWorkspaceHandler) LinkRepository(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Verify connection belongs to workspace
-	connWorkspaceID, providerID, err := h.repo.GetConnectionWorkspaceAndProvider(connID)
-	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			respondNotFound(w, r, "connection")
-		} else {
-			respondInternalError(w, r, err)
-		}
+	if !h.validateWorkspaceConnectionAccess(w, r, workspaceID, connID) {
 		return
-	}
-
-	if connWorkspaceID != workspaceID {
-		respondNotFound(w, r, "connection")
-		return
-	}
-
-	// Strict enforcement: check if workspace is still allowed to use this provider
-	if h.providerHandler != nil {
-		var allowed bool
-		allowed, err = h.providerHandler.IsWorkspaceAllowedForProvider(providerID, workspaceID)
-		if err != nil {
-			respondInternalError(w, r, err)
-			return
-		}
-		if !allowed {
-			respondForbidden(w, r)
-			return
-		}
 	}
 
 	defaultBranch := req.DefaultBranch
