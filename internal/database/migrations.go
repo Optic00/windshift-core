@@ -2366,6 +2366,261 @@ var Catalog = []Migration{
 			END $$;
 		`,
 	},
+	{
+		Version:       "20260729_workspace_managed_agents_setting",
+		Name:          "Add default-on Workspace-Managed Agents setting",
+		CheckSQLite:   "SELECT COUNT(*) FROM system_settings WHERE key = 'workspace_managed_agents'",
+		CheckPostgres: "SELECT COUNT(*) FROM system_settings WHERE key = 'workspace_managed_agents'",
+		SQLite: `
+			INSERT OR IGNORE INTO system_settings
+				(key, value, value_type, description, category)
+			VALUES
+				('workspace_managed_agents', 'true', 'boolean',
+				 'Allow workspace admins to create agent identities owned by their workspace',
+				 'security');
+		`,
+		Postgres: `
+			INSERT INTO system_settings
+				(key, value, value_type, description, category)
+			VALUES
+				('workspace_managed_agents', 'true', 'boolean',
+				 'Allow workspace admins to create agent identities owned by their workspace',
+				 'security')
+			ON CONFLICT (key) DO NOTHING;
+		`,
+	},
+	{
+		Version:       "20260729_agent_studio_profiles",
+		Name:          "Extend workspace agent bindings with Agent Studio profile state",
+		CheckSQLite:   sqliteColumnCheck("workspace_agent_bindings", "profile_type"),
+		CheckPostgres: pgColumnCheck("workspace_agent_bindings", "profile_type"),
+		SQLite: `
+			ALTER TABLE workspace_agent_bindings ADD COLUMN profile_type TEXT NOT NULL DEFAULT 'legacy'
+				CHECK (profile_type IN ('standard','coding','legacy'));
+			ALTER TABLE workspace_agent_bindings ADD COLUMN lifecycle TEXT NOT NULL DEFAULT 'ready'
+				CHECK (lifecycle IN ('draft','ready','paused','archived'));
+			ALTER TABLE workspace_agent_bindings ADD COLUMN profile_version INTEGER NOT NULL DEFAULT 1
+				CHECK (profile_version > 0);
+			ALTER TABLE workspace_agent_bindings ADD COLUMN identity_class TEXT NOT NULL DEFAULT 'centralized_service'
+				CHECK (identity_class IN ('user_owned','centralized_service','workspace_managed'));
+			ALTER TABLE workspace_agent_bindings ADD COLUMN purpose TEXT NOT NULL DEFAULT '';
+			ALTER TABLE workspace_agent_bindings ADD COLUMN capability_groups_json TEXT NOT NULL DEFAULT '[]';
+			ALTER TABLE workspace_agent_bindings ADD COLUMN archived_at DATETIME;
+			ALTER TABLE workspace_agent_bindings ADD COLUMN archived_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
+			ALTER TABLE workspace_agent_bindings ADD COLUMN last_known_name TEXT NOT NULL DEFAULT '';
+			ALTER TABLE workspace_agent_bindings ADD COLUMN last_known_handle TEXT NOT NULL DEFAULT '';
+			ALTER TABLE workspace_agent_bindings ADD COLUMN last_known_avatar TEXT NOT NULL DEFAULT '';
+
+			UPDATE workspace_agent_bindings
+			SET profile_type = CASE WHEN target_pool_id IS NULL THEN 'legacy' ELSE 'coding' END,
+			    identity_class = CASE
+			      WHEN acting_user_kind = 'agent' THEN 'user_owned'
+			      ELSE 'centralized_service'
+			    END;
+
+			CREATE INDEX IF NOT EXISTS idx_workspace_agent_bindings_workspace_lifecycle
+				ON workspace_agent_bindings(workspace_id, lifecycle);
+		`,
+		Postgres: `
+			ALTER TABLE workspace_agent_bindings ADD COLUMN IF NOT EXISTS profile_type TEXT NOT NULL DEFAULT 'legacy'
+				CHECK (profile_type IN ('standard','coding','legacy'));
+			ALTER TABLE workspace_agent_bindings ADD COLUMN IF NOT EXISTS lifecycle TEXT NOT NULL DEFAULT 'ready'
+				CHECK (lifecycle IN ('draft','ready','paused','archived'));
+			ALTER TABLE workspace_agent_bindings ADD COLUMN IF NOT EXISTS profile_version INTEGER NOT NULL DEFAULT 1
+				CHECK (profile_version > 0);
+			ALTER TABLE workspace_agent_bindings ADD COLUMN IF NOT EXISTS identity_class TEXT NOT NULL DEFAULT 'centralized_service'
+				CHECK (identity_class IN ('user_owned','centralized_service','workspace_managed'));
+			ALTER TABLE workspace_agent_bindings ADD COLUMN IF NOT EXISTS purpose TEXT NOT NULL DEFAULT '';
+			ALTER TABLE workspace_agent_bindings ADD COLUMN IF NOT EXISTS capability_groups_json JSONB NOT NULL DEFAULT '[]'::JSONB;
+			ALTER TABLE workspace_agent_bindings ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
+			ALTER TABLE workspace_agent_bindings ADD COLUMN IF NOT EXISTS archived_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
+			ALTER TABLE workspace_agent_bindings ADD COLUMN IF NOT EXISTS last_known_name TEXT NOT NULL DEFAULT '';
+			ALTER TABLE workspace_agent_bindings ADD COLUMN IF NOT EXISTS last_known_handle TEXT NOT NULL DEFAULT '';
+			ALTER TABLE workspace_agent_bindings ADD COLUMN IF NOT EXISTS last_known_avatar TEXT NOT NULL DEFAULT '';
+
+			UPDATE workspace_agent_bindings
+			SET profile_type = CASE WHEN target_pool_id IS NULL THEN 'legacy' ELSE 'coding' END,
+			    identity_class = CASE
+			      WHEN acting_user_kind = 'agent' THEN 'user_owned'
+			      ELSE 'centralized_service'
+			    END;
+
+			CREATE INDEX IF NOT EXISTS idx_workspace_agent_bindings_workspace_lifecycle
+				ON workspace_agent_bindings(workspace_id, lifecycle);
+		`,
+	},
+	{
+		Version:       "20260729_standard_agent_runs",
+		Name:          "Add durable Standard-agent execution snapshots and lineage",
+		CheckSQLite:   sqliteColumnCheck("agent_runs", "acting_user_id"),
+		CheckPostgres: pgColumnCheck("agent_runs", "acting_user_id"),
+		SQLite: `
+			ALTER TABLE agent_runs ADD COLUMN acting_user_id INTEGER;
+			ALTER TABLE agent_runs ADD COLUMN root_initiator_user_id INTEGER;
+			ALTER TABLE agent_runs ADD COLUMN immediate_trigger_user_id INTEGER;
+			ALTER TABLE agent_runs ADD COLUMN parent_run_id INTEGER;
+			ALTER TABLE agent_runs ADD COLUMN chain_depth INTEGER NOT NULL DEFAULT 0;
+			ALTER TABLE agent_runs ADD COLUMN session_id TEXT;
+			ALTER TABLE agent_runs ADD COLUMN profile_version INTEGER;
+			ALTER TABLE agent_runs ADD COLUMN profile_snapshot_json TEXT;
+
+			CREATE INDEX IF NOT EXISTS idx_agent_runs_standard_serial
+				ON agent_runs(binding_id, item_id, status, queued_at, id)
+				WHERE job_kind = 'standard_agent';
+			CREATE INDEX IF NOT EXISTS idx_agent_runs_standard_actor
+				ON agent_runs(acting_user_id, item_id, status)
+				WHERE job_kind = 'standard_agent';
+		`,
+		Postgres: `
+			ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS acting_user_id INTEGER;
+			ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS root_initiator_user_id INTEGER;
+			ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS immediate_trigger_user_id INTEGER;
+			ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS parent_run_id INTEGER;
+			ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS chain_depth INTEGER NOT NULL DEFAULT 0;
+			ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS session_id TEXT;
+			ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS profile_version INTEGER;
+			ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS profile_snapshot_json JSONB;
+
+			CREATE INDEX IF NOT EXISTS idx_agent_runs_standard_serial
+				ON agent_runs(binding_id, item_id, status, queued_at, id)
+				WHERE job_kind = 'standard_agent';
+			CREATE INDEX IF NOT EXISTS idx_agent_runs_standard_actor
+				ON agent_runs(acting_user_id, item_id, status)
+				WHERE job_kind = 'standard_agent';
+		`,
+	},
+	{
+		Version:       "20260729_agent_conversations",
+		Name:          "Add durable participant-private agent sessions and messages",
+		CheckSQLite:   sqliteTableCheck("agent_messages"),
+		CheckPostgres: pgTableCheck("agent_messages"),
+		SQLite: `
+			CREATE TABLE agent_sessions (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				session_type TEXT NOT NULL CHECK (session_type IN ('general','standard')),
+				owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+				workspace_id INTEGER REFERENCES workspaces(id) ON DELETE CASCADE,
+				agent_profile_id INTEGER,
+				title TEXT NOT NULL DEFAULT '',
+				archived_at DATETIME,
+				created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				CHECK (
+					(session_type = 'general' AND workspace_id IS NULL AND agent_profile_id IS NULL)
+					OR
+					(session_type = 'standard' AND workspace_id IS NOT NULL AND agent_profile_id IS NOT NULL)
+				)
+			);
+			CREATE UNIQUE INDEX idx_agent_sessions_general_owner
+				ON agent_sessions(owner_user_id) WHERE session_type = 'general';
+			CREATE INDEX idx_agent_sessions_owner_updated
+				ON agent_sessions(owner_user_id, updated_at DESC);
+			CREATE INDEX idx_agent_sessions_workspace
+				ON agent_sessions(workspace_id, updated_at DESC);
+
+			CREATE TABLE agent_session_participants (
+				session_id INTEGER NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
+				user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+				participant_role TEXT NOT NULL CHECK (participant_role IN ('human','agent')),
+				joined_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				PRIMARY KEY (session_id, user_id)
+			);
+			CREATE INDEX idx_agent_session_participants_user
+				ON agent_session_participants(user_id, session_id);
+
+			CREATE TABLE agent_messages (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				session_id INTEGER NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
+				role TEXT NOT NULL CHECK (role IN ('user','assistant')),
+				author_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+				agent_run_id INTEGER,
+				content TEXT NOT NULL,
+				context_json TEXT,
+				metadata_json TEXT,
+				created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+			);
+			CREATE INDEX idx_agent_messages_session ON agent_messages(session_id, id);
+			CREATE INDEX idx_agent_messages_run ON agent_messages(agent_run_id);
+		`,
+		Postgres: `
+			CREATE TABLE agent_sessions (
+				id SERIAL PRIMARY KEY,
+				session_type TEXT NOT NULL CHECK (session_type IN ('general','standard')),
+				owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+				workspace_id INTEGER REFERENCES workspaces(id) ON DELETE CASCADE,
+				agent_profile_id INTEGER,
+				title TEXT NOT NULL DEFAULT '',
+				archived_at TIMESTAMPTZ,
+				created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				CHECK (
+					(session_type = 'general' AND workspace_id IS NULL AND agent_profile_id IS NULL)
+					OR
+					(session_type = 'standard' AND workspace_id IS NOT NULL AND agent_profile_id IS NOT NULL)
+				)
+			);
+			CREATE UNIQUE INDEX idx_agent_sessions_general_owner
+				ON agent_sessions(owner_user_id) WHERE session_type = 'general';
+			CREATE INDEX idx_agent_sessions_owner_updated
+				ON agent_sessions(owner_user_id, updated_at DESC);
+			CREATE INDEX idx_agent_sessions_workspace
+				ON agent_sessions(workspace_id, updated_at DESC);
+
+			CREATE TABLE agent_session_participants (
+				session_id INTEGER NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
+				user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+				participant_role TEXT NOT NULL CHECK (participant_role IN ('human','agent')),
+				joined_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				PRIMARY KEY (session_id, user_id)
+			);
+			CREATE INDEX idx_agent_session_participants_user
+				ON agent_session_participants(user_id, session_id);
+
+			CREATE TABLE agent_messages (
+				id BIGSERIAL PRIMARY KEY,
+				session_id INTEGER NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
+				role TEXT NOT NULL CHECK (role IN ('user','assistant')),
+				author_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+				agent_run_id INTEGER,
+				content TEXT NOT NULL,
+				context_json JSONB,
+				metadata_json JSONB,
+				created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+			);
+			CREATE INDEX idx_agent_messages_session ON agent_messages(session_id, id);
+			CREATE INDEX idx_agent_messages_run ON agent_messages(agent_run_id);
+		`,
+	},
+	{
+		Version:       "20260729_agent_conversation_serial_turns",
+		Name:          "Enforce one active turn per durable agent session",
+		CheckSQLite:   sqliteIndexCheck("idx_agent_runs_active_session"),
+		CheckPostgres: pgIndexCheck("idx_agent_runs_active_session"),
+		SQLite: `
+			CREATE UNIQUE INDEX idx_agent_runs_active_session
+				ON agent_runs(session_id)
+				WHERE session_id IS NOT NULL AND status IN ('queued', 'running');
+		`,
+		Postgres: `
+			CREATE UNIQUE INDEX idx_agent_runs_active_session
+				ON agent_runs(session_id)
+				WHERE session_id IS NOT NULL AND status IN ('queued', 'running');
+			`,
+	},
+	{
+		Version:       "20260729_agent_run_ephemeral",
+		Name:          "Persist private verification run safety",
+		CheckSQLite:   sqliteColumnCheck("agent_runs", "is_ephemeral"),
+		CheckPostgres: pgColumnCheck("agent_runs", "is_ephemeral"),
+		SQLite: `
+			ALTER TABLE agent_runs
+				ADD COLUMN is_ephemeral BOOLEAN NOT NULL DEFAULT FALSE;
+		`,
+		Postgres: `
+			ALTER TABLE agent_runs
+				ADD COLUMN IF NOT EXISTS is_ephemeral BOOLEAN NOT NULL DEFAULT FALSE;
+		`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {

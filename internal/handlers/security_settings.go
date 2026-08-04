@@ -37,6 +37,7 @@ type SecuritySettings struct {
 	APIKeyAllowedGroupIDs  []int  `json:"api_key_allowed_group_ids"` // Group IDs when policy = "groups_only"
 	AllowUserManagedAgents bool   `json:"allow_user_managed_agents"` // When true, non-admin users may create and administer their own agent users from profile
 	MaxAgentsPerUser       int    `json:"max_agents_per_user"`       // Cap on owned agents per non-admin user (service users are not counted)
+	WorkspaceManagedAgents bool   `json:"workspace_managed_agents"`  // When true, workspace admins may create workspace-owned agent identities
 }
 
 // GetSecuritySettings returns current security settings
@@ -49,6 +50,7 @@ func (h *SecuritySettingsHandler) GetSecuritySettings(w http.ResponseWriter, r *
 		APIKeyAllowedGroupIDs:  []int{},
 		AllowUserManagedAgents: false, // Default: locked down
 		MaxAgentsPerUser:       5,
+		WorkspaceManagedAgents: true,
 	}
 
 	if v, ok, _ := h.settings.GetValue("calendar_feed_enabled"); ok {
@@ -73,6 +75,9 @@ func (h *SecuritySettingsHandler) GetSecuritySettings(w http.ResponseWriter, r *
 		if n, parseErr := strconv.Atoi(v); parseErr == nil && n >= 0 {
 			settings.MaxAgentsPerUser = n
 		}
+	}
+	if v, ok, _ := h.settings.GetValue("workspace_managed_agents"); ok {
+		settings.WorkspaceManagedAgents = strings.EqualFold(v, "true")
 	}
 
 	respondJSONOK(w, settings)
@@ -150,6 +155,14 @@ func (h *SecuritySettingsHandler) UpdateSecuritySettings(w http.ResponseWriter, 
 		return
 	}
 
+	if err := h.settings.Upsert(
+		"workspace_managed_agents", boolToString(settings.WorkspaceManagedAgents),
+		"boolean", "Allow workspace admins to create agent identities owned by their workspace", "security",
+	); err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
 		h.auditor.LogWithDetails(r, currentUser,
@@ -163,6 +176,7 @@ func (h *SecuritySettingsHandler) UpdateSecuritySettings(w http.ResponseWriter, 
 				"api_key_allowed_group_ids": settings.APIKeyAllowedGroupIDs,
 				"allow_user_managed_agents": settings.AllowUserManagedAgents,
 				"max_agents_per_user":       settings.MaxAgentsPerUser,
+				"workspace_managed_agents":  settings.WorkspaceManagedAgents,
 			},
 		)
 	}

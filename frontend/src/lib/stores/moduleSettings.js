@@ -6,6 +6,7 @@ function createModuleSettingsStore() {
   const { subscribe, set, update } = writable({
     time_tracking_enabled: true,
     test_management_enabled: true,
+    workspace_managed_agents: true,
     loaded: false,
     loading: false,
   });
@@ -68,6 +69,7 @@ function createModuleSettingsStore() {
       set({
         time_tracking_enabled: true,
         test_management_enabled: true,
+        workspace_managed_agents: true,
         loaded: false,
         loading: false,
       });

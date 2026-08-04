@@ -1,4 +1,4 @@
-import { GanttChart, Orbit } from '@lucide/svelte';
+import { GanttChart } from '@lucide/svelte';
 import {
   IconAdjustments as Adjustments,
   IconChartBar as BarChart3,
@@ -15,6 +15,7 @@ import {
   IconPlayerPlay as Play,
   IconRefresh as Refresh,
   IconRepeat as Repeat,
+  IconRobot as Robot,
   IconLayoutRows as Rows_3,
   IconSettings as SettingsCog,
   IconLayoutKanban as SquareKanban,
@@ -31,6 +32,7 @@ import {
  * @property {string} label
  * @property {any}    icon
  * @property {string} [tooltip]
+ * @property {string} [testId]
  * @property {string[]} [activeViews]  Route view names that highlight this item.
  */
 
@@ -49,6 +51,23 @@ export const workspaceViewItems = [
     label: 'Roadmap',
     icon: GanttChart,
     tooltip: 'Timeline view with date ranges and dependencies',
+  },
+];
+
+/**
+ * First-class workspace destinations which are not collection-scoped.
+ * Kept separate from Workspace tools so they remain visible when that
+ * disclosure is collapsed.
+ * @type {WorkspaceView[]}
+ */
+export const workspacePrimaryViews = [
+  {
+    id: 'agents',
+    label: 'Agents',
+    icon: Robot,
+    tooltip: 'Meet and work with workspace agents',
+    testId: 'workspace-nav-agents',
+    activeViews: ['workspace-agents', 'workspace-agent-profile', 'workspace-agent-create'],
   },
 ];
 
@@ -173,12 +192,6 @@ export const workspaceSettingsItems = [
     labelKey: 'workspaceSettings.tabs.sourceControl',
     icon: GitBranch,
     view: 'workspace-settings-source-control',
-  },
-  {
-    id: 'coding-agents',
-    labelKey: 'workspaceSettings.tabs.codingAgents',
-    icon: Orbit,
-    view: 'workspace-settings-coding-agents',
   },
   {
     id: 'issue-sync',

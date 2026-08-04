@@ -73,8 +73,9 @@ type SetupUser struct {
 
 // ModuleSettings represents module visibility settings
 type ModuleSettings struct {
-	TimeTrackingEnabled   bool `json:"time_tracking_enabled"`
-	TestManagementEnabled bool `json:"test_management_enabled"`
+	TimeTrackingEnabled    bool `json:"time_tracking_enabled"`
+	TestManagementEnabled  bool `json:"test_management_enabled"`
+	WorkspaceManagedAgents bool `json:"workspace_managed_agents"`
 }
 
 // APIToken represents a bearer token for API authentication

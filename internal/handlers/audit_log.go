@@ -1,21 +1,31 @@
 package handlers
 
 import (
+	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
 
+	"windshift/internal/models"
 	"windshift/internal/repository"
 )
 
 // AuditLogHandler handles audit log query endpoints.
 type AuditLogHandler struct {
-	repo *repository.AuditLogRepository
+	repo          *repository.AuditLogRepository
+	conversations *repository.AgentConversationRepository
+	runs          *repository.AgentRunRepository
 }
 
 // NewAuditLogHandler creates a new audit log handler.
 func NewAuditLogHandler(repo *repository.AuditLogRepository) *AuditLogHandler {
 	return &AuditLogHandler{repo: repo}
+}
+
+func (h *AuditLogHandler) SetAgentTranscriptRepositories(conversations *repository.AgentConversationRepository, runs *repository.AgentRunRepository) {
+	h.conversations = conversations
+	h.runs = runs
 }
 
 // AuditLogEntry represents a single audit log entry in API responses.
@@ -235,4 +245,82 @@ func (h *AuditLogHandler) GetAuditLogResourceTypes(w http.ResponseWriter, r *htt
 		return
 	}
 	respondJSONOK(w, types)
+}
+
+type agentTranscriptResponse struct {
+	AuditID  int                   `json:"audit_id"`
+	Session  *models.AgentSession  `json:"session"`
+	Messages []models.AgentMessage `json:"messages"`
+}
+
+// GetAgentTranscript resolves a correlated audit event to its durable
+// conversation. Routing applies system-admin authorization; core intentionally
+// exposes no transcript viewer or navigation UI.
+func (h *AuditLogHandler) GetAgentTranscript(w http.ResponseWriter, r *http.Request) {
+	if h.conversations == nil || h.runs == nil {
+		respondServiceUnavailable(w, r, "agent transcript resolution is unavailable")
+		return
+	}
+	auditID, ok := requireIDParam(w, r, "id")
+	if !ok {
+		return
+	}
+	entry, err := h.repo.Get(auditID)
+	if errors.Is(err, repository.ErrAuditLogNotFound) {
+		respondNotFound(w, r, "audit event")
+		return
+	}
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	sessionID := auditDetailInt(entry.Details, "agent_session_id")
+	if sessionID == 0 {
+		runID := auditDetailInt(entry.Details, "agent_run_id")
+		if runID > 0 {
+			run, err := h.runs.Get(r.Context(), runID)
+			if err == nil {
+				sessionID, _ = strconv.Atoi(run.SessionID)
+			}
+		}
+	}
+	if sessionID <= 0 {
+		respondNotFound(w, r, "agent transcript correlation")
+		return
+	}
+	session, err := h.conversations.Get(r.Context(), sessionID)
+	if errors.Is(err, repository.ErrAgentSessionNotFound) {
+		respondNotFound(w, r, "agent session")
+		return
+	}
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	messages, err := h.conversations.ListMessages(r.Context(), sessionID, 0, 500)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	if messages == nil {
+		messages = []models.AgentMessage{}
+	}
+	respondJSONOK(w, agentTranscriptResponse{AuditID: auditID, Session: session, Messages: messages})
+}
+
+func auditDetailInt(details map[string]interface{}, key string) int {
+	switch value := details[key].(type) {
+	case float64:
+		return int(value)
+	case int:
+		return value
+	case json.Number:
+		n, _ := value.Int64()
+		return int(n)
+	case string:
+		n, _ := strconv.Atoi(value)
+		return n
+	default:
+		return 0
+	}
 }

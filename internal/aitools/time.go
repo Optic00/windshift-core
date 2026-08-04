@@ -123,6 +123,9 @@ type stopTimerOut struct {
 func init() {
 	Register(Default, Tool[listTimeProjectsArgs]{
 		Name:        "list_time_projects",
+		Group:       CapabilityTime,
+		Access:      AccessRead,
+		Risk:        RiskLow,
 		Description: "List time tracking projects the user has access to.",
 		Scopes:      []string{auth.ScopeTimeRead},
 		Run: func(_ context.Context, env *Env, args listTimeProjectsArgs) (any, error) {
@@ -175,6 +178,9 @@ func init() {
 
 	Register(Default, Tool[listWorklogsArgs]{
 		Name:        "list_worklogs",
+		Group:       CapabilityTime,
+		Access:      AccessRead,
+		Risk:        RiskLow,
 		Description: "List the current user's time tracking worklogs with optional date and project filters.",
 		Scopes:      []string{auth.ScopeTimeRead},
 		Run: func(_ context.Context, env *Env, args listWorklogsArgs) (any, error) {
@@ -247,6 +253,9 @@ func init() {
 
 	Register(Default, Tool[logTimeArgs]{
 		Name:        "log_time",
+		Group:       CapabilityTime,
+		Access:      AccessWrite,
+		Risk:        RiskMedium,
 		Description: "Log a time entry on a time tracking project. Provide duration (e.g. '2h', '30m', '1h30m', '1d') OR duration_minutes OR start_time + end_time (HH:MM). An optional work item can be linked by numeric ID or key (e.g. PROJ-42).",
 		Scopes:      []string{auth.ScopeTimeWrite},
 		Run: func(_ context.Context, env *Env, args logTimeArgs) (any, error) {
@@ -318,6 +327,9 @@ func init() {
 
 	Register(Default, Tool[startTimerArgs]{
 		Name:        "start_timer",
+		Group:       CapabilityTime,
+		Access:      AccessWrite,
+		Risk:        RiskMedium,
 		Description: "Start a time tracking timer. Only one timer can be active at a time. An optional work item can be linked by numeric ID or key (e.g. PROJ-42).",
 		Scopes:      []string{auth.ScopeTimeWrite},
 		Run: func(_ context.Context, env *Env, args startTimerArgs) (any, error) {
@@ -344,6 +356,9 @@ func init() {
 
 	Register(Default, Tool[stopTimerArgs]{
 		Name:        "stop_timer",
+		Group:       CapabilityTime,
+		Access:      AccessWrite,
+		Risk:        RiskMedium,
 		Description: "Stop the user's currently running timer and create a worklog entry.",
 		Scopes:      []string{auth.ScopeTimeWrite},
 		Run: func(_ context.Context, env *Env, _ stopTimerArgs) (any, error) {

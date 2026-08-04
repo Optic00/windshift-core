@@ -21,6 +21,7 @@
   let pluginCliExecEnabled = $state(false);
   let allowUserManagedAgents = $state(false);
   let maxAgentsPerUser = $state(5);
+  let workspaceManagedAgents = $state(true);
   let apiKeyCreationPolicy = $state('all_users');
   let apiKeyAllowedGroupIds = $state([]);
 
@@ -112,6 +113,7 @@
       pluginCliExecEnabled = settings.plugin_cli_exec_enabled ?? false;
       allowUserManagedAgents = settings.allow_user_managed_agents ?? false;
       maxAgentsPerUser = settings.max_agents_per_user ?? 5;
+      workspaceManagedAgents = settings.workspace_managed_agents ?? true;
       apiKeyCreationPolicy = settings.api_key_creation_policy ?? 'all_users';
       apiKeyAllowedGroupIds = settings.api_key_allowed_group_ids ?? [];
     } catch (err) {
@@ -151,6 +153,7 @@
         plugin_cli_exec_enabled: pluginCliExecEnabled,
         allow_user_managed_agents: allowUserManagedAgents,
         max_agents_per_user: maxAgentsPerUser,
+        workspace_managed_agents: workspaceManagedAgents,
         api_key_creation_policy: apiKeyCreationPolicy,
         api_key_allowed_group_ids: apiKeyAllowedGroupIds
       });
@@ -200,6 +203,11 @@
     if (!Number.isFinite(n) || n < 0) maxAgentsPerUser = 0;
     else if (n > 1000) maxAgentsPerUser = 1000;
     else maxAgentsPerUser = Math.floor(n);
+    await saveSettings();
+  }
+
+  async function handleWorkspaceManagedAgentsToggle(newValue) {
+    workspaceManagedAgents = newValue;
     await saveSettings();
   }
 
@@ -295,6 +303,33 @@
                 <AlertBox variant="error" message={t('settings.security.pluginExecutionWarning')} />
               </div>
             {/if}
+          </div>
+        </div>
+      </Panel>
+    </div>
+
+    <!-- User-Managed Agents Settings -->
+    <div class="mt-4">
+      <Panel padding="spacious">
+        <div class="flex items-start gap-4">
+          <div class="p-2 rounded-lg" style="background-color: var(--ds-background-neutral);">
+            <Users class="w-5 h-5" style="color: var(--ds-icon);" />
+          </div>
+          <div class="flex-1">
+            <div class="flex items-center justify-between gap-4">
+              <div>
+                <h3 class="text-base font-medium" style="color: var(--ds-text);">Workspace-Managed Agents</h3>
+                <p class="text-sm mt-1" style="color: var(--ds-text-subtle);">
+                  Allow workspace admins to create agent identities owned by their workspace. Existing agents remain available when disabled; new agents can instead use enabled centralized service identities.
+                </p>
+              </div>
+              <Toggle
+                bind:checked={workspaceManagedAgents}
+                dataTestid="workspace-managed-agents-toggle"
+                disabled={saving}
+                onchange={handleWorkspaceManagedAgentsToggle}
+              />
+            </div>
           </div>
         </div>
       </Panel>

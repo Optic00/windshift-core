@@ -2,9 +2,8 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 
+	"windshift/internal/aitooladapter"
 	"windshift/internal/aitools"
 	"windshift/internal/llm"
 )
@@ -12,52 +11,19 @@ import (
 // ToolExecutor executes tool calls on behalf of the agentic chat loop.
 // It enforces workspace access via a pre-computed list of accessible workspace IDs.
 type ToolExecutor struct {
-	toolEnv *aitools.Env
+	adapter *aitooladapter.Executor
 }
 
 // NewToolExecutor creates a tool executor scoped to the given tool environment.
 func NewToolExecutor(env *aitools.Env) *ToolExecutor {
-	return &ToolExecutor{toolEnv: env}
+	return &ToolExecutor{adapter: aitooladapter.NewExecutor(env, aitools.Default.All())}
 }
 
 // Execute dispatches a tool call by name and returns the JSON result.
 // All tools live in the shared internal/aitools/ registry; this is now
 // just protocol glue.
 func (e *ToolExecutor) Execute(ctx context.Context, name, arguments string) (string, error) {
-	entry, ok := aitools.Default.Lookup(name)
-	if !ok {
-		return `{"error": "unknown tool"}`, nil
-	}
-	return e.runRegistryTool(ctx, entry, arguments)
-}
-
-// env builds the aitools.Env that registry-driven tools consume. The
-// executor's pre-computed accessibleWorkspaceIDs and injected services
-// are reused so behavior matches the legacy in-line handlers exactly.
-func (e *ToolExecutor) env() *aitools.Env {
-	return e.toolEnv
-}
-
-// runRegistryTool unmarshals raw JSON args into the entry's typed Args,
-// invokes Run, and marshals the result. Errors are returned as a tool
-// error JSON object so the agent loop can surface them to the model.
-func (e *ToolExecutor) runRegistryTool(ctx context.Context, entry aitools.Entry, arguments string) (string, error) {
-	args := entry.NewArgs()
-	if arguments != "" {
-		if err := json.Unmarshal([]byte(arguments), args); err != nil {
-			return `{"error": "invalid arguments"}`, nil
-		}
-	}
-	out, err := entry.Run(ctx, e.env(), args)
-	if err != nil {
-		b, _ := json.Marshal(map[string]string{"error": err.Error()})
-		return string(b), nil
-	}
-	b, err := json.Marshal(out)
-	if err != nil {
-		return "", fmt.Errorf("marshal tool result: %w", err)
-	}
-	return string(b), nil
+	return e.adapter.Execute(ctx, name, arguments)
 }
 
 // BuildLLMTools merges the legacy hand-written tool definitions in
@@ -66,15 +32,6 @@ func (e *ToolExecutor) runRegistryTool(ctx context.Context, entry aitools.Entry,
 // derived from its Args struct.
 func BuildLLMTools() []llm.ToolDefinition {
 	out := llm.BuiltinTools()
-	for _, e := range aitools.Default.All() {
-		out = append(out, llm.ToolDefinition{
-			Type: "function",
-			Function: llm.FunctionDef{
-				Name:        e.Name,
-				Description: e.Description,
-				Parameters:  e.Schema,
-			},
-		})
-	}
+	out = append(out, aitooladapter.BuildTools(aitools.Default.All())...)
 	return out
 }

@@ -10,6 +10,9 @@ import (
 	"windshift/internal/database"
 )
 
+// ErrAuditLogNotFound is returned when an audit event does not exist.
+var ErrAuditLogNotFound = sql.ErrNoRows
+
 // AuditLogRepository serves the admin audit-log read endpoints.
 type AuditLogRepository struct {
 	db database.Database
@@ -18,6 +21,30 @@ type AuditLogRepository struct {
 // NewAuditLogRepository creates an AuditLogRepository.
 func NewAuditLogRepository(db database.Database) *AuditLogRepository {
 	return &AuditLogRepository{db: db}
+}
+
+func (r *AuditLogRepository) Get(id int) (*AuditLogRow, error) {
+	rows, err := r.db.Query(`
+		SELECT id, timestamp, user_id, username, ip_address, user_agent,
+		       action_type, resource_type, resource_id, resource_name,
+		       details, success, error_message
+		FROM audit_logs WHERE id = ?
+	`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, sql.ErrNoRows
+	}
+	row, err := scanAuditLogRow(rows)
+	if err != nil {
+		return nil, err
+	}
+	return &row, nil
 }
 
 // AuditLogFilters carries optional filters for AuditLogRepository.List.

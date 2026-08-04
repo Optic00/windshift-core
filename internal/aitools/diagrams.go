@@ -114,6 +114,9 @@ func init() {
 	// ------------------------------------------------------------------------
 	Register(Default, Tool[listDiagramsArgs]{
 		Name:        "list_diagrams",
+		Group:       CapabilityKnowledgeDiagrams,
+		Access:      AccessRead,
+		Risk:        RiskLow,
 		Description: "List diagrams attached to a work item. Returns summaries (id, name, kind, timestamps); use get_diagram to fetch the full Excalidraw/mermaid payload.",
 		Scopes:      []string{auth.ScopeItemsRead},
 		Run: func(_ context.Context, env *Env, args listDiagramsArgs) (any, error) {
@@ -145,6 +148,9 @@ func init() {
 	// ------------------------------------------------------------------------
 	Register(Default, Tool[getDiagramArgs]{
 		Name:        "get_diagram",
+		Group:       CapabilityKnowledgeDiagrams,
+		Access:      AccessRead,
+		Risk:        RiskLow,
 		Description: "Get a single diagram by ID, including its full diagram_data payload (an Excalidraw scene JSON or a {type:mermaid,source} seed wrapper).",
 		Scopes:      []string{auth.ScopeItemsRead},
 		Run: func(_ context.Context, env *Env, args getDiagramArgs) (any, error) {
@@ -185,6 +191,9 @@ func init() {
 	// ------------------------------------------------------------------------
 	Register(Default, Tool[createDiagramArgs]{
 		Name:        "create_diagram",
+		Group:       CapabilityKnowledgeDiagrams,
+		Access:      AccessWrite,
+		Risk:        RiskMedium,
 		Description: "Attach a new diagram to a work item. Provide either `mermaid` (a mermaid source string, stored as a seed and converted on first open) or `excalidraw` (a fully-formed Excalidraw scene JSON, stored as-is).",
 		Scopes:      []string{auth.ScopeItemsWrite},
 		Run: func(_ context.Context, env *Env, args createDiagramArgs) (any, error) {
@@ -235,6 +244,9 @@ func init() {
 	// ------------------------------------------------------------------------
 	Register(Default, Tool[updateDiagramArgs]{
 		Name:        "update_diagram",
+		Group:       CapabilityKnowledgeDiagrams,
+		Access:      AccessWrite,
+		Risk:        RiskMedium,
 		Description: "Update a diagram. Each of name / mermaid / excalidraw is optional; omit to keep the existing value. Mermaid and excalidraw are mutually exclusive.",
 		Scopes:      []string{auth.ScopeItemsWrite},
 		Run: func(_ context.Context, env *Env, args updateDiagramArgs) (any, error) {
@@ -315,6 +327,9 @@ func init() {
 	// ------------------------------------------------------------------------
 	Register(Default, Tool[deleteDiagramArgs]{
 		Name:        "delete_diagram",
+		Group:       CapabilityKnowledgeDiagrams,
+		Access:      AccessDestructive,
+		Risk:        RiskHigh,
 		Description: "Delete a diagram by ID.",
 		Scopes:      []string{auth.ScopeItemsWrite}, // matches v1 DELETE /diagrams/{id} (items:write, not items:delete)
 		Run: func(_ context.Context, env *Env, args deleteDiagramArgs) (any, error) {

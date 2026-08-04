@@ -18,8 +18,17 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     grants_json TEXT, -- RunGrants snapshot the access-layer brokers authorize against (WI-144)
     run_token_id INTEGER, -- api_tokens row that binds a presented credential to this run's grants (WI-144)
     triggered_by_user_id INTEGER, -- soft ref to users: who fired the trigger; credential principal for OAuth SCM connections (WI-275)
+    acting_user_id INTEGER, -- Standard profile identity used for permission checks and authorship
+    root_initiator_user_id INTEGER, -- human that initiated an agent-to-agent chain
+    immediate_trigger_user_id INTEGER, -- human or agent that directly queued this run
+    parent_run_id INTEGER, -- soft self-ref retained when parent runs are pruned independently
+    chain_depth INTEGER NOT NULL DEFAULT 0,
+    session_id TEXT,
+    profile_version INTEGER,
+    profile_snapshot_json JSONB,
     job_kind TEXT NOT NULL DEFAULT 'coding_agent', -- coding_agent | action_container | ci_task (WI-146)
     job_image TEXT, -- admin image for action_container/ci_task jobs; NULL for coding_agent (fixed runner image)
+    is_ephemeral BOOLEAN NOT NULL DEFAULT FALSE, -- private verification: no push or post-run mutation
     trigger_json JSONB, -- run trigger context + free-form instruction (e.g. the @mentioning comment) as a JSON blob; keeps new instruction shapes migration-free
     error TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -34,6 +43,15 @@ CREATE INDEX IF NOT EXISTS idx_agent_runs_binding_created ON agent_runs(binding_
 CREATE INDEX IF NOT EXISTS idx_agent_runs_runner ON agent_runs(runner_id);
 -- Supports the remote DB-as-queue claim: next queued run for a pool, oldest first.
 CREATE INDEX IF NOT EXISTS idx_agent_runs_pool_claim ON agent_runs(target_pool_id, status, queued_at);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_standard_serial
+    ON agent_runs(binding_id, item_id, status, queued_at, id)
+    WHERE job_kind = 'standard_agent';
+CREATE INDEX IF NOT EXISTS idx_agent_runs_standard_actor
+    ON agent_runs(acting_user_id, item_id, status)
+    WHERE job_kind = 'standard_agent';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_runs_active_session
+    ON agent_runs(session_id)
+    WHERE session_id IS NOT NULL AND status IN ('queued', 'running');
 
 CREATE TABLE IF NOT EXISTS agent_run_events (
     id BIGSERIAL PRIMARY KEY,
@@ -44,6 +62,57 @@ CREATE TABLE IF NOT EXISTS agent_run_events (
     FOREIGN KEY (run_id) REFERENCES agent_runs(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_agent_run_events_run ON agent_run_events(run_id, id);
+
+-- Durable General and Standard conversations. Message bodies live only in
+-- agent_messages; audit rows and run events carry correlation IDs/summaries.
+CREATE TABLE IF NOT EXISTS agent_sessions (
+    id SERIAL PRIMARY KEY,
+    session_type TEXT NOT NULL CHECK (session_type IN ('general','standard')),
+    owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace_id INTEGER REFERENCES workspaces(id) ON DELETE CASCADE,
+    agent_profile_id INTEGER, -- soft ref: archived profiles remain transcript-attributable
+    title TEXT NOT NULL DEFAULT '',
+    archived_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (
+        (session_type = 'general' AND workspace_id IS NULL AND agent_profile_id IS NULL)
+        OR
+        (session_type = 'standard' AND workspace_id IS NOT NULL AND agent_profile_id IS NOT NULL)
+    )
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_sessions_general_owner
+    ON agent_sessions(owner_user_id) WHERE session_type = 'general';
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_owner_updated
+    ON agent_sessions(owner_user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_workspace
+    ON agent_sessions(workspace_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS agent_session_participants (
+    session_id INTEGER NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    participant_role TEXT NOT NULL CHECK (participant_role IN ('human','agent')),
+    joined_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (session_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_session_participants_user
+    ON agent_session_participants(user_id, session_id);
+
+CREATE TABLE IF NOT EXISTS agent_messages (
+    id BIGSERIAL PRIMARY KEY,
+    session_id INTEGER NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
+    role TEXT NOT NULL CHECK (role IN ('user','assistant')),
+    author_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    agent_run_id INTEGER, -- soft ref: transcript remains if run retention changes
+    content TEXT NOT NULL,
+    context_json JSONB,
+    metadata_json JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_agent_messages_session
+    ON agent_messages(session_id, id);
+CREATE INDEX IF NOT EXISTS idx_agent_messages_run
+    ON agent_messages(agent_run_id);
 
 CREATE TABLE IF NOT EXISTS global_agent_acting_user_allowlist (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -84,12 +153,35 @@ VALUES (
     'security'
 ) ON CONFLICT (key) DO NOTHING;
 
+INSERT INTO system_settings(key, value, value_type, description, category)
+VALUES (
+    'workspace_managed_agents',
+    'true',
+    'boolean',
+    'Allow workspace admins to create agent identities owned by their workspace',
+    'security'
+) ON CONFLICT (key) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS workspace_agent_bindings (
     id SERIAL PRIMARY KEY,
     workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     acting_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     acting_user_kind TEXT NOT NULL
         CHECK (acting_user_kind IN ('agent','centralized_service')),
+    profile_type TEXT NOT NULL DEFAULT 'legacy'
+        CHECK (profile_type IN ('standard','coding','legacy')),
+    lifecycle TEXT NOT NULL DEFAULT 'ready'
+        CHECK (lifecycle IN ('draft','ready','paused','archived')),
+    profile_version INTEGER NOT NULL DEFAULT 1 CHECK (profile_version > 0),
+    identity_class TEXT NOT NULL DEFAULT 'centralized_service'
+        CHECK (identity_class IN ('user_owned','centralized_service','workspace_managed')),
+    purpose TEXT NOT NULL DEFAULT '',
+    capability_groups_json JSONB NOT NULL DEFAULT '[]'::JSONB,
+    archived_at TIMESTAMPTZ,
+    archived_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    last_known_name TEXT NOT NULL DEFAULT '',
+    last_known_handle TEXT NOT NULL DEFAULT '',
+    last_known_avatar TEXT NOT NULL DEFAULT '',
     repo_slug TEXT,
     repo_base_ref TEXT,
     llm_connection_id INTEGER,
@@ -108,6 +200,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_agent_bindings_workspace_acting
     ON workspace_agent_bindings(workspace_id, acting_user_id);
 CREATE INDEX IF NOT EXISTS idx_workspace_agent_bindings_workspace
     ON workspace_agent_bindings(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_workspace_agent_bindings_workspace_lifecycle
+    ON workspace_agent_bindings(workspace_id, lifecycle);
 CREATE INDEX IF NOT EXISTS idx_workspace_agent_bindings_scm_connection
     ON workspace_agent_bindings(scm_connection_id);
 

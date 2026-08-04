@@ -187,6 +187,25 @@ var DefaultCodingAgentRunScopes = []string{
 	ScopeMCPAccess,
 }
 
+// DefaultCodingAgentPrivateTestScopes is the read-only token surface for
+// ephemeral Coding/Legacy profile verification. The MCP scope remains
+// available so the normal tool transport can be exercised, while every
+// resource-specific write/delete scope is deliberately absent.
+var DefaultCodingAgentPrivateTestScopes = []string{
+	ScopeItemsRead,
+	ScopeWorkspacesRead,
+	ScopeUsersRead,
+	ScopeItemTypesRead, ScopeWorkflowsRead,
+	ScopeStatusesRead, ScopePrioritiesRead, ScopeCustomFieldsRead,
+	ScopeItemTemplatesRead,
+	ScopeMilestonesRead, ScopeIterationsRead, ScopeProjectsRead,
+	ScopePagesRead,
+	ScopeTestsRead,
+	ScopeTimeRead,
+	ScopeAgentSkillsRead,
+	ScopeMCPAccess,
+}
+
 // AllValidScopes is the complete set of valid scope strings for validation.
 var AllValidScopes = []string{
 	ScopeItemsRead, ScopeItemsWrite, ScopeItemsDelete,

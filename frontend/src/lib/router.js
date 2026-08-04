@@ -31,7 +31,6 @@ const routes = {
   '/workspaces/:id/settings/members': 'workspace-settings-members',
   '/workspaces/:id/settings/configuration': 'workspace-settings-configuration',
   '/workspaces/:id/settings/source-control': 'workspace-settings-source-control',
-  '/workspaces/:id/settings/coding-agents': 'workspace-settings-coding-agents',
   '/workspaces/:id/settings/issue-sync': 'workspace-settings-issue-sync',
   '/workspaces/:id/settings/templates': 'workspace-settings-templates',
   '/workspaces/:id/settings/danger': 'workspace-settings-danger',
@@ -53,6 +52,9 @@ const routes = {
   '/workspaces/:id/iterations': 'workspace-iterations',
   '/workspaces/:id/milestones': 'workspace-milestones',
   '/workspaces/:id/analytics': 'workspace-analytics',
+  '/workspaces/:id/agents': 'workspace-agents',
+  '/workspaces/:id/agents/new': 'workspace-agent-create',
+  '/workspaces/:id/agents/:agentId': 'workspace-agent-profile',
   // Knowledge pages (workspace wiki)
   // archived must precede :pageId so the literal segment wins the
   // sequential-iteration match in updateRoute().
@@ -127,9 +129,6 @@ const routes = {
   '/assets': 'assets',
   '/assets/settings': 'asset-settings',
   '/assets/:id': 'asset-detail',
-  '/teams': 'teams-list',
-  '/teams/:id': 'team-detail',
-  '/teams/:id/:section': 'team-detail',
   '/admin': 'admin',
   '/admin/permission-sets/:id': 'admin',
   '/admin/configuration-sets/:id': 'admin',
@@ -235,8 +234,16 @@ export function updateQueryParams(updates, { push = false } = {}) {
 
 // Update current route from URL
 function updateRoute() {
-  const path = toLogical(window.location.pathname);
+  let path = toLogical(window.location.pathname);
   const search = window.location.search;
+
+  // Agent Studio permanently owns the former Coding Agents destination.
+  // Preserve old bookmarks while keeping the legacy editor unreachable.
+  const legacyAgentSettings = path.match(/^\/workspaces\/([^/]+)\/settings\/coding-agents$/);
+  if (legacyAgentSettings) {
+    path = `/workspaces/${legacyAgentSettings[1]}/agents`;
+    window.history.replaceState({}, '', toExternal(path + search));
+  }
 
   // Find matching route
   let matchedRoute = routes[path];

@@ -48,26 +48,38 @@ func (h *AgentRunHandler) SetUsageRepository(usage *repository.LLMUsageRepositor
 }
 
 type agentRunResponse struct {
-	ID          int        `json:"id"`
-	WorkspaceID int        `json:"workspace_id"`
-	ItemID      *int       `json:"item_id,omitempty"`
-	Status      string     `json:"status"`
-	QueuedAt    time.Time  `json:"queued_at"`
-	StartedAt   *time.Time `json:"started_at,omitempty"`
-	EndedAt     *time.Time `json:"ended_at,omitempty"`
-	ContainerID string     `json:"container_id,omitempty"`
-	Error       string     `json:"error,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	ID             int        `json:"id"`
+	WorkspaceID    int        `json:"workspace_id"`
+	ItemID         *int       `json:"item_id,omitempty"`
+	BindingID      *int       `json:"binding_id,omitempty"`
+	JobKind        string     `json:"job_kind,omitempty"`
+	ProfileVersion int        `json:"profile_version,omitempty"`
+	Status         string     `json:"status"`
+	QueuedAt       time.Time  `json:"queued_at"`
+	StartedAt      *time.Time `json:"started_at,omitempty"`
+	EndedAt        *time.Time `json:"ended_at,omitempty"`
+	ContainerID    string     `json:"container_id,omitempty"`
+	Error          string     `json:"error,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
 func toAgentRunResponse(r *models.AgentRun) agentRunResponse {
 	return agentRunResponse{
-		ID: r.ID, WorkspaceID: r.WorkspaceID, ItemID: r.ItemID, Status: r.Status,
+		ID: r.ID, WorkspaceID: r.WorkspaceID, ItemID: r.ItemID, BindingID: r.BindingID,
+		JobKind: r.JobKind, ProfileVersion: r.ProfileVersion, Status: r.Status,
 		QueuedAt: r.QueuedAt, StartedAt: r.StartedAt, EndedAt: r.EndedAt,
 		ContainerID: r.ContainerID, Error: r.Error,
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}
+}
+
+func (h *AgentRunHandler) requireRunRead(w http.ResponseWriter, r *http.Request, userID int, run *models.AgentRun) bool {
+	permission := models.PermissionItemView
+	if run.IsEphemeral {
+		permission = models.PermissionWorkspaceAdmin
+	}
+	return RequireWorkspacePermission(w, r, userID, run.WorkspaceID, permission, h.permissionService)
 }
 
 type agentRunEventResponse struct {
@@ -191,7 +203,7 @@ func (h *AgentRunHandler) Get(w http.ResponseWriter, r *http.Request) {
 		respondNotFound(w, r, "agent run")
 		return
 	}
-	if !RequireWorkspacePermission(w, r, user.ID, run.WorkspaceID, models.PermissionItemView, h.permissionService) {
+	if !h.requireRunRead(w, r, user.ID, run) {
 		return
 	}
 	respondJSON(w, http.StatusOK, toAgentRunResponse(run))
@@ -213,7 +225,7 @@ func (h *AgentRunHandler) Usage(w http.ResponseWriter, r *http.Request) {
 		respondNotFound(w, r, "agent run")
 		return
 	}
-	if !RequireWorkspacePermission(w, r, user.ID, run.WorkspaceID, models.PermissionItemView, h.permissionService) {
+	if !h.requireRunRead(w, r, user.ID, run) {
 		return
 	}
 	if h.usage == nil {
@@ -244,7 +256,7 @@ func (h *AgentRunHandler) Events(w http.ResponseWriter, r *http.Request) {
 		respondNotFound(w, r, "agent run")
 		return
 	}
-	if !RequireWorkspacePermission(w, r, user.ID, run.WorkspaceID, models.PermissionItemView, h.permissionService) {
+	if !h.requireRunRead(w, r, user.ID, run) {
 		return
 	}
 	afterID := parseQueryInt(r, "after_id", 0)

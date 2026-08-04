@@ -86,13 +86,22 @@ func (r *AgentRunRepository) Insert(ctx context.Context, run *models.AgentRun) (
 	// RETURNING id (not LastInsertId) for Postgres compatibility.
 	var id int64
 	err = r.db.QueryRowContext(ctx, `
-		INSERT INTO agent_runs(workspace_id, item_id, binding_id, target_pool_id, job_kind, job_image, status, triggered_by_user_id, trigger_json)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO agent_runs(
+			workspace_id, item_id, binding_id, target_pool_id, job_kind, job_image,
+			is_ephemeral, status, triggered_by_user_id, trigger_json, acting_user_id,
+			root_initiator_user_id, immediate_trigger_user_id, parent_run_id,
+			chain_depth, session_id, profile_version, grants_json, profile_snapshot_json
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		RETURNING id
 	`,
 		run.WorkspaceID, nullIntArg(run.ItemID), nullIntArg(run.BindingID),
-		nullIntArg(run.TargetPoolID), jobKind, nullStringArg(run.JobImage), status,
-		nullIntArg(run.TriggeredByUserID), triggerJSON,
+		nullIntArg(run.TargetPoolID), jobKind, nullStringArg(run.JobImage), run.IsEphemeral, status,
+		nullIntArg(run.TriggeredByUserID), triggerJSON, nullIntArg(run.ActingUserID),
+		nullIntArg(run.RootInitiatorUserID), nullIntArg(run.ImmediateTriggerUserID),
+		nullIntArg(run.ParentRunID), run.ChainDepth, nullStringArg(run.SessionID),
+		nullPositiveIntArg(run.ProfileVersion), nullStringArg(run.GrantsJSON),
+		nullStringArg(run.ProfileSnapshotJSON),
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("failed to insert agent_run: %w", err)
@@ -140,6 +149,13 @@ func truncateInstruction(s string) string {
 	return s
 }
 
+func nullPositiveIntArg(v int) any {
+	if v <= 0 {
+		return nil
+	}
+	return v
+}
+
 // scanTrigger decodes the nullable trigger_json column into a RunTrigger.
 // Returns nil for SQL NULL / empty so callers see a clean absence.
 func scanTrigger(col sql.NullString) (*models.RunTrigger, error) {
@@ -157,19 +173,26 @@ func scanTrigger(col sql.NullString) (*models.RunTrigger, error) {
 func (r *AgentRunRepository) Get(ctx context.Context, id int) (*models.AgentRun, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, workspace_id, item_id, binding_id, status, queued_at, started_at, ended_at,
-		       container_id, runner_id, target_pool_id, job_kind, job_image, error, triggered_by_user_id, trigger_json, created_at, updated_at
+		       container_id, runner_id, target_pool_id, job_kind, job_image, is_ephemeral, error,
+		       triggered_by_user_id, trigger_json, acting_user_id, root_initiator_user_id,
+		       immediate_trigger_user_id, parent_run_id, chain_depth, session_id,
+		       profile_version, grants_json, profile_snapshot_json, created_at, updated_at
 		FROM agent_runs WHERE id = ?
 	`, id)
 
 	run := &models.AgentRun{}
 	var itemID, bindingID, runnerID, targetPoolID, triggeredBy sql.NullInt64
+	var actingUserID, rootUserID, immediateUserID, parentRunID, profileVersion sql.NullInt64
 	var startedAt, endedAt sql.NullTime
-	var containerID, jobImage, errMsg, triggerJSON sql.NullString
+	var containerID, jobImage, errMsg, triggerJSON, sessionID, grantsJSON, profileSnapshotJSON sql.NullString
 
 	if err := row.Scan(
 		&run.ID, &run.WorkspaceID, &itemID, &bindingID, &run.Status,
 		&run.QueuedAt, &startedAt, &endedAt,
-		&containerID, &runnerID, &targetPoolID, &run.JobKind, &jobImage, &errMsg, &triggeredBy, &triggerJSON, &run.CreatedAt, &run.UpdatedAt,
+		&containerID, &runnerID, &targetPoolID, &run.JobKind, &jobImage, &run.IsEphemeral, &errMsg,
+		&triggeredBy, &triggerJSON, &actingUserID, &rootUserID, &immediateUserID,
+		&parentRunID, &run.ChainDepth, &sessionID, &profileVersion, &grantsJSON,
+		&profileSnapshotJSON, &run.CreatedAt, &run.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
@@ -182,6 +205,22 @@ func (r *AgentRunRepository) Get(ctx context.Context, id int) (*models.AgentRun,
 		v := int(triggeredBy.Int64)
 		run.TriggeredByUserID = &v
 	}
+	setOptionalInt := func(col sql.NullInt64, dst **int) {
+		if col.Valid {
+			v := int(col.Int64)
+			*dst = &v
+		}
+	}
+	setOptionalInt(actingUserID, &run.ActingUserID)
+	setOptionalInt(rootUserID, &run.RootInitiatorUserID)
+	setOptionalInt(immediateUserID, &run.ImmediateTriggerUserID)
+	setOptionalInt(parentRunID, &run.ParentRunID)
+	if profileVersion.Valid {
+		run.ProfileVersion = int(profileVersion.Int64)
+	}
+	run.SessionID = sessionID.String
+	run.GrantsJSON = grantsJSON.String
+	run.ProfileSnapshotJSON = profileSnapshotJSON.String
 	if jobImage.Valid {
 		run.JobImage = jobImage.String
 	}
@@ -310,6 +349,210 @@ func (r *AgentRunRepository) CancelQueued(ctx context.Context, id int, now time.
 		return false, fmt.Errorf("cancel queued: rows affected: %w", err)
 	}
 	return n > 0, nil
+}
+
+// ListActiveIDsForBinding returns queued/running runs for lifecycle cleanup.
+// Binding archive calls the ordinary RunService cancellation path for each ID.
+func (r *AgentRunRepository) ListActiveIDsForBinding(ctx context.Context, bindingID int) ([]int, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id
+		FROM agent_runs
+		WHERE binding_id = ? AND status IN (?, ?)
+		ORDER BY id
+	`, bindingID, models.AgentRunStatusQueued, models.AgentRunStatusRunning)
+	if err != nil {
+		return nil, fmt.Errorf("list active runs for binding: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var ids []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// StandardQueueKey identifies one independently serialized Standard-agent
+// queue. Runs for different profile/item pairs may execute concurrently.
+type StandardQueueKey struct {
+	BindingID int
+	ItemID    int
+}
+
+// ClaimNextStandard atomically claims the oldest queued Standard run for one
+// profile/item pair, but only while no run for that pair is already running.
+func (r *AgentRunRepository) ClaimNextStandard(ctx context.Context, bindingID, itemID int, now time.Time) (*models.AgentRun, error) {
+	const maxAttempts = 16
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		var id int
+		err := r.db.QueryRowContext(ctx, `
+			SELECT id FROM agent_runs
+			WHERE binding_id = ? AND item_id = ? AND job_kind = ? AND status = ?
+			ORDER BY queued_at, id
+			LIMIT 1
+		`, bindingID, itemID, models.JobKindStandardAgent, models.AgentRunStatusQueued).Scan(&id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("select Standard run for claim: %w", err)
+		}
+		res, err := r.db.ExecWriteContext(ctx, `
+			UPDATE agent_runs
+			SET status = ?, started_at = ?, updated_at = ?
+			WHERE id = ? AND status = ? AND job_kind = ?
+			  AND NOT EXISTS (
+				SELECT 1 FROM agent_runs active
+				WHERE active.binding_id = agent_runs.binding_id
+				  AND active.item_id = agent_runs.item_id
+				  AND active.job_kind = ?
+				  AND active.status = ?
+			  )
+		`, models.AgentRunStatusRunning, now, now, id,
+			models.AgentRunStatusQueued, models.JobKindStandardAgent,
+			models.JobKindStandardAgent, models.AgentRunStatusRunning)
+		if err != nil {
+			return nil, fmt.Errorf("claim Standard run: %w", err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("claim Standard run rows affected: %w", err)
+		}
+		if n > 0 {
+			return r.Get(ctx, id)
+		}
+		// Another process either claimed this row or currently owns the serial
+		// slot. A running owner means this queue is intentionally unavailable.
+		var running int
+		if err := r.db.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM agent_runs
+			WHERE binding_id = ? AND item_id = ? AND job_kind = ? AND status = ?
+		`, bindingID, itemID, models.JobKindStandardAgent, models.AgentRunStatusRunning).Scan(&running); err != nil {
+			return nil, fmt.Errorf("check Standard serial owner: %w", err)
+		}
+		if running > 0 {
+			return nil, nil
+		}
+	}
+	return nil, errors.New("claim Standard run: contention limit reached")
+}
+
+// ListQueuedStandardKeys returns queues that should be resumed after startup.
+func (r *AgentRunRepository) ListQueuedStandardKeys(ctx context.Context) ([]StandardQueueKey, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT DISTINCT binding_id, item_id
+		FROM agent_runs
+		WHERE job_kind = ? AND status = ? AND binding_id IS NOT NULL AND item_id IS NOT NULL
+		ORDER BY binding_id, item_id
+	`, models.JobKindStandardAgent, models.AgentRunStatusQueued)
+	if err != nil {
+		return nil, fmt.Errorf("list queued Standard queues: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []StandardQueueKey
+	for rows.Next() {
+		var key StandardQueueKey
+		if err := rows.Scan(&key.BindingID, &key.ItemID); err != nil {
+			return nil, err
+		}
+		out = append(out, key)
+	}
+	return out, rows.Err()
+}
+
+// FailOrphanedStandardRuns makes restart behavior explicit: in-process runs
+// cannot be resumed mid-LLM call, while their queued successors remain durable.
+func (r *AgentRunRepository) FailOrphanedStandardRuns(ctx context.Context, now time.Time) (int64, error) {
+	res, err := r.db.ExecWriteContext(ctx, `
+		UPDATE agent_runs
+		SET status = ?, ended_at = ?, error = ?, updated_at = ?
+		WHERE job_kind = ? AND status = ?
+	`, models.AgentRunStatusFailed, now, "Standard agent interrupted by server restart", now,
+		models.JobKindStandardAgent, models.AgentRunStatusRunning)
+	if err != nil {
+		return 0, fmt.Errorf("fail orphaned Standard runs: %w", err)
+	}
+	return res.RowsAffected()
+}
+
+// ListRunningStandard returns in-process calls left running in durable state,
+// used during startup repair before they are failed.
+func (r *AgentRunRepository) ListRunningStandard(ctx context.Context) ([]*models.AgentRun, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id FROM agent_runs
+		WHERE job_kind = ? AND status = ?
+		ORDER BY id
+	`, models.JobKindStandardAgent, models.AgentRunStatusRunning)
+	if err != nil {
+		return nil, fmt.Errorf("list running Standard runs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]*models.AgentRun, 0, len(ids))
+	for _, id := range ids {
+		run, err := r.Get(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, run)
+	}
+	return out, nil
+}
+
+// RunningStandardForActorItem resolves agent-to-agent lineage while the
+// parent is still executing its agent-authored final comment.
+func (r *AgentRunRepository) RunningStandardForActorItem(ctx context.Context, actingUserID, itemID int) (*models.AgentRun, error) {
+	var id int
+	err := r.db.QueryRowContext(ctx, `
+		SELECT id FROM agent_runs
+		WHERE job_kind = ? AND acting_user_id = ? AND item_id = ? AND status = ?
+		ORDER BY started_at DESC, id DESC
+		LIMIT 1
+	`, models.JobKindStandardAgent, actingUserID, itemID, models.AgentRunStatusRunning).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find Standard parent run: %w", err)
+	}
+	return r.Get(ctx, id)
+}
+
+// ListActiveStandardIDsForBinding supports profile archive cancellation
+// without touching Coding/Legacy runner work.
+func (r *AgentRunRepository) ListActiveStandardIDsForBinding(ctx context.Context, bindingID int) ([]int, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id FROM agent_runs
+		WHERE binding_id = ? AND job_kind = ? AND status IN (?, ?)
+		ORDER BY id
+	`, bindingID, models.JobKindStandardAgent, models.AgentRunStatusQueued, models.AgentRunStatusRunning)
+	if err != nil {
+		return nil, fmt.Errorf("list active Standard runs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 // ClaimQueuedForRunner atomically assigns the oldest pool run and marks it
@@ -782,11 +1025,13 @@ func (r *AgentRunRepository) ListForItem(ctx context.Context, itemID, limit, bef
 func (r *AgentRunRepository) listRuns(ctx context.Context, scopeColumn string, scopeID, limit, beforeID int) ([]*models.AgentRun, error) {
 	query := `
 		SELECT id, workspace_id, item_id, binding_id, status, queued_at, started_at, ended_at,
-		       container_id, error, triggered_by_user_id, created_at, updated_at
+		       container_id, error, triggered_by_user_id, job_kind, is_ephemeral, acting_user_id,
+		       root_initiator_user_id, immediate_trigger_user_id, parent_run_id,
+		       chain_depth, session_id, profile_version, created_at, updated_at
 		FROM agent_runs
-		WHERE ` + scopeColumn + ` = ?
+		WHERE ` + scopeColumn + ` = ? AND is_ephemeral = ?
 	`
-	args := []any{scopeID}
+	args := []any{scopeID, false}
 	if beforeID > 0 {
 		query += " AND id < ?"
 		args = append(args, beforeID)
@@ -803,13 +1048,15 @@ func (r *AgentRunRepository) listRuns(ctx context.Context, scopeColumn string, s
 	var out []*models.AgentRun
 	for rows.Next() {
 		run := &models.AgentRun{}
-		var itemID, bindingID, triggeredBy sql.NullInt64
+		var itemID, bindingID, triggeredBy, actingUserID, rootUserID, immediateUserID, parentRunID, profileVersion sql.NullInt64
 		var startedAt, endedAt sql.NullTime
-		var containerID, errMsg sql.NullString
+		var containerID, errMsg, sessionID sql.NullString
 		if err := rows.Scan(
 			&run.ID, &run.WorkspaceID, &itemID, &bindingID, &run.Status,
 			&run.QueuedAt, &startedAt, &endedAt,
-			&containerID, &errMsg, &triggeredBy, &run.CreatedAt, &run.UpdatedAt,
+			&containerID, &errMsg, &triggeredBy, &run.JobKind, &run.IsEphemeral, &actingUserID,
+			&rootUserID, &immediateUserID, &parentRunID, &run.ChainDepth,
+			&sessionID, &profileVersion, &run.CreatedAt, &run.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan run row: %w", err)
 		}
@@ -825,6 +1072,20 @@ func (r *AgentRunRepository) listRuns(ctx context.Context, scopeColumn string, s
 			v := int(bindingID.Int64)
 			run.BindingID = &v
 		}
+		setOptionalInt := func(col sql.NullInt64, dst **int) {
+			if col.Valid {
+				v := int(col.Int64)
+				*dst = &v
+			}
+		}
+		setOptionalInt(actingUserID, &run.ActingUserID)
+		setOptionalInt(rootUserID, &run.RootInitiatorUserID)
+		setOptionalInt(immediateUserID, &run.ImmediateTriggerUserID)
+		setOptionalInt(parentRunID, &run.ParentRunID)
+		if profileVersion.Valid {
+			run.ProfileVersion = int(profileVersion.Int64)
+		}
+		run.SessionID = sessionID.String
 		if startedAt.Valid {
 			run.StartedAt = &startedAt.Time
 		}

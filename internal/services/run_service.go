@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"windshift/internal/auth"
 	"windshift/internal/models"
 	"windshift/internal/repoprep"
 	"windshift/internal/repository"
@@ -393,6 +394,40 @@ func (s *RunService) Cancel(runID int) bool {
 	return true
 }
 
+// CancelForBinding requests ordinary cancellation for every queued or active
+// run owned by a profile being archived.
+func (s *RunService) CancelForBinding(ctx context.Context, bindingID int) error {
+	runIDs, err := s.repo.ListActiveIDsForBinding(ctx, bindingID)
+	if err != nil {
+		return err
+	}
+	now := s.now()
+	for _, runID := range runIDs {
+		run, err := s.repo.Get(ctx, runID)
+		if err != nil {
+			return fmt.Errorf("load run %d for binding archive: %w", runID, err)
+		}
+		if run.Status == models.AgentRunStatusQueued {
+			canceled, err := s.repo.CancelQueued(ctx, runID, now)
+			if err != nil {
+				return err
+			}
+			if canceled {
+				_ = s.repo.AppendEvent(ctx, runID, "lifecycle", `{"phase":"canceled","reason":"agent profile archived"}`)
+			}
+			continue
+		}
+		if run.RunnerID != nil {
+			if err := s.repo.RequestCancel(ctx, runID, now); err != nil {
+				return err
+			}
+			continue
+		}
+		s.Cancel(runID)
+	}
+	return nil
+}
+
 func (s *RunService) registerCancel(runID int, cancel context.CancelFunc) {
 	s.inflightMu.Lock()
 	defer s.inflightMu.Unlock()
@@ -432,6 +467,7 @@ func (s *RunService) Start(ctx context.Context, req RunRequest) (int, error) {
 		ItemID:      req.ItemID,
 		Status:      models.AgentRunStatusQueued,
 		Trigger:     req.Trigger,
+		IsEphemeral: req.Ephemeral,
 	}
 	if req.BindingID > 0 {
 		bID := req.BindingID
@@ -591,6 +627,9 @@ func (s *RunService) FinalizeRemote(ctx context.Context, runID int, result Runne
 	if run.TriggeredByUserID != nil {
 		triggeredBy = *run.TriggeredByUserID
 	}
+	if run.IsEphemeral {
+		return nil
+	}
 	s.invokePostRunHook(PostRunInfo{
 		RunID:             runID,
 		WorkspaceID:       run.WorkspaceID,
@@ -623,6 +662,7 @@ func (s *RunService) RecordFailedStart(ctx context.Context, req RunRequest, reas
 		ItemID:      req.ItemID,
 		Status:      models.AgentRunStatusQueued,
 		Trigger:     req.Trigger,
+		IsEphemeral: req.Ephemeral,
 	}
 	if req.BindingID > 0 {
 		bID := req.BindingID
@@ -796,6 +836,9 @@ func (s *RunService) FailRemoteClaim(ctx context.Context, runID int, reason stri
 // the remote counterpart of the local claimNext preamble (WI-195).
 func (s *RunService) PrepareRemoteClaim(ctx context.Context, run *models.AgentRun) (JobSpec, error) {
 	spec := JobSpec{RunID: run.ID, Kind: run.JobKind, Image: run.JobImage, InitialPrompt: s.initialPrompt}
+	if run.IsEphemeral {
+		spec.InitialPrompt = DefaultTestRunPrompt
+	}
 	if s.bindingInputs == nil || s.tokens == nil || run.BindingID == nil {
 		return spec, nil
 	}
@@ -813,12 +856,21 @@ func (s *RunService) PrepareRemoteClaim(ctx context.Context, run *models.AgentRu
 	}
 	env["AGENT_RUN_ID"] = fmt.Sprintf("%d", run.ID)
 	if inputs.Token != nil {
+		tokenSpec := *inputs.Token
+		if run.IsEphemeral {
+			// Defense in depth at the final mint boundary: even a custom input
+			// resolver cannot give a private verification run write scopes.
+			tokenSpec.Scopes = append([]string(nil), auth.DefaultCodingAgentPrivateTestScopes...)
+		}
 		// Per-repo push refs the remote runner will create (WI-449): the fresh
 		// per-run branch for each repo, or the continuation head branch for the
 		// one repo that continues a PR. Each git grant may push only its ref.
 		runBranch := fmt.Sprintf("agent-runs/run-%d", run.ID)
-		refByRepo := remoteRefByRepo(inputs.Grants, inputs, runBranch)
-		token, err := s.mintTokenAndGrants(ctx, run.ID, *inputs.Token, inputs.Grants, refByRepo)
+		var refByRepo map[string]string
+		if !run.IsEphemeral {
+			refByRepo = remoteRefByRepo(inputs.Grants, inputs, runBranch)
+		}
+		token, err := s.mintTokenAndGrants(ctx, run.ID, tokenSpec, inputs.Grants, refByRepo)
 		if err != nil {
 			return JobSpec{}, fmt.Errorf("remote claim: mint token run=%d: %w", run.ID, err)
 		}

@@ -1,0 +1,773 @@
+openapi: 3.0.3
+info:
+  title: Windshift Agent Studio Session API
+  version: 0.8.5
+  description: |
+    Browser and trusted-client API used by Agent Studio. This contract is
+    intentionally separate from the bearer-token `/rest/api/v1` API: these
+    routes use a Windshift user session and continue to enforce workspace
+    membership, workspace permissions, acting-user permissions, and resource
+    ownership in their handlers.
+servers:
+  - url: /api
+security:
+  - SessionCookie: []
+  - SessionHeader: []
+tags:
+  - name: Agent catalog
+  - name: Agent profiles
+  - name: Agent sessions
+  - name: Agent runs
+  - name: Runner onboarding
+  - name: Audit
+paths:
+  /workspaces/{workspaceId}/agent-profiles:
+    parameters:
+      - $ref: '#/components/parameters/WorkspaceId'
+    get:
+      tags: [Agent catalog]
+      summary: List the workspace Agent Studio catalog
+      description: Requires workspace membership. Archived profiles are excluded.
+      x-required-permission: workspace.view
+      responses:
+        '200':
+          description: Catalog entries with unified lifecycle and availability.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AgentProfile'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [Agent profiles]
+      summary: Create an agent profile
+      description: Creates a Draft Standard or Coding profile.
+      x-required-role: workspace-admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAgentProfile'
+      responses:
+        '201':
+          description: Created Draft profile.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentProfile'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /workspaces/{workspaceId}/agent-templates:
+    get:
+      tags: [Agent catalog]
+      summary: List built-in agent templates
+      description: Requires workspace membership.
+      x-required-permission: workspace.view
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Available templates.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /workspaces/{workspaceId}/agent-profiles/{id}:
+    patch:
+      tags: [Agent profiles]
+      summary: Update an agent profile
+      description: Updates mutable profile fields without changing its identity or history.
+      x-required-role: workspace-admin
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/ProfileId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Updated profile.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentProfile'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /workspaces/{workspaceId}/agent-profiles/{id}/validation:
+    get:
+      tags: [Agent profiles]
+      summary: Validate current readiness dependencies
+      description: Read-only validation; it never changes the saved lifecycle.
+      x-required-role: workspace-admin
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/ProfileId'
+      responses:
+        '200':
+          description: Readiness checks and current availability.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentValidation'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /workspaces/{workspaceId}/agent-profiles/{id}/ready:
+    post:
+      tags: [Agent profiles]
+      summary: Mark a valid Draft profile Ready
+      description: Revalidates every dependency before changing lifecycle.
+      x-required-role: workspace-admin
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/ProfileId'
+      responses:
+        '200':
+          description: Ready profile and validation result.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '409':
+          description: A dependency or acting-user permission is not ready.
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /workspaces/{workspaceId}/agent-profiles/{id}/test:
+    post:
+      tags: [Agent profiles]
+      summary: Run a private profile test
+      description: |
+        Standard profiles run synchronously with read-only canonical tools and
+        do not persist a conversation. Coding and Legacy profiles enqueue an
+        ephemeral, cancelable verification with read-only API scopes, no git
+        push grant, and no post-run mutation hook. Testing does not alter
+        readiness.
+      x-required-role: workspace-admin
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/ProfileId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                prompt:
+                  type: string
+                  maxLength: 8000
+      responses:
+        '200':
+          description: Immediate Standard result or queued Coding run.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrivateTestResult'
+        '409':
+          description: Runtime dependencies are unavailable.
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /workspaces/{workspaceId}/agent-profiles/{id}/connect-runner:
+    post:
+      tags: [Agent profiles]
+      summary: Assign a Coding profile's first runner pool
+      description: The pool must already be authorized for the workspace.
+      x-required-role: workspace-admin
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/ProfileId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunnerAssignment'
+      responses:
+        '200':
+          description: Updated profile.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentProfile'
+        '409':
+          description: The Coding profile already has a runner pool.
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /workspaces/{workspaceId}/agent-profiles/{id}/migrate-runner:
+    post:
+      tags: [Agent profiles]
+      summary: Migrate a Legacy profile to a runner pool
+      description: Preserves profile identity, acting user, configuration, runs, and history.
+      x-required-role: workspace-admin
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/ProfileId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunnerAssignment'
+      responses:
+        '200':
+          description: Migrated profile.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentProfile'
+        '409':
+          description: The profile is not Legacy.
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /workspaces/{workspaceId}/agent-bindings:
+    get:
+      tags: [Agent profiles]
+      summary: List profiles, including archived profiles
+      x-required-role: workspace-admin
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Workspace agent bindings.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AgentProfile'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /workspaces/{workspaceId}/agent-bindings/{id}:
+    put:
+      tags: [Agent profiles]
+      summary: Replace legacy binding configuration
+      x-required-role: workspace-admin
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/ProfileId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Updated binding.
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    delete:
+      tags: [Agent profiles]
+      summary: Archive an agent profile
+      description: Soft-archives the profile and preserves its history.
+      x-required-role: workspace-admin
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/ProfileId'
+      responses:
+        '204':
+          description: Archived.
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /workspaces/{workspaceId}/agent-bindings/{id}/restore:
+    post:
+      tags: [Agent profiles]
+      summary: Restore an archived profile to Draft
+      x-required-role: workspace-admin
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/ProfileId'
+      responses:
+        '200':
+          description: Restored Draft profile.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentProfile'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /workspaces/{workspaceId}/available-standard-agents:
+    get:
+      tags: [Agent sessions]
+      summary: List Standard agents the user may invoke
+      description: Requires workspace membership and the profile acting user to retain required permissions.
+      x-required-permission: item.view
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Available Standard agents.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AgentProfile'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /workspaces/{workspaceId}/agent-sessions:
+    post:
+      tags: [Agent sessions]
+      summary: Create a durable Standard-agent chat session
+      description: Requires item.edit invocation permission in the workspace.
+      x-required-permission: item.edit
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [profile_id]
+              properties:
+                profile_id:
+                  type: integer
+      responses:
+        '201':
+          description: Created session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentSession'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /ai/chat:
+    post:
+      tags: [Agent sessions]
+      summary: Send a message to General or a Standard-agent session
+      description: Rate limited; session ownership and current invocation permissions are rechecked.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                session_id:
+                  type: integer
+                message:
+                  type: string
+      responses:
+        '200':
+          description: Assistant response.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          description: Rate limit exceeded.
+  /ai/sessions:
+    get:
+      tags: [Agent sessions]
+      summary: List the current user's durable agent sessions
+      responses:
+        '200':
+          description: Owned sessions.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AgentSession'
+  /ai/sessions/{id}/messages:
+    get:
+      tags: [Agent sessions]
+      summary: List an owned session's transcript
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: Ordered messages.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /ai/sessions/{id}/archive:
+    post:
+      tags: [Agent sessions]
+      summary: Archive an owned session
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '204':
+          description: Archived.
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /workspaces/{workspaceId}/agent-runs:
+    get:
+      tags: [Agent runs]
+      summary: List observable runs in a workspace
+      description: Results are filtered by the caller's workspace/item access. Private verification runs are excluded.
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Runs visible to the caller.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AgentRun'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /agent-runs/{id}:
+    get:
+      tags: [Agent runs]
+      summary: Get an observable run
+      description: Private verification runs require workspace-admin permission.
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '200':
+          description: Run details.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentRun'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /agent-runs/{id}/events:
+    get:
+      tags: [Agent runs]
+      summary: List incremental events for an observable run
+      description: Private verification run events require workspace-admin permission.
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+        - name: after_id
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        '200':
+          description: Ordered run events.
+  /agent-runs/{id}/cancel:
+    post:
+      tags: [Agent runs]
+      summary: Cancel a queued or running agent run
+      x-required-role: workspace-admin
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '200':
+          description: Canceled run.
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /workspaces/{workspaceId}/agent-runner-pools/{poolId}/tokens:
+    parameters:
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/PoolId'
+    get:
+      tags: [Runner onboarding]
+      summary: List registration token metadata
+      description: Never returns token plaintext. The pool must be authorized for this workspace.
+      x-required-role: workspace-admin
+      responses:
+        '200':
+          description: Token metadata, including consumed/revoked state.
+    post:
+      tags: [Runner onboarding]
+      summary: Mint a single-use runner registration token
+      description: Returns token plaintext and the install command once. Maximum lifetime is 720 hours.
+      x-required-role: workspace-admin
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                description:
+                  type: string
+                ttl_hours:
+                  type: integer
+                  minimum: 0
+                  maximum: 720
+      responses:
+        '201':
+          description: One-time token response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunnerTokenSecret'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Workspace or authorized pool not found.
+  /workspaces/{workspaceId}/agent-runner-pools/{poolId}/tokens/{tokenId}:
+    delete:
+      tags: [Runner onboarding]
+      summary: Revoke an unconsumed runner registration token
+      x-required-role: workspace-admin
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/PoolId'
+        - name: tokenId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Revocation confirmation.
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /workspaces/{workspaceId}/agent-runner-pools/{poolId}/instances:
+    get:
+      tags: [Runner onboarding]
+      summary: List runner instances used to confirm onboarding
+      description: Instance credentials are never returned.
+      x-required-role: workspace-admin
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/PoolId'
+      responses:
+        '200':
+          description: Runner instance liveness metadata.
+  /admin/audit-logs/{id}/agent-transcript:
+    get:
+      tags: [Audit]
+      summary: Resolve an audited agent interaction transcript
+      description: Exact private content is exposed only through this explicit system-admin endpoint.
+      x-required-role: system-admin
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Correlated agent transcript.
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+components:
+  securitySchemes:
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: windshift_session
+      description: Secure Windshift browser session cookie.
+    SessionHeader:
+      type: apiKey
+      in: header
+      name: X-Session-Token
+      description: Internal or trusted-client session transport.
+  parameters:
+    WorkspaceId:
+      name: workspaceId
+      in: path
+      required: true
+      schema:
+        type: integer
+    ProfileId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+    SessionId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+    RunId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+    PoolId:
+      name: poolId
+      in: path
+      required: true
+      schema:
+        type: integer
+  responses:
+    BadRequest:
+      description: Invalid request.
+    Forbidden:
+      description: The authenticated user lacks the required workspace or system permission.
+    NotFound:
+      description: The resource does not exist or is intentionally hidden from this caller.
+  schemas:
+    AgentProfile:
+      type: object
+      required: [id, workspace_id, name, profile_type, lifecycle]
+      properties:
+        id:
+          type: integer
+        workspace_id:
+          type: integer
+        name:
+          type: string
+        description:
+          type: string
+        profile_type:
+          type: string
+          enum: [standard, coding, legacy]
+        lifecycle:
+          type: string
+          enum: [draft, ready, paused, archived]
+        availability:
+          type: string
+          enum: [ready, offline, needs_setup, draft, paused, archived, invalid]
+        available:
+          type: boolean
+        acting_user_id:
+          type: integer
+        target_pool_id:
+          type: integer
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      additionalProperties: true
+    CreateAgentProfile:
+      type: object
+      required: [name, profile_type, acting_user_id]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        profile_type:
+          type: string
+          enum: [standard, coding]
+        acting_user_id:
+          type: integer
+        llm_connection_id:
+          type: integer
+        target_pool_id:
+          type: integer
+        template_key:
+          type: string
+      additionalProperties: true
+    AgentValidation:
+      type: object
+      required: [valid, checks]
+      properties:
+        valid:
+          type: boolean
+        availability:
+          type: string
+          enum: [available, offline, unavailable]
+        checks:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+      additionalProperties: true
+    PrivateTestResult:
+      type: object
+      required: [mode, status]
+      properties:
+        mode:
+          type: string
+          enum: [standard, coding]
+        status:
+          type: string
+        answer:
+          type: string
+        iterations:
+          type: integer
+        tool_calls:
+          type: integer
+        run_id:
+          type: integer
+      additionalProperties: false
+    RunnerAssignment:
+      type: object
+      required: [target_pool_id]
+      properties:
+        target_pool_id:
+          type: integer
+    AgentSession:
+      type: object
+      required: [id, user_id]
+      properties:
+        id:
+          type: integer
+        user_id:
+          type: integer
+        workspace_id:
+          type: integer
+          nullable: true
+        profile_id:
+          type: integer
+          nullable: true
+        archived_at:
+          type: string
+          format: date-time
+          nullable: true
+      additionalProperties: true
+    AgentRun:
+      type: object
+      required: [id, workspace_id, status]
+      properties:
+        id:
+          type: integer
+        workspace_id:
+          type: integer
+        binding_id:
+          type: integer
+          nullable: true
+        item_id:
+          type: integer
+          nullable: true
+        status:
+          type: string
+        is_ephemeral:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+      additionalProperties: true
+    RunnerTokenSecret:
+      type: object
+      required: [id, token, install_command]
+      properties:
+        id:
+          type: integer
+        token:
+          type: string
+          readOnly: true
+        install_command:
+          type: string
+          readOnly: true
+        expires_at:
+          type: string
+          format: date-time
+      additionalProperties: true

@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { CheckSquare, Puzzle, Upload, RefreshCw, Trash2, ToggleLeft, ToggleRight, Package } from '@lucide/svelte';
+  import { Bot, CheckSquare, Puzzle, Upload, RefreshCw, Trash2, ToggleLeft, ToggleRight, Package } from '@lucide/svelte';
   import { moduleSettings } from '../stores/moduleSettings.js';
   import Toggle from '../components/Toggle.svelte';
   import Button from '../components/Button.svelte';
@@ -30,6 +30,7 @@
 
   // Local toggle state
   let testManagementEnabled = $state(false);
+  let workspaceManagedAgents = $state(true);
   let initialLoad = $state(true);
 
   // Plugin system state (from server startup flag)
@@ -39,6 +40,7 @@
   $effect(() => {
     if ($moduleSettings.loaded && initialLoad) {
       testManagementEnabled = $moduleSettings.test_management_enabled;
+      workspaceManagedAgents = $moduleSettings.workspace_managed_agents ?? true;
       initialLoad = false;
     }
   });
@@ -210,6 +212,7 @@
       const newSettings = {
         time_tracking_enabled: true, // Always enabled
         test_management_enabled: testManagementEnabled,
+        workspace_managed_agents: workspaceManagedAgents,
       };
 
       await moduleSettings.update(newSettings);
@@ -237,6 +240,7 @@
       const newSettings = {
         time_tracking_enabled: true, // Always enabled
         test_management_enabled: testManagementEnabled,
+        workspace_managed_agents: workspaceManagedAgents,
       };
 
       await moduleSettings.update(newSettings);
@@ -290,6 +294,25 @@
           </div>
           <Toggle
             bind:checked={testManagementEnabled}
+            onchange={autoSave}
+          />
+        </div>
+      </Panel>
+
+      <Panel padding="spacious">
+        <div class="flex items-center justify-between gap-4">
+          <div class="flex items-center gap-3">
+            <Bot class="w-5 h-5" style="color: var(--ds-text-subtle);" />
+            <div>
+              <h3 class="text-lg font-medium" style="color: var(--ds-text);">Workspace-Managed Agents</h3>
+              <p class="text-sm mt-1" style="color: var(--ds-text-subtle);">
+                Allow workspace admins to create agent identities owned by their workspace. Existing agents remain available when disabled; new agents can instead use enabled centralized service identities.
+              </p>
+            </div>
+          </div>
+          <Toggle
+            bind:checked={workspaceManagedAgents}
+            dataTestid="workspace-managed-agents-toggle"
             onchange={autoSave}
           />
         </div>

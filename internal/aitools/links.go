@@ -83,6 +83,9 @@ type listLinksOut struct {
 func init() {
 	Register(Default, Tool[listLinkTypesArgs]{
 		Name:   "list_link_types",
+		Group:  CapabilityPlanningActivity,
+		Access: AccessRead,
+		Risk:   RiskLow,
 		Scopes: []string{auth.ScopeItemsRead},
 		Description: "List the active link-type catalog with each type's entity-pair " +
 			"constraints. allowed_entity_types is a slot multiset: [item,page] permits " +
@@ -110,6 +113,9 @@ func init() {
 
 	Register(Default, Tool[listLinksArgs]{
 		Name:   "list_links",
+		Group:  CapabilityPlanningActivity,
+		Access: AccessRead,
+		Risk:   RiskLow,
 		Scopes: []string{auth.ScopeItemsRead},
 		Description: "List outgoing and incoming cross-entity links anchored on a work item, " +
 			"page, or test case. Identify the entity by entity_type + entity_id, or by " +
@@ -137,6 +143,9 @@ func init() {
 
 	Register(Default, Tool[addLinkArgs]{
 		Name:   "add_link",
+		Group:  CapabilityPlanningActivity,
+		Access: AccessWrite,
+		Risk:   RiskMedium,
 		Scopes: []string{auth.ScopeItemsWrite},
 		Description: "Create a cross-entity link (item-item, item-page, or item-test_case). " +
 			"Identify each side by type + id, or by source_item_key / target_item_key for work " +
@@ -184,6 +193,9 @@ func init() {
 
 	Register(Default, Tool[removeLinkArgs]{
 		Name:   "remove_link",
+		Group:  CapabilityPlanningActivity,
+		Access: AccessWrite,
+		Risk:   RiskMedium,
 		Scopes: []string{auth.ScopeItemsWrite},
 		Description: "Delete a cross-entity link by its numeric ID (from list_links output). " +
 			"Requires edit access on the link's source entity.",

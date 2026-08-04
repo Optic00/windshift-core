@@ -52,6 +52,9 @@ type getItemApprovalsOut struct {
 func init() {
 	Register(Default, Tool[getItemApprovalsArgs]{
 		Name:        "get_item_approvals",
+		Group:       CapabilityUsersApprovals,
+		Access:      AccessRead,
+		Risk:        RiskLow,
 		Description: "Get the approval state and history for a work item: the current pending approval request (if any), step status, who can approve, and the full audit trail of approve/reject/comment/cancel decisions with their comments.",
 		Scopes:      []string{auth.ScopeItemsRead}, // item-scoped content; no dedicated v1 route, gate like other item reads
 		Run: func(ctx context.Context, env *Env, args getItemApprovalsArgs) (any, error) {

@@ -108,6 +108,9 @@ type listItemsOut struct {
 func init() {
 	Register(Default, Tool[listItemsArgs]{
 		Name:        "list_items",
+		Group:       CapabilityReadComment,
+		Access:      AccessRead,
+		Risk:        RiskLow,
 		Description: "List work items in one or all accessible workspaces. Filter by status, milestone, iteration, assignee, priority, labels, and more with CQL.",
 		Scopes:      []string{auth.ScopeItemsRead},
 		Run: func(ctx context.Context, env *Env, args listItemsArgs) (any, error) {
@@ -199,6 +202,9 @@ func init() {
 	// ------------------------------------------------------------------------
 	Register(Default, Tool[getItemArgs]{
 		Name:        "get_item",
+		Group:       CapabilityReadComment,
+		Access:      AccessRead,
+		Risk:        RiskLow,
 		Description: "Get details of a single work item by numeric ID or key (e.g. PROJ-42). Long descriptions are truncated to 500 characters with an explicit marker unless full_description=true.",
 		Scopes:      []string{auth.ScopeItemsRead},
 		Run: func(_ context.Context, env *Env, args getItemArgs) (any, error) {
@@ -246,6 +252,9 @@ func init() {
 	// ------------------------------------------------------------------------
 	Register(Default, Tool[searchItemsArgs]{
 		Name:        "search_items",
+		Group:       CapabilityReadComment,
+		Access:      AccessRead,
+		Risk:        RiskLow,
 		Description: "Full-text search for work items by title or description across accessible workspaces.",
 		Scopes:      []string{auth.ScopeItemsRead},
 		Run: func(ctx context.Context, env *Env, args searchItemsArgs) (any, error) {
@@ -297,6 +306,9 @@ func init() {
 	// ------------------------------------------------------------------------
 	Register(Default, Tool[createItemArgs]{
 		Name:        "create_item",
+		Group:       CapabilityIssueManagement,
+		Access:      AccessWrite,
+		Risk:        RiskMedium,
 		Description: "Create a new work item in a workspace.",
 		Scopes:      []string{auth.ScopeItemsWrite},
 		Run: func(_ context.Context, env *Env, args createItemArgs) (any, error) {
@@ -361,6 +373,9 @@ func init() {
 	// ------------------------------------------------------------------------
 	Register(Default, Tool[updateItemArgs]{
 		Name:        "update_item",
+		Group:       CapabilityIssueManagement,
+		Access:      AccessWrite,
+		Risk:        RiskMedium,
 		Description: "Update fields on an existing work item. Identifies the item by numeric ID or key. Use transition_item to change status (workflow + condition rules apply).",
 		Scopes:      []string{auth.ScopeItemsWrite},
 		Run: func(_ context.Context, env *Env, args updateItemArgs) (any, error) {
@@ -414,6 +429,9 @@ func init() {
 	// ------------------------------------------------------------------------
 	Register(Default, Tool[deleteItemArgs]{
 		Name:        "delete_item",
+		Group:       CapabilityIssueManagement,
+		Access:      AccessDestructive,
+		Risk:        RiskHigh,
 		Description: "Delete a work item and all its descendants. Identifies the item by numeric ID or key (e.g. PROJ-42).",
 		Scopes:      []string{auth.ScopeItemsDelete},
 		Run: func(_ context.Context, env *Env, args deleteItemArgs) (any, error) {
@@ -453,6 +471,9 @@ func init() {
 	// ------------------------------------------------------------------------
 	Register(Default, Tool[getItemChildrenArgs]{
 		Name:        "get_item_children",
+		Group:       CapabilityReadComment,
+		Access:      AccessRead,
+		Risk:        RiskLow,
 		Description: "Get the direct children of a work item. Identifies the parent by numeric ID or key (e.g. PROJ-42).",
 		Scopes:      []string{auth.ScopeItemsRead},
 		Run: func(_ context.Context, env *Env, args getItemChildrenArgs) (any, error) {
@@ -485,6 +506,9 @@ func init() {
 	// ------------------------------------------------------------------------
 	Register(Default, Tool[transitionItemArgs]{
 		Name:        "transition_item",
+		Group:       CapabilityIssueManagement,
+		Access:      AccessWrite,
+		Risk:        RiskMedium,
 		Description: "Perform a workflow status transition on an item. Identifies the item by ID or key, and the target status by ID or name. Workflow + condition rules are enforced.",
 		Scopes:      []string{auth.ScopeItemsWrite},
 		Run: func(ctx context.Context, env *Env, args transitionItemArgs) (any, error) {

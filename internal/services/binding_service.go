@@ -13,7 +13,9 @@ import (
 	"strings"
 	"time"
 
+	"windshift/internal/agentstudio"
 	"windshift/internal/auth"
+	"windshift/internal/database"
 	"windshift/internal/llm"
 	"windshift/internal/models"
 	"windshift/internal/repoprep"
@@ -116,6 +118,38 @@ type LLMRuntimeResolver interface {
 	PromptConnection(ctx context.Context, connectionID int, prompt string) (string, error)
 }
 
+// StandardRunDispatcher is the durable built-in Standard-agent execution
+// boundary. Keeping it distinct from RunService prevents Standard work from
+// falling through to the Coding/Legacy shell runner.
+type StandardRunDispatcher interface {
+	StartItemRun(ctx context.Context, binding *models.WorkspaceAgentBinding, workspaceID, itemID, triggeredByUserID int, trigger *models.RunTrigger) error
+	CancelForBinding(ctx context.Context, bindingID int) error
+}
+
+// StandardPrivateTester is implemented by the built-in Standard dispatcher.
+// It deliberately remains optional so isolated binding-service tests and
+// deployments that disable Standard execution can fail closed.
+type StandardPrivateTester interface {
+	RunPrivateTest(ctx context.Context, binding *models.WorkspaceAgentBinding, workspaceID, triggeredByUserID int, prompt string) (*StandardPrivateTestResult, error)
+}
+
+type StandardPrivateTestResult struct {
+	Answer     string `json:"answer"`
+	Iterations int    `json:"iterations"`
+	ToolCalls  int    `json:"tool_calls"`
+}
+
+type PrivateProfileTestResult struct {
+	Mode       string `json:"mode"`
+	RunID      int    `json:"run_id,omitempty"`
+	Status     string `json:"status"`
+	Answer     string `json:"answer,omitempty"`
+	Iterations int    `json:"iterations,omitempty"`
+	ToolCalls  int    `json:"tool_calls,omitempty"`
+}
+
+var ErrStandardPrivateTestUnavailable = errors.New("agent profile: the Standard private-test runtime is unavailable")
+
 // AgentRunContextResolver returns workspace/item identifiers the runner needs
 // to render ws.toml and tell the agent which work item it owns.
 type AgentRunContextResolver interface {
@@ -141,6 +175,21 @@ var ErrLLMConnectionInvalid = errors.New("binding service: llm connection not fo
 // ErrBindingNotFound is returned when a binding id doesn't exist in the given
 // workspace. The handler maps it to a 404.
 var ErrBindingNotFound = errors.New("binding service: binding not found")
+
+// ErrBindingNotArchived is returned when restore targets an active profile.
+var ErrBindingNotArchived = errors.New("binding service: binding is not archived")
+
+// ErrBindingUnavailable is returned when a non-Ready profile is asked to
+// accept new work. Coding Offline is computed separately while lifecycle
+// remains Ready, so queued-for-runner behavior is preserved.
+var ErrBindingUnavailable = errors.New("binding service: agent profile is not ready")
+
+// ErrStandardAgentRuntimeUnavailable is returned when a Ready Standard profile
+// is invoked before its built-in dispatcher is configured.
+var ErrStandardAgentRuntimeUnavailable = errors.New("binding service: Standard agent runtime is unavailable")
+
+// ErrAgentChainUnsupported keeps non-Standard execution human-triggered.
+var ErrAgentChainUnsupported = errors.New("binding service: agent-to-agent triggers are supported only by Standard profiles")
 
 // ErrBindingInvalidPool is returned by Create when target_pool_id is set but is
 // not an enabled runner_pool capability the workspace may dispatch to. The
@@ -178,17 +227,22 @@ const DefaultLLMTestPrompt = "Reply in one short sentence to confirm you are rea
 // BindingService owns workspace agent bindings and their run triggers. Acting
 // identities are validated at creation; operators remove bindings to revoke them.
 type BindingService struct {
-	repo          *repository.WorkspaceAgentBindingRepository
-	identity      *AgentActingIdentityService
-	runs          *RunService
-	scmCreds      SCMCredentialResolver
-	llmRuntime    LLMRuntimeResolver
-	runContext    AgentRunContextResolver
-	pools         RunnerPoolLister
-	skills        *repository.WorkspaceAgentSkillRepository
-	continuations ItemPRContinuationResolver
-	apiURL        string
-	logger        *log.Logger
+	db                       database.Database
+	repo                     *repository.WorkspaceAgentBindingRepository
+	identity                 *AgentActingIdentityService
+	permissions              *PermissionService
+	prompts                  *llm.PromptStore
+	standardCapabilityGroups map[string]bool
+	runs                     *RunService
+	standardRuns             StandardRunDispatcher
+	scmCreds                 SCMCredentialResolver
+	llmRuntime               LLMRuntimeResolver
+	runContext               AgentRunContextResolver
+	pools                    RunnerPoolLister
+	skills                   *repository.WorkspaceAgentSkillRepository
+	continuations            ItemPRContinuationResolver
+	apiURL                   string
+	logger                   *log.Logger
 }
 
 // ContinuationTarget identifies the open PR a continuation run should land on:
@@ -213,13 +267,21 @@ type ItemPRContinuationUserResolver interface {
 // MaybeStartRunForAssignee logs and no-ops on every call — useful for
 // tests that exercise the binding CRUD path without a RunService.
 type BindingServiceOptions struct {
-	Repo       *repository.WorkspaceAgentBindingRepository
-	Identity   *AgentActingIdentityService
-	Runs       *RunService
-	SCMCreds   SCMCredentialResolver
-	LLMRuntime LLMRuntimeResolver
-	RunContext AgentRunContextResolver
-	Pools      RunnerPoolLister
+	DB          database.Database
+	Repo        *repository.WorkspaceAgentBindingRepository
+	Identity    *AgentActingIdentityService
+	Permissions *PermissionService
+	Prompts     *llm.PromptStore
+	// StandardCapabilityGroups is derived from the executable aitools registry
+	// by server wiring. Nil retains the closed Agent Studio key set for
+	// isolated service construction.
+	StandardCapabilityGroups []string
+	Runs                     *RunService
+	StandardRuns             StandardRunDispatcher
+	SCMCreds                 SCMCredentialResolver
+	LLMRuntime               LLMRuntimeResolver
+	RunContext               AgentRunContextResolver
+	Pools                    RunnerPoolLister
 	// Skills is optional: when nil, bindings carry no skill attachments and
 	// run prompts get no skills index (WI-258).
 	Skills *repository.WorkspaceAgentSkillRepository
@@ -243,19 +305,40 @@ func NewBindingService(opts BindingServiceOptions) (*BindingService, error) {
 	if logger == nil {
 		logger = log.Default()
 	}
+	capabilityGroups := make(map[string]bool)
+	if len(opts.StandardCapabilityGroups) == 0 {
+		for _, group := range agentstudio.AllCapabilityGroups() {
+			capabilityGroups[string(group)] = true
+		}
+	} else {
+		for _, group := range opts.StandardCapabilityGroups {
+			capabilityGroups[group] = true
+		}
+	}
 	return &BindingService{
-		repo:          opts.Repo,
-		identity:      opts.Identity,
-		runs:          opts.Runs,
-		scmCreds:      opts.SCMCreds,
-		llmRuntime:    opts.LLMRuntime,
-		runContext:    opts.RunContext,
-		pools:         opts.Pools,
-		skills:        opts.Skills,
-		continuations: opts.Continuations,
-		apiURL:        opts.APIURL,
-		logger:        logger,
+		db:                       opts.DB,
+		repo:                     opts.Repo,
+		identity:                 opts.Identity,
+		permissions:              opts.Permissions,
+		prompts:                  opts.Prompts,
+		standardCapabilityGroups: capabilityGroups,
+		runs:                     opts.Runs,
+		standardRuns:             opts.StandardRuns,
+		scmCreds:                 opts.SCMCreds,
+		llmRuntime:               opts.LLMRuntime,
+		runContext:               opts.RunContext,
+		pools:                    opts.Pools,
+		skills:                   opts.Skills,
+		continuations:            opts.Continuations,
+		apiURL:                   opts.APIURL,
+		logger:                   logger,
 	}, nil
+}
+
+// SetStandardRunDispatcher completes the late runtime wiring after comments,
+// approvals, and notifications have been constructed by the server.
+func (s *BindingService) SetStandardRunDispatcher(dispatcher StandardRunDispatcher) {
+	s.standardRuns = dispatcher
 }
 
 // CreateBindingRequest is the workspace-admin's payload, plus the
@@ -488,6 +571,9 @@ type UpdateBindingRequest struct {
 	TokenTTLMinutes int
 	MaxRunsPerDay   int
 	Instructions    string
+	// CapabilityGroups is presence-aware. Omission preserves the profile's
+	// current Standard tool policy; a present list fully replaces it.
+	CapabilityGroups *[]string
 	// RunnerImage is presence-aware (WI-450): nil leaves the current image
 	// untouched; a non-nil value sets it ("" clears back to the default).
 	RunnerImage *string
@@ -508,6 +594,16 @@ func (s *BindingService) UpdateBinding(ctx context.Context, req UpdateBindingReq
 	}
 	if binding.WorkspaceID != req.WorkspaceID {
 		return nil, ErrBindingNotFound
+	}
+	if binding.Lifecycle == models.AgentLifecycleArchived {
+		return nil, ErrBindingUnavailable
+	}
+	if req.CapabilityGroups != nil {
+		groups, err := s.normalizeStudioCapabilityGroups(ctx, binding.ProfileType, *req.CapabilityGroups)
+		if err != nil {
+			return nil, err
+		}
+		binding.CapabilityGroups = groups
 	}
 	if len(req.TokenScopes) > 0 {
 		if err := auth.ValidateAgentScopes(req.TokenScopes); err != nil {
@@ -600,6 +696,9 @@ func (s *BindingService) UpdateAgentConfig(ctx context.Context, workspaceID, bin
 	if binding.WorkspaceID != workspaceID {
 		return ErrBindingNotFound
 	}
+	if binding.Lifecycle == models.AgentLifecycleArchived {
+		return ErrBindingUnavailable
+	}
 	// Custom images require the binding's fixed remote pool.
 	var newRunnerImage string
 	if runnerImage != nil {
@@ -650,11 +749,53 @@ func (s *BindingService) ListForWorkspace(ctx context.Context, workspaceID int) 
 	return s.repo.ListForWorkspace(ctx, workspaceID)
 }
 
-// Delete removes a binding by (id, workspaceID). The workspace scope is
-// required so an admin of workspace A cannot delete a binding that lives
-// in workspace B by guessing its id.
-func (s *BindingService) Delete(ctx context.Context, id, workspaceID int) (int64, error) {
-	return s.repo.Delete(ctx, id, workspaceID)
+// Delete preserves the legacy route name while implementing Agent Studio
+// archive semantics. The stable binding/identity references remain intact and
+// queued/active work is canceled through RunService's ordinary paths.
+func (s *BindingService) Delete(ctx context.Context, id, workspaceID, archivedByUserID int) (int64, error) {
+	binding, err := s.repo.Get(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && binding.WorkspaceID != workspaceID) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("load binding for archive: %w", err)
+	}
+	if _, err := s.repo.Archive(ctx, id, workspaceID, archivedByUserID); err != nil {
+		return 0, err
+	}
+	if s.runs != nil {
+		if err := s.runs.CancelForBinding(ctx, id); err != nil {
+			return 0, fmt.Errorf("cancel runs for archived binding: %w", err)
+		}
+	}
+	if s.standardRuns != nil {
+		if err := s.standardRuns.CancelForBinding(ctx, id); err != nil {
+			return 0, fmt.Errorf("cancel Standard runs for archived binding: %w", err)
+		}
+	}
+	return 1, nil
+}
+
+// Restore returns an archived profile to Draft with the same stable IDs.
+func (s *BindingService) Restore(ctx context.Context, id, workspaceID int) (*models.WorkspaceAgentBinding, error) {
+	binding, err := s.repo.Get(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && binding.WorkspaceID != workspaceID) {
+		return nil, ErrBindingNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load binding for restore: %w", err)
+	}
+	if binding.Lifecycle != models.AgentLifecycleArchived {
+		return nil, ErrBindingNotArchived
+	}
+	if _, err := s.repo.Restore(ctx, id, workspaceID); err != nil {
+		return nil, err
+	}
+	restored, err := s.repo.Get(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("reload restored binding: %w", err)
+	}
+	return restored, nil
 }
 
 // TestLLM verifies a workspace-scoped binding's provider connection directly.
@@ -691,11 +832,8 @@ var ErrBindingNoRepo = errors.New("binding service: binding has no repo configur
 // on this server (CodingAgent.Enabled off).
 var ErrBindingRunnerNotConfigured = errors.New("binding service: coding-agent runner not configured")
 
-// ErrBindingTestRunRemotePool is returned by StartTestRun when the binding
-// targets a remote runner pool. Test runs always execute on the local
-// in-process runtime; running one for a pool-targeted binding would test the
-// wrong runtime — and fail outright on hosts without git/docker, which is the
-// very deployment remote pools exist for.
+// ErrBindingTestRunRemotePool is retained for source compatibility with
+// clients compiled before remote private verification was supported.
 var ErrBindingTestRunRemotePool = errors.New("binding service: test runs are not supported for bindings that target a remote runner pool")
 
 // DefaultTestRunPrompt verifies model and repository access without mutation.
@@ -704,9 +842,23 @@ const DefaultTestRunPrompt = "This is a connectivity test, not a real task. " +
 	"with up to 5 of their names so we can confirm the repository is checked out " +
 	"correctly. Do not modify, create, commit, or push anything."
 
-// StartTestRun asynchronously verifies a local, repo-backed binding end to end.
-// It uses an ephemeral read-only run and the triggering user's OAuth token.
+func privateTestRunPrompt(prompt string) string {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return DefaultTestRunPrompt
+	}
+	return DefaultTestRunPrompt + "\n\nPrivate test request:\n" + prompt
+}
+
+// StartTestRun asynchronously verifies a repo-backed Coding or Legacy profile
+// end to end. Local profiles use the in-process worker; runner-backed profiles
+// use the durable remote queue. Both persist an ephemeral marker that prevents
+// pushes and post-run hooks.
 func (s *BindingService) StartTestRun(ctx context.Context, bindingID, workspaceID, triggeredByUserID int) (int, error) {
+	return s.startTestRun(ctx, bindingID, workspaceID, triggeredByUserID, "")
+}
+
+func (s *BindingService) startTestRun(ctx context.Context, bindingID, workspaceID, triggeredByUserID int, prompt string) (int, error) {
 	binding, err := s.repo.Get(ctx, bindingID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, ErrBindingNotFound
@@ -720,15 +872,17 @@ func (s *BindingService) StartTestRun(ctx context.Context, bindingID, workspaceI
 	if !binding.HasRepo() {
 		return 0, ErrBindingNoRepo
 	}
-	if binding.TargetPoolID != nil {
-		return 0, ErrBindingTestRunRemotePool
-	}
 	if s.runs == nil {
 		return 0, ErrBindingRunnerNotConfigured
 	}
 	// Do not queue test runs when local execution is unavailable.
-	if !s.runs.LocalExecutionEnabled() {
+	if binding.TargetPoolID == nil && !s.runs.LocalExecutionEnabled() {
 		return 0, ErrBindingRunnerNotConfigured
+	}
+	if binding.TargetPoolID != nil {
+		if err := s.validateTargetPool(workspaceID, *binding.TargetPoolID); err != nil {
+			return 0, err
+		}
 	}
 	if s.scmCreds == nil {
 		return 0, errors.New("binding service: scm credential resolver not configured")
@@ -761,14 +915,22 @@ func (s *BindingService) StartTestRun(ctx context.Context, bindingID, workspaceI
 		return 0, fmt.Errorf("derive clone url: %w", derr)
 	}
 
+	initialPrompt := privateTestRunPrompt(prompt)
 	req := RunRequest{
 		WorkspaceID:       workspaceID,
 		ItemID:            nil,
 		BindingID:         binding.ID,
 		Env:               env,
-		InitialPrompt:     DefaultTestRunPrompt,
+		InitialPrompt:     initialPrompt,
 		Ephemeral:         true,
 		TriggeredByUserID: triggeredByUserID,
+		TargetPoolID:      binding.TargetPoolID,
+		JobKind:           models.JobKindCodingAgent,
+		JobImage:          binding.RunnerImage,
+		Trigger: &models.RunTrigger{
+			Kind:        "test",
+			Instruction: strings.TrimSpace(prompt),
+		},
 		Repo: &repoprep.RepoSpec{
 			WorkspaceID: workspaceID,
 			RepoSlug:    binding.RepoSlug,
@@ -788,12 +950,15 @@ func (s *BindingService) StartTestRun(ctx context.Context, bindingID, workspaceI
 		applyLLMModelEnv(req.Env, llmCfg)
 	}
 	req.Token, req.Grants = s.bindingTokenAndGrants(binding, 0, triggeredByUserID, false)
+	if req.Token != nil {
+		req.Token.Scopes = append([]string(nil), auth.DefaultCodingAgentPrivateTestScopes...)
+	}
 
 	runID, err := s.runs.Start(ctx, req)
 	if err != nil {
 		return 0, fmt.Errorf("start test run: %w", err)
 	}
-	s.logger.Printf("binding service: started ephemeral test run=%d for binding=%d (no item)", runID, binding.ID)
+	s.logger.Printf("binding service: started ephemeral test run=%d for binding=%d (no item, remote=%t)", runID, binding.ID, binding.TargetPoolID != nil)
 	return runID, nil
 }
 
@@ -866,7 +1031,7 @@ func (s *BindingService) MaybeStartRunsForMentions(ctx context.Context, workspac
 			// A plain human mention — the notification pipeline owns it.
 			continue
 		}
-		if s.runs != nil {
+		if binding.ProfileType != models.AgentProfileStandard && s.runs != nil {
 			active, err := s.runs.CountActiveRunsForBindingItem(ctx, binding.ID, itemID)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("count active runs for binding %d: %w", binding.ID, err))
@@ -1003,6 +1168,26 @@ func (s *BindingService) applyContinuation(ctx context.Context, trigger *models.
 // the local in-process path, and resolves SCM credentials as the triggering
 // user (WI-275).
 func (s *BindingService) startRunForBinding(ctx context.Context, binding *models.WorkspaceAgentBinding, workspaceID, itemID, triggeredByUserID int, trigger *models.RunTrigger) error {
+	if binding == nil || binding.Lifecycle != models.AgentLifecycleReady {
+		return ErrBindingUnavailable
+	}
+	if binding.ProfileType == models.AgentProfileStandard {
+		if s.standardRuns == nil {
+			return ErrStandardAgentRuntimeUnavailable
+		}
+		return s.standardRuns.StartItemRun(ctx, binding, workspaceID, itemID, triggeredByUserID, trigger)
+	}
+	if s.db != nil {
+		var isAgent bool
+		err := s.db.QueryRowContext(ctx,
+			`SELECT COALESCE(is_agent, false) FROM users WHERE id = ?`, triggeredByUserID).Scan(&isAgent)
+		if err != nil {
+			return fmt.Errorf("load trigger identity: %w", err)
+		}
+		if isAgent {
+			return ErrAgentChainUnsupported
+		}
+	}
 	if s.runs == nil {
 		s.logger.Printf("binding service: matched binding=%d for item=%d but no RunService is configured (dropping)", binding.ID, itemID)
 		return nil
@@ -1489,6 +1674,9 @@ func (s *BindingService) ResolveRunInputs(ctx context.Context, run *models.Agent
 	// the remote claim prepares the prompt identically to the local path.
 	promptSuffix := s.promptSuffixForBinding(binding, skills) + visionSuffix + renderInstruction(run.Trigger)
 	spec, grants := s.bindingTokenAndGrants(binding, itemID, triggeredBy, len(skills) > 0)
+	if run.IsEphemeral && spec != nil {
+		spec.Scopes = append([]string(nil), auth.DefaultCodingAgentPrivateTestScopes...)
+	}
 
 	// Repo-prep inputs for a remote runner, one per bound repo, primary first
 	// (WI-449). Unlike the local path, no SCM token travels here — the remote

@@ -20,8 +20,8 @@
   const subtitleStyleProp = $derived(subtitleStyle || 'color: var(--ds-text-subtle);');
 </script>
 
-<div class="flex items-center justify-between {marginClass}">
-  <div>
+<div class="flex flex-col items-stretch gap-4 sm:flex-row sm:items-center sm:justify-between {marginClass}">
+  <div class="min-w-0">
     <div class="flex items-baseline gap-2 mb-2">
       <h1 class="text-xl font-medium" style="{textStyle || 'color: var(--ds-text);'}">
         {title}
@@ -31,13 +31,13 @@
       {/if}
     </div>
     {#if subtitleText || count !== null}
-      <div class="flex items-center gap-2 text-sm" style="{subtitleStyleProp}">
+      <div class="flex min-w-0 items-start gap-2 text-sm sm:items-center" style="{subtitleStyleProp}">
         {#if icon && subtitleText}
           {@const Icon = icon}
           <Icon class="w-3.5 h-3.5" style={iconStyleProp} />
         {/if}
         {#if subtitleText}
-          <span data-testid="page-header-subtitle">{subtitleText}</span>
+          <span class="min-w-0" data-testid="page-header-subtitle">{subtitleText}</span>
         {/if}
         {#if count !== null}
           {#if subtitleText}<span style="color: var(--ds-text-disabled);">•</span>{/if}
@@ -48,7 +48,7 @@
   </div>
 
   {#if actions}
-    <div>
+    <div class="self-start sm:self-auto">
       {@render actions()}
     </div>
   {/if}

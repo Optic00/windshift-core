@@ -35,6 +35,9 @@ type getWorkspaceArgs struct {
 func init() {
 	Register(Default, Tool[listWorkspacesArgs]{
 		Name:        "list_workspaces",
+		Group:       CapabilityReadComment,
+		Access:      AccessRead,
+		Risk:        RiskLow,
 		Description: "List all workspaces the authenticated user has access to.",
 		Scopes:      []string{auth.ScopeWorkspacesRead},
 		Run: func(_ context.Context, env *Env, _ listWorkspacesArgs) (any, error) {
@@ -56,6 +59,9 @@ func init() {
 
 	Register(Default, Tool[getWorkspaceArgs]{
 		Name:        "get_workspace",
+		Group:       CapabilityReadComment,
+		Access:      AccessRead,
+		Risk:        RiskLow,
 		Description: "Get detailed information about a specific workspace.",
 		Scopes:      []string{auth.ScopeWorkspacesRead},
 		Run: func(_ context.Context, env *Env, args getWorkspaceArgs) (any, error) {

@@ -39,6 +39,9 @@ type updatePageDiagramArgs struct {
 func init() {
 	Register(Default, Tool[createPageDiagramArgs]{
 		Name:        "create_page_diagram",
+		Group:       CapabilityKnowledgeDiagrams,
+		Access:      AccessWrite,
+		Risk:        RiskMedium,
 		Description: "Create an editable Mermaid-seeded or Excalidraw diagram and embed it at the explicit start/end of a Page.",
 		Scopes:      []string{auth.ScopePagesWrite},
 		Run: func(_ context.Context, env *Env, args createPageDiagramArgs) (any, error) {
@@ -63,6 +66,9 @@ func init() {
 
 	Register(Default, Tool[listPageDiagramsArgs]{
 		Name:        "list_page_diagrams",
+		Group:       CapabilityKnowledgeDiagrams,
+		Access:      AccessRead,
+		Risk:        RiskLow,
 		Description: "List editable diagrams embedded in a Page, including their attachment IDs, kinds, payloads, and current Page content hash.",
 		Scopes:      []string{auth.ScopePagesRead},
 		Run: func(_ context.Context, env *Env, args listPageDiagramsArgs) (any, error) {
@@ -80,6 +86,9 @@ func init() {
 
 	Register(Default, Tool[getPageDiagramArgs]{
 		Name:        "get_page_diagram",
+		Group:       CapabilityKnowledgeDiagrams,
+		Access:      AccessRead,
+		Risk:        RiskLow,
 		Description: "Fetch one editable Page diagram by its Page and attachment IDs, including the Mermaid seed or Excalidraw scene.",
 		Scopes:      []string{auth.ScopePagesRead},
 		Run: func(_ context.Context, env *Env, args getPageDiagramArgs) (any, error) {
@@ -97,6 +106,9 @@ func init() {
 
 	Register(Default, Tool[updatePageDiagramArgs]{
 		Name:        "update_page_diagram",
+		Group:       CapabilityKnowledgeDiagrams,
+		Access:      AccessWrite,
+		Risk:        RiskMedium,
 		Description: "Replace exactly one embedded Page diagram with a new immutable Mermaid-seeded or Excalidraw attachment.",
 		Scopes:      []string{auth.ScopePagesWrite},
 		Run: func(_ context.Context, env *Env, args updatePageDiagramArgs) (any, error) {

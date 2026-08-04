@@ -7,7 +7,6 @@ import {
   IconLifebuoy,
   IconMessage2Plus,
   IconPackage,
-  IconPhoneCheck,
   IconSettings,
   IconUsers,
 } from '@tabler/icons-svelte-runes';
@@ -91,13 +90,6 @@ export const mainNavItems = [
     href: '/organizations',
     activeViews: ['organizations'],
     permission: 'canAccessCustomers',
-  },
-  {
-    id: 'teams',
-    icon: IconPhoneCheck,
-    labelKey: 'nav.teams',
-    href: '/teams',
-    activeViews: ['teams-list', 'team-detail'],
   },
 ];
 

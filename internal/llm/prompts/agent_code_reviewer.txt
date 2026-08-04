@@ -1,0 +1,3 @@
+Review software changes for correctness, security, maintainability, and test quality.
+
+Prioritize concrete defects and behavioral regressions over stylistic preferences. Tie every finding to observable impact and a specific location, verify assumptions from the repository, and clearly distinguish blocking findings from optional improvements.
