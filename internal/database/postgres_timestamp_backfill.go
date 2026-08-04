@@ -19,7 +19,6 @@ func backfillPostgresTimestampTZ(db *sql.DB) error {
 	}
 
 	converted := 0
-	failed := 0
 	for _, c := range columns {
 		// Quote catalog identifiers in case they are reserved words.
 		stmt := fmt.Sprintf(
@@ -27,22 +26,13 @@ func backfillPostgresTimestampTZ(db *sql.DB) error {
 			quotePGIdent(c.schema), quotePGIdent(c.table), quotePGIdent(c.column), quotePGIdent(c.column),
 		)
 		if _, err := db.Exec(stmt); err != nil {
-			// One unalterable column must not block startup.
-			failed++
-			slog.Warn("timestamp -> timestamptz alter failed",
-				slog.String("component", "database"),
-				slog.String("schema", c.schema),
-				slog.String("table", c.table),
-				slog.String("column", c.column),
-				slog.Any("error", err))
-			continue
+			return fmt.Errorf("convert %s.%s.%s to timestamptz: %w", c.schema, c.table, c.column, err)
 		}
 		converted++
 	}
 	slog.Info("postgres timestamp backfill complete",
 		slog.String("component", "database"),
 		slog.Int("converted", converted),
-		slog.Int("failed", failed),
 		slog.Int("candidates", len(columns)))
 	return nil
 }

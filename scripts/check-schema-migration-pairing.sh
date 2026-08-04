@@ -131,7 +131,9 @@ has_added_catalog_field() {
 catalog_versions="$(
     {
         target_file internal/database/migrations.go
-        target_file internal/database/catalog.go
+        for catalog_file in internal/database/catalog*.go; do
+            target_file "$catalog_file"
+        done
     } | sed -nE 's/^[[:space:]]*Version:[[:space:]]*"([^"]+)".*/\1/p'
 )"
 

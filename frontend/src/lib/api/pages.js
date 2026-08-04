@@ -63,10 +63,18 @@ export const pages = {
    * children — either may be null for "start of list" / "end of list", and
    * omitting both preserves the legacy append-by-natural-order behavior.
    */
-  movePage: (workspaceId, pageId, parentId, { prevSiblingId = null, nextSiblingId = null } = {}) =>
+  movePage: (
+    workspaceId,
+    pageId,
+    parentId,
+    { destinationWorkspaceId = null, prevSiblingId = null, nextSiblingId = null } = {}
+  ) =>
     fetchAPI(`/workspaces/${workspaceId}/pages/${pageId}/move`, {
       method: 'POST',
       body: JSON.stringify({
+        ...(destinationWorkspaceId != null
+          ? { destination_workspace_id: destinationWorkspaceId }
+          : {}),
         parent_id: parentId,
         prev_sibling_id: prevSiblingId,
         next_sibling_id: nextSiblingId,

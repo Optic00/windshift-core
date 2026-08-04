@@ -9,7 +9,18 @@
   import Logo from '../components/Logo.svelte';
   import { Lock, CheckCircle, AlertCircle, Loader2 } from '@lucide/svelte';
 
-  let token = $derived($currentRoute.params.token);
+  function decodeRouteToken(value) {
+    try {
+      return decodeURIComponent(value || '');
+    } catch {
+      return value || '';
+    }
+  }
+
+  // Router params retain percent-encoding. Decode before putting the token in
+  // the JSON acceptance body; query-string verification happened to decode it
+  // implicitly, which otherwise made verification pass and acceptance fail.
+  let token = $derived(decodeRouteToken($currentRoute.params.token));
   let loading = $state(true);
   let verifying = $state(true);
   let success = $state(false);
@@ -87,29 +98,29 @@
       </div>
 
       {#if verifying}
-        <div class="flex flex-col items-center py-12">
+        <div class="flex flex-col items-center py-12" data-testid="invitation-verifying">
           <Loader2 class="w-12 h-12 text-[var(--ds-icon)] animate-spin mb-4" />
           <p class="text-[var(--ds-text-subtle)]">Verifying invitation...</p>
         </div>
       {:else if error}
-        <div class="flex flex-col items-center py-12 text-center">
+        <div class="flex flex-col items-center py-12 text-center" data-testid="invitation-error">
           <div class="w-16 h-16 bg-[var(--ds-danger-subtle)] rounded-full flex items-center justify-center mb-6 text-[var(--ds-text-danger)]">
             <AlertCircle class="w-10 h-10" />
           </div>
           <h1 class="text-2xl font-bold text-[var(--ds-text)] mb-2">Invalid Invitation</h1>
           <p class="text-[var(--ds-text-subtle)] mb-8">{error}</p>
-          <Button variant="primary" onclick={() => navigate('/')}>
+          <Button variant="primary" dataTestid="invitation-back-to-login" onclick={() => navigate('/')}>
             Back to Login
           </Button>
         </div>
       {:else if success}
-        <div class="flex flex-col items-center py-12 text-center">
+        <div class="flex flex-col items-center py-12 text-center" data-testid="invitation-success">
           <div class="w-16 h-16 bg-[var(--ds-success-subtle)] rounded-full flex items-center justify-center mb-6 text-[var(--ds-text-success)]">
             <CheckCircle class="w-10 h-10" />
           </div>
           <h1 class="text-2xl font-bold text-[var(--ds-text)] mb-2">Password Set!</h1>
           <p class="text-[var(--ds-text-subtle)] mb-8">Your account has been activated. Redirecting you to the login page...</p>
-          <Button variant="primary" onclick={() => navigate('/')}>
+          <Button variant="primary" dataTestid="invitation-login-now" onclick={() => navigate('/')}>
             Login Now
           </Button>
         </div>
@@ -120,12 +131,14 @@
 
           <form onsubmit={handleSubmit} class="space-y-6">
             <TextField
+              id="invitation-email"
               label="Email Address"
               value={user.email}
               disabled
             />
 
             <TextField
+              id="invitation-password"
               label="New Password"
               type="password"
               bind:value={password}
@@ -135,6 +148,7 @@
             />
 
             <TextField
+              id="invitation-confirm-password"
               label="Confirm Password"
               type="password"
               bind:value={confirmPassword}
@@ -155,6 +169,7 @@
               class="w-full"
               disabled={!canSubmit}
               loading={isSubmitting}
+              dataTestid="invitation-activate"
             >
               Activate Account
             </Button>

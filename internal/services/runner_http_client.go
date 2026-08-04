@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"windshift/internal/utils"
 )
 
 // Wire DTOs for the remote-runner control plane (Initiative WI-141). Shared
@@ -127,7 +129,7 @@ type HTTPOrchestratorClient struct {
 // runner credential. A nil hc uses a default client with a sane timeout.
 func NewHTTPOrchestratorClient(baseURL, credential string, hc *http.Client) *HTTPOrchestratorClient {
 	if hc == nil {
-		hc = &http.Client{Timeout: 60 * time.Second}
+		hc = utils.NewHTTPClient(60 * time.Second)
 	}
 	return &HTTPOrchestratorClient{
 		baseURL:    strings.TrimRight(baseURL, "/"),
@@ -142,7 +144,7 @@ func NewHTTPOrchestratorClient(baseURL, credential string, hc *http.Client) *HTT
 // once on deploy, before constructing an authenticated client.
 func RegisterRunner(ctx context.Context, baseURL, registrationToken, name string, hc *http.Client) (*RegisterResponse, error) {
 	if hc == nil {
-		hc = &http.Client{Timeout: 30 * time.Second}
+		hc = utils.NewHTTPClient(30 * time.Second)
 	}
 	var out RegisterResponse
 	if err := doJSON(ctx, hc, strings.TrimRight(baseURL, "/")+"/runner/register", "",

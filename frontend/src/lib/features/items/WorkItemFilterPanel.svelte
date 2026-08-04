@@ -151,6 +151,7 @@
       </div>
     {:else}
       <div
+        data-testid={testId('search-open', 'work-item-search-open')}
         role="button"
         tabindex="0"
         onclick={openSearchModal}
@@ -263,6 +264,7 @@
       {t('collections.searchItemsTitle')}
     </h3>
     <input
+      data-testid={testId('search-input', 'work-item-search-modal-input')}
       type="text"
       bind:value={tempSearchQuery}
       placeholder={t('collections.enterSearchText')}
@@ -272,7 +274,7 @@
     <div class="flex justify-end gap-2 mt-4">
       <Button variant="ghost" size="sm" onclick={clearSearch}>{t('collections.clear')}</Button>
       <Button variant="ghost" size="sm" onclick={closeSearchModal}>{t('common.cancel')}</Button>
-      <Button variant="primary" size="sm" onclick={applySearch}>{t('collections.apply')}</Button>
+      <Button dataTestid={testId('search-apply', 'work-item-search-apply')} variant="primary" size="sm" onclick={applySearch}>{t('collections.apply')}</Button>
     </div>
   </div>
 </Modal>

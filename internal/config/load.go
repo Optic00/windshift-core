@@ -255,6 +255,9 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 			SyncInterval:  parseDurationEnv("NOTIFICATION_SYNC_INTERVAL", 0),
 			BatchInterval: parseDurationEnv("WINDSHIFT_NOTIFICATION_BATCH_INTERVAL", 0),
 		},
+		OutboundTLS: OutboundTLSConfig{
+			SkipVerify: parseBoolEnv("TLS_SKIP_VERIFY"),
+		},
 		Push: PushConfig{
 			VAPIDPublicKey:  os.Getenv("VAPID_PUBLIC_KEY"),
 			VAPIDPrivateKey: os.Getenv("VAPID_PRIVATE_KEY"),

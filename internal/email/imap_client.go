@@ -53,17 +53,15 @@ func Connect(opts ConnectOptions) (*Client, error) {
 	if opts.Timeout == 0 {
 		opts.Timeout = 30 * time.Second
 	}
-	tlsConfig := &tls.Config{
-		ServerName: opts.Host,
-		MinVersion: tls.VersionTLS12,
-	}
+	tlsConfig := utils.OutboundTLSConfig(opts.Host)
 	return connectWithDialer(opts, utils.SafeNetDialer(opts.Timeout), tlsConfig)
 }
 
 // connectWithDialer contains the protocol setup shared by Connect and the
 // in-process IMAP integration tests. Connect always supplies the SSRF-safe
-// dialer and system-root TLS config; tests can supply a loopback dialer and a
-// private test CA without weakening the production entry point.
+// dialer and shared outbound TLS policy (system roots unless the operator
+// explicitly disables verification); tests can supply a loopback dialer and a
+// private test CA without changing that production policy.
 func connectWithDialer(opts ConnectOptions, dialer *net.Dialer, tlsConfig *tls.Config) (*Client, error) {
 	if opts.Timeout == 0 {
 		opts.Timeout = 30 * time.Second

@@ -267,7 +267,7 @@
   }
 </script>
 
-<div class="space-y-6">
+<div class="space-y-6" data-testid="workspace-scm-settings">
   <!-- Header -->
   <div class="flex items-center justify-between">
     <div class="flex items-center gap-3">
@@ -291,6 +291,7 @@
         <div class="flex flex-wrap gap-2">
           {#each availableProviders as provider}
             <div
+              data-testid={`scm-provider-${provider.id}`}
               class="flex items-center gap-2 px-3 py-2 rounded-lg border text-sm"
               style="border-color: var(--ds-border); background-color: var(--ds-surface-raised);"
             >
@@ -308,7 +309,7 @@
                   Connected
                 </span>
               {:else}
-                <Button size="xs" variant="ghost" onclick={() => connectProvider(provider)}>
+                <Button dataTestid={`scm-connect-${provider.id}`} size="xs" variant="ghost" onclick={() => connectProvider(provider)}>
                   <Plus class="w-3 h-3 mr-1" />
                   Connect
                 </Button>
@@ -333,7 +334,7 @@
         <h4 class="text-sm font-medium" style="color: var(--ds-text);">Connected Providers</h4>
 
         {#each connections as conn}
-          <div class="rounded-lg border overflow-hidden" style="border-color: var(--ds-border); background-color: var(--ds-surface-raised);">
+          <div data-testid={`scm-connection-${conn.id}`} class="rounded-lg border overflow-hidden" style="border-color: var(--ds-border); background-color: var(--ds-surface-raised);">
             <!-- Connection Header -->
             <div
               class="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-opacity-50"
@@ -382,6 +383,7 @@
                 <div class="rounded-md p-3" style="background-color: var(--ds-surface);">
                   <label class="flex items-start gap-3 cursor-pointer">
                     <input
+                      data-testid={`scm-smart-commits-${conn.id}`}
                       type="checkbox"
                       class="mt-0.5"
                       checked={conn.smart_commits_enabled}

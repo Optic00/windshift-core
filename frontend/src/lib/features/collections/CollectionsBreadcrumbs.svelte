@@ -135,6 +135,7 @@
       {#if isEditing && collection}
         <!-- Editable collection name -->
         <input
+          data-testid="collection-name"
           type="text"
           value={collection.name}
           oninput={handleNameChange}
@@ -263,6 +264,7 @@
         </Button>
       {/if}
       <Button
+        dataTestid="collection-save"
         onclick={handleSave}
         variant="primary"
         size="sm"

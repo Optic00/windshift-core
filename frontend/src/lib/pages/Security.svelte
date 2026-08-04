@@ -225,6 +225,10 @@
 		}
 	}
 
+	function getCredentialName(credential) {
+		return credential.name || credential.credential_name || '';
+	}
+
 	function getCredentialTypeName(type) {
 		switch (type) {
 			case 'fido':
@@ -264,7 +268,7 @@
 	}
 </script>
 
-<div class="max-w-4xl mx-auto space-y-6">
+<div class="max-w-4xl mx-auto space-y-6" data-testid="security-page">
 	<PageHeader icon={Shield} title={t('security.title')} subtitle={t('security.subtitle')} />
 
 	<!-- Enrollment Banner -->
@@ -321,6 +325,7 @@
 						icon={Plus}
 						size="medium"
 						keyboardHint="A"
+						dataTestid="security-add-credential"
 						hotkeyConfig={{ key: toHotkeyString('security', 'addCredential'), guard: () => !showAddCredential && !showAddToken && !showChangePassword }}
 					>
 						{t('common.add')}
@@ -333,11 +338,11 @@
 		<div class="space-y-3">
 			{#each credentials as credential}
 				{@const CredIcon = getCredentialIcon(credential.credential_type)}
-				<div class="flex items-center justify-between p-4 border rounded hover-bg" style="border-color: var(--ds-border);">
+				<div class="flex items-center justify-between p-4 border rounded hover-bg" style="border-color: var(--ds-border);" data-testid="security-credential-row">
 					<div class="flex items-center space-x-3">
 						<CredIcon class="h-6 w-6" style="color: var(--ds-icon-subtle);" />
 						<div>
-							<div class="font-medium" style="color: var(--ds-text);">{credential.name}</div>
+							<div class="font-medium" style="color: var(--ds-text);" data-testid="security-credential-name">{getCredentialName(credential)}</div>
 							<div class="text-sm" style="color: var(--ds-text-subtle);">
 								{getCredentialTypeName(credential.credential_type)} • Added {formatDateShort(credential.created_at) || '-'}
 							</div>
@@ -347,7 +352,8 @@
 						variant="default"
 						size="small"
 						icon={Trash2}
-						onclick={() => confirmRemoveCredential(credential.id, credential.name)}
+						onclick={() => confirmRemoveCredential(credential.id, getCredentialName(credential))}
+						dataTestid="security-credential-remove"
 					>
 						{t('common.remove')}
 					</Button>
@@ -543,7 +549,7 @@
 </Modal>
 
 <!-- Add Credential Modal -->
-<Modal isOpen={showAddCredential} onclose={() => securityStore.resetCredentialForm()} maxWidth="max-w-lg">
+<Modal isOpen={showAddCredential} onclose={() => securityStore.resetCredentialForm()} maxWidth="max-w-lg" dataTestid="security-credential-modal">
 	<div class="p-6">
 		<h3 class="text-xl font-semibold mb-6" style="color: var(--ds-text);">
 			Add Security Credential
@@ -625,6 +631,7 @@
 				variant="primary"
 				onclick={credentialType === 'fido' ? startFIDORegistration : createSSHKey}
 				disabled={!newCredentialName.trim() || (credentialType === 'ssh' && !newSSHPublicKey.trim()) || enrollingFIDO || loading}
+				dataTestid="security-register-credential"
 				keyboardHint="⏎"
 			>
 				{#if credentialType === 'fido'}

@@ -77,9 +77,10 @@ type pageUpdateRequest struct {
 }
 
 type pageMoveRequest struct {
-	ParentID      *int `json:"parent_id"`
-	PrevSiblingID *int `json:"prev_sibling_id,omitempty"`
-	NextSiblingID *int `json:"next_sibling_id,omitempty"`
+	DestinationWorkspaceID *int `json:"destination_workspace_id,omitempty"`
+	ParentID               *int `json:"parent_id"`
+	PrevSiblingID          *int `json:"prev_sibling_id,omitempty"`
+	NextSiblingID          *int `json:"next_sibling_id,omitempty"`
 }
 
 type pageGrantPermissionRequest struct {
@@ -419,7 +420,7 @@ func (h *PageHandler) Move(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
-	moved, err := h.application.Move(h.auditActor(r, user), wsID, pageID, req.ParentID, req.PrevSiblingID, req.NextSiblingID)
+	moved, err := h.application.Move(h.auditActor(r, user), wsID, pageID, req.DestinationWorkspaceID, req.ParentID, req.PrevSiblingID, req.NextSiblingID)
 	if err != nil {
 		h.respondPageServiceError(w, r, err)
 		return

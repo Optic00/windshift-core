@@ -229,7 +229,9 @@
 
     <!-- Error Messages -->
     {#if ssoError}
-      <AlertBox variant="error" message={ssoError} class="mb-4" />
+      <div data-testid="login-sso-error">
+        <AlertBox variant="error" message={ssoError} class="mb-4" />
+      </div>
     {/if}
 
     {#if ssoRequiredMessage}
@@ -268,6 +270,7 @@
           fullWidth={true}
           onclick={handleSSOLogin}
           disabled={$authStore.loading}
+          dataTestid="login-sso"
         >
           <LogIn class="w-4 h-4 mr-2" />
           {t('auth.continueWith', { provider: $ssoStore.providerName || 'SSO' })}
@@ -280,6 +283,7 @@
               fullWidth={true}
               onclick={() => handleSSOLoginForProvider(provider)}
               disabled={$authStore.loading}
+              dataTestid={`login-sso-${provider.slug}`}
             >
               <LogIn class="w-4 h-4 mr-2" />
               {t('auth.continueWith', { provider: provider.name || 'SSO' })}
@@ -351,6 +355,7 @@
           disabled={$authStore.loading || tryingFido || !emailOrUsername.trim()}
           onclick={handleFidoLogin}
           class="mt-4"
+          dataTestid="login-passkey"
         >
           {#if !tryingFido}
             <Key class="w-4 h-4 mr-2" />
@@ -449,6 +454,7 @@
           loading={tryingFido}
           disabled={$authStore.loading || tryingFido || !emailOrUsername.trim()}
           onclick={handleFidoLogin}
+          dataTestid="login-passkey"
         >
           {#if !tryingFido}
             <svg class="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">

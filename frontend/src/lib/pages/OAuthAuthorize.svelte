@@ -120,6 +120,7 @@
 	<div
 		class="min-h-screen flex items-center justify-center px-4 py-10"
 		style="background-color: var(--ds-surface);"
+		data-testid="oauth-authorize-error"
 	>
 		<div
 			class="w-full max-w-lg rounded-lg border p-6 shadow-sm"

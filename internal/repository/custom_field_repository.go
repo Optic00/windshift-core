@@ -2,6 +2,7 @@ package repository
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -173,13 +174,155 @@ func (r *CustomFieldRepository) UpdateOptions(id int64, optionsJSON string) erro
 	return nil
 }
 
-// Delete removes the custom field definition row.
+// Delete removes the custom field definition and its layout references in one
+// transaction. screen_fields stores custom field IDs as text, while board
+// configurations keep them inside JSON, so neither can rely on a foreign-key
+// cascade from custom_field_definitions.
 func (r *CustomFieldRepository) Delete(id int) error {
-	_, err := r.db.ExecWrite("DELETE FROM custom_field_definitions WHERE id = ?", id)
+	return database.WithTx(r.db, func(tx database.Tx) error {
+		if _, err := tx.ExecWrite(`
+			DELETE FROM screen_fields
+			WHERE field_type = 'custom' AND field_identifier = ?
+		`, strconv.Itoa(id)); err != nil {
+			return fmt.Errorf("delete custom field screen references: %w", err)
+		}
+
+		if err := removeCustomFieldBoardReferences(tx, id); err != nil {
+			return err
+		}
+
+		if _, err := tx.ExecWrite("DELETE FROM custom_field_definitions WHERE id = ?", id); err != nil {
+			return fmt.Errorf("delete custom field: %w", err)
+		}
+		return nil
+	})
+}
+
+type customFieldBoardReferenceRow struct {
+	id            int
+	listColumns   sql.NullString
+	cardFields    sql.NullString
+	roadmapConfig sql.NullString
+}
+
+func removeCustomFieldBoardReferences(tx database.Tx, fieldID int) error {
+	rows, err := tx.Query(`
+		SELECT id, list_columns, card_fields, roadmap_config
+		FROM board_configurations
+	`)
 	if err != nil {
-		return fmt.Errorf("delete custom field: %w", err)
+		return fmt.Errorf("list board configurations for custom field cleanup: %w", err)
 	}
+
+	var configs []customFieldBoardReferenceRow
+	for rows.Next() {
+		var config customFieldBoardReferenceRow
+		if err := rows.Scan(&config.id, &config.listColumns, &config.cardFields, &config.roadmapConfig); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan board configuration for custom field cleanup: %w", err)
+		}
+		configs = append(configs, config)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("iterate board configurations for custom field cleanup: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close board configurations for custom field cleanup: %w", err)
+	}
+
+	for _, config := range configs {
+		listColumns, listChanged := removeCustomFieldListEntries(config.listColumns, fieldID)
+		cardFields, cardsChanged := removeCustomFieldListEntries(config.cardFields, fieldID)
+		roadmapConfig, roadmapChanged := removeCustomFieldRoadmapEntries(config.roadmapConfig, fieldID)
+		if !listChanged && !cardsChanged && !roadmapChanged {
+			continue
+		}
+
+		if _, err := tx.ExecWrite(`
+			UPDATE board_configurations
+			SET list_columns = ?, card_fields = ?, roadmap_config = ?, updated_at = ?
+			WHERE id = ?
+		`, listColumns, cardFields, roadmapConfig, time.Now(), config.id); err != nil {
+			return fmt.Errorf("update board configuration %d for custom field cleanup: %w", config.id, err)
+		}
+	}
+
 	return nil
+}
+
+func removeCustomFieldListEntries(raw sql.NullString, fieldID int) (sql.NullString, bool) {
+	if !raw.Valid || raw.String == "" {
+		return raw, false
+	}
+
+	var entries []json.RawMessage
+	if err := json.Unmarshal([]byte(raw.String), &entries); err != nil {
+		return raw, false
+	}
+
+	kept := make([]json.RawMessage, 0, len(entries))
+	removed := false
+	for _, entry := range entries {
+		var reference struct {
+			FieldIdentifier string `json:"field_identifier"`
+			FieldType       string `json:"field_type"`
+		}
+		if err := json.Unmarshal(entry, &reference); err == nil &&
+			reference.FieldType == "custom" &&
+			isCustomFieldConfigIdentifier(reference.FieldIdentifier, fieldID) {
+			removed = true
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	if !removed {
+		return raw, false
+	}
+
+	encoded, err := json.Marshal(kept)
+	if err != nil {
+		return raw, false
+	}
+	return sql.NullString{String: string(encoded), Valid: true}, true
+}
+
+func removeCustomFieldRoadmapEntries(raw sql.NullString, fieldID int) (sql.NullString, bool) {
+	if !raw.Valid || raw.String == "" {
+		return raw, false
+	}
+
+	var config map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw.String), &config); err != nil {
+		return raw, false
+	}
+
+	changed := false
+	for _, key := range []string{"start_field_id", "end_field_id"} {
+		encoded, ok := config[key]
+		if !ok {
+			continue
+		}
+		var identifier string
+		if err := json.Unmarshal(encoded, &identifier); err == nil && isCustomFieldConfigIdentifier(identifier, fieldID) {
+			config[key] = json.RawMessage(`""`)
+			changed = true
+		}
+	}
+	if !changed {
+		return raw, false
+	}
+
+	encoded, err := json.Marshal(config)
+	if err != nil {
+		return raw, false
+	}
+	return sql.NullString{String: string(encoded), Valid: true}, true
+}
+
+func isCustomFieldConfigIdentifier(identifier string, fieldID int) bool {
+	id := strconv.Itoa(fieldID)
+	return identifier == id || identifier == "custom_field_"+id || identifier == "cf_"+id
 }
 
 // --- asset_type_fields ------------------------------------------------------

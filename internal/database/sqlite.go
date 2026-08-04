@@ -3,6 +3,8 @@ package database
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -194,18 +196,49 @@ func (s *SQLiteDB) Close() error {
 	return s.DB.Close()
 }
 
-// Initialize sets up the database schema. Runs the legacy bootstrap in
-// DB.Initialize first, then the catalog-based migrations (see
-// internal/database/migrations.go). Catalog migrations need the Database
-// interface, which only this wrapper implements — the underlying *DB
-// exposes the embedded *sql.DB's Begin, not the wrapped Tx.
+// Initialize sets up the database schema and applies the ordered catalog.
 func (s *SQLiteDB) Initialize() error {
-	if err := s.DB.Initialize(); err != nil {
-		return err
-	}
-	if err := runPendingMigrations(s, Catalog); err != nil {
+	if err := initializeSQLiteDatabase(s); err != nil {
 		return err
 	}
 	createDeferredSQLiteCustomFieldIndexes(s)
+	return nil
+}
+
+func initializeSQLiteDatabase(db *SQLiteDB) error {
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			version    TEXT PRIMARY KEY,
+			name       TEXT NOT NULL,
+			checksum   TEXT NOT NULL DEFAULT '',
+			applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
+	`); err != nil {
+		return fmt.Errorf("failed to bootstrap schema_migrations: %w", err)
+	}
+
+	var tableCount int
+	if err := db.QueryRow(`
+		SELECT COUNT(name) FROM sqlite_master
+		WHERE type='table' AND name IN ('workspaces', 'items', 'users', 'workflows')
+	`).Scan(&tableCount); err != nil {
+		return fmt.Errorf("failed to check database initialization: %w", err)
+	}
+
+	if tableCount < 4 {
+		schema := coreSchema + itemsSchema + requestTypeSchema + usersSchema + testsSchema + workspaceSchema + configWorkflowsSchema + timeTrackingSchema + channelsSchema + portalSchema + portalAuthSchema + portalWebauthnSchema + milestonesSchema + iterationsSchema + contentSchema + mentionsSchema + notificationsSchema + permissionsSchema + systemSchema + userPreferencesSchema + webauthnSchema + ssoSchema + scmSchema + assetsSchema + recurringTasksSchema + jiraImportSchema + actionsSchema + emailSchema + assetReportsSchema + labelsSchema + templatesSchema + llmSchema + ldapSchema + assetActionsSchema + dailyBriefingsSchema + teamsSchema + conditionSetsSchema + approvalsSchema + integrationsSchema + authPolicySchema + pagesSchema + pageLabelsSchema + agentsSchema
+		if _, err := db.Exec(schema); err != nil {
+			return fmt.Errorf("failed to initialize database schema: %w", err)
+		}
+		if err := db.initializeDefaultData(); err != nil {
+			return fmt.Errorf("failed to initialize default data: %w", err)
+		}
+	} else if _, err := db.Exec("PRAGMA optimize=0x10002"); err != nil {
+		slog.Warn("PRAGMA optimize failed (may be using older SQLite)", slog.String("component", "database"), slog.Any("error", err))
+	}
+
+	if err := runPendingMigrations(db, Catalog); err != nil {
+		return fmt.Errorf("apply database migrations: %w", err)
+	}
 	return nil
 }

@@ -52,6 +52,7 @@ type Config struct {
 	CodingAgent  CodingAgentConfig
 	Logbook      LogbookConfig
 	Notification NotificationConfig
+	OutboundTLS  OutboundTLSConfig
 	Push         PushConfig
 	Jira         JiraConfig
 	Memory       MemoryConfig
@@ -178,6 +179,15 @@ type NotificationConfig struct {
 	BatchInterval time.Duration
 }
 
+// OutboundTLSConfig controls process-wide certificate verification for
+// outbound TLS connections.
+type OutboundTLSConfig struct {
+	// SkipVerify permits self-signed or otherwise untrusted certificates. It is
+	// intentionally disabled by default because enabling it removes server
+	// identity verification from outbound TLS connections.
+	SkipVerify bool
+}
+
 // PushConfig holds Web Push (VAPID) configuration. Push is enabled only when
 // both keys are present; otherwise the push endpoints and dispatch are no-ops
 // and the mobile UI hides the enable-notifications affordance.
@@ -214,4 +224,5 @@ type LogbookSidecarConfig struct {
 	MainServerSecret string
 	BaseURL          string
 	Logging          LoggingConfig
+	OutboundTLS      OutboundTLSConfig
 }

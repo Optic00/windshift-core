@@ -22,6 +22,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/utils"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
 )
@@ -327,7 +328,8 @@ func newPushService(db database.Database, cfg config.PushConfig, serviceCfg Push
 		cfg:        cfg,
 		serviceCfg: serviceCfg,
 		httpClient: &http.Client{
-			Timeout: serviceCfg.HTTPTimeout,
+			Timeout:   serviceCfg.HTTPTimeout,
+			Transport: utils.ConfigureHTTPTransport(nil),
 			// Redirects re-run the endpoint SSRF policy so a validated
 			// endpoint cannot bounce delivery to an internal address.
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {

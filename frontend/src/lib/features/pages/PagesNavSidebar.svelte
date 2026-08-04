@@ -1,7 +1,7 @@
 <script>
   import { onDestroy, untrack } from 'svelte';
   import { draggable, dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter';
-  import { attachClosestEdge, extractClosestEdge } from '@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge';
+  import { attachInstruction, extractInstruction } from '@atlaskit/pragmatic-drag-and-drop-hitbox/tree-item';
   import { isSelfOrDescendant } from './pageHierarchy.js';
   import { api } from '../../api.js';
   import { navigate, currentRoute } from '../../router.js';
@@ -42,8 +42,8 @@
   let permsDialogOpen = $state(false);
   let permsDialogPage = $state(null);
   let dndState = $state(new Map());
-  let setupTimeout;
-  let setupCleanups = [];
+  let dwellExpandTimer;
+  let dwellExpandPageId = null;
 
   // Cache of workspace labels keyed by id. Populated lazily on first
   // page-tree load by walking the preloaded `labels` arrays on each page.
@@ -332,7 +332,7 @@
   });
 
   onDestroy(() => {
-    cleanupDnd();
+    clearDwellExpand();
   });
 
   // Initial load + external refresh in one effect. Reading
@@ -356,19 +356,6 @@
       node.title = r.title;
       pages = pages;
     }
-  });
-
-  // Re-wire DnD whenever the rendered tree changes. The timeout matches
-  // BoardConfigurationPage's pattern: the DOM nodes need to mount before
-  // pragmatic-drag-and-drop can attach. We depend on `visibleRows`, not
-  // `pages`, because expanding/collapsing a subtree (or filtering) now
-  // adds/removes rows from the DOM without changing `pages` itself — the
-  // newly-rendered rows need handlers wired too.
-  $effect(() => {
-    visibleRows;
-    if (typeof document === 'undefined') return;
-    if (setupTimeout) clearTimeout(setupTimeout);
-    setupTimeout = setTimeout(() => setupDnd(), 50);
   });
 
   async function loadTree() {
@@ -487,81 +474,129 @@
 
   // --- DnD ---
 
-  function cleanupDnd() {
-    if (setupTimeout) clearTimeout(setupTimeout);
-    setupCleanups.forEach((fn) => fn());
-    setupCleanups = [];
-    dndState = new Map();
+  function clearDwellExpand(pageId = null) {
+    if (pageId != null && dwellExpandPageId !== pageId) return;
+    if (dwellExpandTimer) clearTimeout(dwellExpandTimer);
+    dwellExpandTimer = undefined;
+    dwellExpandPageId = null;
   }
 
-  function setupDnd() {
-    cleanupDnd();
-    const lookup = pageById;
-    /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('[data-page-row]')).forEach((element) => {
-      const pageId = Number(element.dataset.pageRow);
-      const page = lookup.get(pageId);
-      if (!page) return;
+  function instructionDropMode(instruction) {
+    if (instruction?.type === 'reorder-above') return 'top';
+    if (instruction?.type === 'reorder-below') return 'bottom';
+    if (instruction?.type === 'make-child') return 'child';
+    return null;
+  }
 
-      dndState.set(pageId, { closestEdge: null, over: false });
+  function scheduleDwellExpand(pageId, dropMode) {
+    const canExpand =
+      dropMode === 'child' &&
+      (childCountById.get(pageId) || 0) > 0 &&
+      !expandedIds.has(pageId);
+    if (!canExpand) {
+      clearDwellExpand(pageId);
+      return;
+    }
+    if (dwellExpandPageId === pageId && dwellExpandTimer) return;
 
-      const dragCleanup = draggable({
-        element,
-        getInitialData: () => ({ type: 'page', pageId, parentId: page.parent_id ?? null }),
-        onDragStart: () => {
-          element.style.opacity = '0.5';
-        },
-        onDrop: () => {
-          element.style.opacity = '';
-          dndState = new Map();
-        },
-      });
+    clearDwellExpand();
+    dwellExpandPageId = pageId;
+    dwellExpandTimer = setTimeout(() => {
+      const next = new Set(expandedIds);
+      next.add(pageId);
+      expandedIds = next;
+      persistExpanded();
+      dwellExpandTimer = undefined;
+      dwellExpandPageId = null;
+    }, 500);
+  }
 
-      const dropCleanup = dropTargetForElements({
-        element,
-        canDrop: ({ source }) => {
-          if (source.data.type !== 'page') return false;
-          // Forbid dropping a page onto itself or any of its own descendants.
-          if (source.data.pageId === pageId) return false;
-          const dragged = lookup.get(source.data.pageId);
-          // Source row not in the current tree slice: the self-check above
-          // is all we can enforce here, and the backend answers 409 on a
-          // cycle regardless.
-          return !dragged || !isSelfOrDescendant(page, dragged);
-        },
-        getData: ({ input, element: el }) =>
-          attachClosestEdge({}, { input, element: el, allowedEdges: ['top', 'bottom'] }),
-        onDragEnter: ({ self }) => {
-          const closestEdge = extractClosestEdge(self.data);
-          dndState.set(pageId, { closestEdge, over: true });
-          dndState = new Map(dndState);
-        },
-        onDragLeave: () => {
-          dndState.set(pageId, { closestEdge: null, over: false });
-          dndState = new Map(dndState);
-        },
-        onDrop: ({ self, source }) => {
-          const closestEdge = extractClosestEdge(self.data);
-          dndState = new Map();
-          handleDrop(source.data.pageId, pageId, closestEdge);
-        },
-      });
+  function updateDropState(pageId, instruction) {
+    const dropMode = instructionDropMode(instruction);
+    dndState.set(pageId, { dropMode, over: dropMode !== null });
+    dndState = new Map(dndState);
+    scheduleDwellExpand(pageId, dropMode);
+  }
 
-      setupCleanups.push(() => {
+  function wirePageDnd(element, pageId) {
+    const dragCleanup = draggable({
+      element,
+      getInitialData: () => {
+        const page = pageById.get(pageId);
+        return { type: 'page', pageId, parentId: page?.parent_id ?? null };
+      },
+      onDragStart: () => {
+        element.style.opacity = '0.5';
+      },
+      onDrop: () => {
+        element.style.opacity = '';
+        clearDwellExpand();
+        dndState = new Map();
+      },
+    });
+
+    const dropCleanup = dropTargetForElements({
+      element,
+      canDrop: ({ source }) => {
+        if (source.data.type !== 'page') return false;
+        // Forbid dropping a page onto itself or any of its own descendants.
+        if (source.data.pageId === pageId) return false;
+        const page = pageById.get(pageId);
+        const dragged = pageById.get(source.data.pageId);
+        if (!page) return false;
+        // Source row not in the current tree slice: the self-check above
+        // is all we can enforce here, and the backend answers 409 on a
+        // cycle regardless.
+        return !dragged || !isSelfOrDescendant(page, dragged);
+      },
+      getData: ({ input, element: target }) => {
+        const page = pageById.get(pageId);
+        return attachInstruction({}, {
+          input,
+          element: target,
+          currentLevel: page?.depth ?? 0,
+          indentPerLevel: 12,
+          mode: 'standard',
+        });
+      },
+      onDragEnter: ({ self }) => {
+        updateDropState(pageId, extractInstruction(self.data));
+      },
+      onDrag: ({ self }) => {
+        updateDropState(pageId, extractInstruction(self.data));
+      },
+      onDragLeave: () => {
+        clearDwellExpand(pageId);
+        dndState.set(pageId, { dropMode: null, over: false });
+        dndState = new Map(dndState);
+      },
+      onDrop: ({ self, source }) => {
+        const dropMode = instructionDropMode(extractInstruction(self.data));
+        clearDwellExpand(pageId);
+        dndState = new Map();
+        handleDrop(source.data.pageId, pageId, dropMode);
+      },
+    });
+
+    return {
+      destroy() {
+        clearDwellExpand(pageId);
+        element.style.opacity = '';
         dragCleanup();
         dropCleanup();
-      });
-    });
+      },
+    };
   }
 
-  async function handleDrop(draggedId, targetId, closestEdge) {
-    if (draggedId === targetId) return;
+  async function handleDrop(draggedId, targetId, dropMode) {
+    if (draggedId === targetId || !dropMode) return;
     const target = pageById.get(targetId);
     if (!target) return;
     let newParentId;
     let prevSiblingId = null;
     let nextSiblingId = null;
 
-    if (closestEdge === 'top' || closestEdge === 'bottom') {
+    if (dropMode === 'top' || dropMode === 'bottom') {
       // Sibling drop: parent of dropped page becomes parent of target.
       newParentId = target.parent_id ?? null;
       // Identify the target's siblings (children of newParentId, in
@@ -571,7 +606,7 @@
       const siblings = pages.filter((p) => (p.parent_id ?? null) === newParentId);
       const targetIdx = siblings.findIndex((p) => p.id === targetId);
       if (targetIdx === -1) return;
-      if (closestEdge === 'top') {
+      if (dropMode === 'top') {
         nextSiblingId = target.id;
         prevSiblingId = targetIdx > 0 ? siblings[targetIdx - 1].id : null;
       } else {
@@ -584,8 +619,8 @@
       if (prevSiblingId === draggedId) prevSiblingId = null;
       if (nextSiblingId === draggedId) nextSiblingId = null;
     } else {
-      // Drop on the row body (no closest-edge match): make the dragged
-      // page a child of the target. Position is "end of list" — server
+      // Drop on the row body's middle band: make the dragged page a child
+      // of the target. Position is "end of list" — server
       // computes a frac_index after the last existing child.
       newParentId = targetId;
     }
@@ -755,7 +790,7 @@
   {:else}
     <ul class="tree" data-testid="page-tree">
       {#each visibleRows as page (page.id)}
-        {@const edge = dndState.get(page.id)?.closestEdge}
+        {@const dropMode = dndState.get(page.id)?.dropMode}
         {@const isOver = dndState.get(page.id)?.over}
         {@const hasChildren = (childCountById.get(page.id) || 0) > 0}
         {@const isExpanded = expandedIds.has(page.id)}
@@ -765,14 +800,16 @@
         <li
           class="tree-item"
           class:active={activePageId === page.id}
-          class:drop-top={edge === 'top'}
-          class:drop-bottom={edge === 'bottom'}
-          class:drop-on={isOver && !edge}
+          class:drop-top={dropMode === 'top'}
+          class:drop-bottom={dropMode === 'bottom'}
+          class:drop-on={dropMode === 'child'}
           class:dimmed
+          use:wirePageDnd={page.id}
           data-page-row={page.id}
           data-testid={`page-tree-item-${page.id}`}
           data-page-id={page.id}
           data-expanded={hasChildren ? String(isExpanded) : undefined}
+          data-drop-mode={isOver ? dropMode : undefined}
           style="padding-left: {1 + page.depth * 0.75}rem"
         >
           {#if hasChildren}

@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"windshift/internal/utils"
 )
 
 const maxOAuthResponseBytes = 1 << 20
@@ -34,7 +36,7 @@ func fetchOAuthJSON(ctx context.Context, endpoint, accessToken string, target an
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
-	httpClient := &http.Client{Timeout: 30 * time.Second}
+	httpClient := utils.NewHTTPClient(30 * time.Second)
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("user info request failed: %w", err)
@@ -65,7 +67,7 @@ func exchangeOAuthToken(ctx context.Context, tokenURL string, params url.Values)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	httpClient := &http.Client{Timeout: 30 * time.Second}
+	httpClient := utils.NewHTTPClient(30 * time.Second)
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("token request failed: %w", err)

@@ -231,12 +231,13 @@ CREATE TABLE IF NOT EXISTS scm_milestone_processed_commits (
 );
 
 -- SCM Processed Refs (idempotency ledger for tag / release-branch sync events)
+-- migration: cutover_postgres_timestamp_timezone
 CREATE TABLE IF NOT EXISTS scm_processed_refs (
 	workspace_repository_id INTEGER NOT NULL,
 	ref_type                TEXT NOT NULL,  -- 'tag' | 'branch'
 	ref_name                TEXT NOT NULL,
 	sha                     TEXT,
-	processed_at            TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	processed_at            TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 	PRIMARY KEY (workspace_repository_id, ref_type, ref_name),
 	FOREIGN KEY (workspace_repository_id) REFERENCES workspace_repositories(id) ON DELETE CASCADE
 );

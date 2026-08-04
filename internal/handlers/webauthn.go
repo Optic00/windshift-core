@@ -21,6 +21,7 @@ import (
 	"windshift/internal/utils"
 	"windshift/internal/webauthn"
 
+	"github.com/go-webauthn/webauthn/protocol"
 	webauthnlib "github.com/go-webauthn/webauthn/webauthn"
 )
 
@@ -106,6 +107,14 @@ func padLoginCredentials(credentials []webauthnlib.Credential, decoyID func(int)
 		padded = append(padded, webauthnlib.Credential{ID: decoyID(len(padded))})
 	}
 	return padded
+}
+
+func credentialDescriptors(credentials []webauthnlib.Credential) []protocol.CredentialDescriptor {
+	descriptors := make([]protocol.CredentialDescriptor, len(credentials))
+	for i, credential := range credentials {
+		descriptors[i] = credential.Descriptor()
+	}
+	return descriptors
 }
 
 // FIDORegistrationRequestNew represents the request to start FIDO registration
@@ -508,24 +517,36 @@ func (h *WebAuthnHandler) StartFIDOLoginNew(w http.ResponseWriter, r *http.Reque
 	var storedUserID *int
 	if useSynthetic {
 		user = models.User{ID: 0, Email: "invalid@invalid", Username: "invalid"}
-		credentials = nil
 	} else {
 		storedUserID = &user.ID
 	}
 	decoySeed := strings.ToLower(strings.TrimSpace(req.EmailOrUsername))
-	credentials = padLoginCredentials(credentials, func(index int) []byte {
-		return h.sessionManager.DeriveOpaqueValue(
-			"webauthn-login-decoy",
-			decoySeed+":"+strconv.Itoa(index),
-		)
-	})
+	padCredentials := func(input []webauthnlib.Credential) []webauthnlib.Credential {
+		return padLoginCredentials(input, func(index int) []byte {
+			return h.sessionManager.DeriveOpaqueValue(
+				"webauthn-login-decoy",
+				decoySeed+":"+strconv.Itoa(index),
+			)
+		})
+	}
 
+	// Synthetic starts need decoys before BeginLogin because the library
+	// refuses a non-discoverable login with no credentials. Real users retain
+	// only their owned credentials in SessionData; decoys are added to the
+	// public response afterward so FinishLogin never treats them as owned.
+	beginCredentials := credentials
+	if useSynthetic {
+		beginCredentials = padCredentials(nil)
+	}
 	webAuthnUser := webauthn.NewUser(&user)
-	webAuthnUser.SetCredentials(credentials)
+	webAuthnUser.SetCredentials(beginCredentials)
 	options, sessionData, err := h.config.WebAuthn().BeginLogin(webAuthnUser)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
+	}
+	if !useSynthetic {
+		options.Response.AllowedCredentials = credentialDescriptors(padCredentials(credentials))
 	}
 
 	var sessionID string
@@ -637,6 +658,10 @@ func (h *WebAuthnHandler) CompleteFIDOLoginNew(w http.ResponseWriter, r *http.Re
 	// Finish authentication with go-webauthn (performs all verification)
 	credential, err := h.config.WebAuthn().FinishLogin(webAuthnUser, *sessionData, r)
 	if err != nil {
+		slog.Warn("failed to verify webauthn login assertion",
+			slog.String("component", "webauthn"),
+			slog.Int("user_id", user.ID),
+			slog.Any("error", err))
 		respondUnauthorized(w, r)
 		return
 	}

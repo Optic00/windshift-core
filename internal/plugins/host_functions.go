@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"windshift/internal/services"
+	"windshift/internal/utils"
 
 	extism "github.com/extism/go-sdk"
 )
@@ -117,7 +118,7 @@ func (m *Manager) httpFetchHostFunction(ctx context.Context, plugin *extism.Curr
 
 	client := m.httpClient
 	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
+		client = utils.NewHTTPClient(10 * time.Second)
 	}
 
 	timeout := m.pluginTimeout

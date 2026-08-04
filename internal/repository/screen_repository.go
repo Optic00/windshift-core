@@ -63,6 +63,7 @@ func (r *ScreenRepository) ListFields(screenID int) ([]ScreenFieldRow, error) {
 		FROM screen_fields sf
 		LEFT JOIN custom_field_definitions cfd ON sf.field_type = 'custom' AND (CASE WHEN sf.field_type = 'custom' THEN CAST(sf.field_identifier AS INTEGER) END) = cfd.id
 		WHERE sf.screen_id = ?
+		  AND (sf.field_type != 'custom' OR cfd.id IS NOT NULL)
 		ORDER BY sf.display_order, sf.id
 	`, screenID)
 	if err != nil {

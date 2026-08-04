@@ -40,9 +40,6 @@ var portalDraftsSchemaPostgres string
 //go:embed schema/milestones_postgres.sql
 var milestonesSchemaPostgres string
 
-//go:embed schema/milestones_existing_postgres.sql
-var milestonesExistingSchemaPostgres string
-
 //go:embed schema/iterations_postgres.sql
 var iterationsSchemaPostgres string
 
@@ -412,15 +409,8 @@ func (p *PostgresDB) Close() error {
 	return nil
 }
 
-// Initialize sets up the database schema
-// FIXME(human-review): This Postgres startup path is a very large migration/bootstrap
-// god function and mirrors substantial logic in database.go. Split bootstrap,
-// idempotent migrations, legacy shims, and default data into reviewable units.
+// Initialize sets up the PostgreSQL schema and applies the ordered catalog.
 func (p *PostgresDB) Initialize() error {
-	// Bootstrap the schema_migrations registry before any other DDL runs.
-	// Idempotent; works against fresh, existing, and partially-migrated DBs.
-	// Paired with the same DDL in schema/system_postgres.sql so fresh installs
-	// that run system_postgres.sql first get an identical table.
 	if _, err := p.db.Exec(`
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			version    TEXT PRIMARY KEY,
@@ -432,852 +422,45 @@ func (p *PostgresDB) Initialize() error {
 		return fmt.Errorf("failed to bootstrap schema_migrations: %w", err)
 	}
 
-	// Check if database is already initialized by checking for core tables.
-	// Use to_regclass so the probe follows the active search_path instead of
-	// hard-coding public; deployments may put Windshift in a dedicated schema.
 	var tableCount int
-	err := p.db.QueryRow(`
+	if err := p.db.QueryRow(`
 		SELECT COUNT(*)
 		FROM unnest(ARRAY['workspaces', 'items', 'users', 'workflows']) AS core_table(name)
 		WHERE to_regclass(core_table.name) IS NOT NULL
-	`).Scan(&tableCount)
-	if err != nil {
+	`).Scan(&tableCount); err != nil {
 		return fmt.Errorf("failed to check database initialization: %w", err)
 	}
 
-	// If all core tables exist, database is already initialized
-	if tableCount >= 4 {
-		// OAuth 2.0 server tables (oauth_clients, oauth_authorization_codes,
-		// oauth_refresh_tokens). Mirror of the SQLite block in database.go.
-		// Must run BEFORE the pgMigrations array below, because the
-		// oauth_client_id ALTER on users declares a FK against
-		// oauth_clients(id) — Postgres validates FK targets at ALTER time.
-		if _, err = p.db.Exec(`
-			CREATE TABLE IF NOT EXISTS oauth_clients (
-				id SERIAL PRIMARY KEY,
-				slug TEXT NOT NULL UNIQUE,
-				display_name TEXT NOT NULL,
-				client_id TEXT NOT NULL UNIQUE,
-				client_type TEXT NOT NULL,
-				client_secret_hash TEXT,
-				redirect_uris TEXT NOT NULL DEFAULT '[]',
-				allowed_scopes TEXT NOT NULL DEFAULT '[]',
-				enabled BOOLEAN NOT NULL DEFAULT true,
-				created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-				created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-				updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-			);
-			CREATE INDEX IF NOT EXISTS idx_oauth_clients_client_id ON oauth_clients(client_id);
-			CREATE INDEX IF NOT EXISTS idx_oauth_clients_enabled ON oauth_clients(enabled);
-
-			CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
-				id SERIAL PRIMARY KEY,
-				code TEXT NOT NULL UNIQUE,
-				client_id TEXT NOT NULL,
-				user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-				agent_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-				redirect_uri TEXT NOT NULL,
-				scopes TEXT NOT NULL DEFAULT '[]',
-				code_challenge TEXT,
-				code_challenge_method TEXT,
-				state TEXT,
-				expires_at TIMESTAMPTZ NOT NULL,
-				consumed_at TIMESTAMPTZ,
-				created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-			);
-			CREATE INDEX IF NOT EXISTS idx_oauth_authorization_codes_code ON oauth_authorization_codes(code);
-			CREATE INDEX IF NOT EXISTS idx_oauth_authorization_codes_expires_at ON oauth_authorization_codes(expires_at);
-
-			CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
-				id SERIAL PRIMARY KEY,
-				token_hash TEXT NOT NULL UNIQUE,
-				api_token_id INTEGER NOT NULL REFERENCES api_tokens(id) ON DELETE CASCADE,
-				client_id TEXT NOT NULL,
-				user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-				agent_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-				scopes TEXT NOT NULL DEFAULT '[]',
-				expires_at TIMESTAMPTZ NOT NULL,
-				revoked_at TIMESTAMPTZ,
-				rotated_to_id INTEGER REFERENCES oauth_refresh_tokens(id) ON DELETE SET NULL,
-				created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-			);
-			CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_token_hash ON oauth_refresh_tokens(token_hash);
-			CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_api_token_id ON oauth_refresh_tokens(api_token_id);
-			CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_expires_at ON oauth_refresh_tokens(expires_at);
-		`); err != nil {
-			slog.Warn("oauth server tables postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Audit log table. Mirror of internal/database/schema/system_postgres.sql.
-		// Pre-system_postgres.sql installations would otherwise fail every audit
-		// write; ~80 callers discard LogAudit's error so the loss is invisible.
-		// Column adds for newer audit fields go in pgMigrations below.
-		if _, err = p.db.Exec(`
-			CREATE TABLE IF NOT EXISTS audit_logs (
-				id SERIAL PRIMARY KEY,
-				timestamp TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-				user_id INTEGER,
-				username TEXT NOT NULL,
-				ip_address TEXT,
-				user_agent TEXT,
-				action_type TEXT NOT NULL,
-				resource_type TEXT NOT NULL,
-				resource_id INTEGER,
-				resource_name TEXT,
-				details TEXT,
-				success BOOLEAN NOT NULL DEFAULT TRUE,
-				error_message TEXT,
-				FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
-			);
-			CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp);
-			CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id);
-			CREATE INDEX IF NOT EXISTS idx_audit_logs_action_type ON audit_logs(action_type);
-			CREATE INDEX IF NOT EXISTS idx_audit_logs_resource_type ON audit_logs(resource_type);
-		`); err != nil {
-			slog.Warn("audit_logs postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// The legacy column-add migrations slice + log-and-continue loop
-		// have been removed. All entries are now in the catalog
-		// (internal/database/catalog.go, columnAddMigrations + samlMigrations
-		// + milestoneScmDropMigrations) and applied by the catalog runner
-		// at the end of Initialize. Errors abort startup instead of being
-		// logged and swallowed.
-
-		// Soft-archive: drop the inline UNIQUE(approval_set_id, status_id) so
-		// archived snapshots can coexist with current rows; replace with a
-		// partial unique index on is_active=TRUE.
-		var oldApprovalUnique int
-		_ = p.db.QueryRow(`SELECT COUNT(*) FROM pg_constraint WHERE conname = 'approval_set_statuses_approval_set_id_status_id_key'`).Scan(&oldApprovalUnique)
-		if oldApprovalUnique > 0 {
-			if _, err = p.db.Exec(`ALTER TABLE approval_set_statuses DROP CONSTRAINT approval_set_statuses_approval_set_id_status_id_key`); err != nil {
-				slog.Warn("drop approval_set_statuses unique failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-		if _, err = p.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_approval_set_statuses_active ON approval_set_statuses(approval_set_id, status_id) WHERE is_active = TRUE`); err != nil {
-			slog.Warn("create uq_approval_set_statuses_active failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Agent user constraints, indexes, immutability trigger, and feature
-		// flags. Mirror of the SQLite migrations in database.go so Postgres
-		// deployments pick up the agent-user schema on restart.
-		if _, err = p.db.Exec("CREATE INDEX IF NOT EXISTS idx_users_is_agent ON users(is_agent)"); err != nil {
-			slog.Warn("idx_users_is_agent postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-		if _, err = p.db.Exec("CREATE INDEX IF NOT EXISTS idx_users_agent_owner ON users(agent_owner_user_id) WHERE agent_owner_user_id IS NOT NULL"); err != nil {
-			slog.Warn("idx_users_agent_owner postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-		if _, err = p.db.Exec("CREATE INDEX IF NOT EXISTS idx_portal_sessions_channel_id ON portal_customer_sessions(channel_id)"); err != nil {
-			slog.Warn("idx_portal_sessions_channel_id postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Add CHECK constraint if missing. Postgres ADD CONSTRAINT has no
-		// IF NOT EXISTS form, so gate on pg_constraint.
-		var agentCheckExists int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM pg_constraint WHERE conname = 'users_agent_owner_requires_agent'`).Scan(&agentCheckExists); err == nil && agentCheckExists == 0 {
-			if _, err = p.db.Exec(`ALTER TABLE users ADD CONSTRAINT users_agent_owner_requires_agent CHECK (agent_owner_user_id IS NULL OR is_agent = true)`); err != nil {
-				slog.Warn("users_agent_owner_requires_agent constraint postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Enforce is_agent and agent_owner_user_id immutability at the DB
-		// level: toggling either would open a token-impersonation or
-		// permission-transfer path.
-		if _, err = p.db.Exec(`
-			CREATE OR REPLACE FUNCTION users_is_agent_immutable() RETURNS TRIGGER AS $fn$
-			BEGIN
-				IF COALESCE(NEW.is_agent, false) IS DISTINCT FROM COALESCE(OLD.is_agent, false) THEN
-					RAISE EXCEPTION 'is_agent is immutable';
-				END IF;
-				IF NEW.agent_owner_user_id IS DISTINCT FROM OLD.agent_owner_user_id THEN
-					RAISE EXCEPTION 'agent_owner_user_id is immutable';
-				END IF;
-				RETURN NEW;
-			END;
-			$fn$ LANGUAGE plpgsql
-		`); err != nil {
-			slog.Warn("users_is_agent_immutable function postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-		if _, err = p.db.Exec(`DROP TRIGGER IF EXISTS users_is_agent_immutable_trigger ON users`); err != nil {
-			slog.Warn("users_is_agent_immutable_trigger drop postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-		if _, err = p.db.Exec(`CREATE TRIGGER users_is_agent_immutable_trigger BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION users_is_agent_immutable()`); err != nil {
-			slog.Warn("users_is_agent_immutable_trigger postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Same immutability + invariant pattern for the new agent_provenance
-		// and oauth_client_id columns. Postgres CHECK constraints handle the
-		// insert-time invariant (added via the migrations array above);
-		// these triggers handle update-time immutability.
-		if _, err = p.db.Exec(`
-			CREATE OR REPLACE FUNCTION users_oauth_provenance_immutable() RETURNS TRIGGER AS $fn$
-			BEGIN
-				IF COALESCE(NEW.agent_provenance, '') IS DISTINCT FROM COALESCE(OLD.agent_provenance, '') THEN
-					RAISE EXCEPTION 'agent_provenance is immutable';
-				END IF;
-				IF NEW.oauth_client_id IS DISTINCT FROM OLD.oauth_client_id THEN
-					RAISE EXCEPTION 'oauth_client_id is immutable';
-				END IF;
-				RETURN NEW;
-			END;
-			$fn$ LANGUAGE plpgsql
-		`); err != nil {
-			slog.Warn("users_oauth_provenance_immutable function postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-		if _, err = p.db.Exec(`DROP TRIGGER IF EXISTS users_oauth_provenance_immutable_trigger ON users`); err != nil {
-			slog.Warn("users_oauth_provenance_immutable_trigger drop postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-		if _, err = p.db.Exec(`CREATE TRIGGER users_oauth_provenance_immutable_trigger BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION users_oauth_provenance_immutable()`); err != nil {
-			slog.Warn("users_oauth_provenance_immutable_trigger postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Audit-query indexes for "show me OAuth-spawned agents" and
-		// "agents per OAuth client".
-		if _, err = p.db.Exec("CREATE INDEX IF NOT EXISTS idx_users_agent_provenance ON users(agent_provenance) WHERE is_agent = true"); err != nil {
-			slog.Warn("idx_users_agent_provenance postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-		if _, err = p.db.Exec("CREATE INDEX IF NOT EXISTS idx_users_oauth_client_id ON users(oauth_client_id) WHERE oauth_client_id IS NOT NULL"); err != nil {
-			slog.Warn("idx_users_oauth_client_id postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Seed user-managed agent feature flags.
-		var umaCount int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM system_settings WHERE key = 'allow_user_managed_agents'`).Scan(&umaCount); err == nil && umaCount == 0 {
-			if _, err = p.db.Exec(`INSERT INTO system_settings (key, value, value_type, description, category) VALUES ('allow_user_managed_agents', 'false', 'boolean', 'Allow non-admin users to create and manage their own agent users from their profile', 'security')`); err != nil {
-				slog.Warn("allow_user_managed_agents setting postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-		var maxAgentsCount int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM system_settings WHERE key = 'max_agents_per_user'`).Scan(&maxAgentsCount); err == nil && maxAgentsCount == 0 {
-			if _, err = p.db.Exec(`INSERT INTO system_settings (key, value, value_type, description, category) VALUES ('max_agents_per_user', '5', 'integer', 'Maximum number of owned agents a single non-admin user may create', 'security')`); err != nil {
-				slog.Warn("max_agents_per_user setting postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Create labels tables if they don't exist (for existing databases)
-		labelsContent := strings.TrimSpace(labelsSchemaPostgres)
-		if labelsContent != "" {
-			if _, err = p.db.Exec(labelsContent); err != nil {
-				slog.Warn("labels postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Create page_labels tables if they don't exist (for existing databases)
-		pageLabelsContent := strings.TrimSpace(pageLabelsSchemaPostgres)
-		if pageLabelsContent != "" {
-			if _, err = p.db.Exec(pageLabelsContent); err != nil {
-				slog.Warn("page_labels postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Create LLM tables if they don't exist (for existing databases)
-		llmContent := strings.TrimSpace(llmSchemaPostgres)
-		if llmContent != "" {
-			if _, err = p.db.Exec(llmContent); err != nil {
-				slog.Warn("llm postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Drop legacy vector-search artifacts and the abandoned
-		// page_attachments table for installs that ran the original Slice 1
-		// schema. Page attachments now live in the polymorphic `attachments`
-		// table with entity_type='page'. Idempotent.
-		for _, stmt := range []string{
-			`DROP TABLE IF EXISTS page_chunk_embeddings`,
-			`DROP TABLE IF EXISTS page_attachments`,
-			`DELETE FROM system_settings WHERE key IN (
-				'knowledge.vector_search_enabled',
-				'knowledge.embedding_model',
-				'knowledge.embedding_connection_id',
-				'knowledge.embedding_dimensions'
-			)`,
-		} {
-			if _, err = p.db.Exec(stmt); err != nil {
-				slog.Warn("knowledge cleanup postgres migration failed", slog.String("component", "database"), slog.String("stmt", stmt), slog.Any("error", err))
-			}
-		}
-
-		// Create knowledge pages tables, permission keys, role grants, and
-		// system settings for existing databases. Schema is fully idempotent.
-		pagesContent := strings.TrimSpace(pagesSchemaPostgres)
-		if pagesContent != "" {
-			if _, err = p.db.Exec(pagesContent); err != nil {
-				slog.Warn("pages postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Create milestone_releases table if it doesn't exist and drop legacy SCM columns from milestones
-		milestonesContent := strings.TrimSpace(milestonesExistingSchemaPostgres)
-		if milestonesContent != "" {
-			if _, err = p.db.Exec(milestonesContent); err != nil {
-				slog.Warn("milestones postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Create webhook_deliveries table (added with the admin Diagnostics page)
-		// for existing databases. Re-running channels_postgres is safe — every
-		// statement in it is IF NOT EXISTS.
-		channelsContent := strings.TrimSpace(channelsSchemaPostgres)
-		if channelsContent != "" {
-			if _, err = p.db.Exec(channelsContent); err != nil {
-				slog.Warn("channels postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Create scheduler_runs table (added with the admin Diagnostics page).
-		// Inlined rather than re-running system_postgres so this existing-install
-		// backfill stays small and independent of unrelated schema changes.
-		if _, err = p.db.Exec(`
-			CREATE TABLE IF NOT EXISTS scheduler_runs (
-				id SERIAL PRIMARY KEY,
-				scheduler_name TEXT NOT NULL,
-				started_at TIMESTAMPTZ NOT NULL,
-				completed_at TIMESTAMPTZ,
-				duration_ms INTEGER,
-				items_processed INTEGER,
-				success BOOLEAN NOT NULL DEFAULT FALSE,
-				error_message TEXT
-			);
-			CREATE INDEX IF NOT EXISTS idx_scheduler_runs_name_started ON scheduler_runs(scheduler_name, started_at DESC);
-			CREATE INDEX IF NOT EXISTS idx_scheduler_runs_started_at ON scheduler_runs(started_at);
-			CREATE INDEX IF NOT EXISTS idx_scheduler_runs_success ON scheduler_runs(success);
-		`); err != nil {
-			slog.Warn("scheduler_runs postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Create pending_custom_field_cleanups queue table for existing
-		// databases. Drained by CFVCleanupScheduler; without it the scheduler
-		// logs "no such table" every tick. Inlined for the same reason as
-		// scheduler_runs above.
-		if _, err = p.db.Exec(`
-			CREATE TABLE IF NOT EXISTS pending_custom_field_cleanups (
-				id SERIAL PRIMARY KEY,
-				field_id INTEGER NOT NULL,
-				job_type TEXT NOT NULL DEFAULT 'field_scrub',
-				payload TEXT,
-				status TEXT NOT NULL DEFAULT 'pending',
-				created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-				started_at TIMESTAMPTZ,
-				completed_at TIMESTAMPTZ,
-				items_processed INTEGER NOT NULL DEFAULT 0,
-				error_message TEXT
-			);
-			CREATE INDEX IF NOT EXISTS idx_pending_cfv_cleanups_status ON pending_custom_field_cleanups(status, created_at);
-		`); err != nil {
-			slog.Warn("pending_custom_field_cleanups postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// milestone_*_scm column drops moved to catalog (milestoneScmDropMigrations).
-		// SAML column adds on sso_providers moved to catalog (samlMigrations).
-
-		// Create LDAP tables if they don't exist (for existing databases)
-		ldapContent := strings.TrimSpace(ldapSchemaPostgres)
-		if ldapContent != "" {
-			if _, err = p.db.Exec(ldapContent); err != nil {
-				slog.Warn("LDAP postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Create daily_briefings table if it doesn't exist (for existing databases)
-		dailyBriefingsContent := strings.TrimSpace(dailyBriefingsSchemaPostgres)
-		if dailyBriefingsContent != "" {
-			if _, err = p.db.Exec(dailyBriefingsContent); err != nil {
-				slog.Warn("daily_briefings postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Drop workspace_everyone_roles table (permissions now derived from role assignments)
-		if _, err = p.db.Exec(`DROP TABLE IF EXISTS workspace_everyone_roles`); err != nil {
-			slog.Warn("workspace_everyone_roles drop failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Enforce uniqueness on items.frac_index. Pre-existing duplicates
-		// (possible before the UpdateFracIndex cache-coherence fix) would
-		// block the UNIQUE index, so null them out first, keeping the oldest
-		// occurrence in each duplicate group. NULL items sort to the end of
-		// the list via defaultOrderBy, so this is a safe recovery.
-		var fracIsUnique bool
-		if err = p.db.QueryRow(
-			`SELECT COALESCE((SELECT indisunique FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relname = 'idx_items_frac_index' AND n.nspname = current_schema()), false)`,
-		).Scan(&fracIsUnique); err == nil && !fracIsUnique {
-			if res, err2 := p.db.Exec(`
-				UPDATE items SET frac_index = NULL
-				WHERE frac_index IS NOT NULL
-				  AND id NOT IN (
-				      SELECT MIN(id) FROM items
-				      WHERE frac_index IS NOT NULL
-				      GROUP BY frac_index
-				  )
-			`); err2 != nil {
-				slog.Warn("frac_index duplicate cleanup failed", slog.String("component", "database"), slog.Any("error", err2))
-			} else if n, _ := res.RowsAffected(); n > 0 {
-				slog.Warn("nulled duplicate frac_index rows during UNIQUE migration", slog.String("component", "database"), slog.Int64("rows", n))
-			}
-			if _, err2 := p.db.Exec(`DROP INDEX IF EXISTS idx_items_frac_index`); err2 != nil {
-				slog.Warn("drop non-unique idx_items_frac_index failed", slog.String("component", "database"), slog.Any("error", err2))
-			}
-			if _, err2 := p.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_items_frac_index ON items(frac_index) WHERE frac_index IS NOT NULL`); err2 != nil {
-				slog.Warn("create unique idx_items_frac_index failed", slog.String("component", "database"), slog.Any("error", err2))
-			}
-		}
-
-		// Create asset import tables if they don't exist (for existing databases)
-		assetsContent := strings.TrimSpace(assetsSchemaPostgres)
-		if assetsContent != "" {
-			if _, err = p.db.Exec(assetsContent); err != nil {
-				slog.Warn("assets postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Create asset_actions tables if they don't exist (for existing databases)
-		assetActionsContent := strings.TrimSpace(assetActionsSchemaPostgres)
-		if assetActionsContent != "" {
-			if _, err = p.db.Exec(assetActionsContent); err != nil {
-				slog.Warn("asset_actions postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Create asset_reports tables if they don't exist (for existing databases)
-		assetReportsContent := strings.TrimSpace(assetReportsSchemaPostgres)
-		if assetReportsContent != "" {
-			if _, err = p.db.Exec(assetReportsContent); err != nil {
-				slog.Warn("asset_reports postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Create teams tables if they don't exist (for existing databases)
-		teamsContent := strings.TrimSpace(teamsSchemaPostgres)
-		if teamsContent != "" {
-			if _, err = p.db.Exec(teamsContent); err != nil {
-				slog.Warn("teams postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Create user_invitations table if it doesn't exist (for existing databases)
-		if _, err = p.db.Exec(`
-			CREATE TABLE IF NOT EXISTS user_invitations (
-				id SERIAL PRIMARY KEY,
-				user_id INTEGER NOT NULL,
-				token TEXT UNIQUE NOT NULL,
-				expires_at TIMESTAMPTZ NOT NULL,
-				used_at TIMESTAMPTZ,
-				created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-				FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-			);
-			CREATE INDEX IF NOT EXISTS idx_user_invitations_token ON user_invitations(token);
-			CREATE INDEX IF NOT EXISTS idx_user_invitations_user_id ON user_invitations(user_id);
-		`); err != nil {
-			slog.Warn("user_invitations postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Create custom_field_indexes table if it doesn't exist (for existing databases)
-		if _, err = p.db.Exec(`
-			CREATE TABLE IF NOT EXISTS custom_field_indexes (
-				id SERIAL PRIMARY KEY,
-				custom_field_id INTEGER NOT NULL,
-				target_table TEXT NOT NULL,
-				index_name TEXT NOT NULL,
-				created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-				FOREIGN KEY (custom_field_id) REFERENCES custom_field_definitions(id) ON DELETE CASCADE,
-				UNIQUE(custom_field_id, target_table)
-			)
-		`); err != nil {
-			slog.Warn("custom_field_indexes postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Add max_custom_field_indexes_per_table system setting if it doesn't exist
-		var settingCount int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM system_settings WHERE key = 'max_custom_field_indexes_per_table'`).Scan(&settingCount); err == nil && settingCount == 0 {
-			if _, err = p.db.Exec(`INSERT INTO system_settings (key, value, value_type, description, category) VALUES ('max_custom_field_indexes_per_table', '20', 'integer', 'Maximum number of custom field indexes per table', 'performance')`); err != nil {
-				slog.Warn("max_custom_field_indexes_per_table setting postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		recurrenceSettings := []struct {
-			key, value, valueType, description string
-		}{
-			{"recurrence_volume_diagnostic_enabled", "true", "boolean", "Enable recurrence rule volume warnings in system diagnostics"},
-			{"recurrence_volume_warning_threshold", "80", "integer", "Recurrence rules per workspace that trigger an administrator warning"},
-		}
-		for _, setting := range recurrenceSettings {
-			var count int
-			if err = p.db.QueryRow(`SELECT COUNT(*) FROM system_settings WHERE key = $1`, setting.key).Scan(&count); err == nil && count == 0 {
-				if _, err = p.db.Exec(
-					`INSERT INTO system_settings (key, value, value_type, description, category) VALUES ($1, $2, $3, $4, 'diagnostics')`,
-					setting.key, setting.value, setting.valueType, setting.description,
-				); err != nil {
-					slog.Warn("recurrence diagnostic setting postgres migration failed", slog.String("component", "database"), slog.String("key", setting.key), slog.Any("error", err))
-				}
-			}
-		}
-
-		// Add ai_chat_enabled system setting if it doesn't exist
-		var aiChatCount int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM system_settings WHERE key = 'ai_chat_enabled'`).Scan(&aiChatCount); err == nil && aiChatCount == 0 {
-			if _, err = p.db.Exec(`INSERT INTO system_settings (key, value, value_type, description, category) VALUES ('ai_chat_enabled', 'true', 'boolean', 'Enable AI chat functionality', 'modules')`); err != nil {
-				slog.Warn("ai_chat_enabled setting postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Add ai_feature_config system setting if it doesn't exist
-		var aiFeatureConfigCount int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM system_settings WHERE key = 'ai_feature_config'`).Scan(&aiFeatureConfigCount); err == nil && aiFeatureConfigCount == 0 {
-			defaultCfg := `{}`
-			var aiChatVal string
-			if err = p.db.QueryRow(`SELECT value FROM system_settings WHERE key = 'ai_chat_enabled'`).Scan(&aiChatVal); err == nil && strings.EqualFold(aiChatVal, "false") {
-				defaultCfg = `{"ai_chat":{"mode":"disabled","connection_id":0}}`
-			}
-			if _, err = p.db.Exec(`INSERT INTO system_settings (key, value, value_type, description, category) VALUES ($1, $2, $3, $4, $5)`, "ai_feature_config", defaultCfg, "json", "Per-feature AI LLM configuration", "ai"); err != nil {
-				slog.Warn("ai_feature_config setting postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Add allowed_entity_types column to link_types
-		var aetColCount int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='link_types' AND column_name='allowed_entity_types'`).Scan(&aetColCount); err == nil && aetColCount == 0 {
-			if _, err = p.db.Exec(`ALTER TABLE link_types ADD COLUMN allowed_entity_types TEXT DEFAULT NULL`); err != nil {
-				slog.Warn("link_types allowed_entity_types postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-		// Seed allowed_entity_types for the "Tests" system link type
-		if _, err = p.db.Exec(`UPDATE link_types SET allowed_entity_types = '["item","test_case"]' WHERE name = 'Tests' AND is_system = true AND allowed_entity_types IS NULL`); err != nil {
-			slog.Warn("link_types Tests allowed_entity_types seed failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Add custom_field_id column to item_links (for linking custom field type)
-		var cfColCount int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='item_links' AND column_name='custom_field_id'`).Scan(&cfColCount); err == nil && cfColCount == 0 {
-			if _, err = p.db.Exec(`ALTER TABLE item_links ADD COLUMN custom_field_id INTEGER REFERENCES custom_field_definitions(id) ON DELETE CASCADE`); err != nil {
-				slog.Warn("item_links custom_field_id postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-			if _, err = p.db.Exec(`CREATE INDEX IF NOT EXISTS idx_item_links_custom_field ON item_links(custom_field_id)`); err != nil {
-				slog.Warn("item_links custom_field_id index postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Create actions tables if they don't exist (for existing databases)
-		actionsContent := strings.TrimSpace(actionsSchemaPostgres)
-		if actionsContent != "" {
-			if _, err = p.db.Exec(actionsContent); err != nil {
-				slog.Warn("actions postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Create issue_sync tables if they don't exist (for existing databases)
-		scmContent := strings.TrimSpace(scmSchemaPostgres)
-		if scmContent != "" {
-			if _, err = p.db.Exec(scmContent); err != nil {
-				slog.Warn("scm postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Add public_board.manage permission if it doesn't exist
-		if _, err = p.db.Exec(`INSERT INTO permissions (permission_key, permission_name, description, scope, is_system) VALUES ('public_board.manage', 'Manage Public Boards', 'Can make collections public and configure public board sharing', 'global', false) ON CONFLICT (permission_key) DO NOTHING`); err != nil {
-			slog.Warn("public_board.manage permission postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Add teams.manage permission if it doesn't exist
-		if _, err = p.db.Exec(`INSERT INTO permissions (permission_key, permission_name, description, scope, is_system) VALUES ('teams.manage', 'Manage Teams', 'Can create, edit, and delete teams', 'global', false) ON CONFLICT (permission_key) DO NOTHING`); err != nil {
-			slog.Warn("teams.manage permission postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Add action.credential.manage permission if it doesn't exist
-		if _, err = p.db.Exec(`INSERT INTO permissions (permission_key, permission_name, description, scope, is_system) VALUES ('action.credential.manage', 'Manage Action Credentials', 'Can create, rotate, and delete workspace-scoped action credentials (API tokens for HTTP capabilities)', 'workspace', false) ON CONFLICT (permission_key) DO NOTHING`); err != nil {
-			slog.Warn("action.credential.manage permission postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-		if _, err = p.db.Exec(`INSERT INTO role_permissions (role_id, permission_id)
-			SELECT r.id, p.id FROM workspace_roles r
-			JOIN permissions p ON p.permission_key = 'action.credential.manage'
-			WHERE r.name = 'Administrator'
-			ON CONFLICT (role_id, permission_id) DO NOTHING`); err != nil {
-			slog.Warn("action.credential.manage admin grant postgres failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Add public_slug column to collections
-		var slugColCount int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='collections' AND column_name='public_slug'`).Scan(&slugColCount); err == nil && slugColCount == 0 {
-			if _, err = p.db.Exec(`ALTER TABLE collections ADD COLUMN public_slug TEXT`); err != nil {
-				slog.Warn("public_slug postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-			if _, err = p.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_collections_public_slug ON collections(public_slug)`); err != nil {
-				slog.Warn("public_slug index postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Add filter_state column to collections (persists visual builder state)
-		var filterStateColCount int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='collections' AND column_name='filter_state'`).Scan(&filterStateColCount); err == nil && filterStateColCount == 0 {
-			if _, err = p.db.Exec(`ALTER TABLE collections ADD COLUMN filter_state TEXT`); err != nil {
-				slog.Warn("filter_state postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Add story_points column to items
-		var spColCount int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='items' AND column_name='story_points'`).Scan(&spColCount); err == nil && spColCount == 0 {
-			if _, err = p.db.Exec(`ALTER TABLE items ADD COLUMN story_points REAL`); err != nil {
-				slog.Warn("story_points postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Add due_date field to default screen if missing
-		var dueDateFieldCount int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM screen_fields WHERE screen_id = 1 AND field_identifier = 'due_date'`).Scan(&dueDateFieldCount); err == nil && dueDateFieldCount == 0 {
-			if _, err = p.db.Exec(`INSERT INTO screen_fields (screen_id, field_type, field_identifier, display_order, is_required, field_width) VALUES (1, 'system', 'due_date', 6, false, 'half')`); err != nil {
-				slog.Warn("due_date screen field postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Create condition_sets tables if they don't exist (for existing databases)
-		conditionSetsContent := strings.TrimSpace(conditionSetsSchemaPostgres)
-		if conditionSetsContent != "" {
-			if _, err = p.db.Exec(conditionSetsContent); err != nil {
-				slog.Warn("condition_sets postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Create approvals tables if they don't exist (for existing databases)
-		approvalsContent := strings.TrimSpace(approvalsSchemaPostgres)
-		if approvalsContent != "" {
-			if _, err = p.db.Exec(approvalsContent); err != nil {
-				slog.Warn("approvals postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// One-shot rewrite of legacy user_in_role / user_in_group condition configs onto FieldRef.
-		if err := migrateConditionUserSourceToFieldRef(p.db, true); err != nil {
-			slog.Warn("condition user_source -> source postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Add approval_set_id column to configuration_sets / configuration_set_item_types (existing dbs).
-		var apprSetCol int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='configuration_sets' AND column_name='approval_set_id'`).Scan(&apprSetCol); err == nil && apprSetCol == 0 {
-			if _, err = p.db.Exec(`ALTER TABLE configuration_sets ADD COLUMN approval_set_id INTEGER`); err != nil {
-				slog.Warn("configuration_sets approval_set_id postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='configuration_set_item_types' AND column_name='approval_set_id'`).Scan(&apprSetCol); err == nil && apprSetCol == 0 {
-			if _, err = p.db.Exec(`ALTER TABLE configuration_set_item_types ADD COLUMN approval_set_id INTEGER`); err != nil {
-				slog.Warn("configuration_set_item_types approval_set_id postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Add permissions_enabled flag to workspace_roles (existing dbs).
-		var rolePermsCol int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='workspace_roles' AND column_name='permissions_enabled'`).Scan(&rolePermsCol); err == nil && rolePermsCol == 0 {
-			if _, err = p.db.Exec(`ALTER TABLE workspace_roles ADD COLUMN permissions_enabled BOOLEAN DEFAULT true`); err != nil {
-				slog.Warn("workspace_roles permissions_enabled postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Support user or portal-customer approvers. Add the exclusive-identity
-		// constraint after columns so existing user-only rows remain valid.
-		var apprPortalCol int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='approval_step_approvers' AND column_name='portal_customer_id'`).Scan(&apprPortalCol); err == nil && apprPortalCol == 0 {
-			if _, err = p.db.Exec(`ALTER TABLE approval_step_approvers ADD COLUMN portal_customer_id INTEGER REFERENCES portal_customers(id) ON DELETE RESTRICT`); err != nil {
-				slog.Warn("approval_step_approvers portal_customer_id postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-			if _, err = p.db.Exec(`ALTER TABLE approval_step_approvers ALTER COLUMN user_id DROP NOT NULL`); err != nil {
-				slog.Warn("approval_step_approvers user_id NOT NULL drop failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-			if _, err = p.db.Exec(`DO $$ BEGIN ALTER TABLE approval_step_approvers ADD CONSTRAINT chk_approver_one_identity CHECK ((user_id IS NOT NULL AND portal_customer_id IS NULL) OR (user_id IS NULL AND portal_customer_id IS NOT NULL)); EXCEPTION WHEN duplicate_object THEN NULL; END $$`); err != nil {
-				slog.Warn("approval_step_approvers chk_approver_one_identity add failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='approval_decisions' AND column_name='actor_portal_customer_id'`).Scan(&apprPortalCol); err == nil && apprPortalCol == 0 {
-			if _, err = p.db.Exec(`ALTER TABLE approval_decisions ADD COLUMN actor_portal_customer_id INTEGER REFERENCES portal_customers(id) ON DELETE SET NULL`); err != nil {
-				slog.Warn("approval_decisions actor_portal_customer_id postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Add from_status_id snapshot column to approval_requests so Cancel can revert.
-		var apprFromCol int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='approval_requests' AND column_name='from_status_id'`).Scan(&apprFromCol); err == nil && apprFromCol == 0 {
-			if _, err = p.db.Exec(`ALTER TABLE approval_requests ADD COLUMN from_status_id INTEGER REFERENCES statuses(id) ON DELETE SET NULL`); err != nil {
-				slog.Warn("approval_requests from_status_id postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Create integration tables if they don't exist (for existing databases)
-		integrationsContent := strings.TrimSpace(integrationsSchemaPostgres)
-		if integrationsContent != "" {
-			if _, err = p.db.Exec(integrationsContent); err != nil {
-				slog.Warn("integrations postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Add error_message to conditions
-		var condErrMsgCol int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='conditions' AND column_name='error_message'`).Scan(&condErrMsgCol); err == nil && condErrMsgCol == 0 {
-			if _, err = p.db.Exec(`ALTER TABLE conditions ADD COLUMN error_message TEXT`); err != nil {
-				slog.Warn("conditions error_message postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Add mode to conditions
-		var condModeCol int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='conditions' AND column_name='mode'`).Scan(&condModeCol); err == nil && condModeCol == 0 {
-			if _, err = p.db.Exec(`ALTER TABLE conditions ADD COLUMN mode TEXT NOT NULL DEFAULT 'condition'`); err != nil {
-				slog.Warn("conditions mode postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Add condition_set_id to configuration_sets
-		var csCondSetCol int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='configuration_sets' AND column_name='condition_set_id'`).Scan(&csCondSetCol); err == nil && csCondSetCol == 0 {
-			if _, err = p.db.Exec(`ALTER TABLE configuration_sets ADD COLUMN condition_set_id INTEGER REFERENCES condition_sets(id) ON DELETE SET NULL`); err != nil {
-				slog.Warn("configuration_sets condition_set_id postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Add condition_set_id to configuration_set_item_types
-		var csitCondSetCol int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='configuration_set_item_types' AND column_name='condition_set_id'`).Scan(&csitCondSetCol); err == nil && csitCondSetCol == 0 {
-			if _, err = p.db.Exec(`ALTER TABLE configuration_set_item_types ADD COLUMN condition_set_id INTEGER REFERENCES condition_sets(id) ON DELETE SET NULL`); err != nil {
-				slog.Warn("configuration_set_item_types condition_set_id postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Add config column to request_types (for form channel per-form settings)
-		var rtConfigCol int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='request_types' AND column_name='config'`).Scan(&rtConfigCol); err == nil && rtConfigCol == 0 {
-			if _, err = p.db.Exec(`ALTER TABLE request_types ADD COLUMN config TEXT DEFAULT NULL`); err != nil {
-				slog.Warn("request_types config postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Migrate: create default configuration set for existing databases that have none
-		var csCount int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM configuration_sets`).Scan(&csCount); err == nil && csCount == 0 {
-			if err = p.migrateDefaultConfigurationSet(); err != nil {
-				slog.Warn("default configuration set migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Strip legacy base64 padding from SSH public-key fingerprints so they
-		// match the OpenSSH format (ssh-keygen -lf / gossh.FingerprintSHA256).
-		if _, err = p.db.Exec(`UPDATE user_credentials SET public_key_fingerprint = rtrim(public_key_fingerprint, '=') WHERE public_key_fingerprint LIKE '%=';`); err != nil {
-			slog.Warn("ssh fingerprint padding postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Create api_tokens table if missing. Older Postgres deployments
-		// were initialized from a schema snapshot that predates this table,
-		// and the only prior creation path is the fresh-install schema —
-		// leaving existing DBs without it and every token INSERT failing
-		// with 500. cli_auth_codes (below) also FK-references this, so
-		// this must run first.
-		if _, err = p.db.Exec(`
-			CREATE TABLE IF NOT EXISTS api_tokens (
-				id SERIAL PRIMARY KEY,
-				user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-				name TEXT NOT NULL,
-				token_hash TEXT NOT NULL UNIQUE,
-				token_prefix TEXT NOT NULL,
-				permissions TEXT DEFAULT '["read"]',
-				expires_at TIMESTAMPTZ NULL,
-				last_used_at TIMESTAMPTZ NULL,
-				is_temporary BOOLEAN DEFAULT false,
-				created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-				updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-			);
-			CREATE INDEX IF NOT EXISTS idx_api_tokens_user_id ON api_tokens(user_id);
-			CREATE INDEX IF NOT EXISTS idx_api_tokens_token_hash ON api_tokens(token_hash);
-			CREATE INDEX IF NOT EXISTS idx_api_tokens_expires_at ON api_tokens(expires_at);
-		`); err != nil {
-			slog.Warn("api_tokens postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Create scm_processed_commits table if missing. Older deployments
-		// predate smart-commit support; the sync loop writes a row per commit
-		// it has already applied actions for, guaranteeing idempotency across
-		// re-syncs.
-		if _, err = p.db.Exec(`
-			CREATE TABLE IF NOT EXISTS scm_processed_commits (
-				commit_sha              TEXT NOT NULL,
-				workspace_repository_id INTEGER NOT NULL,
-				processed_at            TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-				actions_applied         INTEGER NOT NULL DEFAULT 0,
-				PRIMARY KEY (commit_sha, workspace_repository_id),
-				FOREIGN KEY (workspace_repository_id) REFERENCES workspace_repositories(id) ON DELETE CASCADE
-			);
-		`); err != nil {
-			slog.Warn("scm_processed_commits postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Create cli_auth_codes table for the `ws init` onboarding flow.
-		if _, err = p.db.Exec(`
-			CREATE TABLE IF NOT EXISTS cli_auth_codes (
-				id SERIAL PRIMARY KEY,
-				code TEXT NOT NULL UNIQUE,
-				state TEXT NOT NULL,
-				callback_url TEXT NOT NULL,
-				hostname TEXT NOT NULL,
-				agent_name TEXT NOT NULL,
-				requested_scopes TEXT NOT NULL,
-				status TEXT NOT NULL DEFAULT 'pending',
-				approved_by_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-				agent_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-				token_id INTEGER REFERENCES api_tokens(id) ON DELETE SET NULL,
-				token_plaintext TEXT,
-				created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-				expires_at TIMESTAMPTZ NOT NULL,
-				consumed_at TIMESTAMPTZ
-			);
-			CREATE INDEX IF NOT EXISTS idx_cli_auth_codes_code ON cli_auth_codes(code);
-			CREATE INDEX IF NOT EXISTS idx_cli_auth_codes_expires_at ON cli_auth_codes(expires_at);
-		`); err != nil {
-			slog.Warn("cli_auth_codes postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Catalog-based migrations (see internal/database/migrations.go).
-		// Runs alongside the legacy migration logic above while entries are
-		// progressively ported. A no-op while Catalog is empty.
-		return runPendingMigrations(p, Catalog)
-	}
-
-	// Database needs full initialization
-	// Execute schema in a transaction
-	tx, err := p.db.Begin()
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	// Execute each schema file individually
-	schemaFiles := p.getPostgresSchemaFiles()
-	for _, sf := range schemaFiles {
-		content := strings.TrimSpace(sf.content)
-		if content == "" {
-			continue
-		}
-		_, err = tx.Exec(content)
+	if tableCount < 4 {
+		tx, err := p.db.Begin()
 		if err != nil {
-			return fmt.Errorf("failed to execute schema file %s: %w", sf.name, err)
+			return fmt.Errorf("failed to begin schema transaction: %w", err)
+		}
+		defer func() { _ = tx.Rollback() }()
+
+		for _, schemaFile := range p.getPostgresSchemaFiles() {
+			content := strings.TrimSpace(schemaFile.content)
+			if content == "" {
+				continue
+			}
+			if _, err := tx.Exec(content); err != nil {
+				return fmt.Errorf("failed to execute schema file %s: %w", schemaFile.name, err)
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("failed to commit schema transaction: %w", err)
+		}
+		slog.Debug("database schema initialized successfully", slog.String("component", "database"))
+
+		if err := p.initializePostgresDefaultData(); err != nil {
+			return fmt.Errorf("failed to initialize default data: %w", err)
 		}
 	}
 
-	if err = tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit schema transaction: %w", err)
+	if err := runPendingMigrations(p, Catalog); err != nil {
+		return fmt.Errorf("apply database migrations: %w", err)
 	}
-
-	slog.Debug("database schema initialized successfully", slog.String("component", "database"))
-
-	// Initialize default data for new installations
-	if err := p.initializePostgresDefaultData(); err != nil {
-		return fmt.Errorf("failed to initialize default data: %w", err)
-	}
-
-	// Convert any legacy TIMESTAMP (without time zone) columns to TIMESTAMPTZ
-	// for installs that predate the schema flip. Idempotent — no-op on a fresh
-	// install where the *_postgres.sql files already declared TIMESTAMPTZ.
-	if err := backfillPostgresTimestampTZ(p.db); err != nil {
-		slog.Warn("postgres TIMESTAMPTZ backfill failed", slog.String("component", "database"), slog.Any("error", err))
-	}
-
-	// On fresh installs, every catalog migration's Check returns true (the
-	// effect is already present in the schema files), so this stamps the
-	// catalog without re-running any DDL.
-	return runPendingMigrations(p, Catalog)
+	return nil
 }
 
 // getPostgresSchemaFiles returns the PostgreSQL schema files in dependency order
@@ -1368,20 +551,8 @@ func (p *PostgresDB) initializePostgresDefaultData() error {
 	defer func() { _ = tx.Rollback() }()
 
 	// 1. Create default status categories
-	categories := []struct {
-		name        string
-		color       string
-		description string
-		isDefault   bool
-		isCompleted bool
-	}{
-		{"To Do", "#d1d5db", "Work that hasn't been started", false, false},
-		{"In Progress", "#3b82f6", "Work that is actively being done", true, false},
-		{"Done", "#22c55e", "Work that has been completed", false, true},
-	}
-
 	categoryIDs := make(map[string]int64)
-	for _, cat := range categories {
+	for _, cat := range defaultStatusCategories {
 		var id int64
 		err = tx.QueryRow(
 			"INSERT INTO status_categories (name, color, description, is_default, is_completed) VALUES ($1, $2, $3, $4, $5) RETURNING id",
@@ -1394,19 +565,8 @@ func (p *PostgresDB) initializePostgresDefaultData() error {
 	}
 
 	// 2. Create default statuses
-	statuses := []struct {
-		name        string
-		description string
-		category    string
-		isDefault   bool
-	}{
-		{"Open", "New work item, not yet started", "To Do", true},
-		{"In Progress", "Currently being worked on", "In Progress", false},
-		{"Done", "Work has been completed", "Done", false},
-	}
-
 	statusIDs := make(map[string]int64)
-	for _, status := range statuses {
+	for _, status := range defaultStatuses {
 		categoryID := categoryIDs[status.category]
 		var id int64
 		err = tx.QueryRow(
@@ -1430,17 +590,7 @@ func (p *PostgresDB) initializePostgresDefaultData() error {
 	}
 
 	// 4. Create workflow transitions
-	transitions := []struct {
-		from string // empty string means initial status
-		to   string
-	}{
-		{"", "Open"}, // Initial transition
-		{"Open", "In Progress"},
-		{"Open", "Done"}, // Direct completion from Open
-		{"In Progress", "Done"},
-	}
-
-	for i, transition := range transitions {
+	for i, transition := range defaultTransitions {
 		var fromStatusID *int64
 		if transition.from != "" {
 			id := statusIDs[transition.from]
@@ -1468,27 +618,7 @@ func (p *PostgresDB) initializePostgresDefaultData() error {
 	}
 
 	// 6. Add default fields to the screen
-	screenFields := []struct {
-		fieldType       string
-		fieldIdentifier string
-		displayOrder    int
-		isRequired      bool
-		fieldWidth      string
-	}{
-		{"system", "title", 1, true, "full"},
-		{"system", "description", 2, false, "full"},
-		{"system", "status", 3, true, "half"},
-		{"system", "priority", 4, false, "half"},
-		{"system", "assignee", 5, false, "half"},
-		{"system", "due_date", 6, false, "half"},
-		{"system", "milestone", 7, false, "half"},
-		{"system", "iteration", 8, false, "half"},
-		{"system", "start_date", 9, false, "half"},
-		{"system", "end_date", 10, false, "half"},
-		{"system", "labels", 11, false, "full"},
-	}
-
-	for _, field := range screenFields {
+	for _, field := range defaultScreenFields {
 		_, err = tx.Exec(
 			"INSERT INTO screen_fields (screen_id, field_type, field_identifier, display_order, is_required, field_width) VALUES ($1, $2, $3, $4, $5, $6)",
 			screenID, field.fieldType, field.fieldIdentifier, field.displayOrder, field.isRequired, field.fieldWidth,
@@ -1509,8 +639,7 @@ func (p *PostgresDB) initializePostgresDefaultData() error {
 	}
 
 	// 8. Assign default screen to configuration set for all contexts
-	contexts := []string{"create", "edit", "view"}
-	for _, context := range contexts {
+	for _, context := range defaultScreenContexts {
 		_, err = tx.Exec(
 			"INSERT INTO configuration_set_screens (configuration_set_id, screen_id, context) VALUES ($1, $2, $3)",
 			configSetID, screenID, context,
@@ -1521,26 +650,7 @@ func (p *PostgresDB) initializePostgresDefaultData() error {
 	}
 
 	// 9. Create default link types
-	linkTypes := []struct {
-		name               string
-		description        string
-		forwardLabel       string
-		reverseLabel       string
-		color              string
-		isSystem           bool
-		allowedEntityTypes *string // JSON array or nil
-	}{
-		{"Tests", "Test case tests work item", "tests", "tested by", "#10b981", true, strPtr(`["item","test_case"]`)},
-		{"Implements", "Work item implements another work item", "implements", "implemented by", "#3b82f6", true, nil},
-		{"Depends On", "Work item depends on another work item", "depends on", "blocks", "#f59e0b", true, nil},
-		{"Relates To", "General bidirectional relationship", "relates to", "relates to", "#6b7280", true, nil},
-		{"Links To", "General directional link", "links to", "linked from", "#64748b", true, nil},
-		{"Duplicates", "Work item is a duplicate of another", "duplicates", "duplicated by", "#ef4444", true, nil},
-		{"Child Of", "Alternative hierarchy relationship", "child of", "parent of", "#8b5cf6", true, nil},
-		{"Page", "Work item references a knowledge page", "references page", "referenced by", "#0ea5e9", true, strPtr(`["item","page"]`)},
-	}
-
-	for _, linkType := range linkTypes {
+	for _, linkType := range defaultLinkTypes {
 		_, err = tx.Exec(
 			"INSERT INTO link_types (name, description, forward_label, reverse_label, color, is_system, allowed_entity_types) VALUES ($1, $2, $3, $4, $5, $6, $7)",
 			linkType.name, linkType.description, linkType.forwardLabel, linkType.reverseLabel, linkType.color, linkType.isSystem, linkType.allowedEntityTypes,
@@ -1551,27 +661,7 @@ func (p *PostgresDB) initializePostgresDefaultData() error {
 	}
 
 	// 11. Create default system settings
-	systemSettings := []struct {
-		key         string
-		value       string
-		valueType   string
-		description string
-		category    string
-	}{
-		{"time_tracking_enabled", "true", "boolean", "Enable time tracking functionality", "modules"},
-		{"test_management_enabled", "true", "boolean", "Enable test management functionality", "modules"},
-		{"ai_chat_enabled", "true", "boolean", "Enable AI chat functionality", "modules"},
-		{"ai_feature_config", "{}", "json", "Per-feature AI LLM configuration", "ai"},
-		{"setup_completed", "false", "boolean", "Whether initial setup has been completed", "setup"},
-		{"admin_user_created", "false", "boolean", "Whether admin user has been created", "setup"},
-		{"calendar_feed_enabled", "true", "boolean", "Allow users to generate ICS calendar feed URLs", "security"},
-		{"plugin_cli_exec_enabled", "false", "boolean", "Allow plugins to execute CLI commands", "security"},
-		{"max_custom_field_indexes_per_table", "20", "integer", "Maximum number of custom field indexes per table", "performance"},
-		{"recurrence_volume_diagnostic_enabled", "true", "boolean", "Enable recurrence rule volume warnings in system diagnostics", "diagnostics"},
-		{"recurrence_volume_warning_threshold", "80", "integer", "Recurrence rules per workspace that trigger an administrator warning", "diagnostics"},
-	}
-
-	for _, setting := range systemSettings {
+	for _, setting := range defaultSystemSettings {
 		_, err = tx.Exec(
 			"INSERT INTO system_settings (key, value, value_type, description, category) VALUES ($1, $2, $3, $4, $5)",
 			setting.key, setting.value, setting.valueType, setting.description, setting.category,
@@ -1582,19 +672,7 @@ func (p *PostgresDB) initializePostgresDefaultData() error {
 	}
 
 	// 12. Create default hierarchy levels
-	hierarchyLevels := []struct {
-		level       int
-		name        string
-		description string
-	}{
-		{0, "Initiative", "High-level strategic work spanning multiple epics"},
-		{1, "Epic", "Large work item that can be broken down into stories"},
-		{2, "Story", "User story or feature that delivers value"},
-		{3, "Task", "Individual work item or technical task"},
-		{4, "Activity", "Discrete activity within a task"},
-	}
-
-	for _, hl := range hierarchyLevels {
+	for _, hl := range defaultHierarchyLevels {
 		_, err = tx.Exec(
 			"INSERT INTO hierarchy_levels (level, name, description) VALUES ($1, $2, $3)",
 			hl.level, hl.name, hl.description,
@@ -1605,22 +683,6 @@ func (p *PostgresDB) initializePostgresDefaultData() error {
 	}
 
 	// 13. Create default item types with icons and colors
-	defaultItemTypes := []struct {
-		name           string
-		description    string
-		icon           string
-		color          string
-		hierarchyLevel int
-		sortOrder      int
-	}{
-		{"Initiative", "Strategic initiative spanning multiple teams", "Target", "#7c3aed", 0, 1},
-		{"Epic", "Large feature or capability", "Zap", "#2563eb", 1, 1},
-		{"Story", "User story delivering value to end users", "BookOpen", "#059669", 2, 1},
-		{"Task", "Development or operational task", "CheckSquare", "#dc2626", 3, 1},
-		{"Bug", "Software defect that needs fixing", "Bug", "#ea580c", 3, 2},
-		{"Sub-task", "Small work item below any regular hierarchy level", "Minus", "#6b7280", -1, 1},
-	}
-
 	for _, itemType := range defaultItemTypes {
 		_, err = tx.Exec(
 			"INSERT INTO item_types (configuration_set_id, name, description, icon, color, hierarchy_level, sort_order, is_default) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
@@ -1632,8 +694,7 @@ func (p *PostgresDB) initializePostgresDefaultData() error {
 	}
 
 	// 13b. Bind selected item types to the default configuration set (excluding Initiative for simplified setup)
-	itemTypesToBind := []string{"Epic", "Story", "Task", "Bug", "Sub-task"}
-	for _, typeName := range itemTypesToBind {
+	for _, typeName := range defaultItemTypeBindings {
 		var itemTypeID int64
 		err = tx.QueryRow("SELECT id FROM item_types WHERE name = $1", typeName).Scan(&itemTypeID)
 		if err != nil {
@@ -1649,40 +710,15 @@ func (p *PostgresDB) initializePostgresDefaultData() error {
 	}
 
 	// 14. Create default Notification Mail channel
-	defaultChannelConfig := `{
-		"smtp_host": "",
-		"smtp_port": 587,
-		"smtp_username": "",
-		"smtp_password": "",
-		"smtp_from_email": "",
-		"smtp_from_name": "Windshift",
-		"smtp_encryption": "tls"
-	}`
-
 	_, err = tx.Exec(
 		"INSERT INTO channels (name, type, direction, description, status, is_default, config) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-		"Notification Mail", "smtp", "outbound", "Default SMTP channel for sending notification emails", "pending", true, defaultChannelConfig,
+		"Notification Mail", "smtp", "outbound", "Default SMTP channel for sending notification emails", "pending", true, defaultNotificationChannelConfig,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create default notification mail channel: %w", err)
 	}
 
 	// 14. Create default themes with dual light/dark nav colors
-	defaultThemes := []struct {
-		name                    string
-		description             string
-		isDefault               bool
-		isActive                bool
-		navBackgroundColorLight string
-		navTextColorLight       string
-		navBackgroundColorDark  string
-		navTextColorDark        string
-	}{
-		{"Default", "Clean theme with standard navigation colors", true, true, "#ffffff", "#374151", "#1f2937", "#f3f4f6"},
-		{"Ocean", "Professional blue-tinted navigation theme", false, false, "#f0f9ff", "#0c4a6e", "#0c4a6e", "#e0f2fe"},
-		{"Forest", "Nature-inspired green navigation theme", false, false, "#f0fdf4", "#14532d", "#14532d", "#dcfce7"},
-	}
-
 	for _, theme := range defaultThemes {
 		_, err = tx.Exec(
 			"INSERT INTO themes (name, description, is_default, is_active, nav_background_color_light, nav_text_color_light, nav_background_color_dark, nav_text_color_dark) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
@@ -1721,23 +757,11 @@ func (p *PostgresDB) initializePostgresDefaultData() error {
 	}
 
 	// 17. Create default notification event rules
-	defaultEventRules := []struct {
-		eventType      string
-		notifyAssignee bool
-		notifyCreator  bool
-		notifyWatchers bool
-	}{
-		{"item.assigned", true, false, false},
-		// Comments notify thread watchers too: commenters are auto-subscribed
-		// in CommentService.Create, so this delivers follow-up notifications.
-		{"comment.created", true, true, true},
-		{"status.changed", true, true, false},
-	}
 	// NOTE: mention.created intentionally absent — mentions are NOT
 	// configurable; they always notify the mentioned user (subject to the
 	// workspace-visibility check enforced in mention_service.go).
 
-	for _, rule := range defaultEventRules {
+	for _, rule := range defaultNotificationEventRules {
 		_, err = tx.Exec(
 			`INSERT INTO notification_event_rules
 			 (notification_setting_id, event_type, is_enabled, notify_assignee, notify_creator,
@@ -1809,27 +833,7 @@ func (p *PostgresDB) migrateDefaultConfigurationSet() error {
 			return fmt.Errorf("failed to create default screen: %w", err)
 		}
 
-		screenFields := []struct {
-			fieldType       string
-			fieldIdentifier string
-			displayOrder    int
-			isRequired      bool
-			fieldWidth      string
-		}{
-			{"system", "title", 1, true, "full"},
-			{"system", "description", 2, false, "full"},
-			{"system", "status", 3, true, "half"},
-			{"system", "priority", 4, false, "half"},
-			{"system", "assignee", 5, false, "half"},
-			{"system", "due_date", 6, false, "half"},
-			{"system", "milestone", 7, false, "half"},
-			{"system", "iteration", 8, false, "half"},
-			{"system", "start_date", 9, false, "half"},
-			{"system", "end_date", 10, false, "half"},
-			{"system", "labels", 11, false, "full"},
-		}
-
-		for _, field := range screenFields {
+		for _, field := range defaultScreenFields {
 			_, err = tx.Exec(
 				`INSERT INTO screen_fields (screen_id, field_type, field_identifier, display_order, is_required, field_width) VALUES ($1, $2, $3, $4, $5, $6)`,
 				screenID, field.fieldType, field.fieldIdentifier, field.displayOrder, field.isRequired, field.fieldWidth,
@@ -1841,8 +845,7 @@ func (p *PostgresDB) migrateDefaultConfigurationSet() error {
 	}
 
 	// Assign screen to config set for create/edit/view contexts
-	contexts := []string{"create", "edit", "view"}
-	for _, ctx := range contexts {
+	for _, ctx := range defaultScreenContexts {
 		_, err = tx.Exec(
 			`INSERT INTO configuration_set_screens (configuration_set_id, screen_id, context) VALUES ($1, $2, $3)`,
 			configSetID, screenID, ctx,

@@ -67,6 +67,7 @@
       {@const isBucketActive = activeBucketId === bucket.id}
       <a
         href={bucketHref(bucket.id)}
+        data-testid={`logbook-bucket-${bucket.id}`}
         class="w-full text-left cursor-pointer px-3 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-3 no-underline"
         style={isBucketActive ? 'background: var(--ds-surface-selected); color: var(--ds-text);' : 'color: var(--ds-text-subtle);'}
         onmouseenter={(e) => { if (!isBucketActive) e.currentTarget.style.cssText = 'background: var(--ds-background-neutral-hovered); color: var(--ds-text);'; }}
@@ -85,7 +86,9 @@
   <!-- Footer - Create Bucket (admin only) -->
   {#if $permissionStore.isSystemAdmin}
     <div class="pt-4 border-t" style="border-color: var(--ds-border);">
+      <!-- shortcut-guard-exempt: contextual sidebar action; the modal owns its submit behavior -->
       <Button
+        dataTestid="logbook-create-bucket"
         variant="default"
         icon={Plus}
         onclick={() => showCreateForm = true}
@@ -115,6 +118,7 @@
           <Label for="bucket-name" required class="mb-2">{t('logbook.bucketName')}</Label>
           <input
             id="bucket-name"
+            data-testid="logbook-bucket-name"
             type="text"
             bind:value={formData.name}
             class="w-full px-4 py-3 rounded border transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"

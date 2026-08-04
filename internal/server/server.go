@@ -152,6 +152,10 @@ func (s *Server) initialize() error {
 	// schedulers, plugins, and shutdown state. Split into focused builders plus a
 	// scheduler/lifecycle registry so start/stop wiring cannot drift silently.
 	cfg := s.config
+	utils.SetSkipTLSVerify(cfg.OutboundTLS.SkipVerify)
+	if cfg.OutboundTLS.SkipVerify {
+		slog.Warn("outbound TLS certificate verification is disabled; self-signed certificates will be accepted without server identity verification")
+	}
 
 	// Suppress all logging in silent mode (for testing)
 	if cfg.SilentMode {

@@ -482,7 +482,8 @@
   const assetColumns = [
     {
       key: 'title',
-      label: 'NAME'
+      label: 'NAME',
+      slot: 'title'
     },
     {
       key: 'asset_type_name',
@@ -790,6 +791,7 @@
         <div class="flex-1 relative">
           <IconSearch class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2" style="color: var(--ds-icon);" />
           <input
+            data-testid="asset-search"
             type="text"
             placeholder={searchMode === 'ql' ? 'Query: status = "Active" (press Enter)' : 'Search by name...'}
             bind:value={searchInput}
@@ -888,11 +890,15 @@
           totalItems={totalAssets}
           onPageChange={handlePageChange}
           rowAttrs={(asset) => ({
-            'data-testid': 'asset-row',
             'data-asset-id': asset.id,
             'data-asset-tag': asset.asset_tag || ''
           })}
         >
+          {#snippet title(item)}
+            <span data-testid="asset-row">
+              <span data-testid={`asset-title-${item.id}`}>{item.title}</span>
+            </span>
+          {/snippet}
           {#snippet type(item)}
             <div class="flex items-center gap-2">
             {#if item.asset_type_name}

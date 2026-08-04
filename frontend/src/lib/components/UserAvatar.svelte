@@ -110,6 +110,7 @@
 <DropdownMenu
   triggerAvatar={showAvatar ? authStore.currentUser?.avatar_url : null}
   triggerText={expanded && label ? label : (showAvatar ? '' : userInitials)}
+  triggerLabel={label || t('nav.profile')}
   triggerIcon={expanded && !showAvatar ? User : null}
   triggerIconClass="w-5 h-5"
   triggerClass={expanded

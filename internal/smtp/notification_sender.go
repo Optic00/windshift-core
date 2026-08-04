@@ -507,10 +507,7 @@ func sendWithStartTLS(addr string, auth smtp.Auth, from, to, message string) err
 	}
 	defer func() { _ = client.Close() }()
 
-	tlsConfig := &tls.Config{
-		ServerName: hostFromAddr(addr),
-		MinVersion: tls.VersionTLS12,
-	}
+	tlsConfig := smtpTLSConfig(addr)
 
 	if err = client.StartTLS(tlsConfig); err != nil { //nolint:gocritic
 		return err
@@ -522,10 +519,7 @@ func sendWithStartTLS(addr string, auth smtp.Auth, from, to, message string) err
 // sendWithSSL sends email using SSL/TLS encryption. SafeNetDialer enforces
 // the SSRF reject list before the TLS handshake.
 func sendWithSSL(addr string, auth smtp.Auth, from, to, message string) error {
-	tlsConfig := &tls.Config{
-		ServerName: hostFromAddr(addr),
-		MinVersion: tls.VersionTLS12,
-	}
+	tlsConfig := smtpTLSConfig(addr)
 
 	conn, err := tls.DialWithDialer(utils.SafeNetDialer(smtpDialTimeout), "tcp", addr, tlsConfig)
 	if err != nil {
@@ -544,6 +538,10 @@ func sendWithSSL(addr string, auth smtp.Auth, from, to, message string) error {
 	defer func() { _ = client.Close() }()
 
 	return sendWithClient(client, auth, from, to, message)
+}
+
+func smtpTLSConfig(addr string) *tls.Config {
+	return utils.OutboundTLSConfig(hostFromAddr(addr))
 }
 
 // sendPlaintext sends email over an unencrypted SMTP connection. Gated by

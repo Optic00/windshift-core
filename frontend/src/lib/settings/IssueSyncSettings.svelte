@@ -285,7 +285,7 @@
     <p>{t('issueSync.noLinkedRepos')}</p>
   </AlertBox>
 {:else}
-  <div class="space-y-6">
+  <div class="space-y-6" data-testid="issue-sync-settings">
     <div>
       <h3 class="text-lg font-semibold" style="color: var(--ds-text);">{t('issueSync.title')}</h3>
       <p class="text-sm mt-1" style="color: var(--ds-text-subtle);">{t('issueSync.subtitle')}</p>
@@ -296,6 +296,7 @@
       <Label>{t('issueSync.repository')}</Label>
       <p class="text-xs mb-2" style="color: var(--ds-text-subtle);">{t('issueSync.repositoryDescription')}</p>
       <select
+        data-testid="issue-sync-repository"
         bind:value={formData.workspace_repository_id}
         class="w-full px-3 py-2 rounded-md border text-sm"
         style="background: var(--ds-surface); color: var(--ds-text); border-color: var(--ds-border);"
@@ -314,7 +315,7 @@
           <Label>{t('issueSync.enabled')}</Label>
           <p class="text-xs" style="color: var(--ds-text-subtle);">{t('issueSync.enabledDescription')}</p>
         </div>
-        <Toggle bind:checked={formData.sync_enabled} />
+        <Toggle dataTestid="issue-sync-enabled" bind:checked={formData.sync_enabled} />
       </div>
     </Card>
 
@@ -604,6 +605,7 @@
         {/if}
       </div>
       <Button
+        dataTestid="issue-sync-save"
         variant="primary"
         onclick={saveConfig}
         disabled={saving || !formData.workspace_repository_id}

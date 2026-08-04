@@ -169,6 +169,7 @@
       {#if activeBucketId}
         <div class="flex items-center gap-2">
           <Button
+            dataTestid="logbook-new-note"
             variant="default"
             icon={StickyNote}
             onclick={() => { showNoteModal = true; }}
@@ -191,6 +192,7 @@
   <div class="mb-6">
     <SearchInput
       bind:value={searchQuery}
+      dataTestid="logbook-search"
       placeholder={t('logbook.search')}
       on_input={handleSearch}
     />
@@ -214,6 +216,7 @@
         {@const health = computeDocumentHealth(doc)}
         <a
           href={`/logbook/documents/${doc.id}`}
+          data-testid={`logbook-document-${doc.id}`}
           class="group text-left rounded-xl border transition-all duration-200 hover:shadow-md cursor-pointer overflow-hidden flex flex-col no-underline"
           style="background-color: var(--ds-surface-raised); border-color: var(--ds-border); color: inherit;"
           onmouseenter={(e) => e.currentTarget.style.borderColor = 'var(--ds-border-focused)'}
@@ -319,6 +322,7 @@
 <!-- Create Note Modal -->
 {#if showNoteModal}
   <div
+    data-testid="logbook-note-dialog"
     class="fixed inset-0 z-50 flex items-center justify-center"
     style="background-color: rgba(0, 0, 0, 0.4); backdrop-filter: blur(2px);"
     onclick={(e) => { if (e.target === e.currentTarget) { showNoteModal = false; } }}
@@ -342,6 +346,7 @@
           </label>
           <input
             id="note-title"
+            data-testid="logbook-note-title"
             type="text"
             bind:value={noteFormData.title}
             class="w-full px-4 py-3 rounded border transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
@@ -357,6 +362,7 @@
           <div style="min-height: 300px;">
             <LazyMilkdownEditor
               bind:content={noteFormData.content}
+              testId="logbook-note-editor"
               placeholder={t('logbook.noteContentPlaceholder')}
               showToolbar={true}
             />
@@ -369,7 +375,9 @@
         <Button variant="default" onclick={() => { showNoteModal = false; noteFormData = { title: '', content: '' }; }}>
           {t('common.cancel')}
         </Button>
+        <!-- shortcut-guard-exempt: dialog submit action; this is not a global create shortcut -->
         <Button
+          dataTestid="logbook-note-create"
           variant="primary"
           onclick={createNote}
           disabled={!noteFormData.title.trim()}

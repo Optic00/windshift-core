@@ -206,6 +206,43 @@ func (h *ItemHandler) setParentSummary(userID int, item *models.Item, resp *dto.
 	resp.ParentTitle = item.ParentTitle
 }
 
+// buildExpandedItemResponse maps an item and applies the optional related
+// collections requested by the caller. Both single-item read routes use this
+// path so their response contracts stay identical.
+func (h *ItemHandler) buildExpandedItemResponse(r *http.Request, userID int, item *models.Item) *dto.ItemResponse {
+	baseURL := getBaseURL(r)
+	response := dto.MapItemToResponse(item, baseURL)
+	h.setParentSummary(userID, item, response)
+
+	expand := restapi.ParseExpand(r)
+	if expand.Comments {
+		if comments, _, err := h.commentSvc.GetByItemIDPaginated(item.ID, services.DefaultCommentFeedLimit, 0, false); err == nil {
+			response.Comments = dto.MapCommentsToResponse(comments)
+		}
+	}
+	if expand.History {
+		if history, err := h.itemCRUD.GetHistory(item.ID); err == nil {
+			response.History = dto.MapHistoryToResponses(history)
+		}
+	}
+	if expand.Attachments {
+		if attachments, err := h.itemCRUD.GetAttachments(item.ID); err == nil {
+			response.Attachments = dto.MapAttachmentsToResponse(attachments, baseURL)
+		}
+	}
+	if expand.Transitions {
+		if item.StatusID != nil {
+			if transitions, err := h.workflowSvc.GetTransitionsForItem(item.WorkspaceID, item.ItemTypeID, *item.StatusID); err == nil {
+				response.Transitions = dto.MapServiceTransitionsToResponse(transitions)
+			}
+		} else {
+			response.Transitions = []dto.TransitionResponse{}
+		}
+	}
+
+	return response
+}
+
 // List handles GET /rest/api/v1/items
 //
 // @Summary      List items visible to the caller
@@ -430,42 +467,9 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	itemID := item.ID
 	h.maskProjectNamesOne(user.ID, item)
 
-	// Convert to DTO
-	baseURL := getBaseURL(r)
-	response := dto.MapItemToResponse(item, baseURL)
-	h.setParentSummary(user.ID, item, response)
-
-	// Handle expand parameter
-	expand := restapi.ParseExpand(r)
-	if expand.Comments {
-		if comments, _, err := h.commentSvc.GetByItemIDPaginated(itemID, services.DefaultCommentFeedLimit, 0, false); err == nil {
-			response.Comments = dto.MapCommentsToResponse(comments)
-		}
-	}
-	if expand.History {
-		if history, err := h.itemCRUD.GetHistory(itemID); err == nil {
-			response.History = dto.MapHistoryToResponses(history)
-		}
-	}
-	if expand.Attachments {
-		if attachments, err := h.itemCRUD.GetAttachments(itemID); err == nil {
-			response.Attachments = dto.MapAttachmentsToResponse(attachments, baseURL)
-		}
-	}
-	if expand.Transitions {
-		if item.StatusID != nil {
-			if transitions, err := h.workflowSvc.GetTransitionsForItem(item.WorkspaceID, item.ItemTypeID, *item.StatusID); err == nil {
-				response.Transitions = dto.MapServiceTransitionsToResponse(transitions)
-			}
-		} else {
-			response.Transitions = []dto.TransitionResponse{}
-		}
-	}
-
-	h.RespondOK(w, response)
+	h.RespondOK(w, h.buildExpandedItemResponse(r, user.ID, item))
 }
 
 // GetByKeyAndNumber handles GET /rest/api/v1/workspaces/{ws_key}/items/{number}.
@@ -535,37 +539,7 @@ func (h *ItemHandler) GetByKeyAndNumber(w http.ResponseWriter, r *http.Request) 
 
 	h.maskProjectNamesOne(user.ID, item)
 
-	baseURL := getBaseURL(r)
-	response := dto.MapItemToResponse(item, baseURL)
-	h.setParentSummary(user.ID, item, response)
-
-	expand := restapi.ParseExpand(r)
-	if expand.Comments {
-		if comments, _, err := h.commentSvc.GetByItemIDPaginated(itemID, services.DefaultCommentFeedLimit, 0, false); err == nil {
-			response.Comments = dto.MapCommentsToResponse(comments)
-		}
-	}
-	if expand.History {
-		if history, err := h.itemCRUD.GetHistory(itemID); err == nil {
-			response.History = dto.MapHistoryToResponses(history)
-		}
-	}
-	if expand.Attachments {
-		if attachments, err := h.itemCRUD.GetAttachments(itemID); err == nil {
-			response.Attachments = dto.MapAttachmentsToResponse(attachments, baseURL)
-		}
-	}
-	if expand.Transitions {
-		if item.StatusID != nil {
-			if transitions, err := h.workflowSvc.GetTransitionsForItem(item.WorkspaceID, item.ItemTypeID, *item.StatusID); err == nil {
-				response.Transitions = dto.MapServiceTransitionsToResponse(transitions)
-			}
-		} else {
-			response.Transitions = []dto.TransitionResponse{}
-		}
-	}
-
-	h.RespondOK(w, response)
+	h.RespondOK(w, h.buildExpandedItemResponse(r, user.ID, item))
 }
 
 // Create handles POST /rest/api/v1/items

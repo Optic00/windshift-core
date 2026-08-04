@@ -153,6 +153,7 @@
           triggerIconClass="w-5 h-5"
           triggerGap="gap-3"
           triggerText={$uiStore.navExpanded ? t('nav.workspaces') : ''}
+          triggerLabel={t('nav.workspaces')}
           triggerClass="{$uiStore.navExpanded ? 'w-full px-3' : 'w-10'} h-10 rounded flex items-center {$uiStore.navExpanded ? '' : 'justify-center'} cursor-pointer nav-button nav-button-emphasized {isWorkspaceRoute($currentRoute.view) ? 'nav-button-selected' : ''} {!$workspacesStore.loaded ? 'opacity-50 cursor-wait' : ''}"
           triggerTestid="workspaces-dropdown-trigger"
           items={workspacesDropdownItems}

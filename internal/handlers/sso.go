@@ -372,6 +372,24 @@ func (h *SSOHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reject missing, expired, replayed, or provider-mismatched application
+	// state before doing OIDC discovery. The relying-party library still
+	// validates its encrypted state cookie during code exchange; this early
+	// application-level check keeps invalid callbacks fail-closed and gives the
+	// browser a useful recovery message even when the IdP is unavailable.
+	state := r.URL.Query().Get("state")
+	if state == "" {
+		h.redirectWithError(w, r, "Login session expired. Please try signing in again.")
+		return
+	}
+	if _, stateErr := repository.NewSSOStateRepository(h.db).GetValid(state, provider.ID, time.Now()); stateErr != nil {
+		slog.Warn("OIDC callback state token missing or expired",
+			slog.String("component", "sso"),
+			slog.String("provider", provider.Slug))
+		h.redirectWithError(w, r, "Login session expired. Please try signing in again.")
+		return
+	}
+
 	// Decrypt client secret
 	clientSecret, err := h.encryption.Decrypt(provider.ClientSecretEncrypted)
 	if err != nil {

@@ -3410,13 +3410,13 @@ func newSSRFSafeClient(timeout time.Duration, allowedPatterns []string) *http.Cl
 			return nil
 		},
 	}
-	transport := &http.Transport{
+	transport := utils.ConfigureHTTPTransport(&http.Transport{
 		DialContext:           dialer.DialContext,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: timeout,
 		ExpectContinueTimeout: 1 * time.Second,
 		DisableKeepAlives:     true,
-	}
+	})
 	return &http.Client{
 		Transport: transport,
 		Timeout:   timeout,

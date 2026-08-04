@@ -33,5 +33,8 @@ func LoadLogbookSidecar() LogbookSidecarConfig {
 			Level:  firstNonEmpty(os.Getenv("LOG_LEVEL"), "info"),
 			Format: firstNonEmpty(os.Getenv("LOG_FORMAT"), "text"),
 		},
+		OutboundTLS: OutboundTLSConfig{
+			SkipVerify: parseBoolEnv("TLS_SKIP_VERIFY"),
+		},
 	}
 }

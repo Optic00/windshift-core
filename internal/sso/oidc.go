@@ -29,9 +29,9 @@ const oidcHTTPTimeout = 15 * time.Second
 func newSSRFSafeOIDCClient(timeout time.Duration) *http.Client {
 	return &http.Client{
 		Timeout: timeout,
-		Transport: &http.Transport{
+		Transport: utils.ConfigureHTTPTransport(&http.Transport{
 			DialContext: utils.SafeNetDialer(timeout).DialContext,
-		},
+		}),
 	}
 }
 

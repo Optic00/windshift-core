@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -29,10 +30,11 @@ import (
 // OAuth 2.0 server lifetimes. Hardcoded constants in v1; configurable via
 // system_settings later if needed.
 const (
-	oauthCodeTTL     = 60 * time.Second
-	oauthAccessTTL   = 1 * time.Hour
-	oauthRefreshTTL  = 30 * 24 * time.Hour
-	oauthAgentPrefix = "oauth-" // agent username = oauth-{slug}-{user_id}
+	oauthCodeTTL          = 60 * time.Second
+	oauthAccessTTL        = 1 * time.Hour
+	oauthRefreshTTL       = 30 * 24 * time.Hour
+	oauthAgentPrefix      = "oauth-" // agent username = oauth-{slug}-{user_id}
+	maxOAuthAgentUsername = 32
 
 	// oauthTokenRequestMaxBytes caps the /token request body. Token requests
 	// carry only a handful of short form/JSON fields; 64 KiB is generous while
@@ -640,9 +642,11 @@ func (h *OAuthHandler) tokenRefreshToken(w http.ResponseWriter, r *http.Request,
 
 // findOrCreateClientAgent returns the per-(client, user) agent that all
 // OAuth-issued tokens for this pair are bound to. Username convention is
-// `oauth-{slug}-{user_id}` — collision-free across clients and users.
+// `oauth-{slug}-{user_id}` when it fits. Long client slugs fall back to
+// `oauth-{client_id}-{user_id}`, which stays collision-free while respecting
+// the agent username contract.
 func (h *OAuthHandler) findOrCreateClientAgent(user *models.User, client *oauthClientRow) (*models.User, error) {
-	username := fmt.Sprintf("%s%s-%d", oauthAgentPrefix, client.Slug, user.ID)
+	username := oauthAgentUsername(client.ID, client.Slug, user.ID)
 	existing, err := h.agent.FindOwnedAgentByUsername(user.ID, username)
 	if err != nil {
 		return nil, err
@@ -673,6 +677,14 @@ func (h *OAuthHandler) findOrCreateClientAgent(user *models.User, client *oauthC
 		}
 	}
 	return created, nil
+}
+
+func oauthAgentUsername(clientID int, clientSlug string, userID int) string {
+	username := fmt.Sprintf("%s%s-%d", oauthAgentPrefix, clientSlug, userID)
+	if utf8.RuneCountInString(username) <= maxOAuthAgentUsername {
+		return username
+	}
+	return fmt.Sprintf("%s%d-%d", oauthAgentPrefix, clientID, userID)
 }
 
 // TokenResponse is the RFC 6749 §5.1 successful response.

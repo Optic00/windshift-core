@@ -354,6 +354,45 @@ func (r *PageRepository) MoveTx(tx database.Tx, pageID int, newParentID *int, ne
 	return nil
 }
 
+// MoveAcrossWorkspaceTx rewrites the workspace and hierarchy columns for one
+// row in a subtree move. Cross-workspace moves deliberately reset home status
+// and explicit ACL inheritance; workspace-scoped relations are reconciled by
+// PageService in the same transaction.
+func (r *PageRepository) MoveAcrossWorkspaceTx(tx database.Tx, pageID, destinationWorkspaceID int, newParentID *int, newPath string, newDepth, updatedBy int, newFracIndex *string) error {
+	now := time.Now().UTC()
+	query := `
+		UPDATE pages
+		SET workspace_id = ?,
+		    parent_id = ?,
+		    path = ?,
+		    depth = ?,
+		    is_home = false,
+		    inherit_permissions = true,
+		    updated_by = ?,
+		    updated_at = ?`
+	args := []interface{}{destinationWorkspaceID, nullInt(newParentID), newPath, newDepth, updatedBy, now}
+	if newFracIndex != nil {
+		query += `,
+		    frac_index = ?`
+		args = append(args, *newFracIndex)
+	}
+	query += ` WHERE id = ?`
+	args = append(args, pageID)
+
+	res, err := tx.Exec(query, args...)
+	if err != nil {
+		if isUniqueConstraintError(err) {
+			return ErrDuplicateEntry
+		}
+		return fmt.Errorf("move page %d across workspaces: %w", pageID, err)
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // SetFracIndexTx writes a frac_index for a single page. Used for one-shot
 // backfills when reordering exposes siblings whose frac_index is still NULL
 // (pages predating drag-and-drop). The caller is responsible for picking a
@@ -594,11 +633,11 @@ func (r *PageRepository) ListChildrenTx(tx database.Tx, workspaceID int, parentI
 	return out, rows.Err()
 }
 
-// ListSubtreeForArchiveTx returns the target page plus every descendant matched
+// ListSubtreeTx returns the target page plus every descendant matched
 // by the materialized-path prefix. When forUpdate is true (Postgres), rows are
 // locked until the caller's transaction commits so permission checks performed
 // by the service cannot race a concurrent insert/update in the archived subtree.
-func (r *PageRepository) ListSubtreeForArchiveTx(tx database.Tx, page *models.Page, forUpdate bool) ([]models.Page, error) {
+func (r *PageRepository) ListSubtreeTx(tx database.Tx, page *models.Page, forUpdate bool) ([]models.Page, error) {
 	prefix := page.Path + fmt.Sprintf("%d/", page.ID)
 	query := `
 		SELECT ` + pageColumns + `
@@ -610,7 +649,7 @@ func (r *PageRepository) ListSubtreeForArchiveTx(tx database.Tx, page *models.Pa
 	}
 	rows, err := tx.Query(query, page.ID, page.WorkspaceID, prefix+"%")
 	if err != nil {
-		return nil, fmt.Errorf("list archive subtree: %w", err)
+		return nil, fmt.Errorf("list page subtree: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -618,11 +657,17 @@ func (r *PageRepository) ListSubtreeForArchiveTx(tx database.Tx, page *models.Pa
 	for rows.Next() {
 		p, scanErr := scanPage(rows)
 		if scanErr != nil {
-			return nil, fmt.Errorf("scan archive subtree: %w", scanErr)
+			return nil, fmt.Errorf("scan page subtree: %w", scanErr)
 		}
 		out = append(out, *p)
 	}
 	return out, rows.Err()
+}
+
+// ListSubtreeForArchiveTx retains the archive-specific call site while the
+// same locked subtree primitive is shared with cross-workspace moves.
+func (r *PageRepository) ListSubtreeForArchiveTx(tx database.Tx, page *models.Page, forUpdate bool) ([]models.Page, error) {
+	return r.ListSubtreeTx(tx, page, forUpdate)
 }
 
 // WouldCreatePageCycleTx reports whether reparenting page pageID under

@@ -30,6 +30,7 @@
       {id}
       {href}
       class="{baseClasses} {variantClasses}"
+      aria-label={label}
       aria-current={isActive ? 'page' : undefined}
     >
       <Icon class="w-5 h-5 flex-shrink-0" />
@@ -40,6 +41,7 @@
       {id}
       {onclick}
       class="{baseClasses} {variantClasses}"
+      aria-label={label}
     >
       <Icon class="w-5 h-5 flex-shrink-0" />
       {#if expanded}<span class="ml-3 whitespace-nowrap">{label}</span>{/if}

@@ -17,6 +17,7 @@ import (
 	"windshift/internal/logbookapi"
 	"windshift/internal/logger"
 	"windshift/internal/middleware"
+	"windshift/internal/utils"
 )
 
 func main() {
@@ -26,6 +27,10 @@ func main() {
 
 	// Initialize logger
 	logger.Init(cfg.Logging.Level, cfg.Logging.Format)
+	utils.SetSkipTLSVerify(cfg.OutboundTLS.SkipVerify)
+	if cfg.OutboundTLS.SkipVerify {
+		slog.Warn("outbound TLS certificate verification is disabled; self-signed certificates will be accepted without server identity verification")
+	}
 
 	slog.Info("starting logbook service",
 		slog.String("port", cfg.Port),

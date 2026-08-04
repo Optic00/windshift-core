@@ -243,6 +243,7 @@
       >
         {#snippet actions()}
           <Button
+            dataTestid="collection-create"
             onclick={createNewCollection}
             variant="primary"
             icon={Plus}
@@ -284,6 +285,7 @@
         emptyIcon={FolderOpen}
         actionItems={buildCollectionActions}
         onRowClick={(collection) => viewCollection(collection)}
+        rowAttrs={(collection) => ({ 'data-testid': `collection-row-${collection.id}` })}
       >
         {#snippet name(collection)}
           {@const href = collection.workspace_id
@@ -333,4 +335,3 @@
   onDelete={handleDeleteCategory}
   showColorPicker={true}
 />
-

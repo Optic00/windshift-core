@@ -833,8 +833,13 @@
     bind:isOpen={moveDialogOpen}
     {workspaceId}
     page={selectedPage}
-    onMoved={async () => {
+    onMoved={async (moved) => {
       pagesTreeRefresh.bump();
+      if (moved?.workspace_id !== workspaceId) {
+        selectedPage = null;
+        navigate(`/workspaces/${workspaceId}/pages`);
+        return;
+      }
       if (selectedPage) await loadPage(selectedPage.id);
     }}
   />

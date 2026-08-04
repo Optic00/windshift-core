@@ -222,7 +222,7 @@
 								</Tooltip>
 							{/if}
 							<span class="user">{group.user_name || 'Unknown'}</span>
-							<span class="time" title={formatHistoryTimestamp(group.changed_at, timezone)}>
+							<span data-testid="item-history-time" class="time" title={formatHistoryTimestamp(group.changed_at, timezone)}>
 								{formatRelativeTime(group.changed_at)}
 							</span>
 						</div>

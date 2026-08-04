@@ -45,9 +45,6 @@ var portalWebauthnSchema string
 //go:embed schema/milestones.sql
 var milestonesSchema string
 
-//go:embed schema/milestones_existing.sql
-var milestonesExistingSchema string
-
 //go:embed schema/iterations.sql
 var iterationsSchema string
 
@@ -260,1073 +257,9 @@ func (db *DB) Close() error {
 	return err2
 }
 
-// Initialize creates the schema and runs idempotent migrations.
-// FIXME(human-review): Split bootstrap, migrations, shims, and default data.
+// Initialize creates the SQLite schema and applies the ordered migration catalog.
 func (db *DB) Initialize() error {
-	// Bootstrap the migration registry before other DDL.
-	if _, err := db.Exec(`
-		CREATE TABLE IF NOT EXISTS schema_migrations (
-			version    TEXT PRIMARY KEY,
-			name       TEXT NOT NULL,
-			checksum   TEXT NOT NULL DEFAULT '',
-			applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-		);
-	`); err != nil {
-		return fmt.Errorf("failed to bootstrap schema_migrations: %w", err)
-	}
-
-	// Check if database is already initialized by checking for core tables
-	var tableCount int
-	err := db.QueryRow(`
-		SELECT COUNT(name) FROM sqlite_master
-		WHERE type='table' AND name IN ('workspaces', 'items', 'users', 'workflows')
-	`).Scan(&tableCount)
-	if err != nil {
-		return fmt.Errorf("failed to check database initialization: %w", err)
-	}
-
-	// If all core tables exist, database is already initialized
-	if tableCount >= 4 {
-		// Optimize query planner statistics (SQLite 3.46.0+)
-		// This is safe to run on older versions - it will just be a no-op
-		if _, err := db.Exec("PRAGMA optimize=0x10002"); err != nil {
-			slog.Warn("PRAGMA optimize failed (may be using older SQLite)", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// OAuth 2.0 server tables (oauth_clients, oauth_authorization_codes,
-		// oauth_refresh_tokens). Created here to backfill existing installs
-		// without re-running the full system schema. Must run BEFORE the
-		// migrations array below, because the oauth_client_id ALTER on users
-		// declares a FK against oauth_clients(id).
-		if _, err := db.Exec(`
-			CREATE TABLE IF NOT EXISTS oauth_clients (
-				id INTEGER PRIMARY KEY AUTOINCREMENT,
-				slug TEXT NOT NULL UNIQUE,
-				display_name TEXT NOT NULL,
-				client_id TEXT NOT NULL UNIQUE,
-				client_type TEXT NOT NULL,
-				client_secret_hash TEXT,
-				redirect_uris TEXT NOT NULL DEFAULT '[]',
-				allowed_scopes TEXT NOT NULL DEFAULT '[]',
-				enabled BOOLEAN NOT NULL DEFAULT 1,
-				created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-			);
-			CREATE INDEX IF NOT EXISTS idx_oauth_clients_client_id ON oauth_clients(client_id);
-			CREATE INDEX IF NOT EXISTS idx_oauth_clients_enabled ON oauth_clients(enabled);
-
-			CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
-				id INTEGER PRIMARY KEY AUTOINCREMENT,
-				code TEXT NOT NULL UNIQUE,
-				client_id TEXT NOT NULL,
-				user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-				agent_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-				redirect_uri TEXT NOT NULL,
-				scopes TEXT NOT NULL DEFAULT '[]',
-				code_challenge TEXT,
-				code_challenge_method TEXT,
-				state TEXT,
-				expires_at DATETIME NOT NULL,
-				consumed_at DATETIME,
-				created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-			);
-			CREATE INDEX IF NOT EXISTS idx_oauth_authorization_codes_code ON oauth_authorization_codes(code);
-			CREATE INDEX IF NOT EXISTS idx_oauth_authorization_codes_expires_at ON oauth_authorization_codes(expires_at);
-
-			CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
-				id INTEGER PRIMARY KEY AUTOINCREMENT,
-				token_hash TEXT NOT NULL UNIQUE,
-				api_token_id INTEGER NOT NULL REFERENCES api_tokens(id) ON DELETE CASCADE,
-				client_id TEXT NOT NULL,
-				user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-				agent_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-				scopes TEXT NOT NULL DEFAULT '[]',
-				expires_at DATETIME NOT NULL,
-				revoked_at DATETIME,
-				rotated_to_id INTEGER REFERENCES oauth_refresh_tokens(id) ON DELETE SET NULL,
-				created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-			);
-			CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_token_hash ON oauth_refresh_tokens(token_hash);
-			CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_api_token_id ON oauth_refresh_tokens(api_token_id);
-			CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_expires_at ON oauth_refresh_tokens(expires_at);
-		`); err != nil {
-			slog.Warn("oauth server tables migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Audit log table. Mirror of internal/database/schema/system.sql.
-		// Pre-system.sql installations would otherwise silently fail every
-		// audit write with "no such table: audit_logs"; ~80 callers discard
-		// LogAudit's error so the loss is invisible. Column adds for newer
-		// audit fields go in the migrations array below.
-		if _, err := db.Exec(`
-			CREATE TABLE IF NOT EXISTS audit_logs (
-				id INTEGER PRIMARY KEY AUTOINCREMENT,
-				timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-				user_id INTEGER,
-				username TEXT NOT NULL,
-				ip_address TEXT,
-				user_agent TEXT,
-				action_type TEXT NOT NULL,
-				resource_type TEXT NOT NULL,
-				resource_id INTEGER,
-				resource_name TEXT,
-				details TEXT,
-				success BOOLEAN NOT NULL DEFAULT 1,
-				error_message TEXT,
-				FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
-			);
-			CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp);
-			CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id);
-			CREATE INDEX IF NOT EXISTS idx_audit_logs_action_type ON audit_logs(action_type);
-			CREATE INDEX IF NOT EXISTS idx_audit_logs_resource_type ON audit_logs(resource_type);
-		`); err != nil {
-			slog.Warn("audit_logs migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// The legacy column-add migrations slice + log-and-continue loop
-		// have been removed. All 35 entries are now in the catalog
-		// (internal/database/catalog.go, columnAddMigrations) and applied
-		// by the catalog runner at the end of Initialize. Errors abort
-		// startup instead of being logged and swallowed.
-
-		if _, err := db.Exec("CREATE INDEX IF NOT EXISTS idx_users_is_agent ON users(is_agent)"); err != nil {
-			slog.Warn("idx_users_is_agent migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		if _, err := db.Exec("CREATE INDEX IF NOT EXISTS idx_portal_sessions_channel_id ON portal_customer_sessions(channel_id)"); err != nil {
-			slog.Warn("idx_portal_sessions_channel_id migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Enforce is_agent immutability at the DB level: toggling the flag
-		// would open a token-impersonation path (flip a user to agent, mint
-		// a token, flip them back).
-		if _, err := db.Exec(`
-			CREATE TRIGGER IF NOT EXISTS users_is_agent_immutable
-			BEFORE UPDATE OF is_agent ON users
-			FOR EACH ROW
-			WHEN IFNULL(NEW.is_agent, 0) IS NOT IFNULL(OLD.is_agent, 0)
-			BEGIN
-				SELECT RAISE(ABORT, 'is_agent is immutable');
-			END
-		`); err != nil {
-			slog.Warn("users_is_agent_immutable trigger migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		if _, err := db.Exec("CREATE INDEX IF NOT EXISTS idx_users_agent_owner ON users(agent_owner_user_id) WHERE agent_owner_user_id IS NOT NULL"); err != nil {
-			slog.Warn("idx_users_agent_owner migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// last review: ser, 210426, NOTE: all of these will be dropped from 0.7 onwards
-		// Owner binding must be immutable: flipping it would silently
-		// reassign every inherited permission of the agent.
-		if _, err := db.Exec(`
-			CREATE TRIGGER IF NOT EXISTS users_agent_owner_immutable
-			BEFORE UPDATE OF agent_owner_user_id ON users
-			FOR EACH ROW
-			WHEN NEW.agent_owner_user_id IS NOT OLD.agent_owner_user_id
-			BEGIN
-				SELECT RAISE(ABORT, 'agent_owner_user_id is immutable');
-			END
-		`); err != nil {
-			slog.Warn("users_agent_owner_immutable trigger migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Reject inserts that would create a non-agent user with an owner link.
-		if _, err := db.Exec(`
-			CREATE TRIGGER IF NOT EXISTS users_agent_owner_requires_agent_insert
-			BEFORE INSERT ON users
-			FOR EACH ROW
-			WHEN NEW.agent_owner_user_id IS NOT NULL AND IFNULL(NEW.is_agent, 0) = 0
-			BEGIN
-				SELECT RAISE(ABORT, 'agent_owner_user_id requires is_agent');
-			END
-		`); err != nil {
-			slog.Warn("users_agent_owner_requires_agent_insert trigger migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// agent_provenance + oauth_client_id invariant enforcement on existing
-		// SQLite databases. SQLite's ALTER TABLE doesn't support adding CHECK
-		// constraints, so the same invariants from the fresh-install schema
-		// (users.sql) are reproduced here as triggers.
-
-		// 1. Reject inserts where agent_provenance='oauth' but oauth_client_id is NULL.
-		if _, err := db.Exec(`
-			CREATE TRIGGER IF NOT EXISTS users_oauth_provenance_requires_client
-			BEFORE INSERT ON users
-			FOR EACH ROW
-			WHEN NEW.agent_provenance = 'oauth' AND NEW.oauth_client_id IS NULL
-			BEGIN
-				SELECT RAISE(ABORT, 'agent_provenance=oauth requires oauth_client_id');
-			END
-		`); err != nil {
-			slog.Warn("users_oauth_provenance_requires_client trigger migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// 2. Reject inserts where oauth_client_id is set but the row isn't an
-		//    is_agent='oauth'-provenance agent. Closes the side channel where
-		//    a non-agent user could be tagged with a client id.
-		if _, err := db.Exec(`
-			CREATE TRIGGER IF NOT EXISTS users_oauth_client_requires_oauth_agent
-			BEFORE INSERT ON users
-			FOR EACH ROW
-			WHEN NEW.oauth_client_id IS NOT NULL
-			  AND (IFNULL(NEW.is_agent, 0) = 0 OR NEW.agent_provenance != 'oauth')
-			BEGIN
-				SELECT RAISE(ABORT, 'oauth_client_id requires is_agent and agent_provenance=oauth');
-			END
-		`); err != nil {
-			slog.Warn("users_oauth_client_requires_oauth_agent trigger migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// 3. agent_provenance is immutable post-creation — flipping a 'user'
-		//    agent into 'oauth' would let an attacker bypass the
-		//    user-managed-agents policy gate.
-		if _, err := db.Exec(`
-			CREATE TRIGGER IF NOT EXISTS users_agent_provenance_immutable
-			BEFORE UPDATE OF agent_provenance ON users
-			FOR EACH ROW
-			WHEN IFNULL(NEW.agent_provenance, '') IS NOT IFNULL(OLD.agent_provenance, '')
-			BEGIN
-				SELECT RAISE(ABORT, 'agent_provenance is immutable');
-			END
-		`); err != nil {
-			slog.Warn("users_agent_provenance_immutable trigger migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// 4. oauth_client_id is immutable too — rebinding to a different client
-		//    would silently change which integration owns the agent.
-		if _, err := db.Exec(`
-			CREATE TRIGGER IF NOT EXISTS users_oauth_client_id_immutable
-			BEFORE UPDATE OF oauth_client_id ON users
-			FOR EACH ROW
-			WHEN NEW.oauth_client_id IS NOT OLD.oauth_client_id
-			BEGIN
-				SELECT RAISE(ABORT, 'oauth_client_id is immutable');
-			END
-		`); err != nil {
-			slog.Warn("users_oauth_client_id_immutable trigger migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Indexes for the audit queries "show me OAuth-spawned agents" and
-		// "agents per OAuth client".
-		if _, err := db.Exec("CREATE INDEX IF NOT EXISTS idx_users_agent_provenance ON users(agent_provenance) WHERE is_agent = true"); err != nil {
-			slog.Warn("idx_users_agent_provenance migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-		if _, err := db.Exec("CREATE INDEX IF NOT EXISTS idx_users_oauth_client_id ON users(oauth_client_id) WHERE oauth_client_id IS NOT NULL"); err != nil {
-			slog.Warn("idx_users_oauth_client_id migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Seed user-managed agent feature flags.
-		var umaCount int
-		if err := db.QueryRow(`SELECT COUNT(*) FROM system_settings WHERE key = 'allow_user_managed_agents'`).Scan(&umaCount); err == nil && umaCount == 0 {
-			if _, err := db.Exec(`INSERT INTO system_settings (key, value, value_type, description, category) VALUES ('allow_user_managed_agents', 'false', 'boolean', 'Allow non-admin users to create and manage their own agent users from their profile', 'security')`); err != nil {
-				slog.Warn("allow_user_managed_agents setting migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-		var maxAgentsCount int
-		if err := db.QueryRow(`SELECT COUNT(*) FROM system_settings WHERE key = 'max_agents_per_user'`).Scan(&maxAgentsCount); err == nil && maxAgentsCount == 0 {
-			if _, err := db.Exec(`INSERT INTO system_settings (key, value, value_type, description, category) VALUES ('max_agents_per_user', '5', 'integer', 'Maximum number of owned agents a single non-admin user may create', 'security')`); err != nil {
-				slog.Warn("max_agents_per_user setting migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Create labels tables if they don't exist (for existing databases)
-		if _, err := db.Exec(labelsSchema); err != nil {
-			slog.Warn("labels migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Create page_labels tables if they don't exist (for existing databases)
-		if _, err := db.Exec(pageLabelsSchema); err != nil {
-			slog.Warn("page_labels migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Create LLM tables if they don't exist (for existing databases)
-		if _, err := db.Exec(llmSchema); err != nil {
-			slog.Warn("llm migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Create auth policy tables if they don't exist (for existing databases)
-		if _, err := db.Exec(authPolicySchema); err != nil {
-			slog.Warn("auth_policy migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Drop legacy vector-search artifacts and the abandoned
-		// page_attachments table for installs that ran the original Slice 1
-		// schema. Page attachments now live in the polymorphic `attachments`
-		// table with entity_type='page'. We do this BEFORE running
-		// pagesSchema so a fresh install sees nothing to drop. Idempotent.
-		for _, stmt := range []string{
-			`DROP TABLE IF EXISTS page_chunk_embeddings`,
-			`DROP TABLE IF EXISTS page_attachments`,
-			`DELETE FROM system_settings WHERE key IN (
-				'knowledge.vector_search_enabled',
-				'knowledge.embedding_model',
-				'knowledge.embedding_connection_id',
-				'knowledge.embedding_dimensions'
-			)`,
-		} {
-			if _, err := db.Exec(stmt); err != nil {
-				slog.Warn("knowledge cleanup migration failed", slog.String("component", "database"), slog.String("stmt", stmt), slog.Any("error", err))
-			}
-		}
-
-		// Create knowledge pages tables, permission keys, role grants, and
-		// system settings for existing databases. Schema is fully idempotent.
-		if _, err := db.Exec(pagesSchema); err != nil {
-			slog.Warn("pages migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Create milestone_releases table if it doesn't exist and drop legacy SCM columns from milestones
-		if _, err := db.Exec(milestonesExistingSchema); err != nil {
-			slog.Warn("milestones migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Migrate items.milestone_id (legacy single FK) into the item_milestones
-		// join table created above. Idempotent: backfill is INSERT OR IGNORE.
-		//
-		// We deliberately do NOT DROP COLUMN milestone_id afterwards: the legacy
-		// items schema declares `FOREIGN KEY (milestone_id) REFERENCES
-		// milestones(id)` as a table-level constraint, and SQLite refuses to
-		// drop a column that participates in any FK ("unknown column in foreign
-		// key definition"). A full items table rebuild on every startup of a
-		// legacy install is too risky for cosmetic cleanup — the column is
-		// nullable, no application code reads it, and the FK's ON DELETE SET
-		// NULL keeps it consistent if a milestone is deleted. It stays as a
-		// harmless vestige on legacy installs; fresh installs never have it.
-		var hasItemMilestoneCol int
-		_ = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('items') WHERE name='milestone_id'`).Scan(&hasItemMilestoneCol)
-		if hasItemMilestoneCol > 0 {
-			if _, err := db.Exec(`
-				INSERT OR IGNORE INTO item_milestones (item_id, milestone_id, created_at)
-				SELECT id, milestone_id, created_at FROM items WHERE milestone_id IS NOT NULL
-			`); err != nil {
-				slog.Warn("item_milestones backfill failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Create webhook_deliveries table (added with the admin Diagnostics page)
-		// for existing databases. Re-running channelsSchema is safe — every
-		// statement in it is IF NOT EXISTS.
-		if _, err := db.Exec(channelsSchema); err != nil {
-			slog.Warn("channels migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Create scheduler_runs table (added with the admin Diagnostics page).
-		// Inlined rather than re-running systemSchema so this existing-install
-		// backfill stays small and independent of unrelated schema changes.
-		if _, err := db.Exec(`
-			CREATE TABLE IF NOT EXISTS scheduler_runs (
-				id INTEGER PRIMARY KEY AUTOINCREMENT,
-				scheduler_name TEXT NOT NULL,
-				started_at DATETIME NOT NULL,
-				completed_at DATETIME,
-				duration_ms INTEGER,
-				items_processed INTEGER,
-				success BOOLEAN NOT NULL DEFAULT 0,
-				error_message TEXT
-			);
-			CREATE INDEX IF NOT EXISTS idx_scheduler_runs_name_started ON scheduler_runs(scheduler_name, started_at DESC);
-			CREATE INDEX IF NOT EXISTS idx_scheduler_runs_started_at ON scheduler_runs(started_at);
-			CREATE INDEX IF NOT EXISTS idx_scheduler_runs_success ON scheduler_runs(success);
-		`); err != nil {
-			slog.Warn("scheduler_runs migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Create pending_custom_field_cleanups queue table for existing
-		// databases. Drained by CFVCleanupScheduler; without it the scheduler
-		// logs "no such table" every tick. Inlined for the same reason as
-		// scheduler_runs above.
-		if _, err := db.Exec(`
-			CREATE TABLE IF NOT EXISTS pending_custom_field_cleanups (
-				id INTEGER PRIMARY KEY AUTOINCREMENT,
-				field_id INTEGER NOT NULL,
-				job_type TEXT NOT NULL DEFAULT 'field_scrub',
-				payload TEXT,
-				status TEXT NOT NULL DEFAULT 'pending',
-				created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-				started_at DATETIME,
-				completed_at DATETIME,
-				items_processed INTEGER NOT NULL DEFAULT 0,
-				error_message TEXT
-			);
-			CREATE INDEX IF NOT EXISTS idx_pending_cfv_cleanups_status ON pending_custom_field_cleanups(status, created_at);
-		`); err != nil {
-			slog.Warn("pending_custom_field_cleanups migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// milestone_*_scm column drops moved to catalog (milestoneScmDropMigrations).
-
-		// Enforce uniqueness on items.frac_index. Pre-existing duplicates
-		// (possible before the UpdateFracIndex cache-coherence fix) would
-		// block the UNIQUE index, so null them out first, keeping the oldest
-		// occurrence in each duplicate group. NULL items sort to the end of
-		// the list via defaultOrderBy, so this is a safe recovery.
-		var fracUniqueCount int
-		if err := db.QueryRow(
-			`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_items_frac_index' AND sql LIKE '%UNIQUE%'`,
-		).Scan(&fracUniqueCount); err == nil && fracUniqueCount == 0 {
-			if res, err := db.Exec(`
-				UPDATE items SET frac_index = NULL
-				WHERE frac_index IS NOT NULL
-				  AND id NOT IN (
-				      SELECT MIN(id) FROM items
-				      WHERE frac_index IS NOT NULL
-				      GROUP BY frac_index
-				  )
-			`); err != nil {
-				slog.Warn("frac_index duplicate cleanup failed", slog.String("component", "database"), slog.Any("error", err))
-			} else if n, _ := res.RowsAffected(); n > 0 {
-				slog.Warn("nulled duplicate frac_index rows during UNIQUE migration", slog.String("component", "database"), slog.Int64("rows", n))
-			}
-			if _, err := db.Exec(`DROP INDEX IF EXISTS idx_items_frac_index`); err != nil {
-				slog.Warn("drop non-unique idx_items_frac_index failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-			if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_items_frac_index ON items(frac_index) WHERE frac_index IS NOT NULL`); err != nil {
-				slog.Warn("create unique idx_items_frac_index failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Soft-archive migration for approval_set_statuses: drop the inline
-		// UNIQUE(approval_set_id, status_id) so multiple snapshots per status
-		// can coexist (one is_active=1 + N is_active=0). The auto-named
-		// sqlite_autoindex_* index for the table-level UNIQUE can only be
-		// removed via a table rebuild.
-		var hasOldApprovalUnique int
-		_ = db.QueryRow(`
-			SELECT COUNT(*) FROM sqlite_master
-			WHERE type='index' AND tbl_name='approval_set_statuses'
-			  AND name LIKE 'sqlite_autoindex_approval_set_statuses_%'
-		`).Scan(&hasOldApprovalUnique)
-		if hasOldApprovalUnique > 0 {
-			// Disable FK enforcement around the rebuild — approval_requests and
-			// approval_steps reference this table; their FKs survive the rename
-			// because they look up by table name.
-			if _, err := db.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
-				slog.Warn("approval_set_statuses rebuild: disable FK failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-			tx, txErr := db.Begin()
-			if txErr != nil {
-				slog.Warn("approval_set_statuses rebuild: begin tx failed", slog.String("component", "database"), slog.Any("error", txErr))
-			} else {
-				rebuildSteps := []string{
-					`CREATE TABLE approval_set_statuses_new (
-						id INTEGER PRIMARY KEY AUTOINCREMENT,
-						approval_set_id INTEGER NOT NULL,
-						status_id INTEGER NOT NULL,
-						approve_transition_id INTEGER NOT NULL,
-						deny_transition_id INTEGER NOT NULL,
-						step_mode TEXT NOT NULL DEFAULT 'sequential',
-						is_active INTEGER NOT NULL DEFAULT 1,
-						created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-						FOREIGN KEY (approval_set_id) REFERENCES approval_sets(id) ON DELETE CASCADE,
-						FOREIGN KEY (status_id) REFERENCES statuses(id) ON DELETE CASCADE,
-						FOREIGN KEY (approve_transition_id) REFERENCES workflow_transitions(id) ON DELETE CASCADE,
-						FOREIGN KEY (deny_transition_id) REFERENCES workflow_transitions(id) ON DELETE CASCADE
-					)`,
-					`INSERT INTO approval_set_statuses_new (id, approval_set_id, status_id, approve_transition_id, deny_transition_id, step_mode, is_active, created_at)
-					 SELECT id, approval_set_id, status_id, approve_transition_id, deny_transition_id, step_mode, COALESCE(is_active, 1), created_at FROM approval_set_statuses`,
-					`DROP TABLE approval_set_statuses`,
-					`ALTER TABLE approval_set_statuses_new RENAME TO approval_set_statuses`,
-				}
-				rebuildOK := true
-				for _, q := range rebuildSteps {
-					if _, err := tx.Exec(q); err != nil {
-						slog.Warn("approval_set_statuses rebuild step failed", slog.String("component", "database"), slog.String("sql", q), slog.Any("error", err))
-						rebuildOK = false
-						break
-					}
-				}
-				if rebuildOK {
-					if err := tx.Commit(); err != nil {
-						slog.Warn("approval_set_statuses rebuild: commit failed", slog.String("component", "database"), slog.Any("error", err))
-					}
-				} else {
-					_ = tx.Rollback()
-				}
-			}
-			if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
-				slog.Warn("approval_set_statuses rebuild: re-enable FK failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-		if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_approval_set_statuses_active ON approval_set_statuses(approval_set_id, status_id) WHERE is_active = 1`); err != nil {
-			slog.Warn("create uq_approval_set_statuses_active failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Drop the inline UNIQUE(workspace_id, parent_id, slug) on pages. The
-		// slug is display-only — nothing resolves a page by it — and the
-		// constraint's only effect was 409s plus a per-write retry loop that
-		// hunted for a free slug. The named half of the rule
-		// (idx_pages_workspace_root_slug) is dropped by catalog migration
-		// 20260803_pages_drop_slug_uniqueness; the table-level UNIQUE has no
-		// droppable name on SQLite, so it needs this rebuild.
-		//
-		// Same shape as the approval_set_statuses rebuild above, and the same
-		// reason it lives here rather than in the catalog: PRAGMA
-		// foreign_keys is a no-op inside a transaction, and the catalog
-		// runner wraps every body in one. FK enforcement must be off because
-		// DROP TABLE performs an implicit DELETE FROM, which would cascade
-		// into page_revisions, page_permissions, page_chunks and page_labels.
-		var hasOldPageSlugUnique int
-		_ = db.QueryRow(`
-			SELECT COUNT(*) FROM sqlite_master
-			WHERE type='index' AND tbl_name='pages'
-			  AND name LIKE 'sqlite_autoindex_pages_%'
-		`).Scan(&hasOldPageSlugUnique)
-		if hasOldPageSlugUnique > 0 {
-			if _, err := db.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
-				slog.Warn("pages slug-unique rebuild: disable FK failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-			tx, txErr := db.Begin()
-			if txErr != nil {
-				slog.Error("pages slug-unique rebuild: begin tx failed", slog.String("component", "database"), slog.Any("error", txErr))
-			} else {
-				// pages_new mirrors schema/pages.sql minus the UNIQUE. The
-				// self-FK names `pages`, which resolves to the old table at
-				// CREATE time and to this table itself after the rename —
-				// the procedure SQLite documents for constraint removal.
-				rebuildSteps := []string{
-					`CREATE TABLE pages_new (
-						id INTEGER PRIMARY KEY AUTOINCREMENT,
-						workspace_id INTEGER NOT NULL,
-						parent_id INTEGER,
-						title TEXT NOT NULL,
-						slug TEXT NOT NULL,
-						metadata TEXT NOT NULL DEFAULT '{}',
-						content TEXT NOT NULL DEFAULT '',
-						content_hash TEXT NOT NULL DEFAULT '',
-						excerpt TEXT NOT NULL DEFAULT '',
-						created_by INTEGER NOT NULL,
-						updated_by INTEGER,
-						archived_by INTEGER,
-						is_home BOOLEAN NOT NULL DEFAULT 0,
-						inherit_permissions BOOLEAN NOT NULL DEFAULT 1,
-						rank TEXT,
-						frac_index TEXT COLLATE BINARY,
-						path TEXT NOT NULL DEFAULT '/',
-						depth INTEGER NOT NULL DEFAULT 0,
-						created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-						updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-						archived_at DATETIME,
-						FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
-						FOREIGN KEY (parent_id) REFERENCES pages(id) ON DELETE CASCADE,
-						FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE RESTRICT,
-						FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL,
-						FOREIGN KEY (archived_by) REFERENCES users(id) ON DELETE SET NULL
-					)`,
-					`INSERT INTO pages_new (
-						id, workspace_id, parent_id, title, slug, metadata, content,
-						content_hash, excerpt, created_by, updated_by, archived_by,
-						is_home, inherit_permissions, rank, frac_index, path, depth,
-						created_at, updated_at, archived_at
-					)
-					SELECT
-						id, workspace_id, parent_id, title, slug, metadata, content,
-						content_hash, excerpt, created_by, updated_by, archived_by,
-						is_home, inherit_permissions, rank, frac_index, path, depth,
-						created_at, updated_at, archived_at
-					FROM pages`,
-					`DROP TABLE pages`,
-					`ALTER TABLE pages_new RENAME TO pages`,
-					// DROP TABLE took every index with it; recreate the set
-					// from schema/pages.sql, minus the root-slug index.
-					`CREATE INDEX IF NOT EXISTS idx_pages_workspace ON pages(workspace_id)`,
-					`CREATE INDEX IF NOT EXISTS idx_pages_parent ON pages(parent_id)`,
-					`CREATE INDEX IF NOT EXISTS idx_pages_workspace_parent ON pages(workspace_id, parent_id)`,
-					`CREATE INDEX IF NOT EXISTS idx_pages_workspace_archived ON pages(workspace_id, archived_at)`,
-					`CREATE INDEX IF NOT EXISTS idx_pages_path ON pages(path)`,
-					`CREATE INDEX IF NOT EXISTS idx_pages_content_hash ON pages(content_hash) WHERE content_hash != ''`,
-					`CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_workspace_home ON pages(workspace_id) WHERE is_home = 1 AND archived_at IS NULL`,
-					`CREATE INDEX IF NOT EXISTS idx_pages_workspace_parent_rank ON pages(workspace_id, parent_id, rank) WHERE rank IS NOT NULL`,
-					`CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_frac_index_scoped
-						ON pages(workspace_id, COALESCE(parent_id, -1), frac_index)
-						WHERE frac_index IS NOT NULL AND archived_at IS NULL`,
-				}
-				rebuildOK := true
-				for _, q := range rebuildSteps {
-					if _, err := tx.Exec(q); err != nil {
-						// Error, not Warn: leaving the constraint in place
-						// means page writes now hit it without the retry
-						// loop that used to absorb collisions.
-						slog.Error("pages slug-unique rebuild step failed", slog.String("component", "database"), slog.String("sql", q), slog.Any("error", err))
-						rebuildOK = false
-						break
-					}
-				}
-				if rebuildOK {
-					if err := tx.Commit(); err != nil {
-						slog.Error("pages slug-unique rebuild: commit failed", slog.String("component", "database"), slog.Any("error", err))
-					}
-				} else {
-					_ = tx.Rollback()
-				}
-			}
-			if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
-				slog.Warn("pages slug-unique rebuild: re-enable FK failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// SAML column adds on sso_providers moved to catalog (samlMigrations).
-
-		// Create LDAP tables if they don't exist (for existing databases)
-		if _, err := db.Exec(ldapSchema); err != nil {
-			slog.Warn("LDAP migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Drop workspace_everyone_roles table (permissions now derived from role assignments)
-		if _, err := db.Exec(`DROP TABLE IF EXISTS workspace_everyone_roles`); err != nil {
-			slog.Warn("workspace_everyone_roles drop failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Create asset import tables if they don't exist (for existing databases)
-		if _, err := db.Exec(assetsSchema); err != nil {
-			slog.Warn("assets migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Create custom_field_indexes table if it doesn't exist (for existing databases)
-		if _, err := db.Exec(`
-			CREATE TABLE IF NOT EXISTS custom_field_indexes (
-				id INTEGER PRIMARY KEY AUTOINCREMENT,
-				custom_field_id INTEGER NOT NULL,
-				target_table TEXT NOT NULL,
-				index_name TEXT NOT NULL,
-				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-				FOREIGN KEY (custom_field_id) REFERENCES custom_field_definitions(id) ON DELETE CASCADE,
-				UNIQUE(custom_field_id, target_table)
-			)
-		`); err != nil {
-			slog.Warn("custom_field_indexes migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Add max_custom_field_indexes_per_table system setting if it doesn't exist
-		var settingCount int
-		if err := db.QueryRow(`SELECT COUNT(*) FROM system_settings WHERE key = 'max_custom_field_indexes_per_table'`).Scan(&settingCount); err == nil && settingCount == 0 {
-			if _, err := db.Exec(`INSERT INTO system_settings (key, value, value_type, description, category) VALUES ('max_custom_field_indexes_per_table', '20', 'integer', 'Maximum number of custom field indexes per table', 'performance')`); err != nil {
-				slog.Warn("max_custom_field_indexes_per_table setting migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		recurrenceSettings := []struct {
-			key, value, valueType, description string
-		}{
-			{"recurrence_volume_diagnostic_enabled", "true", "boolean", "Enable recurrence rule volume warnings in system diagnostics"},
-			{"recurrence_volume_warning_threshold", "80", "integer", "Recurrence rules per workspace that trigger an administrator warning"},
-		}
-		for _, setting := range recurrenceSettings {
-			var count int
-			if err := db.QueryRow(`SELECT COUNT(*) FROM system_settings WHERE key = ?`, setting.key).Scan(&count); err == nil && count == 0 {
-				if _, err := db.Exec(
-					`INSERT INTO system_settings (key, value, value_type, description, category) VALUES (?, ?, ?, ?, 'diagnostics')`,
-					setting.key, setting.value, setting.valueType, setting.description,
-				); err != nil {
-					slog.Warn("recurrence diagnostic setting migration failed", slog.String("component", "database"), slog.String("key", setting.key), slog.Any("error", err))
-				}
-			}
-		}
-
-		// Add ai_chat_enabled system setting if it doesn't exist
-		var aiChatCount int
-		if err := db.QueryRow(`SELECT COUNT(*) FROM system_settings WHERE key = 'ai_chat_enabled'`).Scan(&aiChatCount); err == nil && aiChatCount == 0 {
-			if _, err := db.Exec(`INSERT INTO system_settings (key, value, value_type, description, category) VALUES ('ai_chat_enabled', 'true', 'boolean', 'Enable AI chat functionality', 'modules')`); err != nil {
-				slog.Warn("ai_chat_enabled setting migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Add ai_feature_config system setting if it doesn't exist
-		var aiFeatureConfigCount int
-		if err := db.QueryRow(`SELECT COUNT(*) FROM system_settings WHERE key = 'ai_feature_config'`).Scan(&aiFeatureConfigCount); err == nil && aiFeatureConfigCount == 0 {
-			// Migrate from ai_chat_enabled: if it was false, mark ai_chat as disabled
-			defaultCfg := `{}`
-			var aiChatVal string
-			if err := db.QueryRow(`SELECT value FROM system_settings WHERE key = 'ai_chat_enabled'`).Scan(&aiChatVal); err == nil && strings.EqualFold(aiChatVal, "false") {
-				defaultCfg = `{"ai_chat":{"mode":"disabled","connection_id":0}}`
-			}
-			if _, err := db.Exec(`INSERT INTO system_settings (key, value, value_type, description, category) VALUES ('ai_feature_config', ?, 'json', 'Per-feature AI LLM configuration', 'ai')`, defaultCfg); err != nil {
-				slog.Warn("ai_feature_config setting migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Create daily_briefings table if it doesn't exist (for existing databases)
-		if _, err := db.Exec(dailyBriefingsSchema); err != nil {
-			slog.Warn("daily_briefings migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Create asset_actions tables if they don't exist (for existing databases)
-		if _, err := db.Exec(assetActionsSchema); err != nil {
-			slog.Warn("asset_actions migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Add allowed_entity_types column to link_types
-		var aetColCount int
-		if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('link_types') WHERE name='allowed_entity_types'").Scan(&aetColCount); err == nil && aetColCount == 0 {
-			if _, err := db.Exec("ALTER TABLE link_types ADD COLUMN allowed_entity_types TEXT DEFAULT NULL"); err != nil {
-				slog.Warn("link_types allowed_entity_types migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-		// Seed allowed_entity_types for the "Tests" system link type
-		if _, err := db.Exec(`UPDATE link_types SET allowed_entity_types = '["item","test_case"]' WHERE name = 'Tests' AND is_system = true AND allowed_entity_types IS NULL`); err != nil {
-			slog.Warn("link_types Tests allowed_entity_types seed failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Add custom_field_id column to item_links (for linking custom field type)
-		var cfColCount int
-		if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('item_links') WHERE name='custom_field_id'").Scan(&cfColCount); err == nil && cfColCount == 0 {
-			if _, err := db.Exec("ALTER TABLE item_links ADD COLUMN custom_field_id INTEGER REFERENCES custom_field_definitions(id) ON DELETE CASCADE"); err != nil {
-				slog.Warn("item_links custom_field_id migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-			if _, err := db.Exec("CREATE INDEX IF NOT EXISTS idx_item_links_custom_field ON item_links(custom_field_id)"); err != nil {
-				slog.Warn("item_links custom_field_id index creation failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Create user_invitations table if it doesn't exist (for existing databases)
-		if _, err := db.Exec(`
-			CREATE TABLE IF NOT EXISTS user_invitations (
-				id INTEGER PRIMARY KEY AUTOINCREMENT,
-				user_id INTEGER NOT NULL,
-				token TEXT UNIQUE NOT NULL,
-				expires_at DATETIME NOT NULL,
-				used_at DATETIME,
-				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-				FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-			);
-			CREATE INDEX IF NOT EXISTS idx_user_invitations_token ON user_invitations(token);
-			CREATE INDEX IF NOT EXISTS idx_user_invitations_user_id ON user_invitations(user_id);
-		`); err != nil {
-			slog.Warn("user_invitations migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Create teams tables if they don't exist (for existing databases)
-		if _, err := db.Exec(teamsSchema); err != nil {
-			slog.Warn("teams migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Create condition_sets tables if they don't exist (for existing databases)
-		if _, err := db.Exec(conditionSetsSchema); err != nil {
-			slog.Warn("condition_sets migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Create approvals tables if they don't exist (for existing databases)
-		if _, err := db.Exec(approvalsSchema); err != nil {
-			slog.Warn("approvals migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// One-shot rewrite of legacy user_in_role / user_in_group condition configs:
-		// rename "user_source" to "source", and translate value "field" to "custom_field".
-		// Idempotent: rows already on the new schema are skipped.
-		if err := migrateConditionUserSourceToFieldRef(db); err != nil {
-			slog.Warn("condition user_source -> source migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Add approval_set_id column to configuration_sets / configuration_set_item_types (existing dbs).
-		var apprSetCol int
-		if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('configuration_sets') WHERE name='approval_set_id'").Scan(&apprSetCol); err == nil && apprSetCol == 0 {
-			if _, err := db.Exec("ALTER TABLE configuration_sets ADD COLUMN approval_set_id INTEGER"); err != nil {
-				slog.Warn("configuration_sets approval_set_id migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-		if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('configuration_set_item_types') WHERE name='approval_set_id'").Scan(&apprSetCol); err == nil && apprSetCol == 0 {
-			if _, err := db.Exec("ALTER TABLE configuration_set_item_types ADD COLUMN approval_set_id INTEGER"); err != nil {
-				slog.Warn("configuration_set_item_types approval_set_id migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Add permissions_enabled flag to workspace_roles. Existing rows default
-		// to true so seeded system roles stay permission-bearing; the admin
-		// "Add custom role" flow inserts FALSE for new rows.
-		var rolePermsCol int
-		if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('workspace_roles') WHERE name='permissions_enabled'").Scan(&rolePermsCol); err == nil && rolePermsCol == 0 {
-			if _, err := db.Exec("ALTER TABLE workspace_roles ADD COLUMN permissions_enabled BOOLEAN DEFAULT 1"); err != nil {
-				slog.Warn("workspace_roles permissions_enabled migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Polymorphic approver pool: portal_customer_id on approval_step_approvers
-		// and actor_portal_customer_id on approval_decisions. Existing rows have
-		// user_id set; the new column starts NULL. SQLite can't add CHECK
-		// constraints to an existing table, so on existing dbs the "exactly one
-		// identity is set" invariant is enforced at the application layer
-		// (ApprovalService refuses to insert a row violating it).
-		var apprPortalCol int
-		if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('approval_step_approvers') WHERE name='portal_customer_id'").Scan(&apprPortalCol); err == nil && apprPortalCol == 0 {
-			if _, err := db.Exec("ALTER TABLE approval_step_approvers ADD COLUMN portal_customer_id INTEGER REFERENCES portal_customers(id) ON DELETE RESTRICT"); err != nil {
-				slog.Warn("approval_step_approvers portal_customer_id migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-		if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('approval_decisions') WHERE name='actor_portal_customer_id'").Scan(&apprPortalCol); err == nil && apprPortalCol == 0 {
-			if _, err := db.Exec("ALTER TABLE approval_decisions ADD COLUMN actor_portal_customer_id INTEGER REFERENCES portal_customers(id) ON DELETE SET NULL"); err != nil {
-				slog.Warn("approval_decisions actor_portal_customer_id migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Create integration tables if they don't exist (for existing databases)
-		if _, err := db.Exec(integrationsSchema); err != nil {
-			slog.Warn("integrations migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Add error_message to conditions
-		var condErrMsgCol int
-		if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('conditions') WHERE name='error_message'").Scan(&condErrMsgCol); err == nil && condErrMsgCol == 0 {
-			if _, err := db.Exec("ALTER TABLE conditions ADD COLUMN error_message TEXT"); err != nil {
-				slog.Warn("conditions error_message migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Add mode to conditions
-		var condModeCol int
-		if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('conditions') WHERE name='mode'").Scan(&condModeCol); err == nil && condModeCol == 0 {
-			if _, err := db.Exec("ALTER TABLE conditions ADD COLUMN mode TEXT NOT NULL DEFAULT 'condition'"); err != nil {
-				slog.Warn("conditions mode migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Add condition_set_id to configuration_sets
-		var csCondSetCol int
-		if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('configuration_sets') WHERE name='condition_set_id'").Scan(&csCondSetCol); err == nil && csCondSetCol == 0 {
-			if _, err := db.Exec("ALTER TABLE configuration_sets ADD COLUMN condition_set_id INTEGER REFERENCES condition_sets(id) ON DELETE SET NULL"); err != nil {
-				slog.Warn("configuration_sets condition_set_id migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Add condition_set_id to configuration_set_item_types
-		var csitCondSetCol int
-		if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('configuration_set_item_types') WHERE name='condition_set_id'").Scan(&csitCondSetCol); err == nil && csitCondSetCol == 0 {
-			if _, err := db.Exec("ALTER TABLE configuration_set_item_types ADD COLUMN condition_set_id INTEGER REFERENCES condition_sets(id) ON DELETE SET NULL"); err != nil {
-				slog.Warn("configuration_set_item_types condition_set_id migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Add teams.manage permission if it doesn't exist
-		if _, err := db.Exec(`INSERT OR IGNORE INTO permissions (permission_key, permission_name, description, scope, is_system) VALUES ('teams.manage', 'Manage Teams', 'Can create, edit, and delete teams', 'global', 0)`); err != nil {
-			slog.Warn("teams.manage permission migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Create actions tables if they don't exist (for existing databases)
-		if _, err := db.Exec(actionsSchema); err != nil {
-			slog.Warn("actions migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Create issue_sync tables if they don't exist (for existing databases)
-		if _, err := db.Exec(scmSchema); err != nil {
-			slog.Warn("scm migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Add public_board.manage permission if it doesn't exist
-		if _, err := db.Exec(`INSERT OR IGNORE INTO permissions (permission_key, permission_name, description, scope, is_system) VALUES ('public_board.manage', 'Manage Public Boards', 'Can make collections public and configure public board sharing', 'global', 0)`); err != nil {
-			slog.Warn("public_board.manage permission migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Add action.credential.manage permission if it doesn't exist (workspace-scoped
-		// permission gating action credential CRUD).
-		if _, err := db.Exec(`INSERT OR IGNORE INTO permissions (permission_key, permission_name, description, scope, is_system) VALUES ('action.credential.manage', 'Manage Action Credentials', 'Can create, rotate, and delete workspace-scoped action credentials (API tokens for HTTP capabilities)', 'workspace', 0)`); err != nil {
-			slog.Warn("action.credential.manage permission migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-		if _, err := db.Exec(`INSERT OR IGNORE INTO role_permissions (role_id, permission_id)
-			SELECT r.id, p.id FROM workspace_roles r
-			JOIN permissions p ON p.permission_key = 'action.credential.manage'
-			WHERE r.name = 'Administrator'`); err != nil {
-			slog.Warn("action.credential.manage admin grant failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Add public_slug column to collections
-		var slugColCount int
-		if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('collections') WHERE name='public_slug'").Scan(&slugColCount); err == nil && slugColCount == 0 {
-			if _, err := db.Exec("ALTER TABLE collections ADD COLUMN public_slug TEXT"); err != nil {
-				slog.Warn("public_slug migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-			if _, err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_collections_public_slug ON collections(public_slug)"); err != nil {
-				slog.Warn("public_slug index migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Add filter_state column to collections (persists visual builder state)
-		var filterStateColCount int
-		if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('collections') WHERE name='filter_state'").Scan(&filterStateColCount); err == nil && filterStateColCount == 0 {
-			if _, err := db.Exec("ALTER TABLE collections ADD COLUMN filter_state TEXT"); err != nil {
-				slog.Warn("filter_state migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Add story_points column to items
-		var spColCount int
-		if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('items') WHERE name='story_points'").Scan(&spColCount); err == nil && spColCount == 0 {
-			if _, err := db.Exec("ALTER TABLE items ADD COLUMN story_points REAL"); err != nil {
-				slog.Warn("story_points migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Add from_status_id snapshot column to approval_requests so Cancel can revert.
-		var apprFromCol int
-		if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('approval_requests') WHERE name='from_status_id'").Scan(&apprFromCol); err == nil && apprFromCol == 0 {
-			if _, err := db.Exec("ALTER TABLE approval_requests ADD COLUMN from_status_id INTEGER REFERENCES statuses(id) ON DELETE SET NULL"); err != nil {
-				slog.Warn("approval_requests from_status_id migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Add due_date field to default screen if missing
-		var dueDateFieldCount int
-		if err := db.QueryRow(`SELECT COUNT(*) FROM screen_fields WHERE screen_id = 1 AND field_identifier = 'due_date'`).Scan(&dueDateFieldCount); err == nil && dueDateFieldCount == 0 {
-			if _, err := db.Exec(`INSERT INTO screen_fields (screen_id, field_type, field_identifier, display_order, is_required, field_width) VALUES (1, 'system', 'due_date', 6, false, 'half')`); err != nil {
-				slog.Warn("due_date screen field migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Add labels field to default screen if missing. Drives ItemDetailSidebar
-		// visibility via shouldShowSystemField('labels'); is_required=false so
-		// WorkItemForm does not render a labels input on create/edit.
-		var labelsFieldCount int
-		if err := db.QueryRow(`SELECT COUNT(*) FROM screen_fields WHERE screen_id = 1 AND field_identifier = 'labels'`).Scan(&labelsFieldCount); err == nil && labelsFieldCount == 0 {
-			if _, err := db.Exec(`INSERT INTO screen_fields (screen_id, field_type, field_identifier, display_order, is_required, field_width) VALUES (1, 'system', 'labels', 11, false, 'full')`); err != nil {
-				slog.Warn("labels screen field migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Add config column to request_types (for form channel per-form settings)
-		var rtConfigCol int
-		if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('request_types') WHERE name='config'").Scan(&rtConfigCol); err == nil && rtConfigCol == 0 {
-			if _, err := db.Exec("ALTER TABLE request_types ADD COLUMN config TEXT DEFAULT NULL"); err != nil {
-				slog.Warn("request_types config migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// asset_reports column adds moved to catalog (postSliceColumnAddMigrations).
-
-		// Create asset_report_fields table if it doesn't exist (for existing databases)
-		// last review: ser, 280426, NOTE: This is not great as it duplicates the table def, but we will leave it for now, remove in 0.7
-		if _, err := db.Exec(`
-			CREATE TABLE IF NOT EXISTS asset_report_fields (
-				id INTEGER PRIMARY KEY AUTOINCREMENT,
-				asset_report_id INTEGER NOT NULL,
-				field_identifier TEXT NOT NULL,
-				field_type TEXT NOT NULL,
-				is_required BOOLEAN DEFAULT false,
-				display_order INTEGER DEFAULT 0,
-				options TEXT,
-				display_name TEXT,
-				description TEXT,
-				step_number INTEGER DEFAULT 1,
-				virtual_field_type TEXT,
-				virtual_field_options TEXT,
-				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-				FOREIGN KEY (asset_report_id) REFERENCES asset_reports(id) ON DELETE CASCADE
-			);
-			CREATE INDEX IF NOT EXISTS idx_asset_report_fields_asset_report_id ON asset_report_fields(asset_report_id);
-		`); err != nil {
-			slog.Warn("asset_report_fields migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Migrate: create default configuration set for existing databases that have none
-		var csCount int
-		if err := db.QueryRow("SELECT COUNT(*) FROM configuration_sets").Scan(&csCount); err == nil && csCount == 0 {
-			if err := db.migrateDefaultConfigurationSet(); err != nil {
-				slog.Warn("default configuration set migration failed", slog.String("component", "database"), slog.Any("error", err))
-			}
-		}
-
-		// Strip legacy base64 padding from SSH public-key fingerprints so they
-		// match the OpenSSH format (ssh-keygen -lf / gossh.FingerprintSHA256).
-		if _, err := db.Exec(`UPDATE user_credentials SET public_key_fingerprint = rtrim(public_key_fingerprint, '=') WHERE public_key_fingerprint LIKE '%=';`); err != nil {
-			slog.Warn("ssh fingerprint padding migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Create api_tokens table if missing. Older deployments were
-		// initialized from a schema snapshot that predates this table,
-		// and the only prior creation path is the fresh-install schema —
-		// leaving existing DBs without it and every token INSERT failing
-		// with 500. cli_auth_codes (below) also FK-references this, so
-		// this must run first.
-		if _, err := db.Exec(`
-			CREATE TABLE IF NOT EXISTS api_tokens (
-				id INTEGER PRIMARY KEY AUTOINCREMENT,
-				user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-				name TEXT NOT NULL,
-				token_hash TEXT NOT NULL UNIQUE,
-				token_prefix TEXT NOT NULL,
-				permissions TEXT DEFAULT '["read"]',
-				expires_at DATETIME NULL,
-				last_used_at DATETIME NULL,
-				is_temporary BOOLEAN DEFAULT false,
-				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-			);
-			CREATE INDEX IF NOT EXISTS idx_api_tokens_user_id ON api_tokens(user_id);
-			CREATE INDEX IF NOT EXISTS idx_api_tokens_token_hash ON api_tokens(token_hash);
-			CREATE INDEX IF NOT EXISTS idx_api_tokens_expires_at ON api_tokens(expires_at);
-		`); err != nil {
-			slog.Warn("api_tokens migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Create scm_processed_commits table if missing. Older deployments
-		// predate smart-commit support; the sync loop writes a row per commit
-		// it has already applied actions for, guaranteeing idempotency across
-		// re-syncs.
-		if _, err := db.Exec(`
-			CREATE TABLE IF NOT EXISTS scm_processed_commits (
-				commit_sha              TEXT NOT NULL,
-				workspace_repository_id INTEGER NOT NULL,
-				processed_at            DATETIME DEFAULT CURRENT_TIMESTAMP,
-				actions_applied         INTEGER NOT NULL DEFAULT 0,
-				PRIMARY KEY (commit_sha, workspace_repository_id),
-				FOREIGN KEY (workspace_repository_id) REFERENCES workspace_repositories(id) ON DELETE CASCADE
-			);
-		`); err != nil {
-			slog.Warn("scm_processed_commits migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Create cli_auth_codes table for the `ws init` onboarding flow.
-		if _, err := db.Exec(`
-			CREATE TABLE IF NOT EXISTS cli_auth_codes (
-				id INTEGER PRIMARY KEY AUTOINCREMENT,
-				code TEXT NOT NULL UNIQUE,
-				state TEXT NOT NULL,
-				callback_url TEXT NOT NULL,
-				hostname TEXT NOT NULL,
-				agent_name TEXT NOT NULL,
-				requested_scopes TEXT NOT NULL,
-				status TEXT NOT NULL DEFAULT 'pending',
-				approved_by_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-				agent_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-				token_id INTEGER REFERENCES api_tokens(id) ON DELETE SET NULL,
-				token_plaintext TEXT,
-				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-				expires_at DATETIME NOT NULL,
-				consumed_at DATETIME
-			);
-			CREATE INDEX IF NOT EXISTS idx_cli_auth_codes_code ON cli_auth_codes(code);
-			CREATE INDEX IF NOT EXISTS idx_cli_auth_codes_expires_at ON cli_auth_codes(expires_at);
-		`); err != nil {
-			slog.Warn("cli_auth_codes migration failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Backfill legacy time.Time.String() values produced by older
-		// modernc.org/sqlite installs (before _time_format=sqlite was set
-		// on the DSN). Idempotent — no-op on a database that's already
-		// clean or freshly initialized. Uses writeConn so it respects the
-		// single-writer invariant.
-		if err := backfillLegacyDatetimeFormat(db.writeConn); err != nil {
-			slog.Warn("legacy datetime backfill failed", slog.String("component", "database"), slog.Any("error", err))
-		}
-
-		// Catalog-based migrations are run from SQLiteDB.Initialize after
-		// this returns (the catalog requires the Database interface, which
-		// only the wrapper implements).
-		return nil
-	}
-
-	// Database needs full initialization
-	schema := coreSchema + itemsSchema + requestTypeSchema + usersSchema + testsSchema + workspaceSchema + configWorkflowsSchema + timeTrackingSchema + channelsSchema + portalSchema + portalAuthSchema + portalWebauthnSchema + milestonesSchema + iterationsSchema + contentSchema + mentionsSchema + notificationsSchema + permissionsSchema + systemSchema + userPreferencesSchema + webauthnSchema + ssoSchema + scmSchema + assetsSchema + recurringTasksSchema + jiraImportSchema + actionsSchema + emailSchema + assetReportsSchema + labelsSchema + templatesSchema + llmSchema + ldapSchema + assetActionsSchema + dailyBriefingsSchema + teamsSchema + conditionSetsSchema + approvalsSchema + integrationsSchema + authPolicySchema + pagesSchema + pageLabelsSchema + agentsSchema
-
-	if _, err := db.Exec(schema); err != nil {
-		return fmt.Errorf("failed to initialize database schema: %w", err)
-	}
-
-	// Initialize default data for new installations
-	if err := db.initializeDefaultData(); err != nil {
-		return fmt.Errorf("failed to initialize default data: %w", err)
-	}
-
-	return nil
+	return initializeSQLiteDatabase(&SQLiteDB{DB: db})
 }
 
 // initializeDefaultData creates the default data for a fresh installation
@@ -1351,20 +284,8 @@ func (db *DB) initializeDefaultData() error {
 	defer func() { _ = tx.Rollback() }()
 
 	// 1. Create default status categories
-	categories := []struct {
-		name        string
-		color       string
-		description string
-		isDefault   bool
-		isCompleted bool
-	}{
-		{"To Do", "#d1d5db", "Work that hasn't been started", false, false},
-		{"In Progress", "#3b82f6", "Work that is actively being done", true, false},
-		{"Done", "#22c55e", "Work that has been completed", false, true},
-	}
-
 	categoryIDs := make(map[string]int64)
-	for _, cat := range categories {
+	for _, cat := range defaultStatusCategories {
 		var result sql.Result
 		result, err = tx.Exec(
 			"INSERT INTO status_categories (name, color, description, is_default, is_completed) VALUES (?, ?, ?, ?, ?)",
@@ -1378,19 +299,8 @@ func (db *DB) initializeDefaultData() error {
 	}
 
 	// 2. Create default statuses
-	statuses := []struct {
-		name        string
-		description string
-		category    string
-		isDefault   bool
-	}{
-		{"Open", "New work item, not yet started", "To Do", true},
-		{"In Progress", "Currently being worked on", "In Progress", false},
-		{"Done", "Work has been completed", "Done", false},
-	}
-
 	statusIDs := make(map[string]int64)
-	for _, status := range statuses {
+	for _, status := range defaultStatuses {
 		categoryID := categoryIDs[status.category]
 		var result sql.Result
 		result, err = tx.Exec(
@@ -1415,17 +325,7 @@ func (db *DB) initializeDefaultData() error {
 	workflowID, _ := result.LastInsertId()
 
 	// 4. Create workflow transitions (simplified 3-status workflow)
-	transitions := []struct {
-		from string // empty string means initial status
-		to   string
-	}{
-		{"", "Open"}, // Initial transition
-		{"Open", "In Progress"},
-		{"Open", "Done"}, // Direct completion from Open
-		{"In Progress", "Done"},
-	}
-
-	for i, transition := range transitions {
+	for i, transition := range defaultTransitions {
 		var fromStatusID *int64
 		if transition.from != "" {
 			id := statusIDs[transition.from]
@@ -1453,27 +353,7 @@ func (db *DB) initializeDefaultData() error {
 	screenID, _ := result.LastInsertId()
 
 	// 6. Add default fields to the screen
-	screenFields := []struct {
-		fieldType       string
-		fieldIdentifier string
-		displayOrder    int
-		isRequired      bool
-		fieldWidth      string
-	}{
-		{"system", "title", 1, true, "full"},
-		{"system", "description", 2, false, "full"},
-		{"system", "status", 3, true, "half"},
-		{"system", "priority", 4, false, "half"},
-		{"system", "assignee", 5, false, "half"},
-		{"system", "due_date", 6, false, "half"},
-		{"system", "milestone", 7, false, "half"},
-		{"system", "iteration", 8, false, "half"},
-		{"system", "start_date", 9, false, "half"},
-		{"system", "end_date", 10, false, "half"},
-		{"system", "labels", 11, false, "full"},
-	}
-
-	for _, field := range screenFields {
+	for _, field := range defaultScreenFields {
 		_, err = tx.Exec(
 			"INSERT INTO screen_fields (screen_id, field_type, field_identifier, display_order, is_required, field_width) VALUES (?, ?, ?, ?, ?, ?)",
 			screenID, field.fieldType, field.fieldIdentifier, field.displayOrder, field.isRequired, field.fieldWidth,
@@ -1494,8 +374,7 @@ func (db *DB) initializeDefaultData() error {
 	configSetID, _ := configResult.LastInsertId()
 
 	// 8. Assign default screen to configuration set for all contexts
-	contexts := []string{"create", "edit", "view"}
-	for _, context := range contexts {
+	for _, context := range defaultScreenContexts {
 		_, err = tx.Exec(
 			"INSERT INTO configuration_set_screens (configuration_set_id, screen_id, context) VALUES (?, ?, ?)",
 			configSetID, screenID, context,
@@ -1506,26 +385,7 @@ func (db *DB) initializeDefaultData() error {
 	}
 
 	// 9. Create default link types
-	linkTypes := []struct {
-		name               string
-		description        string
-		forwardLabel       string
-		reverseLabel       string
-		color              string
-		isSystem           bool
-		allowedEntityTypes *string // JSON array or nil
-	}{
-		{"Tests", "Test case tests work item", "tests", "tested by", "#10b981", true, strPtr(`["item","test_case"]`)},
-		{"Implements", "Work item implements another work item", "implements", "implemented by", "#3b82f6", true, nil},
-		{"Depends On", "Work item depends on another work item", "depends on", "blocks", "#f59e0b", true, nil},
-		{"Relates To", "General bidirectional relationship", "relates to", "relates to", "#6b7280", true, nil},
-		{"Links To", "General directional link", "links to", "linked from", "#64748b", true, nil},
-		{"Duplicates", "Work item is a duplicate of another", "duplicates", "duplicated by", "#ef4444", true, nil},
-		{"Child Of", "Alternative hierarchy relationship", "child of", "parent of", "#8b5cf6", true, nil},
-		{"Page", "Work item references a knowledge page", "references page", "referenced by", "#0ea5e9", true, strPtr(`["item","page"]`)},
-	}
-
-	for _, linkType := range linkTypes {
+	for _, linkType := range defaultLinkTypes {
 		_, err = tx.Exec(
 			"INSERT INTO link_types (name, description, forward_label, reverse_label, color, is_system, allowed_entity_types) VALUES (?, ?, ?, ?, ?, ?, ?)",
 			linkType.name, linkType.description, linkType.forwardLabel, linkType.reverseLabel, linkType.color, linkType.isSystem, linkType.allowedEntityTypes,
@@ -1536,27 +396,7 @@ func (db *DB) initializeDefaultData() error {
 	}
 
 	// 11. Create default system settings
-	systemSettings := []struct {
-		key         string
-		value       string
-		valueType   string
-		description string
-		category    string
-	}{
-		{"time_tracking_enabled", "true", "boolean", "Enable time tracking functionality", "modules"},
-		{"test_management_enabled", "true", "boolean", "Enable test management functionality", "modules"},
-		{"ai_chat_enabled", "true", "boolean", "Enable AI chat functionality", "modules"},
-		{"ai_feature_config", "{}", "json", "Per-feature AI LLM configuration", "ai"},
-		{"setup_completed", "false", "boolean", "Whether initial setup has been completed", "setup"},
-		{"admin_user_created", "false", "boolean", "Whether admin user has been created", "setup"},
-		{"calendar_feed_enabled", "true", "boolean", "Allow users to generate ICS calendar feed URLs", "security"},
-		{"plugin_cli_exec_enabled", "false", "boolean", "Allow plugins to execute CLI commands", "security"},
-		{"max_custom_field_indexes_per_table", "20", "integer", "Maximum number of custom field indexes per table", "performance"},
-		{"recurrence_volume_diagnostic_enabled", "true", "boolean", "Enable recurrence rule volume warnings in system diagnostics", "diagnostics"},
-		{"recurrence_volume_warning_threshold", "80", "integer", "Recurrence rules per workspace that trigger an administrator warning", "diagnostics"},
-	}
-
-	for _, setting := range systemSettings {
+	for _, setting := range defaultSystemSettings {
 		_, err = tx.Exec(
 			"INSERT INTO system_settings (key, value, value_type, description, category) VALUES (?, ?, ?, ?, ?)",
 			setting.key, setting.value, setting.valueType, setting.description, setting.category,
@@ -1567,19 +407,7 @@ func (db *DB) initializeDefaultData() error {
 	}
 
 	// 9. Create default hierarchy levels
-	hierarchyLevels := []struct {
-		level       int
-		name        string
-		description string
-	}{
-		{0, "Initiative", "High-level strategic work spanning multiple epics"},
-		{1, "Epic", "Large work item that can be broken down into stories"},
-		{2, "Story", "User story or feature that delivers value"},
-		{3, "Task", "Individual work item or technical task"},
-		{4, "Activity", "Discrete activity within a task"},
-	}
-
-	for _, hl := range hierarchyLevels {
+	for _, hl := range defaultHierarchyLevels {
 		_, err = tx.Exec(
 			"INSERT INTO hierarchy_levels (level, name, description) VALUES (?, ?, ?)",
 			hl.level, hl.name, hl.description,
@@ -1590,22 +418,6 @@ func (db *DB) initializeDefaultData() error {
 	}
 
 	// 10. Create default item types with icons and colors
-	defaultItemTypes := []struct {
-		name           string
-		description    string
-		icon           string
-		color          string
-		hierarchyLevel int
-		sortOrder      int
-	}{
-		{"Initiative", "Strategic initiative spanning multiple teams", "Target", "#7c3aed", 0, 1},
-		{"Epic", "Large feature or capability", "Zap", "#2563eb", 1, 1},
-		{"Story", "User story delivering value to end users", "BookOpen", "#059669", 2, 1},
-		{"Task", "Development or operational task", "CheckSquare", "#dc2626", 3, 1},
-		{"Bug", "Software defect that needs fixing", "Bug", "#ea580c", 3, 2},
-		{"Sub-task", "Small work item below any regular hierarchy level", "Minus", "#6b7280", -1, 1},
-	}
-
 	for _, itemType := range defaultItemTypes {
 		_, err = tx.Exec(
 			"INSERT INTO item_types (configuration_set_id, name, description, icon, color, hierarchy_level, sort_order, is_default) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -1617,8 +429,7 @@ func (db *DB) initializeDefaultData() error {
 	}
 
 	// 10b. Bind selected item types to the default configuration set (excluding Initiative for simplified setup)
-	itemTypesToBind := []string{"Epic", "Story", "Task", "Bug", "Sub-task"}
-	for _, typeName := range itemTypesToBind {
+	for _, typeName := range defaultItemTypeBindings {
 		var itemTypeID int64
 		err = tx.QueryRow("SELECT id FROM item_types WHERE name = ?", typeName).Scan(&itemTypeID)
 		if err != nil {
@@ -1634,40 +445,15 @@ func (db *DB) initializeDefaultData() error {
 	}
 
 	// 11. Create default Notification Mail channel
-	defaultChannelConfig := `{
-		"smtp_host": "",
-		"smtp_port": 587,
-		"smtp_username": "",
-		"smtp_password": "",
-		"smtp_from_email": "",
-		"smtp_from_name": "Windshift",
-		"smtp_encryption": "tls"
-	}`
-
 	_, err = tx.Exec(
 		"INSERT INTO channels (name, type, direction, description, status, is_default, config) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		"Notification Mail", "smtp", "outbound", "Default SMTP channel for sending notification emails", "pending", true, defaultChannelConfig,
+		"Notification Mail", "smtp", "outbound", "Default SMTP channel for sending notification emails", "pending", true, defaultNotificationChannelConfig,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create default notification mail channel: %w", err)
 	}
 
 	// 12. Create default themes with dual light/dark nav colors
-	defaultThemes := []struct {
-		name                    string
-		description             string
-		isDefault               bool
-		isActive                bool
-		navBackgroundColorLight string
-		navTextColorLight       string
-		navBackgroundColorDark  string
-		navTextColorDark        string
-	}{
-		{"Default", "Clean theme with standard navigation colors", true, true, "#ffffff", "#374151", "#1f2937", "#f3f4f6"},
-		{"Ocean", "Professional blue-tinted navigation theme", false, false, "#f0f9ff", "#0c4a6e", "#0c4a6e", "#e0f2fe"},
-		{"Forest", "Nature-inspired green navigation theme", false, false, "#f0fdf4", "#14532d", "#14532d", "#dcfce7"},
-	}
-
 	for _, theme := range defaultThemes {
 		_, err = tx.Exec(
 			"INSERT INTO themes (name, description, is_default, is_active, nav_background_color_light, nav_text_color_light, nav_background_color_dark, nav_text_color_dark) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -1730,28 +516,12 @@ func (db *DB) initializeDefaultData() error {
 	notificationSettingID, _ := notificationSettingResult.LastInsertId()
 
 	// 15. Create default notification event rules
-	defaultEventRules := []struct {
-		eventType             string
-		notifyAssignee        bool
-		notifyCreator         bool
-		notifyWatchers        bool
-		notifyWorkspaceAdmins bool
-	}{
-		// Item assignment - notify the assignee
-		{"item.assigned", true, false, false, false},
-		// Comments - notify assignee, creator, and thread watchers (commenters
-		// are auto-subscribed in CommentService.Create, so this delivers the
-		// "follow-up on your comment" notifications).
-		{"comment.created", true, true, true, false},
-		// Status changes - notify assignee and creator
-		{"status.changed", true, true, false, false},
-	}
 	// NOTE: mention.created is NOT in this rules table by design — mentions
 	// always notify the mentioned user (subject to workspace visibility),
 	// which is enforced in mention_service.go without going through the
 	// configurable rules system.
 
-	for _, rule := range defaultEventRules {
+	for _, rule := range defaultNotificationEventRules {
 		_, err = tx.Exec(
 			`INSERT INTO notification_event_rules
 			 (notification_setting_id, event_type, is_enabled, notify_assignee, notify_creator,
@@ -1825,27 +595,7 @@ func (db *DB) migrateDefaultConfigurationSet() error {
 		}
 		screenID, _ = screenResult.LastInsertId()
 
-		screenFields := []struct {
-			fieldType       string
-			fieldIdentifier string
-			displayOrder    int
-			isRequired      bool
-			fieldWidth      string
-		}{
-			{"system", "title", 1, true, "full"},
-			{"system", "description", 2, false, "full"},
-			{"system", "status", 3, true, "half"},
-			{"system", "priority", 4, false, "half"},
-			{"system", "assignee", 5, false, "half"},
-			{"system", "due_date", 6, false, "half"},
-			{"system", "milestone", 7, false, "half"},
-			{"system", "iteration", 8, false, "half"},
-			{"system", "start_date", 9, false, "half"},
-			{"system", "end_date", 10, false, "half"},
-			{"system", "labels", 11, false, "full"},
-		}
-
-		for _, field := range screenFields {
+		for _, field := range defaultScreenFields {
 			_, err = tx.Exec(
 				"INSERT INTO screen_fields (screen_id, field_type, field_identifier, display_order, is_required, field_width) VALUES (?, ?, ?, ?, ?, ?)",
 				screenID, field.fieldType, field.fieldIdentifier, field.displayOrder, field.isRequired, field.fieldWidth,
@@ -1857,8 +607,7 @@ func (db *DB) migrateDefaultConfigurationSet() error {
 	}
 
 	// Assign screen to config set for create/edit/view contexts
-	contexts := []string{"create", "edit", "view"}
-	for _, ctx := range contexts {
+	for _, ctx := range defaultScreenContexts {
 		_, err = tx.Exec(
 			"INSERT INTO configuration_set_screens (configuration_set_id, screen_id, context) VALUES (?, ?, ?)",
 			configSetID, screenID, ctx,

@@ -503,7 +503,7 @@ func (h *RunnerBrokerHandler) ProxyHTTP(w http.ResponseWriter, r *http.Request) 
 // plain IsPrivateIP check, which misses several localhost-reachable ranges.
 // Used by the HTTP egress broker.
 func ssrfSafeTransport(responseHeaderTimeout time.Duration) http.RoundTripper {
-	return &http.Transport{
+	return utils.ConfigureHTTPTransport(&http.Transport{
 		// No ProxyFromEnvironment (WI-238 security Phase 7): an env-configured
 		// HTTP(S)_PROXY would be dialed directly, bypassing the post-resolution
 		// blocklist below and reopening the SSRF hole the dialer closes. The
@@ -513,7 +513,7 @@ func ssrfSafeTransport(responseHeaderTimeout time.Duration) http.RoundTripper {
 		IdleConnTimeout:       60 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		DialContext:           utils.SafeNetDialer(10 * time.Second).DialContext,
-	}
+	})
 }
 
 // authorizeGitPush parses the pushed ref-update commands from a

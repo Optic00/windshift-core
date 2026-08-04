@@ -199,6 +199,7 @@
           {#if isNote}
             <input
               type="text"
+              data-testid="logbook-document-title"
               bind:value={titleValue}
               oninput={handleTitleInput}
               class="text-xl font-semibold w-full bg-transparent border-none outline-none focus:ring-0 p-0"
@@ -259,6 +260,7 @@
             {t('logbook.delete')}
           </Button>
           <Button
+            dataTestid="logbook-document-save"
             variant="primary"
             icon={Save}
             onclick={saveDocument}
@@ -321,6 +323,7 @@
       <div class="rounded-xl border p-6" style="background-color: var(--ds-surface-raised); border-color: var(--ds-border);">
         <LazyMilkdownEditor
           bind:content={articleContent}
+          testId="logbook-document-editor"
           placeholder={isNote ? t('logbook.noteContentPlaceholder') : 'Article content...'}
           showToolbar={true}
           customUploadFn={(formData) => api.logbook.uploadAttachment(resolvedDocumentId, formData)}

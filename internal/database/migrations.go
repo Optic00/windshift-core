@@ -21,29 +21,33 @@ const (
 // when the migration's effect is already present, used for retroactive
 // backfill on existing installs upgrading past the introduction of the
 // schema_migrations table. SQLite / Postgres carry the backend-specific
-// DDL to apply when the check reports the effect is missing.
+// DDL to apply when the check reports the effect is missing. ApplySQLite /
+// ApplyPostgres are reserved for migrations that cannot be expressed as one
+// transactional SQL body (notably SQLite table rebuilds that must toggle
+// foreign_keys outside their transaction). Their matching SQL field contains
+// a stable implementation marker that participates in checksum validation.
 //
 // An empty Check on a backend means the migration body always runs when
 // the version isn't already stamped. An empty body on a backend means
 // the migration is skipped on that backend — the row is still stamped
 // so the catalog stays consistent across backends.
 type Migration struct {
-	Version       string
-	Name          string
-	CheckSQLite   string
-	CheckPostgres string
-	SQLite        string
-	Postgres      string
+	Version         string
+	Name            string
+	CheckSQLite     string
+	CheckPostgres   string
+	CheckSQLiteFn   func(Database) (bool, error)
+	CheckPostgresFn func(Database) (bool, error)
+	SQLite          string
+	Postgres        string
+	ApplySQLite     func(Database) error
+	ApplyPostgres   func(Database) error
 }
 
 // Catalog is the ordered list of migrations applied via runPendingMigrations.
 // New migrations append with a date-prefixed Version slug such as
 // "20260514_widgets_archived_at". Order matters only between migrations
 // with row dependencies; otherwise entries may be reordered freely.
-//
-// Currently empty: the legacy migration arrays in database.go and
-// postgres.go still own existing-install migrations. They are ported into
-// this Catalog in subsequent commits.
 var Catalog = []Migration{
 	{
 		Version:       "20260727_milestone_release_attempts",
@@ -2393,7 +2397,22 @@ func runPendingMigrations(db Database, catalog []Migration) error {
 	}
 
 	for _, m := range catalog {
-		if _, ok := applied[m.Version]; ok {
+		if checksum, ok := applied[m.Version]; ok {
+			expected := m.checksum(driver)
+			if checksum != "" && checksum != expected {
+				return fmt.Errorf(
+					"migration %s (%s): checksum mismatch: stored %s, expected %s",
+					m.Version, m.Name, checksum, expected,
+				)
+			}
+			if checksum == "" {
+				if _, err := db.Exec(
+					"UPDATE schema_migrations SET name = ?, checksum = ? WHERE version = ? AND checksum = ''",
+					m.Name, expected, m.Version,
+				); err != nil {
+					return fmt.Errorf("migration %s (%s): backfill checksum: %w", m.Version, m.Name, err)
+				}
+			}
 			continue
 		}
 		if err := applyMigration(db, driver, m); err != nil {
@@ -2403,31 +2422,33 @@ func runPendingMigrations(db Database, catalog []Migration) error {
 	return nil
 }
 
-func loadAppliedMigrations(db Database) (map[string]struct{}, error) {
-	rows, err := db.Query("SELECT version FROM schema_migrations")
+func loadAppliedMigrations(db Database) (map[string]string, error) {
+	rows, err := db.Query("SELECT version, checksum FROM schema_migrations")
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
 
-	out := map[string]struct{}{}
+	out := map[string]string{}
 	for rows.Next() {
-		var v string
-		if err := rows.Scan(&v); err != nil {
+		var version, checksum string
+		if err := rows.Scan(&version, &checksum); err != nil {
 			return nil, err
 		}
-		out[v] = struct{}{}
+		out[version] = checksum
 	}
 	return out, rows.Err()
 }
 
 func applyMigration(db Database, driver string, m Migration) error {
 	var checkSQL, body string
+	var check func(Database) (bool, error)
+	var apply func(Database) error
 	switch driver {
 	case driverSQLite:
-		checkSQL, body = m.CheckSQLite, m.SQLite
+		checkSQL, check, body, apply = m.CheckSQLite, m.CheckSQLiteFn, m.SQLite, m.ApplySQLite
 	case driverPostgres:
-		checkSQL, body = m.CheckPostgres, m.Postgres
+		checkSQL, check, body, apply = m.CheckPostgres, m.CheckPostgresFn, m.Postgres, m.ApplyPostgres
 	default:
 		return fmt.Errorf("unknown driver %q", driver)
 	}
@@ -2439,7 +2460,15 @@ func applyMigration(db Database, driver string, m Migration) error {
 
 	// Retroactive backfill: if the effect is already present, stamp without
 	// re-running. Migrations with no Check always run.
-	if checkSQL != "" {
+	if check != nil {
+		alreadyApplied, err := check(db)
+		if err != nil {
+			return fmt.Errorf("check: %w", err)
+		}
+		if alreadyApplied {
+			return stampMigration(db, m, driver)
+		}
+	} else if checkSQL != "" {
 		var count int
 		if err := db.QueryRow(checkSQL).Scan(&count); err != nil {
 			return fmt.Errorf("check: %w", err)
@@ -2447,6 +2476,12 @@ func applyMigration(db Database, driver string, m Migration) error {
 		if count > 0 {
 			return stampMigration(db, m, driver)
 		}
+	}
+	if apply != nil {
+		if err := apply(db); err != nil {
+			return fmt.Errorf("apply: %w", err)
+		}
+		return stampMigration(db, m, driver)
 	}
 
 	return WithTx(db, func(tx Tx) error {

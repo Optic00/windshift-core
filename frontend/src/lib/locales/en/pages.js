@@ -115,10 +115,17 @@ export default {
     moveTitle: 'Move "{title}"',
     moveSubtitle:
       'Pick a new parent. Pages under the current page are hidden because they would create a cycle.',
+    moveWorkspaceLabel: 'Destination workspace',
+    moveWorkspacePlaceholder: 'Select a workspace…',
+    moveParentLabel: 'Parent page',
     moveSearchPlaceholder: 'Search pages…',
     moveRoot: 'Workspace root',
+    moveCrossWorkspaceSummary: 'Pages in this subtree: {count}.',
+    moveCrossWorkspacePolicy:
+      'Matching labels are kept. Explicit permissions, work-item links, and agent-skill references are removed.',
     moveButton: 'Move',
     moveCancel: 'Cancel',
+    errorLoadWorkspaces: 'Failed to load workspaces',
     errorMove: 'Move failed',
 
     // Permissions dialog

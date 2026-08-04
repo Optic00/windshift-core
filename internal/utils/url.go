@@ -186,7 +186,7 @@ func NewSSRFSafeHTTPClient(timeout time.Duration) *http.Client {
 		Timeout: 5 * time.Second,
 	}
 
-	transport := &http.Transport{
+	transport := ConfigureHTTPTransport(&http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			host, port, err := net.SplitHostPort(addr)
 			if err != nil {
@@ -207,7 +207,7 @@ func NewSSRFSafeHTTPClient(timeout time.Duration) *http.Client {
 			// Connect to the first valid resolved IP
 			return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].String(), port))
 		},
-	}
+	})
 
 	return &http.Client{
 		Timeout:   timeout,

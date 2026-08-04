@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"strings"
 
+	"windshift/internal/utils"
+
 	"github.com/google/uuid"
 )
 
@@ -35,7 +37,7 @@ type Client struct {
 func NewClient(accessToken string) *Client {
 	return &Client{
 		accessToken: accessToken,
-		httpClient:  &http.Client{Timeout: requestTimeout},
+		httpClient:  utils.NewHTTPClient(requestTimeout),
 		baseURL:     syncBaseURL,
 	}
 }

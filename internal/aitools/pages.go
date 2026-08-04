@@ -44,10 +44,11 @@ type updatePageArgs struct {
 }
 
 type movePageArgs struct {
-	PageID        int  `json:"page_id" jsonschema:"Page ID to move"`
-	ParentID      *int `json:"parent_id" jsonschema:"New parent ID; null for workspace root"`
-	PrevSiblingID *int `json:"prev_sibling_id,omitempty" jsonschema:"Place page after this sibling"`
-	NextSiblingID *int `json:"next_sibling_id,omitempty" jsonschema:"Place page before this sibling"`
+	PageID                 int  `json:"page_id" jsonschema:"Page ID to move"`
+	DestinationWorkspaceID *int `json:"destination_workspace_id,omitempty" jsonschema:"Destination workspace ID; omit to move within the current workspace"`
+	ParentID               *int `json:"parent_id" jsonschema:"New parent ID; null for workspace root"`
+	PrevSiblingID          *int `json:"prev_sibling_id,omitempty" jsonschema:"Place page after this sibling"`
+	NextSiblingID          *int `json:"next_sibling_id,omitempty" jsonschema:"Place page before this sibling"`
 }
 
 type archivePageArgs struct {
@@ -280,7 +281,7 @@ func init() {
 			if !ok {
 				return toolPageAuthResult(false, nil)
 			}
-			moved, err := pageApplicationService(env).Move(pageAuditActor(env), page.WorkspaceID, page.ID, args.ParentID, args.PrevSiblingID, args.NextSiblingID)
+			moved, err := pageApplicationService(env).Move(pageAuditActor(env), page.WorkspaceID, page.ID, args.DestinationWorkspaceID, args.ParentID, args.PrevSiblingID, args.NextSiblingID)
 			if err != nil {
 				return pageMutationToolError(err), nil
 			}

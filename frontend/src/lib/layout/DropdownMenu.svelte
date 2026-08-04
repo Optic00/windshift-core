@@ -28,6 +28,7 @@
     triggerAlignment = 'center',
     disabled = false,
     triggerTestid = '',
+    triggerLabel = '',
     children = undefined
   } = $props();
 
@@ -160,6 +161,7 @@
     use:melt={$trigger}
     disabled={isDisabled}
     data-testid={triggerTestid || undefined}
+    aria-label={triggerLabel || triggerText || undefined}
     onclick={(e) => e.stopPropagation()}
     onkeydown={(e) => e.stopPropagation()}
     class="{triggerAvatar ? 'p-0' : iconOnly ? '' : triggerClass ? '' : 'px-4 py-2'} rounded text-sm font-medium transition flex items-center {alignmentClass} {triggerGap} flex-shrink-0 {triggerBgColor ? getTextColorForBackground(triggerBgColor) : ''} {triggerClass} {isDisabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}"

@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"windshift/internal/utils"
 )
 
 const (
@@ -44,7 +46,7 @@ func ExchangeOAuthCode(clientID, clientSecret, code, redirectURI string) (*OAuth
 	req.SetBasicAuth(clientID, clientSecret)
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: requestTimeout}
+	client := utils.NewHTTPClient(requestTimeout)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("exchanging code: %w", err)
@@ -89,7 +91,7 @@ func SearchPages(accessToken, query string) ([]NotionPage, error) {
 	}
 	setHeaders(req, accessToken)
 
-	client := &http.Client{Timeout: requestTimeout}
+	client := utils.NewHTTPClient(requestTimeout)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("searching pages: %w", err)
@@ -159,7 +161,7 @@ func GetPage(accessToken, pageID string) (*NotionPage, error) {
 	}
 	setHeaders(req, accessToken)
 
-	client := &http.Client{Timeout: requestTimeout}
+	client := utils.NewHTTPClient(requestTimeout)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("getting page: %w", err)
@@ -186,7 +188,7 @@ func getDatabase(accessToken, dbID string) (*NotionPage, error) {
 	}
 	setHeaders(req, accessToken)
 
-	client := &http.Client{Timeout: requestTimeout}
+	client := utils.NewHTTPClient(requestTimeout)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("getting database: %w", err)

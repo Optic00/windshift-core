@@ -124,6 +124,7 @@ func init() {
 	Catalog = append(Catalog, seedMigrations()...)
 	Catalog = append(Catalog, miscMigrations()...)
 	Catalog = append(Catalog, schemaRerunMigrations()...)
+	Catalog = append(Catalog, cutoverMigrations()...)
 	Catalog = append(Catalog, driftFixMigrations()...)
 }
 

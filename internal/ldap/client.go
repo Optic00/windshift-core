@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"windshift/internal/models"
+	"windshift/internal/utils"
 
 	goldap "github.com/go-ldap/ldap/v3"
 )
@@ -36,10 +37,7 @@ func NewClient(config *models.LDAPConfig, bindPassword string) (*Client, error) 
 
 	if config.UseSSL {
 		// LDAPS (TLS from the start)
-		tlsConfig := &tls.Config{
-			InsecureSkipVerify: config.SkipTLSVerify, //nolint:gosec // Configurable for development environments
-			ServerName:         config.Host,
-		}
+		tlsConfig := ldapTLSConfig(config)
 		conn, err = goldap.DialTLS("tcp", address, tlsConfig)
 	} else {
 		conn, err = goldap.Dial("tcp", address)
@@ -50,10 +48,7 @@ func NewClient(config *models.LDAPConfig, bindPassword string) (*Client, error) 
 
 	// STARTTLS if requested (and not already using SSL)
 	if config.UseTLS && !config.UseSSL {
-		tlsConfig := &tls.Config{
-			InsecureSkipVerify: config.SkipTLSVerify, //nolint:gosec // Configurable for development environments
-			ServerName:         config.Host,
-		}
+		tlsConfig := ldapTLSConfig(config)
 		if err := conn.StartTLS(tlsConfig); err != nil {
 			_ = conn.Close()
 			return nil, fmt.Errorf("STARTTLS failed: %w", err)
@@ -67,6 +62,12 @@ func NewClient(config *models.LDAPConfig, bindPassword string) (*Client, error) 
 	}
 
 	return &Client{conn: conn, config: config}, nil
+}
+
+func ldapTLSConfig(config *models.LDAPConfig) *tls.Config {
+	tlsConfig := utils.OutboundTLSConfig(config.Host)
+	tlsConfig.InsecureSkipVerify = config.SkipTLSVerify || utils.SkipTLSVerify() //nolint:gosec // Explicit connection or process-wide opt-in.
+	return tlsConfig
 }
 
 // Close closes the LDAP connection.

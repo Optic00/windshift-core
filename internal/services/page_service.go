@@ -401,6 +401,225 @@ func (s *PageService) Move(actorID, pageID int, newParentID, prevSiblingID, next
 	})
 }
 
+// MoveAcrossWorkspace moves a page and its complete subtree into another
+// workspace. The hierarchy rewrite and every workspace-scoped relation change
+// commit atomically. Revision rows and attachments intentionally stay attached
+// to their page IDs: revisions are historical snapshots, while attachments are
+// not workspace-scoped.
+func (s *PageService) MoveAcrossWorkspace(actorID, pageID, destinationWorkspaceID int, newParentID, prevSiblingID, nextSiblingID *int) (*models.Page, error) {
+	return database.WithTxResult(s.db, func(tx database.Tx) (*models.Page, error) {
+		page, err := s.pages.GetByIDTx(tx, pageID)
+		if err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				return nil, ErrPageNotFound
+			}
+			return nil, err
+		}
+		if page.WorkspaceID == destinationWorkspaceID {
+			return nil, fmt.Errorf("cross-workspace move requires a different destination workspace")
+		}
+
+		subtree, err := s.pages.ListSubtreeTx(tx, page, s.db.GetDriverName() == "postgres")
+		if err != nil {
+			return nil, err
+		}
+		if len(subtree) == 0 {
+			return nil, ErrPageNotFound
+		}
+
+		var newPath string
+		newDepth := 0
+		if newParentID == nil {
+			newPath = "/"
+		} else {
+			parent, parentErr := s.pages.GetByIDTx(tx, *newParentID)
+			if parentErr != nil {
+				if errors.Is(parentErr, repository.ErrNotFound) {
+					return nil, ErrPageNotFound
+				}
+				return nil, parentErr
+			}
+			if parent.WorkspaceID != destinationWorkspaceID {
+				return nil, ErrPageParentMismatch
+			}
+			newDepth = parent.Depth + 1
+			newPath = parent.Path + fmt.Sprintf("%d/", parent.ID)
+		}
+
+		deepestDepth := page.Depth
+		for i := range subtree {
+			if subtree[i].Depth > deepestDepth {
+				deepestDepth = subtree[i].Depth
+			}
+		}
+		if deepestDepth-page.Depth+newDepth >= repository.MaxPageDepth {
+			return nil, ErrPageDepthExceeded
+		}
+
+		newFracIndex, err := s.resolveSiblingFracIndex(tx, destinationWorkspaceID, newParentID, pageID, prevSiblingID, nextSiblingID, true, actorID)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.pages.MoveAcrossWorkspaceTx(tx, pageID, destinationWorkspaceID, newParentID, newPath, newDepth, actorID, newFracIndex); err != nil {
+			if errors.Is(err, repository.ErrDuplicateEntry) {
+				return nil, ErrPageUniqueConflict
+			}
+			if errors.Is(err, repository.ErrNotFound) {
+				return nil, ErrPageNotFound
+			}
+			return nil, err
+		}
+
+		oldPrefix := page.Path + fmt.Sprintf("%d/", page.ID)
+		newPrefix := newPath + fmt.Sprintf("%d/", page.ID)
+		depthShift := newDepth - page.Depth
+		pageIDs := make([]int, 0, len(subtree))
+		pageIDs = append(pageIDs, page.ID)
+		for i := range subtree {
+			descendant := &subtree[i]
+			if descendant.ID == page.ID {
+				continue
+			}
+			if !strings.HasPrefix(descendant.Path, oldPrefix) {
+				return nil, fmt.Errorf("page %d is outside subtree prefix %q", descendant.ID, oldPrefix)
+			}
+			descendantPath := newPrefix + strings.TrimPrefix(descendant.Path, oldPrefix)
+			if err := s.pages.MoveAcrossWorkspaceTx(
+				tx,
+				descendant.ID,
+				destinationWorkspaceID,
+				descendant.ParentID,
+				descendantPath,
+				descendant.Depth+depthShift,
+				actorID,
+				descendant.FracIndex,
+			); err != nil {
+				if errors.Is(err, repository.ErrDuplicateEntry) {
+					return nil, ErrPageUniqueConflict
+				}
+				return nil, err
+			}
+			pageIDs = append(pageIDs, descendant.ID)
+		}
+
+		if err := s.rehomePageSubtreeRelationsTx(tx, pageIDs, destinationWorkspaceID); err != nil {
+			return nil, err
+		}
+
+		moved, err := s.pages.GetByIDTx(tx, pageID)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := s.writeRevisionTx(tx, moved, actorID, models.PageRevisionChangeTypeMove, "Moved to another workspace"); err != nil {
+			return nil, err
+		}
+		return moved, nil
+	})
+}
+
+// rehomePageSubtreeRelationsTx applies the explicit cross-workspace policy:
+// labels map by exact name when the destination already has one; unmatched
+// labels, explicit ACLs, item links, and workspace-agent skill references are
+// removed. Search chunks follow the page. Attachments and revisions are not
+// workspace-scoped and remain untouched.
+func (s *PageService) rehomePageSubtreeRelationsTx(tx database.Tx, pageIDs []int, destinationWorkspaceID int) error {
+	if len(pageIDs) == 0 {
+		return nil
+	}
+	placeholders := make([]string, len(pageIDs))
+	args := make([]interface{}, len(pageIDs))
+	for i, pageID := range pageIDs {
+		placeholders[i] = "?"
+		args[i] = pageID
+	}
+	idList := strings.Join(placeholders, ",")
+
+	type labelAssignment struct {
+		pageID int
+		name   string
+	}
+	rows, err := tx.Query(`
+		SELECT a.page_id, l.name
+		FROM page_label_assignments a
+		JOIN page_labels l ON l.id = a.page_label_id
+		WHERE a.page_id IN (`+idList+`)
+	`, args...)
+	if err != nil {
+		return fmt.Errorf("load page labels before workspace move: %w", err)
+	}
+	assignments := make([]labelAssignment, 0)
+	for rows.Next() {
+		var assignment labelAssignment
+		if err := rows.Scan(&assignment.pageID, &assignment.name); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan page label before workspace move: %w", err)
+		}
+		assignments = append(assignments, assignment)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("iterate page labels before workspace move: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close page label rows: %w", err)
+	}
+
+	destinationLabels := make(map[string]int)
+	labelRows, err := tx.Query(`SELECT id, name FROM page_labels WHERE workspace_id = ?`, destinationWorkspaceID)
+	if err != nil {
+		return fmt.Errorf("load destination page labels: %w", err)
+	}
+	for labelRows.Next() {
+		var id int
+		var name string
+		if err := labelRows.Scan(&id, &name); err != nil {
+			_ = labelRows.Close()
+			return fmt.Errorf("scan destination page label: %w", err)
+		}
+		destinationLabels[name] = id
+	}
+	if err := labelRows.Err(); err != nil {
+		_ = labelRows.Close()
+		return fmt.Errorf("iterate destination page labels: %w", err)
+	}
+	if err := labelRows.Close(); err != nil {
+		return fmt.Errorf("close destination page label rows: %w", err)
+	}
+
+	if _, err := tx.Exec(`DELETE FROM page_label_assignments WHERE page_id IN (`+idList+`)`, args...); err != nil {
+		return fmt.Errorf("clear page labels during workspace move: %w", err)
+	}
+	for _, assignment := range assignments {
+		destinationLabelID, ok := destinationLabels[assignment.name]
+		if !ok {
+			continue
+		}
+		if _, err := tx.Exec(`INSERT INTO page_label_assignments (page_id, page_label_id) VALUES (?, ?)`, assignment.pageID, destinationLabelID); err != nil {
+			return fmt.Errorf("remap page label %q during workspace move: %w", assignment.name, err)
+		}
+	}
+
+	if _, err := tx.Exec(`DELETE FROM page_permissions WHERE page_id IN (`+idList+`)`, args...); err != nil {
+		return fmt.Errorf("clear page permissions during workspace move: %w", err)
+	}
+	if _, err := tx.Exec(`DELETE FROM workspace_agent_skill_pages WHERE page_id IN (`+idList+`)`, args...); err != nil {
+		return fmt.Errorf("clear workspace skill page references during workspace move: %w", err)
+	}
+	linkArgs := append(append([]interface{}{}, args...), args...)
+	if _, err := tx.Exec(`
+		DELETE FROM item_links
+		WHERE (source_type = 'page' AND source_id IN (`+idList+`))
+		   OR (target_type = 'page' AND target_id IN (`+idList+`))
+	`, linkArgs...); err != nil {
+		return fmt.Errorf("clear page links during workspace move: %w", err)
+	}
+	chunkArgs := append([]interface{}{destinationWorkspaceID}, args...)
+	if _, err := tx.Exec(`UPDATE page_chunks SET workspace_id = ? WHERE page_id IN (`+idList+`)`, chunkArgs...); err != nil {
+		return fmt.Errorf("rehome page chunks during workspace move: %w", err)
+	}
+	return nil
+}
+
 // Archive flags a page (and its entire subtree) as archived. Archive is
 // reversible by restoring an explicit revision, which unarchives only the
 // addressed page. Use ArchiveChecked from HTTP handlers so descendant ACL

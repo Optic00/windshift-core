@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"windshift/internal/utils"
 )
 
 const (
@@ -36,7 +38,7 @@ func ExchangeOAuthCode(clientID, clientSecret, code string) (*OAuthResult, error
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	client := &http.Client{Timeout: requestTimeout}
+	client := utils.NewHTTPClient(requestTimeout)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("exchanging code: %w", err)

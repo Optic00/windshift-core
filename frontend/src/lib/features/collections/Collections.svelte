@@ -427,6 +427,7 @@
         emptyIcon={Search}
         actionItems={buildItemActions}
         onRowClick={viewItem}
+        rowAttrs={(item) => ({ 'data-testid': `collection-result-${item.id}` })}
       />
 
       {#if itemsPagination && itemsPagination.total > 0}
@@ -481,4 +482,3 @@
     />
   </div>
 </Modal>
-

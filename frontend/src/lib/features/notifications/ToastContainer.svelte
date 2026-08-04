@@ -139,7 +139,7 @@
               </div>
             {/if}
             {#if toast.message}
-              <div class="text-sm" style="color: var(--ds-text-subtle);">
+              <div data-testid={`toast-message-${toast.variant}`} class="text-sm" style="color: var(--ds-text-subtle);">
                 {toast.message}
               </div>
             {/if}

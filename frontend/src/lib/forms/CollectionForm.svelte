@@ -57,6 +57,7 @@
 <div class="space-y-3">
   <!-- Title Input -->
   <input
+    data-testid="collection-create-name"
     bind:this={nameInputRef}
     bind:value={formData.name}
     type="text"

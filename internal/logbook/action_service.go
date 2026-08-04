@@ -16,6 +16,7 @@ import (
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/repository/actionutil"
+	"windshift/internal/utils"
 
 	"github.com/google/uuid"
 )
@@ -72,7 +73,7 @@ func NewLogbookActionService(db database.Database, repo *repository.LogbookActio
 	}
 
 	if mainServerURL != "" {
-		service.httpClient = &http.Client{Timeout: 30 * time.Second}
+		service.httpClient = utils.NewHTTPClient(30 * time.Second)
 	}
 
 	if err := service.refreshActionCache(); err != nil {

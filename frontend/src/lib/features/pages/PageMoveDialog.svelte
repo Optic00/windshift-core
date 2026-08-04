@@ -7,8 +7,8 @@
   import { t } from '../../stores/i18n.svelte.js';
   import { isSelfOrDescendant } from './pageHierarchy.js';
 
-  /** Page reparenting dialog. It excludes self, descendants, and current parent
-   * from tree-path candidates while the backend remains the cycle authority. */
+  /** Page reparenting dialog. It can point the subtree at another accessible
+   * workspace; the backend remains the permission and cycle authority. */
   let {
     isOpen = $bindable(false),
     workspaceId,
@@ -17,41 +17,72 @@
   } = $props();
 
   let candidates = $state([]);
+  let sourceTree = $state([]);
+  let workspaces = $state([]);
   let loading = $state(false);
+  let loadingWorkspaces = $state(false);
   let saving = $state(false);
   let error = $state('');
 
   /** Root and no selection both bind as null, so selectionMade disambiguates. */
+  let pickedWorkspaceId = $state(null);
   let pickedParentId = $state(null);
   let selectionMade = $state(false);
 
   $effect(() => {
     if (isOpen && page) {
-      loadCandidates();
+      pickedWorkspaceId = workspaceId;
+      loadDialogData();
     }
     if (!isOpen) {
+      pickedWorkspaceId = null;
       pickedParentId = null;
       selectionMade = false;
       error = '';
     }
   });
 
-  async function loadCandidates() {
+  async function loadDialogData() {
+    loadingWorkspaces = true;
+    const workspaceRequest = api.workspaces.getAll();
+    await Promise.all([loadCandidates(workspaceId, true), workspaceRequest.then((items) => {
+      workspaces = (items || []).filter((item) => item.active !== false);
+    }).catch((err) => {
+      error = err?.message || t('pages.errorLoadWorkspaces');
+      workspaces = [];
+    }).finally(() => {
+      loadingWorkspaces = false;
+    })]);
+  }
+
+  async function loadCandidates(destinationWorkspaceId, rememberSource = false) {
     loading = true;
     error = '';
     try {
-      const resp = await api.pages.getTree(workspaceId);
+      const resp = await api.pages.getTree(destinationWorkspaceId);
       const all = resp.pages || [];
-      candidates = all.filter((p) => {
-        if (isSelfOrDescendant(p, page)) return false;
-        if (p.id === page.parent_id) return false; // already the parent
-        return true;
-      });
+      if (rememberSource) sourceTree = all;
+      candidates = destinationWorkspaceId === workspaceId
+        ? all.filter((candidate) => {
+            if (isSelfOrDescendant(candidate, page)) return false;
+            if (candidate.id === page.parent_id) return false;
+            return true;
+          })
+        : all;
     } catch (err) {
       error = err?.message || t('pages.errorLoadTree');
+      candidates = [];
     } finally {
       loading = false;
     }
+  }
+
+  async function onWorkspacePick(item) {
+    if (!item) return;
+    pickedWorkspaceId = item.id;
+    pickedParentId = null;
+    selectionMade = false;
+    await loadCandidates(item.id);
   }
 
   function onPick(item) {
@@ -64,16 +95,24 @@
   // Show the "Workspace root" option only when moving there would
   // actually change something. If the page is already at the root it'd
   // be a confusing no-op.
-  const rootAvailable = $derived(page?.parent_id != null);
+  const crossWorkspace = $derived(
+    pickedWorkspaceId != null && pickedWorkspaceId !== workspaceId
+  );
+  const rootAvailable = $derived(crossWorkspace || page?.parent_id != null);
+  const subtreeCount = $derived(
+    sourceTree.filter((candidate) => isSelfOrDescendant(candidate, page)).length || 1
+  );
 
   async function confirmMove() {
     if (!selectionMade || saving) return;
     saving = true;
     error = '';
     try {
-      await api.pages.movePage(workspaceId, page.id, pickedParentId);
+      const moved = await api.pages.movePage(workspaceId, page.id, pickedParentId, {
+        destinationWorkspaceId: pickedWorkspaceId,
+      });
       isOpen = false;
-      onMoved?.();
+      onMoved?.(moved);
     } catch (err) {
       error = err?.message || t('pages.errorMove');
     } finally {
@@ -94,10 +133,24 @@
     {/if}
 
     <BasePicker
+      id="page-move-workspace-picker"
+      bind:value={pickedWorkspaceId}
+      items={workspaces}
+      loading={loadingWorkspaces}
+      label={t('pages.moveWorkspaceLabel')}
+      placeholder={t('pages.moveWorkspacePlaceholder')}
+      searchFields={['name', 'key', 'description']}
+      getValue={(item) => item.id}
+      getLabel={(item) => item.name}
+      onSelect={onWorkspacePick}
+    />
+
+    <BasePicker
       id="page-move-picker"
       bind:value={pickedParentId}
       items={candidates}
       {loading}
+      label={t('pages.moveParentLabel')}
       placeholder={t('pages.moveSearchPlaceholder')}
       showUnassigned={rootAvailable}
       unassignedLabel={t('pages.moveRoot')}
@@ -106,6 +159,13 @@
       getLabel={(p) => p.title}
       onSelect={onPick}
     />
+
+    {#if crossWorkspace}
+      <div class="move-policy" data-testid="page-move-cross-workspace-preview">
+        <strong>{t('pages.moveCrossWorkspaceSummary', { count: subtreeCount })}</strong>
+        <p>{t('pages.moveCrossWorkspacePolicy')}</p>
+      </div>
+    {/if}
   </div>
   <DialogFooter
     cancelLabel={t('pages.moveCancel')}
@@ -134,5 +194,25 @@
     color: var(--ds-text-danger, #b91c1c);
     border-radius: 0.25rem;
     font-size: 0.875rem;
+  }
+
+  .move-policy {
+    padding: 0.75rem 0.875rem;
+    background: var(--ds-background-neutral, #f4f5f7);
+    border: 1px solid var(--ds-border, #dfe1e6);
+    border-radius: 0.5rem;
+    color: var(--ds-text, #172b4d);
+    font-size: 0.8125rem;
+    line-height: 1.45;
+  }
+
+  .move-policy strong {
+    display: block;
+    font-weight: 600;
+  }
+
+  .move-policy p {
+    margin: 0.25rem 0 0;
+    color: var(--ds-text-subtle, #44546f);
   }
 </style>

@@ -112,24 +112,49 @@ func (s *PageApplicationService) Update(actor AuditActor, workspaceID int, in Pa
 }
 
 // Move reparents/reorders a page after checking edit access on both the page
-// and its destination parent.
-func (s *PageApplicationService) Move(actor AuditActor, workspaceID, pageID int, parentID, prevSiblingID, nextSiblingID *int) (*models.Page, error) {
+// and its destination parent. A nil destinationWorkspaceID preserves the
+// existing same-workspace contract.
+func (s *PageApplicationService) Move(actor AuditActor, workspaceID, pageID int, destinationWorkspaceID, parentID, prevSiblingID, nextSiblingID *int) (*models.Page, error) {
 	if err := s.requirePageOp(actor.UserID, workspaceID, pageID, PageOpEdit); err != nil {
 		return nil, err
 	}
+	destinationID := workspaceID
+	if destinationWorkspaceID != nil {
+		destinationID = *destinationWorkspaceID
+	}
+	crossWorkspace := destinationID != workspaceID
+	if crossWorkspace {
+		allowed, err := s.canCreate(actor.UserID, destinationID)
+		if err != nil {
+			return nil, err
+		}
+		if !allowed {
+			return nil, ErrPageMutationForbidden
+		}
+	}
 	if parentID != nil {
-		if err := s.requirePageOp(actor.UserID, workspaceID, *parentID, PageOpEdit); err != nil {
+		if err := s.requirePageOp(actor.UserID, destinationID, *parentID, PageOpEdit); err != nil {
 			if errors.Is(err, ErrPageNotFound) {
 				return nil, ErrPageParentNotFound
 			}
 			return nil, err
 		}
 	}
-	moved, err := s.pages.Move(actor.UserID, pageID, parentID, prevSiblingID, nextSiblingID)
+	var moved *models.Page
+	var err error
+	if crossWorkspace {
+		moved, err = s.pages.MoveAcrossWorkspace(actor.UserID, pageID, destinationID, parentID, prevSiblingID, nextSiblingID)
+	} else {
+		moved, err = s.pages.Move(actor.UserID, pageID, parentID, prevSiblingID, nextSiblingID)
+	}
 	if err != nil {
 		return nil, err
 	}
-	s.emitAudit(actor, logger.ActionPageMove, moved.ID, moved.Title, nil)
+	details := map[string]interface{}{
+		"source_workspace_id":      workspaceID,
+		"destination_workspace_id": destinationID,
+	}
+	s.emitAudit(actor, logger.ActionPageMove, moved.ID, moved.Title, details)
 	return moved, nil
 }
 

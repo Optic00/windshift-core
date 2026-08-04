@@ -21,13 +21,7 @@ func backfillLegacyDatetimeFormat(db *sql.DB) error {
 	for _, c := range columns {
 		fixed, err := backfillColumn(db, c.table, c.column)
 		if err != nil {
-			// One bad column must not block startup.
-			slog.Warn("datetime backfill failed for column",
-				slog.String("component", "database"),
-				slog.String("table", c.table),
-				slog.String("column", c.column),
-				slog.Any("error", err))
-			continue
+			return fmt.Errorf("normalize %s.%s: %w", c.table, c.column, err)
 		}
 		totalFixed += fixed
 	}
