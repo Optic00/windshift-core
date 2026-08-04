@@ -2,9 +2,6 @@ package llm
 
 import (
 	"context"
-	"fmt"
-	"log/slog"
-	"net/http"
 	"strings"
 	"time"
 )
@@ -51,61 +48,7 @@ func NewClient(cfg Config) Client {
 		timeout = DefaultRequestTimeout
 	}
 
-	return &httpClient{
-		endpoint: endpoint,
-		apiKey:   cfg.APIKey,
-		http:     newAdminConfiguredHTTPClient(timeout),
-	}
-}
-
-// httpClient implements Client using HTTP requests to an OpenAI-compatible API.
-type httpClient struct {
-	endpoint         string
-	apiKey           string
-	completionTokens completionTokenNegotiator
-	http             *http.Client
-}
-
-func (c *httpClient) Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
-	body := baseChatBody(req, req.Model, c.completionTokens.parameter())
-
-	// llama.cpp takes a GBNF grammar for structured output.
-	if req.StructuredOutput != nil && len(req.StructuredOutput.Schema) > 0 {
-		grammar, err := JSONSchemaToGBNF(req.StructuredOutput.Schema)
-		if err != nil {
-			slog.Warn("failed to generate GBNF grammar", slog.Any("error", err))
-		} else if grammar != "" {
-			slog.Debug("applying GBNF grammar", slog.Int("length", len(grammar)))
-			body["grammar"] = grammar
-		}
-	}
-
-	return c.completionTokens.post(ctx, c.http, c.endpoint+"/v1/chat/completions", c.apiKey, body)
-}
-
-func (c *httpClient) Health(ctx context.Context) error {
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", c.endpoint+"/health", http.NoBody)
-	if err != nil {
-		return fmt.Errorf("%w: %w", ErrConnectionFailed, err)
-	}
-	if c.apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
-	}
-
-	resp, err := c.http.Do(httpReq) //nolint:gosec // G704: admin-configured LLM endpoint
-	if err != nil {
-		return fmt.Errorf("%w: %w", ErrConnectionFailed, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return ErrServiceNotReady
-	}
-	return nil
-}
-
-func (c *httpClient) Available() bool {
-	return true
+	return newDynamicFantasyClient(endpoint, cfg.APIKey, timeout)
 }
 
 // ConnectionConfig holds configuration for creating a provider-specific client.
@@ -130,21 +73,35 @@ func NewProviderClient(cfg ConnectionConfig) Client {
 		baseURL = provider.BaseURL
 	}
 
-	contract := ProviderConfigAPIContract(cfg.ProviderConfig)
-	usesCatalogEndpoint := cfg.BaseURL == "" || strings.TrimRight(cfg.BaseURL, "/") == strings.TrimRight(provider.BaseURL, "/")
-	switch {
-	case provider.APIFormat == "anthropic":
-		return newAnthropicClient(baseURL, cfg.Model, cfg.APIKey, cfg.ProviderConfig, cfg.Timeout)
-	case contract == APIContractResponses:
-		return newOpenAIResponsesClient(baseURL, cfg.Model, cfg.APIKey, cfg.ProviderConfig, cfg.Timeout)
-	case contract == APIContractChatCompletions:
-		return newOpenAIClient(baseURL, cfg.Model, cfg.APIKey, cfg.ProviderConfig, cfg.Timeout, provider.ChatPath)
-	case provider.APIFormat == "openai-responses" && usesCatalogEndpoint:
-		return newOpenAIResponsesClient(baseURL, cfg.Model, cfg.APIKey, cfg.ProviderConfig, cfg.Timeout)
+	switch ResolveGenerationProtocol(cfg.ProviderType, cfg.BaseURL, cfg.ProviderConfig) {
+	case APIContractAnthropic:
+		return newFantasyClient(baseURL, cfg.Model, cfg.APIKey, APIContractAnthropic, provider.ChatPath, cfg.ProviderConfig, cfg.Timeout)
+	case APIContractResponses:
+		return newFantasyClient(baseURL, cfg.Model, cfg.APIKey, APIContractResponses, provider.ChatPath, cfg.ProviderConfig, cfg.Timeout)
 	default:
-		// A custom base URL on an OpenAI connection may be LiteLLM or another
-		// OpenAI-compatible gateway. Preserve Chat Completions unless the
-		// connection explicitly opts into the Responses contract.
-		return newOpenAIClient(baseURL, cfg.Model, cfg.APIKey, cfg.ProviderConfig, cfg.Timeout, provider.ChatPath)
+		return newFantasyClient(baseURL, cfg.Model, cfg.APIKey, APIContractChatCompletions, provider.ChatPath, cfg.ProviderConfig, cfg.Timeout)
 	}
+}
+
+// ResolveGenerationProtocol resolves the connection once into the protocol
+// its model client must speak. The coding-agent binding receives this value so
+// it uses the same dispatch decision as in-process callers without learning a
+// provider credential or upstream URL.
+func ResolveGenerationProtocol(providerType ProviderType, baseURL, providerConfig string) string {
+	provider := GetProvider(providerType)
+	if provider == nil {
+		return APIContractChatCompletions
+	}
+	if provider.APIFormat == "anthropic" {
+		return APIContractAnthropic
+	}
+	contract := ProviderConfigAPIContract(providerConfig)
+	if contract == APIContractResponses || contract == APIContractChatCompletions {
+		return contract
+	}
+	usesCatalogEndpoint := baseURL == "" || strings.TrimRight(baseURL, "/") == strings.TrimRight(provider.BaseURL, "/")
+	if provider.APIFormat == "openai-responses" && usesCatalogEndpoint {
+		return APIContractResponses
+	}
+	return APIContractChatCompletions
 }

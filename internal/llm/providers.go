@@ -32,6 +32,7 @@ type ModelInfo struct {
 	ID             string `json:"id"`
 	Name           string `json:"name"`
 	MaxTokens      int    `json:"max_tokens"`
+	ContextWindow  int    `json:"context_window"`
 	SupportsVision bool   `json:"supports_vision"`
 	// Pricing carries per-unit USD rates when the provider catalog advertises
 	// them (OpenRouter today). nil means rates are unknown — usage is metered in
@@ -42,22 +43,47 @@ type ModelInfo struct {
 // Pricing is a model's per-unit cost in USD, as advertised by a provider
 // catalog. Zero on any field means "not charged / not advertised".
 type Pricing struct {
-	PromptUSD     float64 `json:"prompt"`     // per prompt (input) token
-	CompletionUSD float64 `json:"completion"` // per completion (output) token
-	ImageUSD      float64 `json:"image"`      // per image part
-	RequestUSD    float64 `json:"request"`    // per request (flat)
+	PromptUSD     float64 `json:"prompt"`                // per prompt (input) token
+	CompletionUSD float64 `json:"completion"`            // per completion (output) token
+	CacheReadUSD  float64 `json:"cache_read,omitempty"`  // per cache-read input token
+	CacheWriteUSD float64 `json:"cache_write,omitempty"` // per cache-write input token
+	ImageUSD      float64 `json:"image"`                 // per image part
+	RequestUSD    float64 `json:"request"`               // per request (flat)
 }
 
-// CostUSD computes the cost of one call from token + image counts. Unknown
-// terms simply contribute zero (their rate is 0).
-func (p *Pricing) CostUSD(promptTokens, completionTokens, images int) float64 {
+// CostUSD computes the cost of one call from normalized usage + image counts.
+// Reasoning tokens are already included in CompletionTokens and are reported
+// separately for visibility, so charging them again would double bill them.
+func (p *Pricing) CostUSD(usage Usage, images int) float64 {
 	if p == nil {
 		return 0
 	}
-	return float64(promptTokens)*p.PromptUSD +
-		float64(completionTokens)*p.CompletionUSD +
+	return float64(usage.PromptTokens)*p.PromptUSD +
+		float64(usage.CacheReadTokens)*p.CacheReadUSD +
+		float64(usage.CacheWriteTokens)*p.CacheWriteUSD +
+		float64(usage.CompletionTokens)*p.CompletionUSD +
 		float64(images)*p.ImageUSD +
 		p.RequestUSD
+}
+
+// HasCompleteCacheRates reports whether cache placement can be enabled without
+// silently under-billing a cache write or read. Prompt is included because the
+// uncached portion remains billable whenever caching is active.
+func (p *Pricing) HasCompleteCacheRates() bool {
+	return p != nil && p.PromptUSD > 0 && p.CacheReadUSD > 0 && p.CacheWriteUSD > 0
+}
+
+// CanPriceUsage rejects partial pricing for token classes that actually
+// occurred. This keeps an unknown cache rate from silently becoming a free
+// cache read/write in a computed usage row.
+func (p *Pricing) CanPriceUsage(usage Usage) bool {
+	if p == nil {
+		return false
+	}
+	return (usage.PromptTokens == 0 || p.PromptUSD > 0) &&
+		(usage.CompletionTokens == 0 || p.CompletionUSD > 0) &&
+		(usage.CacheReadTokens == 0 || p.CacheReadUSD > 0) &&
+		(usage.CacheWriteTokens == 0 || p.CacheWriteUSD > 0)
 }
 
 // ProviderInfo describes a known LLM provider and its available models.

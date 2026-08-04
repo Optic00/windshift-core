@@ -2,32 +2,8 @@ package llm
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 )
-
-// decodeCompletionResponse reads an HTTP response and decodes it into a CompletionResponse.
-// It handles common error status codes (503 Service Unavailable, non-200) before attempting JSON decode.
-func decodeCompletionResponse(resp *http.Response) (*CompletionResponse, error) {
-	if resp.StatusCode == http.StatusServiceUnavailable {
-		return nil, ErrServiceNotReady
-	}
-	if resp.StatusCode != http.StatusOK {
-		respBody, readErr := io.ReadAll(resp.Body)
-		if readErr != nil {
-			return nil, fmt.Errorf("%w: status %d; failed to read response body: %v", ErrAPIError, resp.StatusCode, readErr)
-		}
-		return nil, fmt.Errorf("%w: status %d - %s", ErrAPIError, resp.StatusCode, string(respBody))
-	}
-
-	var result CompletionResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-	return &result, nil
-}
 
 // scanConnections scans rows from an llm_connections query into a slice of ConnectionInfo.
 // The rows must select: id, name, provider_type, model, api_key_encrypted, base_url, provider_config, is_default, is_enabled, created_at, updated_at.

@@ -504,10 +504,13 @@ func (d *Dispatcher) execute(run *models.AgentRun) {
 		return
 	}
 	_ = d.opts.Runs.AppendEvent(ctx, run.ID, "succeeded", marshalSafe(map[string]any{
-		"comment_id":        comment.CommentID,
-		"iterations":        result.Iterations,
-		"prompt_tokens":     result.Usage.PromptTokens,
-		"completion_tokens": result.Usage.CompletionTokens,
+		"comment_id":         comment.CommentID,
+		"iterations":         result.Iterations,
+		"prompt_tokens":      result.Usage.PromptTokens,
+		"completion_tokens":  result.Usage.CompletionTokens,
+		"cache_read_tokens":  result.Usage.CacheReadTokens,
+		"cache_write_tokens": result.Usage.CacheWriteTokens,
+		"reasoning_tokens":   result.Usage.ReasoningTokens,
 	}))
 }
 

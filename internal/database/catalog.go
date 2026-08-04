@@ -2173,14 +2173,24 @@ func schemaRerunMigrations() []Migration {
 
 	out := make([]Migration, 0, len(entries))
 	for _, e := range entries {
-		out = append(out, Migration{
+		migration := Migration{
 			Version:       e.version,
 			Name:          e.name,
 			CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='" + e.sentinel + "'",
 			CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='" + e.sentinel + "'",
 			SQLite:        e.sqlite,
 			Postgres:      e.postgres,
-		})
+		}
+		if e.version == "schema_llm" {
+			// The base schema gained the token-class columns alongside the
+			// append-only migration that converges existing tables. Accept and
+			// re-stamp both deployed backend checksums after that migration runs.
+			migration.Superseded = []string{
+				"ce3303166028080e7d00e27ae22f4da9f6931284d60862030a70ee4cc43bd0f7",
+				"2bfa5f49b77f9ba706cfab9ee7917038c9aad8868e3cdf4c819ba7802e4019e8",
+			}
+		}
+		out = append(out, migration)
 	}
 	return out
 }

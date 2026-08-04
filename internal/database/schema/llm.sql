@@ -32,6 +32,9 @@ CREATE TABLE IF NOT EXISTS llm_usage (
     prompt_tokens     INTEGER NOT NULL DEFAULT 0,
     completion_tokens INTEGER NOT NULL DEFAULT 0,
     total_tokens      INTEGER NOT NULL DEFAULT 0,
+    cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+    reasoning_tokens  INTEGER NOT NULL DEFAULT 0,
     cost_usd          REAL,
     cost_source       TEXT NOT NULL DEFAULT '',
     created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP

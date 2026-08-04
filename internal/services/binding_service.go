@@ -1741,14 +1741,15 @@ func (s *BindingService) buildRunEnv(ctx context.Context, workspaceID, itemID in
 	return env, nil
 }
 
-// applyLLMModelEnv exposes model and resolved vision support only. Provider
-// credentials and routing remain behind the run-scoped LLM proxy.
+// applyLLMModelEnv exposes only packing/capability limits. Provider model and
+// protocol selection remain behind the run-scoped neutral inference endpoint.
 func applyLLMModelEnv(env map[string]string, cfg *llm.ConnectionRuntimeConfig) {
 	if cfg == nil {
 		return
 	}
-	env["LLM_MODEL"] = cfg.Model
 	env["LLM_SUPPORTS_VISION"] = strconv.FormatBool(cfg.SupportsVision)
+	env["LLM_CONTEXT_WINDOW"] = strconv.Itoa(cfg.ContextWindow)
+	env["LLM_MAX_TOKENS"] = strconv.Itoa(cfg.MaxOutputTokens)
 }
 
 // deriveCloneURL builds a credential-free HTTPS remote from trusted SCM data.

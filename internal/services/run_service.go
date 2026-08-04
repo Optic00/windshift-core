@@ -786,7 +786,7 @@ func (s *RunService) mintTokenAndGrants(ctx context.Context, runID int, spec Tok
 
 // applyLLMProxyEnv wires the agent container to reach the model only through
 // the run-scoped llm-proxy broker (WI-238): LLM_BASE_URL points at
-// <WS_API_URL>/llm-proxy/<runID> (the agent appends /v1/chat/completions) and
+// <WS_API_URL>/llm-proxy/<runID>/complete and
 // LLM_API_KEY carries the per-run token, which ProxyLLM validates and swaps for
 // the real provider credential server-side. No raw provider key ever reaches
 // the (untrusted) container. A no-op when the run has no LLM grant, or when no
@@ -802,7 +802,7 @@ func applyLLMProxyEnv(env map[string]string, grants *models.RunGrants, runID int
 	if base == "" {
 		return
 	}
-	env["LLM_BASE_URL"] = fmt.Sprintf("%s/llm-proxy/%d", base, runID)
+	env["LLM_BASE_URL"] = fmt.Sprintf("%s/llm-proxy/%d/complete", base, runID)
 	env["LLM_API_KEY"] = token
 }
 

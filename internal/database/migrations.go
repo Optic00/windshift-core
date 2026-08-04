@@ -2641,6 +2641,22 @@ var Catalog = []Migration{
 				ADD COLUMN IF NOT EXISTS is_ephemeral BOOLEAN NOT NULL DEFAULT FALSE;
 		`,
 	},
+	{
+		Version:       "20260804_llm_usage_token_classes",
+		Name:          "Add cache and reasoning token classes to LLM usage",
+		CheckSQLite:   sqliteColumnCheck("llm_usage", "reasoning_tokens"),
+		CheckPostgres: pgColumnCheck("llm_usage", "reasoning_tokens"),
+		SQLite: `
+			ALTER TABLE llm_usage ADD COLUMN cache_read_tokens INTEGER NOT NULL DEFAULT 0;
+			ALTER TABLE llm_usage ADD COLUMN cache_write_tokens INTEGER NOT NULL DEFAULT 0;
+			ALTER TABLE llm_usage ADD COLUMN reasoning_tokens INTEGER NOT NULL DEFAULT 0;
+		`,
+		Postgres: `
+			ALTER TABLE llm_usage ADD COLUMN IF NOT EXISTS cache_read_tokens INTEGER NOT NULL DEFAULT 0;
+			ALTER TABLE llm_usage ADD COLUMN IF NOT EXISTS cache_write_tokens INTEGER NOT NULL DEFAULT 0;
+			ALTER TABLE llm_usage ADD COLUMN IF NOT EXISTS reasoning_tokens INTEGER NOT NULL DEFAULT 0;
+		`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {

@@ -9,8 +9,23 @@
       "models_auth_scheme": "bearer",
       "models_response_format": "openai",
       "models": [
-        {"id": "gpt-4o", "name": "GPT-4o", "max_tokens": 4096, "supports_vision": true},
-        {"id": "gpt-4o-mini", "name": "GPT-4o Mini", "max_tokens": 4096, "supports_vision": true}
+        {"id": "gpt-4o", "name": "GPT-4o", "max_tokens": 16384, "context_window": 128000, "supports_vision": true},
+        {"id": "gpt-4o-mini", "name": "GPT-4o Mini", "max_tokens": 16384, "context_window": 128000, "supports_vision": true}
+      ]
+    },
+    {
+      "type": "anthropic",
+      "name": "Anthropic",
+      "api_format": "anthropic",
+      "base_url": "https://api.anthropic.com",
+      "models_endpoint": "/v1/models",
+      "models_auth_scheme": "anthropic",
+      "models_response_format": "anthropic",
+      "models": [
+        {"id": "claude-fable-5", "name": "Claude Fable 5", "max_tokens": 128000, "context_window": 1000000, "supports_vision": true, "pricing": {"prompt": 0.00001, "completion": 0.00005, "cache_read": 0.000001, "cache_write": 0.0000125}},
+        {"id": "claude-opus-5", "name": "Claude Opus 5", "max_tokens": 128000, "context_window": 1000000, "supports_vision": true, "pricing": {"prompt": 0.000005, "completion": 0.000025, "cache_read": 0.0000005, "cache_write": 0.00000625}},
+        {"id": "claude-sonnet-5", "name": "Claude Sonnet 5", "max_tokens": 128000, "context_window": 1000000, "supports_vision": true, "pricing": {"prompt": 0.000002, "completion": 0.00001, "cache_read": 0.0000002, "cache_write": 0.0000025}},
+        {"id": "claude-haiku-4-5-20251001", "name": "Claude Haiku 4.5", "max_tokens": 64000, "context_window": 200000, "supports_vision": true, "pricing": {"prompt": 0.000001, "completion": 0.000005, "cache_read": 0.0000001, "cache_write": 0.00000125}}
       ]
     },
     {
@@ -24,9 +39,9 @@
       "models_auth_scheme": "google",
       "models_response_format": "google",
       "models": [
-        {"id": "gemini-3.1-pro-preview", "name": "Gemini 3.1 Pro", "max_tokens": 8192, "supports_vision": true},
-        {"id": "gemini-3.1-flash-lite-preview", "name": "Gemini 3.1 Flash Lite", "max_tokens": 8192, "supports_vision": true},
-        {"id": "gemini-3-flash-preview", "name": "Gemini 3 Flash", "max_tokens": 8192, "supports_vision": true}
+        {"id": "gemini-3.1-pro-preview", "name": "Gemini 3.1 Pro", "max_tokens": 65536, "context_window": 1048576, "supports_vision": true},
+        {"id": "gemini-3.1-flash-lite-preview", "name": "Gemini 3.1 Flash Lite", "max_tokens": 65536, "context_window": 1048576, "supports_vision": true},
+        {"id": "gemini-3-flash-preview", "name": "Gemini 3 Flash", "max_tokens": 65536, "context_window": 1048576, "supports_vision": true}
       ]
     },
     {
@@ -39,8 +54,8 @@
       "models_auth_scheme": "bearer",
       "models_response_format": "openai",
       "models": [
-        {"id": "glm-4.7", "name": "GLM-4.7", "max_tokens": 8192},
-        {"id": "glm-4.5", "name": "GLM-4.5", "max_tokens": 8192}
+        {"id": "glm-4.7", "name": "GLM-4.7", "max_tokens": 8192, "context_window": 200000},
+        {"id": "glm-4.5", "name": "GLM-4.5", "max_tokens": 8192, "context_window": 128000}
       ]
     },
     {
@@ -53,8 +68,8 @@
       "models_auth_scheme": "bearer",
       "models_response_format": "openai",
       "models": [
-        {"id": "glm-4.7", "name": "GLM-4.7", "max_tokens": 8192},
-        {"id": "glm-4.5", "name": "GLM-4.5", "max_tokens": 8192}
+        {"id": "glm-4.7", "name": "GLM-4.7", "max_tokens": 8192, "context_window": 200000},
+        {"id": "glm-4.5", "name": "GLM-4.5", "max_tokens": 8192, "context_window": 128000}
       ]
     },
     {
@@ -67,15 +82,15 @@
       "models_auth_scheme": "bearer",
       "models_response_format": "openai",
       "models": [
-        {"id": "anthropic/claude-sonnet-4", "name": "Claude Sonnet 4", "max_tokens": 8192, "supports_vision": true},
-        {"id": "anthropic/claude-opus-4", "name": "Claude Opus 4", "max_tokens": 8192, "supports_vision": true},
-        {"id": "openai/gpt-4o", "name": "GPT-4o", "max_tokens": 4096, "supports_vision": true},
-        {"id": "openai/gpt-4o-mini", "name": "GPT-4o Mini", "max_tokens": 4096, "supports_vision": true},
-        {"id": "google/gemini-2.5-pro", "name": "Gemini 2.5 Pro", "max_tokens": 8192, "supports_vision": true},
-        {"id": "google/gemini-2.5-flash", "name": "Gemini 2.5 Flash", "max_tokens": 8192, "supports_vision": true},
-        {"id": "deepseek/deepseek-chat-v3.1", "name": "DeepSeek Chat v3.1", "max_tokens": 8192},
-        {"id": "qwen/qwen3-coder", "name": "Qwen3 Coder", "max_tokens": 8192},
-        {"id": "x-ai/grok-4", "name": "Grok 4", "max_tokens": 8192, "supports_vision": true}
+        {"id": "anthropic/claude-sonnet-4", "name": "Claude Sonnet 4", "max_tokens": 64000, "context_window": 1000000, "supports_vision": true},
+        {"id": "anthropic/claude-opus-4", "name": "Claude Opus 4", "max_tokens": 32000, "context_window": 200000, "supports_vision": true},
+        {"id": "openai/gpt-4o", "name": "GPT-4o", "max_tokens": 16384, "context_window": 128000, "supports_vision": true},
+        {"id": "openai/gpt-4o-mini", "name": "GPT-4o Mini", "max_tokens": 16384, "context_window": 128000, "supports_vision": true},
+        {"id": "google/gemini-2.5-pro", "name": "Gemini 2.5 Pro", "max_tokens": 65536, "context_window": 1048576, "supports_vision": true},
+        {"id": "google/gemini-2.5-flash", "name": "Gemini 2.5 Flash", "max_tokens": 65535, "context_window": 1048576, "supports_vision": true},
+        {"id": "deepseek/deepseek-chat-v3.1", "name": "DeepSeek Chat v3.1", "max_tokens": 32768, "context_window": 163840},
+        {"id": "qwen/qwen3-coder", "name": "Qwen3 Coder", "max_tokens": 65536, "context_window": 262144},
+        {"id": "x-ai/grok-4", "name": "Grok 4", "max_tokens": 8192, "context_window": 256000, "supports_vision": true}
       ]
     },
     {

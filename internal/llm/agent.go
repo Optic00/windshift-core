@@ -108,6 +108,9 @@ func RunAgent(ctx context.Context, client Client, cfg AgentConfig, userMessage s
 		totalUsage.PromptTokens += resp.Usage.PromptTokens
 		totalUsage.CompletionTokens += resp.Usage.CompletionTokens
 		totalUsage.TotalTokens += resp.Usage.TotalTokens
+		totalUsage.CacheReadTokens += resp.Usage.CacheReadTokens
+		totalUsage.CacheWriteTokens += resp.Usage.CacheWriteTokens
+		totalUsage.ReasoningTokens += resp.Usage.ReasoningTokens
 
 		if len(resp.Choices) == 0 {
 			return nil, fmt.Errorf("LLM returned no choices (iteration %d)", i+1)

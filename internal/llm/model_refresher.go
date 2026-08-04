@@ -52,13 +52,18 @@ type openaiModelsResponse struct {
 		Architecture  struct {
 			InputModalities []string `json:"input_modalities"`
 		} `json:"architecture"`
+		TopProvider struct {
+			MaxCompletionTokens int `json:"max_completion_tokens"`
+		} `json:"top_provider"`
 		// OpenRouter advertises per-unit USD rates as strings (e.g. "0.000003").
 		// Other OpenAI-compatible catalogs omit pricing → left nil downstream.
 		Pricing struct {
-			Prompt     string `json:"prompt"`
-			Completion string `json:"completion"`
-			Image      string `json:"image"`
-			Request    string `json:"request"`
+			Prompt          string `json:"prompt"`
+			Completion      string `json:"completion"`
+			InputCacheRead  string `json:"input_cache_read"`
+			InputCacheWrite string `json:"input_cache_write"`
+			Image           string `json:"image"`
+			Request         string `json:"request"`
 		} `json:"pricing"`
 	} `json:"data"`
 }
@@ -80,6 +85,7 @@ type geminiModelsResponse struct {
 		Name                       string   `json:"name"`
 		DisplayName                string   `json:"displayName"`
 		InputTokenLimit            int      `json:"inputTokenLimit"`
+		OutputTokenLimit           int      `json:"outputTokenLimit"`
 		SupportedGenerationMethods []string `json:"supportedGenerationMethods"`
 	} `json:"models"`
 }
@@ -186,10 +192,13 @@ func parseOpenAIModels(body []byte) ([]ModelInfo, error) {
 		out = append(out, ModelInfo{
 			ID:             m.ID,
 			Name:           name,
-			MaxTokens:      m.ContextLength,
+			MaxTokens:      m.TopProvider.MaxCompletionTokens,
+			ContextWindow:  m.ContextLength,
 			SupportsVision: hasImageModality(m.Architecture.InputModalities),
 			Pricing: parsePricing(
-				m.Pricing.Prompt, m.Pricing.Completion, m.Pricing.Image, m.Pricing.Request,
+				m.Pricing.Prompt, m.Pricing.Completion,
+				m.Pricing.InputCacheRead, m.Pricing.InputCacheWrite,
+				m.Pricing.Image, m.Pricing.Request,
 			),
 		})
 	}
@@ -199,10 +208,12 @@ func parseOpenAIModels(body []byte) ([]ModelInfo, error) {
 // parsePricing builds a *Pricing from the catalog's string rates. It returns
 // nil when no rate is advertised (all empty/zero) so "cost unknown" stays
 // distinct from "free". Unparseable values are treated as zero.
-func parsePricing(prompt, completion, image, request string) *Pricing {
+func parsePricing(prompt, completion, cacheRead, cacheWrite, image, request string) *Pricing {
 	p := Pricing{
 		PromptUSD:     parseFloat(prompt),
 		CompletionUSD: parseFloat(completion),
+		CacheReadUSD:  parseFloat(cacheRead),
+		CacheWriteUSD: parseFloat(cacheWrite),
 		ImageUSD:      parseFloat(image),
 		RequestUSD:    parseFloat(request),
 	}
@@ -259,7 +270,7 @@ func parseGeminiModels(body []byte) ([]ModelInfo, error) {
 		if name == "" {
 			name = id
 		}
-		out = append(out, ModelInfo{ID: id, Name: name, MaxTokens: m.InputTokenLimit})
+		out = append(out, ModelInfo{ID: id, Name: name, MaxTokens: m.OutputTokenLimit, ContextWindow: m.InputTokenLimit})
 	}
 	return out, nil
 }

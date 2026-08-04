@@ -54,11 +54,14 @@ type Message struct {
 	Name       string     `json:"name,omitempty"`         // function name for role="tool" messages
 
 	// ProviderState carries opaque, provider-owned continuation data between
-	// calls in one in-memory agent run. It is deliberately excluded from JSON:
-	// callers reason about normalized messages while a wire adapter can retain
-	// details such as OpenAI Responses reasoning items that must be replayed on
-	// the next tool turn.
-	ProviderState json.RawMessage `json:"-"`
+	// calls. ProviderBinding fingerprints the connection/model that produced it;
+	// the run-scoped inference endpoint rejects replay under any other binding.
+	// Neither field is persisted by Windshift.
+	ProviderState   json.RawMessage `json:"provider_state,omitempty"`
+	ProviderBinding string          `json:"provider_binding,omitempty"`
+	// CacheBreakpoint marks the end of a caller-declared stable history prefix.
+	// The broker honors it only for a provider with complete cache pricing.
+	CacheBreakpoint bool `json:"cache_breakpoint,omitempty"`
 }
 
 // ToolDefinition describes a tool the LLM can call.
@@ -129,6 +132,9 @@ type CompletionRequest struct {
 	// Tool calling fields
 	Tools      []ToolDefinition `json:"tools,omitempty"`
 	ToolChoice interface{}      `json:"tool_choice,omitempty"` // "auto", "none", or {"type":"function","function":{"name":"..."}}
+	// Server-owned flags. They are never accepted from JSON callers.
+	EnablePromptCache bool `json:"-"`
+	CodingAgent       bool `json:"-"`
 }
 
 // ChatCompletionRequest remains as a source-compatible alias for consumers of
@@ -161,4 +167,7 @@ type Usage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
+	CacheReadTokens  int `json:"cache_read_tokens"`
+	CacheWriteTokens int `json:"cache_write_tokens"`
+	ReasoningTokens  int `json:"reasoning_tokens"`
 }

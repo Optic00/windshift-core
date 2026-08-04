@@ -3,8 +3,12 @@ package handlers
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -79,7 +83,10 @@ func (h *RunnerBrokerHandler) SetUsageRepository(usage *repository.LLMUsageRepos
 // running. Returns the run's grants + workspace, or writes a 401/403/404 and
 // returns ok=false.
 func (h *RunnerBrokerHandler) runFromToken(w http.ResponseWriter, r *http.Request, runID int) (grants *models.RunGrants, workspaceID int, ok bool) {
-	token := bearerCredential(r)
+	return h.runFromPresentedToken(w, r, runID, bearerCredential(r))
+}
+
+func (h *RunnerBrokerHandler) runFromPresentedToken(w http.ResponseWriter, r *http.Request, runID int, token string) (grants *models.RunGrants, workspaceID int, ok bool) {
 	if token == "" {
 		respondUnauthorized(w, r)
 		return nil, 0, false
@@ -144,7 +151,9 @@ func unbindStreamDeadlines(w http.ResponseWriter) {
 	_ = rc.SetWriteDeadline(time.Time{})
 }
 
-// ProxyLLM injects a run-scoped provider credential without exposing it to the runner.
+// ProxyLLM executes one provider-neutral inference operation for a running job.
+// Provider credentials, URLs, model selection, and wire protocols remain on
+// the server side; the run token can reach no provider API surface directly.
 func (h *RunnerBrokerHandler) ProxyLLM(w http.ResponseWriter, r *http.Request) {
 	if h.tokens == nil || h.runs == nil || h.llmConns == nil {
 		respondServiceUnavailable(w, r, "coding-agent harness is disabled on this server")
@@ -167,104 +176,92 @@ func (h *RunnerBrokerHandler) ProxyLLM(w http.ResponseWriter, r *http.Request) {
 		respondServiceUnavailable(w, r, "llm connection unavailable")
 		return
 	}
-	provider := llm.GetProvider(llm.ProviderType(cfg.ProviderType))
-	base := cfg.BaseURL
-	if base == "" && provider != nil {
-		base = provider.BaseURL
-	}
-	target, err := url.Parse(base)
-	if err != nil || target.Host == "" {
-		respondServiceUnavailable(w, r, "llm connection has no base url")
-		return
-	}
-	upstreamPath := r.PathValue("path")
-	providerType := strings.ToLower(cfg.ProviderType)
-	// The Go agent speaks OpenAI-compatible /v1/chat/completions. Until the
-	// broker implements OpenAI→Anthropic translation, reject Anthropic bindings
-	// clearly instead of forwarding an incompatible request shape.
-	if providerType == "anthropic" {
-		respondServiceUnavailable(w, r, "anthropic coding-agent bindings require broker translation that is not enabled")
-		return
-	}
-	// Restrict the run token to the exact inference API surface the Go agent
-	// needs. A leaked run token must not be usable to drive files, fine-tuning,
-	// batch, or arbitrary provider APIs through the injected key.
-	if !allowedLLMProxyEndpoint(r.Method, upstreamPath) {
-		respondForbidden(w, r)
-		return
-	}
-	// Bound the request body (WI-238 security Phase 7).
 	r.Body = http.MaxBytesReader(w, r.Body, maxLLMBrokerBody)
-	// Read the chat body once when we need to merge provider_config OR meter
-	// usage (image parts are priced from the request, not the SSE tail).
-	imageCount := 0
-	isChat := strings.TrimPrefix(upstreamPath, "/") == "v1/chat/completions"
-	hasProviderConfig := strings.TrimSpace(cfg.ProviderConfig) != ""
-	if isChat && (hasProviderConfig || h.usage != nil) {
-		body, readErr := io.ReadAll(r.Body)
-		if readErr != nil {
-			respondBadRequest(w, r, "invalid llm request body")
+	var request llm.CompletionRequest
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(&request); err != nil {
+		respondBadRequest(w, r, "invalid inference request body")
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		respondBadRequest(w, r, "inference request must contain one JSON object")
+		return
+	}
+	request.Model = cfg.Model
+	binding := llmBindingFingerprint(grants.LLM.ConnectionID, cfg.ProviderType, cfg.Model)
+	for _, message := range request.Messages {
+		if len(message.ProviderState) > 0 && message.ProviderBinding != binding {
+			respondBadRequest(w, r, "provider continuation binding mismatch")
 			return
 		}
-		imageCount = countImageParts(body)
-		out := body
-		if hasProviderConfig {
-			merged, mergeErr := llm.MergeProviderConfigJSON(body, cfg.ProviderConfig)
-			if mergeErr != nil {
-				respondServiceUnavailable(w, r, services.RedactString(mergeErr.Error()))
-				return
-			}
-			out = merged
-		}
-		r.Body = io.NopCloser(bytes.NewReader(out))
-		r.ContentLength = int64(len(out))
-		r.Header.Set("Content-Length", fmt.Sprintf("%d", len(out)))
 	}
-	apiKey := cfg.APIKey
-	providerChatPath := "/v1/chat/completions"
-	if provider != nil && provider.ChatPath != "" {
-		providerChatPath = provider.ChatPath
+	if request.MaxTokens <= 0 || request.MaxTokens > cfg.MaxOutputTokens {
+		request.MaxTokens = cfg.MaxOutputTokens
 	}
-	proxy := &httputil.ReverseProxy{
-		// Match ProxyHTTP: refuse to dial private/loopback/link-local/metadata
-		// targets even if an LLM connection's base URL is misconfigured or
-		// rebinds between write-time validation and use (Phase 8 of the
-		// agent-runner security fix plan).
-		Transport: ssrfSafeTransport(llmResponseHeaderTimeout),
-		Director: func(req *http.Request) {
-			req.URL.Scheme = target.Scheme
-			req.URL.Host = target.Host
-			req.Host = target.Host
-			outPath := upstreamPath
-			if strings.TrimPrefix(upstreamPath, "/") == "v1/chat/completions" {
-				outPath = strings.TrimPrefix(providerChatPath, "/")
-			}
-			req.URL.Path = singleJoiningSlash(target.Path, outPath)
-			req.URL.RawPath = ""
-			// Replace the run-token with the real provider credential.
-			req.Header.Del("Authorization")
-			req.Header.Del("X-Api-Key")
-			switch providerType {
-			case "anthropic":
-				req.Header.Set("x-api-key", apiKey)
-				if req.Header.Get("anthropic-version") == "" {
-					req.Header.Set("anthropic-version", "2023-06-01")
-				}
-			default: // openai-compatible
-				req.Header.Set("Authorization", "Bearer "+apiKey)
-			}
-		},
-		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			respondServiceUnavailable(w, r, services.RedactString(err.Error()))
-		},
-		// Meter token usage + cost from the SSE usage tail (WI-493). The agent is
-		// untrusted, so the broker is the trustworthy capture point.
-		ModifyResponse: h.meterLLMResponse(runID, cfg.Model, h.llmConns.ModelPricing(llm.ProviderType(cfg.ProviderType), cfg.Model), imageCount),
-	}
-	// The chat completion streams as SSE and routinely runs past the server's
-	// 30s WriteTimeout; lift the deadline so the stream is not severed mid-run.
+	request.CodingAgent = true
+	pricing := h.llmConns.ModelPricing(llm.ProviderType(cfg.ProviderType), cfg.Model)
+	request.EnablePromptCache = cfg.Protocol == llm.APIContractAnthropic && pricing != nil && pricing.HasCompleteCacheRates()
+	client := llm.NewProviderClient(llm.ConnectionConfig{
+		ProviderType: llm.ProviderType(cfg.ProviderType), Model: cfg.Model,
+		APIKey: cfg.APIKey, BaseURL: cfg.BaseURL, ProviderConfig: cfg.ProviderConfig,
+		Timeout: llmResponseHeaderTimeout,
+	})
+
+	// Inference can outlive the server's ordinary 30s response deadline.
 	unbindStreamDeadlines(w)
-	proxy.ServeHTTP(w, r)
+	response, err := client.Complete(r.Context(), request)
+	if err != nil {
+		respondServiceUnavailable(w, r, services.RedactString(err.Error()))
+		return
+	}
+	for i := range response.Choices {
+		if len(response.Choices[i].Message.ProviderState) > 0 {
+			response.Choices[i].Message.ProviderBinding = binding
+		}
+	}
+	h.persistLLMUsage(runID, cfg, request, response.Usage)
+	w.Header().Set("Cache-Control", "no-store")
+	respondJSON(w, http.StatusOK, response)
+}
+
+func llmBindingFingerprint(connectionID int, providerType, model string) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%d\x00%s\x00%s", connectionID, providerType, model)))
+	return fmt.Sprintf("sha256:%x", sum[:])
+}
+
+func (h *RunnerBrokerHandler) persistLLMUsage(runID int, cfg *llm.ConnectionRuntimeConfig, request llm.CompletionRequest, usage llm.Usage) {
+	if h.usage == nil {
+		return
+	}
+	record := repository.LLMUsageRecord{
+		RunID: runID, Model: cfg.Model, PromptTokens: usage.PromptTokens,
+		CompletionTokens: usage.CompletionTokens, TotalTokens: usage.TotalTokens,
+		CacheReadTokens: usage.CacheReadTokens, CacheWriteTokens: usage.CacheWriteTokens,
+		ReasoningTokens: usage.ReasoningTokens,
+	}
+	pricing := h.llmConns.ModelPricing(llm.ProviderType(cfg.ProviderType), cfg.Model)
+	if pricing != nil && pricing.CanPriceUsage(usage) {
+		cost := pricing.CostUSD(usage, completionRequestImageCount(request))
+		record.CostUSD = &cost
+		record.CostSource = "computed"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := h.usage.Insert(ctx, record); err != nil {
+		slog.Warn("persist llm usage", slog.Int("run_id", runID), slog.Any("error", err))
+	}
+}
+
+func completionRequestImageCount(request llm.CompletionRequest) int {
+	count := 0
+	for _, message := range request.Messages {
+		for _, attachment := range message.Attachments {
+			if strings.HasPrefix(strings.ToLower(attachment.MimeType), "image/") {
+				count++
+			}
+		}
+	}
+	return count
 }
 
 // allowedGitProxyPath reports whether the {gitpath...} tail is one of the three
@@ -288,18 +285,6 @@ func gitProxyBaseURL(providerType, stored string) string {
 func allowedGitProxyPath(path string) bool {
 	switch strings.TrimPrefix(path, "/") {
 	case "info/refs", "git-upload-pack", "git-receive-pack":
-		return true
-	default:
-		return false
-	}
-}
-
-func allowedLLMProxyEndpoint(method, path string) bool {
-	path = strings.TrimPrefix(path, "/")
-	switch {
-	case method == http.MethodPost && path == "v1/chat/completions":
-		return true
-	case method == http.MethodGet && path == "v1/models":
 		return true
 	default:
 		return false

@@ -12,10 +12,12 @@ import (
 const (
 	providerConfigVisionModeKey  = "vision_mode"
 	providerConfigAPIContractKey = "api_contract"
+	providerConfigReasoningKey   = "reasoning"
 
 	APIContractAuto            = "auto"
 	APIContractResponses       = "responses"
 	APIContractChatCompletions = "chat_completions"
+	APIContractAnthropic       = "anthropic"
 )
 
 // reservedProviderConfigKeys are provider_config keys that windshift interprets
@@ -26,6 +28,17 @@ const (
 var reservedProviderConfigKeys = map[string]bool{
 	providerConfigVisionModeKey:  true,
 	providerConfigAPIContractKey: true,
+	providerConfigReasoningKey:   true,
+}
+
+// ResponsesReasoningConfig contains the Responses reasoning controls that
+// Windshift accepts from a connection's provider_config. It is deliberately
+// limited to the request fields used by the Responses API so the private
+// connection setting cannot leak to another provider protocol.
+type ResponsesReasoningConfig struct {
+	Effort       string `json:"effort,omitempty"`
+	Summary      string `json:"summary,omitempty"`
+	BudgetTokens int64  `json:"budget_tokens,omitempty"`
 }
 
 // ValidateProviderConfig verifies the per-connection provider_config blob.
@@ -60,6 +73,19 @@ func ValidateProviderConfig(raw string) error {
 		}
 		if !isValidAPIContract(strings.ToLower(strings.TrimSpace(contract))) {
 			return fmt.Errorf("provider_config.api_contract must be one of auto, responses, chat_completions")
+		}
+	}
+	if rawReasoning, ok := cfg[providerConfigReasoningKey]; ok {
+		var reasoningObject map[string]json.RawMessage
+		if err := json.Unmarshal(rawReasoning, &reasoningObject); err != nil || reasoningObject == nil {
+			return fmt.Errorf("provider_config.reasoning must be an object with string effort and summary fields")
+		}
+		var reasoning ResponsesReasoningConfig
+		if err := json.Unmarshal(rawReasoning, &reasoning); err != nil {
+			return fmt.Errorf("provider_config.reasoning must contain valid effort, summary, and budget_tokens fields")
+		}
+		if reasoning.BudgetTokens < 0 {
+			return fmt.Errorf("provider_config.reasoning.budget_tokens must be non-negative")
 		}
 	}
 	return nil
@@ -129,6 +155,34 @@ func ProviderConfigVisionMode(raw string) string {
 	return mode
 }
 
+// ProviderConfigResponsesReasoning extracts Responses reasoning controls from
+// provider_config. Invalid or incomplete input deliberately falls back to nil,
+// matching the permissive read behavior of the other provider config accessors.
+func ProviderConfigResponsesReasoning(raw string) *ResponsesReasoningConfig {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	var cfg map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		return nil
+	}
+	rawReasoning, ok := cfg[providerConfigReasoningKey]
+	if !ok {
+		return nil
+	}
+	var reasoning ResponsesReasoningConfig
+	if err := json.Unmarshal(rawReasoning, &reasoning); err != nil {
+		return nil
+	}
+	reasoning.Effort = strings.TrimSpace(reasoning.Effort)
+	reasoning.Summary = strings.TrimSpace(reasoning.Summary)
+	if reasoning.Effort == "" && reasoning.Summary == "" && reasoning.BudgetTokens == 0 {
+		return nil
+	}
+	return &reasoning
+}
+
 // MergeProviderConfig adds provider_config fields to an in-memory request
 // body. Existing generated request fields win, so config cannot replace the
 // prompt, model, tools, or other fields already set by the caller.
@@ -196,12 +250,4 @@ func MergeProviderConfigJSON(body []byte, raw string) ([]byte, error) {
 		return nil, fmt.Errorf("marshal provider-configured request: %w", err)
 	}
 	return merged, nil
-}
-
-func marshalWithProviderConfig(base interface{}, raw string) ([]byte, error) {
-	body, err := json.Marshal(base)
-	if err != nil {
-		return nil, err
-	}
-	return MergeProviderConfigJSON(body, raw)
 }

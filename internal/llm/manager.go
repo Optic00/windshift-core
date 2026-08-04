@@ -206,11 +206,14 @@ type ConnectionRuntimeConfig struct {
 	APIKey         string
 	BaseURL        string
 	ProviderConfig string
+	Protocol       string
 	// VisionMode is the resolved per-connection override (auto/on/off).
 	VisionMode string
 	// SupportsVision is the effective vision capability for this connection's
 	// model after applying the override — the value injected into the agent env.
-	SupportsVision bool
+	SupportsVision  bool
+	ContextWindow   int
+	MaxOutputTokens int
 }
 
 // ConnectionRuntime returns the runtime config for one enabled connection. It
@@ -248,9 +251,46 @@ func (m *ConnectionManager) ConnectionRuntime(ctx context.Context, connectionID 
 	if providerConfig.Valid {
 		cfg.ProviderConfig = providerConfig.String
 	}
+	cfg.Protocol = ResolveGenerationProtocol(ProviderType(cfg.ProviderType), cfg.BaseURL, cfg.ProviderConfig)
 	cfg.VisionMode = ProviderConfigVisionMode(cfg.ProviderConfig)
 	cfg.SupportsVision = EffectiveVision(cfg.VisionMode, m.resolveModelVision(ProviderType(cfg.ProviderType), cfg.Model))
+	cfg.ContextWindow, cfg.MaxOutputTokens = m.resolveModelLimits(ProviderType(cfg.ProviderType), cfg.Model)
+	if cfg.ContextWindow <= 0 || cfg.MaxOutputTokens <= 0 {
+		return nil, fmt.Errorf("LLM model %q has incomplete limits: context_window=%d max_tokens=%d", cfg.Model, cfg.ContextWindow, cfg.MaxOutputTokens)
+	}
 	return cfg, nil
+}
+
+func (m *ConnectionManager) resolveModelLimits(providerType ProviderType, modelID string) (contextWindow, maxOutput int) {
+	if m.modelCache != nil {
+		if entry, err := m.modelCache.Get(providerType); err == nil {
+			for _, mi := range entry.Models {
+				if mi.ID == modelID {
+					if mi.ContextWindow > 0 {
+						contextWindow = mi.ContextWindow
+						maxOutput = mi.MaxTokens
+					} else {
+						contextWindow = mi.MaxTokens
+					}
+					break
+				}
+			}
+		}
+	}
+	if p := GetProvider(providerType); p != nil {
+		for _, mi := range p.Models {
+			if mi.ID == modelID {
+				if contextWindow == 0 {
+					contextWindow = mi.ContextWindow
+				}
+				if maxOutput == 0 {
+					maxOutput = mi.MaxTokens
+				}
+				break
+			}
+		}
+	}
+	return contextWindow, maxOutput
 }
 
 // ListConnections returns all connections (without secrets) for admin listing.
@@ -629,6 +669,9 @@ func (m *ConnectionManager) PromptConnection(ctx context.Context, connectionID i
 		slog.String("finish_reason", resp.Choices[0].FinishReason),
 		slog.Int("prompt_tokens", resp.Usage.PromptTokens),
 		slog.Int("completion_tokens", resp.Usage.CompletionTokens),
+		slog.Int("cache_read_tokens", resp.Usage.CacheReadTokens),
+		slog.Int("cache_write_tokens", resp.Usage.CacheWriteTokens),
+		slog.Int("reasoning_tokens", resp.Usage.ReasoningTokens),
 		slog.Int("total_tokens", resp.Usage.TotalTokens),
 	)
 	return answer, nil

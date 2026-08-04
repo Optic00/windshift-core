@@ -217,8 +217,7 @@ func RegisterWorkspaceRoutes(deps *Deps) {
 	// Broker routes authenticate with a per-run token.
 	if deps.Workspaces.RunnerBroker != nil {
 		api.HandleH("GET /secrets/{run}/{credentialId}", http.HandlerFunc(deps.Workspaces.RunnerBroker.GetSecret))
-		api.HandleH("POST /llm-proxy/{run}/{path...}", http.HandlerFunc(deps.Workspaces.RunnerBroker.ProxyLLM))
-		api.HandleH("GET /llm-proxy/{run}/{path...}", http.HandlerFunc(deps.Workspaces.RunnerBroker.ProxyLLM))
+		api.HandleH("POST /llm-proxy/{run}/complete", http.HandlerFunc(deps.Workspaces.RunnerBroker.ProxyLLM))
 		api.HandleH("GET /git-proxy/{ws}/{owner}/{repo}/{gitpath...}", http.HandlerFunc(deps.Workspaces.RunnerBroker.ProxyGit))
 		api.HandleH("POST /git-proxy/{ws}/{owner}/{repo}/{gitpath...}", http.HandlerFunc(deps.Workspaces.RunnerBroker.ProxyGit))
 		api.HandleH("GET /http-proxy/{run}", http.HandlerFunc(deps.Workspaces.RunnerBroker.ProxyHTTP))

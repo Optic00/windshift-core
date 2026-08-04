@@ -27,6 +27,9 @@ type LLMUsageRecord struct {
 	PromptTokens     int
 	CompletionTokens int
 	TotalTokens      int
+	CacheReadTokens  int
+	CacheWriteTokens int
+	ReasoningTokens  int
 	CostUSD          *float64
 	CostSource       string // "provider" | "computed" | ""
 }
@@ -35,10 +38,12 @@ type LLMUsageRecord struct {
 func (r *LLMUsageRepository) Insert(ctx context.Context, rec LLMUsageRecord) error {
 	_, err := r.db.ExecWriteContext(ctx, `
 		INSERT INTO llm_usage
-			(run_id, model, prompt_tokens, completion_tokens, total_tokens, cost_usd, cost_source)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+			(run_id, model, prompt_tokens, completion_tokens, total_tokens,
+			 cache_read_tokens, cache_write_tokens, reasoning_tokens, cost_usd, cost_source)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		rec.RunID, rec.Model, rec.PromptTokens, rec.CompletionTokens, rec.TotalTokens,
+		rec.CacheReadTokens, rec.CacheWriteTokens, rec.ReasoningTokens,
 		nullFloatArg(rec.CostUSD), rec.CostSource,
 	)
 	if err != nil {
@@ -52,6 +57,9 @@ type RunUsageTotals struct {
 	PromptTokens     int      `json:"prompt_tokens"`
 	CompletionTokens int      `json:"completion_tokens"`
 	TotalTokens      int      `json:"total_tokens"`
+	CacheReadTokens  int      `json:"cache_read_tokens"`
+	CacheWriteTokens int      `json:"cache_write_tokens"`
+	ReasoningTokens  int      `json:"reasoning_tokens"`
 	CostUSD          *float64 `json:"cost_usd"` // nil when no call carried a known cost
 	Calls            int      `json:"calls"`
 }
@@ -60,23 +68,29 @@ type RunUsageTotals struct {
 // the calls whose cost was known; it is nil when none were.
 func (r *LLMUsageRepository) TotalsForRun(ctx context.Context, runID int) (RunUsageTotals, error) {
 	var t RunUsageTotals
-	var prompt, completion, total, calls sql.NullInt64
+	var prompt, completion, total, cacheRead, cacheWrite, reasoning, calls sql.NullInt64
 	var cost sql.NullFloat64
 	err := r.db.QueryRowContext(ctx, `
 		SELECT
 			COALESCE(SUM(prompt_tokens), 0),
 			COALESCE(SUM(completion_tokens), 0),
 			COALESCE(SUM(total_tokens), 0),
+			COALESCE(SUM(cache_read_tokens), 0),
+			COALESCE(SUM(cache_write_tokens), 0),
+			COALESCE(SUM(reasoning_tokens), 0),
 			SUM(cost_usd),
 			COUNT(*)
 		FROM llm_usage WHERE run_id = ?
-	`, runID).Scan(&prompt, &completion, &total, &cost, &calls)
+	`, runID).Scan(&prompt, &completion, &total, &cacheRead, &cacheWrite, &reasoning, &cost, &calls)
 	if err != nil {
 		return t, fmt.Errorf("aggregate llm_usage for run %d: %w", runID, err)
 	}
 	t.PromptTokens = int(prompt.Int64)
 	t.CompletionTokens = int(completion.Int64)
 	t.TotalTokens = int(total.Int64)
+	t.CacheReadTokens = int(cacheRead.Int64)
+	t.CacheWriteTokens = int(cacheWrite.Int64)
+	t.ReasoningTokens = int(reasoning.Int64)
 	t.Calls = int(calls.Int64)
 	if cost.Valid {
 		c := cost.Float64
