@@ -527,8 +527,14 @@ func inlineTableMigrations() []Migration {
 			`,
 		},
 		{
-			Version:       "inline_action_capabilities",
-			Name:          "action_capabilities",
+			Version: "inline_action_capabilities",
+			Name:    "action_capabilities",
+			// Superseded: this body was edited on 2026-05-17 (TIMESTAMP to TIMESTAMPTZ)
+			// after it had already shipped and been applied, so databases stamped
+			// before that edit carry the checksum below. The edit never reached those
+			// databases (CREATE TABLE IF NOT EXISTS no-ops on an existing table);
+			// 20260804_pg_timestamptz_convergence is what actually converges them.
+			Superseded:    []string{"e7eb501e6df75a7545a4038b76d7724b6dcbb35f542813c7306571736aa12023"},
 			CheckSQLite:   sqliteTableCheck("action_capabilities"),
 			CheckPostgres: pgTableCheck("action_capabilities"),
 			SQLite: `
@@ -591,8 +597,14 @@ func inlineTableMigrations() []Migration {
 			`,
 		},
 		{
-			Version:       "inline_oauth_server_tables",
-			Name:          "oauth_clients, oauth_authorization_codes, oauth_refresh_tokens",
+			Version: "inline_oauth_server_tables",
+			Name:    "oauth_clients, oauth_authorization_codes, oauth_refresh_tokens",
+			// Superseded: this body was edited on 2026-05-17 (TIMESTAMP to TIMESTAMPTZ)
+			// after it had already shipped and been applied, so databases stamped
+			// before that edit carry the checksum below. The edit never reached those
+			// databases (CREATE TABLE IF NOT EXISTS no-ops on an existing table);
+			// 20260804_pg_timestamptz_convergence is what actually converges them.
+			Superseded:    []string{"7cc7702f41804b6734d32106144f3ed3ea3d3d96615556b334589fb815836d5c"},
 			CheckSQLite:   sqliteTableCheck("oauth_clients"),
 			CheckPostgres: pgTableCheck("oauth_clients"),
 			SQLite: `
@@ -703,8 +715,14 @@ func inlineTableMigrations() []Migration {
 			`,
 		},
 		{
-			Version:       "inline_audit_logs",
-			Name:          "audit_logs",
+			Version: "inline_audit_logs",
+			Name:    "audit_logs",
+			// Superseded: this body was edited on 2026-05-17 (TIMESTAMP to TIMESTAMPTZ)
+			// after it had already shipped and been applied, so databases stamped
+			// before that edit carry the checksum below. The edit never reached those
+			// databases (CREATE TABLE IF NOT EXISTS no-ops on an existing table);
+			// 20260804_pg_timestamptz_convergence is what actually converges them.
+			Superseded:    []string{"b4f37a5439649cdc991b1531428c629f58ef40ef6a8339b12b9f2168531aad7e"},
 			CheckSQLite:   sqliteTableCheck("audit_logs"),
 			CheckPostgres: pgTableCheck("audit_logs"),
 			SQLite: `
@@ -753,8 +771,14 @@ func inlineTableMigrations() []Migration {
 			`,
 		},
 		{
-			Version:       "inline_scheduler_runs",
-			Name:          "scheduler_runs",
+			Version: "inline_scheduler_runs",
+			Name:    "scheduler_runs",
+			// Superseded: this body was edited on 2026-05-17 (TIMESTAMP to TIMESTAMPTZ)
+			// after it had already shipped and been applied, so databases stamped
+			// before that edit carry the checksum below. The edit never reached those
+			// databases (CREATE TABLE IF NOT EXISTS no-ops on an existing table);
+			// 20260804_pg_timestamptz_convergence is what actually converges them.
+			Superseded:    []string{"bc0cc96b1cf0cbf24f49e06b98147dbb2e830185901275c5aff0b9a35ed4a768"},
 			CheckSQLite:   sqliteTableCheck("scheduler_runs"),
 			CheckPostgres: pgTableCheck("scheduler_runs"),
 			SQLite: `
@@ -789,8 +813,14 @@ func inlineTableMigrations() []Migration {
 			`,
 		},
 		{
-			Version:       "inline_pending_custom_field_cleanups",
-			Name:          "pending_custom_field_cleanups",
+			Version: "inline_pending_custom_field_cleanups",
+			Name:    "pending_custom_field_cleanups",
+			// Superseded: this body was edited on 2026-05-17 (TIMESTAMP to TIMESTAMPTZ)
+			// after it had already shipped and been applied, so databases stamped
+			// before that edit carry the checksum below. The edit never reached those
+			// databases (CREATE TABLE IF NOT EXISTS no-ops on an existing table);
+			// 20260804_pg_timestamptz_convergence is what actually converges them.
+			Superseded:    []string{"6fd4c1beadd4afec1882bb99d9255a427643bbe289e26d57f9719f6660e1ff87"},
 			CheckSQLite:   sqliteTableCheck("pending_custom_field_cleanups"),
 			CheckPostgres: pgTableCheck("pending_custom_field_cleanups"),
 			SQLite: `
@@ -821,8 +851,14 @@ func inlineTableMigrations() []Migration {
 			`,
 		},
 		{
-			Version:       "inline_user_invitations",
-			Name:          "user_invitations",
+			Version: "inline_user_invitations",
+			Name:    "user_invitations",
+			// Superseded: this body was edited on 2026-05-17 (TIMESTAMP to TIMESTAMPTZ)
+			// after it had already shipped and been applied, so databases stamped
+			// before that edit carry the checksum below. The edit never reached those
+			// databases (CREATE TABLE IF NOT EXISTS no-ops on an existing table);
+			// 20260804_pg_timestamptz_convergence is what actually converges them.
+			Superseded:    []string{"632a419374009fedfa5e685aa8efa20664ce1cd910bb3f21c625ecdc925e2a9e"},
 			CheckSQLite:   sqliteTableCheck("user_invitations"),
 			CheckPostgres: pgTableCheck("user_invitations"),
 			SQLite: `
@@ -853,8 +889,14 @@ func inlineTableMigrations() []Migration {
 			`,
 		},
 		{
-			Version:       "inline_custom_field_indexes",
-			Name:          "custom_field_indexes",
+			Version: "inline_custom_field_indexes",
+			Name:    "custom_field_indexes",
+			// Superseded: this body was edited on 2026-05-17 (TIMESTAMP to TIMESTAMPTZ)
+			// after it had already shipped and been applied, so databases stamped
+			// before that edit carry the checksum below. The edit never reached those
+			// databases (CREATE TABLE IF NOT EXISTS no-ops on an existing table);
+			// 20260804_pg_timestamptz_convergence is what actually converges them.
+			Superseded:    []string{"95f1cf74f4cf3901dd5541f6cd22382477784a20112ddccb80af6fdf18e062a9"},
 			CheckSQLite:   sqliteTableCheck("custom_field_indexes"),
 			CheckPostgres: pgTableCheck("custom_field_indexes"),
 			SQLite: `
@@ -906,8 +948,14 @@ func inlineTableMigrations() []Migration {
 			`,
 		},
 		{
-			Version:       "inline_api_tokens",
-			Name:          "api_tokens",
+			Version: "inline_api_tokens",
+			Name:    "api_tokens",
+			// Superseded: this body was edited on 2026-05-17 (TIMESTAMP to TIMESTAMPTZ)
+			// after it had already shipped and been applied, so databases stamped
+			// before that edit carry the checksum below. The edit never reached those
+			// databases (CREATE TABLE IF NOT EXISTS no-ops on an existing table);
+			// 20260804_pg_timestamptz_convergence is what actually converges them.
+			Superseded:    []string{"be8df54e71a11f71eb67617324db48229f3905b1db4ffe4a1ab7f4b8ece32f32"},
 			CheckSQLite:   sqliteTableCheck("api_tokens"),
 			CheckPostgres: pgTableCheck("api_tokens"),
 			SQLite: `
@@ -948,8 +996,14 @@ func inlineTableMigrations() []Migration {
 			`,
 		},
 		{
-			Version:       "inline_scm_processed_commits",
-			Name:          "scm_processed_commits",
+			Version: "inline_scm_processed_commits",
+			Name:    "scm_processed_commits",
+			// Superseded: this body was edited on 2026-05-17 (TIMESTAMP to TIMESTAMPTZ)
+			// after it had already shipped and been applied, so databases stamped
+			// before that edit carry the checksum below. The edit never reached those
+			// databases (CREATE TABLE IF NOT EXISTS no-ops on an existing table);
+			// 20260804_pg_timestamptz_convergence is what actually converges them.
+			Superseded:    []string{"757968d42a47c9cab14d492e49204f7b4063d50e2039b655340b0e4f401b0924"},
 			CheckSQLite:   sqliteTableCheck("scm_processed_commits"),
 			CheckPostgres: pgTableCheck("scm_processed_commits"),
 			SQLite: `
@@ -974,8 +1028,14 @@ func inlineTableMigrations() []Migration {
 			`,
 		},
 		{
-			Version:       "inline_cli_auth_codes",
-			Name:          "cli_auth_codes",
+			Version: "inline_cli_auth_codes",
+			Name:    "cli_auth_codes",
+			// Superseded: this body was edited on 2026-05-17 (TIMESTAMP to TIMESTAMPTZ)
+			// after it had already shipped and been applied, so databases stamped
+			// before that edit carry the checksum below. The edit never reached those
+			// databases (CREATE TABLE IF NOT EXISTS no-ops on an existing table);
+			// 20260804_pg_timestamptz_convergence is what actually converges them.
+			Superseded:    []string{"5154e09fe27ccc3010da4bd038d275aa3c338858f1b8f3ee365e07d9be93f6b1"},
 			CheckSQLite:   sqliteTableCheck("cli_auth_codes"),
 			CheckPostgres: pgTableCheck("cli_auth_codes"),
 			SQLite: `
@@ -1888,6 +1948,73 @@ func miscMigrations() []Migration {
 // an upgraded database.
 func driftFixMigrations() []Migration {
 	return []Migration{
+		{
+			// A 2026-05-17 edit switched these Postgres columns from TIMESTAMP to
+			// TIMESTAMPTZ inside CREATE TABLE IF NOT EXISTS bodies that had already
+			// been applied. Those bodies no-op against an existing table, so only
+			// databases created after that date ever got the timezone-aware type.
+			// This converges the ones created before it. The matching Superseded
+			// entries on those migrations are what let such databases boot at all.
+			//
+			// Postgres-only: SQLite has no timezone-aware type and stores these as
+			// DATETIME text, so the SQLite body is empty and the row is stamped
+			// without running anything.
+			//
+			// The DO block is self-guarding: it alters only columns that are still
+			// "timestamp without time zone", so it no-ops on already-converged
+			// databases and tolerates an absent table. USING ... AT TIME ZONE UTC
+			// is explicit so stored values are read as UTC rather than reinterpreted
+			// through the session TimeZone, which would shift every timestamp.
+			Version: "20260804_pg_timestamptz_convergence",
+			Name:    "Converge pre-2026-05-17 Postgres timestamp columns to TIMESTAMPTZ",
+			Postgres: `
+				DO $$
+				DECLARE
+					target record;
+				BEGIN
+					FOR target IN
+						SELECT c.table_name::text AS table_name, c.column_name::text AS column_name
+						FROM information_schema.columns c
+						WHERE c.table_schema = current_schema()
+						  AND c.data_type = 'timestamp without time zone'
+						  AND (c.table_name::text, c.column_name::text) IN (
+							('action_capabilities','created_at'),
+							('action_capabilities','updated_at'),
+							('oauth_clients','created_at'),
+							('oauth_clients','updated_at'),
+							('oauth_authorization_codes','expires_at'),
+							('oauth_authorization_codes','consumed_at'),
+							('oauth_authorization_codes','created_at'),
+							('oauth_refresh_tokens','expires_at'),
+							('oauth_refresh_tokens','revoked_at'),
+							('oauth_refresh_tokens','created_at'),
+							('audit_logs','timestamp'),
+							('scheduler_runs','started_at'),
+							('scheduler_runs','completed_at'),
+							('pending_custom_field_cleanups','created_at'),
+							('pending_custom_field_cleanups','started_at'),
+							('pending_custom_field_cleanups','completed_at'),
+							('user_invitations','expires_at'),
+							('user_invitations','used_at'),
+							('user_invitations','created_at'),
+							('api_tokens','expires_at'),
+							('api_tokens','last_used_at'),
+							('api_tokens','created_at'),
+							('api_tokens','updated_at'),
+							('scm_processed_commits','processed_at'),
+							('cli_auth_codes','created_at'),
+							('cli_auth_codes','expires_at'),
+							('cli_auth_codes','consumed_at')
+						  )
+					LOOP
+						EXECUTE format(
+							'ALTER TABLE %I ALTER COLUMN %I TYPE TIMESTAMPTZ USING %I AT TIME ZONE ''UTC''',
+							target.table_name, target.column_name, target.column_name
+						);
+					END LOOP;
+				END $$;
+			`,
+		},
 		{
 			Version:       "drift_email_message_tracking_direction",
 			Name:          "email_message_tracking.direction",
