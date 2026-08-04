@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"slices"
 )
 
 // Driver name constants match the values returned by GetDriverName on each
@@ -42,6 +43,25 @@ type Migration struct {
 	Postgres        string
 	ApplySQLite     func(Database) error
 	ApplyPostgres   func(Database) error
+
+	// Superseded lists checksums this migration's body has carried in the
+	// past, for databases stamped before the body was edited. A stored
+	// checksum listed here is accepted and re-stamped to the current value,
+	// so the entry stops mattering for that database after one boot.
+	//
+	// This exists only to absorb edits made before checksum validation was
+	// enforced. It is not a license to edit applied migrations: an edit still
+	// leaves already-migrated databases with the old schema, because most
+	// bodies are CREATE TABLE IF NOT EXISTS and no-op against an existing
+	// table. Schema changes belong in a new migration. Every entry below is
+	// paired with a migration that converges the schema for real.
+	Superseded []string
+}
+
+// acceptsSuperseded reports whether stored is a checksum this migration's body
+// carried in an earlier release.
+func (m Migration) acceptsSuperseded(stored string) bool {
+	return slices.Contains(m.Superseded, stored)
 }
 
 // Catalog is the ordered list of migrations applied via runPendingMigrations.
@@ -2399,18 +2419,20 @@ func runPendingMigrations(db Database, catalog []Migration) error {
 	for _, m := range catalog {
 		if checksum, ok := applied[m.Version]; ok {
 			expected := m.checksum(driver)
-			if checksum != "" && checksum != expected {
+			if checksum != "" && checksum != expected && !m.acceptsSuperseded(checksum) {
 				return fmt.Errorf(
 					"migration %s (%s): checksum mismatch: stored %s, expected %s",
 					m.Version, m.Name, checksum, expected,
 				)
 			}
-			if checksum == "" {
+			// Backfill an unstamped row, and re-stamp a recognized superseded
+			// checksum so the Superseded entry is needed only once per database.
+			if checksum != expected {
 				if _, err := db.Exec(
-					"UPDATE schema_migrations SET name = ?, checksum = ? WHERE version = ? AND checksum = ''",
+					"UPDATE schema_migrations SET name = ?, checksum = ? WHERE version = ?",
 					m.Name, expected, m.Version,
 				); err != nil {
-					return fmt.Errorf("migration %s (%s): backfill checksum: %w", m.Version, m.Name, err)
+					return fmt.Errorf("migration %s (%s): restamp checksum: %w", m.Version, m.Name, err)
 				}
 			}
 			continue
