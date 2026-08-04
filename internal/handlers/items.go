@@ -37,6 +37,7 @@ type ItemHandler struct {
 	itemCreation        *services.ItemCreationService
 	itemUpdate          *services.ItemUpdateApplicationService
 	itemDeletion        *services.ItemDeletionApplicationService
+	itemWorkspaceMove   *services.ItemWorkspaceMoveService
 	mentionService      *services.MentionService // Mention service for processing @mentions (optional, can be nil)
 	notificationService interface {
 		EmitEvent(event *services.NotificationEvent)
@@ -95,6 +96,7 @@ func NewItemHandler(db database.Database, permissionService *services.Permission
 		itemCreation:        services.NewItemCreationService(db, permissionService),
 		itemUpdate:          itemUpdate,
 		itemDeletion:        itemDeletion,
+		itemWorkspaceMove:   services.NewItemWorkspaceMoveService(db),
 		notificationService: notificationService,
 		transitionMatrix:    services.NewTransitionMatrixService(db),
 		bulkUpdate:          services.NewItemUpdateService(db).WithPermissionService(permissionService),

@@ -372,6 +372,7 @@ const (
 	// captured in work item history; central audit starts with destructive gaps.
 	ActionItemDelete        = "item.delete"
 	ActionItemDeleteCascade = "item.delete_cascade"
+	ActionItemMoveWorkspace = "item.move_workspace"
 	ActionCommentDelete     = "comment.delete"
 	ActionAttachmentDelete  = "attachment.delete"
 

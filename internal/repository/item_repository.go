@@ -753,12 +753,15 @@ func (r *ItemRepository) GetNextWorkspaceItemNumber(tx database.Tx, workspaceID 
 	}
 	q := `
 		SELECT workspace_item_number
-		FROM items
-		WHERE workspace_id = ?
+		FROM (
+			SELECT workspace_item_number FROM items WHERE workspace_id = ?
+			UNION ALL
+			SELECT workspace_item_number FROM item_key_reservations WHERE workspace_id = ?
+		) allocated_item_numbers
 		ORDER BY workspace_item_number DESC
 		LIMIT 1`
 	var maxNumber sql.NullInt64
-	err := tx.QueryRow(q, workspaceID).Scan(&maxNumber)
+	err := tx.QueryRow(q, workspaceID, workspaceID).Scan(&maxNumber)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, fmt.Errorf("failed to get next item number: %w", err)
 	}

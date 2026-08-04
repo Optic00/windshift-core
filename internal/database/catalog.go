@@ -489,6 +489,44 @@ func columnAddMigrations() []Migration {
 func inlineTableMigrations() []Migration {
 	return []Migration{
 		{
+			Version:       "inline_item_key_reservations",
+			Name:          "item key reservations",
+			CheckSQLite:   sqliteTableCheck("item_key_reservations"),
+			CheckPostgres: pgTableCheck("item_key_reservations"),
+			SQLite: `
+				CREATE TABLE IF NOT EXISTS item_key_reservations (
+					workspace_id INTEGER NOT NULL,
+					workspace_item_number INTEGER NOT NULL,
+					moved_item_id INTEGER,
+					destination_workspace_id INTEGER,
+					destination_workspace_item_number INTEGER,
+					moved_by INTEGER,
+					created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+					PRIMARY KEY (workspace_id, workspace_item_number),
+					FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+					FOREIGN KEY (destination_workspace_id) REFERENCES workspaces(id) ON DELETE SET NULL,
+					FOREIGN KEY (moved_by) REFERENCES users(id) ON DELETE SET NULL
+				);
+				CREATE INDEX IF NOT EXISTS idx_item_key_reservations_moved_item ON item_key_reservations(moved_item_id);
+			`,
+			Postgres: `
+				CREATE TABLE IF NOT EXISTS item_key_reservations (
+					workspace_id INTEGER NOT NULL,
+					workspace_item_number INTEGER NOT NULL,
+					moved_item_id INTEGER,
+					destination_workspace_id INTEGER,
+					destination_workspace_item_number INTEGER,
+					moved_by INTEGER,
+					created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+					PRIMARY KEY (workspace_id, workspace_item_number),
+					FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+					FOREIGN KEY (destination_workspace_id) REFERENCES workspaces(id) ON DELETE SET NULL,
+					FOREIGN KEY (moved_by) REFERENCES users(id) ON DELETE SET NULL
+				);
+				CREATE INDEX IF NOT EXISTS idx_item_key_reservations_moved_item ON item_key_reservations(moved_item_id);
+			`,
+		},
+		{
 			Version:       "inline_action_capabilities",
 			Name:          "action_capabilities",
 			CheckSQLite:   sqliteTableCheck("action_capabilities"),

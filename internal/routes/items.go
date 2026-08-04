@@ -38,6 +38,8 @@ func RegisterItemRoutes(deps *Deps) {
 	api.HandleH("DELETE /items/{id}/cascade", auth(http.HandlerFunc(deps.Items.Item.DeleteCascade)))
 	api.HandleH("POST /items/{id}/reparent-children", auth(http.HandlerFunc(deps.Items.Item.ReparentChildren)))
 	api.HandleH("POST /items/{id}/copy", auth(http.HandlerFunc(deps.Items.Item.Copy)))
+	api.HandleH("POST /items/{id}/move-workspace/preview", auth(http.HandlerFunc(deps.Items.Item.PreviewWorkspaceMove)))
+	api.HandleH("POST /items/{id}/move-workspace", auth(http.HandlerFunc(deps.Items.Item.MoveWorkspace)))
 	api.HandleH("GET /items/{id}/available-status-transitions", auth(http.HandlerFunc(deps.Items.Item.GetAvailableStatusTransitions)))
 	api.HandleH("GET /items/{id}/type-change-analysis", auth(http.HandlerFunc(deps.Items.Item.AnalyzeTypeChange)))
 	api.HandleH("POST /items/{id}/change-type", auth(http.HandlerFunc(deps.Items.Item.ChangeType)))

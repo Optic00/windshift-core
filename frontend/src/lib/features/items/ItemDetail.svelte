@@ -7,7 +7,7 @@
   import { workspacePermissions, itemDetailStore } from '../../stores';
   import { t } from '../../stores/i18n.svelte.js';
   import { getShortcut, matchesShortcut, isTypingInField } from '../../utils/keyboardShortcuts.js';
-  import { Trash2, X, Copy, BookOpen, Search, GitBranch, Repeat } from '@lucide/svelte';
+  import { Trash2, X, Copy, BookOpen, Search, GitBranch, Repeat, FolderInput } from '@lucide/svelte';
   import { Bookmark, BookmarkCheck, ExternalLink } from '@lucide/svelte';
   import { itemTypeIconMap } from '../../utils/icons.js';
   import { addToast, successToast, errorToast } from '../../stores/toasts.svelte.js';
@@ -32,6 +32,7 @@ import AIViewModal from '../../dialogs/AIViewModal.svelte';
 import AIConfirmModal from '../../dialogs/AIConfirmModal.svelte';
 import CatchMeUpBriefing from './CatchMeUpBriefing.svelte';
 import FindSimilarResults from './FindSimilarResults.svelte';
+import ItemMoveWorkspaceDialog from './ItemMoveWorkspaceDialog.svelte';
 
   // Import the shared content component
   import ItemDetailContent from '../items/ItemDetailContent.svelte';
@@ -138,6 +139,9 @@ import Button from '../../components/Button.svelte';
   let showRecurrenceModal = $state(false);
   let recurrenceEditorRef = $state(null);
   let recurrenceSaving = $state(false);
+
+  // Cross-workspace move state
+  let showWorkspaceMoveDialog = $state(false);
 
   // Item type change state
   let showTypeChangeModal = $state(false);
@@ -737,6 +741,13 @@ import Button from '../../components/Button.svelte';
     itemDetailStore.openDeleteDialog();
   }
 
+  function handleWorkspaceMoved(result) {
+    const moved = result?.item;
+    if (!moved) return;
+    successToast(t('items.moveWorkspaceSuccess', { key: result.new_key }));
+    navigate(`/workspaces/${moved.workspace_id}/items/${moved.id}`);
+  }
+
   function handleDeleteComplete(result) {
     const collectionId = $currentRoute.params?.collectionId;
     // Navigate based on deletion result
@@ -798,6 +809,18 @@ import Button from '../../components/Button.svelte';
         testid: 'item-recurrence-add',
         title: t('recurrence.addRecurrence'),
         onClick: handleSetupRecurrence
+      });
+    }
+
+    const canEdit = untrack(() => workspacePermissions.canEdit(workspaceId));
+    if (canEdit) {
+      items.push({
+        id: 'move-workspace',
+        type: 'regular',
+        icon: FolderInput,
+        testid: 'item-move-workspace-open',
+        title: t('items.moveWorkspaceMenu'),
+        onClick: () => { showWorkspaceMoveDialog = true; }
       });
     }
 
@@ -1413,6 +1436,12 @@ import Button from '../../components/Button.svelte';
   />
 {/if}
 {/if}
+
+<ItemMoveWorkspaceDialog
+  bind:isOpen={showWorkspaceMoveDialog}
+  item={itemDetailStore.item}
+  onMoved={handleWorkspaceMoved}
+/>
 
 {#if showTypeChangeModal && typeChangeAnalysis}
   <Modal isOpen={showTypeChangeModal} maxWidth="max-w-lg" onclose={closeTypeChangeModal}>

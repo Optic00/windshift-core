@@ -156,6 +156,19 @@ export const items = {
       }),
     'create'
   ),
+  previewWorkspaceMove: (id, data) =>
+    fetchAPI(`/items/${id}/move-workspace/preview`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  moveWorkspace: withCrossTabNotice(
+    (id, data) =>
+      fetchAPI(`/items/${id}/move-workspace`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    'update'
+  ),
   updateFracIndex: withCrossTabNotice(
     (id, data) =>
       fetchAPI(`/items/${id}/frac-index`, {
