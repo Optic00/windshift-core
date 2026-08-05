@@ -287,8 +287,15 @@ func columnAddMigrations() []Migration {
 			Postgres:      "ALTER TABLE action_execution_logs ADD COLUMN effective_actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL",
 		},
 		{
-			Version:       "0020_item_scm_links_smart_commits_applied_at",
-			Name:          "item_scm_links.smart_commits_applied_at",
+			Version: "0020_item_scm_links_smart_commits_applied_at",
+			Name:    "item_scm_links.smart_commits_applied_at",
+			// Superseded: this body was edited on 2026-05-17 (TIMESTAMP to TIMESTAMPTZ)
+			// after it had already shipped and been applied, so databases stamped
+			// before that edit carry the checksum below. Unlike the CREATE TABLE
+			// bodies from the same commit, an already-applied ALTER TABLE ADD COLUMN
+			// is never re-run at all, so the edit reached no existing database;
+			// 20260805_pg_timestamptz_convergence_columns is what converges them.
+			Superseded:    []string{"91289f20026e18116c32d46af7e32b5d49f802f97a867ba00034a0d362019e91"},
 			CheckSQLite:   sqliteColumnCheck("item_scm_links", "smart_commits_applied_at"),
 			CheckPostgres: pgColumnCheck("item_scm_links", "smart_commits_applied_at"),
 			SQLite:        "ALTER TABLE item_scm_links ADD COLUMN smart_commits_applied_at DATETIME",
@@ -1840,8 +1847,11 @@ func miscMigrations() []Migration {
 			// Bughunt #11: split "seen in tray" from "read/acknowledged" so
 			// auto-mark-as-seen on tray view doesn't suppress email batching
 			// (which fires only on read = false).
-			Version:       "notifications_seen_at",
-			Name:          "notifications.seen_at",
+			Version: "notifications_seen_at",
+			Name:    "notifications.seen_at",
+			// Superseded: same 2026-05-17 TIMESTAMP to TIMESTAMPTZ edit as
+			// 0020_item_scm_links_smart_commits_applied_at. See that entry.
+			Superseded:    []string{"4eb1f61b03f0b77c39a973cdde41d749bd774ce63edeea8b4662664f65474d9a"},
 			CheckSQLite:   sqliteColumnCheck("notifications", "seen_at"),
 			CheckPostgres: pgColumnCheck("notifications", "seen_at"),
 			SQLite:        "ALTER TABLE notifications ADD COLUMN seen_at DATETIME",
@@ -2005,6 +2015,45 @@ func driftFixMigrations() []Migration {
 							('cli_auth_codes','created_at'),
 							('cli_auth_codes','expires_at'),
 							('cli_auth_codes','consumed_at')
+						  )
+					LOOP
+						EXECUTE format(
+							'ALTER TABLE %I ALTER COLUMN %I TYPE TIMESTAMPTZ USING %I AT TIME ZONE ''UTC''',
+							target.table_name, target.column_name, target.column_name
+						);
+					END LOOP;
+				END $$;
+			`,
+		},
+		{
+			// The remaining two columns from the same 2026-05-17 edit. They live in
+			// a separate entry rather than in the list above because
+			// 20260804_pg_timestamptz_convergence has already shipped in a :main
+			// image; editing its body would change its checksum and reproduce the
+			// very boot failure both entries exist to fix.
+			//
+			// These two were missed by the first pass because that pass selected on
+			// body shape (CREATE TABLE IF NOT EXISTS). These are ALTER TABLE ADD
+			// COLUMN, which reaches the same end state by a different route: the
+			// column already exists, the row is already stamped, and only the
+			// recorded checksum diverges.
+			//
+			// Postgres-only and self-guarding, same as the entry above.
+			Version: "20260805_pg_timestamptz_convergence_columns",
+			Name:    "Converge remaining pre-2026-05-17 Postgres timestamp columns to TIMESTAMPTZ",
+			Postgres: `
+				DO $$
+				DECLARE
+					target record;
+				BEGIN
+					FOR target IN
+						SELECT c.table_name::text AS table_name, c.column_name::text AS column_name
+						FROM information_schema.columns c
+						WHERE c.table_schema = current_schema()
+						  AND c.data_type = 'timestamp without time zone'
+						  AND (c.table_name::text, c.column_name::text) IN (
+							('item_scm_links','smart_commits_applied_at'),
+							('notifications','seen_at')
 						  )
 					LOOP
 						EXECUTE format(
