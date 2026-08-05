@@ -32,6 +32,7 @@ type WorkspaceAgentBindingHandler struct {
 	auditor           *logger.Auditor
 	skills            *repository.WorkspaceAgentSkillRepository
 	prompts           *llm.PromptStore
+	catalog           llm.TemplateSource
 	presence          *services.AgentPresenceService
 	runnerRegistry    *services.RunnerRegistryService
 	baseURL           string
@@ -85,6 +86,13 @@ func (h *WorkspaceAgentBindingHandler) SetPromptStore(store *llm.PromptStore) {
 	h.prompts = store
 }
 
+// SetTemplateCatalog wires the merged creation catalog (embedded defaults
+// overlaid by system-admin DB overrides, WI-922). When set it takes
+// precedence over the raw PromptStore for the templates endpoint.
+func (h *WorkspaceAgentBindingHandler) SetTemplateCatalog(catalog llm.TemplateSource) {
+	h.catalog = catalog
+}
+
 // SetPresenceService supplies the same runner-heartbeat contract used by
 // assignment pickers so Agent Studio does not invent a second availability
 // interpretation.
@@ -112,6 +120,10 @@ func (h *WorkspaceAgentBindingHandler) Templates(w http.ResponseWriter, r *http.
 		return
 	}
 	if !RequireWorkspacePermission(w, r, user.ID, workspaceID, models.PermissionWorkspaceAdmin, h.permissionService) {
+		return
+	}
+	if h.catalog != nil {
+		respondJSON(w, http.StatusOK, h.catalog.AgentTemplates())
 		return
 	}
 	if h.prompts == nil {

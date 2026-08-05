@@ -226,6 +226,9 @@ const shortcuts = {
     add: { key: 'n' },
     save: { key: 'Enter', modifierKey: true },
   },
+  agentTemplates: {
+    add: { key: 'a' },
+  },
   security: {
     addCredential: { key: 'a' },
     createToken: { key: 't' },

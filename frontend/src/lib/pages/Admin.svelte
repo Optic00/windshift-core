@@ -512,7 +512,7 @@
     <IntegrationsManager />
   {/if}
 
-  <!-- AI Connections Tab (with sub-tabs for Connections + Features) -->
+  <!-- AI Connections Tab (with sub-tabs for Connections + Features + Agent Templates) -->
   {#if activeTab === 'llm-connections'}
     <AIContainer />
   {/if}

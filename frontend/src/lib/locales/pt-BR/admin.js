@@ -138,6 +138,11 @@ export default {
         title: 'Conexões de IA',
         description: 'Configurar provedores de modelos de IA para funcionalidades inteligentes',
       },
+      agentTemplates: {
+        title: 'Modelos de agente',
+        description: 'Substituir o catálogo de criação do Agent Studio: nomes de modelos, tipos de perfil e instruções',
+      },
+
       aiFeatures: {
         title: 'Recursos de IA',
         description: 'Configurar quais recursos de IA estão habilitados e suas conexões LLM',

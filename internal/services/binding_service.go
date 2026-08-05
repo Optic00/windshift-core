@@ -231,7 +231,7 @@ type BindingService struct {
 	repo                     *repository.WorkspaceAgentBindingRepository
 	identity                 *AgentActingIdentityService
 	permissions              *PermissionService
-	prompts                  *llm.PromptStore
+	prompts                  llm.TemplateSource
 	standardCapabilityGroups map[string]bool
 	runs                     *RunService
 	standardRuns             StandardRunDispatcher
@@ -271,7 +271,10 @@ type BindingServiceOptions struct {
 	Repo        *repository.WorkspaceAgentBindingRepository
 	Identity    *AgentActingIdentityService
 	Permissions *PermissionService
-	Prompts     *llm.PromptStore
+	// Prompts is the Agent Studio creation catalog. Defaults only (a
+	// *llm.PromptStore) or a merged *llm.TemplateCatalog both satisfy
+	// llm.TemplateSource (WI-922).
+	Prompts llm.TemplateSource
 	// StandardCapabilityGroups is derived from the executable aitools registry
 	// by server wiring. Nil retains the closed Agent Studio key set for
 	// isolated service construction.

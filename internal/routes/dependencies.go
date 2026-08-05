@@ -159,21 +159,22 @@ type UserHandlers struct {
 
 // AdminHandlers groups admin-related handlers.
 type AdminHandlers struct {
-	SecuritySettings *handlers.SecuritySettingsHandler
-	AuthPolicy       *handlers.AuthPolicyHandler
-	Theme            *handlers.ThemeHandler
-	UserPreferences  *handlers.UserPreferencesHandler
-	JiraImport       *handlers.JiraImportHandler
-	Plugin           *handlers.PluginHandler
-	Setup            *handlers.SetupHandler
-	System           *handlers.SystemHandler
-	AuditLog         *handlers.AuditLogHandler
-	LDAP             *handlers.LDAPHandler
-	Features         *handlers.FeaturesHandler
-	ShellBootstrap   *handlers.ShellBootstrapHandler
-	OAuthClients     *handlers.AdminOAuthClientHandler
-	Diagnostics      *handlers.DiagnosticsHandler
-	AgentSecurity    *handlers.AgentSecurityHandler
+	SecuritySettings     *handlers.SecuritySettingsHandler
+	AuthPolicy           *handlers.AuthPolicyHandler
+	Theme                *handlers.ThemeHandler
+	UserPreferences      *handlers.UserPreferencesHandler
+	JiraImport           *handlers.JiraImportHandler
+	Plugin               *handlers.PluginHandler
+	Setup                *handlers.SetupHandler
+	System               *handlers.SystemHandler
+	AuditLog             *handlers.AuditLogHandler
+	LDAP                 *handlers.LDAPHandler
+	Features             *handlers.FeaturesHandler
+	ShellBootstrap       *handlers.ShellBootstrapHandler
+	OAuthClients         *handlers.AdminOAuthClientHandler
+	Diagnostics          *handlers.DiagnosticsHandler
+	AgentSecurity        *handlers.AgentSecurityHandler
+	AgentTemplateCatalog *handlers.AdminAgentTemplateCatalogHandler
 }
 
 // PlanningHandlers groups planning-related handlers.

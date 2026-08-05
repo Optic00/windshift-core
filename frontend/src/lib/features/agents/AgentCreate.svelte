@@ -254,29 +254,15 @@
     knownRunnerInstanceIds = [];
   }
 
-  async function discardDraft() {
+  async function leaveCreate() {
+    draftReady = false;
     await cancelPendingRunnerSetup();
     try {
       window.localStorage.removeItem(draftStorageKey);
     } catch {
       // Ignore unavailable browser storage.
     }
-    draftReady = false;
-    templateKey = '';
-    profileType = 'standard';
-    name = '';
-    handle = '';
-    purpose = '';
-    instructions = '';
-    llmConnectionId = llmConnections.length === 1 ? llmConnections[0].id : null;
-    actingUserId = 0;
-    capabilityGroups = [];
-    selectedRepository = '';
-    repoBaseRef = '';
-    targetPoolId = null;
-    runnerSetupMode = 'existing';
-    if (templates.length) selectTemplate(templates[0]);
-    draftReady = true;
+    navigate(`/workspaces/${workspaceId}/agents`);
   }
 
   async function changeProfileType(value) {
@@ -358,10 +344,10 @@
 >
   <div class="mx-auto max-w-5xl space-y-6">
     <Button
-      href={`/workspaces/${workspaceId}/agents`}
       variant="subtle"
       size="small"
       icon={ArrowLeft}
+      onclick={leaveCreate}
       dataTestid="agent-create-back"
     >
       Back to agents
@@ -372,17 +358,6 @@
       title="Create an agent"
       subtitle="Start from an approved specialist template and save it as a Draft"
     />
-
-    <div class="flex justify-end">
-      <Button
-        variant="subtle"
-        size="small"
-        onclick={discardDraft}
-        dataTestid="agent-create-discard"
-      >
-        Discard saved draft
-      </Button>
-    </div>
 
     {#if loading}
       <StateDisplay type="loading" message="Loading Agent Studio…" class="py-20" />

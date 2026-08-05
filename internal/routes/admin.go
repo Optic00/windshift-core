@@ -103,6 +103,17 @@ func RegisterAdminRoutes(deps *Deps) {
 		api.HandleH("DELETE /admin/oauth-clients/{id}", admin(http.HandlerFunc(deps.Admin.OAuthClients.DeleteClient)))
 	}
 
+	// Agent template catalog (WI-922): system-admin overrides for the Agent
+	// Studio creation catalog. The handler is always available.
+	if deps.Admin.AgentTemplateCatalog != nil {
+		api.HandleH("GET /admin/agent-templates", admin(http.HandlerFunc(deps.Admin.AgentTemplateCatalog.ListTemplates)))
+		api.HandleH("POST /admin/agent-templates", admin(http.HandlerFunc(deps.Admin.AgentTemplateCatalog.CreateTemplate)))
+		api.HandleH("GET /admin/agent-templates/defaults", admin(http.HandlerFunc(deps.Admin.AgentTemplateCatalog.DefaultTemplates)))
+		api.HandleH("GET /admin/agent-templates/{id}", admin(http.HandlerFunc(deps.Admin.AgentTemplateCatalog.GetTemplate)))
+		api.HandleH("PUT /admin/agent-templates/{id}", admin(http.HandlerFunc(deps.Admin.AgentTemplateCatalog.UpdateTemplate)))
+		api.HandleH("DELETE /admin/agent-templates/{id}", admin(http.HandlerFunc(deps.Admin.AgentTemplateCatalog.DeleteTemplate)))
+	}
+
 	// LDAP directory management endpoints (admin-only)
 	if deps.Admin.LDAP != nil {
 		api.HandleH("GET /admin/ldap/configs", admin(http.HandlerFunc(deps.Admin.LDAP.ListConfigs)))

@@ -300,3 +300,19 @@ CREATE TABLE IF NOT EXISTS runner_instances (
 );
 CREATE INDEX IF NOT EXISTS idx_runner_instances_pool ON runner_instances(pool_capability_id);
 CREATE INDEX IF NOT EXISTS idx_runner_instances_status ON runner_instances(status);
+
+-- agent_template_catalog: system-admin overrides for the Agent Studio
+-- creation catalog (WI-922). Enabled rows win over the embedded defaults;
+-- the embedded defaults remain the fallback seed.
+CREATE TABLE IF NOT EXISTS agent_template_catalog (
+    id SERIAL PRIMARY KEY,
+    template_key TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL DEFAULT '',
+    default_type TEXT NOT NULL DEFAULT 'standard'
+        CHECK (default_type IN ('standard','coding')),
+    instructions TEXT NOT NULL DEFAULT '',
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

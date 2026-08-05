@@ -108,6 +108,10 @@ export default {
         title: 'AI Connections',
         description: 'Configure AI model providers for intelligent features',
       },
+      agentTemplates: {
+        title: 'Agent Templates',
+        description: 'Override the Agent Studio creation catalog: template names, profile types, and instructions',
+      },
       actionCapabilities: {
         title: 'Action Capabilities',
         description: 'Manage Docker environments, HTTP clients, and LLM connections for actions',

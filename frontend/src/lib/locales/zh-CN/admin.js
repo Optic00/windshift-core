@@ -56,6 +56,7 @@ export default {
       assets: { title: '资产', description: '管理资产集、类型、分类和资产' },
       aiFeatures: { title: 'AI 功能', description: '配置启用的 AI 功能及其 LLM 连接' },
       llmConnections: { title: 'AI 连接', description: '配置 AI 模型提供商以支持智能功能' },
+      agentTemplates: { title: '智能体模板', description: '覆盖 Agent Studio 创建目录：模板名称、配置类型和说明' },
       actionCapabilities: { title: '操作能力', description: '管理用于自动化操作节点的 Docker 环境、HTTP 客户端和 LLM 连接' },
       diagnostics: { title: 'Diagnostics', description: 'System health: server clock, action failures, and other operational signals' },
     },

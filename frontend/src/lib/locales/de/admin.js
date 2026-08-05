@@ -143,6 +143,11 @@ export default {
         title: 'KI-Verbindungen',
         description: 'KI-Modellanbieter für intelligente Funktionen konfigurieren',
       },
+      agentTemplates: {
+        title: 'Agent-Vorlagen',
+        description: 'Den Agent-Studio-Erstellungskatalog überschreiben: Vorlagennamen, Profiltypen und Anweisungen',
+      },
+
       aiFeatures: {
         title: 'KI-Funktionen',
         description: 'Konfigurieren, welche KI-Funktionen aktiviert sind und deren LLM-Verbindungen',

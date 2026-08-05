@@ -86,3 +86,11 @@ export const oauthClients = {
       method: 'POST',
     }),
 };
+
+// Agent template catalog (admin only). System-admin overrides for the Agent
+// Studio creation catalog (WI-922). `defaults` returns the embedded default
+// catalog so admins can seed an override that overwrites a built-in template.
+export const agentTemplates = {
+  ...createCrudClient('/admin/agent-templates'),
+  defaults: () => fetchAPI('/admin/agent-templates/defaults'),
+};

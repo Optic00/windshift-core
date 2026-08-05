@@ -1,7 +1,15 @@
 // Main API barrel export - assembles all domain modules into single api object
 
 import { actions } from './actions.js';
-import { oauthClients, securitySettings, setup, shellBootstrap, system, themes } from './admin.js';
+import {
+  agentTemplates,
+  oauthClients,
+  securitySettings,
+  setup,
+  shellBootstrap,
+  system,
+  themes,
+} from './admin.js';
 import {
   actionCapabilities,
   actionCredentials,
@@ -393,6 +401,10 @@ export const api = {
   // OAuth Clients (admin only) — third-party apps registered against the
   // generic OAuth 2.0 server (/api/oauth/authorize + /api/oauth/token)
   oauthClients,
+
+  // Agent template catalog (admin only) — system-admin overrides for the
+  // Agent Studio creation catalog (WI-922)
+  agentTemplates,
 
   // OAuth 2.0 server (consent flow — /authorize/{info,approve,deny})
   oauth,

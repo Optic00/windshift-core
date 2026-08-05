@@ -143,6 +143,11 @@ export default {
         title: 'اتصالات الذكاء الاصطناعي',
         description: 'تكوين موفري نماذج الذكاء الاصطناعي للميزات الذكية',
       },
+      agentTemplates: {
+        title: 'قوالب الوكلاء',
+        description: 'تجاوز كتالوج إنشاء Agent Studio: أسماء القوالب وأنواع الملفات الشخصية والتعليمات',
+      },
+
       actionCapabilities: {
         title: 'إمكانيات الإجراءات',
         description: 'إدارة بيئات Docker وعملاء HTTP واتصالات LLM للإجراءات',

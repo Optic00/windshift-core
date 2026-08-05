@@ -2665,6 +2665,40 @@ var Catalog = []Migration{
 			ALTER TABLE llm_usage ADD COLUMN IF NOT EXISTS reasoning_tokens INTEGER NOT NULL DEFAULT 0;
 		`,
 	},
+	{
+		Version:       "20260805_agent_template_catalog",
+		Name:          "Add system-admin agent template catalog overrides",
+		CheckSQLite:   sqliteTableCheck("agent_template_catalog"),
+		CheckPostgres: pgTableCheck("agent_template_catalog"),
+		SQLite: `
+			CREATE TABLE IF NOT EXISTS agent_template_catalog (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				template_key TEXT NOT NULL UNIQUE,
+				name TEXT NOT NULL DEFAULT '',
+				default_type TEXT NOT NULL DEFAULT 'standard'
+					CHECK (default_type IN ('standard','coding')),
+				instructions TEXT NOT NULL DEFAULT '',
+				enabled BOOLEAN NOT NULL DEFAULT TRUE,
+				created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+				created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+			);
+		`,
+		Postgres: `
+			CREATE TABLE IF NOT EXISTS agent_template_catalog (
+				id SERIAL PRIMARY KEY,
+				template_key TEXT NOT NULL UNIQUE,
+				name TEXT NOT NULL DEFAULT '',
+				default_type TEXT NOT NULL DEFAULT 'standard'
+					CHECK (default_type IN ('standard','coding')),
+				instructions TEXT NOT NULL DEFAULT '',
+				enabled BOOLEAN NOT NULL DEFAULT TRUE,
+				created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+				created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+			);
+		`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {

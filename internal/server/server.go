@@ -799,6 +799,12 @@ func (s *Server) initialize() error {
 
 	// AI handlers and agents share embedded or configured prompt overrides.
 	promptStore := llm.NewPromptStore(cfg.LLM.PromptsDir)
+	// System-admin-overridable Agent Studio catalog (WI-922): configured rows
+	// overlay or disable embedded defaults.
+	agentTemplateCatalogRepo := repository.NewAgentTemplateCatalogRepository(s.db)
+	templateCatalog := llm.NewTemplateCatalog(promptStore, agentTemplateCatalogRepo)
+	agentTemplateCatalogHandler := handlers.NewAdminAgentTemplateCatalogHandler(agentTemplateCatalogRepo, permService, logger.NewAuditor(s.db))
+	agentTemplateCatalogHandler.SetDefaults(promptStore)
 
 	// Bindings and AI handlers share the provider registry.
 	if cfg.LLM.ProvidersFile != "" {
@@ -853,7 +859,7 @@ func (s *Server) initialize() error {
 		Repo:                     agentBindingRepo,
 		Identity:                 agentIdentitySvc,
 		Permissions:              permService,
-		Prompts:                  promptStore,
+		Prompts:                  templateCatalog,
 		StandardCapabilityGroups: standardCapabilityKeys,
 		Runs:                     codingRunSvc,
 		SCMCreds:                 &scmCredsAdapter{cr: scmCredResolver},
@@ -871,6 +877,7 @@ func (s *Server) initialize() error {
 	agentBindingHandler := handlers.NewWorkspaceAgentBindingHandler(bindingSvc, agentIdentitySvc, permService, logger.NewAuditor(s.db))
 	agentBindingHandler.SetSkillsRepo(agentSkillRepo)
 	agentBindingHandler.SetPromptStore(promptStore)
+	agentBindingHandler.SetTemplateCatalog(templateCatalog)
 	agentBindingHandler.SetInitialPrompt(promptStore.Get(llm.PromptCodingAgentInitial))
 	agentSkillHandler := handlers.NewAgentSkillHandler(agentSkillRepo, permService, logger.NewAuditor(s.db))
 	agentRunHandler := handlers.NewAgentRunHandler(repository.NewAgentRunRepository(s.db), codingRunSvc, permService, repository.NewItemRepository(s.db), bindingSvc)
@@ -1541,6 +1548,7 @@ func (s *Server) initialize() error {
 				permService,
 				logger.NewAuditor(s.db),
 			),
+			AgentTemplateCatalog: agentTemplateCatalogHandler,
 		},
 		Planning: routes.PlanningHandlers{
 			MilestoneCategory: milestoneCategoryHandler,

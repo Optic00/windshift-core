@@ -142,6 +142,11 @@ export default {
         title: 'Conexiones de IA',
         description: 'Configurar proveedores de modelos de IA para funciones inteligentes',
       },
+      agentTemplates: {
+        title: 'Plantillas de agentes',
+        description: 'Anular el catálogo de creación de Agent Studio: nombres de plantillas, tipos de perfil e instrucciones',
+      },
+
       actionCapabilities: {
         title: 'Capacidades de acción',
         description: 'Gestionar entornos Docker, clientes HTTP y conexiones LLM para acciones',
