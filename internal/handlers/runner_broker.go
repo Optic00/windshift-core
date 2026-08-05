@@ -35,6 +35,16 @@ const (
 	// egressResponseHeaderTimeout bounds time-to-first-header for arbitrary
 	// HTTP/git egress, where a slow upstream is treated as a fault.
 	egressResponseHeaderTimeout = 30 * time.Second
+
+	// brokerProtocolVersion identifies the non-streaming inference contract the
+	// broker speaks. The coding-agent client must send this exact value in the
+	// X-Protocol-Version header on every /complete request; the broker rejects
+	// a missing or newer/mismatched version with 426 Upgrade Required so an
+	// out-of-step agent fails loudly and diagnostically instead of misparsing
+	// the response (WI-921). Bump it when CompletionRequest/CompletionResponse
+	// changes incompatibly.
+	brokerProtocolVersion = "1"
+	protocolVersionHeader = "X-Protocol-Version"
 	// llmResponseHeaderTimeout is intentionally generous: an OpenAI-compatible
 	// chat completion can spend minutes on prompt prefill (long context,
 	// reasoning) before committing the SSE response headers. A 30s bound aborts
@@ -169,6 +179,11 @@ func (h *RunnerBrokerHandler) ProxyLLM(w http.ResponseWriter, r *http.Request) {
 	}
 	if grants == nil || grants.LLM == nil {
 		respondForbidden(w, r)
+		return
+	}
+	if v := r.Header.Get(protocolVersionHeader); v != brokerProtocolVersion {
+		w.Header().Set(protocolVersionHeader, brokerProtocolVersion)
+		respondUpgradeRequired(w, r)
 		return
 	}
 	cfg, err := h.llmConns.ConnectionRuntime(r.Context(), grants.LLM.ConnectionID)

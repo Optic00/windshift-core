@@ -178,3 +178,14 @@ func respondServiceUnavailable(w http.ResponseWriter, r *http.Request, message s
 	err := restapi.NewAPIError(http.StatusServiceUnavailable, restapi.ErrCodeServiceUnavailable, message)
 	restapi.RespondError(w, r, err)
 }
+
+// respondUpgradeRequired writes a 426 Upgrade Required JSON response. Used by
+// the llm-proxy broker when a coding-agent client presents a missing or
+// mismatched protocol version, so an out-of-step agent fails loudly with a
+// diagnostic signal instead of misparsing the response (WI-921). The caller
+// advertises the supported version in the X-Protocol-Version response header.
+func respondUpgradeRequired(w http.ResponseWriter, r *http.Request) {
+	err := restapi.NewAPIError(http.StatusUpgradeRequired, "PROTOCOL_VERSION_MISMATCH",
+		"coding-agent protocol version is out of date; the agent image must match the server version")
+	restapi.RespondError(w, r, err)
+}
