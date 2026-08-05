@@ -11,6 +11,7 @@ GOMOD=$(GOCMD) mod
 BINARY_NAME=windshift
 BINARY_UNIX=$(BINARY_NAME)_unix
 BINARY_WINDOWS=$(BINARY_NAME).exe
+BINARY_WINDOWS_ARM64=$(BINARY_NAME)-windows-arm64.exe
 
 # Build flags
 LDFLAGS=-ldflags="-s -w"
@@ -18,7 +19,7 @@ LDFLAGS=-ldflags="-s -w"
 # Directories
 FRONTEND_DIR=frontend
 
-.PHONY: all build build-linux build-windows clean deps frontend help hooks lint dev-build release openapi openapi-check coding-agent-image dev-tools install-golangci-lint install-govulncheck install-deadcode ci-tools-check ci-go ci-frontend ci
+.PHONY: all build build-linux build-windows build-windows-arm64 clean deps frontend help hooks lint dev-build release openapi openapi-check coding-agent-image dev-tools install-golangci-lint install-govulncheck install-deadcode ci-tools-check ci-go ci-frontend ci
 
 # Tooling. swag is a tool dependency tracked in go.mod (see `tool` directive),
 # so the version is pinned and CI / dev installs always agree. `go tool swag`
@@ -49,6 +50,11 @@ build-windows:
 	@echo "Building for Windows..."
 	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(BINARY_WINDOWS) -v
 
+# Build for Windows on ARM
+build-windows-arm64:
+	@echo "Building for Windows on ARM64..."
+	CGO_ENABLED=0 GOOS=windows GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -o $(BINARY_WINDOWS_ARM64) -v
+
 # Build frontend
 frontend:
 	@echo "Building frontend..."
@@ -61,6 +67,7 @@ clean:
 	@rm -f $(BINARY_NAME)
 	@rm -f $(BINARY_UNIX)
 	@rm -f $(BINARY_WINDOWS)
+	@rm -f $(BINARY_WINDOWS_ARM64)
 
 # Update dependencies
 deps:
@@ -190,6 +197,7 @@ help:
 	@echo "  make build          - Build production binary"
 	@echo "  make build-linux    - Cross-compile for Linux"
 	@echo "  make build-windows  - Cross-compile for Windows"
+	@echo "  make build-windows-arm64 - Cross-compile for Windows on ARM64"
 	@echo "  make release        - Full production release build"
 	@echo ""
 	@echo "Development:"
