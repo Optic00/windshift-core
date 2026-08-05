@@ -44,6 +44,14 @@ type Migration struct {
 	ApplySQLite     func(Database) error
 	ApplyPostgres   func(Database) error
 
+	// ReconcileChecksum marks a migration whose body is intentionally mutable.
+	// This is reserved for the schema_* compatibility wrappers backed directly
+	// by canonical schema files. Those files must change alongside each new
+	// append-only migration, so treating their whole-file checksum as immutable
+	// would make every legitimate schema change abort startup. Already-stamped
+	// wrappers are never re-applied; their checksum is simply brought forward.
+	ReconcileChecksum bool
+
 	// Superseded lists checksums this migration's body has carried in the
 	// past, for databases stamped before the body was edited. A stored
 	// checksum listed here is accepted and re-stamped to the current value,
@@ -2690,14 +2698,14 @@ func runPendingMigrations(db Database, catalog []Migration) error {
 	for _, m := range catalog {
 		if checksum, ok := applied[m.Version]; ok {
 			expected := m.checksum(driver)
-			if checksum != "" && checksum != expected && !m.acceptsSuperseded(checksum) {
+			if checksum != "" && checksum != expected && !m.ReconcileChecksum && !m.acceptsSuperseded(checksum) {
 				return fmt.Errorf(
 					"migration %s (%s): checksum mismatch: stored %s, expected %s",
 					m.Version, m.Name, checksum, expected,
 				)
 			}
-			// Backfill an unstamped row, and re-stamp a recognized superseded
-			// checksum so the Superseded entry is needed only once per database.
+			// Backfill an unstamped row and bring recognized historical or
+			// intentionally mutable checksums forward to the current value.
 			if checksum != expected {
 				if _, err := db.Exec(
 					"UPDATE schema_migrations SET name = ?, checksum = ? WHERE version = ?",

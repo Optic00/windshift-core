@@ -1977,6 +1977,41 @@ func driftFixMigrations() []Migration {
 			// through the session TimeZone, which would shift every timestamp.
 			Version: "20260804_pg_timestamptz_convergence",
 			Name:    "Converge pre-2026-05-17 Postgres timestamp columns to TIMESTAMPTZ",
+			CheckPostgres: `SELECT CASE WHEN EXISTS (
+				SELECT 1
+				FROM information_schema.columns c
+				WHERE c.table_schema = current_schema()
+				  AND c.data_type = 'timestamp without time zone'
+				  AND (c.table_name, c.column_name) IN (
+					('action_capabilities','created_at'),
+					('action_capabilities','updated_at'),
+					('oauth_clients','created_at'),
+					('oauth_clients','updated_at'),
+					('oauth_authorization_codes','expires_at'),
+					('oauth_authorization_codes','consumed_at'),
+					('oauth_authorization_codes','created_at'),
+					('oauth_refresh_tokens','expires_at'),
+					('oauth_refresh_tokens','revoked_at'),
+					('oauth_refresh_tokens','created_at'),
+					('audit_logs','timestamp'),
+					('scheduler_runs','started_at'),
+					('scheduler_runs','completed_at'),
+					('pending_custom_field_cleanups','created_at'),
+					('pending_custom_field_cleanups','started_at'),
+					('pending_custom_field_cleanups','completed_at'),
+					('user_invitations','expires_at'),
+					('user_invitations','used_at'),
+					('user_invitations','created_at'),
+					('api_tokens','expires_at'),
+					('api_tokens','last_used_at'),
+					('api_tokens','created_at'),
+					('api_tokens','updated_at'),
+					('scm_processed_commits','processed_at'),
+					('cli_auth_codes','created_at'),
+					('cli_auth_codes','expires_at'),
+					('cli_auth_codes','consumed_at')
+				  )
+			) THEN 0 ELSE 1 END`,
 			Postgres: `
 				DO $$
 				DECLARE
@@ -2041,6 +2076,16 @@ func driftFixMigrations() []Migration {
 			// Postgres-only and self-guarding, same as the entry above.
 			Version: "20260805_pg_timestamptz_convergence_columns",
 			Name:    "Converge remaining pre-2026-05-17 Postgres timestamp columns to TIMESTAMPTZ",
+			CheckPostgres: `SELECT CASE WHEN EXISTS (
+				SELECT 1
+				FROM information_schema.columns c
+				WHERE c.table_schema = current_schema()
+				  AND c.data_type = 'timestamp without time zone'
+				  AND (c.table_name, c.column_name) IN (
+					('item_scm_links', 'smart_commits_applied_at'),
+					('notifications', 'seen_at')
+				  )
+			) THEN 0 ELSE 1 END`,
 			Postgres: `
 				DO $$
 				DECLARE
@@ -2223,21 +2268,13 @@ func schemaRerunMigrations() []Migration {
 	out := make([]Migration, 0, len(entries))
 	for _, e := range entries {
 		migration := Migration{
-			Version:       e.version,
-			Name:          e.name,
-			CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='" + e.sentinel + "'",
-			CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='" + e.sentinel + "'",
-			SQLite:        e.sqlite,
-			Postgres:      e.postgres,
-		}
-		if e.version == "schema_llm" {
-			// The base schema gained the token-class columns alongside the
-			// append-only migration that converges existing tables. Accept and
-			// re-stamp both deployed backend checksums after that migration runs.
-			migration.Superseded = []string{
-				"ce3303166028080e7d00e27ae22f4da9f6931284d60862030a70ee4cc43bd0f7",
-				"2bfa5f49b77f9ba706cfab9ee7917038c9aad8868e3cdf4c819ba7802e4019e8",
-			}
+			Version:           e.version,
+			Name:              e.name,
+			CheckSQLite:       "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='" + e.sentinel + "'",
+			CheckPostgres:     "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='" + e.sentinel + "'",
+			SQLite:            e.sqlite,
+			Postgres:          e.postgres,
+			ReconcileChecksum: true,
 		}
 		out = append(out, migration)
 	}
