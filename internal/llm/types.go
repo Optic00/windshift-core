@@ -170,4 +170,9 @@ type Usage struct {
 	CacheReadTokens  int `json:"cache_read_tokens"`
 	CacheWriteTokens int `json:"cache_write_tokens"`
 	ReasoningTokens  int `json:"reasoning_tokens"`
+	// ProviderCostUSD is the cost the provider itself billed for this call,
+	// when it reports one (OpenRouter does). It is authoritative over any rate
+	// Windshift computes, since it already accounts for discounts and routing.
+	// Server-side only: metering reads it, and it never crosses the broker.
+	ProviderCostUSD *float64 `json:"-"`
 }

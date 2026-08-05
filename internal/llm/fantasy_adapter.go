@@ -302,7 +302,7 @@ func (c *fantasyClient) generateObject(ctx context.Context, call fantasy.Call, c
 		}
 		content = string(encoded)
 	}
-	return normalizedFantasyResponse(content, nil, nil, normalizeFantasyUsage(response.Usage), response.FinishReason), nil
+	return normalizedFantasyResponse(content, nil, nil, normalizeFantasyUsage(response.Usage, response.ProviderMetadata), response.FinishReason), nil
 }
 
 func (c *fantasyClient) Health(ctx context.Context) error {
@@ -607,10 +607,10 @@ func fromFantasyResponse(response *fantasy.Response) (*CompletionResponse, error
 		}
 		message.ProviderState = state
 	}
-	return normalizedFantasyResponse(message.Content, message.ToolCalls, message.ProviderState, normalizeFantasyUsage(response.Usage), response.FinishReason), nil
+	return normalizedFantasyResponse(message.Content, message.ToolCalls, message.ProviderState, normalizeFantasyUsage(response.Usage, response.ProviderMetadata), response.FinishReason), nil
 }
 
-func normalizeFantasyUsage(usage fantasy.Usage) Usage {
+func normalizeFantasyUsage(usage fantasy.Usage, metadata fantasy.ProviderMetadata) Usage {
 	baseInput := usage.InputTokens
 	// Fantasy normalizes provider-specific counters before they reach this
 	// boundary: InputTokens is the uncached/base class and the cache classes are
@@ -623,7 +623,28 @@ func normalizeFantasyUsage(usage fantasy.Usage) Usage {
 		CacheReadTokens:  int(usage.CacheReadTokens),
 		CacheWriteTokens: int(usage.CacheCreationTokens),
 		ReasoningTokens:  int(usage.ReasoningTokens),
+		ProviderCostUSD:  fantasyProviderCost(metadata),
 	}
+}
+
+// fantasyProviderCost recovers a provider-billed call cost. Gateways that
+// resell several upstreams report one (OpenRouter emits usage.cost), and it
+// beats any locally computed rate because it already reflects the discounts and
+// routing decisions the gateway applied. Fantasy carries such non-standard
+// usage fields through as raw extras on the OpenAI-compatible contracts.
+func fantasyProviderCost(metadata fantasy.ProviderMetadata) *float64 {
+	if metadata == nil {
+		return nil
+	}
+	openaiMetadata, ok := metadata[openai.Name].(*openai.ProviderMetadata)
+	if !ok {
+		return nil
+	}
+	var cost float64
+	if !openaiMetadata.ExtraField("cost", &cost) || cost < 0 {
+		return nil
+	}
+	return &cost
 }
 
 func normalizedFantasyResponse(content string, toolCalls []ToolCall, providerState json.RawMessage, usage Usage, finish fantasy.FinishReason) *CompletionResponse {

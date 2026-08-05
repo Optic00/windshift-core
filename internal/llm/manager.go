@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"windshift/internal/database"
@@ -39,6 +40,9 @@ type ConnectionManager struct {
 	encryption *sso.SecretEncryption
 	fallback   Client
 	modelCache *ModelCache // optional; enables freshest vision-capability resolution
+	// warnedModelLimits keys the models already reported as missing catalog
+	// limits, so the warning stays one per model rather than one per resolve.
+	warnedModelLimits sync.Map
 }
 
 // NewConnectionManager creates a new connection manager.
@@ -254,11 +258,57 @@ func (m *ConnectionManager) ConnectionRuntime(ctx context.Context, connectionID 
 	cfg.Protocol = ResolveGenerationProtocol(ProviderType(cfg.ProviderType), cfg.BaseURL, cfg.ProviderConfig)
 	cfg.VisionMode = ProviderConfigVisionMode(cfg.ProviderConfig)
 	cfg.SupportsVision = EffectiveVision(cfg.VisionMode, m.resolveModelVision(ProviderType(cfg.ProviderType), cfg.Model))
-	cfg.ContextWindow, cfg.MaxOutputTokens = m.resolveModelLimits(ProviderType(cfg.ProviderType), cfg.Model)
-	if cfg.ContextWindow <= 0 || cfg.MaxOutputTokens <= 0 {
-		return nil, fmt.Errorf("LLM model %q has incomplete limits: context_window=%d max_tokens=%d", cfg.Model, cfg.ContextWindow, cfg.MaxOutputTokens)
+	resolvedContext, resolvedOutput := m.resolveModelLimits(ProviderType(cfg.ProviderType), cfg.Model)
+	cfg.ContextWindow, cfg.MaxOutputTokens = resolvedContext, resolvedOutput
+	if applyFallbackModelLimits(cfg) {
+		// ConnectionRuntime runs per profile render and per run start, so warn
+		// once per model rather than on every resolve.
+		if _, warned := m.warnedModelLimits.LoadOrStore(cfg.ProviderType+"\x00"+cfg.Model, true); !warned {
+			slog.Warn("LLM model limits are not advertised by the provider catalog; using conservative defaults",
+				slog.String("provider_type", cfg.ProviderType),
+				slog.String("model", cfg.Model),
+				slog.Int("resolved_context_window", resolvedContext),
+				slog.Int("resolved_max_output_tokens", resolvedOutput),
+				slog.Int("context_window", cfg.ContextWindow),
+				slog.Int("max_output_tokens", cfg.MaxOutputTokens),
+			)
+		}
 	}
 	return cfg, nil
+}
+
+// Conservative limits for a model no catalog advertises. Several providers
+// publish no limits at all — Anthropic's /v1/models carries none, OpenAI's
+// carries neither a context length nor an output cap, and the local provider
+// has no static model list — so refusing to resolve such a connection would
+// take out binding validation, profile creation, and run start along with the
+// inference call. Erring low is deliberate in both directions: an oversized
+// max_tokens is a hard 400 on Anthropic and OpenAI while an undersized one only
+// truncates, and an oversized context window overflows the upstream prompt
+// while an undersized one merely packs less history.
+const (
+	fallbackContextWindow   = 128_000
+	fallbackMaxOutputTokens = 4096
+)
+
+// applyFallbackModelLimits fills limits the catalog left unresolved, reporting
+// whether it had to. A caller that resolves repeatedly uses that to warn about
+// each unknown model once instead of on every resolve.
+func applyFallbackModelLimits(cfg *ConnectionRuntimeConfig) bool {
+	if cfg.ContextWindow > 0 && cfg.MaxOutputTokens > 0 {
+		return false
+	}
+	if cfg.ContextWindow <= 0 {
+		cfg.ContextWindow = fallbackContextWindow
+	}
+	if cfg.MaxOutputTokens <= 0 {
+		cfg.MaxOutputTokens = fallbackMaxOutputTokens
+		// A model may advertise a context window smaller than the output floor.
+		if cfg.ContextWindow < cfg.MaxOutputTokens {
+			cfg.MaxOutputTokens = cfg.ContextWindow
+		}
+	}
+	return true
 }
 
 func (m *ConnectionManager) resolveModelLimits(providerType ProviderType, modelID string) (contextWindow, maxOutput int) {

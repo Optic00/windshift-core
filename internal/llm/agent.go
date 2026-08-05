@@ -111,6 +111,13 @@ func RunAgent(ctx context.Context, client Client, cfg AgentConfig, userMessage s
 		totalUsage.CacheReadTokens += resp.Usage.CacheReadTokens
 		totalUsage.CacheWriteTokens += resp.Usage.CacheWriteTokens
 		totalUsage.ReasoningTokens += resp.Usage.ReasoningTokens
+		if resp.Usage.ProviderCostUSD != nil {
+			runCost := *resp.Usage.ProviderCostUSD
+			if totalUsage.ProviderCostUSD != nil {
+				runCost += *totalUsage.ProviderCostUSD
+			}
+			totalUsage.ProviderCostUSD = &runCost
+		}
 
 		if len(resp.Choices) == 0 {
 			return nil, fmt.Errorf("LLM returned no choices (iteration %d)", i+1)

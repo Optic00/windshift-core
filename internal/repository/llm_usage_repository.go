@@ -31,7 +31,10 @@ type LLMUsageRecord struct {
 	CacheWriteTokens int
 	ReasoningTokens  int
 	CostUSD          *float64
-	CostSource       string // "provider" | "computed" | ""
+	// CostSource is "provider" (the provider billed this number), "computed"
+	// (priced from catalog rates), "unpriced" (rates exist but not for every
+	// class the call used, so no cost is claimed), or "" (no rates at all).
+	CostSource string
 }
 
 // Insert records one metered call.

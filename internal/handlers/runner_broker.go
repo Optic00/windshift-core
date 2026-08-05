@@ -240,10 +240,27 @@ func (h *RunnerBrokerHandler) persistLLMUsage(runID int, cfg *llm.ConnectionRunt
 		ReasoningTokens: usage.ReasoningTokens,
 	}
 	pricing := h.llmConns.ModelPricing(llm.ProviderType(cfg.ProviderType), cfg.Model)
-	if pricing != nil && pricing.CanPriceUsage(usage) {
+	switch {
+	case usage.ProviderCostUSD != nil:
+		// The provider billed a number; it beats any rate we could apply.
+		record.CostUSD = usage.ProviderCostUSD
+		record.CostSource = "provider"
+	case pricing != nil && pricing.CanPriceUsage(usage):
 		cost := pricing.CostUSD(usage, completionRequestImageCount(request))
 		record.CostUSD = &cost
 		record.CostSource = "computed"
+	case pricing != nil:
+		// Rates exist but not for every class this call actually used. Pricing
+		// it anyway would bill a cache write at the base input rate, so the row
+		// stays costless — but it is recorded as unpriced rather than left
+		// indistinguishable from a model with no configured rates at all.
+		record.CostSource = "unpriced"
+		slog.Warn("llm usage not priced: model pricing is missing a rate for a token class this call used",
+			slog.Int("run_id", runID),
+			slog.String("model", cfg.Model),
+			slog.Int("cache_read_tokens", usage.CacheReadTokens),
+			slog.Int("cache_write_tokens", usage.CacheWriteTokens),
+		)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
