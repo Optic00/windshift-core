@@ -142,6 +142,7 @@
       searchFields={['name', 'key', 'description']}
       getValue={(item) => item.id}
       getLabel={(item) => item.name}
+      optionTestid={(option) => `page-move-workspace-option-${option.value}`}
       onSelect={onWorkspacePick}
     />
 
@@ -157,6 +158,9 @@
       searchFields={['title', 'path']}
       getValue={(p) => p.id}
       getLabel={(p) => p.title}
+      optionTestid={(option) => option.isUnassigned
+        ? 'page-move-parent-root'
+        : `page-move-parent-option-${option.value}`}
       onSelect={onPick}
     />
 

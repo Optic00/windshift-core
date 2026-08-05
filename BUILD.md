@@ -51,6 +51,7 @@ The Makefile produces binaries in the project root:
 windshift           # Main server binary (current platform)
 windshift_unix      # Linux binary (from make build-linux)
 windshift.exe       # Windows binary (from make build-windows)
+windshift-windows-arm64.exe  # Windows on ARM64 binary (from make build-windows-arm64)
 ```
 
 ### Release Builds (release.sh)
@@ -63,12 +64,14 @@ dist/
 │   ├── windshift-linux-amd64
 │   ├── windshift-linux-arm64
 │   ├── windshift-windows-amd64.exe
+│   ├── windshift-windows-arm64.exe
 │   ├── windshift-darwin-amd64
 │   └── windshift-darwin-arm64
 └── releases/
     ├── windshift-v1.0.0-linux-amd64.tar.gz
     ├── windshift-v1.0.0-linux-arm64.tar.gz
     ├── windshift-v1.0.0-windows-amd64.zip
+    ├── windshift-v1.0.0-windows-arm64.zip
     ├── windshift-v1.0.0-darwin-amd64.tar.gz
     ├── windshift-v1.0.0-darwin-arm64.tar.gz
     └── SHA256SUMS.txt
@@ -84,6 +87,9 @@ make build-linux
 
 # Cross-compile for Windows
 make build-windows
+
+# Cross-compile for Windows on ARM64
+make build-windows-arm64
 ```
 
 ### Using release.sh (Full Release)
@@ -196,6 +202,7 @@ Run `make help` to see all available targets:
 - `make build` - Build production binary (excludes test code)
 - `make build-linux` - Cross-compile for Linux
 - `make build-windows` - Cross-compile for Windows
+- `make build-windows-arm64` - Cross-compile for Windows on ARM64
 - `make release` - Full production release build
 
 **Development builds:**
