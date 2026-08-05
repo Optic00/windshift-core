@@ -50,6 +50,7 @@ export function workspaceNavigationProvider(ctx) {
 
   if (!collectionId) {
     for (const view of workspaceOnlyViews) {
+      if (view.id === 'agents' && !workspacePermissions.canAdminWorkspace(workspaceId)) continue;
       out.push(
         createCommand({
           id: `workspace-${view.id}-view`,

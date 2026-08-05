@@ -4,7 +4,14 @@
     IconArrowLeft as ArrowLeft,
     IconBolt as Bolt,
     IconCode as Code,
-    IconRobot as Robot,
+    IconFile as BlankIcon,
+    IconGitPullRequest as ReviewIcon,
+    IconListCheck as TriageIcon,
+    IconMap2 as WorkspaceGuideIcon,
+    IconRocket as ReleaseIcon,
+    IconRoute as DeliveryIcon,
+    IconTestPipe as QAIcon,
+    IconUserStar as AgentIcon,
   } from '@tabler/icons-svelte-runes';
   import { agentBindings, api } from '../../api.js';
   import { navigate } from '../../router.js';
@@ -19,6 +26,7 @@
   import StateDisplay from '../../components/StateDisplay.svelte';
   import Textarea from '../../components/Textarea.svelte';
   import { moduleSettings } from '../../stores/moduleSettings.js';
+  import { getShortcutDisplay, toHotkeyString } from '../../utils/keyboardShortcuts.js';
   import AgentRunnerSetup from './AgentRunnerSetup.svelte';
 
   let { workspaceId } = $props();
@@ -51,6 +59,17 @@
   let pendingRunnerTokenPoolId = $state(null);
   let knownRunnerInstanceIds = $state([]);
   let draftReady = $state(false);
+
+  const templateIcons = {
+    workspace_guide: WorkspaceGuideIcon,
+    work_item_triage: TriageIcon,
+    delivery_coordinator: DeliveryIcon,
+    software_engineer: Code,
+    code_reviewer: ReviewIcon,
+    qa_test_engineer: QAIcon,
+    release_manager: ReleaseIcon,
+    blank: BlankIcon,
+  };
 
   const selectedTemplate = $derived(templates.find((template) => template.key === templateKey));
   const draftStorageKey = $derived(`agent-studio-create:${workspaceId}`);
@@ -183,6 +202,10 @@
     }
   }
 
+  function templateIcon(template) {
+    return templateIcons[template.key] || (template.default_type === 'coding' ? Code : Bolt);
+  }
+
   function updateHandle() {
     handle = handle.toLowerCase().replace(/[^a-z0-9._-]/g, '').slice(0, 32);
   }
@@ -218,8 +241,10 @@
       if (runnerPools.some((entry) => entry.id === saved.targetPoolId)) {
         targetPoolId = saved.targetPoolId;
       }
-      if (['existing', 'this_machine', 'another_machine'].includes(saved.runnerSetupMode)) {
-        runnerSetupMode = saved.runnerSetupMode;
+      if (saved.runnerSetupMode === 'existing') {
+        runnerSetupMode = 'existing';
+      } else if (['new', 'this_machine', 'another_machine'].includes(saved.runnerSetupMode)) {
+        runnerSetupMode = 'new';
       }
       if (Number(saved.pendingRunnerTokenId) > 0) {
         pendingRunnerTokenId = Number(saved.pendingRunnerTokenId);
@@ -354,7 +379,7 @@
     </Button>
 
     <PageHeader
-      icon={Robot}
+      icon={AgentIcon}
       title="Create an agent"
       subtitle="Start from an approved specialist template and save it as a Draft"
     />
@@ -379,6 +404,7 @@
         </p>
         <div class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
           {#each templates as template (template.key)}
+            {@const TemplateIcon = templateIcon(template)}
             <button
               type="button"
               class="rounded-lg text-left focus:outline-none focus:ring-2"
@@ -395,16 +421,23 @@
                 class="h-full"
                 style={templateKey === template.key ? 'border-color: var(--ds-border-selected);' : ''}
               >
-                <div class="flex items-center gap-2">
-                  {#if template.default_type === 'coding'}
-                    <Code class="h-5 w-5" style="color: var(--ds-icon);" />
-                  {:else}
-                    <Bolt class="h-5 w-5" style="color: var(--ds-icon);" />
-                  {/if}
+                <div class="flex items-center gap-3">
+                  <span
+                    class="template-icon"
+                    class:template-icon--coding={template.default_type === 'coding'}
+                  >
+                    <TemplateIcon class="h-5 w-5" aria-hidden="true" />
+                  </span>
                   <span class="font-medium" style="color: var(--ds-text);">{template.name}</span>
                 </div>
-                <p class="mt-3 text-xs" style="color: var(--ds-text-subtle);">
-                  {template.default_type === 'coding' ? 'Coding runtime' : 'Windshift runtime'}
+                <p
+                  class="mt-3 text-xs leading-5"
+                  style="color: var(--ds-text-subtle);"
+                  data-testid="agent-template-description"
+                >
+                  {template.default_type === 'coding'
+                    ? 'Coding agent that works in connected repositories and opens pull requests.'
+                    : 'Windshift agent for workspace planning and coordination.'}
                 </p>
               </Card>
             </button>
@@ -581,20 +614,42 @@
         {/if}
 
         <div class="mt-6 flex justify-end gap-3">
-          <Button href={`/workspaces/${workspaceId}/agents`} variant="subtle">Cancel</Button>
-          <!-- shortcut-guard-exempt: this submit is scoped to the Agent Studio form -->
+          <Button href={`/workspaces/${workspaceId}/agents`}>Cancel</Button>
           <Button
             variant="primary"
-            icon={Robot}
             disabled={!canSubmit}
             loading={saving}
             onclick={createProfile}
+            keyboardHint={getShortcutDisplay('agents', 'create')}
+            hotkeyConfig={{
+              key: toHotkeyString('agents', 'create'),
+              guard: () => canSubmit,
+            }}
             dataTestid="agent-create-submit"
           >
-            Create Draft
+            Create draft
           </Button>
         </div>
       </Card>
     {/if}
   </div>
 </section>
+
+<style>
+  .template-icon {
+    display: inline-flex;
+    width: 2.25rem;
+    height: 2.25rem;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0.625rem;
+    color: var(--ds-icon);
+    background: var(--ds-background-neutral);
+  }
+
+  .template-icon--coding {
+    color: var(--ds-icon-accent-blue);
+    background: var(--ds-accent-blue-subtle);
+  }
+</style>

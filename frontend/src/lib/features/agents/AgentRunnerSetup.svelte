@@ -44,8 +44,7 @@
 
   const modeOptions = [
     { value: 'existing', label: 'Use an existing runner pool' },
-    { value: 'this_machine', label: 'Set up a runner on this machine' },
-    { value: 'another_machine', label: 'Set up a runner on another machine' },
+    { value: 'new', label: 'Set up a new runner' },
   ];
   const poolOptions = $derived([
     { value: null, label: 'Select an authorized runner pool', disabled: true },
@@ -200,10 +199,7 @@
         workspaceId,
         selectedPoolId,
         {
-          description:
-            setupMode === 'this_machine'
-              ? 'Agent Studio · this machine'
-              : 'Agent Studio · another machine',
+          description: 'Agent Studio · new runner',
           ttl_hours: 720,
         }
       );
@@ -308,7 +304,7 @@
         <div class="space-y-2" data-testid="agent-runner-command">
           <div class="flex items-center justify-between gap-3">
             <span class="text-sm font-medium" style="color: var(--ds-text);">
-              Run on {setupMode === 'this_machine' ? 'this machine' : 'the runner machine'}
+              Run on the runner machine
             </span>
             <Button
               variant="secondary"

@@ -214,6 +214,10 @@ const shortcuts = {
     save: { key: 'Enter', modifierKey: true },
     cancel: { key: 'Escape' },
   },
+  agents: {
+    add: { key: 'a' },
+    create: { key: 'Enter', modifierKey: true },
+  },
   actionCredentials: {
     add: { key: 'a' },
   },

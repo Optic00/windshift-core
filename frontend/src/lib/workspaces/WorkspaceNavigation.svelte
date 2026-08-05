@@ -16,7 +16,7 @@
     IconPencil as Pencil,
   } from '@tabler/icons-svelte-runes';
   import { workspaceIconMap } from '../utils/icons.js';
-  import { workspaceViewItems, workspacePrimaryViews, workspaceOnlyViews, testNavigationItems, workspaceSettingsItems, workspaceSettingsViews, workspaceSettingsRoute } from '../navigation/workspaceNavigation.js';
+  import { workspaceViewItems, workspaceOnlyViews, testNavigationItems, workspaceSettingsItems, workspaceSettingsViews, workspaceSettingsRoute } from '../navigation/workspaceNavigation.js';
   import { navItemStyle, onNavMouseEnter, onNavMouseLeave } from '../navigation/navItemStyle.js';
   import { navigate, currentRoute } from '../router.js';
   import { currentWorkspace, workspacePermissions } from '../stores';
@@ -108,7 +108,7 @@
 
   // Workspace view registries live in navigation/workspaceNavigation.js
   const workspaceOnlyViewIds = new Set(
-    [...workspacePrimaryViews, ...workspaceOnlyViews].map(view => view.id)
+    workspaceOnlyViews.map(view => view.id)
   );
   const workspaceTestViewIds = new Set([
     'test-cases',
@@ -135,6 +135,7 @@
   // Filter workspace-only views based on permissions
   const filteredWorkspaceOnlyViews = $derived.by(() => {
     return workspaceOnlyViews.filter(view => {
+      if (view.id === 'agents') return canAdmin;
       if (view.id === 'actions') return canManageActions;
       return true;
     });
@@ -528,10 +529,6 @@
           {@render collapsedNavIcon({ href: getNavigationUrl(view.id), label: view.label, icon: view.icon, isActive: $currentRoute.view === `workspace-${view.id}` })}
         {/each}
 
-        {#each workspacePrimaryViews as view}
-          {@render collapsedNavIcon({ href: getNavigationUrl(view.id), label: view.label, icon: view.icon, testId: view.testId, isActive: isWorkspaceViewActive(view) })}
-        {/each}
-
         {#if $moduleSettings.test_management_enabled && canViewTests && !currentCollectionId}
           {@render sectionDivider()}
           {#each testNavigationItems as view}
@@ -541,7 +538,7 @@
 
         {@render sectionDivider()}
         {#each filteredWorkspaceOnlyViews as view}
-          {@render collapsedNavIcon({ href: getNavigationUrl(view.id), label: view.label, icon: view.icon, isActive: $currentRoute.view === `workspace-${view.id}` })}
+          {@render collapsedNavIcon({ href: getNavigationUrl(view.id), label: view.label, icon: view.icon, testId: view.testId, isActive: isWorkspaceViewActive(view) })}
         {/each}
 
         {#if canAdmin}
@@ -634,10 +631,6 @@
         {@render navLink({ href: getNavigationUrl(view.id), label: view.label, tooltip: view.tooltip, icon: view.icon, isActive: $currentRoute.view === `workspace-${view.id}` })}
       {/each}
 
-      {#each workspacePrimaryViews as view}
-        {@render navLink({ href: getNavigationUrl(view.id), label: view.label, tooltip: view.tooltip, icon: view.icon, testId: view.testId, isActive: isWorkspaceViewActive(view) })}
-      {/each}
-
       {#if currentCollectionId}
         <div class="mt-4 pt-4 border-t" style="border-color: var(--ds-border);">
           <div class="text-xs font-semibold uppercase tracking-wide mb-2" style="color: var(--ds-text-subtle);">
@@ -688,9 +681,9 @@
         </button>
 
         {#if workspaceToolsExpanded}
-          <div class="space-y-1">
+          <div class="space-y-1" data-testid="workspace-tools-navigation">
             {#each filteredWorkspaceOnlyViews as view}
-              {@render navLink({ href: getNavigationUrl(view.id), label: view.label, tooltip: view.tooltip, icon: view.icon, isActive: $currentRoute.view === `workspace-${view.id}` })}
+              {@render navLink({ href: getNavigationUrl(view.id), label: view.label, tooltip: view.tooltip, icon: view.icon, testId: view.testId, isActive: isWorkspaceViewActive(view) })}
             {/each}
 
             {#if canAdmin}
@@ -762,7 +755,7 @@
     transition:
       background-color var(--duration-normal, 200ms) var(--ease-smooth, ease),
       color var(--duration-fast, 100ms) var(--ease-smooth, ease),
-      transform var(--duration-fast, 100ms) var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1));
+      transform var(--duration-fast, 100ms) var(--ease-smooth, cubic-bezier(0.16, 1, 0.3, 1));
   }
 
   :global(.workspace-nav-item:hover) {

@@ -11,7 +11,7 @@
     IconMessage as Message,
     IconNotebook as Notebook,
     IconRefresh as Refresh,
-    IconRobot as Robot,
+    IconUserStar as AgentIcon,
     IconDeviceFloppy as Save,
     IconShieldCheck as ShieldCheck,
     IconArchive as Archive,
@@ -212,8 +212,10 @@
     try {
       const saved = JSON.parse(window.localStorage.getItem(runnerStorageKey) || 'null');
       if (!saved || typeof saved !== 'object') return;
-      if (['existing', 'this_machine', 'another_machine'].includes(saved.setupMode)) {
-        runnerSetupMode = saved.setupMode;
+      if (saved.setupMode === 'existing') {
+        runnerSetupMode = 'existing';
+      } else if (['new', 'this_machine', 'another_machine'].includes(saved.setupMode)) {
+        runnerSetupMode = 'new';
       }
       if (Number(saved.pendingTokenId) > 0) {
         pendingRunnerTokenId = Number(saved.pendingTokenId);
@@ -618,7 +620,7 @@
       />
     {:else}
       <PageHeader
-        icon={Robot}
+        icon={AgentIcon}
         title={agent.name || agent.handle}
         subtitle={agent.purpose || 'Workspace specialist'}
       >

@@ -5,7 +5,8 @@
     IconCode as Code,
     IconMessage as Message,
     IconActivity as Activity,
-    IconRobot as Robot,
+    IconPlus as Plus,
+    IconUserStar as AgentIcon,
   } from '@tabler/icons-svelte-runes';
   import { agentBindings, agentRuns } from '../../api.js';
   import { workspacePermissions } from '../../stores';
@@ -16,6 +17,7 @@
   import Card from '../../components/Card.svelte';
   import SearchInput from '../../components/SearchInput.svelte';
   import StateDisplay from '../../components/StateDisplay.svelte';
+  import { getShortcutDisplay, toHotkeyString } from '../../utils/keyboardShortcuts.js';
 
   let { workspaceId } = $props();
 
@@ -109,7 +111,7 @@
 >
   <div class="mx-auto max-w-7xl space-y-6">
     <PageHeader
-      icon={Robot}
+      icon={AgentIcon}
       title="Agents"
       subtitle="Specialists available in this workspace"
     >
@@ -118,7 +120,10 @@
           <Button
             href={`/workspaces/${workspaceId}/agents/new`}
             variant="primary"
-            icon={Robot}
+            size="medium"
+            icon={Plus}
+            keyboardHint={getShortcutDisplay('agents', 'add')}
+            hotkeyConfig={{ key: toHotkeyString('agents', 'add') }}
             dataTestid="agent-catalog-manage"
           >
             Create agent
@@ -149,7 +154,7 @@
       <Card variant="outlined" padding="spacious">
         <StateDisplay
           type="empty"
-          icon={Robot}
+          icon={AgentIcon}
           title="No agents yet"
           description={canAdmin
             ? 'Create a Standard or Coding specialist for this workspace.'
@@ -160,6 +165,7 @@
             <Button
               href={`/workspaces/${workspaceId}/agents/new`}
               variant="primary"
+              icon={Plus}
               dataTestid="agent-catalog-empty-manage"
             >
               Create agent
@@ -225,7 +231,7 @@
                 <span>{typeLabel(agent.profile_type)} · {runtimeLabel(agent.runtime)}</span>
               </div>
               <div class="flex items-center gap-2" style="color: var(--ds-text-subtle);">
-                <Robot class="h-4 w-4" />
+                <AgentIcon class="h-4 w-4" />
                 <span>
                   {identityLabel(agent.identity_class)}
                   {agent.owner_name ? ` · Owned by ${agent.owner_name}` : ''}

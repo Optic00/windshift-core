@@ -1,6 +1,7 @@
 import { GanttChart } from '@lucide/svelte';
 import {
   IconAdjustments as Adjustments,
+  IconUserStar as AgentIcon,
   IconChartBar as BarChart3,
   IconBook as Book,
   IconCalendar as Calendar,
@@ -15,7 +16,6 @@ import {
   IconPlayerPlay as Play,
   IconRefresh as Refresh,
   IconRepeat as Repeat,
-  IconRobot as Robot,
   IconLayoutRows as Rows_3,
   IconSettings as SettingsCog,
   IconLayoutKanban as SquareKanban,
@@ -55,27 +55,18 @@ export const workspaceViewItems = [
 ];
 
 /**
- * First-class workspace destinations which are not collection-scoped.
- * Kept separate from Workspace tools so they remain visible when that
- * disclosure is collapsed.
+ * Workspace tools which are not scoped to a collection.
  * @type {WorkspaceView[]}
  */
-export const workspacePrimaryViews = [
+export const workspaceOnlyViews = [
   {
     id: 'agents',
     label: 'Agents',
-    icon: Robot,
+    icon: AgentIcon,
     tooltip: 'Meet and work with workspace agents',
     testId: 'workspace-nav-agents',
     activeViews: ['workspace-agents', 'workspace-agent-profile', 'workspace-agent-create'],
   },
-];
-
-/**
- * Workspace-only views (hidden inside collections).
- * @type {WorkspaceView[]}
- */
-export const workspaceOnlyViews = [
   {
     id: 'iterations',
     label: 'Iterations',
