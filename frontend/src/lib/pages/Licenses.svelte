@@ -209,7 +209,13 @@
                   </span>
                 </td>
                 <td>{entry.project}</td>
-                <td><span class="scope-pill">{entry.scope}</span></td>
+                <td>
+                  <span
+                    class="scope-pill"
+                    class:scope-pill-runtime={entry.scope === 'runtime'}
+                    class:scope-pill-transitive={entry.scope === 'transitive'}
+                  >{entry.scope}</span>
+                </td>
                 <td>
                   {#if url}
                     <a class="source-link" href={url} target="_blank" rel="noreferrer">
@@ -433,6 +439,11 @@
   .scope-pill {
     background: var(--ds-background-neutral, #f3f4f6);
     color: var(--ds-text-subtle);
+  }
+
+  .scope-pill-runtime {
+    background: var(--ds-accent-blue-subtle, #deebff);
+    color: var(--ds-icon-accent-blue, #0052cc);
   }
 
   .source-link,
