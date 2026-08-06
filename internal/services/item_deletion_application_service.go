@@ -121,7 +121,7 @@ func (s *ItemDeletionApplicationService) Delete(req ItemDeletionRequest) (*ItemD
 		return nil, ErrItemDeletionMode
 	}
 
-	s.invalidateCaches(item.WorkspaceID, item.ID, descendantIDs, ancestorIDs)
+	s.invalidateCaches(item.ID, descendantIDs, ancestorIDs)
 	descendantCount := deletedCount - 1
 	if s.emitter != nil {
 		s.emitter.EmitItemDeleted(item, req.ActorUserID, descendantCount, req.ActorUsername)
@@ -149,7 +149,7 @@ func (s *ItemDeletionApplicationService) loadAncestorIDs(itemID int) []int {
 	return ids
 }
 
-func (s *ItemDeletionApplicationService) invalidateCaches(workspaceID, itemID int, descendantIDs, ancestorIDs []int) {
+func (s *ItemDeletionApplicationService) invalidateCaches(itemID int, descendantIDs, ancestorIDs []int) {
 	if s.itemCache == nil {
 		return
 	}
@@ -157,5 +157,4 @@ func (s *ItemDeletionApplicationService) invalidateCaches(workspaceID, itemID in
 	for _, descendantID := range descendantIDs {
 		_ = s.itemCache.InvalidateItemHierarchy(descendantID, nil)
 	}
-	_ = s.itemCache.InvalidateWorkspaceProjects(workspaceID)
 }

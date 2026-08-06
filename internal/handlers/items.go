@@ -659,7 +659,7 @@ func (h *ItemHandler) loadItemForUser(ctx context.Context, user *models.User, id
 
 	// Get effective project from cache
 	if h.itemCache != nil {
-		effectiveProjectID, projectInheritanceMode, err := h.itemCache.GetEffectiveProjectForItem(id, item.WorkspaceID)
+		effectiveProjectID, projectInheritanceMode, err := h.itemCache.GetEffectiveProjectForItem(id)
 		if err == nil && effectiveProjectID != nil {
 			item.EffectiveProjectID = effectiveProjectID
 			item.ProjectInheritanceMode = projectInheritanceMode
@@ -1396,7 +1396,6 @@ func (h *ItemHandler) ReparentChildren(w http.ResponseWriter, r *http.Request) {
 
 	// Invalidate caches for reparented children
 	if h.itemCache != nil {
-		_ = h.itemCache.InvalidateWorkspaceProjects(item.WorkspaceID)
 		for _, child := range children {
 			_ = h.itemCache.InvalidateItemHierarchy(child.ID, nil)
 		}
