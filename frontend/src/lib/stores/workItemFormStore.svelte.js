@@ -1,5 +1,6 @@
 // Centralized reactive state for the work-item create form.
 import { api } from '../api.js';
+import { isBooleanCustomFieldType } from '../utils/customFieldTypes.js';
 import { isGenericSubtaskType, sortItemTypesByHierarchy } from '../utils/hierarchy.js';
 import {
   isCreateSystemFieldAutoManaged,
@@ -535,7 +536,7 @@ class WorkItemFormStore {
       // Reset custom field values for new fields
       this.customFieldValues = {};
       filteredCustomFields.forEach((field) => {
-        this.customFieldValues[field.id] = '';
+        this.customFieldValues[field.id] = isBooleanCustomFieldType(field.field_type) ? false : '';
       });
 
       this.customFields = filteredCustomFields;
@@ -873,8 +874,9 @@ class WorkItemFormStore {
         } else if (field.field_type === 'custom') {
           const fieldId = parseInt(field.field_identifier, 10);
           const value = this.customFieldValues[fieldId];
+          const fieldDef = this.allCustomFields.find((f) => f.id === fieldId);
+          if (isBooleanCustomFieldType(fieldDef?.field_type)) continue;
           if (value === undefined || value === null || value === '') {
-            const fieldDef = this.allCustomFields.find((f) => f.id === fieldId);
             errors.push(`${fieldDef?.name || 'Custom field'} is required`);
           }
         }

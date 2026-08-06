@@ -20,6 +20,7 @@ import (
 	"windshift/internal/repository"
 	"windshift/internal/sanitize"
 	"windshift/internal/utils"
+	"windshift/internal/validation"
 )
 
 // sanitizeAssetText centralizes title, description, and tag policies for both authenticated surfaces.
@@ -286,7 +287,7 @@ func validateCustomFieldsSchemaCore(fields []models.AssetTypeField, values map[s
 
 	if opts.EnforceRequired {
 		for _, f := range fields {
-			if !f.IsRequired {
+			if !f.IsRequired || models.IsBooleanCustomFieldType(f.FieldType) {
 				continue
 			}
 			if !customFieldValuePresent(values, f) {
@@ -359,7 +360,7 @@ func coerceAssetFieldValue(f models.AssetTypeField, v interface{}) interface{} {
 			}
 		}
 		return v
-	case "boolean":
+	case models.CustomFieldTypeBoolean, models.CustomFieldTypeCheckbox:
 		if b, ok := v.(bool); ok {
 			return b
 		}
@@ -482,10 +483,9 @@ func validateAssetFieldValue(f models.AssetTypeField, v interface{}) error {
 		default:
 			return fmt.Errorf("expected number")
 		}
-	case "boolean":
-		if _, ok := v.(bool); !ok {
-			return fmt.Errorf("expected boolean")
-		}
+	case models.CustomFieldTypeBoolean, models.CustomFieldTypeCheckbox:
+		_, err := validation.ValidateCheckboxValue(f.FieldName, v)
+		return err
 	case "date":
 		s, ok := v.(string)
 		if !ok {

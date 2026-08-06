@@ -2848,7 +2848,7 @@ func (h *JiraImportHandler) ensureCustomFields(
 			continue
 		}
 
-		fieldType := strings.TrimSpace(m.WindshiftType)
+		fieldType := models.CanonicalCustomFieldType(strings.TrimSpace(m.WindshiftType))
 		if fieldType == "" || fieldType == string(jira.FieldTypeUnmapped) {
 			continue
 		}
@@ -2925,7 +2925,7 @@ func (h *JiraImportHandler) ensureCustomFields(
 				// only reuse a definition previously created for this Jira field.
 				// Operators can explicitly choose action=map to reuse an unrelated
 				// existing Windshift definition.
-				compatible := existingType == fieldType && existingDescription.String == sourceDescription
+				compatible := models.CanonicalCustomFieldType(existingType) == fieldType && existingDescription.String == sourceDescription
 				if compatible && fieldType == string(jira.FieldTypeAsset) {
 					var existingConfig struct {
 						AssetSetID int `json:"asset_set_id"`

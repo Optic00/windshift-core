@@ -40,11 +40,32 @@ func ValidateAndNormalizeCustomFieldValues(db database.Database, cfv map[string]
 				return err
 			}
 			cfv[fieldKey] = normalized
+		case models.CustomFieldTypeBoolean, models.CustomFieldTypeCheckbox:
+			if _, err := ValidateCheckboxValue(fieldKey, raw); err != nil {
+				return &ValidationError{
+					Field:   "custom_field_values." + fieldKey,
+					Message: fmt.Sprintf("boolean value must be true, false, or empty; got %T", raw),
+				}
+			}
 		case "text", "textarea":
 			cfv[fieldKey] = sanitizeTextValue(def.FieldType, raw)
 		}
 	}
 	return nil
+}
+
+// ValidateCheckboxValue enforces the asset-aligned boolean value contract. An
+// empty value is valid, and a supplied value must be an actual Go/JSON boolean.
+// Requiredness never changes boolean semantics: both true and false are valid.
+func ValidateCheckboxValue(fieldID string, raw interface{}) (bool, error) {
+	if raw == nil {
+		return false, nil
+	}
+	value, ok := raw.(bool)
+	if !ok {
+		return false, fmt.Errorf("field %s must be a boolean value", fieldID)
+	}
+	return value, nil
 }
 
 // SanitizeCustomFieldTextValues sanitizes text fields for prevalidated writes.

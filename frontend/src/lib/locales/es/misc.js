@@ -149,6 +149,7 @@ export default {
     createField: 'Crear campo',
     editField: 'Editar campo',
     deleteField: 'Eliminar campo',
+    returnToBoard: 'Volver a campos del tablero',
     fieldName: 'Nombre del campo',
     fieldType: 'Tipo de campo',
     fieldDescription: 'Descripción',

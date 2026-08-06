@@ -598,6 +598,7 @@ export default {
     createField: 'Feld erstellen',
     editField: 'Feld bearbeiten',
     deleteField: 'Feld löschen',
+    returnToBoard: 'Zurück zu Board-Feldern',
     fieldName: 'Feldname',
     fieldType: 'Feldtyp',
     fieldDescription: 'Beschreibung',

@@ -136,6 +136,7 @@ export default {
     createField: '创建字段',
     editField: '编辑字段',
     deleteField: '删除字段',
+    returnToBoard: '返回看板字段',
     fieldName: '字段名称',
     fieldType: '字段类型',
     fieldDescription: '描述',

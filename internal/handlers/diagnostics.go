@@ -117,6 +117,13 @@ func (h *DiagnosticsHandler) GetCacheMemory(w http.ResponseWriter, _ *http.Reque
 		"heap_alloc_bytes":       memory.HeapAlloc,
 		"heap_in_use_bytes":      memory.HeapInuse,
 		"runtime_system_bytes":   memory.Sys,
+		"process_rss_bytes":      processResidentBytes(),
+		"cgroup_memory":          readCgroupMemory(),
+		"next_gc_bytes":          memory.NextGC,
+		"gc_count":               memory.NumGC,
+		"gc_cpu_fraction":        memory.GCCPUFraction,
+		"gc_pause_total_ns":      memory.PauseTotalNs,
+		"gc_pause_max_ns":        maximumGCPause(memory),
 		"heap_limit_utilization": heapUtilization,
 		"allocated_cache_bytes":  allocatedBytes,
 		"maximum_cache_bytes":    maximumBytes,
@@ -125,6 +132,92 @@ func (h *DiagnosticsHandler) GetCacheMemory(w http.ResponseWriter, _ *http.Reque
 		"healthy":                heapUtilization < 90,
 		"sampled_at":             time.Now().UTC(),
 	})
+}
+
+func maximumGCPause(memory runtime.MemStats) uint64 {
+	count := min(uint32(len(memory.PauseNs)), memory.NumGC)
+	var maximum uint64
+	for index := range count {
+		pause := memory.PauseNs[index]
+		if pause > maximum {
+			maximum = pause
+		}
+	}
+	return maximum
+}
+
+type cgroupMemorySnapshot struct {
+	Available     bool   `json:"available"`
+	CurrentBytes  uint64 `json:"current_bytes"`
+	PeakBytes     uint64 `json:"peak_bytes"`
+	LimitBytes    uint64 `json:"limit_bytes"`
+	OOMEvents     uint64 `json:"oom_events"`
+	OOMKillEvents uint64 `json:"oom_kill_events"`
+}
+
+func processResidentBytes() uint64 {
+	data, err := os.ReadFile("/proc/self/statm")
+	if err != nil {
+		return 0
+	}
+	fields := strings.Fields(string(data))
+	if len(fields) < 2 {
+		return 0
+	}
+	residentPages, err := strconv.ParseUint(fields[1], 10, 64)
+	if err != nil {
+		return 0
+	}
+	// The page size is a positive, platform-provided value; residentPages is
+	// parsed as uint64 above so the multiplication cannot use a signed value.
+	return residentPages * uint64(os.Getpagesize()) //nolint:gosec // page size is platform-provided and positive
+}
+
+func readCgroupMemory() cgroupMemorySnapshot {
+	const root = "/sys/fs/cgroup/"
+	current, currentOK := readCgroupUint(root + "memory.current")
+	peak, _ := readCgroupUint(root + "memory.peak")
+	limit, _ := readCgroupUint(root + "memory.max")
+	snapshot := cgroupMemorySnapshot{
+		Available:    currentOK,
+		CurrentBytes: current,
+		PeakBytes:    peak,
+		LimitBytes:   limit,
+	}
+	events, err := os.ReadFile(root + "memory.events")
+	if err != nil {
+		return snapshot
+	}
+	for _, line := range strings.Split(string(events), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		value, parseErr := strconv.ParseUint(fields[1], 10, 64)
+		if parseErr != nil {
+			continue
+		}
+		switch fields[0] {
+		case "oom":
+			snapshot.OOMEvents = value
+		case "oom_kill":
+			snapshot.OOMKillEvents = value
+		}
+	}
+	return snapshot
+}
+
+func readCgroupUint(path string) (uint64, bool) {
+	data, err := os.ReadFile(path) //nolint:gosec // callers pass fixed cgroup metric paths
+	if err != nil {
+		return 0, false
+	}
+	value := strings.TrimSpace(string(data))
+	if value == "max" {
+		return 0, true
+	}
+	parsed, err := strconv.ParseUint(value, 10, 64)
+	return parsed, err == nil
 }
 
 const (

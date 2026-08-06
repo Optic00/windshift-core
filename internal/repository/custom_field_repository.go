@@ -114,6 +114,7 @@ func (r *CustomFieldRepository) FindOptions(id int) (string, error) {
 
 // Create inserts a new custom field definition and returns its id.
 func (r *CustomFieldRepository) Create(cf *models.CustomFieldDefinition, now time.Time) (int64, error) {
+	cf.FieldType = models.CanonicalCustomFieldType(cf.FieldType)
 	var id int64
 	//nolint:misspell // database uses British spelling (applies_to_customer_organisations)
 	err := r.db.QueryRow(`
@@ -148,6 +149,7 @@ func (r *CustomFieldRepository) CreateMirror(name, optionsJSON string, now time.
 
 // Update overwrites the editable fields of a custom field definition.
 func (r *CustomFieldRepository) Update(id int, cf *models.CustomFieldDefinition, now time.Time) error {
+	cf.FieldType = models.CanonicalCustomFieldType(cf.FieldType)
 	//nolint:misspell // customer_organisations is a database table column
 	_, err := r.db.ExecWrite(`
 		UPDATE custom_field_definitions

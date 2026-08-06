@@ -4,6 +4,8 @@
   import { formatDate, formatDateShort, formatStatusAge } from '../../utils/dateFormatter.js';
   import { resolveOptionLabel } from '../../utils/optionUtils.js';
   import { durationToString } from '../../utils/timeUtils.js';
+  import { booleanCustomFieldChecked, isBooleanCustomFieldType } from '../../utils/customFieldTypes.js';
+  import { t } from '../../stores/i18n.svelte.js';
 
   // Renders the chip(s) for a single configured board card field. Centralising
   // this here keeps the board configuration surface (CARD_SELECTABLE_FIELDS) and
@@ -176,10 +178,13 @@
       <Chip appearance="metadata" title={customFieldDef.name}>
         {resolveOptionLabel(customFieldDef.options, customFieldValue) || customFieldValue}
       </Chip>
-    {:else if customFieldDef.field_type === 'checkbox'}
-      <Chip appearance="metadata" title={customFieldDef.name}>
-        {/** @type {any} */ (customFieldValue) === true || String(customFieldValue) === 'true' || customFieldValue === '1' ? '✓' : '✗'}
-      </Chip>
+    {:else if isBooleanCustomFieldType(customFieldDef.field_type)}
+      {@const checked = booleanCustomFieldChecked(customFieldValue)}
+      <span data-testid={`board-card-custom-field-${customFieldId}`}>
+        <Chip appearance="metadata" title={`${customFieldDef.name}: ${checked ? t('common.yes') : t('common.no')}`}>
+          {customFieldDef.name}: {checked ? t('common.yes') : t('common.no')}
+        </Chip>
+      </span>
     {:else if customFieldDef.field_type === 'number'}
       <Chip appearance="metadata" title={customFieldDef.name}>
         {parseFloat(String(customFieldValue))}

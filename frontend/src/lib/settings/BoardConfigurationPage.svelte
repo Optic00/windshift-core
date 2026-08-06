@@ -72,6 +72,40 @@
     collectionId != null || workspacePermissions.canAdminWorkspace(workspaceId)
   );
 
+  // Custom-field administration is global and system-administrator-only. A
+  // workspace administrator who is not a system administrator must not be
+  // shown an unusable privileged action.
+  let isSystemAdmin = $derived(
+    /** @type {any} */ (workspacePermissions).isSystemAdmin === true
+  );
+  let isNonSystemWorkspaceAdmin = $derived(
+    !isSystemAdmin && workspacePermissions.canAdminWorkspace(workspaceId)
+  );
+  let hasCustomFields = $derived(customFieldDefinitions.length > 0);
+  let boardConfigReturnTo = $derived(
+    collectionId != null && workspaceId != null
+      ? `/workspaces/${workspaceId}/collections/${collectionId}/board/configure`
+      : collectionId != null
+        ? `/collections/${collectionId}/board/configure`
+        : workspaceId != null
+          ? `/workspaces/${workspaceId}/board/configure`
+          : '/'
+  );
+
+  async function goCustomFields(create) {
+    if (hasChanges) {
+      const confirmed = await confirm({
+        title: t('common.discardChanges'),
+        message: t('dialogs.confirmations.discardChanges'),
+        confirmText: t('common.discard'),
+        cancelText: t('common.cancel'),
+      });
+      if (!confirmed) return;
+    }
+    const returnTo = encodeURIComponent(boardConfigReturnTo);
+    navigate(`/admin/custom-fields?returnTo=${returnTo}${create ? '&action=create' : ''}`);
+  }
+
   // Derived: set of all assigned status IDs
   let assignedStatusIds = $derived(new Set(columns.flatMap(c => c.status_ids)));
 
@@ -1092,6 +1126,33 @@
                     </button>
                   {/each}
                 </div>
+              {/if}
+
+              <!-- Custom-field global administration -->
+              {#if isSystemAdmin}
+                <div class="flex items-center justify-between mt-4 mb-2">
+                  <p class="text-xs" style="color: var(--ds-text-subtle);">
+                    {t('settings.boardConfig.customFields')}
+                  </p>
+                  <button
+                    data-testid="board-custom-fields-action"
+                    type="button"
+                    onclick={() => goCustomFields(!hasCustomFields)}
+                    class="px-3 py-1.5 text-xs rounded-full border transition-colors"
+                    style="border-color: var(--ds-border); color: var(--ds-interactive); background: var(--ds-surface);"
+                  >
+                    <Plus class="w-3 h-3 inline mr-1" />
+                    {hasCustomFields ? t('settings.boardConfig.manageCustomFields') : t('settings.boardConfig.createCustomField')}
+                  </button>
+                </div>
+              {:else if isNonSystemWorkspaceAdmin}
+                <p
+                  data-testid="board-custom-fields-admin-note"
+                  class="text-xs mt-4 mb-2 p-2 rounded"
+                  style="color: var(--ds-text-subtle); background: var(--ds-surface); border: 1px solid var(--ds-border);"
+                >
+                  {t('settings.boardConfig.customFieldsGlobalNote')}
+                </p>
               {/if}
 
               <!-- Custom fields -->

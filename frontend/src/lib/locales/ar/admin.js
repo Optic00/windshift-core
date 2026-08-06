@@ -789,6 +789,9 @@ export default {
       addField: 'إضافة حقل',
       systemFields: 'حقول النظام',
       customFields: 'حقول مخصصة',
+      manageCustomFields: 'إدارة الحقول المخصصة',
+      createCustomField: 'إنشاء حقل مخصص',
+      customFieldsGlobalNote: 'تتم إدارة الحقول المخصصة عالمياً بواسطة مسؤول النظام.',
     },
     actionCapabilities: {
       title: 'إمكانيات الإجراءات',

@@ -882,6 +882,9 @@ export default {
       addField: 'Add Field',
       systemFields: 'System Fields',
       customFields: 'Custom Fields',
+      manageCustomFields: 'Manage custom fields',
+      createCustomField: 'Create custom field',
+      customFieldsGlobalNote: 'Custom fields are managed globally by a system administrator.',
     },
   },
 

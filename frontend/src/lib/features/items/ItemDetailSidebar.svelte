@@ -27,6 +27,7 @@
   import { formatDateShort, formatCustomFieldDate } from '../../utils/dateFormatter.js';
   import { parseDuration, durationToString } from '../../utils/timeUtils.js';
   import { resolveOptionLabel, resolveOptionLabels } from '../../utils/optionUtils.js';
+  import { booleanCustomFieldChecked, isBooleanCustomFieldType } from '../../utils/customFieldTypes.js';
   import { isSystemFieldConfigured, systemFieldIdentifiers } from '../../utils/screenFields.js';
   import StatusBadge from '../../components/StatusBadge.svelte';
   import Badge from '../../components/Badge.svelte';
@@ -304,20 +305,9 @@
     return customFieldDefinitions.find(field => field.id === parseInt(fieldId));
   }
 
-  function coerceCheckboxValue(raw) {
-    if (typeof raw === 'boolean') return raw;
-    if (typeof raw === 'number') return raw !== 0;
-    if (typeof raw === 'string') {
-      const normalized = raw.trim().toLowerCase();
-      if (['false', '0', 'no', 'off'].includes(normalized)) return false;
-      if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
-    }
-    return Boolean(raw);
-  }
-
   function formatCustomFieldValue(fieldDef, value) {
-    if (fieldDef.field_type === 'checkbox') {
-      return coerceCheckboxValue(value) ? t('common.yes') : t('common.no');
+    if (isBooleanCustomFieldType(fieldDef.field_type)) {
+      return booleanCustomFieldChecked(value) ? t('common.yes') : t('common.no');
     }
     if (fieldDef.field_type === 'select') {
       return resolveOptionLabel(fieldDef.options, value);

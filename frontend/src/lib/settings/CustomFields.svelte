@@ -2,7 +2,7 @@
   import { onMount, untrack } from 'svelte';
   import { api } from '../api.js';
   import { currentRoute, navigate } from '../router.js';
-  import { Plus, Edit, Trash2, MoreHorizontal, Circle, Database, Settings, Type, AlignLeft, ChevronDownCircle, ListChecks, Hash, Calendar, User, Repeat, Flag, Box, Globe, Building2, Link2 } from '@lucide/svelte';
+  import { Plus, Edit, Trash2, MoreHorizontal, Circle, Database, Settings, Type, AlignLeft, ChevronDownCircle, ListChecks, Hash, Calendar, User, Repeat, Flag, Box, Globe, Building2, Link2, CheckSquare } from '@lucide/svelte';
   import Button from '../components/Button.svelte';
   import Input from '../components/Input.svelte';
   import Select from '../components/Select.svelte';
@@ -29,6 +29,8 @@
   import { X as XIcon } from '@lucide/svelte';
   import DescriptionText from '../components/DescriptionText.svelte';
   import { loadCustomFieldsOverview } from './customFieldsData.js';
+  import { BOOLEAN_CUSTOM_FIELD_TYPE, canonicalCustomFieldType, isBooleanCustomFieldType } from '../utils/customFieldTypes.js';
+  import { workspaceDataStore } from '../stores/workspaceDataStore.svelte.js';
 
   const entityTypeOptions = [
     { id: 'item', name: 'Items' },
@@ -41,6 +43,12 @@
   let screens = $state([]);
   let showCreateForm = $state(false);
   let editingField = $state(null);
+  // Validated board-configuration route to return to after a create/cancel
+  // flow, or to surface as a "Back to board fields" action in the manage flow.
+  let boardReturnTarget = $state(null);
+  // True only when this page was opened via action=create from board
+  // configuration, in which case cancel/success should return automatically.
+  let boardCreateFlow = $state(false);
   /** @type {{ field_name: string, field_type: string, field_config: Record<string, any>, applies_to_portal_customers: boolean, applies_to_customer_organisations: boolean, description?: string, required?: boolean }} */
   let formData = $state({
     field_name: '',
@@ -82,6 +90,7 @@
     { value: 'asset', label: 'Asset', icon: Box, iconColor: '#7B8A9E' },
     { value: 'portalcustomer', label: 'Portal Customer', icon: Globe, iconColor: '#E07BAF' },
     { value: 'customerorganisation', label: 'Customer Organisation', icon: Building2, iconColor: '#8B7EC8' },
+    { value: BOOLEAN_CUSTOM_FIELD_TYPE, label: t('fields.checkbox'), icon: CheckSquare, iconColor: '#2F9E8F' },
     { value: 'linking', label: 'Linking', icon: Link2, iconColor: '#3B82F6' }
   ];
 
@@ -117,6 +126,25 @@
   });
 
   onMount(async () => {
+    // Board-configuration entry: validate `returnTo` and consume `action=create`
+    // exactly once (removing it from browser history so back/forward never
+    // re-opens the create form).
+    const query = $currentRoute.query || {};
+    const returnPath = validateReturnTo(query.returnTo);
+    if (query.action === 'create') {
+      boardCreateFlow = true;
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.delete('action');
+        history.replaceState(history.state, '', url.toString());
+      } catch { /* history rewrite is best-effort */ }
+      boardReturnTarget = returnPath;
+      if (returnPath) startCreate();
+    } else if (returnPath) {
+      boardCreateFlow = false;
+      boardReturnTarget = returnPath;
+    }
+
     const loadCatalog = async (loader, label) => {
       try {
         return (await loader()) || [];
@@ -176,7 +204,7 @@
     editingField = field;
     formData = {
       field_name: field.name,
-      field_type: field.field_type,
+      field_type: canonicalCustomFieldType(field.field_type),
       field_config: { max_length: '' },
       applies_to_portal_customers: field.applies_to_portal_customers || false,
       applies_to_customer_organisations: field.applies_to_customer_organisations || false
@@ -265,10 +293,30 @@
     linkingMirrorAllowedItemTypeIds = [];
   }
 
+  // Board-configuration routes this page may return to. External, protocol-
+  // relative, and unrelated paths are rejected rather than trusted.
+  function validateReturnTo(raw) {
+    if (typeof raw !== 'string' || !raw) return null;
+    let p = raw;
+    try { p = decodeURIComponent(raw); } catch { /* keep raw */ }
+    if (!p.startsWith('/') || p.startsWith('//') || /[?#\s:]/.test(p)) return null;
+    const ok = /^\/(?:collections\/\d+\/board\/configure|workspaces\/\d+(?:\/collections\/\d+)?\/board\/configure)$/.test(p);
+    return ok ? p : null;
+  }
+
+  function returnToBoard() {
+    if (!boardReturnTarget) return;
+    navigate(boardReturnTarget);
+    boardReturnTarget = null;
+    boardCreateFlow = false;
+  }
+
   function cancelForm() {
+    const navigateAway = boardCreateFlow && boardReturnTarget;
     showCreateForm = false;
     editingField = null;
     resetForm();
+    if (navigateAway) returnToBoard();
   }
 
   function processFieldConfig() {
@@ -386,6 +434,7 @@
       }
 
       await loadCustomFields();
+      await workspaceDataStore.invalidate('customFieldDefinitions');
       cancelForm();
       window.dispatchEvent(new CustomEvent('refresh-workspace-data'));
     } catch (error) {
@@ -415,7 +464,7 @@
   }
 
   function getFieldTypeLabel(type) {
-    return fieldTypes.find(t => t.value === type)?.label || type;
+    return fieldTypes.find(t => t.value === canonicalCustomFieldType(type))?.label || type;
   }
 
   function getScreenCount(fieldId) {
@@ -640,10 +689,20 @@
         placeholder={t('fields.searchFields')}
         class="w-64"
       />
+      {#if boardReturnTarget && !boardCreateFlow}
+        <Button
+          variant="default"
+          dataTestid="custom-fields-return-to-board"
+          onclick={returnToBoard}
+        >
+          {t('fields.returnToBoard')}
+        </Button>
+      {/if}
       <Button
         id="create-field-button"
         variant="primary"
         icon={Plus}
+        dataTestid="custom-field-create"
         onclick={startCreate}
         keyboardHint="A"
         hotkeyConfig={{ key: toHotkeyString('customFields', 'add'), guard: () => !showCreateForm }}
@@ -670,7 +729,7 @@
 </PageHeader>
 
 
-<Modal isOpen={showCreateForm} onclose={cancelForm} maxWidth="max-w-2xl">
+<Modal isOpen={showCreateForm} onclose={cancelForm} onSubmit={saveField} maxWidth="max-w-2xl" dataTestid="custom-field-dialog">
   <ModalHeader title={editingField ? t('fields.editField') : t('fields.createField')} showCloseButton={false} />
 
   <!-- Modal content -->
@@ -682,6 +741,7 @@
           <Label for="field-name" required class="mb-2">{t('fields.fieldName')}</Label>
           <Input
             id="field-name"
+            dataTestid="custom-field-name"
             bind:value={formData.field_name}
             placeholder="e.g., Sprint, Epic, Customer Impact"
             required
@@ -691,6 +751,7 @@
         <div>
           <Label for="field-type" required class="mb-2">{t('fields.fieldType')}</Label>
           <DropdownMenu
+            triggerTestid="custom-field-type-trigger"
             triggerIcon={selectedFieldType?.icon}
             triggerIconBgColor={selectedFieldType?.iconColor}
             triggerText={selectedFieldType?.label || 'Select type...'}
@@ -705,7 +766,14 @@
               icon: type.icon,
               iconColor: type.iconColor,
               title: type.label,
-              onClick: () => { formData.field_type = type.value; }
+              testid: isBooleanCustomFieldType(type.value) ? 'custom-field-type-checkbox' : undefined,
+              onClick: () => {
+                if (isBooleanCustomFieldType(type.value)) {
+                  optionItems = [];
+                  nextOptionId = 1;
+                }
+                formData.field_type = type.value;
+              }
             }))}
           />
           {#if isMilestoneField}
@@ -772,7 +840,7 @@
       {/if}
 
       {#if needsOptions}
-        <div class="mt-6">
+        <div class="mt-6" data-testid="custom-field-options">
           <Label required class="mb-2">Options</Label>
           <div class="flex flex-col gap-2">
             {#each optionItems as item, index}
@@ -957,6 +1025,9 @@
     onCancel={cancelForm}
     onConfirm={saveField}
     confirmLabel={editingField ? t('common.update') : t('common.create')}
+    confirmTestid="custom-field-save"
+    showKeyboardHint={true}
+    confirmKeyboardHint="⏎"
     disabled={!formData.field_name.trim() || (needsOptions && optionItems.filter(i => i.label.trim()).length === 0) || (isAssetField && !assetSetId) || (isLinkingField && !isLinkingMirror && !linkingLinkTypeId)}
   />
 </Modal>
@@ -984,7 +1055,7 @@
   />
 </Modal>
 
-  <div class="mb-6">
+  <div class="mb-6" data-testid="custom-fields-table">
     <DataTable
       columns={fieldColumns}
       data={paginatedCustomFields}

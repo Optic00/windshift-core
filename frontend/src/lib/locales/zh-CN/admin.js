@@ -724,6 +724,9 @@ export default {
       addField: '添加字段',
       systemFields: '系统字段',
       customFields: '自定义字段',
+      manageCustomFields: '管理自定义字段',
+      createCustomField: '创建自定义字段',
+      customFieldsGlobalNote: '自定义字段由系统管理员全局管理。',
     },
   },
 

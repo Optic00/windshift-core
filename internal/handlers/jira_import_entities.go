@@ -658,6 +658,10 @@ func extractCustomFieldValueWithOptions(
 		if s := customFieldDisplayValue(value); s != "" {
 			return s, true
 		}
+	case models.CustomFieldTypeBoolean, models.CustomFieldTypeCheckbox:
+		if b, ok := jiraCheckboxValue(value); ok {
+			return b, true
+		}
 	}
 	return nil, false
 }
@@ -687,6 +691,36 @@ func numericCustomFieldValue(value any) (float64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+// jiraCheckboxValue converts a Jira boolean representation to a canonical Go
+// boolean. It accepts a raw JSON/Go bool, exact true/false strings from export
+// payloads, and known wrapper shapes containing one of those values. Unknown
+// or ambiguous shapes are not coerced — the caller reports them as
+// unmapped/skipped import data rather than persisting a guessed value.
+func jiraCheckboxValue(value any) (result, ok bool) {
+	switch v := value.(type) {
+	case bool:
+		return v, true
+	case string:
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "true":
+			return true, true
+		case "false":
+			return false, true
+		}
+	case map[string]any:
+		for _, k := range []string{"value", "checked", "enabled", "name"} {
+			if b, ok := jiraCheckboxValue(v[k]); ok {
+				return b, true
+			}
+		}
+	case []any:
+		if len(v) == 1 {
+			return jiraCheckboxValue(v[0])
+		}
+	}
+	return false, false
 }
 
 func customFieldIDValue(value any) string {

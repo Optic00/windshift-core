@@ -2436,11 +2436,21 @@ func (r *AssetRepository) CreateAssetTypeWithFields(setID int, typeCore models.A
 
 	results = make([]ImportTypeFieldResult, 0, len(fields))
 	for _, f := range fields {
+		f.FieldType = models.CanonicalCustomFieldType(f.FieldType)
 		var cfID int
-		err = tx.QueryRow(`
-			SELECT id FROM custom_field_definitions
-			WHERE LOWER(name) = LOWER(?) AND field_type = ?
-		`, f.Name, f.FieldType).Scan(&cfID)
+		if models.IsBooleanCustomFieldType(f.FieldType) {
+			err = tx.QueryRow(`
+				SELECT id FROM custom_field_definitions
+				WHERE LOWER(name) = LOWER(?) AND field_type IN (?, ?)
+				ORDER BY CASE WHEN field_type = ? THEN 0 ELSE 1 END, id
+				LIMIT 1
+			`, f.Name, models.CustomFieldTypeBoolean, models.CustomFieldTypeCheckbox, models.CustomFieldTypeBoolean).Scan(&cfID)
+		} else {
+			err = tx.QueryRow(`
+				SELECT id FROM custom_field_definitions
+				WHERE LOWER(name) = LOWER(?) AND field_type = ?
+			`, f.Name, f.FieldType).Scan(&cfID)
+		}
 		if errors.Is(err, sql.ErrNoRows) {
 			if err = tx.QueryRow(`
 				INSERT INTO custom_field_definitions (name, field_type, options, created_at, updated_at)

@@ -516,6 +516,7 @@ func (s *ConfigSetImportService) apply(ctx context.Context, tx database.Tx, tpl 
 // ---- find-or-create helpers ----------------------------------------------
 
 func (s *ConfigSetImportService) findOrCreateCustomField(ctx context.Context, tx database.Tx, cf ConfigSetTplCustomField, now time.Time) (int, error) {
+	cf.FieldType = models.CanonicalCustomFieldType(cf.FieldType)
 	var id int
 	err := tx.QueryRowContext(ctx, `SELECT id FROM custom_field_definitions WHERE LOWER(name) = LOWER(?)`, cf.Name).Scan(&id)
 	if err == nil {

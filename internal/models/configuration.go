@@ -243,6 +243,30 @@ type CustomFieldIndexInfo struct {
 	Assets bool `json:"assets"`
 }
 
+const (
+	// CustomFieldTypeBoolean is the canonical field type used by the asset
+	// subsystem and every surface that consumes global custom fields.
+	CustomFieldTypeBoolean = "boolean"
+	// CustomFieldTypeCheckbox is retained as a compatibility alias for
+	// definitions written by older clients and prerelease WI-891 builds.
+	CustomFieldTypeCheckbox = "checkbox"
+)
+
+// IsBooleanCustomFieldType reports whether a definition uses either the
+// canonical asset type or its legacy UI-oriented alias.
+func IsBooleanCustomFieldType(fieldType string) bool {
+	return fieldType == CustomFieldTypeBoolean || fieldType == CustomFieldTypeCheckbox
+}
+
+// CanonicalCustomFieldType maps compatibility aliases to the asset subsystem's
+// canonical type before definitions are persisted or compared for reuse.
+func CanonicalCustomFieldType(fieldType string) string {
+	if IsBooleanCustomFieldType(fieldType) {
+		return CustomFieldTypeBoolean
+	}
+	return fieldType
+}
+
 // CustomFieldDefinition represents a custom field definition
 type CustomFieldDefinition struct {
 	ID                             int       `json:"id"`

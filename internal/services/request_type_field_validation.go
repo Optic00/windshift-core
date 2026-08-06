@@ -85,14 +85,10 @@ func normalizeVirtualFieldValue(fieldID string, field virtualRequestField, raw i
 		}
 		return normalized, nil
 	case "checkbox":
-		value, ok := raw.(bool)
-		if !ok {
-			return nil, fmt.Errorf("field %s must be a checkbox value", fieldID)
+		if raw == nil {
+			return nil, nil
 		}
-		if field.required && !value {
-			return nil, fmt.Errorf("field %s must be checked", fieldID)
-		}
-		return value, nil
+		return validation.ValidateCheckboxValue(fieldID, raw)
 	case "select":
 		if IsBlankSubmittedField(raw) {
 			return raw, nil
@@ -239,11 +235,14 @@ func ValidateAndSeparateRequestFields(ctx context.Context, db database.Database,
 	virtualFields := make(map[string]virtualRequestField)
 	configuredCustomFieldIDs := make(map[string]bool)
 	rows, err := db.QueryContext(ctx, `
-		SELECT field_identifier, field_type, is_required,
-		       COALESCE(virtual_field_type, ''), COALESCE(virtual_field_options, '')
-		FROM request_type_fields
-		WHERE request_type_id = ?
-		ORDER BY display_order
+		SELECT rtf.field_identifier, rtf.field_type, rtf.is_required,
+		       COALESCE(rtf.virtual_field_type, ''), COALESCE(rtf.virtual_field_options, ''),
+		       COALESCE(cfd.field_type, '')
+		FROM request_type_fields rtf
+		LEFT JOIN custom_field_definitions cfd
+		  ON rtf.field_type = 'custom' AND CAST(cfd.id AS TEXT) = rtf.field_identifier
+		WHERE rtf.request_type_id = ?
+		ORDER BY rtf.display_order
 	`, *requestTypeID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load request type fields: %w", err)
@@ -251,9 +250,9 @@ func ValidateAndSeparateRequestFields(ctx context.Context, db database.Database,
 	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
-		var fieldID, fieldType, virtualFieldType, virtualFieldOptions string
+		var fieldID, fieldType, virtualFieldType, virtualFieldOptions, customFieldType string
 		var isRequired bool
-		if err := rows.Scan(&fieldID, &fieldType, &isRequired, &virtualFieldType, &virtualFieldOptions); err != nil {
+		if err := rows.Scan(&fieldID, &fieldType, &isRequired, &virtualFieldType, &virtualFieldOptions, &customFieldType); err != nil {
 			return nil, fmt.Errorf("scan request type field: %w", err)
 		}
 		if fieldType == "custom" {
@@ -291,10 +290,16 @@ func ValidateAndSeparateRequestFields(ctx context.Context, db database.Database,
 					return nil, fmt.Errorf("description is required")
 				}
 			case "custom":
+				if models.IsBooleanCustomFieldType(customFieldType) {
+					continue
+				}
 				if customFields == nil || IsBlankSubmittedField(customFields[fieldID]) {
 					return nil, fmt.Errorf("field %s is required", fieldID)
 				}
 			case "virtual":
+				if virtualFieldType == "checkbox" {
+					continue
+				}
 				if customFields == nil || IsBlankSubmittedField(customFields[fieldID]) {
 					return nil, fmt.Errorf("field %s is required", fieldID)
 				}

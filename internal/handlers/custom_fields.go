@@ -182,6 +182,7 @@ func (h *CustomFieldHandler) validateAndNormalizeCustomField(w http.ResponseWrit
 		respondValidationError(w, r, "Field name is required")
 		return nil, nil, false
 	}
+	cf.FieldType = models.CanonicalCustomFieldType(cf.FieldType)
 	if !isValidFieldType(cf.FieldType) {
 		respondValidationError(w, r, "Invalid field type")
 		return nil, nil, false
@@ -202,6 +203,11 @@ func (h *CustomFieldHandler) validateAndNormalizeCustomField(w http.ResponseWrit
 			respondValidationError(w, r, err.Error())
 			return nil, nil, false
 		}
+	}
+
+	if models.IsBooleanCustomFieldType(cf.FieldType) && strings.TrimSpace(cf.Options) != "" {
+		respondValidationError(w, r, "Checkbox fields do not support options")
+		return nil, nil, false
 	}
 
 	if (cf.FieldType == "select" || cf.FieldType == "multiselect") && cf.Options != "" {
@@ -844,20 +850,22 @@ func (h *CustomFieldHandler) cleanupRemovedOptions(fieldID int, oldOptionsJSON, 
 // --- small helpers extracted to keep Create/Update flows readable ----------
 
 var validFieldTypes = map[string]bool{
-	"text":                 true,
-	"textarea":             true,
-	"select":               true,
-	"multiselect":          true,
-	"number":               true,
-	"milestone":            true,
-	"date":                 true,
-	"user":                 true,
-	"multi_user":           true,
-	"iteration":            true,
-	"asset":                true,
-	"portalcustomer":       true,
-	"customerorganisation": true, //nolint:misspell // matches database column
-	"linking":              true,
+	"text":                         true,
+	"textarea":                     true,
+	"select":                       true,
+	"multiselect":                  true,
+	"number":                       true,
+	"milestone":                    true,
+	"date":                         true,
+	"user":                         true,
+	"multi_user":                   true,
+	"iteration":                    true,
+	"asset":                        true,
+	"portalcustomer":               true,
+	"customerorganisation":         true, //nolint:misspell // matches database column
+	"linking":                      true,
+	models.CustomFieldTypeBoolean:  true,
+	models.CustomFieldTypeCheckbox: true,
 }
 
 func isValidFieldType(t string) bool {

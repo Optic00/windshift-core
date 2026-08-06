@@ -164,7 +164,7 @@
     customFieldDefinitions = detail.custom_field_definitions || [];
     steps = buildFormSteps(fields);
 
-    let values = initializeFormValues(fields, initialValues);
+    let values = initializeFormValues(fields, initialValues, customFieldDefinitions);
     let nextStep = steps[0];
     resumedDraft = null;
 
@@ -184,7 +184,7 @@
         userId: draftUserId,
       });
       if (draft) {
-        values = initializeFormValues(fields, draft);
+        values = initializeFormValues(fields, draft, customFieldDefinitions);
         nextStep = clampFormStep(steps, draft.current_step);
         resumedDraft = draft;
       }
@@ -231,6 +231,7 @@
       step: currentStep,
       formData,
       customFieldValues,
+      customFieldDefinitions,
     });
     error = message || null;
     return !message;

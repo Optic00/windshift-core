@@ -16,6 +16,7 @@
     systemFieldIdentifiers,
   } from '../utils/screenFields.js';
   import { parseDuration } from '../utils/timeUtils.js';
+  import { isBooleanCustomFieldType } from '../utils/customFieldTypes.js';
 
   /**
    * @typedef {'work' | 'personal'} CreateMode
@@ -322,7 +323,9 @@
         .map((field) => parseInt(field.field_identifier, 10));
       customFieldValues = {};
       for (const field of allCustomFields) {
-        if (customIds.includes(field.id)) customFieldValues[field.id] = '';
+        if (customIds.includes(field.id)) {
+          customFieldValues[field.id] = isBooleanCustomFieldType(field.field_type) ? false : '';
+        }
       }
       screenFieldsLoadedForKey = key;
     } catch (err) {
@@ -558,8 +561,9 @@
       } else if (field.field_type === 'custom') {
         const fieldId = parseInt(field.field_identifier, 10);
         const value = customFieldValues[fieldId];
+        const fieldDef = customFieldsById.get(fieldId);
+        if (isBooleanCustomFieldType(fieldDef?.field_type)) continue;
         if (isEmptyValue(value)) {
-          const fieldDef = customFieldsById.get(fieldId);
           error = `${fieldDef?.name || 'Custom field'} is required.`;
           return false;
         }

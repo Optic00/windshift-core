@@ -114,7 +114,7 @@
         customFieldDefinitions = (await api.customFields.getAll())?.data || [];
       }
 
-      const initialValues = initializeFormValues(fields);
+      const initialValues = initializeFormValues(fields, null, customFieldDefinitions);
       formData = initialValues.formData;
       customFieldValues = initialValues.customFieldValues;
 
@@ -142,7 +142,7 @@
         title: draft.title,
         description: draft.description,
         custom_fields: draft.custom_field_values,
-      });
+      }, customFieldDefinitions);
       formData = restored.formData;
       customFieldValues = restored.customFieldValues;
       currentStep = clampFormStep(steps, draft.current_step);
@@ -218,7 +218,7 @@
     }
     // Reset form state to a pristine first-step view, but keep the loaded
     // fields metadata (no need to re-fetch).
-    const reset = initializeFormValues(fields);
+    const reset = initializeFormValues(fields, null, customFieldDefinitions);
     formData = reset.formData;
     customFieldValues = reset.customFieldValues;
     currentStep = steps[0] || 1;
@@ -232,6 +232,7 @@
       step: currentStep,
       formData,
       customFieldValues,
+      customFieldDefinitions,
       requiredMessage: (label) => t('requestForm.fieldRequired', { field: label }),
     });
     error = message || null;

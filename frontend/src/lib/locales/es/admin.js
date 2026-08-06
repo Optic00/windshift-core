@@ -788,6 +788,9 @@ export default {
       addField: 'Agregar campo',
       systemFields: 'Campos del sistema',
       customFields: 'Campos personalizados',
+      manageCustomFields: 'Administrar campos personalizados',
+      createCustomField: 'Crear campo personalizado',
+      customFieldsGlobalNote: 'Los campos personalizados se administran globalmente mediante un administrador del sistema.',
     },
     actionCapabilities: {
       title: 'Capacidades de acción',

@@ -141,6 +141,7 @@ export default {
     createField: 'Criar Campo',
     editField: 'Editar Campo',
     deleteField: 'Excluir Campo',
+    returnToBoard: 'Voltar aos campos do quadro',
     fieldName: 'Nome do Campo',
     fieldType: 'Tipo do Campo',
     fieldDescription: 'Descrição',

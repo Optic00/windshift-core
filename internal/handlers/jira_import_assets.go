@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"windshift/internal/jira"
+	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/sanitize"
 	"windshift/internal/services"
@@ -521,7 +522,17 @@ func (h *JiraImportHandler) ensureJiraAssetAttributeField(jobID string, setID in
 
 	action := "reuse_existing"
 	var fieldID int
-	err := h.db.QueryRow(`SELECT id FROM custom_field_definitions WHERE LOWER(name) = LOWER(?) AND field_type = ?`, fieldName, fieldType).Scan(&fieldID)
+	var err error
+	if models.IsBooleanCustomFieldType(fieldType) {
+		err = h.db.QueryRow(`
+			SELECT id FROM custom_field_definitions
+			WHERE LOWER(name) = LOWER(?) AND field_type IN (?, ?)
+			ORDER BY CASE WHEN field_type = ? THEN 0 ELSE 1 END, id
+			LIMIT 1
+		`, fieldName, models.CustomFieldTypeBoolean, models.CustomFieldTypeCheckbox, models.CustomFieldTypeBoolean).Scan(&fieldID)
+	} else {
+		err = h.db.QueryRow(`SELECT id FROM custom_field_definitions WHERE LOWER(name) = LOWER(?) AND field_type = ?`, fieldName, fieldType).Scan(&fieldID)
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		var newID int64
 		err = h.db.QueryRow(`
@@ -660,6 +671,13 @@ func (h *JiraImportHandler) importJiraAssetObject(
 			continue
 		case "user":
 			if value, ok := jiraAssetUserAttributeValue(attr, userMap); ok {
+				customValues[strconv.Itoa(fieldID)] = value
+			} else if rawValue, rawOK := jiraAssetAttributeValue(attr); rawOK {
+				customValues["_jira_asset_attribute_"+attr.ObjectTypeAttributeID] = rawValue
+			}
+			continue
+		case models.CustomFieldTypeBoolean, models.CustomFieldTypeCheckbox:
+			if value, ok := jiraAssetBooleanAttributeValue(attr); ok {
 				customValues[strconv.Itoa(fieldID)] = value
 			} else if rawValue, rawOK := jiraAssetAttributeValue(attr); rawOK {
 				customValues["_jira_asset_attribute_"+attr.ObjectTypeAttributeID] = rawValue
@@ -966,12 +984,23 @@ func jiraAssetAttributeFieldType(attr jira.AssetObjectAttribute) string {
 	case 1, 3:
 		return "number"
 	case 2:
-		return "boolean"
+		return models.CustomFieldTypeBoolean
 	case 4, 5:
 		return "date"
 	default:
 		return "textarea"
 	}
+}
+
+func jiraAssetBooleanAttributeValue(attr jira.AssetObjectAttributeValue) (value, ok bool) {
+	for _, raw := range attr.ObjectAttributeValues {
+		for _, candidate := range []any{raw.Value, raw.DisplayValue, raw.SearchValue} {
+			if value, ok := jiraCheckboxValue(candidate); ok {
+				return value, true
+			}
+		}
+	}
+	return false, false
 }
 
 func jiraAssetAttributeValue(attr jira.AssetObjectAttributeValue) (any, bool) {

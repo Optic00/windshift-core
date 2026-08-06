@@ -8,6 +8,7 @@
   import PortalModal from './PortalModal.svelte';
   import BasePicker from '../pickers/BasePicker.svelte';
   import CustomFieldRenderer from '../features/items/CustomFieldRenderer.svelte';
+  import { isBooleanCustomFieldType } from '../utils/customFieldTypes.js';
   import { t } from '../stores/i18n.svelte.js';
 
   let {
@@ -72,7 +73,11 @@
 
       const initial = {};
       for (const f of fields) {
-        if (f.field_type === 'virtual' && f.virtual_field_type === 'checkbox') {
+        const definition = f.field_type === 'custom' ? getCustomFieldDefinition(f.field_identifier) : null;
+        if (
+          (f.field_type === 'virtual' && f.virtual_field_type === 'checkbox') ||
+          isBooleanCustomFieldType(definition?.field_type)
+        ) {
           initial[f.field_identifier] = false;
         } else {
           initial[f.field_identifier] = '';
@@ -109,6 +114,7 @@
       if (!f.is_required) continue;
       const v = values[f.field_identifier];
       if (f.field_type === 'virtual' && f.virtual_field_type === 'checkbox') continue;
+      if (f.field_type === 'custom' && isBooleanCustomFieldType(getCustomFieldDefinition(f.field_identifier)?.field_type)) continue;
       if (v === '' || v === null || v === undefined || (Array.isArray(v) && v.length === 0)) {
         return t('portal.fieldRequired', { field: getFieldLabel(f) });
       }

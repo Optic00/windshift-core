@@ -147,6 +147,7 @@ export default {
     createField: 'Create Field',
     editField: 'Edit Field',
     deleteField: 'Delete Field',
+    returnToBoard: 'Back to board fields',
     fieldName: 'Field Name',
     fieldType: 'Field Type',
     fieldDescription: 'Description',

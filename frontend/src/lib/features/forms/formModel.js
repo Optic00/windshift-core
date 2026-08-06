@@ -1,3 +1,5 @@
+import { isBooleanCustomFieldType } from '../../utils/customFieldTypes.js';
+
 export function getFieldLabel(field) {
   return field.display_name || field.field_label || field.field_name || field.field_identifier;
 }
@@ -7,7 +9,20 @@ export function buildFormSteps(fields = []) {
   return steps.length > 0 ? steps : [1];
 }
 
-export function initializeFormValues(fields = [], initialValues = null) {
+function customFieldDefinition(field, customFieldDefinitions) {
+  if (field.field_type !== 'custom') return null;
+  return (
+    (customFieldDefinitions || []).find(
+      (definition) => String(definition.id) === String(field.field_identifier)
+    ) || null
+  );
+}
+
+export function initializeFormValues(
+  fields = [],
+  initialValues = null,
+  customFieldDefinitions = []
+) {
   const formData = {
     title: initialValues?.title || '',
     description: initialValues?.description || '',
@@ -20,7 +35,10 @@ export function initializeFormValues(fields = [], initialValues = null) {
     const initialValue = initialValues?.custom_fields?.[field.field_identifier];
     if (initialValue !== undefined) {
       customFieldValues[field.field_identifier] = initialValue;
-    } else if (field.field_type === 'virtual' && field.virtual_field_type === 'checkbox') {
+    } else if (
+      (field.field_type === 'virtual' && field.virtual_field_type === 'checkbox') ||
+      isBooleanCustomFieldType(customFieldDefinition(field, customFieldDefinitions)?.field_type)
+    ) {
       customFieldValues[field.field_identifier] = false;
     } else {
       customFieldValues[field.field_identifier] = '';
@@ -35,6 +53,7 @@ export function validateFormStep({
   step,
   formData,
   customFieldValues,
+  customFieldDefinitions = [],
   requiredMessage = (label) => `${label} is required`,
 }) {
   const stepFields = fields.filter((field) => (field.step_number || 1) === step);
@@ -49,12 +68,13 @@ export function validateFormStep({
       value = customFieldValues[field.field_identifier];
     }
 
+    const booleanField =
+      (field.field_type === 'virtual' && field.virtual_field_type === 'checkbox') ||
+      isBooleanCustomFieldType(customFieldDefinition(field, customFieldDefinitions)?.field_type);
+    if (booleanField) continue;
+
     const missing =
-      field.field_type === 'virtual' && field.virtual_field_type === 'checkbox'
-        ? value !== true
-        : value === undefined ||
-          value === null ||
-          (typeof value === 'string' && value.trim() === '');
+      value === undefined || value === null || (typeof value === 'string' && value.trim() === '');
 
     if (missing) return requiredMessage(getFieldLabel(field));
   }

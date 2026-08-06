@@ -820,8 +820,11 @@ func (h *AssetHandler) CreateTypeFromImport(w http.ResponseWriter, r *http.Reque
 
 	allowedTypes := map[string]bool{
 		"text": true, "textarea": true, "number": true, "date": true, "select": true,
+		models.CustomFieldTypeBoolean: true, models.CustomFieldTypeCheckbox: true,
 	}
-	for _, f := range req.Fields {
+	for i := range req.Fields {
+		f := &req.Fields[i]
+		f.FieldType = models.CanonicalCustomFieldType(f.FieldType)
 		if f.Name == "" {
 			respondValidationError(w, r, "All fields must have a name")
 			return
@@ -927,6 +930,7 @@ func inferFieldType(values []string) (fieldType string, options []string) {
 
 	allNumeric := true
 	allDate := true
+	allBoolean := true
 	hasLong := false
 	uniqueValues := make(map[string]bool)
 
@@ -945,6 +949,9 @@ func inferFieldType(values []string) (fieldType string, options []string) {
 		if !dateRegex.MatchString(v) {
 			allDate = false
 		}
+		if normalized := strings.ToLower(v); normalized != "true" && normalized != "false" {
+			allBoolean = false
+		}
 		if len(v) > 200 {
 			hasLong = true
 		}
@@ -955,6 +962,9 @@ func inferFieldType(values []string) (fieldType string, options []string) {
 		return "text", nil
 	}
 
+	if allBoolean {
+		return models.CustomFieldTypeBoolean, nil
+	}
 	if allNumeric {
 		return "number", nil
 	}

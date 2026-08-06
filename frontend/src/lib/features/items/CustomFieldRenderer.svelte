@@ -16,6 +16,7 @@
   import { formatCustomFieldDate } from '../../utils/dateFormatter.js';
   import { parseFieldOptions, resolveOptionLabel, resolveOptionLabels } from '../../utils/optionUtils.js';
   import { safeHref } from '../../utils/sanitize';
+  import { booleanCustomFieldChecked, isBooleanCustomFieldType } from '../../utils/customFieldTypes.js';
   import {
     milestonePickerConfig as milestoneConfig,
     iterationPickerConfig as iterationConfig,
@@ -79,17 +80,6 @@
 
   function formatDateFromInput(inputValue) {
     return inputValue || '';
-  }
-
-  function coerceCheckboxValue(raw) {
-    if (typeof raw === 'boolean') return raw;
-    if (typeof raw === 'number') return raw !== 0;
-    if (typeof raw === 'string') {
-      const normalized = raw.trim().toLowerCase();
-      if (['false', '0', 'no', 'off'].includes(normalized)) return false;
-      if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
-    }
-    return Boolean(raw);
   }
 
   function parseAssetConfig() {
@@ -196,8 +186,9 @@
           return resolveOptionLabel(field.options, v);
         }
         return v;
+      case 'boolean':
       case 'checkbox':
-        return coerceCheckboxValue(v) ? t('common.yes') : t('common.no');
+        return booleanCustomFieldChecked(v) ? t('common.yes') : t('common.no');
       case 'number':
         const num = parseFloat(v);
         return isNaN(num) ? v : num.toString();
@@ -385,9 +376,9 @@
                 </span>
               {/each}
             </div>
-          {:else if field.field_type === 'checkbox'}
+          {:else if isBooleanCustomFieldType(field.field_type)}
             <CheckSquare class="w-4 h-4 flex-shrink-0" style="color: var(--ds-text-subtle);" />
-            <span style="color: var(--ds-text);">{coerceCheckboxValue(value) ? t('common.yes') : t('common.no')}</span>
+            <span style="color: var(--ds-text);">{booleanCustomFieldChecked(value) ? t('common.yes') : t('common.no')}</span>
           {:else if field.field_type === 'email'}
             <Mail class="w-4 h-4 flex-shrink-0" style="color: var(--ds-text-subtle);" />
             <span style="color: var(--ds-text);">{value}</span>
@@ -410,7 +401,7 @@
             <User class="w-4 h-4 flex-shrink-0" style="color: var(--ds-text-subtle);" />
           {:else if field.field_type === 'customerorganisation'}
             <Building2 class="w-4 h-4 flex-shrink-0" style="color: var(--ds-text-subtle);" />
-          {:else if field.field_type === 'checkbox'}
+          {:else if isBooleanCustomFieldType(field.field_type)}
             <CheckSquare class="w-4 h-4 flex-shrink-0" style="color: var(--ds-text-subtle);" />
           {:else if field.field_type === 'email'}
             <Mail class="w-4 h-4 flex-shrink-0" style="color: var(--ds-text-subtle);" />
@@ -495,10 +486,10 @@
                 </span>
               {/each}
             </div>
-          {:else if field.field_type === 'checkbox'}
+          {:else if isBooleanCustomFieldType(field.field_type)}
             <div class="flex items-center gap-2">
               <CheckSquare class="w-4 h-4" style="color: var(--ds-text-subtle);" />
-              <span style="color: var(--ds-text);">{coerceCheckboxValue(value) ? t('common.yes') : t('common.no')}</span>
+              <span style="color: var(--ds-text);">{booleanCustomFieldChecked(value) ? t('common.yes') : t('common.no')}</span>
             </div>
           {:else if field.field_type === 'email'}
             <div class="flex items-center gap-2">
@@ -762,10 +753,15 @@
           autofocus
         />
       </div>
-    {:else if field.field_type === 'checkbox'}
-      <div use:clickOutside onclickOutside={() => onCancel?.()} class="px-3 py-2">
+    {:else if isBooleanCustomFieldType(field.field_type)}
+      <div
+        use:clickOutside
+        onclickOutside={() => onCancel?.()}
+        class="px-3 py-2"
+        data-testid={`custom-field-input-${field.id}`}
+      >
         <Checkbox
-          checked={coerceCheckboxValue(value)}
+          checked={booleanCustomFieldChecked(value)}
           {disabled}
           onchange={(checked) => onChange(checked)}
         />

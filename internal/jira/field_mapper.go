@@ -48,7 +48,11 @@ const (
 	FieldTypeMilestone   WindshiftFieldType = "milestone"
 	FieldTypeIteration   WindshiftFieldType = "iteration"
 	FieldTypeAsset       WindshiftFieldType = "asset"
-	FieldTypeUnmapped    WindshiftFieldType = "unmapped"
+	FieldTypeBoolean     WindshiftFieldType = "boolean"
+	// FieldTypeCheckbox is retained as a source-compatible name for callers
+	// that present the canonical boolean field as a checkbox control.
+	FieldTypeCheckbox WindshiftFieldType = FieldTypeBoolean
+	FieldTypeUnmapped WindshiftFieldType = "unmapped"
 )
 
 // FieldMappingSuggestion contains a suggested mapping for a Jira field
@@ -71,6 +75,7 @@ var jiraFieldTypeMap = map[string]WindshiftFieldType{
 	"number":    FieldTypeNumber,
 	"date":      FieldTypeDate,
 	"datetime":  FieldTypeDate,
+	"boolean":   FieldTypeBoolean,
 	"user":      FieldTypeUser,
 	"array":     FieldTypeMultiselect, // Depends on items type
 	"option":    FieldTypeSelect,
@@ -88,6 +93,7 @@ var jiraFieldTypeMap = map[string]WindshiftFieldType{
 	"com.atlassian.jira.plugin.system.customfieldtypes:multiselect":      FieldTypeMultiselect,
 	"com.atlassian.jira.plugin.system.customfieldtypes:radiobuttons":     FieldTypeSelect,
 	"com.atlassian.jira.plugin.system.customfieldtypes:multicheckboxes":  FieldTypeMultiselect,
+	"com.atlassian.jira.plugin.system.customfieldtypes:boolean":          FieldTypeBoolean,
 	"com.atlassian.jira.plugin.system.customfieldtypes:datepicker":       FieldTypeDate,
 	"com.atlassian.jira.plugin.system.customfieldtypes:datetime":         FieldTypeDate,
 	"com.atlassian.jira.plugin.system.customfieldtypes:url":              FieldTypeText,

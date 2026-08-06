@@ -148,6 +148,7 @@ export default {
     createField: 'إنشاء حقل',
     editField: 'تعديل الحقل',
     deleteField: 'حذف الحقل',
+    returnToBoard: 'العودة إلى حقول اللوحة',
     fieldName: 'اسم الحقل',
     fieldType: 'نوع الحقل',
     fieldDescription: 'الوصف',

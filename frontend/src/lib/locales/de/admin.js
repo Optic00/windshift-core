@@ -738,6 +738,9 @@ export default {
       addField: 'Feld hinzufügen',
       systemFields: 'Systemfelder',
       customFields: 'Benutzerdefinierte Felder',
+      manageCustomFields: 'Benutzerdefinierte Felder verwalten',
+      createCustomField: 'Benutzerdefiniertes Feld erstellen',
+      customFieldsGlobalNote: 'Benutzerdefinierte Felder werden global von einem Systemadministrator verwaltet.',
     },
     aiFeatures: {
       title: 'KI-Funktionen',

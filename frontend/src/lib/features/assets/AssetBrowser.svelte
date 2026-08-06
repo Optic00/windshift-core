@@ -21,6 +21,7 @@
   import AssetSubFilterBar from './AssetSubFilterBar.svelte';
   import CustomFieldRenderer from '../items/CustomFieldRenderer.svelte';
   import { retainValuesForType } from './assetFormValues.js';
+  import { isBooleanCustomFieldType } from '../../utils/customFieldTypes.js';
   import { toHotkeyString } from '../../utils/keyboardShortcuts.js';
   import { formatDateSimple } from '../../utils/dateFormatter.js';
   import { fetchAssetCategories, fetchAssetStatuses, flattenCategories } from './shared/assetSetUtils.js';
@@ -393,7 +394,7 @@
     try {
       // Validate required custom fields
       for (const field of selectedTypeFields) {
-        if (field.is_required) {
+        if (field.is_required && !isBooleanCustomFieldType(field.field_type)) {
           const value = assetFormData.custom_field_values[field.custom_field_id];
           if (value === undefined || value === null || value === '') {
             errorToast(t('validation.requiredField', { field: field.field_name }));

@@ -734,6 +734,9 @@ export default {
       addField: 'Adicionar campo',
       systemFields: 'Campos do sistema',
       customFields: 'Campos personalizados',
+      manageCustomFields: 'Gerenciar campos personalizados',
+      createCustomField: 'Criar campo personalizado',
+      customFieldsGlobalNote: 'Os campos personalizados são gerenciados globalmente por um administrador do sistema.',
     },
     aiFeatures: {
       title: 'Recursos de IA',
