@@ -8,7 +8,10 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
+
+	"windshift/internal/repository"
 
 	extism "github.com/extism/go-sdk"
 )
@@ -20,10 +23,24 @@ const (
 	MaxCLITimeoutMs = 600000
 	// MaxOutputBytes is the maximum bytes to capture from stdout/stderr
 	MaxOutputBytes = 1024 * 1024 // 1MB
+	// cliExecDisabledError is returned when host command execution is not enabled.
+	cliExecDisabledError = "plugin CLI execution is disabled"
 )
 
 // cliExecHostFunction executes a CLI command and returns the result.
 func (m *Manager) cliExecHostFunction(ctx context.Context, plugin *extism.CurrentPlugin, stack []uint64) {
+	enabled, err := m.cliExecEnabled()
+	if err != nil {
+		m.logger.Error("cli_exec: failed to read security setting", "error", err)
+	}
+	if !enabled {
+		m.writeHostResponse(plugin, stack, CLIExecResponse{
+			Status: "error",
+			Error:  cliExecDisabledError,
+		})
+		return
+	}
+
 	payload, err := plugin.ReadBytes(stack[0])
 	if err != nil {
 		m.logger.Warn("cli_exec: failed to read payload", "error", err)
@@ -129,6 +146,21 @@ func (m *Manager) cliExecHostFunction(ctx context.Context, plugin *extism.Curren
 	)
 
 	m.writeHostResponse(plugin, stack, response)
+}
+
+// cliExecEnabled reads the setting for every invocation so admin changes take
+// effect immediately. Missing database wiring, absent settings, and read
+// failures all leave this security-sensitive capability disabled.
+func (m *Manager) cliExecEnabled() (bool, error) {
+	if m.db == nil {
+		return false, nil
+	}
+
+	value, ok, err := repository.NewSystemSettingRepository(m.db).GetValue("plugin_cli_exec_enabled")
+	if err != nil {
+		return false, err
+	}
+	return ok && strings.EqualFold(value, "true"), nil
 }
 
 // limitedWriter wraps a writer and limits how many bytes can be written.
