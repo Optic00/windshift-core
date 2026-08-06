@@ -116,6 +116,14 @@ func NewConfig(rpID, rpName string, origins []string, isDev bool, allowedHosts, 
 				if host == "" {
 					continue
 				}
+				if isHTTPURL(host) {
+					origin, err := normalizeOrigin(host)
+					if err != nil {
+						return nil, fmt.Errorf("invalid allowed host origin %q: %w", host, err)
+					}
+					c.RPOrigins = append(c.RPOrigins, origin)
+					continue
+				}
 
 				// Add origin with explicit port and standard port
 				c.RPOrigins = append(c.RPOrigins,
@@ -161,6 +169,25 @@ func NewConfig(rpID, rpName string, origins []string, isDev bool, allowedHosts, 
 
 	c.webAuthn = wa
 	return c, nil
+}
+
+func isHTTPURL(value string) bool {
+	lower := strings.ToLower(value)
+	return strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://")
+}
+
+func normalizeOrigin(value string) (string, error) {
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return "", err
+	}
+	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" || parsed.User != nil {
+		return "", fmt.Errorf("must be an http(s) URL without credentials")
+	}
+	if (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", fmt.Errorf("must contain only a scheme, host, and optional port")
+	}
+	return parsed.Scheme + "://" + parsed.Host, nil
 }
 
 // WebAuthn returns the underlying WebAuthn instance

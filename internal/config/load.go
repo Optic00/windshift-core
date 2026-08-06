@@ -166,7 +166,9 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 	// WebAuthn: use the browser-visible BASE_URL hostname by default. This is
 	// especially important in containers, where os.Hostname() is normally an
 	// internal container ID that browsers can never use as a relying-party ID.
-	// Explicit WEBAUTHN_RP_ID remains available for split-host deployments.
+	// Explicit WEBAUTHN_RP_ID remains available for split-host deployments. Accept
+	// a full http(s) URL there as a convenience, but retain only its hostname: the
+	// WebAuthn protocol requires an RP ID rather than an origin.
 	rpID := resolveWebAuthnRPID(os.Getenv("WEBAUTHN_RP_ID"), resolvedBaseURL, os.Hostname)
 	rpName := firstNonEmpty(os.Getenv("WEBAUTHN_RP_NAME"), "Windshift")
 
@@ -281,7 +283,11 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 }
 
 func resolveWebAuthnRPID(explicit, baseURL string, fallbackHostname func() (string, error)) string {
+	explicit = strings.TrimSpace(explicit)
 	if explicit != "" {
+		if hostname, ok := webAuthnRPIDHostnameFromURL(explicit); ok {
+			return hostname
+		}
 		return explicit
 	}
 
@@ -297,6 +303,19 @@ func resolveWebAuthnRPID(explicit, baseURL string, fallbackHostname func() (stri
 		}
 	}
 	return ""
+}
+
+func webAuthnRPIDHostnameFromURL(value string) (string, bool) {
+	lower := strings.ToLower(value)
+	if !strings.HasPrefix(lower, "http://") && !strings.HasPrefix(lower, "https://") {
+		return "", false
+	}
+
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.User != nil || parsed.Hostname() == "" {
+		return "", false
+	}
+	return parsed.Hostname(), true
 }
 
 // postgresEnv reads the POSTGRES_* family for use by database.BuildPostgresConnString.
