@@ -97,35 +97,9 @@ func NewActionHandlers(repo *repository.LogbookActionRepository, permService *lo
 	}
 }
 
-// requireBucketAdmin checks bucket.admin permission and returns bucketID + LogbookUser if authorized.
-func (h *ActionHandlers) requireBucketAdmin(w http.ResponseWriter, r *http.Request) (string, *LogbookUser, bool) {
-	lbUser, ok := requireLogbookAuth(w, r)
-	if !ok {
-		return "", nil, false
-	}
-
-	bucketID := r.PathValue("bucketID")
-	if bucketID == "" {
-		restapi.RespondErrorWithMessage(w, r, http.StatusBadRequest, restapi.ErrCodeInvalidInput, "Missing bucket ID")
-		return "", nil, false
-	}
-
-	has, err := h.permService.HasBucketPermission(lbUser.ID, lbUser.IsAdmin, lbUser.GroupIDs, bucketID, models.LogbookPermissionBucketAdmin)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return "", nil, false
-	}
-	if !has {
-		respondNotFound(w, r)
-		return "", nil, false
-	}
-
-	return bucketID, lbUser, true
-}
-
 // requireBucketAction combines requireBucketAdmin, requireActionID, and requireAction into a single guard.
 func (h *ActionHandlers) requireBucketAction(w http.ResponseWriter, r *http.Request) (bucketID string, lbUser *LogbookUser, action *models.LogbookAction, actionID int, ok bool) {
-	bucketID, lbUser, ok = h.requireBucketAdmin(w, r)
+	lbUser, bucketID, ok = requireBucketAdmin(w, r, h.permService)
 	if !ok {
 		return "", nil, nil, 0, false
 	}
@@ -162,7 +136,7 @@ func parsePaginationParams(r *http.Request, maxLimit int) (limit, offset int) {
 
 // ListActions lists all actions for a bucket.
 func (h *ActionHandlers) ListActions(w http.ResponseWriter, r *http.Request) {
-	bucketID, _, ok := h.requireBucketAdmin(w, r)
+	_, bucketID, ok := requireBucketAdmin(w, r, h.permService)
 	if !ok {
 		return
 	}
@@ -192,7 +166,7 @@ func (h *ActionHandlers) GetAction(w http.ResponseWriter, r *http.Request) {
 
 // CreateAction creates a new logbook action.
 func (h *ActionHandlers) CreateAction(w http.ResponseWriter, r *http.Request) {
-	bucketID, lbUser, ok := h.requireBucketAdmin(w, r)
+	lbUser, bucketID, ok := requireBucketAdmin(w, r, h.permService)
 	if !ok {
 		return
 	}
@@ -510,7 +484,7 @@ func (h *ActionHandlers) GetActionLogs(w http.ResponseWriter, r *http.Request) {
 
 // GetBucketLogs gets execution logs for all actions in a bucket.
 func (h *ActionHandlers) GetBucketLogs(w http.ResponseWriter, r *http.Request) {
-	bucketID, _, ok := h.requireBucketAdmin(w, r)
+	_, bucketID, ok := requireBucketAdmin(w, r, h.permService)
 	if !ok {
 		return
 	}
