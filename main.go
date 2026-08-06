@@ -159,17 +159,20 @@ func main() {
 			if registerErr := srv.RegisterDatabasePool("ssh", sshDB); registerErr != nil {
 				slog.Warn("failed to register SSH database pool for diagnostics", "error", registerErr)
 			}
-			sessionManager := auth.NewSessionManagerWithValidationCacheTTL(
+			_, sshSessionCacheMB := config.SplitSSHCacheBudget(memoryBudget.SessionCacheMB, true)
+			sessionManager := auth.NewSessionManagerWithNamedValidationCacheTTL(
 				sshDB,
 				enableHTTPS,
 				cfg.UseProxy,
 				additionalProxyList,
 				cfg.Auth.SessionSecret,
 				cfg.Auth.SessionValidationCacheTTL,
+				"ssh_session_validation",
+				sshSessionCacheMB,
 			)
 			// nil tokenTracker: the SSH-minted temp tokens are short-lived
 			// (24h) and we don't need last-used-at tracking for them.
-			sshTokenCacheMB := memoryBudget.APITokenCacheMB / 2
+			_, sshTokenCacheMB := config.SplitSSHCacheBudget(memoryBudget.APITokenCacheMB, true)
 			tokenManager := auth.NewTokenManagerWithCacheBudget(sshDB, nil, "ssh_api_tokens", sshTokenCacheMB)
 
 			serverOptions := make([]ssh.Option, 0, 4)

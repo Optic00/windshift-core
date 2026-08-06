@@ -79,7 +79,7 @@ type SessionValidationCacheStats struct {
 	CacheDecodeFailures uint64
 }
 
-func newSessionValidator(ttl time.Duration, cacheSizeMB ...int) *sessionValidator {
+func newSessionValidator(ttl time.Duration, cacheName string, cacheSizeMB ...int) *sessionValidator {
 	validator := &sessionValidator{
 		ttl:             ttl,
 		tokenVersions:   make(map[string]uint64),
@@ -94,7 +94,7 @@ func newSessionValidator(ttl time.Duration, cacheSizeMB ...int) *sessionValidato
 	if len(cacheSizeMB) > 0 && cacheSizeMB[0] > 0 {
 		maxCacheMB = cacheSizeMB[0]
 	}
-	cache, err := cacheutil.New("session_validation", cacheutil.BigCacheOptions{
+	cache, err := cacheutil.New(cacheName, cacheutil.BigCacheOptions{
 		TTL:               ttl,
 		MaxCacheMB:        maxCacheMB,
 		Shards:            16,
@@ -159,7 +159,7 @@ func (sm *SessionManager) ValidateSessionContext(ctx context.Context, token, ipA
 
 	validator := sm.sessionValidation
 	if validator == nil {
-		validator = newSessionValidator(0)
+		validator = newSessionValidator(0, "session_validation")
 		sm.sessionValidation = validator
 	}
 	cacheKey := hashSessionToken(token)

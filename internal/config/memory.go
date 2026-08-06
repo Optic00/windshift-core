@@ -25,6 +25,18 @@ type MemoryBudget struct {
 	SCIMTokenCacheMB    int   `json:"scim_token_cache_mb"`
 }
 
+// SplitSSHCacheBudget divides one configured cache allocation between the
+// primary HTTP server and the optional SSH server without increasing the
+// process-wide maximum. The primary server receives the remainder for odd
+// allocations.
+func SplitSSHCacheBudget(totalMB int, sshEnabled bool) (primaryMB, sshMB int) {
+	if !sshEnabled {
+		return totalMB, 0
+	}
+	sshMB = totalMB / 2
+	return totalMB - sshMB, sshMB
+}
+
 // ResolveMemoryBudget validates a process limit and derives bounded cache
 // allocations. Zero selects the production default so manually constructed
 // Config values and existing embedders remain backward compatible.

@@ -90,6 +90,35 @@ func NewSessionManager(db database.Database, useSecureCookies, useProxy bool, ad
 // bounded local validation cache. A non-positive TTL disables retained cache
 // entries while preserving in-flight request coalescing.
 func NewSessionManagerWithValidationCacheTTL(db database.Database, useSecureCookies, useProxy bool, additionalProxies []string, cookieSecret string, validationCacheTTL time.Duration, cacheSizeMB ...int) *SessionManager {
+	return newSessionManagerWithValidationCache(
+		db,
+		useSecureCookies,
+		useProxy,
+		additionalProxies,
+		cookieSecret,
+		validationCacheTTL,
+		"session_validation",
+		cacheSizeMB...,
+	)
+}
+
+// NewSessionManagerWithNamedValidationCacheTTL creates a session manager whose
+// validation cache has an explicit diagnostics name. The SSH server uses it so
+// the HTTP and SSH allocations remain independently visible.
+func NewSessionManagerWithNamedValidationCacheTTL(db database.Database, useSecureCookies, useProxy bool, additionalProxies []string, cookieSecret string, validationCacheTTL time.Duration, cacheName string, cacheSizeMB int) *SessionManager {
+	return newSessionManagerWithValidationCache(
+		db,
+		useSecureCookies,
+		useProxy,
+		additionalProxies,
+		cookieSecret,
+		validationCacheTTL,
+		cacheName,
+		cacheSizeMB,
+	)
+}
+
+func newSessionManagerWithValidationCache(db database.Database, useSecureCookies, useProxy bool, additionalProxies []string, cookieSecret string, validationCacheTTL time.Duration, cacheName string, cacheSizeMB ...int) *SessionManager {
 	var opaqueKey []byte
 	if cookieSecret != "" {
 		opaqueKey = deriveKey(cookieSecret, "windshift-auth-opaque-values", 32)
@@ -101,7 +130,7 @@ func NewSessionManagerWithValidationCacheTTL(db database.Database, useSecureCook
 			"windshift-cookie-hash", "windshift-cookie-block"),
 		db:                db,
 		opaqueKey:         opaqueKey,
-		sessionValidation: newSessionValidator(validationCacheTTL, cacheSizeMB...),
+		sessionValidation: newSessionValidator(validationCacheTTL, cacheName, cacheSizeMB...),
 	}
 }
 

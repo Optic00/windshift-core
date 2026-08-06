@@ -286,6 +286,7 @@ func (s *Server) initialize() error {
 	ipExtractor := utils.NewIPExtractor(cfg.UseProxy, additionalProxyList)
 
 	// Authentication management
+	primarySessionCacheMB, _ := config.SplitSSHCacheBudget(s.memoryBudget.SessionCacheMB, cfg.SSH.Enabled)
 	sessionManager := auth.NewSessionManagerWithValidationCacheTTL(
 		s.db,
 		enableHTTPS,
@@ -293,7 +294,7 @@ func (s *Server) initialize() error {
 		additionalProxyList,
 		cfg.Auth.SessionSecret,
 		cfg.Auth.SessionValidationCacheTTL,
-		s.memoryBudget.SessionCacheMB,
+		primarySessionCacheMB,
 	)
 
 	// Determine effective port for CORS
@@ -350,10 +351,7 @@ func (s *Server) initialize() error {
 	s.tokenTracker = services.NewTokenTracker(s.db, services.DefaultTokenTrackerConfig())
 
 	// Create token manager
-	apiTokenCacheMB := s.memoryBudget.APITokenCacheMB
-	if cfg.SSH.Enabled {
-		apiTokenCacheMB /= 2
-	}
+	apiTokenCacheMB, _ := config.SplitSSHCacheBudget(s.memoryBudget.APITokenCacheMB, cfg.SSH.Enabled)
 	tokenManager := auth.NewTokenManager(s.db, s.tokenTracker, apiTokenCacheMB)
 	if cleaned, cleanupErr := tokenManager.CleanupExpiredTokens(); cleanupErr != nil {
 		slog.Warn("failed to cleanup expired api tokens on startup", "error", cleanupErr)
