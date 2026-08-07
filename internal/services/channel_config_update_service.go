@@ -145,6 +145,196 @@ func (s *ChannelConfigUpdateService) Update(ctx context.Context, actorUserID, ch
 	return true, nil
 }
 
+// PrepareEnable validates that a channel may transition to "enabled" and
+// returns the exact stored configuration JSON when the channel type has
+// enable-time requirements. The caller must persist the transition through
+// SetStatusIfConfigUnchanged with that JSON so a concurrent configuration
+// edit cannot bypass validation; an empty result signals a transition that
+// needs no configuration-conditional check (disabling, or a type without
+// enable-time requirements).
+func (s *ChannelConfigUpdateService) PrepareEnable(ctx context.Context, actorUserID, channelID int) (string, error) {
+	channel, err := s.channels.GetByID(ctx, channelID)
+	if err != nil {
+		return "", err
+	}
+	if channel == nil {
+		return "", repository.ErrNotFound
+	}
+	// Only enabling requires validation; an already-enabled channel is being
+	// disabled and needs no configuration checks.
+	if channel.Status == "enabled" {
+		return "", nil
+	}
+	if channel.PluginName != nil && *channel.PluginName != "" {
+		return "", channelConfigForbidden("plugin-managed channels cannot be modified")
+	}
+
+	needsConfig := (channel.Type == "email" && channel.Direction == "inbound") ||
+		channel.Type == "portal" || channel.Type == "form" ||
+		(channel.Type == "webhook" && channel.Direction == "outbound") ||
+		(channel.Type == "smtp" && channel.Direction == "outbound")
+	if !needsConfig {
+		return "", nil
+	}
+
+	rawConfig, err := s.channels.GetConfig(ctx, channelID)
+	if err != nil {
+		return "", err
+	}
+	var config models.ChannelConfig
+	if rawConfig != "" {
+		if err := json.Unmarshal([]byte(rawConfig), &config); err != nil {
+			return "", fmt.Errorf("decode stored channel configuration: %w", err)
+		}
+	}
+
+	admin, err := s.permission.IsSystemAdmin(actorUserID)
+	if err != nil {
+		return "", err
+	}
+
+	switch channel.Type {
+	case "email":
+		if err := s.prepareEmailEnable(ctx, actorUserID, channel, &config, admin); err != nil {
+			return "", err
+		}
+	case "portal", "form":
+		if err := s.preparePublicChannelEnable(ctx, actorUserID, channel, &config, admin); err != nil {
+			return "", err
+		}
+	case "webhook":
+		if err := s.prepareWebhookEnable(&config, admin); err != nil {
+			return "", err
+		}
+	case "smtp":
+		if err := s.prepareSMTPEnable(&config); err != nil {
+			return "", err
+		}
+	}
+	return rawConfig, nil
+}
+
+// prepareEmailEnable validates an inbound email channel before activation:
+// the mailbox configuration must be complete, its target workspace must
+// exist, the item type and default priority must be allowed there, and a
+// non-administrator must be able to administer that workspace.
+func (s *ChannelConfigUpdateService) prepareEmailEnable(ctx context.Context, actorUserID int, channel *models.Channel, config *models.ChannelConfig, admin bool) error {
+	if s.validateEmail == nil {
+		return channelConfigInvalid("Email channel validation is not configured")
+	}
+	if err := s.validateEmail(channel, config); err != nil {
+		return channelConfigInvalid(err.Error())
+	}
+	if config.EmailWorkspaceID > 0 {
+		bad, err := s.channels.repo.FindBadWorkspaceIDs([]int{config.EmailWorkspaceID})
+		if err != nil {
+			return err
+		}
+		if len(bad) > 0 {
+			return channelConfigInvalid("Configured email workspace is missing or personal")
+		}
+	}
+	if err := s.validateEmailReferences(ctx, actorUserID, config); err != nil {
+		return err
+	}
+	if !admin {
+		canConnect, err := s.permission.HasWorkspacePermission(actorUserID, config.EmailWorkspaceID, models.PermissionWorkspaceAdmin)
+		if err != nil {
+			return err
+		}
+		if !canConnect {
+			return channelConfigForbidden("workspace administration permission is required to connect the email target workspace")
+		}
+	}
+	return nil
+}
+
+// preparePublicChannelEnable validates a portal/form channel before
+// activation: a routable public slug, existing target workspaces the actor
+// may administer, consistent request-type routes, a valid registration mode,
+// and an unused slug.
+func (s *ChannelConfigUpdateService) preparePublicChannelEnable(ctx context.Context, actorUserID int, channel *models.Channel, config *models.ChannelConfig, admin bool) error {
+	slug := config.PortalSlug
+	workspaceIDs := config.PortalWorkspaceIDs
+	if channel.Type == "form" {
+		slug = config.FormSlug
+		workspaceIDs = config.FormWorkspaceIDs
+	}
+	if slug == "" || !channelSlugPattern.MatchString(slug) {
+		return channelConfigInvalid("A valid public slug is required before enabling this channel")
+	}
+	if len(workspaceIDs) == 0 {
+		return channelConfigInvalid("At least one target workspace is required before enabling this channel")
+	}
+	bad, err := s.channels.repo.FindBadWorkspaceIDs(append([]int(nil), workspaceIDs...))
+	if err != nil {
+		return err
+	}
+	if len(bad) > 0 {
+		return channelConfigInvalid(fmt.Sprintf("Target workspaces %v are missing or personal", bad))
+	}
+	if !admin {
+		for _, workspaceID := range workspaceIDs {
+			canConnect, err := s.permission.HasWorkspacePermission(actorUserID, workspaceID, models.PermissionWorkspaceAdmin)
+			if err != nil {
+				return err
+			}
+			if !canConnect {
+				return channelConfigForbidden("workspace administration permission is required to connect every target workspace")
+			}
+		}
+	}
+	if err := s.validateRequestTypeRoutes(channel.ID, channel.Type, config); err != nil {
+		return err
+	}
+	if channel.Type == "portal" && config.PortalRegistrationMode != "" && config.PortalRegistrationMode != "open" && config.PortalRegistrationMode != "manual" {
+		return channelConfigInvalid("Portal registration mode must be open or manual")
+	}
+	inUse, err := s.channels.repo.SlugInUse(ctx, channel.Type, slug, channel.ID)
+	if err != nil {
+		return err
+	}
+	if inUse {
+		return channelConfigConflict(fmt.Sprintf("Slug %q is already in use by another %s channel", slug, channel.Type))
+	}
+	return nil
+}
+
+// prepareWebhookEnable validates an automatic outbound webhook before
+// activation. Automatic triggers serialize item data without an interactive
+// authorization context, so only a system administrator may enable them; a
+// manual webhook only needs a public destination URL.
+func (s *ChannelConfigUpdateService) prepareWebhookEnable(config *models.ChannelConfig, admin bool) error {
+	if config.WebhookAutoTrigger && !admin {
+		return channelConfigForbidden("system administrator permission is required to enable automatic webhooks")
+	}
+	if strings.TrimSpace(config.WebhookURL) == "" {
+		return channelConfigInvalid("A webhook URL is required before enabling this channel")
+	}
+	if s.validateURL == nil {
+		return channelConfigInvalid("Webhook URL validation is not configured")
+	}
+	if err := s.validateURL(config.WebhookURL); err != nil {
+		return channelConfigInvalid("Webhook URL must target a public host")
+	}
+	return nil
+}
+
+// prepareSMTPEnable validates an outbound SMTP channel before activation:
+// host, port, from address (as a bare mailbox), and an allowed TLS mode.
+func (s *ChannelConfigUpdateService) prepareSMTPEnable(config *models.ChannelConfig) error {
+	if strings.TrimSpace(config.SMTPHost) == "" || config.SMTPPort <= 0 || config.SMTPPort > 65535 || strings.TrimSpace(config.SMTPFromEmail) == "" {
+		return channelConfigInvalid("SMTP host, port, and from address are required before enabling this channel")
+	}
+	if !validBareEmail(config.SMTPFromEmail) {
+		return channelConfigInvalid("SMTP from address must be a valid bare email address")
+	}
+	if !windshiftsmtp.EncryptionModeAllowed(config.SMTPEncryption) {
+		return channelConfigInvalid("SMTP encryption must be tls, starttls, or ssl")
+	}
+	return nil
+}
+
 func mergeChannelConfig(existingJSON string, incoming map[string]interface{}) (map[string]interface{}, models.ChannelConfig, error) {
 	merged := make(map[string]interface{})
 	var stored models.ChannelConfig

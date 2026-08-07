@@ -51,6 +51,12 @@ type UpdateItemRequest struct {
 	UserID     int
 }
 
+// FindItem loads an item through the item repository for pre-update
+// authorization checks, keeping persistence access behind the service layer.
+func (s *ItemUpdateService) FindItem(itemID int) (*models.Item, error) {
+	return repository.NewItemRepository(s.db).FindByID(itemID)
+}
+
 // UpdateItemResult contains the result of an item update operation
 type UpdateItemResult struct {
 	OriginalItem  *models.Item // The item before updates (for notifications)

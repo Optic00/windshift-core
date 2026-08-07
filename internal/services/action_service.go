@@ -1820,20 +1820,10 @@ func pickTerminalByCategoryName(terminals []StatusResult, categoryName string) i
 
 // coerceInt extracts an int from a JSON-decoded interface{} (which may be
 // float64 from json.Unmarshal, int from direct construction, or string).
+// Numeric handling is shared with all other update surfaces via
+// utils.CoerceInt.
 func coerceInt(v interface{}) (int, bool) {
-	switch n := v.(type) {
-	case int:
-		return n, true
-	case int32:
-		return int(n), true
-	case int64:
-		return int(n), true
-	case float64:
-		return int(n), true
-	case float32:
-		return int(n), true
-	}
-	return 0, false
+	return utils.CoerceInt(v)
 }
 
 // executeAddComment executes an add_comment node

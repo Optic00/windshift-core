@@ -14,6 +14,7 @@ import (
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/sanitize"
+	"windshift/internal/utils"
 )
 
 // WorkspacePermissionChecker lets the validator ask whether a user holds a
@@ -261,13 +262,8 @@ func (v *ItemFieldValidator) ValidateAndApplyUpdates(
 				item.InheritProject = false
 			}
 		} else {
-			var newProjectID int
-			switch v := projectIDValue.(type) {
-			case float64:
-				newProjectID = int(v)
-			case int:
-				newProjectID = v
-			default:
+			newProjectID, ok := utils.CoerceInt(projectIDValue)
+			if !ok {
 				return &ValidationError{Field: "project_id", Message: "Invalid project_id type"}
 			}
 			if newProjectID > 0 {
@@ -288,13 +284,8 @@ func (v *ItemFieldValidator) ValidateAndApplyUpdates(
 		if timeProjectIDValue == nil {
 			item.TimeProjectID = nil
 		} else {
-			var newTimeProjectID int
-			switch tv := timeProjectIDValue.(type) {
-			case float64:
-				newTimeProjectID = int(tv)
-			case int:
-				newTimeProjectID = tv
-			default:
+			newTimeProjectID, ok := utils.CoerceInt(timeProjectIDValue)
+			if !ok {
 				return &ValidationError{Field: "time_project_id", Message: "Invalid time_project_id type"}
 			}
 			if newTimeProjectID > 0 {
@@ -311,13 +302,8 @@ func (v *ItemFieldValidator) ValidateAndApplyUpdates(
 
 	// Workspace ID validation (if being changed)
 	if workspaceIDValue, ok := updateData["workspace_id"]; ok && workspaceIDValue != nil {
-		var newWorkspaceID int
-		switch v := workspaceIDValue.(type) {
-		case float64:
-			newWorkspaceID = int(v)
-		case int:
-			newWorkspaceID = v
-		default:
+		newWorkspaceID, ok := utils.CoerceInt(workspaceIDValue)
+		if !ok {
 			return &ValidationError{Field: "workspace_id", Message: "Invalid workspace_id type"}
 		}
 		exists, err := v.EntityExists("workspaces", newWorkspaceID)
@@ -361,13 +347,8 @@ func (v *ItemFieldValidator) ValidateAndApplyUpdates(
 			}
 			item.ParentID = nil
 		} else {
-			var newParentID int
-			switch v := parentIDValue.(type) {
-			case float64:
-				newParentID = int(v)
-			case int:
-				newParentID = v
-			default:
+			newParentID, ok := utils.CoerceInt(parentIDValue)
+			if !ok {
 				return &ValidationError{Field: "parent_id", Message: "Invalid parent_id type"}
 			}
 
@@ -438,13 +419,8 @@ func (v *ItemFieldValidator) ValidateAndApplyUpdates(
 		if relatedWorkItemIDValue == nil {
 			item.RelatedWorkItemID = nil
 		} else {
-			var newRelatedWorkItemID int
-			switch v := relatedWorkItemIDValue.(type) {
-			case float64:
-				newRelatedWorkItemID = int(v)
-			case int:
-				newRelatedWorkItemID = v
-			default:
+			newRelatedWorkItemID, ok := utils.CoerceInt(relatedWorkItemIDValue)
+			if !ok {
 				return &ValidationError{Field: "related_work_item_id", Message: "Invalid related_work_item_id type"}
 			}
 
@@ -544,13 +520,8 @@ func (v *ItemFieldValidator) ValidateNullableIDField(
 		if value == nil {
 			*destination = nil
 		} else {
-			var newID int
-			switch val := value.(type) {
-			case float64:
-				newID = int(val)
-			case int:
-				newID = val
-			default:
+			newID, ok := utils.CoerceInt(value)
+			if !ok {
 				return &ValidationError{Field: fieldName, Message: fmt.Sprintf("Invalid %s type", entityName)}
 			}
 			// Validate entity exists
@@ -578,13 +549,8 @@ func (v *ItemFieldValidator) ValidateNullableUserID(
 		if value == nil {
 			*destination = nil
 		} else {
-			var newID int
-			switch val := value.(type) {
-			case float64:
-				newID = int(val)
-			case int:
-				newID = val
-			default:
+			newID, ok := utils.CoerceInt(value)
+			if !ok {
 				return &ValidationError{Field: fieldName, Message: fmt.Sprintf("Invalid %s type", entityName)}
 			}
 			// Validate user exists
@@ -601,42 +567,16 @@ func (v *ItemFieldValidator) ValidateNullableUserID(
 	return nil
 }
 
-// coerceIntSlice converts an updateData value (typically decoded from JSON,
-// where numbers come through as float64) into a []int. Accepts []int,
-// []float64, []interface{}, or nil. Returns ([]int{}, nil) for nil and for
-// any explicitly-empty slice — distinguished from "field absent" by the
-// caller's `_, ok := updateData[key]` check.
+// coerceIntSlice delegates to the shared integer-array coercion so every
+// update field uses identical number handling. The caller wraps failures in
+// a field-specific ValidationError, so the underlying message is diagnostic
+// only.
 func coerceIntSlice(v interface{}) ([]int, error) {
-	if v == nil {
-		return []int{}, nil
+	ids, ok := utils.CoerceIntSlice(v)
+	if !ok {
+		return nil, fmt.Errorf("unexpected value %T", v)
 	}
-	switch s := v.(type) {
-	case []int:
-		out := make([]int, len(s))
-		copy(out, s)
-		return out, nil
-	case []float64:
-		out := make([]int, len(s))
-		for i, n := range s {
-			out[i] = int(n)
-		}
-		return out, nil
-	case []interface{}:
-		out := make([]int, 0, len(s))
-		for _, e := range s {
-			switch n := e.(type) {
-			case float64:
-				out = append(out, int(n))
-			case int:
-				out = append(out, n)
-			default:
-				return nil, fmt.Errorf("unexpected element type %T", e)
-			}
-		}
-		return out, nil
-	default:
-		return nil, fmt.Errorf("unexpected type %T", v)
-	}
+	return ids, nil
 }
 
 // EntityExists checks if an entity with the given ID exists in the specified table

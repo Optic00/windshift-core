@@ -563,11 +563,6 @@ func (h *ChannelHandler) ToggleChannel(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	isAdmin, err := h.permissionService.IsSystemAdmin(user.ID)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
 	channel, err := h.service.GetByID(ctx, id)
 	if err != nil {
 		respondInternalError(w, r, err)
@@ -577,7 +572,6 @@ func (h *ChannelHandler) ToggleChannel(w http.ResponseWriter, r *http.Request) {
 		respondNotFound(w, r, "channel")
 		return
 	}
-
 	isPluginManaged, err := h.service.IsPluginManaged(ctx, id)
 	if err != nil {
 		respondInternalError(w, r, err)
@@ -593,201 +587,37 @@ func (h *ChannelHandler) ToggleChannel(w http.ResponseWriter, r *http.Request) {
 	if currentStatus == "enabled" {
 		newStatus = "disabled"
 	}
-	var validatedConfigJSON string
 
-	// Block enabling an inbound email channel that's missing required fields.
-	// The scheduler would otherwise spin and increment error state on every
-	// tick; we'd rather give the operator a precise 400 here.
-	if newStatus == "enabled" && channel.Type == "email" && channel.Direction == "inbound" {
-		rawConfig, cfgErr := h.service.GetConfig(ctx, id)
-		if cfgErr != nil {
-			respondInternalError(w, r, cfgErr)
-			return
-		}
-		validatedConfigJSON = rawConfig
-		var cfg models.ChannelConfig
-		if rawConfig != "" {
-			if jsonErr := json.Unmarshal([]byte(rawConfig), &cfg); jsonErr != nil {
-				respondInternalError(w, r, jsonErr)
-				return
-			}
-		}
-		if vErr := email.ValidateConfigForEnable(channel, &cfg); vErr != nil {
-			respondValidationError(w, r, vErr.Error())
-			return
-		}
-		bad, targetErr := h.channelRepo.FindBadWorkspaceIDs([]int{cfg.EmailWorkspaceID})
-		if targetErr != nil {
-			respondInternalError(w, r, targetErr)
-			return
-		}
-		if len(bad) > 0 {
-			respondValidationError(w, r, "Configured email workspace is missing or personal")
-			return
-		}
-		allowed, targetErr := h.service.ItemTypeAllowedInWorkspace(cfg.EmailWorkspaceID, *cfg.EmailItemTypeID)
-		if targetErr != nil {
-			respondInternalError(w, r, targetErr)
-			return
-		}
-		if !allowed {
-			respondValidationError(w, r, fmt.Sprintf("Item type %d is not allowed in workspace %d", *cfg.EmailItemTypeID, cfg.EmailWorkspaceID))
-			return
-		}
-		if cfg.EmailDefaultPriorityID != nil {
-			allowed, priorityErr := h.service.PriorityAllowedInWorkspace(cfg.EmailWorkspaceID, *cfg.EmailDefaultPriorityID)
-			if priorityErr != nil {
-				respondInternalError(w, r, priorityErr)
-				return
-			}
-			if !allowed {
-				respondValidationError(w, r, fmt.Sprintf("Priority %d is not allowed in workspace %d", *cfg.EmailDefaultPriorityID, cfg.EmailWorkspaceID))
-				return
-			}
-		}
-		if !isAdmin {
-			canConnect, permErr := h.permissionService.HasWorkspacePermission(user.ID, cfg.EmailWorkspaceID, models.PermissionWorkspaceAdmin)
-			if permErr != nil {
-				respondInternalError(w, r, permErr)
-				return
-			}
-			if !canConnect {
+	// Enabling validates the stored configuration first so the operator gets
+	// a precise error instead of a later scheduler failure, then the status
+	// transition is compare-and-swapped against that same configuration so a
+	// concurrent edit cannot bypass validation.
+	validatedConfig, err := h.configUpdate.PrepareEnable(ctx, user.ID, id)
+	if err != nil {
+		var configErr *services.ChannelConfigError
+		if errors.As(err, &configErr) {
+			switch configErr.Kind {
+			case services.ChannelConfigInvalid:
+				respondValidationError(w, r, configErr.Message)
+			case services.ChannelConfigForbidden:
 				respondForbidden(w, r)
-				return
+			case services.ChannelConfigWorkspaceForbidden:
+				respondError(w, r, restapi.NewAPIError(http.StatusForbidden, restapi.ErrCodeInsufficientPermission, configErr.Message))
+			case services.ChannelConfigConflict:
+				respondConflict(w, r, configErr.Message)
 			}
+			return
 		}
+		if errors.Is(err, repository.ErrNotFound) {
+			respondNotFound(w, r, "channel")
+			return
+		}
+		respondInternalError(w, r, err)
+		return
 	}
 
-	if newStatus == "enabled" && (channel.Type == "portal" || channel.Type == "form") {
-		rawConfig, cfgErr := h.service.GetConfig(ctx, id)
-		if cfgErr != nil {
-			respondInternalError(w, r, cfgErr)
-			return
-		}
-		validatedConfigJSON = rawConfig
-		var cfg models.ChannelConfig
-		if rawConfig != "" {
-			if jsonErr := json.Unmarshal([]byte(rawConfig), &cfg); jsonErr != nil {
-				respondInternalError(w, r, jsonErr)
-				return
-			}
-		}
-		slug := cfg.PortalSlug
-		if channel.Type == "form" {
-			slug = cfg.FormSlug
-		}
-		if slug == "" || !slugFormatOK(slug) {
-			respondValidationError(w, r, "A valid public slug is required before enabling this channel")
-			return
-		}
-		workspaceIDs := cfg.PortalWorkspaceIDs
-		if channel.Type == "form" {
-			workspaceIDs = cfg.FormWorkspaceIDs
-		}
-		if len(workspaceIDs) == 0 {
-			respondValidationError(w, r, "At least one target workspace is required before enabling this channel")
-			return
-		}
-		bad, targetErr := h.channelRepo.FindBadWorkspaceIDs(workspaceIDs)
-		if targetErr != nil {
-			respondInternalError(w, r, targetErr)
-			return
-		}
-		if len(bad) > 0 {
-			respondValidationError(w, r, fmt.Sprintf("Target workspaces %v are missing or personal", bad))
-			return
-		}
-		if !isAdmin {
-			for _, workspaceID := range workspaceIDs {
-				canConnect, permErr := h.permissionService.HasWorkspacePermission(user.ID, workspaceID, models.PermissionWorkspaceAdmin)
-				if permErr != nil {
-					respondInternalError(w, r, permErr)
-					return
-				}
-				if !canConnect {
-					respondForbidden(w, r)
-					return
-				}
-			}
-		}
-		if !h.validateChannelRequestTypeRoutes(w, r, id, workspaceIDs) {
-			return
-		}
-		if channel.Type == "portal" && cfg.PortalRegistrationMode != "" && cfg.PortalRegistrationMode != "open" && cfg.PortalRegistrationMode != "manual" {
-			respondValidationError(w, r, "Portal registration mode must be open or manual")
-			return
-		}
-		inUse, slugErr := h.channelRepo.SlugInUse(ctx, channel.Type, slug, id)
-		if slugErr != nil {
-			respondInternalError(w, r, slugErr)
-			return
-		}
-		if inUse {
-			respondError(w, r, restapi.NewAPIError(http.StatusConflict, restapi.ErrCodeValidationFailed, fmt.Sprintf("Slug %q is already in use by another %s channel", slug, channel.Type)))
-			return
-		}
-	}
-
-	// Automatic webhooks run without an interactive authorization context and
-	// can serialize item data. Only a system administrator may activate one;
-	// channel managers retain the ability to use manually triggered webhooks,
-	// where the item permission is checked at trigger time.
-	if newStatus == "enabled" && channel.Type == "webhook" && channel.Direction == "outbound" {
-		rawConfig, cfgErr := h.service.GetConfig(ctx, id)
-		if cfgErr != nil {
-			respondInternalError(w, r, cfgErr)
-			return
-		}
-		validatedConfigJSON = rawConfig
-		var cfg models.ChannelConfig
-		if rawConfig != "" {
-			if jsonErr := json.Unmarshal([]byte(rawConfig), &cfg); jsonErr != nil {
-				respondInternalError(w, r, jsonErr)
-				return
-			}
-		}
-		if cfg.WebhookAutoTrigger && !isAdmin {
-			respondForbidden(w, r)
-			return
-		}
-		if strings.TrimSpace(cfg.WebhookURL) == "" {
-			respondValidationError(w, r, "A webhook URL is required before enabling this channel")
-			return
-		}
-		if urlErr := webhook.ValidateWebhookURL(cfg.WebhookURL); urlErr != nil {
-			respondValidationError(w, r, "Webhook URL must target a public host")
-			return
-		}
-	}
-
-	if newStatus == "enabled" && channel.Type == "smtp" && channel.Direction == "outbound" {
-		rawConfig, cfgErr := h.service.GetConfig(ctx, id)
-		if cfgErr != nil {
-			respondInternalError(w, r, cfgErr)
-			return
-		}
-		validatedConfigJSON = rawConfig
-		var cfg models.ChannelConfig
-		if jsonErr := json.Unmarshal([]byte(rawConfig), &cfg); jsonErr != nil {
-			respondInternalError(w, r, jsonErr)
-			return
-		}
-		if strings.TrimSpace(cfg.SMTPHost) == "" || cfg.SMTPPort <= 0 || cfg.SMTPPort > 65535 || strings.TrimSpace(cfg.SMTPFromEmail) == "" {
-			respondValidationError(w, r, "SMTP host, port, and from address are required before enabling this channel")
-			return
-		}
-		if _, valid := bareEmailAddress(cfg.SMTPFromEmail); !valid {
-			respondValidationError(w, r, "SMTP from address must be a valid bare email address")
-			return
-		}
-		if !windshiftsmtp.EncryptionModeAllowed(cfg.SMTPEncryption) {
-			respondValidationError(w, r, "SMTP encryption must be tls, starttls, or ssl")
-			return
-		}
-	}
-
-	if newStatus == "enabled" && validatedConfigJSON != "" {
-		updated, statusErr := h.service.SetStatusIfConfigUnchanged(ctx, id, newStatus, validatedConfigJSON)
+	if validatedConfig != "" {
+		updated, statusErr := h.service.SetStatusIfConfigUnchanged(ctx, id, newStatus, validatedConfig)
 		if statusErr != nil {
 			respondInternalError(w, r, statusErr)
 			return
@@ -1121,42 +951,6 @@ var channelSlugRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$`)
 // slugFormatOK reports whether s is a valid portal/form slug.
 func slugFormatOK(s string) bool {
 	return channelSlugRegex.MatchString(s)
-}
-
-// validateChannelRequestTypeRoutes ensures every request type still has an
-// effective target workspace and that its item type is allowed there. This is
-// run both while saving public-channel config and while enabling a legacy
-// channel, because workspace order controls NULL/legacy routes.
-func (h *ChannelHandler) validateChannelRequestTypeRoutes(w http.ResponseWriter, r *http.Request, channelID int, served []int) bool {
-	routes, err := h.channelRepo.ListRequestTypeRoutes(channelID)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return false
-	}
-	invalid := make([]string, 0)
-	for _, route := range routes {
-		workspaceID, routable := effectiveRequestTypeWorkspace(served, route.WorkspaceID)
-		if !routable || !containsID(served, workspaceID) {
-			invalid = append(invalid, route.Name)
-			continue
-		}
-		allowed, allowErr := h.service.ItemTypeAllowedInWorkspace(workspaceID, route.ItemTypeID)
-		if allowErr != nil {
-			respondInternalError(w, r, allowErr)
-			return false
-		}
-		if !allowed {
-			invalid = append(invalid, route.Name)
-		}
-	}
-	if len(invalid) > 0 {
-		respondValidationError(w, r, fmt.Sprintf(
-			"Request types have missing or incompatible workspace routes: %s. Retarget or update them first.",
-			strings.Join(invalid, ", "),
-		))
-		return false
-	}
-	return true
 }
 
 // UpdateChannelConfig updates only the configuration of a channel

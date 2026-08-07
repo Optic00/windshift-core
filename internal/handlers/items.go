@@ -82,6 +82,13 @@ func NewItemHandler(db database.Database, permissionService *services.Permission
 	itemUpdate := services.NewItemUpdateApplicationService(db, permissionService)
 	itemUpdate.SetActivityTracker(activityTracker)
 	itemUpdate.SetCache(itemCache, hierarchyService)
+	// Embeddings that skip the EventCoordinator keep the original per-service
+	// notification pipeline (actions/webhooks attach through later setters).
+	var notify func(*services.NotificationEvent)
+	if notificationService != nil {
+		notify = notificationService.EmitEvent
+	}
+	itemUpdate.SetFallbackEmitter(services.NewLegacyItemUpdatedEmitter(db, notify, nil, nil))
 	itemDeletion := services.NewItemDeletionApplicationService(db, permissionService)
 	itemDeletion.SetCache(itemCache, hierarchyService)
 
@@ -169,6 +176,7 @@ func (h *ItemHandler) SetActionService(actionService interface {
 	EmitActionEvent(event *models.ActionEvent)
 }) {
 	h.actionService = actionService
+	h.itemUpdate.SetFallbackAction(actionService)
 }
 
 // SetEventCoordinator sets the event coordinator for centralized side effects
@@ -876,6 +884,22 @@ func (h *ItemHandler) emitItemCreatedFallback(item *models.Item, user *models.Us
 		h.webhookSender.DispatchEvent("item.created", item)
 	}
 }
+
+// itemUpdateValidationMessage preserves the legacy transport wording for the
+// workflow-protected fields. The shared update pipeline rejects both for every
+// transport with a field-scoped ValidationError; only the transport-specific
+// pointer to the transition/change-type endpoints differs.
+func itemUpdateValidationMessage(valErr *validation.ValidationError) string {
+	switch valErr.Field {
+	case "status_id":
+		return "status_id may not be set via item update; use POST /items/{id}/transition"
+	case "item_type_id":
+		return "item_type_id may not be set via item update; use POST /items/{id}/change-type"
+	default:
+		return valErr.Error()
+	}
+}
+
 func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// Parse request and validate item ID
 	id, ok := requireIDParam(w, r, "id")
@@ -896,8 +920,9 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Load item to check permissions.
-	loadedItem, err := repository.NewItemRepository(h.db).FindByID(id)
+	// The application service loads the item and enforces workspace edit
+	// permission, so this handler owns no persistence or authorization path.
+	canEdit, err := h.itemUpdate.CanUserEditItem(user.ID, id)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			respondNotFound(w, r, "item")
@@ -906,35 +931,16 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
-	workspaceID := loadedItem.WorkspaceID
-
-	// Check if user has permission to edit items in this workspace
-	canEdit, err := h.canEditItem(user.ID, workspaceID)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
 	if !canEdit {
 		respondNotFound(w, r, "Item")
 		return
 	}
 
-	// status_id must be changed via POST /items/{id}/transition so workflow +
-	// condition rules are always enforced. Accepting it here would allow
-	// bypassing condition-mode checks and diverges from the dedicated
-	// transition flow (which also emits the correct cascade event).
-	if _, hasStatus := updateData["status_id"]; hasStatus {
-		respondValidationError(w, r, "status_id may not be set via item update; use POST /items/{id}/transition")
-		return
-	}
-	if _, hasItemType := updateData["item_type_id"]; hasItemType {
-		respondValidationError(w, r, "item_type_id may not be set via item update; use POST /items/{id}/change-type")
-		return
-	}
-
 	// Run the shared user-facing update pipeline. REST v1 uses this same
 	// service instance so committed-item events, mentions, activity, and cache
-	// invalidation do not depend on the transport.
+	// invalidation do not depend on the transport. The pipeline also rejects
+	// status_id and item_type_id so workflow and condition rules are always
+	// enforced front of the dedicated transition/change-type flows.
 	result, err := h.itemUpdate.Update(user.ID, user.Username, id, updateData)
 
 	if err != nil {
@@ -945,7 +951,7 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 		// hierarchy levels.)
 		var valErr *validation.ValidationError
 		if errors.As(err, &valErr) {
-			respondValidationError(w, r, valErr.Error())
+			respondValidationError(w, r, itemUpdateValidationMessage(valErr))
 			return
 		}
 		// Generic error
@@ -953,137 +959,10 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get original and updated items for event emission
-	originalItem := result.OriginalItem
+	// The application service returns the committed item for the response.
 	updatedItem := result.Item
 
 	w.Header().Set("Content-Type", "application/json")
-
-	// Check if assignee changed (compare originalItem with updatedItem)
-	assigneeChanged := false
-	switch {
-	case originalItem.AssigneeID == nil && updatedItem.AssigneeID != nil:
-		assigneeChanged = true
-	case originalItem.AssigneeID != nil && updatedItem.AssigneeID == nil:
-		assigneeChanged = true
-	case originalItem.AssigneeID != nil && updatedItem.AssigneeID != nil && *originalItem.AssigneeID != *updatedItem.AssigneeID:
-		assigneeChanged = true
-	}
-
-	// The shared application service emits through EventCoordinator. Preserve
-	// the legacy individual-service fallback for lightweight embeddings that
-	// do not install a coordinator.
-	if h.eventCoordinator == nil {
-		// Fallback to individual services if EventCoordinator not set
-		if h.notificationService != nil {
-			var statusName string
-			if result.StatusChanged && updatedItem.StatusID != nil {
-				if err := h.db.QueryRow("SELECT name FROM statuses WHERE id = ?", *updatedItem.StatusID).Scan(&statusName); err != nil && !errors.Is(err, sql.ErrNoRows) {
-					slog.Warn("failed to load status name", slog.Int("status_id", *updatedItem.StatusID), slog.Any("error", err))
-				}
-			}
-			itemKey := fmt.Sprintf("%s-%d", updatedItem.WorkspaceKey, updatedItem.WorkspaceItemNumber)
-
-			if result.StatusChanged {
-				h.notificationService.EmitEvent(&services.NotificationEvent{
-					EventType:   models.EventStatusChanged,
-					WorkspaceID: updatedItem.WorkspaceID,
-					ActorUserID: user.ID,
-					ItemID:      updatedItem.ID,
-					AssigneeID:  updatedItem.AssigneeID,
-					CreatorID:   originalItem.CreatorID,
-					Title:       "Status Changed",
-					TemplateData: map[string]interface{}{
-						"item.title":  updatedItem.Title,
-						"item.key":    itemKey,
-						"item.id":     updatedItem.ID,
-						"status.name": statusName,
-						"user.name":   user.Username,
-					},
-				})
-			}
-			if assigneeChanged {
-				h.notificationService.EmitEvent(&services.NotificationEvent{
-					EventType:   models.EventItemAssigned,
-					WorkspaceID: updatedItem.WorkspaceID,
-					ActorUserID: user.ID,
-					ItemID:      updatedItem.ID,
-					AssigneeID:  updatedItem.AssigneeID,
-					CreatorID:   originalItem.CreatorID,
-					Title:       "Item Assigned",
-					TemplateData: map[string]interface{}{
-						"item.title": updatedItem.Title,
-						"item.key":   itemKey,
-						"item.id":    updatedItem.ID,
-						"user.name":  user.Username,
-					},
-				})
-			}
-			if !result.StatusChanged && !assigneeChanged {
-				h.notificationService.EmitEvent(&services.NotificationEvent{
-					EventType:   models.EventItemUpdated,
-					WorkspaceID: updatedItem.WorkspaceID,
-					ActorUserID: user.ID,
-					ItemID:      updatedItem.ID,
-					AssigneeID:  updatedItem.AssigneeID,
-					CreatorID:   originalItem.CreatorID,
-					Title:       "Item Updated",
-					TemplateData: map[string]interface{}{
-						"item.title": updatedItem.Title,
-						"item.key":   itemKey,
-						"item.id":    updatedItem.ID,
-						"user.name":  user.Username,
-					},
-				})
-			}
-		}
-		if h.actionService != nil {
-			if result.StatusChanged {
-				h.actionService.EmitActionEvent(&models.ActionEvent{
-					EventType:   models.ActionTriggerStatusTransition,
-					WorkspaceID: updatedItem.WorkspaceID,
-					ItemID:      updatedItem.ID,
-					ActorUserID: user.ID,
-					OldValues:   map[string]interface{}{"status_id": originalItem.StatusID},
-					NewValues: map[string]interface{}{
-						"status_id":   updatedItem.StatusID,
-						"title":       updatedItem.Title,
-						"assignee_id": updatedItem.AssigneeID,
-						"creator_id":  updatedItem.CreatorID,
-					},
-				})
-			} else {
-				h.actionService.EmitActionEvent(&models.ActionEvent{
-					EventType:   models.ActionTriggerItemUpdated,
-					WorkspaceID: updatedItem.WorkspaceID,
-					ItemID:      updatedItem.ID,
-					ActorUserID: user.ID,
-					OldValues: map[string]interface{}{
-						"status_id":   originalItem.StatusID,
-						"assignee_id": originalItem.AssigneeID,
-						"title":       originalItem.Title,
-						"priority_id": originalItem.PriorityID,
-					},
-					NewValues: map[string]interface{}{
-						"status_id":   updatedItem.StatusID,
-						"assignee_id": updatedItem.AssigneeID,
-						"title":       updatedItem.Title,
-						"priority_id": updatedItem.PriorityID,
-						"creator_id":  updatedItem.CreatorID,
-					},
-				})
-			}
-		}
-		if h.webhookSender != nil {
-			if result.StatusChanged {
-				h.webhookSender.DispatchEvent("status.changed", updatedItem)
-			}
-			if assigneeChanged {
-				h.webhookSender.DispatchEvent("item.assigned", updatedItem)
-			}
-			h.webhookSender.DispatchEvent("item.updated", updatedItem)
-		}
-	}
 
 	// Push status change to GitHub if issue sync is configured
 	if h.issueSyncService != nil && result.StatusChanged && updatedItem.StatusID != nil {

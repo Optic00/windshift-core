@@ -27,17 +27,20 @@ type contextualItemUpdatedEmitter interface {
 // workflows that deliberately manage their own side effects.
 type ItemUpdateApplicationService struct {
 	update          *ItemUpdateService
+	permission      *PermissionService
 	activityTracker *ActivityTracker
 	itemCache       *ItemCacheService
 	hierarchy       *HierarchyService
 	mentionService  *MentionService
 	emitter         ItemUpdatedEmitter
+	fallback        ItemUpdatedEmitter
 }
 
 func NewItemUpdateApplicationService(db database.Database, perm *PermissionService) *ItemUpdateApplicationService {
 	return &ItemUpdateApplicationService{
-		update:    NewItemUpdateService(db).WithPermissionService(perm),
-		hierarchy: NewHierarchyService(db),
+		update:     NewItemUpdateService(db).WithPermissionService(perm),
+		permission: perm,
+		hierarchy:  NewHierarchyService(db),
 	}
 }
 
@@ -58,6 +61,46 @@ func (s *ItemUpdateApplicationService) SetMentionService(mentionService *Mention
 
 func (s *ItemUpdateApplicationService) SetEmitter(emitter ItemUpdatedEmitter) {
 	s.emitter = emitter
+}
+
+// SetFallbackEmitter installs the event pipeline used when no EventCoordinator
+// is wired. Legacy transports configure it with the original per-service
+// notifier so lightweight embeddings keep identical side effects.
+func (s *ItemUpdateApplicationService) SetFallbackEmitter(emitter ItemUpdatedEmitter) {
+	s.fallback = emitter
+}
+
+// SetFallbackWebhook forwards the webhook sender into the legacy fallback
+// emitter when one is installed.
+func (s *ItemUpdateApplicationService) SetFallbackWebhook(dispatcher WebhookDispatcher) {
+	if legacy, ok := s.fallback.(*LegacyItemUpdatedEmitter); ok {
+		legacy.SetWebhook(dispatcher)
+	}
+}
+
+// SetFallbackAction forwards the automation action service into the legacy
+// fallback emitter when one is installed.
+func (s *ItemUpdateApplicationService) SetFallbackAction(action ActionEventEmitter) {
+	if legacy, ok := s.fallback.(*LegacyItemUpdatedEmitter); ok {
+		legacy.SetAction(action)
+	}
+}
+
+// CanUserEditItem reports whether the actor may edit the item. It loads the
+// item through the update pipeline's own repository access and propagates a
+// not-found error so transports can keep their not-found denial contract.
+func (s *ItemUpdateApplicationService) CanUserEditItem(userID, itemID int) (bool, error) {
+	item, err := s.update.FindItem(itemID)
+	if err != nil {
+		return false, err
+	}
+	if item == nil {
+		return false, nil
+	}
+	if s.permission == nil {
+		return false, nil
+	}
+	return s.permission.HasWorkspacePermission(userID, item.WorkspaceID, models.PermissionItemEdit)
 }
 
 // UpdateJSONFields applies the public item-update patch format. Keeping the
@@ -195,6 +238,16 @@ func (s *ItemUpdateApplicationService) Update(actorUserID int, actorUsername str
 	assigneeChanged := !itemIntPtrEqual(result.OriginalItem.AssigneeID, result.Item.AssigneeID)
 	if s.emitter != nil {
 		s.emitter.EmitItemUpdated(
+			result.OriginalItem,
+			result.Item,
+			result.StatusChanged,
+			assigneeChanged,
+			actorUserID,
+			result.FieldChanges,
+			actorUsername,
+		)
+	} else if s.fallback != nil {
+		s.fallback.EmitItemUpdated(
 			result.OriginalItem,
 			result.Item,
 			result.StatusChanged,
