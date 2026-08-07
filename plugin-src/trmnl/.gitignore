@@ -1,0 +1,15 @@
+# Credentials for the local preview server. The server URL and API token are
+# only ever supplied through these — the committed .trmnlp.yml files reference
+# them as {{ env.* }} so no token is written into a tracked file.
+.env
+.env.*
+!.env.example
+
+# trmnlp render + poll cache
+.trmnlp/
+*/.trmnlp/
+
+# The repo root ignores docker-compose.yml everywhere ("local dev
+# docker-compose"). This one is part of the plugin harness, not a local
+# override, so re-include it.
+!docker-compose.yml

@@ -1,0 +1,22 @@
+{%- comment -%}
+  400x240 is too small for a readable list, so the quadrant reduces to the
+  headline number plus whatever is most urgent.
+{%- endcomment -%}
+{%- if fault != '' -%}
+  {% render 'notice', headline: 'Windshift', detail: fault %}
+{%- else -%}
+  <div class="layout layout--col layout--center">
+    <span class="value value--xlarge value--tnums">{{ total }}</span>
+    <span class="label">{% if total == 1 %}open item{% else %}open items{% endif %}</span>
+    {%- if overdue_count > 0 -%}
+      <span class="label label--small label--underline">{{ overdue_count }} overdue</span>
+    {%- elsif due_today_count > 0 -%}
+      <span class="label label--small label--underline">{{ due_today_count }} due today</span>
+    {%- endif -%}
+  </div>
+{%- endif -%}
+
+<div class="title_bar">
+  <span class="title">Windshift</span>
+  {%- if fault == '' -%}<span class="instance">{{ owner_name }}</span>{%- endif -%}
+</div>

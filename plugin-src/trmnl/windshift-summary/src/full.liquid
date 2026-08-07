@@ -1,0 +1,55 @@
+{%- if fault != '' -%}
+{% render 'notice', headline: 'Windshift', detail: fault %}
+{%- else -%}
+<div class="layout layout--col gap--small">
+
+  <div class="grid grid--cols-4">
+    {% render 'stat', number: open_total,      caption: 'Open',         size: 'large' %}
+    {% render 'stat', number: due_today_count, caption: 'Due today',    size: 'large' %}
+    {% render 'stat', number: overdue_count,   caption: 'Overdue',      size: 'large' %}
+    {% render 'stat', number: closed_today,    caption: 'Closed today', size: 'large' %}
+  </div>
+
+  <div class="columns">
+    <div class="column">
+      <span class="label label--underline">Next up</span>
+      {%- if next_up -%}
+        <div class="item">
+          <div class="content">
+            <span class="title title--small" data-clamp="2">{{ next_up.title }}</span>
+            <div class="flex gap--small">
+              <span class="label label--small">{{ next_up.key }}</span>
+              <span class="label label--small">{{ next_up.status.name }}</span>
+              {%- if next_up.due_date %}<span class="label label--small label--underline">Due {{ next_up.due_date | date: '%b %-d' }}</span>{% endif -%}
+            </div>
+          </div>
+        </div>
+      {%- else -%}
+        <span class="description">Nothing open</span>
+      {%- endif -%}
+    </div>
+
+    <div class="column">
+      <span class="label label--underline">Moved today ({{ activity_total }})</span>
+      <div data-overflow="true" data-overflow-counter="true">
+        {%- for item in activity -%}
+          <div class="item">
+            <div class="content">
+              <span class="title title--small" data-clamp="1">{{ item.title }}</span>
+              <span class="description">{{ item.key }} &nbsp;·&nbsp; {{ item.status.name }} &nbsp;·&nbsp; {{ item.updated_at | date: '%H:%M' }}</span>
+            </div>
+          </div>
+        {%- else -%}
+          <span class="description">Quiet so far</span>
+        {%- endfor -%}
+      </div>
+    </div>
+  </div>
+
+</div>
+{%- endif -%}
+
+<div class="title_bar">
+  <span class="title">Windshift</span>
+  {%- if fault == '' -%}<span class="instance">{{ owner_name }} &nbsp;·&nbsp; {{ 'now' | date: '%A, %-d %B' }}</span>{%- endif -%}
+</div>

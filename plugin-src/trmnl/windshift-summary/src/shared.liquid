@@ -1,0 +1,99 @@
+{%- comment -%}
+  Shared markup is prepended to every view layout before rendering, so the
+  assigns below are in scope for all four layouts.
+
+  Polled responses (see settings.yml polling_url):
+    IDX_0 = /users/me
+    IDX_1 = the open backlog the stats are computed from (window of 100)
+    IDX_2 = closed-today count (only pagination.total is read)
+    IDX_3 = today's activity across all visible workspaces
+
+  Accuracy note: open_total, closed_today and activity_total come from
+  pagination.total and are exact for any backlog size. due_today_count and
+  overdue_count are counted from the 100-item window, so they are exact only
+  while the scope query returns 100 items or fewer — which the default
+  per-assignee query always will.
+{%- endcomment -%}
+
+{%- assign me = IDX_0 -%}
+{%- assign open_items = IDX_1.data -%}
+{%- assign open_total = IDX_1.pagination.total -%}
+{%- assign closed_today = IDX_2.pagination.total -%}
+{%- assign activity = IDX_3.data -%}
+{%- assign activity_total = IDX_3.pagination.total -%}
+
+{%- comment -%}
+  A failed poll yields {} rather than an exception, so an unreachable server
+  or a rejected query would otherwise render as a silently blank screen. The
+  device has no logs to check, so name the fault on the screen itself.
+{%- endcomment -%}
+{%- assign fault = '' -%}
+{%- unless me.id -%}
+  {%- assign fault = 'Cannot reach Windshift. Check the server URL and API token.' -%}
+{%- endunless -%}
+{%- if fault == '' -%}
+  {%- unless IDX_1.pagination -%}
+    {%- assign fault = 'Windshift rejected the scope query. Check the QL syntax.' -%}
+  {%- endunless -%}
+{%- endif -%}
+
+{%- comment -%}
+  Dates arrive as RFC 3339. Collapsing them to a YYYYMMDD integer makes the
+  comparisons unambiguous, and a missing due date lands on 0 — which is never
+  "overdue", because every real date compares greater.
+{%- endcomment -%}
+{%- assign today_num = 'now' | date: '%Y%m%d' | plus: 0 -%}
+
+{%- comment -%}
+  A single pass over the backlog produces every counter the layouts need.
+  next_up is the soonest-due item that is not already overdue.
+{%- endcomment -%}
+{%- assign overdue_count = 0 -%}
+{%- assign due_today_count = 0 -%}
+{%- assign next_up_num = 99999999 -%}
+{%- assign next_up_found = false -%}
+{%- for item in open_items -%}
+  {%- assign due_num = item.due_date | date: '%Y%m%d' | plus: 0 -%}
+  {%- if due_num > 0 -%}
+    {%- if due_num < today_num -%}
+      {%- assign overdue_count = overdue_count | plus: 1 -%}
+    {%- else -%}
+      {%- if due_num == today_num -%}
+        {%- assign due_today_count = due_today_count | plus: 1 -%}
+      {%- endif -%}
+      {%- if due_num < next_up_num -%}
+        {%- assign next_up_num = due_num -%}
+        {%- assign next_up = item -%}
+        {%- assign next_up_found = true -%}
+      {%- endif -%}
+    {%- endif -%}
+  {%- endif -%}
+{%- endfor -%}
+
+{%- comment -%}
+  With no due dates anywhere, fall back to the most recently touched item so
+  the "Next up" slot still says something useful.
+{%- endcomment -%}
+{%- unless next_up_found -%}{%- assign next_up = open_items | first -%}{%- endunless -%}
+
+{%- assign owner_name = me.first_name -%}
+{%- if owner_name == blank -%}{%- assign owner_name = me.full_name | split: ' ' | first -%}{%- endif -%}
+{%- if owner_name == blank -%}{%- assign owner_name = me.username -%}{%- endif -%}
+
+{%- comment -%} Centred message, used for the fault state. {%- endcomment -%}
+{% template notice %}
+  <div class="layout layout--col layout--center">
+    <span class="value value--small">{{ headline }}</span>
+    <span class="label">{{ detail }}</span>
+  </div>
+{% endtemplate %}
+
+{%- comment -%} One stat tile. {% render %} is scope-isolated, so pass everything in. {%- endcomment -%}
+{% template stat %}
+  <div class="item">
+    <div class="content">
+      <span class="value value--{{ size | default: 'base' }} value--tnums">{{ number }}</span>
+      <span class="label label--small">{{ caption }}</span>
+    </div>
+  </div>
+{% endtemplate %}

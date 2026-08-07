@@ -1,0 +1,60 @@
+#
+# TRMNL private plugin definition. `trmnlp pull` overwrites this file, so keep
+# edits in sync with the hosted plugin if you ever push it.
+#
+---
+strategy: polling
+name: Windshift Tasks
+description: Open work items from Windshift
+refresh_interval: 15
+polling_verb: get
+framework_version: latest
+no_screen_padding: 'no'
+dark_mode: 'no'
+
+# Two requests per refresh. The poller exposes them as IDX_0 and IDX_1:
+#   IDX_0 -> the token owner (used for the greeting and to prove auth works)
+#   IDX_1 -> the item page  { data: [...], pagination: { total, ... } }
+#
+# The `append` then `replace` pair tolerates a trailing slash on the entered
+# URL: it only collapses a doubled slash immediately before /rest/, so the
+# one in https:// is never touched. (`remove_last: '/'` is NOT a safe
+# substitute — with no trailing slash it eats the slash in the scheme.)
+polling_url: |-
+  {{ windshift_url | strip | append: '/rest/api/v1/users/me' | replace: '//rest/', '/rest/' }}
+  {{ windshift_url | strip | append: '/rest/api/v1/search/items' | replace: '//rest/', '/rest/' }}?ql={{ task_query | strip | url_encode }}&limit={{ max_items }}&sort=updated_at&order=desc
+
+polling_headers: Authorization=Bearer {{ api_token | strip }}&Accept=application/json
+
+custom_fields:
+  - keyname: windshift_url
+    field_type: url
+    name: Windshift Server URL
+    placeholder: https://windshift.example.com
+    description: Base URL of your Windshift server
+    help_text: Just the origin — no /rest/api/v1 suffix. A trailing slash is fine.
+    required: true
+
+  - keyname: api_token
+    field_type: password
+    name: API Token
+    placeholder: crw_...
+    description: A personal Windshift API token
+    help_text: Create one under Profile > API Tokens. It needs the items:read and users:read scopes.
+    required: true
+
+  - keyname: task_query
+    field_type: string
+    name: Query
+    default: assignee = currentUser() AND status != Done
+    description: Which items to show
+    help_text: 'Windshift QL. currentUser() resolves to the token owner. Examples: assignee = currentUser() AND status != Done — workspace = WI AND priority = High'
+    required: true
+
+  - keyname: max_items
+    field_type: number
+    name: Maximum items
+    default: 20
+    description: Upper bound on items fetched
+    help_text: The screen shows as many as fit and counts the rest.
+    required: true

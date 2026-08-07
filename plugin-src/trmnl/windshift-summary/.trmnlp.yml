@@ -1,0 +1,16 @@
+# Local dev config for `trmnlp serve`. Never committed with real secrets —
+# the token is read from the WINDSHIFT_TOKEN environment variable.
+---
+watch:
+  - .trmnlp.yml
+  - src
+
+# Values for the custom fields declared in src/settings.yml. On the hosted
+# service these come from the plugin's settings form instead.
+custom_fields:
+  windshift_url: '{{ env.WINDSHIFT_URL }}'
+  api_token: '{{ env.WINDSHIFT_TOKEN }}'
+  scope_query: assignee = currentUser() AND status != Done
+
+variables:
+  trmnl: {}

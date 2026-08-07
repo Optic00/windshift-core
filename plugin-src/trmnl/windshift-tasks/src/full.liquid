@@ -1,0 +1,31 @@
+{%- comment -%}
+  The notice brings its own .layout. Nesting one .layout inside another
+  collapses it — the markup survives in the HTML but the e-ink render comes
+  back blank — so the branches sit outside the list's wrapper, not inside it.
+{%- endcomment -%}
+{%- if fault != '' -%}
+  {% render 'notice', headline: 'Windshift', detail: fault %}
+{%- elsif items.size == 0 -%}
+  {% render 'notice', headline: 'Nothing open', detail: 'No work items match this query' %}
+{%- else -%}
+  <div class="layout">
+    <div class="columns" data-overflow="true" data-overflow-max-cols="2" data-overflow-counter="true">
+      <div class="column">
+        {%- for item in items -%}
+          {% render 'task_row', item: item, today_num: today_num, clamp: 2 %}
+        {%- endfor -%}
+      </div>
+    </div>
+  </div>
+{%- endif -%}
+
+<div class="title_bar">
+  <span class="title">Windshift</span>
+  {%- if fault == '' -%}
+  <span class="instance">
+    {{- owner_name }} &nbsp;·&nbsp; {{ total }} open
+    {%- if overdue_count > 0 %} &nbsp;·&nbsp; {{ overdue_count }} overdue{% endif -%}
+    {%- if due_today_count > 0 %} &nbsp;·&nbsp; {{ due_today_count }} due today{% endif -%}
+  </span>
+  {%- endif -%}
+</div>

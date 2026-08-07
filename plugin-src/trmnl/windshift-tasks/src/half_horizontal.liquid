@@ -1,0 +1,21 @@
+{%- comment -%} The notice brings its own .layout; see full.liquid. {%- endcomment -%}
+{%- if fault != '' -%}
+  {% render 'notice', headline: 'Windshift', detail: fault %}
+{%- elsif items.size == 0 -%}
+  {% render 'notice', headline: 'Nothing open', detail: '' %}
+{%- else -%}
+  <div class="layout">
+    <div class="columns" data-overflow="true" data-overflow-max-cols="2" data-overflow-counter="true">
+      <div class="column">
+        {%- for item in items -%}
+          {% render 'task_row', item: item, today_num: today_num, clamp: 1 %}
+        {%- endfor -%}
+      </div>
+    </div>
+  </div>
+{%- endif -%}
+
+<div class="title_bar">
+  <span class="title">Windshift</span>
+  {%- if fault == '' -%}<span class="instance">{{ total }} open{% if overdue_count > 0 %} &nbsp;·&nbsp; {{ overdue_count }} overdue{% endif %}</span>{%- endif -%}
+</div>

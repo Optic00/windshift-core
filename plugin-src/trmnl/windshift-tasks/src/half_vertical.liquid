@@ -1,0 +1,26 @@
+{%- comment -%} The notice brings its own .layout; see full.liquid. {%- endcomment -%}
+{%- if fault != '' -%}
+  {% render 'notice', headline: 'Windshift', detail: fault %}
+{%- elsif items.size == 0 -%}
+  {% render 'notice', headline: 'Nothing open', detail: '' %}
+{%- else -%}
+  <div class="layout">
+    {%- comment -%}
+      max-cols is required, not optional: without it the overflow engine clips
+      the trailing row instead of hiding it and emitting the "and N more"
+      counter. 400px only ever fits one column here.
+    {%- endcomment -%}
+    <div class="columns" data-overflow="true" data-overflow-max-cols="1" data-overflow-counter="true">
+      <div class="column">
+        {%- for item in items -%}
+          {% render 'task_row', item: item, today_num: today_num, clamp: 2 %}
+        {%- endfor -%}
+      </div>
+    </div>
+  </div>
+{%- endif -%}
+
+<div class="title_bar">
+  <span class="title">Windshift</span>
+  {%- if fault == '' -%}<span class="instance">{{ total }} open</span>{%- endif -%}
+</div>

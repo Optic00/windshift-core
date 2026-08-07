@@ -1,0 +1,17 @@
+{%- if fault != '' -%}
+  {% render 'notice', headline: 'Windshift', detail: fault %}
+{%- else -%}
+  <div class="layout layout--col layout--center">
+    <div class="grid grid--cols-4">
+      {% render 'stat', number: open_total,      caption: 'Open',         size: 'large' %}
+      {% render 'stat', number: due_today_count, caption: 'Due today',    size: 'large' %}
+      {% render 'stat', number: overdue_count,   caption: 'Overdue',      size: 'large' %}
+      {% render 'stat', number: closed_today,    caption: 'Closed today', size: 'large' %}
+    </div>
+  </div>
+{%- endif -%}
+
+<div class="title_bar">
+  <span class="title">Windshift</span>
+  {%- if fault == '' -%}<span class="instance">{{ owner_name }} &nbsp;·&nbsp; {{ 'now' | date: '%A, %-d %B' }}</span>{%- endif -%}
+</div>

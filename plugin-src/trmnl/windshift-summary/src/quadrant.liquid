@@ -1,0 +1,19 @@
+{%- comment -%}
+  400x240 only has room for the two numbers that change behaviour: what is
+  waiting, and what is already late.
+{%- endcomment -%}
+{%- if fault != '' -%}
+  {% render 'notice', headline: 'Windshift', detail: fault %}
+{%- else -%}
+  <div class="layout layout--col layout--center">
+    <div class="grid grid--cols-2">
+      {% render 'stat', number: open_total,    caption: 'Open',    size: 'xlarge' %}
+      {% render 'stat', number: overdue_count, caption: 'Overdue', size: 'xlarge' %}
+    </div>
+  </div>
+{%- endif -%}
+
+<div class="title_bar">
+  <span class="title">Windshift</span>
+  {%- if fault == '' -%}<span class="instance">{{ 'now' | date: '%a, %-d %b' }}</span>{%- endif -%}
+</div>

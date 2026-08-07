@@ -1,0 +1,30 @@
+# Local preview for both plugins. trmnlp needs Ruby >= 3.4, which macOS does
+# not ship, so the container is the practical way to run it.
+#
+#   cp .env.example .env && $EDITOR .env
+#   docker compose up tasks      -> http://localhost:4567
+#   docker compose up summary    -> http://localhost:4568
+#
+# Both services read WINDSHIFT_URL and WINDSHIFT_TOKEN from .env; the
+# .trmnlp.yml files interpolate them into the plugin's custom fields.
+services:
+  tasks:
+    image: trmnl/trmnlp
+    pull_policy: always
+    command: serve --bind 0.0.0.0
+    ports:
+      - "4567:4567"
+    volumes:
+      - ./windshift-tasks:/plugin
+    env_file: .env
+
+  summary:
+    image: trmnl/trmnlp
+    pull_policy: always
+    command: serve --bind 0.0.0.0
+    ports:
+      # trmnlp always listens on 4567 inside the container.
+      - "4568:4567"
+    volumes:
+      - ./windshift-summary:/plugin
+    env_file: .env
