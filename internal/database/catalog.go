@@ -140,41 +140,11 @@ func globalRankStatePostgresCheck(db Database) (bool, error) {
 }
 
 func globalRankCheckpointSQLiteCheck(db Database) (bool, error) {
-	ready, err := globalRankStateSQLiteCheck(db)
-	if err != nil || !ready {
-		return ready, err
-	}
-	var phase string
-	if err := db.QueryRow("SELECT phase FROM global_rank_state WHERE id = 1").Scan(&phase); err != nil {
-		return false, err
-	}
-	if phase != "stable" {
-		return false, nil
-	}
-	var invalidCount int
-	if err := db.QueryRow("SELECT COUNT(*) FROM items WHERE frac_index IS NULL OR SUBSTR(frac_index, 1, 2) NOT IN ('0|', '1|', '2|')").Scan(&invalidCount); err != nil {
-		return false, err
-	}
-	return invalidCount == 0, nil
+	return globalRankCheckpointCheck(db, true)
 }
 
 func globalRankCheckpointPostgresCheck(db Database) (bool, error) {
-	ready, err := globalRankStatePostgresCheck(db)
-	if err != nil || !ready {
-		return ready, err
-	}
-	var phase string
-	if err := db.QueryRow("SELECT phase FROM global_rank_state WHERE id = 1").Scan(&phase); err != nil {
-		return false, err
-	}
-	if phase != "stable" {
-		return false, nil
-	}
-	var invalidCount int
-	if err := db.QueryRow("SELECT COUNT(*) FROM items WHERE frac_index IS NULL OR SUBSTR(frac_index, 1, 2) NOT IN ('0|', '1|', '2|')").Scan(&invalidCount); err != nil {
-		return false, err
-	}
-	return invalidCount == 0, nil
+	return globalRankCheckpointCheck(db, false)
 }
 
 // init appends migrations in dependency order: baseline, tables, then dependent

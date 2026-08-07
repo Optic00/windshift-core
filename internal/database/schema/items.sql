@@ -128,6 +128,16 @@ CREATE TABLE IF NOT EXISTS global_rank_state (
 INSERT OR IGNORE INTO global_rank_state (id, active_bucket, phase)
 VALUES (1, 0, 'stable');
 
+-- Durable release checkpoint. Post-checkpoint binaries must validate this
+-- marker before performing application-level startup mutations.
+CREATE TABLE IF NOT EXISTS schema_checkpoint (
+	id INTEGER PRIMARY KEY CHECK (id = 1),
+	version TEXT NOT NULL,
+	applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+INSERT OR IGNORE INTO schema_checkpoint (id, version)
+VALUES (1, '0.8.5');
+
 -- Portal/channel indexes
 CREATE INDEX IF NOT EXISTS idx_items_channel_id ON items(channel_id);
 CREATE INDEX IF NOT EXISTS idx_items_request_type_id ON items(request_type_id);

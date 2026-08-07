@@ -136,6 +136,18 @@ var Catalog = []Migration{
 		ApplyPostgres:   applyGlobalRankCheckpoint,
 	},
 	{
+		Version:         "20260807_schema_checkpoint",
+		Name:            "Record the 0.8.5 canonical schema checkpoint",
+		CheckSQLite:     "SELECT CASE WHEN (SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'schema_checkpoint') = 1 AND (SELECT COUNT(*) FROM schema_checkpoint WHERE id = 1 AND version = '0.8.5') = 1 THEN 1 ELSE 0 END",
+		CheckPostgres:   "SELECT CASE WHEN (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = 'schema_checkpoint') = 1 AND (SELECT COUNT(*) FROM schema_checkpoint WHERE id = 1 AND version = '0.8.5') = 1 THEN 1 ELSE 0 END",
+		CheckSQLiteFn:   schemaCheckpointSQLiteCheck,
+		CheckPostgresFn: schemaCheckpointPostgresCheck,
+		SQLite:          "schema checkpoint handled by ApplySQLite",
+		Postgres:        "schema checkpoint handled by ApplyPostgres",
+		ApplySQLite:     applySchemaCheckpoint,
+		ApplyPostgres:   applySchemaCheckpoint,
+	},
+	{
 		Version:       "20260727_milestone_release_attempts",
 		Name:          "Add durable idempotent milestone release attempts",
 		CheckSQLite:   sqliteIndexCheck("uq_milestone_releases_idempotency"),

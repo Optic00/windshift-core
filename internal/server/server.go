@@ -219,6 +219,9 @@ func (s *Server) initialize() error {
 	if err = s.db.Initialize(); err != nil {
 		return fmt.Errorf("failed to initialize database: %w", err)
 	}
+	if err = database.ValidateCanonicalSchemaCheckpoint(s.db); err != nil {
+		return fmt.Errorf("database startup refused: %w", err)
+	}
 
 	// Seed built-in email templates (idempotent). Lives outside Initialize
 	// so the database layer doesn't depend on the email domain.
