@@ -226,7 +226,7 @@ func (s *ChannelConfigUpdateService) validate(ctx context.Context, actorID int, 
 	if err := validateChannelTargetField(channel.Type, incoming); err != nil {
 		return err
 	}
-	if err := s.validateTargetWorkspaces(ctx, actorID, channel.Type, stored, config); err != nil {
+	if err := s.validateTargetWorkspaces(actorID, channel.Type, stored, config); err != nil {
 		return err
 	}
 	if channel.Type == "email" {
@@ -255,13 +255,13 @@ func (s *ChannelConfigUpdateService) validate(ctx context.Context, actorID int, 
 
 func validateWebhookConfig(config *models.ChannelConfig) error {
 	if config.WebhookScopeType != "" && config.WebhookScopeType != "all" && config.WebhookScopeType != "workspaces" {
-		return fmt.Errorf("Webhook scope must be all or workspaces")
+		return fmt.Errorf("webhook scope must be all or workspaces")
 	}
 	for _, event := range config.WebhookSubscribedEvents {
 		switch event {
 		case "item.created", "item.updated", "item.deleted", "item.assigned", "status.changed":
 		default:
-			return fmt.Errorf("Unsupported automatic webhook event %q", event)
+			return fmt.Errorf("unsupported automatic webhook event %q", event)
 		}
 	}
 	return nil
@@ -273,7 +273,7 @@ func ValidatePortalConfig(config *models.ChannelConfig) error {
 	switch config.PortalRegistrationMode {
 	case "", "open", "manual":
 	default:
-		return fmt.Errorf("Portal registration mode must be open or manual")
+		return fmt.Errorf("portal registration mode must be open or manual")
 	}
 	for field, value := range map[string]string{
 		"portal background image URL": config.PortalBackgroundImageURL,
@@ -312,7 +312,7 @@ func validateChannelTargetField(channelType string, incoming map[string]interfac
 	return nil
 }
 
-func (s *ChannelConfigUpdateService) validateTargetWorkspaces(ctx context.Context, actorID int, channelType string, stored models.ChannelConfig, config *models.ChannelConfig) error {
+func (s *ChannelConfigUpdateService) validateTargetWorkspaces(actorID int, channelType string, stored models.ChannelConfig, config *models.ChannelConfig) error {
 	var targets, previous []int
 	switch channelType {
 	case "portal":
