@@ -241,6 +241,26 @@ func (s *PlanningService) GetIteration(id int) (*IterationResult, error) {
 	return &iter, nil
 }
 
+// FindIterationIDByName resolves an iteration by exact (case-insensitive)
+// name, preferring the workspace's own iteration over a same-named global one.
+// Returns nil when nothing matches.
+func (s *PlanningService) FindIterationIDByName(workspaceID int, name string) (*int, error) {
+	var id int
+	err := s.db.QueryRow(`
+		SELECT id FROM iterations
+		WHERE LOWER(name) = LOWER(?) AND (workspace_id = ? OR is_global = true)
+		ORDER BY CASE WHEN workspace_id = ? THEN 0 ELSE 1 END
+		LIMIT 1
+	`, name, workspaceID, workspaceID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("resolve iteration by name: %w", err)
+	}
+	return &id, nil
+}
+
 // IsIterationGlobal checks if an iteration is global and returns its workspace_id.
 func (s *PlanningService) IsIterationGlobal(id int) (isGlobal bool, workspaceID *int, err error) {
 	var wsID sql.NullInt64

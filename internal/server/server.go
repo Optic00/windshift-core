@@ -783,10 +783,13 @@ func (s *Server) initialize() error {
 
 	// SCM provider handler
 	scmProviderHandler := handlers.NewSCMProviderHandler(s.db, cfg.Auth.SessionSecret, baseURL)
-	scmWorkspaceHandler := handlers.NewSCMWorkspaceHandler(repository.NewSCMWorkspaceRepository(s.db), scmProviderHandler.GetEncryption(), scmProviderHandler, scm.NewCredentialResolver(s.db, scmProviderHandler.GetEncryption()), permService, baseURL)
+	scmWorkspaceRepo := repository.NewSCMWorkspaceRepository(s.db)
+	scmWorkspaceHandler := handlers.NewSCMWorkspaceHandler(scmWorkspaceRepo, scmProviderHandler.GetEncryption(), scmProviderHandler, scm.NewCredentialResolver(s.db, scmProviderHandler.GetEncryption()), permService, baseURL)
 	scmItemLinksHandler := handlers.NewSCMItemLinksHandler(s.db, scmProviderHandler.GetEncryption(), permService)
 	userSCMTokenHandler := handlers.NewUserSCMTokenHandler(repository.NewUserSCMTokenRepository(s.db), scmProviderHandler.GetEncryption())
-	milestoneHandler := handlers.NewMilestoneHandler(services.NewPlanningService(s.db), permService, scm.NewCredentialResolver(s.db, scmProviderHandler.GetEncryption()), logger.NewAuditor(s.db))
+	milestonePlanningService := services.NewPlanningService(s.db)
+	milestonePlanningService.SetSCMWorkspaceRepository(scmWorkspaceRepo)
+	milestoneHandler := handlers.NewMilestoneHandler(milestonePlanningService, permService, scm.NewCredentialResolver(s.db, scmProviderHandler.GetEncryption()), logger.NewAuditor(s.db))
 
 	// The optional coding-agent harness queues and finalizes remote runner-pool
 	// work; disabled mode retains bindings without starting runs.
@@ -1051,6 +1054,7 @@ func (s *Server) initialize() error {
 	approvalSetService := services.NewApprovalSetService(s.db)
 	itemHandler.SetApprovalService(approvalService)
 	commentHandler.SetApprovalService(approvalService)
+	commentService.SetApprovalService(approvalService)
 	s.actionService.SetApprovalService(approvalService)
 	workspaceRoleHandler.SetApprovalService(approvalService)
 

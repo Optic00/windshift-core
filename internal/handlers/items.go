@@ -27,6 +27,7 @@ import (
 
 type ItemHandler struct {
 	db                  database.Database
+	itemRepo            *repository.ItemRepository
 	hierarchyService    *services.HierarchyService
 	permissionService   *services.PermissionService
 	authz               *authz.Authz
@@ -86,6 +87,7 @@ func NewItemHandler(db database.Database, permissionService *services.Permission
 
 	return &ItemHandler{
 		db:                  db,
+		itemRepo:            repository.NewItemRepository(db),
 		hierarchyService:    hierarchyService,
 		permissionService:   permissionService,
 		authz:               authz.New(db, permissionService),

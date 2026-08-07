@@ -81,13 +81,8 @@ func (h *AttachmentHandler) SetChannelService(cs *services.ChannelService) {
 // its workspace). Mirrors the 404-not-403 invariant used for item attachments
 // to avoid disclosing existence of resources outside the caller's reach.
 func (h *AttachmentHandler) authorizeTestCaseAttachmentAccess(w http.ResponseWriter, r *http.Request, testCaseID int, permission string) bool {
-	var wsID int
-	err := h.db.QueryRow(`
-		SELECT workspace_id
-		FROM test_cases
-		WHERE id = ?
-	`, testCaseID).Scan(&wsID)
-	if errors.Is(err, sql.ErrNoRows) {
+	wsID, err := repository.NewTestCaseRepository(h.db).GetWorkspaceID(testCaseID)
+	if errors.Is(err, repository.ErrNotFound) {
 		respondNotFound(w, r, "attachment")
 		return false
 	}
@@ -122,14 +117,8 @@ func (h *AttachmentHandler) authorizeTestCaseAttachmentAccess(w http.ResponseWri
 // PermissionTestExecute so that the privilege required to remove a result
 // attachment matches the privilege required to upload it.
 func (h *AttachmentHandler) authorizeTestResultAttachmentAccess(w http.ResponseWriter, r *http.Request, testResultID int, permission string) bool {
-	var wsID int
-	err := h.db.QueryRow(`
-		SELECT run.workspace_id
-		FROM test_results tr
-		JOIN test_runs run ON tr.run_id = run.id
-		WHERE tr.id = ?
-	`, testResultID).Scan(&wsID)
-	if errors.Is(err, sql.ErrNoRows) {
+	wsID, err := repository.NewTestRunRepository(h.db).GetWorkspaceIDForResult(testResultID)
+	if errors.Is(err, repository.ErrNotFound) {
 		respondNotFound(w, r, "attachment")
 		return false
 	}
@@ -254,14 +243,8 @@ func (h *AttachmentHandler) authorizeUploadEntity(w http.ResponseWriter, r *http
 
 	case "test_result":
 		// Resolve workspace via test_results -> test_runs and gate on test.execute.
-		var wsID int
-		err := h.db.QueryRow(`
-			SELECT run.workspace_id
-			FROM test_results tr
-			JOIN test_runs run ON tr.run_id = run.id
-			WHERE tr.id = ?
-		`, entityID).Scan(&wsID)
-		if errors.Is(err, sql.ErrNoRows) {
+		wsID, err := repository.NewTestRunRepository(h.db).GetWorkspaceIDForResult(entityID)
+		if errors.Is(err, repository.ErrNotFound) {
 			respondNotFound(w, r, "test_result")
 			return false
 		}
@@ -313,13 +296,13 @@ func (h *AttachmentHandler) authorizeUploadEntity(w http.ResponseWriter, r *http
 	case "team_avatar":
 		// entity_id is the team id. Mirror canManageTeam in teams.go:
 		// teams.manage global perm OR team admin role on this team.
-		var exists bool
-		if err := h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM teams WHERE id = ?)", entityID).Scan(&exists); err != nil {
+		teamRepo := repository.NewTeamRepository(h.db)
+		if _, err := teamRepo.GetByID(entityID); err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				respondNotFound(w, r, "team")
+				return false
+			}
 			respondInternalError(w, r, err)
-			return false
-		}
-		if !exists {
-			respondNotFound(w, r, "team")
 			return false
 		}
 		user, ok := RequireAuth(w, r)
@@ -334,11 +317,8 @@ func (h *AttachmentHandler) authorizeUploadEntity(w http.ResponseWriter, r *http
 		if hasPerm {
 			return true
 		}
-		var isAdmin bool
-		if err := h.db.QueryRow(`
-			SELECT EXISTS(SELECT 1 FROM team_members
-			              WHERE team_id = ? AND user_id = ? AND role = 'admin')
-		`, entityID, user.ID).Scan(&isAdmin); err != nil {
+		isAdmin, err := teamRepo.IsTeamAdmin(entityID, user.ID)
+		if err != nil {
 			respondInternalError(w, r, err)
 			return false
 		}

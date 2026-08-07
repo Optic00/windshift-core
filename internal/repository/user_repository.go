@@ -282,19 +282,31 @@ type CreateUserParams struct {
 	IsActive              bool
 	IsAgent               bool
 	EmailVerified         bool
+	// Agent provisioning columns; zero values insert NULL.
+	AgentOwnerUserID *int
+	AgentProvenance  string
+	OAuthClientID    *int
 }
 
 // Create inserts a new user with the supplied is_active value. Returns
 // ErrDuplicateEntry when the unique (email/username) constraint trips.
 func (r *UserRepository) Create(p CreateUserParams) (int64, error) {
 	now := time.Now()
+	// Non-agent rows carry the column default provenance ("user"); agent rows
+	// supply their own (e.g. "oauth").
+	provenance := p.AgentProvenance
+	if provenance == "" {
+		provenance = "user"
+	}
 	var id int64
 	err := r.db.QueryRow(`
-		INSERT INTO users (email, username, first_name, last_name, is_active, avatar_url, password_hash, requires_password_reset, is_agent, email_verified, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+		INSERT INTO users (email, username, first_name, last_name, is_active, avatar_url, password_hash, requires_password_reset, is_agent, email_verified, agent_owner_user_id, agent_provenance, oauth_client_id, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
 	`, p.Email, p.Username, p.FirstName, p.LastName, p.IsActive,
 		nullableUserString(p.AvatarURL), nullableUserPtrString(p.PasswordHash),
-		p.RequiresPasswordReset, p.IsAgent, p.EmailVerified, now, now,
+		p.RequiresPasswordReset, p.IsAgent, p.EmailVerified,
+		nullableUserPtrInt(p.AgentOwnerUserID), provenance, nullableUserPtrInt(p.OAuthClientID),
+		now, now,
 	).Scan(&id)
 	if err != nil {
 		if database.IsUniqueConstraintError(err) {
@@ -503,6 +515,13 @@ func nullableUserString(s string) any {
 }
 
 func nullableUserPtrString(p *string) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+func nullableUserPtrInt(p *int) any {
 	if p == nil {
 		return nil
 	}

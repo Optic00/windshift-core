@@ -20,6 +20,25 @@ func NewTestRunRepository(db database.Database) *TestRunRepository {
 	return &TestRunRepository{db: db}
 }
 
+// GetWorkspaceIDForResult resolves the workspace owning a test result via its
+// run. Returns ErrNotFound when the result is missing.
+func (r *TestRunRepository) GetWorkspaceIDForResult(resultID int) (int, error) {
+	var workspaceID int
+	err := r.db.QueryRow(`
+		SELECT run.workspace_id
+		FROM test_results tr
+		JOIN test_runs run ON tr.run_id = run.id
+		WHERE tr.id = ?
+	`, resultID).Scan(&workspaceID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("resolve test result workspace: %w", err)
+	}
+	return workspaceID, nil
+}
+
 // TestRunFilters contains filter parameters for listing test runs
 type TestRunFilters struct {
 	AssigneeID   *int // Filter by specific assignee

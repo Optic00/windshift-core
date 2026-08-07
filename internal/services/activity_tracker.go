@@ -14,6 +14,7 @@ import (
 
 	"windshift/internal/cacheutil"
 	"windshift/internal/database"
+	"windshift/internal/repository"
 
 	"github.com/allegro/bigcache/v3"
 )
@@ -269,91 +270,6 @@ func (at *ActivityTracker) TrackItemActivity(userID, itemID int, activityType Ac
 	return nil
 }
 
-// AddWatch adds a watch for an item
-func (at *ActivityTracker) AddWatch(userID, itemID int, reason string) error {
-	_, err := at.db.ExecWrite(`
-		INSERT INTO item_watches (user_id, item_id, is_active, watch_reason, created_at, updated_at)
-		VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-		ON CONFLICT(user_id, item_id) DO UPDATE SET
-			is_active = ?,
-			watch_reason = ?,
-			updated_at = CURRENT_TIMESTAMP
-	`, userID, itemID, true, reason, true, reason)
-
-	if err != nil {
-		return fmt.Errorf("failed to add watch: %w", err)
-	}
-
-	// Invalidate cache
-	_ = at.InvalidateUserCache(userID)
-
-	return nil
-}
-
-// RemoveWatch removes a watch for an item
-func (at *ActivityTracker) RemoveWatch(userID, itemID int) error {
-	_, err := at.db.ExecWrite(`
-		UPDATE item_watches
-		SET is_active = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE user_id = ? AND item_id = ?
-	`, false, userID, itemID)
-
-	if err != nil {
-		return fmt.Errorf("failed to remove watch: %w", err)
-	}
-
-	// Invalidate cache
-	_ = at.InvalidateUserCache(userID)
-
-	return nil
-}
-
-// GetUserWatches returns all active watches for a user
-func (at *ActivityTracker) GetUserWatches(userID int) ([]int, error) {
-	rows, err := at.db.Query(`
-		SELECT item_id
-		FROM item_watches
-		WHERE user_id = ? AND is_active = ?
-		ORDER BY created_at DESC
-	`, userID, true)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var itemIDs []int
-	for rows.Next() {
-		var itemID int
-		if err := rows.Scan(&itemID); err == nil {
-			itemIDs = append(itemIDs, itemID)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate user watches: %w", err)
-	}
-
-	return itemIDs, nil
-}
-
-// IsWatching checks if a user is watching an item
-func (at *ActivityTracker) IsWatching(userID, itemID int) (bool, error) {
-	var isActive bool
-	err := at.db.QueryRow(`
-		SELECT is_active
-		FROM item_watches
-		WHERE user_id = ? AND item_id = ?
-	`, userID, itemID).Scan(&isActive)
-
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-
-	return isActive, nil
-}
-
 // GetUserActivity retrieves comprehensive activity data for a user
 func (at *ActivityTracker) GetUserActivity(userID int) (*UserActivityCache, error) {
 	// Try cache first
@@ -524,26 +440,12 @@ func (at *ActivityTracker) loadUserActivityFromDB(userID int) (*UserActivityCach
 		cached.ItemActivities[activityType] = activities
 	}
 
-	// Load active watches
-	watchRows, err := at.db.Query(`
-		SELECT item_id
-		FROM item_watches
-		WHERE user_id = ? AND is_active = ?
-		ORDER BY created_at DESC
-	`, userID, true)
+	// Load active watches through the owning item repository.
+	itemIDs, err := repository.NewItemRepository(at.db).GetUserWatchedItems(userID)
 	if err != nil {
 		slog.Error("Failed to load watches", slog.String("component", "activity"), slog.Any("error", err))
 	} else {
-		defer func() { _ = watchRows.Close() }()
-		for watchRows.Next() {
-			var itemID int
-			if err := watchRows.Scan(&itemID); err == nil {
-				cached.ItemWatches = append(cached.ItemWatches, itemID)
-			}
-		}
-		if err := watchRows.Err(); err != nil {
-			slog.Error("Failed to iterate watches", slog.String("component", "activity"), slog.Any("error", err))
-		}
+		cached.ItemWatches = itemIDs
 	}
 
 	// Store in cache

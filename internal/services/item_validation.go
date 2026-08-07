@@ -1,7 +1,6 @@
 package services
 
 import (
-	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -41,16 +40,12 @@ type ItemValidationResult struct {
 //   - the workspace has no configuration set (all types allowed), or
 //   - the item type appears in configuration_set_item_types for that config set.
 func IsItemTypeAllowedInWorkspace(db database.Database, workspaceID, itemTypeID int) (bool, error) {
-	var configSetID *int
-	err := db.QueryRow(
-		"SELECT configuration_set_id FROM workspace_configuration_sets WHERE workspace_id = ?",
-		workspaceID,
-	).Scan(&configSetID)
-	if errors.Is(err, sql.ErrNoRows) || configSetID == nil {
-		return true, nil // no config set → all types allowed
-	}
+	configSetID, err := repository.NewConfigurationSetRepository(db).GetWorkspaceConfigSetID(workspaceID)
 	if err != nil {
 		return false, fmt.Errorf("failed to query workspace config set: %w", err)
+	}
+	if configSetID == nil {
+		return true, nil // no config set → all types allowed
 	}
 
 	var exists bool

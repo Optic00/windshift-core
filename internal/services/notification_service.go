@@ -14,6 +14,7 @@ import (
 
 	"windshift/internal/database"
 	"windshift/internal/models"
+	"windshift/internal/repository"
 )
 
 // NotificationManager interface for adding notifications. AddNotification
@@ -921,11 +922,12 @@ func (ns *NotificationService) getWorkspaceAdmins(workspaceID int) []int {
 
 // getItemWatchers retrieves active watcher user IDs for an item
 func (ns *NotificationService) getItemWatchers(itemID int) []int {
-	return ns.queryUserIDs("fetch item watchers", `
-		SELECT DISTINCT user_id
-		FROM item_watches
-		WHERE item_id = ? AND is_active = true
-	`, itemID)
+	watchers, err := repository.NewItemRepository(ns.db).GetWatchers(itemID)
+	if err != nil {
+		slog.Error("failed to fetch item watchers", slog.String("component", "notifications"), slog.Any("error", err))
+		return nil
+	}
+	return watchers
 }
 
 // generateNotificationMessage generates title and message for a notification

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"time"
 
 	"windshift/internal/database"
@@ -76,6 +77,8 @@ type AgentMentionTrigger interface {
 // and action automation service.
 type CommentService struct {
 	db                  database.Database
+	itemRepo            *repository.ItemRepository
+	approvalService     *ApprovalService
 	activityTracker     *ActivityTracker
 	notificationService *NotificationService
 	mentionService      *MentionService
@@ -106,13 +109,20 @@ type CreateCommentResult struct {
 // NewCommentService creates a new CommentService.
 func NewCommentService(db database.Database) *CommentService {
 	return &CommentService{
-		db: db,
+		db:       db,
+		itemRepo: repository.NewItemRepository(db),
 	}
 }
 
 // SetActivityTracker sets the activity tracker for tracking comment activity.
 func (s *CommentService) SetActivityTracker(tracker *ActivityTracker) {
 	s.activityTracker = tracker
+}
+
+// SetApprovalService wires the approval domain backing the merged comment
+// feed's decision rows. Optional: nil keeps the feed human-only.
+func (s *CommentService) SetApprovalService(as *ApprovalService) {
+	s.approvalService = as
 }
 
 // SetNotificationService sets the notification service for emitting comment events.
@@ -301,13 +311,15 @@ func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResul
 		// Idempotently follow internal commenters for reply notifications. Portal
 		// customers have no user watch; agent recipients are filtered downstream.
 		if s.activityTracker != nil && params.ActorUserID > 0 {
-			if err := s.activityTracker.AddWatch(params.ActorUserID, params.ItemID, "Commented on item"); err != nil {
+			if err := s.itemRepo.Watch(params.ActorUserID, params.ItemID, "Commented on item"); err != nil {
 				slog.Warn("failed to auto-subscribe commenter to item",
 					slog.String("component", "comment_service"),
 					slog.Int("item_id", params.ItemID),
 					slog.Int("actor_user_id", params.ActorUserID),
 					slog.Any("error", err),
 				)
+			} else {
+				_ = s.activityTracker.InvalidateUserCache(params.ActorUserID)
 			}
 		}
 
@@ -497,8 +509,9 @@ func (s *CommentService) Get(commentID int) (*CommentWithDetails, error) {
 // GetFeedByItemID returns a bounded cookie-auth comment feed for an item. In
 // addition to ordinary comments it projects approval decision comments into
 // the same model so every HTTP surface reads comment data through this
-// service. Cursor filtering and limiting happen outside the UNION so approval
-// rows participate in one stable ordering. Agent-owner attribution is
+// service. Human rows are cursor-filtered and limited in SQL (the dominant
+// population); approval rows come from ApprovalService and are merged in Go so
+// both sources share one stable ordering. Agent-owner attribution is
 // permission-filtered by the caller.
 func (s *CommentService) GetFeedByItemID(itemID int, includeAgentOwner bool, options CommentFeedOptions) (*CommentFeedPage, error) {
 	limit := options.Limit
@@ -510,49 +523,32 @@ func (s *CommentService) GetFeedByItemID(itemID int, includeAgentOwner bool, opt
 	}
 
 	query := `
-		SELECT feed_id, item_id, author_id, portal_customer_id, content, is_private,
-		       feed_created_at, updated_at, author_name, author_email, avatar_url,
-		       source, is_agent, agent_owner_name
-		FROM (
-			SELECT c.id AS feed_id, c.item_id, c.author_id, c.portal_customer_id, c.content, c.is_private,
-			       c.created_at AS feed_created_at, c.updated_at,
-			       COALESCE(NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), ''), pc.name, 'Unknown User') AS author_name,
-			       COALESCE(u.email, pc.email) AS author_email, u.avatar_url,
-			       'human' AS source, COALESCE(u.is_agent, FALSE) AS is_agent,
-			       COALESCE(NULLIF(TRIM(COALESCE(owner.first_name, '') || ' ' || COALESCE(owner.last_name, '')), ''), owner.username, '') AS agent_owner_name
-			FROM comments c
-			LEFT JOIN users u ON c.author_id = u.id
-			LEFT JOIN users owner ON owner.id = u.agent_owner_user_id
-			LEFT JOIN portal_customers pc ON c.portal_customer_id = pc.id
-			WHERE c.item_id = ?
-			UNION ALL
-			SELECT -d.id AS feed_id, ar.item_id, d.actor_user_id, NULL, d.comment, FALSE,
-			       d.created_at AS feed_created_at, d.created_at AS updated_at,
-			       COALESCE(NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), ''), 'Unknown User') AS author_name,
-			       u.email AS author_email, u.avatar_url,
-			       'approval' AS source, COALESCE(u.is_agent, FALSE) AS is_agent,
-			       COALESCE(NULLIF(TRIM(COALESCE(owner.first_name, '') || ' ' || COALESCE(owner.last_name, '')), ''), owner.username, '') AS agent_owner_name
-			FROM approval_decisions d
-			JOIN approval_requests ar ON ar.id = d.approval_request_id
-			LEFT JOIN users u ON u.id = d.actor_user_id
-			LEFT JOIN users owner ON owner.id = u.agent_owner_user_id
-			WHERE ar.item_id = ? AND d.comment IS NOT NULL AND d.comment <> ''
-		) AS feed
+		SELECT c.id AS feed_id, c.item_id, c.author_id, c.portal_customer_id, c.content, c.is_private,
+		       c.created_at AS feed_created_at, c.updated_at,
+		       COALESCE(NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), ''), pc.name, 'Unknown User') AS author_name,
+		       COALESCE(u.email, pc.email) AS author_email, u.avatar_url,
+		       'human' AS source, COALESCE(u.is_agent, FALSE) AS is_agent,
+		       COALESCE(NULLIF(TRIM(COALESCE(owner.first_name, '') || ' ' || COALESCE(owner.last_name, '')), ''), owner.username, '') AS agent_owner_name
+		FROM comments c
+		LEFT JOIN users u ON c.author_id = u.id
+		LEFT JOIN users owner ON owner.id = u.agent_owner_user_id
+		LEFT JOIN portal_customers pc ON c.portal_customer_id = pc.id
+		WHERE c.item_id = ?
 	`
-	args := []interface{}{itemID, itemID}
+	args := []interface{}{itemID}
 	order := "DESC"
 	switch {
 	case options.Before != nil:
-		query += ` WHERE (feed_created_at < ? OR (feed_created_at = ? AND feed_id < ?))`
+		query += ` AND (c.created_at < ? OR (c.created_at = ? AND c.id < ?))`
 		args = append(args, options.Before.CreatedAt, options.Before.CreatedAt, options.Before.ID)
 	case options.Since != nil:
-		query += ` WHERE (feed_created_at > ? OR (feed_created_at = ? AND feed_id > ?))`
+		query += ` AND (c.created_at > ? OR (c.created_at = ? AND c.id > ?))`
 		args = append(args, options.Since.CreatedAt, options.Since.CreatedAt, options.Since.ID)
 		// Return the earliest unseen rows first. If a burst exceeds the limit,
 		// advancing the since cursor cannot skip the rows still to be fetched.
 		order = "ASC"
 	}
-	query += fmt.Sprintf(" ORDER BY feed_created_at %s, feed_id %s LIMIT ?", order, order)
+	query += fmt.Sprintf(" ORDER BY c.created_at %s, c.id %s LIMIT ?", order, order)
 	args = append(args, limit+1)
 
 	rows, err := s.db.Query(query, args...)
@@ -592,6 +588,49 @@ func (s *CommentService) GetFeedByItemID(itemID int, includeAgentOwner bool, opt
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("read comment feed for item %d: %w", itemID, err)
 	}
+
+	// Merge approval decision rows and re-apply the cursor to them. Human rows
+	// were already cursor-filtered and capped above. A lightweight fallback
+	// keeps the merged feed working when no approval service was injected.
+	approval := s.approvalService
+	if approval == nil {
+		approval = NewApprovalService(s.db, nil, nil)
+	}
+	approvalRows, err := approval.GetDecisionCommentsForItem(itemID)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range approvalRows {
+		switch {
+		case options.Before != nil:
+			if c.CreatedAt.Before(options.Before.CreatedAt) ||
+				(c.CreatedAt.Equal(options.Before.CreatedAt) && c.ID < options.Before.ID) {
+				comments = append(comments, c)
+			}
+		case options.Since != nil:
+			if c.CreatedAt.After(options.Since.CreatedAt) ||
+				(c.CreatedAt.Equal(options.Since.CreatedAt) && c.ID > options.Since.ID) {
+				comments = append(comments, c)
+			}
+		default:
+			comments = append(comments, c)
+		}
+	}
+
+	asc := order == "ASC"
+	sort.SliceStable(comments, func(i, j int) bool {
+		if comments[i].CreatedAt.Equal(comments[j].CreatedAt) {
+			if asc {
+				return comments[i].ID < comments[j].ID
+			}
+			return comments[i].ID > comments[j].ID
+		}
+		if asc {
+			return comments[i].CreatedAt.Before(comments[j].CreatedAt)
+		}
+		return comments[i].CreatedAt.After(comments[j].CreatedAt)
+	})
+
 	hasMore := len(comments) > limit
 	if hasMore {
 		comments = comments[:limit]

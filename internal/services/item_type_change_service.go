@@ -235,18 +235,7 @@ func (s *ItemTypeChangeService) ApplyChange(itemID, userID, targetTypeID int, ne
 		if err := s.itemRepo.UpdateFields(tx, itemID, fields); err != nil {
 			return err
 		}
-		repoEntries := make([]repository.HistoryEntry, len(history))
-		for i, h := range history {
-			repoEntries[i] = repository.HistoryEntry{
-				ItemID:    h.ItemID,
-				UserID:    h.UserID,
-				FieldName: h.FieldName,
-				OldValue:  h.OldValue,
-				NewValue:  h.NewValue,
-				ChangedAt: h.ChangedAt,
-			}
-		}
-		if err := s.itemRepo.RecordHistoryBatch(tx, repoEntries); err != nil {
+		if err := s.itemRepo.RecordHistoryBatch(tx, history); err != nil {
 			return fmt.Errorf("record item history: %w", err)
 		}
 		return nil
@@ -285,17 +274,16 @@ func (s *ItemTypeChangeService) loadItemTypeTarget(id int) (*itemTypeTargetDetai
 }
 
 func (s *ItemTypeChangeService) validateItemTypeAllowedForWorkspace(workspaceID, targetTypeID int) error {
-	var configSetID sql.NullInt64
-	err := s.db.QueryRow(`SELECT configuration_set_id FROM workspace_configuration_sets WHERE workspace_id = ?`, workspaceID).Scan(&configSetID)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	configSetID, err := repository.NewConfigurationSetRepository(s.db).GetWorkspaceConfigSetID(workspaceID)
+	if err != nil {
 		return err
 	}
-	if !configSetID.Valid {
+	if configSetID == nil {
 		return nil
 	}
 
 	var configuredCount int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM configuration_set_item_types WHERE configuration_set_id = ?`, configSetID.Int64).Scan(&configuredCount); err != nil {
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM configuration_set_item_types WHERE configuration_set_id = ?`, *configSetID).Scan(&configuredCount); err != nil {
 		return err
 	}
 	if configuredCount == 0 {
@@ -308,7 +296,7 @@ func (s *ItemTypeChangeService) validateItemTypeAllowedForWorkspace(workspaceID,
 			SELECT 1 FROM configuration_set_item_types
 			WHERE configuration_set_id = ? AND item_type_id = ?
 		)
-	`, configSetID.Int64, targetTypeID).Scan(&allowed); err != nil {
+	`, *configSetID, targetTypeID).Scan(&allowed); err != nil {
 		return err
 	}
 	if !allowed {

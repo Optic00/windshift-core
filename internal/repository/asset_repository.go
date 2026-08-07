@@ -56,6 +56,146 @@ func (r *AssetRepository) FindAssetSummariesByIDs(ids []int) ([]models.AssetSumm
 	return summaries, nil
 }
 
+// ListLinkedToItem returns display rows for assets linked to the given item in
+// either direction: "outgoing" when the item is the link source (forward label)
+// and "incoming" when the asset is the link source (reverse label). Callers
+// remain responsible for set-level authorization via SetID.
+func (r *AssetRepository) ListLinkedToItem(itemID int) ([]models.LinkedAsset, error) {
+	queries := []struct {
+		query     string
+		direction string
+	}{
+		{
+			query: `
+				SELECT a.id, a.title, COALESCE(a.description, '') AS description,
+				       a.set_id, ams.name AS set_name,
+				       COALESCE(at.name, '') AS type_name,
+				       COALESCE(ac.name, '') AS category_name,
+				       il.id AS link_id, lt.name AS link_type_name, lt.forward_label
+				FROM item_links il
+				JOIN assets a ON il.target_type = 'asset' AND il.target_id = a.id
+				LEFT JOIN asset_management_sets ams ON a.set_id = ams.id
+				LEFT JOIN asset_types at ON a.asset_type_id = at.id
+				LEFT JOIN asset_categories ac ON a.category_id = ac.id
+				JOIN link_types lt ON il.link_type_id = lt.id
+				WHERE il.source_type = 'item' AND il.source_id = ?
+				ORDER BY a.title`,
+			direction: "outgoing",
+		},
+		{
+			query: `
+				SELECT a.id, a.title, COALESCE(a.description, '') AS description,
+				       a.set_id, ams.name AS set_name,
+				       COALESCE(at.name, '') AS type_name,
+				       COALESCE(ac.name, '') AS category_name,
+				       il.id AS link_id, lt.name AS link_type_name, lt.reverse_label
+				FROM item_links il
+				JOIN assets a ON il.source_type = 'asset' AND il.source_id = a.id
+				LEFT JOIN asset_management_sets ams ON a.set_id = ams.id
+				LEFT JOIN asset_types at ON a.asset_type_id = at.id
+				LEFT JOIN asset_categories ac ON a.category_id = ac.id
+				JOIN link_types lt ON il.link_type_id = lt.id
+				WHERE il.target_type = 'item' AND il.target_id = ?
+				ORDER BY a.title`,
+			direction: "incoming",
+		},
+	}
+
+	var assets []models.LinkedAsset
+	for _, segment := range queries {
+		rows, err := r.db.Query(segment.query, itemID)
+		if err != nil {
+			return nil, fmt.Errorf("list linked assets (%s): %w", segment.direction, err)
+		}
+		for rows.Next() {
+			var asset models.LinkedAsset
+			var description, setName, typeName, categoryName, linkLabel sql.NullString
+			if err := rows.Scan(&asset.ID, &asset.Title, &description, &asset.SetID, &setName,
+				&typeName, &categoryName, &asset.LinkID, &asset.LinkTypeName, &linkLabel); err != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("scan linked asset (%s): %w", segment.direction, err)
+			}
+			asset.Description = description.String
+			asset.SetName = setName.String
+			asset.TypeName = typeName.String
+			asset.CategoryName = categoryName.String
+			asset.LinkLabel = linkLabel.String
+			asset.Direction = segment.direction
+			assets = append(assets, asset)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("iterate linked assets (%s): %w", segment.direction, err)
+		}
+		_ = rows.Close()
+	}
+	return assets, nil
+}
+
+// Search returns linkable asset rows matching query in the given sets. Callers
+// must supply set IDs the user can access (nil set IDs yields no rows).
+func (r *AssetRepository) Search(query string, setIDs []int, limit int) ([]models.LinkableItem, error) {
+	if len(setIDs) == 0 {
+		return []models.LinkableItem{}, nil
+	}
+	setPlaceholders := strings.TrimSuffix(strings.Repeat("?,", len(setIDs)), ",")
+	setArgs := make([]interface{}, len(setIDs))
+	for i, id := range setIDs {
+		setArgs[i] = id
+	}
+
+	sqlQuery := fmt.Sprintf(`
+		SELECT a.id, a.title, COALESCE(a.description, '') AS description,
+		       a.set_id, ams.name AS set_name,
+		       COALESCE(at.name, '') AS type_name,
+		       COALESCE(ac.name, '') AS category_name
+		FROM assets a
+		LEFT JOIN asset_management_sets ams ON a.set_id = ams.id
+		LEFT JOIN asset_types at ON a.asset_type_id = at.id
+		LEFT JOIN asset_categories ac ON a.category_id = ac.id
+		WHERE (a.title LIKE ? OR a.description LIKE ?)
+		  AND a.set_id IN (%s)
+		ORDER BY a.title
+		LIMIT ?
+	`, setPlaceholders)
+
+	searchTerm := "%" + query + "%"
+	args := make([]interface{}, 0, 3+len(setArgs))
+	args = append(args, searchTerm, searchTerm)
+	args = append(args, setArgs...)
+	args = append(args, limit)
+	rows, err := r.db.Query(sqlQuery, args...)
+	if err != nil {
+		return nil, fmt.Errorf("search assets: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var items []models.LinkableItem
+	for rows.Next() {
+		var item models.LinkableItem
+		var description, setName, typeName, categoryName sql.NullString
+		var setID sql.NullInt64
+
+		if err := rows.Scan(&item.ID, &item.Title, &description, &setID, &setName, &typeName, &categoryName); err != nil {
+			return nil, fmt.Errorf("scan asset search result: %w", err)
+		}
+
+		item.Description = description.String
+		item.AssetSetID = utils.NullInt64ToPtr(setID)
+		item.AssetSetName = setName.String
+		item.AssetTypeName = typeName.String
+		item.AssetCategoryName = categoryName.String
+
+		item.Type = "asset"
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate asset search results: %w", err)
+	}
+
+	return items, nil
+}
+
 // NewAssetRepository creates a new asset repository
 func NewAssetRepository(db database.Database) *AssetRepository {
 	return &AssetRepository{db: db}

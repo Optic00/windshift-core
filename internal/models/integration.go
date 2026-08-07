@@ -482,6 +482,16 @@ type TestSet struct {
 	LastRunDate    *time.Time `json:"last_run_date,omitempty"`
 }
 
+// MilestoneTestStats aggregates test-plan activity for a milestone.
+type MilestoneTestStats struct {
+	TotalTestPlans     int `json:"total_test_plans"`
+	TotalTestRuns      int `json:"total_test_runs"`
+	SuccessfulTestRuns int `json:"successful_test_runs"`
+	FailedTestRuns     int `json:"failed_test_runs"`
+	InProgressTestRuns int `json:"in_progress_test_runs"`
+	TotalTestCases     int `json:"total_test_cases"`
+}
+
 // SetTestCase represents the relationship between a test set and a test case
 type SetTestCase struct {
 	ID         int `json:"id"`

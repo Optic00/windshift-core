@@ -59,15 +59,10 @@ type UpdateItemResult struct {
 	FieldChanges  []HistoryEntry
 }
 
-// HistoryEntry represents a single field change in item history
-type HistoryEntry struct {
-	ItemID    int
-	UserID    int
-	FieldName string
-	OldValue  string
-	NewValue  string
-	ChangedAt time.Time
-}
+// HistoryEntry represents a single field change in item history.
+// It aliases the repository record so services can hand history rows straight
+// to ItemRepository.RecordHistory/RecordHistoryBatch without converting.
+type HistoryEntry = repository.HistoryEntry
 
 // UpdateItem updates an item with validation, transaction safety, and history tracking.
 //
@@ -553,32 +548,17 @@ func (s *ItemUpdateService) recordItemCreationHistory(db database.Database, item
 		addHistory("inherit_project", "true")
 	}
 
-	// Record history entries directly (no transaction needed here, caller should manage)
-	for _, entry := range history {
-		_, err := db.ExecWrite(`
-			INSERT INTO item_history (item_id, user_id, field_name, old_value, new_value, changed_at)
-			VALUES (?, ?, ?, ?, ?, ?)
-		`, entry.ItemID, entry.UserID, entry.FieldName, entry.OldValue, entry.NewValue, entry.ChangedAt)
-		if err != nil {
-			return fmt.Errorf("failed to record creation history: %w", err)
-		}
+	// Record history entries via the shared repository writer (no transaction
+	// needed here, caller should manage).
+	if err := repository.NewItemRepository(db).RecordHistoryBatch(db, history); err != nil {
+		return fmt.Errorf("failed to record creation history: %w", err)
 	}
-
 	return nil
 }
 
 // recordItemHistory records history entries in the database
 func (s *ItemUpdateService) recordItemHistory(tx database.Tx, history []HistoryEntry) error {
-	for _, entry := range history {
-		_, err := tx.Exec(`
-			INSERT INTO item_history (item_id, user_id, field_name, old_value, new_value, changed_at)
-			VALUES (?, ?, ?, ?, ?, ?)
-		`, entry.ItemID, entry.UserID, entry.FieldName, entry.OldValue, entry.NewValue, entry.ChangedAt)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+	return repository.NewItemRepository(s.db).RecordHistoryBatch(tx, history)
 }
 
 // joinIntsCSV renders a sorted slice of ints as "1,2,3" — used as the

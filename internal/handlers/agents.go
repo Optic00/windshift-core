@@ -13,6 +13,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
+	"windshift/internal/repository"
 	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
@@ -132,13 +133,20 @@ func (h *AgentHandler) CreateOwnedAgent(ownerID int, isAdmin bool, req CreateAge
 	}
 
 	now := time.Now()
-	var newID int64
-	err := h.db.QueryRow(`
-		INSERT INTO users (email, username, first_name, last_name, is_active, password_hash, requires_password_reset, is_agent, agent_owner_user_id, agent_provenance, email_verified, created_at, updated_at)
-		VALUES (?, ?, ?, ?, true, NULL, false, true, ?, 'user', true, ?, ?) RETURNING id
-	`, email, req.Username, req.FirstName, req.LastName, ownerID, now, now).Scan(&newID)
+	newID, err := repository.NewUserRepository(h.db).Create(repository.CreateUserParams{
+		Email:                 email,
+		Username:              req.Username,
+		FirstName:             req.FirstName,
+		LastName:              req.LastName,
+		IsActive:              true,
+		RequiresPasswordReset: false,
+		IsAgent:               true,
+		EmailVerified:         true,
+		AgentOwnerUserID:      &ownerID,
+		AgentProvenance:       "user",
+	})
 	if err != nil {
-		if database.IsUniqueConstraintError(err) {
+		if errors.Is(err, repository.ErrDuplicateEntry) {
 			return nil, ErrAgentUsernameTaken
 		}
 		return nil, err
@@ -209,13 +217,21 @@ func (h *AgentHandler) CreateOAuthAgent(ownerID, oauthClientID int, req CreateAg
 	}
 
 	now := time.Now()
-	var newID int64
-	err = h.db.QueryRow(`
-		INSERT INTO users (email, username, first_name, last_name, is_active, password_hash, requires_password_reset, is_agent, agent_owner_user_id, agent_provenance, oauth_client_id, email_verified, created_at, updated_at)
-		VALUES (?, ?, ?, ?, true, NULL, false, true, ?, 'oauth', ?, true, ?, ?) RETURNING id
-	`, email, req.Username, req.FirstName, req.LastName, ownerID, oauthClientID, now, now).Scan(&newID)
+	newID, err := repository.NewUserRepository(h.db).Create(repository.CreateUserParams{
+		Email:                 email,
+		Username:              req.Username,
+		FirstName:             req.FirstName,
+		LastName:              req.LastName,
+		IsActive:              true,
+		RequiresPasswordReset: false,
+		IsAgent:               true,
+		EmailVerified:         true,
+		AgentOwnerUserID:      &ownerID,
+		AgentProvenance:       "oauth",
+		OAuthClientID:         &oauthClientID,
+	})
 	if err != nil {
-		if database.IsUniqueConstraintError(err) {
+		if errors.Is(err, repository.ErrDuplicateEntry) {
 			return nil, ErrAgentUsernameTaken
 		}
 		return nil, err

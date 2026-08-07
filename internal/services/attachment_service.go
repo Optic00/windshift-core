@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"windshift/internal/database"
 	"windshift/internal/models"
@@ -196,10 +197,15 @@ func (s *AttachmentService) RecordItemHistory(itemID int, userID *int, action st
 	if action == "attachment_uploaded" {
 		value = fmt.Sprintf("attachment:%d:%s", attachmentID, filename)
 	}
-	_, err := s.db.ExecWrite(
-		`INSERT INTO item_history (item_id, user_id, field_name, old_value, new_value, changed_at)
-		 VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-		itemID, *userID, action, oldValue, value,
-	)
-	return err
+	entry := repository.HistoryEntry{
+		ItemID:    itemID,
+		UserID:    *userID,
+		FieldName: action,
+		NewValue:  value,
+		ChangedAt: time.Now(),
+	}
+	if oldValue != nil {
+		entry.OldValue = *oldValue
+	}
+	return repository.NewItemRepository(s.db).RecordHistory(s.db, entry)
 }

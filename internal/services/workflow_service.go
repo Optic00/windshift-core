@@ -585,14 +585,14 @@ func (s *WorkflowService) CommitTransition(
 		return err
 	}
 
-	if _, err := tx.Exec(`
-		INSERT INTO item_history (item_id, user_id, field_name, old_value, new_value, changed_at)
-		VALUES (?, ?, 'status_id', ?, ?, ?)
-	`, itemID, actorUserID,
-		fmt.Sprintf("%d", oldStatusID),
-		fmt.Sprintf("%d", newStatusID),
-		time.Now(),
-	); err != nil {
+	if err := itemRepo.RecordHistory(tx, repository.HistoryEntry{
+		ItemID:    itemID,
+		UserID:    actorUserID,
+		FieldName: "status_id",
+		OldValue:  fmt.Sprintf("%d", oldStatusID),
+		NewValue:  fmt.Sprintf("%d", newStatusID),
+		ChangedAt: time.Now(),
+	}); err != nil {
 		return fmt.Errorf("record transition history: %w", err)
 	}
 	return nil

@@ -102,7 +102,7 @@ func init() {
 					}
 				}
 			}
-			names := resolveUserNames(env.DB, userIDs)
+			names := env.idResolver().ResolveUserNames(userIDs)
 			resolveName := func(id *int) string {
 				if id == nil {
 					return ""
@@ -175,40 +175,4 @@ func resolveItemID(db database.Database, itemID int, itemKey string) (int, error
 		return 0, errors.New("item not found")
 	}
 	return id, nil
-}
-
-// resolveUserNames batches one SELECT to map user IDs → display names,
-// preferring "first last" then username then email.
-func resolveUserNames(db database.Database, ids map[int]struct{}) map[int]string {
-	names := map[int]string{}
-	if len(ids) == 0 {
-		return names
-	}
-	placeholders := make([]string, 0, len(ids))
-	args := make([]interface{}, 0, len(ids))
-	for id := range ids {
-		placeholders = append(placeholders, "?")
-		args = append(args, id)
-	}
-	rows, err := db.Query(fmt.Sprintf(
-		`SELECT id, COALESCE(NULLIF(TRIM(first_name || ' ' || last_name), ''), username, email, '') FROM users WHERE id IN (%s)`,
-		strings.Join(placeholders, ",")),
-		args...,
-	)
-	if err != nil {
-		return names
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var id int
-		var name string
-		if err := rows.Scan(&id, &name); err != nil {
-			continue
-		}
-		names[id] = name
-	}
-	if err := rows.Err(); err != nil {
-		return names
-	}
-	return names
 }

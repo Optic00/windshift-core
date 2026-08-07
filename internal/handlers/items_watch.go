@@ -66,16 +66,14 @@ func (h *ItemHandler) AddWatch(w http.ResponseWriter, r *http.Request) {
 		reqBody.Reason = "User subscribed to item notifications"
 	}
 
-	// Add watch using ActivityTracker
-	if h.activityTracker != nil {
-		if err := h.activityTracker.AddWatch(user.ID, itemID, reqBody.Reason); err != nil {
-			slog.Error("error adding watch", slog.String("component", "items_watch"), slog.Int("user_id", user.ID), slog.Int("item_id", itemID), slog.Any("error", err))
-			respondInternalError(w, r, err)
-			return
-		}
-	} else {
-		respondInternalError(w, r, errors.New("activity tracker not available"))
+	// Add watch via repository, then drop the stale activity cache entry
+	if err := h.itemRepo.Watch(user.ID, itemID, reqBody.Reason); err != nil {
+		slog.Error("error adding watch", slog.String("component", "items_watch"), slog.Int("user_id", user.ID), slog.Int("item_id", itemID), slog.Any("error", err))
+		respondInternalError(w, r, err)
 		return
+	}
+	if h.activityTracker != nil {
+		_ = h.activityTracker.InvalidateUserCache(user.ID)
 	}
 
 	respondJSONOK(w, map[string]interface{}{
@@ -92,16 +90,14 @@ func (h *ItemHandler) RemoveWatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Remove watch using ActivityTracker
-	if h.activityTracker != nil {
-		if err := h.activityTracker.RemoveWatch(user.ID, itemID); err != nil {
-			slog.Error("error removing watch", slog.String("component", "items_watch"), slog.Int("user_id", user.ID), slog.Int("item_id", itemID), slog.Any("error", err))
-			respondInternalError(w, r, err)
-			return
-		}
-	} else {
-		respondInternalError(w, r, errors.New("activity tracker not available"))
+	// Remove watch via repository, then drop the stale activity cache entry
+	if err := h.itemRepo.Unwatch(user.ID, itemID); err != nil {
+		slog.Error("error removing watch", slog.String("component", "items_watch"), slog.Int("user_id", user.ID), slog.Int("item_id", itemID), slog.Any("error", err))
+		respondInternalError(w, r, err)
 		return
+	}
+	if h.activityTracker != nil {
+		_ = h.activityTracker.InvalidateUserCache(user.ID)
 	}
 
 	respondJSONOK(w, map[string]interface{}{
@@ -118,18 +114,11 @@ func (h *ItemHandler) GetWatchStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check watch status using ActivityTracker
-	var isWatching bool
-	var err error
-	if h.activityTracker != nil {
-		isWatching, err = h.activityTracker.IsWatching(user.ID, itemID)
-		if err != nil {
-			slog.Error("error checking watch status", slog.String("component", "items_watch"), slog.Int("user_id", user.ID), slog.Int("item_id", itemID), slog.Any("error", err))
-			respondInternalError(w, r, err)
-			return
-		}
-	} else {
-		respondInternalError(w, r, errors.New("activity tracker not available"))
+	// Check watch status via repository
+	isWatching, err := h.itemRepo.IsWatching(user.ID, itemID)
+	if err != nil {
+		slog.Error("error checking watch status", slog.String("component", "items_watch"), slog.Int("user_id", user.ID), slog.Int("item_id", itemID), slog.Any("error", err))
+		respondInternalError(w, r, err)
 		return
 	}
 

@@ -13,6 +13,7 @@ import (
 
 	"windshift/internal/database"
 	"windshift/internal/logger"
+	"windshift/internal/models"
 	"windshift/internal/repository"
 )
 
@@ -21,6 +22,7 @@ type PlanningService struct {
 	db       database.Database
 	items    *repository.ItemRepository
 	statuses *repository.StatusRepository
+	scmRepos *repository.SCMWorkspaceRepository
 }
 
 // milestonePositionStep is the gap left between adjacent positions so that a
@@ -62,6 +64,19 @@ func milestoneScopeArgs(isGlobal bool, workspaceID, categoryID *int) []interface
 		cat = *categoryID
 	}
 	return []interface{}{isGlobal, ws, cat}
+}
+
+// SetSCMWorkspaceRepository wires the SCM persistence layer used by release
+// lookups. Optional: when unset, calls build it lazily from db.
+func (s *PlanningService) SetSCMWorkspaceRepository(repo *repository.SCMWorkspaceRepository) {
+	s.scmRepos = repo
+}
+
+func (s *PlanningService) scmRepository() *repository.SCMWorkspaceRepository {
+	if s.scmRepos == nil {
+		s.scmRepos = repository.NewSCMWorkspaceRepository(s.db)
+	}
+	return s.scmRepos
 }
 
 // NewPlanningService creates a new PlanningService.
@@ -429,12 +444,31 @@ func hydrateMilestoneRelease(
 	return rel
 }
 
+// FindMilestoneIDByName resolves a milestone by exact (case-insensitive) name,
+// preferring the workspace's own milestone over a same-named global one.
+// Returns nil when nothing matches.
+func (s *PlanningService) FindMilestoneIDByName(workspaceID int, name string) (*int, error) {
+	var id int
+	err := s.db.QueryRow(`
+		SELECT id FROM milestones
+		WHERE LOWER(name) = LOWER(?) AND (workspace_id = ? OR is_global = true)
+		ORDER BY CASE WHEN workspace_id = ? THEN 0 ELSE 1 END
+		LIMIT 1
+	`, name, workspaceID, workspaceID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("resolve milestone by name: %w", err)
+	}
+	return &id, nil
+}
+
 // GetSCMConnectionWorkspaceID returns the workspace_id for a given SCM connection ID.
 // Returns 0 and no error if the connection doesn't exist.
 func (s *PlanningService) GetSCMConnectionWorkspaceID(connectionID int) (int, error) {
-	var workspaceID int
-	err := s.db.QueryRow(`SELECT workspace_id FROM workspace_scm_connections WHERE id = ?`, connectionID).Scan(&workspaceID)
-	if errors.Is(err, sql.ErrNoRows) {
+	workspaceID, _, err := s.scmRepository().GetConnectionWorkspaceAndProvider(connectionID)
+	if errors.Is(err, repository.ErrNotFound) {
 		return 0, nil
 	}
 	if err != nil {
@@ -448,24 +482,9 @@ func (s *PlanningService) GetSCMConnectionWorkspaceID(connectionID int) (int, er
 // name lookup remains for existing API clients. When both are supplied they
 // must identify the same stored row.
 func (s *PlanningService) ResolveLinkedSCMRepository(connectionID, repositoryID int, repositoryName string) (*LinkedSCMRepository, error) {
-	var linked LinkedSCMRepository
 	repositoryName = strings.TrimSpace(repositoryName)
-	var err error
-	switch {
-	case repositoryID > 0:
-		err = s.db.QueryRow(`
-			SELECT id, repository_name FROM workspace_repositories
-			WHERE id = ? AND workspace_scm_connection_id = ?
-		`, repositoryID, connectionID).Scan(&linked.ID, &linked.RepositoryName)
-	case repositoryName != "":
-		err = s.db.QueryRow(`
-			SELECT id, repository_name FROM workspace_repositories
-			WHERE workspace_scm_connection_id = ? AND repository_name = ?
-		`, connectionID, repositoryName).Scan(&linked.ID, &linked.RepositoryName)
-	default:
-		return nil, ErrSCMRepositoryNotLinked
-	}
-	if errors.Is(err, sql.ErrNoRows) {
+	linked, err := s.scmRepository().ResolveLinkedRepository(connectionID, repositoryID, repositoryName)
+	if errors.Is(err, repository.ErrNotFound) {
 		return nil, ErrSCMRepositoryNotLinked
 	}
 	if err != nil {
@@ -474,7 +493,7 @@ func (s *PlanningService) ResolveLinkedSCMRepository(connectionID, repositoryID 
 	if repositoryName != "" && repositoryName != linked.RepositoryName {
 		return nil, ErrSCMRepositoryNotLinked
 	}
-	return &linked, nil
+	return &LinkedSCMRepository{ID: linked.ID, RepositoryName: linked.RepositoryName}, nil
 }
 
 // CreateMilestoneParams contains parameters for creating a milestone.
@@ -1026,15 +1045,8 @@ func (s *PlanningService) DeleteMilestone(id int, auditActors ...AuditActor) err
 	return nil
 }
 
-// MilestoneTestStats contains test plan statistics for a milestone.
-type MilestoneTestStats struct {
-	TotalTestPlans     int `json:"total_test_plans"`
-	TotalTestRuns      int `json:"total_test_runs"`
-	SuccessfulTestRuns int `json:"successful_test_runs"`
-	FailedTestRuns     int `json:"failed_test_runs"`
-	InProgressTestRuns int `json:"in_progress_test_runs"`
-	TotalTestCases     int `json:"total_test_cases"`
-}
+// MilestoneTestStats aggregates test-plan activity for a milestone.
+type MilestoneTestStats = models.MilestoneTestStats
 
 // GetMilestoneTestStatistics retrieves test plan statistics for a milestone.
 func (s *PlanningService) GetMilestoneTestStatistics(milestoneID int, workspaceIDs []int) (*MilestoneTestStats, error) {
@@ -1053,118 +1065,14 @@ func (s *PlanningService) GetMilestoneTestStatistics(milestoneID int, workspaceI
 // local milestones and every test-set contribution remain restricted to the
 // caller's accessible workspace IDs.
 func (s *PlanningService) GetMilestoneTestStatisticsBatch(milestoneIDs, workspaceIDs []int) (map[int]*MilestoneTestStats, error) {
-	uniqueIDs := make([]int, 0, len(milestoneIDs))
-	seen := make(map[int]struct{}, len(milestoneIDs))
-	for _, milestoneID := range milestoneIDs {
-		if milestoneID <= 0 {
-			continue
-		}
-		if _, exists := seen[milestoneID]; exists {
-			continue
-		}
-		seen[milestoneID] = struct{}{}
-		uniqueIDs = append(uniqueIDs, milestoneID)
-	}
-	result := make(map[int]*MilestoneTestStats, len(uniqueIDs))
-	if len(uniqueIDs) == 0 {
-		return result, nil
-	}
-
-	milestonePlaceholders := strings.TrimSuffix(strings.Repeat("?,", len(uniqueIDs)), ",")
-	testSetWorkspaceClause, testSetWorkspaceArgs := planningWorkspaceFilter("ts.workspace_id", workspaceIDs)
-	visibilityClause := "m.is_global = true"
-	visibilityArgs := []interface{}{}
-	if len(workspaceIDs) > 0 {
-		workspacePlaceholders := strings.TrimSuffix(strings.Repeat("?,", len(workspaceIDs)), ",")
-		visibilityClause += " OR m.workspace_id IN (" + workspacePlaceholders + ")"
-		visibilityArgs = make([]interface{}, len(workspaceIDs))
-		for i, workspaceID := range workspaceIDs {
-			visibilityArgs[i] = workspaceID
-		}
-	}
-	queryArgs := make([]interface{}, 0, len(testSetWorkspaceArgs)+len(uniqueIDs)+len(visibilityArgs))
-	queryArgs = append(queryArgs, testSetWorkspaceArgs...)
-	for _, milestoneID := range uniqueIDs {
-		queryArgs = append(queryArgs, milestoneID)
-	}
-	queryArgs = append(queryArgs, visibilityArgs...)
-
-	rows, err := s.db.Query(`
-		SELECT
-			m.id,
-			COUNT(DISTINCT ts.id) as total_test_plans,
-			COALESCE(SUM(run_stats.total_runs), 0) as total_test_runs,
-			COALESCE(SUM(run_stats.successful_runs), 0) as successful_test_runs,
-			COALESCE(SUM(run_stats.failed_runs), 0) as failed_test_runs,
-			COALESCE(SUM(run_stats.in_progress_runs), 0) as in_progress_test_runs,
-			COALESCE(SUM(tc_counts.test_case_count), 0) as total_test_cases
-		FROM milestones m
-		LEFT JOIN test_sets ts ON ts.milestone_id = m.id`+testSetWorkspaceClause+`
-		LEFT JOIN (
-			SELECT
-				runs.set_id,
-				COUNT(*) as total_runs,
-				SUM(CASE
-					WHEN runs.ended_at IS NOT NULL
-					 AND COALESCE(results.result_count, 0) > 0
-					 AND COALESCE(results.non_success_count, 0) = 0
-					THEN 1 ELSE 0
-				END) as successful_runs,
-				SUM(CASE
-					WHEN runs.ended_at IS NOT NULL
-					 AND (
-						COALESCE(results.result_count, 0) = 0
-						OR COALESCE(results.non_success_count, 0) > 0
-					 )
-					THEN 1 ELSE 0
-				END) as failed_runs,
-				SUM(CASE WHEN runs.ended_at IS NULL THEN 1 ELSE 0 END) as in_progress_runs
-			FROM test_runs runs
-			LEFT JOIN (
-				SELECT
-					run_id,
-					COUNT(*) as result_count,
-					SUM(CASE WHEN status IN ('passed', 'skipped') THEN 0 ELSE 1 END) as non_success_count
-				FROM test_results
-				GROUP BY run_id
-			) results ON results.run_id = runs.id
-			GROUP BY runs.set_id
-		) run_stats ON ts.id = run_stats.set_id
-		LEFT JOIN (
-			SELECT
-				stc.set_id,
-				COUNT(stc.test_case_id) as test_case_count
-			FROM set_test_cases stc
-			GROUP BY stc.set_id
-		) tc_counts ON ts.id = tc_counts.set_id
-		WHERE m.id IN (`+milestonePlaceholders+`)
-		  AND (`+visibilityClause+`)
-		GROUP BY m.id
-	`, queryArgs...)
+	statsByID, err := repository.NewTestSetRepository(s.db).FindStatsByMilestoneIDs(milestoneIDs, workspaceIDs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get milestone test statistics batch: %w", err)
+		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
-
-	for rows.Next() {
-		var milestoneID int
-		var stats MilestoneTestStats
-		if err := rows.Scan(
-			&milestoneID,
-			&stats.TotalTestPlans,
-			&stats.TotalTestRuns,
-			&stats.SuccessfulTestRuns,
-			&stats.FailedTestRuns,
-			&stats.InProgressTestRuns,
-			&stats.TotalTestCases,
-		); err != nil {
-			return nil, fmt.Errorf("failed to scan milestone test statistics batch: %w", err)
-		}
+	result := make(map[int]*MilestoneTestStats, len(statsByID))
+	for milestoneID, stats := range statsByID {
 		statsCopy := stats
 		result[milestoneID] = &statsCopy
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate milestone test statistics batch: %w", err)
 	}
 	return result, nil
 }

@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"windshift/internal/database"
 	"windshift/internal/middleware"
@@ -230,16 +229,4 @@ func GetAccessibleWorkspaceKeys(user *models.User, db database.Database,
 		keys[pair.Key] = true
 	}
 	return keys, nil
-}
-
-// BuildWorkspaceIDPlaceholders builds a parameterized IN clause for workspace IDs.
-func BuildWorkspaceIDPlaceholders(ids []int) (placeholders string, args []interface{}) {
-	ph := make([]string, len(ids))
-	args = make([]interface{}, len(ids))
-	for i, id := range ids {
-		ph[i] = "?"
-		args[i] = id
-	}
-	placeholders = strings.Join(ph, ", ")
-	return placeholders, args
 }

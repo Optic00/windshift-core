@@ -1,12 +1,20 @@
 package repository
 
 import (
+	"database/sql"
 	"fmt"
 	"time"
 
 	"windshift/internal/database"
 	"windshift/internal/models"
 )
+
+// HistoryWriter is the minimal write surface item-history recording needs.
+// Both database.Database and database.Tx satisfy it, so history rows can be
+// recorded inside or outside a caller-owned transaction.
+type HistoryWriter interface {
+	ExecWrite(query string, args ...interface{}) (sql.Result, error)
+}
 
 // HistoryEntry represents a single field change in item history
 type HistoryEntry struct {
@@ -20,8 +28,8 @@ type HistoryEntry struct {
 }
 
 // RecordHistory records a history entry for an item change
-func (r *ItemRepository) RecordHistory(tx database.Tx, entry HistoryEntry) error {
-	_, err := tx.Exec(`
+func (r *ItemRepository) RecordHistory(w HistoryWriter, entry HistoryEntry) error {
+	_, err := w.ExecWrite(`
 		INSERT INTO item_history (item_id, user_id, field_name, old_value, new_value, changed_at)
 		VALUES (?, ?, ?, ?, ?, ?)
 	`, entry.ItemID, entry.UserID, entry.FieldName, entry.OldValue, entry.NewValue, entry.ChangedAt)
@@ -32,9 +40,9 @@ func (r *ItemRepository) RecordHistory(tx database.Tx, entry HistoryEntry) error
 }
 
 // RecordHistoryBatch records multiple history entries in one operation
-func (r *ItemRepository) RecordHistoryBatch(tx database.Tx, entries []HistoryEntry) error {
+func (r *ItemRepository) RecordHistoryBatch(w HistoryWriter, entries []HistoryEntry) error {
 	for _, entry := range entries {
-		if err := r.RecordHistory(tx, entry); err != nil {
+		if err := r.RecordHistory(w, entry); err != nil {
 			return err
 		}
 	}

@@ -21,6 +21,88 @@ func NewTestCaseRepository(db database.Database) *TestCaseRepository {
 	return &TestCaseRepository{db: db}
 }
 
+// FindWorkspacesWithMatchingCases returns distinct workspace IDs containing
+// test cases matching the given search term, before caller-level permission
+// filtering is applied.
+func (r *TestCaseRepository) FindWorkspacesWithMatchingCases(query string) ([]int, error) {
+	searchTerm := "%" + query + "%"
+	rows, err := r.db.Query(`
+		SELECT DISTINCT workspace_id
+		FROM test_cases
+		WHERE title LIKE ? OR preconditions LIKE ?
+	`, searchTerm, searchTerm)
+	if err != nil {
+		return nil, fmt.Errorf("find workspaces with matching test cases: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var workspaceIDs []int
+	for rows.Next() {
+		var workspaceID int
+		if err := rows.Scan(&workspaceID); err != nil {
+			return nil, fmt.Errorf("scan test case workspace: %w", err)
+		}
+		workspaceIDs = append(workspaceIDs, workspaceID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate test case workspaces: %w", err)
+	}
+	return workspaceIDs, nil
+}
+
+// Search returns linkable test-case rows matching query within the given
+// workspaces. Callers must supply workspace IDs the user can access; an empty
+// set yields no rows.
+func (r *TestCaseRepository) Search(query string, workspaceIDs []int, limit int) ([]models.LinkableItem, error) {
+	if len(workspaceIDs) == 0 {
+		return []models.LinkableItem{}, nil
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(workspaceIDs)), ",")
+	wsArgs := make([]interface{}, len(workspaceIDs))
+	for i, id := range workspaceIDs {
+		wsArgs[i] = id
+	}
+
+	sqlQuery := fmt.Sprintf(`
+		SELECT id, title, COALESCE(preconditions, '') AS summary
+		FROM test_cases
+		WHERE (title LIKE ? OR preconditions LIKE ?)
+		  AND workspace_id IN (%s)
+		ORDER BY title
+		LIMIT ?
+	`, placeholders)
+
+	searchTerm := "%" + query + "%"
+	args := make([]interface{}, 0, 3+len(wsArgs))
+	args = append(args, searchTerm, searchTerm)
+	args = append(args, wsArgs...)
+	args = append(args, limit)
+	rows, err := r.db.Query(sqlQuery, args...)
+	if err != nil {
+		return nil, fmt.Errorf("search test cases: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var items []models.LinkableItem
+	for rows.Next() {
+		var item models.LinkableItem
+		var summary sql.NullString
+
+		if err := rows.Scan(&item.ID, &item.Title, &summary); err != nil {
+			return nil, fmt.Errorf("scan test case search result: %w", err)
+		}
+
+		item.Description = summary.String
+		item.Type = "test_case"
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate test case search results: %w", err)
+	}
+
+	return items, nil
+}
+
 // TestCaseListParams contains parameters for listing test cases
 type TestCaseListParams struct {
 	WorkspaceID int
@@ -124,6 +206,20 @@ func (r *TestCaseRepository) CountAll(workspaceID int) (int, error) {
 		return 0, fmt.Errorf("failed to count test cases: %w", err)
 	}
 	return count, nil
+}
+
+// GetWorkspaceID resolves the owning workspace for a test case. Returns
+// ErrNotFound when the case is missing.
+func (r *TestCaseRepository) GetWorkspaceID(id int) (int, error) {
+	var workspaceID int
+	err := r.db.QueryRow(`SELECT workspace_id FROM test_cases WHERE id = ?`, id).Scan(&workspaceID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("resolve test case workspace: %w", err)
+	}
+	return workspaceID, nil
 }
 
 // FindByID retrieves a single test case by ID

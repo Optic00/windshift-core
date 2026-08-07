@@ -22,25 +22,26 @@ func (r *ItemRepository) IsWatching(userID, itemID int) (bool, error) {
 	return exists, nil
 }
 
-// Watch upserts an active watch for the (user, item) pair. If a soft-deleted
-// watch row exists from a previous Unwatch, it is reactivated.
-func (r *ItemRepository) Watch(userID, itemID int) error {
+// Watch upserts an active watch for the (user, item) pair, recording the
+// reason it was created. If a soft-deleted watch row exists from a previous
+// Unwatch, it is reactivated and its reason updated.
+func (r *ItemRepository) Watch(userID, itemID int, reason string) error {
 	_, err := r.db.ExecWrite(`
-		INSERT INTO item_watches (user_id, item_id, is_active, created_at, updated_at)
-		VALUES (?, ?, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		INSERT INTO item_watches (user_id, item_id, is_active, watch_reason, created_at, updated_at)
+		VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		ON CONFLICT (user_id, item_id) DO UPDATE SET
-			is_active = true,
+			is_active = ?,
+			watch_reason = ?,
 			updated_at = CURRENT_TIMESTAMP
-	`, userID, itemID)
+	`, userID, itemID, true, reason, true, reason)
 	if err != nil {
 		return fmt.Errorf("failed to add watch: %w", err)
 	}
 	return nil
 }
 
-// Unwatch soft-deletes the watch by flipping is_active to false, matching the
-// semantics ActivityTracker uses; keeps the row so re-watching can preserve
-// any watch_reason history.
+// Unwatch soft-deletes the watch by flipping is_active to false, keeping the
+// row so re-watching can preserve any watch_reason history.
 func (r *ItemRepository) Unwatch(userID, itemID int) error {
 	_, err := r.db.ExecWrite(`
 		UPDATE item_watches
@@ -79,11 +80,13 @@ func (r *ItemRepository) GetWatchers(itemID int) ([]int, error) {
 	return userIDs, nil
 }
 
-// GetUserWatchedItems returns item IDs the user has an active watch on.
+// GetUserWatchedItems returns item IDs the user has an active watch on,
+// newest watch first.
 func (r *ItemRepository) GetUserWatchedItems(userID int) ([]int, error) {
 	rows, err := r.db.Query(`
 		SELECT item_id FROM item_watches
 		WHERE user_id = ? AND is_active = true
+		ORDER BY created_at DESC
 	`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get watched items: %w", err)

@@ -3,6 +3,7 @@ package repository
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -352,6 +353,42 @@ func (r *SCMWorkspaceRepository) ListLinkedRepositories(connID int) ([]SCMLinked
 		repos = append(repos, repo)
 	}
 	return repos, rows.Err()
+}
+
+// LinkedRepositoryIdentity is the minimal repository identity release callers
+// resolve before creating milestone releases.
+type LinkedRepositoryIdentity struct {
+	ID             int
+	RepositoryName string
+}
+
+// ResolveLinkedRepository finds a repository linked to a connection by id or
+// exact name (id wins when both are supplied). Returns ErrNotFound when
+// neither identifies a stored row.
+func (r *SCMWorkspaceRepository) ResolveLinkedRepository(connID, repositoryID int, repositoryName string) (*LinkedRepositoryIdentity, error) {
+	var identity LinkedRepositoryIdentity
+	var err error
+	switch {
+	case repositoryID > 0:
+		err = r.db.QueryRow(`
+			SELECT id, repository_name FROM workspace_repositories
+			WHERE id = ? AND workspace_scm_connection_id = ?
+		`, repositoryID, connID).Scan(&identity.ID, &identity.RepositoryName)
+	case repositoryName != "":
+		err = r.db.QueryRow(`
+			SELECT id, repository_name FROM workspace_repositories
+			WHERE workspace_scm_connection_id = ? AND repository_name = ?
+		`, connID, repositoryName).Scan(&identity.ID, &identity.RepositoryName)
+	default:
+		return nil, ErrNotFound
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("resolve linked repository: %w", err)
+	}
+	return &identity, nil
 }
 
 // ListLinkedRepositoriesForWorkspace loads repositories for every connection

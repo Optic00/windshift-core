@@ -176,16 +176,12 @@ func (r *RequestTypeRepository) ItemTypeExists(id int) (bool, error) {
 // services.IsItemTypeAllowedInWorkspace, kept here so the request-type handler
 // can validate routing without the repository depending on the services layer.
 func (r *RequestTypeRepository) ItemTypeAllowedInWorkspace(workspaceID, itemTypeID int) (bool, error) {
-	var configSetID *int
-	err := r.db.QueryRow(
-		"SELECT configuration_set_id FROM workspace_configuration_sets WHERE workspace_id = ?",
-		workspaceID,
-	).Scan(&configSetID)
-	if errors.Is(err, sql.ErrNoRows) || configSetID == nil {
-		return true, nil // no config set → all types allowed
-	}
+	configSetID, err := NewConfigurationSetRepository(r.db).GetWorkspaceConfigSetID(workspaceID)
 	if err != nil {
 		return false, fmt.Errorf("query workspace %d config set: %w", workspaceID, err)
+	}
+	if configSetID == nil {
+		return true, nil // no config set → all types allowed
 	}
 	var ok bool
 	if err := r.db.QueryRow(

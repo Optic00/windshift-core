@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 
 	"windshift/internal/models"
 	"windshift/internal/repository"
@@ -88,6 +89,59 @@ func (s *ApprovalService) GetTimelineForItem(ctx context.Context, itemID int) ([
 		return nil, err
 	}
 	return s.loadRequests(ctx, ids)
+}
+
+// GetDecisionCommentsForItem returns comment-bearing approval decisions for an
+// item shaped like feed comment rows: negative IDs keep cursor ordering
+// distinct from real comments, Source is "approval", and UpdatedAt mirrors
+// CreatedAt. The merged comment feed consumes this so approval decisions are
+// read through the approval domain.
+func (s *ApprovalService) GetDecisionCommentsForItem(itemID int) ([]models.Comment, error) {
+	rows, err := s.db.Query(`
+		SELECT -d.id, ar.item_id, d.actor_user_id, d.comment, d.created_at,
+		       COALESCE(NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), ''), 'Unknown User') AS author_name,
+		       u.email, u.avatar_url,
+		       COALESCE(u.is_agent, FALSE) AS is_agent,
+		       COALESCE(NULLIF(TRIM(COALESCE(owner.first_name, '') || ' ' || COALESCE(owner.last_name, '')), ''), owner.username, '') AS agent_owner_name
+		FROM approval_decisions d
+		JOIN approval_requests ar ON ar.id = d.approval_request_id
+		LEFT JOIN users u ON u.id = d.actor_user_id
+		LEFT JOIN users owner ON owner.id = u.agent_owner_user_id
+		WHERE ar.item_id = ? AND d.comment IS NOT NULL AND d.comment <> ''
+	`, itemID)
+	if err != nil {
+		return nil, fmt.Errorf("get approval decision comments for item %d: %w", itemID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var comments []models.Comment
+	for rows.Next() {
+		var c models.Comment
+		var authorID sql.NullInt64
+		var authorName, authorEmail, authorAvatar, agentOwnerName sql.NullString
+		if err := rows.Scan(
+			&c.ID, &c.ItemID, &authorID, &c.Content, &c.CreatedAt,
+			&authorName, &authorEmail, &authorAvatar,
+			&c.IsAgent, &agentOwnerName,
+		); err != nil {
+			return nil, fmt.Errorf("scan approval decision comment for item %d: %w", itemID, err)
+		}
+		if authorID.Valid {
+			id := int(authorID.Int64)
+			c.AuthorID = &id
+		}
+		c.UpdatedAt = c.CreatedAt
+		c.Source = "approval"
+		c.AuthorName = authorName.String
+		c.AuthorEmail = authorEmail.String
+		c.AuthorAvatar = authorAvatar.String
+		c.AgentOwnerName = agentOwnerName.String
+		comments = append(comments, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate approval decision comments for item %d: %w", itemID, err)
+	}
+	return comments, nil
 }
 
 // GetForUser returns approval requests where the user is in the active approver

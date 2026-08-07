@@ -322,6 +322,23 @@ type LinkableItem struct {
 	AssetCategoryName string `json:"asset_category_name,omitempty"`
 }
 
+// LinkedAsset is a display row for an asset linked to an item. Direction is
+// "outgoing" when the item is the link source and "incoming" when the asset
+// is the link source.
+type LinkedAsset struct {
+	ID           int    `json:"id"`
+	Title        string `json:"title"`
+	Description  string `json:"description"`
+	SetID        int    `json:"set_id"`
+	SetName      string `json:"set_name"`
+	TypeName     string `json:"type_name"`
+	CategoryName string `json:"category_name"`
+	LinkID       int    `json:"link_id"`
+	LinkTypeName string `json:"link_type_name"`
+	LinkLabel    string `json:"link_label"`
+	Direction    string `json:"direction"` // "outgoing" or "incoming"
+}
+
 // CalendarScheduleEntry represents a user's calendar scheduling for an item
 type CalendarScheduleEntry struct {
 	UserID          int    `json:"user_id"`

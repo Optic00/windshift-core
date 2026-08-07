@@ -1471,7 +1471,7 @@ func (h *JiraImportHandler) importIssueWatchers(
 		if err != nil {
 			return err
 		}
-		if err := itemRepo.Watch(userID, itemID); err != nil {
+		if err := itemRepo.Watch(userID, itemID, ""); err != nil {
 			return err
 		}
 		wasCreated := !wasWatching

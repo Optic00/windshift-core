@@ -341,123 +341,19 @@ func (h *ItemLinkHandler) GetLinkedAssets(w http.ResponseWriter, r *http.Request
 	}
 	accessibleSets := h.linkSvc.AccessibleAssetSetIDs(user.ID)
 
-	// Get assets where item is the source
-	outgoingQuery := `
-		SELECT a.id, a.title, COALESCE(a.description, '') AS description,
-		       a.set_id, ams.name AS set_name,
-		       COALESCE(at.name, '') AS type_name,
-		       COALESCE(ac.name, '') AS category_name,
-		       il.id AS link_id, lt.name AS link_type_name, lt.forward_label
-		FROM item_links il
-		JOIN assets a ON il.target_type = 'asset' AND il.target_id = a.id
-		LEFT JOIN asset_management_sets ams ON a.set_id = ams.id
-		LEFT JOIN asset_types at ON a.asset_type_id = at.id
-		LEFT JOIN asset_categories ac ON a.category_id = ac.id
-		JOIN link_types lt ON il.link_type_id = lt.id
-		WHERE il.source_type = 'item' AND il.source_id = ?
-		ORDER BY a.title
-	`
-
-	// Get assets where item is the target
-	incomingQuery := `
-		SELECT a.id, a.title, COALESCE(a.description, '') AS description,
-		       a.set_id, ams.name AS set_name,
-		       COALESCE(at.name, '') AS type_name,
-		       COALESCE(ac.name, '') AS category_name,
-		       il.id AS link_id, lt.name AS link_type_name, lt.reverse_label
-		FROM item_links il
-		JOIN assets a ON il.source_type = 'asset' AND il.source_id = a.id
-		LEFT JOIN asset_management_sets ams ON a.set_id = ams.id
-		LEFT JOIN asset_types at ON a.asset_type_id = at.id
-		LEFT JOIN asset_categories ac ON a.category_id = ac.id
-		JOIN link_types lt ON il.link_type_id = lt.id
-		WHERE il.target_type = 'item' AND il.target_id = ?
-		ORDER BY a.title
-	`
-
-	type LinkedAsset struct {
-		ID           int    `json:"id"`
-		Title        string `json:"title"`
-		Description  string `json:"description"`
-		SetID        int    `json:"set_id"`
-		SetName      string `json:"set_name"`
-		TypeName     string `json:"type_name"`
-		CategoryName string `json:"category_name"`
-		LinkID       int    `json:"link_id"`
-		LinkTypeName string `json:"link_type_name"`
-		LinkLabel    string `json:"link_label"`
-		Direction    string `json:"direction"` // "outgoing" or "incoming"
-	}
-
-	var linkedAssets []LinkedAsset
-
-	// Process outgoing links
-	rows, err := h.db.Query(outgoingQuery, id)
+	assets, err := repository.NewAssetRepository(h.db).ListLinkedToItem(id)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
-	for rows.Next() {
-		var asset LinkedAsset
-		var description, setName, typeName, categoryName, linkLabel sql.NullString
-		err = rows.Scan(&asset.ID, &asset.Title, &description, &asset.SetID, &setName,
-			&typeName, &categoryName, &asset.LinkID, &asset.LinkTypeName, &linkLabel)
-		if err != nil {
-			_ = rows.Close()
-			respondInternalError(w, r, err)
-			return
-		}
-		if !accessibleSets[asset.SetID] {
-			continue
-		}
-		asset.Description = description.String
-		asset.SetName = setName.String
-		asset.TypeName = typeName.String
-		asset.CategoryName = categoryName.String
-		asset.LinkLabel = linkLabel.String
-		asset.Direction = "outgoing"
-		linkedAssets = append(linkedAssets, asset)
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		respondInternalError(w, r, err)
-		return
-	}
-	_ = rows.Close()
 
-	// Process incoming links
-	rows, err = h.db.Query(incomingQuery, id)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	for rows.Next() {
-		var asset LinkedAsset
-		var description, setName, typeName, categoryName, linkLabel sql.NullString
-		err := rows.Scan(&asset.ID, &asset.Title, &description, &asset.SetID, &setName,
-			&typeName, &categoryName, &asset.LinkID, &asset.LinkTypeName, &linkLabel)
-		if err != nil {
-			_ = rows.Close()
-			respondInternalError(w, r, err)
-			return
-		}
+	linkedAssets := make([]models.LinkedAsset, 0, len(assets))
+	for _, asset := range assets {
 		if !accessibleSets[asset.SetID] {
 			continue
 		}
-		asset.Description = description.String
-		asset.SetName = setName.String
-		asset.TypeName = typeName.String
-		asset.CategoryName = categoryName.String
-		asset.LinkLabel = linkLabel.String
-		asset.Direction = "incoming"
 		linkedAssets = append(linkedAssets, asset)
 	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		respondInternalError(w, r, err)
-		return
-	}
-	_ = rows.Close()
 
 	respondJSONOK(w, linkedAssets)
 }
@@ -545,33 +441,14 @@ func (h *ItemLinkHandler) searchTestCases(userID int, query string, limit int) (
 		return []models.LinkableItem{}, nil
 	}
 
-	// Test cases have their own permission domain. Derive the candidate
-	// workspace set from matching cases, then retain only workspaces where the
-	// caller has test.view. item.view must never make a case discoverable.
-	searchTerm := "%" + query + "%"
-	rows, err := h.db.Query(`
-		SELECT DISTINCT workspace_id
-		FROM test_cases
-		WHERE title LIKE ? OR preconditions LIKE ?
-	`, searchTerm, searchTerm)
+	testCaseRepo := repository.NewTestCaseRepository(h.db)
+	candidateWorkspaceIDs, err := testCaseRepo.FindWorkspacesWithMatchingCases(query)
 	if err != nil {
 		return nil, err
 	}
-	var candidateWorkspaceIDs []int
-	for rows.Next() {
-		var workspaceID int
-		if err := rows.Scan(&workspaceID); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		candidateWorkspaceIDs = append(candidateWorkspaceIDs, workspaceID)
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return nil, err
-	}
-	_ = rows.Close()
 
+	// Test cases have their own permission domain. Retain only workspaces where
+	// the caller has test.view; item.view must never make a case discoverable.
 	accessibleWorkspaceIDs := make([]int, 0, len(candidateWorkspaceIDs))
 	for _, workspaceID := range candidateWorkspaceIDs {
 		allowed, err := h.permissionService.HasWorkspacePermission(userID, workspaceID, models.PermissionTestView)
@@ -583,45 +460,7 @@ func (h *ItemLinkHandler) searchTestCases(userID int, query string, limit int) (
 		return []models.LinkableItem{}, nil
 	}
 
-	placeholders, wsArgs := BuildWorkspaceIDPlaceholders(accessibleWorkspaceIDs)
-	sqlQuery := fmt.Sprintf(`
-		SELECT id, title, COALESCE(preconditions, '') AS summary
-		FROM test_cases
-		WHERE (title LIKE ? OR preconditions LIKE ?)
-		  AND workspace_id IN (%s)
-		ORDER BY title
-		LIMIT ?
-	`, placeholders)
-
-	args := make([]interface{}, 0, 3+len(wsArgs))
-	args = append(args, searchTerm, searchTerm)
-	args = append(args, wsArgs...)
-	args = append(args, limit)
-	rows, err = h.db.Query(sqlQuery, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	var items []models.LinkableItem
-	for rows.Next() {
-		var item models.LinkableItem
-		var summary sql.NullString
-
-		err := rows.Scan(&item.ID, &item.Title, &summary)
-		if err != nil {
-			return nil, err
-		}
-
-		item.Description = summary.String
-		item.Type = "test_case"
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return items, nil
+	return testCaseRepo.Search(query, accessibleWorkspaceIDs, limit)
 }
 
 func (h *ItemLinkHandler) searchAssets(user *models.User, query string, limit int) ([]models.LinkableItem, error) {
@@ -638,64 +477,8 @@ func (h *ItemLinkHandler) searchAssets(user *models.User, query string, limit in
 	for id := range accessibleSets {
 		setIDs = append(setIDs, id)
 	}
-	setPlaceholders := make([]string, len(setIDs))
-	setArgs := make([]interface{}, len(setIDs))
-	for i, id := range setIDs {
-		setPlaceholders[i] = "?"
-		setArgs[i] = id
-	}
 
-	sqlQuery := fmt.Sprintf(`
-		SELECT a.id, a.title, COALESCE(a.description, '') AS description,
-		       a.set_id, ams.name AS set_name,
-		       COALESCE(at.name, '') AS type_name,
-		       COALESCE(ac.name, '') AS category_name
-		FROM assets a
-		LEFT JOIN asset_management_sets ams ON a.set_id = ams.id
-		LEFT JOIN asset_types at ON a.asset_type_id = at.id
-		LEFT JOIN asset_categories ac ON a.category_id = ac.id
-		WHERE (a.title LIKE ? OR a.description LIKE ?)
-		  AND a.set_id IN (%s)
-		ORDER BY a.title
-		LIMIT ?
-	`, strings.Join(setPlaceholders, ","))
-
-	searchTerm := "%" + query + "%"
-	args := make([]interface{}, 0, 3+len(setArgs))
-	args = append(args, searchTerm, searchTerm)
-	args = append(args, setArgs...)
-	args = append(args, limit)
-	rows, err := h.db.Query(sqlQuery, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	var items []models.LinkableItem
-	for rows.Next() {
-		var item models.LinkableItem
-		var description, setName, typeName, categoryName sql.NullString
-		var setID sql.NullInt64
-
-		err := rows.Scan(&item.ID, &item.Title, &description, &setID, &setName, &typeName, &categoryName)
-		if err != nil {
-			return nil, err
-		}
-
-		item.Description = description.String
-		item.AssetSetID = utils.NullInt64ToPtr(setID)
-		item.AssetSetName = setName.String
-		item.AssetTypeName = typeName.String
-		item.AssetCategoryName = categoryName.String
-
-		item.Type = "asset"
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return items, nil
+	return repository.NewAssetRepository(h.db).Search(query, setIDs, limit)
 }
 
 // GetFieldLinks returns links managed by a specific custom field for a given item

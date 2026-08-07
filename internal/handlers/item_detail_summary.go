@@ -159,10 +159,7 @@ func (h *ItemDetailHandler) load(ctx context.Context, user *models.User, item *m
 		return err
 	})
 	run("watch", func() error {
-		if h.item.activityTracker == nil {
-			return errors.New("activity tracker not available")
-		}
-		watching, err := h.item.activityTracker.IsWatching(user.ID, item.ID)
+		watching, err := h.item.itemRepo.IsWatching(user.ID, item.ID)
 		if err == nil {
 			response.Watching = watching
 		}

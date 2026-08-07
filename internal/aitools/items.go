@@ -660,11 +660,11 @@ func buildUpdateData(env *Env, args updateItemArgs, wsID int) (data map[string]i
 		out["priority_id"] = *args.PriorityID
 		changed = append(changed, "priority")
 	case args.PriorityName != nil:
-		id, err := resolvePriorityName(env.DB, *args.PriorityName)
+		id, err := env.idResolver().ResolvePriorityIDByName(*args.PriorityName)
 		if err != nil {
 			return nil, nil, fmt.Errorf("could not resolve priority name %q: %w", *args.PriorityName, err)
 		}
-		out["priority_id"] = id
+		out["priority_id"] = *id
 		changed = append(changed, "priority")
 	}
 	switch {
@@ -703,7 +703,7 @@ func buildUpdateData(env *Env, args updateItemArgs, wsID int) (data map[string]i
 		}
 		changed = append(changed, "milestone")
 	case args.MilestoneName != nil:
-		id, err := resolveMilestoneName(env.DB, *args.MilestoneName, wsID)
+		id, err := resolveMilestoneName(env, *args.MilestoneName, wsID)
 		if err != nil {
 			return nil, nil, fmt.Errorf("could not resolve milestone name %q: %w", *args.MilestoneName, err)
 		}
@@ -719,7 +719,7 @@ func buildUpdateData(env *Env, args updateItemArgs, wsID int) (data map[string]i
 		}
 		changed = append(changed, "iteration")
 	case args.IterationName != nil:
-		id, err := resolveIterationName(env.DB, *args.IterationName, wsID)
+		id, err := resolveIterationName(env, *args.IterationName, wsID)
 		if err != nil {
 			return nil, nil, fmt.Errorf("could not resolve iteration name %q: %w", *args.IterationName, err)
 		}
@@ -810,15 +810,6 @@ func statusCandidateList(statuses []models.Status) string {
 	return strings.Join(parts, ", ")
 }
 
-func resolvePriorityName(db database.Database, name string) (int, error) {
-	var id int
-	err := db.QueryRow("SELECT id FROM priorities WHERE LOWER(name) = LOWER(?)", name).Scan(&id)
-	if err != nil {
-		return 0, fmt.Errorf("priority not found")
-	}
-	return id, nil
-}
-
 // resolveAssigneeName resolves a user's full name to an ID, restricted to
 // users visible in the item's workspace. Visibility reuses the canonical
 // gated-aware check the HTTP layer builds workspace access from (item.view
@@ -886,26 +877,18 @@ func userCandidateList(users []userCandidate) string {
 	return strings.Join(parts, ", ")
 }
 
-func resolveMilestoneName(db database.Database, name string, workspaceID int) (int, error) {
-	var id int
-	err := db.QueryRow(
-		"SELECT id FROM milestones WHERE LOWER(name) = LOWER(?) AND (workspace_id = ? OR is_global = true) ORDER BY CASE WHEN workspace_id = ? THEN 0 ELSE 1 END LIMIT 1",
-		name, workspaceID, workspaceID,
-	).Scan(&id)
-	if err != nil {
+func resolveMilestoneName(env *Env, name string, workspaceID int) (int, error) {
+	id, err := env.planning().FindMilestoneIDByName(workspaceID, name)
+	if err != nil || id == nil {
 		return 0, fmt.Errorf("milestone not found")
 	}
-	return id, nil
+	return *id, nil
 }
 
-func resolveIterationName(db database.Database, name string, workspaceID int) (int, error) {
-	var id int
-	err := db.QueryRow(
-		"SELECT id FROM iterations WHERE LOWER(name) = LOWER(?) AND (workspace_id = ? OR is_global = true) ORDER BY CASE WHEN workspace_id = ? THEN 0 ELSE 1 END LIMIT 1",
-		name, workspaceID, workspaceID,
-	).Scan(&id)
-	if err != nil {
+func resolveIterationName(env *Env, name string, workspaceID int) (int, error) {
+	id, err := env.planning().FindIterationIDByName(workspaceID, name)
+	if err != nil || id == nil {
 		return 0, fmt.Errorf("iteration not found")
 	}
-	return id, nil
+	return *id, nil
 }

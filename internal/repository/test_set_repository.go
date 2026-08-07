@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"windshift/internal/database"
@@ -95,6 +96,135 @@ func (r *TestSetRepository) FindAllWithStats(workspaceID int) ([]models.TestSet,
 		return nil, fmt.Errorf("failed to iterate test sets: %w", err)
 	}
 	return sets, nil
+}
+
+// FindStatsByMilestoneIDs aggregates test-plan activity grouped by milestone.
+// Test-set contributions are restricted to workspaceIDs (fail-closed: empty
+// workspaceIDs exclude all test sets) and milestone rows are filtered to the
+// caller's visibility (global milestones plus own workspace).
+func (r *TestSetRepository) FindStatsByMilestoneIDs(milestoneIDs, workspaceIDs []int) (map[int]models.MilestoneTestStats, error) {
+	uniqueIDs := make([]int, 0, len(milestoneIDs))
+	seen := make(map[int]struct{}, len(milestoneIDs))
+	for _, milestoneID := range milestoneIDs {
+		if milestoneID <= 0 {
+			continue
+		}
+		if _, exists := seen[milestoneID]; exists {
+			continue
+		}
+		seen[milestoneID] = struct{}{}
+		uniqueIDs = append(uniqueIDs, milestoneID)
+	}
+	result := make(map[int]models.MilestoneTestStats, len(uniqueIDs))
+	if len(uniqueIDs) == 0 {
+		return result, nil
+	}
+
+	milestonePlaceholders := strings.TrimSuffix(strings.Repeat("?,", len(uniqueIDs)), ",")
+	testSetWorkspaceClause := " AND 1=0"
+	var testSetWorkspaceArgs []interface{}
+	if len(workspaceIDs) > 0 {
+		workspacePlaceholders := strings.TrimSuffix(strings.Repeat("?,", len(workspaceIDs)), ",")
+		testSetWorkspaceClause = " AND ts.workspace_id IN (" + workspacePlaceholders + ")"
+		testSetWorkspaceArgs = make([]interface{}, len(workspaceIDs))
+		for i, workspaceID := range workspaceIDs {
+			testSetWorkspaceArgs[i] = workspaceID
+		}
+	}
+	visibilityClause := "m.is_global = true"
+	visibilityArgs := []interface{}{}
+	if len(workspaceIDs) > 0 {
+		workspacePlaceholders := strings.TrimSuffix(strings.Repeat("?,", len(workspaceIDs)), ",")
+		visibilityClause += " OR m.workspace_id IN (" + workspacePlaceholders + ")"
+		visibilityArgs = make([]interface{}, len(workspaceIDs))
+		for i, workspaceID := range workspaceIDs {
+			visibilityArgs[i] = workspaceID
+		}
+	}
+	queryArgs := make([]interface{}, 0, len(testSetWorkspaceArgs)+len(uniqueIDs)+len(visibilityArgs))
+	queryArgs = append(queryArgs, testSetWorkspaceArgs...)
+	for _, milestoneID := range uniqueIDs {
+		queryArgs = append(queryArgs, milestoneID)
+	}
+	queryArgs = append(queryArgs, visibilityArgs...)
+
+	rows, err := r.db.Query(`
+		SELECT
+			m.id,
+			COUNT(DISTINCT ts.id) as total_test_plans,
+			COALESCE(SUM(run_stats.total_runs), 0) as total_test_runs,
+			COALESCE(SUM(run_stats.successful_runs), 0) as successful_test_runs,
+			COALESCE(SUM(run_stats.failed_runs), 0) as failed_test_runs,
+			COALESCE(SUM(run_stats.in_progress_runs), 0) as in_progress_test_runs,
+			COALESCE(SUM(tc_counts.test_case_count), 0) as total_test_cases
+		FROM milestones m
+		LEFT JOIN test_sets ts ON ts.milestone_id = m.id`+testSetWorkspaceClause+`
+		LEFT JOIN (
+			SELECT
+				runs.set_id,
+				COUNT(*) as total_runs,
+				SUM(CASE
+					WHEN runs.ended_at IS NOT NULL
+					 AND COALESCE(results.result_count, 0) > 0
+					 AND COALESCE(results.non_success_count, 0) = 0
+					THEN 1 ELSE 0
+				END) as successful_runs,
+				SUM(CASE
+					WHEN runs.ended_at IS NOT NULL
+					 AND (
+						COALESCE(results.result_count, 0) = 0
+						OR COALESCE(results.non_success_count, 0) > 0
+					 )
+					THEN 1 ELSE 0
+				END) as failed_runs,
+				SUM(CASE WHEN runs.ended_at IS NULL THEN 1 ELSE 0 END) as in_progress_runs
+			FROM test_runs runs
+			LEFT JOIN (
+				SELECT
+					run_id,
+					COUNT(*) as result_count,
+					SUM(CASE WHEN status IN ('passed', 'skipped') THEN 0 ELSE 1 END) as non_success_count
+				FROM test_results
+				GROUP BY run_id
+			) results ON results.run_id = runs.id
+			GROUP BY runs.set_id
+		) run_stats ON ts.id = run_stats.set_id
+		LEFT JOIN (
+			SELECT
+				stc.set_id,
+				COUNT(stc.test_case_id) as test_case_count
+			FROM set_test_cases stc
+			GROUP BY stc.set_id
+		) tc_counts ON ts.id = tc_counts.set_id
+		WHERE m.id IN (`+milestonePlaceholders+`)
+		  AND (`+visibilityClause+`)
+		GROUP BY m.id
+	`, queryArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get milestone test statistics: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var milestoneID int
+		var stats models.MilestoneTestStats
+		if err := rows.Scan(
+			&milestoneID,
+			&stats.TotalTestPlans,
+			&stats.TotalTestRuns,
+			&stats.SuccessfulTestRuns,
+			&stats.FailedTestRuns,
+			&stats.InProgressTestRuns,
+			&stats.TotalTestCases,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan milestone test statistics: %w", err)
+		}
+		result[milestoneID] = stats
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate milestone test statistics: %w", err)
+	}
+	return result, nil
 }
 
 // GetWorkspaceID resolves the owning workspace for a test set.

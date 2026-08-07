@@ -1,6 +1,9 @@
 package services
 
 import (
+	"fmt"
+	"strings"
+
 	"windshift/internal/database"
 	"windshift/internal/repository"
 )
@@ -88,4 +91,62 @@ func (s *IDResolverService) ResolveItemKey(id int) string {
 		return ""
 	}
 	return key
+}
+
+// ResolveUserNames maps user IDs to display names in one read, preferring the
+// trimmed full name, then username, then email. IDs without a matching row are
+// absent from the map.
+func (s *IDResolverService) ResolveUserNames(ids map[int]struct{}) map[int]string {
+	names := map[int]string{}
+	if len(ids) == 0 {
+		return names
+	}
+	placeholders := make([]string, 0, len(ids))
+	args := make([]interface{}, 0, len(ids))
+	for id := range ids {
+		placeholders = append(placeholders, "?")
+		args = append(args, id)
+	}
+	rows, err := s.db.Query(fmt.Sprintf(
+		`SELECT id, COALESCE(NULLIF(TRIM(first_name || ' ' || last_name), ''), username, email, '') FROM users WHERE id IN (%s)`,
+		strings.Join(placeholders, ",")),
+		args...,
+	)
+	if err != nil {
+		return names
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id int
+		var name string
+		if rows.Scan(&id, &name) == nil {
+			names[id] = name
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return names
+	}
+	return names
+}
+
+// ResolveStatusIDByName returns the status ID whose name matches
+// case-insensitively, or nil when there is no match.
+func (s *IDResolverService) ResolveStatusIDByName(name string) (*int, error) {
+	var id int
+	err := s.db.QueryRow("SELECT id FROM statuses WHERE LOWER(name) = LOWER(?)", name).Scan(&id)
+	if err != nil {
+		return nil, fmt.Errorf("status %q not found", name)
+	}
+	return &id, nil
+}
+
+// ResolvePriorityIDByName returns the priority ID whose name matches
+// case-insensitively, or nil when there is no match.
+func (s *IDResolverService) ResolvePriorityIDByName(name string) (*int, error) {
+	var id int
+	err := s.db.QueryRow("SELECT id FROM priorities WHERE LOWER(name) = LOWER(?)", name).Scan(&id)
+	if err != nil {
+		return nil, fmt.Errorf("priority %q not found", name)
+	}
+	return &id, nil
 }
