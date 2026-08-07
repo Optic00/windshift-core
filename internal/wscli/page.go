@@ -25,6 +25,7 @@ var (
 	pageEditContent        string
 	pageEditUploadAssets   bool
 	pageMoveParent         int
+	pageMoveToWorkspace    string
 	pageMoveToRoot         bool
 	pageMoveBefore         int
 	pageMoveAfter          int
@@ -394,7 +395,8 @@ var pageMoveCmd = &cobra.Command{
 	Use:   "move <id>",
 	Short: "Move a page under a new parent (or to the workspace root)",
 	Long: `Move a page under a new parent. Either --parent <id> or --root
-must be supplied. The server enforces cycle and depth limits.
+must be supplied. Use --to-workspace <key> to move the whole subtree to
+another workspace. The server enforces cycle and depth limits.
 
 Pass --before <id> or --after <id> to place the page at a specific
 position among its siblings (mutually exclusive). Combine freely with
@@ -404,7 +406,8 @@ Examples:
   ws page move 42 --parent 7
   ws page move 42 --root
   ws page move 42 --parent 7 --after 11
-  ws page move 42 --parent 7 --before 9`,
+  ws page move 42 --parent 7 --before 9
+  ws page move 42 --root --to-workspace MA`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
 		client, err := NewClient()
@@ -428,6 +431,14 @@ Examples:
 		if pageMoveBefore != 0 && pageMoveAfter != 0 {
 			return fmt.Errorf("--before and --after are mutually exclusive")
 		}
+		var destinationWorkspaceID *int
+		if strings.TrimSpace(pageMoveToWorkspace) != "" {
+			destinationID, resolveErr := client.ResolveWorkspaceID(strings.TrimSpace(pageMoveToWorkspace))
+			if resolveErr != nil {
+				return fmt.Errorf("failed to resolve destination workspace: %w", resolveErr)
+			}
+			destinationWorkspaceID = &destinationID
+		}
 		var parent *int
 		if !pageMoveToRoot {
 			pid := pageMoveParent
@@ -446,7 +457,7 @@ Examples:
 			v := pageMoveBefore
 			nextSibling = &v
 		}
-		page, err := client.MovePage(wsID, pageID, parent, prevSibling, nextSibling)
+		page, err := client.MovePage(wsID, pageID, parent, prevSibling, nextSibling, destinationWorkspaceID)
 		if err != nil {
 			return fmt.Errorf("failed to move page: %w", err)
 		}
@@ -454,6 +465,9 @@ Examples:
 			dest := "root"
 			if parent != nil {
 				dest = fmt.Sprintf("under page %d", *parent)
+			}
+			if pageMoveToWorkspace != "" {
+				dest = fmt.Sprintf("to workspace %s, %s", pageMoveToWorkspace, dest)
 			}
 			_, _ = fmt.Fprintf(stdout, "Moved page %d %s (new path: %s)\n", page.ID, dest, page.Path)
 			return nil
@@ -740,6 +754,7 @@ func init() {
 	pageEditCmd.Flags().BoolVar(&pageEditUploadAssets, "upload-assets", false, "scan --file for ![](./local.png) image refs, upload each as a page attachment, and rewrite the markdown to point at the uploaded URL before the update")
 
 	pageMoveCmd.Flags().IntVar(&pageMoveParent, "parent", 0, "new parent page id")
+	pageMoveCmd.Flags().StringVar(&pageMoveToWorkspace, "to-workspace", "", "destination workspace key or id (moves the whole subtree)")
 	pageMoveCmd.Flags().BoolVar(&pageMoveToRoot, "root", false, "move the page to the workspace root")
 	pageMoveCmd.Flags().IntVar(&pageMoveBefore, "before", 0, "insert the moved page immediately before this sibling id")
 	pageMoveCmd.Flags().IntVar(&pageMoveAfter, "after", 0, "insert the moved page immediately after this sibling id")

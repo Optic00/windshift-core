@@ -1350,14 +1350,18 @@ func (c *Client) UpdatePageDiagram(workspaceID, pageID, attachmentID int, req Pa
 }
 
 // MovePage reparents a page. Pass parentID=nil to move to the workspace
-// root. prevSiblingID / nextSiblingID place the page at a specific position
-// among its siblings; pass nil for both to let the server pick.
-func (c *Client) MovePage(workspaceID, pageID int, parentID, prevSiblingID, nextSiblingID *int) (*Page, error) {
+// root. An optional destination workspace ID moves the whole subtree across
+// workspaces; prevSiblingID / nextSiblingID place it among destination
+// siblings. Pass nil for optional values to let the server pick defaults.
+func (c *Client) MovePage(workspaceID, pageID int, parentID, prevSiblingID, nextSiblingID *int, destinationWorkspaceID ...*int) (*Page, error) {
 	var page Page
 	req := PageMoveRequest{
 		ParentID:      parentID,
 		PrevSiblingID: prevSiblingID,
 		NextSiblingID: nextSiblingID,
+	}
+	if len(destinationWorkspaceID) > 0 {
+		req.DestinationWorkspaceID = destinationWorkspaceID[0]
 	}
 	if err := c.POST(fmt.Sprintf("/rest/api/v1/workspaces/%d/pages/%d/move", workspaceID, pageID), req, &page); err != nil {
 		return nil, err
