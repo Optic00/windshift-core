@@ -106,6 +106,28 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_items_frac_index ON items(frac_index) WHER
 CREATE INDEX IF NOT EXISTS idx_items_workspace_frac_index ON items(workspace_id, frac_index) WHERE frac_index IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_items_workspace_parent_frac_index ON items(workspace_id, parent_id, frac_index) WHERE frac_index IS NOT NULL;
 
+-- Durable singleton coordination state for the 0.8.5 global rank
+-- normalization. The legacy phase is intentional on pre-checkpoint installs;
+-- the checkpoint converter changes it to stable after all ranks are bucketed.
+CREATE TABLE IF NOT EXISTS global_rank_state (
+	id INTEGER PRIMARY KEY CHECK (id = 1),
+	active_bucket INTEGER NOT NULL CHECK (active_bucket IN (0, 1, 2)),
+	target_bucket INTEGER CHECK (target_bucket IS NULL OR target_bucket IN (0, 1, 2)),
+	phase TEXT NOT NULL CHECK (phase IN ('legacy', 'stable', 'migrating', 'paused', 'failed')),
+	direction TEXT CHECK (direction IS NULL OR direction IN ('high_to_low', 'low_to_high')),
+	frontier TEXT,
+	lease_owner TEXT,
+	lease_expires_at DATETIME,
+	migrated_count INTEGER NOT NULL DEFAULT 0 CHECK (migrated_count >= 0),
+	total_count INTEGER NOT NULL DEFAULT 0 CHECK (total_count >= 0),
+	last_error TEXT,
+	updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	CHECK (target_bucket IS NULL OR target_bucket <> active_bucket),
+	CHECK ((phase IN ('legacy', 'stable') AND target_bucket IS NULL AND direction IS NULL) OR phase IN ('migrating', 'paused', 'failed'))
+);
+INSERT OR IGNORE INTO global_rank_state (id, active_bucket, phase)
+VALUES (1, 0, 'stable');
+
 -- Portal/channel indexes
 CREATE INDEX IF NOT EXISTS idx_items_channel_id ON items(channel_id);
 CREATE INDEX IF NOT EXISTS idx_items_request_type_id ON items(request_type_id);

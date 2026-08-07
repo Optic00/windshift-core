@@ -78,6 +78,64 @@ func (m Migration) acceptsSuperseded(stored string) bool {
 // with row dependencies; otherwise entries may be reordered freely.
 var Catalog = []Migration{
 	{
+		Version:         "20260807_global_rank_state",
+		Name:            "Add durable global rank rebalance state",
+		CheckSQLite:     "SELECT CASE WHEN (SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'global_rank_state') = 1 AND (SELECT COUNT(*) FROM global_rank_state WHERE id = 1) = 1 THEN 1 ELSE 0 END",
+		CheckPostgres:   "SELECT CASE WHEN (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = 'global_rank_state') = 1 AND (SELECT COUNT(*) FROM global_rank_state WHERE id = 1) = 1 THEN 1 ELSE 0 END",
+		CheckSQLiteFn:   globalRankStateSQLiteCheck,
+		CheckPostgresFn: globalRankStatePostgresCheck,
+		SQLite: `
+			CREATE TABLE IF NOT EXISTS global_rank_state (
+				id INTEGER PRIMARY KEY CHECK (id = 1),
+				active_bucket INTEGER NOT NULL CHECK (active_bucket IN (0, 1, 2)),
+				target_bucket INTEGER CHECK (target_bucket IS NULL OR target_bucket IN (0, 1, 2)),
+				phase TEXT NOT NULL CHECK (phase IN ('legacy', 'stable', 'migrating', 'paused', 'failed')),
+				direction TEXT CHECK (direction IS NULL OR direction IN ('high_to_low', 'low_to_high')),
+				frontier TEXT,
+				lease_owner TEXT,
+				lease_expires_at DATETIME,
+				migrated_count INTEGER NOT NULL DEFAULT 0 CHECK (migrated_count >= 0),
+				total_count INTEGER NOT NULL DEFAULT 0 CHECK (total_count >= 0),
+				last_error TEXT,
+				updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				CHECK (target_bucket IS NULL OR target_bucket <> active_bucket),
+				CHECK ((phase IN ('legacy', 'stable') AND target_bucket IS NULL AND direction IS NULL) OR phase IN ('migrating', 'paused', 'failed'))
+			);
+			INSERT OR IGNORE INTO global_rank_state (id, active_bucket, phase) VALUES (1, 0, 'legacy');
+		`,
+		Postgres: `
+			CREATE TABLE IF NOT EXISTS global_rank_state (
+				id INTEGER PRIMARY KEY CHECK (id = 1),
+				active_bucket INTEGER NOT NULL CHECK (active_bucket IN (0, 1, 2)),
+				target_bucket INTEGER CHECK (target_bucket IS NULL OR target_bucket IN (0, 1, 2)),
+				phase TEXT NOT NULL CHECK (phase IN ('legacy', 'stable', 'migrating', 'paused', 'failed')),
+				direction TEXT CHECK (direction IS NULL OR direction IN ('high_to_low', 'low_to_high')),
+				frontier TEXT,
+				lease_owner TEXT,
+				lease_expires_at TIMESTAMPTZ,
+				migrated_count BIGINT NOT NULL DEFAULT 0 CHECK (migrated_count >= 0),
+				total_count BIGINT NOT NULL DEFAULT 0 CHECK (total_count >= 0),
+				last_error TEXT,
+				updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				CHECK (target_bucket IS NULL OR target_bucket <> active_bucket),
+				CHECK ((phase IN ('legacy', 'stable') AND target_bucket IS NULL AND direction IS NULL) OR phase IN ('migrating', 'paused', 'failed'))
+			);
+			INSERT INTO global_rank_state (id, active_bucket, phase) VALUES (1, 0, 'legacy') ON CONFLICT (id) DO NOTHING;
+		`,
+	},
+	{
+		Version:         "20260807_global_rank_checkpoint",
+		Name:            "Convert items to the canonical bucketed global rank",
+		CheckSQLite:     "SELECT CASE WHEN (SELECT phase FROM global_rank_state WHERE id = 1) = 'stable' AND NOT EXISTS (SELECT 1 FROM items WHERE frac_index IS NULL OR SUBSTR(frac_index, 1, 2) NOT IN ('0|', '1|', '2|')) THEN 1 ELSE 0 END",
+		CheckPostgres:   "SELECT CASE WHEN (SELECT phase FROM global_rank_state WHERE id = 1) = 'stable' AND NOT EXISTS (SELECT 1 FROM items WHERE frac_index IS NULL OR SUBSTR(frac_index, 1, 2) NOT IN ('0|', '1|', '2|')) THEN 1 ELSE 0 END",
+		CheckSQLiteFn:   globalRankCheckpointSQLiteCheck,
+		CheckPostgresFn: globalRankCheckpointPostgresCheck,
+		SQLite:          "global rank checkpoint conversion handled by ApplySQLite",
+		Postgres:        "global rank checkpoint conversion handled by ApplyPostgres",
+		ApplySQLite:     applyGlobalRankCheckpoint,
+		ApplyPostgres:   applyGlobalRankCheckpoint,
+	},
+	{
 		Version:       "20260727_milestone_release_attempts",
 		Name:          "Add durable idempotent milestone release attempts",
 		CheckSQLite:   sqliteIndexCheck("uq_milestone_releases_idempotency"),

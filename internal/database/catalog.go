@@ -109,6 +109,74 @@ func pgTriggerCheck(trigger string) string {
 	)
 }
 
+func globalRankStateSQLiteCheck(db Database) (bool, error) {
+	var tableCount int
+	if err := db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'global_rank_state'").Scan(&tableCount); err != nil {
+		return false, err
+	}
+	if tableCount == 0 {
+		return false, nil
+	}
+	var rowCount int
+	if err := db.QueryRow("SELECT COUNT(*) FROM global_rank_state WHERE id = 1").Scan(&rowCount); err != nil {
+		return false, err
+	}
+	return rowCount == 1, nil
+}
+
+func globalRankStatePostgresCheck(db Database) (bool, error) {
+	var tableCount int
+	if err := db.QueryRow("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = 'global_rank_state'").Scan(&tableCount); err != nil {
+		return false, err
+	}
+	if tableCount == 0 {
+		return false, nil
+	}
+	var rowCount int
+	if err := db.QueryRow("SELECT COUNT(*) FROM global_rank_state WHERE id = 1").Scan(&rowCount); err != nil {
+		return false, err
+	}
+	return rowCount == 1, nil
+}
+
+func globalRankCheckpointSQLiteCheck(db Database) (bool, error) {
+	ready, err := globalRankStateSQLiteCheck(db)
+	if err != nil || !ready {
+		return ready, err
+	}
+	var phase string
+	if err := db.QueryRow("SELECT phase FROM global_rank_state WHERE id = 1").Scan(&phase); err != nil {
+		return false, err
+	}
+	if phase != "stable" {
+		return false, nil
+	}
+	var invalidCount int
+	if err := db.QueryRow("SELECT COUNT(*) FROM items WHERE frac_index IS NULL OR SUBSTR(frac_index, 1, 2) NOT IN ('0|', '1|', '2|')").Scan(&invalidCount); err != nil {
+		return false, err
+	}
+	return invalidCount == 0, nil
+}
+
+func globalRankCheckpointPostgresCheck(db Database) (bool, error) {
+	ready, err := globalRankStatePostgresCheck(db)
+	if err != nil || !ready {
+		return ready, err
+	}
+	var phase string
+	if err := db.QueryRow("SELECT phase FROM global_rank_state WHERE id = 1").Scan(&phase); err != nil {
+		return false, err
+	}
+	if phase != "stable" {
+		return false, nil
+	}
+	var invalidCount int
+	if err := db.QueryRow("SELECT COUNT(*) FROM items WHERE frac_index IS NULL OR SUBSTR(frac_index, 1, 2) NOT IN ('0|', '1|', '2|')").Scan(&invalidCount); err != nil {
+		return false, err
+	}
+	return invalidCount == 0, nil
+}
+
 // init appends migrations in dependency order: baseline, tables, then dependent
 // columns and indexes. Do not reset Catalog: migrations.go initializes dated
 // entries before init, and append-only preserves both declaration styles.
