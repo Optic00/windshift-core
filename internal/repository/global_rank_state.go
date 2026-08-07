@@ -100,55 +100,7 @@ func LoadGlobalRankState(db database.Database) (GlobalRankState, error) {
 func loadGlobalRankState(q interface {
 	QueryRow(query string, args ...interface{}) *sql.Row
 }) (GlobalRankState, error) {
-	var state GlobalRankState
-	var targetBucket sql.NullInt64
-	var direction, frontier, leaseOwner, lastError sql.NullString
-	var leaseExpiresAt sql.NullTime
-	if err := q.QueryRow(`
-		SELECT active_bucket, target_bucket, phase, direction, frontier,
-		       lease_owner, lease_expires_at, migrated_count, total_count, last_error
-		FROM global_rank_state
-		WHERE id = ?`, globalRankStateRowID).Scan(
-		&state.ActiveBucket,
-		&targetBucket,
-		&state.Phase,
-		&direction,
-		&frontier,
-		&leaseOwner,
-		&leaseExpiresAt,
-		&state.MigratedCount,
-		&state.TotalCount,
-		&lastError,
-	); err != nil {
-		return GlobalRankState{}, fmt.Errorf("load global rank state: %w", err)
-	}
-	if targetBucket.Valid {
-		if targetBucket.Int64 < int64(GlobalRankBucket0) || targetBucket.Int64 > int64(GlobalRankBucket2) {
-			return GlobalRankState{}, fmt.Errorf("load global rank state: invalid target bucket %d", targetBucket.Int64)
-		}
-		bucket := GlobalRankBucket(targetBucket.Int64)
-		state.TargetBucket = &bucket
-	}
-	if direction.Valid {
-		value := GlobalRankDirection(direction.String)
-		state.Direction = &value
-	}
-	if frontier.Valid {
-		state.Frontier = &frontier.String
-	}
-	if leaseOwner.Valid {
-		state.LeaseOwner = &leaseOwner.String
-	}
-	if leaseExpiresAt.Valid {
-		state.LeaseExpiresAt = &leaseExpiresAt.Time
-	}
-	if lastError.Valid {
-		state.LastError = &lastError.String
-	}
-	if err := state.Validate(); err != nil {
-		return GlobalRankState{}, fmt.Errorf("validate loaded global rank state: %w", err)
-	}
-	return state, nil
+	return loadGlobalRankStateWithQuery(q, "")
 }
 
 // SaveGlobalRankState persists a validated state inside the caller's
