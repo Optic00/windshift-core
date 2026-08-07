@@ -9,6 +9,12 @@ import (
 	"time"
 )
 
+// durationPattern matches the whole hours+minutes grammar. The anchors are
+// load-bearing: without them the optional groups match a leading prefix and
+// the remainder is silently dropped, so a typo like "5h30" parses as 5h and
+// "90ms" as 90 minutes. Internal whitespace is tolerated ("1h 30m").
+var durationPattern = regexp.MustCompile(`^(?:(\d+(?:\.\d+)?)\s*h)?\s*(?:(\d+(?:\.\d+)?)\s*m)?$`)
+
 // ParseDuration parses friendly time duration strings into a time.Duration.
 //
 // Supported formats:
@@ -17,21 +23,26 @@ import (
 //   - "1h30m"          combined hours + minutes
 //   - "1d", "2d"       days (1d = 8 hours)
 //
+// The whole input must be consumed. Anything outside the grammar is
+// rejected rather than partially parsed — seconds ("2h15m20s"), unsupported
+// units ("90ms"), and bare trailing numbers ("5h30") are all errors, because
+// silently recording a wrong-but-plausible duration on a timesheet is worse
+// than making the caller retype it.
+//
 // Returns an error if the input is empty or doesn't match.
 func ParseDuration(input string) (time.Duration, error) {
 	input = strings.TrimSpace(strings.ToLower(input))
 	if strings.HasSuffix(input, "d") {
-		days, err := strconv.ParseFloat(strings.TrimSuffix(input, "d"), 64)
+		days, err := strconv.ParseFloat(strings.TrimSpace(strings.TrimSuffix(input, "d")), 64)
 		if err != nil {
 			return 0, fmt.Errorf("invalid day format: %s", input)
 		}
 		return durationFromFloat(days, 8*time.Hour, input)
 	}
 
-	re := regexp.MustCompile(`(?:(\d+(?:\.\d+)?)h)?(?:(\d+(?:\.\d+)?)m)?`)
-	matches := re.FindStringSubmatch(input)
-	if len(matches) != 3 {
-		return 0, fmt.Errorf("invalid duration format: %s", input)
+	matches := durationPattern.FindStringSubmatch(input)
+	if matches == nil {
+		return 0, fmt.Errorf("invalid duration format: %s (use forms like 1h, 0.5h, 30m, 1h30m, 1d)", input)
 	}
 
 	var total time.Duration

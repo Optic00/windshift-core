@@ -73,7 +73,7 @@ type logTimeArgs struct {
 	ProjectID       int    `json:"project_id" jsonschema:"Time project ID"`
 	Description     string `json:"description" jsonschema:"Description of the work done"`
 	Date            string `json:"date" jsonschema:"Date in YYYY-MM-DD format"`
-	Duration        string `json:"duration,omitempty" jsonschema:"Duration string like '2h', '30m', '1h30m', '1d' (1d = 8h)"`
+	Duration        string `json:"duration,omitempty" jsonschema:"Duration string like '2h', '30m', '1h30m', '1d' (1d = 8h). Hours and minutes only; seconds and other units are rejected."`
 	DurationMinutes int    `json:"duration_minutes,omitempty" jsonschema:"Alternative to duration: minutes as integer"`
 	StartTime       string `json:"start_time,omitempty" jsonschema:"HH:MM start time. Pair with end_time."`
 	EndTime         string `json:"end_time,omitempty" jsonschema:"HH:MM end time. Pair with start_time."`
