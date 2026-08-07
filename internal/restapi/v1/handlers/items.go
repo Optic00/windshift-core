@@ -662,106 +662,20 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	itemID := item.ID
 
-	// Read body once so we can reject status_id before decoding into the DTO.
+	// Decode once into raw fields so the application service can preserve the
+	// distinction between omitted fields and explicit JSON null.
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "Invalid request body"))
 		return
 	}
 
-	// status_id must be changed via POST /rest/api/v1/items/{id}/transition so
-	// workflow + condition rules are always enforced. Reject it here.
 	var rawFields map[string]json.RawMessage
 	if err := json.Unmarshal(bodyBytes, &rawFields); err != nil {
 		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "Invalid request body"))
 		return
 	}
-	if _, hasStatus := rawFields["status_id"]; hasStatus {
-		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed,
-			"status_id may not be set via item update; use POST /rest/api/v1/items/{id}/transition"))
-		return
-	}
-
-	var req dto.ItemUpdateRequest
-	if err := json.Unmarshal(bodyBytes, &req); err != nil {
-		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "Invalid request body"))
-		return
-	}
-
-	// Build update data map for service.
-	//
-	// Pointer + omitempty in the DTO collapses two distinct client intents
-	// ("don't change" vs "clear") into the same nil pointer. We disambiguate
-	// by consulting rawFields: a key present with explicit JSON null on a
-	// nullable FK is forwarded to the service as a typed nil so the
-	// validator can null the column.
-	updateData := make(map[string]interface{})
-	isExplicitNull := func(field string) bool {
-		raw, ok := rawFields[field]
-		return ok && string(raw) == "null"
-	}
-	if req.Title != nil {
-		updateData["title"] = sanitize.PlainTextField.Sanitize(*req.Title)
-	}
-	if req.Description != nil {
-		updateData["description"] = sanitize.RichText.Sanitize(*req.Description)
-	}
-	if req.PriorityID != nil {
-		updateData["priority_id"] = *req.PriorityID
-	} else if isExplicitNull("priority_id") {
-		updateData["priority_id"] = nil
-	}
-	if req.ItemTypeID != nil {
-		updateData["item_type_id"] = *req.ItemTypeID
-	}
-	if req.AssigneeID != nil {
-		updateData["assignee_id"] = *req.AssigneeID
-	} else if isExplicitNull("assignee_id") {
-		updateData["assignee_id"] = nil
-	}
-	if req.ParentID != nil {
-		updateData["parent_id"] = *req.ParentID
-	} else if isExplicitNull("parent_id") {
-		updateData["parent_id"] = nil
-	}
-	if req.MilestoneIDs != nil {
-		// Pointer-to-slice present (including empty slice) means "replace set".
-		// Pointer absent (nil) means "leave milestones untouched".
-		updateData["milestone_ids"] = *req.MilestoneIDs
-	}
-	if req.IterationID != nil {
-		updateData["iteration_id"] = *req.IterationID
-	} else if isExplicitNull("iteration_id") {
-		updateData["iteration_id"] = nil
-	}
-	if req.ProjectID != nil {
-		updateData["project_id"] = *req.ProjectID
-	} else if isExplicitNull("project_id") {
-		updateData["project_id"] = nil
-	}
-	if req.DueDate != nil {
-		updateData["due_date"] = *req.DueDate
-	} else if isExplicitNull("due_date") {
-		updateData["due_date"] = nil
-	}
-	if req.StartDate != nil {
-		updateData["start_date"] = *req.StartDate
-	} else if isExplicitNull("start_date") {
-		updateData["start_date"] = nil
-	}
-	if req.EndDate != nil {
-		updateData["end_date"] = *req.EndDate
-	} else if isExplicitNull("end_date") {
-		updateData["end_date"] = nil
-	}
-	if req.IsTask != nil {
-		updateData["is_task"] = *req.IsTask
-	}
-	if req.CustomFields != nil {
-		updateData["custom_field_values"] = req.CustomFields
-	}
-
-	result, err := h.itemUpdate.Update(user.ID, user.Username, itemID, updateData)
+	result, err := h.itemUpdate.UpdateJSONFields(user.ID, user.Username, itemID, rawFields)
 	if err != nil {
 		// Validation errors (e.g. milestone_id refers to a non-existent
 		// milestone) must surface as 400 with the field name, not 500.

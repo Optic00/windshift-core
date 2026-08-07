@@ -1,10 +1,15 @@
 package services
 
 import (
+	"encoding/json"
+	"fmt"
 	"log/slog"
+	"time"
 
 	"windshift/internal/database"
 	"windshift/internal/models"
+	"windshift/internal/sanitize"
+	"windshift/internal/validation"
 )
 
 // ItemUpdatedEmitter receives the committed before/after state so user-facing
@@ -53,6 +58,118 @@ func (s *ItemUpdateApplicationService) SetMentionService(mentionService *Mention
 
 func (s *ItemUpdateApplicationService) SetEmitter(emitter ItemUpdatedEmitter) {
 	s.emitter = emitter
+}
+
+// UpdateJSONFields applies the public item-update patch format. Keeping the
+// presence/null distinction here means every HTTP surface uses the same
+// coercion rules before reaching the transactional update service.
+func (s *ItemUpdateApplicationService) UpdateJSONFields(actorUserID int, actorUsername string, itemID int, fields map[string]json.RawMessage) (*UpdateItemResult, error) {
+	if _, ok := fields["status_id"]; ok {
+		return nil, &validation.ValidationError{
+			Field:   "status_id",
+			Message: "status_id may not be set via item update; use POST /rest/api/v1/items/{id}/transition",
+		}
+	}
+
+	updateData, err := itemUpdateData(fields)
+	if err != nil {
+		return nil, err
+	}
+	return s.Update(actorUserID, actorUsername, itemID, updateData)
+}
+
+func itemUpdateData(fields map[string]json.RawMessage) (map[string]interface{}, error) {
+	updateData := make(map[string]interface{})
+	if raw, ok := fields["title"]; ok && string(raw) != "null" {
+		var value string
+		if err := decodeItemUpdateField(raw, "title", &value); err != nil {
+			return nil, err
+		}
+		updateData["title"] = sanitize.PlainTextField.Sanitize(value)
+	}
+	if raw, ok := fields["description"]; ok && string(raw) != "null" {
+		var value string
+		if err := decodeItemUpdateField(raw, "description", &value); err != nil {
+			return nil, err
+		}
+		updateData["description"] = sanitize.RichText.Sanitize(value)
+	}
+	for _, field := range []string{"priority_id", "assignee_id", "parent_id", "iteration_id", "project_id"} {
+		if raw, ok := fields[field]; ok {
+			value, err := decodeNullableItemUpdateInt(raw, field)
+			if err != nil {
+				return nil, err
+			}
+			updateData[field] = value
+		}
+	}
+	if raw, ok := fields["item_type_id"]; ok && string(raw) != "null" {
+		var value int
+		if err := decodeItemUpdateField(raw, "item_type_id", &value); err != nil {
+			return nil, err
+		}
+		updateData["item_type_id"] = value
+	}
+	if raw, ok := fields["milestone_ids"]; ok && string(raw) != "null" {
+		var value []int
+		if err := decodeItemUpdateField(raw, "milestone_ids", &value); err != nil {
+			return nil, err
+		}
+		updateData["milestone_ids"] = value
+	}
+	for _, field := range []string{"due_date", "start_date", "end_date"} {
+		if raw, ok := fields[field]; ok {
+			value, err := decodeNullableItemUpdateTime(raw, field)
+			if err != nil {
+				return nil, err
+			}
+			updateData[field] = value
+		}
+	}
+	if raw, ok := fields["is_task"]; ok && string(raw) != "null" {
+		var value bool
+		if err := decodeItemUpdateField(raw, "is_task", &value); err != nil {
+			return nil, err
+		}
+		updateData["is_task"] = value
+	}
+	if raw, ok := fields["custom_fields"]; ok && string(raw) != "null" {
+		var value map[string]interface{}
+		if err := decodeItemUpdateField(raw, "custom_fields", &value); err != nil {
+			return nil, err
+		}
+		updateData["custom_field_values"] = value
+	}
+	return updateData, nil
+}
+
+func decodeItemUpdateField(raw json.RawMessage, field string, target interface{}) error {
+	if err := json.Unmarshal(raw, target); err != nil {
+		return &validation.ValidationError{Field: field, Message: fmt.Sprintf("invalid %s", field)}
+	}
+	return nil
+}
+
+func decodeNullableItemUpdateInt(raw json.RawMessage, field string) (interface{}, error) {
+	if string(raw) == "null" {
+		return nil, nil
+	}
+	var value int
+	if err := decodeItemUpdateField(raw, field, &value); err != nil {
+		return nil, err
+	}
+	return value, nil
+}
+
+func decodeNullableItemUpdateTime(raw json.RawMessage, field string) (interface{}, error) {
+	if string(raw) == "null" {
+		return nil, nil
+	}
+	var value time.Time
+	if err := decodeItemUpdateField(raw, field, &value); err != nil {
+		return nil, err
+	}
+	return value, nil
 }
 
 func (s *ItemUpdateApplicationService) Update(actorUserID int, actorUsername string, itemID int, updateData map[string]interface{}) (*UpdateItemResult, error) {
