@@ -399,11 +399,9 @@ func (h *WebAuthnHandler) RemoveWebAuthnCredential(w http.ResponseWriter, r *htt
 		return
 	}
 
-	// Verify the credential belongs to the user
-	var ownerID int
-	err = h.db.QueryRow(`
-		SELECT user_id FROM webauthn_credentials WHERE id = ?
-	`, credentialID).Scan(&ownerID)
+	// Verify the credential belongs to the user. The store owns the fixed
+	// credential table and owner column for this WebAuthn surface.
+	ownerID, err := h.credentialStore.LookupUserByCredentialID(credentialID)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		respondNotFound(w, r, "credential")

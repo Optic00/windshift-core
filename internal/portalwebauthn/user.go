@@ -1,14 +1,14 @@
 package portalwebauthn
 
 import (
-	"encoding/base64"
-	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 
 	"windshift/internal/auth"
+	"windshift/internal/webauthn/persistence"
 )
 
 // Subject adapts auth.PortalCustomer to the webauthn.User interface.
@@ -86,53 +86,55 @@ type Credential struct {
 
 // ToWebAuthnCredential converts the database row to a go-webauthn credential.
 func (wc *Credential) ToWebAuthnCredential() (webauthn.Credential, error) {
-	credID, err := base64.RawURLEncoding.DecodeString(wc.ID)
-	if err != nil {
-		return webauthn.Credential{}, fmt.Errorf("failed to decode credential ID: %w", err)
-	}
-	transports := make([]protocol.AuthenticatorTransport, 0, len(wc.Transport))
-	for _, t := range wc.Transport {
-		transports = append(transports, protocol.AuthenticatorTransport(t))
-	}
-	return webauthn.Credential{
-		ID:              credID,
-		PublicKey:       wc.PublicKey,
-		AttestationType: wc.AttestationType,
-		Transport:       transports,
-		Flags: webauthn.CredentialFlags{
-			UserPresent:    wc.FlagsUserPresent,
-			UserVerified:   wc.FlagsUserVerified,
-			BackupEligible: wc.FlagsBackupEligible,
-			BackupState:    wc.FlagsBackupState,
-		},
-		Authenticator: webauthn.Authenticator{
-			AAGUID:       wc.AAGUID,
-			SignCount:    wc.SignCount,
-			CloneWarning: wc.CloneWarning,
-		},
-	}, nil
+	return credentialRecordFromPortalCredential(wc).ToWebAuthnCredential()
 }
 
 // FromWebAuthnCredential builds a database row from a go-webauthn credential.
 func FromWebAuthnCredential(portalCustomerID int, name string, cred *webauthn.Credential) *Credential {
-	credID := base64.RawURLEncoding.EncodeToString(cred.ID)
-	transports := make([]string, 0, len(cred.Transport))
-	for _, t := range cred.Transport {
-		transports = append(transports, string(t))
+	record := persistence.FromWebAuthnCredential(portalCustomerID, name, cred)
+	credential := portalCredentialFromRecord(record)
+	return &credential
+}
+
+func portalCredentialFromRecord(record persistence.CredentialRecord) Credential {
+	credential := Credential{
+		ID:                  record.ID,
+		PortalCustomerID:    record.OwnerID,
+		CredentialName:      record.CredentialName,
+		PublicKey:           record.PublicKey,
+		AttestationType:     record.AttestationType,
+		AAGUID:              record.AAGUID,
+		SignCount:           record.SignCount,
+		CloneWarning:        record.CloneWarning,
+		Transport:           record.Transport,
+		FlagsUserPresent:    record.FlagsUserPresent,
+		FlagsUserVerified:   record.FlagsUserVerified,
+		FlagsBackupEligible: record.FlagsBackupEligible,
+		FlagsBackupState:    record.FlagsBackupState,
+		CreatedAt:           record.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:           record.UpdatedAt.Format(time.RFC3339),
 	}
-	return &Credential{
-		ID:                  credID,
-		PortalCustomerID:    portalCustomerID,
-		CredentialName:      name,
-		PublicKey:           cred.PublicKey,
-		AttestationType:     cred.AttestationType,
-		AAGUID:              cred.Authenticator.AAGUID,
-		SignCount:           cred.Authenticator.SignCount,
-		CloneWarning:        cred.Authenticator.CloneWarning,
-		Transport:           transports,
-		FlagsUserPresent:    cred.Flags.UserPresent,
-		FlagsUserVerified:   cred.Flags.UserVerified,
-		FlagsBackupEligible: cred.Flags.BackupEligible,
-		FlagsBackupState:    cred.Flags.BackupState,
+	if record.LastUsedAt != nil {
+		lastUsedAt := record.LastUsedAt.Format(time.RFC3339)
+		credential.LastUsedAt = &lastUsedAt
+	}
+	return credential
+}
+
+func credentialRecordFromPortalCredential(credential *Credential) persistence.CredentialRecord {
+	return persistence.CredentialRecord{
+		ID:                  credential.ID,
+		OwnerID:             credential.PortalCustomerID,
+		CredentialName:      credential.CredentialName,
+		PublicKey:           credential.PublicKey,
+		AttestationType:     credential.AttestationType,
+		AAGUID:              credential.AAGUID,
+		SignCount:           credential.SignCount,
+		CloneWarning:        credential.CloneWarning,
+		Transport:           credential.Transport,
+		FlagsUserPresent:    credential.FlagsUserPresent,
+		FlagsUserVerified:   credential.FlagsUserVerified,
+		FlagsBackupEligible: credential.FlagsBackupEligible,
+		FlagsBackupState:    credential.FlagsBackupState,
 	}
 }

@@ -1,247 +1,63 @@
 package webauthn
 
 import (
-	"database/sql"
-	"encoding/base64"
-	"encoding/json"
-	"fmt"
-	"time"
-
-	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
+
+	"windshift/internal/webauthn/persistence"
 )
 
-// CredentialStore handles storage of WebAuthn credentials
+// CredentialStore handles internal-user WebAuthn credentials while the shared
+// persistence package owns SQL, serialization, and authenticator updates.
 type CredentialStore struct {
-	db Database
+	store *persistence.CredentialStore
 }
 
-// NewCredentialStore creates a new credential store
+// NewCredentialStore creates a store bound to the internal-user schema.
 func NewCredentialStore(db Database) *CredentialStore {
-	return &CredentialStore{db: db}
+	return &CredentialStore{store: persistence.NewInternalCredentialStore(db)}
 }
 
-// unmarshalTransports parses a JSON string of transport names and converts them
-// to protocol.AuthenticatorTransport values.
-func unmarshalTransports(jsonStr string) ([]protocol.AuthenticatorTransport, error) {
-	var transport []string
-	if err := json.Unmarshal([]byte(jsonStr), &transport); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal transport: %w", err)
-	}
-
-	transports := make([]protocol.AuthenticatorTransport, len(transport))
-	for i, t := range transport {
-		transports[i] = protocol.AuthenticatorTransport(t)
-	}
-	return transports, nil
-}
-
-// SaveCredential stores a new WebAuthn credential
+// SaveCredential stores a new WebAuthn credential for a user.
 func (cs *CredentialStore) SaveCredential(userID int, credentialName string, cred *webauthn.Credential) error {
-	// Convert credential to database format
-	dbCred := FromWebAuthnCredential(userID, credentialName, cred)
-
-	// Convert transport array to JSON
-	transportJSON, err := json.Marshal(dbCred.Transport)
-	if err != nil {
-		return fmt.Errorf("failed to marshal transport: %w", err)
-	}
-
-	// Insert into database
-	_, err = cs.db.ExecWrite(`
-		INSERT INTO webauthn_credentials (
-			id, user_id, credential_name, public_key, attestation_type,
-			aaguid, sign_count, clone_warning, transport,
-			flags_user_present, flags_user_verified,
-			flags_backup_eligible, flags_backup_state,
-			created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`,
-		dbCred.ID, userID, credentialName, dbCred.PublicKey, dbCred.AttestationType,
-		dbCred.AAGUID, dbCred.SignCount, dbCred.CloneWarning, transportJSON,
-		dbCred.FlagsUserPresent, dbCred.FlagsUserVerified,
-		dbCred.FlagsBackupEligible, dbCred.FlagsBackupState,
-		time.Now(), time.Now(),
-	)
-
-	if err != nil {
-		return fmt.Errorf("failed to save credential: %w", err)
-	}
-
-	return nil
+	return cs.store.SaveCredential(userID, credentialName, cred)
 }
 
-// GetUserCredentials retrieves all credentials for a user
+// GetUserCredentials retrieves all credentials for a user.
 func (cs *CredentialStore) GetUserCredentials(userID int) ([]webauthn.Credential, error) {
-	rows, err := cs.db.Query(`
-		SELECT id, public_key, attestation_type, aaguid, sign_count,
-		       clone_warning, transport, flags_user_present, flags_user_verified,
-		       flags_backup_eligible, flags_backup_state
-		FROM webauthn_credentials
-		WHERE user_id = ?
-		ORDER BY created_at DESC
-	`, userID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query credentials: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	var credentials []webauthn.Credential
-	for rows.Next() {
-		var credID string
-		var publicKey []byte
-		var attestationType string
-		var aaguid []byte
-		var signCount uint32
-		var cloneWarning bool
-		var transportJSON string
-		var flagsUserPresent, flagsUserVerified bool
-		var flagsBackupEligible, flagsBackupState bool
-
-		err := rows.Scan(
-			&credID, &publicKey, &attestationType, &aaguid, &signCount,
-			&cloneWarning, &transportJSON, &flagsUserPresent, &flagsUserVerified,
-			&flagsBackupEligible, &flagsBackupState,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan credential: %w", err)
-		}
-
-		// Decode credential ID from base64
-		credIDBytes, err := base64.RawURLEncoding.DecodeString(credID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decode credential ID: %w", err)
-		}
-
-		transports, err := unmarshalTransports(transportJSON)
-		if err != nil {
-			return nil, err
-		}
-
-		cred := webauthn.Credential{
-			ID:              credIDBytes,
-			PublicKey:       publicKey,
-			AttestationType: attestationType,
-			Transport:       transports,
-			Flags: webauthn.CredentialFlags{
-				UserPresent:    flagsUserPresent,
-				UserVerified:   flagsUserVerified,
-				BackupEligible: flagsBackupEligible,
-				BackupState:    flagsBackupState,
-			},
-			Authenticator: webauthn.Authenticator{
-				AAGUID:       aaguid,
-				SignCount:    signCount,
-				CloneWarning: cloneWarning,
-			},
-		}
-
-		credentials = append(credentials, cred)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate credentials: %w", err)
-	}
-
-	return credentials, nil
+	return cs.store.GetCredentials(userID)
 }
 
-// UpdateCredentialCounter updates the sign count for a credential after successful authentication
+// UpdateCredentialCounter updates the sign count after successful
+// authentication.
 func (cs *CredentialStore) UpdateCredentialCounter(credentialID []byte, signCount uint32, cloneWarning bool) error {
-	// Encode credential ID to base64 for query
-	credIDStr := base64.RawURLEncoding.EncodeToString(credentialID)
-
-	_, err := cs.db.ExecWrite(`
-		UPDATE webauthn_credentials
-		SET sign_count = ?, clone_warning = ?, last_used_at = ?, updated_at = ?
-		WHERE id = ?
-	`, signCount, cloneWarning, time.Now(), time.Now(), credIDStr)
-
-	if err != nil {
-		return fmt.Errorf("failed to update credential counter: %w", err)
-	}
-
-	return nil
+	return cs.store.UpdateCredentialCounter(credentialID, signCount, cloneWarning)
 }
 
-// DeleteCredential removes a specific credential
+// DeleteCredential removes a specific credential.
 func (cs *CredentialStore) DeleteCredential(credentialID string) error {
-	_, err := cs.db.ExecWrite(`
-		DELETE FROM webauthn_credentials
-		WHERE id = ?
-	`, credentialID)
-
-	if err != nil {
-		return fmt.Errorf("failed to delete credential: %w", err)
-	}
-
-	return nil
+	return cs.store.DeleteCredential(credentialID)
 }
 
-// GetUserCredentialsList retrieves credential info for display (without sensitive data)
+// GetUserCredentialsList retrieves credential info for display without
+// sensitive key material.
 func (cs *CredentialStore) GetUserCredentialsList(userID int) ([]WebAuthnCredential, error) {
-	rows, err := cs.db.Query(`
-		SELECT id, user_id, credential_name, attestation_type,
-		       aaguid, sign_count, clone_warning, transport,
-		       flags_user_present, flags_user_verified,
-		       flags_backup_eligible, flags_backup_state,
-		       created_at, updated_at, last_used_at
-		FROM webauthn_credentials
-		WHERE user_id = ?
-		ORDER BY created_at DESC
-	`, userID)
+	records, err := cs.store.GetCredentialRecords(userID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query credentials: %w", err)
+		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
-
-	var credentials []WebAuthnCredential
-	for rows.Next() {
-		var cred WebAuthnCredential
-		var transportJSON string
-		var lastUsedAt sql.NullTime
-
-		err := rows.Scan(
-			&cred.ID, &cred.UserID, &cred.CredentialName, &cred.AttestationType,
-			&cred.AAGUID, &cred.SignCount, &cred.CloneWarning, &transportJSON,
-			&cred.FlagsUserPresent, &cred.FlagsUserVerified,
-			&cred.FlagsBackupEligible, &cred.FlagsBackupState,
-			&cred.CreatedAt, &cred.UpdatedAt, &lastUsedAt,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan credential: %w", err)
-		}
-
-		// Parse transport JSON
-		if err := json.Unmarshal([]byte(transportJSON), &cred.Transport); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal transport: %w", err)
-		}
-
-		if lastUsedAt.Valid {
-			lastUsedStr := lastUsedAt.Time.Format(time.RFC3339)
-			cred.LastUsedAt = &lastUsedStr
-		}
-
-		credentials = append(credentials, cred)
+	credentials := make([]WebAuthnCredential, 0, len(records))
+	for _, record := range records {
+		credentials = append(credentials, webAuthnCredentialFromRecord(record))
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate credentials: %w", err)
-	}
-
 	return credentials, nil
 }
 
-// CheckCredentialExists verifies if a credential ID already exists
+// CheckCredentialExists verifies if a credential ID already exists.
 func (cs *CredentialStore) CheckCredentialExists(credentialID []byte) (bool, error) {
-	credIDStr := base64.RawURLEncoding.EncodeToString(credentialID)
+	return cs.store.CheckCredentialExists(credentialID)
+}
 
-	var exists bool
-	err := cs.db.QueryRow(`
-		SELECT EXISTS(SELECT 1 FROM webauthn_credentials WHERE id = ?)
-	`, credIDStr).Scan(&exists)
-
-	if err != nil {
-		return false, fmt.Errorf("failed to check credential existence: %w", err)
-	}
-
-	return exists, nil
+// LookupUserByCredentialID returns the user that owns a credential.
+func (cs *CredentialStore) LookupUserByCredentialID(credentialID string) (int, error) {
+	return cs.store.LookupOwnerByCredentialID(credentialID)
 }
