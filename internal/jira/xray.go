@@ -63,7 +63,7 @@ func (c *cloudClient) DetectXrayTestIssueTypes(ctx context.Context, issueTypes [
 			continue
 		}
 		if resp.StatusCode != http.StatusOK {
-			responseErr := c.handleErrorResponse(resp)
+			responseErr := jiraErrorFromResponse(resp)
 			_ = resp.Body.Close()
 			return nil, responseErr
 		}
@@ -125,19 +125,9 @@ func (c *cloudClient) ListXrayTestKeys(ctx context.Context, projectKey string, i
 // name is consulted.
 func (c *dataCenterClient) ListXrayTestKeys(ctx context.Context, projectKey string, _ []string, openOnly bool) ([]string, error) {
 	jql := xrayTestJQL(projectKey, nil, openOnly)
-	reqURL := c.xrayURL + "/test?jql=" + url.QueryEscape(jql)
-	resp, err := c.do(ctx, http.MethodGet, reqURL, nil)
+	body, err := c.doXrayGet(ctx, c.xrayURL+"/test?jql="+url.QueryEscape(jql), "Xray Test export")
 	if err != nil {
 		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.handleErrorResponse(resp)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read Xray Test export: %w", err)
 	}
 	keys, err := decodeXrayTestKeys(body)
 	if err != nil {
@@ -146,24 +136,35 @@ func (c *dataCenterClient) ListXrayTestKeys(ctx context.Context, projectKey stri
 	return keys, nil
 }
 
-// GetXrayTestSteps reads the manual Test steps from Raven and normalizes field
-// names used by supported Server/Data Center releases.
-func (c *dataCenterClient) GetXrayTestSteps(ctx context.Context, issueKey string) ([]xray.Step, error) {
-	reqURL := c.xrayURL + "/test/" + url.PathEscape(issueKey) + "/step"
+// doXrayGet performs a Raven GET and returns the raw response body. The Raven
+// payloads here are not plain JSON-decoded at the transport layer because
+// Data Center releases differ on envelope shape, so callers decode.
+func (c *dataCenterClient) doXrayGet(ctx context.Context, reqURL, what string) ([]byte, error) {
 	resp, err := c.do(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil, c.handleErrorResponse(resp)
+		return nil, jiraErrorFromResponse(resp)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", what, err)
+	}
+	return body, nil
+}
+
+// GetXrayTestSteps reads the manual Test steps from Raven and normalizes field
+// names used by supported Server/Data Center releases.
+func (c *dataCenterClient) GetXrayTestSteps(ctx context.Context, issueKey string) ([]xray.Step, error) {
+	body, err := c.doXrayGet(ctx, c.xrayURL+"/test/"+url.PathEscape(issueKey)+"/step", "Xray Test steps")
+	if err != nil {
+		return nil, err
 	}
 
 	var direct []xrayDataCenterStep
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read Xray Test steps: %w", err)
-	}
 	if err := json.Unmarshal(body, &direct); err != nil {
 		var envelope struct {
 			Steps []xrayDataCenterStep `json:"steps"`

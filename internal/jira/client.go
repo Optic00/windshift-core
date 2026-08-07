@@ -6,12 +6,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"html"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,7 +17,6 @@ import (
 
 	"windshift/internal/utils"
 
-	"github.com/microcosm-cc/bluemonday"
 	"golang.org/x/time/rate"
 )
 
@@ -523,76 +520,6 @@ func isAssetsWorkspaceAQLPath(path string) bool {
 		parts[3] == "aql"
 }
 
-// setHeaders sets common headers for Jira API requests
-func (c *cloudClient) setHeaders(req *http.Request) {
-	req.Header.Set("Authorization", c.authHeader)
-	req.Header.Set("Accept", "application/json")
-}
-
-// handleErrorResponse handles non-2xx responses. Jira's response body is
-// preserved on every branch — operators debugging "my token should work"
-// need the upstream message (deprecated auth scheme, SSO required, account
-// locked, etc.) rather than a bare sentinel error.
-func (c *cloudClient) handleErrorResponse(resp *http.Response) error {
-	body, readErr := io.ReadAll(resp.Body)
-	if readErr != nil {
-		return fmt.Errorf("failed to read Jira error response body: %w", readErr)
-	}
-	snippet := summarizeJiraErrorBody(body)
-
-	switch resp.StatusCode {
-	case http.StatusUnauthorized:
-		return fmt.Errorf("%w (jira said: %s)", ErrInvalidCredentials, snippet)
-	case http.StatusForbidden:
-		// Check for rate limiting
-		if strings.Contains(string(body), "rate limit") {
-			return ErrRateLimited
-		}
-		return fmt.Errorf("%w (jira said: %s)", ErrForbidden, snippet)
-	case http.StatusNotFound:
-		return fmt.Errorf("%w (jira said: %s)", ErrNotFound, snippet)
-	case http.StatusTooManyRequests:
-		return ErrRateLimited
-	default:
-		return fmt.Errorf("%w: status %d - %s", ErrAPIError, resp.StatusCode, snippet)
-	}
-}
-
-// summarizeJiraErrorBody makes an upstream error response useful in the UI
-// and logs. Enterprise reverse proxies commonly return an HTML error page
-// whose actual diagnostic follows a large script or style block. Strip that
-// boilerplate before applying a generous safety bound so the useful message
-// is not lost merely because it appeared late in the document.
-func summarizeJiraErrorBody(b []byte) string {
-	const maxRunes = 16 * 1024
-	s := strings.TrimSpace(string(b))
-	if s == "" {
-		return "(empty response body)"
-	}
-
-	lower := strings.ToLower(s)
-	if strings.Contains(lower, "<!doctype html") || strings.Contains(lower, "<html") {
-		title := ""
-		if match := jiraHTMLTitlePattern.FindStringSubmatch(s); len(match) == 2 {
-			title = bluemonday.StrictPolicy().Sanitize(match[1])
-		}
-		s = strings.TrimSpace(title + " " + bluemonday.StrictPolicy().Sanitize(s))
-		s = html.UnescapeString(s)
-		s = strings.Join(strings.Fields(s), " ")
-		if s == "" {
-			return "(empty HTML response body)"
-		}
-	}
-
-	runes := []rune(s)
-	if len(runes) > maxRunes {
-		return string(runes[:maxRunes]) + "…(truncated)"
-	}
-	return s
-}
-
-var jiraHTMLTitlePattern = regexp.MustCompile(`(?is)<title(?:\s[^>]*)?>(.*?)</title\s*>`)
-
 // ================================================================
 // Connection Methods
 // ================================================================
@@ -614,7 +541,7 @@ func (c *cloudClient) TestConnection(ctx context.Context) (*JiraInstanceInfo, er
 	defer func() { _ = serverResp.Body.Close() }()
 
 	if serverResp.StatusCode != http.StatusOK {
-		return nil, c.handleErrorResponse(serverResp)
+		return nil, jiraErrorFromResponse(serverResp)
 	}
 
 	var serverInfo struct {
@@ -660,18 +587,8 @@ func (c *cloudClient) TestConnection(ctx context.Context) (*JiraInstanceInfo, er
 
 // ListProjects lists all projects accessible to the user
 func (c *cloudClient) ListProjects(ctx context.Context) ([]JiraProject, error) {
-	resp, err := c.do(ctx, "GET", c.baseURL+"/project?expand=description", nil)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.handleErrorResponse(resp)
-	}
-
 	var projects []JiraProject
-	if err := json.NewDecoder(resp.Body).Decode(&projects); err != nil {
+	if err := jiraGetJSON(ctx, c, c.baseURL+"/project?expand=description", &projects); err != nil {
 		return nil, err
 	}
 	return projects, nil
@@ -679,170 +596,51 @@ func (c *cloudClient) ListProjects(ctx context.Context) ([]JiraProject, error) {
 
 // GetProject gets details about a specific project
 func (c *cloudClient) GetProject(ctx context.Context, projectKey string) (*JiraProject, error) {
-	resp, err := c.do(ctx, "GET", c.baseURL+"/project/"+url.PathEscape(projectKey), nil)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.handleErrorResponse(resp)
-	}
-
-	var project JiraProject
-	if err := json.NewDecoder(resp.Body).Decode(&project); err != nil {
-		return nil, err
-	}
-	return &project, nil
+	return jiraGetProject(ctx, c, c.baseURL, projectKey)
 }
 
 // ListServiceDesks lists every Jira Service Management portal visible to the
 // importing account.
 func (c *cloudClient) ListServiceDesks(ctx context.Context) ([]JiraServiceDesk, error) {
-	var result []JiraServiceDesk
-	for start := 0; ; {
-		reqURL := fmt.Sprintf("%s/servicedesk?start=%d&limit=100", c.serviceDeskURL, start)
-		resp, err := c.do(ctx, http.MethodGet, reqURL, nil)
-		if err != nil {
-			return nil, err
-		}
-		if resp.StatusCode != http.StatusOK {
-			responseErr := c.handleErrorResponse(resp)
-			_ = resp.Body.Close()
-			return nil, responseErr
-		}
-		var page JiraServiceDeskPage[JiraServiceDesk]
-		decodeErr := json.NewDecoder(resp.Body).Decode(&page)
-		_ = resp.Body.Close()
-		if decodeErr != nil {
-			return nil, decodeErr
-		}
-		result = append(result, page.Values...)
-		if page.IsLastPage || len(page.Values) == 0 {
-			return result, nil
-		}
-		start += len(page.Values)
-	}
+	return jiraServiceDeskValues[JiraServiceDesk](ctx, c, func(start int) string {
+		return fmt.Sprintf("%s/servicedesk?start=%d&limit=100", c.serviceDeskURL, start)
+	})
 }
 
 // ListServiceDeskRequestTypes returns the complete customer-facing request
 // type catalog for one service desk.
 func (c *cloudClient) ListServiceDeskRequestTypes(ctx context.Context, serviceDeskID string) ([]JiraServiceDeskRequestType, error) {
-	var result []JiraServiceDeskRequestType
-	for start := 0; ; {
-		reqURL := fmt.Sprintf("%s/servicedesk/%s/requesttype?start=%d&limit=100",
+	return jiraServiceDeskValues[JiraServiceDeskRequestType](ctx, c, func(start int) string {
+		return fmt.Sprintf("%s/servicedesk/%s/requesttype?start=%d&limit=100",
 			c.serviceDeskURL, url.PathEscape(serviceDeskID), start)
-		resp, err := c.do(ctx, http.MethodGet, reqURL, nil)
-		if err != nil {
-			return nil, err
-		}
-		if resp.StatusCode != http.StatusOK {
-			responseErr := c.handleErrorResponse(resp)
-			_ = resp.Body.Close()
-			return nil, responseErr
-		}
-		var page JiraServiceDeskPage[JiraServiceDeskRequestType]
-		decodeErr := json.NewDecoder(resp.Body).Decode(&page)
-		_ = resp.Body.Close()
-		if decodeErr != nil {
-			return nil, decodeErr
-		}
-		result = append(result, page.Values...)
-		if page.IsLastPage || len(page.Values) == 0 {
-			return result, nil
-		}
-		start += len(page.Values)
-	}
+	})
 }
 
 // ListServiceDeskRequestComments returns JSM's public/internal visibility
 // metadata for every comment on a customer request.
 func (c *cloudClient) ListServiceDeskRequestComments(ctx context.Context, issueKey string) ([]JiraServiceDeskComment, error) {
-	var result []JiraServiceDeskComment
-	for start := 0; ; {
-		reqURL := fmt.Sprintf("%s/request/%s/comment?start=%d&limit=100",
+	return jiraServiceDeskValues[JiraServiceDeskComment](ctx, c, func(start int) string {
+		return fmt.Sprintf("%s/request/%s/comment?start=%d&limit=100",
 			c.serviceDeskURL, url.PathEscape(issueKey), start)
-		resp, err := c.do(ctx, http.MethodGet, reqURL, nil)
-		if err != nil {
-			return nil, err
-		}
-		if resp.StatusCode != http.StatusOK {
-			responseErr := c.handleErrorResponse(resp)
-			_ = resp.Body.Close()
-			return nil, responseErr
-		}
-		var page JiraServiceDeskPage[JiraServiceDeskComment]
-		decodeErr := json.NewDecoder(resp.Body).Decode(&page)
-		_ = resp.Body.Close()
-		if decodeErr != nil {
-			return nil, decodeErr
-		}
-		result = append(result, page.Values...)
-		if page.IsLastPage || len(page.Values) == 0 {
-			return result, nil
-		}
-		start += len(page.Values)
-	}
+	})
 }
 
 // ListServiceDeskOrganizations returns organizations associated with one JSM
 // service desk.
 func (c *cloudClient) ListServiceDeskOrganizations(ctx context.Context, serviceDeskID string) ([]JiraServiceDeskOrganization, error) {
-	var result []JiraServiceDeskOrganization
-	for start := 0; ; {
-		reqURL := fmt.Sprintf("%s/servicedesk/%s/organization?start=%d&limit=100",
+	return jiraServiceDeskValues[JiraServiceDeskOrganization](ctx, c, func(start int) string {
+		return fmt.Sprintf("%s/servicedesk/%s/organization?start=%d&limit=100",
 			c.serviceDeskURL, url.PathEscape(serviceDeskID), start)
-		resp, err := c.do(ctx, http.MethodGet, reqURL, nil)
-		if err != nil {
-			return nil, err
-		}
-		if resp.StatusCode != http.StatusOK {
-			responseErr := c.handleErrorResponse(resp)
-			_ = resp.Body.Close()
-			return nil, responseErr
-		}
-		var page JiraServiceDeskPage[JiraServiceDeskOrganization]
-		decodeErr := json.NewDecoder(resp.Body).Decode(&page)
-		_ = resp.Body.Close()
-		if decodeErr != nil {
-			return nil, decodeErr
-		}
-		result = append(result, page.Values...)
-		if page.IsLastPage || len(page.Values) == 0 {
-			return result, nil
-		}
-		start += len(page.Values)
-	}
+	})
 }
 
 // ListServiceDeskOrganizationUsers returns every customer in a JSM
 // organization.
 func (c *cloudClient) ListServiceDeskOrganizationUsers(ctx context.Context, organizationID string) ([]JiraUser, error) {
-	var result []JiraUser
-	for start := 0; ; {
-		reqURL := fmt.Sprintf("%s/organization/%s/user?start=%d&limit=100",
+	return jiraServiceDeskValues[JiraUser](ctx, c, func(start int) string {
+		return fmt.Sprintf("%s/organization/%s/user?start=%d&limit=100",
 			c.serviceDeskURL, url.PathEscape(organizationID), start)
-		resp, err := c.do(ctx, http.MethodGet, reqURL, nil)
-		if err != nil {
-			return nil, err
-		}
-		if resp.StatusCode != http.StatusOK {
-			responseErr := c.handleErrorResponse(resp)
-			_ = resp.Body.Close()
-			return nil, responseErr
-		}
-		var page JiraServiceDeskPage[JiraUser]
-		decodeErr := json.NewDecoder(resp.Body).Decode(&page)
-		_ = resp.Body.Close()
-		if decodeErr != nil {
-			return nil, decodeErr
-		}
-		result = append(result, page.Values...)
-		if page.IsLastPage || len(page.Values) == 0 {
-			return result, nil
-		}
-		start += len(page.Values)
-	}
+	})
 }
 
 // ================================================================
@@ -851,18 +649,8 @@ func (c *cloudClient) ListServiceDeskOrganizationUsers(ctx context.Context, orga
 
 // ListIssueTypes lists all issue types in the instance
 func (c *cloudClient) ListIssueTypes(ctx context.Context) ([]JiraIssueType, error) {
-	resp, err := c.do(ctx, "GET", c.baseURL+"/issuetype", nil)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.handleErrorResponse(resp)
-	}
-
 	var issueTypes []JiraIssueType
-	if err := json.NewDecoder(resp.Body).Decode(&issueTypes); err != nil {
+	if err := jiraGetJSON(ctx, c, c.baseURL+"/issuetype", &issueTypes); err != nil {
 		return nil, err
 	}
 	return issueTypes, nil
@@ -870,24 +658,8 @@ func (c *cloudClient) ListIssueTypes(ctx context.Context) ([]JiraIssueType, erro
 
 // GetProjectIssueTypes gets issue types available in a project
 func (c *cloudClient) GetProjectIssueTypes(ctx context.Context, projectKey string) ([]JiraIssueType, error) {
-	resp, err := c.do(ctx, "GET", c.baseURL+"/project/"+url.PathEscape(projectKey)+"/statuses", nil)
+	issueTypeStatuses, err := jiraFetchProjectIssueTypeStatuses(ctx, c, c.baseURL, projectKey)
 	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.handleErrorResponse(resp)
-	}
-
-	// The response is an array of issue types with their statuses
-	var issueTypeStatuses []struct {
-		ID       string       `json:"id"`
-		Name     string       `json:"name"`
-		Subtask  bool         `json:"subtask"`
-		Statuses []JiraStatus `json:"statuses"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&issueTypeStatuses); err != nil {
 		return nil, err
 	}
 
@@ -908,18 +680,8 @@ func (c *cloudClient) GetProjectIssueTypes(ctx context.Context, projectKey strin
 
 // ListCustomFields lists all custom field definitions
 func (c *cloudClient) ListCustomFields(ctx context.Context) ([]JiraCustomField, error) {
-	resp, err := c.do(ctx, "GET", c.baseURL+"/field", nil)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.handleErrorResponse(resp)
-	}
-
 	var fields []JiraCustomField
-	if err := json.NewDecoder(resp.Body).Decode(&fields); err != nil {
+	if err := jiraGetJSON(ctx, c, c.baseURL+"/field", &fields); err != nil {
 		return nil, err
 	}
 
@@ -945,57 +707,14 @@ func (c *cloudClient) GetProjectFields(ctx context.Context, projectIDs []string)
 
 	slog.Debug("GetProjectFields request", slog.String("component", "jira"), slog.String("url", endpoint))
 
-	var allFields []JiraCustomField
-	startAt := 0
-	maxResults := 50
-
-	for {
-		paginatedEndpoint := fmt.Sprintf("%s&startAt=%d&maxResults=%d", endpoint, startAt, maxResults)
-
-		resp, err := c.do(ctx, "GET", paginatedEndpoint, nil)
-		if err != nil {
-			return nil, fmt.Errorf("request failed: %w", err)
-		}
-
-		body, err := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-		if err != nil {
-			return nil, fmt.Errorf("failed to read response: %w", err)
-		}
-
-		slog.Debug("GetProjectFields response", slog.String("component", "jira"), slog.Int("status", resp.StatusCode), slog.Int("body_length", len(body)))
-
-		if resp.StatusCode != http.StatusOK {
-			bodyPreview := string(body)
-			if len(bodyPreview) > 500 {
-				bodyPreview = bodyPreview[:500] + "..."
-			}
-			slog.Debug("GetProjectFields error response", slog.String("component", "jira"), slog.String("body", bodyPreview))
-			return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, bodyPreview)
-		}
-
-		// Parse paginated response
-		var result struct {
-			Values     []JiraCustomField `json:"values"`
-			StartAt    int               `json:"startAt"`
-			MaxResults int               `json:"maxResults"`
-			Total      int               `json:"total"`
-			IsLast     bool              `json:"isLast"`
-		}
-		if err := json.Unmarshal(body, &result); err != nil {
-			return nil, fmt.Errorf("failed to parse response: %w", err)
-		}
-
-		allFields = append(allFields, result.Values...)
-
-		// Check if we've fetched all fields
-		if result.IsLast || len(result.Values) == 0 {
-			break
-		}
-		startAt += len(result.Values)
+	const pageSize = 50
+	agg, err := jiraAccumulateStartAtValues[JiraCustomField](ctx, c, pageSize, func(startAt int) string {
+		return fmt.Sprintf("%s&startAt=%d&maxResults=%d", endpoint, startAt, pageSize)
+	})
+	if err != nil {
+		return nil, err
 	}
-
-	return allFields, nil
+	return agg.Values, nil
 }
 
 type cloudFlexibleID string
@@ -1051,41 +770,17 @@ type cloudCustomFieldContextDefaults struct {
 }
 
 func cloudPageValues[T any](ctx context.Context, c *cloudClient, endpoint string) ([]T, error) {
-	values := make([]T, 0)
-	startAt := 0
-	for {
+	agg, err := jiraAccumulateStartAtValues[T](ctx, c, 100, func(startAt int) string {
 		separator := "?"
 		if strings.Contains(endpoint, "?") {
 			separator = "&"
 		}
-		pageURL := fmt.Sprintf("%s%sstartAt=%d&maxResults=100", endpoint, separator, startAt)
-		resp, err := c.do(ctx, http.MethodGet, pageURL, nil)
-		if err != nil {
-			return nil, err
-		}
-		if resp.StatusCode != http.StatusOK {
-			apiErr := c.handleErrorResponse(resp)
-			_ = resp.Body.Close()
-			return nil, apiErr
-		}
-		var page struct {
-			Values     []T  `json:"values"`
-			IsLast     bool `json:"isLast"`
-			Total      int  `json:"total"`
-			MaxResults int  `json:"maxResults"`
-			StartAt    int  `json:"startAt"`
-		}
-		decodeErr := json.NewDecoder(resp.Body).Decode(&page)
-		_ = resp.Body.Close()
-		if decodeErr != nil {
-			return nil, decodeErr
-		}
-		values = append(values, page.Values...)
-		if page.IsLast || len(page.Values) == 0 || (page.Total > 0 && len(values) >= page.Total) {
-			return values, nil
-		}
-		startAt += len(page.Values)
+		return fmt.Sprintf("%s%sstartAt=%d&maxResults=100", endpoint, separator, startAt)
+	})
+	if err != nil {
+		return nil, err
 	}
+	return agg.Values, nil
 }
 
 // GetCustomFieldConfiguration reads every context, project/issue-type mapping,
@@ -1218,18 +913,8 @@ func (c *cloudClient) GetCustomFieldConfiguration(
 
 // ListStatuses lists all statuses in the instance
 func (c *cloudClient) ListStatuses(ctx context.Context) ([]JiraStatus, error) {
-	resp, err := c.do(ctx, "GET", c.baseURL+"/status", nil)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.handleErrorResponse(resp)
-	}
-
 	var statuses []JiraStatus
-	if err := json.NewDecoder(resp.Body).Decode(&statuses); err != nil {
+	if err := jiraGetJSON(ctx, c, c.baseURL+"/status", &statuses); err != nil {
 		return nil, err
 	}
 	return statuses, nil
@@ -1237,18 +922,8 @@ func (c *cloudClient) ListStatuses(ctx context.Context) ([]JiraStatus, error) {
 
 // GetStatusCategories gets all status categories
 func (c *cloudClient) GetStatusCategories(ctx context.Context) ([]JiraStatusCategory, error) {
-	resp, err := c.do(ctx, "GET", c.baseURL+"/statuscategory", nil)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.handleErrorResponse(resp)
-	}
-
 	var categories []JiraStatusCategory
-	if err := json.NewDecoder(resp.Body).Decode(&categories); err != nil {
+	if err := jiraGetJSON(ctx, c, c.baseURL+"/statuscategory", &categories); err != nil {
 		return nil, err
 	}
 	return categories, nil
@@ -1256,43 +931,11 @@ func (c *cloudClient) GetStatusCategories(ctx context.Context) ([]JiraStatusCate
 
 // GetProjectWorkflowScheme gets the workflow scheme for a project
 func (c *cloudClient) GetProjectWorkflowScheme(ctx context.Context, projectKey string) (*JiraWorkflow, error) {
-	// Get project statuses which includes workflow information
-	resp, err := c.do(ctx, "GET", c.baseURL+"/project/"+url.PathEscape(projectKey)+"/statuses", nil)
+	issueTypeStatuses, err := jiraFetchProjectIssueTypeStatuses(ctx, c, c.baseURL, projectKey)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.handleErrorResponse(resp)
-	}
-
-	var issueTypeStatuses []struct {
-		ID       string       `json:"id"`
-		Name     string       `json:"name"`
-		Statuses []JiraStatus `json:"statuses"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&issueTypeStatuses); err != nil {
-		return nil, err
-	}
-
-	// Collect unique statuses across all issue types
-	statusMap := make(map[string]JiraStatus)
-	for _, its := range issueTypeStatuses {
-		for _, s := range its.Statuses {
-			statusMap[s.ID] = s
-		}
-	}
-
-	statuses := make([]JiraStatus, 0, len(statusMap))
-	for _, s := range statusMap {
-		statuses = append(statuses, s)
-	}
-
-	return &JiraWorkflow{
-		Name:     projectKey + " Workflow",
-		Statuses: statuses,
-	}, nil
+	return jiraProjectWorkflowFromStatuses(projectKey, issueTypeStatuses), nil
 }
 
 type cloudWorkflowReadRequest struct {
@@ -1373,7 +1016,7 @@ func (c *cloudClient) GetProjectWorkflowConfiguration(
 
 		var payload cloudWorkflowReadResponse
 		if resp.StatusCode != http.StatusOK {
-			err = c.handleErrorResponse(resp)
+			err = jiraErrorFromResponse(resp)
 			_ = resp.Body.Close()
 			return nil, err
 		}
@@ -1521,21 +1164,6 @@ type cloudScreenField struct {
 	Name string `json:"name"`
 }
 
-func (c *cloudClient) getJSON(ctx context.Context, requestURL string, target any) error {
-	resp, err := c.do(ctx, http.MethodGet, requestURL, nil)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return c.handleErrorResponse(resp)
-	}
-	if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
-		return fmt.Errorf("decode Jira response from %s: %w", requestURL, err)
-	}
-	return nil
-}
-
 func jiraNumberString(value json.Number) string {
 	if value == "" || value == "0" {
 		return ""
@@ -1556,9 +1184,7 @@ func (c *cloudClient) GetProjectScreenConfiguration(
 	projectQuery.Add("projectId", projectID)
 	projectQuery.Set("maxResults", "100")
 	var projectSchemes cloudPage[cloudIssueTypeScreenSchemeProject]
-	if err := c.getJSON(
-		ctx,
-		c.baseURL+"/issuetypescreenscheme/project?"+projectQuery.Encode(),
+	if err := jiraGetJSON(ctx, c, c.baseURL+"/issuetypescreenscheme/project?"+projectQuery.Encode(),
 		&projectSchemes,
 	); err != nil {
 		return nil, err
@@ -1577,9 +1203,7 @@ func (c *cloudClient) GetProjectScreenConfiguration(
 	mappingQuery.Add("issueTypeScreenSchemeId", issueTypeScreenSchemeID)
 	mappingQuery.Set("maxResults", "100")
 	var mappingsPage cloudPage[cloudIssueTypeScreenSchemeMapping]
-	if err := c.getJSON(
-		ctx,
-		c.baseURL+"/issuetypescreenscheme/mapping?"+mappingQuery.Encode(),
+	if err := jiraGetJSON(ctx, c, c.baseURL+"/issuetypescreenscheme/mapping?"+mappingQuery.Encode(),
 		&mappingsPage,
 	); err != nil {
 		return nil, err
@@ -1628,7 +1252,7 @@ func (c *cloudClient) GetProjectScreenConfiguration(
 		screenSchemeQuery.Add("id", screenSchemeID)
 		screenSchemeQuery.Set("maxResults", "100")
 		var page cloudPage[cloudScreenScheme]
-		if err := c.getJSON(ctx, c.baseURL+"/screenscheme?"+screenSchemeQuery.Encode(), &page); err != nil {
+		if err := jiraGetJSON(ctx, c, c.baseURL+"/screenscheme?"+screenSchemeQuery.Encode(), &page); err != nil {
 			return nil, err
 		}
 		if len(page.Values) != 1 {
@@ -1686,7 +1310,7 @@ func (c *cloudClient) GetProjectScreenConfiguration(
 		screenQuery.Add("id", screenID)
 		screenQuery.Set("maxResults", "100")
 		var screensPage cloudPage[cloudScreen]
-		if err := c.getJSON(ctx, c.baseURL+"/screens?"+screenQuery.Encode(), &screensPage); err != nil {
+		if err := jiraGetJSON(ctx, c, c.baseURL+"/screens?"+screenQuery.Encode(), &screensPage); err != nil {
 			return nil, err
 		}
 		if len(screensPage.Values) != 1 {
@@ -1707,9 +1331,7 @@ func (c *cloudClient) GetProjectScreenConfiguration(
 		tabsQuery := url.Values{}
 		tabsQuery.Set("projectKey", projectKey)
 		var tabs []cloudScreenTab
-		if err := c.getJSON(
-			ctx,
-			c.baseURL+"/screens/"+url.PathEscape(screenID)+"/tabs?"+tabsQuery.Encode(),
+		if err := jiraGetJSON(ctx, c, c.baseURL+"/screens/"+url.PathEscape(screenID)+"/tabs?"+tabsQuery.Encode(),
 			&tabs,
 		); err != nil {
 			return nil, err
@@ -1719,10 +1341,8 @@ func (c *cloudClient) GetProjectScreenConfiguration(
 			fieldsQuery := url.Values{}
 			fieldsQuery.Set("projectKey", projectKey)
 			var fields []cloudScreenField
-			if err := c.getJSON(
-				ctx,
-				c.baseURL+"/screens/"+url.PathEscape(screenID)+"/tabs/"+
-					url.PathEscape(jiraNumberString(tab.ID))+"/fields?"+fieldsQuery.Encode(),
+			if err := jiraGetJSON(ctx, c, c.baseURL+"/screens/"+url.PathEscape(screenID)+"/tabs/"+
+				url.PathEscape(jiraNumberString(tab.ID))+"/fields?"+fieldsQuery.Encode(),
 				&fields,
 			); err != nil {
 				return nil, err
@@ -1738,21 +1358,7 @@ func (c *cloudClient) GetProjectScreenConfiguration(
 
 // GetProjectIssueTypeStatuses gets issue types with their available statuses for a project
 func (c *cloudClient) GetProjectIssueTypeStatuses(ctx context.Context, projectKey string) ([]JiraIssueTypeWithStatuses, error) {
-	resp, err := c.do(ctx, "GET", c.baseURL+"/project/"+url.PathEscape(projectKey)+"/statuses", nil)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.handleErrorResponse(resp)
-	}
-
-	var result []JiraIssueTypeWithStatuses
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
-	}
-	return result, nil
+	return jiraGetProjectIssueTypeStatuses(ctx, c, c.baseURL, projectKey)
 }
 
 // ================================================================
@@ -1761,68 +1367,12 @@ func (c *cloudClient) GetProjectIssueTypeStatuses(ctx context.Context, projectKe
 
 // SearchIssues searches for issues using JQL
 func (c *cloudClient) SearchIssues(ctx context.Context, opts SearchOptions) (*SearchResult, error) {
-	// Build URL with query parameters
-	params := url.Values{}
-	if opts.JQL != "" {
-		params.Set("jql", opts.JQL)
-	}
-	params.Set("startAt", fmt.Sprintf("%d", opts.StartAt))
-	if opts.MaxResults > 0 {
-		params.Set("maxResults", fmt.Sprintf("%d", opts.MaxResults))
-	} else {
-		params.Set("maxResults", "50")
-	}
-	if len(opts.Fields) > 0 {
-		params.Set("fields", strings.Join(opts.Fields, ","))
-	}
-	if len(opts.Expand) > 0 {
-		params.Set("expand", strings.Join(opts.Expand, ","))
-	}
-
-	resp, err := c.do(ctx, "GET", c.baseURL+"/search?"+params.Encode(), nil)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.handleErrorResponse(resp)
-	}
-
-	var result SearchResult
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
-	}
-	return &result, nil
+	return jiraSearchIssuesLegacy(ctx, c, c.baseURL, opts)
 }
 
 // GetIssue gets a single issue by key
 func (c *cloudClient) GetIssue(ctx context.Context, issueKey string, expand []string) (*JiraIssue, error) {
-	params := url.Values{}
-	if len(expand) > 0 {
-		params.Set("expand", strings.Join(expand, ","))
-	}
-
-	urlStr := c.baseURL + "/issue/" + url.PathEscape(issueKey)
-	if len(params) > 0 {
-		urlStr += "?" + params.Encode()
-	}
-
-	resp, err := c.do(ctx, "GET", urlStr, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.handleErrorResponse(resp)
-	}
-
-	var issue JiraIssue
-	if err := json.NewDecoder(resp.Body).Decode(&issue); err != nil {
-		return nil, err
-	}
-	return &issue, nil
+	return jiraGetIssue(ctx, c, c.baseURL, issueKey, expand)
 }
 
 // GetIssueWatchers returns the identities behind an issue's watcher count.
@@ -1830,67 +1380,15 @@ func (c *cloudClient) GetIssue(ctx context.Context, issueKey string, expand []st
 // "View Watchers and Voters" permission; callers preserve that distinction
 // instead of treating an unavailable list as an empty list.
 func (c *cloudClient) GetIssueWatchers(ctx context.Context, issueKey string) (*JiraIssueWatchers, error) {
-	resp, err := c.do(ctx, "GET", c.baseURL+"/issue/"+url.PathEscape(issueKey)+"/watchers", nil)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.handleErrorResponse(resp)
-	}
-
-	var result JiraIssueWatchers
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
-	}
-	return &result, nil
+	return jiraGetIssueWatchers(ctx, c, c.baseURL, issueKey)
 }
 
 func (c *cloudClient) GetIssueComments(ctx context.Context, issueKey string, startAt, maxResults int) (*JiraCommentContainer, error) {
-	params := url.Values{}
-	params.Set("startAt", fmt.Sprintf("%d", startAt))
-	if maxResults <= 0 {
-		maxResults = 100
-	}
-	params.Set("maxResults", fmt.Sprintf("%d", maxResults))
-
-	resp, err := c.do(ctx, "GET", c.baseURL+"/issue/"+url.PathEscape(issueKey)+"/comment?"+params.Encode(), nil)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.handleErrorResponse(resp)
-	}
-	var result JiraCommentContainer
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
-	}
-	return &result, nil
+	return jiraGetIssueComments(ctx, c, c.baseURL, issueKey, startAt, maxResults)
 }
 
 func (c *cloudClient) GetIssueWorklogs(ctx context.Context, issueKey string, startAt, maxResults int) (*JiraWorklogContainer, error) {
-	params := url.Values{}
-	params.Set("startAt", fmt.Sprintf("%d", startAt))
-	if maxResults <= 0 {
-		maxResults = 100
-	}
-	params.Set("maxResults", fmt.Sprintf("%d", maxResults))
-
-	resp, err := c.do(ctx, "GET", c.baseURL+"/issue/"+url.PathEscape(issueKey)+"/worklog?"+params.Encode(), nil)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.handleErrorResponse(resp)
-	}
-	var result JiraWorklogContainer
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
-	}
-	return &result, nil
+	return jiraGetIssueWorklogs(ctx, c, c.baseURL, issueKey, startAt, maxResults)
 }
 
 // GetIssueCount gets the total number of issues in a project using the new JQL search endpoint
@@ -1951,18 +1449,8 @@ func (c *cloudClient) countAllIssues(ctx context.Context, jql string) (int, erro
 
 // SearchIssuesJQL searches for issues using the new POST /rest/api/3/search/jql endpoint
 func (c *cloudClient) SearchIssuesJQL(ctx context.Context, req JQLSearchRequest) (*JQLSearchResponse, error) {
-	resp, err := c.do(ctx, "POST", c.baseURL+"/search/jql", req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.handleErrorResponse(resp)
-	}
-
 	var result JQLSearchResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := jiraRequestJSON(ctx, c, http.MethodPost, c.baseURL+"/search/jql", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -1971,18 +1459,8 @@ func (c *cloudClient) SearchIssuesJQL(ctx context.Context, req JQLSearchRequest)
 // BulkFetchIssues fetches multiple issues by their IDs or keys
 // Uses POST /rest/api/3/issue/bulkfetch
 func (c *cloudClient) BulkFetchIssues(ctx context.Context, req BulkFetchRequest) (*BulkFetchResponse, error) {
-	resp, err := c.do(ctx, "POST", c.baseURL+"/issue/bulkfetch", req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.handleErrorResponse(resp)
-	}
-
 	var result BulkFetchResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := jiraRequestJSON(ctx, c, http.MethodPost, c.baseURL+"/issue/bulkfetch", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -2024,21 +1502,7 @@ func (c *cloudClient) GetAllIssueKeys(ctx context.Context, jql string) ([]string
 
 // GetProjectVersions gets all versions for a project
 func (c *cloudClient) GetProjectVersions(ctx context.Context, projectKey string) ([]JiraVersion, error) {
-	resp, err := c.do(ctx, "GET", c.baseURL+"/project/"+url.PathEscape(projectKey)+"/versions", nil)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.handleErrorResponse(resp)
-	}
-
-	var versions []JiraVersion
-	if err := json.NewDecoder(resp.Body).Decode(&versions); err != nil {
-		return nil, err
-	}
-	return versions, nil
+	return jiraGetProjectVersions(ctx, c, c.baseURL, projectKey)
 }
 
 // ListBoards lists all Agile boards for a project.
@@ -2047,137 +1511,22 @@ func (c *cloudClient) GetProjectVersions(ctx context.Context, projectKey string)
 // miss boards on larger projects, which in turn drops every sprint that lives on
 // later boards from the Windshift iteration import.
 func (c *cloudClient) ListBoards(ctx context.Context, projectKey string) (*BoardListResult, error) {
-	const defaultMaxResults = 50
-
-	aggregate := &BoardListResult{MaxResults: defaultMaxResults, IsLast: true}
-	for startAt := 0; ; {
-		params := url.Values{}
-		params.Set("startAt", fmt.Sprintf("%d", startAt))
-		params.Set("maxResults", fmt.Sprintf("%d", defaultMaxResults))
-		if projectKey != "" {
-			params.Set("projectKeyOrId", projectKey)
-		}
-
-		resp, err := c.do(ctx, "GET", c.agileURL+"/board?"+params.Encode(), nil)
-		if err != nil {
-			return nil, err
-		}
-
-		var page BoardListResult
-		decodeErr := func() error {
-			defer func() { _ = resp.Body.Close() }()
-			if resp.StatusCode != http.StatusOK {
-				return c.handleErrorResponse(resp)
-			}
-			return json.NewDecoder(resp.Body).Decode(&page)
-		}()
-		if decodeErr != nil {
-			return nil, decodeErr
-		}
-
-		aggregate.Values = append(aggregate.Values, page.Values...)
-		aggregate.Total = page.Total
-		aggregate.IsLast = page.IsLast
-		if page.MaxResults > 0 {
-			aggregate.MaxResults = page.MaxResults
-		}
-		if page.IsLast || len(page.Values) == 0 || (page.Total > 0 && len(aggregate.Values) >= page.Total) {
-			break
-		}
-		if page.StartAt+len(page.Values) > startAt {
-			startAt = page.StartAt + len(page.Values)
-		} else {
-			startAt += defaultMaxResults
-		}
-	}
-	return aggregate, nil
+	return jiraListBoards(ctx, c, c.agileURL, projectKey)
 }
 
 // GetBoardConfiguration gets Agile board columns, status mappings, and backing filter metadata.
 func (c *cloudClient) GetBoardConfiguration(ctx context.Context, boardID int) (*JiraBoardConfiguration, error) {
-	resp, err := c.do(ctx, "GET", fmt.Sprintf("%s/board/%d/configuration", c.agileURL, boardID), nil)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.handleErrorResponse(resp)
-	}
-	var config JiraBoardConfiguration
-	if err := json.NewDecoder(resp.Body).Decode(&config); err != nil {
-		return nil, err
-	}
-	return &config, nil
+	return jiraGetBoardConfiguration(ctx, c, c.agileURL, boardID)
 }
 
 // ListFilters lists saved filters associated with a project.
 func (c *cloudClient) ListFilters(ctx context.Context, projectKey string) (*FilterSearchResult, error) {
-	project, err := c.GetProject(ctx, projectKey)
-	if err != nil {
-		return nil, err
-	}
-	const defaultMaxResults = 50
-	aggregate := &FilterSearchResult{MaxResults: defaultMaxResults, IsLast: true}
-	for startAt := 0; ; {
-		params := url.Values{}
-		params.Set("startAt", fmt.Sprintf("%d", startAt))
-		params.Set("maxResults", fmt.Sprintf("%d", defaultMaxResults))
-		params.Set("expand", "jql,description,owner,viewUrl")
-		if project != nil && strings.TrimSpace(project.ID) != "" {
-			params.Set("projectId", project.ID)
-		}
-
-		resp, err := c.do(ctx, "GET", c.baseURL+"/filter/search?"+params.Encode(), nil)
-		if err != nil {
-			return nil, err
-		}
-		var page FilterSearchResult
-		decodeErr := func() error {
-			defer func() { _ = resp.Body.Close() }()
-			if resp.StatusCode != http.StatusOK {
-				return c.handleErrorResponse(resp)
-			}
-			return json.NewDecoder(resp.Body).Decode(&page)
-		}()
-		if decodeErr != nil {
-			return nil, decodeErr
-		}
-
-		aggregate.Values = append(aggregate.Values, page.Values...)
-		aggregate.Total = page.Total
-		aggregate.IsLast = page.IsLast
-		if page.MaxResults > 0 {
-			aggregate.MaxResults = page.MaxResults
-		}
-		if page.IsLast || len(page.Values) == 0 || (page.Total > 0 && len(aggregate.Values) >= page.Total) {
-			break
-		}
-		if page.StartAt+len(page.Values) > startAt {
-			startAt = page.StartAt + len(page.Values)
-		} else {
-			startAt += defaultMaxResults
-		}
-	}
-	return aggregate, nil
+	return jiraListFilters(ctx, c, c.baseURL, projectKey)
 }
 
 // GetFilter gets a saved filter with expanded JQL where available.
 func (c *cloudClient) GetFilter(ctx context.Context, filterID string) (*JiraFilter, error) {
-	params := url.Values{}
-	params.Set("expand", "jql,description,owner,viewUrl")
-	resp, err := c.do(ctx, "GET", c.baseURL+"/filter/"+url.PathEscape(filterID)+"?"+params.Encode(), nil)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.handleErrorResponse(resp)
-	}
-	var filter JiraFilter
-	if err := json.NewDecoder(resp.Body).Decode(&filter); err != nil {
-		return nil, err
-	}
-	return &filter, nil
+	return jiraGetFilter(ctx, c, c.baseURL, filterID)
 }
 
 // GetBoardSprints gets all sprints for a board.
@@ -2185,47 +1534,7 @@ func (c *cloudClient) GetFilter(ctx context.Context, filterID string) (*JiraFilt
 // Jira embeds sprint results in pages too; importers need the full set so issue
 // sprint custom fields can always resolve to a Windshift iteration.
 func (c *cloudClient) GetBoardSprints(ctx context.Context, boardID int) (*SprintListResult, error) {
-	const defaultMaxResults = 50
-
-	aggregate := &SprintListResult{MaxResults: defaultMaxResults, IsLast: true}
-	for startAt := 0; ; {
-		params := url.Values{}
-		params.Set("startAt", fmt.Sprintf("%d", startAt))
-		params.Set("maxResults", fmt.Sprintf("%d", defaultMaxResults))
-
-		resp, err := c.do(ctx, "GET", fmt.Sprintf("%s/board/%d/sprint?%s", c.agileURL, boardID, params.Encode()), nil)
-		if err != nil {
-			return nil, err
-		}
-
-		var page SprintListResult
-		decodeErr := func() error {
-			defer func() { _ = resp.Body.Close() }()
-			if resp.StatusCode != http.StatusOK {
-				return c.handleErrorResponse(resp)
-			}
-			return json.NewDecoder(resp.Body).Decode(&page)
-		}()
-		if decodeErr != nil {
-			return nil, decodeErr
-		}
-
-		aggregate.Values = append(aggregate.Values, page.Values...)
-		aggregate.Total = page.Total
-		aggregate.IsLast = page.IsLast
-		if page.MaxResults > 0 {
-			aggregate.MaxResults = page.MaxResults
-		}
-		if page.IsLast || len(page.Values) == 0 || (page.Total > 0 && len(aggregate.Values) >= page.Total) {
-			break
-		}
-		if page.StartAt+len(page.Values) > startAt {
-			startAt = page.StartAt + len(page.Values)
-		} else {
-			startAt += defaultMaxResults
-		}
-	}
-	return aggregate, nil
+	return jiraListBoardSprints(ctx, c, c.agileURL, boardID)
 }
 
 // ================================================================
@@ -2234,28 +1543,7 @@ func (c *cloudClient) GetBoardSprints(ctx context.Context, boardID int) (*Sprint
 
 // DownloadAttachment downloads an attachment and returns the reader and content type
 func (c *cloudClient) DownloadAttachment(ctx context.Context, attachmentURL string) (io.ReadCloser, string, error) {
-	if err := c.limiter.Wait(ctx); err != nil {
-		return nil, "", err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "GET", attachmentURL, http.NoBody)
-	if err != nil {
-		return nil, "", err
-	}
-	c.setHeaders(req)
-
-	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: attachment URL from trusted Jira API response
-	if err != nil {
-		return nil, "", err
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		_ = resp.Body.Close()
-		return nil, "", c.handleErrorResponse(resp)
-	}
-
-	contentType := resp.Header.Get("Content-Type")
-	return resp.Body, contentType, nil
+	return jiraDownloadAttachment(ctx, c.httpClient, c.limiter, c.authHeader, attachmentURL)
 }
 
 // ================================================================
@@ -2285,7 +1573,7 @@ func (c *cloudClient) GetUserEmail(ctx context.Context, accountID string) (strin
 		return "", nil
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", c.handleErrorResponse(resp)
+		return "", jiraErrorFromResponse(resp)
 	}
 
 	var result UserEmailResponse
@@ -2318,7 +1606,7 @@ func (c *cloudClient) ListObjectSchemas(ctx context.Context) ([]AssetObjectSchem
 		return nil, ErrAssetsNotAvailable
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, c.handleErrorResponse(resp)
+		return nil, jiraErrorFromResponse(resp)
 	}
 
 	var result struct {
@@ -2353,7 +1641,7 @@ func (c *cloudClient) listCurrentObjectSchemas(ctx context.Context) ([]AssetObje
 			return nil, ErrAssetsNotAvailable
 		}
 		if resp.StatusCode != http.StatusOK {
-			responseErr := c.handleErrorResponse(resp)
+			responseErr := jiraErrorFromResponse(resp)
 			_ = resp.Body.Close()
 			return nil, responseErr
 		}
@@ -2382,18 +1670,8 @@ func (c *cloudClient) listCurrentObjectSchemas(ctx context.Context) ([]AssetObje
 
 // GetObjectSchema gets a single object schema by ID
 func (c *cloudClient) GetObjectSchema(ctx context.Context, schemaID string) (*AssetObjectSchema, error) {
-	resp, err := c.do(ctx, "GET", c.assetsURL+"/objectschema/"+url.PathEscape(schemaID), nil)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.handleErrorResponse(resp)
-	}
-
 	var schema AssetObjectSchema
-	if err := json.NewDecoder(resp.Body).Decode(&schema); err != nil {
+	if err := jiraGetJSON(ctx, c, c.assetsURL+"/objectschema/"+url.PathEscape(schemaID), &schema); err != nil {
 		return nil, err
 	}
 	return &schema, nil
@@ -2401,18 +1679,8 @@ func (c *cloudClient) GetObjectSchema(ctx context.Context, schemaID string) (*As
 
 // ListObjectTypes lists all object types in a schema
 func (c *cloudClient) ListObjectTypes(ctx context.Context, schemaID string) ([]AssetObjectType, error) {
-	resp, err := c.do(ctx, "GET", c.assetsURL+"/objectschema/"+url.PathEscape(schemaID)+"/objecttypes/flat", nil)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.handleErrorResponse(resp)
-	}
-
 	var types []AssetObjectType
-	if err := json.NewDecoder(resp.Body).Decode(&types); err != nil {
+	if err := jiraGetJSON(ctx, c, c.assetsURL+"/objectschema/"+url.PathEscape(schemaID)+"/objecttypes/flat", &types); err != nil {
 		return nil, err
 	}
 	return types, nil
@@ -2420,18 +1688,8 @@ func (c *cloudClient) ListObjectTypes(ctx context.Context, schemaID string) ([]A
 
 // GetObjectTypeAttributes gets all attributes for an object type
 func (c *cloudClient) GetObjectTypeAttributes(ctx context.Context, objectTypeID string) ([]AssetObjectAttribute, error) {
-	resp, err := c.do(ctx, "GET", c.assetsURL+"/objecttype/"+url.PathEscape(objectTypeID)+"/attributes", nil)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.handleErrorResponse(resp)
-	}
-
 	var attrs []AssetObjectAttribute
-	if err := json.NewDecoder(resp.Body).Decode(&attrs); err != nil {
+	if err := jiraGetJSON(ctx, c, c.assetsURL+"/objecttype/"+url.PathEscape(objectTypeID)+"/attributes", &attrs); err != nil {
 		return nil, err
 	}
 	normalizeAssetDefaultTypes(attrs)
@@ -2458,18 +1716,8 @@ func (c *cloudClient) SearchObjects(ctx context.Context, opts ObjectSearchOption
 		reqBody["iql"] = opts.IQL
 	}
 
-	resp, err := c.do(ctx, "POST", c.assetsURL+"/object/navlist/aql", reqBody)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.handleErrorResponse(resp)
-	}
-
 	var result ObjectSearchResult
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := jiraRequestJSON(ctx, c, http.MethodPost, c.assetsURL+"/object/navlist/aql", reqBody, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -2502,20 +1750,6 @@ func (c *cloudClient) searchCurrentObjects(ctx context.Context, opts ObjectSearc
 	query.Set("includeAttributes", fmt.Sprintf("%t", opts.IncludeAttributes))
 	reqBody := map[string]string{"qlQuery": strings.Join(clauses, " AND ")}
 
-	resp, err := c.do(
-		ctx,
-		http.MethodPost,
-		c.assetsURL+"/object/aql?"+query.Encode(),
-		reqBody,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.handleErrorResponse(resp)
-	}
-
 	var current struct {
 		Values               []AssetObject          `json:"values"`
 		ObjectTypeAttributes []AssetObjectAttribute `json:"objectTypeAttributes"`
@@ -2526,7 +1760,7 @@ func (c *cloudClient) searchCurrentObjects(ctx context.Context, opts ObjectSearc
 		HasMoreResults       bool                   `json:"hasMoreResults"`
 		Last                 bool                   `json:"last"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&current); err != nil {
+	if err := jiraRequestJSON(ctx, c, http.MethodPost, c.assetsURL+"/object/aql?"+query.Encode(), reqBody, &current); err != nil {
 		return nil, err
 	}
 	normalizeAssetDefaultTypes(current.ObjectTypeAttributes)
