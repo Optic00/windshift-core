@@ -108,11 +108,15 @@ func (s *ChannelConfigUpdateService) Update(ctx context.Context, actorUserID, ch
 	if err != nil {
 		return false, err
 	}
-	merged, stored, err := mergeChannelConfig(existingJSON, incoming)
-	if err != nil {
+	incomingStored := make(map[string]interface{}, len(incoming))
+	for key, value := range incoming {
+		incomingStored[key] = value
+	}
+	if err := s.encryptSecrets(incomingStored); err != nil {
 		return false, err
 	}
-	if err := s.encryptSecrets(merged); err != nil {
+	merged, stored, err := mergeChannelConfig(existingJSON, incomingStored)
+	if err != nil {
 		return false, err
 	}
 	normalizeEmailAuthConfig(merged)
@@ -326,7 +330,7 @@ func (s *ChannelConfigUpdateService) prepareSMTPEnable(config *models.ChannelCon
 	if strings.TrimSpace(config.SMTPHost) == "" || config.SMTPPort <= 0 || config.SMTPPort > 65535 || strings.TrimSpace(config.SMTPFromEmail) == "" {
 		return channelConfigInvalid("SMTP host, port, and from address are required before enabling this channel")
 	}
-	if !validBareEmail(config.SMTPFromEmail) {
+	if !validBareEmail(strings.TrimSpace(config.SMTPFromEmail)) {
 		return channelConfigInvalid("SMTP from address must be a valid bare email address")
 	}
 	if !windshiftsmtp.EncryptionModeAllowed(config.SMTPEncryption) {
