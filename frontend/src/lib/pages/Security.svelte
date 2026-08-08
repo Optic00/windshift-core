@@ -676,9 +676,9 @@
 				<div class="flex items-center justify-between mb-2">
 					<Label color="default" class="mb-0">Permissions</Label>
 					<div class="flex gap-2">
-						<Button variant="link" size="small" onclick={() => applyScopePreset(agentDefaultPreset)}>Agent default</Button>
-						<Button variant="link" size="small" onclick={() => applyScopePreset(readOnlyPreset)}>Read-only</Button>
-						<Button variant="link" size="small" onclick={clearScopes}>Clear</Button>
+						<Button variant="link" size="small" dataTestid="token-scope-preset-agent-default" onclick={() => applyScopePreset(agentDefaultPreset)}>Agent default</Button>
+						<Button variant="link" size="small" dataTestid="token-scope-preset-read-only" onclick={() => applyScopePreset(readOnlyPreset)}>Read-only</Button>
+						<Button variant="link" size="small" dataTestid="token-scope-preset-clear" onclick={clearScopes}>Clear</Button>
 					</div>
 				</div>
 				<DescriptionText>
@@ -750,6 +750,7 @@
 				variant="primary"
 				onclick={createApiToken}
 				disabled={!newTokenName.trim() || newTokenScopes.length === 0 || creatingToken}
+				dataTestid="create-token-submit"
 				keyboardHint="⏎"
 			>
 				{creatingToken ? t('common.processing') : t('security.createToken')}

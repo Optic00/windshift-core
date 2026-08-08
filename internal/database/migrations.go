@@ -72,6 +72,20 @@ func (m Migration) acceptsSuperseded(stored string) bool {
 	return slices.Contains(m.Superseded, stored)
 }
 
+// legacyScopeRowsAbsent returns 1 when no api_tokens row still carries a
+// legacy "read"/"write"/"admin" permission string, i.e. when the legacy-scope
+// rewrite has nothing left to do. Used as the Check for that data migration so
+// it is stamped rather than executed on databases (notably fresh installs)
+// that never had a legacy row.
+const legacyScopeRowsAbsent = `
+	SELECT CASE WHEN EXISTS (
+		SELECT 1 FROM api_tokens
+		WHERE permissions LIKE '%"read"%'
+		   OR permissions LIKE '%"write"%'
+		   OR permissions LIKE '%"admin"%'
+	) THEN 0 ELSE 1 END
+`
+
 // Catalog is the ordered list of migrations applied via runPendingMigrations.
 // New migrations append with a date-prefixed Version slug such as
 // "20260514_widgets_archived_at". Order matters only between migrations
@@ -2772,6 +2786,11 @@ var Catalog = []Migration{
 	{
 		Version: "20260808_api_token_legacy_scopes",
 		Name:    "Expand legacy api_token permission strings to granular scopes",
+		// Reports "already applied" when no legacy row is left to rewrite,
+		// which is always the case on a fresh install: schema/*.sql serves
+		// those entirely and the catalog stays upgrade-only.
+		CheckSQLite:   legacyScopeRowsAbsent,
+		CheckPostgres: legacyScopeRowsAbsent,
 		// Data migration for tokens minted before granular scopes existed,
 		// whose permissions column holds ["read"], ["write"] or ["admin"].
 		// auth.CheckTokenPermissions used to expand those at validation time;
