@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"windshift/internal/cacheutil"
@@ -561,34 +560,5 @@ func (tm *TokenManager) CheckTokenPermissions(token *models.APIToken, requiredPe
 		return false
 	}
 
-	// Build lookup set
-	have := make(map[string]bool, len(scopes))
-	for _, s := range scopes {
-		have[s] = true
-	}
-
-	// Check each required permission
-	for _, required := range requiredPermissions {
-		if have[required] {
-			continue
-		}
-		// Hierarchy: write implies read for the same resource
-		// e.g. "items:write" satisfies "items:read"
-		if strings.HasSuffix(required, ":read") {
-			resource := strings.TrimSuffix(required, ":read")
-			if have[resource+":write"] {
-				continue
-			}
-		}
-		// admin:*:write implies admin:*:read
-		if strings.HasPrefix(required, "admin:") && strings.HasSuffix(required, ":read") {
-			resource := strings.TrimSuffix(required, ":read")
-			if have[resource+":write"] {
-				continue
-			}
-		}
-		return false
-	}
-
-	return true
+	return ScopesSatisfy(scopes, requiredPermissions)
 }

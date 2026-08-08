@@ -12,6 +12,7 @@ import (
 
 	"windshift/internal/aitooladapter"
 	"windshift/internal/aitools"
+	"windshift/internal/auth"
 	"windshift/internal/llm"
 	"windshift/internal/models"
 	"windshift/internal/repository"
@@ -993,7 +994,13 @@ func (h *AIHandler) prepareChatMode(ctx context.Context, user *models.User, sess
 			}
 			runWorkspaceID = chatCtx.WorkspaceID
 		}
-		entries := aitools.Default.All()
+		// The chat runs on the caller's cookie session, not an API token, so
+		// there is no scope set to read off a credential. Gate it on
+		// DefaultAgentScopes anyway (WI-962) so one agent surface can't quietly
+		// do more than another: what chat can reach now matches what a `ws` CLI
+		// or MCP token reaches by default. Per-workspace permission checks
+		// inside each tool still apply on top.
+		entries := aitooladapter.EntriesForScopes(aitools.Default, auth.DefaultAgentScopes)
 		toolNames := make([]string, 0, len(entries))
 		for _, entry := range entries {
 			toolNames = append(toolNames, entry.Name)

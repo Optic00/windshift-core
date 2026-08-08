@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"windshift/internal/aitools"
+	"windshift/internal/auth"
 	"windshift/internal/llm"
 )
 
@@ -58,6 +59,23 @@ func EntriesForStandard(registry *aitools.Registry, selected []string) []aitools
 	var out []aitools.Entry
 	for _, entry := range registry.All() {
 		if !groups[entry.Group] || entry.Access == aitools.AccessDestructive || entry.Access == aitools.AccessAdmin {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+// EntriesForScopes returns the registry entries whose declared token scopes
+// are all satisfied by the given scope set. The in-product chat authenticates
+// with a cookie rather than a token, so passing auth.DefaultAgentScopes here
+// is what keeps its capability surface equal to the one a `ws` CLI or MCP
+// token gets by default instead of the entire registry (WI-962).
+func EntriesForScopes(registry *aitools.Registry, scopes []string) []aitools.Entry {
+	all := registry.All()
+	out := make([]aitools.Entry, 0, len(all))
+	for _, entry := range all {
+		if !auth.ScopesSatisfy(scopes, entry.Scopes) {
 			continue
 		}
 		out = append(out, entry)

@@ -342,6 +342,30 @@ func ValidateScopes(scopes []string) error {
 	return nil
 }
 
+// ScopesSatisfy reports whether the held scope set grants every scope in
+// required, applying the hierarchy that a :write scope implies the matching
+// :read. TokenManager.CheckTokenPermissions is the token-shaped wrapper around
+// this; surfaces that gate on a scope set without a token in hand (the chat
+// tool registry) call it directly so the rule is only implemented once.
+func ScopesSatisfy(held, required []string) bool {
+	have := make(map[string]bool, len(held))
+	for _, s := range held {
+		have[s] = true
+	}
+	for _, want := range required {
+		if have[want] {
+			continue
+		}
+		// Hierarchy: write implies read for the same resource, for both
+		// plain ("items:read") and admin ("admin:users:read") scopes.
+		if strings.HasSuffix(want, ":read") && have[strings.TrimSuffix(want, ":read")+":write"] {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 // ValidateAgentScopes restricts coding-agent run tokens to the narrowed
 // DefaultCodingAgentRunScopes set: no admin:* scopes, no destructive scopes,
 // and no broad workspace writes. mcp:access is permitted since WI-351 because
