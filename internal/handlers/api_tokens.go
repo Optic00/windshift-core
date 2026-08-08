@@ -314,7 +314,7 @@ func (ath *APITokenHandler) RevokeToken(w http.ResponseWriter, r *http.Request) 
 func tokenRequestsPageScope(scopes []string) bool {
 	for _, scope := range scopes {
 		switch scope {
-		case "read", "write", "admin", auth.ScopePagesRead, auth.ScopePagesWrite, auth.ScopePagesDelete:
+		case auth.ScopePagesRead, auth.ScopePagesWrite, auth.ScopePagesDelete:
 			return true
 		}
 	}

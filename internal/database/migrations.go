@@ -2769,6 +2769,51 @@ var Catalog = []Migration{
 			);
 		`,
 	},
+	{
+		Version: "20260808_api_token_legacy_scopes",
+		Name:    "Expand legacy api_token permission strings to granular scopes",
+		// Data migration for tokens minted before granular scopes existed,
+		// whose permissions column holds ["read"], ["write"] or ["admin"].
+		// auth.CheckTokenPermissions used to expand those at validation time;
+		// rewriting the rows here lets that expansion be deleted without any
+		// outstanding token losing access (WI-959).
+		//
+		// The scope lists are spelled out rather than referenced from
+		// internal/auth: package auth imports package database, so the
+		// dependency cannot run the other way, and a migration should freeze
+		// the mapping as it stood anyway rather than follow a moving constant.
+		//
+		// Ordered widest-first. The LIKE patterns include the surrounding
+		// quotes, so they match a bare legacy element and never a granular
+		// scope that merely ends in the same word ("items:read" contains
+		// :read" but not "read").
+		SQLite: `
+			UPDATE api_tokens
+			SET permissions = '["items:read","items:write","items:delete","workspaces:read","workspaces:write","workspaces:delete","statuses:read","workflows:read","item-types:read","priorities:read","custom-fields:read","users:read","user-preferences:read","user-preferences:write","milestones:read","milestones:write","milestones:delete","iterations:read","iterations:write","iterations:delete","projects:read","projects:write","projects:delete","mcp:access","collections:read","actions:read","actions:write","pages:read","pages:write","pages:delete","tests:read","tests:write","assets:read","assets:write","time:read","time:write","item-templates:read","item-templates:write","admin:users:read","admin:users:write","admin:groups:read","admin:groups:write","admin:audit-logs:read","admin:api-tokens:read","admin:api-tokens:write"]'
+			WHERE permissions LIKE '%"admin"%';
+
+			UPDATE api_tokens
+			SET permissions = '["items:read","items:write","items:delete","workspaces:read","workspaces:write","workspaces:delete","statuses:read","workflows:read","item-types:read","priorities:read","custom-fields:read","users:read","user-preferences:read","user-preferences:write","milestones:read","milestones:write","milestones:delete","iterations:read","iterations:write","iterations:delete","projects:read","projects:write","projects:delete","mcp:access","collections:read","actions:read","actions:write","pages:read","pages:write","pages:delete","tests:read","tests:write","assets:read","assets:write","time:read","time:write","item-templates:read","item-templates:write"]'
+			WHERE permissions LIKE '%"write"%';
+
+			UPDATE api_tokens
+			SET permissions = '["items:read","workspaces:read","statuses:read","workflows:read","item-types:read","priorities:read","custom-fields:read","users:read","user-preferences:read","milestones:read","iterations:read","projects:read","collections:read","actions:read","pages:read","tests:read","assets:read","time:read","item-templates:read"]'
+			WHERE permissions LIKE '%"read"%';
+		`,
+		Postgres: `
+			UPDATE api_tokens
+			SET permissions = '["items:read","items:write","items:delete","workspaces:read","workspaces:write","workspaces:delete","statuses:read","workflows:read","item-types:read","priorities:read","custom-fields:read","users:read","user-preferences:read","user-preferences:write","milestones:read","milestones:write","milestones:delete","iterations:read","iterations:write","iterations:delete","projects:read","projects:write","projects:delete","mcp:access","collections:read","actions:read","actions:write","pages:read","pages:write","pages:delete","tests:read","tests:write","assets:read","assets:write","time:read","time:write","item-templates:read","item-templates:write","admin:users:read","admin:users:write","admin:groups:read","admin:groups:write","admin:audit-logs:read","admin:api-tokens:read","admin:api-tokens:write"]'
+			WHERE permissions LIKE '%"admin"%';
+
+			UPDATE api_tokens
+			SET permissions = '["items:read","items:write","items:delete","workspaces:read","workspaces:write","workspaces:delete","statuses:read","workflows:read","item-types:read","priorities:read","custom-fields:read","users:read","user-preferences:read","user-preferences:write","milestones:read","milestones:write","milestones:delete","iterations:read","iterations:write","iterations:delete","projects:read","projects:write","projects:delete","mcp:access","collections:read","actions:read","actions:write","pages:read","pages:write","pages:delete","tests:read","tests:write","assets:read","assets:write","time:read","time:write","item-templates:read","item-templates:write"]'
+			WHERE permissions LIKE '%"write"%';
+
+			UPDATE api_tokens
+			SET permissions = '["items:read","workspaces:read","statuses:read","workflows:read","item-types:read","priorities:read","custom-fields:read","users:read","user-preferences:read","milestones:read","iterations:read","projects:read","collections:read","actions:read","pages:read","tests:read","assets:read","time:read","item-templates:read"]'
+			WHERE permissions LIKE '%"read"%';
+		`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {

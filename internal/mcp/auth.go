@@ -131,7 +131,7 @@ func incrementalOAuthScopes(rawCurrent string, missing []string) []string {
 	_ = json.Unmarshal([]byte(rawCurrent), &current)
 	set := map[string]struct{}{auth.ScopeMCPAccess: {}}
 	for _, scope := range append(append([]string{}, current...), missing...) {
-		if auth.IsAdminScope(scope) || scope == "read" || scope == "write" || scope == "admin" {
+		if auth.IsAdminScope(scope) {
 			continue
 		}
 		if auth.ValidateScopes([]string{scope}) == nil {

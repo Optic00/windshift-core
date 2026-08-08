@@ -28,65 +28,6 @@ const (
 
 // Scope constants, the scope catalog, and scope validation live in scopes.go.
 
-// allNonAdminReadScopes is the set of non-admin :read scopes (for legacy "read" mapping).
-// assets:read is included: the per-set asset role model is the real guard,
-// so a legacy read-scoped token can never reach a set the user isn't
-// authorized on. (Legacy 'read' still can't reach assets:write or
-// assets:delete — those require an explicit upgrade.)
-var allNonAdminReadScopes = []string{
-	ScopeItemsRead, ScopeWorkspacesRead, ScopeStatusesRead,
-	ScopeWorkflowsRead, ScopeItemTypesRead, ScopePrioritiesRead,
-	ScopeCustomFieldsRead, ScopeUsersRead, ScopeUserPreferencesRead,
-	ScopeMilestonesRead,
-	ScopeIterationsRead, ScopeProjectsRead, ScopeCollectionsRead,
-	ScopeActionsRead, ScopePagesRead, ScopeTestsRead,
-	ScopeAssetsRead, ScopeTimeRead, ScopeItemTemplatesRead,
-}
-
-// allNonAdminScopes is the set of all non-admin scopes (for legacy "write" mapping).
-// assets:read + assets:write are included (the per-set role guard applies).
-// assets:delete is deliberately excluded so legacy 'write' doesn't silently
-// grant destructive ops — matches the items posture and the spirit of
-// asset-api-v1-security-review-2026-06-03 finding 1 around destructive
-// auto-grants.
-var allNonAdminScopes = []string{
-	ScopeItemsRead, ScopeItemsWrite, ScopeItemsDelete,
-	ScopeWorkspacesRead, ScopeWorkspacesWrite, ScopeWorkspacesDelete,
-	ScopeStatusesRead, ScopeWorkflowsRead, ScopeItemTypesRead,
-	ScopePrioritiesRead, ScopeCustomFieldsRead,
-	ScopeUsersRead,
-	ScopeUserPreferencesRead, ScopeUserPreferencesWrite,
-	ScopeMilestonesRead, ScopeMilestonesWrite, ScopeMilestonesDelete,
-	ScopeIterationsRead, ScopeIterationsWrite, ScopeIterationsDelete,
-	ScopeProjectsRead, ScopeProjectsWrite, ScopeProjectsDelete,
-	ScopeMCPAccess,
-	ScopeCollectionsRead,
-	ScopeActionsRead, ScopeActionsWrite,
-	ScopePagesRead, ScopePagesWrite, ScopePagesDelete,
-	ScopeTestsRead, ScopeTestsWrite,
-	ScopeAssetsRead, ScopeAssetsWrite,
-	ScopeTimeRead, ScopeTimeWrite,
-	ScopeItemTemplatesRead, ScopeItemTemplatesWrite,
-}
-
-// expandLegacyScopes maps old-style permission strings to granular scopes.
-// Returns the original scopes unchanged if they are already in resource:action format.
-func expandLegacyScopes(scopes []string) []string {
-	for _, s := range scopes {
-		switch s {
-		case "admin":
-			// "admin" grants everything
-			return append(append([]string{}, allNonAdminScopes...), AdminScopes()...)
-		case "write":
-			return allNonAdminScopes
-		case "read":
-			return allNonAdminReadScopes
-		}
-	}
-	// No legacy scopes found — return as-is
-	return scopes
-}
-
 // tokenCacheEntry is the value stored in the token validation cache.
 type tokenCacheEntry struct {
 	User          models.User     `json:"user"`
@@ -608,21 +549,21 @@ func (tm *TokenManager) invalidateTokenCache(tokenID int) {
 }
 
 // CheckTokenPermissions checks if a token has specific permissions.
-// Supports both legacy ("read", "write", "admin") and granular ("items:read") scopes.
+// Scopes are granular ("items:read") only. The legacy "read"/"write"/"admin"
+// strings were rewritten to their granular equivalents by the
+// 20260808_api_token_legacy_scopes migration and are no longer expanded here,
+// so a token still carrying one grants nothing.
 // last review: ser, 210426
 func (tm *TokenManager) CheckTokenPermissions(token *models.APIToken, requiredPermissions []string) bool {
-	var rawScopes []string
-	err := json.Unmarshal([]byte(token.Permissions), &rawScopes)
+	var scopes []string
+	err := json.Unmarshal([]byte(token.Permissions), &scopes)
 	if err != nil {
 		return false
 	}
 
-	// Expand legacy scopes into granular ones
-	expanded := expandLegacyScopes(rawScopes)
-
 	// Build lookup set
-	have := make(map[string]bool, len(expanded))
-	for _, s := range expanded {
+	have := make(map[string]bool, len(scopes))
+	for _, s := range scopes {
 		have[s] = true
 	}
 
