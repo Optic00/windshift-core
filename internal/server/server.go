@@ -66,38 +66,39 @@ type Server struct {
 	listener   net.Listener
 
 	// Services that need cleanup
-	ldapHandler               *handlers.LDAPHandler
-	notificationManager       *handlers.NotificationManager
-	notificationService       *services.NotificationService
-	notificationScheduler     *scheduler.NotificationScheduler
-	recurrenceScheduler       *scheduler.RecurrenceScheduler
-	cfvCleanupScheduler       *scheduler.CFVCleanupScheduler
-	todoistSyncScheduler      *scheduler.TodoistSyncScheduler
-	runnerLeaseReaper         *scheduler.RunnerLeaseReaper
-	codingRunService          *services.RunService
-	standardAgentDispatcher   *standardagent.Dispatcher
-	workflowService           *services.WorkflowService
-	actionService             *services.ActionService
-	assetActionService        *services.AssetActionService
-	approvalEscalationSweeper *services.ApprovalEscalationSweeper
-	emailScheduler            *scheduler.EmailScheduler
-	emailTrackingRetention    *scheduler.EmailTrackingRetentionSweeper
-	briefingScheduler         *scheduler.BriefingScheduler
-	pluginScheduleScheduler   *scheduler.PluginScheduleScheduler
-	activityTracker           *services.ActivityTracker
-	tokenTracker              *services.TokenTracker
-	webhookSender             *webhook.WebhookSender
-	scmSyncStopChan           chan struct{}
-	issueSyncStopChan         chan struct{}
-	magicLinkStopChan         chan struct{}
-	cleanupStopChan           chan struct{}
-	jiraHostStopChan          chan struct{}
-	cleanupTicker             *time.Ticker
-	pluginManager             *plugins.Manager
-	databaseDiagRepo          *repository.DatabaseDiagnosticsRepository
-	databasePoolMonitor       *services.DatabasePoolMonitor
-	channelService            *services.ChannelService
-	memoryBudget              config.MemoryBudget
+	ldapHandler                  *handlers.LDAPHandler
+	notificationManager          *handlers.NotificationManager
+	notificationService          *services.NotificationService
+	notificationScheduler        *scheduler.NotificationScheduler
+	recurrenceScheduler          *scheduler.RecurrenceScheduler
+	cfvCleanupScheduler          *scheduler.CFVCleanupScheduler
+	todoistSyncScheduler         *scheduler.TodoistSyncScheduler
+	runnerLeaseReaper            *scheduler.RunnerLeaseReaper
+	globalRankMigrationScheduler *scheduler.GlobalRankMigrationScheduler
+	codingRunService             *services.RunService
+	standardAgentDispatcher      *standardagent.Dispatcher
+	workflowService              *services.WorkflowService
+	actionService                *services.ActionService
+	assetActionService           *services.AssetActionService
+	approvalEscalationSweeper    *services.ApprovalEscalationSweeper
+	emailScheduler               *scheduler.EmailScheduler
+	emailTrackingRetention       *scheduler.EmailTrackingRetentionSweeper
+	briefingScheduler            *scheduler.BriefingScheduler
+	pluginScheduleScheduler      *scheduler.PluginScheduleScheduler
+	activityTracker              *services.ActivityTracker
+	tokenTracker                 *services.TokenTracker
+	webhookSender                *webhook.WebhookSender
+	scmSyncStopChan              chan struct{}
+	issueSyncStopChan            chan struct{}
+	magicLinkStopChan            chan struct{}
+	cleanupStopChan              chan struct{}
+	jiraHostStopChan             chan struct{}
+	cleanupTicker                *time.Ticker
+	pluginManager                *plugins.Manager
+	databaseDiagRepo             *repository.DatabaseDiagnosticsRepository
+	databasePoolMonitor          *services.DatabasePoolMonitor
+	channelService               *services.ChannelService
+	memoryBudget                 config.MemoryBudget
 
 	// Rate limiters that need cleanup
 	loginRateLimiter    *middleware.RateLimiter
@@ -232,11 +233,6 @@ func (s *Server) initialize() error {
 	// Ensure default notification settings exist
 	if err = repository.NewNotificationSettingsRepository(s.db).EnsureDefault(); err != nil {
 		slog.Warn("failed to ensure notification settings", "error", err)
-	}
-
-	// Migrate legacy select field options to ID-based format
-	if err = database.MigrateSelectFieldOptions(s.db); err != nil {
-		slog.Warn("failed to migrate select field options", "error", err)
 	}
 
 	if cfg.RecoverUser != "" {
@@ -444,6 +440,14 @@ func (s *Server) initialize() error {
 		repository.NewRunnerRepository(s.db),
 	)
 	s.runnerLeaseReaper.Start()
+	globalRankHostname, hostnameErr := os.Hostname()
+	if hostnameErr != nil || globalRankHostname == "" {
+		globalRankHostname = "unknown-host"
+	}
+	globalRankOwner := fmt.Sprintf("global-rank-%s-%d", globalRankHostname, os.Getpid())
+	s.globalRankMigrationScheduler = scheduler.NewGlobalRankMigrationScheduler(s.db, globalRankOwner)
+	s.globalRankMigrationScheduler.Start()
+	slog.Info("global rank migration scheduler started", "owner", globalRankOwner)
 	slog.Info("recurrence scheduler started")
 
 	// Initialize shared execution chain store for cross-application loop prevention
@@ -1545,6 +1549,7 @@ func (s *Server) initialize() error {
 				bulkOperationMetrics,
 				repository.NewRecurrenceRepository(s.db),
 				repository.NewSystemSettingRepository(s.db),
+				s.globalRankMigrationScheduler,
 				s.memoryBudget,
 			),
 			AgentSecurity: handlers.NewAgentSecurityHandler(
@@ -1978,6 +1983,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		s.runnerLeaseReaper.Stop()
 	}
 
+	if s.globalRankMigrationScheduler != nil {
+		slog.Info("stopping global rank migration scheduler")
+		s.globalRankMigrationScheduler.Stop()
+	}
+
 	if s.codingRunService != nil {
 		slog.Info("shutting down coding-agent run service")
 		// Stops admission, drains still-queued local runs as canceled, and
@@ -2081,6 +2091,11 @@ func isAPIPath(p string) bool {
 func (s *Server) cleanup() {
 	if s.databasePoolMonitor != nil {
 		s.databasePoolMonitor.Stop()
+	}
+	// initialize may fail after this scheduler has started. Stop and join it
+	// before closing the database so an in-flight rank batch cannot race cleanup.
+	if s.globalRankMigrationScheduler != nil {
+		s.globalRankMigrationScheduler.Stop()
 	}
 	// Stop rate limiters
 	if s.loginRateLimiter != nil {

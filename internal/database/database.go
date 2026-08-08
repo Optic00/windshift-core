@@ -652,12 +652,6 @@ func (db *DB) migrateDefaultConfigurationSet() error {
 	return nil
 }
 
-// MigrateSelectFieldOptions migrates legacy string-array options to ID-based format (SQLite)
-// Note: This is a no-op stub; the real implementation is on SQLiteDB which satisfies the Database interface.
-func (db *DB) MigrateSelectFieldOptions() error {
-	return nil
-}
-
 // IsUniqueConstraintError checks if the error is a unique constraint violation (SQLite + PostgreSQL)
 func IsUniqueConstraintError(err error) bool {
 	if err == nil {
