@@ -124,6 +124,12 @@ func (h *OAuthHandler) RegisterDynamicClient(w http.ResponseWriter, r *http.Requ
 	}
 	slug := "oauth-" + strings.TrimPrefix(clientID, "wsoc_")[:16]
 	redirectsJSON, _ := json.Marshal(req.RedirectURIs)
+	// allowed_scopes caps what this client may ever hold — the full non-admin
+	// catalog, so a client that wants a destructive scope can still step up to
+	// it through an incremental authorization. The registration response
+	// advertises the smaller DefaultAgentScopes instead, so a client that
+	// simply echoes back what it was offered lands on the same capabilities a
+	// `ws` CLI token gets rather than asking for delete scopes it won't use.
 	allowedScopes := nonAdminOAuthScopes()
 	scopesJSON, _ := json.Marshal(allowedScopes)
 
@@ -147,7 +153,7 @@ func (h *OAuthHandler) RegisterDynamicClient(w http.ResponseWriter, r *http.Requ
 		GrantTypes:              []string{"authorization_code", "refresh_token"},
 		ResponseTypes:           []string{"code"},
 		TokenEndpointAuthMethod: "none",
-		Scope:                   strings.Join(allowedScopes, " "),
+		Scope:                   strings.Join(auth.DefaultAgentScopes, " "),
 	})
 }
 
@@ -256,13 +262,7 @@ func sameStringSetOrDefault(got, want []string) bool {
 }
 
 func nonAdminOAuthScopes() []string {
-	out := make([]string, 0, len(auth.AllValidScopes))
-	for _, scope := range auth.AllValidScopes {
-		if !auth.IsAdminScope(scope) {
-			out = append(out, scope)
-		}
-	}
-	return out
+	return auth.NonAdminScopes()
 }
 
 func (h *OAuthHandler) validateOAuthResource(client *oauthClientRow, raw string) (string, error) {

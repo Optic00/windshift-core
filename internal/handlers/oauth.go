@@ -164,12 +164,7 @@ func (h *OAuthHandler) AuthorizeInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	requested := splitOAuthScopes(scopeStr)
-	if len(requested) == 0 {
-		respondBadRequest(w, r, "at least one scope is required")
-		return
-	}
-	granted, err := intersectScopes(requested, client.AllowedScopes)
+	granted, err := grantedScopes(scopeStr, client.AllowedScopes)
 	if err != nil {
 		respondBadRequest(w, r, err.Error())
 		return
@@ -256,8 +251,7 @@ func (h *OAuthHandler) AuthorizeApprove(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	requested := splitOAuthScopes(req.Scope)
-	granted, err := intersectScopes(requested, client.AllowedScopes)
+	granted, err := grantedScopes(req.Scope, client.AllowedScopes)
 	if err != nil {
 		respondBadRequest(w, r, err.Error())
 		return
@@ -1220,6 +1214,43 @@ func splitOAuthScopes(scopeStr string) []string {
 		return nil
 	}
 	return strings.Fields(scopeStr)
+}
+
+// grantedScopes resolves the scope set an authorization request should be
+// granted. A client that named scopes gets the strict subset check below; a
+// client that omitted the scope parameter falls back to auth.DefaultAgentScopes
+// so an MCP client that only follows the protected-resource challenge lands on
+// the same capabilities a `ws` CLI token receives (WI-960).
+func grantedScopes(scopeStr string, allowed []string) ([]string, error) {
+	if requested := splitOAuthScopes(scopeStr); len(requested) > 0 {
+		return intersectScopes(requested, allowed)
+	}
+	granted := defaultGrantScopes(allowed)
+	if len(granted) == 0 {
+		return nil, fmt.Errorf("this client has no grantable scopes")
+	}
+	return granted, nil
+}
+
+// defaultGrantScopes narrows DefaultAgentScopes to what a client is allowed to
+// hold. Unlike intersectScopes it drops non-allowed scopes rather than
+// erroring: the client never asked for them — the server substituted them — so
+// a narrowly configured client must still be able to complete the flow.
+func defaultGrantScopes(allowed []string) []string {
+	allowedSet := make(map[string]struct{}, len(allowed))
+	for _, s := range allowed {
+		allowedSet[s] = struct{}{}
+	}
+	out := make([]string, 0, len(auth.DefaultAgentScopes))
+	for _, s := range auth.DefaultAgentScopes {
+		if auth.IsAdminScope(s) {
+			continue
+		}
+		if _, ok := allowedSet[s]; ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // intersectScopes returns the requested scopes that are in the client's

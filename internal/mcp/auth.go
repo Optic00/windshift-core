@@ -47,26 +47,26 @@ func bearerAuthMiddlewareWithConfig(tokenManager *auth.TokenManager, cfg AuthCon
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		header := r.Header.Get("Authorization")
 		if !strings.HasPrefix(header, "Bearer ") {
-			writeMCPAuthError(w, http.StatusUnauthorized, cfg, []string{auth.ScopeMCPAccess}, "", "missing or invalid Authorization header")
+			writeMCPAuthError(w, http.StatusUnauthorized, cfg, auth.DefaultAgentScopes, "", "missing or invalid Authorization header")
 			return
 		}
 
 		token := strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
 		user, apiToken, err := tokenManager.ValidateToken(token)
 		if err != nil {
-			writeMCPAuthError(w, http.StatusUnauthorized, cfg, []string{auth.ScopeMCPAccess}, "", "invalid token")
+			writeMCPAuthError(w, http.StatusUnauthorized, cfg, auth.DefaultAgentScopes, "", "invalid token")
 			return
 		}
 
 		// PATs intentionally remain a supported fallback. OAuth-issued tokens
 		// carry a client id and must be bound to this exact RFC 8707 audience.
 		if cfg.ResourceURI != "" && apiToken.OAuthClientID != "" && apiToken.OAuthResource != cfg.ResourceURI {
-			writeMCPAuthError(w, http.StatusUnauthorized, cfg, []string{auth.ScopeMCPAccess}, "", "token was not issued for this resource")
+			writeMCPAuthError(w, http.StatusUnauthorized, cfg, auth.DefaultAgentScopes, "", "token was not issued for this resource")
 			return
 		}
 
 		if !tokenManager.CheckTokenPermissions(apiToken, []string{auth.ScopeMCPAccess}) {
-			writeMCPAuthError(w, http.StatusForbidden, cfg, []string{auth.ScopeMCPAccess}, "insufficient_scope", "token missing required scope: mcp:access")
+			writeMCPAuthError(w, http.StatusForbidden, cfg, auth.DefaultAgentScopes, "insufficient_scope", "token missing required scope: mcp:access")
 			return
 		}
 
