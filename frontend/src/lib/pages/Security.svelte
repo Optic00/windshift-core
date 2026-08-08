@@ -57,45 +57,43 @@
 	let currentUserId = $derived(authStore.currentUser?.id);
 	let isSystemAdmin = $derived(authStore.currentUser?.is_system_admin === true);
 
-	// Scope rows for the token permission grid. `resource` drives the
-	// `<resource>:<action>` scope string; entries marked read-only have no
-	// write/delete scopes on the backend.
-	const SCOPE_ROWS = [
-		{ resource: 'items', label: 'Items', actions: ['read', 'write', 'delete'] },
-		{ resource: 'workspaces', label: 'Workspaces', actions: ['read', 'write', 'delete'] },
-		{ resource: 'milestones', label: 'Milestones', actions: ['read', 'write', 'delete'] },
-		{ resource: 'iterations', label: 'Iterations', actions: ['read', 'write', 'delete'] },
-		{ resource: 'projects', label: 'Projects', actions: ['read', 'write', 'delete'] },
-		{ resource: 'collections', label: 'Collections', actions: ['read'] },
-		{ resource: 'pages', label: 'Pages', actions: ['read', 'write', 'delete'] },
-		{ resource: 'users', label: 'Users', actions: ['read'] },
-		{ resource: 'statuses', label: 'Statuses', actions: ['read'] },
-		{ resource: 'workflows', label: 'Workflows', actions: ['read'] },
-		{ resource: 'item-types', label: 'Item types', actions: ['read'] },
-		{ resource: 'priorities', label: 'Priorities', actions: ['read'] },
-		{ resource: 'custom-fields', label: 'Custom fields', actions: ['read'] },
-		{ resource: 'item-templates', label: 'Work item templates', actions: ['read', 'write'] },
-		{ resource: 'mcp', label: 'MCP server', actions: ['access'] },
-	];
+	// The grantable scopes come from the server (GET /api-tokens/scope-catalog,
+	// backed by auth.ScopeCatalog) rather than a list maintained here. A
+	// hand-written copy silently dropped whole resources as scopes were added —
+	// time:*, tests:*, actions:* and even mcp:access were unreachable from this
+	// picker — so the catalog is now the only source of truth.
+	let scopeCatalog = $derived(securityStore.scopeCatalog);
 
-	const ADMIN_SCOPE_ROWS = [
-		{ resource: 'admin:users', label: 'Users', actions: ['read', 'write'] },
-		{ resource: 'admin:groups', label: 'Groups', actions: ['read', 'write'] },
-		{ resource: 'admin:audit-logs', label: 'Audit logs', actions: ['read'] },
-		{ resource: 'admin:api-tokens', label: 'API tokens', actions: ['read', 'write'] },
-	];
+	// Group the flat catalog into one block per resource, preserving the
+	// server's ordering, so any action name (read/write/delete/access) renders
+	// without this page needing to know the column layout in advance.
+	function groupScopes(entries) {
+		const groups = [];
+		const byResource = new Map();
+		for (const info of entries) {
+			let group = byResource.get(info.resource);
+			if (!group) {
+				group = { resource: info.resource, label: info.resource_label, scopes: [] };
+				byResource.set(info.resource, group);
+				groups.push(group);
+			}
+			group.scopes.push(info);
+		}
+		return groups;
+	}
 
-	const READ_ONLY_PRESET = [
-		'items:read', 'workspaces:read', 'milestones:read', 'iterations:read',
-		'projects:read', 'collections:read', 'pages:read', 'users:read', 'statuses:read', 'workflows:read',
-		'item-types:read', 'priorities:read', 'custom-fields:read', 'item-templates:read',
-	];
+	let scopeGroups = $derived(groupScopes(scopeCatalog.filter((s) => !s.admin)));
+	let adminScopeGroups = $derived(groupScopes(scopeCatalog.filter((s) => s.admin)));
 
-	const READ_WRITE_PRESET = [
-		...READ_ONLY_PRESET,
-		'items:write', 'workspaces:write', 'milestones:write',
-		'iterations:write', 'projects:write', 'pages:write', 'item-templates:write',
-	];
+	// Presets derived from the catalog. "Agent default" is the set an MCP or
+	// `ws` CLI token receives when minted without an explicit scope list, so a
+	// hand-made token can match one without ticking 27 boxes.
+	let agentDefaultPreset = $derived(
+		scopeCatalog.filter((s) => s.agent_default).map((s) => s.scope)
+	);
+	let readOnlyPreset = $derived(
+		scopeCatalog.filter((s) => !s.admin && s.action === 'read').map((s) => s.scope)
+	);
 
 	function isScopeSelected(scope) {
 		return newTokenScopes.includes(scope);
@@ -678,8 +676,8 @@
 				<div class="flex items-center justify-between mb-2">
 					<Label color="default" class="mb-0">Permissions</Label>
 					<div class="flex gap-2">
-						<Button variant="link" size="small" onclick={() => applyScopePreset(READ_ONLY_PRESET)}>Read-only</Button>
-						<Button variant="link" size="small" onclick={() => applyScopePreset(READ_WRITE_PRESET)}>Read + Write</Button>
+						<Button variant="link" size="small" onclick={() => applyScopePreset(agentDefaultPreset)}>Agent default</Button>
+						<Button variant="link" size="small" onclick={() => applyScopePreset(readOnlyPreset)}>Read-only</Button>
 						<Button variant="link" size="small" onclick={clearScopes}>Clear</Button>
 					</div>
 				</div>
@@ -687,75 +685,46 @@
 					Scopes limit what this token can do. The token also inherits your account's workspace permissions.
 				</DescriptionText>
 
-				<div class="mt-3 rounded border overflow-hidden" style="border-color: var(--ds-border);">
-					<table class="w-full text-sm">
-						<thead>
-							<tr style="background-color: var(--ds-background-neutral);">
-								<th class="text-left px-3 py-2 font-medium" style="color: var(--ds-text-subtle);">Resource</th>
-								<th class="px-3 py-2 font-medium w-20" style="color: var(--ds-text-subtle);">Read</th>
-								<th class="px-3 py-2 font-medium w-20" style="color: var(--ds-text-subtle);">Write</th>
-								<th class="px-3 py-2 font-medium w-20" style="color: var(--ds-text-subtle);">Delete</th>
-							</tr>
-						</thead>
-						<tbody>
-							{#each SCOPE_ROWS as row}
-								<tr class="border-t" style="border-color: var(--ds-border);">
-									<td class="px-3 py-2" style="color: var(--ds-text);">{row.label}</td>
-									{#each ['read', 'write', 'delete'] as action}
-										<td class="px-3 py-2 text-center">
-											{#if row.actions.includes(action)}
-												{@const scope = `${row.resource}:${action}`}
-												<Checkbox
-													checked={isScopeSelected(scope)}
-													onchange={(checked) => toggleScope(scope, checked)}
-													size="small"
-												/>
-											{:else}
-												<span style="color: var(--ds-text-subtlest);">—</span>
-											{/if}
-										</td>
-									{/each}
-								</tr>
-							{/each}
-						</tbody>
-					</table>
+				<div class="mt-3 rounded border overflow-hidden" style="border-color: var(--ds-border);" data-testid="token-scope-picker">
+					{#each scopeGroups as group (group.resource)}
+						<div class="border-t first:border-t-0 px-3 py-2" style="border-color: var(--ds-border);">
+							<div class="text-sm font-medium" style="color: var(--ds-text);">{group.label}</div>
+							<div class="mt-1 flex flex-wrap gap-x-4 gap-y-1">
+								{#each group.scopes as info (info.scope)}
+									<Checkbox
+										checked={isScopeSelected(info.scope)}
+										onchange={(checked) => toggleScope(info.scope, checked)}
+										label={info.action}
+										size="small"
+										dataTestid={`token-scope-${info.scope}`}
+									/>
+								{/each}
+							</div>
+						</div>
+					{/each}
 				</div>
 
 				{#if isSystemAdmin}
 					<div class="mt-4">
 						<Label color="default" class="mb-2">Admin permissions</Label>
 						<DescriptionText>Require the system admin role. Use with care.</DescriptionText>
-						<div class="mt-2 rounded border overflow-hidden" style="border-color: var(--ds-border);">
-							<table class="w-full text-sm">
-								<thead>
-									<tr style="background-color: var(--ds-background-neutral);">
-										<th class="text-left px-3 py-2 font-medium" style="color: var(--ds-text-subtle);">Resource</th>
-										<th class="px-3 py-2 font-medium w-20" style="color: var(--ds-text-subtle);">Read</th>
-										<th class="px-3 py-2 font-medium w-20" style="color: var(--ds-text-subtle);">Write</th>
-									</tr>
-								</thead>
-								<tbody>
-									{#each ADMIN_SCOPE_ROWS as row}
-										<tr class="border-t" style="border-color: var(--ds-border);">
-											<td class="px-3 py-2" style="color: var(--ds-text);">{row.label}</td>
-											{#each ['read', 'write'] as action}
-												<td class="px-3 py-2 text-center">
-													{#if row.actions.includes(action)}
-														{@const scope = `${row.resource}:${action}`}
-														<Checkbox
-															checked={isScopeSelected(scope)}
-															onchange={(checked) => toggleScope(scope, checked)}
-															size="small"
-														/>
-													{:else}
-														<span style="color: var(--ds-text-subtlest);">—</span>
-													{/if}
-												</td>
-											{/each}
-										</tr>
-									{/each}
-								</tbody>
-							</table>
+						<div class="mt-2 rounded border overflow-hidden" style="border-color: var(--ds-border);" data-testid="token-admin-scope-picker">
+							{#each adminScopeGroups as group (group.resource)}
+								<div class="border-t first:border-t-0 px-3 py-2" style="border-color: var(--ds-border);">
+									<div class="text-sm font-medium" style="color: var(--ds-text);">{group.label}</div>
+									<div class="mt-1 flex flex-wrap gap-x-4 gap-y-1">
+										{#each group.scopes as info (info.scope)}
+											<Checkbox
+												checked={isScopeSelected(info.scope)}
+												onchange={(checked) => toggleScope(info.scope, checked)}
+												label={info.action}
+												size="small"
+												dataTestid={`token-scope-${info.scope}`}
+											/>
+										{/each}
+									</div>
+								</div>
+							{/each}
 						</div>
 					</div>
 				{/if}

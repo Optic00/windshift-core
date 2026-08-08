@@ -64,28 +64,27 @@
 	let mintedToken = $state('');
 	let mintedTokenError = $state('');
 
-	const AGENT_TOKEN_SCOPE_OPTIONS = [
-		{ value: 'items:read', label: 'Read items' },
-		{ value: 'items:write', label: 'Create/update items' },
-		{ value: 'workspaces:read', label: 'Read workspaces' },
-		{ value: 'workspaces:write', label: 'Modify workspaces' },
-		{ value: 'collections:read', label: 'Read collections and reports' },
-		{ value: 'pages:read', label: 'Read pages' },
-		{ value: 'pages:write', label: 'Create/update pages' },
-		{ value: 'pages:delete', label: 'Archive pages' },
-		{ value: 'users:read', label: 'Read users' },
-		{ value: 'item-types:read', label: 'Read item types' },
-		{ value: 'workflows:read', label: 'Read workflows' },
-		{ value: 'statuses:read', label: 'Read statuses' },
-		{ value: 'priorities:read', label: 'Read priorities' },
-		{ value: 'custom-fields:read', label: 'Read custom fields' },
-		{ value: 'item-templates:read', label: 'Read work item templates' },
-		{ value: 'milestones:read', label: 'Read milestones' },
-		{ value: 'iterations:read', label: 'Read iterations' },
-		{ value: 'projects:read', label: 'Read projects' },
-		{ value: 'mcp:access', label: 'MCP access' },
-	];
-	const DEFAULT_AGENT_TOKEN_SCOPES = AGENT_TOKEN_SCOPE_OPTIONS.map((s) => s.value);
+	// Grantable scopes come from the server catalog (auth.ScopeCatalog) rather
+	// than a list maintained here, which had silently fallen behind and left
+	// time:*, tests:*, assets:* and actions:* impossible to grant to an agent.
+	let scopeCatalog = $state([]);
+	// Non-admin only: minting an admin-scoped token for an agent is not something
+	// this modal offers, and the server rejects it for non-admin callers anyway.
+	let agentScopeOptions = $derived(scopeCatalog.filter((s) => !s.admin));
+	// The default selection mirrors the server's DefaultAgentScopes, so a token
+	// minted here matches one minted by `ws init` or the MCP OAuth flow.
+	let defaultAgentTokenScopes = $derived(
+		scopeCatalog.filter((s) => s.agent_default).map((s) => s.scope)
+	);
+
+	async function loadScopeCatalog() {
+		try {
+			scopeCatalog = (await api.getScopeCatalog()) || [];
+		} catch (err) {
+			console.warn('Failed to load scope catalog:', err);
+			scopeCatalog = [];
+		}
+	}
 
 	async function loadUsers() {
 		loading = true;
@@ -379,7 +378,7 @@
 		tokenTargetUser = user;
 		newTokenName = `${user.username}-token`;
 		newTokenExpiresDays = 90;
-		newTokenScopes = [...DEFAULT_AGENT_TOKEN_SCOPES];
+		newTokenScopes = [...defaultAgentTokenScopes];
 		mintedToken = '';
 		mintedTokenError = '';
 		showTokenModal = true;
@@ -438,6 +437,7 @@
 
 	onMount(() => {
 		loadUsers();
+		loadScopeCatalog();
 	});
 </script>
 
@@ -807,12 +807,13 @@
 				<div class="space-y-2">
 					<Label color="default">Scopes</Label>
 					<div class="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-56 overflow-y-auto border rounded p-3" style="border-color: var(--ds-border);">
-						{#each AGENT_TOKEN_SCOPE_OPTIONS as scope}
+						{#each agentScopeOptions as scope (scope.scope)}
 							<Checkbox
-								checked={newTokenScopes.includes(scope.value)}
-								onchange={(checked) => toggleAgentTokenScope(scope.value, checked)}
-								label={scope.label}
+								checked={newTokenScopes.includes(scope.scope)}
+								onchange={(checked) => toggleAgentTokenScope(scope.scope, checked)}
+								label={`${scope.resource_label}: ${scope.action}`}
 								size="small"
+								dataTestid={`agent-token-scope-${scope.scope}`}
 							/>
 						{/each}
 					</div>

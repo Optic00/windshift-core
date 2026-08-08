@@ -10,16 +10,23 @@
 	import ConsentCard from '../components/ConsentCard.svelte';
 	import Spinner from '../components/Spinner.svelte';
 
-	const SCOPE_DESCRIPTIONS = {
-		'items:read': 'Read work items and comments',
-		'items:write': 'Create and update work items',
-		'items:delete': 'Delete work items',
-		'workspaces:read': 'Read workspaces and configuration',
-		'workspaces:write': 'Modify workspaces and configuration',
-		'workspaces:delete': 'Delete workspaces',
-		'collections:read': 'Read collections and reports',
-		'users:read': 'Read user directory',
-	};
+	// Scope descriptions come from the server catalog (auth.ScopeCatalog) so the
+	// consent screen can explain every scope a client might request. The previous
+	// hand-written map covered 8 of them and silently fell back to showing the
+	// raw scope string for the rest.
+	let scopeCatalog = $state([]);
+	let scopeDescriptions = $derived(
+		Object.fromEntries(scopeCatalog.map((s) => [s.scope, s.description]))
+	);
+
+	async function loadScopeCatalog() {
+		try {
+			scopeCatalog = (await api.getScopeCatalog()) || [];
+		} catch (err) {
+			console.warn('Failed to load scope catalog:', err);
+			scopeCatalog = [];
+		}
+	}
 
 	// Parse the query string the third-party app sent the browser with.
 	const params = $derived($currentRoute.query || {});
@@ -40,6 +47,7 @@
 	let actionError = $state('');
 
 	onMount(async () => {
+		loadScopeCatalog();
 		try {
 			info = await api.oauth.authorizeInfo({
 				client_id: params.client_id || '',
@@ -143,7 +151,7 @@
 		icon={Lock}
 		title="Authorize {info.client_display_name}"
 		scopes={info.granted_scopes}
-		scopeDescriptions={SCOPE_DESCRIPTIONS}
+		{scopeDescriptions}
 		error={actionError}
 		onAllow={approve}
 		onDeny={deny}

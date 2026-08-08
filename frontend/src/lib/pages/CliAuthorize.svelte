@@ -14,16 +14,23 @@
 	import Button from '../components/Button.svelte';
 	import Spinner from '../components/Spinner.svelte';
 
-	const SCOPE_DESCRIPTIONS = {
-		'items:read': 'Read work items and comments',
-		'items:write': 'Create and update work items',
-		'items:delete': 'Delete work items',
-		'workspaces:read': 'Read workspaces and configuration',
-		'workspaces:write': 'Modify workspaces and configuration',
-		'workspaces:delete': 'Delete workspaces',
-		'collections:read': 'Read collections and reports',
-		'users:read': 'Read user directory',
-	};
+	// Scope descriptions come from the server catalog (auth.ScopeCatalog) so the
+	// consent screen can explain every scope a client might request. The previous
+	// hand-written map covered 8 of them and silently fell back to showing the
+	// raw scope string for the rest.
+	let scopeCatalog = $state([]);
+	let scopeDescriptions = $derived(
+		Object.fromEntries(scopeCatalog.map((s) => [s.scope, s.description]))
+	);
+
+	async function loadScopeCatalog() {
+		try {
+			scopeCatalog = (await api.getScopeCatalog()) || [];
+		} catch (err) {
+			console.warn('Failed to load scope catalog:', err);
+			scopeCatalog = [];
+		}
+	}
 
 	let params = $derived($currentRoute.query || {});
 	let callbackURL = $derived(params.callback || '');
@@ -46,6 +53,7 @@
 	let error = $state('');
 
 	onMount(async () => {
+		loadScopeCatalog();
 		try {
 			caps = await api.cliAuth.capabilities();
 		} catch (err) {
@@ -202,7 +210,7 @@
 		icon={Terminal}
 		title="Authorize Windshift CLI"
 		{scopes}
-		scopeDescriptions={SCOPE_DESCRIPTIONS}
+		{scopeDescriptions}
 		{error}
 		onAllow={approve}
 		onDeny={deny}

@@ -43,8 +43,11 @@ class SecurityStore {
   loginTestResult = $state('');
 
   // === Token Form ===
-  // Defaults mirror the backend fallback in api_tokens.go when no scopes are sent.
+  // The grantable scopes, loaded from the server catalog (auth.ScopeCatalog).
+  scopeCatalog = $state([]);
   newTokenName = $state('');
+  // A conservative starting selection; the "Agent default" preset in the picker
+  // applies the same set an MCP or `ws` CLI token gets when minted without one.
   newTokenScopes = $state(['items:read', 'workspaces:read', 'pages:read', 'users:read']);
   newTokenExpiry = $state('');
   newTokenValue = $state('');
@@ -88,6 +91,7 @@ class SecurityStore {
         this.loadUserProfile();
         this.loadCredentials();
         this.loadApiTokens();
+        this.loadScopeCatalog();
       }
     }
   }
@@ -156,6 +160,20 @@ class SecurityStore {
       this.apiTokens = [];
     } finally {
       this.tokensLoading = false;
+    }
+  }
+
+  /**
+   * Load the grantable scope catalog the token picker renders. Served from
+   * auth.ScopeCatalog so the picker always offers exactly what the server
+   * accepts, instead of a copy in the frontend that drifts as scopes are added.
+   */
+  async loadScopeCatalog() {
+    try {
+      this.scopeCatalog = (await api.getScopeCatalog()) || [];
+    } catch (err) {
+      console.warn('Failed to load scope catalog:', err);
+      this.scopeCatalog = [];
     }
   }
 

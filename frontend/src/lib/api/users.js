@@ -105,6 +105,10 @@ export const revokeApiToken = (tokenId) =>
     method: 'DELETE',
   });
 export const validateApiToken = () => fetchAPI('/api-tokens/validate');
+// The authoritative list of grantable scopes, with the label/description/
+// grouping each picker renders. Sourced from auth.ScopeCatalog server-side so
+// the pickers can't drift from what the server actually accepts.
+export const getScopeCatalog = () => fetchAPI('/api-tokens/scope-catalog');
 
 // CLI onboarding (used by `ws init` — consent page + status probe)
 export const cliAuth = {

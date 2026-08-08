@@ -17,22 +17,21 @@
 	import { successToast, errorToast } from '../stores/toasts.svelte.js';
 	import { confirm } from '../composables/useConfirm.js';
 
-	// The list of scopes we let admins grant to OAuth clients. Mirrors the
-	// `auth.AllValidScopes` Go-side allowlist, minus admin scopes (those are
-	// rejected server-side anyway). Hardcoded for now — could be fetched from
-	// /admin/scope-catalog later if the list grows.
-	const SCOPE_OPTIONS = [
-		{ value: 'items:read', label: 'Read items and comments' },
-		{ value: 'items:write', label: 'Create and update items' },
-		{ value: 'items:delete', label: 'Delete items' },
-		{ value: 'workspaces:read', label: 'Read workspaces and configuration' },
-		{ value: 'workspaces:write', label: 'Modify workspaces and configuration' },
-		{ value: 'collections:read', label: 'Read collections and reports' },
-		{ value: 'pages:read', label: 'Read knowledge pages' },
-		{ value: 'pages:write', label: 'Create and update knowledge pages' },
-		{ value: 'pages:delete', label: 'Archive knowledge pages' },
-		{ value: 'users:read', label: 'Read user directory' },
-	];
+	// The scopes an admin may grant an OAuth client, fetched from the server
+	// catalog (auth.ScopeCatalog) minus admin scopes, which the OAuth surfaces
+	// reject outright. Previously hand-maintained here, which is what let the
+	// list fall behind the server allowlist.
+	let scopeCatalog = $state([]);
+	let scopeOptions = $derived(scopeCatalog.filter((s) => !s.admin));
+
+	async function loadScopeCatalog() {
+		try {
+			scopeCatalog = (await api.getScopeCatalog()) || [];
+		} catch (err) {
+			console.warn('Failed to load scope catalog:', err);
+			scopeCatalog = [];
+		}
+	}
 
 	const DOCMOST_REQUIRED_SCOPES = ['items:read', 'workspaces:read', 'collections:read'];
 	const DOCMOST_LOCAL_CALLBACK = 'http://localhost:3000/api/integrations/oauth/windshift/callback';
@@ -59,6 +58,7 @@
 
 	onMount(() => {
 		loadClients();
+		loadScopeCatalog();
 	});
 
 	async function loadClients() {
@@ -395,14 +395,15 @@
 
 		<FormField label="Allowed scopes" required>
 			<div class="space-y-2">
-				{#each SCOPE_OPTIONS as scope}
+				{#each scopeOptions as scope (scope.scope)}
 					<label class="flex items-center gap-2 text-sm cursor-pointer" style="color: var(--ds-text);">
 						<input
 							type="checkbox"
-							checked={formData.allowed_scopes.includes(scope.value)}
-							onchange={() => toggleScope(scope.value)}
+							checked={formData.allowed_scopes.includes(scope.scope)}
+							onchange={() => toggleScope(scope.scope)}
+							data-testid={`oauth-client-scope-${scope.scope}`}
 						/>
-						<code class="text-xs">{scope.value}</code>
+						<code class="text-xs">{scope.scope}</code>
 						<span style="color: var(--ds-text-subtle);">— {scope.label}</span>
 					</label>
 				{/each}

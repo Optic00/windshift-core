@@ -122,6 +122,7 @@ import {
   getApiTokens,
   getAssignableUsers,
   getMyAgents,
+  getScopeCatalog,
   getUser,
   getUserCredentials,
   getUsers,
@@ -207,6 +208,7 @@ export const api = {
   getApiToken,
   revokeApiToken,
   validateApiToken,
+  getScopeCatalog,
 
   // Status Categories
   statusCategories,

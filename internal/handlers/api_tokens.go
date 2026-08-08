@@ -506,6 +506,18 @@ func (ath *APITokenHandler) AdminRevokeToken(w http.ResponseWriter, r *http.Requ
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// GetScopeCatalog returns the full catalog of grantable token scopes, with the
+// label, description and grouping each picker renders. Serving it from
+// auth.ScopeCatalog keeps the token UI, the agent-token UI, the OAuth client
+// admin UI and the consent screens in step with the server allowlist instead
+// of each maintaining a hand-written copy that drifts (WI-961).
+func (ath *APITokenHandler) GetScopeCatalog(w http.ResponseWriter, r *http.Request) {
+	if _, ok := RequireAuth(w, r); !ok {
+		return
+	}
+	respondJSONOK(w, auth.ScopeCatalog())
+}
+
 // GetAPIKeyPolicy returns whether the current user can create API keys.
 func (ath *APITokenHandler) GetAPIKeyPolicy(w http.ResponseWriter, r *http.Request) {
 	user, ok := RequireAuth(w, r)
