@@ -366,8 +366,7 @@ func (r *ItemRepository) FindByIDWithWorkspaceStatusContext(ctx context.Context,
 		return nil, fmt.Errorf("failed to find item with details: %w", err)
 	}
 
-	// Eager-load milestones so callers (REST mappers, ai tools, etc.) don't
-	// each have to remember to attach them after the fact.
+	// Attach milestones once so callers receive complete item details.
 	holder := []models.Item{item}
 	if err := NewMilestoneAttachRepository(r.db).LoadForItemsContext(ctx, holder); err == nil {
 		item = holder[0]
@@ -1713,8 +1712,7 @@ func (r *ItemRepository) FindByIDsWithDetails(ids []int) ([]*models.Item, error)
 	}
 	defer func() { _ = rows.Close() }()
 
-	// Materialize into a value slice so the batched milestone attach can mutate
-	// in place, then return pointers into it.
+	// Materialize values before the batched milestone attach populates pointers.
 	scanned := make([]models.Item, 0, len(ids))
 	for rows.Next() {
 		item, _, err := scanItemDetailsRow(rows)
@@ -1727,8 +1725,7 @@ func (r *ItemRepository) FindByIDsWithDetails(ids []int) ([]*models.Item, error)
 		return nil, fmt.Errorf("iterate items with details: %w", err)
 	}
 
-	// Batched milestone attach — one round trip for the whole set, mirroring
-	// the per-item eager-load in FindByIDWithWorkspaceStatus.
+	// Attach milestones in one round trip for the full result set.
 	if err := NewMilestoneAttachRepository(r.db).LoadForItems(scanned); err != nil {
 		slog.Warn("failed to attach milestones for batch items", slog.Any("error", err))
 	}

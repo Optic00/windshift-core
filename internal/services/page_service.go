@@ -319,11 +319,7 @@ func (s *PageService) Move(actorID, pageID int, newParentID, prevSiblingID, next
 			newPath = parent.Path + fmt.Sprintf("%d/", parent.ID)
 		}
 
-		// Verify the WHOLE subtree fits under MaxPageDepth after the
-		// shift, not just the moved page. The deepest descendant gains
-		// (newDepth - page.Depth) levels; if its post-move depth would
-		// breach the cap, refuse the move. Pulled into a single MAX
-		// query so deeply-nested subtrees don't cost a recursive walk.
+		// Check the deepest descendant once so the moved subtree stays within the depth cap.
 		descendantPrefix := page.Path + fmt.Sprintf("%d/", page.ID)
 		var deepestDescendant sql.NullInt64
 		if err := tx.QueryRow(
@@ -339,12 +335,7 @@ func (s *PageService) Move(actorID, pageID int, newParentID, prevSiblingID, next
 			}
 		}
 
-		// Compute the moved page's new frac_index when the caller supplied
-		// sibling positioning, or when the parent is changing (in which
-		// case we must give the page a fresh key in its new sibling set
-		// rather than carry its old key). Backfills NULL keys for the
-		// new parent's children so KeyBetween has well-defined neighbors
-		// to bisect.
+		// Recompute the rank when siblings or the parent change, backfilling missing neighbor keys.
 		parentChanged := !samePageParent(page.ParentID, newParentID)
 		newFracIndex, err := s.resolveSiblingFracIndex(tx, page.WorkspaceID, newParentID, pageID, prevSiblingID, nextSiblingID, parentChanged, actorID)
 		if err != nil {
@@ -355,19 +346,14 @@ func (s *PageService) Move(actorID, pageID int, newParentID, prevSiblingID, next
 			if errors.Is(err, repository.ErrNotFound) {
 				return nil, ErrPageNotFound
 			}
-			// A move can still collide on idx_pages_frac_index_scoped when
-			// the resolved key duplicates a live sibling's. Repo maps that
-			// to ErrDuplicateEntry; without translation here the handler
-			// takes its default 500 branch instead of a 409.
+			// Translate a rank collision to the handler's conflict response.
 			if errors.Is(err, repository.ErrDuplicateEntry) {
 				return nil, ErrPageUniqueConflict
 			}
 			return nil, err
 		}
 
-		// Recompute path/depth for every descendant. The new prefix is
-		// newPath + "{pageID}/" (everything previously rooted at the old
-		// page-path becomes rooted at the new one).
+		// Rewrite every descendant path and depth under the new prefix.
 		oldPrefix := page.Path + fmt.Sprintf("%d/", page.ID)
 		newPrefix := newPath + fmt.Sprintf("%d/", pageID)
 		depthShift := newDepth + 1 - (page.Depth + 1)
@@ -388,9 +374,7 @@ func (s *PageService) Move(actorID, pageID int, newParentID, prevSiblingID, next
 		if err != nil {
 			return nil, err
 		}
-		// Move does not rewrite chunks — content didn't change — but we
-		// still snapshot a revision so the audit log captures the
-		// parent/path change.
+		// Content is unchanged, but record the parent/path change in a revision.
 		if _, err := s.writeRevisionTx(tx, moved, actorID, models.PageRevisionChangeTypeMove, ""); err != nil {
 			return nil, err
 		}

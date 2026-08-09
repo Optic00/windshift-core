@@ -460,17 +460,14 @@ func (g *SQLGenerator) generateComparison(node *ASTNode) (sql string, args []int
 		return "", nil, err
 	}
 
-	// Check if we're comparing status, priority, or type fields - make them case-insensitive
 	isCaseInsensitiveField := false
 	if node.Left.Type == NodeIdentifier {
 		fieldName := strings.ToLower(node.Left.Value)
-		// status and priority apply to items, status and type apply to assets
 		if fieldName == "status" || fieldName == "priority" || fieldName == "type" || fieldName == "assettype" || fieldName == "asset_type" || fieldName == "category" {
 			isCaseInsensitiveField = true
 		}
 	}
 
-	// Unquoted case-insensitive values are literals, not field names.
 	var rightSQL string
 	var rightArgs []interface{}
 	if isCaseInsensitiveField && node.Right.Type == NodeIdentifier {

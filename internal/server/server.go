@@ -65,7 +65,6 @@ type Server struct {
 	db         database.Database
 	listener   net.Listener
 
-	// Services that need cleanup
 	ldapHandler                  *handlers.LDAPHandler
 	notificationManager          *handlers.NotificationManager
 	notificationService          *services.NotificationService
@@ -100,7 +99,6 @@ type Server struct {
 	channelService               *services.ChannelService
 	memoryBudget                 config.MemoryBudget
 
-	// Rate limiters that need cleanup
 	loginRateLimiter    *middleware.RateLimiter
 	fidoRateLimiter     *middleware.RateLimiter
 	authRateLimiter     *middleware.RateLimiter
@@ -119,7 +117,6 @@ type Server struct {
 	calendarFeedLimiter *middleware.RateLimiter
 	userConcurrency     *middleware.UserConcurrencyLimiter
 
-	// Server state
 	actualPort   int
 	started      bool
 	shuttingDown bool
@@ -159,12 +156,10 @@ func (s *Server) initialize() error {
 		slog.Warn("outbound TLS certificate verification is disabled; self-signed certificates will be accepted without server identity verification")
 	}
 
-	// Tests can suppress startup and request logging.
 	if cfg.SilentMode {
 		logger.SetSilent(true)
 	}
 
-	// Open the configured database backend.
 	var err error
 	if cfg.DB.PostgresConn != "" {
 		slog.Info("connecting to PostgreSQL database")
@@ -222,7 +217,6 @@ func (s *Server) initialize() error {
 		return fmt.Errorf("database startup refused: %w", err)
 	}
 
-	// Seed domain defaults outside database initialization.
 	if err = emailutil.SeedTemplates(s.db); err != nil {
 		slog.Warn("failed to seed default email templates", "error", err)
 	}

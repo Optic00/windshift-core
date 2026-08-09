@@ -6,8 +6,6 @@ import (
 	"time"
 )
 
-// SCM Provider Models
-
 // SCMProviderType represents the type of SCM provider
 type SCMProviderType string
 
@@ -227,8 +225,6 @@ type SCMWebhookDelivery struct {
 	CreatedAt        time.Time `json:"created_at"`
 }
 
-// Issue Sync Models
-
 // IssueSyncLabelMode represents the label sync mode
 type IssueSyncLabelMode string
 
@@ -304,8 +300,6 @@ type LabelMapping struct {
 	GitHubLabel      string `json:"github_label"`
 	WindshiftLabelID int    `json:"windshift_label_id"`
 }
-
-// Time Tracking Models
 
 // TimeProjectCategory represents a category for time projects
 type TimeProjectCategory struct {
@@ -384,8 +378,6 @@ type ActiveTimer struct {
 	WorkspaceItemNumber *int    `json:"workspace_item_number,omitempty"`
 }
 
-// Review System Models
-
 // Review represents a daily or weekly personal review entry
 type Review struct {
 	ID         int       `json:"id"`
@@ -418,8 +410,6 @@ type CompletedItemsRequest struct {
 	EndDate   string `json:"end_date"`   // YYYY-MM-DD format
 	UserID    int    `json:"user_id"`    // Filter by assignee
 }
-
-// Test Management Models
 
 // TestFolder represents a folder for organizing test cases
 type TestFolder struct {
@@ -590,8 +580,6 @@ type TestCaseLabel struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
-// Test Coverage Models
-
 // TestCoverageConfiguration represents the requirement type configuration for a collection or workspace
 type TestCoverageConfiguration struct {
 	ID                     int       `json:"id"`
@@ -637,8 +625,6 @@ type TestCoverageListResponse struct {
 	Pagination PaginationMeta            `json:"pagination"`
 	Summary    TestCoverageSummary       `json:"summary"`
 }
-
-// Recurring Tasks Models
 
 // RecurrenceRule represents a recurring task pattern for generating instances
 type RecurrenceRule struct {
@@ -729,8 +715,6 @@ type RRulePreviewRequest struct {
 	DtStart string `json:"dtstart"`
 	Count   int    `json:"count,omitempty"` // Number of occurrences to preview (default 10)
 }
-
-// Actions Automation Models
 
 // ActionTriggerType defines the type of event that triggers an action
 type ActionTriggerType string
