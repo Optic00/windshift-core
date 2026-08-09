@@ -92,12 +92,10 @@ func (s *MentionService) ResolveMentionedUserIDs(content string) ([]int, error) 
 }
 
 // resolveUserIdentifier looks up a user by username or display name
-// ser: last review on July 27
-// FIXME: why is this here? displayName lookup especially is unsafe as two users can share the same displayName
+// FIXME: require unique mention identifiers; display-name matches are ambiguous.
 func (s *MentionService) resolveUserIdentifier(identifier string) (userID int, displayName string, err error) {
 	var firstName, lastName string
 
-	// Try username first (exact match, case insensitive)
 	err = s.db.QueryRow(`
 		SELECT id, first_name, last_name
 		FROM users
@@ -113,7 +111,6 @@ func (s *MentionService) resolveUserIdentifier(identifier string) (userID int, d
 		return 0, "", err
 	}
 
-	// Try display name match (case insensitive)
 	err = s.db.QueryRow(`
 		SELECT id, first_name, last_name
 		FROM users
@@ -136,10 +133,9 @@ func (s *MentionService) resolveUserIdentifier(identifier string) (userID int, d
 func (s *MentionService) ProcessMentions(params ProcessMentionsParams) error {
 	slog.Debug("Processing mentions", slog.String("component", "mentions"), slog.String("source_type", params.SourceType), slog.Int("source_id", params.SourceID), slog.Int("item_id", params.ItemID))
 
-	// Extract current mentions from content
+	// Resolve active, visible recipients, then diff them against stored mentions.
 	identifiers := s.ExtractMentionIdentifiers(params.Content)
 
-	// Resolve identifiers to user IDs
 	currentMentions := make(map[int]string) // userID -> displayName
 	for _, identifier := range identifiers {
 		userID, displayName, err := s.resolveUserIdentifier(identifier)
@@ -150,14 +146,10 @@ func (s *MentionService) ProcessMentions(params ProcessMentionsParams) error {
 		if userID == 0 {
 			continue // Unknown user, skip
 		}
-		// Skip self-mentions
 		if userID == params.ActorUserID {
 			continue
 		}
-		// Enforce workspace visibility: without this, any user in the
-		// instance can be @mentioned into an item they have no access to,
-		// leaking item title/key through the notification and giving the
-		// actor a harassment channel.
+		// Visibility prevents notifications from exposing inaccessible items.
 		if !s.canUserReceiveMention(userID, params.WorkspaceID) {
 			slog.Debug("skipping mention: user lacks workspace view permission",
 				slog.String("component", "mentions"),
@@ -169,7 +161,6 @@ func (s *MentionService) ProcessMentions(params ProcessMentionsParams) error {
 		currentMentions[userID] = displayName
 	}
 
-	// Get existing mentions for this source
 	existingMentions, err := s.getExistingMentions(params.SourceType, params.SourceID)
 	if err != nil {
 		return fmt.Errorf("failed to get existing mentions: %w", err)
@@ -180,13 +171,11 @@ func (s *MentionService) ProcessMentions(params ProcessMentionsParams) error {
 		existingIDs[m.MentionedUserID] = true
 	}
 
-	// Track new mentions for notifications
 	newMentions := make([]struct {
 		userID      int
 		displayName string
 	}, 0)
 
-	// New mentions (in current but not in existing)
 	for userID, displayName := range currentMentions {
 		if !existingIDs[userID] {
 			slog.Debug("Creating new mention", slog.String("component", "mentions"), slog.Int("user_id", userID), slog.String("source_type", params.SourceType), slog.Int("source_id", params.SourceID))
@@ -212,7 +201,6 @@ func (s *MentionService) ProcessMentions(params ProcessMentionsParams) error {
 		}
 	}
 
-	// Removed mentions (in existing but not in current)
 	for _, existingMention := range existingMentions {
 		if _, exists := currentMentions[existingMention.MentionedUserID]; !exists {
 			slog.Debug("Removing mention", slog.String("component", "mentions"), slog.Int("mention_id", existingMention.ID), slog.Int("user_id", existingMention.MentionedUserID))
@@ -224,7 +212,6 @@ func (s *MentionService) ProcessMentions(params ProcessMentionsParams) error {
 		}
 	}
 
-	// Emit notifications for new mentions (skip for personal workspaces)
 	isPersonal, err := s.isPersonalWorkspace(params.WorkspaceID)
 	if err != nil {
 		slog.Error("Error checking if workspace is personal", slog.String("component", "mentions"), slog.Any("error", err))
@@ -328,14 +315,12 @@ func (s *MentionService) emitMentionNotification(params ProcessMentionsParams, m
 		return
 	}
 
-	// Get item details for rich notification
 	item, err := repository.NewItemRepository(s.db).FindByIDWithDetails(params.ItemID)
 	if err != nil {
 		slog.Error("Error fetching item details", slog.String("component", "mentions"), slog.Any("error", err))
 		return
 	}
 
-	// Get actor name
 	var actorFirstName, actorLastName string
 	err = s.db.QueryRow(`
 		SELECT first_name, last_name FROM users WHERE id = ?
@@ -348,7 +333,6 @@ func (s *MentionService) emitMentionNotification(params ProcessMentionsParams, m
 
 	itemKey := fmt.Sprintf("%s-%d", item.WorkspaceKey, item.WorkspaceItemNumber)
 
-	// Determine source type description
 	var sourceTypeDesc string
 	switch params.SourceType {
 	case "comment":
@@ -359,12 +343,8 @@ func (s *MentionService) emitMentionNotification(params ProcessMentionsParams, m
 		sourceTypeDesc = "content"
 	}
 
-	// Mentions intentionally bypass the configurable event→rule→recipient
-	// pipeline. The mentioned user is always notified (the workspace-visibility
-	// gate above is the only filter), and the email batch picks the
-	// notification up automatically because it scans every user's unread set.
-	// `NotifyUsers` is the resolved-recipient path that exists for exactly
-	// this case.
+	// Mentions notify the resolved recipient directly after the visibility gate;
+	// the rule-based pipeline cannot express this exact-recipient contract.
 	title := "You were mentioned"
 	message := fmt.Sprintf("%s mentioned you in %s on %s (%s)",
 		actorName, sourceTypeDesc, item.Title, itemKey)
@@ -384,7 +364,6 @@ func (s *MentionService) emitMentionNotification(params ProcessMentionsParams, m
 			slog.Any("error", err))
 	}
 
-	// Mark notification as sent
 	_, err = s.db.ExecWrite(`
 		UPDATE mentions
 		SET notification_sent = true

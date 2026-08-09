@@ -459,46 +459,60 @@ func generateDefaultAliases(statuses []Status) map[string]string {
 
 func updateAgentsFiles() {
 	files := []struct {
-		name  string
-		read  func() ([]byte, error)
-		write func([]byte) error
+		name   string
+		update func(string) (string, bool)
 	}{
 		{
 			name: "AGENTS.md",
-			read: func() ([]byte, error) {
-				return os.ReadFile("AGENTS.md")
-			},
-			write: func(content []byte) error {
-				return os.WriteFile("AGENTS.md", content, 0o600)
+			update: func(content string) (string, bool) {
+				if strings.Contains(content, "WINDSHIFT.md") {
+					return content, false
+				}
+				return content + "\n\n## Windshift Integration\n\nRead [WINDSHIFT.md](./WINDSHIFT.md) before using the `ws` CLI.\n", true
 			},
 		},
 		{
 			name: "CLAUDE.md",
-			read: func() ([]byte, error) {
-				return os.ReadFile("CLAUDE.md")
-			},
-			write: func(content []byte) error {
-				return os.WriteFile("CLAUDE.md", content, 0o600)
+			update: func(content string) (string, bool) {
+				imports := make([]string, 0, 2)
+				if !containsLine(content, "@AGENTS.md") {
+					imports = append(imports, "@AGENTS.md")
+				}
+				if !containsLine(content, "@WINDSHIFT.md") {
+					imports = append(imports, "@WINDSHIFT.md")
+				}
+				if len(imports) == 0 {
+					return content, false
+				}
+				return content + "\n\n" + strings.Join(imports, "\n") + "\n", true
 			},
 		},
 	}
-	addition := []byte("\n\n## Windshift Integration\n\nSee [WINDSHIFT.md](./WINDSHIFT.md) for task management commands.\n")
 
 	for _, file := range files {
-		content, err := file.read()
+		content, err := os.ReadFile(file.name)
 		if err != nil {
-			// File doesn't exist, skip.
 			continue
 		}
-		if strings.Contains(string(content), "WINDSHIFT.md") {
+		updated, changed := file.update(string(content))
+		if !changed {
 			continue
 		}
-		if err := file.write(append(content, addition...)); err != nil {
+		if err := os.WriteFile(file.name, []byte(updated), 0o600); err != nil {
 			_, _ = fmt.Fprintf(stdout, "Warning: Could not update %s: %s\n", file.name, err)
 			continue
 		}
-		_, _ = fmt.Fprintf(stdout, "Updated %s with Windshift reference\n", file.name)
+		_, _ = fmt.Fprintf(stdout, "Updated %s with agent context\n", file.name)
 	}
+}
+
+func containsLine(content, want string) bool {
+	for line := range strings.SplitSeq(content, "\n") {
+		if strings.TrimSpace(line) == want {
+			return true
+		}
+	}
+	return false
 }
 
 func init() {

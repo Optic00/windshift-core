@@ -116,22 +116,19 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate input using validator
+	// Validate credentials before applying the shared login rate limits.
 	if err := utils.Validate(req); err != nil {
 		respondValidationError(w, r, err.Error())
 		return
 	}
 
-	// Get client IP for rate limiting
 	ipAddress := h.getClientIP(r)
 
-	// Check if IP is locked out due to failed attempts
 	if locked, duration := h.rateLimiter.IsLockedOut(ipAddress); locked {
 		respondTooManyRequests(w, r, fmt.Sprintf("Too many failed login attempts. Please try again in %s", middleware.FormatLockoutDuration(duration)))
 		return
 	}
 
-	// Find user by email or username
 	user, err := h.findUserByEmailOrUsername(req.EmailOrUsername)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
@@ -149,24 +146,19 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify password
 	if err = bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
-		// Record failed attempt
 		h.rateLimiter.RecordFailedLogin(ipAddress)
 		h.logFailedLogin(r, req.EmailOrUsername)
 		respondUnauthorized(w, r)
 		return
 	}
 
-	// Clear failed attempts on successful password validation
 	h.rateLimiter.RecordSuccessfulLogin(ipAddress)
 
-	// Populate system admin status early (needed for policy checks)
 	if err = h.populateIsSystemAdmin(user); err != nil {
 		slog.Warn("failed to populate system admin status", slog.String("component", "auth"), slog.Any("error", err))
 	}
 
-	// Check auth policy (if handler is available)
 	var enrollmentRequired, passkeyRequired bool
 	if h.authPolicyHandler != nil && !h.authPolicyHandler.IsPreviewMode() {
 		policy := h.authPolicyHandler.GetCurrentPolicy()
@@ -246,7 +238,6 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Create session with enrollment flag if needed
 	session, err := h.sessionManager.CreateSession(user.ID, ipAddress, r.UserAgent(), req.RememberMe)
 	if err != nil {
 		respondInternalError(w, r, err)
@@ -277,7 +268,6 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update user's full name for response
 	user.FullName = fmt.Sprintf("%s %s", user.FirstName, user.LastName)
 	user.PasswordHash = "" // Never send password hash
 
@@ -305,10 +295,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 // Logout handles user logout
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
-	// Get session token
 	token, err := h.sessionManager.GetSessionFromRequest(r)
 	if err != nil {
-		// Even if no session found, clear cookie and return success
 		h.sessionManager.ClearSessionCookie(w, r)
 		respondJSONOK(w, map[string]interface{}{
 			"success": true,
@@ -317,13 +305,11 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Invalidate session
 	if err := h.sessionManager.DeleteSession(token); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
 
-	// Clear session cookie
 	h.sessionManager.ClearSessionCookie(w, r)
 
 	session, _ := r.Context().Value(middleware.ContextKeySession).(*auth.Session)
@@ -339,30 +325,25 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 
 // GetCurrentUser returns information about the currently authenticated user
 func (h *AuthHandler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
-	// Get session token from request (since auth middleware skips /api/auth/ paths)
 	token, err := h.sessionManager.GetSessionFromRequest(r)
 	if err != nil {
 		respondUnauthorized(w, r)
 		return
 	}
 
-	// Get client IP for validation
 	clientIP := h.getClientIP(r)
 
-	// Validate session
 	session, err := h.sessionManager.ValidateSessionContext(r.Context(), token, clientIP)
 	if err != nil {
 		respondUnauthorized(w, r)
 		return
 	}
 
-	// Populate system admin status (cached for frontend)
 	if err := h.populateIsSystemAdmin(session.User); err != nil {
 		slog.Warn("failed to populate system admin status", slog.String("component", "auth"), slog.Any("error", err))
 		// Continue anyway - user info will be returned, just without admin flag
 	}
 
-	// Prepare response
 	sessionInfo := &SessionInfo{
 		ExpiresAt:          session.ExpiresAt,
 		IPAddress:          session.IPAddress,
@@ -397,13 +378,11 @@ func (h *AuthHandler) RefreshSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Refresh session
 	if err := h.sessionManager.RefreshSession(token, req.RememberMe); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
 
-	// Update cookie with new expiration
 	if err := h.sessionManager.SetSessionCookie(w, r, token, req.RememberMe); err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -416,20 +395,17 @@ func (h *AuthHandler) RefreshSession(w http.ResponseWriter, r *http.Request) {
 
 // LogoutAll invalidates all sessions for the current user
 func (h *AuthHandler) LogoutAll(w http.ResponseWriter, r *http.Request) {
-	// Get session from context
 	session, ok := r.Context().Value(middleware.ContextKeySession).(*auth.Session)
 	if !ok || session == nil {
 		respondUnauthorized(w, r)
 		return
 	}
 
-	// Invalidate all user sessions
 	if err := h.sessionManager.DeleteAllUserSessions(session.UserID); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
 
-	// Clear current session cookie
 	h.sessionManager.ClearSessionCookie(w, r)
 
 	respondJSONOK(w, map[string]interface{}{
@@ -488,7 +464,6 @@ func (h *AuthHandler) userHasPasskey(userID int) bool {
 
 // ChangePassword allows authenticated users to change their password
 func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
-	// Get session from context
 	session, ok := r.Context().Value(middleware.ContextKeySession).(*auth.Session)
 	if !ok || session == nil {
 		respondUnauthorized(w, r)
@@ -500,33 +475,28 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate input using validator
 	if err := utils.Validate(req); err != nil {
 		respondValidationError(w, r, err.Error())
 		return
 	}
 
-	// Get current user data to verify current password
 	user, err := h.findUserByEmailOrUsername(session.User.Email)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
 
-	// Verify current password
 	if err = bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.CurrentPassword)); err != nil {
 		respondUnauthorized(w, r)
 		return
 	}
 
-	// Hash new password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
 
-	// Update password in database
 	if err = h.userRepo.SetPassword(session.UserID, string(hashedPassword), false); err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -535,12 +505,9 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 
 	h.auditor.Log(r, &models.User{ID: session.UserID}, logger.ActionPasswordChange, logger.ResourceUser, nil, "")
 
-	// Optionally logout all other sessions
 	if req.LogoutAll {
-		// Delete all sessions for this user
 		_ = h.sessionManager.DeleteAllUserSessions(session.UserID)
 
-		// Recreate current session
 		newSession, err := h.sessionManager.CreateSession(
 			session.UserID,
 			h.getClientIP(r),

@@ -152,21 +152,19 @@ func New(cfg Config) (*Server, error) {
 
 // initialize sets up all services and handlers.
 func (s *Server) initialize() error {
-	// FIXME(human-review): This 1k+ line method wires database, services, routes,
-	// schedulers, plugins, and shutdown state. Split into focused builders plus a
-	// scheduler/lifecycle registry so start/stop wiring cannot drift silently.
+	// FIXME: split initialization into focused builders and lifecycle registries.
 	cfg := s.config
 	utils.SetSkipTLSVerify(cfg.OutboundTLS.SkipVerify)
 	if cfg.OutboundTLS.SkipVerify {
 		slog.Warn("outbound TLS certificate verification is disabled; self-signed certificates will be accepted without server identity verification")
 	}
 
-	// Suppress all logging in silent mode (for testing)
+	// Tests can suppress startup and request logging.
 	if cfg.SilentMode {
 		logger.SetSilent(true)
 	}
 
-	// Determine which database to use
+	// Open the configured database backend.
 	var err error
 	if cfg.DB.PostgresConn != "" {
 		slog.Info("connecting to PostgreSQL database")
@@ -224,13 +222,11 @@ func (s *Server) initialize() error {
 		return fmt.Errorf("database startup refused: %w", err)
 	}
 
-	// Seed built-in email templates (idempotent). Lives outside Initialize
-	// so the database layer doesn't depend on the email domain.
+	// Seed domain defaults outside database initialization.
 	if err = emailutil.SeedTemplates(s.db); err != nil {
 		slog.Warn("failed to seed default email templates", "error", err)
 	}
 
-	// Ensure default notification settings exist
 	if err = repository.NewNotificationSettingsRepository(s.db).EnsureDefault(); err != nil {
 		slog.Warn("failed to ensure notification settings", "error", err)
 	}
@@ -239,13 +235,11 @@ func (s *Server) initialize() error {
 		s.recoverUser(cfg.RecoverUser)
 	}
 
-	// Determine setup status
 	setupCompleted, err := checkSetupStatusWithRetry(s.db, 5, time.Second)
 	if err != nil {
 		return fmt.Errorf("failed to determine setup status: %w", err)
 	}
 
-	// Initialize permission service
 	permService, err := services.NewPermissionService(s.db, services.PermissionCacheConfig{
 		TTL:          15 * time.Minute,
 		MaxCacheSize: s.memoryBudget.PermissionCacheMB,
@@ -260,7 +254,6 @@ func (s *Server) initialize() error {
 	channelService := services.NewChannelService(s.db, permService)
 	s.channelService = channelService
 
-	// Initialize activity tracker
 	activityConfig := services.DefaultActivityTrackerConfig()
 	activityConfig.MaxCacheSize = s.memoryBudget.ActivityCacheMB
 	s.activityTracker, err = services.NewActivityTracker(s.db, activityConfig)
@@ -268,23 +261,18 @@ func (s *Server) initialize() error {
 		return fmt.Errorf("failed to initialize activity tracker: %w", err)
 	}
 
-	// Start activity cleanup scheduler
 	s.cleanupTicker = time.NewTicker(24 * time.Hour)
 	go s.runActivityCleanup()
 
-	// Determine HTTPS mode
 	enableHTTPS := cfg.TLSCertPath != "" && cfg.TLSKeyPath != ""
 
-	// Parse additional proxies
 	var additionalProxyList []string
 	if cfg.AdditionalProxies != "" {
 		additionalProxyList = strings.Split(cfg.AdditionalProxies, ",")
 	}
 
-	// Create IP extractor
 	ipExtractor := utils.NewIPExtractor(cfg.UseProxy, additionalProxyList)
 
-	// Authentication management
 	primarySessionCacheMB, _ := config.SplitSSHCacheBudget(s.memoryBudget.SessionCacheMB, cfg.SSH.Enabled)
 	sessionManager := auth.NewSessionManagerWithValidationCacheTTL(
 		s.db,
@@ -296,7 +284,6 @@ func (s *Server) initialize() error {
 		primarySessionCacheMB,
 	)
 
-	// Determine effective port for CORS
 	effectivePort := cfg.Port
 	if cfg.AllowedPort != "" {
 		effectivePort = cfg.AllowedPort
