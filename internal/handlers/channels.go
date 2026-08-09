@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"log/slog"
 	"net"
@@ -834,47 +835,7 @@ func (h *ChannelHandler) testSMTPChannelWithEmail(channel models.Channel, testEm
 
 	// Create a test email
 	subject := "Windshift SMTP Test Email"
-	htmlBody := `<!DOCTYPE html>
-<html>
-<head>
-	<meta charset="UTF-8">
-	<title>Windshift SMTP Test</title>
-	<style>
-		body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5; }
-		.container { max-width: 600px; margin: 0 auto; background-color: white; border-radius: 8px; padding: 24px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-		.header { text-align: center; color: #2563eb; margin-bottom: 24px; }
-		.content { color: #374151; line-height: 1.6; }
-		.success { background-color: #dcfce7; border: 1px solid #16a34a; color: #15803d; padding: 12px; border-radius: 6px; margin: 16px 0; }
-	</style>
-</head>
-<body>
-	<div class="container">
-		<div class="header">
-			<h1>Windshift SMTP Test</h1>
-		</div>
-		<div class="content">
-			<div class="success">
-				<strong>Success!</strong> Your SMTP configuration is working correctly.
-			</div>
-			<p>This test email was sent from Windshift to verify your SMTP settings.</p>
-			<p><strong>Channel:</strong> ` + channel.Name + `</p>
-			<p><strong>Test Time:</strong> ` + time.Now().Format("January 2, 2006 at 3:04 PM MST") + `</p>
-			<p>If you received this email, your SMTP configuration is ready to send notifications.</p>
-		</div>
-	</div>
-</body>
-</html>`
-
-	textBody := `Windshift SMTP Test Email
-
-Success! Your SMTP configuration is working correctly.
-
-This test email was sent from Windshift to verify your SMTP settings.
-
-Channel: ` + channel.Name + `
-Test Time: ` + time.Now().Format("January 2, 2006 at 3:04 PM MST") + `
-
-If you received this email, your SMTP configuration is ready to send notifications.`
+	htmlBody, textBody := buildSMTPTestEmailBodies(channel.Name, time.Now())
 
 	// Check if SMTP sender is configured
 	if h.smtpSender == nil {
@@ -901,6 +862,53 @@ If you received this email, your SMTP configuration is ready to send notificatio
 	}
 
 	return true, "Test email sent successfully to " + testEmail
+}
+
+func buildSMTPTestEmailBodies(channelName string, testTime time.Time) (htmlBody, textBody string) {
+	htmlChannelName := html.EscapeString(channelName)
+	htmlBody = `<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="UTF-8">
+	<title>Windshift SMTP Test</title>
+	<style>
+		body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5; }
+		.container { max-width: 600px; margin: 0 auto; background-color: white; border-radius: 8px; padding: 24px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+		.header { text-align: center; color: #2563eb; margin-bottom: 24px; }
+		.content { color: #374151; line-height: 1.6; }
+		.success { background-color: #dcfce7; border: 1px solid #16a34a; color: #15803d; padding: 12px; border-radius: 6px; margin: 16px 0; }
+	</style>
+</head>
+<body>
+	<div class="container">
+		<div class="header">
+			<h1>Windshift SMTP Test</h1>
+		</div>
+		<div class="content">
+			<div class="success">
+				<strong>Success!</strong> Your SMTP configuration is working correctly.
+			</div>
+			<p>This test email was sent from Windshift to verify your SMTP settings.</p>
+			<p><strong>Channel:</strong> ` + htmlChannelName + `</p>
+			<p><strong>Test Time:</strong> ` + testTime.Format("January 2, 2006 at 3:04 PM MST") + `</p>
+			<p>If you received this email, your SMTP configuration is ready to send notifications.</p>
+		</div>
+	</div>
+</body>
+</html>`
+
+	textBody = `Windshift SMTP Test Email
+
+Success! Your SMTP configuration is working correctly.
+
+This test email was sent from Windshift to verify your SMTP settings.
+
+Channel: ` + channelName + `
+Test Time: ` + testTime.Format("January 2, 2006 at 3:04 PM MST") + `
+
+If you received this email, your SMTP configuration is ready to send notifications.`
+
+	return htmlBody, textBody
 }
 
 // testSMTPConfig tests SMTP configuration directly. Dial goes through
