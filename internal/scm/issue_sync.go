@@ -160,7 +160,6 @@ func (s *IssueSyncService) syncConfig(ctx context.Context, provider IssueProvide
 	}
 	owner, repo := parts[0], parts[1]
 
-	// Parse filter labels
 	var filterLabels []string
 	if config.FilterLabels != "" && config.FilterLabels != "[]" {
 		_ = json.Unmarshal([]byte(config.FilterLabels), &filterLabels)
@@ -226,7 +225,6 @@ func (s *IssueSyncService) syncConfig(ctx context.Context, provider IssueProvide
 
 // syncIssue syncs a single GitHub issue to a Windshift item.
 func (s *IssueSyncService) syncIssue(ctx context.Context, provider IssueProvider, config *models.IssueSyncConfig, owner, repo string, issue *Issue) error {
-	// Check if we already have this issue mapped
 	var syncItemID int
 	var itemID int
 	var lastGHUpdated sql.NullTime
@@ -238,13 +236,10 @@ func (s *IssueSyncService) syncIssue(ctx context.Context, provider IssueProvider
 	).Scan(&syncItemID, &itemID, &lastGHUpdated, &syncLock)
 
 	if errors.Is(err, sql.ErrNoRows) {
-		// New issue — create Windshift item
 		if err := s.createItemFromIssue(ctx, config, issue); err != nil {
 			return err
 		}
-		// After creating the item, sync comments if enabled
 		if config.SyncComments {
-			// Look up the newly created sync item
 			var newSyncItemID, newItemID int
 			if lookupErr := s.db.QueryRowContext(ctx,
 				"SELECT id, item_id FROM issue_sync_items WHERE issue_sync_config_id = ? AND github_issue_number = ?",
@@ -268,21 +263,18 @@ func (s *IssueSyncService) syncIssue(ctx context.Context, provider IssueProvider
 		return nil
 	}
 
-	// Check if GitHub issue has been updated since last sync
 	if lastGHUpdated.Valid && !issue.UpdatedAt.After(lastGHUpdated.Time) {
-		// Even if issue hasn't changed, still sync comments (they update independently)
+		// Comments have their own update cadence.
 		if config.SyncComments {
 			s.syncComments(ctx, provider, owner, repo, issue.Number, syncItemID, itemID)
 		}
 		return nil
 	}
 
-	// Update existing item
 	if err := s.updateItemFromIssue(ctx, config, issue, itemID, syncItemID); err != nil {
 		return err
 	}
 
-	// Sync comments if enabled
 	if config.SyncComments {
 		s.syncComments(ctx, provider, owner, repo, issue.Number, syncItemID, itemID)
 	}
@@ -292,13 +284,10 @@ func (s *IssueSyncService) syncIssue(ctx context.Context, provider IssueProvider
 
 // createItemFromIssue creates a new Windshift item from a GitHub issue.
 func (s *IssueSyncService) createItemFromIssue(ctx context.Context, config *models.IssueSyncConfig, issue *Issue) error {
-	// Resolve status
 	statusID := s.resolveStatusID(config, issue.State)
 
-	// Resolve assignee
 	assigneeID := s.resolveAssigneeID(config, issue)
 
-	// Resolve milestone
 	milestoneID := s.resolveMilestoneID(config, issue)
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -307,7 +296,6 @@ func (s *IssueSyncService) createItemFromIssue(ctx context.Context, config *mode
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Get next workspace item number
 	nextNum, err := s.itemRepo.GetNextWorkspaceItemNumber(tx, config.WorkspaceID)
 	if err != nil {
 		return fmt.Errorf("get next item number: %w", err)
@@ -338,7 +326,6 @@ func (s *IssueSyncService) createItemFromIssue(ctx context.Context, config *mode
 		}
 	}
 
-	// Create sync item mapping
 	now := time.Now()
 	_, err = tx.Exec(`
 		INSERT INTO issue_sync_items (
@@ -353,7 +340,7 @@ func (s *IssueSyncService) createItemFromIssue(ctx context.Context, config *mode
 		return fmt.Errorf("insert sync item: %w", err)
 	}
 
-	// Sync labels inside the transaction so item + labels are atomic
+	// Keep item, labels, and sync metadata atomic.
 	s.syncLabels(ctx, tx, config, issue, itemID)
 
 	if err := tx.Commit(); err != nil {
@@ -404,13 +391,11 @@ func (s *IssueSyncService) updateItemFromIssue(ctx context.Context, config *mode
 		}
 	}
 
-	// Update sync tracking
 	now := time.Now()
 	_, _ = tx.ExecContext(ctx,
 		"UPDATE issue_sync_items SET last_synced_at = ?, last_github_updated_at = ?, updated_at = ? WHERE id = ?",
 		now, issue.UpdatedAt, now, syncItemID)
 
-	// Sync labels inside the transaction
 	s.syncLabels(ctx, tx, config, issue, itemID)
 
 	if err := tx.Commit(); err != nil {
@@ -429,7 +414,6 @@ func (s *IssueSyncService) updateItemFromIssue(ctx context.Context, config *mode
 
 // PushStatusToGitHub pushes a Windshift status change back to GitHub.
 func (s *IssueSyncService) PushStatusToGitHub(ctx context.Context, itemID, newStatusID int) {
-	// Look up sync item
 	var syncItemID int
 	var configID int
 	var issueNumber int
@@ -453,7 +437,6 @@ func (s *IssueSyncService) PushStatusToGitHub(ctx context.Context, itemID, newSt
 		return
 	}
 
-	// Parse reverse status mapping
 	var statusMap map[string]string
 	if err := json.Unmarshal([]byte(reverseMapping), &statusMap); err != nil {
 		slog.Error("parse reverse status mapping", "config_id", configID, "error", err)
@@ -506,7 +489,6 @@ func (s *IssueSyncService) PushStatusToGitHub(ctx context.Context, itemID, newSt
 
 // PushCommentToGitHub pushes a Windshift comment to a linked GitHub issue.
 func (s *IssueSyncService) PushCommentToGitHub(ctx context.Context, itemID, commentID, authorID int, commentBody string) {
-	// Look up author display name
 	if s.userService != nil {
 		if user, err := s.userService.GetByID(authorID); err == nil {
 			authorName := strings.TrimSpace(user.FullName)
@@ -560,7 +542,6 @@ func (s *IssueSyncService) PushCommentToGitHub(ctx context.Context, itemID, comm
 		return
 	}
 
-	// Track the comment mapping
 	now := time.Now()
 	_, _ = s.db.ExecWriteContext(ctx, `
 		INSERT INTO issue_sync_comments (issue_sync_item_id, comment_id, github_comment_id, github_updated_at, created_at, updated_at)
@@ -570,7 +551,6 @@ func (s *IssueSyncService) PushCommentToGitHub(ctx context.Context, itemID, comm
 
 // PushCommentUpdateToGitHub pushes a Windshift comment edit to the linked GitHub comment.
 func (s *IssueSyncService) PushCommentUpdateToGitHub(ctx context.Context, commentID, authorID int, newBody string) {
-	// Look up the GitHub comment ID and repo info via the tracking table
 	var ghCommentID int64
 	var repoName string
 	var connectionID int
@@ -590,7 +570,6 @@ func (s *IssueSyncService) PushCommentUpdateToGitHub(ctx context.Context, commen
 		return
 	}
 
-	// Add author prefix
 	if s.userService != nil {
 		if user, err := s.userService.GetByID(authorID); err == nil {
 			authorName := strings.TrimSpace(user.FullName)
@@ -627,7 +606,7 @@ func (s *IssueSyncService) PushCommentUpdateToGitHub(ctx context.Context, commen
 
 // syncComments pulls GitHub issue comments into Windshift.
 func (s *IssueSyncService) syncComments(ctx context.Context, provider IssueProvider, owner, repo string, issueNumber, syncItemID, itemID int) {
-	// API call stays outside the transaction to avoid holding a write lock
+	// Fetch remotely before opening the transaction.
 	comments, err := provider.ListIssueComments(ctx, owner, repo, issueNumber)
 	if err != nil {
 		slog.Error("list issue comments", "issue_number", issueNumber, "error", err)
@@ -647,12 +626,10 @@ func (s *IssueSyncService) syncComments(ctx context.Context, provider IssueProvi
 	commentSvc := services.NewCommentService(s.db)
 	commentsChanged := false
 	for _, ghComment := range comments {
-		// Skip comments that were pushed from Windshift (contain our attribution marker)
 		if strings.Contains(ghComment.Body, "commented in Windshift:") && strings.HasPrefix(ghComment.Body, "**") {
 			continue
 		}
 
-		// Check if we already track this GitHub comment
 		var trackingID int
 		var existingCommentID sql.NullInt64
 		var lastGHUpdated sql.NullTime
@@ -663,7 +640,6 @@ func (s *IssueSyncService) syncComments(ctx context.Context, provider IssueProvi
 		).Scan(&trackingID, &existingCommentID, &lastGHUpdated)
 
 		if errors.Is(err, sql.ErrNoRows) {
-			// New comment from GitHub — create in Windshift
 			body := fmt.Sprintf("**@%s** commented on GitHub:\n\n%s", ghComment.User.Username, ghComment.Body)
 			now := time.Now()
 
@@ -673,7 +649,6 @@ func (s *IssueSyncService) syncComments(ctx context.Context, provider IssueProvi
 				continue
 			}
 
-			// Create tracking row
 			_, _ = tx.ExecContext(ctx, `
 				INSERT INTO issue_sync_comments (issue_sync_item_id, comment_id, github_comment_id, github_updated_at, created_at, updated_at)
 				VALUES (?, ?, ?, ?, ?, ?)
@@ -687,7 +662,6 @@ func (s *IssueSyncService) syncComments(ctx context.Context, provider IssueProvi
 			continue
 		}
 
-		// Existing tracked comment — check if GitHub version is newer
 		if !existingCommentID.Valid {
 			continue // Windshift comment was deleted, skip
 		}
@@ -695,7 +669,6 @@ func (s *IssueSyncService) syncComments(ctx context.Context, provider IssueProvi
 			continue // No changes
 		}
 
-		// Update the Windshift comment content
 		body := fmt.Sprintf("**@%s** commented on GitHub:\n\n%s", ghComment.User.Username, ghComment.Body)
 		now := time.Now()
 		_ = commentSvc.UpdateContentInTx(ctx, tx, int(existingCommentID.Int64), body, now)

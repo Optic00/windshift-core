@@ -307,10 +307,8 @@ func (r *ItemRepository) FindAllWithDetailsPageContext(ctx context.Context, para
 		pageQueryer = pageTx
 	}
 
-	// Build ORDER BY clause
 	orderByClause := r.buildOrderByClause(params.SortBy, params.SortAsc)
 
-	// Build pagination
 	limit := params.Pagination.Limit
 	if limit <= 0 {
 		limit = 50
@@ -531,7 +529,6 @@ func (r *ItemRepository) SearchContext(ctx context.Context, query string, worksp
 		return []models.Item{}, 0, nil
 	}
 
-	// Detect workspace key pattern (e.g. "OK-40")
 	filters := ItemFilters{}
 	parts := strings.Split(strings.ToUpper(query), "-")
 	isKeyPattern := len(parts) == 2 && parts[0] != "" && parts[1] != ""
@@ -557,7 +554,6 @@ func (r *ItemRepository) SearchContext(ctx context.Context, query string, worksp
 func (r *ItemRepository) buildWhereClause(params ItemListParams) (whereClause string, args []interface{}) {
 	whereClause = "WHERE 1=1"
 
-	// Filter by accessible workspaces
 	if len(params.WorkspaceIDs) > 0 {
 		placeholders := make([]string, len(params.WorkspaceIDs))
 		for i, id := range params.WorkspaceIDs {
@@ -567,13 +563,11 @@ func (r *ItemRepository) buildWhereClause(params ItemListParams) (whereClause st
 		whereClause += " AND i.workspace_id IN (" + strings.Join(placeholders, ",") + ")"
 	}
 
-	// Apply QL query if provided
 	if params.Filters.QLQuery != "" {
 		whereClause += " AND (" + params.Filters.QLQuery + ")"
 		args = append(args, params.Filters.QLArgs...)
 	}
 
-	// Apply individual filters
 	if params.Filters.WorkspaceID != nil {
 		whereClause += " AND i.workspace_id = ?"
 		args = append(args, *params.Filters.WorkspaceID)
@@ -619,7 +613,6 @@ func (r *ItemRepository) buildWhereClause(params ItemListParams) (whereClause st
 		args = append(args, *params.Filters.IterationID)
 	}
 
-	// Handle parent_id filter
 	if params.Filters.ParentIDIsSet {
 		if params.Filters.ParentID == nil || *params.Filters.ParentID == 0 {
 			whereClause += " AND i.parent_id IS NULL"
@@ -657,7 +650,6 @@ func (r *ItemRepository) buildWhereClause(params ItemListParams) (whereClause st
 		args = append(args, *params.Filters.CompletedSince)
 	}
 
-	// Multi-value status filter
 	if len(params.Filters.StatusIDs) > 0 {
 		placeholders := make([]string, len(params.Filters.StatusIDs))
 		for i, id := range params.Filters.StatusIDs {
@@ -667,7 +659,6 @@ func (r *ItemRepository) buildWhereClause(params ItemListParams) (whereClause st
 		whereClause += " AND i.status_id IN (" + strings.Join(placeholders, ",") + ")"
 	}
 
-	// Multi-value negated status filter
 	if len(params.Filters.StatusIDsNot) > 0 {
 		placeholders := make([]string, len(params.Filters.StatusIDsNot))
 		for i, id := range params.Filters.StatusIDsNot {
@@ -677,7 +668,6 @@ func (r *ItemRepository) buildWhereClause(params ItemListParams) (whereClause st
 		whereClause += " AND i.status_id NOT IN (" + strings.Join(placeholders, ",") + ")"
 	}
 
-	// Multi-value priority filter
 	if len(params.Filters.PriorityIDs) > 0 {
 		placeholders := make([]string, len(params.Filters.PriorityIDs))
 		for i, id := range params.Filters.PriorityIDs {
@@ -687,14 +677,12 @@ func (r *ItemRepository) buildWhereClause(params ItemListParams) (whereClause st
 		whereClause += " AND i.priority_id IN (" + strings.Join(placeholders, ",") + ")"
 	}
 
-	// Text search on title/description
 	if params.Filters.TextQuery != "" {
 		whereClause += " AND (LOWER(i.title) LIKE LOWER(?) OR LOWER(i.description) LIKE LOWER(?))"
 		searchPattern := "%" + params.Filters.TextQuery + "%"
 		args = append(args, searchPattern, searchPattern)
 	}
 
-	// Workspace key pattern match (e.g. "OK-40")
 	if params.Filters.ItemKeyQuery != "" {
 		parts := strings.Split(strings.ToUpper(params.Filters.ItemKeyQuery), "-")
 		if len(parts) == 2 {
@@ -705,7 +693,6 @@ func (r *ItemRepository) buildWhereClause(params ItemListParams) (whereClause st
 		}
 	}
 
-	// Filter by specific item ID
 	if params.Filters.ItemID != nil {
 		whereClause += " AND i.id = ?"
 		args = append(args, *params.Filters.ItemID)
@@ -727,7 +714,7 @@ func (r *ItemRepository) buildOrderByClause(sortBy string, sortAsc bool) string 
 		direction = "ASC"
 	}
 
-	// System field?
+	// Preserve the canonical rank order for ascending fractional indexes.
 	if sortBy == "frac_index" && sortAsc {
 		return r.defaultOrderBy()
 	}
@@ -746,8 +733,7 @@ func (r *ItemRepository) buildOrderByClause(sortBy string, sortAsc bool) string 
 		return fmt.Sprintf(" ORDER BY %s %s, i.id ASC", col, direction)
 	}
 
-	// Treat as custom field ID — look up field type for appropriate casting.
-	// Only numeric field IDs are valid custom field references (prevents SQL injection).
+	// Numeric IDs select custom fields; reject other input before building SQL.
 	if _, err := strconv.Atoi(sortBy); err != nil {
 		return r.defaultOrderBy()
 	}
@@ -758,16 +744,14 @@ func (r *ItemRepository) buildOrderByClause(sortBy string, sortAsc bool) string 
 		return r.defaultOrderBy()
 	}
 
-	// Build JSON extraction expression based on DB driver
+	// Use the JSON extraction syntax supported by the active database.
 	var expr string
 	if r.db.GetDriverName() == "postgres" {
 		expr = fmt.Sprintf("(i.custom_field_values->>'%s')", sortBy)
 	} else {
-		// SQLite
 		expr = fmt.Sprintf(`NULLIF(i.custom_field_values, '') ->> '$.%q'`, sortBy)
 	}
 
-	// Wrap in CAST for numeric types
 	if fieldType == "number" {
 		expr = fmt.Sprintf("CAST(%s AS NUMERIC)", expr)
 	}
@@ -820,7 +804,6 @@ func (r *ItemRepository) scanItemList(rows *sql.Rows) ([]models.Item, error) {
 			item.LastActiveAt = item.UpdatedAt
 		}
 
-		// Handle nullable fields
 		assignNullableInt(&item.ItemTypeID, itemTypeID)
 		assignNullableInt(&item.ParentID, parentID)
 		assignNullableInt(&item.ParentWorkspaceItemNumber, parentWorkspaceItemNumber)
@@ -872,7 +855,6 @@ func (r *ItemRepository) scanItemList(rows *sql.Rows) ([]models.Item, error) {
 			item.FracIndex = &fracIndex.String
 		}
 
-		// Parse custom field values JSON
 		if customFieldValuesJSON.Valid && customFieldValuesJSON.String != "" {
 			if err := json.Unmarshal([]byte(customFieldValuesJSON.String), &item.CustomFieldValues); err != nil {
 				item.CustomFieldValues = make(map[string]interface{})
@@ -881,7 +863,6 @@ func (r *ItemRepository) scanItemList(rows *sql.Rows) ([]models.Item, error) {
 			item.CustomFieldValues = make(map[string]interface{})
 		}
 
-		// Parse calendar data JSON
 		if calendarDataJSON.Valid && calendarDataJSON.String != "" {
 			if err := json.Unmarshal([]byte(calendarDataJSON.String), &item.CalendarData); err != nil {
 				item.CalendarData = []models.CalendarScheduleEntry{}

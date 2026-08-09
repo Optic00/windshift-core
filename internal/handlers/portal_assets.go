@@ -139,7 +139,6 @@ func (h *PortalHandler) ExecuteAssetReport(w http.ResponseWriter, r *http.Reques
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	// Find channel by portal slug
 	portalResult, err := h.findChannelByPortalSlug(ctx, slug)
 	if err != nil {
 		respondNotFound(w, r, "portal")
@@ -147,7 +146,6 @@ func (h *PortalHandler) ExecuteAssetReport(w http.ResponseWriter, r *http.Reques
 	}
 	channel := portalResult.channel
 
-	// Get the asset report
 	var report struct {
 		ID                 int
 		ChannelID          int
@@ -177,13 +175,11 @@ func (h *PortalHandler) ExecuteAssetReport(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Verify report belongs to this channel
 	if report.ChannelID != channel.ID {
 		respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Asset report not found"))
 		return
 	}
 
-	// Verify report is active
 	if !report.IsActive {
 		respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Asset report not found"))
 		return
@@ -216,13 +212,11 @@ func (h *PortalHandler) ExecuteAssetReport(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// Get portal customer ID for CQL function replacements
 	var portalCustomerID *int
 	var customerOrgID *int
 	portalCustomerID, _ = h.getPortalCustomerID(ctx, r, channel.ID)
 
 	//nolint:misspell // British spelling used in database
-	// Get organisation ID for this customer if authenticated
 	if portalCustomerID != nil {
 		customerOrgID = h.getPortalCustomerOrgID(ctx, *portalCustomerID)
 	}
@@ -347,7 +341,6 @@ func (h *PortalHandler) ExecuteAssetReport(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// Parse pagination parameters
 	page := 1
 	perPage := 25
 	if p := r.URL.Query().Get("page"); p != "" {
@@ -378,7 +371,6 @@ func (h *PortalHandler) ExecuteAssetReport(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// Build the query for assets, scoped to the report's set and optionally filtered by CQL.
 	whereClause := "a.set_id = ?"
 	queryArgs := []interface{}{report.AssetSetID}
 	if cqlSQL != "" {
@@ -488,7 +480,6 @@ func (h *PortalHandler) ExecuteAssetReport(w http.ResponseWriter, r *http.Reques
 		assets = []AssetResult{}
 	}
 
-	// Get total count honoring the same CQL filter.
 	countArgs := []interface{}{report.AssetSetID}
 	countQuery := `SELECT COUNT(*) FROM assets a WHERE a.set_id = ?`
 	if cqlSQL != "" {
@@ -500,7 +491,6 @@ func (h *PortalHandler) ExecuteAssetReport(w http.ResponseWriter, r *http.Reques
 		slog.Warn("failed to get asset count", slog.Any("error", err))
 	}
 
-	// Build response
 	response := map[string]interface{}{
 		"assets":      assets,
 		"columns":     columns,
@@ -520,7 +510,6 @@ func (h *PortalHandler) GetAssetReports(w http.ResponseWriter, r *http.Request) 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	// Find channel by portal slug
 	portalResult, err := h.findChannelByPortalSlug(ctx, slug)
 	if err != nil {
 		respondNotFound(w, r, "portal")
@@ -538,7 +527,6 @@ func (h *PortalHandler) GetAssetReports(w http.ResponseWriter, r *http.Request) 
 
 func (h *PortalHandler) loadPortalAssetReports(ctx context.Context, portalResult *channelResult, vc portalVisibilityContext) ([]models.PublicAssetReport, error) {
 	channel := portalResult.channel
-	// Query all asset reports for this channel
 	query := `
 		SELECT ar.id, ar.channel_id, ar.asset_set_id, ar.name, ar.description,
 		       ar.cql_query, ar.icon, ar.color, ar.display_order, ar.is_active,
@@ -642,7 +630,6 @@ func (h *PortalHandler) GetRequestTypeFields(w http.ResponseWriter, r *http.Requ
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	// Find channel by portal slug
 	portalResult, err := h.findChannelByPortalSlug(ctx, slug)
 	if err != nil {
 		respondNotFound(w, r, "portal")
@@ -674,7 +661,6 @@ func (h *PortalHandler) GetRequestTypeFields(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Get fields from service
 	fields, err := h.portalService.GetRequestTypeFields(ctx, requestTypeID)
 	if err != nil {
 		slog.Error("failed to get request type fields", slog.String("component", "portal"), slog.Int("request_type_id", requestTypeID), slog.Any("error", err))
@@ -693,7 +679,6 @@ func (h *PortalHandler) GetCustomFields(w http.ResponseWriter, r *http.Request) 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	// Find channel by portal slug
 	portalResult, err := h.findChannelByPortalSlug(ctx, slug)
 	if err != nil {
 		respondNotFound(w, r, "portal")

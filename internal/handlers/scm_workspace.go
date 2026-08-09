@@ -168,9 +168,7 @@ func (h *SCMWorkspaceHandler) CreateWorkspaceSCMConnection(w http.ResponseWriter
 	if !ok {
 		return
 	}
-	// Branch / item-key patterns are short identifier-shaped strings
-	// (templates like "feature/{{key}}-{{title}}" — placeholders survive
-	// PlainText / ShortIdentifier; only HTML markers get stripped).
+	// Sanitize identifier-shaped patterns while preserving supported placeholders.
 	warnings := sanitize.ApplyAllWithWarnings(
 		sanitize.Pair{Target: &req.DefaultBranchPattern, Policy: sanitize.ShortIdentifier, Label: "Default branch pattern"},
 		sanitize.Pair{Target: &req.ItemKeyPattern, Policy: sanitize.ShortIdentifier, Label: "Item key pattern"},
@@ -181,7 +179,6 @@ func (h *SCMWorkspaceHandler) CreateWorkspaceSCMConnection(w http.ResponseWriter
 		return
 	}
 
-	// Verify the provider exists and is enabled
 	providerEnabled, err := h.repo.GetProviderEnabled(req.SCMProviderID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
@@ -197,7 +194,6 @@ func (h *SCMWorkspaceHandler) CreateWorkspaceSCMConnection(w http.ResponseWriter
 		return
 	}
 
-	// Check if workspace is allowed to use this provider
 	if h.providerHandler != nil {
 		var allowed bool
 		allowed, err = h.providerHandler.IsWorkspaceAllowedForProvider(req.SCMProviderID, workspaceID)
@@ -211,13 +207,11 @@ func (h *SCMWorkspaceHandler) CreateWorkspaceSCMConnection(w http.ResponseWriter
 		}
 	}
 
-	// Get user ID from context
 	var createdBy *int
 	if userID, ok := r.Context().Value("user_id").(int); ok {
 		createdBy = &userID
 	}
 
-	// Insert the connection
 	id, err := h.repo.CreateConnection(workspaceID, req.SCMProviderID, req.DefaultBranchPattern, req.ItemKeyPattern, createdBy)
 	if err != nil {
 		slog.Error("failed to create connection", slog.String("component", "scm"), slog.Any("error", err))
@@ -225,7 +219,6 @@ func (h *SCMWorkspaceHandler) CreateWorkspaceSCMConnection(w http.ResponseWriter
 		return
 	}
 
-	// Get the created connection
 	conn, err := h.repo.GetConnectionByID(id)
 	if err != nil {
 		respondInternalError(w, r, err)
@@ -259,7 +252,6 @@ func (h *SCMWorkspaceHandler) GetWorkspaceSCMConnection(w http.ResponseWriter, r
 		return
 	}
 
-	// Verify connection belongs to this workspace
 	if conn.WorkspaceID != workspaceID {
 		respondNotFound(w, r, "connection")
 		return
@@ -285,15 +277,12 @@ func (h *SCMWorkspaceHandler) UpdateWorkspaceSCMConnection(w http.ResponseWriter
 	if !ok {
 		return
 	}
-	// Pointer fields: sanitize the underlying string if it's set (nil
-	// means "leave unchanged" — sanitize.Apply on a nil pointer is a
-	// no-op).
+	// Sanitize only supplied pointer fields; nil means leave unchanged.
 	warnings := sanitize.ApplyAllWithWarnings(
 		sanitize.Pair{Target: req.DefaultBranchPattern, Policy: sanitize.ShortIdentifier, Label: "Default branch pattern"},
 		sanitize.Pair{Target: req.ItemKeyPattern, Policy: sanitize.ShortIdentifier, Label: "Item key pattern"},
 	)
 
-	// Verify connection exists and belongs to this workspace
 	conn, err := h.repo.GetConnectionByID(connID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
@@ -309,7 +298,6 @@ func (h *SCMWorkspaceHandler) UpdateWorkspaceSCMConnection(w http.ResponseWriter
 		return
 	}
 
-	// Build update
 	enabled := conn.Enabled
 	if req.Enabled != nil {
 		enabled = *req.Enabled
@@ -333,7 +321,6 @@ func (h *SCMWorkspaceHandler) UpdateWorkspaceSCMConnection(w http.ResponseWriter
 		return
 	}
 
-	// Get updated connection
 	conn, err = h.repo.GetConnectionByID(connID)
 	if err != nil {
 		respondInternalError(w, r, err)
@@ -431,7 +418,6 @@ func (h *SCMWorkspaceHandler) ListAvailableRepositories(w http.ResponseWriter, r
 		return
 	}
 
-	// Get provider with user-level credentials (falls back to workspace/provider for PAT/GitHub App)
 	user, ok := RequireAuth(w, r)
 	if !ok {
 		return
@@ -461,7 +447,6 @@ func (h *SCMWorkspaceHandler) ListAvailableRepositories(w http.ResponseWriter, r
 		return
 	}
 
-	// Parse query params
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	if page < 1 {
 		page = 1
@@ -489,11 +474,8 @@ func (h *SCMWorkspaceHandler) ListAvailableRepositories(w http.ResponseWriter, r
 		return
 	}
 
-	// Get already linked repos to mark them (best-effort: an error leaves
-	// the linked set empty).
 	linkedMap, _ := h.repo.LinkedRepositoryExternalIDs(connID)
 
-	// Build response with linked status
 	type RepoWithStatus struct {
 		scm.Repository
 		IsLinked bool `json:"is_linked"`

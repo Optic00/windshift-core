@@ -147,9 +147,7 @@ func (h *OAuthHandler) AuthorizeInfo(w http.ResponseWriter, r *http.Request) {
 
 	client, err := h.lookupEnabledClientByClientID(clientID)
 	if err != nil {
-		// Don't leak whether the client_id exists — the user shouldn't see
-		// fingerprint-able errors here. The admin's audit log still records
-		// the failed lookup if/when we plumb it.
+		// Keep unknown-client responses indistinguishable to avoid client-ID probing.
 		respondBadRequest(w, r, "Unknown or disabled client_id")
 		return
 	}
@@ -170,10 +168,7 @@ func (h *OAuthHandler) AuthorizeInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Public clients must use PKCE. Confidential clients may use it. When PKCE
-	// is in play we require S256: `plain` (and the RFC 7636 default of `plain`
-	// when the method is omitted) exposes the verifier-equivalent challenge in
-	// the authorization request, defeating interception protection.
+	// Public clients require PKCE; S256 prevents exposing the verifier-equivalent challenge.
 	if client.ClientType == "public" && codeChallenge == "" {
 		respondBadRequest(w, r, "code_challenge is required for public clients")
 		return
@@ -257,8 +252,7 @@ func (h *OAuthHandler) AuthorizeApprove(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Enforce S256 here too — the SPA echoes the /authorize/info params back,
-	// but a caller could POST straight to /approve and bypass that check.
+	// Repeat the S256 check because callers can post directly to /approve.
 	if client.ClientType == "public" && req.CodeChallenge == "" {
 		respondBadRequest(w, r, "code_challenge is required for public clients")
 		return
@@ -270,8 +264,7 @@ func (h *OAuthHandler) AuthorizeApprove(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	// Same gate the CLI flow uses — refuses to mint a token for a user
-	// whose api_key_creation_policy is disabled.
+	// Match the CLI gate so disabled token creation cannot mint OAuth tokens.
 	if err := h.apiToken.checkCreationPolicy(user.ID); err != nil {
 		h.audit(r, user, "oauth.approve", &client.ID, client.DisplayName, false,
 			map[string]interface{}{"reason": "token_policy_disabled"})
@@ -338,9 +331,7 @@ func (h *OAuthHandler) AuthorizeDeny(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Best-effort lookup so we can reject obviously bad redirect URIs even
-	// on deny. If the client doesn't exist, return without redirecting —
-	// a malformed deny shouldn't bounce to an attacker URL.
+	// Validate the redirect before denying; never bounce an unknown client to an untrusted URL.
 	client, err := h.lookupEnabledClientByClientID(req.ClientID)
 	if err != nil {
 		respondBadRequest(w, r, "Unknown or disabled client_id")
@@ -403,18 +394,14 @@ func (h *OAuthHandler) Userinfo(w http.ResponseWriter, r *http.Request) {
 // application/x-www-form-urlencoded or application/json bodies. Two grant
 // types are supported: authorization_code and refresh_token.
 func (h *OAuthHandler) Token(w http.ResponseWriter, r *http.Request) {
-	// RFC 6749 §2.3.1 mandates that confidential clients NOT pass credentials
-	// in the URL. Reject query-string client_secret outright — it would leak
-	// into webserver/proxy access logs and browser history if a misbehaving
-	// client put it there.
+	// Reject URL credentials because logs and browser history can expose them.
 	if r.URL.Query().Get("client_secret") != "" {
 		writeOAuthTokenError(w, http.StatusBadRequest, oauthErrInvalidRequest,
 			"client_secret must not be sent in the URL — use the request body or HTTP Basic auth")
 		return
 	}
 
-	// Cap the body before parsing (form or JSON) so an oversized request can't
-	// exhaust memory/CPU on this unauthenticated endpoint.
+	// Bound the unauthenticated request body before parsing.
 	r.Body = http.MaxBytesReader(w, r.Body, oauthTokenRequestMaxBytes)
 
 	params, err := parseTokenRequest(r)
@@ -486,9 +473,7 @@ func (h *OAuthHandler) tokenAuthorizationCode(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// PKCE verifier check. Required for public clients (authenticateClient
-	// allowed an empty secret only if PKCE is in play); optional but
-	// honored for confidential clients that set a code_challenge.
+	// Validate PKCE when supplied; public clients must always provide it.
 	if authCode.CodeChallenge != "" {
 		if codeVerifier == "" {
 			writeOAuthTokenError(w, http.StatusBadRequest, oauthErrInvalidGrant,
@@ -500,8 +485,7 @@ func (h *OAuthHandler) tokenAuthorizationCode(w http.ResponseWriter, r *http.Req
 			return
 		}
 	} else if client.ClientType == "public" {
-		// Public client without PKCE. Should have been caught at /authorize
-		// but enforce here too as a safety net.
+		// Enforce the public-client requirement again at token exchange.
 		writeOAuthTokenError(w, http.StatusBadRequest, oauthErrInvalidGrant,
 			"PKCE is required for public clients")
 		return
@@ -573,10 +557,7 @@ func (h *OAuthHandler) tokenRefreshToken(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	// Replay detection — an already-revoked token presented again means the
-	// chain is compromised. Cascade-revoke everything reachable via
-	// rotated_to_id from this row, including the new tokens the attacker
-	// might already hold.
+	// A replayed refresh token compromises its whole rotation chain.
 	if row.RevokedAt.Valid {
 		if err := h.cascadeRevokeRefreshChain(r.Context(), row.ID); err != nil {
 			writeOAuthTokenError(w, http.StatusInternalServerError, oauthErrServerError,
@@ -604,8 +585,7 @@ func (h *OAuthHandler) tokenRefreshToken(w http.ResponseWriter, r *http.Request,
 
 	rotation, err := h.rotateRefreshToken(r.Context(), client, row, scopes, resource)
 	if errors.Is(err, errOAuthRefreshAlreadyRedeemed) {
-		// Another request claimed this token after our initial lookup. Treat
-		// the losing redemption as replay and revoke the complete family.
+		// A concurrent claim is also replay; revoke the complete family.
 		if revokeErr := h.cascadeRevokeRefreshChain(r.Context(), row.ID); revokeErr != nil {
 			writeOAuthTokenError(w, http.StatusInternalServerError, oauthErrServerError,
 				"failed to revoke compromised refresh-token family")
@@ -982,8 +962,7 @@ func (h *OAuthHandler) cascadeRevokeRefreshChain(ctx context.Context, startID in
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Walk the chain forward, locking each refresh row and collecting the
-	// corresponding access-token ids for expiry.
+	// Lock each row while walking forward and collect its access-token IDs.
 	var (
 		visited     = map[int]struct{}{}
 		apiTokenIDs = []int{}
@@ -997,10 +976,7 @@ func (h *OAuthHandler) cascadeRevokeRefreshChain(ctx context.Context, startID in
 		}
 		visited[current] = struct{}{}
 
-		// Lock this row before reading its successor. A concurrent redemption
-		// must update the same row to claim it, so it either loses to this
-		// revocation or commits its successor before this update returns. In
-		// the latter case the SELECT below observes and follows that successor.
+		// Lock before reading the successor so concurrent redemption cannot hide it.
 		locked, err := tx.ExecWriteContext(ctx, `
 			UPDATE oauth_refresh_tokens
 			SET revoked_at = COALESCE(revoked_at, CURRENT_TIMESTAMP)
