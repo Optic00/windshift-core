@@ -10,7 +10,7 @@
   import { capabilitiesStore } from '../stores/capabilities.svelte.js';
   import { startNotificationPoller, stopNotificationPoller } from '../stores/notifications.js';
   import { resetAuthenticatedShellState, runAuthenticatedShellBootstrap } from '../services/authenticatedShellBootstrap.js';
-  import { hydrateAuthenticatedShellUI, refreshAuthenticatedShellUI } from '../services/authenticatedShellUI.js';
+  import { hydrateAuthenticatedShellUI, hydrateCurrentWorkspaceFromSharedData, refreshAuthenticatedShellUI } from '../services/authenticatedShellUI.js';
   import { desktopBridge } from '../desktop/bridge.svelte.js';
   import { initDesktopFocusRefresh } from '../utils/desktopFocusRefresh.svelte.js';
   import { api } from '../api.js';
@@ -857,16 +857,6 @@
       if (adminUIRefreshTimer) clearTimeout(adminUIRefreshTimer);
     };
   });
-
-
-
-  async function hydrateCurrentWorkspaceFromSharedData(workspaceId) {
-    await workspaceDataStore.initialize(workspaceId);
-    const expectedId = Number.parseInt(String(workspaceId), 10);
-    if (workspaceDataStore.workspaceId !== expectedId || !workspaceDataStore.workspace) return;
-    currentWorkspace.hydrate(workspaceDataStore.workspace);
-  }
-
   // Load current workspace when route changes (only for workspace routes).
   // workspaceDataStore owns the request; currentWorkspace is hydrated from the
   // same response so the shell does not issue an identical workspace GET.

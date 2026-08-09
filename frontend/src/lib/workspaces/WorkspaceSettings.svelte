@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { api } from '../api.js';
   import { navigate } from '../router.js';
   import { workspacePermissions, workspacesStore, currentWorkspace } from '../stores';
@@ -42,19 +42,28 @@
   // attach-pickers refresh (the two are siblings on the coding-agents tab).
   let agentSkillsVersion = $state(0);
   let creatingAgentBinding = $state(false);
+  let deleteRedirectTimer = null;
 
   // Time project categories state
   let timeProjectCategories = $state([]);
   let selectedTimeProjectCategories = $state([]);
 
-  let formData = $state({
-    name: '',
-    key: '',
-    description: '',
-    active: true,
-    time_project_id: null,
-    default_view: 'board',
-    internal_comments_enabled: false
+  function blankFormData() {
+    return {
+      name: '',
+      key: '',
+      description: '',
+      active: true,
+      time_project_id: null,
+      default_view: 'board',
+      internal_comments_enabled: false
+    };
+  }
+
+  let formData = $state(blankFormData());
+
+  onDestroy(() => {
+    if (deleteRedirectTimer) clearTimeout(deleteRedirectTimer);
   });
 
   // The active admin module (registry-driven), used to render the page header.
@@ -78,6 +87,16 @@
   // Permission check for workspace admin
   const canAdmin = $derived(workspacePermissions.canAdminWorkspace(workspaceId));
 
+  // MainApp renders one WorkspaceSettings instance for every
+  // /workspaces/:id/settings/* view, so `workspaceId` changes under a mounted
+  // component whenever the user moves between two workspaces' settings. The
+  // load therefore has to follow the prop, not the mount: otherwise the form
+  // keeps showing the previously opened workspace while saveWorkspace() and
+  // deleteWorkspace() already act on the new id.
+  let moduleSettingsReady = $state(false);
+  let lastLoadedWorkspaceId = null;
+  let workspaceLoadVersion = 0;
+
   onMount(async () => {
     await moduleSettings.load();
 
@@ -87,31 +106,67 @@
       // Don't return — still load data so the component isn't stuck in loading state
     }
 
-    const loadPromises = [loadWorkspace(), loadTimeProjectCategories()];
+    moduleSettingsReady = true;
+  });
+
+  $effect(() => {
+    if (!moduleSettingsReady) return;
+    const id = workspaceId ? String(workspaceId) : null;
+    if (!id || id === lastLoadedWorkspaceId) return;
+    lastLoadedWorkspaceId = id;
+    void loadWorkspaceData();
+  });
+
+  async function loadWorkspaceData() {
+    const version = ++workspaceLoadVersion;
+    loading = true;
+    // Drop the previous workspace's state before rendering anything for the
+    // new one — a populated form or a primed delete confirmation must never
+    // outlive the workspace it was filled in for.
+    workspace = null;
+    formData = blankFormData();
+    selectedTimeProjectCategories = [];
+    showDeleteConfirm = false;
+    deleteConfirmText = '';
+
+    const loadPromises = [loadWorkspace(version), loadTimeProjectCategories()];
     if ($moduleSettings.time_tracking_enabled) {
       loadPromises.push(loadTimeProjects());
     }
 
     await Promise.all(loadPromises);
-    loading = false;
-  });
+    if (version === workspaceLoadVersion) {
+      loading = false;
+    }
+  }
 
-  async function loadWorkspace() {
+  // "Reset" discards local edits by re-reading the workspace currently shown.
+  // It must pass the live load version, never be wired up as a bare handler —
+  // loadWorkspace() would then receive the click event as its version.
+  function resetWorkspaceForm() {
+    void loadWorkspace(workspaceLoadVersion);
+  }
+
+  async function loadWorkspace(version) {
     try {
-      workspace = await api.workspaces.get(workspaceId);
-      if (workspace) {
+      const loaded = await api.workspaces.get(workspaceId);
+      // A newer workspace is already loading — its response owns the form.
+      if (version !== workspaceLoadVersion) return;
+      workspace = loaded;
+      if (loaded) {
         formData = {
-          name: workspace.name,
-          key: workspace.key || '',
-          description: workspace.description || '',
-          active: workspace.active,
-          time_project_id: workspace.time_project_id || null,
-          default_view: workspace.default_view || 'board',
-          internal_comments_enabled: workspace.internal_comments_enabled || false
+          name: loaded.name,
+          key: loaded.key || '',
+          description: loaded.description || '',
+          active: loaded.active,
+          time_project_id: loaded.time_project_id || null,
+          default_view: loaded.default_view || 'board',
+          internal_comments_enabled: loaded.internal_comments_enabled || false
         };
-        selectedTimeProjectCategories = workspace.time_project_categories || [];
+        selectedTimeProjectCategories = loaded.time_project_categories || [];
       }
     } catch (error) {
+      if (version !== workspaceLoadVersion) return;
       console.error('Failed to load workspace:', error);
     }
   }
@@ -145,25 +200,39 @@
       return;
     }
 
+    // The workspace can change under the component while the request is in
+    // flight, so pin what this save is about before awaiting. Effects then
+    // split: what the server actually changed is applied unconditionally,
+    // what describes the view is applied only if we are still on that target.
+    const targetId = workspaceId;
+    const payload = {
+      ...formData,
+      time_project_id: formData.time_project_id ? parseInt(formData.time_project_id, 10) : null,
+      time_project_categories: selectedTimeProjectCategories
+    };
+
     try {
       saving = true;
-      await api.workspaces.update(workspaceId, {
-        ...formData,
-        time_project_id: formData.time_project_id ? parseInt(formData.time_project_id, 10) : null,
-        time_project_categories: selectedTimeProjectCategories
-      });
-
-      // Update local workspace object
-      workspace = { ...workspace, ...formData };
+      await api.workspaces.update(targetId, payload);
 
       // Update stores so sidebar dropdown reflects name/description changes immediately
-      workspacesStore.updateWorkspace(workspaceId, { name: formData.name, description: formData.description });
-      currentWorkspace.patch({ name: formData.name, description: formData.description });
+      workspacesStore.updateWorkspace(targetId, {
+        name: payload.name,
+        description: payload.description
+      });
+
+      if (targetId !== workspaceId) return;
+
+      // Update local workspace object
+      workspace = { ...workspace, ...payload };
+      currentWorkspace.patch({ name: payload.name, description: payload.description });
 
       successToast(t('workspaceSettings.savedSuccessfully'));
     } catch (error) {
       console.error('Failed to save workspace:', error);
-      errorToast(t('workspaceSettings.failedToSave', { error: error.message || error }));
+      if (targetId === workspaceId) {
+        errorToast(t('workspaceSettings.failedToSave', { error: error.message || error }));
+      }
     } finally {
       saving = false;
     }
@@ -175,22 +244,35 @@
   }
 
   async function deleteWorkspace() {
-    if (deleteConfirmText !== workspace.name) {
+    // `workspace` is null while a workspace switch is loading.
+    if (!workspace || deleteConfirmText !== workspace.name) {
       errorToast(t('workspaceSettings.pleaseConfirmDeletion'));
       return;
     }
 
+    // Same fencing as saveWorkspace: the deletion is a fact about `targetId`
+    // whatever the user is looking at afterwards, but leaving the page is only
+    // right while that workspace is still the one on screen.
+    const targetId = workspaceId;
+    const targetName = workspace.name;
+
     try {
-      await api.workspaces.delete(workspaceId);
-      workspacesStore.remove(workspaceId);
+      await api.workspaces.delete(targetId);
+      workspacesStore.remove(targetId);
+
+      if (targetId !== workspaceId) return;
+
+      successToast(t('workspaceSettings.deletedSuccessfully', { name: targetName }));
       currentWorkspace.clear();
-      successToast(t('workspaceSettings.deletedSuccessfully', { name: workspace.name }));
-      setTimeout(() => {
-        navigate('/workspaces');
+      deleteRedirectTimer = setTimeout(() => {
+        deleteRedirectTimer = null;
+        if (targetId === workspaceId) navigate('/workspaces');
       }, 1000);
     } catch (error) {
       console.error('Failed to delete workspace:', error);
-      errorToast(t('workspaceSettings.failedToDelete', { error: error.message || error }));
+      if (targetId === workspaceId) {
+        errorToast(t('workspaceSettings.failedToDelete', { error: error.message || error }));
+      }
     }
   }
 
@@ -330,13 +412,15 @@
           size="medium"
           onclick={saveWorkspace}
           disabled={saving || !formData.name.trim() || !formData.key.trim()}
+          dataTestid="workspace-settings-save"
         >
           {#if saving}{t('workspaceSettings.saving')}{:else}{t('workspaceSettings.saveChanges')}{/if}
         </Button>
         <Button
           variant="secondary"
           size="medium"
-          onclick={loadWorkspace}
+          onclick={resetWorkspaceForm}
+          dataTestid="workspace-settings-reset"
         >
           {t('workspaceSettings.reset')}
         </Button>
@@ -365,13 +449,15 @@
             size="medium"
             onclick={saveWorkspace}
             disabled={saving || !formData.name.trim() || !formData.key.trim()}
+            dataTestid="workspace-settings-save"
           >
             {#if saving}{t('workspaceSettings.saving')}{:else}{t('workspaceSettings.saveChanges')}{/if}
           </Button>
           <Button
             variant="secondary"
             size="medium"
-            onclick={loadWorkspace}
+            onclick={resetWorkspaceForm}
+            dataTestid="workspace-settings-reset"
           >
             {t('workspaceSettings.reset')}
           </Button>
@@ -441,6 +527,7 @@
         {#if !showDeleteConfirm}
           <button
             onclick={() => showDeleteConfirm = true}
+            data-testid="delete-workspace-open"
             class="flex items-center gap-2 px-4 py-2 bg-red-600 text-white text-sm font-medium rounded hover:bg-red-700 transition-colors"
           >
             <Trash2 class="w-4 h-4" />
@@ -456,6 +543,7 @@
                 id="delete-confirm"
                 type="text"
                 bind:value={deleteConfirmText}
+                data-testid="delete-workspace-confirm-name"
                 class="w-full px-4 py-2 rounded border border-red-300 text-red-900 bg-white focus:outline-none focus:ring-2 focus:ring-red-500"
                 placeholder={t('workspaceSettings.typeNameHere', { name: workspace.name })}
               />
@@ -465,6 +553,7 @@
               <button
                 onclick={deleteWorkspace}
                 disabled={deleteConfirmText !== workspace.name}
+                data-testid="delete-workspace-confirm"
                 class="px-4 py-2 bg-red-600 text-white text-sm font-medium rounded hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {t('workspaceSettings.yesRemoveWorkspace')}
