@@ -21,15 +21,12 @@ func RegisterRoutes(deps restapi.Deps) {
 	tokenManager := deps.TokenManager
 	permissionService := deps.PermissionService
 
-	// Create auth middleware (with permission service for admin checks)
 	bearerAuth := middleware.NewBearerAuthWithPermissions(tokenManager, permissionService)
 
-	// Create rate limiter (1000 requests per minute)
 	rateLimiter := middleware.NewRateLimiter(1000)
 
 	// Reuse the fully wired comment service so v1 comments retain side effects.
 
-	// Initialize handlers
 	itemHandler := handlers.NewItemHandler(db, permissionService, deps.CommentService, deps.ItemCreationService)
 	itemHandler.SetItemUpdateApplicationService(deps.ItemUpdateApplicationService)
 	itemHandler.SetItemDeletionApplicationService(deps.ItemDeletionApplicationService)

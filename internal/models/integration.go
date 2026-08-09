@@ -46,10 +46,9 @@ type SCMProvider struct {
 	WorkspaceRestrictionMode     string          `json:"workspace_restriction_mode"` // 'unrestricted' or 'restricted'
 	CreatedAt                    time.Time       `json:"created_at"`
 	UpdatedAt                    time.Time       `json:"updated_at"`
-	// Computed fields for API responses
-	HasOAuthClientSecret   bool `json:"has_oauth_client_secret,omitempty"`
-	HasPAT                 bool `json:"has_pat,omitempty"`
-	HasGitHubAppPrivateKey bool `json:"has_github_app_private_key,omitempty"`
+	HasOAuthClientSecret         bool            `json:"has_oauth_client_secret,omitempty"`
+	HasPAT                       bool            `json:"has_pat,omitempty"`
+	HasGitHubAppPrivateKey       bool            `json:"has_github_app_private_key,omitempty"`
 }
 
 // SCMProviderRequest represents the API request for creating/updating an SCM provider
@@ -74,14 +73,13 @@ type SCMProviderRequest struct {
 
 // SCMProviderWorkspaceAllowlist represents a workspace allowed to use an SCM provider
 type SCMProviderWorkspaceAllowlist struct {
-	ID          int       `json:"id"`
-	ProviderID  int       `json:"provider_id"`
-	WorkspaceID int       `json:"workspace_id"`
-	CreatedAt   time.Time `json:"created_at"`
-	CreatedBy   *int      `json:"created_by,omitempty"`
-	// Joined fields for API responses
-	WorkspaceName string `json:"workspace_name,omitempty"`
-	WorkspaceKey  string `json:"workspace_key,omitempty"`
+	ID            int       `json:"id"`
+	ProviderID    int       `json:"provider_id"`
+	WorkspaceID   int       `json:"workspace_id"`
+	CreatedAt     time.Time `json:"created_at"`
+	CreatedBy     *int      `json:"created_by,omitempty"`
+	WorkspaceName string    `json:"workspace_name,omitempty"`
+	WorkspaceKey  string    `json:"workspace_key,omitempty"`
 }
 
 // SCMOAuthState represents a temporary OAuth state token
@@ -98,28 +96,25 @@ type SCMOAuthState struct {
 
 // WorkspaceSCMConnection represents a connection between a workspace and an SCM provider
 type WorkspaceSCMConnection struct {
-	ID                   int       `json:"id"`
-	WorkspaceID          int       `json:"workspace_id"`
-	SCMProviderID        int       `json:"scm_provider_id"`
-	Enabled              bool      `json:"enabled"`
-	SmartCommitsEnabled  bool      `json:"smart_commits_enabled"`
-	DefaultBranchPattern string    `json:"default_branch_pattern,omitempty"`
-	ItemKeyPattern       string    `json:"item_key_pattern,omitempty"`
-	CreatedBy            *int      `json:"created_by,omitempty"`
-	CreatedAt            time.Time `json:"created_at"`
-	UpdatedAt            time.Time `json:"updated_at"`
-	// Workspace-level credentials (encrypted)
-	OAuthAccessTokenEncrypted    string     `json:"-"`
-	OAuthRefreshTokenEncrypted   string     `json:"-"`
-	OAuthTokenExpiresAt          *time.Time `json:"oauth_token_expires_at,omitempty"`
-	PersonalAccessTokenEncrypted string     `json:"-"`
-	// Computed fields for API responses
-	HasOAuthToken bool `json:"has_oauth_token,omitempty"`
-	HasPAT        bool `json:"has_pat,omitempty"`
-	// Joined fields
-	ProviderName string          `json:"provider_name,omitempty"`
-	ProviderType SCMProviderType `json:"provider_type,omitempty"`
-	ProviderSlug string          `json:"provider_slug,omitempty"`
+	ID                           int             `json:"id"`
+	WorkspaceID                  int             `json:"workspace_id"`
+	SCMProviderID                int             `json:"scm_provider_id"`
+	Enabled                      bool            `json:"enabled"`
+	SmartCommitsEnabled          bool            `json:"smart_commits_enabled"`
+	DefaultBranchPattern         string          `json:"default_branch_pattern,omitempty"`
+	ItemKeyPattern               string          `json:"item_key_pattern,omitempty"`
+	CreatedBy                    *int            `json:"created_by,omitempty"`
+	CreatedAt                    time.Time       `json:"created_at"`
+	UpdatedAt                    time.Time       `json:"updated_at"`
+	OAuthAccessTokenEncrypted    string          `json:"-"`
+	OAuthRefreshTokenEncrypted   string          `json:"-"`
+	OAuthTokenExpiresAt          *time.Time      `json:"oauth_token_expires_at,omitempty"`
+	PersonalAccessTokenEncrypted string          `json:"-"`
+	HasOAuthToken                bool            `json:"has_oauth_token,omitempty"`
+	HasPAT                       bool            `json:"has_pat,omitempty"`
+	ProviderName                 string          `json:"provider_name,omitempty"`
+	ProviderType                 SCMProviderType `json:"provider_type,omitempty"`
+	ProviderSlug                 string          `json:"provider_slug,omitempty"`
 }
 
 // WorkspaceSCMConnectionRequest represents the API request for workspace SCM connections

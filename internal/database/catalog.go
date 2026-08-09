@@ -2,18 +2,10 @@ package database
 
 import "fmt"
 
-// Catalog entries are ported 1:1 from the legacy migrations and
-// pgMigrations slices in database.go and postgres.go. Each entry pairs
-// the SQLite and Postgres equivalents of the same logical schema change.
-// Backend-specific changes (e.g. Postgres JSONB conversions, the Postgres
-// CHECK constraints that SQLite enforces via triggers) leave the other
-// backend's SQL empty — the runner still stamps the version so both
-// backends share a single ordered catalog.
-//
-// During the porting window (PR 2a → PR 2d), the legacy migration loops
-// still run first; runPendingMigrations finds Check returns true for
-// every catalog entry on existing installs and stamps without re-running
-// the DDL. PR 2d deletes the legacy loops once parity is verified.
+// Catalog pairs the legacy SQLite and Postgres migrations in one ordered list.
+// Backend-specific entries leave the other SQL body empty while still stamping
+// the shared version. Existing installs are stamped during the legacy-loop
+// transition; new installs apply the catalog directly.
 
 // sqliteColumnCheck and pgColumnCheck build the canonical "column exists"
 // query used by virtually every column-add migration.

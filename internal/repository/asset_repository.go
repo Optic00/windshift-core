@@ -219,7 +219,6 @@ func (r *AssetRepository) ListSetsForUser(userID int, isAdmin bool) ([]models.As
 
 	var args []interface{}
 
-	// System admins see all sets, others see only permitted sets
 	if !isAdmin {
 		query += ` WHERE (
 			EXISTS (SELECT 1 FROM user_asset_set_roles WHERE set_id = ams.id AND user_id = ?)
@@ -395,7 +394,6 @@ func (r *AssetRepository) DeleteSet(setID int) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Delete all associated data in order (respecting foreign key constraints)
 	deletions := []string{
 		"DELETE FROM assets WHERE set_id = ?",
 		"DELETE FROM asset_categories WHERE set_id = ?",
@@ -481,7 +479,6 @@ func (r *AssetRepository) GetAssetSetCoreByID(setID int) (*models.AssetManagemen
 func (r *AssetRepository) GetUserSetRole(userID, setID int) (*models.AssetRole, error) {
 	var role models.AssetRole
 
-	// 1. Check direct user role (OVERRIDE - takes precedence)
 	err := r.db.QueryRow(`
 		SELECT ar.id, ar.name, ar.description, ar.is_system, ar.display_order
 		FROM user_asset_set_roles uasr
@@ -496,7 +493,6 @@ func (r *AssetRepository) GetUserSetRole(userID, setID int) (*models.AssetRole, 
 		return nil, fmt.Errorf("failed to get user role: %w", err)
 	}
 
-	// 2. Check group roles (get highest by display_order desc = most privileged)
 	err = r.db.QueryRow(`
 		SELECT ar.id, ar.name, ar.description, ar.is_system, ar.display_order
 		FROM group_asset_set_roles gasr
@@ -514,7 +510,6 @@ func (r *AssetRepository) GetUserSetRole(userID, setID int) (*models.AssetRole, 
 		return nil, fmt.Errorf("failed to get group role: %w", err)
 	}
 
-	// 3. Check everyone default (FALLBACK)
 	var roleID sql.NullInt64
 	err = r.db.QueryRow(`
 		SELECT role_id FROM asset_set_everyone_roles WHERE set_id = ?
@@ -528,7 +523,6 @@ func (r *AssetRepository) GetUserSetRole(userID, setID int) (*models.AssetRole, 
 		return nil, nil
 	}
 
-	// Fetch the everyone role details
 	err = r.db.QueryRow(`
 		SELECT id, name, description, is_system, display_order
 		FROM asset_roles WHERE id = ?
@@ -543,7 +537,6 @@ func (r *AssetRepository) GetUserSetRole(userID, setID int) (*models.AssetRole, 
 
 // RoleHasPermission checks if a role has a specific permission
 func (r *AssetRepository) RoleHasPermission(roleID int, permissionKey string) (bool, error) {
-	// Virtual admin role (-1) has all permissions
 	if roleID == -1 {
 		return true, nil
 	}
@@ -1091,7 +1084,6 @@ func (r *AssetRepository) GetAssetByID(assetID int) (*models.Asset, error) {
 		return nil, notFoundOrWrap(err, "failed to get asset")
 	}
 
-	// Handle nullable fields
 	if categoryID.Valid {
 		id := int(categoryID.Int64)
 		asset.CategoryID = &id

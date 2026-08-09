@@ -117,13 +117,11 @@ type cloudClient struct {
 // base URL. See cloudRoutingProbe for the algorithm and Atlassian's
 // rationale.
 func NewClient(cfg Config) (Client, error) {
-	// Validate and normalize the instance URL
 	baseURL := strings.TrimSuffix(cfg.InstanceURL, "/")
 	if baseURL == "" {
 		return nil, ErrInvalidURL
 	}
 
-	// Parse URL to validate it
 	u, err := url.Parse(baseURL)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidURL, err)
@@ -137,7 +135,6 @@ func NewClient(cfg Config) (Client, error) {
 		return nil, err
 	}
 
-	// Set defaults
 	timeout := cfg.Timeout
 	if timeout == 0 {
 		timeout = 30 * time.Second
@@ -158,7 +155,6 @@ func NewClient(cfg Config) (Client, error) {
 	}
 	limiter := rate.NewLimiter(rate.Limit(rateLimit), rateLimit)
 
-	// Return appropriate client based on deployment type
 	if cfg.DeploymentType == DeploymentDataCenter {
 		return &dataCenterClient{
 			baseURL:        baseURL + "/rest/api/2", // Data Center uses API v2
@@ -171,7 +167,7 @@ func NewClient(cfg Config) (Client, error) {
 		}, nil
 	}
 
-	// Cloud: probe to pick site URL vs api.atlassian.com gateway.
+	// Cloud routing is selected by the authentication probe.
 	routing := cloudRoutingProbe(baseURL, authHeader, httpClient)
 	return &cloudClient{
 		baseURL:        routing.platformBase, // /rest/api/3 already appended by probe
