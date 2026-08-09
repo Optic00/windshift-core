@@ -100,14 +100,12 @@ func (h *SCIMHandler) limitRequestBody(w http.ResponseWriter, r *http.Request) {
 
 // logSCIMAuditEvent logs a SCIM provisioning event to the audit log.
 func (h *SCIMHandler) logSCIMAuditEvent(r *http.Request, actionType, resourceType string, resourceID *int, resourceName string, details map[string]interface{}, success bool, errorMsg string) {
-	// Get SCIM token from context to identify the requester
 	scimToken := middleware.GetSCIMToken(r)
 	tokenPrefix := ""
 	if scimToken != nil {
 		tokenPrefix = scimToken.TokenPrefix
 	}
 
-	// Add token prefix to details
 	if details == nil {
 		details = make(map[string]interface{})
 	}
@@ -127,7 +125,7 @@ func (h *SCIMHandler) logSCIMAuditEvent(r *http.Request, actionType, resourceTyp
 		ErrorMessage: errorMsg,
 	}
 
-	// Fire and forget - don't block on audit logging
+	// Audit logging is asynchronous so provisioning is not delayed.
 	go h.auditor.LogEvent(event)
 }
 
@@ -374,7 +372,7 @@ func (h *SCIMHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 
 // CreateUser creates a new SCIM-managed user (POST /scim/v2/Users)
 func (h *SCIMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
-	// Security: Limit request body size to prevent memory exhaustion
+	// Bound input before decoding.
 	h.limitRequestBody(w, r)
 
 	var scimUser models.SCIMUser
@@ -388,13 +386,11 @@ func (h *SCIMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	sanitizeSCIMUser(&scimUser)
 
-	// Validate required fields
 	if scimUser.UserName == "" {
 		respondSCIMErrorMsg(w, http.StatusBadRequest, "userName is required", "invalidValue")
 		return
 	}
 
-	// Extract email from emails array or userName
 	email := scimUser.UserName
 	if len(scimUser.Emails) > 0 {
 		for _, e := range scimUser.Emails {
@@ -407,16 +403,13 @@ func (h *SCIMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Resolve active flag: default to true when omitted (SCIM spec)
 	isActive := true
 	if scimUser.Active != nil {
 		isActive = *scimUser.Active
 	}
 
-	// Check for existing user by email (adopt into SCIM if matched)
 	existingUser, err := h.repo.GetUserByEmail(email)
 	if err == nil {
-		// Adopt existing user: link to SCIM
 		username := scimUser.UserName
 		if username == "" {
 			username = existingUser.Username
@@ -446,17 +439,14 @@ func (h *SCIMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check for username collision (email didn't match, but username might)
 	if h.repo.UsernameExists(scimUser.UserName) {
 		respondSCIMErrorMsg(w, http.StatusConflict, "User with this username already exists", "uniqueness")
 		return
 	}
 
-	// Extract name components
 	firstName := scimUser.Name.GivenName
 	lastName := scimUser.Name.FamilyName
 	if firstName == "" && lastName == "" && scimUser.DisplayName != "" {
-		// Try to split displayName
 		parts := strings.SplitN(scimUser.DisplayName, " ", 2)
 		firstName = parts[0]
 		if len(parts) > 1 {
@@ -470,7 +460,6 @@ func (h *SCIMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		lastName = ""
 	}
 
-	// Insert user
 	userID, err := h.repo.CreateUser(email, scimUser.UserName, firstName, lastName, isActive, scimUser.ExternalID)
 	if err != nil {
 		slog.Error("SCIM: failed to create user", slog.Any("error", err), slog.String("email", email))
@@ -478,14 +467,12 @@ func (h *SCIMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fetch created user
 	user, err := h.repo.GetUserByID(userID)
 	if err != nil {
 		respondSCIMErrorMsg(w, http.StatusInternalServerError, "Failed to retrieve created user", "")
 		return
 	}
 
-	// Audit log: SCIM user created
 	h.logSCIMAuditEvent(r, logger.ActionSCIMUserCreate, logger.ResourceUser, &userID, email,
 		map[string]interface{}{"username": scimUser.UserName, "email": email}, true, "")
 

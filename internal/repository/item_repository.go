@@ -261,18 +261,15 @@ func scanItemDetailsRow(scanner rowScanner) (models.Item, bool, error) {
 	var dueDate, startDate, endDate sql.NullTime
 	var workspaceActive bool
 
-	// Joined data
 	var projectName, iterationName, timeProjectName, parentTitle sql.NullString
 	var parentWorkspaceItemNumber sql.NullInt64
 	var assigneeName, assigneeEmail, assigneeAvatar, creatorName, creatorEmail sql.NullString
 	var priorityName, priorityIcon, priorityColor sql.NullString
 	var statusName sql.NullString
 	var itemTypeName sql.NullString
-	// Related work item data (for personal tasks)
 	var relatedWorkItemID sql.NullInt64
 	var relatedWorkItemTitle, relatedWorkItemWorkspaceKey sql.NullString
 	var relatedWorkItemWorkspaceID, relatedWorkItemNumber sql.NullInt64
-	// Portal-specific fields
 	var creatorPortalCustomerID, channelID, requestTypeID sql.NullInt64
 
 	var storyPoints sql.NullFloat64
@@ -301,7 +298,6 @@ func scanItemDetailsRow(scanner rowScanner) (models.Item, bool, error) {
 		return models.Item{}, false, err
 	}
 
-	// Handle nullable ID fields
 	assignNullableInt(&item.ItemTypeID, itemTypeID)
 	assignNullableInt(&item.ParentID, parentID)
 	assignNullableInt(&item.StatusID, statusID)
@@ -312,7 +308,6 @@ func scanItemDetailsRow(scanner rowScanner) (models.Item, bool, error) {
 	assignNullableInt(&item.AssigneeID, assigneeID)
 	assignNullableInt(&item.CreatorID, creatorID)
 
-	// Portal-specific fields
 	assignNullableInt(&item.CreatorPortalCustomerID, creatorPortalCustomerID)
 	assignNullableInt(&item.ChannelID, channelID)
 	assignNullableInt(&item.RequestTypeID, requestTypeID)
@@ -323,7 +318,6 @@ func scanItemDetailsRow(scanner rowScanner) (models.Item, bool, error) {
 	assignNullableFloat64(&item.StoryPoints, storyPoints)
 	assignNullableInt(&item.EstimateMinutes, estimateMinutes)
 
-	// Handle nullable string fields from joins
 	assignNullableString(&item.IterationName, iterationName)
 	assignNullableString(&item.ProjectName, projectName)
 	assignNullableString(&item.TimeProjectName, timeProjectName)
@@ -340,7 +334,6 @@ func scanItemDetailsRow(scanner rowScanner) (models.Item, bool, error) {
 	assignNullableString(&item.StatusName, statusName)
 	assignNullableString(&item.ItemTypeName, itemTypeName)
 
-	// Handle related work item fields (for personal tasks)
 	assignNullableInt(&item.RelatedWorkItemID, relatedWorkItemID)
 	assignNullableString(&item.RelatedWorkItemTitle, relatedWorkItemTitle)
 	assignNullableString(&item.RelatedWorkItemWorkspaceKey, relatedWorkItemWorkspaceKey)

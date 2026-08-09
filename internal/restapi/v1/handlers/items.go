@@ -274,10 +274,8 @@ func (h *ItemHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse pagination
 	pagination := h.ParsePagination(r)
 
-	// Get accessible workspace IDs for the user
 	accessibleWorkspaceIDs, err := h.Perms.GetAccessibleWorkspaceIDs(user.ID)
 	if err != nil {
 		h.RespondError(w, r, restapi.ErrInternalError.WithDetails(map[string]string{
@@ -291,7 +289,6 @@ func (h *ItemHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build filters from query parameters
 	filters := services.ItemFilters{}
 	if wsID := r.URL.Query().Get("workspace_id"); wsID != "" {
 		if id, parseErr := strconv.Atoi(wsID); parseErr == nil {
@@ -345,7 +342,6 @@ func (h *ItemHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Use service layer for listing items
 	params := services.ItemListParams{
 		WorkspaceIDs: accessibleWorkspaceIDs,
 		Filters:      filters,
@@ -369,7 +365,6 @@ func (h *ItemHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	h.maskProjectNames(user.ID, items)
 
-	// Convert to DTOs
 	baseURL := getBaseURL(r)
 	itemResponses := dto.MapItemsToResponse(items, baseURL)
 

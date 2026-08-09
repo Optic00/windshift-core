@@ -119,10 +119,7 @@ func (s *PageService) Create(actorID int, in CreatePageInput) (*models.Page, err
 	excerpt := deriveExcerpt(content)
 	hash := contentHash(content)
 
-	// Pages always inherit on create; the permissions dialog (Phase 2)
-	// lets an admin break inheritance later. The schema default is also
-	// 1/true, so we pass true explicitly rather than relying on the column
-	// default.
+	// Creation always inherits permissions; admins can change this later.
 	inherit := true
 
 	return database.WithTxResult(s.db, func(tx database.Tx) (*models.Page, error) {

@@ -185,7 +185,6 @@ func (s *SyncService) SyncAllRepositories(ctx context.Context) error {
 
 	slog.Debug("Starting sync of all repositories", slog.String("component", "scm"))
 
-	// Get all active workspace repositories
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT
 			wr.id, wr.repository_name, wr.default_branch,
@@ -230,16 +229,11 @@ func (s *SyncService) SyncAllRepositories(ctx context.Context) error {
 
 	slog.Debug("Found active repositories to sync", slog.String("component", "scm"), slog.Int("count", len(repos)))
 
-	// Group repos by connection to minimize provider instance creation
 	connectionRepos := make(map[int][]repoInfo)
 	for _, r := range repos {
 		connectionRepos[r.ConnectionID] = append(connectionRepos[r.ConnectionID], r)
 	}
 
-	// Sync each connection's repos using resolveProvider for proper token resolution.
-	// Repos within a single connection run in parallel up to
-	// syncPerConnectionConcurrency; connections themselves are processed
-	// serially so two connections don't fight for the same DB pool slots.
 	for connectionID, connectionRepoList := range connectionRepos {
 		provider, err := s.resolveProvider(ctx, connectionID)
 		if err != nil {
@@ -337,7 +331,6 @@ func (s *SyncService) syncOAuthAgentRepositories(ctx context.Context) error {
 
 // SyncRepository syncs a specific repository by ID
 func (s *SyncService) SyncRepository(ctx context.Context, repoID int) error {
-	// Get repository info
 	var repositoryName, defaultBranch, workspaceKey string
 	var workspaceID, connectionID int
 	var itemKeyPattern sql.NullString
@@ -358,7 +351,6 @@ func (s *SyncService) SyncRepository(ctx context.Context, repoID int) error {
 		return fmt.Errorf("failed to get repository info: %w", err)
 	}
 
-	// Resolve provider using credential resolution with OAuth token refresh
 	provider, err := s.resolveProvider(ctx, connectionID)
 	if err != nil {
 		return err
@@ -378,7 +370,6 @@ func (s *SyncService) SyncRepository(ctx context.Context, repoID int) error {
 
 // syncRepository performs the actual sync for a single repository
 func (s *SyncService) syncRepository(ctx context.Context, provider Provider, repoID int, repositoryName, defaultBranch string, workspaceID int, workspaceKey, itemKeyPattern string, lastSyncedAt time.Time) error {
-	// Parse owner/repo from repository name
 	parts := strings.SplitN(repositoryName, "/", 2)
 	if len(parts) != 2 {
 		return fmt.Errorf("invalid repository name format: %s", repositoryName)
@@ -387,7 +378,6 @@ func (s *SyncService) syncRepository(ctx context.Context, provider Provider, rep
 
 	slog.Debug("Syncing repository", slog.String("component", "scm"), slog.String("repository", repositoryName), slog.String("workspace", workspaceKey))
 
-	// Sync open pull requests
 	if err := s.syncPullRequests(ctx, provider, owner, repo, repoID, workspaceID, workspaceKey, itemKeyPattern, lastSyncedAt); err != nil {
 		slog.Error("Failed to sync pull requests", slog.String("component", "scm"), slog.String("repository", repositoryName), slog.Any("error", err))
 	}
@@ -398,22 +388,18 @@ func (s *SyncService) syncRepository(ctx context.Context, provider Provider, rep
 		slog.Error("Failed to sync commits", slog.String("component", "scm"), slog.String("repository", repositoryName), slog.Any("error", err))
 	}
 
-	// Sync branches
 	if err := s.syncBranches(ctx, provider, owner, repo, repoID, workspaceID, workspaceKey, itemKeyPattern); err != nil {
 		slog.Error("Failed to sync branches", slog.String("component", "scm"), slog.String("repository", repositoryName), slog.Any("error", err))
 	}
 
-	// Sync release branches (emits scm_release_branch_created events).
 	if err := s.syncReleaseBranches(ctx, provider, owner, repo, repoID, workspaceID); err != nil {
 		slog.Error("Failed to sync release branches", slog.String("component", "scm"), slog.String("repository", repositoryName), slog.Any("error", err))
 	}
 
-	// Sync tags / releases (emits scm_tag_created events).
 	if err := s.syncTagsAndReleases(ctx, provider, owner, repo, repoID, workspaceID); err != nil {
 		slog.Error("Failed to sync tags", slog.String("component", "scm"), slog.String("repository", repositoryName), slog.Any("error", err))
 	}
 
-	// Update last_synced_at
 	_, err := s.db.ExecWrite(`
 		UPDATE workspace_repositories SET last_synced_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
