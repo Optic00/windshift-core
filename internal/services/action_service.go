@@ -199,12 +199,11 @@ func NewActionService(db database.Database, config ActionServiceConfig, chainSto
 		chainStore:  chainStore,
 	}
 
-	// Load initial cache
+	// Build the initial cache before accepting events.
 	if err := service.refreshActionCache(); err != nil {
 		slog.Warn("failed to load initial action cache", slog.String("component", "actions"), slog.Any("error", err))
 	}
 
-	// Start background workers
 	service.wg.Add(2)
 	go service.eventProcessor()
 	go service.cacheRefresher()
@@ -340,7 +339,7 @@ func (as *ActionService) eventProcessor() {
 			}
 		case <-as.stopChan:
 			slog.Debug("stopping action event processor", slog.String("component", "actions"))
-			// Drain remaining events
+			// Finish queued events so shutdown does not silently drop work.
 			for len(as.eventChan) > 0 {
 				event := <-as.eventChan
 				if err := as.processEvent(event); err != nil {
@@ -356,7 +355,7 @@ func (as *ActionService) eventProcessor() {
 	}
 }
 
-// cacheRefresher runs in background and periodically refreshes the action cache
+// cacheRefresher refreshes action definitions and prunes expired chains.
 func (as *ActionService) cacheRefresher() {
 	defer as.wg.Done()
 
@@ -369,7 +368,6 @@ func (as *ActionService) cacheRefresher() {
 			if err := as.refreshActionCache(); err != nil {
 				slog.Error("failed to refresh action cache", slog.String("component", "actions"), slog.Any("error", err))
 			}
-			// Also cleanup stale execution chains
 			as.cleanupChains()
 		case <-as.stopChan:
 			slog.Debug("stopping action cache refresher", slog.String("component", "actions"))
@@ -378,9 +376,9 @@ func (as *ActionService) cacheRefresher() {
 	}
 }
 
-// refreshActionCache reloads enabled actions from database
+// refreshActionCache rebuilds the enabled-action cache, retaining a workspace's
+// previous entry when its refresh query fails.
 func (as *ActionService) refreshActionCache() error {
-	// Get all workspaces with enabled actions
 	rows, err := as.db.Query(`
 		SELECT DISTINCT workspace_id FROM actions WHERE is_enabled = true
 	`)
@@ -403,14 +401,10 @@ func (as *ActionService) refreshActionCache() error {
 		return fmt.Errorf("iterate workspaces with actions: %w", err)
 	}
 
-	// Snapshot the previous cache so we can preserve entries whose refresh
-	// query fails this cycle. Dropping a workspace on a transient DB hiccup
-	// would silently disable its automations for up to one refresh interval.
 	as.cacheMu.RLock()
 	prevCache := as.actionCache
 	as.cacheMu.RUnlock()
 
-	// Load enabled actions for each workspace
 	for _, workspaceID := range workspaceIDs {
 		actions, err := as.repo.ListEnabledByWorkspace(workspaceID)
 		if err != nil {

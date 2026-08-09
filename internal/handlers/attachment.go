@@ -430,7 +430,7 @@ func (h *AttachmentHandler) authorizeUploadEntity(w http.ResponseWriter, r *http
 
 // Upload handles file upload to an item
 func (h *AttachmentHandler) Upload(w http.ResponseWriter, r *http.Request) {
-	// FIXME(human-review): Split this handler by authorization and storage concern.
+	// FIXME: split authorization from storage concerns.
 	slog.Debug("upload request received", slog.String("component", "attachments"))
 
 	if !h.IsEnabled() {
@@ -442,7 +442,6 @@ func (h *AttachmentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	// Cap the request before parsing.
 	r.Body = http.MaxBytesReader(w, r.Body, 32<<20)
 
-	// Parse the capped form.
 	slog.Debug("parsing multipart form", slog.String("component", "attachments"))
 	// #nosec G120 -- the body is already capped by MaxBytesReader above; the int arg is the in-memory threshold, not the upper bound
 	err := r.ParseMultipartForm(32 << 20)
@@ -536,7 +535,6 @@ func (h *AttachmentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get file from form
 	slog.Debug("getting file from form", slog.String("component", "attachments"))
 	file, fileHeader, err := r.FormFile("file")
 	if err != nil {
@@ -547,7 +545,6 @@ func (h *AttachmentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = file.Close() }()
 	slog.Debug("file received", slog.String("component", "attachments"), slog.String("filename", fileHeader.Filename), slog.Int64("size", fileHeader.Size), slog.String("content_type", fileHeader.Header.Get("Content-Type")))
 
-	// Read entire file into memory to avoid multipart.File seek issues
 	slog.Debug("reading file into memory", slog.String("component", "attachments"))
 	fileData, err := io.ReadAll(file)
 	if err != nil {
@@ -557,7 +554,7 @@ func (h *AttachmentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Debug("file data read", slog.String("component", "attachments"), slog.Int("bytes", len(fileData)))
 
-	// SECURITY: Validate file extension against dangerous extensions blacklist
+	// Validate both the filename and detected content before writing anything.
 	slog.Debug("validating file extension", slog.String("component", "attachments"))
 	if err = h.validateFileExtension(fileHeader.Filename); err != nil {
 		slog.Warn("extension validation failed", slog.String("component", "attachments"), slog.Any("error", err))
@@ -565,7 +562,6 @@ func (h *AttachmentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// SECURITY: Verify actual file content matches extension
 	slog.Debug("verifying file content", slog.String("component", "attachments"))
 	detectedMimeType, err := h.verifyFileContentFromBytes(fileData, fileHeader.Filename)
 	if err != nil {
@@ -575,7 +571,6 @@ func (h *AttachmentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Debug("content verified", slog.String("component", "attachments"), slog.String("mime_type", detectedMimeType))
 
-	// SECURITY: For image-only entity types, restrict to known image extensions
 	if isImageEntityType {
 		if !isAllowedImageExtension(fileHeader.Filename) {
 			respondValidationError(w, r, fmt.Sprintf(
@@ -585,7 +580,6 @@ func (h *AttachmentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Get attachment settings for validation
 	slog.Debug("getting attachment settings", slog.String("component", "attachments"))
 	settings, err := h.getAttachmentSettings()
 	if err != nil {
@@ -600,7 +594,6 @@ func (h *AttachmentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate file size
 	if fileHeader.Size > settings.MaxFileSize {
 		respondValidationError(w, r, fmt.Sprintf("File too large. Maximum size: %d bytes", settings.MaxFileSize))
 		return
@@ -628,7 +621,7 @@ func (h *AttachmentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Generate unique filename
+	// Store files under an entity-specific directory with a generated name.
 	slog.Debug("generating unique filename", slog.String("component", "attachments"), slog.String("original_filename", fileHeader.Filename))
 	uniqueFilename, err := h.generateUniqueFilename(fileHeader.Filename)
 	if err != nil {
@@ -638,7 +631,6 @@ func (h *AttachmentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Debug("generated filename", slog.String("component", "attachments"), slog.String("unique_filename", uniqueFilename))
 
-	// Ensure attachment directory exists based on entity type
 	var itemDir string
 	switch entityType {
 	case "avatar":
@@ -671,11 +663,9 @@ func (h *AttachmentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create file path
 	filePath := filepath.Join(itemDir, uniqueFilename)
 	slog.Debug("creating file", slog.String("component", "attachments"), slog.String("path", filePath))
 
-	// Write file data directly (already in memory from earlier read)
 	slog.Debug("writing file data", slog.String("component", "attachments"))
 	err = os.WriteFile(filePath, fileData, 0o600) //nolint:gosec // G703: path from hardcoded base + strconv.Itoa
 	if err != nil {
@@ -686,17 +676,14 @@ func (h *AttachmentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	fileSize := int64(len(fileData))
 	slog.Debug("file saved", slog.String("component", "attachments"), slog.Int64("bytes", fileSize))
 
-	// Get uploader ID from context/session
 	var uploaderID *int
 	if user := utils.GetCurrentUser(r); user != nil {
 		uploaderID = &user.ID
 	}
 
-	// Save attachment record to database
 	// Use the detected MIME type from content verification (not client header)
 	mimeType := detectedMimeType
 
-	// Generate thumbnail for images
 	hasThumbnail := false
 	var thumbnailPath string
 	if strings.HasPrefix(mimeType, "image/") {
@@ -714,10 +701,6 @@ func (h *AttachmentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 
 	slog.Debug("saving attachment record to database", slog.String("component", "attachments"))
 
-	// entity_type and category columns are ensured at startup by the
-	// migrations array in internal/database/{database,postgres}.go.
-
-	// Insert attachment record via service
 	attachmentSvc := services.NewAttachmentService(h.db)
 	attachmentID, err := attachmentSvc.CreateRecord(services.CreateAttachmentParams{
 		ItemID:           entityID,
@@ -739,7 +722,6 @@ func (h *AttachmentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// For avatar type checks below
 	var attachmentEntityID interface{}
 	if isImageEntityType {
 		attachmentEntityID = nil
@@ -748,7 +730,6 @@ func (h *AttachmentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Debug("attachment saved", slog.String("component", "attachments"), slog.Int64("attachment_id", attachmentID))
 
-	// Record history for item attachments only (not test_case, avatars, etc.)
 	if entityType == "item" && attachmentEntityID != nil {
 		if entityIDInt, ok := attachmentEntityID.(int); ok {
 			if err = h.attachmentService.RecordItemHistory(entityIDInt, uploaderID, "attachment_uploaded", nil, attachmentID, fileHeader.Filename); err != nil {
@@ -758,7 +739,6 @@ func (h *AttachmentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// For avatars, also update the user's avatar_url with the attachment download URL
 	if isAvatar && uploaderID != nil {
 		avatarURL := fmt.Sprintf("/api/attachments/%d/download", attachmentID)
 		slog.Debug("updating user avatar_url", slog.String("component", "attachments"), slog.Int("user_id", *uploaderID), slog.String("avatar_url", avatarURL))
@@ -772,10 +752,8 @@ func (h *AttachmentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Return success response
 	if isImageEntityType {
-		// For avatars, backgrounds, and logos, return the appropriate download URL
-		// Portal branding (logo, background, hub_logo) uses public endpoint, others use authenticated endpoint
+		// Image uploads use public or authenticated download URLs by entity type.
 		var downloadURL string
 		if isPortalBackground || isPortalLogo || isHubLogo {
 			// Public endpoint for portal branding (no auth required)

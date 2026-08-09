@@ -1,56 +1,46 @@
 import { fetchAPI } from './core.js';
 import { createCrudClient } from './createCrudClient.js';
 
-// SCM (Source Control Management) providers - GitHub, GitLab, Gitea, Bitbucket
+// Provider administration and OAuth.
 export const scmProviders = {
   ...createCrudClient('/admin/scm-providers'),
 
-  // Test provider connection
   test: (id) =>
     fetchAPI(`/admin/scm-providers/${id}/test`, {
       method: 'POST',
     }),
 
-  // Start OAuth flow (returns auth URL)
   startOAuth: (slug) => fetchAPI(`/scm/oauth/${slug}/start`),
 
-  // Get allowed workspaces for a provider
   getAllowedWorkspaces: (id) => fetchAPI(`/admin/scm-providers/${id}/allowed-workspaces`),
 
-  // Update allowed workspaces (replace entire list)
   updateAllowedWorkspaces: (id, workspaceIds) =>
     fetchAPI(`/admin/scm-providers/${id}/allowed-workspaces`, {
       method: 'PUT',
       body: JSON.stringify({ workspace_ids: workspaceIds }),
     }),
 
-  // Add a workspace to the allowlist
   addAllowedWorkspace: (id, workspaceId) =>
     fetchAPI(`/admin/scm-providers/${id}/allowed-workspaces`, {
       method: 'POST',
       body: JSON.stringify({ workspace_id: workspaceId }),
     }),
 
-  // Remove a workspace from the allowlist
   removeAllowedWorkspace: (id, workspaceId) =>
     fetchAPI(`/admin/scm-providers/${id}/allowed-workspaces/${workspaceId}`, {
       method: 'DELETE',
     }),
 };
 
-// Workspace SCM connections and repositories
+// Workspace connections, repositories, and authentication.
 export const workspaceSCM = {
-  // Get connections across every workspace the current user may view.
   getAccessibleConnections: () => fetchAPI('/scm-connections'),
 
-  // Get available SCM providers for a workspace (enabled providers with connection status)
   getAvailableProviders: (workspaceId) => fetchAPI(`/workspaces/${workspaceId}/scm-providers`),
 
-  // Get all SCM connections for a workspace
   getConnections: (workspaceId) => fetchAPI(`/workspaces/${workspaceId}/scm-connections`),
 
-  // Opt-in connection overview for screens that also consume repository or
-  // authentication summaries.
+  // Optional expansions avoid loading repository and auth summaries by default.
   getConnectionsOverview: (
     workspaceId,
     { includeRepositories = false, includeAuthStatus = false } = {}
@@ -62,185 +52,152 @@ export const workspaceSCM = {
     return fetchAPI(`/workspaces/${workspaceId}/scm-connections${suffix}`);
   },
 
-  // Create a new SCM connection for a workspace
   createConnection: (workspaceId, data) =>
     fetchAPI(`/workspaces/${workspaceId}/scm-connections`, {
       method: 'POST',
       body: JSON.stringify(data),
     }),
 
-  // Get a specific SCM connection
   getConnection: (workspaceId, connId) =>
     fetchAPI(`/workspaces/${workspaceId}/scm-connections/${connId}`),
 
-  // Update an SCM connection
   updateConnection: (workspaceId, connId, data) =>
     fetchAPI(`/workspaces/${workspaceId}/scm-connections/${connId}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     }),
 
-  // Delete an SCM connection
   deleteConnection: (workspaceId, connId) =>
     fetchAPI(`/workspaces/${workspaceId}/scm-connections/${connId}`, {
       method: 'DELETE',
     }),
 
-  // Get available repositories from the provider (not yet linked)
   getAvailableRepos: (workspaceId, connId, params = {}) => {
     const queryString = new URLSearchParams(params).toString();
     const url = `/workspaces/${workspaceId}/scm-connections/${connId}/repositories/available${queryString ? `?${queryString}` : ''}`;
     return fetchAPI(url);
   },
 
-  // Get linked repositories for a connection
   getLinkedRepos: (workspaceId, connId) =>
     fetchAPI(`/workspaces/${workspaceId}/scm-connections/${connId}/repositories`),
 
-  // Link a repository to a workspace connection
   linkRepo: (workspaceId, connId, data) =>
     fetchAPI(`/workspaces/${workspaceId}/scm-connections/${connId}/repositories`, {
       method: 'POST',
       body: JSON.stringify(data),
     }),
 
-  // Unlink a repository
   unlinkRepo: (repoId) =>
     fetchAPI(`/workspace-repositories/${repoId}`, {
       method: 'DELETE',
     }),
 
-  // Update per-repo automation settings (milestone tag/branch globs).
-  // Pass only the fields you want to change.
+  // Sends only the fields being changed.
   updateRepo: (repoId, data) =>
     fetchAPI(`/workspace-repositories/${repoId}`, {
       method: 'PATCH',
       body: JSON.stringify(data),
     }),
 
-  // Trigger manual sync for a repository
   syncRepo: (repoId) =>
     fetchAPI(`/workspace-repositories/${repoId}/sync`, {
       method: 'POST',
     }),
 
-  // Start workspace OAuth flow (returns auth URL with workspace context)
   startOAuth: (workspaceId, connId) =>
     fetchAPI(`/workspaces/${workspaceId}/scm-connections/${connId}/auth/start`, {
       method: 'POST',
     }),
 
-  // Get auth status for a workspace connection
   getAuthStatus: (workspaceId, connId) =>
     fetchAPI(`/workspaces/${workspaceId}/scm-connections/${connId}/auth/status`),
 };
 
-// Item SCM Links - PRs, branches, commits linked to items
+// Pull requests, branches, and commits linked to work items.
 export const itemSCMLinks = {
-  // Get all SCM links for an item
   get: (itemId, options = {}) => fetchAPI(`/items/${itemId}/scm-links`, options),
 
-  // Create a new SCM link for an item
   create: (itemId, data) =>
     fetchAPI(`/items/${itemId}/scm-links`, {
       method: 'POST',
       body: JSON.stringify(data),
     }),
 
-  // Delete an SCM link
   delete: (linkId) =>
     fetchAPI(`/item-scm-links/${linkId}`, {
       method: 'DELETE',
     }),
 
-  // Refresh an SCM link's details from the provider
   refresh: (linkId) =>
     fetchAPI(`/item-scm-links/${linkId}/refresh`, {
       method: 'POST',
     }),
 
-  // Get available repositories for an item (based on item's workspace)
   getRepositories: (itemId) => fetchAPI(`/items/${itemId}/scm-repositories`),
 
-  // Create a branch (and optionally a draft PR) for an item
   createBranch: (itemId, data) =>
     fetchAPI(`/items/${itemId}/scm-links/create-branch`, {
       method: 'POST',
       body: JSON.stringify(data),
     }),
 
-  // Create a pull request from an existing branch link
   createPRFromBranch: (linkId, data) =>
     fetchAPI(`/item-scm-links/${linkId}/create-pr`, {
       method: 'POST',
       body: JSON.stringify(data),
     }),
 
-  // Get SCM connection status for an item (whether user has connected their account)
   getConnectionStatus: (itemId, options = {}) =>
     fetchAPI(`/items/${itemId}/scm-connection-status`, options),
 };
 
-// Issue Sync - GitHub Issues sync configuration
+// GitHub issue-sync configuration and status.
 export const issueSync = {
-  // Get issue sync config for a workspace
   getConfig: (workspaceId) => fetchAPI(`/workspaces/${workspaceId}/issue-sync`),
 
-  // Create issue sync config
   createConfig: (workspaceId, data) =>
     fetchAPI(`/workspaces/${workspaceId}/issue-sync`, {
       method: 'POST',
       body: JSON.stringify(data),
     }),
 
-  // Update issue sync config
   updateConfig: (workspaceId, data) =>
     fetchAPI(`/workspaces/${workspaceId}/issue-sync`, {
       method: 'PUT',
       body: JSON.stringify(data),
     }),
 
-  // Delete issue sync config
   deleteConfig: (workspaceId) =>
     fetchAPI(`/workspaces/${workspaceId}/issue-sync`, {
       method: 'DELETE',
     }),
 
-  // Trigger manual sync
   triggerSync: (workspaceId) =>
     fetchAPI(`/workspaces/${workspaceId}/issue-sync/trigger`, {
       method: 'POST',
     }),
 
-  // Get sync status
   getStatus: (workspaceId) => fetchAPI(`/workspaces/${workspaceId}/issue-sync/status`),
 
-  // Get synced items
   getItems: (workspaceId) => fetchAPI(`/workspaces/${workspaceId}/issue-sync/items`),
 
-  // Get GitHub labels for mapping UI
   getGitHubLabels: (workspaceId, repositoryId) =>
     fetchAPI(`/workspaces/${workspaceId}/issue-sync/github-labels?repository_id=${repositoryId}`),
 
-  // Get GitHub milestones for mapping UI
   getGitHubMilestones: (workspaceId, repositoryId) =>
     fetchAPI(
       `/workspaces/${workspaceId}/issue-sync/github-milestones?repository_id=${repositoryId}`
     ),
 };
 
-// User SCM connections - personal OAuth token management
+// Personal SCM OAuth connections.
 export const userSCM = {
-  // Get all user's connected SCM accounts
   getConnections: () => fetchAPI('/users/me/scm-connections'),
 
-  // Get available OAuth providers with connection status
   getAvailableProviders: () => fetchAPI('/users/me/scm-connections/available'),
 
-  // Get connection status for a specific provider
   getConnectionStatus: (providerId) => fetchAPI(`/users/me/scm-connections/${providerId}`),
 
-  // Disconnect from a provider (revoke OAuth token)
   disconnect: (providerId) =>
     fetchAPI(`/users/me/scm-connections/${providerId}`, {
       method: 'DELETE',
