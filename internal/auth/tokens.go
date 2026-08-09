@@ -95,14 +95,13 @@ func newTokenManager(db database.Database, tokenTracker TokenUsageRecorder, cach
 
 // GenerateToken creates a cryptographically secure API token
 func (tm *TokenManager) GenerateToken() (string, error) {
-	// Generate random bytes for the token body
+	// Generate a random body and prefix it for indexed lookup.
 	tokenBytes := make([]byte, TokenLength-len(TokenPrefix))
 	_, err := rand.Read(tokenBytes)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate random token: %w", err)
 	}
 
-	// Convert to hex and add prefix
 	tokenBody := hex.EncodeToString(tokenBytes)
 	fullToken := TokenPrefix + tokenBody
 
@@ -128,19 +127,17 @@ func (tm *TokenManager) GetTokenPrefix(token string) string {
 
 // ValidateToken checks if a token is valid and returns the associated user
 func (tm *TokenManager) ValidateToken(token string) (*models.User, *models.APIToken, error) {
-	// Check token format
 	if err := checkTokenFormat(token, TokenPrefix, 20); err != nil {
 		return nil, nil, err
 	}
 
 	cacheKey := tokenCacheKey(token)
 
-	// Try cache first
+	// Cached entries avoid the database and bcrypt work; misses use the indexed prefix query below.
 	if tm.cache != nil {
 		if data, err := tm.cache.Get(cacheKey); err == nil {
 			var entry tokenCacheEntry
 			if err := json.Unmarshal(data, &entry); err == nil {
-				// Check expiry
 				switch {
 				case entry.ExpiresAt != nil && entry.ExpiresAt.Before(time.Now()):
 					tm.cache.Delete(cacheKey) //nolint:errcheck // best-effort cache eviction
@@ -158,12 +155,9 @@ func (tm *TokenManager) ValidateToken(token string) (*models.User, *models.APITo
 		}
 	}
 
-	// Cache miss — full DB + bcrypt path
-	// Extract token prefix for efficient database lookup (matches stored format with "...")
 	tokenPrefix := tm.GetTokenPrefix(token)
 
-	// Query tokens matching prefix to avoid full table scan and excessive bcrypt comparisons
-	// Use CURRENT_TIMESTAMP which works in both SQLite and PostgreSQL
+	// Prefix filtering limits bcrypt comparisons; CURRENT_TIMESTAMP is portable across both databases.
 	rows, err := tm.db.Query(`
 		SELECT t.id, t.user_id, t.name, t.token_hash, t.token_prefix, t.permissions,
 		       t.is_temporary, t.oauth_client_id, t.oauth_resource,
@@ -203,12 +197,10 @@ func (tm *TokenManager) ValidateToken(token string) (*models.User, *models.APITo
 			continue
 		}
 
-		// Check if token hash matches
 		if verifyTokenHash(apiToken.Token, token) != nil {
 			continue // Hash doesn't match, try next token
 		}
 
-		// Convert nullable times
 		if expiresAt.Valid {
 			apiToken.ExpiresAt = &expiresAt.Time
 		}
@@ -218,12 +210,10 @@ func (tm *TokenManager) ValidateToken(token string) (*models.User, *models.APITo
 			apiToken.LastUsedAt = &lastUsedAt.Time
 		}
 
-		// Check if user is active
 		if !user.IsActive {
 			return nil, nil, fmt.Errorf("user account is disabled")
 		}
 
-		// Populate cache
 		if tm.cache != nil {
 			entry := tokenCacheEntry{
 				User:          user,
@@ -238,7 +228,6 @@ func (tm *TokenManager) ValidateToken(token string) (*models.User, *models.APITo
 			}
 		}
 
-		// Update last used timestamp
 		go tm.updateLastUsed(apiToken.ID)
 
 		return &user, &apiToken, nil
@@ -282,28 +271,25 @@ func (tm *TokenManager) createToken(store tokenRowStore, userID int, request mod
 		return nil, fmt.Errorf("cannot create token for inactive user")
 	}
 
-	// Generate token
+	// Generate and hash the token; only the response below exposes its plaintext.
 	token, err := tm.GenerateToken()
 	if err != nil {
 		return nil, err
 	}
 
-	// Hash token
 	tokenHash, err := tm.HashToken(token)
 	if err != nil {
 		return nil, err
 	}
 
-	// Get token prefix for identification
 	tokenPrefix := tm.GetTokenPrefix(token)
 
-	// Convert permissions to JSON
 	permissionsJSON, err := json.Marshal(request.Permissions)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal permissions: %w", err)
 	}
 
-	// Insert token into database using RETURNING clause (supported by both SQLite 3.35+ and PostgreSQL)
+	// RETURNING is supported by both SQLite 3.35+ and PostgreSQL.
 	var tokenID int64
 	err = store.QueryRow(`
 		INSERT INTO api_tokens (
@@ -318,7 +304,6 @@ func (tm *TokenManager) createToken(store tokenRowStore, userID int, request mod
 		return nil, fmt.Errorf("failed to create token: %w", err)
 	}
 
-	// Get the created token details
 	apiToken, err := getTokenByID(store, int(tokenID))
 	if err != nil {
 		return nil, err
@@ -451,7 +436,6 @@ func (tm *TokenManager) CleanupExpiredTokens() (int, error) {
 // ListAllTokens retrieves all non-temporary tokens across all users (admin endpoint).
 // Supports optional filtering by user_id and pagination.
 func (tm *TokenManager) ListAllTokens(userIDFilter *int, limit, offset int) ([]models.APIToken, int, error) {
-	// Count total
 	countQuery := `SELECT COUNT(*) FROM api_tokens t WHERE NOT t.is_temporary`
 	var countArgs []interface{}
 	if userIDFilter != nil {
@@ -464,7 +448,6 @@ func (tm *TokenManager) ListAllTokens(userIDFilter *int, limit, offset int) ([]m
 		return nil, 0, fmt.Errorf("failed to count tokens: %w", err)
 	}
 
-	// Fetch page
 	query := `
 		SELECT t.id, t.user_id, t.name, t.token_prefix, t.permissions, t.is_temporary,
 		       t.expires_at, t.last_used_at, t.created_at, t.updated_at,

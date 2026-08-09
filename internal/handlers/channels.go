@@ -200,7 +200,6 @@ func (h *ChannelHandler) canCompleteEmailOAuth(ctx context.Context, userID, chan
 
 // GetChannels returns all channels (admins) or only managed channels (non-admins)
 func (h *ChannelHandler) GetChannels(w http.ResponseWriter, r *http.Request) {
-	// Get current user
 	user, ok := RequireAuth(w, r)
 	if !ok {
 		return
@@ -209,8 +208,6 @@ func (h *ChannelHandler) GetChannels(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	// Parse query-string filters. Unknown values are dropped silently — the
-	// service layer rejects them via its own validation if it cares.
 	q := r.URL.Query()
 	categoryFilter := q.Get("category_id")
 
@@ -261,12 +258,7 @@ func (h *ChannelHandler) CreateChannel(w http.ResponseWriter, r *http.Request) {
 		respondValidationError(w, r, "Default channels cannot be created through this endpoint")
 		return
 	}
-	// Channel Name renders in the channel directory, picker chips, and
-	// the workspace admin UI; Description shows in the channel list and
-	// detail views. Both are user-supplied free-form text. Type +
-	// Direction + Status are enums the service validates; Config is a
-	// JSON blob handled by UpdateChannelConfig + the catalog work
-	// tracked under the WI-180 follow-up.
+	// Sanitize user-facing text; service validation owns enum and config fields.
 	warnings := sanitize.ApplyAllWithWarnings(
 		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
 		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
@@ -358,9 +350,7 @@ func (h *ChannelHandler) GetChannel(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	// Gate by manager scope so direct GET /channels/{id} matches the
-	// visibility filter already applied by GET /channels. See bughunt2.md
-	// Run 6 finding #4.
+	// Match the manager gate used by the collection endpoint.
 	if _, ok := h.requireChannelManageAccess(ctx, w, r, id); !ok {
 		return
 	}
@@ -389,9 +379,7 @@ func (h *ChannelHandler) UpdateChannel(w http.ResponseWriter, r *http.Request) {
 	if !decodeChannelRequest(w, r, &updates, false) {
 		return
 	}
-	// Channel Name + Description are the user-facing free-form fields on
-	// the model; everything else is enum/ID/JSON-blob. See CreateChannel
-	// for the full rationale.
+	// Sanitize the two user-facing text fields before updating the channel.
 	warnings := sanitize.ApplyAllWithWarnings(
 		sanitize.Pair{Target: &updates.Name, Policy: sanitize.PlainTextField, Label: "Name"},
 		sanitize.Pair{Target: &updates.Description, Policy: sanitize.RichText, Label: "Description"},
@@ -424,8 +412,7 @@ func (h *ChannelHandler) UpdateChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Default-channel status is managed only by the dedicated default-channel
-	// workflow, which performs the necessary route-wide atomic update.
+	// Default status changes go through the dedicated atomic workflow.
 	if updates.IsDefault != existing.IsDefault {
 		respondValidationError(w, r, "Default-channel status cannot be changed through the metadata endpoint")
 		return
@@ -665,7 +652,6 @@ func (h *ChannelHandler) TestChannel(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 
-	// Parse request body for test email address
 	var testRequest struct {
 		TestEmail string `json:"test_email"`
 	}
@@ -721,7 +707,6 @@ func (h *ChannelHandler) TestChannel(w http.ResponseWriter, r *http.Request) {
 		result["success"] = success
 		result["message"] = message
 		if success {
-			// Update last activity
 			h.updateChannelActivity(ctx, channel.ID)
 		}
 	default:
@@ -799,7 +784,6 @@ func (h *ChannelHandler) TestChannelConfig(w http.ResponseWriter, r *http.Reques
 		testData.Config.WebhookSecret = secret
 	}
 
-	// Test the configuration based on channel type
 	result := make(map[string]interface{})
 	result["channel_id"] = id
 	result["test_time"] = time.Now()
@@ -1056,7 +1040,6 @@ func (h *ChannelHandler) AddChannelManager(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Validate request
 	if request.ManagerType != "user" && request.ManagerType != "group" {
 		respondValidationError(w, r, "manager_type must be 'user' or 'group'")
 		return
@@ -1241,20 +1224,17 @@ func (h *ChannelHandler) RemoveChannelManager(w http.ResponseWriter, r *http.Req
 // This is primarily used for testing to avoid waiting for the scheduler interval.
 // POST /api/channels/{id}/process-emails
 func (h *ChannelHandler) ProcessEmailsNow(w http.ResponseWriter, r *http.Request) {
-	// Get current user
 	user, ok := RequireAuth(w, r)
 	if !ok {
 		return
 	}
 
-	// Check if user is a system admin
 	isSystemAdmin, err := h.permissionService.IsSystemAdmin(user.ID)
 	if err != nil || !isSystemAdmin {
 		respondAdminRequired(w, r)
 		return
 	}
 
-	// Get channel ID from path
 	channelIDStr := r.PathValue("id")
 	channelID, err := strconv.Atoi(channelIDStr)
 	if err != nil {
@@ -1279,7 +1259,6 @@ func (h *ChannelHandler) ProcessEmailsNow(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Check if email scheduler is available
 	if h.emailScheduler == nil {
 		respondError(w, r, &restapi.APIError{
 			StatusCode: http.StatusServiceUnavailable,
@@ -1289,7 +1268,6 @@ func (h *ChannelHandler) ProcessEmailsNow(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Trigger processing
 	err = h.emailScheduler.ProcessChannelNow(ctx, channelID)
 	if err != nil {
 		respondInternalError(w, r, err)
@@ -1313,7 +1291,6 @@ func (h *ChannelHandler) GetEmailLog(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 
-	// Parse pagination params
 	page := 1
 	pageSize := 50
 	if p := r.URL.Query().Get("page"); p != "" {

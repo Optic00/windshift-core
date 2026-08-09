@@ -462,14 +462,12 @@ func (w *WebhookSender) subscriptionIndex(ctx context.Context) (*subscriptionInd
 			continue
 		}
 
-		// Parse config
 		var config models.ChannelConfig
 		if err := json.Unmarshal([]byte(configJSON), &config); err != nil {
 			logger.Get().Error("Failed to parse webhook config", "error", err, "channel_id", channelID)
 			continue
 		}
 
-		// Skip if auto trigger is disabled
 		if !config.WebhookAutoTrigger {
 			continue
 		}
@@ -480,7 +478,6 @@ func (w *WebhookSender) subscriptionIndex(ctx context.Context) (*subscriptionInd
 			continue
 		}
 
-		// Build webhook config
 		webhook := WebhookConfig{
 			ChannelID:        channelID,
 			Name:             channelName,
@@ -495,7 +492,6 @@ func (w *WebhookSender) subscriptionIndex(ctx context.Context) (*subscriptionInd
 			PluginHandler:    config.WebhookPluginHandler,
 		}
 
-		// Set plugin fields if this is a plugin webhook
 		if pluginName != nil && *pluginName != "" {
 			webhook.PluginName = *pluginName
 		}
@@ -504,10 +500,8 @@ func (w *WebhookSender) subscriptionIndex(ctx context.Context) (*subscriptionInd
 		}
 
 		for _, subscribedEvent := range webhook.SubscribedEvents {
-			// User-configured external webhooks are limited to the payload
-			// contracts exposed by the editor. Plugin-owned handlers are trusted
-			// internal consumers and may subscribe to additional coordinator
-			// events such as approval lifecycle notifications.
+			// Plugin handlers may subscribe to internal lifecycle events; external
+			// webhooks are limited to the events exposed by the editor.
 			if webhook.PluginName == "" && !supportedAutomaticEvents[subscribedEvent] {
 				continue
 			}
@@ -689,7 +683,6 @@ func (w *WebhookSender) sendWebhookPayload(parentCtx context.Context, webhook We
 		RequestedAt: time.Now().UTC(),
 	}
 
-	// Build payload
 	payload := WebhookPayload{
 		Event:     event,
 		Timestamp: time.Now().UTC(),
@@ -705,7 +698,6 @@ func (w *WebhookSender) sendWebhookPayload(parentCtx context.Context, webhook We
 		return fmt.Errorf("serialize webhook payload: %w", err)
 	}
 
-	// If this is a plugin webhook, dispatch to plugin instead of HTTP
 	if webhook.PluginName != "" {
 		delivery.Transport = "plugin"
 		delivery.RequestURL = "" // not meaningful for plugin transport
@@ -747,10 +739,8 @@ func (w *WebhookSender) sendWebhookPayload(parentCtx context.Context, webhook We
 		return nil
 	}
 
-	// Standard HTTP webhook
 	delivery.RequestURL = redactedWebhookURL(webhook.URL)
 
-	// Validate URL to prevent SSRF
 	if err := ValidateWebhookURL(webhook.URL); err != nil {
 		logger.Get().Error("Webhook URL validation failed", "error", err, "url", delivery.RequestURL, "webhook_id", webhook.ChannelID)
 		delivery.ErrorMessage = "URL validation failed: " + err.Error()
@@ -758,7 +748,6 @@ func (w *WebhookSender) sendWebhookPayload(parentCtx context.Context, webhook We
 		return fmt.Errorf("webhook URL validation failed: %w", err)
 	}
 
-	// Create request
 	req, err := http.NewRequestWithContext(ctx, "POST", webhook.URL, bytes.NewBuffer(payloadBytes))
 	if err != nil {
 		logger.Get().Error("Failed to create webhook request", "error", err, "url", delivery.RequestURL)
@@ -775,19 +764,17 @@ func (w *WebhookSender) sendWebhookPayload(parentCtx context.Context, webhook We
 		req.Header.Set(key, value)
 	}
 
-	// Set reserved headers — these take precedence over custom headers.
+	// Reserved Windshift headers take precedence over custom headers.
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Webhook-Event", event)
 	req.Header.Set("X-Webhook-ID", fmt.Sprintf("%d", webhook.ChannelID))
 	req.Header.Set("X-Webhook-Timestamp", fmt.Sprintf("%d", time.Now().Unix()))
 
-	// Add signature if secret is configured
 	if webhook.Secret != "" {
 		signature := w.generateSignature(payloadBytes, webhook.Secret)
 		req.Header.Set("X-Webhook-Signature", "sha256="+signature)
 	}
 
-	// Send request
 	httpStart := time.Now()
 	resp, err := w.httpClient.Do(req)
 	elapsedMs := int(time.Since(httpStart).Milliseconds())
@@ -807,7 +794,6 @@ func (w *WebhookSender) sendWebhookPayload(parentCtx context.Context, webhook We
 
 	delivery.ResponseStatusCode = &resp.StatusCode
 
-	// Log result
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		logger.Get().Debug("Webhook sent successfully", "webhook_id", webhook.ChannelID, "event", event, "status", resp.StatusCode)
 		w.updateChannelActivity(ctx, webhook.ChannelID, true)

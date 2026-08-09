@@ -410,7 +410,7 @@ func (h *PortalHandler) GetPortal(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *PortalHandler) loadPortalData(ctx context.Context, channel models.Channel, config models.ChannelConfig) (map[string]interface{}, error) {
-	// Get workspace info (use first workspace for backward compatibility)
+	// The first configured workspace remains the compatibility value for older clients.
 	var workspace models.Workspace
 	var workspaceID int
 	if len(config.PortalWorkspaceIDs) > 0 {
@@ -428,7 +428,6 @@ func (h *PortalHandler) loadPortalData(ctx context.Context, channel models.Chann
 		}
 	}
 
-	// Get hub logo as fallback (for portals without their own logo)
 	var hubLogoURL string
 	var hubConfigJSON string
 	if err := h.db.QueryRowContext(ctx, `SELECT value FROM system_settings WHERE key = 'portal_hub_config'`).Scan(&hubConfigJSON); err == nil && hubConfigJSON != "" {
@@ -438,16 +437,14 @@ func (h *PortalHandler) loadPortalData(ctx context.Context, channel models.Chann
 		}
 	}
 
-	// Return portal info with customization settings
 	response := map[string]interface{}{
-		"channel_id":    channel.ID,
-		"slug":          config.PortalSlug,
-		"title":         config.PortalTitle,
-		"description":   config.PortalDescription,
-		"workspace_ids": config.PortalWorkspaceIDs,
-		"workspace_id":  workspaceID, // First workspace for backward compatibility
-		"workspace":     workspace,
-		// Customization fields
+		"channel_id":                channel.ID,
+		"slug":                      config.PortalSlug,
+		"title":                     config.PortalTitle,
+		"description":               config.PortalDescription,
+		"workspace_ids":             config.PortalWorkspaceIDs,
+		"workspace_id":              workspaceID, // First workspace for backward compatibility
+		"workspace":                 workspace,
 		"gradient":                  config.PortalGradient,
 		"theme":                     config.PortalTheme,
 		"search_placeholder":        config.PortalSearchPlaceholder,
@@ -473,7 +470,6 @@ func (h *PortalHandler) GetRequestTypes(w http.ResponseWriter, r *http.Request) 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	// Find channel by portal slug
 	portalResult, err := h.findChannelByPortalSlug(ctx, slug)
 	if err != nil {
 		respondNotFound(w, r, "portal")
@@ -490,7 +486,6 @@ func (h *PortalHandler) GetRequestTypes(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *PortalHandler) loadPortalRequestTypes(ctx context.Context, channelID int, vc portalVisibilityContext) ([]models.RequestType, error) {
-	// Query all request types for this channel
 	query := `
 		SELECT rt.id, rt.channel_id, rt.name, rt.description, rt.item_type_id,
 		       rt.icon, rt.color, rt.display_order, rt.is_active,
@@ -559,7 +554,7 @@ func (h *PortalHandler) SubmitToPortal(w http.ResponseWriter, r *http.Request) {
 	}
 	defer cancel()
 
-	// Parse submission
+	// Bound and sanitize untrusted submission data before authorization and persistence.
 	r.Body = http.MaxBytesReader(w, r.Body, portalSubmissionMaxBytes)
 	var submission struct {
 		RequestTypeID *int                   `json:"request_type_id"`
@@ -577,11 +572,9 @@ func (h *PortalHandler) SubmitToPortal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Sanitize user input to prevent XSS
 	submission.Title = sanitize.PlainTextField.Sanitize(submission.Title)
 	submission.Description = sanitize.Comment.Sanitize(submission.Description)
 
-	// Get auth info from context (middleware already validated)
 	authenticatedUserID, portalCustomerID := h.getAuthFromContext(r)
 
 	// Manual-registration portals require pre-existing customer access; other
@@ -652,7 +645,6 @@ func (h *PortalHandler) SubmitToPortal(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Validate and separate fields
 	validationResult, err := services.ValidateAndSeparateRequestFields(ctx, h.db, submission.RequestTypeID, submission.Title, submission.Description, submission.CustomFields)
 	if err != nil {
 		respondValidationError(w, r, err.Error())
@@ -698,7 +690,6 @@ func (h *PortalHandler) SubmitToPortal(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Determine initial status from workflow if item type is specified
 	initialStatus := defaultItemStatus // Default fallback status
 	if validationResult.ItemTypeID != nil {
 		var status string
@@ -720,7 +711,6 @@ func (h *PortalHandler) SubmitToPortal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create item using centralized service
 	itemID, err := services.CreateItem(h.db, services.ItemCreationParams{
 		WorkspaceID:             targetWorkspaceID,
 		Title:                   submission.Title,
@@ -753,7 +743,6 @@ func (h *PortalHandler) SubmitToPortal(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Update channel last activity
 	if _, err := h.db.ExecWriteContext(ctx, `UPDATE channels SET last_activity = ? WHERE id = ?`, time.Now(), channel.ID); err != nil {
 		slog.Warn("failed to update channel last_activity", slog.String("component", "portal"), slog.Int("channel_id", channel.ID), slog.Any("error", err))
 	}
@@ -768,7 +757,6 @@ func (h *PortalHandler) SubmitToPortal(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Return success response
 	respondJSONCreated(w, map[string]interface{}{
 		"success": true,
 		"item_id": itemID,
@@ -783,7 +771,6 @@ func (h *PortalHandler) SearchKnowledgeBase(w http.ResponseWriter, r *http.Reque
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	// Find channel by portal slug
 	portalResult, err := h.findChannelByPortalSlug(ctx, slug)
 	if err != nil {
 		respondNotFound(w, r, "portal")
@@ -791,13 +778,11 @@ func (h *PortalHandler) SearchKnowledgeBase(w http.ResponseWriter, r *http.Reque
 	}
 	config := portalResult.config
 
-	// Check if knowledge base is configured
 	if config.KnowledgeBaseURL == "" || config.KnowledgeBaseShareID == "" {
 		respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Knowledge base not configured for this portal"))
 		return
 	}
 
-	// Parse search request
 	r.Body = http.MaxBytesReader(w, r.Body, portalSearchMaxBytes)
 	var searchRequest struct {
 		Query string `json:"query"`
@@ -822,13 +807,11 @@ func (h *PortalHandler) SearchKnowledgeBase(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Defense in depth: re-validate the URL before making the request
 	if err := utils.ValidateExternalURL(config.KnowledgeBaseURL); err != nil {
 		respondError(w, r, restapi.NewAPIError(http.StatusBadGateway, "BAD_GATEWAY", "Failed to connect to knowledge base"))
 		return
 	}
 
-	// Prepare Docmost API request
 	docmostURL := fmt.Sprintf("%s/api/search/share-search", config.KnowledgeBaseURL)
 	requestBody, err := json.Marshal(map[string]string{
 		"query":   searchRequest.Query,
@@ -839,7 +822,6 @@ func (h *PortalHandler) SearchKnowledgeBase(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Make request to Docmost
 	req, err := http.NewRequestWithContext(ctx, "POST", docmostURL, bytes.NewBuffer(requestBody))
 	if err != nil {
 		respondInternalError(w, r, err)
@@ -869,13 +851,11 @@ func (h *PortalHandler) SearchKnowledgeBase(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Check response status
 	if resp.StatusCode != http.StatusOK {
 		respondError(w, r, restapi.NewAPIError(http.StatusBadGateway, "BAD_GATEWAY", "Knowledge base search failed"))
 		return
 	}
 
-	// Forward response to client
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(body)
@@ -914,7 +894,7 @@ func (h *PortalHandler) DownloadPortalAttachment(w http.ResponseWriter, r *http.
 		return
 	}
 
-	// Security check: Only allow portal branding attachments (logos, backgrounds)
+	// Require both fields to identify a public branding asset; category alone is caller-controlled.
 	allowedPortalAssetTypes := map[string]bool{
 		"portal_logo":       true,
 		"portal_background": true,
@@ -922,7 +902,6 @@ func (h *PortalHandler) DownloadPortalAttachment(w http.ResponseWriter, r *http.
 	}
 
 	if !allowedPortalAssetTypes[entityType] || category != entityType {
-		// Return 404 to prevent enumeration of non-portal attachments
 		respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Attachment not found"))
 		return
 	}
@@ -944,7 +923,6 @@ func (h *PortalHandler) DownloadPortalAttachment(w http.ResponseWriter, r *http.
 	}
 	defer func() { _ = file.Close() }()
 
-	// Set headers
 	w.Header().Set("Content-Type", mimeType)
 	w.Header().Set("Content-Length", strconv.FormatInt(fileSize, 10))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
