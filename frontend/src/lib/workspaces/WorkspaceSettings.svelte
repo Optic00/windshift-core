@@ -528,7 +528,6 @@
           <button
             data-testid="delete-workspace-open"
             onclick={() => showDeleteConfirm = true}
-            data-testid="delete-workspace-open"
             class="flex items-center gap-2 px-4 py-2 bg-red-600 text-white text-sm font-medium rounded hover:bg-red-700 transition-colors"
           >
             <Trash2 class="w-4 h-4" />
@@ -545,7 +544,6 @@
                 data-testid="delete-workspace-confirm-name"
                 type="text"
                 bind:value={deleteConfirmText}
-                data-testid="delete-workspace-confirm-name"
                 class="w-full px-4 py-2 rounded border border-red-300 text-red-900 bg-white focus:outline-none focus:ring-2 focus:ring-red-500"
                 placeholder={t('workspaceSettings.typeNameHere', { name: workspace.name })}
               />
@@ -556,7 +554,6 @@
                 data-testid="delete-workspace-confirm"
                 onclick={deleteWorkspace}
                 disabled={deleteConfirmText !== workspace.name}
-                data-testid="delete-workspace-confirm"
                 class="px-4 py-2 bg-red-600 text-white text-sm font-medium rounded hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {t('workspaceSettings.yesRemoveWorkspace')}
