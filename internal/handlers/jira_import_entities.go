@@ -37,7 +37,7 @@ func (h *JiraImportHandler) ensureUsers(ctx context.Context, jobID string, users
 	result := make(map[string]int)
 	usernames := make(map[string]string)
 
-	// First pass: fetch missing emails via API
+	// Fill missing emails before matching imported accounts.
 	for i := range users {
 		if users[i].AccountID == "" {
 			continue
@@ -46,7 +46,6 @@ func (h *JiraImportHandler) ensureUsers(ctx context.Context, jobID string, users
 			continue // Already have email
 		}
 
-		// Try to fetch email via API
 		email, err := client.GetUserEmail(ctx, users[i].AccountID)
 		if err != nil {
 			slog.Debug("Failed to fetch email for user", slog.String("component", "jira"),
@@ -58,9 +57,8 @@ func (h *JiraImportHandler) ensureUsers(ctx context.Context, jobID string, users
 		}
 	}
 
-	// Second pass: create/match users
+	// Match existing users, then create inactive placeholders for new accounts.
 	for _, u := range users {
-		// Skip users without account ID
 		if u.AccountID == "" {
 			continue
 		}
@@ -75,7 +73,6 @@ func (h *JiraImportHandler) ensureUsers(ctx context.Context, jobID string, users
 			u.Email = syntheticEmailForAccount(u.AccountID)
 		}
 
-		// Check if we already have a mapping for this user in this job
 		var existingUserID int
 		var existingUsername string
 		err := h.db.QueryRow(`
@@ -90,13 +87,11 @@ func (h *JiraImportHandler) ensureUsers(ctx context.Context, jobID string, users
 			continue
 		}
 
-		// Try to find existing Windshift user by email
 		var userID int
 		var existingByEmailUsername string
 		if u.Email != "" {
 			err = h.db.QueryRow(`SELECT id, username FROM users WHERE LOWER(email) = LOWER(?)`, u.Email).Scan(&userID, &existingByEmailUsername)
 			if err == nil {
-				// Found existing user
 				result[u.AccountID] = userID
 				usernames[u.AccountID] = existingByEmailUsername
 				h.recordUserMapping(jobID, u, userID, false)
@@ -108,7 +103,6 @@ func (h *JiraImportHandler) ensureUsers(ctx context.Context, jobID string, users
 			}
 		}
 
-		// Create new inactive user
 		firstName, lastName := parseDisplayName(u.DisplayName)
 		username, err := h.uniqueImportUsername(generateUsername(u.Email, u.DisplayName))
 		if err != nil {

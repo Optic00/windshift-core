@@ -18,7 +18,6 @@ import (
 
 // normalizeStatusName normalizes status names for comparison by replacing underscores with spaces and converting to lowercase
 func normalizeStatusName(name string) string {
-	// Replace underscores with spaces and convert to lowercase
 	normalized := strings.ReplaceAll(name, "_", " ")
 	return strings.ToLower(normalized)
 }
@@ -31,7 +30,7 @@ func (h *ConfigurationSetHandler) AnalyzeMigration(w http.ResponseWriter, r *htt
 		return
 	}
 
-	// Get configuration set details including differentiate_by_item_type
+	// Resolve the configuration set and its affected workspaces.
 	var configSet models.ConfigurationSet
 	var workflowName sql.NullString
 	err := h.db.QueryRow(`
@@ -52,12 +51,10 @@ func (h *ConfigurationSetHandler) AnalyzeMigration(w http.ResponseWriter, r *htt
 
 	configSet.WorkflowName = workflowName.String
 
-	// Get affected workspaces - check for workspace filter in query params
 	workspaceFilter := r.URL.Query().Get("workspace_id")
 	var affectedWorkspaces []int
 
 	if workspaceFilter != "" {
-		// If workspace filter is provided, only analyze that specific workspace
 		workspaceID, err := strconv.Atoi(workspaceFilter)
 		if err != nil {
 			respondBadRequest(w, r, "Invalid workspace_id parameter")
@@ -65,7 +62,6 @@ func (h *ConfigurationSetHandler) AnalyzeMigration(w http.ResponseWriter, r *htt
 		}
 		affectedWorkspaces = []int{workspaceID}
 	} else {
-		// Otherwise, get all workspaces assigned to this configuration set
 		workspaceQuery := `
 			SELECT w.id
 			FROM workspace_configuration_sets wcs
@@ -93,7 +89,6 @@ func (h *ConfigurationSetHandler) AnalyzeMigration(w http.ResponseWriter, r *htt
 		}
 	}
 
-	// Handle empty workspace list
 	if len(affectedWorkspaces) == 0 {
 		analysis := models.WorkflowMigrationAnalysis{
 			NewWorkflowID:      configSet.WorkflowID,
@@ -107,23 +102,20 @@ func (h *ConfigurationSetHandler) AnalyzeMigration(w http.ResponseWriter, r *htt
 		return
 	}
 
-	// Use WorkflowService for proper item type workflow resolution
 	workflowService := services.NewWorkflowService(h.db)
 
 	var statusMigrations []models.StatusMigrationInfo
 	totalAffectedItems := 0
 	requiresMigration := false
 
-	// When differentiate_by_item_type is enabled, analyze per item type
+	// With item-type differentiation, resolve each type's workflow separately.
 	if configSet.DifferentiateByItemType {
-		// Get items grouped by item type and status
 		rowsByType, err := repository.NewItemRepository(h.db).ListItemTypeStatusCountsForWorkspaces(affectedWorkspaces)
 		if err != nil {
 			respondInternalError(w, r, err)
 			return
 		}
 
-		// Cache workflow statuses by workflow ID to avoid repeated queries
 		workflowStatusesCache := make(map[int]map[string]models.Status)
 
 		for _, row := range rowsByType {
@@ -136,7 +128,6 @@ func (h *ConfigurationSetHandler) AnalyzeMigration(w http.ResponseWriter, r *htt
 
 			itemTypeIDPtr := row.ItemTypeID
 
-			// Use first workspace for workflow lookup (they all share the same config set)
 			workflowID, err := workflowService.GetWorkflowIDForItem(affectedWorkspaces[0], itemTypeIDPtr)
 			if err != nil {
 				respondInternalError(w, r, err)
@@ -152,13 +143,11 @@ func (h *ConfigurationSetHandler) AnalyzeMigration(w http.ResponseWriter, r *htt
 				ItemCount:         itemCount,
 			}
 
-			// No workflow configured - no migration needed for this item type
 			if workflowID == nil {
 				statusMigrations = append(statusMigrations, migration)
 				continue
 			}
 
-			// Get or cache workflow statuses
 			workflowStatuses, exists := workflowStatusesCache[*workflowID]
 			if !exists {
 				workflowStatuses = make(map[string]models.Status)
@@ -195,7 +184,6 @@ func (h *ConfigurationSetHandler) AnalyzeMigration(w http.ResponseWriter, r *htt
 				workflowStatusesCache[*workflowID] = workflowStatuses
 			}
 
-			// Check if current status exists in workflow
 			normalizedCurrentStatus := normalizeStatusName(currentStatusName)
 			if workflowStatus, exists := workflowStatuses[normalizedCurrentStatus]; exists {
 				migration.SuggestedStatusID = &workflowStatus.ID
@@ -209,7 +197,7 @@ func (h *ConfigurationSetHandler) AnalyzeMigration(w http.ResponseWriter, r *htt
 			statusMigrations = append(statusMigrations, migration)
 		}
 	} else {
-		// Original behavior: no item type differentiation, use config set default workflow
+		// Without differentiation, reconcile against the config-set workflow.
 		if configSet.WorkflowID == nil {
 			analysis := models.WorkflowMigrationAnalysis{
 				NewWorkflowID:      configSet.WorkflowID,
@@ -223,14 +211,12 @@ func (h *ConfigurationSetHandler) AnalyzeMigration(w http.ResponseWriter, r *htt
 			return
 		}
 
-		// Get current statuses used in affected workspaces and their counts
 		statusCounts, err := repository.NewItemRepository(h.db).ListStatusCountsForWorkspaces(affectedWorkspaces)
 		if err != nil {
 			respondInternalError(w, r, err)
 			return
 		}
 
-		// Get available statuses in the workflow
 		workflowStatusQuery := `
 			SELECT DISTINCT s.id, s.name
 			FROM workflow_transitions wt
@@ -245,7 +231,6 @@ func (h *ConfigurationSetHandler) AnalyzeMigration(w http.ResponseWriter, r *htt
 		}
 		defer func() { _ = workflowStatusRows.Close() }()
 
-		// Build map of available workflow statuses
 		workflowStatuses := make(map[string]models.Status)
 		for workflowStatusRows.Next() {
 			var status models.Status
@@ -261,7 +246,6 @@ func (h *ConfigurationSetHandler) AnalyzeMigration(w http.ResponseWriter, r *htt
 			return
 		}
 
-		// Analyze each current status
 		for _, row := range statusCounts {
 			currentStatusID := row.StatusID
 			currentStatusName := row.StatusName

@@ -356,33 +356,25 @@ func (s *BindingService) SetStandardRunDispatcher(dispatcher StandardRunDispatch
 type CreateBindingRequest struct {
 	WorkspaceID  int
 	ActingUserID int
-	// Repos is the set of repositories the binding checks out (WI-449). Exactly
-	// one must be primary (or, for a single repo, primary is defaulted). When
-	// empty, the legacy scalar RepoSlug/RepoBaseRef/SCMConnectionID below are
-	// folded into a single primary repo for backward compatibility.
+	// Repos are checked out per run; exactly one is primary. Empty preserves the
+	// legacy scalar fields below as a single primary repository.
 	Repos []RepoInput
-	// RepoSlug/RepoBaseRef/SCMConnectionID are the deprecated single-repo
-	// fields, kept for old API clients. Prefer Repos.
+	// Deprecated single-repo fields retained for older clients; prefer Repos.
 	RepoSlug        string
 	RepoBaseRef     string
 	LLMConnectionID *int
 	SCMConnectionID *int
-	// TargetPoolID routes this binding's runs to a remote runner_pool instead of
-	// the local in-process runner. nil = local. Validated against the pools the
-	// workspace may dispatch to.
+	// TargetPoolID selects an enabled, workspace-authorized remote runner pool;
+	// nil uses the local runner.
 	TargetPoolID *int
-	// RunnerImage overrides the coding-agent container image for this binding's
-	// remote (pool) runs. Empty = the runner's default. Only valid when
-	// TargetPoolID is set (WI-450).
+	// RunnerImage overrides the remote runner image and requires TargetPoolID.
 	RunnerImage     string
 	TokenScopes     []string
 	TokenTTLMinutes int
 	MaxRunsPerDay   int
-	// Instructions is the binding's persona/specialization, appended to the
-	// run's standard initial prompt as a "Your role" section (WI-258).
+	// Instructions is appended to the run prompt as the binding's role section.
 	Instructions string
-	// SkillIDs attaches workspace agent skills to the binding; every id must
-	// belong to the binding's workspace.
+	// SkillIDs must reference skills in the binding's workspace.
 	SkillIDs        []int
 	CreatedByUserID int
 }
@@ -395,14 +387,8 @@ type RepoInput struct {
 	IsPrimary       bool
 }
 
-// Create validates the acting identity via the WI-87 chokepoint, then
-// persists the binding with the chokepoint-resolved kind (the client's
-// claim, if any, is ignored). Returns repository.ErrBindingDuplicate
-// when a binding already exists for (workspace, acting_user).
-//
-// Scopes and TTL are validated up front so a workspace admin gets a
-// 400 at create time instead of having their config silently clamped
-// (TTL) or runs failing at mint time (scopes).
+// Create validates the acting identity and run configuration before persisting
+// the binding; duplicate workspace/actor bindings return an explicit error.
 func (s *BindingService) Create(ctx context.Context, req CreateBindingRequest) (*models.WorkspaceAgentBinding, error) {
 	if req.WorkspaceID == 0 {
 		return nil, errors.New("binding service: workspace_id is required")

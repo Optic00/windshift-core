@@ -119,22 +119,17 @@ func (h *SCMProviderHandler) CreateProvider(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	// Name + Slug are user-facing labels on the provider admin surface
-	// and routing keys. Secrets (OAuthClientSecret, PersonalAccessToken,
-	// GitHubAppPrivateKey) and ProviderType / AuthMethod enums are
-	// deliberately untouched.
+	// Sanitize display labels and routing keys; leave secrets and enum fields raw.
 	warnings := sanitize.ApplyAllWithWarnings(
 		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
 		sanitize.Pair{Target: &req.Slug, Policy: sanitize.ShortIdentifier, Label: "Slug"},
 	)
 
-	// Validate required fields
 	if req.Slug == "" || req.Name == "" || req.ProviderType == "" || req.AuthMethod == "" {
 		respondValidationError(w, r, "Missing required fields: slug, name, provider_type, auth_method")
 		return
 	}
 
-	// Validate provider type (only GitHub and Gitea supported)
 	validTypes := map[models.SCMProviderType]bool{
 		models.SCMProviderTypeGitHub: true,
 		models.SCMProviderTypeGitea:  true,
@@ -144,7 +139,6 @@ func (h *SCMProviderHandler) CreateProvider(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Validate auth method
 	validMethods := map[models.SCMAuthMethod]bool{
 		models.SCMAuthMethodOAuth:     true,
 		models.SCMAuthMethodPAT:       true,
@@ -155,13 +149,12 @@ func (h *SCMProviderHandler) CreateProvider(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// GitHub App auth method is only valid for GitHub providers
 	if req.AuthMethod == models.SCMAuthMethodGitHubApp && req.ProviderType != models.SCMProviderTypeGitHub {
 		respondBadRequest(w, r, "GitHub App auth method is only valid for GitHub providers")
 		return
 	}
 
-	// Encrypt secrets
+	// Encrypt credentials before persisting them.
 	var oauthSecretEnc, patEnc, ghAppKeyEnc string
 	var err error
 
@@ -189,13 +182,11 @@ func (h *SCMProviderHandler) CreateProvider(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	// Default workspace restriction mode
 	workspaceRestrictionMode := req.WorkspaceRestrictionMode
 	if workspaceRestrictionMode == "" {
 		workspaceRestrictionMode = "unrestricted"
 	}
 
-	// If this is set as default, unset other defaults
 	if req.IsDefault {
 		_, err = h.db.ExecWrite("UPDATE scm_providers SET is_default = false WHERE is_default = true")
 		if err != nil {
@@ -204,7 +195,6 @@ func (h *SCMProviderHandler) CreateProvider(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	// Insert the provider
 	var id int64
 	err = h.db.QueryRow(`
 		INSERT INTO scm_providers (
@@ -262,7 +252,6 @@ func (h *SCMProviderHandler) UpdateProvider(w http.ResponseWriter, r *http.Reque
 		sanitize.Pair{Target: &req.Slug, Policy: sanitize.ShortIdentifier, Label: "Slug"},
 	)
 
-	// Check if provider exists
 	_, err = h.getProviderByID(id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -273,7 +262,6 @@ func (h *SCMProviderHandler) UpdateProvider(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Validate provider type (only GitHub and Gitea supported)
 	validTypes := map[models.SCMProviderType]bool{
 		models.SCMProviderTypeGitHub: true,
 		models.SCMProviderTypeGitea:  true,
@@ -283,7 +271,6 @@ func (h *SCMProviderHandler) UpdateProvider(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Validate auth method
 	validMethods := map[models.SCMAuthMethod]bool{
 		models.SCMAuthMethodOAuth:     true,
 		models.SCMAuthMethodPAT:       true,
@@ -294,13 +281,12 @@ func (h *SCMProviderHandler) UpdateProvider(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// GitHub App auth method is only valid for GitHub providers
 	if req.AuthMethod == models.SCMAuthMethodGitHubApp && req.ProviderType != models.SCMProviderTypeGitHub {
 		respondBadRequest(w, r, "GitHub App auth method is only valid for GitHub providers")
 		return
 	}
 
-	// Encrypt secrets if provided
+	// Replace encrypted credentials only when new values are supplied.
 	var oauthSecretEnc, patEnc, ghAppKeyEnc *string
 
 	if req.OAuthClientSecret != "" {
@@ -333,13 +319,11 @@ func (h *SCMProviderHandler) UpdateProvider(w http.ResponseWriter, r *http.Reque
 		ghAppKeyEnc = &enc
 	}
 
-	// Default workspace restriction mode if not provided
 	workspaceRestrictionMode := req.WorkspaceRestrictionMode
 	if workspaceRestrictionMode == "" {
 		workspaceRestrictionMode = "unrestricted"
 	}
 
-	// If this is set as default, unset other defaults
 	if req.IsDefault {
 		_, err = h.db.ExecWrite("UPDATE scm_providers SET is_default = false WHERE is_default = true AND id != ?", id)
 		if err != nil {
@@ -348,7 +332,6 @@ func (h *SCMProviderHandler) UpdateProvider(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	// Build update query dynamically
 	query := `UPDATE scm_providers SET
 		slug = ?, name = ?, provider_type = ?, auth_method = ?,
 		enabled = ?, is_default = ?, base_url = ?, oauth_client_id = ?,
@@ -361,7 +344,6 @@ func (h *SCMProviderHandler) UpdateProvider(w http.ResponseWriter, r *http.Reque
 		req.Scopes, workspaceRestrictionMode,
 	}
 
-	// Only update secrets if provided
 	if oauthSecretEnc != nil {
 		query += ", oauth_client_secret_encrypted = ?"
 		args = append(args, *oauthSecretEnc)

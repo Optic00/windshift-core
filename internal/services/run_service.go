@@ -64,19 +64,13 @@ type RunInput struct {
 	WorkspacePath string
 	Env           map[string]string
 	InitialPrompt string
-	// Kind + Image let a kind-dispatching runner pick its execution mode
-	// (WI-146): coding_agent vs action_container / ci_task (run Image as
-	// a plain container). Empty Kind means coding_agent.
+	// Kind and Image select coding_agent, action_container, or ci_task execution.
 	Kind  string
 	Image string
-	// Repo, when set, asks a repo-preparing runner (the remote TriageRunner)
-	// to materialize its own checkout and push the run branch via the
-	// git-proxy. Nil for local runs (WorkspacePath is already prepared).
-	// Deprecated by Repos; mirrors Repos[0] (the primary).
+	// Repo is the deprecated primary checkout input; prefer Repos.
 	Repo *JobRepo
-	// Repos is every repo a repo-preparing runner must check out (WI-449),
-	// primary first. One entry → single-repo layout; many → sibling checkouts
-	// under a shared workspace root, each pushed independently.
+	// Repos lists every checkout, primary first; multiple entries use sibling
+	// directories under one run workspace.
 	Repos []JobRepo
 }
 
@@ -118,49 +112,25 @@ type RunRequest struct {
 	Repos []*repoprep.RepoSpec
 	Token *TokenSpec
 	Env   map[string]string
-	// Grants, when set, is snapshotted onto the run at claim time and bound
-	// to the minted run-token (WI-144) so the access-layer brokers can
-	// authorize the run's git/llm/secret access. The git ref is filled in at
-	// claim from the prepared worktree branch. Only persisted when a token is
-	// minted (the brokers authorize by the bound token).
+	// Grants are snapshotted at claim and bound to the run token for broker
+	// authorization; the git ref is filled from the prepared worktree.
 	Grants *models.RunGrants
-	// JobKind + JobImage select the runner execution mode (WI-146). Empty
-	// JobKind defaults to coding_agent; action_container / ci_task run
-	// JobImage as a plain container.
+	// JobKind and JobImage select the execution mode; empty defaults to coding_agent.
 	JobKind  string
 	JobImage string
-	// InitialPrompt overrides the runner's static coding-agent prompt for
-	// this one run. Empty falls back to RunService.initialPrompt. The binding
-	// "test run" uses it to drive a one-shot read-only prompt instead of the
-	// real work-item prompt.
+	// InitialPrompt overrides the service prompt for this run; empty uses the default.
 	InitialPrompt string
-	// Ephemeral marks a throwaway run that must not mutate the remote: the
-	// host-side run-branch push and the post-run PR hook are both skipped at
-	// finalize. The binding "test run" sets this so simulating an assignment
-	// can never open a PR or push a branch.
+	// Ephemeral runs skip branch pushes and post-run PR creation.
 	Ephemeral bool
-	// TargetPoolID, when set, routes the run to a remote runner_pool instead
-	// of the local in-process pool (WI-195). A remote run is persisted queued
-	// for the pool and enriched (token + grants + env) at claim time by the
-	// remote claim path, so Repo/Token/Grants/Env on this request are ignored
-	// for remote runs — the orchestrator never sees the work locally.
+	// TargetPoolID queues the run for a remote pool; token, grants, and env are
+	// enriched at claim time rather than on the local request path.
 	TargetPoolID *int
-	// InitialPromptSuffix is appended to whichever initial prompt the run
-	// uses (the service default or a per-run override): the binding's
-	// custom instructions + skills index (WI-258). Never replaces the
-	// operational prompt.
+	// InitialPromptSuffix appends binding instructions and skills to the prompt.
 	InitialPromptSuffix string
-	// TriggeredByUserID is the user who caused the run (the assigner whose
-	// change fired the binding trigger, or the admin starting a test run).
-	// Persisted on the run for audit; on OAuth SCM connections it is the
-	// credential principal for the run's git traffic and PR creation
-	// (WI-275). 0 = unknown (legacy callers) → connection-level credential.
+	// TriggeredByUserID identifies the audit actor and OAuth credential principal;
+	// zero retains legacy connection-level credentials.
 	TriggeredByUserID int
-	// Trigger is the run's trigger context + free-form instruction (the
-	// @mentioning comment that started the run). Persisted as JSON on the run
-	// and, for remote runs, recovered at claim time so the instruction reaches
-	// the agent as part of its prompt. Nil for triggers carrying no extra
-	// context (e.g. a bare assignment change).
+	// Trigger carries the persisted context and instruction that started the run.
 	Trigger *models.RunTrigger
 }
 
