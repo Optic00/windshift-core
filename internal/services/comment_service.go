@@ -125,6 +125,13 @@ func (s *CommentService) SetApprovalService(as *ApprovalService) {
 	s.approvalService = as
 }
 
+func (s *CommentService) approvalReader() *ApprovalService {
+	if s.approvalService != nil {
+		return s.approvalService
+	}
+	return NewApprovalService(s.db, nil, nil)
+}
+
 // SetNotificationService sets the notification service for emitting comment events.
 func (s *CommentService) SetNotificationService(ns *NotificationService) {
 	s.notificationService = ns
@@ -514,13 +521,8 @@ func (s *CommentService) Get(commentID int) (*CommentWithDetails, error) {
 // both sources share one stable ordering. Agent-owner attribution is
 // permission-filtered by the caller.
 func (s *CommentService) GetFeedByItemID(itemID int, includeAgentOwner bool, options CommentFeedOptions) (*CommentFeedPage, error) {
-	limit := options.Limit
-	if limit <= 0 {
-		limit = DefaultCommentFeedLimit
-	}
-	if limit > MaxCommentFeedLimit {
-		limit = MaxCommentFeedLimit
-	}
+	limit := normalizeCommentFeedLimit(options.Limit)
+	options.Limit = limit
 
 	query := `
 		SELECT c.id AS feed_id, c.item_id, c.author_id, c.portal_customer_id, c.content, c.is_private,
@@ -589,33 +591,14 @@ func (s *CommentService) GetFeedByItemID(itemID int, includeAgentOwner bool, opt
 		return nil, fmt.Errorf("read comment feed for item %d: %w", itemID, err)
 	}
 
-	// Merge approval decision rows and re-apply the cursor to them. Human rows
-	// were already cursor-filtered and capped above. A lightweight fallback
-	// keeps the merged feed working when no approval service was injected.
-	approval := s.approvalService
-	if approval == nil {
-		approval = NewApprovalService(s.db, nil, nil)
-	}
-	approvalRows, err := approval.GetDecisionCommentsForItem(itemID)
+	// Each source applies the same cursor and limit before the bounded results
+	// are merged. Fetching limit+1 from each is sufficient to produce the first
+	// limit+1 rows of their combined ordering.
+	approvalRows, err := s.approvalReader().GetDecisionCommentsForItem(itemID, includeAgentOwner, options)
 	if err != nil {
 		return nil, err
 	}
-	for _, c := range approvalRows {
-		switch {
-		case options.Before != nil:
-			if c.CreatedAt.Before(options.Before.CreatedAt) ||
-				(c.CreatedAt.Equal(options.Before.CreatedAt) && c.ID < options.Before.ID) {
-				comments = append(comments, c)
-			}
-		case options.Since != nil:
-			if c.CreatedAt.After(options.Since.CreatedAt) ||
-				(c.CreatedAt.Equal(options.Since.CreatedAt) && c.ID > options.Since.ID) {
-				comments = append(comments, c)
-			}
-		default:
-			comments = append(comments, c)
-		}
-	}
+	comments = append(comments, approvalRows...)
 
 	asc := order == "ASC"
 	sort.SliceStable(comments, func(i, j int) bool {
@@ -641,20 +624,26 @@ func (s *CommentService) GetFeedByItemID(itemID int, includeAgentOwner bool, opt
 // CountFeedByItemID counts ordinary comments and approval decision comments in
 // the merged item feed.
 func (s *CommentService) CountFeedByItemID(itemID int) (int, error) {
-	var total int
-	err := s.db.QueryRow(`
-		SELECT
-			(SELECT COUNT(*) FROM comments WHERE item_id = ?)
-			+
-			(SELECT COUNT(*)
-			 FROM approval_decisions d
-			 JOIN approval_requests ar ON ar.id = d.approval_request_id
-			 WHERE ar.item_id = ? AND d.comment IS NOT NULL AND d.comment <> '')
-	`, itemID, itemID).Scan(&total)
+	var commentCount int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM comments WHERE item_id = ?`, itemID).Scan(&commentCount)
 	if err != nil {
 		return 0, fmt.Errorf("count comment feed for item %d: %w", itemID, err)
 	}
-	return total, nil
+	approvalCount, err := s.approvalReader().CountDecisionCommentsForItem(itemID)
+	if err != nil {
+		return 0, err
+	}
+	return commentCount + approvalCount, nil
+}
+
+func normalizeCommentFeedLimit(limit int) int {
+	if limit <= 0 {
+		return DefaultCommentFeedLimit
+	}
+	if limit > MaxCommentFeedLimit {
+		return MaxCommentFeedLimit
+	}
+	return limit
 }
 
 // Update updates a comment's content

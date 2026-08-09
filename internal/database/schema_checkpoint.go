@@ -37,17 +37,38 @@ func ValidateCanonicalSchemaCheckpoint(db Database) error {
 	if err := db.QueryRow("SELECT phase FROM global_rank_state WHERE id = 1").Scan(&phase); err != nil {
 		return fmt.Errorf("read global rank checkpoint state: %w", err)
 	}
-	if phase != "stable" {
+	switch phase {
+	case "stable", "migrating", "paused", "failed":
+		// These are all post-checkpoint operational states. In particular, a
+		// process must be allowed to restart while migrating so the resumable
+		// worker can reclaim an expired lease and continue from its frontier.
+	case "legacy":
 		return fmt.Errorf("database schema checkpoint %s is incomplete: global rank conversion is %s", CanonicalSchemaCheckpointVersion, phase)
+	default:
+		return fmt.Errorf("database schema checkpoint %s has invalid global rank phase %q", CanonicalSchemaCheckpointVersion, phase)
 	}
-	valid, err := globalRankCheckpointCheck(db, db.GetDriverName() == driverSQLite)
+	valid, err := canonicalRankRowsCheck(db, db.GetDriverName() == driverSQLite)
 	if err != nil {
 		return fmt.Errorf("validate canonical item ranks: %w", err)
 	}
 	if !valid {
 		return fmt.Errorf("database schema checkpoint %s is incomplete: canonical item ranks are invalid or duplicated", CanonicalSchemaCheckpointVersion)
 	}
+	canonical, err := canonicalFracIndexSchemaCheck(db)
+	if err != nil {
+		return fmt.Errorf("validate canonical item rank schema: %w", err)
+	}
+	if !canonical {
+		return fmt.Errorf("database schema checkpoint %s is incomplete: items.frac_index is not canonical", CanonicalSchemaCheckpointVersion)
+	}
 	return nil
+}
+
+func canonicalFracIndexSchemaCheck(db Database) (bool, error) {
+	if db.GetDriverName() == driverSQLite {
+		return canonicalFracIndexSQLiteCheck(db)
+	}
+	return canonicalFracIndexPostgresCheck(db)
 }
 
 func schemaCheckpointSQLiteCheck(db Database) (bool, error) {
@@ -101,6 +122,13 @@ func globalRankCheckpointCheck(db Database, sqlite bool) (bool, error) {
 	if phase != "stable" {
 		return false, nil
 	}
+	return canonicalRankRowsCheck(db, sqlite)
+}
+
+// canonicalRankRowsCheck validates the persisted row representation without
+// imposing a lifecycle phase. The release checkpoint can only be recorded in
+// stable state, while later startups must also accept resumable online states.
+func canonicalRankRowsCheck(db Database, sqlite bool) (bool, error) {
 	var invalidCount int
 	query := "SELECT COUNT(*) FROM items WHERE frac_index IS NULL OR SUBSTRING(frac_index FROM 1 FOR 2) NOT IN ('0|', '1|', '2|')"
 	if sqlite {

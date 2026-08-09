@@ -234,7 +234,10 @@ func RegisterWorkspaceRoutes(deps *Deps) {
 		api.HandleH("PUT /workspaces/{workspaceId}/actions/{id}", auth(actionManage(http.HandlerFunc(deps.Workspaces.Actions.UpdateAction))))
 		api.HandleH("DELETE /workspaces/{workspaceId}/actions/{id}", auth(actionManage(http.HandlerFunc(deps.Workspaces.Actions.DeleteAction))))
 		api.HandleH("POST /workspaces/{workspaceId}/actions/{id}/toggle", auth(actionManage(http.HandlerFunc(deps.Workspaces.Actions.ToggleAction))))
-		api.HandleH("POST /workspaces/{workspaceId}/actions/{id}/execute", auth(actionManage(http.HandlerFunc(deps.Workspaces.Actions.ExecuteAction))))
+		// Execute performs its own per-action authorization: manual actions use
+		// their optional role allowlist (or item.edit by default), while testing
+		// event-driven actions remains action.manage-only.
+		api.HandleH("POST /workspaces/{workspaceId}/actions/{id}/execute", auth(http.HandlerFunc(deps.Workspaces.Actions.ExecuteAction)))
 		api.HandleH("GET /workspaces/{workspaceId}/actions/{id}/logs", auth(actionManage(http.HandlerFunc(deps.Workspaces.Actions.GetActionLogs))))
 		api.HandleH("GET /workspaces/{workspaceId}/action-logs", auth(actionManage(http.HandlerFunc(deps.Workspaces.Actions.GetWorkspaceLogs))))
 

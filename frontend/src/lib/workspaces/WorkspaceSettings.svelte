@@ -526,6 +526,7 @@
 
         {#if !showDeleteConfirm}
           <button
+            data-testid="delete-workspace-open"
             onclick={() => showDeleteConfirm = true}
             data-testid="delete-workspace-open"
             class="flex items-center gap-2 px-4 py-2 bg-red-600 text-white text-sm font-medium rounded hover:bg-red-700 transition-colors"
@@ -541,6 +542,7 @@
               </label>
               <input
                 id="delete-confirm"
+                data-testid="delete-workspace-confirm-name"
                 type="text"
                 bind:value={deleteConfirmText}
                 data-testid="delete-workspace-confirm-name"
@@ -551,6 +553,7 @@
 
             <div class="flex items-center gap-3">
               <button
+                data-testid="delete-workspace-confirm"
                 onclick={deleteWorkspace}
                 disabled={deleteConfirmText !== workspace.name}
                 data-testid="delete-workspace-confirm"

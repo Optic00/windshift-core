@@ -358,7 +358,6 @@
       // Remember focus before entering the portalled dropdown.
       activeElementBeforeOpen = document.activeElement;
       if (popoverMode) {
-        popoverSearchTerm = '';
         setTimeout(() => searchInputRef?.focus(), 50);
       }
     }
@@ -370,7 +369,15 @@
   function restoreFocusToTrigger() {
     const target = activeElementBeforeOpen;
     if (target instanceof HTMLElement && !menuRef?.contains(target)) {
-      requestAnimationFrame(() => target.focus());
+      requestAnimationFrame(() => {
+        const active = document.activeElement;
+        // Recover focus only when closing the portalled menu left it nowhere
+        // useful. A user may already have moved to the next field before this
+        // frame runs; never steal focus back from that newer target.
+        if (!active || active === document.body || menuRef?.contains(active)) {
+          target.focus();
+        }
+      });
     }
   }
 
@@ -444,7 +451,13 @@
   // Popover mode trigger handler
   function handleTriggerClick() {
     if (disabled) return;
-    $open = !$open;
+    const opening = !$open;
+    if (opening) {
+      // Reset before exposing the search input. Clearing from the later open
+      // effect can erase text entered immediately after the trigger click.
+      popoverSearchTerm = '';
+    }
+    $open = opening;
   }
 </script>
 
@@ -504,7 +517,7 @@
           </button>
         </div>
       {/each}
-      <input bind:this={inputRef} use:melt={$input} type="text"
+      <input bind:this={inputRef} use:melt={$input} {id} type="text"
              placeholder={selectedItems.length === 0 ? resolvedPlaceholder : ''}
              {disabled} onkeydowncapture={handleKeydown}
              class="flex-1 min-w-[120px] px-1 py-0.5 bg-transparent border-0 outline-none text-sm"

@@ -27,6 +27,7 @@
   let error = $state(null);
   let reparentCandidates = $state([]);
   let selectedNewParentId = $state(null);
+  let requestedItemId = $state(null);
 
   // Derived values
   const hasChildren = $derived(deleteInfo?.hasChildren || false);
@@ -53,16 +54,24 @@
 
   // Load delete info when dialog opens
   $effect(() => {
-    if (show && item?.id) {
-      loadDeleteInfo();
-    } else {
+    if (!show) {
       // Reset state when dialog closes
+      requestedItemId = null;
       deleteInfo = null;
       selectedMode = 'deleteAll';
       confirmText = '';
       error = null;
       reparentCandidates = [];
       selectedNewParentId = null;
+      return;
+    }
+
+    // Item detail may refresh from SSE while this dialog is open. Only reload
+    // delete metadata when the selected item actually changes so a same-item
+    // refresh cannot invalidate confirmation text the user already entered.
+    if (item?.id && requestedItemId !== item.id) {
+      requestedItemId = item.id;
+      loadDeleteInfo(item.id);
     }
   });
 
@@ -73,20 +82,23 @@
     }
   });
 
-  async function loadDeleteInfo() {
+  async function loadDeleteInfo(itemId) {
     loadingInfo = true;
     error = null;
     try {
-      deleteInfo = await api.items.getDeleteInfo(item.id);
+      const result = await api.items.getDeleteInfo(itemId);
+      if (!show || requestedItemId !== itemId) return;
+      deleteInfo = result;
       // If item has a parent, default to that as the new parent
       if (deleteInfo?.parentId) {
         selectedNewParentId = deleteInfo.parentId;
       }
     } catch (err) {
+      if (!show || requestedItemId !== itemId) return;
       console.error('Failed to load delete info:', err);
       error = err.message;
     } finally {
-      loadingInfo = false;
+      if (requestedItemId === itemId) loadingInfo = false;
     }
   }
 
@@ -296,6 +308,7 @@
             <FormField label={t('items.typeToConfirm', { title: item?.title })} id="delete-confirm-input" class="mt-4">
               <input
                 id="delete-confirm-input"
+                data-testid="delete-item-confirmation"
                 type="text"
                 bind:value={confirmText}
                 placeholder={t('items.confirmationPlaceholder')}
@@ -333,6 +346,7 @@
           <!-- Waiting for info to load -->
         {:else if hasChildren}
           <Button
+            dataTestid="delete-item-confirm"
             variant="danger"
             onclick={handleDelete}
             size="small"
@@ -345,6 +359,7 @@
           </Button>
         {:else}
           <Button
+            dataTestid="delete-item-confirm"
             variant="danger"
             onclick={handleDelete}
             size="small"

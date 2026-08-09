@@ -5,11 +5,11 @@
  */
 import { api } from '../api.js';
 import { createSearchFilteredFields } from '../utils/fieldSearchUtils.js';
+import { DragStateStore } from './DragStateStore.svelte.js';
 import { getSystemFieldName } from './fieldConfig.js';
 import { createFieldObject, fieldExists } from './fieldUtils.js';
-import { applyDragStateMixin } from './storeUtils.js';
 
-class FormBuilderStore {
+class FormBuilderStore extends DragStateStore {
   // === Form List ===
   forms = $state([]);
   loading = $state(false);
@@ -50,28 +50,6 @@ class FormBuilderStore {
 
   // === Field Search ===
   fieldSearchQuery = $state('');
-
-  // === Drag State ===
-  draggedField = $state(null);
-  fieldDragState = $state(new Map());
-
-  // === Drag state methods (defined here so TS sees them; mixin would otherwise add at runtime) ===
-  setDragState(fieldId, state) {
-    this.fieldDragState.set(fieldId, state);
-    this.fieldDragState = new Map(this.fieldDragState);
-  }
-  clearDragState() {
-    this.fieldDragState.forEach((_, id) => {
-      this.fieldDragState.set(id, { closestEdge: null });
-    });
-    this.fieldDragState = new Map(this.fieldDragState);
-  }
-  setDraggedField(field) {
-    this.draggedField = field;
-  }
-  clearDraggedField() {
-    this.draggedField = null;
-  }
 
   // === Derived Values ===
 
@@ -337,8 +315,6 @@ class FormBuilderStore {
     this.formFields = [...this.formFields];
   }
 
-  // Drag state methods are added via applyDragStateMixin below.
-
   // === Helpers ===
 
   resetFormConfig() {
@@ -394,13 +370,10 @@ class FormBuilderStore {
     this.savedConfigSnapshot = '';
     this.savedRoutingSnapshot = '';
     this.fieldSearchQuery = '';
-    this.draggedField = null;
-    this.fieldDragState = new Map();
+    this.resetDragState();
     this.resetFormConfig();
     this.resetRoutingMeta();
   }
 }
-
-applyDragStateMixin(FormBuilderStore);
 
 export const formBuilderStore = new FormBuilderStore();

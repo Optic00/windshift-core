@@ -21,9 +21,13 @@ const STORAGE_KEYS = {
 const EXCLUDED_SYSTEM_FIELDS = ['status'];
 const FIXED_SYSTEM_FIELDS = ['title', 'description'];
 
-class WorkItemFormStore {
-  // === Form Data ===
-  formData = $state({
+/**
+ * Default work-item form values. Single source of truth for both initial
+ * state and form resets so the create modal starts and restarts the same way.
+ * @param {{ itemTypeId?: number|null }} [opts]
+ */
+function defaultFormData({ itemTypeId = null } = {}) {
+  return {
     name: '',
     description: '',
     due_date: '',
@@ -38,8 +42,13 @@ class WorkItemFormStore {
     personal_label_names: [],
     story_points: '',
     estimate: '',
-    item_type_id: null,
-  });
+    item_type_id: itemTypeId,
+  };
+}
+
+class WorkItemFormStore {
+  // === Form Data ===
+  formData = $state(defaultFormData());
   customFieldValues = $state({});
   selectedPersonalLabels = $state([]);
   validationErrors = $state([]);
@@ -922,23 +931,9 @@ class WorkItemFormStore {
    * Reset form state while keeping loaded reference data.
    */
   resetForm() {
-    this.formData = {
-      name: '',
-      description: '',
-      due_date: '',
-      start_date: '',
-      end_date: '',
-      workspace_id: null,
-      priority_id: null,
-      milestone_ids: [],
-      assignee_id: null,
-      iteration_id: null,
-      project_id: null,
-      personal_label_names: [],
-      story_points: '',
-      estimate: '',
-      item_type_id: this.availableItemTypes.length > 0 ? this.availableItemTypes[0].id : null,
-    };
+    this.formData = defaultFormData({
+      itemTypeId: this.availableItemTypes.length > 0 ? this.availableItemTypes[0].id : null,
+    });
     this.customFieldValues = {};
     this.selectedPersonalLabels = [];
     this.validationErrors = [];

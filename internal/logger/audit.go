@@ -526,9 +526,10 @@ const (
 	ActionConfigSetComprehensiveMigrationExecute = "config_set.comprehensive_migration_execute"
 
 	// Admin diagnostics / retention maintenance
-	ActionDiagnosticsWebhookDeliveriesPurge = "diagnostics.webhook_deliveries.purge"
-	ActionDiagnosticsSchedulerRunsPurge     = "diagnostics.scheduler_runs.purge"
-	ActionDiagnosticsRecurrenceVolumeUpdate = "diagnostics.recurrence_volume.update"
+	ActionDiagnosticsWebhookDeliveriesPurge     = "diagnostics.webhook_deliveries.purge"
+	ActionDiagnosticsSchedulerRunsPurge         = "diagnostics.scheduler_runs.purge"
+	ActionDiagnosticsRecurrenceVolumeUpdate     = "diagnostics.recurrence_volume.update"
+	ActionDiagnosticsGlobalRankMigrationControl = "diagnostics.global_rank_migration.control"
 
 	// LLM Connections
 	ActionLLMConnectionCreate = "llm_connection.create"

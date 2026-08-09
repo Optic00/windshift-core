@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"windshift/internal/database"
@@ -34,6 +35,9 @@ type GlobalRankMigrationWorker struct {
 	batchSize     int
 	leaseDuration time.Duration
 	now           func() time.Time
+	// beforeCompletion is a deterministic white-box test barrier. Production
+	// constructors leave it nil.
+	beforeCompletion func()
 }
 
 func NewGlobalRankMigrationWorker(db database.Database, owner string, batchSize int, leaseDuration time.Duration) *GlobalRankMigrationWorker {
@@ -71,9 +75,13 @@ func (w *GlobalRankMigrationWorker) Run(ctx context.Context) (GlobalRankMigratio
 		return GlobalRankMigrationBatchResult{}, fmt.Errorf("begin global rank migration batch: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	driver := w.db.GetDriverName()
+	if err := acquireGlobalRankMigrationLock(tx, driver); err != nil {
+		return GlobalRankMigrationBatchResult{}, err
+	}
 
 	var state GlobalRankState
-	if w.db.GetDriverName() == "postgres" {
+	if driver == "postgres" {
 		// PostgreSQL needs an explicit row lock so two balancers cannot both
 		// claim a lease; SQLite's write transaction already serializes them.
 		state, err = loadGlobalRankStateForUpdate(tx)
@@ -90,6 +98,9 @@ func (w *GlobalRankMigrationWorker) Run(ctx context.Context) (GlobalRankMigratio
 	if state.Phase == GlobalRankPhaseFailed {
 		return GlobalRankMigrationBatchResult{}, fmt.Errorf("global rank migration is failed: %s", globalRankLastError(state))
 	}
+	if state.Phase == GlobalRankPhasePaused {
+		return GlobalRankMigrationBatchResult{State: state}, nil
+	}
 	if migrationLeaseBusy(state, w.owner, now) {
 		if err := tx.Commit(); err != nil {
 			return GlobalRankMigrationBatchResult{}, fmt.Errorf("commit global rank lease observation: %w", err)
@@ -97,27 +108,11 @@ func (w *GlobalRankMigrationWorker) Run(ctx context.Context) (GlobalRankMigratio
 		return GlobalRankMigrationBatchResult{State: state}, nil
 	}
 
-	switch state.Phase {
-	case GlobalRankPhaseStable:
-		target, direction, transitionErr := GlobalRankBucketTransition(state.ActiveBucket)
-		if transitionErr != nil {
-			return GlobalRankMigrationBatchResult{}, transitionErr
-		}
-		state.TargetBucket = &target
-		migrationDirection := GlobalRankDirection(direction)
-		state.Direction = &migrationDirection
-		state.Phase = GlobalRankPhaseMigrating
-		state.Frontier = nil
-		state.MigratedCount = 0
-		state.TotalCount, err = countItems(tx)
+	if state.Phase == GlobalRankPhaseStable {
+		state, err = startGlobalRankMigration(tx, state)
 		if err != nil {
 			return GlobalRankMigrationBatchResult{}, err
 		}
-	case GlobalRankPhasePaused:
-		if state.TargetBucket == nil || state.Direction == nil {
-			return GlobalRankMigrationBatchResult{}, fmt.Errorf("paused global rank migration has no target or direction")
-		}
-		state.Phase = GlobalRankPhaseMigrating
 	}
 
 	leaseExpiry := now.Add(w.leaseDuration)
@@ -128,11 +123,14 @@ func (w *GlobalRankMigrationWorker) Run(ctx context.Context) (GlobalRankMigratio
 		return GlobalRankMigrationBatchResult{}, err
 	}
 
-	rows, err := readGlobalRankMigrationRows(tx, state, w.batchSize, w.db.GetDriverName())
+	rows, err := readGlobalRankMigrationRows(tx, state, w.batchSize, driver)
 	if err != nil {
 		return GlobalRankMigrationBatchResult{}, err
 	}
 	if len(rows) == 0 {
+		if w.beforeCompletion != nil {
+			w.beforeCompletion()
+		}
 		if err := completeGlobalRankMigration(tx, &state); err != nil {
 			return GlobalRankMigrationBatchResult{}, err
 		}
@@ -142,7 +140,12 @@ func (w *GlobalRankMigrationWorker) Run(ctx context.Context) (GlobalRankMigratio
 		return GlobalRankMigrationBatchResult{State: state, LeaseAcquired: true, Completed: true}, nil
 	}
 
-	for _, row := range rows {
+	fractions, err := generateGlobalRankMigrationFractions(tx, state, len(rows), driver)
+	if err != nil {
+		return GlobalRankMigrationBatchResult{}, err
+	}
+	updates := make([]globalRankMigrationUpdate, 0, len(rows))
+	for index, row := range rows {
 		parsed, parseErr := ParseGlobalRank(row.rank)
 		if parseErr != nil || parsed.Bucket != state.ActiveBucket {
 			failure := fmt.Errorf("item %d has invalid active-bucket rank %q", row.id, row.rank)
@@ -158,21 +161,17 @@ func (w *GlobalRankMigrationWorker) Run(ctx context.Context) (GlobalRankMigratio
 			}
 			return GlobalRankMigrationBatchResult{State: state, LeaseAcquired: true}, failure
 		}
-		newRank, encodeErr := EncodeGlobalRank(*state.TargetBucket, parsed.Fraction)
+		newRank, encodeErr := EncodeGlobalRank(*state.TargetBucket, fractions[index])
 		if encodeErr != nil {
 			return GlobalRankMigrationBatchResult{}, encodeErr
 		}
-		result, updateErr := tx.Exec("UPDATE items SET frac_index = ? WHERE id = ? AND frac_index = ?", newRank, row.id, row.rank)
-		if updateErr != nil {
-			return GlobalRankMigrationBatchResult{}, fmt.Errorf("migrate item %d rank: %w", row.id, updateErr)
-		}
-		if affected, affectedErr := result.RowsAffected(); affectedErr == nil && affected != 1 {
-			return GlobalRankMigrationBatchResult{}, fmt.Errorf("migrate item %d rank: affected %d rows", row.id, affected)
-		}
+		updates = append(updates, globalRankMigrationUpdate{id: row.id, rank: newRank})
+	}
+	if err := updateGlobalRankMigrationRows(tx, updates); err != nil {
+		return GlobalRankMigrationBatchResult{}, err
 	}
 
 	state.Frontier = stringPointer(rows[len(rows)-1].rank)
-	state.MigratedCount += int64(len(rows))
 	remaining, err := countRemainingGlobalRankRows(tx, state)
 	if err != nil {
 		return GlobalRankMigrationBatchResult{}, err
@@ -181,8 +180,16 @@ func (w *GlobalRankMigrationWorker) Run(ctx context.Context) (GlobalRankMigratio
 	if err != nil {
 		return GlobalRankMigrationBatchResult{}, err
 	}
+	// Recompute progress from current durable membership rather than adding the
+	// batch size. Concurrent creates/deletes between batches can change the
+	// population; derived progress stays bounded and includes rows born directly
+	// in the target bucket.
+	state.MigratedCount = state.TotalCount - remaining
 	completed := remaining == 0
 	if completed {
+		if w.beforeCompletion != nil {
+			w.beforeCompletion()
+		}
 		if err := completeGlobalRankMigration(tx, &state); err != nil {
 			return GlobalRankMigrationBatchResult{}, err
 		}
@@ -201,9 +208,116 @@ func (w *GlobalRankMigrationWorker) Run(ctx context.Context) (GlobalRankMigratio
 	}, nil
 }
 
+// generateGlobalRankMigrationFractions assigns a fresh, balanced fractional
+// payload to every migrated row. The target bucket is an independent namespace,
+// so each batch can extend the already-migrated target range without colliding
+// with active-bucket ranks. High-to-low transitions prepend below the target
+// minimum; low-to-high transitions append above the target maximum.
+func generateGlobalRankMigrationFractions(tx database.Tx, state GlobalRankState, count int, driver string) ([]string, error) {
+	if count <= 0 {
+		return nil, nil
+	}
+	if state.TargetBucket == nil || state.Direction == nil {
+		return nil, fmt.Errorf("global rank migration has no target or direction")
+	}
+
+	left, right := "", ""
+	boundary, found, err := readGlobalRankMigrationTargetBoundary(tx, *state.TargetBucket, *state.Direction, driver)
+	if err != nil {
+		return nil, err
+	}
+	if found {
+		parsed, err := ParseGlobalRank(boundary)
+		if err != nil || parsed.Bucket != *state.TargetBucket {
+			return nil, fmt.Errorf("invalid target-bucket migration boundary %q", boundary)
+		}
+		if *state.Direction == GlobalRankDirectionHighToLow {
+			right = parsed.Fraction
+		} else {
+			left = parsed.Fraction
+		}
+	}
+
+	fractions, err := generateEvenlySpacedFracKeys(left, right, count)
+	if err != nil {
+		return nil, fmt.Errorf("generate balanced global rank batch: %w", err)
+	}
+	if *state.Direction == GlobalRankDirectionHighToLow {
+		// Migration rows are read from highest to lowest, while the generated
+		// fractional keys are ascending.
+		for i, j := 0, len(fractions)-1; i < j; i, j = i+1, j-1 {
+			fractions[i], fractions[j] = fractions[j], fractions[i]
+		}
+	}
+	return fractions, nil
+}
+
+func readGlobalRankMigrationTargetBoundary(tx database.Tx, bucket GlobalRankBucket, direction GlobalRankDirection, driver string) (boundary string, found bool, err error) {
+	lower, upper := globalRankBucketBounds(bucket)
+	order := "DESC"
+	if direction == GlobalRankDirectionHighToLow {
+		order = "ASC"
+	}
+	query := `SELECT frac_index FROM items
+		WHERE frac_index >= ? AND frac_index < ?
+		ORDER BY frac_index ` + order + ` LIMIT 1`
+	if driver == "postgres" {
+		query += " FOR UPDATE"
+	}
+	if err := tx.QueryRow(query, lower, upper).Scan(&boundary); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("read global rank target boundary: %w", err)
+	}
+	return boundary, true, nil
+}
+
 type globalRankMigrationRow struct {
 	id   int64
 	rank string
+}
+
+type globalRankMigrationUpdate struct {
+	id   int64
+	rank string
+}
+
+// updateGlobalRankMigrationRows rewrites one bounded batch with a single SQL
+// statement. The prior one-statement-per-row loop made a 128-row batch hold
+// the migration transaction across 128 database round trips, which caused
+// visible latency spikes for deep-page list scans at 100k rows. The worker has
+// already locked/serialized the selected IDs, and RowsAffected preserves the
+// all-or-nothing guard against a row disappearing unexpectedly.
+func updateGlobalRankMigrationRows(tx database.Tx, updates []globalRankMigrationUpdate) error {
+	if len(updates) == 0 {
+		return nil
+	}
+	var query strings.Builder
+	query.WriteString("UPDATE items SET frac_index = CASE id")
+	args := make([]interface{}, 0, len(updates)*3)
+	for _, update := range updates {
+		query.WriteString(" WHEN ? THEN ?")
+		args = append(args, update.id, update.rank)
+	}
+	query.WriteString(" ELSE frac_index END WHERE id IN (")
+	for i, update := range updates {
+		if i > 0 {
+			query.WriteByte(',')
+		}
+		query.WriteByte('?')
+		args = append(args, update.id)
+	}
+	query.WriteByte(')')
+
+	result, err := tx.Exec(query.String(), args...)
+	if err != nil {
+		return fmt.Errorf("migrate global rank batch: %w", err)
+	}
+	if affected, affectedErr := result.RowsAffected(); affectedErr == nil && affected != int64(len(updates)) {
+		return fmt.Errorf("migrate global rank batch: affected %d rows, want %d", affected, len(updates))
+	}
+	return nil
 }
 
 func loadGlobalRankStateForUpdate(tx database.Tx) (GlobalRankState, error) {
@@ -215,27 +329,9 @@ func migrationLeaseBusy(state GlobalRankState, owner string, now time.Time) bool
 }
 
 func readGlobalRankMigrationRows(tx database.Tx, state GlobalRankState, limit int, driver string) ([]globalRankMigrationRow, error) {
-	if state.TargetBucket == nil || state.Direction == nil {
-		return nil, fmt.Errorf("global rank migration has no target or direction")
-	}
-	where := "SUBSTR(frac_index, 1, 2) = ?"
-	args := []interface{}{fmt.Sprintf("%d|", state.ActiveBucket)}
-	order := "ASC"
-	if *state.Direction == GlobalRankDirectionHighToLow {
-		order = "DESC"
-	}
-	if state.Frontier != nil {
-		operator := ">"
-		if *state.Direction == GlobalRankDirectionHighToLow {
-			operator = "<"
-		}
-		where += " AND frac_index " + operator + " ?"
-		args = append(args, *state.Frontier)
-	}
-	args = append(args, limit)
-	query := "SELECT id, frac_index FROM items WHERE " + where + " ORDER BY frac_index " + order + ", id " + order + " LIMIT ?"
-	if driver == "postgres" {
-		query += " FOR UPDATE"
+	query, args, err := globalRankMigrationRowsQuery(state, limit, driver)
+	if err != nil {
+		return nil, err
 	}
 	rows, err := tx.Query(query, args...)
 	if err != nil {
@@ -256,6 +352,35 @@ func readGlobalRankMigrationRows(tx database.Tx, state GlobalRankState, limit in
 	return out, nil
 }
 
+func globalRankMigrationRowsQuery(state GlobalRankState, limit int, driver string) (query string, args []interface{}, err error) {
+	if state.TargetBucket == nil || state.Direction == nil {
+		return "", nil, fmt.Errorf("global rank migration has no target or direction")
+	}
+	lowerBucketBound, upperBucketBound := globalRankBucketBounds(state.ActiveBucket)
+	// A direct byte range keeps the unique frac_index index usable. Applying
+	// SUBSTR to every row forced a table/index scan for each bounded batch.
+	where := "frac_index >= ? AND frac_index < ?"
+	args = []interface{}{lowerBucketBound, upperBucketBound}
+	order := "ASC"
+	if *state.Direction == GlobalRankDirectionHighToLow {
+		order = "DESC"
+	}
+	if state.Frontier != nil {
+		operator := ">"
+		if *state.Direction == GlobalRankDirectionHighToLow {
+			operator = "<"
+		}
+		where += " AND frac_index " + operator + " ?"
+		args = append(args, *state.Frontier)
+	}
+	args = append(args, limit)
+	query = "SELECT id, frac_index FROM items WHERE " + where + " ORDER BY frac_index " + order + ", id " + order + " LIMIT ?"
+	if driver == "postgres" {
+		query += " FOR UPDATE"
+	}
+	return query, args, nil
+}
+
 func countRemainingGlobalRankRows(tx database.Tx, state GlobalRankState) (int64, error) {
 	if state.Frontier == nil || state.Direction == nil {
 		return 0, nil
@@ -264,11 +389,16 @@ func countRemainingGlobalRankRows(tx database.Tx, state GlobalRankState) (int64,
 	if *state.Direction == GlobalRankDirectionHighToLow {
 		operator = "<"
 	}
+	lowerBucketBound, upperBucketBound := globalRankBucketBounds(state.ActiveBucket)
 	var count int64
-	if err := tx.QueryRow("SELECT COUNT(*) FROM items WHERE SUBSTR(frac_index, 1, 2) = ? AND frac_index "+operator+" ?", fmt.Sprintf("%d|", state.ActiveBucket), *state.Frontier).Scan(&count); err != nil {
+	if err := tx.QueryRow("SELECT COUNT(*) FROM items WHERE frac_index >= ? AND frac_index < ? AND frac_index "+operator+" ?", lowerBucketBound, upperBucketBound, *state.Frontier).Scan(&count); err != nil {
 		return 0, fmt.Errorf("count remaining global rank rows: %w", err)
 	}
 	return count, nil
+}
+
+func globalRankBucketBounds(bucket GlobalRankBucket) (lower, upper string) {
+	return fmt.Sprintf("%d|", bucket), fmt.Sprintf("%d|", int(bucket)+1)
 }
 
 func countItems(q interface {
@@ -308,6 +438,19 @@ func stringPointer(value string) *string {
 }
 
 func loadGlobalRankStateWithQuery(q interface {
+	QueryRow(query string, args ...interface{}) *sql.Row
+}, suffix string) (GlobalRankState, error) {
+	state, err := loadGlobalRankStateUncheckedWithQuery(q, suffix)
+	if err != nil {
+		return GlobalRankState{}, err
+	}
+	if err := state.Validate(); err != nil {
+		return GlobalRankState{}, fmt.Errorf("validate loaded global rank state: %w", err)
+	}
+	return state, nil
+}
+
+func loadGlobalRankStateUncheckedWithQuery(q interface {
 	QueryRow(query string, args ...interface{}) *sql.Row
 }, suffix string) (GlobalRankState, error) {
 	var state GlobalRankState
@@ -354,9 +497,6 @@ func loadGlobalRankStateWithQuery(q interface {
 	}
 	if lastError.Valid {
 		state.LastError = &lastError.String
-	}
-	if err := state.Validate(); err != nil {
-		return GlobalRankState{}, fmt.Errorf("validate loaded global rank state: %w", err)
 	}
 	return state, nil
 }

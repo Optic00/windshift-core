@@ -39,6 +39,15 @@ export default {
         'When enabled, this action will also run when triggered by other actions, not just user changes.',
     },
 
+    manualAccess: {
+      label: 'Who can run this manual action?',
+      allEditors: 'All workspace editors',
+      unrestrictedHint:
+        'No role restriction. Anyone with edit access can see and run this action.',
+      restrictedHint:
+        'Only members with at least one selected role can see and run this action. Workspace administrators always retain access.',
+    },
+
     // Node types
     nodes: {
       trigger: 'Trigger',

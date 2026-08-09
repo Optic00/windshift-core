@@ -60,6 +60,7 @@
       tasks = normalizeTaskResponse(response, rowCount);
     } catch (err) {
       if (v !== version) return;
+      if (err?.name === 'AbortError') return;
       console.error('Failed to load personal tasks:', err);
       errored = true;
       tasks = [];

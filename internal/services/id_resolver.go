@@ -129,17 +129,6 @@ func (s *IDResolverService) ResolveUserNames(ids map[int]struct{}) map[int]strin
 	return names
 }
 
-// ResolveStatusIDByName returns the status ID whose name matches
-// case-insensitively, or nil when there is no match.
-func (s *IDResolverService) ResolveStatusIDByName(name string) (*int, error) {
-	var id int
-	err := s.db.QueryRow("SELECT id FROM statuses WHERE LOWER(name) = LOWER(?)", name).Scan(&id)
-	if err != nil {
-		return nil, fmt.Errorf("status %q not found", name)
-	}
-	return &id, nil
-}
-
 // ResolvePriorityIDByName returns the priority ID whose name matches
 // case-insensitively, or nil when there is no match.
 func (s *IDResolverService) ResolvePriorityIDByName(name string) (*int, error) {

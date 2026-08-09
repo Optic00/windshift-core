@@ -195,6 +195,12 @@ function createWorkspacesStore() {
 
     // Remove a workspace from the store
     remove(id) {
+      // A list request started before the delete may still contain this
+      // workspace. Invalidate it so its eventual response cannot restore the
+      // deleted row after this local mutation.
+      listLoadGeneration += 1;
+      listLoadPromise = null;
+      loading.set(false);
       const workspaceId = String(id);
       workspaces.update((ws) => ws.filter((w) => String(w.id) !== workspaceId));
     },

@@ -54,7 +54,7 @@ func applyGlobalRankCheckpoint(db Database) error {
 				return fmt.Errorf("write checkpoint rank for item %d: %w", id, err)
 			}
 		}
-		if _, err := tx.Exec(`CREATE UNIQUE INDEX idx_items_frac_index ON items(frac_index) WHERE frac_index IS NOT NULL`); err != nil {
+		if _, err := tx.Exec(`CREATE UNIQUE INDEX idx_items_frac_index ON items(frac_index)`); err != nil {
 			return fmt.Errorf("recreate checkpoint frac_index uniqueness: %w", err)
 		}
 		if _, err := tx.Exec(`

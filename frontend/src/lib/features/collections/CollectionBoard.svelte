@@ -299,7 +299,7 @@
         }
       }
     } catch (error) {
-      if (requestedView === viewSignature) {
+      if (error?.name !== 'AbortError' && requestedView === viewSignature) {
         console.error('Failed to load iterations:', error);
       }
     }

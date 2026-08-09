@@ -188,7 +188,7 @@ func (s *ItemCRUDService) Copy(itemID int, opts CopyOptions) (*CopyResult, error
 	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		newID, lastErr = database.WithTxResult(s.db, func(tx database.Tx) (int, error) {
-			fracIndex, err := repository.GenerateFracIndexForNewItem(tx)
+			fracIndex, err := repository.GenerateFracIndexForNewItem(tx, s.db.GetDriverName())
 			if err != nil {
 				return 0, err
 			}
@@ -512,8 +512,17 @@ func (s *ItemCRUDService) ListWithQL(params ListWithQLParams) ([]models.Item, in
 
 // ListWithQLContext is the request-aware form of ListWithQL.
 func (s *ItemCRUDService) ListWithQLContext(ctx context.Context, params ListWithQLParams) ([]models.Item, int, error) {
+	page, err := s.ListWithQLPageContext(ctx, params)
+	return page.Items, page.Total, err
+}
+
+// ListWithQLPageContext preserves the shared collection/workspace resolution
+// path while exposing the optional cursor continuation produced by the
+// repository. Existing callers should keep using ListWithQLContext unless
+// they need cursor metadata.
+func (s *ItemCRUDService) ListWithQLPageContext(ctx context.Context, params ListWithQLParams) (repository.ItemListPage, error) {
 	if len(params.WorkspaceIDs) == 0 {
-		return []models.Item{}, 0, nil
+		return repository.ItemListPage{Items: []models.Item{}}, nil
 	}
 
 	filters := params.Filters
@@ -521,7 +530,7 @@ func (s *ItemCRUDService) ListWithQLContext(ctx context.Context, params ListWith
 	// Resolve QL query from collection or direct parameter
 	qlQuery, collectionResolved, err := s.resolveCollectionQLContext(ctx, params.QLQuery, params.CollectionID)
 	if err != nil {
-		return nil, 0, err
+		return repository.ItemListPage{}, err
 	}
 
 	// Combine with sub-filter QL if provided
@@ -536,7 +545,7 @@ func (s *ItemCRUDService) ListWithQLContext(ctx context.Context, params ListWith
 	// Evaluate QL query into SQL
 	qlSQL, qlArgs, err := s.evaluateQLContext(ctx, qlQuery, cql.UserContext(params.UserID))
 	if err != nil {
-		return nil, 0, err
+		return repository.ItemListPage{}, err
 	}
 	if qlSQL != "" {
 		filters.QLQuery = qlSQL
@@ -546,7 +555,7 @@ func (s *ItemCRUDService) ListWithQLContext(ctx context.Context, params ListWith
 	// If collection was resolved but produced no effective query, return empty results.
 	// A collection with no filter means "nothing to show yet."
 	if collectionResolved && filters.QLQuery == "" {
-		return []models.Item{}, 0, nil
+		return repository.ItemListPage{Items: []models.Item{}}, nil
 	}
 
 	// Apply workspace_id filter only when no collection was resolved
@@ -554,7 +563,7 @@ func (s *ItemCRUDService) ListWithQLContext(ctx context.Context, params ListWith
 		filters.WorkspaceID = &params.WorkspaceID
 	}
 
-	return s.repo.FindAllWithDetailsContext(ctx, ItemListParams{
+	return s.repo.FindAllWithDetailsPageContext(ctx, ItemListParams{
 		WorkspaceIDs:     params.WorkspaceIDs,
 		Filters:          filters,
 		Pagination:       params.Pagination,

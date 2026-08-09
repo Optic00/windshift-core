@@ -10,8 +10,8 @@ import {
   canSystemFieldBeRequiredOnCreate,
   isAlwaysVisibleSystemField,
 } from '../utils/screenFields.js';
+import { DragStateStore } from './DragStateStore.svelte.js';
 import { getSystemFieldName, SYSTEM_FIELDS } from './fieldConfig.js';
-import { applyDragStateMixin } from './storeUtils.js';
 
 const ALWAYS_VISIBLE_SYSTEM_FIELD_DEFAULTS = {
   title: { is_required: true, field_width: 'full' },
@@ -19,7 +19,7 @@ const ALWAYS_VISIBLE_SYSTEM_FIELD_DEFAULTS = {
   status: { is_required: false, field_width: 'half' },
 };
 
-class ScreenEditorStore {
+class ScreenEditorStore extends DragStateStore {
   // === Screens List ===
   screens = $state([]);
   loading = $state(false);
@@ -42,28 +42,6 @@ class ScreenEditorStore {
 
   // === Field Search ===
   fieldSearchQuery = $state('');
-
-  // === Drag State ===
-  draggedField = $state(null);
-  fieldDragState = $state(new Map());
-
-  // === Drag state methods (defined here so TS sees them; mixin would otherwise add at runtime) ===
-  setDragState(fieldId, state) {
-    this.fieldDragState.set(fieldId, state);
-    this.fieldDragState = new Map(this.fieldDragState);
-  }
-  clearDragState() {
-    this.fieldDragState.forEach((_, id) => {
-      this.fieldDragState.set(id, { closestEdge: null });
-    });
-    this.fieldDragState = new Map(this.fieldDragState);
-  }
-  setDraggedField(field) {
-    this.draggedField = field;
-  }
-  clearDraggedField() {
-    this.draggedField = null;
-  }
 
   // === Field Width Options ===
   fieldWidths = [
@@ -388,8 +366,6 @@ class ScreenEditorStore {
     this.screenFields = [...this.screenFields];
   }
 
-  // Drag state methods are added via applyDragStateMixin below.
-
   // === Helpers ===
 
   getFieldWidthLabel(width) {
@@ -440,11 +416,8 @@ class ScreenEditorStore {
     this.editingScreen = null;
     this.formData = { name: '', description: '' };
     this.fieldSearchQuery = '';
-    this.draggedField = null;
-    this.fieldDragState = new Map();
+    this.resetDragState();
   }
 }
-
-applyDragStateMixin(ScreenEditorStore);
 
 export const screenEditorStore = new ScreenEditorStore();

@@ -660,7 +660,7 @@ func buildUpdateData(env *Env, args updateItemArgs, wsID int) (data map[string]i
 		out["priority_id"] = *args.PriorityID
 		changed = append(changed, "priority")
 	case args.PriorityName != nil:
-		id, err := env.idResolver().ResolvePriorityIDByName(*args.PriorityName)
+		id, err := services.NewIDResolverService(env.DB).ResolvePriorityIDByName(*args.PriorityName)
 		if err != nil {
 			return nil, nil, fmt.Errorf("could not resolve priority name %q: %w", *args.PriorityName, err)
 		}
@@ -878,7 +878,7 @@ func userCandidateList(users []userCandidate) string {
 }
 
 func resolveMilestoneName(env *Env, name string, workspaceID int) (int, error) {
-	id, err := env.planning().FindMilestoneIDByName(workspaceID, name)
+	id, err := services.NewPlanningService(env.DB).FindMilestoneIDByName(workspaceID, name)
 	if err != nil || id == nil {
 		return 0, fmt.Errorf("milestone not found")
 	}
@@ -886,7 +886,7 @@ func resolveMilestoneName(env *Env, name string, workspaceID int) (int, error) {
 }
 
 func resolveIterationName(env *Env, name string, workspaceID int) (int, error) {
-	id, err := env.planning().FindIterationIDByName(workspaceID, name)
+	id, err := services.NewPlanningService(env.DB).FindIterationIDByName(workspaceID, name)
 	if err != nil || id == nil {
 		return 0, fmt.Errorf("iteration not found")
 	}

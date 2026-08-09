@@ -6,19 +6,27 @@
 
 import { fetchAPI } from './core.js';
 
+/**
+ * Append run-list pagination options to the query string.
+ * @param {{ limit?: number, beforeId?: number }} opts
+ * @returns {string} query string with leading '?' when non-empty
+ */
+function runListQuery(opts) {
+  const params = new URLSearchParams();
+  if (opts.limit) params.set('limit', String(opts.limit));
+  if (opts.beforeId) params.set('before_id', String(opts.beforeId));
+  const qs = params.toString();
+  return qs ? `?${qs}` : '';
+}
+
 export const agentRuns = {
   /**
    * List the workspace's recent agent runs.
    * @param {number} workspaceId
    * @param {{ limit?: number, beforeId?: number }} [opts]
    */
-  listForWorkspace: (workspaceId, opts = {}) => {
-    const params = new URLSearchParams();
-    if (opts.limit) params.set('limit', String(opts.limit));
-    if (opts.beforeId) params.set('before_id', String(opts.beforeId));
-    const qs = params.toString();
-    return fetchAPI(`/workspaces/${workspaceId}/agent-runs${qs ? `?${qs}` : ''}`);
-  },
+  listForWorkspace: (workspaceId, opts = {}) =>
+    fetchAPI(`/workspaces/${workspaceId}/agent-runs${runListQuery(opts)}`),
 
   /**
    * List the runs triggered against one work item (newest first) — backs
@@ -26,13 +34,7 @@ export const agentRuns = {
    * @param {number} itemId
    * @param {{ limit?: number, beforeId?: number }} [opts]
    */
-  listForItem: (itemId, opts = {}) => {
-    const params = new URLSearchParams();
-    if (opts.limit) params.set('limit', String(opts.limit));
-    if (opts.beforeId) params.set('before_id', String(opts.beforeId));
-    const qs = params.toString();
-    return fetchAPI(`/items/${itemId}/agent-runs${qs ? `?${qs}` : ''}`);
-  },
+  listForItem: (itemId, opts = {}) => fetchAPI(`/items/${itemId}/agent-runs${runListQuery(opts)}`),
 
   /** Get a single run by id. */
   get: (runId) => fetchAPI(`/agent-runs/${runId}`),

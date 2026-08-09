@@ -216,6 +216,7 @@
         triggerIcon={ChevronDown}
         triggerIconBgColor="transparent"
         iconOnly={true}
+        triggerLabel={t('widgets.resizeAriaLabel')}
         triggerClass="!p-1 text-ds-text-subtle hover:text-ds-text hover:bg-ds-surface-hover rounded"
         triggerTestid="widget-width-menu"
         placement="bottom-end"

@@ -39,6 +39,15 @@ export default {
         'Quando ativada, esta ação também será executada quando disparada por outras ações, não apenas por alterações do usuário.',
     },
 
+    manualAccess: {
+      label: 'Quem pode executar esta ação manual?',
+      allEditors: 'Todos os editores do espaço de trabalho',
+      unrestrictedHint:
+        'Sem restrição de função. Qualquer pessoa com acesso de edição pode ver e executar esta ação.',
+      restrictedHint:
+        'Somente membros com pelo menos uma das funções selecionadas podem ver e executar esta ação. Os administradores do espaço de trabalho sempre mantêm o acesso.',
+    },
+
     // Node types
     nodes: {
       trigger: 'Gatilho',

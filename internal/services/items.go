@@ -363,7 +363,7 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 		}
 		defer func() { _ = tx.Rollback() }()
 
-		fracIndex, err := repository.GenerateFracIndexForNewItem(tx)
+		fracIndex, err := repository.GenerateFracIndexForNewItem(tx, db.GetDriverName())
 		if err != nil {
 			return 0, "", fmt.Errorf("failed to generate frac_index: %w", err)
 		}
@@ -486,6 +486,7 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 		}
 		maybeTriggerAssigneeRun(params.WorkspaceID, int(itemID), nil, params.AssigneeID, triggeredBy)
 	}
+	repository.InvalidateItemListCountCache(db)
 
 	// Live-update publish (WI-483): the insert has committed. Announce the new
 	// item, and refresh the parent's child list if this item has a parent.

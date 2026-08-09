@@ -751,31 +751,47 @@ func (r *ItemRepository) GetNextWorkspaceItemNumber(tx database.Tx, workspaceID 
 			return 0, fmt.Errorf("failed to acquire item-number lock: %w", err)
 		}
 	}
-	q := `
-		SELECT workspace_item_number
-		FROM (
-			SELECT workspace_item_number FROM items WHERE workspace_id = ?
-			UNION ALL
-			SELECT workspace_item_number FROM item_key_reservations WHERE workspace_id = ?
-		) allocated_item_numbers
-		ORDER BY workspace_item_number DESC
-		LIMIT 1`
-	var maxNumber sql.NullInt64
-	err := tx.QueryRow(q, workspaceID, workspaceID).Scan(&maxNumber)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return 0, fmt.Errorf("failed to get next item number: %w", err)
+	// Read each indexed maximum independently instead of materializing and
+	// sorting the union of every item and reservation in the workspace.
+	var maxItem, maxReservation sql.NullInt64
+	if err := tx.QueryRow(
+		`SELECT MAX(workspace_item_number) FROM items WHERE workspace_id = ?`,
+		workspaceID,
+	).Scan(&maxItem); err != nil {
+		return 0, fmt.Errorf("failed to get max item number: %w", err)
 	}
-	if !maxNumber.Valid {
-		return 1, nil
+	if err := tx.QueryRow(
+		`SELECT MAX(workspace_item_number) FROM item_key_reservations WHERE workspace_id = ?`,
+		workspaceID,
+	).Scan(&maxReservation); err != nil {
+		return 0, fmt.Errorf("failed to get max reserved item number: %w", err)
 	}
-	return int(maxNumber.Int64) + 1, nil
+	maxNumber := int64(0)
+	if maxItem.Valid && maxItem.Int64 > maxNumber {
+		maxNumber = maxItem.Int64
+	}
+	if maxReservation.Valid && maxReservation.Int64 > maxNumber {
+		maxNumber = maxReservation.Int64
+	}
+	return int(maxNumber + 1), nil
 }
 
 // Create inserts a new item and returns its ID
 func (r *ItemRepository) Create(tx database.Tx, item *models.Item) (int, error) {
+	if err := acquireGlobalRankMutationLock(tx, r.db.GetDriverName()); err != nil {
+		return 0, err
+	}
 	customFieldValuesJSON, err := marshalCustomFields(item.CustomFieldValues)
 	if err != nil {
 		return 0, err
+	}
+	fracIndex := item.FracIndex
+	if fracIndex == nil || *fracIndex == "" {
+		generated, err := GenerateFracIndexForNewItem(tx, r.db.GetDriverName())
+		if err != nil {
+			return 0, fmt.Errorf("failed to generate frac_index: %w", err)
+		}
+		fracIndex = &generated
 	}
 
 	now := time.Now()
@@ -792,12 +808,13 @@ func (r *ItemRepository) Create(tx database.Tx, item *models.Item) (int, error) 
 		item.StatusID, item.PriorityID, item.DueDate, item.StartDate, item.EndDate, item.IsTask,
 		item.IterationID, item.ProjectID, item.InheritProject, item.AssigneeID, item.CreatorID,
 		customFieldValuesJSON, item.ParentID, item.RelatedWorkItemID,
-		item.StoryPoints, item.EstimateMinutes, item.FracIndex, now, now, now,
+		item.StoryPoints, item.EstimateMinutes, fracIndex, now, now, now,
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create item: %w", err)
 	}
 
+	invalidateItemListCountCache(r.db)
 	return int(id), nil
 }
 
@@ -827,6 +844,7 @@ func (r *ItemRepository) Update(tx database.Tx, item *models.Item) error {
 		return fmt.Errorf("failed to update item: %w", err)
 	}
 
+	invalidateItemListCountCache(r.db)
 	return nil
 }
 
@@ -869,6 +887,11 @@ func (r *ItemRepository) UpdateFields(tx database.Tx, itemID int, fields map[str
 	if len(fields) == 0 {
 		return nil
 	}
+	if _, changesRank := fields["frac_index"]; changesRank {
+		if err := acquireGlobalRankMutationLock(tx, r.db.GetDriverName()); err != nil {
+			return err
+		}
+	}
 
 	setClauses := make([]string, 0, len(fields)+1)
 	args := make([]interface{}, 0, len(fields)+2)
@@ -895,6 +918,7 @@ func (r *ItemRepository) UpdateFields(tx database.Tx, itemID int, fields map[str
 	if err != nil {
 		return fmt.Errorf("failed to update item fields: %w", err)
 	}
+	invalidateItemListCountCache(r.db)
 	return nil
 }
 
@@ -975,6 +999,7 @@ func (r *ItemRepository) Delete(tx database.Tx, id int) error {
 	if err != nil {
 		return fmt.Errorf("failed to delete item: %w", err)
 	}
+	invalidateItemListCountCache(r.db)
 	return nil
 }
 

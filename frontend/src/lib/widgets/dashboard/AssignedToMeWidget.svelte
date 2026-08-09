@@ -49,6 +49,7 @@
       tasks = normalizeTaskResponse(response, rowCount);
     } catch (err) {
       if (v !== version) return;
+      if (err?.name === 'AbortError') return;
       console.error('Failed to load assigned items:', err);
       errored = true;
       tasks = [];

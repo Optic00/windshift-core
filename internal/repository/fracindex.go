@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	crand "crypto/rand"
 	"database/sql"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"log/slog"
 	"math"
 	"strings"
+	"time"
 
 	"github.com/lib/pq"
 
@@ -46,6 +48,10 @@ const fracIndexRebalanceLengthThreshold = 128
 // drag-and-drop latency, but large enough that balanced midpoint assignment
 // restores plenty of space around the insertion point.
 const fracIndexLocalRebalanceWindowSize = 128
+
+// globalRankHotGapTriggerTimeout bounds the best-effort state transition that
+// schedules full normalization after a canonical local hot-gap rebalance.
+const globalRankHotGapTriggerTimeout = 2 * time.Second
 
 // IsFracIndexUniqueViolation reports whether err is specifically a
 // UNIQUE-constraint violation on idx_items_frac_index. Other unique
@@ -373,11 +379,20 @@ func decrementInt(x string) (string, error) {
 // without any cross-transaction lock.
 //
 // Callers must (a) be inside a transaction whose subsequent INSERT writes
-// the returned key, and (b) retry the whole transaction on
+// the returned key, (b) pass the database driver when available so PostgreSQL
+// can coordinate the mutation with a bounded global migration batch, and
+// (c) retry the whole transaction on
 // IsFracIndexUniqueViolation — jitter makes collisions astronomically rare
 // but the retry is the correctness backstop (jitter collision, or a
 // non-generator writer racing in).
-func GenerateFracIndexForNewItem(tx database.Tx) (string, error) {
+func GenerateFracIndexForNewItem(tx database.Tx, drivers ...string) (string, error) {
+	driver := ""
+	if len(drivers) > 0 {
+		driver = drivers[0]
+	}
+	if err := acquireGlobalRankMutationLock(tx, driver); err != nil {
+		return "", err
+	}
 	var last sql.NullString
 	err := tx.QueryRow(`SELECT frac_index
 		FROM items
@@ -402,7 +417,15 @@ func GenerateFracIndexForNewItem(tx database.Tx) (string, error) {
 			parsedBucket := parsed.Bucket
 			bucket = &parsedBucket
 		} else {
-			base, err = KeyBetween(last.String, "")
+			// The canonical schema only permits bucketed ranks. A legacy or
+			// hand-written unbucketed value should not leak into a newly created
+			// row once the global rank state is stable; start a fresh valid key
+			// in the active bucket instead.
+			base, err = KeyBetween("", "")
+			if state, stateErr := loadGlobalRankState(tx); stateErr == nil && state.Phase != GlobalRankPhaseLegacy {
+				activeBucket := state.ActiveBucket
+				bucket = &activeBucket
+			}
 		}
 	}
 	if err != nil {
@@ -451,7 +474,11 @@ func MoveItemBetween(db database.Database, itemID int, prevID, nextID *int) (str
 	driver := db.GetDriverName()
 	var lastErr error
 	for attempt := 0; attempt < FracIndexMaxRetries; attempt++ {
+		requestGlobalMigration := false
 		key, err := database.WithTxResult(db, func(tx database.Tx) (string, error) {
+			if err := acquireGlobalRankMutationLock(tx, driver); err != nil {
+				return "", err
+			}
 			prev, perr := readFracIndexForUpdate(tx, prevID, driver)
 			if perr != nil {
 				return "", perr
@@ -465,10 +492,22 @@ func MoveItemBetween(db database.Database, itemID int, prevID, nextID *int) (str
 				return "", fmt.Errorf("compute key between %q and %q: %w", prev, next, kerr)
 			}
 			if len(newKey) > fracIndexRebalanceLengthThreshold {
-				if !hasGlobalRankPrefix(newKey) {
+				rebalanced := false
+				if rank, parseErr := ParseGlobalRank(newKey); parseErr == nil {
+					if globalRankBoundsWithinBucket(prev, next, rank.Bucket) {
+						if rerr := rebalanceLocalGlobalRankWindow(tx, itemID, prev, next, rank.Bucket, driver); rerr != nil {
+							return "", rerr
+						}
+						rebalanced = true
+						requestGlobalMigration = true
+					}
+				} else {
 					if rerr := rebalanceLocalFracIndexWindow(tx, itemID, prev, next, driver); rerr != nil {
 						return "", rerr
 					}
+					rebalanced = true
+				}
+				if rebalanced {
 					// Re-read explicit neighbors because the local rebalance may have
 					// rewritten their frac_index values while preserving order.
 					prev, perr = readFracIndexForUpdate(tx, prevID, driver)
@@ -497,6 +536,9 @@ func MoveItemBetween(db database.Database, itemID int, prevID, nextID *int) (str
 			return newKey, nil
 		})
 		if err == nil {
+			if requestGlobalMigration {
+				requestGlobalRankMigrationAfterHotGap(db, itemID)
+			}
 			return key, nil
 		}
 		if !IsFracIndexUniqueViolation(err) {
@@ -509,6 +551,29 @@ func MoveItemBetween(db database.Database, itemID int, prevID, nextID *int) (str
 			slog.String("component", "fracindex"))
 	}
 	return "", fmt.Errorf("move item %d failed after %d frac_index retries: %w", itemID, FracIndexMaxRetries, lastErr)
+}
+
+func requestGlobalRankMigrationAfterHotGap(db database.Database, itemID int) {
+	ctx, cancel := context.WithTimeout(context.Background(), globalRankHotGapTriggerTimeout)
+	defer cancel()
+	state, err := ControlGlobalRankMigration(ctx, db, GlobalRankMigrationStart)
+	if errors.Is(err, ErrGlobalRankMigrationConflict) {
+		// A migration is already active, paused, or failed. The durable state is
+		// already operator-visible and duplicate scheduling is unnecessary.
+		return
+	}
+	if err != nil {
+		slog.Warn("failed to schedule global rank migration after hot gap",
+			slog.Int("item_id", itemID),
+			slog.Any("error", err),
+			slog.String("component", "fracindex"))
+		return
+	}
+	slog.Info("scheduled global rank migration after canonical hot gap",
+		slog.Int("item_id", itemID),
+		slog.Int("active_bucket", int(state.ActiveBucket)),
+		slog.Any("target_bucket", state.TargetBucket),
+		slog.String("component", "fracindex"))
 }
 
 // chooseMoveFracIndex finds a globally unique key within filtered-view bounds.
@@ -524,7 +589,22 @@ func chooseMoveFracIndex(tx database.Tx, itemID int, prev, next, driver string) 
 			return "", err
 		}
 		if !found {
-			return KeyBetween("", "")
+			fraction, err := KeyBetween("", "")
+			if err != nil {
+				return "", err
+			}
+			state, stateErr := loadGlobalRankState(tx)
+			if stateErr == nil && state.Phase != GlobalRankPhaseLegacy {
+				return EncodeGlobalRank(state.ActiveBucket, fraction)
+			}
+			return fraction, nil
+		}
+		if rank, parseErr := ParseGlobalRank(maxKey); parseErr == nil {
+			fraction, err := KeyBetween(rank.Fraction, "")
+			if err != nil {
+				return "", err
+			}
+			return EncodeGlobalRank(rank.Bucket, fraction)
 		}
 		return KeyBetween(maxKey, "")
 	}
@@ -559,104 +639,105 @@ func chooseMoveFracIndex(tx database.Tx, itemID int, prev, next, driver string) 
 }
 
 func chooseMoveGlobalRank(tx database.Tx, itemID int, prev, next, driver string) (string, error) {
-	var bucket *GlobalRankBucket
-	prevFraction, prevBucket, err := splitGlobalRankBound(prev)
-	if err != nil {
-		return "", err
-	}
-	nextFraction, nextBucket, err := splitGlobalRankBound(next)
-	if err != nil {
-		return "", err
-	}
-	bucket, err = mergeGlobalRankBuckets(prevBucket, nextBucket)
-	if err != nil {
-		return "", err
-	}
-	if bucket == nil {
-		return "", fmt.Errorf("global rank move has no bucket")
-	}
-
-	encode := func(fraction string) (string, error) {
-		return EncodeGlobalRank(*bucket, fraction)
-	}
-	if prev == "" && next == "" {
-		maxKey, found, err := readGlobalBoundaryFracIndexForUpdate(tx, itemID, "DESC", driver)
-		if err != nil {
-			return "", err
-		}
-		if !found {
-			fraction, err := KeyBetween("", "")
-			if err != nil {
-				return "", err
-			}
-			return encode(fraction)
-		}
-		maxFraction, maxBucket, err := splitGlobalRankBound(maxKey)
-		if err != nil {
-			return "", err
-		}
-		bucket, err = mergeGlobalRankBuckets(bucket, maxBucket)
-		if err != nil {
-			return "", err
-		}
-		fraction, err := KeyBetween(maxFraction, "")
-		if err != nil {
-			return "", err
-		}
-		return EncodeGlobalRank(*bucket, fraction)
-	}
-
+	// Narrow filtered-view bounds to the nearest actual global neighbor. This
+	// prevents deterministic collisions with an item hidden by the view.
+	effectivePrev := prev
+	effectiveNext := next
 	if prev == "" {
-		lower := ""
 		maxBelowNext, found, err := readBoundedFracIndexForUpdate(tx, itemID, "frac_index < ?", []interface{}{next}, "DESC", driver)
 		if err != nil {
 			return "", err
 		}
 		if found {
-			var maxBucket *GlobalRankBucket
-			lower, maxBucket, err = splitGlobalRankBound(maxBelowNext)
-			if err != nil {
-				return "", err
-			}
-			bucket, err = mergeGlobalRankBuckets(bucket, maxBucket)
-			if err != nil {
-				return "", err
-			}
+			effectivePrev = maxBelowNext
 		}
-		fraction, err := KeyBetween(lower, nextFraction)
+	} else {
+		where := "frac_index > ?"
+		args := []interface{}{prev}
+		if next != "" {
+			where += " AND frac_index < ?"
+			args = append(args, next)
+		}
+		minAbovePrev, found, err := readBoundedFracIndexForUpdate(tx, itemID, where, args, "ASC", driver)
 		if err != nil {
 			return "", err
 		}
-		return EncodeGlobalRank(*bucket, fraction)
+		if found {
+			effectiveNext = minAbovePrev
+		}
 	}
 
-	upper := nextFraction
-	where := "frac_index > ?"
-	args := []interface{}{prev}
-	if next != "" {
-		where += " AND frac_index < ?"
-		args = append(args, next)
-	}
-	minAbovePrev, found, err := readBoundedFracIndexForUpdate(tx, itemID, where, args, "ASC", driver)
+	return globalRankBetween(tx, effectivePrev, effectiveNext)
+}
+
+func globalRankBetween(tx database.Tx, lowerValue, upperValue string) (string, error) {
+	lowerFraction, lowerBucket, err := splitGlobalRankBound(lowerValue)
 	if err != nil {
 		return "", err
 	}
-	if found {
-		var maxBucket *GlobalRankBucket
-		upper, maxBucket, err = splitGlobalRankBound(minAbovePrev)
-		if err != nil {
-			return "", err
-		}
-		bucket, err = mergeGlobalRankBuckets(bucket, maxBucket)
-		if err != nil {
-			return "", err
-		}
-	}
-	fraction, err := KeyBetween(prevFraction, upper)
+	upperFraction, upperBucket, err := splitGlobalRankBound(upperValue)
 	if err != nil {
 		return "", err
 	}
-	return EncodeGlobalRank(*bucket, fraction)
+
+	var bucket GlobalRankBucket
+	switch {
+	case lowerBucket == nil && upperBucket == nil:
+		return "", fmt.Errorf("global rank move has no bounds")
+	case lowerBucket == nil:
+		bucket = *upperBucket
+	case upperBucket == nil:
+		bucket = *lowerBucket
+	case *lowerBucket == *upperBucket:
+		bucket = *lowerBucket
+	default:
+		state, err := loadGlobalRankState(tx)
+		if err != nil {
+			return "", err
+		}
+		if state.Phase != GlobalRankPhaseMigrating && state.Phase != GlobalRankPhasePaused {
+			return "", fmt.Errorf("global rank bounds use different buckets outside an active migration: %d and %d", *lowerBucket, *upperBucket)
+		}
+		if state.TargetBucket == nil || state.Direction == nil {
+			return "", fmt.Errorf("global rank migration has no target or direction")
+		}
+		validFrontierPair := *state.Direction == GlobalRankDirectionHighToLow &&
+			*lowerBucket == state.ActiveBucket && *upperBucket == *state.TargetBucket
+		validFrontierPair = validFrontierPair || (*state.Direction == GlobalRankDirectionLowToHigh &&
+			*lowerBucket == *state.TargetBucket && *upperBucket == state.ActiveBucket)
+		if !validFrontierPair {
+			return "", fmt.Errorf("global rank bounds %d and %d do not match the migration frontier", *lowerBucket, *upperBucket)
+		}
+		if state.Frontier == nil {
+			return "", fmt.Errorf("global rank migration has mixed buckets without a frontier")
+		}
+		frontier, err := ParseGlobalRank(*state.Frontier)
+		if err != nil || frontier.Bucket != state.ActiveBucket {
+			return "", fmt.Errorf("global rank migration has invalid frontier %q", *state.Frontier)
+		}
+		// Keep the new row in the active bucket so the worker will migrate it.
+		// Target-bucket payloads are freshly balanced and therefore are not
+		// directly comparable with active-bucket payloads. The durable frontier
+		// supplies the opposite fractional bound and ensures the new rank remains
+		// inside the worker's unprocessed active-bucket range.
+		bucket = state.ActiveBucket
+		var fraction string
+		if *state.Direction == GlobalRankDirectionHighToLow {
+			fraction, err = KeyBetween(lowerFraction, frontier.Fraction)
+		} else {
+			fraction, err = KeyBetween(frontier.Fraction, upperFraction)
+		}
+		if err != nil {
+			return "", err
+		}
+		return EncodeGlobalRank(bucket, fraction)
+	}
+
+	fraction, err := KeyBetween(lowerFraction, upperFraction)
+	if err != nil {
+		return "", err
+	}
+	return EncodeGlobalRank(bucket, fraction)
 }
 
 func hasGlobalRankPrefix(value string) bool {
@@ -673,16 +754,6 @@ func splitGlobalRankBound(value string) (string, *GlobalRankBucket, error) {
 	}
 	bucket := rank.Bucket
 	return rank.Fraction, &bucket, nil
-}
-
-func mergeGlobalRankBuckets(left, right *GlobalRankBucket) (*GlobalRankBucket, error) {
-	if left == nil {
-		return right, nil
-	}
-	if right == nil || *left == *right {
-		return left, nil
-	}
-	return nil, fmt.Errorf("global rank bounds use different buckets: %d and %d", *left, *right)
 }
 
 type fracIndexWindowRow struct {
@@ -714,16 +785,18 @@ func rebalanceLocalFracIndexWindow(tx database.Tx, movingItemID int, prev, next,
 		return fmt.Errorf("generate local rebalance keys: %w", err)
 	}
 
-	// Temporarily remove the moving row and the window rows from the UNIQUE
-	// partial index. Without this, sequential rewrites can fail when a new key
-	// equals another window row's old key. The transaction restores final keys
-	// before commit; readers never observe the temporary NULLs on Postgres.
+	// Temporarily move the moving row and the window rows out of the UNIQUE
+	// index. Temporary non-null keys keep this path compatible with the
+	// canonical items.frac_index NOT NULL constraint; sequential rewrites can
+	// otherwise fail when a new key equals another window row's old key. The
+	// transaction restores final keys before commit, and the temporary prefix
+	// is outside the validated fractional/bucket key grammar.
 	ids := make([]int, 0, len(rows)+1)
 	ids = append(ids, movingItemID)
 	for _, row := range rows {
 		ids = append(ids, row.id)
 	}
-	if err := setFracIndexNullForIDs(tx, ids); err != nil {
+	if err := setFracIndexTemporaryForIDs(tx, ids); err != nil {
 		return err
 	}
 
@@ -738,6 +811,173 @@ func rebalanceLocalFracIndexWindow(tx database.Tx, movingItemID int, prev, next,
 		slog.Int("moving_item_id", movingItemID),
 		slog.String("component", "fracindex"))
 	return nil
+}
+
+// rebalanceLocalGlobalRankWindow is the canonical bucket-aware equivalent of
+// rebalanceLocalFracIndexWindow. It scopes every boundary query to one bucket,
+// balances only the fractional payloads, then restores the bucket prefix.
+func rebalanceLocalGlobalRankWindow(tx database.Tx, movingItemID int, prev, next string, bucket GlobalRankBucket, driver string) error {
+	rows, err := readLocalGlobalRankWindowForUpdate(tx, movingItemID, prev, next, bucket, driver)
+	if err != nil {
+		return err
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+
+	left, right, err := readGlobalRankWindowOutsideBoundsForUpdate(tx, movingItemID, rows[0].key, rows[len(rows)-1].key, bucket, driver)
+	if err != nil {
+		return err
+	}
+	leftFraction, err := globalRankFractionForBucket(left, bucket)
+	if err != nil {
+		return err
+	}
+	rightFraction, err := globalRankFractionForBucket(right, bucket)
+	if err != nil {
+		return err
+	}
+	fractions, err := generateEvenlySpacedFracKeys(leftFraction, rightFraction, len(rows))
+	if err != nil {
+		return fmt.Errorf("generate canonical local rebalance keys: %w", err)
+	}
+
+	ids := make([]int, 0, len(rows)+1)
+	ids = append(ids, movingItemID)
+	for _, row := range rows {
+		ids = append(ids, row.id)
+	}
+	if err := setFracIndexTemporaryForIDs(tx, ids); err != nil {
+		return err
+	}
+	for index, row := range rows {
+		key, err := EncodeGlobalRank(bucket, fractions[index])
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec("UPDATE items SET frac_index = ? WHERE id = ?", key, row.id); err != nil {
+			return fmt.Errorf("write canonical local rebalance key for item %d: %w", row.id, err)
+		}
+	}
+
+	slog.Info("rebalanced canonical local frac_index window",
+		slog.Int("rows", len(rows)),
+		slog.Int("moving_item_id", movingItemID),
+		slog.Int("bucket", int(bucket)),
+		slog.String("component", "fracindex"))
+	return nil
+}
+
+func globalRankBoundsWithinBucket(prev, next string, bucket GlobalRankBucket) bool {
+	for _, value := range []string{prev, next} {
+		if value == "" {
+			continue
+		}
+		rank, err := ParseGlobalRank(value)
+		if err != nil || rank.Bucket != bucket {
+			return false
+		}
+	}
+	return true
+}
+
+func readLocalGlobalRankWindowForUpdate(tx database.Tx, movingItemID int, prev, next string, bucket GlobalRankBucket, driver string) ([]fracIndexWindowRow, error) {
+	beforeLimit := fracIndexLocalRebalanceWindowSize / 2
+	afterLimit := fracIndexLocalRebalanceWindowSize - beforeLimit
+
+	var before, after []fracIndexWindowRow
+	var err error
+	switch {
+	case prev != "":
+		before, err = readGlobalRankWindowRowsForUpdate(tx, "frac_index <= ?", []interface{}{prev}, "DESC", beforeLimit, movingItemID, bucket, driver)
+		if err != nil {
+			return nil, err
+		}
+		after, err = readGlobalRankWindowRowsForUpdate(tx, "frac_index > ?", []interface{}{prev}, "ASC", afterLimit, movingItemID, bucket, driver)
+		if err != nil {
+			return nil, err
+		}
+		reverseWindowRows(before)
+	case next != "":
+		before, err = readGlobalRankWindowRowsForUpdate(tx, "frac_index < ?", []interface{}{next}, "DESC", beforeLimit, movingItemID, bucket, driver)
+		if err != nil {
+			return nil, err
+		}
+		after, err = readGlobalRankWindowRowsForUpdate(tx, "frac_index >= ?", []interface{}{next}, "ASC", afterLimit, movingItemID, bucket, driver)
+		if err != nil {
+			return nil, err
+		}
+		reverseWindowRows(before)
+	default:
+		before, err = readGlobalRankWindowRowsForUpdate(tx, "1 = 1", nil, "DESC", fracIndexLocalRebalanceWindowSize, movingItemID, bucket, driver)
+		if err != nil {
+			return nil, err
+		}
+		reverseWindowRows(before)
+	}
+	rows := make([]fracIndexWindowRow, 0, len(before)+len(after))
+	rows = append(rows, before...)
+	rows = append(rows, after...)
+	return rows, nil
+}
+
+func readGlobalRankWindowRowsForUpdate(tx database.Tx, where string, args []interface{}, direction string, limit, movingItemID int, bucket GlobalRankBucket, driver string) ([]fracIndexWindowRow, error) {
+	lower, upper := globalRankBucketBounds(bucket)
+	queryArgs := make([]interface{}, 0, 2+len(args)+2)
+	queryArgs = append(queryArgs, lower, upper)
+	queryArgs = append(queryArgs, args...)
+	queryArgs = append(queryArgs, movingItemID, limit)
+	query := `SELECT id, frac_index FROM items
+		WHERE frac_index >= ? AND frac_index < ? AND (` + where + `) AND id <> ?
+		ORDER BY frac_index ` + direction + `
+		LIMIT ?`
+	if driver == "postgres" {
+		query += " FOR UPDATE"
+	}
+	rows, err := tx.Query(query, queryArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("read canonical local rebalance window: %w", err)
+	}
+	defer rows.Close()
+	out := make([]fracIndexWindowRow, 0, limit)
+	for rows.Next() {
+		var row fracIndexWindowRow
+		if err := rows.Scan(&row.id, &row.key); err != nil {
+			return nil, fmt.Errorf("scan canonical local rebalance window: %w", err)
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate canonical local rebalance window: %w", err)
+	}
+	return out, nil
+}
+
+func readGlobalRankWindowOutsideBoundsForUpdate(tx database.Tx, movingItemID int, firstKey, lastKey string, bucket GlobalRankBucket, driver string) (left, right string, err error) {
+	lower, upper := globalRankBucketBounds(bucket)
+	left, _, err = readBoundedFracIndexForUpdate(tx, movingItemID, "frac_index >= ? AND frac_index < ? AND frac_index < ?", []interface{}{lower, upper, firstKey}, "DESC", driver)
+	if err != nil {
+		return "", "", err
+	}
+	right, _, err = readBoundedFracIndexForUpdate(tx, movingItemID, "frac_index >= ? AND frac_index < ? AND frac_index > ?", []interface{}{lower, upper, lastKey}, "ASC", driver)
+	if err != nil {
+		return "", "", err
+	}
+	return left, right, nil
+}
+
+func globalRankFractionForBucket(value string, bucket GlobalRankBucket) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+	rank, err := ParseGlobalRank(value)
+	if err != nil {
+		return "", err
+	}
+	if rank.Bucket != bucket {
+		return "", fmt.Errorf("global rank %q is outside local rebalance bucket %d", value, bucket)
+	}
+	return rank.Fraction, nil
 }
 
 func readLocalRebalanceWindowForUpdate(tx database.Tx, movingItemID int, prev, next, driver string) ([]fracIndexWindowRow, error) {
@@ -822,19 +1062,19 @@ func readWindowOutsideBoundsForUpdate(tx database.Tx, movingItemID int, firstKey
 	return left, right, nil
 }
 
-func setFracIndexNullForIDs(tx database.Tx, ids []int) error {
+func setFracIndexTemporaryForIDs(tx database.Tx, ids []int) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	placeholders := make([]string, len(ids))
-	args := make([]interface{}, len(ids))
-	for i, id := range ids {
-		placeholders[i] = "?"
-		args[i] = id
-	}
-	q := "UPDATE items SET frac_index = NULL WHERE id IN (" + strings.Join(placeholders, ",") + ")"
-	if _, err := tx.Exec(q, args...); err != nil {
-		return fmt.Errorf("clear local rebalance keys: %w", err)
+	for _, id := range ids {
+		// Generated fractional keys use only the order-key alphabet and
+		// canonical ranks use bucket|fraction. The prefix therefore cannot
+		// collide with a valid application rank, while the item ID makes each
+		// in-flight key unique within this transaction.
+		temporaryKey := fmt.Sprintf("~rebalance-%d", id)
+		if _, err := tx.Exec("UPDATE items SET frac_index = ? WHERE id = ?", temporaryKey, id); err != nil {
+			return fmt.Errorf("set temporary local rebalance key for item %d: %w", id, err)
+		}
 	}
 	return nil
 }

@@ -39,6 +39,15 @@ export default {
         'Cuando está activado, esta acción también se ejecutará cuando sea activada por otras acciones, no solo por cambios del usuario.',
     },
 
+    manualAccess: {
+      label: '¿Quién puede ejecutar esta acción manual?',
+      allEditors: 'Todos los editores del espacio de trabajo',
+      unrestrictedHint:
+        'Sin restricción de rol. Cualquier persona con acceso de edición puede ver y ejecutar esta acción.',
+      restrictedHint:
+        'Solo los miembros con al menos uno de los roles seleccionados pueden ver y ejecutar esta acción. Los administradores del espacio de trabajo siempre conservan el acceso.',
+    },
+
     // Node types
     nodes: {
       trigger: 'Disparador',

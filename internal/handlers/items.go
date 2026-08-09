@@ -160,9 +160,21 @@ func (h *ItemHandler) respondItemReadError(w http.ResponseWriter, r *http.Reques
 	respondInternalError(w, r, err)
 }
 
+// respondItemReadErrorContext preserves the local database deadline when a
+// driver (notably lib/pq) reports cancellation as a driver-specific error
+// instead of wrapping context.DeadlineExceeded. Without this check a timed-out
+// list query is incorrectly exposed as HTTP 500.
+func (h *ItemHandler) respondItemReadErrorContext(ctx context.Context, w http.ResponseWriter, r *http.Request, err error) {
+	if ctx != nil && ctx.Err() != nil {
+		err = ctx.Err()
+	}
+	h.respondItemReadError(w, r, err)
+}
+
 // SetWebhookSender sets the webhook sender for dispatching webhook events
 func (h *ItemHandler) SetWebhookSender(sender *webhook.WebhookSender) {
 	h.webhookSender = sender
+	h.itemUpdate.SetFallbackWebhook(sender)
 }
 
 // SetMentionService sets the mention service for processing @mentions
@@ -442,6 +454,10 @@ func (h *ItemHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 	// Determine sort order
 	sortBy := r.URL.Query().Get("order_by")
 	sortAsc := strings.EqualFold(r.URL.Query().Get("sort_direction"), "asc")
+	cursor := r.URL.Query().Get("cursor")
+	// Cursor mode is explicit for the first request; a continuation token
+	// implicitly enables it. Collection/QL requests remain offset-paginated.
+	cursorMode := strings.EqualFold(r.URL.Query().Get("cursor_mode"), "true") || cursor != ""
 
 	// Collection cards/lists do not render item descriptions; allow callers to
 	// trim that often-large column from list responses while keeping detail
@@ -458,7 +474,7 @@ func (h *ItemHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Call service
-	items, totalCount, err := h.itemCRUD.ListWithQLContext(ctx, services.ListWithQLParams{
+	pageResult, err := h.itemCRUD.ListWithQLPageContext(ctx, services.ListWithQLParams{
 		WorkspaceID:  workspaceID,
 		CollectionID: collectionID,
 		QLQuery:      qlQuery,
@@ -467,8 +483,10 @@ func (h *ItemHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 		UserID:       user.ID,
 		Filters:      filters,
 		Pagination: services.PaginationParams{
-			Limit:  limit,
-			Offset: offset,
+			Limit:      limit,
+			Offset:     offset,
+			Cursor:     cursor,
+			CursorMode: cursorMode,
 		},
 		SortBy:           sortBy,
 		SortAsc:          sortAsc,
@@ -484,9 +502,15 @@ func (h *ItemHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 			respondNotFound(w, r, "collection")
 			return
 		}
-		h.respondItemReadError(w, r, err)
+		if errors.Is(err, repository.ErrInvalidItemListCursor) {
+			respondValidationError(w, r, "Invalid cursor parameter")
+			return
+		}
+		h.respondItemReadErrorContext(ctx, w, r, err)
 		return
 	}
+	items := pageResult.Items
+	totalCount := pageResult.Total
 
 	// Filter items based on user permissions
 	filteredItems, err := h.filterItemsByPermissions(user.ID, items)
@@ -496,7 +520,7 @@ func (h *ItemHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if ctx.Err() != nil {
-		h.respondItemReadError(w, r, ctx.Err())
+		h.respondItemReadErrorContext(ctx, w, r, ctx.Err())
 		return
 	}
 	items = filteredItems
@@ -504,21 +528,21 @@ func (h *ItemHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 	// Strip names of time projects the viewer can't access (keeps the IDs).
 	h.maskInaccessibleProjectNamesContext(ctx, user.ID, items)
 	if ctx.Err() != nil {
-		h.respondItemReadError(w, r, ctx.Err())
+		h.respondItemReadErrorContext(ctx, w, r, ctx.Err())
 		return
 	}
 
 	// Load labels for items
 	if err := repository.NewLabelRepository(h.db).LoadForItemsContext(ctx, items); err != nil {
-		h.respondItemReadError(w, r, err)
+		h.respondItemReadErrorContext(ctx, w, r, err)
 		return
 	}
 	if err := LoadPersonalLabelsForItemsContext(ctx, h.db, items, user.ID); err != nil {
-		h.respondItemReadError(w, r, err)
+		h.respondItemReadErrorContext(ctx, w, r, err)
 		return
 	}
 	if err := repository.NewMilestoneAttachRepository(h.db).LoadForItemsContext(ctx, items); err != nil {
-		h.respondItemReadError(w, r, err)
+		h.respondItemReadErrorContext(ctx, w, r, err)
 		return
 	}
 
@@ -536,6 +560,7 @@ func (h *ItemHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 		},
 		SortableFields: sortableFields,
 		Watermark:      watermark,
+		NextCursor:     pageResult.NextCursor,
 	}
 
 	respondJSONOK(w, response)

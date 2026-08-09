@@ -23,16 +23,22 @@ type HistoryEntry struct {
 	UserID    int
 	FieldName string
 	OldValue  string
-	NewValue  string
-	ChangedAt time.Time
+	// OldValueNull preserves SQL NULL for history events with no prior value.
+	OldValueNull bool
+	NewValue     string
+	ChangedAt    time.Time
 }
 
 // RecordHistory records a history entry for an item change
 func (r *ItemRepository) RecordHistory(w HistoryWriter, entry HistoryEntry) error {
+	var oldValue interface{} = entry.OldValue
+	if entry.OldValueNull {
+		oldValue = nil
+	}
 	_, err := w.ExecWrite(`
 		INSERT INTO item_history (item_id, user_id, field_name, old_value, new_value, changed_at)
 		VALUES (?, ?, ?, ?, ?, ?)
-	`, entry.ItemID, entry.UserID, entry.FieldName, entry.OldValue, entry.NewValue, entry.ChangedAt)
+	`, entry.ItemID, entry.UserID, entry.FieldName, oldValue, entry.NewValue, entry.ChangedAt)
 	if err != nil {
 		return fmt.Errorf("failed to record history: %w", err)
 	}

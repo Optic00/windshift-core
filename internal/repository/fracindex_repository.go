@@ -1,9 +1,11 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"windshift/internal/database"
 )
@@ -19,6 +21,16 @@ type FracIndexRepository struct {
 // NewFracIndexRepository constructs a new repository.
 func NewFracIndexRepository(db database.Database) *FracIndexRepository {
 	return &FracIndexRepository{db: db}
+}
+
+func (r *FracIndexRepository) GetGlobalRankState() (GlobalRankState, error) {
+	// Diagnostics must be able to return malformed durable markers as data;
+	// worker/control paths continue to use the validated loader and refuse them.
+	return loadGlobalRankStateUncheckedWithQuery(r.db, "")
+}
+
+func (r *FracIndexRepository) ControlGlobalRankMigration(ctx context.Context, action GlobalRankMigrationAction) (GlobalRankState, error) {
+	return ControlGlobalRankMigration(ctx, r.db, action)
 }
 
 // FracIndexDBStats describes the persisted frac_index state.
@@ -37,9 +49,152 @@ type FracIndexDBStats struct {
 	ByteMax            *string  `json:"byte_max"`                    // ORDER BY frac_index COLLATE "C" DESC LIMIT 1
 	Top10ByByte        []string `json:"top_10_by_byte"`
 	NotNullCount       int64    `json:"not_null_count"`
+	MaxRankLength      int64    `json:"max_rank_length"`
+	OverlongRankCount  int64    `json:"overlong_rank_count"`
 	CollationMismatch  bool     `json:"collation_mismatch"`
 	PredictedNext      *string  `json:"predicted_next,omitempty"`
 	PredictedCollision *string  `json:"predicted_collision,omitempty"`
+}
+
+// GlobalRankIntegrity describes operator-facing invariants for the durable
+// three-bucket migration state and all persisted item ranks.
+type GlobalRankIntegrity struct {
+	BucketCounts           map[string]int64 `json:"bucket_counts"`
+	NullRankCount          int64            `json:"null_rank_count"`
+	MalformedRankCount     int64            `json:"malformed_rank_count"`
+	DuplicateRankCount     int64            `json:"duplicate_rank_count"`
+	UnexpectedBucketCount  int64            `json:"unexpected_bucket_count"`
+	FrontierViolationCount int64            `json:"frontier_violation_count"`
+	LeaseStalled           bool             `json:"lease_stalled"`
+	Healthy                bool             `json:"healthy"`
+	Issues                 []string         `json:"issues"`
+}
+
+// GetGlobalRankIntegrity checks strict rank grammar, bucket membership,
+// duplicates, frontier placement, and lease liveness. It is intentionally an
+// explicit diagnostics scan rather than part of a hot request path.
+func (r *FracIndexRepository) GetGlobalRankIntegrity(state GlobalRankState, now time.Time) (GlobalRankIntegrity, error) {
+	out := GlobalRankIntegrity{
+		BucketCounts: map[string]int64{"0": 0, "1": 0, "2": 0},
+		Issues:       []string{},
+	}
+	if err := state.Validate(); err != nil {
+		out.Issues = append(out.Issues, "invalid durable migration state: "+err.Error())
+	}
+
+	var frontierRank *GlobalRank
+	if state.Frontier != nil {
+		parsed, err := ParseGlobalRank(*state.Frontier)
+		if err != nil || parsed.Bucket != state.ActiveBucket {
+			out.Issues = append(out.Issues, "migration frontier is not a valid active-bucket rank")
+		} else {
+			frontierRank = &parsed
+		}
+	} else if state.MigratedCount > 0 && state.Phase != GlobalRankPhaseStable {
+		out.Issues = append(out.Issues, "migration progress has no frontier")
+	}
+
+	rows, err := r.db.Query("SELECT frac_index FROM items")
+	if err != nil {
+		return out, fmt.Errorf("read ranks for global integrity: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var value sql.NullString
+		if err := rows.Scan(&value); err != nil {
+			return out, fmt.Errorf("scan rank for global integrity: %w", err)
+		}
+		if !value.Valid {
+			out.NullRankCount++
+			continue
+		}
+		rank, err := ParseGlobalRank(value.String)
+		if err != nil {
+			out.MalformedRankCount++
+			continue
+		}
+		out.BucketCounts[fmt.Sprintf("%d", rank.Bucket)]++
+		if rank.Bucket != state.ActiveBucket && (state.TargetBucket == nil || rank.Bucket != *state.TargetBucket) {
+			out.UnexpectedBucketCount++
+		}
+		if frontierRank != nil && state.TargetBucket != nil && state.Direction != nil {
+			// The frontier constrains only the unprocessed active-bucket range.
+			// Target-bucket payloads are freshly balanced into an independent
+			// namespace and are intentionally not comparable with the old payload.
+			switch *state.Direction {
+			case GlobalRankDirectionHighToLow:
+				if rank.Bucket == state.ActiveBucket && rank.Fraction >= frontierRank.Fraction {
+					out.FrontierViolationCount++
+				}
+			case GlobalRankDirectionLowToHigh:
+				if rank.Bucket == state.ActiveBucket && rank.Fraction <= frontierRank.Fraction {
+					out.FrontierViolationCount++
+				}
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return out, fmt.Errorf("iterate ranks for global integrity: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return out, fmt.Errorf("close ranks for global integrity: %w", err)
+	}
+
+	if err := r.db.QueryRow(`
+		SELECT COUNT(*)
+		FROM (
+			SELECT frac_index
+			FROM items
+			GROUP BY frac_index
+			HAVING COUNT(*) > 1
+		) duplicate_ranks`).Scan(&out.DuplicateRankCount); err != nil {
+		return out, fmt.Errorf("count duplicate global ranks: %w", err)
+	}
+
+	if (state.LeaseOwner == nil) != (state.LeaseExpiresAt == nil) {
+		out.Issues = append(out.Issues, "migration lease owner and expiry are inconsistent")
+	}
+	if (state.Phase == GlobalRankPhaseMigrating || state.Phase == GlobalRankPhasePaused || state.Phase == GlobalRankPhaseFailed) &&
+		(state.TargetBucket == nil || state.Direction == nil) {
+		out.Issues = append(out.Issues, "online migration state has no target or direction")
+	}
+	if state.Phase == GlobalRankPhasePaused && (state.LeaseOwner != nil || state.LeaseExpiresAt != nil) {
+		out.Issues = append(out.Issues, "paused migration still owns a lease")
+	}
+	if (state.Phase == GlobalRankPhaseStable || state.Phase == GlobalRankPhaseLegacy) &&
+		(state.Frontier != nil || state.LeaseOwner != nil || state.LeaseExpiresAt != nil) {
+		out.Issues = append(out.Issues, "inactive rank state retains migration markers")
+	}
+	if state.Phase == GlobalRankPhaseMigrating && state.LeaseExpiresAt != nil && !state.LeaseExpiresAt.After(now) {
+		out.LeaseStalled = true
+		out.Issues = append(out.Issues, "migration lease is expired")
+	}
+	if state.Phase == GlobalRankPhaseFailed {
+		out.Issues = append(out.Issues, "migration is failed")
+		if state.LastError == nil || *state.LastError == "" {
+			out.Issues = append(out.Issues, "failed migration has no failure reason")
+		}
+	}
+	if state.Phase == GlobalRankPhaseLegacy {
+		out.Issues = append(out.Issues, "legacy rank conversion is incomplete")
+	}
+	if out.NullRankCount > 0 {
+		out.Issues = append(out.Issues, "NULL item ranks exist")
+	}
+	if out.MalformedRankCount > 0 {
+		out.Issues = append(out.Issues, "malformed item ranks exist")
+	}
+	if out.DuplicateRankCount > 0 {
+		out.Issues = append(out.Issues, "duplicate item ranks exist")
+	}
+	if out.UnexpectedBucketCount > 0 {
+		out.Issues = append(out.Issues, "items exist outside the active and target buckets")
+	}
+	if out.FrontierViolationCount > 0 {
+		out.Issues = append(out.Issues, "item ranks violate the durable migration frontier")
+	}
+	out.Healthy = len(out.Issues) == 0
+	return out, nil
 }
 
 // GetDBStats inspects items for the diagnostics panel.
@@ -148,8 +303,13 @@ func (r *FracIndexRepository) GetDBStats() (FracIndexDBStats, error) {
 		return out, fmt.Errorf("iterate top 10: %w", err)
 	}
 
-	if err := r.db.QueryRow(`SELECT COUNT(*) FROM items WHERE frac_index IS NOT NULL`).Scan(&out.NotNullCount); err != nil {
-		return out, fmt.Errorf("count: %w", err)
+	if err := r.db.QueryRow(`
+		SELECT COUNT(*),
+			COALESCE(MAX(LENGTH(frac_index)), 0),
+			COALESCE(SUM(CASE WHEN LENGTH(frac_index) > ? THEN 1 ELSE 0 END), 0)
+		FROM items
+		WHERE frac_index IS NOT NULL`, fracIndexRebalanceLengthThreshold).Scan(&out.NotNullCount, &out.MaxRankLength, &out.OverlongRankCount); err != nil {
+		return out, fmt.Errorf("read rank length statistics: %w", err)
 	}
 
 	return out, nil

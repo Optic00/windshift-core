@@ -152,7 +152,7 @@ func init() {
 			}
 			resolved, location, err := services.ResolveTimezone(timezone)
 			if err != nil {
-				return map[string]string{"error": err.Error()}, nil
+				return map[string]string{"error": err.Error()}, nil //nolint:nilerr // tool validation errors are returned in the JSON result
 			}
 			now := time.Now()
 			local := now.In(location)
@@ -332,7 +332,7 @@ func init() {
 			}
 			resolvedTimezone, location, err := services.ResolveTimezone(timezone)
 			if err != nil {
-				return map[string]string{"error": err.Error()}, nil
+				return map[string]string{"error": err.Error()}, nil //nolint:nilerr // tool validation errors are returned in the JSON result
 			}
 			date, err := services.ParseCivilDate(args.Date, location)
 			if err != nil {

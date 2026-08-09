@@ -426,6 +426,7 @@ type PaginatedItemsResponse struct {
 	Pagination     PaginationMeta `json:"pagination"`
 	SortableFields []string       `json:"sortable_fields,omitempty"`
 	Watermark      int64          `json:"watermark,omitempty"`
+	NextCursor     string         `json:"next_cursor,omitempty"`
 }
 
 // PaginatedAttachmentsResponse represents a paginated list of attachments

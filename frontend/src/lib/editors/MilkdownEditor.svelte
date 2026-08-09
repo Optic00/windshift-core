@@ -418,8 +418,19 @@
           ctx.set(rootCtx, editorElement);
           ctx.set(defaultValueCtx, initialContent || '');
           ctx.get(listenerCtx).markdownUpdated((ctx, markdown) => {
-            content = markdown;
-            if (onContentChange) onContentChange(markdown);
+            // Listener notifications can be delivered after a newer editor
+            // transaction (for example, selecting an @ mention). Always
+            // serialize the current document so a delayed callback cannot
+            // regress the bindable value to an older Markdown snapshot.
+            let currentMarkdown = markdown;
+            try {
+              const view = ctx.get(editorViewCtx);
+              if (view) currentMarkdown = ctx.get(serializerCtx)(view.state.doc);
+            } catch {
+              // The listener can outlive the editor view during teardown.
+            }
+            content = currentMarkdown;
+            if (onContentChange) onContentChange(currentMarkdown);
           });
           // Detect mentions on all changes: mobile keyboards may omit keyup.
           // Overlap with desktop keyup is safe because the check only reads state.

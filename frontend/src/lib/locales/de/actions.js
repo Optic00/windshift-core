@@ -38,6 +38,15 @@ export default {
         'Wenn aktiviert, wird diese Aktion auch ausgeführt, wenn sie durch andere Aktionen ausgelöst wird, nicht nur durch Benutzeränderungen.',
     },
 
+    manualAccess: {
+      label: 'Wer darf diese manuelle Aktion ausführen?',
+      allEditors: 'Alle Bearbeiter des Arbeitsbereichs',
+      unrestrictedHint:
+        'Keine Rollenbeschränkung. Alle Personen mit Bearbeitungszugriff können diese Aktion sehen und ausführen.',
+      restrictedHint:
+        'Nur Mitglieder mit mindestens einer ausgewählten Rolle können diese Aktion sehen und ausführen. Arbeitsbereichsadministratoren behalten immer Zugriff.',
+    },
+
     nodes: {
       trigger: 'Auslöser',
       setField: 'Feld setzen',

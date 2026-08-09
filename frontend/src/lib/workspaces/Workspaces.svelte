@@ -136,6 +136,7 @@
         emptyIcon={Circle}
         actionItems={buildWorkspaceDropdownItems}
         onRowClick={(workspace) => navigate(`/workspaces/${workspace.id}`)}
+        rowAttrs={(workspace) => ({ 'data-testid': `workspace-row-${workspace.id}` })}
       >
     {#snippet name(workspace)}
       {@const WorkspaceIcon = iconMap[workspace.icon] || Grip}

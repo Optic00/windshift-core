@@ -25,6 +25,7 @@ type Env struct {
 	DB                     database.Database
 	UserID                 int
 	Username               string // Cached at Env-construction time for audit logs
+	Timezone               string // Validated IANA timezone for the acting user
 	Source                 string // SourceAIChat | SourceMCP — for audit trail
 	AccessibleWorkspaceIDs []int
 	// AuditDetails contains adapter-supplied correlation identifiers only.
@@ -51,28 +52,6 @@ type Env struct {
 	// InvalidateWorkspaceCache so they degrade to "next periodic refresh"
 	// when the adapter (chat handler / MCP server) wasn't wired with one.
 	ActionService *services.ActionService
-	// IDResolver and PlanningService back the tools' name-to-ID lookups.
-	// Optional: when nil, tools construct DB-backed instances lazily.
-	IDResolver      *services.IDResolverService
-	PlanningService *services.PlanningService
-}
-
-// idResolver returns the shared IDResolverService, constructing a DB-backed
-// instance when the adapter did not wire one.
-func (e *Env) idResolver() *services.IDResolverService {
-	if e.IDResolver != nil {
-		return e.IDResolver
-	}
-	return services.NewIDResolverService(e.DB)
-}
-
-// planning returns the shared PlanningService, constructing a DB-backed
-// instance when the adapter did not wire one.
-func (e *Env) planning() *services.PlanningService {
-	if e.PlanningService != nil {
-		return e.PlanningService
-	}
-	return services.NewPlanningService(e.DB)
 }
 
 // Audit resource types for entities internal/logger doesn't define a

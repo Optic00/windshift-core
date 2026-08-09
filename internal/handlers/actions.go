@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 
 	"windshift/internal/logger"
@@ -117,6 +118,73 @@ func (h *ActionsHandler) validateActionDefinition(w http.ResponseWriter, r *http
 		}
 	}
 	return true
+}
+
+func normalizeAllowedRoleIDs(roleIDs []int) ([]int, error) {
+	seen := make(map[int]struct{}, len(roleIDs))
+	normalized := make([]int, 0, len(roleIDs))
+	for _, roleID := range roleIDs {
+		if roleID <= 0 {
+			return nil, fmt.Errorf("allowed_role_ids must contain positive role IDs")
+		}
+		if _, exists := seen[roleID]; exists {
+			continue
+		}
+		seen[roleID] = struct{}{}
+		normalized = append(normalized, roleID)
+	}
+	sort.Ints(normalized)
+	return normalized, nil
+}
+
+func (h *ActionsHandler) validateAllowedRoleIDs(w http.ResponseWriter, r *http.Request, triggerType models.ActionTriggerType, roleIDs []int) ([]int, bool) {
+	if triggerType != models.ActionTriggerManual {
+		if len(roleIDs) > 0 {
+			respondValidationError(w, r, "allowed_role_ids can only be set on manual actions")
+			return nil, false
+		}
+		return []int{}, true
+	}
+
+	normalized, err := normalizeAllowedRoleIDs(roleIDs)
+	if err != nil {
+		respondValidationError(w, r, err.Error())
+		return nil, false
+	}
+	exist, err := h.repo.AllowedRoleIDsExist(normalized)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return nil, false
+	}
+	if !exist {
+		respondValidationError(w, r, "allowed_role_ids contains an unknown workspace role")
+		return nil, false
+	}
+	return normalized, true
+}
+
+// canTriggerManualAction applies the per-action visibility and execution
+// contract. Action managers retain an administrative override. A configured
+// role allowlist grants access to matching members who can view the workspace;
+// without an allowlist, ordinary access falls back to item.edit.
+func (h *ActionsHandler) canTriggerManualAction(userID, workspaceID int, action *models.Action) (bool, error) {
+	canManage, err := h.permissionService.HasWorkspacePermission(userID, workspaceID, models.PermissionActionManage)
+	if err != nil || canManage {
+		return canManage, err
+	}
+
+	requiredPermission := models.PermissionItemEdit
+	if len(action.AllowedRoleIDs) > 0 {
+		requiredPermission = models.PermissionItemView
+	}
+	hasPermission, err := h.permissionService.HasWorkspacePermission(userID, workspaceID, requiredPermission)
+	if err != nil || !hasPermission {
+		return false, err
+	}
+	if len(action.AllowedRoleIDs) == 0 {
+		return true, nil
+	}
+	return h.repo.UserHasAllowedRole(action.ID, userID, workspaceID)
 }
 
 // requireAction fetches an action by ID and verifies workspace ownership.
@@ -299,17 +367,22 @@ func (h *ActionsHandler) CreateAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	allowedRoleIDs, ok := h.validateAllowedRoleIDs(w, r, req.TriggerType, req.AllowedRoleIDs)
+	if !ok {
+		return
+	}
 
 	// Create action
 	action := &models.Action{
-		WorkspaceID:   workspaceID,
-		Name:          req.Name,
-		Description:   req.Description,
-		IsEnabled:     true,
-		TriggerType:   req.TriggerType,
-		TriggerConfig: req.TriggerConfig,
-		CreatedBy:     &currentUser.ID,
-		ActorUserID:   req.ActorUserID,
+		WorkspaceID:    workspaceID,
+		Name:           req.Name,
+		Description:    req.Description,
+		IsEnabled:      true,
+		TriggerType:    req.TriggerType,
+		TriggerConfig:  req.TriggerConfig,
+		CreatedBy:      &currentUser.ID,
+		ActorUserID:    req.ActorUserID,
+		AllowedRoleIDs: allowedRoleIDs,
 	}
 
 	actionID, err := h.repo.Create(action)
@@ -376,6 +449,9 @@ func applyActionUpdateFields(action *models.Action, req *models.UpdateActionRequ
 	if req.IsEnabled != nil {
 		action.IsEnabled = *req.IsEnabled
 	}
+	if req.AllowedRoleIDs != nil {
+		action.AllowedRoleIDs = req.AllowedRoleIDs
+	}
 }
 
 // UpdateAction updates an existing action
@@ -426,6 +502,15 @@ func (h *ActionsHandler) UpdateAction(w http.ResponseWriter, r *http.Request) {
 	var err error
 
 	applyActionUpdateFields(action, &req)
+	if action.TriggerType != models.ActionTriggerManual && req.AllowedRoleIDs == nil {
+		// Role restrictions have no meaning for event-driven actions. Clear a
+		// prior manual allowlist when the trigger type changes away from manual.
+		action.AllowedRoleIDs = []int{}
+	}
+	action.AllowedRoleIDs, ok = h.validateAllowedRoleIDs(w, r, action.TriggerType, action.AllowedRoleIDs)
+	if !ok {
+		return
+	}
 
 	// Run the unified validator against the post-merge effective definition
 	// whenever any definition field changes. Previously metadata-only patches
@@ -694,6 +779,31 @@ func (h *ActionsHandler) ExecuteAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if action.TriggerType == models.ActionTriggerManual {
+		allowed, err := h.canTriggerManualAction(currentUser.ID, workspaceID, action)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return
+		}
+		if !allowed {
+			respondNotFound(w, r, "action")
+			return
+		}
+	} else {
+		// The endpoint is also used by action managers to test event-driven
+		// actions from the settings screen. That administrative path remains
+		// action.manage-only and is never widened by manual-action role rules.
+		allowed, err := h.permissionService.HasWorkspacePermission(currentUser.ID, workspaceID, models.PermissionActionManage)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return
+		}
+		if !allowed {
+			respondNotFound(w, r, "action")
+			return
+		}
+	}
+
 	// A disabled action must not run, even from the manual-execute endpoint —
 	// the toggle is load-bearing (it's how admins quarantine a misbehaving
 	// automation) and the background processor already skips disabled actions
@@ -721,8 +831,11 @@ func (h *ActionsHandler) ExecuteAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify user has edit permission on the item's workspace
-	if !CheckItemPermission(w, r, h.itemRepo, h.permissionService, req.ItemID, models.PermissionItemEdit) {
+	itemPermission := models.PermissionItemEdit
+	if action.TriggerType == models.ActionTriggerManual && len(action.AllowedRoleIDs) > 0 {
+		itemPermission = models.PermissionItemView
+	}
+	if !CheckItemPermission(w, r, h.itemRepo, h.permissionService, req.ItemID, itemPermission) {
 		return
 	}
 

@@ -40,7 +40,7 @@ type ItemCacheService struct {
 
 // ItemCacheConfig represents configuration for the item cache
 type ItemCacheConfig struct {
-	HierarchyTTL    time.Duration `json:"hierarchy_ttl"`     // Default: 5min
+	HierarchyTTL    time.Duration `json:"hierarchy_ttl"`     // Default: 30min
 	MaxCacheSize    int           `json:"max_cache_size"`    // Default: 196MB
 	WarmupBatchSize int           `json:"warmup_batch_size"` // Default: 500
 	EnablePreWarm   bool          `json:"enable_pre_warm"`   // Default: true
@@ -49,7 +49,10 @@ type ItemCacheConfig struct {
 // DefaultItemCacheConfig returns default configuration
 func DefaultItemCacheConfig() ItemCacheConfig {
 	return ItemCacheConfig{
-		HierarchyTTL:    5 * time.Minute,
+		// The measured workload revisits a deterministic hot set throughout a
+		// qualification window longer than five minutes. Retain those entries;
+		// mutation paths explicitly invalidate affected items and ancestors.
+		HierarchyTTL:    30 * time.Minute,
 		MaxCacheSize:    196,
 		WarmupBatchSize: 500,
 		EnablePreWarm:   true,

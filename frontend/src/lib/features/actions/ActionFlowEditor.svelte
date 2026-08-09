@@ -32,6 +32,7 @@
   import Checkbox from '../../components/Checkbox.svelte';
   import Select from '../../components/Select.svelte';
   import UserPicker from '../../pickers/UserPicker.svelte';
+  import RolePicker from '../../pickers/RolePicker.svelte';
   import { actionFlowStore } from '../../stores/actionFlowStore.svelte.js';
   import { permissionStore } from '../../stores';
   import { agentRuns } from '../../stores/agentRuns.svelte.js';
@@ -58,6 +59,9 @@
   // svelte-ignore state_referenced_locally
   let actorUserId = $state(action?.actor_user_id ?? null);
   let lastActorSource = $state(null);
+  // svelte-ignore state_referenced_locally
+  let allowedRoleIds = $state([...(action?.allowed_role_ids ?? [])]);
+  let lastAllowedRolesSource = $state(null);
   let canSetActor = $derived(permissionStore.hasPermissionKey('action.set_actor'));
 
   $effect(() => {
@@ -65,6 +69,14 @@
     if (source === lastActorSource) return;
     lastActorSource = source;
     actorUserId = action?.actor_user_id ?? null;
+  });
+
+  $effect(() => {
+    const roleIDs = action?.allowed_role_ids ?? [];
+    const source = `${action?.id ?? 'new'}:${roleIDs.join(',')}`;
+    if (source === lastAllowedRolesSource) return;
+    lastAllowedRolesSource = source;
+    allowedRoleIds = [...roleIDs];
   });
 
   const nodeTypes = {
@@ -347,6 +359,7 @@
     // enforces action.set_actor when the value actually changes vs the stored
     // action, so passing through unchanged is a no-op.
     apiData.actor_user_id = actorUserId;
+    apiData.allowed_role_ids = apiData.trigger_type === 'manual' ? allowedRoleIds : [];
     await onSave(apiData);
   }
 
@@ -603,6 +616,35 @@
         size="small"
       />
     </div>
+    {#if (selectedNode.data?.triggerType || action?.trigger_type) === 'manual'}
+      <div
+        id="manual-action-role-selector"
+        class="pt-4 border-t cascade-option"
+        role="group"
+        aria-labelledby="manual-action-role-selector-label"
+        aria-describedby="manual-action-role-selector-hint"
+      >
+        <label
+          id="manual-action-role-selector-label"
+          for="manual-action-role-selector-input"
+          class="block text-xs font-medium mb-1"
+        >
+          {t('actions.manualAccess.label')}
+        </label>
+        <RolePicker
+          bind:value={allowedRoleIds}
+          id="manual-action-role-selector-input"
+          multiple={true}
+          placeholder={t('actions.manualAccess.allEditors')}
+          onChange={(roleIDs) => { allowedRoleIds = roleIDs; }}
+        />
+        <p id="manual-action-role-selector-hint" class="mt-2 text-xs sidebar-hints">
+          {allowedRoleIds.length > 0
+            ? t('actions.manualAccess.restrictedHint')
+            : t('actions.manualAccess.unrestrictedHint')}
+        </p>
+      </div>
+    {/if}
     {#if (selectedNode.data?.triggerType || action?.trigger_type) === 'status_transition'}
       <div>
         <label for="config-from-status" class="block text-xs font-medium mb-1">{t('actions.config.fromStatus')}</label>

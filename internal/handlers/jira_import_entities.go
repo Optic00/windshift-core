@@ -1524,7 +1524,7 @@ func (h *JiraImportHandler) updateImportedJiraItem(
 		return 0, fmt.Errorf("begin Jira item upsert: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	fracIndex, err := repository.GenerateFracIndexForNewItem(tx)
+	fracIndex, err := repository.GenerateFracIndexForNewItem(tx, h.db.GetDriverName())
 	if err != nil {
 		return 0, fmt.Errorf("generate Jira re-import fractional index: %w", err)
 	}

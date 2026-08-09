@@ -160,6 +160,7 @@
       const repos = await api.workspaceSCM.getLinkedRepos(workspaceId, connId);
       linkedRepos = { ...linkedRepos, [connId]: repos || [] };
     } catch (error) {
+      if (error?.name === 'AbortError') return;
       console.error('Failed to load repositories:', error);
       linkedRepos = { ...linkedRepos, [connId]: [] };
     } finally {

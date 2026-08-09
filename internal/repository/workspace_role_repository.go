@@ -116,6 +116,18 @@ func (r *WorkspaceRoleRepository) NameExists(name string) (bool, error) {
 	return exists, err
 }
 
+// CountManualActionRestrictions returns how many action allowlists reference
+// the role. Deleting such a role would otherwise turn a restricted manual
+// action into an unrestricted one.
+func (r *WorkspaceRoleRepository) CountManualActionRestrictions(roleID int) (int, error) {
+	var count int
+	err := r.db.QueryRow(`SELECT COUNT(*) FROM action_allowed_roles WHERE role_id = ?`, roleID).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count manual action restrictions for role %d: %w", roleID, err)
+	}
+	return count, nil
+}
+
 // GroupExists reports whether a group with the given id exists.
 func (r *WorkspaceRoleRepository) GroupExists(groupID int) (bool, error) {
 	var exists bool

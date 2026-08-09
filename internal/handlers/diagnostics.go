@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -29,24 +30,25 @@ import (
 // webhook_deliveries, scheduler_runs) and is read-only except for the manual
 // purge endpoints, which delete old rows on demand.
 type DiagnosticsHandler struct {
-	sessionManager   *auth.SessionManager
-	databaseDiagRepo *repository.DatabaseDiagnosticsRepository
-	actionRepo       *repository.ActionRepository
-	deliveryRepo     *repository.WebhookDeliveryRepository
-	schedulerRunRepo *repository.SchedulerRunRepository
-	fracIndexRepo    *repository.FracIndexRepository
-	aiRepo           *repository.AIRepository
-	llmManager       *llm.ConnectionManager
-	llmCache         *llm.ModelCache
-	auditor          *logger.Auditor
-	runnerRepo       *repository.RunnerRepository
-	agentRunRepo     *repository.AgentRunRepository
-	webhookSender    *webhook.WebhookSender
-	transitionMatrix *services.TransitionMatrixService
-	bulkOperations   *services.BulkOperationMetrics
-	recurrenceRepo   *repository.RecurrenceRepository
-	settingsRepo     *repository.SystemSettingRepository
-	memoryBudget     config.MemoryBudget
+	sessionManager      *auth.SessionManager
+	databaseDiagRepo    *repository.DatabaseDiagnosticsRepository
+	actionRepo          *repository.ActionRepository
+	deliveryRepo        *repository.WebhookDeliveryRepository
+	schedulerRunRepo    *repository.SchedulerRunRepository
+	fracIndexRepo       *repository.FracIndexRepository
+	aiRepo              *repository.AIRepository
+	llmManager          *llm.ConnectionManager
+	llmCache            *llm.ModelCache
+	auditor             *logger.Auditor
+	runnerRepo          *repository.RunnerRepository
+	agentRunRepo        *repository.AgentRunRepository
+	webhookSender       *webhook.WebhookSender
+	transitionMatrix    *services.TransitionMatrixService
+	bulkOperations      *services.BulkOperationMetrics
+	recurrenceRepo      *repository.RecurrenceRepository
+	settingsRepo        *repository.SystemSettingRepository
+	globalRankScheduler *scheduler.GlobalRankMigrationScheduler
+	memoryBudget        config.MemoryBudget
 }
 
 // NewDiagnosticsHandler creates a new diagnostics handler.
@@ -68,27 +70,29 @@ func NewDiagnosticsHandler(
 	bulkOperations *services.BulkOperationMetrics,
 	recurrenceRepo *repository.RecurrenceRepository,
 	settingsRepo *repository.SystemSettingRepository,
+	globalRankScheduler *scheduler.GlobalRankMigrationScheduler,
 	memoryBudget config.MemoryBudget,
 ) *DiagnosticsHandler {
 	return &DiagnosticsHandler{
-		sessionManager:   sessionManager,
-		databaseDiagRepo: databaseDiagRepo,
-		actionRepo:       actionRepo,
-		deliveryRepo:     deliveryRepo,
-		schedulerRunRepo: schedulerRunRepo,
-		fracIndexRepo:    fracIndexRepo,
-		aiRepo:           aiRepo,
-		llmManager:       llmManager,
-		llmCache:         llmCache,
-		auditor:          auditor,
-		runnerRepo:       runnerRepo,
-		agentRunRepo:     agentRunRepo,
-		webhookSender:    webhookSender,
-		transitionMatrix: transitionMatrix,
-		bulkOperations:   bulkOperations,
-		recurrenceRepo:   recurrenceRepo,
-		settingsRepo:     settingsRepo,
-		memoryBudget:     memoryBudget,
+		sessionManager:      sessionManager,
+		databaseDiagRepo:    databaseDiagRepo,
+		actionRepo:          actionRepo,
+		deliveryRepo:        deliveryRepo,
+		schedulerRunRepo:    schedulerRunRepo,
+		fracIndexRepo:       fracIndexRepo,
+		aiRepo:              aiRepo,
+		llmManager:          llmManager,
+		llmCache:            llmCache,
+		auditor:             auditor,
+		runnerRepo:          runnerRepo,
+		agentRunRepo:        agentRunRepo,
+		webhookSender:       webhookSender,
+		transitionMatrix:    transitionMatrix,
+		bulkOperations:      bulkOperations,
+		recurrenceRepo:      recurrenceRepo,
+		settingsRepo:        settingsRepo,
+		globalRankScheduler: globalRankScheduler,
+		memoryBudget:        memoryBudget,
 	}
 }
 
@@ -586,11 +590,74 @@ func (h *DiagnosticsHandler) GetFracIndexState(w http.ResponseWriter, r *http.Re
 		dbState.PredictedCollision = collision
 	}
 
-	healthy := !dbState.CollationMismatch && dbState.PredictedCollision == nil
+	globalState, err := h.fracIndexRepo.GetGlobalRankState()
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	integrity, err := h.fracIndexRepo.GetGlobalRankIntegrity(globalState, time.Now().UTC())
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+
+	lengthHealthy := dbState.OverlongRankCount == 0 ||
+		globalState.Phase == repository.GlobalRankPhaseMigrating ||
+		globalState.Phase == repository.GlobalRankPhasePaused
+	healthy := !dbState.CollationMismatch && dbState.PredictedCollision == nil && lengthHealthy && integrity.Healthy
 	respondJSONOK(w, map[string]any{
-		"db":      dbState,
-		"healthy": healthy,
+		"db":        dbState,
+		"migration": globalState,
+		"integrity": integrity,
+		"healthy":   healthy,
 	})
+}
+
+type GlobalRankMigrationControlRequest struct {
+	Action string `json:"action"`
+}
+
+// ControlGlobalRankMigration starts, pauses, or resumes the bounded online
+// migration. The route is system-admin-only and every successful action is
+// audited.
+//
+// POST /api/admin/diagnostics/frac-index/migration
+func (h *DiagnosticsHandler) ControlGlobalRankMigration(w http.ResponseWriter, r *http.Request) {
+	req, ok := decodeJSON[GlobalRankMigrationControlRequest](w, r)
+	if !ok {
+		return
+	}
+	action := repository.GlobalRankMigrationAction(strings.ToLower(strings.TrimSpace(req.Action)))
+	switch action {
+	case repository.GlobalRankMigrationStart, repository.GlobalRankMigrationPause, repository.GlobalRankMigrationResume:
+	default:
+		respondValidationError(w, r, "action must be 'start', 'pause', or 'resume'")
+		return
+	}
+
+	state, err := h.fracIndexRepo.ControlGlobalRankMigration(r.Context(), action)
+	if errors.Is(err, repository.ErrGlobalRankMigrationConflict) {
+		respondConflict(w, r, err.Error())
+		return
+	}
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	if h.globalRankScheduler != nil && (action == repository.GlobalRankMigrationStart || action == repository.GlobalRankMigrationResume) {
+		h.globalRankScheduler.Wake()
+	}
+	if h.auditor != nil {
+		if user := utils.GetCurrentUser(r); user != nil {
+			h.auditor.LogWithDetails(r, user, logger.ActionDiagnosticsGlobalRankMigrationControl, logger.ResourceDiagnostics, nil, "global rank migration", map[string]interface{}{
+				"action":        action,
+				"active_bucket": state.ActiveBucket,
+				"target_bucket": state.TargetBucket,
+				"phase":         state.Phase,
+			})
+		}
+	}
+	respondJSONOK(w, map[string]any{"migration": state})
 }
 
 // nextAppendKey mirrors the deterministic base of GenerateFracIndexForNewItem's
@@ -602,10 +669,23 @@ func (h *DiagnosticsHandler) GetFracIndexState(w http.ResponseWriter, r *http.Re
 // there are no rows (the generator would seed with KeyBetween("", "")).
 func nextAppendKey(byteMax *string) (string, error) {
 	last := ""
-	if byteMax != nil {
-		last = *byteMax
+	if byteMax == nil {
+		return repository.KeyBetween(last, "")
 	}
-	return repository.KeyBetween(last, "")
+
+	last = *byteMax
+	rank, err := repository.ParseGlobalRank(last)
+	if err != nil {
+		// Legacy databases are still observable while the checkpoint converter
+		// is running, so retain the pre-checkpoint calculation for bare keys.
+		return repository.KeyBetween(last, "")
+	}
+
+	nextFraction, err := repository.KeyBetween(rank.Fraction, "")
+	if err != nil {
+		return "", err
+	}
+	return repository.EncodeGlobalRank(rank.Bucket, nextFraction)
 }
 
 // GetActionLogs returns recent cross-workspace action execution logs.

@@ -198,11 +198,12 @@ func (s *AttachmentService) RecordItemHistory(itemID int, userID *int, action st
 		value = fmt.Sprintf("attachment:%d:%s", attachmentID, filename)
 	}
 	entry := repository.HistoryEntry{
-		ItemID:    itemID,
-		UserID:    *userID,
-		FieldName: action,
-		NewValue:  value,
-		ChangedAt: time.Now(),
+		ItemID:       itemID,
+		UserID:       *userID,
+		FieldName:    action,
+		OldValueNull: oldValue == nil,
+		NewValue:     value,
+		ChangedAt:    time.Now(),
 	}
 	if oldValue != nil {
 		entry.OldValue = *oldValue

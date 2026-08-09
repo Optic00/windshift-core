@@ -164,6 +164,7 @@ func init() {
 	Catalog = append(Catalog, schemaRerunMigrations()...)
 	Catalog = append(Catalog, cutoverMigrations()...)
 	Catalog = append(Catalog, driftFixMigrations()...)
+	Catalog = append(Catalog, canonicalRankSchemaMigrations()...)
 }
 
 // baselineMigration stamps a fresh install without DDL. Bootstrap is not yet

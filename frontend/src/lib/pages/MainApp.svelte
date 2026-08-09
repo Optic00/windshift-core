@@ -32,6 +32,8 @@
   import OAuthAuthorize from './OAuthAuthorize.svelte';
   import Channels from '../features/channels/Channels.svelte';
   import Customers from '../workspaces/Customers.svelte';
+  import TeamsList from '../teams/TeamsList.svelte';
+  import TeamDetail from '../teams/TeamDetail.svelte';
   import Hub from '../layout/Hub.svelte';
   import Footer from '../layout/Footer.svelte';
   import {
@@ -1177,6 +1179,15 @@
       </div>
     {:else if view === 'organizations' || view === 'organization-contact-detail'}
       <Customers />
+
+    {:else if view === 'teams-list'}
+      <div class="p-6" style="background-color: var(--ds-surface);">
+        <TeamsList />
+      </div>
+    {:else if view === 'team-detail'}
+      <div class="p-6" style="background-color: var(--ds-surface);">
+        <TeamDetail teamId={$currentRoute.params.id} section={$currentRoute.params.section || 'overview'} />
+      </div>
 
     {:else if view === 'notifications'}
       <NotificationsPage />

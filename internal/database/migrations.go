@@ -2833,6 +2833,34 @@ var Catalog = []Migration{
 			WHERE permissions LIKE '%"read"%';
 		`,
 	},
+	{
+		Version:       "20260808_action_allowed_roles",
+		Name:          "Add manual action workspace role allowlists",
+		CheckSQLite:   sqliteTableCheck("action_allowed_roles"),
+		CheckPostgres: pgTableCheck("action_allowed_roles"),
+		SQLite: `
+			CREATE TABLE IF NOT EXISTS action_allowed_roles (
+				action_id INTEGER NOT NULL,
+				role_id INTEGER NOT NULL,
+				PRIMARY KEY (action_id, role_id),
+				FOREIGN KEY (action_id) REFERENCES actions(id) ON DELETE CASCADE,
+				FOREIGN KEY (role_id) REFERENCES workspace_roles(id) ON DELETE RESTRICT
+			);
+			CREATE INDEX IF NOT EXISTS idx_action_allowed_roles_role_id
+				ON action_allowed_roles(role_id);
+		`,
+		Postgres: `
+			CREATE TABLE IF NOT EXISTS action_allowed_roles (
+				action_id INTEGER NOT NULL,
+				role_id INTEGER NOT NULL,
+				PRIMARY KEY (action_id, role_id),
+				FOREIGN KEY (action_id) REFERENCES actions(id) ON DELETE CASCADE,
+				FOREIGN KEY (role_id) REFERENCES workspace_roles(id) ON DELETE RESTRICT
+			);
+			CREATE INDEX IF NOT EXISTS idx_action_allowed_roles_role_id
+				ON action_allowed_roles(role_id);
+		`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {

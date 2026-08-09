@@ -8,11 +8,14 @@
 
   let {
     value = $bindable(null),
+    id = undefined,
     placeholder = '',
     label = '',
     disabled = false,
+    multiple = false,
     class: className = '',
     onSelect = () => {},
+    onChange = () => {},
     onCancel = () => {}
   } = $props();
 
@@ -25,18 +28,22 @@
 
 <BasePicker
   bind:value
+  {id}
   items={roles.data}
   loading={roles.loading}
   error={roles.error}
   placeholder={resolvedPlaceholder}
   {label}
   {disabled}
+  {multiple}
   class={className}
   searchFields={['name', 'description']}
   getValue={(role) => role?.id}
   getLabel={(role) => role?.name ?? ''}
   onSelect={(item) => onSelect(item)}
+  onChange={(roleIDs) => onChange(roleIDs)}
   onCancel={() => onCancel()}
+  optionTestid={(option) => `role-picker-option-${option.value}`}
 >
   {#snippet itemSnippet({ item: role, isSelected })}
     <div class="flex items-center gap-3 flex-1 min-w-0">

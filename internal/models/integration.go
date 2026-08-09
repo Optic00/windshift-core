@@ -827,9 +827,12 @@ type Action struct {
 	// ActorUserID overrides the execution actor. NULL means the action runs under
 	// the triggering user's permissions. Setting this field requires the global
 	// action.set_actor permission because it grants cross-workspace impersonation.
-	ActorUserID *int      `json:"actor_user_id,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ActorUserID *int `json:"actor_user_id,omitempty"`
+	// AllowedRoleIDs restricts a manual action to members of these workspace
+	// roles. An empty list means every workspace editor may trigger it.
+	AllowedRoleIDs []int     `json:"allowed_role_ids"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 	// Joined fields for API responses
 	CreatorName string       `json:"creator_name,omitempty"`
 	ActorName   string       `json:"actor_name,omitempty"`
@@ -1431,13 +1434,14 @@ type UpdateCapabilityRequest struct {
 
 // CreateActionRequest represents the API request to create an action
 type CreateActionRequest struct {
-	Name          string            `json:"name"`
-	Description   string            `json:"description,omitempty"`
-	TriggerType   ActionTriggerType `json:"trigger_type"`
-	TriggerConfig string            `json:"trigger_config,omitempty"`
-	ActorUserID   *int              `json:"actor_user_id,omitempty"` // requires action.set_actor global permission
-	Nodes         []ActionNode      `json:"nodes,omitempty"`
-	Edges         []ActionEdge      `json:"edges,omitempty"`
+	Name           string            `json:"name"`
+	Description    string            `json:"description,omitempty"`
+	TriggerType    ActionTriggerType `json:"trigger_type"`
+	TriggerConfig  string            `json:"trigger_config,omitempty"`
+	ActorUserID    *int              `json:"actor_user_id,omitempty"` // requires action.set_actor global permission
+	AllowedRoleIDs []int             `json:"allowed_role_ids,omitempty"`
+	Nodes          []ActionNode      `json:"nodes,omitempty"`
+	Edges          []ActionEdge      `json:"edges,omitempty"`
 }
 
 // ActionActorUpdate carries an optional actor_user_id patch for an action.
@@ -1466,12 +1470,13 @@ func (a *ActionActorUpdate) UnmarshalJSON(data []byte) error {
 
 // UpdateActionRequest represents the API request to update an action
 type UpdateActionRequest struct {
-	Name          *string            `json:"name,omitempty"`
-	Description   *string            `json:"description,omitempty"`
-	TriggerType   *ActionTriggerType `json:"trigger_type,omitempty"`
-	TriggerConfig *string            `json:"trigger_config,omitempty"`
-	IsEnabled     *bool              `json:"is_enabled,omitempty"`
-	ActorUserID   ActionActorUpdate  `json:"actor_user_id,omitempty"` // requires action.set_actor global permission when present
-	Nodes         []ActionNode       `json:"nodes,omitempty"`
-	Edges         []ActionEdge       `json:"edges,omitempty"`
+	Name           *string            `json:"name,omitempty"`
+	Description    *string            `json:"description,omitempty"`
+	TriggerType    *ActionTriggerType `json:"trigger_type,omitempty"`
+	TriggerConfig  *string            `json:"trigger_config,omitempty"`
+	IsEnabled      *bool              `json:"is_enabled,omitempty"`
+	ActorUserID    ActionActorUpdate  `json:"actor_user_id,omitempty"` // requires action.set_actor global permission when present
+	AllowedRoleIDs []int              `json:"allowed_role_ids,omitempty"`
+	Nodes          []ActionNode       `json:"nodes,omitempty"`
+	Edges          []ActionEdge       `json:"edges,omitempty"`
 }

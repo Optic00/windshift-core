@@ -38,6 +38,47 @@ func applyActionNulls(a *models.Action, description, triggerConfig sql.NullStrin
 	}
 }
 
+func (r *ActionRepository) loadAllowedRoleIDs(actionID int) ([]int, error) {
+	rows, err := r.db.Query(`
+		SELECT role_id
+		FROM action_allowed_roles
+		WHERE action_id = ?
+		ORDER BY role_id
+	`, actionID)
+	if err != nil {
+		return nil, fmt.Errorf("load allowed roles for action %d: %w", actionID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	roleIDs := []int{}
+	for rows.Next() {
+		var roleID int
+		if err := rows.Scan(&roleID); err != nil {
+			return nil, fmt.Errorf("scan allowed role for action %d: %w", actionID, err)
+		}
+		roleIDs = append(roleIDs, roleID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate allowed roles for action %d: %w", actionID, err)
+	}
+	return roleIDs, nil
+}
+
+func replaceAllowedRoleIDs(tx database.Tx, actionID int, roleIDs []int) error {
+	if _, err := tx.Exec(`DELETE FROM action_allowed_roles WHERE action_id = ?`, actionID); err != nil {
+		return fmt.Errorf("clear allowed roles: %w", err)
+	}
+	for _, roleID := range roleIDs {
+		if _, err := tx.Exec(`
+			INSERT INTO action_allowed_roles (action_id, role_id)
+			VALUES (?, ?)
+		`, actionID, roleID); err != nil {
+			return fmt.Errorf("add allowed role %d: %w", roleID, err)
+		}
+	}
+	return nil
+}
+
 // GetByID retrieves an action by ID with its nodes and edges
 func (r *ActionRepository) GetByID(id int) (*models.Action, error) {
 	var action models.Action
@@ -75,6 +116,10 @@ func (r *ActionRepository) GetByID(id int) (*models.Action, error) {
 	}
 	if actorName.Valid {
 		action.ActorName = actorName.String
+	}
+	action.AllowedRoleIDs, err = r.loadAllowedRoleIDs(id)
+	if err != nil {
+		return nil, err
 	}
 
 	// Load nodes
@@ -137,11 +182,22 @@ func (r *ActionRepository) ListByWorkspace(workspaceID int) ([]*models.Action, e
 		if actorName.Valid {
 			action.ActorName = actorName.String
 		}
-
 		actions = append(actions, action)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("failed to iterate actions: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("failed to close action rows: %w", err)
+	}
+
+	// Load allowlists only after closing the action cursor. This keeps the
+	// repository safe with single-connection database configurations.
+	for _, action := range actions {
+		action.AllowedRoleIDs, err = r.loadAllowedRoleIDs(action.ID)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return actions, nil
@@ -204,39 +260,90 @@ func (r *ActionRepository) ListEnabledByWorkspace(workspaceID int) ([]*models.Ac
 
 // Create creates a new action
 func (r *ActionRepository) Create(action *models.Action) (int, error) {
-	var id int64
-	err := r.db.QueryRow(`
-		INSERT INTO actions (
-			workspace_id, name, description, is_enabled, trigger_type, trigger_config,
-			created_by, actor_user_id, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
-	`,
-		action.WorkspaceID, action.Name, action.Description, action.IsEnabled,
-		action.TriggerType, action.TriggerConfig, action.CreatedBy, action.ActorUserID,
-		time.Now(), time.Now(),
-	).Scan(&id)
+	var id int
+	err := database.WithTx(r.db, func(tx database.Tx) error {
+		now := time.Now()
+		if err := tx.QueryRow(`
+			INSERT INTO actions (
+				workspace_id, name, description, is_enabled, trigger_type, trigger_config,
+				created_by, actor_user_id, created_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+		`,
+			action.WorkspaceID, action.Name, action.Description, action.IsEnabled,
+			action.TriggerType, action.TriggerConfig, action.CreatedBy, action.ActorUserID,
+			now, now,
+		).Scan(&id); err != nil {
+			return err
+		}
+		return replaceAllowedRoleIDs(tx, id, action.AllowedRoleIDs)
+	})
 	if err != nil {
 		return 0, fmt.Errorf("failed to create action: %w", err)
 	}
 
-	return int(id), nil
+	return id, nil
 }
 
 // Update updates an action (actor_user_id is patched separately via SetActor).
 func (r *ActionRepository) Update(action *models.Action) error {
-	_, err := r.db.ExecWrite(`
-		UPDATE actions SET
-			name = ?, description = ?, is_enabled = ?, trigger_type = ?,
-			trigger_config = ?, updated_at = ?
-		WHERE id = ?
-	`,
-		action.Name, action.Description, action.IsEnabled, action.TriggerType,
-		action.TriggerConfig, time.Now(), action.ID,
-	)
+	err := database.WithTx(r.db, func(tx database.Tx) error {
+		if _, err := tx.Exec(`
+			UPDATE actions SET
+				name = ?, description = ?, is_enabled = ?, trigger_type = ?,
+				trigger_config = ?, updated_at = ?
+			WHERE id = ?
+		`,
+			action.Name, action.Description, action.IsEnabled, action.TriggerType,
+			action.TriggerConfig, time.Now(), action.ID,
+		); err != nil {
+			return err
+		}
+		return replaceAllowedRoleIDs(tx, action.ID, action.AllowedRoleIDs)
+	})
 	if err != nil {
 		return fmt.Errorf("failed to update action: %w", err)
 	}
 	return nil
+}
+
+// AllowedRoleIDsExist reports whether every role ID exists. An empty list is
+// valid and represents an unrestricted manual action.
+func (r *ActionRepository) AllowedRoleIDsExist(roleIDs []int) (bool, error) {
+	for _, roleID := range roleIDs {
+		var exists bool
+		if err := r.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM workspace_roles WHERE id = ?)`, roleID).Scan(&exists); err != nil {
+			return false, fmt.Errorf("check workspace role %d: %w", roleID, err)
+		}
+		if !exists {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// UserHasAllowedRole reports whether the user holds one of an action's
+// configured roles directly or through an active group in this workspace.
+func (r *ActionRepository) UserHasAllowedRole(actionID, userID, workspaceID int) (bool, error) {
+	var allowed bool
+	err := r.db.QueryRow(`
+		SELECT EXISTS (
+			SELECT 1
+			FROM action_allowed_roles aar
+			JOIN user_workspace_roles uwr ON uwr.role_id = aar.role_id
+			WHERE aar.action_id = ? AND uwr.user_id = ? AND uwr.workspace_id = ?
+			UNION
+			SELECT 1
+			FROM action_allowed_roles aar
+			JOIN group_workspace_roles gwr ON gwr.role_id = aar.role_id
+			JOIN group_members gm ON gm.group_id = gwr.group_id
+			JOIN groups g ON g.id = gwr.group_id AND g.is_active = TRUE
+			WHERE aar.action_id = ? AND gm.user_id = ? AND gwr.workspace_id = ?
+		)
+	`, actionID, userID, workspaceID, actionID, userID, workspaceID).Scan(&allowed)
+	if err != nil {
+		return false, fmt.Errorf("check allowed role for action %d and user %d: %w", actionID, userID, err)
+	}
+	return allowed, nil
 }
 
 // SetActor updates only the actor_user_id of an action. The handler is responsible
@@ -1053,9 +1160,26 @@ func (r *ActionRepository) SaveActionWithNodesAndEdges(action *models.Action, no
 		action.TriggerConfig, time.Now(), action.ID,
 	}
 
-	return actionutil.UpdateActionGraph(
-		r.db, updateSQL, args, action.ID,
-		flowNodes, flowEdges,
+	tx, err := r.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.Exec(updateSQL, args...); err != nil {
+		return fmt.Errorf("failed to update action: %w", err)
+	}
+	if err := actionutil.SaveNodesAndEdges(
+		tx, action.ID, flowNodes, flowEdges,
 		actionutil.SQLiteStatements("action_nodes", "action_edges"),
-	)
+	); err != nil {
+		return fmt.Errorf("failed to save nodes and edges: %w", err)
+	}
+	if err := replaceAllowedRoleIDs(tx, action.ID, action.AllowedRoleIDs); err != nil {
+		return fmt.Errorf("failed to save allowed roles: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+	return nil
 }

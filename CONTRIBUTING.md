@@ -114,7 +114,7 @@ npm run format      # auto-format
 ```
 ## Submitting a Pull Request
 
-Please open all pull requests here on [GitHub](https://github.com/Windshiftapp/core).
+Pull requests are welcome here on [GitHub](https://github.com/Windshiftapp/core). Fork the repository, open a PR against `main`, and describe *what* changed and *why*. Reference related issues if applicable.
 
 1. Push your branch and open a PR against `main`.
 2. CI will run automatically:
@@ -123,7 +123,30 @@ Please open all pull requests here on [GitHub](https://github.com/Windshiftapp/c
    - **Private tests**: maintained and run from the adjacent `core-tests`
      repository, which overlays its suites onto a core checkout
    - **PR title lint** and **merge-conflict check**
-3. Describe *what* changed and *why*. Reference related issues if applicable.
+
+### AI-assisted contributions
+
+PRs written with the help of AI tools are welcome, with two expectations:
+
+- **Understand the code you submit.** You are responsible for every line in your
+  PR. Be ready to explain what the change does, why it is written that way, and
+  how you tested it. We may ask follow-up questions during review.
+- **Respect the architecture.** Windshift follows a layered design — handlers
+  call services, services call repositories, repositories own database access —
+  and a layering guard in CI enforces the import boundaries (see
+  `scripts/check-layering.sh`). Match the existing layering rather than taking
+  shortcuts (for example, handlers must not import `internal/database`, and the
+  REST v1 API must go through shared services, not the legacy cookie-auth
+  handlers). PRs that break these boundaries will be asked to rework before
+  merge.
+
+### Out of scope: Pro features
+
+Windshift ships an open-source core alongside commercial Pro features. **PRs
+that attempt to merge Pro features into the open-source core will not be
+accepted.** This includes, but is not limited to, SCIM user provisioning and
+SAML single sign-on. These features are maintained separately and deliberately
+kept out of the core repository.
 
 ## Contributor License Agreement
 

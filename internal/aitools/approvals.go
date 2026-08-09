@@ -102,7 +102,7 @@ func init() {
 					}
 				}
 			}
-			names := env.idResolver().ResolveUserNames(userIDs)
+			names := services.NewIDResolverService(env.DB).ResolveUserNames(userIDs)
 			resolveName := func(id *int) string {
 				if id == nil {
 					return ""

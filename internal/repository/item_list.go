@@ -3,12 +3,15 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
+	"windshift/internal/database"
 	"windshift/internal/models"
 )
 
@@ -89,11 +92,83 @@ type ItemFilters struct {
 	ItemID         *int   // Filter by specific item ID
 }
 
+func (f ItemFilters) hasScalarFilters() bool {
+	return f.StatusID != nil || f.StatusIDNot != nil || f.PriorityID != nil ||
+		f.AssigneeID != nil || f.CreatorID != nil || f.ItemTypeID != nil ||
+		f.MilestoneID != nil || f.IterationID != nil || f.ParentIDIsSet ||
+		f.Level != nil || f.MaxLevel != nil || f.CreatedSince != nil ||
+		f.CompletedSince != nil || f.ItemID != nil
+}
+
+func (f ItemFilters) hasListFilters() bool {
+	return len(f.StatusIDs) != 0 || len(f.StatusIDsNot) != 0 || len(f.PriorityIDs) != 0
+}
+
+func (f ItemFilters) hasTextFilters() bool {
+	return f.TextQuery != "" || f.ItemKeyQuery != ""
+}
+
+func (f ItemFilters) isUnfiltered() bool {
+	return f.QLQuery == "" && !f.hasScalarFilters() && !f.hasListFilters() && !f.hasTextFilters()
+}
+
 // PaginationParams contains pagination parameters
 type PaginationParams struct {
 	Page   int
 	Limit  int
 	Offset int
+	// Cursor is an opaque continuation token for the default-ranked workspace
+	// list. CursorMode opts the first request into the continuation contract;
+	// collection, QL, and filtered lists intentionally continue to use their
+	// existing page/offset contract.
+	Cursor     string
+	CursorMode bool
+}
+
+// ItemListPage is the repository result for a list request. The legacy list
+// methods below still return only items and total; callers that opt into the
+// workspace cursor contract can also consume NextCursor.
+type ItemListPage struct {
+	Items      []models.Item
+	Total      int
+	NextCursor string
+}
+
+// ErrInvalidItemListCursor identifies a malformed opaque list continuation.
+// Handlers map it to a validation response instead of exposing a SQL error.
+var ErrInvalidItemListCursor = errors.New("invalid item list cursor")
+
+type itemListCursor struct {
+	Rank string `json:"r"`
+	ID   int    `json:"i"`
+}
+
+// itemListFilterFromClause contains every table alias referenced by
+// buildWhereClause, including aliases emitted by the CQL generator. Keep this
+// shared by count, page-selection, and distinct-workspace queries so a valid
+// filter cannot succeed in one list path and fail in another.
+func itemListFilterFromClause() string {
+	return `FROM items i
+		JOIN workspaces w ON i.workspace_id = w.id
+		LEFT JOIN item_types it ON i.item_type_id = it.id
+		LEFT JOIN iterations iter ON i.iteration_id = iter.id
+		LEFT JOIN time_projects proj ON i.project_id = proj.id
+		LEFT JOIN time_projects tp ON i.time_project_id = tp.id
+		LEFT JOIN statuses st ON i.status_id = st.id
+		LEFT JOIN status_categories sc ON st.category_id = sc.id
+		LEFT JOIN priorities pri ON i.priority_id = pri.id
+	`
+}
+
+// itemListPagePlan keeps the count and page-selection SQL together so the
+// unfiltered workspace fast path cannot drift from filtered/collection lists.
+type itemListPagePlan struct {
+	countQuery       string
+	countArgs        []interface{}
+	pageFromClause   string
+	pageWhereClause  string
+	pageArgs         []interface{}
+	workspaceCountID int
 }
 
 // systemFieldSortColumns maps field identifiers to safe SQL column references for sorting.
@@ -134,13 +209,34 @@ func SystemSortableFieldKeys() []string {
 
 // FindAllWithDetails retrieves items with all joined data, supporting filters and pagination
 func (r *ItemRepository) FindAllWithDetails(params ItemListParams) ([]models.Item, int, error) {
-	return r.FindAllWithDetailsContext(context.Background(), params)
+	page, err := r.FindAllWithDetailsPageContext(context.Background(), params)
+	return page.Items, page.Total, err
 }
 
 // FindAllWithDetailsContext retrieves a page of items while allowing request
 // cancellation to stop both the count and data queries and release their pool
 // connections promptly.
 func (r *ItemRepository) FindAllWithDetailsContext(ctx context.Context, params ItemListParams) ([]models.Item, int, error) {
+	page, err := r.FindAllWithDetailsPageContext(ctx, params)
+	return page.Items, page.Total, err
+}
+
+// FindAllWithDetailsPageContext is the cursor-aware form of the item list
+// query. Cursor mode is deliberately limited to the direct, unfiltered
+// workspace path; collection and filtered lists continue through the same
+// joined page plan and offset semantics as before.
+func (r *ItemRepository) FindAllWithDetailsPageContext(ctx context.Context, params ItemListParams) (ItemListPage, error) {
+	cursorMode := itemListCursorEligible(params) &&
+		(params.Pagination.CursorMode || params.Pagination.Cursor != "")
+	var cursor itemListCursor
+	if cursorMode && params.Pagination.Cursor != "" {
+		var err error
+		cursor, err = decodeItemListCursor(params.Pagination.Cursor)
+		if err != nil {
+			return ItemListPage{}, err
+		}
+	}
+
 	// Build the SELECT clause. Collection/list surfaces can opt out of the
 	// heavy description payload; detail endpoints still fetch full descriptions.
 	descriptionExpr := "i.description"
@@ -159,35 +255,56 @@ func (r *ItemRepository) FindAllWithDetailsContext(ctx context.Context, params I
 		COALESCE(%s, i.created_at) as status_since
 	`, descriptionExpr, currentStatusTransitionAtExpr)
 
-	fromClause := `FROM items i
-		JOIN workspaces w ON i.workspace_id = w.id
-		LEFT JOIN item_types it ON i.item_type_id = it.id
+	fromClause := itemListFilterFromClause() + `
 		LEFT JOIN items p ON i.parent_id = p.id
-		LEFT JOIN iterations iter ON i.iteration_id = iter.id
-		LEFT JOIN time_projects proj ON i.project_id = proj.id
-		LEFT JOIN time_projects tp ON i.time_project_id = tp.id
 		LEFT JOIN users assignee ON i.assignee_id = assignee.id
 		LEFT JOIN users creator ON i.creator_id = creator.id
-		LEFT JOIN statuses st ON i.status_id = st.id
-		LEFT JOIN status_categories sc ON st.category_id = sc.id
-		LEFT JOIN priorities pri ON i.priority_id = pri.id
 	`
 
 	whereClause, args := r.buildWhereClause(params)
 
-	// Count only joins that filtering can reference. The detail query's parent,
-	// iteration, project, user and priority joins are all one-to-one display
-	// enrichment and made every page count pay unnecessary join cost.
-	countFromClause := `FROM items i
-		JOIN workspaces w ON i.workspace_id = w.id
-		LEFT JOIN item_types it ON i.item_type_id = it.id
-		LEFT JOIN statuses st ON i.status_id = st.id
-		LEFT JOIN status_categories sc ON st.category_id = sc.id
-	`
-	countQuery := "SELECT COUNT(*) " + countFromClause + whereClause
+	// Keep display-only parent and user joins out of the count/page plan, but
+	// retain every alias that buildWhereClause or generated QL can reference.
+	countFromClause := itemListFilterFromClause()
+	pagePlan := r.buildItemListPagePlan(params, countFromClause, whereClause, args)
 	var total int
-	if err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("failed to count items: %w", err)
+	var err error
+	if pagePlan.workspaceCountID != 0 {
+		total, err = cachedItemListCount(ctx, r.db, pagePlan.workspaceCountID, pagePlan.countQuery, pagePlan.countArgs...)
+		if err != nil {
+			return ItemListPage{}, fmt.Errorf("failed to count items: %w", err)
+		}
+	} else if err := r.db.QueryRowContext(ctx, pagePlan.countQuery, pagePlan.countArgs...).Scan(&total); err != nil {
+		return ItemListPage{}, fmt.Errorf("failed to count items: %w", err)
+	}
+
+	var pageTx database.Tx
+	var pageQueryer itemListPageQueryer = r.db
+	if cursorMode && params.Pagination.Cursor != "" {
+		// Resolve the cursor row and select the continuation page in one database
+		// transaction. The shared global-rank lock allows concurrent list calls and
+		// ordinary mutations, while preventing a migration batch from changing the
+		// anchor between these two reads. This remains correct when normalization
+		// assigns a new fractional payload rather than merely changing its bucket.
+		pageTx, err = beginItemListCursorTransaction(ctx, r.db)
+		if err != nil {
+			return ItemListPage{}, fmt.Errorf("begin item list cursor transaction: %w", err)
+		}
+		defer func() { _ = pageTx.Rollback() }()
+		if err := acquireGlobalRankMutationLock(pageTx, r.db.GetDriverName()); err != nil {
+			return ItemListPage{}, err
+		}
+		cursor, err = resolveItemListCursor(ctx, pageTx, pagePlan.workspaceCountID, cursor)
+		if err != nil {
+			return ItemListPage{}, err
+		}
+		cursorWhere, cursorArgs, err := itemListCursorWhere(cursor)
+		if err != nil {
+			return ItemListPage{}, err
+		}
+		pagePlan.pageWhereClause += cursorWhere
+		pagePlan.pageArgs = append(append([]interface{}{}, pagePlan.pageArgs...), cursorArgs...)
+		pageQueryer = pageTx
 	}
 
 	// Build ORDER BY clause
@@ -205,21 +322,170 @@ func (r *ItemRepository) FindAllWithDetailsContext(ctx context.Context, params I
 	if offset < 0 {
 		offset = 0
 	}
+	if cursorMode {
+		// A cursor is a continuation of the sorted stream, not a second offset.
+		offset = 0
+	}
+	fetchLimit := limit
+	if cursorMode {
+		// Fetch one sentinel row so the response can omit NextCursor on the last
+		// page without issuing a second count query after the keyset boundary.
+		fetchLimit++
+	}
 
-	// Execute query
-	fullQuery := selectClause + fromClause + whereClause + orderByClause + fmt.Sprintf(" LIMIT %d OFFSET %d", limit, offset)
-	rows, err := r.db.QueryContext(ctx, fullQuery, args...)
+	// Execute the page selection against the narrow filtering joins first. The
+	// old query hydrated every display join before OFFSET discarded deep-page
+	// rows. Keeping the page IDs in a CTE means only the requested rows pay for
+	// descriptions, hierarchy/status enrichment, and the correlated status
+	// transition lookup.
+	pageQuery := "WITH page_items AS (SELECT i.id " + pagePlan.pageFromClause + pagePlan.pageWhereClause + orderByClause + fmt.Sprintf(" LIMIT %d OFFSET %d", fetchLimit, offset) + ") "
+	fullQuery := pageQuery + selectClause + fromClause + " JOIN page_items page ON page.id = i.id" + orderByClause
+	rows, err := pageQueryer.QueryContext(ctx, fullQuery, pagePlan.pageArgs...)
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to query items: %w", err)
+		return ItemListPage{}, fmt.Errorf("failed to query items: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
 	items, err := r.scanItemList(rows)
 	if err != nil {
-		return nil, 0, err
+		return ItemListPage{}, err
+	}
+	if err := rows.Close(); err != nil {
+		return ItemListPage{}, fmt.Errorf("close item list rows: %w", err)
+	}
+	if pageTx != nil {
+		if err := pageTx.Commit(); err != nil {
+			return ItemListPage{}, fmt.Errorf("commit item list cursor transaction: %w", err)
+		}
 	}
 
-	return items, total, nil
+	page := ItemListPage{Items: items, Total: total}
+	if cursorMode && len(page.Items) > limit {
+		page.Items = page.Items[:limit]
+		last := page.Items[len(page.Items)-1]
+		if last.FracIndex != nil && *last.FracIndex != "" {
+			page.NextCursor = encodeItemListCursor(itemListCursor{Rank: *last.FracIndex, ID: last.ID})
+		}
+	}
+	return page, nil
+}
+
+// unfilteredWorkspaceListWorkspaceID identifies the direct workspace-list hot
+// path. Its total is invariant under sorting and can be
+// shared safely for the short cache window. Filtered/search lists retain an
+// exact count query so their totals do not inherit a stale workspace total.
+func unfilteredWorkspaceListWorkspaceID(params ItemListParams) (int, bool) {
+	if len(params.WorkspaceIDs) == 0 || params.Filters.WorkspaceID == nil || !params.Filters.isUnfiltered() {
+		return 0, false
+	}
+	workspaceID := *params.Filters.WorkspaceID
+	for _, accessibleWorkspaceID := range params.WorkspaceIDs {
+		if accessibleWorkspaceID == workspaceID {
+			return workspaceID, true
+		}
+	}
+	return 0, false
+}
+
+func itemListCursorEligible(params ItemListParams) bool {
+	if _, ok := unfilteredWorkspaceListWorkspaceID(params); !ok {
+		return false
+	}
+	// The keyset predicate below matches only the canonical default order. A
+	// caller asking for another sort keeps the established offset contract.
+	return params.SortBy == "" || (params.SortBy == "frac_index" && params.SortAsc)
+}
+
+func encodeItemListCursor(cursor itemListCursor) string {
+	payload, _ := json.Marshal(cursor)
+	return base64.RawURLEncoding.EncodeToString(payload)
+}
+
+func decodeItemListCursor(raw string) (itemListCursor, error) {
+	payload, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return itemListCursor{}, fmt.Errorf("%w: malformed base64", ErrInvalidItemListCursor)
+	}
+	var cursor itemListCursor
+	if err := json.Unmarshal(payload, &cursor); err != nil || cursor.Rank == "" || cursor.ID <= 0 {
+		return itemListCursor{}, fmt.Errorf("%w: malformed payload", ErrInvalidItemListCursor)
+	}
+	if _, err := ParseGlobalRank(cursor.Rank); err != nil {
+		return itemListCursor{}, fmt.Errorf("%w: invalid rank", ErrInvalidItemListCursor)
+	}
+	return cursor, nil
+}
+
+type itemListPageQueryer interface {
+	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
+}
+
+func beginItemListCursorTransaction(ctx context.Context, db database.Database) (database.Tx, error) {
+	if db.GetDriverName() == "sqlite3" || db.GetDriverName() == "sqlite" {
+		// SQLiteDB.BeginTx intentionally uses the single dedicated writer. Cursor
+		// continuations need only a stable read snapshot, so use the ordinary read
+		// pool and avoid serializing unrelated list calls with writes.
+		tx, err := db.GetDB().BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+		if err != nil {
+			return nil, err
+		}
+		return database.NewSQLiteTx(tx), nil
+	}
+	return db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+}
+
+func resolveItemListCursor(ctx context.Context, queryer interface {
+	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
+}, workspaceID int, cursor itemListCursor) (itemListCursor, error) {
+	if workspaceID <= 0 {
+		return itemListCursor{}, fmt.Errorf("%w: cursor requires a workspace", ErrInvalidItemListCursor)
+	}
+	var currentRank string
+	if err := queryer.QueryRowContext(ctx, `SELECT frac_index FROM items WHERE id = ? AND workspace_id = ?`, cursor.ID, workspaceID).Scan(&currentRank); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return itemListCursor{}, fmt.Errorf("%w: cursor item no longer exists", ErrInvalidItemListCursor)
+		}
+		return itemListCursor{}, fmt.Errorf("resolve item list cursor: %w", err)
+	}
+	if _, err := ParseGlobalRank(currentRank); err != nil {
+		return itemListCursor{}, fmt.Errorf("%w: cursor item has invalid rank", ErrInvalidItemListCursor)
+	}
+	cursor.Rank = currentRank
+	return cursor, nil
+}
+
+func itemListCursorWhere(cursor itemListCursor) (where string, args []interface{}, err error) {
+	if _, err := ParseGlobalRank(cursor.Rank); err != nil {
+		return "", nil, fmt.Errorf("%w: invalid rank", ErrInvalidItemListCursor)
+	}
+	return " AND (i.frac_index > ? OR (i.frac_index = ? AND i.id > ?))", []interface{}{cursor.Rank, cursor.Rank, cursor.ID}, nil
+}
+
+func (r *ItemRepository) buildItemListPagePlan(
+	params ItemListParams,
+	countFromClause, whereClause string,
+	args []interface{},
+) itemListPagePlan {
+	plan := itemListPagePlan{
+		countQuery:      "SELECT COUNT(*) " + countFromClause + whereClause,
+		countArgs:       args,
+		pageFromClause:  countFromClause,
+		pageWhereClause: whereClause,
+		pageArgs:        args,
+	}
+	if workspaceID, cacheable := unfilteredWorkspaceListWorkspaceID(params); cacheable {
+		// The explicit workspace filter is safe to use directly because the
+		// workspace ID must also be present in the caller's accessible set.
+		// Collection/QL/filter requests never enter this branch.
+		workspaceArgs := []interface{}{workspaceID}
+		plan.countQuery = "SELECT COUNT(*) FROM items WHERE workspace_id = ?"
+		plan.countArgs = workspaceArgs
+		plan.pageFromClause = "FROM items i "
+		plan.pageWhereClause = "WHERE i.workspace_id = ?"
+		plan.pageArgs = workspaceArgs
+		plan.workspaceCountID = workspaceID
+	}
+	return plan
 }
 
 // FindDistinctWorkspaceIDsContext returns the workspace IDs represented by an
@@ -230,12 +496,7 @@ func (r *ItemRepository) FindAllWithDetailsContext(ctx context.Context, params I
 func (r *ItemRepository) FindDistinctWorkspaceIDsContext(ctx context.Context, params ItemListParams) ([]int, error) {
 	whereClause, args := r.buildWhereClause(params)
 	query := `SELECT DISTINCT i.workspace_id
-		FROM items i
-		JOIN workspaces w ON i.workspace_id = w.id
-		LEFT JOIN item_types it ON i.item_type_id = it.id
-		LEFT JOIN statuses st ON i.status_id = st.id
-		LEFT JOIN status_categories sc ON st.category_id = sc.id
-		` + whereClause + `
+		` + itemListFilterFromClause() + whereClause + `
 		ORDER BY i.workspace_id`
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
@@ -482,7 +743,7 @@ func (r *ItemRepository) buildOrderByClause(sortBy string, sortAsc bool) string 
 		)
 	}
 	if col, ok := systemFieldSortColumns[sortBy]; ok {
-		return fmt.Sprintf(" ORDER BY %s %s", col, direction)
+		return fmt.Sprintf(" ORDER BY %s %s, i.id ASC", col, direction)
 	}
 
 	// Treat as custom field ID — look up field type for appropriate casting.
@@ -511,14 +772,14 @@ func (r *ItemRepository) buildOrderByClause(sortBy string, sortAsc bool) string 
 		expr = fmt.Sprintf("CAST(%s AS NUMERIC)", expr)
 	}
 
-	return fmt.Sprintf(" ORDER BY %s %s", expr, direction)
+	return fmt.Sprintf(" ORDER BY %s %s, i.id ASC", expr, direction)
 }
 
 func (r *ItemRepository) defaultOrderBy() string {
-	return ` ORDER BY
-		CASE WHEN i.frac_index IS NULL THEN 1 ELSE 0 END,
-		i.frac_index ASC,
-		i.created_at DESC`
+	// NULLS LAST preserves legacy rows while allowing PostgreSQL and SQLite to
+	// use the workspace/frac_index index for canonical 0.8.5 ranks. The item ID
+	// tie-breaker makes page boundaries deterministic across concurrent writes.
+	return ` ORDER BY i.frac_index ASC NULLS LAST, i.created_at DESC, i.id ASC`
 }
 
 // scanItemList scans rows into a slice of items

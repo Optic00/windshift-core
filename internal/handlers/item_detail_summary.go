@@ -483,17 +483,20 @@ func (h *ItemDetailHandler) loadManualActions(userID, workspaceID int) ([]*model
 	if h.actions == nil || h.actions.permissionService == nil {
 		return []*models.Action{}, nil
 	}
-	allowed, err := h.actions.permissionService.HasWorkspacePermission(userID, workspaceID, models.PermissionActionManage)
-	if err != nil || !allowed {
-		return []*models.Action{}, err
-	}
 	actions, err := h.actions.repo.ListByWorkspace(workspaceID)
 	if err != nil {
 		return nil, err
 	}
 	manual := make([]*models.Action, 0)
 	for _, action := range actions {
-		if action.IsEnabled && action.TriggerType == models.ActionTriggerManual {
+		if !action.IsEnabled || action.TriggerType != models.ActionTriggerManual {
+			continue
+		}
+		allowed, err := h.actions.canTriggerManualAction(userID, workspaceID, action)
+		if err != nil {
+			return nil, err
+		}
+		if allowed {
 			manual = append(manual, action)
 		}
 	}

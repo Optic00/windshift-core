@@ -91,13 +91,10 @@ func (s *ApprovalService) GetTimelineForItem(ctx context.Context, itemID int) ([
 	return s.loadRequests(ctx, ids)
 }
 
-// GetDecisionCommentsForItem returns comment-bearing approval decisions for an
-// item shaped like feed comment rows: negative IDs keep cursor ordering
-// distinct from real comments, Source is "approval", and UpdatedAt mirrors
-// CreatedAt. The merged comment feed consumes this so approval decisions are
-// read through the approval domain.
-func (s *ApprovalService) GetDecisionCommentsForItem(itemID int) ([]models.Comment, error) {
-	rows, err := s.db.Query(`
+// GetDecisionCommentsForItem returns a cursor-filtered, bounded page of
+// comment-bearing approval decisions shaped like feed comment rows.
+func (s *ApprovalService) GetDecisionCommentsForItem(itemID int, includeAgentOwner bool, options CommentFeedOptions) ([]models.Comment, error) {
+	query := `
 		SELECT -d.id, ar.item_id, d.actor_user_id, d.comment, d.created_at,
 		       COALESCE(NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), ''), 'Unknown User') AS author_name,
 		       u.email, u.avatar_url,
@@ -108,7 +105,22 @@ func (s *ApprovalService) GetDecisionCommentsForItem(itemID int) ([]models.Comme
 		LEFT JOIN users u ON u.id = d.actor_user_id
 		LEFT JOIN users owner ON owner.id = u.agent_owner_user_id
 		WHERE ar.item_id = ? AND d.comment IS NOT NULL AND d.comment <> ''
-	`, itemID)
+	`
+	args := []interface{}{itemID}
+	order := "DESC"
+	switch {
+	case options.Before != nil:
+		query += ` AND (d.created_at < ? OR (d.created_at = ? AND -d.id < ?))`
+		args = append(args, options.Before.CreatedAt, options.Before.CreatedAt, options.Before.ID)
+	case options.Since != nil:
+		query += ` AND (d.created_at > ? OR (d.created_at = ? AND -d.id > ?))`
+		args = append(args, options.Since.CreatedAt, options.Since.CreatedAt, options.Since.ID)
+		order = "ASC"
+	}
+	query += fmt.Sprintf(" ORDER BY d.created_at %s, -d.id %s LIMIT ?", order, order)
+	args = append(args, normalizeCommentFeedLimit(options.Limit)+1)
+
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("get approval decision comments for item %d: %w", itemID, err)
 	}
@@ -135,13 +147,27 @@ func (s *ApprovalService) GetDecisionCommentsForItem(itemID int) ([]models.Comme
 		c.AuthorName = authorName.String
 		c.AuthorEmail = authorEmail.String
 		c.AuthorAvatar = authorAvatar.String
-		c.AgentOwnerName = agentOwnerName.String
+		if includeAgentOwner {
+			c.AgentOwnerName = agentOwnerName.String
+		}
 		comments = append(comments, c)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate approval decision comments for item %d: %w", itemID, err)
 	}
 	return comments, nil
+}
+
+// CountDecisionCommentsForItem returns the number of approval decisions with
+// comments that participate in the merged item comment feed.
+func (s *ApprovalService) CountDecisionCommentsForItem(itemID int) (int, error) {
+	var count int
+	err := s.db.QueryRow(`
+		SELECT COUNT(*) FROM approval_decisions d
+		JOIN approval_requests ar ON ar.id = d.approval_request_id
+		WHERE ar.item_id = ? AND d.comment IS NOT NULL AND d.comment <> ''
+	`, itemID).Scan(&count)
+	return count, err
 }
 
 // GetForUser returns approval requests where the user is in the active approver

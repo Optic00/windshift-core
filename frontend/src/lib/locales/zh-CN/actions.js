@@ -30,6 +30,13 @@ export default {
       respondToCascades: '响应操作触发的更改',
       respondToCascadesHint: '启用后，此操作不仅会在用户更改时运行，也会在其他操作触发时运行。',
     },
+    manualAccess: {
+      label: '谁可以运行此手动操作？',
+      allEditors: '所有工作区编辑者',
+      unrestrictedHint: '没有角色限制。任何具有编辑权限的人都可以查看并运行此操作。',
+      restrictedHint:
+        '只有至少拥有一个所选角色的成员才能查看并运行此操作。工作区管理员始终保留访问权限。',
+    },
     nodes: {
       trigger: '触发器',
       setField: '设置字段',

@@ -624,8 +624,10 @@ func (h *WorkspaceRoleHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 // Delete removes a custom workspace role. System roles (is_system=true) cannot
 // be deleted. The DELETE cascades to user_workspace_roles + group_workspace_roles
-// + role_permissions via existing FKs; we still flush the permission cache for
-// affected users so any cached label-only role assignment goes away.
+// + role_permissions via existing FKs; action allowlists deliberately block the
+// delete because removing their last row would broaden manual-action access.
+// We still flush the permission cache for affected users so any cached
+// label-only role assignment goes away.
 //
 // DELETE /api/workspace-roles/{id}
 func (h *WorkspaceRoleHandler) Delete(w http.ResponseWriter, r *http.Request) {
@@ -660,6 +662,13 @@ func (h *WorkspaceRoleHandler) Delete(w http.ResponseWriter, r *http.Request) {
 			respondConflict(w, r, fmt.Sprintf("Cannot delete: %d pending approval(s) still reference this role", pendingCount))
 			return
 		}
+	}
+	if actionCount, err := h.repo.CountManualActionRestrictions(id); err != nil {
+		respondInternalError(w, r, err)
+		return
+	} else if actionCount > 0 {
+		respondConflict(w, r, fmt.Sprintf("Cannot delete: %d manual action(s) still restrict access to this role", actionCount))
+		return
 	}
 
 	// Snapshot affected users for cache invalidation before the DELETE cascades.

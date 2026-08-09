@@ -25,12 +25,9 @@ var sqliteCustomFieldIndexTargetTables = map[string]bool{
 // HTTP handler only records the desired state and never builds the
 // physical index synchronously on SQLite.
 //
-// Postgres builds custom-field indexes asynchronously through the cleanup
-// scheduler, so this SQLite materialization entrypoint is a no-op there.
+// SQLite-only DDL: callers must guard on the driver. Postgres builds
+// custom-field indexes asynchronously through the cleanup scheduler.
 func MaterializeDeferredSQLiteCustomFieldIndexes(db Database) {
-	if db.GetDriverName() != "sqlite" {
-		return
-	}
 	createDeferredSQLiteCustomFieldIndexes(db)
 }
 

@@ -37,11 +37,11 @@
         {query || t('collections.noFiltersApplied')}
       </code>
       {#if mode === 'builder'}
-        <Button variant="ghost" size="sm" onclick={() => onenterrawmode?.()}>
+        <Button dataTestid="ql-enter-raw-mode" variant="ghost" size="sm" onclick={() => onenterrawmode?.()}>
           {t('collections.editCqlManually')}
         </Button>
       {:else}
-        <Button variant="ghost" size="sm" onclick={() => onreset?.()}>
+        <Button dataTestid="ql-reset-to-builder" variant="ghost" size="sm" onclick={() => onreset?.()}>
           {t('collections.resetToBuilder')}
         </Button>
       {/if}

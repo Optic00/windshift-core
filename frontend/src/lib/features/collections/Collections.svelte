@@ -355,6 +355,7 @@
     {selectedPriorities}
     {searchQuery}
     {dynamicFilters}
+    {loading}
     disabled={rawMode}
     onupdateworkspaces={handleUpdateWorkspaces}
     onupdatestatuses={handleUpdateStatuses}

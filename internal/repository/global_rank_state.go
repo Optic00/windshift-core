@@ -1,7 +1,9 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -9,6 +11,33 @@ import (
 )
 
 const globalRankStateRowID = 1
+
+// globalRankAdvisoryLockClass namespaces the PostgreSQL transaction lock that
+// coordinates normal rank mutations with a global migration batch. Mutations
+// take the shared form (so creates/reorders remain concurrent); the worker
+// takes the exclusive form for its bounded transaction. SQLite already has a
+// single writer and does not need an additional lock.
+const globalRankAdvisoryLockClass = 0x4752 // 'GR'
+
+func acquireGlobalRankMutationLock(tx database.Tx, driver string) error {
+	if driver != "postgres" && driver != "postgresql" {
+		return nil
+	}
+	if _, err := tx.Exec("SELECT pg_advisory_xact_lock_shared(?, ?)", globalRankAdvisoryLockClass, globalRankStateRowID); err != nil {
+		return fmt.Errorf("acquire shared global rank lock: %w", err)
+	}
+	return nil
+}
+
+func acquireGlobalRankMigrationLock(tx database.Tx, driver string) error {
+	if driver != "postgres" && driver != "postgresql" {
+		return nil
+	}
+	if _, err := tx.Exec("SELECT pg_advisory_xact_lock(?, ?)", globalRankAdvisoryLockClass, globalRankStateRowID); err != nil {
+		return fmt.Errorf("acquire exclusive global rank lock: %w", err)
+	}
+	return nil
+}
 
 // GlobalRankPhase describes the durable lifecycle of the singleton rank
 // state. Legacy is used until the 0.8.5 checkpoint converter has rewritten
@@ -34,17 +63,27 @@ const (
 // normalization. Nullable fields are pointers so callers can distinguish an
 // absent target/frontier/lease from an empty value.
 type GlobalRankState struct {
-	ActiveBucket   GlobalRankBucket
-	TargetBucket   *GlobalRankBucket
-	Phase          GlobalRankPhase
-	Direction      *GlobalRankDirection
-	Frontier       *string
-	LeaseOwner     *string
-	LeaseExpiresAt *time.Time
-	MigratedCount  int64
-	TotalCount     int64
-	LastError      *string
+	ActiveBucket   GlobalRankBucket     `json:"active_bucket"`
+	TargetBucket   *GlobalRankBucket    `json:"target_bucket,omitempty"`
+	Phase          GlobalRankPhase      `json:"phase"`
+	Direction      *GlobalRankDirection `json:"direction,omitempty"`
+	Frontier       *string              `json:"frontier,omitempty"`
+	LeaseOwner     *string              `json:"lease_owner,omitempty"`
+	LeaseExpiresAt *time.Time           `json:"lease_expires_at,omitempty"`
+	MigratedCount  int64                `json:"migrated_count"`
+	TotalCount     int64                `json:"total_count"`
+	LastError      *string              `json:"last_error,omitempty"`
 }
+
+type GlobalRankMigrationAction string
+
+const (
+	GlobalRankMigrationStart  GlobalRankMigrationAction = "start"
+	GlobalRankMigrationPause  GlobalRankMigrationAction = "pause"
+	GlobalRankMigrationResume GlobalRankMigrationAction = "resume"
+)
+
+var ErrGlobalRankMigrationConflict = errors.New("global rank migration state conflict")
 
 func (s GlobalRankState) Validate() error {
 	if err := validateGlobalRankBucket(s.ActiveBucket); err != nil {
@@ -95,6 +134,96 @@ func (s GlobalRankState) Validate() error {
 // LoadGlobalRankState reads the singleton state row.
 func LoadGlobalRankState(db database.Database) (GlobalRankState, error) {
 	return loadGlobalRankState(db)
+}
+
+// ControlGlobalRankMigration applies an explicit operator lifecycle action.
+// The state row and the PostgreSQL global-rank advisory lock serialize the
+// action with worker batches and normal rank mutations.
+func ControlGlobalRankMigration(ctx context.Context, db database.Database, action GlobalRankMigrationAction) (GlobalRankState, error) {
+	if ctx == nil {
+		return GlobalRankState{}, errors.New("global rank migration control requires a context")
+	}
+	if db == nil {
+		return GlobalRankState{}, errors.New("global rank migration control requires a database")
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return GlobalRankState{}, fmt.Errorf("begin global rank migration control: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	driver := db.GetDriverName()
+	if err := acquireGlobalRankMigrationLock(tx, driver); err != nil {
+		return GlobalRankState{}, err
+	}
+
+	var state GlobalRankState
+	if driver == "postgres" || driver == "postgresql" {
+		state, err = loadGlobalRankStateForUpdate(tx)
+	} else {
+		state, err = loadGlobalRankState(tx)
+	}
+	if err != nil {
+		return GlobalRankState{}, err
+	}
+
+	switch action {
+	case GlobalRankMigrationStart:
+		if state.Phase != GlobalRankPhaseStable {
+			return GlobalRankState{}, globalRankControlConflict(action, state.Phase)
+		}
+		state, err = startGlobalRankMigration(tx, state)
+	case GlobalRankMigrationPause:
+		if state.Phase != GlobalRankPhaseMigrating {
+			return GlobalRankState{}, globalRankControlConflict(action, state.Phase)
+		}
+		state.Phase = GlobalRankPhasePaused
+		state.LeaseOwner = nil
+		state.LeaseExpiresAt = nil
+	case GlobalRankMigrationResume:
+		if state.Phase != GlobalRankPhasePaused {
+			return GlobalRankState{}, globalRankControlConflict(action, state.Phase)
+		}
+		state.Phase = GlobalRankPhaseMigrating
+		state.LeaseOwner = nil
+		state.LeaseExpiresAt = nil
+	default:
+		return GlobalRankState{}, fmt.Errorf("unsupported global rank migration action %q", action)
+	}
+	if err != nil {
+		return GlobalRankState{}, err
+	}
+	if err := SaveGlobalRankState(tx, state); err != nil {
+		return GlobalRankState{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return GlobalRankState{}, fmt.Errorf("commit global rank migration control: %w", err)
+	}
+	return state, nil
+}
+
+func globalRankControlConflict(action GlobalRankMigrationAction, phase GlobalRankPhase) error {
+	return fmt.Errorf("%w: cannot %s while phase is %s", ErrGlobalRankMigrationConflict, action, phase)
+}
+
+func startGlobalRankMigration(tx database.Tx, state GlobalRankState) (GlobalRankState, error) {
+	target, direction, err := GlobalRankBucketTransition(state.ActiveBucket)
+	if err != nil {
+		return GlobalRankState{}, err
+	}
+	migrationDirection := GlobalRankDirection(direction)
+	state.TargetBucket = &target
+	state.Direction = &migrationDirection
+	state.Phase = GlobalRankPhaseMigrating
+	state.Frontier = nil
+	state.LeaseOwner = nil
+	state.LeaseExpiresAt = nil
+	state.MigratedCount = 0
+	state.TotalCount, err = countItems(tx)
+	state.LastError = nil
+	if err != nil {
+		return GlobalRankState{}, err
+	}
+	return state, nil
 }
 
 func loadGlobalRankState(q interface {

@@ -15,6 +15,7 @@
     selectedPriorities = [],
     searchQuery = '',
     dynamicFilters = [],
+    loading = false,
     disabled = false,
     ontogglecollapse = null,
     onupdateworkspaces = null,
@@ -119,6 +120,7 @@
         {selectedPriorities}
         {searchQuery}
         {dynamicFilters}
+        interactionDisabled={disabled || loading}
         {disabled}
         {onupdateworkspaces}
         {onupdatestatuses}

@@ -17,6 +17,7 @@
     searchQuery = '',
     dynamicFilters = [],
     disabled = false,
+    interactionDisabled = disabled,
     /** 'modal' for compact contexts (sidebar), 'inline' for wide pages. */
     searchInputMode = 'modal',
     /** Optional scope for page-specific E2E selectors. */
@@ -107,9 +108,9 @@
 {/if}
 <div
   data-testid={testId('filters', 'work-item-filter-panel')}
-  class:pointer-events-none={disabled}
-  class:opacity-50={disabled}
-  aria-disabled={disabled ? 'true' : undefined}
+  class:pointer-events-none={interactionDisabled}
+  class:opacity-50={interactionDisabled}
+  aria-disabled={interactionDisabled ? 'true' : undefined}
 >
   <!-- Search input -->
   <div class="mb-4">

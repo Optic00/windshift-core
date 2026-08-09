@@ -515,6 +515,38 @@ function parseDocmostShareLink(link) {
 }
 
 /**
+ * Build the portal channel config from the current customization state.
+ * Shared by the debounced save and the explicit knowledge-base save so both
+ * persistence paths produce identical configuration.
+ */
+function buildPortalConfig() {
+  let workspaceIds = portalData.workspace_ids || [];
+  if (workspaceIds.length === 0 && portalData.workspace_id && portalData.workspace_id > 0) {
+    workspaceIds = [portalData.workspace_id];
+  }
+
+  const { baseURL, shareID } = parseDocmostShareLink(knowledgeBaseShareLink);
+
+  return {
+    portal_slug: portalData.slug,
+    portal_workspace_ids: workspaceIds,
+    portal_title: editableTitle,
+    portal_description: editableDescription,
+    portal_gradient: selectedGradient,
+    portal_theme: isDarkMode ? 'dark' : 'light',
+    portal_search_placeholder: editableSearchPlaceholder,
+    portal_search_hint: editableSearchHint,
+    portal_sections: portalSections,
+    portal_footer_columns: footerColumns,
+    knowledge_base_share_link: knowledgeBaseShareLink,
+    knowledge_base_url: baseURL,
+    knowledge_base_share_id: shareID,
+    portal_background_image_url: backgroundImageUrl || '',
+    portal_logo_url: logoUrl || '',
+  };
+}
+
+/**
  * Save customizations (debounced)
  */
 async function saveCustomizations() {
@@ -528,32 +560,7 @@ async function saveCustomizations() {
 
   saveTimeout = setTimeout(async () => {
     try {
-      let workspaceIds = portalData.workspace_ids || [];
-      if (workspaceIds.length === 0 && portalData.workspace_id && portalData.workspace_id > 0) {
-        workspaceIds = [portalData.workspace_id];
-      }
-
-      const { baseURL, shareID } = parseDocmostShareLink(knowledgeBaseShareLink);
-
-      const config = {
-        portal_slug: portalData.slug,
-        portal_workspace_ids: workspaceIds,
-        portal_title: editableTitle,
-        portal_description: editableDescription,
-        portal_gradient: selectedGradient,
-        portal_theme: isDarkMode ? 'dark' : 'light',
-        portal_search_placeholder: editableSearchPlaceholder,
-        portal_search_hint: editableSearchHint,
-        portal_sections: portalSections,
-        portal_footer_columns: footerColumns,
-        knowledge_base_share_link: knowledgeBaseShareLink,
-        knowledge_base_url: baseURL,
-        knowledge_base_share_id: shareID,
-        portal_background_image_url: backgroundImageUrl || '',
-        portal_logo_url: logoUrl || '',
-      };
-
-      await api.channels.updateConfig(portalData.channel_id, config);
+      await api.channels.updateConfig(portalData.channel_id, buildPortalConfig());
     } catch (err) {
       console.error('Failed to save customizations:', err);
     }
@@ -570,33 +577,8 @@ async function saveKnowledgeBaseConfig() {
     return;
   }
 
-  const { baseURL, shareID } = parseDocmostShareLink(knowledgeBaseShareLink);
-
   try {
-    let workspaceIds = portalData.workspace_ids || [];
-    if (workspaceIds.length === 0 && portalData.workspace_id && portalData.workspace_id > 0) {
-      workspaceIds = [portalData.workspace_id];
-    }
-
-    const config = {
-      portal_slug: portalData.slug,
-      portal_workspace_ids: workspaceIds,
-      portal_title: editableTitle,
-      portal_description: editableDescription,
-      portal_gradient: selectedGradient,
-      portal_theme: isDarkMode ? 'dark' : 'light',
-      portal_search_placeholder: editableSearchPlaceholder,
-      portal_search_hint: editableSearchHint,
-      portal_sections: portalSections,
-      portal_footer_columns: footerColumns,
-      knowledge_base_share_link: knowledgeBaseShareLink,
-      knowledge_base_url: baseURL,
-      knowledge_base_share_id: shareID,
-      portal_background_image_url: backgroundImageUrl || '',
-      portal_logo_url: logoUrl || '',
-    };
-
-    await api.channels.updateConfig(portalData.channel_id, config);
+    await api.channels.updateConfig(portalData.channel_id, buildPortalConfig());
   } catch (err) {
     console.error('Failed to save knowledge base configuration:', err);
     errorToast(`Failed to save knowledge base configuration: ${err.message || err}`);

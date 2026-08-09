@@ -29,7 +29,9 @@ CREATE TABLE IF NOT EXISTS items (
 	estimate_minutes INTEGER,
 	-- Manual sorting fields
 	rank TEXT,
-	frac_index TEXT COLLATE "C",
+	-- The fallback keeps legacy/import SQL writers compatible; application
+	-- writes provide an explicitly allocated canonical key.
+	frac_index TEXT COLLATE "C" NOT NULL DEFAULT ('0|a1' || md5(random()::text || clock_timestamp()::text) || '1'),
 	-- Status and workflow fields
 	status_id INTEGER,
 	-- Portal/channel fields
@@ -103,13 +105,14 @@ CREATE INDEX IF NOT EXISTS idx_items_rank ON items(rank) WHERE rank IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_items_workspace_rank ON items(workspace_id, rank) WHERE rank IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_items_workspace_parent_rank ON items(workspace_id, parent_id, rank) WHERE rank IS NOT NULL;
 
--- Fractional indexing indexes (with partial index for efficiency).
+-- Fractional indexing indexes. frac_index is canonical and non-null, so the
+-- indexes cover every item rather than maintaining a partial NULL subset.
 -- The primary index is UNIQUE: GenerateFracIndexForNewItem and UpdateFracIndex
 -- must not produce duplicate keys, and enforcing it at the DB turns silent
 -- corruption into an INSERT/UPDATE error that callers can react to.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_items_frac_index ON items(frac_index) WHERE frac_index IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_items_workspace_frac_index ON items(workspace_id, frac_index) WHERE frac_index IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_items_workspace_parent_frac_index ON items(workspace_id, parent_id, frac_index) WHERE frac_index IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_items_frac_index ON items(frac_index);
+CREATE INDEX IF NOT EXISTS idx_items_workspace_frac_index ON items(workspace_id, frac_index);
+CREATE INDEX IF NOT EXISTS idx_items_workspace_parent_frac_index ON items(workspace_id, parent_id, frac_index);
 
 -- Durable singleton coordination state for the 0.8.5 global rank
 -- normalization. The legacy phase is intentional on pre-checkpoint installs;

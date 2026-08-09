@@ -24,6 +24,19 @@ CREATE INDEX IF NOT EXISTS idx_actions_is_enabled ON actions(is_enabled);
 CREATE INDEX IF NOT EXISTS idx_actions_trigger_type ON actions(trigger_type);
 CREATE INDEX IF NOT EXISTS idx_actions_created_by ON actions(created_by);
 
+-- Optional role allowlist for manual actions. No rows means the action is
+-- available to every workspace editor; one or more rows restrict visibility
+-- and execution to members of those roles (workspace admins retain override).
+CREATE TABLE IF NOT EXISTS action_allowed_roles (
+	action_id INTEGER NOT NULL,
+	role_id INTEGER NOT NULL,
+	PRIMARY KEY (action_id, role_id),
+	FOREIGN KEY (action_id) REFERENCES actions(id) ON DELETE CASCADE,
+	FOREIGN KEY (role_id) REFERENCES workspace_roles(id) ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_action_allowed_roles_role_id ON action_allowed_roles(role_id);
+
 -- Action nodes: steps in the flow (set_field, add_comment, condition, etc.)
 CREATE TABLE IF NOT EXISTS action_nodes (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,

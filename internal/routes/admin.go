@@ -34,6 +34,7 @@ func RegisterAdminRoutes(deps *Deps) {
 	api.HandleH("GET /admin/diagnostics/scheduler-stats", admin(http.HandlerFunc(deps.Admin.Diagnostics.GetSchedulerStats)))
 	api.HandleH("POST /admin/diagnostics/scheduler-runs/purge", admin(http.HandlerFunc(deps.Admin.Diagnostics.PurgeSchedulerRuns)))
 	api.HandleH("GET /admin/diagnostics/frac-index", admin(http.HandlerFunc(deps.Admin.Diagnostics.GetFracIndexState)))
+	api.HandleH("POST /admin/diagnostics/frac-index/migration", admin(http.HandlerFunc(deps.Admin.Diagnostics.ControlGlobalRankMigration)))
 	api.HandleH("GET /admin/diagnostics/llm-providers", admin(http.HandlerFunc(deps.Admin.Diagnostics.GetLLMProviderStatus)))
 	api.HandleH("GET /admin/diagnostics/briefing-failures", admin(http.HandlerFunc(deps.Admin.Diagnostics.GetBriefingFailures)))
 	api.HandleH("GET /admin/diagnostics/runner-pools", admin(http.HandlerFunc(deps.Admin.Diagnostics.GetRunnerPools)))
