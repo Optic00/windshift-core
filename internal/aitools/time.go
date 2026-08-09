@@ -62,6 +62,17 @@ type listWorklogsOut struct {
 	Worklogs []worklogDTO `json:"worklogs"`
 }
 
+type temporalContextArgs struct {
+	Timezone string `json:"timezone,omitempty" jsonschema:"Optional IANA timezone, only when the user explicitly asks about a different zone; defaults to the acting user's timezone"`
+}
+
+type temporalContextOut struct {
+	Timezone  string `json:"timezone"`
+	LocalNow  string `json:"local_now"`
+	LocalDate string `json:"local_date"`
+	UTCNow    string `json:"utc_now"`
+}
+
 // ----------------------------------------------------------------------------
 // log_time / create_worklog
 // ----------------------------------------------------------------------------
@@ -79,6 +90,7 @@ type logTimeArgs struct {
 	EndTime         string `json:"end_time,omitempty" jsonschema:"HH:MM end time. Pair with start_time."`
 	ItemID          *int   `json:"item_id,omitempty" jsonschema:"Optional linked work item ID (alternative: item_key)"`
 	ItemKey         string `json:"item_key,omitempty" jsonschema:"Optional linked work item key like PROJ-42 (alternative to item_id)"`
+	Timezone        string `json:"timezone,omitempty" jsonschema:"Optional IANA timezone only when the user explicitly named a different zone. Defaults to the acting user's timezone. Enter date and HH:MM exactly as local wall-clock values; never convert or pre-offset them."`
 }
 
 type logTimeOut struct {
@@ -88,6 +100,11 @@ type logTimeOut struct {
 	Date            string `json:"date"`
 	DurationMinutes int    `json:"duration_minutes"`
 	Description     string `json:"description"`
+	Timezone        string `json:"timezone"`
+	StartTimeLocal  string `json:"start_time_local"`
+	EndTimeLocal    string `json:"end_time_local"`
+	StartAt         string `json:"start_at"`
+	EndAt           string `json:"end_at"`
 }
 
 // ----------------------------------------------------------------------------
@@ -121,6 +138,33 @@ type stopTimerOut struct {
 }
 
 func init() {
+	Register(Default, Tool[temporalContextArgs]{
+		Name:        "get_temporal_context",
+		Group:       CapabilityTime,
+		Access:      AccessRead,
+		Risk:        RiskLow,
+		Description: "Get authoritative current local and UTC time context for relative phrases such as today or yesterday. Defaults to the acting user's IANA timezone.",
+		Scopes:      []string{auth.ScopeTimeRead},
+		Run: func(_ context.Context, env *Env, args temporalContextArgs) (any, error) {
+			timezone := env.Timezone
+			if args.Timezone != "" {
+				timezone = args.Timezone
+			}
+			resolved, location, err := services.ResolveTimezone(timezone)
+			if err != nil {
+				return map[string]string{"error": err.Error()}, nil
+			}
+			now := time.Now()
+			local := now.In(location)
+			return temporalContextOut{
+				Timezone:  resolved,
+				LocalNow:  local.Format(time.RFC3339),
+				LocalDate: local.Format(time.DateOnly),
+				UTCNow:    now.UTC().Format(time.RFC3339),
+			}, nil
+		},
+	})
+
 	Register(Default, Tool[listTimeProjectsArgs]{
 		Name:        "list_time_projects",
 		Group:       CapabilityTime,
@@ -256,7 +300,7 @@ func init() {
 		Group:       CapabilityTime,
 		Access:      AccessWrite,
 		Risk:        RiskMedium,
-		Description: "Log a time entry on a time tracking project. Provide duration (e.g. '2h', '30m', '1h30m', '1d') OR duration_minutes OR start_time + end_time (HH:MM). An optional work item can be linked by numeric ID or key (e.g. PROJ-42).",
+		Description: "Log a time entry on a time tracking project. Date and HH:MM are exact local wall-clock values in the acting user's IANA timezone: never convert or pre-offset them. Provide duration OR duration_minutes OR start_time + end_time. Use timezone only when the user explicitly names a different zone.",
 		Scopes:      []string{auth.ScopeTimeWrite},
 		Run: func(_ context.Context, env *Env, args logTimeArgs) (any, error) {
 			if args.ProjectID == 0 || args.Description == "" || args.Date == "" {
@@ -282,9 +326,17 @@ func init() {
 			if !customerID.Valid {
 				return map[string]string{"error": "project has no customer assigned, cannot log time"}, nil
 			}
-			date, err := time.Parse("2006-01-02", args.Date)
+			timezone := env.Timezone
+			if args.Timezone != "" {
+				timezone = args.Timezone
+			}
+			resolvedTimezone, location, err := services.ResolveTimezone(timezone)
 			if err != nil {
-				return map[string]string{"error": "invalid date format, use YYYY-MM-DD"}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
+				return map[string]string{"error": err.Error()}, nil
+			}
+			date, err := services.ParseCivilDate(args.Date, location)
+			if err != nil {
+				return map[string]string{"error": err.Error()}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
 			}
 			durationMins, startUnix, endUnix, err := services.ParseWorklogTimes(date, services.WorklogTimeInput{
 				Duration:        args.Duration,
@@ -305,7 +357,7 @@ func init() {
 				UserID:          env.UserID,
 				ItemID:          itemID,
 				Description:     args.Description,
-				DateUnix:        date.Unix(),
+				DateUnix:        services.WorklogDateUnix(date),
 				StartTimeUnix:   startUnix,
 				EndTimeUnix:     endUnix,
 				DurationMinutes: durationMins,
@@ -321,6 +373,11 @@ func init() {
 				Date:            args.Date,
 				DurationMinutes: durationMins,
 				Description:     args.Description,
+				Timezone:        resolvedTimezone,
+				StartTimeLocal:  time.Unix(startUnix, 0).In(location).Format("15:04"),
+				EndTimeLocal:    time.Unix(endUnix, 0).In(location).Format("15:04"),
+				StartAt:         time.Unix(startUnix, 0).UTC().Format(time.RFC3339),
+				EndAt:           time.Unix(endUnix, 0).UTC().Format(time.RFC3339),
 			}, nil
 		},
 	})

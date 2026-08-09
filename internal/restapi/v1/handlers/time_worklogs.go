@@ -157,6 +157,7 @@ type createWorklogRequest struct {
 	EndTime         string `json:"end_time,omitempty"`
 	ItemID          *int   `json:"item_id,omitempty"`
 	ItemKey         string `json:"item_key,omitempty"`
+	Timezone        string `json:"timezone,omitempty"`
 }
 
 // Create handles POST /rest/api/v1/time/worklogs
@@ -215,9 +216,18 @@ func (h *TimeWorklogHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	date, err := time.Parse("2006-01-02", req.Date)
+	timezone := user.Timezone
+	if req.Timezone != "" {
+		timezone = req.Timezone
+	}
+	resolvedTimezone, location, err := services.ResolveTimezone(timezone)
 	if err != nil {
-		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "invalid date format, use YYYY-MM-DD"))
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, err.Error()))
+		return
+	}
+	date, err := services.ParseCivilDate(req.Date, location)
+	if err != nil {
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, err.Error()))
 		return
 	}
 
@@ -255,7 +265,7 @@ func (h *TimeWorklogHandler) Create(w http.ResponseWriter, r *http.Request) {
 		UserID:          user.ID,
 		ItemID:          itemID,
 		Description:     req.Description,
-		DateUnix:        date.Unix(),
+		DateUnix:        services.WorklogDateUnix(date),
 		StartTimeUnix:   startUnix,
 		EndTimeUnix:     endUnix,
 		DurationMinutes: durationMins,
@@ -272,6 +282,11 @@ func (h *TimeWorklogHandler) Create(w http.ResponseWriter, r *http.Request) {
 		"date":             req.Date,
 		"duration_minutes": durationMins,
 		"description":      req.Description,
+		"timezone":         resolvedTimezone,
+		"start_time_local": time.Unix(startUnix, 0).In(location).Format("15:04"),
+		"end_time_local":   time.Unix(endUnix, 0).In(location).Format("15:04"),
+		"start_at":         time.Unix(startUnix, 0).UTC().Format(time.RFC3339),
+		"end_at":           time.Unix(endUnix, 0).UTC().Format(time.RFC3339),
 	})
 }
 

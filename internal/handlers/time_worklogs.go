@@ -45,10 +45,11 @@ type WorklogRequest struct {
 	ProjectID     int    `json:"project_id"`
 	ItemID        *int   `json:"item_id,omitempty"` // Optional link to work item
 	Description   string `json:"description"`
-	Date          string `json:"date"`       // YYYY-MM-DD format
-	StartTime     string `json:"start_time"` // HH:MM format or empty
-	EndTime       string `json:"end_time"`   // HH:MM format or empty
-	DurationInput string `json:"duration"`   // "1h", "30m", "2h15m" etc
+	Date          string `json:"date"`               // YYYY-MM-DD format
+	StartTime     string `json:"start_time"`         // HH:MM format or empty
+	EndTime       string `json:"end_time"`           // HH:MM format or empty
+	DurationInput string `json:"duration"`           // "1h", "30m", "2h15m" etc
+	Timezone      string `json:"timezone,omitempty"` // Optional explicit IANA timezone; defaults to acting user
 }
 
 // requireWorklogEditAccess extracts the worklog ID, authenticates the user, and verifies
@@ -200,7 +201,7 @@ func (h *TimeWorklogHandler) Get(w http.ResponseWriter, r *http.Request) {
 // validateAndParseWorklog validates a WorklogRequest and returns parsed values
 //
 //nolint:gocritic // tooManyResultsChecker: returns are semantically grouped
-func (h *TimeWorklogHandler) validateAndParseWorklog(req WorklogRequest) (customerID int, date, startTime, endTime time.Time, durationMins int, err error) {
+func (h *TimeWorklogHandler) validateAndParseWorklog(req WorklogRequest, userTimezone string) (customerID int, date, startTime, endTime time.Time, durationMins int, err error) {
 	// Validate project exists, get customer_id, and check status
 	project, projectErr := h.projects.GetBookingInfo(req.ProjectID)
 	if errors.Is(projectErr, repository.ErrNotFound) {
@@ -223,35 +224,33 @@ func (h *TimeWorklogHandler) validateAndParseWorklog(req WorklogRequest) (custom
 		return
 	}
 
-	// Parse date
-	date, err = time.Parse("2006-01-02", req.Date)
+	timezone := userTimezone
+	if req.Timezone != "" {
+		timezone = req.Timezone
+	}
+	_, location, timezoneErr := services.ResolveTimezone(timezone)
+	if timezoneErr != nil {
+		err = timezoneErr
+		return
+	}
+
+	date, err = services.ParseCivilDate(req.Date, location)
 	if err != nil {
-		err = fmt.Errorf("invalid date format, use YYYY-MM-DD")
 		return
 	}
 
 	// Handle time parsing - either explicit times or duration shorthand
 	if req.StartTime != "" && req.EndTime != "" {
-		// Explicit start and end times
-		start, parseErr := time.Parse("15:04", req.StartTime)
-		if parseErr != nil {
-			err = fmt.Errorf("invalid start time format, use HH:MM")
+		var startUnix, endUnix int64
+		durationMins, startUnix, endUnix, err = services.ParseWorklogTimes(date, services.WorklogTimeInput{
+			StartTime: req.StartTime,
+			EndTime:   req.EndTime,
+		})
+		if err != nil {
 			return
 		}
-		end, parseErr := time.Parse("15:04", req.EndTime)
-		if parseErr != nil {
-			err = fmt.Errorf("invalid end time format, use HH:MM")
-			return
-		}
-
-		startTime = time.Date(date.Year(), date.Month(), date.Day(), start.Hour(), start.Minute(), 0, 0, time.Local)
-		endTime = time.Date(date.Year(), date.Month(), date.Day(), end.Hour(), end.Minute(), 0, 0, time.Local)
-		durationMins = int(endTime.Sub(startTime).Minutes())
-
-		if durationMins <= 0 {
-			err = fmt.Errorf("end time must be after start time")
-			return
-		}
+		startTime = time.Unix(startUnix, 0)
+		endTime = time.Unix(endUnix, 0)
 	} else if req.DurationInput != "" {
 		// Duration shorthand like "1h", "30m", "2h15m"
 		duration, parseErr := ParseDuration(req.DurationInput)
@@ -260,29 +259,28 @@ func (h *TimeWorklogHandler) validateAndParseWorklog(req WorklogRequest) (custom
 			return
 		}
 
-		durationMins = int(duration.Minutes())
-
-		// Sub-minute inputs (e.g. "0.4m") truncate to 0; reject them the same
-		// way the explicit start/end branch rejects a non-positive span so a
-		// zero-duration worklog never persists.
-		if durationMins <= 0 {
-			err = fmt.Errorf("end time must be after start time")
+		durationMins = int(duration / time.Minute)
+		if _, validationErr := services.ValidateWorklogDurationMinutes(durationMins); validationErr != nil {
+			err = validationErr
 			return
 		}
 
 		// Default to ending "now" and calculating start time backwards
 		if req.EndTime != "" {
-			end, parseErr := time.Parse("15:04", req.EndTime)
+			endTime, parseErr = services.ResolveCivilClock(date, req.EndTime)
 			if parseErr != nil {
-				err = fmt.Errorf("invalid end time format, use HH:MM")
+				err = fmt.Errorf("invalid end_time: %w", parseErr)
 				return
 			}
-			endTime = time.Date(date.Year(), date.Month(), date.Day(), end.Hour(), end.Minute(), 0, 0, time.Local)
 		} else {
-			endTime = time.Now()
-			if !date.Equal(time.Now().Truncate(24 * time.Hour)) {
+			now := time.Now().In(location)
+			endTime = now
+			if date.Year() != now.Year() || date.Month() != now.Month() || date.Day() != now.Day() {
 				// If not today, default end time to 17:00
-				endTime = time.Date(date.Year(), date.Month(), date.Day(), 17, 0, 0, 0, time.Local)
+				endTime, err = services.ResolveCivilClock(date, "17:00")
+				if err != nil {
+					return
+				}
 			}
 		}
 
@@ -339,7 +337,7 @@ func (h *TimeWorklogHandler) Create(w http.ResponseWriter, r *http.Request) {
 		sanitize.Pair{Target: &req.Description, Policy: sanitize.Comment, Label: "Description"},
 	)
 
-	customerID, date, startTime, endTime, durationMins, err := h.validateAndParseWorklog(req)
+	customerID, date, startTime, endTime, durationMins, err := h.validateAndParseWorklog(req, user.Timezone)
 	if err != nil {
 		respondValidationError(w, r, err.Error())
 		return
@@ -356,7 +354,7 @@ func (h *TimeWorklogHandler) Create(w http.ResponseWriter, r *http.Request) {
 		UserID:          user.ID,
 		ItemID:          req.ItemID,
 		Description:     req.Description,
-		DateUnix:        date.Unix(),
+		DateUnix:        services.WorklogDateUnix(date),
 		StartTimeUnix:   startTime.Unix(),
 		EndTimeUnix:     endTime.Unix(),
 		DurationMinutes: durationMins,
@@ -429,7 +427,7 @@ func (h *TimeWorklogHandler) Update(w http.ResponseWriter, r *http.Request) {
 		sanitize.Pair{Target: &req.Description, Policy: sanitize.Comment, Label: "Description"},
 	)
 
-	customerID, date, startTime, endTime, durationMins, err := h.validateAndParseWorklog(req)
+	customerID, date, startTime, endTime, durationMins, err := h.validateAndParseWorklog(req, user.Timezone)
 	if err != nil {
 		respondValidationError(w, r, err.Error())
 		return
@@ -441,7 +439,7 @@ func (h *TimeWorklogHandler) Update(w http.ResponseWriter, r *http.Request) {
 		CustomerID:      customerID,
 		ItemID:          req.ItemID,
 		Description:     req.Description,
-		DateUnix:        date.Unix(),
+		DateUnix:        services.WorklogDateUnix(date),
 		StartTimeUnix:   startTime.Unix(),
 		EndTimeUnix:     endTime.Unix(),
 		DurationMinutes: durationMins,

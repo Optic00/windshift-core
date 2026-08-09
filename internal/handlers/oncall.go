@@ -213,6 +213,47 @@ func validateScheduleRequest(w http.ResponseWriter, r *http.Request, req models.
 		respondValidationError(w, r, "timezone is required")
 		return false
 	}
+	if _, _, err := services.ResolveTimezone(req.Timezone); err != nil {
+		respondValidationError(w, r, err.Error())
+		return false
+	}
+	return true
+}
+
+func validateLayerRequest(w http.ResponseWriter, r *http.Request, req models.OnCallScheduleLayerRequest) bool {
+	if strings.TrimSpace(req.Name) == "" {
+		respondValidationError(w, r, "name is required")
+		return false
+	}
+	rotationType := strings.TrimSpace(req.RotationType)
+	if rotationType != "daily" && rotationType != "weekly" && rotationType != "custom" {
+		respondValidationError(w, r, "rotation_type must be daily, weekly, or custom")
+		return false
+	}
+	if rotationType == "custom" && req.RotationIntervalDays <= 0 {
+		respondValidationError(w, r, "rotation_interval_days must be positive for custom rotations")
+		return false
+	}
+	if _, err := time.Parse("15:04", req.HandoffTime); err != nil {
+		respondValidationError(w, r, "handoff_time must be in HH:MM format")
+		return false
+	}
+	startDate, err := time.Parse(time.DateOnly, req.StartDate)
+	if err != nil {
+		respondValidationError(w, r, "start_date must be in YYYY-MM-DD format")
+		return false
+	}
+	if req.EndDate != nil {
+		endDate, err := time.Parse(time.DateOnly, *req.EndDate)
+		if err != nil {
+			respondValidationError(w, r, "end_date must be in YYYY-MM-DD format")
+			return false
+		}
+		if endDate.Before(startDate) {
+			respondValidationError(w, r, "end_date must be on or after start_date")
+			return false
+		}
+	}
 	return true
 }
 
@@ -381,19 +422,10 @@ func (h *OnCallHandler) AddLayer(w http.ResponseWriter, r *http.Request) {
 	}
 	sanitizeLayerRequest(&req)
 
-	if strings.TrimSpace(req.Name) == "" {
-		respondValidationError(w, r, "name is required")
+	if !validateLayerRequest(w, r, req) {
 		return
 	}
 	rotationType := strings.TrimSpace(req.RotationType)
-	if rotationType != "daily" && rotationType != "weekly" && rotationType != "custom" {
-		respondValidationError(w, r, "rotation_type must be daily, weekly, or custom")
-		return
-	}
-	if strings.TrimSpace(req.StartDate) == "" {
-		respondValidationError(w, r, "start_date is required")
-		return
-	}
 
 	id, err := h.onCallRepo.AddLayer(schedule.ID, req.Name, req.Priority, rotationType, req.RotationIntervalDays, req.HandoffTime, req.StartDate, req.EndDate)
 	if err != nil {
@@ -422,8 +454,11 @@ func (h *OnCallHandler) UpdateLayer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sanitizeLayerRequest(&req)
+	if !validateLayerRequest(w, r, req) {
+		return
+	}
 
-	if err := h.onCallRepo.UpdateLayer(layerID, req.Name, req.Priority, req.RotationType, req.RotationIntervalDays, req.HandoffTime, req.StartDate, req.EndDate); err != nil {
+	if err := h.onCallRepo.UpdateLayer(layerID, req.Name, req.Priority, strings.TrimSpace(req.RotationType), req.RotationIntervalDays, req.HandoffTime, req.StartDate, req.EndDate); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}

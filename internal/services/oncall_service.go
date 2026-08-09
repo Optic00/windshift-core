@@ -28,27 +28,33 @@ func NewOnCallService(db database.Database, onCallRepo *repository.OnCallReposit
 // at the specified time. Returns nil if no member is on call (e.g. outside the
 // layer's active window or no members configured).
 func (s *OnCallService) ComputeRotationForLayer(layer *models.OnCallScheduleLayer, t time.Time) *int {
-	startDate, err := parseDate(layer.StartDate)
+	return s.computeRotationForLayer(layer, t, t.Location())
+}
+
+func (s *OnCallService) computeRotationForLayer(layer *models.OnCallScheduleLayer, instant time.Time, location *time.Location) *int {
+	startDate, err := time.Parse(time.DateOnly, layer.StartDate)
 	if err != nil {
 		return nil
 	}
-	if t.Before(startDate) {
+	local := instant.In(location)
+	currentDate := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, time.UTC)
+	startDate = time.Date(startDate.Year(), startDate.Month(), startDate.Day(), 0, 0, 0, 0, time.UTC)
+	if currentDate.Before(startDate) {
 		return nil
 	}
 
 	if layer.EndDate != nil {
-		endDate, err := parseDate(*layer.EndDate)
+		endDate, err := time.Parse(time.DateOnly, *layer.EndDate)
 		if err != nil {
 			return nil
 		}
-		// End date is inclusive, so the layer is active through the end of that day.
-		endOfDay := endDate.Add(24 * time.Hour)
-		if t.After(endOfDay) || t.Equal(endOfDay) {
+		endDate = time.Date(endDate.Year(), endDate.Month(), endDate.Day(), 0, 0, 0, 0, time.UTC)
+		if currentDate.After(endDate) {
 			return nil
 		}
 	}
 
-	handoff, err := time.Parse("15:04", layer.HandoffTime)
+	handoff, err := onCallHandoffBoundary(currentDate, layer.HandoffTime, location)
 	if err != nil {
 		return nil
 	}
@@ -64,13 +70,11 @@ func (s *OnCallService) ComputeRotationForLayer(layer *models.OnCallScheduleLaye
 	})
 
 	// Calculate the number of full days since the start date.
-	daysSinceStart := int(t.Sub(startDate).Hours() / 24)
+	daysSinceStart := int(currentDate.Sub(startDate) / (24 * time.Hour))
 
 	// If we have not yet reached the handoff time today, the previous rotation
 	// slot is still active, so we shift back by one period.
-	handoffHour, handoffMin := handoff.Hour(), handoff.Minute()
-	currentHour, currentMin := t.Hour(), t.Minute()
-	beforeHandoff := currentHour < handoffHour || (currentHour == handoffHour && currentMin < handoffMin)
+	beforeHandoff := instant.Before(handoff)
 
 	var rotationIndex int
 	switch layer.RotationType {
@@ -126,6 +130,13 @@ func (s *OnCallService) CurrentOnCallForSchedule(schedule *models.OnCallSchedule
 		OnCall:     []models.OnCallUserEntry{},
 	}
 
+	_, location, err := ResolveTimezone(schedule.Timezone)
+	if err != nil {
+		// Existing invalid rows predate request validation. UTC preserves the old
+		// behavior without making every rotation disappear.
+		location = time.UTC
+	}
+
 	// Check overrides first. An override replaces the original user with the
 	// override user for the duration of the override window.
 	replacedUserIDs := make(map[int]bool)
@@ -152,7 +163,7 @@ func (s *OnCallService) CurrentOnCallForSchedule(schedule *models.OnCallSchedule
 	})
 
 	for _, layer := range layers {
-		userID := s.ComputeRotationForLayer(&layer, now)
+		userID := s.computeRotationForLayer(&layer, now, location)
 		if userID == nil {
 			continue
 		}

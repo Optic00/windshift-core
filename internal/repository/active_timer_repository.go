@@ -52,6 +52,23 @@ func (r *ActiveTimerRepository) GetProjectCustomerID(projectID int) (*int, error
 	return &id, nil
 }
 
+// GetUserTimezone returns the user's configured timezone. Empty values keep
+// the application's UTC default.
+func (r *ActiveTimerRepository) GetUserTimezone(userID int) (string, error) {
+	var timezone sql.NullString
+	err := r.db.QueryRow("SELECT timezone FROM users WHERE id = ?", userID).Scan(&timezone)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	if !timezone.Valid || timezone.String == "" {
+		return "UTC", nil
+	}
+	return timezone.String, nil
+}
+
 // HasActiveTimerForUser reports whether the user already has a running timer.
 func (r *ActiveTimerRepository) HasActiveTimerForUser(userID int) (bool, error) {
 	var existingID int

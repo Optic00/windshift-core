@@ -814,11 +814,20 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	extendWriteDeadline(w)
 	ctx, cancel := context.WithTimeout(r.Context(), llm.DefaultRequestTimeout)
 	defer cancel()
+	actingTimezone, err := services.LookupUserTimezone(h.db, mode.actingUserID)
+	if err != nil {
+		_ = runRepo.Finalize(r.Context(), begun.RunID, models.AgentRunStatusFailed,
+			"Acting user timezone is invalid", time.Now().UTC())
+		respondInternalError(w, r, err)
+		return
+	}
+	systemPrompt += fmt.Sprintf("\n\nThe acting user's authoritative IANA timezone is %s. Interpret relative dates and unqualified wall-clock times in that timezone; never pre-offset values passed to time tools.", actingTimezone)
 
 	env := &aitools.Env{
 		DB:                     h.db,
 		UserID:                 mode.actingUserID,
 		Username:               mode.actingName,
+		Timezone:               actingTimezone,
 		Source:                 mode.source,
 		AccessibleWorkspaceIDs: mode.accessibleWorkspaceIDs,
 		AuditDetails: map[string]interface{}{

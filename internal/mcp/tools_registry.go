@@ -9,6 +9,7 @@ import (
 
 	"windshift/internal/aitools"
 	"windshift/internal/models"
+	"windshift/internal/services"
 )
 
 // registerAITools uses raw AddTool so MCP and aitools share registry-generated
@@ -107,10 +108,15 @@ func (ms *MCPServer) buildEnv(user *models.User) (*aitools.Env, error) {
 	if err != nil {
 		return nil, err
 	}
+	timezone, _, err := services.ResolveTimezone(user.Timezone)
+	if err != nil {
+		return nil, err
+	}
 	return &aitools.Env{
 		DB:                     ms.deps.DB,
 		UserID:                 user.ID,
 		Username:               user.FullName,
+		Timezone:               timezone,
 		Source:                 aitools.SourceMCP,
 		AccessibleWorkspaceIDs: wsIDs,
 		PermService:            ms.deps.PermissionService,

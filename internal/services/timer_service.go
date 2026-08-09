@@ -278,8 +278,18 @@ func (s *TimerService) StopTimerByID(userID, timerID int) (*StopResult, error) {
 		return buildStopResult(timer, endTimeUTC, durationSeconds, durationMinutes, false, metadataVisible), nil
 	}
 
-	startTime := time.Unix(timer.StartTimeUTC, 0).UTC()
-	dateInt := int(startTime.Truncate(24 * time.Hour).Unix())
+	timezone, err := s.repo.GetUserTimezone(userID)
+	if err != nil {
+		return nil, err
+	}
+	_, location, timezoneErr := ResolveTimezone(timezone)
+	if timezoneErr != nil {
+		// Do not wedge a running timer because of a legacy invalid user setting;
+		// UTC matches the pre-0.8.5 attribution behavior.
+		location = time.UTC
+	}
+	startTime := time.Unix(timer.StartTimeUTC, 0).In(location)
+	dateInt := int(WorklogDateUnix(startTime))
 	nowUnix := time.Now().UTC().Unix()
 
 	if err := s.repo.FinalizeTimer(timer.ID, repository.CreateWorklogInput{

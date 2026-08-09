@@ -49,16 +49,14 @@ func ParseWorklogTimes(date time.Time, input WorklogTimeInput) (durationMinutes 
 		start = date
 		end = date.Add(duration)
 	case input.StartTime != "" && input.EndTime != "":
-		startClock, err := time.Parse("15:04", input.StartTime)
+		start, err = ResolveCivilClock(date, input.StartTime)
 		if err != nil {
-			return 0, 0, 0, fmt.Errorf("start_time and end_time must be in HH:MM format")
+			return 0, 0, 0, fmt.Errorf("invalid start_time: %w", err)
 		}
-		endClock, err := time.Parse("15:04", input.EndTime)
+		end, err = ResolveCivilClock(date, input.EndTime)
 		if err != nil {
-			return 0, 0, 0, fmt.Errorf("start_time and end_time must be in HH:MM format")
+			return 0, 0, 0, fmt.Errorf("invalid end_time: %w", err)
 		}
-		start = time.Date(date.Year(), date.Month(), date.Day(), startClock.Hour(), startClock.Minute(), 0, 0, date.Location())
-		end = time.Date(date.Year(), date.Month(), date.Day(), endClock.Hour(), endClock.Minute(), 0, 0, date.Location())
 		duration = end.Sub(start)
 	default:
 		return 0, 0, 0, fmt.Errorf("provide duration, duration_minutes, or start_time and end_time")

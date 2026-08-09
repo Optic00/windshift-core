@@ -248,10 +248,15 @@ func (d *Dispatcher) RunPrivateTest(ctx context.Context, binding *models.Workspa
 			entries = append(entries, entry)
 		}
 	}
+	timezone, err := services.LookupUserTimezone(d.opts.DB, binding.ActingUserID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve acting identity timezone: %w", err)
+	}
 	executor := aitooladapter.NewExecutor(&aitools.Env{
 		DB:                     d.opts.DB,
 		UserID:                 binding.ActingUserID,
 		Username:               d.userDisplayName(ctx, binding.ActingUserID),
+		Timezone:               timezone,
 		Source:                 aitools.SourceStandardAgent,
 		AccessibleWorkspaceIDs: []int{workspaceID},
 		AuditDetails: map[string]interface{}{
@@ -421,10 +426,16 @@ func (d *Dispatcher) execute(run *models.AgentRun) {
 	}
 
 	entries := entriesByName(d.opts.Registry, snapshot.ToolNames)
+	timezone, err := services.LookupUserTimezone(d.opts.DB, snapshot.ActingUserID)
+	if err != nil {
+		d.fail(run, fmt.Errorf("resolve acting identity timezone: %w", err))
+		return
+	}
 	executor := aitooladapter.NewExecutor(&aitools.Env{
 		DB:                     d.opts.DB,
 		UserID:                 snapshot.ActingUserID,
 		Username:               snapshot.ActingName,
+		Timezone:               timezone,
 		Source:                 aitools.SourceStandardAgent,
 		AccessibleWorkspaceIDs: []int{run.WorkspaceID},
 		AuditDetails: map[string]interface{}{
