@@ -1,3 +1,20 @@
 {
-   "signedContributors": []
+  "signedContributors": [
+    {
+      "name": "fmaass",
+      "id": 951138,
+      "comment_id": 5231192585,
+      "created_at": "2026-08-09T11:09:14Z",
+      "repoId": 1116890888,
+      "pullRequestNo": 174
+    },
+    {
+      "name": "stefan-ernst",
+      "id": 24554551,
+      "comment_id": 5231388130,
+      "created_at": "2026-08-09T11:56:10Z",
+      "repoId": 1116890888,
+      "pullRequestNo": 174
+    }
+  ]
 }
