@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { api } from '../api.js';
   import { navigate } from '../router.js';
   import { workspacePermissions, workspacesStore, currentWorkspace } from '../stores';
@@ -42,6 +42,7 @@
   // attach-pickers refresh (the two are siblings on the coding-agents tab).
   let agentSkillsVersion = $state(0);
   let creatingAgentBinding = $state(false);
+  let deleteRedirectTimer = null;
 
   // Time project categories state
   let timeProjectCategories = $state([]);
@@ -60,6 +61,10 @@
   }
 
   let formData = $state(blankFormData());
+
+  onDestroy(() => {
+    if (deleteRedirectTimer) clearTimeout(deleteRedirectTimer);
+  });
 
   // The active admin module (registry-driven), used to render the page header.
   const currentModule = $derived(
@@ -225,7 +230,9 @@
       successToast(t('workspaceSettings.savedSuccessfully'));
     } catch (error) {
       console.error('Failed to save workspace:', error);
-      errorToast(t('workspaceSettings.failedToSave', { error: error.message || error }));
+      if (targetId === workspaceId) {
+        errorToast(t('workspaceSettings.failedToSave', { error: error.message || error }));
+      }
     } finally {
       saving = false;
     }
@@ -252,17 +259,20 @@
     try {
       await api.workspaces.delete(targetId);
       workspacesStore.remove(targetId);
-      successToast(t('workspaceSettings.deletedSuccessfully', { name: targetName }));
 
       if (targetId !== workspaceId) return;
 
+      successToast(t('workspaceSettings.deletedSuccessfully', { name: targetName }));
       currentWorkspace.clear();
-      setTimeout(() => {
-        navigate('/workspaces');
+      deleteRedirectTimer = setTimeout(() => {
+        deleteRedirectTimer = null;
+        if (targetId === workspaceId) navigate('/workspaces');
       }, 1000);
     } catch (error) {
       console.error('Failed to delete workspace:', error);
-      errorToast(t('workspaceSettings.failedToDelete', { error: error.message || error }));
+      if (targetId === workspaceId) {
+        errorToast(t('workspaceSettings.failedToDelete', { error: error.message || error }));
+      }
     }
   }
 
@@ -402,6 +412,7 @@
           size="medium"
           onclick={saveWorkspace}
           disabled={saving || !formData.name.trim() || !formData.key.trim()}
+          dataTestid="workspace-settings-save"
         >
           {#if saving}{t('workspaceSettings.saving')}{:else}{t('workspaceSettings.saveChanges')}{/if}
         </Button>
@@ -409,6 +420,7 @@
           variant="secondary"
           size="medium"
           onclick={resetWorkspaceForm}
+          dataTestid="workspace-settings-reset"
         >
           {t('workspaceSettings.reset')}
         </Button>
@@ -437,6 +449,7 @@
             size="medium"
             onclick={saveWorkspace}
             disabled={saving || !formData.name.trim() || !formData.key.trim()}
+            dataTestid="workspace-settings-save"
           >
             {#if saving}{t('workspaceSettings.saving')}{:else}{t('workspaceSettings.saveChanges')}{/if}
           </Button>
@@ -444,6 +457,7 @@
             variant="secondary"
             size="medium"
             onclick={resetWorkspaceForm}
+            dataTestid="workspace-settings-reset"
           >
             {t('workspaceSettings.reset')}
           </Button>
@@ -513,6 +527,7 @@
         {#if !showDeleteConfirm}
           <button
             onclick={() => showDeleteConfirm = true}
+            data-testid="delete-workspace-open"
             class="flex items-center gap-2 px-4 py-2 bg-red-600 text-white text-sm font-medium rounded hover:bg-red-700 transition-colors"
           >
             <Trash2 class="w-4 h-4" />
@@ -528,6 +543,7 @@
                 id="delete-confirm"
                 type="text"
                 bind:value={deleteConfirmText}
+                data-testid="delete-workspace-confirm-name"
                 class="w-full px-4 py-2 rounded border border-red-300 text-red-900 bg-white focus:outline-none focus:ring-2 focus:ring-red-500"
                 placeholder={t('workspaceSettings.typeNameHere', { name: workspace.name })}
               />
@@ -537,6 +553,7 @@
               <button
                 onclick={deleteWorkspace}
                 disabled={deleteConfirmText !== workspace.name}
+                data-testid="delete-workspace-confirm"
                 class="px-4 py-2 bg-red-600 text-white text-sm font-medium rounded hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {t('workspaceSettings.yesRemoveWorkspace')}

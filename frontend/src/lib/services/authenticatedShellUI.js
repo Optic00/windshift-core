@@ -1,3 +1,4 @@
+import { get } from 'svelte/store';
 import { api } from '../api.js';
 import { aiStore } from '../stores/aiStore.svelte.js';
 import { attachmentStatus } from '../stores/attachmentStatus.svelte.js';
@@ -7,7 +8,7 @@ import { moduleSettings } from '../stores/moduleSettings.js';
 import { permissionStore } from '../stores/permissions.svelte.js';
 import { themeStore } from '../stores/theme.svelte.js';
 import { workspaceDataStore } from '../stores/workspaceDataStore.svelte.js';
-import { workspacesStore } from '../stores/workspaces.svelte.js';
+import { currentWorkspace, workspacesStore } from '../stores/workspaces.svelte.js';
 
 let refreshGeneration = 0;
 
@@ -23,6 +24,32 @@ export function hydrateAuthenticatedShellUI(bootstrap) {
   permissionStore.setHasAssetSets(bootstrap.has_asset_sets === true);
   permissionStore.setHasActivePortals(bootstrap.has_active_portals === true);
   permissionStore.setManagesChannels(bootstrap.manages_channels === true);
+  return true;
+}
+
+/**
+ * Keep the shell workspace aligned with the routed workspace while the shared
+ * workspace snapshot loads. The previous workspace is cleared synchronously
+ * so navigation and command consumers cannot act on stale context.
+ */
+export async function hydrateCurrentWorkspaceFromSharedData(workspaceId) {
+  const expectedId = Number.parseInt(String(workspaceId), 10);
+  const activeWorkspace = get(currentWorkspace);
+
+  if (activeWorkspace && Number.parseInt(String(activeWorkspace.id), 10) !== expectedId) {
+    currentWorkspace.clear();
+  }
+
+  await workspaceDataStore.initialize(workspaceId);
+
+  // A newer route already owns the store — let its own hydration finish.
+  if (workspaceDataStore.workspaceId !== expectedId) return false;
+  if (!workspaceDataStore.workspace) {
+    currentWorkspace.clear();
+    return false;
+  }
+
+  currentWorkspace.hydrate(workspaceDataStore.workspace);
   return true;
 }
 
