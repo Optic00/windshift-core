@@ -863,7 +863,15 @@
   async function hydrateCurrentWorkspaceFromSharedData(workspaceId) {
     await workspaceDataStore.initialize(workspaceId);
     const expectedId = Number.parseInt(String(workspaceId), 10);
-    if (workspaceDataStore.workspaceId !== expectedId || !workspaceDataStore.workspace) return;
+    // A newer route already owns the store — let its own hydration finish.
+    if (workspaceDataStore.workspaceId !== expectedId) return;
+    if (!workspaceDataStore.workspace) {
+      // The routed workspace could not be loaded. Keeping the previously
+      // hydrated one would leave the shell (workspace header, avatar, gradient,
+      // command-palette scope) presenting a different workspace than the URL.
+      currentWorkspace.clear();
+      return;
+    }
     currentWorkspace.hydrate(workspaceDataStore.workspace);
   }
 
