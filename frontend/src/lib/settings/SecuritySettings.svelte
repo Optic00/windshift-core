@@ -236,6 +236,20 @@
     }
     return '';
   }
+
+  function getPolicyLabel(option) {
+    if (option.value === 'password' && authPolicyConfig.sso_configured) {
+      return 'Password or SSO';
+    }
+    return option.label;
+  }
+
+  function getPolicyDescription(option) {
+    if (option?.value === 'password' && authPolicyConfig.sso_configured) {
+      return 'Users can sign in with a password or an enabled SSO provider.';
+    }
+    return option?.description || '';
+  }
 </script>
 
 <div>
@@ -459,12 +473,12 @@
                 disabled={savingPolicy}
                 options={policyOptions.map(o => ({
                   value: o.value,
-                  label: isPolicyDisabled(o) ? `${o.label} (${getPolicyDisabledReason(o)})` : o.label,
+                  label: isPolicyDisabled(o) ? `${getPolicyLabel(o)} (${getPolicyDisabledReason(o)})` : getPolicyLabel(o),
                   disabled: isPolicyDisabled(o)
                 }))}
               />
               <DescriptionText>
-                {policyOptions.find(o => o.value === authPolicyConfig.policy)?.description}
+                {getPolicyDescription(policyOptions.find(o => o.value === authPolicyConfig.policy))}
               </DescriptionText>
             </div>
 

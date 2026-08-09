@@ -19,7 +19,7 @@ import (
 type AuthPolicy string
 
 const (
-	// AuthPolicyPassword is password-only authentication (default)
+	// AuthPolicyPassword allows password authentication (default); configured SSO remains available.
 	AuthPolicyPassword AuthPolicy = "password"
 	// AuthPolicyPasswordPasskey2FA requires password + passkey 2FA (when no SSO configured)
 	AuthPolicyPasswordPasskey2FA AuthPolicy = "password_passkey_2fa"
