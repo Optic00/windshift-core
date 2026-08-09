@@ -377,10 +377,7 @@ func (h *AssetHandler) Update(w http.ResponseWriter, r *http.Request) {
 			in.StatusID = &sid
 		}
 	}
-	// suppliedCustomFields is the map the service validates schema against.
-	// On a partial update where the caller omitted custom_field_values, we
-	// pass nil (skip schema check) and re-encode the row's current values
-	// so the stored JSON doesn't drift across writes.
+	// Validate supplied custom fields; preserve stored values when omitted.
 	var suppliedCustomFields map[string]interface{}
 	if req.CustomFieldValues != nil {
 		cfJSON, err := encodeCustomFieldValues(*req.CustomFieldValues)
@@ -396,9 +393,7 @@ func (h *AssetHandler) Update(w http.ResponseWriter, r *http.Request) {
 			in.CustomFieldValuesJSON = cfJSON
 		}
 	}
-	// requireAssetAccess gave us the *full* asset row; build the update
-	// snapshot the service needs (set_id, status_id, asset_type_id) from
-	// that so we don't re-roundtrip the DB.
+	// Reuse the loaded asset metadata instead of querying it again.
 	snap := repository.AssetUpdateSnapshot{
 		SetID:                 row.SetID,
 		StatusID:              row.StatusID,

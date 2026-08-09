@@ -190,7 +190,7 @@ func (s *ItemLinkService) CreateLinkWithChecks(userID int, params CreateItemLink
 		return nil, err
 	}
 
-	// Duplicate detection (either direction).
+	// Check both directions for an existing link.
 	exists, err := itemLinkExists(s.db, params)
 	if err != nil {
 		return nil, err
@@ -305,8 +305,7 @@ func (s *ItemLinkService) validateCreateLinkWithChecks(userID int, params Create
 		return ErrLinkSelfReference
 	}
 
-	// Permission checks first so unauthorized callers never get a
-	// duplicate-detection 409 leak (would oracle the existence of a link).
+	// Check permissions first so duplicate detection cannot reveal a link.
 	if err := s.CheckEntityPermission(userID, params.SourceType, params.SourceID, models.PermissionItemEdit, AssetPermissionKeyEdit); err != nil {
 		return err
 	}
@@ -314,7 +313,7 @@ func (s *ItemLinkService) validateCreateLinkWithChecks(userID int, params Create
 		return err
 	}
 
-	// Item↔page links must stay in one workspace. Cross-workspace ⇒ 404.
+	// Item↔page links must remain in one workspace; deny cross-workspace links opaquely.
 	if params.SourceType == "page" || params.TargetType == "page" {
 		ok, err := s.linkEndpointsShareWorkspace(params.SourceType, params.SourceID, params.TargetType, params.TargetID)
 		if err != nil {
@@ -356,13 +355,11 @@ func (s *ItemLinkService) finishCreatedLink(userID int, params CreateItemLinkPar
 }
 
 func (s *ItemLinkService) finishHydratedCreatedLink(userID int, params CreateItemLinkParams, link *models.ItemLink) *models.ItemLink {
-	// Notification + action events — item-source only (matches legacy
-	// handler behavior). Failures here do not roll back the link.
+	// Emit optional item-source events without rolling back the link on failure.
 	if params.SourceType == "item" {
 		s.emitLinkedEvents(userID, params, link)
 	}
-	// Live-update publish (WI-483): a link is bidirectional in the UI, so refresh
-	// BOTH endpoints that are items, not only the source.
+	// Refresh both item endpoints because the UI renders links bidirectionally.
 	publishItemLinkChange(params.SourceType, params.SourceID, params.TargetType, params.TargetID)
 	return link
 }
@@ -395,9 +392,7 @@ func (s *ItemLinkService) DeleteLinkWithChecks(userID, linkID int) error {
 	if err := s.CheckEntityPermission(userID, link.SourceType, link.SourceID, models.PermissionItemEdit, AssetPermissionKeyEdit); err != nil {
 		return err
 	}
-	// Require visibility of the other endpoint too. Besides matching the
-	// create contract, this prevents a caller who retained source edit access
-	// from deleting a now-hidden relationship by guessing or replaying its ID.
+	// Require visibility of the other endpoint to prevent hidden-link deletion.
 	if err := s.CheckEntityPermission(userID, link.TargetType, link.TargetID, models.PermissionItemView, AssetPermissionKeyView); err != nil {
 		return err
 	}
@@ -413,7 +408,7 @@ func (s *ItemLinkService) DeleteLinkWithChecks(userID, linkID int) error {
 	if link.SourceType == "item" {
 		s.emitUnlinkedEvents(userID, link)
 	}
-	// Live-update publish (WI-483): refresh both item endpoints of the removed link.
+	// Refresh both item endpoints after removal.
 	publishItemLinkChange(link.SourceType, link.SourceID, link.TargetType, link.TargetID)
 	return nil
 }

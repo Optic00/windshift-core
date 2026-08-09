@@ -150,12 +150,8 @@ func (h *PageHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ListTreeMeta omits the page bodies: this is a list endpoint (ws page
-	// list) that returns id/title/hierarchy/labels per page — the body is
-	// fetched on demand via GET .../pages/{id}. Projecting content out of
-	// the query avoids reading/allocating MBs of body text for a workspace
-	// with thousands of pages; PageResponse.Content is omitempty so the
-	// empty body simply drops from each DTO. (WI-407.)
+	// ListTreeMeta omits bodies; callers fetch content on demand to keep large
+	// workspace lists small.
 	pages, err := h.service.ListTreeMeta(wsID, false)
 	if err != nil {
 		h.RespondInternalError(w, r)
@@ -172,10 +168,7 @@ func (h *PageHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Preload labels onto the visible slice before mapping so each DTO
-	// in the response includes its labels (no per-page round-trip for the
-	// CLI). Safe to call on the full slice — invisible pages just get
-	// their Labels stamped and then dropped below.
+	// Preload labels in one batch before mapping the visible pages.
 	if err := h.service.PreloadLabels(pages); err != nil {
 		h.RespondInternalError(w, r)
 		return
@@ -247,8 +240,7 @@ func (h *PageHandler) Search(w http.ResponseWriter, r *http.Request) {
 		if !visible[pages[i].ID] {
 			continue
 		}
-		// Discovery surface: drop the heavy body so search payloads stay
-		// small (Content is omitempty); callers fetch it via GET the page.
+		// Search returns metadata; fetch the body from the page endpoint.
 		pages[i].Content = ""
 		items = append(items, dto.MapPageToResponse(&pages[i], getBaseURL(r)))
 	}

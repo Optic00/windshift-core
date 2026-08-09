@@ -320,12 +320,8 @@ func (h *MilestoneHandler) requireMilestoneAccessByID(w http.ResponseWriter, r *
 	return user.ID, id, wsID, true
 }
 
-// storedMilestoneTargetDate turns a persisted target date into the value a
-// patch carries forward for the fields the caller left out. MilestoneResult
-// keeps the raw column string, which the driver hands back as a full timestamp
-// ("2026-07-14T00:00:00Z"), while the planning validator only accepts
-// YYYY-MM-DD — so re-supplying it verbatim would reject the update. An empty
-// string is the stored NULL and means "no date".
+// storedMilestoneTargetDate normalizes the driver's timestamp for partial
+// updates; an empty value represents a stored NULL.
 func storedMilestoneTargetDate(stored string) *string {
 	if stored == "" {
 		return nil
@@ -337,12 +333,8 @@ func storedMilestoneTargetDate(stored string) *string {
 	return &stored
 }
 
-// applyMilestoneUpdate decodes a partial update, merges it over the persisted
-// milestone and writes the result. UpdateMilestone always sets every column, so
-// fields the caller omitted have to be re-supplied from current — otherwise a
-// single-field PUT would blank the rest of the milestone. workspaceID scopes the
-// SQL UPDATE to the milestone's owning workspace (nil for global); the WHERE
-// clause refuses cross-scope edits, so milestones cannot be retargeted here.
+// applyMilestoneUpdate merges a partial request with the stored row before
+// writing every column; workspaceID keeps the update in its original scope.
 func (h *MilestoneHandler) applyMilestoneUpdate(w http.ResponseWriter, r *http.Request, current *services.MilestoneResult, workspaceID *int) {
 	var req MilestoneUpdateRequest
 	if !h.DecodeBodyOrRespond(w, r, &req) {

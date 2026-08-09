@@ -551,7 +551,6 @@ func (c *Client) DeleteComment(commentID int) error {
 
 // ListDiagrams returns all diagrams for an item.
 func (c *Client) ListDiagrams(itemID int) ([]Diagram, error) {
-	// Unwrap the v1 envelope to preserve the slice return type.
 	var envelope struct {
 		Items []Diagram `json:"items"`
 	}
@@ -657,9 +656,7 @@ func (c *Client) uploadAttachment(path, originalFilename string, body io.Reader)
 	}
 
 	if resp.StatusCode >= 400 {
-		// Try v1's APIError shape first, then fall back to the legacy
-		// {success:false,message:"..."} envelope the wrapped handler
-		// emits for its own validation errors.
+		// Accept both v1 API errors and the legacy validation envelope.
 		var apiErr APIError
 		if jerr := json.Unmarshal(respBody, &apiErr); jerr == nil && (apiErr.Code != "" || apiErr.Message != "") {
 			apiErr.Status = resp.StatusCode
@@ -902,13 +899,11 @@ func (c *Client) DeleteMilestoneInWorkspace(workspaceID, milestoneID int) error 
 // is non-nil the lookup uses the workspace-scoped list endpoint; otherwise it
 // falls back to the global list (which only callers with global access can use).
 func (c *Client) ResolveMilestoneID(nameOrID string, workspaceID *int) (int, error) {
-	// Try parsing as integer first. Use Atoi so malformed inputs like
-	// "123abc" do not accidentally resolve as ID 123.
+	// Parse strict integer IDs before falling back to name lookup.
 	if id, err := strconv.Atoi(nameOrID); err == nil {
 		return id, nil
 	}
 
-	// Otherwise, look up by name (fuzzy match)
 	var resp *PaginatedResponse[Milestone]
 	var err error
 	if workspaceID != nil {
@@ -927,11 +922,9 @@ func (c *Client) ResolveMilestoneID(nameOrID string, workspaceID *int) (int, err
 		m := &resp.Data[i]
 		mNameLower := strings.ToLower(m.Name)
 
-		// Exact match (case-insensitive)
 		if mNameLower == nameLower {
 			return m.ID, nil
 		}
-		// Partial match - prefer first match
 		if bestMatch == nil && strings.Contains(mNameLower, nameLower) {
 			bestMatch = m
 		}
