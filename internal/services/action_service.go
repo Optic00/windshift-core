@@ -290,9 +290,7 @@ func (as *ActionService) EmitActionEvent(event *models.ActionEvent) {
 
 	select {
 	case as.eventChan <- event:
-		// Event queued successfully
 	default:
-		// Channel full, log warning but don't block
 		slog.Warn("action event channel full, dropping event",
 			slog.String("component", "actions"),
 			slog.String("event_type", string(event.EventType)),
@@ -558,12 +556,10 @@ func (as *ActionService) processEvent(event *models.ActionEvent) error { //nolin
 
 // matchesTrigger checks if an action's trigger matches the event
 func (as *ActionService) matchesTrigger(action *models.Action, event *models.ActionEvent) bool {
-	// First check if trigger types match
 	if action.TriggerType != event.EventType {
 		return false
 	}
 
-	// Parse trigger config if present
 	var config models.ActionTriggerConfig
 	if action.TriggerConfig != "" {
 		if err := json.Unmarshal([]byte(action.TriggerConfig), &config); err != nil {
@@ -576,8 +572,6 @@ func (as *ActionService) matchesTrigger(action *models.Action, event *models.Act
 		}
 	}
 
-	// Check cascade control: if the event was triggered by another action,
-	// only process if this action has respond_to_cascades enabled
 	if event.TriggeredByAction && !config.RespondToCascades {
 		slog.Debug("skipping action - does not respond to cascades",
 			slog.String("component", "actions"),
@@ -587,7 +581,6 @@ func (as *ActionService) matchesTrigger(action *models.Action, event *models.Act
 		return false
 	}
 
-	// If no trigger config, any event of matching type triggers the action
 	if action.TriggerConfig == "" {
 		return true
 	}

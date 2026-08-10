@@ -353,10 +353,8 @@ func (s *Server) initialize() error {
 		},
 	)
 
-	// Create auth middleware
 	authMiddleware := middleware.NewAuthMiddleware(sessionManager, tokenManager, s.db, cfg.UseProxy, additionalProxyList, setupCompleted)
 
-	// Parse additional proxy IPs
 	var additionalProxyIPs []net.IP
 	for _, proxyStr := range additionalProxyList {
 		if ip := net.ParseIP(strings.TrimSpace(proxyStr)); ip != nil {
@@ -369,7 +367,6 @@ func (s *Server) initialize() error {
 	mux.HandleFunc("GET /healthz", healthHandler.Liveness)
 	mux.HandleFunc("GET /readyz", healthHandler.Readiness)
 
-	// Initialize notification manager
 	nmCfg := handlers.DefaultNotificationManagerConfig()
 	nmCfg.MaxCacheSize = s.memoryBudget.NotificationCacheMB
 	if cfg.Notification.FlushInterval > 0 {

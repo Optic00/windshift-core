@@ -1181,9 +1181,7 @@ func (s *BindingService) startRunForBinding(ctx context.Context, binding *models
 		s.logger.Printf("binding service: matched binding=%d for item=%d but no RunService is configured (dropping)", binding.ID, itemID)
 		return nil
 	}
-	// A binding can outlive the pool capability it was configured with. Recheck
-	// enabled/type/workspace scope at every dispatch so disabling, deleting, or
-	// narrowing a pool takes effect immediately for existing bindings too.
+	// Recheck pool availability on every dispatch so binding changes take effect immediately.
 	if binding.TargetPoolID != nil {
 		if err := s.validateTargetPool(workspaceID, *binding.TargetPoolID); err != nil {
 			return err

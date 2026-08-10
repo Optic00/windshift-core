@@ -87,7 +87,6 @@ func RegisterRoutes(deps restapi.Deps) {
 		services.NewItemAttachmentService(db, deps.AttachmentPath, permissionService),
 	)
 
-	// Time tracking
 	timePermService := services.NewTimePermissionService(db, permissionService)
 	timeProjectHandler := handlers.NewTimeProjectHandler(handlers.NewBaseHandler(db, permissionService), timePermService)
 	timeWorklogHandler := handlers.NewTimeWorklogHandler(handlers.NewBaseHandler(db, permissionService), timePermService)

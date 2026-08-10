@@ -1155,8 +1155,7 @@ func (c *Client) ResolveIterationID(nameOrID string, workspaceID *int) (int, err
 
 // ResolveWorkspaceID resolves a workspace key to an ID
 func (c *Client) ResolveWorkspaceID(keyOrID string) (int, error) {
-	// Try parsing as integer first. Use Atoi so malformed inputs like
-	// "123abc" do not accidentally resolve as ID 123.
+	// Parse a strict integer ID before falling back to name lookup.
 	if id, err := strconv.Atoi(keyOrID); err == nil {
 		return id, nil
 	}
