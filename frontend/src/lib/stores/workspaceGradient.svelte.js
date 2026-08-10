@@ -253,13 +253,17 @@ export function useGradientStyles() {
 
     /**
      * Card background style with configurable blur (for smaller elements like cards)
-     * @param {number} blur - Blur amount in pixels (default: 8)
+     * @param {number} blur - Blur amount in pixels; use 0 to omit the filter
      * @returns {string} CSS style string for card background
      */
     cardStyle(blur = 8) {
-      return hasCustomBackground
-        ? `background-color: var(--ds-glass-bg); backdrop-filter: blur(${blur}px); border-color: var(--ds-glass-border);`
-        : 'background-color: var(--ds-surface-raised); border-color: var(--ds-border);';
+      if (!hasCustomBackground) {
+        return 'background-color: var(--ds-surface-raised); border-color: var(--ds-border);';
+      }
+      if (blur <= 0) {
+        return 'background-color: var(--ds-surface-raised); border-color: var(--ds-glass-border);';
+      }
+      return `background-color: var(--ds-glass-bg); backdrop-filter: blur(${blur}px); border-color: var(--ds-glass-border);`;
     },
 
     /**

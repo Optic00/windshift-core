@@ -1608,7 +1608,7 @@
                                 {moveMenuItems}
                                 closestEdge={dragState.get(item.id)?.closestEdge}
                                 swimlaneParentId={selectedGroupByItemType && lane.parent ? lane.parent.id : ''}
-                                cardStyle={styles.cardStyle(4)}
+                                cardStyle={styles.cardStyle(0)}
                                 textStyle={styles.glassTextStyle}
                                 onopen={openItem}
                               />
