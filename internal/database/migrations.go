@@ -175,18 +175,8 @@ var Catalog = []Migration{
 		`,
 	},
 	{
-		// idx_pages_frac_index_scoped originally scoped uniqueness over
-		// every row, archived included. But archived pages leave the live
-		// sibling ordering (ListChildren filters archived_at IS NULL) and
-		// the move backfill re-mints keys only for live siblings, so an
-		// archived row still owning an old key collides when the backfill
-		// re-sequences the group. Rebuild the index to exclude archived
-		// rows, matching what idx_pages_workspace_root_slug did at the time
-		// (that index was later dropped by
-		// 20260803_pages_drop_slug_uniqueness). No Check so it always runs;
-		// the DROP + CREATE is idempotent and stamped once.
-		// The pre-pass NULLs any live/live duplicate keys (keep lowest id)
-		// so the UNIQUE rebuild can't trip over legacy data.
+		// Rebuild sibling rank uniqueness to exclude archived rows. Null duplicate
+		// live keys first so the new unique index can be created safely.
 		Version:       "20260724_pages_frac_index_exclude_archived",
 		Name:          "Exclude archived pages from pages.frac_index uniqueness",
 		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_pages_frac_index_scoped' AND sql LIKE '%archived_at%'",
@@ -281,10 +271,8 @@ var Catalog = []Migration{
 	{
 		Version: "20260716_milestone_scope_guard",
 		Name:    "Enforce global and workspace milestone scope consistency",
-		// Fresh databases enforce this invariant with a named table CHECK.
-		// Existing databases cannot add that CHECK in place, so their upgrade
-		// path normalizes old rows and installs equivalent insert/update
-		// triggers. Recognize either representation as the migration's effect.
+		// Fresh databases use a table CHECK; upgrades normalize rows and install
+		// equivalent triggers because SQLite cannot add the CHECK in place.
 		CheckSQLite: `SELECT CASE WHEN
 			(SELECT COUNT(*) FROM sqlite_master
 			 WHERE type='trigger' AND name IN ('trg_milestones_scope_insert', 'trg_milestones_scope_update')) = 2
@@ -476,9 +464,7 @@ var Catalog = []Migration{
 		CheckPostgres: `SELECT CASE WHEN COUNT(*) = 2 THEN 1 ELSE 0 END FROM information_schema.columns
 			WHERE table_schema=current_schema() AND table_name='channels'
 			  AND column_name IN ('description', 'is_default') AND is_nullable='NO'`,
-		// Existing SQLite tables cannot gain NOT NULL constraints in place.
-		// Normalize legacy rows and guard future writes; fresh schemas carry the
-		// actual constraints and skip this body via CheckSQLite.
+		// Normalize legacy rows and guard future writes; fresh schemas skip this body.
 		SQLite: `
 			UPDATE channels SET description = '' WHERE description IS NULL;
 			UPDATE channels SET is_default = false WHERE is_default IS NULL;
@@ -517,10 +503,8 @@ var Catalog = []Migration{
 		CheckPostgres: `SELECT COUNT(*) FROM information_schema.columns
 			WHERE table_schema=current_schema() AND table_name='channels'
 			  AND column_name='config' AND is_nullable='NO'`,
-		// SQLite cannot add a NOT NULL constraint without rebuilding the parent
-		// table (which is unsafe here because many tables reference channels).
-		// Backfill existing rows and normalize any future legacy-schema NULL
-		// writes with triggers; fresh databases get the real constraint above.
+		// Backfill rows and use triggers for SQLite's legacy nullable schema;
+		// fresh databases already have the constraint.
 		SQLite: `
 			UPDATE channels SET config = '{}' WHERE config IS NULL;
 			CREATE TRIGGER IF NOT EXISTS trg_channels_config_nonnull_insert
@@ -1032,20 +1016,8 @@ var Catalog = []Migration{
 		`,
 	},
 	{
-		// Legacy SQLite installs declared notification_templates with
-		// `template_type TEXT NOT NULL` and `content TEXT NOT NULL`. The
-		// modernized seed in emailutil.SeedTemplates doesn't supply
-		// template_type, so the INSERT trips the legacy NOT NULL constraint
-		// and no built-in templates land. Rebuild the table to match the
-		// current schema (notifications.sql), which makes both columns
-		// nullable. Postgres never had the NOT NULL on either column.
-		//
-		// Check: COUNT > 0 when template_type is already nullable (or the
-		// column is missing — pragma returns no rows, COUNT = 0 falls through,
-		// but the WHEN branch evaluating notnull = 0 also returns 1 when the
-		// column exists and is nullable). The body is a single multi-statement
-		// rebuild; no FK toggling needed because nothing FK-references
-		// notification_templates.
+		// Rebuild legacy SQLite notification_templates so seeded rows can omit
+		// template_type/content. Postgres never had these NOT NULL constraints.
 		Version: "20260515_notification_templates_drop_legacy_notnull",
 		Name:    "Drop legacy NOT NULL on notification_templates.template_type/content",
 		CheckSQLite: `SELECT CASE
@@ -1077,18 +1049,9 @@ var Catalog = []Migration{
 		`,
 	},
 	{
-		// Commit 90edd5a reshaped action_credentials: dropped workspace_id (+ its
-		// FK and idx_action_credentials_workspace), added applies_to_all_workspaces,
-		// and introduced the action_credential_workspaces join table. Schema files
-		// use CREATE TABLE IF NOT EXISTS, so existing installs never picked up the
-		// column rename and the admin /api/admin/action-credentials handler dies
-		// with `column "applies_to_all_workspaces" does not exist`.
-		//
-		// Backfill: rows with workspace_id set become applies_to_all_workspaces=false
-		// with a join-table row; rows with workspace_id IS NULL keep the column
-		// default of true (global). Postgres can drop the legacy column inline.
-		// SQLite rejects DROP COLUMN on a FK-bearing column, so we table-rebuild
-		// the same way as the notification_templates entry above.
+		// Converge legacy action_credentials from workspace_id to the
+		// applies_to_all_workspaces flag and join table. SQLite requires a rebuild
+		// for the FK-bearing column; Postgres can alter it inline.
 		Version:       "20260519_action_credentials_workspace_scope",
 		Name:          "Reshape action_credentials to applies_to_all_workspaces + join table",
 		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('action_credentials') WHERE name='applies_to_all_workspaces'",
@@ -1247,19 +1210,8 @@ var Catalog = []Migration{
 		)`,
 	},
 	{
-		// page_label_assignments is the junction table behind ws/page-label
-		// attach/detach (page_label_repository.AddAssignment / ReplaceAssignments /
-		// ListForPage / LoadLabelsForPages). The legacy upgrade path in
-		// postgres.go:672 re-runs the embedded page_labels schema for
-		// existing installs, but at least one production DB ended up with
-		// page_labels present and page_label_assignments missing (tree-load
-		// 500: "relation \"page_label_assignments\" does not exist"). Stamp
-		// it through the catalog so the table is guaranteed regardless of
-		// which path the install took.
-		//
-		// Both backends use CREATE TABLE IF NOT EXISTS + indexes that are
-		// also IF NOT EXISTS, so re-running this on a healthy install is a
-		// no-op even when the Check happens to be skipped.
+		// Ensure the page-label junction table exists for upgrades that created
+		// page_labels without its assignments table. Both backends are idempotent.
 		Version:       "20260522_page_label_assignments",
 		Name:          "Ensure page_label_assignments table exists",
 		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='page_label_assignments'",

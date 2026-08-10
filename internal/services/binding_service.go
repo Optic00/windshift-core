@@ -463,8 +463,7 @@ func (s *BindingService) Create(ctx context.Context, req CreateBindingRequest) (
 		CreatedByUserID: req.CreatedByUserID,
 		Repos:           repos,
 	}
-	// Insert persists the binding row + its child repo rows atomically and
-	// mirrors the primary onto the deprecated scalar columns.
+	// Persist the binding and repository rows atomically.
 	id, err := s.repo.Insert(ctx, binding)
 	if err != nil {
 		return nil, err
@@ -489,8 +488,6 @@ func (s *BindingService) Create(ctx context.Context, req CreateBindingRequest) (
 func normalizeBindingRepos(req CreateBindingRequest) ([]models.BindingRepo, error) {
 	inputs := req.Repos
 	if len(inputs) == 0 && req.RepoSlug != "" {
-		// Legacy single-repo create shape: fold the scalar fields into one
-		// primary repo input.
 		inputs = []RepoInput{{
 			RepoSlug:        req.RepoSlug,
 			RepoBaseRef:     req.RepoBaseRef,
@@ -637,7 +634,6 @@ func (s *BindingService) UpdateBinding(ctx context.Context, req UpdateBindingReq
 	if ttl <= 0 {
 		ttl = 60 // mirror Insert's default
 	}
-	// Apply the editable fields; identity/kind/workspace/target pool untouched.
 	binding.LLMConnectionID = req.LLMConnectionID
 	// Token scopes are presence-aware: a nil slice (key omitted, as the UI does —
 	// it doesn't manage scopes) preserves the binding's existing scopes rather
@@ -688,7 +684,6 @@ func (s *BindingService) UpdateAgentConfig(ctx context.Context, workspaceID, bin
 	if binding.Lifecycle == models.AgentLifecycleArchived {
 		return ErrBindingUnavailable
 	}
-	// Custom images require the binding's fixed remote pool.
 	var newRunnerImage string
 	if runnerImage != nil {
 		newRunnerImage, err = validateRunnerImage(*runnerImage)

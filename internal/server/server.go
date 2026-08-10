@@ -283,23 +283,19 @@ func (s *Server) initialize() error {
 		effectivePort = cfg.AllowedPort
 	}
 
-	// Initialize WebAuthn — RPID/RPName are pre-resolved by config.Load;
-	// webauthn only overrides RPID when in development mode.
+	// WebAuthn settings are resolved by config.Load; development may override RPID.
 	isDevelopment := cfg.DisableCSRF
 	webAuthnConfig, portalWebAuthnConfig, err := initializeWebAuthnConfigs(cfg, isDevelopment, effectivePort, enableHTTPS)
 	if err != nil {
 		return err
 	}
 
-	// Build options for user-keyed rate limiters (authenticated endpoints)
 	var userKeyedOpts []middleware.RateLimiterOption
 	userKeyedOpts = append(userKeyedOpts, middleware.WithUserKeyed())
 	if cfg.DisableIPRateLimit {
 		userKeyedOpts = append(userKeyedOpts, middleware.WithDisableIPLimit())
 	}
 
-	// Create rate limiters
-	// IP-only limiters (pre-auth / unauthenticated endpoints)
 	s.loginRateLimiter = middleware.NewRateLimiter(5.0/60.0, 10, cfg.UseProxy, additionalProxyList)
 	s.fidoRateLimiter = middleware.NewRateLimiter(10.0/60.0, 15, cfg.UseProxy, additionalProxyList)
 	s.scimRateLimiter = middleware.NewRateLimiter(10.0, 100, cfg.UseProxy, additionalProxyList)
@@ -316,7 +312,6 @@ func (s *Server) initialize() error {
 	// on client_secret/code guessing. Kept separate from the user-keyed
 	// authRateLimiter for exactly this reason.
 	s.oauthTokenLimiter = middleware.NewRateLimiter(20.0/60.0, 30, cfg.UseProxy, additionalProxyList)
-	// User-keyed limiters (authenticated endpoints — key by user ID, optionally skip IP)
 	s.authRateLimiter = middleware.NewRateLimiter(20.0/60.0, 30, cfg.UseProxy, additionalProxyList, userKeyedOpts...)
 	s.aiRateLimiter = middleware.NewRateLimiter(20.0/60.0, 30, cfg.UseProxy, additionalProxyList, userKeyedOpts...)
 	s.uploadLimiter = middleware.NewRateLimiter(10.0/60.0, 15, cfg.UseProxy, additionalProxyList, userKeyedOpts...)
@@ -327,10 +322,8 @@ func (s *Server) initialize() error {
 	// can't starve the others. Applied to the api group below.
 	s.userConcurrency = middleware.NewUserConcurrencyLimiter(cfg.MaxUserConcurrency)
 
-	// Initialize token tracker
 	s.tokenTracker = services.NewTokenTracker(s.db, services.DefaultTokenTrackerConfig())
 
-	// Create token manager
 	apiTokenCacheMB, _ := config.SplitSSHCacheBudget(s.memoryBudget.APITokenCacheMB, cfg.SSH.Enabled)
 	tokenManager := auth.NewTokenManager(s.db, s.tokenTracker, apiTokenCacheMB)
 	if cleaned, cleanupErr := tokenManager.CleanupExpiredTokens(); cleanupErr != nil {
@@ -383,7 +376,6 @@ func (s *Server) initialize() error {
 		return fmt.Errorf("failed to create notification manager: %w", err)
 	}
 
-	// Initialize notification service
 	s.notificationService = services.NewNotificationService(
 		s.db,
 		s.notificationManager,
@@ -391,7 +383,6 @@ func (s *Server) initialize() error {
 		services.DefaultNotificationServiceConfig(),
 	)
 
-	// Initialize SMTP and schedulers
 	smtpSender := smtp.NewNotificationSMTPSender(s.db)
 	s.notificationScheduler = scheduler.NewNotificationScheduler(s.db, smtpSender, cfg.Notification.BatchInterval, s.notificationService)
 	s.notificationScheduler.Start()
@@ -428,16 +419,13 @@ func (s *Server) initialize() error {
 	slog.Info("global rank migration scheduler started", "owner", globalRankOwner)
 	slog.Info("recurrence scheduler started")
 
-	// Initialize shared execution chain store for cross-application loop prevention
 	chainStore := services.NewExecutionChainStore()
 
-	// Initialize action service
 	s.actionService = services.NewActionService(s.db, services.DefaultActionServiceConfig(), chainStore)
 	s.actionService.SetNotificationService(s.notificationService)
 	s.actionService.SetPermissionService(permService)
 	slog.Info("action service initialized")
 
-	// Initialize asset action service (shared chain store for cross-application loop prevention)
 	s.assetActionService = services.NewAssetActionService(s.db, services.DefaultActionServiceConfig(), chainStore)
 	s.assetActionService.SetNotificationService(s.notificationService)
 	s.assetActionService.SetPermissionService(permService)
@@ -451,22 +439,16 @@ func (s *Server) initialize() error {
 		baseURL = fmt.Sprintf("http://localhost:%s%s", cfg.Port, cfg.ContextPath)
 	}
 
-	// Initialize email verification service
 	emailVerificationService := services.NewEmailVerificationService(s.db, smtpSender, baseURL)
 
-	// Initialize portal session manager
 	portalSessionManager := auth.NewPortalSessionManager(s.db, enableHTTPS, cfg.UseProxy, additionalProxyList, cfg.Auth.SessionSecret)
 
-	// Initialize magic link service
 	magicLinkService := services.NewMagicLinkService(s.db, smtpSender, baseURL)
 
-	// Initialize invitation service
 	invitationService := services.NewInvitationService(s.db, smtpSender, baseURL)
 
-	// Initialize workspace key cache (resolves workspace keys to IDs without DB lookups)
 	workspaceKeyCache := handlers.NewWorkspaceKeyCache(repository.NewWorkspaceRepository(s.db))
 
-	// Initialize handlers
 	transitionMatrixService := services.NewTransitionMatrixService(s.db)
 	bulkOperationMetrics := services.NewBulkOperationMetrics()
 	itemHandler := handlers.NewItemHandler(s.db, permService, s.activityTracker, s.notificationService, s.memoryBudget.ItemCacheMB)
@@ -499,7 +481,6 @@ func (s *Server) initialize() error {
 		})
 	})
 
-	// Generic enum handlers
 	hierarchyLevelConfig := services.NewHierarchyLevelConfig()
 	hierarchyLevelConfig.AuditEmit = enumAuditEmit
 	hierarchyLevelHandler := handlers.NewEnumHandler(
@@ -569,7 +550,6 @@ func (s *Server) initialize() error {
 	)
 	agentHandler := handlers.NewAgentHandler(s.db, permService)
 
-	// SCIM handlers
 	scimTokenManager := auth.NewSCIMTokenManager(s.db, s.memoryBudget.SCIMTokenCacheMB)
 	scimAuthMiddleware := middleware.NewSCIMAuthMiddleware(scimTokenManager)
 	scimHandler := handlers.NewSCIMHandler(
@@ -588,7 +568,6 @@ func (s *Server) initialize() error {
 	permissionSetHandler := handlers.NewPermissionSetHandlerWithPool(repository.NewPermissionSetRepository(s.db), permService, logger.NewAuditor(s.db))
 	workspaceRoleHandler := handlers.NewWorkspaceRoleHandlerWithPool(repository.NewWorkspaceRoleRepository(s.db), permService, logger.NewAuditor(s.db))
 
-	// Time tracking handlers
 	timePermissionService := services.NewTimePermissionService(s.db, permService)
 	customerOrgPermissionService := services.NewCustomerOrganisationPermissionService(s.db, permService, timePermissionService)
 	timeCustomerHandler := handlers.NewTimeCustomerHandler(repository.NewCustomerOrganisationRepository(s.db), logger.NewAuditor(s.db), timePermissionService, customerOrgPermissionService)
@@ -601,7 +580,6 @@ func (s *Server) initialize() error {
 	timeProjectPermissionHandler := handlers.NewTimeProjectPermissionHandler(logger.NewAuditor(s.db), timePermissionService)
 	customerOrgPermissionHandler := handlers.NewCustomerOrganisationPermissionHandler(logger.NewAuditor(s.db), customerOrgPermissionService)
 
-	// Test management handlers
 	testFolderHandler := handlers.NewTestFolderHandler(services.NewTestFolderService(s.db), logger.NewAuditor(s.db))
 	testCaseHandler := handlers.NewTestCaseHandlerWithPool(services.NewTestCaseService(s.db), logger.NewAuditor(s.db))
 	testSetHandler := handlers.NewTestSetHandlerWithPool(services.NewTestSetService(s.db), logger.NewAuditor(s.db))
@@ -609,17 +587,13 @@ func (s *Server) initialize() error {
 	testRunHandler := handlers.NewTestRunHandlerWithPool(services.NewTestRunService(s.db), logger.NewAuditor(s.db))
 	testSummaryHandler := handlers.NewTestSummaryHandlerWithPool(repository.NewTestSummaryRepository(s.db))
 
-	// Link management handlers
 	linkTypeHandler := handlers.NewLinkTypeHandler(repository.NewLinkTypeRepository(s.db), logger.NewAuditor(s.db))
 	itemLinkHandler := handlers.NewItemLinkHandler(s.db, s.notificationService, permService)
 
-	// Label handler
 	labelHandler := handlers.NewLabelHandler(repository.NewLabelRepository(s.db), repository.NewItemRepository(s.db), permService, logger.NewAuditor(s.db))
 
-	// Work item template handler (WI-438)
 	itemTemplateHandler := handlers.NewItemTemplateHandler(repository.NewTemplateRepository(s.db), permService, logger.NewAuditor(s.db))
 
-	// Knowledge pages handler (workspace-scoped wiki).
 	pageLabelRepo := repository.NewPageLabelRepository(s.db)
 	pageService := services.NewPageService(s.db)
 	pageService.SetPageLabelRepository(pageLabelRepo)
@@ -638,10 +612,8 @@ func (s *Server) initialize() error {
 	knowledgeSearchHandler := handlers.NewKnowledgeSearchHandler(knowledgeRetrieval)
 	pageLabelHandler := handlers.NewPageLabelHandler(pageLabelRepo, pagePermissionService, logger.NewAuditor(s.db))
 
-	// Recurrence handler
 	recurrenceHandler := handlers.NewRecurrenceHandler(repository.NewRecurrenceRepository(s.db), repository.NewItemRepository(s.db), s.recurrenceScheduler, permService, logger.NewAuditor(s.db))
 
-	// Actions handler
 	actionsHandler := handlers.NewActionsHandler(
 		repository.NewActionRepository(s.db),
 		repository.NewActionCredentialRepository(s.db),
@@ -711,7 +683,6 @@ func (s *Server) initialize() error {
 	// constructor — see the block right after the SCM handlers are
 	// built, since scm.CredentialResolver needs scmProviderHandler.GetEncryption().
 
-	// Admin rate limiter
 	var adminRateLimiter *middleware.AdminFallbackRateLimiter
 	if cfg.EnableAdminFallback {
 		adminRateLimiter = middleware.NewAdminFallbackRateLimiter(s.db)
@@ -723,7 +694,6 @@ func (s *Server) initialize() error {
 		webAuthnHandler.SetAuthPolicyHandler(authPolicyHandler)
 	}
 
-	// Initialize auth handler
 	authHandler := handlers.NewAuthHandler(
 		repository.NewUserRepository(s.db),
 		repository.NewCredentialRepository(s.db),
@@ -737,7 +707,6 @@ func (s *Server) initialize() error {
 		adminRateLimiter,
 	)
 
-	// Initialize invitation handler
 	invitationHandler := handlers.NewInvitationHandler(invitationService)
 
 	themeHandler := handlers.NewThemeHandler(services.NewThemeService(repository.NewThemeRepository(s.db)), logger.NewAuditor(s.db))
@@ -760,13 +729,10 @@ func (s *Server) initialize() error {
 
 	permissionMiddleware := middleware.NewPermissionMiddleware(s.db, permService)
 
-	// Setup handler
 	setupHandler := handlers.NewSetupHandler(s.db, sessionManager, authMiddleware)
 
-	// SSO handler
 	ssoHandler := handlers.NewSSOHandler(s.db, sessionManager, permService, emailVerificationService, s.pluginManager, cfg.Auth.SessionSecret, baseURL, cfg.AllowedHosts, cfg.DisableCSRF, ipExtractor, cfg.UseProxy, additionalProxyList)
 
-	// SCM provider handler
 	scmProviderHandler := handlers.NewSCMProviderHandler(s.db, cfg.Auth.SessionSecret, baseURL)
 	scmWorkspaceRepo := repository.NewSCMWorkspaceRepository(s.db)
 	scmWorkspaceHandler := handlers.NewSCMWorkspaceHandler(scmWorkspaceRepo, scmProviderHandler.GetEncryption(), scmProviderHandler, scm.NewCredentialResolver(s.db, scmProviderHandler.GetEncryption()), permService, baseURL)
@@ -892,7 +858,6 @@ func (s *Server) initialize() error {
 		services.SetItemAssigneeTrigger(bindingSvc)
 	}
 
-	// Asset management handlers
 	assetHandler := handlers.NewAssetHandler(s.db, permService, cfg.AttachmentPath)
 	assetHandler.SetAssetActionService(s.assetActionService)
 	if n, err := assetHandler.ReconcileInterruptedImports(); err != nil {
@@ -915,18 +880,15 @@ func (s *Server) initialize() error {
 	)
 	assetActionHandler := handlers.NewAssetActionHandler(repository.NewAssetActionRepository(s.db), assetHandler, s.assetActionService, logger.NewAuditor(s.db))
 
-	// Jira import handler
 	jiraImportHandler := handlers.NewJiraImportHandler(s.db, cfg.Auth.SessionSecret, cfg.Jira.CapturePayloadsDir)
 
 	// Share one credential manager so every in-process refresh/callback path
 	// uses the same per-channel lock and CAS config writer.
 	emailCredManager := email.NewCredentialManager(s.db, scmProviderHandler.GetEncryption())
 
-	// Email provider handler
 	emailProviderHandler := handlers.NewEmailProviderHandler(s.db, scmProviderHandler.GetEncryption(), baseURL, channelService)
 	emailProviderHandler.SetCredentialManager(emailCredManager)
 
-	// Email scheduler
 	s.emailScheduler = scheduler.NewEmailScheduler(s.db, emailCredManager, cfg.AttachmentPath)
 	s.emailScheduler.Start()
 	slog.Info("email scheduler started (IMAP polling)")
@@ -937,7 +899,6 @@ func (s *Server) initialize() error {
 	s.emailTrackingRetention = scheduler.NewEmailTrackingRetentionSweeper(s.db)
 	s.emailTrackingRetention.Start()
 
-	// Integration provider handlers
 	integrationProviderHandler := handlers.NewIntegrationProviderHandler(repository.NewIntegrationProviderRepository(s.db), scmProviderHandler.GetEncryption(), logger.NewAuditor(s.db))
 	integrationOAuthHandler := handlers.NewIntegrationOAuthHandler(s.db, scmProviderHandler.GetEncryption(), baseURL)
 	integrationItemLinksHandler := handlers.NewIntegrationItemLinksHandler(s.db, scmProviderHandler.GetEncryption(), permService)
@@ -945,24 +906,18 @@ func (s *Server) initialize() error {
 	s.todoistSyncScheduler = scheduler.NewTodoistSyncScheduler(s.db, scmProviderHandler.GetEncryption())
 	s.todoistSyncScheduler.Start()
 
-	// SCM sync service (started below once smart-commit dependencies exist)
 	scmSyncService := scm.NewSyncService(s.db, scmProviderHandler.GetEncryption())
 
-	// Issue sync service
 	issueSyncService := scm.NewIssueSyncService(s.db, scmProviderHandler.GetEncryption())
 	issueSyncService.SetUserService(services.NewUserReadService(s.db))
 
-	// Start issue sync scheduler
 	go s.runIssueSync(issueSyncService)
 
-	// Start magic link cleanup scheduler
 	go s.runMagicLinkCleanup(magicLinkService)
 
-	// Webhook sender
 	webhookSender := webhook.NewWebhookSender(s.db, scmProviderHandler.GetEncryption())
 	s.webhookSender = webhookSender
 
-	// Event coordinator
 	eventCoordinator := services.NewEventCoordinator(s.db)
 	eventCoordinator.SetNotificationService(s.notificationService)
 	eventCoordinator.SetActivityTracker(s.activityTracker)
@@ -989,12 +944,10 @@ func (s *Server) initialize() error {
 	services.SetItemChangePublisher(sseHub)
 	itemHandler.SetSSEHub(sseHub)
 
-	// Mention service
 	mentionService := services.NewMentionService(s.db, s.notificationService, permService)
 	itemHandler.SetMentionService(mentionService)
 	commentHandler.SetMentionService(mentionService)
 
-	// Comment service
 	commentService := services.NewCommentService(s.db)
 	commentService.SetActivityTracker(s.activityTracker)
 	commentService.SetNotificationService(s.notificationService)
@@ -1023,17 +976,14 @@ func (s *Server) initialize() error {
 
 	slog.Info("comment service initialized")
 
-	// Wire up action service
 	itemHandler.SetActionService(s.actionService)
 	itemHandler.SetIssueSyncService(issueSyncService)
 	itemLinkHandler.SetActionService(s.actionService)
 
-	// Wire up condition service for workflow transition conditions
 	scriptEngine := services.NewScriptEngine()
 	conditionService := services.NewConditionService(s.db, permService, scriptEngine)
 	itemHandler.SetConditionService(conditionService)
 
-	// Wire up approval service for status-bound approvals (sibling of conditions).
 	approvalService := services.NewApprovalService(s.db, leaveRepo, workflowService)
 	approvalService.SetEventCoordinator(eventCoordinator)
 	approvalSetService := services.NewApprovalSetService(s.db)
@@ -1112,7 +1062,6 @@ func (s *Server) initialize() error {
 	go s.runSCMLinkRefresh(scmSyncService)
 	go s.runSCMOAuthStateCleanup()
 
-	// Channel handler (reuses the shared channelService initialized earlier)
 	channelRepoForHandler := repository.NewChannelRepository(s.db)
 	channelHandler := handlers.NewChannelHandler(
 		channelRepoForHandler,
@@ -1161,11 +1110,9 @@ func (s *Server) initialize() error {
 	formHandler := handlers.NewFormHandler(s.db, sessionManager, portalSessionManager, ipExtractor, channelService)
 	formHandler.SetEventCoordinator(eventCoordinator)
 
-	// Notification settings
 	notificationSettingsHandler := handlers.NewNotificationSettingsHandler(repository.NewNotificationSettingsRepository(s.db), logger.NewAuditor(s.db), s.notificationService)
 	configSetNotificationHandler := handlers.NewConfigurationSetNotificationHandler(repository.NewConfigurationSetRepository(s.db), s.notificationService, logger.NewAuditor(s.db))
 
-	// Attachment handlers
 	var attachmentHandler *handlers.AttachmentHandler
 	var attachmentSettingsHandler *handlers.AttachmentSettingsHandler
 	if cfg.AttachmentPath != "" {
@@ -1184,10 +1131,8 @@ func (s *Server) initialize() error {
 		slog.Info("attachments disabled (no attachment path specified)")
 	}
 
-	// Diagram handler
 	diagramHandler := handlers.NewDiagramHandler(repository.NewDiagramRepository(s.db), repository.NewItemRepository(s.db), permService)
 
-	// Plugin system
 	var pluginRouter *plugins.Router
 	if !cfg.Plugins.Disabled {
 		var pluginOpts []plugins.Option
@@ -1242,7 +1187,6 @@ func (s *Server) initialize() error {
 
 	pluginHandler := handlers.NewPluginHandler(s.pluginManager, repository.NewPluginRegistryRepository(s.db), logger.NewAuditor(s.db), cfg.Plugins.Disabled)
 
-	// Audit log handler
 	auditLogHandler := handlers.NewAuditLogHandler(repository.NewAuditLogRepository(s.db))
 
 	// LDAP handler — keep on Server so Shutdown can drain in-flight syncs.
@@ -1253,17 +1197,14 @@ func (s *Server) initialize() error {
 	s.ldapHandler = handlers.NewLDAPHandler(s.db, ldapSyncService, ssoHandler.GetEncryption())
 	ldapHandler := s.ldapHandler
 
-	// Features handler
 	featuresHandler := handlers.NewFeaturesHandler(s.pluginManager, cfg.SSH.Enabled, cfg.Logbook.Endpoint != "")
 
-	// System handler
 	shutdownChan := cfg.ShutdownChan
 	if shutdownChan == nil {
 		shutdownChan = make(chan os.Signal, 1)
 	}
 	systemHandler := handlers.NewSystemHandler(shutdownChan)
 
-	// LLM connection manager and AI handler
 	llmConnHandler := handlers.NewLLMConnectionHandler(llmManager, logger.NewAuditor(s.db), llmModelCache, llmModelRefresher)
 	aiHandler := handlers.NewAIHandler(
 		s.db,
@@ -1295,11 +1236,9 @@ func (s *Server) initialize() error {
 		channelService,
 	)
 
-	// Briefing scheduler (generates daily briefings for all users)
 	s.briefingScheduler = scheduler.NewBriefingScheduler(s.db, llmManager, permService, timePermissionService, services.NewUserReadService(s.db), promptStore)
 	s.briefingScheduler.Start()
 
-	// Logbook reverse proxy (optional sidecar)
 	if cfg.Logbook.Endpoint != "" {
 		proxyCfg := LogbookProxyConfig{
 			Endpoint:          cfg.Logbook.Endpoint,

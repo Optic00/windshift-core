@@ -199,7 +199,6 @@ func NewActionService(db database.Database, config ActionServiceConfig, chainSto
 		chainStore:  chainStore,
 	}
 
-	// Build the initial cache before accepting events.
 	if err := service.refreshActionCache(); err != nil {
 		slog.Warn("failed to load initial action cache", slog.String("component", "actions"), slog.Any("error", err))
 	}
@@ -481,7 +480,7 @@ func (as *ActionService) processEvent(event *models.ActionEvent) error { //nolin
 		slog.Int("cascade_depth", event.CascadeDepth),
 	)
 
-	// Check cascade depth limit (uses event's immutable depth)
+	// Enforce the cascade depth limit.
 	if event.CascadeDepth >= MaxCascadeDepth {
 		slog.Warn("action execution depth limit reached",
 			slog.String("component", "actions"),
@@ -491,7 +490,7 @@ func (as *ActionService) processEvent(event *models.ActionEvent) error { //nolin
 		return nil
 	}
 
-	// Get chain state from cache for cycle detection (if cascaded event)
+	// Load chain state for cascade loop detection.
 	var chain *ExecutionChain
 	if event.ExecutionChainID != "" {
 		chain = as.getChain(event.ExecutionChainID)
@@ -500,11 +499,10 @@ func (as *ActionService) processEvent(event *models.ActionEvent) error { //nolin
 				slog.String("component", "actions"),
 				slog.String("chain_id", event.ExecutionChainID),
 			)
-			// Chain expired or missing - treat as new chain (safe default)
+			// Missing chains start fresh as a safe default.
 		}
 	}
 
-	// Get actions for this workspace from cache
 	as.cacheMu.RLock()
 	actions := as.actionCache[event.WorkspaceID]
 	as.cacheMu.RUnlock()
@@ -517,9 +515,7 @@ func (as *ActionService) processEvent(event *models.ActionEvent) error { //nolin
 		return nil
 	}
 
-	// Find matching actions
 	for _, action := range actions {
-		// Cycle detection: skip if this action already ran in this chain
 		actionKey := fmt.Sprintf("workspace:%d", action.ID)
 		if chain != nil && chain.HasExecuted(actionKey) {
 			slog.Debug("skipping action - already executed in chain",
@@ -587,7 +583,6 @@ func (as *ActionService) matchesTrigger(action *models.Action, event *models.Act
 
 	switch event.EventType {
 	case models.ActionTriggerStatusTransition:
-		// Check from_status_id and to_status_id conditions
 		if config.FromStatusID != nil {
 			oldStatusID := utils.InterfaceToIntPtr(event.OldValues["status_id"])
 			if oldStatusID == nil || *oldStatusID != *config.FromStatusID {
@@ -600,9 +595,7 @@ func (as *ActionService) matchesTrigger(action *models.Action, event *models.Act
 				return false
 			}
 		}
-		// Category-based filter: matches when the destination status's
-		// category.is_completed equals the configured value. Lets templates
-		// say "fire on any terminal transition" without per-workflow IDs.
+		// Match the destination status category when configured.
 		if config.ToStatusCategoryIsCompleted != nil {
 			newStatusID := utils.InterfaceToIntPtr(event.NewValues["status_id"])
 			if newStatusID == nil {
@@ -618,16 +611,13 @@ func (as *ActionService) matchesTrigger(action *models.Action, event *models.Act
 		}
 
 	case models.ActionTriggerItemCreated, models.ActionTriggerItemUpdated:
-		// Check item_type_id filter. Events carry Item.ItemTypeID which is
-		// *int, so a raw `.(int)` assertion would always fail — route through
-		// InterfaceToIntPtr to unwrap *int / int / int64 / float64 uniformly.
+		// Normalize item type IDs before comparing them.
 		if config.ItemTypeID != nil {
 			itemTypeID := utils.InterfaceToIntPtr(event.NewValues["item_type_id"])
 			if itemTypeID == nil || *itemTypeID != *config.ItemTypeID {
 				return false
 			}
 		}
-		// For item_updated, check field_name filter
 		if event.EventType == models.ActionTriggerItemUpdated && config.FieldName != "" {
 			if _, changed := event.NewValues[config.FieldName]; !changed {
 				return false
@@ -635,8 +625,7 @@ func (as *ActionService) matchesTrigger(action *models.Action, event *models.Act
 		}
 
 	case models.ActionTriggerItemLinked:
-		// Check link_type_id filter — same unwrapping as item_type_id so this
-		// keeps working if the event emitter ever starts sending *int.
+		// Normalize link type IDs before comparing them.
 		if config.LinkTypeID != nil {
 			linkTypeID := utils.InterfaceToIntPtr(event.NewValues["link_type_id"])
 			if linkTypeID == nil || *linkTypeID != *config.LinkTypeID {
@@ -645,14 +634,12 @@ func (as *ActionService) matchesTrigger(action *models.Action, event *models.Act
 		}
 
 	case models.ActionTriggerSCMPRLinked, models.ActionTriggerSCMPRMerged:
-		// Optional workspace repository filter.
 		if config.WorkspaceRepositoryID != nil {
 			repoID := utils.InterfaceToIntPtr(event.NewValues["repo.workspace_repository_id"])
 			if repoID == nil || *repoID != *config.WorkspaceRepositoryID {
 				return false
 			}
 		}
-		// Optional repository slug filter (case-insensitive).
 		if config.RepositoryFullName != "" {
 			fullName := fmt.Sprintf("%v", event.NewValues["repo.full_name"])
 			if !strings.EqualFold(fullName, config.RepositoryFullName) {
@@ -677,26 +664,23 @@ func (as *ActionService) executeAction(action *models.Action, event *models.Acti
 	}
 	startTime := time.Now()
 
-	// Get or create execution chain for cascade tracking
+	// Load or create the execution chain.
 	chainID := event.ExecutionChainID
 	if chainID == "" {
-		// First action in chain - create new chain
+		// Start a new chain when no chain ID was supplied.
 		chainID = uuid.New().String()
 		chain = as.createChain(chainID)
 	} else if chain == nil {
-		// Chain ID exists but chain not found (expired) - create new one
+		// Recreate an expired or missing chain.
 		chain = as.createChain(chainID)
 	}
 
-	// Mark this action as executed (for cycle detection)
 	actionKey := fmt.Sprintf("workspace:%d", action.ID)
 	chain.MarkExecuted(actionKey)
 
-	// Create execution log — both the trigger user and the user whose perms
-	// actually governed the run are recorded for the audit trail.
+	// Record both the trigger user and effective permission actor.
 	triggerUserID := event.ActorUserID
-	// Effective actor starts as the trigger user; action.ActorUserID may
-	// override it below.
+	// The action may override the triggering user below.
 	effectiveActorID := event.ActorUserID
 	log := &models.ActionExecutionLog{
 		ActionID:             action.ID,
@@ -725,7 +709,6 @@ func (as *ActionService) executeAction(action *models.Action, event *models.Acti
 		log.EffectiveActorUserID = &effectiveActorID
 	}
 
-	// SCM sync triggers need an actor override for workspace mutations.
 	if (action.TriggerType == models.ActionTriggerSCMPRLinked || action.TriggerType == models.ActionTriggerSCMPRMerged) && effectiveActorID <= 0 {
 		log.Status = models.ActionStatusFailed
 		log.ErrorMessage = "SCM trigger requires an actor_user_id override because the sync loop has no authenticated user"
@@ -735,7 +718,6 @@ func (as *ActionService) executeAction(action *models.Action, event *models.Acti
 		return fmt.Errorf("SCM trigger action %d requires an actor_user_id override", action.ID)
 	}
 
-	// Build execution context
 	ctx := &models.ExecutionContext{
 		Action:           action,
 		Event:            event,
@@ -745,9 +727,7 @@ func (as *ActionService) executeAction(action *models.Action, event *models.Acti
 		ChainID:          chainID,
 	}
 
-	// Populate initial variables from event. actor_user_id exposes the
-	// *effective* actor to downstream template expansion since that is the
-	// identity the action is impersonating.
+	// Expose the effective actor to template expansion.
 	ctx.Variables["item_id"] = event.ItemID
 	ctx.Variables["workspace_id"] = event.WorkspaceID
 	ctx.Variables["actor_user_id"] = effectiveActorID
@@ -759,7 +739,6 @@ func (as *ActionService) executeAction(action *models.Action, event *models.Acti
 		ctx.Variables["new_"+k] = v
 	}
 
-	// Get topologically sorted nodes
 	sortedNodes, err := as.topologicalSort(action.Nodes, action.Edges)
 	if err != nil {
 		log.Status = models.ActionStatusFailed
@@ -772,10 +751,8 @@ func (as *ActionService) executeAction(action *models.Action, event *models.Acti
 		return fmt.Errorf("failed to topologically sort nodes: %w", err)
 	}
 
-	// Execute nodes in order
 	executedNodes := make(map[int]bool)
 	for _, node := range sortedNodes {
-		// Skip trigger nodes - they're just entry points
 		if node.NodeType == models.ActionNodeTrigger {
 			executedNodes[node.ID] = true
 			continue
@@ -789,7 +766,6 @@ func (as *ActionService) executeAction(action *models.Action, event *models.Acti
 			continue
 		}
 
-		// Check if all incoming edges allow execution
 		canExecute := as.canExecuteNode(node.ID, action.Edges, executedNodes, ctx)
 		if !canExecute {
 			continue
@@ -837,7 +813,7 @@ func (as *ActionService) executeAction(action *models.Action, event *models.Acti
 			stepResult.ErrorMessage = err.Error()
 			ctx.StepResults = append(ctx.StepResults, stepResult)
 
-			// Log failure but continue - some failures are acceptable
+			// Continue after recording the failed step.
 			slog.Warn("node execution failed",
 				slog.String("component", "actions"),
 				slog.Int("node_id", node.ID),
@@ -851,17 +827,13 @@ func (as *ActionService) executeAction(action *models.Action, event *models.Acti
 		}
 	}
 
-	// Tear down any containers started during this run — they exist only to
-	// service nodes inside this action, and the auto-teardown timeout is a
-	// coarse upper bound, not a cleanup signal.
+	// Clean up containers started by this action.
 	as.cleanupActionContainers(ctx.StepResults)
 
-	// Update execution log
 	completedAt := time.Now()
 	log.CompletedAt = &completedAt
 	log.Status = models.ActionStatusCompleted
 
-	// Check if any step failed
 	for _, result := range ctx.StepResults {
 		if result.Status == models.ActionStatusFailed {
 			log.Status = models.ActionStatusFailed
@@ -869,7 +841,6 @@ func (as *ActionService) executeAction(action *models.Action, event *models.Acti
 		}
 	}
 
-	// Serialize execution trace
 	if trace, err := json.Marshal(ctx.StepResults); err == nil {
 		log.ExecutionTrace = string(trace)
 	}
@@ -910,7 +881,6 @@ func (as *ActionService) topologicalSort(nodes []models.ActionNode, edges []mode
 		inDegree[edge.TargetNodeID]++
 	}
 
-	// Find nodes with no incoming edges
 	queue := []int{}
 	for nodeID, degree := range inDegree {
 		if degree == 0 {
@@ -935,7 +905,6 @@ func (as *ActionService) topologicalSort(nodes []models.ActionNode, edges []mode
 		}
 	}
 
-	// Check for cycles
 	if len(sorted) != len(nodes) {
 		return nil, fmt.Errorf("cycle detected in action flow")
 	}
@@ -954,12 +923,10 @@ func (as *ActionService) canExecuteNodeWithResults(nodeID int, edges []models.Ac
 		if edge.TargetNodeID == nodeID {
 			hasIncomingEdge = true
 
-			// Check if source was executed
 			if !executedNodes[edge.SourceNodeID] {
 				return false
 			}
 
-			// For condition edges, check the edge type matches the condition result.
 			if edge.EdgeType == "true" || edge.EdgeType == "false" {
 				foundConditionResult := false
 				for _, result := range stepResults {

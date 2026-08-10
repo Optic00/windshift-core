@@ -498,7 +498,6 @@ func (g *SQLGenerator) generateComparison(node *ASTNode) (sql string, args []int
 		}
 	}
 
-	// Detect custom fields after reference-field rewriting.
 	isCustomFieldComparison := false
 	if !isReferenceFieldComparison && node.Left.Type == NodeIdentifier {
 		fieldLower := strings.ToLower(node.Left.Value)
@@ -604,7 +603,6 @@ func (g *SQLGenerator) generateComparison(node *ASTNode) (sql string, args []int
 		copy(escapedArgs, leftArgs[:len(leftArgs)-1])
 		escapedArgs = append(escapedArgs, escapeLikePattern(leftArgs[len(leftArgs)-1]))
 
-		// Convert to SQL LIKE with wildcards
 		if isReferenceFieldComparison {
 			// For reference field comparisons, add NULL check to exclude items without the field
 			return fmt.Sprintf("(%s IS NOT NULL AND %s LIKE %s ESCAPE '\\')", leftSQL, leftSQL, "'%' || ? || '%'"), escapedArgs, nil
@@ -963,7 +961,6 @@ func (g *SQLGenerator) generateItemLinkedOf(node *ASTNode) (sql string, args []i
 			)
 	)`, innerSQL, innerSQL)
 
-	// Add link label arguments (used multiple times in the query)
 	args = make([]interface{}, 0, 6+2*len(innerArgs))
 	args = append(args, linkLabel, linkLabel, linkLabel, linkLabel, linkLabel)
 	args = append(args, innerArgs...) // First occurrence of inner query
@@ -989,7 +986,6 @@ func (g *SQLGenerator) generateAssetLinkedOf(node *ASTNode) (sql string, args []
 		return "", nil, fmt.Errorf("linkedOf() second argument (QL query) error: %w", err)
 	}
 
-	// Parse and generate SQL for the inner QL query (queries items)
 	innerTokenizer := NewTokenizer(innerQL)
 	innerTokens, err := innerTokenizer.Tokenize()
 	if err != nil {
@@ -1002,7 +998,6 @@ func (g *SQLGenerator) generateAssetLinkedOf(node *ASTNode) (sql string, args []
 		return "", nil, fmt.Errorf("linkedOf() inner query parse error: %w", err)
 	}
 
-	// Use item SQL generator for the inner query (querying items, not assets).
 	// itemCustomFieldMap is the item-side custom-field map supplied by the
 	// asset evaluator's caller — required for cf_<name> inside linkedOf() to
 	// resolve to the numeric JSON key used in items.custom_field_values.
@@ -1058,7 +1053,6 @@ func (g *SQLGenerator) generateAssetLinkedOf(node *ASTNode) (sql string, args []
 			)
 	)`, innerSQL, innerSQL)
 
-	// Add link label arguments
 	args = make([]interface{}, 0, 2+2*len(innerArgs))
 	args = append(args, linkLabel, linkLabel)
 	args = append(args, innerArgs...) // First occurrence of inner query
@@ -1591,7 +1585,6 @@ func (g *SQLGenerator) mapAssetFieldName(fieldName string) (expr string, args []
 		return g.jsonExtractLiteralKey(prefix+"a.custom_field_values", id), nil, nil
 	}
 
-	// Check for custom field syntax: cf_fieldname or custom.fieldname
 	if strings.HasPrefix(lowerField, "cf_") {
 		customFieldName := fieldName[3:]
 		if !validCustomFieldNameRegex.MatchString(customFieldName) {
@@ -1610,27 +1603,22 @@ func (g *SQLGenerator) mapAssetFieldName(fieldName string) (expr string, args []
 		return sql, args, nil
 	}
 
-	// Standard asset field mappings
 	switch lowerField {
-	// Set fields (equivalent to workspace for items)
 	case "set", "setname", "set_name":
 		return prefix + "ams.name", nil, nil
 	case "setid", "set_id":
 		return prefix + "a.set_id", nil, nil
 
-	// Status fields
 	case "status":
 		return prefix + "ast.name", nil, nil
 	case "statusid", "status_id":
 		return prefix + "a.status_id", nil, nil
 
-	// Type fields
 	case "type", "assettype", "asset_type":
 		return prefix + "at.name", nil, nil
 	case "typeid", "type_id", "assettypeid", "asset_type_id":
 		return prefix + "a.asset_type_id", nil, nil
 
-	// Category fields
 	case "category":
 		return prefix + "ac.name", nil, nil
 	case "categoryid", "category_id":
@@ -1638,7 +1626,6 @@ func (g *SQLGenerator) mapAssetFieldName(fieldName string) (expr string, args []
 	case "categorypath", "category_path":
 		return prefix + "ac.path", nil, nil
 
-	// Basic text fields
 	case "title":
 		return prefix + "a.title", nil, nil
 	case "description":
@@ -1646,19 +1633,16 @@ func (g *SQLGenerator) mapAssetFieldName(fieldName string) (expr string, args []
 	case "tag", "assettag", "asset_tag":
 		return prefix + "a.asset_tag", nil, nil
 
-	// Date fields
 	case "created", "created_at", "createdat":
 		return prefix + "a.created_at", nil, nil
 	case "updated", "updated_at", "updatedat":
 		return prefix + "a.updated_at", nil, nil
 
-	// Creator fields
 	case "creator", "creatorid", "creator_id", "createdby", "created_by":
 		return prefix + "a.created_by", nil, nil
 	case "creatorname", "creator_name":
 		return prefix + "u.first_name || ' ' || " + prefix + "u.last_name", nil, nil
 
-	// ID
 	case "id":
 		return prefix + "a.id", nil, nil
 
@@ -1679,7 +1663,6 @@ func (g *SQLGenerator) mapItemFieldName(fieldName string) (expr string, args []i
 		return g.jsonExtractLiteralKey(prefix+"i.custom_field_values", id), nil, nil
 	}
 
-	// Check for custom field syntax: cf_fieldname or custom.fieldname
 	if strings.HasPrefix(lowerField, "cf_") {
 		// Extract field name after "cf_" prefix
 		customFieldName := fieldName[3:]
@@ -1700,9 +1683,7 @@ func (g *SQLGenerator) mapItemFieldName(fieldName string) (expr string, args []i
 		return sql, args, nil
 	}
 
-	// Standard field mappings
 	switch lowerField {
-	// Workspace fields
 	case "workspace":
 		return prefix + "w.name", nil, nil
 	case "workspaceid", "workspace_id":
@@ -1710,7 +1691,6 @@ func (g *SQLGenerator) mapItemFieldName(fieldName string) (expr string, args []i
 	case "workspacekey":
 		return prefix + "w.key", nil, nil
 
-	// Status and priority
 	case "status":
 		return prefix + "st.name", nil, nil
 	case "statusid", "status_id":
@@ -1724,13 +1704,11 @@ func (g *SQLGenerator) mapItemFieldName(fieldName string) (expr string, args []i
 	case "priority":
 		return prefix + "pri.name", nil, nil
 
-	// Basic text fields
 	case "title":
 		return prefix + "i.title", nil, nil
 	case "description":
 		return prefix + "i.description", nil, nil
 
-	// Date fields
 	case "created", "created_at", "createdat":
 		return prefix + "i.created_at", nil, nil
 	case "updated", "updated_at", "updatedat":
@@ -1738,7 +1716,6 @@ func (g *SQLGenerator) mapItemFieldName(fieldName string) (expr string, args []i
 	case "due_date", "due-date", "duedate":
 		return prefix + "i.due_date", nil, nil
 
-	// User assignments
 	case "assignee", "assignee_id", "assigneeid":
 		return prefix + "i.assignee_id", nil, nil
 	case "creator", "creator_id", "creatorid":
