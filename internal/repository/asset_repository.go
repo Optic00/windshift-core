@@ -15,7 +15,6 @@ import (
 	"windshift/internal/utils"
 )
 
-// AssetRepository provides data access methods for asset management
 type AssetRepository struct {
 	db database.Database
 }
@@ -196,16 +195,12 @@ func (r *AssetRepository) Search(query string, setIDs []int, limit int) ([]model
 	return items, nil
 }
 
-// NewAssetRepository creates a new asset repository
 func NewAssetRepository(db database.Database) *AssetRepository {
 	return &AssetRepository{db: db}
 }
 
-// ============================================================================
-// Asset Management Set Operations
-// ============================================================================
+// Asset-set operations.
 
-// ListSetsForUser returns all asset sets accessible by the specified user
 func (r *AssetRepository) ListSetsForUser(userID int, isAdmin bool) ([]models.AssetManagementSet, error) {
 	query := `
 		SELECT ams.id, ams.name, ams.description, ams.is_default,
@@ -266,7 +261,6 @@ func (r *AssetRepository) ListSetsForUser(userID int, isAdmin bool) ([]models.As
 	return sets, nil
 }
 
-// GetSetByID returns an asset set by ID
 func (r *AssetRepository) GetSetByID(setID int) (*models.AssetManagementSet, error) {
 	var set models.AssetManagementSet
 	var creatorName sql.NullString
@@ -386,7 +380,6 @@ func (r *AssetRepository) UpdateSetAndPromotion(set *models.AssetManagementSet) 
 	})
 }
 
-// DeleteSet deletes an asset management set and all associated data
 func (r *AssetRepository) DeleteSet(setID int) error {
 	tx, err := r.db.Begin()
 	if err != nil {
@@ -445,7 +438,6 @@ func (r *AssetRepository) HardDeleteSet(setID int) error {
 	return nil
 }
 
-// GetAssetRoleIDByName returns the id of an asset role by its name (e.g. "Administrator").
 func (r *AssetRepository) GetAssetRoleIDByName(name string) (int, error) {
 	var id int
 	err := r.db.QueryRow(`SELECT id FROM asset_roles WHERE name = ?`, name).Scan(&id)
@@ -469,9 +461,7 @@ func (r *AssetRepository) GetAssetSetCoreByID(setID int) (*models.AssetManagemen
 	return &set, nil
 }
 
-// ============================================================================
-// Role & Permission Operations
-// ============================================================================
+// Role and permission operations.
 
 // GetUserSetRole returns the role a user has for an asset set
 // Priority: Direct User Role > Group Role > Everyone Default
@@ -535,7 +525,6 @@ func (r *AssetRepository) GetUserSetRole(userID, setID int) (*models.AssetRole, 
 	return &role, nil
 }
 
-// RoleHasPermission checks if a role has a specific permission
 func (r *AssetRepository) RoleHasPermission(roleID int, permissionKey string) (bool, error) {
 	if roleID == -1 {
 		return true, nil
@@ -555,7 +544,6 @@ func (r *AssetRepository) RoleHasPermission(roleID int, permissionKey string) (b
 	return count > 0, nil
 }
 
-// GetEveryoneRoleForSet returns the everyone role ID for a set
 func (r *AssetRepository) GetEveryoneRoleForSet(setID int) (*int, error) {
 	var roleID sql.NullInt64
 	err := r.db.QueryRow(`
@@ -577,7 +565,6 @@ func (r *AssetRepository) GetEveryoneRoleForSet(setID int) (*int, error) {
 	return &id, nil
 }
 
-// ListAllRoles returns all available asset roles
 func (r *AssetRepository) ListAllRoles() ([]models.AssetRole, error) {
 	rows, err := r.db.Query(`
 		SELECT id, name, description, is_system, display_order, created_at, updated_at
@@ -603,7 +590,6 @@ func (r *AssetRepository) ListAllRoles() ([]models.AssetRole, error) {
 	return roles, nil
 }
 
-// GetRoleByID returns a role by ID
 func (r *AssetRepository) GetRoleByID(roleID int) (*models.AssetRole, error) {
 	var role models.AssetRole
 	err := r.db.QueryRow(`
@@ -618,7 +604,6 @@ func (r *AssetRepository) GetRoleByID(roleID int) (*models.AssetRole, error) {
 	return &role, nil
 }
 
-// GetRolePermissions returns the permissions for a role
 func (r *AssetRepository) GetRolePermissions(roleID int) ([]models.AssetPermission, error) {
 	rows, err := r.db.Query(`
 		SELECT ap.id, ap.permission_key, ap.permission_name, ap.description, ap.created_at
@@ -646,11 +631,8 @@ func (r *AssetRepository) GetRolePermissions(roleID int) ([]models.AssetPermissi
 	return permissions, nil
 }
 
-// ============================================================================
-// Set Role Assignment Operations
-// ============================================================================
+// Role-assignment operations.
 
-// GetSetUserRoles returns all user role assignments for a set
 func (r *AssetRepository) GetSetUserRoles(setID int) ([]models.UserAssetSetRole, error) {
 	rows, err := r.db.Query(`
 		SELECT uasr.id, uasr.user_id, uasr.set_id, uasr.role_id, uasr.granted_by, uasr.granted_at,
@@ -688,7 +670,6 @@ func (r *AssetRepository) GetSetUserRoles(setID int) ([]models.UserAssetSetRole,
 	return roles, nil
 }
 
-// GetSetGroupRoles returns all group role assignments for a set
 func (r *AssetRepository) GetSetGroupRoles(setID int) ([]models.GroupAssetSetRole, error) {
 	rows, err := r.db.Query(`
 		SELECT gasr.id, gasr.group_id, gasr.set_id, gasr.role_id, gasr.granted_by, gasr.granted_at,
@@ -810,7 +791,6 @@ func (r *AssetRepository) FindSetGroupRolesByGrantDate(setID int) ([]models.Grou
 	return roles, nil
 }
 
-// AssetRoleExists reports whether an asset role exists.
 func (r *AssetRepository) AssetRoleExists(roleID int) (bool, error) {
 	var exists bool
 	err := r.db.QueryRow("SELECT EXISTS(SELECT 1 FROM asset_roles WHERE id = ?)", roleID).Scan(&exists)
@@ -820,8 +800,6 @@ func (r *AssetRepository) AssetRoleExists(roleID int) (bool, error) {
 	return exists, nil
 }
 
-// DeleteUserRoleAssignment removes a specific user role assignment by id (scoped to a set).
-// Returns ErrNotFound when no row matches.
 func (r *AssetRepository) DeleteUserRoleAssignment(assignmentID, setID int) error {
 	result, err := r.db.ExecWrite(
 		"DELETE FROM user_asset_set_roles WHERE id = ? AND set_id = ?",
@@ -836,7 +814,6 @@ func (r *AssetRepository) DeleteUserRoleAssignment(assignmentID, setID int) erro
 	return nil
 }
 
-// DeleteGroupRoleAssignment removes a specific group role assignment by id (scoped to a set).
 func (r *AssetRepository) DeleteGroupRoleAssignment(assignmentID, setID int) error {
 	result, err := r.db.ExecWrite(
 		"DELETE FROM group_asset_set_roles WHERE id = ? AND set_id = ?",
@@ -851,9 +828,7 @@ func (r *AssetRepository) DeleteGroupRoleAssignment(assignmentID, setID int) err
 	return nil
 }
 
-// GetAssignmentRoleID returns the role_id of a specific assignment for use in
-// admin-guard checks. kind is "user" or "group" (anything else treated as user).
-// Returns ErrNotFound when the assignment does not exist.
+// GetAssignmentRoleID returns ErrNotFound when the assignment does not exist.
 func (r *AssetRepository) GetAssignmentRoleID(setID, assignmentID int, kind string) (int, error) {
 	var query string
 	if kind == "group" {
@@ -869,8 +844,6 @@ func (r *AssetRepository) GetAssignmentRoleID(setID, assignmentID int, kind stri
 	return roleID, err
 }
 
-// GetEveryoneRoleIDValueForSet returns the everyone-role role_id for a set.
-// Returns a zero NullInt64 (Valid=false) and no error when no everyone role is configured.
 func (r *AssetRepository) GetEveryoneRoleIDValueForSet(setID int) (sql.NullInt64, error) {
 	var roleID sql.NullInt64
 	err := r.db.QueryRow(`SELECT role_id FROM asset_set_everyone_roles WHERE set_id = ?`, setID).Scan(&roleID)
@@ -883,9 +856,6 @@ func (r *AssetRepository) GetEveryoneRoleIDValueForSet(setID int) (sql.NullInt64
 	return roleID, nil
 }
 
-// CountAdminAssignmentsExcluding returns the count of admin role assignments
-// (user + group) for a set, not counting the assignment being revoked.
-// excludeKind is "user" or "group"; the assignment with the matching kind+id is skipped.
 func (r *AssetRepository) CountAdminAssignmentsExcluding(setID, adminRoleID, excludeID int, excludeKind string) (int, error) {
 	var count int
 	err := r.db.QueryRow(`
@@ -903,9 +873,6 @@ func (r *AssetRepository) CountAdminAssignmentsExcluding(setID, adminRoleID, exc
 	return count, nil
 }
 
-// GetPrincipalDirectRoleID returns the directly-assigned role_id for a
-// user or group on a set. kind is "user" or "group". Returns ErrNotFound when
-// the principal has no direct assignment on the set.
 func (r *AssetRepository) GetPrincipalDirectRoleID(setID int, kind string, principalID int) (int, error) {
 	var query string
 	if kind == "group" {
@@ -921,10 +888,6 @@ func (r *AssetRepository) GetPrincipalDirectRoleID(setID int, kind string, princ
 	return roleID, err
 }
 
-// CountAdminAssignmentsExcludingPrincipal returns the count of admin role
-// assignments (user + group) for a set, not counting the given principal
-// (matched by user_id/group_id rather than assignment id). Used to decide
-// whether re-assigning that principal to a non-admin role would orphan the set.
 func (r *AssetRepository) CountAdminAssignmentsExcludingPrincipal(setID, adminRoleID int, excludeKind string, excludePrincipalID int) (int, error) {
 	var count int
 	err := r.db.QueryRow(`
@@ -942,8 +905,6 @@ func (r *AssetRepository) CountAdminAssignmentsExcludingPrincipal(setID, adminRo
 	return count, nil
 }
 
-// CountAdminAssignments returns the total count of explicit admin role
-// assignments (user + group) for a set.
 func (r *AssetRepository) CountAdminAssignments(setID, adminRoleID int) (int, error) {
 	var count int
 	err := r.db.QueryRow(`
@@ -958,7 +919,6 @@ func (r *AssetRepository) CountAdminAssignments(setID, adminRoleID int) (int, er
 	return count, nil
 }
 
-// AssignUserRole assigns a role to a user for a set (upsert)
 func (r *AssetRepository) AssignUserRole(setID, userID, roleID, grantedBy int) error {
 	now := time.Now()
 	_, err := r.db.ExecWrite(`
@@ -973,7 +933,6 @@ func (r *AssetRepository) AssignUserRole(setID, userID, roleID, grantedBy int) e
 	return nil
 }
 
-// AssignGroupRole assigns a role to a group for a set (upsert)
 func (r *AssetRepository) AssignGroupRole(setID, groupID, roleID, grantedBy int) error {
 	now := time.Now()
 	_, err := r.db.ExecWrite(`
@@ -988,7 +947,6 @@ func (r *AssetRepository) AssignGroupRole(setID, groupID, roleID, grantedBy int)
 	return nil
 }
 
-// RevokeUserRole removes a user's role assignment for a set
 func (r *AssetRepository) RevokeUserRole(assignmentID, setID int) error {
 	result, err := r.db.ExecWrite(`
 		DELETE FROM user_asset_set_roles WHERE id = ? AND set_id = ?
@@ -1004,7 +962,6 @@ func (r *AssetRepository) RevokeUserRole(assignmentID, setID int) error {
 	return nil
 }
 
-// RevokeGroupRole removes a group's role assignment for a set
 func (r *AssetRepository) RevokeGroupRole(assignmentID, setID int) error {
 	result, err := r.db.ExecWrite(`
 		DELETE FROM group_asset_set_roles WHERE id = ? AND set_id = ?
@@ -1020,7 +977,6 @@ func (r *AssetRepository) RevokeGroupRole(assignmentID, setID int) error {
 	return nil
 }
 
-// SetEveryoneRole sets the everyone role for a set (upsert or delete)
 func (r *AssetRepository) SetEveryoneRole(setID int, roleID *int, grantedBy int) error {
 	now := time.Now()
 	if roleID == nil {
@@ -1040,11 +996,8 @@ func (r *AssetRepository) SetEveryoneRole(setID int, roleID *int, grantedBy int)
 	return nil
 }
 
-// ============================================================================
-// Asset Operations
-// ============================================================================
+// Asset operations.
 
-// GetAssetByID returns an asset by ID with all joined data
 func (r *AssetRepository) GetAssetByID(assetID int) (*models.Asset, error) {
 	var asset models.Asset
 	var categoryID, statusID, createdBy sql.NullInt64
@@ -1113,7 +1066,6 @@ func (r *AssetRepository) GetAssetByID(assetID int) (*models.Asset, error) {
 	return &asset, nil
 }
 
-// GetAssetSetID returns the set ID for an asset
 func (r *AssetRepository) GetAssetSetID(assetID int) (int, error) {
 	var setID int
 	err := r.db.QueryRow("SELECT set_id FROM assets WHERE id = ?", assetID).Scan(&setID)
@@ -1123,7 +1075,6 @@ func (r *AssetRepository) GetAssetSetID(assetID int) (int, error) {
 	return setID, nil
 }
 
-// DeleteAsset deletes an asset
 func (r *AssetRepository) DeleteAsset(assetID int) error {
 	result, err := r.db.ExecWrite("DELETE FROM assets WHERE id = ?", assetID)
 	if err != nil {
@@ -1137,11 +1088,8 @@ func (r *AssetRepository) DeleteAsset(assetID int) error {
 	return nil
 }
 
-// ============================================================================
-// Validation Methods
-// ============================================================================
+// Validation helpers.
 
-// AssetTypeBelongsToSet checks if an asset type belongs to a set
 func (r *AssetRepository) AssetTypeBelongsToSet(typeID, setID int) (bool, error) {
 	var exists bool
 	err := r.db.QueryRow("SELECT EXISTS(SELECT 1 FROM asset_types WHERE id = ? AND set_id = ?)", typeID, setID).Scan(&exists)
@@ -1151,7 +1099,6 @@ func (r *AssetRepository) AssetTypeBelongsToSet(typeID, setID int) (bool, error)
 	return exists, nil
 }
 
-// CategoryBelongsToSet checks if a category belongs to a set
 func (r *AssetRepository) CategoryBelongsToSet(categoryID, setID int) (bool, error) {
 	var exists bool
 	err := r.db.QueryRow("SELECT EXISTS(SELECT 1 FROM asset_categories WHERE id = ? AND set_id = ?)", categoryID, setID).Scan(&exists)
@@ -1161,7 +1108,6 @@ func (r *AssetRepository) CategoryBelongsToSet(categoryID, setID int) (bool, err
 	return exists, nil
 }
 
-// StatusBelongsToSet checks if a status belongs to a set
 func (r *AssetRepository) StatusBelongsToSet(statusID, setID int) (bool, error) {
 	var exists bool
 	err := r.db.QueryRow("SELECT EXISTS(SELECT 1 FROM asset_statuses WHERE id = ? AND set_id = ?)", statusID, setID).Scan(&exists)
@@ -1171,7 +1117,6 @@ func (r *AssetRepository) StatusBelongsToSet(statusID, setID int) (bool, error) 
 	return exists, nil
 }
 
-// GetDefaultStatus returns the default status ID for a set
 func (r *AssetRepository) GetDefaultStatus(setID int) (*int, error) {
 	var statusID sql.NullInt64
 	err := r.db.QueryRow(`
@@ -1189,7 +1134,6 @@ func (r *AssetRepository) GetDefaultStatus(setID int) (*int, error) {
 	return &id, nil
 }
 
-// RoleExists checks if a role exists
 func (r *AssetRepository) RoleExists(roleID int) (bool, error) {
 	var exists bool
 	err := r.db.QueryRow("SELECT EXISTS(SELECT 1 FROM asset_roles WHERE id = ?)", roleID).Scan(&exists)
@@ -1199,11 +1143,8 @@ func (r *AssetRepository) RoleExists(roleID int) (bool, error) {
 	return exists, nil
 }
 
-// ============================================================================
-// Asset types
-// ============================================================================
+// Asset-type operations.
 
-// FindAssetTypesForSet returns all asset types for a set with joined set name and an asset count.
 func (r *AssetRepository) FindAssetTypesForSet(setID int) ([]models.AssetType, error) {
 	rows, err := r.db.Query(`
 		SELECT at.id, at.set_id, at.name, at.description, at.icon, at.color,
@@ -1234,8 +1175,6 @@ func (r *AssetRepository) FindAssetTypesForSet(setID int) ([]models.AssetType, e
 	return types, nil
 }
 
-// FindAssetTypeByID returns a single asset type with set name and asset count.
-// Returns ErrNotFound if the type does not exist.
 func (r *AssetRepository) FindAssetTypeByID(typeID int) (*models.AssetType, error) {
 	row := r.db.QueryRow(`
 		SELECT at.id, at.set_id, at.name, at.description, at.icon, at.color,
@@ -1256,7 +1195,6 @@ func (r *AssetRepository) FindAssetTypeByID(typeID int) (*models.AssetType, erro
 	return &at, nil
 }
 
-// GetAssetTypeSetID returns the set_id for an asset type. Returns ErrNotFound if it doesn't exist.
 func (r *AssetRepository) GetAssetTypeSetID(typeID int) (int, error) {
 	var setID int
 	err := r.db.QueryRow("SELECT set_id FROM asset_types WHERE id = ?", typeID).Scan(&setID)
@@ -1266,7 +1204,6 @@ func (r *AssetRepository) GetAssetTypeSetID(typeID int) (int, error) {
 	return setID, nil
 }
 
-// GetAssetTypeSetAndCount returns the set_id and current asset count for an asset type.
 func (r *AssetRepository) GetAssetTypeSetAndCount(typeID int) (setID, assetCount int, err error) {
 	err = r.db.QueryRow(`
 		SELECT set_id, (SELECT COUNT(*) FROM assets WHERE asset_type_id = ?) as asset_count
@@ -1278,7 +1215,6 @@ func (r *AssetRepository) GetAssetTypeSetAndCount(typeID int) (setID, assetCount
 	return setID, assetCount, nil
 }
 
-// CreateAssetType inserts an asset type and returns its id.
 func (r *AssetRepository) CreateAssetType(at *models.AssetType) (int, error) {
 	var id int64
 	err := r.db.QueryRow(`
@@ -1291,8 +1227,8 @@ func (r *AssetRepository) CreateAssetType(at *models.AssetType) (int, error) {
 	return int(id), nil
 }
 
-// AssetTypeUpdate holds the patchable fields for an asset type update.
-// IsActive is nil-able so callers can distinguish "keep current" from "set false".
+// AssetTypeUpdate holds patchable asset-type fields. A nil IsActive preserves
+// the current value.
 type AssetTypeUpdate struct {
 	Name         string
 	Description  string
@@ -1302,7 +1238,6 @@ type AssetTypeUpdate struct {
 	IsActive     *bool
 }
 
-// UpdateAssetType applies a patch to an asset type. Returns ErrNotFound when no row matches.
 func (r *AssetRepository) UpdateAssetType(typeID int, patch AssetTypeUpdate) error {
 	query := "UPDATE asset_types SET name = ?, description = ?, icon = ?, color = ?, display_order = ?, updated_at = ?"
 	args := []interface{}{patch.Name, patch.Description, patch.Icon, patch.Color, patch.DisplayOrder, time.Now()}
@@ -1324,8 +1259,6 @@ func (r *AssetRepository) UpdateAssetType(typeID int, patch AssetTypeUpdate) err
 	return nil
 }
 
-// DeleteAssetType removes an asset type along with its field assignments in one transaction.
-// Returns ErrNotFound when the type does not exist.
 func (r *AssetRepository) DeleteAssetType(typeID int) error {
 	tx, err := r.db.Begin()
 	if err != nil {
@@ -1347,8 +1280,6 @@ func (r *AssetRepository) DeleteAssetType(typeID int) error {
 	return tx.Commit()
 }
 
-// GetAssetTypeCoreByID returns only the stored fields of an asset type (no joined set name
-// or asset count). Used after an update to return the fresh row.
 func (r *AssetRepository) GetAssetTypeCoreByID(typeID int) (*models.AssetType, error) {
 	var at models.AssetType
 	err := r.db.QueryRow(`
@@ -1365,8 +1296,6 @@ func (r *AssetRepository) GetAssetTypeCoreByID(typeID int) (*models.AssetType, e
 	return &at, nil
 }
 
-// FindAssetTypeFields returns the custom field assignments for an asset type with
-// field metadata (name, type, description, options) joined in.
 func (r *AssetRepository) FindAssetTypeFields(typeID int) ([]models.AssetTypeField, error) {
 	rows, err := r.db.Query(`
 		SELECT atf.id, atf.asset_type_id, atf.custom_field_id, atf.is_required, atf.display_order, atf.created_at,
@@ -1406,15 +1335,12 @@ func (r *AssetRepository) FindAssetTypeFields(typeID int) ([]models.AssetTypeFie
 	return fields, nil
 }
 
-// AssetTypeFieldAssignment is the input for ReplaceAssetTypeFields.
 type AssetTypeFieldAssignment struct {
 	CustomFieldID int
 	IsRequired    bool
 	DisplayOrder  int
 }
 
-// ReplaceAssetTypeFields atomically replaces an asset type's custom field assignments.
-// It deletes existing rows and inserts the provided set in a single transaction.
 func (r *AssetRepository) ReplaceAssetTypeFields(typeID int, fields []AssetTypeFieldAssignment) error {
 	tx, err := r.db.Begin()
 	if err != nil {
@@ -1543,8 +1469,6 @@ func pruneRemovedAssetTypeValues(tx database.Tx, typeID int, removedKeys map[str
 	return nil
 }
 
-// scanAssetTypeRow scans a full asset type row (with nullable description and set_name)
-// from any scanner (sql.Row or sql.Rows).
 func scanAssetTypeRow(scanner interface {
 	Scan(dest ...interface{}) error
 }) (models.AssetType, error) {
@@ -1567,12 +1491,8 @@ func scanAssetTypeRow(scanner interface {
 	return at, nil
 }
 
-// ============================================================================
-// Asset categories
-// ============================================================================
+// Asset-category operations.
 
-// FindAssetCategoriesForSet returns all categories for a set with set/parent names
-// and a joined asset count.
 func (r *AssetRepository) FindAssetCategoriesForSet(setID int) ([]models.AssetCategory, error) {
 	rows, err := r.db.Query(`
 		SELECT ac.id, ac.set_id, ac.name, ac.description, ac.parent_id, ac.path,
@@ -1606,7 +1526,6 @@ func (r *AssetRepository) FindAssetCategoriesForSet(setID int) ([]models.AssetCa
 	return categories, nil
 }
 
-// FindAssetCategoryByID returns a single category with set/parent names and asset count.
 func (r *AssetRepository) FindAssetCategoryByID(categoryID int) (*models.AssetCategory, error) {
 	row := r.db.QueryRow(`
 		SELECT ac.id, ac.set_id, ac.name, ac.description, ac.parent_id, ac.path,
@@ -1630,8 +1549,6 @@ func (r *AssetRepository) FindAssetCategoryByID(categoryID int) (*models.AssetCa
 	return &cat, nil
 }
 
-// GetAssetCategoryCoreByID returns the basic columns for a category (no joined data)
-// — used after a write to return the updated row.
 func (r *AssetRepository) GetAssetCategoryCoreByID(categoryID int) (*models.AssetCategory, error) {
 	row := r.db.QueryRow(`
 		SELECT id, set_id, name, description, parent_id, path,
@@ -1649,7 +1566,6 @@ func (r *AssetRepository) GetAssetCategoryCoreByID(categoryID int) (*models.Asse
 	return &cat, nil
 }
 
-// GetAssetCategorySetID returns the owning set_id for a category.
 func (r *AssetRepository) GetAssetCategorySetID(categoryID int) (int, error) {
 	var setID int
 	err := r.db.QueryRow("SELECT set_id FROM asset_categories WHERE id = ?", categoryID).Scan(&setID)
@@ -1659,7 +1575,6 @@ func (r *AssetRepository) GetAssetCategorySetID(categoryID int) (int, error) {
 	return setID, nil
 }
 
-// GetAssetCategoryParentID returns the parent_id of a category (Valid=false if at root).
 func (r *AssetRepository) GetAssetCategoryParentID(categoryID int) (sql.NullInt64, error) {
 	var parentID sql.NullInt64
 	err := r.db.QueryRow("SELECT parent_id FROM asset_categories WHERE id = ?", categoryID).Scan(&parentID)
@@ -1669,8 +1584,6 @@ func (r *AssetRepository) GetAssetCategoryParentID(categoryID int) (sql.NullInt6
 	return parentID, nil
 }
 
-// GetAssetCategoryDeletionInfo returns the data a delete-guard needs in one query:
-// set_id, has_children flag, parent_id, and the count of assets currently in the category.
 func (r *AssetRepository) GetAssetCategoryDeletionInfo(categoryID int) (setID int, hasChildren bool, parentID sql.NullInt64, assetCount int, err error) {
 	err = r.db.QueryRow(`
 		SELECT set_id, has_children, parent_id,
@@ -1687,7 +1600,6 @@ func (r *AssetRepository) GetAssetCategoryDeletionInfo(categoryID int) (setID in
 	return
 }
 
-// CreateAssetCategoryInput is the input for CreateAssetCategory.
 type CreateAssetCategoryInput struct {
 	SetID       int
 	Name        string
@@ -1695,8 +1607,6 @@ type CreateAssetCategoryInput struct {
 	ParentID    *int
 }
 
-// CreateAssetCategory inserts a new category, updates parent counts if needed,
-// and returns the new category id and created_at timestamp.
 func (r *AssetRepository) CreateAssetCategory(input CreateAssetCategoryInput) (int, time.Time, error) {
 	tx, err := r.db.Begin()
 	if err != nil {
@@ -1726,8 +1636,6 @@ func (r *AssetRepository) CreateAssetCategory(input CreateAssetCategoryInput) (i
 	return int(id), now, nil
 }
 
-// UpdateAssetCategoryNameDescription patches only the name and description.
-// Returns ErrNotFound when no row matches.
 func (r *AssetRepository) UpdateAssetCategoryNameDescription(categoryID int, name, description string) error {
 	result, err := r.db.ExecWrite(`
 		UPDATE asset_categories SET name = ?, description = ?, updated_at = ?
@@ -1742,8 +1650,6 @@ func (r *AssetRepository) UpdateAssetCategoryNameDescription(categoryID int, nam
 	return nil
 }
 
-// DeleteAssetCategory deletes a category and refreshes its old parent's counts
-// in a single transaction. Returns ErrNotFound when no row matches.
 func (r *AssetRepository) DeleteAssetCategory(categoryID int, oldParentID sql.NullInt64) error {
 	tx, err := r.db.Begin()
 	if err != nil {
@@ -1768,8 +1674,6 @@ func (r *AssetRepository) DeleteAssetCategory(categoryID int, oldParentID sql.Nu
 	return tx.Commit()
 }
 
-// MoveAssetCategory updates a category's parent and refreshes both old and new
-// parents' counts in a single transaction.
 func (r *AssetRepository) MoveAssetCategory(categoryID int, oldParentID sql.NullInt64, newParentID *int) error {
 	tx, err := r.db.Begin()
 	if err != nil {
@@ -1798,8 +1702,6 @@ func (r *AssetRepository) MoveAssetCategory(categoryID int, oldParentID sql.Null
 	return tx.Commit()
 }
 
-// IsAssetCategoryDescendantOf reports whether `potentialDescendant` is a descendant
-// of `ancestor` using a recursive CTE over asset_categories.parent_id.
 func (r *AssetRepository) IsAssetCategoryDescendantOf(potentialDescendant, ancestor int) (bool, error) {
 	rows, err := r.db.Query(`
 		WITH RECURSIVE ancestors AS (
@@ -1822,8 +1724,6 @@ func (r *AssetRepository) IsAssetCategoryDescendantOf(potentialDescendant, ances
 	return found, nil
 }
 
-// updateCategoryParentCounts refreshes children_count/has_children on a parent and
-// re-computes descendants_count for all its ancestors. Must be called within a transaction.
 func updateCategoryParentCounts(tx database.Tx, parentID int) error {
 	var childrenCount int
 	if err := tx.QueryRow(
@@ -1919,14 +1819,10 @@ func scanAssetCategoryCoreRow(scanner interface{ Scan(...interface{}) error }) (
 	return cat, nil
 }
 
-// ============================================================================
-// Asset CRUD
-// ============================================================================
+// Asset CRUD operations.
 
-// AssetRowToModel converts an AssetRow into the models.Asset shape returned
-// by the API. Parses custom_field_values JSON; on failure, stamps a warning
-// and leaves the map empty. Canonical home so both cookie-auth and v1
-// handlers map rows the same way.
+// AssetRowToModel is the shared row-to-model conversion for both API surfaces.
+// Invalid custom-field JSON becomes an empty map with a warning.
 func AssetRowToModel(row AssetRow) models.Asset {
 	asset := models.Asset{
 		ID:              row.ID,
@@ -1966,7 +1862,6 @@ func AssetRowToModel(row AssetRow) models.Asset {
 	return asset
 }
 
-// AssetRow captures the full projection returned by the assets list/detail queries.
 type AssetRow struct {
 	ID                int
 	SetID             int
@@ -1994,7 +1889,6 @@ type AssetRow struct {
 	LinkedItemCount   int
 }
 
-// AssetListFilter holds the non-CQL filters for the assets list query.
 type AssetListFilter struct {
 	SetID                int
 	AssetTypeID          string // raw string from query param (empty for no filter)
@@ -2008,7 +1902,6 @@ type AssetListFilter struct {
 	Offset               int
 }
 
-// CountAssets returns the total number of assets matching the filter.
 func (r *AssetRepository) CountAssets(f AssetListFilter) (int, error) {
 	cte, where, args := buildAssetListWhere(f)
 	query := cte + `SELECT COUNT(*) FROM assets a
@@ -2026,8 +1919,6 @@ func (r *AssetRepository) CountAssets(f AssetListFilter) (int, error) {
 	return total, nil
 }
 
-// ListAssets returns a page of assets matching the filter, with all joined fields
-// and the item-link count.
 func (r *AssetRepository) ListAssets(f AssetListFilter) ([]AssetRow, error) {
 	cte, where, args := buildAssetListWhere(f)
 	args = append(args, f.Limit, f.Offset)
@@ -2074,8 +1965,6 @@ func (r *AssetRepository) ListAssets(f AssetListFilter) ([]AssetRow, error) {
 	return result, nil
 }
 
-// FindAssetFullByID returns a single asset with all joined fields, matching the
-// projection returned by ListAssets. Returns ErrNotFound when missing.
 func (r *AssetRepository) FindAssetFullByID(assetID int) (*AssetRow, error) {
 	row := r.db.QueryRow(`
 		SELECT a.id, a.set_id, a.asset_type_id, a.category_id, a.status_id, a.title, a.description,
@@ -2106,7 +1995,6 @@ func (r *AssetRepository) FindAssetFullByID(assetID int) (*AssetRow, error) {
 	return &assetRow, nil
 }
 
-// AssetUpdateSnapshot is what UpdateAsset needs from the existing row to detect status changes.
 type AssetUpdateSnapshot struct {
 	SetID                 int
 	StatusID              sql.NullInt64
@@ -2114,7 +2002,6 @@ type AssetUpdateSnapshot struct {
 	CustomFieldValuesJSON sql.NullString
 }
 
-// GetAssetUpdateSnapshot returns the fields needed by UpdateAsset before applying changes.
 func (r *AssetRepository) GetAssetUpdateSnapshot(assetID int) (*AssetUpdateSnapshot, error) {
 	var snap AssetUpdateSnapshot
 	err := r.db.QueryRow(
@@ -2127,7 +2014,6 @@ func (r *AssetRepository) GetAssetUpdateSnapshot(assetID int) (*AssetUpdateSnaps
 	return &snap, nil
 }
 
-// GetAssetSetAndTitle returns the set_id and title for an asset (used by delete flows for auditing).
 func (r *AssetRepository) GetAssetSetAndTitle(assetID int) (setID int, title string, err error) {
 	err = r.db.QueryRow(`SELECT set_id, title FROM assets WHERE id = ?`, assetID).Scan(&setID, &title)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -2140,8 +2026,7 @@ func (r *AssetRepository) GetAssetSetAndTitle(assetID int) (setID int, title str
 	return
 }
 
-// GetResourceSetID returns set_id from one of the asset-scoped child tables.
-// `table` must be one of the allowed values to prevent SQL injection via table name.
+// GetResourceSetID reads set_id from an allowlisted asset child table.
 func (r *AssetRepository) GetResourceSetID(table string, resourceID int) (int, error) {
 	allowed := map[string]bool{
 		"asset_types":      true,
@@ -2163,7 +2048,6 @@ func (r *AssetRepository) GetResourceSetID(table string, resourceID int) (int, e
 	return setID, nil
 }
 
-// CreateAssetInput holds the columns written by a single asset insert.
 type CreateAssetInput struct {
 	SetID                 int
 	AssetTypeID           int
@@ -2177,7 +2061,6 @@ type CreateAssetInput struct {
 	CreatedAt             time.Time
 }
 
-// CreateAsset inserts a new asset and returns its id.
 func (r *AssetRepository) CreateAsset(in CreateAssetInput) (int, error) {
 	var id int64
 	err := r.db.QueryRow(`
@@ -2191,7 +2074,6 @@ func (r *AssetRepository) CreateAsset(in CreateAssetInput) (int, error) {
 	return int(id), nil
 }
 
-// UpdateAssetInput holds the columns written by a single asset update.
 type UpdateAssetInput struct {
 	AssetTypeID           int
 	CategoryID            *int
@@ -2202,7 +2084,6 @@ type UpdateAssetInput struct {
 	CustomFieldValuesJSON *string
 }
 
-// UpdateAsset writes the given columns to an asset. Returns ErrNotFound when no row matches.
 func (r *AssetRepository) UpdateAsset(assetID int, in UpdateAssetInput) error {
 	result, err := r.db.ExecWrite(`
 		UPDATE assets
@@ -2220,8 +2101,6 @@ func (r *AssetRepository) UpdateAsset(assetID int, in UpdateAssetInput) error {
 	return nil
 }
 
-// DeleteAssetWithLinks deletes an asset and its item_links rows in a single transaction.
-// Returns ErrNotFound when the asset does not exist.
 func (r *AssetRepository) DeleteAssetWithLinks(assetID int) error {
 	tx, err := r.db.Begin()
 	if err != nil {
@@ -2261,8 +2140,6 @@ func scanAssetRow(scanner interface{ Scan(...interface{}) error }) (AssetRow, er
 	return row, err
 }
 
-// buildAssetListWhere converts the filter into a (cte-prefix, where-clause, args) triple
-// shared by CountAssets and ListAssets.
 func buildAssetListWhere(f AssetListFilter) (ctePrefix, whereClause string, args []interface{}) {
 	whereClause = "WHERE a.set_id = ?"
 	args = []interface{}{f.SetID}
@@ -2307,11 +2184,8 @@ func buildAssetListWhere(f AssetListFilter) (ctePrefix, whereClause string, args
 	return ctePrefix, whereClause, args
 }
 
-// ============================================================================
-// Asset imports
-// ============================================================================
+// Asset-import operations.
 
-// ImportJobRow is the projection used by import-job list/detail queries.
 type ImportJobRow struct {
 	JobID        string
 	Status       sql.NullString
@@ -2323,7 +2197,6 @@ type ImportJobRow struct {
 	CompletedAt  sql.NullTime
 }
 
-// CreateImportJob inserts a new import job row in 'queued'/'initializing' state.
 func (r *AssetRepository) CreateImportJob(jobID string, setID int, filePath, configJSON string, createdBy int, createdAt time.Time) error {
 	_, err := r.db.ExecWrite(`
 		INSERT INTO asset_import_jobs (id, set_id, status, phase, file_path, config_json, created_by, created_at)
@@ -2335,7 +2208,6 @@ func (r *AssetRepository) CreateImportJob(jobID string, setID int, filePath, con
 	return nil
 }
 
-// GetImportJob returns a single import job scoped by set. Returns ErrNotFound if absent.
 func (r *AssetRepository) GetImportJob(jobID string, setID int) (*ImportJobRow, error) {
 	row := ImportJobRow{JobID: jobID}
 	err := r.db.QueryRow(`
@@ -2351,7 +2223,6 @@ func (r *AssetRepository) GetImportJob(jobID string, setID int) (*ImportJobRow, 
 	return &row, nil
 }
 
-// ListImportJobs returns the most recent import jobs for a set (up to `limit`).
 func (r *AssetRepository) ListImportJobs(setID, limit int) ([]ImportJobRow, error) {
 	rows, err := r.db.Query(`
 		SELECT id, status, phase, progress_json, error_message, created_at, started_at, completed_at
@@ -2376,8 +2247,6 @@ func (r *AssetRepository) ListImportJobs(setID, limit int) ([]ImportJobRow, erro
 	return jobs, nil
 }
 
-// ListInterruptedImportJobIDs returns job ids left in 'running' or 'queued'
-// state from a previous process (used at startup to reconcile orphans).
 func (r *AssetRepository) ListInterruptedImportJobIDs() ([]string, error) {
 	rows, err := r.db.Query(`SELECT id FROM asset_import_jobs WHERE status IN ('running', 'queued')`)
 	if err != nil {
@@ -2399,7 +2268,6 @@ func (r *AssetRepository) ListInterruptedImportJobIDs() ([]string, error) {
 	return ids, nil
 }
 
-// DeleteAssetsFromImportJob rolls back partial inserts left by a crashed import.
 func (r *AssetRepository) DeleteAssetsFromImportJob(jobID string) error {
 	_, err := r.db.ExecWrite(`DELETE FROM assets WHERE import_job_id = ?`, jobID)
 	if err != nil {
@@ -2408,8 +2276,6 @@ func (r *AssetRepository) DeleteAssetsFromImportJob(jobID string) error {
 	return nil
 }
 
-// MarkInterruptedImportsFailed flips every running/queued job to failed and
-// returns the number of jobs updated.
 func (r *AssetRepository) MarkInterruptedImportsFailed(completedAt time.Time) (int, error) {
 	result, err := r.db.ExecWrite(`
 		UPDATE asset_import_jobs
@@ -2426,7 +2292,6 @@ func (r *AssetRepository) MarkInterruptedImportsFailed(completedAt time.Time) (i
 	return int(n), nil
 }
 
-// ImportAssetRowInput holds the columns written by a single import row insert.
 type ImportAssetRowInput struct {
 	SetID                 int
 	AssetTypeID           int
@@ -2441,7 +2306,6 @@ type ImportAssetRowInput struct {
 	CreatedAt             time.Time
 }
 
-// InsertImportedAsset inserts a single asset row during CSV import.
 func (r *AssetRepository) InsertImportedAsset(in ImportAssetRowInput) (int, error) {
 	var id int
 	err := r.db.QueryRow(`
@@ -2456,7 +2320,6 @@ func (r *AssetRepository) InsertImportedAsset(in ImportAssetRowInput) (int, erro
 	return id, nil
 }
 
-// GetCustomFieldTypeAndOptions reads a custom field definition's field_type and options JSON.
 func (r *AssetRepository) GetCustomFieldTypeAndOptions(fieldID int) (fieldType string, options sql.NullString, err error) {
 	err = r.db.QueryRow(
 		`SELECT field_type, options FROM custom_field_definitions WHERE id = ?`,
@@ -2472,7 +2335,6 @@ func (r *AssetRepository) GetCustomFieldTypeAndOptions(fieldID int) (fieldType s
 	return
 }
 
-// StartImportJobRunning flips a job to running and sets started_at=now.
 func (r *AssetRepository) StartImportJobRunning(jobID, phase, progressJSON string) error {
 	_, err := r.db.ExecWrite(
 		`UPDATE asset_import_jobs SET status = 'running', phase = ?, progress_json = ?, started_at = CURRENT_TIMESTAMP WHERE id = ?`,
@@ -2484,8 +2346,6 @@ func (r *AssetRepository) StartImportJobRunning(jobID, phase, progressJSON strin
 	return nil
 }
 
-// FinishImportJob marks a job as completed or failed and sets completed_at=now.
-// status must be "completed" or "failed".
 func (r *AssetRepository) FinishImportJob(jobID, status, phase, progressJSON, errorMessage string) error {
 	_, err := r.db.ExecWrite(
 		`UPDATE asset_import_jobs SET status = ?, phase = ?, progress_json = ?, error_message = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?`,
@@ -2497,7 +2357,6 @@ func (r *AssetRepository) FinishImportJob(jobID, status, phase, progressJSON, er
 	return nil
 }
 
-// UpdateImportJobStatus writes status/phase/progress without touching started_at/completed_at.
 func (r *AssetRepository) UpdateImportJobStatus(jobID, status, phase, progressJSON string) error {
 	_, err := r.db.ExecWrite(
 		`UPDATE asset_import_jobs SET status = ?, phase = ?, progress_json = ? WHERE id = ?`,
@@ -2509,7 +2368,6 @@ func (r *AssetRepository) UpdateImportJobStatus(jobID, status, phase, progressJS
 	return nil
 }
 
-// UpdateImportJobProgress writes only phase and progress_json.
 func (r *AssetRepository) UpdateImportJobProgress(jobID, phase, progressJSON string) error {
 	_, err := r.db.ExecWrite(
 		`UPDATE asset_import_jobs SET phase = ?, progress_json = ? WHERE id = ?`,
@@ -2521,8 +2379,6 @@ func (r *AssetRepository) UpdateImportJobProgress(jobID, phase, progressJSON str
 	return nil
 }
 
-// ImportTypeFieldInput describes one custom field to attach to a type during
-// the "create type from import" flow.
 type ImportTypeFieldInput struct {
 	Name         string
 	FieldType    string
@@ -2531,20 +2387,12 @@ type ImportTypeFieldInput struct {
 	DisplayOrder int
 }
 
-// ImportTypeFieldResult mirrors ImportTypeFieldInput plus the generated ids
-// needed by the handler to build the API response.
 type ImportTypeFieldResult struct {
 	AssetTypeFieldID int
 	CustomFieldID    int
 }
 
-// CreateAssetTypeWithFields inserts an asset type and links a set of custom fields
-// (creating the custom_field_definitions rows when the name/type isn't already present).
-// Everything runs in a single transaction. Returns the new type id and, for each
-// input field, the generated asset_type_fields id and custom_field_id.
-//
-// The returned `createdAt` timestamp is the value used for every inserted row.
-// On UNIQUE-constraint violations for the type name, ErrConflict is returned.
+// CreateAssetTypeWithFields creates a type and its custom fields atomically.
 func (r *AssetRepository) CreateAssetTypeWithFields(setID int, typeCore models.AssetType, fields []ImportTypeFieldInput) (typeID int, createdAt time.Time, results []ImportTypeFieldResult, err error) {
 	tx, err := r.db.Begin()
 	if err != nil {
@@ -2614,12 +2462,8 @@ func (r *AssetRepository) CreateAssetTypeWithFields(setID int, typeCore models.A
 	return typeID, now, results, nil
 }
 
-// ============================================================================
-// Asset custom field resolution
-// ============================================================================
+// Asset custom-field resolution.
 
-// FindCustomFieldIDsByType returns the set of custom field IDs of a given field_type
-// (e.g. "user", "asset") attached to an asset type via asset_type_fields.
 func (r *AssetRepository) FindCustomFieldIDsByType(assetTypeID int, fieldType string) (map[int]bool, error) {
 	rows, err := r.db.Query(`
 		SELECT cfd.id
@@ -2646,17 +2490,12 @@ func (r *AssetRepository) FindCustomFieldIDsByType(assetTypeID int, fieldType st
 	return fieldIDs, nil
 }
 
-// AssetSummary is the tiny projection used to enrich an asset-reference custom field value.
 type AssetSummary struct {
 	Title    string
 	AssetTag string
 }
 
-// GetAssetSummary returns the title and asset_tag for an asset within the given
-// set. Returns ErrNotFound when the asset does not exist or belongs to another
-// set — asset-reference custom fields must not resolve across set boundaries,
-// otherwise an out-of-set asset's title/tag would leak (used to render a
-// "deleted" marker in that case).
+// GetAssetSummary rejects cross-set lookups so asset references cannot leak data.
 func (r *AssetRepository) GetAssetSummary(assetID, setID int) (*AssetSummary, error) {
 	var title, assetTag sql.NullString
 	err := r.db.QueryRow(`SELECT title, asset_tag FROM assets WHERE id = ? AND set_id = ?`, assetID, setID).Scan(&title, &assetTag)
@@ -2669,7 +2508,6 @@ func (r *AssetRepository) GetAssetSummary(assetID, setID int) (*AssetSummary, er
 	return &AssetSummary{Title: title.String, AssetTag: assetTag.String}, nil
 }
 
-// UserBasicInfo is the projection used to enrich a user-reference custom field value.
 type UserBasicInfo struct {
 	FirstName sql.NullString
 	LastName  sql.NullString
@@ -2677,8 +2515,6 @@ type UserBasicInfo struct {
 	AvatarURL sql.NullString
 }
 
-// GetUserBasicInfo returns first/last name, email, and avatar URL for a user.
-// Returns ErrNotFound when the user does not exist.
 func (r *AssetRepository) GetUserBasicInfo(userID int) (*UserBasicInfo, error) {
 	var info UserBasicInfo
 	err := r.db.QueryRow(`
@@ -2694,11 +2530,8 @@ func (r *AssetRepository) GetUserBasicInfo(userID int) (*UserBasicInfo, error) {
 	return &info, nil
 }
 
-// ============================================================================
-// Asset statuses
-// ============================================================================
+// Asset-status operations.
 
-// FindAssetStatusesForSet returns all asset statuses for a set.
 func (r *AssetRepository) FindAssetStatusesForSet(setID int) ([]models.AssetStatus, error) {
 	rows, err := r.db.Query(`
 		SELECT id, set_id, name, color, description, is_default, display_order, created_at, updated_at
@@ -2725,7 +2558,6 @@ func (r *AssetRepository) FindAssetStatusesForSet(setID int) ([]models.AssetStat
 	return statuses, nil
 }
 
-// FindAssetStatusByID returns a single asset status. Returns ErrNotFound if missing.
 func (r *AssetRepository) FindAssetStatusByID(statusID int) (*models.AssetStatus, error) {
 	row := r.db.QueryRow(`
 		SELECT id, set_id, name, color, description, is_default, display_order, created_at, updated_at
@@ -2741,7 +2573,6 @@ func (r *AssetRepository) FindAssetStatusByID(statusID int) (*models.AssetStatus
 	return &status, nil
 }
 
-// GetAssetStatusSetID returns the owning set_id for an asset status.
 func (r *AssetRepository) GetAssetStatusSetID(statusID int) (int, error) {
 	var setID int
 	err := r.db.QueryRow("SELECT set_id FROM asset_statuses WHERE id = ?", statusID).Scan(&setID)
@@ -2754,7 +2585,6 @@ func (r *AssetRepository) GetAssetStatusSetID(statusID int) (int, error) {
 	return setID, nil
 }
 
-// AssetStatusUpdate holds the patchable fields for an asset status update.
 type AssetStatusUpdate struct {
 	Name         string
 	Color        string
@@ -2763,7 +2593,6 @@ type AssetStatusUpdate struct {
 	IsDefault    *bool
 }
 
-// DeleteAssetStatus removes an asset status. Returns ErrNotFound when missing.
 func (r *AssetRepository) DeleteAssetStatus(statusID int) error {
 	result, err := r.db.ExecWrite("DELETE FROM asset_statuses WHERE id = ?", statusID)
 	if err != nil {
@@ -2775,9 +2604,7 @@ func (r *AssetRepository) DeleteAssetStatus(statusID int) error {
 	return nil
 }
 
-// CreateAssetStatusTransactional inserts an asset status and clears the set's
-// previous default flag when the new status is default. All writes occur in one
-// transaction so a failed insert cannot leave the set without a default.
+// CreateAssetStatusTransactional inserts a status and updates the set default atomically.
 func (r *AssetRepository) CreateAssetStatusTransactional(s *models.AssetStatus) (int, error) {
 	var id int64
 	err := database.WithTx(r.db, func(tx database.Tx) error {
@@ -2800,9 +2627,7 @@ func (r *AssetRepository) CreateAssetStatusTransactional(s *models.AssetStatus) 
 	return int(id), nil
 }
 
-// UpdateAssetStatusTransactional applies a patch to an asset status and clears
-// the set's previous default flag when the status is being promoted. All writes
-// happen in one transaction.
+// UpdateAssetStatusTransactional applies a status patch and updates the default atomically.
 func (r *AssetRepository) UpdateAssetStatusTransactional(statusID int, patch AssetStatusUpdate, setID int) error {
 	return database.WithTx(r.db, func(tx database.Tx) error {
 		if patch.IsDefault != nil && *patch.IsDefault {
@@ -2832,7 +2657,6 @@ func (r *AssetRepository) UpdateAssetStatusTransactional(statusID int, patch Ass
 	})
 }
 
-// CountAssetsUsingStatus returns the number of assets currently assigned the given status.
 func (r *AssetRepository) CountAssetsUsingStatus(statusID int) (int, error) {
 	var count int
 	err := r.db.QueryRow("SELECT COUNT(*) FROM assets WHERE status_id = ?", statusID).Scan(&count)
@@ -2857,12 +2681,8 @@ func scanAssetStatus(scanner interface{ Scan(...interface{}) error }) (models.As
 	return status, nil
 }
 
-// ============================================================================
-// CQL lookup maps
-// ============================================================================
+// CQL lookup maps.
 
-// GetCQLSetMap returns a lowercase-name → id map for asset management sets,
-// used by the CQL evaluator.
 func (r *AssetRepository) GetCQLSetMap() (map[string]int, error) {
 	rows, err := r.db.Query("SELECT id, name FROM asset_management_sets")
 	if err != nil {
@@ -2885,11 +2705,6 @@ func (r *AssetRepository) GetCQLSetMap() (map[string]int, error) {
 	return setMap, nil
 }
 
-// GetCQLCustomFieldMap returns a lowercase-name → {ID, Kind, ...} map for the
-// custom fields attached to asset types in a set. Lets CQL queries reference
-// human-readable field names even though the DB stores numeric keys, and lets
-// the generator pick the right extraction strategy per field type. For linking
-// fields, also reads options to detect mirror fields and target-type constraints.
 func (r *AssetRepository) GetCQLCustomFieldMap(setID int) (cql.CustomFieldMap, error) {
 	rows, err := r.db.Query(`
 		SELECT DISTINCT cfd.id, LOWER(cfd.name), cfd.field_type, COALESCE(cfd.options, '')
@@ -2926,9 +2741,6 @@ func (r *AssetRepository) GetCQLCustomFieldMap(setID int) (cql.CustomFieldMap, e
 	return cfMap, nil
 }
 
-// GetEveryoneRoleDetailed returns the everyone-default role assignment for a set,
-// with the role name and granter name joined in. Returns nil (with no error) when
-// no everyone role is configured for the set.
 func (r *AssetRepository) GetEveryoneRoleDetailed(setID int) (*models.AssetSetEveryoneRole, error) {
 	var role models.AssetSetEveryoneRole
 	var roleID, grantedBy sql.NullInt64
@@ -2964,11 +2776,8 @@ func (r *AssetRepository) GetEveryoneRoleDetailed(setID int) (*models.AssetSetEv
 	return &role, nil
 }
 
-// ============================================================================
-// Link Operations
-// ============================================================================
+// Link operations.
 
-// DeleteAssetLinks deletes all links associated with an asset
 func (r *AssetRepository) DeleteAssetLinks(assetID int) error {
 	_, err := r.db.ExecWrite(`
 		DELETE FROM item_links

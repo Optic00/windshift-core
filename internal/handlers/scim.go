@@ -45,7 +45,6 @@ func sanitizeSCIMGroup(g *models.SCIMGroup) {
 	)
 }
 
-// SCIMHandler handles SCIM 2.0 endpoints
 type SCIMHandler struct {
 	repo              *repository.SCIMRepository
 	baseURL           string
@@ -60,7 +59,6 @@ type SCIMHandler struct {
 	notificationService  *services.NotificationService
 }
 
-// NewSCIMHandler creates a new SCIM handler
 func NewSCIMHandler(
 	repo *repository.SCIMRepository,
 	baseURL string,
@@ -81,24 +79,17 @@ func NewSCIMHandler(
 	}
 }
 
-// =============================================================================
-// Constants
-// =============================================================================
+// SCIM request limits.
 
-// scimMaxBodySize limits request body size to prevent memory exhaustion (1MB)
 const scimMaxBodySize = 1 * 1024 * 1024
 
-// =============================================================================
-// Response Helpers
-// =============================================================================
+// Response helpers.
 
-// limitRequestBody wraps the request body with a size limiter
-// Returns true if the body was limited successfully, false if body is too large
+// limitRequestBody bounds request bodies and reports whether they fit.
 func (h *SCIMHandler) limitRequestBody(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, scimMaxBodySize)
 }
 
-// logSCIMAuditEvent logs a SCIM provisioning event to the audit log.
 func (h *SCIMHandler) logSCIMAuditEvent(r *http.Request, actionType, resourceType string, resourceID *int, resourceName string, details map[string]interface{}, success bool, errorMsg string) {
 	scimToken := middleware.GetSCIMToken(r)
 	tokenPrefix := ""
@@ -129,9 +120,7 @@ func (h *SCIMHandler) logSCIMAuditEvent(r *http.Request, actionType, resourceTyp
 	go h.auditor.LogEvent(event)
 }
 
-// attrChange records a single attribute mutation inside a SCIM PATCH request.
-// It is embedded under the "changes" key in audit log details so that operators
-// can see exactly which attributes an IdP touched and what the old/new values were.
+// attrChange records one PATCH mutation for the audit log.
 type attrChange struct {
 	Op       string      `json:"op"`
 	Path     string      `json:"path"`
@@ -139,11 +128,8 @@ type attrChange struct {
 	NewValue interface{} `json:"new_value,omitempty"`
 }
 
-// logPatchOpError records the underlying driver/model error server-side for
-// operators, keyed by the SCIM token prefix so it can be correlated to the IdP
-// that triggered it. The client response stays generic ("Patch operation
-// failed") so driver-level text like FK constraint names doesn't leak out to
-// the IdP's logs.
+// logPatchOpError records driver details server-side while keeping the client
+// response generic.
 func (h *SCIMHandler) logPatchOpError(r *http.Request, resourceKind string, resourceID int, op models.SCIMPatchOp, opErr error) {
 	var tokenPrefix string
 	if tok := middleware.GetSCIMToken(r); tok != nil {
@@ -159,23 +145,17 @@ func (h *SCIMHandler) logPatchOpError(r *http.Request, resourceKind string, reso
 	)
 }
 
-// respondSCIMJSON sends a SCIM JSON response
 func respondSCIMJSON(w http.ResponseWriter, statusCode int, data interface{}) {
 	w.Header().Set("Content-Type", "application/scim+json")
 	w.WriteHeader(statusCode)
 	_ = json.NewEncoder(w).Encode(data)
 }
 
-// isInvalidFilterErr reports whether err looks like a SCIM filter parse
-// failure. Both listUsersFiltered and listGroupsFiltered wrap
-// ParseSCIMFilterWithAnd errors with the literal "invalid filter:" prefix,
-// and ParseSCIMFilter itself returns errors that contain that phrase. Using
-// a single helper keeps every classification site consistent.
+// isInvalidFilterErr centralizes SCIM filter parse classification.
 func isInvalidFilterErr(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "invalid filter")
 }
 
-// respondSCIMErrorMsg sends a SCIM error response
 func respondSCIMErrorMsg(w http.ResponseWriter, status int, detail, scimType string) {
 	w.Header().Set("Content-Type", "application/scim+json")
 	w.WriteHeader(status)
@@ -190,17 +170,13 @@ func respondSCIMErrorMsg(w http.ResponseWriter, status int, detail, scimType str
 	_ = json.NewEncoder(w).Encode(scimError)
 }
 
-// =============================================================================
-// Service Provider Endpoints
-// =============================================================================
+// Service-provider endpoints.
 
-// GetServiceProviderConfig returns SCIM capabilities (GET /scim/v2/ServiceProviderConfig)
 func (h *SCIMHandler) GetServiceProviderConfig(w http.ResponseWriter, r *http.Request) {
 	config := GetServiceProviderConfig(h.baseURL)
 	respondSCIMJSON(w, http.StatusOK, config)
 }
 
-// GetResourceTypes returns supported resource types (GET /scim/v2/ResourceTypes)
 func (h *SCIMHandler) GetResourceTypes(w http.ResponseWriter, r *http.Request) {
 	resourceTypes := []models.SCIMResourceType{
 		GetUserResourceType(h.baseURL),
@@ -221,7 +197,6 @@ func (h *SCIMHandler) GetResourceTypes(w http.ResponseWriter, r *http.Request) {
 	respondSCIMJSON(w, http.StatusOK, response)
 }
 
-// GetResourceType returns a single resource type (GET /scim/v2/ResourceTypes/{id})
 func (h *SCIMHandler) GetResourceType(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	switch id {
@@ -236,7 +211,6 @@ func (h *SCIMHandler) GetResourceType(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// GetSchemas returns SCIM schemas (GET /scim/v2/Schemas)
 func (h *SCIMHandler) GetSchemas(w http.ResponseWriter, r *http.Request) {
 	schemas := []models.SCIMSchema{
 		GetUserSchema(h.baseURL),
@@ -257,7 +231,6 @@ func (h *SCIMHandler) GetSchemas(w http.ResponseWriter, r *http.Request) {
 	respondSCIMJSON(w, http.StatusOK, response)
 }
 
-// GetSchema returns a single schema (GET /scim/v2/Schemas/{id})
 func (h *SCIMHandler) GetSchema(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	switch id {
@@ -270,11 +243,8 @@ func (h *SCIMHandler) GetSchema(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// =============================================================================
-// User Endpoints
-// =============================================================================
+// User endpoints.
 
-// listUsersFiltered queries users with a SCIM filter and pagination, returning a list response.
 func (h *SCIMHandler) listUsersFiltered(filter string, startIndex, count int) (*models.SCIMListResponse, error) {
 	filterResult, err := ParseSCIMFilterWithAnd(filter, "User")
 	if err != nil {
@@ -303,7 +273,6 @@ func (h *SCIMHandler) listUsersFiltered(filter string, startIndex, count int) (*
 	}, nil
 }
 
-// listGroupsFiltered queries groups with a SCIM filter and pagination, returning a list response.
 func (h *SCIMHandler) listGroupsFiltered(filter string, startIndex, count int) (*models.SCIMListResponse, error) {
 	filterResult, err := ParseSCIMFilterWithAnd(filter, "Group")
 	if err != nil {
@@ -337,7 +306,6 @@ func (h *SCIMHandler) listGroupsFiltered(filter string, startIndex, count int) (
 	}, nil
 }
 
-// ListUsers returns users with filtering (GET /scim/v2/Users)
 func (h *SCIMHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	filter := r.URL.Query().Get("filter")
 	startIndexStr := r.URL.Query().Get("startIndex")
@@ -370,9 +338,7 @@ func (h *SCIMHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	respondSCIMJSON(w, http.StatusOK, response)
 }
 
-// CreateUser creates a new SCIM-managed user (POST /scim/v2/Users)
 func (h *SCIMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
-	// Bound input before decoding.
 	h.limitRequestBody(w, r)
 
 	var scimUser models.SCIMUser
@@ -479,7 +445,6 @@ func (h *SCIMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	respondSCIMJSON(w, http.StatusCreated, h.userToSCIM(user))
 }
 
-// GetUser returns a single user (GET /scim/v2/Users/{id})
 func (h *SCIMHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(r.PathValue("id"))
 	if err != nil {
@@ -503,9 +468,7 @@ func (h *SCIMHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 	respondSCIMJSON(w, http.StatusOK, h.userToSCIM(user))
 }
 
-// ReplaceUser fully replaces a user (PUT /scim/v2/Users/{id})
 func (h *SCIMHandler) ReplaceUser(w http.ResponseWriter, r *http.Request) {
-	// Bound input before decoding.
 	h.limitRequestBody(w, r)
 
 	id, err := strconv.Atoi(r.PathValue("id"))
@@ -514,7 +477,6 @@ func (h *SCIMHandler) ReplaceUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify user exists
 	existingUser, err := h.repo.GetUserByID(id)
 	if err != nil {
 		respondSCIMErrorMsg(w, http.StatusNotFound, "User not found", "")
@@ -593,7 +555,6 @@ func (h *SCIMHandler) ReplaceUser(w http.ResponseWriter, r *http.Request) {
 			"old_email":    existingUser.Email,
 		}, true, "")
 
-	// Alert on active→inactive transitions (PUT can deactivate a user via Active: false).
 	if existingUser.IsActive && !isActive {
 		h.handleSCIMUserDeactivation(r, id, existingUser.Username, "scim_replace", existingUser.SCIMManaged)
 	}
@@ -601,9 +562,7 @@ func (h *SCIMHandler) ReplaceUser(w http.ResponseWriter, r *http.Request) {
 	respondSCIMJSON(w, http.StatusOK, h.userToSCIM(user))
 }
 
-// PatchUser partially updates a user (PATCH /scim/v2/Users/{id})
 func (h *SCIMHandler) PatchUser(w http.ResponseWriter, r *http.Request) {
-	// Bound input before decoding.
 	h.limitRequestBody(w, r)
 
 	id, err := strconv.Atoi(r.PathValue("id"))
@@ -612,7 +571,6 @@ func (h *SCIMHandler) PatchUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Keep a mutable snapshot so each patch operation records its prior value.
 	snapshot, err := h.repo.GetUserByID(id)
 	if err != nil {
 		respondSCIMErrorMsg(w, http.StatusNotFound, "User not found", "")
@@ -664,7 +622,6 @@ func (h *SCIMHandler) PatchUser(w http.ResponseWriter, r *http.Request) {
 			"changes":         changes,
 		}, true, "")
 
-	// Alert on active→inactive transitions applied through this PATCH.
 	for _, c := range changes {
 		if c.Path != "active" {
 			continue
@@ -680,7 +637,6 @@ func (h *SCIMHandler) PatchUser(w http.ResponseWriter, r *http.Request) {
 	respondSCIMJSON(w, http.StatusOK, h.userToSCIM(user))
 }
 
-// DeleteUser deactivates a user (DELETE /scim/v2/Users/{id})
 func (h *SCIMHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(r.PathValue("id"))
 	if err != nil {
@@ -717,17 +673,13 @@ func (h *SCIMHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	h.logSCIMAuditEvent(r, logger.ActionSCIMUserDelete, logger.ResourceUser, &id, user.Email,
 		map[string]interface{}{"username": user.Username, "email": user.Email}, true, "")
 
-	// Cascade to owned agents + revoke their tokens, and notify admins.
 	h.handleSCIMUserDeactivation(r, id, user.Username, "scim_delete", user.SCIMManaged)
 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// =============================================================================
-// Group Endpoints
-// =============================================================================
+// Group endpoints.
 
-// ListGroups returns groups with filtering (GET /scim/v2/Groups)
 func (h *SCIMHandler) ListGroups(w http.ResponseWriter, r *http.Request) {
 	filter := r.URL.Query().Get("filter")
 	startIndexStr := r.URL.Query().Get("startIndex")
@@ -760,9 +712,7 @@ func (h *SCIMHandler) ListGroups(w http.ResponseWriter, r *http.Request) {
 	respondSCIMJSON(w, http.StatusOK, response)
 }
 
-// CreateGroup creates a new SCIM-managed group (POST /scim/v2/Groups)
 func (h *SCIMHandler) CreateGroup(w http.ResponseWriter, r *http.Request) {
-	// Bound input before decoding.
 	h.limitRequestBody(w, r)
 
 	var scimGroup models.SCIMGroup
@@ -795,8 +745,7 @@ func (h *SCIMHandler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 
 	groupRef := &models.TeamGroup{ID: groupIDInt, Name: scimGroup.DisplayName}
 
-	// Add members. Each insert is audited individually so the trail shows exactly
-	// which users were provisioned into this group and which (if any) failed.
+	// Audit each member insert individually so partial failures remain visible.
 	for _, member := range scimGroup.Members {
 		memberID, convErr := strconv.Atoi(member.Value)
 		if convErr != nil {
@@ -813,7 +762,6 @@ func (h *SCIMHandler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 		h.logGroupMemberChange(r, logger.ActionSCIMGroupAddMember, groupRef, memberID, execErr)
 	}
 
-	// Invalidate permission caches for new group members
 	if len(scimGroup.Members) > 0 {
 		_ = h.permissionService.InvalidateGroupMemberCaches(groupIDInt)
 	}
@@ -832,7 +780,6 @@ func (h *SCIMHandler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 	respondSCIMJSON(w, http.StatusCreated, h.groupToSCIM(group, members))
 }
 
-// GetGroup returns a single group (GET /scim/v2/Groups/{id})
 func (h *SCIMHandler) GetGroup(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(r.PathValue("id"))
 	if err != nil {
@@ -857,9 +804,7 @@ func (h *SCIMHandler) GetGroup(w http.ResponseWriter, r *http.Request) {
 	respondSCIMJSON(w, http.StatusOK, h.groupToSCIM(group, members))
 }
 
-// ReplaceGroup fully replaces a group (PUT /scim/v2/Groups/{id})
 func (h *SCIMHandler) ReplaceGroup(w http.ResponseWriter, r *http.Request) {
-	// Bound input before decoding.
 	h.limitRequestBody(w, r)
 
 	id, err := strconv.Atoi(r.PathValue("id"))
@@ -976,7 +921,6 @@ func (h *SCIMHandler) ReplaceGroup(w http.ResponseWriter, r *http.Request) {
 	respondSCIMJSON(w, http.StatusOK, h.groupToSCIM(group, members))
 }
 
-// PatchGroup partially updates a group (PATCH /scim/v2/Groups/{id})
 func (h *SCIMHandler) PatchGroup(w http.ResponseWriter, r *http.Request) {
 	// Security: Limit request body size to prevent memory exhaustion
 	h.limitRequestBody(w, r)
@@ -1029,7 +973,6 @@ func (h *SCIMHandler) PatchGroup(w http.ResponseWriter, r *http.Request) {
 		changes = append(changes, opChanges...)
 	}
 
-	// Invalidate permission caches if any member operations were applied
 	if hasMemberOps {
 		_ = h.permissionService.InvalidateGroupMemberCaches(id)
 	}
@@ -1042,7 +985,6 @@ func (h *SCIMHandler) PatchGroup(w http.ResponseWriter, r *http.Request) {
 
 	members, _ := h.getGroupMembers(id)
 
-	// Audit log: SCIM group patched (aggregate; per-member events emitted inside applyGroupPatchOp)
 	h.logSCIMAuditEvent(r, logger.ActionSCIMGroupUpdate, logger.ResourceGroup, &id, group.Name,
 		map[string]interface{}{
 			"operation_count": len(patchReq.Operations),
@@ -1052,7 +994,6 @@ func (h *SCIMHandler) PatchGroup(w http.ResponseWriter, r *http.Request) {
 	respondSCIMJSON(w, http.StatusOK, h.groupToSCIM(group, members))
 }
 
-// DeleteGroup deletes a group (DELETE /scim/v2/Groups/{id})
 func (h *SCIMHandler) DeleteGroup(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(r.PathValue("id"))
 	if err != nil {
@@ -1060,7 +1001,6 @@ func (h *SCIMHandler) DeleteGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get group info for audit logging before deletion
 	group, err := h.repo.GetGroupByID(id)
 	if err != nil {
 		respondSCIMErrorMsg(w, http.StatusNotFound, "Group not found", "")
@@ -1079,7 +1019,6 @@ func (h *SCIMHandler) DeleteGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Invalidate permission caches for group members before deletion
 	_ = h.permissionService.InvalidateGroupMemberCaches(id)
 
 	err = h.repo.DeleteGroup(id)
@@ -1088,27 +1027,20 @@ func (h *SCIMHandler) DeleteGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Audit log: SCIM group deleted
 	h.logSCIMAuditEvent(r, logger.ActionSCIMGroupDelete, logger.ResourceGroup, &id, group.Name,
 		nil, true, "")
 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// =============================================================================
-// Me Endpoint
-// =============================================================================
+// Me endpoint.
 
-// GetMe returns 501 Not Implemented (GET /scim/v2/Me)
 func (h *SCIMHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 	respondSCIMErrorMsg(w, http.StatusNotImplemented, "The /Me endpoint is not implemented", "")
 }
 
-// =============================================================================
-// Search Endpoint
-// =============================================================================
+// Search endpoints.
 
-// SearchRequest handles POST /.search (RFC 7644 Section 3.4.3)
 func (h *SCIMHandler) SearchRequest(w http.ResponseWriter, r *http.Request) {
 	h.limitRequestBody(w, r)
 
@@ -1134,7 +1066,6 @@ func (h *SCIMHandler) SearchRequest(w http.ResponseWriter, r *http.Request) {
 		count = 200
 	}
 
-	// Extract resource type from filter
 	resourceType, remainingFilter := ExtractResourceTypeFilter(searchReq.Filter)
 
 	switch resourceType {
@@ -1202,7 +1133,6 @@ func (h *SCIMHandler) SearchRequest(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// SearchUsers handles POST /Users/.search — resource-specific search per RFC 7644 §3.4.3
 func (h *SCIMHandler) SearchUsers(w http.ResponseWriter, r *http.Request) {
 	h.limitRequestBody(w, r)
 
@@ -1240,7 +1170,6 @@ func (h *SCIMHandler) SearchUsers(w http.ResponseWriter, r *http.Request) {
 	respondSCIMJSON(w, http.StatusOK, response)
 }
 
-// SearchGroups handles POST /Groups/.search — resource-specific search per RFC 7644 §3.4.3
 func (h *SCIMHandler) SearchGroups(w http.ResponseWriter, r *http.Request) {
 	h.limitRequestBody(w, r)
 
@@ -1278,14 +1207,10 @@ func (h *SCIMHandler) SearchGroups(w http.ResponseWriter, r *http.Request) {
 	respondSCIMJSON(w, http.StatusOK, response)
 }
 
-// =============================================================================
-// Bulk Endpoint
-// =============================================================================
+// Bulk endpoint.
 
-// scimBulkMaxOperations is the maximum number of operations in a single bulk request
 const scimBulkMaxOperations = 100
 
-// BulkRequest handles POST /Bulk (RFC 7644 Section 3.7)
 func (h *SCIMHandler) BulkRequest(w http.ResponseWriter, r *http.Request) {
 	h.limitRequestBody(w, r)
 
@@ -1318,11 +1243,9 @@ func (h *SCIMHandler) BulkRequest(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// executeBulkOperation dispatches a single bulk operation to the appropriate handler
 func (h *SCIMHandler) executeBulkOperation(originalReq *http.Request, op models.SCIMBulkOperation) models.SCIMBulkResponseOperation {
 	method := strings.ToUpper(op.Method)
 
-	// Validate method
 	switch method {
 	case "POST", "PUT", "PATCH", "DELETE", "GET":
 		// ok
@@ -1336,7 +1259,6 @@ func (h *SCIMHandler) executeBulkOperation(originalReq *http.Request, op models.
 		}
 	}
 
-	// Build the sub-request
 	var body *bytes.Reader
 	if op.Data != nil {
 		body = bytes.NewReader(op.Data)
@@ -1361,7 +1283,6 @@ func (h *SCIMHandler) executeBulkOperation(originalReq *http.Request, op models.
 	}
 	subReq.Header.Set("Content-Type", "application/scim+json")
 
-	// Route to the correct handler
 	handler := h.routeBulkOperation(method, path)
 	if handler == nil {
 		return models.SCIMBulkResponseOperation{
@@ -1373,7 +1294,6 @@ func (h *SCIMHandler) executeBulkOperation(originalReq *http.Request, op models.
 		}
 	}
 
-	// Execute using httptest recorder
 	recorder := httptest.NewRecorder()
 	handler(recorder, subReq)
 
@@ -1383,19 +1303,16 @@ func (h *SCIMHandler) executeBulkOperation(originalReq *http.Request, op models.
 		Status: strconv.Itoa(recorder.Code),
 	}
 
-	// Parse response body for location header and error responses
 	if recorder.Header().Get("Location") != "" {
 		result.Location = recorder.Header().Get("Location")
 	}
 
-	// Include response body for errors or resource creation
 	if recorder.Body.Len() > 0 {
 		var respBody interface{}
 		if err := json.Unmarshal(recorder.Body.Bytes(), &respBody); err == nil {
 			if recorder.Code >= 400 {
 				result.Response = respBody
 			} else if method == "POST" || method == "PUT" || method == "GET" || method == "PATCH" {
-				// For successful resource operations, extract location from the response
 				if respMap, ok := respBody.(map[string]interface{}); ok {
 					if meta, ok := respMap["meta"].(map[string]interface{}); ok {
 						if loc, ok := meta["location"].(string); ok {
@@ -1410,12 +1327,9 @@ func (h *SCIMHandler) executeBulkOperation(originalReq *http.Request, op models.
 	return result
 }
 
-// routeBulkOperation returns the handler function for a given method and path
 func (h *SCIMHandler) routeBulkOperation(method, path string) http.HandlerFunc {
-	// Normalize path: strip leading /scim/v2 prefix if present
 	path = strings.TrimPrefix(path, "/scim/v2")
 
-	// Parse the path to determine resource type and optional ID
 	parts := strings.SplitN(strings.TrimPrefix(path, "/"), "/", 2)
 	if len(parts) == 0 {
 		return nil
@@ -1425,7 +1339,6 @@ func (h *SCIMHandler) routeBulkOperation(method, path string) http.HandlerFunc {
 	hasID := len(parts) > 1 && parts[1] != ""
 
 	if hasID {
-		// Inject path value for {id} parameter via SetPathValue
 		id := parts[1]
 		return func(w http.ResponseWriter, r *http.Request) {
 			r.SetPathValue("id", id)
@@ -1462,7 +1375,6 @@ func (h *SCIMHandler) routeBulkOperation(method, path string) http.HandlerFunc {
 		}
 	}
 
-	// Collection-level operations (no ID)
 	switch resource {
 	case "Users":
 		if method == "POST" {
@@ -1483,9 +1395,7 @@ func (h *SCIMHandler) routeBulkOperation(method, path string) http.HandlerFunc {
 	return nil
 }
 
-// =============================================================================
-// Helper Methods
-// =============================================================================
+// Helper methods.
 
 func (h *SCIMHandler) getGroupMembers(groupID int) ([]models.SCIMGroupMember, error) {
 	// Only SCIM-managed memberships come back from the repository. A
