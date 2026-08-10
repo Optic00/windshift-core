@@ -712,7 +712,15 @@ func (s *Server) initialize() error {
 	themeHandler := handlers.NewThemeHandler(services.NewThemeService(repository.NewThemeRepository(s.db)), logger.NewAuditor(s.db))
 	userPreferencesService := services.NewUserPreferencesService(repository.NewUserPreferencesRepository(s.db), repository.NewThemeRepository(s.db))
 	userPreferencesHandler := handlers.NewUserPreferencesHandler(userPreferencesService)
-	homepageHandler := handlers.NewHomepageHandler(repository.NewWorkspaceRepository(s.db), repository.NewItemRepository(s.db), s.activityTracker, permService, userPreferencesService)
+	homepageHandler := handlers.NewHomepageHandler(
+		repository.NewWorkspaceRepository(s.db),
+		repository.NewItemRepository(s.db),
+		services.NewItemCRUDService(s.db),
+		services.NewPlanningService(s.db),
+		s.activityTracker,
+		permService,
+		userPreferencesService,
+	)
 
 	notificationHandler := handlers.NewNotificationHandler(s.notificationManager, s.notificationService)
 	emailTemplateHandler := handlers.NewEmailTemplateHandler(repository.NewEmailTemplateRepository(s.db), logger.NewAuditor(s.db))
@@ -860,6 +868,8 @@ func (s *Server) initialize() error {
 
 	assetHandler := handlers.NewAssetHandler(s.db, permService, cfg.AttachmentPath)
 	assetHandler.SetAssetActionService(s.assetActionService)
+	actionsHandler.SetAssetService(assetHandler.AssetService())
+	s.actionService.SetAssetNodeServices(assetHandler.AssetService(), assetHandler.AssetPermissionService())
 	if n, err := assetHandler.ReconcileInterruptedImports(); err != nil {
 		slog.Warn("failed to reconcile interrupted asset imports", slog.Any("error", err))
 	} else if n > 0 {
@@ -925,9 +935,7 @@ func (s *Server) initialize() error {
 	eventCoordinator.SetActionService(s.actionService)
 	eventCoordinator.SetAssetActionService(s.assetActionService)
 	eventCoordinator.SetMagicLinkService(magicLinkService)
-	s.actionService.SetAssetActionService(s.assetActionService)
 	s.actionService.SetEventCoordinator(eventCoordinator)
-	s.actionService.SetAssetPermissionChecker(assetHandler)
 	s.assetActionService.SetAssetPermissionChecker(assetHandler)
 	s.assetActionService.SetEventCoordinator(eventCoordinator)
 	slog.Info("event coordinator initialized")
@@ -935,6 +943,8 @@ func (s *Server) initialize() error {
 	// Wire up services
 	itemHandler.SetWebhookSender(webhookSender)
 	itemHandler.SetEventCoordinator(eventCoordinator)
+	s.actionService.SetItemUpdateApplicationService(itemHandler.ItemUpdateApplicationService())
+	s.assetActionService.SetItemCreationService(itemHandler.ItemCreationService())
 	commentHandler.SetWebhookSender(webhookSender)
 
 	// Item live-update stream (WI-484): register the in-memory SSE hub as the
@@ -1278,8 +1288,7 @@ func (s *Server) initialize() error {
 				eventCoordinator,
 				permService,
 				assetHandler,
-				func(params services.ItemCreationParams) (int64, error) { return services.CreateItem(s.db, params) },
-				repository.NewWorkspaceRepository(s.db),
+				itemHandler.ItemCreationService(),
 				repository.NewAssetRepository(s.db),
 			)
 			mux.Handle("POST /api/internal/logbook/execute-node", http.HandlerFunc(nodeExecHandler.HandleNodeExecution))

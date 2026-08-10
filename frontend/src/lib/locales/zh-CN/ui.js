@@ -312,6 +312,7 @@ export default {
 
   widgets: {
     removeWidget: '移除小部件',
+    defaultWidth: '默认：{width}/{columns} 宽度',
     widthQuarter: '四分之一',
     widthThird: '三分之一',
     widthHalf: '半',

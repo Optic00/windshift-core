@@ -139,7 +139,7 @@
       error = t('portal.itemTypeRequired');
       return;
     }
-    if (formData.run_mode === 'form' && !/\{[a-zA-Z0-9_]+\}/.test(formData.cql_query)) {
+    if (formData.run_mode === 'form' && !/\$\{[a-zA-Z0-9_-]+\}/.test(formData.cql_query)) {
       error = t('portal.qlQueryTokenRequired');
       return;
     }

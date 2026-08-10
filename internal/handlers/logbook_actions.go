@@ -28,20 +28,18 @@ type LogbookNodeExecutionHandler struct {
 	eventCoordinator  *services.EventCoordinator
 	permissionService *services.PermissionService
 	assetHandler      *AssetHandler
-	createItem        func(services.ItemCreationParams) (int64, error)
-	workspaceRepo     *repository.WorkspaceRepository
+	itemCreation      *services.ItemCreationService
 	assetRepo         *repository.AssetRepository
 }
 
 // NewLogbookNodeExecutionHandler creates a new node execution handler.
-func NewLogbookNodeExecutionHandler(secret string, eventCoordinator *services.EventCoordinator, permissionService *services.PermissionService, assetHandler *AssetHandler, createItem func(services.ItemCreationParams) (int64, error), workspaceRepo *repository.WorkspaceRepository, assetRepo *repository.AssetRepository) *LogbookNodeExecutionHandler {
+func NewLogbookNodeExecutionHandler(secret string, eventCoordinator *services.EventCoordinator, permissionService *services.PermissionService, assetHandler *AssetHandler, itemCreation *services.ItemCreationService, assetRepo *repository.AssetRepository) *LogbookNodeExecutionHandler {
 	return &LogbookNodeExecutionHandler{
 		secret:            secret,
 		eventCoordinator:  eventCoordinator,
 		permissionService: permissionService,
 		assetHandler:      assetHandler,
-		createItem:        createItem,
-		workspaceRepo:     workspaceRepo,
+		itemCreation:      itemCreation,
 		assetRepo:         assetRepo,
 	}
 }
@@ -132,7 +130,7 @@ func (h *LogbookNodeExecutionHandler) executeCreateItem(nodeConfig string, event
 
 	// Authorize: the action config may target any workspace, so verify the
 	// acting user has edit permission on the target before creating an item.
-	if h.permissionService == nil || h.createItem == nil {
+	if h.permissionService == nil || h.itemCreation == nil {
 		return nil, fmt.Errorf("create_item blocked: permission or item service not configured")
 	}
 	hasPerm, permErr := h.permissionService.HasWorkspacePermission(creatorID, config.WorkspaceID, models.PermissionItemCreate)
@@ -150,48 +148,27 @@ func (h *LogbookNodeExecutionHandler) executeCreateItem(nodeConfig string, event
 		slog.Int("creator_id", creatorID),
 	)
 
-	itemID, err := h.createItem(services.ItemCreationParams{
-		WorkspaceID:      config.WorkspaceID,
-		Title:            title,
-		Description:      config.Description,
-		ItemTypeID:       &itemTypeID,
-		CreatorID:        &creatorID,
-		ValidatingUserID: creatorID,
-		PermService:      h.permissionService,
+	result, err := h.itemCreation.CreateWithContext(creatorID, "", services.ItemCreateInput{
+		WorkspaceID: config.WorkspaceID,
+		Title:       title,
+		Description: config.Description,
+		ItemTypeID:  &itemTypeID,
+	}, services.ActionContext{
+		TriggeredByAction: true,
+		ExecutionChainID:  req.ExecutionChainID,
+		CascadeDepth:      req.CascadeDepth + 1,
+		SourceApplication: "logbook",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create item: %w", err)
 	}
+	itemID := result.Item.ID
 
 	slog.Info("item created from logbook action",
 		slog.String("component", "logbook-actions"),
-		slog.Int64("item_id", itemID),
+		slog.Int("item_id", itemID),
 		slog.Int("workspace_id", config.WorkspaceID),
 	)
-
-	// Emit item created event with cascade context so workspace actions can fire
-	if h.eventCoordinator != nil {
-		item := &models.Item{
-			ID:          int(itemID),
-			WorkspaceID: config.WorkspaceID,
-			Title:       title,
-			ItemTypeID:  &itemTypeID,
-			CreatorID:   &creatorID,
-		}
-		// Load workspace key for event emission
-		if h.workspaceRepo != nil {
-			if key, err := h.workspaceRepo.GetKey(config.WorkspaceID); err == nil {
-				item.WorkspaceKey = key
-			}
-		}
-
-		h.eventCoordinator.EmitItemCreatedWithContext(item, creatorID, services.ActionContext{
-			TriggeredByAction: true,
-			ExecutionChainID:  req.ExecutionChainID,
-			CascadeDepth:      req.CascadeDepth + 1,
-			SourceApplication: "logbook",
-		})
-	}
 
 	return map[string]interface{}{
 		"item_id":      itemID,

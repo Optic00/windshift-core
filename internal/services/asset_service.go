@@ -178,6 +178,49 @@ func (s *AssetService) actions() AssetActionEventEmitter {
 	return s.actionService
 }
 
+// ValidateActionTaxonomyReferences rejects asset action nodes whose taxonomy
+// IDs do not belong to the configured asset set.
+func (s *AssetService) ValidateActionTaxonomyReferences(nodes []models.ActionNode) error {
+	for i, node := range nodes {
+		switch node.NodeType {
+		case models.ActionNodeCreateAsset:
+			var config models.CreateAssetNodeConfig
+			if err := json.Unmarshal([]byte(node.NodeConfig), &config); err != nil {
+				return fmt.Errorf("nodes[%d].node_config: parse create_asset config: %w", i, err)
+			}
+			if err := s.validateActionTaxonomy(config.AssetSetID, config.AssetTypeID, config.CategoryID, config.StatusID); err != nil {
+				return fmt.Errorf("nodes[%d].node_config: %w", i, err)
+			}
+		case models.ActionNodeUpdateAsset:
+			var config models.UpdateAssetNodeConfig
+			if err := json.Unmarshal([]byte(node.NodeConfig), &config); err != nil {
+				return fmt.Errorf("nodes[%d].node_config: parse update_asset config: %w", i, err)
+			}
+			if err := s.validateActionTaxonomy(config.AssetSetID, config.AssetTypeID, nil, nil); err != nil {
+				return fmt.Errorf("nodes[%d].node_config: %w", i, err)
+			}
+		}
+	}
+	return nil
+}
+
+func (s *AssetService) validateActionTaxonomy(setID, typeID int, categoryID, statusID *int) error {
+	if setID <= 0 {
+		return fmt.Errorf("asset_set_id must be positive")
+	}
+	return s.validateAssetTaxonomy(setID, typeID, categoryID, statusID)
+}
+
+// FindAsset returns the complete asset model used by mutation adapters.
+func (s *AssetService) FindAsset(assetID int) (*models.Asset, error) {
+	row, err := s.repo.FindAssetFullByID(assetID)
+	if err != nil {
+		return nil, err
+	}
+	asset := repository.AssetRowToModel(*row)
+	return &asset, nil
+}
+
 func applyAssetAutomationContext(event *models.AssetActionEvent, context AssetAutomationContext) {
 	event.TriggeredByAction = context.TriggeredByAction
 	event.ExecutionChainID = context.ExecutionChainID

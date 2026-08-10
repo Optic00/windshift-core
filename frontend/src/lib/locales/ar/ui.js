@@ -378,6 +378,7 @@ export default {
   },
   widgets: {
     removeWidget: 'إزالة الأداة',
+    defaultWidth: 'الافتراضي: عرض {width}/{columns}',
     widthQuarter: 'ربع',
     widthThird: 'ثلث',
     widthHalf: 'نصف',

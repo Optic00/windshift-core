@@ -2,11 +2,13 @@
   import { useEventListener } from 'runed';
   import { Sparkles, CheckSquare, Compass, GripVertical, Bell, Clock, Eye, Target, Briefcase, Grip, ListChecks } from '@lucide/svelte';
   import {
+    DASHBOARD_GRID_COLUMNS,
     dashboardWidgetCategories,
     getDashboardWidgetsByCategory,
   } from '../services/dashboardWidgetRegistry.js';
   import DescriptionText from '../components/DescriptionText.svelte';
   import ModalHeader from '../dialogs/ModalHeader.svelte';
+  import { t } from '../stores/i18n.svelte.js';
 
   let { isOpen = $bindable(false), activeCategory = $bindable('activity') } = $props();
 
@@ -137,7 +139,10 @@
                     {widget.category}
                   </span>
                   <span class="text-xs" style="color: var(--ds-text-subtlest);">
-                    Default: {widget.defaultWidth}/3 width
+                    {t('widgets.defaultWidth', {
+                      width: widget.defaultWidth,
+                      columns: DASHBOARD_GRID_COLUMNS,
+                    })}
                   </span>
                 </div>
               </div>

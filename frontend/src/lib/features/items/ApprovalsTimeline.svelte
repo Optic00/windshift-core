@@ -73,15 +73,14 @@
     }
   }
 
-  function activeStep(req) {
-    return req.step_instances?.find(si => si.status === 'pending' && si.started_at);
-  }
-
-  function isInActivePool(req) {
+  function activeStepForCurrentUser(req) {
     const me = authStore.currentUser?.id;
-    if (!me) return false;
-    const step = activeStep(req);
-    return !!step?.approvers?.some(a => a.user_id === me && a.is_active);
+    if (!me) return undefined;
+    return req.step_instances?.find(si =>
+      si.status === 'pending' &&
+      si.started_at &&
+      si.approvers?.some(a => a.user_id === me && a.is_active)
+    );
   }
 
   function canCancelRequest(req) {
@@ -170,8 +169,7 @@
     {#each requests as req (req.id)}
       {@const expanded = expandedRequests.has(req.id)}
       {@const badge = statusBadge(req.status)}
-      {@const inPool = isInActivePool(req)}
-      {@const myStep = activeStep(req)}
+      {@const myStep = activeStepForCurrentUser(req)}
       <div
         class="border rounded-lg"
         style="border-color: var(--ds-border); background: var(--ds-surface-raised);"
@@ -257,7 +255,7 @@
             </div>
 
             <!-- Decision actions for the active pool -->
-            {#if req.status === 'pending' && inPool && myStep}
+            {#if req.status === 'pending' && myStep}
               <div class="border-t pt-4 space-y-3" style="border-color: var(--ds-border);">
                 <div class="text-sm font-medium" style="color: var(--ds-text);">
                   Your decision is required

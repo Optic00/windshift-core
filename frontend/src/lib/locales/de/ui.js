@@ -376,6 +376,7 @@ export default {
   },
   widgets: {
     removeWidget: 'Widget entfernen',
+    defaultWidth: 'Standard: {width}/{columns} Breite',
     widthQuarter: 'Viertel',
     widthThird: 'Drittel',
     widthHalf: 'Hälfte',

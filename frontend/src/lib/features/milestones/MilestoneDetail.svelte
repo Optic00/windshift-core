@@ -249,19 +249,11 @@
       <!-- Milestone Header Card -->
       <div class="rounded-xl border p-6 mb-6" style="background-color: var(--ds-surface-raised); border-color: var(--ds-border);">
         <div class="flex items-start justify-between mb-4">
-          <div class="flex items-center gap-3">
-            <div
-              class="w-12 h-12 rounded-full flex items-center justify-center"
-              style="background-color: {progress.category_color ? progress.category_color + '20' : 'rgba(37,99,235,0.12)'};"
-            >
-              <Flag class="w-6 h-6" style="color: {progress.category_color || '#2563eb'};" />
-            </div>
-            <div>
-              <h1 class="text-2xl font-semibold" style="color: var(--ds-text);">{progress.milestone_name}</h1>
-              {#if progress.description}
-                <p class="text-sm mt-1" style="color: var(--ds-text-subtle);">{progress.description}</p>
-              {/if}
-            </div>
+          <div>
+            <h1 class="text-2xl font-semibold" style="color: var(--ds-text);">{progress.milestone_name}</h1>
+            {#if progress.description}
+              <p class="text-sm mt-1" style="color: var(--ds-text-subtle);">{progress.description}</p>
+            {/if}
           </div>
           {#if progress.status}
             {@const statusInfo = getStatusInfo(progress.status)}

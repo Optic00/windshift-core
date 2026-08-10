@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"windshift/internal/database"
 	"windshift/internal/models"
@@ -265,8 +266,9 @@ func (ec *EventCoordinator) emitItemUpdatedInternal(original, updated *models.It
 			oldVals := make(map[string]interface{})
 			newVals := make(map[string]interface{})
 			for _, fc := range fieldChanges {
-				oldVals[fc.FieldName] = fc.OldValue
-				newVals[fc.FieldName] = fc.NewValue
+				fieldName := actionEventFieldName(fc.FieldName)
+				oldVals[fieldName] = fc.OldValue
+				newVals[fieldName] = fc.NewValue
 			}
 			event := &models.ActionEvent{
 				EventType:   models.ActionTriggerItemUpdated,
@@ -292,6 +294,13 @@ func (ec *EventCoordinator) emitItemUpdatedInternal(original, updated *models.It
 		// Always dispatch item.updated for any update
 		ec.webhookDispatcher.DispatchEvent("item.updated", updated)
 	}
+}
+
+func actionEventFieldName(historyFieldName string) string {
+	if strings.HasPrefix(historyFieldName, "cf_") {
+		return "custom_field_" + strings.TrimPrefix(historyFieldName, "cf_")
+	}
+	return historyFieldName
 }
 
 func applyActionContext(event *models.ActionEvent, actionContext *ActionContext) {
