@@ -205,6 +205,22 @@ class HomepageStore {
     this.debouncedSaveLayout();
   }
 
+  moveSection(sectionId, offset) {
+    const currentIndex = this.sections.findIndex((section) => section.id === sectionId);
+    const nextIndex = currentIndex + offset;
+    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= this.sections.length) return false;
+
+    const reordered = [...this.sections];
+    const [section] = reordered.splice(currentIndex, 1);
+    reordered.splice(nextIndex, 0, section);
+    this.sections = reordered.map((candidate, index) => ({
+      ...candidate,
+      display_order: index,
+    }));
+    this.debouncedSaveLayout();
+    return true;
+  }
+
   deleteSection(sectionId) {
     this.widgets = this.widgets.filter((w) => w.section_id !== sectionId);
     this.sections = this.sections.filter((s) => s.id !== sectionId);

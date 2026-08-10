@@ -1,11 +1,20 @@
 <script>
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import { authStore, homepageStore, permissionStore, isSystemAdmin, workspacesStore } from '../stores';
   import { t } from '../stores/i18n.svelte.js';
   import DashboardOnboarding from './DashboardOnboarding.svelte';
   import Text from '../components/Text.svelte';
   import Button from '../components/Button.svelte';
-  import { Edit3, LayoutGrid, Plus, Pencil, Trash2, X } from '@lucide/svelte';
+  import {
+    ChevronDown,
+    ChevronUp,
+    Edit3,
+    LayoutGrid,
+    Plus,
+    Pencil,
+    Trash2,
+    X,
+  } from '@lucide/svelte';
   import { useEventListener } from 'runed';
   import { confirm } from '../composables/useConfirm.js';
   import { draggable, dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter';
@@ -102,12 +111,23 @@
     homepageStore.toggleCustomizeMode();
   }
 
-  function addSection() {
+  async function addSection() {
     const created = homepageStore.addSection('New Section', '');
     editingSectionId = created.id;
     editingSectionTitle = created.title;
     editingSectionSubtitle = created.subtitle;
     isNewSection = true;
+
+    await tick();
+    const titleInput = /** @type {HTMLInputElement | null} */ (
+      document.getElementById(`dashboard-section-title-${created.id}`)
+    );
+    titleInput?.focus({ preventScroll: true });
+    titleInput?.select();
+    document.getElementById(`dashboard-section-${created.id}`)?.scrollIntoView({
+      behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+      block: 'center',
+    });
   }
 
   function startEditingSection(section) {
@@ -274,6 +294,7 @@
           variant={isEditMode ? 'primary' : 'default'}
           icon={isEditMode ? X : Edit3}
           onclick={toggleEditMode}
+          dataTestid="dashboard-edit-toggle"
         >
           {isEditMode ? 'Done Editing' : 'Edit'}
         </Button>
@@ -320,9 +341,16 @@
       >
         <div class="flex items-center gap-2 text-sm" style="color: var(--ds-status-info-text);">
           <Edit3 class="h-4 w-4" />
-          <span>Edit mode: add, rename, or delete sections and widgets</span>
+          <span>Edit mode: add, rename, reorder, or delete sections and widgets</span>
         </div>
-        <Button variant="primary" size="small" icon={Plus} onclick={addSection}>
+        <!-- shortcut-guard-exempt: contextual edit-mode action -->
+        <Button
+          variant="primary"
+          size="small"
+          icon={Plus}
+          onclick={addSection}
+          dataTestid="dashboard-add-section"
+        >
           Add Section
         </Button>
       </div>
@@ -331,20 +359,26 @@
     <!-- Sections + widgets -->
     {#if layoutLoaded}
       <div class="space-y-10">
-        {#each sections as section (section.id)}
+        {#each sections as section, sectionIndex (section.id)}
           {@const sectionWidgets = getSectionWidgets(section.id)}
-          <section>
+          <section
+            id={`dashboard-section-${section.id}`}
+            data-testid="dashboard-section"
+            aria-label={section.title || 'Dashboard section'}
+          >
             <!-- Section header -->
             <div class="flex items-center justify-between mb-4">
               {#if editingSectionId === section.id}
                 <div class="flex-1 flex items-center gap-2 flex-wrap">
                   <input
+                    id={`dashboard-section-title-${section.id}`}
                     type="text"
                     bind:value={editingSectionTitle}
                     class="px-3 py-2 border rounded text-lg font-semibold"
                     style="border-color: var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text);"
                     placeholder="Section title"
                     onkeydown={handleSectionEditKeydown}
+                    data-testid="dashboard-section-title-input"
                   />
                   <input
                     type="text"
@@ -363,15 +397,44 @@
                 </div>
               {:else}
                 <div>
-                  <h2 class="text-lg font-semibold" style="color: var(--ds-text);">{section.title}</h2>
+                  <h2
+                    id={`dashboard-section-heading-${section.id}`}
+                    class="text-lg font-semibold"
+                    style="color: var(--ds-text);"
+                  >{section.title}</h2>
                   {#if section.subtitle}
                     <p class="text-sm mt-0.5" style="color: var(--ds-text-subtle);">{section.subtitle}</p>
                   {/if}
                 </div>
                 {#if isEditMode}
-                  <div class="flex items-center gap-2">
+                  <div class="flex items-center gap-1">
                     <button
-                      class="p-2 rounded"
+                      type="button"
+                      class="p-2 rounded transition-colors hover:bg-[var(--ds-background-neutral-hovered)] disabled:cursor-not-allowed disabled:opacity-30"
+                      style="color: var(--ds-text-subtle);"
+                      onclick={() => homepageStore.moveSection(section.id, -1)}
+                      disabled={sectionIndex === 0}
+                      title={t('layout.moveUp')}
+                      aria-label={t('layout.moveUp')}
+                      data-testid="dashboard-section-move-up"
+                    >
+                      <ChevronUp class="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      class="p-2 rounded transition-colors hover:bg-[var(--ds-background-neutral-hovered)] disabled:cursor-not-allowed disabled:opacity-30"
+                      style="color: var(--ds-text-subtle);"
+                      onclick={() => homepageStore.moveSection(section.id, 1)}
+                      disabled={sectionIndex === sections.length - 1}
+                      title={t('layout.moveDown')}
+                      aria-label={t('layout.moveDown')}
+                      data-testid="dashboard-section-move-down"
+                    >
+                      <ChevronDown class="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      class="p-2 rounded transition-colors hover:bg-[var(--ds-background-neutral-hovered)]"
                       style="color: var(--ds-text-subtle);"
                       onclick={() => startEditingSection(section)}
                       title="Rename section"
@@ -379,7 +442,8 @@
                       <Pencil class="h-4 w-4" />
                     </button>
                     <button
-                      class="p-2 rounded"
+                      type="button"
+                      class="p-2 rounded transition-colors hover:bg-[var(--ds-background-neutral-hovered)]"
                       style="color: var(--ds-text-subtle);"
                       onclick={() => handleDeleteSection(section.id)}
                       title="Delete section"
