@@ -164,7 +164,7 @@
         item_type_id: formData.run_mode === 'form' ? formData.item_type_id : null,
         workspace_id: formData.run_mode === 'form' ? formData.workspace_id : null,
         config: configJson,
-        is_active: true
+        is_active: mode === 'edit' ? (assetReport.is_active ?? true) : true
       };
 
       if (mode === 'create') {

@@ -83,6 +83,11 @@ type AssetReportHandler struct {
 	assetPerm      *services.AssetPermissionService
 }
 
+type createAssetReportRequest struct {
+	models.AssetReport
+	IsActive *bool `json:"is_active"`
+}
+
 func NewAssetReportHandler(
 	repo *repository.AssetReportRepository,
 	channelRepo *repository.ChannelRepository,
@@ -300,9 +305,14 @@ func (h *AssetReportHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ar, ok := decodeChannelJSON[models.AssetReport](w, r)
+	input, ok := decodeChannelJSON[createAssetReportRequest](w, r)
 	if !ok {
 		return
+	}
+	ar := input.AssetReport
+	ar.IsActive = true
+	if input.IsActive != nil {
+		ar.IsActive = *input.IsActive
 	}
 	if !sanitizeAssetReport(w, r, &ar) {
 		return
@@ -351,11 +361,6 @@ func (h *AssetReportHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !h.validateAssetReportFormBinding(w, r, user.ID, &ar) {
 		return
 	}
-	// Reports default to active on create — JSON's false zero-value collides
-	// with "field omitted", so we always activate here. Callers that want to
-	// land an inactive report can follow up with PUT (Update preserves the
-	// requested is_active value verbatim).
-	ar.IsActive = true
 	if ar.DisplayOrder == 0 {
 		maxOrder, mErr := h.repo.MaxDisplayOrder(ar.ChannelID)
 		if mErr != nil {
