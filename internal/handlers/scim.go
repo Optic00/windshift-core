@@ -505,7 +505,7 @@ func (h *SCIMHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 
 // ReplaceUser fully replaces a user (PUT /scim/v2/Users/{id})
 func (h *SCIMHandler) ReplaceUser(w http.ResponseWriter, r *http.Request) {
-	// Security: Limit request body size to prevent memory exhaustion
+	// Bound input before decoding.
 	h.limitRequestBody(w, r)
 
 	id, err := strconv.Atoi(r.PathValue("id"))
@@ -545,7 +545,6 @@ func (h *SCIMHandler) ReplaceUser(w http.ResponseWriter, r *http.Request) {
 	}
 	sanitizeSCIMUser(&scimUser)
 
-	// Extract email
 	email := existingUser.Email
 	if len(scimUser.Emails) > 0 {
 		for _, e := range scimUser.Emails {
@@ -559,7 +558,6 @@ func (h *SCIMHandler) ReplaceUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Extract name
 	firstName := scimUser.Name.GivenName
 	lastName := scimUser.Name.FamilyName
 	if firstName == "" {
@@ -569,27 +567,23 @@ func (h *SCIMHandler) ReplaceUser(w http.ResponseWriter, r *http.Request) {
 		lastName = existingUser.LastName
 	}
 
-	// Resolve active flag: preserve existing when omitted
 	isActive := existingUser.IsActive
 	if scimUser.Active != nil {
 		isActive = *scimUser.Active
 	}
 
-	// Update user
 	err = h.repo.ReplaceUser(id, email, scimUser.UserName, firstName, lastName, isActive, scimUser.ExternalID)
 	if err != nil {
 		respondSCIMErrorMsg(w, http.StatusInternalServerError, "Failed to update user", "")
 		return
 	}
 
-	// Fetch updated user
 	user, err := h.repo.GetUserByID(id)
 	if err != nil {
 		respondSCIMErrorMsg(w, http.StatusInternalServerError, "Failed to retrieve updated user", "")
 		return
 	}
 
-	// Audit log: SCIM user updated (full replace)
 	h.logSCIMAuditEvent(r, logger.ActionSCIMUserUpdate, logger.ResourceUser, &id, email,
 		map[string]interface{}{
 			"username":     scimUser.UserName,
@@ -609,7 +603,7 @@ func (h *SCIMHandler) ReplaceUser(w http.ResponseWriter, r *http.Request) {
 
 // PatchUser partially updates a user (PATCH /scim/v2/Users/{id})
 func (h *SCIMHandler) PatchUser(w http.ResponseWriter, r *http.Request) {
-	// Security: Limit request body size to prevent memory exhaustion
+	// Bound input before decoding.
 	h.limitRequestBody(w, r)
 
 	id, err := strconv.Atoi(r.PathValue("id"))
@@ -618,9 +612,7 @@ func (h *SCIMHandler) PatchUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Capture a snapshot so applyUserPatchOp can record old/new values per attribute.
-	// The snapshot is mutated in place as each op applies, so subsequent ops on the
-	// same attribute still see the prior-op value as "old".
+	// Keep a mutable snapshot so each patch operation records its prior value.
 	snapshot, err := h.repo.GetUserByID(id)
 	if err != nil {
 		respondSCIMErrorMsg(w, http.StatusNotFound, "User not found", "")
@@ -660,14 +652,12 @@ func (h *SCIMHandler) PatchUser(w http.ResponseWriter, r *http.Request) {
 		changes = append(changes, opChanges...)
 	}
 
-	// Fetch updated user
 	user, err := h.repo.GetUserByID(id)
 	if err != nil {
 		respondSCIMErrorMsg(w, http.StatusInternalServerError, "Failed to retrieve updated user", "")
 		return
 	}
 
-	// Audit log: SCIM user patched
 	h.logSCIMAuditEvent(r, logger.ActionSCIMUserUpdate, logger.ResourceUser, &id, user.Email,
 		map[string]interface{}{
 			"operation_count": len(patchReq.Operations),
@@ -698,7 +688,6 @@ func (h *SCIMHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get user info for audit logging before deactivation
 	user, err := h.repo.GetUserByID(id)
 	if err != nil {
 		respondSCIMErrorMsg(w, http.StatusNotFound, "User not found", "")
@@ -719,14 +708,12 @@ func (h *SCIMHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Deactivate rather than delete
 	err = h.repo.DeactivateUser(id)
 	if err != nil {
 		respondSCIMErrorMsg(w, http.StatusInternalServerError, "Failed to delete user", "")
 		return
 	}
 
-	// Audit log: SCIM user deactivated
 	h.logSCIMAuditEvent(r, logger.ActionSCIMUserDelete, logger.ResourceUser, &id, user.Email,
 		map[string]interface{}{"username": user.Username, "email": user.Email}, true, "")
 
@@ -775,7 +762,7 @@ func (h *SCIMHandler) ListGroups(w http.ResponseWriter, r *http.Request) {
 
 // CreateGroup creates a new SCIM-managed group (POST /scim/v2/Groups)
 func (h *SCIMHandler) CreateGroup(w http.ResponseWriter, r *http.Request) {
-	// Security: Limit request body size to prevent memory exhaustion
+	// Bound input before decoding.
 	h.limitRequestBody(w, r)
 
 	var scimGroup models.SCIMGroup
@@ -794,13 +781,11 @@ func (h *SCIMHandler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check for existing group with same name
 	if h.repo.GroupNameExists(scimGroup.DisplayName) {
 		respondSCIMErrorMsg(w, http.StatusConflict, "Group with this name already exists", "uniqueness")
 		return
 	}
 
-	// Insert group
 	groupIDInt, err := h.repo.CreateGroup(scimGroup.DisplayName, scimGroup.ExternalID)
 	if err != nil {
 		slog.Error("SCIM: failed to create group", slog.Any("error", err), slog.String("name", scimGroup.DisplayName))
@@ -833,7 +818,6 @@ func (h *SCIMHandler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 		_ = h.permissionService.InvalidateGroupMemberCaches(groupIDInt)
 	}
 
-	// Fetch created group
 	group, err := h.repo.GetGroupByID(groupIDInt)
 	if err != nil {
 		respondSCIMErrorMsg(w, http.StatusInternalServerError, "Failed to retrieve created group", "")
@@ -842,7 +826,6 @@ func (h *SCIMHandler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 
 	members, _ := h.getGroupMembers(groupIDInt)
 
-	// Audit log: SCIM group created (aggregate event; per-member events are above)
 	h.logSCIMAuditEvent(r, logger.ActionSCIMGroupCreate, logger.ResourceGroup, &groupIDInt, scimGroup.DisplayName,
 		map[string]interface{}{"member_count": len(scimGroup.Members)}, true, "")
 
@@ -876,7 +859,7 @@ func (h *SCIMHandler) GetGroup(w http.ResponseWriter, r *http.Request) {
 
 // ReplaceGroup fully replaces a group (PUT /scim/v2/Groups/{id})
 func (h *SCIMHandler) ReplaceGroup(w http.ResponseWriter, r *http.Request) {
-	// Security: Limit request body size to prevent memory exhaustion
+	// Bound input before decoding.
 	h.limitRequestBody(w, r)
 
 	id, err := strconv.Atoi(r.PathValue("id"))

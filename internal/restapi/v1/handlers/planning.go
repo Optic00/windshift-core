@@ -301,8 +301,7 @@ func (h *MilestoneHandler) requireMilestoneAccessByID(w http.ResponseWriter, r *
 		return user.ID, id, nil, true
 	}
 	if wsID == nil {
-		// workspace-scoped row missing workspace_id — treat as not found rather
-		// than 500; this should be impossible per the schema constraint.
+		// Treat an invalid workspace-scoped row as not found.
 		h.RespondNotFound(w, r)
 		return 0, 0, nil, false
 	}
@@ -677,9 +676,7 @@ func (h *MilestoneHandler) GetItems(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Even with view access on the milestone, the items list is filtered to
-	// workspaces the user can access — a global milestone may aggregate items
-	// across many workspaces, and we don't surface items the caller can't see.
+	// Filter aggregated items to workspaces visible to the caller.
 	accessibleWorkspaceIDs, err := h.Perms.GetAccessibleWorkspaceIDs(userID)
 	if err != nil {
 		h.RespondInternalError(w, r)
@@ -923,8 +920,7 @@ func (h *MilestoneHandler) UpdateInWorkspace(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Passing wsID scopes the SQL UPDATE to this workspace as a defense-in-depth
-	// check beyond the URL match resolveWorkspaceMilestone already made.
+	// Scope the update to the resolved workspace as defense in depth.
 	h.applyMilestoneUpdate(w, r, m, &wsID)
 }
 
@@ -1340,8 +1336,7 @@ func (h *IterationHandler) Create(w http.ResponseWriter, r *http.Request) {
 // @Failure      500   {object}  handlers.ErrorResponse
 // @Router       /iterations/{id} [put]
 func (h *IterationHandler) Update(w http.ResponseWriter, r *http.Request) {
-	// Scope is taken from the persisted iteration, not the request body — body
-	// fields for workspace_id / is_global cannot be used to retarget.
+	// Use the persisted scope; request fields cannot retarget an iteration.
 	id, workspaceID, ok := h.requireIterationAccessByID(w, r, true)
 	if !ok {
 		return
@@ -1651,8 +1646,7 @@ func (h *IterationHandler) UpdateInWorkspace(w http.ResponseWriter, r *http.Requ
 		sanitize.Pair{Target: &merged.Description, Policy: sanitize.RichText, Label: "Description"},
 	)
 
-	// WorkspaceID scopes the SQL UPDATE to this workspace as defense-in-depth
-	// beyond the URL match above.
+	// Scope the update to the resolved workspace as defense in depth.
 	user := middleware.GetUser(r.Context())
 	if user == nil {
 		h.RespondUnauthorized(w, r)

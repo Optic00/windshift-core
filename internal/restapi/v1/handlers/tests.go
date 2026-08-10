@@ -320,8 +320,7 @@ func (h *TestManagementHandler) GetTestCaseSteps(w http.ResponseWriter, r *http.
 	if !ok {
 		return
 	}
-	// Confirm the case belongs to the workspace so steps from another
-	// workspace can't be fetched by knowing a step ID alone.
+	// Confirm workspace ownership before exposing the step.
 	if _, err := h.caseSvc.GetByID(testCaseID, workspaceID); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			h.RespondNotFound(w, r)

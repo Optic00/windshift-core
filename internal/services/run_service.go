@@ -323,11 +323,7 @@ func NewRunService(repo *repository.AgentRunRepository, opts RunServiceOptions) 
 		inflight:      make(map[int]context.CancelFunc),
 		claims:        make(map[int]*claimState),
 	}
-	// Orchestration-only mode (no Runner): the service still queues runs,
-	// enriches remote claims (PrepareRemoteClaim), and finalizes remote
-	// results (FinalizeRemote) + fires the post-run hook — but it runs no
-	// in-process worker pool, so no agent executes on this host. This is the
-	// production wiring: all runs are dispatched to remote runner pools.
+	// Orchestration-only mode queues and finalizes remote runs without local workers.
 	if opts.Runner == nil {
 		return s, nil
 	}

@@ -44,25 +44,12 @@ type Migration struct {
 	ApplySQLite     func(Database) error
 	ApplyPostgres   func(Database) error
 
-	// ReconcileChecksum marks a migration whose body is intentionally mutable.
-	// This is reserved for the schema_* compatibility wrappers backed directly
-	// by canonical schema files. Those files must change alongside each new
-	// append-only migration, so treating their whole-file checksum as immutable
-	// would make every legitimate schema change abort startup. Already-stamped
-	// wrappers are never re-applied; their checksum is simply brought forward.
+	// ReconcileChecksum permits intentional edits to schema_* compatibility
+	// wrappers. Applied wrappers are not rerun; their checksum is advanced.
 	ReconcileChecksum bool
 
-	// Superseded lists checksums this migration's body has carried in the
-	// past, for databases stamped before the body was edited. A stored
-	// checksum listed here is accepted and re-stamped to the current value,
-	// so the entry stops mattering for that database after one boot.
-	//
-	// This exists only to absorb edits made before checksum validation was
-	// enforced. It is not a license to edit applied migrations: an edit still
-	// leaves already-migrated databases with the old schema, because most
-	// bodies are CREATE TABLE IF NOT EXISTS and no-op against an existing
-	// table. Schema changes belong in a new migration. Every entry below is
-	// paired with a migration that converges the schema for real.
+	// Superseded accepts checksums from before validation was enforced and
+	// restamps them once. New schema changes still require a new migration.
 	Superseded []string
 }
 
