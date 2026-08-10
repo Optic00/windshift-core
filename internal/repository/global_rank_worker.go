@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"windshift/internal/database"
@@ -144,7 +143,7 @@ func (w *GlobalRankMigrationWorker) Run(ctx context.Context) (GlobalRankMigratio
 	if err != nil {
 		return GlobalRankMigrationBatchResult{}, err
 	}
-	updates := make([]globalRankMigrationUpdate, 0, len(rows))
+	updates := make([]fracIndexUpdate, 0, len(rows))
 	for index, row := range rows {
 		parsed, parseErr := ParseGlobalRank(row.rank)
 		if parseErr != nil || parsed.Bucket != state.ActiveBucket {
@@ -165,7 +164,7 @@ func (w *GlobalRankMigrationWorker) Run(ctx context.Context) (GlobalRankMigratio
 		if encodeErr != nil {
 			return GlobalRankMigrationBatchResult{}, encodeErr
 		}
-		updates = append(updates, globalRankMigrationUpdate{id: row.id, rank: newRank})
+		updates = append(updates, fracIndexUpdate{id: row.id, key: newRank})
 	}
 	if err := updateGlobalRankMigrationRows(tx, updates); err != nil {
 		return GlobalRankMigrationBatchResult{}, err
@@ -278,44 +277,15 @@ type globalRankMigrationRow struct {
 	rank string
 }
 
-type globalRankMigrationUpdate struct {
-	id   int64
-	rank string
-}
-
 // updateGlobalRankMigrationRows rewrites one bounded batch with a single SQL
 // statement. The prior one-statement-per-row loop made a 128-row batch hold
 // the migration transaction across 128 database round trips, which caused
 // visible latency spikes for deep-page list scans at 100k rows. The worker has
 // already locked/serialized the selected IDs, and RowsAffected preserves the
 // all-or-nothing guard against a row disappearing unexpectedly.
-func updateGlobalRankMigrationRows(tx database.Tx, updates []globalRankMigrationUpdate) error {
-	if len(updates) == 0 {
-		return nil
-	}
-	var query strings.Builder
-	query.WriteString("UPDATE items SET frac_index = CASE id")
-	args := make([]interface{}, 0, len(updates)*3)
-	for _, update := range updates {
-		query.WriteString(" WHEN ? THEN ?")
-		args = append(args, update.id, update.rank)
-	}
-	query.WriteString(" ELSE frac_index END WHERE id IN (")
-	for i, update := range updates {
-		if i > 0 {
-			query.WriteByte(',')
-		}
-		query.WriteByte('?')
-		args = append(args, update.id)
-	}
-	query.WriteByte(')')
-
-	result, err := tx.Exec(query.String(), args...)
-	if err != nil {
+func updateGlobalRankMigrationRows(tx database.Tx, updates []fracIndexUpdate) error {
+	if err := updateFracIndexes(tx, updates); err != nil {
 		return fmt.Errorf("migrate global rank batch: %w", err)
-	}
-	if affected, affectedErr := result.RowsAffected(); affectedErr == nil && affected != int64(len(updates)) {
-		return fmt.Errorf("migrate global rank batch: affected %d rows, want %d", affected, len(updates))
 	}
 	return nil
 }

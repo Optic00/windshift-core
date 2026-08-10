@@ -787,7 +787,7 @@ func rebalanceLocalFracIndexWindow(tx database.Tx, movingItemID int, prev, next,
 
 	// Temporarily move the moving row and the window rows out of the UNIQUE
 	// index. Temporary non-null keys keep this path compatible with the
-	// canonical items.frac_index NOT NULL constraint; sequential rewrites can
+	// canonical items.frac_index NOT NULL constraint; the final rewrite can
 	// otherwise fail when a new key equals another window row's old key. The
 	// transaction restores final keys before commit, and the temporary prefix
 	// is outside the validated fractional/bucket key grammar.
@@ -800,10 +800,12 @@ func rebalanceLocalFracIndexWindow(tx database.Tx, movingItemID int, prev, next,
 		return err
 	}
 
-	for i, row := range rows {
-		if _, err := tx.Exec("UPDATE items SET frac_index = ? WHERE id = ?", keys[i], row.id); err != nil {
-			return fmt.Errorf("write local rebalance key for item %d: %w", row.id, err)
-		}
+	updates := make([]fracIndexUpdate, 0, len(rows))
+	for index, row := range rows {
+		updates = append(updates, fracIndexUpdate{id: int64(row.id), key: keys[index]})
+	}
+	if err := updateFracIndexes(tx, updates); err != nil {
+		return fmt.Errorf("write local rebalance keys: %w", err)
 	}
 
 	slog.Info("rebalanced local frac_index window",
@@ -842,22 +844,22 @@ func rebalanceLocalGlobalRankWindow(tx database.Tx, movingItemID int, prev, next
 		return fmt.Errorf("generate canonical local rebalance keys: %w", err)
 	}
 
+	updates := make([]fracIndexUpdate, 0, len(rows))
 	ids := make([]int, 0, len(rows)+1)
 	ids = append(ids, movingItemID)
-	for _, row := range rows {
-		ids = append(ids, row.id)
-	}
-	if err := setFracIndexTemporaryForIDs(tx, ids); err != nil {
-		return err
-	}
 	for index, row := range rows {
+		ids = append(ids, row.id)
 		key, err := EncodeGlobalRank(bucket, fractions[index])
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec("UPDATE items SET frac_index = ? WHERE id = ?", key, row.id); err != nil {
-			return fmt.Errorf("write canonical local rebalance key for item %d: %w", row.id, err)
-		}
+		updates = append(updates, fracIndexUpdate{id: int64(row.id), key: key})
+	}
+	if err := setFracIndexTemporaryForIDs(tx, ids); err != nil {
+		return err
+	}
+	if err := updateFracIndexes(tx, updates); err != nil {
+		return fmt.Errorf("write canonical local rebalance keys: %w", err)
 	}
 
 	slog.Info("rebalanced canonical local frac_index window",
@@ -1066,15 +1068,54 @@ func setFracIndexTemporaryForIDs(tx database.Tx, ids []int) error {
 	if len(ids) == 0 {
 		return nil
 	}
+	updates := make([]fracIndexUpdate, 0, len(ids))
 	for _, id := range ids {
 		// Generated fractional keys use only the order-key alphabet and
 		// canonical ranks use bucket|fraction. The prefix therefore cannot
 		// collide with a valid application rank, while the item ID makes each
 		// in-flight key unique within this transaction.
-		temporaryKey := fmt.Sprintf("~rebalance-%d", id)
-		if _, err := tx.Exec("UPDATE items SET frac_index = ? WHERE id = ?", temporaryKey, id); err != nil {
-			return fmt.Errorf("set temporary local rebalance key for item %d: %w", id, err)
+		updates = append(updates, fracIndexUpdate{id: int64(id), key: fmt.Sprintf("~rebalance-%d", id)})
+	}
+	if err := updateFracIndexes(tx, updates); err != nil {
+		return fmt.Errorf("set temporary local rebalance keys: %w", err)
+	}
+	return nil
+}
+
+type fracIndexUpdate struct {
+	id  int64
+	key string
+}
+
+// updateFracIndexes rewrites one bounded set of item ranks in one statement.
+// Callers lock or serialize the rows before invoking it.
+func updateFracIndexes(tx database.Tx, updates []fracIndexUpdate) error {
+	if len(updates) == 0 {
+		return nil
+	}
+	var query strings.Builder
+	query.WriteString("UPDATE items SET frac_index = CASE id")
+	args := make([]interface{}, 0, len(updates)*3)
+	for _, update := range updates {
+		query.WriteString(" WHEN ? THEN ?")
+		args = append(args, update.id, update.key)
+	}
+	query.WriteString(" ELSE frac_index END WHERE id IN (")
+	for index, update := range updates {
+		if index > 0 {
+			query.WriteByte(',')
 		}
+		query.WriteByte('?')
+		args = append(args, update.id)
+	}
+	query.WriteByte(')')
+
+	result, err := tx.Exec(query.String(), args...)
+	if err != nil {
+		return fmt.Errorf("update frac_index batch: %w", err)
+	}
+	if affected, affectedErr := result.RowsAffected(); affectedErr == nil && affected != int64(len(updates)) {
+		return fmt.Errorf("update frac_index batch: affected %d rows, want %d", affected, len(updates))
 	}
 	return nil
 }
