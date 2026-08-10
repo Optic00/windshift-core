@@ -419,7 +419,7 @@ type itemListPageQueryer interface {
 }
 
 func beginItemListCursorTransaction(ctx context.Context, db database.Database) (database.Tx, error) {
-	if db.GetDriverName() == "sqlite3" || db.GetDriverName() == "sqlite" {
+	if !database.IsPostgresDriver(db.GetDriverName()) {
 		// SQLiteDB.BeginTx intentionally uses the single dedicated writer. Cursor
 		// continuations need only a stable read snapshot, so use the ordinary read
 		// pool and avoid serializing unrelated list calls with writes.
@@ -746,7 +746,7 @@ func (r *ItemRepository) buildOrderByClause(sortBy string, sortAsc bool) string 
 
 	// Use the JSON extraction syntax supported by the active database.
 	var expr string
-	if r.db.GetDriverName() == "postgres" {
+	if database.IsPostgresDriver(r.db.GetDriverName()) {
 		expr = fmt.Sprintf("(i.custom_field_values->>'%s')", sortBy)
 	} else {
 		expr = fmt.Sprintf(`NULLIF(i.custom_field_values, '') ->> '$.%q'`, sortBy)

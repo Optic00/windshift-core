@@ -79,7 +79,7 @@ func applyGlobalRankCheckpoint(db Database) error {
 
 func createGlobalRankStateTable(tx Tx, driver string) error {
 	var ddl, seed string
-	if driver == "postgres" {
+	if IsPostgresDriver(driver) {
 		ddl = `
 			CREATE TABLE IF NOT EXISTS global_rank_state (
 				id INTEGER PRIMARY KEY CHECK (id = 1),

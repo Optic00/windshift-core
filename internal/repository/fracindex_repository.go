@@ -206,7 +206,7 @@ func (r *FracIndexRepository) GetGlobalRankIntegrity(state GlobalRankState, now 
 func (r *FracIndexRepository) GetDBStats() (FracIndexDBStats, error) {
 	out := FracIndexDBStats{Top10ByByte: []string{}}
 	driver := r.db.GetDriverName()
-	isPostgres := driver == "postgres" || driver == "postgresql"
+	isPostgres := database.IsPostgresDriver(driver)
 
 	if isPostgres {
 		var collation sql.NullString

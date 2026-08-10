@@ -20,7 +20,7 @@ const globalRankStateRowID = 1
 const globalRankAdvisoryLockClass = 0x4752 // 'GR'
 
 func acquireGlobalRankMutationLock(tx database.Tx, driver string) error {
-	if driver != "postgres" && driver != "postgresql" {
+	if !database.IsPostgresDriver(driver) {
 		return nil
 	}
 	if _, err := tx.Exec("SELECT pg_advisory_xact_lock_shared(?, ?)", globalRankAdvisoryLockClass, globalRankStateRowID); err != nil {
@@ -30,7 +30,7 @@ func acquireGlobalRankMutationLock(tx database.Tx, driver string) error {
 }
 
 func acquireGlobalRankMigrationLock(tx database.Tx, driver string) error {
-	if driver != "postgres" && driver != "postgresql" {
+	if !database.IsPostgresDriver(driver) {
 		return nil
 	}
 	if _, err := tx.Exec("SELECT pg_advisory_xact_lock(?, ?)", globalRankAdvisoryLockClass, globalRankStateRowID); err != nil {
@@ -158,7 +158,7 @@ func ControlGlobalRankMigration(ctx context.Context, db database.Database, actio
 	}
 
 	var state GlobalRankState
-	if driver == "postgres" || driver == "postgresql" {
+	if database.IsPostgresDriver(driver) {
 		state, err = loadGlobalRankStateForUpdate(tx)
 	} else {
 		state, err = loadGlobalRankState(tx)

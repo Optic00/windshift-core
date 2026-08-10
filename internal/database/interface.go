@@ -6,6 +6,18 @@ import (
 	"fmt"
 )
 
+// Driver names are the canonical values returned by Database.GetDriverName.
+const (
+	driverSQLite   = "sqlite"
+	driverPostgres = "postgres"
+)
+
+// IsPostgresDriver reports whether name is the canonical PostgreSQL driver
+// value. URL schemes are normalized before a Database is constructed.
+func IsPostgresDriver(name string) bool {
+	return name == driverPostgres
+}
+
 // Database is the main interface that all database implementations must satisfy
 // last review: ser, 210426
 type Database interface {
@@ -56,7 +68,7 @@ type Database interface {
 	// GetDB returns the underlying *sql.DB for legacy compatibility
 	GetDB() *sql.DB
 
-	// GetDriverName returns the database driver name ("sqlite3" or "postgres")
+	// GetDriverName returns the database driver name ("sqlite" or "postgres")
 	GetDriverName() string
 }
 

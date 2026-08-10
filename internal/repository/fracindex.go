@@ -933,7 +933,7 @@ func readGlobalRankWindowRowsForUpdate(tx database.Tx, where string, args []inte
 		WHERE frac_index >= ? AND frac_index < ? AND (` + where + `) AND id <> ?
 		ORDER BY frac_index ` + direction + `
 		LIMIT ?`
-	if driver == "postgres" {
+	if database.IsPostgresDriver(driver) {
 		query += " FOR UPDATE"
 	}
 	rows, err := tx.Query(query, queryArgs...)
@@ -1029,7 +1029,7 @@ func readWindowRowsForUpdate(tx database.Tx, where string, args []interface{}, d
 		ORDER BY frac_index ` + direction + `
 		LIMIT ?`
 	args = append(args, movingItemID, limit)
-	if driver == "postgres" {
+	if database.IsPostgresDriver(driver) {
 		q += " FOR UPDATE"
 	}
 	rows, err := tx.Query(q, args...)
@@ -1168,7 +1168,7 @@ func readBoundedFracIndexForUpdate(tx database.Tx, itemID int, where string, arg
 }
 
 func scanBoundaryFracIndexForUpdate(tx database.Tx, q string, args []interface{}, driver string) (key string, found bool, err error) {
-	if driver == "postgres" {
+	if database.IsPostgresDriver(driver) {
 		q += " FOR UPDATE"
 	}
 	var k sql.NullString
@@ -1194,7 +1194,7 @@ func readFracIndexForUpdate(tx database.Tx, id *int, driver string) (string, err
 		return "", nil
 	}
 	q := "SELECT frac_index FROM items WHERE id = ?"
-	if driver == "postgres" {
+	if database.IsPostgresDriver(driver) {
 		q += " FOR UPDATE"
 	}
 	var k sql.NullString

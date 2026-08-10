@@ -80,7 +80,7 @@ func (w *GlobalRankMigrationWorker) Run(ctx context.Context) (GlobalRankMigratio
 	}
 
 	var state GlobalRankState
-	if driver == "postgres" {
+	if database.IsPostgresDriver(driver) {
 		// PostgreSQL needs an explicit row lock so two balancers cannot both
 		// claim a lease; SQLite's write transaction already serializes them.
 		state, err = loadGlobalRankStateForUpdate(tx)
@@ -260,7 +260,7 @@ func readGlobalRankMigrationTargetBoundary(tx database.Tx, bucket GlobalRankBuck
 	query := `SELECT frac_index FROM items
 		WHERE frac_index >= ? AND frac_index < ?
 		ORDER BY frac_index ` + order + ` LIMIT 1`
-	if driver == "postgres" {
+	if database.IsPostgresDriver(driver) {
 		query += " FOR UPDATE"
 	}
 	if err := tx.QueryRow(query, lower, upper).Scan(&boundary); err != nil {
@@ -345,7 +345,7 @@ func globalRankMigrationRowsQuery(state GlobalRankState, limit int, driver strin
 	}
 	args = append(args, limit)
 	query = "SELECT id, frac_index FROM items WHERE " + where + " ORDER BY frac_index " + order + ", id " + order + " LIMIT ?"
-	if driver == "postgres" {
+	if database.IsPostgresDriver(driver) {
 		query += " FOR UPDATE"
 	}
 	return query, args, nil

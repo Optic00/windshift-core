@@ -7,15 +7,6 @@ import (
 	"slices"
 )
 
-// Driver name constants match the values returned by GetDriverName on each
-// backend (SQLiteDB.GetDriverName → "sqlite", PostgresDB.GetDriverName →
-// "postgres"). The Database interface comment claims "sqlite3" but that's
-// stale; the actual returns are below.
-const (
-	driverSQLite   = "sqlite"
-	driverPostgres = "postgres"
-)
-
 // Migration is one entry in the schema_migrations catalog. Version is a
 // stable slug used as the schema_migrations primary key; Name is a human
 // label. CheckSQLite / CheckPostgres are queries that return COUNT >= 1
