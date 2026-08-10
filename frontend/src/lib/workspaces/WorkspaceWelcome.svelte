@@ -19,7 +19,19 @@
   import { errorToast } from '../stores/toasts.svelte.js';
   import { confirm } from '../composables/useConfirm.js';
   import { draggable, dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter';
-  import { getDefaultWidth, getWidgetMetadata } from '../services/widgetRegistry.js';
+  import {
+    WORKSPACE_WIDGET_GRID_COLUMNS,
+    clampWidgetWidth,
+    getDefaultWidth,
+    getWidgetMetadata,
+    getWidgetMaxWidth,
+    getWidgetMinWidth
+  } from '../services/widgetRegistry.js';
+  import {
+    captureWorkspaceWidgetWidths,
+    normalizeWorkspaceWidgets,
+    restoreRejectedWorkspaceWidgetWidths
+  } from '../services/workspaceWidgetLayout.js';
   import Button from '../components/Button.svelte';
   import Card from '../components/Card.svelte';
   import ViewHeader from '../layout/ViewHeader.svelte';
@@ -66,6 +78,7 @@
   let customizationCategory = $state('built-in');
   let setupCleanups = [];
   let savePending = $state(false);
+  let savedWidgetWidths = new Map();
 
   // Drag state
   let draggedWidget = $state(null);
@@ -325,7 +338,7 @@
       const layout = await loadWorkspaceGradient(workspaceId);
       if (layout && layout.sections && layout.sections.length > 0) {
         sections = layout.sections.sort((a, b) => a.display_order - b.display_order);
-        widgets = layout.widgets || [];
+        widgets = normalizeWorkspaceWidgets(layout.widgets);
       } else {
         sections = getDefaultSections();
         widgets = getDefaultWidgets();
@@ -335,6 +348,7 @@
       sections = getDefaultSections();
       widgets = getDefaultWidgets();
     }
+    savedWidgetWidths = captureWorkspaceWidgetWidths(widgets);
   }
 
   async function saveHomepageLayout() {
@@ -343,9 +357,10 @@
       return;
     }
     savePending = true;
+    let attemptedLayout = null;
 
     try {
-      const layout = {
+      attemptedLayout = {
         sections: sections.map((s, idx) => ({
           ...s,
           display_order: idx
@@ -359,10 +374,18 @@
         backgroundImageUrl: get(workspaceBackgroundImageUrl) || ''
       };
 
-      await api.workspaces.updateHomepageLayout(workspaceId, layout);
-      hydrateWorkspaceGradientLayout(workspaceId, layout);
+      await api.workspaces.updateHomepageLayout(workspaceId, attemptedLayout);
+      hydrateWorkspaceGradientLayout(workspaceId, attemptedLayout);
+      savedWidgetWidths = captureWorkspaceWidgetWidths(attemptedLayout.widgets);
     } catch (error) {
       console.error('Failed to save homepage layout:', error);
+      if (attemptedLayout) {
+        widgets = restoreRejectedWorkspaceWidgetWidths(
+          widgets,
+          attemptedLayout.widgets,
+          savedWidgetWidths
+        );
+      }
       errorToast(t('dialogs.alerts.failedToSaveLayout'));
     } finally {
       savePending = false;
@@ -524,10 +547,14 @@
   }
 
   function updateWidgetWidth(widgetId, newWidth) {
+    const widget = widgets.find(w => w.id === widgetId);
+    if (!widget) return null;
+    const width = clampWidgetWidth(widget.type, newWidth);
     widgets = widgets.map(w =>
-      w.id === widgetId ? { ...w, width: newWidth } : w
+      w.id === widgetId ? { ...w, width } : w
     );
     debouncedSave();
+    return width;
   }
 
   // Drag and drop setup
@@ -771,7 +798,12 @@
                   <WidgetWrapper
                     title={getWidgetTitle(widget.type)}
                     widgetId={widget.id}
-                    bind:width={widget.width}
+                    widgetType={widget.type}
+                    width={widget.width}
+                    gridColumns={WORKSPACE_WIDGET_GRID_COLUMNS}
+                    resizeMinWidth={getWidgetMinWidth(widget.type)}
+                    resizeMaxWidth={getWidgetMaxWidth(widget.type)}
+                    resizeDefaultWidth={getDefaultWidth(widget.type)}
                     isEditing={isCustomizeMode}
                     onremove={() => removeWidget(widget.id)}
                     onwidthchange={(newWidth) => updateWidgetWidth(widget.id, newWidth)}

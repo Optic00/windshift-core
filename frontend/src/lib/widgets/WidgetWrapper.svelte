@@ -13,19 +13,37 @@
     isEditing = false,
     width = $bindable(getDashboardWidgetDefaultWidth(widgetType)),
     config = $bindable({}),
+    gridColumns = 12,
     resizeMinWidth = null,
     resizeMaxWidth = null,
+    resizeDefaultWidth = null,
     onremove = null,
     onwidthchange = null,
     onconfigchange = null,
     children,
   } = $props();
 
-  const TOTAL_COLUMNS = 12;
+  const totalColumns = $derived(
+    Number.isFinite(Number(gridColumns))
+      ? Math.max(1, Math.round(Number(gridColumns)))
+      : 12
+  );
   const registryMinWidth = $derived(getDashboardWidgetMinWidth(widgetType) || 3);
-  const minWidth = $derived(resizeMinWidth ?? registryMinWidth);
-  const maxWidth = $derived(resizeMaxWidth ?? TOTAL_COLUMNS);
-  const defaultWidth = $derived(getDashboardWidgetDefaultWidth(widgetType) || 12);
+  const minWidth = $derived(
+    Math.min(totalColumns, Math.max(1, resizeMinWidth ?? registryMinWidth))
+  );
+  const maxWidth = $derived(
+    Math.max(minWidth, Math.min(totalColumns, resizeMaxWidth ?? totalColumns))
+  );
+  const defaultWidth = $derived(
+    Math.min(
+      maxWidth,
+      Math.max(
+        minWidth,
+        resizeDefaultWidth ?? getDashboardWidgetDefaultWidth(widgetType) ?? totalColumns
+      )
+    )
+  );
 
   function handleRemove(event) {
     event.stopPropagation();
@@ -41,12 +59,14 @@
 
   // --- Resize presets (WI-831) ---
   const presets = $derived([
-    { label: t('widgets.widthQuarter'), value: 3 },
-    { label: t('widgets.widthThird'), value: 4 },
-    { label: t('widgets.widthHalf'), value: 6 },
-    { label: t('widgets.widthTwoThirds'), value: 8 },
-    { label: t('widgets.widthFull'), value: 12 },
-  ].filter((p) => p.value >= minWidth && p.value <= maxWidth));
+    { label: t('widgets.widthQuarter'), value: totalColumns / 4 },
+    { label: t('widgets.widthThird'), value: totalColumns / 3 },
+    { label: t('widgets.widthHalf'), value: totalColumns / 2 },
+    { label: t('widgets.widthTwoThirds'), value: (totalColumns * 2) / 3 },
+    { label: t('widgets.widthFull'), value: totalColumns },
+  ].filter((p) =>
+    Number.isInteger(p.value) && p.value >= minWidth && p.value <= maxWidth
+  ));
 
   const presetItems = $derived(presets.map((p) => ({
     title: p.label,
@@ -122,7 +142,7 @@
     if (!containerEl) return;
     const grid = containerEl.parentElement;
     if (!grid) return;
-    const colWidth = grid.getBoundingClientRect().width / TOTAL_COLUMNS;
+    const colWidth = grid.getBoundingClientRect().width / totalColumns;
     if (colWidth <= 0) return;
     const deltaCols = Math.round((e.clientX - resizeStartX) / colWidth);
     const next = Math.min(maxWidth, Math.max(minWidth, resizeStartWidth + deltaCols));

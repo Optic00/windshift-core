@@ -10,6 +10,7 @@ import {
 } from '../services/dashboardGridLayout.js';
 import {
   buildDefaultDashboardLayout,
+  DASHBOARD_GRID_COLUMNS,
   getDashboardWidgetDefaultWidth,
   getDashboardWidgetMinWidth,
 } from '../services/dashboardWidgetRegistry.js';
@@ -19,8 +20,6 @@ import { errorToast } from './toasts.svelte.js';
 
 const ONBOARDING_STORAGE_KEY = 'windshift-dashboard-onboarding-dismissed';
 const HOMEPAGE_SNAPSHOT_REUSE_MS = 5_000;
-const DASHBOARD_GRID_COLUMNS = 12;
-
 class HomepageStore {
   // === Dashboard Data ===
   recentWorkspaces = $state([]);

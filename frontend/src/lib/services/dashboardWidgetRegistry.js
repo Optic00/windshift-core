@@ -8,6 +8,8 @@ export const dashboardWidgetCategories = {
   NAVIGATION: 'navigation',
 };
 
+export const DASHBOARD_GRID_COLUMNS = 12;
+
 export const dashboardWidgetRegistry = [
   // Activity & news
   {
@@ -107,7 +109,7 @@ export function getDashboardWidgetsByCategory(category) {
 
 export function getDashboardWidgetDefaultWidth(type) {
   const widget = getDashboardWidgetMetadata(type);
-  return widget ? widget.defaultWidth : 12;
+  return widget ? widget.defaultWidth : DASHBOARD_GRID_COLUMNS;
 }
 
 export function getDashboardWidgetMinWidth(type) {
@@ -163,5 +165,5 @@ export function buildDefaultDashboardLayout() {
     widget('default-quick-access', 'quick-access', 'default-workspaces', 1),
   ];
 
-  return { grid_columns: 12, sections, widgets };
+  return { grid_columns: DASHBOARD_GRID_COLUMNS, sections, widgets };
 }
