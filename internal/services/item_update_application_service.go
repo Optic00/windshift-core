@@ -44,6 +44,14 @@ func NewItemUpdateApplicationService(db database.Database, perm *PermissionServi
 	}
 }
 
+// SetPermissionService updates the permission checks used by item updates.
+// This supports services that are constructed before the shared permission
+// service is available during server bootstrap.
+func (s *ItemUpdateApplicationService) SetPermissionService(perm *PermissionService) {
+	s.permission = perm
+	s.update.WithPermissionService(perm)
+}
+
 func (s *ItemUpdateApplicationService) SetActivityTracker(activityTracker *ActivityTracker) {
 	s.activityTracker = activityTracker
 }
@@ -216,6 +224,28 @@ func decodeNullableItemUpdateTime(raw json.RawMessage, field string) (interface{
 }
 
 func (s *ItemUpdateApplicationService) Update(actorUserID int, actorUsername string, itemID int, updateData map[string]interface{}) (*UpdateItemResult, error) {
+	return s.updateItem(actorUserID, actorUsername, itemID, updateData, nil)
+}
+
+// UpdateWithContext runs the standard update pipeline while preserving the
+// automation chain that caused the mutation.
+func (s *ItemUpdateApplicationService) UpdateWithContext(
+	actorUserID int,
+	actorUsername string,
+	itemID int,
+	updateData map[string]interface{},
+	actionContext ActionContext,
+) (*UpdateItemResult, error) {
+	return s.updateItem(actorUserID, actorUsername, itemID, updateData, &actionContext)
+}
+
+func (s *ItemUpdateApplicationService) updateItem(
+	actorUserID int,
+	actorUsername string,
+	itemID int,
+	updateData map[string]interface{},
+	actionContext *ActionContext,
+) (*UpdateItemResult, error) {
 	if s.activityTracker != nil {
 		if err := s.activityTracker.TrackItemActivity(actorUserID, itemID, ActivityEdit); err != nil {
 			slog.Warn("failed to track item edit activity", slog.Int("user_id", actorUserID), slog.Int("item_id", itemID), slog.Any("error", err))
@@ -236,7 +266,18 @@ func (s *ItemUpdateApplicationService) Update(actorUserID int, actorUsername str
 	}
 
 	assigneeChanged := !itemIntPtrEqual(result.OriginalItem.AssigneeID, result.Item.AssigneeID)
-	if s.emitter != nil {
+	if contextual, ok := s.emitter.(contextualItemUpdatedEmitter); ok && actionContext != nil {
+		contextual.EmitItemUpdatedWithContext(
+			result.OriginalItem,
+			result.Item,
+			result.StatusChanged,
+			assigneeChanged,
+			actorUserID,
+			result.FieldChanges,
+			*actionContext,
+			actorUsername,
+		)
+	} else if s.emitter != nil {
 		s.emitter.EmitItemUpdated(
 			result.OriginalItem,
 			result.Item,

@@ -19,6 +19,10 @@ type ItemCreatedEmitter interface {
 	EmitItemCreated(item *models.Item, actorUserID int, actorUsername ...string)
 }
 
+type contextualItemCreatedEmitter interface {
+	EmitItemCreatedWithContext(item *models.Item, actorUserID int, actionContext ActionContext, actorUsername ...string)
+}
+
 // ItemCreateInput is the transport-neutral user-facing item-create payload.
 type ItemCreateInput struct {
 	WorkspaceID       int
@@ -74,7 +78,31 @@ func (s *ItemCreationService) SetEmitter(emitter ItemCreatedEmitter) {
 	s.emitter = emitter
 }
 
+func (s *ItemCreationService) SetPermissionService(perm *PermissionService) {
+	s.perm = perm
+}
+
 func (s *ItemCreationService) Create(actorUserID int, actorUsername string, input ItemCreateInput) (*ItemCreateResult, error) {
+	return s.create(actorUserID, actorUsername, input, nil)
+}
+
+// CreateWithContext runs the standard creation pipeline while preserving the
+// automation chain that caused the mutation.
+func (s *ItemCreationService) CreateWithContext(
+	actorUserID int,
+	actorUsername string,
+	input ItemCreateInput,
+	actionContext ActionContext,
+) (*ItemCreateResult, error) {
+	return s.create(actorUserID, actorUsername, input, &actionContext)
+}
+
+func (s *ItemCreationService) create(
+	actorUserID int,
+	actorUsername string,
+	input ItemCreateInput,
+	actionContext *ActionContext,
+) (*ItemCreateResult, error) {
 	input.Title = sanitize.PlainTextField.Sanitize(input.Title)
 	input.Description = sanitize.RichText.Sanitize(input.Description)
 
@@ -148,7 +176,9 @@ func (s *ItemCreationService) Create(actorUserID int, actorUsername string, inpu
 	if err != nil {
 		return nil, fmt.Errorf("load created item: %w", err)
 	}
-	if s.emitter != nil {
+	if contextual, ok := s.emitter.(contextualItemCreatedEmitter); ok && actionContext != nil {
+		contextual.EmitItemCreatedWithContext(item, actorUserID, *actionContext, actorUsername)
+	} else if s.emitter != nil {
 		s.emitter.EmitItemCreated(item, actorUserID, actorUsername)
 	}
 	return &ItemCreateResult{Item: item, MandatoryTemplate: mandatoryTemplate}, nil

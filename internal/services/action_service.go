@@ -76,9 +76,9 @@ type ActionService struct {
 	notificationService *NotificationService
 	commentService      *CommentService
 	assetActionService  AssetActionEventEmitter
-	eventCoordinator    *EventCoordinator
 	teamService         *TeamService
 	approvalService     *ApprovalService
+	itemUpdate          *ItemUpdateApplicationService
 
 	// AI/container dependencies
 	llmConnectionManager LLMConnectionResolver
@@ -197,6 +197,7 @@ func NewActionService(db database.Database, config ActionServiceConfig, chainSto
 		eventChan:   make(chan *models.ActionEvent, config.EventBufferSize),
 		stopChan:    make(chan struct{}),
 		chainStore:  chainStore,
+		itemUpdate:  NewItemUpdateApplicationService(db, nil),
 	}
 
 	if err := service.refreshActionCache(); err != nil {
@@ -244,9 +245,20 @@ func (as *ActionService) SetTeamService(ts *TeamService) {
 	as.teamService = ts
 }
 
-// SetEventCoordinator sets the event coordinator for emitting item events from create_item-like nodes.
+// SetEventCoordinator routes action-driven item updates through the shared
+// event pipeline.
 func (as *ActionService) SetEventCoordinator(ec *EventCoordinator) {
-	as.eventCoordinator = ec
+	if as.itemUpdate != nil {
+		as.itemUpdate.SetEmitter(ec)
+	}
+}
+
+// SetItemUpdateApplicationService shares the canonical item mutation pipeline
+// used by interactive and API updates with action execution.
+func (as *ActionService) SetItemUpdateApplicationService(service *ItemUpdateApplicationService) {
+	if service != nil {
+		as.itemUpdate = service
+	}
 }
 
 // SetLLMConnectionManager sets the LLM connection manager for AI node types.
@@ -276,6 +288,9 @@ func (as *ActionService) SetAssetPermissionChecker(c AssetSetPermissionChecker) 
 // the effective actor's rights on the target workspace.
 func (as *ActionService) SetPermissionService(ps *PermissionService) {
 	as.permissionService = ps
+	if as.itemUpdate != nil {
+		as.itemUpdate.SetPermissionService(ps)
+	}
 }
 
 // EmitActionEvent sends an event to be processed asynchronously (non-blocking)
@@ -1014,6 +1029,28 @@ func currentActionWorkspaceID(ctx *models.ExecutionContext) int {
 	return 0
 }
 
+func (as *ActionService) updateItemFromAction(ctx *models.ExecutionContext, updateData map[string]interface{}) (*UpdateItemResult, error) {
+	if as.itemUpdate == nil {
+		return nil, fmt.Errorf("item update application service not configured")
+	}
+	depth := 1
+	if ctx != nil && ctx.Event != nil {
+		depth = ctx.Event.CascadeDepth + 1
+	}
+	return as.itemUpdate.UpdateWithContext(
+		ctx.EffectiveActorID,
+		"",
+		currentActionItemID(ctx),
+		updateData,
+		ActionContext{
+			TriggeredByAction: true,
+			ExecutionChainID:  ctx.ChainID,
+			CascadeDepth:      depth,
+			SourceApplication: "workspace",
+		},
+	)
+}
+
 func derefIntPtr(p *int) interface{} {
 	if p == nil {
 		return nil
@@ -1138,7 +1175,6 @@ func (as *ActionService) executeSetField(node *models.ActionNode, ctx *models.Ex
 }
 
 func (as *ActionService) executeSetFieldMilestones(ctx *models.ExecutionContext, stepResult *models.StepResult, value string) error {
-	itemID := currentActionItemID(ctx)
 	workspaceID := currentActionWorkspaceID(ctx)
 	if err := as.authorizeWorkspaceMutation(ctx.EffectiveActorID, workspaceID, models.PermissionItemEdit); err != nil {
 		return err
@@ -1149,12 +1185,7 @@ func (as *ActionService) executeSetFieldMilestones(ctx *models.ExecutionContext,
 		return fmt.Errorf("set_field milestones: %w", err)
 	}
 
-	updateService := NewItemUpdateService(as.db).WithPermissionService(as.permissionService)
-	result, err := updateService.UpdateItem(UpdateItemRequest{
-		ItemID:     itemID,
-		UpdateData: map[string]interface{}{"milestone_ids": ids},
-		UserID:     ctx.EffectiveActorID,
-	})
+	result, err := as.updateItemFromAction(ctx, map[string]interface{}{"milestone_ids": ids})
 	if err != nil {
 		return err
 	}
@@ -1177,18 +1208,6 @@ func (as *ActionService) executeSetFieldMilestones(ctx *models.ExecutionContext,
 		"old_value":  oldValue,
 		"new_value":  newValue,
 	}
-
-	as.EmitActionEvent(&models.ActionEvent{
-		EventType:         models.ActionTriggerItemUpdated,
-		WorkspaceID:       workspaceID,
-		ItemID:            itemID,
-		ActorUserID:       ctx.EffectiveActorID,
-		OldValues:         map[string]interface{}{"milestones": oldValue},
-		NewValues:         map[string]interface{}{"milestones": newValue},
-		TriggeredByAction: true,
-		ExecutionChainID:  ctx.ChainID,
-		CascadeDepth:      ctx.Event.CascadeDepth + 1,
-	})
 
 	return nil
 }
@@ -1261,12 +1280,7 @@ func (as *ActionService) executeSetFieldColumn(ctx *models.ExecutionContext, ste
 	// edits. This restores type/FK checks, hierarchy-cycle protection,
 	// sanitization, history, live updates, and assignment hooks that a raw
 	// items-table UPDATE bypassed.
-	updateService := NewItemUpdateService(as.db).WithPermissionService(as.permissionService)
-	result, err := updateService.UpdateItem(UpdateItemRequest{
-		ItemID:     itemID,
-		UpdateData: map[string]interface{}{fieldName: typedValue},
-		UserID:     ctx.EffectiveActorID,
-	})
+	result, err := as.updateItemFromAction(ctx, map[string]interface{}{fieldName: typedValue})
 	if err != nil {
 		return err
 	}
@@ -1275,11 +1289,7 @@ func (as *ActionService) executeSetFieldColumn(ctx *models.ExecutionContext, ste
 	if val, readErr := as.itemRepo.GetAllowedColumnValue(itemID, fieldName); readErr == nil {
 		newValue = val
 	}
-	oldValues := make(map[string]interface{}, len(result.FieldChanges))
-	newValues := make(map[string]interface{}, len(result.FieldChanges))
 	for _, change := range result.FieldChanges {
-		oldValues[change.FieldName] = change.OldValue
-		newValues[change.FieldName] = change.NewValue
 		if change.FieldName == fieldName {
 			oldValue = change.OldValue
 			newValue = change.NewValue
@@ -1290,20 +1300,6 @@ func (as *ActionService) executeSetFieldColumn(ctx *models.ExecutionContext, ste
 		"field_name": fieldName,
 		"old_value":  oldValue,
 		"new_value":  newValue,
-	}
-
-	if len(result.FieldChanges) > 0 {
-		as.EmitActionEvent(&models.ActionEvent{
-			EventType:         models.ActionTriggerItemUpdated,
-			WorkspaceID:       workspaceID,
-			ItemID:            itemID,
-			ActorUserID:       ctx.EffectiveActorID,
-			OldValues:         oldValues,
-			NewValues:         newValues,
-			TriggeredByAction: true,
-			ExecutionChainID:  ctx.ChainID,
-			CascadeDepth:      ctx.Event.CascadeDepth + 1,
-		})
 	}
 
 	return nil
@@ -1420,16 +1416,23 @@ func (as *ActionService) executeSetFieldCustom(ctx *models.ExecutionContext, ste
 		)
 	}
 
-	tx, err := as.db.BeginTx(context.Background(), nil)
+	item, err := as.itemRepo.FindByID(itemID)
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+		return fmt.Errorf("load item custom fields: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
-	if err := as.itemRepo.SetItemCustomFieldValue(tx, itemID, config.CustomFieldID, newValue); err != nil {
+	customFieldValues := make(map[string]interface{}, len(item.CustomFieldValues)+1)
+	for key, existingValue := range item.CustomFieldValues {
+		customFieldValues[key] = existingValue
+	}
+	customFieldValues[fieldKey] = newValue
+	result, err := as.updateItemFromAction(ctx, map[string]interface{}{
+		"custom_field_values": customFieldValues,
+	})
+	if err != nil {
 		return err
 	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit: %w", err)
+	if result.Item.CustomFieldValues != nil {
+		newValue = result.Item.CustomFieldValues[fieldKey]
 	}
 
 	key := "custom_field_" + strconv.Itoa(config.CustomFieldID)
@@ -1439,18 +1442,6 @@ func (as *ActionService) executeSetFieldCustom(ctx *models.ExecutionContext, ste
 		"old_value":       oldValue,
 		"new_value":       newValue,
 	}
-
-	as.EmitActionEvent(&models.ActionEvent{
-		EventType:         models.ActionTriggerItemUpdated,
-		WorkspaceID:       workspaceID,
-		ItemID:            itemID,
-		ActorUserID:       ctx.EffectiveActorID,
-		OldValues:         map[string]interface{}{key: oldValue},
-		NewValues:         map[string]interface{}{key: newValue},
-		TriggeredByAction: true,
-		ExecutionChainID:  ctx.ChainID,
-		CascadeDepth:      ctx.Event.CascadeDepth + 1,
-	})
 
 	return nil
 }
@@ -2494,24 +2485,10 @@ func (as *ActionService) executeRoundRobinAssign(node *models.ActionNode, ctx *m
 		return fmt.Errorf("failed to get round-robin assignee: %w", err)
 	}
 
-	// Update the item's assignee
-	tx, txErr := as.db.BeginTx(context.Background(), nil)
-	if txErr != nil {
-		return fmt.Errorf("begin tx: %w", txErr)
+	_, err = as.updateItemFromAction(ctx, map[string]interface{}{"assignee_id": assigneeID})
+	if err != nil {
+		return fmt.Errorf("failed to update item assignee: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
-	if txErr = as.itemRepo.UpdateFields(tx, itemID, map[string]interface{}{
-		"assignee_id": assigneeID,
-	}); txErr != nil {
-		return fmt.Errorf("failed to update item assignee: %w", txErr)
-	}
-	if txErr = tx.Commit(); txErr != nil {
-		return fmt.Errorf("commit: %w", txErr)
-	}
-
-	// Live-update publish (WI-483): round-robin reassigns the item directly,
-	// bypassing ItemUpdateService.
-	PublishItemChange(itemID, ItemChangeUpdated)
 
 	// Populate step result
 	var oldVal interface{}
@@ -2525,19 +2502,6 @@ func (as *ActionService) executeRoundRobinAssign(node *models.ActionNode, ctx *m
 		"team_id":     config.TeamID,
 		"action_node": node.ID,
 	}
-
-	// Emit cascade event
-	as.EmitActionEvent(&models.ActionEvent{
-		EventType:         models.ActionTriggerItemUpdated,
-		WorkspaceID:       workspaceID,
-		ItemID:            itemID,
-		ActorUserID:       ctx.EffectiveActorID,
-		OldValues:         map[string]interface{}{"assignee_id": oldVal},
-		NewValues:         map[string]interface{}{"assignee_id": assigneeID},
-		TriggeredByAction: true,
-		ExecutionChainID:  ctx.ChainID,
-		CascadeDepth:      ctx.Event.CascadeDepth + 1,
-	})
 
 	return nil
 }

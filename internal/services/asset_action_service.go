@@ -39,10 +39,10 @@ type AssetActionService struct {
 
 	// Dependencies
 	notificationService *NotificationService
-	eventCoordinator    *EventCoordinator
 	chainStore          *ExecutionChainStore
 	permissionService   *PermissionService
 	assetPermChecker    AssetSetPermissionChecker
+	itemCreation        *ItemCreationService
 
 	// Statistics
 	eventsProcessed int64
@@ -92,13 +92,14 @@ func NewAssetActionService(db database.Database, config ActionServiceConfig, cha
 		chainStore = NewExecutionChainStore()
 	}
 	service := &AssetActionService{
-		db:          db,
-		repo:        repository.NewAssetActionRepository(db),
-		config:      config,
-		actionCache: make(map[int][]*models.AssetAction),
-		eventChan:   make(chan *models.AssetActionEvent, config.EventBufferSize),
-		stopChan:    make(chan struct{}),
-		chainStore:  chainStore,
+		db:           db,
+		repo:         repository.NewAssetActionRepository(db),
+		config:       config,
+		actionCache:  make(map[int][]*models.AssetAction),
+		eventChan:    make(chan *models.AssetActionEvent, config.EventBufferSize),
+		stopChan:     make(chan struct{}),
+		chainStore:   chainStore,
+		itemCreation: NewItemCreationService(db, nil),
 	}
 
 	// Load initial cache
@@ -186,14 +187,28 @@ func (as *AssetActionService) SetNotificationService(ns *NotificationService) {
 	as.notificationService = ns
 }
 
-// SetEventCoordinator sets the event coordinator for emitting item events
+// SetEventCoordinator routes action-driven item creation through the shared
+// event pipeline.
 func (as *AssetActionService) SetEventCoordinator(ec *EventCoordinator) {
-	as.eventCoordinator = ec
+	if as.itemCreation != nil {
+		as.itemCreation.SetEmitter(ec)
+	}
 }
 
 // SetPermissionService wires workspace RBAC for create_item nodes.
 func (as *AssetActionService) SetPermissionService(ps *PermissionService) {
 	as.permissionService = ps
+	if as.itemCreation != nil {
+		as.itemCreation.SetPermissionService(ps)
+	}
+}
+
+// SetItemCreationService shares the canonical item creation pipeline with
+// asset action execution.
+func (as *AssetActionService) SetItemCreationService(service *ItemCreationService) {
+	if service != nil {
+		as.itemCreation = service
+	}
 }
 
 // SetAssetPermissionChecker wires asset-set RBAC for mutating asset nodes and
@@ -751,43 +766,31 @@ func (as *AssetActionService) executeCreateItem(node *models.AssetActionNode, ct
 		return fmt.Errorf("create_item title is empty after sanitization")
 	}
 
+	if as.itemCreation == nil {
+		return fmt.Errorf("item creation application service not configured")
+	}
 	creatorID := ctx.Event.ActorUserID
 	itemTypeID := config.ItemTypeID
-
-	itemID, err := CreateItem(as.db, ItemCreationParams{
+	result, err := as.itemCreation.CreateWithContext(creatorID, "", ItemCreateInput{
 		WorkspaceID: config.WorkspaceID,
 		Title:       title,
 		Description: description,
 		ItemTypeID:  &itemTypeID,
-		CreatorID:   &creatorID,
+	}, ActionContext{
+		TriggeredByAction: true,
+		ExecutionChainID:  ctx.ChainID,
+		CascadeDepth:      ctx.Event.CascadeDepth + 1,
+		SourceApplication: "asset",
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create item: %w", err)
 	}
+	itemID := result.Item.ID
 
 	stepResult.Output = map[string]interface{}{
 		"item_id":      itemID,
 		"title":        title,
 		"workspace_id": config.WorkspaceID,
-	}
-
-	// Emit item created event with cascade context
-	if as.eventCoordinator != nil {
-		item := &models.Item{
-			ID:          int(itemID),
-			WorkspaceID: config.WorkspaceID,
-			Title:       title,
-			ItemTypeID:  &itemTypeID,
-			CreatorID:   &creatorID,
-		}
-		_ = as.db.QueryRow(`SELECT key FROM workspaces WHERE id = ?`, config.WorkspaceID).Scan(&item.WorkspaceKey)
-
-		as.eventCoordinator.EmitItemCreatedWithContext(item, creatorID, ActionContext{
-			TriggeredByAction: true,
-			ExecutionChainID:  ctx.ChainID,
-			CascadeDepth:      ctx.Event.CascadeDepth + 1,
-			SourceApplication: "asset",
-		})
 	}
 
 	return nil

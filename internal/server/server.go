@@ -943,6 +943,8 @@ func (s *Server) initialize() error {
 	// Wire up services
 	itemHandler.SetWebhookSender(webhookSender)
 	itemHandler.SetEventCoordinator(eventCoordinator)
+	s.actionService.SetItemUpdateApplicationService(itemHandler.ItemUpdateApplicationService())
+	s.assetActionService.SetItemCreationService(itemHandler.ItemCreationService())
 	commentHandler.SetWebhookSender(webhookSender)
 
 	// Item live-update stream (WI-484): register the in-memory SSE hub as the
@@ -1286,8 +1288,7 @@ func (s *Server) initialize() error {
 				eventCoordinator,
 				permService,
 				assetHandler,
-				func(params services.ItemCreationParams) (int64, error) { return services.CreateItem(s.db, params) },
-				repository.NewWorkspaceRepository(s.db),
+				itemHandler.ItemCreationService(),
 				repository.NewAssetRepository(s.db),
 			)
 			mux.Handle("POST /api/internal/logbook/execute-node", http.HandlerFunc(nodeExecHandler.HandleNodeExecution))
