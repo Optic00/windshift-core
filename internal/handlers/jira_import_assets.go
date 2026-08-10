@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -99,26 +98,11 @@ func (h *JiraImportHandler) ensureJiraAssetSet(jobID string, schema jira.AssetOb
 		name = "Jira Assets: " + jiraAssetSchemaBaseName(schema)
 	}
 
-	action := "reuse_existing"
-	var setID int
-	err := h.db.QueryRow(`SELECT id FROM asset_management_sets WHERE name = ?`, name).Scan(&setID)
-	if errors.Is(err, sql.ErrNoRows) {
-		var createdBy any
-		if createdByUserID > 0 {
-			createdBy = createdByUserID
-		}
-		var newID int64
-		err = h.db.QueryRow(`
-			INSERT INTO asset_management_sets (name, description, is_default, created_by, created_at, updated_at)
-			VALUES (?, ?, false, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING id
-		`, name, strings.TrimSpace(schema.Description), createdBy).Scan(&newID)
-		setID = int(newID)
-		if err == nil {
-			action = "create"
-			h.ensureJiraAssetDefaultStatus(setID)
-			h.grantJiraAssetSetAdmin(setID, createdByUserID)
-		}
-	}
+	setID, created, err := h.imports.EnsureAssetSet(
+		name,
+		strings.TrimSpace(schema.Description),
+		createdByUserID,
+	)
 	if err != nil {
 		slog.Warn("Failed to ensure Jira asset set", slog.String("component", "jira"), slog.String("schemaID", schema.ID), slog.Any("error", err))
 		return 0, false
@@ -127,7 +111,7 @@ func (h *JiraImportHandler) ensureJiraAssetSet(jobID string, schema jira.AssetOb
 	if err := h.recordMapping(jobID, "asset_set", schema.ID, schema.ObjectSchemaKey, setID, map[string]any{
 		"schema_name":  schema.Name,
 		"object_count": schema.ObjectCount,
-		"action":       action,
+		"action":       map[bool]string{true: "create", false: "reuse_existing"}[created],
 	}); err != nil {
 		return 0, false
 	}
@@ -135,42 +119,12 @@ func (h *JiraImportHandler) ensureJiraAssetSet(jobID string, schema jira.AssetOb
 }
 
 func (h *JiraImportHandler) ensureJiraAssetDefaultStatus(setID int) int {
-	var statusID int
-	err := h.db.QueryRow(`SELECT id FROM asset_statuses WHERE set_id = ? AND is_default = true ORDER BY id LIMIT 1`, setID).Scan(&statusID)
-	if err == nil {
-		return statusID
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		slog.Warn("Failed to load default asset status", slog.String("component", "jira"), slog.Int("setID", setID), slog.Any("error", err))
-		return 0
-	}
-	var newID int64
-	if err := h.db.QueryRow(`
-		INSERT INTO asset_statuses (set_id, name, color, description, is_default, display_order, created_at, updated_at)
-		VALUES (?, 'Active', '#22c55e', 'Default status for imported Jira Assets', true, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING id
-	`, setID).Scan(&newID); err != nil {
+	statusID, err := h.imports.EnsureAssetDefaultStatus(setID)
+	if err != nil {
 		slog.Warn("Failed to create default asset status", slog.String("component", "jira"), slog.Int("setID", setID), slog.Any("error", err))
 		return 0
 	}
-	return int(newID)
-}
-
-func (h *JiraImportHandler) grantJiraAssetSetAdmin(setID, userID int) {
-	if userID <= 0 {
-		return
-	}
-	var roleID int
-	if err := h.db.QueryRow(`SELECT id FROM asset_roles WHERE name = 'Administrator'`).Scan(&roleID); err != nil {
-		return
-	}
-	_, err := h.db.ExecWrite(`
-		INSERT INTO user_asset_set_roles (user_id, set_id, role_id, granted_by)
-		VALUES (?, ?, ?, ?)
-		ON CONFLICT(user_id, set_id) DO NOTHING
-	`, userID, setID, roleID, userID)
-	if err != nil {
-		slog.Warn("Failed to grant Jira asset set admin role", slog.String("component", "jira"), slog.Int("setID", setID), slog.Int("userID", userID), slog.Any("error", err))
-	}
+	return statusID
 }
 
 type jiraAssetTypeImport struct {
@@ -197,15 +151,7 @@ type jiraIssueAssetReference struct {
 }
 
 func (h *JiraImportHandler) importedJiraAssetSetID(jobID, schemaID string) (int, bool) {
-	var setID int
-	err := h.db.QueryRow(`
-		SELECT windshift_id
-		FROM jira_import_id_mappings
-		WHERE job_id = ? AND entity_type = 'asset_set' AND jira_id = ?
-		ORDER BY id
-		LIMIT 1
-	`, jobID, strings.TrimSpace(schemaID)).Scan(&setID)
-	return setID, err == nil && setID > 0
+	return h.imports.MappedEntity(jobID, "asset_set", strings.TrimSpace(schemaID))
 }
 
 func (h *JiraImportHandler) resolveJiraIssueAssetReferences(jobID string, value any) []jiraIssueAssetReference {
@@ -270,67 +216,20 @@ func (h *JiraImportHandler) resolveJiraIssueAssetReference(jobID string, candida
 		return jiraIssueAssetReference{}, false
 	}
 
-	args := []any{jobID}
-	where := "job_id = ? AND entity_type = 'asset' AND ("
-	if candidate.ID != "" {
-		where += "jira_id = ?"
-		args = append(args, candidate.ID)
-	}
-	if candidate.Key != "" {
-		if candidate.ID != "" {
-			where += " OR "
-		}
-		where += "jira_key = ?"
-		args = append(args, candidate.Key)
-	}
-	where += ")"
-
-	query := fmt.Sprintf(`
-		SELECT m.windshift_id, COALESCE(m.metadata_json, ''), a.title, COALESCE(a.asset_tag, '')
-		FROM jira_import_id_mappings m
-		JOIN assets a ON a.id = m.windshift_id
-		WHERE %s
-		ORDER BY CASE WHEN m.jira_id = ? THEN 0 ELSE 1 END, m.id
-		LIMIT 1
-	`, where)
-	args = append(args, candidate.ID)
-
-	var ref jiraIssueAssetReference
-	var metadataJSON string
-	if err := h.db.QueryRow(query, args...).Scan(&ref.AssetID, &metadataJSON, &ref.Title, &ref.AssetTag); err != nil {
+	imported, ok := h.imports.AssetReference(jobID, candidate.ID, candidate.Key)
+	if !ok {
 		return jiraIssueAssetReference{}, false
+	}
+	ref := jiraIssueAssetReference{
+		AssetID:  imported.ID,
+		SetID:    imported.SetID,
+		Title:    imported.Title,
+		AssetTag: imported.AssetTag,
 	}
 	if strings.TrimSpace(ref.Title) == "" {
 		ref.Title = candidate.Label
 	}
-	if metadataJSON != "" {
-		var meta map[string]any
-		if json.Unmarshal([]byte(metadataJSON), &meta) == nil {
-			if setID, ok := numericMetadataInt(meta["asset_set_id"]); ok {
-				ref.SetID = setID
-			}
-		}
-	}
-	if ref.SetID == 0 {
-		_ = h.db.QueryRow(`SELECT set_id FROM assets WHERE id = ?`, ref.AssetID).Scan(&ref.SetID)
-	}
 	return ref, ref.AssetID > 0
-}
-
-func numericMetadataInt(value any) (int, bool) {
-	switch v := value.(type) {
-	case float64:
-		return int(v), true
-	case int:
-		return v, true
-	case int64:
-		return int(v), true
-	case string:
-		parsed, err := strconv.Atoi(strings.TrimSpace(v))
-		return parsed, err == nil
-	default:
-		return 0, false
-	}
 }
 
 func (h *JiraImportHandler) ensureJiraAssetTypes(ctx context.Context, jobID string, client jira.Client, setID int, schema jira.AssetObjectSchema) map[string]jiraAssetTypeImport {
@@ -429,34 +328,9 @@ func (h *JiraImportHandler) ensureJiraAssetTypeCategory(
 	if name == "" {
 		name = "Jira Object Type " + objectType.ID
 	}
-	var parent any
-	if parentID > 0 {
-		parent = parentID
-	}
-	action := "reuse_existing"
-	var categoryID int
-	err := h.db.QueryRow(`
-		SELECT id FROM asset_categories
-		WHERE set_id = ? AND name = ?
-		  AND ((parent_id IS NULL AND ? IS NULL) OR parent_id = ?)
-		ORDER BY id LIMIT 1
-	`, setID, name, parent, parent).Scan(&categoryID)
-	if errors.Is(err, sql.ErrNoRows) {
-		repo := repository.NewAssetRepository(h.db)
-		var parentPtr *int
-		if parentID > 0 {
-			parentPtr = &parentID
-		}
-		categoryID, _, err = repo.CreateAssetCategory(repository.CreateAssetCategoryInput{
-			SetID:       setID,
-			Name:        name,
-			Description: strings.TrimSpace(objectType.Description),
-			ParentID:    parentPtr,
-		})
-		if err == nil {
-			action = "create"
-		}
-	}
+	categoryID, created, err := h.imports.EnsureAssetCategory(
+		setID, parentID, name, strings.TrimSpace(objectType.Description),
+	)
 	if err != nil {
 		slog.Warn("Failed to ensure Jira asset type category",
 			slog.String("component", "jira"),
@@ -468,7 +342,7 @@ func (h *JiraImportHandler) ensureJiraAssetTypeCategory(
 		"asset_set_id":               setID,
 		"jira_parent_object_type_id": objectType.ParentObjectTypeID,
 		"abstract":                   objectType.AbstractObjectType,
-		"action":                     action,
+		"action":                     map[bool]string{true: "create", false: "reuse_existing"}[created],
 	}); err != nil {
 		return 0, false
 	}
@@ -480,23 +354,19 @@ func (h *JiraImportHandler) ensureJiraAssetType(jobID string, setID int, objectT
 	if name == "" {
 		name = "Jira Object Type " + objectType.ID
 	}
-	action := "reuse_existing"
-	var typeID int
-	err := h.db.QueryRow(`SELECT id FROM asset_types WHERE set_id = ? AND name = ?`, setID, name).Scan(&typeID)
-	if errors.Is(err, sql.ErrNoRows) {
-		var newID int64
-		err = h.db.QueryRow(`
-			INSERT INTO asset_types (set_id, name, description, icon, color, display_order, is_active, created_at, updated_at)
-			VALUES (?, ?, ?, 'Box', '#3b82f6', ?, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING id
-		`, setID, name, strings.TrimSpace(objectType.Description), objectType.Position).Scan(&newID)
-		typeID = int(newID)
-		if err == nil {
-			action = "create"
-		}
-	}
+	typeID, created, err := h.imports.EnsureAssetType(
+		setID,
+		name,
+		strings.TrimSpace(objectType.Description),
+		objectType.Position,
+	)
 	if err != nil {
 		slog.Warn("Failed to ensure Jira asset type", slog.String("component", "jira"), slog.String("objectTypeID", objectType.ID), slog.Any("error", err))
 		return 0, false
+	}
+	action := "reuse_existing"
+	if created {
+		action = "create"
 	}
 	if err := h.recordMapping(jobID, "asset_type", objectType.ID, name, typeID, map[string]any{"asset_set_id": setID, "action": action}); err != nil {
 		return 0, false
@@ -520,32 +390,14 @@ func (h *JiraImportHandler) ensureJiraAssetAttributeField(jobID string, setID in
 		options = string(optionsBytes)
 	}
 
-	action := "reuse_existing"
-	var fieldID int
-	var err error
-	if models.IsBooleanCustomFieldType(fieldType) {
-		err = h.db.QueryRow(`
-			SELECT id FROM custom_field_definitions
-			WHERE LOWER(name) = LOWER(?) AND field_type IN (?, ?)
-			ORDER BY CASE WHEN field_type = ? THEN 0 ELSE 1 END, id
-			LIMIT 1
-		`, fieldName, models.CustomFieldTypeBoolean, models.CustomFieldTypeCheckbox, models.CustomFieldTypeBoolean).Scan(&fieldID)
-	} else {
-		err = h.db.QueryRow(`SELECT id FROM custom_field_definitions WHERE LOWER(name) = LOWER(?) AND field_type = ?`, fieldName, fieldType).Scan(&fieldID)
-	}
-	if errors.Is(err, sql.ErrNoRows) {
-		var newID int64
-		err = h.db.QueryRow(`
-			INSERT INTO custom_field_definitions (name, field_type, description, required, options, display_order,
-			                                      applies_to_portal_customers, applies_to_customer_organisations,
-			                                      created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, false, false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING id
-		`, fieldName, fieldType, strings.TrimSpace(attr.Description), attr.MinimumCardinality > 0, options, attr.Position).Scan(&newID)
-		fieldID = int(newID)
-		if err == nil {
-			action = "create"
-		}
-	}
+	fieldID, created, err := h.imports.EnsureAssetAttributeField(
+		fieldName,
+		fieldType,
+		strings.TrimSpace(attr.Description),
+		options,
+		attr.MinimumCardinality > 0,
+		attr.Position,
+	)
 	if err != nil {
 		slog.Warn("Failed to ensure Jira asset attribute field", slog.String("component", "jira"), slog.String("attributeID", attr.ID), slog.Any("error", err))
 		return 0, false
@@ -555,7 +407,7 @@ func (h *JiraImportHandler) ensureJiraAssetAttributeField(jobID string, setID in
 		"asset_set_id":    setID,
 		"object_type_id":  objectType.ID,
 		"jira_type":       attr.Type,
-		"action":          action,
+		"action":          map[bool]string{true: "create", false: "reuse_existing"}[created],
 	}); err != nil {
 		return 0, false
 	}
@@ -563,13 +415,7 @@ func (h *JiraImportHandler) ensureJiraAssetAttributeField(jobID string, setID in
 }
 
 func (h *JiraImportHandler) linkJiraAssetTypeField(assetTypeID, fieldID int, attr jira.AssetObjectAttribute) {
-	_, err := h.db.ExecWrite(`
-		INSERT INTO asset_type_fields (asset_type_id, custom_field_id, is_required, display_order)
-		VALUES (?, ?, ?, ?)
-		ON CONFLICT(asset_type_id, custom_field_id) DO UPDATE SET
-			is_required = excluded.is_required,
-			display_order = excluded.display_order
-	`, assetTypeID, fieldID, attr.MinimumCardinality > 0, attr.Position)
+	err := h.imports.LinkAssetTypeField(assetTypeID, fieldID, attr.MinimumCardinality > 0, attr.Position)
 	if err != nil {
 		slog.Warn("Failed to link Jira asset type field", slog.String("component", "jira"), slog.Int("assetTypeID", assetTypeID), slog.Int("fieldID", fieldID), slog.Any("error", err))
 	}
@@ -727,21 +573,28 @@ func (h *JiraImportHandler) importJiraAssetObject(
 
 	createdAt := nullableAssetTime(object.Created)
 	updatedAt := nullableAssetTime(object.Updated)
-	var status any
+	var status *int
 	if statusID > 0 {
-		status = statusID
+		status = &statusID
 	}
-	var assetID int64
-	err := h.db.QueryRow(`
-		INSERT INTO assets (set_id, asset_type_id, category_id, status_id, title, description, asset_tag, custom_field_values, import_job_id, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), COALESCE(?, CURRENT_TIMESTAMP)) RETURNING id
-	`, setID, assetTypeID, nullablePositiveInt(categoryID), status, title, description, assetTag, customJSON, jobID, createdAt, updatedAt).Scan(&assetID)
+	assetID, err := h.imports.InsertAsset(repository.JiraImportAssetRowInput{
+		SetID:                 setID,
+		AssetTypeID:           assetTypeID,
+		StatusID:              status,
+		Title:                 title,
+		Description:           description,
+		AssetTag:              assetTag,
+		CustomFieldValuesJSON: customJSON,
+		ImportJobID:           jobID,
+		CreatedAt:             createdAt,
+		UpdatedAt:             updatedAt,
+	})
 	if err != nil {
 		slog.Warn("Failed to import Jira asset object", slog.String("component", "jira"), slog.String("objectID", object.ID), slog.String("objectKey", object.ObjectKey), slog.Any("error", err))
 		return nil
 	}
 
-	if err := h.recordMapping(jobID, "asset", object.ID, object.ObjectKey, int(assetID), map[string]any{
+	if err := h.recordMapping(jobID, "asset", object.ID, object.ObjectKey, assetID, map[string]any{
 		"asset_set_id":  setID,
 		"asset_type_id": assetTypeID,
 		"category_id":   categoryID,
@@ -750,16 +603,9 @@ func (h *JiraImportHandler) importJiraAssetObject(
 		return nil
 	}
 	for idx := range pendingAttributes {
-		pendingAttributes[idx].AssetID = int(assetID)
+		pendingAttributes[idx].AssetID = assetID
 	}
 	return pendingAttributes
-}
-
-func nullablePositiveInt(value int) any {
-	if value > 0 {
-		return value
-	}
-	return nil
 }
 
 func (h *JiraImportHandler) ensureJiraAssetAttributeUsers(
@@ -806,32 +652,9 @@ func (h *JiraImportHandler) ensureJiraAssetStatus(jobID string, setID int, statu
 	if name == "" {
 		return 0
 	}
-	action := "reuse_existing"
-	var statusID int
-	err := h.db.QueryRow(`
-		SELECT id FROM asset_statuses WHERE set_id = ? AND LOWER(name) = LOWER(?)
-		ORDER BY id LIMIT 1
-	`, setID, name).Scan(&statusID)
-	if errors.Is(err, sql.ErrNoRows) {
-		color := "#22c55e"
-		switch status.Category {
-		case 0:
-			color = "#ef4444"
-		case 2:
-			color = "#f59e0b"
-		}
-		var newID int64
-		err = h.db.QueryRow(`
-			INSERT INTO asset_statuses
-			       (set_id, name, color, description, is_default, display_order, created_at, updated_at)
-			VALUES (?, ?, ?, ?, false, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-			RETURNING id
-		`, setID, name, color, strings.TrimSpace(status.Description), status.Category).Scan(&newID)
-		statusID = int(newID)
-		if err == nil {
-			action = "create"
-		}
-	}
+	statusID, created, err := h.imports.EnsureAssetStatus(
+		setID, name, strings.TrimSpace(status.Description), status.Category,
+	)
 	if err != nil {
 		slog.Warn("Failed to ensure Jira asset status",
 			slog.String("component", "jira"),
@@ -846,7 +669,7 @@ func (h *JiraImportHandler) ensureJiraAssetStatus(jobID string, setID int, statu
 	if err := h.recordMapping(jobID, "asset_status", jiraStatusID, name, statusID, map[string]any{
 		"asset_set_id": setID,
 		"category":     status.Category,
-		"action":       action,
+		"action":       map[bool]string{true: "create", false: "reuse_existing"}[created],
 	}); err != nil {
 		return 0
 	}
@@ -896,15 +719,9 @@ func (h *JiraImportHandler) resolveJiraAssetReferences(
 		if len(refs) == 0 {
 			continue
 		}
-		var rawJSON string
-		if err := h.db.QueryRow(`
-			SELECT COALESCE(custom_field_values, '{}') FROM assets WHERE id = ?
-		`, reference.AssetID).Scan(&rawJSON); err != nil {
+		values, err := h.imports.AssetCustomFieldValues(reference.AssetID)
+		if err != nil {
 			continue
-		}
-		values := make(map[string]any)
-		if err := json.Unmarshal([]byte(rawJSON), &values); err != nil {
-			values = make(map[string]any)
 		}
 		fieldKey := strconv.Itoa(reference.FieldID)
 		if reference.Multiple {
@@ -916,13 +733,7 @@ func (h *JiraImportHandler) resolveJiraAssetReferences(
 		} else {
 			values[fieldKey] = assetCustomFieldValue(refs[0])
 		}
-		encoded, err := json.Marshal(values)
-		if err != nil {
-			continue
-		}
-		if _, err := h.db.ExecWrite(`
-			UPDATE assets SET custom_field_values = ?, updated_at = updated_at WHERE id = ?
-		`, string(encoded), reference.AssetID); err != nil {
+		if err := h.imports.UpdateAssetCustomFieldValues(reference.AssetID, values); err != nil {
 			slog.Warn("Failed to resolve Jira Assets object reference",
 				slog.String("component", "jira"),
 				slog.Int("assetID", reference.AssetID),
@@ -959,11 +770,7 @@ func jiraAssetAttributeReferenceCandidate(raw jira.AssetAttributeValue) jiraIssu
 }
 
 func (h *JiraImportHandler) existingImportedJiraAsset(jobID, objectID string) int {
-	var id int
-	if err := h.db.QueryRow(`
-		SELECT windshift_id FROM jira_import_id_mappings
-		WHERE job_id = ? AND entity_type = 'asset' AND jira_id = ?
-	`, jobID, objectID).Scan(&id); err == nil {
+	if id, ok := h.imports.MappedEntity(jobID, "asset", objectID); ok {
 		return id
 	}
 	return 0
@@ -1035,9 +842,9 @@ func jiraAssetAttributeValue(attr jira.AssetObjectAttributeValue) (any, bool) {
 	return strings.Join(values, "\n"), true
 }
 
-func nullableAssetTime(t time.Time) any {
+func nullableAssetTime(t time.Time) *time.Time {
 	if t.IsZero() {
 		return nil
 	}
-	return t
+	return &t
 }

@@ -181,6 +181,38 @@ type NewWorklog struct {
 	DurationMinutes int
 }
 
+// ImportedWorklog preserves source timestamps and permits an unresolved user.
+type ImportedWorklog struct {
+	ProjectID       int
+	CustomerID      int64
+	UserID          *int
+	ItemID          int
+	Description     string
+	DateUnix        int64
+	StartTimeUnix   int64
+	EndTimeUnix     int64
+	DurationMinutes int
+	CreatedAtUnix   int64
+	UpdatedAtUnix   int64
+}
+
+// CreateImported inserts a worklog with source-system timestamps.
+func (r *TimeWorklogRepository) CreateImported(in ImportedWorklog) (int64, error) {
+	var id int64
+	err := r.db.QueryRow(`
+		INSERT INTO time_worklogs
+			(project_id, customer_id, user_id, item_id, description, date,
+			 start_time, end_time, duration_minutes, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+	`, in.ProjectID, in.CustomerID, in.UserID, in.ItemID, in.Description,
+		in.DateUnix, in.StartTimeUnix, in.EndTimeUnix, in.DurationMinutes,
+		in.CreatedAtUnix, in.UpdatedAtUnix).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("create imported worklog: %w", err)
+	}
+	return id, nil
+}
+
 // UpdateWorklog captures the mutable fields of an existing worklog.
 type UpdateWorklog struct {
 	ID              int

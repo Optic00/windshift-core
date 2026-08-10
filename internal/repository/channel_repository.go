@@ -268,6 +268,50 @@ func (r *ChannelRepository) FindByID(ctx context.Context, id int) (*models.Chann
 	return r.scanChannelRow(row)
 }
 
+// FindInboundPortalBySlug returns a portal channel for import-time slug
+// collision resolution.
+func (r *ChannelRepository) FindInboundPortalBySlug(ctx context.Context, slug string) (*models.Channel, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT c.id, c.name, c.type, c.direction, COALESCE(c.description, ''),
+		       c.status, COALESCE(c.is_default, false), COALESCE(c.config, '{}'),
+		       c.plugin_name, c.plugin_webhook_id, c.category_id, c.created_at,
+		       c.updated_at, c.last_activity, cc.name, cc.color
+		FROM channels c
+		LEFT JOIN channel_categories cc ON c.category_id = cc.id
+		WHERE c.type = 'portal' AND c.direction = 'inbound' AND c.public_slug = ?
+	`, slug)
+	return r.scanChannelRow(row)
+}
+
+// CreatePortalWithManager atomically creates a portal and grants its importing
+// user channel-manager access when one is available.
+func (r *ChannelRepository) CreatePortalWithManager(
+	ctx context.Context,
+	channel *models.Channel,
+	managerUserID int,
+) (int, error) {
+	return database.WithTxResult(r.db, func(tx database.Tx) (int, error) {
+		id, err := r.Create(ctx, tx, channel)
+		if err != nil {
+			return 0, err
+		}
+		if managerUserID > 0 {
+			if _, err := r.AddManager(ctx, tx, id, "user", managerUserID, managerUserID); err != nil {
+				return 0, err
+			}
+		}
+		return id, nil
+	})
+}
+
+// SetConfig performs a repository-owned transaction for callers that only
+// need to replace channel configuration.
+func (r *ChannelRepository) SetConfig(ctx context.Context, id int, config string) error {
+	return database.WithTx(r.db, func(tx database.Tx) error {
+		return r.UpdateConfig(ctx, tx, id, config)
+	})
+}
+
 // Create inserts a new channel and returns its ID
 func (r *ChannelRepository) Create(ctx context.Context, tx database.Tx, channel *models.Channel) (int, error) {
 	now := time.Now()

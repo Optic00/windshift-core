@@ -282,6 +282,29 @@ func (r *TestCaseRepository) GetMaxSortOrder(workspaceID int, folderID *int) (in
 	return int(maxSortOrder.Int64), nil
 }
 
+// GetMaxSortOrderTx is the transaction-scoped form used by atomic import
+// workflows.
+func (r *TestCaseRepository) GetMaxSortOrderTx(tx database.Tx, workspaceID int, folderID *int) (int, error) {
+	var maxSortOrder sql.NullInt64
+	var err error
+	if folderID != nil {
+		err = tx.QueryRow(
+			"SELECT MAX(sort_order) FROM test_cases WHERE workspace_id = ? AND folder_id = ?",
+			workspaceID,
+			*folderID,
+		).Scan(&maxSortOrder)
+	} else {
+		err = tx.QueryRow(
+			"SELECT MAX(sort_order) FROM test_cases WHERE workspace_id = ? AND folder_id IS NULL",
+			workspaceID,
+		).Scan(&maxSortOrder)
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, fmt.Errorf("failed to get max sort order: %w", err)
+	}
+	return int(maxSortOrder.Int64), nil
+}
+
 // Create inserts a new test case and returns its ID
 func (r *TestCaseRepository) Create(tx database.Tx, tc *models.TestCase) (int, error) {
 	query := `
@@ -558,6 +581,32 @@ func (r *TestCaseRepository) FindLabelsByTestCaseID(testCaseID int) ([]models.Te
 	defer func() { _ = rows.Close() }()
 
 	return scanTestLabels(rows)
+}
+
+// FindLabelByNameTx returns a case-insensitive workspace label match within
+// the caller's transaction.
+func (r *TestCaseRepository) FindLabelByNameTx(tx database.Tx, workspaceID int, name string) (*models.TestLabel, error) {
+	var label models.TestLabel
+	err := tx.QueryRow(`
+		SELECT id, workspace_id, name, color, description, created_at, updated_at
+		FROM test_labels
+		WHERE workspace_id = ? AND LOWER(name) = LOWER(?)
+	`, workspaceID, name).Scan(
+		&label.ID,
+		&label.WorkspaceID,
+		&label.Name,
+		&label.Color,
+		&label.Description,
+		&label.CreatedAt,
+		&label.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find test label by name: %w", err)
+	}
+	return &label, nil
 }
 
 // CreateLabel creates a new test label

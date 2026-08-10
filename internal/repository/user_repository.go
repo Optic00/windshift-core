@@ -58,6 +58,36 @@ func (r *UserRepository) GetIDByEmail(email string) (int, error) {
 	return id, err
 }
 
+// FindByEmailCaseInsensitive returns the small identity projection used when
+// matching users from external systems.
+func (r *UserRepository) FindByEmailCaseInsensitive(email string) (id int, username string, err error) {
+	err = r.db.QueryRow(
+		"SELECT id, username FROM users WHERE LOWER(email) = LOWER(?)",
+		email,
+	).Scan(&id, &username)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, "", ErrNotFound
+	}
+	if err != nil {
+		return 0, "", fmt.Errorf("find user by email: %w", err)
+	}
+	return id, username, nil
+}
+
+// UsernameExistsCaseInsensitive reports whether a username is already in use
+// without relying on database collation.
+func (r *UserRepository) UsernameExistsCaseInsensitive(username string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow(
+		"SELECT EXISTS(SELECT 1 FROM users WHERE LOWER(username) = LOWER(?))",
+		username,
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check imported username %q: %w", username, err)
+	}
+	return exists, nil
+}
+
 // GetFullName returns "first_name last_name" for a user. Used to enrich
 // audit details on channel-manager add/remove and similar admin actions.
 // Returns empty string + nil if the row is missing (caller treats that as

@@ -66,6 +66,55 @@ func (r *CustomFieldRepository) FindByID(id int) (*models.CustomFieldDefinition,
 	return &cf, nil
 }
 
+// FindByName returns a case-insensitive exact-name match, or ErrNotFound.
+func (r *CustomFieldRepository) FindByName(name string) (*models.CustomFieldDefinition, error) {
+	row := r.db.QueryRow(customFieldDefinitionSelect+` WHERE LOWER(name) = LOWER(?)`, name)
+	field, err := scanCustomFieldDefinitionRow(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find custom field %q: %w", name, err)
+	}
+	return &field, nil
+}
+
+// FindByNameAndType returns a case-insensitive exact-name match with the
+// requested field type, or ErrNotFound.
+func (r *CustomFieldRepository) FindByNameAndType(name, fieldType string) (*models.CustomFieldDefinition, error) {
+	row := r.db.QueryRow(
+		customFieldDefinitionSelect+` WHERE LOWER(name) = LOWER(?) AND field_type = ?`,
+		name,
+		fieldType,
+	)
+	field, err := scanCustomFieldDefinitionRow(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find custom field %q by type: %w", name, err)
+	}
+	return &field, nil
+}
+
+// FindPreferredByName returns a case-insensitive name match, preferring the
+// requested type and then the legacy milestone type.
+func (r *CustomFieldRepository) FindPreferredByName(name, preferredType string) (*models.CustomFieldDefinition, error) {
+	row := r.db.QueryRow(customFieldDefinitionSelect+`
+		WHERE LOWER(name) = LOWER(?)
+		ORDER BY CASE WHEN field_type = ? THEN 0 WHEN field_type = 'milestone' THEN 1 ELSE 2 END, id
+		LIMIT 1
+	`, name, preferredType)
+	field, err := scanCustomFieldDefinitionRow(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find preferred custom field %q: %w", name, err)
+	}
+	return &field, nil
+}
+
 // CustomFieldDeleteInfo is the subset of fields needed by Delete flows for
 // audit logs and cascade decisions.
 type CustomFieldDeleteInfo struct {

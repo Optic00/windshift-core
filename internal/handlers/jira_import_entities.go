@@ -9,7 +9,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -71,58 +70,53 @@ func (h *JiraImportHandler) ensureUsers(ctx context.Context, jobID string, users
 			u.Email = syntheticEmailForAccount(u.AccountID)
 		}
 
-		var existingUserID int
-		var existingUsername string
-		err := h.db.QueryRow(`
-			SELECT u.id, u.username
-			FROM jira_import_user_mappings m
-			JOIN users u ON u.id = m.windshift_user_id
-			WHERE m.job_id = ? AND m.jira_account_id = ?
-		`, jobID, u.AccountID).Scan(&existingUserID, &existingUsername)
-		if err == nil {
-			result[u.AccountID] = existingUserID
-			usernames[u.AccountID] = existingUsername
+		// Check if we already have a mapping for this user in this job.
+		if existing, ok := h.imports.UserMapping(jobID, u.AccountID); ok {
+			result[u.AccountID] = existing.UserID
+			usernames[u.AccountID] = existing.Username
 			continue
 		}
 
-		var userID int
-		var existingByEmailUsername string
+		// Try to find existing Windshift user by email
 		if u.Email != "" {
-			err = h.db.QueryRow(`SELECT id, username FROM users WHERE LOWER(email) = LOWER(?)`, u.Email).Scan(&userID, &existingByEmailUsername)
+			existing, err := h.imports.FindUserByEmail(u.Email)
 			if err == nil {
-				result[u.AccountID] = userID
-				usernames[u.AccountID] = existingByEmailUsername
-				h.recordUserMapping(jobID, u, userID, false)
+				// Found existing user
+				result[u.AccountID] = existing.UserID
+				usernames[u.AccountID] = existing.Username
+				h.recordUserMapping(jobID, u, existing.UserID, false)
 				continue
 			}
-			if !errors.Is(err, sql.ErrNoRows) {
+			if !errors.Is(err, repository.ErrNotFound) {
 				slog.Error("Failed to find existing user by email", slog.String("component", "jira"), slog.String("displayName", u.DisplayName), slog.Any("error", err))
 				continue
 			}
 		}
 
 		firstName, lastName := parseDisplayName(u.DisplayName)
-		username, err := h.uniqueImportUsername(generateUsername(u.Email, u.DisplayName))
+		username, err := h.imports.UniqueImportedUsername(generateUsername(u.Email, u.DisplayName))
 		if err != nil {
 			slog.Error("Failed to allocate username for imported user", slog.String("component", "jira"), slog.String("displayName", u.DisplayName), slog.Any("error", err))
 			continue
 		}
 
-		var newUserID int64
-		err = h.db.QueryRow(`
-			INSERT INTO users (email, username, first_name, last_name, is_active, avatar_url, requires_password_reset, created_at, updated_at)
-			VALUES (?, ?, ?, ?, false, ?, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING id
-		`, u.Email, username, firstName, lastName, u.AvatarURL).Scan(&newUserID)
+		newUserID, err := h.imports.CreateImportedUser(
+			u.Email,
+			username,
+			firstName,
+			lastName,
+			u.AvatarURL,
+		)
 		if err != nil {
 			slog.Error("Failed to create user", slog.String("component", "jira"), slog.String("displayName", u.DisplayName), slog.String("email", u.Email), slog.Any("error", err))
 			continue
 		}
 
-		result[u.AccountID] = int(newUserID)
+		result[u.AccountID] = newUserID
 		usernames[u.AccountID] = username
-		h.recordUserMapping(jobID, u, int(newUserID), true)
+		h.recordUserMapping(jobID, u, newUserID, true)
 
-		slog.Debug("Created user", slog.String("component", "jira"), slog.String("displayName", u.DisplayName), slog.String("email", u.Email), slog.Int64("userID", newUserID))
+		slog.Debug("Created user", slog.String("component", "jira"), slog.String("displayName", u.DisplayName), slog.String("email", u.Email), slog.Int("userID", newUserID))
 	}
 
 	return result, usernames, nil
@@ -130,10 +124,7 @@ func (h *JiraImportHandler) ensureUsers(ctx context.Context, jobID string, users
 
 // recordUserMapping stores a Jira user to Windshift user mapping
 func (h *JiraImportHandler) recordUserMapping(jobID string, user JiraUserSummary, windshiftUserID int, wasCreated bool) {
-	_, err := h.db.ExecWrite(`
-		INSERT INTO jira_import_user_mappings (job_id, jira_account_id, jira_email, jira_display_name, windshift_user_id, was_created)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`, jobID, user.AccountID, user.Email, user.DisplayName, windshiftUserID, wasCreated)
+	err := h.imports.RecordUserMapping(jobID, user.AccountID, user.Email, user.DisplayName, windshiftUserID, wasCreated)
 	if err != nil {
 		slog.Error("Failed to record user mapping", slog.String("component", "jira"), slog.Any("error", err))
 	}
@@ -143,25 +134,7 @@ func (h *JiraImportHandler) recordUserMapping(jobID string, user JiraUserSummary
 // label row if it doesn't exist yet. Color/created_at/updated_at fall back to
 // the schema defaults.
 func (h *JiraImportHandler) ensureLabel(workspaceID int, name string) (int, error) {
-	var id int
-	err := h.db.QueryRow(
-		`SELECT id FROM labels WHERE workspace_id = ? AND name = ?`,
-		workspaceID, name,
-	).Scan(&id)
-	if err == nil {
-		return id, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return 0, err
-	}
-	var newID int64
-	if err := h.db.QueryRow(
-		`INSERT INTO labels (name, workspace_id) VALUES (?, ?) RETURNING id`,
-		name, workspaceID,
-	).Scan(&newID); err != nil {
-		return 0, err
-	}
-	return int(newID), nil
+	return h.imports.EnsureLabel(workspaceID, name)
 }
 
 // importLabels ensures each Jira label exists in the workspace and links it to
@@ -191,10 +164,7 @@ func (h *JiraImportHandler) importLabels(workspaceID, itemID int, labels []strin
 				slog.Any("error", err))
 			continue
 		}
-		if _, err := h.db.ExecWrite(
-			`INSERT INTO item_labels (item_id, label_id) VALUES (?, ?)`,
-			itemID, labelID,
-		); err != nil {
+		if err := h.imports.AddItemLabel(itemID, labelID); err != nil {
 			slog.Error("Failed to link label to item",
 				slog.String("component", "jira"),
 				slog.String("label", name),
@@ -217,28 +187,7 @@ const importedDummyUserEmail = "imported-user@jira-import.invalid"
 // becomes a real account. Concurrent imports that race on creation are handled
 // by re-SELECTing after a UNIQUE-violating INSERT.
 func (h *JiraImportHandler) ensureImportedDummyUser() (int, error) {
-	var id int
-	err := h.db.QueryRow(`SELECT id FROM users WHERE email = ?`, importedDummyUserEmail).Scan(&id)
-	if err == nil {
-		return id, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return 0, err
-	}
-
-	var newID int64
-	err = h.db.QueryRow(`
-		INSERT INTO users (email, username, first_name, last_name, is_active, requires_password_reset, created_at, updated_at)
-		VALUES (?, ?, ?, ?, false, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING id
-	`, importedDummyUserEmail, "jira-imported-user", "Imported", "(Jira)").Scan(&newID)
-	if err == nil {
-		return int(newID), nil
-	}
-
-	if e := h.db.QueryRow(`SELECT id FROM users WHERE email = ?`, importedDummyUserEmail).Scan(&id); e == nil {
-		return id, nil
-	}
-	return 0, err
+	return h.imports.EnsureImportedDummyUser(importedDummyUserEmail)
 }
 
 // syntheticEmailForAccount produces a deterministic, RFC-safe email for a Jira
@@ -287,44 +236,6 @@ func generateUsername(email, displayName string) string {
 // Jira accounts commonly share the same email local-part across domains, so the
 // plain generated name is not guaranteed to satisfy users.username's uniqueness
 // constraint.
-func (h *JiraImportHandler) uniqueImportUsername(base string) (string, error) {
-	const maxUsernameLength = 32
-
-	base = strings.TrimSpace(strings.ToLower(base))
-	if base == "" {
-		base = "jira-user"
-	}
-	if len(base) > maxUsernameLength {
-		base = base[:maxUsernameLength]
-	}
-
-	for suffix := 0; ; suffix++ {
-		candidate := base
-		if suffix > 0 {
-			tail := fmt.Sprintf("-%d", suffix+1)
-			prefixLength := maxUsernameLength - len(tail)
-			if prefixLength < 1 {
-				return "", fmt.Errorf("cannot allocate username suffix")
-			}
-			if len(candidate) > prefixLength {
-				candidate = candidate[:prefixLength]
-			}
-			candidate += tail
-		}
-
-		var exists bool
-		if err := h.db.QueryRow(
-			`SELECT EXISTS(SELECT 1 FROM users WHERE LOWER(username) = LOWER(?))`,
-			candidate,
-		).Scan(&exists); err != nil {
-			return "", err
-		}
-		if !exists {
-			return candidate, nil
-		}
-	}
-}
-
 // collectUsersFromCustomField extracts users from a custom field value
 func collectUsersFromCustomField(value interface{}, fieldType string,
 	existingMap map[string]int, usersToProcess *[]JiraUserSummary, seen map[string]bool) {
@@ -470,33 +381,29 @@ func isJiraSprintField(mapping CustomFieldMapping) bool {
 // that belongs in the item's custom_field_values JSON bag. Returns (nil, false)
 // for skip/unmapped paths.
 func (h *JiraImportHandler) customFieldType(fieldID int) string {
-	var fieldType string
-	if err := h.db.QueryRow(`SELECT field_type FROM custom_field_definitions WHERE id = ?`, fieldID).Scan(&fieldType); err != nil {
-		return ""
-	}
-	return fieldType
+	return h.imports.CustomFieldType(fieldID)
 }
 
 func (h *JiraImportHandler) customFieldAssetAllowsMultiple(fieldID int) bool {
-	var options sql.NullString
-	if err := h.db.QueryRow(`SELECT options FROM custom_field_definitions WHERE id = ?`, fieldID).Scan(&options); err != nil || !options.Valid {
+	options := h.imports.CustomFieldOptions(fieldID)
+	if options == "" {
 		return false
 	}
 	var config struct {
 		Multi bool `json:"multi"`
 	}
-	return json.Unmarshal([]byte(options.String), &config) == nil && config.Multi
+	return json.Unmarshal([]byte(options), &config) == nil && config.Multi
 }
 
 func (h *JiraImportHandler) customFieldAssetSetID(fieldID int) int {
-	var options sql.NullString
-	if err := h.db.QueryRow(`SELECT options FROM custom_field_definitions WHERE id = ?`, fieldID).Scan(&options); err != nil || !options.Valid {
+	options := h.imports.CustomFieldOptions(fieldID)
+	if options == "" {
 		return 0
 	}
 	var config struct {
 		AssetSetID int `json:"asset_set_id"`
 	}
-	if json.Unmarshal([]byte(options.String), &config) != nil {
+	if json.Unmarshal([]byte(options), &config) != nil {
 		return 0
 	}
 	return config.AssetSetID
@@ -1287,10 +1194,8 @@ func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, works
 			return fmt.Errorf("find previous Jira item mapping: %w", err)
 		}
 		if previousItemMapping != nil {
-			var previousWorkspaceID int
-			if lookupErr := h.db.QueryRow(`
-				SELECT workspace_id FROM items WHERE id = ?
-			`, previousItemMapping.WindshiftID).Scan(&previousWorkspaceID); lookupErr != nil {
+			previousWorkspaceID, lookupErr := h.imports.ItemWorkspaceID(previousItemMapping.WindshiftID)
+			if lookupErr != nil {
 				if !errors.Is(lookupErr, sql.ErrNoRows) {
 					return fmt.Errorf("load previous Jira item: %w", lookupErr)
 				}
@@ -1400,7 +1305,7 @@ func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, works
 	if mediaResolver != nil && rawDescription != nil {
 		linked := jira.ConvertADFToMarkdown(rawDescription, mentionResolver, mediaResolver)
 		if linked != "" && linked != description {
-			if _, err := h.db.ExecWrite(`UPDATE items SET description = ? WHERE id = ?`, linked, itemID); err != nil {
+			if err := h.imports.UpdateItemDescription(int(itemID), linked); err != nil {
 				slog.Warn("Failed to update item description with linked media",
 					slog.String("component", "jira"),
 					slog.String("issue", issue.Key),
@@ -1479,109 +1384,7 @@ func (h *JiraImportHandler) updateImportedJiraItem(
 	itemID int,
 	params services.ItemCreationParams,
 ) (int64, error) {
-	if err := validation.ValidatePlanningAssignments(h.db, params.WorkspaceID, params.MilestoneIDs, params.IterationID); err != nil {
-		return 0, err
-	}
-	var priorityID interface{}
-	if strings.TrimSpace(params.Priority) != "" {
-		var resolvedPriorityID int
-		if err := h.db.QueryRow(`
-			SELECT id FROM priorities WHERE LOWER(name) = LOWER(?) ORDER BY id LIMIT 1
-		`, params.Priority).Scan(&resolvedPriorityID); err == nil {
-			priorityID = resolvedPriorityID
-		}
-	}
-	updatedAt := time.Now()
-	if params.UpdatedAt != nil {
-		updatedAt = *params.UpdatedAt
-	}
-	var createdAt interface{}
-	if params.CreatedAt != nil {
-		createdAt = *params.CreatedAt
-	}
-
-	tx, err := h.db.Begin()
-	if err != nil {
-		return 0, fmt.Errorf("begin Jira item upsert: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	fracIndex, err := repository.GenerateFracIndexForNewItem(tx, h.db.GetDriverName())
-	if err != nil {
-		return 0, fmt.Errorf("generate Jira re-import fractional index: %w", err)
-	}
-	result, err := tx.Exec(`
-		UPDATE items
-		SET title = ?,
-		    description = ?,
-		    status_id = COALESCE(?, status_id),
-		    item_type_id = COALESCE(?, item_type_id),
-		    priority_id = COALESCE(?, priority_id),
-		    iteration_id = ?,
-		    time_project_id = ?,
-		    assignee_id = ?,
-		    reporter_id = ?,
-		    creator_id = ?,
-		    creator_portal_customer_id = ?,
-		    channel_id = ?,
-		    request_type_id = ?,
-		    due_date = ?,
-		    story_points = ?,
-		    estimate_minutes = ?,
-		    custom_field_values = ?,
-		    frac_index = ?,
-		    created_at = COALESCE(?, created_at),
-		    updated_at = ?
-		WHERE id = ? AND workspace_id = ?
-	`,
-		params.Title,
-		params.Description,
-		params.StatusID,
-		params.ItemTypeID,
-		priorityID,
-		params.IterationID,
-		params.TimeProjectID,
-		params.AssigneeID,
-		params.ReporterID,
-		params.CreatorID,
-		params.CreatorPortalCustomerID,
-		params.ChannelID,
-		params.RequestTypeID,
-		params.DueDate,
-		params.StoryPoints,
-		params.EstimateMinutes,
-		nullString(params.CustomFieldValuesJSON),
-		fracIndex,
-		createdAt,
-		updatedAt,
-		itemID,
-		params.WorkspaceID,
-	)
-	if err != nil {
-		return 0, fmt.Errorf("update imported Jira item: %w", err)
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("inspect imported Jira item update: %w", err)
-	}
-	if affected != 1 {
-		return 0, fmt.Errorf("imported Jira item %d no longer exists in workspace %d", itemID, params.WorkspaceID)
-	}
-	if _, err := tx.Exec(`DELETE FROM item_milestones WHERE item_id = ?`, itemID); err != nil {
-		return 0, fmt.Errorf("replace Jira item milestones: %w", err)
-	}
-	for _, milestoneID := range params.MilestoneIDs {
-		if _, err := tx.Exec(`
-			INSERT INTO item_milestones (item_id, milestone_id, created_at)
-			VALUES (?, ?, CURRENT_TIMESTAMP)
-		`, itemID, milestoneID); err != nil {
-			return 0, fmt.Errorf("attach Jira milestone %d: %w", milestoneID, err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return 0, fmt.Errorf("commit Jira item upsert: %w", err)
-	}
-	services.PublishItemChange(itemID, services.ItemChangeUpdated)
-	return int64(itemID), nil
+	return h.imports.UpdateImportedItem(itemID, params)
 }
 
 // ================================================================
@@ -1592,111 +1395,40 @@ func (h *JiraImportHandler) updateImportedJiraItem(
 // Must be called after all issues for a project are imported so that both
 // parent and child exist in jira_import_id_mappings.
 func (h *JiraImportHandler) linkParents(jobID string) {
-	// Find all item mappings that have a parent_key in metadata
-	rows, err := h.db.Query(`
-		SELECT windshift_id, metadata_json
-		FROM jira_import_id_mappings
-		WHERE job_id = ? AND entity_type = 'item'
-	`, jobID)
+	links, err := h.imports.ParentLinks(jobID)
 	if err != nil {
 		slog.Error("Failed to query item mappings for parent linking", slog.String("component", "jira"), slog.Any("error", err))
-		return
-	}
-	defer func() { _ = rows.Close() }()
-
-	type parentLink struct {
-		childID   int
-		parentKey string
-	}
-	var links []parentLink
-
-	for rows.Next() {
-		var windshiftID int
-		var metadataJSON sql.NullString
-		if err := rows.Scan(&windshiftID, &metadataJSON); err != nil {
-			slog.Warn("failed to scan item mapping row", slog.String("component", "jira"), slog.Any("error", err))
-			continue
-		}
-		if !metadataJSON.Valid {
-			continue
-		}
-		var meta map[string]interface{}
-		if err := json.Unmarshal([]byte(metadataJSON.String), &meta); err != nil {
-			continue
-		}
-		if parentKey, ok := meta["parent_key"].(string); ok && parentKey != "" {
-			links = append(links, parentLink{childID: windshiftID, parentKey: parentKey})
-		}
-	}
-	if err := rows.Err(); err != nil {
-		slog.Error("error iterating item mapping rows for parent linking", slog.String("component", "jira"), slog.Any("error", err))
 		return
 	}
 
 	for _, link := range links {
 		// Look up parent's Windshift ID from mappings
-		var parentID int
-		err := h.db.QueryRow(`
-			SELECT windshift_id FROM jira_import_id_mappings
-			WHERE job_id = ? AND entity_type = 'item' AND jira_key = ?
-		`, jobID, link.parentKey).Scan(&parentID)
+		parentID, err := h.imports.LookupMappedEntityByKey(jobID, "item", link.ParentKey)
 		if err != nil {
 			slog.Debug("Parent not found in import mappings",
 				slog.String("component", "jira"),
-				slog.String("parentKey", link.parentKey),
-				slog.Int("childID", link.childID))
+				slog.String("parentKey", link.ParentKey),
+				slog.Int("childID", link.ChildID))
 			continue
 		}
 
-		// Jira's hierarchy level -1 is Windshift's generic-subtask sentinel.
-		// Validate that special edge before using the import-only direct write:
-		// generic subtasks may sit below any regular item, but not below another
-		// generic subtask.
-		var childItemTypeID, childHierarchyLevel int
-		if err := h.db.QueryRow(`
-			SELECT it.id, it.hierarchy_level
-			FROM items child
-			JOIN item_types it ON child.item_type_id = it.id
-			WHERE child.id = ?
-		`, link.childID).Scan(&childItemTypeID, &childHierarchyLevel); err != nil {
-			slog.Error("Failed to load imported child hierarchy level",
+		if err := h.imports.ValidateParentLink(link.ChildID, parentID); err != nil {
+			slog.Error("Rejected invalid Jira parent link",
 				slog.String("component", "jira"),
-				slog.Int("childID", link.childID),
+				slog.Int("childID", link.ChildID),
+				slog.Int("parentID", parentID),
 				slog.Any("error", err))
 			continue
-		}
-		if childHierarchyLevel == models.HierarchyLevelGenericSubtask {
-			if err := validation.ValidateParentForItemType(
-				h.db,
-				childItemTypeID,
-				&parentID,
-			); err != nil {
-				slog.Error("Rejected invalid Jira generic sub-task parent",
-					slog.String("component", "jira"),
-					slog.Int("childID", link.childID),
-					slog.Int("parentID", parentID),
-					slog.Any("error", err))
-				continue
-			}
-			wouldCycle, err := services.NewHierarchyService(h.db).WouldCreateCycle(link.childID, parentID)
-			if err != nil || wouldCycle {
-				slog.Error("Rejected cyclic Jira generic sub-task parent",
-					slog.String("component", "jira"),
-					slog.Int("childID", link.childID),
-					slog.Int("parentID", parentID),
-					slog.Any("error", err))
-				continue
-			}
 		}
 
 		// Update the child item's parent_id directly.
 		// We cannot use ItemUpdateService here because it requires a valid user ID
 		// for history tracking, and the import runs without a user context.
-		err = repository.NewItemRepository(h.db).SetParentDirect(link.childID, parentID)
+		err = repository.NewItemRepository(h.db).SetParentDirect(link.ChildID, parentID)
 		if err != nil {
 			slog.Error("Failed to set parent_id",
 				slog.String("component", "jira"),
-				slog.Int("childID", link.childID),
+				slog.Int("childID", link.ChildID),
 				slog.Int("parentID", parentID),
 				slog.Any("error", err))
 		}
@@ -1775,8 +1507,7 @@ func (h *JiraImportHandler) importComments(jobID string, itemID int, issue *jira
 			previousMapping, _ = h.findPreviousJiraImportMapping(jobID, "comment", comment.ID)
 		}
 		if previousMapping != nil {
-			var exists bool
-			if lookupErr := h.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM comments WHERE id = ?)`, previousMapping.WindshiftID).Scan(&exists); lookupErr != nil || !exists {
+			if !h.imports.CommentExists(previousMapping.WindshiftID) {
 				previousMapping = nil
 			}
 		}
@@ -1871,63 +1602,17 @@ func (h *JiraImportHandler) importComments(jobID string, itemID int, issue *jira
 // importIssueLinks creates item_links from Jira issue links stored in mapping metadata.
 // Must be called after all issues for a project are imported.
 func (h *JiraImportHandler) importIssueLinks(jobID string) error {
-	rows, err := h.db.Query(`
-		SELECT windshift_id, jira_key, metadata_json
-		FROM jira_import_id_mappings
-		WHERE job_id = ? AND entity_type = 'item'
-	`, jobID)
+	allLinks, err := h.imports.IssueLinks(jobID)
 	if err != nil {
 		slog.Error("Failed to query item mappings for link import", slog.String("component", "jira"), slog.Any("error", err))
 		return fmt.Errorf("query Jira item mappings for links: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	type issueLinkInfo struct {
-		sourceID  int
-		sourceKey string
-		links     []map[string]interface{}
-	}
-	var allLinks []issueLinkInfo
-
-	for rows.Next() {
-		var windshiftID int
-		var jiraKey string
-		var metadataJSON sql.NullString
-		if err := rows.Scan(&windshiftID, &jiraKey, &metadataJSON); err != nil {
-			slog.Warn("failed to scan item mapping row for link import", slog.String("component", "jira"), slog.Any("error", err))
-			continue
-		}
-		if !metadataJSON.Valid {
-			continue
-		}
-		var meta map[string]interface{}
-		if err := json.Unmarshal([]byte(metadataJSON.String), &meta); err != nil {
-			continue
-		}
-		linksRaw, ok := meta["issue_links"].([]interface{})
-		if !ok || len(linksRaw) == 0 {
-			continue
-		}
-		var links []map[string]interface{}
-		for _, l := range linksRaw {
-			if m, ok := l.(map[string]interface{}); ok {
-				links = append(links, m)
-			}
-		}
-		if len(links) > 0 {
-			allLinks = append(allLinks, issueLinkInfo{sourceID: windshiftID, sourceKey: jiraKey, links: links})
-		}
-	}
-	if err := rows.Err(); err != nil {
-		slog.Error("error iterating item mapping rows for link import", slog.String("component", "jira"), slog.Any("error", err))
-		return fmt.Errorf("iterate Jira item mappings for links: %w", err)
 	}
 
 	linkTypeCache := make(map[string]int) // link type name -> ID
 	linkSvc := services.NewItemLinkService(h.db)
 
 	for _, info := range allLinks {
-		for _, link := range info.links {
+		for _, link := range info.Links {
 			typeName, _ := link["type_name"].(string)
 			if typeName == "" {
 				continue
@@ -1945,30 +1630,15 @@ func (h *JiraImportHandler) importIssueLinks(jobID string) error {
 				if inwardKey == "" {
 					continue
 				}
-				var sourceID int
-				err := h.db.QueryRow(`
-					SELECT windshift_id FROM jira_import_id_mappings
-					WHERE job_id = ? AND entity_type = 'item' AND jira_key = ?
-				`, jobID, inwardKey).Scan(&sourceID)
+				_, err := h.imports.LookupMappedEntityByKey(jobID, "item", inwardKey)
 				if errors.Is(err, sql.ErrNoRows) {
-					if externalErr := h.importExternalJiraIssueLink(
-						jobID,
-						info.sourceID,
-						info.sourceKey,
-						inwardKey,
-						typeName,
-						"inward",
-						link,
-					); externalErr != nil {
+					if externalErr := h.importExternalJiraIssueLink(jobID, info.SourceID, info.SourceKey, inwardKey, typeName, "inward", link); externalErr != nil {
 						if mappingErr := h.mappingFailure(jobID); mappingErr != nil {
 							return mappingErr
 						}
 						slog.Warn("Failed to preserve inward link from non-imported issue",
-							slog.String("component", "jira"),
-							slog.String("source", inwardKey),
-							slog.String("target", info.sourceKey),
-							slog.String("typeName", typeName),
-							slog.Any("error", externalErr))
+							slog.String("component", "jira"), slog.String("source", inwardKey),
+							slog.String("target", info.SourceKey), slog.String("typeName", typeName), slog.Any("error", externalErr))
 					}
 				} else if err != nil {
 					slog.Warn("Failed to look up inward link source",
@@ -1979,30 +1649,16 @@ func (h *JiraImportHandler) importIssueLinks(jobID string) error {
 				continue
 			}
 
-			var targetID int
-			err := h.db.QueryRow(`
-				SELECT windshift_id FROM jira_import_id_mappings
-				WHERE job_id = ? AND entity_type = 'item' AND jira_key = ?
-			`, jobID, outwardKey).Scan(&targetID)
+			// Look up target Windshift ID
+			targetID, err := h.imports.LookupMappedEntityByKey(jobID, "item", outwardKey)
 			if errors.Is(err, sql.ErrNoRows) {
-				if externalErr := h.importExternalJiraIssueLink(
-					jobID,
-					info.sourceID,
-					info.sourceKey,
-					outwardKey,
-					typeName,
-					"outward",
-					link,
-				); externalErr != nil {
+				if externalErr := h.importExternalJiraIssueLink(jobID, info.SourceID, info.SourceKey, outwardKey, typeName, "outward", link); externalErr != nil {
 					if mappingErr := h.mappingFailure(jobID); mappingErr != nil {
 						return mappingErr
 					}
 					slog.Warn("Failed to preserve outward link to non-imported issue",
-						slog.String("component", "jira"),
-						slog.String("source", info.sourceKey),
-						slog.String("target", outwardKey),
-						slog.String("typeName", typeName),
-						slog.Any("error", externalErr))
+						slog.String("component", "jira"), slog.String("source", info.SourceKey),
+						slog.String("target", outwardKey), slog.String("typeName", typeName), slog.Any("error", externalErr))
 				}
 				continue
 			} else if err != nil {
@@ -2022,7 +1678,7 @@ func (h *JiraImportHandler) importIssueLinks(jobID string) error {
 				linkTypeCache[typeName] = linkTypeID
 			}
 
-			mappingID := fmt.Sprintf("%s-%s-%s", info.sourceKey, typeName, outwardKey)
+			mappingID := fmt.Sprintf("%s-%s-%s", info.SourceKey, typeName, outwardKey)
 			previousMapping, previousErr := h.findPreviousJiraImportMapping(jobID, "link", mappingID)
 			if previousErr != nil {
 				slog.Warn("Failed to find prior Jira item-link mapping",
@@ -2034,14 +1690,14 @@ func (h *JiraImportHandler) importIssueLinks(jobID string) error {
 			linkID, err := linkSvc.CreateLink(services.CreateItemLinkParams{
 				LinkTypeID: linkTypeID,
 				SourceType: "item",
-				SourceID:   info.sourceID,
+				SourceID:   info.SourceID,
 				TargetType: "item",
 				TargetID:   targetID,
 			})
 			if err != nil {
 				slog.Error("Failed to create item link",
 					slog.String("component", "jira"),
-					slog.String("source", info.sourceKey),
+					slog.String("source", info.SourceKey),
 					slog.String("target", outwardKey),
 					slog.Any("error", err))
 				continue
@@ -2053,18 +1709,13 @@ func (h *JiraImportHandler) importIssueLinks(jobID string) error {
 				}
 				continue
 			}
-			if previousMapping != nil {
-				var exists bool
-				if lookupErr := h.db.QueryRow(`
-					SELECT EXISTS(SELECT 1 FROM item_links WHERE id = ?)
-				`, previousMapping.WindshiftID).Scan(&exists); lookupErr == nil && exists {
-					if err := h.recordMappingAndTransferOwnership(jobID, "link", mappingID, "", previousMapping.WindshiftID, map[string]any{
-						"action":                 "reuse_existing_mapping",
-						"was_created":            jiraImportMappingWasCreated(previousMapping.Metadata),
-						"reimported_from_job_id": previousMapping.JobID,
-					}, previousMapping); err != nil {
-						return fmt.Errorf("record Jira item link mapping: %w", err)
-					}
+			if previousMapping != nil && h.imports.ItemLinkExists(previousMapping.WindshiftID) {
+				if err := h.recordMappingAndTransferOwnership(jobID, "link", mappingID, "", previousMapping.WindshiftID, map[string]any{
+					"action":                 "reuse_existing_mapping",
+					"was_created":            jiraImportMappingWasCreated(previousMapping.Metadata),
+					"reimported_from_job_id": previousMapping.JobID,
+				}, previousMapping); err != nil {
+					return fmt.Errorf("record Jira item link mapping: %w", err)
 				}
 			}
 		}
@@ -2078,127 +1729,13 @@ func (h *JiraImportHandler) importExternalJiraIssueLink(
 	itemKey, externalKey, typeName, direction string,
 	sourceMetadata map[string]interface{},
 ) error {
-	externalKey = strings.TrimSpace(externalKey)
-	if itemID <= 0 || externalKey == "" {
-		return nil
-	}
-	var connectionID, instanceURL string
-	var instanceName sql.NullString
-	var createdBy sql.NullInt64
-	if err := h.db.QueryRow(`
-		SELECT j.connection_id, c.instance_url, c.instance_name, j.created_by
-		FROM jira_import_jobs j
-		JOIN jira_import_connections c ON c.id = j.connection_id
-		WHERE j.id = ?
-	`, jobID).Scan(&connectionID, &instanceURL, &instanceName, &createdBy); err != nil {
-		return fmt.Errorf("load Jira external-link provenance: %w", err)
-	}
-	providerID := "jira-import-" + connectionID
-	providerName := strings.TrimSpace(instanceName.String)
-	if providerName == "" {
-		providerName = "Jira"
-	}
-	providerConfig, err := json.Marshal(map[string]interface{}{
-		"base_url":      strings.TrimRight(instanceURL, "/"),
-		"connection_id": connectionID,
-		"managed_by":    "jira_import",
-	})
-	if err != nil {
-		return fmt.Errorf("encode Jira provider configuration: %w", err)
-	}
-	if _, err := h.db.ExecWrite(`
-		INSERT INTO integration_providers (
-			id, slug, name, provider_type, enabled, provider_config, created_at, updated_at
-		)
-		VALUES (?, ?, ?, 'jira', true, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-		ON CONFLICT(id) DO UPDATE SET
-			name = excluded.name,
-			enabled = true,
-			provider_config = excluded.provider_config,
-			updated_at = CURRENT_TIMESTAMP
-	`, providerID, providerID, providerName, string(providerConfig)); err != nil {
-		return fmt.Errorf("ensure Jira integration provider: %w", err)
-	}
-
-	externalURL := strings.TrimRight(instanceURL, "/") + "/browse/" + url.PathEscape(externalKey)
-	relation := strings.TrimSpace(typeName)
-	if direction == "outward" {
-		if phrase, _ := sourceMetadata["outward"].(string); strings.TrimSpace(phrase) != "" {
-			relation = strings.TrimSpace(phrase)
-		}
-	} else if phrase, _ := sourceMetadata["inward"].(string); strings.TrimSpace(phrase) != "" {
-		relation = strings.TrimSpace(phrase)
-	}
-	title := externalKey
-	if relation != "" {
-		title = relation + ": " + externalKey
-	}
-	linkMetadata, err := json.Marshal(map[string]interface{}{
-		"jira_issue_key":  externalKey,
-		"local_issue_key": itemKey,
-		"jira_link_type":  typeName,
-		"direction":       direction,
-		"source":          "jira_import",
-	})
-	if err != nil {
-		return fmt.Errorf("encode Jira external link metadata: %w", err)
-	}
-
-	var existingID string
-	queryErr := h.db.QueryRow(`
-		SELECT id FROM item_integration_links
-		WHERE item_id = ? AND integration_provider_id = ? AND external_id = ?
-	`, strconv.Itoa(itemID), providerID, externalKey).Scan(&existingID)
-	wasCreated := errors.Is(queryErr, sql.ErrNoRows)
-	if queryErr != nil && !wasCreated {
-		return fmt.Errorf("find existing Jira external link: %w", queryErr)
-	}
-	linkID := existingID
-	if linkID == "" {
-		linkID = uuid.NewString()
-	}
-	linkedBy := "jira-import"
-	if createdBy.Valid {
-		linkedBy = strconv.FormatInt(createdBy.Int64, 10)
-	}
-	if _, err := h.db.ExecWrite(`
-		INSERT INTO item_integration_links (
-			id, item_id, integration_provider_id, external_id, external_url,
-			title, icon, link_type, link_metadata, linked_by, created_at, updated_at
-		)
-		VALUES (?, ?, ?, ?, ?, ?, 'ExternalLink', 'jira_issue', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-		ON CONFLICT(item_id, integration_provider_id, external_id) DO UPDATE SET
-			external_url = excluded.external_url,
-			title = excluded.title,
-			link_metadata = excluded.link_metadata,
-			updated_at = CURRENT_TIMESTAMP
-	`, linkID, strconv.Itoa(itemID), providerID, externalKey, externalURL,
-		sanitize.PlainTextField.Sanitize(title), string(linkMetadata), linkedBy); err != nil {
-		return fmt.Errorf("upsert Jira external issue link: %w", err)
-	}
-	if err := h.recordMapping(jobID, "external_issue_link",
-		itemKey+":"+direction+":"+typeName+":"+externalKey,
-		externalKey,
-		itemID,
-		map[string]interface{}{
-			"integration_link_id": linkID,
-			"provider_id":         providerID,
-			"was_created":         wasCreated,
-		},
-	); err != nil {
-		return fmt.Errorf("record Jira external issue link mapping: %w", err)
-	}
-	return nil
+	return h.imports.UpsertExternalIssueLink(
+		jobID, itemID, itemKey, externalKey, typeName, direction, sourceMetadata,
+	)
 }
 
 // ensureLinkType finds or creates a link type matching the Jira link type
 func (h *JiraImportHandler) ensureLinkType(typeName string, linkData map[string]interface{}) (int, error) {
-	var existingID int
-	err := h.db.QueryRow(`SELECT id FROM link_types WHERE name = ?`, typeName).Scan(&existingID)
-	if err == nil {
-		return existingID, nil
-	}
-
 	forwardLabel, _ := linkData["outward"].(string)
 	reverseLabel, _ := linkData["inward"].(string)
 	if forwardLabel == "" {
@@ -2208,19 +1745,11 @@ func (h *JiraImportHandler) ensureLinkType(typeName string, linkData map[string]
 		reverseLabel = typeName
 	}
 
-	linkTypeSvc := services.NewEnumService(h.db, services.NewLinkTypeConfig())
-	linkType := &models.LinkType{
-		Name:         typeName,
-		ForwardLabel: forwardLabel,
-		ReverseLabel: reverseLabel,
-		Color:        "#6B7280",
-		Active:       true,
-	}
-	entity, err := linkTypeSvc.Create(linkType, nil)
+	id, err := h.imports.EnsureLinkType(typeName, forwardLabel, reverseLabel)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create link type: %w", err)
 	}
-	return entity.GetID(), nil
+	return id, nil
 }
 
 // ================================================================
@@ -2239,8 +1768,8 @@ func (h *JiraImportHandler) importWorklogs(jobID string, itemID int, issue *jira
 			slog.Int("total", issue.Fields.Worklog.Total))
 	}
 
-	var customerID int
-	if err := h.db.QueryRow(`SELECT customer_id FROM time_projects WHERE id = ?`, *timeProjectID).Scan(&customerID); err != nil {
+	customerID, err := h.imports.TimeProjectCustomerID(*timeProjectID)
+	if err != nil {
 		slog.Error("Failed to resolve time project customer for Jira worklogs",
 			slog.String("component", "jira"),
 			slog.String("issue", issue.Key),
@@ -2297,8 +1826,6 @@ func (h *JiraImportHandler) importWorklogs(jobID string, itemID int, issue *jira
 			updatedAt = updated.Unix()
 		}
 
-		var worklogID int64
-		var importErr error
 		previousMapping, lookupErr := h.findPreviousJiraImportMapping(jobID, "worklog", worklog.ID)
 		if lookupErr != nil {
 			slog.Warn("Failed to find prior Jira worklog mapping",
@@ -2307,35 +1834,25 @@ func (h *JiraImportHandler) importWorklogs(jobID string, itemID int, issue *jira
 				slog.Any("error", lookupErr))
 			previousMapping = nil
 		}
-		if previousMapping != nil {
-			var exists bool
-			if lookupErr := h.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM time_worklogs WHERE id = ?)`, previousMapping.WindshiftID).Scan(&exists); lookupErr != nil || !exists {
-				previousMapping = nil
-			}
-		}
-		if previousMapping != nil {
-			_, importErr = h.db.ExecWrite(`
-				UPDATE time_worklogs
-				SET project_id = ?, customer_id = ?, user_id = ?, item_id = ?,
-				    description = ?, date = ?, start_time = ?, end_time = ?,
-				    duration_minutes = ?, created_at = ?, updated_at = ?
-				WHERE id = ?
-			`, *timeProjectID, customerID, userID, itemID, description, date.Unix(),
-				started.Unix(), end.Unix(), durationMinutes, createdAt, updatedAt,
-				previousMapping.WindshiftID)
-			worklogID = int64(previousMapping.WindshiftID)
-		} else {
-			importErr = h.db.QueryRow(`
-				INSERT INTO time_worklogs (project_id, customer_id, user_id, item_id, description, date, start_time, end_time, duration_minutes, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
-			`, *timeProjectID, customerID, userID, itemID, description, date.Unix(), started.Unix(), end.Unix(), durationMinutes, createdAt, updatedAt).Scan(&worklogID)
-		}
-		if importErr != nil {
+		worklogID, err := h.imports.UpsertImportedWorklog(repository.ImportedWorklog{
+			ProjectID:       *timeProjectID,
+			CustomerID:      customerID,
+			UserID:          userID,
+			ItemID:          itemID,
+			Description:     description,
+			DateUnix:        date.Unix(),
+			StartTimeUnix:   started.Unix(),
+			EndTimeUnix:     end.Unix(),
+			DurationMinutes: durationMinutes,
+			CreatedAtUnix:   createdAt,
+			UpdatedAtUnix:   updatedAt,
+		}, previousMapping)
+		if err != nil {
 			slog.Error("Failed to import Jira worklog",
 				slog.String("component", "jira"),
 				slog.String("issue", issue.Key),
 				slog.String("worklogID", worklog.ID),
-				slog.Any("error", importErr))
+				slog.Any("error", err))
 			continue
 		}
 
@@ -2376,9 +1893,9 @@ func (h *JiraImportHandler) importAttachments(ctx context.Context, jobID string,
 		return nil, nil
 	}
 
-	var attachmentPath string
-	err := h.db.QueryRow(`SELECT attachment_path FROM attachment_settings WHERE enabled = true LIMIT 1`).Scan(&attachmentPath)
-	if err != nil || attachmentPath == "" {
+	// Get attachment storage path from settings.
+	attachmentPath, ok := h.imports.AttachmentPath()
+	if !ok {
 		slog.Warn("Attachment settings not configured, skipping attachment import",
 			slog.String("component", "jira"), slog.String("issue", issue.Key))
 		return jiraNoAttachmentMediaRefs()
@@ -2406,37 +1923,27 @@ func (h *JiraImportHandler) importAttachments(ctx context.Context, jobID string,
 			previousMapping = nil
 		}
 		if previousMapping != nil {
-			var mimeType, originalFilename string
-			var exists bool
-			if lookupErr := h.db.QueryRow(`
-				SELECT EXISTS(SELECT 1 FROM attachments WHERE id = ?)
-			`, previousMapping.WindshiftID).Scan(&exists); lookupErr != nil || !exists {
+			mimeType, originalFilename, exists := h.imports.ReassignAttachment(previousMapping.WindshiftID, itemID)
+			if !exists {
 				previousMapping = nil
-			} else if lookupErr := h.db.QueryRow(`
-				SELECT mime_type, original_filename FROM attachments WHERE id = ?
-			`, previousMapping.WindshiftID).Scan(&mimeType, &originalFilename); lookupErr == nil {
-				if _, updateErr := h.db.ExecWrite(`
-					UPDATE attachments SET item_id = ?, entity_type = 'item' WHERE id = ?
-				`, itemID, previousMapping.WindshiftID); updateErr == nil {
-					metadata := jiraImportMappingMetadata(previousMapping.Metadata)
-					if metadata == nil {
-						metadata = make(map[string]interface{})
-					}
-					metadata["action"] = "reuse_existing_mapping"
-					metadata["was_created"] = jiraImportMappingWasCreated(previousMapping.Metadata)
-					metadata["reimported_from_job_id"] = previousMapping.JobID
-					if mappingErr := h.recordMappingAndTransferOwnership(jobID, "attachment", attachment.ID, issue.Key, previousMapping.WindshiftID, metadata, previousMapping); mappingErr == nil {
-						mediaRefs[attachment.ID] = jira.MediaAttachment{
-							ID:               previousMapping.WindshiftID,
-							MimeType:         mimeType,
-							OriginalFilename: originalFilename,
-						}
-						progress.ImportedAttachments++
-						continue
-					} else {
-						return nil, fmt.Errorf("record Jira attachment mapping: %w", h.mappingFailure(jobID))
-					}
+			} else {
+				metadata := jiraImportMappingMetadata(previousMapping.Metadata)
+				if metadata == nil {
+					metadata = make(map[string]interface{})
 				}
+				metadata["action"] = "reuse_existing_mapping"
+				metadata["was_created"] = jiraImportMappingWasCreated(previousMapping.Metadata)
+				metadata["reimported_from_job_id"] = previousMapping.JobID
+				if mappingErr := h.recordMappingAndTransferOwnership(jobID, "attachment", attachment.ID, issue.Key, previousMapping.WindshiftID, metadata, previousMapping); mappingErr == nil {
+					mediaRefs[attachment.ID] = jira.MediaAttachment{
+						ID:               previousMapping.WindshiftID,
+						MimeType:         mimeType,
+						OriginalFilename: originalFilename,
+					}
+					progress.ImportedAttachments++
+					continue
+				}
+				return nil, fmt.Errorf("record Jira attachment mapping: %w", h.mappingFailure(jobID))
 			}
 		}
 
@@ -2531,7 +2038,7 @@ func (h *JiraImportHandler) importAttachments(ctx context.Context, jobID string,
 			attachmentMeta["author"] = author
 		}
 		if createdAt := jira.ParseJiraTimestamp(attachment.Created); createdAt != nil {
-			if _, err := h.db.ExecWrite(`UPDATE attachments SET created_at = ? WHERE id = ?`, *createdAt, attachmentID); err != nil {
+			if err := h.imports.PreserveAttachmentCreatedAt(attachmentID, *createdAt); err != nil {
 				slog.Warn("Failed to preserve Jira attachment created timestamp",
 					slog.String("component", "jira"),
 					slog.String("issue", issue.Key),

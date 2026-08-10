@@ -167,6 +167,23 @@ func (r *TimeProjectRepository) Create(project *models.TimeProject) error {
 	return nil
 }
 
+// FindIDByNameAndCustomer returns a project with the exact import identity.
+func (r *TimeProjectRepository) FindIDByNameAndCustomer(name string, customerID int) (int, error) {
+	var id int
+	err := r.db.QueryRow(
+		"SELECT id FROM time_projects WHERE name = ? AND customer_id = ?",
+		name,
+		customerID,
+	).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("find time project by name and customer: %w", err)
+	}
+	return id, nil
+}
+
 // Update replaces a project's editable fields and stamps UpdatedAt.
 func (r *TimeProjectRepository) Update(id int, project *models.TimeProject) error {
 	settings, err := encodeTimeProjectSettings(project.Settings)

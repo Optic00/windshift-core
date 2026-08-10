@@ -38,6 +38,19 @@ func (r *LinkTypeRepository) FindActiveIDByName(name string) (int, error) {
 	return id, nil
 }
 
+// FindIDByName returns the ID of a link type regardless of active state.
+func (r *LinkTypeRepository) FindIDByName(name string) (int, error) {
+	var id int
+	err := r.db.QueryRow("SELECT id FROM link_types WHERE name = ?", name).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("find link type %q: %w", name, err)
+	}
+	return id, nil
+}
+
 // LinkTypeBasic carries the subset of link_type fields needed by validators.
 // AllowedEntityTypes is the raw JSON string as stored in the column; callers
 // parse it as needed.

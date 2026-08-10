@@ -56,6 +56,23 @@ func (r *LabelRepository) GetByID(id int) (*models.Label, error) {
 	return &label, nil
 }
 
+// FindIDByName returns an exact-name label within one workspace.
+func (r *LabelRepository) FindIDByName(workspaceID int, name string) (int, error) {
+	var id int
+	err := r.db.QueryRow(
+		"SELECT id FROM labels WHERE workspace_id = ? AND name = ?",
+		workspaceID,
+		name,
+	).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("find label %q in workspace %d: %w", name, workspaceID, err)
+	}
+	return id, nil
+}
+
 // GetWorkspaceID returns the workspace_id for a label or ErrNotFound when missing.
 func (r *LabelRepository) GetWorkspaceID(id int) (int, error) {
 	var workspaceID int

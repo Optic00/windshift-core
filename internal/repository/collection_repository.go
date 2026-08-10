@@ -152,6 +152,37 @@ func (r *CollectionRepository) GetModel(id int) (*models.Collection, error) {
 	return &collection, nil
 }
 
+// FindByWorkspaceAndName returns an exact collection match, or ErrNotFound.
+func (r *CollectionRepository) FindByWorkspaceAndName(workspaceID int, name string) (*models.Collection, error) {
+	collection, err := scanCollectionModel(r.db.QueryRow(
+		collectionModelSelect+"\nWHERE c.workspace_id = ? AND c.name = ?", workspaceID, name,
+	))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find collection %q in workspace %d: %w", name, workspaceID, err)
+	}
+	return &collection, nil
+}
+
+// CreateForImport inserts an optionally unowned collection.
+func (r *CollectionRepository) CreateForImport(collection *models.Collection, userID *int) error {
+	var id int64
+	err := r.db.QueryRow(`
+		INSERT INTO collections
+			(name, description, ql_query, filter_state, is_public, workspace_id, category_id, created_by, public_slug, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING id
+	`, collection.Name, collection.Description, collection.QLQuery, collection.FilterState,
+		collection.IsPublic, collection.WorkspaceID, collection.CategoryID, userID, collection.PublicSlug).Scan(&id)
+	if err != nil {
+		return fmt.Errorf("create imported collection: %w", err)
+	}
+	collection.ID = int(id)
+	collection.CreatedBy = userID
+	return nil
+}
+
 // GetOwnerID returns the creator ID. A nil creator represents an unowned
 // legacy collection.
 func (r *CollectionRepository) GetOwnerID(id int) (*int, error) {

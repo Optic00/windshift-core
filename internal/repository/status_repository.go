@@ -59,6 +59,48 @@ func (r *StatusRepository) List() ([]models.Status, error) {
 	return statuses, nil
 }
 
+// GetByID returns a single status with category fields. ErrNotFound when missing.
+func (r *StatusRepository) GetByID(id int) (*models.Status, error) {
+	row := r.db.QueryRow(statusJoinedSelect+" WHERE s.id = ?", id)
+	s, err := scanStatusJoined(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get status %d: %w", id, err)
+	}
+	return &s, nil
+}
+
+// FindByName returns the status with the exact name, or ErrNotFound.
+func (r *StatusRepository) FindByName(name string) (*models.Status, error) {
+	row := r.db.QueryRow(statusJoinedSelect+" WHERE s.name = ?", name)
+	status, err := scanStatusJoined(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find status %q: %w", name, err)
+	}
+	return &status, nil
+}
+
+// CategoryIDs returns status category IDs keyed by status ID.
+func (r *StatusRepository) CategoryIDs(statusIDs []int) (map[int]int, error) {
+	result := make(map[int]int, len(statusIDs))
+	for _, statusID := range statusIDs {
+		var categoryID int
+		if err := r.db.QueryRow(`SELECT category_id FROM statuses WHERE id = ?`, statusID).Scan(&categoryID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			return nil, fmt.Errorf("get status %d category: %w", statusID, err)
+		}
+		result[statusID] = categoryID
+	}
+	return result, nil
+}
+
 // GetName returns a status name. Missing statuses return an empty name for
 // compatibility with the status-transition API.
 func (r *StatusRepository) GetName(statusID int64) (string, error) {

@@ -573,6 +573,22 @@ func (s *PlanningService) FindMilestoneByExternalKey(workspaceID int, externalKe
 	return s.GetMilestone(id)
 }
 
+// FindMilestoneByName returns a workspace-scoped milestone with the exact
+// name, or (nil, nil) when no row matches.
+func (s *PlanningService) FindMilestoneByName(workspaceID int, name string) (*MilestoneResult, error) {
+	var id int
+	err := s.db.QueryRow(`
+		SELECT id FROM milestones WHERE workspace_id = ? AND name = ?
+	`, workspaceID, name).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to find milestone by name: %w", err)
+	}
+	return s.GetMilestone(id)
+}
+
 // SetMilestoneStatus updates only the status column on a milestone scoped
 // to the given workspace. Used by automation to promote a "planning"
 // milestone to "in-progress" or "completed" without disturbing the other

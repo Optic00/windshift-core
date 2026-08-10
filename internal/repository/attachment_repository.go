@@ -131,3 +131,19 @@ func (r *AttachmentRepository) GetPageAttachmentRecord(pageID, attachmentID int)
 	}
 	return &rec, nil
 }
+
+// UpdateCreatedAt preserves the source timestamp for an imported attachment.
+func (r *AttachmentRepository) UpdateCreatedAt(attachmentID int64, createdAt time.Time) error {
+	result, err := r.db.ExecWrite(
+		"UPDATE attachments SET created_at = ? WHERE id = ?",
+		createdAt,
+		attachmentID,
+	)
+	if err != nil {
+		return fmt.Errorf("update attachment created timestamp: %w", err)
+	}
+	if rows, _ := result.RowsAffected(); rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}

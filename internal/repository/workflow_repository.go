@@ -112,6 +112,48 @@ func (r *WorkflowRepository) Create(name, description string, isDefault bool) (i
 	return int(id), nil
 }
 
+// CreateImported creates a workflow and its complete imported transition graph.
+func (r *WorkflowRepository) CreateImported(
+	name string,
+	statusIDs []int,
+	fromAnywhere map[int]bool,
+) (int, error) {
+	workflowID, err := r.Create(name, "", false)
+	if err != nil {
+		return 0, err
+	}
+	order := 0
+	transitions := make([]models.WorkflowTransition, 0, len(statusIDs)*len(statusIDs))
+	for _, statusID := range statusIDs {
+		if fromAnywhere[statusID] {
+			order++
+			transitions = append(transitions, models.WorkflowTransition{
+				ToStatusID:   statusID,
+				DisplayOrder: order,
+			})
+		}
+	}
+	for _, fromID := range statusIDs {
+		for _, toID := range statusIDs {
+			if fromID == toID {
+				continue
+			}
+			order++
+			sourceID := fromID
+			transitions = append(transitions, models.WorkflowTransition{
+				FromStatusID: &sourceID,
+				ToStatusID:   toID,
+				DisplayOrder: order,
+			})
+		}
+	}
+	if _, err := r.ReplaceTransitions(workflowID, transitions); err != nil {
+		_, _ = r.Delete(workflowID)
+		return 0, err
+	}
+	return workflowID, nil
+}
+
 // Update rewrites a workflow's mutable fields.
 func (r *WorkflowRepository) Update(id int, name, description string, isDefault bool) error {
 	_, err := r.db.ExecWrite(`

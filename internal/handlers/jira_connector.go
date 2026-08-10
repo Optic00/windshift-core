@@ -2,7 +2,7 @@ package handlers
 
 import (
 	"context"
-	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -10,6 +10,7 @@ import (
 
 	"windshift/internal/database"
 	"windshift/internal/jira"
+	"windshift/internal/jiraimport"
 	"windshift/internal/logger"
 	"windshift/internal/sanitize"
 	"windshift/internal/sso"
@@ -21,6 +22,7 @@ import (
 // JiraImportHandler handles Jira import endpoints
 type JiraImportHandler struct {
 	db                 database.Database
+	imports            *jiraimport.Service
 	encryption         *sso.SecretEncryption
 	capturePayloadsDir string // JIRA_CAPTURE_PAYLOADS (empty disables capture)
 	mappingFailuresMu  sync.Mutex
@@ -37,6 +39,7 @@ func NewJiraImportHandler(db database.Database, sessionSecret, capturePayloadsDi
 	}
 	return &JiraImportHandler{
 		db:                 db,
+		imports:            jiraimport.New(db),
 		encryption:         sso.NewSecretEncryption(sessionSecret),
 		capturePayloadsDir: capturePayloadsDir,
 		mappingFailures:    make(map[string]error),
@@ -120,10 +123,11 @@ func (h *JiraImportHandler) Connect(w http.ResponseWriter, r *http.Request) {
 	// Get user ID from session
 	userID := getUserIDFromContext(r)
 
-	_, err = h.db.ExecWrite(`
-		INSERT INTO jira_import_connections (id, instance_url, email, encrypted_credentials, instance_name, deployment_type, created_by, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-	`, connectionID, req.InstanceURL, req.Email, encryptedToken, instanceInfo.DisplayName, string(deploymentType), userID)
+	err = h.imports.CreateConnection(jiraimport.NewConnection{
+		ID: connectionID, InstanceURL: req.InstanceURL, Email: req.Email,
+		EncryptedCredentials: encryptedToken, InstanceName: instanceInfo.DisplayName,
+		DeploymentType: string(deploymentType), CreatedBy: userID,
+	})
 	if err != nil {
 		respondInternalError(w, r, fmt.Errorf("failed to store connection: %w", err))
 		return
@@ -156,46 +160,11 @@ func (h *JiraImportHandler) Connect(w http.ResponseWriter, r *http.Request) {
 
 // GetConnections handles GET /api/admin/jira-import/connections
 func (h *JiraImportHandler) GetConnections(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.db.Query(`
-		SELECT id, instance_url, email, instance_name, deployment_type, created_at, last_used_at
-		FROM jira_import_connections
-		ORDER BY created_at DESC
-	`)
+	connections, err := h.imports.ListConnections()
 	if err != nil {
 		respondInternalError(w, r, fmt.Errorf("failed to list connections: %w", err))
 		return
 	}
-	defer func() { _ = rows.Close() }()
-
-	connections := make([]ConnectionInfo, 0)
-	for rows.Next() {
-		var conn ConnectionInfo
-		var instanceName sql.NullString
-		var deploymentType sql.NullString
-		var lastUsedAt sql.NullTime
-
-		if err := rows.Scan(&conn.ID, &conn.InstanceURL, &conn.Email, &instanceName, &deploymentType, &conn.CreatedAt, &lastUsedAt); err != nil {
-			slog.Warn("Failed to scan connection", slog.String("component", "jira"), slog.Any("error", err))
-			continue
-		}
-		if instanceName.Valid {
-			conn.InstanceName = instanceName.String
-		}
-		if deploymentType.Valid {
-			conn.DeploymentType = deploymentType.String
-		} else {
-			conn.DeploymentType = "cloud" // Default for existing connections
-		}
-		if lastUsedAt.Valid {
-			conn.LastUsedAt = &lastUsedAt.Time
-		}
-		connections = append(connections, conn)
-	}
-	if err := rows.Err(); err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-
 	respondJSONOK(w, connections)
 }
 
@@ -203,31 +172,17 @@ func (h *JiraImportHandler) GetConnections(w http.ResponseWriter, r *http.Reques
 func (h *JiraImportHandler) DeleteConnection(w http.ResponseWriter, r *http.Request) {
 	connectionID := r.PathValue("connectionId")
 
-	var jobCount int
-	if err := h.db.QueryRow(`
-		SELECT COUNT(*)
-		FROM jira_import_jobs
-		WHERE connection_id = ?
-	`, connectionID).Scan(&jobCount); err != nil {
-		respondInternalError(w, r, fmt.Errorf("failed to check Jira import history: %w", err))
-		return
-	}
-	if jobCount > 0 {
+	err := h.imports.DeleteConnection(connectionID)
+	if errors.Is(err, jiraimport.ErrConnectionHasHistory) {
 		respondConflict(w, r, "Cannot delete a Jira connection while import jobs reference it. Delete imported data and retain the connection to preserve import provenance.")
 		return
 	}
-
-	result, err := h.db.ExecWrite(`
-		DELETE FROM jira_import_connections WHERE id = ?
-	`, connectionID)
-	if err != nil {
-		respondInternalError(w, r, fmt.Errorf("failed to delete connection: %w", err))
+	if errors.Is(err, jiraimport.ErrConnectionNotFound) {
+		respondNotFound(w, r, "connection")
 		return
 	}
-
-	rowsAffected, _ := result.RowsAffected()
-	if rowsAffected == 0 {
-		respondNotFound(w, r, "connection")
+	if err != nil {
+		respondInternalError(w, r, fmt.Errorf("failed to delete connection: %w", err))
 		return
 	}
 
@@ -250,40 +205,26 @@ func (h *JiraImportHandler) DeleteConnection(w http.ResponseWriter, r *http.Requ
 
 // getClientForConnection retrieves stored credentials and creates a Jira client
 func (h *JiraImportHandler) getClientForConnection(_ context.Context, connectionID string) (jira.Client, error) {
-	var instanceURL, email, encryptedCredentials string
-	var deploymentTypeStr sql.NullString
-
-	err := h.db.QueryRow(`
-		SELECT instance_url, email, encrypted_credentials, deployment_type
-		FROM jira_import_connections
-		WHERE id = ?
-	`, connectionID).Scan(&instanceURL, &email, &encryptedCredentials, &deploymentTypeStr)
+	connection, err := h.imports.UseConnection(connectionID)
 	if err != nil {
 		return nil, fmt.Errorf("connection not found: %w", err)
 	}
 
-	// Update last used timestamp
-	if _, err = h.db.ExecWrite(`
-		UPDATE jira_import_connections SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?
-	`, connectionID); err != nil {
-		slog.Warn("failed to update connection last_used_at", slog.String("component", "jira"), slog.String("connection_id", connectionID), slog.Any("error", err))
-	}
-
 	// Decrypt the API token
-	apiToken, err := h.encryption.Decrypt(encryptedCredentials)
+	apiToken, err := h.encryption.Decrypt(connection.EncryptedCredentials)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt credentials: %w", err)
 	}
 
 	// Determine deployment type (default to cloud for existing connections)
 	deploymentType := jira.DeploymentCloud
-	if deploymentTypeStr.Valid && deploymentTypeStr.String == "datacenter" {
+	if connection.DeploymentType == "datacenter" {
 		deploymentType = jira.DeploymentDataCenter
 	}
 
 	return jira.NewClient(jira.Config{
-		InstanceURL:    instanceURL,
-		Email:          email,
+		InstanceURL:    connection.InstanceURL,
+		Email:          connection.Email,
 		APIToken:       apiToken,
 		DeploymentType: deploymentType,
 	})

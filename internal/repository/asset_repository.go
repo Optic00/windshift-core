@@ -291,6 +291,71 @@ func (r *AssetRepository) GetSetByID(setID int) (*models.AssetManagementSet, err
 	return &set, nil
 }
 
+// FindSetIDByName returns the ID of the asset set with the exact name.
+func (r *AssetRepository) FindSetIDByName(name string) (int, error) {
+	var setID int
+	err := r.db.QueryRow(
+		"SELECT id FROM asset_management_sets WHERE name = ?",
+		name,
+	).Scan(&setID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("find asset set by name: %w", err)
+	}
+	return setID, nil
+}
+
+// CreateImportedSet creates an asset set for an external import, seeds its
+// default Active status, and grants the importing user Administrator access
+// when one is available.
+func (r *AssetRepository) CreateImportedSet(name, description string, creatorUserID int) (int, error) {
+	var setID int
+	err := database.WithTx(r.db, func(tx database.Tx) error {
+		now := time.Now()
+		var creator any
+		if creatorUserID > 0 {
+			creator = creatorUserID
+		}
+		if err := tx.QueryRow(`
+			INSERT INTO asset_management_sets (name, description, is_default, created_by, created_at, updated_at)
+			VALUES (?, ?, false, ?, ?, ?) RETURNING id
+		`, name, description, creator, now, now).Scan(&setID); err != nil {
+			return fmt.Errorf("create imported asset set: %w", err)
+		}
+		if _, err := tx.ExecWrite(`
+			INSERT INTO asset_statuses
+				(set_id, name, color, description, is_default, display_order, created_at, updated_at)
+			VALUES (?, 'Active', '#22c55e', 'Default status for imported Jira Assets', true, 0, ?, ?)
+		`, setID, now, now); err != nil {
+			return fmt.Errorf("create imported asset status: %w", err)
+		}
+		if creatorUserID <= 0 {
+			return nil
+		}
+		var roleID int
+		if err := tx.QueryRow(
+			"SELECT id FROM asset_roles WHERE name = ?",
+			assetRoleAdministrator,
+		).Scan(&roleID); err != nil {
+			return fmt.Errorf("find imported asset administrator role: %w", err)
+		}
+		if _, err := tx.ExecWrite(`
+			INSERT INTO user_asset_set_roles (user_id, set_id, role_id, granted_by)
+			VALUES (?, ?, ?, ?)
+			ON CONFLICT(user_id, set_id) DO NOTHING
+		`, creatorUserID, setID, roleID, creatorUserID); err != nil {
+			return fmt.Errorf("grant imported asset administrator role: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return setID, nil
+}
+
 const assetRoleAdministrator = "Administrator"
 
 // CreateSetAndInitialize creates an asset set, assigns the Administrator role
@@ -1134,6 +1199,31 @@ func (r *AssetRepository) GetDefaultStatus(setID int) (*int, error) {
 	return &id, nil
 }
 
+// EnsureImportedDefaultStatus returns a set's default status, creating the
+// Jira-import default when a legacy or partially-created set has none.
+func (r *AssetRepository) EnsureImportedDefaultStatus(setID int) (int, error) {
+	statusID, err := r.GetDefaultStatus(setID)
+	if err != nil {
+		return 0, err
+	}
+	if statusID != nil {
+		return *statusID, nil
+	}
+	now := time.Now()
+	var id int
+	err = r.db.QueryRow(`
+		INSERT INTO asset_statuses
+			(set_id, name, color, description, is_default, display_order, created_at, updated_at)
+		VALUES (?, 'Active', '#22c55e', 'Default status for imported Jira Assets', true, 0, ?, ?)
+		RETURNING id
+	`, setID, now, now).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("create imported default asset status: %w", err)
+	}
+	return id, nil
+}
+
+// RoleExists checks if a role exists
 func (r *AssetRepository) RoleExists(roleID int) (bool, error) {
 	var exists bool
 	err := r.db.QueryRow("SELECT EXISTS(SELECT 1 FROM asset_roles WHERE id = ?)", roleID).Scan(&exists)
@@ -1175,6 +1265,25 @@ func (r *AssetRepository) FindAssetTypesForSet(setID int) ([]models.AssetType, e
 	return types, nil
 }
 
+// FindAssetTypeIDByName returns the ID of an exact-name type within a set.
+func (r *AssetRepository) FindAssetTypeIDByName(setID int, name string) (int, error) {
+	var typeID int
+	err := r.db.QueryRow(
+		"SELECT id FROM asset_types WHERE set_id = ? AND name = ?",
+		setID,
+		name,
+	).Scan(&typeID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("find asset type by name: %w", err)
+	}
+	return typeID, nil
+}
+
+// FindAssetTypeByID returns a single asset type with set name and asset count.
+// Returns ErrNotFound if the type does not exist.
 func (r *AssetRepository) FindAssetTypeByID(typeID int) (*models.AssetType, error) {
 	row := r.db.QueryRow(`
 		SELECT at.id, at.set_id, at.name, at.description, at.icon, at.color,
@@ -1341,6 +1450,23 @@ type AssetTypeFieldAssignment struct {
 	DisplayOrder  int
 }
 
+// UpsertAssetTypeField creates or updates one custom-field assignment.
+func (r *AssetRepository) UpsertAssetTypeField(typeID, fieldID int, required bool, displayOrder int) error {
+	_, err := r.db.ExecWrite(`
+		INSERT INTO asset_type_fields (asset_type_id, custom_field_id, is_required, display_order)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(asset_type_id, custom_field_id) DO UPDATE SET
+			is_required = excluded.is_required,
+			display_order = excluded.display_order
+	`, typeID, fieldID, required, displayOrder)
+	if err != nil {
+		return fmt.Errorf("upsert asset type field: %w", err)
+	}
+	return nil
+}
+
+// ReplaceAssetTypeFields atomically replaces an asset type's custom field assignments.
+// It deletes existing rows and inserts the provided set in a single transaction.
 func (r *AssetRepository) ReplaceAssetTypeFields(typeID int, fields []AssetTypeFieldAssignment) error {
 	tx, err := r.db.Begin()
 	if err != nil {
@@ -2306,6 +2432,39 @@ type ImportAssetRowInput struct {
 	CreatedAt             time.Time
 }
 
+// JiraImportAssetRowInput preserves Jira's optional created/updated timestamps.
+type JiraImportAssetRowInput struct {
+	SetID                 int
+	AssetTypeID           int
+	StatusID              *int
+	Title                 string
+	Description           string
+	AssetTag              string
+	CustomFieldValuesJSON string
+	ImportJobID           string
+	CreatedAt             *time.Time
+	UpdatedAt             *time.Time
+}
+
+// InsertJiraImportedAsset inserts an asset while retaining Jira timestamps
+// when present and otherwise using the database clock.
+func (r *AssetRepository) InsertJiraImportedAsset(in JiraImportAssetRowInput) (int, error) {
+	var id int
+	err := r.db.QueryRow(`
+		INSERT INTO assets
+			(set_id, asset_type_id, status_id, title, description, asset_tag,
+			 custom_field_values, import_job_id, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), COALESCE(?, CURRENT_TIMESTAMP))
+		RETURNING id
+	`, in.SetID, in.AssetTypeID, in.StatusID, in.Title, in.Description,
+		in.AssetTag, in.CustomFieldValuesJSON, in.ImportJobID, in.CreatedAt, in.UpdatedAt).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("insert Jira imported asset: %w", err)
+	}
+	return id, nil
+}
+
+// InsertImportedAsset inserts a single asset row during CSV import.
 func (r *AssetRepository) InsertImportedAsset(in ImportAssetRowInput) (int, error) {
 	var id int
 	err := r.db.QueryRow(`

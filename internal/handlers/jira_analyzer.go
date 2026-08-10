@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"windshift/internal/jira"
+	"windshift/internal/jiraimport"
 	"windshift/internal/repository"
 	"windshift/internal/sanitize"
 )
@@ -202,55 +203,10 @@ func dedupeNonEmpty(in []string) []string {
 	return out
 }
 
-type jiraWorkspaceKeyPlan struct {
-	Key       string
-	Collision bool
-}
+type jiraWorkspaceKeyPlan = jiraimport.WorkspaceKeyPlan
 
 func (h *JiraImportHandler) planJiraWorkspaceKeys(projectKeys []string) (map[string]jiraWorkspaceKeyPlan, error) {
-	rows, err := h.db.Query(`SELECT key FROM workspaces`)
-	if err != nil {
-		return nil, fmt.Errorf("load existing workspace keys: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	occupied := make(map[string]struct{})
-	for rows.Next() {
-		var key string
-		if err := rows.Scan(&key); err != nil {
-			return nil, fmt.Errorf("scan existing workspace key: %w", err)
-		}
-		occupied[strings.ToUpper(strings.TrimSpace(key))] = struct{}{}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate existing workspace keys: %w", err)
-	}
-
-	plans := make(map[string]jiraWorkspaceKeyPlan, len(projectKeys))
-	for _, projectKey := range projectKeys {
-		jiraKey := strings.ToUpper(strings.TrimSpace(projectKey))
-		if jiraKey == "" {
-			continue
-		}
-		if _, alreadyPlanned := plans[jiraKey]; alreadyPlanned {
-			continue
-		}
-		targetKey := jiraKey
-		_, collision := occupied[targetKey]
-		if collision {
-			base := "JIRA_" + jiraKey
-			targetKey = base
-			for suffix := 2; ; suffix++ {
-				if _, exists := occupied[targetKey]; !exists {
-					break
-				}
-				targetKey = fmt.Sprintf("%s_%d", base, suffix)
-			}
-		}
-		plans[jiraKey] = jiraWorkspaceKeyPlan{Key: targetKey, Collision: collision}
-		occupied[targetKey] = struct{}{}
-	}
-	return plans, nil
+	return h.imports.PlanWorkspaceKeys(projectKeys)
 }
 
 // Analyze handles POST /api/admin/jira-import/analyze

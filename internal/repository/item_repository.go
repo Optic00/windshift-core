@@ -531,6 +531,24 @@ func (r *ItemRepository) SetVirtualFieldDataRaw(ctx context.Context, itemID int,
 	return nil
 }
 
+// UpdateDescription replaces only an item's description. Import workflows use
+// this after attachment mappings make rich-text media links resolvable.
+func (r *ItemRepository) UpdateDescription(itemID int, description string) error {
+	result, err := r.db.ExecWrite(
+		"UPDATE items SET description = ? WHERE id = ?",
+		description,
+		itemID,
+	)
+	if err != nil {
+		return fmt.Errorf("update item description: %w", err)
+	}
+	if rows, _ := result.RowsAffected(); rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ItemCFVRow is one (id, custom_field_values) pair from a paged scan.
 type ItemCFVRow struct {
 	ID  int
 	CFV string

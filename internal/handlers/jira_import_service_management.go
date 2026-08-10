@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"windshift/internal/database"
 	"windshift/internal/jira"
 	"windshift/internal/models"
 	"windshift/internal/repository"
@@ -109,11 +107,7 @@ func (h *JiraImportHandler) ensureJiraPortal(
 	serviceDesk jira.JiraServiceDesk,
 	workspaceID, createdByUserID int,
 ) (int, error) {
-	var mappedID int
-	if err := h.db.QueryRow(`
-		SELECT windshift_id FROM jira_import_id_mappings
-		WHERE job_id = ? AND entity_type = 'portal' AND jira_id = ?
-	`, jobID, serviceDesk.ID).Scan(&mappedID); err == nil {
+	if mappedID, ok := h.imports.MappedEntity(jobID, "portal", serviceDesk.ID); ok {
 		return mappedID, nil
 	}
 
@@ -123,27 +117,22 @@ func (h *JiraImportHandler) ensureJiraPortal(
 	}
 	slug := baseSlug
 	for suffix := 2; ; suffix++ {
-		var existingID int
-		var rawConfig string
-		err := h.db.QueryRow(`
-			SELECT id, config FROM channels
-			WHERE type = 'portal' AND direction = 'inbound' AND public_slug = ?
-		`, slug).Scan(&existingID, &rawConfig)
-		if errors.Is(err, sql.ErrNoRows) {
+		existing, err := h.imports.PortalBySlug(ctx, slug)
+		if errors.Is(err, repository.ErrNotFound) {
 			break
 		}
 		if err != nil {
 			return 0, fmt.Errorf("find Jira portal slug: %w", err)
 		}
 		var config models.ChannelConfig
-		if json.Unmarshal([]byte(rawConfig), &config) == nil && jiraPortalContainsWorkspace(config.PortalWorkspaceIDs, workspaceID) {
-			if err := h.recordMapping(jobID, "portal", serviceDesk.ID, project.Key, existingID, map[string]any{
+		if json.Unmarshal([]byte(existing.Config), &config) == nil && jiraPortalContainsWorkspace(config.PortalWorkspaceIDs, workspaceID) {
+			if err := h.recordMapping(jobID, "portal", serviceDesk.ID, project.Key, existing.ID, map[string]any{
 				"was_created": false,
 				"project_id":  project.ID,
 			}); err != nil {
 				return 0, fmt.Errorf("record Jira portal mapping: %w", err)
 			}
-			return existingID, nil
+			return existing.ID, nil
 		}
 		slug = baseSlug + "-" + strconv.Itoa(suffix)
 	}
@@ -171,22 +160,7 @@ func (h *JiraImportHandler) ensureJiraPortal(
 		Status:      "enabled",
 		Config:      string(configBytes),
 	}
-	channelID, err := database.WithTxResult(h.db, func(tx database.Tx) (int, error) {
-		id, createErr := repository.NewChannelRepository(h.db).Create(ctx, tx, channel)
-		if createErr != nil {
-			return 0, createErr
-		}
-		if createdByUserID > 0 {
-			if _, createErr = tx.Exec(`
-				INSERT INTO channel_managers (channel_id, manager_type, manager_id, added_by, created_at, updated_at)
-				VALUES (?, 'user', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-				ON CONFLICT(channel_id, manager_type, manager_id) DO NOTHING
-			`, id, createdByUserID, createdByUserID); createErr != nil {
-				return 0, createErr
-			}
-		}
-		return id, nil
-	})
+	channelID, err := h.imports.CreatePortal(ctx, channel, createdByUserID)
 	if err != nil {
 		return 0, fmt.Errorf("create Jira portal: %w", err)
 	}
@@ -206,37 +180,17 @@ func (h *JiraImportHandler) ensureJiraRequestTypes(
 	itemTypeMap map[string]int,
 ) (map[string]int, error) {
 	result := make(map[string]int, len(requestTypes))
-	repo := repository.NewRequestTypeRepository(h.db)
 	for order, requestType := range requestTypes {
 		itemTypeID, ok := itemTypeMap[requestType.IssueTypeID]
 		if !ok {
 			continue
 		}
 
-		var existingID int
-		err := h.db.QueryRow(`
-			SELECT id FROM request_types WHERE channel_id = ? AND name = ?
-		`, channelID, requestType.Name).Scan(&existingID)
-		if err == nil {
-			result[requestType.ID] = existingID
-			if err := h.recordMapping(jobID, "request_type", requestType.ID, requestType.Name, existingID, map[string]any{
-				"was_created":        false,
-				"service_desk_id":    requestType.ServiceDeskID,
-				"jira_issue_type_id": requestType.IssueTypeID,
-			}); err != nil {
-				return nil, fmt.Errorf("record Jira request type mapping: %w", err)
-			}
-			continue
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("find Jira request type %s: %w", requestType.ID, err)
-		}
-
 		description := strings.TrimSpace(requestType.Description)
 		if description == "" {
 			description = strings.TrimSpace(requestType.HelpText)
 		}
-		id, err := repo.Create(&models.RequestType{
+		id, created, err := h.imports.EnsureRequestType(&models.RequestType{
 			ChannelID:    channelID,
 			Name:         sanitize.PlainTextField.Sanitize(requestType.Name),
 			Description:  sanitize.PlainTextField.Sanitize(description),
@@ -246,29 +200,16 @@ func (h *JiraImportHandler) ensureJiraRequestTypes(
 			DisplayOrder: order + 1,
 			IsActive:     !strings.EqualFold(requestType.RestrictionStatus, "CLOSED"),
 			WorkspaceID:  &workspaceID,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("create Jira request type %s: %w", requestType.ID, err)
-		}
-		requestTypeConfig, _ := json.Marshal(models.RequestTypeConfig{
+		}, models.RequestTypeConfig{
 			RequireAuth:      true,
 			AllowAttachments: true,
 		})
-		if _, err := h.db.ExecWrite(`UPDATE request_types SET config = ? WHERE id = ?`, string(requestTypeConfig), id); err != nil {
-			return nil, fmt.Errorf("configure Jira request type %s: %w", requestType.ID, err)
+		if err != nil {
+			return nil, fmt.Errorf("ensure Jira request type %s: %w", requestType.ID, err)
 		}
-		if _, err := h.db.ExecWrite(`
-			INSERT INTO request_type_fields
-				(request_type_id, field_identifier, field_type, display_order, is_required, step_number, created_at, updated_at)
-			VALUES
-				(?, 'title', 'default', 1, true, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-				(?, 'description', 'default', 2, false, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-		`, id, id); err != nil {
-			return nil, fmt.Errorf("create default fields for Jira request type %s: %w", requestType.ID, err)
-		}
-		result[requestType.ID] = int(id)
-		if err := h.recordMapping(jobID, "request_type", requestType.ID, requestType.Name, int(id), map[string]any{
-			"was_created":        true,
+		result[requestType.ID] = id
+		if err := h.recordMapping(jobID, "request_type", requestType.ID, requestType.Name, id, map[string]any{
+			"was_created":        created,
 			"service_desk_id":    requestType.ServiceDeskID,
 			"jira_issue_type_id": requestType.IssueTypeID,
 			"jira_group_ids":     requestType.GroupIDs,
@@ -280,44 +221,12 @@ func (h *JiraImportHandler) ensureJiraRequestTypes(
 }
 
 func (h *JiraImportHandler) ensureJiraPortalRequestTypeSection(channelID int, requestTypes map[string]int) error {
-	var rawConfig string
-	if err := h.db.QueryRow(`SELECT config FROM channels WHERE id = ?`, channelID).Scan(&rawConfig); err != nil {
-		return fmt.Errorf("load Jira portal config: %w", err)
-	}
-	var config models.ChannelConfig
-	if err := json.Unmarshal([]byte(rawConfig), &config); err != nil {
-		return fmt.Errorf("decode Jira portal config: %w", err)
-	}
-
 	requestTypeIDs := make([]int, 0, len(requestTypes))
 	for _, id := range requestTypes {
 		requestTypeIDs = append(requestTypeIDs, id)
 	}
 	sort.Ints(requestTypeIDs)
-	if len(config.PortalSections) == 0 {
-		config.PortalSections = []models.PortalSection{{
-			ID:             uuid.NewString(),
-			Title:          "Requests",
-			DisplayOrder:   0,
-			RequestTypeIDs: requestTypeIDs,
-			AssetReportIDs: []int{},
-		}}
-	} else {
-		seen := make(map[int]struct{}, len(config.PortalSections[0].RequestTypeIDs))
-		for _, id := range config.PortalSections[0].RequestTypeIDs {
-			seen[id] = struct{}{}
-		}
-		for _, id := range requestTypeIDs {
-			if _, ok := seen[id]; !ok {
-				config.PortalSections[0].RequestTypeIDs = append(config.PortalSections[0].RequestTypeIDs, id)
-			}
-		}
-	}
-	configBytes, err := json.Marshal(config)
-	if err != nil {
-		return fmt.Errorf("encode Jira portal config: %w", err)
-	}
-	if _, err := h.db.ExecWrite(`UPDATE channels SET config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, string(configBytes), channelID); err != nil {
+	if err := h.imports.AddPortalRequestTypeSection(context.Background(), channelID, requestTypeIDs, uuid.NewString()); err != nil {
 		return fmt.Errorf("update Jira portal request type section: %w", err)
 	}
 	return nil
@@ -373,61 +282,27 @@ func (h *JiraImportHandler) ensurePortalCustomers(
 		if customer.AccountID == "" {
 			continue
 		}
-		var customerID int
-		mappingExists := false
-		err := h.db.QueryRow(`
-			SELECT windshift_id FROM jira_import_id_mappings
-			WHERE job_id = ? AND entity_type = 'portal_customer' AND jira_id = ?
-		`, jobID, customer.AccountID).Scan(&customerID)
-		if err == nil {
-			mappingExists = true
-		}
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return nil, err
-		}
+		customerID, mappingExists := h.imports.MappedEntity(jobID, "portal_customer", customer.AccountID)
 
 		wasCreated := false
 		organizationID := customerOrganizations[customer.AccountID]
+		var previousOrganizationID *int
 		if !mappingExists {
 			email := strings.TrimSpace(customer.Email)
 			if email == "" {
 				email = jiraPortalCustomerSyntheticEmail(customer.AccountID)
 			}
-			err = h.db.QueryRow(`SELECT id FROM portal_customers WHERE LOWER(email) = LOWER(?)`, email).Scan(&customerID)
-			if errors.Is(err, sql.ErrNoRows) {
-				name := sanitize.PlainTextField.Sanitize(strings.TrimSpace(customer.DisplayName))
-				if name == "" {
-					name = "Imported Jira Customer"
-				}
-				var newID int64
-				err = h.db.QueryRow(`
-					INSERT INTO portal_customers (name, email, customer_organisation_id, created_at, updated_at)
-					VALUES (?, ?, NULLIF(?, 0), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING id
-				`, name, email, organizationID).Scan(&newID)
-				customerID = int(newID)
-				wasCreated = err == nil
+			name := sanitize.PlainTextField.Sanitize(strings.TrimSpace(customer.DisplayName))
+			if name == "" {
+				name = "Imported Jira Customer"
 			}
+			imported, err := h.imports.EnsurePortalCustomer(name, email, organizationID)
 			if err != nil {
 				return nil, fmt.Errorf("ensure Jira portal customer: %w", err)
 			}
-		}
-
-		var previousOrganizationID sql.NullInt64
-		if err = h.db.QueryRow(`
-			SELECT customer_organisation_id FROM portal_customers WHERE id = ?
-		`, customerID).Scan(&previousOrganizationID); err != nil {
-			return nil, fmt.Errorf("load Jira portal customer organization: %w", err)
-		}
-		organizationWasAssigned := false
-		if organizationID > 0 && !previousOrganizationID.Valid {
-			if _, err = h.db.ExecWrite(`
-				UPDATE portal_customers
-				SET customer_organisation_id = ?, updated_at = CURRENT_TIMESTAMP
-				WHERE id = ? AND customer_organisation_id IS NULL
-			`, organizationID, customerID); err != nil {
-				return nil, fmt.Errorf("assign Jira portal customer organization: %w", err)
-			}
-			organizationWasAssigned = true
+			customerID = imported.ID
+			previousOrganizationID = imported.OrganisationID
+			wasCreated = imported.Created
 		}
 
 		if err := h.ensureJiraPortalCustomerAccess(jobID, customer.AccountID, customerID, channelID); err != nil {
@@ -437,13 +312,13 @@ func (h *JiraImportHandler) ensurePortalCustomers(
 		result[customer.AccountID] = customerID
 		if !mappingExists {
 			previousID := 0
-			if previousOrganizationID.Valid {
-				previousID = int(previousOrganizationID.Int64)
+			if previousOrganizationID != nil {
+				previousID = *previousOrganizationID
 			}
 			if err := h.recordMapping(jobID, "portal_customer", customer.AccountID, "", customerID, map[string]any{
 				"was_created":                       wasCreated,
 				"customer_organisation_id":          organizationID,
-				"organization_was_assigned":         organizationWasAssigned,
+				"organization_was_assigned":         organizationID > 0 && previousOrganizationID == nil,
 				"previous_customer_organisation_id": previousID,
 			}); err != nil {
 				return nil, fmt.Errorf("record Jira portal customer mapping: %w", err)
@@ -457,51 +332,23 @@ func (h *JiraImportHandler) ensureJiraPortalCustomerAccess(
 	jobID, accountID string,
 	customerID, channelID int,
 ) error {
-	var channelAccessExisted bool
-	if err := h.db.QueryRow(`
-		SELECT EXISTS(
-			SELECT 1 FROM portal_customer_channels
-			WHERE portal_customer_id = ? AND channel_id = ?
-		)
-	`, customerID, channelID).Scan(&channelAccessExisted); err != nil {
-		return fmt.Errorf("check Jira portal customer channel access: %w", err)
-	}
-	if _, err := h.db.ExecWrite(`
-		INSERT INTO portal_customer_channels (portal_customer_id, channel_id, created_at)
-		VALUES (?, ?, CURRENT_TIMESTAMP)
-		ON CONFLICT(portal_customer_id, channel_id) DO NOTHING
-	`, customerID, channelID); err != nil {
+	channelAccessCreated, err := h.imports.EnsurePortalCustomerChannel(customerID, channelID)
+	if err != nil {
 		return fmt.Errorf("grant Jira portal customer channel access: %w", err)
 	}
 	if err := h.recordMapping(jobID, "portal_customer_channel", accountID+":"+strconv.Itoa(channelID), "", customerID, map[string]any{
-		"was_created": !channelAccessExisted,
+		"was_created": channelAccessCreated,
 		"channel_id":  channelID,
 	}); err != nil {
 		return fmt.Errorf("record Jira portal customer channel mapping: %w", err)
 	}
 
-	var roleID int
-	if err := h.db.QueryRow(`SELECT id FROM contact_roles WHERE name = 'Portal Customer'`).Scan(&roleID); err != nil {
-		return fmt.Errorf("find Jira portal customer role: %w", err)
-	}
-	var roleExisted bool
-	if err := h.db.QueryRow(`
-		SELECT EXISTS(
-			SELECT 1 FROM portal_customer_roles
-			WHERE portal_customer_id = ? AND contact_role_id = ?
-		)
-	`, customerID, roleID).Scan(&roleExisted); err != nil {
-		return fmt.Errorf("check Jira portal customer role: %w", err)
-	}
-	if _, err := h.db.ExecWrite(`
-		INSERT INTO portal_customer_roles (portal_customer_id, contact_role_id, created_at)
-		VALUES (?, ?, CURRENT_TIMESTAMP)
-		ON CONFLICT(portal_customer_id, contact_role_id) DO NOTHING
-	`, customerID, roleID); err != nil {
+	roleID, roleCreated, err := h.imports.EnsurePortalCustomerRole(customerID)
+	if err != nil {
 		return fmt.Errorf("assign Jira portal customer role: %w", err)
 	}
 	if err := h.recordMapping(jobID, "portal_customer_role", accountID+":"+strconv.Itoa(roleID), "", customerID, map[string]any{
-		"was_created":     !roleExisted,
+		"was_created":     roleCreated,
 		"contact_role_id": roleID,
 	}); err != nil {
 		return fmt.Errorf("record Jira portal customer role mapping: %w", err)
@@ -528,27 +375,19 @@ func (h *JiraImportHandler) ensureJiraCustomerOrganizations(
 
 	customersByAccountID := make(map[string]JiraUserSummary)
 	customerOrganizations := make(map[string]int)
-	repo := repository.NewCustomerOrganisationRepository(h.db)
 	for _, organization := range organizations {
 		var organizationID int
 		if importOrganizations {
-			wasCreated := false
-			mappingErr := h.db.QueryRow(`
-				SELECT windshift_id FROM jira_import_id_mappings
-				WHERE job_id = ? AND entity_type = 'customer_organisation' AND jira_id = ?
-			`, jobID, organization.ID).Scan(&organizationID)
-			if errors.Is(mappingErr, sql.ErrNoRows) {
-				mappingErr = h.db.QueryRow(`
-					SELECT id FROM customer_organisations WHERE LOWER(name) = LOWER(?)
-				`, organization.Name).Scan(&organizationID)
-				if errors.Is(mappingErr, sql.ErrNoRows) {
-					organizationID, _, mappingErr = repo.Create(&models.CustomerOrganisation{
-						Name:        sanitize.PlainTextField.Sanitize(organization.Name),
-						Description: "Imported from Jira Service Management",
-						Active:      true,
-					})
-					wasCreated = mappingErr == nil
-				}
+			mappedID, mapped := h.imports.MappedEntity(jobID, "customer_organisation", organization.ID)
+			if mapped {
+				organizationID = mappedID
+			} else {
+				var mappingErr error
+				var wasCreated bool
+				organizationID, wasCreated, mappingErr = h.imports.EnsureCustomerOrganisation(
+					sanitize.PlainTextField.Sanitize(organization.Name),
+					"Imported from Jira Service Management",
+				)
 				if mappingErr == nil {
 					mappingErr = h.recordMapping(jobID, "customer_organisation", organization.ID, projectKey, organizationID, map[string]any{
 						"was_created":     wasCreated,
@@ -557,9 +396,9 @@ func (h *JiraImportHandler) ensureJiraCustomerOrganizations(
 						"scim_managed":    organization.SCIMManaged,
 					})
 				}
-			}
-			if mappingErr != nil {
-				return nil, nil, fmt.Errorf("ensure Jira customer organization %s: %w", organization.ID, mappingErr)
+				if mappingErr != nil {
+					return nil, nil, fmt.Errorf("ensure Jira customer organization %s: %w", organization.ID, mappingErr)
+				}
 			}
 		}
 

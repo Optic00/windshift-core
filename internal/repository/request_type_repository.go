@@ -101,6 +101,40 @@ func (r *RequestTypeRepository) GetByID(id int) (*models.RequestType, error) {
 	return &rt, nil
 }
 
+// FindIDByName returns the exact-name request type within a channel.
+func (r *RequestTypeRepository) FindIDByName(channelID int, name string) (int, error) {
+	var id int
+	err := r.db.QueryRow(
+		"SELECT id FROM request_types WHERE channel_id = ? AND name = ?",
+		channelID,
+		name,
+	).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("find request type %q: %w", name, err)
+	}
+	return id, nil
+}
+
+// UpdateConfig replaces the request type's JSON configuration.
+func (r *RequestTypeRepository) UpdateConfig(id int, config string) error {
+	result, err := r.db.ExecWrite(
+		"UPDATE request_types SET config = ?, updated_at = ? WHERE id = ?",
+		config,
+		time.Now(),
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("update request type config: %w", err)
+	}
+	if rows, _ := result.RowsAffected(); rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // RequestTypeBasic carries the small subset of columns the Update audit
 // path uses to detect what changed.
 type RequestTypeBasic struct {

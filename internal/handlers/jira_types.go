@@ -1,9 +1,8 @@
 package handlers
 
 import (
-	"time"
-
 	"windshift/internal/jira"
+	"windshift/internal/jiraimport"
 )
 
 // ================================================================
@@ -201,18 +200,6 @@ type JiraUserSummary struct {
 	MatchedUserID *int   `json:"matched_user_id,omitempty"` // Existing Windshift user ID if matched
 }
 
-// ImportJobStatus represents the status of an import job
-type ImportJobStatus struct {
-	JobID        string                 `json:"job_id"`
-	Status       string                 `json:"status"`
-	Phase        string                 `json:"phase,omitempty"`
-	Progress     map[string]interface{} `json:"progress,omitempty"`
-	Result       map[string]interface{} `json:"result,omitempty"`
-	ErrorMessage string                 `json:"error_message,omitempty"`
-	StartedAt    *time.Time             `json:"started_at,omitempty"`
-	CompletedAt  *time.Time             `json:"completed_at,omitempty"`
-}
-
 // StartImportRequest is the request body for POST /api/admin/jira-import/start
 type StartImportRequest struct {
 	ConnectionID   string            `json:"connection_id"`
@@ -312,67 +299,11 @@ type CustomFieldMapping struct {
 	AssetSchemaID string `json:"assetSchemaId,omitempty"`
 }
 
-// ImportProgress tracks the progress of an import job
-type ImportProgress struct {
-	Phase               string `json:"phase"`
-	CurrentProject      string `json:"current_project,omitempty"`
-	TotalProjects       int    `json:"total_projects"`
-	CompletedProjects   int    `json:"completed_projects"`
-	TotalIssues         int    `json:"total_issues"`
-	ImportedIssues      int    `json:"imported_issues"`
-	FailedIssues        int    `json:"failed_issues"`
-	TotalTests          int    `json:"total_tests"`
-	ImportedTests       int    `json:"imported_tests"`
-	FailedTests         int    `json:"failed_tests"`
-	TotalAttachments    int    `json:"total_attachments"`
-	ImportedAttachments int    `json:"imported_attachments"`
-	TotalComments       int    `json:"total_comments"`
-	ImportedComments    int    `json:"imported_comments"`
-	TotalWorklogs       int    `json:"total_worklogs"`
-	ImportedWorklogs    int    `json:"imported_worklogs"`
-}
+// ImportProgress tracks the progress of an import job.
+type ImportProgress = jiraimport.Progress
 
 // StartImportResponse is returned when starting an import
 type StartImportResponse struct {
 	JobID   string `json:"job_id"`
 	Message string `json:"message"`
-}
-
-// ConnectionInfo represents a saved connection for the UI
-type ConnectionInfo struct {
-	ID             string     `json:"id"`
-	InstanceURL    string     `json:"instance_url"`
-	Email          string     `json:"email"`
-	InstanceName   string     `json:"instance_name"`
-	DeploymentType string     `json:"deployment_type"` // "cloud" or "datacenter"
-	CreatedAt      time.Time  `json:"created_at"`
-	LastUsedAt     *time.Time `json:"last_used_at,omitempty"`
-}
-
-// ImportedWorkspaceInfo summarizes a workspace that was mapped by an import job.
-type ImportedWorkspaceInfo struct {
-	ID   int    `json:"id"`
-	Key  string `json:"key"`
-	Name string `json:"name"`
-}
-
-// ImportJobInfo represents an import job for the UI
-type ImportJobInfo struct {
-	ID                     string                  `json:"id"`
-	ConnectionID           string                  `json:"connection_id"`
-	InstanceURL            string                  `json:"instance_url,omitempty"`
-	InstanceName           string                  `json:"instance_name,omitempty"`
-	Status                 string                  `json:"status"`
-	Phase                  string                  `json:"phase,omitempty"`
-	Scope                  string                  `json:"scope"`
-	ProjectKeys            []string                `json:"project_keys,omitempty"`
-	ImportedWorkspaces     []ImportedWorkspaceInfo `json:"imported_workspaces,omitempty"`
-	ImportedWorkspaceCount int                     `json:"imported_workspace_count"`
-	ImportedItemCount      int                     `json:"imported_item_count"`
-	Progress               map[string]interface{}  `json:"progress,omitempty"`
-	Result                 map[string]interface{}  `json:"result,omitempty"`
-	ErrorMessage           string                  `json:"error_message,omitempty"`
-	CreatedAt              time.Time               `json:"created_at"`
-	StartedAt              *time.Time              `json:"started_at,omitempty"`
-	CompletedAt            *time.Time              `json:"completed_at,omitempty"`
 }

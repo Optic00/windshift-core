@@ -68,6 +68,22 @@ func (r *CustomerOrganisationRepository) GetByID(id int) (*models.CustomerOrgani
 	return &c, nil
 }
 
+// FindIDByName returns a case-insensitive organisation name match.
+func (r *CustomerOrganisationRepository) FindIDByName(name string) (int, error) {
+	var id int
+	err := r.db.QueryRow(
+		"SELECT id FROM customer_organisations WHERE LOWER(name) = LOWER(?)",
+		name,
+	).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("find customer organisation %q: %w", name, err)
+	}
+	return id, nil
+}
+
 // Create inserts a customer_organisation and returns the generated id and
 // the timestamp it stamped on created_at/updated_at. Sanitization is the
 // caller's responsibility.

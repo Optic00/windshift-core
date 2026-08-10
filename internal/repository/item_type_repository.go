@@ -90,6 +90,25 @@ func (r *ItemTypeRepository) GetByID(id int) (*models.ItemType, error) {
 	return &it, nil
 }
 
+// FindByName returns the item type with the exact name, or ErrNotFound.
+func (r *ItemTypeRepository) FindByName(name string) (*models.ItemType, error) {
+	var itemType models.ItemType
+	err := scanItemType(
+		r.db.QueryRow("SELECT "+itemTypeColumns+" FROM item_types WHERE name = ?", name),
+		&itemType,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find item type %q: %w", name, err)
+	}
+	if err := r.populateConfigurationSets(&itemType); err != nil {
+		return nil, err
+	}
+	return &itemType, nil
+}
+
 // Exists reports whether an item_type row with the given id exists. Used as an
 // FK-style validator before writes that reference an item type.
 func (r *ItemTypeRepository) Exists(id int) (bool, error) {

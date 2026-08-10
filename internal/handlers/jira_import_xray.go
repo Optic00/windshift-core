@@ -2,15 +2,13 @@ package handlers
 
 import (
 	"context"
-	"database/sql"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 
-	"windshift/internal/database"
 	"windshift/internal/jira"
+	"windshift/internal/jiraimport"
+	"windshift/internal/models"
 	"windshift/internal/sanitize"
 	"windshift/internal/xray"
 )
@@ -191,78 +189,20 @@ func (h *JiraImportHandler) importXrayTestCase(
 	if updatedAt.IsZero() {
 		updatedAt = createdAt
 	}
-	metadataJSON, err := json.Marshal(map[string]any{
-		"was_created":    true,
-		"xray_test_type": definition.TestTypeName,
-	})
-	if err != nil {
-		return 0, fmt.Errorf("encode Xray Test mapping metadata: %w", err)
+	steps := make([]models.TestStep, 0, len(definition.Steps))
+	for index, source := range definition.Steps {
+		steps = append(steps, models.TestStep{
+			StepNumber: index + 1,
+			Action:     sanitize.Comment.Sanitize(source.Action),
+			Data:       sanitize.Comment.Sanitize(source.Data),
+			Expected:   sanitize.Comment.Sanitize(source.Expected),
+			CreatedAt:  createdAt,
+			UpdatedAt:  updatedAt,
+		})
 	}
-
-	return database.WithTxResult(h.db, func(tx database.Tx) (int, error) {
-		var maxSortOrder sql.NullInt64
-		if err := tx.QueryRow(`
-			SELECT MAX(sort_order)
-			FROM test_cases
-			WHERE workspace_id = ? AND folder_id IS NULL
-		`, workspaceID).Scan(&maxSortOrder); err != nil {
-			return 0, fmt.Errorf("load Xray Test sort order: %w", err)
-		}
-
-		var testCaseID int
-		if err := tx.QueryRow(`
-			INSERT INTO test_cases
-				(workspace_id, folder_id, title, preconditions, priority, status,
-				 estimated_duration, sort_order, created_at, updated_at)
-			VALUES (?, NULL, ?, '', ?, 'active', 0, ?, ?, ?)
-			RETURNING id
-		`, workspaceID, title, jiraTestCasePriority(issue.Fields.Priority),
-			int(maxSortOrder.Int64)+1000, createdAt, updatedAt).Scan(&testCaseID); err != nil {
-			return 0, fmt.Errorf("create Xray Test case %s: %w", issue.Key, err)
-		}
-
-		for index, source := range definition.Steps {
-			action := sanitize.Comment.Sanitize(source.Action)
-			expected := sanitize.Comment.Sanitize(source.Expected)
-			if _, err := tx.Exec(`
-				INSERT INTO test_steps
-					(test_case_id, step_number, action, data, expected, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?)
-			`, testCaseID, index+1, action, sanitize.Comment.Sanitize(source.Data),
-				expected, createdAt, updatedAt); err != nil {
-				return 0, fmt.Errorf("create Xray Test step %d for %s: %w", index+1, issue.Key, err)
-			}
-		}
-
-		if err := importXrayTestLabels(tx, workspaceID, testCaseID, issue.Fields.Labels, createdAt); err != nil {
-			return 0, err
-		}
-
-		if _, err := tx.Exec(`
-			INSERT INTO jira_import_id_mappings
-				(job_id, entity_type, jira_id, jira_key, windshift_id, metadata_json)
-			VALUES (?, 'test_case', ?, ?, ?, ?)
-			ON CONFLICT (job_id, entity_type, jira_id) DO UPDATE SET
-				windshift_id = excluded.windshift_id,
-				jira_key = excluded.jira_key,
-				metadata_json = excluded.metadata_json
-		`, jobID, issue.ID, issue.Key, testCaseID,
-			string(metadataJSON)); err != nil {
-			return 0, fmt.Errorf("record Xray Test mapping for %s: %w", issue.Key, err)
-		}
-
-		return testCaseID, nil
-	})
-}
-
-func importXrayTestLabels(
-	tx database.Tx,
-	workspaceID, testCaseID int,
-	labels []string,
-	createdAt time.Time,
-) error {
-	seen := make(map[string]struct{}, len(labels))
-	for _, source := range labels {
+	labels := make([]models.TestLabel, 0, len(issue.Fields.Labels))
+	seen := make(map[string]struct{}, len(issue.Fields.Labels))
+	for _, source := range issue.Fields.Labels {
 		name := sanitize.PlainTextField.Sanitize(source)
 		normalized := strings.ToLower(strings.TrimSpace(name))
 		if normalized == "" {
@@ -272,33 +212,30 @@ func importXrayTestLabels(
 			continue
 		}
 		seen[normalized] = struct{}{}
-
-		var labelID int
-		err := tx.QueryRow(`
-			SELECT id FROM test_labels WHERE workspace_id = ? AND LOWER(name) = LOWER(?)
-		`, workspaceID, name).Scan(&labelID)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("find Xray Test label %q: %w", name, err)
-		}
-		if errors.Is(err, sql.ErrNoRows) {
-			if err := tx.QueryRow(`
-				INSERT INTO test_labels
-					(workspace_id, name, color, description, created_at, updated_at)
-				VALUES (?, ?, '#3B82F6', '', ?, ?)
-				RETURNING id
-			`, workspaceID, name, createdAt, createdAt).Scan(&labelID); err != nil {
-				return fmt.Errorf("create Xray Test label %q: %w", name, err)
-			}
-		}
-		if _, err := tx.Exec(`
-			INSERT INTO test_case_labels (test_case_id, label_id, created_at)
-			VALUES (?, ?, ?)
-			ON CONFLICT (test_case_id, label_id) DO NOTHING
-		`, testCaseID, labelID, createdAt); err != nil {
-			return fmt.Errorf("attach Xray Test label %q: %w", name, err)
-		}
+		labels = append(labels, models.TestLabel{
+			WorkspaceID: workspaceID,
+			Name:        name,
+			Color:       "#3B82F6",
+			CreatedAt:   createdAt,
+			UpdatedAt:   createdAt,
+		})
 	}
-	return nil
+	return h.imports.CreateXrayTestCase(jiraimport.XrayTestCaseInput{
+		JobID:   jobID,
+		JiraID:  issue.ID,
+		JiraKey: issue.Key,
+		TestCase: models.TestCase{
+			WorkspaceID: workspaceID,
+			Title:       title,
+			Priority:    jiraTestCasePriority(issue.Fields.Priority),
+			Status:      "active",
+			CreatedAt:   createdAt,
+			UpdatedAt:   updatedAt,
+		},
+		Steps:        steps,
+		Labels:       labels,
+		XrayTestType: definition.TestTypeName,
+	})
 }
 
 func jiraTestCasePriority(priority *jira.JiraPriority) string {

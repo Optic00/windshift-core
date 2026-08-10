@@ -32,8 +32,6 @@ import (
 	"golang.org/x/image/draw"
 )
 
-var errAttachmentPathOutsideRoot = errors.New("attachment path is outside configured storage root")
-
 type AttachmentHandler struct {
 	db                    database.Database
 	attachmentPath        string

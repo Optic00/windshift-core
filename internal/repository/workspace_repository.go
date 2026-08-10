@@ -304,6 +304,20 @@ func (r *WorkspaceRepository) Update(workspace *models.Workspace) error {
 	return err
 }
 
+// AssignTimeProjectIfUnset attaches an imported time project without replacing
+// an existing workspace default.
+func (r *WorkspaceRepository) AssignTimeProjectIfUnset(workspaceID, timeProjectID int) error {
+	_, err := r.db.ExecWrite(`
+		UPDATE workspaces
+		SET time_project_id = ?, updated_at = ?
+		WHERE id = ? AND time_project_id IS NULL
+	`, timeProjectID, time.Now(), workspaceID)
+	if err != nil {
+		return fmt.Errorf("assign workspace time project: %w", err)
+	}
+	return nil
+}
+
 // Delete removes a workspace by ID
 func (r *WorkspaceRepository) Delete(id int) error {
 	_, err := r.db.ExecWrite("DELETE FROM workspaces WHERE id = ?", id)

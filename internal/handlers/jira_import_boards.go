@@ -2,16 +2,12 @@ package handlers
 
 import (
 	"context"
-	"database/sql"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"windshift/internal/jira"
 	"windshift/internal/models"
@@ -469,64 +465,11 @@ func quoteQLValue(value string) string {
 }
 
 func (h *JiraImportHandler) ensureJiraCollection(jobID, jiraID, jiraKey, name, description, ql string, workspaceID, createdByUserID int, metadata map[string]any) (int, bool) {
-	if existingID := h.existingMappedEntity(jobID, "collection", jiraID); existingID > 0 {
-		return existingID, true
-	}
-	name = strings.TrimSpace(name)
-	if name == "" {
-		name = "Jira Collection " + jiraKey
-	}
-	var collectionID int
-	var existingDescription sql.NullString
-	var existingQL sql.NullString
-	err := h.db.QueryRow(`
-		SELECT id, description, ql_query FROM collections
-		WHERE workspace_id = ? AND name = ?
-	`, workspaceID, name).Scan(&collectionID, &existingDescription, &existingQL)
-	action := "reuse_existing"
-	if errors.Is(err, sql.ErrNoRows) {
-		var createdBy any
-		if createdByUserID > 0 {
-			createdBy = createdByUserID
-		}
-		var newID int64
-		err = h.db.QueryRow(`
-			INSERT INTO collections (name, description, ql_query, is_public, workspace_id, created_by, created_at, updated_at)
-			VALUES (?, ?, ?, false, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING id
-		`, name, description, ql, workspaceID, createdBy).Scan(&newID)
-		collectionID = int(newID)
-		action = "create"
-	} else if err == nil {
-		if strings.TrimSpace(existingDescription.String) != strings.TrimSpace(description) || strings.TrimSpace(existingQL.String) != strings.TrimSpace(ql) {
-			_, err = h.db.ExecWrite(`
-				UPDATE collections
-				SET description = ?, ql_query = ?, updated_at = CURRENT_TIMESTAMP
-				WHERE id = ?
-			`, description, ql, collectionID)
-			action = "update_existing"
-		}
-	}
-	if err != nil {
-		slog.Warn("Failed to ensure Jira collection", slog.String("component", "jira"), slog.String("jiraID", jiraID), slog.String("name", name), slog.Any("error", err))
-		return 0, false
-	}
-	if metadata == nil {
-		metadata = map[string]any{}
-	}
-	metadata["action"] = action
-	metadata["workspace_id"] = workspaceID
-	if err := h.recordMapping(jobID, "collection", jiraID, jiraKey, collectionID, metadata); err != nil {
-		return 0, false
-	}
-	return collectionID, true
+	return h.imports.EnsureCollection(jobID, jiraID, jiraKey, name, description, ql, workspaceID, createdByUserID, metadata)
 }
 
 func (h *JiraImportHandler) existingMappedEntity(jobID, entityType, jiraID string) int {
-	var id int
-	if err := h.db.QueryRow(`
-		SELECT windshift_id FROM jira_import_id_mappings
-		WHERE job_id = ? AND entity_type = ? AND jira_id = ?
-	`, jobID, entityType, jiraID).Scan(&id); err == nil {
+	if id, ok := h.imports.MappedEntity(jobID, entityType, jiraID); ok {
 		return id
 	}
 	return 0
@@ -583,11 +526,9 @@ func (h *JiraImportHandler) defaultBoardColumnsFromMappedStatuses(statusMap map[
 	}
 	sort.Ints(statusIDs)
 	groups := map[int][]int{1: {}, 2: {}, 3: {}}
+	categoryIDs, _ := h.imports.StatusCategoryIDs(statusIDs)
 	for _, id := range statusIDs {
-		var categoryID int
-		if err := h.db.QueryRow(`SELECT category_id FROM statuses WHERE id = ?`, id).Scan(&categoryID); err != nil {
-			continue
-		}
+		categoryID := categoryIDs[id]
 		groups[categoryID] = append(groups[categoryID], id)
 	}
 	defs := []struct {
@@ -620,75 +561,10 @@ func (h *JiraImportHandler) ensureJiraBoardConfiguration(jobID string, board jir
 	}
 	listColumns := defaultImportedBoardListColumns()
 	cardFields := defaultImportedBoardCardFields()
-	listJSON, _ := json.Marshal(listColumns)
-	cardJSON, _ := json.Marshal(cardFields)
-	backlogJSON, _ := json.Marshal(dedupeInts(backlogStatusIDs))
-	roadmapJSON := []byte("{}")
-
-	tx, err := h.db.Begin()
-	if err != nil {
-		slog.Warn("Failed to begin Jira board configuration import transaction", slog.String("component", "jira"), slog.Int("boardID", board.ID), slog.Any("error", err))
-		return 0, false
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	var configID int
-	action := "reuse_existing"
-	err = tx.QueryRow(`SELECT id FROM board_configurations WHERE collection_id = ? ORDER BY id LIMIT 1`, collectionID).Scan(&configID)
-	if errors.Is(err, sql.ErrNoRows) {
-		var newID int64
-		err = tx.QueryRow(`
-			INSERT INTO board_configurations (collection_id, backlog_status_ids, list_columns, card_fields, roadmap_config, show_rightmost_column_last_50, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, false, ?, ?) RETURNING id
-		`, collectionID, string(backlogJSON), string(listJSON), string(cardJSON), string(roadmapJSON), time.Now(), time.Now()).Scan(&newID)
-		configID = int(newID)
-		action = "create"
-	} else if err == nil {
-		_, err = tx.Exec(`
-			UPDATE board_configurations
-			SET backlog_status_ids = ?, list_columns = ?, card_fields = ?, roadmap_config = ?, updated_at = ?
-			WHERE id = ?
-		`, string(backlogJSON), string(listJSON), string(cardJSON), string(roadmapJSON), time.Now(), configID)
-		action = "update_existing"
-	}
-	if err != nil {
-		slog.Warn("Failed to ensure Jira board configuration", slog.String("component", "jira"), slog.Int("boardID", board.ID), slog.Any("error", err))
-		return 0, false
-	}
-	if _, err = tx.Exec(`DELETE FROM board_columns WHERE board_configuration_id = ?`, configID); err != nil {
-		slog.Warn("Failed to clear imported board columns", slog.String("component", "jira"), slog.Int("boardConfigID", configID), slog.Any("error", err))
-		return 0, false
-	}
-	for i, col := range columns {
-		var columnID int64
-		if err = tx.QueryRow(`
-			INSERT INTO board_columns (board_configuration_id, name, display_order, wip_limit, color, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id
-		`, configID, col.Name, i, col.WIPLimit, col.Color, time.Now(), time.Now()).Scan(&columnID); err != nil {
-			slog.Warn("Failed to create imported board column", slog.String("component", "jira"), slog.Int("boardConfigID", configID), slog.String("column", col.Name), slog.Any("error", err))
-			return 0, false
-		}
-		for _, statusID := range dedupeInts(col.StatusIDs) {
-			if _, err = tx.Exec(`INSERT INTO board_column_statuses (board_column_id, status_id, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)`, columnID, statusID); err != nil {
-				slog.Warn("Failed to map status to imported board column", slog.String("component", "jira"), slog.Int64("columnID", columnID), slog.Int("statusID", statusID), slog.Any("error", err))
-				return 0, false
-			}
-		}
-	}
-	if err = tx.Commit(); err != nil {
-		slog.Warn("Failed to commit Jira board configuration import", slog.String("component", "jira"), slog.Int("boardID", board.ID), slog.Any("error", err))
-		return 0, false
-	}
-	if metadata == nil {
-		metadata = map[string]any{}
-	}
-	metadata["action"] = action
-	metadata["collection_id"] = collectionID
-	metadata["column_count"] = len(columns)
-	if err := h.recordMapping(jobID, "board_configuration", jiraID, board.Name, configID, metadata); err != nil {
-		return 0, false
-	}
-	return configID, true
+	return h.imports.EnsureBoardConfiguration(jobID, jiraID, board.Name, collectionID, &models.BoardConfigurationRequest{
+		Columns: columns, BacklogStatusIDs: dedupeInts(backlogStatusIDs),
+		ListColumns: listColumns, CardFields: cardFields, RoadmapConfig: &models.RoadmapConfig{},
+	}, metadata)
 }
 
 func defaultImportedBoardListColumns() []models.ListColumn {

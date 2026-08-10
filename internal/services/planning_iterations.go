@@ -118,6 +118,22 @@ type IterationListParams struct {
 	IncludeGlobal bool   // Include global iterations
 }
 
+// FindIterationByName returns a local workspace iteration by exact name.
+func (s *PlanningService) FindIterationByName(workspaceID int, name string) (*IterationResult, error) {
+	var id int
+	err := s.db.QueryRow(`
+		SELECT id FROM iterations
+		WHERE workspace_id = ? AND is_global = false AND name = ?
+	`, workspaceID, name).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, repository.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find iteration by name: %w", err)
+	}
+	return s.GetIteration(id)
+}
+
 // ListIterations retrieves iterations with pagination and filtering.
 func (s *PlanningService) ListIterations(params IterationListParams) ([]IterationResult, int, error) {
 	query := `
