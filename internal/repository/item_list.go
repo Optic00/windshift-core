@@ -87,7 +87,6 @@ type ItemFilters struct {
 	StatusIDs      []int  // Multi-value status filter (for backlog + search)
 	StatusIDsNot   []int  // Multi-value negated status filter
 	PriorityIDs    []int  // Multi-value priority filter
-	ItemIDs        []int  // Multi-value item ID filter
 	TextQuery      string // LIKE search on title/description
 	ItemKeyQuery   string // Workspace key pattern match (e.g. "OK-40")
 	ItemID         *int   // Filter by specific item ID
@@ -102,7 +101,7 @@ func (f ItemFilters) hasScalarFilters() bool {
 }
 
 func (f ItemFilters) hasListFilters() bool {
-	return len(f.StatusIDs) != 0 || len(f.StatusIDsNot) != 0 || len(f.PriorityIDs) != 0 || len(f.ItemIDs) != 0
+	return len(f.StatusIDs) != 0 || len(f.StatusIDsNot) != 0 || len(f.PriorityIDs) != 0
 }
 
 func (f ItemFilters) hasTextFilters() bool {
@@ -252,7 +251,7 @@ func (r *ItemRepository) FindAllWithDetailsPageContext(ctx context.Context, para
 		p.title as parent_title, p.workspace_item_number as parent_workspace_item_number, iter.name as iteration_name, COALESCE(CAST(iter.end_date AS TEXT), '') as iteration_end_date, proj.name as project_name, tp.name as time_project_name,
 		assignee.first_name || ' ' || assignee.last_name as assignee_name, assignee.email as assignee_email, assignee.avatar_url as assignee_avatar,
 		creator.first_name || ' ' || creator.last_name as creator_name, creator.email as creator_email,
-		st.name as status_name, sc.color as status_color, pri.name as priority_name, pri.icon as priority_icon, pri.color as priority_color,
+		st.name as status_name, pri.name as priority_name, pri.icon as priority_icon, pri.color as priority_color,
 		COALESCE(%s, i.created_at) as status_since
 	`, descriptionExpr, currentStatusTransitionAtExpr)
 
@@ -678,15 +677,6 @@ func (r *ItemRepository) buildWhereClause(params ItemListParams) (whereClause st
 		whereClause += " AND i.priority_id IN (" + strings.Join(placeholders, ",") + ")"
 	}
 
-	if len(params.Filters.ItemIDs) > 0 {
-		placeholders := make([]string, len(params.Filters.ItemIDs))
-		for i, id := range params.Filters.ItemIDs {
-			placeholders[i] = "?"
-			args = append(args, id)
-		}
-		whereClause += " AND i.id IN (" + strings.Join(placeholders, ",") + ")"
-	}
-
 	if params.Filters.TextQuery != "" {
 		whereClause += " AND (LOWER(i.title) LIKE LOWER(?) OR LOWER(i.description) LIKE LOWER(?))"
 		searchPattern := "%" + params.Filters.TextQuery + "%"
@@ -787,7 +777,7 @@ func (r *ItemRepository) scanItemList(rows *sql.Rows) ([]models.Item, error) {
 		var dueDate, startDate, endDate sql.NullTime
 		var statusSince sql.NullString
 		var itemTypeName, parentTitle, iterationName, iterationEndDate, projectName, timeProjectName sql.NullString
-		var assigneeName, assigneeEmail, assigneeAvatar, creatorName, creatorEmail, statusName, statusColor sql.NullString
+		var assigneeName, assigneeEmail, assigneeAvatar, creatorName, creatorEmail, statusName sql.NullString
 		var priorityName, priorityIcon, priorityColor sql.NullString
 		var fracIndex sql.NullString
 		var storyPoints sql.NullFloat64
@@ -801,7 +791,7 @@ func (r *ItemRepository) scanItemList(rows *sql.Rows) ([]models.Item, error) {
 			&item.ID, &item.WorkspaceID, &item.WorkspaceItemNumber, &itemTypeID, &item.Title, &item.Description,
 			&statusID, &priorityID, &dueDate, &startDate, &endDate, &item.IsTask, &iterationID, &projectID, &inheritProject, &timeProjectID, &assigneeID, &creatorID, &customFieldValuesJSON, &calendarDataJSON, &parentID,
 			&storyPoints, &estimateMinutes, &fracIndex, &item.CreatedAt, &item.UpdatedAt, &lastActiveAt, &item.WorkspaceName, &item.WorkspaceKey, &itemTypeName, &parentTitle, &parentWorkspaceItemNumber, &iterationName, &iterationEndDate, &projectName, &timeProjectName,
-			&assigneeName, &assigneeEmail, &assigneeAvatar, &creatorName, &creatorEmail, &statusName, &statusColor, &priorityName, &priorityIcon, &priorityColor,
+			&assigneeName, &assigneeEmail, &assigneeAvatar, &creatorName, &creatorEmail, &statusName, &priorityName, &priorityIcon, &priorityColor,
 			&statusSince,
 		)
 		if err != nil {
@@ -850,7 +840,6 @@ func (r *ItemRepository) scanItemList(rows *sql.Rows) ([]models.Item, error) {
 		assignNullableString(&item.IterationName, iterationName)
 		assignNullableString(&item.IterationEndDate, iterationEndDate)
 		assignNullableString(&item.StatusName, statusName)
-		assignNullableString(&item.StatusColor, statusColor)
 		assignNullableString(&item.ProjectName, projectName)
 		assignNullableString(&item.TimeProjectName, timeProjectName)
 		assignNullableString(&item.PriorityName, priorityName)

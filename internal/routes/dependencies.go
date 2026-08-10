@@ -126,7 +126,7 @@ type WorkspaceHandlers struct {
 	RequestType           *handlers.RequestTypeHandler
 	StatusCategory        *handlers.EnumHandler
 	Status                *handlers.EnumHandler
-	StatusLegacy          *handlers.StatusHandler
+	StatusQuery           *handlers.StatusQueryHandler
 	Workflow              *handlers.WorkflowHandler
 	Actions               *handlers.ActionsHandler
 	ActionCredentials     *handlers.ActionCredentialsHandler

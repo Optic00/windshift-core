@@ -502,7 +502,7 @@ func (s *Server) initialize() error {
 	statusHandler := handlers.NewEnumHandler(
 		services.NewEnumService(s.db, services.NewStatusConfig()),
 		func() interface{} { return &models.Status{} })
-	statusHandlerLegacy := handlers.NewStatusHandler(repository.NewStatusRepository(s.db), repository.NewItemRepository(s.db), logger.NewAuditor(s.db))
+	statusQueryHandler := handlers.NewStatusQueryHandler(repository.NewStatusRepository(s.db))
 	workflowService := s.workflowService
 	workflowHandler := handlers.NewWorkflowHandler(repository.NewWorkflowRepository(s.db), logger.NewAuditor(s.db))
 	workflowHandler.SetWorkflowService(workflowService)
@@ -712,15 +712,7 @@ func (s *Server) initialize() error {
 	themeHandler := handlers.NewThemeHandler(services.NewThemeService(repository.NewThemeRepository(s.db)), logger.NewAuditor(s.db))
 	userPreferencesService := services.NewUserPreferencesService(repository.NewUserPreferencesRepository(s.db), repository.NewThemeRepository(s.db))
 	userPreferencesHandler := handlers.NewUserPreferencesHandler(userPreferencesService)
-	homepageHandler := handlers.NewHomepageHandler(
-		repository.NewWorkspaceRepository(s.db),
-		repository.NewItemRepository(s.db),
-		services.NewItemCRUDService(s.db),
-		services.NewPlanningService(s.db),
-		s.activityTracker,
-		permService,
-		userPreferencesService,
-	)
+	homepageHandler := handlers.NewHomepageHandler(repository.NewWorkspaceRepository(s.db), repository.NewItemRepository(s.db), s.activityTracker, permService, userPreferencesService)
 
 	notificationHandler := handlers.NewNotificationHandler(s.notificationManager, s.notificationService)
 	emailTemplateHandler := handlers.NewEmailTemplateHandler(repository.NewEmailTemplateRepository(s.db), logger.NewAuditor(s.db))
@@ -1414,7 +1406,7 @@ func (s *Server) initialize() error {
 			RequestType:           requestTypeHandler,
 			StatusCategory:        statusCategoryHandler,
 			Status:                statusHandler,
-			StatusLegacy:          statusHandlerLegacy,
+			StatusQuery:           statusQueryHandler,
 			Workflow:              workflowHandler,
 			Actions:               actionsHandler,
 			ActionCredentials:     actionCredentialsHandler,

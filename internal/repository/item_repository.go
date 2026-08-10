@@ -1582,6 +1582,152 @@ func (r *ItemRepository) CountActiveNonPersonalItems() (int, error) {
 	return count, nil
 }
 
+// HomepageItemSummary carries the subset of item metadata the homepage
+// activity widget needs. MilestoneIDs is the full set of milestones the item
+// belongs to, so the caller can aggregate by milestone without a second round
+// trip.
+type HomepageItemSummary struct {
+	ItemID              int
+	WorkspaceID         int
+	WorkspaceItemNumber int
+	Title               string
+	Status              string
+	StatusColor         *string
+	PriorityID          *int
+	PriorityName        *string
+	PriorityColor       *string
+	WorkspaceKey        string
+	MilestoneIDs        []int
+}
+
+// ListHomepageItemSummaries returns the homepage widget's item summaries for
+// the given item IDs. Missing IDs are silently omitted. The result order is
+// not guaranteed — callers index by ItemID.
+func (r *ItemRepository) ListHomepageItemSummaries(itemIDs []int) ([]HomepageItemSummary, error) {
+	if len(itemIDs) == 0 {
+		return []HomepageItemSummary{}, nil
+	}
+	placeholders, args := inPlaceholders(itemIDs)
+	query := `
+		SELECT i.id, i.workspace_id, i.workspace_item_number, i.title,
+		       COALESCE(s.name, 'Unknown') as status,
+		       sc.color as status_color,
+		       i.priority_id, p.name as priority_name, p.color as priority_color,
+		       w.key as workspace_key
+		FROM items i
+		JOIN workspaces w ON i.workspace_id = w.id
+		LEFT JOIN statuses s ON i.status_id = s.id
+		LEFT JOIN status_categories sc ON s.category_id = sc.id
+		LEFT JOIN priorities p ON i.priority_id = p.id
+		WHERE i.id IN (` + placeholders + `)`
+
+	rows, err := r.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list homepage items: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	results := []HomepageItemSummary{}
+	resultIdx := map[int]int{}
+	for rows.Next() {
+		var s HomepageItemSummary
+		var priorityID sql.NullInt64
+		var statusColor, priorityName, priorityColor sql.NullString
+		if err := rows.Scan(
+			&s.ItemID, &s.WorkspaceID, &s.WorkspaceItemNumber, &s.Title,
+			&s.Status, &statusColor,
+			&priorityID, &priorityName, &priorityColor,
+			&s.WorkspaceKey,
+		); err != nil {
+			return nil, fmt.Errorf("scan homepage item: %w", err)
+		}
+		s.StatusColor = nullStrPtr(statusColor)
+		s.PriorityID = nullIntPtr(priorityID)
+		s.PriorityName = nullStrPtr(priorityName)
+		s.PriorityColor = nullStrPtr(priorityColor)
+		resultIdx[s.ItemID] = len(results)
+		results = append(results, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if len(results) > 0 {
+		msPlaceholders, msArgs := inPlaceholders(itemIDs)
+		msRows, err := r.db.Query(`
+			SELECT item_id, milestone_id
+			FROM item_milestones
+			WHERE item_id IN (`+msPlaceholders+`)
+			ORDER BY milestone_id
+		`, msArgs...)
+		if err != nil {
+			return nil, fmt.Errorf("list homepage item milestones: %w", err)
+		}
+		defer func() { _ = msRows.Close() }()
+		for msRows.Next() {
+			var itemID, mID int
+			if err := msRows.Scan(&itemID, &mID); err != nil {
+				return nil, fmt.Errorf("scan homepage item milestone: %w", err)
+			}
+			if idx, ok := resultIdx[itemID]; ok {
+				results[idx].MilestoneIDs = append(results[idx].MilestoneIDs, mID)
+			}
+		}
+		if err := msRows.Err(); err != nil {
+			return nil, err
+		}
+	}
+
+	return results, nil
+}
+
+// TopMilestoneIDsForItems returns the `limit` most frequently referenced
+// milestone_id values among the given item IDs, ordered by frequency desc,
+// then ascending milestone_id for stability. With multi-milestone, every
+// (item, milestone) row in item_milestones counts once.
+func (r *ItemRepository) TopMilestoneIDsForItems(itemIDs []int, limit int) ([]int, error) {
+	if len(itemIDs) == 0 || limit <= 0 {
+		return []int{}, nil
+	}
+	placeholders, args := inPlaceholders(itemIDs)
+	query := `
+		SELECT milestone_id, COUNT(*) as freq
+		FROM item_milestones
+		WHERE item_id IN (` + placeholders + `)
+		GROUP BY milestone_id
+		ORDER BY freq DESC, milestone_id ASC
+		LIMIT ?`
+	args = append(args, limit)
+	rows, err := r.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("top milestone frequencies: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var ids []int
+	for rows.Next() {
+		var id int
+		var freq int
+		if err := rows.Scan(&id, &freq); err != nil {
+			return nil, fmt.Errorf("scan milestone freq: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// HomepageMilestoneProgress is the per-milestone progress row returned by
+// HomepageMilestoneProgressByIDs. TargetDate and CategoryColor may be empty
+// when the milestone lacks a target date or category.
+type HomepageMilestoneProgress struct {
+	MilestoneID   int
+	MilestoneName string
+	TargetDate    *string
+	CategoryColor string
+	TotalItems    int
+	DoneItems     int
+}
+
 // ClearRelatedWorkItem removes a personal task's related work item reference.
 func (r *ItemRepository) ClearRelatedWorkItem(itemID int) error {
 	res, err := r.db.ExecWrite(`
@@ -1650,6 +1796,65 @@ func (r *ItemRepository) GetHistoryWithApprovals(itemID int, includeAgentOwner b
 		history = append(history, entry)
 	}
 	return history, rows.Err()
+}
+
+func (r *ItemRepository) HomepageMilestoneProgressByIDs(milestoneIDs []int) ([]HomepageMilestoneProgress, error) {
+	if len(milestoneIDs) == 0 {
+		return []HomepageMilestoneProgress{}, nil
+	}
+	placeholders, args := inPlaceholders(milestoneIDs)
+	query := `
+		SELECT
+			m.id,
+			m.name,
+			m.target_date,
+			mc.color,
+			COUNT(i.id) as total_items,
+			SUM(CASE WHEN COALESCE(sc.is_completed, FALSE) = TRUE THEN 1 ELSE 0 END) as done_items
+		FROM milestones m
+		LEFT JOIN milestone_categories mc ON m.category_id = mc.id
+		LEFT JOIN item_milestones im ON im.milestone_id = m.id
+		LEFT JOIN items i ON i.id = im.item_id
+		LEFT JOIN statuses s ON i.status_id = s.id
+		LEFT JOIN status_categories sc ON s.category_id = sc.id
+		WHERE m.id IN (` + placeholders + `)
+		GROUP BY m.id, m.name, m.target_date, mc.color
+		ORDER BY m.id`
+
+	rows, err := r.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query milestone progress: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	results := []HomepageMilestoneProgress{}
+	for rows.Next() {
+		var progress HomepageMilestoneProgress
+		var targetDate, categoryColor sql.NullString
+		var doneItems sql.NullInt64
+		if err := rows.Scan(
+			&progress.MilestoneID,
+			&progress.MilestoneName,
+			&targetDate,
+			&categoryColor,
+			&progress.TotalItems,
+			&doneItems,
+		); err != nil {
+			return nil, fmt.Errorf("scan milestone progress: %w", err)
+		}
+		if targetDate.Valid {
+			v := targetDate.String
+			progress.TargetDate = &v
+		}
+		if categoryColor.Valid {
+			progress.CategoryColor = categoryColor.String
+		}
+		if doneItems.Valid {
+			progress.DoneItems = int(doneItems.Int64)
+		}
+		results = append(results, progress)
+	}
+	return results, rows.Err()
 }
 
 // GetCQLCustomFieldMap returns a lowercase-name → {ID, Kind, ...} map of every

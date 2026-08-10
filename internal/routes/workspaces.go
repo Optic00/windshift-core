@@ -98,7 +98,7 @@ func RegisterWorkspaceRoutes(deps *Deps) {
 	// Status endpoints
 	api.HandleH("GET /statuses", auth(http.HandlerFunc(deps.Workspaces.Status.GetAll)))
 	api.HandleH("POST /statuses", admin(http.HandlerFunc(deps.Workspaces.Status.Create)))
-	api.HandleH("GET /statuses/non-done-ids", auth(http.HandlerFunc(deps.Workspaces.StatusLegacy.GetNonDoneStatusIDs)))
+	api.HandleH("GET /statuses/non-done-ids", auth(http.HandlerFunc(deps.Workspaces.StatusQuery.GetNonDoneStatusIDs)))
 	api.HandleH("GET /statuses/{id}", auth(http.HandlerFunc(deps.Workspaces.Status.Get)))
 	api.HandleH("PUT /statuses/{id}", admin(http.HandlerFunc(deps.Workspaces.Status.Update)))
 	api.HandleH("DELETE /statuses/{id}", admin(http.HandlerFunc(deps.Workspaces.Status.Delete)))

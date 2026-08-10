@@ -1,11 +1,9 @@
 package handlers
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"sort"
 	"time"
 
 	"windshift/internal/models"
@@ -17,20 +15,16 @@ import (
 type HomepageHandler struct {
 	workspaceRepo      *repository.WorkspaceRepository
 	itemRepo           *repository.ItemRepository
-	itemCRUD           *services.ItemCRUDService
-	planningService    *services.PlanningService
 	activityTracker    *services.ActivityTracker
 	permService        *services.PermissionService
 	preferencesService *services.UserPreferencesService
 }
 
 // NewHomepageHandler creates a new homepage handler
-func NewHomepageHandler(workspaceRepo *repository.WorkspaceRepository, itemRepo *repository.ItemRepository, itemCRUD *services.ItemCRUDService, planningService *services.PlanningService, activityTracker *services.ActivityTracker, permService *services.PermissionService, preferencesService *services.UserPreferencesService) *HomepageHandler {
+func NewHomepageHandler(workspaceRepo *repository.WorkspaceRepository, itemRepo *repository.ItemRepository, activityTracker *services.ActivityTracker, permService *services.PermissionService, preferencesService *services.UserPreferencesService) *HomepageHandler {
 	return &HomepageHandler{
 		workspaceRepo:      workspaceRepo,
 		itemRepo:           itemRepo,
-		itemCRUD:           itemCRUD,
-		planningService:    planningService,
 		activityTracker:    activityTracker,
 		permService:        permService,
 		preferencesService: preferencesService,
@@ -108,12 +102,6 @@ func (h *HomepageHandler) GetHomepage(w http.ResponseWriter, r *http.Request) {
 	userActivity, err := h.activityTracker.GetUserActivity(user.ID)
 	if err != nil {
 		respondInternalError(w, r, err)
-		return
-	}
-
-	accessibleWorkspaceIDs, err := GetAccessibleWorkspaceIDs(user, nil, h.permService)
-	if err != nil {
-		respondInternalError(w, r, fmt.Errorf("failed to resolve accessible workspaces: %w", err))
 		return
 	}
 
@@ -204,16 +192,12 @@ func (h *HomepageHandler) GetHomepage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Load all feed items through the same workspace-scoped list query used by
-	// the item collection surface. Revoked and deleted items are absent from the
-	// result map, so every feed below inherits the same visibility contract.
-	var authorizedItems []models.Item
+	// Batch load all item details
 	if len(allItemActivities) > 0 {
-		itemDetails, items, err := h.getItemActivitiesBatch(r.Context(), allItemActivities, accessibleWorkspaceIDs)
+		itemDetails, err := h.getItemActivitiesBatch(allItemActivities)
 		if err != nil {
 			slog.Warn("error batch loading items", slog.String("component", "homepage"), slog.Any("error", err))
 		} else {
-			authorizedItems = items
 			// Distribute items to appropriate lists with correct timestamps
 			if viewedItems, ok := userActivity.ItemActivities[services.ActivityView]; ok {
 				for _, activity := range viewedItems {
@@ -248,9 +232,37 @@ func (h *HomepageHandler) GetHomepage(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
+			// Watches are long-lived and survive workspace permission changes;
+			// re-authorize each item's workspace before surfacing the title /
+			// key / status, otherwise a revoked user sees the metadata of items
+			// they can no longer open.
+			workspaceVisible := make(map[int]bool)
 			for _, itemID := range userActivity.ItemWatches {
 				item, exists := itemDetails[itemID]
 				if !exists {
+					continue
+				}
+				visible, cached := workspaceVisible[item.WorkspaceID]
+				if !cached {
+					if h.permService == nil {
+						visible = true
+					} else {
+						ok, permErr := h.permService.HasWorkspacePermission(user.ID, item.WorkspaceID, models.PermissionItemView)
+						if permErr != nil {
+							slog.Warn("watch visibility check failed; hiding item",
+								slog.String("component", "homepage"),
+								slog.Int("user_id", user.ID),
+								slog.Int("item_id", item.ItemID),
+								slog.Int("workspace_id", item.WorkspaceID),
+								slog.Any("error", permErr))
+							visible = false
+						} else {
+							visible = ok
+						}
+					}
+					workspaceVisible[item.WorkspaceID] = visible
+				}
+				if !visible {
 					continue
 				}
 				homepageData.WatchedItems = append(homepageData.WatchedItems, item)
@@ -259,9 +271,9 @@ func (h *HomepageHandler) GetHomepage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Load upcoming milestones based on user's recent activity - now uses batch approach
-	milestoneIDs := getUpcomingMilestones(authorizedItems, 3)
+	milestoneIDs := h.getUpcomingMilestonesBatch(allItemActivities)
 	if len(milestoneIDs) > 0 {
-		milestoneStats, err := h.getMilestoneStatsBatch(milestoneIDs, accessibleWorkspaceIDs)
+		milestoneStats, err := h.getMilestoneStatsBatch(milestoneIDs)
 		if err != nil {
 			slog.Warn("error loading milestone stats", slog.String("component", "homepage"), slog.Any("error", err))
 		} else {
@@ -311,13 +323,10 @@ func (h *HomepageHandler) getWorkspaceActivitiesBatch(visits []services.Workspac
 	return activities, nil
 }
 
-// getItemActivitiesBatch loads item details through the canonical item list.
-func (h *HomepageHandler) getItemActivitiesBatch(ctx context.Context, activities map[int]services.ItemActivity, workspaceIDs []int) (map[int]ItemActivity, []models.Item, error) {
+// getItemActivitiesBatch batch loads item details for multiple items
+func (h *HomepageHandler) getItemActivitiesBatch(activities map[int]services.ItemActivity) (map[int]ItemActivity, error) {
 	if len(activities) == 0 {
-		return map[int]ItemActivity{}, []models.Item{}, nil
-	}
-	if h.itemCRUD == nil {
-		return nil, nil, fmt.Errorf("item query service not available")
+		return map[int]ItemActivity{}, nil
 	}
 
 	// Build item ID list
@@ -326,28 +335,25 @@ func (h *HomepageHandler) getItemActivitiesBatch(ctx context.Context, activities
 		itemIDs = append(itemIDs, id)
 	}
 
-	items, err := h.itemCRUD.ListByIDsContext(ctx, itemIDs, workspaceIDs)
+	summaries, err := h.itemRepo.ListHomepageItemSummaries(itemIDs)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	result := make(map[int]ItemActivity, len(items))
-	for _, item := range items {
+	result := make(map[int]ItemActivity, len(summaries))
+	for _, s := range summaries {
 		itemActivity := ItemActivity{
-			ItemID:              item.ID,
-			WorkspaceID:         item.WorkspaceID,
-			WorkspaceItemNumber: item.WorkspaceItemNumber,
-			Title:               item.Title,
-			Status:              item.StatusName,
-			PriorityID:          item.PriorityID,
-			WorkspaceKey:        item.WorkspaceKey,
+			ItemID:              s.ItemID,
+			WorkspaceID:         s.WorkspaceID,
+			WorkspaceItemNumber: s.WorkspaceItemNumber,
+			Title:               s.Title,
+			Status:              s.Status,
+			StatusColor:         s.StatusColor,
+			PriorityID:          s.PriorityID,
+			PriorityName:        s.PriorityName,
+			PriorityColor:       s.PriorityColor,
+			WorkspaceKey:        s.WorkspaceKey,
 		}
-		if itemActivity.Status == "" {
-			itemActivity.Status = "Unknown"
-		}
-		itemActivity.StatusColor = optionalString(item.StatusColor)
-		itemActivity.PriorityName = optionalString(item.PriorityName)
-		itemActivity.PriorityColor = optionalString(item.PriorityColor)
 
 		if activity, ok := activities[itemActivity.ItemID]; ok {
 			if !activity.ActivityAt.IsZero() {
@@ -359,66 +365,49 @@ func (h *HomepageHandler) getItemActivitiesBatch(ctx context.Context, activities
 		result[itemActivity.ItemID] = itemActivity
 	}
 
-	return result, items, nil
+	return result, nil
 }
 
-func optionalString(value string) *string {
-	if value == "" {
-		return nil
-	}
-	return &value
-}
-
-// getUpcomingMilestones returns the most common milestones attached to the
-// authorized feed items, ordered deterministically.
-func getUpcomingMilestones(items []models.Item, limit int) []int {
-	if len(items) == 0 || limit <= 0 {
+// getUpcomingMilestonesBatch identifies the top 3 most frequently occurring milestones
+// from the loaded item activities (avoids N+1 queries)
+func (h *HomepageHandler) getUpcomingMilestonesBatch(itemActivities map[int]services.ItemActivity) []int {
+	if len(itemActivities) == 0 {
 		return []int{}
 	}
 
-	frequencies := make(map[int]int)
-	for _, item := range items {
-		for _, milestone := range item.Milestones {
-			frequencies[milestone.ID]++
-		}
+	itemIDs := make([]int, 0, len(itemActivities))
+	for id := range itemActivities {
+		itemIDs = append(itemIDs, id)
 	}
-	ids := make([]int, 0, len(frequencies))
-	for id := range frequencies {
-		ids = append(ids, id)
-	}
-	sort.Slice(ids, func(i, j int) bool {
-		if frequencies[ids[i]] == frequencies[ids[j]] {
-			return ids[i] < ids[j]
-		}
-		return frequencies[ids[i]] > frequencies[ids[j]]
-	})
-	if len(ids) > limit {
-		ids = ids[:limit]
+
+	ids, err := h.itemRepo.TopMilestoneIDsForItems(itemIDs, 3)
+	if err != nil {
+		slog.Warn("error loading milestone frequencies", slog.String("component", "homepage"), slog.Any("error", err))
+		return []int{}
 	}
 	return ids
 }
 
-// getMilestoneStatsBatch reuses the workspace-scoped planning progress query.
-func (h *HomepageHandler) getMilestoneStatsBatch(milestoneIDs, workspaceIDs []int) ([]MilestoneProgress, error) {
-	if h.planningService == nil {
-		return nil, fmt.Errorf("planning service not available")
+// getMilestoneStatsBatch batch calculates progress statistics for multiple milestones
+func (h *HomepageHandler) getMilestoneStatsBatch(milestoneIDs []int) ([]MilestoneProgress, error) {
+	stats, err := h.itemRepo.HomepageMilestoneProgressByIDs(milestoneIDs)
+	if err != nil {
+		return nil, err
 	}
 
-	results := make([]MilestoneProgress, 0, len(milestoneIDs))
-	for _, milestoneID := range milestoneIDs {
-		report, err := h.planningService.GetMilestoneProgress(milestoneID, workspaceIDs)
-		if err != nil {
-			return nil, err
-		}
+	results := make([]MilestoneProgress, 0, len(stats))
+	for _, s := range stats {
 		progress := MilestoneProgress{
-			MilestoneID:     report.MilestoneID,
-			MilestoneName:   report.MilestoneName,
-			TargetDate:      report.TargetDate,
-			CategoryColor:   report.CategoryColor,
-			TotalItems:      report.TotalItems,
-			DoneItems:       report.CompletedItems,
-			NotDoneItems:    report.TotalItems - report.CompletedItems,
-			PercentComplete: report.PercentComplete,
+			MilestoneID:   s.MilestoneID,
+			MilestoneName: s.MilestoneName,
+			TargetDate:    s.TargetDate,
+			CategoryColor: s.CategoryColor,
+			TotalItems:    s.TotalItems,
+			DoneItems:     s.DoneItems,
+			NotDoneItems:  s.TotalItems - s.DoneItems,
+		}
+		if progress.TotalItems > 0 {
+			progress.PercentComplete = float64(progress.DoneItems) / float64(progress.TotalItems) * 100.0
 		}
 		results = append(results, progress)
 	}
