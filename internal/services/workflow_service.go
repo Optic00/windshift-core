@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -406,12 +407,20 @@ type PerformTransitionRequest struct {
 	Modes []string
 }
 
-// PerformTransitionResult is returned on a successful transition (including no-ops).
+// PerformTransitionResult is returned once a transition commits, including
+// when a post-commit approval hook also returns an error.
 type PerformTransitionResult struct {
 	Item        *models.Item
 	OldStatusID *int
 	NewStatusID *int
 	NoOp        bool
+}
+
+type transitionApprovalService interface {
+	IsTransitionGatedByApproval(ctx context.Context, itemID, fromStatusID, toStatusID int) (*int, error)
+	GetPendingForItem(ctx context.Context, itemID int) (*models.ApprovalRequest, error)
+	Cancel(ctx context.Context, requestID, actorUserID int, comment, reason string) error
+	MaybeOpenForStatusEntry(ctx context.Context, itemID, statusID, fromStatusID, actorUserID int) (*models.ApprovalRequest, error)
 }
 
 // TransitionRejection is returned as an error when a transition is rejected
@@ -455,7 +464,7 @@ func (s *WorkflowService) PerformTransition(
 	req PerformTransitionRequest,
 	itemRepo *repository.ItemRepository,
 	conditionService *ConditionService,
-	approvalService *ApprovalService,
+	approvalService transitionApprovalService,
 ) (*PerformTransitionResult, error) {
 	item, err := itemRepo.FindByID(req.ItemID)
 	if err != nil {
@@ -540,33 +549,53 @@ func (s *WorkflowService) PerformTransition(
 	// on a real transition (the no-op case short-circuits earlier).
 	PublishItemChange(req.ItemID, ItemChangeStatus)
 
-	// Post-commit approval hooks. Cancel any pending approval (we just left the
-	// approval-bound status by a non-gated transition), then open a new one if
-	// the destination status is itself approval-bound.
-	if approvalService != nil {
-		if pending, err := approvalService.GetPendingForItem(ctx, req.ItemID); err == nil && pending != nil {
-			_ = approvalService.Cancel(ctx, pending.ID, req.ActorUserID, "", "left_status")
-		}
-		if _, err := approvalService.MaybeOpenForStatusEntry(ctx, req.ItemID, req.ToStatusID, oldStatusID, req.ActorUserID); err != nil {
-			// Non-fatal: log via err return path? We've already committed the transition,
-			// so a failure here leaves the item in the new status without an open approval.
-			// Surface it so callers can decide how to handle.
-			return nil, fmt.Errorf("open approval after commit: %w", err)
-		}
-	}
-
 	updated, err := itemRepo.FindByIDWithDetails(req.ItemID)
 	if err != nil {
 		return nil, fmt.Errorf("reload item: %w", err)
 	}
 
 	newStatusID := req.ToStatusID
-	return &PerformTransitionResult{
+	result := &PerformTransitionResult{
 		Item:        updated,
 		OldStatusID: &oldStatusID,
 		NewStatusID: &newStatusID,
 		NoOp:        false,
-	}, nil
+	}
+
+	// Post-commit approval hooks. Cancel any pending approval (we just left the
+	// approval-bound status by a non-gated transition), then open a new one if
+	// the destination status is itself approval-bound.
+	if approvalService != nil {
+		pending, err := approvalService.GetPendingForItem(ctx, req.ItemID)
+		if err != nil {
+			logPostCommitApprovalError(req, oldStatusID, "get_pending", err)
+			return result, fmt.Errorf("get pending approval after commit: %w", err)
+		}
+		if pending != nil {
+			if err := approvalService.Cancel(ctx, pending.ID, req.ActorUserID, "", "left_status"); err != nil {
+				logPostCommitApprovalError(req, oldStatusID, "cancel", err)
+				return result, fmt.Errorf("cancel approval after commit: %w", err)
+			}
+		}
+		if _, err := approvalService.MaybeOpenForStatusEntry(ctx, req.ItemID, req.ToStatusID, oldStatusID, req.ActorUserID); err != nil {
+			logPostCommitApprovalError(req, oldStatusID, "maybe_open", err)
+			return result, fmt.Errorf("open approval after commit: %w", err)
+		}
+	}
+
+	return result, nil
+}
+
+func logPostCommitApprovalError(req PerformTransitionRequest, oldStatusID int, hook string, err error) {
+	slog.Error("post-commit approval hook failed",
+		slog.String("component", "workflow"),
+		slog.String("hook", hook),
+		slog.Int("item_id", req.ItemID),
+		slog.Int("old_status_id", oldStatusID),
+		slog.Int("new_status_id", req.ToStatusID),
+		slog.Int("actor_user_id", req.ActorUserID),
+		slog.Any("error", err),
+	)
 }
 
 // CommitTransition writes the status change and a corresponding item_history row
