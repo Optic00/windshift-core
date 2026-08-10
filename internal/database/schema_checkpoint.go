@@ -47,19 +47,19 @@ func ValidateCanonicalSchemaCheckpoint(db Database) error {
 	default:
 		return fmt.Errorf("database schema checkpoint %s has invalid global rank phase %q", CanonicalSchemaCheckpointVersion, phase)
 	}
-	valid, err := canonicalRankRowsCheck(db, db.GetDriverName() == driverSQLite)
-	if err != nil {
-		return fmt.Errorf("validate canonical item ranks: %w", err)
-	}
-	if !valid {
-		return fmt.Errorf("database schema checkpoint %s is incomplete: canonical item ranks are invalid or duplicated", CanonicalSchemaCheckpointVersion)
-	}
 	canonical, err := canonicalFracIndexSchemaCheck(db)
 	if err != nil {
 		return fmt.Errorf("validate canonical item rank schema: %w", err)
 	}
 	if !canonical {
 		return fmt.Errorf("database schema checkpoint %s is incomplete: items.frac_index is not canonical", CanonicalSchemaCheckpointVersion)
+	}
+	valid, err := canonicalRankPrefixesCheck(db)
+	if err != nil {
+		return fmt.Errorf("validate canonical item ranks: %w", err)
+	}
+	if !valid {
+		return fmt.Errorf("database schema checkpoint %s is incomplete: canonical item ranks are invalid or duplicated", CanonicalSchemaCheckpointVersion)
 	}
 	return nil
 }
@@ -125,9 +125,9 @@ func globalRankCheckpointCheck(db Database, sqlite bool) (bool, error) {
 	return canonicalRankRowsCheck(db, sqlite)
 }
 
-// canonicalRankRowsCheck validates the persisted row representation without
-// imposing a lifecycle phase. The release checkpoint can only be recorded in
-// stable state, while later startups must also accept resumable online states.
+// canonicalRankRowsCheck performs the thorough row validation used while
+// recording the checkpoint. Normal startup uses structural guarantees and
+// bounded index probes instead of scanning every item.
 func canonicalRankRowsCheck(db Database, sqlite bool) (bool, error) {
 	var invalidCount int
 	query := "SELECT COUNT(*) FROM items WHERE frac_index IS NULL OR SUBSTRING(frac_index FROM 1 FOR 2) NOT IN ('0|', '1|', '2|')"
@@ -145,6 +145,25 @@ func canonicalRankRowsCheck(db Database, sqlite bool) (bool, error) {
 		return false, err
 	}
 	return duplicateCount == 0, nil
+}
+
+const canonicalRankPrefixValidationQuery = `
+	SELECT CASE WHEN
+		EXISTS (SELECT 1 FROM items WHERE frac_index < '0|' LIMIT 1)
+		OR EXISTS (SELECT 1 FROM items WHERE frac_index >= '0}' AND frac_index < '1|' LIMIT 1)
+		OR EXISTS (SELECT 1 FROM items WHERE frac_index >= '1}' AND frac_index < '2|' LIMIT 1)
+		OR EXISTS (SELECT 1 FROM items WHERE frac_index >= '2}' LIMIT 1)
+	THEN 0 ELSE 1 END`
+
+// canonicalRankPrefixesCheck probes only the gaps outside the three bucket
+// prefixes. The structural check has already guaranteed non-null unique ranks,
+// and each bounded probe can use idx_items_frac_index.
+func canonicalRankPrefixesCheck(db Database) (bool, error) {
+	var valid int
+	if err := db.QueryRow(canonicalRankPrefixValidationQuery).Scan(&valid); err != nil {
+		return false, err
+	}
+	return valid == 1, nil
 }
 
 func applySchemaCheckpoint(db Database) error {
