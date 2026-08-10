@@ -617,9 +617,9 @@ type GlobalRankMigrationControlRequest struct {
 	Action string `json:"action"`
 }
 
-// ControlGlobalRankMigration starts, pauses, or resumes the bounded online
-// migration. The route is system-admin-only and every successful action is
-// audited.
+// ControlGlobalRankMigration starts, pauses, resumes, or resets the bounded
+// online migration. The route is system-admin-only and every successful action
+// is audited.
 //
 // POST /api/admin/diagnostics/frac-index/migration
 func (h *DiagnosticsHandler) ControlGlobalRankMigration(w http.ResponseWriter, r *http.Request) {
@@ -629,9 +629,9 @@ func (h *DiagnosticsHandler) ControlGlobalRankMigration(w http.ResponseWriter, r
 	}
 	action := repository.GlobalRankMigrationAction(strings.ToLower(strings.TrimSpace(req.Action)))
 	switch action {
-	case repository.GlobalRankMigrationStart, repository.GlobalRankMigrationPause, repository.GlobalRankMigrationResume:
+	case repository.GlobalRankMigrationStart, repository.GlobalRankMigrationPause, repository.GlobalRankMigrationResume, repository.GlobalRankMigrationReset:
 	default:
-		respondValidationError(w, r, "action must be 'start', 'pause', or 'resume'")
+		respondValidationError(w, r, "action must be 'start', 'pause', 'resume', or 'reset'")
 		return
 	}
 

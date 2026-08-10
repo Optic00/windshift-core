@@ -81,6 +81,7 @@ const (
 	GlobalRankMigrationStart  GlobalRankMigrationAction = "start"
 	GlobalRankMigrationPause  GlobalRankMigrationAction = "pause"
 	GlobalRankMigrationResume GlobalRankMigrationAction = "resume"
+	GlobalRankMigrationReset  GlobalRankMigrationAction = "reset"
 )
 
 var ErrGlobalRankMigrationConflict = errors.New("global rank migration state conflict")
@@ -186,6 +187,19 @@ func ControlGlobalRankMigration(ctx context.Context, db database.Database, actio
 		state.Phase = GlobalRankPhaseMigrating
 		state.LeaseOwner = nil
 		state.LeaseExpiresAt = nil
+	case GlobalRankMigrationReset:
+		if state.Phase != GlobalRankPhaseFailed {
+			return GlobalRankState{}, globalRankControlConflict(action, state.Phase)
+		}
+		state.Phase = GlobalRankPhaseStable
+		state.TargetBucket = nil
+		state.Direction = nil
+		state.Frontier = nil
+		state.LeaseOwner = nil
+		state.LeaseExpiresAt = nil
+		state.MigratedCount = 0
+		state.TotalCount = 0
+		state.LastError = nil
 	default:
 		return GlobalRankState{}, fmt.Errorf("unsupported global rank migration action %q", action)
 	}
