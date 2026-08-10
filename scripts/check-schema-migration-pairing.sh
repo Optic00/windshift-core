@@ -13,8 +13,8 @@ Usage:
   scripts/check-schema-migration-pairing.sh --commit <revision>
 
 Executable changes under internal/database/schema/*.sql must be paired with a
-new Migration Version in internal/database/{migrations,catalog}.go. The same
-patch must add CheckSQLite + SQLite fields for SQLite schema changes and
+new Migration Version in an internal/database migration catalog source. The
+same patch must add CheckSQLite + SQLite fields for SQLite schema changes and
 CheckPostgres + Postgres fields for PostgreSQL schema changes.
 
 If a schema edit completes an already-existing migration, add this SQL comment
@@ -131,6 +131,7 @@ has_added_catalog_field() {
 catalog_versions="$(
     {
         target_file internal/database/migrations.go
+        target_file internal/database/canonical_rank_schema.go
         for catalog_file in internal/database/catalog*.go; do
             target_file "$catalog_file"
         done
@@ -187,7 +188,7 @@ if [[ "${#schema_files[@]}" -eq 0 ]]; then
     exit 0
 fi
 
-if ! catalog_patch="$(git_diff internal/database/migrations.go internal/database/catalog.go)"; then
+if ! catalog_patch="$(git_diff internal/database/migrations.go internal/database/canonical_rank_schema.go internal/database/catalog.go)"; then
     echo "FAIL: unable to inspect migration catalog changes." >&2
     exit 2
 fi

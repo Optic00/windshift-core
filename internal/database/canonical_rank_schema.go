@@ -185,7 +185,7 @@ func rebuildSQLiteItemsWithCanonicalFracIndex(db Database) error {
 			story_points REAL,
 			estimate_minutes INTEGER,
 			rank TEXT,
-			frac_index TEXT COLLATE BINARY NOT NULL DEFAULT ('0|a1' || lower(hex(randomblob(16))) || '1'),
+			frac_index TEXT COLLATE BINARY NOT NULL,
 			status_id INTEGER REFERENCES statuses(id) ON DELETE RESTRICT,
 			channel_id INTEGER REFERENCES channels(id) ON DELETE SET NULL,
 			request_type_id INTEGER REFERENCES request_types(id) ON DELETE SET NULL,

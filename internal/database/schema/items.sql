@@ -29,9 +29,9 @@ CREATE TABLE IF NOT EXISTS items (
 	estimate_minutes INTEGER,
 	-- Manual sorting fields
 	rank TEXT,
-	-- The fallback keeps legacy/import SQL writers compatible; application
-	-- writes provide an explicitly allocated canonical key.
-	frac_index TEXT COLLATE BINARY NOT NULL DEFAULT ('0|a1' || lower(hex(randomblob(16))) || '1'),
+	-- migration: 20260807_items_frac_index_not_null
+	-- Application writes allocate a canonical key in the active rank bucket.
+	frac_index TEXT COLLATE BINARY NOT NULL,
 	-- Status and workflow fields
 	status_id INTEGER REFERENCES statuses(id) ON DELETE RESTRICT,
 	-- Portal/channel fields
