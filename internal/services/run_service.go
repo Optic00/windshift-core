@@ -31,19 +31,12 @@ type RunnerResult struct {
 	ContainerID string
 	Status      string
 	Error       string
-	// Branch + BaseCommit are reported by a remote runner that prepared its
-	// own worktree, so the orchestrator can create the PR on result (the
-	// in-process path already has these from the worktree it prepared). Empty
-	// for runs that produced no branch.
+	// Branch and BaseCommit are prepared worktree refs used for PR creation.
 	Branch     string
 	BaseCommit string
-	// Summary is the agent's finish summary, surfaced as the PR note (WI-400).
-	// Empty when the agent emitted no summary. Agent-generated text — bound and
-	// sanitize before it reaches an SCM PR body.
+	// Summary is the bounded, sanitized agent finish summary used as the PR note.
 	Summary string
-	// Repos carries the per-repo push results of a multi-repo run (WI-449),
-	// primary first. Branch is empty for a repo with no new commits. When set,
-	// it supersedes the scalar Branch/BaseCommit (which mirror the primary).
+	// Repos carries per-repo push results, primary first; it supersedes scalar refs when present.
 	Repos []RunnerRepoResult
 }
 
@@ -64,13 +57,10 @@ type RunInput struct {
 	WorkspacePath string
 	Env           map[string]string
 	InitialPrompt string
-	// Kind and Image select coding_agent, action_container, or ci_task execution.
-	Kind  string
-	Image string
-	// Repo is the deprecated primary checkout input; prefer Repos.
-	Repo *JobRepo
-	// Repos lists every checkout, primary first; multiple entries use sibling
-	// directories under one run workspace.
+	Kind          string
+	Image         string
+	Repo          *JobRepo
+	// Repos lists every checkout, primary first.
 	Repos []JobRepo
 }
 
@@ -101,37 +91,22 @@ type RunRequest struct {
 	WorkspaceID int
 	ItemID      *int
 	BindingID   int
-	// Repo is the deprecated single-repo input (WI-449). Prefer Repos. When
-	// Repos is empty and Repo is set, the run path treats it as a one-element
-	// primary repo, keeping single-repo behavior byte-identical.
+	// Repo is the deprecated single-repo input; an empty Repos list preserves it.
 	Repo *repoprep.RepoSpec
-	// Repos is the set of repositories to check out for the run (WI-449), the
-	// primary first. One repo → single-repo layout (cwd = that checkout, as
-	// before); more than one → each is checked out as a sibling dir under a
-	// shared per-run workspace root that becomes the agent's cwd.
+	// Repos is the full checkout set, primary first.
 	Repos []*repoprep.RepoSpec
 	Token *TokenSpec
 	Env   map[string]string
-	// Grants are snapshotted at claim and bound to the run token for broker
-	// authorization; the git ref is filled from the prepared worktree.
-	Grants *models.RunGrants
-	// JobKind and JobImage select the execution mode; empty defaults to coding_agent.
-	JobKind  string
-	JobImage string
-	// InitialPrompt overrides the service prompt for this run; empty uses the default.
-	InitialPrompt string
-	// Ephemeral runs skip branch pushes and post-run PR creation.
-	Ephemeral bool
-	// TargetPoolID queues the run for a remote pool; token, grants, and env are
-	// enriched at claim time rather than on the local request path.
-	TargetPoolID *int
-	// InitialPromptSuffix appends binding instructions and skills to the prompt.
+	// Grants are snapshotted at claim and bound to the run token.
+	Grants              *models.RunGrants
+	JobKind             string
+	JobImage            string
+	InitialPrompt       string
+	Ephemeral           bool
+	TargetPoolID        *int
 	InitialPromptSuffix string
-	// TriggeredByUserID identifies the audit actor and OAuth credential principal;
-	// zero retains legacy connection-level credentials.
-	TriggeredByUserID int
-	// Trigger carries the persisted context and instruction that started the run.
-	Trigger *models.RunTrigger
+	TriggeredByUserID   int
+	Trigger             *models.RunTrigger
 }
 
 // TokenSpec is the per-run input to RunTokenService.Mint. Phase 4-5 wire
@@ -177,23 +152,13 @@ type PostRunInfo struct {
 	Error       string
 	Branch      string
 	BaseCommit  string
-	// TriggeredByUserID is the run's triggering user (0 when unknown). The
-	// PR hook uses it as the credential principal on OAuth SCM connections
-	// (WI-275).
+	// TriggeredByUserID is the audit actor and OAuth credential principal.
 	TriggeredByUserID int
-	// Summary is the agent's finish summary, rendered as the PR note (WI-400).
-	// Already sanitized + bounded by the time it reaches the hook.
+	// Summary is already sanitized and bounded before reaching the PR hook.
 	Summary string
-	// Trigger is the run's trigger context (nil for legacy/triggerless runs).
-	// The PR hook reads it to detect a continuation run — one that pushed to an
-	// existing PR's head branch — so it comments on that PR instead of opening a
-	// new one.
+	// Trigger identifies continuation runs so the PR hook updates the existing PR.
 	Trigger *models.RunTrigger
-	// Repos carries the per-repo push outcome for a multi-repo run (WI-449),
-	// the primary first. Branch is empty for a repo the agent left unchanged
-	// (no_changes). For single-repo runs this has one entry mirroring
-	// Branch/BaseCommit above; the PR hook prefers Repos when present and falls
-	// back to the scalar Branch/BaseCommit otherwise.
+	// Repos carries per-repo push outcomes, primary first; scalar refs remain legacy fallbacks.
 	Repos []PostRunRepo
 }
 
@@ -223,11 +188,8 @@ type BindingInputsResolver interface {
 type RunInputs struct {
 	Token  *TokenSpec
 	Grants *models.RunGrants
-	// Repo is the deprecated single-repo prep input (WI-449); mirrors Repos[0]
-	// (the primary). Prefer Repos.
-	Repo *JobRepo
-	// Repos is every repo a remote runner must check out, primary first
-	// (WI-449).
+	Repo   *JobRepo
+	// Repos is every repository a remote runner must check out, primary first.
 	Repos        []JobRepo
 	Env          map[string]string
 	PromptSuffix string
@@ -327,12 +289,7 @@ func NewRunService(repo *repository.AgentRunRepository, opts RunServiceOptions) 
 	if opts.Runner == nil {
 		return s, nil
 	}
-	// In-process worker pool (decision #7): `capacity` workers each run
-	// the shared RunWorker loop with RunService itself as the (local)
-	// OrchestratorClient. Pool size is the concurrency cap, which replaced
-	// the old global semaphore. Remote pools run the same RunWorker in the
-	// agent binary against the HTTP transport. Used by tests that exercise
-	// the local execution path directly.
+	// Local workers run the shared RunWorker loop; capacity is the concurrency cap.
 	for i := 0; i < capacity; i++ {
 		s.workerWG.Add(1)
 		go func() {

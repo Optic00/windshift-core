@@ -37,7 +37,6 @@ func (h *JiraImportHandler) ensureUsers(ctx context.Context, jobID string, users
 	result := make(map[string]int)
 	usernames := make(map[string]string)
 
-	// Fill missing emails before matching imported accounts.
 	for i := range users {
 		if users[i].AccountID == "" {
 			continue
@@ -57,7 +56,6 @@ func (h *JiraImportHandler) ensureUsers(ctx context.Context, jobID string, users
 		}
 	}
 
-	// Match existing users, then create inactive placeholders for new accounts.
 	for _, u := range users {
 		if u.AccountID == "" {
 			continue
@@ -237,7 +235,6 @@ func (h *JiraImportHandler) ensureImportedDummyUser() (int, error) {
 		return int(newID), nil
 	}
 
-	// Lost a race with another import — re-fetch.
 	if e := h.db.QueryRow(`SELECT id FROM users WHERE email = ?`, importedDummyUserEmail).Scan(&id); e == nil {
 		return id, nil
 	}
@@ -274,14 +271,12 @@ func parseDisplayName(displayName string) (firstName, lastName string) {
 
 // generateUsername creates a unique username from email or display name
 func generateUsername(email, displayName string) string {
-	// Try to use email prefix first
 	if email != "" {
 		parts := strings.Split(email, "@")
 		if len(parts) > 0 && parts[0] != "" {
 			return strings.ToLower(parts[0])
 		}
 	}
-	// Fall back to display name
 	if displayName != "" {
 		return strings.ToLower(strings.ReplaceAll(displayName, " ", "."))
 	}
@@ -957,7 +952,6 @@ func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, works
 	mentionResolver := jira.MentionResolver(func(accountID string) string {
 		return usernameMap[accountID]
 	})
-	// Get mapped status and item type (use nil instead of 0 for missing mappings)
 	var statusID *int
 	if issue.Fields.Status != nil {
 		if sid, ok := statusMap[issue.Fields.Status.ID]; ok {
@@ -972,7 +966,6 @@ func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, works
 		}
 	}
 
-	// Map assignee and reporter
 	var assigneeID *int
 	if issue.Fields.Assignee != nil && issue.Fields.Assignee.GetIdentifier() != "" {
 		if uid, ok := userMap[issue.Fields.Assignee.GetIdentifier()]; ok {
@@ -1039,7 +1032,6 @@ func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, works
 		priorityName = jira.SuggestPriorityMapping(issue.Fields.Priority.Name)
 	}
 
-	// Parse due date
 	var dueDate *time.Time
 	if issue.Fields.DueDate != "" {
 		if parsed, err := time.Parse("2006-01-02", issue.Fields.DueDate); err == nil {
@@ -1251,7 +1243,6 @@ func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, works
 		return fmt.Errorf("failed to sanitize custom field values: %w", err)
 	}
 
-	// Serialize custom field values to JSON
 	customFieldValuesJSON := ""
 	if len(customFieldValues) > 0 {
 		if jsonBytes, err := json.Marshal(customFieldValues); err == nil {
@@ -1259,7 +1250,6 @@ func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, works
 		}
 	}
 
-	// Create the work item using centralized service (handles workspace_item_number, frac_index, etc.)
 	// The summary gets the same title sanitize the normal item-create path applies.
 	itemParams := services.ItemCreationParams{
 		WorkspaceID:             workspaceID,
@@ -1321,7 +1311,6 @@ func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, works
 		return fmt.Errorf("failed to create or update item: %w", err)
 	}
 
-	// Build metadata for the mapping (includes parent key for later linking)
 	meta := map[string]interface{}{
 		"summary": issue.Fields.Summary,
 	}
@@ -1378,7 +1367,6 @@ func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, works
 		meta["was_created"] = jiraImportMappingWasCreated(previousItemMapping.Metadata)
 		meta["reimported_from_job_id"] = previousItemMapping.JobID
 	}
-	// Record the mapping
 	if err := h.recordMappingAndTransferOwnership(jobID, "item", issue.ID, issue.Key, int(itemID), meta, previousItemMapping); err != nil {
 		return fmt.Errorf("record Jira item mapping: %w", err)
 	}
@@ -1421,7 +1409,6 @@ func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, works
 		}
 	}
 
-	// Import comments for this issue
 	if err := h.importComments(jobID, int(itemID), issue, userMap, portalCustomerMap, mentionResolver, mediaResolver, progress); err != nil {
 		return fmt.Errorf("import Jira comments: %w", err)
 	}
@@ -1884,7 +1871,6 @@ func (h *JiraImportHandler) importComments(jobID string, itemID int, issue *jira
 // importIssueLinks creates item_links from Jira issue links stored in mapping metadata.
 // Must be called after all issues for a project are imported.
 func (h *JiraImportHandler) importIssueLinks(jobID string) error {
-	// Query all item mappings with issue_links metadata
 	rows, err := h.db.Query(`
 		SELECT windshift_id, jira_key, metadata_json
 		FROM jira_import_id_mappings
@@ -1937,7 +1923,6 @@ func (h *JiraImportHandler) importIssueLinks(jobID string) error {
 		return fmt.Errorf("iterate Jira item mappings for links: %w", err)
 	}
 
-	// Cache link type lookups
 	linkTypeCache := make(map[string]int) // link type name -> ID
 	linkSvc := services.NewItemLinkService(h.db)
 
@@ -1948,11 +1933,7 @@ func (h *JiraImportHandler) importIssueLinks(jobID string) error {
 				continue
 			}
 
-			// Determine source and target.
-			// Outward link: this issue is the source, outward_key is the target.
-			// Inward link:  inward_key is the source, this issue is the target.
-			// We only build the link from the outward side so an A→B relationship
-			// imported from both ends doesn't produce two rows.
+			// Build each relationship from its outward side to avoid duplicates.
 			outwardKey, _ := link["outward_key"].(string)
 			if outwardKey == "" {
 				// Inward-only entry. If the source is in this import we'll catch
@@ -1998,7 +1979,6 @@ func (h *JiraImportHandler) importIssueLinks(jobID string) error {
 				continue
 			}
 
-			// Look up target Windshift ID
 			var targetID int
 			err := h.db.QueryRow(`
 				SELECT windshift_id FROM jira_import_id_mappings
@@ -2029,7 +2009,6 @@ func (h *JiraImportHandler) importIssueLinks(jobID string) error {
 				continue
 			}
 
-			// Ensure link type exists
 			linkTypeID, ok := linkTypeCache[typeName]
 			if !ok {
 				linkTypeID, err = h.ensureLinkType(typeName, link)
@@ -2043,7 +2022,6 @@ func (h *JiraImportHandler) importIssueLinks(jobID string) error {
 				linkTypeCache[typeName] = linkTypeID
 			}
 
-			// Create item link via service (handles duplicate check)
 			mappingID := fmt.Sprintf("%s-%s-%s", info.sourceKey, typeName, outwardKey)
 			previousMapping, previousErr := h.findPreviousJiraImportMapping(jobID, "link", mappingID)
 			if previousErr != nil {
@@ -2215,14 +2193,12 @@ func (h *JiraImportHandler) importExternalJiraIssueLink(
 
 // ensureLinkType finds or creates a link type matching the Jira link type
 func (h *JiraImportHandler) ensureLinkType(typeName string, linkData map[string]interface{}) (int, error) {
-	// Try to find existing by name
 	var existingID int
 	err := h.db.QueryRow(`SELECT id FROM link_types WHERE name = ?`, typeName).Scan(&existingID)
 	if err == nil {
 		return existingID, nil
 	}
 
-	// Create new link type
 	forwardLabel, _ := linkData["outward"].(string)
 	reverseLabel, _ := linkData["inward"].(string)
 	if forwardLabel == "" {
@@ -2400,7 +2376,6 @@ func (h *JiraImportHandler) importAttachments(ctx context.Context, jobID string,
 		return nil, nil
 	}
 
-	// Get attachment storage path from settings
 	var attachmentPath string
 	err := h.db.QueryRow(`SELECT attachment_path FROM attachment_settings WHERE enabled = true LIMIT 1`).Scan(&attachmentPath)
 	if err != nil || attachmentPath == "" {
@@ -2465,7 +2440,6 @@ func (h *JiraImportHandler) importAttachments(ctx context.Context, jobID string,
 			}
 		}
 
-		// Download the attachment
 		reader, _, err := client.DownloadAttachment(ctx, attachment.Content)
 		if err != nil {
 			slog.Error("Failed to download attachment",
@@ -2476,11 +2450,9 @@ func (h *JiraImportHandler) importAttachments(ctx context.Context, jobID string,
 			continue
 		}
 
-		// Generate a unique filename to avoid collisions
 		storedFilename := fmt.Sprintf("%s_%s", uuid.New().String(), filepath.Base(attachment.Filename))
 		filePath := filepath.Join(attachmentPath, storedFilename)
 
-		// Save to disk
 		file, err := os.Create(filePath) //nolint:gosec // G304 — filePath from attachmentPath + UUID + filename
 		if err != nil {
 			_ = reader.Close()
@@ -2509,7 +2481,6 @@ func (h *JiraImportHandler) importAttachments(ctx context.Context, jobID string,
 			fileSize = written
 		}
 
-		// Map uploader
 		var uploadedBy *int
 		if attachment.Author != nil && attachment.Author.GetIdentifier() != "" {
 			if uid, ok := userMap[attachment.Author.GetIdentifier()]; ok {
@@ -2527,7 +2498,6 @@ func (h *JiraImportHandler) importAttachments(ctx context.Context, jobID string,
 			mimeType = "application/octet-stream"
 		}
 
-		// Insert attachment record via service
 		attachmentSvc := services.NewAttachmentService(h.db)
 		attachmentID, err := attachmentSvc.CreateRecord(services.CreateAttachmentParams{
 			ItemID:           itemID,

@@ -826,13 +826,11 @@ func (h *AttachmentHandler) GetByItem(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 
-	// Get user from context and check permissions
 	user, ok := RequireAuth(w, r)
 	if !ok {
 		return
 	}
 
-	// Look up the item to get its workspace_id for permission check
 	workspaceID, err := repository.NewItemRepository(h.db).GetWorkspaceID(itemID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
@@ -859,7 +857,6 @@ func (h *AttachmentHandler) GetByItem(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Parse pagination parameters
 	page := 1
 	limit := 50     // Default items per page
 	maxLimit := 100 // Maximum items that can be returned from API
@@ -883,7 +880,6 @@ func (h *AttachmentHandler) GetByItem(w http.ResponseWriter, r *http.Request) {
 
 	offset := (page - 1) * limit
 
-	// Get total count first
 	var totalCount int
 	err = h.db.QueryRow(`
 		SELECT COUNT(*) FROM attachments WHERE item_id = ? AND entity_type = 'item'
@@ -894,7 +890,6 @@ func (h *AttachmentHandler) GetByItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Query attachments with uploader info and pagination
 	rows, err := h.db.Query(`
 		SELECT a.id, a.item_id, a.filename, a.original_filename, a.mime_type, a.file_size,
 		       a.uploaded_by, a.has_thumbnail, a.created_at,
@@ -1293,7 +1288,6 @@ func (h *AttachmentHandler) Thumbnail(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 
-	// Get attachment info
 	var hasThumbnail bool
 	var thumbnailPath string
 	var mimeType string
@@ -1346,38 +1340,31 @@ func (h *AttachmentHandler) Thumbnail(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = file.Close() }()
 
-	// Get file info for size
 	fileInfo, err := file.Stat()
 	if err != nil {
 		respondInternalError(w, r, fmt.Errorf("failed to get file info: %w", err))
 		return
 	}
 
-	// Set headers for thumbnail (always JPEG)
 	w.Header().Set("Content-Type", "image/jpeg")
 	w.Header().Set("Content-Length", strconv.FormatInt(fileInfo.Size(), 10))
 	w.Header().Set("Cache-Control", "public, max-age=31536000") // Cache for 1 year
 
-	// Serve thumbnail
 	_, _ = io.Copy(w, file)
 }
 
 // verifyFileContentFromBytes detects actual file content from bytes and validates it matches the extension
 func (h *AttachmentHandler) verifyFileContentFromBytes(fileData []byte, filename string) (string, error) {
-	// Use first 512 bytes for content detection (or less if file is smaller)
 	detectSize := 512
 	if len(fileData) < detectSize {
 		detectSize = len(fileData)
 	}
 
-	// Detect actual content type from file content
 	detectedType := http.DetectContentType(fileData[:detectSize])
 
-	// Get expected type from file extension
 	ext := filepath.Ext(filename)
 	expectedType := mime.TypeByExtension(ext)
 
-	// Validate content matches extension (if we have an expected type)
 	if expectedType != "" {
 		// Extract base type (before semicolon and parameters)
 		detectedBase := strings.Split(detectedType, ";")[0]
@@ -1471,7 +1458,6 @@ func looksLikeJSON(data []byte) bool {
 
 // validateFileExtension checks if the file extension is allowed (not in dangerous list)
 func (h *AttachmentHandler) validateFileExtension(filename string) error {
-	// List of dangerous extensions that could be used for attacks
 	dangerousExtensions := []string{
 		".exe", ".bat", ".cmd", ".com", ".pif", ".scr", ".msi", // Windows executables
 		".js", ".jsx", ".ts", ".tsx", // JavaScript/TypeScript (XSS risk)
@@ -1486,14 +1472,12 @@ func (h *AttachmentHandler) validateFileExtension(filename string) error {
 
 	ext := strings.ToLower(filepath.Ext(filename))
 
-	// Check if extension is in the dangerous list
 	for _, dangerous := range dangerousExtensions {
 		if ext == dangerous {
 			return fmt.Errorf("file extension %s is not allowed for security reasons", ext)
 		}
 	}
 
-	// Additional check: reject files with no extension
 	if ext == "" || ext == "." {
 		return fmt.Errorf("files without extensions are not allowed")
 	}
@@ -1516,13 +1500,11 @@ func isAllowedImageExtension(filename string) bool {
 func (h *AttachmentHandler) generateUniqueFilename(originalFilename string) (string, error) {
 	ext := filepath.Ext(originalFilename)
 
-	// Generate random bytes for filename
 	randomBytes := make([]byte, 16)
 	if _, err := rand.Read(randomBytes); err != nil {
 		return "", err
 	}
 
-	// Create hex string from random bytes
 	randomStr := fmt.Sprintf("%x", randomBytes)
 
 	return randomStr + ext, nil

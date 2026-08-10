@@ -125,20 +125,19 @@ type WorkspaceSCMConnectionRequest struct {
 
 // WorkspaceRepository represents a repository linked to a workspace
 type WorkspaceRepository struct {
-	ID                       int        `json:"id"`
-	WorkspaceSCMConnectionID int        `json:"workspace_scm_connection_id"`
-	RepositoryExternalID     string     `json:"repository_external_id"`
-	RepositoryName           string     `json:"repository_name"`
-	RepositoryURL            string     `json:"repository_url"`
-	DefaultBranch            string     `json:"default_branch"`
-	IsActive                 bool       `json:"is_active"`
-	LastSyncedAt             *time.Time `json:"last_synced_at,omitempty"`
-	CreatedAt                time.Time  `json:"created_at"`
-	UpdatedAt                time.Time  `json:"updated_at"`
-	// Joined fields
-	WorkspaceID  int             `json:"workspace_id,omitempty"`
-	ProviderType SCMProviderType `json:"provider_type,omitempty"`
-	ProviderSlug string          `json:"provider_slug,omitempty"`
+	ID                       int             `json:"id"`
+	WorkspaceSCMConnectionID int             `json:"workspace_scm_connection_id"`
+	RepositoryExternalID     string          `json:"repository_external_id"`
+	RepositoryName           string          `json:"repository_name"`
+	RepositoryURL            string          `json:"repository_url"`
+	DefaultBranch            string          `json:"default_branch"`
+	IsActive                 bool            `json:"is_active"`
+	LastSyncedAt             *time.Time      `json:"last_synced_at,omitempty"`
+	CreatedAt                time.Time       `json:"created_at"`
+	UpdatedAt                time.Time       `json:"updated_at"`
+	WorkspaceID              int             `json:"workspace_id,omitempty"`
+	ProviderType             SCMProviderType `json:"provider_type,omitempty"`
+	ProviderSlug             string          `json:"provider_slug,omitempty"`
 }
 
 // WorkspaceRepositoryRequest represents the API request for linking a repository
@@ -169,23 +168,22 @@ const (
 
 // ItemSCMLink represents a link between an item and an SCM resource (PR, commit, branch)
 type ItemSCMLink struct {
-	ID                    int          `json:"id"`
-	ItemID                int          `json:"item_id"`
-	WorkspaceRepositoryID int          `json:"workspace_repository_id"`
-	LinkType              SCMLinkType  `json:"link_type"`
-	ExternalID            string       `json:"external_id"`
-	ExternalURL           string       `json:"external_url,omitempty"`
-	Title                 string       `json:"title,omitempty"`
-	State                 SCMLinkState `json:"state,omitempty"`
-	AuthorExternalID      string       `json:"author_external_id,omitempty"`
-	AuthorName            string       `json:"author_name,omitempty"`
-	DetectionSource       string       `json:"detection_source,omitempty"`
-	CreatedAt             time.Time    `json:"created_at"`
-	UpdatedAt             time.Time    `json:"updated_at"`
-	// Joined fields
-	RepositoryName string          `json:"repository_name,omitempty"`
-	RepositoryURL  string          `json:"repository_url,omitempty"`
-	ProviderType   SCMProviderType `json:"provider_type,omitempty"`
+	ID                    int             `json:"id"`
+	ItemID                int             `json:"item_id"`
+	WorkspaceRepositoryID int             `json:"workspace_repository_id"`
+	LinkType              SCMLinkType     `json:"link_type"`
+	ExternalID            string          `json:"external_id"`
+	ExternalURL           string          `json:"external_url,omitempty"`
+	Title                 string          `json:"title,omitempty"`
+	State                 SCMLinkState    `json:"state,omitempty"`
+	AuthorExternalID      string          `json:"author_external_id,omitempty"`
+	AuthorName            string          `json:"author_name,omitempty"`
+	DetectionSource       string          `json:"detection_source,omitempty"`
+	CreatedAt             time.Time       `json:"created_at"`
+	UpdatedAt             time.Time       `json:"updated_at"`
+	RepositoryName        string          `json:"repository_name,omitempty"`
+	RepositoryURL         string          `json:"repository_url,omitempty"`
+	ProviderType          SCMProviderType `json:"provider_type,omitempty"`
 }
 
 // ItemSCMLinkRequest represents the API request for creating an SCM link
@@ -254,10 +252,9 @@ type IssueSyncConfig struct {
 	CreatedBy             *int               `json:"created_by,omitempty"`
 	CreatedAt             time.Time          `json:"created_at"`
 	UpdatedAt             time.Time          `json:"updated_at"`
-	// Joined fields for API responses
-	RepositoryName  string `json:"repository_name,omitempty"`
-	WorkspaceID     int    `json:"workspace_id,omitempty"`
-	SyncedItemCount int    `json:"synced_item_count,omitempty"`
+	RepositoryName        string             `json:"repository_name,omitempty"`
+	WorkspaceID           int                `json:"workspace_id,omitempty"`
+	SyncedItemCount       int                `json:"synced_item_count,omitempty"`
 }
 
 // IssueSyncConfigRequest represents the API request for creating/updating an issue sync config
@@ -289,10 +286,9 @@ type IssueSyncItem struct {
 	SyncLock            bool       `json:"sync_lock"`
 	CreatedAt           time.Time  `json:"created_at"`
 	UpdatedAt           time.Time  `json:"updated_at"`
-	// Joined fields
-	ItemTitle           string `json:"item_title,omitempty"`
-	WorkspaceItemNumber int    `json:"workspace_item_number,omitempty"`
-	WorkspaceKey        string `json:"workspace_key,omitempty"`
+	ItemTitle           string     `json:"item_title,omitempty"`
+	WorkspaceItemNumber int        `json:"workspace_item_number,omitempty"`
+	WorkspaceKey        string     `json:"workspace_key,omitempty"`
 }
 
 // LabelMapping represents a mapping between a GitHub label and a Windshift label
@@ -314,40 +310,38 @@ type TimeProjectCategory struct {
 
 // TimeProject represents a time tracking project
 type TimeProject struct {
-	ID          int                    `json:"id"`
-	CustomerID  *int                   `json:"customer_id,omitempty"` // Now optional
-	CategoryID  *int                   `json:"category_id,omitempty"` // Link to project category
-	Name        string                 `json:"name"`
-	Description string                 `json:"description"`
-	Status      string                 `json:"status"` // Active, On Hold, Completed, Archived
-	Color       string                 `json:"color,omitempty"`
-	HourlyRate  float64                `json:"hourly_rate"`
-	Settings    map[string]interface{} `json:"settings,omitempty"` // Flexible JSON attributes (e.g., max_hours)
-	CreatedAt   time.Time              `json:"created_at"`
-	UpdatedAt   time.Time              `json:"updated_at"`
-	// Joined fields for API responses
-	CustomerName  string   `json:"customer_name,omitempty"`
-	CategoryName  string   `json:"category_name,omitempty"`
-	CategoryColor string   `json:"category_color,omitempty"`
-	TotalHours    *float64 `json:"total_hours,omitempty"` // Computed from worklogs
-	IsManager     bool     `json:"is_manager,omitempty"`  // Whether current user is a manager of this project
+	ID            int                    `json:"id"`
+	CustomerID    *int                   `json:"customer_id,omitempty"` // Now optional
+	CategoryID    *int                   `json:"category_id,omitempty"` // Link to project category
+	Name          string                 `json:"name"`
+	Description   string                 `json:"description"`
+	Status        string                 `json:"status"` // Active, On Hold, Completed, Archived
+	Color         string                 `json:"color,omitempty"`
+	HourlyRate    float64                `json:"hourly_rate"`
+	Settings      map[string]interface{} `json:"settings,omitempty"` // Flexible JSON attributes (e.g., max_hours)
+	CreatedAt     time.Time              `json:"created_at"`
+	UpdatedAt     time.Time              `json:"updated_at"`
+	CustomerName  string                 `json:"customer_name,omitempty"`
+	CategoryName  string                 `json:"category_name,omitempty"`
+	CategoryColor string                 `json:"category_color,omitempty"`
+	TotalHours    *float64               `json:"total_hours,omitempty"` // Computed from worklogs
+	IsManager     bool                   `json:"is_manager,omitempty"`  // Whether current user is a manager of this project
 }
 
 // Worklog represents a time tracking entry
 type Worklog struct {
-	ID           int    `json:"id"`
-	ProjectID    int    `json:"project_id"`
-	CustomerID   int    `json:"customer_id"`
-	UserID       *int   `json:"user_id,omitempty"` // User who created the worklog
-	ItemID       *int   `json:"item_id,omitempty"` // Optional link to work item
-	Description  string `json:"description"`
-	Date         int64  `json:"date"`       // Unix timestamp
-	StartTime    int64  `json:"start_time"` // Unix timestamp
-	EndTime      int64  `json:"end_time"`   // Unix timestamp
-	DurationMins int    `json:"duration_minutes"`
-	CreatedAt    int64  `json:"created_at"` // Unix timestamp
-	UpdatedAt    int64  `json:"updated_at"` // Unix timestamp
-	// Joined fields for API responses
+	ID                  int      `json:"id"`
+	ProjectID           int      `json:"project_id"`
+	CustomerID          int      `json:"customer_id"`
+	UserID              *int     `json:"user_id,omitempty"` // User who created the worklog
+	ItemID              *int     `json:"item_id,omitempty"` // Optional link to work item
+	Description         string   `json:"description"`
+	Date                int64    `json:"date"`       // Unix timestamp
+	StartTime           int64    `json:"start_time"` // Unix timestamp
+	EndTime             int64    `json:"end_time"`   // Unix timestamp
+	DurationMins        int      `json:"duration_minutes"`
+	CreatedAt           int64    `json:"created_at"` // Unix timestamp
+	UpdatedAt           int64    `json:"updated_at"` // Unix timestamp
 	CustomerName        string   `json:"customer_name,omitempty"`
 	ProjectName         string   `json:"project_name,omitempty"`
 	UserName            string   `json:"user_name,omitempty"`             // Name of user who created the worklog
@@ -361,15 +355,14 @@ type Worklog struct {
 
 // ActiveTimer represents a running timer
 type ActiveTimer struct {
-	ID           int    `json:"id"`
-	WorkspaceID  int    `json:"workspace_id"`
-	ItemID       *int   `json:"item_id,omitempty"` // Optional link to work item
-	ProjectID    int    `json:"project_id"`
-	UserID       int    `json:"user_id"`
-	Description  string `json:"description"`
-	StartTimeUTC int64  `json:"start_time_utc"` // Unix timestamp in UTC
-	CreatedAt    int64  `json:"created_at"`     // Unix timestamp
-	// Joined fields for API responses - nullable since they come from LEFT JOINs
+	ID                  int     `json:"id"`
+	WorkspaceID         int     `json:"workspace_id"`
+	ItemID              *int    `json:"item_id,omitempty"` // Optional link to work item
+	ProjectID           int     `json:"project_id"`
+	UserID              int     `json:"user_id"`
+	Description         string  `json:"description"`
+	StartTimeUTC        int64   `json:"start_time_utc"` // Unix timestamp in UTC
+	CreatedAt           int64   `json:"created_at"`     // Unix timestamp
 	ProjectName         *string `json:"project_name,omitempty"`
 	CustomerName        *string `json:"customer_name,omitempty"`
 	ItemTitle           *string `json:"item_title,omitempty"`
@@ -387,9 +380,8 @@ type Review struct {
 	ReviewData string    `json:"review_data"` // JSON data - unstructured storage
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
-	// Joined fields for API responses
-	UserName  string `json:"user_name,omitempty"`
-	UserEmail string `json:"user_email,omitempty"`
+	UserName   string    `json:"user_name,omitempty"`
+	UserEmail  string    `json:"user_email,omitempty"`
 }
 
 // ReviewCreateRequest represents the payload for creating a new review
@@ -413,36 +405,34 @@ type CompletedItemsRequest struct {
 
 // TestFolder represents a folder for organizing test cases
 type TestFolder struct {
-	ID          int       `json:"id"`
-	WorkspaceID int       `json:"workspace_id"`
-	ParentID    *int      `json:"parent_id,omitempty"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	SortOrder   int       `json:"sort_order"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
-	// Computed fields for API responses
-	TestCaseCount int `json:"test_case_count,omitempty"`
+	ID            int       `json:"id"`
+	WorkspaceID   int       `json:"workspace_id"`
+	ParentID      *int      `json:"parent_id,omitempty"`
+	Name          string    `json:"name"`
+	Description   string    `json:"description"`
+	SortOrder     int       `json:"sort_order"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	TestCaseCount int       `json:"test_case_count,omitempty"`
 }
 
 // TestCase represents a test case
 type TestCase struct {
-	ID                int       `json:"id"`
-	WorkspaceID       int       `json:"workspace_id"`
-	FolderID          *int      `json:"folder_id,omitempty"`
-	Title             string    `json:"title"`
-	Name              string    `json:"name"`
-	Priority          string    `json:"priority"`           // low, medium, high, critical
-	Status            string    `json:"status"`             // active, inactive, draft
-	EstimatedDuration int       `json:"estimated_duration"` // in seconds
-	Preconditions     string    `json:"preconditions"`
-	SortOrder         int       `json:"sort_order"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
-	// Computed fields for API responses
-	FolderName string      `json:"folder_name,omitempty"`
-	TestSteps  []TestStep  `json:"test_steps,omitempty"`
-	Labels     []TestLabel `json:"labels,omitempty"`
+	ID                int         `json:"id"`
+	WorkspaceID       int         `json:"workspace_id"`
+	FolderID          *int        `json:"folder_id,omitempty"`
+	Title             string      `json:"title"`
+	Name              string      `json:"name"`
+	Priority          string      `json:"priority"`           // low, medium, high, critical
+	Status            string      `json:"status"`             // active, inactive, draft
+	EstimatedDuration int         `json:"estimated_duration"` // in seconds
+	Preconditions     string      `json:"preconditions"`
+	SortOrder         int         `json:"sort_order"`
+	CreatedAt         time.Time   `json:"created_at"`
+	UpdatedAt         time.Time   `json:"updated_at"`
+	FolderName        string      `json:"folder_name,omitempty"`
+	TestSteps         []TestStep  `json:"test_steps,omitempty"`
+	Labels            []TestLabel `json:"labels,omitempty"`
 }
 
 // TestSet represents a collection of test cases
@@ -456,10 +446,8 @@ type TestSet struct {
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 
-	// Test case count
 	TestCaseCount int `json:"test_case_count,omitempty"`
 
-	// Test run statistics
 	TotalRuns      int        `json:"total_runs,omitempty"`
 	SuccessfulRuns int        `json:"successful_runs,omitempty"`
 	FailedRuns     int        `json:"failed_runs,omitempty"`
@@ -493,25 +481,23 @@ type TestRunTemplate struct {
 	Description string    `json:"description"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
-	// Joined fields for API responses
-	SetName string `json:"set_name,omitempty"`
+	SetName     string    `json:"set_name,omitempty"`
 }
 
 // TestRun represents an execution of a test set
 type TestRun struct {
-	ID          int        `json:"id"`
-	WorkspaceID int        `json:"workspace_id"`
-	TemplateID  int        `json:"template_id,omitempty"` // Optional reference to template
-	SetID       int        `json:"set_id"`
-	Name        string     `json:"name"`
-	AssigneeID  *int       `json:"assignee_id,omitempty"` // User assigned to execute this run
-	StartedAt   time.Time  `json:"started_at"`
-	EndedAt     *time.Time `json:"ended_at"`
-	CreatedAt   time.Time  `json:"created_at"`
-	// Computed fields from JOIN with users table
-	AssigneeName   string `json:"assignee_name,omitempty"`
-	AssigneeEmail  string `json:"assignee_email,omitempty"`
-	AssigneeAvatar string `json:"assignee_avatar,omitempty"`
+	ID             int        `json:"id"`
+	WorkspaceID    int        `json:"workspace_id"`
+	TemplateID     int        `json:"template_id,omitempty"` // Optional reference to template
+	SetID          int        `json:"set_id"`
+	Name           string     `json:"name"`
+	AssigneeID     *int       `json:"assignee_id,omitempty"` // User assigned to execute this run
+	StartedAt      time.Time  `json:"started_at"`
+	EndedAt        *time.Time `json:"ended_at"`
+	CreatedAt      time.Time  `json:"created_at"`
+	AssigneeName   string     `json:"assignee_name,omitempty"`
+	AssigneeEmail  string     `json:"assignee_email,omitempty"`
+	AssigneeAvatar string     `json:"assignee_avatar,omitempty"`
 }
 
 // TestResult represents the result of a test case execution
@@ -632,31 +618,26 @@ type RecurrenceRule struct {
 	TemplateItemID int `json:"template_item_id"`
 	WorkspaceID    int `json:"workspace_id"`
 
-	// iCalendar RRULE configuration (RFC 5545)
 	RRule    string     `json:"rrule"`   // e.g., "FREQ=WEEKLY;BYDAY=MO,WE,FR"
 	DtStart  time.Time  `json:"dtstart"` // Recurrence start date
 	DtEnd    *time.Time `json:"dtend,omitempty"`
 	Timezone string     `json:"timezone"` // IANA timezone
 
-	// Generation settings
 	LeadTimeDays        int        `json:"lead_time_days"`
 	LastGeneratedUntil  *time.Time `json:"last_generated_until,omitempty"`
 	NextGenerationCheck *time.Time `json:"next_generation_check,omitempty"`
 
-	// Instance configuration (what to copy from template)
 	CopyAssignee     bool `json:"copy_assignee"`
 	CopyPriority     bool `json:"copy_priority"`
 	CopyCustomFields bool `json:"copy_custom_fields"`
 	CopyDescription  bool `json:"copy_description"`
 	StatusOnCreate   *int `json:"status_on_create,omitempty"`
 
-	// Lifecycle
 	IsActive  bool      `json:"is_active"`
 	CreatedBy *int      `json:"created_by,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 
-	// Joined fields for API responses
 	TemplateTitle  string     `json:"template_title,omitempty"`
 	WorkspaceName  string     `json:"workspace_name,omitempty"`
 	WorkspaceKey   string     `json:"workspace_key,omitempty"`
@@ -674,7 +655,6 @@ type RecurrenceInstance struct {
 	SequenceNumber   int       `json:"sequence_number"`
 	CreatedAt        time.Time `json:"created_at"`
 
-	// Joined fields for API responses
 	ItemTitle  string `json:"item_title,omitempty"`
 	ItemStatus string `json:"item_status,omitempty"`
 }
@@ -821,7 +801,6 @@ type Action struct {
 
 // ActionTriggerConfig represents trigger-specific configuration
 type ActionTriggerConfig struct {
-	// For status_transition
 	FromStatusID *int `json:"from_status_id,omitempty"` // null means any status
 	ToStatusID   *int `json:"to_status_id,omitempty"`   // null means any status
 	// ToStatusCategoryIsCompleted matches when the to-status's category has
@@ -829,13 +808,10 @@ type ActionTriggerConfig struct {
 	// that want to fire on "any terminal transition" without enumerating
 	// per-workflow status IDs. Evaluated after FromStatusID/ToStatusID; both
 	// can be set together.
-	ToStatusCategoryIsCompleted *bool `json:"to_status_category_completed,omitempty"`
-	// For item_created and item_updated
-	ItemTypeID *int `json:"item_type_id,omitempty"` // Filter by item type (optional)
-	// For item_updated
-	FieldName string `json:"field_name,omitempty"` // Which field changed
-	// For item_linked
-	LinkTypeID *int `json:"link_type_id,omitempty"` // Filter by link type (optional)
+	ToStatusCategoryIsCompleted *bool  `json:"to_status_category_completed,omitempty"`
+	ItemTypeID                  *int   `json:"item_type_id,omitempty"` // Filter by item type (optional)
+	FieldName                   string `json:"field_name,omitempty"`   // Which field changed
+	LinkTypeID                  *int   `json:"link_type_id,omitempty"` // Filter by link type (optional)
 	// For scm_pr_linked and scm_pr_merged: optional filter to a specific
 	// workspace repository. When nil the trigger fires for any repository.
 	WorkspaceRepositoryID *int `json:"workspace_repository_id,omitempty"`
@@ -844,7 +820,6 @@ type ActionTriggerConfig struct {
 	// repository slug (e.g. "owner/repo"). Empty matches any repository.
 	RepositoryFullName string `json:"repository_full_name,omitempty"`
 
-	// Cascade control - applies to all trigger types
 	RespondToCascades bool `json:"respond_to_cascades,omitempty"` // If true, action responds to events triggered by other actions
 }
 
