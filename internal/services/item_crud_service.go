@@ -317,6 +317,37 @@ func (s *ItemCRUDService) ListContext(ctx context.Context, params ItemListParams
 	return s.repo.FindAllWithDetailsContext(ctx, params)
 }
 
+// ListByIDsContext loads item summaries through the canonical workspace-scoped
+// list query. IDs outside the supplied workspace scope are silently omitted.
+func (s *ItemCRUDService) ListByIDsContext(ctx context.Context, itemIDs, workspaceIDs []int) ([]models.Item, error) {
+	if len(itemIDs) == 0 || len(workspaceIDs) == 0 {
+		return []models.Item{}, nil
+	}
+
+	const batchSize = 500
+	items := make([]models.Item, 0, len(itemIDs))
+	for start := 0; start < len(itemIDs); start += batchSize {
+		end := min(start+batchSize, len(itemIDs))
+		batch, _, err := s.ListContext(ctx, ItemListParams{
+			WorkspaceIDs: workspaceIDs,
+			Filters: ItemFilters{
+				ItemIDs: itemIDs[start:end],
+			},
+			Pagination:       PaginationParams{Limit: end - start},
+			OmitDescriptions: true,
+		})
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, batch...)
+	}
+
+	if err := repository.NewMilestoneAttachRepository(s.db).LoadForItemsContext(ctx, items); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 // Search searches items by title and description
 func (s *ItemCRUDService) Search(query string, workspaceIDs []int, pagination PaginationParams) ([]models.Item, int, error) {
 	return s.repo.Search(query, workspaceIDs, pagination)

@@ -712,7 +712,15 @@ func (s *Server) initialize() error {
 	themeHandler := handlers.NewThemeHandler(services.NewThemeService(repository.NewThemeRepository(s.db)), logger.NewAuditor(s.db))
 	userPreferencesService := services.NewUserPreferencesService(repository.NewUserPreferencesRepository(s.db), repository.NewThemeRepository(s.db))
 	userPreferencesHandler := handlers.NewUserPreferencesHandler(userPreferencesService)
-	homepageHandler := handlers.NewHomepageHandler(repository.NewWorkspaceRepository(s.db), repository.NewItemRepository(s.db), s.activityTracker, permService, userPreferencesService)
+	homepageHandler := handlers.NewHomepageHandler(
+		repository.NewWorkspaceRepository(s.db),
+		repository.NewItemRepository(s.db),
+		services.NewItemCRUDService(s.db),
+		services.NewPlanningService(s.db),
+		s.activityTracker,
+		permService,
+		userPreferencesService,
+	)
 
 	notificationHandler := handlers.NewNotificationHandler(s.notificationManager, s.notificationService)
 	emailTemplateHandler := handlers.NewEmailTemplateHandler(repository.NewEmailTemplateRepository(s.db), logger.NewAuditor(s.db))
