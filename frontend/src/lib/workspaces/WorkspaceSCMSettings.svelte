@@ -246,17 +246,6 @@
     }
   }
 
-  function getProviderIcon(providerType) {
-    // Return appropriate styling based on provider type
-    const colors = {
-      github: '#333',
-      gitlab: '#FC6D26',
-      gitea: '#609926',
-      bitbucket: '#0052CC'
-    };
-    return colors[providerType] || '#666';
-  }
-
   function getProviderLabel(providerType) {
     const labels = {
       github: 'GitHub',
@@ -296,10 +285,6 @@
               class="flex items-center gap-2 px-3 py-2 rounded-lg border text-sm"
               style="border-color: var(--ds-border); background-color: var(--ds-surface-raised);"
             >
-              <span
-                class="w-2 h-2 rounded-full"
-                style="background-color: {getProviderIcon(provider.provider_type)};"
-              ></span>
               <span style="color: var(--ds-text);">{provider.name}</span>
               <span class="text-xs px-1.5 py-0.5 rounded" style="background-color: var(--ds-background-neutral); color: var(--ds-text-subtle);">
                 {getProviderLabel(provider.provider_type)}
@@ -351,10 +336,6 @@
                 {:else}
                   <ChevronRight class="w-4 h-4" style="color: var(--ds-text-subtle);" />
                 {/if}
-                <span
-                  class="w-3 h-3 rounded-full"
-                  style="background-color: {getProviderIcon(conn.provider_type)};"
-                ></span>
                 <span class="font-medium" style="color: var(--ds-text);">{conn.provider_name}</span>
                 <span class="text-xs px-1.5 py-0.5 rounded" style="background-color: var(--ds-background-neutral); color: var(--ds-text-subtle);">
                   {conn.repository_count} {conn.repository_count === 1 ? 'repository' : 'repositories'}
