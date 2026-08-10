@@ -868,6 +868,8 @@ func (s *Server) initialize() error {
 
 	assetHandler := handlers.NewAssetHandler(s.db, permService, cfg.AttachmentPath)
 	assetHandler.SetAssetActionService(s.assetActionService)
+	actionsHandler.SetAssetService(assetHandler.AssetService())
+	s.actionService.SetAssetNodeServices(assetHandler.AssetService(), assetHandler.AssetPermissionService())
 	if n, err := assetHandler.ReconcileInterruptedImports(); err != nil {
 		slog.Warn("failed to reconcile interrupted asset imports", slog.Any("error", err))
 	} else if n > 0 {
@@ -933,9 +935,7 @@ func (s *Server) initialize() error {
 	eventCoordinator.SetActionService(s.actionService)
 	eventCoordinator.SetAssetActionService(s.assetActionService)
 	eventCoordinator.SetMagicLinkService(magicLinkService)
-	s.actionService.SetAssetActionService(s.assetActionService)
 	s.actionService.SetEventCoordinator(eventCoordinator)
-	s.actionService.SetAssetPermissionChecker(assetHandler)
 	s.assetActionService.SetAssetPermissionChecker(assetHandler)
 	s.assetActionService.SetEventCoordinator(eventCoordinator)
 	slog.Info("event coordinator initialized")

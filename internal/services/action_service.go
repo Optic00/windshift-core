@@ -75,7 +75,6 @@ type ActionService struct {
 	// Dependencies for action execution
 	notificationService *NotificationService
 	commentService      *CommentService
-	assetActionService  AssetActionEventEmitter
 	teamService         *TeamService
 	approvalService     *ApprovalService
 	itemUpdate          *ItemUpdateApplicationService
@@ -88,10 +87,6 @@ type ActionService struct {
 	// (WI-146) when the node names a PoolCapabilityID; nil disables pool
 	// dispatch (container_run then requires containerService for local runs).
 	agentRuns *repository.AgentRunRepository
-
-	// Asset permission checker — consulted before create_asset / update_asset
-	// nodes mutate an asset set the action's actor may not control.
-	assetPermChecker AssetSetPermissionChecker
 
 	// Workspace permission service — consulted for item.edit / item.comment
 	// checks on nodes that mutate workspace items. The effective actor (see
@@ -117,70 +112,6 @@ type ActionService struct {
 	eventsProcessed int64
 	actionsExecuted int64
 	errors          int64
-}
-
-// ValidateAssetTaxonomyReferences rejects action node configurations whose
-// asset taxonomy IDs do not belong to their declared set. Executors repeat
-// these checks at write time as defense in depth; this method keeps invalid
-// definitions from being persisted in the first place.
-func (as *ActionService) ValidateAssetTaxonomyReferences(nodes []models.ActionNode) error {
-	repo := repository.NewAssetRepository(as.db)
-	for i, node := range nodes {
-		switch node.NodeType {
-		case models.ActionNodeCreateAsset:
-			var config models.CreateAssetNodeConfig
-			if err := json.Unmarshal([]byte(node.NodeConfig), &config); err != nil {
-				return fmt.Errorf("nodes[%d].node_config: parse create_asset config: %w", i, err)
-			}
-			if err := validateAssetTaxonomyForSet(repo, config.AssetSetID, config.AssetTypeID, config.CategoryID, config.StatusID); err != nil {
-				return fmt.Errorf("nodes[%d].node_config: %w", i, err)
-			}
-		case models.ActionNodeUpdateAsset:
-			var config models.UpdateAssetNodeConfig
-			if err := json.Unmarshal([]byte(node.NodeConfig), &config); err != nil {
-				return fmt.Errorf("nodes[%d].node_config: parse update_asset config: %w", i, err)
-			}
-			if err := validateAssetTaxonomyForSet(repo, config.AssetSetID, config.AssetTypeID, nil, nil); err != nil {
-				return fmt.Errorf("nodes[%d].node_config: %w", i, err)
-			}
-		}
-	}
-	return nil
-}
-
-func validateAssetTaxonomyForSet(repo *repository.AssetRepository, setID, typeID int, categoryID, statusID *int) error {
-	if setID <= 0 {
-		return fmt.Errorf("asset_set_id must be positive")
-	}
-	if typeID <= 0 {
-		return fmt.Errorf("asset_type_id must be positive")
-	}
-	belongs, err := repo.AssetTypeBelongsToSet(typeID, setID)
-	if err != nil {
-		return fmt.Errorf("validate asset_type_id: %w", err)
-	}
-	if !belongs {
-		return fmt.Errorf("asset_type_id %d does not belong to asset_set_id %d", typeID, setID)
-	}
-	if categoryID != nil {
-		belongs, err = repo.CategoryBelongsToSet(*categoryID, setID)
-		if err != nil {
-			return fmt.Errorf("validate category_id: %w", err)
-		}
-		if !belongs {
-			return fmt.Errorf("category_id %d does not belong to asset_set_id %d", *categoryID, setID)
-		}
-	}
-	if statusID != nil {
-		belongs, err = repo.StatusBelongsToSet(*statusID, setID)
-		if err != nil {
-			return fmt.Errorf("validate status_id: %w", err)
-		}
-		if !belongs {
-			return fmt.Errorf("status_id %d does not belong to asset_set_id %d", *statusID, setID)
-		}
-	}
-	return nil
 }
 
 // NewActionService creates a new action service
@@ -235,11 +166,6 @@ func (as *ActionService) SetCommentService(cs *CommentService) {
 	as.commentService = cs
 }
 
-// SetAssetActionService sets the asset action service for emitting asset events from create_asset/update_asset nodes.
-func (as *ActionService) SetAssetActionService(aas AssetActionEventEmitter) {
-	as.assetActionService = aas
-}
-
 // SetTeamService sets the team service for round-robin assignment actions
 func (as *ActionService) SetTeamService(ts *TeamService) {
 	as.teamService = ts
@@ -277,10 +203,11 @@ func (as *ActionService) SetContainerService(cs *ContainerService) {
 	as.containerService = cs
 }
 
-// SetAssetPermissionChecker wires the asset-set RBAC check used by
-// create_asset / update_asset nodes.
-func (as *ActionService) SetAssetPermissionChecker(c AssetSetPermissionChecker) {
-	as.assetPermChecker = c
+// SetAssetNodeServices registers asset executors with the shared asset
+// mutation service and permission checker used by the asset API.
+func (as *ActionService) SetAssetNodeServices(assetService *AssetService, permissions AssetSetPermissionChecker) {
+	as.RegisterNodeExecutor(NewCreateAssetNodeExecutor(assetService, as.itemRepo, permissions, as))
+	as.RegisterNodeExecutor(NewUpdateAssetNodeExecutor(assetService, as.itemRepo, permissions, as))
 }
 
 // SetPermissionService wires the workspace permission service used by
@@ -988,10 +915,6 @@ func (as *ActionService) executeNode(node *models.ActionNode, ctx *models.Execut
 		return as.executeNotifyUser(node, ctx, stepResult)
 	case models.ActionNodeCondition:
 		return as.executeCondition(node, ctx, stepResult)
-	case models.ActionNodeUpdateAsset:
-		return as.executeUpdateAsset(node, ctx, stepResult)
-	case models.ActionNodeCreateAsset:
-		return as.executeCreateAsset(node, ctx, stepResult)
 	case models.ActionNodeRoundRobinAssign:
 		return as.executeRoundRobinAssign(node, ctx, stepResult)
 	case models.ActionNodeAIExtract:
@@ -1073,6 +996,10 @@ func derefTimePtr(p *time.Time) interface{} {
 }
 
 func (as *ActionService) currentItemFieldValue(ctx *models.ExecutionContext, fieldName string) interface{} {
+	return currentItemFieldValue(as.itemRepo, ctx, fieldName)
+}
+
+func currentItemFieldValue(itemRepo *repository.ItemRepository, ctx *models.ExecutionContext, fieldName string) interface{} {
 	if ctx == nil {
 		return nil
 	}
@@ -1087,7 +1014,7 @@ func (as *ActionService) currentItemFieldValue(ctx *models.ExecutionContext, fie
 		if strings.HasPrefix(fieldName, "custom_field_") {
 			customFieldID, err := strconv.Atoi(strings.TrimPrefix(fieldName, "custom_field_"))
 			if err == nil && customFieldID > 0 {
-				if val, readErr := as.itemRepo.GetItemCustomFieldValue(itemID, customFieldID); readErr == nil {
+				if val, readErr := itemRepo.GetItemCustomFieldValue(itemID, customFieldID); readErr == nil {
 					return val
 				}
 			}
@@ -1097,7 +1024,7 @@ func (as *ActionService) currentItemFieldValue(ctx *models.ExecutionContext, fie
 		}
 	}
 	if itemID != 0 && repository.IsAllowedItemColumn(fieldName) {
-		if val, err := as.itemRepo.GetAllowedColumnValue(itemID, fieldName); err == nil {
+		if val, err := itemRepo.GetAllowedColumnValue(itemID, fieldName); err == nil {
 			return val
 		}
 	}
@@ -2066,25 +1993,6 @@ func (as *ActionService) cleanupActionContainers(results []models.StepResult) {
 	}
 }
 
-// authorizeAssetMutation requires an identified effective actor and asset-set
-// RBAC, failing closed when authorization is unavailable.
-func (as *ActionService) authorizeAssetMutation(actorUserID, setID int, permissionKey string) error {
-	if actorUserID <= 0 {
-		return fmt.Errorf("asset mutation requires an identified actor (set %d)", setID)
-	}
-	if as.assetPermChecker == nil {
-		return fmt.Errorf("asset mutation blocked: asset permission checker not configured")
-	}
-	ok, err := as.assetPermChecker.HasAssetSetPermission(actorUserID, setID, permissionKey)
-	if err != nil {
-		return fmt.Errorf("failed to check asset set %d permission: %w", setID, err)
-	}
-	if !ok {
-		return fmt.Errorf("user %d not authorized (%s) on asset set %d", actorUserID, permissionKey, setID)
-	}
-	return nil
-}
-
 // authorizeWorkspaceMutation requires effective-actor workspace access and
 // fails closed when authorization is unavailable.
 func (as *ActionService) authorizeWorkspaceMutation(actorUserID, workspaceID int, permissionKey string) error {
@@ -2112,342 +2020,6 @@ func (as *ActionService) getStatusName(statusID int) string {
 		return fmt.Sprintf("Status #%d", statusID)
 	}
 	return name
-}
-
-// executeUpdateAsset executes an update_asset node
-func (as *ActionService) executeUpdateAsset(node *models.ActionNode, ctx *models.ExecutionContext, stepResult *models.StepResult) error {
-	var config models.UpdateAssetNodeConfig
-	if err := json.Unmarshal([]byte(node.NodeConfig), &config); err != nil {
-		return fmt.Errorf("failed to parse update_asset config: %w", err)
-	}
-
-	// Skip if no field mappings configured
-	if len(config.FieldMappings) == 0 {
-		stepResult.Output = map[string]interface{}{
-			"skipped": true,
-			"reason":  "no field mappings configured",
-		}
-		return nil
-	}
-
-	itemID := currentActionItemID(ctx)
-	// Get the item's custom_field_values to find the asset reference
-	customFieldValuesJSON, err := as.itemRepo.GetCustomFieldValuesRaw(itemID)
-	if err != nil {
-		return fmt.Errorf("failed to get item custom_field_values: %w", err)
-	}
-
-	var customFieldValues map[string]interface{}
-	if customFieldValuesJSON.Valid && customFieldValuesJSON.String != "" {
-		if err = json.Unmarshal([]byte(customFieldValuesJSON.String), &customFieldValues); err != nil {
-			return fmt.Errorf("failed to parse item custom_field_values: %w", err)
-		}
-	}
-
-	// Extract asset ID from source field
-	assetFieldValue, exists := customFieldValues[config.SourceFieldID]
-	if !exists || assetFieldValue == nil {
-		stepResult.Output = map[string]interface{}{
-			"skipped": true,
-			"reason":  "no asset linked in source field",
-		}
-		return nil
-	}
-
-	// Handle both integer and object formats for asset field value
-	var assetID int
-	switch v := assetFieldValue.(type) {
-	case float64:
-		assetID = int(v)
-	case int:
-		assetID = v
-	case map[string]interface{}:
-		// Object format: { "id": 123, ... }
-		if idVal, ok := v["id"]; ok {
-			switch id := idVal.(type) {
-			case float64:
-				assetID = int(id)
-			case int:
-				assetID = id
-			}
-		}
-	}
-
-	if assetID == 0 {
-		stepResult.Output = map[string]interface{}{
-			"skipped": true,
-			"reason":  "invalid asset reference format",
-		}
-		return nil
-	}
-
-	// Get the asset and validate it exists with expected type/set
-	var asset struct {
-		ID                int
-		SetID             int
-		AssetTypeID       int
-		CustomFieldValues sql.NullString
-	}
-	err = as.db.QueryRow(`
-		SELECT id, set_id, asset_type_id, custom_field_values
-		FROM assets WHERE id = ?
-	`, assetID).Scan(&asset.ID, &asset.SetID, &asset.AssetTypeID, &asset.CustomFieldValues)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("asset not found: %d", assetID)
-		}
-		return fmt.Errorf("failed to get asset: %w", err)
-	}
-
-	// Validate asset type if specified
-	if config.AssetTypeID > 0 && asset.AssetTypeID != config.AssetTypeID {
-		return fmt.Errorf("asset type mismatch: expected %d, got %d", config.AssetTypeID, asset.AssetTypeID)
-	}
-
-	// Validate asset set if specified
-	if config.AssetSetID > 0 && asset.SetID != config.AssetSetID {
-		return fmt.Errorf("asset set mismatch: expected %d, got %d", config.AssetSetID, asset.SetID)
-	}
-
-	// Authorize the effective actor against the resolved set's RBAC. Without
-	// this, an action could mutate assets in a set where the actor has no
-	// role at all.
-	if err := as.authorizeAssetMutation(ctx.EffectiveActorID, asset.SetID, "asset.edit"); err != nil {
-		return err
-	}
-
-	// Parse existing asset custom_field_values
-	var assetCustomFields map[string]interface{}
-	if asset.CustomFieldValues.Valid && asset.CustomFieldValues.String != "" {
-		if err = json.Unmarshal([]byte(asset.CustomFieldValues.String), &assetCustomFields); err != nil {
-			assetCustomFields = make(map[string]interface{})
-		}
-	} else {
-		assetCustomFields = make(map[string]interface{})
-	}
-
-	// Track old values for logging
-	oldValues := make(map[string]interface{})
-	newValues := make(map[string]interface{})
-
-	// Apply field mappings
-	for _, mapping := range config.FieldMappings {
-		var sourceValue interface{}
-
-		switch mapping.SourceType {
-		case "variable":
-			// Substitute variables in the template
-			sourceValue = as.substituteVariables(mapping.SourceValue, ctx)
-		case "item_field":
-			// Get value from the current item, then its custom fields.
-			if val := as.currentItemFieldValue(ctx, mapping.SourceValue); val != nil {
-				sourceValue = val
-			} else if val, ok := customFieldValues[mapping.SourceValue]; ok {
-				sourceValue = val
-			}
-		case "literal":
-			sourceValue = mapping.SourceValue
-		default:
-			// Default to variable substitution
-			sourceValue = as.substituteVariables(mapping.SourceValue, ctx)
-		}
-
-		// Track changes
-		oldValues[mapping.TargetFieldID] = assetCustomFields[mapping.TargetFieldID]
-		newValues[mapping.TargetFieldID] = sourceValue
-
-		// Update the asset field
-		assetCustomFields[mapping.TargetFieldID] = sourceValue
-	}
-
-	assetRepo := repository.NewAssetRepository(as.db)
-	assetService := NewAssetService(as.db, assetRepo)
-	assetService.SetActionService(as.assetActionService)
-	updated, err := assetService.MutateAsset(
-		automationAuditActor(as.db, ctx.EffectiveActorID, "workspace_action"),
-		assetID,
-		AssetMutationPatch{CustomFieldValues: assetCustomFields},
-		AssetAutomationContext{
-			TriggeredByAction: true,
-			ExecutionChainID:  ctx.ChainID,
-			CascadeDepth:      ctx.Event.CascadeDepth + 1,
-			SourceApplication: "workspace",
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("mutate asset custom fields: %w", err)
-	}
-	for k := range newValues {
-		newValues[k] = updated.CustomFieldValues[k]
-	}
-
-	// Populate step result output
-	stepResult.Output = map[string]interface{}{
-		"asset_id":      assetID,
-		"old_values":    oldValues,
-		"new_values":    newValues,
-		"mapping_count": len(config.FieldMappings),
-	}
-
-	slog.Debug("updated asset via action",
-		slog.String("component", "actions"),
-		slog.Int("asset_id", assetID),
-		slog.Int("item_id", itemID),
-		slog.Any("mappings", len(config.FieldMappings)),
-	)
-
-	return nil
-}
-
-// executeCreateAsset executes a create_asset node
-func (as *ActionService) executeCreateAsset(node *models.ActionNode, ctx *models.ExecutionContext, stepResult *models.StepResult) error {
-	var config models.CreateAssetNodeConfig
-	if err := json.Unmarshal([]byte(node.NodeConfig), &config); err != nil {
-		return fmt.Errorf("failed to parse create_asset config: %w", err)
-	}
-
-	// Validate required fields
-	if config.AssetSetID == 0 {
-		return fmt.Errorf("asset_set_id is required")
-	}
-	if config.AssetTypeID == 0 {
-		return fmt.Errorf("asset_type_id is required")
-	}
-	assetRepo := repository.NewAssetRepository(as.db)
-	typeBelongs, err := assetRepo.AssetTypeBelongsToSet(config.AssetTypeID, config.AssetSetID)
-	if err != nil {
-		return fmt.Errorf("validate asset type: %w", err)
-	}
-	if !typeBelongs {
-		return fmt.Errorf("asset_type_id %d does not belong to asset_set_id %d", config.AssetTypeID, config.AssetSetID)
-	}
-	if config.CategoryID != nil {
-		if *config.CategoryID <= 0 {
-			return fmt.Errorf("category_id must be positive")
-		}
-		categoryBelongs, err := assetRepo.CategoryBelongsToSet(*config.CategoryID, config.AssetSetID)
-		if err != nil {
-			return fmt.Errorf("validate asset category: %w", err)
-		}
-		if !categoryBelongs {
-			return fmt.Errorf("category_id %d does not belong to asset_set_id %d", *config.CategoryID, config.AssetSetID)
-		}
-	}
-	if config.StatusID != nil {
-		if *config.StatusID <= 0 {
-			return fmt.Errorf("status_id must be positive")
-		}
-		statusBelongs, err := assetRepo.StatusBelongsToSet(*config.StatusID, config.AssetSetID)
-		if err != nil {
-			return fmt.Errorf("validate asset status: %w", err)
-		}
-		if !statusBelongs {
-			return fmt.Errorf("status_id %d does not belong to asset_set_id %d", *config.StatusID, config.AssetSetID)
-		}
-	}
-
-	// Authorize the effective actor against the target set before we create anything.
-	if err := as.authorizeAssetMutation(ctx.EffectiveActorID, config.AssetSetID, "asset.create"); err != nil {
-		return err
-	}
-
-	// Substitute variables in title, description, and asset_tag.
-	// Substituted variables can carry user content — apply the same
-	// input policy the normal asset create path runs (WI-319) before
-	// anything reaches the INSERT.
-	title := as.substituteVariables(config.Title, ctx)
-	description := as.substituteVariables(config.Description, ctx)
-	assetTag := as.substituteVariables(config.AssetTag, ctx)
-	sanitizeAssetText(&title, &description, &assetTag)
-	if title == "" {
-		return fmt.Errorf("title is required and cannot be empty after substitution")
-	}
-
-	itemID := currentActionItemID(ctx)
-	// Get item's custom field values for field mapping
-	customFieldValuesJSON, err := as.itemRepo.GetCustomFieldValuesRaw(itemID)
-	if err != nil && !errors.Is(err, repository.ErrNotFound) {
-		return fmt.Errorf("failed to get item custom_field_values: %w", err)
-	}
-
-	var itemCustomFields map[string]interface{}
-	if customFieldValuesJSON.Valid && customFieldValuesJSON.String != "" {
-		if err = json.Unmarshal([]byte(customFieldValuesJSON.String), &itemCustomFields); err != nil {
-			itemCustomFields = make(map[string]interface{})
-		}
-	} else {
-		itemCustomFields = make(map[string]interface{})
-	}
-
-	// Build custom_field_values from field mappings
-	assetCustomFields := make(map[string]interface{})
-	for _, mapping := range config.FieldMappings {
-		var sourceValue interface{}
-
-		switch mapping.SourceType {
-		case "variable":
-			sourceValue = as.substituteVariables(mapping.SourceValue, ctx)
-		case "item_field":
-			if val := as.currentItemFieldValue(ctx, mapping.SourceValue); val != nil {
-				sourceValue = val
-			} else if val, ok := itemCustomFields[mapping.SourceValue]; ok {
-				sourceValue = val
-			}
-		case "literal":
-			sourceValue = mapping.SourceValue
-		default:
-			sourceValue = as.substituteVariables(mapping.SourceValue, ctx)
-		}
-
-		assetCustomFields[mapping.TargetFieldID] = sourceValue
-	}
-
-	assetService := NewAssetService(as.db, assetRepo)
-	assetService.SetActionService(as.assetActionService)
-	created, err := assetService.CreateAssetWithContext(
-		automationAuditActor(as.db, ctx.EffectiveActorID, "workspace_action"),
-		repository.CreateAssetInput{
-			SetID:       config.AssetSetID,
-			AssetTypeID: config.AssetTypeID,
-			CategoryID:  config.CategoryID,
-			StatusID:    config.StatusID,
-			Title:       title,
-			Description: description,
-			AssetTag:    assetTag,
-			CreatedBy:   ctx.EffectiveActorID,
-			CreatedAt:   time.Now(),
-		},
-		assetCustomFields,
-		AssetAutomationContext{
-			TriggeredByAction: true,
-			ExecutionChainID:  ctx.ChainID,
-			CascadeDepth:      ctx.Event.CascadeDepth + 1,
-			SourceApplication: "workspace",
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("create asset through mutation service: %w", err)
-	}
-	assetID := created.ID
-
-	// Populate step result output
-	stepResult.Output = map[string]interface{}{
-		"asset_id":      assetID,
-		"title":         title,
-		"description":   description,
-		"asset_tag":     assetTag,
-		"asset_set_id":  config.AssetSetID,
-		"asset_type_id": config.AssetTypeID,
-		"mapping_count": len(config.FieldMappings),
-	}
-
-	slog.Debug("created asset via action",
-		slog.String("component", "actions"),
-		slog.Int("asset_id", assetID),
-		slog.Int("item_id", itemID),
-	)
-
-	return nil
 }
 
 // executeRoundRobinAssign executes a round_robin_assign node

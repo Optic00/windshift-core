@@ -27,8 +27,14 @@ type ActionsHandler struct {
 	itemRepo          *repository.ItemRepository
 	auditor           *logger.Auditor
 	actionService     *services.ActionService
+	assetService      *services.AssetService
 	permissionService *services.PermissionService
 	keyCache          *WorkspaceKeyCache
+}
+
+// SetAssetService shares asset taxonomy validation with action definitions.
+func (h *ActionsHandler) SetAssetService(service *services.AssetService) {
+	h.assetService = service
 }
 
 // NewActionsHandler creates a new actions handler
@@ -110,8 +116,8 @@ func (h *ActionsHandler) validateActionDefinition(w http.ResponseWriter, r *http
 		restapi.RespondError(w, r, apiErr)
 		return false
 	}
-	if h.actionService != nil {
-		if err := h.actionService.ValidateAssetTaxonomyReferences(def.Nodes); err != nil {
+	if h.assetService != nil {
+		if err := h.assetService.ValidateActionTaxonomyReferences(def.Nodes); err != nil {
 			apiErr := restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, err.Error())
 			restapi.RespondError(w, r, apiErr)
 			return false
