@@ -66,7 +66,7 @@
   maxWidth="max-w-xs"
   triggerIcon={MoreHorizontal}
   triggerClass="p-1 rounded hover:bg-[var(--ds-background-neutral-hovered)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-border-focused)]"
-  triggerStyle="color: var(--ctx-text-subtle, var(--ds-text-subtle));"
+  triggerStyle="color: var(--ds-text-subtle);"
   iconOnly
   showChevron={false}
   {disabled}
