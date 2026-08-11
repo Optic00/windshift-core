@@ -25,8 +25,8 @@ CREATE TABLE IF NOT EXISTS milestones (
 	FOREIGN KEY (category_id) REFERENCES milestone_categories(id) ON DELETE SET NULL,
 	FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
 	CONSTRAINT milestones_scope_check CHECK (
-		(is_global = 1 AND workspace_id IS NULL) OR
-		(is_global = 0 AND workspace_id IS NOT NULL)
+		(is_global = TRUE AND workspace_id IS NULL) OR
+		(is_global = FALSE AND workspace_id IS NOT NULL)
 	)
 );
 
@@ -85,3 +85,5 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_milestones_workspace_external_key
 -- reorder. Existing installs use milestones_existing.sql before catalog
 -- migrations, so this canonical fresh-install schema can include the index.
 CREATE INDEX IF NOT EXISTS idx_milestones_position ON milestones(is_global, workspace_id, category_id, position);
+
+-- migration: 20260716_milestone_scope_guard

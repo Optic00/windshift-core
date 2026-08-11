@@ -9,8 +9,8 @@ CREATE TABLE IF NOT EXISTS scm_providers (
 	name TEXT NOT NULL,                           -- Display name (e.g., "GitHub - Main Org")
 	provider_type TEXT NOT NULL,                  -- 'github', 'gitlab', 'gitea', 'bitbucket'
 	auth_method TEXT NOT NULL,                    -- 'oauth', 'pat', 'github_app'
-	enabled BOOLEAN DEFAULT 0,
-	is_default BOOLEAN DEFAULT 0,
+	enabled BOOLEAN DEFAULT FALSE,
+	is_default BOOLEAN DEFAULT FALSE,
 	-- Connection settings
 	base_url TEXT,                                -- API base URL (null = use provider default)
 	-- OAuth credentials
@@ -74,11 +74,11 @@ CREATE TABLE IF NOT EXISTS workspace_scm_connections (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	workspace_id INTEGER NOT NULL,
 	scm_provider_id INTEGER NOT NULL,
-	enabled BOOLEAN DEFAULT 1,
+	enabled BOOLEAN DEFAULT TRUE,
 	-- Smart-commit processing (#comment / #<transition>) on PR merge. Default
 	-- off — acting-user resolution trusts the raw git committer email, which
 	-- is not authenticated. Workspace admins must opt in knowingly.
-	smart_commits_enabled BOOLEAN DEFAULT 0,
+	smart_commits_enabled BOOLEAN DEFAULT FALSE,
 	-- Workspace-specific settings
 	default_branch_pattern TEXT,                  -- e.g., "main", "develop"
 	item_key_pattern TEXT,                        -- Regex for detecting item keys (default uses workspace key)
@@ -107,7 +107,7 @@ CREATE TABLE IF NOT EXISTS workspace_repositories (
 	repository_name TEXT NOT NULL,                -- e.g., "org/repo-name"
 	repository_url TEXT NOT NULL,                 -- Clone/web URL
 	default_branch TEXT DEFAULT 'main',
-	is_active BOOLEAN DEFAULT 1,
+	is_active BOOLEAN DEFAULT TRUE,
 	last_synced_at DATETIME,
 	milestone_tag_pattern TEXT NOT NULL DEFAULT 'v*',           -- Glob of tags that trigger the milestone-from-tag action
 	milestone_branch_pattern TEXT NOT NULL DEFAULT 'release/*', -- Glob of branches that trigger the planning-milestone action
@@ -291,7 +291,7 @@ CREATE INDEX IF NOT EXISTS idx_user_scm_tokens_provider ON user_scm_oauth_tokens
 CREATE TABLE IF NOT EXISTS issue_sync_configs (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	workspace_repository_id INTEGER NOT NULL UNIQUE,
-	sync_enabled BOOLEAN DEFAULT 0,
+	sync_enabled BOOLEAN DEFAULT FALSE,
 	-- Status mapping: GitHub state → Windshift status ID
 	status_mapping TEXT DEFAULT '{}',               -- JSON: {"open": <status_id>, "closed": <status_id>}
 	reverse_status_mapping TEXT DEFAULT '{}',        -- JSON: {<status_id>: "open"|"closed", ...}
@@ -306,7 +306,7 @@ CREATE TABLE IF NOT EXISTS issue_sync_configs (
 	default_item_type_id INTEGER,
 	default_priority_id INTEGER,
 	-- Comment sync
-	sync_comments BOOLEAN DEFAULT 0,
+	sync_comments BOOLEAN DEFAULT FALSE,
 	-- Sync state
 	last_full_sync_at DATETIME,
 	last_sync_error TEXT,
@@ -330,7 +330,7 @@ CREATE TABLE IF NOT EXISTS issue_sync_items (
 	github_issue_url TEXT NOT NULL,
 	last_synced_at DATETIME,
 	last_github_updated_at DATETIME,                 -- GitHub's updated_at at last sync
-	sync_lock BOOLEAN DEFAULT 0,                     -- Prevents re-entrant sync during pushback
+	sync_lock BOOLEAN DEFAULT FALSE,                     -- Prevents re-entrant sync during pushback
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	FOREIGN KEY (issue_sync_config_id) REFERENCES issue_sync_configs(id) ON DELETE CASCADE,
@@ -358,3 +358,5 @@ CREATE TABLE IF NOT EXISTS issue_sync_comments (
 
 CREATE INDEX IF NOT EXISTS idx_issue_sync_comments_item ON issue_sync_comments(issue_sync_item_id);
 CREATE INDEX IF NOT EXISTS idx_issue_sync_comments_comment ON issue_sync_comments(comment_id);
+
+-- migration: 0021_workspace_scm_connections_smart_commits_enabled

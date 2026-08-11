@@ -8,7 +8,7 @@
 					icon TEXT DEFAULT 'FileText',
 					color TEXT DEFAULT '#6b7280',
 					display_order INTEGER DEFAULT 0,
-					is_active BOOLEAN DEFAULT 1,
+					is_active BOOLEAN DEFAULT TRUE,
 					config TEXT DEFAULT NULL,
 					visibility_group_ids TEXT DEFAULT NULL,
 					visibility_org_ids TEXT DEFAULT NULL,
@@ -21,3 +21,5 @@
 					FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE SET NULL
 				);
 			
+
+-- migration: 0000_baseline

@@ -147,7 +147,7 @@ func (s *ApprovalSetService) Update(ctx context.Context, id int, input models.Ap
 		if err := s.repo.UpdateSet(ctx, tx, id, input.Name, input.Description); err != nil {
 			return err
 		}
-		// Soft-archive: drop unreferenced rows, flip the rest to is_active=0,
+		// Soft-archive: drop unreferenced rows, flip the rest to is_active=FALSE,
 		// then insert fresh active rows. In-flight requests' FK to the
 		// archived snapshot is preserved.
 		if err := s.repo.DeleteUnreferencedStatuses(ctx, tx, id); err != nil {

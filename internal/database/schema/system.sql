@@ -111,7 +111,7 @@ CREATE TABLE IF NOT EXISTS oauth_clients (
 	redirect_uris TEXT NOT NULL DEFAULT '[]',
 	allowed_scopes TEXT NOT NULL DEFAULT '[]',
 	resource_uri TEXT,
-	enabled BOOLEAN NOT NULL DEFAULT 1,
+	enabled BOOLEAN NOT NULL DEFAULT TRUE,
 	created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -322,7 +322,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 	resource_id INTEGER,
 	resource_name TEXT,
 	details TEXT,
-	success BOOLEAN NOT NULL DEFAULT 1,
+	success BOOLEAN NOT NULL DEFAULT TRUE,
 	error_message TEXT,
 	FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
 );
@@ -521,7 +521,7 @@ CREATE TABLE IF NOT EXISTS scheduler_runs (
 	completed_at DATETIME,
 	duration_ms INTEGER,
 	items_processed INTEGER,
-	success BOOLEAN NOT NULL DEFAULT 0,
+	success BOOLEAN NOT NULL DEFAULT FALSE,
 	error_message TEXT
 );
 
@@ -555,3 +555,5 @@ CREATE TABLE IF NOT EXISTS pending_custom_field_cleanups (
 );
 
 CREATE INDEX IF NOT EXISTS idx_pending_cfv_cleanups_status ON pending_custom_field_cleanups(status, created_at);
+
+-- migration: 0000_baseline

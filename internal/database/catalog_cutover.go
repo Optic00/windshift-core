@@ -241,7 +241,7 @@ func rebuildSQLiteApprovalSetStatuses(db Database) error {
 		`DROP TABLE approval_set_statuses`,
 		`ALTER TABLE approval_set_statuses_new RENAME TO approval_set_statuses`,
 		`CREATE UNIQUE INDEX uq_approval_set_statuses_active
-			ON approval_set_statuses(approval_set_id, status_id) WHERE is_active = 1`,
+			ON approval_set_statuses(approval_set_id, status_id) WHERE is_active = TRUE`,
 	})
 }
 
@@ -260,8 +260,8 @@ func rebuildSQLitePagesWithoutSlugUniqueness(db Database) error {
 			created_by INTEGER NOT NULL,
 			updated_by INTEGER,
 			archived_by INTEGER,
-			is_home BOOLEAN NOT NULL DEFAULT 0,
-			inherit_permissions BOOLEAN NOT NULL DEFAULT 1,
+			is_home BOOLEAN NOT NULL DEFAULT FALSE,
+			inherit_permissions BOOLEAN NOT NULL DEFAULT TRUE,
 			rank TEXT,
 			frac_index TEXT COLLATE BINARY,
 			path TEXT NOT NULL DEFAULT '/',
@@ -291,7 +291,7 @@ func rebuildSQLitePagesWithoutSlugUniqueness(db Database) error {
 		`CREATE INDEX IF NOT EXISTS idx_pages_workspace_archived ON pages(workspace_id, archived_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_pages_path ON pages(path)`,
 		`CREATE INDEX IF NOT EXISTS idx_pages_content_hash ON pages(content_hash) WHERE content_hash != ''`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_workspace_home ON pages(workspace_id) WHERE is_home = 1 AND archived_at IS NULL`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_workspace_home ON pages(workspace_id) WHERE is_home = TRUE AND archived_at IS NULL`,
 		`CREATE INDEX IF NOT EXISTS idx_pages_workspace_parent_rank ON pages(workspace_id, parent_id, rank) WHERE rank IS NOT NULL`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_frac_index_scoped
 			ON pages(workspace_id, COALESCE(parent_id, -1), frac_index)

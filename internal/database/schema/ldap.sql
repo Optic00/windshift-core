@@ -4,13 +4,13 @@
 CREATE TABLE IF NOT EXISTS ldap_configs (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	name TEXT NOT NULL,
-	enabled BOOLEAN DEFAULT 0,
+	enabled BOOLEAN DEFAULT FALSE,
 	-- Connection settings
 	host TEXT NOT NULL,
 	port INTEGER NOT NULL DEFAULT 389,
-	use_tls BOOLEAN DEFAULT 0,           -- Use STARTTLS
-	use_ssl BOOLEAN DEFAULT 0,           -- Use LDAPS (port 636)
-	skip_tls_verify BOOLEAN DEFAULT 0,   -- Skip TLS certificate verification (dev only)
+	use_tls BOOLEAN DEFAULT FALSE,           -- Use STARTTLS
+	use_ssl BOOLEAN DEFAULT FALSE,           -- Use LDAPS (port 636)
+	skip_tls_verify BOOLEAN DEFAULT FALSE,   -- Skip TLS certificate verification (dev only)
 	-- Bind credentials
 	bind_dn TEXT NOT NULL,               -- DN for binding to LDAP (e.g., cn=admin,dc=example,dc=com)
 	bind_password_encrypted TEXT NOT NULL, -- Encrypted bind password
@@ -28,8 +28,8 @@ CREATE TABLE IF NOT EXISTS ldap_configs (
 	attr_group_member TEXT DEFAULT 'member', -- Group membership attribute
 	-- Sync settings
 	sync_interval_minutes INTEGER DEFAULT 60,  -- Auto-sync interval (0 = disabled)
-	auto_provision_users BOOLEAN DEFAULT 1,    -- Create users on sync
-	auto_deactivate_users BOOLEAN DEFAULT 0,   -- Deactivate users removed from LDAP
+	auto_provision_users BOOLEAN DEFAULT TRUE,    -- Create users on sync
+	auto_deactivate_users BOOLEAN DEFAULT FALSE,   -- Deactivate users removed from LDAP
 	-- Metadata
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -73,3 +73,5 @@ CREATE TABLE IF NOT EXISTS ldap_user_mappings (
 CREATE INDEX IF NOT EXISTS idx_ldap_user_mappings_config_id ON ldap_user_mappings(config_id);
 CREATE INDEX IF NOT EXISTS idx_ldap_user_mappings_user_id ON ldap_user_mappings(user_id);
 CREATE INDEX IF NOT EXISTS idx_ldap_user_mappings_ldap_dn ON ldap_user_mappings(ldap_dn);
+
+-- migration: 0000_baseline

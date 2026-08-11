@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
 	requested_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	response_status_code INTEGER,        -- NULL on connection error or plugin transport
 	response_time_ms INTEGER,            -- NULL on hard failure
-	success BOOLEAN NOT NULL DEFAULT 0,  -- denormalized for fast filtering
+	success BOOLEAN NOT NULL DEFAULT FALSE,  -- denormalized for fast filtering
 	error_message TEXT,
 	response_preview TEXT,               -- up to 4 KiB of non-2xx response body for diagnostics
 	FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE,
@@ -80,3 +80,5 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
 CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_channel_id ON webhook_deliveries(channel_id);
 CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_requested_at ON webhook_deliveries(requested_at);
 CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_success ON webhook_deliveries(success);
+
+-- migration: 0000_baseline

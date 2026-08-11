@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS customer_organisations (
 	name TEXT NOT NULL,
 	email TEXT,
 	description TEXT,
-	active BOOLEAN DEFAULT 1,
+	active BOOLEAN DEFAULT TRUE,
 	avatar_url TEXT,
 	custom_field_values TEXT,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS time_projects (
 	color TEXT,
 	hourly_rate REAL DEFAULT 0,
 	settings TEXT,
-	active BOOLEAN DEFAULT 1,
+	active BOOLEAN DEFAULT TRUE,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	FOREIGN KEY (customer_id) REFERENCES customer_organisations(id) ON DELETE SET NULL,
@@ -134,3 +134,5 @@ CREATE TABLE IF NOT EXISTS customer_organisation_members (
 
 CREATE INDEX IF NOT EXISTS idx_customer_organisation_managers_org ON customer_organisation_managers(customer_organisation_id);
 CREATE INDEX IF NOT EXISTS idx_customer_organisation_members_org ON customer_organisation_members(customer_organisation_id);
+
+-- migration: 0023_time_projects_active_sqlite

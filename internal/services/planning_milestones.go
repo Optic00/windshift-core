@@ -639,7 +639,7 @@ func (s *PlanningService) AttachRelease(params ReleaseMilestoneParams) error {
 
 // UpdateMilestoneParams contains parameters for updating a milestone.
 // The scope (WorkspaceID) determines which rows the UPDATE may touch:
-// nil means a global milestone (WHERE is_global = 1), non-nil scopes the
+// nil means a global milestone (WHERE is_global = TRUE), non-nil scopes the
 // UPDATE to that workspace. Cross-scope updates are impossible — the WHERE
 // clause filters out milestones owned by another workspace, returning 0 rows
 // affected, which surfaces as a "not found" error.

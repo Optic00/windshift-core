@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS items (
 	iteration_id INTEGER,
 	time_project_id INTEGER REFERENCES time_projects(id) ON DELETE SET NULL,
 	project_id INTEGER REFERENCES time_projects(id) ON DELETE SET NULL,
-	inherit_project BOOLEAN DEFAULT 0,
+	inherit_project BOOLEAN DEFAULT FALSE,
 	assignee_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
 	creator_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
 	reporter_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -215,3 +215,5 @@ CREATE TRIGGER IF NOT EXISTS trg_items_change_delete BEFORE DELETE ON items
 BEGIN
 	INSERT INTO item_change_log(item_id, workspace_id, change_type) VALUES (OLD.id, OLD.workspace_id, 'delete');
 END;
+
+-- migration: 0000_baseline

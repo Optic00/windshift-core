@@ -29,8 +29,8 @@ CREATE TABLE IF NOT EXISTS milestones (
 	FOREIGN KEY (category_id) REFERENCES milestone_categories(id) ON DELETE SET NULL,
 	FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
 	CONSTRAINT milestones_scope_check CHECK (
-		(is_global = 1 AND workspace_id IS NULL) OR
-		(is_global = 0 AND workspace_id IS NOT NULL)
+		(is_global = TRUE AND workspace_id IS NULL) OR
+		(is_global = FALSE AND workspace_id IS NOT NULL)
 	)
 );
 
@@ -70,3 +70,5 @@ CREATE INDEX IF NOT EXISTS idx_milestones_is_global ON milestones(is_global);
 CREATE INDEX IF NOT EXISTS idx_milestone_releases_milestone_id ON milestone_releases(milestone_id);
 CREATE INDEX IF NOT EXISTS idx_item_milestones_item_id ON item_milestones(item_id);
 CREATE INDEX IF NOT EXISTS idx_item_milestones_milestone_id ON item_milestones(milestone_id);
+
+-- migration: 20260716_milestone_scope_guard

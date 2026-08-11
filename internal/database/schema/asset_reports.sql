@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS asset_reports (
     icon TEXT DEFAULT 'Table2',
     color TEXT DEFAULT '#6b7280',
     display_order INTEGER DEFAULT 0,
-    is_active BOOLEAN DEFAULT 1,
+    is_active BOOLEAN DEFAULT TRUE,
     column_config TEXT DEFAULT NULL,  -- JSON array: ["title", "status", "cf_serial"]
     visibility_group_ids TEXT DEFAULT NULL,
     visibility_org_ids TEXT DEFAULT NULL,
@@ -51,3 +51,5 @@ CREATE TABLE IF NOT EXISTS asset_report_fields (
 );
 
 CREATE INDEX IF NOT EXISTS idx_asset_report_fields_asset_report_id ON asset_report_fields(asset_report_id);
+
+-- migration: 0000_baseline

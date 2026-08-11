@@ -10,12 +10,12 @@ CREATE TABLE IF NOT EXISTS portal_webauthn_credentials (
 	attestation_type TEXT,
 	aaguid BLOB,
 	sign_count INTEGER DEFAULT 0,
-	clone_warning BOOLEAN DEFAULT 0,
+	clone_warning BOOLEAN DEFAULT FALSE,
 	transport TEXT, -- JSON array of transport types
-	flags_user_present BOOLEAN DEFAULT 0,
-	flags_user_verified BOOLEAN DEFAULT 0,
-	flags_backup_eligible BOOLEAN DEFAULT 0,
-	flags_backup_state BOOLEAN DEFAULT 0,
+	flags_user_present BOOLEAN DEFAULT FALSE,
+	flags_user_verified BOOLEAN DEFAULT FALSE,
+	flags_backup_eligible BOOLEAN DEFAULT FALSE,
+	flags_backup_state BOOLEAN DEFAULT FALSE,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	last_used_at DATETIME,
@@ -54,3 +54,5 @@ END;
 -- portal_customers.dismissed_passkey_prompt_at — see migrations slice in
 -- database.go for the SQLite-side ALTER (SQLite has no IF NOT EXISTS for
 -- ADD COLUMN, so re-running this file would fail on upgrades).
+
+-- migration: 0000_baseline

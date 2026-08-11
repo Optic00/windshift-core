@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS portal_customer_sessions (
 	expires_at DATETIME NOT NULL,
 	ip_address TEXT,
 	user_agent TEXT,
-	is_active BOOLEAN DEFAULT 1,
+	is_active BOOLEAN DEFAULT TRUE,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	FOREIGN KEY (portal_customer_id) REFERENCES portal_customers(id) ON DELETE CASCADE,
 	FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE SET NULL
@@ -41,3 +41,5 @@ CREATE INDEX IF NOT EXISTS idx_portal_sessions_token ON portal_customer_sessions
 CREATE INDEX IF NOT EXISTS idx_portal_sessions_customer_id ON portal_customer_sessions(portal_customer_id);
 CREATE INDEX IF NOT EXISTS idx_portal_sessions_expires_at ON portal_customer_sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_portal_sessions_channel_id ON portal_customer_sessions(channel_id);
+
+-- migration: 0000_baseline

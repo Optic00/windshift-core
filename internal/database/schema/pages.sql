@@ -19,8 +19,8 @@ CREATE TABLE IF NOT EXISTS pages (
     created_by INTEGER NOT NULL,
     updated_by INTEGER,
     archived_by INTEGER,
-    is_home BOOLEAN NOT NULL DEFAULT 0,
-    inherit_permissions BOOLEAN NOT NULL DEFAULT 1,
+    is_home BOOLEAN NOT NULL DEFAULT FALSE,
+    inherit_permissions BOOLEAN NOT NULL DEFAULT TRUE,
     rank TEXT,
     frac_index TEXT COLLATE BINARY,
     path TEXT NOT NULL DEFAULT '/',
@@ -41,7 +41,7 @@ CREATE INDEX IF NOT EXISTS idx_pages_workspace_parent ON pages(workspace_id, par
 CREATE INDEX IF NOT EXISTS idx_pages_workspace_archived ON pages(workspace_id, archived_at);
 CREATE INDEX IF NOT EXISTS idx_pages_path ON pages(path);
 CREATE INDEX IF NOT EXISTS idx_pages_content_hash ON pages(content_hash) WHERE content_hash != '';
-CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_workspace_home ON pages(workspace_id) WHERE is_home = 1 AND archived_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_workspace_home ON pages(workspace_id) WHERE is_home = TRUE AND archived_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_pages_workspace_parent_rank ON pages(workspace_id, parent_id, rank) WHERE rank IS NOT NULL;
 -- Slug carries no uniqueness rule. It used to be constrained by
 -- UNIQUE(workspace_id, parent_id, slug) plus a partial index covering root
@@ -183,3 +183,5 @@ WHERE r.name = 'Administrator';
 
 INSERT OR IGNORE INTO system_settings (key, value, value_type, description, category) VALUES
     ('knowledge.full_text_search_enabled', 'true', 'boolean', 'Enable full-text knowledge search', 'knowledge');
+
+-- migration: 20260803_pages_drop_slug_uniqueness

@@ -4,7 +4,7 @@
 		key TEXT UNIQUE NOT NULL, -- Workspace key for issue prefixes (e.g., TEST, PROJ)
 		description TEXT,
 		time_project_id INTEGER REFERENCES time_projects(id) ON DELETE SET NULL,
-		active BOOLEAN DEFAULT 1,
+		active BOOLEAN DEFAULT TRUE,
 		is_personal BOOLEAN DEFAULT FALSE, -- Flag for personal workspaces
 		owner_id INTEGER REFERENCES users(id) ON DELETE SET NULL, -- Owner for personal workspaces
 		icon TEXT,
@@ -34,3 +34,5 @@
 
 	CREATE INDEX IF NOT EXISTS idx_workspace_time_project_categories_workspace_id ON workspace_time_project_categories(workspace_id);
 	CREATE INDEX IF NOT EXISTS idx_workspace_time_project_categories_category_id ON workspace_time_project_categories(time_project_category_id);
+
+-- migration: 0000_baseline

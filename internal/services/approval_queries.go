@@ -185,7 +185,7 @@ func (s *ApprovalService) GetForUserInChannel(ctx context.Context, userID int, s
 // UserHasActivePoolMembershipOnItem returns true iff the user is in an active
 // approver row of a step that is currently active on a pending approval request
 // for itemID. This is the gate used by approver-derived item-view access:
-// when the step closes (is_active flipped to 0) or the request is no longer
+// when the step closes (is_active flipped to FALSE) or the request is no longer
 // pending, the user immediately loses approver-derived access.
 //
 // channelID is optional. Non-nil restricts the lookup to items in that channel,

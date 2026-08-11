@@ -19,9 +19,9 @@ CREATE TABLE IF NOT EXISTS approval_sets (
 -- The approve_transition_id and deny_transition_id are the two transitions out
 -- of the status that the approval engine drives. Users cannot invoke them directly.
 -- Soft-archive model: when an admin updates an approval set, the prior rows
--- are flipped to is_active=0 instead of deleted, so in-flight approval_requests
+-- are flipped to is_active=FALSE instead of deleted, so in-flight approval_requests
 -- (RESTRICT-FK to this row) keep their snapshot. New rows replace them with
--- is_active=1 and the partial unique index keeps "current" rows unique per
+-- is_active=TRUE and the partial unique index keeps "current" rows unique per
 -- (set, status). Engine queries that follow request→set_status FK do NOT
 -- filter on is_active — they want the snapshot.
 CREATE TABLE IF NOT EXISTS approval_set_statuses (
@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS approval_set_statuses (
     FOREIGN KEY (deny_transition_id) REFERENCES workflow_transitions(id) ON DELETE CASCADE
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_approval_set_statuses_active
-    ON approval_set_statuses(approval_set_id, status_id) WHERE is_active = 1;
+    ON approval_set_statuses(approval_set_id, status_id) WHERE is_active = TRUE;
 
 -- Individual steps within an approval-set-status.
 -- approver_source mirrors ConditionUserInRoleConfig.UserSource semantics, extended
@@ -191,3 +191,5 @@ CREATE INDEX IF NOT EXISTS idx_approval_decisions_actor
 CREATE UNIQUE INDEX IF NOT EXISTS uq_approval_decisions_one_vote_per_actor
     ON approval_decisions(approval_step_instance_id, actor_user_id)
     WHERE decision IN ('approve', 'reject');
+
+-- migration: 0030_approval_set_statuses_is_active

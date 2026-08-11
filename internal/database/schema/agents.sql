@@ -241,7 +241,7 @@ CREATE TABLE IF NOT EXISTS workspace_agent_skills (
     name TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
     body TEXT NOT NULL DEFAULT '',
-    enabled BOOLEAN NOT NULL DEFAULT 1,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_by_user_id INTEGER,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -281,7 +281,7 @@ CREATE INDEX IF NOT EXISTS idx_workspace_agent_skill_pages_page
 
 -- Workspace agent binding repos (WI-449): a binding may bind N repositories so
 -- the agent gets all of them checked out (e.g. core + core-tests) and opens one
--- PR per changed repo. Exactly one row per binding is is_primary=1 (the repo
+-- PR per changed repo. Exactly one row per binding is is_primary=TRUE (the repo
 -- whose PR links to the work item, and the single-repo backward-compat repo).
 -- Like the binding itself, no clone URL is stored: it is derived server-side
 -- from the trusted scm_connection_id + repo_slug (anti-SSRF). Supersedes the
@@ -293,7 +293,7 @@ CREATE TABLE IF NOT EXISTS workspace_agent_binding_repos (
     scm_connection_id INTEGER,
     repo_slug TEXT NOT NULL,
     repo_base_ref TEXT NOT NULL DEFAULT '',
-    is_primary BOOLEAN NOT NULL DEFAULT 0,
+    is_primary BOOLEAN NOT NULL DEFAULT FALSE,
     position INTEGER NOT NULL DEFAULT 0,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (binding_id) REFERENCES workspace_agent_bindings(id) ON DELETE CASCADE,
@@ -361,3 +361,5 @@ CREATE TABLE IF NOT EXISTS agent_template_catalog (
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- migration: 20260620_workspace_agent_binding_repos

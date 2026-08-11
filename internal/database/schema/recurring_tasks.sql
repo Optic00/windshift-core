@@ -28,14 +28,14 @@ CREATE TABLE IF NOT EXISTS recurrence_rules (
 	next_generation_check DATETIME,
 
 	-- Instance configuration (what to copy from template)
-	copy_assignee BOOLEAN DEFAULT 1,
-	copy_priority BOOLEAN DEFAULT 1,
-	copy_custom_fields BOOLEAN DEFAULT 1,
-	copy_description BOOLEAN DEFAULT 1,
+	copy_assignee BOOLEAN DEFAULT TRUE,
+	copy_priority BOOLEAN DEFAULT TRUE,
+	copy_custom_fields BOOLEAN DEFAULT TRUE,
+	copy_description BOOLEAN DEFAULT TRUE,
 	status_on_create INTEGER,
 
 	-- Lifecycle
-	is_active BOOLEAN DEFAULT 1,
+	is_active BOOLEAN DEFAULT TRUE,
 	created_by INTEGER,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS recurrence_rules (
 );
 
 -- Index for efficient scheduler queries (only check active rules)
-CREATE INDEX IF NOT EXISTS idx_recurrence_rules_next_check ON recurrence_rules(next_generation_check) WHERE is_active = 1;
+CREATE INDEX IF NOT EXISTS idx_recurrence_rules_next_check ON recurrence_rules(next_generation_check) WHERE is_active = TRUE;
 CREATE INDEX IF NOT EXISTS idx_recurrence_rules_workspace ON recurrence_rules(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_recurrence_rules_template ON recurrence_rules(template_item_id);
 CREATE INDEX IF NOT EXISTS idx_recurrence_rules_active ON recurrence_rules(is_active);
@@ -76,3 +76,4 @@ CREATE INDEX IF NOT EXISTS idx_recurrence_instances_item ON recurrence_instances
 CREATE INDEX IF NOT EXISTS idx_recurrence_instances_date ON recurrence_instances(scheduled_date);
 CREATE INDEX IF NOT EXISTS idx_recurrence_instances_rule_date ON recurrence_instances(recurrence_rule_id, scheduled_date);
 
+-- migration: 0000_baseline

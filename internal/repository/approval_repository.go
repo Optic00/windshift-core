@@ -752,7 +752,7 @@ func (r *ApprovalRepository) SkipPendingPeerSteps(ctx context.Context, tx databa
 	return nil
 }
 
-// DeactivateApprovers flips is_active=1 → is_active=0 on every active
+// DeactivateApprovers flips is_active=TRUE → is_active=FALSE on every active
 // approver row for a step. Used by reassign / refresh flows to tombstone the
 // prior pool while preserving snapshot history.
 func (r *ApprovalRepository) DeactivateApprovers(ctx context.Context, tx database.Tx, stepInstanceID int) error {

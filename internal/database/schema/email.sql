@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS email_providers (
 	name TEXT NOT NULL,
 	slug TEXT UNIQUE NOT NULL,
 	type TEXT NOT NULL CHECK(type IN ('microsoft', 'google', 'generic')),
-	is_enabled BOOLEAN NOT NULL DEFAULT 0,
+	is_enabled BOOLEAN NOT NULL DEFAULT FALSE,
 	oauth_client_id TEXT,
 	oauth_client_secret_encrypted TEXT,
 	oauth_scopes TEXT,
@@ -151,3 +151,5 @@ CREATE TABLE IF NOT EXISTS email_oauth_state (
 CREATE INDEX IF NOT EXISTS idx_email_oauth_state_state ON email_oauth_state(state);
 CREATE INDEX IF NOT EXISTS idx_email_oauth_state_provider_id ON email_oauth_state(provider_id);
 CREATE INDEX IF NOT EXISTS idx_email_oauth_state_expires_at ON email_oauth_state(expires_at);
+
+-- migration: 0000_baseline

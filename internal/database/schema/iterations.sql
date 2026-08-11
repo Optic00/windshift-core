@@ -27,8 +27,8 @@ CREATE TABLE IF NOT EXISTS iterations (
 	FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
 	CHECK (end_date >= start_date),
 	CHECK (
-		(is_global = 1 AND workspace_id IS NULL) OR
-		(is_global = 0 AND workspace_id IS NOT NULL)
+		(is_global = TRUE AND workspace_id IS NULL) OR
+		(is_global = FALSE AND workspace_id IS NOT NULL)
 	)
 );
 
@@ -44,3 +44,5 @@ INSERT OR IGNORE INTO iteration_types (name, color, description) VALUES
 ('Sprint', '#3b82f6', 'Short-term development cycle (typically 1-4 weeks)'),
 ('PI / Quarter', '#8b5cf6', 'Program Increment or Quarterly cycle (typically 8-12 weeks)'),
 ('Release', '#f59e0b', 'Product release cycle');
+
+-- migration: 0000_baseline

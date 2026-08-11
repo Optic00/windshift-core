@@ -274,7 +274,7 @@ func columnAddMigrations() []Migration {
 			Name:          "users.is_agent",
 			CheckSQLite:   sqliteColumnCheck("users", "is_agent"),
 			CheckPostgres: pgColumnCheck("users", "is_agent"),
-			SQLite:        "ALTER TABLE users ADD COLUMN is_agent BOOLEAN DEFAULT 0",
+			SQLite:        "ALTER TABLE users ADD COLUMN is_agent BOOLEAN DEFAULT FALSE",
 			Postgres:      "ALTER TABLE users ADD COLUMN is_agent BOOLEAN DEFAULT false",
 		},
 		{
@@ -337,7 +337,7 @@ func columnAddMigrations() []Migration {
 			Name:          "workspace_scm_connections.smart_commits_enabled",
 			CheckSQLite:   sqliteColumnCheck("workspace_scm_connections", "smart_commits_enabled"),
 			CheckPostgres: pgColumnCheck("workspace_scm_connections", "smart_commits_enabled"),
-			SQLite:        "ALTER TABLE workspace_scm_connections ADD COLUMN smart_commits_enabled BOOLEAN DEFAULT 0",
+			SQLite:        "ALTER TABLE workspace_scm_connections ADD COLUMN smart_commits_enabled BOOLEAN DEFAULT FALSE",
 			Postgres:      "ALTER TABLE workspace_scm_connections ADD COLUMN smart_commits_enabled BOOLEAN DEFAULT false",
 		},
 		// SQLite-only: user_sessions.enrollment_required has no Postgres
@@ -347,13 +347,13 @@ func columnAddMigrations() []Migration {
 			Version:     "0022_user_sessions_enrollment_required_sqlite",
 			Name:        "user_sessions.enrollment_required (SQLite)",
 			CheckSQLite: sqliteColumnCheck("user_sessions", "enrollment_required"),
-			SQLite:      "ALTER TABLE user_sessions ADD COLUMN enrollment_required BOOLEAN DEFAULT 0",
+			SQLite:      "ALTER TABLE user_sessions ADD COLUMN enrollment_required BOOLEAN DEFAULT FALSE",
 		},
 		{
 			Version:     "0023_time_projects_active_sqlite",
 			Name:        "time_projects.active (SQLite)",
 			CheckSQLite: sqliteColumnCheck("time_projects", "active"),
-			SQLite:      "ALTER TABLE time_projects ADD COLUMN active BOOLEAN DEFAULT 1",
+			SQLite:      "ALTER TABLE time_projects ADD COLUMN active BOOLEAN DEFAULT TRUE",
 		},
 		// Postgres-only: notification_templates.subject doesn't appear in the
 		// SQLite legacy migrations; SQLite's notifications schema presumably
@@ -376,7 +376,7 @@ func columnAddMigrations() []Migration {
 			Version:     "0026_notification_templates_is_system_sqlite",
 			Name:        "notification_templates.is_system (SQLite)",
 			CheckSQLite: sqliteColumnCheck("notification_templates", "is_system"),
-			SQLite:      "ALTER TABLE notification_templates ADD COLUMN is_system BOOLEAN DEFAULT 0",
+			SQLite:      "ALTER TABLE notification_templates ADD COLUMN is_system BOOLEAN DEFAULT FALSE",
 		},
 		{
 			Version:       "0027_teams_icon",
@@ -421,7 +421,7 @@ func columnAddMigrations() []Migration {
 			Name:          "action_capabilities.applies_to_all_workspaces",
 			CheckSQLite:   sqliteColumnCheck("action_capabilities", "applies_to_all_workspaces"),
 			CheckPostgres: pgColumnCheck("action_capabilities", "applies_to_all_workspaces"),
-			SQLite:        "ALTER TABLE action_capabilities ADD COLUMN applies_to_all_workspaces BOOLEAN DEFAULT 1",
+			SQLite:        "ALTER TABLE action_capabilities ADD COLUMN applies_to_all_workspaces BOOLEAN DEFAULT TRUE",
 			Postgres:      "ALTER TABLE action_capabilities ADD COLUMN applies_to_all_workspaces BOOLEAN DEFAULT TRUE",
 		},
 		{
@@ -429,7 +429,7 @@ func columnAddMigrations() []Migration {
 			Name:          "notifications.last_send_failed",
 			CheckSQLite:   sqliteColumnCheck("notifications", "last_send_failed"),
 			CheckPostgres: pgColumnCheck("notifications", "last_send_failed"),
-			SQLite:        "ALTER TABLE notifications ADD COLUMN last_send_failed BOOLEAN DEFAULT 0",
+			SQLite:        "ALTER TABLE notifications ADD COLUMN last_send_failed BOOLEAN DEFAULT FALSE",
 			Postgres:      "ALTER TABLE notifications ADD COLUMN last_send_failed BOOLEAN DEFAULT FALSE",
 		},
 		{
@@ -655,7 +655,7 @@ func inlineTableMigrations() []Migration {
 					client_secret_hash TEXT,
 					redirect_uris TEXT NOT NULL DEFAULT '[]',
 					allowed_scopes TEXT NOT NULL DEFAULT '[]',
-					enabled BOOLEAN NOT NULL DEFAULT 1,
+					enabled BOOLEAN NOT NULL DEFAULT TRUE,
 					created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
 					created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 					updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -776,7 +776,7 @@ func inlineTableMigrations() []Migration {
 					resource_id INTEGER,
 					resource_name TEXT,
 					details TEXT,
-					success BOOLEAN NOT NULL DEFAULT 1,
+					success BOOLEAN NOT NULL DEFAULT TRUE,
 					error_message TEXT,
 					FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
 				);
@@ -827,7 +827,7 @@ func inlineTableMigrations() []Migration {
 					completed_at DATETIME,
 					duration_ms INTEGER,
 					items_processed INTEGER,
-					success BOOLEAN NOT NULL DEFAULT 0,
+					success BOOLEAN NOT NULL DEFAULT FALSE,
 					error_message TEXT
 				);
 				CREATE INDEX IF NOT EXISTS idx_scheduler_runs_name_started ON scheduler_runs(scheduler_name, started_at DESC);
@@ -1511,7 +1511,7 @@ func postSliceColumnAddMigrations() []Migration {
 			Name:          "workspace_roles.permissions_enabled",
 			CheckSQLite:   sqliteColumnCheck("workspace_roles", "permissions_enabled"),
 			CheckPostgres: pgColumnCheck("workspace_roles", "permissions_enabled"),
-			SQLite:        "ALTER TABLE workspace_roles ADD COLUMN permissions_enabled BOOLEAN DEFAULT 1",
+			SQLite:        "ALTER TABLE workspace_roles ADD COLUMN permissions_enabled BOOLEAN DEFAULT TRUE",
 			Postgres:      "ALTER TABLE workspace_roles ADD COLUMN permissions_enabled BOOLEAN DEFAULT true",
 		},
 		{
@@ -1693,7 +1693,7 @@ func samlMigrations() []Migration {
 			Name:          "sso_providers.saml_sign_requests",
 			CheckSQLite:   sqliteColumnCheck("sso_providers", "saml_sign_requests"),
 			CheckPostgres: pgColumnCheck("sso_providers", "saml_sign_requests"),
-			SQLite:        "ALTER TABLE sso_providers ADD COLUMN saml_sign_requests BOOLEAN DEFAULT 0",
+			SQLite:        "ALTER TABLE sso_providers ADD COLUMN saml_sign_requests BOOLEAN DEFAULT FALSE",
 			Postgres:      "ALTER TABLE sso_providers ADD COLUMN saml_sign_requests BOOLEAN DEFAULT FALSE",
 		},
 	}
@@ -1845,7 +1845,7 @@ func miscMigrations() []Migration {
 			Name:          "uq_approval_set_statuses_active (partial unique index)",
 			CheckSQLite:   sqliteIndexCheck("uq_approval_set_statuses_active"),
 			CheckPostgres: pgIndexCheck("uq_approval_set_statuses_active"),
-			SQLite:        "CREATE UNIQUE INDEX IF NOT EXISTS uq_approval_set_statuses_active ON approval_set_statuses(approval_set_id, status_id) WHERE is_active = 1",
+			SQLite:        "CREATE UNIQUE INDEX IF NOT EXISTS uq_approval_set_statuses_active ON approval_set_statuses(approval_set_id, status_id) WHERE is_active = TRUE",
 			Postgres:      "CREATE UNIQUE INDEX IF NOT EXISTS uq_approval_set_statuses_active ON approval_set_statuses(approval_set_id, status_id) WHERE is_active = TRUE",
 		},
 		{
@@ -1975,9 +1975,9 @@ func miscMigrations() []Migration {
 			// so follow-up replies reach participants. Check skips once all are fixed.
 			Version:       "comment_created_notify_watchers",
 			Name:          "comment.created notify_watchers = true (follow-on-comment)",
-			CheckSQLite:   "SELECT CASE WHEN EXISTS(SELECT 1 FROM notification_event_rules WHERE event_type = 'comment.created' AND notify_watchers = 0) THEN 0 ELSE 1 END",
+			CheckSQLite:   "SELECT CASE WHEN EXISTS(SELECT 1 FROM notification_event_rules WHERE event_type = 'comment.created' AND notify_watchers = FALSE) THEN 0 ELSE 1 END",
 			CheckPostgres: "SELECT CASE WHEN EXISTS(SELECT 1 FROM notification_event_rules WHERE event_type = 'comment.created' AND notify_watchers = false) THEN 0 ELSE 1 END",
-			SQLite:        "UPDATE notification_event_rules SET notify_watchers = 1 WHERE event_type = 'comment.created' AND notify_watchers = 0",
+			SQLite:        "UPDATE notification_event_rules SET notify_watchers = TRUE WHERE event_type = 'comment.created' AND notify_watchers = FALSE",
 			Postgres:      "UPDATE notification_event_rules SET notify_watchers = true WHERE event_type = 'comment.created' AND notify_watchers = false",
 		},
 	}

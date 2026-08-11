@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS notifications (
 	-- failure and the rollback ITSELF failed. Without this flag the row is wedged:
 	-- sent_at is set so the next tick's `WHERE sent_at IS NULL` skips it, and the
 	-- user never gets the email. Surfacing makes the wedge visible to operators.
-	last_send_failed BOOLEAN DEFAULT 0,
+	last_send_failed BOOLEAN DEFAULT FALSE,
 	avatar TEXT, -- Initials or avatar identifier
 	action_url TEXT, -- URL to navigate to when clicked
 	metadata TEXT, -- JSON for additional data
@@ -44,8 +44,8 @@ CREATE TABLE IF NOT EXISTS notification_templates (
 	content TEXT, -- HTML body template
 	text_body TEXT, -- Plain-text body template
 	description TEXT,
-	is_system BOOLEAN DEFAULT 0,
-	is_active BOOLEAN DEFAULT 1,
+	is_system BOOLEAN DEFAULT FALSE,
+	is_active BOOLEAN DEFAULT TRUE,
 	template_type TEXT, -- legacy, unused
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -129,3 +129,5 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_push_subscriptions_endpoint ON push_subscriptions(endpoint);
 CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user_id ON push_subscriptions(user_id);
+
+-- migration: 0033_notifications_last_send_failed

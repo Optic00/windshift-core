@@ -148,7 +148,7 @@ func CheckItemPermission(w http.ResponseWriter, r *http.Request, itemRepo *repos
 // CheckItemPermission — approver-derived access is read-only and never extends
 // to edit/delete.
 //
-// Active-pool membership is a snapshot: once the step closes (is_active=0) or
+// Active-pool membership is a snapshot: once the step closes (is_active=FALSE) or
 // the request is no longer pending, the fallback fails and access disappears.
 //
 // approvalService may be nil (e.g. in tests); behavior degrades to

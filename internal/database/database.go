@@ -567,7 +567,7 @@ func (db *DB) migrateDefaultConfigurationSet() error {
 
 	// Find a default workflow to link to
 	var workflowID int64
-	err = tx.QueryRow("SELECT id FROM workflows WHERE is_default = 1 LIMIT 1").Scan(&workflowID)
+	err = tx.QueryRow("SELECT id FROM workflows WHERE is_default = TRUE LIMIT 1").Scan(&workflowID)
 	if err != nil {
 		// No workflow exists, nothing to link to
 		slog.Info("no default workflow found, skipping configuration set migration", slog.String("component", "database"))

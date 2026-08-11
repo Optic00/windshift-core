@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS permissions (
 	permission_name TEXT NOT NULL,
 	description TEXT,
 	scope TEXT NOT NULL CHECK (scope IN ('global', 'workspace')),
-	is_system BOOLEAN DEFAULT 0,
+	is_system BOOLEAN DEFAULT FALSE,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -35,13 +35,13 @@ CREATE TABLE IF NOT EXISTS workspace_roles (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	name TEXT NOT NULL UNIQUE,
 	description TEXT,
-	is_system BOOLEAN DEFAULT 0,
+	is_system BOOLEAN DEFAULT FALSE,
 	display_order INTEGER DEFAULT 0,
 	-- Whether this role's permission rows are honored by the permission cache.
 	-- Default true so seeded system roles stay permission-bearing. Custom
 	-- (admin-created) roles default this to false and become "label-only" —
 	-- usable for approval routing but ignored when computing user permissions.
-	permissions_enabled BOOLEAN DEFAULT 1,
+	permissions_enabled BOOLEAN DEFAULT TRUE,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -143,7 +143,7 @@ CREATE TABLE IF NOT EXISTS permission_sets (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	name TEXT NOT NULL,
 	description TEXT,
-	is_system BOOLEAN DEFAULT 0,
+	is_system BOOLEAN DEFAULT FALSE,
 	created_by INTEGER,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -381,3 +381,5 @@ SELECT r.id, p.id
 FROM workspace_roles r
 JOIN permissions p ON p.permission_key = 'test.view'
 WHERE r.name = 'Editor';
+
+-- migration: 0000_baseline

@@ -277,18 +277,18 @@ var Catalog = []Migration{
 			WHERE table_schema=current_schema() AND table_name='milestones'
 			  AND constraint_name='milestones_scope_check'`,
 		SQLite: `
-			UPDATE milestones SET is_global = CASE WHEN workspace_id IS NULL THEN 1 ELSE 0 END;
+			UPDATE milestones SET is_global = CASE WHEN workspace_id IS NULL THEN TRUE ELSE FALSE END;
 			CREATE TRIGGER IF NOT EXISTS trg_milestones_scope_insert
 			BEFORE INSERT ON milestones
-			WHEN (NEW.is_global = 1 AND NEW.workspace_id IS NOT NULL)
-			  OR (NEW.is_global = 0 AND NEW.workspace_id IS NULL)
+			WHEN (NEW.is_global = TRUE AND NEW.workspace_id IS NOT NULL)
+			  OR (NEW.is_global = FALSE AND NEW.workspace_id IS NULL)
 			BEGIN
 				SELECT RAISE(ABORT, 'invalid milestone scope');
 			END;
 			CREATE TRIGGER IF NOT EXISTS trg_milestones_scope_update
 			BEFORE UPDATE OF is_global, workspace_id ON milestones
-			WHEN (NEW.is_global = 1 AND NEW.workspace_id IS NOT NULL)
-			  OR (NEW.is_global = 0 AND NEW.workspace_id IS NULL)
+			WHEN (NEW.is_global = TRUE AND NEW.workspace_id IS NOT NULL)
+			  OR (NEW.is_global = FALSE AND NEW.workspace_id IS NULL)
 			BEGIN
 				SELECT RAISE(ABORT, 'invalid milestone scope');
 			END;
@@ -1024,8 +1024,8 @@ var Catalog = []Migration{
 				content TEXT,
 				text_body TEXT,
 				description TEXT,
-				is_system BOOLEAN DEFAULT 0,
-				is_active BOOLEAN DEFAULT 1,
+				is_system BOOLEAN DEFAULT FALSE,
+				is_active BOOLEAN DEFAULT TRUE,
 				template_type TEXT,
 				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -1080,12 +1080,12 @@ var Catalog = []Migration{
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				name TEXT NOT NULL,
 				credential_type TEXT NOT NULL,
-				applies_to_all_workspaces BOOLEAN NOT NULL DEFAULT 1,
+				applies_to_all_workspaces BOOLEAN NOT NULL DEFAULT TRUE,
 				created_by INTEGER,
 				encrypted_secret TEXT NOT NULL,
 				secret_prefix TEXT,
 				secret_metadata TEXT,
-				is_enabled BOOLEAN DEFAULT 1,
+				is_enabled BOOLEAN DEFAULT TRUE,
 				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 				FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
@@ -1095,7 +1095,7 @@ var Catalog = []Migration{
 				 encrypted_secret, secret_prefix, secret_metadata, is_enabled,
 				 created_at, updated_at)
 			SELECT id, name, credential_type,
-				   CASE WHEN workspace_id IS NULL THEN 1 ELSE 0 END,
+				   CASE WHEN workspace_id IS NULL THEN TRUE ELSE FALSE END,
 				   created_by, encrypted_secret, secret_prefix, secret_metadata,
 				   is_enabled, created_at, updated_at
 			FROM action_credentials;
@@ -1129,7 +1129,7 @@ var Catalog = []Migration{
 		CheckSQLite:   "SELECT COUNT(*) FROM link_types WHERE name='Page'",
 		CheckPostgres: "SELECT COUNT(*) FROM link_types WHERE name='Page'",
 		SQLite: `INSERT INTO link_types (name, description, forward_label, reverse_label, color, is_system, active, allowed_entity_types, created_at, updated_at)
-			VALUES ('Page', 'Work item references a knowledge page', 'references page', 'referenced by', '#0ea5e9', 1, 1, '["item","page"]', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+			VALUES ('Page', 'Work item references a knowledge page', 'references page', 'referenced by', '#0ea5e9', TRUE, TRUE, '["item","page"]', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
 		Postgres: `INSERT INTO link_types (name, description, forward_label, reverse_label, color, is_system, active, allowed_entity_types, created_at, updated_at)
 			VALUES ('Page', 'Work item references a knowledge page', 'references page', 'referenced by', '#0ea5e9', true, true, '["item","page"]', NOW(), NOW())`,
 	},
@@ -1676,7 +1676,7 @@ var Catalog = []Migration{
 				name TEXT NOT NULL,
 				description TEXT NOT NULL DEFAULT '',
 				body TEXT NOT NULL DEFAULT '',
-				enabled BOOLEAN NOT NULL DEFAULT 1,
+				enabled BOOLEAN NOT NULL DEFAULT TRUE,
 				created_by_user_id INTEGER,
 				created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 				updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -1790,7 +1790,7 @@ var Catalog = []Migration{
 				user_id TEXT NOT NULL,
 				integration_provider_id TEXT NOT NULL,
 				personal_workspace_id INTEGER NOT NULL,
-				enabled BOOLEAN DEFAULT 0,
+				enabled BOOLEAN DEFAULT FALSE,
 				scope_mode TEXT NOT NULL DEFAULT 'all',
 				todoist_project_id TEXT DEFAULT '',
 				sync_token TEXT DEFAULT '*',
@@ -1815,7 +1815,7 @@ var Catalog = []Migration{
 				last_description TEXT DEFAULT '',
 				last_due TEXT DEFAULT '',
 				last_priority INTEGER DEFAULT 1,
-				last_completed BOOLEAN DEFAULT 0,
+				last_completed BOOLEAN DEFAULT FALSE,
 				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 				UNIQUE(user_id, todoist_task_id),
@@ -1938,7 +1938,7 @@ var Catalog = []Migration{
 				scm_connection_id INTEGER,
 				repo_slug TEXT NOT NULL,
 				repo_base_ref TEXT NOT NULL DEFAULT '',
-				is_primary BOOLEAN NOT NULL DEFAULT 0,
+				is_primary BOOLEAN NOT NULL DEFAULT FALSE,
 				position INTEGER NOT NULL DEFAULT 0,
 				created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 				FOREIGN KEY (binding_id) REFERENCES workspace_agent_bindings(id) ON DELETE CASCADE,
@@ -1949,7 +1949,7 @@ var Catalog = []Migration{
 			CREATE INDEX idx_wab_repos_binding ON workspace_agent_binding_repos(binding_id);
 			INSERT INTO workspace_agent_binding_repos
 				(binding_id, scm_connection_id, repo_slug, repo_base_ref, is_primary, position)
-			SELECT id, scm_connection_id, repo_slug, COALESCE(repo_base_ref, ''), 1, 0
+			SELECT id, scm_connection_id, repo_slug, COALESCE(repo_base_ref, ''), TRUE, 0
 			FROM workspace_agent_bindings
 			WHERE repo_slug IS NOT NULL AND repo_slug <> '';
 		`,

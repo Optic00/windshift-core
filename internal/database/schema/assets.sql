@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS asset_roles (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	name TEXT NOT NULL UNIQUE,
 	description TEXT,
-	is_system BOOLEAN DEFAULT 0,
+	is_system BOOLEAN DEFAULT FALSE,
 	display_order INTEGER DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -262,3 +262,5 @@ CREATE TABLE IF NOT EXISTS asset_import_jobs (
 CREATE INDEX IF NOT EXISTS idx_asset_import_jobs_set_id ON asset_import_jobs(set_id);
 CREATE INDEX IF NOT EXISTS idx_asset_import_jobs_status ON asset_import_jobs(status);
 CREATE INDEX IF NOT EXISTS idx_asset_import_jobs_created_by ON asset_import_jobs(created_by);
+
+-- migration: 0000_baseline

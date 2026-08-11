@@ -171,7 +171,7 @@ func rebuildSQLiteItemsWithCanonicalFracIndex(db Database) error {
 			iteration_id INTEGER,
 			time_project_id INTEGER REFERENCES time_projects(id) ON DELETE SET NULL,
 			project_id INTEGER REFERENCES time_projects(id) ON DELETE SET NULL,
-			inherit_project BOOLEAN DEFAULT 0,
+			inherit_project BOOLEAN DEFAULT FALSE,
 			assignee_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
 			creator_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
 			reporter_id INTEGER REFERENCES users(id) ON DELETE SET NULL,

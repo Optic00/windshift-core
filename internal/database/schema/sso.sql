@@ -9,16 +9,16 @@ CREATE TABLE IF NOT EXISTS sso_providers (
 	slug TEXT UNIQUE NOT NULL, -- URL-safe identifier for routing
 	name TEXT NOT NULL, -- Display name (e.g., "Company SSO", "Keycloak")
 	provider_type TEXT NOT NULL DEFAULT 'oidc', -- 'oidc' or 'saml' (future)
-	enabled BOOLEAN DEFAULT 0,
-	is_default BOOLEAN DEFAULT 0, -- Default provider for SSO login
+	enabled BOOLEAN DEFAULT FALSE,
+	is_default BOOLEAN DEFAULT FALSE, -- Default provider for SSO login
 	-- OIDC-specific fields
 	issuer_url TEXT, -- OIDC issuer URL for discovery
 	client_id TEXT,
 	client_secret_encrypted TEXT, -- Encrypted client secret
 	scopes TEXT DEFAULT 'openid email profile', -- Space-separated scopes
 	-- Common settings
-	auto_provision_users BOOLEAN DEFAULT 0, -- Create users on first SSO login
-	require_verified_email BOOLEAN DEFAULT 1, -- Require email_verified=true from IdP (security)
+	auto_provision_users BOOLEAN DEFAULT FALSE, -- Create users on first SSO login
+	require_verified_email BOOLEAN DEFAULT TRUE, -- Require email_verified=true from IdP (security)
 	-- Claim/attribute mappings (JSON for flexibility)
 	attribute_mapping TEXT DEFAULT '{"email":"email","name":"name","given_name":"given_name","family_name":"family_name","username":"preferred_username"}',
 	-- SAML-specific fields
@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS sso_providers (
 	saml_idp_sso_url TEXT,       -- IdP Single Sign-On URL
 	saml_idp_certificate TEXT,   -- IdP X.509 certificate (PEM)
 	saml_sp_entity_id TEXT,      -- SP Entity ID (defaults to base URL)
-	saml_sign_requests BOOLEAN DEFAULT 0, -- Whether to sign AuthnRequests
+	saml_sign_requests BOOLEAN DEFAULT FALSE, -- Whether to sign AuthnRequests
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS sso_state_tokens (
 	nonce TEXT, -- OIDC nonce (NULL for SAML)
 	request_id TEXT, -- SAML SP-issued AuthnRequest ID for InResponseTo binding (NULL for OIDC)
 	redirect_uri TEXT NOT NULL, -- Callback URL
-	remember_me BOOLEAN DEFAULT 0, -- Extended session flag
+	remember_me BOOLEAN DEFAULT FALSE, -- Extended session flag
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	expires_at DATETIME NOT NULL, -- 15-minute expiry
 	FOREIGN KEY (provider_id) REFERENCES sso_providers(id) ON DELETE CASCADE
@@ -86,3 +86,5 @@ CREATE TABLE IF NOT EXISTS user_external_accounts (
 CREATE INDEX IF NOT EXISTS idx_user_external_accounts_user_id ON user_external_accounts(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_external_accounts_provider ON user_external_accounts(provider_id, external_id);
 CREATE INDEX IF NOT EXISTS idx_user_external_accounts_email ON user_external_accounts(email);
+
+-- migration: 0000_baseline

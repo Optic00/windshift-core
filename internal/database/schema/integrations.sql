@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS integration_providers (
 	slug TEXT UNIQUE NOT NULL,
 	name TEXT NOT NULL,
 	provider_type TEXT NOT NULL,                  -- 'notion', 'confluence', etc.
-	enabled BOOLEAN DEFAULT 1,
+	enabled BOOLEAN DEFAULT TRUE,
 	oauth_client_id TEXT,
 	oauth_client_secret_encrypted TEXT,
 	provider_config TEXT DEFAULT '{}',            -- JSON: provider-specific config (e.g., base_url for self-hosted)
@@ -95,7 +95,7 @@ CREATE TABLE IF NOT EXISTS todoist_sync_config (
 	user_id TEXT NOT NULL,
 	integration_provider_id TEXT NOT NULL,
 	personal_workspace_id INTEGER NOT NULL,        -- workspace synced tasks live in
-	enabled BOOLEAN DEFAULT 0,
+	enabled BOOLEAN DEFAULT FALSE,
 	scope_mode TEXT NOT NULL DEFAULT 'all',        -- 'all' (every project, flattened) | 'project'
 	todoist_project_id TEXT DEFAULT '',            -- set when scope_mode = 'project'
 	sync_token TEXT DEFAULT '*',                   -- Todoist incremental sync cursor
@@ -124,7 +124,7 @@ CREATE TABLE IF NOT EXISTS todoist_task_links (
 	last_description TEXT DEFAULT '',
 	last_due TEXT DEFAULT '',                      -- 'YYYY-MM-DD' or RFC3339 or ''
 	last_priority INTEGER DEFAULT 1,              -- Todoist scale: 1 (normal) .. 4 (urgent)
-	last_completed BOOLEAN DEFAULT 0,
+	last_completed BOOLEAN DEFAULT FALSE,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	UNIQUE(user_id, todoist_task_id),
@@ -134,3 +134,5 @@ CREATE TABLE IF NOT EXISTS todoist_task_links (
 CREATE INDEX IF NOT EXISTS idx_todoist_task_links_user ON todoist_task_links(user_id);
 CREATE INDEX IF NOT EXISTS idx_todoist_task_links_item ON todoist_task_links(item_id);
 CREATE INDEX IF NOT EXISTS idx_todoist_task_links_todoist ON todoist_task_links(todoist_task_id);
+
+-- migration: 20260615_todoist_sync_tables

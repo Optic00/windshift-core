@@ -107,7 +107,7 @@ CREATE TABLE IF NOT EXISTS action_capabilities (
 	-- reference this capability. When false, restricted to workspaces in the
 	-- action_capability_workspaces join table. Default true preserves the
 	-- pre-scoping behavior for legacy capabilities.
-	applies_to_all_workspaces BOOLEAN DEFAULT 1,
+	applies_to_all_workspaces BOOLEAN DEFAULT TRUE,
 	created_by INTEGER,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -139,7 +139,7 @@ CREATE TABLE IF NOT EXISTS action_credentials (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	name TEXT NOT NULL,
 	credential_type TEXT NOT NULL,   -- bearer_token, api_key, basic_auth, custom_header
-	applies_to_all_workspaces BOOLEAN NOT NULL DEFAULT 1,
+	applies_to_all_workspaces BOOLEAN NOT NULL DEFAULT TRUE,
 	created_by INTEGER,
 	encrypted_secret TEXT NOT NULL,  -- AES-GCM ciphertext (label-bound HKDF key)
 	secret_prefix TEXT,              -- non-sensitive fingerprint (first 4 chars + "…")
@@ -163,3 +163,5 @@ CREATE TABLE IF NOT EXISTS action_credential_workspaces (
 );
 
 CREATE INDEX IF NOT EXISTS idx_action_credential_workspaces_workspace ON action_credential_workspaces(workspace_id);
+
+-- migration: 0032_action_capabilities_applies_to_all_workspaces
