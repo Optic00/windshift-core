@@ -2566,7 +2566,7 @@ func (r *AssetRepository) CreateAssetTypeWithFields(setID int, typeCore models.A
 		INSERT INTO asset_types (set_id, name, description, icon, color, display_order, is_active, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, 0, true, ?, ?) RETURNING id
 	`, setID, typeCore.Name, typeCore.Description, typeCore.Icon, typeCore.Color, now, now).Scan(&typeID64); err != nil {
-		if strings.Contains(err.Error(), "UNIQUE") || strings.Contains(err.Error(), "unique") {
+		if database.IsUniqueConstraintError(err) {
 			return 0, time.Time{}, nil, ErrDuplicateEntry
 		}
 		return 0, time.Time{}, nil, fmt.Errorf("failed to create asset type: %w", err)

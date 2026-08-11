@@ -248,7 +248,7 @@ func (s *PlanningService) GetIteration(id int) (*IterationResult, error) {
 
 	iter, err := scanIterationRow(row)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("iteration not found: %d", id)
+		return nil, fmt.Errorf("iteration not found: %d: %w", id, repository.ErrNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get iteration: %w", err)
@@ -282,7 +282,7 @@ func (s *PlanningService) IsIterationGlobal(id int) (isGlobal bool, workspaceID 
 	var wsID sql.NullInt64
 	err = s.db.QueryRow("SELECT is_global, workspace_id FROM iterations WHERE id = ?", id).Scan(&isGlobal, &wsID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil, fmt.Errorf("iteration not found: %d", id)
+		return false, nil, fmt.Errorf("iteration not found: %d: %w", id, repository.ErrNotFound)
 	}
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to check iteration: %w", err)
@@ -426,7 +426,7 @@ func (s *PlanningService) iterationStatusInScope(id int, workspaceID *int) (stri
 		err = s.db.QueryRow("SELECT status FROM iterations WHERE id = ? AND workspace_id = ? AND is_global = false", id, *workspaceID).Scan(&status)
 	}
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", fmt.Errorf("iteration not found: %d", id)
+		return "", fmt.Errorf("iteration not found: %d: %w", id, repository.ErrNotFound)
 	}
 	if err != nil {
 		return "", fmt.Errorf("failed to load iteration status: %w", err)
@@ -506,7 +506,7 @@ func (s *PlanningService) GetIterationProgress(iterationID int, workspaceIDs []i
 	`, iterationID).Scan(&report.IterationName, &description, &report.StartDate, &report.EndDate, &report.Status, &typeColor)
 
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("iteration not found: %d", iterationID)
+		return nil, fmt.Errorf("iteration not found: %d: %w", iterationID, repository.ErrNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get iteration: %w", err)

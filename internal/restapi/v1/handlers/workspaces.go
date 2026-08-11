@@ -1,12 +1,13 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
-	"strings"
 
 	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
+	"windshift/internal/repository"
 	"windshift/internal/restapi"
 	"windshift/internal/restapi/v1/dto"
 	"windshift/internal/sanitize"
@@ -283,7 +284,7 @@ func (h *WorkspaceHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Color:       req.Color,
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, repository.ErrNotFound) {
 			h.RespondError(w, r, restapi.ErrWorkspaceNotFound)
 			return
 		}
@@ -331,7 +332,7 @@ func (h *WorkspaceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	err := h.workspaceService.Delete(wsID)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, repository.ErrNotFound) {
 			h.RespondError(w, r, restapi.ErrWorkspaceNotFound)
 			return
 		}

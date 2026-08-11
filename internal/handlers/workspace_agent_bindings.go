@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"windshift/internal/aitools"
+	"windshift/internal/auth"
 	"windshift/internal/llm"
 	"windshift/internal/logger"
 	"windshift/internal/models"
@@ -1243,7 +1244,8 @@ func (h *WorkspaceAgentBindingHandler) Update(w http.ResponseWriter, r *http.Req
 // isSkillAttachError reports whether the error came from skill-id
 // validation during binding create/update (bad or foreign ids → 400).
 func isSkillAttachError(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "skill")
+	return errors.Is(err, repository.ErrBindingSkillNotInWorkspace) ||
+		errors.Is(err, services.ErrBindingSkillsUnavailable)
 }
 
 type updateAgentConfigBody struct {
@@ -1512,9 +1514,7 @@ func isIdentityGateError(err error) bool {
 }
 
 // isAgentScopeError reports whether the wrapped error came from
-// auth.ValidateAgentScopes. The auth package returns a plain
-// fmt.Errorf rather than a sentinel; matching by substring is ugly but
-// localized and preferable to leaking the validation message via 500.
+// auth.ValidateAgentScopes.
 func isAgentScopeError(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "scopes not permitted for coding-agent tokens")
+	return errors.Is(err, auth.ErrAgentScopesNotPermitted)
 }

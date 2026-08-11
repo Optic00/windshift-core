@@ -9,6 +9,7 @@ import (
 
 	"windshift/internal/logger"
 	"windshift/internal/models"
+	"windshift/internal/repository"
 	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
@@ -104,7 +105,7 @@ func (h *IterationHandler) Get(w http.ResponseWriter, r *http.Request) {
 	// Use service to get iteration
 	result, err := h.planningService.GetIteration(id)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, repository.ErrNotFound) {
 			respondNotFound(w, r, "iteration")
 			return
 		}
@@ -281,7 +282,7 @@ func (h *IterationHandler) Update(w http.ResponseWriter, r *http.Request) {
 			respondConflict(w, r, err.Error())
 			return
 		}
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, repository.ErrNotFound) {
 			respondNotFound(w, r, "iteration")
 			return
 		}
@@ -307,7 +308,7 @@ func (h *IterationHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	// First, fetch the iteration to check its properties for permission validation (using service)
 	isGlobal, wsID, err := h.planningService.IsIterationGlobal(id)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, repository.ErrNotFound) {
 			respondNotFound(w, r, "iteration")
 			return
 		}
@@ -345,7 +346,7 @@ func (h *IterationHandler) requireIterationAccess(w http.ResponseWriter, r *http
 
 	isGlobal, wsID, err := h.planningService.IsIterationGlobal(iterationID)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, repository.ErrNotFound) {
 			respondNotFound(w, r, "iteration")
 			return nil, 0, false
 		}
@@ -380,7 +381,7 @@ func (h *IterationHandler) GetProgress(w http.ResponseWriter, r *http.Request) {
 	// Use service to get progress report
 	report, err := h.planningService.GetIterationProgress(iterationID, workspaceIDs)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, repository.ErrNotFound) {
 			respondNotFound(w, r, "iteration")
 			return
 		}
@@ -465,7 +466,7 @@ func (h *IterationHandler) GetBurndown(w http.ResponseWriter, r *http.Request) {
 	// Use service to get burndown data
 	burndown, err := h.planningService.GetIterationBurndown(iterationID, workspaceIDs)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, repository.ErrNotFound) {
 			respondNotFound(w, r, "iteration")
 			return
 		}

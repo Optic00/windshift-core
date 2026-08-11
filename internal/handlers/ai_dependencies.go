@@ -120,7 +120,7 @@ func (h *AIHandler) AnalyzeDependencies(w http.ResponseWriter, r *http.Request) 
 	planningService := services.NewPlanningService(h.db)
 	iteration, err := planningService.GetIteration(iterationID)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, repository.ErrNotFound) {
 			respondNotFound(w, r, "iteration")
 			return
 		}

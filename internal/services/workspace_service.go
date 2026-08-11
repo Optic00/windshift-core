@@ -131,7 +131,7 @@ func (s *WorkspaceService) GetByID(id int) (*WorkspaceListResult, error) {
 		&icon, &color, &ws.CreatedAt, &ws.UpdatedAt)
 
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("workspace not found: %d", id)
+		return nil, fmt.Errorf("workspace not found: %d: %w", id, repository.ErrNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get workspace: %w", err)
@@ -224,7 +224,7 @@ func (s *WorkspaceService) Update(params UpdateWorkspaceParams) (*WorkspaceListR
 	err := s.db.QueryRow("SELECT id, name, description, active, icon, color FROM workspaces WHERE id = ?", params.ID).
 		Scan(&ws.ID, &ws.Name, &ws.Description, &ws.Active, &ws.Icon, &ws.Color)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("workspace not found: %d", params.ID)
+		return nil, fmt.Errorf("workspace not found: %d: %w", params.ID, repository.ErrNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to load workspace: %w", err)
@@ -267,7 +267,7 @@ func (s *WorkspaceService) Delete(id int) error {
 		return fmt.Errorf("failed to check workspace existence: %w", err)
 	}
 	if !exists {
-		return fmt.Errorf("workspace not found: %d", id)
+		return fmt.Errorf("workspace not found: %d: %w", id, repository.ErrNotFound)
 	}
 
 	// Delete workspace (cascade will handle related records)

@@ -1263,7 +1263,7 @@ func (h *ItemHandler) Search(w http.ResponseWriter, r *http.Request) {
 			SortBy:  pagination.SortBy,
 			SortAsc: pagination.SortAsc,
 		})
-		if err != nil && strings.Contains(err.Error(), "QL query error:") {
+		if errors.Is(err, services.ErrQLQuery) {
 			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, err.Error()))
 			return
 		}

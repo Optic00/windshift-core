@@ -1,11 +1,12 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
-	"strings"
 
 	"windshift/internal/database"
 	"windshift/internal/models"
+	"windshift/internal/repository"
 	"windshift/internal/restapi"
 	"windshift/internal/services"
 )
@@ -127,7 +128,7 @@ func (h *UserHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	u, err := h.userSvc.GetByID(id)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, repository.ErrNotFound) {
 			h.RespondError(w, r, restapi.ErrUserNotFound)
 			return
 		}

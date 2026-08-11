@@ -15,6 +15,8 @@ import (
 // exists in the workspace. The handler maps it to 409.
 var ErrSkillDuplicateName = errors.New("workspace agent skill: a skill with this name already exists in this workspace")
 
+var ErrBindingSkillNotInWorkspace = errors.New("workspace agent skill: one or more skill ids do not exist in this workspace")
+
 // ErrSkillPageNotInWorkspace is returned when a page id handed to
 // ReplaceSkillPages is not a page in the skill's workspace. The handler maps
 // it to 400 (client supplied a bad id), not 500.
@@ -218,7 +220,7 @@ func (r *WorkspaceAgentSkillRepository) ReplaceBindingSkills(ctx context.Context
 			return fmt.Errorf("validate skill ids: %w", err)
 		}
 		if n != len(uniqueInts(skillIDs)) {
-			return fmt.Errorf("workspace agent skill: one or more skill ids do not exist in this workspace")
+			return ErrBindingSkillNotInWorkspace
 		}
 	}
 	if _, err := r.db.ExecWriteContext(ctx, `DELETE FROM workspace_agent_binding_skills WHERE binding_id = ?`, bindingID); err != nil {

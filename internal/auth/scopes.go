@@ -1,9 +1,12 @@
 package auth
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
+
+var ErrAgentScopesNotPermitted = errors.New("scopes not permitted for coding-agent tokens")
 
 // Granular resource:action scope constants
 const (
@@ -385,7 +388,7 @@ func ValidateAgentScopes(scopes []string) error {
 		}
 	}
 	if len(rejected) > 0 {
-		return fmt.Errorf("scopes not permitted for coding-agent tokens: %s", strings.Join(rejected, ", "))
+		return fmt.Errorf("%w: %s", ErrAgentScopesNotPermitted, strings.Join(rejected, ", "))
 	}
 	return nil
 }

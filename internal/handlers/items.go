@@ -494,11 +494,11 @@ func (h *ItemHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		// Check for QL-specific errors to return as validation errors
-		if strings.Contains(err.Error(), "QL query error:") {
+		if errors.Is(err, services.ErrQLQuery) {
 			respondValidationError(w, r, err.Error())
 			return
 		}
-		if strings.Contains(err.Error(), "collection not found") {
+		if errors.Is(err, services.ErrCollectionNotFound) {
 			respondNotFound(w, r, "collection")
 			return
 		}

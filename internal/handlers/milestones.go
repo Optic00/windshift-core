@@ -12,6 +12,7 @@ import (
 
 	"windshift/internal/logger"
 	"windshift/internal/models"
+	repositorypkg "windshift/internal/repository"
 	"windshift/internal/sanitize"
 	"windshift/internal/scm"
 	"windshift/internal/services"
@@ -131,7 +132,7 @@ func (h *MilestoneHandler) Get(w http.ResponseWriter, r *http.Request) {
 	// Use service to get milestone
 	result, err := h.planningService.GetMilestone(id)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, repositorypkg.ErrNotFound) {
 			respondNotFound(w, r, "milestone")
 			return
 		}
@@ -326,7 +327,7 @@ func (h *MilestoneHandler) Update(w http.ResponseWriter, r *http.Request) {
 		if respondPlanningValidationError(w, r, err) {
 			return
 		}
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, repositorypkg.ErrNotFound) {
 			respondNotFound(w, r, "milestone")
 			return
 		}
@@ -476,7 +477,7 @@ func (h *MilestoneHandler) GetProgress(w http.ResponseWriter, r *http.Request) {
 	// Use service to get progress report
 	report, err := h.planningService.GetMilestoneProgress(milestoneID, workspaceIDs)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, repositorypkg.ErrNotFound) {
 			respondNotFound(w, r, "milestone")
 			return
 		}
@@ -518,7 +519,7 @@ func (h *MilestoneHandler) resolveMilestone(w http.ResponseWriter, r *http.Reque
 func (h *MilestoneHandler) requireMilestonePermission(w http.ResponseWriter, r *http.Request, milestoneID, userID int, workspacePerm string) bool {
 	isGlobal, workspaceID, err := h.planningService.IsMilestoneGlobal(milestoneID)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, repositorypkg.ErrNotFound) {
 			respondNotFound(w, r, "milestone")
 			return false
 		}

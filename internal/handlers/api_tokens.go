@@ -3,10 +3,10 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"windshift/internal/auth"
@@ -486,7 +486,7 @@ func (ath *APITokenHandler) AdminRevokeToken(w http.ResponseWriter, r *http.Requ
 	}
 
 	if err := ath.tokenManager.AdminRevokeToken(tokenID); err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, auth.ErrTokenNotFound) {
 			respondNotFound(w, r, "token")
 			return
 		}

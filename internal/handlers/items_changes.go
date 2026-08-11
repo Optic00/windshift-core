@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -143,7 +144,7 @@ func (h *ItemHandler) GetChanges(w http.ResponseWriter, r *http.Request) {
 		}
 		visible, err := h.itemVisibleInDeltaScope(user, accessibleWorkspaceIDs, workspaceID, collectionID, change.ItemID, r.URL.Query().Get("sub_ql"))
 		if err != nil {
-			if strings.Contains(err.Error(), "QL query error:") {
+			if errors.Is(err, services.ErrQLQuery) {
 				respondValidationError(w, r, err.Error())
 				return
 			}
@@ -209,7 +210,7 @@ func (h *ItemHandler) itemVisibleInDeltaScope(user *models.User, accessibleWorks
 		Pagination: services.PaginationParams{Limit: 1, Offset: 0},
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "collection not found") {
+		if errors.Is(err, services.ErrCollectionNotFound) {
 			return false, nil
 		}
 		return false, err

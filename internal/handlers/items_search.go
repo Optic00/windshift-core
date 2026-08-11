@@ -384,11 +384,11 @@ func (h *ItemHandler) GetBacklogItems(w http.ResponseWriter, r *http.Request) {
 		OmitDescriptions: omitDescriptions,
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "QL query error:") {
+		if errors.Is(err, services.ErrQLQuery) {
 			respondValidationError(w, r, err.Error())
 			return
 		}
-		if strings.Contains(err.Error(), "collection not found") {
+		if errors.Is(err, services.ErrCollectionNotFound) {
 			respondNotFound(w, r, "collection")
 			return
 		}

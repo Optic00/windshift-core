@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/lib/pq"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 
 	"windshift/internal/database"
 )
@@ -64,11 +66,9 @@ func IsFracIndexUniqueViolation(err error) bool {
 	}
 	var pqErr *pq.Error
 	if errors.As(err, &pqErr) {
-		return pqErr.Code == "23505" &&
-			(pqErr.Constraint == "idx_items_frac_index" ||
-				strings.Contains(pqErr.Message, "idx_items_frac_index"))
+		return pqErr.Code == "23505" && pqErr.Constraint == "idx_items_frac_index"
 	}
-	return strings.Contains(err.Error(), "UNIQUE constraint failed: items.frac_index")
+	return isSQLiteUniqueViolation(err)
 }
 
 // IsWorkspaceItemNumberUniqueViolation reports whether err is specifically a
@@ -83,11 +83,16 @@ func IsWorkspaceItemNumberUniqueViolation(err error) bool {
 	}
 	var pqErr *pq.Error
 	if errors.As(err, &pqErr) {
-		return pqErr.Code == "23505" &&
-			(pqErr.Constraint == "items_workspace_id_workspace_item_number_key" ||
-				strings.Contains(pqErr.Message, "workspace_item_number"))
+		return pqErr.Code == "23505" && pqErr.Constraint == "items_workspace_id_workspace_item_number_key"
 	}
-	return strings.Contains(err.Error(), "UNIQUE constraint failed: items.workspace_id, items.workspace_item_number")
+	return isSQLiteUniqueViolation(err)
+}
+
+func isSQLiteUniqueViolation(err error) bool {
+	var sqliteErr *sqlite.Error
+	return errors.As(err, &sqliteErr) &&
+		(sqliteErr.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE ||
+			sqliteErr.Code() == sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY)
 }
 
 // Fractional indexing implementation based on https://github.com/rocicorp/fracdex

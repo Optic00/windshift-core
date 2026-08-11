@@ -5,11 +5,14 @@ import (
 	"database/sql"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 
-	_ "modernc.org/sqlite"
+	"github.com/lib/pq"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 //go:embed schema/items.sql
@@ -652,14 +655,21 @@ func (db *DB) migrateDefaultConfigurationSet() error {
 	return nil
 }
 
-// IsUniqueConstraintError checks if the error is a unique constraint violation (SQLite + PostgreSQL)
+// IsUniqueConstraintError checks if the error is a unique constraint violation.
 func IsUniqueConstraintError(err error) bool {
 	if err == nil {
 		return false
 	}
-	errStr := strings.ToLower(err.Error())
-	return strings.Contains(errStr, "unique constraint") ||
-		strings.Contains(errStr, "duplicate key")
+	var pqErr *pq.Error
+	if errors.As(err, &pqErr) {
+		return pqErr.Code == "23505"
+	}
+	var sqliteErr *sqlite.Error
+	if errors.As(err, &sqliteErr) {
+		return sqliteErr.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE ||
+			sqliteErr.Code() == sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY
+	}
+	return false
 }
 
 // NewDatabase creates a new database connection based on the driver and connection string

@@ -90,10 +90,7 @@ func (s *AgentActingIdentityService) Resolve(ctx context.Context, bindingCreator
 
 	u, err := s.users.GetByID(actingUserID)
 	if err != nil {
-		// GetByID returns "user not found: <id>" on missing rows; the
-		// security-aware mapping back to ErrActingIdentityNotFound
-		// keeps row existence from leaking to non-admins.
-		if strings.Contains(err.Error(), "user not found") {
+		if errors.Is(err, repository.ErrNotFound) {
 			return nil, ErrActingIdentityNotFound
 		}
 		return nil, fmt.Errorf("load candidate user: %w", err)

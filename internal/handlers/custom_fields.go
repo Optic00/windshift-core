@@ -65,6 +65,8 @@ const (
 	defaultMaxIndexes    = 20
 )
 
+var errCustomFieldIndexLimit = errors.New("custom field index limit reached")
+
 // logAndRespondDatabaseError logs database errors and responds with a generic message
 func (h *CustomFieldHandler) logAndRespondDatabaseError(w http.ResponseWriter, r *http.Request, err error) {
 	slog.Error("database error in custom field handler", slog.String("component", "custom_fields"), slog.Any("error", err))
@@ -375,7 +377,7 @@ func (h *CustomFieldHandler) Update(w http.ResponseWriter, r *http.Request) {
 		} {
 			deferred, err := h.manageFieldIndex(id, oldCF.FieldType, table.name, table.wanted)
 			if err != nil {
-				if strings.Contains(err.Error(), "index limit") {
+				if errors.Is(err, errCustomFieldIndexLimit) {
 					respondBadRequest(w, r, err.Error())
 					return
 				}
@@ -581,7 +583,7 @@ func (h *CustomFieldHandler) manageFieldIndex(fieldID int, fieldType, targetTabl
 		maxIndexes := h.maxIndexesPerTable()
 
 		if currentCount >= maxIndexes {
-			return false, fmt.Errorf("index limit reached: %d of %d indexes used on %s", currentCount, maxIndexes, targetTable)
+			return false, fmt.Errorf("%w: %d of %d indexes used on %s", errCustomFieldIndexLimit, currentCount, maxIndexes, targetTable)
 		}
 
 		// Building the physical index is deferred off the request thread on both

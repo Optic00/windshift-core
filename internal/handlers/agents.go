@@ -23,11 +23,12 @@ import (
 // handlers translate these to status codes; other callers (the CLI onboarding
 // flow, tests) can branch on them directly.
 var (
-	ErrAgentsDisabled     = errors.New("user-managed agents are disabled")
-	ErrAgentLimitReached  = errors.New("agent limit reached")
-	ErrAgentUsernameTaken = errors.New("username already exists")
-	ErrAgentEmailTaken    = errors.New("email already exists")
-	ErrAgentInactive      = errors.New("agent is inactive")
+	ErrAgentsDisabled      = errors.New("user-managed agents are disabled")
+	ErrAgentLimitReached   = errors.New("agent limit reached")
+	ErrAgentUsernameTaken  = errors.New("username already exists")
+	ErrAgentEmailTaken     = errors.New("email already exists")
+	ErrAgentInactive       = errors.New("agent is inactive")
+	ErrInvalidAgentRequest = errors.New("invalid agent request")
 )
 
 // AgentHandler handles profile-scoped CRUD for owned agent users.
@@ -96,7 +97,7 @@ func (h *AgentHandler) CreateOwnedAgent(ownerID int, isAdmin bool, req CreateAge
 		return nil, ErrAgentsDisabled
 	}
 	if err := utils.Validate(req); err != nil {
-		return nil, fmt.Errorf("invalid agent request: %w", err)
+		return nil, fmt.Errorf("%w: %v", ErrInvalidAgentRequest, err)
 	}
 	if !isAdmin {
 		maxAgents := h.maxAgentsPerUser()
@@ -180,7 +181,7 @@ var ErrOAuthClientDisabledOrMissing = errors.New("oauth client is disabled or do
 // It bypasses self-service limits but requires an enabled client.
 func (h *AgentHandler) CreateOAuthAgent(ownerID, oauthClientID int, req CreateAgentRequest) (*models.User, error) {
 	if err := utils.Validate(req); err != nil {
-		return nil, fmt.Errorf("invalid agent request: %w", err)
+		return nil, fmt.Errorf("%w: %v", ErrInvalidAgentRequest, err)
 	}
 
 	// Recheck the client to close a disable-after-consent race.
@@ -336,11 +337,9 @@ func (h *AgentHandler) Create(w http.ResponseWriter, r *http.Request) {
 			respondConflict(w, r, "Username already exists")
 		case errors.Is(err, ErrAgentEmailTaken):
 			respondConflict(w, r, "Email already exists")
+		case errors.Is(err, ErrInvalidAgentRequest):
+			respondValidationError(w, r, strings.TrimPrefix(err.Error(), ErrInvalidAgentRequest.Error()+": "))
 		default:
-			if strings.Contains(err.Error(), "invalid agent request") {
-				respondValidationError(w, r, strings.TrimPrefix(err.Error(), "invalid agent request: "))
-				return
-			}
 			respondInternalError(w, r, err)
 		}
 		return

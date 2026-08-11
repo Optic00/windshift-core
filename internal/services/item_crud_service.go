@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -13,6 +14,11 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+)
+
+var (
+	ErrCollectionNotFound = errors.New("collection not found")
+	ErrQLQuery            = errors.New("QL query error")
 )
 
 // ItemCRUDService handles item CRUD operations
@@ -415,8 +421,8 @@ func (s *ItemCRUDService) resolveCollectionQLContext(ctx context.Context, qlQuer
 	}
 	_, collectionQL, err := s.workspaceRepo.GetCollectionQueryContext(ctx, collectionID)
 	if err != nil {
-		if err == repository.ErrNotFound {
-			return "", false, fmt.Errorf("collection not found")
+		if errors.Is(err, repository.ErrNotFound) {
+			return "", false, fmt.Errorf("%w: %d", ErrCollectionNotFound, collectionID)
 		}
 		return "", false, fmt.Errorf("failed to get collection query: %w", err)
 	}
@@ -442,7 +448,7 @@ func (s *ItemCRUDService) evaluateQLContext(requestCtx context.Context, qlQuery 
 	evaluator := cql.NewEvaluator(workspaceMap, customFieldMap, s.db.GetDriverName())
 	qlSQL, qlArgs, err = evaluator.EvaluateToSQL(qlQuery)
 	if err != nil {
-		return "", nil, fmt.Errorf("QL query error: %w", err)
+		return "", nil, fmt.Errorf("%w: %v", ErrQLQuery, err)
 	}
 	return qlSQL, qlArgs, nil
 }

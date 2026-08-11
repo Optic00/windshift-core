@@ -201,11 +201,11 @@ func (h *CollectionHandler) respondCollectionItems(w http.ResponseWriter, r *htt
 		SortAsc: pagination.SortAsc,
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "QL query error:") {
+		if errors.Is(err, services.ErrQLQuery) {
 			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, err.Error()))
 			return
 		}
-		if strings.Contains(err.Error(), "collection not found") {
+		if errors.Is(err, services.ErrCollectionNotFound) {
 			h.RespondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Collection not found"))
 			return
 		}

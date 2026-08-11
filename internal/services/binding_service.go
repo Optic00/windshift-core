@@ -74,6 +74,8 @@ const maxBindingRepos = 10
 // every run start.
 var ErrBindingTokenTTLOverCap = errors.New("binding service: token_ttl_minutes exceeds the agent-token ceiling")
 
+var ErrBindingSkillsUnavailable = errors.New("binding service: skills are not configured on this server")
+
 // ErrBindingInstructionsTooLong caps a binding's custom instructions: the
 // text is appended to every run's initial prompt, so an unbounded value is
 // a token-cost and context-window footgun. 8000 characters is plenty for a
@@ -414,7 +416,7 @@ func (s *BindingService) Create(ctx context.Context, req CreateBindingRequest) (
 		return nil, ErrBindingInstructionsTooLong
 	}
 	if len(req.SkillIDs) > 0 && s.skills == nil {
-		return nil, errors.New("binding service: skills are not configured on this server")
+		return nil, ErrBindingSkillsUnavailable
 	}
 	identity, err := s.identity.Resolve(ctx, req.CreatedByUserID, req.ActingUserID, req.WorkspaceID)
 	if err != nil {
@@ -603,7 +605,7 @@ func (s *BindingService) UpdateBinding(ctx context.Context, req UpdateBindingReq
 		return nil, ErrBindingInstructionsTooLong
 	}
 	if len(req.SkillIDs) > 0 && s.skills == nil {
-		return nil, errors.New("binding service: skills are not configured on this server")
+		return nil, ErrBindingSkillsUnavailable
 	}
 	repos, err := normalizeRepoInputs(req.Repos)
 	if err != nil {
@@ -704,7 +706,7 @@ func (s *BindingService) UpdateAgentConfig(ctx context.Context, workspaceID, bin
 	}
 	if s.skills == nil {
 		if len(skillIDs) > 0 {
-			return errors.New("binding service: skills are not configured on this server")
+			return ErrBindingSkillsUnavailable
 		}
 		return nil
 	}

@@ -25,6 +25,8 @@ const (
 	PrefixLength = 4  // Length of visible prefix for identification
 )
 
+var ErrTokenNotFound = errors.New("token not found")
+
 // Scope constants, the scope catalog, and scope validation live in scopes.go.
 
 // tokenCacheEntry is the value stored in the token validation cache.
@@ -342,7 +344,7 @@ func getTokenByID(store tokenRowStore, id int) (*models.APIToken, error) {
 	token, err := scanAPITokenListRow(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("token not found")
+			return nil, ErrTokenNotFound
 		}
 		return nil, fmt.Errorf("failed to get token: %w", err)
 	}
@@ -398,7 +400,7 @@ func (tm *TokenManager) RevokeToken(tokenID, userID int) error {
 	}
 
 	if rowsAffected == 0 {
-		return fmt.Errorf("token not found or not owned by user")
+		return fmt.Errorf("%w or not owned by user", ErrTokenNotFound)
 	}
 
 	tm.invalidateTokenCache(tokenID)
@@ -498,7 +500,7 @@ func (tm *TokenManager) AdminRevokeToken(tokenID int) error {
 	}
 
 	if rowsAffected == 0 {
-		return fmt.Errorf("token not found")
+		return ErrTokenNotFound
 	}
 
 	tm.invalidateTokenCache(tokenID)

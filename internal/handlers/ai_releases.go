@@ -9,6 +9,7 @@ import (
 
 	"windshift/internal/llm"
 	"windshift/internal/models"
+	"windshift/internal/repository"
 	"windshift/internal/services"
 )
 
@@ -37,7 +38,7 @@ func (h *AIHandler) GenerateReleaseNotes(w http.ResponseWriter, r *http.Request)
 	planningService := services.NewPlanningService(h.db)
 	milestone, err := planningService.GetMilestone(milestoneID)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, repository.ErrNotFound) {
 			respondNotFound(w, r, "milestone")
 			return
 		}

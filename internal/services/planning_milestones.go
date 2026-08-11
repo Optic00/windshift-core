@@ -387,7 +387,7 @@ func (s *PlanningService) GetMilestone(id int) (*MilestoneResult, error) {
 
 	m, err := scanMilestoneRow(row)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("milestone not found: %d", id)
+		return nil, fmt.Errorf("milestone not found: %d: %w", id, repository.ErrNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get milestone: %w", err)
@@ -610,7 +610,7 @@ func (s *PlanningService) SetMilestoneStatus(milestoneID, workspaceID int, statu
 		return fmt.Errorf("failed to read update result: %w", err)
 	}
 	if n == 0 {
-		return fmt.Errorf("milestone not found in workspace: %d", milestoneID)
+		return fmt.Errorf("milestone not found in workspace: %d: %w", milestoneID, repository.ErrNotFound)
 	}
 	return nil
 }
@@ -693,7 +693,7 @@ func (s *PlanningService) UpdateMilestone(params UpdateMilestoneParams) (*Milest
 		return nil, fmt.Errorf("failed to read update result: %w", err)
 	}
 	if n == 0 {
-		return nil, fmt.Errorf("milestone not found: %d", params.ID)
+		return nil, fmt.Errorf("milestone not found: %d: %w", params.ID, repository.ErrNotFound)
 	}
 	updated, err := s.GetMilestone(params.ID)
 	if err != nil {
@@ -989,7 +989,7 @@ func (s *PlanningService) CompleteMilestoneRelease(ctx context.Context, attemptI
 			return fmt.Errorf("failed to inspect milestone status update: %w", err)
 		}
 		if updated == 0 {
-			return fmt.Errorf("milestone not found: %d", params.ID)
+			return fmt.Errorf("milestone not found: %d: %w", params.ID, repository.ErrNotFound)
 		}
 		return nil
 	})
@@ -1122,7 +1122,7 @@ func (s *PlanningService) GetMilestoneProgress(milestoneID int, workspaceIDs []i
 	`, milestoneID).Scan(&report.MilestoneName, &description, &targetDate, &report.Status, &categoryColor)
 
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("milestone not found: %d", milestoneID)
+		return nil, fmt.Errorf("milestone not found: %d: %w", milestoneID, repository.ErrNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get milestone: %w", err)
@@ -1154,7 +1154,7 @@ func (s *PlanningService) IsMilestoneGlobal(id int) (isGlobal bool, workspaceID 
 	var wsID sql.NullInt64
 	err = s.db.QueryRow("SELECT is_global, workspace_id FROM milestones WHERE id = ?", id).Scan(&isGlobal, &wsID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil, fmt.Errorf("milestone not found: %d", id)
+		return false, nil, fmt.Errorf("milestone not found: %d: %w", id, repository.ErrNotFound)
 	}
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to check milestone: %w", err)

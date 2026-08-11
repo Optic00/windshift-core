@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -153,7 +154,7 @@ func respondSCIMJSON(w http.ResponseWriter, statusCode int, data interface{}) {
 
 // isInvalidFilterErr centralizes SCIM filter parse classification.
 func isInvalidFilterErr(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "invalid filter")
+	return errors.Is(err, errInvalidSCIMFilter)
 }
 
 func respondSCIMErrorMsg(w http.ResponseWriter, status int, detail, scimType string) {
@@ -248,7 +249,7 @@ func (h *SCIMHandler) GetSchema(w http.ResponseWriter, r *http.Request) {
 func (h *SCIMHandler) listUsersFiltered(filter string, startIndex, count int) (*models.SCIMListResponse, error) {
 	filterResult, err := ParseSCIMFilterWithAnd(filter, "User")
 	if err != nil {
-		return nil, fmt.Errorf("invalid filter: %w", err)
+		return nil, fmt.Errorf("%w: %v", errInvalidSCIMFilter, err)
 	}
 
 	// The repository scopes the query to the IdP-provisioned surface (no
@@ -276,7 +277,7 @@ func (h *SCIMHandler) listUsersFiltered(filter string, startIndex, count int) (*
 func (h *SCIMHandler) listGroupsFiltered(filter string, startIndex, count int) (*models.SCIMListResponse, error) {
 	filterResult, err := ParseSCIMFilterWithAnd(filter, "Group")
 	if err != nil {
-		return nil, fmt.Errorf("invalid filter: %w", err)
+		return nil, fmt.Errorf("%w: %v", errInvalidSCIMFilter, err)
 	}
 
 	// The repository scopes the query so SCIM only sees what the IdP

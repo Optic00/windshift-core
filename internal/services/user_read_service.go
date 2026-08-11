@@ -9,6 +9,7 @@ import (
 
 	"windshift/internal/database"
 	"windshift/internal/models"
+	"windshift/internal/repository"
 )
 
 // UserReadService provides read operations for users
@@ -121,7 +122,7 @@ func (s *UserReadService) GetByID(id int) (*models.User, error) {
 
 	u, err := scanUserRow(row)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("user not found: %d", id)
+		return nil, fmt.Errorf("user not found: %d: %w", id, repository.ErrNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user: %w", err)

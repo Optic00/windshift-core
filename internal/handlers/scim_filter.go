@@ -1,10 +1,13 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 )
+
+var errInvalidSCIMFilter = errors.New("invalid filter")
 
 // SCIM filter operators
 const (
