@@ -52,13 +52,31 @@ func scanAssetReport(scanner interface{ Scan(...any) error }) (models.AssetRepor
 		return ar, err
 	}
 	ar.ColumnConfig = decodeStringJSONArray(columnConfig)
-	ar.VisibilityGroupIDs = decodeIntJSONArray(visibilityGroupIDs)
-	ar.VisibilityOrgIDs = decodeIntJSONArray(visibilityOrgIDs)
+	var err error
+	ar.VisibilityGroupIDs, err = decodeAssetReportVisibilityIDs(visibilityGroupIDs)
+	if err != nil {
+		return ar, fmt.Errorf("parse asset report %d visibility groups: %w", ar.ID, err)
+	}
+	ar.VisibilityOrgIDs, err = decodeAssetReportVisibilityIDs(visibilityOrgIDs)
+	if err != nil {
+		return ar, fmt.Errorf("parse asset report %d visibility organizations: %w", ar.ID, err)
+	}
 	ar.Config = config
 	if itemTypeName.Valid {
 		ar.ItemTypeName = itemTypeName.String
 	}
 	return ar, nil
+}
+
+func decodeAssetReportVisibilityIDs(raw *string) ([]int, error) {
+	if raw == nil || *raw == "" {
+		return nil, nil
+	}
+	var ids []int
+	if err := json.Unmarshal([]byte(*raw), &ids); err != nil {
+		return nil, err
+	}
+	return ids, nil
 }
 
 // ListByChannel returns all asset reports for a channel, ordered by
