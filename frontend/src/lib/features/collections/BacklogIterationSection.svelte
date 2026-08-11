@@ -65,6 +65,7 @@
 
 <div
   class="mb-4"
+  data-testid={`backlog-iteration-section-${sectionId}`}
   data-iteration-section
   data-iteration-id={sectionId}
 >
