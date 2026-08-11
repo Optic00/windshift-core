@@ -334,51 +334,51 @@ func (p *PostgresDB) GetDriverName() string {
 }
 
 // Query executes a query that returns rows
-func (p *PostgresDB) Query(query string, args ...interface{}) (*sql.Rows, error) {
+func (p *PostgresDB) Query(query string, args ...any) (*sql.Rows, error) {
 	query = ConvertPlaceholders(query)
 	return p.db.Query(query, args...)
 }
 
 // QueryRow executes a query that returns at most one row
-func (p *PostgresDB) QueryRow(query string, args ...interface{}) *sql.Row {
+func (p *PostgresDB) QueryRow(query string, args ...any) *sql.Row {
 	query = ConvertPlaceholders(query)
 	return p.db.QueryRow(query, args...)
 }
 
 // Exec executes a query that doesn't return rows
-func (p *PostgresDB) Exec(query string, args ...interface{}) (sql.Result, error) {
+func (p *PostgresDB) Exec(query string, args ...any) (sql.Result, error) {
 	query = ConvertPlaceholders(query)
 	return p.db.Exec(query, args...)
 }
 
 // QueryContext executes a query with context that returns rows
-func (p *PostgresDB) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+func (p *PostgresDB) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
 	query = ConvertPlaceholders(query)
 	return p.db.QueryContext(ctx, query, args...)
 }
 
 // QueryRowContext executes a query with context that returns at most one row
-func (p *PostgresDB) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
+func (p *PostgresDB) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
 	query = ConvertPlaceholders(query)
 	return p.db.QueryRowContext(ctx, query, args...)
 }
 
 // ExecContext executes a query with context that doesn't return rows
-func (p *PostgresDB) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+func (p *PostgresDB) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
 	query = ConvertPlaceholders(query)
 	return p.db.ExecContext(ctx, query, args...)
 }
 
 // ExecWrite explicitly executes a write query
 // For PostgreSQL, this is the same as Exec since MVCC handles concurrency
-func (p *PostgresDB) ExecWrite(query string, args ...interface{}) (sql.Result, error) {
+func (p *PostgresDB) ExecWrite(query string, args ...any) (sql.Result, error) {
 	query = ConvertPlaceholders(query)
 	return p.db.Exec(query, args...)
 }
 
 // ExecWriteContext explicitly executes a write query with context
 // For PostgreSQL, this is the same as ExecContext since MVCC handles concurrency
-func (p *PostgresDB) ExecWriteContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+func (p *PostgresDB) ExecWriteContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
 	query = ConvertPlaceholders(query)
 	return p.db.ExecContext(ctx, query, args...)
 }

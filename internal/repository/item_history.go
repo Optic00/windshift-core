@@ -13,7 +13,7 @@ import (
 // Both database.Database and database.Tx satisfy it, so history rows can be
 // recorded inside or outside a caller-owned transaction.
 type HistoryWriter interface {
-	ExecWrite(query string, args ...interface{}) (sql.Result, error)
+	ExecWrite(query string, args ...any) (sql.Result, error)
 }
 
 // HistoryEntry represents a single field change in item history
@@ -31,7 +31,7 @@ type HistoryEntry struct {
 
 // RecordHistory records a history entry for an item change
 func (r *ItemRepository) RecordHistory(w HistoryWriter, entry HistoryEntry) error {
-	var oldValue interface{} = entry.OldValue
+	var oldValue any = entry.OldValue
 	if entry.OldValueNull {
 		oldValue = nil
 	}

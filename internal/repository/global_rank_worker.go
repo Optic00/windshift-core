@@ -322,7 +322,7 @@ func readGlobalRankMigrationRows(tx database.Tx, state GlobalRankState, limit in
 	return out, nil
 }
 
-func globalRankMigrationRowsQuery(state GlobalRankState, limit int, driver string) (query string, args []interface{}, err error) {
+func globalRankMigrationRowsQuery(state GlobalRankState, limit int, driver string) (query string, args []any, err error) {
 	if state.TargetBucket == nil || state.Direction == nil {
 		return "", nil, fmt.Errorf("global rank migration has no target or direction")
 	}
@@ -330,7 +330,7 @@ func globalRankMigrationRowsQuery(state GlobalRankState, limit int, driver strin
 	// A direct byte range keeps the unique frac_index index usable. Applying
 	// SUBSTR to every row forced a table/index scan for each bounded batch.
 	where := "frac_index >= ? AND frac_index < ?"
-	args = []interface{}{lowerBucketBound, upperBucketBound}
+	args = []any{lowerBucketBound, upperBucketBound}
 	order := "ASC"
 	if *state.Direction == GlobalRankDirectionHighToLow {
 		order = "DESC"
@@ -372,7 +372,7 @@ func globalRankBucketBounds(bucket GlobalRankBucket) (lower, upper string) {
 }
 
 func countItems(q interface {
-	QueryRow(query string, args ...interface{}) *sql.Row
+	QueryRow(query string, args ...any) *sql.Row
 }) (int64, error) {
 	var count int64
 	if err := q.QueryRow("SELECT COUNT(*) FROM items").Scan(&count); err != nil {
@@ -408,7 +408,7 @@ func stringPointer(value string) *string {
 }
 
 func loadGlobalRankStateWithQuery(q interface {
-	QueryRow(query string, args ...interface{}) *sql.Row
+	QueryRow(query string, args ...any) *sql.Row
 }, suffix string) (GlobalRankState, error) {
 	state, err := loadGlobalRankStateUncheckedWithQuery(q, suffix)
 	if err != nil {
@@ -421,7 +421,7 @@ func loadGlobalRankStateWithQuery(q interface {
 }
 
 func loadGlobalRankStateUncheckedWithQuery(q interface {
-	QueryRow(query string, args ...interface{}) *sql.Row
+	QueryRow(query string, args ...any) *sql.Row
 }, suffix string) (GlobalRankState, error) {
 	var state GlobalRankState
 	var targetBucket sql.NullInt64

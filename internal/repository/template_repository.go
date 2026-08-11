@@ -299,7 +299,7 @@ func (r *TemplateRepository) loadItemTypeIDs(templates []models.ItemTemplate) er
 	if len(templates) == 0 {
 		return nil
 	}
-	ids := make([]interface{}, len(templates))
+	ids := make([]any, len(templates))
 	placeholders := make([]string, len(templates))
 	for i, t := range templates {
 		ids[i] = t.ID

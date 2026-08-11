@@ -71,14 +71,14 @@ const providerColumnsWithoutSecret = `id, slug, name, provider_type, enabled, is
 // scanProviderRow is the shared scanner for SSOProvider rows.
 // When withSecret is true, it expects the client_secret_encrypted column in the result set.
 func scanProviderRow(row interface {
-	Scan(dest ...interface{}) error
+	Scan(dest ...any) error
 }, withSecret bool) (*SSOProvider, error) {
 	var provider SSOProvider
 	var issuerURL, clientID, clientSecretEncrypted, scopes, attributeMapping sql.NullString
 	var samlIDPMetadataURL, samlIDPSSOURL, samlIDPCertificate, samlSPEntityID sql.NullString
 
 	// Build scan destinations: shared prefix, optional secret, shared suffix
-	dests := []interface{}{
+	dests := []any{
 		&provider.ID, &provider.Slug, &provider.Name, &provider.ProviderType,
 		&provider.Enabled, &provider.IsDefault,
 		&issuerURL, &clientID,
@@ -113,14 +113,14 @@ func scanProviderRow(row interface {
 
 // scanProvider scans a row into an SSOProvider (with secret)
 func scanProvider(row interface {
-	Scan(dest ...interface{}) error
+	Scan(dest ...any) error
 }) (*SSOProvider, error) {
 	return scanProviderRow(row, true)
 }
 
 // scanProviderNoSecret scans a row into an SSOProvider (without secret column)
 func scanProviderNoSecret(row interface {
-	Scan(dest ...interface{}) error
+	Scan(dest ...any) error
 }) (*SSOProvider, error) {
 	return scanProviderRow(row, false)
 }
@@ -185,7 +185,7 @@ func (s *ProviderStore) GetBySlug(slug string) (*SSOProvider, error) {
 
 // queryProviders runs a SELECT that returns providerColumnsWithoutSecret rows
 // and scans each one into an SSOProvider.
-func (s *ProviderStore) queryProviders(query string, args ...interface{}) ([]*SSOProvider, error) {
+func (s *ProviderStore) queryProviders(query string, args ...any) ([]*SSOProvider, error) {
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err

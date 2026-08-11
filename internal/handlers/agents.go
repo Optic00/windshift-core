@@ -315,7 +315,7 @@ func (h *AgentHandler) Create(w http.ResponseWriter, r *http.Request) {
 				UserAgent:    r.UserAgent(),
 				ActionType:   logger.ActionAgentCreate,
 				ResourceType: logger.ResourceUser,
-				Details:      map[string]interface{}{"reason": "feature_disabled"},
+				Details:      map[string]any{"reason": "feature_disabled"},
 				Success:      false,
 				ErrorMessage: err.Error(),
 			})
@@ -328,7 +328,7 @@ func (h *AgentHandler) Create(w http.ResponseWriter, r *http.Request) {
 				UserAgent:    r.UserAgent(),
 				ActionType:   logger.ActionAgentCreate,
 				ResourceType: logger.ResourceUser,
-				Details:      map[string]interface{}{"reason": "max_agents_reached"},
+				Details:      map[string]any{"reason": "max_agents_reached"},
 				Success:      false,
 				ErrorMessage: err.Error(),
 			})
@@ -354,7 +354,7 @@ func (h *AgentHandler) Create(w http.ResponseWriter, r *http.Request) {
 		ResourceType: logger.ResourceUser,
 		ResourceID:   &agent.ID,
 		ResourceName: agent.Username,
-		Details: map[string]interface{}{
+		Details: map[string]any{
 			"agent_kind":    "owned",
 			"owner_user_id": currentUser.ID,
 			"email":         agent.Email,
@@ -479,7 +479,7 @@ func (h *AgentHandler) Update(w http.ResponseWriter, r *http.Request) {
 		ResourceType: logger.ResourceUser,
 		ResourceID:   &agentID,
 		ResourceName: agent.Username,
-		Details: map[string]interface{}{
+		Details: map[string]any{
 			"agent_kind":    "owned",
 			"owner_user_id": currentUser.ID,
 			"name":          req.Name,
@@ -522,7 +522,7 @@ func (h *AgentHandler) Delete(w http.ResponseWriter, r *http.Request) {
 			ActionType:   logger.ActionAgentDelete,
 			ResourceType: logger.ResourceUser,
 			ResourceID:   &agentID,
-			Details:      map[string]interface{}{"reason": "not_agent_owner"},
+			Details:      map[string]any{"reason": "not_agent_owner"},
 			Success:      false,
 			ErrorMessage: "caller does not own target agent",
 		})
@@ -546,7 +546,7 @@ func (h *AgentHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		ResourceType: logger.ResourceUser,
 		ResourceID:   &agentID,
 		ResourceName: username,
-		Details: map[string]interface{}{
+		Details: map[string]any{
 			"agent_kind":    "owned",
 			"owner_user_id": currentUser.ID,
 		},

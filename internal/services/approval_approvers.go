@@ -279,7 +279,7 @@ func (s *ApprovalService) resolveCustomFieldApprovers(ctx context.Context, tx da
 	if err != nil || !raw.Valid || raw.String == "" {
 		return nil, err
 	}
-	var values map[string]interface{}
+	var values map[string]any
 	if err := json.Unmarshal([]byte(raw.String), &values); err != nil {
 		return nil, err
 	}
@@ -330,7 +330,7 @@ func scanResolvedApprovers(rows *sql.Rows, roleID, groupID *int) ([]resolvedAppr
 }
 
 // userListFromValue interprets a custom-field value as a user id or list of user ids.
-func userListFromValue(v interface{}) []resolvedApprover {
+func userListFromValue(v any) []resolvedApprover {
 	switch val := v.(type) {
 	case float64:
 		if val > 0 {
@@ -340,7 +340,7 @@ func userListFromValue(v interface{}) []resolvedApprover {
 		if val > 0 {
 			return []resolvedApprover{{UserID: val}}
 		}
-	case []interface{}:
+	case []any:
 		var out []resolvedApprover
 		for _, item := range val {
 			if uid, ok := toInt(item); ok && uid > 0 {

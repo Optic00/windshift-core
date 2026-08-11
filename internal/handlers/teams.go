@@ -187,7 +187,7 @@ func (h *TeamHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.auditor.LogWithDetails(r, user, logger.ActionTeamCreate, logger.ResourceTeam, &teamID, req.Name, map[string]interface{}{
+	h.auditor.LogWithDetails(r, user, logger.ActionTeamCreate, logger.ResourceTeam, &teamID, req.Name, map[string]any{
 		"description": req.Description,
 	})
 
@@ -234,7 +234,7 @@ func (h *TeamHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if user := utils.GetCurrentUser(r); user != nil {
-		h.auditor.LogWithDetails(r, user, logger.ActionTeamUpdate, logger.ResourceTeam, &id, team.Name, map[string]interface{}{
+		h.auditor.LogWithDetails(r, user, logger.ActionTeamUpdate, logger.ResourceTeam, &id, team.Name, map[string]any{
 			"description": team.Description,
 			"is_active":   team.IsActive,
 		})
@@ -282,7 +282,7 @@ func (h *TeamHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.auditor.LogWithDetails(r, user, logger.ActionTeamDelete, logger.ResourceTeam, &id, team.Name, map[string]interface{}{
+	h.auditor.LogWithDetails(r, user, logger.ActionTeamDelete, logger.ResourceTeam, &id, team.Name, map[string]any{
 		"description": team.Description,
 		"is_active":   team.IsActive,
 	})
@@ -367,9 +367,9 @@ func (h *TeamHandler) AddMembers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if currentUser != nil {
-		h.auditor.LogWithDetails(r, currentUser, logger.ActionTeamAddMember, logger.ResourceTeam, &id, "", map[string]interface{}{"user_ids": req.UserIDs})
+		h.auditor.LogWithDetails(r, currentUser, logger.ActionTeamAddMember, logger.ResourceTeam, &id, "", map[string]any{"user_ids": req.UserIDs})
 	}
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"message": "Members added successfully",
 	})
 }
@@ -396,9 +396,9 @@ func (h *TeamHandler) RemoveMembers(w http.ResponseWriter, r *http.Request) {
 
 	user := utils.GetCurrentUser(r)
 	if user != nil {
-		h.auditor.LogWithDetails(r, user, logger.ActionTeamRemoveMember, logger.ResourceTeam, &id, "", map[string]interface{}{"user_ids": req.UserIDs})
+		h.auditor.LogWithDetails(r, user, logger.ActionTeamRemoveMember, logger.ResourceTeam, &id, "", map[string]any{"user_ids": req.UserIDs})
 	}
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"message": "Members removed successfully",
 	})
 }
@@ -432,9 +432,9 @@ func (h *TeamHandler) UpdateMemberRole(w http.ResponseWriter, r *http.Request) {
 
 	user := utils.GetCurrentUser(r)
 	if user != nil {
-		h.auditor.LogWithDetails(r, user, logger.ActionTeamUpdateMemberRole, logger.ResourceTeam, &teamID, "", map[string]interface{}{"user_id": userID, "role": req.Role})
+		h.auditor.LogWithDetails(r, user, logger.ActionTeamUpdateMemberRole, logger.ResourceTeam, &teamID, "", map[string]any{"user_id": userID, "role": req.Role})
 	}
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"message": "Member role updated successfully",
 	})
 }
@@ -477,9 +477,9 @@ func (h *TeamHandler) AddGroups(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	h.auditor.LogWithDetails(r, currentUser, logger.ActionTeamAddGroup, logger.ResourceTeam, &id, "", map[string]interface{}{"group_ids": req.GroupIDs})
+	h.auditor.LogWithDetails(r, currentUser, logger.ActionTeamAddGroup, logger.ResourceTeam, &id, "", map[string]any{"group_ids": req.GroupIDs})
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"message": "Groups added successfully",
 	})
 }
@@ -504,10 +504,10 @@ func (h *TeamHandler) RemoveGroups(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if user := utils.GetCurrentUser(r); user != nil {
-		h.auditor.LogWithDetails(r, user, logger.ActionTeamRemoveGroup, logger.ResourceTeam, &id, "", map[string]interface{}{"group_ids": req.GroupIDs})
+		h.auditor.LogWithDetails(r, user, logger.ActionTeamRemoveGroup, logger.ResourceTeam, &id, "", map[string]any{"group_ids": req.GroupIDs})
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"message": "Groups removed successfully",
 	})
 }

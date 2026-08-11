@@ -39,8 +39,8 @@ type Item struct {
 	// Portal submission tracking fields (immutable once set)
 	ChannelID         *int                    `json:"channel_id,omitempty"`      // Portal/channel this request was submitted through
 	RequestTypeID     *int                    `json:"request_type_id,omitempty"` // Request type used for submission
-	CustomFieldValues map[string]interface{}  `json:"custom_field_values,omitempty"`
-	VirtualFieldData  map[string]interface{}  `json:"virtual_field_data,omitempty"`
+	CustomFieldValues map[string]any          `json:"custom_field_values,omitempty"`
+	VirtualFieldData  map[string]any          `json:"virtual_field_data,omitempty"`
 	CalendarData      []CalendarScheduleEntry `json:"calendar_data,omitempty"`
 	// Hierarchy fields
 	ParentID *int `json:"parent_id"` // Foreign key to parent item
@@ -393,13 +393,13 @@ type PersonalLabel struct {
 
 // RelationshipGraphNode represents a node in the asset relationship graph
 type RelationshipGraphNode struct {
-	ID       string                 `json:"id"` // Unique node key: "{type}-{entity_id}"
-	EntityID int                    `json:"entity_id"`
-	Type     string                 `json:"type"` // "asset", "item", "test_case"
-	Title    string                 `json:"title"`
-	IsOrigin bool                   `json:"is_origin"`
-	Hop      int                    `json:"hop"`
-	Metadata map[string]interface{} `json:"metadata,omitempty"`
+	ID       string         `json:"id"` // Unique node key: "{type}-{entity_id}"
+	EntityID int            `json:"entity_id"`
+	Type     string         `json:"type"` // "asset", "item", "test_case"
+	Title    string         `json:"title"`
+	IsOrigin bool           `json:"is_origin"`
+	Hop      int            `json:"hop"`
+	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
 // RelationshipGraphEdge represents an edge in the asset relationship graph

@@ -251,7 +251,7 @@ func (h *AdminOAuthClientHandler) CreateClient(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	h.audit(r, user, logger.ActionOAuthClientCreate, &created.ID, created.DisplayName, map[string]interface{}{
+	h.audit(r, user, logger.ActionOAuthClientCreate, &created.ID, created.DisplayName, map[string]any{
 		"slug":           created.Slug,
 		"client_id":      created.ClientID,
 		"client_type":    created.ClientType,
@@ -294,7 +294,7 @@ func (h *AdminOAuthClientHandler) UpdateClient(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	changes := map[string]interface{}{}
+	changes := map[string]any{}
 
 	if dn := strings.TrimSpace(req.DisplayName); dn != "" && dn != existing.DisplayName {
 		if _, err := h.db.ExecWrite(`UPDATE oauth_clients SET display_name = ? WHERE id = ?`, dn, id); err != nil {
@@ -368,7 +368,7 @@ func (h *AdminOAuthClientHandler) UpdateClient(w http.ResponseWriter, r *http.Re
 	}
 
 	if len(changes) > 0 {
-		h.audit(r, user, logger.ActionOAuthClientUpdate, &updated.ID, updated.DisplayName, map[string]interface{}{
+		h.audit(r, user, logger.ActionOAuthClientUpdate, &updated.ID, updated.DisplayName, map[string]any{
 			"changes": changes,
 		})
 	}
@@ -469,7 +469,7 @@ func (h *AdminOAuthClientHandler) DeleteClient(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	h.audit(r, user, logger.ActionOAuthClientDelete, &existing.ID, existing.DisplayName, map[string]interface{}{
+	h.audit(r, user, logger.ActionOAuthClientDelete, &existing.ID, existing.DisplayName, map[string]any{
 		"client_id":      existing.ClientID,
 		"tokens_revoked": revoked,
 	})
@@ -532,7 +532,7 @@ func (h *AdminOAuthClientHandler) cascadeRevokeTokensForClient(clientID string) 
 
 // audit emits a single audit-log entry for an oauth_client.* action. Errors
 // are swallowed because audit-log failures shouldn't break admin actions.
-func (h *AdminOAuthClientHandler) audit(r *http.Request, user *models.User, action string, resourceID *int, resourceName string, details map[string]interface{}) {
+func (h *AdminOAuthClientHandler) audit(r *http.Request, user *models.User, action string, resourceID *int, resourceName string, details map[string]any) {
 	_ = logger.LogAudit(h.db, logger.AuditEvent{
 		UserID:       user.ID,
 		Username:     user.Username,
@@ -568,7 +568,7 @@ func (h *AdminOAuthClientHandler) queryClientByClientID(clientID string) *sql.Ro
 // oauthClientScanner unifies sql.Row and sql.Rows so scanOAuthClient backs
 // both the list and the single-row paths.
 type oauthClientScanner interface {
-	Scan(dest ...interface{}) error
+	Scan(dest ...any) error
 }
 
 func scanOAuthClient(s oauthClientScanner) (OAuthClientResponse, error) {

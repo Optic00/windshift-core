@@ -364,7 +364,7 @@ func gatewayAuthProbe(gatewayBase, authHeader string, httpClient *http.Client) b
 }
 
 // do performs an HTTP request with rate limiting
-func (c *cloudClient) do(ctx context.Context, method, reqURL string, body interface{}) (*http.Response, error) {
+func (c *cloudClient) do(ctx context.Context, method, reqURL string, body any) (*http.Response, error) {
 	return doReadOnlyJiraRequest(
 		ctx, c.httpClient, c.limiter, c.authHeader, method, reqURL, body,
 		c.retryAttempts, c.retryWait,
@@ -384,7 +384,7 @@ func doReadOnlyJiraRequest(
 	authHeader string,
 	method string,
 	reqURL string,
-	body interface{},
+	body any,
 	retryAttempts int,
 	retryWait func(context.Context, time.Duration) error,
 ) (*http.Response, error) {
@@ -759,9 +759,9 @@ type cloudCustomFieldOption struct {
 type cloudCustomFieldContextDefaults struct {
 	ContextID     cloudFlexibleID `json:"contextId"`
 	DefaultValues []struct {
-		IssueTypeID    string      `json:"issueTypeId"`
-		IsAnyIssueType bool        `json:"isAnyIssueType"`
-		Value          interface{} `json:"value"`
+		IssueTypeID    string `json:"issueTypeId"`
+		IsAnyIssueType bool   `json:"isAnyIssueType"`
+		Value          any    `json:"value"`
 	} `json:"defaultValues"`
 }
 
@@ -1699,7 +1699,7 @@ func (c *cloudClient) SearchObjects(ctx context.Context, opts ObjectSearchOption
 	}
 
 	// Build the request body for object search
-	reqBody := map[string]interface{}{
+	reqBody := map[string]any{
 		"objectSchemaId":    opts.ObjectSchemaID,
 		"page":              opts.Page,
 		"resultsPerPage":    opts.PageSize,

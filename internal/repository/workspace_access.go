@@ -46,7 +46,7 @@ func FilterSharedWorkspaceIDs(db database.Database, ids []int) ([]int, error) {
 		return ids, nil
 	}
 	placeholders := make([]byte, 0, len(ids)*2)
-	args := make([]interface{}, 0, len(ids))
+	args := make([]any, 0, len(ids))
 	for i, id := range ids {
 		if i > 0 {
 			placeholders = append(placeholders, ',')

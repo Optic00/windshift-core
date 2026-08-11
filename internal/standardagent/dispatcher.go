@@ -259,7 +259,7 @@ func (d *Dispatcher) RunPrivateTest(ctx context.Context, binding *models.Workspa
 		Timezone:               timezone,
 		Source:                 aitools.SourceStandardAgent,
 		AccessibleWorkspaceIDs: []int{workspaceID},
-		AuditDetails: map[string]interface{}{
+		AuditDetails: map[string]any{
 			"agent_profile_id":       binding.ID,
 			"agent_profile_version":  binding.ProfileVersion,
 			"root_initiator_user_id": triggeredByUserID,
@@ -438,7 +438,7 @@ func (d *Dispatcher) execute(run *models.AgentRun) {
 		Timezone:               timezone,
 		Source:                 aitools.SourceStandardAgent,
 		AccessibleWorkspaceIDs: []int{run.WorkspaceID},
-		AuditDetails: map[string]interface{}{
+		AuditDetails: map[string]any{
 			"agent_run_id":              run.ID,
 			"agent_profile_id":          snapshot.BindingID,
 			"agent_profile_version":     snapshot.ProfileVersion,

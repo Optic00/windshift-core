@@ -54,8 +54,8 @@ type CreateItemLinkParams struct {
 }
 
 type itemLinkQuerier interface {
-	Query(query string, args ...interface{}) (*sql.Rows, error)
-	QueryRow(query string, args ...interface{}) *sql.Row
+	Query(query string, args ...any) (*sql.Rows, error)
+	QueryRow(query string, args ...any) *sql.Row
 }
 
 // ErrInvalidLinkTypeForEntities is returned when the requested link type

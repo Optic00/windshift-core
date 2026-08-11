@@ -11,7 +11,7 @@ import (
 func (s *Service) EnsureCollection(
 	jobID, jiraID, jiraKey, name, description, ql string,
 	workspaceID, createdByUserID int,
-	metadata map[string]interface{},
+	metadata map[string]any,
 ) (int, bool) {
 	if id, ok := s.MappedEntity(jobID, "collection", jiraID); ok {
 		return id, true
@@ -43,7 +43,7 @@ func (s *Service) EnsureCollection(
 		return 0, false
 	}
 	if metadata == nil {
-		metadata = map[string]interface{}{}
+		metadata = map[string]any{}
 	}
 	metadata["action"] = action
 	metadata["workspace_id"] = workspaceID
@@ -61,7 +61,7 @@ func (s *Service) EnsureBoardConfiguration(
 	jobID, jiraID, jiraName string,
 	collectionID int,
 	request *models.BoardConfigurationRequest,
-	metadata map[string]interface{},
+	metadata map[string]any,
 ) (int, bool) {
 	if id, ok := s.MappedEntity(jobID, "board_configuration", jiraID); ok {
 		return id, true
@@ -81,7 +81,7 @@ func (s *Service) EnsureBoardConfiguration(
 		return 0, false
 	}
 	if metadata == nil {
-		metadata = map[string]interface{}{}
+		metadata = map[string]any{}
 	}
 	metadata["action"] = action
 	metadata["collection_id"] = collectionID

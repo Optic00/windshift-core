@@ -5,7 +5,7 @@ package utils
 // scans produce int, and typed DTOs may carry wider int widths. Non-numeric
 // values are rejected; fractional floats truncate exactly like the legacy
 // decode path.
-func CoerceInt(value interface{}) (int, bool) {
+func CoerceInt(value any) (int, bool) {
 	switch v := value.(type) {
 	case int:
 		return v, true
@@ -27,10 +27,10 @@ func CoerceInt(value interface{}) (int, bool) {
 }
 
 // CoerceIntSlice converts a JSON-decoded or Go-side integer array into a
-// fresh []int. Accepts []int, []float64, []interface{}, and nil, mirroring
+// fresh []int. Accepts []int, []float64, []any, and nil, mirroring
 // the legacy per-field coercion so callers keep distinguishing "field absent"
 // (via their own presence check) from "explicitly empty".
-func CoerceIntSlice(value interface{}) ([]int, bool) {
+func CoerceIntSlice(value any) ([]int, bool) {
 	if value == nil {
 		return []int{}, true
 	}
@@ -51,7 +51,7 @@ func CoerceIntSlice(value interface{}) ([]int, bool) {
 			out[i] = int(n)
 		}
 		return out, true
-	case []interface{}:
+	case []any:
 		out := make([]int, 0, len(s))
 		for _, e := range s {
 			n, ok := CoerceInt(e)

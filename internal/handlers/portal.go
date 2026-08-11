@@ -409,7 +409,7 @@ func (h *PortalHandler) GetPortal(w http.ResponseWriter, r *http.Request) {
 	respondJSONOK(w, response)
 }
 
-func (h *PortalHandler) loadPortalData(ctx context.Context, channel models.Channel, config models.ChannelConfig) (map[string]interface{}, error) {
+func (h *PortalHandler) loadPortalData(ctx context.Context, channel models.Channel, config models.ChannelConfig) (map[string]any, error) {
 	// The first configured workspace remains the compatibility value for older clients.
 	var workspace models.Workspace
 	var workspaceID int
@@ -437,7 +437,7 @@ func (h *PortalHandler) loadPortalData(ctx context.Context, channel models.Chann
 		}
 	}
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"channel_id":                channel.ID,
 		"slug":                      config.PortalSlug,
 		"title":                     config.PortalTitle,
@@ -557,10 +557,10 @@ func (h *PortalHandler) SubmitToPortal(w http.ResponseWriter, r *http.Request) {
 	// Bound and sanitize untrusted submission data before authorization and persistence.
 	r.Body = http.MaxBytesReader(w, r.Body, portalSubmissionMaxBytes)
 	var submission struct {
-		RequestTypeID *int                   `json:"request_type_id"`
-		Title         string                 `json:"title"`
-		Description   string                 `json:"description"`
-		CustomFields  map[string]interface{} `json:"custom_fields"`
+		RequestTypeID *int           `json:"request_type_id"`
+		Title         string         `json:"title"`
+		Description   string         `json:"description"`
+		CustomFields  map[string]any `json:"custom_fields"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&submission); err != nil {
@@ -757,7 +757,7 @@ func (h *PortalHandler) SubmitToPortal(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	respondJSONCreated(w, map[string]interface{}{
+	respondJSONCreated(w, map[string]any{
 		"success": true,
 		"item_id": itemID,
 		"message": "Submission received successfully",

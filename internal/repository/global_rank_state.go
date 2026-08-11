@@ -241,7 +241,7 @@ func startGlobalRankMigration(tx database.Tx, state GlobalRankState) (GlobalRank
 }
 
 func loadGlobalRankState(q interface {
-	QueryRow(query string, args ...interface{}) *sql.Row
+	QueryRow(query string, args ...any) *sql.Row
 }) (GlobalRankState, error) {
 	return loadGlobalRankStateWithQuery(q, "")
 }
@@ -281,14 +281,14 @@ func SaveGlobalRankState(tx database.Tx, state GlobalRankState) error {
 	return nil
 }
 
-func nullableGlobalRankBucket(bucket *GlobalRankBucket) interface{} {
+func nullableGlobalRankBucket(bucket *GlobalRankBucket) any {
 	if bucket == nil {
 		return nil
 	}
 	return *bucket
 }
 
-func nullableGlobalRankDirection(direction *GlobalRankDirection) interface{} {
+func nullableGlobalRankDirection(direction *GlobalRankDirection) any {
 	if direction == nil {
 		return nil
 	}

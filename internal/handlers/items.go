@@ -252,27 +252,27 @@ func parseIDListParam(raw string) []int {
 // fields here instead of adding them to models.Item, whose milestone
 // representation on reads is the joined Milestones slice.
 type itemCreateRequest struct {
-	WorkspaceID       int                    `json:"workspace_id"`
-	Title             string                 `json:"title"`
-	Description       string                 `json:"description"`
-	StatusID          *int                   `json:"status_id,omitempty"`
-	PriorityID        *int                   `json:"priority_id,omitempty"`
-	ItemTypeID        *int                   `json:"item_type_id,omitempty"`
-	DueDate           *time.Time             `json:"due_date,omitempty"`
-	StartDate         *time.Time             `json:"start_date,omitempty"`
-	EndDate           *time.Time             `json:"end_date,omitempty"`
-	IsTask            bool                   `json:"is_task"`
-	IterationID       *int                   `json:"iteration_id,omitempty"`
-	ProjectID         *int                   `json:"project_id,omitempty"`
-	InheritProject    bool                   `json:"inherit_project"`
-	TimeProjectID     *int                   `json:"time_project_id,omitempty"`
-	AssigneeID        *int                   `json:"assignee_id,omitempty"`
-	ParentID          *int                   `json:"parent_id"`
-	RelatedWorkItemID *int                   `json:"related_work_item_id,omitempty"`
-	StoryPoints       *float64               `json:"story_points,omitempty"`
-	EstimateMinutes   *int                   `json:"estimate_minutes,omitempty"`
-	CustomFieldValues map[string]interface{} `json:"custom_field_values,omitempty"`
-	MilestoneIDs      []int                  `json:"milestone_ids,omitempty"`
+	WorkspaceID       int            `json:"workspace_id"`
+	Title             string         `json:"title"`
+	Description       string         `json:"description"`
+	StatusID          *int           `json:"status_id,omitempty"`
+	PriorityID        *int           `json:"priority_id,omitempty"`
+	ItemTypeID        *int           `json:"item_type_id,omitempty"`
+	DueDate           *time.Time     `json:"due_date,omitempty"`
+	StartDate         *time.Time     `json:"start_date,omitempty"`
+	EndDate           *time.Time     `json:"end_date,omitempty"`
+	IsTask            bool           `json:"is_task"`
+	IterationID       *int           `json:"iteration_id,omitempty"`
+	ProjectID         *int           `json:"project_id,omitempty"`
+	InheritProject    bool           `json:"inherit_project"`
+	TimeProjectID     *int           `json:"time_project_id,omitempty"`
+	AssigneeID        *int           `json:"assignee_id,omitempty"`
+	ParentID          *int           `json:"parent_id"`
+	RelatedWorkItemID *int           `json:"related_work_item_id,omitempty"`
+	StoryPoints       *float64       `json:"story_points,omitempty"`
+	EstimateMinutes   *int           `json:"estimate_minutes,omitempty"`
+	CustomFieldValues map[string]any `json:"custom_field_values,omitempty"`
+	MilestoneIDs      []int          `json:"milestone_ids,omitempty"`
 }
 
 // SetApprovalService wires the approval service so status-bound approvals gate
@@ -299,7 +299,7 @@ func (h *ItemHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 
 	// If user has no accessible workspaces, return empty list
 	if len(accessibleWorkspaceIDs) == 0 {
-		respondJSONOK(w, map[string]interface{}{
+		respondJSONOK(w, map[string]any{
 			"items":       []models.Item{},
 			"total_count": 0,
 			"page":        1,
@@ -879,7 +879,7 @@ func (h *ItemHandler) emitItemCreatedFallback(item *models.Item, user *models.Us
 			AssigneeID:  item.AssigneeID,
 			CreatorID:   &user.ID,
 			Title:       "New Item Created",
-			TemplateData: map[string]interface{}{
+			TemplateData: map[string]any{
 				"item.title":     item.Title,
 				"item.key":       itemKey,
 				"item.id":        item.ID,
@@ -895,7 +895,7 @@ func (h *ItemHandler) emitItemCreatedFallback(item *models.Item, user *models.Us
 			WorkspaceID: item.WorkspaceID,
 			ItemID:      item.ID,
 			ActorUserID: user.ID,
-			NewValues: map[string]interface{}{
+			NewValues: map[string]any{
 				"title":        item.Title,
 				"status_id":    item.StatusID,
 				"item_type_id": item.ItemTypeID,
@@ -933,7 +933,7 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Parse update data from request body
-	var updateData map[string]interface{}
+	var updateData map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&updateData); err != nil {
 		respondValidationError(w, r, err.Error())
 		return
@@ -1065,7 +1065,7 @@ func (h *ItemHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logAuditWithDetails(h.db, r, user, logger.ActionItemDelete, logger.ResourceItem, &id, result.Item.Title, map[string]interface{}{
+	logAuditWithDetails(h.db, r, user, logger.ActionItemDelete, logger.ResourceItem, &id, result.Item.Title, map[string]any{
 		"workspace_id": result.Item.WorkspaceID,
 		"item_type_id": result.Item.ItemTypeID,
 		"parent_id":    result.Item.ParentID,
@@ -1102,7 +1102,7 @@ func (h *ItemHandler) emitItemDeletedFallback(item *models.Item, user *models.Us
 			AssigneeID:  item.AssigneeID,
 			CreatorID:   item.CreatorID,
 			Title:       "Item Deleted",
-			TemplateData: map[string]interface{}{
+			TemplateData: map[string]any{
 				"item.title":  item.Title,
 				"item.id":     item.ID,
 				"user.name":   user.Username,
@@ -1166,7 +1166,7 @@ func (h *ItemHandler) GetDeleteInfo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"hasChildren":     len(descendantIDs) > 0,
 		"descendantCount": len(descendantIDs),
 		"parentId":        item.ParentID,
@@ -1248,7 +1248,7 @@ func (h *ItemHandler) ReparentChildren(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(children) == 0 {
-		respondJSONOK(w, map[string]interface{}{"reparentedCount": 0})
+		respondJSONOK(w, map[string]any{"reparentedCount": 0})
 		return
 	}
 
@@ -1307,7 +1307,7 @@ func (h *ItemHandler) ReparentChildren(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	respondJSONOK(w, map[string]interface{}{"reparentedCount": len(children)})
+	respondJSONOK(w, map[string]any{"reparentedCount": len(children)})
 }
 
 // DeleteCascade deletes an item and all its descendants
@@ -1331,7 +1331,7 @@ func (h *ItemHandler) DeleteCascade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logAuditWithDetails(h.db, r, user, logger.ActionItemDeleteCascade, logger.ResourceItem, &id, result.Item.Title, map[string]interface{}{
+	logAuditWithDetails(h.db, r, user, logger.ActionItemDeleteCascade, logger.ResourceItem, &id, result.Item.Title, map[string]any{
 		"workspace_id":     result.Item.WorkspaceID,
 		"item_type_id":     result.Item.ItemTypeID,
 		"parent_id":        result.Item.ParentID,
@@ -1345,7 +1345,7 @@ func (h *ItemHandler) DeleteCascade(w http.ResponseWriter, r *http.Request) {
 		h.emitItemDeletedFallback(result.Item, user, result.DescendantCount)
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"deletedCount": result.DeletedCount,
 	})
 }
@@ -1419,7 +1419,7 @@ func (h *ItemHandler) GetCacheStats(w http.ResponseWriter, r *http.Request) {
 
 	stats := h.itemCache.GetStats()
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"cache_enabled": true,
 		"statistics":    stats,
 		"timestamp":     time.Now().Format(time.RFC3339),

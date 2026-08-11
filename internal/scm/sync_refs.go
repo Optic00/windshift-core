@@ -193,7 +193,7 @@ func (s *SyncService) emitTagEvent(workspaceID, repoID int, owner, repo string, 
 	if s.actionEvents == nil {
 		return
 	}
-	values := map[string]interface{}{
+	values := map[string]any{
 		"ref.name":                     t.Name,
 		"ref.short":                    refShort("tag", t.Name),
 		"ref.sha":                      t.SHA,
@@ -217,7 +217,7 @@ func (s *SyncService) emitBranchEvent(workspaceID, repoID int, owner, repo strin
 	if s.actionEvents == nil {
 		return
 	}
-	values := map[string]interface{}{
+	values := map[string]any{
 		"ref.name":                     b.Name,
 		"ref.short":                    refShort("branch", b.Name),
 		"ref.sha":                      b.SHA,

@@ -131,7 +131,7 @@ const scmWorkspaceConnectionSelect = `
 `
 
 type scmWorkspaceScanner interface {
-	Scan(dest ...interface{}) error
+	Scan(dest ...any) error
 }
 
 func scanSCMWorkspaceConnection(scanner scmWorkspaceScanner) (SCMWorkspaceConnection, error) {
@@ -206,7 +206,7 @@ func (r *SCMWorkspaceRepository) ListConnectionsForWorkspaces(workspaceIDs []int
 		return []SCMWorkspaceConnection{}, nil
 	}
 	placeholders := make([]string, len(workspaceIDs))
-	args := make([]interface{}, len(workspaceIDs))
+	args := make([]any, len(workspaceIDs))
 	for i, workspaceID := range workspaceIDs {
 		placeholders[i] = "?"
 		args[i] = workspaceID
@@ -725,7 +725,7 @@ func (r *SCMWorkspaceRepository) GetUserOAuthTokenStatus(userID, providerID int)
 }
 
 // scmNullString stores empty strings as NULL.
-func scmNullString(s string) interface{} {
+func scmNullString(s string) any {
 	if s == "" {
 		return nil
 	}

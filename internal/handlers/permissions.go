@@ -155,7 +155,7 @@ func (h *PermissionHandler) GrantGlobalPermission(w http.ResponseWriter, r *http
 			ResourceType: logger.ResourcePermission,
 			ResourceID:   &req.PermissionID,
 			ResourceName: permissionName,
-			Details: map[string]interface{}{
+			Details: map[string]any{
 				"target_user_id":  req.UserID,
 				"target_username": targetUsername,
 				"permission_id":   req.PermissionID,
@@ -243,7 +243,7 @@ func (h *PermissionHandler) RevokeGlobalPermission(w http.ResponseWriter, r *htt
 			ResourceType: logger.ResourcePermission,
 			ResourceID:   &permissionID,
 			ResourceName: permissionName,
-			Details: map[string]interface{}{
+			Details: map[string]any{
 				"target_user_id":  userID,
 				"target_username": targetUsername,
 				"permission_id":   permissionID,
@@ -341,7 +341,7 @@ func (h *PermissionHandler) GrantGlobalPermissionToGroup(w http.ResponseWriter, 
 			ResourceType: logger.ResourcePermission,
 			ResourceID:   &req.PermissionID,
 			ResourceName: permissionName,
-			Details: map[string]interface{}{
+			Details: map[string]any{
 				"target_group_id":   req.GroupID,
 				"target_group_name": groupName,
 				"permission_id":     req.PermissionID,
@@ -403,7 +403,7 @@ func (h *PermissionHandler) RevokeGlobalPermissionFromGroup(w http.ResponseWrite
 			ResourceType: logger.ResourcePermission,
 			ResourceID:   &permissionID,
 			ResourceName: permissionName,
-			Details: map[string]interface{}{
+			Details: map[string]any{
 				"target_group_id":   groupID,
 				"target_group_name": groupName,
 				"permission_id":     permissionID,

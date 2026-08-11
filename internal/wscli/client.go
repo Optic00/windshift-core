@@ -50,9 +50,9 @@ type APIError struct {
 	// it under "message"; the v1 REST surface (restapi.ErrorResponse)
 	// puts it under "error". Accept both so we don't fall back to the
 	// machine-readable Code on v1 responses.
-	Message      string      `json:"message"`
-	ErrorMessage string      `json:"error"`
-	Details      interface{} `json:"details,omitempty"`
+	Message      string `json:"message"`
+	ErrorMessage string `json:"error"`
+	Details      any    `json:"details,omitempty"`
 }
 
 func (e *APIError) Error() string {
@@ -68,7 +68,7 @@ func (e *APIError) Error() string {
 // doRequest executes an HTTP request with authentication. WS_DEBUG_HTTP=1
 // in the env enables one-line request/response logging on stderr — useful
 // when triaging server-side errors from the CLI.
-func (c *Client) doRequest(method, path string, body, result interface{}) error {
+func (c *Client) doRequest(method, path string, body, result any) error {
 	var bodyReader io.Reader
 	var jsonBody []byte
 	if body != nil {
@@ -126,19 +126,19 @@ func (c *Client) doRequest(method, path string, body, result interface{}) error 
 	return nil
 }
 
-func (c *Client) GET(path string, result interface{}) error {
+func (c *Client) GET(path string, result any) error {
 	return c.doRequest("GET", path, nil, result)
 }
 
-func (c *Client) POST(path string, body, result interface{}) error {
+func (c *Client) POST(path string, body, result any) error {
 	return c.doRequest("POST", path, body, result)
 }
 
-func (c *Client) PUT(path string, body, result interface{}) error {
+func (c *Client) PUT(path string, body, result any) error {
 	return c.doRequest("PUT", path, body, result)
 }
 
-func (c *Client) PATCH(path string, body, result interface{}) error {
+func (c *Client) PATCH(path string, body, result any) error {
 	return c.doRequest("PATCH", path, body, result)
 }
 

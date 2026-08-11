@@ -114,11 +114,11 @@ type SCIMGroup struct {
 
 // SCIMListResponse represents a SCIM 2.0 list response
 type SCIMListResponse struct {
-	Schemas      []string      `json:"schemas"`
-	TotalResults int           `json:"totalResults"`
-	StartIndex   int           `json:"startIndex"`
-	ItemsPerPage int           `json:"itemsPerPage"`
-	Resources    []interface{} `json:"Resources"`
+	Schemas      []string `json:"schemas"`
+	TotalResults int      `json:"totalResults"`
+	StartIndex   int      `json:"startIndex"`
+	ItemsPerPage int      `json:"itemsPerPage"`
+	Resources    []any    `json:"Resources"`
 }
 
 // =============================================================================
@@ -149,9 +149,9 @@ func NewSCIMError(status int, detail, scimType string) *SCIMError {
 
 // SCIMPatchOp represents a single SCIM patch operation
 type SCIMPatchOp struct {
-	Op    string      `json:"op"`             // add, remove, replace
-	Path  string      `json:"path,omitempty"` // Attribute path (optional for add/replace at root)
-	Value interface{} `json:"value,omitempty"`
+	Op    string `json:"op"`             // add, remove, replace
+	Path  string `json:"path,omitempty"` // Attribute path (optional for add/replace at root)
+	Value any    `json:"value,omitempty"`
 }
 
 // SCIMPatchRequest represents a SCIM PATCH request
@@ -286,11 +286,11 @@ type SCIMBulkRequest struct {
 
 // SCIMBulkResponseOperation represents a single operation result in a bulk response
 type SCIMBulkResponseOperation struct {
-	Method   string      `json:"method"`
-	BulkID   string      `json:"bulkId,omitempty"`
-	Location string      `json:"location,omitempty"`
-	Status   string      `json:"status"`
-	Response interface{} `json:"response,omitempty"`
+	Method   string `json:"method"`
+	BulkID   string `json:"bulkId,omitempty"`
+	Location string `json:"location,omitempty"`
+	Status   string `json:"status"`
+	Response any    `json:"response,omitempty"`
 }
 
 // SCIMBulkResponse represents a SCIM bulk response

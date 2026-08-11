@@ -83,7 +83,7 @@ type ItemFilters struct {
 	// pass. Caps the indefinitely-growing "done" list on personal views.
 	CompletedSince *string
 	QLQuery        string // Custom QL query
-	QLArgs         []interface{}
+	QLArgs         []any
 	StatusIDs      []int  // Multi-value status filter (for backlog + search)
 	StatusIDsNot   []int  // Multi-value negated status filter
 	PriorityIDs    []int  // Multi-value priority filter
@@ -165,10 +165,10 @@ func itemListFilterFromClause() string {
 // unfiltered workspace fast path cannot drift from filtered/collection lists.
 type itemListPagePlan struct {
 	countQuery       string
-	countArgs        []interface{}
+	countArgs        []any
 	pageFromClause   string
 	pageWhereClause  string
-	pageArgs         []interface{}
+	pageArgs         []any
 	workspaceCountID int
 }
 
@@ -304,7 +304,7 @@ func (r *ItemRepository) FindAllWithDetailsPageContext(ctx context.Context, para
 			return ItemListPage{}, err
 		}
 		pagePlan.pageWhereClause += cursorWhere
-		pagePlan.pageArgs = append(append([]interface{}{}, pagePlan.pageArgs...), cursorArgs...)
+		pagePlan.pageArgs = append(append([]any{}, pagePlan.pageArgs...), cursorArgs...)
 		pageQueryer = pageTx
 	}
 
@@ -416,7 +416,7 @@ func decodeItemListCursor(raw string) (itemListCursor, error) {
 }
 
 type itemListPageQueryer interface {
-	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }
 
 func beginItemListCursorTransaction(ctx context.Context, db database.Database) (database.Tx, error) {
@@ -434,7 +434,7 @@ func beginItemListCursorTransaction(ctx context.Context, db database.Database) (
 }
 
 func resolveItemListCursor(ctx context.Context, queryer interface {
-	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }, workspaceID int, cursor itemListCursor) (itemListCursor, error) {
 	if workspaceID <= 0 {
 		return itemListCursor{}, fmt.Errorf("%w: cursor requires a workspace", ErrInvalidItemListCursor)
@@ -453,17 +453,17 @@ func resolveItemListCursor(ctx context.Context, queryer interface {
 	return cursor, nil
 }
 
-func itemListCursorWhere(cursor itemListCursor) (where string, args []interface{}, err error) {
+func itemListCursorWhere(cursor itemListCursor) (where string, args []any, err error) {
 	if _, err := ParseGlobalRank(cursor.Rank); err != nil {
 		return "", nil, fmt.Errorf("%w: invalid rank", ErrInvalidItemListCursor)
 	}
-	return " AND (i.frac_index > ? OR (i.frac_index = ? AND i.id > ?))", []interface{}{cursor.Rank, cursor.Rank, cursor.ID}, nil
+	return " AND (i.frac_index > ? OR (i.frac_index = ? AND i.id > ?))", []any{cursor.Rank, cursor.Rank, cursor.ID}, nil
 }
 
 func (r *ItemRepository) buildItemListPagePlan(
 	params ItemListParams,
 	countFromClause, whereClause string,
-	args []interface{},
+	args []any,
 ) itemListPagePlan {
 	plan := itemListPagePlan{
 		countQuery:      "SELECT COUNT(*) " + countFromClause + whereClause,
@@ -476,7 +476,7 @@ func (r *ItemRepository) buildItemListPagePlan(
 		// The explicit workspace filter is safe to use directly because the
 		// workspace ID must also be present in the caller's accessible set.
 		// Collection/QL/filter requests never enter this branch.
-		workspaceArgs := []interface{}{workspaceID}
+		workspaceArgs := []any{workspaceID}
 		plan.countQuery = "SELECT COUNT(*) FROM items WHERE workspace_id = ?"
 		plan.countArgs = workspaceArgs
 		plan.pageFromClause = "FROM items i "
@@ -552,7 +552,7 @@ func (r *ItemRepository) SearchContext(ctx context.Context, query string, worksp
 }
 
 // buildWhereClause constructs the WHERE clause and arguments for item queries
-func (r *ItemRepository) buildWhereClause(params ItemListParams) (whereClause string, args []interface{}) {
+func (r *ItemRepository) buildWhereClause(params ItemListParams) (whereClause string, args []any) {
 	whereClause = "WHERE 1=1"
 
 	if len(params.WorkspaceIDs) > 0 {
@@ -868,10 +868,10 @@ func (r *ItemRepository) scanItemList(rows *sql.Rows) ([]models.Item, error) {
 
 		if customFieldValuesJSON.Valid && customFieldValuesJSON.String != "" {
 			if err := json.Unmarshal([]byte(customFieldValuesJSON.String), &item.CustomFieldValues); err != nil {
-				item.CustomFieldValues = make(map[string]interface{})
+				item.CustomFieldValues = make(map[string]any)
 			}
 		} else {
-			item.CustomFieldValues = make(map[string]interface{})
+			item.CustomFieldValues = make(map[string]any)
 		}
 
 		if calendarDataJSON.Valid && calendarDataJSON.String != "" {

@@ -57,10 +57,10 @@ const (
 
 // ErrorResponse represents a structured API error response
 type ErrorResponse struct {
-	Error     string      `json:"error"`                // Human-readable message
-	Code      string      `json:"code"`                 // Machine-readable error code
-	RequestID string      `json:"request_id,omitempty"` // Request correlation ID
-	Details   interface{} `json:"details,omitempty"`    // Additional error details
+	Error     string `json:"error"`                // Human-readable message
+	Code      string `json:"code"`                 // Machine-readable error code
+	RequestID string `json:"request_id,omitempty"` // Request correlation ID
+	Details   any    `json:"details,omitempty"`    // Additional error details
 }
 
 // APIError represents an error with HTTP status code
@@ -68,7 +68,7 @@ type APIError struct {
 	StatusCode int
 	Code       string
 	Message    string
-	Details    interface{}
+	Details    any
 }
 
 // NewAPIError creates a new API error
@@ -81,7 +81,7 @@ func NewAPIError(statusCode int, code, message string) *APIError {
 }
 
 // WithDetails adds details to an API error
-func (e *APIError) WithDetails(details interface{}) *APIError {
+func (e *APIError) WithDetails(details any) *APIError {
 	e.Details = details
 	return e
 }

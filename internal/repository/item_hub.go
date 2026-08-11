@@ -34,14 +34,14 @@ func (r *ItemRepository) ListHubInboxItems(ctx context.Context, f HubInboxFilter
 		LEFT JOIN portal_customers pc ON i.creator_portal_customer_id = pc.id
 		WHERE c.type = 'portal' AND i.creator_id = ?
 	`
-	facetArgs := []interface{}{f.UserID}
+	facetArgs := []any{f.UserID}
 	if f.PortalID != nil {
 		baseFrom += " AND c.id = ?"
 		facetArgs = append(facetArgs, *f.PortalID)
 	}
 
 	baseQuery := baseFrom
-	args := append([]interface{}{}, facetArgs...)
+	args := append([]any{}, facetArgs...)
 	if f.StatusFilter != "" {
 		baseQuery += " AND s.name = ?"
 		args = append(args, f.StatusFilter)
@@ -52,7 +52,7 @@ func (r *ItemRepository) ListHubInboxItems(ctx context.Context, f HubInboxFilter
 		return nil, 0, nil, fmt.Errorf("hub inbox count: %w", err)
 	}
 
-	itemArgs := append([]interface{}{}, args...)
+	itemArgs := append([]any{}, args...)
 	itemArgs = append(itemArgs, f.PerPage, f.Offset)
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT

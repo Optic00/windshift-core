@@ -35,7 +35,7 @@ func (h *AssetHandler) GetSetRoles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"user_roles":    userRoles,
 		"group_roles":   groupRoles,
 		"everyone_role": everyoneRole,
@@ -105,7 +105,7 @@ func (h *AssetHandler) AssignSetRole(w http.ResponseWriter, r *http.Request) {
 		ActionType:   logger.ActionAssetSetRoleAssign,
 		ResourceType: logger.ResourceAssetSetRole,
 		ResourceID:   &setID,
-		Details:      map[string]interface{}{"role_id": req.RoleID},
+		Details:      map[string]any{"role_id": req.RoleID},
 		Success:      true,
 	})
 
@@ -155,7 +155,7 @@ func (h *AssetHandler) RevokeSetRole(w http.ResponseWriter, r *http.Request) {
 		ActionType:   logger.ActionAssetSetRoleRevoke,
 		ResourceType: logger.ResourceAssetSetRole,
 		ResourceID:   &setID,
-		Details:      map[string]interface{}{"role_assignment_id": roleAssignmentID},
+		Details:      map[string]any{"role_assignment_id": roleAssignmentID},
 		Success:      true,
 	})
 

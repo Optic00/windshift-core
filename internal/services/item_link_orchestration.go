@@ -431,7 +431,7 @@ func (s *ItemLinkService) listLinksForItemsWithChecks(userID int, itemIDs []int,
 	}
 	outgoing, err := s.getLinksWhere(
 		outgoingFilter,
-		append([]interface{}{"item"}, idArgs...)...)
+		append([]any{"item"}, idArgs...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -441,7 +441,7 @@ func (s *ItemLinkService) listLinksForItemsWithChecks(userID int, itemIDs []int,
 	}
 	incoming, err := s.getLinksWhere(
 		incomingFilter,
-		append([]interface{}{"item"}, idArgs...)...)
+		append([]any{"item"}, idArgs...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -1054,11 +1054,11 @@ func (s *ItemLinkService) FilterPageLinksByACL(userID int, links []models.ItemLi
 }
 
 // getLinksWhere is the shared joined projection for link list endpoints.
-func (s *ItemLinkService) getLinksWhere(whereClause string, args ...interface{}) ([]models.ItemLink, error) {
+func (s *ItemLinkService) getLinksWhere(whereClause string, args ...any) ([]models.ItemLink, error) {
 	return getLinksWhere(s.db, whereClause, args...)
 }
 
-func getLinksWhere(db itemLinkQuerier, whereClause string, args ...interface{}) ([]models.ItemLink, error) {
+func getLinksWhere(db itemLinkQuerier, whereClause string, args ...any) ([]models.ItemLink, error) {
 	query := `
 		SELECT il.id, il.link_type_id, il.source_type, il.source_id, il.target_type, il.target_id,
 		       il.created_by, il.created_at,
@@ -1182,7 +1182,7 @@ func (s *ItemLinkService) emitLinkedEvents(actorUserID int, params CreateItemLin
 			Title:                         "Item Linked",
 			ReferencedWorkspaceID:         referencedWorkspaceID,
 			ReferencedWorkspacePermission: referencedPermission,
-			TemplateData: map[string]interface{}{
+			TemplateData: map[string]any{
 				"item.title":   sourceItem.Title,
 				"item.id":      params.SourceID,
 				"target.title": link.TargetTitle,
@@ -1197,7 +1197,7 @@ func (s *ItemLinkService) emitLinkedEvents(actorUserID int, params CreateItemLin
 			WorkspaceID: sourceItem.WorkspaceID,
 			ItemID:      params.SourceID,
 			ActorUserID: actorUserID,
-			NewValues: map[string]interface{}{
+			NewValues: map[string]any{
 				"link_type_id": params.LinkTypeID,
 				"target_type":  params.TargetType,
 				"target_id":    params.TargetID,
@@ -1226,7 +1226,7 @@ func (s *ItemLinkService) emitUnlinkedEvents(actorUserID int, link *models.ItemL
 		Title:                         "Item Unlinked",
 		ReferencedWorkspaceID:         referencedWorkspaceID,
 		ReferencedWorkspacePermission: referencedPermission,
-		TemplateData: map[string]interface{}{
+		TemplateData: map[string]any{
 			"item.title":   sourceItem.Title,
 			"item.id":      link.SourceID,
 			"target.title": link.TargetTitle,

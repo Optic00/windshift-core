@@ -195,7 +195,7 @@ func (h *SCIMTokenHandler) DisconnectSCIM(w http.ResponseWriter, r *http.Request
 		h.auditor.LogWithDetails(r, currentUser,
 			logger.ActionSCIMTokenRevoke, logger.ResourceSCIMToken,
 			nil, "scim-disconnect",
-			map[string]interface{}{
+			map[string]any{
 				"revoked_tokens":       summary.ActiveTokens,
 				"released_users":       summary.Users,
 				"released_groups":      summary.Groups,

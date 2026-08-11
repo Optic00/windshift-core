@@ -229,7 +229,7 @@ func (r *LabelRepository) LoadForItemsContext(ctx context.Context, items []model
 		return nil
 	}
 
-	itemIDs := make([]interface{}, len(items))
+	itemIDs := make([]any, len(items))
 	placeholders := make([]string, len(items))
 	for i, item := range items {
 		itemIDs[i] = item.ID

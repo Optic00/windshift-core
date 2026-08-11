@@ -143,7 +143,7 @@ func (h *JiraImportHandler) Connect(w http.ResponseWriter, r *http.Request) {
 			ActionType:   logger.ActionJiraConnect,
 			ResourceType: logger.ResourceJiraImport,
 			ResourceName: connectionID,
-			Details: map[string]interface{}{
+			Details: map[string]any{
 				"instance_url":    req.InstanceURL,
 				"instance_name":   instanceInfo.DisplayName,
 				"deployment_type": string(deploymentType),

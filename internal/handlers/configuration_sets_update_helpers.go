@@ -47,7 +47,7 @@ func (h *ConfigurationSetHandler) respondIntraSetItemTypeConflictIfNeeded(
 		RequiresItemTypeMigration: true,
 	}
 
-	respondJSON(w, http.StatusConflict, map[string]interface{}{
+	respondJSON(w, http.StatusConflict, map[string]any{
 		"error":    "migration_required",
 		"message":  "Migration is required before item types can be removed from this configuration set",
 		"analysis": analysis,
@@ -233,7 +233,7 @@ func (h *ConfigurationSetHandler) respondIntraSetWorkflowConflictIfNeeded(
 		NewWorkflowID:           newWorkflowID,
 	}
 
-	respondJSON(w, http.StatusConflict, map[string]interface{}{
+	respondJSON(w, http.StatusConflict, map[string]any{
 		"error":    "migration_required",
 		"message":  "Migration is required before the workflow change can be applied",
 		"analysis": analysis,
@@ -316,7 +316,7 @@ func (h *ConfigurationSetHandler) respondMigrationConflictIfNeeded(
 		analysis.NewWorkflowID = overrideTargetWorkflowID
 	}
 
-	respondJSON(w, http.StatusConflict, map[string]interface{}{
+	respondJSON(w, http.StatusConflict, map[string]any{
 		"error":    "migration_required",
 		"message":  "Migration is required before this configuration set update can be applied",
 		"analysis": analysis,

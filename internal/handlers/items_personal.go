@@ -102,7 +102,7 @@ func (h *ItemHandler) RemoveRelatedWorkItem(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"success": true,
 		"message": "Successfully removed work item relationship",
 	})

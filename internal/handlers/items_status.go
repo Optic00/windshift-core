@@ -16,7 +16,7 @@ import (
 
 type ItemTransitionSummary struct {
 	CurrentStatus        string                           `json:"current_status"`
-	AvailableTransitions []map[string]interface{}         `json:"available_transitions"`
+	AvailableTransitions []map[string]any                 `json:"available_transitions"`
 	PendingApproval      *services.PendingApprovalSummary `json:"pending_approval"`
 }
 
@@ -63,7 +63,7 @@ func (h *ItemHandler) GetAvailableStatusTransitions(w http.ResponseWriter, r *ht
 }
 
 func (h *ItemHandler) loadAvailableStatusTransitions(ctx context.Context, userID int, item *models.Item) (ItemTransitionSummary, error) {
-	response := ItemTransitionSummary{AvailableTransitions: []map[string]interface{}{}}
+	response := ItemTransitionSummary{AvailableTransitions: []map[string]any{}}
 	workspaceID := item.WorkspaceID
 	currentStatusID := item.StatusID
 	itemTypeIDPtr := item.ItemTypeID
@@ -240,10 +240,10 @@ func (h *ItemHandler) GetWorkspaceTransitionMatrix(w http.ResponseWriter, r *htt
 		h.respondItemReadError(w, r, err)
 		return
 	}
-	transitions := map[string][]map[string]interface{}{}
+	transitions := map[string][]map[string]any{}
 	for itemTypeID, byStatus := range matrix.ByItemType {
 		for statusID, rawOptions := range byStatus {
-			options := make([]map[string]interface{}, 0, len(rawOptions))
+			options := make([]map[string]any, 0, len(rawOptions))
 			for _, option := range rawOptions {
 				options = append(options, transitionOptionResponse(option))
 			}
@@ -251,7 +251,7 @@ func (h *ItemHandler) GetWorkspaceTransitionMatrix(w http.ResponseWriter, r *htt
 		}
 	}
 
-	response := map[string]interface{}{"transitions": transitions}
+	response := map[string]any{"transitions": transitions}
 	responseBytes := 0
 	if encoded, marshalErr := json.Marshal(response); marshalErr == nil {
 		// respondJSONOK uses json.Encoder, which appends one trailing newline.
@@ -271,8 +271,8 @@ func (h *ItemHandler) GetWorkspaceTransitionMatrix(w http.ResponseWriter, r *htt
 	respondJSONOK(w, response)
 }
 
-func transitionOptionResponse(option services.StatusTransitionOption) map[string]interface{} {
-	transition := map[string]interface{}{
+func transitionOptionResponse(option services.StatusTransitionOption) map[string]any {
+	transition := map[string]any{
 		"id":    option.StatusID,
 		"name":  option.StatusName,
 		"value": strings.ToLower(strings.ReplaceAll(option.StatusName, " ", "_")),

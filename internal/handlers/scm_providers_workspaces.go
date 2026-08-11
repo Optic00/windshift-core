@@ -116,7 +116,7 @@ func (h *SCMProviderHandler) AddWorkspaceToProviderAllowlist(w http.ResponseWrit
 
 	// Get user ID from context if available
 	currentUser := utils.GetCurrentUser(r)
-	var createdBy interface{}
+	var createdBy any
 	if currentUser != nil {
 		createdBy = currentUser.ID
 	}
@@ -136,7 +136,7 @@ func (h *SCMProviderHandler) AddWorkspaceToProviderAllowlist(w http.ResponseWrit
 	}
 
 	if currentUser != nil {
-		logAuditWithDetails(h.db, r, currentUser, logger.ActionSCMProviderAllowlistAdd, logger.ResourceSCMProviderAllowlist, &providerID, "", map[string]interface{}{
+		logAuditWithDetails(h.db, r, currentUser, logger.ActionSCMProviderAllowlistAdd, logger.ResourceSCMProviderAllowlist, &providerID, "", map[string]any{
 			"provider_id":  providerID,
 			"workspace_id": req.WorkspaceID,
 		})
@@ -174,7 +174,7 @@ func (h *SCMProviderHandler) RemoveWorkspaceFromProviderAllowlist(w http.Respons
 	}
 
 	if currentUser := utils.GetCurrentUser(r); currentUser != nil {
-		logAuditWithDetails(h.db, r, currentUser, logger.ActionSCMProviderAllowlistRemove, logger.ResourceSCMProviderAllowlist, &providerID, "", map[string]interface{}{
+		logAuditWithDetails(h.db, r, currentUser, logger.ActionSCMProviderAllowlistRemove, logger.ResourceSCMProviderAllowlist, &providerID, "", map[string]any{
 			"provider_id":  providerID,
 			"workspace_id": workspaceID,
 		})
@@ -200,7 +200,7 @@ func (h *SCMProviderHandler) UpdateProviderAllowedWorkspaces(w http.ResponseWrit
 
 	// Get user ID from context if available
 	currentUser := utils.GetCurrentUser(r)
-	var createdBy interface{}
+	var createdBy any
 	if currentUser != nil {
 		createdBy = currentUser.ID
 	}
@@ -244,7 +244,7 @@ func (h *SCMProviderHandler) UpdateProviderAllowedWorkspaces(w http.ResponseWrit
 	}
 
 	if currentUser != nil {
-		logAuditWithDetails(h.db, r, currentUser, logger.ActionSCMProviderAllowlistUpdate, logger.ResourceSCMProviderAllowlist, &providerID, "", map[string]interface{}{
+		logAuditWithDetails(h.db, r, currentUser, logger.ActionSCMProviderAllowlistUpdate, logger.ResourceSCMProviderAllowlist, &providerID, "", map[string]any{
 			"provider_id":   providerID,
 			"workspace_ids": req.WorkspaceIDs,
 			"count":         len(req.WorkspaceIDs),
@@ -322,10 +322,10 @@ func (h *SCMProviderHandler) DiscoverGitHubAppInstallations(w http.ResponseWrite
 	provider, err := scm.NewGitHubProvider(cfg)
 	if err != nil {
 		slog.Error("failed to create GitHub provider for discovery", slog.String("component", "scm"), slog.Any("error", err))
-		respondJSONOK(w, map[string]interface{}{
+		respondJSONOK(w, map[string]any{
 			"success":       false,
 			"error":         "Failed to initialize GitHub App: " + err.Error(),
-			"installations": []interface{}{},
+			"installations": []any{},
 		})
 		return
 	}
@@ -336,10 +336,10 @@ func (h *SCMProviderHandler) DiscoverGitHubAppInstallations(w http.ResponseWrite
 	installations, err := provider.ListAppInstallations(ctx)
 	if err != nil {
 		slog.Error("failed to discover GitHub App installations", slog.String("component", "scm"), slog.Any("error", err))
-		respondJSONOK(w, map[string]interface{}{
+		respondJSONOK(w, map[string]any{
 			"success":       false,
 			"error":         "Failed to list installations: " + err.Error(),
-			"installations": []interface{}{},
+			"installations": []any{},
 		})
 		return
 	}
@@ -356,7 +356,7 @@ func (h *SCMProviderHandler) DiscoverGitHubAppInstallations(w http.ResponseWrite
 		})
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"success":       true,
 		"installations": result,
 	})
@@ -440,7 +440,7 @@ func (h *SCMProviderHandler) RefreshGitHubAppInstallation(w http.ResponseWriter,
 	}
 
 	if foundInstallation == nil {
-		respondJSONOK(w, map[string]interface{}{
+		respondJSONOK(w, map[string]any{
 			"success": false,
 			"error":   "App is no longer installed for this organization",
 		})
@@ -459,7 +459,7 @@ func (h *SCMProviderHandler) RefreshGitHubAppInstallation(w http.ResponseWriter,
 		return
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"success":         true,
 		"installation_id": foundInstallation.ID,
 		"account_login":   foundInstallation.AccountLogin,

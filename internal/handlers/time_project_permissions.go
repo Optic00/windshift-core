@@ -122,7 +122,7 @@ func (h *TimeProjectPermissionHandler) AddManager(w http.ResponseWriter, r *http
 		return
 	}
 
-	h.auditor.LogWithDetails(r, user, logger.ActionTimeProjectAddManager, logger.ResourceTimeProject, &projectID, "", map[string]interface{}{"manager_id": req.ManagerID})
+	h.auditor.LogWithDetails(r, user, logger.ActionTimeProjectAddManager, logger.ResourceTimeProject, &projectID, "", map[string]any{"manager_id": req.ManagerID})
 
 	respondJSONCreated(w, manager)
 }
@@ -166,7 +166,7 @@ func (h *TimeProjectPermissionHandler) RemoveManager(w http.ResponseWriter, r *h
 		return
 	}
 
-	h.auditor.LogWithDetails(r, user, logger.ActionTimeProjectRemoveManager, logger.ResourceTimeProject, &projectID, "", map[string]interface{}{"manager_id": managerID})
+	h.auditor.LogWithDetails(r, user, logger.ActionTimeProjectRemoveManager, logger.ResourceTimeProject, &projectID, "", map[string]any{"manager_id": managerID})
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -214,7 +214,7 @@ func (h *TimeProjectPermissionHandler) AddMember(w http.ResponseWriter, r *http.
 		return
 	}
 
-	h.auditor.LogWithDetails(r, user, logger.ActionTimeProjectAddMember, logger.ResourceTimeProject, &projectID, "", map[string]interface{}{"member_id": req.MemberID})
+	h.auditor.LogWithDetails(r, user, logger.ActionTimeProjectAddMember, logger.ResourceTimeProject, &projectID, "", map[string]any{"member_id": req.MemberID})
 
 	respondJSONCreated(w, member)
 }
@@ -255,7 +255,7 @@ func (h *TimeProjectPermissionHandler) RemoveMember(w http.ResponseWriter, r *ht
 		return
 	}
 
-	h.auditor.LogWithDetails(r, user, logger.ActionTimeProjectRemoveMember, logger.ResourceTimeProject, &projectID, "", map[string]interface{}{"member_id": memberID})
+	h.auditor.LogWithDetails(r, user, logger.ActionTimeProjectRemoveMember, logger.ResourceTimeProject, &projectID, "", map[string]any{"member_id": memberID})
 
 	w.WriteHeader(http.StatusNoContent)
 }

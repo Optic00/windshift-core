@@ -782,7 +782,7 @@ func (h *Handlers) UploadAttachment(w http.ResponseWriter, r *http.Request) {
 	att.ID = attID
 	att.DownloadURL = fmt.Sprintf("/api/logbook/attachments/%s/download", attID)
 
-	restapi.RespondJSON(w, http.StatusCreated, map[string]interface{}{
+	restapi.RespondJSON(w, http.StatusCreated, map[string]any{
 		"success":    true,
 		"attachment": att,
 	})

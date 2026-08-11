@@ -340,7 +340,7 @@ func (r *AssetActionRepository) SaveActionWithNodesAndEdges(action *models.Asset
 			name = ?, description = ?, is_enabled = ?, trigger_type = ?, trigger_config = ?, updated_at = ?
 		WHERE id = ?
 	`
-	args := []interface{}{
+	args := []any{
 		action.Name, action.Description, action.IsEnabled, action.TriggerType, action.TriggerConfig,
 		time.Now(), action.ID,
 	}

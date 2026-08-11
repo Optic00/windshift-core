@@ -38,7 +38,7 @@ func (h *ItemHandler) MoveWorkspace(w http.ResponseWriter, r *http.Request) {
 	for _, childID := range result.DetachedChildIDs {
 		h.invalidateEffectiveProjectSubtree(childID)
 	}
-	logAuditWithDetails(h.db, r, user, logger.ActionItemMoveWorkspace, logger.ResourceItem, &itemID, result.Item.Title, map[string]interface{}{
+	logAuditWithDetails(h.db, r, user, logger.ActionItemMoveWorkspace, logger.ResourceItem, &itemID, result.Item.Title, map[string]any{
 		"old_key":               result.OldKey,
 		"new_key":               result.NewKey,
 		"fields":                result.Preview.Fields,

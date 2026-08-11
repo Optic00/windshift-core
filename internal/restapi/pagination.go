@@ -91,12 +91,12 @@ func NewPaginationMeta(params PaginationParams, total int) PaginationMeta {
 
 // PaginatedResponse wraps any data with pagination metadata
 type PaginatedResponse struct {
-	Data       interface{}    `json:"data"`
+	Data       any            `json:"data"`
 	Pagination PaginationMeta `json:"pagination"`
 }
 
 // NewPaginatedResponse creates a paginated response
-func NewPaginatedResponse(data interface{}, pagination PaginationMeta) PaginatedResponse {
+func NewPaginatedResponse(data any, pagination PaginationMeta) PaginatedResponse {
 	return PaginatedResponse{
 		Data:       data,
 		Pagination: pagination,

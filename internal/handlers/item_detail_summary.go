@@ -119,7 +119,7 @@ func (h *ItemDetailHandler) load(ctx context.Context, user *models.User, item *m
 		},
 		LinkTypes:              []models.LinkType{},
 		RequestTypeFields:      []models.RequestTypeField{},
-		Transitions:            ItemTransitionSummary{AvailableTransitions: []map[string]interface{}{}},
+		Transitions:            ItemTransitionSummary{AvailableTransitions: []map[string]any{}},
 		Children:               []models.Item{},
 		Ancestors:              []models.Item{},
 		AvailableSubIssueTypes: []services.ItemTypeResult{},

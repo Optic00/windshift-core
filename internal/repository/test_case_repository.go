@@ -58,7 +58,7 @@ func (r *TestCaseRepository) Search(query string, workspaceIDs []int, limit int)
 		return []models.LinkableItem{}, nil
 	}
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(workspaceIDs)), ",")
-	wsArgs := make([]interface{}, len(workspaceIDs))
+	wsArgs := make([]any, len(workspaceIDs))
 	for i, id := range workspaceIDs {
 		wsArgs[i] = id
 	}
@@ -73,7 +73,7 @@ func (r *TestCaseRepository) Search(query string, workspaceIDs []int, limit int)
 	`, placeholders)
 
 	searchTerm := "%" + query + "%"
-	args := make([]interface{}, 0, 3+len(wsArgs))
+	args := make([]any, 0, 3+len(wsArgs))
 	args = append(args, searchTerm, searchTerm)
 	args = append(args, wsArgs...)
 	args = append(args, limit)
@@ -126,7 +126,7 @@ func (r *TestCaseRepository) FindAll(params TestCaseListParams) ([]models.TestCa
 			FROM test_cases tc
 			LEFT JOIN test_folders tf ON tc.folder_id = tf.id
 			WHERE tc.workspace_id = ?`
-	args := []interface{}{params.WorkspaceID}
+	args := []any{params.WorkspaceID}
 
 	if !params.All {
 		if params.FolderID == nil {

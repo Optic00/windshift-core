@@ -872,7 +872,7 @@ func (r *ActionRepository) GetCapabilityByID(id int) (*models.ActionCapability, 
 // queryCapabilities runs a SELECT that returns capability rows and scans them
 // into a slice via scanCapability. Populates WorkspaceIDs in a single follow-up
 // query that joins all scoped capabilities at once.
-func (r *ActionRepository) queryCapabilities(errLabel, query string, args ...interface{}) ([]*models.ActionCapability, error) {
+func (r *ActionRepository) queryCapabilities(errLabel, query string, args ...any) ([]*models.ActionCapability, error) {
 	rows, err := r.db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", errLabel, err)
@@ -902,7 +902,7 @@ func (r *ActionRepository) queryCapabilities(errLabel, query string, args ...int
 // lookups to keep the list path O(1) DB calls.
 func (r *ActionRepository) populateWorkspaceIDs(caps []*models.ActionCapability) error {
 	scopedByID := map[int]*models.ActionCapability{}
-	ids := []interface{}{}
+	ids := []any{}
 	for _, c := range caps {
 		if !c.AppliesToAllWorkspaces {
 			scopedByID[c.ID] = c
@@ -959,7 +959,7 @@ func (r *ActionRepository) ListEnabledCapabilities() ([]*models.ActionCapability
 // PLUS every enabled capability explicitly scoped to this workspace via the
 // join table. Optional capType filter narrows by capability_type.
 func (r *ActionRepository) ListCapabilitiesForWorkspace(workspaceID int, capType string) ([]*models.ActionCapability, error) {
-	args := []interface{}{}
+	args := []any{}
 	typeFilter := ""
 	if capType != "" {
 		typeFilter = " AND capability_type = ?"
@@ -1032,8 +1032,8 @@ func (r *ActionRepository) SetCapabilityWorkspaces(capabilityID int, workspaceID
 }
 
 type capabilityWriter interface {
-	QueryRow(query string, args ...interface{}) *sql.Row
-	ExecWrite(query string, args ...interface{}) (sql.Result, error)
+	QueryRow(query string, args ...any) *sql.Row
+	ExecWrite(query string, args ...any) (sql.Result, error)
 }
 
 func setCapabilityWorkspaces(writer capabilityWriter, capabilityID int, workspaceIDs []int) error {
@@ -1155,7 +1155,7 @@ func (r *ActionRepository) SaveActionWithNodesAndEdges(action *models.Action, no
 			trigger_config = ?, updated_at = ?
 		WHERE id = ?
 	`
-	args := []interface{}{
+	args := []any{
 		action.Name, action.Description, action.IsEnabled, action.TriggerType,
 		action.TriggerConfig, time.Now(), action.ID,
 	}

@@ -262,7 +262,7 @@ func (as *ActionService) executeRelatedItems(node *models.ActionNode, ctx *model
 			return fmt.Errorf("related_items: source-workspace permission check: %w", err)
 		}
 		if !ok {
-			stepResult.Output = map[string]interface{}{
+			stepResult.Output = map[string]any{
 				"relation":   config.Relation,
 				"item_count": 0,
 				"items":      []*models.Item{},
@@ -335,7 +335,7 @@ func (as *ActionService) executeRelatedItems(node *models.ActionNode, ctx *model
 		truncated = true
 	}
 
-	stepResult.Output = map[string]interface{}{
+	stepResult.Output = map[string]any{
 		"relation":   config.Relation,
 		"item_count": len(items),
 		"items":      items, // consumed by runIterator, then deleted before trace serialization

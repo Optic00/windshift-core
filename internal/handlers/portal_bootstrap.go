@@ -17,7 +17,7 @@ import (
 )
 
 type PublicPortalBootstrapResponse struct {
-	Portal       map[string]interface{}     `json:"portal"`
+	Portal       map[string]any             `json:"portal"`
 	RequestTypes []models.RequestType       `json:"request_types"`
 	AssetReports []models.PublicAssetReport `json:"asset_reports"`
 }
@@ -25,8 +25,8 @@ type PublicPortalBootstrapResponse struct {
 type PortalUserBootstrapResponse struct {
 	Authenticated bool                            `json:"authenticated"`
 	IsInternal    bool                            `json:"is_internal"`
-	User          map[string]interface{}          `json:"user,omitempty"`
-	Customer      map[string]interface{}          `json:"customer,omitempty"`
+	User          map[string]any                  `json:"user,omitempty"`
+	Customer      map[string]any                  `json:"customer,omitempty"`
 	MyRequests    []services.PortalRequestSummary `json:"my_requests"`
 	MyApprovals   []*models.ApprovalRequest       `json:"my_approvals"`
 }
@@ -151,7 +151,7 @@ func (h *PortalHandler) portalAuthSnapshot(ctx context.Context, r *http.Request)
 	}
 	if session, ok := r.Context().Value(middleware.ContextKeySession).(*auth.Session); ok && session != nil && session.User != nil {
 		response.IsInternal = true
-		response.User = map[string]interface{}{
+		response.User = map[string]any{
 			"id":         session.User.ID,
 			"email":      session.User.Email,
 			"name":       session.User.FirstName + " " + session.User.LastName,
@@ -170,7 +170,7 @@ func (h *PortalHandler) portalAuthSnapshot(ctx context.Context, r *http.Request)
 		slog.Warn("portal user bootstrap: passkey state unavailable", "portal_customer_id", portalSession.Customer.ID, "error", err)
 		info = &repository.PortalCustomerSessionInfo{}
 	}
-	response.Customer = map[string]interface{}{
+	response.Customer = map[string]any{
 		"id":                          portalSession.Customer.ID,
 		"email":                       portalSession.Customer.Email,
 		"name":                        portalSession.Customer.Name,

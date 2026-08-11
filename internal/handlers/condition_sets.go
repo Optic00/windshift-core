@@ -28,7 +28,7 @@ func NewConditionSetHandler(db database.Database) *ConditionSetHandler {
 
 // respondConditionSets runs a condition-set SELECT query and writes the scanned
 // rows (or an empty array) as JSON, handling the usual 500 cascades.
-func (h *ConditionSetHandler) respondConditionSets(w http.ResponseWriter, r *http.Request, query string, args ...interface{}) {
+func (h *ConditionSetHandler) respondConditionSets(w http.ResponseWriter, r *http.Request, query string, args ...any) {
 	rows, err := h.db.Query(query, args...)
 	if err != nil {
 		respondInternalError(w, r, err)
@@ -60,7 +60,7 @@ func (h *ConditionSetHandler) attachGatedTransitions(sets []models.ConditionSet)
 	}
 	byID := make(map[int]*models.ConditionSet, len(sets))
 	placeholders := make([]string, len(sets))
-	args := make([]interface{}, len(sets))
+	args := make([]any, len(sets))
 	for i := range sets {
 		byID[sets[i].ID] = &sets[i]
 		placeholders[i] = "?"
@@ -112,7 +112,7 @@ func (h *ConditionSetHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 		FROM condition_sets cs
 		JOIN workflows w ON cs.workflow_id = w.id`
 
-	var args []interface{}
+	var args []any
 	if workflowIDStr := r.URL.Query().Get("workflow_id"); workflowIDStr != "" {
 		workflowID, err := strconv.Atoi(workflowIDStr)
 		if err != nil {

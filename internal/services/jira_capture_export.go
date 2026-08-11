@@ -166,7 +166,7 @@ func loadItemMappings(db database.Database, jobID string) ([]itemMapping, map[in
 		}
 		parent := ""
 		if metaJSON != "" {
-			var meta map[string]interface{}
+			var meta map[string]any
 			if err := json.Unmarshal([]byte(metaJSON), &meta); err == nil {
 				if pk, ok := meta["parent_key"].(string); ok {
 					parent = pk

@@ -909,7 +909,7 @@ func (h *ItemHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.auditor.LogWithDetails(r, user, logger.ActionItemDeleteCascade, logger.ResourceItem, &itemID, result.Item.Title, map[string]interface{}{
+	h.auditor.LogWithDetails(r, user, logger.ActionItemDeleteCascade, logger.ResourceItem, &itemID, result.Item.Title, map[string]any{
 		"workspace_id":     result.Item.WorkspaceID,
 		"item_type_id":     result.Item.ItemTypeID,
 		"parent_id":        result.Item.ParentID,

@@ -180,9 +180,9 @@ type JiraCustomFieldContextOption struct {
 // and choices; preserving Value losslessly keeps that provenance useful even
 // when Windshift has no global custom-field default model.
 type JiraCustomFieldDefaultValue struct {
-	IssueTypeID    string      `json:"issue_type_id,omitempty"`
-	IsAnyIssueType bool        `json:"is_any_issue_type"`
-	Value          interface{} `json:"value"`
+	IssueTypeID    string `json:"issue_type_id,omitempty"`
+	IsAnyIssueType bool   `json:"is_any_issue_type"`
+	Value          any    `json:"value"`
 }
 
 // JiraStatus represents a Jira status
@@ -325,18 +325,18 @@ type JiraScreenField struct {
 
 // JiraIssue represents a Jira issue
 type JiraIssue struct {
-	ID             string                 `json:"id"`
-	Key            string                 `json:"key"`
-	Self           string                 `json:"self"`
-	Fields         JiraIssueFields        `json:"fields"`
-	Changelog      *JiraChangelog         `json:"changelog,omitempty"`
-	Renderedfields map[string]interface{} `json:"renderedFields,omitempty"`
+	ID             string          `json:"id"`
+	Key            string          `json:"key"`
+	Self           string          `json:"self"`
+	Fields         JiraIssueFields `json:"fields"`
+	Changelog      *JiraChangelog  `json:"changelog,omitempty"`
+	Renderedfields map[string]any  `json:"renderedFields,omitempty"`
 }
 
 // JiraIssueFields contains the fields of a Jira issue
 type JiraIssueFields struct {
 	Summary      string                  `json:"summary"`
-	Description  interface{}             `json:"description"` // Can be string or ADF
+	Description  any                     `json:"description"` // Can be string or ADF
 	IssueType    *JiraIssueType          `json:"issuetype"`
 	Project      *JiraProject            `json:"project"`
 	Status       *JiraStatus             `json:"status"`
@@ -362,9 +362,9 @@ type JiraIssueFields struct {
 	Watches      *JiraWatchSummary       `json:"watches"`
 	Votes        *JiraVoteSummary        `json:"votes"`
 	Security     *JiraIssueSecurityLevel `json:"security"`
-	Sprint       interface{}             `json:"sprint"` // Can be object or customfield
+	Sprint       any                     `json:"sprint"` // Can be object or customfield
 	Epic         *JiraIssue              `json:"epic"`   // Epic link for stories
-	CustomFields map[string]interface{}  `json:"-"`      // Populated separately
+	CustomFields map[string]any          `json:"-"`      // Populated separately
 	// Watchers is populated from the paged issue-watchers endpoint. The issue
 	// payload contains only Watches.Count and never the identities needed for
 	// first-class Windshift item_watches rows.
@@ -429,10 +429,10 @@ func (f *JiraIssueFields) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	f.CustomFields = make(map[string]interface{})
+	f.CustomFields = make(map[string]any)
 	for key, val := range raw {
 		if strings.HasPrefix(key, "customfield_") {
-			var v interface{}
+			var v any
 			if err := json.Unmarshal(val, &v); err == nil {
 				f.CustomFields[key] = v
 			}
@@ -544,12 +544,12 @@ type JiraCommentContainer struct {
 
 // JiraComment represents a comment on an issue
 type JiraComment struct {
-	ID           string      `json:"id"`
-	Author       *JiraUser   `json:"author"`
-	Body         interface{} `json:"body"` // Can be string or ADF
-	Created      string      `json:"created"`
-	Updated      string      `json:"updated"`
-	UpdateAuthor *JiraUser   `json:"updateAuthor"`
+	ID           string    `json:"id"`
+	Author       *JiraUser `json:"author"`
+	Body         any       `json:"body"` // Can be string or ADF
+	Created      string    `json:"created"`
+	Updated      string    `json:"updated"`
+	UpdateAuthor *JiraUser `json:"updateAuthor"`
 	// ServiceDeskPublic is populated from the JSM request comment endpoint.
 	// A false value means an agent-only internal note.
 	ServiceDeskPublic *bool `json:"-"`
@@ -588,14 +588,14 @@ type JiraWorklogContainer struct {
 
 // JiraWorklog represents a worklog entry
 type JiraWorklog struct {
-	ID               string      `json:"id"`
-	Author           *JiraUser   `json:"author"`
-	Comment          interface{} `json:"comment"` // Can be string or ADF
-	Created          string      `json:"created"`
-	Updated          string      `json:"updated"`
-	Started          string      `json:"started"`
-	TimeSpent        string      `json:"timeSpent"`
-	TimeSpentSeconds int         `json:"timeSpentSeconds"`
+	ID               string    `json:"id"`
+	Author           *JiraUser `json:"author"`
+	Comment          any       `json:"comment"` // Can be string or ADF
+	Created          string    `json:"created"`
+	Updated          string    `json:"updated"`
+	Started          string    `json:"started"`
+	TimeSpent        string    `json:"timeSpent"`
+	TimeSpentSeconds int       `json:"timeSpentSeconds"`
 }
 
 // JiraTimeTracking represents time tracking info
@@ -743,9 +743,9 @@ type AssetObjectAttributeValue struct {
 
 // AssetAttributeValue represents a single value for an attribute
 type AssetAttributeValue struct {
-	Value        interface{} `json:"value"`
-	DisplayValue string      `json:"displayValue"`
-	SearchValue  string      `json:"searchValue"`
+	Value        any    `json:"value"`
+	DisplayValue string `json:"displayValue"`
+	SearchValue  string `json:"searchValue"`
 	// Jira Cloud currently returns a boolean here, while older Assets
 	// responses used a numeric reference type. The importer does not depend on
 	// this metadata, so retain either representation without rejecting the
@@ -867,7 +867,7 @@ type JiraBoardConfiguration struct {
 	Location     *JiraBoardLocation     `json:"location,omitempty"`
 	ColumnConfig *JiraBoardColumnConfig `json:"columnConfig,omitempty"`
 	SubQuery     *JiraBoardSubQuery     `json:"subQuery,omitempty"`
-	Ranking      map[string]interface{} `json:"ranking,omitempty"`
+	Ranking      map[string]any         `json:"ranking,omitempty"`
 }
 
 // JiraBoardFilter is the saved filter backing a board.

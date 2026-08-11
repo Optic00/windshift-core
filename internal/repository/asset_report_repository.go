@@ -38,7 +38,7 @@ const assetReportSelectQuery = `
 	LEFT JOIN asset_management_sets ams ON ar.asset_set_id = ams.id
 	LEFT JOIN item_types it ON ar.item_type_id = it.id`
 
-func scanAssetReport(scanner interface{ Scan(...interface{}) error }) (models.AssetReport, error) {
+func scanAssetReport(scanner interface{ Scan(...any) error }) (models.AssetReport, error) {
 	var ar models.AssetReport
 	var columnConfig, visibilityGroupIDs, visibilityOrgIDs, config *string
 	var itemTypeName sql.NullString

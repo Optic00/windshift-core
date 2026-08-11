@@ -140,7 +140,7 @@ Examples:
 			_, _ = fmt.Fprintln(stdout, "Comment deleted")
 		} else {
 			output := NewOutput()
-			output.Print(map[string]interface{}{
+			output.Print(map[string]any{
 				"deleted":    true,
 				"comment_id": commentID,
 			})

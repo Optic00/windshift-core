@@ -102,7 +102,7 @@ func (r *AdminGroupRepository) Create(name, description string, createdBy int) (
 // updated. Callers should check AdminGroupUpdate.IsEmpty before invoking it.
 func (r *AdminGroupRepository) Update(id int, update AdminGroupUpdate) error {
 	sets := []string{}
-	args := []interface{}{}
+	args := []any{}
 	if update.Name != nil && *update.Name != "" {
 		sets = append(sets, "name = ?")
 		args = append(args, *update.Name)

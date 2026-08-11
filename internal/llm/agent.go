@@ -88,7 +88,7 @@ func RunAgent(ctx context.Context, client Client, cfg AgentConfig, userMessage s
 
 	for i := 0; i < maxIter; i++ {
 		tools := cfg.Tools
-		var toolChoice interface{} = "auto"
+		var toolChoice any = "auto"
 		if forceFinalWithoutTools {
 			tools = nil
 			toolChoice = nil

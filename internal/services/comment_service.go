@@ -231,7 +231,7 @@ func (s *CommentService) UpdateImported(params UpdateImportedCommentParams) erro
 // themselves after they commit. authorID == 0 inserts a system (NULL author)
 // comment.
 func (s *CommentService) CreateInTx(ctx context.Context, tx database.Tx, itemID, authorID int, content string, createdAt time.Time) (int64, error) {
-	var author interface{}
+	var author any
 	if authorID != 0 {
 		author = authorID
 	}
@@ -284,7 +284,7 @@ func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResul
 	} else {
 		// Internal user or portal customer with linked user; AuthorID == 0 with no
 		// portal customer inserts a system (NULL author) comment.
-		var authorID interface{}
+		var authorID any
 		if params.AuthorID != 0 {
 			authorID = params.AuthorID
 		}
@@ -368,7 +368,7 @@ func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResul
 				AssigneeID:  item.AssigneeID,
 				CreatorID:   item.CreatorID,
 				Title:       "New Comment Added",
-				TemplateData: map[string]interface{}{
+				TemplateData: map[string]any{
 					"item.title": item.Title,
 					"item.key":   itemKey,
 					"item.id":    params.ItemID,
@@ -537,7 +537,7 @@ func (s *CommentService) GetFeedByItemID(itemID int, includeAgentOwner bool, opt
 		LEFT JOIN portal_customers pc ON c.portal_customer_id = pc.id
 		WHERE c.item_id = ?
 	`
-	args := []interface{}{itemID}
+	args := []any{itemID}
 	order := "DESC"
 	switch {
 	case options.Before != nil:

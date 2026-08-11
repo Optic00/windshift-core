@@ -485,7 +485,7 @@ func (s *Server) initialize() error {
 	hierarchyLevelConfig.AuditEmit = enumAuditEmit
 	hierarchyLevelHandler := handlers.NewEnumHandler(
 		services.NewEnumService(s.db, hierarchyLevelConfig),
-		func() interface{} { return &models.HierarchyLevel{} })
+		func() any { return &models.HierarchyLevel{} })
 	requestTypeHandler := handlers.NewRequestTypeHandler(
 		repository.NewRequestTypeRepository(s.db),
 		repository.NewChannelRepository(s.db),
@@ -498,10 +498,10 @@ func (s *Server) initialize() error {
 	statusCategoryConfig.AuditEmit = enumAuditEmit
 	statusCategoryHandler := handlers.NewEnumHandler(
 		services.NewEnumService(s.db, statusCategoryConfig),
-		func() interface{} { return &models.StatusCategory{} })
+		func() any { return &models.StatusCategory{} })
 	statusHandler := handlers.NewEnumHandler(
 		services.NewEnumService(s.db, services.NewStatusConfig()),
-		func() interface{} { return &models.Status{} })
+		func() any { return &models.Status{} })
 	statusQueryHandler := handlers.NewStatusQueryHandler(repository.NewStatusRepository(s.db))
 	workflowService := s.workflowService
 	workflowHandler := handlers.NewWorkflowHandler(repository.NewWorkflowRepository(s.db), logger.NewAuditor(s.db))
@@ -656,22 +656,22 @@ func (s *Server) initialize() error {
 	milestoneCategoryConfig.AuditEmit = enumAuditEmit
 	milestoneCategoryHandler := handlers.NewEnumHandler(
 		services.NewEnumService(s.db, milestoneCategoryConfig),
-		func() interface{} { return &models.MilestoneCategory{} }).WithGlobalMutationPermission(permService, models.PermissionMilestoneCreate)
+		func() any { return &models.MilestoneCategory{} }).WithGlobalMutationPermission(permService, models.PermissionMilestoneCreate)
 	channelCategoryConfig := services.NewChannelCategoryConfig()
 	channelCategoryConfig.AuditEmit = enumAuditEmit
 	channelCategoryHandler := handlers.NewEnumHandler(
 		services.NewEnumService(s.db, channelCategoryConfig),
-		func() interface{} { return &models.ChannelCategory{} })
+		func() any { return &models.ChannelCategory{} })
 	collectionCategoryConfig := services.NewCollectionCategoryConfig()
 	collectionCategoryConfig.AuditEmit = enumAuditEmit
 	collectionCategoryHandler := handlers.NewEnumHandler(
 		services.NewEnumService(s.db, collectionCategoryConfig),
-		func() interface{} { return &models.CollectionCategory{} })
+		func() any { return &models.CollectionCategory{} })
 	iterationTypeConfig := services.NewIterationTypeConfig()
 	iterationTypeConfig.AuditEmit = enumAuditEmit
 	iterationTypeHandler := handlers.NewEnumHandler(
 		services.NewEnumService(s.db, iterationTypeConfig),
-		func() interface{} { return &models.IterationType{} }).WithGlobalMutationPermission(permService, models.PermissionIterationManage)
+		func() any { return &models.IterationType{} }).WithGlobalMutationPermission(permService, models.PermissionIterationManage)
 	iterationHandler := handlers.NewIterationHandler(services.NewPlanningService(s.db), permService, logger.NewAuditor(s.db))
 	personalLabelHandler := handlers.NewPersonalLabelHandler(s.db, permService)
 	commentHandler := handlers.NewCommentHandler(s.db, permService, s.activityTracker, s.notificationService)
@@ -1115,7 +1115,7 @@ func (s *Server) initialize() error {
 	contactRoleConfig.AuditEmit = enumAuditEmit
 	contactRolesHandler := handlers.NewEnumHandler(
 		services.NewEnumService(s.db, contactRoleConfig),
-		func() interface{} { return &models.ContactRole{} })
+		func() any { return &models.ContactRole{} })
 	hubHandler := handlers.NewHubHandler(s.db, permService, logger.NewAuditor(s.db))
 	formHandler := handlers.NewFormHandler(s.db, sessionManager, portalSessionManager, ipExtractor, channelService)
 	formHandler.SetEventCoordinator(eventCoordinator)

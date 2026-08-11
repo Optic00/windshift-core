@@ -148,7 +148,7 @@ func init() {
 			}
 
 			var qlParts []string
-			var qlArgs []interface{}
+			var qlArgs []any
 			if args.Status != "" {
 				qlParts = append(qlParts, "st.name = ?")
 				qlArgs = append(qlArgs, args.Status)
@@ -600,22 +600,22 @@ type createItemArgs struct {
 }
 
 type updateItemArgs struct {
-	ItemID            int                    `json:"item_id,omitempty" jsonschema:"Item ID"`
-	ItemKey           string                 `json:"item_key,omitempty" jsonschema:"Item key like PROJ-42"`
-	Title             *string                `json:"title,omitempty" jsonschema:"New title"`
-	Description       *string                `json:"description,omitempty" jsonschema:"New description"`
-	PriorityID        *int                   `json:"priority_id,omitempty" jsonschema:"New priority ID"`
-	PriorityName      *string                `json:"priority_name,omitempty" jsonschema:"New priority name (alternative to ID)"`
-	AssigneeID        *int                   `json:"assignee_id,omitempty" jsonschema:"New assignee user ID (0 to unassign)"`
-	AssigneeName      *string                `json:"assignee_name,omitempty" jsonschema:"New assignee full name (alternative to ID)"`
-	DueDate           *string                `json:"due_date,omitempty" jsonschema:"Due date YYYY-MM-DD (empty string to clear)"`
-	MilestoneID       *int                   `json:"milestone_id,omitempty" jsonschema:"Milestone ID"`
-	MilestoneName     *string                `json:"milestone_name,omitempty" jsonschema:"Milestone name (alternative to ID)"`
-	IterationID       *int                   `json:"iteration_id,omitempty" jsonschema:"Iteration ID"`
-	IterationName     *string                `json:"iteration_name,omitempty" jsonschema:"Iteration name (alternative to ID)"`
-	ProjectID         *int                   `json:"project_id,omitempty" jsonschema:"Project ID"`
-	ParentID          *int                   `json:"parent_id,omitempty" jsonschema:"Parent item ID"`
-	CustomFieldValues map[string]interface{} `json:"custom_field_values,omitempty" jsonschema:"Custom field values map"`
+	ItemID            int            `json:"item_id,omitempty" jsonschema:"Item ID"`
+	ItemKey           string         `json:"item_key,omitempty" jsonschema:"Item key like PROJ-42"`
+	Title             *string        `json:"title,omitempty" jsonschema:"New title"`
+	Description       *string        `json:"description,omitempty" jsonschema:"New description"`
+	PriorityID        *int           `json:"priority_id,omitempty" jsonschema:"New priority ID"`
+	PriorityName      *string        `json:"priority_name,omitempty" jsonschema:"New priority name (alternative to ID)"`
+	AssigneeID        *int           `json:"assignee_id,omitempty" jsonschema:"New assignee user ID (0 to unassign)"`
+	AssigneeName      *string        `json:"assignee_name,omitempty" jsonschema:"New assignee full name (alternative to ID)"`
+	DueDate           *string        `json:"due_date,omitempty" jsonschema:"Due date YYYY-MM-DD (empty string to clear)"`
+	MilestoneID       *int           `json:"milestone_id,omitempty" jsonschema:"Milestone ID"`
+	MilestoneName     *string        `json:"milestone_name,omitempty" jsonschema:"Milestone name (alternative to ID)"`
+	IterationID       *int           `json:"iteration_id,omitempty" jsonschema:"Iteration ID"`
+	IterationName     *string        `json:"iteration_name,omitempty" jsonschema:"Iteration name (alternative to ID)"`
+	ProjectID         *int           `json:"project_id,omitempty" jsonschema:"Project ID"`
+	ParentID          *int           `json:"parent_id,omitempty" jsonschema:"Parent item ID"`
+	CustomFieldValues map[string]any `json:"custom_field_values,omitempty" jsonschema:"Custom field values map"`
 }
 
 type deleteItemArgs struct {
@@ -643,8 +643,8 @@ type transitionItemArgs struct {
 // services.UpdateItemRequest, resolving names to IDs where applicable.
 // Returns the update map, the list of changed field names, and any
 // resolution error.
-func buildUpdateData(env *Env, args updateItemArgs, wsID int) (data map[string]interface{}, changed []string, err error) {
-	data = map[string]interface{}{}
+func buildUpdateData(env *Env, args updateItemArgs, wsID int) (data map[string]any, changed []string, err error) {
+	data = map[string]any{}
 	out := data
 
 	if args.Title != nil {

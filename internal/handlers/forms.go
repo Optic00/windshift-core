@@ -246,10 +246,10 @@ func (h *FormHandler) publicFormAttachmentConfig() PublicFormAttachmentConfig {
 }
 
 type publicFormSubmission struct {
-	RequestTypeID *int                   `json:"request_type_id"`
-	Title         string                 `json:"title"`
-	Description   string                 `json:"description"`
-	CustomFields  map[string]interface{} `json:"custom_fields"`
+	RequestTypeID *int           `json:"request_type_id"`
+	Title         string         `json:"title"`
+	Description   string         `json:"description"`
+	CustomFields  map[string]any `json:"custom_fields"`
 }
 
 func (h *FormHandler) parsePublicFormSubmission(w http.ResponseWriter, r *http.Request) (publicFormSubmission, []services.ItemAttachmentUploadInput, bool) {
@@ -718,7 +718,7 @@ func (h *FormHandler) SubmitForm(w http.ResponseWriter, r *http.Request) {
 
 	// Build response with per-form config overrides
 	const defaultSuccessMessage = "Submission received successfully"
-	response := map[string]interface{}{
+	response := map[string]any{
 		"success":          true,
 		"item_id":          itemID,
 		"success_message":  defaultSuccessMessage,

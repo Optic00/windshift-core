@@ -26,7 +26,7 @@ const themeColumns = `id, name, description, is_default, is_active,
 	created_at, updated_at`
 
 type themeScanner interface {
-	Scan(dest ...interface{}) error
+	Scan(dest ...any) error
 }
 
 func scanTheme(s themeScanner, t *models.Theme) error {

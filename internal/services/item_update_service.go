@@ -47,7 +47,7 @@ func (s *ItemUpdateService) WithPermissionService(permService *PermissionService
 // UpdateItemRequest contains the data needed to update an item
 type UpdateItemRequest struct {
 	ItemID     int
-	UpdateData map[string]interface{}
+	UpdateData map[string]any
 	UserID     int
 }
 
@@ -357,7 +357,7 @@ func (s *ItemUpdateService) AddMilestone(req UpdateItemRequest, milestoneID int)
 	}, true, nil
 }
 
-func hasAnyItemUpdateField(updateData map[string]interface{}, fields ...string) bool {
+func hasAnyItemUpdateField(updateData map[string]any, fields ...string) bool {
 	for _, field := range fields {
 		if _, ok := updateData[field]; ok {
 			return true
@@ -602,7 +602,7 @@ func float64PtrToString(val *float64) string {
 	return fmt.Sprintf("%g", *val)
 }
 
-func customFieldValueToString(val interface{}) string {
+func customFieldValueToString(val any) string {
 	if val == nil {
 		return ""
 	}

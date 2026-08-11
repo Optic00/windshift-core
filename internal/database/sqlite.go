@@ -26,11 +26,11 @@ import (
 //
 // Returns a new slice (never mutates the caller's). A nil/empty input is
 // returned unchanged.
-func toUTCArgs(args []interface{}) []interface{} {
+func toUTCArgs(args []any) []any {
 	if len(args) == 0 {
 		return args
 	}
-	out := make([]interface{}, len(args))
+	out := make([]any, len(args))
 	for i, a := range args {
 		switch v := a.(type) {
 		case time.Time:
@@ -112,7 +112,7 @@ func (s *SQLiteDB) GetDriverName() string {
 }
 
 // Query executes a query that returns rows
-func (s *SQLiteDB) Query(query string, args ...interface{}) (*sql.Rows, error) {
+func (s *SQLiteDB) Query(query string, args ...any) (*sql.Rows, error) {
 	return s.DB.Query(query, toUTCArgs(args)...)
 }
 
@@ -120,7 +120,7 @@ func (s *SQLiteDB) Query(query string, args ...interface{}) (*sql.Rows, error) {
 // Write queries (INSERT/UPDATE/DELETE) are routed through the dedicated write
 // connection so that INSERT ... RETURNING does not race with other writers.
 // last review: ser, 210426, OPTIMIZE: Check whether the write fallback is still needed
-func (s *SQLiteDB) QueryRow(query string, args ...interface{}) *sql.Row {
+func (s *SQLiteDB) QueryRow(query string, args ...any) *sql.Row {
 	args = toUTCArgs(args)
 	if isWriteQuery(query) {
 		return s.writeConn.QueryRow(query, args...)
@@ -130,7 +130,7 @@ func (s *SQLiteDB) QueryRow(query string, args ...interface{}) *sql.Row {
 
 // Exec executes a query that doesn't return rows
 // Always uses write connection for safety (all Exec operations are writes)
-func (s *SQLiteDB) Exec(query string, args ...interface{}) (sql.Result, error) {
+func (s *SQLiteDB) Exec(query string, args ...any) (sql.Result, error) {
 	return s.writeConn.Exec(query, toUTCArgs(args)...)
 }
 
@@ -138,7 +138,7 @@ func (s *SQLiteDB) Exec(query string, args ...interface{}) (sql.Result, error) {
 // Write-returning queries (e.g. WITH ... INSERT/UPDATE/DELETE ... RETURNING)
 // must route through the write connection so they don't lose single-writer
 // serialization. Mirrors QueryRowContext, which already applies isWriteQuery.
-func (s *SQLiteDB) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+func (s *SQLiteDB) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
 	args = toUTCArgs(args)
 	if isWriteQuery(query) {
 		return s.writeConn.QueryContext(ctx, query, args...)
@@ -149,7 +149,7 @@ func (s *SQLiteDB) QueryContext(ctx context.Context, query string, args ...inter
 // QueryRowContext executes a query with context that returns at most one row.
 // Write queries (INSERT/UPDATE/DELETE) are routed through the dedicated write
 // connection so that INSERT ... RETURNING does not race with other writers.
-func (s *SQLiteDB) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
+func (s *SQLiteDB) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
 	args = toUTCArgs(args)
 	if isWriteQuery(query) {
 		return s.writeConn.QueryRowContext(ctx, query, args...)
@@ -159,17 +159,17 @@ func (s *SQLiteDB) QueryRowContext(ctx context.Context, query string, args ...in
 
 // ExecContext executes a query with context that doesn't return rows
 // Always uses write connection for safety (all Exec operations are writes)
-func (s *SQLiteDB) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+func (s *SQLiteDB) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
 	return s.writeConn.ExecContext(ctx, query, toUTCArgs(args)...)
 }
 
 // ExecWrite explicitly executes a write query using the dedicated write connection
-func (s *SQLiteDB) ExecWrite(query string, args ...interface{}) (sql.Result, error) {
+func (s *SQLiteDB) ExecWrite(query string, args ...any) (sql.Result, error) {
 	return s.writeConn.Exec(query, toUTCArgs(args)...)
 }
 
 // ExecWriteContext explicitly executes a write query with context using the dedicated write connection
-func (s *SQLiteDB) ExecWriteContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+func (s *SQLiteDB) ExecWriteContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
 	return s.writeConn.ExecContext(ctx, query, toUTCArgs(args)...)
 }
 

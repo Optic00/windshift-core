@@ -157,7 +157,7 @@ func (h *AgentSkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !h.setPageRefs(w, r, skill, body.PageIDs) {
 		return
 	}
-	h.auditor.LogWithDetails(r, user, "agent_skill.create", "workspace_agent_skill", &id, "", map[string]interface{}{
+	h.auditor.LogWithDetails(r, user, "agent_skill.create", "workspace_agent_skill", &id, "", map[string]any{
 		"workspace_id": workspaceID,
 		"name":         skill.Name,
 	})
@@ -209,7 +209,7 @@ func (h *AgentSkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !h.setPageRefs(w, r, skill, body.PageIDs) {
 		return
 	}
-	h.auditor.LogWithDetails(r, user, "agent_skill.update", "workspace_agent_skill", &id, "", map[string]interface{}{
+	h.auditor.LogWithDetails(r, user, "agent_skill.update", "workspace_agent_skill", &id, "", map[string]any{
 		"workspace_id": workspaceID,
 		"name":         skill.Name,
 	})
@@ -236,7 +236,7 @@ func (h *AgentSkillHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		respondNotFound(w, r, "agent skill")
 		return
 	}
-	h.auditor.LogWithDetails(r, user, "agent_skill.delete", "workspace_agent_skill", &id, "", map[string]interface{}{
+	h.auditor.LogWithDetails(r, user, "agent_skill.delete", "workspace_agent_skill", &id, "", map[string]any{
 		"workspace_id": workspaceID,
 	})
 	respondJSON(w, http.StatusOK, map[string]any{"deleted": true})

@@ -72,7 +72,7 @@ func (s *ExecutionChainStore) CreateChain(chainID string) *ExecutionChain {
 func (s *ExecutionChainStore) Cleanup() {
 	threshold := time.Now().Add(-5 * time.Minute)
 	cleaned := 0
-	s.cache.Range(func(key, value interface{}) bool {
+	s.cache.Range(func(key, value any) bool {
 		chain := value.(*ExecutionChain) //nolint:errcheck // type assertion always succeeds for cached chains
 		if chain.CreatedAt.Before(threshold) {
 			s.cache.Delete(key)

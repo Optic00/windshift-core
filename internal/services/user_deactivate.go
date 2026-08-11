@@ -206,8 +206,8 @@ func inClauseQuery(prefix string, n int) string {
 	return out + ")"
 }
 
-func toIfaceSlice(ids []int) []interface{} {
-	out := make([]interface{}, len(ids))
+func toIfaceSlice(ids []int) []any {
+	out := make([]any, len(ids))
 	for i, v := range ids {
 		out[i] = v
 	}

@@ -264,7 +264,7 @@ func (h *IntegrationProviderHandler) audit(r *http.Request, action string, p *re
 	if user == nil {
 		return
 	}
-	h.auditor.LogWithDetails(r, user, action, logger.ResourceIntegrationProvider, nil, p.Name, map[string]interface{}{
+	h.auditor.LogWithDetails(r, user, action, logger.ResourceIntegrationProvider, nil, p.Name, map[string]any{
 		"provider_id":     p.ID,
 		"slug":            p.Slug,
 		"provider_type":   p.ProviderType,

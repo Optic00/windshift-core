@@ -134,7 +134,7 @@ func (h *ItemHandler) ChangeType(w http.ResponseWriter, r *http.Request) {
 	var nextStatusID *int
 	if analysis.RequiresMigration {
 		if req.TargetStatusID == nil {
-			respondJSON(w, http.StatusConflict, map[string]interface{}{
+			respondJSON(w, http.StatusConflict, map[string]any{
 				"error":    "migration_required",
 				"message":  "A target status is required before changing this item type",
 				"analysis": analysis,

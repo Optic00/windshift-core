@@ -186,7 +186,7 @@ func ProviderConfigResponsesReasoning(raw string) *ResponsesReasoningConfig {
 // MergeProviderConfig adds provider_config fields to an in-memory request
 // body. Existing generated request fields win, so config cannot replace the
 // prompt, model, tools, or other fields already set by the caller.
-func MergeProviderConfig(body map[string]interface{}, raw string) error {
+func MergeProviderConfig(body map[string]any, raw string) error {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil
@@ -205,7 +205,7 @@ func MergeProviderConfig(body map[string]interface{}, raw string) error {
 		if _, exists := body[k]; exists {
 			continue
 		}
-		var decoded interface{}
+		var decoded any
 		if err := json.Unmarshal(v, &decoded); err != nil {
 			return fmt.Errorf("provider_config.%s must be valid JSON: %w", k, err)
 		}

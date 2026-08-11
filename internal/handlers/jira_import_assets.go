@@ -186,11 +186,11 @@ func jiraIssueAssetCandidates(value any) []jiraIssueAssetCandidate {
 	var walk func(any)
 	walk = func(v any) {
 		switch x := v.(type) {
-		case []interface{}:
+		case []any:
 			for _, entry := range x {
 				walk(entry)
 			}
-		case map[string]interface{}:
+		case map[string]any:
 			candidate := jiraIssueAssetCandidate{
 				// Cloud issue payloads include both id="<workspace UUID>:<id>"
 				// and objectId="<id>". Asset import mappings use the latter.
@@ -749,7 +749,7 @@ func jiraAssetAttributeReferenceCandidate(raw jira.AssetAttributeValue) jiraIssu
 		Label: strings.TrimSpace(raw.DisplayValue),
 	}
 	switch value := raw.Value.(type) {
-	case map[string]interface{}:
+	case map[string]any:
 		candidate.ID = firstStringKey(value, "objectId", "objectID", "id")
 		if key := firstStringKey(value, "objectKey", "key", "globalId"); key != "" {
 			candidate.Key = key

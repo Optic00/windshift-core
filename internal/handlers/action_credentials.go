@@ -374,7 +374,7 @@ func (h *ActionCredentialsHandler) auditCredential(r *http.Request, user *models
 	// Details intentionally hold only non-sensitive metadata. The audit
 	// pipeline's sanitizeAuditDetails additionally redacts any key that
 	// looks like a secret, but we don't put plaintext here either way.
-	h.auditor.LogWithDetails(r, user, action, logger.ResourceActionCredential, &cred.ID, cred.Name, map[string]interface{}{
+	h.auditor.LogWithDetails(r, user, action, logger.ResourceActionCredential, &cred.ID, cred.Name, map[string]any{
 		"credential_type": cred.CredentialType,
 		"scope":           scope,
 		"workspace_ids":   cred.WorkspaceIDs,

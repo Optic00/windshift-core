@@ -205,7 +205,7 @@ func (h *SetupHandler) CompleteInitialSetup(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"success": true,
 		"message": "Initial setup completed successfully",
 		"status":  status,
@@ -303,7 +303,7 @@ func (h *SetupHandler) UpdateModuleSettings(w http.ResponseWriter, r *http.Reque
 		ActionType:   logger.ActionModuleSettingsUpdate,
 		ResourceType: logger.ResourceModule,
 		ResourceName: "Module Settings",
-		Details: map[string]interface{}{
+		Details: map[string]any{
 			"time_tracking_enabled":    settings.TimeTrackingEnabled,
 			"test_management_enabled":  settings.TestManagementEnabled,
 			"workspace_managed_agents": settings.WorkspaceManagedAgents,
@@ -311,7 +311,7 @@ func (h *SetupHandler) UpdateModuleSettings(w http.ResponseWriter, r *http.Reque
 		Success: true,
 	})
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"success":  true,
 		"message":  "Module settings updated successfully",
 		"settings": settings,
@@ -350,7 +350,7 @@ func (h *SetupHandler) GetAIFeaturesConfig(w http.ResponseWriter, r *http.Reques
 		connections = []connInfo{}
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"config":      cfg,
 		"connections": connections,
 	})
@@ -425,14 +425,14 @@ func (h *SetupHandler) UpdateAIFeaturesConfig(w http.ResponseWriter, r *http.Req
 			ActionType:   logger.ActionAIFeaturesConfigUpdate,
 			ResourceType: logger.ResourceAIFeaturesConfig,
 			ResourceName: "AI Features Config",
-			Details: map[string]interface{}{
+			Details: map[string]any{
 				"feature_count": len(cfg),
 			},
 			Success: true,
 		})
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"success": true,
 		"config":  cfg,
 	})

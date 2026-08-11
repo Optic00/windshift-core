@@ -696,7 +696,7 @@ func (s *ConfigSetImportService) createConditionSetTransition(ctx context.Contex
 	return id, err
 }
 
-func (s *ConfigSetImportService) createCondition(ctx context.Context, tx database.Tx, transitionID int, c ConfigSetTplCondition, cfg map[string]interface{}, now time.Time) error {
+func (s *ConfigSetImportService) createCondition(ctx context.Context, tx database.Tx, transitionID int, c ConfigSetTplCondition, cfg map[string]any, now time.Time) error {
 	cfgBytes, err := json.Marshal(cfg)
 	if err != nil {
 		return fmt.Errorf("marshal condition config: %w", err)
@@ -705,7 +705,7 @@ func (s *ConfigSetImportService) createCondition(ctx context.Context, tx databas
 	if mode == "" {
 		mode = models.ConditionModeCondition
 	}
-	var errMsg interface{}
+	var errMsg any
 	if c.ErrorMessage != "" {
 		errMsg = c.ErrorMessage
 	}
@@ -718,8 +718,8 @@ func (s *ConfigSetImportService) createCondition(ctx context.Context, tx databas
 
 // rewriteConditionConfigForImport reverses the export rewrites: name fields
 // → integer IDs. Returns a fresh map (does not mutate the input).
-func (s *ConfigSetImportService) rewriteConditionConfigForImport(condType string, cfg map[string]interface{}, customFieldNameToID map[string]int, ctx context.Context) map[string]interface{} {
-	out := make(map[string]interface{}, len(cfg))
+func (s *ConfigSetImportService) rewriteConditionConfigForImport(condType string, cfg map[string]any, customFieldNameToID map[string]int, ctx context.Context) map[string]any {
+	out := make(map[string]any, len(cfg))
 	for k, v := range cfg {
 		out[k] = v
 	}
@@ -751,7 +751,7 @@ func (s *ConfigSetImportService) rewriteConditionConfigForImport(condType string
 	return out
 }
 
-func (s *ConfigSetImportService) rewriteFieldRefForImport(cfg map[string]interface{}, customFieldNameToID map[string]int) {
+func (s *ConfigSetImportService) rewriteFieldRefForImport(cfg map[string]any, customFieldNameToID map[string]int) {
 	source, _ := cfg["source"].(string)
 	if source != "custom_field" {
 		return
@@ -963,7 +963,7 @@ func resolveCustomFieldID(name string, m map[string]int) *int {
 // repository — duplicated rather than exported because the repo package keeps
 // it private. Empty strings need to scan/insert as SQL NULL on these columns,
 // not as the empty literal.
-func nullStringIfEmptyImport(s string) interface{} {
+func nullStringIfEmptyImport(s string) any {
 	if s == "" {
 		return nil
 	}

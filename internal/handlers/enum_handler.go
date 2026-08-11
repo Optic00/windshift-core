@@ -24,7 +24,7 @@ func sanitizeEnumFields(name, color, description *string) {
 
 // sanitizeEnumEntity dispatches to the entity types this generic
 // handler decodes (see the NewEnumHandler call sites in server.go).
-func sanitizeEnumEntity(entity interface{}) {
+func sanitizeEnumEntity(entity any) {
 	switch e := entity.(type) {
 	case *models.HierarchyLevel:
 		sanitizeEnumFields(&e.Name, nil, &e.Description)
@@ -48,7 +48,7 @@ func sanitizeEnumEntity(entity interface{}) {
 // EnumHandler provides HTTP handlers for generic enum CRUD operations
 type EnumHandler struct {
 	service            *services.EnumService
-	newEntity          func() interface{} // Factory function to create new entity
+	newEntity          func() any // Factory function to create new entity
 	permissionService  *services.PermissionService
 	mutationPermission string
 }
@@ -87,7 +87,7 @@ func (h *EnumHandler) authorizeMutation(w http.ResponseWriter, r *http.Request) 
 }
 
 // NewEnumHandler creates a new enum handler
-func NewEnumHandler(service *services.EnumService, newEntity func() interface{}) *EnumHandler {
+func NewEnumHandler(service *services.EnumService, newEntity func() any) *EnumHandler {
 	return &EnumHandler{
 		service:   service,
 		newEntity: newEntity,

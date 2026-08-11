@@ -22,7 +22,7 @@ type PortalRequestDraft struct {
 	UserID            *int
 	Title             string
 	Description       string
-	CustomFieldValues map[string]interface{}
+	CustomFieldValues map[string]any
 	CurrentStep       int
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
@@ -53,7 +53,7 @@ type DraftIdentity struct {
 type PortalRequestDraftPayload struct {
 	Title             string
 	Description       string
-	CustomFieldValues map[string]interface{}
+	CustomFieldValues map[string]any
 	CurrentStep       int
 }
 
@@ -277,7 +277,7 @@ func identityColumn(identity DraftIdentity) (column string, value int, err error
 	return "", 0, fmt.Errorf("portal draft identity: one of portal_customer_id / user_id is required")
 }
 
-func marshalDraftCustomFields(v map[string]interface{}) (interface{}, error) {
+func marshalDraftCustomFields(v map[string]any) (any, error) {
 	if v == nil {
 		return nil, nil
 	}
@@ -288,18 +288,18 @@ func marshalDraftCustomFields(v map[string]interface{}) (interface{}, error) {
 	return string(b), nil
 }
 
-func unmarshalDraftCustomFields(n sql.NullString) map[string]interface{} {
+func unmarshalDraftCustomFields(n sql.NullString) map[string]any {
 	if !n.Valid || n.String == "" {
-		return map[string]interface{}{}
+		return map[string]any{}
 	}
-	var out map[string]interface{}
+	var out map[string]any
 	if err := json.Unmarshal([]byte(n.String), &out); err != nil {
-		return map[string]interface{}{}
+		return map[string]any{}
 	}
 	return out
 }
 
-func draftNullableInt(v *int) interface{} {
+func draftNullableInt(v *int) any {
 	if v == nil {
 		return nil
 	}

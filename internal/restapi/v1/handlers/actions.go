@@ -371,7 +371,7 @@ func (h *ActionHandler) CreateAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if user := middleware.GetUser(r.Context()); user != nil {
-		h.Auditor.LogWithDetails(r, user, logger.ActionAutomationCreate, logger.ResourceAutomation, &created.ID, created.Name, map[string]interface{}{"workspace_id": workspaceID})
+		h.Auditor.LogWithDetails(r, user, logger.ActionAutomationCreate, logger.ResourceAutomation, &created.ID, created.Name, map[string]any{"workspace_id": workspaceID})
 	}
 	h.RespondCreated(w, actionResponse{Action: created, Warnings: warnings})
 }
@@ -445,7 +445,7 @@ func (h *ActionHandler) UpdateAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if user := middleware.GetUser(r.Context()); user != nil {
-		h.Auditor.LogWithDetails(r, user, logger.ActionAutomationUpdate, logger.ResourceAutomation, &updated.ID, updated.Name, map[string]interface{}{"workspace_id": workspaceID})
+		h.Auditor.LogWithDetails(r, user, logger.ActionAutomationUpdate, logger.ResourceAutomation, &updated.ID, updated.Name, map[string]any{"workspace_id": workspaceID})
 	}
 	h.RespondOK(w, actionResponse{Action: updated, Warnings: warnings})
 }

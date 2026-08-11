@@ -245,7 +245,7 @@ func (r *TestSummaryRepository) GetRecentFailures(filter ReportFilter, limit int
 		LIMIT ?
 	`
 
-	args := append(append([]interface{}{}, baseArgs...), limit)
+	args := append(append([]any{}, baseArgs...), limit)
 	rows, err := r.db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query recent failures: %w", err)
@@ -288,7 +288,7 @@ func (r *TestSummaryRepository) GetRecentBlocked(filter ReportFilter, limit int)
 		LIMIT ?
 	`
 
-	args := append(append([]interface{}{}, baseArgs...), limit)
+	args := append(append([]any{}, baseArgs...), limit)
 	rows, err := r.db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query recent blocked: %w", err)
@@ -320,12 +320,12 @@ const reportBaseFrom = `
 	JOIN test_sets ts ON tr.set_id = ts.id
 `
 
-func reportBase(filter ReportFilter) (where string, args []interface{}) {
+func reportBase(filter ReportFilter) (where string, args []any) {
 	where = `
 		WHERE tr.workspace_id = ?
 		AND tr.started_at >= ?
 	`
-	args = []interface{}{filter.WorkspaceID, filter.StartDate}
+	args = []any{filter.WorkspaceID, filter.StartDate}
 	if filter.MilestoneID != nil {
 		where += " AND ts.milestone_id = ?"
 		args = append(args, *filter.MilestoneID)

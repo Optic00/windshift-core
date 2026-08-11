@@ -662,7 +662,7 @@ func (r *CredentialResolver) invalidateStoredCredentials(ctx context.Context, cr
 }
 
 // nullString returns nil if the string is empty, otherwise returns the string
-func nullString(s string) interface{} {
+func nullString(s string) any {
 	if s == "" {
 		return nil
 	}

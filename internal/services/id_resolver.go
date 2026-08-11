@@ -102,7 +102,7 @@ func (s *IDResolverService) ResolveUserNames(ids map[int]struct{}) map[int]strin
 		return names
 	}
 	placeholders := make([]string, 0, len(ids))
-	args := make([]interface{}, 0, len(ids))
+	args := make([]any, 0, len(ids))
 	for id := range ids {
 		placeholders = append(placeholders, "?")
 		args = append(args, id)

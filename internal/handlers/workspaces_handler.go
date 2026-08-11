@@ -407,53 +407,53 @@ func (h *WorkspaceHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// Log audit event with change tracking
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
-		details := make(map[string]interface{})
+		details := make(map[string]any)
 
 		// Track what changed
 		if oldWorkspace.Name != workspace.Name {
-			details["name_changed"] = map[string]interface{}{
+			details["name_changed"] = map[string]any{
 				"old": oldWorkspace.Name,
 				"new": workspace.Name,
 			}
 		}
 		if oldWorkspace.Key != workspace.Key {
-			details["key_changed"] = map[string]interface{}{
+			details["key_changed"] = map[string]any{
 				"old": oldWorkspace.Key,
 				"new": workspace.Key,
 			}
 		}
 		if oldWorkspace.Description != workspace.Description {
-			details["description_changed"] = map[string]interface{}{
+			details["description_changed"] = map[string]any{
 				"old": oldWorkspace.Description,
 				"new": workspace.Description,
 			}
 		}
 		if oldWorkspace.Active != workspace.Active {
-			details["active_changed"] = map[string]interface{}{
+			details["active_changed"] = map[string]any{
 				"old": oldWorkspace.Active,
 				"new": workspace.Active,
 			}
 		}
 		if oldWorkspace.IsPersonal != workspace.IsPersonal {
-			details["is_personal_changed"] = map[string]interface{}{
+			details["is_personal_changed"] = map[string]any{
 				"old": oldWorkspace.IsPersonal,
 				"new": workspace.IsPersonal,
 			}
 		}
 		if oldWorkspace.Icon != workspace.Icon {
-			details["icon_changed"] = map[string]interface{}{
+			details["icon_changed"] = map[string]any{
 				"old": oldWorkspace.Icon,
 				"new": workspace.Icon,
 			}
 		}
 		if oldWorkspace.Color != workspace.Color {
-			details["color_changed"] = map[string]interface{}{
+			details["color_changed"] = map[string]any{
 				"old": oldWorkspace.Color,
 				"new": workspace.Color,
 			}
 		}
 		if oldWorkspace.InternalCommentsEnabled != workspace.InternalCommentsEnabled {
-			details["internal_comments_enabled_changed"] = map[string]interface{}{
+			details["internal_comments_enabled_changed"] = map[string]any{
 				"old": oldWorkspace.InternalCommentsEnabled,
 				"new": workspace.InternalCommentsEnabled,
 			}
@@ -532,7 +532,7 @@ func (h *WorkspaceHandler) logWorkspaceAudit(r *http.Request, actionType string,
 		ResourceType: logger.ResourceWorkspace,
 		ResourceID:   resourceID,
 		ResourceName: resourceName,
-		Details: map[string]interface{}{
+		Details: map[string]any{
 			"key":         key,
 			"description": description,
 			"active":      active,

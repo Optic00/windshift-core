@@ -392,7 +392,7 @@ func (h *MilestoneHandler) Reorder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSONOK(w, map[string]interface{}{"ok": true})
+	respondJSONOK(w, map[string]any{"ok": true})
 }
 
 func (h *MilestoneHandler) Delete(w http.ResponseWriter, r *http.Request) {

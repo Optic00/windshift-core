@@ -64,7 +64,7 @@ func (h *CLIAuthHandler) Capabilities(w http.ResponseWriter, r *http.Request) {
 	}
 	tokensEnabled := tokenPolicy != "disabled"
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"auto_onboarding_enabled": agentsEnabled && tokensEnabled,
 		"manual_tokens_enabled":   tokensEnabled,
 		"agents_enabled":          agentsEnabled,
@@ -199,7 +199,7 @@ func (h *CLIAuthHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		}
 		agent = created
 
-		h.auditor.LogWithDetails(r, currentUser, logger.ActionAgentCreate, logger.ResourceUser, &agent.ID, agent.Username, map[string]interface{}{
+		h.auditor.LogWithDetails(r, currentUser, logger.ActionAgentCreate, logger.ResourceUser, &agent.ID, agent.Username, map[string]any{
 			"agent_kind":    "owned",
 			"origin":        "cli_onboarding",
 			"owner_user_id": currentUser.ID,
@@ -248,18 +248,18 @@ func (h *CLIAuthHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.auditor.LogWithDetails(r, currentUser, logger.ActionAPITokenCreate, logger.ResourceAPIToken, &tokenResp.APIToken.ID, tokenResp.APIToken.Name, map[string]interface{}{
+	h.auditor.LogWithDetails(r, currentUser, logger.ActionAPITokenCreate, logger.ResourceAPIToken, &tokenResp.APIToken.ID, tokenResp.APIToken.Name, map[string]any{
 		"origin":         "cli_onboarding",
 		"target_user_id": agent.ID,
 		"hostname":       req.Hostname,
 		"token_prefix":   tokenResp.APIToken.TokenPrefix,
 	})
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"code":         code,
 		"state":        req.State,
 		"callback_url": req.CallbackURL,
-		"agent": map[string]interface{}{
+		"agent": map[string]any{
 			"id":       agent.ID,
 			"username": agent.Username,
 		},
@@ -277,7 +277,7 @@ func (h *CLIAuthHandler) Deny(w http.ResponseWriter, r *http.Request) {
 	req, _ := decodeJSON[ApproveRequest](w, r) // best-effort body, optional fields
 	sanitizeApproveRequest(&req)
 
-	h.auditor.LogWithDetails(r, currentUser, "cli_onboarding.deny", logger.ResourceUser, nil, "", map[string]interface{}{
+	h.auditor.LogWithDetails(r, currentUser, "cli_onboarding.deny", logger.ResourceUser, nil, "", map[string]any{
 		"hostname":   req.Hostname,
 		"agent_name": sanitizeAgentName(req.AgentName),
 	})
@@ -348,9 +348,9 @@ func (h *CLIAuthHandler) Exchange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"token": *codeRow.TokenPlaintext,
-		"agent": map[string]interface{}{
+		"agent": map[string]any{
 			"id":       cliAuthAgentID(codeRow),
 			"username": codeRow.AgentName,
 		},
@@ -440,5 +440,5 @@ func cliAuthAgentID(code *repository.CLIAuthCode) int64 {
 }
 
 func (h *CLIAuthHandler) auditApproveFailure(r *http.Request, user *models.User, agentName, reason string) {
-	h.auditor.LogFailure(r, user, "cli_onboarding.approve", logger.ResourceUser, nil, agentName, reason, map[string]interface{}{"reason": reason})
+	h.auditor.LogFailure(r, user, "cli_onboarding.approve", logger.ResourceUser, nil, agentName, reason, map[string]any{"reason": reason})
 }

@@ -928,7 +928,7 @@ func (r *OnCallRepository) GetActiveIncidents(policyID *int, status string) ([]m
 		LEFT JOIN items it ON it.id = i.item_id
 		WHERE 1=1
 	`
-	args := []interface{}{}
+	args := []any{}
 
 	if policyID != nil {
 		query += " AND i.escalation_policy_id = ?"

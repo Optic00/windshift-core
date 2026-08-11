@@ -129,8 +129,8 @@ func (s *ItemUpdateApplicationService) UpdateJSONFields(actorUserID int, actorUs
 	return s.Update(actorUserID, actorUsername, itemID, updateData)
 }
 
-func itemUpdateData(fields map[string]json.RawMessage) (map[string]interface{}, error) {
-	updateData := make(map[string]interface{})
+func itemUpdateData(fields map[string]json.RawMessage) (map[string]any, error) {
+	updateData := make(map[string]any)
 	if raw, ok := fields["title"]; ok && string(raw) != "null" {
 		var value string
 		if err := decodeItemUpdateField(raw, "title", &value); err != nil {
@@ -185,7 +185,7 @@ func itemUpdateData(fields map[string]json.RawMessage) (map[string]interface{}, 
 		updateData["is_task"] = value
 	}
 	if raw, ok := fields["custom_fields"]; ok && string(raw) != "null" {
-		var value map[string]interface{}
+		var value map[string]any
 		if err := decodeItemUpdateField(raw, "custom_fields", &value); err != nil {
 			return nil, err
 		}
@@ -194,14 +194,14 @@ func itemUpdateData(fields map[string]json.RawMessage) (map[string]interface{}, 
 	return updateData, nil
 }
 
-func decodeItemUpdateField(raw json.RawMessage, field string, target interface{}) error {
+func decodeItemUpdateField(raw json.RawMessage, field string, target any) error {
 	if err := json.Unmarshal(raw, target); err != nil {
 		return &validation.ValidationError{Field: field, Message: fmt.Sprintf("invalid %s", field)}
 	}
 	return nil
 }
 
-func decodeNullableItemUpdateInt(raw json.RawMessage, field string) (interface{}, error) {
+func decodeNullableItemUpdateInt(raw json.RawMessage, field string) (any, error) {
 	if string(raw) == "null" {
 		return nil, nil
 	}
@@ -212,7 +212,7 @@ func decodeNullableItemUpdateInt(raw json.RawMessage, field string) (interface{}
 	return value, nil
 }
 
-func decodeNullableItemUpdateTime(raw json.RawMessage, field string) (interface{}, error) {
+func decodeNullableItemUpdateTime(raw json.RawMessage, field string) (any, error) {
 	if string(raw) == "null" {
 		return nil, nil
 	}
@@ -223,7 +223,7 @@ func decodeNullableItemUpdateTime(raw json.RawMessage, field string) (interface{
 	return value, nil
 }
 
-func (s *ItemUpdateApplicationService) Update(actorUserID int, actorUsername string, itemID int, updateData map[string]interface{}) (*UpdateItemResult, error) {
+func (s *ItemUpdateApplicationService) Update(actorUserID int, actorUsername string, itemID int, updateData map[string]any) (*UpdateItemResult, error) {
 	return s.updateItem(actorUserID, actorUsername, itemID, updateData, nil)
 }
 
@@ -233,7 +233,7 @@ func (s *ItemUpdateApplicationService) UpdateWithContext(
 	actorUserID int,
 	actorUsername string,
 	itemID int,
-	updateData map[string]interface{},
+	updateData map[string]any,
 	actionContext ActionContext,
 ) (*UpdateItemResult, error) {
 	return s.updateItem(actorUserID, actorUsername, itemID, updateData, &actionContext)
@@ -243,7 +243,7 @@ func (s *ItemUpdateApplicationService) updateItem(
 	actorUserID int,
 	actorUsername string,
 	itemID int,
-	updateData map[string]interface{},
+	updateData map[string]any,
 	actionContext *ActionContext,
 ) (*UpdateItemResult, error) {
 	if s.activityTracker != nil {

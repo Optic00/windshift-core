@@ -119,7 +119,7 @@ func (h *AIHandler) PlanMyDay(w http.ResponseWriter, r *http.Request) {
 
 	// Build filter: include items assigned to user OR items in their personal workspace(s)
 	statusFilter := "NOT EXISTS (SELECT 1 FROM status_categories sc WHERE sc.id = st.category_id AND COALESCE(sc.is_completed, FALSE) = TRUE) OR i.status_id IS NULL"
-	qlArgs := []interface{}{user.ID}
+	qlArgs := []any{user.ID}
 	ownershipFilter := "i.assignee_id = ?"
 
 	if len(personalWSIDs) > 0 {
@@ -334,7 +334,7 @@ func (h *AIHandler) GetDailyBriefing(w http.ResponseWriter, r *http.Request) {
 	briefing, err := repository.NewAIRepository(h.db).GetLatestSuccessfulDailyBriefing(user.ID)
 	if err != nil {
 		slog.Warn("GetDailyBriefing: no briefing found", slog.Int("user_id", user.ID), slog.Any("error", err))
-		respondJSONOK(w, map[string]interface{}{"content": ""})
+		respondJSONOK(w, map[string]any{"content": ""})
 		return
 	}
 
@@ -351,7 +351,7 @@ func (h *AIHandler) GetDailyBriefing(w http.ResponseWriter, r *http.Request) {
 	itemKeyRe := regexp.MustCompile(`[A-Z]{2,10}-\d+`)
 	keys := itemKeyRe.FindAllString(briefing.Content, -1)
 
-	references := map[string]interface{}{}
+	references := map[string]any{}
 	if len(keys) > 0 {
 		seen := map[string]bool{}
 		unique := make([]string, 0, len(keys))
@@ -364,7 +364,7 @@ func (h *AIHandler) GetDailyBriefing(w http.ResponseWriter, r *http.Request) {
 
 		if refs, qErr := repository.NewItemRepository(h.db).ResolveItemKeyReferences(unique); qErr == nil {
 			for _, ref := range refs {
-				references[ref.ItemKey] = map[string]interface{}{
+				references[ref.ItemKey] = map[string]any{
 					"item_id":      ref.ItemID,
 					"workspace_id": ref.WorkspaceID,
 				}
@@ -372,7 +372,7 @@ func (h *AIHandler) GetDailyBriefing(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"id":           briefing.ID,
 		"content":      briefing.Content,
 		"date":         briefing.Date,

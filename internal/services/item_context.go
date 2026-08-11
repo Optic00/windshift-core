@@ -11,7 +11,7 @@ import (
 // It loads the item via the item repository to enrich the context with
 // creator, assignee, title, and custom fields used by script/role/group
 // conditions.
-func BuildItemContext(db database.Database, itemID, workspaceID int, currentStatusID, itemTypeID sql.NullInt64) map[string]interface{} {
+func BuildItemContext(db database.Database, itemID, workspaceID int, currentStatusID, itemTypeID sql.NullInt64) map[string]any {
 	var statusIDPtr, itemTypeIDPtr *int
 	if currentStatusID.Valid {
 		statusID := int(currentStatusID.Int64)
@@ -26,8 +26,8 @@ func BuildItemContext(db database.Database, itemID, workspaceID int, currentStat
 
 // BuildItemContextFromIDs builds item context from pointer IDs, avoiding SQL
 // null types at handler call sites.
-func BuildItemContextFromIDs(db database.Database, itemID, workspaceID int, currentStatusID, itemTypeID *int) map[string]interface{} {
-	ctx := map[string]interface{}{
+func BuildItemContextFromIDs(db database.Database, itemID, workspaceID int, currentStatusID, itemTypeID *int) map[string]any {
+	ctx := map[string]any{
 		"id":           itemID,
 		"workspace_id": workspaceID,
 	}

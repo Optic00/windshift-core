@@ -39,7 +39,7 @@ const (
 // rejects concatenated values after the first document. Channel configs can
 // contain form/portal layout data, so the cap is deliberately roomy while
 // still preventing an authenticated manager from forcing unbounded reads.
-func decodeChannelRequest(w http.ResponseWriter, r *http.Request, target interface{}, optional bool) bool {
+func decodeChannelRequest(w http.ResponseWriter, r *http.Request, target any, optional bool) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, channelRequestBodyMaxBytes)
 	decoder := json.NewDecoder(r.Body)
 	if err := decoder.Decode(target); err != nil {
@@ -53,7 +53,7 @@ func decodeChannelRequest(w http.ResponseWriter, r *http.Request, target interfa
 		}
 		return false
 	}
-	var trailing interface{}
+	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		if isRequestBodyTooLarge(err) {
 			respondRequestTooLarge(w, r)
@@ -264,7 +264,7 @@ func (h *ChannelHandler) CreateChannel(w http.ResponseWriter, r *http.Request) {
 		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
 		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
 	)
-	config := map[string]interface{}{}
+	config := map[string]any{}
 	req.Slug = strings.TrimSpace(req.Slug)
 	if (req.Type == "portal" || req.Type == "form") && req.Slug != "" {
 		if !slugFormatOK(req.Slug) {
@@ -629,7 +629,7 @@ func (h *ChannelHandler) ToggleChannel(w http.ResponseWriter, r *http.Request) {
 		h.auditor.LogWithDetails(r, currentUser,
 			actionType, logger.ResourceChannel,
 			&id, channel.Name,
-			map[string]interface{}{
+			map[string]any{
 				"old_status": currentStatus,
 				"new_status": newStatus,
 			},
@@ -696,7 +696,7 @@ func (h *ChannelHandler) TestChannel(w http.ResponseWriter, r *http.Request) {
 	channel := *got
 	channel.Config = rawConfig
 
-	result := make(map[string]interface{})
+	result := make(map[string]any)
 	result["channel_id"] = channel.ID
 	result["channel_name"] = channel.Name
 	result["test_time"] = time.Now()
@@ -785,7 +785,7 @@ func (h *ChannelHandler) TestChannelConfig(w http.ResponseWriter, r *http.Reques
 		testData.Config.WebhookSecret = secret
 	}
 
-	result := make(map[string]interface{})
+	result := make(map[string]any)
 	result["channel_id"] = id
 	result["test_time"] = time.Now()
 
@@ -962,7 +962,7 @@ func (h *ChannelHandler) UpdateChannelConfig(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	var incomingConfig map[string]interface{}
+	var incomingConfig map[string]any
 	if err := json.Unmarshal(rawConfig, &incomingConfig); err != nil {
 		respondValidationError(w, r, "Invalid config JSON")
 		return
@@ -1002,7 +1002,7 @@ func (h *ChannelHandler) UpdateChannelConfig(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"success": updated,
 		"message": "Channel configuration updated successfully",
 	})
@@ -1135,7 +1135,7 @@ func (h *ChannelHandler) AddChannelManager(w http.ResponseWriter, r *http.Reques
 		h.auditor.LogWithDetails(r, user,
 			logger.ActionChannelAddManager, logger.ResourceChannelManager,
 			&channelID, channel.Name,
-			map[string]interface{}{
+			map[string]any{
 				"manager_type": request.ManagerType,
 				"manager_id":   managerID,
 				"manager_name": managerNames[managerID],
@@ -1143,7 +1143,7 @@ func (h *ChannelHandler) AddChannelManager(w http.ResponseWriter, r *http.Reques
 		)
 	}
 
-	respondJSONCreated(w, map[string]interface{}{
+	respondJSONCreated(w, map[string]any{
 		"success": true,
 		"message": fmt.Sprintf("Added %d manager(s) to channel", len(insertedManagerIDs)),
 	})
@@ -1218,7 +1218,7 @@ func (h *ChannelHandler) RemoveChannelManager(w http.ResponseWriter, r *http.Req
 	h.auditor.LogWithDetails(r, user,
 		logger.ActionChannelRemoveManager, logger.ResourceChannelManager,
 		&channelID, channel.Name,
-		map[string]interface{}{
+		map[string]any{
 			"manager_type": managerType,
 			"manager_id":   actualManagerID,
 			"manager_name": managerName,
@@ -1282,7 +1282,7 @@ func (h *ChannelHandler) ProcessEmailsNow(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"success":    true,
 		"channel_id": channelID,
 		"message":    "Email processing triggered",
@@ -1442,7 +1442,7 @@ func (h *ChannelHandler) GetEmailLog(w http.ResponseWriter, r *http.Request) {
 		messages = append(messages, msg)
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"state":     state,
 		"messages":  messages,
 		"total":     total,

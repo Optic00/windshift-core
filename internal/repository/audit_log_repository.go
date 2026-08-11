@@ -72,7 +72,7 @@ type AuditLogRow struct {
 	ResourceType string
 	ResourceID   *int
 	ResourceName string
-	Details      map[string]interface{}
+	Details      map[string]any
 	Success      bool
 	ErrorMessage string
 }
@@ -233,7 +233,7 @@ func escapeLikePattern(s string) string {
 	return s
 }
 
-func buildAuditLogWhere(f AuditLogFilters) (whereClause string, args []interface{}) {
+func buildAuditLogWhere(f AuditLogFilters) (whereClause string, args []any) {
 	var conditions []string
 
 	if f.ActionType != "" {

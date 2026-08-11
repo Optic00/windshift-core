@@ -106,7 +106,7 @@ func (h *ItemHandler) Transition(w http.ResponseWriter, r *http.Request) {
 	maskedItem := []models.Item{*result.Item}
 	h.maskInaccessibleProjectNames(user.ID, maskedItem)
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"item":          maskedItem[0],
 		"old_status_id": result.OldStatusID,
 		"new_status_id": result.NewStatusID,

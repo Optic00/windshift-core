@@ -363,7 +363,7 @@ func (nm *NotificationManager) AddNotificationsContext(ctx context.Context, noti
 
 func insertNotificationChunk(ctx context.Context, tx database.Tx, notifications []models.Notification) error {
 	values := make([]string, len(notifications))
-	args := make([]interface{}, 0, len(notifications)*11)
+	args := make([]any, 0, len(notifications)*11)
 	for i, notification := range notifications {
 		values[i] = "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 		args = append(args,
@@ -615,7 +615,7 @@ func (nm *NotificationManager) RollbackNotificationsSent(notificationIDs []int) 
 	return nm.updateNotificationsByID(notificationIDs, `sent_at = NULL, updated_at = ?`, time.Now())
 }
 
-func (nm *NotificationManager) updateNotificationsByID(notificationIDs []int, setClause string, args ...interface{}) error {
+func (nm *NotificationManager) updateNotificationsByID(notificationIDs []int, setClause string, args ...any) error {
 	placeholders := make([]string, len(notificationIDs))
 	for i, id := range notificationIDs {
 		placeholders[i] = "?"

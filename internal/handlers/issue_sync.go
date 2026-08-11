@@ -286,7 +286,7 @@ func (h *IssueSyncHandler) audit(r *http.Request, user *models.User, action stri
 	if h.auditor == nil || user == nil || config == nil {
 		return
 	}
-	h.auditor.LogWithDetails(r, user, action, logger.ResourceIssueSyncConfig, &config.ID, config.RepositoryName, map[string]interface{}{
+	h.auditor.LogWithDetails(r, user, action, logger.ResourceIssueSyncConfig, &config.ID, config.RepositoryName, map[string]any{
 		"workspace_id":            config.WorkspaceID,
 		"workspace_repository_id": config.WorkspaceRepositoryID,
 		"sync_enabled":            config.SyncEnabled,
@@ -310,11 +310,11 @@ func (h *IssueSyncHandler) GetSyncStatus(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if config == nil {
-		respondJSONOK(w, map[string]interface{}{"configured": false})
+		respondJSONOK(w, map[string]any{"configured": false})
 		return
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"configured":        true,
 		"sync_enabled":      config.SyncEnabled,
 		"last_sync_at":      config.LastFullSyncAt,
@@ -336,7 +336,7 @@ func (h *IssueSyncHandler) GetSyncedItems(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if config == nil {
-		respondJSONOK(w, []interface{}{})
+		respondJSONOK(w, []any{})
 		return
 	}
 

@@ -323,17 +323,17 @@ func (s *Service) UpdateStatus(jobID, status, phase string, progress *Progress, 
 		progressJSON = string(data)
 	}
 	var query string
-	var args []interface{}
+	var args []any
 	switch status {
 	case "running":
 		query = `UPDATE jira_import_jobs SET status = ?, phase = ?, progress_json = ?, started_at = CURRENT_TIMESTAMP WHERE id = ?`
-		args = []interface{}{status, phase, progressJSON, jobID}
+		args = []any{status, phase, progressJSON, jobID}
 	case "completed", "failed":
 		query = `UPDATE jira_import_jobs SET status = ?, phase = ?, progress_json = ?, error_message = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?`
-		args = []interface{}{status, phase, progressJSON, errorMessage, jobID}
+		args = []any{status, phase, progressJSON, errorMessage, jobID}
 	default:
 		query = `UPDATE jira_import_jobs SET status = ?, phase = ?, progress_json = ? WHERE id = ?`
-		args = []interface{}{status, phase, progressJSON, jobID}
+		args = []any{status, phase, progressJSON, jobID}
 	}
 	_, err := s.db.ExecWrite(query, args...)
 	return err
@@ -351,11 +351,11 @@ func (s *Service) UpdateProgress(jobID string, progress *Progress) error {
 }
 
 func ProjectKeys(configJSON string) []string {
-	var config map[string]interface{}
+	var config map[string]any
 	if json.Unmarshal([]byte(configJSON), &config) != nil {
 		return nil
 	}
-	rawKeys, ok := config["project_keys"].([]interface{})
+	rawKeys, ok := config["project_keys"].([]any)
 	if !ok {
 		return nil
 	}

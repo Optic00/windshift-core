@@ -221,7 +221,7 @@ func (e *CreateMilestoneExecutor) Execute(node *models.ActionNode, ctx *models.E
 		milestoneID = existing.ID
 	}
 
-	stepResult.Output = map[string]interface{}{
+	stepResult.Output = map[string]any{
 		"milestone_id": milestoneID,
 		"external_key": upsertKey,
 		"created":      created,

@@ -230,7 +230,7 @@ func (h *AssetHandler) GetAssetLinks(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"outgoing": outgoing,
 		"incoming": incoming,
 	}
@@ -327,7 +327,7 @@ func (h *AssetHandler) CreateAssetLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"id":           linkID,
 		"link_type_id": req.LinkTypeID,
 		"source_type":  "asset",
@@ -876,7 +876,7 @@ func extractReferencedAssetIDs(raw json.RawMessage) []int {
 		return nil
 	}
 	if raw[0] == '[' {
-		var arr []interface{}
+		var arr []any
 		if err := json.Unmarshal(raw, &arr); err != nil {
 			return nil
 		}
@@ -908,7 +908,7 @@ func extractReferencedAssetIDFromRaw(raw json.RawMessage) (int, bool) {
 	return 0, false
 }
 
-func extractReferencedAssetID(v interface{}) (int, bool) {
+func extractReferencedAssetID(v any) (int, bool) {
 	switch x := v.(type) {
 	case float64:
 		return int(x), true
@@ -916,7 +916,7 @@ func extractReferencedAssetID(v interface{}) (int, bool) {
 		return x, true
 	case int64:
 		return int(x), true
-	case map[string]interface{}:
+	case map[string]any:
 		if idVal, ok := x["id"]; ok {
 			return extractReferencedAssetID(idVal)
 		}
@@ -925,8 +925,8 @@ func extractReferencedAssetID(v interface{}) (int, bool) {
 }
 
 // getEntityMetadata returns metadata for a graph node based on its entity type.
-func (h *AssetHandler) getEntityMetadata(entityType string, entityID int) map[string]interface{} {
-	meta := map[string]interface{}{}
+func (h *AssetHandler) getEntityMetadata(entityType string, entityID int) map[string]any {
+	meta := map[string]any{}
 	switch entityType {
 	case "item":
 		if m, err := repository.NewItemRepository(h.db).GetItemGraphMetadata(entityID); err == nil {

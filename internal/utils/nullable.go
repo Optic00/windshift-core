@@ -33,10 +33,10 @@ func NullTimeToPtr(n sql.NullTime) *time.Time {
 	return nil
 }
 
-// InterfaceToIntPtr extracts an int value from an interface{} that could be int, *int, or other numeric types.
-// Useful for extracting values from map[string]interface{} where the underlying type may vary.
+// InterfaceToIntPtr extracts an int value from an any that could be int, *int, or other numeric types.
+// Useful for extracting values from map[string]any where the underlying type may vary.
 // Returns nil if the value is nil or cannot be converted to int.
-func InterfaceToIntPtr(v interface{}) *int {
+func InterfaceToIntPtr(v any) *int {
 	if v == nil {
 		return nil
 	}

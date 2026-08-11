@@ -313,7 +313,7 @@ func (s *WorkspaceService) GetStatusesForWorkspaces(workspaceIDs []int) ([]model
 	}
 
 	placeholders := make([]string, len(workspaceIDs))
-	args := make([]interface{}, len(workspaceIDs))
+	args := make([]any, len(workspaceIDs))
 	for i, workspaceID := range workspaceIDs {
 		placeholders[i] = "?"
 		args[i] = workspaceID

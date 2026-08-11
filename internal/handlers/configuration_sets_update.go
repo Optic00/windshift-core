@@ -175,17 +175,17 @@ func (h *ConfigurationSetHandler) Update(w http.ResponseWriter, r *http.Request)
 	// Log audit event with change tracking
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
-		details := make(map[string]interface{})
+		details := make(map[string]any)
 
 		// Track what changed
 		if oldCS.Name != updatedCS.Name {
-			details["name_changed"] = map[string]interface{}{
+			details["name_changed"] = map[string]any{
 				"old": oldCS.Name,
 				"new": updatedCS.Name,
 			}
 		}
 		if oldCS.Description != updatedCS.Description {
-			details["description_changed"] = map[string]interface{}{
+			details["description_changed"] = map[string]any{
 				"old": oldCS.Description,
 				"new": updatedCS.Description,
 			}
@@ -200,7 +200,7 @@ func (h *ConfigurationSetHandler) Update(w http.ResponseWriter, r *http.Request)
 			newWorkflowID = *updatedCS.WorkflowID
 		}
 		if oldWorkflowID != newWorkflowID {
-			details["workflow_changed"] = map[string]interface{}{
+			details["workflow_changed"] = map[string]any{
 				"old": oldWorkflowID,
 				"new": newWorkflowID,
 			}

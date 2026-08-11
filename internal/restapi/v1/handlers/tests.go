@@ -1247,7 +1247,7 @@ func (h *TestManagementHandler) DeleteTestCase(w http.ResponseWriter, r *http.Re
 // @Security     BearerAuth
 // @Param        workspaceId  path      int                     true  "Workspace ID"
 // @Param        id           path      int                     true  "Test case ID"
-// @Param        body         body      map[string]interface{}  true  "Folder ID + sort order"
+// @Param        body         body      map[string]any  true  "Folder ID + sort order"
 // @Success      200          "Test case moved"
 // @Failure      400          {object}  handlers.ErrorResponse  "Invalid request body"
 // @Failure      401          {object}  handlers.ErrorResponse
@@ -1291,7 +1291,7 @@ func (h *TestManagementHandler) MoveTestCase(w http.ResponseWriter, r *http.Requ
 // @Produce      json
 // @Security     BearerAuth
 // @Param        workspaceId  path      int                     true  "Workspace ID"
-// @Param        body         body      map[string]interface{}  true  "Folder ID + test case IDs in desired order"
+// @Param        body         body      map[string]any  true  "Folder ID + test case IDs in desired order"
 // @Success      200          "Test cases reordered"
 // @Failure      400          {object}  handlers.ErrorResponse  "Invalid request body"
 // @Failure      401          {object}  handlers.ErrorResponse
@@ -1326,7 +1326,7 @@ func (h *TestManagementHandler) ReorderTestCases(w http.ResponseWriter, r *http.
 // @Security     BearerAuth
 // @Param        workspaceId  path      int  true  "Workspace ID"
 // @Param        id           path      int  true  "Test case ID"
-// @Success      200          {object}  map[string]interface{}
+// @Success      200          {object}  map[string]any
 // @Failure      400          {object}  handlers.ErrorResponse  "Invalid workspace or case ID"
 // @Failure      401          {object}  handlers.ErrorResponse
 // @Failure      403          {object}  handlers.ErrorResponse  "Token lacks the tests:read scope"
@@ -2329,7 +2329,7 @@ func (h *TestManagementHandler) ListTestRunTemplateExecutions(w http.ResponseWri
 // @Security     BearerAuth
 // @Param        workspaceId  path      int                     true  "Workspace ID"
 // @Param        id           path      int                     true  "Test run ID"
-// @Param        body         body      map[string]interface{}  true  "Test run fields to update (name, assignee_id)"
+// @Param        body         body      map[string]any  true  "Test run fields to update (name, assignee_id)"
 // @Success      200          "Test run updated"
 // @Failure      400          {object}  handlers.ErrorResponse  "Invalid request body or validation error"
 // @Failure      401          {object}  handlers.ErrorResponse
@@ -2410,7 +2410,7 @@ func (h *TestManagementHandler) DeleteTestRun(w http.ResponseWriter, r *http.Req
 // @Security     BearerAuth
 // @Param        workspaceId  path      int  true  "Workspace ID"
 // @Param        id           path      int  true  "Test run ID"
-// @Success      200          {object}  map[string]interface{}
+// @Success      200          {object}  map[string]any
 // @Failure      400          {object}  handlers.ErrorResponse  "Invalid workspace or run ID"
 // @Failure      401          {object}  handlers.ErrorResponse
 // @Failure      403          {object}  handlers.ErrorResponse  "Token lacks the tests:read scope"
@@ -2449,7 +2449,7 @@ func (h *TestManagementHandler) GetTestRunStepResults(w http.ResponseWriter, r *
 // @Param        workspaceId  path      int                     true  "Workspace ID"
 // @Param        id           path      int                     true  "Test run ID"
 // @Param        stepId       path      int                     true  "Test step ID"
-// @Param        body         body      map[string]interface{}  true  "Step result update"
+// @Param        body         body      map[string]any  true  "Step result update"
 // @Success      200          "Step result recorded"
 // @Failure      400          {object}  handlers.ErrorResponse  "Invalid request body"
 // @Failure      401          {object}  handlers.ErrorResponse
@@ -2547,7 +2547,7 @@ func (h *TestManagementHandler) GetTestRunSummary(w http.ResponseWriter, r *http
 // @Param        workspaceId   path      int     true   "Workspace ID"
 // @Param        milestone_id  query     int     false  "Milestone ID to scope the report to"
 // @Param        days          query     int     false  "Window (1-365 days, default 30)"
-// @Success      200           {object}  map[string]interface{}
+// @Success      200           {object}  map[string]any
 // @Failure      400           {object}  handlers.ErrorResponse  "Invalid query parameters"
 // @Failure      401           {object}  handlers.ErrorResponse
 // @Failure      403           {object}  handlers.ErrorResponse  "Token lacks the tests:read scope"
@@ -2598,8 +2598,8 @@ func (h *TestManagementHandler) GetTestReportsSummary(w http.ResponseWriter, r *
 		h.RespondInternalError(w, r)
 		return
 	}
-	h.RespondOK(w, map[string]interface{}{
-		"overall": map[string]interface{}{
+	h.RespondOK(w, map[string]any{
+		"overall": map[string]any{
 			"total_runs":  stats.TotalRuns,
 			"total_tests": stats.TotalTests,
 			"passed":      stats.Passed,

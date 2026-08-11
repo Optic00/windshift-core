@@ -38,7 +38,7 @@ func sanitizeAssetText(title, description, assetTag *string) {
 // text/textarea values in the map afterwards — without a re-encode the
 // sanitized values would never reach persistence. No-op when the caller
 // didn't supply a values map (partial update keeping stored values).
-func reencodeCustomFieldValues(values map[string]interface{}, target **string) error {
+func reencodeCustomFieldValues(values map[string]any, target **string) error {
 	if values == nil {
 		return nil
 	}
@@ -92,7 +92,7 @@ type AssetMutationPatch struct {
 	Description       *string
 	AssetTag          *string
 	StatusID          *int
-	CustomFieldValues map[string]interface{}
+	CustomFieldValues map[string]any
 }
 
 // NewAuditActorFromRequest extracts the audit fields from a request +
@@ -228,8 +228,8 @@ func applyAssetAutomationContext(event *models.AssetActionEvent, context AssetAu
 	event.SourceApplication = context.SourceApplication
 }
 
-func assetCreatedEvent(inSetID, assetID, actorUserID, assetTypeID int, statusID, categoryID *int, title, description, assetTag string, customFieldValues map[string]interface{}) *models.AssetActionEvent {
-	newValues := map[string]interface{}{
+func assetCreatedEvent(inSetID, assetID, actorUserID, assetTypeID int, statusID, categoryID *int, title, description, assetTag string, customFieldValues map[string]any) *models.AssetActionEvent {
+	newValues := map[string]any{
 		"title":         title,
 		"description":   description,
 		"asset_tag":     assetTag,
@@ -270,7 +270,7 @@ type CustomFieldsValidationOpts struct {
 // ValidateCustomFieldsSchema rejects unknown or invalid values, sanitizes text
 // in place, and optionally requires all mandatory fields. It accepts legacy ID
 // keys and case-insensitive field names.
-func (s *AssetService) ValidateCustomFieldsSchema(assetTypeID int, values map[string]interface{}, opts CustomFieldsValidationOpts) error {
+func (s *AssetService) ValidateCustomFieldsSchema(assetTypeID int, values map[string]any, opts CustomFieldsValidationOpts) error {
 	if len(values) == 0 && !opts.EnforceRequired {
 		return nil
 	}
@@ -282,7 +282,7 @@ func (s *AssetService) ValidateCustomFieldsSchema(assetTypeID int, values map[st
 }
 
 // validateCustomFieldsSchemaCore validates an already-loaded field list in place.
-func validateCustomFieldsSchemaCore(fields []models.AssetTypeField, values map[string]interface{}, opts CustomFieldsValidationOpts) error {
+func validateCustomFieldsSchemaCore(fields []models.AssetTypeField, values map[string]any, opts CustomFieldsValidationOpts) error {
 	if len(values) == 0 && !opts.EnforceRequired {
 		return nil
 	}
@@ -345,7 +345,7 @@ func validateCustomFieldsSchemaCore(fields []models.AssetTypeField, values map[s
 // values (converting CSV strings to numbers, booleans, arrays, etc.) and runs
 // them through the asset type's schema validation. It returns the coerced
 // and sanitized map that should be persisted.
-func (s *AssetService) CoerceAndValidateCustomFieldValues(assetTypeID int, values map[string]interface{}) (map[string]interface{}, error) {
+func (s *AssetService) CoerceAndValidateCustomFieldValues(assetTypeID int, values map[string]any) (map[string]any, error) {
 	fields, err := s.repo.FindAssetTypeFields(assetTypeID)
 	if err != nil {
 		return nil, fmt.Errorf("load asset type fields: %w", err)
@@ -361,7 +361,7 @@ func (s *AssetService) CoerceAndValidateCustomFieldValues(assetTypeID int, value
 // types expected by the field definition. Non-string values are left
 // mostly untouched so values already resolved by callers (e.g. select
 // option IDs) are preserved.
-func coerceCustomFieldValues(fields []models.AssetTypeField, values map[string]interface{}) map[string]interface{} {
+func coerceCustomFieldValues(fields []models.AssetTypeField, values map[string]any) map[string]any {
 	if len(values) == 0 {
 		return values
 	}
@@ -371,7 +371,7 @@ func coerceCustomFieldValues(fields []models.AssetTypeField, values map[string]i
 		byKey[strings.ToLower(f.FieldName)] = f
 		byKey[f.FieldName] = f
 	}
-	coerced := make(map[string]interface{}, len(values))
+	coerced := make(map[string]any, len(values))
 	for k, v := range values {
 		f, ok := byKey[k]
 		if !ok {
@@ -387,7 +387,7 @@ func coerceCustomFieldValues(fields []models.AssetTypeField, values map[string]i
 
 // coerceAssetFieldValue converts a single raw value toward the type expected
 // by the asset field. The result is still validated by validateAssetFieldValue.
-func coerceAssetFieldValue(f models.AssetTypeField, v interface{}) interface{} {
+func coerceAssetFieldValue(f models.AssetTypeField, v any) any {
 	if v == nil {
 		return nil
 	}
@@ -430,7 +430,7 @@ func coerceAssetFieldValue(f models.AssetTypeField, v interface{}) interface{} {
 		}
 		if s, ok := v.(string); ok && s != "" {
 			parts := strings.Split(s, ",")
-			arr := make([]interface{}, 0, len(parts))
+			arr := make([]any, 0, len(parts))
 			for _, part := range parts {
 				if t := strings.TrimSpace(part); t != "" {
 					arr = append(arr, t)
@@ -446,13 +446,13 @@ func coerceAssetFieldValue(f models.AssetTypeField, v interface{}) interface{} {
 	}
 }
 
-// toInterfaceSlice converts any slice or array value into []interface{}.
-func toInterfaceSlice(v interface{}) ([]interface{}, bool) {
+// toInterfaceSlice converts any slice or array value into []any.
+func toInterfaceSlice(v any) ([]any, bool) {
 	rv := reflect.ValueOf(v)
 	if rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array {
 		return nil, false
 	}
-	out := make([]interface{}, rv.Len())
+	out := make([]any, rv.Len())
 	for i := range out {
 		out[i] = rv.Index(i).Interface()
 	}
@@ -466,7 +466,7 @@ func toInterfaceSlice(v interface{}) ([]interface{}, bool) {
 // unknown keys and non-string values are left untouched so existing
 // behavior for those callers is preserved; only string values on
 // text/textarea fields get the rendering-matched policies applied.
-func (s *AssetService) SanitizeCustomFieldTextValues(assetTypeID int, values map[string]interface{}) error {
+func (s *AssetService) SanitizeCustomFieldTextValues(assetTypeID int, values map[string]any) error {
 	if len(values) == 0 {
 		return nil
 	}
@@ -505,7 +505,7 @@ func (s *AssetService) SanitizeCustomFieldTextValues(assetTypeID int, values map
 // separately by ValidateCustomFieldsSchema when opts.EnforceRequired
 // is set, so a value of explicit-null here just means "not set this
 // time", not "schema violation".
-func validateAssetFieldValue(f models.AssetTypeField, v interface{}) error {
+func validateAssetFieldValue(f models.AssetTypeField, v any) error {
 	if v == nil {
 		return nil
 	}
@@ -546,7 +546,7 @@ func validateAssetFieldValue(f models.AssetTypeField, v interface{}) error {
 			return fmt.Errorf("value %v is not an allowed option for this field", v)
 		}
 	case "multiselect":
-		arr, ok := v.([]interface{})
+		arr, ok := v.([]any)
 		if !ok {
 			return fmt.Errorf("expected array for multiselect field")
 		}
@@ -559,7 +559,7 @@ func validateAssetFieldValue(f models.AssetTypeField, v interface{}) error {
 		switch x := v.(type) {
 		case float64, int, int64:
 			return nil
-		case map[string]interface{}:
+		case map[string]any:
 			if _, ok := x["id"]; ok {
 				return nil
 			}
@@ -578,7 +578,7 @@ func validateAssetFieldValue(f models.AssetTypeField, v interface{}) error {
 // (the field accepts any value) or when the stored options JSON is
 // malformed (fail-open — better to accept than to block legitimate
 // writes against a misconfigured field).
-func assetFieldOptionAllowed(f models.AssetTypeField, value interface{}) bool {
+func assetFieldOptionAllowed(f models.AssetTypeField, value any) bool {
 	if value == nil || f.Options == "" {
 		return true
 	}
@@ -621,7 +621,7 @@ func assetFieldOptionAllowed(f models.AssetTypeField, value interface{}) bool {
 // non-empty value for the given field. Accepts the field-id-string
 // key, the lowercased field-name key, and the raw field-name key
 // (so an editor that sends mixed-case names is satisfied).
-func customFieldValuePresent(values map[string]interface{}, f models.AssetTypeField) bool {
+func customFieldValuePresent(values map[string]any, f models.AssetTypeField) bool {
 	keys := []string{
 		fmt.Sprintf("%d", f.CustomFieldID),
 		strings.ToLower(f.FieldName),
@@ -635,14 +635,14 @@ func customFieldValuePresent(values map[string]interface{}, f models.AssetTypeFi
 	return false
 }
 
-func isEmptyCustomFieldValue(v interface{}) bool {
+func isEmptyCustomFieldValue(v any) bool {
 	if v == nil {
 		return true
 	}
 	switch x := v.(type) {
 	case string:
 		return strings.TrimSpace(x) == ""
-	case []interface{}:
+	case []any:
 		return len(x) == 0
 	}
 	return false
@@ -654,13 +654,13 @@ func isEmptyCustomFieldValue(v interface{}) bool {
 //
 // All required fields declared on the asset type must be present in
 // customFieldValues (EnforceRequired is on for creates).
-func (s *AssetService) CreateAsset(actor AuditActor, in repository.CreateAssetInput, customFieldValues map[string]interface{}) (*models.Asset, error) {
+func (s *AssetService) CreateAsset(actor AuditActor, in repository.CreateAssetInput, customFieldValues map[string]any) (*models.Asset, error) {
 	return s.CreateAssetWithContext(actor, in, customFieldValues, AssetAutomationContext{})
 }
 
 // CreateAssetWithContext runs the canonical create pipeline while preserving
 // automation cascade metadata on the emitted asset-created event.
-func (s *AssetService) CreateAssetWithContext(actor AuditActor, in repository.CreateAssetInput, customFieldValues map[string]interface{}, context AssetAutomationContext) (*models.Asset, error) {
+func (s *AssetService) CreateAssetWithContext(actor AuditActor, in repository.CreateAssetInput, customFieldValues map[string]any, context AssetAutomationContext) (*models.Asset, error) {
 	if err := s.validateAssetTaxonomy(in.SetID, in.AssetTypeID, in.CategoryID, in.StatusID); err != nil {
 		return nil, err
 	}
@@ -750,13 +750,13 @@ func (s *AssetService) InsertImportedAsset(in repository.ImportAssetRowInput) (i
 // asset_status_changed automation events when applicable. oldSnap (read
 // from repo.GetAssetUpdateSnapshot before the call) is used to detect
 // the status transition.
-func (s *AssetService) UpdateAsset(actor AuditActor, assetID int, oldSnap repository.AssetUpdateSnapshot, in repository.UpdateAssetInput, customFieldValues map[string]interface{}) (*models.Asset, error) {
+func (s *AssetService) UpdateAsset(actor AuditActor, assetID int, oldSnap repository.AssetUpdateSnapshot, in repository.UpdateAssetInput, customFieldValues map[string]any) (*models.Asset, error) {
 	return s.UpdateAssetWithContext(actor, assetID, oldSnap, in, customFieldValues, AssetAutomationContext{})
 }
 
 // UpdateAssetWithContext runs the canonical update pipeline while preserving
 // automation cascade metadata on emitted update and status-change events.
-func (s *AssetService) UpdateAssetWithContext(actor AuditActor, assetID int, oldSnap repository.AssetUpdateSnapshot, in repository.UpdateAssetInput, customFieldValues map[string]interface{}, context AssetAutomationContext) (*models.Asset, error) {
+func (s *AssetService) UpdateAssetWithContext(actor AuditActor, assetID int, oldSnap repository.AssetUpdateSnapshot, in repository.UpdateAssetInput, customFieldValues map[string]any, context AssetAutomationContext) (*models.Asset, error) {
 	if err := s.validateAssetTaxonomy(oldSnap.SetID, in.AssetTypeID, in.CategoryID, in.StatusID); err != nil {
 		return nil, err
 	}
@@ -815,8 +815,8 @@ func (s *AssetService) UpdateAssetWithContext(actor AuditActor, assetID int, old
 				SetID:       oldSnap.SetID,
 				AssetID:     assetID,
 				ActorUserID: actor.UserID,
-				OldValues:   map[string]interface{}{"status_id": oldSID},
-				NewValues:   map[string]interface{}{"status_id": newSID},
+				OldValues:   map[string]any{"status_id": oldSID},
+				NewValues:   map[string]any{"status_id": newSID},
 			}
 			applyAssetAutomationContext(event, context)
 			a.EmitAssetActionEvent(event)
@@ -826,7 +826,7 @@ func (s *AssetService) UpdateAssetWithContext(actor AuditActor, assetID int, old
 			SetID:       oldSnap.SetID,
 			AssetID:     assetID,
 			ActorUserID: actor.UserID,
-			NewValues: map[string]interface{}{
+			NewValues: map[string]any{
 				"title":         in.Title,
 				"asset_type_id": in.AssetTypeID,
 				"status_id":     in.StatusID,
@@ -859,7 +859,7 @@ func (s *AssetService) MutateAsset(actor AuditActor, assetID int, patch AssetMut
 	statusID := current.StatusID
 	customFields := current.CustomFieldValues
 	if customFields == nil {
-		customFields = make(map[string]interface{})
+		customFields = make(map[string]any)
 	}
 	if patch.Title != nil {
 		title = *patch.Title
@@ -937,7 +937,7 @@ func (s *AssetService) validateAssetTaxonomy(setID, assetTypeID int, categoryID,
 // type. It is used only during an explicit type change: compatible values are
 // retained, incompatible values are pruned, and the subsequent required-field
 // validation tells the caller which new values must be supplied.
-func (s *AssetService) retainCustomFieldsForType(assetTypeID int, values map[string]interface{}) error {
+func (s *AssetService) retainCustomFieldsForType(assetTypeID int, values map[string]any) error {
 	if len(values) == 0 {
 		return nil
 	}
@@ -987,7 +987,7 @@ func (s *AssetService) DeleteAsset(actor AuditActor, assetID int) error {
 			SetID:       setID,
 			AssetID:     assetID,
 			ActorUserID: actor.UserID,
-			OldValues:   map[string]interface{}{"title": title},
+			OldValues:   map[string]any{"title": title},
 		})
 	}
 	return nil
@@ -1150,7 +1150,7 @@ func (s *AssetService) ImportAssetsCSV(actor AuditActor, setID, assetTypeID int,
 		summary.Status = "partial"
 	}
 
-	s.emitAudit(actor, logger.ActionAssetCreate, nil, "csv_import:"+filename, map[string]interface{}{
+	s.emitAudit(actor, logger.ActionAssetCreate, nil, "csv_import:"+filename, map[string]any{
 		"source":        "csv_import_sync",
 		"set_id":        setID,
 		"asset_type_id": assetTypeID,
@@ -1164,7 +1164,7 @@ func (s *AssetService) ImportAssetsCSV(actor AuditActor, setID, assetTypeID int,
 
 // emitAudit best-effort records successful mutations. Details include token
 // attribution so each token's footprint remains queryable.
-func (s *AssetService) emitAudit(actor AuditActor, action string, resourceID *int, resourceName string, extra map[string]interface{}) {
+func (s *AssetService) emitAudit(actor AuditActor, action string, resourceID *int, resourceName string, extra map[string]any) {
 	details := mergeAuditDetails(extra, actor)
 	_ = logger.LogAudit(s.db, logger.AuditEvent{
 		UserID:       actor.UserID,
@@ -1184,11 +1184,11 @@ func (s *AssetService) emitAudit(actor AuditActor, action string, resourceID *in
 // attribution stamped onto every row. Caller-supplied keys win on a
 // collision so route-specific context (e.g. csv_import totals) isn't
 // clobbered by the actor stamp.
-func mergeAuditDetails(extra map[string]interface{}, actor AuditActor) map[string]interface{} {
+func mergeAuditDetails(extra map[string]any, actor AuditActor) map[string]any {
 	if actor.AuthMethod == "" && actor.Source == "" && actor.APITokenID == 0 && len(extra) == 0 {
 		return nil
 	}
-	merged := make(map[string]interface{}, len(extra)+4)
+	merged := make(map[string]any, len(extra)+4)
 	if actor.AuthMethod != "" {
 		merged["auth_method"] = actor.AuthMethod
 	}
@@ -1216,14 +1216,14 @@ type csvRow struct {
 	title        string
 	description  string
 	assetTag     string
-	customFields map[string]interface{}
+	customFields map[string]any
 }
 
 // buildCSVRow walks the CSV record against its header row and routes
 // each cell to either a built-in column or a custom field on the type,
 // matched case-insensitively by header name.
 func buildCSVRow(headers, record []string, customFieldByName map[string]string) csvRow {
-	row := csvRow{customFields: map[string]interface{}{}}
+	row := csvRow{customFields: map[string]any{}}
 	for i, h := range headers {
 		if i >= len(record) {
 			break
@@ -1250,11 +1250,11 @@ func buildCSVRow(headers, record []string, customFieldByName map[string]string) 
 // column. Returns nil for nil / empty / unparseable JSON — callers fall back
 // to "empty map" semantics, which the validator then runs against the new
 // type's required-field set.
-func loadStoredCustomFieldValues(stored *string) map[string]interface{} {
+func loadStoredCustomFieldValues(stored *string) map[string]any {
 	if stored == nil || *stored == "" {
 		return nil
 	}
-	var m map[string]interface{}
+	var m map[string]any
 	if err := json.Unmarshal([]byte(*stored), &m); err != nil {
 		return nil
 	}
@@ -1264,7 +1264,7 @@ func loadStoredCustomFieldValues(stored *string) map[string]interface{} {
 // encodeCustomFieldValuesJSON marshals the values map for storage.
 // Returns nil for nil / empty maps so the column stores NULL rather
 // than "null" or "{}".
-func encodeCustomFieldValuesJSON(m map[string]interface{}) (*string, error) {
+func encodeCustomFieldValuesJSON(m map[string]any) (*string, error) {
 	if len(m) == 0 {
 		return nil, nil
 	}

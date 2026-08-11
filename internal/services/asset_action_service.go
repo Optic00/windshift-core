@@ -580,7 +580,7 @@ func (as *AssetActionService) executeActionWithResult(action *models.AssetAction
 	ctx := &models.AssetActionExecutionContext{
 		Action:      action,
 		Event:       event,
-		Variables:   make(map[string]interface{}),
+		Variables:   make(map[string]any),
 		StepResults: []models.StepResult{},
 		ChainID:     chainID,
 	}
@@ -787,7 +787,7 @@ func (as *AssetActionService) executeCreateItem(node *models.AssetActionNode, ct
 	}
 	itemID := result.Item.ID
 
-	stepResult.Output = map[string]interface{}{
+	stepResult.Output = map[string]any{
 		"item_id":      itemID,
 		"title":        title,
 		"workspace_id": config.WorkspaceID,
@@ -850,7 +850,7 @@ func (as *AssetActionService) executeSetField(node *models.AssetActionNode, ctx 
 		return fmt.Errorf("asset %d does not belong to set %d", ctx.Event.AssetID, ctx.Event.SetID)
 	}
 
-	var oldValue, newValue interface{}
+	var oldValue, newValue any
 	patch := AssetMutationPatch{}
 	switch config.FieldName {
 	case "title":
@@ -863,7 +863,7 @@ func (as *AssetActionService) executeSetField(node *models.AssetActionNode, ctx 
 		oldValue = current.Description
 		patch.Description = &value
 	default:
-		customFields := make(map[string]interface{}, len(current.CustomFieldValues)+1)
+		customFields := make(map[string]any, len(current.CustomFieldValues)+1)
 		for key, currentValue := range current.CustomFieldValues {
 			customFields[key] = currentValue
 		}
@@ -898,7 +898,7 @@ func (as *AssetActionService) executeSetField(node *models.AssetActionNode, ctx 
 	default:
 		newValue = updated.CustomFieldValues[config.FieldName]
 	}
-	stepResult.Output = map[string]interface{}{
+	stepResult.Output = map[string]any{
 		"field_name": config.FieldName,
 		"old_value":  oldValue,
 		"new_value":  newValue,
@@ -973,7 +973,7 @@ func (as *AssetActionService) executeSetStatus(node *models.AssetActionNode, ctx
 		return fmt.Errorf("mutate asset status: %w", err)
 	}
 
-	stepResult.Output = map[string]interface{}{
+	stepResult.Output = map[string]any{
 		"old_status_id": oldStatusID,
 		"new_status_id": config.StatusID,
 	}
@@ -1002,7 +1002,7 @@ func (as *AssetActionService) executeCondition(node *models.AssetActionNode, ctx
 
 	result := evaluateCondition(fieldValue, config.Operator, config.Value)
 
-	stepResult.Output = map[string]interface{}{
+	stepResult.Output = map[string]any{
 		"condition_result": result,
 		"field_name":       canonicalField,
 		"field_value":      fieldValue,
@@ -1053,7 +1053,7 @@ func (as *AssetActionService) executeNotifyUser(node *models.AssetActionNode, ct
 		return fmt.Errorf("notify_user failed: %w", err)
 	}
 
-	stepResult.Output = map[string]interface{}{
+	stepResult.Output = map[string]any{
 		"recipient_count": len(deliveredUserIDs),
 		"recipient_ids":   deliveredUserIDs,
 		"title":           title,
@@ -1105,7 +1105,7 @@ func (as *AssetActionService) canExecuteNode(nodeID int, edges []models.AssetAct
 }
 
 // evaluateCondition evaluates a condition (reused from workspace action service)
-func evaluateCondition(value interface{}, operator, compareValue string) bool {
+func evaluateCondition(value any, operator, compareValue string) bool {
 	strValue := fmt.Sprintf("%v", value)
 
 	switch operator {
@@ -1158,8 +1158,8 @@ func (as *AssetActionService) ExecuteActionManuallyWithResult(action *models.Ass
 		SetID:             action.SetID,
 		AssetID:           assetID,
 		ActorUserID:       actorUserID,
-		OldValues:         map[string]interface{}{},
-		NewValues:         map[string]interface{}{},
+		OldValues:         map[string]any{},
+		NewValues:         map[string]any{},
 		TriggeredByAction: false,
 		CascadeDepth:      0,
 	}

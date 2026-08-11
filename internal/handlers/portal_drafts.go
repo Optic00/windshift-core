@@ -84,11 +84,11 @@ func (h *PortalHandler) SaveDraft(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		RequestTypeID *int                   `json:"request_type_id"`
-		Title         string                 `json:"title"`
-		Description   string                 `json:"description"`
-		CustomFields  map[string]interface{} `json:"custom_fields"`
-		CurrentStep   int                    `json:"current_step"`
+		RequestTypeID *int           `json:"request_type_id"`
+		Title         string         `json:"title"`
+		Description   string         `json:"description"`
+		CustomFields  map[string]any `json:"custom_fields"`
+		CurrentStep   int            `json:"current_step"`
 	}
 	if !decodeChannelRequest(w, r, &body, false) {
 		return
@@ -265,8 +265,8 @@ func (h *PortalHandler) deleteDraftAfterSubmit(ctx context.Context, channelID, r
 	_ = h.draftRepo.DeleteByIdentity(dctx, channelID, requestTypeID, identity)
 }
 
-func draftResponse(d *repository.PortalRequestDraft) map[string]interface{} {
-	resp := map[string]interface{}{
+func draftResponse(d *repository.PortalRequestDraft) map[string]any {
+	resp := map[string]any{
 		"id":                  d.ID,
 		"channel_id":          d.ChannelID,
 		"request_type_id":     d.RequestTypeID,

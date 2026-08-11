@@ -401,7 +401,7 @@ func (h *IntegrationItemLinksHandler) auditItemLink(r *http.Request, user *model
 	if user == nil {
 		return
 	}
-	logAuditWithDetails(h.db, r, user, action, logger.ResourceIntegrationItemLink, nil, link.Title, map[string]interface{}{
+	logAuditWithDetails(h.db, r, user, action, logger.ResourceIntegrationItemLink, nil, link.Title, map[string]any{
 		"link_id":                 link.ID,
 		"item_id":                 link.ItemID,
 		"integration_provider_id": link.IntegrationProviderID,

@@ -54,7 +54,7 @@ func (m *SSHAuthMiddleware) PublicKeyHandler() ssh.PublicKeyHandler {
 				IPAddress:    remoteAddr,
 				ActionType:   logger.ActionLoginFailure,
 				ResourceType: logger.ResourceUser,
-				Details: map[string]interface{}{
+				Details: map[string]any{
 					"auth_method": "ssh",
 					"fingerprint": fingerprint,
 				},
@@ -72,7 +72,7 @@ func (m *SSHAuthMiddleware) PublicKeyHandler() ssh.PublicKeyHandler {
 			IPAddress:    remoteAddr,
 			ActionType:   logger.ActionLoginSuccess,
 			ResourceType: logger.ResourceUser,
-			Details: map[string]interface{}{
+			Details: map[string]any{
 				"auth_method":     "ssh",
 				"credential_name": userCredential.CredentialName,
 			},

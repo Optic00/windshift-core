@@ -88,7 +88,7 @@ func ValidateActionCredentialMetadata(metadata string) error {
 	if metadata == "" {
 		return nil
 	}
-	var parsed map[string]interface{}
+	var parsed map[string]any
 	if err := json.Unmarshal([]byte(metadata), &parsed); err != nil {
 		return fmt.Errorf("secret_metadata must be a JSON object: %w", err)
 	}
@@ -101,9 +101,9 @@ func ValidateActionCredentialMetadata(metadata string) error {
 	return nil
 }
 
-func findSensitiveCredentialMetadataKey(value interface{}) (string, bool) {
+func findSensitiveCredentialMetadataKey(value any) (string, bool) {
 	switch typed := value.(type) {
-	case map[string]interface{}:
+	case map[string]any:
 		for key, child := range typed {
 			if IsSensitiveActionCredentialMetadataKey(key) {
 				return key, true
@@ -112,7 +112,7 @@ func findSensitiveCredentialMetadataKey(value interface{}) (string, bool) {
 				return nested, true
 			}
 		}
-	case []interface{}:
+	case []any:
 		for _, child := range typed {
 			if nested, ok := findSensitiveCredentialMetadataKey(child); ok {
 				return nested, true

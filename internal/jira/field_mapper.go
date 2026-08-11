@@ -396,7 +396,7 @@ func isImageMimeType(mimeType string) bool {
 // MentionResolver is consulted for every `mention` node so the output uses
 // Windshift's `@username` syntax — picked up later by MentionService and
 // by the rendered comment view.
-func ConvertADFToMarkdownWithUsers(adf interface{}, resolver MentionResolver) string {
+func ConvertADFToMarkdownWithUsers(adf any, resolver MentionResolver) string {
 	return ConvertADFToMarkdown(adf, resolver, nil)
 }
 
@@ -405,18 +405,18 @@ func ConvertADFToMarkdownWithUsers(adf interface{}, resolver MentionResolver) st
 // nodes as Windshift `@username`s; mediaResolver links `media` nodes to the
 // imported attachments where possible (otherwise they fall back to a
 // placeholder). Either may be nil.
-func ConvertADFToMarkdown(adf interface{}, mentionResolver MentionResolver, mediaResolver MediaResolver) string {
+func ConvertADFToMarkdown(adf any, mentionResolver MentionResolver, mediaResolver MediaResolver) string {
 	if adf == nil {
 		return ""
 	}
 	if str, ok := adf.(string); ok {
 		return str
 	}
-	adfMap, ok := adf.(map[string]interface{})
+	adfMap, ok := adf.(map[string]any)
 	if !ok {
 		return ""
 	}
-	content, ok := adfMap["content"].([]interface{})
+	content, ok := adfMap["content"].([]any)
 	if !ok {
 		return ""
 	}
@@ -430,8 +430,8 @@ func ConvertADFToMarkdown(adf interface{}, mentionResolver MentionResolver, medi
 
 // convertADFNode converts a single ADF node to Markdown,
 // consulting the resolvers (when non-nil) for `mention` and `media` nodes.
-func convertADFNode(node interface{}, mentionResolver MentionResolver, mediaResolver MediaResolver) string {
-	nodeMap, ok := node.(map[string]interface{})
+func convertADFNode(node any, mentionResolver MentionResolver, mediaResolver MediaResolver) string {
+	nodeMap, ok := node.(map[string]any)
 	if !ok {
 		return ""
 	}
@@ -444,7 +444,7 @@ func convertADFNode(node interface{}, mentionResolver MentionResolver, mediaReso
 	case "heading":
 		// Guard each step: a missing or non-map attrs would otherwise nil-deref,
 		// and a non-float64 level would silently produce a heading with zero "#".
-		attrs, _ := nodeMap["attrs"].(map[string]interface{})
+		attrs, _ := nodeMap["attrs"].(map[string]any)
 		levelF, _ := attrs["level"].(float64)
 		level := int(levelF)
 		if level < 1 || level > 6 {
@@ -458,7 +458,7 @@ func convertADFNode(node interface{}, mentionResolver MentionResolver, mediaReso
 		return convertADFOrderedList(nodeMap, mentionResolver, mediaResolver)
 	case "codeBlock":
 		lang := ""
-		if attrs, ok := nodeMap["attrs"].(map[string]interface{}); ok {
+		if attrs, ok := nodeMap["attrs"].(map[string]any); ok {
 			lang, _ = attrs["language"].(string)
 		}
 		return "```" + lang + "\n" + convertADFContent(nodeMap, mentionResolver, mediaResolver) + "\n```\n\n"
@@ -494,9 +494,9 @@ func convertADFNode(node interface{}, mentionResolver MentionResolver, mediaReso
 	case "text":
 		text, _ := nodeMap["text"].(string)
 		// Apply marks (bold, italic, etc.)
-		if marks, ok := nodeMap["marks"].([]interface{}); ok {
+		if marks, ok := nodeMap["marks"].([]any); ok {
 			for _, mark := range marks {
-				markMap, _ := mark.(map[string]interface{})
+				markMap, _ := mark.(map[string]any)
 				markType, _ := markMap["type"].(string)
 				switch markType {
 				case "strong":
@@ -508,7 +508,7 @@ func convertADFNode(node interface{}, mentionResolver MentionResolver, mediaReso
 				case "strike":
 					text = "~~" + text + "~~"
 				case "link":
-					if attrs, ok := markMap["attrs"].(map[string]interface{}); ok {
+					if attrs, ok := markMap["attrs"].(map[string]any); ok {
 						href, _ := attrs["href"].(string)
 						text = "[" + text + "](" + href + ")"
 					}
@@ -519,7 +519,7 @@ func convertADFNode(node interface{}, mentionResolver MentionResolver, mediaReso
 	case "hardBreak":
 		return "\n"
 	case "mention":
-		attrs, ok := nodeMap["attrs"].(map[string]interface{})
+		attrs, ok := nodeMap["attrs"].(map[string]any)
 		if !ok {
 			return ""
 		}
@@ -546,25 +546,25 @@ func convertADFNode(node interface{}, mentionResolver MentionResolver, mediaReso
 	}
 }
 
-func convertADFTable(nodeMap map[string]interface{}, mentionResolver MentionResolver, mediaResolver MediaResolver) string {
-	rowsRaw, ok := nodeMap["content"].([]interface{})
+func convertADFTable(nodeMap map[string]any, mentionResolver MentionResolver, mediaResolver MediaResolver) string {
+	rowsRaw, ok := nodeMap["content"].([]any)
 	if !ok || len(rowsRaw) == 0 {
 		return ""
 	}
 
 	rows := make([][]string, 0, len(rowsRaw))
 	for _, rowRaw := range rowsRaw {
-		rowMap, ok := rowRaw.(map[string]interface{})
+		rowMap, ok := rowRaw.(map[string]any)
 		if !ok {
 			continue
 		}
-		cellsRaw, ok := rowMap["content"].([]interface{})
+		cellsRaw, ok := rowMap["content"].([]any)
 		if !ok {
 			continue
 		}
 		row := make([]string, 0, len(cellsRaw))
 		for _, cellRaw := range cellsRaw {
-			cellMap, ok := cellRaw.(map[string]interface{})
+			cellMap, ok := cellRaw.(map[string]any)
 			if !ok {
 				continue
 			}
@@ -625,9 +625,9 @@ func writeMarkdownTableRow(out *strings.Builder, cells []string) {
 	out.WriteString(" |\n")
 }
 
-func convertADFPanel(nodeMap map[string]interface{}, mentionResolver MentionResolver, mediaResolver MediaResolver) string {
+func convertADFPanel(nodeMap map[string]any, mentionResolver MentionResolver, mediaResolver MediaResolver) string {
 	panelType := "info"
-	if attrs, ok := nodeMap["attrs"].(map[string]interface{}); ok {
+	if attrs, ok := nodeMap["attrs"].(map[string]any); ok {
 		if raw, _ := attrs["panelType"].(string); raw != "" {
 			panelType = raw
 		}
@@ -648,19 +648,19 @@ func convertADFPanel(nodeMap map[string]interface{}, mentionResolver MentionReso
 	return out.String()
 }
 
-func convertADFTaskList(nodeMap map[string]interface{}, mentionResolver MentionResolver, mediaResolver MediaResolver) string {
-	items, ok := nodeMap["content"].([]interface{})
+func convertADFTaskList(nodeMap map[string]any, mentionResolver MentionResolver, mediaResolver MediaResolver) string {
+	items, ok := nodeMap["content"].([]any)
 	if !ok {
 		return ""
 	}
 	var out strings.Builder
 	for _, item := range items {
-		itemMap, ok := item.(map[string]interface{})
+		itemMap, ok := item.(map[string]any)
 		if !ok {
 			continue
 		}
 		state := "TODO"
-		if attrs, ok := itemMap["attrs"].(map[string]interface{}); ok {
+		if attrs, ok := itemMap["attrs"].(map[string]any); ok {
 			state, _ = attrs["state"].(string)
 		}
 		checkbox := "[ ]"
@@ -677,8 +677,8 @@ func convertADFTaskList(nodeMap map[string]interface{}, mentionResolver MentionR
 	return out.String()
 }
 
-func convertADFCard(nodeMap map[string]interface{}) string {
-	attrs, ok := nodeMap["attrs"].(map[string]interface{})
+func convertADFCard(nodeMap map[string]any) string {
+	attrs, ok := nodeMap["attrs"].(map[string]any)
 	if !ok {
 		return ""
 	}
@@ -689,8 +689,8 @@ func convertADFCard(nodeMap map[string]interface{}) string {
 	return "[" + url + "](" + url + ")"
 }
 
-func convertADFMedia(nodeMap map[string]interface{}, mediaResolver MediaResolver) string {
-	attrs, ok := nodeMap["attrs"].(map[string]interface{})
+func convertADFMedia(nodeMap map[string]any, mediaResolver MediaResolver) string {
+	attrs, ok := nodeMap["attrs"].(map[string]any)
 	if !ok {
 		return "[media]"
 	}
@@ -711,9 +711,9 @@ func convertADFMedia(nodeMap map[string]interface{}, mediaResolver MediaResolver
 	return "[media: " + alt + "]"
 }
 
-func convertADFExpand(nodeMap map[string]interface{}, mentionResolver MentionResolver, mediaResolver MediaResolver) string {
+func convertADFExpand(nodeMap map[string]any, mentionResolver MentionResolver, mediaResolver MediaResolver) string {
 	title := "Details"
-	if attrs, ok := nodeMap["attrs"].(map[string]interface{}); ok {
+	if attrs, ok := nodeMap["attrs"].(map[string]any); ok {
 		if raw, _ := attrs["title"].(string); strings.TrimSpace(raw) != "" {
 			title = strings.TrimSpace(raw)
 		}
@@ -725,8 +725,8 @@ func convertADFExpand(nodeMap map[string]interface{}, mentionResolver MentionRes
 	return "<details>\n<summary>" + title + "</summary>\n\n" + content + "\n\n</details>\n\n"
 }
 
-func convertADFStatus(nodeMap map[string]interface{}) string {
-	attrs, ok := nodeMap["attrs"].(map[string]interface{})
+func convertADFStatus(nodeMap map[string]any) string {
+	attrs, ok := nodeMap["attrs"].(map[string]any)
 	if !ok {
 		return ""
 	}
@@ -737,16 +737,16 @@ func convertADFStatus(nodeMap map[string]interface{}) string {
 	return "[" + strings.TrimSpace(text) + "]"
 }
 
-func convertADFEmoji(nodeMap map[string]interface{}) string {
-	attrs, ok := nodeMap["attrs"].(map[string]interface{})
+func convertADFEmoji(nodeMap map[string]any) string {
+	attrs, ok := nodeMap["attrs"].(map[string]any)
 	if !ok {
 		return ""
 	}
 	return firstADFAttrString(attrs, "text", "shortName", "id")
 }
 
-func convertADFDate(nodeMap map[string]interface{}) string {
-	attrs, ok := nodeMap["attrs"].(map[string]interface{})
+func convertADFDate(nodeMap map[string]any) string {
+	attrs, ok := nodeMap["attrs"].(map[string]any)
 	if !ok {
 		return ""
 	}
@@ -761,7 +761,7 @@ func convertADFDate(nodeMap map[string]interface{}) string {
 	return time.UnixMilli(millis).UTC().Format("2006-01-02")
 }
 
-func firstADFAttrString(attrs map[string]interface{}, keys ...string) string {
+func firstADFAttrString(attrs map[string]any, keys ...string) string {
 	for _, key := range keys {
 		if raw, _ := attrs[key].(string); strings.TrimSpace(raw) != "" {
 			return strings.TrimSpace(raw)
@@ -782,8 +782,8 @@ func collapseMarkdownWhitespace(value string) string {
 	return strings.Join(clean, " ")
 }
 
-func convertADFContent(nodeMap map[string]interface{}, mentionResolver MentionResolver, mediaResolver MediaResolver) string {
-	content, ok := nodeMap["content"].([]interface{})
+func convertADFContent(nodeMap map[string]any, mentionResolver MentionResolver, mediaResolver MediaResolver) string {
+	content, ok := nodeMap["content"].([]any)
 	if !ok {
 		// Check for direct text
 		if text, ok := nodeMap["text"].(string); ok {
@@ -799,15 +799,15 @@ func convertADFContent(nodeMap map[string]interface{}, mentionResolver MentionRe
 	return result.String()
 }
 
-func convertADFList(nodeMap map[string]interface{}, prefix string, mentionResolver MentionResolver, mediaResolver MediaResolver) string {
-	items, ok := nodeMap["content"].([]interface{})
+func convertADFList(nodeMap map[string]any, prefix string, mentionResolver MentionResolver, mediaResolver MediaResolver) string {
+	items, ok := nodeMap["content"].([]any)
 	if !ok {
 		return ""
 	}
 
 	var result strings.Builder
 	for _, item := range items {
-		itemMap, ok := item.(map[string]interface{})
+		itemMap, ok := item.(map[string]any)
 		if !ok {
 			continue
 		}
@@ -816,15 +816,15 @@ func convertADFList(nodeMap map[string]interface{}, prefix string, mentionResolv
 	return result.String() + "\n"
 }
 
-func convertADFOrderedList(nodeMap map[string]interface{}, mentionResolver MentionResolver, mediaResolver MediaResolver) string {
-	items, ok := nodeMap["content"].([]interface{})
+func convertADFOrderedList(nodeMap map[string]any, mentionResolver MentionResolver, mediaResolver MediaResolver) string {
+	items, ok := nodeMap["content"].([]any)
 	if !ok {
 		return ""
 	}
 
 	var result strings.Builder
 	for i, item := range items {
-		itemMap, ok := item.(map[string]interface{})
+		itemMap, ok := item.(map[string]any)
 		if !ok {
 			continue
 		}

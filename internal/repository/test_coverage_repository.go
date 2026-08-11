@@ -400,9 +400,9 @@ func decodeTypeIDs(v sql.NullString) []int {
 	return ids
 }
 
-func coverageWhereArgs(workspaceID int, typeIDs []int) (placeholders string, args []interface{}) {
+func coverageWhereArgs(workspaceID int, typeIDs []int) (placeholders string, args []any) {
 	slots := make([]string, len(typeIDs))
-	args = make([]interface{}, 0, len(typeIDs)+1)
+	args = make([]any, 0, len(typeIDs)+1)
 	args = append(args, workspaceID)
 	for i, id := range typeIDs {
 		slots[i] = "?"
@@ -411,7 +411,7 @@ func coverageWhereArgs(workspaceID int, typeIDs []int) (placeholders string, arg
 	return strings.Join(slots, ","), args
 }
 
-func buildRequirementFilters(params RequirementListParams) (where, having string, args []interface{}) {
+func buildRequirementFilters(params RequirementListParams) (where, having string, args []any) {
 	placeholders, filterArgs := coverageWhereArgs(params.WorkspaceID, params.TypeIDs)
 	args = filterArgs
 	where = "WHERE i.workspace_id = ? AND i.item_type_id IN (" + placeholders + ")"

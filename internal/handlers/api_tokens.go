@@ -163,7 +163,7 @@ func (ath *APITokenHandler) CreateToken(w http.ResponseWriter, r *http.Request) 
 			if ownership.IsAgent && !isSystemAdmin {
 				reason = "not_agent_owner"
 			}
-			ath.auditor.LogFailure(r, user, logger.ActionAPITokenCreate, logger.ResourceAPIToken, nil, request.Name, "not authorized to create token for target user", map[string]interface{}{
+			ath.auditor.LogFailure(r, user, logger.ActionAPITokenCreate, logger.ResourceAPIToken, nil, request.Name, "not authorized to create token for target user", map[string]any{
 				"reason":         reason,
 				"target_user_id": *request.UserID,
 			})
@@ -194,7 +194,7 @@ func (ath *APITokenHandler) CreateToken(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	details := map[string]interface{}{
+	details := map[string]any{
 		"token_prefix": tokenResponse.APIToken.TokenPrefix,
 	}
 	if targetUserID != user.ID {
@@ -378,7 +378,7 @@ func (ath *APITokenHandler) ValidateToken(w http.ResponseWriter, r *http.Request
 	apiToken, _ := r.Context().Value("api_token").(*models.APIToken)
 	authMethod, _ := r.Context().Value("auth_method").(string)
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"valid":       true,
 		"user_id":     user.ID,
 		"username":    user.Username,
@@ -408,12 +408,12 @@ func (ath *APITokenHandler) CleanupExpiredTokens(w http.ResponseWriter, r *http.
 
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
-		ath.auditor.LogWithDetails(r, currentUser, logger.ActionAPITokenCleanup, logger.ResourceAPIToken, nil, "", map[string]interface{}{
+		ath.auditor.LogWithDetails(r, currentUser, logger.ActionAPITokenCleanup, logger.ResourceAPIToken, nil, "", map[string]any{
 			"cleaned_count": count,
 		})
 	}
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"cleaned_count": count,
 		"message":       "Successfully cleaned up expired tokens",
 	}
@@ -461,7 +461,7 @@ func (ath *APITokenHandler) ListAllTokens(w http.ResponseWriter, r *http.Request
 		totalPages++
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"tokens":      tokens,
 		"total":       total,
 		"page":        page,
@@ -498,7 +498,7 @@ func (ath *APITokenHandler) AdminRevokeToken(w http.ResponseWriter, r *http.Requ
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
 		tid := tokenID
-		ath.auditor.LogWithDetails(r, currentUser, logger.ActionAPITokenAdminRevoke, logger.ResourceAPIToken, &tid, token.Name, map[string]interface{}{
+		ath.auditor.LogWithDetails(r, currentUser, logger.ActionAPITokenAdminRevoke, logger.ResourceAPIToken, &tid, token.Name, map[string]any{
 			"revoked_user_id": token.UserID,
 		})
 	}
@@ -542,7 +542,7 @@ func (ath *APITokenHandler) GetAPIKeyPolicy(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"can_create": canCreate,
 		"policy":     policy,
 	})

@@ -264,7 +264,7 @@ func (s *PagePermissionService) loadPagePermissionsByPage(ids []int) (map[int][]
 	if len(ids) == 0 {
 		return map[int][]models.PagePermission{}, nil
 	}
-	args := make([]interface{}, len(ids))
+	args := make([]any, len(ids))
 	placeholders := ""
 	for i, id := range ids {
 		args[i] = id
@@ -382,7 +382,7 @@ func (s *PagePermissionService) collectEffectiveACL(page *models.Page) ([]models
 		return nil, nil
 	}
 
-	args := make([]interface{}, len(ids))
+	args := make([]any, len(ids))
 	placeholders := ""
 	for i, id := range ids {
 		args[i] = id
@@ -424,7 +424,7 @@ func (s *PagePermissionService) loadAncestorInheritFlags(ids []int) (map[int]boo
 	if len(ids) == 0 {
 		return map[int]bool{}, nil
 	}
-	args := make([]interface{}, len(ids))
+	args := make([]any, len(ids))
 	placeholders := ""
 	for i, id := range ids {
 		args[i] = id

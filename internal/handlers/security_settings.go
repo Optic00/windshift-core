@@ -169,7 +169,7 @@ func (h *SecuritySettingsHandler) UpdateSecuritySettings(w http.ResponseWriter, 
 			logger.ActionSecuritySettingsUpdate,
 			logger.ResourceSecuritySettings,
 			nil, "security_settings",
-			map[string]interface{}{
+			map[string]any{
 				"calendar_feed_enabled":     settings.CalendarFeedEnabled,
 				"plugin_cli_exec_enabled":   settings.PluginCLIExecEnabled,
 				"api_key_creation_policy":   settings.APIKeyCreationPolicy,

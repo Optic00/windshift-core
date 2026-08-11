@@ -29,7 +29,7 @@ type dataCenterClient struct {
 // do performs an HTTP request with rate limiting
 //
 //nolint:unparam // method is always "GET" currently but kept for future flexibility
-func (c *dataCenterClient) do(ctx context.Context, method, reqURL string, body interface{}) (*http.Response, error) {
+func (c *dataCenterClient) do(ctx context.Context, method, reqURL string, body any) (*http.Response, error) {
 	return doReadOnlyJiraRequest(
 		ctx, c.httpClient, c.limiter, c.authHeader, method, reqURL, body,
 		c.retryAttempts, c.retryWait,

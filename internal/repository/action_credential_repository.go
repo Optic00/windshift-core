@@ -104,7 +104,7 @@ func (r *ActionCredentialRepository) ListAllActionCredentials() ([]*models.Actio
 	)
 }
 
-func (r *ActionCredentialRepository) queryActionCredentials(errLabel, query string, args ...interface{}) ([]*models.ActionCredential, error) {
+func (r *ActionCredentialRepository) queryActionCredentials(errLabel, query string, args ...any) ([]*models.ActionCredential, error) {
 	rows, err := r.db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", errLabel, err)
@@ -133,7 +133,7 @@ func (r *ActionCredentialRepository) queryActionCredentials(errLabel, query stri
 // ActionRepository.populateWorkspaceIDs.
 func (r *ActionCredentialRepository) populateCredentialWorkspaceIDs(creds []*models.ActionCredential) error {
 	scopedByID := map[int]*models.ActionCredential{}
-	ids := []interface{}{}
+	ids := []any{}
 	for _, c := range creds {
 		if !c.AppliesToAllWorkspaces {
 			scopedByID[c.ID] = c
@@ -342,7 +342,7 @@ func setCredentialWorkspaces(writer capabilityWriter, credentialID int, workspac
 	return nil
 }
 
-func nullableString(s string) interface{} {
+func nullableString(s string) any {
 	if s == "" {
 		return nil
 	}

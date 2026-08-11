@@ -175,7 +175,7 @@ func sanitizeConfigSetCondition(c *services.ConfigSetTplCondition) {
 		}
 	}
 	if raw, err := json.Marshal(c.Config); err != nil || len(raw) > configSetConditionConfigMaxBytes {
-		c.Config = map[string]interface{}{}
+		c.Config = map[string]any{}
 	}
 }
 
@@ -374,7 +374,7 @@ func (h *ConfigurationSetHandler) Import(w http.ResponseWriter, r *http.Request)
 
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
-		logAuditWithDetails(h.db, r, currentUser, logger.ActionConfigSetImport, logger.ResourceConfigurationSet, &newID, created.Name, map[string]interface{}{
+		logAuditWithDetails(h.db, r, currentUser, logger.ActionConfigSetImport, logger.ResourceConfigurationSet, &newID, created.Name, map[string]any{
 			"workflow_id":   created.WorkflowID,
 			"warning_count": len(warnings),
 		})
@@ -390,7 +390,7 @@ func (h *ConfigurationSetHandler) Import(w http.ResponseWriter, r *http.Request)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"data":     created,
 		"warnings": warnings,
 	})

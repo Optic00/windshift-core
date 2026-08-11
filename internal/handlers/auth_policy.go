@@ -225,7 +225,7 @@ func (h *AuthPolicyHandler) UpdateAuthPolicy(w http.ResponseWriter, r *http.Requ
 
 	if h.auditor != nil {
 		if user := utils.GetCurrentUser(r); user != nil {
-			h.auditor.LogWithDetails(r, user, logger.ActionAuthPolicyUpdate, logger.ResourceAuthPolicy, nil, string(req.Policy), map[string]interface{}{
+			h.auditor.LogWithDetails(r, user, logger.ActionAuthPolicyUpdate, logger.ResourceAuthPolicy, nil, string(req.Policy), map[string]any{
 				"previous_policy":       previousPolicy,
 				"new_policy":            req.Policy,
 				"previous_preview_mode": previousPreviewMode,
@@ -483,12 +483,12 @@ func (h *AuthPolicyHandler) GetPublicPolicyStatus(w http.ResponseWriter, r *http
 }
 
 // LogAuditEvent logs an auth policy related event
-func (h *AuthPolicyHandler) LogAuditEvent(userID int, eventType, ipAddress, userAgent string, details map[string]interface{}) error {
+func (h *AuthPolicyHandler) LogAuditEvent(userID int, eventType, ipAddress, userAgent string, details map[string]any) error {
 	policy := h.GetCurrentPolicy()
 
 	// details is JSONB on Postgres / TEXT on SQLite. Empty string isn't valid
 	// JSON, so when there's no details we send a Go nil interface (→ NULL).
-	var detailsArg interface{}
+	var detailsArg any
 	if details != nil {
 		detailsJSON, err := json.Marshal(details)
 		if err == nil {

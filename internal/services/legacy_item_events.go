@@ -56,7 +56,7 @@ func (e *LegacyItemUpdatedEmitter) EmitItemUpdated(original, updated *models.Ite
 				AssigneeID:  updated.AssigneeID,
 				CreatorID:   original.CreatorID,
 				Title:       "Status Changed",
-				TemplateData: map[string]interface{}{
+				TemplateData: map[string]any{
 					"item.title":  updated.Title,
 					"item.key":    itemKey,
 					"item.id":     updated.ID,
@@ -74,7 +74,7 @@ func (e *LegacyItemUpdatedEmitter) EmitItemUpdated(original, updated *models.Ite
 				AssigneeID:  updated.AssigneeID,
 				CreatorID:   original.CreatorID,
 				Title:       "Item Assigned",
-				TemplateData: map[string]interface{}{
+				TemplateData: map[string]any{
 					"item.title": updated.Title,
 					"item.key":   itemKey,
 					"item.id":    updated.ID,
@@ -91,7 +91,7 @@ func (e *LegacyItemUpdatedEmitter) EmitItemUpdated(original, updated *models.Ite
 				AssigneeID:  updated.AssigneeID,
 				CreatorID:   original.CreatorID,
 				Title:       "Item Updated",
-				TemplateData: map[string]interface{}{
+				TemplateData: map[string]any{
 					"item.title": updated.Title,
 					"item.key":   itemKey,
 					"item.id":    updated.ID,
@@ -108,8 +108,8 @@ func (e *LegacyItemUpdatedEmitter) EmitItemUpdated(original, updated *models.Ite
 				WorkspaceID: updated.WorkspaceID,
 				ItemID:      updated.ID,
 				ActorUserID: actorUserID,
-				OldValues:   map[string]interface{}{"status_id": original.StatusID},
-				NewValues: map[string]interface{}{
+				OldValues:   map[string]any{"status_id": original.StatusID},
+				NewValues: map[string]any{
 					"status_id":   updated.StatusID,
 					"title":       updated.Title,
 					"assignee_id": updated.AssigneeID,
@@ -122,13 +122,13 @@ func (e *LegacyItemUpdatedEmitter) EmitItemUpdated(original, updated *models.Ite
 				WorkspaceID: updated.WorkspaceID,
 				ItemID:      updated.ID,
 				ActorUserID: actorUserID,
-				OldValues: map[string]interface{}{
+				OldValues: map[string]any{
 					"status_id":   original.StatusID,
 					"assignee_id": original.AssigneeID,
 					"title":       original.Title,
 					"priority_id": original.PriorityID,
 				},
-				NewValues: map[string]interface{}{
+				NewValues: map[string]any{
 					"status_id":   updated.StatusID,
 					"assignee_id": updated.AssigneeID,
 					"title":       updated.Title,

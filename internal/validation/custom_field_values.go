@@ -12,7 +12,7 @@ import (
 // ValidateAndNormalizeCustomFieldValues mutates CFV values to match field
 // definitions. It validates choices, deduplicates multiselects, sanitizes text,
 // and returns the first invalid value; unknown keys await async cleanup.
-func ValidateAndNormalizeCustomFieldValues(db database.Database, cfv map[string]interface{}) error {
+func ValidateAndNormalizeCustomFieldValues(db database.Database, cfv map[string]any) error {
 	if len(cfv) == 0 {
 		return nil
 	}
@@ -57,7 +57,7 @@ func ValidateAndNormalizeCustomFieldValues(db database.Database, cfv map[string]
 // ValidateCheckboxValue enforces the asset-aligned boolean value contract. An
 // empty value is valid, and a supplied value must be an actual Go/JSON boolean.
 // Requiredness never changes boolean semantics: both true and false are valid.
-func ValidateCheckboxValue(fieldID string, raw interface{}) (bool, error) {
+func ValidateCheckboxValue(fieldID string, raw any) (bool, error) {
 	if raw == nil {
 		return false, nil
 	}
@@ -69,7 +69,7 @@ func ValidateCheckboxValue(fieldID string, raw interface{}) (bool, error) {
 }
 
 // SanitizeCustomFieldTextValues sanitizes text fields for prevalidated writes.
-func SanitizeCustomFieldTextValues(db database.Database, cfv map[string]interface{}) error {
+func SanitizeCustomFieldTextValues(db database.Database, cfv map[string]any) error {
 	if len(cfv) == 0 {
 		return nil
 	}
@@ -91,7 +91,7 @@ func SanitizeCustomFieldTextValues(db database.Database, cfv map[string]interfac
 }
 
 // CustomFieldTypes bulk-resolves field types for known numeric CFV keys.
-func CustomFieldTypes(db database.Database, cfv map[string]interface{}) (map[string]string, error) {
+func CustomFieldTypes(db database.Database, cfv map[string]any) (map[string]string, error) {
 	fields, err := loadFieldsForCFV(db, cfv)
 	if err != nil {
 		return nil, err
@@ -104,7 +104,7 @@ func CustomFieldTypes(db database.Database, cfv map[string]interface{}) (map[str
 }
 
 // sanitizeTextValue applies the matching text policy; non-strings pass through.
-func sanitizeTextValue(fieldType string, raw interface{}) interface{} {
+func sanitizeTextValue(fieldType string, raw any) any {
 	s, ok := raw.(string)
 	if !ok {
 		return raw
@@ -115,7 +115,7 @@ func sanitizeTextValue(fieldType string, raw interface{}) interface{} {
 	return sanitize.PlainTextField.Sanitize(s)
 }
 
-func loadFieldsForCFV(db database.Database, cfv map[string]interface{}) (map[string]*models.CustomFieldDefinition, error) {
+func loadFieldsForCFV(db database.Database, cfv map[string]any) (map[string]*models.CustomFieldDefinition, error) {
 	if len(cfv) == 0 {
 		return nil, nil
 	}
@@ -165,7 +165,7 @@ func loadFieldsForCFV(db database.Database, cfv map[string]interface{}) (map[str
 
 // validateSelectValue accepts numeric or numeric-string values that match
 // a known option id on the field. Anything else is a ValidationError.
-func validateSelectValue(fieldKey string, def *models.CustomFieldDefinition, raw interface{}) error {
+func validateSelectValue(fieldKey string, def *models.CustomFieldDefinition, raw any) error {
 	if raw == nil {
 		return nil
 	}
@@ -190,7 +190,7 @@ func validateSelectValue(fieldKey string, def *models.CustomFieldDefinition, raw
 }
 
 // validateAndDedupeMultiselect validates option IDs and preserves first-seen order.
-func validateAndDedupeMultiselect(fieldKey string, def *models.CustomFieldDefinition, raw interface{}) ([]int, error) {
+func validateAndDedupeMultiselect(fieldKey string, def *models.CustomFieldDefinition, raw any) ([]int, error) {
 	if raw == nil {
 		return nil, nil
 	}
@@ -246,7 +246,7 @@ func optionIDSet(def *models.CustomFieldDefinition) (map[int]bool, error) {
 }
 
 // coerceOptionID accepts JSON numbers, Go ints, and legacy numeric strings.
-func coerceOptionID(v interface{}) (int, bool) {
+func coerceOptionID(v any) (int, bool) {
 	switch x := v.(type) {
 	case float64:
 		return int(x), true
@@ -265,12 +265,12 @@ func coerceOptionID(v interface{}) (int, bool) {
 }
 
 // coerceToSlice accepts JSON-decoded arrays and Go-side []int values.
-func coerceToSlice(v interface{}) ([]interface{}, error) {
+func coerceToSlice(v any) ([]any, error) {
 	switch x := v.(type) {
-	case []interface{}:
+	case []any:
 		return x, nil
 	case []int:
-		out := make([]interface{}, len(x))
+		out := make([]any, len(x))
 		for i, n := range x {
 			out[i] = n
 		}

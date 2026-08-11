@@ -351,7 +351,7 @@ func (s *WorkflowService) ValidateCreateStatusOverride(ctx context.Context, work
 // transition endpoint where condition-mode also blocks.
 // Returns (allowed, failureMessage, error). failureMessage is set when a condition with an
 // error_message fails.
-func (s *WorkflowService) IsValidStatusTransitionForUser(ctx context.Context, workspaceID int, itemTypeID *int, fromStatusID, toStatusID int64, userID int, item map[string]interface{}, conditionService *ConditionService, modes []string) (allowed bool, failureMessage string, err error) {
+func (s *WorkflowService) IsValidStatusTransitionForUser(ctx context.Context, workspaceID int, itemTypeID *int, fromStatusID, toStatusID int64, userID int, item map[string]any, conditionService *ConditionService, modes []string) (allowed bool, failureMessage string, err error) {
 	// Same status is always valid
 	if fromStatusID == toStatusID {
 		return true, "", nil
@@ -608,7 +608,7 @@ func (s *WorkflowService) CommitTransition(
 	tx database.Tx, itemRepo *repository.ItemRepository,
 	itemID, oldStatusID, newStatusID, actorUserID int,
 ) error {
-	if err := itemRepo.UpdateFields(tx, itemID, map[string]interface{}{
+	if err := itemRepo.UpdateFields(tx, itemID, map[string]any{
 		"status_id": newStatusID,
 	}); err != nil {
 		return err

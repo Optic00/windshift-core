@@ -161,7 +161,7 @@ func (h *LinkHandler) DeleteLink(w http.ResponseWriter, r *http.Request) {
 // @Produce      json
 // @Security     BearerAuth
 // @Param        id   path      int  true  "Entity ID (item / page / test case)"
-// @Success      200  {object}  map[string]interface{}  "Object with `outgoing` and `incoming` arrays of models.ItemLink"
+// @Success      200  {object}  map[string]any  "Object with `outgoing` and `incoming` arrays of models.ItemLink"
 // @Failure      400  {object}  handlers.ErrorResponse  "Invalid entity ID"
 // @Failure      401  {object}  handlers.ErrorResponse
 // @Failure      404  {object}  handlers.ErrorResponse  "Entity not found or not accessible to caller"
@@ -191,7 +191,7 @@ func (h *LinkHandler) GetLinksForEntity(w http.ResponseWriter, r *http.Request) 
 		h.respondLinkServiceError(w, r, entityType, err)
 		return
 	}
-	h.RespondOK(w, map[string]interface{}{
+	h.RespondOK(w, map[string]any{
 		"outgoing": outgoing,
 		"incoming": incoming,
 	})

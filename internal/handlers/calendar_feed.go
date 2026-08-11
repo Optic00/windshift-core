@@ -119,7 +119,7 @@ func (h *CalendarFeedHandler) GetFeedToken(w http.ResponseWriter, r *http.Reques
 
 	if errors.Is(err, sql.ErrNoRows) {
 		// No token exists, return empty response
-		respondJSONOK(w, map[string]interface{}{
+		respondJSONOK(w, map[string]any{
 			"has_token": false,
 		})
 		return
@@ -139,7 +139,7 @@ func (h *CalendarFeedHandler) GetFeedToken(w http.ResponseWriter, r *http.Reques
 		CreatedAt:      token.CreatedAt,
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"has_token": true,
 		"feed":      response,
 	})

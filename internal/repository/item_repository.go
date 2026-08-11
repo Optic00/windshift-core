@@ -46,7 +46,7 @@ const itemBaseColumns = `id, workspace_id, workspace_item_number, item_type_id, 
        story_points, estimate_minutes, frac_index, created_at, updated_at`
 
 func scanItemBase(scanner interface {
-	Scan(dest ...interface{}) error
+	Scan(dest ...any) error
 }) (*models.Item, error) {
 	var item models.Item
 	var customFieldValuesJSON sql.NullString
@@ -602,7 +602,7 @@ func (r *ItemRepository) RemapFieldForWorkspacesTx(tx database.Tx, column string
 	// The column name is validated against the fixed allow-list above, so the
 	// fmt.Sprintf cannot splice attacker-controlled input.
 	query := fmt.Sprintf("UPDATE items SET %s = ?, updated_at = ?", column)
-	args := []interface{}{toID, now}
+	args := []any{toID, now}
 	if fromID == nil {
 		query += fmt.Sprintf(" WHERE %s IS NULL", column)
 	} else {
@@ -790,11 +790,11 @@ func IsAllowedItemColumn(col string) bool {
 }
 
 // GetAllowedColumnValue reads one allowlisted item column.
-func (r *ItemRepository) GetAllowedColumnValue(itemID int, col string) (interface{}, error) {
+func (r *ItemRepository) GetAllowedColumnValue(itemID int, col string) (any, error) {
 	if !allowedItemColumns[col] {
 		return nil, fmt.Errorf("unknown item column: %s", col)
 	}
-	var val interface{}
+	var val any
 	if err := r.db.QueryRow(`SELECT `+col+` FROM items WHERE id = ?`, itemID).Scan(&val); err != nil {
 		return nil, fmt.Errorf("get item column %s: %w", col, err)
 	}
@@ -802,7 +802,7 @@ func (r *ItemRepository) GetAllowedColumnValue(itemID int, col string) (interfac
 }
 
 // UpdateFields updates only allowlisted item columns.
-func (r *ItemRepository) UpdateFields(tx database.Tx, itemID int, fields map[string]interface{}) error {
+func (r *ItemRepository) UpdateFields(tx database.Tx, itemID int, fields map[string]any) error {
 	if len(fields) == 0 {
 		return nil
 	}
@@ -813,7 +813,7 @@ func (r *ItemRepository) UpdateFields(tx database.Tx, itemID int, fields map[str
 	}
 
 	setClauses := make([]string, 0, len(fields)+1)
-	args := make([]interface{}, 0, len(fields)+2)
+	args := make([]any, 0, len(fields)+2)
 
 	for col, val := range fields {
 		if !allowedItemColumns[col] {
@@ -842,7 +842,7 @@ func (r *ItemRepository) UpdateFields(tx database.Tx, itemID int, fields map[str
 }
 
 type execer interface {
-	Exec(query string, args ...interface{}) (sql.Result, error)
+	Exec(query string, args ...any) (sql.Result, error)
 }
 
 // TouchActivity updates Bubble Mode recency without changing updated_at.
@@ -854,7 +854,7 @@ func (r *ItemRepository) TouchActivity(exec execer, itemID int, now time.Time) e
 }
 
 // GetItemCustomFieldValue returns a decoded field value, or nil when absent.
-func (r *ItemRepository) GetItemCustomFieldValue(itemID, customFieldID int) (interface{}, error) {
+func (r *ItemRepository) GetItemCustomFieldValue(itemID, customFieldID int) (any, error) {
 	var raw sql.NullString
 	if err := r.db.QueryRow(`SELECT custom_field_values FROM items WHERE id = ?`, itemID).Scan(&raw); err != nil {
 		return nil, fmt.Errorf("load item custom_field_values: %w", err)
@@ -862,7 +862,7 @@ func (r *ItemRepository) GetItemCustomFieldValue(itemID, customFieldID int) (int
 	if !raw.Valid || raw.String == "" {
 		return nil, nil
 	}
-	var values map[string]interface{}
+	var values map[string]any
 	if err := json.Unmarshal([]byte(raw.String), &values); err != nil {
 		return nil, nil //nolint:nilerr // treat malformed blob as "no value present"
 	}
@@ -870,7 +870,7 @@ func (r *ItemRepository) GetItemCustomFieldValue(itemID, customFieldID int) (int
 }
 
 // SetItemCustomFieldValue updates one JSON field while preserving the others.
-func (r *ItemRepository) SetItemCustomFieldValue(tx database.Tx, itemID, customFieldID int, value interface{}) error {
+func (r *ItemRepository) SetItemCustomFieldValue(tx database.Tx, itemID, customFieldID int, value any) error {
 	var exists int
 	if err := tx.QueryRow(`SELECT 1 FROM custom_field_definitions WHERE id = ?`, customFieldID).Scan(&exists); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -884,7 +884,7 @@ func (r *ItemRepository) SetItemCustomFieldValue(tx database.Tx, itemID, customF
 		return fmt.Errorf("load item custom_field_values: %w", err)
 	}
 
-	values := make(map[string]interface{})
+	values := make(map[string]any)
 	if raw.Valid && raw.String != "" {
 		_ = json.Unmarshal([]byte(raw.String), &values)
 	}
@@ -1016,7 +1016,7 @@ var itemCountableColumns = map[string]bool{
 }
 
 // CountByField counts items matching an allowlisted column value.
-func (r *ItemRepository) CountByField(column string, value interface{}) (int, error) {
+func (r *ItemRepository) CountByField(column string, value any) (int, error) {
 	if !itemCountableColumns[column] {
 		return 0, fmt.Errorf("CountByField: column %q is not in the allow-list", column)
 	}
@@ -1166,7 +1166,7 @@ func (r *ItemRepository) SearchLinkableItems(query string, workspaceIDs, itemTyp
 		return []models.LinkableItem{}, nil
 	}
 	wsPlaceholders := make([]string, len(workspaceIDs))
-	args := []interface{}{}
+	args := []any{}
 	args = append(args, "%"+query+"%", "%"+query+"%")
 	for i, id := range workspaceIDs {
 		wsPlaceholders[i] = "?"
@@ -1419,13 +1419,13 @@ func (r *ItemRepository) ListIterationItems(iterationIDs, workspaceIDs []int) ([
 		return []IterationItemInfo{}, nil
 	}
 	iterPlaceholders := make([]string, len(iterationIDs))
-	iterArgs := make([]interface{}, len(iterationIDs))
+	iterArgs := make([]any, len(iterationIDs))
 	for i, id := range iterationIDs {
 		iterPlaceholders[i] = "?"
 		iterArgs[i] = id
 	}
 	wsPlaceholders := make([]string, len(workspaceIDs))
-	wsArgs := make([]interface{}, len(workspaceIDs))
+	wsArgs := make([]any, len(workspaceIDs))
 	for i, id := range workspaceIDs {
 		wsPlaceholders[i] = "?"
 		wsArgs[i] = id
@@ -1452,7 +1452,7 @@ func (r *ItemRepository) ListIterationItems(iterationIDs, workspaceIDs []int) ([
 		strings.Join(iterPlaceholders, ","),
 		strings.Join(wsPlaceholders, ","))
 
-	args := make([]interface{}, 0, len(iterArgs)+len(wsArgs))
+	args := make([]any, 0, len(iterArgs)+len(wsArgs))
 	args = append(args, iterArgs...)
 	args = append(args, wsArgs...)
 

@@ -353,7 +353,7 @@ func (g *GiteaProvider) CreateBranch(ctx context.Context, owner, repo, branchNam
 func (g *GiteaProvider) CreatePullRequest(ctx context.Context, owner, repo string, opts CreatePROptions) (*PullRequest, error) {
 	createURL := g.apiURL(fmt.Sprintf("/repos/%s/%s/pulls", url.PathEscape(owner), url.PathEscape(repo)))
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"title": opts.Title,
 		"body":  opts.Body,
 		"head":  opts.HeadBranch,
@@ -516,7 +516,7 @@ func (g *GiteaProvider) UpdateIssueComment(ctx context.Context, owner, repo stri
 func (g *GiteaProvider) CreateRelease(ctx context.Context, owner, repo string, opts CreateReleaseOptions) (*Release, error) {
 	createURL := g.apiURL(fmt.Sprintf("/repos/%s/%s/releases", url.PathEscape(owner), url.PathEscape(repo)))
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"tag_name":   opts.TagName,
 		"name":       opts.Name,
 		"body":       opts.Body,
@@ -644,7 +644,7 @@ func (g *GiteaProvider) RegisterWebhook(ctx context.Context, owner, repo string,
 		events = []string{"push", "pull_request"}
 	}
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"type":   "gitea", // Gitea webhook type
 		"active": true,
 		"events": events,

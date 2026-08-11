@@ -207,7 +207,7 @@ func (s *ItemTypeChangeService) ValidateStatusMapping(ctx context.Context, item 
 // Analyze + ValidateStatusMapping.
 func (s *ItemTypeChangeService) ApplyChange(itemID, userID, targetTypeID int, nextStatusID *int, original *models.Item) ([]HistoryEntry, error) {
 	now := time.Now()
-	fields := map[string]interface{}{"item_type_id": targetTypeID}
+	fields := map[string]any{"item_type_id": targetTypeID}
 	if nextStatusID != nil {
 		fields["status_id"] = *nextStatusID
 	}

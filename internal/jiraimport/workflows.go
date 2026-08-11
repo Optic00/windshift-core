@@ -28,7 +28,7 @@ type WorkflowDefinition struct {
 	Description string
 	Edges       []WorkflowEdge
 	ItemTypeIDs []int
-	Metadata    map[string]interface{}
+	Metadata    map[string]any
 }
 
 func (s *Service) CreateDetailedWorkflowConfiguration(

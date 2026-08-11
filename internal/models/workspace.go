@@ -47,12 +47,12 @@ type WorkspaceHomepageSection struct {
 
 // WorkspaceWidget represents a single widget in the workspace homepage
 type WorkspaceWidget struct {
-	ID        string                 `json:"id"`               // UUID for client-side tracking
-	Type      string                 `json:"type"`             // Widget type: "stats", "completion-chart", "created-chart", "milestone-progress", etc.
-	SectionID string                 `json:"section_id"`       // Which section this widget belongs to
-	Position  int                    `json:"position"`         // Display order within the section
-	Width     int                    `json:"width"`            // Column span: 1, 2, or 3 (for grid-based sections)
-	Config    map[string]interface{} `json:"config,omitempty"` // Widget-specific configuration
+	ID        string         `json:"id"`               // UUID for client-side tracking
+	Type      string         `json:"type"`             // Widget type: "stats", "completion-chart", "created-chart", "milestone-progress", etc.
+	SectionID string         `json:"section_id"`       // Which section this widget belongs to
+	Position  int            `json:"position"`         // Display order within the section
+	Width     int            `json:"width"`            // Column span: 1, 2, or 3 (for grid-based sections)
+	Config    map[string]any `json:"config,omitempty"` // Widget-specific configuration
 }
 
 // WorkspaceHomepageLayout represents the complete homepage layout structure

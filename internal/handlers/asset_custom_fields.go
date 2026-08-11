@@ -10,7 +10,7 @@ import (
 )
 
 // extractUserID extracts user ID from various value formats (int, float64, or map with "id")
-func extractUserID(val interface{}) int {
+func extractUserID(val any) int {
 	switch v := val.(type) {
 	case int:
 		return v
@@ -18,7 +18,7 @@ func extractUserID(val interface{}) int {
 		return int(v)
 	case float64:
 		return int(v)
-	case map[string]interface{}:
+	case map[string]any:
 		if id, ok := v["id"]; ok {
 			return extractUserID(id)
 		}
@@ -29,7 +29,7 @@ func extractUserID(val interface{}) int {
 // extractRefID extracts an integer ID from a raw JSON value shape used by
 // reference-typed custom fields (asset, user, etc.). Shares the same semantics
 // as extractUserID but is named to make intent clear at call sites.
-func extractRefID(val interface{}) int { return extractUserID(val) }
+func extractRefID(val any) int { return extractUserID(val) }
 
 // enrichAssetRefCustomFields resolves asset-type custom fields to the
 // referenced asset's summary (id, title, asset_tag). If the referenced asset
@@ -66,7 +66,7 @@ func (h *AssetHandler) enrichAssetRefCustomFields(asset *models.Asset) error {
 		summary, err := h.repo.GetAssetSummary(refID, asset.SetID)
 		if err != nil {
 			if errors.Is(err, repository.ErrNotFound) {
-				asset.CustomFieldValues[fieldKey] = map[string]interface{}{
+				asset.CustomFieldValues[fieldKey] = map[string]any{
 					"id":      refID,
 					"title":   "(deleted asset)",
 					"deleted": true,
@@ -76,7 +76,7 @@ func (h *AssetHandler) enrichAssetRefCustomFields(asset *models.Asset) error {
 			return err
 		}
 
-		asset.CustomFieldValues[fieldKey] = map[string]interface{}{
+		asset.CustomFieldValues[fieldKey] = map[string]any{
 			"id":        refID,
 			"title":     summary.Title,
 			"asset_tag": summary.AssetTag,
@@ -118,7 +118,7 @@ func (h *AssetHandler) enrichUserCustomFields(asset *models.Asset) error {
 				// User was deleted — keep the ID so the UI can render a
 				// "(deleted user)" marker instead of silently losing the
 				// assignment history.
-				asset.CustomFieldValues[fieldKey] = map[string]interface{}{
+				asset.CustomFieldValues[fieldKey] = map[string]any{
 					"id":      userID,
 					"name":    "(deleted user)",
 					"deleted": true,
@@ -128,7 +128,7 @@ func (h *AssetHandler) enrichUserCustomFields(asset *models.Asset) error {
 			return err
 		}
 
-		asset.CustomFieldValues[fieldKey] = map[string]interface{}{
+		asset.CustomFieldValues[fieldKey] = map[string]any{
 			"id":         userID,
 			"name":       strings.TrimSpace(info.FirstName.String + " " + info.LastName.String),
 			"email":      info.Email.String,
@@ -140,7 +140,7 @@ func (h *AssetHandler) enrichUserCustomFields(asset *models.Asset) error {
 }
 
 // normalizeUserFieldValues extracts just the user ID from user-type custom field values before storage
-func (h *AssetHandler) normalizeUserFieldValues(customFieldValues map[string]interface{}, assetTypeID int) error {
+func (h *AssetHandler) normalizeUserFieldValues(customFieldValues map[string]any, assetTypeID int) error {
 	if len(customFieldValues) == 0 {
 		return nil
 	}

@@ -72,7 +72,7 @@ func readFormParams(r *http.Request) (map[string]string, error) {
 		return map[string]string{}, nil
 	}
 	var body struct {
-		Params map[string]interface{} `json:"params"`
+		Params map[string]any `json:"params"`
 	}
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
@@ -260,8 +260,8 @@ func (h *PortalHandler) ExecuteAssetReport(w http.ResponseWriter, r *http.Reques
 		// the "show me the form" state — return an empty result and the column
 		// config so the FE can render headers without running the query.
 		if len(formValues) == 0 && r.Method == http.MethodGet {
-			respondJSONOK(w, map[string]interface{}{
-				"assets":                   []interface{}{},
+			respondJSONOK(w, map[string]any{
+				"assets":                   []any{},
 				"columns":                  decodeColumnConfig(report.ColumnConfig),
 				"total":                    0,
 				"page":                     1,
@@ -309,7 +309,7 @@ func (h *PortalHandler) ExecuteAssetReport(w http.ResponseWriter, r *http.Reques
 
 	// Evaluate CQL (if any) to a SQL fragment against the assets table.
 	var cqlSQL string
-	var cqlArgs []interface{}
+	var cqlArgs []any
 	if strings.TrimSpace(cqlQuery) != "" {
 		assetRepo := repository.NewAssetRepository(h.db)
 		setMap, setMapErr := assetRepo.GetCQLSetMap()
@@ -372,7 +372,7 @@ func (h *PortalHandler) ExecuteAssetReport(w http.ResponseWriter, r *http.Reques
 	}
 
 	whereClause := "a.set_id = ?"
-	queryArgs := []interface{}{report.AssetSetID}
+	queryArgs := []any{report.AssetSetID}
 	if cqlSQL != "" {
 		whereClause += " AND (" + cqlSQL + ")"
 		queryArgs = append(queryArgs, cqlArgs...)
@@ -401,19 +401,19 @@ func (h *PortalHandler) ExecuteAssetReport(w http.ResponseWriter, r *http.Reques
 	defer func() { _ = rows.Close() }()
 
 	type AssetResult struct {
-		ID                int                    `json:"id"`
-		Title             string                 `json:"title"`
-		AssetTag          string                 `json:"asset_tag"`
-		AssetTypeID       *int                   `json:"asset_type_id,omitempty"`
-		StatusID          *int                   `json:"status_id,omitempty"`
-		CategoryID        *int                   `json:"category_id,omitempty"`
-		CustomFieldValues map[string]interface{} `json:"custom_field_values,omitempty"`
-		CreatedAt         time.Time              `json:"created_at"`
-		UpdatedAt         time.Time              `json:"updated_at"`
-		AssetTypeName     *string                `json:"asset_type_name,omitempty"`
-		StatusName        *string                `json:"status_name,omitempty"`
-		StatusColor       *string                `json:"status_color,omitempty"`
-		CategoryName      *string                `json:"category_name,omitempty"`
+		ID                int            `json:"id"`
+		Title             string         `json:"title"`
+		AssetTag          string         `json:"asset_tag"`
+		AssetTypeID       *int           `json:"asset_type_id,omitempty"`
+		StatusID          *int           `json:"status_id,omitempty"`
+		CategoryID        *int           `json:"category_id,omitempty"`
+		CustomFieldValues map[string]any `json:"custom_field_values,omitempty"`
+		CreatedAt         time.Time      `json:"created_at"`
+		UpdatedAt         time.Time      `json:"updated_at"`
+		AssetTypeName     *string        `json:"asset_type_name,omitempty"`
+		StatusName        *string        `json:"status_name,omitempty"`
+		StatusColor       *string        `json:"status_color,omitempty"`
+		CategoryName      *string        `json:"category_name,omitempty"`
 	}
 
 	var assets []AssetResult
@@ -443,9 +443,9 @@ func (h *PortalHandler) ExecuteAssetReport(w http.ResponseWriter, r *http.Reques
 			asset.CategoryID = &id
 		}
 		if customFieldValuesStr.Valid && customFieldValuesStr.String != "" && len(allowedCustomFieldKeys) > 0 {
-			var allValues map[string]interface{}
+			var allValues map[string]any
 			if json.Unmarshal([]byte(customFieldValuesStr.String), &allValues) == nil {
-				projected := make(map[string]interface{}, len(allowedCustomFieldKeys))
+				projected := make(map[string]any, len(allowedCustomFieldKeys))
 				for key := range allowedCustomFieldKeys {
 					if v, present := allValues[key]; present {
 						projected[key] = v
@@ -480,7 +480,7 @@ func (h *PortalHandler) ExecuteAssetReport(w http.ResponseWriter, r *http.Reques
 		assets = []AssetResult{}
 	}
 
-	countArgs := []interface{}{report.AssetSetID}
+	countArgs := []any{report.AssetSetID}
 	countQuery := `SELECT COUNT(*) FROM assets a WHERE a.set_id = ?`
 	if cqlSQL != "" {
 		countQuery += " AND (" + cqlSQL + ")"
@@ -491,7 +491,7 @@ func (h *PortalHandler) ExecuteAssetReport(w http.ResponseWriter, r *http.Reques
 		slog.Warn("failed to get asset count", slog.Any("error", err))
 	}
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"assets":      assets,
 		"columns":     columns,
 		"total":       total,

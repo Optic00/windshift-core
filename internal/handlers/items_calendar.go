@@ -110,7 +110,7 @@ func (h *ItemHandler) ScheduleItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"status":   "success",
 		"message":  "Item scheduled successfully",
 		"schedule": newEntry,
@@ -230,7 +230,7 @@ func (h *ItemHandler) GetScheduledItems(w http.ResponseWriter, r *http.Request) 
 
 	// If user has no accessible workspaces, return empty result
 	if len(accessibleWorkspaceIDs) == 0 {
-		respondJSONOK(w, map[string][]map[string]interface{}{})
+		respondJSONOK(w, map[string][]map[string]any{})
 		return
 	}
 
@@ -262,7 +262,7 @@ func (h *ItemHandler) GetScheduledItems(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Build scheduled items map from filtered items only
-	scheduledItems := make(map[string][]map[string]interface{})
+	scheduledItems := make(map[string][]map[string]any)
 
 	for _, item := range filteredItems {
 		calendarData := itemCalendarData[item.ID]
@@ -283,10 +283,10 @@ func (h *ItemHandler) GetScheduledItems(w http.ResponseWriter, r *http.Request) 
 
 			// Add to results grouped by date
 			if scheduledItems[entry.ScheduledDate] == nil {
-				scheduledItems[entry.ScheduledDate] = []map[string]interface{}{}
+				scheduledItems[entry.ScheduledDate] = []map[string]any{}
 			}
 
-			itemWithSchedule := map[string]interface{}{
+			itemWithSchedule := map[string]any{
 				"id":                  item.ID,
 				"workspace_id":        item.WorkspaceID,
 				"title":               item.Title,

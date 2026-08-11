@@ -27,7 +27,7 @@ func (r *AssetRepository) FindAssetSummariesByIDs(ids []int) ([]models.AssetSumm
 	}
 
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
-	args := make([]interface{}, len(ids))
+	args := make([]any, len(ids))
 	for i, id := range ids {
 		args[i] = id
 	}
@@ -138,7 +138,7 @@ func (r *AssetRepository) Search(query string, setIDs []int, limit int) ([]model
 		return []models.LinkableItem{}, nil
 	}
 	setPlaceholders := strings.TrimSuffix(strings.Repeat("?,", len(setIDs)), ",")
-	setArgs := make([]interface{}, len(setIDs))
+	setArgs := make([]any, len(setIDs))
 	for i, id := range setIDs {
 		setArgs[i] = id
 	}
@@ -159,7 +159,7 @@ func (r *AssetRepository) Search(query string, setIDs []int, limit int) ([]model
 	`, setPlaceholders)
 
 	searchTerm := "%" + query + "%"
-	args := make([]interface{}, 0, 3+len(setArgs))
+	args := make([]any, 0, 3+len(setArgs))
 	args = append(args, searchTerm, searchTerm)
 	args = append(args, setArgs...)
 	args = append(args, limit)
@@ -212,7 +212,7 @@ func (r *AssetRepository) ListSetsForUser(userID int, isAdmin bool) ([]models.As
 		LEFT JOIN users u ON ams.created_by = u.id
 	`
 
-	var args []interface{}
+	var args []any
 
 	if !isAdmin {
 		query += ` WHERE (
@@ -1349,7 +1349,7 @@ type AssetTypeUpdate struct {
 
 func (r *AssetRepository) UpdateAssetType(typeID int, patch AssetTypeUpdate) error {
 	query := "UPDATE asset_types SET name = ?, description = ?, icon = ?, color = ?, display_order = ?, updated_at = ?"
-	args := []interface{}{patch.Name, patch.Description, patch.Icon, patch.Color, patch.DisplayOrder, time.Now()}
+	args := []any{patch.Name, patch.Description, patch.Icon, patch.Color, patch.DisplayOrder, time.Now()}
 
 	if patch.IsActive != nil {
 		query += ", is_active = ?"
@@ -1555,7 +1555,7 @@ func pruneRemovedAssetTypeValues(tx database.Tx, typeID int, removedKeys map[str
 		if err := rows.Scan(&assetID, &raw); err != nil {
 			return fmt.Errorf("failed to scan asset custom fields: %w", err)
 		}
-		values := map[string]interface{}{}
+		values := map[string]any{}
 		if raw == "" {
 			continue
 		}
@@ -1596,7 +1596,7 @@ func pruneRemovedAssetTypeValues(tx database.Tx, typeID int, removedKeys map[str
 }
 
 func scanAssetTypeRow(scanner interface {
-	Scan(dest ...interface{}) error
+	Scan(dest ...any) error
 }) (models.AssetType, error) {
 	var at models.AssetType
 	var description, setName sql.NullString
@@ -1893,7 +1893,7 @@ func updateCategoryParentCounts(tx database.Tx, parentID int) error {
 	return nil
 }
 
-func scanAssetCategoryRow(scanner interface{ Scan(...interface{}) error }) (models.AssetCategory, error) {
+func scanAssetCategoryRow(scanner interface{ Scan(...any) error }) (models.AssetCategory, error) {
 	var cat models.AssetCategory
 	var description, path, fracIndex, setName, parentName sql.NullString
 	var parentID sql.NullInt64
@@ -1921,7 +1921,7 @@ func scanAssetCategoryRow(scanner interface{ Scan(...interface{}) error }) (mode
 	return cat, nil
 }
 
-func scanAssetCategoryCoreRow(scanner interface{ Scan(...interface{}) error }) (models.AssetCategory, error) {
+func scanAssetCategoryCoreRow(scanner interface{ Scan(...any) error }) (models.AssetCategory, error) {
 	var cat models.AssetCategory
 	var description, path, fracIndex sql.NullString
 	var parentID sql.NullInt64
@@ -1981,7 +1981,7 @@ func AssetRowToModel(row AssetRow) models.Asset {
 				slog.Int("asset_id", asset.ID),
 				slog.String("raw", row.CustomFieldValues.String),
 				slog.Any("error", err))
-			asset.CustomFieldValues = make(map[string]interface{})
+			asset.CustomFieldValues = make(map[string]any)
 			asset.Warnings = append(asset.Warnings, "custom field values could not be parsed")
 		}
 	}
@@ -2023,7 +2023,7 @@ type AssetListFilter struct {
 	StatusID             string // raw string
 	Search               string
 	CQLSQL               string
-	CQLArgs              []interface{}
+	CQLArgs              []any
 	Limit                int
 	Offset               int
 }
@@ -2253,7 +2253,7 @@ func (r *AssetRepository) DeleteAssetWithLinks(assetID int) error {
 }
 
 // scanAssetRow populates an AssetRow from the full joined projection.
-func scanAssetRow(scanner interface{ Scan(...interface{}) error }) (AssetRow, error) {
+func scanAssetRow(scanner interface{ Scan(...any) error }) (AssetRow, error) {
 	var row AssetRow
 	err := scanner.Scan(
 		&row.ID, &row.SetID, &row.AssetTypeID, &row.CategoryID, &row.StatusID, &row.Title, &row.Description,
@@ -2266,9 +2266,9 @@ func scanAssetRow(scanner interface{ Scan(...interface{}) error }) (AssetRow, er
 	return row, err
 }
 
-func buildAssetListWhere(f AssetListFilter) (ctePrefix, whereClause string, args []interface{}) {
+func buildAssetListWhere(f AssetListFilter) (ctePrefix, whereClause string, args []any) {
 	whereClause = "WHERE a.set_id = ?"
-	args = []interface{}{f.SetID}
+	args = []any{f.SetID}
 
 	if f.AssetTypeID != "" {
 		whereClause += " AND a.asset_type_id = ?"
@@ -2285,7 +2285,7 @@ func buildAssetListWhere(f AssetListFilter) (ctePrefix, whereClause string, args
 			) `
 			whereClause += " AND a.category_id IN (SELECT id FROM category_tree)"
 			// CTE parameter comes first.
-			args = append([]interface{}{f.CategoryID}, args...)
+			args = append([]any{f.CategoryID}, args...)
 		} else {
 			whereClause += " AND a.category_id = ?"
 			args = append(args, f.CategoryID)
@@ -2798,7 +2798,7 @@ func (r *AssetRepository) UpdateAssetStatusTransactional(statusID int, patch Ass
 			}
 		}
 		query := "UPDATE asset_statuses SET name = ?, color = ?, description = ?, display_order = ?, updated_at = ?"
-		args := []interface{}{patch.Name, patch.Color, patch.Description, patch.DisplayOrder, time.Now()}
+		args := []any{patch.Name, patch.Color, patch.Description, patch.DisplayOrder, time.Now()}
 		if patch.IsDefault != nil {
 			query += ", is_default = ?"
 			args = append(args, *patch.IsDefault)
@@ -2825,7 +2825,7 @@ func (r *AssetRepository) CountAssetsUsingStatus(statusID int) (int, error) {
 	return count, nil
 }
 
-func scanAssetStatus(scanner interface{ Scan(...interface{}) error }) (models.AssetStatus, error) {
+func scanAssetStatus(scanner interface{ Scan(...any) error }) (models.AssetStatus, error) {
 	var status models.AssetStatus
 	var description sql.NullString
 	if err := scanner.Scan(

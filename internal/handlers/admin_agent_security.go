@@ -96,7 +96,7 @@ func (h *AgentSecurityHandler) UpdateSettings(w http.ResponseWriter, r *http.Req
 		respondInternalError(w, r, err)
 		return
 	}
-	h.auditor.LogWithDetails(r, user, "agent_security.flag.set", "agent_security_flag", nil, "allow_centralized_service_users", map[string]interface{}{
+	h.auditor.LogWithDetails(r, user, "agent_security.flag.set", "agent_security_flag", nil, "allow_centralized_service_users", map[string]any{
 		"enabled": body.AllowCentralizedServiceUsers,
 		"reason":  body.Reason,
 	})
@@ -190,7 +190,7 @@ func (h *AgentSecurityHandler) AddAllowlist(w http.ResponseWriter, r *http.Reque
 		respondInternalError(w, r, err)
 		return
 	}
-	h.auditor.LogWithDetails(r, user, "agent_security.allowlist.add", "agent_security_allowlist", &body.UserID, "", map[string]interface{}{
+	h.auditor.LogWithDetails(r, user, "agent_security.allowlist.add", "agent_security_allowlist", &body.UserID, "", map[string]any{
 		"workspace_ids": body.WorkspaceIDs,
 		"reason":        body.Reason,
 	})
@@ -258,7 +258,7 @@ func (h *AgentSecurityHandler) RemoveAllowlist(w http.ResponseWriter, r *http.Re
 		respondNotFound(w, r, "allowlist entry")
 		return
 	}
-	h.auditor.LogWithDetails(r, user, "agent_security.allowlist.remove", "agent_security_allowlist", &userID, "", map[string]interface{}{
+	h.auditor.LogWithDetails(r, user, "agent_security.allowlist.remove", "agent_security_allowlist", &userID, "", map[string]any{
 		"workspace_id": workspaceID,
 		"reason":       reason,
 	})

@@ -174,25 +174,25 @@ type Priority struct {
 }
 
 type WorkItem struct {
-	ID                int                    `json:"id"`
-	WorkspaceID       int                    `json:"workspace_id"`
-	ItemTypeID        *int                   `json:"item_type_id"`
-	Title             string                 `json:"title"`
-	Description       string                 `json:"description"`
-	Status            string                 `json:"status"`                // Legacy text field
-	Priority          string                 `json:"priority"`              // Legacy text field
-	StatusID          *int                   `json:"status_id,omitempty"`   // ID-based status
-	PriorityID        *int                   `json:"priority_id,omitempty"` // ID-based priority
-	MilestoneID       *int                   `json:"milestone_id"`
-	TimeProjectID     *int                   `json:"time_project_id"`
-	AssigneeID        *int                   `json:"assignee_id"`
-	CreatorID         *int                   `json:"creator_id"`
-	CustomFieldValues map[string]interface{} `json:"custom_field_values"`
-	ParentID          *int                   `json:"parent_id"`
-	Path              string                 `json:"path"`
-	Rank              *string                `json:"rank"`
-	CreatedAt         string                 `json:"created_at"`
-	UpdatedAt         string                 `json:"updated_at"`
+	ID                int            `json:"id"`
+	WorkspaceID       int            `json:"workspace_id"`
+	ItemTypeID        *int           `json:"item_type_id"`
+	Title             string         `json:"title"`
+	Description       string         `json:"description"`
+	Status            string         `json:"status"`                // Legacy text field
+	Priority          string         `json:"priority"`              // Legacy text field
+	StatusID          *int           `json:"status_id,omitempty"`   // ID-based status
+	PriorityID        *int           `json:"priority_id,omitempty"` // ID-based priority
+	MilestoneID       *int           `json:"milestone_id"`
+	TimeProjectID     *int           `json:"time_project_id"`
+	AssigneeID        *int           `json:"assignee_id"`
+	CreatorID         *int           `json:"creator_id"`
+	CustomFieldValues map[string]any `json:"custom_field_values"`
+	ParentID          *int           `json:"parent_id"`
+	Path              string         `json:"path"`
+	Rank              *string        `json:"rank"`
+	CreatedAt         string         `json:"created_at"`
+	UpdatedAt         string         `json:"updated_at"`
 	// Joined fields for display
 	WorkspaceName   string `json:"workspace_name"`
 	WorkspaceKey    string `json:"workspace_key"`

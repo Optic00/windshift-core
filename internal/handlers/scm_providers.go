@@ -337,7 +337,7 @@ func (h *SCMProviderHandler) UpdateProvider(w http.ResponseWriter, r *http.Reque
 		enabled = ?, is_default = ?, base_url = ?, oauth_client_id = ?,
 		github_app_id = ?, github_app_installation_id = ?, github_org_id = ?,
 		scopes = ?, workspace_restriction_mode = ?, updated_at = CURRENT_TIMESTAMP`
-	args := []interface{}{
+	args := []any{
 		req.Slug, req.Name, req.ProviderType, req.AuthMethod,
 		req.Enabled, req.IsDefault, nullString(req.BaseURL), nullString(req.OAuthClientID),
 		nullString(req.GitHubAppID), nullString(req.GitHubAppInstallationID), nullInt64(req.GitHubOrgID),
@@ -463,7 +463,7 @@ func (h *SCMProviderHandler) TestProvider(w http.ResponseWriter, r *http.Request
 	// Decrypt and set credentials based on auth method
 	switch p.AuthMethod {
 	case models.SCMAuthMethodOAuth:
-		respondJSONOK(w, map[string]interface{}{
+		respondJSONOK(w, map[string]any{
 			"success": false,
 			"error":   "OAuth providers cannot be tested at the provider level. Test by completing the OAuth flow as a user.",
 		})
@@ -478,7 +478,7 @@ func (h *SCMProviderHandler) TestProvider(w http.ResponseWriter, r *http.Request
 			}
 			cfg.PersonalAccessToken = token
 		} else {
-			respondJSONOK(w, map[string]interface{}{
+			respondJSONOK(w, map[string]any{
 				"success": false,
 				"error":   "Personal Access Token not configured",
 			})
@@ -487,21 +487,21 @@ func (h *SCMProviderHandler) TestProvider(w http.ResponseWriter, r *http.Request
 	case models.SCMAuthMethodGitHubApp:
 		// Check required fields
 		if !ghAppID.Valid || ghAppID.String == "" {
-			respondJSONOK(w, map[string]interface{}{
+			respondJSONOK(w, map[string]any{
 				"success": false,
 				"error":   "GitHub App ID not configured",
 			})
 			return
 		}
 		if !ghAppKeyEnc.Valid || ghAppKeyEnc.String == "" {
-			respondJSONOK(w, map[string]interface{}{
+			respondJSONOK(w, map[string]any{
 				"success": false,
 				"error":   "GitHub App private key not configured",
 			})
 			return
 		}
 		if !ghAppInstallID.Valid || ghAppInstallID.String == "" {
-			respondJSONOK(w, map[string]interface{}{
+			respondJSONOK(w, map[string]any{
 				"success": false,
 				"error":   "GitHub App installation ID not configured. Use 'Discover Installations' to select an organization.",
 			})
@@ -524,7 +524,7 @@ func (h *SCMProviderHandler) TestProvider(w http.ResponseWriter, r *http.Request
 	// Create provider instance and test connection
 	provider, err := scm.NewProvider(cfg)
 	if err != nil {
-		respondJSONOK(w, map[string]interface{}{
+		respondJSONOK(w, map[string]any{
 			"success": false,
 			"error":   err.Error(),
 		})
@@ -536,14 +536,14 @@ func (h *SCMProviderHandler) TestProvider(w http.ResponseWriter, r *http.Request
 
 	err = provider.TestConnection(ctx)
 	if err != nil {
-		respondJSONOK(w, map[string]interface{}{
+		respondJSONOK(w, map[string]any{
 			"success": false,
 			"error":   err.Error(),
 		})
 		return
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"success": true,
 		"message": "Connection successful",
 	})
@@ -564,8 +564,8 @@ type providerRowScanResult struct {
 }
 
 // scanDestinations returns the scan destinations for a provider query row
-func (r *providerRowScanResult) scanDestinations() []interface{} {
-	return []interface{}{
+func (r *providerRowScanResult) scanDestinations() []any {
+	return []any{
 		&r.Provider.ID, &r.Provider.Slug, &r.Provider.Name, &r.Provider.ProviderType, &r.Provider.AuthMethod,
 		&r.Provider.Enabled, &r.Provider.IsDefault, &r.BaseURL, &r.OAuthClientID, &r.OAuthClientSecretEnc,
 		&r.PATEnc, &r.GHAppID, &r.GHAppKeyEnc, &r.GHAppInstallID, &r.GHOrgID,
@@ -629,14 +629,14 @@ func (h *SCMProviderHandler) getProviderByID(id int) (*SCMProviderResponse, erro
 	return &resp, nil
 }
 
-func nullString(s string) interface{} {
+func nullString(s string) any {
 	if s == "" {
 		return nil
 	}
 	return s
 }
 
-func nullInt64(i *int64) interface{} {
+func nullInt64(i *int64) any {
 	if i == nil {
 		return nil
 	}

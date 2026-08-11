@@ -24,7 +24,7 @@ var (
 
 // iterationScanner is satisfied by both *sql.Row and *sql.Rows.
 type iterationScanner interface {
-	Scan(dest ...interface{}) error
+	Scan(dest ...any) error
 }
 
 // parseDate tries date-only format first, then falls back to RFC3339.
@@ -147,8 +147,8 @@ func (s *PlanningService) ListIterations(params IterationListParams) ([]Iteratio
 		WHERE 1=1`
 
 	countQuery := "SELECT COUNT(*) FROM iterations i WHERE 1=1"
-	var args []interface{}
-	var countArgs []interface{}
+	var args []any
+	var countArgs []any
 
 	// Filter by workspace - show local iterations for this workspace + optionally global iterations
 	switch {
@@ -574,7 +574,7 @@ func (s *PlanningService) GetIterationBurndown(iterationID int, workspaceIDs []i
 	}
 	workspaceClause, workspaceArgs := planningWorkspaceFilter("i.workspace_id", workspaceIDs)
 	iterationValue := fmt.Sprintf("%d", iterationID)
-	itemArgs := make([]interface{}, 0, 3+len(workspaceArgs))
+	itemArgs := make([]any, 0, 3+len(workspaceArgs))
 	itemArgs = append(itemArgs, iterationID, iterationValue, iterationValue)
 	itemArgs = append(itemArgs, workspaceArgs...)
 	rows, err := s.db.Query(`
@@ -599,7 +599,7 @@ func (s *PlanningService) GetIterationBurndown(iterationID int, workspaceIDs []i
 	for rows.Next() {
 		var (
 			itemID       int
-			createdValue interface{}
+			createdValue any
 			state        historicalItemState
 		)
 		if err := rows.Scan(&itemID, &state.iterationID, &state.statusID, &createdValue); err != nil {
@@ -631,7 +631,7 @@ func (s *PlanningService) GetIterationBurndown(iterationID int, workspaceIDs []i
 		oldValue  sql.NullString
 		newValue  sql.NullString
 	}
-	historyArgs := make([]interface{}, 0, 4+len(workspaceArgs))
+	historyArgs := make([]any, 0, 4+len(workspaceArgs))
 	historyArgs = append(historyArgs, startDate, iterationID, iterationValue, iterationValue)
 	historyArgs = append(historyArgs, workspaceArgs...)
 	historyRows, err := s.db.Query(`
@@ -659,7 +659,7 @@ func (s *PlanningService) GetIterationBurndown(iterationID int, workspaceIDs []i
 	var changes []historyChange
 	for historyRows.Next() {
 		var change historyChange
-		var changedValue interface{}
+		var changedValue any
 		if err := historyRows.Scan(
 			&change.itemID, &changedValue, &change.fieldName, &change.oldValue, &change.newValue,
 		); err != nil {

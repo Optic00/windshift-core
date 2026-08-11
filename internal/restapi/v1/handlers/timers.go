@@ -45,7 +45,7 @@ type startTimerRequest struct {
 // @Produce      json
 // @Security     BearerAuth
 // @Param        body  body      handlers.startTimerRequest  true  "Timer to start"
-// @Success      201   {object}  map[string]interface{}
+// @Success      201   {object}  map[string]any
 // @Failure      400   {object}  restapi.ErrorResponse
 // @Failure      401   {object}  restapi.ErrorResponse
 // @Failure      403   {object}  restapi.ErrorResponse
@@ -117,7 +117,7 @@ func (h *ActiveTimerHandler) GetActiveTimer(w http.ResponseWriter, r *http.Reque
 // @Tags         time-tracking
 // @Produce      json
 // @Security     BearerAuth
-// @Success      200  {object}  map[string]interface{}
+// @Success      200  {object}  map[string]any
 // @Failure      401  {object}  restapi.ErrorResponse
 // @Failure      404  {object}  restapi.ErrorResponse  "No timer is running"
 // @Router       /timer/stop [delete]

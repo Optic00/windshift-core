@@ -86,9 +86,9 @@ type portalRegistrationStartRequest struct {
 }
 
 type portalRegistrationCompleteRequest struct {
-	SessionID      string      `json:"sessionId"`
-	CredentialName string      `json:"credentialName"`
-	Response       interface{} `json:"response"`
+	SessionID      string `json:"sessionId"`
+	CredentialName string `json:"credentialName"`
+	Response       any    `json:"response"`
 }
 
 // StartPortalRegistration begins enrolment of a new passkey for the
@@ -146,7 +146,7 @@ func (h *PortalWebAuthnHandler) StartPortalRegistration(w http.ResponseWriter, r
 		return
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"publicKey": options.Response,
 		"sessionId": sessionID,
 	})
@@ -215,10 +215,10 @@ func (h *PortalWebAuthnHandler) CompletePortalRegistration(w http.ResponseWriter
 		return
 	}
 
-	respondJSONCreated(w, map[string]interface{}{
+	respondJSONCreated(w, map[string]any{
 		"status":  "success",
 		"message": "Passkey registered successfully",
-		"credential": map[string]interface{}{
+		"credential": map[string]any{
 			"id":              credential.ID,
 			"name":            name,
 			"attestationType": credential.AttestationType,
@@ -230,8 +230,8 @@ func (h *PortalWebAuthnHandler) CompletePortalRegistration(w http.ResponseWriter
 // ----- discoverable login -----
 
 type portalLoginCompleteRequest struct {
-	SessionID string      `json:"sessionId"`
-	Response  interface{} `json:"response"`
+	SessionID string `json:"sessionId"`
+	Response  any    `json:"response"`
 }
 
 // StartPortalLogin issues a discoverable-login challenge. The slug must
@@ -258,7 +258,7 @@ func (h *PortalWebAuthnHandler) StartPortalLogin(w http.ResponseWriter, r *http.
 		return
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"publicKey": options.Response,
 		"sessionId": sessionID,
 	})
@@ -380,10 +380,10 @@ func (h *PortalWebAuthnHandler) CompletePortalLogin(w http.ResponseWriter, r *ht
 		slog.Int("portal_customer_id", resolvedCustomer.ID),
 		slog.String("portal", slug))
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"success": true,
 		"message": "Successfully signed in",
-		"customer": map[string]interface{}{
+		"customer": map[string]any{
 			"id":    resolvedCustomer.ID,
 			"email": resolvedCustomer.Email,
 			"name":  resolvedCustomer.Name,

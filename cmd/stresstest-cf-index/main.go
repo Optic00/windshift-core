@@ -350,7 +350,7 @@ func bulkInsertWithCheckpoints(db database.Database, wsID, fieldID int, cfg conf
 				WorkspaceID:         wsID,
 				WorkspaceItemNumber: i + 1,
 				Title:               fmt.Sprintf("stress-%d", i+1),
-				CustomFieldValues: map[string]interface{}{
+				CustomFieldValues: map[string]any{
 					fieldKey: cfValueFor(i, cfg.fieldType),
 				},
 			}
@@ -428,7 +428,7 @@ func descendingIndexedSweep(db database.Database, cfg config, queryFilter, index
 	return measurements, nil
 }
 
-func cfValueFor(i int, fieldType string) interface{} {
+func cfValueFor(i int, fieldType string) any {
 	bucket := i % 1000
 	switch fieldType {
 	case "number":

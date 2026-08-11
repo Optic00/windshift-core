@@ -131,7 +131,7 @@ Examples:
 		if outputFormat == "table" {
 			_, _ = fmt.Fprintf(stdout, "Downloaded %s\n", finalPath)
 		} else {
-			NewOutput().Print(map[string]interface{}{
+			NewOutput().Print(map[string]any{
 				"attachment_id": id,
 				"path":          finalPath,
 			})

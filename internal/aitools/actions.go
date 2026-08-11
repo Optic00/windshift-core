@@ -19,7 +19,7 @@ import (
 
 // emitActionAudit records agent-driven action mutations through Env.audit.
 func emitActionAudit(env *Env, actionType string, workspaceID, actionID int, actionName string) {
-	env.audit(actionType, logger.ResourceAutomation, actionID, actionName, map[string]interface{}{
+	env.audit(actionType, logger.ResourceAutomation, actionID, actionName, map[string]any{
 		"workspace_id": workspaceID,
 	})
 }

@@ -83,7 +83,7 @@ func (s *TestSCMHookService) InjectRef(params TestSCMInjectRefParams) (models.Ac
 	s.actionService.EmitActionEvent(&models.ActionEvent{
 		EventType:   eventType,
 		WorkspaceID: workspaceID,
-		NewValues: map[string]interface{}{
+		NewValues: map[string]any{
 			"ref.name":                     params.RefName,
 			"ref.short":                    short,
 			"ref.sha":                      sha,

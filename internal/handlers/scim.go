@@ -91,7 +91,7 @@ func (h *SCIMHandler) limitRequestBody(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, scimMaxBodySize)
 }
 
-func (h *SCIMHandler) logSCIMAuditEvent(r *http.Request, actionType, resourceType string, resourceID *int, resourceName string, details map[string]interface{}, success bool, errorMsg string) {
+func (h *SCIMHandler) logSCIMAuditEvent(r *http.Request, actionType, resourceType string, resourceID *int, resourceName string, details map[string]any, success bool, errorMsg string) {
 	scimToken := middleware.GetSCIMToken(r)
 	tokenPrefix := ""
 	if scimToken != nil {
@@ -99,7 +99,7 @@ func (h *SCIMHandler) logSCIMAuditEvent(r *http.Request, actionType, resourceTyp
 	}
 
 	if details == nil {
-		details = make(map[string]interface{})
+		details = make(map[string]any)
 	}
 	details["scim_token_prefix"] = tokenPrefix
 
@@ -123,10 +123,10 @@ func (h *SCIMHandler) logSCIMAuditEvent(r *http.Request, actionType, resourceTyp
 
 // attrChange records one PATCH mutation for the audit log.
 type attrChange struct {
-	Op       string      `json:"op"`
-	Path     string      `json:"path"`
-	OldValue interface{} `json:"old_value,omitempty"`
-	NewValue interface{} `json:"new_value,omitempty"`
+	Op       string `json:"op"`
+	Path     string `json:"path"`
+	OldValue any    `json:"old_value,omitempty"`
+	NewValue any    `json:"new_value,omitempty"`
 }
 
 // logPatchOpError records driver details server-side while keeping the client
@@ -146,7 +146,7 @@ func (h *SCIMHandler) logPatchOpError(r *http.Request, resourceKind string, reso
 	)
 }
 
-func respondSCIMJSON(w http.ResponseWriter, statusCode int, data interface{}) {
+func respondSCIMJSON(w http.ResponseWriter, statusCode int, data any) {
 	w.Header().Set("Content-Type", "application/scim+json")
 	w.WriteHeader(statusCode)
 	_ = json.NewEncoder(w).Encode(data)
@@ -189,7 +189,7 @@ func (h *SCIMHandler) GetResourceTypes(w http.ResponseWriter, r *http.Request) {
 		TotalResults: len(resourceTypes),
 		StartIndex:   1,
 		ItemsPerPage: len(resourceTypes),
-		Resources:    make([]interface{}, len(resourceTypes)),
+		Resources:    make([]any, len(resourceTypes)),
 	}
 	for i, rt := range resourceTypes {
 		response.Resources[i] = rt
@@ -223,7 +223,7 @@ func (h *SCIMHandler) GetSchemas(w http.ResponseWriter, r *http.Request) {
 		TotalResults: len(schemas),
 		StartIndex:   1,
 		ItemsPerPage: len(schemas),
-		Resources:    make([]interface{}, len(schemas)),
+		Resources:    make([]any, len(schemas)),
 	}
 	for i, s := range schemas {
 		response.Resources[i] = s
@@ -260,7 +260,7 @@ func (h *SCIMHandler) listUsersFiltered(filter string, startIndex, count int) (*
 		return nil, err
 	}
 
-	resources := make([]interface{}, 0)
+	resources := make([]any, 0)
 	for i := range users {
 		resources = append(resources, h.userToSCIM(&users[i]))
 	}
@@ -288,7 +288,7 @@ func (h *SCIMHandler) listGroupsFiltered(filter string, startIndex, count int) (
 		return nil, err
 	}
 
-	resources := make([]interface{}, 0)
+	resources := make([]any, 0)
 	for i := range groups {
 		group := &groups[i]
 		members, mErr := h.getGroupMembers(group.ID)
@@ -395,7 +395,7 @@ func (h *SCIMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		}
 
 		h.logSCIMAuditEvent(r, logger.ActionSCIMUserCreate, logger.ResourceUser, &existingUser.ID, email,
-			map[string]interface{}{
+			map[string]any{
 				"username":     username,
 				"email":        email,
 				"adopted":      true,
@@ -441,7 +441,7 @@ func (h *SCIMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.logSCIMAuditEvent(r, logger.ActionSCIMUserCreate, logger.ResourceUser, &userID, email,
-		map[string]interface{}{"username": scimUser.UserName, "email": email}, true, "")
+		map[string]any{"username": scimUser.UserName, "email": email}, true, "")
 
 	respondSCIMJSON(w, http.StatusCreated, h.userToSCIM(user))
 }
@@ -489,7 +489,7 @@ func (h *SCIMHandler) ReplaceUser(w http.ResponseWriter, r *http.Request) {
 	// PUT. See DeleteUser for the full rationale.
 	if !existingUser.SCIMManaged {
 		h.logSCIMAuditEvent(r, logger.ActionSCIMUserUpdate, logger.ResourceUser, &id, existingUser.Email,
-			map[string]interface{}{
+			map[string]any{
 				"username": existingUser.Username,
 				"reason":   "target_not_scim_managed",
 			}, false, "refused: user is not SCIM-managed")
@@ -548,7 +548,7 @@ func (h *SCIMHandler) ReplaceUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.logSCIMAuditEvent(r, logger.ActionSCIMUserUpdate, logger.ResourceUser, &id, email,
-		map[string]interface{}{
+		map[string]any{
 			"username":     scimUser.UserName,
 			"email":        email,
 			"active":       isActive,
@@ -582,7 +582,7 @@ func (h *SCIMHandler) PatchUser(w http.ResponseWriter, r *http.Request) {
 	// for the full rationale.
 	if !snapshot.SCIMManaged {
 		h.logSCIMAuditEvent(r, logger.ActionSCIMUserUpdate, logger.ResourceUser, &id, snapshot.Email,
-			map[string]interface{}{
+			map[string]any{
 				"username": snapshot.Username,
 				"reason":   "target_not_scim_managed",
 			}, false, "refused: user is not SCIM-managed")
@@ -618,7 +618,7 @@ func (h *SCIMHandler) PatchUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.logSCIMAuditEvent(r, logger.ActionSCIMUserUpdate, logger.ResourceUser, &id, user.Email,
-		map[string]interface{}{
+		map[string]any{
 			"operation_count": len(patchReq.Operations),
 			"changes":         changes,
 		}, true, "")
@@ -657,7 +657,7 @@ func (h *SCIMHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	// admins and local accounts the IdP never owned.
 	if !user.SCIMManaged {
 		h.logSCIMAuditEvent(r, logger.ActionSCIMUserDelete, logger.ResourceUser, &id, user.Email,
-			map[string]interface{}{
+			map[string]any{
 				"username": user.Username,
 				"reason":   "target_not_scim_managed",
 			}, false, "refused: user is not SCIM-managed")
@@ -672,7 +672,7 @@ func (h *SCIMHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.logSCIMAuditEvent(r, logger.ActionSCIMUserDelete, logger.ResourceUser, &id, user.Email,
-		map[string]interface{}{"username": user.Username, "email": user.Email}, true, "")
+		map[string]any{"username": user.Username, "email": user.Email}, true, "")
 
 	h.handleSCIMUserDeactivation(r, id, user.Username, "scim_delete", user.SCIMManaged)
 
@@ -776,7 +776,7 @@ func (h *SCIMHandler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 	members, _ := h.getGroupMembers(groupIDInt)
 
 	h.logSCIMAuditEvent(r, logger.ActionSCIMGroupCreate, logger.ResourceGroup, &groupIDInt, scimGroup.DisplayName,
-		map[string]interface{}{"member_count": len(scimGroup.Members)}, true, "")
+		map[string]any{"member_count": len(scimGroup.Members)}, true, "")
 
 	respondSCIMJSON(w, http.StatusCreated, h.groupToSCIM(group, members))
 }
@@ -825,7 +825,7 @@ func (h *SCIMHandler) ReplaceGroup(w http.ResponseWriter, r *http.Request) {
 	// its ID. See ReplaceUser for the user-side equivalent of this guard.
 	if !existingGroup.SCIMManaged {
 		h.logSCIMAuditEvent(r, logger.ActionSCIMGroupUpdate, logger.ResourceGroup, &id, existingGroup.Name,
-			map[string]interface{}{
+			map[string]any{
 				"reason": "target_not_scim_managed",
 			}, false, "refused: group is not SCIM-managed")
 		respondSCIMErrorMsg(w, http.StatusNotFound, "Group not found", "")
@@ -913,7 +913,7 @@ func (h *SCIMHandler) ReplaceGroup(w http.ResponseWriter, r *http.Request) {
 
 	// Audit log: SCIM group updated (full replace)
 	h.logSCIMAuditEvent(r, logger.ActionSCIMGroupUpdate, logger.ResourceGroup, &id, scimGroup.DisplayName,
-		map[string]interface{}{
+		map[string]any{
 			"old_name":     existingGroup.Name,
 			"new_name":     scimGroup.DisplayName,
 			"member_count": len(scimGroup.Members),
@@ -942,7 +942,7 @@ func (h *SCIMHandler) PatchGroup(w http.ResponseWriter, r *http.Request) {
 	// for the rationale.
 	if !snapshot.SCIMManaged {
 		h.logSCIMAuditEvent(r, logger.ActionSCIMGroupUpdate, logger.ResourceGroup, &id, snapshot.Name,
-			map[string]interface{}{
+			map[string]any{
 				"reason": "target_not_scim_managed",
 			}, false, "refused: group is not SCIM-managed")
 		respondSCIMErrorMsg(w, http.StatusNotFound, "Group not found", "")
@@ -987,7 +987,7 @@ func (h *SCIMHandler) PatchGroup(w http.ResponseWriter, r *http.Request) {
 	members, _ := h.getGroupMembers(id)
 
 	h.logSCIMAuditEvent(r, logger.ActionSCIMGroupUpdate, logger.ResourceGroup, &id, group.Name,
-		map[string]interface{}{
+		map[string]any{
 			"operation_count": len(patchReq.Operations),
 			"changes":         changes,
 		}, true, "")
@@ -1013,7 +1013,7 @@ func (h *SCIMHandler) DeleteGroup(w http.ResponseWriter, r *http.Request) {
 	// the IdP never owned. See DeleteUser for the user-side equivalent.
 	if !group.SCIMManaged {
 		h.logSCIMAuditEvent(r, logger.ActionSCIMGroupDelete, logger.ResourceGroup, &id, group.Name,
-			map[string]interface{}{
+			map[string]any{
 				"reason": "target_not_scim_managed",
 			}, false, "refused: group is not SCIM-managed")
 		respondSCIMErrorMsg(w, http.StatusNotFound, "Group not found", "")
@@ -1103,7 +1103,7 @@ func (h *SCIMHandler) SearchRequest(w http.ResponseWriter, r *http.Request) {
 			Schemas:      []string{models.SCIMSchemaListResponse},
 			TotalResults: 0,
 			StartIndex:   startIndex,
-			Resources:    make([]interface{}, 0),
+			Resources:    make([]any, 0),
 		}
 
 		if userErr == nil {
@@ -1309,13 +1309,13 @@ func (h *SCIMHandler) executeBulkOperation(originalReq *http.Request, op models.
 	}
 
 	if recorder.Body.Len() > 0 {
-		var respBody interface{}
+		var respBody any
 		if err := json.Unmarshal(recorder.Body.Bytes(), &respBody); err == nil {
 			if recorder.Code >= 400 {
 				result.Response = respBody
 			} else if method == "POST" || method == "PUT" || method == "GET" || method == "PATCH" {
-				if respMap, ok := respBody.(map[string]interface{}); ok {
-					if meta, ok := respMap["meta"].(map[string]interface{}); ok {
+				if respMap, ok := respBody.(map[string]any); ok {
+					if meta, ok := respMap["meta"].(map[string]any); ok {
 						if loc, ok := meta["location"].(string); ok {
 							result.Location = loc
 						}
@@ -1549,7 +1549,7 @@ func (h *SCIMHandler) applyUserPatchOp(snapshot *models.User, op models.SCIMPatc
 
 		case "":
 			// No path - value should be an object with attributes
-			if valueMap, ok := op.Value.(map[string]interface{}); ok {
+			if valueMap, ok := op.Value.(map[string]any); ok {
 				var changes []attrChange
 				for key, val := range valueMap {
 					subOp := models.SCIMPatchOp{Op: op.Op, Path: key, Value: val}
@@ -1617,9 +1617,9 @@ func (h *SCIMHandler) applyGroupPatchOp(r *http.Request, snapshot *models.TeamGr
 			}
 
 		case "members":
-			if members, ok := op.Value.([]interface{}); ok {
+			if members, ok := op.Value.([]any); ok {
 				for _, m := range members {
-					memberMap, ok := m.(map[string]interface{})
+					memberMap, ok := m.(map[string]any)
 					if !ok {
 						continue
 					}
@@ -1650,12 +1650,12 @@ func (h *SCIMHandler) applyGroupPatchOp(r *http.Request, snapshot *models.TeamGr
 			if op.Value == nil {
 				return nil, nil
 			}
-			members, ok := op.Value.([]interface{})
+			members, ok := op.Value.([]any)
 			if !ok {
 				return nil, nil
 			}
 			for _, m := range members {
-				memberMap, ok := m.(map[string]interface{})
+				memberMap, ok := m.(map[string]any)
 				if !ok {
 					continue
 				}
@@ -1691,7 +1691,7 @@ func (h *SCIMHandler) handleSCIMUserDeactivation(r *http.Request, userID int, us
 			slog.String("trigger", trigger),
 			slog.Any("error", err))
 		h.logSCIMAuditEvent(r, logger.ActionSCIMUserAgentImpact, logger.ResourceUser, &userID, username,
-			map[string]interface{}{"trigger": trigger}, false, err.Error())
+			map[string]any{"trigger": trigger}, false, err.Error())
 		return
 	}
 	if len(cascade.AgentIDs) == 0 && len(cascade.RevokedAPITokens) == 0 {
@@ -1706,7 +1706,7 @@ func (h *SCIMHandler) handleSCIMUserDeactivation(r *http.Request, userID int, us
 		slog.Int("revoked_api_tokens", len(cascade.RevokedAPITokens)))
 
 	h.logSCIMAuditEvent(r, logger.ActionSCIMUserAgentImpact, logger.ResourceUser, &userID, username,
-		map[string]interface{}{
+		map[string]any{
 			"trigger":               trigger,
 			"deactivated_agent_ids": cascade.AgentIDs,
 			"revoked_api_tokens":    len(cascade.RevokedAPITokens),
@@ -1716,7 +1716,7 @@ func (h *SCIMHandler) handleSCIMUserDeactivation(r *http.Request, userID int, us
 	for _, aid := range cascade.AgentIDs {
 		agentID := aid
 		h.logSCIMAuditEvent(r, logger.ActionAgentDeactivate, logger.ResourceUser, &agentID, "",
-			map[string]interface{}{
+			map[string]any{
 				"reason":   "scim_owner_deactivated",
 				"owner_id": userID,
 				"trigger":  trigger,
@@ -1725,7 +1725,7 @@ func (h *SCIMHandler) handleSCIMUserDeactivation(r *http.Request, userID int, us
 	for _, tid := range cascade.RevokedAPITokens {
 		tokenID := tid
 		h.logSCIMAuditEvent(r, logger.ActionAPITokenAutoRevoke, logger.ResourceAPIToken, &tokenID, "",
-			map[string]interface{}{
+			map[string]any{
 				"reason":   "scim_owner_deactivated",
 				"owner_id": userID,
 				"trigger":  trigger,
@@ -1774,7 +1774,7 @@ func (h *SCIMHandler) notifyAdminsOfSCIMCascade(ownerID int, ownerUsername, trig
 			len(cascade.AgentIDs), len(cascade.RevokedAPITokens))
 	}
 
-	meta, _ := json.Marshal(map[string]interface{}{
+	meta, _ := json.Marshal(map[string]any{
 		"source":                "scim",
 		"trigger":               trigger,
 		"owner_id":              ownerID,
@@ -1807,7 +1807,7 @@ func (h *SCIMHandler) notifyAdminsOfSCIMCascade(ownerID int, ownerUsername, trig
 // and error message reflect the DB write result, so the audit log can be queried
 // for failed SCIM member ops (e.g., FK violations on non-existent user_id).
 func (h *SCIMHandler) logGroupMemberChange(r *http.Request, actionType string, group *models.TeamGroup, memberID int, execErr error) {
-	details := map[string]interface{}{
+	details := map[string]any{
 		"user_id":    memberID,
 		"group_id":   group.ID,
 		"group_name": group.Name,

@@ -446,7 +446,7 @@ func (s *LogbookActionService) executeAction(action *models.LogbookAction, event
 	log.ID = logID
 
 	// Build execution variables
-	vars := map[string]interface{}{
+	vars := map[string]any{
 		"doc.id":           event.DocumentID,
 		"doc.bucket_id":    event.BucketID,
 		"doc.title":        event.Title,
@@ -537,7 +537,7 @@ func (s *LogbookActionService) canExecuteNode(nodeID int, edges []models.Logbook
 	return actionutil.CanExecuteNodeTyped(nodeID, edges, executedNodes, stepResults)
 }
 
-func (s *LogbookActionService) executeNode(node *models.LogbookActionNode, event *models.LogbookActionEvent, vars map[string]interface{}, stepResult *models.StepResult) error {
+func (s *LogbookActionService) executeNode(node *models.LogbookActionNode, event *models.LogbookActionEvent, vars map[string]any, stepResult *models.StepResult) error {
 	switch node.NodeType {
 	case models.LogbookNodeCreateItem:
 		return s.executeCreateItem(node, event, vars, stepResult)
@@ -553,17 +553,17 @@ func (s *LogbookActionService) executeNode(node *models.LogbookActionNode, event
 }
 
 // executeCreateItem delegates to the main server via HTTP.
-func (s *LogbookActionService) executeCreateItem(node *models.LogbookActionNode, event *models.LogbookActionEvent, vars map[string]interface{}, stepResult *models.StepResult) error {
+func (s *LogbookActionService) executeCreateItem(node *models.LogbookActionNode, event *models.LogbookActionEvent, vars map[string]any, stepResult *models.StepResult) error {
 	return s.executeViaMainServer(node, event, vars, stepResult)
 }
 
 // executeCreateAssetNode delegates to the main server via HTTP.
-func (s *LogbookActionService) executeCreateAssetNode(node *models.LogbookActionNode, event *models.LogbookActionEvent, vars map[string]interface{}, stepResult *models.StepResult) error {
+func (s *LogbookActionService) executeCreateAssetNode(node *models.LogbookActionNode, event *models.LogbookActionEvent, vars map[string]any, stepResult *models.StepResult) error {
 	return s.executeViaMainServer(node, event, vars, stepResult)
 }
 
 // executeViaMainServer sends a node execution request to the main server's internal endpoint.
-func (s *LogbookActionService) executeViaMainServer(node *models.LogbookActionNode, event *models.LogbookActionEvent, vars map[string]interface{}, stepResult *models.StepResult) error {
+func (s *LogbookActionService) executeViaMainServer(node *models.LogbookActionNode, event *models.LogbookActionEvent, vars map[string]any, stepResult *models.StepResult) error {
 	if s.httpClient == nil || s.mainServerURL == "" {
 		return fmt.Errorf("main server not configured for node execution")
 	}
@@ -659,7 +659,7 @@ func (s *LogbookActionService) executeAssociateCustomer(node *models.LogbookActi
 		return fmt.Errorf("failed to associate customer: %w", err)
 	}
 
-	stepResult.Output = map[string]interface{}{
+	stepResult.Output = map[string]any{
 		"document_id":              event.DocumentID,
 		"customer_organisation_id": config.CustomerOrganisationID,
 		"portal_customer_id":       config.PortalCustomerID,
@@ -668,7 +668,7 @@ func (s *LogbookActionService) executeAssociateCustomer(node *models.LogbookActi
 	return nil
 }
 
-func (s *LogbookActionService) executeConditionNode(node *models.LogbookActionNode, event *models.LogbookActionEvent, vars map[string]interface{}, stepResult *models.StepResult) error {
+func (s *LogbookActionService) executeConditionNode(node *models.LogbookActionNode, event *models.LogbookActionEvent, vars map[string]any, stepResult *models.StepResult) error {
 	var config models.ConditionNodeConfig
 	if err := json.Unmarshal([]byte(node.NodeConfig), &config); err != nil {
 		return fmt.Errorf("failed to parse condition config: %w", err)
@@ -695,7 +695,7 @@ func (s *LogbookActionService) executeConditionNode(node *models.LogbookActionNo
 
 	result := evaluateCondition(fieldValue, config.Operator, config.Value)
 
-	stepResult.Output = map[string]interface{}{
+	stepResult.Output = map[string]any{
 		"condition_result": result,
 		"field_name":       config.FieldName,
 		"field_value":      fieldValue,
@@ -733,7 +733,7 @@ func evaluateCondition(fieldValue, operator, compareValue string) bool {
 
 var logbookVarRegexp = regexp.MustCompile(`\{\{([^}]+)\}\}`)
 
-func (s *LogbookActionService) substituteVariables(template string, vars map[string]interface{}) string {
+func (s *LogbookActionService) substituteVariables(template string, vars map[string]any) string {
 	return logbookVarRegexp.ReplaceAllStringFunc(template, func(match string) string {
 		varName := strings.TrimPrefix(strings.TrimSuffix(match, "}}"), "{{")
 		varName = strings.TrimSpace(varName)

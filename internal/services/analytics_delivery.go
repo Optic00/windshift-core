@@ -227,9 +227,9 @@ func analyticsIDChunks(ids []int) [][]int {
 	return chunks
 }
 
-func analyticsIDArgs(ids []int) (placeholders string, args []interface{}) {
+func analyticsIDArgs(ids []int) (placeholders string, args []any) {
 	placeholderList := make([]string, len(ids))
-	args = make([]interface{}, len(ids))
+	args = make([]any, len(ids))
 	for i, id := range ids {
 		placeholderList[i] = "?"
 		args[i] = id
@@ -344,7 +344,7 @@ func (s *AnalyticsService) loadAnalyticsDeliveryData(ctx context.Context, ds *da
 
 		for rows.Next() {
 			var event analyticsStatusEvent
-			var changedAt interface{}
+			var changedAt any
 			var oldValue, newValue sql.NullString
 			if err := rows.Scan(&event.ItemID, &changedAt, &oldValue, &newValue); err != nil {
 				rows.Close()
@@ -383,7 +383,7 @@ func analyticsStatusID(value sql.NullString) (int, bool) {
 	return id, true
 }
 
-func analyticsDBTime(value interface{}) (time.Time, bool) {
+func analyticsDBTime(value any) (time.Time, bool) {
 	switch v := value.(type) {
 	case time.Time:
 		return v, !v.IsZero()

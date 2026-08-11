@@ -44,13 +44,13 @@ func itemListCountCacheKey(db database.Database, workspaceID int) string {
 	return fmt.Sprintf("%s:workspace:%d", itemListCountCacheDBKey(db), workspaceID)
 }
 
-func cachedItemListCount(ctx context.Context, db database.Database, workspaceID int, query string, args ...interface{}) (int, error) {
+func cachedItemListCount(ctx context.Context, db database.Database, workspaceID int, query string, args ...any) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
 
 	key := itemListCountCacheKey(db, workspaceID)
-	load := func() (interface{}, error) {
+	load := func() (any, error) {
 		now := time.Now()
 		itemListCountCache.Lock()
 		entry, ok := itemListCountCache.entries[key]

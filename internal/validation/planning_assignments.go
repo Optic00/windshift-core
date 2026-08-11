@@ -10,7 +10,7 @@ import (
 // database.Tx. Keeping the contract local lets create paths validate before a
 // transaction while update paths validate against the locked item transaction.
 type PlanningAssignmentQueryer interface {
-	QueryRow(query string, args ...interface{}) *sql.Row
+	QueryRow(query string, args ...any) *sql.Row
 }
 
 // ValidatePlanningAssignments ensures workspace-local planning objects are

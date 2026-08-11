@@ -31,7 +31,7 @@ func (h *PriorityHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 		       p.icon, p.color, p.sort_order, p.created_at, p.updated_at
 		FROM priorities p`
 
-	args := []interface{}{}
+	args := []any{}
 	whereClause := ""
 
 	// Filter by configuration set if specified (via junction table)
@@ -188,7 +188,7 @@ func (h *PriorityHandler) validatePriority(w http.ResponseWriter, r *http.Reques
 
 	if p.IsDefault {
 		query := "UPDATE priorities SET is_default = false WHERE is_default = true"
-		args := []interface{}{}
+		args := []any{}
 		if excludeID > 0 {
 			query += " AND id != ?"
 			args = append(args, excludeID)
@@ -320,7 +320,7 @@ func (h *PriorityHandler) Create(w http.ResponseWriter, r *http.Request) {
 			ResourceType: "priority",
 			ResourceID:   &p.ID,
 			ResourceName: p.Name,
-			Details: map[string]interface{}{
+			Details: map[string]any{
 				"icon":       p.Icon,
 				"color":      p.Color,
 				"sort_order": p.SortOrder,
@@ -415,7 +415,7 @@ func (h *PriorityHandler) Update(w http.ResponseWriter, r *http.Request) {
 			ResourceType: "priority",
 			ResourceID:   &p.ID,
 			ResourceName: p.Name,
-			Details: map[string]interface{}{
+			Details: map[string]any{
 				"icon":       p.Icon,
 				"color":      p.Color,
 				"sort_order": p.SortOrder,

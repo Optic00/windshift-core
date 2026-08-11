@@ -184,10 +184,10 @@ func (ics *ItemCacheService) WarmCache() error {
 }
 
 // GetStats returns cache statistics
-func (ics *ItemCacheService) GetStats() map[string]interface{} {
+func (ics *ItemCacheService) GetStats() map[string]any {
 	hierarchyTotal := ics.hierarchyHits + ics.hierarchyMisses
 
-	stats := map[string]interface{}{
+	stats := map[string]any{
 		"hierarchy_hits":       ics.hierarchyHits,
 		"hierarchy_misses":     ics.hierarchyMisses,
 		"hierarchy_hit_rate":   float64(ics.hierarchyHits) / float64(max(hierarchyTotal, 1)),

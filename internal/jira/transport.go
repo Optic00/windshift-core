@@ -20,7 +20,7 @@ import (
 // Center keep their own URL construction, auth, and response types; this
 // interface is the kernel every call flows through.
 type jiraTransport interface {
-	do(ctx context.Context, method, reqURL string, body interface{}) (*http.Response, error)
+	do(ctx context.Context, method, reqURL string, body any) (*http.Response, error)
 }
 
 // summarizeJiraErrorBody makes an upstream error response useful in the UI
@@ -95,7 +95,7 @@ func jiraErrorFromResponse(resp *http.Response) error {
 
 // jiraRequestJSON executes one request, maps non-200 responses through the
 // shared error contract, and decodes the JSON body into result.
-func jiraRequestJSON(ctx context.Context, t jiraTransport, method, reqURL string, body, result interface{}) error {
+func jiraRequestJSON(ctx context.Context, t jiraTransport, method, reqURL string, body, result any) error {
 	resp, err := t.do(ctx, method, reqURL, body)
 	if err != nil {
 		return err
@@ -110,7 +110,7 @@ func jiraRequestJSON(ctx context.Context, t jiraTransport, method, reqURL string
 }
 
 // jiraGetJSON is the GET specialization of jiraRequestJSON.
-func jiraGetJSON(ctx context.Context, t jiraTransport, reqURL string, result interface{}) error {
+func jiraGetJSON(ctx context.Context, t jiraTransport, reqURL string, result any) error {
 	return jiraRequestJSON(ctx, t, http.MethodGet, reqURL, nil, result)
 }
 

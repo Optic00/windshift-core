@@ -708,8 +708,8 @@ func strPtr(s string) *string { return &s }
 // Idempotent: rows that already carry a "source" key (the new schema) are
 // left alone. Runs as part of the schema bootstrap and is safe to re-run.
 type queryExecutor interface {
-	Query(query string, args ...interface{}) (*sql.Rows, error)
-	Exec(query string, args ...interface{}) (sql.Result, error)
+	Query(query string, args ...any) (*sql.Rows, error)
+	Exec(query string, args ...any) (sql.Result, error)
 }
 
 // migrateConditionUserSourceToFieldRef rewrites legacy user_in_role /
@@ -735,7 +735,7 @@ func migrateConditionUserSourceToFieldRef(db queryExecutor, pgPlaceholders ...bo
 		if err := rows.Scan(&r.id, &r.config); err != nil {
 			return err
 		}
-		var raw map[string]interface{}
+		var raw map[string]any
 		if err := json.Unmarshal([]byte(r.config), &raw); err != nil {
 			continue // malformed config; leave alone for visibility in logs
 		}

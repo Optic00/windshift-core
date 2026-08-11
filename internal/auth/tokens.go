@@ -258,7 +258,7 @@ func (tm *TokenManager) CreateTokenInTx(tx database.Tx, userID int, request mode
 }
 
 type tokenRowStore interface {
-	QueryRow(query string, args ...interface{}) *sql.Row
+	QueryRow(query string, args ...any) *sql.Row
 }
 
 func (tm *TokenManager) createToken(store tokenRowStore, userID int, request models.APITokenCreate) (*models.APITokenResponse, error) {
@@ -319,7 +319,7 @@ func (tm *TokenManager) createToken(store tokenRowStore, userID int, request mod
 	}, nil
 }
 
-func nullIfEmpty(value string) interface{} {
+func nullIfEmpty(value string) any {
 	if value == "" {
 		return nil
 	}
@@ -439,7 +439,7 @@ func (tm *TokenManager) CleanupExpiredTokens() (int, error) {
 // Supports optional filtering by user_id and pagination.
 func (tm *TokenManager) ListAllTokens(userIDFilter *int, limit, offset int) ([]models.APIToken, int, error) {
 	countQuery := `SELECT COUNT(*) FROM api_tokens t WHERE NOT t.is_temporary`
-	var countArgs []interface{}
+	var countArgs []any
 	if userIDFilter != nil {
 		countQuery += " AND t.user_id = ?"
 		countArgs = append(countArgs, *userIDFilter)
@@ -457,7 +457,7 @@ func (tm *TokenManager) ListAllTokens(userIDFilter *int, limit, offset int) ([]m
 		FROM api_tokens t
 		JOIN users u ON t.user_id = u.id
 		WHERE NOT t.is_temporary`
-	var args []interface{}
+	var args []any
 	if userIDFilter != nil {
 		query += " AND t.user_id = ?"
 		args = append(args, *userIDFilter)

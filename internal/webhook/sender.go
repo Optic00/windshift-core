@@ -913,14 +913,14 @@ func (w *WebhookSender) SendTestWebhook(ctx context.Context, config *models.Chan
 	}
 
 	// Create test payload
-	testPayload := map[string]interface{}{
+	testPayload := map[string]any{
 		"event":     "test",
 		"timestamp": time.Now().UTC(),
 		"message":   "This is a test webhook from Windshift",
-		"item": map[string]interface{}{
+		"item": map[string]any{
 			"id":    0,
 			"title": "Test Item",
-			"workspace": map[string]interface{}{
+			"workspace": map[string]any{
 				"id":   0,
 				"name": "Test Workspace",
 				"key":  "TEST",

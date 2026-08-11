@@ -236,7 +236,7 @@ func (h *JiraImportHandler) StartImport(w http.ResponseWriter, r *http.Request) 
 				http.StatusConflict,
 				"JIRA_IMPORT_CONFLICT",
 				conflictErr.Message,
-			).WithDetails(map[string]interface{}{
+			).WithDetails(map[string]any{
 				"conflicting_imports": conflictErr.Conflicts,
 			})
 			respondError(w, r, apiErr)
@@ -257,7 +257,7 @@ func (h *JiraImportHandler) StartImport(w http.ResponseWriter, r *http.Request) 
 			ActionType:   logger.ActionJiraImport,
 			ResourceType: logger.ResourceJiraImport,
 			ResourceName: jobID,
-			Details: map[string]interface{}{
+			Details: map[string]any{
 				"connection_id": req.ConnectionID,
 				"project_keys":  req.ProjectKeys,
 			},
@@ -352,14 +352,14 @@ func jiraImportJobConfigJSON(req StartImportRequest, conflicts ...jiraImportConf
 			break
 		}
 	}
-	return json.Marshal(map[string]interface{}{
+	return json.Marshal(map[string]any{
 		"project_keys":        req.ProjectKeys,
 		"open_issues_only":    req.OpenIssuesOnly,
 		"mappings":            req.Mappings,
 		"plan_fingerprint":    fingerprint,
 		"configuration_drift": configurationDrift,
 		"previous_imports":    conflicts,
-		"xray": map[string]interface{}{
+		"xray": map[string]any{
 			"import_tests": req.Xray.ImportTests,
 			"region":       req.Xray.Region,
 		},
@@ -520,11 +520,11 @@ func jiraImportPlanFingerprint(req StartImportRequest) (string, error) {
 }
 
 func extractJiraImportProjectKeys(configJSON string) []string {
-	var config map[string]interface{}
+	var config map[string]any
 	if err := json.Unmarshal([]byte(configJSON), &config); err != nil {
 		return nil
 	}
-	rawKeys, ok := config["project_keys"].([]interface{})
+	rawKeys, ok := config["project_keys"].([]any)
 	if !ok {
 		return nil
 	}
@@ -619,11 +619,11 @@ func (h *JiraImportHandler) DeleteImportedData(w http.ResponseWriter, r *http.Re
 			IPAddress: utils.GetClientIP(r), UserAgent: r.UserAgent(),
 			ActionType:   logger.ActionJiraImportDeleteData,
 			ResourceType: logger.ResourceJiraImport, ResourceName: jobID,
-			Details: map[string]interface{}{"job_id": jobID, "deleted": deleted},
+			Details: map[string]any{"job_id": jobID, "deleted": deleted},
 			Success: true,
 		})
 	}
-	respondJSONOK(w, map[string]interface{}{"success": true, "deleted": deleted})
+	respondJSONOK(w, map[string]any{"success": true, "deleted": deleted})
 }
 
 // GetPreviousImports handles GET /api/admin/jira-import/previous-imports.
@@ -647,7 +647,7 @@ func jiraImportMappingWasCreated(metadata sql.NullString) bool {
 	return jiraimport.MappingWasCreated(metadata)
 }
 
-func jiraImportMappingMetadata(metadata sql.NullString) map[string]interface{} {
+func jiraImportMappingMetadata(metadata sql.NullString) map[string]any {
 	return jiraimport.Metadata(metadata)
 }
 
@@ -697,7 +697,7 @@ func (h *JiraImportHandler) failOnMappingFailure(jobID string, progress *ImportP
 }
 
 // recordMapping records an entity mapping through the Jira import module.
-func (h *JiraImportHandler) recordMapping(jobID, entityType, jiraID, jiraKey string, windshiftID int, metadata map[string]interface{}) error {
+func (h *JiraImportHandler) recordMapping(jobID, entityType, jiraID, jiraKey string, windshiftID int, metadata map[string]any) error {
 	if err := h.imports.RecordMapping(jobID, entityType, jiraID, jiraKey, windshiftID, metadata); err != nil {
 		slog.Error("Failed to record mapping", slog.String("component", "jira"), slog.String("job_id", jobID),
 			slog.String("entity_type", entityType), slog.String("jira_id", jiraID), slog.Any("error", err))
@@ -709,7 +709,7 @@ func (h *JiraImportHandler) recordMapping(jobID, entityType, jiraID, jiraKey str
 func (h *JiraImportHandler) recordMappingAndTransferOwnership(
 	jobID, entityType, jiraID, jiraKey string,
 	windshiftID int,
-	metadata map[string]interface{},
+	metadata map[string]any,
 	previous *previousJiraImportMapping,
 ) error {
 	err := h.imports.RecordMappingAndTransferOwnership(

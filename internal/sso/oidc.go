@@ -44,16 +44,16 @@ var (
 
 // OIDCClaims represents the extracted claims from an OIDC ID token
 type OIDCClaims struct {
-	Subject               string                 `json:"sub"`
-	Email                 string                 `json:"email"`
-	EmailVerified         bool                   `json:"email_verified"`
-	EmailVerifiedProvided bool                   `json:"email_verified_provided"` // True if IdP included email_verified in claims
-	Name                  string                 `json:"name"`
-	GivenName             string                 `json:"given_name"`
-	FamilyName            string                 `json:"family_name"`
-	Username              string                 `json:"preferred_username"`
-	Picture               string                 `json:"picture"`
-	Raw                   map[string]interface{} `json:"raw"` // All claims for debugging
+	Subject               string         `json:"sub"`
+	Email                 string         `json:"email"`
+	EmailVerified         bool           `json:"email_verified"`
+	EmailVerifiedProvided bool           `json:"email_verified_provided"` // True if IdP included email_verified in claims
+	Name                  string         `json:"name"`
+	GivenName             string         `json:"given_name"`
+	FamilyName            string         `json:"family_name"`
+	Username              string         `json:"preferred_username"`
+	Picture               string         `json:"picture"`
+	Raw                   map[string]any `json:"raw"` // All claims for debugging
 }
 
 // OIDCService handles OIDC authentication flows using zitadel/oidc library
@@ -161,7 +161,7 @@ func (s *OIDCService) ExtractClaims(tokens *oidc.Tokens[*oidc.IDTokenClaims], at
 
 	claims := &OIDCClaims{
 		Subject: idTokenClaims.Subject,
-		Raw:     make(map[string]interface{}),
+		Raw:     make(map[string]any),
 	}
 
 	// Get all claims for debugging
@@ -263,7 +263,7 @@ func (s *OIDCService) TestConnection(ctx context.Context, provider *SSOProvider,
 }
 
 // getClaimString extracts a string value from claims map
-func getClaimString(claims map[string]interface{}, key string) (string, bool) {
+func getClaimString(claims map[string]any, key string) (string, bool) {
 	if claims == nil {
 		return "", false
 	}

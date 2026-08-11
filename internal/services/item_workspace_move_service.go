@@ -91,7 +91,7 @@ type itemMoveSnapshot struct {
 	ParentID            *int
 	ChannelID           *int
 	RequestTypeID       *int
-	CustomFieldValues   map[string]interface{}
+	CustomFieldValues   map[string]any
 	Path                string
 }
 
@@ -236,7 +236,7 @@ func (s *ItemWorkspaceMoveService) loadSnapshot(itemID int) (*itemMoveSnapshot, 
 	out.IterationID, out.ProjectID, out.TimeProjectID = nullableMoveInt(iterationID), nullableMoveInt(projectID), nullableMoveInt(timeProjectID)
 	out.ParentID, out.ChannelID, out.RequestTypeID = nullableMoveInt(parentID), nullableMoveInt(channelID), nullableMoveInt(requestTypeID)
 	out.ItemTypeName, out.StatusName, out.PriorityName = itemTypeName.String, statusName.String, priorityName.String
-	out.CustomFieldValues = map[string]interface{}{}
+	out.CustomFieldValues = map[string]any{}
 	if customJSON.Valid && strings.TrimSpace(customJSON.String) != "" {
 		if err := json.Unmarshal([]byte(customJSON.String), &out.CustomFieldValues); err != nil {
 			return nil, fmt.Errorf("decode item custom fields: %w", err)
@@ -489,9 +489,9 @@ func (s *ItemWorkspaceMoveService) previewLabels(itemID, destinationWorkspaceID 
 	return kept, dropped, rows.Err()
 }
 
-func (s *ItemWorkspaceMoveService) destinationCustomFields(values map[string]interface{}, workspaceID, itemTypeID int) (keptValues map[string]interface{}, kept, dropped []string, err error) {
+func (s *ItemWorkspaceMoveService) destinationCustomFields(values map[string]any, workspaceID, itemTypeID int) (keptValues map[string]any, kept, dropped []string, err error) {
 	if len(values) == 0 {
-		return map[string]interface{}{}, []string{}, []string{}, nil
+		return map[string]any{}, []string{}, []string{}, nil
 	}
 	var screenID sql.NullInt64
 	err = s.db.QueryRow(`
@@ -547,7 +547,7 @@ func (s *ItemWorkspaceMoveService) destinationCustomFields(values map[string]int
 		}
 	}
 
-	keptValues = map[string]interface{}{}
+	keptValues = map[string]any{}
 	kept, dropped = []string{}, []string{}
 	for _, key := range keys {
 		if name, ok := allowed[key]; ok {
@@ -630,7 +630,7 @@ func (s *ItemWorkspaceMoveService) Move(itemID, actorUserID int, input ItemWorks
 		return nil, fmt.Errorf("remap recurrence: %w", err)
 	}
 
-	priorityValue := interface{}(nil)
+	priorityValue := any(nil)
 	if input.TargetPriorityID != nil {
 		priorityValue = *input.TargetPriorityID
 	}
@@ -652,7 +652,7 @@ func (s *ItemWorkspaceMoveService) Move(itemID, actorUserID int, input ItemWorks
 	}
 
 	newKey := fmt.Sprintf("%s-%d", preview.DestinationWorkspaceKey, newNumber)
-	historyJSON, err := json.Marshal(map[string]interface{}{
+	historyJSON, err := json.Marshal(map[string]any{
 		"old_key": preview.SourceKey, "new_key": newKey, "fields": preview.Fields,
 		"labels_kept": preview.LabelsKept, "labels_dropped": preview.LabelsDropped,
 		"custom_fields_kept": preview.CustomFieldsKept, "custom_fields_dropped": preview.CustomFieldsDropped,

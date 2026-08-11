@@ -18,17 +18,17 @@ type EnumEntity interface {
 
 // ValidationFunc validates an entity before create/update
 // Returns error message if validation fails, empty string if valid
-type ValidationFunc func(entity interface{}, isUpdate bool) string
+type ValidationFunc func(entity any, isUpdate bool) string
 
 // UniqueCheckFunc checks if an entity with the same unique key exists
 // For create: excludeID is 0
 // For update: excludeID is the ID being updated
 // Returns true if duplicate exists
-type UniqueCheckFunc func(db database.Database, entity interface{}, excludeID int) (bool, error)
+type UniqueCheckFunc func(db database.Database, entity any, excludeID int) (bool, error)
 
 // FKValidationFunc validates foreign key references exist
 // Returns error message if FK is invalid, empty string if valid
-type FKValidationFunc func(db database.Database, entity interface{}) string
+type FKValidationFunc func(db database.Database, entity any) string
 
 // DeleteCheckFunc checks if entity can be deleted (no dependencies)
 // Returns error message describing dependency, empty string if deletable
@@ -40,13 +40,13 @@ type BeforeDeleteFunc func(db database.Database, id int) (bool, int, string)
 
 // BeforeUpdateFunc runs before update (e.g., check system protection)
 // Returns (shouldProceed, httpStatusCode, errorMessage)
-type BeforeUpdateFunc func(db database.Database, id int, entity interface{}) (bool, int, string)
+type BeforeUpdateFunc func(db database.Database, id int, entity any) (bool, int, string)
 
 // AfterCreateFunc runs after successful create (e.g., junction tables, audit)
-type AfterCreateFunc func(db database.Database, id int, entity interface{}, r *http.Request) error
+type AfterCreateFunc func(db database.Database, id int, entity any, r *http.Request) error
 
 // AfterUpdateFunc runs after successful update (e.g., junction tables, audit)
-type AfterUpdateFunc func(db database.Database, id int, entity interface{}, r *http.Request) error
+type AfterUpdateFunc func(db database.Database, id int, entity any, r *http.Request) error
 
 // AfterDeleteFunc runs after successful delete (e.g., audit logging)
 type AfterDeleteFunc func(db database.Database, id int, name string, r *http.Request) error
@@ -58,15 +58,15 @@ type ScanRowFunc func(rows *sql.Rows) (EnumEntity, error)
 type ScanSingleRowFunc func(row *sql.Row) (EnumEntity, error)
 
 // InsertArgsFunc returns the insert query columns and arguments
-// Returns (columns string, placeholders string, args []interface{})
-type InsertArgsFunc func(entity interface{}, now time.Time) (string, string, []interface{})
+// Returns (columns string, placeholders string, args []any)
+type InsertArgsFunc func(entity any, now time.Time) (string, string, []any)
 
 // UpdateArgsFunc returns the update SET clause and arguments
-// Returns (setClause string, args []interface{}) - args should NOT include id (added by service)
-type UpdateArgsFunc func(entity interface{}, now time.Time) (string, []interface{})
+// Returns (setClause string, args []any) - args should NOT include id (added by service)
+type UpdateArgsFunc func(entity any, now time.Time) (string, []any)
 
 // DefaultValueFunc applies default values to entity before insert
-type DefaultValueFunc func(entity interface{})
+type DefaultValueFunc func(entity any)
 
 // AuditEmitFunc logs an audit event for enum CRUD operations.
 // Parameters: db, r, actionType, resourceType, entityID, entityName
@@ -207,7 +207,7 @@ func (s *EnumService) GetByID(id int) (EnumEntity, error) {
 }
 
 // Create creates a new entity
-func (s *EnumService) Create(entity interface{}, r *http.Request) (EnumEntity, error) {
+func (s *EnumService) Create(entity any, r *http.Request) (EnumEntity, error) {
 	// Apply defaults
 	if s.config.ApplyDefaults != nil {
 		s.config.ApplyDefaults(entity)
@@ -278,7 +278,7 @@ func (s *EnumService) Create(entity interface{}, r *http.Request) (EnumEntity, e
 }
 
 // Update updates an existing entity
-func (s *EnumService) Update(id int, entity interface{}, r *http.Request) (EnumEntity, error) {
+func (s *EnumService) Update(id int, entity any, r *http.Request) (EnumEntity, error) {
 	// Check entity exists first
 	_, err := s.GetByID(id)
 	if err != nil {

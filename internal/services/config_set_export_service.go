@@ -393,7 +393,7 @@ func (s *ConfigSetExportService) exportConditionSet(ctx context.Context, conditi
 				_ = condRows.Close()
 				return nil, scanErr
 			}
-			cfg := map[string]interface{}{}
+			cfg := map[string]any{}
 			if configRaw != "" {
 				if err := json.Unmarshal([]byte(configRaw), &cfg); err != nil {
 					_ = condRows.Close()
@@ -420,7 +420,7 @@ func (s *ConfigSetExportService) exportConditionSet(ctx context.Context, conditi
 // rewriteConditionConfigForExport replaces ID-based references with names so
 // the bundle is portable. role_id → role_name; group_id → group_name; for
 // custom_field references, field_id → custom_field_name.
-func (s *ConfigSetExportService) rewriteConditionConfigForExport(ctx context.Context, condType string, cfg map[string]interface{}, customFieldNames map[int]string) error {
+func (s *ConfigSetExportService) rewriteConditionConfigForExport(ctx context.Context, condType string, cfg map[string]any, customFieldNames map[int]string) error {
 	switch condType {
 	case models.ConditionTypeUserInRole:
 		if rawID, ok := cfg["role_id"]; ok {
@@ -469,7 +469,7 @@ func (s *ConfigSetExportService) rewriteConditionConfigForExport(ctx context.Con
 
 // rewriteFieldRef handles the embedded FieldRef inside user_in_role / user_in_group
 // configs (when source=='custom_field', it carries a field_id).
-func (s *ConfigSetExportService) rewriteFieldRef(cfg map[string]interface{}, customFieldNames map[int]string, ctx context.Context) {
+func (s *ConfigSetExportService) rewriteFieldRef(cfg map[string]any, customFieldNames map[int]string, ctx context.Context) {
 	source, _ := cfg["source"].(string)
 	if source != "custom_field" {
 		return
@@ -958,8 +958,8 @@ func mapValues(m map[int]string) []string {
 	return out
 }
 
-func inArgs(names []string) (placeholders string, args []interface{}) {
-	args = make([]interface{}, 0, len(names))
+func inArgs(names []string) (placeholders string, args []any) {
+	args = make([]any, 0, len(names))
 	for i, n := range names {
 		if i > 0 {
 			placeholders += ","
@@ -970,8 +970,8 @@ func inArgs(names []string) (placeholders string, args []interface{}) {
 	return placeholders, args
 }
 
-func inArgsInt(ids []int) (placeholders string, args []interface{}) {
-	args = make([]interface{}, 0, len(ids))
+func inArgsInt(ids []int) (placeholders string, args []any) {
+	args = make([]any, 0, len(ids))
 	for i, id := range ids {
 		if i > 0 {
 			placeholders += ","
@@ -986,7 +986,7 @@ func inArgsInt(ids []int) (placeholders string, args []interface{}) {
 // string) into an int. Numbers come back as float64 from json.Unmarshal;
 // SQLite TEXT columns scan as string. Returns false when no sensible int
 // is extractable so callers can leave the original identifier alone.
-func parseIntish(v interface{}) (int, bool) {
+func parseIntish(v any) (int, bool) {
 	switch x := v.(type) {
 	case int:
 		return x, true

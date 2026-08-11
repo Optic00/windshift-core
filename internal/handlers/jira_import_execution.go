@@ -608,10 +608,10 @@ type jiraImportFidelityFinding struct {
 
 func (h *JiraImportHandler) persistJiraImportResult(jobID string, progress *ImportProgress) {
 	type configurationEntity struct {
-		SourceID   string                 `json:"source_id"`
-		SourceName string                 `json:"source_name,omitempty"`
-		TargetID   int                    `json:"target_id"`
-		Metadata   map[string]interface{} `json:"metadata"`
+		SourceID   string         `json:"source_id"`
+		SourceName string         `json:"source_name,omitempty"`
+		TargetID   int            `json:"target_id"`
+		Metadata   map[string]any `json:"metadata"`
 	}
 	planFingerprint, configurationDrift, previousImports := h.jiraImportPlanResult(jobID)
 	result := struct {
@@ -827,12 +827,12 @@ func (h *JiraImportHandler) jiraImportFidelityFindings(jobID string) []jiraImpor
 	return findings
 }
 
-func metadataString(metadata map[string]interface{}, key string) string {
+func metadataString(metadata map[string]any, key string) string {
 	value, _ := metadata[key].(string)
 	return value
 }
 
-func metadataInt(metadata map[string]interface{}, key string) int {
+func metadataInt(metadata map[string]any, key string) int {
 	value, _ := numericMetadataInt(metadata[key])
 	return value
 }
@@ -1425,7 +1425,7 @@ func (h *JiraImportHandler) ensureWorkflowsAndConfigSet(
 		definitions = append(definitions, jiraimport.WorkflowDefinition{
 			SourceID: sourceID, Name: workflowName, Description: group.description,
 			Edges: serviceEdges, ItemTypeIDs: group.itemTypeIDs,
-			Metadata: map[string]interface{}{
+			Metadata: map[string]any{
 				"fidelity": fidelity, "transition_count": len(edges),
 				"transition_rules_complete":         group.rulesComplete,
 				"guarded_transition_count":          group.guardedTransitions,

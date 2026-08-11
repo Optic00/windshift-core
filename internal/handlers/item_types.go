@@ -132,7 +132,7 @@ func (h *ItemTypeHandler) Create(w http.ResponseWriter, r *http.Request) {
 			ResourceType: logger.ResourceItemType,
 			ResourceID:   &created.ID,
 			ResourceName: created.Name,
-			Details: map[string]interface{}{
+			Details: map[string]any{
 				"icon":                    created.Icon,
 				"color":                   created.Color,
 				"hierarchy_level":         created.HierarchyLevel,
@@ -206,21 +206,21 @@ func (h *ItemTypeHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
-		details := make(map[string]interface{})
+		details := make(map[string]any)
 		if old.Name != updated.Name {
-			details["name_changed"] = map[string]interface{}{"old": old.Name, "new": updated.Name}
+			details["name_changed"] = map[string]any{"old": old.Name, "new": updated.Name}
 		}
 		if old.Icon != updated.Icon {
-			details["icon_changed"] = map[string]interface{}{"old": old.Icon, "new": updated.Icon}
+			details["icon_changed"] = map[string]any{"old": old.Icon, "new": updated.Icon}
 		}
 		if old.Color != updated.Color {
-			details["color_changed"] = map[string]interface{}{"old": old.Color, "new": updated.Color}
+			details["color_changed"] = map[string]any{"old": old.Color, "new": updated.Color}
 		}
 		if old.HierarchyLevel != updated.HierarchyLevel {
-			details["hierarchy_level_changed"] = map[string]interface{}{"old": old.HierarchyLevel, "new": updated.HierarchyLevel}
+			details["hierarchy_level_changed"] = map[string]any{"old": old.HierarchyLevel, "new": updated.HierarchyLevel}
 		}
 		if old.SortOrder != updated.SortOrder {
-			details["sort_order_changed"] = map[string]interface{}{"old": old.SortOrder, "new": updated.SortOrder}
+			details["sort_order_changed"] = map[string]any{"old": old.SortOrder, "new": updated.SortOrder}
 		}
 		if len(updated.ConfigurationSetIDs) > 0 {
 			details["configuration_sets"] = updated.ConfigurationSetNames
@@ -290,7 +290,7 @@ func (h *ItemTypeHandler) Delete(w http.ResponseWriter, r *http.Request) {
 			ResourceType: logger.ResourceItemType,
 			ResourceID:   &id,
 			ResourceName: existing.Name,
-			Details: map[string]interface{}{
+			Details: map[string]any{
 				"icon":  existing.Icon,
 				"color": existing.Color,
 			},

@@ -269,7 +269,7 @@ func (h *LLMConnectionHandler) RefreshProviderModels(w http.ResponseWriter, r *h
 	if currentUser != nil {
 		h.auditor.Log(r, currentUser, logger.ActionLLMConnectionUpdate, logger.ResourceLLMConnection, nil, string(providerType))
 	}
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"provider_type":     providerType,
 		"models":            models,
 		"last_refreshed_at": time.Now(),

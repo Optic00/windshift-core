@@ -262,7 +262,7 @@ func init() {
 			       LEFT JOIN milestone_categories mc ON m.category_id = mc.id
 			       LEFT JOIN workspaces w ON m.workspace_id = w.id
 			       WHERE NOT (m.status IN ('completed', 'cancelled') AND m.updated_at < ` + oneYearAgo + `)`
-			var qa []interface{}
+			var qa []any
 			var accessParts []string
 			if includeGlobal {
 				accessParts = append(accessParts, "m.is_global = true")
@@ -404,7 +404,7 @@ func init() {
 			       LEFT JOIN iteration_types it ON iter.type_id = it.id
 			       LEFT JOIN workspaces w ON iter.workspace_id = w.id
 			       WHERE NOT (iter.status IN ('completed', 'cancelled') AND iter.end_date IS NOT NULL AND iter.end_date < ` + oneYearAgo + `)`
-			var qa []interface{}
+			var qa []any
 			var accessParts []string
 			if includeGlobal {
 				accessParts = append(accessParts, "iter.is_global = true")

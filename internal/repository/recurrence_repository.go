@@ -163,7 +163,7 @@ func (r *RecurrenceRepository) Create(rule *models.RecurrenceRule) (int, error) 
 }
 
 type recurrenceRuleCreator interface {
-	QueryRow(query string, args ...interface{}) *sql.Row
+	QueryRow(query string, args ...any) *sql.Row
 }
 
 func createRecurrenceRule(db recurrenceRuleCreator, rule *models.RecurrenceRule) (int, error) {

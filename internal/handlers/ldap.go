@@ -353,7 +353,7 @@ func (h *LDAPHandler) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 
 	// Update bind password if provided
 	bindPasswordClause := ""
-	var args []interface{}
+	var args []any
 	if req.BindPassword != "" {
 		encryptedPassword, encErr := h.encryption.Encrypt(req.BindPassword)
 		if encErr != nil {
@@ -456,7 +456,7 @@ func (h *LDAPHandler) TestConnection(w http.ResponseWriter, r *http.Request) {
 	// Connect and test
 	client, err := ldapPkg.NewClient(config, bindPassword)
 	if err != nil {
-		respondJSONOK(w, map[string]interface{}{
+		respondJSONOK(w, map[string]any{
 			"success": false,
 			"error":   err.Error(),
 		})
@@ -465,7 +465,7 @@ func (h *LDAPHandler) TestConnection(w http.ResponseWriter, r *http.Request) {
 	defer client.Close()
 
 	if err := client.TestConnection(); err != nil {
-		respondJSONOK(w, map[string]interface{}{
+		respondJSONOK(w, map[string]any{
 			"success": false,
 			"error":   err.Error(),
 		})
@@ -479,7 +479,7 @@ func (h *LDAPHandler) TestConnection(w http.ResponseWriter, r *http.Request) {
 		userCount = len(users)
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"success":    true,
 		"user_count": userCount,
 	})

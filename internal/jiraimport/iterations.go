@@ -122,7 +122,7 @@ func (s *Service) EnsureTimeProject(jobID string, workspaceID int, projectKey, p
 	}
 	if workspace.TimeProjectID != nil {
 		id := *workspace.TimeProjectID
-		err := s.RecordMapping(jobID, "time_project", "project:"+projectKey+":worklogs", projectKey, id, map[string]interface{}{
+		err := s.RecordMapping(jobID, "time_project", "project:"+projectKey+":worklogs", projectKey, id, map[string]any{
 			"workspace_id": workspaceID, "action": "reuse_workspace_default", "was_created": false,
 		})
 		return &id, err
@@ -152,7 +152,7 @@ func (s *Service) EnsureTimeProject(jobID string, workspaceID int, projectKey, p
 			Description: description,
 			Status:      "Active",
 			Color:       "#3b82f6",
-			Settings:    map[string]interface{}{},
+			Settings:    map[string]any{},
 		}
 		err = s.timeProjects.Create(project)
 		projectID = project.ID
@@ -164,7 +164,7 @@ func (s *Service) EnsureTimeProject(jobID string, workspaceID int, projectKey, p
 	if err := s.workspaces.AssignTimeProjectIfUnset(workspaceID, projectID); err != nil {
 		return nil, err
 	}
-	if err := s.RecordMapping(jobID, "time_project", "project:"+projectKey+":worklogs", projectKey, projectID, map[string]interface{}{
+	if err := s.RecordMapping(jobID, "time_project", "project:"+projectKey+":worklogs", projectKey, projectID, map[string]any{
 		"workspace_id": workspaceID, "was_created": wasCreated,
 	}); err != nil {
 		return nil, err

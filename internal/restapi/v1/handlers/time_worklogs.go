@@ -169,7 +169,7 @@ type createWorklogRequest struct {
 // @Produce      json
 // @Security     BearerAuth
 // @Param        body  body      handlers.createWorklogRequest  true  "Worklog to create"
-// @Success      201   {object}  map[string]interface{}
+// @Success      201   {object}  map[string]any
 // @Failure      400   {object}  restapi.ErrorResponse
 // @Failure      401   {object}  restapi.ErrorResponse
 // @Failure      403   {object}  restapi.ErrorResponse  "No permission to book time on this project"
@@ -304,7 +304,7 @@ type updateWorklogRequest struct {
 // @Security     BearerAuth
 // @Param        id    path      int                            true  "Worklog ID"
 // @Param        body  body      handlers.updateWorklogRequest  true  "New description"
-// @Success      200   {object}  map[string]interface{}
+// @Success      200   {object}  map[string]any
 // @Failure      400   {object}  restapi.ErrorResponse
 // @Failure      401   {object}  restapi.ErrorResponse
 // @Failure      403   {object}  restapi.ErrorResponse  "Caller does not own the worklog"

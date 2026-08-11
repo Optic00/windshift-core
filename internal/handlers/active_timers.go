@@ -86,7 +86,7 @@ func (h *ActiveTimerHandler) StopTimer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"timer_id":         res.TimerID,
 		"duration_seconds": res.DurationSeconds,
 		"worklog_created":  res.WorklogCreated,

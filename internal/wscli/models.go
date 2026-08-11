@@ -69,18 +69,18 @@ type Workspace struct {
 // ============================================
 
 type Item struct {
-	ID                  int                    `json:"id"`
-	WorkspaceID         int                    `json:"workspace_id"`
-	WorkspaceKey        string                 `json:"workspace_key"`
-	Key                 string                 `json:"key"`
-	WorkspaceItemNumber int                    `json:"workspace_item_number"`
-	Title               string                 `json:"title"`
-	Description         string                 `json:"description,omitempty"`
-	IsTask              bool                   `json:"is_task"`
-	DueDate             *time.Time             `json:"due_date,omitempty"`
-	StartDate           *time.Time             `json:"start_date,omitempty"`
-	EndDate             *time.Time             `json:"end_date,omitempty"`
-	CustomFields        map[string]interface{} `json:"custom_fields,omitempty"`
+	ID                  int            `json:"id"`
+	WorkspaceID         int            `json:"workspace_id"`
+	WorkspaceKey        string         `json:"workspace_key"`
+	Key                 string         `json:"key"`
+	WorkspaceItemNumber int            `json:"workspace_item_number"`
+	Title               string         `json:"title"`
+	Description         string         `json:"description,omitempty"`
+	IsTask              bool           `json:"is_task"`
+	DueDate             *time.Time     `json:"due_date,omitempty"`
+	StartDate           *time.Time     `json:"start_date,omitempty"`
+	EndDate             *time.Time     `json:"end_date,omitempty"`
+	CustomFields        map[string]any `json:"custom_fields,omitempty"`
 
 	// Hierarchy. ParentKey/ParentTitle are populated by the server on
 	// permission-checked single-item reads (omitted when the caller may not
@@ -126,42 +126,42 @@ type EnforcedTemplate struct {
 }
 
 type ItemCreateRequest struct {
-	WorkspaceID  int                    `json:"workspace_id"`
-	Title        string                 `json:"title"`
-	Description  string                 `json:"description,omitempty"`
-	StatusID     *int                   `json:"status_id,omitempty"`
-	PriorityID   *int                   `json:"priority_id,omitempty"`
-	ItemTypeID   *int                   `json:"item_type_id,omitempty"`
-	AssigneeID   *int                   `json:"assignee_id,omitempty"`
-	ParentID     *int                   `json:"parent_id,omitempty"`
-	MilestoneIDs []int                  `json:"milestone_ids,omitempty"`
-	IterationID  *int                   `json:"iteration_id,omitempty"`
-	ProjectID    *int                   `json:"project_id,omitempty"`
-	DueDate      *time.Time             `json:"due_date,omitempty"`
-	StartDate    *time.Time             `json:"start_date,omitempty"`
-	EndDate      *time.Time             `json:"end_date,omitempty"`
-	IsTask       bool                   `json:"is_task,omitempty"`
-	CustomFields map[string]interface{} `json:"custom_fields,omitempty"`
+	WorkspaceID  int            `json:"workspace_id"`
+	Title        string         `json:"title"`
+	Description  string         `json:"description,omitempty"`
+	StatusID     *int           `json:"status_id,omitempty"`
+	PriorityID   *int           `json:"priority_id,omitempty"`
+	ItemTypeID   *int           `json:"item_type_id,omitempty"`
+	AssigneeID   *int           `json:"assignee_id,omitempty"`
+	ParentID     *int           `json:"parent_id,omitempty"`
+	MilestoneIDs []int          `json:"milestone_ids,omitempty"`
+	IterationID  *int           `json:"iteration_id,omitempty"`
+	ProjectID    *int           `json:"project_id,omitempty"`
+	DueDate      *time.Time     `json:"due_date,omitempty"`
+	StartDate    *time.Time     `json:"start_date,omitempty"`
+	EndDate      *time.Time     `json:"end_date,omitempty"`
+	IsTask       bool           `json:"is_task,omitempty"`
+	CustomFields map[string]any `json:"custom_fields,omitempty"`
 }
 
 // ItemUpdateRequest is the body for PUT /rest/api/v1/items/{id}. It does NOT
 // carry status_id — status changes go through TransitionRequest on a
 // dedicated endpoint so workflow and condition rules are enforced.
 type ItemUpdateRequest struct {
-	Title        *string                `json:"title,omitempty"`
-	Description  *string                `json:"description,omitempty"`
-	PriorityID   *int                   `json:"priority_id,omitempty"`
-	ItemTypeID   *int                   `json:"item_type_id,omitempty"`
-	AssigneeID   *int                   `json:"assignee_id,omitempty"`
-	ParentID     *int                   `json:"parent_id,omitempty"`
-	MilestoneIDs *[]int                 `json:"milestone_ids,omitempty"`
-	IterationID  *int                   `json:"iteration_id,omitempty"`
-	ProjectID    *int                   `json:"project_id,omitempty"`
-	DueDate      *time.Time             `json:"due_date,omitempty"`
-	StartDate    *time.Time             `json:"start_date,omitempty"`
-	EndDate      *time.Time             `json:"end_date,omitempty"`
-	IsTask       *bool                  `json:"is_task,omitempty"`
-	CustomFields map[string]interface{} `json:"custom_fields,omitempty"`
+	Title        *string        `json:"title,omitempty"`
+	Description  *string        `json:"description,omitempty"`
+	PriorityID   *int           `json:"priority_id,omitempty"`
+	ItemTypeID   *int           `json:"item_type_id,omitempty"`
+	AssigneeID   *int           `json:"assignee_id,omitempty"`
+	ParentID     *int           `json:"parent_id,omitempty"`
+	MilestoneIDs *[]int         `json:"milestone_ids,omitempty"`
+	IterationID  *int           `json:"iteration_id,omitempty"`
+	ProjectID    *int           `json:"project_id,omitempty"`
+	DueDate      *time.Time     `json:"due_date,omitempty"`
+	StartDate    *time.Time     `json:"start_date,omitempty"`
+	EndDate      *time.Time     `json:"end_date,omitempty"`
+	IsTask       *bool          `json:"is_task,omitempty"`
+	CustomFields map[string]any `json:"custom_fields,omitempty"`
 }
 
 // TransitionRequest is the body for POST /rest/api/v1/items/{id}/transition.
@@ -879,48 +879,48 @@ type LinkListResponse struct {
 
 // Asset is the CLI-side mirror of dto.AssetResponse.
 type Asset struct {
-	ID                int                    `json:"id"`
-	SetID             int                    `json:"set_id"`
-	Title             string                 `json:"title"`
-	Description       string                 `json:"description,omitempty"`
-	AssetTag          string                 `json:"asset_tag,omitempty"`
-	AssetTypeID       int                    `json:"asset_type_id"`
-	CategoryID        *int                   `json:"category_id,omitempty"`
-	StatusID          *int                   `json:"status_id,omitempty"`
-	CreatedBy         *int                   `json:"created_by,omitempty"`
-	CreatedAt         string                 `json:"created_at"`
-	UpdatedAt         string                 `json:"updated_at"`
-	CustomFieldValues map[string]interface{} `json:"custom_field_values,omitempty"`
-	Set               *AssetSetSummary       `json:"set,omitempty"`
-	AssetType         *AssetTypeSummary      `json:"asset_type,omitempty"`
-	Category          *AssetCategorySummary  `json:"category,omitempty"`
-	Status            *AssetStatusSummary    `json:"status,omitempty"`
-	Creator           *UserSummary           `json:"creator,omitempty"`
-	LinkedItemCount   int                    `json:"linked_item_count,omitempty"`
-	Warnings          []string               `json:"warnings"`
+	ID                int                   `json:"id"`
+	SetID             int                   `json:"set_id"`
+	Title             string                `json:"title"`
+	Description       string                `json:"description,omitempty"`
+	AssetTag          string                `json:"asset_tag,omitempty"`
+	AssetTypeID       int                   `json:"asset_type_id"`
+	CategoryID        *int                  `json:"category_id,omitempty"`
+	StatusID          *int                  `json:"status_id,omitempty"`
+	CreatedBy         *int                  `json:"created_by,omitempty"`
+	CreatedAt         string                `json:"created_at"`
+	UpdatedAt         string                `json:"updated_at"`
+	CustomFieldValues map[string]any        `json:"custom_field_values,omitempty"`
+	Set               *AssetSetSummary      `json:"set,omitempty"`
+	AssetType         *AssetTypeSummary     `json:"asset_type,omitempty"`
+	Category          *AssetCategorySummary `json:"category,omitempty"`
+	Status            *AssetStatusSummary   `json:"status,omitempty"`
+	Creator           *UserSummary          `json:"creator,omitempty"`
+	LinkedItemCount   int                   `json:"linked_item_count,omitempty"`
+	Warnings          []string              `json:"warnings"`
 }
 
 // AssetCreateRequest is the JSON body for POST /asset-sets/{setId}/assets.
 type AssetCreateRequest struct {
-	Title             string                 `json:"title"`
-	Description       string                 `json:"description,omitempty"`
-	AssetTag          string                 `json:"asset_tag,omitempty"`
-	AssetTypeID       int                    `json:"asset_type_id"`
-	CategoryID        *int                   `json:"category_id,omitempty"`
-	StatusID          *int                   `json:"status_id,omitempty"`
-	CustomFieldValues map[string]interface{} `json:"custom_field_values,omitempty"`
+	Title             string         `json:"title"`
+	Description       string         `json:"description,omitempty"`
+	AssetTag          string         `json:"asset_tag,omitempty"`
+	AssetTypeID       int            `json:"asset_type_id"`
+	CategoryID        *int           `json:"category_id,omitempty"`
+	StatusID          *int           `json:"status_id,omitempty"`
+	CustomFieldValues map[string]any `json:"custom_field_values,omitempty"`
 }
 
 // AssetUpdateRequest is the JSON body for PUT /assets/{id}. Pointers so
 // "not set" is distinguishable from "set to zero value".
 type AssetUpdateRequest struct {
-	Title             *string                 `json:"title,omitempty"`
-	Description       *string                 `json:"description,omitempty"`
-	AssetTag          *string                 `json:"asset_tag,omitempty"`
-	AssetTypeID       *int                    `json:"asset_type_id,omitempty"`
-	CategoryID        *int                    `json:"category_id,omitempty"`
-	StatusID          *int                    `json:"status_id,omitempty"`
-	CustomFieldValues *map[string]interface{} `json:"custom_field_values,omitempty"`
+	Title             *string         `json:"title,omitempty"`
+	Description       *string         `json:"description,omitempty"`
+	AssetTag          *string         `json:"asset_tag,omitempty"`
+	AssetTypeID       *int            `json:"asset_type_id,omitempty"`
+	CategoryID        *int            `json:"category_id,omitempty"`
+	StatusID          *int            `json:"status_id,omitempty"`
+	CustomFieldValues *map[string]any `json:"custom_field_values,omitempty"`
 }
 
 // AssetSet mirrors dto.AssetSetResponse.
@@ -1024,19 +1024,19 @@ type AssetStatusSummary struct {
 
 // TimeProject mirrors the v1 time-projects response.
 type TimeProject struct {
-	ID            int                    `json:"id"`
-	CustomerID    *int                   `json:"customer_id,omitempty"`
-	CategoryID    *int                   `json:"category_id,omitempty"`
-	Name          string                 `json:"name"`
-	Description   string                 `json:"description"`
-	Status        string                 `json:"status"`
-	Color         string                 `json:"color,omitempty"`
-	HourlyRate    float64                `json:"hourly_rate"`
-	Settings      map[string]interface{} `json:"settings,omitempty"`
-	CustomerName  string                 `json:"customer_name,omitempty"`
-	CategoryName  string                 `json:"category_name,omitempty"`
-	CategoryColor string                 `json:"category_color,omitempty"`
-	TotalHours    *float64               `json:"total_hours,omitempty"`
+	ID            int            `json:"id"`
+	CustomerID    *int           `json:"customer_id,omitempty"`
+	CategoryID    *int           `json:"category_id,omitempty"`
+	Name          string         `json:"name"`
+	Description   string         `json:"description"`
+	Status        string         `json:"status"`
+	Color         string         `json:"color,omitempty"`
+	HourlyRate    float64        `json:"hourly_rate"`
+	Settings      map[string]any `json:"settings,omitempty"`
+	CustomerName  string         `json:"customer_name,omitempty"`
+	CategoryName  string         `json:"category_name,omitempty"`
+	CategoryColor string         `json:"category_color,omitempty"`
+	TotalHours    *float64       `json:"total_hours,omitempty"`
 }
 
 // TimeWorklog mirrors the v1 worklog response.

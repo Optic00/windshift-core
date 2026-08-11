@@ -354,7 +354,7 @@ func (h *RequestTypeHandler) Create(w http.ResponseWriter, r *http.Request) {
 		h.auditor.LogWithDetails(r, currentUser,
 			"request_type_create", "request_type",
 			&rt.ID, rt.Name,
-			map[string]interface{}{
+			map[string]any{
 				"channel_id":     rt.ChannelID,
 				"item_type_id":   rt.ItemTypeID,
 				"icon":           rt.Icon,
@@ -449,21 +449,21 @@ func (h *RequestTypeHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
-		details := make(map[string]interface{})
+		details := make(map[string]any)
 		if old.Name != rt.Name {
-			details["name_changed"] = map[string]interface{}{"old": old.Name, "new": rt.Name}
+			details["name_changed"] = map[string]any{"old": old.Name, "new": rt.Name}
 		}
 		if old.ItemTypeID != rt.ItemTypeID {
-			details["item_type_changed"] = map[string]interface{}{"old": old.ItemTypeID, "new": rt.ItemTypeID}
+			details["item_type_changed"] = map[string]any{"old": old.ItemTypeID, "new": rt.ItemTypeID}
 		}
 		if old.Icon != rt.Icon {
-			details["icon_changed"] = map[string]interface{}{"old": old.Icon, "new": rt.Icon}
+			details["icon_changed"] = map[string]any{"old": old.Icon, "new": rt.Icon}
 		}
 		if old.Color != rt.Color {
-			details["color_changed"] = map[string]interface{}{"old": old.Color, "new": rt.Color}
+			details["color_changed"] = map[string]any{"old": old.Color, "new": rt.Color}
 		}
 		if old.TitleTemplate != rt.TitleTemplate {
-			details["title_template_changed"] = map[string]interface{}{"old": old.TitleTemplate, "new": rt.TitleTemplate}
+			details["title_template_changed"] = map[string]any{"old": old.TitleTemplate, "new": rt.TitleTemplate}
 		}
 
 		h.auditor.LogWithDetails(r, currentUser,
@@ -513,7 +513,7 @@ func (h *RequestTypeHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		h.auditor.LogWithDetails(r, currentUser,
 			"request_type_delete", "request_type",
 			&id, requestTypeName,
-			map[string]interface{}{
+			map[string]any{
 				"channel_id": channelID,
 			},
 		)
@@ -609,7 +609,7 @@ func (h *RequestTypeHandler) UpdateFields(w http.ResponseWriter, r *http.Request
 		h.auditor.LogWithDetails(r, currentUser,
 			"request_type_fields_update", "request_type",
 			&requestTypeID, "",
-			map[string]interface{}{
+			map[string]any{
 				"field_count": len(fields),
 			},
 		)
@@ -693,7 +693,7 @@ func (h *RequestTypeHandler) UpdateVisibility(w http.ResponseWriter, r *http.Req
 		h.auditor.LogWithDetails(r, currentUser,
 			"request_type_visibility_update", "request_type",
 			&rt.ID, rt.Name,
-			map[string]interface{}{
+			map[string]any{
 				"visibility_group_ids": rt.VisibilityGroupIDs,
 				"visibility_org_ids":   rt.VisibilityOrgIDs,
 			},

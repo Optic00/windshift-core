@@ -343,7 +343,7 @@ func (h *EmailProviderHandler) CreateEmailProvider(w http.ResponseWriter, r *htt
 		logAudit(h.db, r, currentUser, logger.ActionEmailProviderCreate, logger.ResourceEmailProvider, &providerID, req.Name)
 	}
 
-	resp := map[string]interface{}{
+	resp := map[string]any{
 		"id":   id,
 		"slug": req.Slug,
 	}
@@ -428,7 +428,7 @@ func (h *EmailProviderHandler) UpdateEmailProvider(w http.ResponseWriter, r *htt
 	          oauth_client_id = ?, oauth_scopes = ?, oauth_tenant_id = ?,
 	          imap_host = ?, imap_port = ?, imap_encryption = ?,
 	          updated_at = CURRENT_TIMESTAMP`
-	args := []interface{}{
+	args := []any{
 		req.Name, req.Slug, req.Type, req.IsEnabled,
 		nullString(req.OAuthClientID), nullString(req.OAuthScopes), nullString(req.OAuthTenantID),
 		nullString(req.IMAPHost), req.IMAPPort, nullString(req.IMAPEncryption),
@@ -468,7 +468,7 @@ func (h *EmailProviderHandler) UpdateEmailProvider(w http.ResponseWriter, r *htt
 		logAudit(h.db, r, currentUser, logger.ActionEmailProviderUpdate, logger.ResourceEmailProvider, &id, req.Name)
 	}
 
-	resp := map[string]interface{}{"status": "updated"}
+	resp := map[string]any{"status": "updated"}
 	if len(warnings) > 0 {
 		resp["warnings"] = warnings
 	}
@@ -850,14 +850,14 @@ func (h *EmailProviderHandler) TestEmailChannel(w http.ResponseWriter, r *http.R
 	// Test connection
 	err = provider.TestConnection(ctx, config)
 	if err != nil {
-		respondJSONOK(w, map[string]interface{}{
+		respondJSONOK(w, map[string]any{
 			"success": false,
 			"error":   err.Error(),
 		})
 		return
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"success": true,
 		"email":   config.EmailOAuthEmail,
 	})

@@ -406,7 +406,7 @@ func (h *SCMItemLinksHandler) RefreshItemSCMLink(w http.ResponseWriter, r *http.
 		err = h.syncService.RefreshItemSCMLinkForUser(ctx, linkID, user.ID)
 		if err != nil {
 			if errors.Is(err, scm.ErrUserSCMNotConnected) {
-				respondJSON(w, http.StatusForbidden, map[string]interface{}{
+				respondJSON(w, http.StatusForbidden, map[string]any{
 					"error":   "scm_not_connected",
 					"message": "You need to connect your SCM account to refresh this link",
 				})
@@ -486,7 +486,7 @@ func (h *SCMItemLinksHandler) SyncWorkspaceRepository(w http.ResponseWriter, r *
 		return
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"success": true,
 		"message": "Repository sync completed",
 	})
@@ -641,7 +641,7 @@ func (h *SCMItemLinksHandler) CreateBranchForItem(w http.ResponseWriter, r *http
 	branchURL, err := h.syncService.CreateBranchForRepository(ctx, req.WorkspaceRepositoryID, req.BranchName, req.BaseBranch, user.ID)
 	if err != nil {
 		if errors.Is(err, scm.ErrUserSCMNotConnected) {
-			respondJSON(w, http.StatusForbidden, map[string]interface{}{
+			respondJSON(w, http.StatusForbidden, map[string]any{
 				"error":   "scm_not_connected",
 				"message": "You need to connect your SCM account before creating branches or PRs",
 			})
@@ -689,7 +689,7 @@ func (h *SCMItemLinksHandler) CreateBranchForItem(w http.ResponseWriter, r *http
 			if errors.Is(err, scm.ErrAlreadyExists) {
 				errorMsg = "Branch created but a pull request already exists for this branch"
 			}
-			respondJSON(w, http.StatusPartialContent, map[string]interface{}{
+			respondJSON(w, http.StatusPartialContent, map[string]any{
 				"branch_url": branchURL,
 				"link_id":    branchLinkID,
 				"error":      errorMsg,
@@ -817,7 +817,7 @@ func (h *SCMItemLinksHandler) CreatePRFromBranch(w http.ResponseWriter, r *http.
 	}, user.ID)
 	if err != nil {
 		if errors.Is(err, scm.ErrUserSCMNotConnected) {
-			respondJSON(w, http.StatusForbidden, map[string]interface{}{
+			respondJSON(w, http.StatusForbidden, map[string]any{
 				"error":   "scm_not_connected",
 				"message": "You need to connect your SCM account before creating branches or PRs",
 			})
@@ -1024,7 +1024,7 @@ func (h *SCMItemLinksHandler) GetSCMConnectionStatus(w http.ResponseWriter, r *h
 
 	connected := allConnected || !hasOAuthProvider
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"providers":          providers,
 		"user_connected":     connected,
 		"connected":          connected,

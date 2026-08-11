@@ -19,7 +19,7 @@ func unmarshalExtras(data []byte, knownKeys ...string) (map[string]json.RawMessa
 }
 
 // marshalWithExtras marshals base and merges extra fields into the resulting JSON object.
-func marshalWithExtras(base interface{}, extra map[string]json.RawMessage) ([]byte, error) {
+func marshalWithExtras(base any, extra map[string]json.RawMessage) ([]byte, error) {
 	data, err := json.Marshal(base)
 	if err != nil {
 		return nil, err
@@ -131,7 +131,7 @@ type CompletionRequest struct {
 	StructuredOutput *StructuredOutputConfig `json:"structured_output,omitempty"`
 	// Tool calling fields
 	Tools      []ToolDefinition `json:"tools,omitempty"`
-	ToolChoice interface{}      `json:"tool_choice,omitempty"` // "auto", "none", or {"type":"function","function":{"name":"..."}}
+	ToolChoice any              `json:"tool_choice,omitempty"` // "auto", "none", or {"type":"function","function":{"name":"..."}}
 	// Server-owned flags. They are never accepted from JSON callers.
 	EnablePromptCache bool `json:"-"`
 	CodingAgent       bool `json:"-"`

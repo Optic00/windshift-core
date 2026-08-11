@@ -12,7 +12,7 @@ import (
 
 // scanner is the interface satisfied by both *sql.Row and *sql.Rows.
 type scanner interface {
-	Scan(dest ...interface{}) error
+	Scan(dest ...any) error
 }
 
 // checkTokenFormat validates that a raw token has the expected prefix and minimum length.

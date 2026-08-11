@@ -809,7 +809,7 @@ func (p *Processor) finalizeTrackingClaim(
 }
 
 // nullString returns nil for empty strings
-func nullString(s string) interface{} {
+func nullString(s string) any {
 	if s == "" {
 		return nil
 	}

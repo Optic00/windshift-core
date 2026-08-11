@@ -84,7 +84,7 @@ func (s *ChannelConfigUpdateService) SetSubscriptionInvalidator(invalidate func(
 // Update applies a partial configuration object and returns true only when
 // the compare-and-swap write committed. An unchanged false result is a
 // concurrent-edit conflict, not a successful no-op.
-func (s *ChannelConfigUpdateService) Update(ctx context.Context, actorUserID, channelID int, incoming map[string]interface{}) (bool, error) {
+func (s *ChannelConfigUpdateService) Update(ctx context.Context, actorUserID, channelID int, incoming map[string]any) (bool, error) {
 	canManage, err := s.channels.UserCanManage(ctx, actorUserID, channelID)
 	if err != nil {
 		return false, err
@@ -108,7 +108,7 @@ func (s *ChannelConfigUpdateService) Update(ctx context.Context, actorUserID, ch
 	if err != nil {
 		return false, err
 	}
-	incomingStored := make(map[string]interface{}, len(incoming))
+	incomingStored := make(map[string]any, len(incoming))
 	for key, value := range incoming {
 		incomingStored[key] = value
 	}
@@ -339,8 +339,8 @@ func (s *ChannelConfigUpdateService) prepareSMTPEnable(config *models.ChannelCon
 	return nil
 }
 
-func mergeChannelConfig(existingJSON string, incoming map[string]interface{}) (map[string]interface{}, models.ChannelConfig, error) {
-	merged := make(map[string]interface{})
+func mergeChannelConfig(existingJSON string, incoming map[string]any) (map[string]any, models.ChannelConfig, error) {
+	merged := make(map[string]any)
 	var stored models.ChannelConfig
 	if existingJSON != "" {
 		if err := json.Unmarshal([]byte(existingJSON), &merged); err != nil {
@@ -375,7 +375,7 @@ func mergeChannelConfig(existingJSON string, incoming map[string]interface{}) (m
 	return merged, stored, nil
 }
 
-func (s *ChannelConfigUpdateService) encryptSecrets(config map[string]interface{}) error {
+func (s *ChannelConfigUpdateService) encryptSecrets(config map[string]any) error {
 	for _, key := range []string{"smtp_password", "imap_password", "webhook_secret", "email_oauth_client_secret"} {
 		value, ok := config[key]
 		if !ok {
@@ -397,7 +397,7 @@ func (s *ChannelConfigUpdateService) encryptSecrets(config map[string]interface{
 	return nil
 }
 
-func (s *ChannelConfigUpdateService) validate(ctx context.Context, actorID int, channel *models.Channel, incoming map[string]interface{}, stored models.ChannelConfig, config *models.ChannelConfig) error {
+func (s *ChannelConfigUpdateService) validate(ctx context.Context, actorID int, channel *models.Channel, incoming map[string]any, stored models.ChannelConfig, config *models.ChannelConfig) error {
 	if channel.Type == "webhook" && channel.Direction == "outbound" {
 		if config.WebhookAutoTrigger {
 			admin, err := s.permission.IsSystemAdmin(actorID)
@@ -496,7 +496,7 @@ func ValidatePortalConfig(config *models.ChannelConfig) error {
 	return nil
 }
 
-func validateChannelTargetField(channelType string, incoming map[string]interface{}) error {
+func validateChannelTargetField(channelType string, incoming map[string]any) error {
 	allowed := map[string]string{"portal": "portal_workspace_ids", "form": "form_workspace_ids", "email": "email_workspace_id"}[channelType]
 	for _, field := range []string{"portal_workspace_ids", "form_workspace_ids", "email_workspace_id"} {
 		if _, present := incoming[field]; present && field != allowed {
@@ -745,7 +745,7 @@ func containsChannelConfigID(values []int, target int) bool {
 	return false
 }
 
-func normalizeEmailAuthConfig(config map[string]interface{}) {
+func normalizeEmailAuthConfig(config map[string]any) {
 	method, _ := config["email_auth_method"].(string)
 	switch strings.ToLower(method) {
 	case "basic":

@@ -43,14 +43,14 @@ type conditionRow struct {
 // within a condition set. Only conditions whose mode is listed in `modes` are considered.
 // Returns (allowed, failureMessage, error). failureMessage is the error_message from the
 // first failing condition (if set).
-func (s *ConditionService) EvaluateTransitionConditions(ctx context.Context, conditionSetID, transitionID, userID int, item map[string]interface{}, modes []string) (allowed bool, failureMessage string, err error) {
+func (s *ConditionService) EvaluateTransitionConditions(ctx context.Context, conditionSetID, transitionID, userID int, item map[string]any, modes []string) (allowed bool, failureMessage string, err error) {
 	if len(modes) == 0 {
 		return true, "", nil
 	}
 
 	placeholders := strings.Repeat("?,", len(modes))
 	placeholders = placeholders[:len(placeholders)-1]
-	args := make([]interface{}, 0, 2+len(modes))
+	args := make([]any, 0, 2+len(modes))
 	args = append(args, conditionSetID, transitionID)
 	for _, m := range modes {
 		args = append(args, m)
@@ -94,7 +94,7 @@ func (s *ConditionService) EvaluateTransitionConditions(ctx context.Context, con
 
 // FilterTransitionsByConditions filters a list of transitions, returning only those
 // the user is allowed to perform given the condition set.
-func (s *ConditionService) FilterTransitionsByConditions(ctx context.Context, conditionSetID int, transitions []TransitionWithID, userID int, item map[string]interface{}) ([]TransitionWithID, error) {
+func (s *ConditionService) FilterTransitionsByConditions(ctx context.Context, conditionSetID int, transitions []TransitionWithID, userID int, item map[string]any) ([]TransitionWithID, error) {
 	// Load only condition-mode rules (validators are checked at transition time, not filtering)
 	rows, err := s.db.Query(`
 		SELECT cst.transition_id, cst.logic_mode, c.condition_type, c.config, c.mode, COALESCE(c.error_message, '')
@@ -160,7 +160,7 @@ type TransitionWithID struct {
 	CategoryColor string
 }
 
-func (s *ConditionService) evaluateConditions(ctx context.Context, conditions []conditionRow, logicMode string, userID int, item map[string]interface{}) (allowed bool, failureMessage string, err error) {
+func (s *ConditionService) evaluateConditions(ctx context.Context, conditions []conditionRow, logicMode string, userID int, item map[string]any) (allowed bool, failureMessage string, err error) {
 	if logicMode == "or" {
 		// OR: any condition passing = allowed
 		var lastFailMessage string
@@ -192,7 +192,7 @@ func (s *ConditionService) evaluateConditions(ctx context.Context, conditions []
 	return true, "", nil
 }
 
-func (s *ConditionService) evaluateCondition(ctx context.Context, c conditionRow, userID int, item map[string]interface{}) (bool, error) {
+func (s *ConditionService) evaluateCondition(ctx context.Context, c conditionRow, userID int, item map[string]any) (bool, error) {
 	switch c.ConditionType {
 	case models.ConditionTypeUserInRole:
 		return s.evaluateUserInRole(c.Config, userID, item)
@@ -210,7 +210,7 @@ func (s *ConditionService) evaluateCondition(ctx context.Context, c conditionRow
 // resolveUserID determines which user to evaluate based on a FieldRef. Source
 // vocabulary is shared with approvals: 'current_user' | 'creator' | 'assignee' |
 // 'regular_field' | 'custom_field'.
-func resolveUserID(ref models.FieldRef, currentUserID int, item map[string]interface{}) (int, error) {
+func resolveUserID(ref models.FieldRef, currentUserID int, item map[string]any) (int, error) {
 	switch ref.Source {
 	case models.ApprovalSourceCurrentUser:
 		return currentUserID, nil
@@ -239,7 +239,7 @@ func resolveUserID(ref models.FieldRef, currentUserID int, item map[string]inter
 		if ref.FieldID == nil {
 			return 0, fmt.Errorf("field_id required for custom_field source")
 		}
-		cfv, ok := item["custom_fields"].(map[string]interface{})
+		cfv, ok := item["custom_fields"].(map[string]any)
 		if !ok {
 			return 0, fmt.Errorf("no custom fields on item")
 		}
@@ -257,7 +257,7 @@ func resolveUserID(ref models.FieldRef, currentUserID int, item map[string]inter
 	}
 }
 
-func (s *ConditionService) evaluateUserInRole(configJSON string, userID int, item map[string]interface{}) (bool, error) {
+func (s *ConditionService) evaluateUserInRole(configJSON string, userID int, item map[string]any) (bool, error) {
 	var cfg models.ConditionUserInRoleConfig
 	if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
 		return false, fmt.Errorf("invalid user_in_role config: %w", err)
@@ -276,7 +276,7 @@ func (s *ConditionService) evaluateUserInRole(configJSON string, userID int, ite
 	return s.permService.HasWorkspaceRole(evalUserID, workspaceID, cfg.RoleID)
 }
 
-func (s *ConditionService) evaluateUserInGroup(configJSON string, userID int, item map[string]interface{}) (bool, error) {
+func (s *ConditionService) evaluateUserInGroup(configJSON string, userID int, item map[string]any) (bool, error) {
 	var cfg models.ConditionUserInGroupConfig
 	if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
 		return false, fmt.Errorf("invalid user_in_group config: %w", err)
@@ -300,7 +300,7 @@ func (s *ConditionService) evaluateUserInGroup(configJSON string, userID int, it
 	return false, nil
 }
 
-func (s *ConditionService) evaluateFieldValue(configJSON string, item map[string]interface{}) (bool, error) {
+func (s *ConditionService) evaluateFieldValue(configJSON string, item map[string]any) (bool, error) {
 	var cfg models.ConditionFieldValueConfig
 	if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
 		return false, fmt.Errorf("invalid field_value config: %w", err)
@@ -315,13 +315,13 @@ func (s *ConditionService) evaluateFieldValue(configJSON string, item map[string
 	return re.MatchString(fieldValue), nil
 }
 
-func (s *ConditionService) evaluateScript(ctx context.Context, configJSON string, userID int, item map[string]interface{}) (bool, error) {
+func (s *ConditionService) evaluateScript(ctx context.Context, configJSON string, userID int, item map[string]any) (bool, error) {
 	var cfg models.ConditionScriptConfig
 	if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
 		return false, fmt.Errorf("invalid script config: %w", err)
 	}
 
-	vars := map[string]interface{}{
+	vars := map[string]any{
 		"item":    item,
 		"user_id": userID,
 	}
@@ -399,8 +399,8 @@ func (s *ConditionService) GetConditionSetIDForItem(workspaceID int, itemTypeID 
 	return conditionSetID, nil
 }
 
-// toInt converts an interface{} to int, returning 0 if not possible.
-func toInt(v interface{}) (int, bool) {
+// toInt converts an any to int, returning 0 if not possible.
+func toInt(v any) (int, bool) {
 	switch val := v.(type) {
 	case int:
 		return val, true

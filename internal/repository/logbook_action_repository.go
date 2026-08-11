@@ -338,7 +338,7 @@ func (r *LogbookActionRepository) SaveActionWithNodesAndEdges(action *models.Log
 			trigger_config = $5, updated_at = $6
 		WHERE id = $7
 	`
-	args := []interface{}{
+	args := []any{
 		action.Name, action.Description, action.IsEnabled, action.TriggerType,
 		action.TriggerConfig, time.Now(), action.ID,
 	}

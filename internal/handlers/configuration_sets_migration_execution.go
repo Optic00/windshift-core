@@ -32,7 +32,7 @@ const defaultValueNodeBudget = 256
 
 // sanitizeJSONValue recursively sanitizes strings and keys under a shared node
 // budget, preventing nested values from bypassing input bounds.
-func sanitizeJSONValue(v interface{}, budget *int) interface{} {
+func sanitizeJSONValue(v any, budget *int) any {
 	if *budget <= 0 {
 		return nil
 	}
@@ -40,8 +40,8 @@ func sanitizeJSONValue(v interface{}, budget *int) interface{} {
 	switch x := v.(type) {
 	case string:
 		return sanitize.PlainTextField.Sanitize(x)
-	case []interface{}:
-		out := make([]interface{}, 0, len(x))
+	case []any:
+		out := make([]any, 0, len(x))
 		for _, e := range x {
 			if *budget <= 0 {
 				break
@@ -49,8 +49,8 @@ func sanitizeJSONValue(v interface{}, budget *int) interface{} {
 			out = append(out, sanitizeJSONValue(e, budget))
 		}
 		return out
-	case map[string]interface{}:
-		out := make(map[string]interface{}, len(x))
+	case map[string]any:
+		out := make(map[string]any, len(x))
 		for k, e := range x {
 			if *budget <= 0 {
 				break
@@ -144,7 +144,7 @@ func (h *ConfigurationSetHandler) ExecuteMigration(w http.ResponseWriter, r *htt
 	}
 
 	if currentUser := utils.GetCurrentUser(r); currentUser != nil {
-		logAuditWithDetails(h.db, r, currentUser, logger.ActionConfigSetMigrationExecute, logger.ResourceConfigurationSet, &migrationReq.ConfigurationSetID, "", map[string]interface{}{
+		logAuditWithDetails(h.db, r, currentUser, logger.ActionConfigSetMigrationExecute, logger.ResourceConfigurationSet, &migrationReq.ConfigurationSetID, "", map[string]any{
 			"configuration_set_id": migrationReq.ConfigurationSetID,
 			"workspace_ids":        migrationReq.WorkspaceIDs,
 			"status_mapping_count": len(migrationReq.StatusMappings),
@@ -152,7 +152,7 @@ func (h *ConfigurationSetHandler) ExecuteMigration(w http.ResponseWriter, r *htt
 		})
 	}
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"success":        true,
 		"message":        fmt.Sprintf("Successfully migrated %d items", totalMigrated),
 		"migrated_items": totalMigrated,
@@ -267,7 +267,7 @@ func (h *ConfigurationSetHandler) ExecuteComprehensiveMigration(w http.ResponseW
 			} else if _, ok := provided[*migration.CurrentItemTypeID]; ok {
 				continue
 			}
-			respondJSON(w, http.StatusConflict, map[string]interface{}{
+			respondJSON(w, http.StatusConflict, map[string]any{
 				"error":   "item_type_migration_incomplete",
 				"message": fmt.Sprintf("A migration mapping is required for item type %q", migration.CurrentItemTypeName),
 			})
@@ -393,7 +393,7 @@ func (h *ConfigurationSetHandler) ExecuteComprehensiveMigration(w http.ResponseW
 		for _, wsID := range req.WorkspaceIDs {
 			if err = h.swapWorkspaceConfigSet(tx, wsID, req.OldConfigurationSetID, req.NewConfigurationSetID, now); err != nil {
 				if errors.Is(err, errMigrationConflict) {
-					respondJSON(w, http.StatusConflict, map[string]interface{}{
+					respondJSON(w, http.StatusConflict, map[string]any{
 						"error":   "workspace_configuration_changed",
 						"message": fmt.Sprintf("Workspace %d is no longer assigned to configuration set %d; refresh and retry.", wsID, req.OldConfigurationSetID),
 					})
@@ -465,7 +465,7 @@ func (h *ConfigurationSetHandler) ExecuteComprehensiveMigration(w http.ResponseW
 	totalMigrated := stats.ItemTypesMigrated + stats.StatusesMigrated + stats.PrioritiesMigrated
 
 	if currentUser := utils.GetCurrentUser(r); currentUser != nil {
-		logAuditWithDetails(h.db, r, currentUser, logger.ActionConfigSetComprehensiveMigrationExecute, logger.ResourceConfigurationSet, &req.NewConfigurationSetID, "", map[string]interface{}{
+		logAuditWithDetails(h.db, r, currentUser, logger.ActionConfigSetComprehensiveMigrationExecute, logger.ResourceConfigurationSet, &req.NewConfigurationSetID, "", map[string]any{
 			"old_configuration_set_id":   req.OldConfigurationSetID,
 			"new_configuration_set_id":   req.NewConfigurationSetID,
 			"workspace_ids":              req.WorkspaceIDs,
@@ -481,7 +481,7 @@ func (h *ConfigurationSetHandler) ExecuteComprehensiveMigration(w http.ResponseW
 		})
 	}
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"success":            true,
 		"message":            fmt.Sprintf("Successfully migrated %d items", totalMigrated),
 		"migrated_items":     totalMigrated,
@@ -711,7 +711,7 @@ func (h *ConfigurationSetHandler) swapWorkspaceConfigSet(tx database.Tx, workspa
 }
 
 // addDefaultFieldValue adds a default value for a custom field to items that don't have it
-func (h *ConfigurationSetHandler) addDefaultFieldValue(tx database.Tx, workspaceIDs []int, fieldID int, defaultValue interface{}) (int, error) {
+func (h *ConfigurationSetHandler) addDefaultFieldValue(tx database.Tx, workspaceIDs []int, fieldID int, defaultValue any) (int, error) {
 	fieldKey := strconv.Itoa(fieldID)
 	count := 0
 
@@ -732,9 +732,9 @@ func (h *ConfigurationSetHandler) addDefaultFieldValue(tx database.Tx, workspace
 		id := row.ID
 		cfvJSON := row.CFVJSON
 
-		var cfv map[string]interface{}
+		var cfv map[string]any
 		if err := json.Unmarshal([]byte(cfvJSON), &cfv); err != nil {
-			cfv = make(map[string]interface{})
+			cfv = make(map[string]any)
 		}
 
 		// Only add if field not already set

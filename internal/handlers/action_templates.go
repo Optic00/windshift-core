@@ -99,7 +99,7 @@ func (h *ActionTemplatesHandler) CreateActionFromTemplate(w http.ResponseWriter,
 		h.actionService.InvalidateWorkspaceCache(workspaceID)
 	}
 
-	h.auditor.LogWithDetails(r, currentUser, logger.ActionAutomationCreate, logger.ResourceAutomation, &result.ActionID, result.Name, map[string]interface{}{
+	h.auditor.LogWithDetails(r, currentUser, logger.ActionAutomationCreate, logger.ResourceAutomation, &result.ActionID, result.Name, map[string]any{
 		"template_key": result.TemplateKey,
 		"context":      "from_template",
 	})

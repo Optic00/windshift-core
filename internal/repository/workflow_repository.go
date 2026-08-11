@@ -474,7 +474,7 @@ func (r *WorkflowRepository) ReplaceTransitions(workflowID int, transitions []mo
 
 	if len(toDeleteIDs) > 0 {
 		delPlaceholders := make([]string, len(toDeleteIDs))
-		delArgs := make([]interface{}, len(toDeleteIDs))
+		delArgs := make([]any, len(toDeleteIDs))
 		for i, id := range toDeleteIDs {
 			delPlaceholders[i] = "?"
 			delArgs[i] = id
@@ -546,7 +546,7 @@ func CancelApprovalRequestsForTransitions(tx database.Tx, transitionIDs []int) (
 	}
 	placeholderList := strings.Join(placeholders, ",")
 
-	args := make([]interface{}, 0, len(transitionIDs)*2)
+	args := make([]any, 0, len(transitionIDs)*2)
 	for _, id := range transitionIDs {
 		args = append(args, id)
 	}
@@ -584,7 +584,7 @@ func CancelApprovalRequestsForTransitions(tx database.Tx, transitionIDs []int) (
 	}
 
 	delPlaceholders := make([]string, len(requestIDs))
-	delArgs := make([]interface{}, len(requestIDs))
+	delArgs := make([]any, len(requestIDs))
 	for i, id := range requestIDs {
 		delPlaceholders[i] = "?"
 		delArgs[i] = id

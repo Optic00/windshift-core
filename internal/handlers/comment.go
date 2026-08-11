@@ -454,7 +454,7 @@ func (h *CommentHandler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 			AssigneeID:  assigneeID,
 			CreatorID:   creatorID,
 			Title:       "Comment Updated",
-			TemplateData: map[string]interface{}{
+			TemplateData: map[string]any{
 				"item.title": itemTitle,
 				"item.id":    itemID,
 				"user.name":  user.Username,
@@ -524,7 +524,7 @@ func (h *CommentHandler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logAuditWithDetails(h.db, r, user, logger.ActionCommentDelete, logger.ResourceComment, &commentID, "", map[string]interface{}{
+	logAuditWithDetails(h.db, r, user, logger.ActionCommentDelete, logger.ResourceComment, &commentID, "", map[string]any{
 		"item_id":                itemID,
 		"workspace_id":           workspaceID,
 		"comment_author_user_id": ctx.AuthorID,
@@ -545,7 +545,7 @@ func (h *CommentHandler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 			AssigneeID:  assigneeID,
 			CreatorID:   creatorID,
 			Title:       "Comment Deleted",
-			TemplateData: map[string]interface{}{
+			TemplateData: map[string]any{
 				"item.title": itemTitle,
 				"item.id":    itemID,
 				"user.name":  user.Username,

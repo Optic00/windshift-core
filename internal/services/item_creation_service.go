@@ -44,7 +44,7 @@ type ItemCreateInput struct {
 	RelatedWorkItemID *int
 	StoryPoints       *float64
 	EstimateMinutes   *int
-	CustomFieldValues map[string]interface{}
+	CustomFieldValues map[string]any
 	MilestoneIDs      []int
 }
 

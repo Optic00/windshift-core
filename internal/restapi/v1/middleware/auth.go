@@ -104,7 +104,7 @@ func (ba *BearerAuth) RequirePermission(permissions ...string) func(http.Handler
 					http.StatusForbidden,
 					restapi.ErrCodeInsufficientPermission,
 					"Token does not have required permissions",
-				).WithDetails(map[string]interface{}{
+				).WithDetails(map[string]any{
 					"required": permissions,
 				}))
 				return

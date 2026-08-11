@@ -148,7 +148,7 @@ func (s *SyncService) SyncUsers(ctx context.Context, config *models.LDAPConfig) 
 			ActionType:   "ldap.sync",
 			ResourceType: "ldap_config",
 			ResourceName: config.Name,
-			Details: map[string]interface{}{
+			Details: map[string]any{
 				"config_id":   config.ID,
 				"synced":      result.UsersSynced,
 				"created":     result.UsersCreated,

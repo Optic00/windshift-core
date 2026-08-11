@@ -102,7 +102,7 @@ func (r *LLMUsageRepository) TotalsForRun(ctx context.Context, runID int) (RunUs
 	return t, nil
 }
 
-func nullFloatArg(f *float64) interface{} {
+func nullFloatArg(f *float64) any {
 	if f == nil {
 		return nil
 	}

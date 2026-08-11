@@ -24,7 +24,7 @@ type AssetResponse struct {
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 
-	CustomFieldValues map[string]interface{} `json:"custom_field_values,omitempty"`
+	CustomFieldValues map[string]any `json:"custom_field_values,omitempty"`
 
 	// Nested summaries — populated from the row's joined columns when the
 	// underlying query asks for them, otherwise omitted.
@@ -58,13 +58,13 @@ type AssetLinks struct {
 // field name — validation happens in the handler against the asset type's
 // declared fields.
 type AssetCreateRequest struct {
-	Title             string                 `json:"title"`
-	Description       string                 `json:"description,omitempty"`
-	AssetTag          string                 `json:"asset_tag,omitempty"`
-	AssetTypeID       int                    `json:"asset_type_id"`
-	CategoryID        *int                   `json:"category_id,omitempty"`
-	StatusID          *int                   `json:"status_id,omitempty"`
-	CustomFieldValues map[string]interface{} `json:"custom_field_values,omitempty"`
+	Title             string         `json:"title"`
+	Description       string         `json:"description,omitempty"`
+	AssetTag          string         `json:"asset_tag,omitempty"`
+	AssetTypeID       int            `json:"asset_type_id"`
+	CategoryID        *int           `json:"category_id,omitempty"`
+	StatusID          *int           `json:"status_id,omitempty"`
+	CustomFieldValues map[string]any `json:"custom_field_values,omitempty"`
 }
 
 // AssetUpdateRequest is the v1 payload for partial-updating an asset.
@@ -72,13 +72,13 @@ type AssetCreateRequest struct {
 // "not set" from "set to zero value". Pass a non-nil pointer to update;
 // omit to leave unchanged.
 type AssetUpdateRequest struct {
-	Title             *string                 `json:"title,omitempty"`
-	Description       *string                 `json:"description,omitempty"`
-	AssetTag          *string                 `json:"asset_tag,omitempty"`
-	AssetTypeID       *int                    `json:"asset_type_id,omitempty"`
-	CategoryID        *int                    `json:"category_id,omitempty"`
-	StatusID          *int                    `json:"status_id,omitempty"`
-	CustomFieldValues *map[string]interface{} `json:"custom_field_values,omitempty"`
+	Title             *string         `json:"title,omitempty"`
+	Description       *string         `json:"description,omitempty"`
+	AssetTag          *string         `json:"asset_tag,omitempty"`
+	AssetTypeID       *int            `json:"asset_type_id,omitempty"`
+	CategoryID        *int            `json:"category_id,omitempty"`
+	StatusID          *int            `json:"status_id,omitempty"`
+	CustomFieldValues *map[string]any `json:"custom_field_values,omitempty"`
 }
 
 // AssetSetResponse is the v1 representation of an asset management set.

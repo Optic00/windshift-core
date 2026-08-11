@@ -34,7 +34,7 @@ type jsonSchema struct {
 	Required             []string               `json:"required"`
 	AdditionalProperties *bool                  `json:"additionalProperties"`
 	Items                *jsonSchema            `json:"items"`
-	Enum                 []interface{}          `json:"enum"`
+	Enum                 []any                  `json:"enum"`
 }
 
 type gbnfGenerator struct {
@@ -116,7 +116,7 @@ func (g *gbnfGenerator) generateRule(name string, s *jsonSchema) string {
 	}
 }
 
-func (g *gbnfGenerator) generateEnum(values []interface{}) string {
+func (g *gbnfGenerator) generateEnum(values []any) string {
 	parts := make([]string, 0, len(values))
 	for _, v := range values {
 		encoded, err := json.Marshal(v)

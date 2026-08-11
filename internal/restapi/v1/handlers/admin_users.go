@@ -185,7 +185,7 @@ func (h *AdminUserHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	resp := mapUserToResponse(u)
 	resp.Warnings = warnings
-	changes := map[string]interface{}{}
+	changes := map[string]any{}
 	if before.FirstName != u.FirstName {
 		changes["first_name"] = map[string]string{"old": before.FirstName, "new": u.FirstName}
 	}

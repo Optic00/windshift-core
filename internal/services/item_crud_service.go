@@ -432,7 +432,7 @@ func (s *ItemCRUDService) resolveCollectionQLContext(ctx context.Context, qlQuer
 	return "", true, nil
 }
 
-func (s *ItemCRUDService) evaluateQLContext(requestCtx context.Context, qlQuery string, functionCtx cql.FunctionContext) (qlSQL string, qlArgs []interface{}, err error) {
+func (s *ItemCRUDService) evaluateQLContext(requestCtx context.Context, qlQuery string, functionCtx cql.FunctionContext) (qlSQL string, qlArgs []any, err error) {
 	if qlQuery == "" {
 		return "", nil, nil
 	}

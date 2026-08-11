@@ -22,8 +22,8 @@ import (
 // queryExecer is the common subset of database.Database and database.Tx used by
 // helper methods so they can run inside or outside an explicit transaction.
 type queryExecer interface {
-	ExecWriteContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
-	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
+	ExecWriteContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
 // IssueSyncService handles synchronization of GitHub Issues into Windshift items.
@@ -368,7 +368,7 @@ func (s *IssueSyncService) updateItemFromIssue(ctx context.Context, config *mode
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if err := s.itemRepo.UpdateFields(tx, itemID, map[string]interface{}{
+	if err := s.itemRepo.UpdateFields(tx, itemID, map[string]any{
 		"title":       issue.Title,
 		"description": issue.Body,
 		"status_id":   statusID,

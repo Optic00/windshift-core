@@ -237,18 +237,18 @@ func generateUsername(email, displayName string) string {
 // plain generated name is not guaranteed to satisfy users.username's uniqueness
 // constraint.
 // collectUsersFromCustomField extracts users from a custom field value
-func collectUsersFromCustomField(value interface{}, fieldType string,
+func collectUsersFromCustomField(value any, fieldType string,
 	existingMap map[string]int, usersToProcess *[]JiraUserSummary, seen map[string]bool) {
 
 	switch fieldType {
 	case "user":
-		if userObj, ok := value.(map[string]interface{}); ok {
+		if userObj, ok := value.(map[string]any); ok {
 			addUserFromObject(userObj, existingMap, usersToProcess, seen)
 		}
 	case "multi_user":
-		if users, ok := value.([]interface{}); ok {
+		if users, ok := value.([]any); ok {
 			for _, u := range users {
-				if userObj, ok := u.(map[string]interface{}); ok {
+				if userObj, ok := u.(map[string]any); ok {
 					addUserFromObject(userObj, existingMap, usersToProcess, seen)
 				}
 			}
@@ -261,11 +261,11 @@ func collectUsersFromCustomField(value interface{}, fieldType string,
 // assignee/reporter/comment-author fields; pre-collecting them lets the ADF
 // converter resolve to Windshift @username syntax instead of falling back to
 // inert display text.
-func collectUsersFromADF(value interface{}, existingMap map[string]int, usersToProcess *[]JiraUserSummary, seen map[string]bool) {
+func collectUsersFromADF(value any, existingMap map[string]int, usersToProcess *[]JiraUserSummary, seen map[string]bool) {
 	switch v := value.(type) {
-	case map[string]interface{}:
+	case map[string]any:
 		if nodeType, _ := v["type"].(string); nodeType == "mention" {
-			if attrs, ok := v["attrs"].(map[string]interface{}); ok {
+			if attrs, ok := v["attrs"].(map[string]any); ok {
 				accountID, _ := attrs["id"].(string)
 				if accountID == "" {
 					accountID, _ = attrs["accountId"].(string)
@@ -280,7 +280,7 @@ func collectUsersFromADF(value interface{}, existingMap map[string]int, usersToP
 		for _, child := range v {
 			collectUsersFromADF(child, existingMap, usersToProcess, seen)
 		}
-	case []interface{}:
+	case []any:
 		for _, child := range v {
 			collectUsersFromADF(child, existingMap, usersToProcess, seen)
 		}
@@ -326,7 +326,7 @@ func addJiraUserSummaryFromUser(user *jira.JiraUser, existingMap map[string]int,
 }
 
 // addUserFromObject extracts user data from a Jira user object and adds it to the processing list
-func addUserFromObject(userObj map[string]interface{}, existingMap map[string]int,
+func addUserFromObject(userObj map[string]any, existingMap map[string]int,
 	usersToProcess *[]JiraUserSummary, seen map[string]bool) {
 
 	accountID, _ := userObj["accountId"].(string)
@@ -350,7 +350,7 @@ func addUserFromObject(userObj map[string]interface{}, existingMap map[string]in
 	accountType, _ := userObj["accountType"].(string)
 	displayName, _ := userObj["displayName"].(string)
 	avatarURL := ""
-	if avatars, ok := userObj["avatarUrls"].(map[string]interface{}); ok {
+	if avatars, ok := userObj["avatarUrls"].(map[string]any); ok {
 		avatarURL, _ = avatars["48x48"].(string)
 	}
 
@@ -459,7 +459,7 @@ func extractCustomFieldValueWithOptions(
 
 	switch mapping.WindshiftType {
 	case "user":
-		userObj, ok := value.(map[string]interface{})
+		userObj, ok := value.(map[string]any)
 		if !ok {
 			return nil, false
 		}
@@ -473,13 +473,13 @@ func extractCustomFieldValueWithOptions(
 		}
 		return uid, true
 	case "multi_user":
-		users, ok := value.([]interface{})
+		users, ok := value.([]any)
 		if !ok {
 			return nil, false
 		}
 		var userIDs []int
 		for _, u := range users {
-			userObj, ok := u.(map[string]interface{})
+			userObj, ok := u.(map[string]any)
 			if !ok {
 				continue
 			}
@@ -562,7 +562,7 @@ func extractCustomFieldValueWithOptions(
 	return nil, false
 }
 
-func userIdentifierFromObject(userObj map[string]interface{}) string {
+func userIdentifierFromObject(userObj map[string]any) string {
 	for _, key := range []string{"accountId", "name", "key"} {
 		if v, _ := userObj[key].(string); v != "" {
 			return v
@@ -620,7 +620,7 @@ func jiraCheckboxValue(value any) (result, ok bool) {
 }
 
 func customFieldIDValue(value any) string {
-	if m, ok := value.(map[string]interface{}); ok {
+	if m, ok := value.(map[string]any); ok {
 		for _, key := range []string{"id", "key", "accountId", "name"} {
 			if s, _ := m[key].(string); s != "" {
 				return s
@@ -638,12 +638,12 @@ func customFieldDisplayValue(value any) string {
 		return strconv.FormatFloat(v, 'f', -1, 64)
 	case bool:
 		return strconv.FormatBool(v)
-	case map[string]interface{}:
+	case map[string]any:
 		// Jira option/version/user-like objects usually carry a human label in one
 		// of these fields. Prefer labels over IDs so imports preserve admin-facing
 		// display values instead of opaque Jira identifiers.
 		if parent := firstStringKey(v, "value", "name", "displayName", "label", "key"); parent != "" {
-			if child, ok := v["child"].(map[string]interface{}); ok {
+			if child, ok := v["child"].(map[string]any); ok {
 				if childLabel := customFieldDisplayValue(child); childLabel != "" {
 					return parent + " / " + childLabel
 				}
@@ -657,7 +657,7 @@ func customFieldDisplayValue(value any) string {
 		if err == nil {
 			return string(b)
 		}
-	case []interface{}:
+	case []any:
 		values := customFieldDisplayValues(v)
 		if len(values) > 0 {
 			return strings.Join(values, ", ")
@@ -667,7 +667,7 @@ func customFieldDisplayValue(value any) string {
 }
 
 func customFieldDisplayValues(value any) []string {
-	arr, ok := value.([]interface{})
+	arr, ok := value.([]any)
 	if !ok {
 		if s := customFieldDisplayValue(value); s != "" {
 			return []string{s}
@@ -725,7 +725,7 @@ func sanitizeJiraImportStrings(value any) any {
 	}
 }
 
-func firstStringKey(m map[string]interface{}, keys ...string) string {
+func firstStringKey(m map[string]any, keys ...string) string {
 	for _, key := range keys {
 		if s, _ := m[key].(string); strings.TrimSpace(s) != "" {
 			return strings.TrimSpace(s)
@@ -761,11 +761,11 @@ func sprintIDsFromValue(value any) []string {
 	switch v := value.(type) {
 	case nil:
 		return nil
-	case map[string]interface{}:
+	case map[string]any:
 		if id := sprintIDFromMap(v); id != "" {
 			return []string{id}
 		}
-	case []interface{}:
+	case []any:
 		ids := make([]string, 0, len(v))
 		for _, entry := range v {
 			ids = append(ids, sprintIDsFromValue(entry)...)
@@ -790,7 +790,7 @@ func sprintIDsFromValue(value any) []string {
 	return nil
 }
 
-func sprintIDFromMap(m map[string]interface{}) string {
+func sprintIDFromMap(m map[string]any) string {
 	switch raw := m["id"].(type) {
 	case string:
 		return strings.TrimSpace(raw)
@@ -967,7 +967,7 @@ func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, works
 	// Windshift column ride along inside the same JSON bag so reports and exports
 	// can still surface them. Underscore-prefixed keys are importer metadata;
 	// user-selected Jira custom fields are keyed by Windshift custom field ID.
-	customFieldValues := make(map[string]interface{})
+	customFieldValues := make(map[string]any)
 	customFieldValues["_jira_issue_id"] = issue.ID
 	customFieldValues["_jira_issue_key"] = issue.Key
 	if jiraKeyFieldID := customFieldIDMap[jiraIssueKeyFieldSourceID]; jiraKeyFieldID > 0 && issue.Key != "" {
@@ -1216,7 +1216,7 @@ func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, works
 		return fmt.Errorf("failed to create or update item: %w", err)
 	}
 
-	meta := map[string]interface{}{
+	meta := map[string]any{
 		"summary": issue.Fields.Summary,
 	}
 	if jiraRequestType != "" {
@@ -1248,9 +1248,9 @@ func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, works
 		meta["parent_key"] = parentKey
 	}
 	if len(issue.Fields.IssueLinks) > 0 {
-		var links []map[string]interface{}
+		var links []map[string]any
 		for _, link := range issue.Fields.IssueLinks {
-			entry := map[string]interface{}{}
+			entry := map[string]any{}
 			if link.Type != nil {
 				entry["type_name"] = link.Type.Name
 				entry["inward"] = link.Type.Inward
@@ -1361,7 +1361,7 @@ func (h *JiraImportHandler) importIssueWatchers(
 			return err
 		}
 		wasCreated := !wasWatching
-		metadata := map[string]interface{}{
+		metadata := map[string]any{
 			"user_id":     userID,
 			"account_id":  accountID,
 			"was_created": wasCreated,
@@ -1548,7 +1548,7 @@ func (h *JiraImportHandler) importComments(jobID string, itemID int, issue *jira
 			continue
 		}
 
-		commentMeta := map[string]interface{}{}
+		commentMeta := map[string]any{}
 		if updatedAt != nil {
 			commentMeta["updated"] = updatedAt.UTC().Format(time.RFC3339)
 		}
@@ -1727,7 +1727,7 @@ func (h *JiraImportHandler) importExternalJiraIssueLink(
 	jobID string,
 	itemID int,
 	itemKey, externalKey, typeName, direction string,
-	sourceMetadata map[string]interface{},
+	sourceMetadata map[string]any,
 ) error {
 	return h.imports.UpsertExternalIssueLink(
 		jobID, itemID, itemKey, externalKey, typeName, direction, sourceMetadata,
@@ -1735,7 +1735,7 @@ func (h *JiraImportHandler) importExternalJiraIssueLink(
 }
 
 // ensureLinkType finds or creates a link type matching the Jira link type
-func (h *JiraImportHandler) ensureLinkType(typeName string, linkData map[string]interface{}) (int, error) {
+func (h *JiraImportHandler) ensureLinkType(typeName string, linkData map[string]any) (int, error) {
 	forwardLabel, _ := linkData["outward"].(string)
 	reverseLabel, _ := linkData["inward"].(string)
 	if forwardLabel == "" {
@@ -1929,7 +1929,7 @@ func (h *JiraImportHandler) importAttachments(ctx context.Context, jobID string,
 			} else {
 				metadata := jiraImportMappingMetadata(previousMapping.Metadata)
 				if metadata == nil {
-					metadata = make(map[string]interface{})
+					metadata = make(map[string]any)
 				}
 				metadata["action"] = "reuse_existing_mapping"
 				metadata["was_created"] = jiraImportMappingWasCreated(previousMapping.Metadata)
@@ -2025,7 +2025,7 @@ func (h *JiraImportHandler) importAttachments(ctx context.Context, jobID string,
 			continue
 		}
 
-		attachmentMeta := map[string]interface{}{
+		attachmentMeta := map[string]any{
 			"filename":  attachment.Filename,
 			"content":   attachment.Content,
 			"mime_type": mimeType,

@@ -52,7 +52,7 @@ func (s *Service) DeleteImportedData(jobID string, confirmedWorkspaceCount int) 
 	if _, err := s.db.ExecWrite(`DELETE FROM jira_import_id_mappings WHERE job_id = ?`, jobID); err != nil {
 		return nil, err
 	}
-	resultJSON, err := json.Marshal(map[string]interface{}{"deleted": deleted})
+	resultJSON, err := json.Marshal(map[string]any{"deleted": deleted})
 	if err != nil {
 		return nil, err
 	}

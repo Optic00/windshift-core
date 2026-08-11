@@ -75,7 +75,7 @@ func (h *ReviewHandler) GetReviews(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN users u ON r.user_id = u.id
 		WHERE r.user_id = ?`
 
-	args := []interface{}{userID}
+	args := []any{userID}
 
 	if reviewType != "" {
 		query += " AND r.review_type = ?"

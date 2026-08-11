@@ -267,7 +267,7 @@ func (h *OAuthHandler) AuthorizeApprove(w http.ResponseWriter, r *http.Request) 
 	// Match the CLI gate so disabled token creation cannot mint OAuth tokens.
 	if err := h.apiToken.checkCreationPolicy(user.ID); err != nil {
 		h.audit(r, user, "oauth.approve", &client.ID, client.DisplayName, false,
-			map[string]interface{}{"reason": "token_policy_disabled"})
+			map[string]any{"reason": "token_policy_disabled"})
 		respondForbidden(w, r)
 		return
 	}
@@ -303,7 +303,7 @@ func (h *OAuthHandler) AuthorizeApprove(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	h.audit(r, user, "oauth.approve", &client.ID, client.DisplayName, true, map[string]interface{}{
+	h.audit(r, user, "oauth.approve", &client.ID, client.DisplayName, true, map[string]any{
 		"client_id": client.ClientID,
 		"scopes":    granted,
 		"agent_id":  agent.ID,
@@ -346,7 +346,7 @@ func (h *OAuthHandler) AuthorizeDeny(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.audit(r, user, "oauth.deny", &client.ID, client.DisplayName, true, map[string]interface{}{
+	h.audit(r, user, "oauth.deny", &client.ID, client.DisplayName, true, map[string]any{
 		"client_id": client.ClientID,
 	})
 
@@ -382,7 +382,7 @@ func (h *OAuthHandler) Userinfo(w http.ResponseWriter, r *http.Request) {
 		respondUnauthorized(w, r)
 		return
 	}
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"sub":      fmt.Sprintf("%d", user.ID),
 		"email":    user.Email,
 		"name":     firstNonEmpty(user.FullName, user.Username),
@@ -503,7 +503,7 @@ func (h *OAuthHandler) tokenAuthorizationCode(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	h.auditClient(r, client, "oauth.token.issue", map[string]interface{}{
+	h.auditClient(r, client, "oauth.token.issue", map[string]any{
 		"grant_type": "authorization_code",
 		"user_id":    authCode.UserID,
 		"agent_id":   authCode.AgentID,
@@ -564,7 +564,7 @@ func (h *OAuthHandler) tokenRefreshToken(w http.ResponseWriter, r *http.Request,
 				"failed to revoke compromised refresh-token family")
 			return
 		}
-		h.auditClient(r, client, "oauth.token.refresh_replay", map[string]interface{}{
+		h.auditClient(r, client, "oauth.token.refresh_replay", map[string]any{
 			"refresh_id": row.ID,
 		})
 		writeOAuthTokenError(w, http.StatusBadRequest, oauthErrInvalidGrant,
@@ -591,7 +591,7 @@ func (h *OAuthHandler) tokenRefreshToken(w http.ResponseWriter, r *http.Request,
 				"failed to revoke compromised refresh-token family")
 			return
 		}
-		h.auditClient(r, client, "oauth.token.refresh_replay", map[string]interface{}{
+		h.auditClient(r, client, "oauth.token.refresh_replay", map[string]any{
 			"refresh_id": row.ID,
 		})
 		writeOAuthTokenError(w, http.StatusBadRequest, oauthErrInvalidGrant,
@@ -603,7 +603,7 @@ func (h *OAuthHandler) tokenRefreshToken(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	h.auditClient(r, client, "oauth.token.refresh", map[string]interface{}{
+	h.auditClient(r, client, "oauth.token.refresh", map[string]any{
 		"old_refresh_id": row.ID,
 		"new_refresh_id": rotation.NewRefreshID,
 		"user_id":        row.UserID,
@@ -1111,7 +1111,7 @@ type oauthRefreshTokenRow struct {
 }
 
 // audit emits a single audit-log entry for an OAuth event from the user side.
-func (h *OAuthHandler) audit(r *http.Request, user *models.User, action string, resourceID *int, resourceName string, success bool, details map[string]interface{}) {
+func (h *OAuthHandler) audit(r *http.Request, user *models.User, action string, resourceID *int, resourceName string, success bool, details map[string]any) {
 	_ = logger.LogAudit(h.db, logger.AuditEvent{
 		UserID:       user.ID,
 		Username:     user.Username,
@@ -1129,7 +1129,7 @@ func (h *OAuthHandler) audit(r *http.Request, user *models.User, action string, 
 // auditClient emits an audit entry for a /token-side event where there's no
 // authenticated user — only the OAuth client and (sometimes) a user_id in
 // the details bag.
-func (h *OAuthHandler) auditClient(r *http.Request, client *oauthClientRow, action string, details map[string]interface{}) {
+func (h *OAuthHandler) auditClient(r *http.Request, client *oauthClientRow, action string, details map[string]any) {
 	_ = logger.LogAudit(h.db, logger.AuditEvent{
 		IPAddress:    utils.GetClientIP(r),
 		UserAgent:    r.UserAgent(),
@@ -1345,7 +1345,7 @@ func generateOAuthRefreshToken() (string, error) {
 // nullStringOrEmpty turns "" into a NULL-safe value for sql.Exec where the
 // column is nullable. Plain empty string would be stored as ”; we want NULL
 // so the consumed_at-style UPDATE-where-NULL guard works.
-func nullStringOrEmpty(s string) interface{} {
+func nullStringOrEmpty(s string) any {
 	if s == "" {
 		return nil
 	}

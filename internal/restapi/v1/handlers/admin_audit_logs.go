@@ -29,19 +29,19 @@ func NewAdminAuditLogHandler(db database.Database, permissionService *services.P
 
 // AuditLogEntryResponse is the REST API v1 representation of an audit log entry.
 type AuditLogEntryResponse struct {
-	ID           int                    `json:"id"`
-	Timestamp    string                 `json:"timestamp"`
-	UserID       *int                   `json:"user_id"`
-	Username     string                 `json:"username"`
-	IPAddress    string                 `json:"ip_address,omitempty"`
-	UserAgent    string                 `json:"user_agent,omitempty"`
-	ActionType   string                 `json:"action_type"`
-	ResourceType string                 `json:"resource_type"`
-	ResourceID   *int                   `json:"resource_id,omitempty"`
-	ResourceName string                 `json:"resource_name,omitempty"`
-	Details      map[string]interface{} `json:"details,omitempty"`
-	Success      bool                   `json:"success"`
-	ErrorMessage string                 `json:"error_message,omitempty"`
+	ID           int            `json:"id"`
+	Timestamp    string         `json:"timestamp"`
+	UserID       *int           `json:"user_id"`
+	Username     string         `json:"username"`
+	IPAddress    string         `json:"ip_address,omitempty"`
+	UserAgent    string         `json:"user_agent,omitempty"`
+	ActionType   string         `json:"action_type"`
+	ResourceType string         `json:"resource_type"`
+	ResourceID   *int           `json:"resource_id,omitempty"`
+	ResourceName string         `json:"resource_name,omitempty"`
+	Details      map[string]any `json:"details,omitempty"`
+	Success      bool           `json:"success"`
+	ErrorMessage string         `json:"error_message,omitempty"`
 }
 
 // List handles GET /rest/api/v1/admin/audit-logs

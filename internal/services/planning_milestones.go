@@ -54,7 +54,7 @@ func milestoneScopeClause() string {
 }
 
 // milestoneScopeArgs returns the args for milestoneScopeClause for a scope.
-func milestoneScopeArgs(isGlobal bool, workspaceID, categoryID *int) []interface{} {
+func milestoneScopeArgs(isGlobal bool, workspaceID, categoryID *int) []any {
 	ws := 0
 	if workspaceID != nil {
 		ws = *workspaceID
@@ -63,7 +63,7 @@ func milestoneScopeArgs(isGlobal bool, workspaceID, categoryID *int) []interface
 	if categoryID != nil {
 		cat = *categoryID
 	}
-	return []interface{}{isGlobal, ws, cat}
+	return []any{isGlobal, ws, cat}
 }
 
 // SetSCMWorkspaceRepository wires the SCM persistence layer used by release
@@ -90,7 +90,7 @@ func NewPlanningService(db database.Database) *PlanningService {
 
 // milestoneScanner is satisfied by both *sql.Row and *sql.Rows.
 type milestoneScanner interface {
-	Scan(dest ...interface{}) error
+	Scan(dest ...any) error
 }
 
 // scanMilestoneRow scans a single milestone row (with LEFT JOIN release columns)
@@ -276,8 +276,8 @@ func (s *PlanningService) ListMilestones(params MilestoneListParams) ([]Mileston
 		WHERE 1=1`
 
 	countQuery := "SELECT COUNT(*) FROM milestones m WHERE 1=1"
-	var args []interface{}
-	var countArgs []interface{}
+	var args []any
+	var countArgs []any
 
 	// Filter by workspace - show local milestones for this workspace + optionally global milestones
 	switch {
@@ -1032,7 +1032,7 @@ func (s *PlanningService) ReleaseMilestone(params ReleaseMilestoneParams) (*Mile
 	return s.GetMilestone(params.ID)
 }
 
-func nullablePlanningString(value string) interface{} {
+func nullablePlanningString(value string) any {
 	if value == "" {
 		return nil
 	}
@@ -1248,7 +1248,7 @@ func (s *PlanningService) ReorderMilestones(scope MilestoneScope, orderedIDs []i
 		now := time.Now()
 		for i, id := range orderedIDs {
 			position := (i + 1) * milestonePositionStep
-			updateArgs := append([]interface{}{position, now, id}, scopeArgs...)
+			updateArgs := append([]any{position, now, id}, scopeArgs...)
 			if _, err := tx.Exec(
 				"UPDATE milestones SET position = ?, updated_at = ? WHERE id = ? AND "+scopeClause,
 				updateArgs...,
@@ -1261,7 +1261,7 @@ func (s *PlanningService) ReorderMilestones(scope MilestoneScope, orderedIDs []i
 		return err
 	}
 	if actor := optionalAuditActor(auditActors); actor != nil {
-		emitServiceAudit(s.db, *actor, logger.ActionMilestoneReorder, logger.ResourceMilestone, nil, "", map[string]interface{}{
+		emitServiceAudit(s.db, *actor, logger.ActionMilestoneReorder, logger.ResourceMilestone, nil, "", map[string]any{
 			"ordered_ids":  orderedIDs,
 			"is_global":    scope.IsGlobal,
 			"workspace_id": scope.WorkspaceID,

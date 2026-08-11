@@ -129,18 +129,18 @@ var supportedADFNodes = map[string]bool{
 // ScanADF walks an ADF document (the shape Jira returns for description and
 // comment bodies) and returns a histogram of node `type` → occurrence count.
 // A nil or plain-string body yields an empty map.
-func ScanADF(adf interface{}) map[string]int {
+func ScanADF(adf any) map[string]int {
 	counts := make(map[string]int)
-	var walk func(node interface{})
-	walk = func(node interface{}) {
-		m, ok := node.(map[string]interface{})
+	var walk func(node any)
+	walk = func(node any) {
+		m, ok := node.(map[string]any)
 		if !ok {
 			return
 		}
 		if t, _ := m["type"].(string); t != "" {
 			counts[t]++
 		}
-		if content, ok := m["content"].([]interface{}); ok {
+		if content, ok := m["content"].([]any); ok {
 			for _, c := range content {
 				walk(c)
 			}

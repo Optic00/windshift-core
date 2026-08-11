@@ -45,7 +45,7 @@ func (b *BaseHandler) ParsePagination(r *http.Request) restapi.PaginationParams 
 }
 
 // RespondOK writes a 200 OK response.
-func (b *BaseHandler) RespondOK(w http.ResponseWriter, data interface{}) {
+func (b *BaseHandler) RespondOK(w http.ResponseWriter, data any) {
 	restapi.RespondOK(w, data)
 }
 
@@ -54,7 +54,7 @@ func (b *BaseHandler) RespondUnauthorized(w http.ResponseWriter, r *http.Request
 }
 
 // RespondCreated writes a 201 Created response.
-func (b *BaseHandler) RespondCreated(w http.ResponseWriter, data interface{}) {
+func (b *BaseHandler) RespondCreated(w http.ResponseWriter, data any) {
 	restapi.RespondCreated(w, data)
 }
 
@@ -64,7 +64,7 @@ func (b *BaseHandler) RespondNoContent(w http.ResponseWriter) {
 }
 
 // RespondPaginated writes a paginated response.
-func (b *BaseHandler) RespondPaginated(w http.ResponseWriter, data interface{}, pagination restapi.PaginationParams, total int) {
+func (b *BaseHandler) RespondPaginated(w http.ResponseWriter, data any, pagination restapi.PaginationParams, total int) {
 	restapi.RespondPaginated(w, data, restapi.NewPaginationMeta(pagination, total))
 }
 
@@ -106,7 +106,7 @@ func (b *BaseHandler) ParsePathID(w http.ResponseWriter, r *http.Request, param,
 }
 
 // DecodeBodyOrRespond decodes JSON body or writes 400 on error.
-func (b *BaseHandler) DecodeBodyOrRespond(w http.ResponseWriter, r *http.Request, v interface{}) bool {
+func (b *BaseHandler) DecodeBodyOrRespond(w http.ResponseWriter, r *http.Request, v any) bool {
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
 		restapi.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "Invalid request body"))
 		return false

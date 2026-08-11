@@ -29,14 +29,14 @@ type WorkspaceAgentSkillRepository struct {
 }
 
 type workspaceAgentSkillStore interface {
-	Query(query string, args ...interface{}) (*sql.Rows, error)
-	QueryRow(query string, args ...interface{}) *sql.Row
-	Exec(query string, args ...interface{}) (sql.Result, error)
-	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
-	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
-	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
-	ExecWrite(query string, args ...interface{}) (sql.Result, error)
-	ExecWriteContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+	Query(query string, args ...any) (*sql.Rows, error)
+	QueryRow(query string, args ...any) *sql.Row
+	Exec(query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	ExecWrite(query string, args ...any) (sql.Result, error)
+	ExecWriteContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
 // NewWorkspaceAgentSkillRepository constructs a new repository.

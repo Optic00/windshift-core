@@ -186,7 +186,7 @@ func init() {
 			LEFT JOIN customer_organisations co ON tp.customer_id = co.id
 			LEFT JOIN time_project_categories tpc ON tp.category_id = tpc.id
 			WHERE 1=1`
-			var qa []interface{}
+			var qa []any
 			if accessibleIDs != nil {
 				ph := make([]string, len(accessibleIDs))
 				for i, id := range accessibleIDs {
@@ -241,7 +241,7 @@ func init() {
 			LEFT JOIN items i ON tw.item_id = i.id
 			LEFT JOIN workspaces w ON i.workspace_id = w.id
 			WHERE tw.user_id = ?`
-			qa := []interface{}{env.UserID}
+			qa := []any{env.UserID}
 			if args.DateFrom != "" {
 				t, err := time.Parse("2006-01-02", args.DateFrom)
 				if err != nil {

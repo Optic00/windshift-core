@@ -146,7 +146,7 @@ func (r *ItemChangeRepository) QueryPage(accessibleWorkspaceIDs []int, workspace
 	return changes, rows.Err()
 }
 
-func itemChangeScopeWhere(accessibleWorkspaceIDs []int, workspaceID int, since int64) (where string, args []interface{}) {
+func itemChangeScopeWhere(accessibleWorkspaceIDs []int, workspaceID int, since int64) (where string, args []any) {
 	clauses := []string{}
 	if since > 0 {
 		clauses = append(clauses, "id > ?")

@@ -162,16 +162,16 @@ type PortalSection struct {
 
 // PortalCustomer represents an individual portal user
 type PortalCustomer struct {
-	ID                     int                    `json:"id"`
-	Name                   string                 `json:"name"`
-	Email                  string                 `json:"email"`
-	Phone                  string                 `json:"phone,omitempty"`
-	UserID                 *int                   `json:"user_id,omitempty"`                  // Links to internal user if applicable
-	CustomerOrganisationID *int                   `json:"customer_organisation_id,omitempty"` //nolint:misspell // matches API/database field name
-	IsPrimary              bool                   `json:"is_primary"`                         // Primary contact for the organization
-	CustomFieldValues      map[string]interface{} `json:"custom_field_values,omitempty"`
-	CreatedAt              time.Time              `json:"created_at"`
-	UpdatedAt              time.Time              `json:"updated_at"`
+	ID                     int            `json:"id"`
+	Name                   string         `json:"name"`
+	Email                  string         `json:"email"`
+	Phone                  string         `json:"phone,omitempty"`
+	UserID                 *int           `json:"user_id,omitempty"`                  // Links to internal user if applicable
+	CustomerOrganisationID *int           `json:"customer_organisation_id,omitempty"` //nolint:misspell // matches API/database field name
+	IsPrimary              bool           `json:"is_primary"`                         // Primary contact for the organization
+	CustomFieldValues      map[string]any `json:"custom_field_values,omitempty"`
+	CreatedAt              time.Time      `json:"created_at"`
+	UpdatedAt              time.Time      `json:"updated_at"`
 	// Joined fields for API responses
 	UserName                 string        `json:"user_name,omitempty"`
 	UserEmail                string        `json:"user_email,omitempty"`
@@ -203,15 +203,15 @@ type PortalCustomerRole struct {
 
 // CustomerOrganisation represents a B2B entity for time tracking
 type CustomerOrganisation struct {
-	ID                int                    `json:"id"`
-	Name              string                 `json:"name"`
-	Email             string                 `json:"email"`
-	Description       string                 `json:"description"`
-	Active            bool                   `json:"active"`
-	AvatarURL         string                 `json:"avatar_url,omitempty"`
-	CustomFieldValues map[string]interface{} `json:"custom_field_values,omitempty"`
-	CreatedAt         time.Time              `json:"created_at"`
-	UpdatedAt         time.Time              `json:"updated_at"`
+	ID                int            `json:"id"`
+	Name              string         `json:"name"`
+	Email             string         `json:"email"`
+	Description       string         `json:"description"`
+	Active            bool           `json:"active"`
+	AvatarURL         string         `json:"avatar_url,omitempty"`
+	CustomFieldValues map[string]any `json:"custom_field_values,omitempty"`
+	CreatedAt         time.Time      `json:"created_at"`
+	UpdatedAt         time.Time      `json:"updated_at"`
 }
 
 // ContactRole represents a role that can be assigned to portal customers

@@ -277,7 +277,7 @@ func (h *CollectionHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h.RespondOK(w, map[string]interface{}{
+	h.RespondOK(w, map[string]any{
 		"items": results,
 		"total": len(results),
 	})

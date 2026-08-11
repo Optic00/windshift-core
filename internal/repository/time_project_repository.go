@@ -34,7 +34,7 @@ type TimeProjectDetail struct {
 	Status        string
 	Color         string
 	HourlyRate    float64
-	Settings      map[string]interface{} // parsed settings JSON; nil when empty
+	Settings      map[string]any // parsed settings JSON; nil when empty
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 	CustomerName  string
@@ -66,7 +66,7 @@ func scanTimeProjectDetail(scan func(dest ...any) error) (TimeProjectDetail, err
 		p.TotalHours = &totalHours.Float64
 	}
 	if settingsStr.Valid && settingsStr.String != "" && settingsStr.String != "{}" {
-		var m map[string]interface{}
+		var m map[string]any
 		_ = json.Unmarshal([]byte(settingsStr.String), &m)
 		p.Settings = m
 	}
@@ -214,7 +214,7 @@ func (r *TimeProjectRepository) Delete(id int) error {
 	return nil
 }
 
-func encodeTimeProjectSettings(settings map[string]interface{}) (any, error) {
+func encodeTimeProjectSettings(settings map[string]any) (any, error) {
 	if len(settings) == 0 {
 		return nil, nil
 	}

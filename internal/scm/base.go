@@ -34,7 +34,7 @@ func newSCMHTTPClient(timeout time.Duration) *http.Client {
 // It handles request creation, auth headers, status checking, and response body closing.
 // expectedStatus is the HTTP status code that indicates success (e.g., http.StatusOK).
 func (b *baseProvider) doJSON(ctx context.Context, method, reqURL string,
-	body io.Reader, expectedStatus int, result interface{}) error {
+	body io.Reader, expectedStatus int, result any) error {
 
 	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
 	if err != nil {

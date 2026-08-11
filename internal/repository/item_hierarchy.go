@@ -669,10 +669,10 @@ func scanItemRowBase(rows *sql.Rows, level *int) (*models.Item, error) {
 
 	if customFieldValuesJSON.Valid && customFieldValuesJSON.String != "" {
 		if err := json.Unmarshal([]byte(customFieldValuesJSON.String), &item.CustomFieldValues); err != nil {
-			item.CustomFieldValues = make(map[string]interface{})
+			item.CustomFieldValues = make(map[string]any)
 		}
 	} else {
-		item.CustomFieldValues = make(map[string]interface{})
+		item.CustomFieldValues = make(map[string]any)
 	}
 
 	return &item, nil

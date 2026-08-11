@@ -169,7 +169,7 @@ func (s *Service) UpdateImportedItem(itemID int, params services.ItemCreationPar
 	if err := validation.ValidatePlanningAssignments(s.db, params.WorkspaceID, params.MilestoneIDs, params.IterationID); err != nil {
 		return 0, err
 	}
-	var priorityID interface{}
+	var priorityID any
 	if strings.TrimSpace(params.Priority) != "" {
 		var resolvedPriorityID int
 		if err := s.db.QueryRow(`
@@ -182,7 +182,7 @@ func (s *Service) UpdateImportedItem(itemID int, params services.ItemCreationPar
 	if params.UpdatedAt != nil {
 		updatedAt = *params.UpdatedAt
 	}
-	var createdAt interface{}
+	var createdAt any
 	if params.CreatedAt != nil {
 		createdAt = *params.CreatedAt
 	}
@@ -195,7 +195,7 @@ func (s *Service) UpdateImportedItem(itemID int, params services.ItemCreationPar
 	if err != nil {
 		return 0, fmt.Errorf("generate Jira re-import fractional index: %w", err)
 	}
-	customFieldValues := interface{}(nil)
+	customFieldValues := any(nil)
 	if params.CustomFieldValuesJSON != "" {
 		customFieldValues = params.CustomFieldValuesJSON
 	}
@@ -247,7 +247,7 @@ func (s *Service) UpsertExternalIssueLink(
 	jobID string,
 	itemID int,
 	itemKey, externalKey, typeName, direction string,
-	sourceMetadata map[string]interface{},
+	sourceMetadata map[string]any,
 ) error {
 	externalKey = strings.TrimSpace(externalKey)
 	if itemID <= 0 || externalKey == "" {
@@ -269,7 +269,7 @@ func (s *Service) UpsertExternalIssueLink(
 	if providerName == "" {
 		providerName = "Jira"
 	}
-	providerConfig, err := json.Marshal(map[string]interface{}{
+	providerConfig, err := json.Marshal(map[string]any{
 		"base_url": strings.TrimRight(instanceURL, "/"), "connection_id": connectionID, "managed_by": "jira_import",
 	})
 	if err != nil {
@@ -298,7 +298,7 @@ func (s *Service) UpsertExternalIssueLink(
 	if relation != "" {
 		title = relation + ": " + externalKey
 	}
-	linkMetadata, err := json.Marshal(map[string]interface{}{
+	linkMetadata, err := json.Marshal(map[string]any{
 		"jira_issue_key": externalKey, "local_issue_key": itemKey, "jira_link_type": typeName,
 		"direction": direction, "source": "jira_import",
 	})
@@ -336,7 +336,7 @@ func (s *Service) UpsertExternalIssueLink(
 	}
 	return s.RecordMapping(jobID, "external_issue_link",
 		itemKey+":"+direction+":"+typeName+":"+externalKey,
-		externalKey, itemID, map[string]interface{}{
+		externalKey, itemID, map[string]any{
 			"integration_link_id": linkID, "provider_id": providerID, "was_created": wasCreated,
 		})
 }

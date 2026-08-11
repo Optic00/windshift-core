@@ -22,36 +22,36 @@ func IsPostgresDriver(name string) bool {
 // last review: ser, 210426
 type Database interface {
 	// Query executes a query that returns rows (SELECT)
-	Query(query string, args ...interface{}) (*sql.Rows, error)
+	Query(query string, args ...any) (*sql.Rows, error)
 
 	// QueryRow executes a query that returns at most one row
-	QueryRow(query string, args ...interface{}) *sql.Row
+	QueryRow(query string, args ...any) *sql.Row
 
 	// Exec executes a query that doesn't return rows (INSERT, UPDATE, DELETE)
 	// For SQLite: routes to write connection for safety
 	// For PostgreSQL: uses standard connection pool
-	Exec(query string, args ...interface{}) (sql.Result, error)
+	Exec(query string, args ...any) (sql.Result, error)
 
 	// QueryContext executes a query with context that returns rows
-	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 
 	// QueryRowContext executes a query with context that returns at most one row
-	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 
 	// ExecContext executes a query with context that doesn't return rows
 	// For SQLite: routes to write connection for safety
 	// For PostgreSQL: uses standard connection pool
-	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 
 	// ExecWrite explicitly executes a write query using the write connection
 	// For SQLite: uses dedicated write connection (serialized)
 	// For PostgreSQL: uses standard connection pool (MVCC handles concurrency)
-	ExecWrite(query string, args ...interface{}) (sql.Result, error)
+	ExecWrite(query string, args ...any) (sql.Result, error)
 
 	// ExecWriteContext explicitly executes a write query with context using the write connection
 	// For SQLite: uses dedicated write connection (serialized)
 	// For PostgreSQL: uses standard connection pool (MVCC handles concurrency)
-	ExecWriteContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+	ExecWriteContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 
 	// Begin starts a new transaction (returns wrapped transaction)
 	Begin() (Tx, error)
@@ -75,32 +75,32 @@ type Database interface {
 // Tx is a database transaction interface that supports placeholder conversion
 type Tx interface {
 	// Query executes a query that returns rows within the transaction
-	Query(query string, args ...interface{}) (*sql.Rows, error)
+	Query(query string, args ...any) (*sql.Rows, error)
 
 	// QueryRow executes a query that returns at most one row within the transaction
-	QueryRow(query string, args ...interface{}) *sql.Row
+	QueryRow(query string, args ...any) *sql.Row
 
 	// Exec executes a query that doesn't return rows within the transaction
-	Exec(query string, args ...interface{}) (sql.Result, error)
+	Exec(query string, args ...any) (sql.Result, error)
 
 	// ExecWrite explicitly executes a write query within the transaction.
 	// Transactions already run on SQLite's dedicated write connection; this method
 	// exists so write-oriented helpers can share database.Database/Tx call sites.
-	ExecWrite(query string, args ...interface{}) (sql.Result, error)
+	ExecWrite(query string, args ...any) (sql.Result, error)
 
 	// QueryContext executes a query with context that returns rows
-	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 
 	// QueryRowContext executes a query with context that returns at most one row
-	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 
 	// ExecContext executes a query with context that doesn't return rows
-	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 
 	// ExecWriteContext explicitly executes a write query with context within the transaction.
 	// Transactions already run on SQLite's dedicated write connection; this method
 	// exists so write-oriented helpers can share database.Database/Tx call sites.
-	ExecWriteContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+	ExecWriteContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 
 	// Prepare prepares a statement within the transaction
 	Prepare(query string) (*sql.Stmt, error)

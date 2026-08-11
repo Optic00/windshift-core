@@ -60,7 +60,7 @@ func (r *TestRunRepository) FindAll(workspaceID int, filters TestRunFilters) ([]
 		LEFT JOIN users u ON tr.assignee_id = u.id
 		WHERE tr.workspace_id = ?
 	`
-	args := []interface{}{workspaceID}
+	args := []any{workspaceID}
 
 	if filters.Unassigned {
 		query += " AND tr.assignee_id IS NULL"
@@ -607,7 +607,7 @@ func (r *TestRunRepository) UnlinkResultFromItem(resultID, itemID int) error {
 
 // testRunScanner abstracts *sql.Row and *sql.Rows so scanTestRun can back both.
 type testRunScanner interface {
-	Scan(dest ...interface{}) error
+	Scan(dest ...any) error
 }
 
 func scanTestRun(s testRunScanner) (*models.TestRun, error) {

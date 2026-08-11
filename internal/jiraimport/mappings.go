@@ -9,8 +9,8 @@ import (
 )
 
 type mappingStore interface {
-	QueryRow(query string, args ...interface{}) *sql.Row
-	ExecWrite(query string, args ...interface{}) (sql.Result, error)
+	QueryRow(query string, args ...any) *sql.Row
+	ExecWrite(query string, args ...any) (sql.Result, error)
 }
 
 type PreviousMapping struct {
@@ -25,7 +25,7 @@ type MappingRecord struct {
 	JiraID      string
 	JiraKey     string
 	WindshiftID int
-	Metadata    map[string]interface{}
+	Metadata    map[string]any
 }
 
 func (s *Service) ConfigurationRecords(jobID string) ([]MappingRecord, error) {
@@ -102,7 +102,7 @@ func MappingWasCreated(metadata sql.NullString) bool {
 	if !metadata.Valid || strings.TrimSpace(metadata.String) == "" {
 		return false
 	}
-	var values map[string]interface{}
+	var values map[string]any
 	if json.Unmarshal([]byte(metadata.String), &values) != nil {
 		return false
 	}
@@ -110,12 +110,12 @@ func MappingWasCreated(metadata sql.NullString) bool {
 	return ok && created
 }
 
-func (s *Service) RecordMapping(jobID, entityType, jiraID, jiraKey string, windshiftID int, metadata map[string]interface{}) error {
+func (s *Service) RecordMapping(jobID, entityType, jiraID, jiraKey string, windshiftID int, metadata map[string]any) error {
 	return recordMappingInStore(s.db, jobID, entityType, jiraID, jiraKey, windshiftID, metadata)
 }
 
-func recordMappingInStore(store mappingStore, jobID, entityType, jiraID, jiraKey string, windshiftID int, metadata map[string]interface{}) error {
-	mappingMetadata := make(map[string]interface{}, len(metadata)+1)
+func recordMappingInStore(store mappingStore, jobID, entityType, jiraID, jiraKey string, windshiftID int, metadata map[string]any) error {
+	mappingMetadata := make(map[string]any, len(metadata)+1)
 	for key, value := range metadata {
 		mappingMetadata[key] = value
 	}
@@ -180,7 +180,7 @@ func (s *Service) FindPreviousMapping(currentJobID, entityType, jiraID string) (
 func (s *Service) RecordMappingAndTransferOwnership(
 	jobID, entityType, jiraID, jiraKey string,
 	windshiftID int,
-	metadata map[string]interface{},
+	metadata map[string]any,
 	previous *PreviousMapping,
 ) error {
 	if previous == nil {
@@ -196,7 +196,7 @@ func (s *Service) RecordMappingAndTransferOwnership(
 	}
 	previousMetadata := Metadata(previous.Metadata)
 	if previousMetadata == nil {
-		previousMetadata = make(map[string]interface{})
+		previousMetadata = make(map[string]any)
 	}
 	previousMetadata["was_created"] = false
 	previousMetadata["superseded_by_job_id"] = jobID
@@ -245,7 +245,7 @@ func (s *Service) LookupMappedEntityByKey(jobID, entityType, jiraKey string) (in
 	return id, err
 }
 
-func mappingActionWasCreated(metadata map[string]interface{}) bool {
+func mappingActionWasCreated(metadata map[string]any) bool {
 	action, _ := metadata["action"].(string)
 	switch action {
 	case "map", "reuse_existing", "reuse_existing_mapping", "reuse_workspace_default", "update_existing":
@@ -255,18 +255,18 @@ func mappingActionWasCreated(metadata map[string]interface{}) bool {
 	}
 }
 
-func Metadata(metadata sql.NullString) map[string]interface{} {
+func Metadata(metadata sql.NullString) map[string]any {
 	if !metadata.Valid || strings.TrimSpace(metadata.String) == "" {
 		return nil
 	}
-	var values map[string]interface{}
+	var values map[string]any
 	if json.Unmarshal([]byte(metadata.String), &values) != nil {
 		return nil
 	}
 	return values
 }
 
-func mappingMetadata(metadata sql.NullString) map[string]interface{} {
+func mappingMetadata(metadata sql.NullString) map[string]any {
 	return Metadata(metadata)
 }
 

@@ -426,7 +426,7 @@ func (h *ActionsHandler) CreateAction(w http.ResponseWriter, r *http.Request) {
 
 	h.auditor.Log(r, currentUser, logger.ActionAutomationCreate, logger.ResourceAutomation, &createdAction.ID, createdAction.Name)
 	if createdAction.ActorUserID != nil {
-		h.auditor.LogWithDetails(r, currentUser, logger.ActionAutomationSetActor, logger.ResourceAutomation, &createdAction.ID, createdAction.Name, map[string]interface{}{
+		h.auditor.LogWithDetails(r, currentUser, logger.ActionAutomationSetActor, logger.ResourceAutomation, &createdAction.ID, createdAction.Name, map[string]any{
 			"actor_user_id": *createdAction.ActorUserID,
 			"context":       "create",
 		})
@@ -583,7 +583,7 @@ func (h *ActionsHandler) UpdateAction(w http.ResponseWriter, r *http.Request) {
 	if currentUser != nil {
 		h.auditor.Log(r, currentUser, logger.ActionAutomationUpdate, logger.ResourceAutomation, &actionID, updatedAction.Name)
 		if actorChanging {
-			details := map[string]interface{}{
+			details := map[string]any{
 				"previous_actor_user_id": intPtrForAudit(previousActor),
 				"new_actor_user_id":      intPtrForAudit(req.ActorUserID.Value),
 				"context":                "update",
@@ -610,7 +610,7 @@ func equalIntPtr(a, b *int) bool {
 }
 
 // intPtrForAudit returns the pointed-to int or nil (which serializes as JSON null).
-func intPtrForAudit(p *int) interface{} {
+func intPtrForAudit(p *int) any {
 	if p == nil {
 		return nil
 	}
@@ -1432,7 +1432,7 @@ func (h *ActionsHandler) auditCapability(r *http.Request, user *models.User, act
 	if user == nil || capability == nil {
 		return
 	}
-	h.auditor.LogWithDetails(r, user, action, logger.ResourceAutomationCapability, &capability.ID, capability.Name, map[string]interface{}{
+	h.auditor.LogWithDetails(r, user, action, logger.ResourceAutomationCapability, &capability.ID, capability.Name, map[string]any{
 		"capability_type":           capability.CapabilityType,
 		"is_enabled":                capability.IsEnabled,
 		"applies_to_all_workspaces": capability.AppliesToAllWorkspaces,

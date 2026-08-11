@@ -498,7 +498,7 @@ func (g *GitHubProvider) CreatePullRequest(ctx context.Context, owner, repo stri
 
 	createURL := fmt.Sprintf("%s/repos/%s/pulls", g.baseURL, githubRepoPath(owner, repo))
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"title": opts.Title,
 		"body":  opts.Body,
 		"head":  opts.HeadBranch,
@@ -524,7 +524,7 @@ func (g *GitHubProvider) CreateRelease(ctx context.Context, owner, repo string, 
 
 	createURL := fmt.Sprintf("%s/repos/%s/releases", g.baseURL, githubRepoPath(owner, repo))
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"tag_name":   opts.TagName,
 		"name":       opts.Name,
 		"body":       opts.Body,
@@ -769,7 +769,7 @@ func (g *GitHubProvider) RegisterWebhook(ctx context.Context, owner, repo string
 		contentType = "json"
 	}
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"name":   "web",
 		"active": true,
 		"events": opts.Events,
@@ -895,7 +895,7 @@ func (g *GitHubProvider) UpdateIssue(ctx context.Context, owner, repo string, nu
 
 	reqURL := fmt.Sprintf("%s/repos/%s/issues/%d", g.baseURL, githubRepoPath(owner, repo), number)
 
-	body := make(map[string]interface{})
+	body := make(map[string]any)
 	if opts.State != nil {
 		body["state"] = *opts.State
 	}

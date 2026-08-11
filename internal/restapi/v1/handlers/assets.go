@@ -378,7 +378,7 @@ func (h *AssetHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// Validate supplied custom fields; preserve stored values when omitted.
-	var suppliedCustomFields map[string]interface{}
+	var suppliedCustomFields map[string]any
 	if req.CustomFieldValues != nil {
 		cfJSON, err := encodeCustomFieldValues(*req.CustomFieldValues)
 		if err != nil {
@@ -822,7 +822,7 @@ func (h *AssetHandler) validateResourceBelongsToSet(w http.ResponseWriter, r *ht
 // encodeCustomFieldValues marshals the values map for storage. Returns
 // nil pointer for nil / empty maps so the column stores NULL rather than
 // "null" / "{}".
-func encodeCustomFieldValues(m map[string]interface{}) (*string, error) {
+func encodeCustomFieldValues(m map[string]any) (*string, error) {
 	if len(m) == 0 {
 		return nil, nil
 	}

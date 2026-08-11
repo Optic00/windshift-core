@@ -57,7 +57,7 @@ func (h *KnowledgeSearchHandler) Search(w http.ResponseWriter, r *http.Request) 
 	if results == nil {
 		results = []services.KnowledgeResult{}
 	}
-	respondJSONOK(w, map[string]interface{}{"results": results, "query": query})
+	respondJSONOK(w, map[string]any{"results": results, "query": query})
 }
 
 // PageHandler serves the workspace knowledge-pages API.
@@ -274,7 +274,7 @@ func (h *PageHandler) Search(w http.ResponseWriter, r *http.Request) {
 			Path:        p.Path,
 		})
 	}
-	respondJSONOK(w, map[string]interface{}{"results": results, "query": query})
+	respondJSONOK(w, map[string]any{"results": results, "query": query})
 }
 
 // Get returns a single page after authorizing view access.

@@ -261,7 +261,7 @@ func (s *CFVCleanupScheduler) processJob(fieldID int) (int, error) {
 // If the resulting object would be empty, returns "" (the items.cfv
 // column treats empty/NULL identically).
 func stripCFVKey(cfvJSON, key string) (newJSON string, changed bool, err error) {
-	var m map[string]interface{}
+	var m map[string]any
 	if err := json.Unmarshal([]byte(cfvJSON), &m); err != nil {
 		return "", false, err
 	}
@@ -433,7 +433,7 @@ func (s *CFVCleanupScheduler) scrubPortalOptions(cfRepo *repository.CustomFieldR
 // dropped if the array empties). Returns the new JSON, whether anything
 // changed, and any parse error.
 func stripCFVOptionIDs(cfvJSON, fieldKey, fieldType string, removed map[int]bool) (newJSON string, changed bool, err error) {
-	var cfv map[string]interface{}
+	var cfv map[string]any
 	if err := json.Unmarshal([]byte(cfvJSON), &cfv); err != nil {
 		return "", false, err
 	}
@@ -449,8 +449,8 @@ func stripCFVOptionIDs(cfvJSON, fieldKey, fieldType string, removed map[int]bool
 			changed = true
 		}
 	case "multiselect":
-		if arr, ok := val.([]interface{}); ok {
-			var filtered []interface{}
+		if arr, ok := val.([]any); ok {
+			var filtered []any
 			for _, item := range arr {
 				if num, ok := item.(float64); ok && removed[int(num)] {
 					changed = true

@@ -269,7 +269,7 @@ func (h *UserHandler) Create(w http.ResponseWriter, r *http.Request) {
 		h.auditor.LogWithDetails(r, currentUser,
 			logger.ActionUserCreate, logger.ResourceUser,
 			&user.ID, user.Username,
-			map[string]interface{}{
+			map[string]any{
 				"email":      user.Email,
 				"username":   user.Username,
 				"first_name": user.FirstName,
@@ -354,7 +354,7 @@ func (h *UserHandler) InviteUser(w http.ResponseWriter, r *http.Request) {
 		h.auditor.LogWithDetails(r, currentUser,
 			logger.ActionUserCreate, logger.ResourceUser,
 			&user.ID, user.Username,
-			map[string]interface{}{
+			map[string]any{
 				"email":      user.Email,
 				"username":   user.Username,
 				"is_invite":  true,
@@ -363,7 +363,7 @@ func (h *UserHandler) InviteUser(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 
-	respondJSONCreated(w, map[string]interface{}{
+	respondJSONCreated(w, map[string]any{
 		"user":       user,
 		"token":      token,
 		"email_sent": emailErr == nil,
@@ -465,7 +465,7 @@ func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
-		changes := make(map[string]interface{})
+		changes := make(map[string]any)
 		if old.Email != req.Email {
 			changes["email"] = map[string]string{"old": old.Email, "new": req.Email}
 		}
@@ -616,7 +616,7 @@ func (h *UserHandler) UpdateRegionalSettings(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	changes := make(map[string]interface{})
+	changes := make(map[string]any)
 	oldTz := "UTC"
 	if old.Timezone.Valid {
 		oldTz = old.Timezone.String
@@ -673,7 +673,7 @@ func (h *UserHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		h.auditor.LogWithDetails(r, currentUser,
 			logger.ActionUserDelete, logger.ResourceUser,
 			&id, deleted.Username,
-			map[string]interface{}{
+			map[string]any{
 				"email":      deleted.Email,
 				"first_name": deleted.FirstName,
 				"last_name":  deleted.LastName,
@@ -719,18 +719,18 @@ func (h *UserHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 
 	var password string
 	requiresReset := true
-	var response map[string]interface{}
+	var response map[string]any
 
 	if req.GenerateRandom || req.Password == "" {
 		password = generateTempPassword()
-		response = map[string]interface{}{
+		response = map[string]any{
 			"temporary_password": password,
 			"message":            "Password reset successfully. User must change password on next login.",
 		}
 	} else {
 		password = req.Password
 		requiresReset = false
-		response = map[string]interface{}{
+		response = map[string]any{
 			"message": "Password set successfully.",
 		}
 	}
@@ -760,7 +760,7 @@ func (h *UserHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	h.auditor.LogWithDetails(r, currentUser,
 		logger.ActionUserPasswordReset, logger.ResourceUser,
 		&id, target.Username,
-		map[string]interface{}{
+		map[string]any{
 			"email":                   target.Email,
 			"requires_password_reset": requiresReset,
 			"password_type":           map[bool]string{true: "generated", false: "custom"}[req.GenerateRandom || req.Password == ""],
@@ -896,7 +896,7 @@ func (h *UserHandler) ActivateUser(w http.ResponseWriter, r *http.Request) {
 		h.auditor.LogWithDetails(r, currentUser,
 			logger.ActionUserActivate, logger.ResourceUser,
 			&id, target.Username,
-			map[string]interface{}{
+			map[string]any{
 				"email":          target.Email,
 				"previous_state": "inactive",
 				"new_state":      "active",
@@ -947,7 +947,7 @@ func (h *UserHandler) DeactivateUser(w http.ResponseWriter, r *http.Request) {
 		h.auditor.LogWithDetails(r, currentUser,
 			logger.ActionUserDeactivate, logger.ResourceUser,
 			&id, target.Username,
-			map[string]interface{}{
+			map[string]any{
 				"email":              target.Email,
 				"previous_state":     "active",
 				"new_state":          "inactive",
@@ -963,7 +963,7 @@ func (h *UserHandler) DeactivateUser(w http.ResponseWriter, r *http.Request) {
 			h.auditor.LogWithDetails(r, currentUser,
 				logger.ActionAgentDeactivate, logger.ResourceUser,
 				&aid, "",
-				map[string]interface{}{
+				map[string]any{
 					"reason":   "owner_deactivated",
 					"owner_id": id,
 				},
@@ -974,7 +974,7 @@ func (h *UserHandler) DeactivateUser(w http.ResponseWriter, r *http.Request) {
 			h.auditor.LogWithDetails(r, currentUser,
 				logger.ActionAPITokenAutoRevoke, logger.ResourceAPIToken,
 				&tokenID, "",
-				map[string]interface{}{
+				map[string]any{
 					"reason":   "owner_deactivated",
 					"owner_id": id,
 					"table":    "api_tokens",
@@ -1006,7 +1006,7 @@ func generateTempPassword() string {
 // or nil when empty so the column receives SQL NULL. Kept here because
 // notification.go still uses it; will move to a shared helpers file when
 // that handler migrates.
-func nullableString(s string) interface{} {
+func nullableString(s string) any {
 	if s == "" {
 		return nil
 	}

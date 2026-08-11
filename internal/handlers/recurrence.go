@@ -173,7 +173,7 @@ func (h *RecurrenceHandler) ListInstances(w http.ResponseWriter, r *http.Request
 		respondInternalError(w, r, err)
 		return
 	}
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"instances":  result.Items,
 		"pagination": map[string]int{"limit": limit, "offset": offset, "total": result.Total},
 	})
@@ -209,7 +209,7 @@ func (h *RecurrenceHandler) ForceGenerate(w http.ResponseWriter, r *http.Request
 		respondInternalError(w, r, err)
 		return
 	}
-	respondJSONOK(w, map[string]interface{}{"instances_generated": count})
+	respondJSONOK(w, map[string]any{"instances_generated": count})
 }
 
 // ListByWorkspace lists all recurrence rules for a workspace.
@@ -257,7 +257,7 @@ func (h *RecurrenceHandler) PreviewRRule(w http.ResponseWriter, r *http.Request)
 	for i, occurrence := range preview.Occurrences {
 		dates[i] = occurrence.Format(time.RFC3339)
 	}
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"rrule": preview.RRule, "dtstart": preview.DtStart.Format(time.RFC3339), "occurrences": dates,
 	})
 }

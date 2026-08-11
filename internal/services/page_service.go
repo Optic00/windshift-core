@@ -508,7 +508,7 @@ func (s *PageService) rehomePageSubtreeRelationsTx(tx database.Tx, pageIDs []int
 		return nil
 	}
 	placeholders := make([]string, len(pageIDs))
-	args := make([]interface{}, len(pageIDs))
+	args := make([]any, len(pageIDs))
 	for i, pageID := range pageIDs {
 		placeholders[i] = "?"
 		args[i] = pageID
@@ -586,7 +586,7 @@ func (s *PageService) rehomePageSubtreeRelationsTx(tx database.Tx, pageIDs []int
 	if _, err := tx.Exec(`DELETE FROM workspace_agent_skill_pages WHERE page_id IN (`+idList+`)`, args...); err != nil {
 		return fmt.Errorf("clear workspace skill page references during workspace move: %w", err)
 	}
-	linkArgs := append(append([]interface{}{}, args...), args...)
+	linkArgs := append(append([]any{}, args...), args...)
 	if _, err := tx.Exec(`
 		DELETE FROM item_links
 		WHERE (source_type = 'page' AND source_id IN (`+idList+`))
@@ -594,7 +594,7 @@ func (s *PageService) rehomePageSubtreeRelationsTx(tx database.Tx, pageIDs []int
 	`, linkArgs...); err != nil {
 		return fmt.Errorf("clear page links during workspace move: %w", err)
 	}
-	chunkArgs := append([]interface{}{destinationWorkspaceID}, args...)
+	chunkArgs := append([]any{destinationWorkspaceID}, args...)
 	if _, err := tx.Exec(`UPDATE page_chunks SET workspace_id = ? WHERE page_id IN (`+idList+`)`, chunkArgs...); err != nil {
 		return fmt.Errorf("rehome page chunks during workspace move: %w", err)
 	}
@@ -1329,7 +1329,7 @@ func normalizePageMetadata(raw json.RawMessage) (string, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return "{}", nil
 	}
-	var obj map[string]interface{}
+	var obj map[string]any
 	if err := json.Unmarshal(raw, &obj); err != nil || obj == nil {
 		return "", ErrPageMetadataInvalid
 	}

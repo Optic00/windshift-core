@@ -5,7 +5,7 @@ import "time"
 // SampleData returns canned template data matching the variable schema for a
 // given template name. Used by the admin preview endpoint so editors can see
 // how the rendered email will look before saving.
-func SampleData(name string) interface{} {
+func SampleData(name string) any {
 	switch name {
 	case TemplateMagicLink:
 		return struct {

@@ -19,7 +19,7 @@ func NewOutput() *Output {
 }
 
 // Print outputs data in the configured format
-func (o *Output) Print(data interface{}) {
+func (o *Output) Print(data any) {
 	switch o.format {
 	case "table":
 		o.printTable(data)
@@ -30,13 +30,13 @@ func (o *Output) Print(data interface{}) {
 	}
 }
 
-func (o *Output) printJSON(data interface{}) {
+func (o *Output) printJSON(data any) {
 	encoder := json.NewEncoder(stdout)
 	encoder.SetIndent("", "  ")
 	_ = encoder.Encode(data) //nolint:errcheck // output to stdout
 }
 
-func (o *Output) printTable(data interface{}) {
+func (o *Output) printTable(data any) {
 	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
 	defer func() { _ = w.Flush() }() //nolint:errcheck // output to stdout
 
@@ -143,7 +143,7 @@ func (o *Output) printTable(data interface{}) {
 	}
 }
 
-func (o *Output) printCSV(data interface{}) {
+func (o *Output) printCSV(data any) {
 	w := csv.NewWriter(stdout)
 	defer w.Flush()
 

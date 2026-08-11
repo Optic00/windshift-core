@@ -192,7 +192,7 @@ func (r *ConfigurationSetRepository) findByIDBasic(id int) (*models.Configuratio
 func (r *ConfigurationSetRepository) List(page, limit int, search string) ([]models.ConfigurationSet, int, error) {
 	// Build WHERE clause for search
 	whereClause := ""
-	args := []interface{}{}
+	args := []any{}
 	if search != "" {
 		whereClause = "WHERE LOWER(cs.name) LIKE ?"
 		args = append(args, "%"+strings.ToLower(search)+"%")

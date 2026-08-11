@@ -75,7 +75,7 @@ func scanWorklogDetail(scanner worklogDetailScanner) (models.Worklog, error) {
 	}
 	worklog.UserName = userName.String
 	if projectSettings.Valid && projectSettings.String != "" {
-		var settings map[string]interface{}
+		var settings map[string]any
 		if err := json.Unmarshal([]byte(projectSettings.String), &settings); err == nil {
 			if maxHours, ok := settings["max_hours"].(float64); ok && maxHours > 0 {
 				worklog.ProjectMaxHours = &maxHours
@@ -338,7 +338,7 @@ func (r *TimeWorklogRepository) ListForUser(f WorklogListFilter) ([]models.Workl
 			wl.ProjectTotalHours = &projectTotalHours.Float64
 		}
 		if projectSettings.Valid && projectSettings.String != "" {
-			var settings map[string]interface{}
+			var settings map[string]any
 			if err := json.Unmarshal([]byte(projectSettings.String), &settings); err == nil {
 				if maxHours, ok := settings["max_hours"].(float64); ok && maxHours > 0 {
 					wl.ProjectMaxHours = &maxHours

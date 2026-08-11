@@ -116,7 +116,7 @@ func (h *CredentialHandler) CreateSSHKey(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Create credential data
-	credentialData := map[string]interface{}{
+	credentialData := map[string]any{
 		"public_key": req.PublicKey,
 		"key_type":   getSSHKeyType(req.PublicKey),
 	}
@@ -136,14 +136,14 @@ func (h *CredentialHandler) CreateSSHKey(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	h.auditor.LogWithDetails(r, currentUser, logger.ActionCredentialCreate, logger.ResourceCredential, &credentialID, req.CredentialName, map[string]interface{}{
+	h.auditor.LogWithDetails(r, currentUser, logger.ActionCredentialCreate, logger.ResourceCredential, &credentialID, req.CredentialName, map[string]any{
 		"credential_type": "ssh",
 		"target_user_id":  userID,
 		"key_type":        getSSHKeyType(req.PublicKey),
 	})
 
 	// Return success response
-	response := map[string]interface{}{
+	response := map[string]any{
 		"id":              credentialID,
 		"credential_type": "ssh",
 		"name":            req.CredentialName,
@@ -214,7 +214,7 @@ func (h *CredentialHandler) RemoveCredential(w http.ResponseWriter, r *http.Requ
 				return
 			}
 
-			h.auditor.LogWithDetails(r, currentUser, logger.ActionCredentialRemove, logger.ResourceCredential, &credentialID, summary.Name, map[string]interface{}{
+			h.auditor.LogWithDetails(r, currentUser, logger.ActionCredentialRemove, logger.ResourceCredential, &credentialID, summary.Name, map[string]any{
 				"credential_type": summary.Type,
 				"target_user_id":  userID,
 			})
@@ -246,7 +246,7 @@ func (h *CredentialHandler) RemoveCredential(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	h.auditor.LogWithDetails(r, currentUser, logger.ActionWebAuthnRemove, logger.ResourceWebAuthn, nil, credName, map[string]interface{}{
+	h.auditor.LogWithDetails(r, currentUser, logger.ActionWebAuthnRemove, logger.ResourceWebAuthn, nil, credName, map[string]any{
 		"credential_id":  credentialIDStr,
 		"target_user_id": userID,
 	})

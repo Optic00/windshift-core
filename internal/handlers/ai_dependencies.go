@@ -830,7 +830,7 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		Timezone:               actingTimezone,
 		Source:                 mode.source,
 		AccessibleWorkspaceIDs: mode.accessibleWorkspaceIDs,
-		AuditDetails: map[string]interface{}{
+		AuditDetails: map[string]any{
 			"agent_session_id":          session.ID,
 			"agent_message_id":          begun.MessageID,
 			"agent_run_id":              begun.RunID,

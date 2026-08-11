@@ -171,7 +171,7 @@ func (h *ItemLinkHandler) GetLinksForItem(w http.ResponseWriter, r *http.Request
 		respondLinkServiceError(w, r, internalType, err)
 		return
 	}
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"outgoing": outgoing,
 		"incoming": incoming,
 	})

@@ -278,7 +278,7 @@ func (h *SSOHandler) SAMLAssertionConsumerService(w http.ResponseWriter, r *http
 		ActionType:   logger.ActionLoginSuccess,
 		ResourceType: logger.ResourceUser,
 		ResourceName: user.Email,
-		Details: map[string]interface{}{
+		Details: map[string]any{
 			"provider":      provider.Slug,
 			"provider_type": sso.ProviderTypeSAML,
 			"method":        "saml",
@@ -317,7 +317,7 @@ func (h *SSOHandler) samlAssertionToClaims(info *sso.SAMLAssertionInfo, provider
 
 	claims := &sso.OIDCClaims{
 		Subject: info.NameID,
-		Raw:     make(map[string]interface{}),
+		Raw:     make(map[string]any),
 	}
 
 	// Copy all attributes into Raw for profile_data

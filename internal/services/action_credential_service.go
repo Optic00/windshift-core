@@ -356,11 +356,11 @@ func ScanLegacyInlineSecrets(db scanLegacyDB) int {
 		if err := rows.Scan(&id, &name, &cfg); err != nil {
 			continue
 		}
-		var hc map[string]interface{}
+		var hc map[string]any
 		if err := json.Unmarshal([]byte(cfg), &hc); err != nil {
 			continue
 		}
-		raw, ok := hc["default_headers"].(map[string]interface{})
+		raw, ok := hc["default_headers"].(map[string]any)
 		if !ok {
 			continue
 		}
@@ -393,5 +393,5 @@ func ScanLegacyInlineSecrets(db scanLegacyDB) int {
 // scanLegacyDB narrows the database.Database interface to the one method
 // the scanner needs, so tests can pass a stub.
 type scanLegacyDB interface {
-	Query(query string, args ...interface{}) (*sql.Rows, error)
+	Query(query string, args ...any) (*sql.Rows, error)
 }

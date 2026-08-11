@@ -75,7 +75,7 @@ func (c *Client) setAuth(req *http.Request, mode authMode) {
 }
 
 // doGet performs a GET request to the given path and decodes the JSON response into result.
-func (c *Client) doGet(path string, mode authMode, result interface{}) error {
+func (c *Client) doGet(path string, mode authMode, result any) error {
 	req, err := http.NewRequest("GET", c.baseURL+path, http.NoBody)
 	if err != nil {
 		return err
@@ -104,7 +104,7 @@ func (c *Client) doGet(path string, mode authMode, result interface{}) error {
 
 // doMutate performs a mutating HTTP request (POST, PUT, etc.) with a JSON body.
 // If result is non-nil, the response body is decoded into it.
-func (c *Client) doMutate(method, path string, mode authMode, body, result interface{}) error { //nolint:unparam // result is wired for callers that will decode bodies; all current call sites pass nil
+func (c *Client) doMutate(method, path string, mode authMode, body, result any) error { //nolint:unparam // result is wired for callers that will decode bodies; all current call sites pass nil
 	jsonData, err := json.Marshal(body)
 	if err != nil {
 		return err
@@ -264,14 +264,14 @@ func (c *Client) getWorkItem(itemID int) (WorkItem, error) {
 // setItemStatus drives the workflow transition endpoint (v1 PUT rejects
 // status_id so validator/condition rules stay in the hot path).
 func (c *Client) setItemStatus(itemID, statusID int) error {
-	body := map[string]interface{}{"to_status_id": statusID}
+	body := map[string]any{"to_status_id": statusID}
 	return c.doMutate("POST", fmt.Sprintf("/rest/api/v1/items/%d/transition", itemID), authBearer, body, nil)
 }
 
 // setItemField PUTs a single field — v1 update semantics are partial
 // (pointer fields), so nothing else is clobbered.
-func (c *Client) setItemField(itemID int, field string, value interface{}) error {
-	body := map[string]interface{}{field: value}
+func (c *Client) setItemField(itemID int, field string, value any) error {
+	body := map[string]any{field: value}
 	return c.doMutate("PUT", fmt.Sprintf("/rest/api/v1/items/%d", itemID), authBearer, body, nil)
 }
 
@@ -333,7 +333,7 @@ func (c *Client) getTimeProjects() ([]TimeProject, error) {
 // v1's ItemUpdateRequest deliberately rejects status_id to keep workflow
 // validator/condition rules in the hot path.
 func (c *Client) updateWorkItem(itemID int, title, description string, statusID, priorityID *int) error {
-	body := map[string]interface{}{
+	body := map[string]any{
 		"title":       title,
 		"description": description,
 	}
@@ -344,7 +344,7 @@ func (c *Client) updateWorkItem(itemID int, title, description string, statusID,
 		return err
 	}
 	if statusID != nil {
-		transition := map[string]interface{}{"to_status_id": *statusID}
+		transition := map[string]any{"to_status_id": *statusID}
 		if err := c.doMutate("POST", fmt.Sprintf("/rest/api/v1/items/%d/transition", itemID), authBearer, transition, nil); err != nil {
 			return fmt.Errorf("status transition: %w", err)
 		}
@@ -353,7 +353,7 @@ func (c *Client) updateWorkItem(itemID int, title, description string, statusID,
 }
 
 func (c *Client) createWorkItem(workspaceID int, title, description string, priorityID *int) error {
-	body := map[string]interface{}{
+	body := map[string]any{
 		"workspace_id": workspaceID,
 		"title":        title,
 		"description":  description,
@@ -367,7 +367,7 @@ func (c *Client) createWorkItem(workspaceID int, title, description string, prio
 func (c *Client) createComment(itemID int, content string) error {
 	// v1's request shape drops the author_id field — the user is identified
 	// from the bearer token. Less to forge.
-	body := map[string]interface{}{"content": content}
+	body := map[string]any{"content": content}
 	return c.doMutate("POST", fmt.Sprintf("/rest/api/v1/items/%d/comments", itemID), authBearer, body, nil)
 }
 

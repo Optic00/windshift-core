@@ -36,7 +36,7 @@ func (r *ItemLinkRepository) FindItemToItemLinksWithin(itemIDs []int) ([]ItemLin
 	for i := range itemIDs {
 		placeholders[i] = "?"
 	}
-	args := make([]interface{}, 0, len(itemIDs)*2)
+	args := make([]any, 0, len(itemIDs)*2)
 	for _, id := range itemIDs {
 		args = append(args, id)
 	}
@@ -89,7 +89,7 @@ func (r *ItemLinkRepository) FindLinkedItems(itemID int, linkTypeID *int, direct
 
 	var (
 		clauses []string
-		args    []interface{}
+		args    []any
 	)
 	if direction == "outgoing" || direction == "both" {
 		c := "(il.source_type = 'item' AND il.target_type = 'item' AND il.source_id = ?)"
@@ -123,7 +123,7 @@ func (r *ItemLinkRepository) FindLinkedItems(itemID int, linkTypeID *int, direct
 		    SELECT CASE WHEN il.source_id = ? THEN il.target_id ELSE il.source_id END
 		    FROM item_links il
 		    WHERE (` + strings.Join(clauses, " OR ") + `)`
-	args = append([]interface{}{itemID}, args...)
+	args = append([]any{itemID}, args...)
 
 	if linkTypeID != nil {
 		query += ` AND il.link_type_id = ?`

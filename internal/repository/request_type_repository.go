@@ -39,7 +39,7 @@ const requestTypeFromJoins = `
 	LEFT JOIN workspaces ws ON rt.workspace_id = ws.id`
 
 func scanRequestType(scanner interface {
-	Scan(dest ...interface{}) error
+	Scan(dest ...any) error
 }) (models.RequestType, error) {
 	var rt models.RequestType
 	var visibilityGroupIDs, visibilityOrgIDs *string

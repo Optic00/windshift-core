@@ -250,7 +250,7 @@ func (h *WorkflowHandler) Delete(w http.ResponseWriter, r *http.Request) {
 				ActionType:   logger.ActionWorkflowDelete,
 				ResourceType: logger.ResourceWorkflow,
 				ResourceID:   &id,
-				Details: map[string]interface{}{
+				Details: map[string]any{
 					"canceled_approval_request_ids": cancelledApprovalIDs,
 					"cancellation_reason":           "workflow_deleted",
 				},
@@ -308,7 +308,7 @@ func (h *WorkflowHandler) UpdateTransitions(w http.ResponseWriter, r *http.Reque
 
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
-		details := map[string]interface{}{"update_type": "transitions"}
+		details := map[string]any{"update_type": "transitions"}
 		if len(cancelledApprovalIDs) > 0 {
 			details["canceled_approval_request_ids"] = cancelledApprovalIDs
 			details["cancellation_reason"] = "transition_removed"

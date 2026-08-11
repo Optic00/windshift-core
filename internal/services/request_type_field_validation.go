@@ -17,12 +17,12 @@ import (
 
 // IsBlankSubmittedField reports whether a value submitted in a portal/form
 // payload should be treated as "no value" by required-field validation. JSON
-// unmarshalling produces []interface{} / map[string]interface{} for empty
+// unmarshalling produces []any / map[string]any for empty
 // arrays and objects respectively, and the old `== nil || == ""` check let
 // those slip through, allowing required multiselect/object fields to be
 // satisfied by `[]` or `{}`. Scalars `false` and `0` (and `0.0`) are NOT
 // blank — they're legitimate values.
-func IsBlankSubmittedField(value interface{}) bool {
+func IsBlankSubmittedField(value any) bool {
 	if value == nil {
 		return true
 	}
@@ -47,8 +47,8 @@ type RequestTypeValidationResult struct {
 	// only when it is nil. Nullable in the schema, so a request type may not
 	// pin a workspace.
 	WorkspaceID        *int
-	VirtualFieldValues map[string]interface{}
-	CustomFieldValues  map[string]interface{}
+	VirtualFieldValues map[string]any
+	CustomFieldValues  map[string]any
 	// TitleFieldInForm is true when the request type's field config includes
 	// the default "title" field — meaning the submitter saw a title input on
 	// the form. Callers that need a title (every item create) use this to
@@ -62,7 +62,7 @@ type virtualRequestField struct {
 	required  bool
 }
 
-func normalizeVirtualFieldValue(fieldID string, field virtualRequestField, raw interface{}) (interface{}, error) {
+func normalizeVirtualFieldValue(fieldID string, field virtualRequestField, raw any) (any, error) {
 	switch field.fieldType {
 	case "text":
 		value, ok := raw.(string)
@@ -93,7 +93,7 @@ func normalizeVirtualFieldValue(fieldID string, field virtualRequestField, raw i
 		if IsBlankSubmittedField(raw) {
 			return raw, nil
 		}
-		var configured []interface{}
+		var configured []any
 		if field.options == "" {
 			return nil, fmt.Errorf("field %s has no configured options", fieldID)
 		}
@@ -102,7 +102,7 @@ func normalizeVirtualFieldValue(fieldID string, field virtualRequestField, raw i
 		}
 		for _, option := range configured {
 			value := option
-			if object, ok := option.(map[string]interface{}); ok {
+			if object, ok := option.(map[string]any); ok {
 				configuredValue, exists := object["value"]
 				if !exists {
 					continue
@@ -202,7 +202,7 @@ func allowedRequestTypeCustomFieldIdentifiers(ctx context.Context, db database.D
 }
 
 // ValidateAndSeparateRequestFields validates request type fields and separates virtual from custom fields.
-func ValidateAndSeparateRequestFields(ctx context.Context, db database.Database, requestTypeID *int, title, description string, customFields map[string]interface{}) (*RequestTypeValidationResult, error) {
+func ValidateAndSeparateRequestFields(ctx context.Context, db database.Database, requestTypeID *int, title, description string, customFields map[string]any) (*RequestTypeValidationResult, error) {
 	result := &RequestTypeValidationResult{}
 
 	if requestTypeID == nil {
@@ -313,8 +313,8 @@ func ValidateAndSeparateRequestFields(ctx context.Context, db database.Database,
 	// Partition submitted fields. Keys that are neither configured custom fields
 	// nor virtual fields are dropped silently — a 400 would act as an oracle
 	// telling probers which field IDs exist on the request type.
-	result.VirtualFieldValues = make(map[string]interface{})
-	result.CustomFieldValues = make(map[string]interface{})
+	result.VirtualFieldValues = make(map[string]any)
+	result.CustomFieldValues = make(map[string]any)
 	for fieldID, value := range customFields {
 		if virtualField, ok := virtualFields[fieldID]; ok {
 			normalized, err := normalizeVirtualFieldValue(fieldID, virtualField, value)
@@ -335,7 +335,7 @@ func ValidateAndSeparateRequestFields(ctx context.Context, db database.Database,
 
 // StoreCustomFieldValues stores custom field values for an item.
 // The component parameter is used for log attribution (e.g. "forms", "portal").
-func StoreCustomFieldValues(ctx context.Context, db database.Database, component string, itemID int64, customFields map[string]interface{}) error {
+func StoreCustomFieldValues(ctx context.Context, db database.Database, component string, itemID int64, customFields map[string]any) error {
 	_ = component
 	if len(customFields) == 0 {
 		return nil
@@ -353,7 +353,7 @@ func StoreCustomFieldValues(ctx context.Context, db database.Database, component
 
 // StoreVirtualFieldValues stores virtual field values for an item.
 // The component parameter is used for log attribution (e.g. "forms", "portal").
-func StoreVirtualFieldValues(ctx context.Context, db database.Database, component string, itemID int64, virtualFields map[string]interface{}) error {
+func StoreVirtualFieldValues(ctx context.Context, db database.Database, component string, itemID int64, virtualFields map[string]any) error {
 	_ = component
 	if len(virtualFields) == 0 {
 		return nil

@@ -334,7 +334,7 @@ func (r *WorkspaceRepository) FindMissingOrPersonal(ids []int) ([]int, error) {
 		return nil, nil
 	}
 	placeholders := make([]string, len(ids))
-	args := make([]interface{}, len(ids))
+	args := make([]any, len(ids))
 	for i, id := range ids {
 		placeholders[i] = "?"
 		args[i] = id
@@ -501,7 +501,7 @@ func (r *WorkspaceRepository) FindBasicsByIDs(ids []int) ([]WorkspaceBasic, erro
 		return []WorkspaceBasic{}, nil
 	}
 	placeholders := make([]string, len(ids))
-	args := make([]interface{}, len(ids))
+	args := make([]any, len(ids))
 	for i, id := range ids {
 		placeholders[i] = "?"
 		args[i] = id
@@ -571,7 +571,7 @@ type MilestoneStatusProgress struct {
 }
 
 // GetMilestoneProgress returns milestone progress for a workspace
-func (r *WorkspaceRepository) GetMilestoneProgress(workspaceID int, filterSQL string, filterArgs []interface{}) ([]MilestoneStatusProgress, error) {
+func (r *WorkspaceRepository) GetMilestoneProgress(workspaceID int, filterSQL string, filterArgs []any) ([]MilestoneStatusProgress, error) {
 	query := `
 		SELECT
 			m.id,
@@ -592,7 +592,7 @@ func (r *WorkspaceRepository) GetMilestoneProgress(workspaceID int, filterSQL st
 		WHERE i.workspace_id = ?
 		  AND (m.status IS NULL OR LOWER(m.status) <> 'completed')`
 
-	args := []interface{}{workspaceID}
+	args := []any{workspaceID}
 	if filterSQL != "" {
 		query += " AND (" + filterSQL + ")"
 		args = append(args, filterArgs...)

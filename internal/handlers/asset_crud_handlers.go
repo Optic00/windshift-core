@@ -37,7 +37,7 @@ func (h *AssetHandler) validateResourceBelongsToSet(w http.ResponseWriter, r *ht
 
 // serializeCustomFields normalizes user-type fields and marshals custom field values to JSON.
 // Returns (serialized *string, ok bool). Writes error response on failure.
-func (h *AssetHandler) serializeCustomFields(w http.ResponseWriter, r *http.Request, customFieldValues map[string]interface{}, assetTypeID int) (*string, bool) {
+func (h *AssetHandler) serializeCustomFields(w http.ResponseWriter, r *http.Request, customFieldValues map[string]any, assetTypeID int) (*string, bool) {
 	if customFieldValues == nil {
 		return nil, true
 	}
@@ -133,7 +133,7 @@ func (h *AssetHandler) GetAssets(w http.ResponseWriter, r *http.Request) {
 		assets = append(assets, asset)
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"assets": assets,
 		"total":  total,
 		"limit":  limit,
@@ -239,13 +239,13 @@ func (h *AssetHandler) GetAsset(w http.ResponseWriter, r *http.Request) {
 
 // CreateAssetRequest represents the request body for creating an asset
 type CreateAssetRequest struct {
-	AssetTypeID       int                    `json:"asset_type_id"`
-	CategoryID        *int                   `json:"category_id,omitempty"`
-	StatusID          *int                   `json:"status_id,omitempty"`
-	Title             string                 `json:"title"`
-	Description       string                 `json:"description"`
-	AssetTag          string                 `json:"asset_tag,omitempty"`
-	CustomFieldValues map[string]interface{} `json:"custom_field_values,omitempty"`
+	AssetTypeID       int            `json:"asset_type_id"`
+	CategoryID        *int           `json:"category_id,omitempty"`
+	StatusID          *int           `json:"status_id,omitempty"`
+	Title             string         `json:"title"`
+	Description       string         `json:"description"`
+	AssetTag          string         `json:"asset_tag,omitempty"`
+	CustomFieldValues map[string]any `json:"custom_field_values,omitempty"`
 }
 
 // CreateAsset creates a new asset
@@ -329,13 +329,13 @@ func (h *AssetHandler) CreateAsset(w http.ResponseWriter, r *http.Request) {
 
 // UpdateAssetRequest represents the request body for updating an asset
 type UpdateAssetRequest struct {
-	AssetTypeID       int                    `json:"asset_type_id"`
-	CategoryID        *int                   `json:"category_id,omitempty"`
-	StatusID          *int                   `json:"status_id,omitempty"`
-	Title             string                 `json:"title"`
-	Description       string                 `json:"description"`
-	AssetTag          string                 `json:"asset_tag,omitempty"`
-	CustomFieldValues map[string]interface{} `json:"custom_field_values,omitempty"`
+	AssetTypeID       int            `json:"asset_type_id"`
+	CategoryID        *int           `json:"category_id,omitempty"`
+	StatusID          *int           `json:"status_id,omitempty"`
+	Title             string         `json:"title"`
+	Description       string         `json:"description"`
+	AssetTag          string         `json:"asset_tag,omitempty"`
+	CustomFieldValues map[string]any `json:"custom_field_values,omitempty"`
 }
 
 // UpdateAsset updates an existing asset

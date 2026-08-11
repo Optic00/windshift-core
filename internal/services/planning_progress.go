@@ -51,12 +51,12 @@ const progressPageSize = 1000
 // workspace column. Planning reports are often attached to global objects, but
 // their items and test sets remain workspace-scoped; every report query must
 // therefore carry the caller's visible workspace IDs.
-func planningWorkspaceFilter(column string, workspaceIDs []int) (whereClause string, queryArgs []interface{}) {
+func planningWorkspaceFilter(column string, workspaceIDs []int) (whereClause string, queryArgs []any) {
 	if len(workspaceIDs) == 0 {
 		return " AND 1=0", nil
 	}
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(workspaceIDs)), ",")
-	args := make([]interface{}, len(workspaceIDs))
+	args := make([]any, len(workspaceIDs))
 	for i, id := range workspaceIDs {
 		args[i] = id
 	}

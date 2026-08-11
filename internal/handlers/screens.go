@@ -480,7 +480,7 @@ func scanScreenFields(rows *sql.Rows) ([]models.ScreenField, error) {
 
 		// Parse field config if it exists
 		if configStr.Valid && configStr.String != "" {
-			var config map[string]interface{}
+			var config map[string]any
 			if err := json.Unmarshal([]byte(configStr.String), &config); err == nil {
 				field.FieldConfig = config
 			}
@@ -598,7 +598,7 @@ func (h *ScreenHandler) logScreenUpdate(r *http.Request, screenID int, updateTyp
 			ActionType:   logger.ActionScreenUpdate,
 			ResourceType: logger.ResourceScreen,
 			ResourceID:   &screenID,
-			Details:      map[string]interface{}{"update_type": updateType},
+			Details:      map[string]any{"update_type": updateType},
 			Success:      true,
 		})
 	}

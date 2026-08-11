@@ -189,7 +189,7 @@ func (r *PageRepository) GetByIDs(ids []int) ([]models.Page, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	args := make([]interface{}, len(ids))
+	args := make([]any, len(ids))
 	placeholders := ""
 	for i, id := range ids {
 		args[i] = id
@@ -280,7 +280,7 @@ func (r *PageRepository) UpdateTx(tx database.Tx, in UpdateInput) error {
 		    inherit_permissions = ?,
 		    updated_by = ?,
 		    updated_at = ?`
-	args := make([]interface{}, 0, 10)
+	args := make([]any, 0, 10)
 	args = append(args, in.Title, in.Slug, in.Content, in.ContentHash, in.Excerpt, in.InheritPermissions, in.UpdatedBy, now)
 	if in.Metadata != nil {
 		query += `,
@@ -370,7 +370,7 @@ func (r *PageRepository) MoveAcrossWorkspaceTx(tx database.Tx, pageID, destinati
 		    inherit_permissions = true,
 		    updated_by = ?,
 		    updated_at = ?`
-	args := []interface{}{destinationWorkspaceID, nullInt(newParentID), newPath, newDepth, updatedBy, now}
+	args := []any{destinationWorkspaceID, nullInt(newParentID), newPath, newDepth, updatedBy, now}
 	if newFracIndex != nil {
 		query += `,
 		    frac_index = ?`
@@ -426,7 +426,7 @@ func (r *PageRepository) ClearFracIndexesTx(tx database.Tx, pageIDs []int) error
 	}
 
 	placeholders := make([]string, len(pageIDs))
-	args := make([]interface{}, len(pageIDs))
+	args := make([]any, len(pageIDs))
 	for i, pageID := range pageIDs {
 		placeholders[i] = "?"
 		args[i] = pageID
@@ -1239,14 +1239,14 @@ func (r *PageRepository) CountWorkspacePages(workspaceID int) (int, error) {
 
 // --- helpers ---
 
-func nullInt(v *int) interface{} {
+func nullInt(v *int) any {
 	if v == nil {
 		return nil
 	}
 	return *v
 }
 
-func nullString(v *string) interface{} {
+func nullString(v *string) any {
 	if v == nil {
 		return nil
 	}

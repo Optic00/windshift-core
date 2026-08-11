@@ -9,7 +9,7 @@ import (
 // WorkspaceConfigurationQueryer is implemented by database connections and
 // transactions that can read workspace configuration assignments.
 type WorkspaceConfigurationQueryer interface {
-	QueryRow(query string, args ...interface{}) *sql.Row
+	QueryRow(query string, args ...any) *sql.Row
 }
 
 // IsPriorityAllowedInWorkspace verifies that a priority exists and is enabled

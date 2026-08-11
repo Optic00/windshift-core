@@ -30,7 +30,7 @@ type Env struct {
 	AccessibleWorkspaceIDs []int
 	// AuditDetails contains adapter-supplied correlation identifiers only.
 	// Raw tool arguments and results must never be placed here.
-	AuditDetails map[string]interface{}
+	AuditDetails map[string]any
 
 	PermService     *services.PermissionService
 	TimePermService *services.TimePermissionService
@@ -83,9 +83,9 @@ func (e *Env) AuditWrite(entityType string, entityID int, toolName, summary stri
 // actions.go's emitActionAudit both funnel through it. IP/UserAgent are
 // empty by design: the call originates from the chat/MCP adapter, not a
 // direct HTTP request.
-func (e *Env) audit(actionType, resourceType string, resourceID int, resourceName string, details map[string]interface{}) {
+func (e *Env) audit(actionType, resourceType string, resourceID int, resourceName string, details map[string]any) {
 	if details == nil {
-		details = map[string]interface{}{}
+		details = map[string]any{}
 	}
 	for key, value := range e.AuditDetails {
 		details[key] = value

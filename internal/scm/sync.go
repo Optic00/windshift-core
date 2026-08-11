@@ -943,8 +943,8 @@ func (s *SyncService) emitPRMergedEvent(workspaceID, itemID, repoID int, owner, 
 
 // prEventValues builds the shared NewValues payload for PR-linked and
 // PR-merged action events.
-func (s *SyncService) prEventValues(pr PullRequest, repoID int, owner, repo string) map[string]interface{} {
-	values := map[string]interface{}{
+func (s *SyncService) prEventValues(pr PullRequest, repoID int, owner, repo string) map[string]any {
+	values := map[string]any{
 		"pr.number":                    pr.Number,
 		"pr.title":                     pr.Title,
 		"pr.url":                       pr.URL,

@@ -34,7 +34,7 @@ type ScriptEngine struct {
 func NewScriptEngine() *ScriptEngine {
 	return &ScriptEngine{
 		pool: sync.Pool{
-			New: func() interface{} {
+			New: func() any {
 				vm := sobek.New()
 				keys := vm.GlobalObject().Keys()
 				base := make(map[string]struct{}, len(keys))
@@ -54,7 +54,7 @@ func NewScriptEngine() *ScriptEngine {
 //
 // The exported Go value is safe to use after this function returns; no sobek.Value
 // escapes the pool-managed runtime (which is NOT goroutine-safe).
-func (e *ScriptEngine) Execute(ctx context.Context, script string, vars map[string]interface{}, timeoutMs int) (any, error) {
+func (e *ScriptEngine) Execute(ctx context.Context, script string, vars map[string]any, timeoutMs int) (any, error) {
 	if len(script) > maxScriptLength {
 		return nil, fmt.Errorf("script exceeds maximum length of %d bytes", maxScriptLength)
 	}
@@ -142,7 +142,7 @@ func (e *ScriptEngine) Execute(ctx context.Context, script string, vars map[stri
 }
 
 // ExecuteBool runs a script and coerces the result to bool using JS-like truthiness.
-func (e *ScriptEngine) ExecuteBool(ctx context.Context, script string, vars map[string]interface{}, timeoutMs int) (bool, error) {
+func (e *ScriptEngine) ExecuteBool(ctx context.Context, script string, vars map[string]any, timeoutMs int) (bool, error) {
 	result, err := e.Execute(ctx, script, vars, timeoutMs)
 	if err != nil {
 		return false, err

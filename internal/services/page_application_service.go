@@ -150,7 +150,7 @@ func (s *PageApplicationService) Move(actor AuditActor, workspaceID, pageID int,
 	if err != nil {
 		return nil, err
 	}
-	details := map[string]interface{}{
+	details := map[string]any{
 		"source_workspace_id":      workspaceID,
 		"destination_workspace_id": destinationID,
 	}
@@ -198,7 +198,7 @@ func (s *PageApplicationService) Restore(actor AuditActor, workspaceID, pageID, 
 	if err != nil {
 		return nil, err
 	}
-	s.emitAudit(actor, logger.ActionPageRestore, restored.ID, restored.Title, map[string]interface{}{"revision_id": revisionID})
+	s.emitAudit(actor, logger.ActionPageRestore, restored.ID, restored.Title, map[string]any{"revision_id": revisionID})
 	return restored, nil
 }
 
@@ -211,7 +211,7 @@ func (s *PageApplicationService) GrantPermission(actor AuditActor, workspaceID, 
 	if err != nil {
 		return nil, err
 	}
-	s.emitAudit(actor, logger.ActionPagePermissionGrant, pageID, "", map[string]interface{}{
+	s.emitAudit(actor, logger.ActionPagePermissionGrant, pageID, "", map[string]any{
 		"permission_id":    row.ID,
 		"principal_type":   row.PrincipalType,
 		"principal_id":     row.PrincipalID,
@@ -228,7 +228,7 @@ func (s *PageApplicationService) RevokePermission(actor AuditActor, workspaceID,
 	if err := s.pages.RevokePermission(actor.UserID, pageID, permissionID); err != nil {
 		return err
 	}
-	s.emitAudit(actor, logger.ActionPagePermissionRevoke, pageID, "", map[string]interface{}{"permission_id": permissionID})
+	s.emitAudit(actor, logger.ActionPagePermissionRevoke, pageID, "", map[string]any{"permission_id": permissionID})
 	return nil
 }
 
@@ -241,7 +241,7 @@ func (s *PageApplicationService) SetInheritance(actor AuditActor, workspaceID, p
 	if err != nil {
 		return nil, err
 	}
-	s.emitAudit(actor, logger.ActionPageInheritanceSet, page.ID, page.Title, map[string]interface{}{"inherit_permissions": inherit})
+	s.emitAudit(actor, logger.ActionPageInheritanceSet, page.ID, page.Title, map[string]any{"inherit_permissions": inherit})
 	return page, nil
 }
 
@@ -282,7 +282,7 @@ func (s *PageApplicationService) requirePageOp(userID, workspaceID, pageID int, 
 	return nil
 }
 
-func (s *PageApplicationService) emitAudit(actor AuditActor, action string, pageID int, pageTitle string, extra map[string]interface{}) {
+func (s *PageApplicationService) emitAudit(actor AuditActor, action string, pageID int, pageTitle string, extra map[string]any) {
 	id := pageID
 	_ = logger.LogAudit(s.pages.db, logger.AuditEvent{
 		UserID:       actor.UserID,

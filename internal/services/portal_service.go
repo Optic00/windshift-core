@@ -59,7 +59,7 @@ func (s *PortalService) GetCustomFieldNamesByID(ctx context.Context, ids []int) 
 	}
 	placeholders := strings.Repeat("?,", len(ids))
 	placeholders = placeholders[:len(placeholders)-1]
-	args := make([]interface{}, len(ids))
+	args := make([]any, len(ids))
 	for i, id := range ids {
 		args[i] = id
 	}
@@ -485,7 +485,7 @@ func (s *PortalService) getCustomFieldDefinitions(ctx context.Context, cfIDs map
 		return []models.CustomFieldDefinition{}, nil
 	}
 	placeholders := make([]string, 0, len(cfIDs))
-	args := make([]interface{}, 0, len(cfIDs))
+	args := make([]any, 0, len(cfIDs))
 	for id := range cfIDs {
 		placeholders = append(placeholders, "?")
 		args = append(args, id)

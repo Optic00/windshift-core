@@ -106,7 +106,7 @@ func (s *ApprovalService) GetDecisionCommentsForItem(itemID int, includeAgentOwn
 		LEFT JOIN users owner ON owner.id = u.agent_owner_user_id
 		WHERE ar.item_id = ? AND d.comment IS NOT NULL AND d.comment <> ''
 	`
-	args := []interface{}{itemID}
+	args := []any{itemID}
 	order := "DESC"
 	switch {
 	case options.Before != nil:

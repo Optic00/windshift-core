@@ -115,7 +115,7 @@ func (ec *EventCoordinator) emitItemCreatedInternal(item *models.Item, actorUser
 			AssigneeID:  item.AssigneeID,
 			CreatorID:   &actorUserID,
 			Title:       "New Item Created",
-			TemplateData: map[string]interface{}{
+			TemplateData: map[string]any{
 				"item.title":     item.Title,
 				"item.key":       itemKey,
 				"item.id":        item.ID,
@@ -133,7 +133,7 @@ func (ec *EventCoordinator) emitItemCreatedInternal(item *models.Item, actorUser
 			WorkspaceID: item.WorkspaceID,
 			ItemID:      item.ID,
 			ActorUserID: actorUserID,
-			NewValues: map[string]interface{}{
+			NewValues: map[string]any{
 				"title":        item.Title,
 				"status_id":    item.StatusID,
 				"item_type_id": item.ItemTypeID,
@@ -192,7 +192,7 @@ func (ec *EventCoordinator) emitItemUpdatedInternal(original, updated *models.It
 				AssigneeID:  updated.AssigneeID,
 				CreatorID:   original.CreatorID,
 				Title:       "Status Changed",
-				TemplateData: map[string]interface{}{
+				TemplateData: map[string]any{
 					"item.title":  updated.Title,
 					"item.key":    itemKey,
 					"item.id":     updated.ID,
@@ -212,7 +212,7 @@ func (ec *EventCoordinator) emitItemUpdatedInternal(original, updated *models.It
 				AssigneeID:  updated.AssigneeID,
 				CreatorID:   original.CreatorID,
 				Title:       "Item Assigned",
-				TemplateData: map[string]interface{}{
+				TemplateData: map[string]any{
 					"item.title": updated.Title,
 					"item.key":   itemKey,
 					"item.id":    updated.ID,
@@ -231,7 +231,7 @@ func (ec *EventCoordinator) emitItemUpdatedInternal(original, updated *models.It
 				AssigneeID:  updated.AssigneeID,
 				CreatorID:   original.CreatorID,
 				Title:       "Item Updated",
-				TemplateData: map[string]interface{}{
+				TemplateData: map[string]any{
 					"item.title": updated.Title,
 					"item.key":   itemKey,
 					"item.id":    updated.ID,
@@ -249,10 +249,10 @@ func (ec *EventCoordinator) emitItemUpdatedInternal(original, updated *models.It
 				WorkspaceID: updated.WorkspaceID,
 				ItemID:      updated.ID,
 				ActorUserID: actorUserID,
-				OldValues: map[string]interface{}{
+				OldValues: map[string]any{
 					"status_id": original.StatusID,
 				},
-				NewValues: map[string]interface{}{
+				NewValues: map[string]any{
 					"status_id":   updated.StatusID,
 					"title":       updated.Title,
 					"assignee_id": updated.AssigneeID,
@@ -263,8 +263,8 @@ func (ec *EventCoordinator) emitItemUpdatedInternal(original, updated *models.It
 			ec.actionService.EmitActionEvent(event)
 		} else {
 			// Build OldValues/NewValues dynamically from field changes
-			oldVals := make(map[string]interface{})
-			newVals := make(map[string]interface{})
+			oldVals := make(map[string]any)
+			newVals := make(map[string]any)
 			for _, fc := range fieldChanges {
 				fieldName := actionEventFieldName(fc.FieldName)
 				oldVals[fieldName] = fc.OldValue
@@ -327,7 +327,7 @@ func (ec *EventCoordinator) EmitItemDeleted(item *models.Item, actorUserID, desc
 			AssigneeID:  item.AssigneeID,
 			CreatorID:   item.CreatorID,
 			Title:       "Item Deleted",
-			TemplateData: map[string]interface{}{
+			TemplateData: map[string]any{
 				"item.title":  item.Title,
 				"item.id":     item.ID,
 				"user.name":   actorName,
@@ -363,7 +363,7 @@ func (ec *EventCoordinator) EmitStatusChanged(item *models.Item, oldStatusID, ne
 			AssigneeID:  item.AssigneeID,
 			CreatorID:   item.CreatorID,
 			Title:       "Status Changed",
-			TemplateData: map[string]interface{}{
+			TemplateData: map[string]any{
 				"item.title":  item.Title,
 				"item.key":    itemKey,
 				"item.id":     item.ID,
@@ -380,10 +380,10 @@ func (ec *EventCoordinator) EmitStatusChanged(item *models.Item, oldStatusID, ne
 			WorkspaceID: item.WorkspaceID,
 			ItemID:      item.ID,
 			ActorUserID: actorUserID,
-			OldValues: map[string]interface{}{
+			OldValues: map[string]any{
 				"status_id": oldStatusID,
 			},
-			NewValues: map[string]interface{}{
+			NewValues: map[string]any{
 				"status_id":   newStatusID,
 				"title":       item.Title,
 				"assignee_id": item.AssigneeID,
@@ -447,7 +447,7 @@ func (ec *EventCoordinator) EmitApprovalRequested(req *models.ApprovalRequest, i
 			AssigneeID:  item.AssigneeID,
 			CreatorID:   item.CreatorID,
 			Title:       "Approval Requested",
-			TemplateData: map[string]interface{}{
+			TemplateData: map[string]any{
 				"item.title":         item.Title,
 				"item.key":           itemKey,
 				"item.id":            item.ID,
@@ -487,7 +487,7 @@ func (ec *EventCoordinator) EmitApprovalStepStarted(req *models.ApprovalRequest,
 			AssigneeID:  item.AssigneeID,
 			CreatorID:   item.CreatorID,
 			Title:       title,
-			TemplateData: map[string]interface{}{
+			TemplateData: map[string]any{
 				"item.title":              item.Title,
 				"item.key":                itemKey,
 				"approval.id":             req.ID,
@@ -591,7 +591,7 @@ func (ec *EventCoordinator) EmitApprovalDecided(req *models.ApprovalRequest, dec
 			AssigneeID:  item.AssigneeID,
 			CreatorID:   item.CreatorID,
 			Title:       fmt.Sprintf("Approval %s", decision.Decision),
-			TemplateData: map[string]interface{}{
+			TemplateData: map[string]any{
 				"item.title":        item.Title,
 				"item.key":          itemKey,
 				"approval.id":       req.ID,
@@ -624,7 +624,7 @@ func (ec *EventCoordinator) EmitApprovalCompleted(req *models.ApprovalRequest, i
 			AssigneeID:  item.AssigneeID,
 			CreatorID:   item.CreatorID,
 			Title:       fmt.Sprintf("Approval %s", req.Status),
-			TemplateData: map[string]interface{}{
+			TemplateData: map[string]any{
 				"item.title":      item.Title,
 				"item.key":        itemKey,
 				"approval.id":     req.ID,
@@ -656,7 +656,7 @@ func (ec *EventCoordinator) EmitApprovalCancelled(req *models.ApprovalRequest, i
 			AssigneeID:  item.AssigneeID,
 			CreatorID:   item.CreatorID,
 			Title:       "Approval Cancelled", //nolint:misspell // British spelling consistent with event_type value
-			TemplateData: map[string]interface{}{
+			TemplateData: map[string]any{
 				"item.title":      item.Title,
 				"item.key":        itemKey,
 				"approval.id":     req.ID,
@@ -695,7 +695,7 @@ func (ec *EventCoordinator) EmitApprovalEscalated(req *models.ApprovalRequest, s
 			AssigneeID:  item.AssigneeID,
 			CreatorID:   item.CreatorID,
 			Title:       "Approval Escalated",
-			TemplateData: map[string]interface{}{
+			TemplateData: map[string]any{
 				"item.title":       item.Title,
 				"item.key":         itemKey,
 				"approval.id":      req.ID,

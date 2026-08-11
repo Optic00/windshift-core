@@ -115,19 +115,19 @@ type AssetStatus struct {
 
 // Asset represents an individual asset instance
 type Asset struct {
-	ID                int                    `json:"id"`
-	SetID             int                    `json:"set_id"`
-	AssetTypeID       int                    `json:"asset_type_id"`
-	CategoryID        *int                   `json:"category_id,omitempty"`
-	StatusID          *int                   `json:"status_id,omitempty"`
-	Title             string                 `json:"title"`
-	Description       string                 `json:"description"`
-	AssetTag          string                 `json:"asset_tag,omitempty"`
-	CustomFieldValues map[string]interface{} `json:"custom_field_values,omitempty"`
-	FracIndex         *string                `json:"frac_index,omitempty"`
-	CreatedBy         *int                   `json:"created_by,omitempty"`
-	CreatedAt         time.Time              `json:"created_at"`
-	UpdatedAt         time.Time              `json:"updated_at"`
+	ID                int            `json:"id"`
+	SetID             int            `json:"set_id"`
+	AssetTypeID       int            `json:"asset_type_id"`
+	CategoryID        *int           `json:"category_id,omitempty"`
+	StatusID          *int           `json:"status_id,omitempty"`
+	Title             string         `json:"title"`
+	Description       string         `json:"description"`
+	AssetTag          string         `json:"asset_tag,omitempty"`
+	CustomFieldValues map[string]any `json:"custom_field_values,omitempty"`
+	FracIndex         *string        `json:"frac_index,omitempty"`
+	CreatedBy         *int           `json:"created_by,omitempty"`
+	CreatedAt         time.Time      `json:"created_at"`
+	UpdatedAt         time.Time      `json:"updated_at"`
 	// Joined fields
 	SetName        string `json:"set_name,omitempty"`
 	AssetTypeName  string `json:"asset_type_name,omitempty"`
@@ -344,8 +344,8 @@ type AssetActionEvent struct {
 	SetID       int                    `json:"set_id"`
 	AssetID     int                    `json:"asset_id"`
 	ActorUserID int                    `json:"actor_user_id"`
-	OldValues   map[string]interface{} `json:"old_values,omitempty"`
-	NewValues   map[string]interface{} `json:"new_values,omitempty"`
+	OldValues   map[string]any         `json:"old_values,omitempty"`
+	NewValues   map[string]any         `json:"new_values,omitempty"`
 	// Loop prevention
 	TriggeredByAction bool   `json:"triggered_by_action,omitempty"`
 	ExecutionChainID  string `json:"execution_chain_id,omitempty"`
@@ -387,9 +387,9 @@ type UpdateAssetActionRequest struct {
 
 // AssetActionExecutionContext holds context during asset action execution
 type AssetActionExecutionContext struct {
-	Action      *AssetAction           `json:"action"`
-	Event       *AssetActionEvent      `json:"event"`
-	Variables   map[string]interface{} `json:"variables,omitempty"`
-	StepResults []StepResult           `json:"step_results,omitempty"`
-	ChainID     string                 `json:"-"`
+	Action      *AssetAction      `json:"action"`
+	Event       *AssetActionEvent `json:"event"`
+	Variables   map[string]any    `json:"variables,omitempty"`
+	StepResults []StepResult      `json:"step_results,omitempty"`
+	ChainID     string            `json:"-"`
 }

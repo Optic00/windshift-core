@@ -100,7 +100,7 @@ func (h *PermissionSetHandler) Create(w http.ResponseWriter, r *http.Request) {
 		h.auditor.LogWithDetails(r, currentUser,
 			logger.ActionPermissionSetCreate, logger.ResourcePermissionSet,
 			&psID, req.Name,
-			map[string]interface{}{
+			map[string]any{
 				"description":      req.Description,
 				"permission_count": len(req.PermissionIDs),
 			},
@@ -170,16 +170,16 @@ func (h *PermissionSetHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
-		details := make(map[string]interface{})
+		details := make(map[string]any)
 
 		if oldPS.Name != ps.Name {
-			details["name_changed"] = map[string]interface{}{
+			details["name_changed"] = map[string]any{
 				"old": oldPS.Name,
 				"new": ps.Name,
 			}
 		}
 		if oldPS.Description != ps.Description {
-			details["description_changed"] = map[string]interface{}{
+			details["description_changed"] = map[string]any{
 				"old": oldPS.Description,
 				"new": ps.Description,
 			}
@@ -232,7 +232,7 @@ func (h *PermissionSetHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		h.auditor.LogWithDetails(r, currentUser,
 			logger.ActionPermissionSetDelete, logger.ResourcePermissionSet,
 			&id, oldPS.Name,
-			map[string]interface{}{
+			map[string]any{
 				"description": oldPS.Description,
 				"is_system":   oldPS.IsSystem,
 			},
@@ -329,7 +329,7 @@ func (h *PermissionSetHandler) CreateAssignment(w http.ResponseWriter, r *http.R
 
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
-		h.auditor.LogWithDetails(r, currentUser, logger.ActionPermissionSetAssignmentCreate, logger.ResourcePermissionSet, &setID, "", map[string]interface{}{
+		h.auditor.LogWithDetails(r, currentUser, logger.ActionPermissionSetAssignmentCreate, logger.ResourcePermissionSet, &setID, "", map[string]any{
 			"permission_id":   req.PermissionID,
 			"assignment_kind": string(kind),
 			"target_id":       targetID,
@@ -385,7 +385,7 @@ func (h *PermissionSetHandler) DeleteAssignment(w http.ResponseWriter, r *http.R
 
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
-		h.auditor.LogWithDetails(r, currentUser, logger.ActionPermissionSetAssignmentDelete, logger.ResourcePermissionSet, &setID, "", map[string]interface{}{
+		h.auditor.LogWithDetails(r, currentUser, logger.ActionPermissionSetAssignmentDelete, logger.ResourcePermissionSet, &setID, "", map[string]any{
 			"assignment_id":   assignmentID,
 			"assignment_kind": string(kind),
 		})

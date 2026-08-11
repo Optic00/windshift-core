@@ -200,7 +200,7 @@ func (h *PortalHandler) AddRequestComment(w http.ResponseWriter, r *http.Request
 	}
 
 	// Return the created comment
-	response := map[string]interface{}{
+	response := map[string]any{
 		"id":            comment.ID,
 		"item_id":       comment.ItemID,
 		"content":       comment.Content,

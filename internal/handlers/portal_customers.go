@@ -87,7 +87,7 @@ func isCustomFieldParseError(err error) bool {
 }
 
 // scanPortalCustomer scans a single portal customer row from a scanner (works with both *sql.Row and *sql.Rows).
-func scanPortalCustomer(scanner interface{ Scan(...interface{}) error }) (models.PortalCustomer, error) {
+func scanPortalCustomer(scanner interface{ Scan(...any) error }) (models.PortalCustomer, error) {
 	var c models.PortalCustomer
 	var phone sql.NullString
 	var userFirstName, userLastName, userEmail, orgName sql.NullString
@@ -347,13 +347,13 @@ type portalCustomerInput struct {
 func decodePortalCustomerInput(w http.ResponseWriter, r *http.Request) (portalCustomerInput, bool) {
 	//nolint:misspell // API uses British spelling (customer_organisation_id)
 	var requestData struct {
-		Name                   string                 `json:"name"`
-		Email                  string                 `json:"email"`
-		Phone                  string                 `json:"phone"`
-		CustomerOrganisationID *int                   `json:"customer_organisation_id"`
-		IsPrimary              bool                   `json:"is_primary"`
-		RoleIDs                []int                  `json:"role_ids"`
-		CustomFieldValues      map[string]interface{} `json:"custom_field_values"`
+		Name                   string         `json:"name"`
+		Email                  string         `json:"email"`
+		Phone                  string         `json:"phone"`
+		CustomerOrganisationID *int           `json:"customer_organisation_id"`
+		IsPrimary              bool           `json:"is_primary"`
+		RoleIDs                []int          `json:"role_ids"`
+		CustomFieldValues      map[string]any `json:"custom_field_values"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&requestData); err != nil {
@@ -824,7 +824,7 @@ func (h *PortalCustomersHandler) loadRolesForCustomers(customerIDs []int) (map[i
 	}
 
 	placeholders := make([]string, len(customerIDs))
-	args := make([]interface{}, len(customerIDs))
+	args := make([]any, len(customerIDs))
 	for i, id := range customerIDs {
 		placeholders[i] = "?"
 		args[i] = id

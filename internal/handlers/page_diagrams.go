@@ -37,7 +37,7 @@ func (h *PageHandler) ListDiagrams(w http.ResponseWriter, r *http.Request) {
 		h.respondPageDiagramError(w, r, err)
 		return
 	}
-	respondJSONOK(w, map[string]interface{}{"items": items})
+	respondJSONOK(w, map[string]any{"items": items})
 }
 
 // GetDiagram returns one Page-owned diagram attachment.

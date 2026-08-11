@@ -53,7 +53,7 @@ var groupFilterAttrs = map[string]string{
 // SCIMFilterResult holds parsed filter data
 type SCIMFilterResult struct {
 	WhereClause string
-	Args        []interface{}
+	Args        []any
 }
 
 // ParseSCIMFilter parses a SCIM filter string and returns SQL WHERE clause and args
@@ -116,7 +116,7 @@ func ParseSCIMFilter(filter, resourceType string) (*SCIMFilterResult, error) {
 
 	// Build WHERE clause based on operator
 	var whereClause string
-	var args []interface{}
+	var args []any
 
 	switch op {
 	case FilterOpEq:
@@ -126,10 +126,10 @@ func ParseSCIMFilter(filter, resourceType string) (*SCIMFilterResult, error) {
 				return nil, err
 			}
 			whereClause = fmt.Sprintf("%s = ?", sqlCol)
-			args = []interface{}{boolVal}
+			args = []any{boolVal}
 		} else {
 			whereClause = fmt.Sprintf("LOWER(%s) = LOWER(?)", sqlCol)
-			args = []interface{}{value}
+			args = []any{value}
 		}
 	case FilterOpNe:
 		if attr == "active" {
@@ -138,23 +138,23 @@ func ParseSCIMFilter(filter, resourceType string) (*SCIMFilterResult, error) {
 				return nil, err
 			}
 			whereClause = fmt.Sprintf("%s != ?", sqlCol)
-			args = []interface{}{boolVal}
+			args = []any{boolVal}
 		} else {
 			whereClause = fmt.Sprintf("LOWER(%s) != LOWER(?)", sqlCol)
-			args = []interface{}{value}
+			args = []any{value}
 		}
 	case FilterOpCo:
 		// Security: Escape LIKE wildcards to prevent pattern injection
 		whereClause = fmt.Sprintf("LOWER(%s) LIKE LOWER(?) ESCAPE '\\'", sqlCol)
-		args = []interface{}{"%" + escapeLikePattern(value) + "%"}
+		args = []any{"%" + escapeLikePattern(value) + "%"}
 	case FilterOpSw:
 		// Security: Escape LIKE wildcards to prevent pattern injection
 		whereClause = fmt.Sprintf("LOWER(%s) LIKE LOWER(?) ESCAPE '\\'", sqlCol)
-		args = []interface{}{escapeLikePattern(value) + "%"}
+		args = []any{escapeLikePattern(value) + "%"}
 	case FilterOpEw:
 		// Security: Escape LIKE wildcards to prevent pattern injection
 		whereClause = fmt.Sprintf("LOWER(%s) LIKE LOWER(?) ESCAPE '\\'", sqlCol)
-		args = []interface{}{"%" + escapeLikePattern(value)}
+		args = []any{"%" + escapeLikePattern(value)}
 	default:
 		return nil, fmt.Errorf("unsupported filter operator: %s", op)
 	}
@@ -314,7 +314,7 @@ func ParseSCIMFilterWithAnd(filter, resourceType string) (*SCIMFilterResult, err
 	parts := splitTopLevelAnd(filter)
 
 	var whereClauses []string
-	var allArgs []interface{}
+	var allArgs []any
 
 	for _, part := range parts {
 		result, err := ParseSCIMFilter(stripParens(strings.TrimSpace(part)), resourceType)

@@ -430,7 +430,7 @@ func (h *AssetActionHandler) ToggleAction(w http.ResponseWriter, r *http.Request
 			logger.ResourceAutomation,
 			&actionID,
 			updatedAction.Name,
-			map[string]interface{}{
+			map[string]any{
 				"old_is_enabled": action.IsEnabled,
 				"is_enabled":     updatedAction.IsEnabled,
 			},

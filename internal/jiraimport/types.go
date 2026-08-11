@@ -24,14 +24,14 @@ func (e *WorkspaceCountMismatchError) Error() string {
 }
 
 type JobStatus struct {
-	JobID        string                 `json:"job_id"`
-	Status       string                 `json:"status"`
-	Phase        string                 `json:"phase,omitempty"`
-	Progress     map[string]interface{} `json:"progress,omitempty"`
-	Result       map[string]interface{} `json:"result,omitempty"`
-	ErrorMessage string                 `json:"error_message,omitempty"`
-	StartedAt    *time.Time             `json:"started_at,omitempty"`
-	CompletedAt  *time.Time             `json:"completed_at,omitempty"`
+	JobID        string         `json:"job_id"`
+	Status       string         `json:"status"`
+	Phase        string         `json:"phase,omitempty"`
+	Progress     map[string]any `json:"progress,omitempty"`
+	Result       map[string]any `json:"result,omitempty"`
+	ErrorMessage string         `json:"error_message,omitempty"`
+	StartedAt    *time.Time     `json:"started_at,omitempty"`
+	CompletedAt  *time.Time     `json:"completed_at,omitempty"`
 }
 
 type Progress struct {
@@ -60,23 +60,23 @@ type ImportedWorkspace struct {
 }
 
 type JobInfo struct {
-	ID                     string                 `json:"id"`
-	ConnectionID           string                 `json:"connection_id"`
-	InstanceURL            string                 `json:"instance_url,omitempty"`
-	InstanceName           string                 `json:"instance_name,omitempty"`
-	Status                 string                 `json:"status"`
-	Phase                  string                 `json:"phase,omitempty"`
-	Scope                  string                 `json:"scope"`
-	ProjectKeys            []string               `json:"project_keys,omitempty"`
-	ImportedWorkspaces     []ImportedWorkspace    `json:"imported_workspaces,omitempty"`
-	ImportedWorkspaceCount int                    `json:"imported_workspace_count"`
-	ImportedItemCount      int                    `json:"imported_item_count"`
-	Progress               map[string]interface{} `json:"progress,omitempty"`
-	Result                 map[string]interface{} `json:"result,omitempty"`
-	ErrorMessage           string                 `json:"error_message,omitempty"`
-	CreatedAt              time.Time              `json:"created_at"`
-	StartedAt              *time.Time             `json:"started_at,omitempty"`
-	CompletedAt            *time.Time             `json:"completed_at,omitempty"`
+	ID                     string              `json:"id"`
+	ConnectionID           string              `json:"connection_id"`
+	InstanceURL            string              `json:"instance_url,omitempty"`
+	InstanceName           string              `json:"instance_name,omitempty"`
+	Status                 string              `json:"status"`
+	Phase                  string              `json:"phase,omitempty"`
+	Scope                  string              `json:"scope"`
+	ProjectKeys            []string            `json:"project_keys,omitempty"`
+	ImportedWorkspaces     []ImportedWorkspace `json:"imported_workspaces,omitempty"`
+	ImportedWorkspaceCount int                 `json:"imported_workspace_count"`
+	ImportedItemCount      int                 `json:"imported_item_count"`
+	Progress               map[string]any      `json:"progress,omitempty"`
+	Result                 map[string]any      `json:"result,omitempty"`
+	ErrorMessage           string              `json:"error_message,omitempty"`
+	CreatedAt              time.Time           `json:"created_at"`
+	StartedAt              *time.Time          `json:"started_at,omitempty"`
+	CompletedAt            *time.Time          `json:"completed_at,omitempty"`
 }
 
 type Conflict struct {

@@ -88,9 +88,9 @@ type ScreenField struct {
 	IsRequired      bool   `json:"is_required"`
 	FieldWidth      string `json:"field_width"`
 	// Joined/computed fields for API responses
-	FieldName   string                 `json:"field_name,omitempty"`
-	FieldLabel  string                 `json:"field_label,omitempty"`
-	FieldConfig map[string]interface{} `json:"field_config,omitempty"`
+	FieldName   string         `json:"field_name,omitempty"`
+	FieldLabel  string         `json:"field_label,omitempty"`
+	FieldConfig map[string]any `json:"field_config,omitempty"`
 }
 
 // ItemType represents a type of work item
@@ -437,9 +437,9 @@ type ItemTypeMigrationMapping struct {
 
 // CustomFieldMigrationMapping specifies how to handle a custom field
 type CustomFieldMigrationMapping struct {
-	FieldID      int         `json:"field_id"`
-	Action       string      `json:"action"`                  // keep, orphan, add_default
-	DefaultValue interface{} `json:"default_value,omitempty"` // for new required fields
+	FieldID      int    `json:"field_id"`
+	Action       string `json:"action"`                  // keep, orphan, add_default
+	DefaultValue any    `json:"default_value,omitempty"` // for new required fields
 }
 
 // PriorityMigrationMapping maps old priority to new

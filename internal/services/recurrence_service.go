@@ -184,16 +184,16 @@ func (s *RecurrenceService) ForceGenerate(itemID int, auditActors ...AuditActor)
 	if err != nil {
 		return 0, err
 	}
-	s.emitAudit(optionalAuditActor(auditActors), logger.ActionRecurrenceForceGenerate, rule, itemID, map[string]interface{}{"instances_generated": count})
+	s.emitAudit(optionalAuditActor(auditActors), logger.ActionRecurrenceForceGenerate, rule, itemID, map[string]any{"instances_generated": count})
 	return count, nil
 }
 
-func (s *RecurrenceService) emitAudit(actor *AuditActor, action string, rule *models.RecurrenceRule, itemID int, details map[string]interface{}) {
+func (s *RecurrenceService) emitAudit(actor *AuditActor, action string, rule *models.RecurrenceRule, itemID int, details map[string]any) {
 	if actor == nil || s.auditor == nil || rule == nil {
 		return
 	}
 	if details == nil {
-		details = map[string]interface{}{}
+		details = map[string]any{}
 	}
 	details["item_id"] = itemID
 	event := logger.AuditEvent{

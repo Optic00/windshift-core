@@ -25,7 +25,7 @@ func NewSCIMRepository(db database.Database) *SCIMRepository {
 // scimNullIfEmpty converts an empty string to nil (SQL NULL) so that partial
 // unique indexes on scim_external_id (WHERE scim_external_id IS NOT NULL) are
 // not violated when the field is omitted from the SCIM request.
-func scimNullIfEmpty(s string) interface{} {
+func scimNullIfEmpty(s string) any {
 	if s == "" {
 		return nil
 	}
@@ -53,13 +53,13 @@ type SCIMGroupMemberRow struct {
 // GET /Users sweep it records their IDs in its shadow and then tries to
 // DELETE them on the next sync tick, producing audit noise forever even
 // after the write-side guard refuses every attempt.
-func (r *SCIMRepository) ListUsersFiltered(whereClause string, filterArgs []interface{}, count, offset int) ([]models.User, int, error) {
+func (r *SCIMRepository) ListUsersFiltered(whereClause string, filterArgs []any, count, offset int) ([]models.User, int, error) {
 	baseQuery := `SELECT id, email, username, first_name, last_name, is_active,
 	              COALESCE(scim_external_id, '') as scim_external_id, created_at, updated_at
 	              FROM users WHERE is_agent = false AND scim_managed = true`
 	countQuery := `SELECT COUNT(*) FROM users WHERE is_agent = false AND scim_managed = true`
 
-	args := []interface{}{}
+	args := []any{}
 	if whereClause != "" {
 		baseQuery += " AND " + whereClause
 		countQuery += " AND " + whereClause
@@ -244,12 +244,12 @@ func (r *SCIMRepository) IsUserSCIMVisible(userID int) bool {
 // Mirrors ListUsersFiltered: SCIM only sees what the IdP provisioned.
 // Returning locally-managed groups here would let a SCIM client enumerate
 // them, then take them over via PUT/PATCH or destroy them via DELETE.
-func (r *SCIMRepository) ListGroupsFiltered(whereClause string, filterArgs []interface{}, count, offset int) ([]models.TeamGroup, int, error) {
+func (r *SCIMRepository) ListGroupsFiltered(whereClause string, filterArgs []any, count, offset int) ([]models.TeamGroup, int, error) {
 	baseQuery := `SELECT id, name, description, COALESCE(scim_external_id, '') as scim_external_id,
 	              created_at, updated_at FROM groups WHERE scim_managed = true`
 	countQuery := `SELECT COUNT(*) FROM groups WHERE scim_managed = true`
 
-	args := []interface{}{}
+	args := []any{}
 	if whereClause != "" {
 		baseQuery += " AND " + whereClause
 		countQuery += " AND " + whereClause

@@ -717,7 +717,7 @@ func (r *CustomFieldRepository) UpdatePortalCFV(id int, newVal string) error {
 
 // rowScanner mirrors the Scan methods of *sql.Row and *sql.Rows.
 type rowScanner interface {
-	Scan(dest ...interface{}) error
+	Scan(dest ...any) error
 }
 
 func scanCustomFieldDefinition(rows *sql.Rows) (models.CustomFieldDefinition, error) {

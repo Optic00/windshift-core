@@ -124,9 +124,9 @@ type FIDORegistrationRequestNew struct {
 
 // FIDOCompleteRegistrationRequest represents the completion request
 type FIDOCompleteRegistrationRequest struct {
-	SessionID      string      `json:"sessionId"`
-	CredentialName string      `json:"credentialName"`
-	Response       interface{} `json:"response"`
+	SessionID      string `json:"sessionId"`
+	CredentialName string `json:"credentialName"`
+	Response       any    `json:"response"`
 }
 
 // StartFIDORegistrationNew initiates FIDO2/WebAuthn registration with proper verification
@@ -213,7 +213,7 @@ func (h *WebAuthnHandler) StartFIDORegistrationNew(w http.ResponseWriter, r *htt
 
 	// Send response - options already contains the publicKey structure
 	// We need to extract just the publicKey content from the CredentialCreation
-	response := map[string]interface{}{
+	response := map[string]any{
 		"publicKey": options.Response,
 		"sessionId": sessionID,
 	}
@@ -341,10 +341,10 @@ func (h *WebAuthnHandler) CompleteFIDORegistrationNew(w http.ResponseWriter, r *
 		})
 	}
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"status":  "success",
 		"message": "FIDO credential registered successfully",
-		"credential": map[string]interface{}{
+		"credential": map[string]any{
 			"id":              credential.ID,
 			"name":            req.CredentialName,
 			"attestationType": credential.AttestationType,
@@ -454,8 +454,8 @@ type FIDOLoginRequestNew struct {
 
 // FIDOCompleteLoginRequest represents the login completion request
 type FIDOCompleteLoginRequest struct {
-	SessionID string      `json:"sessionId"`
-	Response  interface{} `json:"response"`
+	SessionID string `json:"sessionId"`
+	Response  any    `json:"response"`
 }
 
 // StartFIDOLoginNew initiates FIDO authentication with proper verification.
@@ -557,7 +557,7 @@ func (h *WebAuthnHandler) StartFIDOLoginNew(w http.ResponseWriter, r *http.Reque
 		respondInternalError(w, r, err)
 		return
 	}
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"publicKey": options.Response,
 		"sessionId": sessionID,
 	})
@@ -728,7 +728,7 @@ func (h *WebAuthnHandler) CompleteFIDOLoginNew(w http.ResponseWriter, r *http.Re
 		}
 	}
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"status":  "success",
 		"message": "Authentication successful",
 		"user":    user,

@@ -67,7 +67,7 @@ func (h *PortalAuthHandler) RequestMagicLink(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		// Always return success to prevent email enumeration
 		slog.Debug("portal not found", slog.String("component", "portal_auth"), slog.String("slug", slug))
-		respondJSONOK(w, map[string]interface{}{
+		respondJSONOK(w, map[string]any{
 			"success": true,
 			"message": "If your email is registered, you will receive a sign-in link shortly.",
 		})
@@ -120,7 +120,7 @@ func (h *PortalAuthHandler) RequestMagicLink(w http.ResponseWriter, r *http.Requ
 	// Unknown modes fail closed. An empty value is the legacy spelling of
 	// "open"; anything else must not silently turn a typo into open signup.
 	if config.PortalRegistrationMode != "" && config.PortalRegistrationMode != "open" && config.PortalRegistrationMode != "manual" {
-		respondJSONOK(w, map[string]interface{}{
+		respondJSONOK(w, map[string]any{
 			"success": true,
 			"message": "If your email is registered, you will receive a sign-in link shortly.",
 		})
@@ -136,7 +136,7 @@ func (h *PortalAuthHandler) RequestMagicLink(w http.ResponseWriter, r *http.Requ
 			if err != nil {
 				slog.Error("failed to check portal customer access", slog.String("component", "portal_auth"), slog.Any("error", err))
 			}
-			respondJSONOK(w, map[string]interface{}{
+			respondJSONOK(w, map[string]any{
 				"success": true,
 				"message": "If your email is registered, you will receive a sign-in link shortly.",
 			})
@@ -149,7 +149,7 @@ func (h *PortalAuthHandler) RequestMagicLink(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		slog.Error("failed to find or create portal customer", slog.String("component", "portal_auth"), slog.String("email", email), slog.Any("error", err))
 		// Still return success to prevent email enumeration
-		respondJSONOK(w, map[string]interface{}{
+		respondJSONOK(w, map[string]any{
 			"success": true,
 			"message": "If your email is registered, you will receive a sign-in link shortly.",
 		})
@@ -164,7 +164,7 @@ func (h *PortalAuthHandler) RequestMagicLink(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		slog.Error("failed to generate magic link", slog.String("component", "portal_auth"), slog.Any("error", err))
 		// Still return success to prevent enumeration
-		respondJSONOK(w, map[string]interface{}{
+		respondJSONOK(w, map[string]any{
 			"success": true,
 			"message": "If your email is registered, you will receive a sign-in link shortly.",
 		})
@@ -180,7 +180,7 @@ func (h *PortalAuthHandler) RequestMagicLink(w http.ResponseWriter, r *http.Requ
 		slog.Info("magic link email sent", slog.String("component", "portal_auth"), slog.String("email", email), slog.String("portal", slug))
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"success": true,
 		"message": "If your email is registered, you will receive a sign-in link shortly.",
 	})
@@ -237,7 +237,7 @@ func (h *PortalAuthHandler) VerifyMagicLink(w http.ResponseWriter, r *http.Reque
 			statusCode = http.StatusInternalServerError
 		}
 
-		body := map[string]interface{}{
+		body := map[string]any{
 			"success": false,
 			"message": message,
 			"code":    code,
@@ -272,10 +272,10 @@ func (h *PortalAuthHandler) VerifyMagicLink(w http.ResponseWriter, r *http.Reque
 
 	slog.Info("portal customer authenticated", slog.String("component", "portal_auth"), slog.Int("portal_customer_id", result.PortalCustomerID), slog.String("email", result.CustomerEmail))
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"success": true,
 		"message": "Successfully signed in",
-		"customer": map[string]interface{}{
+		"customer": map[string]any{
 			"id":    result.PortalCustomerID,
 			"email": result.CustomerEmail,
 			"name":  result.CustomerName,
@@ -312,7 +312,7 @@ func (h *PortalAuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 
 	slog.Debug("portal customer logged out", slog.String("component", "portal_auth"), slog.String("portal", slug))
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"success": true,
 		"message": "Successfully logged out",
 	})
@@ -349,7 +349,7 @@ func (h *PortalAuthHandler) GetCurrentCustomer(w http.ResponseWriter, r *http.Re
 				info = &repository.PortalCustomerSessionInfo{}
 			}
 
-			customerPayload := map[string]interface{}{
+			customerPayload := map[string]any{
 				"id":            session.Customer.ID,
 				"email":         session.Customer.Email,
 				"name":          session.Customer.Name,
@@ -361,7 +361,7 @@ func (h *PortalAuthHandler) GetCurrentCustomer(w http.ResponseWriter, r *http.Re
 				customerPayload["dismissed_passkey_prompt_at"] = nil
 			}
 
-			respondJSONOK(w, map[string]interface{}{
+			respondJSONOK(w, map[string]any{
 				"authenticated": true,
 				"is_internal":   false,
 				"customer":      customerPayload,
@@ -378,10 +378,10 @@ func (h *PortalAuthHandler) GetCurrentCustomer(w http.ResponseWriter, r *http.Re
 			session, err := h.sessionManager.ValidateSessionContext(r.Context(), internalToken, clientIP)
 			if err == nil && session.User != nil {
 				// Internal user authenticated
-				respondJSONOK(w, map[string]interface{}{
+				respondJSONOK(w, map[string]any{
 					"authenticated": true,
 					"is_internal":   true,
-					"user": map[string]interface{}{
+					"user": map[string]any{
 						"id":         session.User.ID,
 						"email":      session.User.Email,
 						"name":       session.User.FirstName + " " + session.User.LastName,
@@ -395,7 +395,7 @@ func (h *PortalAuthHandler) GetCurrentCustomer(w http.ResponseWriter, r *http.Re
 	}
 
 	// No valid session found
-	respondJSON(w, http.StatusUnauthorized, map[string]interface{}{
+	respondJSON(w, http.StatusUnauthorized, map[string]any{
 		"authenticated": false,
 	})
 }

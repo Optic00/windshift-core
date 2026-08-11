@@ -67,7 +67,7 @@ func (r *APITokenPolicyRepository) UserInAnyGroup(userID int, groupIDs []int) (b
 		return false, nil
 	}
 	placeholders := make([]string, len(groupIDs))
-	args := make([]interface{}, 0, len(groupIDs)+1)
+	args := make([]any, 0, len(groupIDs)+1)
 	args = append(args, userID)
 	for i, gid := range groupIDs {
 		placeholders[i] = "?"

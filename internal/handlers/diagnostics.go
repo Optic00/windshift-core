@@ -368,7 +368,7 @@ func (h *DiagnosticsHandler) UpdateRecurrenceVolumeSettings(w http.ResponseWrite
 			logger.ResourceDiagnostics,
 			nil,
 			"recurrence_volume",
-			map[string]interface{}{
+			map[string]any{
 				"diagnostic_enabled": req.DiagnosticEnabled,
 				"warning_threshold":  req.WarningThreshold,
 			},
@@ -649,7 +649,7 @@ func (h *DiagnosticsHandler) ControlGlobalRankMigration(w http.ResponseWriter, r
 	}
 	if h.auditor != nil {
 		if user := utils.GetCurrentUser(r); user != nil {
-			h.auditor.LogWithDetails(r, user, logger.ActionDiagnosticsGlobalRankMigrationControl, logger.ResourceDiagnostics, nil, "global rank migration", map[string]interface{}{
+			h.auditor.LogWithDetails(r, user, logger.ActionDiagnosticsGlobalRankMigrationControl, logger.ResourceDiagnostics, nil, "global rank migration", map[string]any{
 				"action":        action,
 				"active_bucket": state.ActiveBucket,
 				"target_bucket": state.TargetBucket,
@@ -964,7 +964,7 @@ func (h *DiagnosticsHandler) auditPurge(r *http.Request, action, olderThan strin
 	if user == nil {
 		return
 	}
-	h.auditor.LogWithDetails(r, user, action, logger.ResourceDiagnostics, nil, "", map[string]interface{}{
+	h.auditor.LogWithDetails(r, user, action, logger.ResourceDiagnostics, nil, "", map[string]any{
 		"older_than": olderThan,
 		"cutoff":     cutoff.Format(time.RFC3339),
 		"deleted":    rows,
@@ -1145,7 +1145,7 @@ func (h *DiagnosticsHandler) GetBriefingFailures(w http.ResponseWriter, r *http.
 		bucketList = append(bucketList, *buckets[c])
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"since":   since.String(),
 		"buckets": bucketList,
 		"recent":  recent,

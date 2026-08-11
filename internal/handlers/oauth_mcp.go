@@ -43,7 +43,7 @@ func (h *OAuthHandler) MCPDiscoveryEnabled() bool {
 
 // ProtectedResourceMetadata implements RFC 9728 discovery for /mcp.
 func (h *OAuthHandler) ProtectedResourceMetadata(w http.ResponseWriter, _ *http.Request) {
-	writeOAuthMetadata(w, map[string]interface{}{
+	writeOAuthMetadata(w, map[string]any{
 		"resource":                 h.mcpResourceURI,
 		"resource_name":            "Windshift MCP",
 		"authorization_servers":    []string{h.issuerURL},
@@ -55,7 +55,7 @@ func (h *OAuthHandler) ProtectedResourceMetadata(w http.ResponseWriter, _ *http.
 // AuthorizationServerMetadata implements RFC 8414 discovery for Windshift's
 // authorization-code server.
 func (h *OAuthHandler) AuthorizationServerMetadata(w http.ResponseWriter, _ *http.Request) {
-	writeOAuthMetadata(w, map[string]interface{}{
+	writeOAuthMetadata(w, map[string]any{
 		"issuer":                                         h.issuerURL,
 		"authorization_endpoint":                         h.issuerURL + "/oauth/authorize",
 		"token_endpoint":                                 h.issuerURL + "/api/oauth/token",
@@ -319,12 +319,12 @@ func matchStoredOAuthResource(stored, requested string) (string, error) {
 	return stored, nil
 }
 
-func writeOAuthMetadata(w http.ResponseWriter, body interface{}) {
+func writeOAuthMetadata(w http.ResponseWriter, body any) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	writeOAuthJSON(w, http.StatusOK, body)
 }
 
-func writeOAuthJSON(w http.ResponseWriter, status int, body interface{}) {
+func writeOAuthJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")

@@ -407,7 +407,7 @@ func (h *CollectionHandler) UpdatePublicSharing(w http.ResponseWriter, r *http.R
 
 	logAudit(h.db, r, currentUser, logger.ActionCollectionUpdate, logger.ResourceCollection, &id, "")
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"is_public":   payload.IsPublic,
 		"public_slug": payload.PublicSlug,
 	})

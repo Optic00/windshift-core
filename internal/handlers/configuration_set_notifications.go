@@ -109,7 +109,7 @@ func (h *ConfigurationSetNotificationHandler) AssignNotificationToConfigurationS
 
 	if h.auditor != nil {
 		if currentUser := utils.GetCurrentUser(r); currentUser != nil {
-			h.auditor.LogWithDetails(r, currentUser, logger.ActionConfigSetNotificationAssign, logger.ResourceConfigurationSet, &configSetID, csName, map[string]interface{}{
+			h.auditor.LogWithDetails(r, currentUser, logger.ActionConfigSetNotificationAssign, logger.ResourceConfigurationSet, &configSetID, csName, map[string]any{
 				"notification_setting_id":   req.NotificationSettingID,
 				"notification_setting_name": ns.Name,
 				"assignment_id":             id,
@@ -162,7 +162,7 @@ func (h *ConfigurationSetNotificationHandler) UnassignNotificationFromConfigurat
 	}
 	if h.auditor != nil {
 		if currentUser := utils.GetCurrentUser(r); currentUser != nil {
-			h.auditor.LogWithDetails(r, currentUser, logger.ActionConfigSetNotificationUnassign, logger.ResourceConfigurationSet, &configSetID, csName, map[string]interface{}{
+			h.auditor.LogWithDetails(r, currentUser, logger.ActionConfigSetNotificationUnassign, logger.ResourceConfigurationSet, &configSetID, csName, map[string]any{
 				"assignment_id": assignmentID,
 			})
 		}

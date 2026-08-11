@@ -136,7 +136,7 @@ func (s *UserReadService) GetByID(id int) (*models.User, error) {
 // when no row is updated.
 func (s *UserReadService) UpdateAdmin(id int, update AdminUserUpdate) error {
 	sets := []string{}
-	args := []interface{}{}
+	args := []any{}
 	if update.FirstName != nil && *update.FirstName != "" {
 		sets = append(sets, "first_name = ?")
 		args = append(args, *update.FirstName)

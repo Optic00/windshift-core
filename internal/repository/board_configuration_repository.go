@@ -61,7 +61,7 @@ func (r *BoardConfigurationRepository) GetByCollectionID(collectionID int) (*mod
 	return r.getConfig("collection_id = ?", collectionID)
 }
 
-func (r *BoardConfigurationRepository) getConfig(where string, arg interface{}) (*models.BoardConfiguration, error) {
+func (r *BoardConfigurationRepository) getConfig(where string, arg any) (*models.BoardConfiguration, error) {
 	var config models.BoardConfiguration
 	var collID, wsID sql.NullInt64
 	var backlogStatusIDsJSON, listColumnsJSON, cardFieldsJSON, roadmapConfigJSON sql.NullString

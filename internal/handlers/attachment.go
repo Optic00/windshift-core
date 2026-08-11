@@ -720,7 +720,7 @@ func (h *AttachmentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var attachmentEntityID interface{}
+	var attachmentEntityID any
 	if isImageEntityType {
 		attachmentEntityID = nil
 	} else {
@@ -782,7 +782,7 @@ func (h *AttachmentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 			message = "Hub logo uploaded successfully"
 			urlKey = "logo_url"
 		}
-		response := map[string]interface{}{
+		response := map[string]any{
 			"success":       true,
 			"message":       message,
 			urlKey:          downloadURL,
@@ -1256,7 +1256,7 @@ func (h *AttachmentHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if currentUser != nil {
-		logAuditWithDetails(h.db, r, currentUser, logger.ActionAttachmentDelete, logger.ResourceAttachment, &attachmentID, details.OriginalFilename, map[string]interface{}{
+		logAuditWithDetails(h.db, r, currentUser, logger.ActionAttachmentDelete, logger.ResourceAttachment, &attachmentID, details.OriginalFilename, map[string]any{
 			"entity_type":       details.EntityType,
 			"item_id":           details.ItemID,
 			"original_filename": details.OriginalFilename,

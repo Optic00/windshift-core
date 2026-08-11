@@ -214,7 +214,7 @@ func (r *UserSCMTokenRepository) ListAvailableOAuthProviders(userID int) ([]User
 }
 
 type userSCMConnectionScanner interface {
-	Scan(dest ...interface{}) error
+	Scan(dest ...any) error
 }
 
 func scanUserSCMConnection(scanner userSCMConnectionScanner) (UserSCMConnection, error) {

@@ -155,7 +155,7 @@ func (s *AttachmentService) CreateRecord(params CreateAttachmentParams) (int64, 
 	// portals, hubs, users) and must be stored as NULL here — otherwise a
 	// numeric collision with a real item id can leak the row via the
 	// items-scoped GetByItem query. See WI-46.
-	var itemID interface{}
+	var itemID any
 	switch params.EntityType {
 	case "avatar",
 		"workspace_avatar", "workspace_background",

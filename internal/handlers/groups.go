@@ -138,7 +138,7 @@ func (h *GroupHandler) Create(w http.ResponseWriter, r *http.Request) {
 	auditUser := utils.GetCurrentUser(r)
 	if auditUser != nil {
 		groupID := int(id)
-		h.auditor.LogWithDetails(r, auditUser, logger.ActionGroupCreate, logger.ResourceGroup, &groupID, req.Name, map[string]interface{}{
+		h.auditor.LogWithDetails(r, auditUser, logger.ActionGroupCreate, logger.ResourceGroup, &groupID, req.Name, map[string]any{
 			"description": req.Description,
 		})
 	}
@@ -209,23 +209,23 @@ func (h *GroupHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// Log audit event with change tracking
 	auditUser := utils.GetCurrentUser(r)
 	if auditUser != nil {
-		details := make(map[string]interface{})
+		details := make(map[string]any)
 
 		// Track what changed
 		if oldGroup.Name != req.Name {
-			details["name_changed"] = map[string]interface{}{
+			details["name_changed"] = map[string]any{
 				"old": oldGroup.Name,
 				"new": req.Name,
 			}
 		}
 		if oldGroup.Description != req.Description {
-			details["description_changed"] = map[string]interface{}{
+			details["description_changed"] = map[string]any{
 				"old": oldGroup.Description,
 				"new": req.Description,
 			}
 		}
 		if oldGroup.IsActive != req.IsActive {
-			details["is_active_changed"] = map[string]interface{}{
+			details["is_active_changed"] = map[string]any{
 				"old": oldGroup.IsActive,
 				"new": req.IsActive,
 			}
@@ -279,7 +279,7 @@ func (h *GroupHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Log audit event
-	h.auditor.LogWithDetails(r, auditUser, logger.ActionGroupDelete, logger.ResourceGroup, &id, snap.Name, map[string]interface{}{
+	h.auditor.LogWithDetails(r, auditUser, logger.ActionGroupDelete, logger.ResourceGroup, &id, snap.Name, map[string]any{
 		"description": snap.Description,
 		"is_active":   snap.IsActive,
 	})
@@ -402,13 +402,13 @@ func (h *GroupHandler) AddMembers(w http.ResponseWriter, r *http.Request) {
 	// Log audit event
 	auditUser := utils.GetCurrentUser(r)
 	if auditUser != nil && len(addedMembers) > 0 {
-		h.auditor.LogWithDetails(r, auditUser, logger.ActionGroupAddMember, logger.ResourceGroup, &groupID, groupName, map[string]interface{}{
+		h.auditor.LogWithDetails(r, auditUser, logger.ActionGroupAddMember, logger.ResourceGroup, &groupID, groupName, map[string]any{
 			"members_added": addedUsernames,
 			"count":         len(addedMembers),
 		})
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"message":       "Members added successfully",
 		"added_members": addedMembers,
 		"members_added": len(addedMembers),
@@ -457,13 +457,13 @@ func (h *GroupHandler) RemoveMembers(w http.ResponseWriter, r *http.Request) {
 	// Log audit event
 	auditUser := utils.GetCurrentUser(r)
 	if auditUser != nil && removedCount > 0 {
-		h.auditor.LogWithDetails(r, auditUser, logger.ActionGroupRemoveMember, logger.ResourceGroup, &groupID, groupName, map[string]interface{}{
+		h.auditor.LogWithDetails(r, auditUser, logger.ActionGroupRemoveMember, logger.ResourceGroup, &groupID, groupName, map[string]any{
 			"members_removed": removedUsernames,
 			"count":           removedCount,
 		})
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"message":         "Members removed successfully",
 		"members_removed": removedCount,
 	})

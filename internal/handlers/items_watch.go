@@ -76,7 +76,7 @@ func (h *ItemHandler) AddWatch(w http.ResponseWriter, r *http.Request) {
 		_ = h.activityTracker.InvalidateUserCache(user.ID)
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"success":  true,
 		"watching": true,
 		"message":  "Successfully added watch to item",
@@ -100,7 +100,7 @@ func (h *ItemHandler) RemoveWatch(w http.ResponseWriter, r *http.Request) {
 		_ = h.activityTracker.InvalidateUserCache(user.ID)
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"success":  true,
 		"watching": false,
 		"message":  "Successfully removed watch from item",
@@ -122,7 +122,7 @@ func (h *ItemHandler) GetWatchStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"watching": isWatching,
 		"item_id":  itemID,
 	})

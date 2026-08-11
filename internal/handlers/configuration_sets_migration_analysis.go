@@ -607,7 +607,7 @@ func (h *ConfigurationSetHandler) analyzeCustomFieldMigration(workspaceID, sourc
 	cfvJSONs, err := repository.NewItemRepository(h.db).ListNonEmptyCustomFieldJSONForWorkspace(workspaceID)
 	if err == nil {
 		for _, cfvJSON := range cfvJSONs {
-			var cfv map[string]interface{}
+			var cfv map[string]any
 			if json.Unmarshal([]byte(cfvJSON), &cfv) == nil {
 				for key := range cfv {
 					if fieldID, err := strconv.Atoi(key); err == nil {

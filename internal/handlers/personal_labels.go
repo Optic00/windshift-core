@@ -52,7 +52,7 @@ func (h *PersonalLabelHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 		SELECT id, name, color, user_id, created_at, updated_at
 		FROM personal_labels
 		WHERE `
-	var args []interface{}
+	var args []any
 
 	switch userIDParam {
 	case "":
@@ -129,7 +129,7 @@ func (h *PersonalLabelHandler) validatePersonalLabel(w http.ResponseWriter, r *h
 	var existingCount int
 	if label.UserID != nil {
 		query := "SELECT COUNT(*) FROM personal_labels WHERE name = ? AND user_id = ?"
-		args := []interface{}{label.Name, *label.UserID}
+		args := []any{label.Name, *label.UserID}
 		if excludeID > 0 {
 			query += " AND id != ?"
 			args = append(args, excludeID)
@@ -140,7 +140,7 @@ func (h *PersonalLabelHandler) validatePersonalLabel(w http.ResponseWriter, r *h
 		}
 	} else {
 		query := "SELECT COUNT(*) FROM personal_labels WHERE name = ? AND user_id IS NULL"
-		args := []interface{}{label.Name}
+		args := []any{label.Name}
 		if excludeID > 0 {
 			query += " AND id != ?"
 			args = append(args, excludeID)
@@ -609,7 +609,7 @@ func LoadPersonalLabelsForItemsContext(ctx context.Context, db database.Database
 		return nil
 	}
 
-	itemIDs := make([]interface{}, 0, len(items)+1)
+	itemIDs := make([]any, 0, len(items)+1)
 	placeholders := make([]string, 0, len(items))
 	for _, item := range items {
 		itemIDs = append(itemIDs, item.ID)

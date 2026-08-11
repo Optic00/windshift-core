@@ -46,7 +46,7 @@ func (r *ApprovalSetRepository) FindAll(ctx context.Context, workflowID *int) ([
 		SELECT a.id, a.name, a.description, a.workflow_id, a.created_at, a.updated_at, w.name AS workflow_name
 		FROM approval_sets a
 		JOIN workflows w ON a.workflow_id = w.id`
-	var args []interface{}
+	var args []any
 	if workflowID != nil {
 		query += " WHERE a.workflow_id = ?"
 		args = append(args, *workflowID)
@@ -143,7 +143,7 @@ func (r *ApprovalSetRepository) FindGatedStatusesForSets(ctx context.Context, se
 		return out, nil
 	}
 	placeholders := make([]string, len(setIDs))
-	args := make([]interface{}, len(setIDs))
+	args := make([]any, len(setIDs))
 	for i, id := range setIDs {
 		placeholders[i] = "?"
 		args[i] = id
@@ -624,7 +624,7 @@ func scanApprovalSetRows(rows *sql.Rows) ([]models.ApprovalSet, error) {
 // approvalStepScanner is satisfied by both *sql.Row and *sql.Rows so the
 // shared scanner can populate an ApprovalStep from either source.
 type approvalStepScanner interface {
-	Scan(dest ...interface{}) error
+	Scan(dest ...any) error
 }
 
 func scanApprovalStepCols(sc approvalStepScanner) (*models.ApprovalStep, error) {
@@ -664,7 +664,7 @@ func scanApprovalStepRow(row *sql.Row) (*models.ApprovalStep, error) {
 
 // nullStringIfEmpty returns nil for empty strings so the column scans/inserts
 // as SQL NULL rather than the empty string.
-func nullStringIfEmpty(s string) interface{} {
+func nullStringIfEmpty(s string) any {
 	if s == "" {
 		return nil
 	}

@@ -310,22 +310,22 @@ type TimeProjectCategory struct {
 
 // TimeProject represents a time tracking project
 type TimeProject struct {
-	ID            int                    `json:"id"`
-	CustomerID    *int                   `json:"customer_id,omitempty"` // Now optional
-	CategoryID    *int                   `json:"category_id,omitempty"` // Link to project category
-	Name          string                 `json:"name"`
-	Description   string                 `json:"description"`
-	Status        string                 `json:"status"` // Active, On Hold, Completed, Archived
-	Color         string                 `json:"color,omitempty"`
-	HourlyRate    float64                `json:"hourly_rate"`
-	Settings      map[string]interface{} `json:"settings,omitempty"` // Flexible JSON attributes (e.g., max_hours)
-	CreatedAt     time.Time              `json:"created_at"`
-	UpdatedAt     time.Time              `json:"updated_at"`
-	CustomerName  string                 `json:"customer_name,omitempty"`
-	CategoryName  string                 `json:"category_name,omitempty"`
-	CategoryColor string                 `json:"category_color,omitempty"`
-	TotalHours    *float64               `json:"total_hours,omitempty"` // Computed from worklogs
-	IsManager     bool                   `json:"is_manager,omitempty"`  // Whether current user is a manager of this project
+	ID            int            `json:"id"`
+	CustomerID    *int           `json:"customer_id,omitempty"` // Now optional
+	CategoryID    *int           `json:"category_id,omitempty"` // Link to project category
+	Name          string         `json:"name"`
+	Description   string         `json:"description"`
+	Status        string         `json:"status"` // Active, On Hold, Completed, Archived
+	Color         string         `json:"color,omitempty"`
+	HourlyRate    float64        `json:"hourly_rate"`
+	Settings      map[string]any `json:"settings,omitempty"` // Flexible JSON attributes (e.g., max_hours)
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
+	CustomerName  string         `json:"customer_name,omitempty"`
+	CategoryName  string         `json:"category_name,omitempty"`
+	CategoryColor string         `json:"category_color,omitempty"`
+	TotalHours    *float64       `json:"total_hours,omitempty"` // Computed from worklogs
+	IsManager     bool           `json:"is_manager,omitempty"`  // Whether current user is a manager of this project
 }
 
 // Worklog represents a time tracking entry
@@ -891,12 +891,12 @@ type ActionExecutionLog struct {
 
 // ActionEvent represents an event that can trigger actions
 type ActionEvent struct {
-	EventType   ActionTriggerType      `json:"event_type"`
-	WorkspaceID int                    `json:"workspace_id"`
-	ItemID      int                    `json:"item_id"`
-	ActorUserID int                    `json:"actor_user_id"`
-	OldValues   map[string]interface{} `json:"old_values,omitempty"` // Previous field values
-	NewValues   map[string]interface{} `json:"new_values,omitempty"` // New field values
+	EventType   ActionTriggerType `json:"event_type"`
+	WorkspaceID int               `json:"workspace_id"`
+	ItemID      int               `json:"item_id"`
+	ActorUserID int               `json:"actor_user_id"`
+	OldValues   map[string]any    `json:"old_values,omitempty"` // Previous field values
+	NewValues   map[string]any    `json:"new_values,omitempty"` // New field values
 	// Cascade control fields for loop prevention
 	TriggeredByAction bool   `json:"triggered_by_action,omitempty"` // True if this event was emitted by an action
 	ExecutionChainID  string `json:"execution_chain_id,omitempty"`  // UUID to look up cached chain state for cycle detection
@@ -915,9 +915,9 @@ type ExecutionContext struct {
 	// (comments authored, item history entries, etc.). It equals the action's
 	// ActorUserID override when set, otherwise the triggering user from the
 	// event. All node executors MUST use this instead of Event.ActorUserID.
-	EffectiveActorID int                    `json:"effective_actor_id"`
-	Variables        map[string]interface{} `json:"variables,omitempty"` // Dynamic variables during execution
-	StepResults      []StepResult           `json:"step_results,omitempty"`
+	EffectiveActorID int            `json:"effective_actor_id"`
+	Variables        map[string]any `json:"variables,omitempty"` // Dynamic variables during execution
+	StepResults      []StepResult   `json:"step_results,omitempty"`
 	// ChainID is set when this action is part of a cascade chain (for emitting chained events)
 	ChainID string `json:"-"` // Not serialized - internal use only
 	// TotalSteps counts every node execution within this action invocation,
@@ -929,13 +929,13 @@ type ExecutionContext struct {
 
 // StepResult holds the result of executing a single node
 type StepResult struct {
-	NodeID       int                    `json:"node_id"`
-	NodeType     ActionNodeType         `json:"node_type"`
-	Status       ActionExecutionStatus  `json:"status"`
-	StartedAt    time.Time              `json:"started_at"`
-	CompletedAt  *time.Time             `json:"completed_at,omitempty"`
-	ErrorMessage string                 `json:"error_message,omitempty"`
-	Output       map[string]interface{} `json:"output,omitempty"`
+	NodeID       int                   `json:"node_id"`
+	NodeType     ActionNodeType        `json:"node_type"`
+	Status       ActionExecutionStatus `json:"status"`
+	StartedAt    time.Time             `json:"started_at"`
+	CompletedAt  *time.Time            `json:"completed_at,omitempty"`
+	ErrorMessage string                `json:"error_message,omitempty"`
+	Output       map[string]any        `json:"output,omitempty"`
 	// Iterations is populated when the node is an iterator (related_items).
 	// Each entry holds the per-item subgraph step results so the trace can
 	// show which downstream nodes ran for which item.

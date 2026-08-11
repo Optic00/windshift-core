@@ -220,11 +220,11 @@ type WebhookRegistration struct {
 
 // WebhookPayload represents a parsed webhook payload
 type WebhookPayload struct {
-	EventType  string                 `json:"event_type"`
-	Action     string                 `json:"action,omitempty"`
-	Repository Repository             `json:"repository"`
-	Sender     User                   `json:"sender"`
-	Raw        map[string]interface{} `json:"raw,omitempty"`
+	EventType  string         `json:"event_type"`
+	Action     string         `json:"action,omitempty"`
+	Repository Repository     `json:"repository"`
+	Sender     User           `json:"sender"`
+	Raw        map[string]any `json:"raw,omitempty"`
 	// Specific payloads
 	PullRequest *PullRequest `json:"pull_request,omitempty"`
 	Commit      *Commit      `json:"commit,omitempty"`

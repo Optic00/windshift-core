@@ -30,19 +30,19 @@ func (h *AuditLogHandler) SetAgentTranscriptRepositories(conversations *reposito
 
 // AuditLogEntry represents a single audit log entry in API responses.
 type AuditLogEntry struct {
-	ID           int                    `json:"id"`
-	Timestamp    time.Time              `json:"timestamp"`
-	UserID       *int                   `json:"user_id"`
-	Username     string                 `json:"username"`
-	IPAddress    string                 `json:"ip_address,omitempty"`
-	UserAgent    string                 `json:"user_agent,omitempty"`
-	ActionType   string                 `json:"action_type"`
-	ResourceType string                 `json:"resource_type"`
-	ResourceID   *int                   `json:"resource_id,omitempty"`
-	ResourceName string                 `json:"resource_name,omitempty"`
-	Details      map[string]interface{} `json:"details,omitempty"`
-	Success      bool                   `json:"success"`
-	ErrorMessage string                 `json:"error_message,omitempty"`
+	ID           int            `json:"id"`
+	Timestamp    time.Time      `json:"timestamp"`
+	UserID       *int           `json:"user_id"`
+	Username     string         `json:"username"`
+	IPAddress    string         `json:"ip_address,omitempty"`
+	UserAgent    string         `json:"user_agent,omitempty"`
+	ActionType   string         `json:"action_type"`
+	ResourceType string         `json:"resource_type"`
+	ResourceID   *int           `json:"resource_id,omitempty"`
+	ResourceName string         `json:"resource_name,omitempty"`
+	Details      map[string]any `json:"details,omitempty"`
+	Success      bool           `json:"success"`
+	ErrorMessage string         `json:"error_message,omitempty"`
 }
 
 // AuditLogResponse is the paginated response for audit log queries.
@@ -308,7 +308,7 @@ func (h *AuditLogHandler) GetAgentTranscript(w http.ResponseWriter, r *http.Requ
 	respondJSONOK(w, agentTranscriptResponse{AuditID: auditID, Session: session, Messages: messages})
 }
 
-func auditDetailInt(details map[string]interface{}, key string) int {
+func auditDetailInt(details map[string]any, key string) int {
 	switch value := details[key].(type) {
 	case float64:
 		return int(value)

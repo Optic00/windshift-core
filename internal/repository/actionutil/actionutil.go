@@ -42,7 +42,7 @@ type FlowEdge struct {
 // Querier is the common subset of database.Database and database.Tx needed
 // for read-only helpers.
 type Querier interface {
-	Query(query string, args ...interface{}) (*sql.Rows, error)
+	Query(query string, args ...any) (*sql.Rows, error)
 }
 
 // HydrateNodesAndEdges fetches both nodes and edges for a given action ID using
@@ -136,7 +136,7 @@ func ScanEdges(q Querier, query string, actionID int) ([]FlowEdge, error) {
 func UpdateActionGraph(
 	db database.Database,
 	updateSQL string,
-	updateArgs []interface{},
+	updateArgs []any,
 	actionID int,
 	nodes []FlowNode,
 	edges []FlowEdge,

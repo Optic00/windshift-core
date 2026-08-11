@@ -146,7 +146,7 @@ func (h *WorkspaceRoleHandler) AssignRoleToUser(w http.ResponseWriter, r *http.R
 		workspaceName := h.repo.WorkspaceName(req.WorkspaceID)
 
 		h.auditor.LogWithDetails(r, currentUser, logger.ActionRoleAssign, logger.ResourceRole, &req.RoleID, roleName,
-			map[string]interface{}{
+			map[string]any{
 				"target_user_id":  req.UserID,
 				"target_username": targetUsername,
 				"role_id":         req.RoleID,
@@ -213,7 +213,7 @@ func (h *WorkspaceRoleHandler) RevokeRoleFromUser(w http.ResponseWriter, r *http
 		workspaceName := h.repo.WorkspaceName(workspaceID)
 
 		h.auditor.LogWithDetails(r, currentUser, logger.ActionRoleRevoke, logger.ResourceRole, &roleID, roleName,
-			map[string]interface{}{
+			map[string]any{
 				"target_user_id":  userID,
 				"target_username": targetUsername,
 				"role_id":         roleID,
@@ -398,7 +398,7 @@ func (h *WorkspaceRoleHandler) AssignRoleToGroup(w http.ResponseWriter, r *http.
 		workspaceName := h.repo.WorkspaceName(req.WorkspaceID)
 
 		h.auditor.LogWithDetails(r, currentUser, logger.ActionRoleAssign, logger.ResourceRole, &req.RoleID, roleName,
-			map[string]interface{}{
+			map[string]any{
 				"target_group_id":   req.GroupID,
 				"target_group_name": groupName,
 				"role_id":           req.RoleID,
@@ -462,7 +462,7 @@ func (h *WorkspaceRoleHandler) RevokeRoleFromGroup(w http.ResponseWriter, r *htt
 		workspaceName := h.repo.WorkspaceName(workspaceID)
 
 		h.auditor.LogWithDetails(r, currentUser, logger.ActionRoleRevoke, logger.ResourceRole, &roleID, roleName,
-			map[string]interface{}{
+			map[string]any{
 				"target_group_id":   groupID,
 				"target_group_name": groupName,
 				"role_id":           roleID,

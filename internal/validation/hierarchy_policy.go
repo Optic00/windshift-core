@@ -12,7 +12,7 @@ import (
 // database.Tx. Placement checks that accompany a write should receive the
 // transaction so validation and mutation observe the same hierarchy state.
 type HierarchyQueryer interface {
-	QueryRow(query string, args ...interface{}) *sql.Row
+	QueryRow(query string, args ...any) *sql.Row
 }
 
 type hierarchyTypeDetails struct {

@@ -490,7 +490,7 @@ func resolveLookup(maps *repository.NameMaps, field, raw string) string {
 }
 
 func (bs *BriefingScheduler) storeBriefing(userID int, date, content string, durationMs int64, errMsg string) {
-	var errVal interface{}
+	var errVal any
 	if errMsg != "" {
 		errVal = errMsg
 	}

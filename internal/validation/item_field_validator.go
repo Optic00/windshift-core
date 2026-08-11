@@ -135,7 +135,7 @@ func (e *ValidationError) Error() string {
 // maps), or a time.Time (the REST v1 handlers decode typed DTOs). Any other
 // type is a validation error — a recognized key must never be silently
 // dropped.
-func applyDateField(updateData map[string]interface{}, field string, dst **time.Time) error {
+func applyDateField(updateData map[string]any, field string, dst **time.Time) error {
 	value, ok := updateData[field]
 	if !ok {
 		return nil
@@ -162,7 +162,7 @@ func applyDateField(updateData map[string]interface{}, field string, dst **time.
 // Returns a list of validation errors if any occur
 func (v *ItemFieldValidator) ValidateAndApplyUpdates(
 	item *models.Item,
-	updateData map[string]interface{},
+	updateData map[string]any,
 	userID int, // for permission checks on personal tasks
 ) error {
 	// Title validation and sanitization
@@ -211,7 +211,7 @@ func (v *ItemFieldValidator) ValidateAndApplyUpdates(
 	}
 
 	// Milestone IDs validation (multi-milestone). Accepts []int / []float64 /
-	// []interface{}. nil/missing = no change. Empty slice = clear all. Each
+	// []any. nil/missing = no change. Empty slice = clear all. Each
 	// referenced milestone must exist.
 	if msVal, ok := updateData["milestone_ids"]; ok {
 		ids, err := coerceIntSlice(msVal)
@@ -488,7 +488,7 @@ func (v *ItemFieldValidator) ValidateAndApplyUpdates(
 	// Custom field values validation
 	if customFields, ok := updateData["custom_field_values"]; ok {
 		if customFields != nil {
-			cfv, ok := customFields.(map[string]interface{})
+			cfv, ok := customFields.(map[string]any)
 			if !ok {
 				return &ValidationError{Field: "custom_field_values", Message: "must be a JSON object"}
 			}
@@ -500,7 +500,7 @@ func (v *ItemFieldValidator) ValidateAndApplyUpdates(
 			}
 			item.CustomFieldValues = cfv
 		} else {
-			item.CustomFieldValues = make(map[string]interface{})
+			item.CustomFieldValues = make(map[string]any)
 		}
 	}
 
@@ -510,7 +510,7 @@ func (v *ItemFieldValidator) ValidateAndApplyUpdates(
 // ValidateNullableIDField validates a nullable foreign key field
 // This eliminates the repetitive pattern used for status_id, priority_id, milestone_id, etc.
 func (v *ItemFieldValidator) ValidateNullableIDField(
-	updateData map[string]interface{},
+	updateData map[string]any,
 	fieldName string,
 	destination **int,
 	tableName string,
@@ -540,7 +540,7 @@ func (v *ItemFieldValidator) ValidateNullableIDField(
 
 // ValidateNullableUserID validates a user ID field (assignee_id, creator_id, etc.)
 func (v *ItemFieldValidator) ValidateNullableUserID(
-	updateData map[string]interface{},
+	updateData map[string]any,
 	fieldName string,
 	destination **int,
 	entityName string,
@@ -571,7 +571,7 @@ func (v *ItemFieldValidator) ValidateNullableUserID(
 // update field uses identical number handling. The caller wraps failures in
 // a field-specific ValidationError, so the underlying message is diagnostic
 // only.
-func coerceIntSlice(v interface{}) ([]int, error) {
+func coerceIntSlice(v any) ([]int, error) {
 	ids, ok := utils.CoerceIntSlice(v)
 	if !ok {
 		return nil, fmt.Errorf("unexpected value %T", v)
@@ -661,7 +661,7 @@ func (v *ItemFieldValidator) ValidateIsTask(workspaceID int, isTask bool) error 
 }
 
 // ConvertCustomFieldValuesToJSON converts custom field values map to JSON for database storage
-func ConvertCustomFieldValuesToJSON(customFieldValues map[string]interface{}) (sql.NullString, error) {
+func ConvertCustomFieldValuesToJSON(customFieldValues map[string]any) (sql.NullString, error) {
 	if len(customFieldValues) == 0 {
 		return sql.NullString{Valid: false}, nil
 	}

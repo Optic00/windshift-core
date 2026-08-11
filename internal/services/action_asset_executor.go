@@ -84,7 +84,7 @@ func (e *CreateAssetNodeExecutor) Execute(node *models.ActionNode, ctx *models.E
 		return fmt.Errorf("create asset through mutation service: %w", err)
 	}
 
-	stepResult.Output = map[string]interface{}{
+	stepResult.Output = map[string]any{
 		"asset_id":      created.ID,
 		"title":         created.Title,
 		"description":   created.Description,
@@ -129,7 +129,7 @@ func (e *UpdateAssetNodeExecutor) Execute(node *models.ActionNode, ctx *models.E
 		return fmt.Errorf("failed to parse update_asset config: %w", err)
 	}
 	if len(config.FieldMappings) == 0 {
-		stepResult.Output = map[string]interface{}{"skipped": true, "reason": "no field mappings configured"}
+		stepResult.Output = map[string]any{"skipped": true, "reason": "no field mappings configured"}
 		return nil
 	}
 
@@ -144,7 +144,7 @@ func (e *UpdateAssetNodeExecutor) Execute(node *models.ActionNode, ctx *models.E
 		if itemFields[config.SourceFieldID] == nil {
 			reason = "no asset linked in source field"
 		}
-		stepResult.Output = map[string]interface{}{"skipped": true, "reason": reason}
+		stepResult.Output = map[string]any{"skipped": true, "reason": reason}
 		return nil
 	}
 
@@ -165,13 +165,13 @@ func (e *UpdateAssetNodeExecutor) Execute(node *models.ActionNode, ctx *models.E
 		return err
 	}
 
-	assetFields := make(map[string]interface{}, len(asset.CustomFieldValues)+len(config.FieldMappings))
+	assetFields := make(map[string]any, len(asset.CustomFieldValues)+len(config.FieldMappings))
 	for key, value := range asset.CustomFieldValues {
 		assetFields[key] = value
 	}
-	oldValues := make(map[string]interface{}, len(config.FieldMappings))
-	newValues := make(map[string]interface{}, len(config.FieldMappings))
-	e.support.mapFields(config.FieldMappings, ctx, itemFields, func(target string, value interface{}) {
+	oldValues := make(map[string]any, len(config.FieldMappings))
+	newValues := make(map[string]any, len(config.FieldMappings))
+	e.support.mapFields(config.FieldMappings, ctx, itemFields, func(target string, value any) {
 		oldValues[target] = assetFields[target]
 		assetFields[target] = value
 		newValues[target] = value
@@ -190,7 +190,7 @@ func (e *UpdateAssetNodeExecutor) Execute(node *models.ActionNode, ctx *models.E
 		newValues[key] = updated.CustomFieldValues[key]
 	}
 
-	stepResult.Output = map[string]interface{}{
+	stepResult.Output = map[string]any{
 		"asset_id":      assetID,
 		"old_values":    oldValues,
 		"new_values":    newValues,
@@ -235,19 +235,19 @@ func (s *actionAssetNodeSupport) authorize(actorUserID, setID int, permissionKey
 	return nil
 }
 
-func (s *actionAssetNodeSupport) itemCustomFields(itemID int, allowMissing, allowMalformed bool) (map[string]interface{}, error) {
+func (s *actionAssetNodeSupport) itemCustomFields(itemID int, allowMissing, allowMalformed bool) (map[string]any, error) {
 	raw, err := s.items.GetCustomFieldValuesRaw(itemID)
 	if err != nil {
 		if allowMissing && errors.Is(err, repository.ErrNotFound) {
-			return map[string]interface{}{}, nil
+			return map[string]any{}, nil
 		}
 		return nil, fmt.Errorf("failed to get item custom_field_values: %w", err)
 	}
-	values := map[string]interface{}{}
+	values := map[string]any{}
 	if raw.Valid && raw.String != "" {
 		if err := json.Unmarshal([]byte(raw.String), &values); err != nil {
 			if allowMalformed {
-				return map[string]interface{}{}, nil
+				return map[string]any{}, nil
 			}
 			return nil, fmt.Errorf("failed to parse item custom_field_values: %w", err)
 		}
@@ -255,10 +255,10 @@ func (s *actionAssetNodeSupport) itemCustomFields(itemID int, allowMissing, allo
 	return values, nil
 }
 
-func (s *actionAssetNodeSupport) mapFields(mappings []models.AssetFieldMapping, ctx *models.ExecutionContext, itemFields map[string]interface{}, apply func(string, interface{})) map[string]interface{} {
-	values := make(map[string]interface{}, len(mappings))
+func (s *actionAssetNodeSupport) mapFields(mappings []models.AssetFieldMapping, ctx *models.ExecutionContext, itemFields map[string]any, apply func(string, any)) map[string]any {
+	values := make(map[string]any, len(mappings))
 	for _, mapping := range mappings {
-		var value interface{}
+		var value any
 		switch mapping.SourceType {
 		case "item_field":
 			value = currentItemFieldValue(s.items, ctx, mapping.SourceValue)
@@ -278,13 +278,13 @@ func (s *actionAssetNodeSupport) mapFields(mappings []models.AssetFieldMapping, 
 	return values
 }
 
-func actionAssetReferenceID(value interface{}) int {
+func actionAssetReferenceID(value any) int {
 	switch v := value.(type) {
 	case float64:
 		return int(v)
 	case int:
 		return v
-	case map[string]interface{}:
+	case map[string]any:
 		return actionAssetReferenceID(v["id"])
 	default:
 		return 0

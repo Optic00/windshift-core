@@ -387,6 +387,6 @@ type NodeExecutionRequest struct {
 
 // NodeExecutionResponse is returned by the main server after executing a node.
 type NodeExecutionResponse struct {
-	Output map[string]interface{} `json:"output,omitempty"`
-	Error  string                 `json:"error,omitempty"`
+	Output map[string]any `json:"output,omitempty"`
+	Error  string         `json:"error,omitempty"`
 }

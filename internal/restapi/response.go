@@ -6,7 +6,7 @@ import (
 )
 
 // RespondJSON writes a JSON response with the given status code
-func RespondJSON(w http.ResponseWriter, statusCode int, data interface{}) {
+func RespondJSON(w http.ResponseWriter, statusCode int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	if data != nil {
@@ -15,12 +15,12 @@ func RespondJSON(w http.ResponseWriter, statusCode int, data interface{}) {
 }
 
 // RespondOK writes a 200 OK JSON response
-func RespondOK(w http.ResponseWriter, data interface{}) {
+func RespondOK(w http.ResponseWriter, data any) {
 	RespondJSON(w, http.StatusOK, data)
 }
 
 // RespondCreated writes a 201 Created JSON response
-func RespondCreated(w http.ResponseWriter, data interface{}) {
+func RespondCreated(w http.ResponseWriter, data any) {
 	RespondJSON(w, http.StatusCreated, data)
 }
 
@@ -30,6 +30,6 @@ func RespondNoContent(w http.ResponseWriter) {
 }
 
 // RespondPaginated writes a paginated JSON response
-func RespondPaginated(w http.ResponseWriter, data interface{}, pagination PaginationMeta) {
+func RespondPaginated(w http.ResponseWriter, data any, pagination PaginationMeta) {
 	RespondOK(w, NewPaginatedResponse(data, pagination))
 }

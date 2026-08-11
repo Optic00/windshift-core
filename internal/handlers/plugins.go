@@ -310,12 +310,12 @@ func (h *PluginHandler) TogglePlugin(w http.ResponseWriter, r *http.Request) {
 		if req.Enabled {
 			action = logger.ActionPluginEnable
 		}
-		h.auditor.LogWithDetails(r, currentUser, action, logger.ResourcePlugin, nil, pluginName, map[string]interface{}{
+		h.auditor.LogWithDetails(r, currentUser, action, logger.ResourcePlugin, nil, pluginName, map[string]any{
 			"enabled": req.Enabled,
 		})
 	}
 
-	respondJSONOK(w, map[string]interface{}{"status": "success", "enabled": req.Enabled})
+	respondJSONOK(w, map[string]any{"status": "success", "enabled": req.Enabled})
 }
 
 // DeletePlugin removes a plugin

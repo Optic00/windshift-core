@@ -116,7 +116,7 @@ func (h *ItemHandler) CompleteIteration(w http.ResponseWriter, r *http.Request) 
 
 	result.Items = h.emitBulkUpdateResults(user.ID, user.Username, result.Updates)
 	h.observeBulkOperation("iteration_completion", result.MovedCount, result.MovedCount, result.SQLStatements, len(result.Updates), time.Since(started), false)
-	logAuditWithDetails(h.db, r, user, logger.ActionIterationUpdate, logger.ResourceIteration, &iterationID, "", map[string]interface{}{
+	logAuditWithDetails(h.db, r, user, logger.ActionIterationUpdate, logger.ResourceIteration, &iterationID, "", map[string]any{
 		"operation":           "complete",
 		"moved_count":         result.MovedCount,
 		"target_iteration_id": result.TargetIterationID,

@@ -57,11 +57,11 @@ func (h *PageHandler) SetPageApplicationService(application *services.PageApplic
 // --- request payloads ---
 
 type pageCreateRequest struct {
-	Title    string                 `json:"title"`
-	Metadata map[string]interface{} `json:"metadata,omitempty"`
-	Content  string                 `json:"content"`
-	ParentID *int                   `json:"parent_id,omitempty"`
-	IsHome   bool                   `json:"is_home,omitempty"`
+	Title    string         `json:"title"`
+	Metadata map[string]any `json:"metadata,omitempty"`
+	Content  string         `json:"content"`
+	ParentID *int           `json:"parent_id,omitempty"`
+	IsHome   bool           `json:"is_home,omitempty"`
 }
 
 // pageUpdateRequest is a partial-update payload: only fields supplied get
@@ -70,10 +70,10 @@ type pageCreateRequest struct {
 // yet on v1; the cookie surface has it). Allowing it here would let an
 // editor flip the flag via a normal save.
 type pageUpdateRequest struct {
-	Title               *string                 `json:"title,omitempty"`
-	Metadata            *map[string]interface{} `json:"metadata,omitempty"`
-	Content             *string                 `json:"content,omitempty"`
-	ExpectedContentHash *string                 `json:"expected_content_hash,omitempty"`
+	Title               *string         `json:"title,omitempty"`
+	Metadata            *map[string]any `json:"metadata,omitempty"`
+	Content             *string         `json:"content,omitempty"`
+	ExpectedContentHash *string         `json:"expected_content_hash,omitempty"`
 }
 
 type pageMoveRequest struct {
@@ -93,7 +93,7 @@ type pageSetInheritanceRequest struct {
 	InheritPermissions bool `json:"inherit_permissions"`
 }
 
-func marshalPageMetadata(metadata map[string]interface{}) json.RawMessage {
+func marshalPageMetadata(metadata map[string]any) json.RawMessage {
 	if metadata == nil {
 		return nil
 	}

@@ -276,7 +276,7 @@ func (h *DiagramHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"success": true,
 		"message": fmt.Sprintf("Diagram %d deleted successfully", id),
 	})

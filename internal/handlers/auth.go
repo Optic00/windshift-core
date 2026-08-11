@@ -181,7 +181,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				_ = h.adminRateLimiter.RecordAttempt(r.Context(), user.ID, ipAddress)
-				_ = h.authPolicyHandler.LogAuditEvent(user.ID, "admin_fallback_used", ipAddress, r.UserAgent(), map[string]interface{}{
+				_ = h.authPolicyHandler.LogAuditEvent(user.ID, "admin_fallback_used", ipAddress, r.UserAgent(), map[string]any{
 					"policy": string(policy),
 				})
 			default:
@@ -213,14 +213,14 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				_ = h.adminRateLimiter.RecordAttempt(r.Context(), user.ID, ipAddress)
-				_ = h.authPolicyHandler.LogAuditEvent(user.ID, "admin_fallback_used", ipAddress, r.UserAgent(), map[string]interface{}{
+				_ = h.authPolicyHandler.LogAuditEvent(user.ID, "admin_fallback_used", ipAddress, r.UserAgent(), map[string]any{
 					"policy": string(policy),
 				})
 			case !hasPasskey:
 				// Password use is limited to a server-restricted enrollment
 				// session. Middleware denies every unrelated protected route.
 				enrollmentRequired = true
-				_ = h.authPolicyHandler.LogAuditEvent(user.ID, "enrollment_started", ipAddress, r.UserAgent(), map[string]interface{}{
+				_ = h.authPolicyHandler.LogAuditEvent(user.ID, "enrollment_started", ipAddress, r.UserAgent(), map[string]any{
 					"policy": string(policy),
 				})
 			case policy == AuthPolicyPasskeyOnly:
@@ -298,7 +298,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	token, err := h.sessionManager.GetSessionFromRequest(r)
 	if err != nil {
 		h.sessionManager.ClearSessionCookie(w, r)
-		respondJSONOK(w, map[string]interface{}{
+		respondJSONOK(w, map[string]any{
 			"success": true,
 			"message": "Logout successful",
 		})
@@ -317,7 +317,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		h.auditor.Log(r, &models.User{ID: session.UserID}, logger.ActionLogout, logger.ResourceUser, nil, "")
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"success": true,
 		"message": "Logout successful",
 	})
@@ -387,7 +387,7 @@ func (h *AuthHandler) RefreshSession(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"success": true,
 		"message": "Session refreshed",
 	})
@@ -408,7 +408,7 @@ func (h *AuthHandler) LogoutAll(w http.ResponseWriter, r *http.Request) {
 
 	h.sessionManager.ClearSessionCookie(w, r)
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"success": true,
 		"message": "All sessions logged out",
 	})
@@ -519,7 +519,7 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"success": true,
 		"message": "Password changed successfully",
 	})
@@ -547,7 +547,7 @@ func (h *AuthHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 			respondBadRequest(w, r, "Invalid verification link")
 		case services.ErrAlreadyVerified:
 			// Not an error - just let them know
-			respondJSONOK(w, map[string]interface{}{
+			respondJSONOK(w, map[string]any{
 				"success": true,
 				"message": "Email is already verified",
 			})
@@ -560,7 +560,7 @@ func (h *AuthHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 	}
 	h.sessionManager.InvalidateUserSessionValidation(user.ID)
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"success":  true,
 		"message":  "Email verified successfully",
 		"user_id":  user.ID,
@@ -586,7 +586,7 @@ func (h *AuthHandler) ResendVerification(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		switch err {
 		case services.ErrAlreadyVerified:
-			respondJSONOK(w, map[string]interface{}{
+			respondJSONOK(w, map[string]any{
 				"success": true,
 				"message": "Email is already verified",
 			})
@@ -596,7 +596,7 @@ func (h *AuthHandler) ResendVerification(w http.ResponseWriter, r *http.Request)
 			slog.Warn("resend verification for non-existent user",
 				slog.String("component", "auth"),
 				slog.Int("session_user_id", session.UserID))
-			respondJSONOK(w, map[string]interface{}{
+			respondJSONOK(w, map[string]any{
 				"success": true,
 				"message": "If your account exists, a verification email will be sent",
 			})
@@ -609,7 +609,7 @@ func (h *AuthHandler) ResendVerification(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"success": true,
 		"message": "Verification email sent",
 	})
@@ -626,7 +626,7 @@ func (h *AuthHandler) GetVerificationStatus(w http.ResponseWriter, r *http.Reque
 
 	if h.emailVerificationService == nil {
 		// If email verification service is not configured, assume verified
-		respondJSONOK(w, map[string]interface{}{
+		respondJSONOK(w, map[string]any{
 			"email_verified": true,
 			"configured":     false,
 		})
@@ -637,14 +637,14 @@ func (h *AuthHandler) GetVerificationStatus(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		slog.Error("failed to check verification status", slog.String("component", "auth"), slog.Any("error", err))
 		// Return verified=true on error for graceful degradation
-		respondJSONOK(w, map[string]interface{}{
+		respondJSONOK(w, map[string]any{
 			"email_verified": true,
 			"configured":     false,
 		})
 		return
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"email_verified": verified,
 		"configured":     true,
 	})

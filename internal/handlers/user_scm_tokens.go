@@ -67,7 +67,7 @@ func (h *UserSCMTokenHandler) GetConnectionStatus(w http.ResponseWriter, r *http
 			return
 		}
 
-		respondJSONOK(w, map[string]interface{}{
+		respondJSONOK(w, map[string]any{
 			"connected":     false,
 			"provider_id":   providerID,
 			"provider_name": provider.ProviderName,
@@ -82,7 +82,7 @@ func (h *UserSCMTokenHandler) GetConnectionStatus(w http.ResponseWriter, r *http
 		return
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"connected":  true,
 		"connection": conn,
 	})
@@ -120,7 +120,7 @@ func (h *UserSCMTokenHandler) DisconnectProvider(w http.ResponseWriter, r *http.
 		return
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"success": true,
 		"message": "SCM account disconnected",
 	})

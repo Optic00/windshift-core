@@ -26,7 +26,7 @@ var ErrRecipientIsAgent = errors.New("recipient is an agent or service user; ref
 // fake.
 type TransactionalEmailSender interface {
 	IsSMTPConfigured() bool
-	SendTransactional(toEmail, templateName string, data interface{}) error
+	SendTransactional(toEmail, templateName string, data any) error
 }
 
 // ThreadedEmailSender abstracts the SMTP sending capability for the threaded
@@ -38,5 +38,5 @@ type TransactionalEmailSender interface {
 type ThreadedEmailSender interface {
 	IsSMTPConfigured() bool
 	SendThreadedEmail(params smtp.ThreadedEmailParams) error
-	RenderEmail(templateName string, data interface{}) (subject, htmlBody, textBody string, err error)
+	RenderEmail(templateName string, data any) (subject, htmlBody, textBody string, err error)
 }

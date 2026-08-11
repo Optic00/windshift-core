@@ -51,7 +51,7 @@ type ApprovalSetValidationError struct{ Msg string }
 
 func (e *ApprovalSetValidationError) Error() string { return e.Msg }
 func (e *ApprovalSetValidationError) Unwrap() error { return ErrApprovalSetValidation }
-func newApprovalSetValidation(format string, args ...interface{}) error {
+func newApprovalSetValidation(format string, args ...any) error {
 	return &ApprovalSetValidationError{Msg: fmt.Sprintf(format, args...)}
 }
 

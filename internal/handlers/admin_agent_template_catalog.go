@@ -207,7 +207,7 @@ func (h *AdminAgentTemplateCatalogHandler) CreateTemplate(w http.ResponseWriter,
 		return
 	}
 	h.auditor.LogWithDetails(r, user, "agent_template_catalog.create", "agent_template_catalog", nil,
-		"template_key", map[string]interface{}{
+		"template_key", map[string]any{
 			"template_key": created.TemplateKey,
 			"enabled":      created.Enabled,
 		})
@@ -266,7 +266,7 @@ func (h *AdminAgentTemplateCatalogHandler) UpdateTemplate(w http.ResponseWriter,
 		return
 	}
 	h.auditor.LogWithDetails(r, user, "agent_template_catalog.update", "agent_template_catalog", nil,
-		"template_key", map[string]interface{}{
+		"template_key", map[string]any{
 			"id":      current.ID,
 			"enabled": current.Enabled,
 		})
@@ -295,7 +295,7 @@ func (h *AdminAgentTemplateCatalogHandler) DeleteTemplate(w http.ResponseWriter,
 		return
 	}
 	h.auditor.LogWithDetails(r, user, "agent_template_catalog.delete", "agent_template_catalog", nil,
-		"template_key", map[string]interface{}{
+		"template_key", map[string]any{
 			"id": id,
 		})
 	w.WriteHeader(http.StatusNoContent)

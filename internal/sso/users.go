@@ -96,7 +96,7 @@ func (s *UserStore) FindExternalAccount(providerID int, externalID string) (*Ext
 // standard order: id, email, username, first_name, last_name, is_active,
 // avatar_url, password_hash, requires_password_reset, timezone, language,
 // created_at, updated_at.
-func (s *UserStore) getUserByQuery(query string, arg interface{}) (*models.User, error) {
+func (s *UserStore) getUserByQuery(query string, arg any) (*models.User, error) {
 	var user models.User
 	var avatarURL, timezone, language sql.NullString
 

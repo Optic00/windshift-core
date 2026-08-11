@@ -188,7 +188,7 @@ func (s *NotificationSMTPSender) SetEncryption(enc Encryptor) {
 // `{{.Subject}}` (used by the shared shell's <title> tag), so each call site
 // only has to pass its native fields without remembering to mirror the
 // subject in the struct.
-func (s *NotificationSMTPSender) RenderEmail(templateName string, data interface{}) (subject, htmlBody, textBody string, err error) {
+func (s *NotificationSMTPSender) RenderEmail(templateName string, data any) (subject, htmlBody, textBody string, err error) {
 	subjectSrc, htmlSrc, textSrc := s.resolveTemplate(templateName)
 
 	subject, _, err = emailutil.RenderTemplates(subjectSrc, subjectSrc, data)
@@ -208,7 +208,7 @@ func (s *NotificationSMTPSender) RenderEmail(templateName string, data interface
 // SMTP to `toEmail`. Returns ErrSMTPNotConfigured if SMTP isn't set up. This
 // is the shared one-call surface used by the magic-link / verification /
 // invitation services so each one stays a thin URL-builder + caller.
-func (s *NotificationSMTPSender) SendTransactional(toEmail, templateName string, data interface{}) error {
+func (s *NotificationSMTPSender) SendTransactional(toEmail, templateName string, data any) error {
 	if !s.IsSMTPConfigured() {
 		return ErrSMTPNotConfigured
 	}
@@ -303,7 +303,7 @@ type notificationBatchEntry struct {
 	FormattedTime string
 }
 
-func buildNotificationBatchData(userName string, notifications []models.Notification) interface{} {
+func buildNotificationBatchData(userName string, notifications []models.Notification) any {
 	data := struct {
 		UserName          string
 		NotificationCount int

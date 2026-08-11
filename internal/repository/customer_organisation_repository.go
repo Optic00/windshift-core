@@ -192,7 +192,7 @@ func scanCustomerOrganisation(scanner interface {
 
 // encodeCustomFieldValues returns the JSON string form for SQL params, or
 // nil when the map is empty (column is nullable).
-func encodeCustomFieldValues(values map[string]interface{}) (any, error) {
+func encodeCustomFieldValues(values map[string]any) (any, error) {
 	if len(values) == 0 {
 		return nil, nil
 	}

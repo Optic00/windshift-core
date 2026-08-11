@@ -146,11 +146,11 @@ type ConfigSetTplTransitionCondition struct {
 //
 // Importer reverses these substitutions.
 type ConfigSetTplCondition struct {
-	Type         string                 `json:"type"`
-	Mode         string                 `json:"mode"`
-	ErrorMessage string                 `json:"error_message,omitempty"`
-	DisplayOrder int                    `json:"display_order,omitempty"`
-	Config       map[string]interface{} `json:"config"`
+	Type         string         `json:"type"`
+	Mode         string         `json:"mode"`
+	ErrorMessage string         `json:"error_message,omitempty"`
+	DisplayOrder int            `json:"display_order,omitempty"`
+	Config       map[string]any `json:"config"`
 }
 
 type ConfigSetTplApprovalSet struct {

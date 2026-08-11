@@ -50,24 +50,24 @@ func emailOAuthStateMatchesConfig(state, configJSON string) bool {
 
 // rowScanner abstracts sql.Row and sql.Rows for Scan.
 type rowScanner interface {
-	Scan(dest ...interface{}) error
+	Scan(dest ...any) error
 }
 
 // respondJSON sends a JSON response with the given status code
-func respondJSON(w http.ResponseWriter, statusCode int, data interface{}) {
+func respondJSON(w http.ResponseWriter, statusCode int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	_ = json.NewEncoder(w).Encode(data)
 }
 
 // respondJSONOK sends a JSON response with 200 OK
-func respondJSONOK(w http.ResponseWriter, data interface{}) {
+func respondJSONOK(w http.ResponseWriter, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(data)
 }
 
 // respondJSONCreated sends a JSON response with 201 Created
-func respondJSONCreated(w http.ResponseWriter, data interface{}) {
+func respondJSONCreated(w http.ResponseWriter, data any) {
 	respondJSON(w, http.StatusCreated, data)
 }
 
@@ -142,12 +142,12 @@ func requireWorkspaceIDParam(w http.ResponseWriter, r *http.Request, cache *Work
 // respondJSONWithWarnings sends a JSON response with warnings if any exist
 // If there are warnings, the response is wrapped in {"data": ..., "warnings": [...]}
 // If there are no warnings, the response is sent as-is for backward compatibility
-func respondJSONWithWarnings(w http.ResponseWriter, statusCode int, data interface{}, warnings []models.APIWarning) {
+func respondJSONWithWarnings(w http.ResponseWriter, statusCode int, data any, warnings []models.APIWarning) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 
 	if len(warnings) > 0 {
-		response := map[string]interface{}{
+		response := map[string]any{
 			"data":     data,
 			"warnings": warnings,
 		}
@@ -158,12 +158,12 @@ func respondJSONWithWarnings(w http.ResponseWriter, statusCode int, data interfa
 }
 
 // respondJSONOKWithWarnings sends 200 OK with optional warnings
-func respondJSONOKWithWarnings(w http.ResponseWriter, data interface{}, warnings []models.APIWarning) {
+func respondJSONOKWithWarnings(w http.ResponseWriter, data any, warnings []models.APIWarning) {
 	respondJSONWithWarnings(w, http.StatusOK, data, warnings)
 }
 
 // respondJSONCreatedWithWarnings sends 201 Created with optional warnings
-func respondJSONCreatedWithWarnings(w http.ResponseWriter, data interface{}, warnings []models.APIWarning) {
+func respondJSONCreatedWithWarnings(w http.ResponseWriter, data any, warnings []models.APIWarning) {
 	respondJSONWithWarnings(w, http.StatusCreated, data, warnings)
 }
 
@@ -183,7 +183,7 @@ func logAudit(db database.Database, r *http.Request, user *models.User, actionTy
 
 // logAuditWithDetails logs a successful resource action audit event with extra
 // structured details (serialized to JSON in the audit log row).
-func logAuditWithDetails(db database.Database, r *http.Request, user *models.User, actionType, resourceType string, resourceID *int, resourceName string, details map[string]interface{}) {
+func logAuditWithDetails(db database.Database, r *http.Request, user *models.User, actionType, resourceType string, resourceID *int, resourceName string, details map[string]any) {
 	_ = logger.LogAudit(db, logger.NewRequestAuditEvent(r, user, actionType, resourceType, resourceID, resourceName, details))
 }
 

@@ -921,8 +921,8 @@ func resolveItemTypeID(client *Client, input string, workspaceID *int) (int, err
 // (numeric input passes through; names resolve via the v1 custom-fields
 // read endpoint). Values pass through as strings — the server validates
 // them against the field type.
-func parseCustomFieldFlags(client *Client, pairs []string) (map[string]interface{}, error) {
-	fields := make(map[string]interface{}, len(pairs))
+func parseCustomFieldFlags(client *Client, pairs []string) (map[string]any, error) {
+	fields := make(map[string]any, len(pairs))
 	var defs []CustomField // lazily loaded, only when a non-numeric key shows up
 	for _, pair := range pairs {
 		key, value, found := strings.Cut(pair, "=")

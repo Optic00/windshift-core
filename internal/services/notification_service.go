@@ -32,16 +32,16 @@ type NotificationManager interface {
 
 // NotificationEvent represents an event that should trigger notifications
 type NotificationEvent struct {
-	EventType                     string                 // e.g., "item.created", "comment.added"
-	WorkspaceID                   int                    // Workspace where event occurred
-	ActorUserID                   int                    // User who triggered the event
-	ItemID                        int                    // Work item ID (for action URL)
-	AssigneeID                    *int                   // Current assignee (if applicable)
-	CreatorID                     *int                   // Item creator (if applicable)
-	Title                         string                 // Event title
-	TemplateData                  map[string]interface{} // Data for template substitution
-	ReferencedWorkspaceID         int                    // Optional secondary workspace whose content appears in TemplateData
-	ReferencedWorkspacePermission string                 // Permission required to receive secondary-entity data
+	EventType                     string         // e.g., "item.created", "comment.added"
+	WorkspaceID                   int            // Workspace where event occurred
+	ActorUserID                   int            // User who triggered the event
+	ItemID                        int            // Work item ID (for action URL)
+	AssigneeID                    *int           // Current assignee (if applicable)
+	CreatorID                     *int           // Item creator (if applicable)
+	Title                         string         // Event title
+	TemplateData                  map[string]any // Data for template substitution
+	ReferencedWorkspaceID         int            // Optional secondary workspace whose content appears in TemplateData
+	ReferencedWorkspacePermission string         // Permission required to receive secondary-entity data
 }
 
 // RuleCache stores cached notification rules for fast lookup

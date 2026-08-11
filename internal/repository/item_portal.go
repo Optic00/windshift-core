@@ -230,7 +230,7 @@ const portalRequestSelect = `
 `
 
 func scanPortalRequestRow(scanner interface {
-	Scan(dest ...interface{}) error
+	Scan(dest ...any) error
 }) (PortalRequestRow, error) {
 	var row PortalRequestRow
 	var channelID, requestTypeID, creatorID, creatorPortalCustomerID sql.NullInt64
@@ -404,7 +404,7 @@ type OrganisationTicket struct {
 // that org-level ACLs authorize reading every ticket in the org. When
 // workspaceIDs is non-nil but empty, no tickets match.
 func (r *ItemRepository) ListOrganisationTickets(orgID int, workspaceIDs []int) ([]OrganisationTicket, error) {
-	args := []interface{}{orgID}
+	args := []any{orgID}
 	workspaceClause := ""
 	if workspaceIDs != nil {
 		if len(workspaceIDs) == 0 {

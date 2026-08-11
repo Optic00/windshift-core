@@ -72,7 +72,7 @@ func (h *LogbookNodeExecutionHandler) HandleNodeExecution(w http.ResponseWriter,
 		slog.String("document_id", req.Event.DocumentID),
 	)
 
-	var output map[string]interface{}
+	var output map[string]any
 	var execErr error
 
 	switch models.LogbookActionNodeType(req.NodeType) {
@@ -104,7 +104,7 @@ func (h *LogbookNodeExecutionHandler) HandleNodeExecution(w http.ResponseWriter,
 	})
 }
 
-func (h *LogbookNodeExecutionHandler) executeCreateItem(nodeConfig string, event *models.LogbookActionEvent, req *models.NodeExecutionRequest) (map[string]interface{}, error) {
+func (h *LogbookNodeExecutionHandler) executeCreateItem(nodeConfig string, event *models.LogbookActionEvent, req *models.NodeExecutionRequest) (map[string]any, error) {
 	var config models.CreateItemNodeConfig
 	if err := json.Unmarshal([]byte(nodeConfig), &config); err != nil {
 		return nil, fmt.Errorf("failed to parse create_item config: %w", err)
@@ -170,14 +170,14 @@ func (h *LogbookNodeExecutionHandler) executeCreateItem(nodeConfig string, event
 		slog.Int("workspace_id", config.WorkspaceID),
 	)
 
-	return map[string]interface{}{
+	return map[string]any{
 		"item_id":      itemID,
 		"title":        title,
 		"workspace_id": config.WorkspaceID,
 	}, nil
 }
 
-func (h *LogbookNodeExecutionHandler) executeCreateAsset(nodeConfig string, event *models.LogbookActionEvent, req *models.NodeExecutionRequest) (map[string]interface{}, error) {
+func (h *LogbookNodeExecutionHandler) executeCreateAsset(nodeConfig string, event *models.LogbookActionEvent, req *models.NodeExecutionRequest) (map[string]any, error) {
 	var config models.CreateAssetNodeConfig
 	if err := json.Unmarshal([]byte(nodeConfig), &config); err != nil {
 		return nil, fmt.Errorf("failed to parse create_asset config: %w", err)
@@ -267,7 +267,7 @@ func (h *LogbookNodeExecutionHandler) executeCreateAsset(nodeConfig string, even
 		})
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"asset_id":     assetID,
 		"title":        title,
 		"asset_set_id": config.AssetSetID,

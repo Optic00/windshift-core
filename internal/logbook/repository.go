@@ -213,7 +213,7 @@ func (r *Repository) HasBucketPermission(userID int, groupIDs []int, bucketID, p
 	// Check group permission using provided group IDs
 	if len(groupIDs) > 0 {
 		groupPlaceholders, groupArgs := buildIntPlaceholders(groupIDs, 2)
-		args := make([]interface{}, 0, 2+len(groupArgs))
+		args := make([]any, 0, 2+len(groupArgs))
 		args = append(args, bucketID, permission)
 		args = append(args, groupArgs...)
 		query := fmt.Sprintf(`
@@ -249,7 +249,7 @@ func (r *Repository) GetAccessibleBucketIDs(userID int, groupIDs []int, permissi
 
 	// User + group query
 	groupPlaceholders, groupArgs := buildIntPlaceholders(groupIDs, 2)
-	args := make([]interface{}, 0, 2+len(groupArgs))
+	args := make([]any, 0, 2+len(groupArgs))
 	args = append(args, userID, permission)
 	args = append(args, groupArgs...)
 	query := fmt.Sprintf(`
@@ -871,10 +871,10 @@ func capIDs[T any](ids []T, label string) []T {
 }
 
 // buildStringPlaceholders creates PostgreSQL $N placeholders for string slices.
-func buildStringPlaceholders(ids []string) (placeholders string, args []interface{}) {
+func buildStringPlaceholders(ids []string) (placeholders string, args []any) {
 	ids = capIDs(ids, "string-ids")
 	ph := make([]string, len(ids))
-	args = make([]interface{}, len(ids))
+	args = make([]any, len(ids))
 	for i, id := range ids {
 		ph[i] = fmt.Sprintf("$%d", i+1)
 		args[i] = id
@@ -885,10 +885,10 @@ func buildStringPlaceholders(ids []string) (placeholders string, args []interfac
 
 // buildIntPlaceholders creates PostgreSQL $N placeholders for int slices,
 // starting at the given parameter offset (1-based).
-func buildIntPlaceholders(ids []int, offset int) (placeholders string, args []interface{}) {
+func buildIntPlaceholders(ids []int, offset int) (placeholders string, args []any) {
 	ids = capIDs(ids, "int-ids")
 	ph := make([]string, len(ids))
-	args = make([]interface{}, len(ids))
+	args = make([]any, len(ids))
 	for i, id := range ids {
 		ph[i] = fmt.Sprintf("$%d", offset+i+1)
 		args[i] = id

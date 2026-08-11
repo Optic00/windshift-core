@@ -108,8 +108,8 @@ func (h *TestSummaryHandler) GetReportsSummary(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	respondJSONOK(w, map[string]interface{}{
-		"overall": map[string]interface{}{
+	respondJSONOK(w, map[string]any{
+		"overall": map[string]any{
 			"total_runs":  stats.TotalRuns,
 			"total_tests": stats.TotalTests,
 			"passed":      stats.Passed,

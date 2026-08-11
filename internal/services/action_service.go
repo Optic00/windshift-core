@@ -664,7 +664,7 @@ func (as *ActionService) executeAction(action *models.Action, event *models.Acti
 		Action:           action,
 		Event:            event,
 		EffectiveActorID: effectiveActorID,
-		Variables:        make(map[string]interface{}),
+		Variables:        make(map[string]any),
 		StepResults:      []models.StepResult{},
 		ChainID:          chainID,
 	}
@@ -952,7 +952,7 @@ func currentActionWorkspaceID(ctx *models.ExecutionContext) int {
 	return 0
 }
 
-func (as *ActionService) updateItemFromAction(ctx *models.ExecutionContext, updateData map[string]interface{}) (*UpdateItemResult, error) {
+func (as *ActionService) updateItemFromAction(ctx *models.ExecutionContext, updateData map[string]any) (*UpdateItemResult, error) {
 	if as.itemUpdate == nil {
 		return nil, fmt.Errorf("item update application service not configured")
 	}
@@ -974,32 +974,32 @@ func (as *ActionService) updateItemFromAction(ctx *models.ExecutionContext, upda
 	)
 }
 
-func derefIntPtr(p *int) interface{} {
+func derefIntPtr(p *int) any {
 	if p == nil {
 		return nil
 	}
 	return *p
 }
 
-func derefFloatPtr(p *float64) interface{} {
+func derefFloatPtr(p *float64) any {
 	if p == nil {
 		return nil
 	}
 	return *p
 }
 
-func derefTimePtr(p *time.Time) interface{} {
+func derefTimePtr(p *time.Time) any {
 	if p == nil {
 		return nil
 	}
 	return *p
 }
 
-func (as *ActionService) currentItemFieldValue(ctx *models.ExecutionContext, fieldName string) interface{} {
+func (as *ActionService) currentItemFieldValue(ctx *models.ExecutionContext, fieldName string) any {
 	return currentItemFieldValue(as.itemRepo, ctx, fieldName)
 }
 
-func currentItemFieldValue(itemRepo *repository.ItemRepository, ctx *models.ExecutionContext, fieldName string) interface{} {
+func currentItemFieldValue(itemRepo *repository.ItemRepository, ctx *models.ExecutionContext, fieldName string) any {
 	if ctx == nil {
 		return nil
 	}
@@ -1112,7 +1112,7 @@ func (as *ActionService) executeSetFieldMilestones(ctx *models.ExecutionContext,
 		return fmt.Errorf("set_field milestones: %w", err)
 	}
 
-	result, err := as.updateItemFromAction(ctx, map[string]interface{}{"milestone_ids": ids})
+	result, err := as.updateItemFromAction(ctx, map[string]any{"milestone_ids": ids})
 	if err != nil {
 		return err
 	}
@@ -1130,7 +1130,7 @@ func (as *ActionService) executeSetFieldMilestones(ctx *models.ExecutionContext,
 		newValue = joinIntsCSV(ids)
 	}
 
-	stepResult.Output = map[string]interface{}{
+	stepResult.Output = map[string]any{
 		"field_name": "milestones",
 		"old_value":  oldValue,
 		"new_value":  newValue,
@@ -1145,7 +1145,7 @@ func parseActionMilestoneIDs(value string) ([]int, error) {
 		return []int{}, nil
 	}
 
-	var raw []interface{}
+	var raw []any
 	if err := json.Unmarshal([]byte(trimmed), &raw); err == nil {
 		ids := make([]int, 0, len(raw))
 		for _, v := range raw {
@@ -1191,7 +1191,7 @@ func (as *ActionService) executeSetFieldColumn(ctx *models.ExecutionContext, ste
 	}
 
 	// Get current field value for event emission (best effort).
-	var oldValue interface{}
+	var oldValue any
 	if val, err := as.itemRepo.GetAllowedColumnValue(itemID, fieldName); err == nil {
 		oldValue = val
 	} else {
@@ -1207,7 +1207,7 @@ func (as *ActionService) executeSetFieldColumn(ctx *models.ExecutionContext, ste
 	// edits. This restores type/FK checks, hierarchy-cycle protection,
 	// sanitization, history, live updates, and assignment hooks that a raw
 	// items-table UPDATE bypassed.
-	result, err := as.updateItemFromAction(ctx, map[string]interface{}{fieldName: typedValue})
+	result, err := as.updateItemFromAction(ctx, map[string]any{fieldName: typedValue})
 	if err != nil {
 		return err
 	}
@@ -1223,7 +1223,7 @@ func (as *ActionService) executeSetFieldColumn(ctx *models.ExecutionContext, ste
 		}
 	}
 
-	stepResult.Output = map[string]interface{}{
+	stepResult.Output = map[string]any{
 		"field_name": fieldName,
 		"old_value":  oldValue,
 		"new_value":  newValue,
@@ -1232,7 +1232,7 @@ func (as *ActionService) executeSetFieldColumn(ctx *models.ExecutionContext, ste
 	return nil
 }
 
-func parseActionSetFieldValue(fieldName, value string) (interface{}, error) {
+func parseActionSetFieldValue(fieldName, value string) (any, error) {
 	trimmed := strings.TrimSpace(value)
 	isNull := trimmed == "" || strings.EqualFold(trimmed, "null")
 
@@ -1310,7 +1310,7 @@ func (as *ActionService) executeSetFieldCustom(ctx *models.ExecutionContext, ste
 
 	// Validate options and sanitize substituted user content before persisting.
 	fieldKey := strconv.Itoa(config.CustomFieldID)
-	cfv := map[string]interface{}{fieldKey: value}
+	cfv := map[string]any{fieldKey: value}
 	fieldTypes, err := validation.CustomFieldTypes(as.db, cfv)
 	if err != nil {
 		return fmt.Errorf("resolve custom field type: %w", err)
@@ -1347,12 +1347,12 @@ func (as *ActionService) executeSetFieldCustom(ctx *models.ExecutionContext, ste
 	if err != nil {
 		return fmt.Errorf("load item custom fields: %w", err)
 	}
-	customFieldValues := make(map[string]interface{}, len(item.CustomFieldValues)+1)
+	customFieldValues := make(map[string]any, len(item.CustomFieldValues)+1)
 	for key, existingValue := range item.CustomFieldValues {
 		customFieldValues[key] = existingValue
 	}
 	customFieldValues[fieldKey] = newValue
-	result, err := as.updateItemFromAction(ctx, map[string]interface{}{
+	result, err := as.updateItemFromAction(ctx, map[string]any{
 		"custom_field_values": customFieldValues,
 	})
 	if err != nil {
@@ -1363,7 +1363,7 @@ func (as *ActionService) executeSetFieldCustom(ctx *models.ExecutionContext, ste
 	}
 
 	key := "custom_field_" + strconv.Itoa(config.CustomFieldID)
-	stepResult.Output = map[string]interface{}{
+	stepResult.Output = map[string]any{
 		"field_name":      key,
 		"custom_field_id": config.CustomFieldID,
 		"old_value":       oldValue,
@@ -1377,17 +1377,17 @@ func (as *ActionService) executeSetFieldCustom(ctx *models.ExecutionContext, ste
 // value: a JSON array ("[1,2]") or a CSV of option ids ("1, 2"). An empty
 // string means "clear". Elements stay untyped — option-id coercion and
 // option-set validation happen in ValidateAndNormalizeCustomFieldValues.
-func parseActionMultiselectValue(value string) interface{} {
+func parseActionMultiselectValue(value string) any {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
 		return nil
 	}
-	var arr []interface{}
+	var arr []any
 	if err := json.Unmarshal([]byte(trimmed), &arr); err == nil {
 		return arr
 	}
 	parts := strings.Split(trimmed, ",")
-	out := make([]interface{}, 0, len(parts))
+	out := make([]any, 0, len(parts))
 	for _, part := range parts {
 		out = append(out, strings.TrimSpace(part))
 	}
@@ -1442,7 +1442,7 @@ func (as *ActionService) executeSetStatusID(statusID int, ctx *models.ExecutionC
 		newStatusID = *result.NewStatusID
 	}
 
-	stepResult.Output = map[string]interface{}{
+	stepResult.Output = map[string]any{
 		"old_status_id":   oldStatusID,
 		"new_status_id":   newStatusID,
 		"old_status_name": as.getStatusName(oldStatusID),
@@ -1456,8 +1456,8 @@ func (as *ActionService) executeSetStatusID(statusID int, ctx *models.ExecutionC
 			WorkspaceID:       workspaceID,
 			ItemID:            itemID,
 			ActorUserID:       ctx.EffectiveActorID,
-			OldValues:         map[string]interface{}{"status_id": oldStatusID},
-			NewValues:         map[string]interface{}{"status_id": newStatusID},
+			OldValues:         map[string]any{"status_id": oldStatusID},
+			NewValues:         map[string]any{"status_id": newStatusID},
 			TriggeredByAction: true,
 			ExecutionChainID:  ctx.ChainID,
 			CascadeDepth:      ctx.Event.CascadeDepth + 1,
@@ -1488,7 +1488,7 @@ func (as *ActionService) executeTransitionItem(node *models.ActionNode, ctx *mod
 	}
 
 	if item.StatusID == nil {
-		stepResult.Output = map[string]interface{}{
+		stepResult.Output = map[string]any{
 			"item_id": item.ID,
 			"skipped": true,
 			"reason":  "item has no current status",
@@ -1505,7 +1505,7 @@ func (as *ActionService) executeTransitionItem(node *models.ActionNode, ctx *mod
 			return fmt.Errorf("permission check failed for item %d: %w", item.ID, err)
 		}
 		if !ok {
-			stepResult.Output = map[string]interface{}{
+			stepResult.Output = map[string]any{
 				"item_id":      item.ID,
 				"workspace_id": item.WorkspaceID,
 				"skipped":      true,
@@ -1520,7 +1520,7 @@ func (as *ActionService) executeTransitionItem(node *models.ActionNode, ctx *mod
 		return err
 	}
 	if targetStatusID == 0 {
-		stepResult.Output = map[string]interface{}{
+		stepResult.Output = map[string]any{
 			"item_id": item.ID,
 			"skipped": true,
 			"reason":  "no target status could be resolved",
@@ -1536,7 +1536,7 @@ func (as *ActionService) executeTransitionItem(node *models.ActionNode, ctx *mod
 		skipIfMatching = *config.SkipIfAlreadyMatching
 	}
 	if skipIfMatching && *item.StatusID == targetStatusID {
-		stepResult.Output = map[string]interface{}{
+		stepResult.Output = map[string]any{
 			"item_id":   item.ID,
 			"status_id": targetStatusID,
 			"skipped":   true,
@@ -1554,7 +1554,7 @@ func (as *ActionService) executeTransitionItem(node *models.ActionNode, ctx *mod
 	}, as.itemRepo, nil, as.approvalService)
 	if err != nil {
 		if rej := IsTransitionRejection(err); rej != nil {
-			stepResult.Output = map[string]interface{}{
+			stepResult.Output = map[string]any{
 				"item_id":           item.ID,
 				"target_status":     targetStatusID,
 				"skipped":           true,
@@ -1571,7 +1571,7 @@ func (as *ActionService) executeTransitionItem(node *models.ActionNode, ctx *mod
 	if result.OldStatusID != nil {
 		oldStatusID = *result.OldStatusID
 	}
-	stepResult.Output = map[string]interface{}{
+	stepResult.Output = map[string]any{
 		"item_id":         item.ID,
 		"workspace_id":    item.WorkspaceID,
 		"old_status_id":   oldStatusID,
@@ -1589,8 +1589,8 @@ func (as *ActionService) executeTransitionItem(node *models.ActionNode, ctx *mod
 			WorkspaceID:       item.WorkspaceID,
 			ItemID:            item.ID,
 			ActorUserID:       ctx.EffectiveActorID,
-			OldValues:         map[string]interface{}{"status_id": oldStatusID},
-			NewValues:         map[string]interface{}{"status_id": targetStatusID},
+			OldValues:         map[string]any{"status_id": oldStatusID},
+			NewValues:         map[string]any{"status_id": targetStatusID},
 			TriggeredByAction: true,
 			ExecutionChainID:  ctx.ChainID,
 			CascadeDepth:      ctx.Event.CascadeDepth + 1,
@@ -1690,11 +1690,11 @@ func pickTerminalByCategoryName(terminals []StatusResult, categoryName string) i
 	return terminals[0].ID
 }
 
-// coerceInt extracts an int from a JSON-decoded interface{} (which may be
+// coerceInt extracts an int from a JSON-decoded any (which may be
 // float64 from json.Unmarshal, int from direct construction, or string).
 // Numeric handling is shared with all other update surfaces via
 // utils.CoerceInt.
-func coerceInt(v interface{}) (int, bool) {
+func coerceInt(v any) (int, bool) {
 	return utils.CoerceInt(v)
 }
 
@@ -1731,7 +1731,7 @@ func (as *ActionService) executeAddComment(node *models.ActionNode, ctx *models.
 	commentID := result.CommentID
 
 	// Populate step result output with change details
-	stepResult.Output = map[string]interface{}{
+	stepResult.Output = map[string]any{
 		"content":    content,
 		"is_private": config.IsPrivate,
 		"comment_id": commentID,
@@ -1798,7 +1798,7 @@ func (as *ActionService) executeNotifyUser(node *models.ActionNode, ctx *models.
 	}
 
 	// Populate step result output with notification details
-	stepResult.Output = map[string]interface{}{
+	stepResult.Output = map[string]any{
 		"recipient_count": len(userIDs),
 		"recipient_ids":   userIDs,
 		"title":           title,
@@ -1850,7 +1850,7 @@ func (as *ActionService) executeCondition(node *models.ActionNode, ctx *models.E
 	result := as.evaluateCondition(fieldValue, config.Operator, config.Value)
 
 	// Populate step result output with condition details
-	stepResult.Output = map[string]interface{}{
+	stepResult.Output = map[string]any{
 		"condition_result": result,
 		"field_name":       config.FieldName,
 		"field_value":      fieldValue,
@@ -1862,7 +1862,7 @@ func (as *ActionService) executeCondition(node *models.ActionNode, ctx *models.E
 }
 
 // evaluateCondition evaluates a condition
-func (as *ActionService) evaluateCondition(value interface{}, operator, compareValue string) bool {
+func (as *ActionService) evaluateCondition(value any, operator, compareValue string) bool {
 	strValue := fmt.Sprintf("%v", value)
 
 	switch operator {
@@ -2057,17 +2057,17 @@ func (as *ActionService) executeRoundRobinAssign(node *models.ActionNode, ctx *m
 		return fmt.Errorf("failed to get round-robin assignee: %w", err)
 	}
 
-	_, err = as.updateItemFromAction(ctx, map[string]interface{}{"assignee_id": assigneeID})
+	_, err = as.updateItemFromAction(ctx, map[string]any{"assignee_id": assigneeID})
 	if err != nil {
 		return fmt.Errorf("failed to update item assignee: %w", err)
 	}
 
 	// Populate step result
-	var oldVal interface{}
+	var oldVal any
 	if oldAssigneeID.Valid {
 		oldVal = int(oldAssigneeID.Int64)
 	}
-	stepResult.Output = map[string]interface{}{
+	stepResult.Output = map[string]any{
 		"field_name":  "assignee_id",
 		"old_value":   oldVal,
 		"new_value":   assigneeID,
@@ -2119,8 +2119,8 @@ func (as *ActionService) ExecuteActionManually(action *models.Action, itemID, ac
 		WorkspaceID:       action.WorkspaceID,
 		ItemID:            itemID,
 		ActorUserID:       actorUserID,
-		OldValues:         map[string]interface{}{},
-		NewValues:         map[string]interface{}{},
+		OldValues:         map[string]any{},
+		NewValues:         map[string]any{},
 		TriggeredByAction: false,
 		CascadeDepth:      0,
 	}
@@ -2209,7 +2209,7 @@ func (as *ActionService) executeAIExtract(node *models.ActionNode, ctx *models.E
 	}
 
 	// Run sandboxed analysis (no tools, structured output only)
-	result, err := llm.RunSandboxedAnalysis[map[string]interface{}](
+	result, err := llm.RunSandboxedAnalysis[map[string]any](
 		context.Background(),
 		client,
 		llm.SandboxedAnalysisRequest{
@@ -2227,7 +2227,7 @@ func (as *ActionService) executeAIExtract(node *models.ActionNode, ctx *models.E
 		ctx.Variables[config.OutputField] = *result
 	}
 
-	stepResult.Output = map[string]interface{}{
+	stepResult.Output = map[string]any{
 		"extracted": result,
 	}
 
@@ -2330,7 +2330,7 @@ func (as *ActionService) executeAIAgent(node *models.ActionNode, ctx *models.Exe
 		ctx.Variables[config.OutputField] = agentResult.Answer
 	}
 
-	stepResult.Output = map[string]interface{}{
+	stepResult.Output = map[string]any{
 		"answer":     agentResult.Answer,
 		"iterations": agentResult.Iterations,
 		"tool_calls": len(agentResult.ToolCalls),
@@ -2537,7 +2537,7 @@ func (as *ActionService) executeContainerRun(node *models.ActionNode, ctx *model
 		if derr != nil {
 			return fmt.Errorf("enqueue container run for pool %d: %w", pool, derr)
 		}
-		out := map[string]interface{}{"agent_run_id": runID, "dispatched": "pool", "pool_capability_id": pool}
+		out := map[string]any{"agent_run_id": runID, "dispatched": "pool", "pool_capability_id": pool}
 		if config.OutputField != "" {
 			ctx.Variables[config.OutputField] = out
 		}
@@ -2561,14 +2561,14 @@ func (as *ActionService) executeContainerRun(node *models.ActionNode, ctx *model
 
 	// Store container info in execution context
 	if config.OutputField != "" {
-		ctx.Variables[config.OutputField] = map[string]interface{}{
+		ctx.Variables[config.OutputField] = map[string]any{
 			"container_id": containerInfo.ContainerID,
 			"host":         containerInfo.Host,
 			"port":         containerInfo.Port,
 		}
 	}
 
-	stepResult.Output = map[string]interface{}{
+	stepResult.Output = map[string]any{
 		"container_id": containerInfo.ContainerID,
 		"host":         containerInfo.Host,
 		"port":         containerInfo.Port,
@@ -2638,7 +2638,7 @@ func (as *ActionService) executeHTTPRequest(node *models.ActionNode, ctx *models
 		ctx.Variables[config.OutputField] = result
 	}
 
-	stepResult.Output = map[string]interface{}{
+	stepResult.Output = map[string]any{
 		"response_preview": truncateString(RedactString(result), 500),
 	}
 
@@ -2859,7 +2859,7 @@ func doHTTPRequest(ctx context.Context, method, targetURL, body string, headers,
 		return "", fmt.Errorf("failed to read response: %w", err)
 	}
 
-	result := map[string]interface{}{
+	result := map[string]any{
 		"status_code": resp.StatusCode,
 		"body":        string(respBody),
 	}

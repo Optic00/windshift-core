@@ -262,7 +262,7 @@ func (h *CustomFieldHandler) Create(w http.ResponseWriter, r *http.Request) {
 			respondInternalError(w, r, mirrorErr)
 			return
 		}
-		var primaryOpts map[string]interface{}
+		var primaryOpts map[string]any
 		if err := json.Unmarshal([]byte(cf.Options), &primaryOpts); err == nil {
 			delete(primaryOpts, "mirror_name")
 			delete(primaryOpts, "mirror_allowed_item_type_ids")
@@ -290,7 +290,7 @@ func (h *CustomFieldHandler) Create(w http.ResponseWriter, r *http.Request) {
 			ResourceType: logger.ResourceCustomField,
 			ResourceID:   &createdCF.ID,
 			ResourceName: createdCF.Name,
-			Details: map[string]interface{}{
+			Details: map[string]any{
 				"field_type":    createdCF.FieldType,
 				"required":      createdCF.Required,
 				"display_order": createdCF.DisplayOrder,
@@ -404,22 +404,22 @@ func (h *CustomFieldHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
-		details := make(map[string]interface{})
+		details := make(map[string]any)
 
 		if oldCF.Name != updatedCF.Name {
-			details["name_changed"] = map[string]interface{}{"old": oldCF.Name, "new": updatedCF.Name}
+			details["name_changed"] = map[string]any{"old": oldCF.Name, "new": updatedCF.Name}
 		}
 		if oldCF.FieldType != updatedCF.FieldType {
-			details["field_type_changed"] = map[string]interface{}{"old": oldCF.FieldType, "new": updatedCF.FieldType}
+			details["field_type_changed"] = map[string]any{"old": oldCF.FieldType, "new": updatedCF.FieldType}
 		}
 		if oldCF.Required != updatedCF.Required {
-			details["required_changed"] = map[string]interface{}{"old": oldCF.Required, "new": updatedCF.Required}
+			details["required_changed"] = map[string]any{"old": oldCF.Required, "new": updatedCF.Required}
 		}
 		if oldCF.DisplayOrder != updatedCF.DisplayOrder {
-			details["display_order_changed"] = map[string]interface{}{"old": oldCF.DisplayOrder, "new": updatedCF.DisplayOrder}
+			details["display_order_changed"] = map[string]any{"old": oldCF.DisplayOrder, "new": updatedCF.DisplayOrder}
 		}
 		if oldCF.Options != updatedCF.Options {
-			details["options_changed"] = map[string]interface{}{"old": oldCF.Options, "new": updatedCF.Options}
+			details["options_changed"] = map[string]any{"old": oldCF.Options, "new": updatedCF.Options}
 		}
 		if req.Indexed != nil {
 			details["indexed"] = req.Indexed
@@ -546,7 +546,7 @@ func (h *CustomFieldHandler) Delete(w http.ResponseWriter, r *http.Request) {
 			ResourceType: logger.ResourceCustomField,
 			ResourceID:   &id,
 			ResourceName: info.Name,
-			Details: map[string]interface{}{
+			Details: map[string]any{
 				"field_type": info.FieldType,
 			},
 			Success: true,
@@ -667,7 +667,7 @@ func (h *CustomFieldHandler) UpdateSettings(w http.ResponseWriter, r *http.Reque
 			ActionType:   logger.ActionCustomFieldUpdate,
 			ResourceType: logger.ResourceCustomField,
 			ResourceName: "custom_field_settings",
-			Details: map[string]interface{}{
+			Details: map[string]any{
 				"max_indexes_per_table": settings.MaxIndexesPerTable,
 			},
 			Success: true,
@@ -753,7 +753,7 @@ func (h *CustomFieldHandler) validateLinkingOptions(optionsJSON string) (*linkin
 
 // createMirrorField creates a mirror linking field for the given primary field
 func (h *CustomFieldHandler) createMirrorField(primaryID int, opts *linkingFieldOptions, now time.Time) (int64, error) {
-	mirrorOpts := map[string]interface{}{
+	mirrorOpts := map[string]any{
 		"mirror_of_field_id": primaryID,
 		"link_type_id":       opts.LinkTypeID,
 		"multi":              opts.Multi,
@@ -798,7 +798,7 @@ func (h *CustomFieldHandler) handleLinkingFieldDelete(fieldID int) {
 		if err != nil || primaryOptsJSON == "" {
 			return
 		}
-		var primaryOpts map[string]interface{}
+		var primaryOpts map[string]any
 		if err := json.Unmarshal([]byte(primaryOptsJSON), &primaryOpts); err == nil {
 			delete(primaryOpts, "mirror_field_id")
 			if updatedJSON, err := json.Marshal(primaryOpts); err == nil {

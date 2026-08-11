@@ -14,11 +14,11 @@ import (
 // renderPortalTitle renders a missing form title from the request type template.
 // Templates support type, requester, description (120 runes), and named custom
 // field variables; an empty result is rejected by the caller.
-func (h *PortalHandler) renderPortalTitle(ctx context.Context, rt *models.RequestType, description string, customFields map[string]interface{}, userID, customerID *int) string {
+func (h *PortalHandler) renderPortalTitle(ctx context.Context, rt *models.RequestType, description string, customFields map[string]any, userID, customerID *int) string {
 	return renderSubmissionTitle(ctx, h.portalService, rt, description, customFields, userID, customerID)
 }
 
-func renderSubmissionTitle(ctx context.Context, portalService *services.PortalService, rt *models.RequestType, description string, customFields map[string]interface{}, userID, customerID *int) string {
+func renderSubmissionTitle(ctx context.Context, portalService *services.PortalService, rt *models.RequestType, description string, customFields map[string]any, userID, customerID *int) string {
 	if rt == nil || strings.TrimSpace(rt.TitleTemplate) == "" {
 		return ""
 	}
@@ -53,13 +53,13 @@ func renderSubmissionTitle(ctx context.Context, portalService *services.PortalSe
 
 // resolveCustomFieldNames maps numeric field IDs to template variable names.
 // Virtual or malformed keys are skipped.
-func resolveCustomFieldNames(ctx context.Context, portalService *services.PortalService, customFields map[string]interface{}) map[string]string {
+func resolveCustomFieldNames(ctx context.Context, portalService *services.PortalService, customFields map[string]any) map[string]string {
 	if len(customFields) == 0 {
 		return nil
 	}
 
 	var ids []int
-	keyToValue := map[int]interface{}{}
+	keyToValue := map[int]any{}
 	for k, v := range customFields {
 		if id, err := strconv.Atoi(k); err == nil {
 			ids = append(ids, id)
@@ -84,7 +84,7 @@ func resolveCustomFieldNames(ctx context.Context, portalService *services.Portal
 	return out
 }
 
-func formatTemplateValue(v interface{}) string {
+func formatTemplateValue(v any) string {
 	if v == nil {
 		return ""
 	}

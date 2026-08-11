@@ -188,7 +188,7 @@ func (r *ApprovalRepository) findRequestIDsForActor(ctx context.Context, actorCo
 		status = models.ApprovalRequestStatusPending
 	}
 	channelJoin := ""
-	args := []interface{}{}
+	args := []any{}
 	if channelID != nil {
 		channelJoin = "JOIN items i ON i.id = ar.item_id AND i.channel_id = ?"
 		args = append(args, *channelID)
@@ -223,7 +223,7 @@ func (r *ApprovalRepository) ActorHasActivePoolMembershipOnItem(ctx context.Cont
 		return false, fmt.Errorf("invalid actor column %q", actorColumn)
 	}
 	channelJoin := ""
-	args := []interface{}{}
+	args := []any{}
 	if channelID != nil {
 		channelJoin = "JOIN items i ON i.id = ar.item_id AND i.channel_id = ?"
 		args = append(args, *channelID)
@@ -399,7 +399,7 @@ func (r *ApprovalRepository) findRequestRowInChannel(ctx context.Context, reques
 		JOIN items i ON i.id = ar.item_id
 		WHERE ar.id = ?
 	`
-	args := []interface{}{requestID}
+	args := []any{requestID}
 	if channelID != nil {
 		query = `
 			SELECT ar.id, ar.item_id, i.workspace_id, ar.approval_set_status_id, ar.status_id, ar.from_status_id,
@@ -450,7 +450,7 @@ func (r *ApprovalRepository) loadRequestByIDInChannelInTx(ctx context.Context, t
 		JOIN items i ON i.id = ar.item_id
 		WHERE ar.id = ?
 	`
-	args := []interface{}{requestID}
+	args := []any{requestID}
 	if channelID != nil {
 		query = `
 			SELECT ar.id, ar.item_id, i.workspace_id, ar.approval_set_status_id, ar.status_id, ar.from_status_id,
@@ -780,7 +780,7 @@ func (r *ApprovalRepository) DeactivateApproverByUser(ctx context.Context, tx da
 // InsertApprover inserts an approval_step_approvers row. Exactly one of
 // UserID / PortalCustomerID must be > 0 — the schema CHECK enforces this.
 func (r *ApprovalRepository) InsertApprover(ctx context.Context, tx database.Tx, stepInstanceID int, ai ApproverInsert) error {
-	var userID, portalCustomerID interface{}
+	var userID, portalCustomerID any
 	switch {
 	case ai.PortalCustomerID > 0:
 		portalCustomerID = ai.PortalCustomerID
@@ -833,7 +833,7 @@ func (r *ApprovalRepository) WriteDecision(ctx context.Context, tx database.Tx, 
 	// metadata is JSONB on Postgres. Writing the empty string (which is what
 	// `string(nil)` produces) fails JSONB parsing, so a nil map must hit the
 	// driver as a Go nil interface (→ SQL NULL).
-	var metadataArg interface{}
+	var metadataArg any
 	if metadata != nil {
 		metaJSON, err := json.Marshal(metadata)
 		if err != nil {

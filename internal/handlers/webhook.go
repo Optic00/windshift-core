@@ -123,9 +123,9 @@ func (h *WebhookHandler) TriggerWebhook(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	h.auditor.LogWithDetails(r, user, logger.ActionWebhookTrigger, logger.ResourceWebhook, &webhookID, "", map[string]interface{}{"item_id": request.ItemID})
+	h.auditor.LogWithDetails(r, user, logger.ActionWebhookTrigger, logger.ResourceWebhook, &webhookID, "", map[string]any{"item_id": request.ItemID})
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"success": true,
 		"message": "Webhook triggered successfully",
 	})

@@ -458,11 +458,11 @@ func jiraRequestTypeID(issue *jira.JiraIssue, mappings []CustomFieldMapping) str
 		if mapping.JiraType != jiraRequestTypeFieldType && !strings.EqualFold(strings.TrimSpace(mapping.JiraName), "Request Type") {
 			continue
 		}
-		value, ok := issue.Fields.CustomFields[mapping.JiraID].(map[string]interface{})
+		value, ok := issue.Fields.CustomFields[mapping.JiraID].(map[string]any)
 		if !ok {
 			continue
 		}
-		requestType, _ := value["requestType"].(map[string]interface{})
+		requestType, _ := value["requestType"].(map[string]any)
 		if id := firstStringKey(requestType, "id"); id != "" {
 			return id
 		}

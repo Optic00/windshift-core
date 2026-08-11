@@ -114,7 +114,7 @@ func SetItemPriority(c *Client, itemID, priorityID int) tea.Cmd {
 // SetItemAssignee sets assignee_id only (0 unassigns), then refreshes.
 func SetItemAssignee(c *Client, itemID, assigneeID int) tea.Cmd {
 	return func() tea.Msg {
-		var v interface{}
+		var v any
 		if assigneeID > 0 {
 			v = assigneeID
 		} else {

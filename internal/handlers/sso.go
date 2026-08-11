@@ -753,7 +753,7 @@ func (h *SSOHandler) CreateProvider(w http.ResponseWriter, r *http.Request) {
 
 	// Gate: require sso.multi-provider capability to add more than one provider
 	if count >= 1 && (h.pluginManager == nil || !h.pluginManager.HasCapability("sso.multi-provider")) {
-		respondJSON(w, http.StatusForbidden, map[string]interface{}{
+		respondJSON(w, http.StatusForbidden, map[string]any{
 			"error": "Multiple SSO providers require the sso.multi-provider capability",
 			"code":  "CAPABILITY_REQUIRED",
 		})
@@ -1034,14 +1034,14 @@ func (h *SSOHandler) TestProvider(w http.ResponseWriter, r *http.Request) {
 			safeMessage = "OIDC discovery failed. Verify the issuer URL is correct and accessible."
 		}
 
-		respondJSON(w, http.StatusBadRequest, map[string]interface{}{
+		respondJSON(w, http.StatusBadRequest, map[string]any{
 			"success": false,
 			"error":   safeMessage,
 		})
 		return
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"success": true,
 		"message": "Successfully connected to OIDC provider",
 	})

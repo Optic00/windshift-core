@@ -42,14 +42,14 @@ func (a *Auditor) LogEvent(event AuditEvent) {
 
 // LogWithDetails records a successful resource action with extra structured
 // details (serialized to JSON in the audit log row).
-func (a *Auditor) LogWithDetails(r *http.Request, user *models.User, actionType, resourceType string, resourceID *int, resourceName string, details map[string]interface{}) {
+func (a *Auditor) LogWithDetails(r *http.Request, user *models.User, actionType, resourceType string, resourceID *int, resourceName string, details map[string]any) {
 	_ = LogAudit(a.db, NewRequestAuditEvent(r, user, actionType, resourceType, resourceID, resourceName, details))
 }
 
 // LogFailure records an attempted resource action that failed after the caller
 // was identified. It is intended for security-relevant mutation failures where
 // operators need visibility into attempted actions as well as successful ones.
-func (a *Auditor) LogFailure(r *http.Request, user *models.User, actionType, resourceType string, resourceID *int, resourceName, errorMessage string, details map[string]interface{}) {
+func (a *Auditor) LogFailure(r *http.Request, user *models.User, actionType, resourceType string, resourceID *int, resourceName, errorMessage string, details map[string]any) {
 	userID, username := auditActor(user)
 	_ = LogAudit(a.db, AuditEvent{
 		UserID:       userID,
@@ -67,9 +67,9 @@ func (a *Auditor) LogFailure(r *http.Request, user *models.User, actionType, res
 }
 
 // LogDenied records an authorization/permission denial for an attempted action.
-func (a *Auditor) LogDenied(r *http.Request, user *models.User, actionType, resourceType string, resourceID *int, resourceName, requiredPermission string, details map[string]interface{}) {
+func (a *Auditor) LogDenied(r *http.Request, user *models.User, actionType, resourceType string, resourceID *int, resourceName, requiredPermission string, details map[string]any) {
 	if details == nil {
-		details = map[string]interface{}{}
+		details = map[string]any{}
 	}
 	if requiredPermission != "" {
 		details["required_permission"] = requiredPermission
@@ -87,7 +87,7 @@ func auditActor(user *models.User) (userID int, username string) {
 }
 
 // NewRequestAuditEvent builds a successful HTTP-driven audit event.
-func NewRequestAuditEvent(r *http.Request, user *models.User, actionType, resourceType string, resourceID *int, resourceName string, details map[string]interface{}) AuditEvent {
+func NewRequestAuditEvent(r *http.Request, user *models.User, actionType, resourceType string, resourceID *int, resourceName string, details map[string]any) AuditEvent {
 	return AuditEvent{
 		UserID:       user.ID,
 		Username:     user.Username,
@@ -104,18 +104,18 @@ func NewRequestAuditEvent(r *http.Request, user *models.User, actionType, resour
 
 // AuditEvent represents a security or admin event that should be logged
 type AuditEvent struct {
-	UserID       int                    // User who performed the action
-	Username     string                 // Username for quick reference
-	IPAddress    string                 // Client IP address
-	UserAgent    string                 // Client user agent
-	ActionType   string                 // e.g., "user.create", "permission.grant"
-	ResourceType string                 // e.g., "user", "workspace", "permission"
-	ResourceID   *int                   // ID of the resource (nullable)
-	ResourceName string                 // Human-readable resource name
-	Details      map[string]interface{} // Additional details (old_value, new_value, etc.)
-	Success      bool                   // Whether the operation succeeded
-	ErrorMessage string                 // Error message if failed
-	Timestamp    time.Time              // When the event occurred (set automatically if zero)
+	UserID       int            // User who performed the action
+	Username     string         // Username for quick reference
+	IPAddress    string         // Client IP address
+	UserAgent    string         // Client user agent
+	ActionType   string         // e.g., "user.create", "permission.grant"
+	ResourceType string         // e.g., "user", "workspace", "permission"
+	ResourceID   *int           // ID of the resource (nullable)
+	ResourceName string         // Human-readable resource name
+	Details      map[string]any // Additional details (old_value, new_value, etc.)
+	Success      bool           // Whether the operation succeeded
+	ErrorMessage string         // Error message if failed
+	Timestamp    time.Time      // When the event occurred (set automatically if zero)
 }
 
 const (
@@ -132,7 +132,7 @@ func LogAudit(db database.Database, event AuditEvent) error {
 	// 81 sites discard LogAudit's error) believe rich details were saved.
 	var detailsJSON *string
 	if len(event.Details) > 0 {
-		safeDetails, _ := sanitizeAuditDetails(event.Details).(map[string]interface{})
+		safeDetails, _ := sanitizeAuditDetails(event.Details).(map[string]any)
 		detailsBytes, err := json.Marshal(safeDetails)
 		if err != nil {
 			slog.Warn("failed to marshal audit details", "error", err)
@@ -146,7 +146,7 @@ func LogAudit(db database.Database, event AuditEvent) error {
 			}
 		} else {
 			if len(detailsBytes) > auditDetailsMaxBytes {
-				detailsBytes, _ = json.Marshal(map[string]interface{}{
+				detailsBytes, _ = json.Marshal(map[string]any{
 					"details_truncated": true,
 					"original_bytes":    len(detailsBytes),
 				})
@@ -238,10 +238,10 @@ func LogAudit(db database.Database, event AuditEvent) error {
 	return nil
 }
 
-func sanitizeAuditDetails(v interface{}) interface{} {
+func sanitizeAuditDetails(v any) any {
 	switch x := v.(type) {
-	case map[string]interface{}:
-		out := make(map[string]interface{}, len(x))
+	case map[string]any:
+		out := make(map[string]any, len(x))
 		for k, val := range x {
 			if isSensitiveAuditKey(k) {
 				out[k] = auditDetailsRedactedValue
@@ -251,7 +251,7 @@ func sanitizeAuditDetails(v interface{}) interface{} {
 		}
 		return out
 	case map[string]string:
-		out := make(map[string]interface{}, len(x))
+		out := make(map[string]any, len(x))
 		for k, val := range x {
 			if isSensitiveAuditKey(k) {
 				out[k] = auditDetailsRedactedValue
@@ -260,14 +260,14 @@ func sanitizeAuditDetails(v interface{}) interface{} {
 			out[k] = val
 		}
 		return out
-	case []interface{}:
-		out := make([]interface{}, len(x))
+	case []any:
+		out := make([]any, len(x))
 		for i, val := range x {
 			out[i] = sanitizeAuditDetails(val)
 		}
 		return out
-	case []map[string]interface{}:
-		out := make([]interface{}, len(x))
+	case []map[string]any:
+		out := make([]any, len(x))
 		for i, val := range x {
 			out[i] = sanitizeAuditDetails(val)
 		}

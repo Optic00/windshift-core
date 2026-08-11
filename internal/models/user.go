@@ -147,12 +147,12 @@ type UserDashboardSection struct {
 
 // UserDashboardWidget represents a single widget on the user's personal dashboard
 type UserDashboardWidget struct {
-	ID        string                 `json:"id"`
-	Type      string                 `json:"type"`
-	SectionID string                 `json:"section_id"`
-	Position  int                    `json:"position"`
-	Width     int                    `json:"width"`
-	Config    map[string]interface{} `json:"config,omitempty"`
+	ID        string         `json:"id"`
+	Type      string         `json:"type"`
+	SectionID string         `json:"section_id"`
+	Position  int            `json:"position"`
+	Width     int            `json:"width"`
+	Config    map[string]any `json:"config,omitempty"`
 }
 
 // UserDashboardLayout represents the complete personal dashboard layout

@@ -118,7 +118,7 @@ func (h *WorkspaceHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var filterSQL string
-	var filterArgs []interface{}
+	var filterArgs []any
 	if strings.TrimSpace(vqlQuery) != "" {
 		workspaceMap, err := h.buildWorkspaceMap()
 		if err != nil {

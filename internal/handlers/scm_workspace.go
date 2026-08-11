@@ -428,10 +428,10 @@ func (h *SCMWorkspaceHandler) ListAvailableRepositories(w http.ResponseWriter, r
 	provider, err := h.credentialResolver.GetProviderForUser(r.Context(), connID, user.ID)
 	if err != nil {
 		if errors.Is(err, scm.ErrUserSCMNotConnected) {
-			respondJSONOK(w, map[string]interface{}{
+			respondJSONOK(w, map[string]any{
 				"error":        "Please connect your SCM account first",
 				"error_code":   "user_scm_not_connected",
-				"repositories": []interface{}{},
+				"repositories": []any{},
 			})
 			return
 		}
@@ -440,9 +440,9 @@ func (h *SCMWorkspaceHandler) ListAvailableRepositories(w http.ResponseWriter, r
 			return
 		}
 		slog.Error("failed to get provider", slog.String("component", "scm"), slog.Any("error", err))
-		respondJSONOK(w, map[string]interface{}{
+		respondJSONOK(w, map[string]any{
 			"error":        err.Error(),
-			"repositories": []interface{}{},
+			"repositories": []any{},
 		})
 		return
 	}
@@ -467,9 +467,9 @@ func (h *SCMWorkspaceHandler) ListAvailableRepositories(w http.ResponseWriter, r
 	repos, err := provider.ListRepositories(ctx, opts)
 	if err != nil {
 		slog.Error("failed to list repositories", slog.String("component", "scm"), slog.Any("error", err))
-		respondJSONOK(w, map[string]interface{}{
+		respondJSONOK(w, map[string]any{
 			"error":        err.Error(),
-			"repositories": []interface{}{},
+			"repositories": []any{},
 		})
 		return
 	}
@@ -489,7 +489,7 @@ func (h *SCMWorkspaceHandler) ListAvailableRepositories(w http.ResponseWriter, r
 		})
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"repositories": result,
 		"page":         page,
 		"per_page":     perPage,
@@ -972,7 +972,7 @@ func (h *SCMWorkspaceHandler) GetWorkspaceConnectionAuthStatus(w http.ResponseWr
 		return
 	}
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"auth_method":      providerInfo.AuthMethod,
 		"is_authenticated": false,
 		"provider_slug":    providerInfo.Slug,

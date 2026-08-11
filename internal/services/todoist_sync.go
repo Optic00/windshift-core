@@ -537,7 +537,7 @@ func (st *itemPersonalStore) CreateTask(workspaceID, userID int, s taskState) (i
 }
 
 func (st *itemPersonalStore) UpdateTask(itemID int, s taskState, fields []string) error {
-	update := map[string]interface{}{}
+	update := map[string]any{}
 	for _, f := range fields {
 		switch f {
 		case "title":

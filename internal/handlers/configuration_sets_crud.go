@@ -164,7 +164,7 @@ func (h *ConfigurationSetHandler) Create(w http.ResponseWriter, r *http.Request)
 			ResourceType: logger.ResourceConfigurationSet,
 			ResourceID:   &configSetID,
 			ResourceName: createdCS.Name,
-			Details: map[string]interface{}{
+			Details: map[string]any{
 				"description":     createdCS.Description,
 				"workflow_id":     createdCS.WorkflowID,
 				"workspace_count": len(createdCS.WorkspaceIDs),
@@ -220,7 +220,7 @@ func (h *ConfigurationSetHandler) Delete(w http.ResponseWriter, r *http.Request)
 			ResourceType: logger.ResourceConfigurationSet,
 			ResourceID:   &id,
 			ResourceName: cs.Name,
-			Details: map[string]interface{}{
+			Details: map[string]any{
 				"description": cs.Description,
 				"is_default":  cs.IsDefault,
 			},

@@ -291,7 +291,7 @@ func (h *AssetHandler) StartImport(w http.ResponseWriter, r *http.Request) {
 		ActionType:   "asset_import",
 		ResourceType: "asset_import",
 		ResourceName: jobID,
-		Details: map[string]interface{}{
+		Details: map[string]any{
 			"set_id":        setID,
 			"asset_type_id": req.AssetTypeID,
 		},
@@ -545,7 +545,7 @@ func (h *AssetHandler) importCSVRow(record []string, setID int, req StartAssetIm
 	}
 
 	// Validate every row so required custom fields cannot be bypassed.
-	cfValues := make(map[string]interface{})
+	cfValues := make(map[string]any)
 	for fieldKey, colIdx := range req.Mappings.CustomFields {
 		val := getCol(colIdx)
 		if val != "" {
@@ -586,7 +586,7 @@ func (h *AssetHandler) importCSVRow(record []string, setID int, req StartAssetIm
 }
 
 // resolveImportFieldValue maps select labels to option IDs.
-func (h *AssetHandler) resolveImportFieldValue(fieldKey, textValue string) interface{} {
+func (h *AssetHandler) resolveImportFieldValue(fieldKey, textValue string) any {
 	fieldID, err := strconv.Atoi(fieldKey)
 	if err != nil {
 		return textValue
@@ -789,7 +789,7 @@ func (h *AssetHandler) SuggestFieldsFromCSV(w http.ResponseWriter, r *http.Reque
 		})
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"suggested_fields": suggestions,
 	})
 }
@@ -896,7 +896,7 @@ func (h *AssetHandler) CreateTypeFromImport(w http.ResponseWriter, r *http.Reque
 		ResourceType: logger.ResourceAssetType,
 		ResourceID:   &typeID,
 		ResourceName: req.Name,
-		Details: map[string]interface{}{
+		Details: map[string]any{
 			"source":      "import_wizard",
 			"field_count": len(req.Fields),
 		},
@@ -916,7 +916,7 @@ func (h *AssetHandler) CreateTypeFromImport(w http.ResponseWriter, r *http.Reque
 		Fields:      fields,
 	}
 
-	respondJSONCreated(w, map[string]interface{}{
+	respondJSONCreated(w, map[string]any{
 		"asset_type": assetType,
 		"fields":     fields,
 	})

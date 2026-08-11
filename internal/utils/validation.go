@@ -17,7 +17,7 @@ func init() {
 
 // Validate validates a struct and returns a user-friendly error message
 // Returns nil if validation passes, otherwise returns an error with a descriptive message
-func Validate(s interface{}) error {
+func Validate(s any) error {
 	err := validate.Struct(s)
 	if err == nil {
 		return nil

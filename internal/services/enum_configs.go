@@ -35,7 +35,7 @@ func NewStatusCategoryConfig() EnumConfig {
 			return &c, err
 		},
 
-		Validate: func(entity interface{}, isUpdate bool) string {
+		Validate: func(entity any, isUpdate bool) string {
 			c := entity.(*models.StatusCategory) //nolint:errcheck // type assertion is safe here - entity is always *models.StatusCategory
 			if strings.TrimSpace(c.Name) == "" {
 				return "Name is required"
@@ -49,7 +49,7 @@ func NewStatusCategoryConfig() EnumConfig {
 			return ""
 		},
 
-		CheckUnique: func(db database.Database, entity interface{}, excludeID int) (bool, error) {
+		CheckUnique: func(db database.Database, entity any, excludeID int) (bool, error) {
 			c := entity.(*models.StatusCategory) //nolint:errcheck // type assertion is safe here - entity is always *models.StatusCategory
 			var exists bool
 			var err error
@@ -75,17 +75,17 @@ func NewStatusCategoryConfig() EnumConfig {
 			return ""
 		},
 
-		InsertArgs: func(entity interface{}, now time.Time) (string, string, []interface{}) {
+		InsertArgs: func(entity any, now time.Time) (string, string, []any) {
 			c := entity.(*models.StatusCategory) //nolint:errcheck // type assertion is safe here - entity is always *models.StatusCategory
 			return "name, color, description, is_default, is_completed, created_at, updated_at",
 				"?, ?, ?, ?, ?, ?, ?",
-				[]interface{}{c.Name, c.Color, c.Description, c.IsDefault, c.IsCompleted, now, now}
+				[]any{c.Name, c.Color, c.Description, c.IsDefault, c.IsCompleted, now, now}
 		},
 
-		UpdateArgs: func(entity interface{}, now time.Time) (string, []interface{}) {
+		UpdateArgs: func(entity any, now time.Time) (string, []any) {
 			c := entity.(*models.StatusCategory) //nolint:errcheck // type assertion is safe here - entity is always *models.StatusCategory
 			return "name = ?, color = ?, description = ?, is_default = ?, is_completed = ?, updated_at = ?",
-				[]interface{}{c.Name, c.Color, c.Description, c.IsDefault, c.IsCompleted, now}
+				[]any{c.Name, c.Color, c.Description, c.IsDefault, c.IsCompleted, now}
 		},
 
 		AuditActionCreate: "status_category.create",
@@ -123,7 +123,7 @@ func NewMilestoneCategoryConfig() EnumConfig {
 			return &m, err
 		},
 
-		ApplyDefaults: func(entity interface{}) {
+		ApplyDefaults: func(entity any) {
 			m := entity.(*models.MilestoneCategory) //nolint:errcheck // type assertion is safe here - entity is always *models.MilestoneCategory
 			// Default color to blue if not provided
 			if strings.TrimSpace(m.Color) == "" {
@@ -131,7 +131,7 @@ func NewMilestoneCategoryConfig() EnumConfig {
 			}
 		},
 
-		Validate: func(entity interface{}, isUpdate bool) string {
+		Validate: func(entity any, isUpdate bool) string {
 			m := entity.(*models.MilestoneCategory) //nolint:errcheck // type assertion is safe here
 			if strings.TrimSpace(m.Name) == "" {
 				return "Name is required"
@@ -139,7 +139,7 @@ func NewMilestoneCategoryConfig() EnumConfig {
 			return ""
 		},
 
-		CheckUnique: func(db database.Database, entity interface{}, excludeID int) (bool, error) {
+		CheckUnique: func(db database.Database, entity any, excludeID int) (bool, error) {
 			m := entity.(*models.MilestoneCategory) //nolint:errcheck // type assertion is safe here
 			var count int
 			var err error
@@ -166,17 +166,17 @@ func NewMilestoneCategoryConfig() EnumConfig {
 			return ""
 		},
 
-		InsertArgs: func(entity interface{}, now time.Time) (string, string, []interface{}) {
+		InsertArgs: func(entity any, now time.Time) (string, string, []any) {
 			m := entity.(*models.MilestoneCategory) //nolint:errcheck // type assertion is safe here
 			return "name, color, description, created_at, updated_at",
 				"?, ?, ?, ?, ?",
-				[]interface{}{m.Name, m.Color, m.Description, now, now}
+				[]any{m.Name, m.Color, m.Description, now, now}
 		},
 
-		UpdateArgs: func(entity interface{}, now time.Time) (string, []interface{}) {
+		UpdateArgs: func(entity any, now time.Time) (string, []any) {
 			m := entity.(*models.MilestoneCategory) //nolint:errcheck // type assertion is safe here - entity is always *models.MilestoneCategory
 			return "name = ?, color = ?, description = ?, updated_at = ?",
-				[]interface{}{m.Name, m.Color, m.Description, now}
+				[]any{m.Name, m.Color, m.Description, now}
 		},
 
 		AuditActionCreate: "milestone_category.create",
@@ -214,7 +214,7 @@ func NewCollectionCategoryConfig() EnumConfig {
 			return &c, err
 		},
 
-		ApplyDefaults: func(entity interface{}) {
+		ApplyDefaults: func(entity any) {
 			c := entity.(*models.CollectionCategory) //nolint:errcheck // type assertion is safe here - entity is always *models.CollectionCategory
 			// Default color to blue if not provided
 			if strings.TrimSpace(c.Color) == "" {
@@ -222,7 +222,7 @@ func NewCollectionCategoryConfig() EnumConfig {
 			}
 		},
 
-		Validate: func(entity interface{}, isUpdate bool) string {
+		Validate: func(entity any, isUpdate bool) string {
 			c := entity.(*models.CollectionCategory) //nolint:errcheck // type assertion is safe here - entity is always *models.CollectionCategory
 			if strings.TrimSpace(c.Name) == "" {
 				return "Name is required"
@@ -230,7 +230,7 @@ func NewCollectionCategoryConfig() EnumConfig {
 			return ""
 		},
 
-		CheckUnique: func(db database.Database, entity interface{}, excludeID int) (bool, error) {
+		CheckUnique: func(db database.Database, entity any, excludeID int) (bool, error) {
 			c := entity.(*models.CollectionCategory) //nolint:errcheck // type assertion is safe here - entity is always *models.CollectionCategory
 			var count int
 			var err error
@@ -257,17 +257,17 @@ func NewCollectionCategoryConfig() EnumConfig {
 			return ""
 		},
 
-		InsertArgs: func(entity interface{}, now time.Time) (string, string, []interface{}) {
+		InsertArgs: func(entity any, now time.Time) (string, string, []any) {
 			c := entity.(*models.CollectionCategory) //nolint:errcheck // type assertion is safe here - entity is always *models.CollectionCategory
 			return "name, color, description, created_at, updated_at",
 				"?, ?, ?, ?, ?",
-				[]interface{}{c.Name, c.Color, c.Description, now, now}
+				[]any{c.Name, c.Color, c.Description, now, now}
 		},
 
-		UpdateArgs: func(entity interface{}, now time.Time) (string, []interface{}) {
+		UpdateArgs: func(entity any, now time.Time) (string, []any) {
 			c := entity.(*models.CollectionCategory) //nolint:errcheck // type assertion is safe here - entity is always *models.CollectionCategory
 			return "name = ?, color = ?, description = ?, updated_at = ?",
-				[]interface{}{c.Name, c.Color, c.Description, now}
+				[]any{c.Name, c.Color, c.Description, now}
 		},
 
 		AuditActionCreate: "collection_category.create",
@@ -305,7 +305,7 @@ func NewChannelCategoryConfig() EnumConfig {
 			return &c, err
 		},
 
-		ApplyDefaults: func(entity interface{}) {
+		ApplyDefaults: func(entity any) {
 			c := entity.(*models.ChannelCategory) //nolint:errcheck // type assertion is safe here - entity is always *models.ChannelCategory
 			// Default color to blue if not provided
 			if strings.TrimSpace(c.Color) == "" {
@@ -313,7 +313,7 @@ func NewChannelCategoryConfig() EnumConfig {
 			}
 		},
 
-		Validate: func(entity interface{}, isUpdate bool) string {
+		Validate: func(entity any, isUpdate bool) string {
 			c := entity.(*models.ChannelCategory) //nolint:errcheck // type assertion is safe here - entity is always *models.ChannelCategory
 			if strings.TrimSpace(c.Name) == "" {
 				return "Name is required"
@@ -321,7 +321,7 @@ func NewChannelCategoryConfig() EnumConfig {
 			return ""
 		},
 
-		CheckUnique: func(db database.Database, entity interface{}, excludeID int) (bool, error) {
+		CheckUnique: func(db database.Database, entity any, excludeID int) (bool, error) {
 			c := entity.(*models.ChannelCategory) //nolint:errcheck // type assertion is safe here - entity is always *models.ChannelCategory
 			var count int
 			var err error
@@ -348,17 +348,17 @@ func NewChannelCategoryConfig() EnumConfig {
 			return ""
 		},
 
-		InsertArgs: func(entity interface{}, now time.Time) (string, string, []interface{}) {
+		InsertArgs: func(entity any, now time.Time) (string, string, []any) {
 			c := entity.(*models.ChannelCategory) //nolint:errcheck // type assertion is safe here - entity is always *models.ChannelCategory
 			return "name, color, description, created_at, updated_at",
 				"?, ?, ?, ?, ?",
-				[]interface{}{c.Name, c.Color, c.Description, now, now}
+				[]any{c.Name, c.Color, c.Description, now, now}
 		},
 
-		UpdateArgs: func(entity interface{}, now time.Time) (string, []interface{}) {
+		UpdateArgs: func(entity any, now time.Time) (string, []any) {
 			c := entity.(*models.ChannelCategory) //nolint:errcheck // type assertion is safe here - entity is always *models.ChannelCategory
 			return "name = ?, color = ?, description = ?, updated_at = ?",
-				[]interface{}{c.Name, c.Color, c.Description, now}
+				[]any{c.Name, c.Color, c.Description, now}
 		},
 
 		AuditActionCreate: "channel_category.create",
@@ -396,7 +396,7 @@ func NewIterationTypeConfig() EnumConfig {
 			return &i, err
 		},
 
-		Validate: func(entity interface{}, isUpdate bool) string {
+		Validate: func(entity any, isUpdate bool) string {
 			i := entity.(*models.IterationType) //nolint:errcheck // type assertion is safe here
 			if strings.TrimSpace(i.Name) == "" {
 				return "Name is required"
@@ -407,7 +407,7 @@ func NewIterationTypeConfig() EnumConfig {
 			return ""
 		},
 
-		CheckUnique: func(db database.Database, entity interface{}, excludeID int) (bool, error) {
+		CheckUnique: func(db database.Database, entity any, excludeID int) (bool, error) {
 			i := entity.(*models.IterationType) //nolint:errcheck // type assertion is safe here
 			var count int
 			var err error
@@ -433,17 +433,17 @@ func NewIterationTypeConfig() EnumConfig {
 			return ""
 		},
 
-		InsertArgs: func(entity interface{}, now time.Time) (string, string, []interface{}) {
+		InsertArgs: func(entity any, now time.Time) (string, string, []any) {
 			i := entity.(*models.IterationType) //nolint:errcheck // type assertion is safe here
 			return "name, color, description, created_at, updated_at",
 				"?, ?, ?, ?, ?",
-				[]interface{}{i.Name, i.Color, i.Description, now, now}
+				[]any{i.Name, i.Color, i.Description, now, now}
 		},
 
-		UpdateArgs: func(entity interface{}, now time.Time) (string, []interface{}) {
+		UpdateArgs: func(entity any, now time.Time) (string, []any) {
 			i := entity.(*models.IterationType) //nolint:errcheck // type assertion is safe here
 			return "name = ?, color = ?, description = ?, updated_at = ?",
-				[]interface{}{i.Name, i.Color, i.Description, now}
+				[]any{i.Name, i.Color, i.Description, now}
 		},
 
 		AuditActionCreate: "iteration_type.create",
@@ -473,7 +473,7 @@ func NewHierarchyLevelConfig() EnumConfig {
 			return &h, err
 		},
 
-		Validate: func(entity interface{}, isUpdate bool) string {
+		Validate: func(entity any, isUpdate bool) string {
 			h := entity.(*models.HierarchyLevel) //nolint:errcheck // type assertion is safe here
 			if strings.TrimSpace(h.Name) == "" {
 				return "Name is required"
@@ -499,17 +499,17 @@ func NewHierarchyLevelConfig() EnumConfig {
 			return ""
 		},
 
-		InsertArgs: func(entity interface{}, now time.Time) (string, string, []interface{}) {
+		InsertArgs: func(entity any, now time.Time) (string, string, []any) {
 			h := entity.(*models.HierarchyLevel) //nolint:errcheck // type assertion is safe here
 			return "level, name, description, created_at, updated_at",
 				"?, ?, ?, ?, ?",
-				[]interface{}{h.Level, h.Name, h.Description, now, now}
+				[]any{h.Level, h.Name, h.Description, now, now}
 		},
 
-		UpdateArgs: func(entity interface{}, now time.Time) (string, []interface{}) {
+		UpdateArgs: func(entity any, now time.Time) (string, []any) {
 			h := entity.(*models.HierarchyLevel) //nolint:errcheck // type assertion is safe here
 			return "level = ?, name = ?, description = ?, updated_at = ?",
-				[]interface{}{h.Level, h.Name, h.Description, now}
+				[]any{h.Level, h.Name, h.Description, now}
 		},
 
 		AuditActionCreate: "hierarchy_level.create",
@@ -547,7 +547,7 @@ func NewContactRoleConfig() EnumConfig {
 			return &c, err
 		},
 
-		Validate: func(entity interface{}, isUpdate bool) string {
+		Validate: func(entity any, isUpdate bool) string {
 			c := entity.(*models.ContactRole) //nolint:errcheck // type assertion is safe here
 			if strings.TrimSpace(c.Name) == "" {
 				return "Contact role name is required"
@@ -558,7 +558,7 @@ func NewContactRoleConfig() EnumConfig {
 		// No CheckUnique - relies on DB UNIQUE constraint on `name` column
 		// database.IsUniqueConstraintError will catch duplicates and return 409
 
-		BeforeUpdate: func(db database.Database, id int, entity interface{}) (bool, int, string) {
+		BeforeUpdate: func(db database.Database, id int, entity any) (bool, int, string) {
 			var isSystem bool
 			err := db.QueryRow("SELECT is_system FROM contact_roles WHERE id = ?", id).Scan(&isSystem)
 			if err != nil {
@@ -582,18 +582,18 @@ func NewContactRoleConfig() EnumConfig {
 			return true, 0, ""
 		},
 
-		InsertArgs: func(entity interface{}, now time.Time) (string, string, []interface{}) {
+		InsertArgs: func(entity any, now time.Time) (string, string, []any) {
 			c := entity.(*models.ContactRole) //nolint:errcheck // type assertion is safe here
 			// Force is_system to false for user-created roles
 			return "name, description, is_system, created_at",
 				"?, ?, false, ?",
-				[]interface{}{c.Name, c.Description, now}
+				[]any{c.Name, c.Description, now}
 		},
 
-		UpdateArgs: func(entity interface{}, now time.Time) (string, []interface{}) {
+		UpdateArgs: func(entity any, now time.Time) (string, []any) {
 			c := entity.(*models.ContactRole) //nolint:errcheck // type assertion is safe here
 			return "name = ?, description = ?",
-				[]interface{}{c.Name, c.Description}
+				[]any{c.Name, c.Description}
 		},
 
 		AuditActionCreate: "contact_role.create",
@@ -640,7 +640,7 @@ func NewStatusConfig() EnumConfig {
 			return &s, err
 		},
 
-		Validate: func(entity interface{}, isUpdate bool) string {
+		Validate: func(entity any, isUpdate bool) string {
 			s := entity.(*models.Status) //nolint:errcheck // type assertion is safe here
 			if strings.TrimSpace(s.Name) == "" {
 				return "Name is required"
@@ -651,7 +651,7 @@ func NewStatusConfig() EnumConfig {
 			return ""
 		},
 
-		ValidateFKs: func(db database.Database, entity interface{}) string {
+		ValidateFKs: func(db database.Database, entity any) string {
 			s := entity.(*models.Status) //nolint:errcheck // type assertion is safe here
 			var exists bool
 			err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM status_categories WHERE id = ?)", s.CategoryID).Scan(&exists)
@@ -661,7 +661,7 @@ func NewStatusConfig() EnumConfig {
 			return ""
 		},
 
-		CheckUnique: func(db database.Database, entity interface{}, excludeID int) (bool, error) {
+		CheckUnique: func(db database.Database, entity any, excludeID int) (bool, error) {
 			s := entity.(*models.Status) //nolint:errcheck // type assertion is safe here
 			var exists bool
 			var err error
@@ -707,17 +707,17 @@ func NewStatusConfig() EnumConfig {
 			return ""
 		},
 
-		InsertArgs: func(entity interface{}, now time.Time) (string, string, []interface{}) {
+		InsertArgs: func(entity any, now time.Time) (string, string, []any) {
 			s := entity.(*models.Status) //nolint:errcheck // type assertion is safe here
 			return "name, description, category_id, is_default, created_at, updated_at",
 				"?, ?, ?, ?, ?, ?",
-				[]interface{}{s.Name, s.Description, s.CategoryID, s.IsDefault, now, now}
+				[]any{s.Name, s.Description, s.CategoryID, s.IsDefault, now, now}
 		},
 
-		UpdateArgs: func(entity interface{}, now time.Time) (string, []interface{}) {
+		UpdateArgs: func(entity any, now time.Time) (string, []any) {
 			s := entity.(*models.Status) //nolint:errcheck // type assertion is safe here
 			return "name = ?, description = ?, category_id = ?, is_default = ?, updated_at = ?",
-				[]interface{}{s.Name, s.Description, s.CategoryID, s.IsDefault, now}
+				[]any{s.Name, s.Description, s.CategoryID, s.IsDefault, now}
 		},
 	}
 }
@@ -744,7 +744,7 @@ func NewLinkTypeConfig() EnumConfig {
 			return &l, err
 		},
 
-		Validate: func(entity interface{}, isUpdate bool) string {
+		Validate: func(entity any, isUpdate bool) string {
 			l := entity.(*models.LinkType) //nolint:errcheck // type assertion is safe here
 			if strings.TrimSpace(l.Name) == "" {
 				return "Name is required"
@@ -758,7 +758,7 @@ func NewLinkTypeConfig() EnumConfig {
 			return ""
 		},
 
-		CheckUnique: func(db database.Database, entity interface{}, excludeID int) (bool, error) {
+		CheckUnique: func(db database.Database, entity any, excludeID int) (bool, error) {
 			l := entity.(*models.LinkType) //nolint:errcheck // type assertion is safe here
 			var exists bool
 			var err error
@@ -772,7 +772,7 @@ func NewLinkTypeConfig() EnumConfig {
 			return exists, err
 		},
 
-		BeforeUpdate: func(db database.Database, id int, entity interface{}) (bool, int, string) {
+		BeforeUpdate: func(db database.Database, id int, entity any) (bool, int, string) {
 			var isSystem bool
 			err := db.QueryRow("SELECT is_system FROM link_types WHERE id = ?", id).Scan(&isSystem)
 			if err != nil {
@@ -808,18 +808,18 @@ func NewLinkTypeConfig() EnumConfig {
 			return ""
 		},
 
-		InsertArgs: func(entity interface{}, now time.Time) (string, string, []interface{}) {
+		InsertArgs: func(entity any, now time.Time) (string, string, []any) {
 			l := entity.(*models.LinkType) //nolint:errcheck // type assertion is safe here
 			// Force is_system to false for user-created link types
 			return "name, description, forward_label, reverse_label, color, is_system, active, created_at, updated_at",
 				"?, ?, ?, ?, ?, false, ?, ?, ?",
-				[]interface{}{l.Name, l.Description, l.ForwardLabel, l.ReverseLabel, l.Color, l.Active, now, now}
+				[]any{l.Name, l.Description, l.ForwardLabel, l.ReverseLabel, l.Color, l.Active, now, now}
 		},
 
-		UpdateArgs: func(entity interface{}, now time.Time) (string, []interface{}) {
+		UpdateArgs: func(entity any, now time.Time) (string, []any) {
 			l := entity.(*models.LinkType) //nolint:errcheck // type assertion is safe here
 			return "name = ?, description = ?, forward_label = ?, reverse_label = ?, color = ?, active = ?, updated_at = ?",
-				[]interface{}{l.Name, l.Description, l.ForwardLabel, l.ReverseLabel, l.Color, l.Active, now}
+				[]any{l.Name, l.Description, l.ForwardLabel, l.ReverseLabel, l.Color, l.Active, now}
 		},
 	}
 }
@@ -857,7 +857,7 @@ func NewItemTypeConfig() EnumConfig {
 			return &it, err
 		},
 
-		ApplyDefaults: func(entity interface{}) {
+		ApplyDefaults: func(entity any) {
 			it := entity.(*models.ItemType) //nolint:errcheck // type assertion is safe here
 			if it.Icon == "" {
 				it.Icon = "Circle"
@@ -867,7 +867,7 @@ func NewItemTypeConfig() EnumConfig {
 			}
 		},
 
-		Validate: func(entity interface{}, isUpdate bool) string {
+		Validate: func(entity any, isUpdate bool) string {
 			it := entity.(*models.ItemType) //nolint:errcheck // type assertion is safe here
 			if strings.TrimSpace(it.Name) == "" {
 				return "Name is required"
@@ -875,7 +875,7 @@ func NewItemTypeConfig() EnumConfig {
 			return ""
 		},
 
-		CheckUnique: func(db database.Database, entity interface{}, excludeID int) (bool, error) {
+		CheckUnique: func(db database.Database, entity any, excludeID int) (bool, error) {
 			it := entity.(*models.ItemType) //nolint:errcheck // type assertion is safe here
 			var exists bool
 			var err error
@@ -901,17 +901,17 @@ func NewItemTypeConfig() EnumConfig {
 			return ""
 		},
 
-		InsertArgs: func(entity interface{}, now time.Time) (string, string, []interface{}) {
+		InsertArgs: func(entity any, now time.Time) (string, string, []any) {
 			it := entity.(*models.ItemType) //nolint:errcheck // type assertion is safe here
 			return "name, description, is_default, icon, color, hierarchy_level, sort_order, created_at, updated_at",
 				"?, ?, ?, ?, ?, ?, ?, ?, ?",
-				[]interface{}{it.Name, it.Description, it.IsDefault, it.Icon, it.Color, it.HierarchyLevel, it.SortOrder, now, now}
+				[]any{it.Name, it.Description, it.IsDefault, it.Icon, it.Color, it.HierarchyLevel, it.SortOrder, now, now}
 		},
 
-		UpdateArgs: func(entity interface{}, now time.Time) (string, []interface{}) {
+		UpdateArgs: func(entity any, now time.Time) (string, []any) {
 			it := entity.(*models.ItemType) //nolint:errcheck // type assertion is safe here
 			return "name = ?, description = ?, is_default = ?, icon = ?, color = ?, hierarchy_level = ?, sort_order = ?, updated_at = ?",
-				[]interface{}{it.Name, it.Description, it.IsDefault, it.Icon, it.Color, it.HierarchyLevel, it.SortOrder, now}
+				[]any{it.Name, it.Description, it.IsDefault, it.Icon, it.Color, it.HierarchyLevel, it.SortOrder, now}
 		},
 	}
 }

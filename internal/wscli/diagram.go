@@ -178,7 +178,7 @@ var diagramDeleteCmd = &cobra.Command{
 		if outputFormat == "table" {
 			_, _ = fmt.Fprintln(stdout, "Diagram deleted")
 		} else {
-			NewOutput().Print(map[string]interface{}{
+			NewOutput().Print(map[string]any{
 				"deleted":    true,
 				"diagram_id": id,
 			})

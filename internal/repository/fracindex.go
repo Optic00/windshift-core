@@ -616,7 +616,7 @@ func chooseMoveFracIndex(tx database.Tx, itemID int, prev, next, driver string) 
 
 	if prev == "" {
 		lower := ""
-		maxBelowNext, found, err := readBoundedFracIndexForUpdate(tx, itemID, "frac_index < ?", []interface{}{next}, "DESC", driver)
+		maxBelowNext, found, err := readBoundedFracIndexForUpdate(tx, itemID, "frac_index < ?", []any{next}, "DESC", driver)
 		if err != nil {
 			return "", err
 		}
@@ -628,7 +628,7 @@ func chooseMoveFracIndex(tx database.Tx, itemID int, prev, next, driver string) 
 
 	upper := next
 	where := "frac_index > ?"
-	args := []interface{}{prev}
+	args := []any{prev}
 	if next != "" {
 		where += " AND frac_index < ?"
 		args = append(args, next)
@@ -649,7 +649,7 @@ func chooseMoveGlobalRank(tx database.Tx, itemID int, prev, next, driver string)
 	effectivePrev := prev
 	effectiveNext := next
 	if prev == "" {
-		maxBelowNext, found, err := readBoundedFracIndexForUpdate(tx, itemID, "frac_index < ?", []interface{}{next}, "DESC", driver)
+		maxBelowNext, found, err := readBoundedFracIndexForUpdate(tx, itemID, "frac_index < ?", []any{next}, "DESC", driver)
 		if err != nil {
 			return "", err
 		}
@@ -658,7 +658,7 @@ func chooseMoveGlobalRank(tx database.Tx, itemID int, prev, next, driver string)
 		}
 	} else {
 		where := "frac_index > ?"
-		args := []interface{}{prev}
+		args := []any{prev}
 		if next != "" {
 			where += " AND frac_index < ?"
 			args = append(args, next)
@@ -896,21 +896,21 @@ func readLocalGlobalRankWindowForUpdate(tx database.Tx, movingItemID int, prev, 
 	var err error
 	switch {
 	case prev != "":
-		before, err = readGlobalRankWindowRowsForUpdate(tx, "frac_index <= ?", []interface{}{prev}, "DESC", beforeLimit, movingItemID, bucket, driver)
+		before, err = readGlobalRankWindowRowsForUpdate(tx, "frac_index <= ?", []any{prev}, "DESC", beforeLimit, movingItemID, bucket, driver)
 		if err != nil {
 			return nil, err
 		}
-		after, err = readGlobalRankWindowRowsForUpdate(tx, "frac_index > ?", []interface{}{prev}, "ASC", afterLimit, movingItemID, bucket, driver)
+		after, err = readGlobalRankWindowRowsForUpdate(tx, "frac_index > ?", []any{prev}, "ASC", afterLimit, movingItemID, bucket, driver)
 		if err != nil {
 			return nil, err
 		}
 		reverseWindowRows(before)
 	case next != "":
-		before, err = readGlobalRankWindowRowsForUpdate(tx, "frac_index < ?", []interface{}{next}, "DESC", beforeLimit, movingItemID, bucket, driver)
+		before, err = readGlobalRankWindowRowsForUpdate(tx, "frac_index < ?", []any{next}, "DESC", beforeLimit, movingItemID, bucket, driver)
 		if err != nil {
 			return nil, err
 		}
-		after, err = readGlobalRankWindowRowsForUpdate(tx, "frac_index >= ?", []interface{}{next}, "ASC", afterLimit, movingItemID, bucket, driver)
+		after, err = readGlobalRankWindowRowsForUpdate(tx, "frac_index >= ?", []any{next}, "ASC", afterLimit, movingItemID, bucket, driver)
 		if err != nil {
 			return nil, err
 		}
@@ -928,9 +928,9 @@ func readLocalGlobalRankWindowForUpdate(tx database.Tx, movingItemID int, prev, 
 	return rows, nil
 }
 
-func readGlobalRankWindowRowsForUpdate(tx database.Tx, where string, args []interface{}, direction string, limit, movingItemID int, bucket GlobalRankBucket, driver string) ([]fracIndexWindowRow, error) {
+func readGlobalRankWindowRowsForUpdate(tx database.Tx, where string, args []any, direction string, limit, movingItemID int, bucket GlobalRankBucket, driver string) ([]fracIndexWindowRow, error) {
 	lower, upper := globalRankBucketBounds(bucket)
-	queryArgs := make([]interface{}, 0, 2+len(args)+2)
+	queryArgs := make([]any, 0, 2+len(args)+2)
 	queryArgs = append(queryArgs, lower, upper)
 	queryArgs = append(queryArgs, args...)
 	queryArgs = append(queryArgs, movingItemID, limit)
@@ -962,11 +962,11 @@ func readGlobalRankWindowRowsForUpdate(tx database.Tx, where string, args []inte
 
 func readGlobalRankWindowOutsideBoundsForUpdate(tx database.Tx, movingItemID int, firstKey, lastKey string, bucket GlobalRankBucket, driver string) (left, right string, err error) {
 	lower, upper := globalRankBucketBounds(bucket)
-	left, _, err = readBoundedFracIndexForUpdate(tx, movingItemID, "frac_index >= ? AND frac_index < ? AND frac_index < ?", []interface{}{lower, upper, firstKey}, "DESC", driver)
+	left, _, err = readBoundedFracIndexForUpdate(tx, movingItemID, "frac_index >= ? AND frac_index < ? AND frac_index < ?", []any{lower, upper, firstKey}, "DESC", driver)
 	if err != nil {
 		return "", "", err
 	}
-	right, _, err = readBoundedFracIndexForUpdate(tx, movingItemID, "frac_index >= ? AND frac_index < ? AND frac_index > ?", []interface{}{lower, upper, lastKey}, "ASC", driver)
+	right, _, err = readBoundedFracIndexForUpdate(tx, movingItemID, "frac_index >= ? AND frac_index < ? AND frac_index > ?", []any{lower, upper, lastKey}, "ASC", driver)
 	if err != nil {
 		return "", "", err
 	}
@@ -995,21 +995,21 @@ func readLocalRebalanceWindowForUpdate(tx database.Tx, movingItemID int, prev, n
 	var err error
 	switch {
 	case prev != "":
-		before, err = readWindowRowsForUpdate(tx, `frac_index <= ?`, []interface{}{prev}, "DESC", beforeLimit, movingItemID, driver)
+		before, err = readWindowRowsForUpdate(tx, `frac_index <= ?`, []any{prev}, "DESC", beforeLimit, movingItemID, driver)
 		if err != nil {
 			return nil, err
 		}
-		after, err = readWindowRowsForUpdate(tx, `frac_index > ?`, []interface{}{prev}, "ASC", afterLimit, movingItemID, driver)
+		after, err = readWindowRowsForUpdate(tx, `frac_index > ?`, []any{prev}, "ASC", afterLimit, movingItemID, driver)
 		if err != nil {
 			return nil, err
 		}
 		reverseWindowRows(before)
 	case next != "":
-		before, err = readWindowRowsForUpdate(tx, `frac_index < ?`, []interface{}{next}, "DESC", beforeLimit, movingItemID, driver)
+		before, err = readWindowRowsForUpdate(tx, `frac_index < ?`, []any{next}, "DESC", beforeLimit, movingItemID, driver)
 		if err != nil {
 			return nil, err
 		}
-		after, err = readWindowRowsForUpdate(tx, `frac_index >= ?`, []interface{}{next}, "ASC", afterLimit, movingItemID, driver)
+		after, err = readWindowRowsForUpdate(tx, `frac_index >= ?`, []any{next}, "ASC", afterLimit, movingItemID, driver)
 		if err != nil {
 			return nil, err
 		}
@@ -1028,7 +1028,7 @@ func readLocalRebalanceWindowForUpdate(tx database.Tx, movingItemID int, prev, n
 	return rows, nil
 }
 
-func readWindowRowsForUpdate(tx database.Tx, where string, args []interface{}, direction string, limit, movingItemID int, driver string) ([]fracIndexWindowRow, error) {
+func readWindowRowsForUpdate(tx database.Tx, where string, args []any, direction string, limit, movingItemID int, driver string) ([]fracIndexWindowRow, error) {
 	q := `SELECT id, frac_index FROM items
 		WHERE ` + where + ` AND id <> ?
 		ORDER BY frac_index ` + direction + `
@@ -1058,11 +1058,11 @@ func readWindowRowsForUpdate(tx database.Tx, where string, args []interface{}, d
 }
 
 func readWindowOutsideBoundsForUpdate(tx database.Tx, movingItemID int, firstKey, lastKey, driver string) (left, right string, err error) {
-	left, _, err = readBoundedFracIndexForUpdate(tx, movingItemID, "frac_index < ?", []interface{}{firstKey}, "DESC", driver)
+	left, _, err = readBoundedFracIndexForUpdate(tx, movingItemID, "frac_index < ?", []any{firstKey}, "DESC", driver)
 	if err != nil {
 		return "", "", err
 	}
-	right, _, err = readBoundedFracIndexForUpdate(tx, movingItemID, "frac_index > ?", []interface{}{lastKey}, "ASC", driver)
+	right, _, err = readBoundedFracIndexForUpdate(tx, movingItemID, "frac_index > ?", []any{lastKey}, "ASC", driver)
 	if err != nil {
 		return "", "", err
 	}
@@ -1100,7 +1100,7 @@ func updateFracIndexes(tx database.Tx, updates []fracIndexUpdate) error {
 	}
 	var query strings.Builder
 	query.WriteString("UPDATE items SET frac_index = CASE id")
-	args := make([]interface{}, 0, len(updates)*3)
+	args := make([]any, 0, len(updates)*3)
 	for _, update := range updates {
 		query.WriteString(" WHEN ? THEN ?")
 		args = append(args, update.id, update.key)
@@ -1160,10 +1160,10 @@ func readGlobalBoundaryFracIndexForUpdate(tx database.Tx, itemID int, direction,
 		WHERE frac_index IS NOT NULL AND id <> ?
 		ORDER BY frac_index ` + direction + `
 		LIMIT 1`
-	return scanBoundaryFracIndexForUpdate(tx, q, []interface{}{itemID}, driver)
+	return scanBoundaryFracIndexForUpdate(tx, q, []any{itemID}, driver)
 }
 
-func readBoundedFracIndexForUpdate(tx database.Tx, itemID int, where string, args []interface{}, direction, driver string) (key string, found bool, err error) {
+func readBoundedFracIndexForUpdate(tx database.Tx, itemID int, where string, args []any, direction, driver string) (key string, found bool, err error) {
 	q := `SELECT frac_index FROM items
 		WHERE ` + where + ` AND id <> ?
 		ORDER BY frac_index ` + direction + `
@@ -1172,7 +1172,7 @@ func readBoundedFracIndexForUpdate(tx database.Tx, itemID int, where string, arg
 	return scanBoundaryFracIndexForUpdate(tx, q, args, driver)
 }
 
-func scanBoundaryFracIndexForUpdate(tx database.Tx, q string, args []interface{}, driver string) (key string, found bool, err error) {
+func scanBoundaryFracIndexForUpdate(tx database.Tx, q string, args []any, driver string) (key string, found bool, err error) {
 	if database.IsPostgresDriver(driver) {
 		q += " FOR UPDATE"
 	}

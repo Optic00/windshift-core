@@ -122,26 +122,26 @@ func (r *TestSetRepository) FindStatsByMilestoneIDs(milestoneIDs, workspaceIDs [
 
 	milestonePlaceholders := strings.TrimSuffix(strings.Repeat("?,", len(uniqueIDs)), ",")
 	testSetWorkspaceClause := " AND 1=0"
-	var testSetWorkspaceArgs []interface{}
+	var testSetWorkspaceArgs []any
 	if len(workspaceIDs) > 0 {
 		workspacePlaceholders := strings.TrimSuffix(strings.Repeat("?,", len(workspaceIDs)), ",")
 		testSetWorkspaceClause = " AND ts.workspace_id IN (" + workspacePlaceholders + ")"
-		testSetWorkspaceArgs = make([]interface{}, len(workspaceIDs))
+		testSetWorkspaceArgs = make([]any, len(workspaceIDs))
 		for i, workspaceID := range workspaceIDs {
 			testSetWorkspaceArgs[i] = workspaceID
 		}
 	}
 	visibilityClause := "m.is_global = true"
-	visibilityArgs := []interface{}{}
+	visibilityArgs := []any{}
 	if len(workspaceIDs) > 0 {
 		workspacePlaceholders := strings.TrimSuffix(strings.Repeat("?,", len(workspaceIDs)), ",")
 		visibilityClause += " OR m.workspace_id IN (" + workspacePlaceholders + ")"
-		visibilityArgs = make([]interface{}, len(workspaceIDs))
+		visibilityArgs = make([]any, len(workspaceIDs))
 		for i, workspaceID := range workspaceIDs {
 			visibilityArgs[i] = workspaceID
 		}
 	}
-	queryArgs := make([]interface{}, 0, len(testSetWorkspaceArgs)+len(uniqueIDs)+len(visibilityArgs))
+	queryArgs := make([]any, 0, len(testSetWorkspaceArgs)+len(uniqueIDs)+len(visibilityArgs))
 	queryArgs = append(queryArgs, testSetWorkspaceArgs...)
 	for _, milestoneID := range uniqueIDs {
 		queryArgs = append(queryArgs, milestoneID)

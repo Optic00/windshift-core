@@ -220,7 +220,7 @@ func (h *HubHandler) UpdateHubConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.auditor != nil {
-		h.auditor.LogWithDetails(r, user, logger.ActionHubConfigUpdate, logger.ResourceHubConfig, nil, "Portal Hub", map[string]interface{}{
+		h.auditor.LogWithDetails(r, user, logger.ActionHubConfigUpdate, logger.ResourceHubConfig, nil, "Portal Hub", map[string]any{
 			"title":          config.Title,
 			"theme":          config.Theme,
 			"section_count":  len(config.Sections),
@@ -228,7 +228,7 @@ func (h *HubHandler) UpdateHubConfig(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	respondJSONOK(w, map[string]interface{}{
+	respondJSONOK(w, map[string]any{
 		"success": true,
 		"message": "Hub configuration saved successfully",
 	})
@@ -434,7 +434,7 @@ func (h *HubHandler) getRequestTypesForPortals(ctx context.Context, portalIDs []
 
 	// Build query with IN clause
 	placeholders := make([]string, len(portalIDs))
-	args := make([]interface{}, len(portalIDs))
+	args := make([]any, len(portalIDs))
 	for i, id := range portalIDs {
 		placeholders[i] = "?"
 		args[i] = id

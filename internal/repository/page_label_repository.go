@@ -238,7 +238,7 @@ func (r *PageLabelRepository) LoadForPages(pages []models.Page) error {
 		return nil
 	}
 
-	pageIDs := make([]interface{}, len(pages))
+	pageIDs := make([]any, len(pages))
 	placeholders := make([]string, len(pages))
 	for i, page := range pages {
 		pageIDs[i] = page.ID

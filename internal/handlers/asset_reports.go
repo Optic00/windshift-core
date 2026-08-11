@@ -401,7 +401,7 @@ func (h *AssetReportHandler) Create(w http.ResponseWriter, r *http.Request) {
 		h.auditor.LogWithDetails(r, currentUser,
 			"asset_report_create", "asset_report",
 			&ar.ID, ar.Name,
-			map[string]interface{}{
+			map[string]any{
 				"channel_id":   ar.ChannelID,
 				"asset_set_id": ar.AssetSetID,
 				"icon":         ar.Icon,
@@ -519,18 +519,18 @@ func (h *AssetReportHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
-		details := make(map[string]interface{})
+		details := make(map[string]any)
 		if old.Name != ar.Name {
-			details["name_changed"] = map[string]interface{}{"old": old.Name, "new": ar.Name}
+			details["name_changed"] = map[string]any{"old": old.Name, "new": ar.Name}
 		}
 		if old.AssetSetID != ar.AssetSetID {
-			details["asset_set_changed"] = map[string]interface{}{"old": old.AssetSetID, "new": ar.AssetSetID}
+			details["asset_set_changed"] = map[string]any{"old": old.AssetSetID, "new": ar.AssetSetID}
 		}
 		if old.Icon != ar.Icon {
-			details["icon_changed"] = map[string]interface{}{"old": old.Icon, "new": ar.Icon}
+			details["icon_changed"] = map[string]any{"old": old.Icon, "new": ar.Icon}
 		}
 		if old.Color != ar.Color {
-			details["color_changed"] = map[string]interface{}{"old": old.Color, "new": ar.Color}
+			details["color_changed"] = map[string]any{"old": old.Color, "new": ar.Color}
 		}
 
 		h.auditor.LogWithDetails(r, currentUser,
@@ -579,7 +579,7 @@ func (h *AssetReportHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		h.auditor.LogWithDetails(r, currentUser,
 			"asset_report_delete", "asset_report",
 			&id, assetReportName,
-			map[string]interface{}{
+			map[string]any{
 				"channel_id": channelID,
 			},
 		)
@@ -626,7 +626,7 @@ func (h *AssetReportHandler) UpdateVisibility(w http.ResponseWriter, r *http.Req
 		h.auditor.LogWithDetails(r, currentUser,
 			"asset_report_visibility_update", "asset_report",
 			&ar.ID, ar.Name,
-			map[string]interface{}{
+			map[string]any{
 				"visibility_group_ids": ar.VisibilityGroupIDs,
 				"visibility_org_ids":   ar.VisibilityOrgIDs,
 			},
@@ -760,7 +760,7 @@ func (h *AssetReportHandler) UpdateFields(w http.ResponseWriter, r *http.Request
 		h.auditor.LogWithDetails(r, currentUser,
 			"asset_report_fields_update", "asset_report",
 			&assetReportID, "",
-			map[string]interface{}{"field_count": len(fields)},
+			map[string]any{"field_count": len(fields)},
 		)
 	}
 

@@ -82,7 +82,7 @@ type ChannelListFilters struct {
 // FindAll returns channels visible to the user
 // If isAdmin is true, returns all channels; otherwise returns only channels the user manages
 func (r *ChannelRepository) FindAll(ctx context.Context, userID int, isAdmin bool, filters ChannelListFilters) ([]models.Channel, error) {
-	var args []interface{}
+	var args []any
 
 	baseSelect := `
 		SELECT c.id, c.name, c.type, c.direction, COALESCE(c.description, ''), c.status, COALESCE(c.is_default, false), COALESCE(c.config, '{}'),
@@ -986,7 +986,7 @@ func configSlugValues(config string) (portalSlug, formSlug string, err error) {
 	return cfg.PortalSlug, cfg.FormSlug, nil
 }
 
-func nullableSlug(slug string) interface{} {
+func nullableSlug(slug string) any {
 	if slug == "" {
 		return nil
 	}
@@ -1091,7 +1091,7 @@ func (r *ChannelRepository) ListEmailMessages(ctx context.Context, channelID int
 
 	whereClause, args := emailMessageWhere(channelID, search)
 	offset := (page - 1) * pageSize
-	queryArgs := append([]interface{}{}, args...)
+	queryArgs := append([]any{}, args...)
 	queryArgs = append(queryArgs, pageSize, offset)
 
 	rows, err := r.db.QueryContext(ctx,
@@ -1145,9 +1145,9 @@ func (r *ChannelRepository) ListEmailMessages(ctx context.Context, channelID int
 	return out, nil
 }
 
-func emailMessageWhere(channelID int, search string) (whereClause string, args []interface{}) {
+func emailMessageWhere(channelID int, search string) (whereClause string, args []any) {
 	whereClause = "WHERE emt.channel_id = ?"
-	args = []interface{}{channelID}
+	args = []any{channelID}
 	if search != "" {
 		searchPattern := "%" + search + "%"
 		whereClause += " AND (emt.from_email LIKE ? OR emt.from_name LIKE ? OR emt.subject LIKE ?)"
@@ -1208,7 +1208,7 @@ func ScrubChannelConfig(configJSON string) string {
 		return ""
 	}
 
-	var config map[string]interface{}
+	var config map[string]any
 	if err := json.Unmarshal([]byte(configJSON), &config); err != nil {
 		return "{}"
 	}

@@ -95,7 +95,7 @@ func (s jiraImportJobTxStore) Insert(job JiraImportJobInsert) error {
 }
 
 type jiraImportJobQueryer interface {
-	Query(query string, args ...interface{}) (*sql.Rows, error)
+	Query(query string, args ...any) (*sql.Rows, error)
 }
 
 func listJiraImportJobCandidates(
