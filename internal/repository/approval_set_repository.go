@@ -181,7 +181,7 @@ func (r *ApprovalSetRepository) FindGatedStatusesForSets(ctx context.Context, se
 
 // FindActiveStatusBySetAndStatus returns the active approval_set_status row
 // for a (approvalSetID, statusID) pair, or (nil, nil) if no row matches.
-// is_active=1 is the partial-unique guarantee enforcing one current row.
+// is_active=TRUE is the partial-unique guarantee enforcing one current row.
 func (r *ApprovalSetRepository) FindActiveStatusBySetAndStatus(ctx context.Context, approvalSetID, statusID int) (*models.ApprovalSetStatus, error) {
 	var ass models.ApprovalSetStatus
 	err := r.db.QueryRowContext(ctx, `
@@ -204,7 +204,7 @@ func (r *ApprovalSetRepository) FindActiveStatusBySetAndStatus(ctx context.Conte
 
 // FindStatusByIDInTx loads a single approval_set_status by id inside a
 // transaction. Used by the runtime engine when finalizing a request — the
-// snapshot row may be is_active=0, so this query does NOT filter on is_active.
+// snapshot row may be is_active=FALSE, so this query does NOT filter on is_active.
 func (r *ApprovalSetRepository) FindStatusByIDInTx(ctx context.Context, tx database.Tx, id int) (*models.ApprovalSetStatus, error) {
 	var ass models.ApprovalSetStatus
 	err := tx.QueryRowContext(ctx, `
@@ -486,7 +486,7 @@ func (r *ApprovalSetRepository) DeleteUnreferencedStatuses(ctx context.Context, 
 	return nil
 }
 
-// DeactivateActiveStatuses flips is_active=1 rows to is_active=0 for the
+// DeactivateActiveStatuses flips is_active=TRUE rows to is_active=FALSE for the
 // given approval set. Soft-archive: keeps the snapshot for in-flight requests.
 func (r *ApprovalSetRepository) DeactivateActiveStatuses(ctx context.Context, tx database.Tx, approvalSetID int) error {
 	if _, err := tx.ExecContext(ctx, `
@@ -534,10 +534,6 @@ func (r *ApprovalSetRepository) CreateStep(ctx context.Context, tx database.Tx, 
 	if onLeave == "" {
 		onLeave = models.ApprovalOnLeaveUseSubstitute
 	}
-	allowSelf := 0
-	if step.AllowSelfApproval {
-		allowSelf = 1
-	}
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO approval_steps
 			(approval_set_status_id, display_order, name,
@@ -554,7 +550,7 @@ func (r *ApprovalSetRepository) CreateStep(ctx context.Context, tx database.Tx, 
 		approvalSetStatusID, step.DisplayOrder, step.Name,
 		quorumMode, step.QuorumCount, step.QuorumPercent, rejectionPolicy,
 		step.ApproverSource, nullStringIfEmpty(step.ApproverFieldIdentifier), step.ApproverFieldID,
-		step.ApproverRoleID, step.ApproverGroupID, step.ApproverUserID, allowSelf,
+		step.ApproverRoleID, step.ApproverGroupID, step.ApproverUserID, step.AllowSelfApproval,
 		onLeave,
 		step.EscalationAfterHours, nullStringIfEmpty(step.EscalationAction), nullStringIfEmpty(step.EscalationTargetSource),
 		nullStringIfEmpty(step.EscalationTargetFieldIdentifier), step.EscalationTargetFieldID,
