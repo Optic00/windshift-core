@@ -18,7 +18,7 @@
   import ItemPicker from '../../pickers/ItemPicker.svelte';
   import { backlogStore, workspaceDataStore } from '../../stores/index.js';
   import { useWorkItemPoller } from '../../composables/useWorkItemPoller.svelte.js';
-  import { successToast, warningToast } from '../../stores/toasts.svelte.js';
+  import { errorToast, successToast, warningToast } from '../../stores/toasts.svelte.js';
   import { getIncompleteIterationItems } from './iterationCompletion.js';
   import CompleteIterationDialog from '../../dialogs/CompleteIterationDialog.svelte';
 
@@ -48,6 +48,7 @@
   let addedGlobalIds = $state(new Set());
   let collapsedSections = $state(new Set());
   let sectionDropHighlight = $state(new Map()); // iterationId|'unassigned' -> boolean
+  let pendingActionItemIds = $state(new Set());
 
   // --- Complete Iteration dialog state ---
   let completeIterationShow = $state(false);
@@ -82,6 +83,9 @@
   // Derived iteration groupings
   let localIterations = $derived(allIterations.filter(i => !i.is_global));
   let addedGlobalIterations = $derived(allIterations.filter(i => i.is_global && addedGlobalIds.has(i.id)));
+  let assignableIterations = $derived(
+    allIterations.filter(i => i.status === 'planned' || i.status === 'active')
+  );
 
   // Sort order: active first, then planned, then completed/cancelled
   const statusOrder = { active: 0, planned: 1, completed: 2, cancelled: 3 };
@@ -285,6 +289,73 @@
     next.delete(iteration.id);
     addedGlobalIds = next;
     persistGlobalIds();
+  }
+
+  function setItemActionPending(itemId, pending) {
+    const next = new Set(pendingActionItemIds);
+    if (pending) next.add(itemId);
+    else next.delete(itemId);
+    pendingActionItemIds = next;
+  }
+
+  async function moveItemToBoundary(item, boundary) {
+    if (pendingActionItemIds.has(item.id)) return;
+    setItemActionPending(item.id, true);
+
+    try {
+      const boundaryItem = await api.items.getBacklogBoundary(
+        workspaceId,
+        collectionId,
+        collectionStore.subFilterQL,
+        boundary,
+      );
+      if (!boundaryItem || boundaryItem.id === item.id) return;
+
+      await api.items.updateFracIndex(item.id, boundary === 'start'
+        ? { prev_item_id: null, next_item_id: boundaryItem.id }
+        : { prev_item_id: boundaryItem.id, next_item_id: null });
+
+      const otherItems = collectionStore.backlogItems.filter(i => i.id !== item.id);
+      collectionStore.backlogItems = boundary === 'start'
+        ? [item, ...otherItems]
+        : [...otherItems, item];
+      successToast(t(boundary === 'start'
+        ? 'collections.movedToBeginningOfBacklog'
+        : 'collections.sentToEndOfBacklog', { title: item.title }));
+      reloadCollection();
+    } catch (error) {
+      console.error(`Failed to move backlog item to ${boundary}:`, error);
+      errorToast(t('collections.backlogActionFailed'));
+    } finally {
+      setItemActionPending(item.id, false);
+    }
+  }
+
+  async function assignItemToIteration(item, iteration) {
+    if (pendingActionItemIds.has(item.id)) return;
+    setItemActionPending(item.id, true);
+
+    try {
+      if (iteration.status === 'active') {
+        warningToast(t('iterations.activeScopeWarning'));
+      }
+      await api.items.update(item.id, { iteration_id: iteration.id });
+      collectionStore.backlogItems = collectionStore.backlogItems.map(i =>
+        i.id === item.id
+          ? { ...i, iteration_id: iteration.id, iteration_name: iteration.name }
+          : i
+      );
+      successToast(t('collections.assignedToIteration', {
+        title: item.title,
+        iteration: iteration.name,
+      }));
+      reloadCollection();
+    } catch (error) {
+      console.error('Failed to assign backlog item to iteration:', error);
+      errorToast(t('collections.backlogActionFailed'));
+    } finally {
+      setItemActionPending(item.id, false);
+    }
   }
 
   // --- Drag and Drop ---
@@ -654,10 +725,14 @@
               {styles}
               {dragState}
               {backlogRowGap}
+              {assignableIterations}
+              {pendingActionItemIds}
               isGlobalAdded={addedGlobalIds.has(section.iteration.id)}
               sectionHighlight={sectionDropHighlight.get(String(section.iteration.id)) || false}
               onToggleCollapse={toggleCollapse}
               onOpenItem={openItem}
+              onMoveItemToBoundary={moveItemToBoundary}
+              onAssignItemToIteration={assignItemToIteration}
               onStartIteration={startIteration}
               onCompleteIteration={completeIteration}
               onRemoveGlobal={removeGlobalIteration}
@@ -676,9 +751,13 @@
             {styles}
             {dragState}
             {backlogRowGap}
+            {assignableIterations}
+            {pendingActionItemIds}
             sectionHighlight={sectionDropHighlight.get('unassigned') || false}
             onToggleCollapse={toggleCollapse}
             onOpenItem={openItem}
+            onMoveItemToBoundary={moveItemToBoundary}
+            onAssignItemToIteration={assignItemToIteration}
           />
 
           <!-- Load More -->

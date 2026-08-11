@@ -507,6 +507,14 @@ export default {
     noItemsInBacklogDesc: 'All work items are either completed or no items exist yet.',
     showingItemsFromBacklog: 'Showing {count} items from backlog',
     dragItemsHere: 'Drag items here to add to this sprint',
+    backlogItemActions: 'Backlog actions for {title}',
+    toBeginningOfBacklog: 'To beginning of backlog',
+    sendToEndOfBacklog: 'Send to end of backlog',
+    assignToIteration: 'Assign to iteration…',
+    movedToBeginningOfBacklog: 'Moved “{title}” to the beginning of the backlog',
+    sentToEndOfBacklog: 'Sent “{title}” to the end of the backlog',
+    assignedToIteration: 'Assigned “{title}” to {iteration}',
+    backlogActionFailed: 'Could not update the backlog item. Please try again.',
 
     // Map view
     loadingStoryMap: 'Loading story map...',

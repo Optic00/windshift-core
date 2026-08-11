@@ -58,6 +58,54 @@ function fetchItemDetailSummaryByKey(workspaceKey, itemNumber, options = {}) {
   );
 }
 
+function fetchBacklog(
+  workspaceId,
+  ql = null,
+  collectionId = null,
+  /** @type {any} */ { page, limit, sub_ql, omit_descriptions, include_watermark } = {}
+) {
+  const params = new URLSearchParams();
+  if (collectionId) {
+    params.append('collection_id', collectionId);
+  } else if (workspaceId) {
+    params.append('workspace_id', workspaceId);
+  }
+  if (ql) params.append('ql', ql);
+  if (sub_ql) params.append('sub_ql', sub_ql);
+  if (omit_descriptions) params.append('omit_descriptions', 'true');
+  if (include_watermark) params.append('include_watermark', 'true');
+  if (page) params.append('page', page);
+  if (limit) params.append('limit', limit);
+  return fetchAPI(`/items/backlog?${params}`);
+}
+
+async function fetchBacklogBoundary(workspaceId, collectionId, subQL, boundary) {
+  const options = {
+    page: 1,
+    limit: 1,
+    sub_ql: subQL || undefined,
+    omit_descriptions: true,
+  };
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const firstPage = await fetchBacklog(workspaceId, null, collectionId, options);
+    const firstItems = firstPage?.items ?? (Array.isArray(firstPage) ? firstPage : []);
+    if (boundary === 'start' || firstItems.length === 0) return firstItems[0] ?? null;
+
+    const total = firstPage?.pagination?.total ?? firstItems.length;
+    if (total <= 1) return firstItems[0] ?? null;
+
+    const lastPage = await fetchBacklog(workspaceId, null, collectionId, {
+      ...options,
+      page: total,
+    });
+    const lastItems = lastPage?.items ?? (Array.isArray(lastPage) ? lastPage : []);
+    if (lastItems.length > 0) return lastItems[0];
+  }
+
+  return null;
+}
+
 export const items = {
   getAll: (filters = {}, requestOptions = {}) => {
     return fetchAPI(`/items${buildQueryString(filters)}`, requestOptions);
@@ -177,26 +225,8 @@ export const items = {
       }),
     'reorder'
   ),
-  getBacklog: (
-    workspaceId,
-    ql = null,
-    collectionId = null,
-    /** @type {any} */ { page, limit, sub_ql, omit_descriptions, include_watermark } = {}
-  ) => {
-    const params = new URLSearchParams();
-    if (collectionId) {
-      params.append('collection_id', collectionId);
-    } else if (workspaceId) {
-      params.append('workspace_id', workspaceId);
-    }
-    if (ql) params.append('ql', ql);
-    if (sub_ql) params.append('sub_ql', sub_ql);
-    if (omit_descriptions) params.append('omit_descriptions', 'true');
-    if (include_watermark) params.append('include_watermark', 'true');
-    if (page) params.append('page', page);
-    if (limit) params.append('limit', limit);
-    return fetchAPI(`/items/backlog?${params}`);
-  },
+  getBacklog: fetchBacklog,
+  getBacklogBoundary: fetchBacklogBoundary,
   getChildren: (itemId, requestOptions = {}) =>
     fetchAPI(`/items/${itemId}/children`, requestOptions),
   getAncestors: (itemId, requestOptions = {}) =>

@@ -6,6 +6,7 @@
   import WorkItemRow from '../items/WorkItemRow.svelte';
   import DropIndicator from '../../layout/DropIndicator.svelte';
   import LazyRender from '../../components/LazyRender.svelte';
+  import BacklogItemActions from './BacklogItemActions.svelte';
 
   let {
     iteration = null,
@@ -20,8 +21,12 @@
     backlogRowGap = 2,
     isGlobalAdded = false,
     sectionHighlight = false,
+    assignableIterations = [],
+    pendingActionItemIds = new Set(),
     onToggleCollapse,
     onOpenItem,
+    onMoveItemToBoundary = null,
+    onAssignItemToIteration = null,
     onStartIteration = null,
     onCompleteIteration = null,
     onRemoveGlobal = null,
@@ -188,6 +193,15 @@
                       <div class="cursor-grab active:cursor-grabbing" style="{styles.dragHandleStyle}">
                         <GripVertical class="w-4 h-4" />
                       </div>
+                    {/snippet}
+                    {#snippet trailing()}
+                      <BacklogItemActions
+                        {item}
+                        iterations={assignableIterations}
+                        disabled={pendingActionItemIds.has(item.id)}
+                        onMoveToBoundary={onMoveItemToBoundary}
+                        onAssignIteration={onAssignItemToIteration}
+                      />
                     {/snippet}
                   </WorkItemRow>
                 {/snippet}
