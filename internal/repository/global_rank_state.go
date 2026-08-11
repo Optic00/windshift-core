@@ -181,8 +181,14 @@ func ControlGlobalRankMigration(ctx context.Context, db database.Database, actio
 		state.LeaseOwner = nil
 		state.LeaseExpiresAt = nil
 	case GlobalRankMigrationResume:
-		if state.Phase != GlobalRankPhasePaused {
+		if state.Phase != GlobalRankPhasePaused && state.Phase != GlobalRankPhaseFailed {
 			return GlobalRankState{}, globalRankControlConflict(action, state.Phase)
+		}
+		if state.Phase == GlobalRankPhaseFailed {
+			if err := validateGlobalRankResumePopulation(tx, state); err != nil {
+				return GlobalRankState{}, err
+			}
+			state.LastError = nil
 		}
 		state.Phase = GlobalRankPhaseMigrating
 		state.LeaseOwner = nil
@@ -190,6 +196,9 @@ func ControlGlobalRankMigration(ctx context.Context, db database.Database, actio
 	case GlobalRankMigrationReset:
 		if state.Phase != GlobalRankPhaseFailed {
 			return GlobalRankState{}, globalRankControlConflict(action, state.Phase)
+		}
+		if err := validateGlobalRankResetPopulation(tx, state); err != nil {
+			return GlobalRankState{}, err
 		}
 		state.Phase = GlobalRankPhaseStable
 		state.TargetBucket = nil
@@ -217,6 +226,85 @@ func ControlGlobalRankMigration(ctx context.Context, db database.Database, actio
 
 func globalRankControlConflict(action GlobalRankMigrationAction, phase GlobalRankPhase) error {
 	return fmt.Errorf("%w: cannot %s while phase is %s", ErrGlobalRankMigrationConflict, action, phase)
+}
+
+type globalRankPopulation struct {
+	bucketCounts   [3]int64
+	nullCount      int64
+	malformedCount int64
+}
+
+func inspectGlobalRankPopulation(q interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+}) (globalRankPopulation, error) {
+	var population globalRankPopulation
+	rows, err := q.Query("SELECT frac_index FROM items")
+	if err != nil {
+		return population, fmt.Errorf("inspect global rank population: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var value sql.NullString
+		if err := rows.Scan(&value); err != nil {
+			return population, fmt.Errorf("scan global rank population: %w", err)
+		}
+		if !value.Valid {
+			population.nullCount++
+			continue
+		}
+		rank, err := ParseGlobalRank(value.String)
+		if err != nil {
+			population.malformedCount++
+			continue
+		}
+		population.bucketCounts[rank.Bucket]++
+	}
+	if err := rows.Err(); err != nil {
+		return population, fmt.Errorf("iterate global rank population: %w", err)
+	}
+	return population, nil
+}
+
+func validateGlobalRankResetPopulation(tx database.Tx, state GlobalRankState) error {
+	population, err := inspectGlobalRankPopulation(tx)
+	if err != nil {
+		return err
+	}
+	invalidCount := population.nullCount + population.malformedCount
+	outsideActive := int64(0)
+	for bucket, count := range population.bucketCounts {
+		if GlobalRankBucket(bucket) != state.ActiveBucket {
+			outsideActive += count
+		}
+	}
+	if outsideActive > 0 {
+		return fmt.Errorf("%w: cannot reset failed global rank migration while %d items remain outside active bucket %d and %d malformed or NULL ranks remain; repair invalid ranks and resume the migration to completion",
+			ErrGlobalRankMigrationConflict, outsideActive, state.ActiveBucket, invalidCount)
+	}
+	if invalidCount > 0 {
+		return fmt.Errorf("%w: cannot reset failed global rank migration while %d malformed or NULL item ranks remain; repair them, then retry reset or resume if target-bucket ranks remain",
+			ErrGlobalRankMigrationConflict, invalidCount)
+	}
+	return nil
+}
+
+func validateGlobalRankResumePopulation(tx database.Tx, state GlobalRankState) error {
+	population, err := inspectGlobalRankPopulation(tx)
+	if err != nil {
+		return err
+	}
+	if population.nullCount > 0 || population.malformedCount > 0 {
+		return fmt.Errorf("%w: cannot resume failed global rank migration while %d malformed or NULL item ranks remain; repair them and resume again",
+			ErrGlobalRankMigrationConflict, population.nullCount+population.malformedCount)
+	}
+	for bucket, count := range population.bucketCounts {
+		globalBucket := GlobalRankBucket(bucket)
+		if count > 0 && globalBucket != state.ActiveBucket && (state.TargetBucket == nil || globalBucket != *state.TargetBucket) {
+			return fmt.Errorf("%w: cannot resume failed global rank migration while %d items remain in unexpected bucket %d; move them into the active or target bucket first",
+				ErrGlobalRankMigrationConflict, count, bucket)
+		}
+	}
+	return nil
 }
 
 func startGlobalRankMigration(tx database.Tx, state GlobalRankState) (GlobalRankState, error) {

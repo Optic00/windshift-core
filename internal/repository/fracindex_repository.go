@@ -66,6 +66,7 @@ type GlobalRankIntegrity struct {
 	UnexpectedBucketCount  int64            `json:"unexpected_bucket_count"`
 	FrontierViolationCount int64            `json:"frontier_violation_count"`
 	LeaseStalled           bool             `json:"lease_stalled"`
+	PopulationSplit        bool             `json:"population_split"`
 	Healthy                bool             `json:"healthy"`
 	Issues                 []string         `json:"issues"`
 }
@@ -139,6 +140,13 @@ func (r *FracIndexRepository) GetGlobalRankIntegrity(state GlobalRankState, now 
 	if err := rows.Close(); err != nil {
 		return out, fmt.Errorf("close ranks for global integrity: %w", err)
 	}
+	occupiedBuckets := 0
+	for _, count := range out.BucketCounts {
+		if count > 0 {
+			occupiedBuckets++
+		}
+	}
+	out.PopulationSplit = occupiedBuckets > 1
 
 	if err := r.db.QueryRow(`
 		SELECT COUNT(*)
@@ -189,6 +197,9 @@ func (r *FracIndexRepository) GetGlobalRankIntegrity(state GlobalRankState, now 
 	}
 	if out.UnexpectedBucketCount > 0 {
 		out.Issues = append(out.Issues, "items exist outside the active and target buckets")
+	}
+	if out.PopulationSplit && state.Phase != GlobalRankPhaseMigrating && state.Phase != GlobalRankPhasePaused {
+		out.Issues = append(out.Issues, "item ranks are split across buckets outside an active migration")
 	}
 	if out.FrontierViolationCount > 0 {
 		out.Issues = append(out.Issues, "item ranks violate the durable migration frontier")
