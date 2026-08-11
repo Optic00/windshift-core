@@ -49,6 +49,46 @@ type AttachmentRepository struct {
 	db database.Database
 }
 
+type CaptureAttachment struct {
+	ID               int
+	OriginalFilename string
+	MimeType         string
+	FileSize         int64
+	UploaderUsername string
+}
+
+// ListCaptureAttachments returns mapped item attachments for export verification.
+func (r *AttachmentRepository) ListCaptureAttachments(itemID int, attachmentIDs []int) ([]CaptureAttachment, error) {
+	if len(attachmentIDs) == 0 {
+		return []CaptureAttachment{}, nil
+	}
+	placeholders, idArgs := inPlaceholders(attachmentIDs)
+	args := append([]any{itemID}, idArgs...)
+	rows, err := r.db.Query(`
+		SELECT a.id, COALESCE(a.original_filename, ''), COALESCE(a.mime_type, ''),
+		       COALESCE(a.file_size, 0), COALESCE(u.username, '')
+		FROM attachments a
+		LEFT JOIN users u ON u.id = a.uploaded_by
+		WHERE a.item_id = ? AND a.entity_type = 'item' AND a.id IN (`+placeholders+`)
+	`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list capture attachments: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := []CaptureAttachment{}
+	for rows.Next() {
+		var attachment CaptureAttachment
+		if err := rows.Scan(&attachment.ID, &attachment.OriginalFilename, &attachment.MimeType, &attachment.FileSize, &attachment.UploaderUsername); err != nil {
+			return nil, fmt.Errorf("scan capture attachment: %w", err)
+		}
+		out = append(out, attachment)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate capture attachments: %w", err)
+	}
+	return out, nil
+}
+
 // NewAttachmentRepository creates an attachment repository.
 func NewAttachmentRepository(db database.Database) *AttachmentRepository {
 	return &AttachmentRepository{db: db}

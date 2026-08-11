@@ -164,58 +164,7 @@ func (s *TransitionMatrixService) load(ctx context.Context, workspaceID int) (*W
 // types; an unconfigured workspace (or a configuration with no type mappings)
 // emits the global catalog, matching WorkspaceService.GetItemTypes.
 func (s *TransitionMatrixService) loadItemTypeWorkflows(ctx context.Context, workspaceID int) (resolved map[int]int, isPersonal bool, err error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT w.is_personal,
-		       it.id AS item_type_id,
-		       CASE WHEN w.is_personal THEN NULL
-		            ELSE COALESCE(
-		              csit.workflow_id,
-		              cs.workflow_id,
-		              (SELECT id FROM workflows WHERE is_default = true ORDER BY id LIMIT 1)
-		            )
-		       END AS workflow_id
-		FROM workspaces w
-		LEFT JOIN workspace_configuration_sets wcs ON wcs.workspace_id = w.id
-		LEFT JOIN configuration_sets cs ON cs.id = wcs.configuration_set_id
-		LEFT JOIN item_types it ON
-		  NOT EXISTS (
-		    SELECT 1
-		    FROM configuration_set_item_types configured_type
-		    WHERE configured_type.configuration_set_id = cs.id
-		  )
-		  OR EXISTS (
-		    SELECT 1
-		    FROM configuration_set_item_types configured_type
-		    WHERE configured_type.configuration_set_id = cs.id
-		      AND configured_type.item_type_id = it.id
-		  )
-		LEFT JOIN configuration_set_item_types csit
-		  ON csit.configuration_set_id = cs.id
-		 AND csit.item_type_id = it.id
-		WHERE w.id = ?
-		ORDER BY it.id
-	`, workspaceID)
-	if err != nil {
-		return nil, false, fmt.Errorf("load transition-matrix workflow mappings: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	resolved = map[int]int{}
-	for rows.Next() {
-		var personal bool
-		var itemTypeID, workflowID sql.NullInt64
-		if err := rows.Scan(&personal, &itemTypeID, &workflowID); err != nil {
-			return nil, false, fmt.Errorf("scan transition-matrix workflow mapping: %w", err)
-		}
-		isPersonal = personal
-		if !personal && itemTypeID.Valid && workflowID.Valid {
-			resolved[int(itemTypeID.Int64)] = int(workflowID.Int64)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, false, fmt.Errorf("iterate transition-matrix workflow mappings: %w", err)
-	}
-	return resolved, isPersonal, nil
+	return repository.NewConfigurationSetRepository(s.db).ListItemTypeWorkflows(ctx, workspaceID)
 }
 
 func (s *TransitionMatrixService) loadStatuses(ctx context.Context, workflowIDs []int) ([]StatusTransitionOption, error) {

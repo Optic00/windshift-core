@@ -1,10 +1,8 @@
 package handlers
 
 import (
-	"database/sql"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -60,8 +58,8 @@ type UpdateAgentRequest struct {
 // allowUserManagedAgents reads the admin flag that unlocks self-serve agent
 // creation. Admins bypass the flag and can always manage agents.
 func (h *AgentHandler) allowUserManagedAgents() bool {
-	var value string
-	if err := h.db.QueryRow("SELECT value FROM system_settings WHERE key = 'allow_user_managed_agents'").Scan(&value); err == nil {
+	value, ok, err := repository.NewSystemSettingRepository(h.db).GetValue("allow_user_managed_agents")
+	if err == nil && ok {
 		return strings.EqualFold(value, "true")
 	}
 	return false
@@ -70,8 +68,8 @@ func (h *AgentHandler) allowUserManagedAgents() bool {
 // maxAgentsPerUser reads the configurable cap. Falls back to 5 when the
 // setting is missing or malformed.
 func (h *AgentHandler) maxAgentsPerUser() int {
-	var value string
-	if err := h.db.QueryRow("SELECT value FROM system_settings WHERE key = 'max_agents_per_user'").Scan(&value); err == nil {
+	value, ok, err := repository.NewSystemSettingRepository(h.db).GetValue("max_agents_per_user")
+	if err == nil && ok {
 		if n, perr := strconv.Atoi(value); perr == nil && n >= 0 {
 			return n
 		}
@@ -81,9 +79,7 @@ func (h *AgentHandler) maxAgentsPerUser() int {
 
 // countOwnedAgents returns the number of agents owned by the given user.
 func (h *AgentHandler) countOwnedAgents(ownerID int) (int, error) {
-	var count int
-	err := h.db.QueryRow("SELECT COUNT(*) FROM users WHERE agent_owner_user_id = ?", ownerID).Scan(&count)
-	return count, err
+	return repository.NewUserRepository(h.db).CountOwnedAgents(ownerID)
 }
 
 // CreateOwnedAgent provisions a new agent owned by ownerID after running the
@@ -118,15 +114,16 @@ func (h *AgentHandler) CreateOwnedAgent(ownerID int, isAdmin bool, req CreateAge
 		email = fmt.Sprintf("agent-%s-%d@agents.local", strings.ToLower(req.Username), time.Now().UnixNano())
 	}
 
-	var emailExists bool
-	if err := h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE email = ?)", email).Scan(&emailExists); err != nil {
+	userRepo := repository.NewUserRepository(h.db)
+	emailExists, err := userRepo.EmailExists(email, 0)
+	if err != nil {
 		return nil, err
 	}
 	if emailExists {
 		return nil, ErrAgentEmailTaken
 	}
-	var usernameExists bool
-	if err := h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE username = ?)", req.Username).Scan(&usernameExists); err != nil {
+	usernameExists, err := userRepo.UsernameExists(req.Username, 0)
+	if err != nil {
 		return nil, err
 	}
 	if usernameExists {
@@ -134,7 +131,7 @@ func (h *AgentHandler) CreateOwnedAgent(ownerID int, isAdmin bool, req CreateAge
 	}
 
 	now := time.Now()
-	newID, err := repository.NewUserRepository(h.db).Create(repository.CreateUserParams{
+	newID, err := userRepo.Create(repository.CreateUserParams{
 		Email:                 email,
 		Username:              req.Username,
 		FirstName:             req.FirstName,
@@ -185,9 +182,8 @@ func (h *AgentHandler) CreateOAuthAgent(ownerID, oauthClientID int, req CreateAg
 	}
 
 	// Recheck the client to close a disable-after-consent race.
-	var enabled bool
-	err := h.db.QueryRow(`SELECT enabled FROM oauth_clients WHERE id = ?`, oauthClientID).Scan(&enabled)
-	if errors.Is(err, sql.ErrNoRows) {
+	enabled, err := repository.NewOAuthClientRepository(h.db).EnabledByID(oauthClientID)
+	if errors.Is(err, repository.ErrNotFound) {
 		return nil, ErrOAuthClientDisabledOrMissing
 	}
 	if err != nil {
@@ -202,15 +198,16 @@ func (h *AgentHandler) CreateOAuthAgent(ownerID, oauthClientID int, req CreateAg
 		email = fmt.Sprintf("agent-%s-%d@agents.local", strings.ToLower(req.Username), time.Now().UnixNano())
 	}
 
-	var emailExists bool
-	if err := h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE email = ?)", email).Scan(&emailExists); err != nil {
+	userRepo := repository.NewUserRepository(h.db)
+	emailExists, err := userRepo.EmailExists(email, 0)
+	if err != nil {
 		return nil, err
 	}
 	if emailExists {
 		return nil, ErrAgentEmailTaken
 	}
-	var usernameExists bool
-	if err := h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE username = ?)", req.Username).Scan(&usernameExists); err != nil {
+	usernameExists, err := userRepo.UsernameExists(req.Username, 0)
+	if err != nil {
 		return nil, err
 	}
 	if usernameExists {
@@ -218,7 +215,7 @@ func (h *AgentHandler) CreateOAuthAgent(ownerID, oauthClientID int, req CreateAg
 	}
 
 	now := time.Now()
-	newID, err := repository.NewUserRepository(h.db).Create(repository.CreateUserParams{
+	newID, err := userRepo.Create(repository.CreateUserParams{
 		Email:                 email,
 		Username:              req.Username,
 		FirstName:             req.FirstName,
@@ -260,26 +257,7 @@ func (h *AgentHandler) CreateOAuthAgent(ownerID, oauthClientID int, req CreateAg
 // by the CLI onboarding flow so repeat `ws init` runs on the same machine
 // reuse the same agent row (stable identity, revocable per-machine).
 func (h *AgentHandler) FindOwnedAgentByUsername(ownerID int, username string) (*models.User, error) {
-	var u models.User
-	var avatarURL sql.NullString
-	err := h.db.QueryRow(`
-		SELECT id, email, username, first_name, last_name, is_active, avatar_url, created_at, updated_at
-		FROM users
-		WHERE username = ? AND agent_owner_user_id = ? AND COALESCE(is_agent, false) = true
-	`, username, ownerID).Scan(&u.ID, &u.Email, &u.Username, &u.FirstName, &u.LastName, &u.IsActive, &avatarURL, &u.CreatedAt, &u.UpdatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	u.IsAgent = true
-	u.AgentOwnerUserID = &ownerID
-	if avatarURL.Valid {
-		u.AvatarURL = avatarURL.String
-	}
-	u.FullName = strings.TrimSpace(u.FirstName + " " + u.LastName)
-	return &u, nil
+	return repository.NewUserRepository(h.db).FindOwnedAgentByUsername(ownerID, username)
 }
 
 // Create handles POST /api/me/agents.
@@ -372,36 +350,8 @@ func (h *AgentHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := h.db.Query(`
-		SELECT id, email, username, first_name, last_name, is_active, avatar_url, created_at, updated_at
-		FROM users
-		WHERE agent_owner_user_id = ?
-		ORDER BY created_at DESC
-	`, currentUser.ID)
+	agents, err := repository.NewUserRepository(h.db).ListOwnedAgents(currentUser.ID)
 	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	defer func() { _ = rows.Close() }()
-
-	agents := []models.User{}
-	for rows.Next() {
-		var u models.User
-		var avatarURL sql.NullString
-		if scanErr := rows.Scan(&u.ID, &u.Email, &u.Username, &u.FirstName, &u.LastName, &u.IsActive, &avatarURL, &u.CreatedAt, &u.UpdatedAt); scanErr != nil {
-			slog.Warn("agent list scan failed", slog.Any("error", scanErr))
-			continue
-		}
-		u.IsAgent = true
-		ownerID := currentUser.ID
-		u.AgentOwnerUserID = &ownerID
-		if avatarURL.Valid {
-			u.AvatarURL = avatarURL.String
-		}
-		u.FullName = strings.TrimSpace(u.FirstName + " " + u.LastName)
-		agents = append(agents, u)
-	}
-	if err := rows.Err(); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
@@ -431,43 +381,14 @@ func (h *AgentHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.db.ExecWrite(`
-		UPDATE users
-		SET first_name = ?, last_name = '', updated_at = CURRENT_TIMESTAMP
-		WHERE id = ? AND agent_owner_user_id = ? AND COALESCE(is_agent, false) = true
-	`, req.Name, agentID, currentUser.ID)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	if rows == 0 {
+	agent, err := repository.NewUserRepository(h.db).UpdateOwnedAgentName(agentID, currentUser.ID, req.Name)
+	if errors.Is(err, repository.ErrNotFound) {
 		respondNotFound(w, r, "agent")
 		return
 	}
-
-	var agent models.User
-	var avatarURL sql.NullString
-	err = h.db.QueryRow(`
-		SELECT id, email, username, first_name, last_name, is_active, avatar_url, created_at, updated_at
-		FROM users WHERE id = ?
-	`, agentID).Scan(
-		&agent.ID, &agent.Email, &agent.Username, &agent.FirstName, &agent.LastName,
-		&agent.IsActive, &avatarURL, &agent.CreatedAt, &agent.UpdatedAt,
-	)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
-	}
-	agent.IsAgent = true
-	agent.AgentOwnerUserID = &currentUser.ID
-	agent.FullName = strings.TrimSpace(agent.FirstName + " " + agent.LastName)
-	if avatarURL.Valid {
-		agent.AvatarURL = avatarURL.String
 	}
 
 	_ = logger.LogAudit(h.db, logger.AuditEvent{
@@ -502,10 +423,9 @@ func (h *AgentHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify ownership before deletion to avoid disclosing whether the agent exists.
-	var ownerID sql.NullInt64
-	var username string
-	err := h.db.QueryRow("SELECT agent_owner_user_id, username FROM users WHERE id = ?", agentID).Scan(&ownerID, &username)
-	if errors.Is(err, sql.ErrNoRows) {
+	userRepo := repository.NewUserRepository(h.db)
+	ownerID, username, err := userRepo.OwnedAgentTarget(agentID)
+	if errors.Is(err, repository.ErrNotFound) {
 		respondNotFound(w, r, "agent")
 		return
 	}
@@ -513,7 +433,7 @@ func (h *AgentHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
-	if !ownerID.Valid || int(ownerID.Int64) != currentUser.ID {
+	if ownerID == nil || *ownerID != currentUser.ID {
 		_ = logger.LogAudit(h.db, logger.AuditEvent{
 			UserID:       currentUser.ID,
 			Username:     currentUser.Username,
@@ -530,7 +450,7 @@ func (h *AgentHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err = h.db.ExecWrite("DELETE FROM users WHERE id = ?", agentID); err != nil {
+	if err = userRepo.Delete(agentID); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}

@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -17,6 +18,121 @@ import (
 
 type AssetRepository struct {
 	db database.Database
+}
+
+// PortalReportAsset is the public projection returned by an asset report.
+type PortalReportAsset struct {
+	ID                int            `json:"id"`
+	Title             string         `json:"title"`
+	AssetTag          string         `json:"asset_tag"`
+	AssetTypeID       *int           `json:"asset_type_id,omitempty"`
+	StatusID          *int           `json:"status_id,omitempty"`
+	CategoryID        *int           `json:"category_id,omitempty"`
+	CustomFieldValues map[string]any `json:"custom_field_values,omitempty"`
+	CreatedAt         time.Time      `json:"created_at"`
+	UpdatedAt         time.Time      `json:"updated_at"`
+	AssetTypeName     *string        `json:"asset_type_name,omitempty"`
+	StatusName        *string        `json:"status_name,omitempty"`
+	StatusColor       *string        `json:"status_color,omitempty"`
+	CategoryName      *string        `json:"category_name,omitempty"`
+}
+
+// ListPortalReportAssets returns one page of assets for a report and projects
+// custom fields down to the explicitly allowed keys.
+func (r *AssetRepository) ListPortalReportAssets(ctx context.Context, setID int, cqlSQL string, cqlArgs []any, limit, offset int, allowedCustomFieldKeys map[string]struct{}) ([]PortalReportAsset, error) {
+	where := "a.set_id = ?"
+	args := []any{setID}
+	if cqlSQL != "" {
+		where += " AND (" + cqlSQL + ")"
+		args = append(args, cqlArgs...)
+	}
+	args = append(args, limit, offset)
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT a.id, a.title, COALESCE(a.asset_tag, ''), a.asset_type_id, a.status_id, a.category_id,
+		       a.custom_field_values, a.created_at, a.updated_at,
+		       at.name, ast.name, ast.color, ac.name
+		FROM assets a
+		LEFT JOIN asset_types at ON a.asset_type_id = at.id
+		LEFT JOIN asset_statuses ast ON a.status_id = ast.id
+		LEFT JOIN asset_categories ac ON a.category_id = ac.id
+		WHERE `+where+`
+		ORDER BY a.created_at DESC
+		LIMIT ? OFFSET ?
+	`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list portal report assets: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	assets := make([]PortalReportAsset, 0)
+	for rows.Next() {
+		var asset PortalReportAsset
+		var assetTypeID, statusID, categoryID sql.NullInt64
+		var customFieldValues sql.NullString
+		var assetTypeName, statusName, statusColor, categoryName sql.NullString
+		if err := rows.Scan(&asset.ID, &asset.Title, &asset.AssetTag, &assetTypeID, &statusID, &categoryID,
+			&customFieldValues, &asset.CreatedAt, &asset.UpdatedAt,
+			&assetTypeName, &statusName, &statusColor, &categoryName); err != nil {
+			return nil, fmt.Errorf("scan portal report asset: %w", err)
+		}
+		if assetTypeID.Valid {
+			id := int(assetTypeID.Int64)
+			asset.AssetTypeID = &id
+		}
+		if statusID.Valid {
+			id := int(statusID.Int64)
+			asset.StatusID = &id
+		}
+		if categoryID.Valid {
+			id := int(categoryID.Int64)
+			asset.CategoryID = &id
+		}
+		if customFieldValues.Valid && customFieldValues.String != "" && len(allowedCustomFieldKeys) > 0 {
+			var values map[string]any
+			if json.Unmarshal([]byte(customFieldValues.String), &values) == nil {
+				projected := make(map[string]any, len(allowedCustomFieldKeys))
+				for key := range allowedCustomFieldKeys {
+					if value, ok := values[key]; ok {
+						projected[key] = value
+					}
+				}
+				if len(projected) > 0 {
+					asset.CustomFieldValues = projected
+				}
+			}
+		}
+		if assetTypeName.Valid {
+			asset.AssetTypeName = &assetTypeName.String
+		}
+		if statusName.Valid {
+			asset.StatusName = &statusName.String
+		}
+		if statusColor.Valid {
+			asset.StatusColor = &statusColor.String
+		}
+		if categoryName.Valid {
+			asset.CategoryName = &categoryName.String
+		}
+		assets = append(assets, asset)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate portal report assets: %w", err)
+	}
+	return assets, nil
+}
+
+func (r *AssetRepository) CountPortalReportAssets(ctx context.Context, setID int, cqlSQL string, cqlArgs []any) (int, error) {
+	query := "SELECT COUNT(*) FROM assets a WHERE a.set_id = ?"
+	args := []any{setID}
+	if cqlSQL != "" {
+		query += " AND (" + cqlSQL + ")"
+		args = append(args, cqlArgs...)
+	}
+	var total int
+	if err := r.db.QueryRowContext(ctx, query, args...).Scan(&total); err != nil {
+		return 0, fmt.Errorf("count portal report assets: %w", err)
+	}
+	return total, nil
 }
 
 // FindAssetSummariesByIDs returns compact display data in one query. Callers

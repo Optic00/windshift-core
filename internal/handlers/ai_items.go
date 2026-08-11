@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"time"
 
 	"windshift/internal/llm"
 	"windshift/internal/models"
@@ -125,31 +124,26 @@ func (h *AIHandler) CatchMeUp(w http.ResponseWriter, r *http.Request) {
 		contextLines = append(contextLines, fmt.Sprintf("\nDescription:\n%s", desc))
 	}
 
-	// Load comments (last 20)
-	commentRows, err := h.db.Query(
-		`SELECT c.content, COALESCE(u.first_name || ' ' || u.last_name, 'Unknown'), c.created_at FROM comments c
-		 LEFT JOIN users u ON c.author_id = u.id
-		 WHERE c.item_id = ? ORDER BY c.created_at DESC LIMIT 20`, itemID)
+	commentService := h.commentService
+	if commentService == nil {
+		commentService = services.NewCommentService(h.db)
+	}
+	commentRows, err := commentService.ListRecentSummaries(itemID, 20)
 	if err == nil {
-		defer func() { _ = commentRows.Close() }()
-		var comments []string
-		for commentRows.Next() {
-			var content, author string
-			var createdAt time.Time
-			if err = commentRows.Scan(&content, &author, &createdAt); err == nil {
-				if len(content) > 300 {
-					content = content[:300] + "..."
-				}
-				comments = append(comments, fmt.Sprintf("- %s (%s): %s", author, createdAt.Format("Jan 2"), content))
+		comments := make([]string, 0, len(commentRows))
+		for _, comment := range commentRows {
+			content := comment.Content
+			if len(content) > 300 {
+				content = content[:300] + "..."
 			}
-		}
-		if err := commentRows.Err(); err != nil {
-			slog.Warn("error iterating comment rows", slog.String("component", "ai"), slog.Any("error", err))
+			comments = append(comments, fmt.Sprintf("- %s (%s): %s", comment.Author, comment.CreatedAt.Format("Jan 2"), content))
 		}
 		if len(comments) > 0 {
 			contextLines = append(contextLines, "\nRecent comments:")
 			contextLines = append(contextLines, comments...)
 		}
+	} else {
+		slog.Warn("failed to load recent comments", slog.String("component", "ai"), slog.Any("error", err))
 	}
 
 	// Load history (last 30 changes)
@@ -187,50 +181,33 @@ func (h *AIHandler) CatchMeUp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Load item links
-	linkRows, err := h.db.Query(
-		`SELECT lt.name, i2.title, CONCAT(w.key, '-', i2.workspace_item_number) as item_key
-		 FROM item_links il
-		 JOIN link_types lt ON il.link_type_id = lt.id
-		 JOIN items i2 ON (CASE WHEN il.source_item_id = ? THEN il.target_item_id ELSE il.source_item_id END) = i2.id
-		 JOIN workspaces w ON i2.workspace_id = w.id
-		 WHERE il.source_item_id = ? OR il.target_item_id = ?`, itemID, itemID, itemID)
+	linkRows, err := repository.NewItemLinkRepository(h.db).ListLinkedItemSummaries(itemID)
 	if err == nil {
-		defer func() { _ = linkRows.Close() }()
-		var links []string
-		for linkRows.Next() {
-			var linkType, title, key string
-			if err = linkRows.Scan(&linkType, &title, &key); err == nil {
-				links = append(links, fmt.Sprintf("- %s: [%s] %s", linkType, key, title))
-			}
-		}
-		if err := linkRows.Err(); err != nil {
-			slog.Warn("error iterating link rows", slog.String("component", "ai"), slog.Any("error", err))
+		links := make([]string, 0, len(linkRows))
+		for _, link := range linkRows {
+			links = append(links, fmt.Sprintf("- %s: [%s] %s", link.LinkType, link.ItemKey, link.Title))
 		}
 		if len(links) > 0 {
 			contextLines = append(contextLines, "\nLinked items:")
 			contextLines = append(contextLines, links...)
 		}
+	} else {
+		slog.Warn("failed to load linked items", slog.String("component", "ai"), slog.Any("error", err))
 	}
 
 	// Load SCM links
-	scmRows, err := h.db.Query(
-		`SELECT title, branch_name, state FROM item_scm_links WHERE item_id = ?`, itemID)
+	scmRows, err := repository.NewSCMWorkspaceRepository(h.db).ListItemSCMLinkSummaries(itemID)
 	if err == nil {
-		defer func() { _ = scmRows.Close() }()
-		var scmLinks []string
-		for scmRows.Next() {
-			var title, branch, state string
-			if err = scmRows.Scan(&title, &branch, &state); err == nil {
-				scmLinks = append(scmLinks, fmt.Sprintf("- PR: %s (branch: %s, state: %s)", title, branch, state))
-			}
-		}
-		if err := scmRows.Err(); err != nil {
-			slog.Warn("error iterating SCM link rows", slog.String("component", "ai"), slog.Any("error", err))
+		scmLinks := make([]string, 0, len(scmRows))
+		for _, link := range scmRows {
+			scmLinks = append(scmLinks, fmt.Sprintf("- PR: %s (branch: %s, state: %s)", link.Title, link.BranchName, link.State))
 		}
 		if len(scmLinks) > 0 {
 			contextLines = append(contextLines, "\nSource control:")
 			contextLines = append(contextLines, scmLinks...)
 		}
+	} else {
+		slog.Warn("failed to load SCM links", slog.String("component", "ai"), slog.Any("error", err))
 	}
 
 	systemPrompt := h.promptStore.Get(llm.PromptCatchMeUp)
@@ -370,22 +347,13 @@ func (h *AIHandler) DecomposeItem(w http.ResponseWriter, r *http.Request) {
 	itemID := item.ID
 	itemKey := fmt.Sprintf("%s-%d", item.WorkspaceKey, item.WorkspaceItemNumber)
 
-	// Get available child item types
-	typeRows, err := h.db.Query(
-		`SELECT it.name FROM item_types it
-		 JOIN workspace_hierarchy wh ON wh.child_type_id = it.id
-		 WHERE wh.parent_type_id = ? AND it.workspace_id = ?`, item.ItemTypeID, item.WorkspaceID)
 	var childTypeNames []string
-	if err == nil {
-		defer func() { _ = typeRows.Close() }()
-		for typeRows.Next() {
-			var name string
-			if err = typeRows.Scan(&name); err == nil {
-				childTypeNames = append(childTypeNames, name)
-			}
-		}
-		if err := typeRows.Err(); err != nil {
-			slog.Warn("error iterating type rows", slog.String("component", "ai"), slog.Any("error", err))
+	var err error
+	if item.ItemTypeID != nil {
+		childTypeNames, err = repository.NewItemTypeRepository(h.db).ListChildNames(*item.ItemTypeID, item.WorkspaceID)
+		if err != nil {
+			slog.Warn("error loading child item types", slog.String("component", "ai"), slog.Any("error", err))
+			childTypeNames = nil
 		}
 	}
 

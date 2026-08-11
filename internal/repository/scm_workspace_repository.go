@@ -19,8 +19,41 @@ type SCMWorkspaceRepository struct {
 	db database.Database
 }
 
+// ItemSCMLinkSummary is the source-control projection used by item briefings.
+type ItemSCMLinkSummary struct {
+	Title      string
+	BranchName string
+	State      string
+}
+
 func NewSCMWorkspaceRepository(db database.Database) *SCMWorkspaceRepository {
 	return &SCMWorkspaceRepository{db: db}
+}
+
+// ListItemSCMLinkSummaries returns source-control links attached to an item.
+func (r *SCMWorkspaceRepository) ListItemSCMLinkSummaries(itemID int) ([]ItemSCMLinkSummary, error) {
+	rows, err := r.db.Query(`
+		SELECT title, branch_name, state
+		FROM item_scm_links
+		WHERE item_id = ?
+	`, itemID)
+	if err != nil {
+		return nil, fmt.Errorf("list SCM links for item %d: %w", itemID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]ItemSCMLinkSummary, 0)
+	for rows.Next() {
+		var summary ItemSCMLinkSummary
+		if err := rows.Scan(&summary.Title, &summary.BranchName, &summary.State); err != nil {
+			return nil, fmt.Errorf("scan SCM link for item %d: %w", itemID, err)
+		}
+		out = append(out, summary)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate SCM links for item %d: %w", itemID, err)
+	}
+	return out, nil
 }
 
 // SCMWorkspaceConnection represents a workspace SCM connection joined with

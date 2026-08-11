@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -15,6 +16,23 @@ type PortalCustomerRepository struct {
 
 func NewPortalCustomerRepository(db database.Database) *PortalCustomerRepository {
 	return &PortalCustomerRepository{db: db}
+}
+
+// UserID returns the linked application user, if any.
+func (r *PortalCustomerRepository) UserID(ctx context.Context, customerID int) (*int, error) {
+	var id sql.NullInt64
+	err := r.db.QueryRowContext(ctx, "SELECT user_id FROM portal_customers WHERE id = ?", customerID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get portal customer %d user: %w", customerID, err)
+	}
+	if !id.Valid {
+		return nil, nil
+	}
+	value := int(id.Int64)
+	return &value, nil
 }
 
 func (r *PortalCustomerRepository) FindIDByEmail(email string) (int, error) {

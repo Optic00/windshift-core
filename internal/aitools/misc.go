@@ -2,8 +2,8 @@ package aitools
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -14,17 +14,6 @@ import (
 	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
-
-// oneYearAgoCutoff returns a dialect-appropriate SQL fragment that evaluates
-// to "one year before now". Postgres uses INTERVAL syntax; SQLite uses
-// datetime() with relative modifiers. Both are returned as bare expressions
-// suitable for inlining into a WHERE clause.
-func oneYearAgoCutoff(driver string) string {
-	if driver == "postgres" {
-		return "(NOW() - INTERVAL '1 year')"
-	}
-	return "datetime('now', '-1 year')"
-}
 
 // ----------------------------------------------------------------------------
 // list_milestones
@@ -253,59 +242,50 @@ func init() {
 			if args.IncludeGlobal != nil {
 				includeGlobal = *args.IncludeGlobal
 			}
-			oneYearAgo := oneYearAgoCutoff(env.DB.GetDriverName())
-			query := `SELECT m.id, m.name, COALESCE(m.description, ''), m.status,
-			       COALESCE(CAST(m.target_date AS TEXT), ''),
-			       COALESCE(mc.name, ''),
-			       COALESCE(m.workspace_id, 0), COALESCE(w.name, '')
-			       FROM milestones m
-			       LEFT JOIN milestone_categories mc ON m.category_id = mc.id
-			       LEFT JOIN workspaces w ON m.workspace_id = w.id
-			       WHERE NOT (m.status IN ('completed', 'cancelled') AND m.updated_at < ` + oneYearAgo + `)`
-			var qa []any
-			var accessParts []string
-			if includeGlobal {
-				accessParts = append(accessParts, "m.is_global = true")
-			}
+			params := services.MilestoneListParams{Limit: 1<<31 - 1, Status: args.Status, IncludeGlobal: includeGlobal}
 			if args.WorkspaceID > 0 {
 				if !env.HasWorkspaceAccess(args.WorkspaceID) {
 					return map[string]string{"error": "workspace not found"}, nil
 				}
-				accessParts = append(accessParts, "m.workspace_id = ?")
-				qa = append(qa, args.WorkspaceID)
-			} else if len(env.AccessibleWorkspaceIDs) > 0 {
-				ph := make([]string, len(env.AccessibleWorkspaceIDs))
-				for i, id := range env.AccessibleWorkspaceIDs {
-					ph[i] = "?"
-					qa = append(qa, id)
+				params.WorkspaceID = &args.WorkspaceID
+			} else {
+				params.WorkspaceIDs = env.AccessibleWorkspaceIDs
+				if len(params.WorkspaceIDs) == 0 {
+					if !includeGlobal {
+						return listMilestonesOut{Milestones: []milestoneDTO{}}, nil
+					}
+					params.WorkspaceIDs = []int{-1}
 				}
-				accessParts = append(accessParts, fmt.Sprintf("m.workspace_id IN (%s)", strings.Join(ph, ",")))
 			}
-			if len(accessParts) == 0 {
-				return listMilestonesOut{Milestones: []milestoneDTO{}}, nil
-			}
-			query += " AND (" + strings.Join(accessParts, " OR ") + ")"
-			if args.Status != "" {
-				query += " AND m.status = ?"
-				qa = append(qa, args.Status)
-			}
-			query += " ORDER BY m.status, m.target_date NULLS LAST, m.name"
-			rows, err := env.DB.Query(query, qa...)
+			milestones, _, err := services.NewPlanningService(env.DB).ListMilestones(params)
 			if err != nil {
 				return nil, err
 			}
-			defer func() { _ = rows.Close() }()
 			out := listMilestonesOut{Milestones: []milestoneDTO{}}
-			for rows.Next() {
-				var m milestoneDTO
-				if err := rows.Scan(&m.ID, &m.Name, &m.Description, &m.Status, &m.TargetDate, &m.CategoryName, &m.WorkspaceID, &m.WorkspaceName); err != nil {
+			cutoff := time.Now().AddDate(-1, 0, 0)
+			for i := range milestones {
+				milestone := &milestones[i]
+				if (milestone.Status == "completed" || milestone.Status == "cancelled") && milestone.UpdatedAt.Before(cutoff) { //nolint:misspell // Status values use British spelling.
 					continue
 				}
-				out.Milestones = append(out.Milestones, m)
+				out.Milestones = append(out.Milestones, milestoneToDTO(milestone))
 			}
-			if err := rows.Err(); err != nil {
-				return nil, err
-			}
+			sort.SliceStable(out.Milestones, func(i, j int) bool {
+				left, right := out.Milestones[i], out.Milestones[j]
+				if left.Status != right.Status {
+					return left.Status < right.Status
+				}
+				if left.TargetDate != right.TargetDate {
+					if left.TargetDate == "" {
+						return false
+					}
+					if right.TargetDate == "" {
+						return true
+					}
+					return left.TargetDate < right.TargetDate
+				}
+				return left.Name < right.Name
+			})
 			return out, nil
 		},
 	})
@@ -390,71 +370,44 @@ func init() {
 			if args.IncludeGlobal != nil {
 				includeGlobal = *args.IncludeGlobal
 			}
-			oneYearAgo := oneYearAgoCutoff(env.DB.GetDriverName())
-			// Iterations created without dates have NULL start_date/end_date.
-			// `null < timestamp` is NULL (≈ false) in both Postgres and SQLite,
-			// which would silently drop them from the result. Treat NULL
-			// end_date as "not stale" so newly seeded completed iterations
-			// still surface.
-			query := `SELECT iter.id, iter.name, COALESCE(iter.description, ''), iter.status,
-			       CAST(iter.start_date AS TEXT), CAST(iter.end_date AS TEXT),
-			       COALESCE(it.name, ''),
-			       COALESCE(iter.workspace_id, 0), COALESCE(w.name, '')
-			       FROM iterations iter
-			       LEFT JOIN iteration_types it ON iter.type_id = it.id
-			       LEFT JOIN workspaces w ON iter.workspace_id = w.id
-			       WHERE NOT (iter.status IN ('completed', 'cancelled') AND iter.end_date IS NOT NULL AND iter.end_date < ` + oneYearAgo + `)`
-			var qa []any
-			var accessParts []string
-			if includeGlobal {
-				accessParts = append(accessParts, "iter.is_global = true")
-			}
+			params := services.IterationListParams{Limit: 1<<31 - 1, Status: args.Status, IncludeGlobal: includeGlobal}
 			if args.WorkspaceID > 0 {
 				if !env.HasWorkspaceAccess(args.WorkspaceID) {
 					return map[string]string{"error": "workspace not found"}, nil
 				}
-				accessParts = append(accessParts, "iter.workspace_id = ?")
-				qa = append(qa, args.WorkspaceID)
-			} else if len(env.AccessibleWorkspaceIDs) > 0 {
-				ph := make([]string, len(env.AccessibleWorkspaceIDs))
-				for i, id := range env.AccessibleWorkspaceIDs {
-					ph[i] = "?"
-					qa = append(qa, id)
+				params.WorkspaceID = &args.WorkspaceID
+			} else {
+				params.WorkspaceIDs = env.AccessibleWorkspaceIDs
+				if len(params.WorkspaceIDs) == 0 {
+					if !includeGlobal {
+						return listIterationsOut{Iterations: []iterationDTO{}}, nil
+					}
+					params.WorkspaceIDs = []int{-1}
 				}
-				accessParts = append(accessParts, fmt.Sprintf("iter.workspace_id IN (%s)", strings.Join(ph, ",")))
 			}
-			if len(accessParts) == 0 {
-				return listIterationsOut{Iterations: []iterationDTO{}}, nil
-			}
-			query += " AND (" + strings.Join(accessParts, " OR ") + ")"
-			if args.Status != "" {
-				query += " AND iter.status = ?"
-				qa = append(qa, args.Status)
-			}
-			query += " ORDER BY iter.status, iter.start_date, iter.name"
-			rows, err := env.DB.Query(query, qa...)
+			iterations, _, err := services.NewPlanningService(env.DB).ListIterations(params)
 			if err != nil {
 				return nil, err
 			}
-			defer func() { _ = rows.Close() }()
 			out := listIterationsOut{Iterations: []iterationDTO{}}
-			for rows.Next() {
-				var it iterationDTO
-				var startDate, endDate sql.NullString
-				if err := rows.Scan(&it.ID, &it.Name, &it.Description, &it.Status, &startDate, &endDate, &it.TypeName, &it.WorkspaceID, &it.WorkspaceName); err != nil {
+			cutoff := time.Now().AddDate(-1, 0, 0).Format(time.DateOnly)
+			for i := range iterations {
+				iteration := &iterations[i]
+				if (iteration.Status == "completed" || iteration.Status == "cancelled") && iteration.EndDate != "" && iteration.EndDate < cutoff { //nolint:misspell // Status values use British spelling.
 					continue
 				}
-				if startDate.Valid {
-					it.StartDate = startDate.String
-				}
-				if endDate.Valid {
-					it.EndDate = endDate.String
-				}
-				out.Iterations = append(out.Iterations, it)
+				out.Iterations = append(out.Iterations, iterationToDTO(iteration))
 			}
-			if err := rows.Err(); err != nil {
-				return nil, err
-			}
+			sort.SliceStable(out.Iterations, func(i, j int) bool {
+				left, right := out.Iterations[i], out.Iterations[j]
+				if left.Status != right.Status {
+					return left.Status < right.Status
+				}
+				if left.StartDate != right.StartDate {
+					return left.StartDate < right.StartDate
+				}
+				return left.Name < right.Name
+			})
 			return out, nil
 		},
 	})
@@ -467,23 +420,16 @@ func init() {
 		Description: "List available custom field definitions. Use this to discover what custom fields exist before filtering items with cf_<name> in the filter parameter of list_items.",
 		Scopes:      []string{auth.ScopeCustomFieldsRead},
 		Run: func(_ context.Context, env *Env, _ listCustomFieldsArgs) (any, error) {
-			rows, err := env.DB.Query(
-				"SELECT id, name, field_type, COALESCE(description, ''), required, COALESCE(options, '') FROM custom_field_definitions ORDER BY display_order, name",
-			)
+			fields, err := repository.NewCustomFieldRepository(env.DB).List()
 			if err != nil {
 				return nil, err
 			}
-			defer func() { _ = rows.Close() }()
 			out := listCustomFieldsOut{CustomFields: []customFieldDTO{}}
-			for rows.Next() {
-				var cf customFieldDTO
-				if err := rows.Scan(&cf.ID, &cf.Name, &cf.FieldType, &cf.Description, &cf.Required, &cf.Options); err != nil {
-					continue
-				}
-				out.CustomFields = append(out.CustomFields, cf)
-			}
-			if err := rows.Err(); err != nil {
-				return nil, err
+			for _, field := range fields {
+				out.CustomFields = append(out.CustomFields, customFieldDTO{
+					ID: field.ID, Name: field.Name, FieldType: field.FieldType,
+					Description: field.Description, Required: field.Required, Options: field.Options,
+				})
 			}
 			return out, nil
 		},

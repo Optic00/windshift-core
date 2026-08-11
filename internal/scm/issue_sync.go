@@ -19,13 +19,6 @@ import (
 	"windshift/internal/sso"
 )
 
-// queryExecer is the common subset of database.Database and database.Tx used by
-// helper methods so they can run inside or outside an explicit transaction.
-type queryExecer interface {
-	ExecWriteContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-}
-
 // IssueSyncService handles synchronization of GitHub Issues into Windshift items.
 type IssueSyncService struct {
 	db          database.Database
@@ -316,14 +309,12 @@ func (s *IssueSyncService) createItemFromIssue(ctx context.Context, config *mode
 		return fmt.Errorf("create item: %w", err)
 	}
 
-	// Carry the inferred milestone (if any) into item_milestones.
+	milestoneIDs := []int{}
 	if milestoneID != nil {
-		if _, err := tx.Exec(
-			"INSERT INTO item_milestones (item_id, milestone_id, created_at) VALUES (?, ?, ?)",
-			itemID, *milestoneID, time.Now(),
-		); err != nil {
-			return fmt.Errorf("attach milestone: %w", err)
-		}
+		milestoneIDs = append(milestoneIDs, *milestoneID)
+	}
+	if err := repository.NewMilestoneAttachRepository(s.db).ReplaceItemMilestonesTx(ctx, tx, itemID, milestoneIDs); err != nil {
+		return err
 	}
 
 	now := time.Now()
@@ -377,18 +368,12 @@ func (s *IssueSyncService) updateItemFromIssue(ctx context.Context, config *mode
 		return fmt.Errorf("update item: %w", err)
 	}
 
-	// Milestones live in item_milestones, not on items. Replace whatever's there
-	// so a removed-on-GitHub milestone is cleared locally too.
-	if _, err := tx.Exec("DELETE FROM item_milestones WHERE item_id = ?", itemID); err != nil {
-		return fmt.Errorf("clear milestones: %w", err)
-	}
+	milestoneIDs := []int{}
 	if milestoneID != nil {
-		if _, err := tx.Exec(
-			"INSERT INTO item_milestones (item_id, milestone_id, created_at) VALUES (?, ?, ?)",
-			itemID, *milestoneID, time.Now(),
-		); err != nil {
-			return fmt.Errorf("attach milestone: %w", err)
-		}
+		milestoneIDs = append(milestoneIDs, *milestoneID)
+	}
+	if err := repository.NewMilestoneAttachRepository(s.db).ReplaceItemMilestonesTx(ctx, tx, itemID, milestoneIDs); err != nil {
+		return err
 	}
 
 	now := time.Now()
@@ -884,11 +869,8 @@ func (s *IssueSyncService) GetSyncedItems(ctx context.Context, configID int) ([]
 		SELECT isi.id, isi.issue_sync_config_id, isi.item_id,
 			   isi.github_issue_number, isi.github_issue_id, isi.github_issue_url,
 			   isi.last_synced_at, isi.last_github_updated_at, isi.sync_lock,
-			   isi.created_at, isi.updated_at,
-			   i.title, i.workspace_item_number, w.key
+			   isi.created_at, isi.updated_at
 		FROM issue_sync_items isi
-		JOIN items i ON i.id = isi.item_id
-		JOIN workspaces w ON w.id = i.workspace_id
 		WHERE isi.issue_sync_config_id = ?
 		ORDER BY isi.github_issue_number
 	`, configID)
@@ -897,7 +879,8 @@ func (s *IssueSyncService) GetSyncedItems(ctx context.Context, configID int) ([]
 	}
 	defer func() { _ = rows.Close() }()
 
-	var items []models.IssueSyncItem
+	items := make([]models.IssueSyncItem, 0)
+	itemIDs := make([]int, 0)
 	for rows.Next() {
 		var item models.IssueSyncItem
 		var lastSync, lastGH sql.NullTime
@@ -906,7 +889,6 @@ func (s *IssueSyncService) GetSyncedItems(ctx context.Context, configID int) ([]
 			&item.GitHubIssueNumber, &item.GitHubIssueID, &item.GitHubIssueURL,
 			&lastSync, &lastGH, &item.SyncLock,
 			&item.CreatedAt, &item.UpdatedAt,
-			&item.ItemTitle, &item.WorkspaceItemNumber, &item.WorkspaceKey,
 		); err != nil {
 			return nil, err
 		}
@@ -917,9 +899,25 @@ func (s *IssueSyncService) GetSyncedItems(ctx context.Context, configID int) ([]
 			item.LastGitHubUpdatedAt = &lastGH.Time
 		}
 		items = append(items, item)
+		itemIDs = append(itemIDs, item.ItemID)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+	itemDetails, err := s.itemRepo.FindByIDsWithDetails(itemIDs)
+	if err != nil {
+		return nil, fmt.Errorf("load synced item details: %w", err)
+	}
+	detailsByID := make(map[int]*models.Item, len(itemDetails))
+	for _, item := range itemDetails {
+		detailsByID[item.ID] = item
+	}
+	for i := range items {
+		if item := detailsByID[items[i].ItemID]; item != nil {
+			items[i].ItemTitle = item.Title
+			items[i].WorkspaceItemNumber = item.WorkspaceItemNumber
+			items[i].WorkspaceKey = item.WorkspaceKey
+		}
 	}
 	return items, nil
 }
@@ -1036,7 +1034,7 @@ func (s *IssueSyncService) resolveMilestoneID(config *models.IssueSyncConfig, is
 	return nil
 }
 
-func (s *IssueSyncService) syncLabels(ctx context.Context, execer queryExecer, config *models.IssueSyncConfig, issue *Issue, itemID int) {
+func (s *IssueSyncService) syncLabels(ctx context.Context, tx database.Tx, config *models.IssueSyncConfig, issue *Issue, itemID int) {
 	if config.LabelSyncMode == "" || config.LabelSyncMode == models.IssueSyncLabelNone {
 		return
 	}
@@ -1054,47 +1052,28 @@ func (s *IssueSyncService) syncLabels(ctx context.Context, execer queryExecer, c
 			ghToWS[m.GitHubLabel] = m.WindshiftLabelID
 		}
 
-		// Clear existing labels and set mapped ones
-		_, _ = execer.ExecWriteContext(ctx, "DELETE FROM item_labels WHERE item_id = ?", itemID)
+		labelIDs := make([]int, 0, len(issue.Labels))
 		for _, l := range issue.Labels {
 			if wsLabelID, ok := ghToWS[l.Name]; ok {
-				_, _ = execer.ExecWriteContext(ctx,
-					"INSERT INTO item_labels (item_id, label_id) VALUES (?, ?) ON CONFLICT DO NOTHING",
-					itemID, wsLabelID)
+				labelIDs = append(labelIDs, wsLabelID)
 			}
 		}
+		_ = repository.NewLabelRepository(s.db).ReplaceItemLabelsTx(ctx, tx, itemID, labelIDs)
 	} else if config.LabelSyncMode == models.IssueSyncLabelMirror {
-		// Auto-create labels that don't exist
-		_, _ = execer.ExecWriteContext(ctx, "DELETE FROM item_labels WHERE item_id = ?", itemID)
-
+		labelRepo := repository.NewLabelRepository(s.db)
+		labelIDs := make([]int, 0, len(issue.Labels))
 		for _, l := range issue.Labels {
-			// Try to find existing label by name in workspace
-			var labelID int
-			err := execer.QueryRowContext(ctx,
-				"SELECT id FROM labels WHERE workspace_id = ? AND LOWER(name) = LOWER(?)",
-				config.WorkspaceID, l.Name,
-			).Scan(&labelID)
-			if errors.Is(err, sql.ErrNoRows) {
-				// Create the label
-				color := l.Color
-				if color == "" {
-					color = "808080"
-				}
-				err = execer.QueryRowContext(ctx,
-					"INSERT INTO labels (workspace_id, name, color, created_at, updated_at) VALUES (?, ?, ?, ?, ?) RETURNING id",
-					config.WorkspaceID, l.Name, color, time.Now(), time.Now(),
-				).Scan(&labelID)
-				if err != nil {
-					continue
-				}
-			} else if err != nil {
+			color := l.Color
+			if color == "" {
+				color = "808080"
+			}
+			labelID, err := labelRepo.EnsureByNameTx(ctx, tx, config.WorkspaceID, l.Name, color)
+			if err != nil {
 				continue
 			}
-
-			_, _ = execer.ExecWriteContext(ctx,
-				"INSERT INTO item_labels (item_id, label_id) VALUES (?, ?) ON CONFLICT DO NOTHING",
-				itemID, labelID)
+			labelIDs = append(labelIDs, labelID)
 		}
+		_ = labelRepo.ReplaceItemLabelsTx(ctx, tx, itemID, labelIDs)
 	}
 }
 

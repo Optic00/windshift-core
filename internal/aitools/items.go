@@ -750,24 +750,9 @@ func buildUpdateData(env *Env, args updateItemArgs, wsID int) (data map[string]a
 }
 
 func workspaceLookupMap(db database.Database) map[string]int {
-	out := map[string]int{}
-	rows, err := db.Query("SELECT id, name, key FROM workspaces")
+	out, err := repository.NewWorkspaceRepository(db).ListNameKeyToIDMap()
 	if err != nil {
-		return out
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var id int
-		var name, key string
-		if err := rows.Scan(&id, &name, &key); err != nil {
-			continue
-		}
-		out[fmt.Sprintf("%d", id)] = id
-		out[strings.ToLower(name)] = id
-		out[strings.ToLower(key)] = id
-	}
-	if err := rows.Err(); err != nil {
-		return out
+		return map[string]int{}
 	}
 	return out
 }
@@ -818,24 +803,13 @@ func statusCandidateList(statuses []models.Status) string {
 // or out-of-workspace matches return an error listing candidates so the
 // caller can disambiguate (e.g. by passing assignee_id).
 func resolveAssigneeName(env *Env, name string, workspaceID int) (int, error) {
-	rows, err := env.DB.Query(
-		"SELECT id, first_name || ' ' || last_name FROM users WHERE LOWER(first_name || ' ' || last_name) = LOWER(?) ORDER BY id",
-		name,
-	)
+	rows, err := repository.NewUserRepository(env.DB).FindIDsByFullName(name)
 	if err != nil {
 		return 0, fmt.Errorf("failed to look up user: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-	var matches []userCandidate
-	for rows.Next() {
-		var c userCandidate
-		if err := rows.Scan(&c.id, &c.fullName); err != nil {
-			continue
-		}
-		matches = append(matches, c)
-	}
-	if err := rows.Err(); err != nil {
-		return 0, fmt.Errorf("failed to look up user: %w", err)
+	matches := make([]userCandidate, 0, len(rows))
+	for _, row := range rows {
+		matches = append(matches, userCandidate{id: row.ID, fullName: row.FullName})
 	}
 	if len(matches) == 0 {
 		return 0, fmt.Errorf("user not found")

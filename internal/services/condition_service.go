@@ -2,15 +2,14 @@ package services
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 
 	"windshift/internal/database"
 	"windshift/internal/models"
+	"windshift/internal/repository"
 )
 
 // ConditionService evaluates workflow transition conditions.
@@ -332,71 +331,22 @@ func (s *ConditionService) evaluateScript(ctx context.Context, configJSON string
 // GetConditionSetIDForItem returns the condition set ID for an item's workspace/item type,
 // using the same fallback chain as workflows: item type override -> config set default -> nil.
 func (s *ConditionService) GetConditionSetIDForItem(workspaceID int, itemTypeID *int) (*int, error) {
-	// Personal workspaces have no conditions
-	var isPersonal bool
-	err := s.db.QueryRow(`SELECT is_personal FROM workspaces WHERE id = ?`, workspaceID).Scan(&isPersonal)
-	if err == nil && isPersonal {
+	repo := repository.NewConfigurationSetRepository(s.db)
+	resolved, err := repo.ResolveForWorkspace(context.Background(), workspaceID, itemTypeID)
+	if err != nil {
+		return nil, err
+	}
+	if resolved != nil && resolved.IsPersonal {
 		return nil, nil
 	}
-
-	var conditionSetID *int
-
-	// Try item type override first
-	if itemTypeID != nil {
-		err = s.db.QueryRow(`
-			SELECT COALESCE(csit.condition_set_id, cs.condition_set_id) as condition_set_id
-			FROM workspace_configuration_sets wcs
-			JOIN configuration_sets cs ON wcs.configuration_set_id = cs.id
-			LEFT JOIN configuration_set_item_types csit
-				ON cs.id = csit.configuration_set_id AND csit.item_type_id = ?
-			WHERE wcs.workspace_id = ?
-		`, *itemTypeID, workspaceID).Scan(&conditionSetID)
-
-		if err == nil && conditionSetID != nil {
-			return conditionSetID, nil
-		}
+	if resolved != nil && resolved.ConditionSetID != nil {
+		return resolved.ConditionSetID, nil
 	}
-
-	// Config set default
-	err = s.db.QueryRow(`
-		SELECT cs.condition_set_id
-		FROM workspace_configuration_sets wcs
-		JOIN configuration_sets cs ON wcs.configuration_set_id = cs.id
-		WHERE wcs.workspace_id = ?
-	`, workspaceID).Scan(&conditionSetID)
-
-	if err == nil && conditionSetID != nil {
-		return conditionSetID, nil
-	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	defaultConfig, err := repo.ResolveDefault(context.Background(), itemTypeID)
+	if err != nil || defaultConfig == nil {
 		return nil, err
 	}
-
-	// Fallback: default config set with item type override
-	if itemTypeID != nil {
-		err = s.db.QueryRow(`
-			SELECT COALESCE(csit.condition_set_id, cs.condition_set_id) as condition_set_id
-			FROM configuration_sets cs
-			LEFT JOIN configuration_set_item_types csit
-				ON cs.id = csit.configuration_set_id AND csit.item_type_id = ?
-			WHERE cs.is_default = true
-		`, *itemTypeID).Scan(&conditionSetID)
-
-		if err == nil && conditionSetID != nil {
-			return conditionSetID, nil
-		}
-	}
-
-	// Fallback: default config set
-	err = s.db.QueryRow(`
-		SELECT condition_set_id FROM configuration_sets WHERE is_default = true
-	`).Scan(&conditionSetID)
-
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return nil, err
-	}
-
-	return conditionSetID, nil
+	return defaultConfig.ConditionSetID, nil
 }
 
 // toInt converts an any to int, returning 0 if not possible.

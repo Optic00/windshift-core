@@ -20,6 +20,77 @@ type TimeWorklogRepository struct {
 	db database.Database
 }
 
+type BriefingWorklog struct {
+	Description     string
+	DurationMinutes int
+	ProjectName     string
+}
+
+type CaptureWorklog struct {
+	ID              int
+	AuthorUsername  string
+	DurationMinutes int
+	StartedUnix     int64
+}
+
+// ListCaptureWorklogs returns mapped worklogs that still belong to the item.
+func (r *TimeWorklogRepository) ListCaptureWorklogs(itemID int, worklogIDs []int) ([]CaptureWorklog, error) {
+	if len(worklogIDs) == 0 {
+		return []CaptureWorklog{}, nil
+	}
+	placeholders, idArgs := inPlaceholders(worklogIDs)
+	args := append([]any{itemID}, idArgs...)
+	rows, err := r.db.Query(`
+		SELECT w.id, COALESCE(u.username, ''), COALESCE(w.duration_minutes, 0), COALESCE(w.start_time, 0)
+		FROM time_worklogs w
+		LEFT JOIN users u ON u.id = w.user_id
+		WHERE w.item_id = ? AND w.id IN (`+placeholders+`)
+	`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list capture worklogs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := []CaptureWorklog{}
+	for rows.Next() {
+		var worklog CaptureWorklog
+		if err := rows.Scan(&worklog.ID, &worklog.AuthorUsername, &worklog.DurationMinutes, &worklog.StartedUnix); err != nil {
+			return nil, fmt.Errorf("scan capture worklog: %w", err)
+		}
+		out = append(out, worklog)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate capture worklogs: %w", err)
+	}
+	return out, nil
+}
+
+// ListBriefingWorklogs returns a user's worklogs in a half-open time window.
+func (r *TimeWorklogRepository) ListBriefingWorklogs(userID int, start, end time.Time) ([]BriefingWorklog, error) {
+	rows, err := r.db.Query(`
+		SELECT tw.description, tw.duration_minutes, tp.name
+		FROM time_worklogs tw
+		JOIN time_projects tp ON tw.project_id = tp.id
+		WHERE tw.user_id = ? AND tw.date >= ? AND tw.date < ?
+		ORDER BY tw.date DESC
+	`, userID, start.Unix(), end.Unix())
+	if err != nil {
+		return nil, fmt.Errorf("list briefing worklogs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]BriefingWorklog, 0)
+	for rows.Next() {
+		var worklog BriefingWorklog
+		if err := rows.Scan(&worklog.Description, &worklog.DurationMinutes, &worklog.ProjectName); err != nil {
+			return nil, fmt.Errorf("scan briefing worklog: %w", err)
+		}
+		out = append(out, worklog)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate briefing worklogs: %w", err)
+	}
+	return out, nil
+}
+
 // NewTimeWorklogRepository creates a TimeWorklogRepository.
 func NewTimeWorklogRepository(db database.Database) *TimeWorklogRepository {
 	return &TimeWorklogRepository{db: db}

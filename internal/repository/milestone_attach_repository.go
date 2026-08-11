@@ -68,6 +68,21 @@ func (r *MilestoneAttachRepository) ReplaceItemMilestones(itemID int, milestoneI
 	return nil
 }
 
+// ReplaceItemMilestonesTx swaps an item's milestones inside the caller's transaction.
+func (r *MilestoneAttachRepository) ReplaceItemMilestonesTx(ctx context.Context, tx database.Tx, itemID int, milestoneIDs []int) error {
+	if _, err := tx.ExecContext(ctx, "DELETE FROM item_milestones WHERE item_id = ?", itemID); err != nil {
+		return fmt.Errorf("delete milestones for item %d: %w", itemID, err)
+	}
+	for _, milestoneID := range milestoneIDs {
+		if _, err := tx.ExecContext(ctx,
+			"INSERT INTO item_milestones (item_id, milestone_id, created_at) VALUES (?, ?, ?)",
+			itemID, milestoneID, time.Now()); err != nil {
+			return fmt.Errorf("attach milestone %d to item %d: %w", milestoneID, itemID, err)
+		}
+	}
+	return nil
+}
+
 // AddItemMilestone attaches a milestone to an item. Returns ErrDuplicateEntry
 // when the pair already exists (the table has a unique constraint).
 func (r *MilestoneAttachRepository) AddItemMilestone(itemID, milestoneID int) error {

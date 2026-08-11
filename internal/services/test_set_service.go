@@ -19,14 +19,16 @@ var (
 
 // TestSetService owns test-set validation, normalization, and relationships.
 type TestSetService struct {
-	repo    *repository.TestSetRepository
-	caseSvc *TestCaseService
+	repo         *repository.TestSetRepository
+	planningRepo *repository.PlanningRepository
+	caseSvc      *TestCaseService
 }
 
 func NewTestSetService(db database.Database) *TestSetService {
 	return &TestSetService{
-		repo:    repository.NewTestSetRepository(db),
-		caseSvc: NewTestCaseService(db),
+		repo:         repository.NewTestSetRepository(db),
+		planningRepo: repository.NewPlanningRepository(db),
+		caseSvc:      NewTestCaseService(db),
 	}
 }
 
@@ -123,7 +125,7 @@ func (s *TestSetService) normalizeAndValidate(workspaceID int, set *models.TestS
 	if set.MilestoneID == nil {
 		return nil
 	}
-	exists, err := s.repo.MilestoneUsableInWorkspace(*set.MilestoneID, workspaceID)
+	exists, err := s.planningRepo.MilestoneUsableInWorkspace(*set.MilestoneID, workspaceID)
 	if err != nil {
 		return err
 	}

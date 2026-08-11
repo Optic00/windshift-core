@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"time"
 
 	"windshift/internal/database"
@@ -65,6 +66,14 @@ type CommentFeedPage struct {
 	HasMore  bool
 }
 
+// ItemCommentSummary is the bounded comment projection used to assemble an
+// item briefing without exposing comment persistence to HTTP handlers.
+type ItemCommentSummary struct {
+	Content   string
+	Author    string
+	CreatedAt time.Time
+}
+
 // AgentMentionTrigger is the coding-agent harness's interest in new
 // comments (WI-264): @mentions of a binding's acting user start a run on
 // the commented item. Kept as an interface so CommentService stays
@@ -85,6 +94,49 @@ type CommentService struct {
 	webhookSender       WebhookDispatcher
 	emailReplyService   EmailReplyHandler
 	agentMentionTrigger AgentMentionTrigger
+}
+
+type CaptureComment struct {
+	ID             int
+	AuthorUsername string
+	Content        string
+	CreatedAt      string
+}
+
+// ListCaptureComments returns mapped comments that still belong to the item.
+func (s *CommentService) ListCaptureComments(itemID int, commentIDs []int) ([]CaptureComment, error) {
+	if len(commentIDs) == 0 {
+		return []CaptureComment{}, nil
+	}
+	placeholders := make([]string, len(commentIDs))
+	args := make([]any, 0, len(commentIDs)+1)
+	args = append(args, itemID)
+	for i, id := range commentIDs {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	rows, err := s.db.Query(`
+		SELECT c.id, COALESCE(u.username, ''), COALESCE(c.content, ''), CAST(c.created_at AS TEXT)
+		FROM comments c
+		LEFT JOIN users u ON u.id = c.author_id
+		WHERE c.item_id = ? AND c.id IN (`+strings.Join(placeholders, ",")+`)
+	`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list capture comments: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := []CaptureComment{}
+	for rows.Next() {
+		var comment CaptureComment
+		if err := rows.Scan(&comment.ID, &comment.AuthorUsername, &comment.Content, &comment.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan capture comment: %w", err)
+		}
+		out = append(out, comment)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate capture comments: %w", err)
+	}
+	return out, nil
 }
 
 // CreateCommentParams contains the parameters for creating a comment.
@@ -112,6 +164,40 @@ func NewCommentService(db database.Database) *CommentService {
 		db:       db,
 		itemRepo: repository.NewItemRepository(db),
 	}
+}
+
+// ListRecentSummaries returns the newest comments for an item.
+func (s *CommentService) ListRecentSummaries(itemID, limit int) ([]ItemCommentSummary, error) {
+	if limit <= 0 {
+		return []ItemCommentSummary{}, nil
+	}
+	rows, err := s.db.Query(`
+		SELECT c.content,
+		       COALESCE(NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), ''), 'Unknown'),
+		       c.created_at
+		FROM comments c
+		LEFT JOIN users u ON c.author_id = u.id
+		WHERE c.item_id = ?
+		ORDER BY c.created_at DESC
+		LIMIT ?
+	`, itemID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list recent comments for item %d: %w", itemID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]ItemCommentSummary, 0)
+	for rows.Next() {
+		var summary ItemCommentSummary
+		if err := rows.Scan(&summary.Content, &summary.Author, &summary.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan recent comment for item %d: %w", itemID, err)
+		}
+		out = append(out, summary)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate recent comments for item %d: %w", itemID, err)
+	}
+	return out, nil
 }
 
 // SetActivityTracker sets the activity tracker for tracking comment activity.

@@ -188,6 +188,44 @@ func (r *LabelRepository) ReplaceItemLabels(itemID int, labelIDs []int) error {
 	return nil
 }
 
+// ReplaceItemLabelsTx swaps an item's labels inside the caller's transaction.
+func (r *LabelRepository) ReplaceItemLabelsTx(ctx context.Context, tx database.Tx, itemID int, labelIDs []int) error {
+	if _, err := tx.ExecWriteContext(ctx, "DELETE FROM item_labels WHERE item_id = ?", itemID); err != nil {
+		return fmt.Errorf("delete labels for item %d: %w", itemID, err)
+	}
+	for _, labelID := range labelIDs {
+		if _, err := tx.ExecWriteContext(ctx,
+			"INSERT INTO item_labels (item_id, label_id) VALUES (?, ?) ON CONFLICT DO NOTHING",
+			itemID, labelID); err != nil {
+			return fmt.Errorf("attach label %d to item %d: %w", labelID, itemID, err)
+		}
+	}
+	return nil
+}
+
+// EnsureByNameTx returns an existing case-insensitive workspace label or
+// creates it inside the caller's transaction.
+func (r *LabelRepository) EnsureByNameTx(ctx context.Context, tx database.Tx, workspaceID int, name, color string) (int, error) {
+	var id int
+	err := tx.QueryRowContext(ctx,
+		"SELECT id FROM labels WHERE workspace_id = ? AND LOWER(name) = LOWER(?)",
+		workspaceID, name).Scan(&id)
+	if err == nil {
+		return id, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return 0, fmt.Errorf("find label %q in workspace %d: %w", name, workspaceID, err)
+	}
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO labels (workspace_id, name, color, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?) RETURNING id
+	`, workspaceID, name, color, time.Now(), time.Now()).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("create label %q in workspace %d: %w", name, workspaceID, err)
+	}
+	return id, nil
+}
+
 // AddItemLabel attaches a label to an item. Returns ErrDuplicateEntry when
 // the pair already exists (the table has a unique constraint).
 func (r *LabelRepository) AddItemLabel(itemID, labelID int) error {

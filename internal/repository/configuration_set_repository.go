@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -15,6 +16,16 @@ import (
 // ConfigurationSetRepository provides data access methods for configuration sets
 type ConfigurationSetRepository struct {
 	db database.Database
+}
+
+// EffectiveConfiguration contains the workspace- or default-level settings
+// after applying an optional item-type override.
+type EffectiveConfiguration struct {
+	IsPersonal         bool
+	ConfigurationSetID *int
+	WorkflowID         *int
+	ConditionSetID     *int
+	ApprovalSetID      *int
 }
 
 // NewConfigurationSetRepository creates a new configuration set repository
@@ -425,14 +436,14 @@ func (r *ConfigurationSetRepository) loadScreens(cs *models.ConfigurationSet) er
 	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
-		var context string
+		var screenContext string
 		var screenID int
 		var screenName string
-		if err := rows.Scan(&context, &screenID, &screenName); err != nil {
+		if err := rows.Scan(&screenContext, &screenID, &screenName); err != nil {
 			return fmt.Errorf("failed to scan screen: %w", err)
 		}
 
-		switch context {
+		switch screenContext {
 		case "create":
 			cs.CreateScreenID = &screenID
 			cs.CreateScreenName = screenName
@@ -635,6 +646,238 @@ func (r *ConfigurationSetRepository) GetWorkspaceConfigSetID(workspaceID int) (*
 	}
 
 	return utils.NullInt64ToPtr(configSetID), nil
+}
+
+// ResolveForWorkspace returns a workspace's effective configuration after
+// applying item-type overrides. A workspace without a configuration set still
+// returns its personal-workspace flag and nil configuration values.
+func (r *ConfigurationSetRepository) ResolveForWorkspace(ctx context.Context, workspaceID int, itemTypeID *int) (*EffectiveConfiguration, error) {
+	var query string
+	args := []any{}
+	if itemTypeID == nil {
+		query = `
+			SELECT w.is_personal, cs.id, cs.workflow_id, cs.condition_set_id, cs.approval_set_id
+			FROM workspaces w
+			LEFT JOIN workspace_configuration_sets wcs ON wcs.workspace_id = w.id
+			LEFT JOIN configuration_sets cs ON cs.id = wcs.configuration_set_id
+			WHERE w.id = ?
+		`
+		args = append(args, workspaceID)
+	} else {
+		query = `
+			SELECT w.is_personal, cs.id,
+			       COALESCE(csit.workflow_id, cs.workflow_id),
+			       COALESCE(csit.condition_set_id, cs.condition_set_id),
+			       COALESCE(csit.approval_set_id, cs.approval_set_id)
+			FROM workspaces w
+			LEFT JOIN workspace_configuration_sets wcs ON wcs.workspace_id = w.id
+			LEFT JOIN configuration_sets cs ON cs.id = wcs.configuration_set_id
+			LEFT JOIN configuration_set_item_types csit
+			  ON csit.configuration_set_id = cs.id AND csit.item_type_id = ?
+			WHERE w.id = ?
+		`
+		args = append(args, *itemTypeID, workspaceID)
+	}
+
+	var resolved EffectiveConfiguration
+	err := r.db.QueryRowContext(ctx, query, args...).Scan(
+		&resolved.IsPersonal,
+		&resolved.ConfigurationSetID,
+		&resolved.WorkflowID,
+		&resolved.ConditionSetID,
+		&resolved.ApprovalSetID,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("resolve workspace configuration: %w", err)
+	}
+	return &resolved, nil
+}
+
+// ResolveDefault returns the default configuration set after applying an
+// optional item-type override.
+func (r *ConfigurationSetRepository) ResolveDefault(ctx context.Context, itemTypeID *int) (*EffectiveConfiguration, error) {
+	var query string
+	args := []any{}
+	if itemTypeID == nil {
+		query = `
+			SELECT cs.id, cs.workflow_id, cs.condition_set_id, cs.approval_set_id
+			FROM configuration_sets cs
+			WHERE cs.is_default = true
+			ORDER BY cs.id
+			LIMIT 1
+		`
+	} else {
+		query = `
+			SELECT cs.id,
+			       COALESCE(csit.workflow_id, cs.workflow_id),
+			       COALESCE(csit.condition_set_id, cs.condition_set_id),
+			       COALESCE(csit.approval_set_id, cs.approval_set_id)
+			FROM configuration_sets cs
+			LEFT JOIN configuration_set_item_types csit
+			  ON csit.configuration_set_id = cs.id AND csit.item_type_id = ?
+			WHERE cs.is_default = true
+			ORDER BY cs.id
+			LIMIT 1
+		`
+		args = append(args, *itemTypeID)
+	}
+
+	var resolved EffectiveConfiguration
+	err := r.db.QueryRowContext(ctx, query, args...).Scan(
+		&resolved.ConfigurationSetID,
+		&resolved.WorkflowID,
+		&resolved.ConditionSetID,
+		&resolved.ApprovalSetID,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("resolve default configuration: %w", err)
+	}
+	return &resolved, nil
+}
+
+// ItemTypeAllowed reports whether a workspace's configuration allows an item
+// type. An absent configuration or an empty item-type catalog allows all types.
+func (r *ConfigurationSetRepository) ItemTypeAllowed(workspaceID, itemTypeID int) (bool, error) {
+	var allowed bool
+	err := r.db.QueryRow(`
+		SELECT CASE
+			WHEN wcs.configuration_set_id IS NULL THEN true
+			WHEN NOT EXISTS (
+				SELECT 1 FROM configuration_set_item_types configured
+				WHERE configured.configuration_set_id = wcs.configuration_set_id
+			) THEN true
+			ELSE EXISTS (
+				SELECT 1 FROM configuration_set_item_types configured
+				WHERE configured.configuration_set_id = wcs.configuration_set_id
+				  AND configured.item_type_id = ?
+			)
+		END
+		FROM workspaces w
+		LEFT JOIN workspace_configuration_sets wcs ON wcs.workspace_id = w.id
+		WHERE w.id = ?
+	`, itemTypeID, workspaceID).Scan(&allowed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("check workspace item type: %w", err)
+	}
+	return allowed, nil
+}
+
+// MappedItemTypeWorkflow returns the effective workflow for an explicit
+// workspace item-type mapping. The boolean is false when no mapping exists.
+func (r *ConfigurationSetRepository) MappedItemTypeWorkflow(workspaceID, itemTypeID int) (workflowID *int, found bool, err error) {
+	err = r.db.QueryRow(`
+		SELECT COALESCE(csit.workflow_id, cs.workflow_id)
+		FROM workspace_configuration_sets wcs
+		JOIN configuration_sets cs ON cs.id = wcs.configuration_set_id
+		JOIN configuration_set_item_types csit
+		  ON csit.configuration_set_id = cs.id AND csit.item_type_id = ?
+		WHERE wcs.workspace_id = ?
+	`, itemTypeID, workspaceID).Scan(&workflowID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("resolve mapped item-type workflow: %w", err)
+	}
+	return workflowID, true, nil
+}
+
+// ListItemTypeWorkflows resolves the workspace item-type catalog and each
+// type's effective workflow in one bounded query.
+func (r *ConfigurationSetRepository) ListItemTypeWorkflows(ctx context.Context, workspaceID int) (workflows map[int]int, isPersonal bool, err error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT w.is_personal,
+		       it.id,
+		       CASE WHEN w.is_personal THEN NULL
+		            ELSE COALESCE(
+		              csit.workflow_id,
+		              cs.workflow_id,
+		              (SELECT id FROM workflows WHERE is_default = true ORDER BY id LIMIT 1)
+		            )
+		       END
+		FROM workspaces w
+		LEFT JOIN workspace_configuration_sets wcs ON wcs.workspace_id = w.id
+		LEFT JOIN configuration_sets cs ON cs.id = wcs.configuration_set_id
+		LEFT JOIN item_types it ON
+		  NOT EXISTS (
+		    SELECT 1 FROM configuration_set_item_types configured_type
+		    WHERE configured_type.configuration_set_id = cs.id
+		  )
+		  OR EXISTS (
+		    SELECT 1 FROM configuration_set_item_types configured_type
+		    WHERE configured_type.configuration_set_id = cs.id
+		      AND configured_type.item_type_id = it.id
+		  )
+		LEFT JOIN configuration_set_item_types csit
+		  ON csit.configuration_set_id = cs.id AND csit.item_type_id = it.id
+		WHERE w.id = ?
+		ORDER BY it.id
+	`, workspaceID)
+	if err != nil {
+		return nil, false, fmt.Errorf("list item-type workflows: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	workflows = map[int]int{}
+	for rows.Next() {
+		var personal bool
+		var itemTypeID, workflowID sql.NullInt64
+		if err := rows.Scan(&personal, &itemTypeID, &workflowID); err != nil {
+			return nil, false, fmt.Errorf("scan item-type workflow: %w", err)
+		}
+		isPersonal = personal
+		if !personal && itemTypeID.Valid && workflowID.Valid {
+			workflows[int(itemTypeID.Int64)] = int(workflowID.Int64)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("iterate item-type workflows: %w", err)
+	}
+	return workflows, isPersonal, nil
+}
+
+// ListEffectiveWorkflowIDs returns the distinct workflows selected by a
+// workspace configuration. Personal workspaces return an empty slice.
+func (r *ConfigurationSetRepository) ListEffectiveWorkflowIDs(workspaceID int) ([]int, error) {
+	rows, err := r.db.Query(`
+		SELECT DISTINCT COALESCE(
+			csit.workflow_id,
+			cs.workflow_id,
+			(SELECT id FROM workflows WHERE is_default = true ORDER BY id LIMIT 1)
+		)
+		FROM workspaces target
+		LEFT JOIN workspace_configuration_sets wcs ON wcs.workspace_id = target.id
+		LEFT JOIN configuration_sets cs ON cs.id = wcs.configuration_set_id
+		LEFT JOIN configuration_set_item_types csit ON csit.configuration_set_id = cs.id
+		WHERE target.id = ? AND target.is_personal = false
+	`, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("list effective workflow ids: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	ids := []int{}
+	for rows.Next() {
+		var id sql.NullInt64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan effective workflow id: %w", err)
+		}
+		if id.Valid {
+			ids = append(ids, int(id.Int64))
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate effective workflow ids: %w", err)
+	}
+	return ids, nil
 }
 
 // Create inserts a new configuration set and returns its ID

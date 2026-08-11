@@ -358,25 +358,12 @@ func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, looku
 	// outside UTC see worklogs from the wrong window (or none at all).
 	var worklogLines []string
 	if bs.timePermService != nil {
-		wlRows, err := bs.db.Query(`SELECT tw.description, tw.duration_minutes, tp.name
-			FROM time_worklogs tw
-			JOIN time_projects tp ON tw.project_id = tp.id
-			WHERE tw.user_id = ? AND tw.date >= ? AND tw.date < ?
-			ORDER BY tw.date DESC`,
-			userID, yesterdayStart.Unix(), todayStart.Unix())
+		worklogs, err := repository.NewTimeWorklogRepository(bs.db).ListBriefingWorklogs(userID, yesterdayStart, todayStart)
 		if err != nil {
 			slog.Warn("briefing: worklogs query failed", slog.Int("user_id", userID), slog.Any("error", err))
 		} else {
-			defer func() { _ = wlRows.Close() }()
-			for wlRows.Next() {
-				var desc, projectName string
-				var durationMins int
-				if err := wlRows.Scan(&desc, &durationMins, &projectName); err == nil {
-					worklogLines = append(worklogLines, fmt.Sprintf("- %s (%s): %dm", desc, projectName, durationMins))
-				}
-			}
-			if err := wlRows.Err(); err != nil {
-				slog.Warn("briefing: worklogs iteration failed", slog.Int("user_id", userID), slog.Any("error", err))
+			for _, worklog := range worklogs {
+				worklogLines = append(worklogLines, fmt.Sprintf("- %s (%s): %dm", worklog.Description, worklog.ProjectName, worklog.DurationMinutes))
 			}
 		}
 	}

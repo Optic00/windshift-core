@@ -440,32 +440,20 @@ func (s *BindingService) workspaceManagedAgentsEnabled(ctx context.Context) (boo
 
 func createWorkspaceManagedAgentIdentity(ctx context.Context, tx database.Tx, req CreateStudioProfileRequest) (int, error) {
 	email := fmt.Sprintf("agent-%s-w%d@agents.local", req.Handle, req.WorkspaceID)
-	var id int
-	err := tx.QueryRowContext(ctx, `
-		INSERT INTO users
-			(email, username, first_name, last_name, is_active, password_hash,
-			 requires_password_reset, is_agent, agent_owner_user_id,
-			 agent_provenance, avatar_url, email_verified)
-		VALUES (?, ?, ?, '', true, NULL, false, true, NULL, 'user', ?, true)
-		RETURNING id
-	`, email, req.Handle, req.Name, nullProfileString(req.AvatarURL)).Scan(&id)
+	id, err := repository.CreateWorkspaceManagedAgentIdentity(ctx, tx, repository.WorkspaceManagedAgentIdentityParams{
+		Email:           email,
+		Username:        req.Handle,
+		Name:            req.Name,
+		AvatarURL:       req.AvatarURL,
+		WorkspaceID:     req.WorkspaceID,
+		GrantedByUserID: req.CreatedByUserID,
+		RoleName:        models.RoleViewer,
+	})
 	if err != nil {
-		if database.IsUniqueConstraintError(err) {
+		if errors.Is(err, repository.ErrDuplicateEntry) {
 			return 0, ErrAgentProfileHandleTaken
 		}
-		return 0, fmt.Errorf("create workspace-managed agent identity: %w", err)
-	}
-	result, err := tx.ExecContext(ctx, `
-		INSERT INTO user_workspace_roles (user_id, workspace_id, role_id, granted_by, granted_at)
-		SELECT ?, ?, id, ?, CURRENT_TIMESTAMP
-		FROM workspace_roles
-		WHERE name = ?
-	`, id, req.WorkspaceID, req.CreatedByUserID, models.RoleViewer)
-	if err != nil {
-		return 0, fmt.Errorf("grant default workspace member role: %w", err)
-	}
-	if rows, _ := result.RowsAffected(); rows != 1 {
-		return 0, errors.New("grant default workspace member role: Viewer role is unavailable")
+		return 0, err
 	}
 	return id, nil
 }

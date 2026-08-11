@@ -40,19 +40,7 @@ type ItemValidationResult struct {
 //   - the workspace has no configuration set (all types allowed), or
 //   - the item type appears in configuration_set_item_types for that config set.
 func IsItemTypeAllowedInWorkspace(db database.Database, workspaceID, itemTypeID int) (bool, error) {
-	configSetID, err := repository.NewConfigurationSetRepository(db).GetWorkspaceConfigSetID(workspaceID)
-	if err != nil {
-		return false, fmt.Errorf("failed to query workspace config set: %w", err)
-	}
-	if configSetID == nil {
-		return true, nil // no config set → all types allowed
-	}
-
-	var exists bool
-	err = db.QueryRow(
-		"SELECT EXISTS(SELECT 1 FROM configuration_set_item_types WHERE configuration_set_id = ? AND item_type_id = ?)",
-		*configSetID, itemTypeID,
-	).Scan(&exists)
+	exists, err := repository.NewConfigurationSetRepository(db).ItemTypeAllowed(workspaceID, itemTypeID)
 	if err != nil {
 		return false, fmt.Errorf("failed to check item type in config set: %w", err)
 	}

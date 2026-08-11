@@ -65,6 +65,37 @@ func (r *WorkflowRepository) List() ([]models.Workflow, error) {
 	return workflows, nil
 }
 
+// ListByIDs returns workflows for the supplied IDs ordered by name.
+func (r *WorkflowRepository) ListByIDs(ids []int) ([]models.Workflow, error) {
+	if len(ids) == 0 {
+		return []models.Workflow{}, nil
+	}
+	placeholders, args := inPlaceholders(ids)
+	rows, err := r.db.Query(`
+		SELECT id, name, description, is_default, created_at, updated_at
+		FROM workflows
+		WHERE id IN (`+placeholders+`)
+		ORDER BY name
+	`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list workflows by id: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := []models.Workflow{}
+	for rows.Next() {
+		var workflow models.Workflow
+		if err := rows.Scan(&workflow.ID, &workflow.Name, &workflow.Description,
+			&workflow.IsDefault, &workflow.CreatedAt, &workflow.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan workflow by id: %w", err)
+		}
+		out = append(out, workflow)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate workflows by id: %w", err)
+	}
+	return out, nil
+}
+
 // Get returns a workflow by id, without its transitions.
 // Returns ErrNotFound when no workflow with that id exists.
 func (r *WorkflowRepository) Get(id int) (*models.Workflow, error) {

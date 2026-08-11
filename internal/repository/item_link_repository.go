@@ -14,9 +14,47 @@ type ItemLinkPair struct {
 	TargetID int
 }
 
+type CaptureItemLink struct {
+	LinkType string
+	TargetID int
+}
+
 // ItemLinkRepository provides data access methods for the item_links table.
 type ItemLinkRepository struct {
 	db database.Database
+}
+
+// ListCaptureItemLinks returns outgoing item-to-item links for export verification.
+func (r *ItemLinkRepository) ListCaptureItemLinks(itemID int) ([]CaptureItemLink, error) {
+	rows, err := r.db.Query(`
+		SELECT COALESCE(lt.name, ''), il.target_id
+		FROM item_links il
+		LEFT JOIN link_types lt ON lt.id = il.link_type_id
+		WHERE il.source_type = 'item' AND il.source_id = ? AND il.target_type = 'item'
+	`, itemID)
+	if err != nil {
+		return nil, fmt.Errorf("list capture item links: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := []CaptureItemLink{}
+	for rows.Next() {
+		var link CaptureItemLink
+		if err := rows.Scan(&link.LinkType, &link.TargetID); err != nil {
+			return nil, fmt.Errorf("scan capture item link: %w", err)
+		}
+		out = append(out, link)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate capture item links: %w", err)
+	}
+	return out, nil
+}
+
+// LinkedItemSummary is the small projection used by item briefings.
+type LinkedItemSummary struct {
+	LinkType string
+	Title    string
+	ItemKey  string
 }
 
 // NewItemLinkRepository creates a new ItemLinkRepository.
@@ -69,6 +107,39 @@ func (r *ItemLinkRepository) FindItemToItemLinksWithin(itemIDs []int) ([]ItemLin
 		return nil, fmt.Errorf("iterate item_links: %w", err)
 	}
 	return pairs, nil
+}
+
+// ListLinkedItemSummaries returns both incoming and outgoing item links.
+func (r *ItemLinkRepository) ListLinkedItemSummaries(itemID int) ([]LinkedItemSummary, error) {
+	rows, err := r.db.Query(`
+		SELECT lt.name, linked.title, w.key || '-' || linked.workspace_item_number
+		FROM item_links il
+		JOIN link_types lt ON il.link_type_id = lt.id
+		JOIN items linked ON linked.id = CASE
+			WHEN il.source_type = 'item' AND il.source_id = ? THEN il.target_id
+			ELSE il.source_id
+		END
+		JOIN workspaces w ON linked.workspace_id = w.id
+		WHERE (il.source_type = 'item' AND il.source_id = ? AND il.target_type = 'item')
+		   OR (il.target_type = 'item' AND il.target_id = ? AND il.source_type = 'item')
+	`, itemID, itemID, itemID)
+	if err != nil {
+		return nil, fmt.Errorf("list linked item summaries for item %d: %w", itemID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]LinkedItemSummary, 0)
+	for rows.Next() {
+		var summary LinkedItemSummary
+		if err := rows.Scan(&summary.LinkType, &summary.Title, &summary.ItemKey); err != nil {
+			return nil, fmt.Errorf("scan linked item summary for item %d: %w", itemID, err)
+		}
+		out = append(out, summary)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate linked item summaries for item %d: %w", itemID, err)
+	}
+	return out, nil
 }
 
 // FindLinkedItems returns the items linked to itemID via item_links rows

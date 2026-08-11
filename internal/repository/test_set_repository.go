@@ -266,20 +266,6 @@ func (r *TestSetRepository) FindByID(id, workspaceID int) (*models.TestSet, erro
 	return &set, nil
 }
 
-// MilestoneUsableInWorkspace reports whether a milestone is global or belongs to workspaceID.
-func (r *TestSetRepository) MilestoneUsableInWorkspace(milestoneID, workspaceID int) (bool, error) {
-	var count int
-	err := r.db.QueryRow(`
-		SELECT COUNT(*)
-		FROM milestones
-		WHERE id = ? AND (COALESCE(is_global, FALSE) = TRUE OR workspace_id = ?)
-	`, milestoneID, workspaceID).Scan(&count)
-	if err != nil {
-		return false, fmt.Errorf("failed to validate milestone workspace: %w", err)
-	}
-	return count > 0, nil
-}
-
 // Create inserts a new test set and returns its id and timestamps.
 func (r *TestSetRepository) Create(workspaceID int, set *models.TestSet) (id int, createdAt time.Time, err error) {
 	now := time.Now()

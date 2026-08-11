@@ -274,29 +274,8 @@ func (s *ItemTypeChangeService) loadItemTypeTarget(id int) (*itemTypeTargetDetai
 }
 
 func (s *ItemTypeChangeService) validateItemTypeAllowedForWorkspace(workspaceID, targetTypeID int) error {
-	configSetID, err := repository.NewConfigurationSetRepository(s.db).GetWorkspaceConfigSetID(workspaceID)
+	allowed, err := repository.NewConfigurationSetRepository(s.db).ItemTypeAllowed(workspaceID, targetTypeID)
 	if err != nil {
-		return err
-	}
-	if configSetID == nil {
-		return nil
-	}
-
-	var configuredCount int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM configuration_set_item_types WHERE configuration_set_id = ?`, *configSetID).Scan(&configuredCount); err != nil {
-		return err
-	}
-	if configuredCount == 0 {
-		return nil
-	}
-
-	var allowed bool
-	if err := s.db.QueryRow(`
-		SELECT EXISTS(
-			SELECT 1 FROM configuration_set_item_types
-			WHERE configuration_set_id = ? AND item_type_id = ?
-		)
-	`, *configSetID, targetTypeID).Scan(&allowed); err != nil {
 		return err
 	}
 	if !allowed {

@@ -126,6 +126,58 @@ func (r *ItemRepository) FindByIDContext(ctx context.Context, id int) (*models.I
 	return item, nil
 }
 
+// ItemCaptureSnapshot is the stable item projection used by the Jira capture
+// export verifier.
+type ItemCaptureSnapshot struct {
+	Title, Description, StatusName, ItemTypeName, PriorityName string
+	AssigneeUsername, ReporterUsername, CreatorUsername        string
+	StoryPoints                                                *float64
+	DueDate, CreatedAt, UpdatedAt, CustomFieldValues           string
+}
+
+// GetCaptureSnapshot returns the item fields required by capture verification.
+func (r *ItemRepository) GetCaptureSnapshot(itemID int) (*ItemCaptureSnapshot, error) {
+	var out ItemCaptureSnapshot
+	var description, statusName, itemTypeName, priorityName sql.NullString
+	var assignee, reporter, creator, dueDate, createdAt, updatedAt, customFields sql.NullString
+	err := r.db.QueryRow(`
+		SELECT i.title, i.description, s.name, t.name, p.name,
+		       ua.username, ur.username, uc.username, i.story_points,
+		       CAST(i.due_date AS TEXT), CAST(i.created_at AS TEXT),
+		       CAST(i.updated_at AS TEXT), CAST(i.custom_field_values AS TEXT)
+		FROM items i
+		LEFT JOIN statuses s ON s.id = i.status_id
+		LEFT JOIN item_types t ON t.id = i.item_type_id
+		LEFT JOIN priorities p ON p.id = i.priority_id
+		LEFT JOIN users ua ON ua.id = i.assignee_id
+		LEFT JOIN users ur ON ur.id = i.reporter_id
+		LEFT JOIN users uc ON uc.id = i.creator_id
+		WHERE i.id = ?
+	`, itemID).Scan(
+		&out.Title, &description, &statusName, &itemTypeName, &priorityName,
+		&assignee, &reporter, &creator, &out.StoryPoints,
+		&dueDate, &createdAt, &updatedAt, &customFields,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get item capture snapshot: %w", err)
+	}
+	out.Description = description.String
+	out.StatusName = statusName.String
+	out.ItemTypeName = itemTypeName.String
+	out.PriorityName = priorityName.String
+	out.AssigneeUsername = assignee.String
+	out.ReporterUsername = reporter.String
+	out.CreatorUsername = creator.String
+	out.DueDate = dueDate.String
+	out.CreatedAt = createdAt.String
+	out.UpdatedAt = updatedAt.String
+	out.CustomFieldValues = customFields.String
+	return &out, nil
+}
+
 // FindByIDForUpdate locks the row on Postgres; SQLite uses a plain select.
 func (r *ItemRepository) FindByIDForUpdate(tx database.Tx, id int) (*models.Item, error) {
 	query := `SELECT ` + itemBaseColumns + ` FROM items WHERE id = ?`

@@ -393,15 +393,14 @@ func (r *ApprovalSetRepository) FindDriversForTransition(ctx context.Context, tr
 // IsWorkspacePersonal reports whether a workspace is the user's personal
 // space. Personal workspaces never get an approval set.
 func (r *ApprovalSetRepository) IsWorkspacePersonal(ctx context.Context, workspaceID int) (bool, error) {
-	var isPersonal bool
-	err := r.db.QueryRowContext(ctx, `SELECT is_personal FROM workspaces WHERE id = ?`, workspaceID).Scan(&isPersonal)
-	if errors.Is(err, sql.ErrNoRows) {
+	resolved, err := NewConfigurationSetRepository(r.db).ResolveForWorkspace(ctx, workspaceID, nil)
+	if err != nil {
+		return false, err
+	}
+	if resolved == nil {
 		return false, nil
 	}
-	if err != nil {
-		return false, fmt.Errorf("load workspace is_personal: %w", err)
-	}
-	return isPersonal, nil
+	return resolved.IsPersonal, nil
 }
 
 // ResolveForWorkspace mirrors the resolution order in
@@ -409,53 +408,19 @@ func (r *ApprovalSetRepository) IsWorkspacePersonal(ctx context.Context, workspa
 // workspace's bound config-set → workspace-level default → global default.
 // Returns (nil, nil) when no approval set is configured.
 func (r *ApprovalSetRepository) ResolveForWorkspace(ctx context.Context, workspaceID int, itemTypeID *int) (*int, error) {
-	var approvalSetID *int
-
-	if itemTypeID != nil {
-		err := r.db.QueryRowContext(ctx, `
-			SELECT COALESCE(csit.approval_set_id, cs.approval_set_id) AS approval_set_id
-			FROM workspace_configuration_sets wcs
-			JOIN configuration_sets cs ON wcs.configuration_set_id = cs.id
-			LEFT JOIN configuration_set_item_types csit
-				ON cs.id = csit.configuration_set_id AND csit.item_type_id = ?
-			WHERE wcs.workspace_id = ?
-		`, *itemTypeID, workspaceID).Scan(&approvalSetID)
-		if err == nil && approvalSetID != nil {
-			return approvalSetID, nil
-		}
+	configRepo := NewConfigurationSetRepository(r.db)
+	resolved, err := configRepo.ResolveForWorkspace(ctx, workspaceID, itemTypeID)
+	if err != nil {
+		return nil, err
 	}
-
-	err := r.db.QueryRowContext(ctx, `
-		SELECT cs.approval_set_id
-		FROM workspace_configuration_sets wcs
-		JOIN configuration_sets cs ON wcs.configuration_set_id = cs.id
-		WHERE wcs.workspace_id = ?
-	`, workspaceID).Scan(&approvalSetID)
-	if err == nil && approvalSetID != nil {
-		return approvalSetID, nil
+	if resolved != nil && resolved.ApprovalSetID != nil {
+		return resolved.ApprovalSetID, nil
 	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("load workspace config-set approval: %w", err)
+	defaultConfig, err := configRepo.ResolveDefault(ctx, itemTypeID)
+	if err != nil || defaultConfig == nil {
+		return nil, err
 	}
-
-	if itemTypeID != nil {
-		err = r.db.QueryRowContext(ctx, `
-			SELECT COALESCE(csit.approval_set_id, cs.approval_set_id) AS approval_set_id
-			FROM configuration_sets cs
-			LEFT JOIN configuration_set_item_types csit
-				ON cs.id = csit.configuration_set_id AND csit.item_type_id = ?
-			WHERE cs.is_default = true
-		`, *itemTypeID).Scan(&approvalSetID)
-		if err == nil && approvalSetID != nil {
-			return approvalSetID, nil
-		}
-	}
-
-	err = r.db.QueryRowContext(ctx, `SELECT approval_set_id FROM configuration_sets WHERE is_default = true`).Scan(&approvalSetID)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("load global default approval set: %w", err)
-	}
-	return approvalSetID, nil
+	return defaultConfig.ApprovalSetID, nil
 }
 
 // ============================================================================

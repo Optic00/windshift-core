@@ -70,6 +70,71 @@ func (r *ItemTypeRepository) List(configurationSetID *int) ([]models.ItemType, e
 	return itemTypes, nil
 }
 
+// ListForWorkspace returns the workspace-applicable item type catalog.
+func (r *ItemTypeRepository) ListForWorkspace(workspaceID int) ([]models.ItemType, error) {
+	rows, err := r.db.Query(`
+		SELECT it.id, it.name, COALESCE(it.description, ''), COALESCE(it.icon, ''), COALESCE(it.color, ''),
+		       it.hierarchy_level, it.sort_order, it.is_default
+		FROM item_types it
+		WHERE NOT EXISTS (
+			SELECT 1 FROM workspace_configuration_sets wcs
+			JOIN configuration_set_item_types csit ON wcs.configuration_set_id = csit.configuration_set_id
+			WHERE wcs.workspace_id = ?
+		)
+		OR EXISTS (
+			SELECT 1 FROM workspace_configuration_sets wcs
+			JOIN configuration_set_item_types csit ON wcs.configuration_set_id = csit.configuration_set_id
+			WHERE wcs.workspace_id = ? AND csit.item_type_id = it.id
+		)
+		ORDER BY CASE WHEN it.hierarchy_level = -1 THEN 1 ELSE 0 END,
+		         it.hierarchy_level, it.sort_order, it.name
+	`, workspaceID, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("list item types for workspace %d: %w", workspaceID, err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]models.ItemType, 0)
+	for rows.Next() {
+		var itemType models.ItemType
+		if err := rows.Scan(&itemType.ID, &itemType.Name, &itemType.Description,
+			&itemType.Icon, &itemType.Color, &itemType.HierarchyLevel, &itemType.SortOrder,
+			&itemType.IsDefault); err != nil {
+			return nil, fmt.Errorf("scan workspace item type: %w", err)
+		}
+		out = append(out, itemType)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate workspace item types: %w", err)
+	}
+	return out, nil
+}
+
+// ListChildNames returns item types allowed below a parent type in a workspace.
+func (r *ItemTypeRepository) ListChildNames(parentTypeID, workspaceID int) ([]string, error) {
+	rows, err := r.db.Query(`
+		SELECT it.name
+		FROM item_types it
+		JOIN workspace_hierarchy wh ON wh.child_type_id = it.id
+		WHERE wh.parent_type_id = ? AND it.workspace_id = ?
+	`, parentTypeID, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("list child item types: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	names := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("scan child item type: %w", err)
+		}
+		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate child item types: %w", err)
+	}
+	return names, nil
+}
+
 // GetByID returns the item type with the given id (configuration sets
 // populated), or ErrNotFound when it does not exist.
 func (r *ItemTypeRepository) GetByID(id int) (*models.ItemType, error) {

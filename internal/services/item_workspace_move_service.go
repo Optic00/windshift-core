@@ -265,98 +265,102 @@ func (s *ItemWorkspaceMoveService) loadDestination(workspaceID int) (name, key s
 }
 
 func (s *ItemWorkspaceMoveService) listDestinationItemTypes(workspaceID int) ([]ItemWorkspaceMoveOption, error) {
-	rows, err := s.db.Query(`
-		SELECT it.id, it.name, COALESCE(it.icon, ''), COALESCE(it.color, ''), it.is_default
-		FROM item_types it
-		LEFT JOIN workspace_configuration_sets wcs ON wcs.workspace_id = ?
-		LEFT JOIN configuration_set_item_types csit
-		  ON csit.configuration_set_id = wcs.configuration_set_id AND csit.item_type_id = it.id
-		WHERE (wcs.configuration_set_id IS NULL OR csit.id IS NOT NULL)
-		  AND COALESCE(it.hierarchy_level, 0) != -1
-		ORDER BY it.is_default DESC, it.hierarchy_level, it.sort_order, it.name
-	`, workspaceID)
+	itemTypes, err := repository.NewItemTypeRepository(s.db).ListForWorkspace(workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("list destination item types: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-	return scanMoveOptions(rows)
+	sort.SliceStable(itemTypes, func(i, j int) bool {
+		if itemTypes[i].IsDefault != itemTypes[j].IsDefault {
+			return itemTypes[i].IsDefault
+		}
+		if itemTypes[i].HierarchyLevel != itemTypes[j].HierarchyLevel {
+			return itemTypes[i].HierarchyLevel < itemTypes[j].HierarchyLevel
+		}
+		if itemTypes[i].SortOrder != itemTypes[j].SortOrder {
+			return itemTypes[i].SortOrder < itemTypes[j].SortOrder
+		}
+		return itemTypes[i].Name < itemTypes[j].Name
+	})
+	options := []ItemWorkspaceMoveOption{}
+	for _, itemType := range itemTypes {
+		if itemType.HierarchyLevel == -1 {
+			continue
+		}
+		options = append(options, ItemWorkspaceMoveOption{
+			ID: itemType.ID, Name: itemType.Name, Icon: itemType.Icon,
+			Color: itemType.Color, IsDefault: itemType.IsDefault,
+		})
+	}
+	return options, nil
 }
 
 func (s *ItemWorkspaceMoveService) listDestinationStatuses(workspaceID, itemTypeID int) ([]ItemWorkspaceMoveOption, error) {
-	var workflowID sql.NullInt64
-	err := s.db.QueryRow(`
-		SELECT COALESCE(csit.workflow_id, cs.workflow_id)
-		FROM workspace_configuration_sets wcs
-		JOIN configuration_sets cs ON cs.id = wcs.configuration_set_id
-		JOIN configuration_set_item_types csit
-		  ON csit.configuration_set_id = cs.id AND csit.item_type_id = ?
-		WHERE wcs.workspace_id = ?
-	`, itemTypeID, workspaceID).Scan(&workflowID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return s.listAllStatuses()
-	}
+	workflowID, mapped, err := repository.NewConfigurationSetRepository(s.db).MappedItemTypeWorkflow(workspaceID, itemTypeID)
 	if err != nil {
 		return nil, fmt.Errorf("resolve destination workflow: %w", err)
 	}
-	if !workflowID.Valid {
+	if !mapped || workflowID == nil {
 		return s.listAllStatuses()
 	}
-	rows, err := s.db.Query(`
-		SELECT DISTINCT s.id, s.name, '', COALESCE(sc.color, ''), s.is_default
-		FROM statuses s
-		JOIN status_categories sc ON sc.id = s.category_id
-		WHERE s.id IN (
-			SELECT to_status_id FROM workflow_transitions WHERE workflow_id = ?
-			UNION
-			SELECT from_status_id FROM workflow_transitions WHERE workflow_id = ? AND from_status_id IS NOT NULL
-		)
-		ORDER BY s.is_default DESC, s.name
-	`, workflowID.Int64, workflowID.Int64)
+	statuses, err := repository.NewStatusRepository(s.db).ListForWorkflow(*workflowID)
 	if err != nil {
 		return nil, fmt.Errorf("list destination statuses: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-	return scanMoveOptions(rows)
+	return moveOptionsFromStatuses(statuses), nil
 }
 
 func (s *ItemWorkspaceMoveService) listAllStatuses() ([]ItemWorkspaceMoveOption, error) {
-	rows, err := s.db.Query(`SELECT s.id, s.name, '', COALESCE(sc.color, ''), s.is_default FROM statuses s JOIN status_categories sc ON sc.id = s.category_id ORDER BY s.is_default DESC, s.name`)
+	statuses, err := repository.NewStatusRepository(s.db).List()
 	if err != nil {
 		return nil, fmt.Errorf("list statuses: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-	return scanMoveOptions(rows)
+	options := moveOptionsFromStatuses(statuses)
+	sortMoveOptionsDefaultName(options)
+	return options, nil
 }
 
 func (s *ItemWorkspaceMoveService) listDestinationPriorities(workspaceID int) ([]ItemWorkspaceMoveOption, error) {
-	rows, err := s.db.Query(`
-		SELECT p.id, p.name, COALESCE(p.icon, ''), COALESCE(p.color, ''), p.is_default
-		FROM priorities p
-		LEFT JOIN workspace_configuration_sets wcs ON wcs.workspace_id = ?
-		LEFT JOIN configuration_set_priorities csp
-		  ON csp.configuration_set_id = wcs.configuration_set_id AND csp.priority_id = p.id
-		WHERE wcs.configuration_set_id IS NULL
-		   OR NOT EXISTS (SELECT 1 FROM configuration_set_priorities x WHERE x.configuration_set_id = wcs.configuration_set_id)
-		   OR csp.id IS NOT NULL
-		ORDER BY p.is_default DESC, p.sort_order, p.name
-	`, workspaceID)
+	priorities, err := repository.NewPriorityRepository(s.db).ListForWorkspace(workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("list destination priorities: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-	return scanMoveOptions(rows)
+	sort.SliceStable(priorities, func(i, j int) bool {
+		if priorities[i].IsDefault != priorities[j].IsDefault {
+			return priorities[i].IsDefault
+		}
+		if priorities[i].SortOrder != priorities[j].SortOrder {
+			return priorities[i].SortOrder < priorities[j].SortOrder
+		}
+		return priorities[i].Name < priorities[j].Name
+	})
+	options := make([]ItemWorkspaceMoveOption, 0, len(priorities))
+	for _, priority := range priorities {
+		options = append(options, ItemWorkspaceMoveOption{
+			ID: priority.ID, Name: priority.Name, Icon: priority.Icon,
+			Color: priority.Color, IsDefault: priority.IsDefault,
+		})
+	}
+	return options, nil
 }
 
-func scanMoveOptions(rows *sql.Rows) ([]ItemWorkspaceMoveOption, error) {
-	options := []ItemWorkspaceMoveOption{}
-	for rows.Next() {
-		var option ItemWorkspaceMoveOption
-		if err := rows.Scan(&option.ID, &option.Name, &option.Icon, &option.Color, &option.IsDefault); err != nil {
-			return nil, err
-		}
-		options = append(options, option)
+func moveOptionsFromStatuses(statuses []models.Status) []ItemWorkspaceMoveOption {
+	options := make([]ItemWorkspaceMoveOption, 0, len(statuses))
+	for _, status := range statuses {
+		options = append(options, ItemWorkspaceMoveOption{
+			ID: status.ID, Name: status.Name, Color: status.CategoryColor,
+			IsDefault: status.IsDefault,
+		})
 	}
-	return options, rows.Err()
+	return options
+}
+
+func sortMoveOptionsDefaultName(options []ItemWorkspaceMoveOption) {
+	sort.SliceStable(options, func(i, j int) bool {
+		if options[i].IsDefault != options[j].IsDefault {
+			return options[i].IsDefault
+		}
+		return options[i].Name < options[j].Name
+	})
 }
 
 func optionName(options []ItemWorkspaceMoveOption, id int) string {
@@ -493,42 +497,22 @@ func (s *ItemWorkspaceMoveService) destinationCustomFields(values map[string]any
 	if len(values) == 0 {
 		return map[string]any{}, []string{}, []string{}, nil
 	}
-	var screenID sql.NullInt64
-	err = s.db.QueryRow(`
-		SELECT COALESCE(csit.create_screen_id, css.screen_id)
-		FROM workspace_configuration_sets wcs
-		JOIN configuration_sets cs ON cs.id = wcs.configuration_set_id
-		JOIN configuration_set_item_types csit
-		  ON csit.configuration_set_id = cs.id AND csit.item_type_id = ?
-		LEFT JOIN configuration_set_screens css
-		  ON css.configuration_set_id = cs.id AND css.context = 'create'
-		WHERE wcs.workspace_id = ?
-	`, itemTypeID, workspaceID).Scan(&screenID)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	screenRepo := repository.NewScreenRepository(s.db)
+	screenID, err := screenRepo.GetEffectiveCreateScreenID(workspaceID, itemTypeID)
+	if err != nil {
 		return nil, nil, nil, fmt.Errorf("resolve destination screen: %w", err)
 	}
 
 	allowed := map[string]string{}
-	if screenID.Valid {
-		rows, err := s.db.Query(`
-			SELECT sf.field_identifier, COALESCE(cfd.name, sf.field_identifier)
-			FROM screen_fields sf
-			LEFT JOIN custom_field_definitions cfd ON cfd.id = CAST(sf.field_identifier AS INTEGER)
-			WHERE sf.screen_id = ? AND sf.field_type = 'custom'
-		`, screenID.Int64)
+	if screenID != nil {
+		fields, err := screenRepo.ListFields(*screenID)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("list destination custom fields: %w", err)
 		}
-		defer func() { _ = rows.Close() }()
-		for rows.Next() {
-			var id, name string
-			if err := rows.Scan(&id, &name); err != nil {
-				return nil, nil, nil, err
+		for _, field := range fields {
+			if field.FieldType == "custom" {
+				allowed[field.FieldIdentifier] = field.FieldName
 			}
-			allowed[id] = name
-		}
-		if err := rows.Err(); err != nil {
-			return nil, nil, nil, err
 		}
 	}
 

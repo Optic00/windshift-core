@@ -210,21 +210,7 @@ func (r *RequestTypeRepository) ItemTypeExists(id int) (bool, error) {
 // services.IsItemTypeAllowedInWorkspace, kept here so the request-type handler
 // can validate routing without the repository depending on the services layer.
 func (r *RequestTypeRepository) ItemTypeAllowedInWorkspace(workspaceID, itemTypeID int) (bool, error) {
-	configSetID, err := NewConfigurationSetRepository(r.db).GetWorkspaceConfigSetID(workspaceID)
-	if err != nil {
-		return false, fmt.Errorf("query workspace %d config set: %w", workspaceID, err)
-	}
-	if configSetID == nil {
-		return true, nil // no config set → all types allowed
-	}
-	var ok bool
-	if err := r.db.QueryRow(
-		"SELECT EXISTS(SELECT 1 FROM configuration_set_item_types WHERE configuration_set_id = ? AND item_type_id = ?)",
-		*configSetID, itemTypeID,
-	).Scan(&ok); err != nil {
-		return false, fmt.Errorf("check item_type %d in config set %d: %w", itemTypeID, *configSetID, err)
-	}
-	return ok, nil
+	return NewConfigurationSetRepository(r.db).ItemTypeAllowed(workspaceID, itemTypeID)
 }
 
 // MaxDisplayOrder returns the largest display_order in use within a channel

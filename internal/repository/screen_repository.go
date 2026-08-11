@@ -55,6 +55,29 @@ func (r *ScreenRepository) GetCreateScreenID(workspaceID, itemTypeID int) (*int,
 	return screenID, nil
 }
 
+// GetEffectiveCreateScreenID resolves the item-type override and then the
+// configuration set's default create screen.
+func (r *ScreenRepository) GetEffectiveCreateScreenID(workspaceID, itemTypeID int) (*int, error) {
+	var screenID *int
+	err := r.db.QueryRow(`
+		SELECT COALESCE(csit.create_screen_id, css.screen_id)
+		FROM workspace_configuration_sets wcs
+		JOIN configuration_sets cs ON cs.id = wcs.configuration_set_id
+		JOIN configuration_set_item_types csit
+		  ON csit.configuration_set_id = cs.id AND csit.item_type_id = ?
+		LEFT JOIN configuration_set_screens css
+		  ON css.configuration_set_id = cs.id AND css.context = 'create'
+		WHERE wcs.workspace_id = ?
+	`, itemTypeID, workspaceID).Scan(&screenID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("resolve effective create screen: %w", err)
+	}
+	return screenID, nil
+}
+
 // ListFields returns the screen_fields rows for a screen, joined with
 // custom_field_definitions for the "custom" entries.
 func (r *ScreenRepository) ListFields(screenID int) ([]ScreenFieldRow, error) {

@@ -318,6 +318,181 @@ type CreateUserParams struct {
 	OAuthClientID    *int
 }
 
+// WorkspaceManagedAgentIdentityParams contains the identity and initial role
+// fields created atomically with a workspace-managed agent profile.
+type WorkspaceManagedAgentIdentityParams struct {
+	Email           string
+	Username        string
+	Name            string
+	AvatarURL       string
+	WorkspaceID     int
+	GrantedByUserID int
+	RoleName        string
+}
+
+// CreateWorkspaceManagedAgentIdentity creates the agent user and its initial
+// workspace role inside the caller's transaction.
+func CreateWorkspaceManagedAgentIdentity(ctx context.Context, tx database.Tx, p WorkspaceManagedAgentIdentityParams) (int, error) {
+	var id int
+	err := tx.QueryRowContext(ctx, `
+		INSERT INTO users
+			(email, username, first_name, last_name, is_active, password_hash,
+			 requires_password_reset, is_agent, agent_owner_user_id,
+			 agent_provenance, avatar_url, email_verified)
+		VALUES (?, ?, ?, '', true, NULL, false, true, NULL, 'user', ?, true)
+		RETURNING id
+	`, p.Email, p.Username, p.Name, nullableUserString(p.AvatarURL)).Scan(&id)
+	if err != nil {
+		if database.IsUniqueConstraintError(err) {
+			return 0, ErrDuplicateEntry
+		}
+		return 0, fmt.Errorf("create workspace-managed agent identity: %w", err)
+	}
+	result, err := tx.ExecContext(ctx, `
+		INSERT INTO user_workspace_roles (user_id, workspace_id, role_id, granted_by, granted_at)
+		SELECT ?, ?, id, ?, CURRENT_TIMESTAMP
+		FROM workspace_roles
+		WHERE name = ?
+	`, id, p.WorkspaceID, p.GrantedByUserID, p.RoleName)
+	if err != nil {
+		return 0, fmt.Errorf("grant workspace-managed agent role: %w", err)
+	}
+	if rows, _ := result.RowsAffected(); rows != 1 {
+		return 0, fmt.Errorf("grant workspace-managed agent role %q: %w", p.RoleName, ErrNotFound)
+	}
+	return id, nil
+}
+
+// CountOwnedAgents returns the number of agent users owned by ownerID.
+func (r *UserRepository) CountOwnedAgents(ownerID int) (int, error) {
+	var count int
+	if err := r.db.QueryRow("SELECT COUNT(*) FROM users WHERE agent_owner_user_id = ?", ownerID).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count agents owned by user %d: %w", ownerID, err)
+	}
+	return count, nil
+}
+
+func scanOwnedAgent(scanner interface{ Scan(...any) error }, ownerID int) (*models.User, error) {
+	var user models.User
+	var avatarURL sql.NullString
+	if err := scanner.Scan(&user.ID, &user.Email, &user.Username, &user.FirstName, &user.LastName,
+		&user.IsActive, &avatarURL, &user.CreatedAt, &user.UpdatedAt); err != nil {
+		return nil, err
+	}
+	user.IsAgent = true
+	user.AgentOwnerUserID = &ownerID
+	user.AvatarURL = avatarURL.String
+	user.FullName = strings.TrimSpace(user.FirstName + " " + user.LastName)
+	return &user, nil
+}
+
+const ownedAgentColumns = "id, email, username, first_name, last_name, is_active, avatar_url, created_at, updated_at"
+
+// FindOwnedAgentByUsername returns nil when no owned agent matches.
+func (r *UserRepository) FindOwnedAgentByUsername(ownerID int, username string) (*models.User, error) {
+	user, err := scanOwnedAgent(r.db.QueryRow(`SELECT `+ownedAgentColumns+`
+		FROM users WHERE username = ? AND agent_owner_user_id = ? AND COALESCE(is_agent, false) = true`, username, ownerID), ownerID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find owned agent %q: %w", username, err)
+	}
+	return user, nil
+}
+
+// ListOwnedAgents returns newest agents first.
+func (r *UserRepository) ListOwnedAgents(ownerID int) ([]models.User, error) {
+	rows, err := r.db.Query(`SELECT `+ownedAgentColumns+`
+		FROM users WHERE agent_owner_user_id = ? ORDER BY created_at DESC`, ownerID)
+	if err != nil {
+		return nil, fmt.Errorf("list agents owned by user %d: %w", ownerID, err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]models.User, 0)
+	for rows.Next() {
+		user, err := scanOwnedAgent(rows, ownerID)
+		if err != nil {
+			return nil, fmt.Errorf("scan owned agent: %w", err)
+		}
+		out = append(out, *user)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate owned agents: %w", err)
+	}
+	return out, nil
+}
+
+// UpdateOwnedAgentName updates and returns an owned agent or ErrNotFound.
+func (r *UserRepository) UpdateOwnedAgentName(agentID, ownerID int, name string) (*models.User, error) {
+	result, err := r.db.ExecWrite(`UPDATE users SET first_name = ?, last_name = '', updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND agent_owner_user_id = ? AND COALESCE(is_agent, false) = true`, name, agentID, ownerID)
+	if err != nil {
+		return nil, fmt.Errorf("update owned agent %d: %w", agentID, err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return nil, fmt.Errorf("count updated owned agent rows: %w", err)
+	}
+	if rows == 0 {
+		return nil, ErrNotFound
+	}
+	user, err := scanOwnedAgent(r.db.QueryRow("SELECT "+ownedAgentColumns+" FROM users WHERE id = ?", agentID), ownerID)
+	if err != nil {
+		return nil, fmt.Errorf("reload owned agent %d: %w", agentID, err)
+	}
+	return user, nil
+}
+
+// OwnedAgentTarget returns the owner and username used by the delete policy.
+func (r *UserRepository) OwnedAgentTarget(agentID int) (ownerID *int, username string, err error) {
+	var owner sql.NullInt64
+	err = r.db.QueryRow("SELECT agent_owner_user_id, username FROM users WHERE id = ?", agentID).Scan(&owner, &username)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, "", ErrNotFound
+	}
+	if err != nil {
+		return nil, "", fmt.Errorf("get owned agent target %d: %w", agentID, err)
+	}
+	if owner.Valid {
+		value := int(owner.Int64)
+		ownerID = &value
+	}
+	return ownerID, username, nil
+}
+
+// Delete removes a user row.
+func (r *UserRepository) Delete(id int) error {
+	if _, err := r.db.ExecWrite("DELETE FROM users WHERE id = ?", id); err != nil {
+		return fmt.Errorf("delete user %d: %w", id, err)
+	}
+	return nil
+}
+
+type UserNameMatch struct {
+	ID       int
+	FullName string
+}
+
+// FindIDsByFullName returns exact case-insensitive full-name matches.
+func (r *UserRepository) FindIDsByFullName(name string) ([]UserNameMatch, error) {
+	rows, err := r.db.Query(`SELECT id, first_name || ' ' || last_name
+		FROM users WHERE LOWER(first_name || ' ' || last_name) = LOWER(?) ORDER BY id`, name)
+	if err != nil {
+		return nil, fmt.Errorf("find users by full name: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]UserNameMatch, 0)
+	for rows.Next() {
+		var match UserNameMatch
+		if err := rows.Scan(&match.ID, &match.FullName); err != nil {
+			return nil, fmt.Errorf("scan user full-name match: %w", err)
+		}
+		out = append(out, match)
+	}
+	return out, rows.Err()
+}
+
 // Create inserts a new user with the supplied is_active value. Returns
 // ErrDuplicateEntry when the unique (email/username) constraint trips.
 func (r *UserRepository) Create(p CreateUserParams) (int64, error) {

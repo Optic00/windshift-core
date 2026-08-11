@@ -2,10 +2,8 @@ package aitools
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"windshift/internal/auth"
@@ -180,41 +178,17 @@ func init() {
 			if accessibleIDs != nil && len(accessibleIDs) == 0 {
 				return listTimeProjectsOut{Projects: []timeProjectDTO{}}, nil
 			}
-			query := `SELECT tp.id, tp.name, tp.status, COALESCE(tp.description, ''),
-			       COALESCE(co.name, ''), COALESCE(tpc.name, ''), tp.hourly_rate
-			FROM time_projects tp
-			LEFT JOIN customer_organisations co ON tp.customer_id = co.id
-			LEFT JOIN time_project_categories tpc ON tp.category_id = tpc.id
-			WHERE 1=1`
-			var qa []any
-			if accessibleIDs != nil {
-				ph := make([]string, len(accessibleIDs))
-				for i, id := range accessibleIDs {
-					ph[i] = "?"
-					qa = append(qa, id)
-				}
-				query += fmt.Sprintf(" AND tp.id IN (%s)", strings.Join(ph, ","))
-			}
-			if args.Status != "" {
-				query += " AND tp.status = ?"
-				qa = append(qa, args.Status)
-			}
-			query += " ORDER BY tp.name"
-			rows, err := env.DB.Query(query, qa...)
+			projects, err := repository.NewTimeProjectRepository(env.DB).ListDetails(accessibleIDs, args.Status)
 			if err != nil {
 				return nil, err
 			}
-			defer func() { _ = rows.Close() }()
 			out := listTimeProjectsOut{Projects: []timeProjectDTO{}}
-			for rows.Next() {
-				var p timeProjectDTO
-				if err := rows.Scan(&p.ID, &p.Name, &p.Status, &p.Description, &p.CustomerName, &p.CategoryName, &p.HourlyRate); err != nil {
-					continue
-				}
-				out.Projects = append(out.Projects, p)
-			}
-			if err := rows.Err(); err != nil {
-				return nil, err
+			for _, project := range projects {
+				out.Projects = append(out.Projects, timeProjectDTO{
+					ID: project.ID, Name: project.Name, Status: project.Status,
+					Description: project.Description, CustomerName: project.CustomerName,
+					CategoryName: project.CategoryName, HourlyRate: project.HourlyRate,
+				})
 			}
 			return out, nil
 		},
@@ -232,64 +206,39 @@ func init() {
 			if limit <= 0 || limit > 200 {
 				limit = 50
 			}
-			query := `SELECT tw.id, tw.project_id, tp.name, COALESCE(co.name, ''), tw.description, tw.date,
-			       tw.duration_minutes, COALESCE(tw.item_id, 0),
-			       COALESCE(i.workspace_item_number, 0), COALESCE(w.key, ''), COALESCE(i.workspace_id, 0)
-			FROM time_worklogs tw
-			JOIN time_projects tp ON tw.project_id = tp.id
-			LEFT JOIN customer_organisations co ON tw.customer_id = co.id
-			LEFT JOIN items i ON tw.item_id = i.id
-			LEFT JOIN workspaces w ON i.workspace_id = w.id
-			WHERE tw.user_id = ?`
-			qa := []any{env.UserID}
+			filter := repository.WorklogListFilter{UserID: env.UserID, ProjectID: args.ProjectID, Limit: limit}
 			if args.DateFrom != "" {
 				t, err := time.Parse("2006-01-02", args.DateFrom)
 				if err != nil {
-					return map[string]string{"error": "invalid date_from format, use YYYY-MM-DD"}, nil
+					return map[string]string{"error": "invalid date_from format, use YYYY-MM-DD"}, nil //nolint:nilerr // Tool validation errors use response payloads.
 				}
-				query += " AND tw.date >= ?"
-				qa = append(qa, t.Unix())
+				from := t.Unix()
+				filter.DateFromUnix = &from
 			}
 			if args.DateTo != "" {
 				t, err := time.Parse("2006-01-02", args.DateTo)
 				if err != nil {
-					return map[string]string{"error": "invalid date_to format, use YYYY-MM-DD"}, nil
+					return map[string]string{"error": "invalid date_to format, use YYYY-MM-DD"}, nil //nolint:nilerr // Tool validation errors use response payloads.
 				}
-				query += " AND tw.date <= ?"
-				qa = append(qa, t.Add(24*time.Hour-time.Second).Unix())
+				to := t.Add(24*time.Hour - time.Second).Unix()
+				filter.DateToUnix = &to
 			}
-			if args.ProjectID != nil && *args.ProjectID > 0 {
-				query += " AND tw.project_id = ?"
-				qa = append(qa, *args.ProjectID)
-			}
-			query += " ORDER BY tw.date DESC LIMIT ?"
-			qa = append(qa, limit)
-
-			rows, err := env.DB.Query(query, qa...)
+			worklogs, _, err := repository.NewTimeWorklogRepository(env.DB).ListForUser(filter)
 			if err != nil {
 				return nil, err
 			}
-			defer func() { _ = rows.Close() }()
 			out := listWorklogsOut{Worklogs: []worklogDTO{}}
-			for rows.Next() {
-				var w worklogDTO
-				var dateUnix int64
-				var itemID, itemNumber, wsID int
-				var wsKey string
-				if err := rows.Scan(&w.ID, &w.ProjectID, &w.ProjectName, &w.CustomerName, &w.Description,
-					&dateUnix, &w.DurationMinutes, &itemID, &itemNumber, &wsKey, &wsID); err != nil {
-					continue
+			for _, worklog := range worklogs {
+				result := worklogDTO{
+					ID: worklog.ID, ProjectID: worklog.ProjectID, ProjectName: worklog.ProjectName,
+					CustomerName: worklog.CustomerName, Description: worklog.Description,
+					Date: time.Unix(worklog.Date, 0).UTC().Format("2006-01-02"), DurationMinutes: worklog.DurationMins,
 				}
-				w.Date = time.Unix(dateUnix, 0).UTC().Format("2006-01-02")
-				if itemID > 0 && wsKey != "" && env.HasWorkspaceAccess(wsID) {
-					w.ItemKey = fmt.Sprintf("%s-%d", wsKey, itemNumber)
-					id := itemID
-					w.ItemID = &id
+				if worklog.ItemID != nil && worklog.WorkspaceID != nil && worklog.WorkspaceKey != "" && env.HasWorkspaceAccess(*worklog.WorkspaceID) {
+					result.ItemKey = fmt.Sprintf("%s-%d", worklog.WorkspaceKey, worklog.WorkspaceItemNumber)
+					result.ItemID = worklog.ItemID
 				}
-				out.Worklogs = append(out.Worklogs, w)
-			}
-			if err := rows.Err(); err != nil {
-				return nil, err
+				out.Worklogs = append(out.Worklogs, result)
 			}
 			return out, nil
 		},
@@ -313,17 +262,14 @@ func init() {
 			if !canBook {
 				return map[string]string{"error": "no permission to book time on this project"}, nil
 			}
-			var projectName, projectStatus string
-			var customerID sql.NullInt64
-			err = env.DB.QueryRow("SELECT name, status, customer_id FROM time_projects WHERE id = ?", args.ProjectID).
-				Scan(&projectName, &projectStatus, &customerID)
+			project, err := repository.NewTimeProjectRepository(env.DB).GetBookingInfo(args.ProjectID)
 			if err != nil {
 				return map[string]string{"error": "project not found"}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
 			}
-			if projectStatus != "Active" {
-				return map[string]string{"error": fmt.Sprintf("project %q is not active (status: %s)", projectName, projectStatus)}, nil
+			if project.Status != "Active" {
+				return map[string]string{"error": fmt.Sprintf("project %q is not active (status: %s)", project.Name, project.Status)}, nil
 			}
-			if !customerID.Valid {
+			if project.CustomerID == nil {
 				return map[string]string{"error": "project has no customer assigned, cannot log time"}, nil
 			}
 			timezone := env.Timezone
@@ -353,7 +299,7 @@ func init() {
 			}
 			id, err := repository.NewTimeWorklogRepository(env.DB).Create(repository.NewWorklog{
 				ProjectID:       args.ProjectID,
-				CustomerID:      customerID.Int64,
+				CustomerID:      *project.CustomerID,
 				UserID:          env.UserID,
 				ItemID:          itemID,
 				Description:     args.Description,
@@ -369,7 +315,7 @@ func init() {
 			return logTimeOut{
 				ID:              id,
 				ProjectID:       args.ProjectID,
-				ProjectName:     projectName,
+				ProjectName:     project.Name,
 				Date:            args.Date,
 				DurationMinutes: durationMins,
 				Description:     args.Description,

@@ -308,130 +308,38 @@ func (s *WorkspaceService) GetStatuses(workspaceID int) ([]models.Status, error)
 // the supplied workspaces in one query. An empty workspace list means global
 // status context and therefore returns the complete status catalog.
 func (s *WorkspaceService) GetStatusesForWorkspaces(workspaceIDs []int) ([]models.Status, error) {
-	if len(workspaceIDs) == 0 {
-		return repository.NewStatusRepository(s.db).List()
-	}
-
-	placeholders := make([]string, len(workspaceIDs))
-	args := make([]any, len(workspaceIDs))
-	for i, workspaceID := range workspaceIDs {
-		placeholders[i] = "?"
-		args[i] = workspaceID
-	}
-
-	rows, err := s.db.Query(fmt.Sprintf(`
-		WITH target_workspaces AS (
-			SELECT id, is_personal
-			FROM workspaces
-			WHERE id IN (%s)
-		), effective_workflows AS (
-			SELECT target.id AS workspace_id,
-			       target.is_personal,
-			       COALESCE(
-			         csit.workflow_id,
-			         cs.workflow_id,
-			         (SELECT id FROM workflows WHERE is_default = true ORDER BY id LIMIT 1)
-			       ) AS workflow_id
-			FROM target_workspaces target
-			LEFT JOIN workspace_configuration_sets wcs ON wcs.workspace_id = target.id
-			LEFT JOIN configuration_sets cs ON cs.id = wcs.configuration_set_id
-			LEFT JOIN configuration_set_item_types csit ON csit.configuration_set_id = cs.id
-		), available_statuses AS (
-			SELECT wt.from_status_id AS status_id
-			FROM effective_workflows ew
-			JOIN workflow_transitions wt ON wt.workflow_id = ew.workflow_id
-			WHERE wt.from_status_id IS NOT NULL
-			UNION
-			SELECT wt.to_status_id AS status_id
-			FROM effective_workflows ew
-			JOIN workflow_transitions wt ON wt.workflow_id = ew.workflow_id
-		)
-		SELECT DISTINCT s.id, s.name, s.description, s.category_id, s.is_default,
-		       sc.name as category_name, sc.color as category_color, sc.is_completed
-		FROM statuses s
-		JOIN status_categories sc ON s.category_id = sc.id
-		WHERE s.id IN (SELECT status_id FROM available_statuses)
-		   OR EXISTS (SELECT 1 FROM target_workspaces WHERE is_personal = true)
-		ORDER BY s.category_id, s.name
-	`, strings.Join(placeholders, ",")), args...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get statuses for workspaces: %w", err)
-	}
-	defer rows.Close()
-	return scanWorkspaceStatuses(rows)
-}
-
-func scanWorkspaceStatuses(rows *sql.Rows) ([]models.Status, error) {
-	statuses := []models.Status{}
-	for rows.Next() {
-		var status models.Status
-		var description sql.NullString
-		err := rows.Scan(
-			&status.ID, &status.Name, &description, &status.CategoryID, &status.IsDefault,
-			&status.CategoryName, &status.CategoryColor, &status.IsCompleted,
-		)
-		if err != nil {
-			continue
-		}
-		status.Description = description.String
-		statuses = append(statuses, status)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate workspace statuses: %w", err)
-	}
-	return statuses, nil
+	return repository.NewStatusRepository(s.db).ListForWorkspaces(workspaceIDs)
 }
 
 // GetItemTypes retrieves item types available for a workspace via its configuration set.
 // If the workspace has a config set with item types defined, only those are returned.
 // If no config set exists, all item types are returned.
 func (s *WorkspaceService) GetItemTypes(workspaceID int) ([]ItemTypeResult, error) {
-	rows, err := s.db.Query(`
-		SELECT it.id, it.name, it.description, it.icon, it.color,
-		       it.hierarchy_level, it.sort_order, it.is_default
-		FROM item_types it
-		WHERE NOT EXISTS (
-			SELECT 1 FROM workspace_configuration_sets wcs
-			JOIN configuration_set_item_types csit ON wcs.configuration_set_id = csit.configuration_set_id
-			WHERE wcs.workspace_id = ?
-		)
-		OR EXISTS (
-			SELECT 1 FROM workspace_configuration_sets wcs
-			JOIN configuration_set_item_types csit ON wcs.configuration_set_id = csit.configuration_set_id
-			WHERE wcs.workspace_id = ? AND csit.item_type_id = it.id
-		)
-		ORDER BY CASE WHEN it.hierarchy_level = -1 THEN 1 ELSE 0 END, it.hierarchy_level, it.sort_order, it.name
-	`, workspaceID, workspaceID)
+	rows, err := repository.NewItemTypeRepository(s.db).ListForWorkspace(workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get workspace item types: %w", err)
 	}
-
-	return ScanItemTypes(rows)
+	out := make([]ItemTypeResult, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, ItemTypeResult{ID: row.ID, Name: row.Name, Description: row.Description,
+			Icon: row.Icon, Color: row.Color, HierarchyLevel: row.HierarchyLevel,
+			SortOrder: row.SortOrder, IsDefault: row.IsDefault})
+	}
+	return out, nil
 }
 
 // GetPriorities returns the priorities enabled for a workspace's configuration
 // set. When the workspace has no configuration set (or no priorities mapped to
 // it), all priorities are returned — mirroring GetItemTypes/GetStatuses.
 func (s *WorkspaceService) GetPriorities(workspaceID int) ([]PriorityResult, error) {
-	rows, err := s.db.Query(`
-		SELECT DISTINCT p.id, p.name, p.description, p.icon, p.color,
-		       p.sort_order, p.is_default
-		FROM priorities p
-		WHERE NOT EXISTS (
-			SELECT 1 FROM workspace_configuration_sets wcs
-			JOIN configuration_set_priorities csp ON wcs.configuration_set_id = csp.configuration_set_id
-			WHERE wcs.workspace_id = ?
-		)
-		OR EXISTS (
-			SELECT 1 FROM workspace_configuration_sets wcs
-			JOIN configuration_set_priorities csp ON wcs.configuration_set_id = csp.configuration_set_id
-			WHERE wcs.workspace_id = ? AND csp.priority_id = p.id
-		)
-		ORDER BY p.sort_order, p.name
-	`, workspaceID, workspaceID)
+	rows, err := repository.NewPriorityRepository(s.db).ListForWorkspace(workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get workspace priorities: %w", err)
 	}
-
-	return ScanPriorities(rows)
+	out := make([]PriorityResult, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, PriorityResult{ID: row.ID, Name: row.Name, Description: row.Description,
+			Icon: row.Icon, Color: row.Color, SortOrder: row.SortOrder, IsDefault: row.IsDefault})
+	}
+	return out, nil
 }

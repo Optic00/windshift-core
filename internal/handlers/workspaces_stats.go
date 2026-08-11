@@ -214,7 +214,7 @@ func (h *WorkspaceHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 7. Load milestone progress for active milestones referenced in this workspace
-	if repoProgress, mpErr := h.repo.GetMilestoneProgress(workspaceID, filterSQL, filterArgs); mpErr == nil {
+	if repoProgress, mpErr := repository.NewPlanningRepository(h.db).GetWorkspaceMilestoneProgress(workspaceID, filterSQL, filterArgs); mpErr == nil {
 		milestoneProgress := make([]MilestoneStatusProgress, len(repoProgress))
 		for i, rp := range repoProgress {
 			breakdowns := make([]MilestoneStatusBreakdown, len(rp.StatusBreakdown))

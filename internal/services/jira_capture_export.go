@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"windshift/internal/database"
+	"windshift/internal/repository"
 )
 
 // windshiftExport is the deterministic post-import snapshot consumed by the capture diff harness.
@@ -93,6 +94,10 @@ func WriteWindshiftExport(db database.Database, jobID, dir string) error {
 		return fmt.Errorf("load item mappings: %w", err)
 	}
 	exp.Warnings = append(exp.Warnings, warnings...)
+	entityMappings, err := loadCaptureEntityMappings(db, jobID)
+	if err != nil {
+		return fmt.Errorf("load capture entity mappings: %w", err)
+	}
 
 	for _, im := range itemMappings {
 		item, ok, warn := loadItemRow(db, im.windshiftID, im.jiraKey)
@@ -108,10 +113,10 @@ func WriteWindshiftExport(db database.Database, jobID, dir string) error {
 
 		item.Labels = loadItemLabels(db, im.windshiftID)
 		item.Milestones = loadItemMilestones(db, im.windshiftID)
-		item.Comments = loadItemComments(db, jobID, im.jiraKey, im.windshiftID)
-		item.Attachments = loadItemAttachments(db, jobID, im.jiraKey, im.windshiftID)
+		item.Comments = loadItemComments(db, entityMappings.forItem("comment", im.jiraKey), im.windshiftID)
+		item.Attachments = loadItemAttachments(db, entityMappings.forItem("attachment", im.jiraKey), im.windshiftID)
 		item.Links = loadItemLinks(db, im.windshiftID, idToKey)
-		item.Worklogs = loadItemWorklogs(db, jobID, im.jiraKey, im.windshiftID)
+		item.Worklogs = loadItemWorklogs(db, entityMappings.forItem("worklog", im.jiraKey), im.windshiftID)
 
 		exp.Items = append(exp.Items, item)
 	}
@@ -137,6 +142,48 @@ type itemMapping struct {
 	jiraKey     string
 	windshiftID int
 	parentKey   string
+}
+
+type captureEntityMapping struct {
+	jiraID       string
+	metadataJSON string
+}
+
+type captureEntityMappings map[string]map[string]map[int]captureEntityMapping
+
+func (m captureEntityMappings) forItem(entityType, jiraKey string) map[int]captureEntityMapping {
+	if byKey := m[entityType]; byKey != nil {
+		return byKey[jiraKey]
+	}
+	return nil
+}
+
+func loadCaptureEntityMappings(db database.Database, jobID string) (captureEntityMappings, error) {
+	rows, err := db.Query(`
+		SELECT entity_type, jira_key, jira_id, windshift_id, COALESCE(metadata_json, '{}')
+		FROM jira_import_id_mappings
+		WHERE job_id = ? AND entity_type IN ('comment', 'attachment', 'worklog')
+	`, jobID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := captureEntityMappings{}
+	for rows.Next() {
+		var entityType, jiraKey, jiraID, metadataJSON string
+		var windshiftID int
+		if err := rows.Scan(&entityType, &jiraKey, &jiraID, &windshiftID, &metadataJSON); err != nil {
+			return nil, err
+		}
+		if out[entityType] == nil {
+			out[entityType] = map[string]map[int]captureEntityMapping{}
+		}
+		if out[entityType][jiraKey] == nil {
+			out[entityType][jiraKey] = map[int]captureEntityMapping{}
+		}
+		out[entityType][jiraKey][windshiftID] = captureEntityMapping{jiraID: jiraID, metadataJSON: metadataJSON}
+	}
+	return out, rows.Err()
 }
 
 //nolint:gocritic // result names would shadow loop locals; positional return is clearer
@@ -181,67 +228,29 @@ func loadItemMappings(db database.Database, jobID string) ([]itemMapping, map[in
 
 //nolint:gocritic // positional return: (row, ok, warning); naming wouldn't add clarity
 func loadItemRow(db database.Database, itemID int, jiraKey string) (windshiftExportItem, bool, string) {
-	var (
-		title       string
-		description *string
-		statusName  *string
-		typeName    *string
-		priority    *string
-		assignee    *string
-		reporter    *string
-		creator     *string
-		storyPts    *float64
-		dueDate     *string
-		created     *string
-		updated     *string
-		cfValues    *string
-	)
-	err := db.QueryRow(`
-		SELECT i.title,
-		       i.description,
-		       s.name,
-		       t.name,
-		       p.name,
-		       ua.username,
-		       ur.username,
-		       uc.username,
-		       i.story_points,
-		       CAST(i.due_date AS TEXT),
-		       CAST(i.created_at AS TEXT),
-		       CAST(i.updated_at AS TEXT),
-		       CAST(i.custom_field_values AS TEXT)
-		FROM items i
-		LEFT JOIN statuses s   ON s.id = i.status_id
-		LEFT JOIN item_types t ON t.id = i.item_type_id
-		LEFT JOIN priorities p ON p.id = i.priority_id
-		LEFT JOIN users ua     ON ua.id = i.assignee_id
-		LEFT JOIN users ur     ON ur.id = i.reporter_id
-		LEFT JOIN users uc     ON uc.id = i.creator_id
-		WHERE i.id = ?
-	`, itemID).Scan(&title, &description, &statusName, &typeName, &priority,
-		&assignee, &reporter, &creator, &storyPts, &dueDate, &created, &updated, &cfValues)
+	snapshot, err := repository.NewItemRepository(db).GetCaptureSnapshot(itemID)
 	if err != nil {
 		return windshiftExportItem{}, false, fmt.Sprintf("item %s (id=%d) missing: %v", jiraKey, itemID, err)
 	}
 
 	out := windshiftExportItem{
-		Title:            title,
-		Description:      derefString(description),
-		StatusName:       derefString(statusName),
-		ItemTypeName:     derefString(typeName),
-		PriorityName:     derefString(priority),
-		AssigneeUsername: derefString(assignee),
-		ReporterUsername: derefString(reporter),
-		CreatorUsername:  derefString(creator),
-		StoryPoints:      storyPts,
-		DueDate:          derefString(dueDate),
-		CreatedAt:        derefString(created),
-		UpdatedAt:        derefString(updated),
+		Title:            snapshot.Title,
+		Description:      snapshot.Description,
+		StatusName:       snapshot.StatusName,
+		ItemTypeName:     snapshot.ItemTypeName,
+		PriorityName:     snapshot.PriorityName,
+		AssigneeUsername: snapshot.AssigneeUsername,
+		ReporterUsername: snapshot.ReporterUsername,
+		CreatorUsername:  snapshot.CreatorUsername,
+		StoryPoints:      snapshot.StoryPoints,
+		DueDate:          snapshot.DueDate,
+		CreatedAt:        snapshot.CreatedAt,
+		UpdatedAt:        snapshot.UpdatedAt,
 		CustomFields:     map[string]json.RawMessage{},
 	}
-	if cfValues != nil && *cfValues != "" {
+	if snapshot.CustomFieldValues != "" {
 		var bag map[string]json.RawMessage
-		if err := json.Unmarshal([]byte(*cfValues), &bag); err == nil {
+		if err := json.Unmarshal([]byte(snapshot.CustomFieldValues), &bag); err == nil {
 			out.CustomFields = bag
 		}
 	}
@@ -249,24 +258,14 @@ func loadItemRow(db database.Database, itemID int, jiraKey string) (windshiftExp
 }
 
 func loadItemLabels(db database.Database, itemID int) []string {
-	rows, err := db.Query(`
-		SELECT l.name
-		FROM item_labels il
-		JOIN labels l ON l.id = il.label_id
-		WHERE il.item_id = ?
-	`, itemID)
+	labels, err := repository.NewLabelRepository(db).ListForItem(itemID)
 	if err != nil {
 		return []string{}
 	}
-	defer func() { _ = rows.Close() }()
-	var out []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err == nil {
-			out = append(out, name)
-		}
+	out := make([]string, 0, len(labels))
+	for _, label := range labels {
+		out = append(out, label.Name)
 	}
-	_ = rows.Err()
 	sort.Strings(out)
 	if out == nil {
 		return []string{}
@@ -275,24 +274,10 @@ func loadItemLabels(db database.Database, itemID int) []string {
 }
 
 func loadItemMilestones(db database.Database, itemID int) []string {
-	rows, err := db.Query(`
-		SELECT m.name
-		FROM item_milestones im
-		JOIN milestones m ON m.id = im.milestone_id
-		WHERE im.item_id = ?
-	`, itemID)
+	out, err := repository.NewPlanningRepository(db).ListMilestoneNamesForItem(itemID)
 	if err != nil {
 		return []string{}
 	}
-	defer func() { _ = rows.Close() }()
-	var out []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err == nil {
-			out = append(out, name)
-		}
-	}
-	_ = rows.Err()
 	sort.Strings(out)
 	if out == nil {
 		return []string{}
@@ -300,26 +285,19 @@ func loadItemMilestones(db database.Database, itemID int) []string {
 	return out
 }
 
-func loadItemComments(db database.Database, jobID, jiraKey string, itemID int) []windshiftExportComment {
-	rows, err := db.Query(`
-		SELECT m.jira_id, COALESCE(u.username, ''), COALESCE(c.content, ''), CAST(c.created_at AS TEXT)
-		FROM jira_import_id_mappings m
-		JOIN comments c ON c.id = m.windshift_id AND c.item_id = ?
-		LEFT JOIN users u ON u.id = c.author_id
-		WHERE m.job_id = ? AND m.entity_type = 'comment' AND m.jira_key = ?
-	`, itemID, jobID, jiraKey)
+func loadItemComments(db database.Database, mappings map[int]captureEntityMapping, itemID int) []windshiftExportComment {
+	ids := captureMappingIDs(mappings)
+	comments, err := NewCommentService(db).ListCaptureComments(itemID, ids)
 	if err != nil {
 		return []windshiftExportComment{}
 	}
-	defer func() { _ = rows.Close() }()
-	var out []windshiftExportComment
-	for rows.Next() {
-		var c windshiftExportComment
-		if err := rows.Scan(&c.JiraID, &c.AuthorUsername, &c.Content, &c.CreatedAt); err == nil {
-			out = append(out, c)
-		}
+	out := make([]windshiftExportComment, 0, len(comments))
+	for _, comment := range comments {
+		out = append(out, windshiftExportComment{
+			JiraID: mappings[comment.ID].jiraID, AuthorUsername: comment.AuthorUsername,
+			Content: comment.Content, CreatedAt: comment.CreatedAt,
+		})
 	}
-	_ = rows.Err()
 	sort.Slice(out, func(i, j int) bool { return out[i].JiraID < out[j].JiraID })
 	if out == nil {
 		return []windshiftExportComment{}
@@ -327,30 +305,18 @@ func loadItemComments(db database.Database, jobID, jiraKey string, itemID int) [
 	return out
 }
 
-func loadItemAttachments(db database.Database, jobID, jiraKey string, itemID int) []windshiftExportAttachment {
-	rows, err := db.Query(`
-		SELECT m.jira_id,
-		       COALESCE(a.original_filename, ''),
-		       COALESCE(a.mime_type, ''),
-		       COALESCE(a.file_size, 0),
-		       COALESCE(u.username, '')
-		FROM jira_import_id_mappings m
-		JOIN attachments a ON a.id = m.windshift_id AND a.item_id = ? AND a.entity_type = 'item'
-		LEFT JOIN users u ON u.id = a.uploaded_by
-		WHERE m.job_id = ? AND m.entity_type = 'attachment' AND m.jira_key = ?
-	`, itemID, jobID, jiraKey)
+func loadItemAttachments(db database.Database, mappings map[int]captureEntityMapping, itemID int) []windshiftExportAttachment {
+	attachments, err := repository.NewAttachmentRepository(db).ListCaptureAttachments(itemID, captureMappingIDs(mappings))
 	if err != nil {
 		return []windshiftExportAttachment{}
 	}
-	defer func() { _ = rows.Close() }()
-	var out []windshiftExportAttachment
-	for rows.Next() {
-		var a windshiftExportAttachment
-		if err := rows.Scan(&a.JiraID, &a.OriginalFilename, &a.MimeType, &a.FileSize, &a.UploaderUsername); err == nil {
-			out = append(out, a)
-		}
+	out := make([]windshiftExportAttachment, 0, len(attachments))
+	for _, attachment := range attachments {
+		out = append(out, windshiftExportAttachment{
+			JiraID: mappings[attachment.ID].jiraID, OriginalFilename: attachment.OriginalFilename,
+			MimeType: attachment.MimeType, FileSize: attachment.FileSize, UploaderUsername: attachment.UploaderUsername,
+		})
 	}
-	_ = rows.Err()
 	sort.Slice(out, func(i, j int) bool { return out[i].JiraID < out[j].JiraID })
 	if out == nil {
 		return []windshiftExportAttachment{}
@@ -359,34 +325,20 @@ func loadItemAttachments(db database.Database, jobID, jiraKey string, itemID int
 }
 
 func loadItemLinks(db database.Database, itemID int, idToKey map[int]string) []windshiftExportLink {
-	rows, err := db.Query(`
-		SELECT COALESCE(lt.name, ''), il.target_id
-		FROM item_links il
-		LEFT JOIN link_types lt ON lt.id = il.link_type_id
-		WHERE il.source_type = 'item' AND il.source_id = ? AND il.target_type = 'item'
-	`, itemID)
+	links, err := repository.NewItemLinkRepository(db).ListCaptureItemLinks(itemID)
 	if err != nil {
 		return []windshiftExportLink{}
 	}
-	defer func() { _ = rows.Close() }()
-	var out []windshiftExportLink
-	for rows.Next() {
-		var (
-			linkType string
-			targetID int
-		)
-		if err := rows.Scan(&linkType, &targetID); err != nil {
-			continue
-		}
-		targetKey, ok := idToKey[targetID]
+	out := []windshiftExportLink{}
+	for _, link := range links {
+		targetKey, ok := idToKey[link.TargetID]
 		if !ok {
 			// Link points outside this job's imported items; skip — the diff
 			// harness treats these as expected gaps and the importer logs them.
 			continue
 		}
-		out = append(out, windshiftExportLink{LinkType: linkType, TargetJiraKey: targetKey})
+		out = append(out, windshiftExportLink{LinkType: link.LinkType, TargetJiraKey: targetKey})
 	}
-	_ = rows.Err()
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].LinkType != out[j].LinkType {
 			return out[i].LinkType < out[j].LinkType
@@ -399,53 +351,34 @@ func loadItemLinks(db database.Database, itemID int, idToKey map[int]string) []w
 	return out
 }
 
-func loadItemWorklogs(db database.Database, jobID, jiraKey string, itemID int) []windshiftExportWorklog {
-	rows, err := db.Query(`
-		SELECT m.jira_id,
-		       COALESCE(u.username, ''),
-		       COALESCE(w.duration_minutes, 0),
-		       COALESCE(w.start_time, 0),
-		       COALESCE(m.metadata_json, '{}')
-		FROM jira_import_id_mappings m
-		JOIN time_worklogs w ON w.id = m.windshift_id AND w.item_id = ?
-		LEFT JOIN users u ON u.id = w.user_id
-		WHERE m.job_id = ? AND m.entity_type = 'worklog' AND m.jira_key = ?
-	`, itemID, jobID, jiraKey)
+func loadItemWorklogs(db database.Database, mappings map[int]captureEntityMapping, itemID int) []windshiftExportWorklog {
+	worklogs, err := repository.NewTimeWorklogRepository(db).ListCaptureWorklogs(itemID, captureMappingIDs(mappings))
 	if err != nil {
 		return []windshiftExportWorklog{}
 	}
-	defer func() { _ = rows.Close() }()
-	var out []windshiftExportWorklog
-	for rows.Next() {
-		var (
-			w            windshiftExportWorklog
-			durationMins int
-			startedUnix  int64
-			metadataJSON string
-		)
-		if err := rows.Scan(&w.JiraID, &w.AuthorUsername, &durationMins, &startedUnix, &metadataJSON); err != nil {
-			continue
-		}
+	out := make([]windshiftExportWorklog, 0, len(worklogs))
+	for _, worklog := range worklogs {
+		mapping := mappings[worklog.ID]
+		w := windshiftExportWorklog{JiraID: mapping.jiraID, AuthorUsername: worklog.AuthorUsername}
 		var meta struct {
 			TimeSpentSeconds int    `json:"time_spent_seconds"`
 			Started          string `json:"started"`
 		}
-		if metadataJSON != "" {
-			_ = json.Unmarshal([]byte(metadataJSON), &meta)
+		if mapping.metadataJSON != "" {
+			_ = json.Unmarshal([]byte(mapping.metadataJSON), &meta)
 		}
 		if meta.TimeSpentSeconds > 0 {
 			w.TimeSpentSeconds = meta.TimeSpentSeconds
 		} else {
-			w.TimeSpentSeconds = durationMins * 60
+			w.TimeSpentSeconds = worklog.DurationMinutes * 60
 		}
 		if meta.Started != "" {
 			w.Started = meta.Started
-		} else if startedUnix > 0 {
-			w.Started = time.Unix(startedUnix, 0).UTC().Format(time.RFC3339)
+		} else if worklog.StartedUnix > 0 {
+			w.Started = time.Unix(worklog.StartedUnix, 0).UTC().Format(time.RFC3339)
 		}
 		out = append(out, w)
 	}
-	_ = rows.Err()
 	sort.Slice(out, func(i, j int) bool { return out[i].JiraID < out[j].JiraID })
 	if out == nil {
 		return []windshiftExportWorklog{}
@@ -453,9 +386,10 @@ func loadItemWorklogs(db database.Database, jobID, jiraKey string, itemID int) [
 	return out
 }
 
-func derefString(s *string) string {
-	if s == nil {
-		return ""
+func captureMappingIDs(mappings map[int]captureEntityMapping) []int {
+	ids := make([]int, 0, len(mappings))
+	for id := range mappings {
+		ids = append(ids, id)
 	}
-	return *s
+	return ids
 }

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"windshift/internal/database"
@@ -15,6 +16,19 @@ type OAuthClientRepository struct {
 // NewOAuthClientRepository constructs an OAuth client repository.
 func NewOAuthClientRepository(db database.Database) *OAuthClientRepository {
 	return &OAuthClientRepository{db: db}
+}
+
+// EnabledByID returns ErrNotFound when the client does not exist.
+func (r *OAuthClientRepository) EnabledByID(id int) (bool, error) {
+	var enabled bool
+	err := r.db.QueryRow("SELECT enabled FROM oauth_clients WHERE id = ?", id).Scan(&enabled)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	if err != nil {
+		return false, fmt.Errorf("get OAuth client %d: %w", id, err)
+	}
+	return enabled, nil
 }
 
 // CreateDynamicPublicClient inserts a dynamically registered public OAuth
