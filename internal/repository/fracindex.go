@@ -68,7 +68,7 @@ func IsFracIndexUniqueViolation(err error) bool {
 	if errors.As(err, &pqErr) {
 		return pqErr.Code == "23505" && pqErr.Constraint == "idx_items_frac_index"
 	}
-	return isSQLiteUniqueViolation(err)
+	return isSQLiteUniqueViolation(err, "items.frac_index")
 }
 
 // IsWorkspaceItemNumberUniqueViolation reports whether err is specifically a
@@ -85,14 +85,15 @@ func IsWorkspaceItemNumberUniqueViolation(err error) bool {
 	if errors.As(err, &pqErr) {
 		return pqErr.Code == "23505" && pqErr.Constraint == "items_workspace_id_workspace_item_number_key"
 	}
-	return isSQLiteUniqueViolation(err)
+	return isSQLiteUniqueViolation(err, "items.workspace_id, items.workspace_item_number")
 }
 
-func isSQLiteUniqueViolation(err error) bool {
+func isSQLiteUniqueViolation(err error, columns string) bool {
 	var sqliteErr *sqlite.Error
 	return errors.As(err, &sqliteErr) &&
 		(sqliteErr.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE ||
-			sqliteErr.Code() == sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY)
+			sqliteErr.Code() == sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY) &&
+		strings.Contains(sqliteErr.Error(), "UNIQUE constraint failed: "+columns)
 }
 
 // Fractional indexing implementation based on https://github.com/rocicorp/fracdex
