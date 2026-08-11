@@ -17,6 +17,11 @@ if ! "$REPO_ROOT/scripts/check-schema-migration-pairing.sh" --staged; then
     FAILED=1
 fi
 
+echo "  Running SQL boolean literal guard..."
+if ! node "$REPO_ROOT/scripts/check-sql-boolean-literals.mjs" "$REPO_ROOT/internal"; then
+    FAILED=1
+fi
+
 # --- Go linting ---
 if command -v golangci-lint >/dev/null 2>&1; then
     echo "  Running golangci-lint..."

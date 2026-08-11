@@ -166,6 +166,7 @@ scripts/*
 !scripts/check-handler-db-access.sh
 !scripts/report-handler-db-access.sh
 !scripts/check-schema-migration-pairing.sh
+!scripts/check-sql-boolean-literals.mjs
 !scripts/audit_coverage_inventory.py
 !scripts/.layering-baseline
 !scripts/.handler-db-access-allowlist
