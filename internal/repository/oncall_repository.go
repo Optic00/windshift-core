@@ -144,7 +144,7 @@ func (r *OnCallRepository) GetScheduleByID(id int) (*models.OnCallSchedule, erro
 	return &s, nil
 }
 
-func (r *OnCallRepository) ListSchedulesForTeam(teamID int) ([]models.OnCallSchedule, error) {
+func (r *OnCallRepository) ListSchedulesForTeam(teamID int, includeRoster bool) ([]models.OnCallSchedule, error) {
 	rows, err := r.db.Query(`
 		SELECT s.id, s.team_id, s.name, s.description, s.timezone, s.is_active,
 			s.created_by, s.created_at, s.updated_at,
@@ -191,13 +191,12 @@ func (r *OnCallRepository) ListSchedulesForTeam(teamID int) ([]models.OnCallSche
 		return schedules, nil
 	}
 
-	return r.hydrateSchedulesForTeam(teamID, schedules)
+	return r.hydrateSchedulesForTeam(teamID, schedules, includeRoster)
 }
 
-// hydrateSchedulesForTeam fills every schedule's layers, members, and active
-// overrides with three bounded queries. Together with the schedule query above,
-// team overview cost remains four reads regardless of schedule/layer count.
-func (r *OnCallRepository) hydrateSchedulesForTeam(teamID int, schedules []models.OnCallSchedule) ([]models.OnCallSchedule, error) {
+// hydrateSchedulesForTeam fills every schedule's layers. Authorized roster
+// views also receive members and active overrides in two additional queries.
+func (r *OnCallRepository) hydrateSchedulesForTeam(teamID int, schedules []models.OnCallSchedule, includeRoster bool) ([]models.OnCallSchedule, error) {
 	scheduleIndexes := make(map[int]int, len(schedules))
 	for i := range schedules {
 		scheduleIndexes[schedules[i].ID] = i
@@ -249,6 +248,9 @@ func (r *OnCallRepository) hydrateSchedulesForTeam(teamID int, schedules []model
 	}
 	if err := layerRows.Close(); err != nil {
 		return nil, err
+	}
+	if !includeRoster {
+		return schedules, nil
 	}
 
 	memberRows, err := r.db.Query(`

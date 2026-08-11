@@ -208,10 +208,9 @@
 
   async function loadBoardConfiguration() {
     try {
-      // Try to load collection-specific config, or workspace default
-      const config = await api.collections.getBoardConfiguration(collectionId, workspaceId);
+      const config = await collectionStore.getBoardConfiguration(workspaceId, collectionId);
       boardConfig = config;
-      listColumns = config.list_columns && config.list_columns.length > 0
+      listColumns = config?.list_columns && config.list_columns.length > 0
         ? [...config.list_columns].sort((a, b) => a.display_order - b.display_order)
         : [...defaultColumns];
     } catch (error) {

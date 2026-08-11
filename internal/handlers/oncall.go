@@ -269,7 +269,12 @@ func (h *OnCallHandler) ListSchedules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	schedules, err := h.onCallRepo.ListSchedulesForTeam(teamID)
+	includeRoster, err := h.hasTeamOnCallViewAccess(user.ID, teamID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	schedules, err := h.onCallRepo.ListSchedulesForTeam(teamID, includeRoster)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -278,12 +283,7 @@ func (h *OnCallHandler) ListSchedules(w http.ResponseWriter, r *http.Request) {
 	if schedules == nil {
 		schedules = []models.OnCallSchedule{}
 	}
-	includeCurrent, err := h.hasTeamOnCallViewAccess(user.ID, teamID)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	if includeCurrent {
+	if includeRoster {
 		now := time.Now()
 		for i := range schedules {
 			schedules[i].CurrentOnCall = h.onCallService.CurrentOnCallForSchedule(&schedules[i], now)
