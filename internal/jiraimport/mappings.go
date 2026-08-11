@@ -134,16 +134,18 @@ func recordMappingInStore(store mappingStore, jobID, entityType, jiraID, jiraKey
 	}
 	metadataJSON, err := json.Marshal(mappingMetadata)
 	if err != nil {
-		return err
+		return fmt.Errorf("encode mapping provenance: %w", err)
 	}
-	_, err = store.ExecWrite(`
+	if _, err := store.ExecWrite(`
 		INSERT INTO jira_import_id_mappings (job_id, entity_type, jira_id, jira_key, windshift_id, metadata_json)
 		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT (job_id, entity_type, jira_id) DO UPDATE SET
 			windshift_id = excluded.windshift_id,
 			metadata_json = excluded.metadata_json
-	`, jobID, entityType, jiraID, jiraKey, windshiftID, string(metadataJSON))
-	return err
+	`, jobID, entityType, jiraID, jiraKey, windshiftID, string(metadataJSON)); err != nil {
+		return fmt.Errorf("persist mapping provenance: %w", err)
+	}
+	return nil
 }
 
 func (s *Service) FindPreviousMapping(currentJobID, entityType, jiraID string) (*PreviousMapping, error) {
