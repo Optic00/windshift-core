@@ -21,12 +21,15 @@
   let requests = $state([]);
   let loading = $state(true);
   let acting = $state(false);
-  let comment = $state('');
+  let commentsByRequest = $state({});
   let expandedRequests = $state(new Set());
   let lastInitialRequests = null;
 
   function applyRequests(nextRequests) {
     requests = nextRequests || [];
+    commentsByRequest = Object.fromEntries(
+      requests.map((request) => [request.id, commentsByRequest[request.id] ?? ''])
+    );
     const next = new Set(expandedRequests);
     for (const request of requests) if (request.status === 'pending') next.add(request.id);
     expandedRequests = next;
@@ -107,8 +110,8 @@
     }
     acting = true;
     try {
-      await api.approvals.decide(req.id, decision, comment);
-      comment = '';
+      await api.approvals.decide(req.id, decision, commentsByRequest[req.id] ?? '');
+      commentsByRequest[req.id] = '';
       successToast(`Decision recorded: ${decision}`);
       await load();
       ondecisionMade?.(requests);
@@ -130,8 +133,8 @@
     if (!ok) return;
     acting = true;
     try {
-      await api.approvals.cancel(req.id, comment);
-      comment = '';
+      await api.approvals.cancel(req.id, commentsByRequest[req.id] ?? '');
+      commentsByRequest[req.id] = '';
       successToast('Approval cancelled and item returned to previous status');
       await load();
       ondecisionMade?.(requests);
@@ -272,7 +275,7 @@
                     Reject
                   </Button>
                   <Button variant="default" icon={MessageSquare}
-                          disabled={acting || comment.trim() === ''}
+                          disabled={acting || commentsByRequest[req.id].trim() === ''}
                           onclick={() => decide(req, 'comment')}
                           dataTestid="approval-decision-comment-submit">
                     Comment
@@ -283,7 +286,7 @@
                   style="border-color: var(--ds-border); background: var(--ds-surface);"
                   rows="2"
                   placeholder="Optional comment…"
-                  bind:value={comment}
+                  bind:value={commentsByRequest[req.id]}
                   data-testid="approval-decision-comment"
                 ></textarea>
               </div>
