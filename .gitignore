@@ -76,6 +76,9 @@ frontend/vite.config.js.timestamp-*
 # Biome cache
 .biome/
 
+# Per-worktree golangci-lint cache
+.golangci-lint-cache/
+
 # IDE and editor files
 .vscode/
 .idea/
@@ -158,6 +161,7 @@ releases/v0.3.2.md
 .jscpd-report
 scripts/*
 !scripts/pre-commit
+!scripts/run-golangci-lint.sh
 !scripts/check-layering.sh
 !scripts/check-handler-db-access.sh
 !scripts/report-handler-db-access.sh

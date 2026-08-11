@@ -20,7 +20,7 @@ fi
 # --- Go linting ---
 if command -v golangci-lint >/dev/null 2>&1; then
     echo "  Running golangci-lint..."
-    if ! (cd "$REPO_ROOT" && golangci-lint run --timeout=5m); then
+    if ! "$REPO_ROOT/scripts/run-golangci-lint.sh" run --timeout=5m; then
         echo "FAIL: golangci-lint found issues."
         FAILED=1
     fi
