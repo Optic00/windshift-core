@@ -520,11 +520,18 @@ func (s *Service) ItemLinkExists(linkID int) bool {
 }
 
 func (s *Service) AttachmentPath() (string, bool) {
-	settings, err := services.NewAttachmentSettingsService(s.db).Get()
-	if err != nil || !settings.Enabled || strings.TrimSpace(settings.AttachmentPath) == "" {
+	var attachmentPath string
+	err := s.db.QueryRow(`
+		SELECT attachment_path
+		FROM attachment_settings
+		WHERE enabled = true
+		ORDER BY id DESC
+		LIMIT 1
+	`).Scan(&attachmentPath)
+	if err != nil || strings.TrimSpace(attachmentPath) == "" {
 		return "", false
 	}
-	return settings.AttachmentPath, true
+	return attachmentPath, true
 }
 
 func (s *Service) PreserveAttachmentCreatedAt(attachmentID int64, createdAt time.Time) error {
