@@ -105,6 +105,21 @@
     }
   }
 
+  const TOOL_FAILURE_PATTERN = /(^|\n)\((?:exit:|timeout after |cancelled\)|empty (?:command|path|pattern|old_string)\)|unknown tool:|tool arguments were not valid JSON:|path error:|read error:|write error:|mkdir error:|not found:|ambiguous:|offset \d+ is past the end)/;
+
+  function failedToolOutput(output) {
+    if (typeof output !== 'string' || !output.trim()) return null;
+    const trimmed = output.trim();
+    if (TOOL_FAILURE_PATTERN.test(trimmed)) return trimmed;
+    if (!trimmed.startsWith('{')) return null;
+    try {
+      const body = JSON.parse(trimmed);
+      return typeof body?.error === 'string' && body.error.trim() ? trimmed : null;
+    } catch {
+      return null;
+    }
+  }
+
   // Inspection-grade transcript: unlike the bindings test panel this KEEPS
   // lifecycle and warning events (queued/claimed/stall warnings are exactly
   // what you need when a run goes nowhere), and still drops streaming
@@ -135,8 +150,14 @@
         return null; // streaming duplicate of the final message
       case 'tool_start':
         return payload.args?.cmd ? `$ ${payload.args.cmd}` : `→ ${payload.tool || 'tool'}`;
-      case 'tool_done':
-        return null;
+      case 'tool_done': {
+        const failure = failedToolOutput(payload.output);
+        return failure ? `⚠ ${payload.tool || 'tool'} failed\n${failure}` : null;
+      }
+      case 'comment_failed': {
+        const error = typeof payload.error === 'string' ? payload.error.trim() : '';
+        return `⚠ Work-item comment failed${error ? `\n${error}` : ''}`;
+      }
       case 'error':
         return payload.message ? `⚠ ${payload.message}` : null;
       case 'starting':
