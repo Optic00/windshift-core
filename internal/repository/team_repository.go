@@ -380,19 +380,19 @@ func (r *TeamRepository) GetResolvedMembers(teamID int) ([]models.ResolvedTeamMe
 	dateWhere := activeLeaveDateWhere(r.db.GetDriverName(), "ulp.start_date", "ulp.end_date")
 	rows, err := r.db.Query(fmt.Sprintf(`
 		WITH all_members AS (
-			SELECT user_id, 1 as is_direct FROM team_members WHERE team_id = ?
+			SELECT user_id, 1 as source_priority FROM team_members WHERE team_id = ?
 			UNION ALL
-			SELECT gm.user_id, 0 as is_direct FROM team_groups tg
+			SELECT gm.user_id, 0 as source_priority FROM team_groups tg
 			JOIN group_members gm ON gm.group_id = tg.group_id
 			WHERE tg.team_id = ?
 		),
 		deduped AS (
-			SELECT user_id, MAX(is_direct) as is_direct FROM all_members GROUP BY user_id
+			SELECT user_id, MAX(source_priority) as source_priority FROM all_members GROUP BY user_id
 		)
 		SELECT u.id, u.first_name || ' ' || u.last_name as name, u.email, u.username,
 			COALESCE(u.avatar_url, '') as avatar_url,
-			CASE WHEN d.is_direct = 1 THEN 'direct' ELSE 'group' END as source,
-			CASE WHEN d.is_direct = 1 THEN 'Direct'
+			CASE WHEN d.source_priority = 1 THEN 'direct' ELSE 'group' END as source,
+			CASE WHEN d.source_priority = 1 THEN 'Direct'
 				 ELSE COALESCE((
 					 SELECT g.name FROM team_groups tg
 					 JOIN group_members gm ON gm.group_id = tg.group_id AND gm.user_id = u.id
@@ -400,7 +400,7 @@ func (r *TeamRepository) GetResolvedMembers(teamID int) ([]models.ResolvedTeamMe
 					 WHERE tg.team_id = ?
 					 LIMIT 1
 				 ), '') END as source_name,
-			CASE WHEN ulp.id IS NOT NULL THEN 1 ELSE 0 END as is_on_leave,
+			CASE WHEN ulp.id IS NOT NULL THEN TRUE ELSE FALSE END as is_on_leave,
 			ulp.substitute_user_id,
 			COALESCE(sub.first_name || ' ' || sub.last_name, '') as substitute_name
 		FROM deduped d
@@ -419,7 +419,7 @@ func (r *TeamRepository) GetResolvedMembers(teamID int) ([]models.ResolvedTeamMe
 	var members []models.ResolvedTeamMember
 	for rows.Next() {
 		var member models.ResolvedTeamMember
-		var isOnLeave int
+		var isOnLeave bool
 		var substituteID sql.NullInt64
 
 		if err := rows.Scan(
@@ -430,7 +430,7 @@ func (r *TeamRepository) GetResolvedMembers(teamID int) ([]models.ResolvedTeamMe
 			return nil, fmt.Errorf("failed to scan resolved member: %w", err)
 		}
 
-		member.IsOnLeave = isOnLeave == 1
+		member.IsOnLeave = isOnLeave
 		if substituteID.Valid {
 			val := int(substituteID.Int64)
 			member.SubstituteID = &val
