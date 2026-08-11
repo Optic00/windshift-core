@@ -270,16 +270,20 @@ func (r *RequestTypeRepository) Create(rt *models.RequestType) (int64, error) {
 }
 
 // Update replaces the editable fields of a request_type scoped to channelID.
+// It intentionally does not write visibility_group_ids / visibility_org_ids —
+// those are managed exclusively by UpdateVisibility so that routine edits
+// (rename, icon, title template, etc.) can never accidentally wipe access
+// controls by omitting them from the request body.
 // Returns ErrNotFound when no row matches and ErrDuplicateEntry on
 // (name, channel_id) collision.
 func (r *RequestTypeRepository) Update(id, channelID int, rt *models.RequestType) error {
 	res, err := r.db.ExecWrite(`
 		UPDATE request_types
 		SET name = ?, description = ?, item_type_id = ?, icon = ?, color = ?, display_order = ?, is_active = ?,
-		    visibility_group_ids = ?, visibility_org_ids = ?, workspace_id = ?, title_template = ?, updated_at = ?
+		    workspace_id = ?, title_template = ?, updated_at = ?
 		WHERE id = ? AND channel_id = ?
 	`, rt.Name, rt.Description, rt.ItemTypeID, rt.Icon, rt.Color, rt.DisplayOrder, rt.IsActive,
-		encodeIntJSONArray(rt.VisibilityGroupIDs), encodeIntJSONArray(rt.VisibilityOrgIDs), rt.WorkspaceID, rt.TitleTemplate, time.Now(), id, channelID,
+		rt.WorkspaceID, rt.TitleTemplate, time.Now(), id, channelID,
 	)
 	if err != nil {
 		if database.IsUniqueConstraintError(err) {
