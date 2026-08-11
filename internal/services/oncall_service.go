@@ -32,7 +32,7 @@ func (s *OnCallService) ComputeRotationForLayer(layer *models.OnCallScheduleLaye
 }
 
 func (s *OnCallService) computeRotationForLayer(layer *models.OnCallScheduleLayer, instant time.Time, location *time.Location) *int {
-	startDate, err := time.Parse(time.DateOnly, layer.StartDate)
+	startDate, err := parseOnCallDate(layer.StartDate)
 	if err != nil {
 		return nil
 	}
@@ -44,7 +44,7 @@ func (s *OnCallService) computeRotationForLayer(layer *models.OnCallScheduleLaye
 	}
 
 	if layer.EndDate != nil {
-		endDate, err := time.Parse(time.DateOnly, *layer.EndDate)
+		endDate, err := parseOnCallDate(*layer.EndDate)
 		if err != nil {
 			return nil
 		}
@@ -109,6 +109,14 @@ func (s *OnCallService) computeRotationForLayer(layer *models.OnCallScheduleLaye
 
 	userID := members[rotationIndex].UserID
 	return &userID
+}
+
+func parseOnCallDate(value string) (time.Time, error) {
+	parsed, err := time.Parse(time.DateOnly, value)
+	if err == nil {
+		return parsed, nil
+	}
+	return time.Parse(time.RFC3339, value)
 }
 
 // GetCurrentOnCall resolves who is currently on call for the given schedule,
