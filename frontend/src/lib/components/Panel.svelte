@@ -42,6 +42,12 @@
     'background-color: var(--ds-surface-raised); border-color: var(--ds-border);',
     userStyle
   ].filter(Boolean).join(' '));
+
+  function handleKeydown(event) {
+    if (!onclick || (event.key !== 'Enter' && event.key !== ' ')) return;
+    event.preventDefault();
+    onclick(event);
+  }
 </script>
 
 {#if href}
@@ -49,9 +55,14 @@
     {@render children?.()}
   </a>
 {:else if onclick}
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class={baseClasses} style={computedStyle} {onclick}>
+  <div
+    class={baseClasses}
+    style={computedStyle}
+    role="button"
+    tabindex="0"
+    {onclick}
+    onkeydown={handleKeydown}
+  >
     {@render children?.()}
   </div>
 {:else}

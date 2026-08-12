@@ -71,16 +71,15 @@
 
     <!-- Remove button (edit mode only) -->
     {#if hubStore.isEditing && onRemove}
-      <span
-        role="button"
-        tabindex="-1"
+      <button
+        type="button"
         onclick={(e) => { e.preventDefault(); e.stopPropagation(); onRemove(portal.id); }}
-        onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onRemove(portal.id); } }}
         class="absolute top-2 right-2 p-1 rounded bg-red-500/80 text-white hover:bg-red-600 transition-colors cursor-pointer"
         title={t('common.remove', 'Remove')}
+        aria-label={t('common.remove', 'Remove')}
       >
-        <X class="w-4 h-4" />
-      </span>
+        <X class="w-4 h-4" aria-hidden="true" />
+      </button>
     {/if}
   </div>
 

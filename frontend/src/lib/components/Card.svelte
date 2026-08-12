@@ -66,6 +66,12 @@
     shadow && variant !== 'raised' ? 'box-shadow: var(--ds-shadow-raised);' : '',
     userStyle
   ].filter(Boolean).join(' '));
+
+  function handleKeydown(event) {
+    if (!onclick || (event.key !== 'Enter' && event.key !== ' ')) return;
+    event.preventDefault();
+    onclick(event);
+  }
 </script>
 
 {#if href}
@@ -89,9 +95,16 @@
     {/if}
   </a>
 {:else}
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class={baseClasses} style={computedStyle} class:glass data-testid={dataTestid} onclick={onclick}>
+  <div
+    class={baseClasses}
+    style={computedStyle}
+    class:glass
+    data-testid={dataTestid}
+    role={onclick ? 'button' : undefined}
+    tabindex={onclick ? '0' : undefined}
+    onclick={onclick}
+    onkeydown={onclick ? handleKeydown : undefined}
+  >
     {#if hasStructure}
       {#if header}
         <div class="px-4 py-3 border-b" style="border-color: var(--ds-border);">
