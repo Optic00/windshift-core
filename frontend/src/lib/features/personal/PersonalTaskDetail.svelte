@@ -9,6 +9,7 @@
   import { X, Calendar, MessageSquare, ExternalLink } from '@lucide/svelte';
   import Button from '../../components/Button.svelte';
   import Checkbox from '../../components/Checkbox.svelte';
+  import Input from '../../components/Input.svelte';
   import { itemTypeIconMap } from '../../utils/icons.js';
   import { copyToClipboard } from '../../utils/clipboard.js';
   import { formatDate } from '../../utils/dateFormatter.js';
@@ -397,13 +398,12 @@
           <div class="flex items-center gap-2">
             <Calendar class="w-4 h-4" style="color: var(--ds-text-subtle);" />
             <!-- svelte-ignore a11y_autofocus -->
-            <input
+            <Input
               type="date"
               value={item.due_date?.split('T')[0] || ''}
               onchange={(e) => saveDueDate(e.currentTarget.value || null)}
               onblur={() => editingDueDate = false}
-              class="px-2 py-1 border rounded text-sm"
-              style="background-color: var(--ds-surface); color: var(--ds-text); border-color: var(--ds-border);"
+              size="small"
               autofocus
             />
           </div>

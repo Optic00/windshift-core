@@ -2,6 +2,7 @@
   import ItemPicker from './ItemPicker.svelte';
   import { api } from '../api.js';
   import { t } from '../stores/i18n.svelte.js';
+  import Checkbox from '../components/Checkbox.svelte';
 
   // When `multiple` is false (the default), `value` is a single milestone ID
   // (or null) and onSelect emits `{ value, milestone }`.
@@ -177,14 +178,13 @@
   >
     {#snippet footer()}
       {#if hasCompletedMilestones}
-        <label
-          class="flex items-center gap-2 px-4 py-2.5 cursor-pointer text-sm select-none"
-          style="color: var(--ds-text);"
-          data-testid="milestone-show-completed-toggle"
-        >
-          <input type="checkbox" bind:checked={showCompleted} class="accent-[var(--ds-interactive)]" />
-          <span>{t('pickers.showCompletedMilestones')}</span>
-        </label>
+        <Checkbox
+          bind:checked={showCompleted}
+          label={t('pickers.showCompletedMilestones')}
+          class="px-4 py-2.5"
+          dataTestid="milestone-show-completed-toggle"
+          size="small"
+        />
       {/if}
     {/snippet}
   </ItemPicker>
@@ -208,14 +208,13 @@
   >
     {#snippet footer()}
       {#if hasCompletedMilestones}
-        <label
-          class="flex items-center gap-2 px-4 py-2.5 cursor-pointer text-sm select-none"
-          style="color: var(--ds-text);"
-          data-testid="milestone-show-completed-toggle"
-        >
-          <input type="checkbox" bind:checked={showCompleted} class="accent-[var(--ds-interactive)]" />
-          <span>{t('pickers.showCompletedMilestones')}</span>
-        </label>
+        <Checkbox
+          bind:checked={showCompleted}
+          label={t('pickers.showCompletedMilestones')}
+          class="px-4 py-2.5"
+          dataTestid="milestone-show-completed-toggle"
+          size="small"
+        />
       {/if}
     {/snippet}
   </ItemPicker>

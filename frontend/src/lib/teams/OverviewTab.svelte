@@ -7,6 +7,7 @@
   import { workspaceIconMap } from '../utils/icons.js';
   import Button from '../components/Button.svelte';
   import Input from '../components/Input.svelte';
+  import Checkbox from '../components/Checkbox.svelte';
   import Textarea from '../components/Textarea.svelte';
   import StatCard from '../components/StatCard.svelte';
   import Card from '../components/Card.svelte';
@@ -139,16 +140,11 @@
           onchange={handleIconChange}
         />
       </div>
-      <div class="flex items-center gap-2">
-        <input
-          id="overview-team-is-active"
-          type="checkbox"
-          bind:checked={formData.is_active}
-        />
-        <label for="overview-team-is-active" class="text-sm" style="color: var(--ds-text)">
-          {t('teams.active')}
-        </label>
-      </div>
+      <Checkbox
+        id="overview-team-is-active"
+        bind:checked={formData.is_active}
+        label={t('teams.active')}
+      />
       <div class="flex gap-2">
         <Button variant="primary" icon={IconCheck} onclick={save} dataTestid="overview-save">
           {t('common.save')}

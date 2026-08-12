@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { currentRoute, navigate } from '../router.js';
+  import Input from '../components/Input.svelte';
   import { t } from '../stores/i18n.svelte.js';
   import CustomFields from '../settings/CustomFields.svelte';
   import Workspaces from '../workspaces/Workspaces.svelte';
@@ -286,16 +287,16 @@
         <label for="admin-search" class="sr-only">Search admin settings</label>
         <div class="relative">
           <IconSearch size={16} stroke={1.5} class="absolute left-3 top-1/2 transform -translate-y-1/2" style="color: var(--ds-icon-subtle);" aria-hidden="true" />
-          <input
+          <Input
             id="admin-search"
             bind:this={searchInput}
             bind:value={searchQuery}
             onkeydown={handleSearchKeydown}
             type="search"
             placeholder={t('common.search')}
-            class="w-full pl-10 pr-8 py-2 text-sm border rounded-md focus:outline-none focus:ring-2"
-            style="border-color: var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text); --tw-ring-color: var(--ds-interactive);"
-            aria-describedby={searchQuery && filteredGroups.length === 0 ? 'search-no-results' : undefined}
+            class="pl-10 pr-8"
+            ariaDescribedby={searchQuery && filteredGroups.length === 0 ? 'search-no-results' : undefined}
+            size="small"
           />
           {#if searchQuery}
             <button
@@ -649,7 +650,7 @@
   }
 
   :global(.tiptap-editor blockquote) {
-    border-left: 4px solid var(--ds-border);
+    border-left: 1px solid var(--ds-border);
     padding-left: 1rem;
     margin: 1rem 0;
     font-style: italic;

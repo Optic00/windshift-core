@@ -3,6 +3,7 @@
   import { api } from '../api.js';
   import { portalStore, iconMap } from '../stores/portal.svelte.js';
   import { t } from '../stores/i18n.svelte.js';
+  import Input from '../components/Input.svelte';
 
   let {
     report,
@@ -264,13 +265,12 @@
                 {field.field_label || field.field_name || field.field_identifier}
                 {#if field.is_required}<span class="text-red-500">*</span>{/if}
               </label>
-              <input
+              <Input
                 id={`ar-field-${field.id}`}
                 type="text"
                 bind:value={formValues[field.field_identifier]}
                 required={field.is_required}
-                class="w-full px-3 py-2 rounded border text-sm"
-                style="background-color: var(--ds-surface); border-color: var(--ds-border); color: var(--ds-text);"
+                size="small"
               />
               {#if field.description}
                 <p class="text-xs mt-1" style="color: var(--ds-text-subtle);">{field.description}</p>

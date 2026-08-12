@@ -15,6 +15,7 @@
   import BackgroundImageSelector from '../components/BackgroundImageSelector.svelte';
   import LogoUploader from '../components/LogoUploader.svelte';
   import Label from '../components/Label.svelte';
+  import Input from '../components/Input.svelte';
   import { portalStore, gradients, iconMap } from '../stores/portal.svelte.js';
   import ModalBackdrop from '../components/ModalBackdrop.svelte';
   import { api } from '../api.js';
@@ -705,15 +706,14 @@
             <label for="docmost-share-link" class="block text-xs font-medium mb-2" style="color: var(--ds-text);">
               {t('portal.customize.docmostShareLink')}
             </label>
-            <input
+            <Input
               id="docmost-share-link"
               type="text"
               value={portalStore.knowledgeBaseShareLink}
               oninput={(e) => portalStore.knowledgeBaseShareLink = /** @type {HTMLInputElement} */ (e.target).value}
               onblur={() => portalStore.saveKnowledgeBaseConfig()}
-              class="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-              style="background-color: var(--ds-surface); color: var(--ds-text); border-color: var(--ds-border);"
               placeholder={t('portal.customize.docmostShareLinkPlaceholder')}
+              size="small"
             />
             <p class="text-xs mt-2" style="color: var(--ds-text-subtle);">
               {t('portal.customize.docmostShareLinkHelp')}

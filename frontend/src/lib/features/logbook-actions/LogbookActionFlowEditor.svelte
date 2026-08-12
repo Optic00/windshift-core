@@ -2,6 +2,9 @@
   import { FileText, PlusSquare, Users, HelpCircle } from '@lucide/svelte';
   import Select from '../../components/Select.svelte';
   import Button from '../../components/Button.svelte';
+  import Checkbox from '../../components/Checkbox.svelte';
+  import Input from '../../components/Input.svelte';
+  import Textarea from '../../components/Textarea.svelte';
   import LogbookTriggerNode from './nodes/LogbookTriggerNode.svelte';
   import CreateItemNode from './nodes/CreateItemNode.svelte';
   import AssociateCustomerNode from './nodes/AssociateCustomerNode.svelte';
@@ -85,20 +88,18 @@
         <div class="block text-xs font-medium mb-1">Content Types</div>
         <div class="flex flex-col gap-1.5">
           {#each ['knowledge', 'record', 'correspondence'] as ct}
-            <label class="checkbox-label">
-              <input
-                type="checkbox"
+            <Checkbox
                 checked={selectedNode.data?.config?.content_types?.includes(ct) || false}
-                onchange={(e) => {
+                onchange={(checked) => {
                   const current = selectedNode.data?.config?.content_types || [];
-                  const updated = e.currentTarget.checked
+                  const updated = checked
                     ? [...current, ct]
                     : current.filter(c => c !== ct);
                   store.updateNodeConfig(selectedNode.id, { content_types: updated });
                 }}
+                label={ct}
+                size="small"
               />
-              {ct}
-            </label>
           {/each}
         </div>
       </div>
@@ -107,15 +108,15 @@
     {#if store.triggerType === 'content_keyword'}
       <div>
         <div class="block text-xs font-medium mb-1">Keywords (one per line)</div>
-        <textarea
-          class="w-full px-3 py-2 border rounded-md text-sm config-input"
-          rows="4"
+        <Textarea
+          rows={4}
           value={selectedNode.data?.config?.keywords?.join('\n') || ''}
           oninput={(e) => {
             const keywords = e.currentTarget.value.split('\n').filter(k => k.trim());
             store.updateNodeConfig(selectedNode.id, { keywords });
           }}
-        ></textarea>
+          size="small"
+        />
       </div>
       <div>
         <label for="keyword-mode" class="block text-xs font-medium mb-1">Match Mode</label>
@@ -132,16 +133,16 @@
     {#if store.triggerType === 'mime_type'}
       <div>
         <div class="block text-xs font-medium mb-1">MIME Types (one per line)</div>
-        <textarea
-          class="w-full px-3 py-2 border rounded-md text-sm config-input"
-          rows="3"
+        <Textarea
+          rows={3}
           placeholder="e.g. application/pdf&#10;image/*"
           value={selectedNode.data?.config?.mime_types?.join('\n') || ''}
           oninput={(e) => {
             const mime_types = e.currentTarget.value.split('\n').filter(m => m.trim());
             store.updateNodeConfig(selectedNode.id, { mime_types });
           }}
-        ></textarea>
+          size="small"
+        />
       </div>
     {/if}
   {/snippet}
@@ -158,20 +159,20 @@
     {:else if selectedNode.type === 'associate_customer'}
       <div>
         <div class="block text-xs font-medium mb-1">Customer Organisation ID</div>
-        <input
+        <Input
           type="number"
-          class="w-full px-3 py-2 border rounded-md text-sm config-input"
           value={selectedNode.data?.config?.customer_organisation_id || ''}
           oninput={(e) => store.updateNodeConfig(selectedNode.id, { customer_organisation_id: parseInt(e.currentTarget.value) || null })}
+          size="small"
         />
       </div>
       <div>
         <div class="block text-xs font-medium mb-1">Portal Customer ID</div>
-        <input
+        <Input
           type="number"
-          class="w-full px-3 py-2 border rounded-md text-sm config-input"
           value={selectedNode.data?.config?.portal_customer_id || ''}
           oninput={(e) => store.updateNodeConfig(selectedNode.id, { portal_customer_id: parseInt(e.currentTarget.value) || null })}
+          size="small"
         />
       </div>
       <Button variant="ghost" size="small" onclick={handleDeleteNode}>Delete Node</Button>

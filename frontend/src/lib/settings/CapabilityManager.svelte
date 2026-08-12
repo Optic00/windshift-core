@@ -3,6 +3,8 @@
   import { api } from '../api.js';
   import { Plus, Edit, Trash2, Power, PowerOff } from '@lucide/svelte';
   import Button from '../components/Button.svelte';
+  import Checkbox from '../components/Checkbox.svelte';
+  import Input from '../components/Input.svelte';
   import PageHeader from '../layout/PageHeader.svelte';
   import Modal from '../dialogs/Modal.svelte';
   import ModalHeader from '../dialogs/ModalHeader.svelte';
@@ -502,13 +504,11 @@
   <!-- Name -->
   <div>
     <label for="cap-name" class="block text-xs font-medium mb-1" style="color: var(--ds-text-subtle);">{t('settings.actionCapabilities.name')}</label>
-    <input
+    <Input
       id="cap-name"
       type="text"
       bind:value={form.name}
       placeholder={t('settings.actionCapabilities.namePlaceholder')}
-      class="w-full px-3 py-2 text-sm rounded-md border"
-      style="border-color: var(--ds-border); background: var(--ds-surface); color: var(--ds-text);"
     />
   </div>
 
@@ -530,13 +530,7 @@
   </div>
 
   <!-- Enabled toggle -->
-  <div class="flex items-center gap-2">
-    <label class="flex items-center gap-2 text-sm cursor-pointer" style="color: var(--ds-text);">
-      <input type="checkbox" bind:checked={form.is_enabled} class="rounded" />
-      <Power size={14} />
-      {t('settings.actionCapabilities.enabled')}
-    </label>
-  </div>
+  <Checkbox bind:checked={form.is_enabled} label={t('settings.actionCapabilities.enabled')} />
 
   <!-- Scope: applies to all workspaces vs. specific allowlist -->
   <div class="space-y-2 pt-2 border-t" style="border-color: var(--ds-border);">
@@ -574,14 +568,12 @@
           <p class="text-xs" style="color: var(--ds-text-subtle);">No workspaces available.</p>
         {:else}
           {#each workspaces as ws}
-            <label class="flex items-center gap-2 text-sm py-1 cursor-pointer" style="color: var(--ds-text);">
-              <input
-                type="checkbox"
-                checked={form.workspace_ids.includes(ws.id)}
-                onchange={() => toggleWorkspaceScope(ws.id)}
-              />
-              {ws.name}
-            </label>
+            <Checkbox
+              checked={form.workspace_ids.includes(ws.id)}
+              onchange={() => toggleWorkspaceScope(ws.id)}
+              label={ws.name}
+              class="py-1"
+            />
           {/each}
         {/if}
       </div>

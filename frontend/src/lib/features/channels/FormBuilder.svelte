@@ -15,6 +15,7 @@
   import Button from '../../components/Button.svelte';
   import EmptyState from '../../components/EmptyState.svelte';
   import Input from '../../components/Input.svelte';
+  import Checkbox from '../../components/Checkbox.svelte';
   import Textarea from '../../components/Textarea.svelte';
   import Label from '../../components/Label.svelte';
   import Spinner from '../../components/Spinner.svelte';
@@ -521,24 +522,19 @@
               These settings apply only to this form. Branding and the public URL are channel settings.
             </DescriptionText>
 
-            <div class="flex items-center gap-3">
-              <input id="form-require-auth" type="checkbox" bind:checked={formBuilderStore.formConfig.require_auth} class="rounded" />
-              <div>
-                <Label for="form-require-auth" color="default">{t('forms.settings.requireAuth')}</Label>
-                <DescriptionText>Only signed-in Windshift users can submit this form.</DescriptionText>
-              </div>
-            </div>
+            <Checkbox
+              id="form-require-auth"
+              bind:checked={formBuilderStore.formConfig.require_auth}
+              label={t('forms.settings.requireAuth')}
+              hint="Only signed-in Windshift users can submit this form."
+            />
 
-            <div class="flex items-center gap-3">
-              <input
-                id="form-allow-attachments"
-                data-testid="form-allow-attachments"
-                type="checkbox"
-                bind:checked={formBuilderStore.formConfig.allow_attachments}
-                class="rounded"
-              />
-              <Label for="form-allow-attachments" color="default">{t('forms.settings.allowAttachments')}</Label>
-            </div>
+            <Checkbox
+              id="form-allow-attachments"
+              dataTestid="form-allow-attachments"
+              bind:checked={formBuilderStore.formConfig.allow_attachments}
+              label={t('forms.settings.allowAttachments')}
+            />
 
             <div>
               <Label color="default" class="mb-2">{t('forms.settings.submitButton')}</Label>
@@ -657,25 +653,23 @@
                       {#if isExpanded}
                         <div>
                           <Label color="default" class="mb-1">Label</Label>
-                          <input
+                          <Input
                             type="text"
                             value={field.display_name ?? ''}
                             oninput={(e) => formBuilderStore.updateFieldProperty(index, 'display_name', e.currentTarget.value)}
                             placeholder={field.field_name || field.field_identifier}
-                            class="w-full px-2 py-1 text-sm rounded border"
-                            style="border-color: var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text);"
+                            size="small"
                           />
                         </div>
                         <div>
                           <Label color="default" class="mb-1">Help text</Label>
-                          <textarea
+                          <Textarea
                             value={field.description ?? ''}
                             oninput={(e) => formBuilderStore.updateFieldProperty(index, 'description', e.currentTarget.value)}
-                            rows="2"
+                            rows={2}
                             placeholder="Optional instructions shown below the field"
-                            class="w-full px-2 py-1 text-sm rounded border"
-                            style="border-color: var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text);"
-                          ></textarea>
+                            size="small"
+                          />
                         </div>
                       {/if}
 
@@ -683,21 +677,21 @@
                       <div class="text-xs font-semibold" style="color: var(--ds-text-subtle);">Options</div>
                       {#each options as opt, optIdx (optIdx)}
                         <div class="flex items-center gap-2">
-                          <input
+                          <Input
                             type="text"
                             value={opt.label ?? ''}
                             oninput={(e) => updateOptionLabel(index, optIdx, e.currentTarget.value)}
                             placeholder="Label"
-                            class="flex-1 px-2 py-1 text-sm rounded border"
-                            style="border-color: var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text);"
+                            class="flex-1"
+                            size="small"
                           />
-                          <input
+                          <Input
                             type="text"
                             value={opt.value ?? ''}
                             oninput={(e) => updateOptionValue(index, optIdx, e.currentTarget.value)}
                             placeholder="value"
-                            class="w-32 px-2 py-1 text-sm rounded border"
-                            style="border-color: var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text);"
+                            class="w-32"
+                            size="small"
                           />
                           <button
                             onclick={() => removeOption(index, optIdx)}

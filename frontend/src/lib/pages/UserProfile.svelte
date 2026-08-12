@@ -811,13 +811,13 @@
 					<h3 class="text-sm font-medium mb-3" style="color: var(--ds-text);">{t('users.uploadNewAvatar')}</h3>
 
 					<div class="mb-4">
-						<input
-							type="file"
-							accept="image/*"
-							onchange={(e) => handleAvatarUpload(/** @type {HTMLInputElement} */ (e.target).files)}
-							disabled={uploadingAvatar}
-							class="block w-full text-sm file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-blue-600 file:text-white hover:file:bg-blue-700 disabled:opacity-50"
-							style="color: var(--ds-text-subtle);"
+											<input
+												type="file"
+												accept="image/*"
+												onchange={(e) => handleAvatarUpload(/** @type {HTMLInputElement} */ (e.target).files)}
+												disabled={uploadingAvatar}
+												class="block w-full text-sm file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-blue-600 file:text-white hover:file:bg-blue-700 disabled:opacity-50"
+												style="color: var(--ds-text-subtle);"
 						/>
 						<p class="text-xs mt-2" style="color: var(--ds-text-subtlest);">
 							{t('users.avatarFileHint')}
@@ -985,8 +985,7 @@
 														type="text"
 														value={agentMintState[agent.id].token}
 														readonly
-														class="flex-1 px-3 py-2 rounded font-mono text-sm"
-														style="background-color: var(--ds-background-input); border: 1px solid var(--ds-border-success); color: var(--ds-text);"
+												class="flex-1 font-mono border-[var(--ds-border-success)]"
 													/>
 													<Button
 														variant="default"
@@ -1175,12 +1174,11 @@
 						</div>
 
 						<div class="flex items-center gap-2">
-							<input
+							<Input
 								type="text"
 								readonly
 								value={showFullFeedUrl ? calendarFeedInfo.feed?.feed_url : getMaskedFeedUrl(calendarFeedInfo.feed?.feed_url)}
-								class="flex-1 px-3 py-2 text-sm border rounded-md font-mono"
-								style="border-color: var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text);"
+								class="flex-1 font-mono"
 							/>
 							<Button
 								variant="default"

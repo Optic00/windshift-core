@@ -4,6 +4,7 @@
 	import { t } from '../stores/i18n.svelte.js';
 	import { User, Shield, Key, Smartphone, Plus, Trash2, Code, Copy, Terminal, AlertTriangle, X } from '@lucide/svelte';
 	import Button from '../components/Button.svelte';
+	import Input from '../components/Input.svelte';
 	import EmptyState from '../components/EmptyState.svelte';
 	import SectionHeader from '../layout/SectionHeader.svelte';
 	import PageHeader from '../layout/PageHeader.svelte';
@@ -408,12 +409,11 @@
 					{t('security.tokenWarning')}
 				</p>
 				<div class="flex items-center space-x-2">
-					<input
+					<Input
 						type="text"
 						value={newTokenValue}
 						readonly
-						class="flex-1 px-3 py-2 rounded font-mono text-sm"
-						style="background-color: var(--ds-background-input); border: 1px solid var(--ds-border-success); color: var(--ds-text);"
+						class="flex-1 font-mono border-[var(--ds-border-success)]"
 					/>
 					<Button
 						variant="default"
@@ -492,34 +492,28 @@
 						type="password"
 						value={changePasswordData.current_password}
 						oninput={(e) => setChangePasswordData('current_password', /** @type {HTMLInputElement} */ (e.target).value)}
-						class="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-						style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
 						placeholder={t('placeholders.enterPassword')}
 					/>
 				</div>
 
 				<div>
 					<Label for="new-password" color="default" class="mb-1">{t('auth.newPassword')}</Label>
-					<input
+					<Input
 						id="new-password"
 						type="password"
 						value={changePasswordData.new_password}
 						oninput={(e) => setChangePasswordData('new_password', /** @type {HTMLInputElement} */ (e.target).value)}
-						class="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-						style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
 						placeholder={t('placeholders.enterNewPassword')}
 					/>
 				</div>
 
 				<div>
 					<Label for="confirm-password" color="default" class="mb-1">{t('auth.confirmPassword')}</Label>
-					<input
+					<Input
 						id="confirm-password"
 						type="password"
 						value={changePasswordData.confirm_password}
 						oninput={(e) => setChangePasswordData('confirm_password', /** @type {HTMLInputElement} */ (e.target).value)}
-						class="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-						style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
 						placeholder={t('placeholders.confirmNewPassword')}
 					/>
 				</div>
@@ -597,14 +591,12 @@
 		<div class="space-y-4">
 			<div>
 				<Label for="credential-name" color="default" class="mb-1">{credentialType === 'fido' ? 'Security Key Name' : 'SSH Key Name'}</Label>
-				<input
+				<Input
 					id="credential-name"
 					type="text"
 					value={newCredentialName}
 					oninput={(e) => setNewCredentialName(/** @type {HTMLInputElement} */ (e.target).value)}
 					placeholder={credentialType === 'fido' ? 'e.g., YubiKey, iPhone Touch ID' : 'e.g., MacBook Pro, CI Server'}
-					class="w-full px-3 py-2 rounded border transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
-					style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
 				/>
 			</div>
 
@@ -661,14 +653,12 @@
 		<div class="space-y-5">
 			<div>
 				<Label for="token-name" color="default" class="mb-1">{t('security.tokenName')}</Label>
-				<input
+				<Input
 					id="token-name"
 					type="text"
 					value={newTokenName}
 					oninput={(e) => setNewTokenName(/** @type {HTMLInputElement} */ (e.target).value)}
 					placeholder="e.g., Mobile App, CI/CD Pipeline"
-					class="w-full px-3 py-2 rounded border transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
-					style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
 				/>
 			</div>
 
@@ -732,14 +722,12 @@
 
 			<div>
 				<Label for="token-expiry" color="default" class="mb-1">Last valid date (optional)</Label>
-				<input
+				<Input
 					id="token-expiry"
 					type="date"
 					value={newTokenExpiry}
 					oninput={(e) => setNewTokenExpiry(/** @type {HTMLInputElement} */ (e.target).value)}
 					min={formatDate(new Date())}
-					class="w-full px-3 py-2 rounded border transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
-					style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
 				/>
 				<DescriptionText>The token remains valid through this date in your configured timezone. Leave empty for no expiration.</DescriptionText>
 			</div>

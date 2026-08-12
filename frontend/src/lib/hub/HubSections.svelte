@@ -3,6 +3,7 @@
   import { hubStore } from '../stores/hub.svelte.js';
   import { t } from '../stores/i18n.svelte.js';
   import HubPortalCard from './HubPortalCard.svelte';
+  import Input from '../components/Input.svelte';
 
   function handleDrop(e, sectionId) {
     e.preventDefault();
@@ -64,20 +65,20 @@
         <div class="flex items-start justify-between mb-4">
           <div class="flex-1">
             {#if hubStore.isEditing}
-              <input
+              <Input
                 type="text"
                 value={section.title}
                 oninput={(e) => hubStore.updateSection(section.id, 'title', e.currentTarget.value)}
-                class="text-lg font-semibold w-full bg-transparent focus:outline-none border-b border-dashed"
-                style="color: var(--ds-text); border-color: var(--ds-border);"
+                class="text-lg font-semibold"
+                size="small"
                 placeholder="Section title"
               />
-              <input
+              <Input
                 type="text"
                 value={section.subtitle || ''}
                 oninput={(e) => hubStore.updateSection(section.id, 'subtitle', e.currentTarget.value)}
-                class="text-sm mt-1 w-full bg-transparent focus:outline-none border-b border-dashed"
-                style="color: var(--ds-text-subtle); border-color: var(--ds-border);"
+                class="mt-1"
+                size="small"
                 placeholder="Section subtitle (optional)"
               />
             {:else}

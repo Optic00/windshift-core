@@ -2,6 +2,8 @@
   import { FileText, Pencil, Bell, HelpCircle, Zap, X } from '@lucide/svelte';
   import Select from '../../components/Select.svelte';
   import Button from '../../components/Button.svelte';
+  import Input from '../../components/Input.svelte';
+  import Textarea from '../../components/Textarea.svelte';
   import TriggerNode from '../actions/nodes/TriggerNode.svelte';
   import SetFieldNode from '../actions/nodes/SetFieldNode.svelte';
   import SetStatusNode from '../actions/nodes/SetStatusNode.svelte';
@@ -269,12 +271,12 @@
       </div>
       <div>
         <div class="block text-xs font-medium mb-1">Value</div>
-        <input
+        <Input
           type="text"
-          class="w-full px-3 py-2 border rounded-md text-sm config-input"
           value={selectedNode.data?.config?.value || ''}
           oninput={(e) =>
             store.updateNodeConfig(selectedNode.id, { value: e.currentTarget.value })}
+          size="small"
         />
       </div>
       <Button variant="ghost" size="small" onclick={handleDeleteNode}>Delete Node</Button>
@@ -338,13 +340,13 @@
       </div>
       <div>
         <div class="block text-xs font-medium mb-1">Message</div>
-        <textarea
-          class="w-full px-3 py-2 border rounded-md text-sm config-input"
-          rows="3"
+        <Textarea
+          rows={3}
           value={selectedNode.data?.config?.message || ''}
           oninput={(e) =>
             store.updateNodeConfig(selectedNode.id, { message: e.currentTarget.value })}
-        ></textarea>
+          size="small"
+        />
       </div>
       <Button variant="ghost" size="small" onclick={handleDeleteNode}>Delete Node</Button>
     {/if}

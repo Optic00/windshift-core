@@ -30,7 +30,9 @@
   import { getFieldSelectorValue, backendFieldName, standardFieldTypes, collectOutputFields, isValidOutputFieldName } from './shared/fieldNameMapping.js';
   import { t } from '../../stores/i18n.svelte.js';
   import Checkbox from '../../components/Checkbox.svelte';
+  import Input from '../../components/Input.svelte';
   import Select from '../../components/Select.svelte';
+  import Textarea from '../../components/Textarea.svelte';
   import UserPicker from '../../pickers/UserPicker.svelte';
   import RolePicker from '../../pickers/RolePicker.svelte';
   import { actionFlowStore } from '../../stores/actionFlowStore.svelte.js';
@@ -792,19 +794,18 @@
           <p class="text-xs mt-1 sidebar-hints">
             {t('actions.config.userPickerHint')}
           </p>
-          <input
+          <Input
             id="config-set-field-value"
             type="text"
-            class="w-full px-3 py-2 border rounded-md text-sm config-input mt-2"
+            class="mt-2"
             value={selectedNode.data?.config?.value || ''}
             oninput={(e) => store.updateNodeConfig(selectedNode.id, { value: e.currentTarget.value, value_display_name: '' })}
             placeholder="{'{{'}item.creator_id{'}}'}"
           />
         {:else}
-          <input
+          <Input
             id="config-set-field-value"
             type="text"
-            class="w-full px-3 py-2 border rounded-md text-sm config-input"
             value={selectedNode.data?.config?.value || ''}
             oninput={(e) => store.updateNodeConfig(selectedNode.id, { value: e.currentTarget.value, value_display_name: '' })}
             placeholder="{'{{'}item.creator_id{'}}'}"
@@ -823,14 +824,14 @@
             <HelpCircle class="w-3.5 h-3.5" />
           </button>
         </div>
-        <textarea
+        <Textarea
           id="config-comment-content"
-          class="w-full px-3 py-2 border rounded-md text-sm config-input"
-          rows="4"
+          rows={4}
           value={selectedNode.data?.config?.content || ''}
           oninput={(e) => store.updateNodeConfig(selectedNode.id, { content: e.currentTarget.value })}
           placeholder={t('actions.config.commentPlaceholder')}
-        ></textarea>
+          size="small"
+        />
       </div>
       <Checkbox
         checked={selectedNode.data?.config?.is_private || false}
@@ -867,10 +868,9 @@
       </div>
       <div>
         <label for="config-condition-value" class="block text-xs font-medium mb-1">{t('actions.config.compareValue')}</label>
-        <input
+        <Input
           id="config-condition-value"
           type="text"
-          class="w-full px-3 py-2 border rounded-md text-sm config-input"
           value={selectedNode.data?.config?.value || ''}
           oninput={(e) => store.updateNodeConfig(selectedNode.id, { value: e.currentTarget.value })}
         />
@@ -936,14 +936,14 @@
             <HelpCircle class="w-3.5 h-3.5" />
           </button>
         </div>
-        <textarea
+        <Textarea
           id="config-notify-message"
-          class="w-full px-3 py-2 border rounded-md text-sm config-input"
-          rows="4"
+          rows={4}
           value={selectedNode.data?.config?.message || ''}
           oninput={(e) => store.updateNodeConfig(selectedNode.id, { message: e.currentTarget.value })}
           placeholder={t('actions.config.notifyPlaceholder')}
-        ></textarea>
+          size="small"
+        />
       </div>
       <Checkbox
         checked={selectedNode.data?.config?.include_link ?? true}

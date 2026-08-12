@@ -539,12 +539,12 @@
               <label for="delete-confirm" class="block text-sm font-medium text-red-900 mb-2">
                 {t('workspaceSettings.typeToConfirm', { name: workspace.name })}
               </label>
-              <input
+              <Input
                 id="delete-confirm"
-                data-testid="delete-workspace-confirm-name"
+                dataTestid="delete-workspace-confirm-name"
                 type="text"
                 bind:value={deleteConfirmText}
-                class="w-full px-4 py-2 rounded border border-red-300 text-red-900 bg-white focus:outline-none focus:ring-2 focus:ring-red-500"
+                class="border-red-300 text-red-900"
                 placeholder={t('workspaceSettings.typeNameHere', { name: workspace.name })}
               />
             </div>

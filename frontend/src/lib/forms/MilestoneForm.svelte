@@ -4,6 +4,7 @@
   import { formatDateWithOptions } from '../utils/dateFormatter.js';
   import MilkdownEditor from '../editors/LazyMilkdownEditor.svelte';
   import FieldChip from '../components/FieldChip.svelte';
+  import Input from '../components/Input.svelte';
   import ChipPicker from '../pickers/ChipPicker.svelte';
   import { useForm, validators } from '../composables/useForm.svelte.js';
 
@@ -114,15 +115,14 @@
     >
       {#snippet children({ close: closePopover })}
         <div class="p-3">
-          <input
+          <Input
             type="date"
             bind:value={form.values.target_date}
-            class="w-full px-3 py-2 rounded border text-sm"
-            style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
             onchange={() => {
               form.touchField('target_date');
               closePopover();
             }}
+            size="small"
           />
         </div>
       {/snippet}

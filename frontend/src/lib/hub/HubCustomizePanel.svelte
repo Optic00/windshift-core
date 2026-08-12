@@ -6,6 +6,8 @@
   import { hubStore, gradients } from '../stores/hub.svelte.js';
   import { t } from '../stores/i18n.svelte.js';
   import LogoUploader from '../components/LogoUploader.svelte';
+  import Input from '../components/Input.svelte';
+  import Textarea from '../components/Textarea.svelte';
   import ModalBackdrop from '../components/ModalBackdrop.svelte';
 
   let showCustomizePanelHover = $state(false);
@@ -71,22 +73,20 @@
               <TextCursorInput class="w-4 h-4 inline mr-1" />
               {t('hub.heroContent', 'Hero Content')}
             </span>
-            <input
+            <Input
               type="text"
               value={hubStore.editableTitle}
               oninput={(e) => { hubStore.editableTitle = e.currentTarget.value; hubStore.saveCustomizations(); }}
-              class="w-full px-3 py-2 rounded border text-sm mb-2"
-              style="background-color: var(--ds-surface-raised); border-color: var(--ds-border); color: var(--ds-text);"
+              class="mb-2"
               placeholder="Hub title"
             />
-            <textarea
+            <Textarea
               value={hubStore.editableDescription}
               oninput={(e) => { hubStore.editableDescription = e.currentTarget.value; hubStore.saveCustomizations(); }}
-              class="w-full px-3 py-2 rounded border text-sm resize-none"
-              style="background-color: var(--ds-surface-raised); border-color: var(--ds-border); color: var(--ds-text);"
               placeholder="Hub description (optional)"
-              rows="2"
-            ></textarea>
+              rows={2}
+              size="small"
+            />
           </div>
 
           <!-- Gradient Selection -->
@@ -123,21 +123,18 @@
             <label for="hub-search-box" class="block text-sm font-medium mb-2" style="color: var(--ds-text);">
               {t('portal.searchBox', 'Search Box')}
             </label>
-            <input
+            <Input
               id="hub-search-box"
               type="text"
               value={hubStore.editableSearchPlaceholder}
               oninput={(e) => { hubStore.editableSearchPlaceholder = e.currentTarget.value; hubStore.saveCustomizations(); }}
-              class="w-full px-3 py-2 rounded border text-sm mb-2"
-              style="background-color: var(--ds-surface-raised); border-color: var(--ds-border); color: var(--ds-text);"
+              class="mb-2"
               placeholder="Search placeholder"
             />
-            <input
+            <Input
               type="text"
               value={hubStore.editableSearchHint}
               oninput={(e) => { hubStore.editableSearchHint = e.currentTarget.value; hubStore.saveCustomizations(); }}
-              class="w-full px-3 py-2 rounded border text-sm"
-              style="background-color: var(--ds-surface-raised); border-color: var(--ds-border); color: var(--ds-text);"
               placeholder="Search hint text"
             />
           </div>
@@ -170,12 +167,12 @@
               style="background-color: var(--ds-surface-raised); border-color: var(--ds-border);"
             >
               <div class="flex items-center justify-between mb-2">
-                <input
+                <Input
                   type="text"
                   value={section.title}
                   oninput={(e) => hubStore.updateSection(section.id, 'title', e.currentTarget.value)}
-                  class="flex-1 text-sm font-medium bg-transparent focus:outline-none"
-                  style="color: var(--ds-text);"
+                  class="flex-1 font-medium"
+                  size="small"
                   placeholder="Section title"
                 />
                 <button

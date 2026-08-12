@@ -5,6 +5,7 @@
   import { api } from '../../api.js';
   import { t } from '../../stores/i18n.svelte.js';
   import { errorToast } from '../../stores/toasts.svelte.js';
+  import Input from '../../components/Input.svelte';
 
   /** Page-label picker for page editing and sidebar filtering. The parent owns
    * selection; callbacks receive full labels. Sidebar callers disable creation. */
@@ -153,8 +154,8 @@
 {#if $open}
   <div use:melt={$content} class="popover" data-testid="page-label-picker">
     <div class="search-row">
-      <input
-        bind:this={searchInputEl}
+      <Input
+        bind:inputRef={searchInputEl}
         bind:value={search}
         onkeydown={onSearchKeydown}
         type="text"
@@ -162,7 +163,8 @@
         placeholder={allowCreate
           ? t('pages.labelsSearchPlaceholder')
           : t('pages.labelsFilterPlaceholder')}
-        data-testid="page-label-picker-search"
+        dataTestid="page-label-picker-search"
+        size="small"
       />
     </div>
 

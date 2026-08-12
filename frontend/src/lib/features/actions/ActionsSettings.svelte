@@ -12,6 +12,8 @@
   import ActionTemplatePicker from './ActionTemplatePicker.svelte';
   import Modal from '../../dialogs/Modal.svelte';
   import Button from '../../components/Button.svelte';
+  import Input from '../../components/Input.svelte';
+  import Textarea from '../../components/Textarea.svelte';
   import UnauthorizedAccess from '../../pages/UnauthorizedAccess.svelte';
 
   let { workspaceId, actionId = 0 } = $props();
@@ -235,23 +237,24 @@
     <div class="space-y-4">
       <div>
         <label for="action-name" class="block text-sm font-medium mb-1 modal-label">{t('common.name')}</label>
-        <input
+        <Input
           id="action-name"
           type="text"
-          class="w-full px-3 py-2 border rounded-md text-sm modal-input"
           bind:value={newActionName}
           placeholder={t('actions.newAction')}
+          size="small"
         />
       </div>
 
       <div>
         <label for="action-description" class="block text-sm font-medium mb-1 modal-label">{t('common.description')}</label>
-        <textarea
+        <Textarea
           id="action-description"
-          class="w-full px-3 py-2 border rounded-md text-sm modal-input"
-          rows="2"
+          rows={2}
           bind:value={newActionDescription}
-        ></textarea>
+          style="background-color: var(--ds-surface);"
+          size="small"
+        />
       </div>
     </div>
 
@@ -285,14 +288,4 @@
     color: var(--ds-text);
   }
 
-  .modal-input {
-    background-color: var(--ds-surface);
-    border-color: var(--ds-border);
-    color: var(--ds-text);
-  }
-
-  .modal-input:focus {
-    border-color: var(--ds-interactive);
-    outline: none;
-  }
 </style>

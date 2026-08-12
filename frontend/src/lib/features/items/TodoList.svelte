@@ -361,14 +361,15 @@
               <label for="done-range-date" class="text-xs font-medium" style="color: var(--ds-text-subtle);">
                 {t('todo.customDateLabel')}
               </label>
-              <input
+              <Input
                 id="done-range-date"
                 type="date"
-                data-testid="done-range-date"
+                dataTestid="done-range-date"
                 value={customDate}
                 onchange={onCustomDateChange}
-                aria-label={t('todo.customDateAriaLabel')}
-                class="date-input text-sm rounded border px-3 py-1.5 transition-colors bg-[var(--ds-background-input)] text-[var(--ds-text)] hover:border-[var(--ds-interactive)] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 {completedRange === 'custom' ? 'border-[var(--ds-interactive)]' : 'border-[var(--ds-border)]'}"
+                ariaLabel={t('todo.customDateAriaLabel')}
+                class="date-input {completedRange === 'custom' ? 'border-[var(--ds-interactive)]' : 'border-[var(--ds-border)]'}"
+                size="small"
               />
             </div>
           </div>
@@ -608,7 +609,7 @@
 
   /* Tint the native calendar picker indicator so it reads correctly in dark
      mode — a vendor pseudo-element that can't be targeted via Tailwind. */
-  :global(.dark) .date-input::-webkit-calendar-picker-indicator {
+  :global(.dark .date-input::-webkit-calendar-picker-indicator) {
     filter: invert(1) opacity(0.7);
   }
 </style>

@@ -3,6 +3,7 @@
   import { ChevronDown, Check } from '@lucide/svelte';
   import { t } from '../stores/i18n.svelte.js';
   import { getVisibleColor } from '../utils/colorUtils.js';
+  import Input from '../components/Input.svelte';
 
   let {
     value = $bindable(null),
@@ -190,21 +191,14 @@
     <!-- Search Input (optional) -->
     {#if searchable}
       <div class="p-2 border-b" style="border-color: var(--ds-border);">
-        <input
-          bind:this={inputElement}
+        <Input
+          bind:inputRef={inputElement}
           bind:value={searchTerm}
-          data-testid={testId ? `${testId}-search` : undefined}
+          dataTestid={testId ? `${testId}-search` : undefined}
           onkeydown={handleKeyDown}
           type="text"
           placeholder={t('pickers.search')}
-          class="w-full px-3 py-2 rounded text-sm outline-none"
-          style="
-            background-color: var(--ds-background-input);
-            border: 1px solid var(--ds-border);
-            color: var(--ds-text);
-          "
-          onfocus={(e) => e.currentTarget.style.borderColor = 'var(--ds-border-focused)'}
-          onblur={(e) => e.currentTarget.style.borderColor = 'var(--ds-border)'}
+          size="small"
         />
       </div>
     {/if}

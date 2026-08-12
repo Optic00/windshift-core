@@ -5,6 +5,7 @@
   import DashboardOnboarding from './DashboardOnboarding.svelte';
   import Text from '../components/Text.svelte';
   import Button from '../components/Button.svelte';
+  import Input from '../components/Input.svelte';
   import {
     ChevronDown,
     ChevronUp,
@@ -370,23 +371,21 @@
             <div class="flex items-center justify-between mb-4">
               {#if editingSectionId === section.id}
                 <div class="flex-1 flex items-center gap-2 flex-wrap">
-                  <input
+                  <Input
                     id={`dashboard-section-title-${section.id}`}
                     type="text"
                     bind:value={editingSectionTitle}
-                    class="px-3 py-2 border rounded text-lg font-semibold"
-                    style="border-color: var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text);"
+                    class="text-lg font-semibold"
                     placeholder="Section title"
                     onkeydown={handleSectionEditKeydown}
-                    data-testid="dashboard-section-title-input"
+                    dataTestid="dashboard-section-title-input"
                   />
-                  <input
+                  <Input
                     type="text"
                     bind:value={editingSectionSubtitle}
-                    class="px-3 py-2 border rounded text-sm"
-                    style="border-color: var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text);"
                     placeholder="Subtitle (optional)"
                     onkeydown={handleSectionEditKeydown}
+                    size="small"
                   />
                   <Button variant="primary" size="small" onclick={saveSection}>
                     Save <span class="ml-1 opacity-60">⏎</span>

@@ -5,6 +5,7 @@
   import Modal from '../dialogs/Modal.svelte';
   import Button from '../components/Button.svelte';
   import Label from '../components/Label.svelte';
+  import Input from '../components/Input.svelte';
   import Seagulls from '../components/Seagulls.svelte';
   import WaveBackground from '../components/WaveBackground.svelte';
   import { APP_NAME } from '../constants.js';
@@ -201,80 +202,74 @@
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <Label for="first_name" color="default" required class="mb-2">{t('setup.firstName')}</Label>
-              <input
+              <Input
                 id="first_name"
                 type="text"
                 bind:value={adminUser.first_name}
-                class="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                style="background-color: var(--ds-surface); border-color: var(--ds-border); color: var(--ds-text);"
                 placeholder="John"
                 required
+                size="small"
               />
             </div>
 
             <div>
               <Label for="last_name" color="default" required class="mb-2">{t('setup.lastName')}</Label>
-              <input
+              <Input
                 id="last_name"
                 type="text"
                 bind:value={adminUser.last_name}
-                class="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                style="background-color: var(--ds-surface); border-color: var(--ds-border); color: var(--ds-text);"
                 placeholder="Doe"
                 required
+                size="small"
               />
             </div>
           </div>
 
           <div>
             <Label for="email" color="default" required class="mb-2">{t('setup.emailAddress')}</Label>
-            <input
+            <Input
               id="email"
               type="email"
               bind:value={adminUser.email}
-              class="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              style="background-color: var(--ds-surface); border-color: var(--ds-border); color: var(--ds-text);"
               placeholder="admin@example.com"
               required
+              size="small"
             />
           </div>
 
           <div>
             <Label for="username" color="default" class="mb-2">{t('setup.username')}</Label>
-            <input
+            <Input
               id="username"
               type="text"
               bind:value={adminUser.username}
-              class="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              style="background-color: var(--ds-surface); border-color: var(--ds-border); color: var(--ds-text);"
               placeholder="admin"
+              size="small"
             />
           </div>
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <Label for="password" color="default" required class="mb-2">{t('setup.password')}</Label>
-              <input
+              <Input
                 id="password"
                 type="password"
                 bind:value={adminUser.password}
-                class="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                style="background-color: var(--ds-surface); border-color: var(--ds-border); color: var(--ds-text);"
                 placeholder="••••••••"
                 required
+                size="small"
               />
             </div>
 
             <div>
               <Label for="confirm_password" color="default" required class="mb-2">{t('setup.confirmPassword')}</Label>
-              <input
+              <Input
                 id="confirm_password"
                 type="password"
                 bind:value={adminUser.confirmPassword}
-                class="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                style="background-color: var(--ds-surface); border-color: var(--ds-border); color: var(--ds-text);"
                 placeholder="••••••••"
                 required
+                size="small"
               />
             </div>
           </div>

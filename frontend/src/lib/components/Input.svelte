@@ -23,6 +23,8 @@
    *   maxlength?: number,
    *   class?: string,
    *   dataTestid?: string,
+   *   ariaLabel?: string,
+   *   ariaDescribedby?: string,
    *   inputRef?: any,
    *   oninput?: (e?: any) => void,
    *   onchange?: (e?: any) => void,
@@ -53,6 +55,8 @@
     maxlength = undefined,
     class: className = '',
     dataTestid = undefined,
+    ariaLabel = undefined,
+    ariaDescribedby = undefined,
     // Optional ref binding for parent components that need the raw input element
     inputRef = $bindable(null),
     // Event handlers
@@ -96,6 +100,8 @@
   bind:value
   bind:this={inputRef}
   data-testid={dataTestid}
+  aria-label={ariaLabel}
+  aria-describedby={ariaDescribedby}
   {placeholder}
   {disabled}
   {required}

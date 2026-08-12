@@ -5,6 +5,7 @@
   import Card from '../components/Card.svelte';
   import Toggle from '../components/Toggle.svelte';
   import Label from '../components/Label.svelte';
+  import NativeSelect from '../components/NativeSelect.svelte';
   import AlertBox from '../components/AlertBox.svelte';
   import Chip from '../components/Chip.svelte';
   import { RefreshCw, Trash2, ExternalLink, Loader2, Plus, X, Layers } from '@lucide/svelte';
@@ -295,17 +296,16 @@
     <Card rounded="lg" padding="spacious">
       <Label>{t('issueSync.repository')}</Label>
       <p class="text-xs mb-2" style="color: var(--ds-text-subtle);">{t('issueSync.repositoryDescription')}</p>
-      <select
-        data-testid="issue-sync-repository"
-        bind:value={formData.workspace_repository_id}
-        class="w-full px-3 py-2 rounded-md border text-sm"
-        style="background: var(--ds-surface); color: var(--ds-text); border-color: var(--ds-border);"
-      >
-        <option value={0}>{t('issueSync.selectRepository')}</option>
-        {#each repoOptions as opt}
-          <option value={Number(opt.value)}>{opt.label}</option>
-        {/each}
-      </select>
+      <NativeSelect
+        dataTestid="issue-sync-repository"
+        value={String(formData.workspace_repository_id)}
+        onchange={(value) => formData.workspace_repository_id = Number(value)}
+        options={[
+          { value: '0', label: t('issueSync.selectRepository') },
+          ...repoOptions.map((opt) => ({ value: String(opt.value), label: opt.label }))
+        ]}
+        size="medium"
+      />
     </Card>
 
     <!-- Enable/Disable Toggle -->

@@ -23,6 +23,7 @@
   import DropdownMenu from '../../layout/DropdownMenu.svelte';
   import EmptyState from '../../components/EmptyState.svelte';
   import Tooltip from '../../components/Tooltip.svelte';
+  import Input from '../../components/Input.svelte';
   import PageMoveDialog from './PageMoveDialog.svelte';
   import PagePermissionsDialog from './PagePermissionsDialog.svelte';
   import PageLabelPicker from './PageLabelPicker.svelte';
@@ -711,14 +712,15 @@
   {#if searchOpen}
     <div class="search-row" data-testid="pages-search-row">
       <Search size={14} class="search-row__icon" aria-hidden="true" />
-      <input
-        bind:this={searchInputEl}
+      <Input
+        bind:inputRef={searchInputEl}
         bind:value={searchQuery}
         onkeydown={onSearchKeydown}
         type="text"
         class="search-input"
         placeholder={t('pages.searchPlaceholder')}
-        data-testid="pages-search-input"
+        dataTestid="pages-search-input"
+        size="small"
       />
       {#if searchQuery}
         <button
@@ -974,22 +976,6 @@
   :global(.search-row__icon) {
     color: var(--ds-text-subtle);
     flex-shrink: 0;
-  }
-
-  .search-input {
-    flex: 1;
-    padding: 0.25rem 0.375rem;
-    border: 1px solid var(--ds-border);
-    border-radius: 0.25rem;
-    background: var(--ds-surface);
-    color: var(--ds-text);
-    font-size: 0.8125rem;
-    min-width: 0;
-  }
-
-  .search-input:focus {
-    outline: none;
-    border-color: var(--ds-accent-blue);
   }
 
   .search-row__clear {

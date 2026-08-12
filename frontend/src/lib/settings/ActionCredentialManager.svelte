@@ -16,6 +16,9 @@
   import { Plus, Edit, Trash2, KeyRound, Power, PowerOff } from '@lucide/svelte';
   import { api } from '../api.js';
   import Button from '../components/Button.svelte';
+  import Checkbox from '../components/Checkbox.svelte';
+  import Input from '../components/Input.svelte';
+  import Textarea from '../components/Textarea.svelte';
   import PageHeader from '../layout/PageHeader.svelte';
   import Modal from '../dialogs/Modal.svelte';
   import ModalHeader from '../dialogs/ModalHeader.svelte';
@@ -416,10 +419,9 @@
       <div class="p-4 space-y-4">
         <label class="block">
           <span class="text-sm font-medium" style="color: var(--ds-text);">Name</span>
-          <input
+          <Input
             type="text"
-            class="mt-1 w-full px-3 py-2 text-sm rounded border bg-transparent"
-            style="border-color: var(--ds-border); color: var(--ds-text);"
+            class="mt-1"
             bind:value={form.name}
             placeholder="GitHub PAT"
             required
@@ -431,12 +433,11 @@
         </label>
         <label class="block">
           <span class="text-sm font-medium" style="color: var(--ds-text);">Secret</span>
-          <input
+          <Input
             id="action-credential-secret"
             type="password"
             autocomplete="new-password"
-            class="mt-1 w-full px-3 py-2 text-sm rounded border bg-transparent font-mono"
-            style="border-color: var(--ds-border); color: var(--ds-text);"
+            class="mt-1 font-mono"
             bind:value={form.secret}
             placeholder="Enter token, API key, or user:password"
             required
@@ -448,21 +449,17 @@
         </label>
         <label class="block">
           <span class="text-sm font-medium" style="color: var(--ds-text);">Metadata (JSON, optional)</span>
-          <textarea
-            class="mt-1 w-full px-3 py-2 text-sm rounded border bg-transparent font-mono"
-            style="border-color: var(--ds-border); color: var(--ds-text);"
-            rows="3"
+          <Textarea
+            class="mt-1 font-mono"
+            rows={3}
             bind:value={form.secret_metadata}
             placeholder={'{"provider":"github","scope":"repo"}'}
-          ></textarea>
+          />
           <p class="text-xs mt-1" style="color: var(--ds-text-subtle);">
             Non-sensitive metadata only. Keys like <code>token</code>, <code>secret</code>, <code>password</code> are rejected.
           </p>
         </label>
-        <label class="flex items-center gap-2">
-          <input type="checkbox" bind:checked={form.is_enabled} />
-          <span class="text-sm" style="color: var(--ds-text);">Enabled</span>
-        </label>
+        <Checkbox bind:checked={form.is_enabled} label="Enabled" />
         {@render scopeFields()}
         <div class="flex justify-end gap-2 pt-2 border-t" style="border-color: var(--ds-border);">
           <Button variant="secondary" onclick={closeAndClearSecret} keyboardHint="Esc">Cancel</Button>
@@ -489,10 +486,9 @@
       <div class="p-4 space-y-4">
         <label class="block">
           <span class="text-sm font-medium" style="color: var(--ds-text);">Name</span>
-          <input
+          <Input
             type="text"
-            class="mt-1 w-full px-3 py-2 text-sm rounded border bg-transparent"
-            style="border-color: var(--ds-border); color: var(--ds-text);"
+            class="mt-1"
             bind:value={form.name}
             required
           />
@@ -505,17 +501,13 @@
         </div>
         <label class="block">
           <span class="text-sm font-medium" style="color: var(--ds-text);">Metadata (JSON, optional)</span>
-          <textarea
-            class="mt-1 w-full px-3 py-2 text-sm rounded border bg-transparent font-mono"
-            style="border-color: var(--ds-border); color: var(--ds-text);"
-            rows="3"
+          <Textarea
+            class="mt-1 font-mono"
+            rows={3}
             bind:value={form.secret_metadata}
-          ></textarea>
+          />
         </label>
-        <label class="flex items-center gap-2">
-          <input type="checkbox" bind:checked={form.is_enabled} />
-          <span class="text-sm" style="color: var(--ds-text);">Enabled</span>
-        </label>
+        <Checkbox bind:checked={form.is_enabled} label="Enabled" />
         {@render scopeFields()}
         <div class="flex justify-end gap-2 pt-2 border-t" style="border-color: var(--ds-border);">
           <Button variant="secondary" onclick={closeAndClearSecret} keyboardHint="Esc">Cancel</Button>
@@ -539,11 +531,10 @@
         </p>
         <label class="block">
           <span class="text-sm font-medium" style="color: var(--ds-text);">New secret</span>
-          <input
+          <Input
             type="password"
             autocomplete="new-password"
-            class="mt-1 w-full px-3 py-2 text-sm rounded border bg-transparent font-mono"
-            style="border-color: var(--ds-border); color: var(--ds-text);"
+            class="mt-1 font-mono"
             bind:value={form.secret}
             required
           />

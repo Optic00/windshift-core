@@ -10,6 +10,7 @@
   import ModalHeader from '../../dialogs/ModalHeader.svelte';
   import DialogFooter from '../../dialogs/DialogFooter.svelte';
   import Label from '../../components/Label.svelte';
+  import Input from '../../components/Input.svelte';
   import Textarea from '../../components/Textarea.svelte';
   import { IconPlus as Plus, IconFolderOpen as FolderOpen } from '@tabler/icons-svelte-runes';
   import SidebarHeader from '../../layout/SidebarHeader.svelte';
@@ -116,13 +117,11 @@
       <div class="space-y-4">
         <div>
           <Label for="bucket-name" required class="mb-2">{t('logbook.bucketName')}</Label>
-          <input
+          <Input
             id="bucket-name"
-            data-testid="logbook-bucket-name"
+            dataTestid="logbook-bucket-name"
             type="text"
             bind:value={formData.name}
-            class="w-full px-4 py-3 rounded border transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
-            style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
             placeholder={t('logbook.bucketNamePlaceholder')}
             required
           />

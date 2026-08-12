@@ -13,6 +13,8 @@
   import UserPicker from '../pickers/UserPicker.svelte';
   import PersonalLabelCombobox from '../pickers/PersonalLabelCombobox.svelte';
   import Label from '../components/Label.svelte';
+  import Input from '../components/Input.svelte';
+  import NativeSelect from '../components/NativeSelect.svelte';
   import AlertBox from '../components/AlertBox.svelte';
   import { createPopover, melt } from '@melt-ui/svelte'; // used for dueDateTrigger/dueDateContent
   import { Milestone as MilestoneIcon } from '@lucide/svelte';
@@ -637,12 +639,11 @@
             <Label color="default" for="work-item-due-date-required">
               {t('createModal.dueDate')} <span style="color: var(--ds-text-danger, #ef4444);">*</span>
             </Label>
-            <input
+            <Input
               type="date"
               id="work-item-due-date-required"
               bind:value={store.formData.due_date}
-              class="w-full px-3 py-2 rounded border text-sm"
-              style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
+              size="medium"
             />
           </div>
         {:else if field.field_identifier === 'start_date'}
@@ -650,12 +651,11 @@
             <Label color="default" for="work-item-start-date-required">
               {t('common.startDate')} <span style="color: var(--ds-text-danger, #ef4444);">*</span>
             </Label>
-            <input
+            <Input
               type="date"
               id="work-item-start-date-required"
               bind:value={store.formData.start_date}
-              class="w-full px-3 py-2 rounded border text-sm"
-              style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
+              size="medium"
             />
           </div>
         {:else if field.field_identifier === 'end_date'}
@@ -663,12 +663,11 @@
             <Label color="default" for="work-item-end-date-required">
               {t('common.endDate')} <span style="color: var(--ds-text-danger, #ef4444);">*</span>
             </Label>
-            <input
+            <Input
               type="date"
               id="work-item-end-date-required"
               bind:value={store.formData.end_date}
-              class="w-full px-3 py-2 rounded border text-sm"
-              style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
+              size="medium"
             />
           </div>
         {:else if field.field_identifier === 'milestone'}
@@ -701,34 +700,26 @@
             <Label color="default" for="work-item-iteration-required">
               {t('items.iteration')} <span style="color: var(--ds-text-danger, #ef4444);">*</span>
             </Label>
-            <select
+            <NativeSelect
               id="work-item-iteration-required"
-              bind:value={store.formData.iteration_id}
-              class="w-full px-3 py-2 rounded border text-sm"
-              style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
-            >
-              <option value={null}>{t('items.selectIteration')}</option>
-              {#each store.iterations as iteration}
-                <option value={iteration.id}>{iteration.name}</option>
-              {/each}
-            </select>
+              value={store.formData.iteration_id == null ? '' : String(store.formData.iteration_id)}
+              options={store.iterations.map((iteration) => ({ value: String(iteration.id), label: iteration.name }))}
+              placeholder={t('items.selectIteration')}
+              onchange={(value) => store.formData.iteration_id = value ? Number(value) : null}
+            />
           </div>
         {:else if field.field_identifier === 'project'}
           <div class="space-y-1">
             <Label color="default" for="work-item-project-required">
               {t('items.project')} <span style="color: var(--ds-text-danger, #ef4444);">*</span>
             </Label>
-            <select
+            <NativeSelect
               id="work-item-project-required"
-              bind:value={store.formData.project_id}
-              class="w-full px-3 py-2 rounded border text-sm"
-              style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
-            >
-              <option value={null}>{t('pickers.selectProject')}</option>
-              {#each store.timeProjects as project}
-                <option value={project.id}>{project.name}</option>
-              {/each}
-            </select>
+              value={store.formData.project_id == null ? '' : String(store.formData.project_id)}
+              options={store.timeProjects.map((project) => ({ value: String(project.id), label: project.name }))}
+              placeholder={t('pickers.selectProject')}
+              onchange={(value) => store.formData.project_id = value ? Number(value) : null}
+            />
           </div>
         {:else if field.field_identifier === 'labels'}
           <div class="space-y-1">
@@ -749,14 +740,13 @@
             <Label color="default" for="work-item-story-points-required">
               {t('items.storyPoints')} <span style="color: var(--ds-text-danger, #ef4444);">*</span>
             </Label>
-            <input
+            <Input
               id="work-item-story-points-required"
               type="number"
               min="0"
               step="0.5"
               bind:value={store.formData.story_points}
-              class="w-full px-3 py-2 rounded border text-sm"
-              style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
+              size="medium"
             />
           </div>
         {:else if field.field_identifier === 'estimate' || field.field_identifier === 'estimate_minutes'}
@@ -764,13 +754,12 @@
             <Label color="default" for="work-item-estimate-required">
               {t('items.estimate') || 'Estimate'} <span style="color: var(--ds-text-danger, #ef4444);">*</span>
             </Label>
-            <input
+            <Input
               id="work-item-estimate-required"
               type="text"
               bind:value={store.formData.estimate}
               placeholder="3d 4h"
-              class="w-full px-3 py-2 rounded border text-sm"
-              style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
+              size="medium"
             />
           </div>
         {/if}

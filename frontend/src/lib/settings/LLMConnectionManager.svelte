@@ -6,6 +6,7 @@
   } from '@lucide/svelte';
   import Button from '../components/Button.svelte';
   import Input from '../components/Input.svelte';
+  import Checkbox from '../components/Checkbox.svelte';
   import PageHeader from '../layout/PageHeader.svelte';
   import Modal from '../dialogs/Modal.svelte';
   import ModalHeader from '../dialogs/ModalHeader.svelte';
@@ -671,16 +672,8 @@
 
   <!-- Toggles -->
   <div class="flex items-center gap-6">
-    <label class="flex items-center gap-2 text-sm cursor-pointer" style="color: var(--ds-text);">
-      <input type="checkbox" bind:checked={form.is_default} class="rounded" />
-      <Star size={14} />
-      Default connection
-    </label>
-    <label class="flex items-center gap-2 text-sm cursor-pointer" style="color: var(--ds-text);">
-      <input type="checkbox" bind:checked={form.is_enabled} class="rounded" />
-      <Power size={14} />
-      Enabled
-    </label>
+    <Checkbox bind:checked={form.is_default} label="Default connection" size="small" />
+    <Checkbox bind:checked={form.is_enabled} label="Enabled" size="small" />
   </div>
 
 {/snippet}
