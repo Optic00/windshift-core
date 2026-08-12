@@ -363,7 +363,7 @@
     class="relative w-full max-w-2xl mx-4"
     transition:scale={{ duration: 200, start: 0.95, easing: backOut }}
   >
-    <div class="command-palette-container rounded-xl overflow-hidden" style="background-color: var(--ds-glass-bg, var(--ds-surface-raised)); backdrop-filter: blur(12px) saturate(180%); -webkit-backdrop-filter: blur(12px) saturate(180%); border: 1px solid var(--ds-glass-border, var(--ds-border)); box-shadow: var(--shadow-float, 0 20px 50px rgba(0, 0, 0, 0.18));">
+    <div class="command-palette-container rounded-lg overflow-hidden" style="background-color: var(--ds-glass-bg, var(--ds-surface-raised)); backdrop-filter: blur(12px) saturate(180%); -webkit-backdrop-filter: blur(12px) saturate(180%); border: 1px solid var(--ds-glass-border, var(--ds-border)); box-shadow: var(--shadow-float, 0 20px 50px rgba(0, 0, 0, 0.18));">
       <div class="p-4 border-b" style="background-color: var(--ds-surface); border-color: var(--ds-border);">
         <input
           bind:this={searchInputRef}

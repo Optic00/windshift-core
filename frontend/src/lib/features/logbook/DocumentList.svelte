@@ -332,7 +332,7 @@
     tabindex="-1"
   >
     <div
-      class="w-full max-w-2xl rounded-xl border shadow-xl"
+      class="w-full max-w-2xl rounded-lg border shadow-xl"
       style="background-color: var(--ds-surface-overlay); border-color: var(--ds-border);"
     >
       <!-- Header -->

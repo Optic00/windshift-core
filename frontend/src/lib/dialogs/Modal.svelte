@@ -136,7 +136,7 @@
   <!-- Inline mode is used for long creation flows that need page-sized space
        without dialog semantics, a backdrop, or scroll trapping. -->
   <div
-    class="relative rounded-xl overflow-hidden w-full border"
+    class="relative rounded-lg overflow-hidden w-full border"
     style="background-color: var(--ds-surface-raised, var(--ds-surface, white)); border-color: var(--ds-border);"
   >
     {@render children?.(getDisplayString(submitShortcut))}
@@ -161,7 +161,7 @@
     <div
       bind:this={modalContentElement}
       transition:scale={{ duration: 200, start: 0.95, easing: backOut }}
-      class="relative rounded-xl overflow-hidden {maxWidth} w-full mx-4 mb-8 {maxHeight ? 'flex flex-col' : ''}"
+      class="relative rounded-lg overflow-hidden {maxWidth} w-full mx-4 mb-8 {maxHeight ? 'flex flex-col' : ''}"
       style="background-color: var(--ds-surface-raised, var(--ds-surface, white)); box-shadow: var(--shadow-float, 0 20px 50px rgba(0, 0, 0, 0.18));{maxHeight ? ` max-height: ${maxHeight};` : ''}"
     >
       {@render children?.(submitHint)}

@@ -173,7 +173,7 @@
     <div
       role="presentation"
       data-testid="delete-item-dialog"
-      class="bg-white rounded-xl shadow-xl max-w-md w-full transform transition-all"
+      class="bg-white rounded-lg shadow-xl max-w-md w-full transform transition-all"
       style="background-color: var(--ds-surface-raised);"
       onclick={(e) => e.stopPropagation()}
     >

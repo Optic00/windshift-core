@@ -669,7 +669,7 @@
       }}
     >
       <div
-        class="relative w-full max-w-md rounded-xl shadow-2xl overflow-hidden"
+        class="relative w-full max-w-md rounded-lg shadow-2xl overflow-hidden"
         style="background-color: var(--ds-surface-card);"
       >
         <PortalVerifyLink

@@ -9,7 +9,7 @@
 </script>
 
 <div
-  class="mx-4 mb-8 flex w-full max-w-lg flex-col rounded-xl shadow-2xl {className}"
+  class="mx-4 mb-8 flex w-full max-w-lg flex-col rounded-lg shadow-2xl {className}"
   style="background-color: var(--ds-surface-raised);"
   data-testid={dataTestid}
 >

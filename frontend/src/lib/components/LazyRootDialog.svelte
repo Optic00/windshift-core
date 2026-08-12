@@ -27,7 +27,7 @@
     ariaLabelledBy="root-dialog-loading-label"
   >
     <div
-      class="rounded-xl px-6 py-5 text-center"
+      class="rounded-lg px-6 py-5 text-center"
       style="background-color: var(--ds-surface-raised); color: var(--ds-text); box-shadow: var(--ds-shadow-raised);"
       role="status"
       data-testid="root-dialog-loading"
@@ -51,7 +51,7 @@
     ariaLabelledBy="root-dialog-error-title"
   >
     <div
-      class="mx-2 max-w-sm rounded-xl px-6 py-5 text-center"
+      class="mx-2 max-w-sm rounded-lg px-6 py-5 text-center"
       style="background-color: var(--ds-surface-raised); color: var(--ds-text); box-shadow: var(--ds-shadow-raised);"
       role="alert"
       data-testid="root-dialog-error"

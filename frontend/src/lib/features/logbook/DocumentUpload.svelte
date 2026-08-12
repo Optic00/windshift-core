@@ -86,7 +86,7 @@
   tabindex="-1"
 >
   <div
-    class="w-full max-w-lg rounded-xl border shadow-xl"
+    class="w-full max-w-lg rounded-lg border shadow-xl"
     style="background-color: var(--ds-surface-overlay); border-color: var(--ds-border);"
   >
     <ModalHeader title={t('logbook.uploadDocument')} onClose={onclose} />

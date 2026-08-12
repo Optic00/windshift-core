@@ -24,7 +24,7 @@
 <ModalBackdrop bind:show opacity={0.4} blur={4} align="top" paddingTop="pt-8" scrollable onclose={close} ariaLabelledBy="ai-modal-title">
     <div
       transition:scale={{ duration: 200, start: 0.95, easing: backOut }}
-      class="relative rounded-xl overflow-hidden max-w-2xl w-full mx-4 mb-8"
+      class="relative rounded-lg overflow-hidden max-w-2xl w-full mx-4 mb-8"
       style="background-color: var(--ds-surface-raised); box-shadow: 0 20px 50px rgba(0, 0, 0, 0.18);"
     >
       <!-- Header -->
