@@ -141,7 +141,7 @@ func (tm *TokenManager) ValidateToken(token string) (*models.User, *models.APITo
 			var entry tokenCacheEntry
 			if err := json.Unmarshal(data, &entry); err == nil {
 				switch {
-				case entry.ExpiresAt != nil && entry.ExpiresAt.Before(time.Now()):
+				case entry.ExpiresAt != nil && !time.Now().Before(*entry.ExpiresAt):
 					tm.cache.Delete(cacheKey) //nolint:errcheck // best-effort cache eviction
 				case !entry.User.IsActive:
 					tm.cache.Delete(cacheKey) //nolint:errcheck // best-effort cache eviction

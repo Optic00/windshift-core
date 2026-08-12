@@ -58,7 +58,7 @@
 	let showTokenModal = $state(false);
 	let tokenTargetUser = $state(null);
 	let newTokenName = $state('');
-	let newTokenExpiresDays = $state(90);
+	let newTokenExpiry = $state('');
 	let newTokenScopes = $state([]);
 	let creatingToken = $state(false);
 	let mintedToken = $state('');
@@ -377,7 +377,7 @@
 	function openTokenModal(user) {
 		tokenTargetUser = user;
 		newTokenName = `${user.username}-token`;
-		newTokenExpiresDays = 90;
+		newTokenExpiry = '';
 		newTokenScopes = [...defaultAgentTokenScopes];
 		mintedToken = '';
 		mintedTokenError = '';
@@ -407,13 +407,9 @@
 			const payload = {
 				name: newTokenName,
 				user_id: tokenTargetUser.id,
-				permissions: newTokenScopes
+				permissions: newTokenScopes,
+				expires_on: newTokenExpiry || null
 			};
-			if (newTokenExpiresDays && Number(newTokenExpiresDays) > 0) {
-				const expires = new Date();
-				expires.setDate(expires.getDate() + Number(newTokenExpiresDays));
-				payload.expires_at = expires.toISOString();
-			}
 			const result = await api.createApiToken(payload);
 			mintedToken = result?.token || result?.api_token?.token || '';
 		} catch (err) {
@@ -798,8 +794,8 @@
 					<Input id="token-name" bind:value={newTokenName} required />
 				</div>
 				<div>
-					<Label for="token-expiry" color="default">Expires in (days, 0 = never)</Label>
-					<Input id="token-expiry" type="number" min="0" max="3650" bind:value={newTokenExpiresDays} />
+					<Label for="token-expiry" color="default">Last valid date (optional)</Label>
+					<Input id="token-expiry" type="date" bind:value={newTokenExpiry} />
 				</div>
 				{#if tokenTargetUser && !tokenTargetUser.agent_owner_user_id}
 					<AlertBox message="Service users do not inherit an owner's workspace/page permissions. Grant this agent workspace roles or page ACLs separately; scopes only limit what the token may do." />

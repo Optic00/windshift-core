@@ -107,6 +107,7 @@ type APITokenCreate struct {
 	Name          string     `json:"name"`
 	UserID        *int       `json:"user_id,omitempty"` // Optional: admins can create tokens for other users
 	Permissions   []string   `json:"permissions"`
+	ExpiresOn     *string    `json:"expires_on,omitempty"`
 	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
 	IsTemporary   bool       `json:"-"` // Internal-only: hide ephemeral server-minted tokens from user/admin token lists
 	OAuthClientID string     `json:"-"` // Internal-only: OAuth client that requested this token

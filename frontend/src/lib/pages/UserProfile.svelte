@@ -16,7 +16,7 @@
 	import PersonalLabelManager from '../features/labels/PersonalLabelManager.svelte';
 	import LeavePeriods from '../profile/LeavePeriods.svelte';
 	import { copyToClipboard } from '../utils/clipboard.js';
-	import { dateInputToISOString, formatDate, formatDateSimple, formatDateShort } from '../utils/dateFormatter.js';
+	import { formatDate, formatDateSimple, formatDateShort } from '../utils/dateFormatter.js';
 	import { t, i18n, SUPPORTED_LOCALES } from '../stores/i18n.svelte.js';
 	import { confirm } from '../composables/useConfirm.js';
 	import DescriptionText from '../components/DescriptionText.svelte';
@@ -156,11 +156,9 @@
 		try {
 			const payload = {
 				name: s.name,
-				user_id: agentId
+				user_id: agentId,
+				expires_on: s.expiresAt || null
 			};
-			if (s.expiresAt) {
-				payload.expires_at = dateInputToISOString(s.expiresAt);
-			}
 			const result = await api.createApiToken(payload);
 			s.token = result?.token || result?.api_token?.token || '';
 			s.name = '';
@@ -1017,7 +1015,7 @@
 												<Input placeholder={t('security.tokenName')} bind:value={agentMintState[agent.id].name} />
 												<Input type="date" bind:value={agentMintState[agent.id].expiresAt} />
 											</div>
-											<DescriptionText>Leave expiration empty for tokens that never expire.</DescriptionText>
+											<DescriptionText>The token remains valid through this date in your configured timezone. Leave empty for no expiration.</DescriptionText>
 											{#if agentMintState[agent.id].error}
 												<p class="text-sm mt-2" style="color: var(--ds-text-danger);">{agentMintState[agent.id].error}</p>
 											{/if}
