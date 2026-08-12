@@ -6,7 +6,9 @@
   import { api } from '../../api.js';
   import { navigate, currentRoute, updateQueryParams } from '../../router.js';
   import Button from '../../components/Button.svelte';
+  import Input from '../../components/Input.svelte';
   import Label from '../../components/Label.svelte';
+  import Textarea from '../../components/Textarea.svelte';
   import PageHeader from '../../layout/PageHeader.svelte';
   import Modal from '../../dialogs/Modal.svelte';
   import ModalHeader from '../../dialogs/ModalHeader.svelte';
@@ -791,14 +793,14 @@
       <div class="flex-1 min-w-0 relative flex items-center gap-2">
         <div class="flex-1 relative">
           <IconSearch class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2" style="color: var(--ds-icon);" />
-          <input
-            data-testid="asset-search"
+          <Input
+            dataTestid="asset-search"
             type="text"
             placeholder={searchMode === 'ql' ? 'Query: status = "Active" (press Enter)' : 'Search by name...'}
             bind:value={searchInput}
             onkeydown={(e) => { if (searchMode === 'ql' && e.key === 'Enter') activeQuery = searchInput; }}
-            class="w-full pl-9 pr-4 py-2 rounded-lg text-sm {searchMode === 'ql' ? 'font-mono' : ''}"
-            style="background: var(--ds-background-input); border: 1px solid var(--ds-border); color: var(--ds-text);"
+            class={`pl-9 ${searchMode === 'ql' ? 'font-mono' : ''}`}
+            size="small"
             title={searchMode === 'ql' ? 'QL Query - Press Enter to search. Examples: status = "Active", type IN ("Laptop", "Desktop"), title ~ "server"' : 'Search by title or description'}
           />
         </div>
@@ -1085,32 +1087,29 @@
     <div class="space-y-4">
       <div>
         <Label color="default" class="mb-1">Title</Label>
-        <input
+        <Input
           id="asset-title-input"
           type="text"
           bind:value={assetFormData.title}
           required
-          class="w-full px-3 py-2 rounded-lg"
-          style="background: var(--ds-background-input); border: 1px solid var(--ds-border); color: var(--ds-text);"
+          size="small"
         />
       </div>
       <div>
         <Label color="default" class="mb-1">Description</Label>
-        <textarea
+        <Textarea
           bind:value={assetFormData.description}
-          rows="3"
-          class="w-full px-3 py-2 rounded-lg"
-          style="background: var(--ds-background-input); border: 1px solid var(--ds-border); color: var(--ds-text);"
-        ></textarea>
+          rows={3}
+          size="small"
+        />
       </div>
       <div>
         <Label color="default" class="mb-1">Asset Tag</Label>
-        <input
+        <Input
           id="asset-tag-input"
           type="text"
           bind:value={assetFormData.asset_tag}
-          class="w-full px-3 py-2 rounded-lg"
-          style="background: var(--ds-background-input); border: 1px solid var(--ds-border); color: var(--ds-text);"
+          size="small"
         />
       </div>
       <div>

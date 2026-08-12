@@ -40,6 +40,7 @@ import TimeLogModal from '../../dialogs/TimeLogModal.svelte';
 import TestCaseViewModal from '../../dialogs/TestCaseViewModal.svelte';
 import RecurrenceEditor from '../../editors/RecurrenceEditor.svelte';
 import Button from '../../components/Button.svelte';
+import NativeSelect from '../../components/NativeSelect.svelte';
 
   // Use centralized icon map for work item types
   const iconMap = itemTypeIconMap;
@@ -1465,17 +1466,13 @@ import Button from '../../components/Button.svelte';
           Current status: <span class="font-medium" style="color: var(--ds-text);">{typeChangeAnalysis.current_status_name || 'None'}</span>
         </div>
         <label class="block text-sm font-medium mb-1" for="type-change-status">Target status</label>
-        <select
+        <NativeSelect
           id="type-change-status"
           bind:value={selectedTypeChangeStatusId}
-          class="w-full px-3 py-2 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
-        >
-          <option value={null}>Select target status…</option>
-          {#each typeChangeAnalysis.available_statuses || [] as status (status.id)}
-            <option value={status.id}>{status.name}</option>
-          {/each}
-        </select>
+          options={(typeChangeAnalysis.available_statuses || []).map((status) => ({ value: status.id, label: status.name }))}
+          placeholder="Select target status…"
+          size="small"
+        />
         <p class="text-xs mt-2" style="color: var(--ds-text-subtle);">
           The change is blocked if the selected status would bypass a condition-gated transition or an approval-bound status.
         </p>

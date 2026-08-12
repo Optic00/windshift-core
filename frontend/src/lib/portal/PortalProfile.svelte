@@ -13,6 +13,7 @@
     getWebAuthnErrorMessage,
   } from '../utils/webauthn-utils.js';
   import Button from '../components/Button.svelte';
+  import Input from '../components/Input.svelte';
   import AlertBox from '../components/AlertBox.svelte';
   import ModalBackdrop from '../components/ModalBackdrop.svelte';
   import PageHeader from '../layout/PageHeader.svelte';
@@ -305,16 +306,15 @@
       <label for="passkey-name" class="block text-sm font-medium mb-2" style="color: var(--ds-text);">
         {t('portal.passkeyName') || 'Passkey name'}
       </label>
-      <input
+      <Input
         id="passkey-name"
         type="text"
         bind:value={newCredentialName}
         placeholder="e.g. Personal MacBook"
-        maxlength="100"
+        maxlength={100}
         autocomplete="off"
         disabled={registering}
-        class="block w-full px-3 py-2 rounded border focus:outline-none focus:ring-2"
-        style="background-color: var(--ds-surface); color: var(--ds-text); border-color: var(--ds-border);"
+        size="small"
       />
 
       <div class="mt-6 flex items-center justify-end gap-2">

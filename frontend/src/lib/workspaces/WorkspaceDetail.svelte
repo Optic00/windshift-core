@@ -17,6 +17,7 @@
   import Label from '../components/Label.svelte';
   import Checkbox from '../components/Checkbox.svelte';
   import Card from '../components/Card.svelte';
+  import Input from '../components/Input.svelte';
 
   let { workspaceId } = $props();
 
@@ -185,11 +186,9 @@
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
             <Label required class="mb-2">Project Name</Label>
-            <input
+            <Input
               type="text"
               bind:value={formData.name}
-              class="w-full px-4 py-3 rounded border transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
-              style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
               placeholder="Enter project name"
               required
             />
@@ -197,11 +196,9 @@
 
           <div>
             <Label class="mb-2">Description</Label>
-            <input
+            <Input
               type="text"
               bind:value={formData.description}
-              class="w-full px-4 py-3 rounded border transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
-              style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
               placeholder="Optional project description"
             />
           </div>

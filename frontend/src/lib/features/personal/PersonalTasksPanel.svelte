@@ -7,6 +7,7 @@
   import { workspacesStore } from '../../stores';
   import Tooltip from '../../components/Tooltip.svelte';
   import Text from '../../components/Text.svelte';
+  import Input from '../../components/Input.svelte';
   import { t } from '../../stores/i18n.svelte.js';
 
   let {
@@ -293,14 +294,13 @@
         {#if showAddForm}
           <div class="py-2 rounded-md mb-2" style="background-color: var(--ds-surface);">
             <form onsubmit={(e) => { e.preventDefault(); handleAddTask(); }} class="flex flex-col gap-2">
-              <input
+              <Input
                 type="text"
-                bind:this={addTaskInput}
+                bind:inputRef={addTaskInput}
                 bind:value={newTaskTitle}
                 placeholder={t('personal.taskTitlePlaceholder')}
-                class="px-2 py-1.5 text-sm border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
                 disabled={adding}
+                size="small"
               />
               <div class="flex gap-2 justify-end">
                 <button

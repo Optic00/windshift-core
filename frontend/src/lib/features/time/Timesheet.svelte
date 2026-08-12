@@ -5,6 +5,7 @@
   import { timeEntryStore } from '../../stores';
   import { BasePicker } from '../../pickers';
   import Button from '../../components/Button.svelte';
+  import Checkbox from '../../components/Checkbox.svelte';
   import Card from '../../components/Card.svelte';
   import TimeLogModal from '../../dialogs/TimeLogModal.svelte';
   import PageHeader from '../../layout/PageHeader.svelte';
@@ -371,16 +372,13 @@
 >
   {#snippet actions()}
     <div class="flex items-center gap-4">
-      <label class="flex items-center gap-2 text-sm select-none {hasWeekendWorklogs ? '' : 'cursor-pointer'}" style="color: var(--ds-text-subtle);">
-        <input
-          type="checkbox"
-          checked={effectiveShowWeekends}
-          onchange={toggleWeekends}
-          disabled={hasWeekendWorklogs}
-          class="rounded {hasWeekendWorklogs ? 'opacity-50' : 'cursor-pointer'}"
-        />
-        {t('time.timesheet.showWeekends')}
-      </label>
+      <Checkbox
+        checked={effectiveShowWeekends}
+        onchange={toggleWeekends}
+        disabled={hasWeekendWorklogs}
+        label={t('time.timesheet.showWeekends')}
+        size="small"
+      />
       <div class="flex items-center gap-2">
         <Button
           variant="default"

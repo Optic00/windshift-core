@@ -34,6 +34,7 @@
   } from '../services/workspaceWidgetLayout.js';
   import Button from '../components/Button.svelte';
   import Card from '../components/Card.svelte';
+  import Input from '../components/Input.svelte';
   import ViewHeader from '../layout/ViewHeader.svelte';
   import StaticViewBackground from '../layout/StaticViewBackground.svelte';
 
@@ -716,19 +717,19 @@
             {#if editingSectionId === section.id}
               <!-- Editing mode -->
               <div class="flex-1 flex items-center gap-2">
-                <input
+                <Input
                   type="text"
                   bind:value={editingSectionTitle}
-                  class="px-3 py-2 border border-gray-300 rounded text-lg font-semibold"
+                  class="text-lg font-semibold"
                   placeholder="Section title"
                   onkeydown={handleSectionEditKeydown}
                 />
-                <input
+                <Input
                   type="text"
                   bind:value={editingSectionSubtitle}
-                  class="px-3 py-2 border border-gray-300 rounded text-sm"
                   placeholder="Subtitle (optional)"
                   onkeydown={handleSectionEditKeydown}
+                  size="small"
                 />
                 <Button
                   variant="primary"

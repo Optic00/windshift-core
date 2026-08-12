@@ -1,6 +1,7 @@
 <script>
   import ExcalidrawEditor from '../../components/ExcalidrawEditor.svelte';
   import Button from '../../components/Button.svelte';
+  import Input from '../../components/Input.svelte';
   import { api } from '../../api.js';
   import { themeStore } from '../../stores/theme.svelte.js';
   import { t } from '../../stores/i18n.svelte.js';
@@ -166,13 +167,13 @@
     <div class="rounded shadow-xl w-full h-full max-w-[95vw] max-h-[95vh] flex flex-col" style="background-color: var(--ds-surface-raised);">
       <div class="flex items-center justify-between p-4 border-b" style="border-color: var(--ds-border);">
         <div class="flex items-center space-x-4 flex-1 min-w-0">
-          <input
+          <Input
             type="text"
             bind:value={diagramName}
             placeholder={t('editors.diagramNamePlaceholder')}
-            class="px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 max-w-md"
-            style="background-color: var(--ds-surface-raised); border-color: var(--ds-border); color: var(--ds-text);"
-            data-testid="page-diagram-name"
+            class="max-w-md"
+            dataTestid="page-diagram-name"
+            size="small"
           />
           {#if hasChanges}
             <span class="text-sm text-orange-600">{t('editors.diagramUnsaved')}</span>

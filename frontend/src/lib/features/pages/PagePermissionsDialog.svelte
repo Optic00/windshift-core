@@ -3,6 +3,7 @@
   import ModalHeader from '../../dialogs/ModalHeader.svelte';
   import DialogFooter from '../../dialogs/DialogFooter.svelte';
   import Button from '../../components/Button.svelte';
+  import Checkbox from '../../components/Checkbox.svelte';
   import Select from '../../components/Select.svelte';
   import DataTable from '../../components/DataTable.svelte';
   import UserPicker from '../../pickers/UserPicker.svelte';
@@ -175,16 +176,14 @@
       <p class="status">{t('pages.permsLoading')}</p>
     {:else}
       <section class="inheritance">
-        <label class="inheritance-toggle">
-          <input
-            id="page-perms-inherit-toggle"
-            type="checkbox"
-            checked={data.inherit_permissions}
-            disabled={!isAdmin || saving}
-            onchange={toggleInheritance}
-          />
-          <span>{t('pages.permsInheritLabel')}</span>
-        </label>
+        <Checkbox
+          id="page-perms-inherit-toggle"
+          checked={data.inherit_permissions}
+          disabled={!isAdmin || saving}
+          onchange={toggleInheritance}
+          label={t('pages.permsInheritLabel')}
+          size="small"
+        />
         <p class="hint">{t('pages.permsInheritHint')}</p>
       </section>
 
@@ -294,14 +293,6 @@
   .inheritance {
     border-top: 1px solid var(--ds-border, #e5e7eb);
     padding-top: 0.75rem;
-  }
-
-  .inheritance-toggle {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: 0.9375rem;
-    cursor: pointer;
   }
 
   .acl {

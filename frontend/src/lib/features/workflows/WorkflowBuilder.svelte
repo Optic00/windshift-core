@@ -12,6 +12,7 @@
   import PageHeader from '../../layout/PageHeader.svelte';
   import DataTable from '../../components/DataTable.svelte';
   import Textarea from '../../components/Textarea.svelte';
+  import Input from '../../components/Input.svelte';
   import Lozenge from '../../components/Lozenge.svelte';
   import Modal from '../../dialogs/Modal.svelte';
   import ModalHeader from '../../dialogs/ModalHeader.svelte';
@@ -27,7 +28,7 @@
   let loadingStatuses = $state(true);
   let creating = $state(false);
   let editingId = $state(null);
-  let nameInput;
+  let nameInput = $state(null);
 
   // Form state
   let newWorkflow = $state({
@@ -292,13 +293,12 @@
       <div class="space-y-4">
         <div>
           <Label color="default" required class="mb-2">{t('common.name')}</Label>
-          <input
+          <Input
             type="text"
             bind:value={newWorkflow.name}
-            bind:this={nameInput}
+            bind:inputRef={nameInput}
             placeholder={t('workflows.workflowNamePlaceholder')}
-            class="w-full px-3 py-2 rounded focus:outline-none focus:ring-2"
-            style="border: 1px solid var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text);"
+            size="small"
             required
           />
         </div>
@@ -342,11 +342,10 @@
       <div class="space-y-4">
         <div>
           <Label color="default" required class="mb-2">{t('common.name')}</Label>
-          <input
+          <Input
             type="text"
             bind:value={editWorkflow.name}
-            class="w-full px-3 py-2 rounded focus:outline-none focus:ring-2"
-            style="border: 1px solid var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text);"
+            size="small"
             required
           />
         </div>

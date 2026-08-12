@@ -6,6 +6,7 @@
   import Modal from '../dialogs/Modal.svelte';
   import AlertBox from '../components/AlertBox.svelte';
   import Badge from '../components/Badge.svelte';
+  import Input from '../components/Input.svelte';
   import { X, ArrowRight, Type, FileText, Flag, Activity } from '@lucide/svelte';
   import DialogFooter from '../dialogs/DialogFooter.svelte';
   import { t } from '../stores/i18n.svelte.js';
@@ -644,13 +645,13 @@
                                   <Badge variant="warning" size="sm">
                                     New required field
                                   </Badge>
-                                  <input
+                                  <Input
                                     type="text"
-                                    class="px-3 py-1.5 text-sm border rounded-md w-48"
-                                    style="border-color: var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text);"
+                                    class="w-48"
                                     placeholder="Enter default value..."
                                     bind:value={mapping.default_value}
                                     oninput={(e) => updateFieldDefaultValue(mapping.field_id, /** @type {HTMLInputElement} */ (e.target).value)}
+                                    size="small"
                                   />
                                 </div>
                               {/if}

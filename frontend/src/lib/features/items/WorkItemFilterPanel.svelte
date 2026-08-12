@@ -4,6 +4,7 @@
   import BasePicker from '../../pickers/BasePicker.svelte';
   import DynamicFieldFilter from './DynamicFieldFilter.svelte';
   import Button from '../../components/Button.svelte';
+  import Input from '../../components/Input.svelte';
   import Panel from '../../components/Panel.svelte';
   import Modal from '../../dialogs/Modal.svelte';
 
@@ -120,8 +121,8 @@
           class="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
           style="color: var(--ds-icon-subtle);"
         />
-        <input
-          data-testid={testId('query', 'work-item-search-input')}
+        <Input
+          dataTestid={testId('query', 'work-item-search-input')}
           type="text"
           value={searchQuery}
           oninput={(e) => onupdatesearch?.(e.currentTarget.value)}
@@ -132,8 +133,8 @@
             }
           }}
           placeholder={t('collections.searchItems')}
-          class="w-full pl-9 pr-3 py-1.5 text-sm border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          style="background-color: var(--ds-surface); border-color: var(--ds-border); color: var(--ds-text);"
+          class="pl-9"
+          size="small"
         />
         {#if searchQuery}
           <button
@@ -264,13 +265,12 @@
     <h3 class="text-lg font-semibold mb-4" style="color: var(--ds-text);">
       {t('collections.searchItemsTitle')}
     </h3>
-    <input
-      data-testid={testId('search-input', 'work-item-search-modal-input')}
+    <Input
+      dataTestid={testId('search-input', 'work-item-search-modal-input')}
       type="text"
       bind:value={tempSearchQuery}
       placeholder={t('collections.enterSearchText')}
-      class="w-full px-3 py-2 text-sm border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-      style="background-color: var(--ds-surface); border-color: var(--ds-border); color: var(--ds-text);"
+      size="small"
     />
     <div class="flex justify-end gap-2 mt-4">
       <Button variant="ghost" size="sm" onclick={clearSearch}>{t('collections.clear')}</Button>

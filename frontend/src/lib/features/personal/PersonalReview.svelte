@@ -10,6 +10,7 @@
   import PageHeader from '../../layout/PageHeader.svelte';
   import MilkdownEditor from '../../editors/LazyMilkdownEditor.svelte';
   import Button from '../../components/Button.svelte';
+  import Input from '../../components/Input.svelte';
   import { getShortcut, matchesShortcut, toHotkeyString } from '../../utils/keyboardShortcuts.js';
   import { t } from '../../stores/i18n.svelte.js';
   import { formatDate, formatDateSimple, formatDateWithOptions } from '../../utils/dateFormatter.js';
@@ -316,11 +317,10 @@ ${t('personal.placeholderImprovements')}`;
           >
             <ChevronLeft class="w-4 h-4" />
           </button>
-          <input
+          <Input
             type="date"
             bind:value={currentDate}
-            class="text-sm border-none bg-transparent cursor-pointer rounded px-2 py-1 transition-colors"
-            style="color: var(--ds-text-subtle); hover:background-color: var(--ds-background-neutral-hovered);"
+            class="w-auto border-0 bg-transparent cursor-pointer px-2 py-1"
           />
           <button
             class="p-2 rounded transition-colors"

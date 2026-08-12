@@ -6,6 +6,7 @@
   import { t } from '../../stores/i18n.svelte.js';
   import { errorToast } from '../../stores/toasts.svelte.js';
   import StatusBadge from '../../components/StatusBadge.svelte';
+  import Input from '../../components/Input.svelte';
   import { onDestroy } from 'svelte';
 
   /**
@@ -193,14 +194,15 @@
 
     {#if mode === 'add'}
       <div class="search-row">
-        <input
+        <Input
           type="text"
           value={searchQuery}
           oninput={handleSearchInput}
           onkeydown={handleSearchKeyDown}
           placeholder={t('pages.addWorkItemSearchPlaceholder')}
           class="search-input"
-          data-testid="page-work-items-add-search"
+          dataTestid="page-work-items-add-search"
+          size="small"
         />
       </div>
       {#if searching}

@@ -2,6 +2,7 @@
   import { X, ChevronDown } from '@lucide/svelte';
   import { onClickOutside } from 'runed';
   import Label from '../components/Label.svelte';
+  import Input from '../components/Input.svelte';
   import { t } from '../stores/i18n.svelte.js';
 
   let {
@@ -125,12 +126,11 @@
       
       <!-- Search Input -->
       <div class="p-3 border-b" style="border-color: var(--ds-border);">
-        <input
+        <Input
           type="text"
           bind:value={searchInput}
           placeholder={t('pickers.searchCategories')}
-          class="w-full px-3 py-2 text-sm border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-          style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
+          size="small"
         />
       </div>
 

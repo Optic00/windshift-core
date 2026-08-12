@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from 'svelte';
   import { IconRefresh, IconAlertCircle, IconTrash } from '@tabler/icons-svelte-runes';
   import Card from '../../components/Card.svelte';
+  import Input from '../../components/Input.svelte';
 
   let {
     title,
@@ -88,12 +89,12 @@
         <IconTrash size={16} stroke={1.75} style="color: var(--ds-icon-subtle);" />
         <div class="text-sm flex-1" style="color: var(--ds-text);">
           {purgeLabel}
-          <input
+          <Input
             type="text"
             bind:value={purgeOlderThan}
             placeholder="30d"
-            class="px-2 py-1 text-sm rounded border mx-2 w-20 font-mono"
-            style="border-color: var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text);"
+            class="inline-block mx-2 w-20 font-mono"
+            size="small"
           />
           <span style="color: var(--ds-text-subtle);">{purgeHint}</span>
         </div>

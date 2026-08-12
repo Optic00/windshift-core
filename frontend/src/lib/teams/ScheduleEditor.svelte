@@ -8,6 +8,7 @@
   import Input from '../components/Input.svelte';
   import Textarea from '../components/Textarea.svelte';
   import Select from '../components/Select.svelte';
+  import Checkbox from '../components/Checkbox.svelte';
 
   let { teamId, schedule = null, onSaved, onCancel } = $props();
 
@@ -92,15 +93,13 @@
         </label>
         <Select id="schedule-timezone" bind:value={formData.timezone} options={timezoneOptions} />
       </div>
-      <div class="flex items-center gap-2">
-        <input
+      <div>
+        <Checkbox
           id="schedule-is-active"
-          type="checkbox"
           bind:checked={formData.is_active}
+          label={t('teams.active')}
+          size="small"
         />
-        <label for="schedule-is-active" class="text-sm" style="color: var(--ds-text)">
-          {t('teams.active')}
-        </label>
       </div>
     </form>
   </div>

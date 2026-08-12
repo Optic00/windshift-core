@@ -10,6 +10,7 @@
   import ModalHeader from '../../dialogs/ModalHeader.svelte';
   import DropdownMenu from '../../layout/DropdownMenu.svelte';
   import Label from '../../components/Label.svelte';
+  import Input from '../../components/Input.svelte';
   import Textarea from '../../components/Textarea.svelte';
   import { formatDateShort, daysUntil } from '../../utils/dateFormatter.js';
   import {
@@ -496,12 +497,10 @@
       <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div>
           <Label for="iteration-name" required class="mb-2">{t('iterations.iterationName')}</Label>
-          <input
+          <Input
             id="iteration-name"
             type="text"
             bind:value={formData.name}
-            class="w-full px-4 py-3 rounded border transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
-            style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
             placeholder={t('iterations.iterationNamePlaceholder')}
             required
           />
@@ -520,24 +519,20 @@
 
         <div>
           <Label for="iteration-start-date" required class="mb-2">{t('iterations.startDate')}</Label>
-          <input
+          <Input
             id="iteration-start-date"
             type="date"
             bind:value={formData.start_date}
-            class="w-full px-4 py-3 rounded border transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
-            style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
             required
           />
         </div>
 
         <div>
           <Label for="iteration-end-date" required class="mb-2">{t('iterations.endDate')}</Label>
-          <input
+          <Input
             id="iteration-end-date"
             type="date"
             bind:value={formData.end_date}
-            class="w-full px-4 py-3 rounded border transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
-            style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
             required
           />
         </div>

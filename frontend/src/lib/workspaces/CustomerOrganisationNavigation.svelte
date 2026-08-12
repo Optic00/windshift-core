@@ -1,6 +1,7 @@
 <script>
   import { Search, Users, Plus } from '@lucide/svelte';
   import Button from '../components/Button.svelte';
+  import Input from '../components/Input.svelte';
   import Avatar from '../components/Avatar.svelte';
   import { t } from '../stores/i18n.svelte.js';
   import SidebarHeader from '../layout/SidebarHeader.svelte';
@@ -40,12 +41,12 @@
   <!-- Search -->
   <div class="relative mb-4">
     <Search class="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2" style="color: var(--ds-icon-subtle);" />
-    <input
+    <Input
       type="text"
       bind:value={searchQuery}
       placeholder={t('workspaces.customers.searchOrganisations')}
-      class="w-full pl-9 pr-3 py-2 text-sm border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-      style="background-color: var(--ds-surface); border-color: var(--ds-border); color: var(--ds-text);"
+      class="pl-9"
+      size="small"
     />
   </div>
 

@@ -12,6 +12,7 @@
   import EmptyState from '../../components/EmptyState.svelte';
   import ModalHeader from '../../dialogs/ModalHeader.svelte';
   import SearchInput from '../../components/SearchInput.svelte';
+  import Input from '../../components/Input.svelte';
   import DocumentUpload from './DocumentUpload.svelte';
   import { computeDocumentHealth } from './healthScore.js';
   import {
@@ -344,13 +345,11 @@
           <label for="note-title" class="block text-sm font-medium mb-1" style="color: var(--ds-text);">
             {t('logbook.noteTitle')} <span class="text-red-500">*</span>
           </label>
-          <input
+          <Input
             id="note-title"
-            data-testid="logbook-note-title"
+            dataTestid="logbook-note-title"
             type="text"
             bind:value={noteFormData.title}
-            class="w-full px-4 py-3 rounded border transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
-            style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
             placeholder={t('logbook.noteTitlePlaceholder')}
           />
         </div>

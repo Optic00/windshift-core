@@ -13,6 +13,7 @@
   import DropdownMenu from '../../layout/DropdownMenu.svelte';
   import Textarea from '../../components/Textarea.svelte';
   import Label from '../../components/Label.svelte';
+  import Input from '../../components/Input.svelte';
   import { milestonesStore } from '../../stores/milestones.js';
   import { formatDateShort, daysUntil } from '../../utils/dateFormatter.js';
   import { safeHref } from '../../utils/sanitize';
@@ -456,12 +457,10 @@
       <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div>
           <Label for="milestone-name" required class="mb-2">{t('milestones.milestoneName')}</Label>
-          <input
+          <Input
             id="milestone-name"
             type="text"
             bind:value={formData.name}
-            class="w-full px-4 py-3 rounded border transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
-            style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
             placeholder={t('milestones.milestoneNamePlaceholder')}
             required
           />
@@ -469,12 +468,10 @@
 
         <div>
           <Label for="milestone-target-date" class="mb-2">{t('milestones.targetDate')}</Label>
-          <input
+          <Input
             id="milestone-target-date"
             type="date"
             bind:value={formData.target_date}
-            class="w-full px-4 py-3 rounded border transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
-            style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
           />
         </div>
 

@@ -20,6 +20,8 @@
   import Panel from '../components/Panel.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import SearchInput from '../components/SearchInput.svelte';
+  import Input from '../components/Input.svelte';
+  import Checkbox from '../components/Checkbox.svelte';
   import DropIndicator from '../layout/DropIndicator.svelte';
   import CollectionViewSwitcher from '../features/collections/CollectionViewSwitcher.svelte';
 
@@ -789,19 +791,14 @@
         <!-- Columns Tab -->
         {#if activeTab === 'columns'}
         <div class="mt-4 rounded border p-4" style="background-color: var(--ds-surface-raised); border-color: var(--ds-border);">
-          <label class="flex items-start gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              class="mt-1 h-4 w-4 rounded"
-              checked={showRightmostColumnLast50}
-              onchange={(e) => setShowRightmostColumnLast50(e.currentTarget.checked)}
-              disabled={!canConfigure}
-            />
-            <span>
-              <span class="block text-sm font-medium" style="color: var(--ds-text);">Show only the latest 50 items in the rightmost column</span>
-              <span class="block text-xs mt-1" style="color: var(--ds-text-subtle);">Useful for high-volume Done columns while keeping the rest of the board complete.</span>
-            </span>
-          </label>
+          <Checkbox
+            bind:checked={showRightmostColumnLast50}
+            onchange={setShowRightmostColumnLast50}
+            disabled={!canConfigure}
+            label="Show only the latest 50 items in the rightmost column"
+            hint="Useful for high-volume Done columns while keeping the rest of the board complete."
+            size="small"
+          />
         </div>
 
         <div class="grid grid-cols-1 lg:grid-cols-6 gap-3 mt-4 mb-6">
@@ -900,24 +897,24 @@
                       <GripVertical class="w-4 h-4" />
                     </div>
 
-                    <input
+                    <Input
                       type="text"
                       value={column.name}
                       oninput={(e) => updateColumnName(colIndex, e.currentTarget.value)}
-                      class="flex-1 px-1.5 py-1 border rounded text-sm font-semibold min-w-0"
-                      style="border-color: var(--ds-border); color: var(--ds-text); background-color: var(--ds-surface);"
+                      class="flex-1 font-semibold min-w-0"
                       placeholder={t('placeholders.columnName')}
+                      size="small"
                     />
 
-                    <input
+                    <Input
                       type="number"
                       value={column.wip_limit || ''}
                       oninput={(e) => updateWIPLimit(colIndex, e.currentTarget.value)}
-                      class="w-14 px-1 py-1 border rounded text-sm text-center flex-shrink-0"
-                      style="border-color: var(--ds-border); color: var(--ds-text); background-color: var(--ds-surface);"
+                      class="w-14 text-center flex-shrink-0"
                       placeholder="WIP"
                       title={t('settings.boardConfig.wipLimit')}
-                      min="1"
+                      min={1}
+                      size="small"
                     />
 
                     <button

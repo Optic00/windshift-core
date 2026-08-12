@@ -3,6 +3,7 @@
   import { api } from '../../api.js';
   import { successToast, errorToast } from '../../stores/toasts.svelte.js';
   import Button from '../../components/Button.svelte';
+  import Input from '../../components/Input.svelte';
   import Spinner from '../../components/Spinner.svelte';
   import FormField from '../../components/FormField.svelte';
   import ModalHeader from '../../dialogs/ModalHeader.svelte';
@@ -134,12 +135,10 @@
 
       <!-- Title field -->
       <FormField label={t('logbook.documentTitle')} id="doc-title">
-        <input
+        <Input
           id="doc-title"
           type="text"
           bind:value={title}
-          class="w-full px-4 py-3 rounded border transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
-          style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
           placeholder={t('logbook.documentTitlePlaceholder')}
         />
       </FormField>

@@ -8,6 +8,7 @@
   import Modal from '../../dialogs/Modal.svelte';
   import Button from '../../components/Button.svelte';
   import Checkbox from '../../components/Checkbox.svelte';
+  import Input from '../../components/Input.svelte';
   import { api } from '../../api.js';
   import { booleanOptions, operatorsByType, isMultiValueOperator } from '../shared/filterOperators.js';
 
@@ -447,26 +448,25 @@
       {:else if filter.field.type === 'date'}
         <!-- Date input -->
         <div class="relative">
-          <input
+          <Input
             type="date"
             value={filter.value}
             oninput={handleValueChange}
             onkeydown={handleValueKeydown}
-            class="w-full px-3 py-2 pr-10 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            style="border-color: var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text);"
+            class="pr-10"
+            size="small"
           />
           <Calendar class="w-4 h-4 absolute right-3 top-1/2 transform -translate-y-1/2 pointer-events-none" style="color: var(--ds-text-subtle);" />
         </div>
       {:else if filter.field.type === 'number'}
         <!-- Number input -->
-        <input
+        <Input
           type="number"
           placeholder="Enter number..."
           value={filter.value}
           oninput={handleValueChange}
           onkeydown={handleValueKeydown}
-          class="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          style="border-color: var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text);"
+          size="small"
         />
       {:else if filter.field.type === 'boolean'}
         <!-- Boolean select -->
@@ -533,13 +533,12 @@
     <h3 class="text-lg font-semibold mb-4" style="color: var(--ds-text);">
       {filter.field?.label || 'Enter Value'}
     </h3>
-    <input
-      data-testid={testIdPrefix ? `${testIdPrefix}-value-input` : undefined}
+    <Input
+      dataTestid={testIdPrefix ? `${testIdPrefix}-value-input` : undefined}
       type="text"
       bind:value={tempTextValue}
       placeholder="Enter value..."
-      class="w-full px-3 py-2 text-sm border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-      style="background-color: var(--ds-surface); border-color: var(--ds-border); color: var(--ds-text);"
+      size="small"
     />
     <div class="flex justify-end gap-2 mt-4">
       <Button variant="ghost" size="sm" onclick={clearTextValue}>Clear</Button>

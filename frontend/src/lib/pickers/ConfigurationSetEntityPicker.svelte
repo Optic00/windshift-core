@@ -4,6 +4,7 @@
   import { t } from '../stores/i18n.svelte.js';
   import { confirm } from '../composables/useConfirm.js';
   import { isGenericSubtaskType } from '../utils/hierarchy.js';
+  import Input from '../components/Input.svelte';
 
   // Entity type determines rendering behavior
   let {
@@ -75,13 +76,13 @@
   <!-- Search input -->
   <div class="relative">
     <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style="color: var(--ds-icon-subtle);" />
-    <input
-      data-testid={`${entityType}-search`}
+    <Input
+      dataTestid={`${entityType}-search`}
       type="text"
       placeholder={t('pickers.searchEntities', { entities: getEntityLabelPlural() })}
       bind:value={searchQuery}
-      class="w-full pl-9 pr-4 py-2 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-      style="background-color: var(--ds-surface); border-color: var(--ds-border); color: var(--ds-text);"
+      class="pl-9"
+      size="small"
     />
   </div>
 

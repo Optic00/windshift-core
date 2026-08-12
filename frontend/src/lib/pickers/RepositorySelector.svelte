@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { api } from '../api.js';
   import Button from '../components/Button.svelte';
+  import Input from '../components/Input.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import DialogFooter from '../dialogs/DialogFooter.svelte';
   import { X, Search, Loader2, Check, GitBranch, Lock, Globe } from '@lucide/svelte';
@@ -181,12 +182,12 @@
     <div class="px-6 py-3 border-b" style="border-color: var(--ds-border);">
       <div class="relative">
         <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style="color: var(--ds-text-subtle);" />
-        <input
+        <Input
           type="text"
           bind:value={searchQuery}
           placeholder={t('pickers.searchRepositories')}
-          class="w-full pl-10 pr-4 py-2 rounded-lg border text-sm"
-          style="border-color: var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text);"
+          class="pl-10"
+          size="small"
         />
       </div>
     </div>

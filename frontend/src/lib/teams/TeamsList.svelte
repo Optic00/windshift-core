@@ -13,6 +13,7 @@
   import PageHeader from '../layout/PageHeader.svelte';
   import Button from '../components/Button.svelte';
   import Input from '../components/Input.svelte';
+  import Checkbox from '../components/Checkbox.svelte';
   import Textarea from '../components/Textarea.svelte';
   import DataTable from '../components/DataTable.svelte';
   import Lozenge from '../components/Lozenge.svelte';
@@ -270,15 +271,13 @@
           />
         </div>
         {#if editingTeam}
-          <div class="flex items-center gap-2">
-            <input
+          <div>
+            <Checkbox
               id="team-is-active"
-              type="checkbox"
               bind:checked={formData.is_active}
+              label={t('teams.active')}
+              size="small"
             />
-            <label for="team-is-active" class="text-sm" style="color: var(--ds-text)">
-              {t('teams.active')}
-            </label>
           </div>
         {/if}
       </form>

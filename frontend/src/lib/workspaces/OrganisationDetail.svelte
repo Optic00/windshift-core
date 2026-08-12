@@ -2,6 +2,7 @@
   import { IconUsers as Users, IconMail as Mail, IconSearch as Search, IconGripVertical as GripVertical, IconPlus as Plus, IconEdit as Edit2, IconTrash as Trash2, IconDots as MoreHorizontal, IconFile as FileIcon, IconTicket as Ticket, IconFileText as FileText, IconNote as StickyNote, IconExternalLink as ExternalLink } from '@tabler/icons-svelte-runes';
   import { toHotkeyString } from '../utils/keyboardShortcuts.js';
   import Button from '../components/Button.svelte';
+  import Input from '../components/Input.svelte';
   import Avatar from '../components/Avatar.svelte';
   import DropdownMenu from '../layout/DropdownMenu.svelte';
   import Card from '../components/Card.svelte';
@@ -170,12 +171,12 @@
     <div class="mb-4">
       <div class="relative max-w-md">
         <Search class="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4" style="color: var(--ds-text-subtle);" />
-        <input
+        <Input
           type="text"
           bind:value={customerSearch}
           placeholder={t('workspaces.customers.searchCustomers')}
-          class="w-full pl-10 pr-4 py-2 rounded border focus:outline-none focus:ring-2 focus:ring-blue-500"
-          style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
+          class="pl-10"
+          size="small"
         />
       </div>
     </div>

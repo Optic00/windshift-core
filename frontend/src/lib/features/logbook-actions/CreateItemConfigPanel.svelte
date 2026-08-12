@@ -4,6 +4,8 @@
   import { logbookActionFlowStore } from '../../stores/logbookActionFlowStore.svelte.js';
   import WorkspacePicker from '../../pickers/WorkspacePicker.svelte';
   import ItemPicker from '../../pickers/ItemPicker.svelte';
+  import Input from '../../components/Input.svelte';
+  import Textarea from '../../components/Textarea.svelte';
 
   let { selectedNode, flowStore = logbookActionFlowStore } = $props();
 
@@ -83,38 +85,26 @@
 
   <div>
     <label for="create-item-title" class="block text-xs font-medium mb-1">Title Template</label>
-    <input
+    <Input
       id="create-item-title"
       type="text"
-      class="w-full px-3 py-2 border rounded-md text-sm config-input"
-      placeholder="{'{{doc.title}}'}"
+      placeholder={'{{doc.title}}'}
       value={selectedNode.data?.config?.title || ''}
       oninput={handleTitleChange}
+      size="small"
     />
   </div>
 
   <div>
     <label for="create-item-description" class="block text-xs font-medium mb-1">Description Template</label>
-    <textarea
+    <Textarea
       id="create-item-description"
-      class="w-full px-3 py-2 border rounded-md text-sm config-input"
-      rows="3"
+      rows={3}
       placeholder={"Document from logbook: {{doc.title}}\nLink: {{doc.link}}"}
       value={selectedNode.data?.config?.description || ''}
       oninput={handleDescriptionChange}
-    ></textarea>
+      style="background-color: var(--ds-surface);"
+      size="small"
+    />
   </div>
 </div>
-
-<style>
-  .config-input {
-    background-color: var(--ds-surface);
-    border-color: var(--ds-border);
-    color: var(--ds-text);
-  }
-
-  .config-input:focus {
-    border-color: var(--ds-interactive);
-    outline: none;
-  }
-</style>

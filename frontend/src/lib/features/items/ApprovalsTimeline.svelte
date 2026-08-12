@@ -5,6 +5,7 @@
   import { errorToast, successToast } from '../../stores/toasts.svelte.js';
   import { AlertCircle, Check, X, MessageSquare, RotateCcw, ChevronUp, ChevronDown, Clock, ShieldX } from '@lucide/svelte';
   import Button from '../../components/Button.svelte';
+  import Textarea from '../../components/Textarea.svelte';
   import Badge from '../../components/Badge.svelte';
   import EmptyState from '../../components/EmptyState.svelte';
   import { formatDateTimeLocale } from '../../utils/dateFormatter.js';
@@ -281,14 +282,15 @@
                     Comment
                   </Button>
                 </div>
-                <textarea
-                  class="w-full px-3 py-2 border rounded text-sm"
-                  style="border-color: var(--ds-border); background: var(--ds-surface);"
-                  rows="2"
+                <Textarea
+                  class="text-sm"
+                  style="background: var(--ds-surface);"
+                  rows={2}
                   placeholder="Optional comment…"
                   bind:value={commentsByRequest[req.id]}
                   data-testid="approval-decision-comment"
-                ></textarea>
+                  size="small"
+                />
               </div>
             {/if}
 
