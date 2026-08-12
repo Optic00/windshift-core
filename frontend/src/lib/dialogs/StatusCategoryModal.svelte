@@ -1,6 +1,7 @@
 <script>
   import Modal from './Modal.svelte';
   import Button from '../components/Button.svelte';
+  import Input from '../components/Input.svelte';
   import Textarea from '../components/Textarea.svelte';
   import IconSelector from '../pickers/IconSelector.svelte';
   import Label from '../components/Label.svelte';
@@ -48,13 +49,12 @@
 
       <div class="mb-6">
         <Label required class="mb-2">{t('common.name')}</Label>
-        <input
+        <Input
           type="text"
           bind:value={formData.name}
           placeholder={t('statusCategory.namePlaceholder')}
-          class="w-full px-4 py-3 rounded border transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
-          style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
           required
+          size="medium"
         />
       </div>
 
@@ -109,4 +109,3 @@
     {/snippet}
   </Modal>
 {/if}
-

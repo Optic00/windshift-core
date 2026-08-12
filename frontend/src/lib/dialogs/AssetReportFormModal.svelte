@@ -1,6 +1,8 @@
 <script>
   import { api } from '../api.js';
   import Button from '../components/Button.svelte';
+  import Checkbox from '../components/Checkbox.svelte';
+  import Input from '../components/Input.svelte';
   import Textarea from '../components/Textarea.svelte';
   import AlertBox from '../components/AlertBox.svelte';
   import Spinner from '../components/Spinner.svelte';
@@ -212,12 +214,11 @@
                     placeholder={getFieldLabel(field)}
                   />
                 {:else}
-                  <input
+                  <Input
                     type="text"
                     bind:value={values[field.field_identifier]}
-                    class="w-full px-4 py-3 rounded border focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    style="background-color: {isDarkMode ? '#1e293b' : '#ffffff'}; color: {isDarkMode ? '#e2e8f0' : '#111827'}; border-color: {isDarkMode ? '#475569' : '#d1d5db'};"
                     placeholder={getFieldLabel(field)}
+                    size="medium"
                   />
                 {/if}
                 {#if field.description}
@@ -293,31 +294,23 @@
                     getLabel={(option) => option.label}
                   />
                 {:else if field.virtual_field_type === 'checkbox'}
-                  <label class="flex items-center gap-3 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      bind:checked={values[field.field_identifier]}
-                      class="h-5 w-5 rounded border-gray-300 focus:ring-2 focus:ring-blue-500"
-                    />
-                    <span class="text-sm" style="color: {isDarkMode ? '#e2e8f0' : '#374151'};">
-                      {getFieldLabel(field)}
-                    </span>
-                  </label>
+                  <Checkbox
+                    bind:checked={values[field.field_identifier]}
+                    label={getFieldLabel(field)}
+                  />
                 {:else if field.virtual_field_type === 'number'}
-                  <input
+                  <Input
                     type="number"
                     bind:value={values[field.field_identifier]}
-                    class="w-full px-4 py-3 rounded border focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    style="background-color: {isDarkMode ? '#1e293b' : '#ffffff'}; color: {isDarkMode ? '#e2e8f0' : '#111827'}; border-color: {isDarkMode ? '#475569' : '#d1d5db'};"
                     placeholder={getFieldLabel(field)}
+                    size="medium"
                   />
                 {:else}
-                  <input
+                  <Input
                     type="text"
                     bind:value={values[field.field_identifier]}
-                    class="w-full px-4 py-3 rounded border focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    style="background-color: {isDarkMode ? '#1e293b' : '#ffffff'}; color: {isDarkMode ? '#e2e8f0' : '#111827'}; border-color: {isDarkMode ? '#475569' : '#d1d5db'};"
                     placeholder={getFieldLabel(field)}
+                    size="medium"
                   />
                 {/if}
               </div>

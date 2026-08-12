@@ -7,6 +7,9 @@
   import { confirm } from '../composables/useConfirm.js';
   import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, AlertTriangle } from '@lucide/svelte';
   import Button from '../components/Button.svelte';
+  import Checkbox from '../components/Checkbox.svelte';
+  import Input from '../components/Input.svelte';
+  import NativeSelect from '../components/NativeSelect.svelte';
   import Textarea from '../components/Textarea.svelte';
   import Label from '../components/Label.svelte';
   import WorkflowPicker from '../pickers/WorkflowPicker.svelte';
@@ -405,13 +408,12 @@
       <div class="space-y-4">
         <div>
           <Label required>{t('approvalSets.name')}</Label>
-          <input
+          <Input
             type="text"
-            class="w-full px-3 py-2 border rounded text-sm"
-            style="border-color: var(--ds-border); background: var(--ds-surface-raised); color: var(--ds-text);"
             placeholder={t('approvalSets.namePlaceholder')}
             bind:value={formData.name}
-            data-testid="approval-set-name"
+            dataTestid="approval-set-name"
+            size="small"
           />
         </div>
         <div>
@@ -606,96 +608,91 @@
                           <div class="p-3 border-t space-y-3" style="border-color: var(--ds-border);">
                             <div>
                               <Label required>{t('approvalSets.stepName')}</Label>
-                              <input type="text" class="w-full px-3 py-2 border rounded text-sm"
-                                     style="border-color: var(--ds-border); background: var(--ds-surface);"
-                                     placeholder={t('approvalSets.stepNamePlaceholder')}
-                                     bind:value={step.name} />
+                              <Input
+                                type="text"
+                                placeholder={t('approvalSets.stepNamePlaceholder')}
+                                bind:value={step.name}
+                                size="small"
+                              />
                             </div>
 
                             <div class="grid grid-cols-2 gap-3">
                               <div>
                                 <Label>{t('approvalSets.quorum')}</Label>
-                                <select class="w-full px-3 py-2 border rounded text-sm"
-                                        style="border-color: var(--ds-border); background: var(--ds-surface);"
-                                        bind:value={step.quorum_mode}>
-                                  {#each QUORUM_MODES as q}
-                                    <option value={q.id}>{q.name}</option>
-                                  {/each}
-                                </select>
+                                <NativeSelect
+                                  bind:value={step.quorum_mode}
+                                  options={QUORUM_MODES.map((mode) => ({ value: mode.id, label: mode.name }))}
+                                  size="small"
+                                />
                                 {#if step.quorum_mode === 'count'}
-                                  <input type="number" min="1" class="mt-2 w-full px-3 py-2 border rounded text-sm"
-                                         placeholder={t('approvalSets.quorumCountValue')}
-                                         bind:value={step.quorum_count} />
+                                  <Input
+                                    type="number"
+                                    min="1"
+                                    class="mt-2"
+                                    placeholder={t('approvalSets.quorumCountValue')}
+                                    bind:value={step.quorum_count}
+                                    size="small"
+                                  />
                                 {:else if step.quorum_mode === 'percent'}
-                                  <input type="number" min="1" max="100" class="mt-2 w-full px-3 py-2 border rounded text-sm"
-                                         placeholder={t('approvalSets.quorumPercentValue')}
-                                         bind:value={step.quorum_percent} />
+                                  <Input
+                                    type="number"
+                                    min="1"
+                                    max="100"
+                                    class="mt-2"
+                                    placeholder={t('approvalSets.quorumPercentValue')}
+                                    bind:value={step.quorum_percent}
+                                    size="small"
+                                  />
                                 {/if}
                               </div>
                               <div>
                                 <Label>{t('approvalSets.rejectionPolicy')}</Label>
-                                <select class="w-full px-3 py-2 border rounded text-sm"
-                                        style="border-color: var(--ds-border); background: var(--ds-surface);"
-                                        bind:value={step.rejection_policy}>
-                                  {#each REJECTION_POLICIES as r}
-                                    <option value={r.id}>{r.name}</option>
-                                  {/each}
-                                </select>
+                                <NativeSelect
+                                  bind:value={step.rejection_policy}
+                                  options={REJECTION_POLICIES.map((policy) => ({ value: policy.id, label: policy.name }))}
+                                  size="small"
+                                />
                               </div>
                             </div>
 
                             <div class="grid grid-cols-2 gap-3">
                               <div>
                                 <Label>{t('approvalSets.approverSource')}</Label>
-                                <select class="w-full px-3 py-2 border rounded text-sm"
-                                        style="border-color: var(--ds-border); background: var(--ds-surface);"
-                                        bind:value={step.approver_source}>
-                                  {#each APPROVER_SOURCES as src}
-                                    <option value={src.id}>{src.name}</option>
-                                  {/each}
-                                </select>
+                                <NativeSelect
+                                  bind:value={step.approver_source}
+                                  options={APPROVER_SOURCES.map((source) => ({ value: source.id, label: source.name }))}
+                                  size="small"
+                                />
                               </div>
                               <div>
                                 {#if step.approver_source === 'regular_field'}
                                   <Label>{t('approvalSets.approverFieldIdentifier')}</Label>
-                                  <select class="w-full px-3 py-2 border rounded text-sm"
-                                          style="border-color: var(--ds-border); background: var(--ds-surface);"
-                                          bind:value={step.approver_field_identifier}>
-                                    <option value="">…</option>
-                                    {#each REGULAR_FIELD_OPTIONS as f}
-                                      <option value={f.id}>{f.name}</option>
-                                    {/each}
-                                  </select>
+                                  <NativeSelect
+                                    bind:value={step.approver_field_identifier}
+                                    options={[{ value: '', label: '…' }, ...REGULAR_FIELD_OPTIONS.map((field) => ({ value: field.id, label: field.name }))]}
+                                    size="small"
+                                  />
                                 {:else if step.approver_source === 'custom_field'}
                                   <Label>{t('approvalSets.approverFieldId')}</Label>
-                                  <select class="w-full px-3 py-2 border rounded text-sm"
-                                          style="border-color: var(--ds-border); background: var(--ds-surface);"
-                                          bind:value={step.approver_field_id}>
-                                    <option value={null}>…</option>
-                                    {#each userCustomFields as f}
-                                      <option value={f.id}>{f.name}</option>
-                                    {/each}
-                                  </select>
+                                  <NativeSelect
+                                    bind:value={step.approver_field_id}
+                                    options={[{ value: null, label: '…' }, ...userCustomFields.map((field) => ({ value: field.id, label: field.name }))]}
+                                    size="small"
+                                  />
                                 {:else if step.approver_source === 'role'}
                                   <Label>{t('approvalSets.approverRole')}</Label>
-                                  <select class="w-full px-3 py-2 border rounded text-sm"
-                                          style="border-color: var(--ds-border); background: var(--ds-surface);"
-                                          bind:value={step.approver_role_id}>
-                                    <option value={null}>…</option>
-                                    {#each roles as r}
-                                      <option value={r.id}>{r.name}</option>
-                                    {/each}
-                                  </select>
+                                  <NativeSelect
+                                    bind:value={step.approver_role_id}
+                                    options={[{ value: null, label: '…' }, ...roles.map((role) => ({ value: role.id, label: role.name }))]}
+                                    size="small"
+                                  />
                                 {:else if step.approver_source === 'group'}
                                   <Label>{t('approvalSets.approverGroup')}</Label>
-                                  <select class="w-full px-3 py-2 border rounded text-sm"
-                                          style="border-color: var(--ds-border); background: var(--ds-surface);"
-                                          bind:value={step.approver_group_id}>
-                                    <option value={null}>…</option>
-                                    {#each groups as g}
-                                      <option value={g.id}>{g.name}</option>
-                                    {/each}
-                                  </select>
+                                  <NativeSelect
+                                    bind:value={step.approver_group_id}
+                                    options={[{ value: null, label: '…' }, ...groups.map((group) => ({ value: group.id, label: group.name }))]}
+                                    size="small"
+                                  />
                                 {:else if step.approver_source === 'user'}
                                   <Label>{t('approvalSets.approverUser')}</Label>
                                   <UserPicker
@@ -706,10 +703,11 @@
                               </div>
                             </div>
 
-                            <label class="flex items-center gap-2 text-sm cursor-pointer">
-                              <input type="checkbox" bind:checked={step.allow_self_approval} />
-                              <span>{t('approvalSets.allowSelfApproval')}</span>
-                            </label>
+                            <Checkbox
+                              bind:checked={step.allow_self_approval}
+                              label={t('approvalSets.allowSelfApproval')}
+                              size="small"
+                            />
 
                             <!-- Fallback chain: leave handling + timeout escalation. The
                                  two rules are presented as a single panel because they
@@ -784,30 +782,33 @@
                                   <div class="mt-3 pl-4 border-l-2 space-y-2" style="border-color: var(--ds-border-bold);">
                                     <div>
                                       <Label>{t('approvalSets.escalationAfterHours')}</Label>
-                                      <input type="number" min="1" class="w-full px-3 py-2 border rounded text-sm"
-                                             style="border-color: var(--ds-border); background: var(--ds-surface);"
-                                             placeholder="24"
-                                             bind:value={step.escalation_after_hours} />
+                                      <Input
+                                        type="number"
+                                        min="1"
+                                        placeholder="24"
+                                        bind:value={step.escalation_after_hours}
+                                        size="small"
+                                      />
                                     </div>
                                     {#if step.escalation_action === 'reassign'}
                                       <div class="grid grid-cols-2 gap-3">
                                         <div>
                                           <Label>{t('approvalSets.escalationTarget')}</Label>
-                                          <select class="w-full px-3 py-2 border rounded text-sm"
-                                                  style="border-color: var(--ds-border); background: var(--ds-surface);"
-                                                  bind:value={step.escalation_target_source}>
-                                            <option value="">…</option>
-                                            {#each APPROVER_SOURCES as src}
-                                              <option value={src.id}>{src.name}</option>
-                                            {/each}
-                                          </select>
+                                          <NativeSelect
+                                            bind:value={step.escalation_target_source}
+                                            options={[{ value: '', label: '…' }, ...APPROVER_SOURCES.map((source) => ({ value: source.id, label: source.name }))]}
+                                            size="small"
+                                          />
                                         </div>
                                         <div>
                                           <Label>{t('approvalSets.maxEscalations')}</Label>
-                                          <input type="number" min="1" class="w-full px-3 py-2 border rounded text-sm"
-                                                 style="border-color: var(--ds-border); background: var(--ds-surface);"
-                                                 placeholder="∞"
-                                                 bind:value={step.max_escalations} />
+                                          <Input
+                                            type="number"
+                                            min="1"
+                                            placeholder="∞"
+                                            bind:value={step.max_escalations}
+                                            size="small"
+                                          />
                                         </div>
                                       </div>
                                       <p class="text-xs" style="color: var(--ds-text-subtle);">

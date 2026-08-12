@@ -1,6 +1,7 @@
 <script>
   import { api } from '../api.js';
   import Button from '../components/Button.svelte';
+  import Input from '../components/Input.svelte';
   import BasePicker from '../pickers/BasePicker.svelte';
   import IconSelector from '../pickers/IconSelector.svelte';
   import Textarea from '../components/Textarea.svelte';
@@ -192,14 +193,13 @@
           <label for="rt-name" class="block text-sm font-medium mb-2" style="color: {isDarkMode ? '#9ca3af' : '#374151'};">
             {t('common.name')} <span class="text-red-500">*</span>
           </label>
-          <input
+          <Input
             id="rt-name"
             bind:value={formData.name}
             type="text"
-            class="w-full px-4 py-3 rounded border focus:outline-none focus:ring-2 focus:ring-blue-500"
-            style="background-color: {isDarkMode ? '#1e293b' : '#ffffff'}; color: {isDarkMode ? '#e2e8f0' : '#111827'}; border-color: {isDarkMode ? '#475569' : '#d1d5db'};"
             placeholder={t('portal.requestTypeNamePlaceholder')}
             required
+            size="medium"
           />
         </div>
 

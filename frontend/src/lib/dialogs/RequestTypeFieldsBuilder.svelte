@@ -7,7 +7,9 @@
   import { api } from '../api.js';
   import { Plus, Trash2, Pencil, Type, AlignLeft, ListChecks, ToggleLeft, AlertTriangle, Search, X } from '@lucide/svelte';
   import Button from '../components/Button.svelte';
+  import Input from '../components/Input.svelte';
   import Spinner from '../components/Spinner.svelte';
+  import Textarea from '../components/Textarea.svelte';
   import PortalModal from './PortalModal.svelte';
   import DropIndicator from '../layout/DropIndicator.svelte';
   import { t } from '../stores/i18n.svelte.js';
@@ -630,15 +632,14 @@
               </p>
             </div>
           </div>
-          <input
+          <Input
             id="rtfb-title-template"
             type="text"
             bind:value={titleTemplate}
             oninput={scheduleTitleTemplateSave}
             onblur={saveTitleTemplate}
             placeholder={'Request: {{type.name}} from {{requester.name}}'}
-            class="w-full px-3 py-2 rounded border text-sm focus:outline-none focus:ring-2"
-            style="background-color: var(--ds-background-input); color: var(--ds-text); border-color: var(--ds-border); --tw-ring-color: var(--ds-interactive);"
+            size="small"
           />
           {#if titleTemplateError}
             <p class="text-xs mt-1" style="color: var(--ds-status-error);">{titleTemplateError}</p>
@@ -770,13 +771,12 @@
             <label for="virtual-field-name" class="block text-sm font-medium mb-2" style="color: var(--ds-text);">
               {t('requestTypeFields.fieldName')}
             </label>
-            <input
+            <Input
               id="virtual-field-name"
               type="text"
               bind:value={virtualFieldName}
               placeholder={t('requestTypeFields.fieldNamePlaceholder')}
-              class="w-full px-3 py-2 rounded border focus:outline-none focus:ring-2 text-sm"
-              style="background-color: var(--ds-background-input); color: var(--ds-text); border-color: var(--ds-border); --tw-ring-color: var(--ds-interactive);"
+              size="small"
             />
           </div>
 
@@ -811,19 +811,19 @@
               <div class="space-y-2" role="group" aria-labelledby="virtual-field-options-label">
                 {#each virtualFieldOptions as option, i}
                   <div class="flex gap-2">
-                    <input
+                    <Input
                       type="text"
                       bind:value={option.value}
                       placeholder={t('requestTypeFields.value')}
-                      class="flex-1 px-2 py-1.5 rounded border focus:outline-none focus:ring-2 text-sm"
-                      style="background-color: var(--ds-background-input); color: var(--ds-text); border-color: var(--ds-border); --tw-ring-color: var(--ds-interactive);"
+                      size="small"
+                      class="flex-1"
                     />
-                    <input
+                    <Input
                       type="text"
                       bind:value={option.label}
                       placeholder={t('requestTypeFields.label')}
-                      class="flex-1 px-2 py-1.5 rounded border focus:outline-none focus:ring-2 text-sm"
-                      style="background-color: var(--ds-background-input); color: var(--ds-text); border-color: var(--ds-border); --tw-ring-color: var(--ds-interactive);"
+                      size="small"
+                      class="flex-1"
                     />
                     <button
                       onclick={() => removeVirtualFieldOption(i)}
@@ -894,13 +894,13 @@
     <div class="p-2 border-b" style="border-color: var(--ds-border);">
       <div class="relative">
         <Search class="w-4 h-4 absolute left-2 top-1/2 -translate-y-1/2" style="color: var(--ds-text-subtle);" />
-        <input
-          bind:this={addFieldSearchEl}
+        <Input
+          bind:inputRef={addFieldSearchEl}
           type="text"
           bind:value={addFieldQuery}
           placeholder={t('requestTypeFields.searchFields')}
-          class="w-full pl-8 pr-2 py-1.5 rounded border text-sm focus:outline-none focus:ring-2"
-          style="background-color: var(--ds-background-input); color: var(--ds-text); border-color: var(--ds-border); --tw-ring-color: var(--ds-interactive);"
+          size="small"
+          class="pl-8"
         />
       </div>
     </div>
@@ -945,13 +945,12 @@
         <label for="edit-field-display-name" class="block text-sm font-medium mb-2" style="color: var(--ds-text);">
           {t('requestTypeFields.displayName')}
         </label>
-        <input
+        <Input
           id="edit-field-display-name"
           type="text"
           bind:value={editDisplayName}
           placeholder={editingField.field_name || editingField.field_identifier}
-          class="w-full px-3 py-2 rounded border focus:outline-none focus:ring-2"
-          style="background-color: var(--ds-background-input); color: var(--ds-text); border-color: var(--ds-border); --tw-ring-color: var(--ds-interactive);"
+          size="small"
         />
         <DescriptionText>
           {t('requestTypeFields.overrideLabel')}
@@ -962,14 +961,13 @@
         <label for="edit-field-description" class="block text-sm font-medium mb-2" style="color: var(--ds-text);">
           {t('requestTypeFields.descriptionHelpText')}
         </label>
-        <textarea
+        <Textarea
           id="edit-field-description"
           bind:value={editDescription}
           placeholder={t('requestTypeFields.helpTextPlaceholder')}
-          rows="3"
-          class="w-full px-3 py-2 rounded border focus:outline-none focus:ring-2"
-          style="background-color: var(--ds-background-input); color: var(--ds-text); border-color: var(--ds-border); --tw-ring-color: var(--ds-interactive);"
-        ></textarea>
+          rows={3}
+          size="small"
+        />
       </div>
 
       <div class="flex gap-2 pt-2">

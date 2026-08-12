@@ -7,6 +7,8 @@
   import { confirm } from '../composables/useConfirm.js';
   import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, HelpCircle } from '@lucide/svelte';
   import Button from '../components/Button.svelte';
+  import Input from '../components/Input.svelte';
+  import NativeSelect from '../components/NativeSelect.svelte';
   import Textarea from '../components/Textarea.svelte';
   import Label from '../components/Label.svelte';
   import Lozenge from '../components/Lozenge.svelte';
@@ -464,12 +466,11 @@
           <div class="space-y-4">
             <div>
               <Label color="default" required class="mb-1">{t('conditionSets.name')}</Label>
-              <input
+              <Input
                 type="text"
                 bind:value={formData.name}
-                class="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                style="background-color: var(--ds-surface); border-color: var(--ds-border); color: var(--ds-text);"
                 placeholder={t('conditionSets.namePlaceholder')}
+                size="small"
               />
             </div>
             <div>
@@ -586,16 +587,13 @@
                             <div class="flex items-center justify-between">
                               <div class="flex items-center gap-3 flex-1">
                                 <Label color="default" class="text-xs whitespace-nowrap">{t('conditionSets.type')}</Label>
-                                <select
-                                  class="px-2 py-1.5 text-sm border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                  style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
+                                <NativeSelect
+                                  class="w-auto"
                                   value={cond.condition_type}
-                                  onchange={(e) => updateConditionType(tc.transition_id, condIdx, e.currentTarget.value)}
-                                >
-                                  {#each conditionTypes as ct}
-                                    <option value={ct.id}>{ct.name}</option>
-                                  {/each}
-                                </select>
+                                  options={conditionTypes.map((type) => ({ value: type.id, label: type.name }))}
+                                  onchange={(value) => updateConditionType(tc.transition_id, condIdx, value)}
+                                  size="small"
+                                />
                               </div>
                               <button
                                 class="p-1 rounded transition-colors"
@@ -642,21 +640,17 @@
                               <div class="grid grid-cols-2 gap-3">
                                 <div>
                                   <Label color="default" class="text-xs mb-1">{t('conditionSets.userEvaluated')}</Label>
-                                  <select
-                                    class="w-full px-2 py-1.5 text-sm border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                    style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
+                                  <NativeSelect
                                     value={cond.config?.source || 'current_user'}
-                                    onchange={(e) => {
-                                      updateConditionConfig(tc.transition_id, condIdx, 'source', e.currentTarget.value);
-                                      if (e.currentTarget.value !== 'custom_field') {
+                                    options={userSourceOptions.map((option) => ({ value: option.id, label: option.name }))}
+                                    onchange={(value) => {
+                                      updateConditionConfig(tc.transition_id, condIdx, 'source', value);
+                                      if (value !== 'custom_field') {
                                         updateConditionConfig(tc.transition_id, condIdx, 'field_id', null);
                                       }
                                     }}
-                                  >
-                                    {#each userSourceOptions as opt}
-                                      <option value={opt.id}>{opt.name}</option>
-                                    {/each}
-                                  </select>
+                                    size="small"
+                                  />
                                 </div>
                                 <div>
                                   <Label color="default" class="text-xs mb-1">{t('conditionSets.againstRole')}</Label>
@@ -685,21 +679,17 @@
                               <div class="grid grid-cols-2 gap-3">
                                 <div>
                                   <Label color="default" class="text-xs mb-1">{t('conditionSets.userEvaluated')}</Label>
-                                  <select
-                                    class="w-full px-2 py-1.5 text-sm border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                    style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
+                                  <NativeSelect
                                     value={cond.config?.source || 'current_user'}
-                                    onchange={(e) => {
-                                      updateConditionConfig(tc.transition_id, condIdx, 'source', e.currentTarget.value);
-                                      if (e.currentTarget.value !== 'custom_field') {
+                                    options={userSourceOptions.map((option) => ({ value: option.id, label: option.name }))}
+                                    onchange={(value) => {
+                                      updateConditionConfig(tc.transition_id, condIdx, 'source', value);
+                                      if (value !== 'custom_field') {
                                         updateConditionConfig(tc.transition_id, condIdx, 'field_id', null);
                                       }
                                     }}
-                                  >
-                                    {#each userSourceOptions as opt}
-                                      <option value={opt.id}>{opt.name}</option>
-                                    {/each}
-                                  </select>
+                                    size="small"
+                                  />
                                 </div>
                                 <div>
                                   <Label color="default" class="text-xs mb-1">{t('conditionSets.againstGroup')}</Label>
@@ -731,24 +721,23 @@
                               <div class="grid grid-cols-2 gap-3">
                                 <div>
                                   <Label color="default" class="text-xs mb-1">{t('conditionSets.fieldIdentifier')}</Label>
-                                  <input
+                                  <Input
                                     type="text"
-                                    class="w-full px-2 py-1.5 text-sm border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                    style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
                                     placeholder="e.g. priority, custom_field_name"
                                     value={cond.config?.field_identifier || ''}
                                     oninput={(e) => updateConditionConfig(tc.transition_id, condIdx, 'field_identifier', e.currentTarget.value)}
+                                    size="small"
                                   />
                                 </div>
                                 <div>
                                   <Label color="default" class="text-xs mb-1">{t('conditionSets.pattern')}</Label>
-                                  <input
+                                  <Input
                                     type="text"
-                                    class="w-full px-2 py-1.5 text-sm border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
-                                    style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
                                     placeholder="e.g. ^(high|critical)$"
                                     value={cond.config?.pattern || ''}
                                     oninput={(e) => updateConditionConfig(tc.transition_id, condIdx, 'pattern', e.currentTarget.value)}
+                                    size="small"
+                                    class="font-mono"
                                   />
                                 </div>
                               </div>
@@ -769,14 +758,14 @@
                                     <HelpCircle class="w-3.5 h-3.5" />
                                   </button>
                                 </div>
-                                <textarea
-                                  class="w-full px-3 py-2 text-sm border rounded font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                  style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
-                                  rows="4"
+                                <Textarea
+                                  rows={4}
                                   placeholder="// Return true to allow transition&#10;// Available: item, user_id&#10;item.title !== ''"
                                   value={cond.config?.script || ''}
                                   oninput={(e) => updateConditionConfig(tc.transition_id, condIdx, 'script', e.currentTarget.value)}
-                                ></textarea>
+                                  size="small"
+                                  class="font-mono"
+                                />
                                 <DescriptionText>
                                   {t('conditionSets.scriptHelp')}
                                 </DescriptionText>
@@ -787,13 +776,12 @@
                             {#if (cond.mode || 'condition') === 'validator'}
                               <div>
                                 <Label color="default" class="text-xs mb-1">{t('conditionSets.errorMessage')}</Label>
-                                <input
+                                <Input
                                   type="text"
-                                  class="w-full px-2 py-1.5 text-sm border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                  style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
                                   placeholder={t('conditionSets.errorMessagePlaceholder')}
                                   value={cond.error_message || ''}
                                   oninput={(e) => updateConditionErrorMessage(tc.transition_id, condIdx, e.currentTarget.value)}
+                                  size="small"
                                 />
                                 <DescriptionText>
                                   {t('conditionSets.errorMessageHelp')}
