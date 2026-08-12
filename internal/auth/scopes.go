@@ -255,8 +255,9 @@ func defaultAgentScopes() []string {
 // DefaultCodingAgentRunScopes is the narrowed scope set granted to short-lived
 // per-run coding-agent tokens when a binding does not explicitly request
 // scopes. It is intentionally smaller than DefaultAgentScopes: no workspace
-// write, no pages delete/write, no assets write, no tests write, and no
-// automation authoring.
+// write, no page deletion, no assets write, no tests write, and no automation
+// authoring. Page writes let agents turn completed work into workspace
+// documentation while the acting identity's page permissions remain enforced.
 var DefaultCodingAgentRunScopes = []string{
 	ScopeItemsRead, ScopeItemsWrite,
 	ScopeWorkspacesRead,
@@ -265,14 +266,14 @@ var DefaultCodingAgentRunScopes = []string{
 	ScopeStatusesRead, ScopePrioritiesRead, ScopeCustomFieldsRead,
 	ScopeItemTemplatesRead,
 	ScopeMilestonesRead, ScopeIterationsRead, ScopeProjectsRead,
-	ScopePagesRead,
+	ScopePagesRead, ScopePagesWrite,
 	ScopeTestsRead,
 	ScopeTimeRead, ScopeTimeWrite,
 	ScopeAgentSkillsRead,
 	// mcp:access is safe to grant since WI-351: the MCP server enforces
 	// each tool's required token scopes at dispatch, so this narrowed set
-	// holds on the MCP surface too — e.g. a run token (no pages:write,
-	// no items:delete, no actions:*) is refused page-writing, item-delete
+	// holds on the MCP surface too — e.g. a run token (no pages:delete,
+	// no items:delete, no actions:*) is refused page deletion, item deletion,
 	// and automation tools there just like on the v1 REST surface.
 	ScopeMCPAccess,
 }
