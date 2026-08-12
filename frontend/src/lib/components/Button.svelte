@@ -19,6 +19,11 @@
     keyboardHint = null,
     id = undefined,
     title = null,
+    ariaLabel = undefined,
+    ariaPressed = undefined,
+    ariaExpanded = undefined,
+    ariaControls = undefined,
+    ariaDescribedBy = undefined,
     onclick = null,
     hotkeyConfig = null,
     dataTestid = undefined,
@@ -155,11 +160,11 @@
 <!-- Snippet for the button/link element -->
 {#snippet buttonElement()}
   {#if href}
-    <a bind:this={buttonEl} {id} {href} {target} {style} data-testid={dataTestid} data-page-id={dataPageId} class={allClasses} onclick={(e) => onclick?.(e)}>
+    <a bind:this={buttonEl} {id} {href} {target} {style} aria-label={ariaLabel || title} aria-pressed={ariaPressed} aria-expanded={ariaExpanded} aria-controls={ariaControls} aria-describedby={ariaDescribedBy} title={title} data-testid={dataTestid} data-page-id={dataPageId} class={allClasses} onclick={(e) => onclick?.(e)}>
       {@render linkContent()}
     </a>
   {:else}
-    <button bind:this={buttonEl} {id} type={buttonType} {disabled} {style} data-testid={dataTestid} data-page-id={dataPageId} class={allClasses} onclick={(e) => onclick?.(e)}>
+    <button bind:this={buttonEl} {id} type={buttonType} {disabled} {style} aria-label={ariaLabel || title} aria-pressed={ariaPressed} aria-expanded={ariaExpanded} aria-controls={ariaControls} aria-describedby={ariaDescribedBy} title={title} data-testid={dataTestid} data-page-id={dataPageId} class={allClasses} onclick={(e) => onclick?.(e)}>
       {@render buttonContent()}
     </button>
   {/if}

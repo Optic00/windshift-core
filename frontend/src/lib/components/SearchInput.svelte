@@ -10,6 +10,10 @@
     class: classProp = '',
     size = 'medium',
     dataTestid = undefined,
+    id = undefined,
+    name = undefined,
+    ariaLabel = undefined,
+    ariaLabelledBy = undefined,
     on_input = undefined,
     on_keydown = undefined
   } = $props();
@@ -43,8 +47,12 @@
     style="color: var(--ds-text-subtle);"
   />
   <input
-    type="text"
+    {id}
+    {name}
+    type="search"
     bind:value
+    aria-label={ariaLabel || t('common.search')}
+    aria-labelledby={ariaLabelledBy}
     placeholder={placeholder || t('common.search')}
     {disabled}
     data-testid={dataTestid}
