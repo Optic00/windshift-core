@@ -99,23 +99,24 @@ type Server struct {
 	channelService               *services.ChannelService
 	memoryBudget                 config.MemoryBudget
 
-	loginRateLimiter    *middleware.RateLimiter
-	fidoRateLimiter     *middleware.RateLimiter
-	authRateLimiter     *middleware.RateLimiter
-	scimRateLimiter     *middleware.RateLimiter
-	portalSubmitLimiter *middleware.RateLimiter
-	portalSearchLimiter *middleware.RateLimiter
-	emailVerifyLimiter  *middleware.RateLimiter
-	setupLimiter        *middleware.RateLimiter
-	ssoRateLimiter      *middleware.RateLimiter
-	portalAuthLimiter   *middleware.RateLimiter
-	oauthTokenLimiter   *middleware.RateLimiter
-	aiRateLimiter       *middleware.RateLimiter
-	uploadLimiter       *middleware.RateLimiter
-	webhookLimiter      *middleware.RateLimiter
-	searchLimiter       *middleware.RateLimiter
-	calendarFeedLimiter *middleware.RateLimiter
-	userConcurrency     *middleware.UserConcurrencyLimiter
+	loginRateLimiter      *middleware.RateLimiter
+	runnerRegisterLimiter *middleware.RateLimiter
+	fidoRateLimiter       *middleware.RateLimiter
+	authRateLimiter       *middleware.RateLimiter
+	scimRateLimiter       *middleware.RateLimiter
+	portalSubmitLimiter   *middleware.RateLimiter
+	portalSearchLimiter   *middleware.RateLimiter
+	emailVerifyLimiter    *middleware.RateLimiter
+	setupLimiter          *middleware.RateLimiter
+	ssoRateLimiter        *middleware.RateLimiter
+	portalAuthLimiter     *middleware.RateLimiter
+	oauthTokenLimiter     *middleware.RateLimiter
+	aiRateLimiter         *middleware.RateLimiter
+	uploadLimiter         *middleware.RateLimiter
+	webhookLimiter        *middleware.RateLimiter
+	searchLimiter         *middleware.RateLimiter
+	calendarFeedLimiter   *middleware.RateLimiter
+	userConcurrency       *middleware.UserConcurrencyLimiter
 
 	actualPort   int
 	started      bool
@@ -297,6 +298,7 @@ func (s *Server) initialize() error {
 	}
 
 	s.loginRateLimiter = middleware.NewRateLimiter(5.0/60.0, 10, cfg.UseProxy, additionalProxyList)
+	s.runnerRegisterLimiter = middleware.NewRateLimiter(5.0/60.0, 10, cfg.UseProxy, additionalProxyList)
 	s.fidoRateLimiter = middleware.NewRateLimiter(10.0/60.0, 15, cfg.UseProxy, additionalProxyList)
 	s.scimRateLimiter = middleware.NewRateLimiter(10.0, 100, cfg.UseProxy, additionalProxyList)
 	s.portalSubmitLimiter = middleware.NewRateLimiter(5.0/60.0, 10, cfg.UseProxy, additionalProxyList)
@@ -1354,22 +1356,23 @@ func (s *Server) initialize() error {
 		SCIMAuthMiddleware:   scimAuthMiddleware,
 		PortalAuthMiddleware: portalAuthMiddleware,
 
-		LoginRateLimiter:    s.loginRateLimiter,
-		AuthRateLimiter:     s.authRateLimiter,
-		FIDORateLimiter:     s.fidoRateLimiter,
-		SSORateLimiter:      s.ssoRateLimiter,
-		SCIMRateLimiter:     s.scimRateLimiter,
-		PortalSubmitLimiter: s.portalSubmitLimiter,
-		PortalSearchLimiter: s.portalSearchLimiter,
-		PortalAuthLimiter:   s.portalAuthLimiter,
-		OAuthTokenLimiter:   s.oauthTokenLimiter,
-		EmailVerifyLimiter:  s.emailVerifyLimiter,
-		SetupLimiter:        s.setupLimiter,
-		AIRateLimiter:       s.aiRateLimiter,
-		UploadLimiter:       s.uploadLimiter,
-		WebhookLimiter:      s.webhookLimiter,
-		SearchLimiter:       s.searchLimiter,
-		CalendarFeedLimiter: s.calendarFeedLimiter,
+		LoginRateLimiter:      s.loginRateLimiter,
+		RunnerRegisterLimiter: s.runnerRegisterLimiter,
+		AuthRateLimiter:       s.authRateLimiter,
+		FIDORateLimiter:       s.fidoRateLimiter,
+		SSORateLimiter:        s.ssoRateLimiter,
+		SCIMRateLimiter:       s.scimRateLimiter,
+		PortalSubmitLimiter:   s.portalSubmitLimiter,
+		PortalSearchLimiter:   s.portalSearchLimiter,
+		PortalAuthLimiter:     s.portalAuthLimiter,
+		OAuthTokenLimiter:     s.oauthTokenLimiter,
+		EmailVerifyLimiter:    s.emailVerifyLimiter,
+		SetupLimiter:          s.setupLimiter,
+		AIRateLimiter:         s.aiRateLimiter,
+		UploadLimiter:         s.uploadLimiter,
+		WebhookLimiter:        s.webhookLimiter,
+		SearchLimiter:         s.searchLimiter,
+		CalendarFeedLimiter:   s.calendarFeedLimiter,
 
 		Auth: routes.AuthHandlers{
 			Auth:       authHandler,
@@ -2026,6 +2029,9 @@ func (s *Server) cleanup() {
 	// Stop rate limiters
 	if s.loginRateLimiter != nil {
 		s.loginRateLimiter.Stop()
+	}
+	if s.runnerRegisterLimiter != nil {
+		s.runnerRegisterLimiter.Stop()
 	}
 	if s.fidoRateLimiter != nil {
 		s.fidoRateLimiter.Stop()

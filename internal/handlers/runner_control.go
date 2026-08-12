@@ -7,7 +7,10 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
+
+	"golang.org/x/time/rate"
 
 	"windshift/internal/models"
 	"windshift/internal/repository"
@@ -25,11 +28,68 @@ import (
 // emit/report against a run it actually claimed (runner_id ownership check).
 const runnerControlMaxBodyBytes = 1 << 20
 
+const (
+	// Event delivery is synchronous but can burst while an agent streams output.
+	// Keep the steady limit generous and isolate it per registered runner.
+	runnerControlRequestsPerSecond = 20
+	runnerControlBurst             = 100
+	runnerLimiterEntryTTL          = 10 * time.Minute
+)
+
+type runnerRateLimitEntry struct {
+	limiter  *rate.Limiter
+	lastSeen time.Time
+}
+
+type runnerInstanceRateLimiter struct {
+	mu        sync.Mutex
+	entries   map[int]*runnerRateLimitEntry
+	rate      rate.Limit
+	burst     int
+	now       func() time.Time
+	lastSweep time.Time
+}
+
+func newRunnerInstanceRateLimiter(r rate.Limit, burst int) *runnerInstanceRateLimiter {
+	now := time.Now
+	return &runnerInstanceRateLimiter{
+		entries: make(map[int]*runnerRateLimitEntry),
+		rate:    r,
+		burst:   burst,
+		now:     now,
+	}
+}
+
+func (l *runnerInstanceRateLimiter) Allow(instanceID int) bool {
+	if l == nil || l.burst <= 0 {
+		return true
+	}
+	now := l.now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.lastSweep.IsZero() || now.Sub(l.lastSweep) >= runnerLimiterEntryTTL {
+		for id, entry := range l.entries {
+			if now.Sub(entry.lastSeen) > runnerLimiterEntryTTL {
+				delete(l.entries, id)
+			}
+		}
+		l.lastSweep = now
+	}
+	entry := l.entries[instanceID]
+	if entry == nil {
+		entry = &runnerRateLimitEntry{limiter: rate.NewLimiter(l.rate, l.burst)}
+		l.entries[instanceID] = entry
+	}
+	entry.lastSeen = now
+	return entry.limiter.Allow()
+}
+
 type RunnerControlHandler struct {
 	registry *services.RunnerRegistryService
 	runs     *repository.AgentRunRepository
 	runSvc   *services.RunService
 	caps     *repository.ActionRepository
+	limiter  *runnerInstanceRateLimiter
 	now      func() time.Time
 	// baseURL is the resolved public base URL (without /api); used to render
 	// the copy-paste install command returned alongside a minted registration
@@ -44,7 +104,15 @@ func NewRunnerControlHandler(registry *services.RunnerRegistryService, runs *rep
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	return &RunnerControlHandler{registry: registry, runs: runs, runSvc: runSvc, caps: caps, now: now, baseURL: baseURL}
+	return &RunnerControlHandler{
+		registry: registry,
+		runs:     runs,
+		runSvc:   runSvc,
+		caps:     caps,
+		limiter:  newRunnerInstanceRateLimiter(runnerControlRequestsPerSecond, runnerControlBurst),
+		now:      now,
+		baseURL:  baseURL,
+	}
 }
 
 // poolMaxConcurrent reads an enabled runner_pool capability's quota. Pool
@@ -352,8 +420,8 @@ func (h *RunnerControlHandler) Heartbeat(w http.ResponseWriter, r *http.Request)
 	respondJSONOK(w, services.HeartbeatResponse{Abort: abort, QueueDepth: depth})
 }
 
-// requireRunner authenticates the per-instance runner credential. Writes a
-// 401/503 and returns ok=false on failure.
+// requireRunner authenticates the per-instance runner credential and applies
+// its isolated request budget. It writes the error response on failure.
 func (h *RunnerControlHandler) requireRunner(w http.ResponseWriter, r *http.Request) (*models.RunnerInstance, bool) {
 	if h.registry == nil || h.runs == nil {
 		respondServiceUnavailable(w, r, "coding-agent harness is disabled on this server")
@@ -367,6 +435,11 @@ func (h *RunnerControlHandler) requireRunner(w http.ResponseWriter, r *http.Requ
 	inst, err := h.registry.Authenticate(r.Context(), cred)
 	if err != nil {
 		respondUnauthorized(w, r)
+		return nil, false
+	}
+	if !h.limiter.Allow(inst.ID) {
+		w.Header().Set("Retry-After", "1")
+		respondTooManyRequests(w, r, "Runner request rate exceeded. Retry shortly.")
 		return nil, false
 	}
 	return inst, true

@@ -201,17 +201,15 @@ func RegisterWorkspaceRoutes(deps *Deps) {
 
 	// Runner control uses inline runner credentials rather than user sessions.
 	if deps.Workspaces.RunnerControl != nil {
-		runnerLimit := func(h http.HandlerFunc) http.Handler {
-			if deps.AuthRateLimiter != nil {
-				return deps.AuthRateLimiter.Limit(h)
-			}
-			return h
+		register := http.Handler(http.HandlerFunc(deps.Workspaces.RunnerControl.Register))
+		if deps.RunnerRegisterLimiter != nil {
+			register = deps.RunnerRegisterLimiter.Limit(register)
 		}
-		api.HandleH("POST /runner/register", runnerLimit(http.HandlerFunc(deps.Workspaces.RunnerControl.Register)))
-		api.HandleH("POST /runner/claim", runnerLimit(http.HandlerFunc(deps.Workspaces.RunnerControl.Claim)))
-		api.HandleH("POST /runner/runs/{id}/events", runnerLimit(http.HandlerFunc(deps.Workspaces.RunnerControl.Events)))
-		api.HandleH("POST /runner/runs/{id}/result", runnerLimit(http.HandlerFunc(deps.Workspaces.RunnerControl.Result)))
-		api.HandleH("POST /runner/heartbeat", runnerLimit(http.HandlerFunc(deps.Workspaces.RunnerControl.Heartbeat)))
+		api.HandleH("POST /runner/register", register)
+		api.HandleH("POST /runner/claim", http.HandlerFunc(deps.Workspaces.RunnerControl.Claim))
+		api.HandleH("POST /runner/runs/{id}/events", http.HandlerFunc(deps.Workspaces.RunnerControl.Events))
+		api.HandleH("POST /runner/runs/{id}/result", http.HandlerFunc(deps.Workspaces.RunnerControl.Result))
+		api.HandleH("POST /runner/heartbeat", http.HandlerFunc(deps.Workspaces.RunnerControl.Heartbeat))
 	}
 
 	// Broker routes authenticate with a per-run token.
