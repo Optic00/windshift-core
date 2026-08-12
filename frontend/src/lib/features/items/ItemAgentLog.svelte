@@ -148,8 +148,13 @@
         return typeof payload.text === 'string' ? payload.text : null;
       case 'content':
         return null; // streaming duplicate of the final message
-      case 'tool_start':
-        return payload.args?.cmd ? `$ ${payload.args.cmd}` : `→ ${payload.tool || 'tool'}`;
+      case 'tool_start': {
+        if (payload.args?.cmd) return `$ ${payload.args.cmd}`;
+        const path = payload.tool === 'read_file' && typeof payload.args?.path === 'string'
+          ? payload.args.path.trim()
+          : '';
+        return `→ ${payload.tool || 'tool'}${path ? ` ${path}` : ''}`;
+      }
       case 'tool_done': {
         const failure = failedToolOutput(payload.output);
         return failure ? `⚠ ${payload.tool || 'tool'} failed\n${failure}` : null;

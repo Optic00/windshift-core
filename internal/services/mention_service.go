@@ -114,7 +114,7 @@ func (s *MentionService) resolveUserIdentifier(identifier string) (userID int, d
 	err = s.db.QueryRow(`
 		SELECT id, first_name, last_name
 		FROM users
-		WHERE LOWER(first_name || ' ' || last_name) = LOWER(?) AND is_active = true
+		WHERE LOWER(TRIM(first_name || ' ' || last_name)) = LOWER(?) AND is_active = true
 	`, identifier).Scan(&userID, &firstName, &lastName)
 
 	if err == nil {

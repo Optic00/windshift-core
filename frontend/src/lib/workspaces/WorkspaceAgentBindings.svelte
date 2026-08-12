@@ -158,9 +158,13 @@
       case 'content':
         // Duplicate streaming delta.
         return null;
-      case 'tool_start':
-        // Show bash commands compactly; otherwise the tool name.
-        return payload.args?.cmd ? `$ ${payload.args.cmd}` : `→ ${payload.tool || 'tool'}`;
+      case 'tool_start': {
+        if (payload.args?.cmd) return `$ ${payload.args.cmd}`;
+        const path = payload.tool === 'read_file' && typeof payload.args?.path === 'string'
+          ? payload.args.path.trim()
+          : '';
+        return `→ ${payload.tool || 'tool'}${path ? ` ${path}` : ''}`;
+      }
       case 'tool_done':
         return null; // Large output is implied by the next message.
       case 'error':
