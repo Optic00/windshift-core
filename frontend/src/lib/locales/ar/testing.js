@@ -319,6 +319,9 @@ export default {
     duration: 'Duration',
     failedToLoadSummary: 'Failed to load test summary',
     noResultsForExport: 'No results available for export',
+    testRunSummary: 'ملخص تشغيل الاختبار',
+    printLoading: 'جارٍ إعداد ملخص تشغيل الاختبار للطباعة…',
+    backToRun: 'العودة إلى تشغيل الاختبار',
     stepsNotExecuted: 'لم تُنفّذ {count} خطوة بشكل فردي',
   },
 

@@ -99,6 +99,9 @@ export default {
       dailyHours: 'Tägliche Stunden',
       noBudgetSet: 'Kein Budget festgelegt',
       noProjectSelected: 'Wählen Sie ein Projekt, um den Bericht anzuzeigen',
+      printLoading: 'Zeitbericht wird für den Druck vorbereitet…',
+      printUnavailable: 'Dieser Zeitbericht ist nicht mehr verfügbar. Kehren Sie zu den Berichten zurück und exportieren Sie ihn erneut.',
+      backToReports: 'Zurück zu den Berichten',
     },
     timer: {
       goToWorkItem: 'Zum Vorgang gehen: {title}',

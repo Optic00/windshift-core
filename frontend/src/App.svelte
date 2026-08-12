@@ -25,6 +25,8 @@
     mobile: () => import('./lib/mobile/MobileShell.svelte'),
     publicBoard: () => import('./lib/pages/PublicBoard.svelte'),
     pagePrint: () => import('./lib/features/pages/PagePrintView.svelte'),
+    timeReportPrint: () => import('./lib/features/time/TimeReportPrintView.svelte'),
+    testRunSummaryPrint: () => import('./lib/features/testing/TestRunSummaryPrintView.svelte'),
   };
 
   let showLoginDialog = $state(false);
@@ -330,6 +332,17 @@
       componentProps={{
         workspaceId: Number($currentRoute.params.id),
         pageId: Number($currentRoute.params.pageId),
+      }}
+    />
+  {:else if $authStore.isAuthenticated && appInitialized && $currentRoute.view === 'time-report-print'}
+    <LazyRootView loader={ROOT_VIEW_LOADERS.timeReportPrint} label="time report print view" />
+  {:else if $authStore.isAuthenticated && appInitialized && $currentRoute.view === 'test-run-summary-print'}
+    <LazyRootView
+      loader={ROOT_VIEW_LOADERS.testRunSummaryPrint}
+      label="test run summary print view"
+      componentProps={{
+        workspaceId: Number($currentRoute.params.id),
+        runId: Number($currentRoute.params.runId),
       }}
     />
   <!-- Mobile PWA surface (phone-focused shell, bypasses desktop MainApp chrome) -->

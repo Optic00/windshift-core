@@ -330,6 +330,9 @@ export default {
     duration: 'Duration',
     failedToLoadSummary: 'Failed to load test summary',
     noResultsForExport: 'No results available for export',
+    testRunSummary: 'Resumo da execução de teste',
+    printLoading: 'Preparando o resumo da execução de teste para impressão…',
+    backToRun: 'Voltar à execução de teste',
     stepsNotExecuted: '{count} etapas não foram executadas individualmente',
   },
 

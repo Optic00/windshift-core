@@ -105,6 +105,9 @@ export default {
       dailyHours: '每日工时',
       noBudgetSet: '未设置预算',
       noProjectSelected: '选择项目以查看报告',
+      printLoading: '正在准备打印工时报告…',
+      printUnavailable: '此工时报告已不可用。请返回报告页面并重新导出。',
+      backToReports: '返回报告',
     },
     timer: {
       goToWorkItem: '前往工作项：{title}',

@@ -123,6 +123,9 @@ export default {
       dailyHours: 'الساعات اليومية',
       noBudgetSet: 'لم يتم تعيين ميزانية',
       noProjectSelected: 'اختر مشروعًا لعرض تقريره',
+      printLoading: 'جارٍ إعداد تقرير الوقت للطباعة…',
+      printUnavailable: 'لم يعد تقرير الوقت هذا متاحًا. عُد إلى التقارير وصدّره مرة أخرى.',
+      backToReports: 'العودة إلى التقارير',
     },
 
     // Timer

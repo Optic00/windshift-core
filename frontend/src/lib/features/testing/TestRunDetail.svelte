@@ -10,7 +10,6 @@
   import { getStatusBadgeCSS, getStatusLabel } from '../../utils/statusColors.js';
   import { t } from '../../stores/i18n.svelte.js';
   import { errorToast, infoToast } from '../../stores/toasts.svelte.js';
-  import { escapeHtml } from '../../utils/sanitize.ts';
   import { loadTestRunDetail } from './testRunDetailData.js';
 
   let testRun = $state(null);
@@ -82,41 +81,13 @@
     return `${base}${suffix}`;
   }
 
-  async function exportResults() {
+  function exportResults() {
     if (!testRun || !testRun.ended_at) {
       infoToast(t('testing.noResultsForExport'));
       return;
     }
     
-    try {
-      const response = await fetch(`/api/workspaces/${workspaceId}/test-runs/${runId}/summary`);
-      const data = await response.json();
-      
-      // Open summary in a new window/tab with formatted markdown
-      const summaryWindow = window.open('', '_blank');
-      summaryWindow.document.write(`
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <title>Test Run Summary - ${escapeHtml(testRun.name)}</title>
-          <style>
-            body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
-            pre { background: #f5f5f5; padding: 15px; border-radius: 5px; white-space: pre-wrap; }
-            table { border-collapse: collapse; width: 100%; margin: 15px 0; }
-            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-            th { background-color: #f2f2f2; }
-          </style>
-        </head>
-        <body>
-          <pre>${escapeHtml(data.markdown)}</pre>
-        </body>
-        </html>
-      `);
-      summaryWindow.document.close();
-    } catch (error) {
-      console.error('Failed to get summary:', error);
-      errorToast(t('testing.failedToLoadSummary'));
-    }
+    window.open(testPath(`/runs/${runId}/print`), '_blank');
   }
 
   async function executeRun() {
@@ -279,6 +250,7 @@
               variant="primary"
               size="medium"
               icon={IconFileText}
+              dataTestid="test-run-export-results"
             >
               {t('testing.exportResults')}
             </Button>

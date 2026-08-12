@@ -100,6 +100,9 @@ export default {
       dailyHours: 'Horas diárias',
       noBudgetSet: 'Nenhum orçamento definido',
       noProjectSelected: 'Selecione um projeto para ver o relatório',
+      printLoading: 'Preparando relatório de horas para impressão…',
+      printUnavailable: 'Este relatório de horas não está mais disponível. Volte aos relatórios e exporte-o novamente.',
+      backToReports: 'Voltar aos relatórios',
     },
     timer: {
       goToWorkItem: 'Ir para o item de trabalho: {title}',

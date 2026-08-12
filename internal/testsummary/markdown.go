@@ -21,8 +21,8 @@ func RenderMarkdown(header *repository.MarkdownRunHeader, results []repository.M
 	}
 
 	var markdown strings.Builder
-	fmt.Fprintf(&markdown, "# Test Run Summary: %s\n\n", header.RunName) //nolint:gosec // G705: written to strings.Builder, returned as JSON
-	fmt.Fprintf(&markdown, "**Test Set:** %s\n\n", header.SetName)       //nolint:gosec // G705: written to strings.Builder, returned as JSON
+	fmt.Fprintf(&markdown, "# Test Run Summary: %s\n\n", escapeMarkdownInline(header.RunName)) //nolint:gosec // G705: written to strings.Builder, returned as JSON
+	fmt.Fprintf(&markdown, "**Test Set:** %s\n\n", escapeMarkdownInline(header.SetName))       //nolint:gosec // G705: written to strings.Builder, returned as JSON
 	if header.StartedAt.Valid {
 		fmt.Fprintf(&markdown, "**Started:** %s\n\n", header.StartedAt.Time.Format("2006-01-02 15:04:05")) //nolint:gosec // G705: written to strings.Builder, returned as JSON
 	}
@@ -50,12 +50,12 @@ func RenderMarkdown(header *repository.MarkdownRunHeader, results []repository.M
 		markdown.WriteString("## Failed Tests\n\n")
 		for _, result := range results {
 			if result.Status == "failed" {
-				fmt.Fprintf(&markdown, "### ❌ %s\n\n", result.Title) //nolint:gosec // G705: written to strings.Builder, returned as JSON
+				fmt.Fprintf(&markdown, "### ❌ %s\n\n", escapeMarkdownInline(result.Title)) //nolint:gosec // G705: written to strings.Builder, returned as JSON
 				if result.ActualResult != "" {
-					fmt.Fprintf(&markdown, "**Actual Result:**\n%s\n\n", result.ActualResult) //nolint:gosec // G705: written to strings.Builder, returned as JSON
+					fmt.Fprintf(&markdown, "**Actual Result:**\n%s\n\n", escapeMarkdownBlock(result.ActualResult)) //nolint:gosec // G705: written to strings.Builder, returned as JSON
 				}
 				if result.Notes != "" {
-					fmt.Fprintf(&markdown, "**Notes:**\n%s\n\n", result.Notes) //nolint:gosec // G705: written to strings.Builder, returned as JSON
+					fmt.Fprintf(&markdown, "**Notes:**\n%s\n\n", escapeMarkdownBlock(result.Notes)) //nolint:gosec // G705: written to strings.Builder, returned as JSON
 				}
 				markdown.WriteString("---\n\n")
 			}
@@ -65,9 +65,9 @@ func RenderMarkdown(header *repository.MarkdownRunHeader, results []repository.M
 		markdown.WriteString("## Blocked Tests\n\n")
 		for _, result := range results {
 			if result.Status == "blocked" {
-				fmt.Fprintf(&markdown, "### ⚠️ %s\n", result.Title) //nolint:gosec // G705: written to strings.Builder, returned as JSON
+				fmt.Fprintf(&markdown, "### ⚠️ %s\n", escapeMarkdownInline(result.Title)) //nolint:gosec // G705: written to strings.Builder, returned as JSON
 				if result.Notes != "" {
-					fmt.Fprintf(&markdown, "**Reason:** %s\n", result.Notes) //nolint:gosec // G705: written to strings.Builder, returned as JSON
+					fmt.Fprintf(&markdown, "**Reason:**\n%s\n", escapeMarkdownBlock(result.Notes)) //nolint:gosec // G705: written to strings.Builder, returned as JSON
 				}
 				markdown.WriteString("\n")
 			}
@@ -77,15 +77,15 @@ func RenderMarkdown(header *repository.MarkdownRunHeader, results []repository.M
 	markdown.WriteString("| Test Case | Status | Notes |\n")
 	markdown.WriteString("|-----------|--------|-------|\n")
 	for _, result := range results {
-		notes := result.Notes
-		if notes == "" {
-			notes = "-"
+		notes := "-"
+		if result.Notes != "" {
+			notes = escapeMarkdownTableCell(result.Notes)
 		}
 		fmt.Fprintf(&markdown, "| %s | %s %s | %s |\n", //nolint:gosec // G705: written to strings.Builder, returned as JSON
 			escapeMarkdownTableCell(result.Title),
 			statusIcon(result.Status),
 			escapeMarkdownTableCell(cases.Title(language.English).String(result.Status)),
-			escapeMarkdownTableCell(notes))
+			notes)
 	}
 	return markdown.String()
 }
@@ -109,9 +109,39 @@ func statusIcon(status string) string {
 // markdown table cell. Pipes are escaped so they don't introduce new columns,
 // and any newline is collapsed to a space so the cell can't break the row.
 func escapeMarkdownTableCell(s string) string {
+	return escapeMarkdownInline(s)
+}
+
+func escapeMarkdownInline(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", " ")
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.ReplaceAll(s, "\r", " ")
-	s = strings.ReplaceAll(s, "|", `\|`)
-	return s
+	return escapeMarkdownText(s)
+}
+
+func escapeMarkdownBlock(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	lines := strings.Split(s, "\n")
+	for i := range lines {
+		lines[i] = escapeMarkdownText(lines[i])
+	}
+	return strings.Join(lines, "  \n")
+}
+
+func escapeMarkdownText(s string) string {
+	const punctuation = `!"#$%&'()*+,-./:;<=>?@[\]^_` + "`" + `{|}~`
+	var escaped strings.Builder
+	escaped.Grow(len(s))
+	for _, char := range s {
+		if strings.ContainsRune(punctuation, char) {
+			escaped.WriteByte('\\')
+		}
+		escaped.WriteRune(char)
+	}
+	result := escaped.String()
+	result = strings.ReplaceAll(result, `\:\/\/`, "\\:\u200b\\/\\/")
+	result = strings.ReplaceAll(result, `www\.`, "www\u200b\\.")
+	result = strings.ReplaceAll(result, `WWW\.`, "WWW\u200b\\.")
+	return strings.ReplaceAll(result, `\@`, "\\@\u200b")
 }

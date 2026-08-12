@@ -124,6 +124,9 @@ export default {
       dailyHours: 'Horas diarias',
       noBudgetSet: 'Sin presupuesto definido',
       noProjectSelected: 'Selecciona un proyecto para ver su reporte',
+      printLoading: 'Preparando el reporte de tiempo para imprimir…',
+      printUnavailable: 'Este reporte de tiempo ya no está disponible. Vuelve a los reportes y expórtalo de nuevo.',
+      backToReports: 'Volver a reportes',
     },
 
     // Timer

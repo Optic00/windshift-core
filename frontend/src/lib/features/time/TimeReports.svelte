@@ -12,7 +12,8 @@
   import Chart from '../../widgets/Chart.svelte';
   import { t } from '../../stores/i18n.svelte.js';
   import { formatDate, formatDateSimple, formatDateWithOptions } from '../../utils/dateFormatter.js';
-  import { escapeHtml } from '../../utils/sanitize.ts';
+  import { openMarkdownPrintView } from '../print/markdownPrintWindow.js';
+  import { buildTimeReportMarkdown } from './timeReportMarkdown.js';
 
   let worklogs = $state([]);
   let customers = $state([]);
@@ -393,162 +394,77 @@
   }
 
   function exportPersonalPDF() {
-    const template = localStorage.getItem('ostime_export_template') || getDefaultTemplate();
+    const report = buildTimeReportMarkdown({
+      title: 'Time Tracking Report',
+      period: {
+        from: filters.date_from || 'All time',
+        to: filters.date_to || 'Present',
+      },
+      generated: formatDateSimple(new Date()),
+      summary: [
+        { label: 'Total Hours', value: `${summary.totalHours}h` },
+        { label: 'Total Entries', value: summary.totalEntries },
+        { label: 'Average Hours per Day', value: `${summary.averageHoursPerDay}h` },
+        { label: 'Top Project', value: `${summary.topProject?.name || 'N/A'} (${summary.topProject?.hours || 0}h)` },
+        { label: 'Top Customer', value: `${summary.topCustomer?.name || 'N/A'} (${summary.topCustomer?.hours || 0}h)` },
+      ],
+      entries: worklogs.map((worklog) => ({
+        heading: `${formatDateSimple(new Date(worklog.date * 1000))} — ${worklog.project_name}`,
+        fields: [
+          { label: 'Customer', value: worklog.customer_name },
+          { label: 'Duration', value: formatDuration(worklog.duration_minutes) },
+          { label: 'Description', value: worklog.description },
+          { label: 'Time', value: `${formatTime(worklog.start_time)} – ${formatTime(worklog.end_time)}` },
+        ],
+      })),
+      totalSummary: `Grand Total: ${summary.totalHours} hours across ${summary.totalEntries} entries.`,
+    });
 
-    const templateData = {
-      date_from: filters.date_from || 'All time',
-      date_to: filters.date_to || 'Present',
-      generated_date: formatDateSimple(new Date()),
-      total_hours: summary.totalHours.toString(),
-      total_entries: summary.totalEntries.toString(),
-      average_hours_per_day: summary.averageHoursPerDay.toString(),
-      top_project_name: summary.topProject?.name || 'N/A',
-      top_project_hours: summary.topProject?.hours?.toString() || '0',
-      top_customer_name: summary.topCustomer?.name || 'N/A',
-      top_customer_hours: summary.topCustomer?.hours?.toString() || '0',
-      entries: worklogs.map(worklog => ({
-        date: formatDateSimple(new Date(worklog.date * 1000)),
-        project_name: worklog.project_name,
-        customer_name: worklog.customer_name,
-        duration: formatDuration(worklog.duration_minutes),
-        description: worklog.description,
-        start_time: formatTime(worklog.start_time),
-        end_time: formatTime(worklog.end_time)
-      }))
-    };
-
-    let processedContent = processTemplate(template, templateData);
-    openPrintWindow(processedContent);
+    openTimeReport(report, 'Time Tracking Report');
   }
 
   function exportProjectPDF() {
     const projectName = selectedProject?.name || 'Project';
-    let html = `<h1>Project Time Report: ${escapeHtml(projectName)}</h1>`;
-    html += `<p><strong>Report Period:</strong> ${escapeHtml(projectDateFrom || 'All time')} to ${escapeHtml(projectDateTo || 'Present')}<br>`;
-    html += `<strong>Generated:</strong> ${escapeHtml(formatDateSimple(new Date()))}</p><hr>`;
-    html += `<h2>Summary</h2><ul>`;
-    html += `<li><strong>Total Hours:</strong> ${projectSummary.totalHours}h</li>`;
-    html += `<li><strong>Contributors:</strong> ${projectSummary.contributors}</li>`;
-    html += `<li><strong>Avg Hours/Day:</strong> ${projectSummary.avgPerDay}h</li>`;
+    const summaryRows = [
+      { label: 'Total Hours', value: `${projectSummary.totalHours}h` },
+      { label: 'Contributors', value: projectSummary.contributors },
+      { label: 'Avg Hours/Day', value: `${projectSummary.avgPerDay}h` },
+    ];
     if (projectSummary.budgetLabel) {
-      html += `<li><strong>Budget:</strong> ${escapeHtml(projectSummary.budgetLabel)}</li>`;
-    }
-    html += `</ul><hr>`;
-    html += `<h2>Team Breakdown</h2>`;
-    html += `<table style="width:100%;border-collapse:collapse;"><thead><tr>`;
-    html += `<th style="text-align:left;padding:8px;border-bottom:2px solid #e5e7eb;">Member</th>`;
-    html += `<th style="text-align:right;padding:8px;border-bottom:2px solid #e5e7eb;">Hours</th>`;
-    html += `<th style="text-align:right;padding:8px;border-bottom:2px solid #e5e7eb;">Entries</th>`;
-    html += `<th style="text-align:right;padding:8px;border-bottom:2px solid #e5e7eb;">Avg/Day</th>`;
-    html += `</tr></thead><tbody>`;
-    memberBreakdown.forEach(m => {
-      html += `<tr>`;
-      html += `<td style="padding:8px;border-bottom:1px solid #e5e7eb;">${escapeHtml(m.user_name)}</td>`;
-      html += `<td style="text-align:right;padding:8px;border-bottom:1px solid #e5e7eb;">${m.hours}h</td>`;
-      html += `<td style="text-align:right;padding:8px;border-bottom:1px solid #e5e7eb;">${m.entries}</td>`;
-      html += `<td style="text-align:right;padding:8px;border-bottom:1px solid #e5e7eb;">${m.avgPerDay}h</td>`;
-      html += `</tr>`;
-    });
-    html += `</tbody></table><hr>`;
-    html += `<h2>Time Entries</h2>`;
-    projectWorklogs.forEach(w => {
-      html += `<h3>${escapeHtml(formatDateSimple(new Date(w.date * 1000)))} - ${escapeHtml(w.user_name || 'Unknown')}</h3>`;
-      html += `<p><strong>Duration:</strong> ${escapeHtml(formatDuration(w.duration_minutes))}<br>`;
-      html += `<strong>Description:</strong> ${escapeHtml(w.description)}<br>`;
-      html += `<strong>Time:</strong> ${escapeHtml(formatTime(w.start_time))} - ${escapeHtml(formatTime(w.end_time))}</p><hr>`;
-    });
-    html += `<p><em>Generated by ostime Time Management System</em></p>`;
-
-    openPrintWindow(html);
-  }
-
-  function openPrintWindow(content) {
-    const printWindow = window.open('', '_blank');
-    const printContent = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>Time Tracking Report</title>
-        <style>
-          body { font-family: Arial, sans-serif; margin: 20px; line-height: 1.6; }
-          h1 { color: #2563eb; font-size: 2em; margin-bottom: 0.5em; }
-          h2 { color: #2563eb; font-size: 1.5em; margin: 1em 0 0.5em 0; }
-          h3 { color: #374151; font-size: 1.2em; margin: 0.8em 0 0.3em 0; }
-          hr { border: none; border-top: 2px solid #e5e7eb; margin: 1.5em 0; }
-          strong { color: #374151; }
-          ul, ol { padding-left: 1.5em; }
-          li { margin-bottom: 0.3em; }
-          table { font-size: 0.9em; }
-          .page-break { page-break-before: always; }
-        </style>
-      </head>
-      <body>
-        ${content}
-      </body>
-      </html>
-    `;
-
-    printWindow.document.write(printContent);
-    printWindow.document.close();
-
-    setTimeout(() => {
-      printWindow.print();
-    }, 500);
-  }
-
-  function getDefaultTemplate() {
-    return `<h1>Time Tracking Report</h1>
-<p><strong>Report Period:</strong> {{date_from}} to {{date_to}}<br><strong>Generated:</strong> {{generated_date}}</p>
-<hr>
-<h2>Summary</h2>
-<ul>
-<li><strong>Total Hours:</strong> {{total_hours}}h</li>
-<li><strong>Total Entries:</strong> {{total_entries}}</li>
-<li><strong>Average Hours per Day:</strong> {{average_hours_per_day}}h</li>
-<li><strong>Top Project:</strong> {{top_project_name}} ({{top_project_hours}}h)</li>
-<li><strong>Top Customer:</strong> {{top_customer_name}} ({{top_customer_hours}}h)</li>
-</ul>
-<hr>
-<h2>Time Entries</h2>
-{{#each entries}}
-<h3>{{date}} - {{project_name}}</h3>
-<p><strong>Customer:</strong> {{customer_name}}<br><strong>Duration:</strong> {{duration}}<br><strong>Description:</strong> {{description}}<br><strong>Time:</strong> {{start_time}} - {{end_time}}</p>
-<hr>
-{{/each}}
-<h2>Total Summary</h2>
-<p><strong>Grand Total:</strong> {{total_hours}} hours across {{total_entries}} entries.</p>
-<hr>
-<p><em>Generated by ostime Time Management System</em></p>`;
-  }
-
-  function processTemplate(template, data) {
-    let processed = template;
-
-    Object.keys(data).forEach(key => {
-      if (key !== 'entries') {
-        const regex = new RegExp(`{{${key}}}`, 'g');
-        processed = processed.replace(regex, escapeHtml(data[key]));
-      }
-    });
-
-    const entriesMatch = processed.match(/{{#each entries}}(.*?){{\/each}}/s);
-    if (entriesMatch && data.entries) {
-      const entryTemplate = entriesMatch[1];
-      let entriesContent = '';
-
-      data.entries.forEach(entry => {
-        let entryContent = entryTemplate;
-        Object.keys(entry).forEach(key => {
-          const regex = new RegExp(`{{${key}}}`, 'g');
-          entryContent = entryContent.replace(regex, escapeHtml(entry[key]));
-        });
-        entriesContent += entryContent;
-      });
-
-      processed = processed.replace(/{{#each entries}}.*?{{\/each}}/s, entriesContent);
+      summaryRows.push({ label: 'Budget', value: projectSummary.budgetLabel });
     }
 
-    return processed;
+    const report = buildTimeReportMarkdown({
+      title: `Project Time Report: ${projectName}`,
+      period: {
+        from: projectDateFrom || 'All time',
+        to: projectDateTo || 'Present',
+      },
+      generated: formatDateSimple(new Date()),
+      summary: summaryRows,
+      team: memberBreakdown.map((member) => ({
+        name: member.user_name,
+        hours: `${member.hours}h`,
+        entries: member.entries,
+        average: `${member.avgPerDay}h`,
+      })),
+      entries: projectWorklogs.map((worklog) => ({
+        heading: `${formatDateSimple(new Date(worklog.date * 1000))} — ${worklog.user_name || 'Unknown'}`,
+        fields: [
+          { label: 'Duration', value: formatDuration(worklog.duration_minutes) },
+          { label: 'Description', value: worklog.description },
+          { label: 'Time', value: `${formatTime(worklog.start_time)} – ${formatTime(worklog.end_time)}` },
+        ],
+      })),
+    });
+
+    openTimeReport(report, `Project Time Report - ${projectName}`);
+  }
+
+  function openTimeReport(content, title) {
+    if (!openMarkdownPrintView('/time/worklogs/print', 'time-report', { content, title })) {
+      throw new Error('The browser blocked the report window');
+    }
   }
 
   // Reactive filtering for projects based on selected customer
@@ -591,6 +507,7 @@
         loading={exportLoading}
         icon={FileText}
         size="medium"
+        dataTestid="time-report-export-pdf"
       >
         {t('time.reports.exportPDF')}
       </Button>

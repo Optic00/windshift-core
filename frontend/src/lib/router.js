@@ -103,6 +103,7 @@ const routes = {
   '/time/projects': 'time',
   '/time/timesheet': 'time',
   '/time/worklogs': 'time',
+  '/time/worklogs/print': 'time-report-print',
   // Workspace-scoped test management routes
   '/workspaces/:id/tests': 'test-cases',
   '/workspaces/:id/tests/cases': 'test-cases',
@@ -114,6 +115,7 @@ const routes = {
   '/workspaces/:id/tests/templates/:templateId': 'test-template-detail',
   '/workspaces/:id/tests/runs': 'test-runs',
   '/workspaces/:id/tests/runs/:runId': 'test-run-detail',
+  '/workspaces/:id/tests/runs/:runId/print': 'test-run-summary-print',
   '/workspaces/:id/tests/runs/:runId/execute': 'test-execution',
   '/workspaces/:id/tests/reports': 'test-reports',
   '/milestones': 'milestones',
