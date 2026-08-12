@@ -563,7 +563,7 @@ func (h *PortalHandler) SubmitToPortal(w http.ResponseWriter, r *http.Request) {
 		CustomFields  map[string]any `json:"custom_fields"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&submission); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&submission); err != nil {
 		if isRequestBodyTooLarge(err) {
 			respondRequestTooLarge(w, r)
 			return
@@ -788,7 +788,7 @@ func (h *PortalHandler) SearchKnowledgeBase(w http.ResponseWriter, r *http.Reque
 		Query string `json:"query"`
 	}
 
-	if err = json.NewDecoder(r.Body).Decode(&searchRequest); err != nil {
+	if err = newJSONDecoder(w, r).Decode(&searchRequest); err != nil {
 		if isRequestBodyTooLarge(err) {
 			respondRequestTooLarge(w, r)
 			return

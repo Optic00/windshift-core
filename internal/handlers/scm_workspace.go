@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -839,7 +838,7 @@ func (h *SCMWorkspaceHandler) SetWorkspacePAT(w http.ResponseWriter, r *http.Req
 	var req struct {
 		PersonalAccessToken string `json:"personal_access_token"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&req); err != nil {
 		respondBadRequest(w, r, "Invalid request body")
 		return
 	}

@@ -3,12 +3,12 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/restapi"
 	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
@@ -125,8 +125,12 @@ func (h *TestFolderHandler) UpdateFolder(w http.ResponseWriter, r *http.Request)
 
 	user := utils.GetCurrentUser(r)
 
-	body, err := io.ReadAll(r.Body)
+	body, err := restapi.ReadJSONBody(w, r)
 	if err != nil {
+		if isRequestBodyTooLarge(err) {
+			respondRequestTooLarge(w, r)
+			return
+		}
 		respondBadRequest(w, r, "Invalid request body")
 		return
 	}
@@ -196,7 +200,7 @@ func (h *TestFolderHandler) ReorderFolders(w http.ResponseWriter, r *http.Reques
 		FolderIDs []int `json:"folder_ids"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&reorderData); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&reorderData); err != nil {
 		respondBadRequest(w, r, "Invalid request body")
 		return
 	}

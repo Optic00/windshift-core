@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -164,7 +163,7 @@ func (h *ApprovalSetHandler) decodeForEdit(w http.ResponseWriter, r *http.Reques
 		return nil, models.ApprovalSet{}, false
 	}
 	var input models.ApprovalSet
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&input); err != nil {
 		respondValidationError(w, r, "Invalid request body")
 		return nil, models.ApprovalSet{}, false
 	}

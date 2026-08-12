@@ -1,7 +1,6 @@
 package logbookapi
 
 import (
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -172,8 +171,7 @@ func (h *ActionHandlers) CreateAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req models.CreateLogbookActionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		restapi.RespondErrorWithMessage(w, r, http.StatusBadRequest, restapi.ErrCodeInvalidInput, "Invalid request body")
+	if !decodeJSONOrRespond(w, r, &req) {
 		return
 	}
 	sanitize.ApplyAll(
@@ -277,8 +275,7 @@ func (h *ActionHandlers) UpdateAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req models.UpdateLogbookActionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		restapi.RespondErrorWithMessage(w, r, http.StatusBadRequest, restapi.ErrCodeInvalidInput, "Invalid request body")
+	if !decodeJSONOrRespond(w, r, &req) {
 		return
 	}
 	sanitize.ApplyAll(
@@ -400,8 +397,7 @@ func (h *ActionHandlers) ExecuteAction(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		DocumentID string `json:"document_id"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		restapi.RespondErrorWithMessage(w, r, http.StatusBadRequest, restapi.ErrCodeInvalidInput, "Invalid request body")
+	if !decodeJSONOrRespond(w, r, &req) {
 		return
 	}
 	if req.DocumentID == "" {

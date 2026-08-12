@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 
@@ -130,7 +129,7 @@ func (h *ApprovalHandler) Decide(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body decideRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&body); err != nil {
 		respondValidationError(w, r, "Invalid request body")
 		return
 	}
@@ -199,7 +198,7 @@ func (h *ApprovalHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 
 	var body cancelRequestBody
 	if r.ContentLength > 0 {
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if err := newJSONDecoder(w, r).Decode(&body); err != nil {
 			respondValidationError(w, r, "Invalid request body")
 			return
 		}
@@ -285,7 +284,7 @@ func (h *ApprovalHandler) Delegate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body delegateRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&body); err != nil {
 		respondValidationError(w, r, "Invalid request body")
 		return
 	}

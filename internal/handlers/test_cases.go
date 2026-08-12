@@ -141,7 +141,7 @@ func (h *TestCaseHandler) CreateTestCase(w http.ResponseWriter, r *http.Request)
 		EstimatedDuration int    `json:"estimated_duration"`
 		FolderID          *int   `json:"folder_id"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&input); err != nil {
 		respondValidationError(w, r, "Invalid JSON")
 		return
 	}
@@ -195,7 +195,7 @@ func (h *TestCaseHandler) UpdateTestCase(w http.ResponseWriter, r *http.Request)
 		FolderID          *int   `json:"folder_id"`
 		SortOrder         int    `json:"sort_order"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&input); err != nil {
 		respondValidationError(w, r, "Invalid JSON")
 		return
 	}
@@ -268,7 +268,7 @@ func (h *TestCaseHandler) MoveTestCase(w http.ResponseWriter, r *http.Request) {
 		SortOrder int  `json:"sort_order"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&moveData); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&moveData); err != nil {
 		respondValidationError(w, r, "Invalid JSON")
 		return
 	}
@@ -297,7 +297,7 @@ func (h *TestCaseHandler) ReorderTestCases(w http.ResponseWriter, r *http.Reques
 		TestCaseIDs []int `json:"test_case_ids"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&reorderData); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&reorderData); err != nil {
 		respondValidationError(w, r, "Invalid JSON")
 		return
 	}
@@ -364,7 +364,7 @@ func (h *TestCaseHandler) CreateTestStep(w http.ResponseWriter, r *http.Request)
 		Data     string `json:"data"`
 		Expected string `json:"expected"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&input); err != nil {
 		respondValidationError(w, r, "Invalid JSON")
 		return
 	}
@@ -405,7 +405,7 @@ func (h *TestCaseHandler) UpdateTestStep(w http.ResponseWriter, r *http.Request)
 		Data       string `json:"data"`
 		Expected   string `json:"expected"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&input); err != nil {
 		respondValidationError(w, r, "Invalid JSON")
 		return
 	}
@@ -468,7 +468,7 @@ func (h *TestCaseHandler) ReorderTestSteps(w http.ResponseWriter, r *http.Reques
 		StepIDs []int `json:"step_ids"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&reorderData); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&reorderData); err != nil {
 		respondValidationError(w, r, "Invalid JSON")
 		return
 	}
@@ -512,7 +512,7 @@ func decodeTestLabelInput(w http.ResponseWriter, r *http.Request) (testLabelInpu
 		Color       string `json:"color"`
 		Description string `json:"description"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&raw); err != nil {
 		respondValidationError(w, r, "Invalid JSON")
 		return testLabelInput{}, false
 	}
@@ -633,7 +633,7 @@ func (h *TestCaseHandler) AddTestCaseLabel(w http.ResponseWriter, r *http.Reques
 	var data struct {
 		LabelID int `json:"label_id"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&data); err != nil {
 		respondValidationError(w, r, "Invalid JSON")
 		return
 	}

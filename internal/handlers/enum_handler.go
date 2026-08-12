@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 
@@ -125,7 +124,7 @@ func (h *EnumHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	entity := h.newEntity()
-	if err := json.NewDecoder(r.Body).Decode(entity); err != nil {
+	if err := newJSONDecoder(w, r).Decode(entity); err != nil {
 		respondBadRequest(w, r, "Invalid request body")
 		return
 	}
@@ -150,7 +149,7 @@ func (h *EnumHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	entity := h.newEntity()
-	if err := json.NewDecoder(r.Body).Decode(entity); err != nil {
+	if err := newJSONDecoder(w, r).Decode(entity); err != nil {
 		respondBadRequest(w, r, "Invalid request body")
 		return
 	}

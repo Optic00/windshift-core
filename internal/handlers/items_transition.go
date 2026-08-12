@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -33,7 +32,7 @@ func (h *ItemHandler) Transition(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req transitionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&req); err != nil {
 		respondValidationError(w, r, err.Error())
 		return
 	}

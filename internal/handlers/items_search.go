@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -191,7 +190,7 @@ func (h *ItemHandler) UpdateFracIndex(w http.ResponseWriter, r *http.Request) {
 		NextItemID *int `json:"next_item_id"` // ID of item after in current view
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&fracIndexRequest); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&fracIndexRequest); err != nil {
 		respondBadRequest(w, r, "Invalid request body")
 		return
 	}

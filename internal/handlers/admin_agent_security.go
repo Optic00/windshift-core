@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 
@@ -83,7 +82,7 @@ func (h *AgentSecurityHandler) UpdateSettings(w http.ResponseWriter, r *http.Req
 		return
 	}
 	var body agentSecurityFlagUpdate
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&body); err != nil {
 		respondBadRequest(w, r, "invalid request body")
 		return
 	}
@@ -159,7 +158,7 @@ func (h *AgentSecurityHandler) AddAllowlist(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	var body allowlistCreateRequest
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&body); err != nil {
 		respondBadRequest(w, r, "invalid request body")
 		return
 	}

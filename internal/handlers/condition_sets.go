@@ -398,7 +398,7 @@ func (h *ConditionSetHandler) getConditionSetForEdit(w http.ResponseWriter, r *h
 	}
 
 	var input models.ConditionSet
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&input); err != nil {
 		respondValidationError(w, r, "Invalid request body")
 		return nil, models.ConditionSet{}, false
 	}

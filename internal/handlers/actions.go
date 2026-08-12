@@ -660,7 +660,7 @@ func (h *ActionsHandler) ToggleAction(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		IsEnabled bool `json:"is_enabled"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&req); err != nil {
 		if !errors.Is(err, io.EOF) {
 			respondBadRequest(w, r, "Invalid JSON request body")
 			return

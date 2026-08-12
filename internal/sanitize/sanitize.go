@@ -136,17 +136,13 @@ var ShortIdentifier Policy = PolicyFunc(shortIdentifier)
 var RichText Policy = PolicyFunc(richText)
 
 // LongDocument — long-form Markdown document (workspace knowledge
-// pages, runbooks). Same policy shape as RichText, same 256 KiB cap.
-// Kept as a distinct policy from RichText so callers can express the
-// intent ("this is a document, not a description") at the call site,
-// and so the cap can diverge in future without churning every caller.
+// pages, runbooks). Same policy shape as RichText with a 1 MiB cap.
 var LongDocument Policy = PolicyFunc(longDocument)
 
 // Comment — user-submitted comment content (Markdown editor input).
 // Strips every HTML tag, preserves safe CommonMark autolinks, and
 // neutralizes dangerous Markdown URLs.
-// Caps at 256 KiB (matches RichText / LongDocument — one uniform
-// upper bound for any long-form user text).
+// Caps at 256 KiB, matching other non-document long-form text.
 var Comment Policy = PolicyFunc(commentPolicy)
 
 // MarkdownURLOnly neutralizes dangerous URL schemes in Markdown
@@ -199,10 +195,11 @@ const (
 	// (asset_tag, slug, link-type name). Tighter on purpose — these
 	// aren't free-form titles.
 	ShortIdentifierMaxRunes = 100
-	// LongTextMaxBytes is the unified upper bound on any long-form
-	// user-supplied text (descriptions, page bodies, comments). One
-	// number, one place to evolve it.
+	// LongTextMaxBytes bounds descriptions, comments, and other non-document
+	// long-form user text.
 	LongTextMaxBytes = 256 * 1024
+	// LongDocumentMaxBytes bounds page and runbook Markdown.
+	LongDocumentMaxBytes = 1 * 1024 * 1024
 )
 
 func plainTextField(s string) string  { return stripAndCap(s, PlainTextFieldMaxRunes) }
@@ -234,7 +231,7 @@ func brAllowAndCap(input string, maxBytes int) string {
 }
 
 func richText(s string) string     { return brAllowAndCap(s, LongTextMaxBytes) }
-func longDocument(s string) string { return brAllowAndCap(s, LongTextMaxBytes) }
+func longDocument(s string) string { return brAllowAndCap(s, LongDocumentMaxBytes) }
 
 func commentPolicy(s string) string {
 	if s == "" {

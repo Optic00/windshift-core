@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 
@@ -154,7 +153,7 @@ func (h *TestSetHandler) AddTestCase(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		TestCaseID int `json:"test_case_id"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&request); err != nil {
 		respondBadRequest(w, r, "Invalid request body")
 		return
 	}

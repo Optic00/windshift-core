@@ -105,13 +105,21 @@ func (b *BaseHandler) ParsePathID(w http.ResponseWriter, r *http.Request, param,
 	return id, true
 }
 
-// DecodeBodyOrRespond decodes JSON body or writes 400 on error.
+// DecodeBodyOrRespond decodes JSON or writes the corresponding client error.
 func (b *BaseHandler) DecodeBodyOrRespond(w http.ResponseWriter, r *http.Request, v any) bool {
-	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+	if err := restapi.DecodeJSONBody(w, r, v); err != nil {
+		if restapi.IsRequestBodyTooLarge(err) {
+			restapi.RespondError(w, r, restapi.NewAPIError(http.StatusRequestEntityTooLarge, restapi.ErrCodeRequestTooLarge, "Request body too large"))
+			return false
+		}
 		restapi.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "Invalid request body"))
 		return false
 	}
 	return true
+}
+
+func newJSONDecoder(w http.ResponseWriter, r *http.Request) *json.Decoder {
+	return restapi.NewJSONDecoder(w, r)
 }
 
 // RequireGlobalPermission checks global permission or writes 403.

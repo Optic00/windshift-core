@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -494,7 +493,7 @@ func (h *WorkspaceAgentBindingHandler) CreateProfile(w http.ResponseWriter, r *h
 		return
 	}
 	var body createStudioProfileBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&body); err != nil {
 		respondBadRequest(w, r, "invalid request body")
 		return
 	}
@@ -609,7 +608,7 @@ func (h *WorkspaceAgentBindingHandler) UpdateProfile(w http.ResponseWriter, r *h
 		return
 	}
 	var body updateStudioProfileBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&body); err != nil {
 		respondBadRequest(w, r, "invalid request body")
 		return
 	}
@@ -670,7 +669,7 @@ func (h *WorkspaceAgentBindingHandler) MigrateLegacyProfile(w http.ResponseWrite
 		return
 	}
 	var body migrateLegacyProfileBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&body); err != nil {
 		respondBadRequest(w, r, "invalid request body")
 		return
 	}
@@ -710,7 +709,7 @@ func (h *WorkspaceAgentBindingHandler) ConnectCodingRunner(w http.ResponseWriter
 		return
 	}
 	var body migrateLegacyProfileBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&body); err != nil {
 		respondBadRequest(w, r, "invalid request body")
 		return
 	}
@@ -776,7 +775,7 @@ func (h *WorkspaceAgentBindingHandler) MintRunnerSetupToken(w http.ResponseWrite
 		return
 	}
 	var req mintRunnerTokenRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+	if err := newJSONDecoder(w, r).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		respondBadRequest(w, r, "invalid request body")
 		return
 	}
@@ -893,7 +892,7 @@ func (h *WorkspaceAgentBindingHandler) TestProfile(w http.ResponseWriter, r *htt
 	}
 	var body privateProfileTestBody
 	if r.Body != nil {
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+		if err := newJSONDecoder(w, r).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
 			respondBadRequest(w, r, "invalid request body")
 			return
 		}
@@ -1056,7 +1055,7 @@ func (h *WorkspaceAgentBindingHandler) Create(w http.ResponseWriter, r *http.Req
 		return
 	}
 	var body createBindingBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&body); err != nil {
 		respondBadRequest(w, r, "invalid request body")
 		return
 	}
@@ -1175,7 +1174,7 @@ func (h *WorkspaceAgentBindingHandler) Update(w http.ResponseWriter, r *http.Req
 		return
 	}
 	var body updateBindingBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&body); err != nil {
 		respondBadRequest(w, r, "invalid request body")
 		return
 	}
@@ -1280,7 +1279,7 @@ func (h *WorkspaceAgentBindingHandler) UpdateAgentConfig(w http.ResponseWriter, 
 		return
 	}
 	var body updateAgentConfigBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&body); err != nil {
 		respondBadRequest(w, r, "invalid request body")
 		return
 	}

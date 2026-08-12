@@ -52,14 +52,14 @@ func substituteFormFields(query string, values map[string]string) string {
 // Values are coerced to strings — numbers, booleans, and strings all flow
 // into CQL as quoted literals (the tokenizer handles type coercion at compare
 // time for status/priority/etc.).
-func readFormParams(r *http.Request) (map[string]string, error) {
+func readFormParams(w http.ResponseWriter, r *http.Request) (map[string]string, error) {
 	if r.Method != http.MethodPost || r.Body == nil || r.ContentLength == 0 {
 		return map[string]string{}, nil
 	}
 	var body struct {
 		Params map[string]any `json:"params"`
 	}
-	dec := json.NewDecoder(r.Body)
+	dec := newJSONDecoder(w, r)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&body); err != nil {
 		return nil, err
@@ -188,7 +188,7 @@ func (h *PortalHandler) ExecuteAssetReport(w http.ResponseWriter, r *http.Reques
 	cqlQuery := report.CQLQuery
 	if report.RunMode == "form" {
 		r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
-		formValues, formErr := readFormParams(r)
+		formValues, formErr := readFormParams(w, r)
 		if formErr != nil {
 			if isRequestBodyTooLarge(formErr) {
 				respondRequestTooLarge(w, r)

@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -46,7 +45,7 @@ func decodeDiagramRequest(w http.ResponseWriter, r *http.Request) (name, diagram
 		DiagramData string `json:"diagram_data"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&req); err != nil {
 		respondBadRequest(w, r, "Invalid request body")
 		return "", "", false
 	}

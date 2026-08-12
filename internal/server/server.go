@@ -1309,7 +1309,16 @@ func (s *Server) initialize() error {
 	csrfOrigins := buildAllowedOrigins(cfg.AllowedHosts, effectivePort, corsScheme, cfg.UseProxy)
 	corsMiddleware := createCORSMiddleware(cfg.AllowedHosts, effectivePort, corsScheme, cfg.DisableCSRF, cfg.UseProxy, cfg.AllowInsecureHTTP)
 	apiCORSMiddleware := createFormEmbedCORSMiddleware(cfg.FormEmbedOrigins, csrfOrigins, corsMiddleware)
-	apiMiddleware := router.MiddlewareChain{apiCORSMiddleware, authMiddleware.OptionalAuth}
+	apiMiddleware := router.MiddlewareChain{
+		apiCORSMiddleware,
+		authMiddleware.OptionalAuth,
+		middleware.LimitJSONRequestBody(
+			restapi.DefaultJSONRequestBodyLimit,
+			"/api/llm-proxy/",
+			"/api/http-proxy/",
+			"/api/git-proxy/",
+		),
+	}
 
 	if !cfg.DisableCSRF {
 		slog.Info("CSRF protection enabled (Sec-Fetch-Site + Origin/Referer fallback)", "allowed_origins", csrfOrigins)

@@ -343,7 +343,7 @@ func (h *SCIMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	h.limitRequestBody(w, r)
 
 	var scimUser models.SCIMUser
-	if err := json.NewDecoder(r.Body).Decode(&scimUser); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&scimUser); err != nil {
 		if err.Error() == "http: request body too large" {
 			respondSCIMErrorMsg(w, http.StatusRequestEntityTooLarge, "Request body too large", "tooLarge")
 			return
@@ -498,7 +498,7 @@ func (h *SCIMHandler) ReplaceUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var scimUser models.SCIMUser
-	if err = json.NewDecoder(r.Body).Decode(&scimUser); err != nil {
+	if err = newJSONDecoder(w, r).Decode(&scimUser); err != nil {
 		if err.Error() == "http: request body too large" {
 			respondSCIMErrorMsg(w, http.StatusRequestEntityTooLarge, "Request body too large", "tooLarge")
 			return
@@ -591,7 +591,7 @@ func (h *SCIMHandler) PatchUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var patchReq models.SCIMPatchRequest
-	if err = json.NewDecoder(r.Body).Decode(&patchReq); err != nil {
+	if err = newJSONDecoder(w, r).Decode(&patchReq); err != nil {
 		if err.Error() == "http: request body too large" {
 			respondSCIMErrorMsg(w, http.StatusRequestEntityTooLarge, "Request body too large", "tooLarge")
 			return
@@ -717,7 +717,7 @@ func (h *SCIMHandler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 	h.limitRequestBody(w, r)
 
 	var scimGroup models.SCIMGroup
-	if err := json.NewDecoder(r.Body).Decode(&scimGroup); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&scimGroup); err != nil {
 		if err.Error() == "http: request body too large" {
 			respondSCIMErrorMsg(w, http.StatusRequestEntityTooLarge, "Request body too large", "tooLarge")
 			return
@@ -833,7 +833,7 @@ func (h *SCIMHandler) ReplaceGroup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var scimGroup models.SCIMGroup
-	if err = json.NewDecoder(r.Body).Decode(&scimGroup); err != nil {
+	if err = newJSONDecoder(w, r).Decode(&scimGroup); err != nil {
 		if err.Error() == "http: request body too large" {
 			respondSCIMErrorMsg(w, http.StatusRequestEntityTooLarge, "Request body too large", "tooLarge")
 			return
@@ -950,7 +950,7 @@ func (h *SCIMHandler) PatchGroup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var patchReq models.SCIMPatchRequest
-	if err = json.NewDecoder(r.Body).Decode(&patchReq); err != nil {
+	if err = newJSONDecoder(w, r).Decode(&patchReq); err != nil {
 		if err.Error() == "http: request body too large" {
 			respondSCIMErrorMsg(w, http.StatusRequestEntityTooLarge, "Request body too large", "tooLarge")
 			return
@@ -1046,7 +1046,7 @@ func (h *SCIMHandler) SearchRequest(w http.ResponseWriter, r *http.Request) {
 	h.limitRequestBody(w, r)
 
 	var searchReq models.SCIMSearchRequest
-	if err := json.NewDecoder(r.Body).Decode(&searchReq); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&searchReq); err != nil {
 		if err.Error() == "http: request body too large" {
 			respondSCIMErrorMsg(w, http.StatusRequestEntityTooLarge, "Request body too large", "tooLarge")
 			return
@@ -1138,7 +1138,7 @@ func (h *SCIMHandler) SearchUsers(w http.ResponseWriter, r *http.Request) {
 	h.limitRequestBody(w, r)
 
 	var searchReq models.SCIMSearchRequest
-	if err := json.NewDecoder(r.Body).Decode(&searchReq); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&searchReq); err != nil {
 		if err.Error() == "http: request body too large" {
 			respondSCIMErrorMsg(w, http.StatusRequestEntityTooLarge, "Request body too large", "tooLarge")
 			return
@@ -1175,7 +1175,7 @@ func (h *SCIMHandler) SearchGroups(w http.ResponseWriter, r *http.Request) {
 	h.limitRequestBody(w, r)
 
 	var searchReq models.SCIMSearchRequest
-	if err := json.NewDecoder(r.Body).Decode(&searchReq); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&searchReq); err != nil {
 		if err.Error() == "http: request body too large" {
 			respondSCIMErrorMsg(w, http.StatusRequestEntityTooLarge, "Request body too large", "tooLarge")
 			return
@@ -1216,7 +1216,7 @@ func (h *SCIMHandler) BulkRequest(w http.ResponseWriter, r *http.Request) {
 	h.limitRequestBody(w, r)
 
 	var bulkReq models.SCIMBulkRequest
-	if err := json.NewDecoder(r.Body).Decode(&bulkReq); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&bulkReq); err != nil {
 		if err.Error() == "http: request body too large" {
 			respondSCIMErrorMsg(w, http.StatusRequestEntityTooLarge, "Request body too large", "tooLarge")
 			return

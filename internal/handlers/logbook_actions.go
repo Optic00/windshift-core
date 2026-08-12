@@ -56,7 +56,7 @@ func (h *LogbookNodeExecutionHandler) HandleNodeExecution(w http.ResponseWriter,
 	}
 
 	var req models.NodeExecutionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&req); err != nil {
 		respondJSON(w, http.StatusBadRequest, models.NodeExecutionResponse{
 			Error: "invalid request body",
 		})

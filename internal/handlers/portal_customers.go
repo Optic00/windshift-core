@@ -356,7 +356,7 @@ func decodePortalCustomerInput(w http.ResponseWriter, r *http.Request) (portalCu
 		CustomFieldValues      map[string]any `json:"custom_field_values"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&requestData); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&requestData); err != nil {
 		respondBadRequest(w, r, "Invalid request body")
 		return portalCustomerInput{}, false
 	}
@@ -471,7 +471,7 @@ func (h *PortalCustomersHandler) UpdatePortalCustomerOrganisation(w http.Respons
 		CustomerOrganisationID *int `json:"customer_organisation_id"`
 	}
 
-	if err = json.NewDecoder(r.Body).Decode(&requestData); err != nil {
+	if err = newJSONDecoder(w, r).Decode(&requestData); err != nil {
 		respondBadRequest(w, r, "Invalid request body")
 		return
 	}

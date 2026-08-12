@@ -21,7 +21,6 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -694,7 +693,7 @@ func (h *TestManagementHandler) UpdateTestRunResult(w http.ResponseWriter, r *ht
 		return
 	}
 	var req testResultUpdateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&req); err != nil {
 		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "Invalid request body"))
 		return
 	}
@@ -873,8 +872,12 @@ func (h *TestManagementHandler) UpdateTestFolder(w http.ResponseWriter, r *http.
 	if !ok {
 		return
 	}
-	body, err := io.ReadAll(r.Body)
+	body, err := restapi.ReadJSONBody(w, r)
 	if err != nil {
+		if restapi.IsRequestBodyTooLarge(err) {
+			h.RespondError(w, r, restapi.NewAPIError(http.StatusRequestEntityTooLarge, restapi.ErrCodeRequestTooLarge, "Request body too large"))
+			return
+		}
 		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "Invalid request body"))
 		return
 	}

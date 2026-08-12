@@ -257,7 +257,7 @@ func (h *FormHandler) parsePublicFormSubmission(w http.ResponseWriter, r *http.R
 	mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if !strings.HasPrefix(mediaType, "multipart/") {
 		r.Body = http.MaxBytesReader(w, r.Body, formSubmissionMaxBytes)
-		if err := json.NewDecoder(r.Body).Decode(&submission); err != nil {
+		if err := newJSONDecoder(w, r).Decode(&submission); err != nil {
 			if isRequestBodyTooLarge(err) {
 				respondRequestTooLarge(w, r)
 			} else {

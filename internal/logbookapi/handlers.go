@@ -2,7 +2,6 @@ package logbookapi
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -103,6 +102,18 @@ func respondInternalError(w http.ResponseWriter, r *http.Request, err error) {
 	restapi.RespondError(w, r, restapi.ErrInternalError)
 }
 
+func decodeJSONOrRespond(w http.ResponseWriter, r *http.Request, dst any) bool {
+	if err := restapi.DecodeJSONBody(w, r, dst); err != nil {
+		if restapi.IsRequestBodyTooLarge(err) {
+			restapi.RespondErrorWithMessage(w, r, http.StatusRequestEntityTooLarge, restapi.ErrCodeRequestTooLarge, "Request body too large")
+			return false
+		}
+		restapi.RespondErrorWithMessage(w, r, http.StatusBadRequest, restapi.ErrCodeInvalidInput, "Invalid request body")
+		return false
+	}
+	return true
+}
+
 func (h *Handlers) requireDocumentPermission(w http.ResponseWriter, r *http.Request, permission string) (*LogbookUser, *models.LogbookDocument, bool) {
 	lbUser, ok := requireLogbookAuth(w, r)
 	if !ok {
@@ -158,8 +169,7 @@ func (h *Handlers) CreateBucket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req models.LogbookBucketCreateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		restapi.RespondErrorWithMessage(w, r, http.StatusBadRequest, restapi.ErrCodeInvalidInput, "Invalid request body")
+	if !decodeJSONOrRespond(w, r, &req) {
 		return
 	}
 
@@ -205,8 +215,7 @@ func (h *Handlers) UpdateBucket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req models.LogbookBucketUpdateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		restapi.RespondErrorWithMessage(w, r, http.StatusBadRequest, restapi.ErrCodeInvalidInput, "Invalid request body")
+	if !decodeJSONOrRespond(w, r, &req) {
 		return
 	}
 
@@ -270,8 +279,7 @@ func (h *Handlers) SetBucketPermissions(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var req models.LogbookSetPermissionsRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		restapi.RespondErrorWithMessage(w, r, http.StatusBadRequest, restapi.ErrCodeInvalidInput, "Invalid request body")
+	if !decodeJSONOrRespond(w, r, &req) {
 		return
 	}
 
@@ -421,8 +429,7 @@ func (h *Handlers) CreateNote(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req models.LogbookNoteCreateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		restapi.RespondErrorWithMessage(w, r, http.StatusBadRequest, restapi.ErrCodeInvalidInput, "Invalid request body")
+	if !decodeJSONOrRespond(w, r, &req) {
 		return
 	}
 
@@ -475,8 +482,7 @@ func (h *Handlers) UpdateDocument(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req models.LogbookDocumentUpdateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		restapi.RespondErrorWithMessage(w, r, http.StatusBadRequest, restapi.ErrCodeInvalidInput, "Invalid request body")
+	if !decodeJSONOrRespond(w, r, &req) {
 		return
 	}
 

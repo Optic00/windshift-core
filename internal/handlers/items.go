@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -934,7 +933,7 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	// Parse update data from request body
 	var updateData map[string]any
-	if err := json.NewDecoder(r.Body).Decode(&updateData); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&updateData); err != nil {
 		respondValidationError(w, r, err.Error())
 		return
 	}
@@ -1195,7 +1194,7 @@ func (h *ItemHandler) ReparentChildren(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		NewParentID *int `json:"newParentId"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&req); err != nil {
 		respondValidationError(w, r, "Invalid request body: "+err.Error())
 		return
 	}

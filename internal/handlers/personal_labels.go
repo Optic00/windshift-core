@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -404,7 +403,7 @@ func (h *PersonalLabelHandler) SetItemPersonalLabels(w http.ResponseWriter, r *h
 	var input struct {
 		LabelIDs []int `json:"label_ids"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&input); err != nil {
 		respondBadRequest(w, r, err.Error())
 		return
 	}
@@ -477,7 +476,7 @@ func (h *PersonalLabelHandler) AddItemPersonalLabel(w http.ResponseWriter, r *ht
 	var input struct {
 		LabelID int `json:"label_id"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&input); err != nil {
 		respondBadRequest(w, r, err.Error())
 		return
 	}

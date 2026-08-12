@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -226,7 +225,7 @@ func (h *TimeProjectCategoryHandler) ReorderCategories(w http.ResponseWriter, r 
 		DisplayOrder int `json:"display_order"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&orderUpdates); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&orderUpdates); err != nil {
 		respondBadRequest(w, r, "Invalid request body")
 		return
 	}

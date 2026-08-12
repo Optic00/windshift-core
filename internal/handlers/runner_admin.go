@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -83,7 +82,7 @@ func (h *RunnerControlHandler) MintRunnerToken(w http.ResponseWriter, r *http.Re
 	var req mintRunnerTokenRequest
 	// Body is optional: a bare POST mints a non-expiring, undescribed token,
 	// so an empty body (io.EOF) is not an error.
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+	if err := newJSONDecoder(w, r).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		respondBadRequest(w, r, "invalid request body")
 		return
 	}

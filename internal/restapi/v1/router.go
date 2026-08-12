@@ -6,10 +6,11 @@
 package v1
 
 import (
+	coremiddleware "windshift/internal/middleware"
 	"windshift/internal/repository"
 	"windshift/internal/restapi"
 	"windshift/internal/restapi/v1/handlers"
-	"windshift/internal/restapi/v1/middleware"
+	v1middleware "windshift/internal/restapi/v1/middleware"
 	"windshift/internal/router"
 	"windshift/internal/services"
 )
@@ -21,9 +22,9 @@ func RegisterRoutes(deps restapi.Deps) {
 	tokenManager := deps.TokenManager
 	permissionService := deps.PermissionService
 
-	bearerAuth := middleware.NewBearerAuthWithPermissions(tokenManager, permissionService)
+	bearerAuth := v1middleware.NewBearerAuthWithPermissions(tokenManager, permissionService)
 
-	rateLimiter := middleware.NewRateLimiter(1000)
+	rateLimiter := v1middleware.NewRateLimiter(1000)
 
 	// Reuse the fully wired comment service so v1 comments retain side effects.
 
@@ -100,7 +101,8 @@ func RegisterRoutes(deps restapi.Deps) {
 	// RequireAuth — the OpenAPI document describes the public surface and
 	// has to be fetchable by clients that don't yet have a token.
 	publicV1 := router.NewRouteGroup(mux, "/rest/api/v1",
-		middleware.RequestID,
+		v1middleware.RequestID,
+		coremiddleware.LimitJSONRequestBody(restapi.DefaultJSONRequestBodyLimit),
 		rateLimiter.Middleware,
 	)
 	publicV1.Handle("GET /openapi.json", handlers.OpenAPISpecJSON)
@@ -109,7 +111,8 @@ func RegisterRoutes(deps restapi.Deps) {
 	// Create authenticated route group with middleware chain:
 	// RequestID -> RequireAuth -> RateLimiter
 	v1 := router.NewRouteGroup(mux, "/rest/api/v1",
-		middleware.RequestID,
+		v1middleware.RequestID,
+		coremiddleware.LimitJSONRequestBody(restapi.DefaultJSONRequestBodyLimit),
 		bearerAuth.RequireAuth,
 		rateLimiter.Middleware,
 	)

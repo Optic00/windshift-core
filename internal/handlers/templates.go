@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -121,7 +120,7 @@ type templateInput struct {
 // Create creates a new template.
 func (h *ItemTemplateHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var input templateInput
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&input); err != nil {
 		respondBadRequest(w, r, err.Error())
 		return
 	}
@@ -202,7 +201,7 @@ func (h *ItemTemplateHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var input templateInput
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&input); err != nil {
 		respondBadRequest(w, r, err.Error())
 		return
 	}

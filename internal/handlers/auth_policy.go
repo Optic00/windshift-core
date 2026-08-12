@@ -127,7 +127,7 @@ func (h *AuthPolicyHandler) UpdateAuthPolicy(w http.ResponseWriter, r *http.Requ
 		PreviewMode bool       `json:"preview_mode"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&req); err != nil {
 		respondBadRequest(w, r, "Invalid JSON")
 		return
 	}

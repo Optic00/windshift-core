@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -659,8 +658,12 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	// Decode once into raw fields so the application service can preserve the
 	// distinction between omitted fields and explicit JSON null.
-	bodyBytes, err := io.ReadAll(r.Body)
+	bodyBytes, err := restapi.ReadJSONBody(w, r)
 	if err != nil {
+		if restapi.IsRequestBodyTooLarge(err) {
+			h.RespondError(w, r, restapi.NewAPIError(http.StatusRequestEntityTooLarge, restapi.ErrCodeRequestTooLarge, "Request body too large"))
+			return
+		}
 		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "Invalid request body"))
 		return
 	}

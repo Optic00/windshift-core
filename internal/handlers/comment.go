@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -240,7 +239,7 @@ func (h *CommentHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, commentRequestBodyMaxBytes)
-	if err = json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+	if err = newJSONDecoder(w, r).Decode(&reqBody); err != nil {
 		respondBadRequest(w, r, "Invalid request body")
 		return
 	}
@@ -415,7 +414,7 @@ func (h *CommentHandler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, commentRequestBodyMaxBytes)
-	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&reqBody); err != nil {
 		respondBadRequest(w, r, "Invalid request body")
 		return
 	}

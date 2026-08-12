@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -113,7 +112,7 @@ func (h *LabelHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Color       string `json:"color"`
 		WorkspaceID int    `json:"workspace_id"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&input); err != nil {
 		respondBadRequest(w, r, err.Error())
 		return
 	}
@@ -178,7 +177,7 @@ func (h *LabelHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Name  string `json:"name"`
 		Color string `json:"color"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&input); err != nil {
 		respondBadRequest(w, r, err.Error())
 		return
 	}
@@ -324,7 +323,7 @@ func (h *LabelHandler) SetItemLabels(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		LabelIDs []int `json:"label_ids"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&input); err != nil {
 		respondBadRequest(w, r, err.Error())
 		return
 	}
@@ -352,7 +351,7 @@ func (h *LabelHandler) AddItemLabel(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		LabelID int `json:"label_id"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&input); err != nil {
 		respondBadRequest(w, r, err.Error())
 		return
 	}

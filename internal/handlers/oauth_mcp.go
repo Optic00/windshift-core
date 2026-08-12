@@ -98,7 +98,7 @@ type dynamicClientRegistrationResponse struct {
 func (h *OAuthHandler) RegisterDynamicClient(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, oauthRegistrationMaxBytes)
 	var req dynamicClientRegistrationRequest
-	decoder := json.NewDecoder(r.Body)
+	decoder := newJSONDecoder(w, r)
 	if err := decoder.Decode(&req); err != nil {
 		writeDynamicRegistrationError(w, http.StatusBadRequest, "invalid JSON registration request")
 		return

@@ -122,7 +122,7 @@ func (h *TestRunHandler) Create(w http.ResponseWriter, r *http.Request) {
 		SetID      int    `json:"set_id"`
 		AssigneeID *int   `json:"assignee_id"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&input); err != nil {
 		respondValidationError(w, r, "Invalid JSON")
 		return
 	}
@@ -184,7 +184,7 @@ func (h *TestRunHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Name       string `json:"name"`
 		AssigneeID *int   `json:"assignee_id"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&input); err != nil {
 		respondValidationError(w, r, "Invalid JSON")
 		return
 	}
@@ -270,7 +270,7 @@ func (h *TestRunHandler) UpdateResult(w http.ResponseWriter, r *http.Request) {
 		ActualResult string `json:"actual_result"`
 		Notes        string `json:"notes"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&input); err != nil {
 		respondValidationError(w, r, "Invalid JSON")
 		return
 	}
@@ -338,7 +338,7 @@ func (h *TestRunHandler) UpdateStepResult(w http.ResponseWriter, r *http.Request
 		Notes        string `json:"notes"`
 		ItemID       *int   `json:"item_id,omitempty"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&update); err != nil {
 		respondValidationError(w, r, "Invalid JSON")
 		return
 	}
@@ -415,7 +415,7 @@ func (h *TestRunHandler) LinkItemToTestResult(w http.ResponseWriter, r *http.Req
 	var data struct {
 		ItemID int `json:"item_id"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&data); err != nil {
 		respondValidationError(w, r, "Invalid JSON")
 		return
 	}

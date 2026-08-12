@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -126,7 +125,7 @@ func (h *AgentSkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body skillBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&body); err != nil {
 		respondBadRequest(w, r, "invalid request body")
 		return
 	}
@@ -176,7 +175,7 @@ func (h *AgentSkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body skillBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&body); err != nil {
 		respondBadRequest(w, r, "invalid request body")
 		return
 	}

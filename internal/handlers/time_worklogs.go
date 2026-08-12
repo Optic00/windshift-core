@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -301,7 +300,7 @@ func (h *TimeWorklogHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req WorklogRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&req); err != nil {
 		slog.Debug("JSON decode error", slog.String("component", "time_tracking"), slog.Any("error", err))
 		respondBadRequest(w, r, fmt.Sprintf("JSON decode error: %v", err))
 		return
@@ -392,7 +391,7 @@ func (h *TimeWorklogHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req WorklogRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&req); err != nil {
 		slog.Debug("JSON decode error", slog.String("component", "time_tracking"), slog.Any("error", err))
 		respondBadRequest(w, r, fmt.Sprintf("JSON decode error: %v", err))
 		return

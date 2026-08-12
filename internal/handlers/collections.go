@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -13,6 +12,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/restapi"
 	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
@@ -224,8 +224,12 @@ func (h *CollectionHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bodyBytes, err := io.ReadAll(r.Body)
+	bodyBytes, err := restapi.ReadJSONBody(w, r)
 	if err != nil {
+		if isRequestBodyTooLarge(err) {
+			respondRequestTooLarge(w, r)
+			return
+		}
 		respondBadRequest(w, r, "Failed to read request body: "+err.Error())
 		return
 	}
@@ -363,7 +367,7 @@ func (h *CollectionHandler) UpdatePublicSharing(w http.ResponseWriter, r *http.R
 		IsPublic   bool    `json:"is_public"`
 		PublicSlug *string `json:"public_slug"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&payload); err != nil {
 		respondBadRequest(w, r, "Invalid JSON: "+err.Error())
 		return
 	}

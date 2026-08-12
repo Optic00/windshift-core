@@ -17,6 +17,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/restapi"
 )
 
 const emailOAuthStateRandomBytes = 32
@@ -91,19 +92,26 @@ func requireIDParam(w http.ResponseWriter, r *http.Request, paramName string) (i
 // (error response already written).
 func decodeJSON[T any](w http.ResponseWriter, r *http.Request) (T, bool) {
 	var v T
-	if err := json.NewDecoder(r.Body).Decode(&v); err != nil {
+	if err := restapi.DecodeJSONBody(w, r, &v); err != nil {
+		if isRequestBodyTooLarge(err) {
+			respondRequestTooLarge(w, r)
+			return v, false
+		}
 		respondBadRequest(w, r, "Invalid request body")
 		return v, false
 	}
 	return v, true
 }
 
+func newJSONDecoder(w http.ResponseWriter, r *http.Request) *json.Decoder {
+	return restapi.NewJSONDecoder(w, r)
+}
+
 // isRequestBodyTooLarge reports whether err is the error http.MaxBytesReader
 // returns once a request body exceeds its cap. Used to distinguish an
 // oversized body (413) from otherwise-malformed input (400) after a decode.
 func isRequestBodyTooLarge(err error) bool {
-	var maxErr *http.MaxBytesError
-	return errors.As(err, &maxErr)
+	return restapi.IsRequestBodyTooLarge(err)
 }
 
 // decodeOptionalJSON decodes a JSON request body into a value of type T when one
@@ -115,9 +123,13 @@ func decodeOptionalJSON[T any](w http.ResponseWriter, r *http.Request) (T, bool)
 	if r.Body == nil {
 		return v, true
 	}
-	err := json.NewDecoder(r.Body).Decode(&v)
+	err := restapi.DecodeJSONBody(w, r, &v)
 	if err == nil || errors.Is(err, io.EOF) {
 		return v, true
+	}
+	if isRequestBodyTooLarge(err) {
+		respondRequestTooLarge(w, r)
+		return v, false
 	}
 	respondBadRequest(w, r, "Invalid request body")
 	return v, false

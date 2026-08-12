@@ -41,7 +41,7 @@ const (
 // still preventing an authenticated manager from forcing unbounded reads.
 func decodeChannelRequest(w http.ResponseWriter, r *http.Request, target any, optional bool) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, channelRequestBodyMaxBytes)
-	decoder := json.NewDecoder(r.Body)
+	decoder := newJSONDecoder(w, r)
 	if err := decoder.Decode(target); err != nil {
 		if optional && errors.Is(err, io.EOF) {
 			return true
