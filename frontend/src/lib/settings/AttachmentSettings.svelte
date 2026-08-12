@@ -3,6 +3,7 @@
   import { api } from '../api.js';
   import { AlertCircle, CheckCircle, X, Plus, Paperclip } from '@lucide/svelte';
   import Button from '../components/Button.svelte';
+  import Input from '../components/Input.svelte';
   import PageHeader from '../layout/PageHeader.svelte';
   import Spinner from '../components/Spinner.svelte';
   import Lozenge from '../components/Lozenge.svelte';
@@ -296,14 +297,14 @@
             <!-- Max File Size -->
             <div>
               <Label for="max-file-size" color="default" class="mb-1">{t('settings.attachments.maxFileSize')}</Label>
-              <input
+              <Input
                 type="number"
                 id="max-file-size"
                 bind:value={maxFileSizeMB}
                 min="1"
                 max="1024"
-                class="w-32 px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
+                class="w-32"
+                size="small"
               />
               <DescriptionText>
                 {t('settings.attachments.current')}: {formatFileSize(maxFileSizeMB * 1048576)}
@@ -351,14 +352,14 @@
           <div class="mb-4">
             <Label for="add-mime-type" color="default" class="mb-1">{t('settings.attachments.addMimeType')}</Label>
             <div class="flex gap-2">
-              <input
+              <Input
                 type="text"
                 id="add-mime-type"
                 bind:value={newMimeType}
                 onkeydown={handleKeydown}
                 placeholder={t('settings.attachments.mimeTypePlaceholder')}
-                class="flex-1 px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
+                class="flex-1"
+                size="small"
               />
               <Button
                 variant="default"

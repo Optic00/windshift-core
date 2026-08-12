@@ -6,6 +6,7 @@
   import { errorToast } from '../stores/toasts.svelte.js';
   import { confirm } from '../composables/useConfirm.js';
   import Button from '../components/Button.svelte';
+  import Input from '../components/Input.svelte';
   import PageHeader from '../layout/PageHeader.svelte';
   import Modal from '../dialogs/Modal.svelte';
   import ModalHeader from '../dialogs/ModalHeader.svelte';
@@ -237,13 +238,12 @@
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
         <div>
           <Label color="default" class="mb-2">{t('settings.linkTypes.name')}</Label>
-          <input
+          <Input
             type="text"
             bind:value={formData.name}
             required
             placeholder="e.g., Implements"
-            class="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-            style="border-color: var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text);"
+            size="small"
           />
         </div>
         <div>
@@ -254,25 +254,23 @@
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
         <div>
           <Label color="default" class="mb-2">{t('settings.linkTypes.forwardLabel')}</Label>
-          <input
+          <Input
             type="text"
             bind:value={formData.forward_label}
             required
             placeholder="e.g., implements"
-            class="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-            style="border-color: var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text);"
+            size="small"
           />
           <DescriptionText>When A links to B, show as "A implements B"</DescriptionText>
         </div>
         <div>
           <Label color="default" class="mb-2">{t('settings.linkTypes.reverseLabel')}</Label>
-          <input
+          <Input
             type="text"
             bind:value={formData.reverse_label}
             required
             placeholder="e.g., implemented by"
-            class="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-            style="border-color: var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text);"
+            size="small"
           />
           <DescriptionText>When B is linked from A, show as "B implemented by A"</DescriptionText>
         </div>

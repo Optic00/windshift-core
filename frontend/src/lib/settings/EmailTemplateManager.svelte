@@ -5,6 +5,7 @@
   import { t } from '../stores/i18n.svelte.js';
   import { errorToast, successToast } from '../stores/toasts.svelte.js';
   import Button from '../components/Button.svelte';
+  import Input from '../components/Input.svelte';
   import PageHeader from '../layout/PageHeader.svelte';
   import Modal from '../dialogs/Modal.svelte';
   import ModalHeader from '../dialogs/ModalHeader.svelte';
@@ -200,11 +201,10 @@
     <div class="lg:col-span-2 flex flex-col gap-4">
       <div>
         <Label color="default" class="mb-2">{t('settings.emailTemplates.subject')}</Label>
-        <input
+        <Input
           type="text"
           bind:value={formData.subject}
-          class="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-          style="border-color: var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text);"
+          size="small"
         />
       </div>
 

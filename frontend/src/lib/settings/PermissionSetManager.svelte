@@ -6,6 +6,7 @@
   import { navigate } from '../router.js';
   import { Plus, Edit, Trash2, Shield } from '@lucide/svelte';
   import Button from '../components/Button.svelte';
+  import Input from '../components/Input.svelte';
   import DataTable from '../components/DataTable.svelte';
   import PageHeader from '../layout/PageHeader.svelte';
   import Textarea from '../components/Textarea.svelte';
@@ -184,14 +185,13 @@
           <div>
             <Label for="permset-name" color="default" required class="mb-1">{t('common.name')}</Label>
             <!-- svelte-ignore a11y_autofocus -->
-            <input
+            <Input
               type="text"
               id="permset-name"
               bind:value={formData.name}
-              class="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              style="background-color: var(--ds-surface); border-color: var(--ds-border); color: var(--ds-text)"
               placeholder={t('settings.permissionSets.namePlaceholder')}
               autofocus
+              size="small"
             />
           </div>
 

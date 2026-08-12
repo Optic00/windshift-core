@@ -7,6 +7,9 @@
 	import Modal from '../dialogs/Modal.svelte';
 	import ModalHeader from '../dialogs/ModalHeader.svelte';
 	import Input from '../components/Input.svelte';
+	import Checkbox from '../components/Checkbox.svelte';
+	import NativeSelect from '../components/NativeSelect.svelte';
+	import Textarea from '../components/Textarea.svelte';
 	import FormField from '../components/FormField.svelte';
 	import AlertBox from '../components/AlertBox.svelte';
 	import EmptyState from '../components/EmptyState.svelte';
@@ -366,28 +369,28 @@
 		</FormField>
 
 		<FormField label="Client type" required>
-			<select
+			<NativeSelect
 				bind:value={formData.client_type}
 				disabled={!!editingClient}
-				class="w-full h-9 px-3 text-sm border rounded-md disabled:opacity-60"
-				style="background-color: var(--ds-surface-raised); border-color: var(--ds-border); color: var(--ds-text);"
-			>
-				<option value="confidential">Confidential (server-to-server, has secret)</option>
-				<option value="public">Public (PKCE only, no secret)</option>
-			</select>
+				options={[
+					{ value: 'confidential', label: 'Confidential (server-to-server, has secret)' },
+					{ value: 'public', label: 'Public (PKCE only, no secret)' },
+				]}
+				size="small"
+			/>
 			<p class="text-xs mt-1" style="color: var(--ds-text-subtle);">
 				Confidential clients store a client_secret server-side. Public clients (browser SPAs, native apps) must use PKCE on every /token exchange.
 			</p>
 		</FormField>
 
 		<FormField label="Redirect URIs" required>
-			<textarea
+			<Textarea
 				bind:value={formData.redirect_uris_text}
-				rows="3"
-				class="w-full px-3 py-2 text-sm border rounded-md font-mono"
-				style="background-color: var(--ds-surface-raised); border-color: var(--ds-border); color: var(--ds-text);"
+				rows={3}
+				class="font-mono"
+				size="small"
 				placeholder={`https://docmost.example.com/api/integrations/oauth/windshift/callback\n${DOCMOST_LOCAL_CALLBACK}`}
-			></textarea>
+			/>
 			<p class="text-xs mt-1" style="color: var(--ds-text-subtle);">
 				One URI per line. For Docmost, register {`{DOCMOST_APP_URL}/api/integrations/oauth/windshift/callback`}. The redirect_uri parameter on /authorize must exactly match one of these.
 			</p>
@@ -396,16 +399,13 @@
 		<FormField label="Allowed scopes" required>
 			<div class="space-y-2">
 				{#each scopeOptions as scope (scope.scope)}
-					<label class="flex items-center gap-2 text-sm cursor-pointer" style="color: var(--ds-text);">
-						<input
-							type="checkbox"
-							checked={formData.allowed_scopes.includes(scope.scope)}
-							onchange={() => toggleScope(scope.scope)}
-							data-testid={`oauth-client-scope-${scope.scope}`}
-						/>
-						<code class="text-xs">{scope.scope}</code>
-						<span style="color: var(--ds-text-subtle);">— {scope.label}</span>
-					</label>
+					<Checkbox
+						checked={formData.allowed_scopes.includes(scope.scope)}
+						onchange={() => toggleScope(scope.scope)}
+						dataTestid={`oauth-client-scope-${scope.scope}`}
+						label={`${scope.scope} — ${scope.label}`}
+						size="small"
+					/>
 				{/each}
 			</div>
 			<p class="text-xs mt-2" style="color: var(--ds-text-subtle);">
@@ -413,12 +413,7 @@
 			</p>
 		</FormField>
 
-		<div class="flex items-center gap-2">
-			<input type="checkbox" id="oauth-client-enabled" bind:checked={formData.enabled} />
-			<label for="oauth-client-enabled" class="text-sm" style="color: var(--ds-text);">
-				Enabled
-			</label>
-		</div>
+		<Checkbox id="oauth-client-enabled" bind:checked={formData.enabled} label="Enabled" size="small" />
 
 		<div class="flex justify-end gap-2 pt-2">
 			<Button variant="ghost" onclick={() => (showFormModal = false)}>Cancel</Button>

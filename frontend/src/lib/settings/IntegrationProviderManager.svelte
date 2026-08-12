@@ -7,6 +7,8 @@
 	import Modal from '../dialogs/Modal.svelte';
 	import ModalHeader from '../dialogs/ModalHeader.svelte';
 	import Input from '../components/Input.svelte';
+	import Checkbox from '../components/Checkbox.svelte';
+	import NativeSelect from '../components/NativeSelect.svelte';
 	import FormField from '../components/FormField.svelte';
 	import AlertBox from '../components/AlertBox.svelte';
 	import EmptyState from '../components/EmptyState.svelte';
@@ -219,15 +221,11 @@
 			</FormField>
 
 			<FormField label={t('integrations.providerType')} required>
-				<select
+				<NativeSelect
 					bind:value={formData.provider_type}
-					class="w-full h-9 px-3 text-sm border rounded-md"
-					style="background-color: var(--ds-surface-raised); border-color: var(--ds-border); color: var(--ds-text);"
-				>
-					{#each providerTypes as pt}
-						<option value={pt.value}>{pt.label}</option>
-					{/each}
-				</select>
+					options={providerTypes}
+					size="small"
+				/>
 			</FormField>
 
 			<FormField label={t('integrations.oauthClientId')}>
@@ -257,10 +255,7 @@
 				</FormField>
 			{/if}
 
-			<div class="flex items-center gap-2">
-				<input type="checkbox" id="int-enabled" bind:checked={formData.enabled} />
-				<label for="int-enabled" class="text-sm" style="color: var(--ds-text);">Enabled</label>
-			</div>
+			<Checkbox id="int-enabled" bind:checked={formData.enabled} label="Enabled" size="small" />
 
 			<div class="flex justify-end gap-2 pt-2">
 				<Button variant="ghost" onclick={() => showModal = false}>Cancel</Button>

@@ -13,6 +13,7 @@
   import ModalHeader from '../dialogs/ModalHeader.svelte';
   import Spinner from '../components/Spinner.svelte';
   import Input from '../components/Input.svelte';
+  import Textarea from '../components/Textarea.svelte';
   import FormField from '../components/FormField.svelte';
   import AlertBox from '../components/AlertBox.svelte';
   import Lozenge from '../components/Lozenge.svelte';
@@ -612,13 +613,13 @@
         </FormField>
 
         <FormField label={t('settings.scmProviders.privateKeyPem')} error={formErrors.github_app_private_key} helper={editingProvider ? t('settings.scmProviders.leaveEmptyToKeep') : ''}>
-          <textarea
+          <Textarea
             bind:value={formData.github_app_private_key}
-            rows="4"
-            class="shadow-sm focus:ring-blue-500 focus:border-blue-500 block w-full sm:text-sm rounded-md font-mono text-xs border"
-            style="background-color: var(--ds-background-input); color: var(--ds-text); border-color: var(--ds-border);"
+            rows={4}
+            class="font-mono"
+            size="small"
             placeholder="-----BEGIN RSA PRIVATE KEY-----"
-          ></textarea>
+          />
         </FormField>
 
         <!-- Installation Discovery -->
@@ -779,4 +780,3 @@
       </div>
     </form>
 </Modal>
-

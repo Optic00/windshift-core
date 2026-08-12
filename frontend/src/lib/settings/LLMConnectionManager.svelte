@@ -5,6 +5,7 @@
     Plus, Edit, Trash2, TestTube, CheckCircle, Power, PowerOff, Star, AlertTriangle, Eye, EyeOff
   } from '@lucide/svelte';
   import Button from '../components/Button.svelte';
+  import Input from '../components/Input.svelte';
   import PageHeader from '../layout/PageHeader.svelte';
   import Modal from '../dialogs/Modal.svelte';
   import ModalHeader from '../dialogs/ModalHeader.svelte';
@@ -13,6 +14,7 @@
   import DataTable from '../components/DataTable.svelte';
   import { successToast, errorToast } from '../stores/toasts.svelte.js';
   import Select from '../components/Select.svelte';
+  import Textarea from '../components/Textarea.svelte';
   import BasePicker from '../pickers/BasePicker.svelte';
   import { confirm } from '../composables/useConfirm.js';
   import { llmConnectionTestErrorMessage } from './llmConnectionErrors.js';
@@ -521,13 +523,12 @@
   <!-- Name -->
   <div>
     <label for="llm-connection-name" class="block text-xs font-medium mb-1" style="color: var(--ds-text-subtle);">Name</label>
-    <input
+    <Input
       id="llm-connection-name"
       type="text"
       bind:value={form.name}
       placeholder="e.g. OpenRouter Claude Sonnet"
-      class="w-full px-3 py-2 text-sm rounded-md border"
-      style="border-color: var(--ds-border); background: var(--ds-surface); color: var(--ds-text);"
+      size="small"
     />
   </div>
 
@@ -547,13 +548,12 @@
   {#if isLocalProvider}
     <div>
       <label for="llm-connection-base-url" class="block text-xs font-medium mb-1" style="color: var(--ds-text-subtle);">Base URL</label>
-      <input
+      <Input
         id="llm-connection-base-url"
         type="text"
         bind:value={form.base_url}
         placeholder="e.g. http://localhost:11434 or http://localhost:11434/v1"
-        class="w-full px-3 py-2 text-sm rounded-md border"
-        style="border-color: var(--ds-border); background: var(--ds-surface); color: var(--ds-text);"
+        size="small"
       />
     </div>
   {/if}
@@ -561,13 +561,12 @@
   <!-- API Key -->
   <div>
     <label for="llm-connection-api-key" class="block text-xs font-medium mb-1" style="color: var(--ds-text-subtle);">API Key</label>
-    <input
+    <Input
       id="llm-connection-api-key"
       type="password"
       bind:value={form.api_key}
       placeholder={editingConnection?.has_api_key ? 'Key configured (leave blank to keep)' : 'Enter API key'}
-      class="w-full px-3 py-2 text-sm rounded-md border"
-      style="border-color: var(--ds-border); background: var(--ds-surface); color: var(--ds-text);"
+      size="small"
     />
   </div>
 
@@ -639,15 +638,15 @@
   <!-- Provider Config -->
   <div>
     <label for="llm-connection-provider-config" class="block text-xs font-medium mb-1" style="color: var(--ds-text-subtle);">Provider config JSON</label>
-    <textarea
+    <Textarea
       id="llm-connection-provider-config"
       bind:value={form.provider_config}
-      rows="5"
+      rows={5}
       spellcheck="false"
       placeholder={`{\n  "provider": {\n    "sort": "latency",\n    "allow_fallbacks": true\n  }\n}`}
-      class="w-full px-3 py-2 text-sm rounded-md border font-mono"
-      style="border-color: var(--ds-border); background: var(--ds-surface); color: var(--ds-text);"
-    ></textarea>
+      class="font-mono"
+      size="small"
+    />
     <div class="text-xs mt-1" style="color: var(--ds-text-subtle);">
       Optional top-level request fields merged into provider calls. Existing Windshift fields take precedence.
     </div>

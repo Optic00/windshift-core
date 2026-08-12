@@ -3,6 +3,7 @@
   import { api } from '../api.js';
   import { Plus, Edit, Trash2, Circle, GitBranch } from '@lucide/svelte';
   import Button from '../components/Button.svelte';
+  import ColorDot from '../components/ColorDot.svelte';
   import DataTable from '../components/DataTable.svelte';
   import Panel from '../components/Panel.svelte';
   import PageHeader from '../layout/PageHeader.svelte';
@@ -10,6 +11,7 @@
   import Modal from '../dialogs/Modal.svelte';
   import ModalHeader from '../dialogs/ModalHeader.svelte';
   import Textarea from '../components/Textarea.svelte';
+  import Input from '../components/Input.svelte';
   import Lozenge from '../components/Lozenge.svelte';
   import Toggle from '../components/Toggle.svelte';
   import BasePicker from '../pickers/BasePicker.svelte';
@@ -280,10 +282,7 @@
 
       {#snippet category(status)}
         <div class="flex items-center gap-2">
-          <div
-            class="w-4 h-4 rounded border border-gray-300"
-            style="background-color: {getCategoryColor(status.category_id)};"
-          ></div>
+          <ColorDot color={getCategoryColor(status.category_id)} class="w-4 h-4 border border-[var(--ds-border)]" />
           <span class="font-medium" style="color: var(--ds-text);">{getCategoryName(status.category_id)}</span>
         </div>
       {/snippet}
@@ -300,12 +299,13 @@
       <form onsubmit={(e) => { e.preventDefault(); saveStatus(); }}>
         <div class="form-group">
           <label for="name">{t('common.name')} *</label>
-          <input
+          <Input
             type="text"
             id="name"
             placeholder="e.g. Open, In Progress, Resolved"
             bind:value={formData.name}
             required
+            size="small"
           />
         </div>
 

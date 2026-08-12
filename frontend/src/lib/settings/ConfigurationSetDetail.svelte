@@ -6,6 +6,7 @@
   import { api } from '../api.js';
   import { ArrowLeft } from '@lucide/svelte';
   import Button from '../components/Button.svelte';
+  import Input from '../components/Input.svelte';
   import Textarea from '../components/Textarea.svelte';
   import Tabs from '../components/Tabs.svelte';
   import ConfigurationSetWorkspaces from './ConfigurationSetWorkspaces.svelte';
@@ -380,12 +381,11 @@
                   <div class="space-y-4">
                     <div>
                       <Label color="default" required class="mb-1">{t('settings.configSets.name')}</Label>
-                      <input
+                      <Input
                         type="text"
                         bind:value={formData.name}
-                        class="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        style="background-color: var(--ds-surface); border-color: var(--ds-border); color: var(--ds-text);"
                         placeholder={t('settings.configSets.namePlaceholder')}
+                        size="small"
                       />
                     </div>
 

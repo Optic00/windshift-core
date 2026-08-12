@@ -4,6 +4,7 @@
     placeholder = '',
     disabled = false,
     required = false,
+    spellcheck = undefined,
     rows = 3,
     size = 'medium',
     id = undefined,
@@ -40,6 +41,7 @@
   {placeholder}
   {disabled}
   {required}
+  {spellcheck}
   {rows}
   class={allClasses}
   style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text); {style}"

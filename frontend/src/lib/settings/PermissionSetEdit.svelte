@@ -6,6 +6,7 @@
   import { errorToast } from '../stores/toasts.svelte.js';
   import { ArrowLeft, Save, X, UserPlus } from '@lucide/svelte';
   import Button from '../components/Button.svelte';
+  import Input from '../components/Input.svelte';
   import Modal from '../dialogs/Modal.svelte';
   import UserPicker from '../pickers/UserPicker.svelte';
   import RolePicker from '../pickers/RolePicker.svelte';
@@ -300,12 +301,11 @@
         <div class="space-y-4">
           <div>
             <Label color="default" required class="mb-1">{t('common.name')}</Label>
-            <input
+            <Input
               type="text"
               bind:value={formData.name}
-              class="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              style="background-color: var(--ds-surface); border-color: var(--ds-border); color: var(--ds-text);"
               placeholder={t('settings.permissionSets.namePlaceholder')}
+              size="small"
             />
           </div>
 

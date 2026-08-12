@@ -6,6 +6,7 @@
   import { confirm } from '../composables/useConfirm.js';
   import { Plus, Edit, Trash2, Palette, Folder } from '@lucide/svelte';
   import Button from '../components/Button.svelte';
+  import ColorDot from '../components/ColorDot.svelte';
   import DataTable from '../components/DataTable.svelte';
   import PageHeader from '../layout/PageHeader.svelte';
   import StatusCategoryModal from '../dialogs/StatusCategoryModal.svelte';
@@ -227,10 +228,7 @@
 
     {#snippet color(category)}
       <div class="flex items-center gap-2">
-        <div
-          class="w-4 h-4 rounded border border-gray-300"
-          style="background-color: {category.color};"
-        ></div>
+        <ColorDot color={category.color} class="w-4 h-4 border border-[var(--ds-border)]" />
         <span class="text-sm font-mono" style="color: var(--ds-text-subtle);">{category.color}</span>
       </div>
     {/snippet}

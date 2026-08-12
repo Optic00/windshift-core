@@ -12,6 +12,7 @@
   import DataTable from '../components/DataTable.svelte';
   import PageHeader from '../layout/PageHeader.svelte';
   import Button from '../components/Button.svelte';
+  import Input from '../components/Input.svelte';
   import Modal from '../dialogs/Modal.svelte';
   import ModalHeader from '../dialogs/ModalHeader.svelte';
   import Spinner from '../components/Spinner.svelte';
@@ -321,14 +322,13 @@
         <div class="grid grid-cols-1 gap-4">
           <div>
             <Label for="name" color="default" required class="mb-1">{t('settings.notifications.name')}</Label>
-            <input
+            <Input
               id="name"
               type="text"
               bind:value={formData.name}
               placeholder={t('settings.notifications.namePlaceholder')}
-              class="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              style="border-color: var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text);"
               required
+              size="small"
             />
           </div>
 
