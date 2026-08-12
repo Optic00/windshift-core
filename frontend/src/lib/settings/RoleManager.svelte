@@ -9,6 +9,7 @@
   import ModalHeader from '../dialogs/ModalHeader.svelte';
   import Button from '../components/Button.svelte';
   import Label from '../components/Label.svelte';
+  import Input from '../components/Input.svelte';
   import Lozenge from '../components/Lozenge.svelte';
   import Textarea from '../components/Textarea.svelte';
   import DialogFooter from '../dialogs/DialogFooter.svelte';
@@ -240,13 +241,12 @@
 
         <div>
           <Label required>{t('roles.roleName')}</Label>
-          <input
+          <Input
             type="text"
-            class="w-full px-3 py-2 border rounded text-sm"
-            style="border-color: var(--ds-border); background: var(--ds-surface-raised); color: var(--ds-text);"
+            size="small"
             placeholder={t('settings.workspaceRoles.namePlaceholder')}
             bind:value={newName}
-            data-testid="workspace-role-name"
+            dataTestid="workspace-role-name"
           />
         </div>
         <div>

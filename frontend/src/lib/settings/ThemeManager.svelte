@@ -12,6 +12,7 @@
   import Spinner from '../components/Spinner.svelte';
   import IconSelector from '../pickers/IconSelector.svelte';
   import Label from '../components/Label.svelte';
+  import Input from '../components/Input.svelte';
   import { toHotkeyString } from '../utils/keyboardShortcuts.js';
   import { t } from '../stores/i18n.svelte.js';
   import { confirm } from '../composables/useConfirm.js';
@@ -222,24 +223,24 @@
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
         <div>
           <Label for="name" color="default" class="mb-2">{t('common.name')}</Label>
-          <input
+          <Input
             type="text"
             id="name"
             bind:value={newTheme.name}
             placeholder={t('common.name')}
             required
-            class="w-full px-3 py-2 rounded-md focus:outline-none focus:ring-2" style="border: 1px solid var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text);"
+            size="small"
           />
         </div>
 
         <div>
           <Label for="description" color="default" class="mb-2">{t('common.description')}</Label>
-          <input
+          <Input
             type="text"
             id="description"
             bind:value={newTheme.description}
             placeholder={t('placeholders.optionalDescription')}
-            class="w-full px-3 py-2 rounded-md focus:outline-none focus:ring-2" style="border: 1px solid var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text);"
+            size="small"
           />
         </div>
       </div>
@@ -330,22 +331,22 @@
               <form onsubmit={handleEditSubmit} class="space-y-4">
                 <div>
                   <Label for="edit-theme-name" color="default" class="mb-1">Name</Label>
-                  <input
+                  <Input
                     type="text"
                     id="edit-theme-name"
                     bind:value={editingTheme.name}
                     required
-                    class="w-full px-3 py-2 rounded-md focus:outline-none focus:ring-2" style="border: 1px solid var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text);"
+                    size="small"
                   />
                 </div>
 
                 <div>
                   <Label for="edit-theme-description" color="default" class="mb-1">Description</Label>
-                  <input
+                  <Input
                     type="text"
                     id="edit-theme-description"
                     bind:value={editingTheme.description}
-                    class="w-full px-3 py-2 rounded-md focus:outline-none focus:ring-2" style="border: 1px solid var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text);"
+                    size="small"
                   />
                 </div>
 

@@ -11,6 +11,7 @@
   import ModalHeader from '../dialogs/ModalHeader.svelte';
   import DialogFooter from '../dialogs/DialogFooter.svelte';
   import { errorToast } from '../stores/toasts.svelte.js';
+  import Input from '../components/Input.svelte';
   import Textarea from '../components/Textarea.svelte';
   import { confirm } from '../composables/useConfirm.js';
   import { toHotkeyString } from '../utils/keyboardShortcuts.js';
@@ -258,7 +259,7 @@
     <form onsubmit={saveHierarchyLevel}>
       <div class="form-group">
         <label for="level">{t('settings.hierarchyLevels.level')}</label>
-        <input
+        <Input
           type="number"
           id="level"
           min="0"
@@ -271,7 +272,7 @@
 
       <div class="form-group">
         <label for="name">{t('settings.hierarchyLevels.name')}</label>
-        <input
+        <Input
           type="text"
           id="name"
           placeholder="e.g. Initiative, Epic, Story, Task"
@@ -314,23 +315,6 @@
     margin-bottom: 0.5rem;
     font-weight: 500;
     color: var(--ds-text);
-  }
-
-  .form-group input {
-    width: 100%;
-    padding: 0.75rem;
-    border: 1px solid var(--ds-border);
-    border-radius: 6px;
-    font-size: 0.9rem;
-    background: var(--ds-surface);
-    color: var(--ds-text);
-    transition: border-color 0.2s ease;
-  }
-
-  .form-group input:focus {
-    outline: none;
-    border-color: var(--ds-border-focused);
-    box-shadow: 0 0 0 3px var(--ds-focus-ring);
   }
 
   .form-group small {

@@ -267,7 +267,7 @@
       <form onsubmit={(e) => { e.preventDefault(); savePriority(); }}>
         <div class="form-group">
           <label for="name">{t('common.name')}</label>
-          <input
+          <Input
             type="text"
             id="name"
             placeholder="e.g. Critical, High, Medium, Low"
@@ -327,4 +327,3 @@
     />
     {/snippet}
   </Modal>
-

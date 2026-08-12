@@ -95,12 +95,12 @@
   {#if activeTab === 'hosted'}
     <div class="space-y-3">
       <div class="flex items-center gap-2">
-        <input
+        <Input
           type="text"
           value={formUrl}
           readonly
-          class="flex-1 px-3 py-2 text-sm rounded-lg border font-mono"
-          style="background-color: var(--ds-background-neutral); border-color: var(--ds-border); color: var(--ds-text);"
+          class="flex-1 font-mono"
+          size="small"
         />
         <CopyButton
           text={formUrl}

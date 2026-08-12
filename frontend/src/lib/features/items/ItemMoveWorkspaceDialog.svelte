@@ -3,6 +3,7 @@
   import ModalHeader from '../../dialogs/ModalHeader.svelte';
   import DialogFooter from '../../dialogs/DialogFooter.svelte';
   import BasePicker from '../../pickers/BasePicker.svelte';
+  import NativeSelect from '../../components/NativeSelect.svelte';
   import { api } from '../../api.js';
   import { workspacePermissions } from '../../stores';
   import { t } from '../../stores/i18n.svelte.js';
@@ -163,43 +164,33 @@
       <div class="grid grid-cols-1 gap-3 sm:grid-cols-3" data-testid="item-move-workspace-mapping-controls">
         <label class="flex flex-col gap-1.5 text-xs font-semibold text-[var(--ds-text-subtle)]">
           <span>{t('items.itemType')}</span>
-          <select
-            class="min-h-10 rounded-md border border-[var(--ds-border)] bg-[var(--ds-background-input)] px-2.5 py-2 text-sm font-normal text-[var(--ds-text)] focus:outline-none focus:ring-2 focus:ring-[var(--ds-border-focused)]"
-            data-testid="item-move-workspace-item-type"
+          <NativeSelect
+            options={preview.item_types.map((option) => ({ value: option.id, label: option.name }))}
+            dataTestid="item-move-workspace-item-type"
             bind:value={targetItemTypeId}
             onchange={changeItemType}
-          >
-            {#each preview.item_types as option (option.id)}
-              <option value={option.id}>{option.name}</option>
-            {/each}
-          </select>
+          />
         </label>
         <label class="flex flex-col gap-1.5 text-xs font-semibold text-[var(--ds-text-subtle)]">
           <span>{t('items.itemStatus')}</span>
-          <select
-            class="min-h-10 rounded-md border border-[var(--ds-border)] bg-[var(--ds-background-input)] px-2.5 py-2 text-sm font-normal text-[var(--ds-text)] focus:outline-none focus:ring-2 focus:ring-[var(--ds-border-focused)]"
-            data-testid="item-move-workspace-status"
+          <NativeSelect
+            options={preview.statuses.map((option) => ({ value: option.id, label: option.name }))}
+            dataTestid="item-move-workspace-status"
             bind:value={targetStatusId}
             onchange={() => loadPreview()}
-          >
-            {#each preview.statuses as option (option.id)}
-              <option value={option.id}>{option.name}</option>
-            {/each}
-          </select>
+          />
         </label>
         <label class="flex flex-col gap-1.5 text-xs font-semibold text-[var(--ds-text-subtle)]">
           <span>{t('items.itemPriority')}</span>
-          <select
-            class="min-h-10 rounded-md border border-[var(--ds-border)] bg-[var(--ds-background-input)] px-2.5 py-2 text-sm font-normal text-[var(--ds-text)] focus:outline-none focus:ring-2 focus:ring-[var(--ds-border-focused)]"
-            data-testid="item-move-workspace-priority"
+          <NativeSelect
+            options={[
+              { value: null, label: t('items.moveWorkspaceNoPriority') },
+              ...preview.priorities.map((option) => ({ value: option.id, label: option.name })),
+            ]}
+            dataTestid="item-move-workspace-priority"
             bind:value={targetPriorityId}
             onchange={() => loadPreview()}
-          >
-            <option value={null}>{t('items.moveWorkspaceNoPriority')}</option>
-            {#each preview.priorities as option (option.id)}
-              <option value={option.id}>{option.name}</option>
-            {/each}
-          </select>
+          />
         </label>
       </div>
 

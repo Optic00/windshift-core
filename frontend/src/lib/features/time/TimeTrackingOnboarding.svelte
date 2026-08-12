@@ -2,6 +2,7 @@
   import { api } from '../../api.js';
   import { Clock, Briefcase, User, X } from '@lucide/svelte';
   import Button from '../../components/Button.svelte';
+  import Input from '../../components/Input.svelte';
   import Modal from '../../dialogs/Modal.svelte';
   import Textarea from '../../components/Textarea.svelte';
   import AlertBox from '../../components/AlertBox.svelte';
@@ -204,12 +205,11 @@
           <div class="space-y-4">
             <div>
               <Label for="customer_name" required class="mb-2">{t('time.organizations.name')}</Label>
-              <input
+              <Input
                 id="customer_name"
                 type="text"
                 bind:value={customerData.name}
-                class="w-full px-3 py-2 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                style="background-color: var(--ds-surface); border: 1px solid var(--ds-border); color: var(--ds-text);"
+                size="small"
                 placeholder={t('time.onboarding.organizationNamePlaceholder')}
                 required
               />
@@ -217,24 +217,22 @@
 
             <div>
               <Label for="customer_email" class="mb-2">{t('time.organizations.emailOptional')}</Label>
-              <input
+              <Input
                 id="customer_email"
                 type="email"
                 bind:value={customerData.email}
-                class="w-full px-3 py-2 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                style="background-color: var(--ds-surface); border: 1px solid var(--ds-border); color: var(--ds-text);"
+                size="small"
                 placeholder={t('time.onboarding.emailPlaceholder')}
               />
             </div>
 
             <div>
               <Label for="contact_person" class="mb-2">{t('time.organizations.contactPersonOptional')}</Label>
-              <input
+              <Input
                 id="contact_person"
                 type="text"
                 bind:value={customerData.contact_person}
-                class="w-full px-3 py-2 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                style="background-color: var(--ds-surface); border: 1px solid var(--ds-border); color: var(--ds-text);"
+                size="small"
                 placeholder={t('time.onboarding.contactPersonPlaceholder')}
               />
             </div>
@@ -261,12 +259,11 @@
           <div class="space-y-4">
             <div>
               <Label for="project_name" required class="mb-2">{t('time.projects.projectName')}</Label>
-              <input
+              <Input
                 id="project_name"
                 type="text"
                 bind:value={projectData.name}
-                class="w-full px-3 py-2 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                style="background-color: var(--ds-surface); border: 1px solid var(--ds-border); color: var(--ds-text);"
+                size="small"
                 placeholder={t('time.onboarding.projectNamePlaceholder')}
                 required
               />
@@ -286,14 +283,14 @@
               <Label for="hourly_rate" class="mb-2">{t('time.projects.hourlyRateOptional')}</Label>
               <div class="relative">
                 <span class="absolute left-3 top-1/2 transform -translate-y-1/2" style="color: var(--ds-text-subtle);">$</span>
-                <input
+                <Input
                   id="hourly_rate"
                   type="number"
                   bind:value={projectData.hourly_rate}
                   min="0"
                   step="0.01"
-                  class="w-full pl-8 pr-3 py-2 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  style="background-color: var(--ds-surface); border: 1px solid var(--ds-border); color: var(--ds-text);"
+                  class="pl-8"
+                  size="small"
                   placeholder="0.00"
                 />
               </div>

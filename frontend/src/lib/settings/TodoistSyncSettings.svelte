@@ -3,6 +3,8 @@
 	import { api } from '../api.js';
 	import { Loader2, RefreshCw } from '@lucide/svelte';
 	import Button from '../components/Button.svelte';
+	import Checkbox from '../components/Checkbox.svelte';
+	import NativeSelect from '../components/NativeSelect.svelte';
 	import { formatDateSimple } from '../utils/dateFormatter.js';
 
 	let loading = $state(true);
@@ -21,6 +23,15 @@
 	let projects = $state([]);
 	let projectsLoaded = $state(false);
 	let loadingProjects = $state(false);
+
+	const scopeOptions = [
+		{ value: 'all', label: 'Everything' },
+		{ value: 'project', label: 'A single project' },
+	];
+	const projectOptions = $derived([
+		{ value: '', label: 'Choose a project…', disabled: true },
+		...projects.map((project) => ({ value: project.id, label: project.name })),
+	]);
 
 	onMount(load);
 
@@ -81,11 +92,6 @@
 		}
 	}
 
-	async function toggleEnabled() {
-		enabled = !enabled;
-		await save();
-	}
-
 	async function onScopeChange(value) {
 		scopeMode = value;
 		if (scopeMode === 'project') {
@@ -141,53 +147,44 @@
 					Two-way sync between your personal task list and Todoist.
 				</p>
 			</div>
-			<label class="flex items-center gap-2 shrink-0 cursor-pointer">
-				<input
-					type="checkbox"
-					checked={enabled}
-					disabled={saving}
-					onchange={toggleEnabled}
-					data-testid="todoist-sync-toggle"
-				/>
-				<span class="text-sm" style="color: var(--ds-text-subtle);">
-					{enabled ? 'On' : 'Off'}
-				</span>
-			</label>
+			<Checkbox
+				bind:checked={enabled}
+				disabled={saving}
+				onchange={save}
+				dataTestid="todoist-sync-toggle"
+				label={enabled ? 'On' : 'Off'}
+				size="small"
+				class="shrink-0"
+			/>
 		</div>
 
 		{#if enabled}
 			<div class="mt-3 flex flex-col gap-3">
 				<div class="flex items-center gap-2 flex-wrap">
 					<span class="text-sm" style="color: var(--ds-text-subtle);">Sync</span>
-					<select
-						value={scopeMode}
+					<NativeSelect
+						bind:value={scopeMode}
+						options={scopeOptions}
 						disabled={saving}
-						onchange={(e) => onScopeChange(e.currentTarget.value)}
-						class="text-sm rounded px-2 py-1 border"
-						style="border-color: var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text);"
-						data-testid="todoist-sync-scope"
-					>
-						<option value="all">Everything</option>
-						<option value="project">A single project</option>
-					</select>
+						onchange={onScopeChange}
+						dataTestid="todoist-sync-scope"
+						size="small"
+						class="w-auto"
+					/>
 
 					{#if scopeMode === 'project'}
 						{#if loadingProjects}
 							<Loader2 class="w-4 h-4 animate-spin" style="color: var(--ds-text-subtle);" />
 						{:else}
-							<select
-								value={projectId}
+							<NativeSelect
+								bind:value={projectId}
+								options={projectOptions}
 								disabled={saving}
-								onchange={(e) => onProjectChange(e.currentTarget.value)}
-								class="text-sm rounded px-2 py-1 border"
-								style="border-color: var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text);"
-								data-testid="todoist-sync-project"
-							>
-								<option value="" disabled>Choose a project…</option>
-								{#each projects as p}
-									<option value={p.id}>{p.name}</option>
-								{/each}
-							</select>
+								onchange={onProjectChange}
+								dataTestid="todoist-sync-project"
+								size="small"
+								class="w-auto"
+							/>
 						{/if}
 					{/if}
 				</div>

@@ -28,6 +28,7 @@
   import { permissionStore, isSystemAdmin } from '../../stores/permissions.svelte.js';
   import { workspacePermissions } from '../../stores/workspacePermissions.svelte.js';
   import ColorDot from '../../components/ColorDot.svelte';
+  import Input from '../../components/Input.svelte';
   import Label from '../../components/Label.svelte';
   import BasePicker from '../../pickers/BasePicker.svelte';
   import DialogFooter from '../../dialogs/DialogFooter.svelte';
@@ -778,12 +779,10 @@
       <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div>
           <Label for="milestone-name" required class="mb-2">{t('milestones.milestoneName')}</Label>
-          <input
+          <Input
             id="milestone-name"
             type="text"
             bind:value={formData.name}
-            class="w-full px-4 py-3 rounded border transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
-            style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
             placeholder={t('milestones.milestoneNamePlaceholder')}
             required
           />
@@ -791,12 +790,10 @@
 
         <div>
           <Label for="milestone-target-date" class="mb-2">{t('milestones.targetDate')}</Label>
-          <input
+          <Input
             id="milestone-target-date"
             type="date"
             bind:value={formData.target_date}
-            class="w-full px-4 py-3 rounded border transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
-            style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
           />
         </div>
 

@@ -5,6 +5,7 @@
   import LinkItemSearchResult from './LinkItemSearchResult.svelte';
   import BasePicker from '../pickers/BasePicker.svelte';
   import PagePicker from '../pickers/PagePicker.svelte';
+  import Input from '../components/Input.svelte';
   import { api } from '../api.js';
   import { t } from '../stores/i18n.svelte.js';
   import { useEventListener } from 'runed';
@@ -320,17 +321,16 @@
         {:else}
           <!-- Search Input -->
           <div class="relative">
-            <input
+            <Input
               id="link-target-search"
-              bind:this={inputRef}
+              bind:inputRef={inputRef}
               type="text"
-              value={searchQuery}
+              bind:value={searchQuery}
               oninput={handleSearchInput}
               onkeydown={handleKeyDown}
               placeholder={searchPlaceholder}
-              class="w-full px-3 py-2 text-sm border rounded bg-[var(--ds-background-input)] text-[var(--ds-text)] placeholder:text-[var(--ds-text-subtlest)] focus:outline-none focus:ring-1 focus:ring-[var(--ds-border-focused)] focus:border-[var(--ds-border-focused)] disabled:text-[var(--ds-text-disabled)] disabled:cursor-not-allowed"
-              style="border-color: var(--ds-border);"
               disabled={searchDisabled}
+              size="small"
             />
 
             {#if searchDisabled}

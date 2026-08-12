@@ -30,6 +30,7 @@
   import Label from '../components/Label.svelte';
   import Checkbox from '../components/Checkbox.svelte';
   import DialogFooter from '../dialogs/DialogFooter.svelte';
+  import Input from '../components/Input.svelte';
   import { toHotkeyString } from '../utils/keyboardShortcuts.js';
   import DescriptionText from '../components/DescriptionText.svelte';
 
@@ -552,12 +553,11 @@
           <div class="space-y-4">
             <div>
               <Label color="default" required class="mb-2">{t('settings.configSets.name')}</Label>
-              <input
+              <Input
                 type="text"
                 bind:value={newConfigSet.name}
                 placeholder={t('settings.configSets.namePlaceholder')}
-                class="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2"
-                style="background-color: var(--ds-surface); border-color: var(--ds-border); color: var(--ds-text);"
+                size="small"
               />
             </div>
 
@@ -871,11 +871,10 @@
       <div class="space-y-4">
         <div>
           <Label color="default" required class="mb-2">{t('settings.configSets.name')}</Label>
-          <input
+          <Input
             type="text"
             bind:value={editConfigSet.name}
-            class="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2"
-            style="background-color: var(--ds-surface); border-color: var(--ds-border); color: var(--ds-text);"
+            size="small"
           />
         </div>
 

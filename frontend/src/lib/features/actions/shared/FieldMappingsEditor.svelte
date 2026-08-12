@@ -3,6 +3,7 @@
   import { t } from '../../../stores/i18n.svelte.js';
   import Select from '../../../components/Select.svelte';
   import FieldSelector from '../../../pickers/FieldSelector.svelte';
+  import Input from '../../../components/Input.svelte';
   import { getFieldSelectorValue, backendFieldName } from './fieldNameMapping.js';
 
   let {
@@ -71,9 +72,9 @@
                 />
               </div>
             {:else}
-              <input
+              <Input
                 type="text"
-                class="w-full px-2 py-1.5 border rounded text-xs config-input"
+                class="text-xs"
                 value={mapping.source_value}
                 oninput={(e) => handleMappingChange(index, 'source_value', e.currentTarget.value)}
                 placeholder={mapping.source_type === 'variable' ? '{{item.assignee_id}}' : t('actions.config.fromField')}
@@ -108,17 +109,6 @@
 </div>
 
 <style>
-  .config-input {
-    background-color: var(--ds-surface);
-    border-color: var(--ds-border);
-    color: var(--ds-text);
-  }
-
-  .config-input:focus {
-    border-color: var(--ds-interactive);
-    outline: none;
-  }
-
   .add-mapping-btn {
     color: var(--ds-text-subtle);
     border-color: var(--ds-border);

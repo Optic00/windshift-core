@@ -12,6 +12,8 @@
   import Spinner from '../components/Spinner.svelte';
   import Lozenge from '../components/Lozenge.svelte';
   import DataTable from '../components/DataTable.svelte';
+  import Checkbox from '../components/Checkbox.svelte';
+  import Input from '../components/Input.svelte';
   import { successToast, errorToast } from '../stores/toasts.svelte.js';
   import { confirm } from '../composables/useConfirm.js';
 
@@ -355,32 +357,26 @@
       <div class="space-y-4 p-4">
         <label class="block">
           <span class="text-sm font-medium" style="color: var(--ds-text);">Name</span>
-          <input
-            class="mt-1 w-full rounded-md border px-3 py-2 text-sm"
-            style="background: var(--ds-surface); color: var(--ds-text); border-color: var(--ds-border);"
+          <Input
+            class="mt-1"
+            size="small"
             bind:value={poolForm.name}
             placeholder="e.g. default-runners"
           />
         </label>
         <label class="block">
           <span class="text-sm font-medium" style="color: var(--ds-text);">Max concurrent runs</span>
-          <input
+          <Input
             type="number"
             min="0"
-            class="mt-1 w-full rounded-md border px-3 py-2 text-sm"
-            style="background: var(--ds-surface); color: var(--ds-text); border-color: var(--ds-border);"
+            class="mt-1"
+            size="small"
             bind:value={poolForm.maxConcurrent}
           />
           <span class="text-xs" style="color: var(--ds-text-subtle);">0 = unlimited</span>
         </label>
-        <label class="flex items-center gap-2">
-          <input type="checkbox" bind:checked={poolForm.appliesToAll} />
-          <span class="text-sm" style="color: var(--ds-text);">Available to all workspaces</span>
-        </label>
-        <label class="flex items-center gap-2">
-          <input type="checkbox" bind:checked={poolForm.enabled} />
-          <span class="text-sm" style="color: var(--ds-text);">Enabled</span>
-        </label>
+        <Checkbox bind:checked={poolForm.appliesToAll} label="Available to all workspaces" size="small" />
+        <Checkbox bind:checked={poolForm.enabled} label="Enabled" size="small" />
         <div class="flex justify-end gap-2 pt-2 border-t" style="border-color: var(--ds-border);">
           <Button variant="secondary" onclick={() => (showCreatePool = false)} keyboardHint="Esc">Cancel</Button>
           <Button variant="primary" onclick={createPool} loading={creating} disabled={!canCreate} keyboardHint={submitHint}>Create pool</Button>
@@ -397,20 +393,20 @@
       <div class="space-y-4 p-4">
         <label class="block">
           <span class="text-sm font-medium" style="color: var(--ds-text);">Description (optional)</span>
-          <input
-            class="mt-1 w-full rounded-md border px-3 py-2 text-sm"
-            style="background: var(--ds-surface); color: var(--ds-text); border-color: var(--ds-border);"
+          <Input
+            class="mt-1"
+            size="small"
             bind:value={mintForm.description}
             placeholder="e.g. eu-west runner box"
           />
         </label>
         <label class="block">
           <span class="text-sm font-medium" style="color: var(--ds-text);">Expires in (hours)</span>
-          <input
+          <Input
             type="number"
             min="0"
-            class="mt-1 w-full rounded-md border px-3 py-2 text-sm"
-            style="background: var(--ds-surface); color: var(--ds-text); border-color: var(--ds-border);"
+            class="mt-1"
+            size="small"
             bind:value={mintForm.ttlHours}
           />
           <span class="text-xs" style="color: var(--ds-text-subtle);">0 = never expires (revoke to disable)</span>

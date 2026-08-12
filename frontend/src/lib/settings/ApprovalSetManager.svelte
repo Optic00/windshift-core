@@ -12,6 +12,7 @@
   import Panel from '../components/Panel.svelte';
   import PageHeader from '../layout/PageHeader.svelte';
   import Lozenge from '../components/Lozenge.svelte';
+  import SearchInput from '../components/SearchInput.svelte';
   import { toHotkeyString } from '../utils/keyboardShortcuts.js';
 
   let approvalSets = $state([]);
@@ -97,16 +98,7 @@
 />
 
 <div class="mb-6">
-  <div class="relative max-w-md">
-    <Search class="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4" style="color: var(--ds-icon-subtle);" />
-    <input
-      type="text"
-      placeholder={t('approvalSets.searchPlaceholder')}
-      bind:value={searchQuery}
-      class="w-full pl-9 pr-4 py-2 border rounded text-sm focus:outline-none focus:ring-2"
-      style="border-color: var(--ds-border); background-color: var(--ds-surface-raised); color: var(--ds-text);"
-    />
-  </div>
+  <SearchInput bind:value={searchQuery} placeholder={t('approvalSets.searchPlaceholder')} class="max-w-md" />
 </div>
 
 {#if loading}

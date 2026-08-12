@@ -508,12 +508,12 @@
           <!-- Search Bar (embedded) -->
           <div class="relative w-64">
             <IconSearch class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style="color: var(--ds-text-subtle);" />
-            <input
+            <Input
               type="text"
               bind:value={channelSearch}
               placeholder={t('channels.searchChannels')}
-              class="w-full pl-9 pr-3 py-2 text-sm rounded-lg border"
-              style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
+              class="pl-9"
+              size="small"
             />
           </div>
         {/if}
@@ -537,12 +537,12 @@
       <div class="mb-6">
         <div class="relative max-w-md">
           <IconSearch class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style="color: var(--ds-text-subtle);" />
-          <input
+          <Input
             type="text"
             bind:value={channelSearch}
             placeholder={t('channels.searchChannels')}
-            class="w-full pl-9 pr-3 py-2 text-sm rounded-lg border"
-            style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
+            class="pl-9"
+            size="small"
           />
         </div>
       </div>

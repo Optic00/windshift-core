@@ -18,7 +18,9 @@
   import FieldLayoutEditor from '../../editors/FieldLayoutEditor.svelte';
   import IconSelector from '../../pickers/IconSelector.svelte';
   import Label from '../../components/Label.svelte';
+  import Input from '../../components/Input.svelte';
   import DescriptionText from '../../components/DescriptionText.svelte';
+  import Textarea from '../../components/Textarea.svelte';
   import Checkbox from '../../components/Checkbox.svelte';
   import DialogFooter from '../../dialogs/DialogFooter.svelte';
   import { t } from '../../stores/i18n.svelte.js';
@@ -838,22 +840,20 @@
     <div class="p-6 space-y-4">
       <div>
         <Label color="default" class="mb-1">{t('common.name')}</Label>
-        <input
+        <Input
           type="text"
           bind:value={setFormData.name}
           required
-          class="w-full px-3 py-2 rounded-lg"
-          style="background: var(--ds-background-input); border: 1px solid var(--ds-border); color: var(--ds-text);"
+          size="small"
         />
       </div>
       <div>
         <Label color="default" class="mb-1">{t('common.description')}</Label>
-        <textarea
+        <Textarea
           bind:value={setFormData.description}
-          rows="3"
-          class="w-full px-3 py-2 rounded-lg"
-          style="background: var(--ds-background-input); border: 1px solid var(--ds-border); color: var(--ds-text);"
-        ></textarea>
+          rows={3}
+          size="small"
+        />
       </div>
       <Checkbox bind:checked={setFormData.is_default} label={t('assets.default')} />
     </div>
@@ -875,22 +875,20 @@
     <div class="p-6 space-y-4">
       <div>
         <Label color="default" class="mb-1">{t('common.name')}</Label>
-        <input
+        <Input
           type="text"
           bind:value={typeFormData.name}
           required
-          class="w-full px-3 py-2 rounded-lg"
-          style="background: var(--ds-background-input); border: 1px solid var(--ds-border); color: var(--ds-text);"
+          size="small"
         />
       </div>
       <div>
         <Label color="default" class="mb-1">{t('common.description')}</Label>
-        <textarea
+        <Textarea
           bind:value={typeFormData.description}
-          rows="2"
-          class="w-full px-3 py-2 rounded-lg"
-          style="background: var(--ds-background-input); border: 1px solid var(--ds-border); color: var(--ds-text);"
-        ></textarea>
+          rows={2}
+          size="small"
+        />
       </div>
       <div>
         <IconSelector bind:selectedColor={typeFormData.color} colorOnly compact />
@@ -915,22 +913,20 @@
     <div class="p-6 space-y-4">
       <div>
         <Label color="default" class="mb-1">{t('common.name')}</Label>
-        <input
+        <Input
           type="text"
           bind:value={categoryFormData.name}
           required
-          class="w-full px-3 py-2 rounded-lg"
-          style="background: var(--ds-background-input); border: 1px solid var(--ds-border); color: var(--ds-text);"
+          size="small"
         />
       </div>
       <div>
         <Label color="default" class="mb-1">{t('common.description')}</Label>
-        <textarea
+        <Textarea
           bind:value={categoryFormData.description}
-          rows="2"
-          class="w-full px-3 py-2 rounded-lg"
-          style="background: var(--ds-background-input); border: 1px solid var(--ds-border); color: var(--ds-text);"
-        ></textarea>
+          rows={2}
+          size="small"
+        />
       </div>
       <div>
         <Label color="default" class="mb-1">{t('assets.parentCategory')}</Label>

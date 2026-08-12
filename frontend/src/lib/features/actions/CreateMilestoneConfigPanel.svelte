@@ -3,6 +3,8 @@
   import { actionFlowStore } from '../../stores/actionFlowStore.svelte.js';
   import Select from '../../components/Select.svelte';
   import Checkbox from '../../components/Checkbox.svelte';
+  import Input from '../../components/Input.svelte';
+  import Textarea from '../../components/Textarea.svelte';
 
   let {
     selectedNode,
@@ -48,10 +50,10 @@
         <HelpCircle class="w-3.5 h-3.5" />
       </button>
     </div>
-    <input
+    <Input
       id="cm-upsert-key"
       type="text"
-      class="w-full px-3 py-2 border rounded-md text-sm config-input"
+      size="small"
       value={cfg.upsert_key_template || ''}
       placeholder={refShortLiteral}
       oninput={(e) => flowStore.updateNodeConfig(selectedNode.id, { upsert_key_template: e.currentTarget.value })}
@@ -62,10 +64,10 @@
 
   <div>
     <label for="cm-name" class="block text-xs font-medium mb-1">Milestone name template</label>
-    <input
+    <Input
       id="cm-name"
       type="text"
-      class="w-full px-3 py-2 border rounded-md text-sm config-input"
+      size="small"
       value={cfg.name_template || ''}
       placeholder={namePlaceholder}
       oninput={(e) => flowStore.updateNodeConfig(selectedNode.id, { name_template: e.currentTarget.value })}
@@ -111,14 +113,13 @@
 
   <div>
     <label for="cm-description" class="block text-xs font-medium mb-1">Description template (insert only)</label>
-    <textarea
+    <Textarea
       id="cm-description"
-      class="w-full px-3 py-2 border rounded-md text-sm config-input"
-      rows="3"
+      rows={3}
       value={cfg.description_template || ''}
       placeholder={descPlaceholder}
       oninput={(e) => flowStore.updateNodeConfig(selectedNode.id, { description_template: e.currentTarget.value })}
-    ></textarea>
+    />
   </div>
 </div>
 

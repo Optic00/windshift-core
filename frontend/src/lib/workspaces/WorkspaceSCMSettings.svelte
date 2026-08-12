@@ -8,7 +8,9 @@
   import { t } from '../stores/i18n.svelte.js';
   import { confirm } from '../composables/useConfirm.js';
   import DescriptionText from '../components/DescriptionText.svelte';
+  import Checkbox from '../components/Checkbox.svelte';
   import EmptyState from '../components/EmptyState.svelte';
+  import Input from '../components/Input.svelte';
   import { safeHref } from '../utils/sanitize';
   import { loadWorkspaceSCMOverview } from './workspaceSCMData.js';
 
@@ -363,19 +365,14 @@
               <div class="border-t px-4 py-3 space-y-4" style="border-color: var(--ds-border);">
                 <!-- Smart-commit toggle -->
                 <div class="rounded-md p-3" style="background-color: var(--ds-surface);">
-                  <label class="flex items-start gap-3 cursor-pointer">
-                    <input
-                      data-testid={`scm-smart-commits-${conn.id}`}
-                      type="checkbox"
-                      class="mt-0.5"
-                      checked={conn.smart_commits_enabled}
-                      onchange={(e) => toggleSmartCommits(conn, e.currentTarget.checked)}
-                    />
-                    <div class="flex-1 min-w-0">
-                      <div class="text-sm font-medium" style="color: var(--ds-text);">{t('scm.smartCommitsTitle')}</div>
-                      <div class="text-xs mt-0.5" style="color: var(--ds-text-subtle);">{t('scm.smartCommitsDescription')}</div>
-                    </div>
-                  </label>
+                  <Checkbox
+                    checked={conn.smart_commits_enabled}
+                    onchange={(checked) => toggleSmartCommits(conn, checked)}
+                    dataTestid={`scm-smart-commits-${conn.id}`}
+                    label={t('scm.smartCommitsTitle')}
+                    hint={t('scm.smartCommitsDescription')}
+                    size="small"
+                  />
                   {#if conn.smart_commits_enabled}
                     <div class="mt-3 flex items-start gap-2 p-2 rounded text-xs" style="background-color: var(--ds-background-warning, #fff7e6); color: var(--ds-text-warning, #b35900); border: 1px solid var(--ds-border-warning, #f0b64d);">
                       <AlertTriangle class="w-4 h-4 flex-shrink-0 mt-0.5" />
@@ -452,20 +449,20 @@
                             <div class="grid grid-cols-2 gap-3">
                               <div>
                                 <label for="ws-scm-tag-pattern-{repo.id}" class="block text-xs font-medium mb-1">Tag pattern</label>
-                                <input
+                                <Input
                                   id="ws-scm-tag-pattern-{repo.id}"
                                   type="text"
-                                  class="w-full px-2 py-1 border rounded text-sm font-mono"
+                                  class="font-mono"
                                   bind:value={editingRepoSettings.milestone_tag_pattern}
                                   placeholder="v*"
                                 />
                               </div>
                               <div>
                                 <label for="ws-scm-branch-pattern-{repo.id}" class="block text-xs font-medium mb-1">Branch pattern</label>
-                                <input
+                                <Input
                                   id="ws-scm-branch-pattern-{repo.id}"
                                   type="text"
-                                  class="w-full px-2 py-1 border rounded text-sm font-mono"
+                                  class="font-mono"
                                   bind:value={editingRepoSettings.milestone_branch_pattern}
                                   placeholder="release/*"
                                 />

@@ -1,6 +1,7 @@
 <script>
   import Select from '../../../components/Select.svelte';
   import Button from '../../../components/Button.svelte';
+  import Input from '../../../components/Input.svelte';
 
   // Field / operator / value config for a condition node, shared by the
   // action flow editors. The available fields and operators are
@@ -32,9 +33,9 @@
 </div>
 <div>
   <div class="block text-xs font-medium mb-1">Value</div>
-  <input
+  <Input
     type="text"
-    class="w-full px-3 py-2 border rounded-md text-sm config-input"
+    size="small"
     value={selectedNode.data?.config?.value || ''}
     oninput={(e) =>
       store.updateNodeConfig(selectedNode.id, { value: e.currentTarget.value })}

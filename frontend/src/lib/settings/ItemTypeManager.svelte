@@ -327,7 +327,7 @@
       <form onsubmit={(e) => { e.preventDefault(); saveItemType(); }}>
         <div class="form-group">
           <label for="name">{t('settings.itemTypes.name')}</label>
-          <input
+          <Input
             type="text"
             id="name"
             placeholder="e.g. Epic, Story, Task, Bug"

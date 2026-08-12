@@ -3,6 +3,8 @@
   import { successToast, errorToast } from '../../../stores/toasts.svelte.js';
   import Modal from '../../../dialogs/Modal.svelte';
   import Button from '../../../components/Button.svelte';
+  import Input from '../../../components/Input.svelte';
+  import Textarea from '../../../components/Textarea.svelte';
 
   let {
     parentId,
@@ -158,10 +160,10 @@
       <div class="space-y-4">
         <div>
           <label for="action-name" class="block text-sm font-medium mb-1 modal-label">Name</label>
-          <input
+          <Input
             id="action-name"
             type="text"
-            class="w-full px-3 py-2 border rounded-md text-sm modal-input"
+            size="small"
             bind:value={newActionName}
             placeholder={namePlaceholder}
           />
@@ -169,12 +171,11 @@
 
         <div>
           <label for="action-description" class="block text-sm font-medium mb-1 modal-label">Description</label>
-          <textarea
+          <Textarea
             id="action-description"
-            class="w-full px-3 py-2 border rounded-md text-sm modal-input"
-            rows="2"
+            rows={2}
             bind:value={newActionDescription}
-          ></textarea>
+          />
         </div>
       </div>
 
@@ -208,14 +209,4 @@
     color: var(--ds-text);
   }
 
-  .modal-input {
-    background-color: var(--ds-surface);
-    border-color: var(--ds-border);
-    color: var(--ds-text);
-  }
-
-  .modal-input:focus {
-    border-color: var(--ds-interactive);
-    outline: none;
-  }
 </style>

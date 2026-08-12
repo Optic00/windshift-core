@@ -11,6 +11,7 @@
   import { t } from '../../stores/i18n.svelte.js';
   import { errorToast } from '../../stores/toasts.svelte.js';
   import Checkbox from '../../components/Checkbox.svelte';
+  import Input from '../../components/Input.svelte';
   import EmptyState from '../../components/EmptyState.svelte';
   import Button from '../../components/Button.svelte';
 
@@ -398,14 +399,14 @@
               <div class="mb-2 px-1">
                 {#if isAddingTodo}
                   <div class="flex items-center gap-3 p-3 border rounded-lg" style="border-color: var(--ds-interactive); background-color: var(--ds-background-selected);">
-                    <input
+                    <Input
                       id="new-todo-input"
                       type="text"
                       bind:value={newTodoTitle}
                       onkeydown={handleKeydown}
                       placeholder={t('todo.whatNeedsToBeDone')}
-                      class="flex-1 px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      style="background-color: var(--ds-background-input); color: var(--ds-text); border-color: var(--ds-border);"
+                      class="flex-1"
+                      size="small"
                     />
                     <button
                       onclick={saveTodo}

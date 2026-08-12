@@ -6,6 +6,7 @@
   import Button from '../../components/Button.svelte';
   import { confirm } from '../../composables/useConfirm.js';
   import EmptyState from '../../components/EmptyState.svelte';
+  import Input from '../../components/Input.svelte';
   import Spinner from '../../components/Spinner.svelte';
   import Textarea from '../../components/Textarea.svelte';
   import SectionHeader from '../../layout/SectionHeader.svelte';
@@ -184,12 +185,11 @@
           <div class="flex-1">
             {#if editMode}
               <!-- svelte-ignore a11y_autofocus -->
-              <input
+              <Input
                 type="text"
                 bind:value={editName}
                 onkeydown={handleEditKeydown}
-                class="text-2xl font-semibold px-2 py-1 border rounded w-full"
-                style="border-color: var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text);"
+                class="text-2xl font-semibold px-2 py-1"
                 autofocus
               />
             {:else}
@@ -427,4 +427,3 @@
     {/if}
   </div>
 </div>
-

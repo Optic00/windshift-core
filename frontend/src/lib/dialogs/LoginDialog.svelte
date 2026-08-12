@@ -8,6 +8,7 @@
   import { APP_NAME } from '../constants.js';
   import Button from '../components/Button.svelte';
   import Checkbox from '../components/Checkbox.svelte';
+  import Input from '../components/Input.svelte';
   import Label from '../components/Label.svelte';
   import AlertBox from '../components/AlertBox.svelte';
   import {
@@ -335,13 +336,13 @@
             <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
               <User class="h-4 w-4 text-[var(--ds-icon)]" />
             </div>
-            <input
+            <Input
               id="emailOrUsernamePasskey"
               type="text"
               bind:value={emailOrUsername}
               onblur={checkFidoAvailability}
               disabled={$authStore.loading || tryingFido}
-              class="block w-full pl-10 pr-3 py-2 border border-[var(--ds-border)] rounded-md leading-5 bg-[var(--ds-background-input)] placeholder-[var(--ds-text-subtlest)] text-[var(--ds-text)] focus:outline-none focus:placeholder-[var(--ds-text-disabled)] focus:ring-1 focus:ring-[var(--ds-border-focused)] focus:border-[var(--ds-border-focused)] disabled:bg-[var(--ds-background-disabled)] disabled:text-[var(--ds-text-disabled)]"
+              class="pl-10 pr-3 py-2 leading-5"
               placeholder={t('placeholders.enterEmailOrUsername')}
               autocomplete="username"
             />
@@ -376,15 +377,15 @@
           <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
             <User class="h-4 w-4 text-[var(--ds-icon)]" />
           </div>
-          <input
-            bind:this={emailInput}
+          <Input
+            bind:inputRef={emailInput}
             id="emailOrUsername"
             type="text"
             bind:value={emailOrUsername}
             onkeydown={handleKeydown}
             onblur={checkFidoAvailability}
             disabled={$authStore.loading}
-            class="block w-full pl-10 pr-3 py-2 border border-[var(--ds-border)] rounded-md leading-5 bg-[var(--ds-background-input)] placeholder-[var(--ds-text-subtlest)] text-[var(--ds-text)] focus:outline-none focus:placeholder-[var(--ds-text-disabled)] focus:ring-1 focus:ring-[var(--ds-border-focused)] focus:border-[var(--ds-border-focused)] disabled:bg-[var(--ds-background-disabled)] disabled:text-[var(--ds-text-disabled)]"
+            class="pl-10 pr-3 py-2 leading-5"
             placeholder={t('placeholders.enterEmailOrUsername')}
             autocomplete="username"
             required
@@ -401,13 +402,13 @@
           <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
             <Lock class="h-4 w-4 text-[var(--ds-icon)]" />
           </div>
-          <input
+          <Input
             id="password"
             type={showPassword ? 'text' : 'password'}
             bind:value={password}
             onkeydown={handleKeydown}
             disabled={$authStore.loading}
-            class="block w-full pl-10 pr-10 py-2 border border-[var(--ds-border)] rounded-md leading-5 bg-[var(--ds-background-input)] placeholder-[var(--ds-text-subtlest)] text-[var(--ds-text)] focus:outline-none focus:placeholder-[var(--ds-text-disabled)] focus:ring-1 focus:ring-[var(--ds-border-focused)] focus:border-[var(--ds-border-focused)] disabled:bg-[var(--ds-background-disabled)] disabled:text-[var(--ds-text-disabled)]"
+            class="pl-10 pr-10 py-2 leading-5"
             placeholder={t('placeholders.enterPassword')}
             autocomplete="current-password"
             required
