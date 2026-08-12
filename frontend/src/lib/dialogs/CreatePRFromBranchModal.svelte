@@ -1,6 +1,8 @@
 <script>
   import { api } from '../api.js';
+  import Input from '../components/Input.svelte';
   import Label from '../components/Label.svelte';
+  import Textarea from '../components/Textarea.svelte';
   import Modal from './Modal.svelte';
   import ModalHeader from './ModalHeader.svelte';
   import DialogFooter from './DialogFooter.svelte';
@@ -65,36 +67,34 @@
       <!-- PR Title -->
       <div>
         <Label color="default" class="mb-1.5">{t('scm.prTitle')}</Label>
-        <input
+        <Input
           type="text"
           bind:value={prTitle}
           placeholder={itemKey ? `${itemKey}: ${itemTitle}` : 'Pull request title'}
-          class="w-full px-3 py-2 rounded-lg border text-sm"
-          style="border-color: var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text);"
+          size="small"
         />
       </div>
 
       <!-- PR Body -->
       <div>
         <Label color="default" class="mb-1.5">{t('scm.description')}</Label>
-        <textarea
+        <Textarea
           bind:value={prBody}
           placeholder={itemKey ? `Linked to ${itemKey}` : 'Pull request description'}
-          rows="3"
-          class="w-full px-3 py-2 rounded-lg border text-sm resize-none"
-          style="border-color: var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text);"
-        ></textarea>
+          rows={3}
+          size="small"
+        />
       </div>
 
       <!-- Base Branch -->
       <div>
         <Label color="default" class="mb-1.5">{t('scm.baseBranchPR')}</Label>
-        <input
+        <Input
           type="text"
           bind:value={baseBranch}
           placeholder="main"
-          class="w-full px-3 py-2 rounded-lg border text-sm font-mono"
-          style="border-color: var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text);"
+          class="font-mono"
+          size="small"
         />
         <DescriptionText variant="subtlest">
           {t('scm.baseBranchPRHelp')}

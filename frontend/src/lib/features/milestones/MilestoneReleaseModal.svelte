@@ -2,6 +2,8 @@
   import { onMount } from 'svelte';
   import { api } from '../../api.js';
   import { successToast, errorToast } from '../../stores/toasts.svelte.js';
+  import Checkbox from '../../components/Checkbox.svelte';
+  import Input from '../../components/Input.svelte';
   import Label from '../../components/Label.svelte';
   import Textarea from '../../components/Textarea.svelte';
   import DialogFooter from '../../dialogs/DialogFooter.svelte';
@@ -241,24 +243,22 @@
     <!-- Tag Name -->
     <div>
       <Label required>Tag Name</Label>
-      <input
+      <Input
         type="text"
         bind:value={tagName}
         placeholder="v1.0.0"
-        class="w-full px-3 py-2 text-sm rounded border focus:outline-none"
-        style="background: var(--ds-background-input); color: var(--ds-text); border-color: var(--ds-border);"
+        size="small"
       />
     </div>
 
     <!-- Release Title -->
     <div>
       <Label>Release Title</Label>
-      <input
+      <Input
         type="text"
         bind:value={releaseName}
         placeholder="Release title"
-        class="w-full px-3 py-2 text-sm rounded border focus:outline-none"
-        style="background: var(--ds-background-input); color: var(--ds-text); border-color: var(--ds-border);"
+        size="small"
       />
     </div>
 
@@ -297,25 +297,18 @@
     <!-- Target Branch (optional) -->
     <div>
       <Label>Target Branch / Commit <span class="font-normal" style="color: var(--ds-text-subtle);">(optional)</span></Label>
-      <input
+      <Input
         type="text"
         bind:value={targetCommitish}
         placeholder="main"
-        class="w-full px-3 py-2 text-sm rounded border focus:outline-none"
-        style="background: var(--ds-background-input); color: var(--ds-text); border-color: var(--ds-border);"
+        size="small"
       />
     </div>
 
     <!-- Draft / Pre-release checkboxes -->
     <div class="flex items-center gap-6">
-      <label class="flex items-center gap-2 text-sm cursor-pointer" style="color: var(--ds-text);">
-        <input type="checkbox" bind:checked={isDraft} />
-        Draft
-      </label>
-      <label class="flex items-center gap-2 text-sm cursor-pointer" style="color: var(--ds-text);">
-        <input type="checkbox" bind:checked={isPrerelease} />
-        Pre-release
-      </label>
+      <Checkbox bind:checked={isDraft} label="Draft" size="small" />
+      <Checkbox bind:checked={isPrerelease} label="Pre-release" size="small" />
     </div>
   {/if}
 </div>

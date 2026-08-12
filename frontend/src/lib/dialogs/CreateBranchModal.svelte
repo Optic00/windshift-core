@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { api } from '../api.js';
+  import Input from '../components/Input.svelte';
   import Label from '../components/Label.svelte';
   import BasePicker from '../pickers/BasePicker.svelte';
   import Modal from './Modal.svelte';
@@ -144,12 +145,12 @@
           <Label color="default" required class="mb-1.5">{t('scm.branchName')}</Label>
           <div class="flex items-center gap-2">
             <GitBranch class="w-4 h-4 flex-shrink-0" style="color: var(--ds-text-subtle);" />
-            <input
+            <Input
               type="text"
               bind:value={branchName}
               placeholder="feature/PROJ-123-add-login"
-              class="flex-1 px-3 py-2 rounded-lg border text-sm font-mono"
-              style="border-color: var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text);"
+              class="flex-1 font-mono"
+              size="small"
             />
           </div>
         </div>
@@ -157,12 +158,12 @@
         <!-- Base Branch -->
         <div>
           <Label color="default" class="mb-1.5">{t('scm.baseBranch')}</Label>
-          <input
+          <Input
             type="text"
             bind:value={baseBranch}
             placeholder={selectedRepo?.default_branch || 'main'}
-            class="w-full px-3 py-2 rounded-lg border text-sm font-mono"
-            style="border-color: var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text);"
+            class="font-mono"
+            size="small"
           />
           <DescriptionText variant="subtlest">
             {t('scm.baseBranchHelp')}

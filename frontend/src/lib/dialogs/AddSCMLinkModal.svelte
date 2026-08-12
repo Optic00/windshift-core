@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { api } from '../api.js';
   import BasePicker from '../pickers/BasePicker.svelte';
+  import Input from '../components/Input.svelte';
   import Label from '../components/Label.svelte';
   import Modal from './Modal.svelte';
   import ModalHeader from './ModalHeader.svelte';
@@ -232,24 +233,22 @@
         <!-- External ID -->
         <div>
           <Label color="default" required class="mb-1.5">{getIdLabel(linkType)}</Label>
-          <input
+          <Input
             type="text"
             bind:value={externalId}
             placeholder={getPlaceholder(linkType)}
-            class="w-full px-3 py-2 rounded-lg border text-sm"
-            style="border-color: var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text);"
+            size="small"
           />
         </div>
 
         <!-- Title (optional) -->
         <div>
           <Label color="default" class="mb-1.5">{t('scm.titleOptional')}</Label>
-          <input
+          <Input
             type="text"
             bind:value={title}
             placeholder="e.g., Add user authentication"
-            class="w-full px-3 py-2 rounded-lg border text-sm"
-            style="border-color: var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text);"
+            size="small"
           />
         </div>
 
