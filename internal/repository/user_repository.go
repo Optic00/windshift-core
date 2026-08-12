@@ -318,8 +318,8 @@ type CreateUserParams struct {
 	OAuthClientID    *int
 }
 
-// WorkspaceManagedAgentIdentityParams contains the identity and initial role
-// fields created atomically with a workspace-managed agent profile.
+// WorkspaceManagedAgentIdentityParams contains the identity fields created
+// atomically with a workspace-managed agent profile.
 type WorkspaceManagedAgentIdentityParams struct {
 	Email           string
 	Username        string
@@ -327,11 +327,10 @@ type WorkspaceManagedAgentIdentityParams struct {
 	AvatarURL       string
 	WorkspaceID     int
 	GrantedByUserID int
-	RoleName        string
 }
 
-// CreateWorkspaceManagedAgentIdentity creates the agent user and its initial
-// workspace role inside the caller's transaction.
+// CreateWorkspaceManagedAgentIdentity creates the agent user and grants Editor
+// only when Everyone does not already inherit Editor access in the workspace.
 func CreateWorkspaceManagedAgentIdentity(ctx context.Context, tx database.Tx, p WorkspaceManagedAgentIdentityParams) (int, error) {
 	var id int
 	err := tx.QueryRowContext(ctx, `
@@ -348,17 +347,49 @@ func CreateWorkspaceManagedAgentIdentity(ctx context.Context, tx database.Tx, p 
 		}
 		return 0, fmt.Errorf("create workspace-managed agent identity: %w", err)
 	}
-	result, err := tx.ExecContext(ctx, `
-		INSERT INTO user_workspace_roles (user_id, workspace_id, role_id, granted_by, granted_at)
-		SELECT ?, ?, id, ?, CURRENT_TIMESTAMP
-		FROM workspace_roles
-		WHERE name = ?
-	`, id, p.WorkspaceID, p.GrantedByUserID, p.RoleName)
+
+	var editorRoleID int
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM workspace_roles WHERE name = ?`, models.RoleEditor).Scan(&editorRoleID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, fmt.Errorf("load workspace-managed agent role %q: %w", models.RoleEditor, ErrNotFound)
+		}
+		return 0, fmt.Errorf("load workspace-managed agent role %q: %w", models.RoleEditor, err)
+	}
+
+	// Everyone inherits Editor while both Viewer and Editor have no explicit
+	// user or group assignments. Preserve that open state by adding no row.
+	var editorRestricted bool
+	err = tx.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM user_workspace_roles uwr
+			JOIN workspace_roles wr ON wr.id = uwr.role_id
+			WHERE uwr.workspace_id = ? AND wr.name IN (?, ?)
+			UNION ALL
+			SELECT 1
+			FROM group_workspace_roles gwr
+			JOIN workspace_roles wr ON wr.id = gwr.role_id
+			WHERE gwr.workspace_id = ? AND wr.name IN (?, ?)
+		)
+	`, p.WorkspaceID, models.RoleViewer, models.RoleEditor,
+		p.WorkspaceID, models.RoleViewer, models.RoleEditor).Scan(&editorRestricted)
 	if err != nil {
-		return 0, fmt.Errorf("grant workspace-managed agent role: %w", err)
+		return 0, fmt.Errorf("check workspace Editor restrictions: %w", err)
+	}
+	if !editorRestricted {
+		return id, nil
+	}
+
+	result, err := tx.ExecContext(ctx, `
+		INSERT INTO user_workspace_roles
+			(user_id, workspace_id, role_id, granted_by, granted_at)
+		VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+	`, id, p.WorkspaceID, editorRoleID, p.GrantedByUserID)
+	if err != nil {
+		return 0, fmt.Errorf("grant workspace-managed agent Editor role: %w", err)
 	}
 	if rows, _ := result.RowsAffected(); rows != 1 {
-		return 0, fmt.Errorf("grant workspace-managed agent role %q: %w", p.RoleName, ErrNotFound)
+		return 0, fmt.Errorf("grant workspace-managed agent role %q: %w", models.RoleEditor, ErrNotFound)
 	}
 	return id, nil
 }

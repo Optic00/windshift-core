@@ -273,9 +273,9 @@ func (s *BindingService) ValidateRunnerPool(workspaceID, poolID int) error {
 }
 
 // CreateStudioProfile creates a Draft from one of the approved templates. In
-// workspace-managed mode the user, Viewer role, binding, repositories, and
-// skill attachments share one transaction. In fallback mode the same
-// transaction creates the binding around an already eligible centralized
+// workspace-managed mode the user, conditional Editor role, binding,
+// repositories, and skill attachments share one transaction. In fallback mode
+// the same transaction creates the binding around an eligible centralized
 // identity.
 func (s *BindingService) CreateStudioProfile(ctx context.Context, req CreateStudioProfileRequest) (*models.WorkspaceAgentBinding, error) {
 	if s.db == nil || s.prompts == nil {
@@ -447,7 +447,6 @@ func createWorkspaceManagedAgentIdentity(ctx context.Context, tx database.Tx, re
 		AvatarURL:       req.AvatarURL,
 		WorkspaceID:     req.WorkspaceID,
 		GrantedByUserID: req.CreatedByUserID,
-		RoleName:        models.RoleViewer,
 	})
 	if err != nil {
 		if errors.Is(err, repository.ErrDuplicateEntry) {
@@ -548,6 +547,7 @@ func (s *BindingService) ValidateStudioProfile(ctx context.Context, workspaceID,
 			Code: "llm_connection_unavailable", Message: "The selected LLM connection is missing or disabled.", Dependency: "llm_connection",
 		})
 	}
+	s.validateProfilePermissions(binding, result)
 
 	switch binding.ProfileType {
 	case models.AgentProfileStandard:
@@ -556,7 +556,6 @@ func (s *BindingService) ValidateStudioProfile(ctx context.Context, workspaceID,
 				Code: "standard_runtime_unavailable", Message: "The built-in Standard agent runtime is not configured on this server.", Dependency: "standard_runtime",
 			})
 		}
-		s.validateStandardPermissions(binding, result)
 	case models.AgentProfileCoding:
 		if len(binding.Repos) == 0 {
 			result.Errors = append(result.Errors, ProfileValidationError{
@@ -592,22 +591,20 @@ func (s *BindingService) ValidateStudioProfile(ctx context.Context, workspaceID,
 	return result, nil
 }
 
-func (s *BindingService) validateStandardPermissions(binding *models.WorkspaceAgentBinding, result *ProfileValidationResult) {
-	required := []string{models.PermissionItemView, models.PermissionItemComment}
-	for _, group := range binding.CapabilityGroups {
-		switch agentstudio.CapabilityGroup(group) {
-		case agentstudio.CapabilityIssueManagement:
-			required = append(required, models.PermissionItemCreate, models.PermissionItemEdit)
-		case agentstudio.CapabilityCommentEditing:
-			required = append(required, models.PermissionItemComment)
-		case agentstudio.CapabilityPlanningActivity:
-			required = append(required, models.PermissionItemEdit)
-		case agentstudio.CapabilityKnowledgeDiagrams:
-			required = append(required, models.PermissionPageView, models.PermissionPageCreate, models.PermissionPageEdit)
-		case agentstudio.CapabilityActions:
-			required = append(required, models.PermissionActionManage)
-		case agentstudio.CapabilityTests:
-			required = append(required, models.PermissionTestView, models.PermissionTestExecute)
+func (s *BindingService) validateProfilePermissions(binding *models.WorkspaceAgentBinding, result *ProfileValidationResult) {
+	required := []string{models.PermissionItemView, models.PermissionItemComment, models.PermissionItemEdit}
+	if binding.ProfileType == models.AgentProfileStandard {
+		for _, group := range binding.CapabilityGroups {
+			switch agentstudio.CapabilityGroup(group) {
+			case agentstudio.CapabilityIssueManagement:
+				required = append(required, models.PermissionItemCreate)
+			case agentstudio.CapabilityKnowledgeDiagrams:
+				required = append(required, models.PermissionPageView, models.PermissionPageCreate, models.PermissionPageEdit)
+			case agentstudio.CapabilityActions:
+				required = append(required, models.PermissionActionManage)
+			case agentstudio.CapabilityTests:
+				required = append(required, models.PermissionTestView, models.PermissionTestExecute)
+			}
 		}
 	}
 	required = uniqueProfileStrings(required)
@@ -620,12 +617,16 @@ func (s *BindingService) validateStandardPermissions(binding *models.WorkspaceAg
 	}
 	for _, permission := range required {
 		if !grants[permission] {
+			message := fmt.Sprintf("Grant the acting identity the %s permission.", permission)
+			if permission == models.PermissionItemEdit {
+				message = "Grant the acting identity Editor access."
+			}
 			result.Errors = append(result.Errors, ProfileValidationError{
-				Code: "permission_missing", Message: fmt.Sprintf("Grant the acting identity the %s permission.", permission), Dependency: permission,
+				Code: "permission_missing", Message: message, Dependency: permission,
 			})
 		}
 	}
-	if slices.Contains(binding.CapabilityGroups, string(agentstudio.CapabilityUsersApprovals)) {
+	if binding.ProfileType == models.AgentProfileStandard && slices.Contains(binding.CapabilityGroups, string(agentstudio.CapabilityUsersApprovals)) {
 		allowed, err := s.permissions.HasGlobalPermission(binding.ActingUserID, models.PermissionUserList)
 		if err != nil || !allowed {
 			result.Errors = append(result.Errors, ProfileValidationError{
