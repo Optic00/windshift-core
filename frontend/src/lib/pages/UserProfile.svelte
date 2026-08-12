@@ -16,7 +16,7 @@
 	import PersonalLabelManager from '../features/labels/PersonalLabelManager.svelte';
 	import LeavePeriods from '../profile/LeavePeriods.svelte';
 	import { copyToClipboard } from '../utils/clipboard.js';
-	import { formatDate, formatDateSimple, formatDateShort } from '../utils/dateFormatter.js';
+	import { dateInputToISOString, formatDate, formatDateSimple, formatDateShort } from '../utils/dateFormatter.js';
 	import { t, i18n, SUPPORTED_LOCALES } from '../stores/i18n.svelte.js';
 	import { confirm } from '../composables/useConfirm.js';
 	import DescriptionText from '../components/DescriptionText.svelte';
@@ -159,7 +159,7 @@
 				user_id: agentId
 			};
 			if (s.expiresAt) {
-				payload.expires_at = new Date(s.expiresAt).toISOString();
+				payload.expires_at = dateInputToISOString(s.expiresAt);
 			}
 			const result = await api.createApiToken(payload);
 			s.token = result?.token || result?.api_token?.token || '';

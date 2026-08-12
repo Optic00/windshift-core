@@ -1,6 +1,7 @@
 // Centralized reactive state for the work-item create form.
 import { api } from '../api.js';
 import { isBooleanCustomFieldType } from '../utils/customFieldTypes.js';
+import { dateInputToISOString } from '../utils/dateFormatter.js';
 import { isGenericSubtaskType, sortItemTypesByHierarchy } from '../utils/hierarchy.js';
 import {
   isCreateSystemFieldAutoManaged,
@@ -914,11 +915,9 @@ class WorkItemFormStore {
       project_id: this.formData.project_id || null,
       story_points: this.#parsedStoryPoints(),
       estimate_minutes: this.#parsedEstimateMinutes(),
-      due_date: this.formData.due_date ? new Date(this.formData.due_date).toISOString() : null,
-      start_date: this.formData.start_date
-        ? new Date(this.formData.start_date).toISOString()
-        : null,
-      end_date: this.formData.end_date ? new Date(this.formData.end_date).toISOString() : null,
+      due_date: dateInputToISOString(this.formData.due_date),
+      start_date: dateInputToISOString(this.formData.start_date),
+      end_date: dateInputToISOString(this.formData.end_date),
       item_type_id: this.formData.item_type_id,
       parent_id: this.parentItem?.id || null,
       custom_field_values: this.customFieldValues,

@@ -39,8 +39,7 @@
       return;
     }
     baseEditor.setSaving(true);
-    const dateValue = editValue ? new Date(editValue).toISOString() : '';
-    onsave?.({ value: dateValue });
+    onsave?.({ value: editValue });
   }
 
   export function confirmSave(newValue) {

@@ -15,6 +15,7 @@
     resolveEffectiveScreenIds,
     systemFieldIdentifiers,
   } from '../utils/screenFields.js';
+  import { dateInputToISOString } from '../utils/dateFormatter.js';
   import { parseDuration } from '../utils/timeUtils.js';
   import { isBooleanCustomFieldType } from '../utils/customFieldTypes.js';
 
@@ -585,9 +586,9 @@
           milestone_ids: Array.isArray(milestoneIds) ? milestoneIds : [],
           iteration_id: iterationId || null,
           project_id: projectId || null,
-          due_date: dueDate ? new Date(dueDate).toISOString() : null,
-          start_date: startDate ? new Date(startDate).toISOString() : null,
-          end_date: endDate ? new Date(endDate).toISOString() : null,
+          due_date: dateInputToISOString(dueDate),
+          start_date: dateInputToISOString(startDate),
+          end_date: dateInputToISOString(endDate),
           story_points: parsedStoryPoints(),
           estimate_minutes: parsedEstimateMinutes(),
           custom_field_values: customFieldValues,

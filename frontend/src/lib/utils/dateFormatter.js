@@ -16,6 +16,24 @@ function getAppLocale() {
 }
 
 /**
+ * Convert an HTML date input value to the UTC timestamp expected by timestamp APIs.
+ * @param {string|null|undefined} value - Date in YYYY-MM-DD format
+ * @returns {string|null} RFC 3339 timestamp at midnight UTC, or null when empty
+ */
+export function dateInputToISOString(value) {
+  if (!value) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new RangeError('Date input must use YYYY-MM-DD format');
+  }
+
+  const date = new Date(`${value}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value) {
+    throw new RangeError('Date input must be a valid calendar date');
+  }
+  return date.toISOString();
+}
+
+/**
  * Format a date string to YYYY-MM-DD format
  * @param {string|Date} dateString - Date string or Date object to format
  * @returns {string} Formatted date in YYYY-MM-DD format, or empty string if invalid
