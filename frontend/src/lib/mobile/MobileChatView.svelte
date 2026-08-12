@@ -5,6 +5,7 @@
   import { buildChatContext } from '../features/chat/chatContext.js';
   import { currentRoute, navigate } from '../router.js';
   import { renderMarkdown } from '../utils/render-markdown.js';
+  import Textarea from '../components/Textarea.svelte';
 
   let text = $state('');
   let scrollEl = $state(null);
@@ -90,13 +91,14 @@
 </div>
 
 <form class="composer" onsubmit={(e) => { e.preventDefault(); send(); }}>
-  <textarea
+  <Textarea
     bind:value={text}
     onkeydown={onKeydown}
     placeholder="Message the assistant…"
-    rows="1"
+    rows={1}
     data-testid="chat-input"
-  ></textarea>
+    class="mobile-chat-input"
+  />
   <button class="send" disabled={!text.trim() || loading} data-testid="chat-send" aria-label="Send" type="submit">
     <Send size={18} />
   </button>
@@ -148,7 +150,7 @@
     padding: 0.6rem 0.75rem; padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.6rem);
     background-color: var(--ds-surface); border-top: 1px solid var(--ds-border);
   }
-  .composer textarea {
+  .composer :global(.mobile-chat-input) {
     flex: 1; min-width: 0; max-height: 8rem; resize: none;
     padding: 0.55rem 0.7rem; border: 1px solid var(--ds-border); border-radius: var(--radius-lg, 8px);
     background-color: var(--ds-background-input, var(--ds-surface)); color: var(--ds-text);

@@ -526,7 +526,7 @@
 <div class="mb-6">
   <div class="relative max-w-md">
     <Search class="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4" style="color: var(--ds-icon-subtle);" />
-    <input
+    <Input
       type="text"
       placeholder={t('settings.configSets.searchPlaceholder')}
       value={searchQuery}

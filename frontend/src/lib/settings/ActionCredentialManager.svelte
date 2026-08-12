@@ -17,6 +17,7 @@
   import { api } from '../api.js';
   import Button from '../components/Button.svelte';
   import Checkbox from '../components/Checkbox.svelte';
+  import Radio from '../components/Radio.svelte';
   import Input from '../components/Input.svelte';
   import Textarea from '../components/Textarea.svelte';
   import PageHeader from '../layout/PageHeader.svelte';
@@ -364,8 +365,7 @@
   <div class="space-y-2 pt-2 border-t" style="border-color: var(--ds-border);">
     <div class="block text-xs font-medium" style="color: var(--ds-text-subtle);">Workspace scope</div>
     <label class="flex items-start gap-2 text-sm cursor-pointer" style="color: var(--ds-text);">
-      <input
-        type="radio"
+      <Radio
         name="cred-scope"
         checked={form.applies_to_all_workspaces}
         onchange={() => { form.applies_to_all_workspaces = true; }}
@@ -377,8 +377,7 @@
       </div>
     </label>
     <label class="flex items-start gap-2 text-sm cursor-pointer" style="color: var(--ds-text);">
-      <input
-        type="radio"
+      <Radio
         name="cred-scope"
         checked={!form.applies_to_all_workspaces}
         onchange={() => { form.applies_to_all_workspaces = false; }}
@@ -396,14 +395,12 @@
           <p class="text-xs" style="color: var(--ds-text-subtle);">No workspaces available.</p>
         {:else}
           {#each workspaces as ws}
-            <label class="flex items-center gap-2 text-sm py-1 cursor-pointer" style="color: var(--ds-text);">
-              <input
-                type="checkbox"
-                checked={form.workspace_ids.includes(ws.id)}
-                onchange={() => toggleWorkspaceScope(ws.id)}
-              />
-              {ws.name}
-            </label>
+            <Checkbox
+              checked={form.workspace_ids.includes(ws.id)}
+              onchange={() => toggleWorkspaceScope(ws.id)}
+              label={ws.name}
+              size="small"
+            />
           {/each}
         {/if}
       </div>

@@ -12,6 +12,7 @@
     id = undefined,
     class: className = '',
     dataTestid = undefined,
+    ariaLabel = undefined,
     onchange = undefined,
   } = $props();
 
@@ -45,6 +46,7 @@
     {required}
     multiple
     data-testid={dataTestid}
+    aria-label={ariaLabel}
     class={classes}
     style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
     onchange={handleChange}
@@ -60,6 +62,7 @@
     {disabled}
     {required}
     data-testid={dataTestid}
+    aria-label={ariaLabel}
     class={classes}
     style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
     onchange={handleChange}

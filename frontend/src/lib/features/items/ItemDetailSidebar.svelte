@@ -5,6 +5,7 @@
   import { rruleToText } from '../../editors/rruleUtils.js';
   import Lozenge from '../../components/Lozenge.svelte';
   import Avatar from '../../components/Avatar.svelte';
+  import Input from '../../components/Input.svelte';
   import Text from '../../components/Text.svelte';
   import DropdownMenu from '../../layout/DropdownMenu.svelte';
   import ItemPicker from '../../pickers/ItemPicker.svelte';
@@ -1004,8 +1005,7 @@
         {#if editingEstimate}
           <div class="w-full flex items-center justify-between px-2 py-1.5 text-sm">
             <Text variant="subtle" size="sm">{t('items.estimate') || 'Estimate'}</Text>
-            <!-- svelte-ignore a11y_autofocus -->
-            <input
+            <Input
               type="text"
               placeholder="3d 4h"
               class="w-24 text-right text-sm rounded px-1.5 py-0.5 border focus:outline-none focus:ring-1"
@@ -1019,6 +1019,7 @@
                 if (e.key === 'Escape') { editingEstimate = false; estimateError = false; }
               }}
               autofocus
+              size="small"
             />
           </div>
         {:else}
@@ -1047,8 +1048,7 @@
         {#if editingStoryPoints}
           <div class="w-full flex items-center justify-between px-2 py-1.5 text-sm">
             <Text variant="subtle" size="sm">{t('items.storyPoints')}</Text>
-            <!-- svelte-ignore a11y_autofocus -->
-            <input
+            <Input
               type="number"
               step="0.5"
               min="0"
@@ -1063,6 +1063,7 @@
                 if (e.key === 'Escape') { editingStoryPoints = false; }
               }}
               autofocus
+              size="small"
             />
           </div>
         {:else}

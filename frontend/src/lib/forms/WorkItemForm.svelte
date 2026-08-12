@@ -195,12 +195,12 @@
   {/if}
 
   <!-- Title Input -->
-  <input
-    bind:this={nameInputRef}
+  <Input
+    bind:inputRef={nameInputRef}
     bind:value={store.formData.name}
     type="text"
     id="work-item-title"
-    aria-label={t('createModal.issueTitle')}
+    ariaLabel={t('createModal.issueTitle')}
     class="w-full text-lg font-medium border-0 outline-none bg-transparent"
     style="color: var(--ds-text);"
     placeholder={t('createModal.issueTitle')}
@@ -480,7 +480,7 @@
         style="background-color: var(--ds-surface); border: 1px solid var(--ds-border); color: var(--ds-text-subtle);"
       >
         <Hash size={14} style="flex-shrink: 0;" />
-        <input
+        <Input
           type="number"
           min="0"
           step="0.5"
@@ -488,7 +488,7 @@
           class="w-20 bg-transparent outline-none text-sm"
           style="color: var(--ds-text);"
           placeholder={t('items.storyPoints')}
-          aria-label={t('items.storyPoints')}
+          ariaLabel={t('items.storyPoints')}
         />
       </label>
     {/if}
@@ -500,13 +500,13 @@
         style="background-color: var(--ds-surface); border: 1px solid var(--ds-border); color: var(--ds-text-subtle);"
       >
         <Clock size={14} style="flex-shrink: 0;" />
-        <input
+        <Input
           type="text"
           bind:value={store.formData.estimate}
           class="w-20 bg-transparent outline-none text-sm"
           style="color: var(--ds-text);"
           placeholder={t('items.estimate') || 'Estimate'}
-          aria-label={t('items.estimate') || 'Estimate'}
+          ariaLabel={t('items.estimate') || 'Estimate'}
         />
       </label>
     {/if}

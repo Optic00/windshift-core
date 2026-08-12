@@ -4,6 +4,7 @@
   import { Plus, Edit, Trash2, Power, PowerOff } from '@lucide/svelte';
   import Button from '../components/Button.svelte';
   import Checkbox from '../components/Checkbox.svelte';
+  import Radio from '../components/Radio.svelte';
   import Input from '../components/Input.svelte';
   import PageHeader from '../layout/PageHeader.svelte';
   import Modal from '../dialogs/Modal.svelte';
@@ -536,8 +537,7 @@
   <div class="space-y-2 pt-2 border-t" style="border-color: var(--ds-border);">
     <div class="block text-xs font-medium" style="color: var(--ds-text-subtle);">Workspace scope</div>
     <label class="flex items-start gap-2 text-sm cursor-pointer" style="color: var(--ds-text);">
-      <input
-        type="radio"
+      <Radio
         name="cap-scope"
         checked={form.applies_to_all_workspaces}
         onchange={() => { form.applies_to_all_workspaces = true; }}
@@ -549,8 +549,7 @@
       </div>
     </label>
     <label class="flex items-start gap-2 text-sm cursor-pointer" style="color: var(--ds-text);">
-      <input
-        type="radio"
+      <Radio
         name="cap-scope"
         checked={!form.applies_to_all_workspaces}
         onchange={() => { form.applies_to_all_workspaces = false; }}
@@ -597,13 +596,12 @@
     <!-- Image -->
     <div>
       <label for="docker-image" class="block text-xs font-medium mb-1" style="color: var(--ds-text-subtle);">{t('settings.actionCapabilities.docker.image')}</label>
-      <input
+      <Input
         id="docker-image"
         type="text"
         bind:value={form.docker_image}
         placeholder={t('settings.actionCapabilities.docker.imagePlaceholder')}
-        class="w-full px-3 py-2 text-sm rounded-md border"
-        style="border-color: var(--ds-border); background: var(--ds-surface); color: var(--ds-text);"
+        size="small"
       />
     </div>
 
@@ -611,24 +609,22 @@
     <div class="grid grid-cols-2 gap-3">
       <div>
         <label for="docker-memory" class="block text-xs font-medium mb-1" style="color: var(--ds-text-subtle);">{t('settings.actionCapabilities.docker.memory')}</label>
-        <input
+        <Input
           id="docker-memory"
           type="text"
           bind:value={form.docker_memory}
           placeholder={t('settings.actionCapabilities.docker.memoryPlaceholder')}
-          class="w-full px-3 py-2 text-sm rounded-md border"
-          style="border-color: var(--ds-border); background: var(--ds-surface); color: var(--ds-text);"
+          size="small"
         />
       </div>
       <div>
         <label for="docker-cpus" class="block text-xs font-medium mb-1" style="color: var(--ds-text-subtle);">{t('settings.actionCapabilities.docker.cpus')}</label>
-        <input
+        <Input
           id="docker-cpus"
           type="text"
           bind:value={form.docker_cpus}
           placeholder={t('settings.actionCapabilities.docker.cpusPlaceholder')}
-          class="w-full px-3 py-2 text-sm rounded-md border"
-          style="border-color: var(--ds-border); background: var(--ds-surface); color: var(--ds-text);"
+          size="small"
         />
       </div>
     </div>
@@ -651,19 +647,19 @@
       </div>
       {#each form.docker_env_vars as envVar, i}
         <div class="flex gap-2 mb-1">
-          <input
+          <Input
             type="text"
             bind:value={envVar.key}
             placeholder={t('settings.actionCapabilities.docker.key')}
-            class="flex-1 px-3 py-1.5 text-sm rounded-md border"
-            style="border-color: var(--ds-border); background: var(--ds-surface); color: var(--ds-text);"
+            class="flex-1"
+            size="small"
           />
-          <input
+          <Input
             type="text"
             bind:value={envVar.value}
             placeholder={t('settings.actionCapabilities.docker.value')}
-            class="flex-1 px-3 py-1.5 text-sm rounded-md border"
-            style="border-color: var(--ds-border); background: var(--ds-surface); color: var(--ds-text);"
+            class="flex-1"
+            size="small"
           />
           <button class="p-1 rounded hover:opacity-80" style="color: var(--ds-text-danger);" onclick={() => removeEnvVar(i)}>
             <Trash2 size={14} />
@@ -676,31 +672,28 @@
     <div>
       <div class="block text-xs font-medium mb-1" style="color: var(--ds-text-subtle);">{t('settings.actionCapabilities.docker.healthCheck')}</div>
       <div class="space-y-2">
-        <input
+        <Input
           type="text"
           bind:value={form.docker_health_endpoint}
           placeholder={t('settings.actionCapabilities.docker.endpointPlaceholder')}
-          class="w-full px-3 py-1.5 text-sm rounded-md border"
-          style="border-color: var(--ds-border); background: var(--ds-surface); color: var(--ds-text);"
+          size="small"
         />
         {#if form.docker_health_endpoint}
           <div class="grid grid-cols-2 gap-2">
             <div>
               <div class="block text-xs mb-0.5" style="color: var(--ds-text-subtle);">{t('settings.actionCapabilities.docker.intervalSecs')}</div>
-              <input
+              <Input
                 type="number"
                 bind:value={form.docker_health_interval}
-                class="w-full px-3 py-1.5 text-sm rounded-md border"
-                style="border-color: var(--ds-border); background: var(--ds-surface); color: var(--ds-text);"
+                size="small"
               />
             </div>
             <div>
               <div class="block text-xs mb-0.5" style="color: var(--ds-text-subtle);">{t('settings.actionCapabilities.docker.timeoutSecs')}</div>
-              <input
+              <Input
                 type="number"
                 bind:value={form.docker_health_timeout}
-                class="w-full px-3 py-1.5 text-sm rounded-md border"
-                style="border-color: var(--ds-border); background: var(--ds-surface); color: var(--ds-text);"
+                size="small"
               />
             </div>
           </div>
@@ -720,12 +713,12 @@
       </div>
       {#each form.http_allowed_patterns as pattern, i}
         <div class="flex gap-2 mb-1">
-          <input
+          <Input
             type="text"
             bind:value={pattern.value}
             placeholder={t('settings.actionCapabilities.http.patternPlaceholder')}
-            class="flex-1 px-3 py-1.5 text-sm rounded-md border"
-            style="border-color: var(--ds-border); background: var(--ds-surface); color: var(--ds-text);"
+            class="flex-1"
+            size="small"
           />
           <button class="p-1 rounded hover:opacity-80" style="color: var(--ds-text-danger);" onclick={() => removePattern(i)}>
             <Trash2 size={14} />
@@ -745,19 +738,19 @@
       </p>
       {#each form.http_default_headers as header, i}
         <div class="flex gap-2 mb-1">
-          <input
+          <Input
             type="text"
             bind:value={header.key}
             placeholder={t('settings.actionCapabilities.http.key')}
-            class="flex-1 px-3 py-1.5 text-sm rounded-md border"
-            style="border-color: var(--ds-border); background: var(--ds-surface); color: var(--ds-text);"
+            class="flex-1"
+            size="small"
           />
-          <input
+          <Input
             type="text"
             bind:value={header.value}
             placeholder={t('settings.actionCapabilities.http.value')}
-            class="flex-1 px-3 py-1.5 text-sm rounded-md border"
-            style="border-color: var(--ds-border); background: var(--ds-surface); color: var(--ds-text);"
+            class="flex-1"
+            size="small"
           />
           <button class="p-1 rounded hover:opacity-80" style="color: var(--ds-text-danger);" onclick={() => removeHeader(i)}>
             <Trash2 size={14} />
@@ -768,10 +761,7 @@
 
     <!-- Authentication (credential refs) -->
     <div class="rounded-md border p-3" style="border-color: var(--ds-border); background: var(--ds-surface-raised);">
-      <label class="flex items-center gap-2 mb-2">
-        <input type="checkbox" bind:checked={form.http_auth_enabled} />
-        <span class="text-sm font-medium" style="color: var(--ds-text);">Use an auth credential</span>
-      </label>
+      <Checkbox bind:checked={form.http_auth_enabled} label="Use an auth credential" class="mb-2" />
       {#if form.http_auth_enabled}
         <div class="space-y-2 mt-2">
           <div>
@@ -792,22 +782,22 @@
           <div class="grid grid-cols-2 gap-2">
             <label class="block">
               <span class="text-xs font-medium" style="color: var(--ds-text-subtle);">Header name</span>
-              <input
+              <Input
                 type="text"
                 bind:value={form.http_auth_header_name}
                 placeholder="Authorization"
-                class="mt-1 w-full px-3 py-1.5 text-sm rounded-md border"
-                style="border-color: var(--ds-border); background: var(--ds-surface); color: var(--ds-text);"
+                class="mt-1"
+                size="small"
               />
             </label>
             <label class="block">
               <span class="text-xs font-medium" style="color: var(--ds-text-subtle);">Scheme (bearer tokens only)</span>
-              <input
+              <Input
                 type="text"
                 bind:value={form.http_auth_scheme}
                 placeholder="Bearer"
-                class="mt-1 w-full px-3 py-1.5 text-sm rounded-md border"
-                style="border-color: var(--ds-border); background: var(--ds-surface); color: var(--ds-text);"
+                class="mt-1"
+                size="small"
               />
             </label>
           </div>
@@ -826,12 +816,12 @@
       </p>
       {#each form.http_secret_header_refs as ref, i}
         <div class="flex gap-2 mb-1">
-          <input
+          <Input
             type="text"
             bind:value={ref.header}
             placeholder="X-API-Key"
-            class="flex-1 px-3 py-1.5 text-sm rounded-md border"
-            style="border-color: var(--ds-border); background: var(--ds-surface); color: var(--ds-text);"
+            class="flex-1"
+            size="small"
           />
           <div class="flex-1">
             <CredentialPicker
@@ -849,13 +839,12 @@
     <!-- Timeout -->
     <div>
       <label for="http-timeout" class="block text-xs font-medium mb-1" style="color: var(--ds-text-subtle);">{t('settings.actionCapabilities.http.timeout')}</label>
-      <input
+      <Input
         id="http-timeout"
         type="number"
         bind:value={form.http_timeout}
         placeholder={t('settings.actionCapabilities.http.timeoutPlaceholder')}
-        class="w-full px-3 py-2 text-sm rounded-md border"
-        style="border-color: var(--ds-border); background: var(--ds-surface); color: var(--ds-text);"
+        size="small"
       />
     </div>
   </div>

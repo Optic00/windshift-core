@@ -20,6 +20,7 @@
   import { portalAuthStore } from '../stores/portalAuth.svelte.js';
   import { t } from '../stores/i18n.svelte.js';
   import { navigate } from '../router.js';
+  import Input from '../components/Input.svelte';
 
   let isInternalUser = $derived($authStore.isAuthenticated || $portalAuthStore.isInternal);
   let isAnyUserAuthenticated = $derived(
@@ -124,7 +125,7 @@
         />
       {/if}
       {#if portalStore.isEditing}
-        <input
+        <Input
           type="text"
           value={portalStore.editableTitle}
           oninput={(event) =>

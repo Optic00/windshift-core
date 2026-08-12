@@ -3,6 +3,7 @@
   import { api } from '../../api.js';
   import { successToast, errorToast } from '../../stores/toasts.svelte.js';
   import Button from '../../components/Button.svelte';
+  import FileInput from '../../components/FileInput.svelte';
   import Input from '../../components/Input.svelte';
   import Spinner from '../../components/Spinner.svelte';
   import FormField from '../../components/FormField.svelte';
@@ -125,9 +126,8 @@
         {/if}
       </div>
 
-      <input
+      <FileInput
         id="file-input"
-        type="file"
         accept={acceptedTypes}
         onchange={handleFileSelect}
         class="hidden"

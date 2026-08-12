@@ -3,6 +3,7 @@
   import { api } from '../api.js';
   import { X, Plus, Search, Link2 } from '@lucide/svelte';
   import { errorToast } from '../stores/toasts.svelte.js';
+  import Input from '../components/Input.svelte';
 
   let {
     fieldId,
@@ -212,8 +213,7 @@
       <div class="mt-2 rounded-lg shadow-lg overflow-hidden" style="background: var(--ds-surface); border: 1px solid var(--ds-border);">
         <div class="flex items-center gap-2 px-3 py-2" style="border-bottom: 1px solid var(--ds-border);">
           <Search class="w-4 h-4 flex-shrink-0" style="color: var(--ds-text-subtle);" />
-          <!-- svelte-ignore a11y_autofocus -->
-          <input
+          <Input
             type="text"
             class="w-full bg-transparent text-sm outline-none"
             style="color: var(--ds-text);"

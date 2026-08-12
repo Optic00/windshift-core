@@ -5,6 +5,8 @@
   import { t } from '../stores/i18n.svelte.js';
   import { portalUrl, portalRequestTypeUrl } from '../utils/urls.js';
   import GlassButton from '../components/GlassButton.svelte';
+  import Input from '../components/Input.svelte';
+  import Textarea from '../components/Textarea.svelte';
 
   // Track if input is focused
   let inputFocused = $state(false);
@@ -105,7 +107,7 @@
 
       <!-- Hub Title -->
       {#if hubStore.isEditing}
-        <input
+        <Input
           type="text"
           value={hubStore.editableTitle}
           oninput={(e) => hubStore.editableTitle = e.currentTarget.value}
@@ -120,13 +122,13 @@
 
       <!-- Hub Description -->
       {#if hubStore.isEditing}
-        <textarea
+        <Textarea
           value={hubStore.editableDescription}
           oninput={(e) => hubStore.editableDescription = e.currentTarget.value}
           class="text-base text-white/90 mb-6 max-w-3xl mx-auto bg-transparent text-center w-full focus:outline-none resize-none"
           placeholder="Hub description (optional)"
-          rows="2"
-        ></textarea>
+          rows={2}
+        />
       {:else if hubStore.editableDescription}
         <p class="text-base text-white/90 mb-6 max-w-3xl mx-auto">
           {hubStore.editableDescription}
@@ -140,7 +142,7 @@
             <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
               <Search class="h-5 w-5 text-gray-400" />
             </div>
-            <input
+            <Input
               type="text"
               bind:value={hubStore.searchQuery}
               placeholder={hubStore.editableSearchPlaceholder || 'Search portals...'}
@@ -227,7 +229,7 @@
           <div class="mt-3 space-y-2">
             <div>
               <label for="hub-search-placeholder" class="text-xs text-white/60 block mb-1">Search Box Placeholder:</label>
-              <input
+              <Input
                 id="hub-search-placeholder"
                 type="text"
                 value={hubStore.editableSearchPlaceholder}
@@ -238,7 +240,7 @@
             </div>
             <div>
               <label for="hub-search-hint" class="text-xs text-white/60 block mb-1">Search Hint Text:</label>
-              <input
+              <Input
                 id="hub-search-hint"
                 type="text"
                 value={hubStore.editableSearchHint}

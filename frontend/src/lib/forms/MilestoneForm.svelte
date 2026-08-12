@@ -77,8 +77,8 @@
 
 <div class="space-y-3">
   <!-- Title Input -->
-  <input
-    bind:this={nameInputRef}
+  <Input
+    bind:inputRef={nameInputRef}
     bind:value={form.values.name}
     type="text"
     class="w-full text-lg font-medium border-0 outline-none bg-transparent"

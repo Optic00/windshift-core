@@ -34,7 +34,7 @@
     <!-- Search -->
     <div class="relative mb-3">
       <IconSearch class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style="color: var(--ds-text-disabled);" />
-      <input
+      <Input
         type="text"
         bind:value={formBuilderStore.fieldSearchQuery}
         placeholder={t('forms.builder.searchFields')}

@@ -1,6 +1,7 @@
 <script>
   import { AlertTriangle, Check, FileText, Edit3, X, Search } from '@lucide/svelte';
   import Tooltip from '../../components/Tooltip.svelte';
+  import Input from '../../components/Input.svelte';
   import ItemKey from '../items/ItemKey.svelte';
   import { api } from '../../api.js';
   import { t } from '../../stores/i18n.svelte.js';
@@ -349,13 +350,14 @@
         <div class="p-3 border-b" style="border-color: var(--ds-border);">
           <div class="relative">
             <Search class="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4" style="color: var(--ds-text-subtlest);" />
-            <input
-              data-testid="item-parent-search"
+            <Input
+              dataTestid="item-parent-search"
               type="text"
               bind:value={searchQuery}
               placeholder={t('items.searchForParentItem')}
               class="w-full pl-9 pr-3 py-2 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
+              size="small"
             />
           </div>
           {#if currentItemIsGenericSubtask}

@@ -6,6 +6,7 @@
   import { sanitizeHtml } from '../utils/sanitize.ts';
   import { tick } from 'svelte';
   import Checkbox from '../components/Checkbox.svelte';
+  import Input from '../components/Input.svelte';
 
   let {
     triggerText = '',
@@ -227,10 +228,10 @@
           <div class="px-4 py-3 text-sm text-center italic" style="color: var(--ds-text-subtle);">{itemData.text}</div>
         {:else if itemData.type === 'search'}
           <div class="px-3 py-2 border-b" style="border-color: var(--ds-border);">
-            <input
-              bind:this={searchInputElement}
+            <Input
+              bind:inputRef={searchInputElement}
               type="text"
-              data-testid={itemData.testid || undefined}
+              dataTestid={itemData.testid || undefined}
               placeholder={itemData.placeholder || t('common.search')}
               value={itemData.value || ''}
               oninput={(e) => itemData.onInput && itemData.onInput(/** @type {HTMLInputElement} */ (e.target).value)}

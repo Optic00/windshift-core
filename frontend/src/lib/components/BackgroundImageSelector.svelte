@@ -1,4 +1,5 @@
 <script>
+  import FileInput from './FileInput.svelte';
   import { Upload, Trash2 } from '@lucide/svelte';
   import { backgroundCategories, getPresetsByCategory } from '../utils/backgroundImages.js';
   import Button from './Button.svelte';
@@ -119,8 +120,7 @@
 
     {#if showUploadSection && attachmentStatus.enabled}
       <div class="mt-3 p-4 rounded-lg border" style="border-color: var(--ds-border); background-color: var(--ds-surface);">
-        <input
-          type="file"
+        <FileInput
           accept="image/*"
           onchange={handleFileChange}
           disabled={uploading}

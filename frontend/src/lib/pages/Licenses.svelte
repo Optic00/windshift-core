@@ -1,6 +1,9 @@
 <script>
   import { AlertTriangle, Download, ExternalLink, FileText, Search, ShieldCheck } from '@lucide/svelte';
   import Button from '../components/Button.svelte';
+  import Checkbox from '../components/Checkbox.svelte';
+  import Input from '../components/Input.svelte';
+  import NativeSelect from '../components/NativeSelect.svelte';
   import manifest from '../generated/license-manifest.json';
 
   const dependencies = manifest.dependencies;
@@ -134,41 +137,18 @@
     <section class="filters mb-6">
       <label class="search-box">
         <Search class="h-4 w-4" />
-        <input bind:value={search} type="search" placeholder="Search dependencies, licenses, projects" />
+        <Input bind:value={search} type="search" placeholder="Search dependencies, licenses, projects" class="license-search" size="small" />
       </label>
 
-      <select bind:value={ecosystem} aria-label="Ecosystem filter">
-        <option value={allOption}>All ecosystems</option>
-        {#each ecosystems as option}
-          <option value={option}>{option}</option>
-        {/each}
-      </select>
+      <NativeSelect bind:value={ecosystem} ariaLabel="Ecosystem filter" class="license-filter" size="small" options={[{ value: allOption, label: 'All ecosystems' }, ...ecosystems.map((option) => ({ value: option, label: option }))]} />
 
-      <select bind:value={project} aria-label="Project filter">
-        <option value={allOption}>All projects</option>
-        {#each projects as option}
-          <option value={option}>{option}</option>
-        {/each}
-      </select>
+      <NativeSelect bind:value={project} ariaLabel="Project filter" class="license-filter" size="small" options={[{ value: allOption, label: 'All projects' }, ...projects.map((option) => ({ value: option, label: option }))]} />
 
-      <select bind:value={license} aria-label="License filter">
-        <option value={allOption}>All licenses</option>
-        {#each licenses as option}
-          <option value={option}>{option}</option>
-        {/each}
-      </select>
+      <NativeSelect bind:value={license} ariaLabel="License filter" class="license-filter" size="small" options={[{ value: allOption, label: 'All licenses' }, ...licenses.map((option) => ({ value: option, label: option }))]} />
 
-      <select bind:value={scope} aria-label="Scope filter">
-        <option value={allOption}>All scopes</option>
-        {#each scopes as option}
-          <option value={option}>{option}</option>
-        {/each}
-      </select>
+      <NativeSelect bind:value={scope} ariaLabel="Scope filter" class="license-filter" size="small" options={[{ value: allOption, label: 'All scopes' }, ...scopes.map((option) => ({ value: option, label: option }))]} />
 
-      <label class="unknown-toggle">
-        <input bind:checked={unknownOnly} type="checkbox" />
-        Unknown only
-      </label>
+      <Checkbox bind:checked={unknownOnly} label="Unknown only" class="unknown-toggle" size="small" />
     </section>
 
     <div class="table-shell">
@@ -318,8 +298,8 @@
     color: var(--ds-text-subtle);
   }
 
-  .search-box input,
-  .filters select {
+  .search-box :global(.license-search),
+  .filters :global(.license-filter) {
     width: 100%;
     min-height: 38px;
     border: 1px solid var(--ds-border);
@@ -329,13 +309,13 @@
     font-size: 0.875rem;
   }
 
-  .search-box input {
+  .search-box :global(.license-search) {
     min-height: 34px;
     border: 0;
     outline: 0;
   }
 
-  .filters select {
+  .filters :global(.license-filter) {
     padding: 0 10px;
   }
 

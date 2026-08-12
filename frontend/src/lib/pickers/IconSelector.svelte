@@ -3,6 +3,7 @@
   import { Search, ChevronDown, Package } from '@lucide/svelte';
   import { workspaceIconMap, workspaceIconOptions } from '../utils/icons.js';
   import Label from '../components/Label.svelte';
+  import Input from '../components/Input.svelte';
   import { t } from '../stores/i18n.svelte.js';
 
   // Color options with good contrast and variety
@@ -150,7 +151,7 @@
           <!-- Search Field -->
           <div class="popover-search" style="border-color: var(--ds-border);">
             <Search class="popover-search-icon" size={14} />
-            <input
+            <Input
               type="text"
               placeholder={t('pickers.searchIcons')}
               bind:value={searchQuery}
@@ -201,7 +202,7 @@
 
           <!-- Custom Color Picker -->
           <div class="custom-color-row">
-            <input
+            <Input
               type="color"
               bind:value={selectedColor}
               oninput={handleColorInputChange}
@@ -240,7 +241,7 @@
           <h4 class="text-sm font-medium" style="color: var(--ds-text);">{t('pickers.icon')}</h4>
           <div class="search-box">
             <Search class="w-4 h-4 text-gray-400" />
-            <input
+            <Input
               type="text"
               placeholder={t('pickers.searchIcons')}
               bind:value={searchQuery}
@@ -348,7 +349,7 @@
     z-index: 1;
   }
 
-  .search-input {
+  :global(.search-input) {
     width: 100%;
     padding: 6px 12px 6px 32px;
     font-size: 12px;
@@ -358,7 +359,7 @@
     transition: border-color 0.2s;
   }
 
-  .search-input:focus {
+  :global(.search-input):focus {
     border-color: #3b82f6;
     box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
   }
@@ -538,7 +539,7 @@
     position: relative;
   }
 
-  .popover-search-input {
+  :global(.popover-search-input) {
     width: 100%;
     padding: 8px 12px 8px 32px;
     font-size: 13px;
@@ -548,7 +549,7 @@
     transition: border-color 0.2s;
   }
 
-  .popover-search-input:focus {
+  :global(.popover-search-input):focus {
     border-color: #3b82f6;
     box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
   }

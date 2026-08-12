@@ -18,11 +18,15 @@
    *   pattern?: string,
    *   title?: string,
    *   autocomplete?: string,
+   *   enterkeyhint?: 'enter' | 'done' | 'go' | 'next' | 'previous' | 'search' | 'send',
    *   readonly?: boolean,
    *   minlength?: number,
    *   maxlength?: number,
+   *   list?: string,
    *   class?: string,
+   *   style?: string,
    *   dataTestid?: string,
+   *   dataAutofocus?: boolean,
    *   ariaLabel?: string,
    *   ariaDescribedby?: string,
    *   inputRef?: any,
@@ -30,6 +34,7 @@
    *   onchange?: (e?: any) => void,
    *   onfocus?: (e?: any) => void,
    *   onblur?: (e?: any) => void,
+   *   onclick?: (e?: any) => void,
    *   onkeydown?: (e?: any) => void,
    *   onkeyup?: (e?: any) => void,
    * }}
@@ -50,11 +55,15 @@
     pattern = undefined,
     title = undefined,
     autocomplete = undefined,
+    enterkeyhint = undefined,
     readonly = false,
     minlength = undefined,
     maxlength = undefined,
+    list = undefined,
     class: className = '',
+    style = '',
     dataTestid = undefined,
+    dataAutofocus = false,
     ariaLabel = undefined,
     ariaDescribedby = undefined,
     // Optional ref binding for parent components that need the raw input element
@@ -64,6 +73,7 @@
     onchange = undefined,
     onfocus = undefined,
     onblur = undefined,
+    onclick = undefined,
     onkeydown = undefined,
     onkeyup = undefined
   } = $props();
@@ -94,12 +104,15 @@
   {pattern}
   {title}
   autocomplete={autocompleteValue}
+  {enterkeyhint}
   {readonly}
   {minlength}
   {maxlength}
+  {list}
   bind:value
   bind:this={inputRef}
   data-testid={dataTestid}
+  data-autofocus={dataAutofocus || undefined}
   aria-label={ariaLabel}
   aria-describedby={ariaDescribedby}
   {placeholder}
@@ -110,11 +123,12 @@
   {max}
   {step}
   class={allClasses}
-  style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
+  style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text); {style}"
   {oninput}
   {onchange}
   {onfocus}
   {onblur}
+  {onclick}
   {onkeydown}
   {onkeyup}
 />

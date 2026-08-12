@@ -11,6 +11,7 @@
   import { FileText, Plus, ChevronDown, ChevronRight, Home, MapPin } from '@lucide/svelte';
   import { itemTypeIconMap } from '../../utils/icons.js';
   import EmptyState from '../../components/EmptyState.svelte';
+  import Textarea from '../../components/Textarea.svelte';
   import { monitorForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter';
   import { draggable, dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter';
   import Tooltip from '../../components/Tooltip.svelte';
@@ -750,12 +751,12 @@
                     >
                       <!-- Title -->
                       {#if editingItemId === childItem.id}
-                        <textarea
+                        <Textarea
                           bind:value={editingTitle}
                           data-item-id={childItem.id}
                           class="text-sm mb-2 leading-snug w-full resize-none overflow-hidden bg-transparent border-none outline-none p-0 m-0"
                           style="color: var(--ds-text); caret-color: var(--ds-text);"
-                          rows="2"
+                          rows={2}
                           onblur={() => saveEditingItem(childItem)}
                           onkeydown={(e) => {
                             if (e.key === 'Enter' && !e.shiftKey) {
@@ -767,7 +768,7 @@
                             }
                           }}
                           onclick={(e) => e.stopPropagation()}
-                        ></textarea>
+                        />
                       {:else}
                         <h4 class="text-sm mb-2 leading-snug line-clamp-2" style="{styles.glassTextStyle}">
                           {childItem.title}

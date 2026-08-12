@@ -6,6 +6,7 @@
   import AlertBox from '../components/AlertBox.svelte';
   import FormField from '../components/FormField.svelte';
   import Input from '../components/Input.svelte';
+  import Radio from '../components/Radio.svelte';
   import ItemPicker from '../pickers/ItemPicker.svelte';
   import { t } from '../stores/i18n.svelte.js';
   import { api } from '../api';
@@ -225,11 +226,10 @@
               class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors {selectedMode === 'deleteAll' ? 'border-red-500' : ''}"
               style="border-color: {selectedMode === 'deleteAll' ? 'var(--ds-border-danger)' : 'var(--ds-border)'}; background-color: {selectedMode === 'deleteAll' ? 'var(--ds-background-danger)' : 'transparent'};"
             >
-              <input
-                type="radio"
+              <Radio
                 name="deleteMode"
                 value="deleteAll"
-                bind:group={selectedMode}
+                bind:groupValue={selectedMode}
                 disabled={loading}
                 class="mt-1"
               />
@@ -251,11 +251,10 @@
               class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors"
               style="border-color: {selectedMode === 'reparent' ? 'var(--ds-border-selected)' : 'var(--ds-border)'}; background-color: {selectedMode === 'reparent' ? 'var(--ds-background-selected)' : 'transparent'};"
             >
-              <input
-                type="radio"
+              <Radio
                 name="deleteMode"
                 value="reparent"
-                bind:group={selectedMode}
+                bind:groupValue={selectedMode}
                 disabled={loading}
                 class="mt-1"
               />

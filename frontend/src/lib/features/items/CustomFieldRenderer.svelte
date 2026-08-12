@@ -10,6 +10,8 @@
   import { Box, Globe, Building2, Calendar, User, Target, Link2, Mail, ExternalLink, CheckSquare } from '@lucide/svelte';
   import ColorDot from '../../components/ColorDot.svelte';
   import Checkbox from '../../components/Checkbox.svelte';
+  import Input from '../../components/Input.svelte';
+  import Textarea from '../../components/Textarea.svelte';
   import { onDestroy } from 'svelte';
   import { referenceDisplayCache } from '../../stores/referenceDisplayCache.svelte.js';
   import { t } from '../../stores/i18n.svelte.js';
@@ -709,7 +711,7 @@
     {:else if field.field_type === 'date'}
       <div use:clickOutside onclickOutside={() => onCancel?.()}>
         <!-- svelte-ignore a11y_autofocus -->
-        <input
+        <Input
           type="date"
           value={formatDateForInput(value)}
           oninput={(e) => onChange(formatDateFromInput(/** @type {HTMLInputElement} */ (e.target).value))}
@@ -724,22 +726,23 @@
     {:else if field.field_type === 'textarea'}
       <div use:clickOutside onclickOutside={() => onCancel?.()}>
         <!-- svelte-ignore a11y_autofocus -->
-        <textarea
+        <Textarea
           {value}
           oninput={(e) => onChange(/** @type {HTMLTextAreaElement} */ (e.target).value)}
           class="w-full px-3 py-2 text-sm hover:bg-gray-50 focus:outline-none transition-colors bg-transparent border rounded"
           style="background-color: {isDarkMode ? '#1e293b' : 'var(--ds-background-input)'}; border-color: {isDarkMode ? '#475569' : 'var(--ds-border)'}; color: {isDarkMode ? '#e2e8f0' : 'var(--ds-text)'};"
           placeholder={t('items.enterField', { field: field.name.toLowerCase() })}
-          rows="3"
+          rows={3}
           {disabled}
           required={isRequired}
           autofocus
-        ></textarea>
+          size="small"
+        />
       </div>
     {:else if field.field_type === 'number'}
       <div use:clickOutside onclickOutside={() => onCancel?.()}>
         <!-- svelte-ignore a11y_autofocus -->
-        <input
+        <Input
           type="number"
           step="any"
           {value}
@@ -769,7 +772,7 @@
     {:else if field.field_type === 'email'}
       <div use:clickOutside onclickOutside={() => onCancel?.()}>
         <!-- svelte-ignore a11y_autofocus -->
-        <input
+        <Input
           type="email"
           {value}
           oninput={(e) => onChange(/** @type {HTMLInputElement} */ (e.target).value)}
@@ -785,7 +788,7 @@
     {:else if field.field_type === 'url'}
       <div use:clickOutside onclickOutside={() => onCancel?.()}>
         <!-- svelte-ignore a11y_autofocus -->
-        <input
+        <Input
           type="url"
           {value}
           oninput={(e) => onChange(/** @type {HTMLInputElement} */ (e.target).value)}
@@ -802,10 +805,10 @@
       <!-- Default: text input -->
       <div use:clickOutside onclickOutside={() => onCancel?.()}>
         <!-- svelte-ignore a11y_autofocus -->
-        <input
+        <Input
           type="text"
           {value}
-          data-testid={`custom-field-input-${field.id}`}
+          dataTestid={`custom-field-input-${field.id}`}
           oninput={(e) => onChange(/** @type {HTMLInputElement} */ (e.target).value)}
           class="w-full px-3 py-2 text-sm hover:bg-gray-50 focus:outline-none transition-colors bg-transparent border rounded"
           style="background-color: {isDarkMode ? '#1e293b' : 'var(--ds-background-input)'}; border-color: {isDarkMode ? '#475569' : 'var(--ds-border)'}; color: {isDarkMode ? '#e2e8f0' : 'var(--ds-text)'};"

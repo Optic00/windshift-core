@@ -1,5 +1,6 @@
 <script>
   import { api } from '../../api.js';
+  import Input from '../../components/Input.svelte';
   import { IconX, IconKey, IconCheck, IconLoader2 } from '@tabler/icons-svelte-runes';
 
   let { folderPath, workspaceKey = '', serverUrl = '', onComplete, onCancel } = $props();
@@ -83,7 +84,7 @@
     <div class="mb-4">
       <label for="ws-toml-api-token" class="block text-xs mb-1" style="color: #565f89;">API Token</label>
       <div class="flex gap-2">
-        <input
+        <Input
           id="ws-toml-api-token"
           type="text"
           bind:value={token}

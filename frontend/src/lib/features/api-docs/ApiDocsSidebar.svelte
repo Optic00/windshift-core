@@ -1,5 +1,6 @@
 <script>
   import MethodBadge from './MethodBadge.svelte';
+  import Input from '../../components/Input.svelte';
   import { filterGroups } from './openapi-store.svelte.js';
 
   let {
@@ -27,13 +28,14 @@
   </header>
 
   <div class="filter">
-    <input
+    <Input
       type="search"
       bind:value={query}
       placeholder="Filter operations…"
       class="filter-input"
-      data-testid="api-docs-filter"
-      aria-label="Filter operations"
+      dataTestid="api-docs-filter"
+      ariaLabel="Filter operations"
+      size="small"
     />
     {#if query}
       <span class="filter-count">{visibleCount}</span>
@@ -101,7 +103,7 @@
     border-bottom: 1px solid var(--ds-border);
     position: relative;
   }
-  .filter-input {
+  :global(.filter-input) {
     width: 100%;
     padding: 6px 10px;
     font-size: 12.5px;
@@ -110,7 +112,7 @@
     border-radius: 4px;
     color: var(--ds-text);
   }
-  .filter-input:focus {
+  :global(.filter-input):focus {
     outline: none;
     border-color: var(--ds-border-focused);
   }

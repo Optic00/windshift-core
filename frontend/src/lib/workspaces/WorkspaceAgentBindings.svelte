@@ -15,6 +15,7 @@
   import UserPicker from '../pickers/UserPicker.svelte';
   import Select from '../components/Select.svelte';
   import Input from '../components/Input.svelte';
+  import Radio from '../components/Radio.svelte';
   import Label from '../components/Label.svelte';
   import Textarea from '../components/Textarea.svelte';
   import AlertBox from '../components/AlertBox.svelte';
@@ -934,12 +935,11 @@
                 <Input id={`binding-repo-base-${idx}`} size="small" value={repo.repoBaseRef} oninput={(e) => { formRepos[idx].repoBaseRef = e.currentTarget.value; }} placeholder="main" />
               </div>
               <label class="flex items-center gap-1 text-xs pb-2" style="color: var(--ds-text-subtle);">
-                <input
-                  type="radio"
+                <Radio
                   name="binding-primary-repo"
                   checked={repo.isPrimary}
                   onchange={() => setPrimaryRepo(idx)}
-                  data-testid="binding-repo-primary"
+                  dataTestid="binding-repo-primary"
                 />
                 Primary
               </label>

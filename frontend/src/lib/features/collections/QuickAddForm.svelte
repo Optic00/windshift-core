@@ -2,6 +2,7 @@
   import { Plus, X, Package, ChevronDown } from '@lucide/svelte';
   import { useEventListener } from 'runed';
   import Button from '../../components/Button.svelte';
+  import Textarea from '../../components/Textarea.svelte';
   import { portal } from '../../actions/portal.js';
   import { t } from '../../stores/i18n.svelte.js';
   import { itemTypeIconMap, workspaceIconMap } from '../../utils/icons.js';
@@ -127,16 +128,16 @@
 >
   <!-- Textarea area -->
   <div class={compact ? 'p-3 pb-2' : ''}>
-    <textarea
+    <Textarea
       value={formState.title}
       data-quick-add-parent={parentId}
       oninput={(e) => onUpdateField(parentId, 'title', e.currentTarget.value)}
       onkeydown={handleKeydown}
       placeholder={t('collections.enterSummary')}
-      rows="2"
+      rows={2}
       class="w-full px-0 py-0 text-sm leading-5 resize-none border-0 focus:outline-none focus:ring-0"
       style="background-color: transparent; color: var(--ds-text); caret-color: var(--ds-text);"
-    ></textarea>
+    />
   </div>
 
   <!-- Divider (compact layout only; the board layout mirrors the card footer instead) -->

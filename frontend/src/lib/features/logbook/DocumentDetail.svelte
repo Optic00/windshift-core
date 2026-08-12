@@ -7,6 +7,7 @@
   import { successToast, errorToast } from '../../stores/toasts.svelte.js';
   import { confirm } from '../../composables/useConfirm.js';
   import Button from '../../components/Button.svelte';
+  import Input from '../../components/Input.svelte';
   import Spinner from '../../components/Spinner.svelte';
   import Lozenge from '../../components/Lozenge.svelte';
   import Progress from '../../components/Progress.svelte';
@@ -197,9 +198,9 @@
       <div class="flex items-start justify-between gap-4">
         <div class="flex-1 min-w-0">
           {#if isNote}
-            <input
+            <Input
               type="text"
-              data-testid="logbook-document-title"
+              dataTestid="logbook-document-title"
               bind:value={titleValue}
               oninput={handleTitleInput}
               class="text-xl font-semibold w-full bg-transparent border-none outline-none focus:ring-0 p-0"

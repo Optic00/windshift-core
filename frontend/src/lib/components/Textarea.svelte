@@ -4,6 +4,7 @@
     placeholder = '',
     disabled = false,
     required = false,
+    autofocus = false,
     spellcheck = undefined,
     rows = 3,
     size = 'medium',
@@ -11,12 +12,15 @@
     class: className = '',
     style = '',
     'data-testid': dataTestid = undefined,
+    textareaRef = $bindable(null),
     // Svelte 5 event handlers
     oninput = undefined,
     onchange = undefined,
     onfocus = undefined,
     onblur = undefined,
-    onkeydown = undefined
+    onkeydown = undefined,
+    onclick = undefined,
+    ...restProps
   } = $props();
   export { className as class };
 
@@ -35,12 +39,16 @@
   ].filter(Boolean).join(' '));
 </script>
 
+<!-- svelte-ignore a11y_autofocus -->
 <textarea
+  {...restProps}
   {id}
   bind:value
+  bind:this={textareaRef}
   {placeholder}
   {disabled}
   {required}
+  {autofocus}
   {spellcheck}
   {rows}
   class={allClasses}
@@ -51,4 +59,5 @@
   {onfocus}
   {onblur}
   {onkeydown}
+  {onclick}
 ></textarea>

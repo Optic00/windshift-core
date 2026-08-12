@@ -1010,12 +1010,11 @@
       />
       <div>
         <label for="config-related-max-items" class="block text-xs font-medium mb-1">Max items</label>
-        <input
+        <Input
           id="config-related-max-items"
-          data-testid="related-max-items"
+          dataTestid="related-max-items"
           type="number"
           min="0"
-          class="w-full px-3 py-2 border rounded-md text-sm config-input"
           value={selectedNode.data?.config?.max_items || ''}
           oninput={(e) => store.updateNodeConfig(selectedNode.id, { max_items: e.currentTarget.value ? parseInt(e.currentTarget.value) : 0 })}
           placeholder="Engine default"
@@ -1083,10 +1082,9 @@
               size="small"
             />
           {:else}
-            <input
+            <Input
               id="config-transition-category"
               type="text"
-              class="w-full px-3 py-2 border rounded-md text-sm config-input"
               value={target.category_name || ''}
               oninput={(e) => store.updateNodeConfig(selectedNode.id, { target: { ...target, category_name: e.currentTarget.value } })}
               placeholder="Done"
@@ -1113,10 +1111,9 @@
       </div>
       <div>
         <label for="config-container-output" class="block text-xs font-medium mb-1">{t('actions.config.outputField')}</label>
-        <input
+        <Input
           id="config-container-output"
           type="text"
-          class="w-full px-3 py-2 border rounded-md text-sm config-input"
           value={selectedNode.data?.config?.output_field || ''}
           oninput={(e) => store.updateNodeConfig(selectedNode.id, { output_field: e.currentTarget.value })}
           placeholder={t('actions.config.outputFieldPlaceholder')}
@@ -1125,11 +1122,10 @@
       </div>
       <div>
         <label for="config-container-timeout" class="block text-xs font-medium mb-1">{t('actions.config.timeoutSecs')}</label>
-        <input
+        <Input
           id="config-container-timeout"
           type="number"
           min="1"
-          class="w-full px-3 py-2 border rounded-md text-sm config-input"
           value={selectedNode.data?.config?.timeout_secs || 60}
           oninput={(e) => store.updateNodeConfig(selectedNode.id, { timeout_secs: parseInt(e.currentTarget.value) || 60 })}
         />
@@ -1172,10 +1168,9 @@
             <HelpCircle class="w-3.5 h-3.5" />
           </button>
         </div>
-        <input
+        <Input
           id="config-http-url"
           type="text"
-          class="w-full px-3 py-2 border rounded-md text-sm config-input"
           value={selectedNode.data?.config?.url_template || ''}
           oninput={(e) => store.updateNodeConfig(selectedNode.id, { url_template: e.currentTarget.value })}
           placeholder="https://example.com/api/items/{'{{'}item.id{'}}'}"
@@ -1183,14 +1178,14 @@
       </div>
       <div>
         <label for="config-http-body" class="block text-xs font-medium mb-1">{t('actions.config.requestBody')}</label>
-        <textarea
+        <Textarea
           id="config-http-body"
-          class="w-full px-3 py-2 border rounded-md text-sm config-input"
-          rows="3"
+          rows={3}
           value={selectedNode.data?.config?.body || ''}
           oninput={(e) => store.updateNodeConfig(selectedNode.id, { body: e.currentTarget.value })}
           placeholder={t('actions.config.requestBodyPlaceholder')}
-        ></textarea>
+          size="small"
+        />
       </div>
       <div>
         <span class="block text-xs font-medium mb-1">{t('actions.config.httpHeaders')}</span>
@@ -1202,10 +1197,9 @@
       </div>
       <div>
         <label for="config-http-output" class="block text-xs font-medium mb-1">{t('actions.config.outputField')}</label>
-        <input
+        <Input
           id="config-http-output"
           type="text"
-          class="w-full px-3 py-2 border rounded-md text-sm config-input"
           value={selectedNode.data?.config?.output_field || ''}
           oninput={(e) => store.updateNodeConfig(selectedNode.id, { output_field: e.currentTarget.value })}
           placeholder="response"
@@ -1225,10 +1219,9 @@
       </div>
       <div>
         <label for="config-aix-input" class="block text-xs font-medium mb-1">{t('actions.config.inputField')}</label>
-        <input
+        <Input
           id="config-aix-input"
           type="text"
-          class="w-full px-3 py-2 border rounded-md text-sm config-input"
           value={selectedNode.data?.config?.input_field || ''}
           oninput={(e) => store.updateNodeConfig(selectedNode.id, { input_field: e.currentTarget.value })}
           placeholder={t('actions.config.inputFieldPlaceholder')}
@@ -1236,33 +1229,32 @@
       </div>
       <div>
         <label for="config-aix-prompt" class="block text-xs font-medium mb-1">{t('actions.config.aiPrompt')}</label>
-        <textarea
+        <Textarea
           id="config-aix-prompt"
-          class="w-full px-3 py-2 border rounded-md text-sm config-input"
-          rows="4"
+          rows={4}
           value={selectedNode.data?.config?.prompt || ''}
           oninput={(e) => store.updateNodeConfig(selectedNode.id, { prompt: e.currentTarget.value })}
           placeholder={t('actions.config.aiExtractPromptPlaceholder')}
-        ></textarea>
+          size="small"
+        />
       </div>
       <div>
         <label for="config-aix-schema" class="block text-xs font-medium mb-1">{t('actions.config.outputSchema')}</label>
-        <textarea
+        <Textarea
           id="config-aix-schema"
-          class="w-full px-3 py-2 border rounded-md text-sm config-input"
-          rows="4"
+          rows={4}
           value={selectedNode.data?.config?.output_schema || ''}
           oninput={(e) => store.updateNodeConfig(selectedNode.id, { output_schema: e.currentTarget.value })}
           placeholder={'{"type":"object","properties":{...}}'}
           style="font-family: monospace;"
-        ></textarea>
+          size="small"
+        />
       </div>
       <div>
         <label for="config-aix-output" class="block text-xs font-medium mb-1">{t('actions.config.outputField')}</label>
-        <input
+        <Input
           id="config-aix-output"
           type="text"
-          class="w-full px-3 py-2 border rounded-md text-sm config-input"
           value={selectedNode.data?.config?.output_field || ''}
           oninput={(e) => store.updateNodeConfig(selectedNode.id, { output_field: e.currentTarget.value })}
           placeholder="extracted_data"
@@ -1282,14 +1274,14 @@
       </div>
       <div>
         <label for="config-aia-prompt" class="block text-xs font-medium mb-1">{t('actions.config.systemPrompt')}</label>
-        <textarea
+        <Textarea
           id="config-aia-prompt"
-          class="w-full px-3 py-2 border rounded-md text-sm config-input"
-          rows="4"
+          rows={4}
           value={selectedNode.data?.config?.prompt || ''}
           oninput={(e) => store.updateNodeConfig(selectedNode.id, { prompt: e.currentTarget.value })}
           placeholder={t('actions.config.systemPromptPlaceholder')}
-        ></textarea>
+          size="small"
+        />
       </div>
       <div>
         <label for="config-aia-input-fields" class="block text-xs font-medium mb-1">{t('actions.config.inputFields')}</label>
@@ -1310,12 +1302,11 @@
             {/each}
           </div>
         {/if}
-        <input
+        <Input
           id="config-aia-input-fields"
-          data-testid="ai-input-field-add"
+          dataTestid="ai-input-field-add"
           type="text"
           list={`ai-input-suggestions-${selectedNode.id}`}
-          class="w-full px-3 py-2 border rounded-md text-sm config-input"
           placeholder={t('actions.config.inputFieldsPlaceholder')}
           onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addInputField(selectedNode.id, selectedNode.data?.config, e.currentTarget.value); e.currentTarget.value = ''; } }}
           onchange={(e) => { if (e.currentTarget.value) { addInputField(selectedNode.id, selectedNode.data?.config, e.currentTarget.value); e.currentTarget.value = ''; } }}
@@ -1333,41 +1324,38 @@
           <p class="text-xs" style="color: var(--ds-text-subtle); font-style: italic;">{t('actions.config.noToolsAvailable')}</p>
         {:else}
           {#each capabilitiesByType.http_client as cap}
-            <label class="flex items-center gap-2 text-sm py-1 cursor-pointer">
-              <input
-                type="checkbox"
+            <Checkbox
                 checked={(selectedNode.data?.config?.tools || []).includes(String(cap.id))}
-                onchange={(e) => {
+                onchange={(checked) => {
                   const current = selectedNode.data?.config?.tools || [];
-                  const next = e.currentTarget.checked
+                  const next = checked
                     ? [...current.filter((id) => id !== String(cap.id)), String(cap.id)]
                     : current.filter((id) => id !== String(cap.id));
                   store.updateNodeConfig(selectedNode.id, { tools: next });
                 }}
+                label={cap.name}
+                class="py-1"
+                size="small"
               />
-              <span style="color: var(--ds-text);">{cap.name}</span>
-            </label>
           {/each}
         {/if}
       </div>
       <div>
         <label for="config-aia-max-steps" class="block text-xs font-medium mb-1">{t('actions.config.maxSteps')}</label>
-        <input
+        <Input
           id="config-aia-max-steps"
           type="number"
           min="1"
           max="50"
-          class="w-full px-3 py-2 border rounded-md text-sm config-input"
           value={selectedNode.data?.config?.max_steps || 10}
           oninput={(e) => store.updateNodeConfig(selectedNode.id, { max_steps: parseInt(e.currentTarget.value) || 10 })}
         />
       </div>
       <div>
         <label for="config-aia-output" class="block text-xs font-medium mb-1">{t('actions.config.outputField')}</label>
-        <input
+        <Input
           id="config-aia-output"
           type="text"
-          class="w-full px-3 py-2 border rounded-md text-sm config-input"
           value={selectedNode.data?.config?.output_field || ''}
           oninput={(e) => store.updateNodeConfig(selectedNode.id, { output_field: e.currentTarget.value })}
           placeholder="agent_answer"

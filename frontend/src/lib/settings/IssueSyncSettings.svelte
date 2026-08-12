@@ -6,6 +6,8 @@
   import Toggle from '../components/Toggle.svelte';
   import Label from '../components/Label.svelte';
   import NativeSelect from '../components/NativeSelect.svelte';
+  import Input from '../components/Input.svelte';
+  import Radio from '../components/Radio.svelte';
   import AlertBox from '../components/AlertBox.svelte';
   import Chip from '../components/Chip.svelte';
   import { RefreshCw, Trash2, ExternalLink, Loader2, Plus, X, Layers } from '@lucide/svelte';
@@ -356,32 +358,22 @@
             <div class="flex items-center gap-3">
               <span class="text-sm font-medium w-32" style="color: var(--ds-text);">{t('issueSync.githubOpen')}</span>
               <span class="text-xs" style="color: var(--ds-text-subtle);">{t('issueSync.mapsTo')}</span>
-              <select
+              <NativeSelect
                 value={formData.status_mapping.open ? String(formData.status_mapping.open) : ''}
-                onchange={(e) => formData.status_mapping = { ...formData.status_mapping, open: e.currentTarget.value ? Number(e.currentTarget.value) : null }}
+                onchange={(value) => formData.status_mapping = { ...formData.status_mapping, open: value ? Number(value) : null }}
                 class="flex-1 px-3 py-1.5 rounded-md border text-sm"
-                style="background: var(--ds-surface); color: var(--ds-text); border-color: var(--ds-border);"
-              >
-                <option value="">{t('issueSync.selectStatus')}</option>
-                {#each statusOptions as opt}
-                  <option value={opt.value}>{opt.label}</option>
-                {/each}
-              </select>
+                options={[{ value: '', label: t('issueSync.selectStatus') }, ...statusOptions]}
+              />
             </div>
             <div class="flex items-center gap-3">
               <span class="text-sm font-medium w-32" style="color: var(--ds-text);">{t('issueSync.githubClosed')}</span>
               <span class="text-xs" style="color: var(--ds-text-subtle);">{t('issueSync.mapsTo')}</span>
-              <select
+              <NativeSelect
                 value={formData.status_mapping.closed ? String(formData.status_mapping.closed) : ''}
-                onchange={(e) => formData.status_mapping = { ...formData.status_mapping, closed: e.currentTarget.value ? Number(e.currentTarget.value) : null }}
+                onchange={(value) => formData.status_mapping = { ...formData.status_mapping, closed: value ? Number(value) : null }}
                 class="flex-1 px-3 py-1.5 rounded-md border text-sm"
-                style="background: var(--ds-surface); color: var(--ds-text); border-color: var(--ds-border);"
-              >
-                <option value="">{t('issueSync.selectStatus')}</option>
-                {#each statusOptions as opt}
-                  <option value={opt.value}>{opt.label}</option>
-                {/each}
-              </select>
+                options={[{ value: '', label: t('issueSync.selectStatus') }, ...statusOptions]}
+              />
             </div>
           </div>
         {/if}
@@ -399,24 +391,20 @@
               <div class="flex items-center gap-3">
                 <span class="text-sm w-40 truncate" style="color: var(--ds-text);">{status.name}</span>
                 <span class="text-xs" style="color: var(--ds-text-subtle);">{t('issueSync.mapsTo')}</span>
-                <select
+                <NativeSelect
                   value={formData.reverse_status_mapping[String(status.id)] || ''}
-                  onchange={(e) => {
+                  onchange={(value) => {
                     const m = { ...formData.reverse_status_mapping };
-                    if (e.currentTarget.value) {
-                      m[String(status.id)] = e.currentTarget.value;
+                    if (value) {
+                      m[String(status.id)] = value;
                     } else {
                       delete m[String(status.id)];
                     }
                     formData.reverse_status_mapping = m;
                   }}
                   class="w-32 px-2 py-1 rounded-md border text-sm"
-                  style="background: var(--ds-surface); color: var(--ds-text); border-color: var(--ds-border);"
-                >
-                  <option value="">—</option>
-                  <option value="open">open</option>
-                  <option value="closed">closed</option>
-                </select>
+                  options={[{ value: '', label: '—' }, { value: 'open', label: 'open' }, { value: 'closed', label: 'closed' }]}
+                />
               </div>
             {/each}
           </div>
@@ -431,8 +419,7 @@
       <div class="flex gap-4">
         {#each ['none', 'mirror', 'mapped'] as mode}
           <label class="flex items-center gap-2 cursor-pointer">
-            <input
-              type="radio"
+            <Radio
               name="label_sync_mode"
               value={mode}
               checked={formData.label_sync_mode === mode}
@@ -450,7 +437,7 @@
       <Label>{t('issueSync.filterLabels')}</Label>
       <p class="text-xs mb-2" style="color: var(--ds-text-subtle);">{t('issueSync.filterLabelsDescription')}</p>
       <div class="flex gap-2 mb-2">
-        <input
+        <Input
           type="text"
           bind:value={filterLabelInput}
           placeholder={t('issueSync.filterLabelsPlaceholder')}
@@ -488,7 +475,7 @@
         </div>
       {/each}
       <div class="flex items-center gap-2 mt-2">
-        <input
+        <Input
           type="text"
           bind:value={newAssigneeGH}
           placeholder={t('issueSync.githubUsername')}
@@ -511,17 +498,12 @@
     <Card rounded="lg" padding="spacious">
       <Label>{t('issueSync.defaultPriority')}</Label>
       <p class="text-xs mb-2" style="color: var(--ds-text-subtle);">{t('issueSync.defaultPriorityDescription')}</p>
-      <select
+      <NativeSelect
         value={formData.default_priority_id ? String(formData.default_priority_id) : ''}
-        onchange={(e) => formData.default_priority_id = e.currentTarget.value ? Number(e.currentTarget.value) : null}
+        onchange={(value) => formData.default_priority_id = value ? Number(value) : null}
         class="w-full px-3 py-2 rounded-md border text-sm"
-        style="background: var(--ds-surface); color: var(--ds-text); border-color: var(--ds-border);"
-      >
-        <option value="">—</option>
-        {#each priorityOptions as opt}
-          <option value={opt.value}>{opt.label}</option>
-        {/each}
-      </select>
+        options={[{ value: '', label: '—' }, ...priorityOptions]}
+      />
     </Card>
 
     <!-- Comment Sync -->

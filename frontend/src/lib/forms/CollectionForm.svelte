@@ -5,6 +5,7 @@
   import MilkdownEditor from '../editors/LazyMilkdownEditor.svelte';
   import ChipPicker from '../pickers/ChipPicker.svelte';
   import { collectionCategoriesStore } from '../stores/collectionCategories.js';
+  import Input from '../components/Input.svelte';
 
   let {
     formData = $bindable({
@@ -56,9 +57,9 @@
 
 <div class="space-y-3">
   <!-- Title Input -->
-  <input
-    data-testid="collection-create-name"
-    bind:this={nameInputRef}
+  <Input
+    dataTestid="collection-create-name"
+    bind:inputRef={nameInputRef}
     bind:value={formData.name}
     type="text"
     class="w-full text-lg font-medium border-0 outline-none bg-transparent"

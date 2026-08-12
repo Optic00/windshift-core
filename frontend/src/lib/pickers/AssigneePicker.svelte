@@ -3,6 +3,7 @@
   import UserPicker from './UserPicker.svelte';
   import GroupPicker from './GroupPicker.svelte';
   import Label from '../components/Label.svelte';
+  import Radio from '../components/Radio.svelte';
   import { t } from '../stores/i18n.svelte.js';
 
   let {
@@ -46,18 +47,16 @@
     <Label color="default" class="mb-2">{t('pickers.assignTo')}</Label>
     <div class="flex gap-4">
       <label class="flex items-center">
-        <input
-          type="radio"
-          bind:group={type}
+        <Radio
+          bind:groupValue={type}
           value="user"
           class="mr-2"
         />
         <span style="color: var(--ds-text);">{t('common.user')}</span>
       </label>
       <label class="flex items-center">
-        <input
-          type="radio"
-          bind:group={type}
+        <Radio
+          bind:groupValue={type}
           value="group"
           class="mr-2"
         />

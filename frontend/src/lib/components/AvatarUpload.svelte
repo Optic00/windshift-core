@@ -1,4 +1,5 @@
 <script>
+  import FileInput from './FileInput.svelte';
   /** Reusable image-avatar upload control with availability/MIME checks and
    * fallback tile. Categories require matching backend attachment support. */
   import { Camera, Trash2, Package } from '@lucide/svelte';
@@ -112,8 +113,7 @@
 
   {#if showUpload && attachmentStatus.enabled}
     <div class="p-4 rounded border" style="border-color: var(--ds-border); background-color: var(--ds-surface-raised);">
-      <input
-        type="file"
+      <FileInput
         accept="image/*"
         onchange={(e) => handleFiles(e.currentTarget.files)}
         disabled={uploading}

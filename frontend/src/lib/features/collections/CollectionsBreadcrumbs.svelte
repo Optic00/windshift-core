@@ -5,6 +5,8 @@
   import { IconLayoutKanban as SquareKanban, IconDeviceFloppy as Save, IconTag as Tag, IconWorld, IconExternalLink, IconLoader2 } from '@tabler/icons-svelte-runes';
   import CopyButton from '../../components/CopyButton.svelte';
   import Button from '../../components/Button.svelte';
+  import Checkbox from '../../components/Checkbox.svelte';
+  import Input from '../../components/Input.svelte';
   import Select from '../../components/Select.svelte';
   import Tooltip from '../../components/Tooltip.svelte';
   import DescriptionText from '../../components/DescriptionText.svelte';
@@ -134,13 +136,13 @@
 
       {#if isEditing && collection}
         <!-- Editable collection name -->
-        <input
-          data-testid="collection-name"
+        <Input
+          dataTestid="collection-name"
           type="text"
           value={collection.name}
           oninput={handleNameChange}
           class="text-sm font-medium bg-transparent border-none p-0 focus:outline-none focus:ring-0"
-          style="color: var(--ds-text); min-width: 150px;"
+          style="background-color: transparent; border-color: transparent; color: var(--ds-text); min-width: 150px;"
           placeholder={t('collections.collectionName')}
         />
       {:else if collection}
@@ -174,16 +176,12 @@
                 <p class="text-xs" style="color: var(--ds-text-subtle);">Share a read-only Kanban board publicly.</p>
 
                 <!-- Public toggle -->
-                <label class="flex items-center gap-3 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={isPublic}
-                    onchange={() => onpublictoggle?.()}
-                    class="w-4 h-4 rounded"
-                    style="accent-color: #2874BB;"
-                  />
-                  <span class="text-sm" style="color: var(--ds-text);">Enable public sharing</span>
-                </label>
+                <Checkbox
+                  checked={isPublic}
+                  onchange={() => onpublictoggle?.()}
+                  label="Enable public sharing"
+                  size="small"
+                />
 
                 {#if isPublic}
                   <!-- Slug input -->
@@ -191,14 +189,14 @@
                     <label for="public-board-slug" class="block text-xs font-medium mb-1" style="color: var(--ds-text);">Board URL slug</label>
                     <div class="flex items-center gap-1.5">
                       <span class="text-xs" style="color: var(--ds-text-subtle);">/board/</span>
-                      <input
+                      <Input
                         id="public-board-slug"
                         type="text"
                         value={publicSlug || ''}
                         oninput={(e) => onslugchange?.(e.currentTarget.value || null)}
                         placeholder="my-board"
-                        class="flex-1 px-2 py-1 text-sm rounded border"
-                        style="border-color: var(--ds-border); background-color: var(--ds-input); color: var(--ds-text);"
+                        class="flex-1"
+                        size="small"
                       />
                       <button
                         onclick={() => onslugsave?.()}
@@ -283,12 +281,12 @@
   <!-- Editable description (only when editing) -->
   {#if isEditing && collection}
     <div class="mt-2 flex items-center gap-4">
-      <input
+      <Input
         type="text"
         value={collection.description || ''}
         oninput={handleDescriptionChange}
         class="text-sm bg-transparent border-none p-0 focus:outline-none focus:ring-0 flex-1"
-        style="color: var(--ds-text-subtle);"
+        style="background-color: transparent; border-color: transparent; color: var(--ds-text-subtle);"
         placeholder={t('collections.collectionDescription')}
       />
 

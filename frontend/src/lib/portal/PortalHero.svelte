@@ -1,6 +1,7 @@
 <script>
   import { Search, X, BookOpen } from '@lucide/svelte';
   import Spinner from '../components/Spinner.svelte';
+  import Input from '../components/Input.svelte';
   import { portalStore, gradients } from '../stores/portal.svelte.js';
   import { safeCssUrl } from '../utils/sanitize';
 
@@ -49,7 +50,7 @@
           <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
             <Search class="h-6 w-6 text-gray-400" />
           </div>
-          <input
+          <Input
             type="text"
             value={portalStore.searchQuery}
             oninput={handleSearchInput}
@@ -66,7 +67,7 @@
         <div class="mt-4 space-y-3">
           <div>
             <label for="search-box-placeholder" class="text-xs text-white/60 block mb-1">Search Box Placeholder:</label>
-            <input
+            <Input
               id="search-box-placeholder"
               type="text"
               value={portalStore.editableSearchPlaceholder}
@@ -77,7 +78,7 @@
           </div>
           <div>
             <label for="search-hint-text" class="text-xs text-white/60 block mb-1">Search Hint Text:</label>
-            <input
+            <Input
               id="search-hint-text"
               type="text"
               value={portalStore.editableSearchHint}

@@ -6,6 +6,7 @@
   import { t } from '../stores/i18n.svelte.js';
   import { confirm } from '../composables/useConfirm.js';
   import AssetReportTable from './AssetReportTable.svelte';
+  import Input from '../components/Input.svelte';
 
   let {
     onOpenRequestForm = () => {},
@@ -177,8 +178,7 @@
           <!-- Section Title -->
           {#if portalStore.isEditing}
             {#if editingSectionId === section.id && editingSectionField === 'title'}
-              <!-- svelte-ignore a11y_autofocus -->
-              <input
+              <Input
                 type="text"
                 bind:value={editingSectionValue}
                 onkeydown={(e) => {
@@ -187,8 +187,7 @@
                 }}
                 onblur={saveSection}
                 class="text-xl font-medium mb-1 bg-transparent border-b-2 focus:outline-none w-full"
-                style:border-color="var(--ds-border-focused)"
-                style="color: var(--ds-text);"
+                style="border-color: var(--ds-border-focused); color: var(--ds-text);"
                 placeholder="Section title (click to edit)"
                 autofocus
               />
@@ -218,8 +217,7 @@
           <!-- Section Subtitle -->
           {#if portalStore.isEditing}
             {#if editingSectionId === section.id && editingSectionField === 'subtitle'}
-              <!-- svelte-ignore a11y_autofocus -->
-              <input
+              <Input
                 type="text"
                 bind:value={editingSectionValue}
                 onkeydown={(e) => {
@@ -228,8 +226,7 @@
                 }}
                 onblur={saveSection}
                 class="text-sm mb-4 bg-transparent border-b focus:outline-none w-full"
-                style:border-color="var(--ds-border-focused)"
-                style="color: var(--ds-text-subtle);"
+                style="border-color: var(--ds-border-focused); color: var(--ds-text-subtle);"
                 placeholder="Subtitle (optional, click to edit)"
                 autofocus
               />

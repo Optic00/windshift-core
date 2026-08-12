@@ -6,6 +6,7 @@
   import { authStore } from '../../stores';
   import Spinner from '../../components/Spinner.svelte';
   import Label from '../../components/Label.svelte';
+  import FileInput from '../../components/FileInput.svelte';
   import AlertBox from '../../components/AlertBox.svelte';
   import Button from '../../components/Button.svelte';
   import Progress from '../../components/Progress.svelte';
@@ -451,11 +452,10 @@
       {#if isLastStep && attachmentConfig?.enabled}
         <div class="mt-4">
           <Label for="form-attachments" class="mb-1.5" color="default">Attachments</Label>
-          <input
+          <FileInput
             id="form-attachments"
-            bind:this={attachmentInput}
-            data-testid="public-form-attachments"
-            type="file"
+            bind:inputRef={attachmentInput}
+            dataTestid="public-form-attachments"
             multiple
             accept={attachmentConfig.allowed_mime_types?.join(',') || undefined}
             onchange={handleAttachmentChange}

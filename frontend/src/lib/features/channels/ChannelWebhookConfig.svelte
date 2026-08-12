@@ -11,6 +11,7 @@
   import WorkspacePicker from '../../pickers/WorkspacePicker.svelte';
   import DescriptionText from '../../components/DescriptionText.svelte';
   import Toggle from '../../components/Toggle.svelte';
+  import Radio from '../../components/Radio.svelte';
 
   let {
     channelId,
@@ -201,11 +202,11 @@
         <h5 class="text-sm font-semibold mb-3" style="color: var(--ds-text);">{t('channel.scope')}</h5>
         <div class="space-y-3">
           <label class="flex items-center gap-2 cursor-pointer">
-            <input type="radio" name="webhookScope" value="all" bind:group={formData.scope_type} class="w-4 h-4" />
+            <Radio name="webhookScope" value="all" bind:groupValue={formData.scope_type} />
             <span class="text-sm" style="color: var(--ds-text);">{t('channel.allItems')}</span>
           </label>
           <label class="flex items-center gap-2 cursor-pointer">
-            <input type="radio" name="webhookScope" value="workspaces" bind:group={formData.scope_type} class="w-4 h-4" />
+            <Radio name="webhookScope" value="workspaces" bind:groupValue={formData.scope_type} />
             <span class="text-sm" style="color: var(--ds-text);">{t('channel.specificWorkspaces')}</span>
           </label>
           {#if formData.scope_type === 'workspaces'}

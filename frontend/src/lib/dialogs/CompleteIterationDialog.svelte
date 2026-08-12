@@ -1,6 +1,7 @@
 <script>
   import { CheckCircle, X } from '@lucide/svelte';
   import Button from '../components/Button.svelte';
+  import Radio from '../components/Radio.svelte';
   import ModalBackdrop from '../components/ModalBackdrop.svelte';
   import ItemPicker from '../pickers/ItemPicker.svelte';
   import { t } from '../stores/i18n.svelte.js';
@@ -135,11 +136,10 @@
 
             <!-- Radio: Move to backlog -->
             <label class="flex items-center gap-2 cursor-pointer">
-              <input
-                type="radio"
+              <Radio
                 name="move-target"
                 value="backlog"
-                bind:group={moveTarget}
+                bind:groupValue={moveTarget}
                 class="accent-[var(--ds-interactive)]"
               />
               <span class="text-sm" style="color: var(--ds-text);">
@@ -149,11 +149,10 @@
 
             <!-- Radio: Move to another iteration -->
             <label class="flex items-center gap-2 cursor-pointer">
-              <input
-                type="radio"
+              <Radio
                 name="move-target"
                 value="iteration"
-                bind:group={moveTarget}
+                bind:groupValue={moveTarget}
                 class="accent-[var(--ds-interactive)]"
               />
               <span class="text-sm" style="color: var(--ds-text);">

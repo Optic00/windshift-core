@@ -7,6 +7,7 @@
   import Card from '../components/Card.svelte';
   import FormField from '../components/FormField.svelte';
   import Input from '../components/Input.svelte';
+  import Radio from '../components/Radio.svelte';
   import Select from '../components/Select.svelte';
   import Toggle from '../components/Toggle.svelte';
   import { Save, Trash2, X, Eye } from '@lucide/svelte';
@@ -280,11 +281,11 @@
     <Card variant="outlined" padding="compact">
       <div class="space-y-3">
         <label class="flex items-center gap-2 cursor-pointer">
-          <input id="recurrence-end-never" type="radio" bind:group={endType} value="never" />
+          <Radio id="recurrence-end-never" bind:groupValue={endType} value="never" />
           <span class="text-sm" style="color: var(--ds-text);">{t('recurrence.never')}</span>
         </label>
         <label class="flex items-center gap-2 cursor-pointer">
-          <input id="recurrence-end-date-option" type="radio" bind:group={endType} value="date" />
+          <Radio id="recurrence-end-date-option" bind:groupValue={endType} value="date" />
           <span class="text-sm" style="color: var(--ds-text);">{t('recurrence.onDate')}</span>
           {#if endType === 'date'}
             <Input
@@ -297,7 +298,7 @@
           {/if}
         </label>
         <label class="flex items-center gap-2 cursor-pointer">
-          <input id="recurrence-end-count-option" type="radio" bind:group={endType} value="count" />
+          <Radio id="recurrence-end-count-option" bind:groupValue={endType} value="count" />
           <span class="text-sm" style="color: var(--ds-text);">{t('recurrence.afterOccurrences')}</span>
           {#if endType === 'count'}
             <Input

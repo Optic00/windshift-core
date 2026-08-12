@@ -2,6 +2,7 @@
   import { Link2, Plus, Paperclip, PenTool, Zap, ChevronDown } from '@lucide/svelte';
   import { tick } from 'svelte';
   import Button from '../../components/Button.svelte';
+  import FileInput from '../../components/FileInput.svelte';
   import MilkdownEditor from '../../editors/LazyMilkdownEditor.svelte';
   import AttachmentDiagramList from '../assets/AttachmentDiagramList.svelte';
   import AIActionsDropdown from './AIActionsDropdown.svelte';
@@ -229,8 +230,7 @@
       >
         <Paperclip class="w-4 h-4 flex-shrink-0" />
         <span class="action-label">{t('items.attach')}</span>
-        <input
-          type="file"
+        <FileInput
           class="hidden"
           multiple
           onchange={(e) => {

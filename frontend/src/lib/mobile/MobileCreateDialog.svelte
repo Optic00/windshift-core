@@ -3,6 +3,9 @@
   import { navigate } from '../router.js';
   import { workspacesStore } from '../stores';
   import Modal from '../dialogs/Modal.svelte';
+  import Input from '../components/Input.svelte';
+  import NativeSelect from '../components/NativeSelect.svelte';
+  import Textarea from '../components/Textarea.svelte';
   import { FileText } from '@lucide/svelte';
   import CustomFieldRenderer from '../features/items/CustomFieldRenderer.svelte';
   import PriorityPicker from '../pickers/PriorityPicker.svelte';
@@ -646,11 +649,12 @@
 
     <label class="field">
       <span>{isPersonal ? 'Task' : 'Title'}</span>
-      <input
+      <Input
         bind:value={title}
         placeholder={isPersonal ? 'What do you need to do?' : 'What needs doing?'}
-        data-testid="create-title"
+        dataTestid="create-title"
         autocomplete="off"
+        class="mobile-create-input"
       />
     </label>
 
@@ -658,32 +662,37 @@
       <div class="row">
         <label class="field">
           <span>Workspace</span>
-          <select bind:value={workspaceId} disabled={isChild} data-testid="create-workspace">
-            {#each workspaces as ws (ws.id)}
-              <option value={ws.id}>{ws.name}</option>
-            {/each}
-          </select>
+          <NativeSelect
+            bind:value={workspaceId}
+            disabled={isChild}
+            dataTestid="create-workspace"
+            class="mobile-create-select"
+            options={workspaces.map((ws) => ({ value: ws.id, label: ws.name }))}
+          />
         </label>
 
         <label class="field">
           <span>Type</span>
-          <select bind:value={itemTypeId} disabled={typesLoading || itemTypes.length === 0} data-testid="create-type">
-            {#each itemTypes as it (it.id)}
-              <option value={it.id}>{it.name}</option>
-            {/each}
-          </select>
+          <NativeSelect
+            bind:value={itemTypeId}
+            disabled={typesLoading || itemTypes.length === 0}
+            dataTestid="create-type"
+            class="mobile-create-select"
+            options={itemTypes.map((itemType) => ({ value: itemType.id, label: itemType.name }))}
+          />
         </label>
       </div>
 
       <label class="field">
         <span>Description <em>(optional)</em></span>
-        <textarea
+        <Textarea
           bind:value={description}
-          rows="3"
+          rows={3}
           placeholder="Add detail…"
           data-testid="create-description"
           readonly={templateLocked}
-        ></textarea>
+          class="mobile-create-textarea"
+        />
       </label>
 
       <!-- Work item templates (WI-538). When the selected type enforces a
@@ -702,10 +711,10 @@
       {:else if templateOptions.length >= 1}
         <label class="field">
           <span>Template</span>
-          <select
+          <NativeSelect
             value={selectedTemplateId ?? ''}
-            onchange={(e) => {
-              const id = e.currentTarget.value;
+            onchange={(value) => {
+              const id = value;
               if (id === '') {
                 selectedTemplateId = null;
                 return;
@@ -713,13 +722,13 @@
               applyTemplate(Number(id));
             }}
             disabled={templatesLoading}
-            data-testid="template-picker"
-          >
-            <option value="">No template</option>
-            {#each templateOptions as tmpl (tmpl.id)}
-              <option value={tmpl.id}>{tmpl.name}</option>
-            {/each}
-          </select>
+            dataTestid="template-picker"
+            class="mobile-create-select"
+            options={[
+              { value: '', label: 'No template' },
+              ...templateOptions.map((template) => ({ value: template.id, label: template.name })),
+            ]}
+          />
         </label>
       {/if}
 
@@ -795,19 +804,23 @@
         placeholder="No milestone"
       />
     {:else if field.field_identifier === 'iteration'}
-      <select bind:value={iterationId}>
-        <option value={null}>No iteration</option>
-        {#each iterations as iteration (iteration.id)}
-          <option value={iteration.id}>{iteration.name}</option>
-        {/each}
-      </select>
+      <NativeSelect
+        bind:value={iterationId}
+        class="mobile-create-select"
+        options={[
+          { value: null, label: 'No iteration' },
+          ...iterations.map((iteration) => ({ value: iteration.id, label: iteration.name })),
+        ]}
+      />
     {:else if field.field_identifier === 'project'}
-      <select bind:value={projectId}>
-        <option value={null}>No project</option>
-        {#each timeProjects as project (project.id)}
-          <option value={project.id}>{project.name}</option>
-        {/each}
-      </select>
+      <NativeSelect
+        bind:value={projectId}
+        class="mobile-create-select"
+        options={[
+          { value: null, label: 'No project' },
+          ...timeProjects.map((project) => ({ value: project.id, label: project.name })),
+        ]}
+      />
     {:else if field.field_identifier === 'labels'}
       <PersonalLabelCombobox
         bind:value={personalLabelNames}
@@ -818,15 +831,15 @@
         }}
       />
     {:else if field.field_identifier === 'due_date'}
-      <input type="date" bind:value={dueDate} />
+      <Input type="date" bind:value={dueDate} class="mobile-create-input" />
     {:else if field.field_identifier === 'start_date'}
-      <input type="date" bind:value={startDate} />
+      <Input type="date" bind:value={startDate} class="mobile-create-input" />
     {:else if field.field_identifier === 'end_date'}
-      <input type="date" bind:value={endDate} />
+      <Input type="date" bind:value={endDate} class="mobile-create-input" />
     {:else if field.field_identifier === 'story_points'}
-      <input type="number" min="0" step="0.5" bind:value={storyPoints} placeholder="Story points" />
+      <Input type="number" min="0" step="0.5" bind:value={storyPoints} placeholder="Story points" class="mobile-create-input" />
     {:else if field.field_identifier === 'estimate' || field.field_identifier === 'estimate_minutes'}
-      <input type="text" bind:value={estimate} placeholder="3d 4h" />
+      <Input type="text" bind:value={estimate} placeholder="3d 4h" class="mobile-create-input" />
     {/if}
   </div>
 {/snippet}
@@ -858,13 +871,13 @@
   .field { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.75rem; color: var(--ds-text-subtle); }
   .field strong { color: var(--ds-text-danger, #ef4444); }
   .field em { font-style: normal; opacity: 0.7; }
-  .field input, .field select, .field textarea {
+  .field :global(.mobile-create-input), .field :global(.mobile-create-select), .field :global(.mobile-create-textarea) {
     padding: 0.6rem; border: 1px solid var(--ds-border); border-radius: var(--radius-md, 6px);
     background-color: var(--ds-background-input, var(--ds-surface)); color: var(--ds-text);
     font-size: 1rem; /* >=16px avoids iOS zoom-on-focus */
   }
-  .field textarea { resize: vertical; font-family: inherit; }
-  .field select:disabled { opacity: 0.7; }
+  .field :global(.mobile-create-textarea) { resize: vertical; font-family: inherit; }
+  .field :global(.mobile-create-select):disabled { opacity: 0.7; }
   .configured-field :global([role='combobox']),
   .configured-field :global(button),
   .configured-field :global(input),

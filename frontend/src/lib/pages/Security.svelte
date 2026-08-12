@@ -19,6 +19,7 @@
 	import { formatDate, formatDateShort } from '../utils/dateFormatter.js';
 	import { errorToast, successToast } from '../stores/toasts.svelte.js';
 	import Checkbox from '../components/Checkbox.svelte';
+	import Radio from '../components/Radio.svelte';
 	import DescriptionText from '../components/DescriptionText.svelte';
 	import {
 		isWebAuthnSupported,
@@ -487,7 +488,7 @@
 			<div class="space-y-4">
 				<div>
 					<Label for="current-password" color="default" class="mb-1">{t('auth.currentPassword')}</Label>
-					<input
+					<Input
 						id="current-password"
 						type="password"
 						value={changePasswordData.current_password}
@@ -553,8 +554,7 @@
 				<Label color="default" class="mb-2">Credential Type</Label>
 				<div class="flex space-x-4">
 					<label class="flex items-center cursor-pointer">
-						<input
-							type="radio"
+						<Radio
 							checked={credentialType === 'fido'}
 							onchange={() => setCredentialType('fido')}
 							class="mr-2"
@@ -564,8 +564,7 @@
 					</label>
 					{#if sshAvailable && !enrollmentOnly}
 					<label class="flex items-center cursor-pointer">
-						<input
-							type="radio"
+						<Radio
 							checked={credentialType === 'ssh'}
 							onchange={() => setCredentialType('ssh')}
 							class="mr-2"

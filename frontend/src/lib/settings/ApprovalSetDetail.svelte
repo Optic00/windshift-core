@@ -8,6 +8,7 @@
   import { ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, AlertTriangle } from '@lucide/svelte';
   import Button from '../components/Button.svelte';
   import Checkbox from '../components/Checkbox.svelte';
+  import Radio from '../components/Radio.svelte';
   import Input from '../components/Input.svelte';
   import NativeSelect from '../components/NativeSelect.svelte';
   import Textarea from '../components/Textarea.svelte';
@@ -563,7 +564,7 @@
                     {#each STEP_MODES as mode}
                       <label class="flex items-start gap-2 text-sm cursor-pointer p-2 rounded border flex-1"
                              style="border-color: {ass.step_mode === mode.id ? 'var(--ds-border-bold)' : 'var(--ds-border)'};">
-                        <input type="radio" bind:group={ass.step_mode} value={mode.id} class="mt-0.5" />
+                        <Radio bind:groupValue={ass.step_mode} value={mode.id} class="mt-0.5" />
                         <div>
                           <div class="font-medium" style="color: var(--ds-text);">{mode.name}</div>
                           <div class="text-xs" style="color: var(--ds-text-subtle);">
@@ -733,7 +734,7 @@
                                   {#each ON_LEAVE as ol}
                                     <label class="flex items-start gap-2 text-sm cursor-pointer p-2 rounded border"
                                            style="border-color: {step.on_leave_strategy === ol.id ? 'var(--ds-border-bold)' : 'var(--ds-border)'}; background: var(--ds-surface);">
-                                      <input type="radio" bind:group={step.on_leave_strategy} value={ol.id} class="mt-0.5" />
+                                      <Radio bind:groupValue={step.on_leave_strategy} value={ol.id} class="mt-0.5" />
                                       <div class="flex-1 min-w-0">
                                         <div class="font-medium" style="color: var(--ds-text);">{ol.name}</div>
                                         {#if ol.id === 'use_substitute'}
@@ -759,7 +760,7 @@
                                     {@const isSelected = (step.escalation_action || '') === a.id}
                                     <label class="flex items-start gap-2 text-sm cursor-pointer p-2 rounded border"
                                            style="border-color: {isSelected ? 'var(--ds-border-bold)' : 'var(--ds-border)'}; background: var(--ds-surface);">
-                                      <input type="radio" bind:group={step.escalation_action} value={a.id}
+                                      <Radio bind:groupValue={step.escalation_action} value={a.id}
                                              onchange={() => syncEscalationFields(step)} class="mt-0.5" />
                                       <div class="flex-1 min-w-0">
                                         <div class="font-medium" style="color: var(--ds-text);">{a.name}</div>

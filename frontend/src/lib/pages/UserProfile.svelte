@@ -981,9 +981,9 @@
 													{t('security.tokenWarning')}
 												</p>
 												<div class="flex items-center space-x-2">
-													<input
-														type="text"
-														value={agentMintState[agent.id].token}
+											<Input
+												type="text"
+												value={agentMintState[agent.id].token}
 														readonly
 												class="flex-1 font-mono border-[var(--ds-border-success)]"
 													/>

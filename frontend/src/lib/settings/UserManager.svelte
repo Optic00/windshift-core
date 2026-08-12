@@ -17,6 +17,7 @@
 	import Lozenge from '../components/Lozenge.svelte';
 	import Label from '../components/Label.svelte';
 	import Checkbox from '../components/Checkbox.svelte';
+	import Radio from '../components/Radio.svelte';
 	import { toHotkeyString } from '../utils/keyboardShortcuts.js';
 	import { t } from '../stores/i18n.svelte.js';
 	import { formatDateSimple } from '../utils/dateFormatter.js';
@@ -630,9 +631,8 @@
 			<div class="space-y-4">
 				<div>
 					<label class="flex items-center">
-						<input
-							type="radio"
-							bind:group={generateRandomPassword}
+						<Radio
+							bind:groupValue={generateRandomPassword}
 							value={true}
 							class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
 						/>
@@ -642,9 +642,8 @@
 
 				<div>
 					<label class="flex items-center">
-						<input
-							type="radio"
-							bind:group={generateRandomPassword}
+						<Radio
+							bind:groupValue={generateRandomPassword}
 							value={false}
 							class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
 						/>

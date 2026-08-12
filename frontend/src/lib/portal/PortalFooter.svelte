@@ -2,6 +2,7 @@
   import { Plus, X } from '@lucide/svelte';
   import { APP_NAME } from '../constants.js';
   import { portalStore } from '../stores/portal.svelte.js';
+  import Input from '../components/Input.svelte';
   import { t } from '../stores/i18n.svelte.js';
   import { safeHref } from '../utils/sanitize';
 
@@ -23,7 +24,7 @@
           <div>
             <!-- Column Title -->
             {#if portalStore.isEditing}
-              <input
+              <Input
                 type="text"
                 value={column.title}
                 oninput={(e) => portalStore.updateColumnTitle(columnIndex, /** @type {HTMLInputElement} */ (e.target).value)}
@@ -43,7 +44,7 @@
                 <div class="flex items-center gap-2">
                   {#if portalStore.isEditing}
                     <div class="flex-1 space-y-1">
-                      <input
+                      <Input
                         type="text"
                         value={link.text}
                         oninput={(e) => portalStore.updateFooterLink(columnIndex, linkIndex, 'text', /** @type {HTMLInputElement} */ (e.target).value)}
@@ -51,7 +52,7 @@
                         style="color: var(--ds-text-subtle); border-color: var(--ds-border);"
                         placeholder="Link text"
                       />
-                      <input
+                      <Input
                         type="text"
                         value={link.url}
                         oninput={(e) => portalStore.updateFooterLink(columnIndex, linkIndex, 'url', /** @type {HTMLInputElement} */ (e.target).value)}

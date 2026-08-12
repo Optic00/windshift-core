@@ -4,6 +4,7 @@
   import { t } from '../stores/i18n.svelte.js';
   import { formatDate, formatDateShort } from '../utils/dateFormatter.js';
   import BaseInlineEditor from './BaseInlineEditor.svelte';
+  import Input from '../components/Input.svelte';
 
   let {
     value = '', placeholder = '', disabled = false, required = false,
@@ -63,12 +64,11 @@
   onstartedit={handleStartEdit}
 >
   {#snippet editingInput({ saving, error, onkeydown, onblur })}
-    <input
-      bind:this={inputElement}
+    <Input
+      bind:inputRef={inputElement}
       bind:value={editValue}
       type="date"
-      class="w-full px-2 py-1 text-sm border rounded {editingClass} {className}"
-      class:border-red-500={error}
+      class="w-full px-2 py-1 text-sm border rounded {editingClass} {className} {error ? 'border-red-500' : ''}"
       disabled={saving}
       {onkeydown}
       {onblur}

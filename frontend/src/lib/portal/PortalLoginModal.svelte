@@ -6,6 +6,7 @@
   import { t } from '../stores/i18n.svelte.js';
   import { isWebAuthnSupported } from '../utils/webauthn-utils.js';
   import Button from '../components/Button.svelte';
+  import Input from '../components/Input.svelte';
   import AlertBox from '../components/AlertBox.svelte';
   import ModalBackdrop from '../components/ModalBackdrop.svelte';
 
@@ -179,9 +180,9 @@
                 <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                   <Mail class="h-4 w-4" style="color: var(--ds-text-subtle);" />
                 </div>
-                <input
+                <Input
                   id="email"
-                  data-autofocus
+                  dataAutofocus
                   type="email"
                   bind:value={email}
                   placeholder={t('portal.enterEmail')}
@@ -270,9 +271,9 @@
                 <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                   <Mail class="h-4 w-4" style="color: var(--ds-text-subtle);" />
                 </div>
-                <input
+                <Input
                   id="internal-email"
-                  data-autofocus
+                  dataAutofocus
                   type="text"
                   bind:value={email}
                   placeholder={t('portal.enterEmail')}
@@ -292,7 +293,7 @@
                 <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                   <Lock class="h-4 w-4" style="color: var(--ds-text-subtle);" />
                 </div>
-                <input
+                <Input
                   id="password"
                   type="password"
                   bind:value={password}

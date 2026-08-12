@@ -4,6 +4,7 @@
   import { navigate } from '../router.js';
   import { formatItemKey } from '../utils/itemKey.js';
   import MobileItemRow from './MobileItemRow.svelte';
+  import Input from '../components/Input.svelte';
 
   let query = $state('');
   let results = $state([]);
@@ -80,15 +81,16 @@
   </button>
   <div class="field">
     <Search size={16} class="s-icon" />
-    <input
-      bind:this={inputEl}
+    <Input
+      bind:inputRef={inputEl}
       bind:value={query}
       oninput={onInput}
       type="search"
       enterkeyhint="search"
       placeholder="Search work items…"
-      data-testid="mobile-search-input"
+      dataTestid="mobile-search-input"
       autocomplete="off"
+      class="mobile-search-input !p-0"
     />
     {#if query}
       <button class="clear" onclick={clear} aria-label="Clear" type="button"><X size={16} /></button>
@@ -137,7 +139,7 @@
     padding: 0 0.5rem; height: 38px;
   }
   .field :global(.s-icon) { color: var(--ds-text-subtle); flex-shrink: 0; }
-  .field input {
+  .field :global(.mobile-search-input) {
     flex: 1 1 auto; min-width: 0; height: 100%;
     border: none; outline: none; background: transparent;
     color: var(--ds-text); font-size: 1rem; /* >=16px avoids iOS zoom-on-focus */

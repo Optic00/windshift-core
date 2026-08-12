@@ -1,6 +1,7 @@
 <script>
   import { Check, X } from '@lucide/svelte';
   import Button from "../../components/Button.svelte";
+  import Input from '../../components/Input.svelte';
   import { errorToast } from '../../stores/toasts.svelte.js';
   import { t } from '../../stores/i18n.svelte.js';
 
@@ -56,10 +57,9 @@
           <!-- Item key (in edit mode) -->
 
           <div class="min-w-[80%]">
-            <!-- svelte-ignore a11y_autofocus -->
-            <input
+            <Input
               type="text"
-              data-testid="item-title-input"
+              dataTestid="item-title-input"
               bind:value={editTitle}
               onkeydown={handleKeydown}
               class="w-full text-2xl font-semibold bg-transparent border-0 py-1 focus:outline-none break-words"

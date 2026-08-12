@@ -1,4 +1,5 @@
 <script>
+  import FileInput from './FileInput.svelte';
   import { Upload, Trash2, Image } from '@lucide/svelte';
   import Button from './Button.svelte';
   import Label from './Label.svelte';
@@ -57,8 +58,7 @@
   <!-- Upload button and input -->
   <div class="flex items-center gap-3">
     <label class="cursor-pointer">
-      <input
-        type="file"
+      <FileInput
         accept="image/png,image/jpeg,image/svg+xml,image/gif,image/webp"
         onchange={handleFileChange}
         disabled={uploading || !attachmentStatus.enabled}

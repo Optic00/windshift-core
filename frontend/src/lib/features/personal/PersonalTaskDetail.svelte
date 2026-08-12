@@ -356,8 +356,7 @@
 
         <!-- Editable Title -->
         {#if editingTitle}
-          <!-- svelte-ignore a11y_autofocus -->
-          <input
+          <Input
             type="text"
             bind:value={editTitle}
             onblur={saveTitle}

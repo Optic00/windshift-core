@@ -2,6 +2,7 @@
   import { assetImportStore } from './AssetImportStore.svelte.js';
   import Select from '../../../components/Select.svelte';
   import Input from '../../../components/Input.svelte';
+  import FileInput from '../../../components/FileInput.svelte';
   import Checkbox from '../../../components/Checkbox.svelte';
   import Button from '../../../components/Button.svelte';
   import AlertBox from '../../../components/AlertBox.svelte';
@@ -136,7 +137,7 @@
                 </div>
                 <div class="flex-1 min-w-0 space-y-1">
                   <div class="flex items-center gap-2">
-                    <input
+                    <Input
                       type="text"
                       class="flex-1 px-2 py-1 text-sm rounded border"
                       style="background: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
@@ -218,10 +219,9 @@
         {/if}
       </button>
 
-      <input
+      <FileInput
         id="asset-import-file"
-        bind:this={fileInput}
-        type="file"
+        bind:inputRef={fileInput}
         accept=".csv,.tsv,.txt"
         class="hidden"
         onchange={handleFileSelect}

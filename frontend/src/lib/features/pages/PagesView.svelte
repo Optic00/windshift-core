@@ -1,6 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import { api } from '../../api.js';
+  import Input from '../../components/Input.svelte';
   import { navigate } from '../../router.js';
   import LazyMilkdownEditor from '../../editors/LazyMilkdownEditor.svelte';
   import PagePermissionsDialog from './PagePermissionsDialog.svelte';
@@ -640,9 +641,9 @@
               aria-hidden="true"
             />
           {/if}
-          <input
+          <Input
             id="page-title-input"
-            bind:this={titleInputEl}
+            bind:inputRef={titleInputEl}
             class="title-input"
             type="text"
             value={draftTitle}
@@ -953,7 +954,7 @@
     flex-shrink: 0;
   }
 
-  .title-input {
+  :global(.title-input) {
     flex: 1;
     min-width: 0;
     font-size: 2rem;

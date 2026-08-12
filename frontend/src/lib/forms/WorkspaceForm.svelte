@@ -1,6 +1,7 @@
 <script>
   import { t } from '../stores/i18n.svelte.js';
   import MilkdownEditor from '../editors/LazyMilkdownEditor.svelte';
+  import Input from '../components/Input.svelte';
 
   let {
     formData = $bindable({
@@ -62,9 +63,9 @@
 
 <div class="space-y-3">
   <!-- Title Input -->
-  <input
+  <Input
     id="workspace-name"
-    bind:this={nameInputRef}
+    bind:inputRef={nameInputRef}
     bind:value={formData.name}
     oninput={onNameInput}
     type="text"
@@ -74,7 +75,7 @@
   />
 
   <!-- Workspace Key -->
-  <input
+  <Input
     id="workspace-key"
     bind:value={formData.key}
     oninput={onKeyInput}

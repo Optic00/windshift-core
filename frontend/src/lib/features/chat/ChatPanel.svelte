@@ -9,6 +9,7 @@
   import { currentRoute } from '../../router.js';
   import Button from '../../components/Button.svelte';
   import Select from '../../components/Select.svelte';
+  import Textarea from '../../components/Textarea.svelte';
   import EmptyState from '../../components/EmptyState.svelte';
   import { buildChatContext } from './chatContext.js';
 
@@ -411,18 +412,18 @@
     <!-- Input -->
     <div class="border-t px-4 py-3" style="border-color: var(--ds-border);">
       <div class="flex items-end gap-2">
-        <textarea
-          bind:this={textareaEl}
+        <Textarea
+          bind:textareaRef={textareaEl}
           data-testid="chat-input"
           bind:value={inputText}
           oninput={autoResize}
           onkeydown={handleTextareaKeydown}
           placeholder="Ask a question..."
-          rows="1"
+          rows={1}
           class="flex-1 resize-none rounded-lg px-3 py-2 text-sm border focus:outline-none focus:ring-1"
           style="background-color: var(--ds-surface); border-color: var(--ds-border); color: var(--ds-text); --tw-ring-color: var(--ds-border-focused);"
           disabled={chatStore.loading || chatStore.conversationLoading}
-        ></textarea>
+        />
         <Button
           onclick={send}
           disabled={chatStore.loading || chatStore.conversationLoading || !inputText.trim()}

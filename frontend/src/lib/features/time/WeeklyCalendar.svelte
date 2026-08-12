@@ -15,6 +15,7 @@
   import { publicBaseURL } from '../../runtime/contextPath.js';
   import { formatDate, formatDateWithOptions } from '../../utils/dateFormatter.js';
   import Checkbox from '../../components/Checkbox.svelte';
+  import Input from '../../components/Input.svelte';
   import DescriptionText from '../../components/DescriptionText.svelte';
 
   // Get current date and week
@@ -1163,8 +1164,7 @@
                       <p class="text-[10px] mb-1" style="color: var(--ds-text-subtle);">
                         {creatingTaskAt.time} - {minutesToTime(timeToMinutes(creatingTaskAt.time) + DEFAULT_DURATION)}
                       </p>
-                      <!-- svelte-ignore a11y_autofocus -->
-                      <input
+                      <Input
                         type="text"
                         bind:value={newTaskTitle}
                         placeholder={t('time.calendar.newTaskPlaceholder')}
