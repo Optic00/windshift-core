@@ -19,7 +19,7 @@ import (
 )
 
 // defaultAPITokenLifetime is the expiry applied to non-admin tokens that omit
-// expires_at. Caps the credential's lifetime so a forgotten token in CI logs
+// expires_on. Caps the credential's lifetime so a forgotten token in CI logs
 // or a stale dev machine eventually stops working without admin intervention.
 // Admins keep the never-expiring option for service tokens that need it.
 const defaultAPITokenLifetime = 90 * 24 * time.Hour
@@ -73,6 +73,25 @@ func (ath *APITokenHandler) CreateToken(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
+	if request.ExpiresAt != nil {
+		respondValidationError(w, r, "expires_at is not accepted; use expires_on in YYYY-MM-DD format")
+		return
+	}
+	if request.ExpiresOn != nil {
+		_, location, err := services.ResolveTimezone(user.Timezone)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return
+		}
+		date, err := services.ParseCivilDate(*request.ExpiresOn, location)
+		if err != nil {
+			respondValidationError(w, r, "expires_on must use YYYY-MM-DD format")
+			return
+		}
+		// The token expires when the next day starts for the caller.
+		expiry := date.AddDate(0, 0, 1).UTC()
+		request.ExpiresAt = &expiry
+	}
 	sanitize.Apply(&request.Name, sanitize.PlainTextField)
 
 	// Validate required fields
@@ -111,7 +130,7 @@ func (ath *APITokenHandler) CreateToken(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Default expiry for non-admin callers when omitted. Admins can still mint
-	// never-expiring tokens by omitting expires_at — needed for some service
+	// never-expiring tokens by omitting expires_on — needed for some service
 	// integrations.
 	if request.ExpiresAt == nil {
 		isAdmin, _ := ath.permissionService.IsSystemAdmin(user.ID)

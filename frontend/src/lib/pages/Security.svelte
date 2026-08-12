@@ -731,7 +731,7 @@
 			</div>
 
 			<div>
-				<Label for="token-expiry" color="default" class="mb-1">Expiration (Optional)</Label>
+				<Label for="token-expiry" color="default" class="mb-1">Last valid date (optional)</Label>
 				<input
 					id="token-expiry"
 					type="date"
@@ -741,7 +741,7 @@
 					class="w-full px-3 py-2 rounded border transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
 					style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
 				/>
-				<DescriptionText>Leave empty for tokens that never expire</DescriptionText>
+				<DescriptionText>The token remains valid through this date in your configured timezone. Leave empty for no expiration.</DescriptionText>
 			</div>
 		</div>
 

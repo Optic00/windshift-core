@@ -4,7 +4,6 @@
  * Centralizes credentials, tokens, SSH keys, and password management.
  */
 import { api } from '../api.js';
-import { dateInputToISOString } from '../utils/dateFormatter.js';
 import { capabilitiesStore } from './capabilities.svelte.js';
 
 class SecurityStore {
@@ -291,7 +290,7 @@ class SecurityStore {
       const tokenData = {
         name: this.newTokenName.trim(),
         permissions: this.newTokenScopes,
-        expires_at: dateInputToISOString(this.newTokenExpiry),
+        expires_on: this.newTokenExpiry || null,
       };
 
       const result = await api.createApiToken(tokenData);
