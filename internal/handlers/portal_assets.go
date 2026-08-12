@@ -130,6 +130,9 @@ func (h *PortalHandler) ExecuteAssetReport(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	channel := portalResult.channel
+	if !h.verifyPortalSessionBinding(w, r, channel.ID) {
+		return
+	}
 
 	report, err := repository.NewAssetReportRepository(h.db).GetByID(reportID)
 	if errors.Is(err, repository.ErrNotFound) {
@@ -365,6 +368,9 @@ func (h *PortalHandler) GetAssetReports(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	channel := portalResult.channel
+	if !h.verifyPortalSessionBinding(w, r, channel.ID) {
+		return
+	}
 	vc := h.getPortalVisibilityContext(ctx, r, channel.ID)
 	assetReports, err := h.loadPortalAssetReports(portalResult, vc)
 	if err != nil {
@@ -568,6 +574,9 @@ func (h *PortalHandler) GetAssetReportFields(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	channel := portalResult.channel
+	if !h.verifyPortalSessionBinding(w, r, channel.ID) {
+		return
+	}
 
 	report, err := repository.NewAssetReportRepository(h.db).GetByID(reportID)
 	if errors.Is(err, repository.ErrNotFound) || (err == nil && (report.ChannelID != channel.ID || !report.IsActive)) {
