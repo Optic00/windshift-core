@@ -62,6 +62,7 @@
     bind:inputRef={nameInputRef}
     bind:value={formData.name}
     type="text"
+    variant="ghost"
     class="w-full text-lg font-medium border-0 outline-none bg-transparent"
     style="color: var(--ds-text);"
     placeholder={t('createModal.workspaceName', { type: t('createModal.collection') })}

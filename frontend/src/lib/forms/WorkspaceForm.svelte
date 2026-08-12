@@ -69,6 +69,7 @@
     bind:value={formData.name}
     oninput={onNameInput}
     type="text"
+    variant="ghost"
     class="w-full text-lg font-medium border-0 outline-none bg-transparent"
     style="color: var(--ds-text);"
     placeholder={t('createModal.workspaceName', { type: t('createModal.workspace') })}
@@ -80,6 +81,7 @@
     bind:value={formData.key}
     oninput={onKeyInput}
     type="text"
+    variant="ghost"
     class="w-full text-sm border-0 outline-none bg-transparent"
     style="color: var(--ds-text-subtle);"
     placeholder={t('createModal.workspaceKeyPlaceholder')}

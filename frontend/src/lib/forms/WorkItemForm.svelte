@@ -201,6 +201,7 @@
     type="text"
     id="work-item-title"
     ariaLabel={t('createModal.issueTitle')}
+    variant="ghost"
     class="w-full text-lg font-medium border-0 outline-none bg-transparent"
     style="color: var(--ds-text);"
     placeholder={t('createModal.issueTitle')}
@@ -485,6 +486,7 @@
           min="0"
           step="0.5"
           bind:value={store.formData.story_points}
+          variant="ghost"
           class="w-20 bg-transparent outline-none text-sm"
           style="color: var(--ds-text);"
           placeholder={t('items.storyPoints')}
@@ -503,6 +505,7 @@
         <Input
           type="text"
           bind:value={store.formData.estimate}
+          variant="ghost"
           class="w-20 bg-transparent outline-none text-sm"
           style="color: var(--ds-text);"
           placeholder={t('items.estimate') || 'Estimate'}

@@ -9,6 +9,7 @@
    *   disabled?: boolean,
    *   required?: boolean,
    *   autofocus?: boolean,
+   *   variant?: 'default' | 'ghost',
    *   size?: string,
    *   min?: any,
    *   max?: any,
@@ -46,6 +47,7 @@
     disabled = false,
     required = false,
     autofocus = false,
+    variant = 'default',
     size = 'medium',
     min = undefined,
     max = undefined,
@@ -80,18 +82,25 @@
   export { className as class };
 
   // Size variants
-  const sizeClasses = $derived({
+  const sizeClasses = $derived(variant === 'ghost' ? '' : ({
     small: 'px-3 py-1.5 text-sm',
     medium: 'px-4 py-3'
-  }[size] || 'px-4 py-3');
+  }[size] || 'px-4 py-3'));
 
   // Combine all classes
   const allClasses = $derived(cn(
-    'w-full rounded border transition-all duration-200',
-    'focus:outline-none focus:ring-2 focus:ring-[var(--ds-border-focused)] focus:ring-opacity-50',
+    variant === 'ghost' ? 'transition-all duration-200' : 'w-full transition-all duration-200',
+    variant === 'ghost'
+      ? 'border-0 bg-transparent focus:outline-none focus:ring-0'
+      : 'rounded border focus:outline-none focus:ring-2 focus:ring-[var(--ds-border-focused)] focus:ring-opacity-50',
     sizeClasses,
     className
   ));
+  const variantStyle = $derived(
+    variant === 'ghost'
+      ? 'background-color: transparent; border-color: transparent; color: var(--ds-text);'
+      : 'background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);'
+  );
   /** @type {any} */
   const autocompleteValue = $derived(autocomplete);
 </script>
@@ -123,7 +132,7 @@
   {max}
   {step}
   class={allClasses}
-  style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text); {style}"
+  style="{variantStyle} {style}"
   {oninput}
   {onchange}
   {onfocus}
