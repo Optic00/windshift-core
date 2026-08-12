@@ -22,7 +22,7 @@
 //	WSRUNNER_ALLOW_UNLABELED_IMAGE  set to 1 to accept an agent image without the
 //	                             org.windshift.agent-contract label (pre-WI-312 images)
 //	WSRUNNER_DOCKER              docker binary (default: docker)
-//	WSRUNNER_POLL_INTERVAL       claim poll interval when idle (default: 2s)
+//	WSRUNNER_POLL_INTERVAL       claim poll interval when idle (default: 10s)
 //	WSRUNNER_HEARTBEAT_INTERVAL  lease heartbeat interval (default: 30s)
 //	WSRUNNER_INITIAL_PROMPT      optional fallback only; normal runs use JobSpec.initial_prompt
 //
@@ -59,7 +59,7 @@ func main() {
 	triageBin := envOr("WSRUNNER_TRIAGE_BIN", "windshift-triage")
 	cacheRoot := envOr("WSRUNNER_CACHE_ROOT", "/var/lib/windshift-runner/cache")
 	credFile := envOr("WSRUNNER_CREDENTIAL_FILE", filepath.Join(cacheRoot, "credential"))
-	pollInterval := envDuration(logger, "WSRUNNER_POLL_INTERVAL", 2*time.Second)
+	pollInterval := configuredPollInterval(logger)
 	heartbeatInterval := envDuration(logger, "WSRUNNER_HEARTBEAT_INTERVAL", 30*time.Second)
 	initialPrompt := os.Getenv("WSRUNNER_INITIAL_PROMPT")
 
@@ -129,6 +129,10 @@ func main() {
 		pollInterval, heartbeatInterval, image, triageBin, cacheRoot)
 	services.RunWorker(ctx, client, runner, logger)
 	logger.Println("shut down")
+}
+
+func configuredPollInterval(logger *log.Logger) time.Duration {
+	return envDuration(logger, "WSRUNNER_POLL_INTERVAL", services.DefaultRunnerPollInterval)
 }
 
 // heartbeatLoop renews the runner's lease on an interval until ctx is done.

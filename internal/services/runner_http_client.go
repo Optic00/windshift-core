@@ -100,6 +100,9 @@ type HeartbeatResponse struct {
 	QueueDepth int   `json:"queue_depth"`
 }
 
+// DefaultRunnerPollInterval balances idle traffic with job pickup latency.
+const DefaultRunnerPollInterval = 10 * time.Second
+
 // HTTPOrchestratorClient is the remote transport for the shared RunWorker
 // loop: it implements OrchestratorClient by talking to the orchestrator's
 // runner control plane over HTTPS, authenticated with the per-instance
@@ -111,7 +114,7 @@ type HTTPOrchestratorClient struct {
 	hc         *http.Client
 
 	// PollInterval is how long Claim waits between polls when the
-	// orchestrator has no work. Defaults to 2s when zero.
+	// orchestrator has no work. Defaults to DefaultRunnerPollInterval when zero.
 	PollInterval time.Duration
 	// Logger, when set, receives transient Claim errors (which are retried
 	// rather than surfaced, so a network blip never stops the worker).
@@ -161,10 +164,7 @@ func RegisterRunner(ctx context.Context, baseURL, registrationToken, name string
 // blocks until work or shutdown. Transient request failures are logged and
 // retried on the same interval so a blip never stops the worker.
 func (c *HTTPOrchestratorClient) Claim(ctx context.Context) (*ClaimedJob, error) {
-	interval := c.PollInterval
-	if interval <= 0 {
-		interval = 2 * time.Second
-	}
+	interval := c.pollInterval()
 	for {
 		select {
 		case <-ctx.Done():
@@ -193,6 +193,13 @@ func (c *HTTPOrchestratorClient) Claim(ctx context.Context) (*ClaimedJob, error)
 		case <-time.After(interval):
 		}
 	}
+}
+
+func (c *HTTPOrchestratorClient) pollInterval() time.Duration {
+	if c.PollInterval > 0 {
+		return c.PollInterval
+	}
+	return DefaultRunnerPollInterval
 }
 
 // Emit implements OrchestratorClient.
