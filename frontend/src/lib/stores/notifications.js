@@ -97,6 +97,20 @@ export const notificationActions = {
     notifications.update((items) => items.filter((item) => item.id !== id));
   },
 
+  // Delete every notification from the server-backed inbox.
+  clearAll: async () => {
+    try {
+      await api.notifications.clearAll();
+      // An older inbox request may have started before the delete. Let it
+      // settle first so its response cannot restore deleted notifications.
+      if (loadPromise) await loadPromise;
+      notifications.set([]);
+    } catch (error) {
+      console.error('Failed to clear notifications:', error);
+      throw error;
+    }
+  },
+
   // Mark all as read
   markAllAsRead: async () => {
     if (!get(notifications).some((item) => !item.read)) return;

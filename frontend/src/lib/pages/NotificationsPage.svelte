@@ -4,6 +4,7 @@
   import { Bell, Check, Filter, MoreHorizontal, X } from '@lucide/svelte';
   import { t } from '../stores/i18n.svelte.js';
   import { confirm } from '../composables/useConfirm.js';
+  import { errorToast } from '../stores/toasts.svelte.js';
   import NotificationCard from '../features/notifications/NotificationCard.svelte';
   import Button from '../components/Button.svelte';
   import Select from '../components/Select.svelte';
@@ -19,6 +20,7 @@
   let selectedType = $state('all'); // all, assignment, comment, status_change, reminder, milestone
   let selectedStatus = $state('all'); // all, read, unread
   let showFilters = $state(false);
+  let clearing = $state(false);
 
   // Filter options
   const typeOptions = [
@@ -86,8 +88,15 @@
       cancelText: t('common.cancel'),
       variant: 'warning'
     });
-    if (confirmed) {
-      notifications.set([]);
+    if (!confirmed || clearing) return;
+
+    clearing = true;
+    try {
+      await notificationActions.clearAll();
+    } catch (error) {
+      errorToast(t('dialogs.alerts.failedToDelete', { error: error?.message || String(error) }));
+    } finally {
+      clearing = false;
     }
   }
 
@@ -122,7 +131,7 @@
         color: 'var(--ds-text-danger)',
         hoverClass: 'hover-danger',
         onClick: handleClearAll,
-        disabled: $notifications.length === 0
+        disabled: clearing || $notifications.length === 0
       }
     ];
   }

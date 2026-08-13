@@ -573,8 +573,7 @@ func (nm *NotificationManager) MarkAllAsSeen(userID int) error {
 }
 
 // DeleteUserNotifications removes all notification rows for a user and drops
-// the user's tray cache. Offboarding uses this instead of deleting directly so
-// cached entries cannot survive after the DB rows are gone.
+// the user's tray cache so cached entries cannot survive the database delete.
 func (nm *NotificationManager) DeleteUserNotifications(userID int) error {
 	lock := nm.userLock(userID)
 	lock.Lock()
@@ -768,6 +767,23 @@ func (nh *NotificationHandler) GetNotifications(w http.ResponseWriter, r *http.R
 	}
 
 	respondJSONOK(w, notifications)
+}
+
+// ClearNotifications handles DELETE /api/notifications.
+func (nh *NotificationHandler) ClearNotifications(w http.ResponseWriter, r *http.Request) {
+	user := utils.GetCurrentUser(r)
+	if user == nil {
+		respondUnauthorized(w, r)
+		return
+	}
+
+	if err := nh.manager.DeleteUserNotifications(user.ID); err != nil {
+		slog.Error("failed to clear notifications", slog.String("component", "notifications"), slog.Int("user_id", user.ID), slog.Any("error", err))
+		respondInternalError(w, r, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // CreateNotification handles POST /api/notifications.

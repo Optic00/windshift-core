@@ -11,6 +11,10 @@ export const notifications = {
       method: 'POST',
       body: JSON.stringify(data),
     }),
+  clearAll: () =>
+    fetchAPI('/notifications', {
+      method: 'DELETE',
+    }),
   markAsRead: (id) =>
     fetchAPI(`/notifications/${id}/read`, {
       method: 'PATCH',
