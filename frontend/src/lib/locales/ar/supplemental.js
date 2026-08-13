@@ -746,6 +746,8 @@ export default {
     "builderRecoveryDropped": "لا يمكن إعادة بناء بعض أجزاء الاستعلام الخاص بك (مثل NOT، أو المجموعات، أو الحقول غير المدعومة) وتم إسقاطها.",
     "publicBoard": "اللوحة العامة",
     "transition_failed": "فشل نقل الحالة. تم تحديث اللوحة.",
+    "manual_sort_unavailable_title": "الفرز اليدوي غير متاح",
+    "manual_sort_unavailable": "بدّل إلى وضع الترتيب لتنظيم البطاقات يدويًا.",
     "blockersCount": "{count} أدوات الحظر",
     "blockingCount": "{count} الحظر"
   },

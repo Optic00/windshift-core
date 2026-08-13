@@ -750,6 +750,8 @@ export default {
     "builderRecoveryDropped": "Algunas partes de su consulta (como NO, grupos O o campos no admitidos) no se pudieron reconstruir y se eliminaron.",
     "publicBoard": "Junta pública",
     "transition_failed": "Error en la transición de estado. El tablero ha sido renovado.",
+    "manual_sort_unavailable_title": "Ordenación manual no disponible",
+    "manual_sort_unavailable": "Cambia al modo Clasificación para organizar las tarjetas manualmente.",
     "blockersCount": "{count} bloqueadores",
     "blockingCount": "{count} bloqueo"
   },

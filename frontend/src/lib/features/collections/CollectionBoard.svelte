@@ -1215,6 +1215,12 @@
       // last_active_at); a same-column drag is a no-op. Either way, skip the
       // frac_index reorder and just refresh.
       if (sortMode === 'bubble') {
+        if (isSameStatus && !wouldChangeLaneParent(draggedItem, targetLaneParentId)) {
+          infoToast(
+            t('collections.manual_sort_unavailable'),
+            t('collections.manual_sort_unavailable_title')
+          );
+        }
         reloadCollection();
         return;
       }

@@ -711,6 +711,8 @@ export default {
     "builderRecoveryDropped": "Einige Teile Ihrer Abfrage (wie NOT, OR-Gruppen oder nicht unterstützte Felder) konnten nicht rekonstruiert werden und wurden gelöscht.",
     "publicBoard": "Öffentliches Board",
     "transition_failed": "Statusübergang fehlgeschlagen. Das Forum wurde aktualisiert.",
+    "manual_sort_unavailable_title": "Manuelles Sortieren nicht verfügbar",
+    "manual_sort_unavailable": "Wechseln Sie in den Rangmodus, um Karten manuell anzuordnen.",
     "blockersCount": "{count} Blocker",
     "blockingCount": "{count} Blockierung"
   },

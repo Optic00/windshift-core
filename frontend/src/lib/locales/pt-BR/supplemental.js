@@ -747,6 +747,8 @@ export default {
     "builderRecoveryDropped": "Algumas partes da sua consulta (como grupos NOT, OR ou campos não suportados) não puderam ser reconstruídas e foram descartadas.",
     "publicBoard": "Quadro público",
     "transition_failed": "Falha na transição de status. O quadro foi atualizado.",
+    "manual_sort_unavailable_title": "Ordenação manual indisponível",
+    "manual_sort_unavailable": "Mude para o modo Classificação para organizar os cartões manualmente.",
     "blockersCount": "{count} bloqueadores",
     "blockingCount": "{count} bloqueio"
   },

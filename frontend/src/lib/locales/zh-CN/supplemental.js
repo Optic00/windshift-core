@@ -738,6 +738,8 @@ export default {
     "builderRecoveryDropped": "查询的某些部分（例如 NOT、OR 组或不受支持的字段）无法重建并被删除。",
     "publicBoard": "公共板",
     "transition_failed": "状态转换失败。董事会已经刷新。",
+    "manual_sort_unavailable_title": "无法手动排序",
+    "manual_sort_unavailable": "切换到排名模式以手动排列卡片。",
     "blockersCount": "{count} 阻止程序",
     "blockingCount": "{count} 阻止"
   },

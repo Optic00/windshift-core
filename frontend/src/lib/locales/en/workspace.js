@@ -570,6 +570,8 @@ export default {
     boardSummary: 'Total: {itemCount} work items across {columnCount} columns',
     allItems: 'All Items',
     transition_failed: 'Status transition failed. The board has been refreshed.',
+    manual_sort_unavailable_title: 'Manual sorting unavailable',
+    manual_sort_unavailable: 'Switch to Rank mode to arrange cards manually.',
     // Board card dependency hover summary
     blockedBy: 'Blocked by',
     blocking: 'Blocking',
