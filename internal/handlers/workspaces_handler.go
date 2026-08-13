@@ -18,6 +18,7 @@ import (
 type WorkspaceHandler struct {
 	db                database.Database
 	repo              *repository.WorkspaceRepository
+	workspaceService  *services.WorkspaceService
 	permissionService *services.PermissionService
 	authz             *authz.Authz
 	activityTracker   *services.ActivityTracker
@@ -41,30 +42,43 @@ type CreateWorkspaceRequest struct {
 
 // UpdateWorkspaceRequest represents the request payload for updating a workspace
 type UpdateWorkspaceRequest struct {
-	Name                    string `json:"name" validate:"required,max=100"`
-	Key                     string `json:"key" validate:"omitempty,min=2,max=10,alphanum"` // Optional - if not provided, keeps existing key
-	Description             string `json:"description" validate:"max=500"`
-	Active                  bool   `json:"active"`
-	TimeProjectID           *int   `json:"time_project_id,omitempty"`
-	IsPersonal              bool   `json:"is_personal"`
-	OwnerID                 *int   `json:"owner_id,omitempty"`
-	Icon                    string `json:"icon,omitempty"`
-	Color                   string `json:"color,omitempty"`
-	AvatarURL               string `json:"avatar_url,omitempty"`
-	DefaultView             string `json:"default_view,omitempty"` // Default view when entering workspace (board, backlog, list, tree, map)
-	InternalCommentsEnabled bool   `json:"internal_comments_enabled"`
-	TimeProjectCategories   []int  `json:"time_project_categories,omitempty"`
+	Name                    *string                    `json:"name,omitempty" validate:"omitempty,min=1,max=100"`
+	Key                     *string                    `json:"key,omitempty" validate:"omitempty,min=2,max=10,alphanum"`
+	Description             *string                    `json:"description,omitempty" validate:"omitempty,max=500"`
+	Active                  *bool                      `json:"active,omitempty"`
+	TimeProjectID           models.NullableIntPatch    `json:"time_project_id,omitempty"`
+	IsPersonal              *bool                      `json:"is_personal,omitempty"`
+	OwnerID                 models.NullableIntPatch    `json:"owner_id,omitempty"`
+	Icon                    *string                    `json:"icon,omitempty"`
+	Color                   *string                    `json:"color,omitempty"`
+	AvatarURL               models.NullableStringPatch `json:"avatar_url,omitempty"`
+	DefaultView             *string                    `json:"default_view,omitempty"`
+	InternalCommentsEnabled *bool                      `json:"internal_comments_enabled,omitempty"`
+	TimeProjectCategories   *[]int                     `json:"time_project_categories,omitempty"`
 }
 
 func NewWorkspaceHandler(db database.Database, permissionService *services.PermissionService, activityTracker *services.ActivityTracker, keyCache *WorkspaceKeyCache) *WorkspaceHandler {
 	return &WorkspaceHandler{
 		db:                db,
 		repo:              repository.NewWorkspaceRepository(db),
+		workspaceService:  services.NewWorkspaceService(db),
 		permissionService: permissionService,
 		authz:             authz.New(db, permissionService),
 		activityTracker:   activityTracker,
 		keyCache:          keyCache,
 	}
+}
+
+func sanitizeWorkspaceUpdateField(value *string, sanitizer func(string) string) *string {
+	if value == nil {
+		return nil
+	}
+	sanitized := sanitizer(*value)
+	return &sanitized
+}
+
+func nullableWorkspaceUpdate[T any](present bool, value *T) services.NullableUpdate[T] {
+	return services.NullableUpdate[T]{Present: present, Value: value}
 }
 
 func (h *WorkspaceHandler) GetAll(w http.ResponseWriter, r *http.Request) {
@@ -315,7 +329,7 @@ func (h *WorkspaceHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get the old workspace for audit logging
-	oldWorkspace, err := h.repo.FindByIDBasic(id)
+	oldWorkspace, err := h.repo.FindByID(id)
 	if err == repository.ErrNotFound {
 		respondNotFound(w, r, "workspace")
 		return
@@ -337,58 +351,40 @@ func (h *WorkspaceHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Sanitize user input for defense in depth
-	req.Name = sanitize.ShortIdentifier.Sanitize(req.Name)
-	req.Description = sanitize.RichText.Sanitize(req.Description)
+	// Sanitize supplied user input for defense in depth.
+	req.Name = sanitizeWorkspaceUpdateField(req.Name, sanitize.ShortIdentifier.Sanitize)
+	req.Key = sanitizeWorkspaceUpdateField(req.Key, sanitize.ShortIdentifier.Sanitize)
+	req.Description = sanitizeWorkspaceUpdateField(req.Description, sanitize.RichText.Sanitize)
+	req.Icon = sanitizeWorkspaceUpdateField(req.Icon, sanitize.ShortIdentifier.Sanitize)
+	req.Color = sanitizeWorkspaceUpdateField(req.Color, sanitize.ShortIdentifier.Sanitize)
 
-	// Sanitize key to match Create behavior
-	req.Key = sanitize.ShortIdentifier.Sanitize(req.Key)
-
-	// If key is not provided, use the existing key
-	keyToUse := req.Key
-	if keyToUse == "" {
-		keyToUse = oldWorkspace.Key
-	}
-
-	avatarURL := req.AvatarURL
-	updatedWs := &models.Workspace{
+	workspace, err := h.workspaceService.Update(services.UpdateWorkspaceParams{
 		ID:                      id,
 		Name:                    req.Name,
-		Key:                     keyToUse,
+		Key:                     req.Key,
 		Description:             req.Description,
 		Active:                  req.Active,
-		TimeProjectID:           req.TimeProjectID,
+		TimeProjectID:           nullableWorkspaceUpdate(req.TimeProjectID.Present, req.TimeProjectID.Value),
 		IsPersonal:              req.IsPersonal,
-		OwnerID:                 req.OwnerID,
+		OwnerID:                 nullableWorkspaceUpdate(req.OwnerID.Present, req.OwnerID.Value),
 		Icon:                    req.Icon,
 		Color:                   req.Color,
-		AvatarURL:               &avatarURL,
+		AvatarURL:               nullableWorkspaceUpdate(req.AvatarURL.Present, req.AvatarURL.Value),
 		DefaultView:             req.DefaultView,
 		InternalCommentsEnabled: req.InternalCommentsEnabled,
-	}
-	err = h.repo.Update(updatedWs)
+		TimeProjectCategories:   req.TimeProjectCategories,
+	})
 	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			respondNotFound(w, r, "workspace")
+			return
+		}
 		respondInternalError(w, r, err)
 		return
 	}
 	if h.permissionService != nil {
 		h.permissionService.InvalidateActiveWorkspaceCache()
 		h.permissionService.OnEveryoneAccessChanged()
-	}
-
-	// Save time project categories if provided
-	if req.TimeProjectCategories != nil {
-		if err = h.repo.SaveTimeProjectCategories(id, req.TimeProjectCategories); err != nil {
-			slog.Error("failed to save time project categories", slog.String("component", "workspaces"), slog.Int("workspace_id", id), slog.Any("error", err))
-			// Don't fail the entire update, just log the error
-		}
-	}
-
-	// Return the updated workspace with joined data
-	workspace, err := h.repo.FindByID(id)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
 	}
 
 	// Load time project categories for the response
@@ -452,6 +448,12 @@ func (h *WorkspaceHandler) Update(w http.ResponseWriter, r *http.Request) {
 				"new": workspace.Color,
 			}
 		}
+		if !workspaceStringPointersEqual(oldWorkspace.AvatarURL, workspace.AvatarURL) {
+			details["avatar_url_changed"] = map[string]any{
+				"old": workspaceStringPointerValue(oldWorkspace.AvatarURL),
+				"new": workspaceStringPointerValue(workspace.AvatarURL),
+			}
+		}
 		if oldWorkspace.InternalCommentsEnabled != workspace.InternalCommentsEnabled {
 			details["internal_comments_enabled_changed"] = map[string]any{
 				"old": oldWorkspace.InternalCommentsEnabled,
@@ -474,6 +476,20 @@ func (h *WorkspaceHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSONOK(w, workspace)
+}
+
+func workspaceStringPointersEqual(a, b *string) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+func workspaceStringPointerValue(value *string) any {
+	if value == nil {
+		return nil
+	}
+	return *value
 }
 
 func (h *WorkspaceHandler) Delete(w http.ResponseWriter, r *http.Request) {

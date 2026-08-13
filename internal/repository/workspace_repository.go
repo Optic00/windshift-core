@@ -288,22 +288,6 @@ func (r *WorkspaceRepository) CreateTx(tx database.Tx, workspace *models.Workspa
 	return id, nil
 }
 
-// Update updates an existing workspace
-func (r *WorkspaceRepository) Update(workspace *models.Workspace) error {
-	now := time.Now()
-	_, err := r.db.ExecWrite(`
-		UPDATE workspaces
-		SET name = ?, key = ?, description = ?, active = ?, time_project_id = ?, is_personal = ?, owner_id = ?, icon = ?, color = ?, avatar_url = ?, default_view = ?, internal_comments_enabled = ?, updated_at = ?
-		WHERE id = ?
-	`, workspace.Name, workspace.Key, workspace.Description, workspace.Active,
-		workspace.TimeProjectID, workspace.IsPersonal, workspace.OwnerID,
-		workspace.Icon, workspace.Color, workspace.AvatarURL, workspace.DefaultView,
-		workspace.InternalCommentsEnabled,
-		now, workspace.ID)
-
-	return err
-}
-
 // AssignTimeProjectIfUnset attaches an imported time project without replacing
 // an existing workspace default.
 func (r *WorkspaceRepository) AssignTimeProjectIfUnset(workspaceID, timeProjectID int) error {

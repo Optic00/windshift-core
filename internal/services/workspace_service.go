@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"time"
 
 	"windshift/internal/database"
 	"windshift/internal/models"
@@ -35,26 +34,12 @@ type WorkspaceListParams struct {
 	Offset int
 }
 
-// WorkspaceListResult contains a workspace with minimal fields for list views.
-type WorkspaceListResult struct {
-	ID          int
-	Name        string
-	Key         string
-	Description string
-	Active      bool
-	IsPersonal  bool
-	Icon        string
-	Color       string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-}
-
 // List retrieves all workspaces accessible to a user with pagination.
 // This checks both direct user workspace roles and group workspace roles.
-func (s *WorkspaceService) List(params WorkspaceListParams) ([]WorkspaceListResult, int, error) {
+func (s *WorkspaceService) List(params WorkspaceListParams) ([]models.Workspace, int, error) {
 	rows, err := s.db.Query(`
 		SELECT DISTINCT w.id, w.name, w.key, w.description, w.active, w.is_personal,
-		       w.icon, w.color, w.created_at, w.updated_at
+		       w.icon, w.color, w.internal_comments_enabled, w.created_at, w.updated_at
 		FROM workspaces w
 		LEFT JOIN user_workspace_roles uwr ON w.id = uwr.workspace_id AND uwr.user_id = ?
 		LEFT JOIN (
@@ -75,12 +60,12 @@ func (s *WorkspaceService) List(params WorkspaceListParams) ([]WorkspaceListResu
 	}
 	defer rows.Close()
 
-	var workspaces []WorkspaceListResult
+	var workspaces []models.Workspace
 	for rows.Next() {
-		var ws WorkspaceListResult
+		var ws models.Workspace
 		var icon, color sql.NullString
 		err = rows.Scan(&ws.ID, &ws.Name, &ws.Key, &ws.Description, &ws.Active, &ws.IsPersonal,
-			&icon, &color, &ws.CreatedAt, &ws.UpdatedAt)
+			&icon, &color, &ws.InternalCommentsEnabled, &ws.CreatedAt, &ws.UpdatedAt)
 		if err != nil {
 			continue
 		}
@@ -93,7 +78,7 @@ func (s *WorkspaceService) List(params WorkspaceListParams) ([]WorkspaceListResu
 	}
 
 	if workspaces == nil {
-		workspaces = []WorkspaceListResult{}
+		workspaces = []models.Workspace{}
 	}
 
 	// Get total count
@@ -120,27 +105,16 @@ func (s *WorkspaceService) List(params WorkspaceListParams) ([]WorkspaceListResu
 	return workspaces, total, nil
 }
 
-// GetByID retrieves a workspace by ID with minimal fields.
-func (s *WorkspaceService) GetByID(id int) (*WorkspaceListResult, error) {
-	var ws WorkspaceListResult
-	var icon, color sql.NullString
-	err := s.db.QueryRow(`
-		SELECT id, name, key, description, active, is_personal, icon, color, created_at, updated_at
-		FROM workspaces WHERE id = ?
-	`, id).Scan(&ws.ID, &ws.Name, &ws.Key, &ws.Description, &ws.Active, &ws.IsPersonal,
-		&icon, &color, &ws.CreatedAt, &ws.UpdatedAt)
-
-	if errors.Is(err, sql.ErrNoRows) {
+// GetByID retrieves a workspace by ID.
+func (s *WorkspaceService) GetByID(id int) (*models.Workspace, error) {
+	ws, err := s.repo.FindByID(id)
+	if errors.Is(err, repository.ErrNotFound) {
 		return nil, fmt.Errorf("workspace not found: %d: %w", id, repository.ErrNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get workspace: %w", err)
 	}
-
-	ws.Icon = icon.String
-	ws.Color = color.String
-
-	return &ws, nil
+	return ws, nil
 }
 
 // CreateWorkspaceParams contains the parameters for creating a workspace.
@@ -155,7 +129,7 @@ type CreateWorkspaceParams struct {
 
 // CreateWorkspaceResult contains the result of creating a workspace.
 type CreateWorkspaceResult struct {
-	Workspace *WorkspaceListResult
+	Workspace *models.Workspace
 }
 
 // Create creates a new workspace and grants admin permission to the creator.
@@ -200,63 +174,109 @@ func (s *WorkspaceService) Create(params CreateWorkspaceParams) (*CreateWorkspac
 	return &CreateWorkspaceResult{Workspace: ws}, nil
 }
 
-// UpdateWorkspaceParams contains the parameters for updating a workspace.
-type UpdateWorkspaceParams struct {
-	ID          int
-	Name        *string
-	Description *string
-	Active      *bool
-	Icon        *string
-	Color       *string
+// NullableUpdate distinguishes an omitted field from an explicit null.
+type NullableUpdate[T any] struct {
+	Present bool
+	Value   *T
 }
 
-// Update updates an existing workspace.
-func (s *WorkspaceService) Update(params UpdateWorkspaceParams) (*WorkspaceListResult, error) {
-	// Load existing workspace
-	var ws struct {
-		ID          int
-		Name        string
-		Description string
-		Active      bool
-		Icon        sql.NullString
-		Color       sql.NullString
-	}
-	err := s.db.QueryRow("SELECT id, name, description, active, icon, color FROM workspaces WHERE id = ?", params.ID).
-		Scan(&ws.ID, &ws.Name, &ws.Description, &ws.Active, &ws.Icon, &ws.Color)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("workspace not found: %d: %w", params.ID, repository.ErrNotFound)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to load workspace: %w", err)
+// UpdateWorkspaceParams contains the fields to update on a workspace.
+type UpdateWorkspaceParams struct {
+	ID                      int
+	Name                    *string
+	Key                     *string
+	Description             *string
+	Active                  *bool
+	TimeProjectID           NullableUpdate[int]
+	IsPersonal              *bool
+	OwnerID                 NullableUpdate[int]
+	Icon                    *string
+	Color                   *string
+	AvatarURL               NullableUpdate[string]
+	DefaultView             *string
+	InternalCommentsEnabled *bool
+	TimeProjectCategories   *[]int
+}
+
+// Update changes only the supplied workspace fields.
+func (s *WorkspaceService) Update(params UpdateWorkspaceParams) (*models.Workspace, error) {
+	sets := make([]string, 0, 12)
+	args := make([]any, 0, 13)
+	appendField := func(column string, value any) {
+		sets = append(sets, column+" = ?")
+		args = append(args, value)
 	}
 
-	// Apply updates
 	if params.Name != nil {
-		ws.Name = *params.Name
+		appendField("name", *params.Name)
+	}
+	if params.Key != nil {
+		appendField("key", *params.Key)
 	}
 	if params.Description != nil {
-		ws.Description = *params.Description
+		appendField("description", *params.Description)
 	}
 	if params.Active != nil {
-		ws.Active = *params.Active
+		appendField("active", *params.Active)
+	}
+	if params.TimeProjectID.Present {
+		appendField("time_project_id", nullableUpdateValue(params.TimeProjectID))
+	}
+	if params.IsPersonal != nil {
+		appendField("is_personal", *params.IsPersonal)
+	}
+	if params.OwnerID.Present {
+		appendField("owner_id", nullableUpdateValue(params.OwnerID))
 	}
 	if params.Icon != nil {
-		ws.Icon = sql.NullString{String: *params.Icon, Valid: true}
+		appendField("icon", *params.Icon)
 	}
 	if params.Color != nil {
-		ws.Color = sql.NullString{String: *params.Color, Valid: true}
+		appendField("color", *params.Color)
+	}
+	if params.AvatarURL.Present {
+		appendField("avatar_url", nullableUpdateValue(params.AvatarURL))
+	}
+	if params.DefaultView != nil {
+		appendField("default_view", *params.DefaultView)
+	}
+	if params.InternalCommentsEnabled != nil {
+		appendField("internal_comments_enabled", *params.InternalCommentsEnabled)
 	}
 
-	_, err = s.db.ExecWrite(`
-		UPDATE workspaces SET name = ?, description = ?, active = ?, icon = ?, color = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?
-	`, ws.Name, ws.Description, ws.Active, ws.Icon.String, ws.Color.String, params.ID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to update workspace: %w", err)
+	if len(sets) > 0 {
+		sets = append(sets, "updated_at = CURRENT_TIMESTAMP")
+		args = append(args, params.ID)
+		result, err := s.db.ExecWrite(
+			"UPDATE workspaces SET "+strings.Join(sets, ", ")+" WHERE id = ?",
+			args...,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to update workspace: %w", err)
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("failed to read workspace update result: %w", err)
+		}
+		if rows == 0 {
+			return nil, fmt.Errorf("workspace not found: %d: %w", params.ID, repository.ErrNotFound)
+		}
 	}
 
-	// Return updated workspace
+	if params.TimeProjectCategories != nil {
+		if err := s.repo.SaveTimeProjectCategories(params.ID, *params.TimeProjectCategories); err != nil {
+			return nil, fmt.Errorf("failed to update workspace time project categories: %w", err)
+		}
+	}
+
 	return s.GetByID(params.ID)
+}
+
+func nullableUpdateValue[T any](update NullableUpdate[T]) any {
+	if update.Value == nil {
+		return nil
+	}
+	return *update.Value
 }
 
 // Delete removes a workspace by ID.

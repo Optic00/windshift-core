@@ -69,18 +69,19 @@ type WorkspaceUpdateRequest struct {
 	Color       *string `json:"color,omitempty"`
 }
 
-func toWorkspaceResponse(ws *services.WorkspaceListResult) WorkspaceResponse {
+func toWorkspaceResponse(ws *models.Workspace) WorkspaceResponse {
 	return WorkspaceResponse{
-		ID:          ws.ID,
-		Name:        ws.Name,
-		Key:         ws.Key,
-		Description: ws.Description,
-		Active:      ws.Active,
-		IsPersonal:  ws.IsPersonal,
-		Icon:        ws.Icon,
-		Color:       ws.Color,
-		CreatedAt:   ws.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-		UpdatedAt:   ws.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		ID:                      ws.ID,
+		Name:                    ws.Name,
+		Key:                     ws.Key,
+		Description:             ws.Description,
+		Active:                  ws.Active,
+		IsPersonal:              ws.IsPersonal,
+		InternalCommentsEnabled: ws.InternalCommentsEnabled,
+		Icon:                    ws.Icon,
+		Color:                   ws.Color,
+		CreatedAt:               ws.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		UpdatedAt:               ws.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
 }
 

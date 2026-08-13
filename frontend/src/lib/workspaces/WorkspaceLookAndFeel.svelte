@@ -114,12 +114,6 @@
 
       await Promise.all([
         api.workspaces.update(workspaceId, {
-          name: workspace.name,
-          key: workspace.key,
-          description: workspace.description || '',
-          active: workspace.active,
-          time_project_id: workspace.time_project_id || null,
-          default_view: workspace.default_view || 'board',
           icon,
           color,
           avatar_url: avatarUrl
