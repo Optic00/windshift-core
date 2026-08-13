@@ -1085,7 +1085,8 @@
                             </div>
                             <button
                               onclick={(e) => { e.stopPropagation(); removeWorkItem(day.dateKey, workItem.id); }}
-                              class="opacity-0 group-hover/item:opacity-100 text-xs"
+                              class="opacity-0 group-hover/item:opacity-100 group-focus-within/item:opacity-100 focus-visible:opacity-100 text-xs"
+                              aria-label="Remove work item"
                               style="color: var(--ds-text-subtlest);"
                             >×</button>
                           </div>
@@ -1130,7 +1131,8 @@
                             </button>
                             <button
                               onclick={(e) => { e.stopPropagation(); removeWorkItem(day.dateKey, workItem.id); }}
-                              class="opacity-0 group-hover/item:opacity-100 text-xs"
+                              class="opacity-0 group-hover/item:opacity-100 group-focus-within/item:opacity-100 focus-visible:opacity-100 text-xs"
+                              aria-label="Remove work item"
                               style="color: var(--ds-text-subtlest);"
                             >×</button>
                           </div>

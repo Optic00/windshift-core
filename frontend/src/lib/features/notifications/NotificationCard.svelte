@@ -101,9 +101,9 @@
         <!-- Dismiss button (shows on hover) -->
         <button
           onclick={handleDismiss}
-          class="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded dismiss-btn"
+          class="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 transition-opacity p-1 rounded dismiss-btn"
           title={t('notifications.dismiss')}
-          tabindex="-1"
+          aria-label={t('notifications.dismiss')}
         >
           <X class="w-3 h-3" style="color: var(--ds-text-subtle);" />
         </button>

@@ -171,22 +171,29 @@
           <tr>
             {#each columns as column, colIndex}
               <th
-                class="{thClass} {getColumnAlign(column)} {getColumnWidth(column)} {column.sortable ? 'group cursor-pointer select-none' : ''}"
+                class="{thClass} {getColumnAlign(column)} {getColumnWidth(column)}"
                 style="color: var(--ds-text); {getColumnWidthStyle(column)} {column.headerStyle || ''}"
-                onclick={() => toggleSort(column)}
+                aria-sort={column.sortable && sortKey === column.key ? (sortDirection === 'asc' ? 'ascending' : sortDirection === 'desc' ? 'descending' : 'none') : undefined}
               >
-                <span class="inline-flex items-center gap-1">
-                  {column.label}
-                  {#if column.sortable}
+                {#if column.sortable}
+                  <button
+                    type="button"
+                    class="group inline-flex items-center gap-1 text-left select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-border-focused)]"
+                    onclick={() => toggleSort(column)}
+                    aria-label={`Sort by ${column.label}`}
+                  >
+                    {column.label}
                     {#if sortKey === column.key && sortDirection === 'asc'}
                       <ArrowUp class="w-3.5 h-3.5" style="color: var(--ds-text-subtle);" />
                     {:else if sortKey === column.key && sortDirection === 'desc'}
                       <ArrowDown class="w-3.5 h-3.5" style="color: var(--ds-text-subtle);" />
                     {:else}
-                      <ArrowUpDown class="w-3.5 h-3.5 opacity-0 group-hover:opacity-100" style="color: var(--ds-text-subtlest);" />
+                      <ArrowUpDown class="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100" style="color: var(--ds-text-subtlest);" />
                     {/if}
-                  {/if}
-                </span>
+                  </button>
+                {:else}
+                  {column.label}
+                {/if}
               </th>
             {/each}
           </tr>
