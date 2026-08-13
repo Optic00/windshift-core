@@ -19,6 +19,16 @@ type SQLGenerator struct {
 	customFieldMap        CustomFieldMap // Maps lowercase custom field name to {ID, Kind} for the entity being queried
 	itemCustomFieldMap    CustomFieldMap // Item-side custom field map, used by inner item queries inside asset linkedOf()
 	legacyNameKeyFallback bool           // Also read legacy custom_field_values keyed by field name
+	userID                *int           // Current user for personal-label visibility
+}
+
+// newInnerSQLGenerator creates a nested item generator while preserving the
+// caller's personal-label visibility context.
+func (g *SQLGenerator) newInnerSQLGenerator(customFieldMap CustomFieldMap) *SQLGenerator {
+	inner := NewInnerSQLGenerator(g.workspaceMap, customFieldMap, g.dbDriver)
+	inner.legacyNameKeyFallback = g.legacyNameKeyFallback
+	inner.userID = g.userID
+	return inner
 }
 
 // NewSQLGenerator creates an outer work-item query generator. A nil field map
@@ -232,49 +242,77 @@ func (g *SQLGenerator) getNameFieldForIDField(fieldName string) (string, bool) {
 	}
 }
 
-// generateLabelComparison uses EXISTS for many-to-many labels.
+// generateLabelComparison matches workspace labels and labels visible to the
+// current user. Personal labels are intentionally scoped to that user because
+// their assignments are private by default.
 func (g *SQLGenerator) generateLabelComparison(node *ASTNode) (sql string, args []any, err error) {
-	prefix := g.aliasPrefix
-
 	rightValue := node.Right.Value
 
 	switch node.Operator {
 	case "=":
-		sql := fmt.Sprintf(`EXISTS (SELECT 1 FROM item_labels lbl_il JOIN labels lbl_l ON lbl_il.label_id = lbl_l.id WHERE lbl_il.item_id = %si.id AND LOWER(lbl_l.name) = LOWER(?))`, prefix)
-		return sql, []any{rightValue}, nil
+		matchSQL, matchArgs := g.generateLabelMatch(
+			`LOWER(lbl_l.name) = LOWER(?)`,
+			`LOWER(pl.name) = LOWER(?)`,
+			[]any{rightValue},
+		)
+		return matchSQL, matchArgs, nil
 	case "!=", "<>":
-		sql := fmt.Sprintf(`NOT EXISTS (SELECT 1 FROM item_labels lbl_il JOIN labels lbl_l ON lbl_il.label_id = lbl_l.id WHERE lbl_il.item_id = %si.id AND LOWER(lbl_l.name) = LOWER(?))`, prefix)
-		return sql, []any{rightValue}, nil
+		matchSQL, matchArgs := g.generateLabelMatch(
+			`LOWER(lbl_l.name) = LOWER(?)`,
+			`LOWER(pl.name) = LOWER(?)`,
+			[]any{rightValue},
+		)
+		return "NOT (" + matchSQL + ")", matchArgs, nil
 	case "~":
-		sql := fmt.Sprintf(`EXISTS (SELECT 1 FROM item_labels lbl_il JOIN labels lbl_l ON lbl_il.label_id = lbl_l.id WHERE lbl_il.item_id = %si.id AND LOWER(lbl_l.name) LIKE '%%' || LOWER(?) || '%%')`, prefix)
-		return sql, []any{rightValue}, nil
+		matchSQL, matchArgs := g.generateLabelMatch(
+			`LOWER(lbl_l.name) LIKE '%%' || LOWER(?) || '%%'`,
+			`LOWER(pl.name) LIKE '%%' || LOWER(?) || '%%'`,
+			[]any{rightValue},
+		)
+		return matchSQL, matchArgs, nil
 	default:
 		return "", nil, fmt.Errorf("unsupported operator for label field: %s", node.Operator)
 	}
 }
 
+// generateLabelMatch emits the shared-label predicate and, when a user is
+// available, the current user's visible personal-label predicate.
+func (g *SQLGenerator) generateLabelMatch(workspacePredicate, personalPredicate string, values []any) (sql string, args []any) {
+	prefix := g.aliasPrefix
+	workspaceSQL := fmt.Sprintf(`EXISTS (SELECT 1 FROM item_labels lbl_il JOIN labels lbl_l ON lbl_il.label_id = lbl_l.id WHERE lbl_il.item_id = %si.id AND %s)`, prefix, workspacePredicate)
+	if g.userID == nil {
+		return workspaceSQL, values
+	}
+
+	personalSQL := fmt.Sprintf(`EXISTS (SELECT 1 FROM personal_item_labels pil JOIN personal_labels pl ON pil.personal_label_id = pl.id WHERE pil.item_id = %si.id AND (pl.user_id IS NULL OR pl.user_id = ?) AND %s)`, prefix, personalPredicate)
+	args = append([]any{}, values...)
+	args = append(args, *g.userID)
+	args = append(args, values...)
+	return "(" + workspaceSQL + " OR " + personalSQL + ")", args
+}
+
 // generateLabelInExpression uses EXISTS for label IN expressions.
 func (g *SQLGenerator) generateLabelInExpression(node *ASTNode) (sql string, args []any, err error) {
-	prefix := g.aliasPrefix
-
 	if node.Values.Type != NodeList {
 		return "", nil, errors.New("IN expression requires a list of values")
 	}
 
+	values := make([]any, 0, len(node.Values.Arguments))
 	var placeholders []string
 	for _, valueNode := range node.Values.Arguments {
 		placeholders = append(placeholders, "LOWER(?)")
-		args = append(args, g.convertLiteral(valueNode))
+		values = append(values, g.convertLiteral(valueNode))
 	}
 	placeholderList := strings.Join(placeholders, ", ")
-
+	matchSQL, matchArgs := g.generateLabelMatch(
+		fmt.Sprintf("LOWER(lbl_l.name) IN (%s)", placeholderList),
+		fmt.Sprintf("LOWER(pl.name) IN (%s)", placeholderList),
+		values,
+	)
 	if strings.EqualFold(node.Operator, "NOT IN") {
-		sql = fmt.Sprintf(`NOT EXISTS (SELECT 1 FROM item_labels lbl_il JOIN labels lbl_l ON lbl_il.label_id = lbl_l.id WHERE lbl_il.item_id = %si.id AND LOWER(lbl_l.name) IN (%s))`, prefix, placeholderList)
-		return sql, args, nil
+		return "NOT (" + matchSQL + ")", matchArgs, nil
 	}
-
-	sql = fmt.Sprintf(`EXISTS (SELECT 1 FROM item_labels lbl_il JOIN labels lbl_l ON lbl_il.label_id = lbl_l.id WHERE lbl_il.item_id = %si.id AND LOWER(lbl_l.name) IN (%s))`, prefix, placeholderList)
-	return sql, args, nil
+	return matchSQL, matchArgs, nil
 }
 
 // isLabelField accepts the current `labels` and legacy `label` aliases.
@@ -827,8 +865,7 @@ func (g *SQLGenerator) generateFunction(node *ASTNode) (sql string, args []any, 
 			return "", nil, fmt.Errorf("childrenOf() inner query parse error: %w", err)
 		}
 
-		innerGenerator := NewInnerSQLGenerator(g.workspaceMap, g.customFieldMap, g.dbDriver)
-		innerGenerator.legacyNameKeyFallback = g.legacyNameKeyFallback
+		innerGenerator := g.newInnerSQLGenerator(g.customFieldMap)
 		innerSQL, innerArgs, err := innerGenerator.GenerateSQL(innerAST)
 		if err != nil {
 			return "", nil, fmt.Errorf("childrenOf() inner query SQL generation error: %w", err)
@@ -907,8 +944,7 @@ func (g *SQLGenerator) generateItemLinkedOf(node *ASTNode) (sql string, args []a
 		return "", nil, fmt.Errorf("linkedOf() inner query parse error: %w", err)
 	}
 
-	innerGenerator := NewInnerSQLGenerator(g.workspaceMap, g.customFieldMap, g.dbDriver)
-	innerGenerator.legacyNameKeyFallback = g.legacyNameKeyFallback
+	innerGenerator := g.newInnerSQLGenerator(g.customFieldMap)
 	innerSQL, innerArgs, err := innerGenerator.GenerateSQL(innerAST)
 	if err != nil {
 		return "", nil, fmt.Errorf("linkedOf() inner query SQL generation error: %w", err)
@@ -1001,8 +1037,7 @@ func (g *SQLGenerator) generateAssetLinkedOf(node *ASTNode) (sql string, args []
 	// itemCustomFieldMap is the item-side custom-field map supplied by the
 	// asset evaluator's caller — required for cf_<name> inside linkedOf() to
 	// resolve to the numeric JSON key used in items.custom_field_values.
-	innerGenerator := NewInnerSQLGenerator(g.workspaceMap, g.itemCustomFieldMap, g.dbDriver)
-	innerGenerator.legacyNameKeyFallback = g.legacyNameKeyFallback
+	innerGenerator := g.newInnerSQLGenerator(g.itemCustomFieldMap)
 	innerSQL, innerArgs, err := innerGenerator.GenerateSQL(innerAST)
 	if err != nil {
 		return "", nil, fmt.Errorf("linkedOf() inner query SQL generation error: %w", err)

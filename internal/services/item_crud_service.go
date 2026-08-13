@@ -445,7 +445,7 @@ func (s *ItemCRUDService) evaluateQLContext(requestCtx context.Context, qlQuery 
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to build custom field map: %w", err)
 	}
-	evaluator := cql.NewEvaluator(workspaceMap, customFieldMap, s.db.GetDriverName())
+	evaluator := cql.NewEvaluatorWithContext(workspaceMap, customFieldMap, s.db.GetDriverName(), functionCtx)
 	qlSQL, qlArgs, err = evaluator.EvaluateToSQL(qlQuery)
 	if err != nil {
 		return "", nil, fmt.Errorf("%w: %v", ErrQLQuery, err)

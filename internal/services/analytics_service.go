@@ -233,7 +233,7 @@ func (s *AnalyticsService) evaluateQLToItemIDs(
 	}
 
 	resolvedQuery := cql.SubstituteFunctions(query, cql.UserContext(userID))
-	evaluator := cql.NewEvaluator(workspaceMap, customFieldMap, s.db.GetDriverName())
+	evaluator := cql.NewEvaluatorWithContext(workspaceMap, customFieldMap, s.db.GetDriverName(), cql.UserContext(userID))
 	sqlWhere, sqlArgs, err := evaluator.EvaluateToSQL(resolvedQuery)
 	if err != nil {
 		return nil, fmt.Errorf("CQL evaluation failed: %w", err)

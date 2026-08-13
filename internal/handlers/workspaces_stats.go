@@ -130,7 +130,7 @@ func (h *WorkspaceHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 			respondInternalError(w, r, cfErr)
 			return
 		}
-		evaluator := cql.NewEvaluator(workspaceMap, customFieldMap, h.db.GetDriverName())
+		evaluator := cql.NewEvaluatorWithContext(workspaceMap, customFieldMap, h.db.GetDriverName(), cql.UserContext(authUser.ID))
 		resolvedQuery := cql.SubstituteFunctions(vqlQuery, cql.UserContext(authUser.ID))
 		filterSQL, filterArgs, err = evaluator.EvaluateToSQL(resolvedQuery)
 		if err != nil {

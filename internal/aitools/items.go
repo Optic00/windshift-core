@@ -159,7 +159,7 @@ func init() {
 				if cfErr != nil {
 					return map[string]string{"error": fmt.Sprintf("failed to build custom field map: %s", cfErr.Error())}, nil
 				}
-				evaluator := cql.NewEvaluator(wsMap, customFieldMap, env.DB.GetDriverName())
+				evaluator := cql.NewEvaluatorWithContext(wsMap, customFieldMap, env.DB.GetDriverName(), cql.UserContext(env.UserID))
 				resolved := cql.SubstituteFunctions(args.Filter, cql.UserContext(env.UserID))
 				cqlSQL, cqlArgs, err := evaluator.EvaluateToSQL(resolved)
 				if err != nil {
