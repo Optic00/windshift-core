@@ -15,6 +15,7 @@
   import { Bold, Italic, Code, List, ListOrdered, Strikethrough, Image as ImageIcon, Workflow } from '@lucide/svelte';
   import { api } from '../api.js';
   import Tooltip from '../components/Tooltip.svelte';
+  import FileInput from '../components/FileInput.svelte';
   import MentionPicker from '../pickers/MentionPicker.svelte';
   import { mentionDecorationPlugin } from './milkdown-mention-mark.js';
   import { linkSanitizerPlugin } from './milkdown-link-sanitizer.js';
@@ -743,13 +744,12 @@
     onclick={handleClick}
   ></div>
 </div>
-<input
-  bind:this={fileInput}
-  type="file"
+<FileInput
+  bind:inputRef={fileInput}
   accept="image/*"
   multiple
   tabindex="-1"
-  aria-hidden="true"
+  ariaHidden="true"
   class="hidden-file-input"
   onchange={handleFileInputChange}
 />
@@ -812,7 +812,7 @@
 {/if}
 
 <style>
-  .hidden-file-input {
+  :global(.hidden-file-input) {
     position: absolute;
     opacity: 0;
     pointer-events: none;

@@ -31,6 +31,7 @@
   import Checkbox from '../components/Checkbox.svelte';
   import DialogFooter from '../dialogs/DialogFooter.svelte';
   import Input from '../components/Input.svelte';
+  import FileInput from '../components/FileInput.svelte';
   import { toHotkeyString } from '../utils/keyboardShortcuts.js';
   import DescriptionText from '../components/DescriptionText.svelte';
 
@@ -64,7 +65,7 @@
 
   // Import / unresolved-references modal state. unresolvedRefs is the
   // structured list returned by the backend on a 422; null hides the modal.
-  let importFileInput;
+  let importFileInput = $state(null);
   let importing = $state(false);
   let unresolvedRefs = $state(null);
   let unresolvedHeading = $state('');
@@ -507,10 +508,9 @@
   </Button>
 {/snippet}
 
-<input
-  type="file"
+<FileInput
   accept="application/json,.json"
-  bind:this={importFileInput}
+  bind:inputRef={importFileInput}
   onchange={handleImportFileChange}
   style="display: none;"
 />

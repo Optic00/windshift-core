@@ -17,6 +17,7 @@
   import { Palette, Camera, Trash2, X, Shield, Package } from '@lucide/svelte';
   import IconSelector from '../pickers/IconSelector.svelte';
   import BackgroundImageSelector from '../components/BackgroundImageSelector.svelte';
+  import FileInput from '../components/FileInput.svelte';
   import Button from '../components/Button.svelte';
   import PageHeader from '../layout/PageHeader.svelte';
   import StaticViewBackground from '../layout/StaticViewBackground.svelte';
@@ -425,8 +426,7 @@
 
             {#if showAvatarUpload && attachmentStatus.enabled}
               <div class="p-4 rounded border" style="border-color: var(--ds-border); background-color: var(--ds-surface-raised);">
-                <input
-                  type="file"
+                <FileInput
                   accept="image/*"
                   onchange={(e) => handleAvatarUpload(e.currentTarget.files)}
                   disabled={uploadingAvatar}

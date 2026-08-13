@@ -3,6 +3,7 @@
   import Modal from './Modal.svelte';
   import Button from '../components/Button.svelte';
   import Input from '../components/Input.svelte';
+  import FileInput from '../components/FileInput.svelte';
   import Textarea from '../components/Textarea.svelte';
   import CustomFieldRenderer from '../features/items/CustomFieldRenderer.svelte';
   import Label from '../components/Label.svelte';
@@ -196,8 +197,7 @@
         <!-- Upload Input (shown when toggled) -->
         {#if showAvatarUpload && attachmentsEnabled}
           <div class="mt-3 p-4 rounded border" style="border-color: var(--ds-border); background-color: var(--ds-surface-raised);">
-            <input
-              type="file"
+            <FileInput
               accept="image/*"
               onchange={(e) => handleAvatarUpload(e.currentTarget.files)}
               disabled={uploadingAvatar}

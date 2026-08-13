@@ -13,6 +13,7 @@
   import { confirm } from '../composables/useConfirm.js';
   import DescriptionText from '../components/DescriptionText.svelte';
   import EmptyState from '../components/EmptyState.svelte';
+  import FileInput from '../components/FileInput.svelte';
 
   let saving = $state(false);
   let error = $state('');
@@ -354,12 +355,11 @@
             <p class="text-xs mb-4" style="color: var(--ds-text-subtle);">
               {t('settings.modules.supportedFormats')}
             </p>
-            <input
-              type="file"
+            <FileInput
               accept=".wasm,.zip"
               onchange={handleFileSelect}
               class="hidden"
-              bind:this={fileInput}
+              bind:inputRef={fileInput}
             />
             <Button variant="primary" onclick={() => fileInput?.click()}>
               {t('common.select')}
@@ -380,12 +380,11 @@
                   <p class="text-xs mb-3">
                     {t('settings.modules.wasmManifestRequiredDesc')}
                   </p>
-                  <input
-                    type="file"
+                  <FileInput
                     accept=".json"
                     onchange={handleManifestSelect}
                     class="hidden"
-                    bind:this={manifestInput}
+                    bind:inputRef={manifestInput}
                   />
                   <Button variant="primary" size="sm" onclick={() => manifestInput?.click()}>
                     {selectedManifest ? t('settings.modules.changeManifest') : t('settings.modules.chooseManifest')}

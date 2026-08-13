@@ -5,6 +5,7 @@
 	import { User, Shield, Key, Smartphone, Trash2, Camera, Upload, Globe, CalendarDays, RefreshCw, Link2, Eye, EyeOff, Copy, GitBranch, Bot, Code, Plus, Tag, Plane, MoreHorizontal, Pencil } from '@lucide/svelte';
 	import Button from '../components/Button.svelte';
 	import Input from '../components/Input.svelte';
+	import FileInput from '../components/FileInput.svelte';
 	import Badge from '../components/Badge.svelte';
 	import PageHeader from '../layout/PageHeader.svelte';
 	import Tabs from '../components/Tabs.svelte';
@@ -811,8 +812,7 @@
 					<h3 class="text-sm font-medium mb-3" style="color: var(--ds-text);">{t('users.uploadNewAvatar')}</h3>
 
 					<div class="mb-4">
-											<input
-												type="file"
+											<FileInput
 												accept="image/*"
 												onchange={(e) => handleAvatarUpload(/** @type {HTMLInputElement} */ (e.target).files)}
 												disabled={uploadingAvatar}
