@@ -54,6 +54,11 @@ type SessionManager struct {
 	db                database.Database
 	opaqueKey         []byte
 	sessionValidation *sessionValidator
+	// ipBinding is the resolved SESSION_IP_BINDING mode (config.SessionIPBinding*)
+	// that session validation applies to a client-IP change. An unknown or
+	// zero value is treated as strict so managers built without config.Load
+	// fail closed.
+	ipBinding string
 }
 
 // Session represents an active user session
@@ -74,14 +79,16 @@ type Session struct {
 // NewSessionManager creates a new session manager with secure cookie handling.
 // If cookieSecret is non-empty, deterministic cookie keys are derived from it
 // so that sessions survive process restarts with the same secret.
+// ipBinding is the resolved SESSION_IP_BINDING mode.
 // last review: ser, 210426
-func NewSessionManager(db database.Database, useSecureCookies, useProxy bool, additionalProxies []string, cookieSecret string) *SessionManager {
+func NewSessionManager(db database.Database, useSecureCookies, useProxy bool, additionalProxies []string, cookieSecret, ipBinding string) *SessionManager {
 	return NewSessionManagerWithValidationCacheTTL(
 		db,
 		useSecureCookies,
 		useProxy,
 		additionalProxies,
 		cookieSecret,
+		ipBinding,
 		DefaultSessionValidationCacheTTL,
 	)
 }
@@ -89,13 +96,14 @@ func NewSessionManager(db database.Database, useSecureCookies, useProxy bool, ad
 // NewSessionManagerWithValidationCacheTTL creates a session manager with a
 // bounded local validation cache. A non-positive TTL disables retained cache
 // entries while preserving in-flight request coalescing.
-func NewSessionManagerWithValidationCacheTTL(db database.Database, useSecureCookies, useProxy bool, additionalProxies []string, cookieSecret string, validationCacheTTL time.Duration, cacheSizeMB ...int) *SessionManager {
+func NewSessionManagerWithValidationCacheTTL(db database.Database, useSecureCookies, useProxy bool, additionalProxies []string, cookieSecret, ipBinding string, validationCacheTTL time.Duration, cacheSizeMB ...int) *SessionManager {
 	return newSessionManagerWithValidationCache(
 		db,
 		useSecureCookies,
 		useProxy,
 		additionalProxies,
 		cookieSecret,
+		ipBinding,
 		validationCacheTTL,
 		"session_validation",
 		cacheSizeMB...,
@@ -105,20 +113,21 @@ func NewSessionManagerWithValidationCacheTTL(db database.Database, useSecureCook
 // NewSessionManagerWithNamedValidationCacheTTL creates a session manager whose
 // validation cache has an explicit diagnostics name. The SSH server uses it so
 // the HTTP and SSH allocations remain independently visible.
-func NewSessionManagerWithNamedValidationCacheTTL(db database.Database, useSecureCookies, useProxy bool, additionalProxies []string, cookieSecret string, validationCacheTTL time.Duration, cacheName string, cacheSizeMB int) *SessionManager {
+func NewSessionManagerWithNamedValidationCacheTTL(db database.Database, useSecureCookies, useProxy bool, additionalProxies []string, cookieSecret, ipBinding string, validationCacheTTL time.Duration, cacheName string, cacheSizeMB int) *SessionManager {
 	return newSessionManagerWithValidationCache(
 		db,
 		useSecureCookies,
 		useProxy,
 		additionalProxies,
 		cookieSecret,
+		ipBinding,
 		validationCacheTTL,
 		cacheName,
 		cacheSizeMB,
 	)
 }
 
-func newSessionManagerWithValidationCache(db database.Database, useSecureCookies, useProxy bool, additionalProxies []string, cookieSecret string, validationCacheTTL time.Duration, cacheName string, cacheSizeMB ...int) *SessionManager {
+func newSessionManagerWithValidationCache(db database.Database, useSecureCookies, useProxy bool, additionalProxies []string, cookieSecret, ipBinding string, validationCacheTTL time.Duration, cacheName string, cacheSizeMB ...int) *SessionManager {
 	var opaqueKey []byte
 	if cookieSecret != "" {
 		opaqueKey = deriveKey(cookieSecret, "windshift-auth-opaque-values", 32)
@@ -131,6 +140,7 @@ func newSessionManagerWithValidationCache(db database.Database, useSecureCookies
 		db:                db,
 		opaqueKey:         opaqueKey,
 		sessionValidation: newSessionValidator(validationCacheTTL, cacheName, cacheSizeMB...),
+		ipBinding:         ipBinding,
 	}
 }
 
@@ -251,6 +261,23 @@ func (sm *SessionManager) RefreshSession(token string, rememberMe bool) error {
 	if err != nil {
 		return fmt.Errorf("failed to refresh session: %w", err)
 	}
+	sm.invalidateSessionValidationToken(token)
+	return nil
+}
+
+// UpdateSessionIP rebinds a session to a new client IP. It is used by the log
+// SESSION_IP_BINDING mode, where a session that moves between networks is
+// followed rather than rejected. Sessions are stored as token digests with a
+// legacy plaintext fallback, so the predicate matches both forms — a
+// plaintext-only predicate would match zero rows for every current session.
+func (sm *SessionManager) UpdateSessionIP(token, ipAddress string) error {
+	query := `UPDATE user_sessions SET ip_address = ? WHERE session_token IN (?, ?) AND is_active = true`
+	_, err := sm.db.ExecWrite(query, ipAddress, hashSessionToken(token), token)
+	if err != nil {
+		return fmt.Errorf("failed to update session IP: %w", err)
+	}
+	// The cached snapshot still carries the previous IP; drop it so the next
+	// request revalidates against the rebound row instead of rebinding again.
 	sm.invalidateSessionValidationToken(token)
 	return nil
 }
