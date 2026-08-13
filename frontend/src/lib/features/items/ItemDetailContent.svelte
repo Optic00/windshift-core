@@ -1,7 +1,10 @@
 <script>
   import { useEventListener } from 'runed';
   import { AlertCircle } from '@lucide/svelte';
+  import { api } from '../../api.js';
+  import { confirm } from '../../composables/useConfirm.js';
   import { t } from '../../stores/i18n.svelte.js';
+  import { errorToast, successToast } from '../../stores/toasts.svelte.js';
   import ItemDetailBreadcrumbs from '../items/ItemDetailBreadcrumbs.svelte';
   import ItemDetailHeader from '../items/ItemDetailHeader.svelte';
   import ItemDetailDescription from '../items/ItemDetailDescription.svelte';
@@ -118,7 +121,6 @@
   let diagramPromise = $state(null);
 
   // Component references
-  let diagramListComponent = $state(null);
   let descriptionComponent = $state(null);
 
   // Diagram modal state
@@ -285,17 +287,26 @@
   }
 
   function handleSaveDiagram() {
-    // Refresh the diagram list
-    if (diagramListComponent) {
-      diagramListComponent.refresh();
-    }
     ondiagramSaved?.();
   }
 
-  function handleDeleteDiagram() {
-    // Refresh the diagram list
-    if (diagramListComponent) {
-      diagramListComponent.refresh();
+  async function handleDeleteDiagram(diagram) {
+    if (!diagram?.id) return;
+    const confirmed = await confirm({
+      title: t('common.delete'),
+      message: t('components.diagram.confirmDelete'),
+      confirmText: t('common.delete'),
+      variant: 'danger',
+    });
+    if (!confirmed) return;
+
+    try {
+      await api.deleteDiagram(diagram.id);
+      await ondiagramSaved?.();
+      successToast(t('editors.diagramDeleted'));
+    } catch (err) {
+      console.error('Failed to delete diagram:', err);
+      errorToast(t('components.diagram.deleteError'));
     }
   }
 

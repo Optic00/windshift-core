@@ -14,6 +14,7 @@
   import { imageBlockComponent } from '@milkdown/kit/component/image-block';
   import { Bold, Italic, Code, List, ListOrdered, Strikethrough, Image as ImageIcon, Workflow } from '@lucide/svelte';
   import { api } from '../api.js';
+  import { confirm } from '../composables/useConfirm.js';
   import Tooltip from '../components/Tooltip.svelte';
   import FileInput from '../components/FileInput.svelte';
   import MentionPicker from '../pickers/MentionPicker.svelte';
@@ -412,6 +413,39 @@
     onDiagramPersisted({ attachmentId, name, contentHash, pageContent });
   }
 
+  async function deleteDiagramNode(attachmentId, getPos) {
+    const confirmed = await confirm({
+      title: t('common.delete'),
+      message: t('components.diagram.confirmDelete'),
+      confirmText: t('common.delete'),
+      variant: 'danger',
+    });
+    if (!confirmed || !editor || typeof getPos !== 'function') return;
+
+    editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      let position;
+      try {
+        position = getPos();
+      } catch {
+        return;
+      }
+      if (!Number.isInteger(position)) return;
+      const node = view.state.doc.nodeAt(position);
+      if (
+        !node ||
+        node.type.name !== 'excalidraw' ||
+        node.attrs.attachmentId !== attachmentId
+      ) {
+        return;
+      }
+      view.dispatch(
+        view.state.tr.delete(position, position + node.nodeSize).scrollIntoView()
+      );
+      view.focus();
+    });
+  }
+
   onMount(async () => {
     try {
       const builder = Editor.make()
@@ -519,8 +553,16 @@
       await onBeforeDiagramOpen();
       diagramModal = { open: true, mode: 'edit', attachmentId, name: name || '', getPos };
     };
+    const deleteHandler = (e) => {
+      const { attachmentId, getPos } = e.detail || {};
+      void deleteDiagramNode(attachmentId, getPos);
+    };
     editorElement.addEventListener('excalidraw:edit', handler);
-    return () => editorElement.removeEventListener('excalidraw:edit', handler);
+    editorElement.addEventListener('excalidraw:delete', deleteHandler);
+    return () => {
+      editorElement.removeEventListener('excalidraw:edit', handler);
+      editorElement.removeEventListener('excalidraw:delete', deleteHandler);
+    };
   });
 
   onDestroy(async () => {

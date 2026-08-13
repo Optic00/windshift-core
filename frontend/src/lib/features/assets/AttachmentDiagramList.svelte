@@ -159,13 +159,17 @@
       </div>
     {/each}
     {#each diagrams as diagram}
-      <div class="flex items-center gap-2 py-1 px-2 -mx-2 rounded group hover:bg-[var(--ds-background-neutral-hovered)] transition-colors">
+      <div
+        class="flex items-center gap-2 py-1 px-2 -mx-2 rounded group hover:bg-[var(--ds-background-neutral-hovered)] transition-colors"
+        data-testid={`item-diagram-${diagram.id}`}
+      >
         <IconPencil class="w-3.5 h-3.5 flex-shrink-0" style="color: var(--ds-text-subtle);" />
         <button
           class="flex-1 text-sm truncate text-left hover:underline"
           style="color: var(--ds-text);"
           onclick={() => handleEditDiagram(diagram)}
           title={t('assets.editDiagram')}
+          data-testid={`item-diagram-edit-${diagram.id}`}
         >
           {diagram.name || t('assets.untitledDiagram')}
         </button>
@@ -178,6 +182,7 @@
             style="color: var(--ds-text-danger);"
             onclick={() => handleDeleteDiagram(diagram)}
             title={t('common.delete')}
+            data-testid={`item-diagram-delete-${diagram.id}`}
           >
             <IconTrash class="w-3.5 h-3.5" />
           </button>

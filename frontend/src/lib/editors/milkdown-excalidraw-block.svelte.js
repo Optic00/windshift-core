@@ -105,6 +105,18 @@ export const excalidrawView = defineView(excalidrawNode, () => {
           })
         );
       },
+      onDelete: () => {
+        dom.dispatchEvent(
+          new CustomEvent('excalidraw:delete', {
+            bubbles: true,
+            detail: {
+              attachmentId: props.attachmentId,
+              name: props.name,
+              getPos,
+            },
+          })
+        );
+      },
     });
 
     const app = mount(ExcalidrawBlockView, { target: dom, props });

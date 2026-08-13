@@ -1,5 +1,5 @@
 <script>
-  import { Pencil, AlertTriangle, Loader2 } from '@lucide/svelte';
+  import { Pencil, AlertTriangle, Loader2, Trash2 } from '@lucide/svelte';
   import { t } from '../stores/i18n.svelte.js';
   import { preparePageDiagramScene } from '../features/pages/pageDiagramScene.js';
 
@@ -8,6 +8,7 @@
     name = '',
     readonly = false,
     onEdit = () => {},
+    onDelete = () => {},
   } = $props();
 
   let svgHost = $state(null);
@@ -102,16 +103,28 @@
   <figcaption class="excalidraw-block__caption">
     <span class="excalidraw-block__name" data-testid="page-diagram-caption">{name || t('editors.diagramUntitled')}</span>
     {#if !readonly}
-      <button
-        type="button"
-        class="excalidraw-block__edit"
-        onclick={() => onEdit()}
-        title={t('editors.diagramEdit')}
-        aria-label={t('editors.diagramEdit')}
-        data-testid="excalidraw-block-edit"
-      >
-        <Pencil size={14} />
-      </button>
+      <div class="excalidraw-block__actions">
+        <button
+          type="button"
+          class="excalidraw-block__action"
+          onclick={() => onEdit()}
+          title={t('editors.diagramEdit')}
+          aria-label={t('editors.diagramEdit')}
+          data-testid="excalidraw-block-edit"
+        >
+          <Pencil size={14} />
+        </button>
+        <button
+          type="button"
+          class="excalidraw-block__action excalidraw-block__delete"
+          onclick={() => onDelete()}
+          title={t('common.delete')}
+          aria-label={t('common.delete')}
+          data-testid="excalidraw-block-delete"
+        >
+          <Trash2 size={14} />
+        </button>
+      </div>
     {/if}
   </figcaption>
 </figure>
@@ -165,7 +178,13 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .excalidraw-block__edit {
+  .excalidraw-block__actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    flex-shrink: 0;
+  }
+  .excalidraw-block__action {
     background: none;
     border: 1px solid transparent;
     border-radius: 4px;
@@ -175,9 +194,12 @@
     display: inline-flex;
     align-items: center;
   }
-  .excalidraw-block__edit:hover {
+  .excalidraw-block__action:hover {
     background: var(--surface-3, #e5e7eb);
     border-color: var(--border-color, #d1d5db);
+  }
+  .excalidraw-block__delete {
+    color: var(--ds-text-danger, #b91c1c);
   }
   :global(.spin) {
     animation: excal-spin 1s linear infinite;
