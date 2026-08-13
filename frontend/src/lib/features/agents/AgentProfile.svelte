@@ -15,11 +15,13 @@
     IconDeviceFloppy as Save,
     IconShieldCheck as ShieldCheck,
     IconArchive as Archive,
+    IconDots as MoreHorizontal,
   } from '@tabler/icons-svelte-runes';
   import { agentBindings, agentRuns, agentSkills, api } from '../../api.js';
   import { updateQueryParams } from '../../router.js';
   import { workspacePermissions } from '../../stores';
   import PageHeader from '../../layout/PageHeader.svelte';
+  import DropdownMenu from '../../layout/DropdownMenu.svelte';
   import AlertBox from '../../components/AlertBox.svelte';
   import Avatar from '../../components/Avatar.svelte';
   import Badge from '../../components/Badge.svelte';
@@ -586,6 +588,21 @@
       .replace(/\b\w/g, (letter) => letter.toUpperCase());
   }
 
+  function profileActionItems() {
+    return [
+      {
+        id: 'archive',
+        type: 'regular',
+        icon: Archive,
+        title: 'Archive',
+        color: 'var(--ds-text-danger)',
+        hoverClass: 'hover-danger',
+        testid: 'agent-archive',
+        onClick: () => archiveDialogOpen = true,
+      },
+    ];
+  }
+
   function changeTab({ tab }) {
     activeTab = tab;
     updateQueryParams({ tab: tab === 'overview' ? null : tab }, { push: true });
@@ -625,32 +642,37 @@
         subtitle={agent.purpose || 'Workspace specialist'}
       >
         {#snippet actions()}
-          <Badge variant={availabilityVariant(agent.availability)}>
-            {label(agent.availability)}
-          </Badge>
-          {#if canAdmin}
-            {#if agent.lifecycle === 'archived'}
-              <Button
-                variant="default"
-                size="small"
-                loading={lifecycleChanging}
-                onclick={restoreProfile}
-                dataTestid="agent-restore"
-              >
-                Restore as Draft
-              </Button>
-            {:else}
-              <Button
-                variant="danger"
-                size="small"
-                icon={Archive}
-                onclick={() => archiveDialogOpen = true}
-                dataTestid="agent-archive"
-              >
-                Archive
-              </Button>
+          <div class="flex min-h-8 items-center gap-2">
+            <Badge variant={availabilityVariant(agent.availability)}>
+              {label(agent.availability)}
+            </Badge>
+            {#if canAdmin}
+              {#if agent.lifecycle === 'archived'}
+                <Button
+                  variant="default"
+                  size="small"
+                  loading={lifecycleChanging}
+                  onclick={restoreProfile}
+                  dataTestid="agent-restore"
+                >
+                  Restore as Draft
+                </Button>
+              {:else}
+                <DropdownMenu
+                  triggerIcon={MoreHorizontal}
+                  triggerClass="w-8 h-8 flex items-center justify-center rounded-md transition-colors"
+                  triggerStyle="background-color: var(--ds-surface); color: var(--ds-text-subtle);"
+                  triggerTestid="agent-profile-actions"
+                  triggerLabel="Agent actions"
+                  items={profileActionItems()}
+                  maxWidth="max-w-48"
+                  showChevron={false}
+                  iconOnly={true}
+                  disabled={lifecycleChanging}
+                />
+              {/if}
             {/if}
-          {/if}
+          </div>
         {/snippet}
       </PageHeader>
 
