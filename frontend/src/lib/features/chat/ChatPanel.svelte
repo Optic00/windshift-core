@@ -245,7 +245,7 @@
   <div
     class="fixed z-40 flex flex-col shadow-2xl rounded-lg overflow-hidden"
     class:select-none={isInteracting}
-    style="background-color: var(--ds-surface-raised); border: 1px solid var(--ds-border);
+    style="background-color: var(--ds-surface-raised); border: 1px solid var(--ds-border); container-type: inline-size;
            width: {panelWidth}px; height: {panelHeight}px; max-height: calc(100vh - 32px);
            right: {panelRight}px; bottom: {panelBottom}px;"
     transition:fly={{ y: 100, duration: 250 }}
@@ -266,16 +266,19 @@
       style="border-color: var(--ds-border);"
       onmousedown={startDrag}
     >
-      <div class="flex items-center gap-2">
+      <div class="flex min-w-0 flex-1 items-center gap-2">
         <IconMessage size={20} stroke={1.5} style="color: var(--ds-text-subtle);" />
         <h2 class="text-sm font-semibold" style="color: var(--ds-text);">AI Chat</h2>
       </div>
       <div class="flex items-center gap-2">
         {#if chatStore.sessionType === 'general' && chatStore.connections.length > 1}
           <Select
+            id="agent-chat-model"
             value={chatStore.connectionId}
             onchange={(v) => { chatStore.connectionId = parseInt(v) || 0; }}
             size="small"
+            class="w-[clamp(8rem,55cqi,22rem)]"
+            menuWidth="min(22rem, calc(100vw - 2rem))"
             options={[{ value: 0, label: 'Default' }, ...chatStore.connections.map(c => ({ value: c.id, label: c.name }))]}
           />
         {/if}

@@ -1,7 +1,7 @@
 <script>
   import { createPopover, melt } from '@melt-ui/svelte';
   import { ChevronDown, Check } from '@lucide/svelte';
-  import { tick } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import { fly } from 'svelte/transition';
 
   /**
@@ -13,6 +13,7 @@
    *   size?: string,
    *   id?: string,
    *   class?: string,
+   *   menuWidth?: string,
    *   placeholder?: string,
    *   onchange?: (e?: any) => void,
    *   onfocus?: (e?: any) => void,
@@ -27,6 +28,7 @@
     size = 'medium',
     id = undefined,
     class: className = '',
+    menuWidth = '',
     placeholder = '',
     onchange = undefined,
     onfocus = undefined,
@@ -41,7 +43,7 @@
     positioning: {
       strategy: 'fixed',
       placement: 'bottom-start',
-      sameWidth: true,
+      sameWidth: untrack(() => !menuWidth),
       gutter: 4
     },
     portal: 'body'
@@ -201,7 +203,7 @@
     aria-activedescendant={highlightedIndex >= 0 ? optionId(options[highlightedIndex], highlightedIndex) : undefined}
     onkeydown={handleListboxKeydown}
     class="rounded border shadow-lg max-h-60 overflow-y-auto z-[60] focus:outline-none"
-    style="background-color: var(--ds-surface-raised); border-color: var(--ds-border);
+    style="background-color: var(--ds-surface-raised); border-color: var(--ds-border); width: {menuWidth || undefined};
            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.25), 0 10px 10px -5px rgba(0, 0, 0, 0.15);"
     transition:fly={{ duration: 150, y: -5 }}
   >
