@@ -12,7 +12,7 @@
   import { collectionStore } from '../stores/collectionContext.svelte.js';
   import { workspaceDataStore } from '../stores/workspaceDataStore.svelte.js';
   import { loadBoardConfigurationPageData } from './boardConfigurationData.js';
-  import { Plus, GripVertical, X, Grip } from '@lucide/svelte';
+  import { Plus, GripVertical, X, Grip, Settings } from '@lucide/svelte';
   import { useGradientStyles, loadWorkspaceGradient } from '../stores/workspaceGradient.svelte.js';
   import ViewHeader from '../layout/ViewHeader.svelte';
   import StaticViewBackground from '../layout/StaticViewBackground.svelte';
@@ -1105,69 +1105,97 @@
 
             <!-- Add field section -->
             <div>
-              <h4 class="text-sm font-semibold mb-2" style="color: var(--ds-text);">{t('settings.boardConfig.addField')}</h4>
+              <h4 class="text-base font-semibold mb-4" style="color: var(--ds-text);">{t('settings.boardConfig.addField')}</h4>
 
               <!-- System fields -->
               {#if availableSystemFields.length > 0}
-                <p class="text-xs mb-2" style="color: var(--ds-text-subtle);">{t('settings.boardConfig.systemFields')}</p>
-                <div class="flex flex-wrap gap-2 mb-4">
-                  {#each availableSystemFields as sf}
-                    <button
-                      onclick={() => addCardField(sf.identifier, 'system')}
-                      class="px-3 py-1.5 text-xs rounded-full border transition-colors"
-                      style="border-color: var(--ds-border); color: var(--ds-text); background: var(--ds-surface);"
-                      onmouseenter={(e) => { e.currentTarget.style.borderColor = 'var(--ds-interactive)'; e.currentTarget.style.color = 'var(--ds-interactive)'; }}
-                      onmouseleave={(e) => { e.currentTarget.style.borderColor = 'var(--ds-border)'; e.currentTarget.style.color = 'var(--ds-text)'; }}
-                    >
-                      <Plus class="w-3 h-3 inline mr-1" />{sf.label}
-                    </button>
-                  {/each}
-                </div>
-              {/if}
-
-              <!-- Custom-field global administration -->
-              {#if isSystemAdmin}
-                <div class="flex items-center justify-between mt-4 mb-2">
-                  <p class="text-xs" style="color: var(--ds-text-subtle);">
-                    {t('settings.boardConfig.customFields')}
-                  </p>
-                  <button
-                    data-testid="board-custom-fields-action"
-                    type="button"
-                    onclick={() => goCustomFields(!hasCustomFields)}
-                    class="px-3 py-1.5 text-xs rounded-full border transition-colors"
-                    style="border-color: var(--ds-border); color: var(--ds-interactive); background: var(--ds-surface);"
+                <section class="mb-5" aria-labelledby="board-card-fields-system-heading">
+                  <h5
+                    id="board-card-fields-system-heading"
+                    class="text-sm font-medium mb-2"
+                    style="color: var(--ds-text-subtle);"
                   >
-                    <Plus class="w-3 h-3 inline mr-1" />
-                    {hasCustomFields ? t('settings.boardConfig.manageCustomFields') : t('settings.boardConfig.createCustomField')}
-                  </button>
-                </div>
-              {:else if isNonSystemWorkspaceAdmin}
-                <p
-                  data-testid="board-custom-fields-admin-note"
-                  class="text-xs mt-4 mb-2 p-2 rounded"
-                  style="color: var(--ds-text-subtle); background: var(--ds-surface); border: 1px solid var(--ds-border);"
-                >
-                  {t('settings.boardConfig.customFieldsGlobalNote')}
-                </p>
+                    {t('settings.boardConfig.systemFields')}
+                  </h5>
+                  <div class="flex flex-wrap gap-2">
+                    {#each availableSystemFields as sf}
+                      <button
+                        onclick={() => addCardField(sf.identifier, 'system')}
+                        class="px-3 py-1.5 text-xs rounded-full border transition-colors"
+                        style="border-color: var(--ds-border); color: var(--ds-text); background: var(--ds-surface);"
+                        onmouseenter={(e) => { e.currentTarget.style.borderColor = 'var(--ds-interactive)'; e.currentTarget.style.color = 'var(--ds-interactive)'; }}
+                        onmouseleave={(e) => { e.currentTarget.style.borderColor = 'var(--ds-border)'; e.currentTarget.style.color = 'var(--ds-text)'; }}
+                      >
+                        <Plus class="w-3 h-3 inline mr-1" />{sf.label}
+                      </button>
+                    {/each}
+                  </div>
+                </section>
               {/if}
 
               <!-- Custom fields -->
-              {#if availableCustomFields.length > 0}
-                <p class="text-xs mb-2" style="color: var(--ds-text-subtle);">{t('settings.boardConfig.customFields')}</p>
-                <div class="flex flex-wrap gap-2">
-                  {#each availableCustomFields as cf}
-                    <button
-                      onclick={() => addCardField(`custom_field_${cf.id}`, 'custom')}
-                      class="px-3 py-1.5 text-xs rounded-full border transition-colors"
-                      style="border-color: var(--ds-border); color: var(--ds-text); background: var(--ds-surface);"
-                      onmouseenter={(e) => { e.currentTarget.style.borderColor = 'var(--ds-interactive)'; e.currentTarget.style.color = 'var(--ds-interactive)'; }}
-                      onmouseleave={(e) => { e.currentTarget.style.borderColor = 'var(--ds-border)'; e.currentTarget.style.color = 'var(--ds-text)'; }}
+              {#if availableCustomFields.length > 0 || isSystemAdmin || isNonSystemWorkspaceAdmin}
+                <section
+                  data-testid="board-card-fields-custom-section"
+                  aria-labelledby="board-card-fields-custom-heading"
+                  class={availableSystemFields.length > 0 ? 'pt-5 border-t' : ''}
+                  style={availableSystemFields.length > 0 ? 'border-color: var(--ds-border);' : undefined}
+                >
+                  <div class="flex flex-wrap items-center gap-3 mb-3">
+                    <h5
+                      id="board-card-fields-custom-heading"
+                      data-testid="board-card-fields-custom-heading"
+                      class="text-sm font-medium"
+                      style="color: var(--ds-text-subtle);"
                     >
-                      <Plus class="w-3 h-3 inline mr-1" />{cf.name}
-                    </button>
-                  {/each}
-                </div>
+                      {t('settings.boardConfig.customFields')}
+                    </h5>
+
+                    {#if isSystemAdmin}
+                      <button
+                        data-testid="board-custom-fields-action"
+                        type="button"
+                        onclick={() => goCustomFields(!hasCustomFields)}
+                        class="inline-flex items-center px-3 py-1.5 text-xs rounded-full border transition-colors"
+                        style="border-color: var(--ds-border); color: var(--ds-interactive); background: var(--ds-surface);"
+                      >
+                        {#if hasCustomFields}
+                          <Settings class="w-3 h-3 mr-1" />
+                        {:else}
+                          <Plus class="w-3 h-3 mr-1" />
+                        {/if}
+                        {hasCustomFields ? t('settings.boardConfig.manageCustomFields') : t('settings.boardConfig.createCustomField')}
+                      </button>
+                    {/if}
+                  </div>
+
+                  {#if isNonSystemWorkspaceAdmin}
+                    <p
+                      data-testid="board-custom-fields-admin-note"
+                      class="text-xs mb-3 p-2 rounded"
+                      style="color: var(--ds-text-subtle); background: var(--ds-surface); border: 1px solid var(--ds-border);"
+                    >
+                      {t('settings.boardConfig.customFieldsGlobalNote')}
+                    </p>
+                  {/if}
+
+                  {#if availableCustomFields.length > 0}
+                    <div class="flex flex-wrap gap-2">
+                      {#each availableCustomFields as cf}
+                        <button
+                          data-testid={`board-card-field-add-custom-${cf.id}`}
+                          onclick={() => addCardField(`custom_field_${cf.id}`, 'custom')}
+                          class="px-3 py-1.5 text-xs rounded-full border transition-colors"
+                          style="border-color: var(--ds-border); color: var(--ds-text); background: var(--ds-surface);"
+                          onmouseenter={(e) => { e.currentTarget.style.borderColor = 'var(--ds-interactive)'; e.currentTarget.style.color = 'var(--ds-interactive)'; }}
+                          onmouseleave={(e) => { e.currentTarget.style.borderColor = 'var(--ds-border)'; e.currentTarget.style.color = 'var(--ds-text)'; }}
+                        >
+                          <Plus class="w-3 h-3 inline mr-1" />{cf.name}
+                        </button>
+                      {/each}
+                    </div>
+                  {/if}
+                </section>
               {/if}
             </div>
           </div>
