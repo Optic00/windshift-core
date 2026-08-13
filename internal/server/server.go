@@ -2491,16 +2491,7 @@ func openPRViaCredentialResolver(cr *scm.CredentialResolver) services.OpenPRFn {
 		if err != nil {
 			return nil, fmt.Errorf("resolve connection %d: %w", req.ConnectionID, err)
 		}
-		provider, err := scm.NewProvider(scm.ProviderConfig{
-			ProviderType:        creds.ProviderType,
-			AuthMethod:          creds.AuthMethod,
-			BaseURL:             creds.BaseURL,
-			OAuthAccessToken:    creds.OAuthAccessToken,
-			OAuthRefreshToken:   creds.OAuthRefreshToken,
-			PersonalAccessToken: creds.PersonalAccessToken,
-			OAuthClientID:       creds.OAuthClientID,
-			OAuthClientSecret:   creds.OAuthClientSecret,
-		})
+		provider, err := cr.CreateProvider(creds)
 		if err != nil {
 			return nil, fmt.Errorf("build provider: %w", err)
 		}
@@ -2546,16 +2537,7 @@ func commentPRViaCredentialResolver(cr *scm.CredentialResolver) services.Comment
 		if err != nil {
 			return fmt.Errorf("resolve connection %d: %w", req.ConnectionID, err)
 		}
-		provider, err := scm.NewProvider(scm.ProviderConfig{
-			ProviderType:        creds.ProviderType,
-			AuthMethod:          creds.AuthMethod,
-			BaseURL:             creds.BaseURL,
-			OAuthAccessToken:    creds.OAuthAccessToken,
-			OAuthRefreshToken:   creds.OAuthRefreshToken,
-			PersonalAccessToken: creds.PersonalAccessToken,
-			OAuthClientID:       creds.OAuthClientID,
-			OAuthClientSecret:   creds.OAuthClientSecret,
-		})
+		provider, err := cr.CreateProvider(creds)
 		if err != nil {
 			return fmt.Errorf("build provider: %w", err)
 		}
@@ -2624,9 +2606,7 @@ func (r *itemPRContinuationResolver) ContinuationForItemAsUser(ctx context.Conte
 		if err != nil {
 			return nil, fmt.Errorf("resolve connection %d: %w", connectionID, err)
 		}
-		provider, err := scm.NewProvider(scm.ProviderConfig{ProviderType: creds.ProviderType, AuthMethod: creds.AuthMethod,
-			BaseURL: creds.BaseURL, OAuthAccessToken: creds.OAuthAccessToken, OAuthRefreshToken: creds.OAuthRefreshToken,
-			PersonalAccessToken: creds.PersonalAccessToken, OAuthClientID: creds.OAuthClientID, OAuthClientSecret: creds.OAuthClientSecret})
+		provider, err := r.cr.CreateProvider(creds)
 		if err != nil {
 			return nil, fmt.Errorf("build provider: %w", err)
 		}
