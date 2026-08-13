@@ -42,7 +42,13 @@ import {
  */
 export const workspaceViewItems = [
   { id: 'backlog', label: 'Backlog', icon: Rows_3, tooltip: 'Backlog view for unfinished items' },
-  { id: 'board', label: 'Board', icon: SquareKanban, tooltip: 'Kanban board view with columns' },
+  {
+    id: 'board',
+    label: 'Board',
+    icon: SquareKanban,
+    tooltip: 'Kanban board view with columns',
+    testId: 'workspace-nav-board',
+  },
   { id: 'list', label: 'List', icon: List, tooltip: 'Detailed list view with all fields' },
   { id: 'tree', label: 'Tree', icon: ListTree, tooltip: 'Hierarchical tree view for nested items' },
   { id: 'map', label: 'Map', icon: MapPin, tooltip: 'Visual map view for spatial organization' },

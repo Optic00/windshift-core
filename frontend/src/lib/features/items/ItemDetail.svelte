@@ -10,7 +10,7 @@
   import { Trash2, X, Copy, BookOpen, Search, GitBranch, Repeat, FolderInput } from '@lucide/svelte';
   import { Bookmark, BookmarkCheck, ExternalLink } from '@lucide/svelte';
   import { itemTypeIconMap } from '../../utils/icons.js';
-  import { addToast, successToast, errorToast } from '../../stores/toasts.svelte.js';
+  import { addToast, successToast, errorToast, infoToast } from '../../stores/toasts.svelte.js';
   import { timerStore } from '../../stores/timerStore.svelte.js';
   import { useItemAttachments } from '../../composables/useItemAttachments.svelte.js';
   import { useWorkItemPoller } from '../../composables/useWorkItemPoller.svelte.js';
@@ -111,12 +111,12 @@ import NativeSelect from '../../components/NativeSelect.svelte';
   // semantics during a full page navigation.
   useEventListener(() => window, 'pagehide', () => itemDetailStore.reset());
 
-  // Close the detail when the open item is deleted elsewhere (SSE `deleted`, or
-  // a 404 discovered by the poll fallback). Force hasChanges=false so a deleted
-  // item never triggers an unsaved-changes prompt.
+  // Close the detail when the open item is deleted. Consume the shared flag
+  // before closing so the next detail does not inherit the deletion state.
   $effect(() => {
     if (!itemDetailStore.notFound) return;
-    errorToast('This item was deleted.');
+    itemDetailStore.notFound = false;
+    infoToast('This item was deleted.');
     if (isModal && onclose) {
       onclose({ hasChanges: false });
     } else if (!isModal) {

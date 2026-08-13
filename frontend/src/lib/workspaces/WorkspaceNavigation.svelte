@@ -628,7 +628,7 @@
       {@render navLink({ href: getNavigationUrl('overview'), label: 'Overview', tooltip: 'Workspace overview and dashboard', icon: Home, isActive: $currentRoute.view === 'workspace-overview' })}
 
       {#each workspaceViewItems as view}
-        {@render navLink({ href: getNavigationUrl(view.id), label: view.label, tooltip: view.tooltip, icon: view.icon, isActive: $currentRoute.view === `workspace-${view.id}` })}
+        {@render navLink({ href: getNavigationUrl(view.id), label: view.label, tooltip: view.tooltip, icon: view.icon, testId: view.testId, isActive: $currentRoute.view === `workspace-${view.id}` })}
       {/each}
 
       {#if currentCollectionId}

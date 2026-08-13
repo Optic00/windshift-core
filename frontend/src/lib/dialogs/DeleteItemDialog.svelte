@@ -345,6 +345,7 @@
           <!-- Waiting for info to load -->
         {:else if hasChildren}
           <Button
+            id="item-delete-confirm"
             dataTestid="delete-item-confirm"
             variant="danger"
             onclick={handleDelete}
@@ -358,6 +359,7 @@
           </Button>
         {:else}
           <Button
+            id="item-delete-confirm"
             dataTestid="delete-item-confirm"
             variant="danger"
             onclick={handleDelete}

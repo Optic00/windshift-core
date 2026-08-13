@@ -5,7 +5,7 @@
   import { agentRuns as agentRunBus } from '../stores/agentRuns.svelte.js';
   import { navigate } from '../router.js';
   import { notificationActions } from '../stores/notifications.js';
-  import { errorToast } from '../stores/toasts.svelte.js';
+  import { errorToast, infoToast } from '../stores/toasts.svelte.js';
   import { timerStore } from '../stores/timerStore.svelte.js';
   import { useWorkItemPoller } from '../composables/useWorkItemPoller.svelte.js';
   import { useItemEventStream } from '../composables/useItemEventStream.svelte.js';
@@ -335,7 +335,7 @@
 
   // The viewed item was deleted elsewhere: toast and leave the now-stale detail.
   function handleDeleted() {
-    errorToast('This item was deleted.');
+    infoToast('This item was deleted.');
     if (window.history.length > 1) window.history.back();
     else navigate('/m');
   }
