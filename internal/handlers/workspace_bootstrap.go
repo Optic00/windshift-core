@@ -145,7 +145,7 @@ func (h *WorkspaceBootstrapHandler) load(ctx context.Context, userID int, worksp
 	})
 	run("configuration", func() error {
 		config := services.NewConfigReadService(h.workspace.db)
-		itemTypes, err := config.ListItemTypes()
+		itemTypes, err := services.NewWorkspaceService(h.workspace.db).GetItemTypes(workspace.ID)
 		if err != nil {
 			return err
 		}

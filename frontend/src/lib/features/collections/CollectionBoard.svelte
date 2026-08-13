@@ -77,6 +77,22 @@
   // Quick-add state per column
   let quickAddState = $state({});
   let workspaces = $derived($workspacesStore.regularWorkspaces || []);
+  let collectionAllowsAllWorkspaces = $derived(
+    collectionStore.boardWorkspaceScopeLoaded &&
+    !workspaceId &&
+    Boolean(collectionId) &&
+    !collectionStore.boardCollection?.workspace_id &&
+    !collectionStore.boardCollection?.ql_query?.trim()
+  );
+  let availableWorkspaces = $derived(
+    !collectionStore.boardWorkspaceScopeLoaded
+      ? []
+      : collectionAllowsAllWorkspaces
+        ? workspaces
+        : workspaces.filter(workspace => collectionStore.boardWorkspaceIds.includes(workspace.id))
+  );
+  const quickAddItemTypesByWorkspace = new Map();
+  let quickAddTypeLoadToken = 0;
 
   // Backlog functionality
   let backlogItems = $derived(collectionStore.backlogItems);
@@ -136,41 +152,99 @@
   // Quick-add functions
 
   // Children in a swimlane must be exactly one hierarchy level below its parent.
-  function quickAddTypesFor(parentItem) {
+  function quickAddTypesFor(parentItem, sourceTypes = itemTypes) {
     const parentType = parentItem?.item_type_id
-      ? (itemTypes || []).find(type => type.id === parentItem.item_type_id)
+      ? (sourceTypes || []).find(type => type.id === parentItem.item_type_id)
       : null;
     const candidates = parentType
-      ? childItemTypesForParent(itemTypes, parentType)
-      : (itemTypes || []).filter((type) => !isGenericSubtaskType(type));
+      ? childItemTypesForParent(sourceTypes, parentType)
+      : (sourceTypes || []).filter((type) => !isGenericSubtaskType(type));
     return candidates.slice().sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
   }
 
-  function initQuickAdd(columnId, statusId, quickAddKey = columnId, parentItem = null) {
-    const availableTypes = quickAddTypesFor(parentItem);
-    if (availableTypes.length === 0) return;
-    const parentId = parentItem?.id ?? null;
-
-    let preselectedWorkspaceId = workspaceId ? parseInt(workspaceId) : (workspaces.length === 1 ? workspaces[0].id : null);
-
-    let preselectedItemTypeId = availableTypes[0]?.id ?? null;
+  function preferredQuickAddTypeId(availableTypes) {
+    let preferredId = availableTypes[0]?.id ?? null;
     try {
       const savedId = parseInt(localStorage.getItem('board-quickadd-last-item-type-id') || '', 10);
-      if (savedId && availableTypes.some(t => t.id === savedId)) {
-        preselectedItemTypeId = savedId;
+      if (savedId && availableTypes.some(type => type.id === savedId)) {
+        preferredId = savedId;
       }
     } catch (e) { /* ignore storage errors */ }
+    return preferredId;
+  }
+
+  async function loadQuickAddItemTypes(quickAddKey, selectedWorkspaceId) {
+    const state = quickAddState[quickAddKey];
+    if (!state || !selectedWorkspaceId) return;
+
+    const numericWorkspaceId = Number(selectedWorkspaceId);
+    const loadToken = ++quickAddTypeLoadToken;
+    state.typeLoadToken = loadToken;
+    state.loadingTypes = true;
+    state.availableTypes = [];
+    state.itemTypeId = null;
+
+    try {
+      let workspaceItemTypes = quickAddItemTypesByWorkspace.get(numericWorkspaceId);
+      if (!workspaceItemTypes) {
+        const currentWorkspaceId = Number(workspaceId);
+        const storeWorkspaceId = Number(workspaceDataStore.workspaceId);
+        if (currentWorkspaceId === numericWorkspaceId && storeWorkspaceId === numericWorkspaceId) {
+          workspaceItemTypes = itemTypes || [];
+        } else {
+          workspaceItemTypes = await api.workspaces.getItemTypes(numericWorkspaceId);
+        }
+        quickAddItemTypesByWorkspace.set(numericWorkspaceId, workspaceItemTypes || []);
+      }
+
+      const currentState = quickAddState[quickAddKey];
+      if (
+        !currentState ||
+        currentState.typeLoadToken !== loadToken ||
+        Number(currentState.workspaceId) !== numericWorkspaceId
+      ) return;
+
+      const availableTypes = quickAddTypesFor(currentState.parentItem, workspaceItemTypes);
+      currentState.availableTypes = availableTypes;
+      currentState.itemTypeId = preferredQuickAddTypeId(availableTypes);
+      currentState.error = availableTypes.length > 0
+        ? null
+        : 'No item types are available for this workspace';
+    } catch (error) {
+      const currentState = quickAddState[quickAddKey];
+      if (!currentState || currentState.typeLoadToken !== loadToken) return;
+      console.error('Failed to load workspace item types:', error);
+      currentState.error = 'Failed to load item types for this workspace';
+    } finally {
+      const currentState = quickAddState[quickAddKey];
+      if (currentState?.typeLoadToken === loadToken) {
+        currentState.loadingTypes = false;
+      }
+    }
+  }
+
+  function initQuickAdd(columnId, statusId, quickAddKey = columnId, parentItem = null) {
+    const parentId = parentItem?.id ?? null;
+
+    const preselectedWorkspaceId = parentItem?.workspace_id
+      ?? (availableWorkspaces.length === 1 ? availableWorkspaces[0].id : null);
 
     quickAddState[quickAddKey] = {
       show: true,
       workspaceId: preselectedWorkspaceId,
-      itemTypeId: preselectedItemTypeId,
-      availableTypes,
+      itemTypeId: null,
+      availableTypes: [],
+      loadingTypes: Boolean(preselectedWorkspaceId),
       statusId,
       parentId,
+      parentItem,
       title: '',
       error: null
     };
+
+    if (preselectedWorkspaceId) {
+      void loadQuickAddItemTypes(quickAddKey, preselectedWorkspaceId);
+    }
 
     setTimeout(() => {
       const textarea = /** @type {HTMLTextAreaElement | null} */ (document.querySelector(`textarea[data-quick-add-parent="${quickAddKey}"]`));
@@ -186,6 +260,9 @@
     if (quickAddState[quickAddKey]) {
       quickAddState[quickAddKey][field] = value;
       quickAddState[quickAddKey].error = null;
+      if (field === 'workspaceId') {
+        void loadQuickAddItemTypes(quickAddKey, value);
+      }
     }
   }
 
@@ -195,6 +272,10 @@
 
     if (!state.workspaceId) {
       quickAddState[quickAddKey].error = 'Please select a workspace';
+      return;
+    }
+    if (state.loadingTypes) {
+      quickAddState[quickAddKey].error = 'Item types are still loading';
       return;
     }
     if (!state.itemTypeId) {
@@ -220,10 +301,8 @@
 
       const newItem = await api.items.create(payload);
 
-      // The item can be created into a workspace the current view does not show
-      // (the quick-add form lets you pick any workspace). Only place it on the
-      // board when it actually belongs to this view, otherwise it appears now
-      // and vanishes on the next reload.
+      // A collection can span several allowed workspaces while applying other
+      // filters. Only add the new item locally when it matches the full view.
       let belongsToView = true;
       if (collectionId) {
         const collection = await getCollection(collectionId);
@@ -235,7 +314,7 @@
       }
 
       if (!belongsToView) {
-        const selectedWorkspace = workspaces.find(w => w.id === state.workspaceId);
+        const selectedWorkspace = availableWorkspaces.find(w => w.id === state.workspaceId);
         const workspaceName = selectedWorkspace?.name || 'another workspace';
         const reason = collectionId ? 'collection filters' : 'the current workspace filter';
         infoToast(`Card created in ${workspaceName} but won't appear here due to ${reason}`, 'Card created successfully');
@@ -1569,7 +1648,7 @@
                       columnStyle={styles.columnStyle(12)}
                       textStyle={styles.glassTextStyle}
                       subtleTextStyle={styles.glassSubtleTextStyle}
-                      onadd={laneQuickAddTypes.length > 0
+                      onadd={laneQuickAddTypes.length > 0 && availableWorkspaces.length > 0
                         ? () => initQuickAdd(column.id, column.status_ids[0], quickAddKey, lane.parent ?? null)
                         : null}
                       oncollapse={() => toggleColumnCollapse(column.id)}
@@ -1579,7 +1658,7 @@
                             <QuickAddForm
                               parentId={quickAddKey}
                               formState={quickAddState[quickAddKey]}
-                              {workspaces}
+                              workspaces={availableWorkspaces}
                               cardBgStyle={styles.cardStyle(8)}
                               onUpdateField={updateQuickAddField}
                               onCreate={createColumnItem}

@@ -101,6 +101,9 @@ class CollectionStore {
   // Server-side sort state
   sortableFields = $state([]);
   boardConfiguration = $state(null);
+  boardCollection = $state(null);
+  boardWorkspaceIds = $state([]);
+  boardWorkspaceScopeLoaded = $state(false);
   #sortBy = null;
   #sortDirection = null;
   #boardSortMode = 'rank';
@@ -203,6 +206,9 @@ class CollectionStore {
       this.#sortDirection = null;
       this.sortableFields = [];
       this.boardConfiguration = null;
+      this.boardCollection = null;
+      this.boardWorkspaceIds = [];
+      this.boardWorkspaceScopeLoaded = false;
       this.#boardConfigurationKey = null;
       this.#boardConfigurationPromise = null;
       this.#boardConfigurationLoaded = false;
@@ -329,15 +335,22 @@ class CollectionStore {
 
     this.#boardConfigurationKey = key;
     this.#boardConfigurationLoaded = false;
+    this.boardWorkspaceScopeLoaded = false;
     const request = api.collections
-      .getBoardConfiguration(colId || null, wsId || null)
+      .getBoardConfigurationBootstrap(colId || null, wsId || null)
       .catch((error) => {
         if (error?.status !== 404) throw error;
         return null;
       })
-      .then((config) => {
+      .then((bootstrap) => {
+        const config = bootstrap?.board_configuration ?? null;
         if (this.#boardConfigurationKey === key) {
           this.boardConfiguration = config;
+          this.boardCollection = bootstrap?.collection ?? null;
+          this.boardWorkspaceIds = Array.isArray(bootstrap?.referenced_workspace_ids)
+            ? bootstrap.referenced_workspace_ids
+            : [];
+          this.boardWorkspaceScopeLoaded = true;
           this.#boardConfigurationLoaded = true;
         }
         return config;
@@ -358,6 +371,9 @@ class CollectionStore {
     this.#boardConfigurationPromise = null;
     this.#boardConfigurationLoaded = false;
     this.boardConfiguration = null;
+    this.boardCollection = null;
+    this.boardWorkspaceIds = [];
+    this.boardWorkspaceScopeLoaded = false;
   }
 
   /** Query-param fragment excluding capped-column statuses from a paged items fetch. */

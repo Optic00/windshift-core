@@ -1,5 +1,5 @@
 <script>
-  import { Plus, X, Package, ChevronDown } from '@lucide/svelte';
+  import { Plus, X, Package, ChevronDown, LoaderCircle } from '@lucide/svelte';
   import { useEventListener } from 'runed';
   import Button from '../../components/Button.svelte';
   import Textarea from '../../components/Textarea.svelte';
@@ -213,7 +213,19 @@
     </div>
 
     <!-- Item Type Selector -->
-    {#if formState.availableTypes?.length > 0}
+    {#if formState.loadingTypes}
+      <Button
+        variant="default"
+        size="small"
+        class={compact ? '!size-7 !p-0' : '!h-6 !px-1.5 !gap-1 !rounded-[3px]'}
+        dataTestid="quick-add-type-loading"
+        title="Loading item types"
+        disabled
+      >
+        <LoaderCircle class="w-3.5 h-3.5 animate-spin" />
+        {#if !compact}<span class="text-xs">Loading types</span>{/if}
+      </Button>
+    {:else if formState.availableTypes?.length > 0}
       <div class="relative" bind:this={itemTypeAnchor} data-quick-add-menu-anchor>
         {#if compact}
           <Button
@@ -330,6 +342,7 @@
         class="!size-7 !p-0"
         dataTestid="quick-add-create"
         title={t('common.create')}
+        disabled={formState.loadingTypes || !formState.itemTypeId}
       />
     {:else}
       <Button
@@ -339,6 +352,7 @@
         onclick={() => onCreate(parentId)}
         class="!h-6 !px-2 !text-xs !gap-1.5"
         dataTestid="quick-add-create"
+        disabled={formState.loadingTypes || !formState.itemTypeId}
       >
         {t('common.create')}
       </Button>
