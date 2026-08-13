@@ -1037,7 +1037,13 @@
                       onmouseleave={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral)'}
                     >
                       {t('testing.steps')}
-                      <kbd class="px-1 py-0.5 text-[10px] rounded" style="background-color: var(--ds-surface-raised); border: 1px solid var(--ds-border); color: var(--ds-text-subtle);">
+                      <kbd
+                        data-testid={`test-case-steps-shortcut-${testCase.id}`}
+                        class="px-1 py-0.5 text-[10px] rounded"
+                        style={stepsShortcutMode
+                          ? 'background-color: var(--ds-interactive); border: 1px solid var(--ds-interactive); color: var(--ds-text-inverse); font-weight: 600;'
+                          : 'background-color: var(--ds-surface-raised); border: 1px solid var(--ds-border); color: var(--ds-text-subtle);'}
+                      >
                         {stepsShortcutMode ? stepsShortcutCodes[index] : 'S'}
                       </kbd>
                     </a>

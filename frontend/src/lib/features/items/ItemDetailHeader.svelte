@@ -59,6 +59,7 @@
           <div class="min-w-[80%]">
             <Input
               type="text"
+              variant="ghost"
               dataTestid="item-title-input"
               bind:value={editTitle}
               onkeydown={handleKeydown}
