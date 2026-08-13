@@ -27,6 +27,7 @@
     swimlaneParentId = '',
     cardStyle = 'background-color: var(--ds-surface-raised); border-color: var(--ds-border);',
     textStyle = 'color: var(--ds-text);',
+    showMoveMenu = true,
     onopen = null,
   } = $props();
 
@@ -92,19 +93,21 @@
         <h4 class="min-w-0 flex-1 break-words text-sm font-medium leading-5" style={textStyle}>
           {item.title}
         </h4>
-        <div class="board-card-menu -mr-1 -mt-1 shrink-0 transition-opacity">
-          <DropdownMenu
-            items={resolvedMoveMenuItems}
-            placement="bottom-end"
-            maxWidth="max-w-xs"
-            triggerIcon={MoreHorizontal}
-            triggerClass="p-1 rounded hover:bg-[var(--ds-background-neutral-hovered)] focus:ring-2 focus:ring-[var(--ds-border-focused)]"
-            triggerStyle="color: var(--ds-text-subtle);"
-            iconOnly
-            showChevron={false}
-            triggerTestid={`board-card-move-menu-${item.id}`}
-          />
-        </div>
+        {#if showMoveMenu}
+          <div class="board-card-menu -mr-1 -mt-1 shrink-0 transition-opacity">
+            <DropdownMenu
+              items={resolvedMoveMenuItems}
+              placement="bottom-end"
+              maxWidth="max-w-xs"
+              triggerIcon={MoreHorizontal}
+              triggerClass="p-1 rounded hover:bg-[var(--ds-background-neutral-hovered)] focus:ring-2 focus:ring-[var(--ds-border-focused)]"
+              triggerStyle="color: var(--ds-text-subtle);"
+              iconOnly
+              showChevron={false}
+              triggerTestid={`board-card-move-menu-${item.id}`}
+            />
+          </div>
+        {/if}
       </div>
 
       {#if bodyCardFields.length > 0}

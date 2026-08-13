@@ -15,7 +15,8 @@
   import SubFilterBar from './SubFilterBar.svelte';
   import Select from '../../components/Select.svelte';
   import ItemDetail from '../items/ItemDetail.svelte';
-  import { Settings, ChevronLeft, ChevronRight, Diamond, ChevronDown, Circle, GitBranch } from '@lucide/svelte';
+  import RoadmapItemPreview from './RoadmapItemPreview.svelte';
+  import { Settings, ChevronLeft, ChevronRight, Diamond, ChevronDown, Circle, GitBranch, CalendarClock } from '@lucide/svelte';
   import { getVisibleColor } from '../../utils/colorUtils.js';
   import { itemTypeIconMap } from '../../utils/icons.js';
   import { SYSTEM_FIELDS } from '../../stores/fieldConfig.js';
@@ -65,6 +66,7 @@
   let boardConfig = $state(null);
   let boardConfigId = $state(null);
   let roadmapConfig = $state({ start_field_id: 'due_date', end_field_id: '', dependency_link_type_id: null });
+  let roadmapCardFields = $derived(boardConfig?.card_fields || []);
   let linkTypes = $state([]);
   let customFields = $state([]);
   let screenFields = $state([]);
@@ -411,6 +413,10 @@
     const end = roadmapConfig.end_field_id ? getDateValue(item, roadmapConfig.end_field_id) : null;
     return !!(start || end);
   }
+
+  let unscheduledItemCount = $derived(
+    collectionStore.loading ? 0 : collectionStore.items.filter((item) => !itemHasDate(item)).length,
+  );
 
   // Auto-expand root items with children on first load
   $effect(() => {
@@ -1045,6 +1051,17 @@
 
       </div>
 
+      {#if roadmapConfig.start_field_id && unscheduledItemCount > 0}
+        <div
+          class="mb-4 flex items-center gap-2 rounded-md px-3 py-2 text-xs"
+          style="background-color: var(--ds-background-neutral-hovered); color: var(--ds-text-subtle);"
+          data-testid="roadmap-unscheduled-hint"
+        >
+          <CalendarClock class="h-4 w-4 shrink-0" />
+          <span>{unscheduledItemCount} {unscheduledItemCount === 1 ? 'item needs dates' : 'items need dates'} — click a timeline row to schedule it.</span>
+        </div>
+      {/if}
+
 
       <!-- No config state -->
       {#if !roadmapConfig.start_field_id}
@@ -1246,28 +1263,60 @@
 
                             {#if roadmapItem.isMilestone && !roadmapConfig.end_field_id}
                               <!-- Diamond milestone (no end field configured, can't expand) -->
-                              <div
-                                data-testid="roadmap-bar-{item.id}"
-                                data-start-date={roadmapItem.startDate || ''}
-                                data-end-date={roadmapItem.endDate || ''}
-                                class="absolute flex items-center justify-center"
-                                style="left: {barLeftPx + barWidthPx / 2 - 8}px; top: {(ROW_HEIGHT - 16) / 2}px; width: 16px; height: 16px; transform: rotate(45deg); background-color: {visibleColor}; border-radius: 2px; z-index: 10; cursor: grab;"
-                                role="button"
-                                tabindex="0"
+                              <RoadmapItemPreview
+                                item={roadmapItem}
+                                workspace={workspace}
+                                itemTypes={itemTypes}
+                                cardFields={roadmapCardFields}
+                                priorities={workspaceDataStore.priorities}
+                                statuses={statuses}
+                                iterations={workspaceDataStore.iterations}
+                                projects={workspaceDataStore.projects}
+                                labels={workspaceDataStore.labels}
+                                customFieldDefinitions={customFields}
+                                users={workspaceDataStore.users}
                                 onpointerdown={(e) => onBarPointerDown(e, roadmapItem, 'move')}
-                              ></div>
+                                onopen={openItem}
+                              >
+                                {#snippet children()}
+                                  <div
+                                    data-testid="roadmap-bar-{item.id}"
+                                    data-start-date={roadmapItem.startDate || ''}
+                                    data-end-date={roadmapItem.endDate || ''}
+                                    class="absolute flex items-center justify-center"
+                                    style="left: {barLeftPx + barWidthPx / 2 - 8}px; top: {(ROW_HEIGHT - 16) / 2}px; width: 16px; height: 16px; transform: rotate(45deg); background-color: {visibleColor}; border-radius: 2px; z-index: 10; cursor: grab;"
+                                    role="button"
+                                    tabindex="0"
+                                  ></div>
+                                {/snippet}
+                              </RoadmapItemPreview>
                             {:else}
                               <!-- Range bar OR expandable milestone (thin bar with resize handles) -->
-                              <div
-                                data-testid="roadmap-bar-{item.id}"
-                                data-start-date={roadmapItem.startDate || ''}
-                                data-end-date={roadmapItem.endDate || ''}
-                                class="absolute flex items-center rounded group/bar"
-                                style="left: {barLeftPx}px; width: {barWidthPx}px; top: {(ROW_HEIGHT - 24) / 2}px; height: 24px; background-color: {visibleColor}; opacity: 0.85; z-index: 10; cursor: grab;"
-                                role="button"
-                                tabindex="0"
+                              <RoadmapItemPreview
+                                item={roadmapItem}
+                                workspace={workspace}
+                                itemTypes={itemTypes}
+                                cardFields={roadmapCardFields}
+                                priorities={workspaceDataStore.priorities}
+                                statuses={statuses}
+                                iterations={workspaceDataStore.iterations}
+                                projects={workspaceDataStore.projects}
+                                labels={workspaceDataStore.labels}
+                                customFieldDefinitions={customFields}
+                                users={workspaceDataStore.users}
                                 onpointerdown={(e) => onBarPointerDown(e, roadmapItem, 'move')}
+                                onopen={openItem}
                               >
+                                {#snippet children()}
+                                  <div
+                                    data-testid="roadmap-bar-{item.id}"
+                                    data-start-date={roadmapItem.startDate || ''}
+                                    data-end-date={roadmapItem.endDate || ''}
+                                    class="absolute flex items-center rounded group/bar"
+                                    style="left: {barLeftPx}px; width: {barWidthPx}px; top: {(ROW_HEIGHT - 24) / 2}px; height: 24px; background-color: {visibleColor}; opacity: 0.85; z-index: 10; cursor: grab;"
+                                    role="button"
+                                    tabindex="0"
+                                  >
                                 <div
                                   class="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize opacity-0 group-hover/bar:opacity-100 rounded-l"
                                   style="background-color: rgba(0,0,0,0.2);"
@@ -1289,7 +1338,9 @@
                                   tabindex="-1"
                                   onpointerdown={(e) => { e.stopPropagation(); onBarPointerDown(e, roadmapItem, 'resize-right'); }}
                                 ></div>
-                              </div>
+                                  </div>
+                                {/snippet}
+                              </RoadmapItemPreview>
                             {/if}
                           {:else if schedulePreview?.itemId === item.id}
                             {@const previewColor = getVisibleColor(statuses.find(s => s.id === item.status_id)?.color || '#6b7280')}
