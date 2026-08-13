@@ -71,6 +71,7 @@
     opacity={0.4}
     blur={8}
     extraFilter="saturate(120%)"
+    ariaLabel="Loading search"
     zIndex={60}
     align="top"
     paddingTop="pt-[20vh]"
@@ -88,7 +89,7 @@
   <CommandPalette bind:isOpen={showCommandPalette} onclose={() => showCommandPalette = false} />
 {:else if commandPaletteState.error && showCommandPalette}
   <!-- shortcut-guard-exempt: retrying a failed lazy import is a recovery action, not a form submission. -->
-  <ModalBackdrop show={true} opacity={0.4} zIndex={60} closeOnClick={false} onclose={() => showCommandPalette = false}>
+  <ModalBackdrop show={true} opacity={0.4} zIndex={60} ariaLabel="Search failed to load" closeOnClick={false} onclose={() => showCommandPalette = false}>
     <div class="rounded-lg p-6 text-center" role="alert" style="background-color: var(--ds-surface-raised); color: var(--ds-text);">
       <p class="font-semibold">Failed to load Search</p>
       <p class="mt-1 text-sm" style="color: var(--ds-text-subtle);">Check your connection, then try again.</p>
@@ -101,7 +102,7 @@
 {/if}
 
 {#if createModalState.loading}
-  <ModalBackdrop show={true} opacity={0.4} closeOnClick={false} closeOnEscape={false} transition={false}>
+  <ModalBackdrop show={true} opacity={0.4} ariaLabel="Loading create form" closeOnClick={false} closeOnEscape={false} transition={false}>
     <div class="rounded-lg p-6" style="background-color: var(--ds-surface-raised); color: var(--ds-text-subtle);">
       <Spinner class="mx-auto mb-4" />
       <p>{t('nav.loadingCreateForm')}</p>
@@ -118,7 +119,7 @@
   />
 {:else if createModalState.error && showCreateModal}
   <!-- shortcut-guard-exempt: retrying a failed lazy import is a recovery action, not a form submission. -->
-  <ModalBackdrop show={true} opacity={0.4} closeOnClick={false} onclose={onclosecreate}>
+  <ModalBackdrop show={true} opacity={0.4} ariaLabel="Create form failed to load" closeOnClick={false} onclose={onclosecreate}>
     <div class="rounded-lg p-6 text-center" role="alert" data-testid="create-modal-load-error" style="background-color: var(--ds-surface-raised); color: var(--ds-text);">
       <p class="font-semibold">Failed to load Create Form</p>
       <p class="mt-1 text-sm" style="color: var(--ds-text-subtle);">Check your connection, then try again.</p>

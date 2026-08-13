@@ -24,6 +24,7 @@
     closeOnClick={false}
     closeOnEscape={false}
     transition={false}
+    ariaLabel="Loading dialog"
     ariaLabelledBy="root-dialog-loading-label"
   >
     <div
@@ -48,6 +49,7 @@
     closeOnClick={false}
     closeOnEscape={false}
     transition={false}
+    ariaLabel="Dialog failed to load"
     ariaLabelledBy="root-dialog-error-title"
   >
     <div

@@ -155,6 +155,18 @@
       onRowClick(item);
     }
   }
+
+  function handleRowKeydown(item, event) {
+    if ((event.key === 'Enter' || event.key === ' ') && !event.target.closest('.dropdown-trigger')) {
+      event.preventDefault();
+      onRowClick?.(item);
+    }
+  }
+
+  function getSortState(column) {
+    if (!column.sortable || sortKey !== column.key) return 'none';
+    return sortDirection === 'asc' ? 'ascending' : 'descending';
+  }
 </script>
 
 <div class="overflow-hidden {containerClass}" style="background-color: var(--ds-surface-raised); border-color: var(--ds-border);">
@@ -171,22 +183,29 @@
           <tr>
             {#each columns as column, colIndex}
               <th
-                class="{thClass} {getColumnAlign(column)} {getColumnWidth(column)} {column.sortable ? 'group cursor-pointer select-none' : ''}"
+                class="{thClass} {getColumnAlign(column)} {getColumnWidth(column)}"
+                aria-sort={getSortState(column)}
                 style="color: var(--ds-text); {getColumnWidthStyle(column)} {column.headerStyle || ''}"
-                onclick={() => toggleSort(column)}
               >
-                <span class="inline-flex items-center gap-1">
-                  {column.label}
-                  {#if column.sortable}
+                {#if column.sortable}
+                  <button
+                    type="button"
+                    class="group inline-flex items-center gap-1 text-left"
+                    onclick={() => toggleSort(column)}
+                    aria-label={`Sort by ${column.label}${sortKey === column.key && sortDirection ? `, currently ${sortDirection}` : ''}`}
+                  >
+                    {column.label}
                     {#if sortKey === column.key && sortDirection === 'asc'}
-                      <ArrowUp class="w-3.5 h-3.5" style="color: var(--ds-text-subtle);" />
+                      <ArrowUp class="w-3.5 h-3.5" aria-hidden="true" style="color: var(--ds-text-subtle);" />
                     {:else if sortKey === column.key && sortDirection === 'desc'}
-                      <ArrowDown class="w-3.5 h-3.5" style="color: var(--ds-text-subtle);" />
+                      <ArrowDown class="w-3.5 h-3.5" aria-hidden="true" style="color: var(--ds-text-subtle);" />
                     {:else}
-                      <ArrowUpDown class="w-3.5 h-3.5 opacity-0 group-hover:opacity-100" style="color: var(--ds-text-subtlest);" />
+                      <ArrowUpDown class="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100" aria-hidden="true" style="color: var(--ds-text-subtlest);" />
                     {/if}
-                  {/if}
-                </span>
+                  </button>
+                {:else}
+                  {column.label}
+                {/if}
               </th>
             {/each}
           </tr>
@@ -197,6 +216,10 @@
               class="{trClass} {onRowClick ? 'cursor-pointer' : ''}"
               style="border-color: var(--ds-border); {item[keyField] === selectedItemId ? 'background-color: var(--ds-surface-selected);' : ''}"
               onclick={(e) => handleRowClick(item, e)}
+              onkeydown={(e) => onRowClick && handleRowKeydown(item, e)}
+              role={onRowClick ? 'button' : undefined}
+              tabindex={onRowClick ? '0' : undefined}
+              aria-label={onRowClick ? `Open item ${item[keyField]}` : undefined}
               onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-surface-raised-hovered)'}
               onmouseleave={(e) => e.currentTarget.style.backgroundColor = item[keyField] === selectedItemId ? 'var(--ds-surface-selected)' : ''}
               {...rowAttrs ? rowAttrs(item) : {}}

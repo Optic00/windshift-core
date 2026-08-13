@@ -15,6 +15,7 @@
     closeOnEscape = true,
     transition = true,
     ariaLabelledBy = undefined,
+    ariaLabel = undefined,
     /** CSS selector for the element that should receive focus first. */
     initialFocus = '[data-autofocus], [autofocus]',
     onclose = undefined,
@@ -166,6 +167,7 @@
     role="dialog"
     aria-modal="true"
     aria-labelledby={ariaLabelledBy}
+    aria-label={ariaLabel}
     tabindex="-1"
   >
     {@render children?.()}
