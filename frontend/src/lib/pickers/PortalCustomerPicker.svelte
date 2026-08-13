@@ -3,7 +3,7 @@
   import { User } from '@lucide/svelte';
   import { createAsyncLoader } from '../composables';
   import { api } from '../api.js';
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
 
   let {
     value = $bindable(null),
@@ -21,6 +21,7 @@
 
   const customers = createAsyncLoader(() => api.portalCustomers.getAll());
   onMount(() => { if (providedCustomers === null) customers.load(); });
+  onDestroy(() => customers.dispose());
   const customerOptions = $derived(providedCustomers ?? customers.data ?? []);
 </script>
 

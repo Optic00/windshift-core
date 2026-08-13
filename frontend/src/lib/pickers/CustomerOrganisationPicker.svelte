@@ -3,7 +3,7 @@
   import { Building2 } from '@lucide/svelte';
   import { createAsyncLoader } from '../composables';
   import { api } from '../api.js';
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
 
   let {
     value = $bindable(null),
@@ -21,6 +21,7 @@
 
   const organisations = createAsyncLoader(() => api.customerOrganisations.getAll());
   onMount(() => { if (providedOrganisations === null) organisations.load(); });
+  onDestroy(() => organisations.dispose());
   const organisationOptions = $derived(providedOrganisations ?? organisations.data ?? []);
 </script>
 

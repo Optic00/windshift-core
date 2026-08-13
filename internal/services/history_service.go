@@ -5,13 +5,15 @@ import (
 	"sync"
 
 	"windshift/internal/database"
+	"windshift/internal/models"
+	"windshift/internal/repository"
 )
 
 // historyRequest represents an async request to record item creation history
 type historyRequest struct {
-	db     database.Database
-	itemID int
-	userID int
+	db      database.Database
+	itemID  int
+	entries []HistoryEntry
 }
 
 // HistoryService handles asynchronous history recording to avoid blocking the hot path.
@@ -51,17 +53,18 @@ func newHistoryService() *HistoryService {
 }
 
 // RecordItemCreationHistoryAsync queues item creation history to be written in the background.
-func (hs *HistoryService) RecordItemCreationHistoryAsync(db database.Database, itemID, userID int) {
+func (hs *HistoryService) RecordItemCreationHistoryAsync(db database.Database, item models.Item, userID int) {
+	entries := creationHistoryEntries(item, userID)
 	// Increment before send so a successful enqueue is always counted; if
 	// the channel is full we roll back the increment in the drop branch.
 	hs.inflight.Add(1)
 	select {
-	case hs.historyChan <- historyRequest{db: db, itemID: itemID, userID: userID}:
+	case hs.historyChan <- historyRequest{db: db, itemID: item.ID, entries: entries}:
 		// Queued successfully — processor will call inflight.Done.
 	default:
 		hs.inflight.Done()
 		slog.Warn("history channel full, dropping creation history",
-			slog.Int("item_id", itemID))
+			slog.Int("item_id", item.ID))
 	}
 }
 
@@ -72,8 +75,7 @@ func (hs *HistoryService) processor() {
 	for {
 		select {
 		case req := <-hs.historyChan:
-			updateService := NewItemUpdateService(req.db)
-			if err := updateService.recordItemCreationHistory(req.db, req.itemID, req.userID); err != nil {
+			if err := repository.NewItemRepository(req.db).RecordHistoryBatch(req.db, req.entries); err != nil {
 				slog.Warn("async: failed to record item creation history",
 					slog.Int("item_id", req.itemID), slog.Any("error", err))
 			}
@@ -82,8 +84,7 @@ func (hs *HistoryService) processor() {
 			// Drain remaining
 			for len(hs.historyChan) > 0 {
 				req := <-hs.historyChan
-				updateService := NewItemUpdateService(req.db)
-				if err := updateService.recordItemCreationHistory(req.db, req.itemID, req.userID); err != nil {
+				if err := repository.NewItemRepository(req.db).RecordHistoryBatch(req.db, req.entries); err != nil {
 					slog.Warn("async shutdown: failed to record item creation history",
 						slog.Int("item_id", req.itemID), slog.Any("error", err))
 				}

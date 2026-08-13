@@ -36,14 +36,44 @@ func (e *InvalidRPIDError) Error() string {
 
 func (e *InvalidRPIDError) Unwrap() error { return e.Err }
 
+// MissingOriginsError reports that no browser-visible origin could be derived,
+// which leaves the relying party unable to verify a ceremony. Like an invalid
+// RP ID this only disables the optional passkey surface, because an
+// installation that never uses passkeys should still start.
+type MissingOriginsError struct{}
+
+func (e *MissingOriginsError) Error() string {
+	return "no WebAuthn origin could be derived from the base URL or allowed hosts"
+}
+
+// Options carries the settings NewConfig needs to build a relying party.
+type Options struct {
+	RPID   string
+	RPName string
+	// Origins overrides origin inference entirely when set.
+	Origins []string
+	// BaseURL is the browser-visible URL of the installation and the primary
+	// source for origin inference.
+	BaseURL string
+	// AllowedHosts is the comma-separated CSRF host list. Entries may be bare
+	// hostnames or full origins.
+	AllowedHosts string
+	// Port is the port the server listens on, used for origins that are not
+	// served through a proxy on a standard port.
+	Port          string
+	IsDevelopment bool
+	EnableHTTPS   bool
+	UseProxy      bool
+}
+
 // NewConfig creates a new WebAuthn configuration
-func NewConfig(rpID, rpName string, origins []string, isDev bool, allowedHosts, port string, enableHTTPS, useProxy bool) (*Config, error) {
+func NewConfig(opts Options) (*Config, error) {
 	c := &Config{
-		RPID:          rpID,
-		RPName:        rpName,
-		RPOrigins:     origins,
-		isDevelopment: isDev,
-		Debug:         isDev,
+		RPID:          opts.RPID,
+		RPName:        opts.RPName,
+		RPOrigins:     opts.Origins,
+		isDevelopment: opts.IsDevelopment,
+		Debug:         opts.IsDevelopment,
 	}
 
 	// Dev-mode RPID override: production-mode RPID/RPName are pre-resolved by
@@ -64,6 +94,7 @@ func NewConfig(rpID, rpName string, origins []string, isDev bool, allowedHosts, 
 
 	// If no origins provided, derive from configuration
 	if len(c.RPOrigins) == 0 {
+		port := opts.Port
 		if c.isDevelopment {
 			// Development mode: Allow both http and https with common ports.
 			// Also include the actual port the server is bound to so e2e
@@ -90,51 +121,11 @@ func NewConfig(rpID, rpName string, origins []string, isDev bool, allowedHosts, 
 				)
 			}
 		} else {
-			// Production mode: Infer origins from allowed-hosts
-			if allowedHosts == "" {
-				return nil, fmt.Errorf("no allowed hosts configured for WebAuthn origin inference")
+			origins, err := productionOrigins(opts)
+			if err != nil {
+				return nil, err
 			}
-
-			// Determine scheme based on TLS configuration or proxy mode
-			scheme := "http"
-			if enableHTTPS || useProxy {
-				scheme = "https"
-			}
-
-			// Determine standard port based on scheme
-			standardPort := "80"
-			if scheme == "https" {
-				standardPort = "443"
-			}
-
-			// Parse allowed hosts and generate origins
-			hosts := strings.Split(allowedHosts, ",")
-			c.RPOrigins = make([]string, 0, len(hosts)*2)
-
-			for _, host := range hosts {
-				host = strings.TrimSpace(host)
-				if host == "" {
-					continue
-				}
-				if isHTTPURL(host) {
-					origin, err := normalizeOrigin(host)
-					if err != nil {
-						return nil, fmt.Errorf("invalid allowed host origin %q: %w", host, err)
-					}
-					c.RPOrigins = append(c.RPOrigins, origin)
-					continue
-				}
-
-				// Add origin with explicit port and standard port
-				c.RPOrigins = append(c.RPOrigins,
-					fmt.Sprintf("%s://%s:%s", scheme, host, port),
-					fmt.Sprintf("%s://%s:%s", scheme, host, standardPort),
-				)
-			}
-
-			if len(c.RPOrigins) == 0 {
-				return nil, fmt.Errorf("no valid hosts found in allowed-hosts configuration")
-			}
+			c.RPOrigins = origins
 		}
 	}
 
@@ -169,6 +160,83 @@ func NewConfig(rpID, rpName string, origins []string, isDev bool, allowedHosts, 
 
 	c.webAuthn = wa
 	return c, nil
+}
+
+// productionOrigins collects every browser-visible origin a ceremony may come
+// from. The base URL comes first because it is the address operators actually
+// hand to browsers, and it is the only one that works behind a TLS-terminating
+// proxy where the listen port never reaches the client. Allowed hosts are added
+// on top so installations reachable under several names keep working.
+func productionOrigins(opts Options) ([]string, error) {
+	origins := make([]string, 0, 4)
+	if origin, ok := originFromBaseURL(opts.BaseURL); ok {
+		origins = append(origins, origin)
+	}
+
+	scheme := "http"
+	if opts.EnableHTTPS || opts.UseProxy {
+		scheme = "https"
+	}
+	standardPort := "80"
+	if scheme == "https" {
+		standardPort = "443"
+	}
+
+	for _, host := range strings.Split(opts.AllowedHosts, ",") {
+		host = strings.TrimSpace(host)
+		if host == "" {
+			continue
+		}
+		if isHTTPURL(host) {
+			origin, err := normalizeOrigin(host)
+			if err != nil {
+				return nil, fmt.Errorf("invalid allowed host origin %q: %w", host, err)
+			}
+			origins = append(origins, origin)
+			continue
+		}
+
+		if opts.Port != "" && opts.Port != standardPort {
+			origins = append(origins, fmt.Sprintf("%s://%s:%s", scheme, host, opts.Port))
+		}
+		origins = append(origins, fmt.Sprintf("%s://%s:%s", scheme, host, standardPort))
+	}
+
+	origins = dedupeOrigins(origins)
+	if len(origins) == 0 {
+		return nil, &MissingOriginsError{}
+	}
+	return origins, nil
+}
+
+// originFromBaseURL reduces a base URL to its origin, dropping any context path
+// so that an installation served under a subpath still matches what the browser
+// reports.
+func originFromBaseURL(baseURL string) (string, bool) {
+	baseURL = strings.TrimSpace(baseURL)
+	if !isHTTPURL(baseURL) {
+		return "", false
+	}
+
+	parsed, err := url.Parse(baseURL)
+	if err != nil || parsed.Hostname() == "" || parsed.User != nil {
+		return "", false
+	}
+	return parsed.Scheme + "://" + parsed.Host, true
+}
+
+func dedupeOrigins(origins []string) []string {
+	seen := make(map[string]struct{}, len(origins))
+	unique := make([]string, 0, len(origins))
+	for _, origin := range origins {
+		key := strings.ToLower(origin)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		unique = append(unique, origin)
+	}
+	return unique
 }
 
 func isHTTPURL(value string) bool {

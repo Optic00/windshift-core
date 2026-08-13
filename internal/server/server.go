@@ -1750,38 +1750,57 @@ func (s *Server) initialize() error {
 }
 
 // initializeWebAuthnConfigs builds the internal and portal passkey
-// configurations. An invalid RP ID disables the optional passkey surface and
-// returns nil configurations so local installations with single-label
-// service names can still start normally. Other configuration errors remain
-// fatal because they indicate a broken WebAuthn setup rather than an
-// unsupported local hostname.
+// configurations. Passkeys are optional, so a relying party that cannot be
+// described by the current settings disables them and returns nil
+// configurations rather than stopping an otherwise healthy installation.
+// Remaining errors stay fatal because they indicate a broken WebAuthn setup.
 func initializeWebAuthnConfigs(cfg Config, isDevelopment bool, effectivePort string, enableHTTPS bool) (internalConfig *webauthn.Config, portalConfig *portalwebauthn.Config, err error) {
 	rpID := cfg.WebAuthn.RPID
 	if isDevelopment {
 		rpID = ""
 	}
 
-	webAuthnConfig, err := webauthn.NewConfig(rpID, cfg.WebAuthn.RPName, nil, isDevelopment, cfg.AllowedHosts, effectivePort, enableHTTPS, cfg.UseProxy)
+	webAuthnConfig, err := webauthn.NewConfig(webauthn.Options{
+		RPID:          rpID,
+		RPName:        cfg.WebAuthn.RPName,
+		BaseURL:       cfg.BaseURL,
+		AllowedHosts:  cfg.AllowedHosts,
+		Port:          effectivePort,
+		IsDevelopment: isDevelopment,
+		EnableHTTPS:   enableHTTPS,
+		UseProxy:      cfg.UseProxy,
+	})
 	if err != nil {
 		var invalidRPIDErr *webauthn.InvalidRPIDError
-		if !errors.As(err, &invalidRPIDErr) {
-			return nil, nil, fmt.Errorf("failed to initialize WebAuthn configuration: %w", err)
-		}
+		var missingOriginsErr *webauthn.MissingOriginsError
 
+		switch {
 		// A single-label hostname is common in Docker, homelab DNS, and local
 		// test installations, but it cannot be used as an RP ID by the current
 		// WebAuthn implementation. Keep the application healthy and make the
 		// limitation actionable; passkeys remain available when the operator
 		// uses localhost, an IP address, or a dotted hostname.
-		slog.Warn("WebAuthn disabled because the configured RP ID is not valid; set BASE_URL or WEBAUTHN_RP_ID to localhost, an IP address, or a dotted hostname to enable passkeys",
-			"rp_id", invalidRPIDErr.RPID,
-			"error", invalidRPIDErr)
+		case errors.As(err, &invalidRPIDErr):
+			slog.Warn("WebAuthn disabled because the configured RP ID is not valid; set BASE_URL or WEBAUTHN_RP_ID to localhost, an IP address, or a dotted hostname to enable passkeys",
+				"rp_id", invalidRPIDErr.RPID,
+				"error", invalidRPIDErr)
+		case errors.As(err, &missingOriginsErr):
+			slog.Warn("WebAuthn disabled because no browser-visible origin is configured; set BASE_URL to the URL users open to enable passkeys",
+				"error", missingOriginsErr)
+		default:
+			return nil, nil, fmt.Errorf("failed to initialize WebAuthn configuration: %w", err)
+		}
+
 		return nil, nil, nil
 	}
 
+	// Log the origins: a passkey ceremony that fails in the browser is almost
+	// always an origin the relying party does not accept, and this is the only
+	// place the resolved list is visible to an operator.
 	slog.Info("WebAuthn configuration initialized",
 		"rp_id", webAuthnConfig.RPID,
 		"rp_name", webAuthnConfig.RPName,
+		"rp_origins", webAuthnConfig.RPOrigins,
 		"development_mode", isDevelopment)
 
 	// Portal passkeys reuse the relying-party settings but require resident

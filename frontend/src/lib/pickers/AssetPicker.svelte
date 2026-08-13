@@ -38,6 +38,7 @@
   // pagination, a column change, or navigation while its request was active.
   onDestroy(() => {
     externalLoadToken += 1;
+    assets.dispose();
   });
 
   const assets = createAsyncLoader(async () => {

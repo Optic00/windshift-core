@@ -332,7 +332,9 @@ func (s *IssueSyncService) createItemFromIssue(ctx context.Context, config *mode
 	}
 
 	// Keep item, labels, and sync metadata atomic.
-	s.syncLabels(ctx, tx, config, issue, itemID)
+	if err := s.syncLabels(ctx, tx, config, issue, itemID); err != nil {
+		return fmt.Errorf("sync labels: %w", err)
+	}
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
@@ -377,11 +379,23 @@ func (s *IssueSyncService) updateItemFromIssue(ctx context.Context, config *mode
 	}
 
 	now := time.Now()
-	_, _ = tx.ExecContext(ctx,
+	result, err := tx.ExecContext(ctx,
 		"UPDATE issue_sync_items SET last_synced_at = ?, last_github_updated_at = ?, updated_at = ? WHERE id = ?",
 		now, issue.UpdatedAt, now, syncItemID)
+	if err != nil {
+		return fmt.Errorf("update sync item %d: %w", syncItemID, err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("count updated sync items: %w", err)
+	}
+	if rowsAffected != 1 {
+		return fmt.Errorf("sync item %d not found", syncItemID)
+	}
 
-	s.syncLabels(ctx, tx, config, issue, itemID)
+	if err := s.syncLabels(ctx, tx, config, issue, itemID); err != nil {
+		return fmt.Errorf("sync labels: %w", err)
+	}
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
@@ -1034,16 +1048,15 @@ func (s *IssueSyncService) resolveMilestoneID(config *models.IssueSyncConfig, is
 	return nil
 }
 
-func (s *IssueSyncService) syncLabels(ctx context.Context, tx database.Tx, config *models.IssueSyncConfig, issue *Issue, itemID int) {
-	if config.LabelSyncMode == "" || config.LabelSyncMode == models.IssueSyncLabelNone {
-		return
-	}
-
-	if config.LabelSyncMode == models.IssueSyncLabelMapped {
+func (s *IssueSyncService) syncLabels(ctx context.Context, tx database.Tx, config *models.IssueSyncConfig, issue *Issue, itemID int) error {
+	switch config.LabelSyncMode {
+	case "", models.IssueSyncLabelNone:
+		return nil
+	case models.IssueSyncLabelMapped:
 		// Use explicit mappings
 		var mappings []models.LabelMapping
 		if err := json.Unmarshal([]byte(config.LabelMappings), &mappings); err != nil {
-			return
+			return fmt.Errorf("parse label mappings: %w", err)
 		}
 
 		// Build lookup: github label name → windshift label ID
@@ -1058,8 +1071,10 @@ func (s *IssueSyncService) syncLabels(ctx context.Context, tx database.Tx, confi
 				labelIDs = append(labelIDs, wsLabelID)
 			}
 		}
-		_ = repository.NewLabelRepository(s.db).ReplaceItemLabelsTx(ctx, tx, itemID, labelIDs)
-	} else if config.LabelSyncMode == models.IssueSyncLabelMirror {
+		if err := repository.NewLabelRepository(s.db).ReplaceItemLabelsTx(ctx, tx, itemID, labelIDs); err != nil {
+			return fmt.Errorf("replace mapped labels: %w", err)
+		}
+	case models.IssueSyncLabelMirror:
 		labelRepo := repository.NewLabelRepository(s.db)
 		labelIDs := make([]int, 0, len(issue.Labels))
 		for _, l := range issue.Labels {
@@ -1069,12 +1084,17 @@ func (s *IssueSyncService) syncLabels(ctx context.Context, tx database.Tx, confi
 			}
 			labelID, err := labelRepo.EnsureByNameTx(ctx, tx, config.WorkspaceID, l.Name, color)
 			if err != nil {
-				continue
+				return fmt.Errorf("ensure mirrored label %q: %w", l.Name, err)
 			}
 			labelIDs = append(labelIDs, labelID)
 		}
-		_ = labelRepo.ReplaceItemLabelsTx(ctx, tx, itemID, labelIDs)
+		if err := labelRepo.ReplaceItemLabelsTx(ctx, tx, itemID, labelIDs); err != nil {
+			return fmt.Errorf("replace mirrored labels: %w", err)
+		}
+	default:
+		return fmt.Errorf("unsupported label sync mode %q", config.LabelSyncMode)
 	}
+	return nil
 }
 
 func (s *IssueSyncService) recordSyncError(configID int, errMsg string) {

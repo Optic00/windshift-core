@@ -3,7 +3,7 @@
   import { createAsyncLoader } from '../composables';
   import { api } from '../api.js';
   import { FileText } from '@lucide/svelte';
-  import { untrack } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import { t } from '../stores/i18n.svelte.js';
 
   let {
@@ -33,6 +33,7 @@
     const items = result?.results ?? (Array.isArray(result) ? result : []);
     return items;
   });
+  onDestroy(() => pages.dispose());
 
   $effect(() => {
     if (workspaceId) {

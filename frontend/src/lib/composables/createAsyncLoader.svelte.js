@@ -7,20 +7,21 @@ export function createAsyncLoader(fetchFn) {
   let data = $state([]);
   let loading = $state(false);
   let error = $state(null);
+  let disposed = false;
 
   async function load() {
-    if (loading) return;
+    if (loading || disposed) return;
 
     loading = true;
     error = null;
 
     try {
-      data = (await fetchFn()) || [];
+      const result = await fetchFn();
+      if (disposed) return;
+      data = result || [];
     } catch (e) {
-      // Navigation and superseded requests abort in-flight fetches by design.
-      // The owning component is either gone or about to load newer data, so an
-      // AbortError is neither a user-visible loader error nor a console error.
-      if (e?.name === 'AbortError') return;
+      // Navigation can destroy the owner or abort its in-flight request.
+      if (disposed || e?.name === 'AbortError') return;
       console.error('Failed to load data:', e);
       error = e.message || 'Failed to load data';
       data = [];
@@ -32,6 +33,10 @@ export function createAsyncLoader(fetchFn) {
   async function refetch() {
     data = [];
     await load();
+  }
+
+  function dispose() {
+    disposed = true;
   }
 
   return {
@@ -46,5 +51,6 @@ export function createAsyncLoader(fetchFn) {
     },
     load,
     refetch,
+    dispose,
   };
 }

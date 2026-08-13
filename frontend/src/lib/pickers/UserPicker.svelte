@@ -3,7 +3,7 @@
   import { BasePicker } from '.';
   import { createAsyncLoader } from '../composables';
   import { api } from '../api.js';
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import Avatar from '../components/Avatar.svelte';
   import Text from '../components/Text.svelte';
   import { t } from '../stores/i18n.svelte.js';
@@ -37,6 +37,7 @@
     workspaceId ? api.getAssignableUsers(workspaceId) : api.getUsers()
   );
   onMount(() => { if (!users) loader.load(); });
+  onDestroy(() => loader.dispose());
 
   let usersList = $derived(users ?? loader.data ?? []);
 

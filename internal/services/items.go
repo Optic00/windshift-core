@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"windshift/internal/database"
+	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/validation"
 )
@@ -472,7 +473,27 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 	// Record item creation history asynchronously if a creator is specified
 	if params.CreatorID != nil {
 		historyService := GetHistoryService(db)
-		historyService.RecordItemCreationHistoryAsync(db, int(itemID), *params.CreatorID)
+		historyService.RecordItemCreationHistoryAsync(db, models.Item{
+			ID:              int(itemID),
+			WorkspaceID:     params.WorkspaceID,
+			ItemTypeID:      params.ItemTypeID,
+			Title:           params.Title,
+			Description:     params.Description,
+			StatusID:        statusID,
+			PriorityID:      priorityID,
+			IterationID:     params.IterationID,
+			ProjectID:       params.ProjectID,
+			InheritProject:  params.InheritProject,
+			TimeProjectID:   params.TimeProjectID,
+			AssigneeID:      params.AssigneeID,
+			CreatorID:       params.CreatorID,
+			ParentID:        params.ParentID,
+			DueDate:         params.DueDate,
+			StartDate:       params.StartDate,
+			EndDate:         params.EndDate,
+			StoryPoints:     params.StoryPoints,
+			EstimateMinutes: params.EstimateMinutes,
+		}, *params.CreatorID)
 	}
 
 	// Items created with an assignee already set fire the coding-agent

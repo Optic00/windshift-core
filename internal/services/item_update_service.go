@@ -512,7 +512,14 @@ func (s *ItemUpdateService) recordItemCreationHistory(db database.Database, item
 		return fmt.Errorf("failed to load created item: %w", err)
 	}
 
-	// Generate history entries for all initial values
+	history := creationHistoryEntries(*item, userID)
+	if err := repository.NewItemRepository(db).RecordHistoryBatch(db, history); err != nil {
+		return fmt.Errorf("failed to record creation history: %w", err)
+	}
+	return nil
+}
+
+func creationHistoryEntries(item models.Item, userID int) []HistoryEntry {
 	var history []HistoryEntry
 	now := time.Now()
 
@@ -520,7 +527,7 @@ func (s *ItemUpdateService) recordItemCreationHistory(db database.Database, item
 	addHistory := func(fieldName, newValue string) {
 		if newValue != "" {
 			history = append(history, HistoryEntry{
-				ItemID:    itemID,
+				ItemID:    item.ID,
 				UserID:    userID,
 				FieldName: fieldName,
 				OldValue:  "",
@@ -554,12 +561,7 @@ func (s *ItemUpdateService) recordItemCreationHistory(db database.Database, item
 		addHistory("inherit_project", "true")
 	}
 
-	// Record history entries via the shared repository writer (no transaction
-	// needed here, caller should manage).
-	if err := repository.NewItemRepository(db).RecordHistoryBatch(db, history); err != nil {
-		return fmt.Errorf("failed to record creation history: %w", err)
-	}
-	return nil
+	return history
 }
 
 // recordItemHistory records history entries in the database

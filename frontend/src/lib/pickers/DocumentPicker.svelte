@@ -2,7 +2,7 @@
   import { BasePicker } from '.';
   import { createAsyncLoader } from '../composables';
   import { api } from '../api.js';
-  import { untrack } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import { FileText } from '@lucide/svelte';
   import { t } from '../stores/i18n.svelte.js';
 
@@ -32,6 +32,7 @@
     const result = await api.logbook.listDocuments(bucketId, { limit: 50 });
     return result?.data ?? (Array.isArray(result) ? result : []);
   });
+  onDestroy(() => documents.dispose());
 
   // Reload when bucketId or searchQuery changes
   $effect(() => {
