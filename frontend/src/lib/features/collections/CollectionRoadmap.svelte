@@ -96,7 +96,8 @@
   let resizeStartX = $state(0);
   let resizeStartWidth = $state(0);
   let expandedItems = $state(new Set());
-  let scheduleDragInfo = $state(null); // { itemId, itemTitle, startX, startY, currentX, currentY, active }
+  let schedulePreview = $state(null);
+  let schedulingItemIds = $state(new Set());
   let treeScrollContainer = $state(null);
   let timelineScrollContainer = $state(null);
 
@@ -105,8 +106,6 @@
   useEventListener(() => (dragInfo ? window : null), 'pointerup', onDragEnd);
   useEventListener(() => (isResizingPanel ? window : null), 'pointermove', onPanelResizeMove);
   useEventListener(() => (isResizingPanel ? window : null), 'pointerup', onPanelResizeEnd);
-  useEventListener(() => (scheduleDragInfo ? window : null), 'pointermove', onScheduleDragMove);
-  useEventListener(() => (scheduleDragInfo ? window : null), 'pointerup', onScheduleDragEnd);
 
   // Derived: date field options from screen-configured fields
   let dateFieldOptions = $derived.by(() => {
@@ -174,12 +173,12 @@
         const startVal = getDateValue(item, roadmapConfig.start_field_id);
         const endVal = roadmapConfig.end_field_id ? getDateValue(item, roadmapConfig.end_field_id) : null;
         if (startVal) {
-          const pos = dateToColPos(new Date(startVal));
+          const pos = dateToColPos(parseRoadmapDate(startVal));
           if (pos < -prependCount) prependCount = Math.ceil(Math.abs(pos)) + 1;
         }
         const farVal = endVal || startVal;
         if (farVal) {
-          const d = new Date(farVal);
+          const d = parseRoadmapDate(farVal);
           d.setDate(d.getDate() + 1);
           const pos = dateToColPos(d);
           if (pos > rightCount - 1) rightCount = Math.ceil(pos) + 2;
@@ -441,11 +440,8 @@
 
         if (!start && !end) return null;
 
-        const startDate = start ? new Date(start) : null;
-        const endDate = end ? new Date(end) : null;
-
-        if (startDate) startDate.setHours(0, 0, 0, 0);
-        if (endDate) endDate.setHours(0, 0, 0, 0);
+        const startDate = start ? parseRoadmapDate(start) : null;
+        const endDate = end ? parseRoadmapDate(end) : null;
 
         let barStart, barEnd, isMilestone;
 
@@ -473,8 +469,8 @@
           barEnd,
           isMilestone,
           statusColor: color,
-          startDate: startDate?.toISOString()?.split('T')[0],
-          endDate: endDate?.toISOString()?.split('T')[0],
+          startDate: startDate ? formatDateValue(startDate) : null,
+          endDate: endDate ? formatDateValue(endDate) : null,
         };
       })
       .filter(Boolean)
@@ -513,6 +509,14 @@
     return item[fieldId] ?? null;
   }
 
+  function parseRoadmapDate(value) {
+    const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (match) return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+    const date = new Date(value);
+    date.setHours(0, 0, 0, 0);
+    return date;
+  }
+
   // Column width in pixels
   let colWidth = $derived.by(() => {
     if (zoom === 'week') return 40;
@@ -524,6 +528,7 @@
 
   // Row height
   const ROW_HEIGHT = 40;
+  const DEFAULT_SCHEDULE_DAYS = 7;
 
   // Sync collection name and load links when items change
   $effect(() => {
@@ -707,24 +712,24 @@
 
     if (mode === 'move' || mode === 'resize-left') {
       if (origStartDate) {
-        const newStart = new Date(origStartDate);
+        const newStart = parseRoadmapDate(origStartDate);
         newStart.setDate(newStart.getDate() + actualDays);
         setDateUpdate(updateData, roadmapConfig.start_field_id, newStart);
       } else if (mode === 'resize-left' && origEndDate && roadmapConfig.start_field_id) {
         // Milestone with only end date → expand left: set start = end - |days|
-        const newStart = new Date(origEndDate);
+        const newStart = parseRoadmapDate(origEndDate);
         newStart.setDate(newStart.getDate() + actualDays);
         setDateUpdate(updateData, roadmapConfig.start_field_id, newStart);
       }
     }
     if (mode === 'move' || mode === 'resize-right') {
       if (origEndDate) {
-        const newEnd = new Date(origEndDate);
+        const newEnd = parseRoadmapDate(origEndDate);
         newEnd.setDate(newEnd.getDate() + actualDays);
         setDateUpdate(updateData, roadmapConfig.end_field_id, newEnd);
       } else if (mode === 'resize-right' && origStartDate && roadmapConfig.end_field_id) {
         // Milestone with only start date → expand right: set end = start + days
-        const newEnd = new Date(origStartDate);
+        const newEnd = parseRoadmapDate(origStartDate);
         newEnd.setDate(newEnd.getDate() + actualDays);
         setDateUpdate(updateData, roadmapConfig.end_field_id, newEnd);
       }
@@ -741,8 +746,16 @@
     }
   }
 
+  function formatDateValue(date) {
+    return [
+      date.getFullYear(),
+      String(date.getMonth() + 1).padStart(2, '0'),
+      String(date.getDate()).padStart(2, '0'),
+    ].join('-');
+  }
+
   function setDateUpdate(data, fieldId, date) {
-    const dateStr = date.toISOString().split('T')[0];
+    const dateStr = formatDateValue(date);
     if (fieldId?.startsWith('cf_')) {
       const cfId = fieldId.replace('cf_', '');
       if (!data.custom_field_values) data.custom_field_values = {};
@@ -792,85 +805,89 @@
     isResizingPanel = false;
   }
 
-  // --- Drag-to-schedule handlers ---
-  function onTreeItemDragStart(e, item) {
-    if (e.button !== 0) return;
-    if (itemHasDate(item)) return; // Only drag unscheduled items
-    e.preventDefault();
-
-    scheduleDragInfo = {
-      itemId: item.id,
-      itemTitle: item.title,
-      startX: e.clientX,
-      startY: e.clientY,
-      currentX: e.clientX,
-      currentY: e.clientY,
-      active: false,
-    };
-  }
-
-  function onScheduleDragMove(e) {
-    if (!scheduleDragInfo) return;
-    const dx = e.clientX - scheduleDragInfo.startX;
-    const dy = e.clientY - scheduleDragInfo.startY;
-
-    // Activate after 5px threshold
-    if (!scheduleDragInfo.active && Math.sqrt(dx * dx + dy * dy) > 5) {
-      scheduleDragInfo.active = true;
-    }
-
-    if (scheduleDragInfo.active) {
-      scheduleDragInfo = { ...scheduleDragInfo, currentX: e.clientX, currentY: e.clientY };
-    }
-  }
-
-  async function onScheduleDragEnd(e) {
-    if (!scheduleDragInfo || !scheduleDragInfo.active) {
-      scheduleDragInfo = null;
-      return;
-    }
-
-    const { itemId } = scheduleDragInfo;
-    scheduleDragInfo = null;
-
-    // Determine drop position relative to the timeline
-    if (!timelineScrollContainer) return;
-    const timelineRect = timelineScrollContainer.getBoundingClientRect();
-    const dropX = e.clientX - timelineRect.left + timelineScrollContainer.scrollLeft;
-
-    if (dropX < 0) return; // Dropped outside timeline
-
-    const dayOffset = dropX / colWidth - gridOffset;
-    const dropDate = new Date(referenceDate);
+  // --- Click-to-schedule handlers ---
+  function dateAtTimelineX(timelineX) {
+    const dayOffset = timelineX / colWidth - gridOffset;
+    const date = new Date(referenceDate);
     if (zoom === 'quarter') {
       const monthOffset = Math.floor(dayOffset);
       const frac = dayOffset - monthOffset;
-      dropDate.setMonth(dropDate.getMonth() + monthOffset);
-      const nextM = new Date(dropDate.getFullYear(), dropDate.getMonth() + 1, 1);
-      const dim = (nextM.getTime() - new Date(dropDate.getFullYear(), dropDate.getMonth(), 1).getTime()) / (1000 * 60 * 60 * 24);
-      dropDate.setDate(1 + Math.round(frac * dim / snapDays) * snapDays);
+      date.setMonth(date.getMonth() + monthOffset);
+      const nextMonth = new Date(date.getFullYear(), date.getMonth() + 1, 1);
+      const monthStart = new Date(date.getFullYear(), date.getMonth(), 1);
+      const daysInMonth = (nextMonth.getTime() - monthStart.getTime()) / (1000 * 60 * 60 * 24);
+      date.setDate(1 + Math.floor(frac * daysInMonth / snapDays) * snapDays);
     } else {
-      dropDate.setDate(dropDate.getDate() + Math.round(dayOffset * zoomConfig.columnDays));
+      const days = Math.floor(dayOffset * zoomConfig.columnDays / snapDays) * snapDays;
+      date.setDate(date.getDate() + days);
     }
+    return date;
+  }
+
+  function scheduleRange(startDate) {
+    const start = new Date(startDate);
+    const end = roadmapConfig.end_field_id ? new Date(startDate) : null;
+    if (end) end.setDate(end.getDate() + DEFAULT_SCHEDULE_DAYS - 1);
+
+    const endExclusive = new Date(end || start);
+    endExclusive.setDate(endExclusive.getDate() + 1);
+
+    return {
+      start,
+      end,
+      leftPx: (dateToColPos(start) + gridOffset) * colWidth,
+      widthPx: Math.max((dateToColPos(endExclusive) - dateToColPos(start)) * colWidth, 8),
+    };
+  }
+
+  function scheduleRangeAtPointer(e) {
+    const rowRect = e.currentTarget.getBoundingClientRect();
+    return scheduleRange(dateAtTimelineX(e.clientX - rowRect.left));
+  }
+
+  function onSchedulePointerMove(e, item) {
+    if (e.pointerType === 'touch' || itemHasDate(item) || schedulingItemIds.has(item.id)) return;
+    schedulePreview = { itemId: item.id, ...scheduleRangeAtPointer(e) };
+  }
+
+  function onSchedulePointerLeave(itemId) {
+    if (schedulePreview?.itemId === itemId) schedulePreview = null;
+  }
+
+  async function scheduleItem(item, range) {
+    if (itemHasDate(item) || schedulingItemIds.has(item.id)) return;
 
     const updateData = {};
-    setDateUpdate(updateData, roadmapConfig.start_field_id, dropDate);
+    setDateUpdate(updateData, roadmapConfig.start_field_id, range.start);
 
-    // If end field is configured, default span = 7 days
-    if (roadmapConfig.end_field_id) {
-      const endDate = new Date(dropDate);
-      endDate.setDate(endDate.getDate() + 7);
-      setDateUpdate(updateData, roadmapConfig.end_field_id, endDate);
-    }
+    if (range.end) setDateUpdate(updateData, roadmapConfig.end_field_id, range.end);
 
     if (Object.keys(updateData).length > 0) {
+      schedulingItemIds = new Set(schedulingItemIds).add(item.id);
+      schedulePreview = null;
       try {
-        await api.items.update(itemId, updateData);
-        reloadCollection();
+        await api.items.update(item.id, updateData);
+        await refreshCollectionItem(item.id);
       } catch (err) {
         console.error('Failed to schedule item:', err);
+        reloadCollection();
+      } finally {
+        const nextSchedulingIds = new Set(schedulingItemIds);
+        nextSchedulingIds.delete(item.id);
+        schedulingItemIds = nextSchedulingIds;
       }
     }
+  }
+
+  function onScheduleClick(e, item) {
+    if (itemHasDate(item) || schedulingItemIds.has(item.id)) return;
+    if (e.detail !== 0) {
+      scheduleItem(item, schedulePreview?.itemId === item.id ? schedulePreview : scheduleRangeAtPointer(e));
+      return;
+    }
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    scheduleItem(item, scheduleRange(today));
   }
 
   // --- Scroll sync ---
@@ -912,7 +929,7 @@
   <StaticViewBackground
     backgroundStyle={styles.backgroundStyle}
     contextVars={styles.contextVars}
-    class="h-screen flex flex-col overflow-hidden {isResizingPanel || scheduleDragInfo?.active ? 'roadmap-dragging' : ''}"
+    class="h-screen flex flex-col overflow-hidden {isResizingPanel ? 'roadmap-dragging' : ''}"
     contentClass="p-6 flex-1 flex flex-col min-h-0"
     rootStyle="overscroll-behavior: none;"
     testid="roadmap-view"
@@ -1083,7 +1100,6 @@
                   class="flex items-center gap-1.5 w-full text-left group/tree-row"
                   style="height: {ROW_HEIGHT}px; padding-left: calc(8px + {getIndentLevel(item.treeLevel)}); padding-right: 8px; border-bottom: 1px solid var(--ds-border-subtle, var(--ds-border));"
                   onclick={() => openItem(item.id)}
-                  onpointerdown={(e) => onTreeItemDragStart(e, item)}
                 >
                   <LazyRender height={ROW_HEIGHT} class="flex items-center gap-1.5 w-full">
                     {#snippet children()}
@@ -1207,6 +1223,18 @@
                             ></div>
                           {/if}
 
+                          {#if !roadmapItem}
+                            <button
+                              type="button"
+                              data-testid="roadmap-schedule-row-{item.id}"
+                              class="absolute inset-0 w-full roadmap-schedule-row"
+                              aria-label={`Schedule ${item.title}`}
+                              onpointermove={(e) => onSchedulePointerMove(e, item)}
+                              onpointerleave={() => onSchedulePointerLeave(item.id)}
+                              onclick={(e) => onScheduleClick(e, item)}
+                            ></button>
+                          {/if}
+
                           <!-- Bar / milestone (only if item is scheduled) -->
                           {#if roadmapItem}
                             {@const offset = getDragOffset(roadmapItem)}
@@ -1219,6 +1247,9 @@
                             {#if roadmapItem.isMilestone && !roadmapConfig.end_field_id}
                               <!-- Diamond milestone (no end field configured, can't expand) -->
                               <div
+                                data-testid="roadmap-bar-{item.id}"
+                                data-start-date={roadmapItem.startDate || ''}
+                                data-end-date={roadmapItem.endDate || ''}
                                 class="absolute flex items-center justify-center"
                                 style="left: {barLeftPx + barWidthPx / 2 - 8}px; top: {(ROW_HEIGHT - 16) / 2}px; width: 16px; height: 16px; transform: rotate(45deg); background-color: {visibleColor}; border-radius: 2px; z-index: 10; cursor: grab;"
                                 role="button"
@@ -1228,6 +1259,9 @@
                             {:else}
                               <!-- Range bar OR expandable milestone (thin bar with resize handles) -->
                               <div
+                                data-testid="roadmap-bar-{item.id}"
+                                data-start-date={roadmapItem.startDate || ''}
+                                data-end-date={roadmapItem.endDate || ''}
                                 class="absolute flex items-center rounded group/bar"
                                 style="left: {barLeftPx}px; width: {barWidthPx}px; top: {(ROW_HEIGHT - 24) / 2}px; height: 24px; background-color: {visibleColor}; opacity: 0.85; z-index: 10; cursor: grab;"
                                 role="button"
@@ -1257,6 +1291,19 @@
                                 ></div>
                               </div>
                             {/if}
+                          {:else if schedulePreview?.itemId === item.id}
+                            {@const previewColor = getVisibleColor(statuses.find(s => s.id === item.status_id)?.color || '#6b7280')}
+                            {@const previewStart = schedulePreview.start.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                            {@const previewEnd = schedulePreview.end?.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                            <div
+                              data-testid="roadmap-schedule-preview-{item.id}"
+                              data-start-date={formatDateValue(schedulePreview.start)}
+                              data-end-date={schedulePreview.end ? formatDateValue(schedulePreview.end) : ''}
+                              class="absolute rounded schedule-preview"
+                              style="left: {schedulePreview.leftPx}px; width: {schedulePreview.widthPx}px; top: {(ROW_HEIGHT - 24) / 2}px; height: 24px; border-color: {previewColor}; background-color: color-mix(in srgb, {previewColor} 22%, transparent);"
+                              aria-label={previewEnd ? `${previewStart} – ${previewEnd}` : previewStart}
+                              title={previewEnd ? `${previewStart} – ${previewEnd}` : previewStart}
+                            ></div>
                           {/if}
                         {/snippet}
                       </LazyRender>
@@ -1299,16 +1346,6 @@
         </div>
       {/if}
   </StaticViewBackground>
-{/if}
-
-<!-- Drag-to-schedule ghost -->
-{#if scheduleDragInfo?.active}
-  <div
-    class="fixed pointer-events-none z-50 px-3 py-1.5 rounded shadow-lg text-xs font-medium truncate max-w-[200px]"
-    style="left: {scheduleDragInfo.currentX + 12}px; top: {scheduleDragInfo.currentY - 8}px; background-color: var(--ds-accent-blue); color: white;"
-  >
-    {scheduleDragInfo.itemTitle}
-  </div>
 {/if}
 
 <!-- Item Detail Modal -->
@@ -1355,6 +1392,27 @@
   .resize-handle:active {
     background-color: var(--ds-accent-blue) !important;
     opacity: 0.5;
+  }
+
+  .roadmap-schedule-row {
+    cursor: crosshair;
+    z-index: 1;
+    border: 0;
+    background: transparent;
+  }
+
+  .roadmap-schedule-row:focus-visible {
+    outline: 2px solid var(--ds-accent-blue);
+    outline-offset: -2px;
+  }
+
+  .schedule-preview {
+    z-index: 9;
+    pointer-events: none;
+    border-width: 1px;
+    border-style: dashed;
+    opacity: 0.9;
+    transition: left 80ms ease-out;
   }
 
   /* Disable text selection during drag/resize */
