@@ -109,7 +109,7 @@
         <span>/</span>
       {:else}
         <!-- Global collection breadcrumb -->
-        <span>{t('collections.globalCollection')}</span>
+        <span class="shrink-0 whitespace-nowrap">{t('collections.globalCollection')}</span>
         <span>/</span>
       {/if}
 
