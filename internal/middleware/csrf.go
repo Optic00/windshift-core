@@ -13,6 +13,8 @@ import (
 var csrfExemptPaths = map[string]bool{
 	// A single-use CLI code provides replay protection.
 	"/api/cli/auth/exchange": true,
+	// A single-use native SSO code provides replay protection.
+	"/api/auth/native/exchange": true,
 	// Server-to-server OAuth endpoints use no session cookie.
 	"/api/oauth/register": true,
 	"/api/oauth/token":    true,
