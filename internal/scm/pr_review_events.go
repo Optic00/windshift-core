@@ -194,7 +194,7 @@ func (s *SyncService) setReviewEventStatus(ctx context.Context, eventID int64, s
 func (s *SyncService) pendingPRReviewEvents(ctx context.Context, repoID, prNumber int) ([]prReviewEvent, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, item_id, event_kind, external_id, COALESCE(author_id,''), COALESCE(author_login,''),
-			COALESCE(author_association,''), body, COALESCE(context_json,''), status, COALESCE(agent_run_id,0),
+			COALESCE(author_association,''), body, COALESCE(CAST(context_json AS TEXT),''), status, COALESCE(agent_run_id,0),
 			COALESCE(ack_comment_id,0), attempts, COALESCE(terminal_body,'')
 		FROM agent_pr_review_events
 		WHERE workspace_repository_id = ? AND pr_number = ?
