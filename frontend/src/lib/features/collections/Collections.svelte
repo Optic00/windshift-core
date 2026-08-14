@@ -211,16 +211,31 @@
 
   // ===== Public sharing =====
 
+  function buildCollectionUpdate(overrides = {}) {
+    return {
+      name: currentCollection.name,
+      description: currentCollection.description || null,
+      ql_query: qlQuery,
+      filter_state: rawMode ? null : serializeFilterState(),
+      workspace_id: currentCollection.workspace_id ?? null,
+      category_id: currentCollection.category_id ?? null,
+      ...overrides,
+    };
+  }
+
   async function handlePublicSharingSave({ isPublic, publicSlug }) {
     if (!currentCollection) return { ok: false, error: 'Collection not found.' };
     savingPublicSharing = true;
     try {
-      await api.collections.updatePublicSharing(currentCollection.id, {
+      const update = buildCollectionUpdate({
         is_public: isPublic,
         public_slug: publicSlug,
       });
+      await api.collections.update(currentCollection.id, update);
       currentCollection = {
         ...currentCollection,
+        ql_query: update.ql_query,
+        filter_state: update.filter_state,
         is_public: isPublic,
         public_slug: publicSlug,
       };
@@ -244,14 +259,7 @@
       return;
     }
     try {
-      await api.collections.update(currentCollection.id, {
-        name: currentCollection.name,
-        description: currentCollection.description || null,
-        ql_query: qlQuery,
-        filter_state: rawMode ? null : serializeFilterState(),
-        workspace_id: currentCollection.workspace_id ?? null,
-        category_id: currentCollection.category_id ?? null,
-      });
+      await api.collections.update(currentCollection.id, buildCollectionUpdate());
       navigate(returnPath || '/collections');
     } catch (error) {
       console.error('Failed to update collection:', error);

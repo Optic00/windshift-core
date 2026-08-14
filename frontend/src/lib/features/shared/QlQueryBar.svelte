@@ -33,7 +33,11 @@
   <div class="flex items-center gap-3 text-xs" style="color: var(--ds-text-subtle);">
     <div class="flex items-center gap-2 min-w-0">
       <span class="font-medium shrink-0">{t('collections.query')}:</span>
-      <code class="font-mono truncate" title={query || t('collections.noQuery')}>
+      <code
+        class="font-mono truncate"
+        title={query || t('collections.noQuery')}
+        data-testid="ql-query-summary"
+      >
         {query || t('collections.noFiltersApplied')}
       </code>
       {#if mode === 'builder'}
