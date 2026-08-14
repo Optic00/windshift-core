@@ -15,7 +15,10 @@
 <p align="center"> <strong>Work management that fits the way your team works.</strong><br> Plan projects, organize your work, and keep things moving, while keeping your data under your control. </p>
 
 <p align="center">
-  <img src=".github/assets/screenshots/hero-board.webp" alt="A Windshift board showing work moving from open to in progress and done" width="100%">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset=".github/assets/screenshots/hero-board-framed.webp">
+    <img src=".github/assets/screenshots/hero-board-framed-dark.webp" alt="A Windshift board showing work moving from open to in progress and done" width="100%">
+  </picture>
 </p>
 
 ## One place for the work that matters
