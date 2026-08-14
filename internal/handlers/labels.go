@@ -272,6 +272,30 @@ func (h *LabelHandler) checkItemEditPermission(w http.ResponseWriter, r *http.Re
 	return CheckItemPermission(w, r, h.itemRepo, h.permissionService, itemID, models.PermissionItemEdit)
 }
 
+func (h *LabelHandler) labelsBelongToItemWorkspace(w http.ResponseWriter, r *http.Request, itemID int, labelIDs []int) bool {
+	workspaceID, err := h.itemRepo.GetWorkspaceID(itemID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return false
+	}
+	for _, labelID := range labelIDs {
+		labelWorkspaceID, err := h.repo.GetWorkspaceID(labelID)
+		if errors.Is(err, repository.ErrNotFound) {
+			respondNotFound(w, r, "Label")
+			return false
+		}
+		if err != nil {
+			respondInternalError(w, r, err)
+			return false
+		}
+		if labelWorkspaceID != workspaceID {
+			respondNotFound(w, r, "Label")
+			return false
+		}
+	}
+	return true
+}
+
 // requireWorkspaceEditPermission verifies the current user has edit permission
 // on the given workspace. Returns false (and writes an HTTP error) on failure.
 func (h *LabelHandler) requireWorkspaceEditPermission(w http.ResponseWriter, r *http.Request, workspaceID int) bool {
@@ -327,6 +351,9 @@ func (h *LabelHandler) SetItemLabels(w http.ResponseWriter, r *http.Request) {
 		respondBadRequest(w, r, err.Error())
 		return
 	}
+	if !h.labelsBelongToItemWorkspace(w, r, itemID, input.LabelIDs) {
+		return
+	}
 
 	if err := h.repo.ReplaceItemLabels(itemID, input.LabelIDs); err != nil {
 		respondInternalError(w, r, err)
@@ -357,6 +384,9 @@ func (h *LabelHandler) AddItemLabel(w http.ResponseWriter, r *http.Request) {
 	}
 	if input.LabelID == 0 {
 		respondValidationError(w, r, "label_id is required")
+		return
+	}
+	if !h.labelsBelongToItemWorkspace(w, r, itemID, []int{input.LabelID}) {
 		return
 	}
 

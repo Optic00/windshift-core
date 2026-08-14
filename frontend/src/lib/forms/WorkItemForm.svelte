@@ -11,7 +11,7 @@
   import PriorityPicker from '../pickers/PriorityPicker.svelte';
   import MilestoneCombobox from '../pickers/MilestoneCombobox.svelte';
   import UserPicker from '../pickers/UserPicker.svelte';
-  import PersonalLabelCombobox from '../pickers/PersonalLabelCombobox.svelte';
+  import WorkspaceLabelCombobox from '../pickers/WorkspaceLabelCombobox.svelte';
   import Label from '../components/Label.svelte';
   import Input from '../components/Input.svelte';
   import NativeSelect from '../components/NativeSelect.svelte';
@@ -585,12 +585,13 @@
         {#if field.field_identifier === 'labels'}
           <div class="space-y-1">
             <Label color="default">{t('items.labels') || 'Labels'}</Label>
-            <PersonalLabelCombobox
-              bind:value={store.formData.personal_label_names}
+            <WorkspaceLabelCombobox
+              workspaceId={store.formData.workspace_id}
+              bind:value={store.formData.label_names}
               placeholder={t('items.selectOrCreateLabels') || 'Select or create labels...'}
               onSelect={(result) => {
-                store.formData.personal_label_names = result?.value || [];
-                store.selectedPersonalLabels = result?.labels || [];
+                store.formData.label_names = result?.value || [];
+                store.selectedLabels = result?.labels || [];
               }}
             />
           </div>
@@ -729,12 +730,13 @@
             <Label color="default">
               {t('items.labels') || 'Labels'} <span style="color: var(--ds-text-danger, #ef4444);">*</span>
             </Label>
-            <PersonalLabelCombobox
-              bind:value={store.formData.personal_label_names}
+            <WorkspaceLabelCombobox
+              workspaceId={store.formData.workspace_id}
+              bind:value={store.formData.label_names}
               placeholder={t('items.selectOrCreateLabels') || 'Select or create labels...'}
               onSelect={(result) => {
-                store.formData.personal_label_names = result?.value || [];
-                store.selectedPersonalLabels = result?.labels || [];
+                store.formData.label_names = result?.value || [];
+                store.selectedLabels = result?.labels || [];
               }}
             />
           </div>

@@ -40,7 +40,7 @@ function defaultFormData({ itemTypeId = null } = {}) {
     assignee_id: null,
     iteration_id: null,
     project_id: null,
-    personal_label_names: [],
+    label_names: [],
     story_points: '',
     estimate: '',
     item_type_id: itemTypeId,
@@ -51,7 +51,7 @@ class WorkItemFormStore {
   // === Form Data ===
   formData = $state(defaultFormData());
   customFieldValues = $state({});
-  selectedPersonalLabels = $state([]);
+  selectedLabels = $state([]);
   validationErrors = $state([]);
   pendingDescriptionImages = $state([]);
 
@@ -181,10 +181,10 @@ class WorkItemFormStore {
   }
 
   /**
-   * Get selected personal label IDs for post-create assignment.
+   * Get selected workspace label IDs for post-create assignment.
    */
-  get selectedPersonalLabelIds() {
-    return (this.selectedPersonalLabels || [])
+  get selectedLabelIds() {
+    return (this.selectedLabels || [])
       .map((label) => label?.id)
       .filter((id) => Number.isFinite(id));
   }
@@ -590,8 +590,13 @@ class WorkItemFormStore {
    * Set the selected workspace.
    */
   setWorkspace(workspace) {
+    const nextWorkspaceID = workspace?.id || null;
+    if (this.formData.workspace_id && this.formData.workspace_id !== nextWorkspaceID) {
+      this.formData.label_names = [];
+      this.selectedLabels = [];
+    }
     this.selectedWorkspace = workspace;
-    this.formData.workspace_id = workspace?.id || null;
+    this.formData.workspace_id = nextWorkspaceID;
 
     if (workspace?.id) {
       this.#persistWorkspaceSelection(workspace.id);
@@ -821,7 +826,7 @@ class WorkItemFormStore {
       case 'milestone':
         return this.formData.milestone_ids;
       case 'labels':
-        return this.selectedPersonalLabelIds;
+        return this.selectedLabelIds;
       case 'estimate_minutes':
       case 'estimate':
         return this.formData.estimate;
@@ -910,7 +915,7 @@ class WorkItemFormStore {
       priority_id: this.formData.priority_id || null,
       milestone_ids: Array.isArray(this.formData.milestone_ids) ? this.formData.milestone_ids : [],
       assignee_id: this.formData.assignee_id || null,
-      personal_label_ids: this.selectedPersonalLabelIds,
+      label_ids: this.selectedLabelIds,
       iteration_id: this.formData.iteration_id || null,
       project_id: this.formData.project_id || null,
       story_points: this.#parsedStoryPoints(),
@@ -934,7 +939,7 @@ class WorkItemFormStore {
       itemTypeId: this.availableItemTypes.length > 0 ? this.availableItemTypes[0].id : null,
     });
     this.customFieldValues = {};
-    this.selectedPersonalLabels = [];
+    this.selectedLabels = [];
     this.validationErrors = [];
     this.clearPendingDescriptionImages();
     this.selectedWorkspace = null;
@@ -986,7 +991,7 @@ class WorkItemFormStore {
     this.itemTypesLoaded = false;
     this.allCustomFields = [];
     this.customFields = [];
-    this.selectedPersonalLabels = [];
+    this.selectedLabels = [];
     this.customFieldsLoaded = false;
     this.screenFields = [];
     this.screenSystemFields = [];

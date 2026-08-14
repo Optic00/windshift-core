@@ -123,7 +123,7 @@ func RegisterItemRoutes(deps *Deps) {
 
 	// Label definition CRUD
 	api.HandleH("GET /labels", auth(http.HandlerFunc(deps.Items.Label.GetAll)))
-	api.HandleH("POST /labels", admin(http.HandlerFunc(deps.Items.Label.Create)))
+	api.HandleH("POST /labels", auth(http.HandlerFunc(deps.Items.Label.Create)))
 	api.HandleH("GET /labels/{id}", auth(http.HandlerFunc(deps.Items.Label.Get)))
 	api.HandleH("PUT /labels/{id}", admin(http.HandlerFunc(deps.Items.Label.Update)))
 	api.HandleH("DELETE /labels/{id}", admin(http.HandlerFunc(deps.Items.Label.Delete)))

@@ -93,7 +93,7 @@
 		},
 		{
 			id: 'labels',
-			label: t('users.labels.tabLabel') || 'Labels',
+			label: t('users.labels.tabLabel') || 'Personal labels',
 			icon: Tag,
 			testid: 'profile-tab-labels'
 		},
@@ -1082,12 +1082,12 @@
 			<ConnectedAccountsTab />
 		{/if}
 
-		<!-- Labels Tab -->
+		<!-- Personal Labels Tab -->
 		{#if activeTab === 'labels'}
 			<div class="mb-6">
 				<h2 class="text-lg font-medium flex items-center gap-2" style="color: var(--ds-text);">
 					<Tag class="h-5 w-5" style="color: var(--ds-text-subtle);" />
-					{t('users.labels.tabLabel') || 'Labels'}
+					{t('users.labels.tabLabel') || 'Personal labels'}
 				</h2>
 				<p class="text-sm" style="color: var(--ds-text-subtle);">
 					{t('users.labels.tabDescription') || 'Manage your personal labels.'}

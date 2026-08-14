@@ -224,6 +224,32 @@ export const personalLabels = {
     }),
 };
 
+// Workspace labels
+export const labels = {
+  getAll: (workspaceId) => fetchAPI(`/labels?workspace_id=${encodeURIComponent(workspaceId)}`),
+  get: (id) => fetchAPI(`/labels/${id}`),
+  create: (data) =>
+    fetchAPI('/labels', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  update: (id, data) =>
+    fetchAPI(`/labels/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+  delete: (id) =>
+    fetchAPI(`/labels/${id}`, {
+      method: 'DELETE',
+    }),
+  getForItem: (itemId) => fetchAPI(`/items/${itemId}/labels`),
+  setForItem: (itemId, labelIds) =>
+    fetchAPI(`/items/${itemId}/labels`, {
+      method: 'PUT',
+      body: JSON.stringify({ label_ids: labelIds }),
+    }),
+};
+
 // Jira Cloud Import
 export const jiraImport = {
   // List saved connections

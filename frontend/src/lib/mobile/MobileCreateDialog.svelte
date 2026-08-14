@@ -11,7 +11,7 @@
   import PriorityPicker from '../pickers/PriorityPicker.svelte';
   import UserPicker from '../pickers/UserPicker.svelte';
   import MilestoneCombobox from '../pickers/MilestoneCombobox.svelte';
-  import PersonalLabelCombobox from '../pickers/PersonalLabelCombobox.svelte';
+  import WorkspaceLabelCombobox from '../pickers/WorkspaceLabelCombobox.svelte';
   import {
     isCreateSystemFieldAutoManaged,
     isCreateSystemFieldRenderable,
@@ -99,8 +99,9 @@
   let endDate = $state('');
   let storyPoints = $state('');
   let estimate = $state('');
-  let personalLabelNames = $state([]);
-  let selectedPersonalLabels = $state([]);
+  let labelNames = $state([]);
+  let selectedLabels = $state([]);
+  let labelsWorkspaceId = null;
 
   // === Work item templates (WI-538). Mirrors the desktop create modal
   // (workItemFormStore.loadTemplatesForCurrentType): load the templates valid
@@ -183,6 +184,15 @@
     if (!workspaceId && workspaces.length > 0) {
       workspaceId = workspaces[0].id;
     }
+  });
+
+  $effect(() => {
+    const nextWorkspaceId = workspaceId;
+    if (labelsWorkspaceId != null && labelsWorkspaceId !== nextWorkspaceId) {
+      labelNames = [];
+      selectedLabels = [];
+    }
+    labelsWorkspaceId = nextWorkspaceId;
   });
 
   // Load the personal workspace on-demand when the dialog opens in personal
@@ -448,8 +458,8 @@
     endDate = '';
     storyPoints = '';
     estimate = '';
-    personalLabelNames = [];
-    selectedPersonalLabels = [];
+    labelNames = [];
+    selectedLabels = [];
   }
 
   function reset() {
@@ -494,7 +504,7 @@
   }
 
   function selectedLabelIds() {
-    return (selectedPersonalLabels || [])
+    return (selectedLabels || [])
       .map((label) => label?.id)
       .filter((id) => Number.isFinite(id));
   }
@@ -610,7 +620,7 @@
 
       const result = await api.items.create(createPayload());
       if (!isPersonal && selectedLabelIds().length > 0) {
-        await api.personalLabels.setForItem(result.id, selectedLabelIds());
+        await api.labels.setForItem(result.id, selectedLabelIds());
       }
       if (isPersonal) {
         // The newly created personal task lives in this tab's list - let the
@@ -822,12 +832,13 @@
         ]}
       />
     {:else if field.field_identifier === 'labels'}
-      <PersonalLabelCombobox
-        bind:value={personalLabelNames}
+      <WorkspaceLabelCombobox
+        {workspaceId}
+        bind:value={labelNames}
         placeholder="Select or create labels..."
         onSelect={(result) => {
-          personalLabelNames = result?.value || [];
-          selectedPersonalLabels = result?.labels || [];
+          labelNames = result?.value || [];
+          selectedLabels = result?.labels || [];
         }}
       />
     {:else if field.field_identifier === 'due_date'}

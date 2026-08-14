@@ -13,16 +13,7 @@ type Evaluator struct {
 // NewEvaluator creates a new QL evaluator. customFieldMap may be nil; when nil
 // the generator falls back to name-based JSON extraction (legacy behavior).
 func NewEvaluator(workspaceMap map[string]int, customFieldMap CustomFieldMap, dbDriver string) *Evaluator {
-	return NewEvaluatorWithContext(workspaceMap, customFieldMap, dbDriver, FunctionContext{})
-}
-
-// NewEvaluatorWithContext creates a QL evaluator with request-scoped label
-// visibility in addition to the context functions used by the query.
-func NewEvaluatorWithContext(workspaceMap map[string]int, customFieldMap CustomFieldMap, dbDriver string, functionCtx FunctionContext) *Evaluator {
 	gen := NewSQLGenerator(workspaceMap, customFieldMap, dbDriver)
-	if functionCtx.UserID != nil && *functionCtx.UserID > 0 {
-		gen.userID = functionCtx.UserID
-	}
 	gen.EnableLegacyCustomFieldNameFallback()
 	return &Evaluator{sqlGenerator: gen}
 }

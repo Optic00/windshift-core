@@ -129,7 +129,7 @@ export default {
     connectedAccountsDesc:
       'Connect your source control accounts to create branches and pull requests',
     labels: {
-      tabLabel: 'Labels',
+      tabLabel: 'Personal labels',
       tabDescription: 'Manage your personal labels.',
       searchPlaceholder: 'Search labels',
       new: 'New label',

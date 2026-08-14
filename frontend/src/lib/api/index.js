@@ -75,6 +75,7 @@ import {
   getDiagrams,
   homepage,
   jiraImport,
+  labels,
   personalLabels,
   projects,
   reviews,
@@ -252,6 +253,9 @@ export const api = {
 
   // Personal Labels
   personalLabels,
+
+  // Workspace Labels
+  labels,
 
   // Attachments
   attachments,

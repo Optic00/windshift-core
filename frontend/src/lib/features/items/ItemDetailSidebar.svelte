@@ -11,7 +11,7 @@
   import ItemPicker from '../../pickers/ItemPicker.svelte';
   import UserPicker from '../../pickers/UserPicker.svelte';
   import CustomFieldRenderer from '../items/CustomFieldRenderer.svelte';
-  import PersonalLabelCombobox from '../../pickers/PersonalLabelCombobox.svelte';
+  import WorkspaceLabelCombobox from '../../pickers/WorkspaceLabelCombobox.svelte';
   import MilestoneCombobox from '../../pickers/MilestoneCombobox.svelte';
   import PersonalTasksPanel from '../personal/PersonalTasksPanel.svelte';
   import { api } from '../../api.js';
@@ -235,25 +235,22 @@
   let estimateEditValue = $state('');
   let estimateError = $state(false);
 
-  // Personal labels inline editing
-  let editingPersonalLabels = $state(false);
+  // Workspace labels inline editing
+  let editingLabels = $state(false);
 
-  async function savePersonalLabels(result) {
+  async function saveLabels(result) {
     const labelIds = (result?.labels || [])
       .map((l) => l?.id)
       .filter((id) => Number.isFinite(id));
 
-    // Optimistic close so creating/picking feels instantaneous; the
-    // setForItem round-trip resolves in the background.
-    if (item) item.personal_labels = result?.labels || [];
-    editingPersonalLabels = false;
-    onsaveField?.({ field: 'personal_labels', value: result?.labels || [] });
+    if (item) item.labels = result?.labels || [];
+    editingLabels = false;
 
     try {
-      const updated = await api.personalLabels.setForItem(item.id, labelIds);
-      if (item) item.personal_labels = updated || [];
+      const updated = await api.labels.setForItem(item.id, labelIds);
+      if (item) item.labels = updated || [];
     } catch (err) {
-      console.error('Failed to save personal labels:', err);
+      console.error('Failed to save workspace labels:', err);
       errorToast(err?.message || 'Failed to save labels');
     }
   }
@@ -953,21 +950,22 @@
 
     {#snippet labelsField()}
       {#if item?.id}
-        <div class="mb-3" data-testid="personal-labels-field">
-          {#if editingPersonalLabels}
+        <div class="mb-3" data-testid="labels-field">
+          {#if editingLabels}
             <div class="px-2 py-1.5">
-              <PersonalLabelCombobox
-                value={(item?.personal_labels || []).map((l) => l.name)}
+              <WorkspaceLabelCombobox
+                workspaceId={item?.workspace_id || workspace?.id}
+                value={(item?.labels || []).map((l) => l.name)}
                 placeholder={t('items.selectOrCreateLabels') || 'Select or create labels...'}
                 disabled={!canEdit || !isSystemFieldEditable('labels')}
-                onSelect={savePersonalLabels}
-                onClose={() => (editingPersonalLabels = false)}
-                onCancel={() => (editingPersonalLabels = false)}
+                onSelect={saveLabels}
+                onClose={() => (editingLabels = false)}
+                onCancel={() => (editingLabels = false)}
               />
             </div>
           {:else}
             <button
-              onclick={() => canEdit && isSystemFieldEditable('labels') && (editingPersonalLabels = true)}
+              onclick={() => canEdit && isSystemFieldEditable('labels') && (editingLabels = true)}
               class="w-full flex items-start justify-between gap-2 px-2 py-1.5 text-sm transition-colors rounded group text-left"
               onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'}
               onmouseleave={(e) => e.currentTarget.style.backgroundColor = ''}
@@ -975,11 +973,11 @@
             >
               <Text variant="subtle" size="sm" class="shrink-0">{t('items.labels') || 'Labels'}</Text>
               <div class="flex flex-wrap justify-end gap-1.5 min-w-0">
-                {#each (item?.personal_labels || []) as label (label.id)}
+                {#each (item?.labels || []) as label (label.id)}
                   <span
                     class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs"
                     style="background-color: {label.color || '#3B82F6'}1A; color: var(--ds-text); border: 1px solid {label.color || '#3B82F6'};"
-                    data-testid="item-personal-label"
+                    data-testid="item-label"
                   >
                     <span
                       class="inline-block w-2 h-2 rounded-full"

@@ -111,7 +111,7 @@
     assignee_id: null,
     iteration_id: null,
     project_id: null,
-    personal_label_names: [],
+    label_names: [],
     story_points: '',
     estimate: '',
     item_type_id: 1,
@@ -250,7 +250,7 @@
     customFieldValues: {},
     customFieldsLoaded: false,
     validationErrors: [],
-    selectedPersonalLabels: [],
+    selectedLabels: [],
     templateOptions: [
       { id: 1, name: 'Release task', description_body: 'Document the release readiness checks.' },
     ],
