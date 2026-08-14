@@ -1,16 +1,12 @@
 <script>
   import { navigate } from '../../router.js';
-  import { publicBaseURL } from '../../runtime/contextPath.js';
   import { t } from '../../stores/i18n.svelte.js';
-  import { IconLayoutKanban as SquareKanban, IconDeviceFloppy as Save, IconTag as Tag, IconWorld, IconExternalLink, IconLoader2 } from '@tabler/icons-svelte-runes';
-  import CopyButton from '../../components/CopyButton.svelte';
+  import { IconLayoutKanban as SquareKanban, IconDeviceFloppy as Save, IconTag as Tag, IconWorld } from '@tabler/icons-svelte-runes';
   import Button from '../../components/Button.svelte';
-  import Checkbox from '../../components/Checkbox.svelte';
   import Input from '../../components/Input.svelte';
   import Select from '../../components/Select.svelte';
   import Tooltip from '../../components/Tooltip.svelte';
-  import DescriptionText from '../../components/DescriptionText.svelte';
-  import { onClickOutside, useEventListener } from 'runed';
+  import PublicBoardSharingDialog from './PublicBoardSharingDialog.svelte';
 
   let {
     collection = null,
@@ -26,9 +22,7 @@
     oncategorychange = null,
     isPublic = false,
     publicSlug = null,
-    onpublictoggle = null,
-    onslugchange = null,
-    onslugsave = null,
+    onpublicsave = null,
     saving = false,
     slugSaved = false,
     showPublicBoard = false,
@@ -37,30 +31,15 @@
   // Computed: is this a global collection (no workspace)?
   let isGlobal = $derived(!collection?.workspace_id);
 
-  // Public board popover state
-  let showPublicPopover = $state(false);
-  let popoverRef = $state(null);
+  let showPublicDialog = $state(false);
 
-  function togglePopover() {
-    showPublicPopover = !showPublicPopover;
+  function openPublicDialog() {
+    showPublicDialog = true;
   }
 
-  onClickOutside(
-    () => popoverRef,
-    () => {
-      if (showPublicPopover) showPublicPopover = false;
-    }
-  );
-  useEventListener(
-    () => (showPublicPopover ? document : null),
-    'keydown',
-    (event) => {
-      if (event.key === 'Escape') showPublicPopover = false;
-    }
-  );
-
-  const publicBoardUrl = () =>
-    publicSlug ? `${publicBaseURL()}/board/${publicSlug}` : '';
+  function closePublicDialog() {
+    showPublicDialog = false;
+  }
 
   function handleNavigateWorkspaces() {
     navigate('/workspaces');
@@ -156,89 +135,15 @@
     <div class="flex items-center gap-2">
       {#if isEditing && collection}
         {#if showPublicBoard}
-          <!-- Public Board button with popover -->
-          <div class="relative" bind:this={popoverRef}>
-            <Tooltip content="Public Board">
-              <button
-                data-testid="public-board-button"
-                onclick={togglePopover}
-                class="inline-flex items-center justify-center w-8 h-8 rounded-md border cursor-pointer transition-colors"
-                class:public-active={isPublic}
-                class:public-inactive={!isPublic}
-              >
-                <IconWorld class="w-4 h-4" />
-              </button>
-            </Tooltip>
-
-            {#if showPublicPopover}
-              <div class="absolute right-0 top-full mt-2 w-80 rounded-lg border shadow-lg z-50 p-4 space-y-3" style="border-color: var(--ds-border); background-color: var(--ds-surface-raised);">
-                <div class="text-sm font-medium" style="color: var(--ds-text);">Public Board</div>
-                <p class="text-xs" style="color: var(--ds-text-subtle);">Share a read-only Kanban board publicly.</p>
-
-                <!-- Public toggle -->
-                <Checkbox
-                  checked={isPublic}
-                  onchange={() => onpublictoggle?.()}
-                  label="Enable public sharing"
-                  size="small"
-                />
-
-                {#if isPublic}
-                  <!-- Slug input -->
-                  <div>
-                    <label for="public-board-slug" class="block text-xs font-medium mb-1" style="color: var(--ds-text);">Board URL slug</label>
-                    <div class="flex items-center gap-1.5">
-                      <span class="text-xs" style="color: var(--ds-text-subtle);">/board/</span>
-                      <Input
-                        id="public-board-slug"
-                        type="text"
-                        value={publicSlug || ''}
-                        oninput={(e) => onslugchange?.(e.currentTarget.value || null)}
-                        placeholder="my-board"
-                        class="flex-1"
-                        size="small"
-                      />
-                      <button
-                        onclick={() => onslugsave?.()}
-                        disabled={saving || !publicSlug}
-                        class="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded border cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        style="border-color: var(--ds-border-brand); background-color: var(--ds-surface-brand); color: white;"
-                      >
-                        {#if saving}
-                          <IconLoader2 class="w-3.5 h-3.5 animate-spin" />
-                        {:else}
-                          <Save class="w-3.5 h-3.5" />
-                        {/if}
-                        Save
-                      </button>
-                    </div>
-                    <DescriptionText variant="subtlest">Lowercase letters, numbers, and hyphens.</DescriptionText>
-                  </div>
-
-                  <!-- Copy URL + Preview (only when slug is persisted) -->
-                  {#if publicSlug && slugSaved}
-                    <div class="flex items-center gap-2 pt-1">
-                      <CopyButton
-                        getText={publicBoardUrl}
-                        size="sm"
-                        label="Copy URL"
-                        copiedLabel="Copied!"
-                      />
-                      <a
-                        href="/board/{publicSlug}"
-                        target="_blank"
-                        class="inline-flex items-center gap-1 text-xs underline"
-                        style="color: var(--ds-link);"
-                      >
-                        <IconExternalLink class="w-3.5 h-3.5" />
-                        Preview
-                      </a>
-                    </div>
-                  {/if}
-                {/if}
-              </div>
-            {/if}
-          </div>
+          <Button
+            dataTestid="public-board-button"
+            onclick={openPublicDialog}
+            variant={isPublic ? 'selected' : 'default'}
+            size="sm"
+            icon={IconWorld}
+          >
+            {isPublic ? 'Shared' : 'Share'}
+          </Button>
         {/if}
 
         <Tooltip content={workspace ? t('collections.changeWorkspace') : t('collections.associateWorkspace')}>
@@ -315,15 +220,17 @@
   {/if}
 </div>
 
+<PublicBoardSharingDialog
+  isOpen={showPublicDialog}
+  {isPublic}
+  {publicSlug}
+  {slugSaved}
+  {saving}
+  onclose={closePublicDialog}
+  onsave={onpublicsave}
+/>
+
 <style>
-  .public-active {
-    background-color: color-mix(in srgb, #16a34a 12%, transparent);
-    border-color: color-mix(in srgb, #16a34a 30%, transparent);
-    color: #16a34a;
-  }
-  .public-active:hover {
-    background-color: color-mix(in srgb, #16a34a 18%, transparent);
-  }
   .public-inactive {
     background-color: var(--ds-surface);
     border-color: var(--ds-border);

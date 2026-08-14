@@ -52,7 +52,7 @@ export function createWorkItemSearchStore() {
     ],
     ([$ws, $st, $pr, $q, $df, $wsRef]) =>
       QLBuilder.buildQuery({
-        workspaces: $ws.map((id) => $wsRef.find((w) => w.id === id)?.name).filter(Boolean),
+        workspaces: $ws.map((id) => $wsRef.find((w) => w.id === id)?.key).filter(Boolean),
         statuses: $st,
         priorities: $pr,
         search: $q,
@@ -261,7 +261,9 @@ export function createWorkItemSearchStore() {
     const wsList = get(workspaces);
     selectedWorkspaces.set(
       parsed
-        ? parsed.workspaces.map((name) => wsList.find((w) => w.name === name)?.id).filter(Boolean)
+        ? parsed.workspaces
+            .map((reference) => wsList.find((w) => w.key === reference || w.name === reference)?.id)
+            .filter(Boolean)
         : []
     );
     selectedStatuses.set(parsed ? parsed.statuses : []);

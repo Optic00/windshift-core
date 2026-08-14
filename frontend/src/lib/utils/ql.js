@@ -730,13 +730,13 @@ export class QLBuilder {
   static buildQuery(filters) {
     const conditions = [];
 
-    // Workspace uses names; status and priority use numeric IDs.
+    // Workspace keys are stable and unique; status and priority use numeric IDs.
     if (filters.workspaces && filters.workspaces.length > 0) {
       if (filters.workspaces.length === 1) {
-        conditions.push(`workspace = "${filters.workspaces[0]}"`);
+        conditions.push(`workspaceKey = "${filters.workspaces[0]}"`);
       } else {
-        const workspaceNames = filters.workspaces.map((w) => `"${w}"`).join(', ');
-        conditions.push(`workspace IN (${workspaceNames})`);
+        const workspaceKeys = filters.workspaces.map((w) => `"${w}"`).join(', ');
+        conditions.push(`workspaceKey IN (${workspaceKeys})`);
       }
     }
 
@@ -906,8 +906,8 @@ export class QLBuilder {
       return m;
     };
 
-    const wsIn = consume(/workspace\s+IN\s*\(([^)]+)\)/i);
-    const wsEq = !wsIn ? consume(/workspace\s*=\s*"([^"]+)"/i) : null;
+    const wsIn = consume(/workspace(?:Key)?\s+IN\s*\(([^)]+)\)/i);
+    const wsEq = !wsIn ? consume(/workspace(?:Key)?\s*=\s*"([^"]+)"/i) : null;
     if (wsIn) {
       result.workspaces = wsIn[1]
         .split(',')

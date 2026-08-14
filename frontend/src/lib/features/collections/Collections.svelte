@@ -211,47 +211,25 @@
 
   // ===== Public sharing =====
 
-  async function handlePublicToggle() {
-    if (!currentCollection) return;
-    const newIsPublic = !currentCollection.is_public;
-    if (!newIsPublic) {
-      savingPublicSharing = true;
-      try {
-        await api.collections.updatePublicSharing(currentCollection.id, {
-          is_public: false,
-          public_slug: currentCollection.public_slug || null,
-        });
-        currentCollection = { ...currentCollection, is_public: false };
-        slugSaved = false;
-      } catch (error) {
-        console.error('Failed to disable public sharing:', error);
-      } finally {
-        savingPublicSharing = false;
-      }
-    } else {
-      currentCollection = { ...currentCollection, is_public: true };
-      slugSaved = false;
-    }
-  }
-
-  function handleSlugChange(value) {
-    if (!currentCollection) return;
-    currentCollection = { ...currentCollection, public_slug: value };
-    slugSaved = false;
-  }
-
-  async function handleSlugSave() {
-    if (!currentCollection || !currentCollection.public_slug) return;
+  async function handlePublicSharingSave({ isPublic, publicSlug }) {
+    if (!currentCollection) return { ok: false, error: 'Collection not found.' };
     savingPublicSharing = true;
     try {
       await api.collections.updatePublicSharing(currentCollection.id, {
-        is_public: currentCollection.is_public,
-        public_slug: currentCollection.public_slug,
+        is_public: isPublic,
+        public_slug: publicSlug,
       });
-      slugSaved = true;
+      currentCollection = {
+        ...currentCollection,
+        is_public: isPublic,
+        public_slug: publicSlug,
+      };
+      slugSaved = Boolean(isPublic && publicSlug);
+      return { ok: true };
     } catch (error) {
       console.error('Failed to save public sharing:', error);
       errorToast(error.message || 'Failed to save public sharing settings');
+      return { ok: false, error: error.message || 'Failed to save public sharing settings.' };
     } finally {
       savingPublicSharing = false;
     }
@@ -389,9 +367,7 @@
       publicSlug={currentCollection?.public_slug || null}
       {slugSaved}
       saving={savingPublicSharing}
-      onpublictoggle={handlePublicToggle}
-      onslugchange={handleSlugChange}
-      onslugsave={handleSlugSave}
+      onpublicsave={handlePublicSharingSave}
     />
 
     <QlQueryBar
