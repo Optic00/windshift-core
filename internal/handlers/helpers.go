@@ -103,6 +103,34 @@ func decodeJSON[T any](w http.ResponseWriter, r *http.Request) (T, bool) {
 	return v, true
 }
 
+// decodeJSONWithFields decodes an object and records which fields were sent.
+// Update handlers use the field map to distinguish omission from zero values.
+func decodeJSONWithFields[T any](w http.ResponseWriter, r *http.Request) (value T, fields map[string]json.RawMessage, ok bool) {
+	body, err := restapi.ReadJSONBody(w, r)
+	if err != nil {
+		if isRequestBodyTooLarge(err) {
+			respondRequestTooLarge(w, r)
+			return value, nil, false
+		}
+		respondBadRequest(w, r, "Invalid request body")
+		return value, nil, false
+	}
+
+	if err := json.Unmarshal(body, &fields); err != nil {
+		respondBadRequest(w, r, "Invalid request body")
+		return value, nil, false
+	}
+	if fields == nil {
+		respondBadRequest(w, r, "Invalid request body")
+		return value, nil, false
+	}
+	if err := json.Unmarshal(body, &value); err != nil {
+		respondBadRequest(w, r, "Invalid request body")
+		return value, nil, false
+	}
+	return value, fields, true
+}
+
 func newJSONDecoder(w http.ResponseWriter, r *http.Request) *json.Decoder {
 	return restapi.NewJSONDecoder(w, r)
 }

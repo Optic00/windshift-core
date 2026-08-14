@@ -1452,20 +1452,25 @@ func (r *AssetRepository) CreateAssetType(at *models.AssetType) (int, error) {
 	return int(id), nil
 }
 
-// AssetTypeUpdate holds patchable asset-type fields. A nil IsActive preserves
-// the current value.
+// AssetTypeUpdate holds patchable asset-type fields. Nil pointer fields preserve
+// their current values.
 type AssetTypeUpdate struct {
 	Name         string
 	Description  string
 	Icon         string
 	Color        string
-	DisplayOrder int
+	DisplayOrder *int
 	IsActive     *bool
 }
 
 func (r *AssetRepository) UpdateAssetType(typeID int, patch AssetTypeUpdate) error {
-	query := "UPDATE asset_types SET name = ?, description = ?, icon = ?, color = ?, display_order = ?, updated_at = ?"
-	args := []any{patch.Name, patch.Description, patch.Icon, patch.Color, patch.DisplayOrder, time.Now()}
+	query := "UPDATE asset_types SET name = ?, description = ?, icon = ?, color = ?, updated_at = ?"
+	args := []any{patch.Name, patch.Description, patch.Icon, patch.Color, time.Now()}
+
+	if patch.DisplayOrder != nil {
+		query += ", display_order = ?"
+		args = append(args, *patch.DisplayOrder)
+	}
 
 	if patch.IsActive != nil {
 		query += ", is_active = ?"

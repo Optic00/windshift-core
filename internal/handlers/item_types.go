@@ -163,9 +163,12 @@ func (h *ItemTypeHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	it, ok := decodeJSON[models.ItemType](w, r)
+	it, fields, ok := decodeJSONWithFields[models.ItemType](w, r)
 	if !ok {
 		return
+	}
+	if _, provided := fields["is_default"]; !provided {
+		it.IsDefault = old.IsDefault
 	}
 	sanitizeItemTypeRequest(&it)
 

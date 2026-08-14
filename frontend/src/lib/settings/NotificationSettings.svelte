@@ -115,7 +115,7 @@
     formData = {
       name: setting.name,
       description: setting.description || '',
-      is_active: true,
+      is_active: setting.is_active,
       event_rules: [...(setting.event_rules || [])],
       created_by: setting.created_by
     };

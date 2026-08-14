@@ -45,7 +45,7 @@
   let assetTypes = $state([]);
   let showTypeForm = $state(false);
   let editingType = $state(null);
-  let typeFormData = $state({ name: '', description: '', icon: 'package', color: '#6b7280', is_active: true });
+  let typeFormData = $state({ name: '', description: '', icon: 'package', color: '#6b7280', display_order: 0, is_active: true });
 
   // Asset Categories state
   let assetCategories = $state([]);
@@ -179,7 +179,7 @@
   function showAddTypeForm() {
     showTypeForm = true;
     editingType = null;
-    typeFormData = { name: '', description: '', icon: 'package', color: '#6b7280', is_active: true };
+    typeFormData = { name: '', description: '', icon: 'package', color: '#6b7280', display_order: 0, is_active: true };
   }
 
   function showEditTypeForm(type) {
@@ -190,6 +190,7 @@
       description: type.description || '',
       icon: type.icon || 'package',
       color: type.color || '#6b7280',
+      display_order: type.display_order,
       is_active: type.is_active
     };
   }

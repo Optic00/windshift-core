@@ -62,7 +62,7 @@
 			if (editingGroup) {
 				await api.groups.update(editingGroup.id, {
 					...formData,
-					is_active: true // Always keep groups active when editing
+					is_active: editingGroup.is_active
 				});
 			} else {
 				await api.groups.create(formData);

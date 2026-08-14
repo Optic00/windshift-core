@@ -229,7 +229,7 @@ type UpdateAssetTypeRequest struct {
 	Description  string `json:"description"`
 	Icon         string `json:"icon"`
 	Color        string `json:"color"`
-	DisplayOrder int    `json:"display_order"`
+	DisplayOrder *int   `json:"display_order"`
 	IsActive     *bool  `json:"is_active"`
 }
 

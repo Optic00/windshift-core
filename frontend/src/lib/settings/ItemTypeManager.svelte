@@ -41,7 +41,8 @@
     icon: 'FileText',
     color: '#3b82f6',
     hierarchy_level: 0, // Default to level 0 (Initiative level)
-    sort_order: 1
+    sort_order: 1,
+    is_default: false
   });
 
   onMount(async () => {
@@ -81,7 +82,8 @@
       icon: 'FileText',
       color: '#3b82f6',
       hierarchy_level: defaultHierarchyLevel,
-      sort_order: getNextSortOrder(defaultHierarchyLevel)
+      sort_order: getNextSortOrder(defaultHierarchyLevel),
+      is_default: false
     };
     editingId = null;
     originalHierarchyLevel = null;
@@ -95,7 +97,8 @@
       icon: itemType.icon,
       color: itemType.color,
       hierarchy_level: itemType.hierarchy_level,
-      sort_order: itemType.sort_order
+      sort_order: itemType.sort_order,
+      is_default: itemType.is_default
     };
     editingId = itemType.id;
     originalHierarchyLevel = itemType.hierarchy_level;
@@ -112,7 +115,8 @@
       icon: 'FileText',
       color: '#3b82f6',
       hierarchy_level: 0, // Default to level 0 (Initiative level)
-      sort_order: 1
+      sort_order: 1,
+      is_default: false
     };
   }
 

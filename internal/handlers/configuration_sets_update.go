@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -19,7 +20,7 @@ func (h *ConfigurationSetHandler) Update(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Get the old configuration set for audit logging
-	oldCS, err := h.repo.FindByIDBasic(id)
+	oldCS, err := h.repo.FindByID(id)
 	if err == repository.ErrNotFound {
 		respondNotFound(w, r, "configuration_set")
 		return
@@ -29,10 +30,11 @@ func (h *ConfigurationSetHandler) Update(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	cs, ok := decodeJSON[models.ConfigurationSet](w, r)
+	cs, fields, ok := decodeJSONWithFields[models.ConfigurationSet](w, r)
 	if !ok {
 		return
 	}
+	preserveOmittedConfigurationSetFields(&cs, oldCS, fields)
 	sanitize.ApplyAll(
 		sanitize.Pair{Target: &cs.Name, Policy: sanitize.PlainTextField},
 		sanitize.Pair{Target: &cs.Description, Policy: sanitize.RichText},
@@ -222,4 +224,52 @@ func (h *ConfigurationSetHandler) Update(w http.ResponseWriter, r *http.Request)
 	}
 
 	respondJSONOKWithWarnings(w, updatedCS, warnings)
+}
+
+func preserveOmittedConfigurationSetFields(cs, old *models.ConfigurationSet, fields map[string]json.RawMessage) {
+	if _, ok := fields["name"]; !ok {
+		cs.Name = old.Name
+	}
+	if _, ok := fields["description"]; !ok {
+		cs.Description = old.Description
+	}
+	if _, ok := fields["is_default"]; !ok {
+		cs.IsDefault = old.IsDefault
+	}
+	if _, ok := fields["differentiate_by_item_type"]; !ok {
+		cs.DifferentiateByItemType = old.DifferentiateByItemType
+	}
+	if _, ok := fields["workflow_id"]; !ok {
+		cs.WorkflowID = old.WorkflowID
+	}
+	if _, ok := fields["notification_setting_id"]; !ok {
+		cs.NotificationSettingID = old.NotificationSettingID
+	}
+	if _, ok := fields["condition_set_id"]; !ok {
+		cs.ConditionSetID = old.ConditionSetID
+	}
+	if _, ok := fields["approval_set_id"]; !ok {
+		cs.ApprovalSetID = old.ApprovalSetID
+	}
+	if _, ok := fields["workspace_ids"]; !ok {
+		cs.WorkspaceIDs = old.WorkspaceIDs
+	}
+	if _, ok := fields["item_type_configs"]; !ok {
+		cs.ItemTypeConfigs = old.ItemTypeConfigs
+	}
+	if _, ok := fields["priority_ids"]; !ok {
+		cs.PriorityIDs = old.PriorityIDs
+	}
+	if _, ok := fields["create_screen_id"]; !ok {
+		cs.CreateScreenID = old.CreateScreenID
+	}
+	if _, ok := fields["edit_screen_id"]; !ok {
+		cs.EditScreenID = old.EditScreenID
+	}
+	if _, ok := fields["view_screen_id"]; !ok {
+		cs.ViewScreenID = old.ViewScreenID
+	}
+	if _, ok := fields["default_item_type_id"]; !ok {
+		cs.DefaultItemTypeID = old.DefaultItemTypeID
+	}
 }
