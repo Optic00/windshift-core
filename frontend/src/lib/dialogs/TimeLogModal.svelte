@@ -188,6 +188,7 @@
           searchFields={['name', 'subtitle']}
           getValue={(project) => project?.id}
           getLabel={(project) => project?.name ?? ''}
+          optionTestid={(option) => `time-log-project-option-${option.value}`}
         >
           {#snippet itemSnippet({ item: project })}
             <div class="flex flex-col min-w-0">
