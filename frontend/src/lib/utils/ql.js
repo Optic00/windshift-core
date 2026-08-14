@@ -12,6 +12,7 @@ export const TokenType = {
   STRING: 'STRING',
   NUMBER: 'NUMBER',
   DATE: 'DATE',
+  BOOLEAN: 'BOOLEAN',
 
   EQUALS: 'EQUALS', // =
   NOT_EQUALS: 'NOT_EQUALS', // !=, <>
@@ -88,6 +89,10 @@ export class QLTokenizer {
 
   readNumber() {
     let value = '';
+    if (this.current === '-') {
+      value += this.current;
+      this.advance();
+    }
     while (this.current && /[\d.]/.test(this.current)) {
       value += this.current;
       this.advance();
@@ -97,7 +102,7 @@ export class QLTokenizer {
 
   readIdentifier() {
     let value = '';
-    while (this.current && /[a-zA-Z0-9_]/.test(this.current)) {
+    while (this.current && /[a-zA-Z0-9_.-]/.test(this.current)) {
       value += this.current;
       this.advance();
     }
@@ -146,7 +151,7 @@ export class QLTokenizer {
       }
 
       // Numbers and dates (YYYY-MM-DD)
-      if (/\d/.test(this.current)) {
+      if (/\d/.test(this.current) || (this.current === '-' && /\d/.test(this.peekAhead()))) {
         // Check if it's a date pattern (YYYY-MM-DD)
         if (
           this.current &&
@@ -181,32 +186,26 @@ export class QLTokenizer {
             tokens.push({ type: TokenType.OR, value: 'OR' });
             break;
           case 'NOT':
-            // Look ahead to see if it's "NOT IN"
+            // Look ahead to see if it's "NOT IN".
             this.skipWhitespace();
             if (
               this.current &&
-              this.input.slice(this.position, this.position + 2).toUpperCase() === 'IN'
+              this.input.slice(this.position, this.position + 2).toUpperCase() === 'IN' &&
+              !/[a-zA-Z0-9_.-]/.test(this.input[this.position + 2] || '')
             ) {
+              this.advance(); // I
               this.advance(); // N
-              this.advance(); // O
-              this.advance(); // T
-              this.skipWhitespace();
-              if (
-                this.current &&
-                this.input.slice(this.position, this.position + 2).toUpperCase() === 'IN'
-              ) {
-                this.advance(); // I
-                this.advance(); // N
-                tokens.push({ type: TokenType.NOT_IN, value: 'NOT IN' });
-              } else {
-                this.error('Expected IN after NOT');
-              }
+              tokens.push({ type: TokenType.NOT_IN, value: 'NOT IN' });
             } else {
               tokens.push({ type: TokenType.NOT, value: 'NOT' });
             }
             break;
           case 'IN':
             tokens.push({ type: TokenType.IN, value: 'IN' });
+            break;
+          case 'TRUE':
+          case 'FALSE':
+            tokens.push({ type: TokenType.BOOLEAN, value: upperIdent.toLowerCase() });
             break;
           default:
             // Check if it's a function (followed by parentheses)
@@ -449,7 +448,7 @@ export class QLParser {
       };
     }
 
-    if (this.match(TokenType.STRING, TokenType.NUMBER, TokenType.DATE)) {
+    if (this.match(TokenType.STRING, TokenType.NUMBER, TokenType.DATE, TokenType.BOOLEAN)) {
       const token = this.advance();
       return {
         type: NodeType.LITERAL,
@@ -499,7 +498,15 @@ export class QLParser {
   }
 
   _parseValues(values) {
-    if (this.match(TokenType.STRING, TokenType.NUMBER, TokenType.DATE, TokenType.IDENTIFIER)) {
+    if (
+      this.match(
+        TokenType.STRING,
+        TokenType.NUMBER,
+        TokenType.DATE,
+        TokenType.BOOLEAN,
+        TokenType.IDENTIFIER
+      )
+    ) {
       const token = this.advance();
       values.push({
         type: NodeType.LITERAL,
@@ -509,7 +516,15 @@ export class QLParser {
 
       while (this.match(TokenType.COMMA)) {
         this.advance();
-        if (this.match(TokenType.STRING, TokenType.NUMBER, TokenType.DATE, TokenType.IDENTIFIER)) {
+        if (
+          this.match(
+            TokenType.STRING,
+            TokenType.NUMBER,
+            TokenType.DATE,
+            TokenType.BOOLEAN,
+            TokenType.IDENTIFIER
+          )
+        ) {
           const token = this.advance();
           values.push({
             type: NodeType.LITERAL,
@@ -526,7 +541,21 @@ export class QLParser {
 
 // Shared evaluation helpers used by both QLEvaluator and AssetQLEvaluator.
 
+const BARE_VALUE_FIELDS = new Set([
+  'workspace',
+  'workspacekey',
+  'status',
+  'priority',
+  'type',
+  'assettype',
+  'asset_type',
+  'category',
+]);
+
 function compareValuesShared(left, right, operation) {
+  if (Array.isArray(left)) {
+    return left.some((candidate) => compareValuesShared(candidate, right, operation));
+  }
   if (left == null && right == null) return operation === 'equals';
   if (left == null || right == null) return operation !== 'equals';
 
@@ -553,7 +582,11 @@ function compareValuesShared(left, right, operation) {
 
 function evaluateComparisonShared(evaluator, ast, item) {
   const left = evaluator.evaluate(ast.left, item);
-  const right = evaluator.evaluate(ast.right, item);
+  const leftField = ast.left?.type === NodeType.IDENTIFIER ? ast.left.value.toLowerCase() : '';
+  const right =
+    ast.right?.type === NodeType.IDENTIFIER && BARE_VALUE_FIELDS.has(leftField)
+      ? ast.right.value
+      : evaluator.evaluate(ast.right, item);
 
   switch (ast.operator) {
     case '=':
@@ -668,9 +701,10 @@ export class QLEvaluator {
     switch (fieldName.toLowerCase()) {
       case 'workspace': {
         const workspace = this.workspaceMap.get(item.workspace_id);
-        return workspace ? workspace.name : 'Unknown';
+        return workspace ? [workspace.name, workspace.key] : [];
       }
       case 'workspaceid':
+      case 'workspace_id':
         return item.workspace_id;
       case 'workspacekey': {
         const ws = this.workspaceMap.get(item.workspace_id);
@@ -726,35 +760,62 @@ export class QLEvaluator {
 /**
  * Utility functions for building QL queries from UI components
  */
+const BUILDER_FILTER_FIELDS = [
+  {
+    state: 'workspaces',
+    outputField: 'workspaceKey',
+    outputType: 'text',
+    inputs: [
+      ['workspace', 'workspace'],
+      ['workspacekey', 'workspace'],
+      ['workspaceid', 'workspaceId'],
+      ['workspace_id', 'workspaceId'],
+    ],
+  },
+  {
+    state: 'statuses',
+    outputField: 'status_id',
+    outputType: 'number',
+    inputs: [
+      ['statusid', 'id'],
+      ['status_id', 'id'],
+      ['status', 'catalog'],
+    ],
+    catalog: 'statuses',
+  },
+  {
+    state: 'priorities',
+    outputField: 'priority_id',
+    outputType: 'number',
+    inputs: [
+      ['priorityid', 'id'],
+      ['priority_id', 'id'],
+      ['priority', 'catalog'],
+    ],
+    catalog: 'priorities',
+  },
+];
+
+const BUILDER_INPUT_FIELDS = new Map(
+  BUILDER_FILTER_FIELDS.flatMap((definition) =>
+    definition.inputs.map(([alias, mode]) => [alias, { ...definition, mode }])
+  )
+);
+
 export class QLBuilder {
   static buildQuery(filters) {
     const conditions = [];
 
-    // Workspace keys are stable and unique; status and priority use numeric IDs.
-    if (filters.workspaces && filters.workspaces.length > 0) {
-      if (filters.workspaces.length === 1) {
-        conditions.push(`workspaceKey = "${filters.workspaces[0]}"`);
+    for (const definition of BUILDER_FILTER_FIELDS) {
+      const values = (filters[definition.state] || []).filter(
+        (value) => value !== null && value !== undefined
+      );
+      if (values.length === 0) continue;
+      const formatted = values.map((value) => QLBuilder.formatValue(value, definition.outputType));
+      if (formatted.length === 1) {
+        conditions.push(`${definition.outputField} = ${formatted[0]}`);
       } else {
-        const workspaceKeys = filters.workspaces.map((w) => `"${w}"`).join(', ');
-        conditions.push(`workspaceKey IN (${workspaceKeys})`);
-      }
-    }
-
-    if (filters.statuses && filters.statuses.length > 0) {
-      const statusIds = filters.statuses.filter((id) => id !== null && id !== undefined);
-      if (statusIds.length === 1) {
-        conditions.push(`status_id = ${statusIds[0]}`);
-      } else if (statusIds.length > 1) {
-        conditions.push(`status_id IN (${statusIds.join(', ')})`);
-      }
-    }
-
-    if (filters.priorities && filters.priorities.length > 0) {
-      const priorityIds = filters.priorities.filter((id) => id !== null && id !== undefined);
-      if (priorityIds.length === 1) {
-        conditions.push(`priority_id = ${priorityIds[0]}`);
-      } else if (priorityIds.length > 1) {
-        conditions.push(`priority_id IN (${priorityIds.join(', ')})`);
+        conditions.push(`${definition.outputField} IN (${formatted.join(', ')})`);
       }
     }
 
@@ -874,9 +935,9 @@ export class QLBuilder {
     }
   }
 
-  // Best-effort parser for workspace, status, priority, title, and custom
-  // field clauses. Unsupported NOT, nested, or mixed-OR expressions set
-  // `dropped`; custom-field types come from options.customFields when present.
+  // Projects parsed QL into the fields supported by the visual builder.
+  // Unsupported boolean structures and fields set `dropped` so callers can
+  // preserve the original query in raw mode.
   static tryParseToBuilder(queryString, options = {}) {
     if (!queryString?.trim()) return null;
 
@@ -894,176 +955,14 @@ export class QLBuilder {
       dropped: false,
     };
 
-    // Track byte ranges of the input that we've successfully accounted for so
-    // we can detect content that fell through (NOT, parens, OR, unknown
-    // fields). We do this by replacing matched substrings with whitespace in a
-    // mutable copy of the query.
-    let remaining = queryString;
-    const consume = (re) => {
-      const m = remaining.match(re);
-      if (!m) return null;
-      remaining = remaining.replace(re, (full) => ' '.repeat(full.length));
-      return m;
-    };
-
-    const wsIn = consume(/workspace(?:Key)?\s+IN\s*\(([^)]+)\)/i);
-    const wsEq = !wsIn ? consume(/workspace(?:Key)?\s*=\s*"([^"]+)"/i) : null;
-    if (wsIn) {
-      result.workspaces = wsIn[1]
-        .split(',')
-        .map((s) => s.trim().replace(/["']/g, ''))
-        .filter(Boolean);
-    } else if (wsEq) {
-      result.workspaces = [wsEq[1]];
+    let ast;
+    try {
+      ast = new QLParser(new QLTokenizer(queryString).tokenize()).parse();
+    } catch {
+      return null;
     }
 
-    const stIn = consume(/status_id\s+IN\s*\(([^)]+)\)/i);
-    const stEq = !stIn ? consume(/status_id\s*=\s*(\d+)/i) : null;
-    if (stIn) {
-      result.statuses = stIn[1]
-        .split(',')
-        .map((s) => parseInt(s.trim(), 10))
-        .filter((n) => !Number.isNaN(n));
-    } else if (stEq) {
-      const id = parseInt(stEq[1], 10);
-      if (!Number.isNaN(id)) result.statuses = [id];
-    }
-
-    const prIn = consume(/priority_id\s+IN\s*\(([^)]+)\)/i);
-    const prEq = !prIn ? consume(/priority_id\s*=\s*(\d+)/i) : null;
-    if (prIn) {
-      result.priorities = prIn[1]
-        .split(',')
-        .map((s) => parseInt(s.trim(), 10))
-        .filter((n) => !Number.isNaN(n));
-    } else if (prEq) {
-      const id = parseInt(prEq[1], 10);
-      if (!Number.isNaN(id)) result.priorities = [id];
-    }
-
-    // Resolve hand-written or imported name clauses after consuming *_id forms.
-    const resolveNamesToIds = (names, catalog) => {
-      const ids = [];
-      for (const raw of names) {
-        const name = raw.trim().replace(/["']/g, '');
-        if (!name) continue;
-        const match = (catalog || []).find(
-          (c) => String(c?.name ?? '').toLowerCase() === name.toLowerCase()
-        );
-        if (match?.id != null) {
-          ids.push(match.id);
-        } else {
-          // Matched the clause but can't represent it in the builder — fall
-          // back to raw mode so the filter isn't silently dropped.
-          result.dropped = true;
-        }
-      }
-      return ids;
-    };
-
-    const stNameIn = consume(/status\s+IN\s*\(([^)]+)\)/i);
-    const stNameEq = !stNameIn ? consume(/status\s*=\s*"([^"]+)"/i) : null;
-    if (stNameIn) {
-      result.statuses = result.statuses.concat(
-        resolveNamesToIds(stNameIn[1].split(','), options.statuses)
-      );
-    } else if (stNameEq) {
-      result.statuses = result.statuses.concat(resolveNamesToIds([stNameEq[1]], options.statuses));
-    }
-
-    const prNameIn = consume(/priority\s+IN\s*\(([^)]+)\)/i);
-    const prNameEq = !prNameIn ? consume(/priority\s*=\s*"([^"]+)"/i) : null;
-    if (prNameIn) {
-      result.priorities = result.priorities.concat(
-        resolveNamesToIds(prNameIn[1].split(','), options.priorities)
-      );
-    } else if (prNameEq) {
-      result.priorities = result.priorities.concat(
-        resolveNamesToIds([prNameEq[1]], options.priorities)
-      );
-    }
-
-    const title = consume(/title\s*~\s*"([^"]+)"/i);
-    if (title) result.search = title[1];
-
-    // Parse custom fields in IN/NOT IN, contains, then comparison order.
-    const fieldPattern =
-      '(?:`(cf_[^`]+|custom\\.[^`]+)`|\\b(cf_[a-zA-Z0-9_ -]+|custom\\.[a-zA-Z0-9_ -]+)\\b)';
-    const inRe = new RegExp(`${fieldPattern}\\s+(NOT\\s+IN|IN)\\s*\\(([^)]+)\\)`, 'i');
-    const tildeRe = new RegExp(`${fieldPattern}\\s*~\\s*"((?:[^"\\\\]|\\\\.)*)"`, 'i');
-    const cmpRe = new RegExp(
-      `${fieldPattern}\\s*(=|!=|<=|>=|<|>)\\s*(?:"((?:[^"\\\\]|\\\\.)*)"|(-?\\d+(?:\\.\\d+)?)|(true|false))`,
-      'i'
-    );
-
-    while (true) {
-      const m = consume(inRe);
-      if (!m) break;
-      const fieldId = (m[1] || m[2]).trim();
-      const operator = m[3].toUpperCase().replace(/\s+/, ' ');
-      const rawList = m[4];
-      const values = QLBuilder._splitValueList(rawList);
-      const inferred = QLBuilder._inferFieldFromValues(values);
-      const field = QLBuilder._resolveField(fieldId, customFieldsById, inferred);
-      result.dynamicFields.push({
-        field,
-        operator,
-        value: '',
-        values,
-      });
-    }
-
-    while (true) {
-      const m = consume(tildeRe);
-      if (!m) break;
-      const fieldId = (m[1] || m[2]).trim();
-      const value = QLBuilder._unescapeString(m[3]);
-      const field = QLBuilder._resolveField(fieldId, customFieldsById, 'text');
-      result.dynamicFields.push({
-        field,
-        operator: '~',
-        value,
-        values: [],
-      });
-    }
-
-    while (true) {
-      const m = consume(cmpRe);
-      if (!m) break;
-      const fieldId = (m[1] || m[2]).trim();
-      const operator = m[3];
-      let rawValue;
-      let inferredType;
-      if (m[4] !== undefined) {
-        rawValue = QLBuilder._unescapeString(m[4]);
-        inferredType = 'text';
-      } else if (m[5] !== undefined) {
-        rawValue = m[5];
-        inferredType = 'number';
-      } else {
-        rawValue = m[6];
-        inferredType = 'boolean';
-      }
-      const field = QLBuilder._resolveField(fieldId, customFieldsById, inferredType);
-      result.dynamicFields.push({
-        field,
-        operator,
-        value: rawValue,
-        values: [],
-      });
-    }
-
-    // Anything left after stripping AND/OR connectives is unaccounted-for
-    // content. NOT is intentionally NOT stripped: an unmatched NOT means we
-    // captured the inner clause but lost its negation, which is a meaningful
-    // change to the query and warrants a warning.
-    const leftover = remaining
-      .replace(/\b(?:AND|OR)\b/gi, '')
-      .replace(/[()\s]+/g, '')
-      .trim();
-    if (leftover.length > 0) {
-      result.dropped = true;
-    }
+    QLBuilder._projectBuilderNode(ast, result, options, customFieldsById);
 
     const hasAny =
       result.workspaces.length > 0 ||
@@ -1074,56 +973,187 @@ export class QLBuilder {
     return hasAny ? result : null;
   }
 
-  static _splitValueList(raw) {
-    // Split a comma-separated list while honoring quoted strings.
-    const out = [];
-    let buf = '';
-    let inStr = false;
-    let escaping = false;
-    for (let i = 0; i < raw.length; i++) {
-      const ch = raw[i];
-      if (escaping) {
-        buf += ch;
-        escaping = false;
-        continue;
-      }
-      if (inStr) {
-        if (ch === '\\') {
-          escaping = true;
-          continue;
-        }
-        if (ch === '"') {
-          inStr = false;
-          continue;
-        }
-        buf += ch;
-        continue;
-      }
-      if (ch === '"') {
-        inStr = true;
-        continue;
-      }
-      if (ch === ',') {
-        const trimmed = buf.trim();
-        if (trimmed) out.push(trimmed);
-        buf = '';
-        continue;
-      }
-      buf += ch;
+  static _projectBuilderNode(node, result, options, customFieldsById) {
+    if (node?.type === NodeType.BINARY_OP && node.operator === 'AND') {
+      QLBuilder._projectBuilderNode(node.left, result, options, customFieldsById);
+      QLBuilder._projectBuilderNode(node.right, result, options, customFieldsById);
+      return;
     }
-    const trimmed = buf.trim();
-    if (trimmed) out.push(trimmed);
-    return out;
+
+    if (node?.type === NodeType.BINARY_OP && node.operator === 'OR') {
+      const search = QLBuilder._searchTermFromOr(node);
+      if (search !== null && (result.search === '' || result.search === search)) {
+        result.search = search;
+      } else {
+        result.dropped = true;
+        QLBuilder._projectBuilderNode(node.left, result, options, customFieldsById);
+        QLBuilder._projectBuilderNode(node.right, result, options, customFieldsById);
+      }
+      return;
+    }
+
+    if (node?.type === NodeType.BINARY_OP && node.operator === 'NOT') {
+      result.dropped = true;
+      QLBuilder._projectBuilderNode(node.right, result, options, customFieldsById);
+      return;
+    }
+
+    if (QLBuilder._projectBuiltInField(node, result, options)) return;
+    if (QLBuilder._projectCustomField(node, result, customFieldsById)) return;
+    result.dropped = true;
   }
 
-  static _unescapeString(s) {
-    return s.replace(/\\(["\\])/g, '$1');
+  static _projectBuiltInField(node, result, options) {
+    const isComparison = node?.type === NodeType.COMPARISON;
+    const isIn = node?.type === NodeType.IN_EXPRESSION;
+    if (!isComparison && !isIn) return false;
+
+    const fieldNode = isComparison ? node.left : node.field;
+    if (fieldNode?.type !== NodeType.IDENTIFIER) return false;
+    const fieldName = String(fieldNode.value).toLowerCase();
+
+    if (fieldName === 'title' && isComparison && node.operator === '~') {
+      const value = QLBuilder._builderNodeValue(node.right);
+      if (value === null) return false;
+      if (result.search !== '' && result.search !== value) result.dropped = true;
+      result.search = value;
+      return true;
+    }
+
+    const definition = BUILDER_INPUT_FIELDS.get(fieldName);
+    if (!definition || (node.operator !== '=' && node.operator !== 'IN')) return false;
+    const valueNodes = isComparison ? [node.right] : node.values?.values || [];
+    const values = valueNodes.map(QLBuilder._builderNodeValue).filter((value) => value !== null);
+    if (values.length !== valueNodes.length || values.length === 0) return false;
+
+    if (definition.mode === 'workspace') {
+      result[definition.state].push(...values);
+      return true;
+    }
+
+    if (definition.mode === 'workspaceId') {
+      for (const value of values) {
+        const match = (options.workspaces || []).find(
+          (workspace) => workspace.id === Number(value)
+        );
+        if (match?.key) result[definition.state].push(match.key);
+        else result.dropped = true;
+      }
+      return true;
+    }
+
+    if (definition.mode === 'id') {
+      for (const value of values) {
+        const id = Number(value);
+        if (Number.isInteger(id)) result[definition.state].push(id);
+        else result.dropped = true;
+      }
+      return true;
+    }
+
+    const catalog = options[definition.catalog] || [];
+    for (const value of values) {
+      const match = catalog.find(
+        (entry) => String(entry?.name ?? '').toLowerCase() === value.toLowerCase()
+      );
+      if (match?.id != null) result[definition.state].push(match.id);
+      else result.dropped = true;
+    }
+    return true;
   }
 
-  static _inferFieldFromValues(values) {
-    if (!values || values.length === 0) return 'text';
-    const allNumeric = values.every((v) => /^-?\d+(?:\.\d+)?$/.test(v));
-    if (allNumeric) return 'number';
+  static _projectCustomField(node, result, customFieldsById) {
+    const isComparison = node?.type === NodeType.COMPARISON;
+    const isIn = node?.type === NodeType.IN_EXPRESSION;
+    if (!isComparison && !isIn) return false;
+
+    const fieldNode = isComparison ? node.left : node.field;
+    if (fieldNode?.type !== NodeType.IDENTIFIER) return false;
+    const fieldId = String(fieldNode.value).trim();
+    const lowerField = fieldId.toLowerCase();
+    if (!lowerField.startsWith('cf_') && !lowerField.startsWith('custom.')) return false;
+
+    if (isIn) {
+      const valueNodes = node.values?.values || [];
+      const values = valueNodes.map(QLBuilder._builderNodeValue).filter((value) => value !== null);
+      if (values.length !== valueNodes.length || values.length === 0) return false;
+      const inferred = QLBuilder._inferFieldFromNodes(valueNodes);
+      result.dynamicFields.push({
+        field: QLBuilder._resolveField(fieldId, customFieldsById, inferred),
+        operator: node.operator,
+        value: '',
+        values,
+      });
+      return true;
+    }
+
+    const value = QLBuilder._builderNodeValue(node.right);
+    if (value === null) return false;
+    result.dynamicFields.push({
+      field: QLBuilder._resolveField(
+        fieldId,
+        customFieldsById,
+        QLBuilder._fieldTypeFromNode(node.right)
+      ),
+      operator: node.operator,
+      value,
+      values: [],
+    });
+    return true;
+  }
+
+  static _searchTermFromOr(node) {
+    const clauses = [];
+    const flatten = (candidate) => {
+      if (candidate?.type === NodeType.BINARY_OP && candidate.operator === 'OR') {
+        flatten(candidate.left);
+        flatten(candidate.right);
+      } else {
+        clauses.push(candidate);
+      }
+    };
+    flatten(node);
+    if (clauses.length !== 3) return null;
+
+    const expected = new Map([
+      ['title', '~'],
+      ['description', '~'],
+      ['key', '='],
+    ]);
+    let value = null;
+    for (const clause of clauses) {
+      if (clause?.type !== NodeType.COMPARISON || clause.left?.type !== NodeType.IDENTIFIER) {
+        return null;
+      }
+      const field = String(clause.left.value).toLowerCase();
+      if (expected.get(field) !== clause.operator) return null;
+      const clauseValue = QLBuilder._builderNodeValue(clause.right);
+      if (clauseValue === null || (value !== null && value !== clauseValue)) return null;
+      value = clauseValue;
+      expected.delete(field);
+    }
+    return expected.size === 0 ? value : null;
+  }
+
+  static _builderNodeValue(node) {
+    if (node?.type !== NodeType.LITERAL && node?.type !== NodeType.IDENTIFIER) return null;
+    return String(node.value);
+  }
+
+  static _fieldTypeFromNode(node) {
+    switch (node?.dataType) {
+      case TokenType.NUMBER:
+        return 'number';
+      case TokenType.BOOLEAN:
+        return 'boolean';
+      default:
+        return 'text';
+    }
+  }
+
+  static _inferFieldFromNodes(nodes) {
+    if (nodes.every((node) => node.dataType === TokenType.NUMBER)) return 'number';
+    if (nodes.every((node) => node.dataType === TokenType.BOOLEAN)) return 'boolean';
     return 'enum';
   }
 

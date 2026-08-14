@@ -17,6 +17,8 @@ const (
 	WorkspaceScopeName WorkspaceScopeField = "name"
 	WorkspaceScopeKey  WorkspaceScopeField = "key"
 	WorkspaceScopeID   WorkspaceScopeField = "id"
+	// WorkspaceScopeNameOrKey is the generic workspace field, which accepts either.
+	WorkspaceScopeNameOrKey WorkspaceScopeField = "name_or_key"
 )
 
 // WorkspaceScopeReference is one positive workspace value that bounds a query.
@@ -118,7 +120,7 @@ func extractWorkspaceScopeNode(node *ASTNode) ([]WorkspaceScopeReference, bool) 
 func workspaceScopeField(field string) (WorkspaceScopeField, bool) {
 	switch strings.ToLower(field) {
 	case "workspace":
-		return WorkspaceScopeName, true
+		return WorkspaceScopeNameOrKey, true
 	case "workspacekey":
 		return WorkspaceScopeKey, true
 	case "workspaceid", "workspace_id":
@@ -129,18 +131,24 @@ func workspaceScopeField(field string) (WorkspaceScopeField, bool) {
 }
 
 func workspaceScopeReference(field WorkspaceScopeField, node *ASTNode) (WorkspaceScopeReference, bool) {
-	if node == nil || node.Type != NodeLiteral {
+	if node == nil {
 		return WorkspaceScopeReference{}, false
 	}
 
 	switch field {
-	case WorkspaceScopeName, WorkspaceScopeKey:
-		if node.DataType != STRING || strings.TrimSpace(node.Value) == "" {
+	case WorkspaceScopeName, WorkspaceScopeKey, WorkspaceScopeNameOrKey:
+		if node.Type == NodeIdentifier {
+			if strings.TrimSpace(node.Value) == "" {
+				return WorkspaceScopeReference{}, false
+			}
+			return WorkspaceScopeReference{Field: field, Value: node.Value}, true
+		}
+		if node.Type != NodeLiteral || (node.DataType != STRING && node.DataType != IDENTIFIER) || strings.TrimSpace(node.Value) == "" {
 			return WorkspaceScopeReference{}, false
 		}
 		return WorkspaceScopeReference{Field: field, Value: node.Value}, true
 	case WorkspaceScopeID:
-		if node.DataType != NUMBER {
+		if node.Type != NodeLiteral || node.DataType != NUMBER {
 			return WorkspaceScopeReference{}, false
 		}
 		id, err := strconv.Atoi(node.Value)

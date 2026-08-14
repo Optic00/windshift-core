@@ -252,13 +252,14 @@ export function createWorkItemSearchStore() {
       console.warn('Failed to load reference data for builder recovery:', err);
     }
 
+    const wsList = get(workspaces);
     const parsed = QLBuilder.tryParseToBuilder(qlString, {
       customFields: customFieldsCatalog,
       statuses: statusCatalog,
       priorities: priorityCatalog,
+      workspaces: wsList,
     });
 
-    const wsList = get(workspaces);
     selectedWorkspaces.set(
       parsed
         ? parsed.workspaces

@@ -87,6 +87,24 @@ func (s *PublicBoardScopeService) AuthorizePublishing(userID int, query string) 
 
 func (s *PublicBoardScopeService) resolveReference(reference cql.WorkspaceScopeReference) ([]int, error) {
 	switch reference.Field {
+	case cql.WorkspaceScopeNameOrKey:
+		ids, err := s.workspaceRepo.ListIDsByName(reference.Value)
+		if err != nil {
+			return nil, err
+		}
+		keyID, err := s.workspaceRepo.FindIDByKey(reference.Value)
+		if err != nil && !errors.Is(err, repository.ErrNotFound) {
+			return nil, err
+		}
+		if err == nil {
+			for _, id := range ids {
+				if id == keyID {
+					return ids, nil
+				}
+			}
+			ids = append(ids, keyID)
+		}
+		return ids, nil
 	case cql.WorkspaceScopeName:
 		return s.workspaceRepo.ListIDsByName(reference.Value)
 	case cql.WorkspaceScopeKey:

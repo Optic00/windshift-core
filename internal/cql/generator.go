@@ -212,24 +212,101 @@ func (g *SQLGenerator) generateBinaryOp(node *ASTNode) (sql string, args []any, 
 	}
 }
 
-// getNameFieldForIDField returns a reference name field, when available.
-func (g *SQLGenerator) getNameFieldForIDField(fieldName string) (string, bool) {
-	lowerField := strings.ToLower(fieldName)
+type fieldSemantics struct {
+	caseInsensitive     bool
+	bareIdentifierValue bool
+	referenceNameField  string
+	workspaceReference  bool
+}
 
-	switch lowerField {
+// fieldSemanticsFor keeps value handling consistent across comparison and IN.
+func fieldSemanticsFor(entityType EntityType, fieldName string) fieldSemantics {
+	switch strings.ToLower(fieldName) {
+	case "status", "priority", "type", "assettype", "asset_type", "category":
+		return fieldSemantics{caseInsensitive: true, bareIdentifierValue: true}
+	}
+	if entityType != EntityTypeItem {
+		return fieldSemantics{}
+	}
+
+	switch strings.ToLower(fieldName) {
+	case "workspace":
+		return fieldSemantics{workspaceReference: true}
+	case "workspacekey":
+		return fieldSemantics{caseInsensitive: true, bareIdentifierValue: true}
 	case "project", "project_id", "projectid":
-		return "proj.name", true
+		return fieldSemantics{referenceNameField: "proj.name"}
 	// milestone fields are handled by generateMilestoneComparison (M2M via
 	// item_milestones); no name-substitution shortcut applies here.
 	case "itemtype", "item_type_id", "itemtypeid":
-		return "it.name", true
+		return fieldSemantics{referenceNameField: "it.name"}
 	case "timeproject", "time_project_id", "timeprojectid":
-		return "tp.name", true
+		return fieldSemantics{referenceNameField: "tp.name"}
 	case "iteration", "iteration_id", "iterationid":
-		return "iter.name", true
-	default:
-		return "", false
+		return fieldSemantics{referenceNameField: "iter.name"}
 	}
+	return fieldSemantics{}
+}
+
+func fieldValue(node *ASTNode) (any, error) {
+	if node == nil {
+		return nil, errors.New("field comparison requires a value")
+	}
+	switch node.Type {
+	case NodeLiteral:
+		return node.Value, nil
+	case NodeIdentifier:
+		return node.Value, nil
+	default:
+		return nil, fmt.Errorf("field comparison requires a literal value, got %v", node.Type)
+	}
+}
+
+func (g *SQLGenerator) generateWorkspaceComparison(node *ASTNode) (sql string, args []any, err error) {
+	value, err := fieldValue(node.Right)
+	if err != nil {
+		return "", nil, err
+	}
+	prefix := g.aliasPrefix
+	nameMatch := fmt.Sprintf("LOWER(%sw.name) = LOWER(?)", prefix)
+	keyMatch := fmt.Sprintf("LOWER(%sw.key) = LOWER(?)", prefix)
+
+	switch node.Operator {
+	case "=":
+		return fmt.Sprintf("(%s OR %s)", nameMatch, keyMatch), []any{value, value}, nil
+	case "!=", "<>":
+		return fmt.Sprintf("(NOT (%s) AND NOT (%s))", nameMatch, keyMatch), []any{value, value}, nil
+	default:
+		return "", nil, fmt.Errorf("operator %q is not supported on workspace references", node.Operator)
+	}
+}
+
+func (g *SQLGenerator) generateWorkspaceInExpression(node *ASTNode) (sql string, args []any, err error) {
+	if node.Values == nil || node.Values.Type != NodeList || len(node.Values.Arguments) == 0 {
+		return "", nil, errors.New("workspace IN requires at least one value")
+	}
+
+	values := make([]any, 0, len(node.Values.Arguments))
+	placeholders := make([]string, 0, len(node.Values.Arguments))
+	for _, valueNode := range node.Values.Arguments {
+		value, err := fieldValue(valueNode)
+		if err != nil {
+			return "", nil, err
+		}
+		values = append(values, value)
+		placeholders = append(placeholders, "LOWER(?)")
+	}
+
+	prefix := g.aliasPrefix
+	list := strings.Join(placeholders, ", ")
+	nameMatch := fmt.Sprintf("LOWER(%sw.name) IN (%s)", prefix, list)
+	keyMatch := fmt.Sprintf("LOWER(%sw.key) IN (%s)", prefix, list)
+	args = append(args, values...)
+	args = append(args, values...)
+	if strings.EqualFold(node.Operator, "NOT IN") {
+		return fmt.Sprintf("(NOT (%s) AND NOT (%s))", nameMatch, keyMatch), args, nil
+	}
+	return fmt.Sprintf("(%s OR %s)", nameMatch, keyMatch), args, nil
 }
 
 // generateLabelComparison matches global labels attached through item_labels.
@@ -430,6 +507,14 @@ func (g *SQLGenerator) generateMilestoneInExpression(node *ASTNode) (sql string,
 
 // generateComparison generates SQL for comparison operations
 func (g *SQLGenerator) generateComparison(node *ASTNode) (sql string, args []any, err error) {
+	semantics := fieldSemantics{}
+	if node.Left.Type == NodeIdentifier {
+		semantics = fieldSemanticsFor(g.entityType, node.Left.Value)
+		if semantics.workspaceReference {
+			return g.generateWorkspaceComparison(node)
+		}
+	}
+
 	// Labels use a many-to-many EXISTS query.
 	if node.Left.Type == NodeIdentifier && isLabelField(node.Left.Value) {
 		return g.generateLabelComparison(node)
@@ -459,17 +544,9 @@ func (g *SQLGenerator) generateComparison(node *ASTNode) (sql string, args []any
 		return "", nil, err
 	}
 
-	isCaseInsensitiveField := false
-	if node.Left.Type == NodeIdentifier {
-		fieldName := strings.ToLower(node.Left.Value)
-		if fieldName == "status" || fieldName == "priority" || fieldName == "type" || fieldName == "assettype" || fieldName == "asset_type" || fieldName == "category" {
-			isCaseInsensitiveField = true
-		}
-	}
-
 	var rightSQL string
 	var rightArgs []any
-	if isCaseInsensitiveField && node.Right.Type == NodeIdentifier {
+	if semantics.bareIdentifierValue && node.Right.Type == NodeIdentifier {
 		rightSQL = "?"
 		rightArgs = []any{node.Right.Value}
 	} else {
@@ -486,7 +563,7 @@ func (g *SQLGenerator) generateComparison(node *ASTNode) (sql string, args []any
 	// String reference values compare against the corresponding name field.
 	isReferenceFieldComparison := false
 	if node.Left.Type == NodeIdentifier && node.Right.Type == NodeLiteral && node.Right.DataType == STRING {
-		if nameField, isReferenceField := g.getNameFieldForIDField(node.Left.Value); isReferenceField {
+		if nameField := semantics.referenceNameField; nameField != "" {
 			// Replace the ID field with the name field for string comparisons
 			leftSQL = nameField
 			isReferenceFieldComparison = true
@@ -544,7 +621,7 @@ func (g *SQLGenerator) generateComparison(node *ASTNode) (sql string, args []any
 
 	switch node.Operator {
 	case "=":
-		if isCaseInsensitiveField {
+		if semantics.caseInsensitive {
 			// Make status, priority, type, category comparisons case-insensitive
 			return fmt.Sprintf("LOWER(%s) = LOWER(%s)", leftSQL, rightSQL), leftArgs, nil
 		}
@@ -554,7 +631,7 @@ func (g *SQLGenerator) generateComparison(node *ASTNode) (sql string, args []any
 		}
 		return fmt.Sprintf("%s = %s", leftSQL, rightSQL), leftArgs, nil
 	case "!=", "<>":
-		if isCaseInsensitiveField {
+		if semantics.caseInsensitive {
 			// Make status, priority, type, category comparisons case-insensitive
 			return fmt.Sprintf("LOWER(%s) != LOWER(%s)", leftSQL, rightSQL), leftArgs, nil
 		}
@@ -614,6 +691,14 @@ func (g *SQLGenerator) generateComparison(node *ASTNode) (sql string, args []any
 
 // generateInExpression generates SQL for IN expressions
 func (g *SQLGenerator) generateInExpression(node *ASTNode) (sql string, args []any, err error) {
+	semantics := fieldSemantics{}
+	if node.Field.Type == NodeIdentifier {
+		semantics = fieldSemanticsFor(g.entityType, node.Field.Value)
+		if semantics.workspaceReference {
+			return g.generateWorkspaceInExpression(node)
+		}
+	}
+
 	// Special handling for label field — uses EXISTS subqueries for many-to-many.
 	// Accept both `label` (canonical) and `labels` (UI plural) as aliases.
 	if node.Field.Type == NodeIdentifier && isLabelField(node.Field.Value) {
@@ -661,7 +746,7 @@ func (g *SQLGenerator) generateInExpression(node *ASTNode) (sql string, args []a
 	// If we have string values and this is a reference field, use the name field
 	isReferenceFieldIn := false
 	if node.Field.Type == NodeIdentifier && hasStringValue {
-		if nameField, isReferenceField := g.getNameFieldForIDField(node.Field.Value); isReferenceField {
+		if nameField := semantics.referenceNameField; nameField != "" {
 			// Replace the ID field with the name field for string comparisons
 			fieldSQL = nameField
 			isReferenceFieldIn = true
@@ -710,15 +795,6 @@ func (g *SQLGenerator) generateInExpression(node *ASTNode) (sql string, args []a
 		return fmt.Sprintf("(%s IS NOT NULL AND %s IN (%s))", fieldSQL, fieldSQL, subquery), args, nil
 	}
 
-	// Check if we're comparing status, priority, type, or category fields - make them case-insensitive
-	isCaseInsensitiveField := false
-	if node.Field.Type == NodeIdentifier {
-		fieldName := strings.ToLower(node.Field.Value)
-		if fieldName == "status" || fieldName == "priority" || fieldName == "type" || fieldName == "assettype" || fieldName == "asset_type" || fieldName == "category" {
-			isCaseInsensitiveField = true
-		}
-	}
-
 	// Custom field NUMERIC cast for IN expressions with number values.
 	// Both PostgreSQL ->> and SQLite ->> return TEXT, so CAST for numeric comparisons.
 	if node.Field.Type == NodeIdentifier {
@@ -734,7 +810,7 @@ func (g *SQLGenerator) generateInExpression(node *ASTNode) (sql string, args []a
 	args = append(args, fieldArgs...)
 
 	for _, valueNode := range node.Values.Arguments {
-		if isCaseInsensitiveField {
+		if semantics.caseInsensitive {
 			placeholders = append(placeholders, "LOWER(?)")
 		} else {
 			placeholders = append(placeholders, "?")
@@ -744,7 +820,7 @@ func (g *SQLGenerator) generateInExpression(node *ASTNode) (sql string, args []a
 
 	placeholderList := strings.Join(placeholders, ", ")
 
-	if isCaseInsensitiveField {
+	if semantics.caseInsensitive {
 		// Make status, priority, type, category IN comparisons case-insensitive
 		if strings.EqualFold(node.Operator, "NOT IN") {
 			return fmt.Sprintf("LOWER(%s) NOT IN (%s)", fieldSQL, placeholderList), args, nil
@@ -1803,10 +1879,6 @@ func (g *SQLGenerator) convertLiteral(node *ASTNode) any {
 		}
 		return int64(0)
 	case IDENTIFIER:
-		// For identifier literals in IN clauses, try to resolve workspace names
-		if id, exists := g.workspaceMap[strings.ToLower(node.Value)]; exists {
-			return id
-		}
 		return node.Value
 	case NULL:
 		return nil
