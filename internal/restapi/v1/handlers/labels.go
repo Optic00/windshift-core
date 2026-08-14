@@ -14,11 +14,9 @@ import (
 	"windshift/internal/services"
 )
 
-// LabelHandler exposes workspace item-label CRUD and item↔label attachment
-// endpoints on the bearer-token v1 surface. Mirrors the cookie-auth
-// handlers/labels.go in shape but uses bearer auth + the items:* token
-// scopes. Workspace view/edit is enforced in-handler (404-not-403 on
-// permission failure to avoid leaking label / workspace existence).
+// LabelHandler exposes the global item-label catalog and item assignments on
+// the bearer-token v1 surface. Workspace paths provide the authorization
+// context for catalog access.
 type LabelHandler struct {
 	BaseHandler
 	repo     *repository.LabelRepository
@@ -62,12 +60,12 @@ type labelListResponse struct {
 
 const defaultLabelColor = "#3B82F6"
 
-// --- workspace catalog ---
+// --- global catalog with workspace authorization context ---
 
 // ListForWorkspace handles GET /rest/api/v1/workspaces/{id}/labels
 //
-// @Summary      List workspace labels
-// @Description  Returns every item label defined in the workspace, alphabetically.
+// @Summary      List global labels
+// @Description  Returns the global item-label catalog alphabetically. The workspace path controls access.
 // @Tags         labels
 // @Produce      json
 // @Security     BearerAuth
@@ -80,11 +78,11 @@ const defaultLabelColor = "#3B82F6"
 // @Failure      500  {object}  handlers.ErrorResponse
 // @Router       /workspaces/{id}/labels [get]
 func (h *LabelHandler) ListForWorkspace(w http.ResponseWriter, r *http.Request) {
-	wsID, ok := h.RequireWorkspaceViewAccess(w, r)
+	_, ok := h.RequireWorkspaceViewAccess(w, r)
 	if !ok {
 		return
 	}
-	labels, err := h.repo.ListByWorkspace(wsID)
+	labels, err := h.repo.ListAll()
 	if err != nil {
 		h.RespondInternalError(w, r)
 		return
@@ -94,8 +92,8 @@ func (h *LabelHandler) ListForWorkspace(w http.ResponseWriter, r *http.Request) 
 
 // CreateInWorkspace handles POST /rest/api/v1/workspaces/{id}/labels
 //
-// @Summary      Create a workspace label
-// @Description  Creates a new item label in the workspace. `color` defaults to a neutral blue if omitted.
+// @Summary      Create a global label
+// @Description  Creates a global item label. The workspace path controls access; `color` defaults to neutral blue.
 // @Tags         labels
 // @Accept       json
 // @Produce      json
@@ -107,11 +105,11 @@ func (h *LabelHandler) ListForWorkspace(w http.ResponseWriter, r *http.Request) 
 // @Failure      401   {object}  handlers.ErrorResponse
 // @Failure      403   {object}  handlers.ErrorResponse  "Token lacks the items:write scope"
 // @Failure      404   {object}  handlers.ErrorResponse  "Workspace not found or not editable by caller"
-// @Failure      409   {object}  handlers.ErrorResponse  "A label with this name already exists in the workspace"
+// @Failure      409   {object}  handlers.ErrorResponse  "A global label with this name already exists"
 // @Failure      500   {object}  handlers.ErrorResponse
 // @Router       /workspaces/{id}/labels [post]
 func (h *LabelHandler) CreateInWorkspace(w http.ResponseWriter, r *http.Request) {
-	wsID, ok := h.RequireWorkspaceEditAccess(w, r)
+	_, ok := h.RequireWorkspaceEditAccess(w, r)
 	if !ok {
 		return
 	}
@@ -128,20 +126,20 @@ func (h *LabelHandler) CreateInWorkspace(w http.ResponseWriter, r *http.Request)
 		color = defaultLabelColor
 	}
 
-	exists, err := h.repo.NameExistsInWorkspace(wsID, name, 0)
+	exists, err := h.repo.NameExists(name, 0)
 	if err != nil {
 		h.RespondInternalError(w, r)
 		return
 	}
 	if exists {
-		h.RespondError(w, r, restapi.NewAPIError(http.StatusConflict, restapi.ErrCodeValidationFailed, "a label with this name already exists in this workspace"))
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusConflict, restapi.ErrCodeValidationFailed, "a label with this name already exists"))
 		return
 	}
 
-	id, _, err := h.repo.Create(name, color, wsID)
+	id, _, err := h.repo.Create(name, color)
 	if err != nil {
 		if errors.Is(err, repository.ErrDuplicateEntry) {
-			h.RespondError(w, r, restapi.NewAPIError(http.StatusConflict, restapi.ErrCodeValidationFailed, "a label with this name already exists in this workspace"))
+			h.RespondError(w, r, restapi.NewAPIError(http.StatusConflict, restapi.ErrCodeValidationFailed, "a label with this name already exists"))
 			return
 		}
 		h.RespondInternalError(w, r)
@@ -161,7 +159,7 @@ func (h *LabelHandler) CreateInWorkspace(w http.ResponseWriter, r *http.Request)
 
 // GetInWorkspace handles GET /rest/api/v1/workspaces/{id}/labels/{labelId}
 //
-// @Summary      Get a workspace label by ID
+// @Summary      Get a global label by ID
 // @Tags         labels
 // @Produce      json
 // @Security     BearerAuth
@@ -171,16 +169,16 @@ func (h *LabelHandler) CreateInWorkspace(w http.ResponseWriter, r *http.Request)
 // @Failure      400      {object}  handlers.ErrorResponse  "Invalid workspace or label ID"
 // @Failure      401      {object}  handlers.ErrorResponse
 // @Failure      403      {object}  handlers.ErrorResponse  "Token lacks the items:read scope"
-// @Failure      404      {object}  handlers.ErrorResponse  "Label not found in this workspace or not visible to caller"
+// @Failure      404      {object}  handlers.ErrorResponse  "Workspace not visible or label not found"
 // @Failure      500      {object}  handlers.ErrorResponse
 // @Router       /workspaces/{id}/labels/{labelId} [get]
 func (h *LabelHandler) GetInWorkspace(w http.ResponseWriter, r *http.Request) {
-	wsID, labelID, ok := h.resolveWorkspaceLabelAccess(w, r, h.Perms.CanViewWorkspace)
+	labelID, ok := h.resolveWorkspaceLabelAccess(w, r, h.Perms.CanViewWorkspace)
 	if !ok {
 		return
 	}
 	label, err := h.repo.GetByID(labelID)
-	if errors.Is(err, repository.ErrNotFound) || (err == nil && label.WorkspaceID != wsID) {
+	if errors.Is(err, repository.ErrNotFound) {
 		h.RespondNotFound(w, r)
 		return
 	}
@@ -193,8 +191,8 @@ func (h *LabelHandler) GetInWorkspace(w http.ResponseWriter, r *http.Request) {
 
 // UpdateInWorkspace handles PUT /rest/api/v1/workspaces/{id}/labels/{labelId}
 //
-// @Summary      Update a workspace label
-// @Description  Partial update: only fields supplied in the body are touched. Pass `color` as `""` to reset to the default neutral blue.
+// @Summary      Update a global label
+// @Description  Updates a global label. The workspace path controls access. Pass `color` as `""` to reset it.
 // @Tags         labels
 // @Accept       json
 // @Produce      json
@@ -206,17 +204,17 @@ func (h *LabelHandler) GetInWorkspace(w http.ResponseWriter, r *http.Request) {
 // @Failure      400      {object}  handlers.ErrorResponse  "Invalid request body or invalid field"
 // @Failure      401      {object}  handlers.ErrorResponse
 // @Failure      403      {object}  handlers.ErrorResponse  "Token lacks the items:write scope"
-// @Failure      404      {object}  handlers.ErrorResponse  "Label not found in this workspace or not editable by caller"
-// @Failure      409      {object}  handlers.ErrorResponse  "Another label in this workspace already has the new name"
+// @Failure      404      {object}  handlers.ErrorResponse  "Workspace not editable or label not found"
+// @Failure      409      {object}  handlers.ErrorResponse  "Another global label already has the new name"
 // @Failure      500      {object}  handlers.ErrorResponse
 // @Router       /workspaces/{id}/labels/{labelId} [put]
 func (h *LabelHandler) UpdateInWorkspace(w http.ResponseWriter, r *http.Request) {
-	wsID, labelID, ok := h.resolveWorkspaceLabelAccess(w, r, h.Perms.CanEditWorkspace)
+	labelID, ok := h.resolveWorkspaceLabelAccess(w, r, h.Perms.CanEditWorkspace)
 	if !ok {
 		return
 	}
 	existing, err := h.repo.GetByID(labelID)
-	if errors.Is(err, repository.ErrNotFound) || (err == nil && existing.WorkspaceID != wsID) {
+	if errors.Is(err, repository.ErrNotFound) {
 		h.RespondNotFound(w, r)
 		return
 	}
@@ -247,20 +245,20 @@ func (h *LabelHandler) UpdateInWorkspace(w http.ResponseWriter, r *http.Request)
 	}
 
 	if name != existing.Name {
-		exists, eerr := h.repo.NameExistsInWorkspace(wsID, name, labelID)
+		exists, eerr := h.repo.NameExists(name, labelID)
 		if eerr != nil {
 			h.RespondInternalError(w, r)
 			return
 		}
 		if exists {
-			h.RespondError(w, r, restapi.NewAPIError(http.StatusConflict, restapi.ErrCodeValidationFailed, "a label with this name already exists in this workspace"))
+			h.RespondError(w, r, restapi.NewAPIError(http.StatusConflict, restapi.ErrCodeValidationFailed, "a label with this name already exists"))
 			return
 		}
 	}
 
 	if err := h.repo.Update(labelID, name, color); err != nil {
 		if errors.Is(err, repository.ErrDuplicateEntry) {
-			h.RespondError(w, r, restapi.NewAPIError(http.StatusConflict, restapi.ErrCodeValidationFailed, "a label with this name already exists in this workspace"))
+			h.RespondError(w, r, restapi.NewAPIError(http.StatusConflict, restapi.ErrCodeValidationFailed, "a label with this name already exists"))
 			return
 		}
 		h.RespondInternalError(w, r)
@@ -279,7 +277,7 @@ func (h *LabelHandler) UpdateInWorkspace(w http.ResponseWriter, r *http.Request)
 
 // DeleteInWorkspace handles DELETE /rest/api/v1/workspaces/{id}/labels/{labelId}
 //
-// @Summary      Delete a workspace label
+// @Summary      Delete a global label
 // @Description  Cascade-removes the label from every item it was attached to.
 // @Tags         labels
 // @Security     BearerAuth
@@ -289,16 +287,16 @@ func (h *LabelHandler) UpdateInWorkspace(w http.ResponseWriter, r *http.Request)
 // @Failure      400      {object}  handlers.ErrorResponse  "Invalid workspace or label ID"
 // @Failure      401      {object}  handlers.ErrorResponse
 // @Failure      403      {object}  handlers.ErrorResponse  "Token lacks the items:write scope"
-// @Failure      404      {object}  handlers.ErrorResponse  "Label not found in this workspace or not editable by caller"
+// @Failure      404      {object}  handlers.ErrorResponse  "Workspace not editable or label not found"
 // @Failure      500      {object}  handlers.ErrorResponse
 // @Router       /workspaces/{id}/labels/{labelId} [delete]
 func (h *LabelHandler) DeleteInWorkspace(w http.ResponseWriter, r *http.Request) {
-	wsID, labelID, ok := h.resolveWorkspaceLabelAccess(w, r, h.Perms.CanEditWorkspace)
+	labelID, ok := h.resolveWorkspaceLabelAccess(w, r, h.Perms.CanEditWorkspace)
 	if !ok {
 		return
 	}
 	existing, err := h.repo.GetByID(labelID)
-	if errors.Is(err, repository.ErrNotFound) || (err == nil && existing.WorkspaceID != wsID) {
+	if errors.Is(err, repository.ErrNotFound) {
 		h.RespondNotFound(w, r)
 		return
 	}
@@ -343,7 +341,7 @@ func (h *LabelHandler) ListForItem(w http.ResponseWriter, r *http.Request) {
 // SetForItem handles PUT /rest/api/v1/items/{id}/labels
 //
 // @Summary      Replace the label set on an item
-// @Description  Atomically replaces every label attached to the item with the supplied IDs. Labels must belong to the item's workspace.
+// @Description  Atomically replaces every global label attached to the item with the supplied IDs.
 // @Tags         labels
 // @Accept       json
 // @Produce      json
@@ -354,7 +352,7 @@ func (h *LabelHandler) ListForItem(w http.ResponseWriter, r *http.Request) {
 // @Failure      400   {object}  handlers.ErrorResponse  "Invalid request body"
 // @Failure      401   {object}  handlers.ErrorResponse
 // @Failure      403   {object}  handlers.ErrorResponse  "Token lacks the items:write scope"
-// @Failure      404   {object}  handlers.ErrorResponse  "Item not found, not editable, or label doesn't belong to the workspace"
+// @Failure      404   {object}  handlers.ErrorResponse  "Item not found, not editable, or label not found"
 // @Failure      500   {object}  handlers.ErrorResponse
 // @Router       /items/{id}/labels [put]
 func (h *LabelHandler) SetForItem(w http.ResponseWriter, r *http.Request) {
@@ -366,7 +364,7 @@ func (h *LabelHandler) SetForItem(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
-	if !h.labelsBelongToWorkspace(w, r, req.LabelIDs, item.WorkspaceID) {
+	if !h.labelsExist(w, r, req.LabelIDs) {
 		return
 	}
 	if err := h.repo.ReplaceItemLabels(item.ID, req.LabelIDs); err != nil {
@@ -389,7 +387,7 @@ func (h *LabelHandler) SetForItem(w http.ResponseWriter, r *http.Request) {
 // @Failure      400   {object}  handlers.ErrorResponse  "Invalid request body or missing required field"
 // @Failure      401   {object}  handlers.ErrorResponse
 // @Failure      403   {object}  handlers.ErrorResponse  "Token lacks the items:write scope"
-// @Failure      404   {object}  handlers.ErrorResponse  "Item not found, not editable, or label doesn't belong to the workspace"
+// @Failure      404   {object}  handlers.ErrorResponse  "Item not found, not editable, or label not found"
 // @Failure      409   {object}  handlers.ErrorResponse  "Label is already attached to this item"
 // @Failure      500   {object}  handlers.ErrorResponse
 // @Router       /items/{id}/labels [post]
@@ -406,7 +404,7 @@ func (h *LabelHandler) AddToItem(w http.ResponseWriter, r *http.Request) {
 		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeMissingField, "label_id is required"))
 		return
 	}
-	if !h.labelsBelongToWorkspace(w, r, []int{req.LabelID}, item.WorkspaceID) {
+	if !h.labelsExist(w, r, []int{req.LabelID}) {
 		return
 	}
 	if err := h.repo.AddItemLabel(item.ID, req.LabelID); err != nil {
@@ -455,25 +453,25 @@ func (h *LabelHandler) RemoveFromItem(w http.ResponseWriter, r *http.Request) {
 // resolveWorkspaceLabelAccess parses {id} (workspace) + {labelId} from the
 // path and verifies the caller has the given permission on the workspace.
 // Permission failure returns 404 so the caller can't probe workspace IDs.
-func (h *LabelHandler) resolveWorkspaceLabelAccess(w http.ResponseWriter, r *http.Request, permCheck func(int, int) (bool, error)) (workspaceID, labelID int, ok bool) {
+func (h *LabelHandler) resolveWorkspaceLabelAccess(w http.ResponseWriter, r *http.Request, permCheck func(int, int) (bool, error)) (labelID int, ok bool) {
 	user, ok := h.RequireAuth(w, r)
 	if !ok {
-		return 0, 0, false
+		return 0, false
 	}
-	workspaceID, ok = h.ParsePathID(w, r, "id", "workspace ID")
+	workspaceID, ok := h.ParsePathID(w, r, "id", "workspace ID")
 	if !ok {
-		return 0, 0, false
+		return 0, false
 	}
 	labelID, ok = h.ParsePathID(w, r, "labelId", "label ID")
 	if !ok {
-		return 0, 0, false
+		return 0, false
 	}
 	allowed, err := permCheck(user.ID, workspaceID)
 	if err != nil || !allowed {
 		h.RespondNotFound(w, r)
-		return 0, 0, false
+		return 0, false
 	}
-	return workspaceID, labelID, true
+	return labelID, true
 }
 
 // resolveItemAccess loads the item from path param `id` and applies the
@@ -505,13 +503,11 @@ func (h *LabelHandler) resolveItemAccess(w http.ResponseWriter, r *http.Request,
 	return item, true
 }
 
-// labelsBelongToWorkspace ensures every supplied label ID lives in the
-// expected workspace. Missing or cross-workspace IDs surface as 404 so an
-// agent can't learn labels exist in other workspaces by trying them here.
-func (h *LabelHandler) labelsBelongToWorkspace(w http.ResponseWriter, r *http.Request, labelIDs []int, workspaceID int) bool {
+// labelsExist hides unknown global label IDs as 404.
+func (h *LabelHandler) labelsExist(w http.ResponseWriter, r *http.Request, labelIDs []int) bool {
 	for _, id := range labelIDs {
-		ws, err := h.repo.GetWorkspaceID(id)
-		if errors.Is(err, repository.ErrNotFound) || (err == nil && ws != workspaceID) {
+		_, err := h.repo.GetByID(id)
+		if errors.Is(err, repository.ErrNotFound) {
 			h.RespondNotFound(w, r)
 			return false
 		}

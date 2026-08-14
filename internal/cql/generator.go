@@ -232,7 +232,7 @@ func (g *SQLGenerator) getNameFieldForIDField(fieldName string) (string, bool) {
 	}
 }
 
-// generateLabelComparison matches workspace labels attached through item_labels.
+// generateLabelComparison matches global labels attached through item_labels.
 func (g *SQLGenerator) generateLabelComparison(node *ASTNode) (sql string, args []any, err error) {
 	prefix := g.aliasPrefix
 	rightValue := node.Right.Value

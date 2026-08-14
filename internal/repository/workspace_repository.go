@@ -87,6 +87,41 @@ func (r *WorkspaceRepository) ListNameKeyToIDMap() (map[string]int, error) {
 	return m, nil
 }
 
+// ListIDsByName returns every workspace with the given case-insensitive name.
+func (r *WorkspaceRepository) ListIDsByName(name string) ([]int, error) {
+	rows, err := r.db.Query("SELECT id FROM workspaces WHERE LOWER(name) = LOWER(?) ORDER BY id", name)
+	if err != nil {
+		return nil, fmt.Errorf("list workspace ids by name: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var ids []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan workspace id by name: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate workspace ids by name: %w", err)
+	}
+	return ids, nil
+}
+
+// FindIDByKey resolves a case-insensitive workspace key.
+func (r *WorkspaceRepository) FindIDByKey(key string) (int, error) {
+	var id int
+	err := r.db.QueryRow("SELECT id FROM workspaces WHERE LOWER(key) = LOWER(?)", key).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("find workspace id by key: %w", err)
+	}
+	return id, nil
+}
+
 // ListActiveIDs returns the IDs of every workspace where active = true.
 //
 // Callers that need a per-user permission filter (e.g. item.view) should

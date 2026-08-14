@@ -335,11 +335,8 @@ func RegisterRoutes(deps restapi.Deps) {
 	v1.HandleWithMiddleware("POST /recurrence-rules/preview", recurrenceHandler.PreviewRRule, bearerAuth.RequirePermission("items:read"))
 
 	// ============================================
-	// Item labels (workspace-scoped catalog + per-item attach/detach).
-	// Mirrors the page-labels surface in shape: catalog CRUD lives under
-	// /workspaces/{id}/labels, and the per-item attachments live under
-	// /items/{id}/labels. Gated by items:* because these labels are
-	// item-content; the handler enforces workspace view/edit on top.
+	// Global item-label catalog + per-item attach/detach. Catalog routes keep
+	// the workspace path as their authorization context.
 	// ============================================
 	v1.HandleWithMiddleware("GET /workspaces/{id}/labels", labelHandler.ListForWorkspace, bearerAuth.RequirePermission("items:read"), router.RequireNumericID)
 	v1.HandleWithMiddleware("POST /workspaces/{id}/labels", labelHandler.CreateInWorkspace, bearerAuth.RequirePermission("items:write"), router.RequireNumericID)

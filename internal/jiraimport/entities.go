@@ -127,15 +127,15 @@ func (s *Service) EnsureImportedDummyUser(email string) (int, error) {
 	return 0, createErr
 }
 
-func (s *Service) EnsureLabel(workspaceID int, name string) (int, error) {
-	id, err := s.labels.FindIDByName(workspaceID, name)
+func (s *Service) EnsureLabel(name string) (int, error) {
+	id, err := s.labels.FindIDByName(name)
 	if err == nil {
 		return id, nil
 	}
 	if !errors.Is(err, repository.ErrNotFound) {
 		return 0, err
 	}
-	id64, _, err := s.labels.Create(name, "", workspaceID)
+	id64, _, err := s.labels.Create(name, "")
 	return int(id64), err
 }
 

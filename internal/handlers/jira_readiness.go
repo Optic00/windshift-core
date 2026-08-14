@@ -536,7 +536,7 @@ func buildFindings(t *projectScanTally, fields map[string]jira.FieldMappingSugge
 	if t.labeledIssues > 0 {
 		findings = append(findings, jira.Finding{
 			Entity: "Labels", Category: "labels", Severity: jira.SeverityClean,
-			Reason: "Labels import as workspace-scoped labels.", UsageCount: t.labeledIssues,
+			Reason: "Labels import into the global item-label catalog.", UsageCount: t.labeledIssues,
 		})
 	}
 	for name, n := range t.linkTypeUsage {

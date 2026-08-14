@@ -1082,7 +1082,7 @@ func (s *IssueSyncService) syncLabels(ctx context.Context, tx database.Tx, confi
 			if color == "" {
 				color = "808080"
 			}
-			labelID, err := labelRepo.EnsureByNameTx(ctx, tx, config.WorkspaceID, l.Name, color)
+			labelID, err := labelRepo.EnsureByNameTx(ctx, tx, l.Name, color)
 			if err != nil {
 				return fmt.Errorf("ensure mirrored label %q: %w", l.Name, err)
 			}

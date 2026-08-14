@@ -409,19 +409,17 @@ type CustomField struct {
 // Item Labels
 // ============================================
 
-// Label is a workspace-scoped work-item label (fully separate from the
-// page-label system). Mirrors models.Label on the wire.
+// Label is a global work-item label, separate from page labels.
 type Label struct {
-	ID          int       `json:"id"`
-	Name        string    `json:"name"`
-	Color       string    `json:"color"`
-	WorkspaceID int       `json:"workspace_id"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID        int       `json:"id"`
+	Name      string    `json:"name"`
+	Color     string    `json:"color"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // LabelListResponse is the {items:[...]} envelope used by the v1
-// workspace-label and item-label endpoints.
+// global-label and item-label endpoints.
 type LabelListResponse struct {
 	Items []Label `json:"items"`
 }

@@ -224,9 +224,9 @@ export const personalLabels = {
     }),
 };
 
-// Workspace labels
+// Global item labels
 export const labels = {
-  getAll: (workspaceId) => fetchAPI(`/labels?workspace_id=${encodeURIComponent(workspaceId)}`),
+  getAll: () => fetchAPI('/labels'),
   get: (id) => fetchAPI(`/labels/${id}`),
   create: (data) =>
     fetchAPI('/labels', {

@@ -250,7 +250,7 @@
       const updated = await api.labels.setForItem(item.id, labelIds);
       if (item) item.labels = updated || [];
     } catch (err) {
-      console.error('Failed to save workspace labels:', err);
+      console.error('Failed to save labels:', err);
       errorToast(err?.message || 'Failed to save labels');
     }
   }

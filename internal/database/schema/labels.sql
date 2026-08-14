@@ -1,18 +1,14 @@
--- Labels table for workspace-scoped item labels
+-- Global item-label catalog
 
 CREATE TABLE IF NOT EXISTS labels (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     color TEXT DEFAULT '#3B82F6',
-    workspace_id INTEGER NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
-    UNIQUE(name, workspace_id)
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS idx_labels_workspace_id ON labels(workspace_id);
-CREATE INDEX IF NOT EXISTS idx_labels_workspace_name ON labels(workspace_id, name);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_labels_name_ci ON labels(LOWER(name));
 
 -- Junction table for item-label many-to-many relationship
 

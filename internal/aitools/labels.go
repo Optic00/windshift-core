@@ -13,14 +13,13 @@ import (
 )
 
 type listLabelsArgs struct {
-	WorkspaceID int `json:"workspace_id" jsonschema:"Workspace ID to list labels for"`
+	WorkspaceID int `json:"workspace_id" jsonschema:"Workspace ID used to authorize access to the global label catalog"`
 }
 
 type labelDTO struct {
-	ID          int    `json:"id"`
-	Name        string `json:"name"`
-	Color       string `json:"color"`
-	WorkspaceID int    `json:"workspace_id"`
+	ID    int    `json:"id"`
+	Name  string `json:"name"`
+	Color string `json:"color"`
 }
 
 type listLabelsOut struct {
@@ -45,19 +44,19 @@ func init() {
 		Group:       CapabilityPlanningActivity,
 		Access:      AccessRead,
 		Risk:        RiskLow,
-		Description: "List all labels in a workspace.",
+		Description: "List the global work-item label catalog.",
 		Scopes:      []string{auth.ScopeItemsRead},
 		Run: func(_ context.Context, env *Env, args listLabelsArgs) (any, error) {
 			if !env.HasWorkspaceAccess(args.WorkspaceID) {
 				return map[string]string{"error": "workspace not found"}, nil
 			}
-			labels, err := repository.NewLabelRepository(env.DB).ListByWorkspace(args.WorkspaceID)
+			labels, err := repository.NewLabelRepository(env.DB).ListAll()
 			if err != nil {
 				return nil, err
 			}
 			out := listLabelsOut{Labels: make([]labelDTO, 0, len(labels))}
 			for _, l := range labels {
-				out.Labels = append(out.Labels, labelDTO{ID: l.ID, Name: l.Name, Color: l.Color, WorkspaceID: l.WorkspaceID})
+				out.Labels = append(out.Labels, labelDTO{ID: l.ID, Name: l.Name, Color: l.Color})
 			}
 			return out, nil
 		},
@@ -90,21 +89,16 @@ func init() {
 				return map[string]string{"error": "permission denied"}, nil
 			}
 			labelRepo := repository.NewLabelRepository(env.DB)
-			// Validate every requested label exists in the item's workspace,
-			// deduplicating so the replace below never hits the unique
-			// constraint on (item_id, label_id).
+			// Validate every requested global label and deduplicate IDs.
 			seen := make(map[int]bool, len(args.LabelIDs))
 			labelIDs := make([]int, 0, len(args.LabelIDs))
 			for _, labelID := range args.LabelIDs {
-				wsID, err := labelRepo.GetWorkspaceID(labelID)
+				_, err := labelRepo.GetByID(labelID)
 				if errors.Is(err, repository.ErrNotFound) {
 					return map[string]string{"error": fmt.Sprintf("label %d not found", labelID)}, nil
 				}
 				if err != nil {
 					return nil, err
-				}
-				if wsID != item.WorkspaceID {
-					return map[string]string{"error": fmt.Sprintf("label %d belongs to a different workspace", labelID)}, nil
 				}
 				if seen[labelID] {
 					continue

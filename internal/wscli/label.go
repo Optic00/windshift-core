@@ -16,17 +16,17 @@ var (
 	taskLabelSet    []string
 )
 
-// --- workspace label catalog: `ws label ...` ---
+// --- global label catalog: `ws label ...` ---
 
 var labelCmd = &cobra.Command{
 	Use:   "label",
-	Short: "Manage workspace item labels",
-	Long: `Item labels are workspace-scoped labels that attach to work items.
+	Short: "Manage global item labels",
+	Long: `Item labels come from a global catalog and attach to work items.
 Fully separate from page labels — they live in their own table and never
 collide with the page-label namespace.
 
-A workspace must be configured via -w, $WS_WORKSPACE, or
-defaults.workspace_key in ws.toml.
+A workspace must be configured to provide the API authorization context.
+Use -w, $WS_WORKSPACE, or defaults.workspace_key in ws.toml.
 
 Examples:
   ws label ls
@@ -36,7 +36,7 @@ Examples:
 
 var labelListCmd = &cobra.Command{
 	Use:   "ls",
-	Short: "List item labels in the current workspace",
+	Short: "List global item labels",
 	RunE: func(_ *cobra.Command, _ []string) error {
 		client, err := NewClient()
 		if err != nil {
@@ -65,8 +65,8 @@ prints the labels currently attached to the item. Pass any combination of
 --add and --remove, or --set, to mutate the assignment set (--set is
 exclusive with --add/--remove and atomically replaces the full set).
 
-Labels are given by name (case-insensitive, resolved against the item's
-workspace catalog) or numeric ID.
+Labels are given by name (case-insensitive, resolved against the global
+catalog) or numeric ID.
 
 Examples:
   ws task label PROJ-12
@@ -99,14 +99,14 @@ Examples:
 			return nil
 		}
 
-		// Name resolution needs the item's workspace catalog.
+		// The workspace path supplies authorization context for catalog access.
 		item, err := client.GetItem(itemID, "")
 		if err != nil {
 			return fmt.Errorf("failed to get item: %w", err)
 		}
 		catalog, err := client.ListLabels(item.WorkspaceID)
 		if err != nil {
-			return fmt.Errorf("failed to list workspace labels: %w", err)
+			return fmt.Errorf("failed to list global labels: %w", err)
 		}
 
 		var labels []Label
@@ -154,7 +154,7 @@ Examples:
 }
 
 // resolveLabelIDs maps label names / numeric IDs to label IDs using the
-// workspace catalog. Names match case-insensitively, exact first, then
+// global catalog. Names match case-insensitively, exact first, then
 // unique substring — same convention as resolveItemTypeID.
 func resolveLabelIDs(inputs []string, catalog []Label) ([]int, error) {
 	ids := make([]int, 0, len(inputs))

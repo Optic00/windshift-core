@@ -41,6 +41,7 @@ type CollectionHandler struct {
 	db                database.Database
 	repo              *repository.CollectionRepository
 	permissionService *services.PermissionService
+	publicBoardScope  *services.PublicBoardScopeService
 }
 
 func NewCollectionHandler(db database.Database, permissionService *services.PermissionService) *CollectionHandler {
@@ -48,7 +49,25 @@ func NewCollectionHandler(db database.Database, permissionService *services.Perm
 		db:                db,
 		repo:              repository.NewCollectionRepository(db),
 		permissionService: permissionService,
+		publicBoardScope:  services.NewPublicBoardScopeService(db, permissionService),
 	}
+}
+
+func (h *CollectionHandler) authorizePublicBoardScope(w http.ResponseWriter, r *http.Request, userID int, query string) bool {
+	_, err := h.publicBoardScope.AuthorizePublishing(userID, query)
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, services.ErrPublicBoardWorkspaceScopeRequired):
+		respondValidationError(w, r, "Public boards require a workspace scope in the collection query")
+	case errors.Is(err, services.ErrPublicBoardWorkspaceNotFound):
+		respondValidationError(w, r, "Public board query references an unknown workspace")
+	case errors.Is(err, services.ErrPublicBoardWorkspaceAdminRequired):
+		respondForbidden(w, r)
+	default:
+		respondInternalError(w, r, err)
+	}
+	return false
 }
 
 // requireCollectionOwner authenticates and verifies creator ownership.
@@ -206,6 +225,9 @@ func (h *CollectionHandler) Create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if collection.IsPublic && !h.authorizePublicBoardScope(w, r, currentUser.ID, collection.QLQuery) {
+		return
+	}
 
 	if err := h.repo.Create(&collection, currentUser.ID); err != nil {
 		respondInternalError(w, r, err)
@@ -254,6 +276,7 @@ func (h *CollectionHandler) Update(w http.ResponseWriter, r *http.Request) {
 	_, isPublicProvided := payload["is_public"]
 	_, publicSlugProvided := payload["public_slug"]
 	_, filterStateProvided := payload["filter_state"]
+	_, qlQueryProvided := payload["ql_query"]
 
 	// Validate required fields
 	if collection.Name == "" {
@@ -279,10 +302,11 @@ func (h *CollectionHandler) Update(w http.ResponseWriter, r *http.Request) {
 		collection.IsPublic = existing.IsPublic
 	}
 
-	// Check public board permission if trying to change public status or slug
+	// Public queries and workspace associations change anonymous visibility.
 	changingPublic := isPublicProvided && collection.IsPublic != existing.IsPublic
 	changingSlug := publicSlugProvided
-	if changingPublic || changingSlug {
+	changingPublicScope := collection.IsPublic && (qlQueryProvided || workspaceProvided)
+	if changingPublic || changingSlug || changingPublicScope {
 		isAdmin, _ := h.permissionService.IsSystemAdmin(currentUser.ID)
 		hasPerm, _ := h.permissionService.HasGlobalPermission(currentUser.ID, models.PermissionPublicBoardManage)
 		if !isAdmin && !hasPerm {
@@ -319,6 +343,9 @@ func (h *CollectionHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !filterStateProvided {
 		collection.FilterState = existing.FilterState
 	}
+	if !qlQueryProvided {
+		collection.QLQuery = existing.QLQuery
+	}
 
 	// Validate workspace_id if provided — check user has view permission
 	if workspaceProvided && collection.WorkspaceID != nil {
@@ -343,6 +370,10 @@ func (h *CollectionHandler) Update(w http.ResponseWriter, r *http.Request) {
 			respondValidationError(w, r, "Category not found")
 			return
 		}
+	}
+	requiresScopeAuthorization := collection.IsPublic && (!existing.IsPublic || qlQueryProvided || workspaceProvided)
+	if requiresScopeAuthorization && !h.authorizePublicBoardScope(w, r, currentUser.ID, collection.QLQuery) {
+		return
 	}
 
 	if err := h.repo.Update(id, &collection); err != nil {
@@ -396,6 +427,14 @@ func (h *CollectionHandler) UpdatePublicSharing(w http.ResponseWriter, r *http.R
 		}
 		if !slugRegex.MatchString(*payload.PublicSlug) {
 			respondValidationError(w, r, "Public slug must be 3-64 characters, lowercase alphanumeric and hyphens only")
+			return
+		}
+		collection, err := h.repo.GetModel(id)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return
+		}
+		if !h.authorizePublicBoardScope(w, r, currentUser.ID, collection.QLQuery) {
 			return
 		}
 	}

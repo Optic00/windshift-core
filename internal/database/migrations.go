@@ -70,6 +70,45 @@ const legacyScopeRowsAbsent = `
 // with row dependencies; otherwise entries may be reordered freely.
 var Catalog = []Migration{
 	{
+		Version:       "20260814_global_item_labels",
+		Name:          "Consolidate item labels into a global catalog",
+		CheckSQLite:   "SELECT CASE WHEN EXISTS(SELECT 1 FROM pragma_table_info('labels') WHERE name='workspace_id') THEN 0 ELSE 1 END",
+		CheckPostgres: "SELECT CASE WHEN EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='labels' AND column_name='workspace_id') THEN 0 ELSE 1 END",
+		SQLite:        "global item-label migration handled by ApplySQLite",
+		ApplySQLite:   migrateSQLiteGlobalItemLabels,
+		Postgres: `
+			INSERT INTO item_labels (item_id, label_id, created_at)
+			SELECT il.item_id,
+			       (SELECT MIN(canonical.id) FROM labels canonical WHERE LOWER(canonical.name) = LOWER(duplicate.name)),
+			       il.created_at
+			FROM item_labels il
+			JOIN labels duplicate ON duplicate.id = il.label_id
+			WHERE duplicate.id <> (
+				SELECT MIN(canonical.id) FROM labels canonical WHERE LOWER(canonical.name) = LOWER(duplicate.name)
+			)
+			ON CONFLICT (item_id, label_id) DO NOTHING;
+
+			DELETE FROM item_labels
+			WHERE label_id IN (
+				SELECT duplicate.id
+				FROM labels duplicate
+				WHERE duplicate.id <> (
+					SELECT MIN(canonical.id) FROM labels canonical WHERE LOWER(canonical.name) = LOWER(duplicate.name)
+				)
+			);
+
+			DELETE FROM labels duplicate
+			WHERE duplicate.id <> (
+				SELECT MIN(canonical.id) FROM labels canonical WHERE LOWER(canonical.name) = LOWER(duplicate.name)
+			);
+
+			DROP INDEX IF EXISTS idx_labels_workspace_id;
+			DROP INDEX IF EXISTS idx_labels_workspace_name;
+			ALTER TABLE labels DROP COLUMN workspace_id CASCADE;
+			CREATE UNIQUE INDEX uq_labels_name_ci ON labels(LOWER(name));
+		`,
+	},
+	{
 		Version:         "20260807_global_rank_state",
 		Name:            "Add durable global rank rebalance state",
 		CheckSQLite:     "SELECT CASE WHEN (SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'global_rank_state') = 1 AND (SELECT COUNT(*) FROM global_rank_state WHERE id = 1) = 1 THEN 1 ELSE 0 END",

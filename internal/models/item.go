@@ -101,7 +101,7 @@ type Item struct {
 	RelatedWorkItemWorkspaceID  int             `json:"related_work_item_workspace_id,omitempty"`
 	RelatedWorkItemNumber       int             `json:"related_work_item_number,omitempty"`
 	Children                    []Item          `json:"children,omitempty"` // For tree representations
-	Labels                      []Label         `json:"labels,omitempty"`   // Workspace-scoped labels
+	Labels                      []Label         `json:"labels,omitempty"`   // Global item labels
 	PersonalLabels              []PersonalLabel `json:"personal_labels,omitempty"`
 	Milestones                  []Milestone     `json:"milestones,omitempty"`
 }

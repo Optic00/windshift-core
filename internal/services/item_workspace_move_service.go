@@ -383,7 +383,7 @@ func displayMoveValue(id *int, name string) string {
 }
 
 func (s *ItemWorkspaceMoveService) populatePreviewMappings(preview *ItemWorkspaceMovePreview, item *itemMoveSnapshot) error {
-	keptLabels, droppedLabels, err := s.previewLabels(item.ID, preview.DestinationWorkspaceID)
+	keptLabels, droppedLabels, err := s.previewLabels(item.ID)
 	if err != nil {
 		return err
 	}
@@ -462,35 +462,27 @@ func collectionMoveAction(kept, dropped int) string {
 	return "keep"
 }
 
-func (s *ItemWorkspaceMoveService) previewLabels(itemID, destinationWorkspaceID int) (kept, dropped []string, err error) {
+func (s *ItemWorkspaceMoveService) previewLabels(itemID int) (kept, dropped []string, err error) {
 	rows, err := s.db.Query(`
-		SELECT source.name,
-		       CASE WHEN destination.id IS NULL THEN false ELSE true END
+		SELECT labels.name
 		FROM item_labels il
-		JOIN labels source ON source.id = il.label_id
-		LEFT JOIN labels destination
-		  ON destination.workspace_id = ? AND LOWER(destination.name) = LOWER(source.name)
+		JOIN labels ON labels.id = il.label_id
 		WHERE il.item_id = ?
-		ORDER BY source.name
-	`, destinationWorkspaceID, itemID)
+		ORDER BY labels.name
+	`, itemID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("preview item labels: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	kept, dropped = []string{}, []string{}
+	kept = []string{}
 	for rows.Next() {
 		var name string
-		var available bool
-		if err := rows.Scan(&name, &available); err != nil {
+		if err := rows.Scan(&name); err != nil {
 			return nil, nil, err
 		}
-		if available {
-			kept = append(kept, name)
-		} else {
-			dropped = append(dropped, name)
-		}
+		kept = append(kept, name)
 	}
-	return kept, dropped, rows.Err()
+	return kept, []string{}, rows.Err()
 }
 
 func (s *ItemWorkspaceMoveService) destinationCustomFields(values map[string]any, workspaceID, itemTypeID int) (keptValues map[string]any, kept, dropped []string, err error) {
@@ -567,11 +559,6 @@ func (s *ItemWorkspaceMoveService) Move(itemID, actorUserID int, input ItemWorks
 	if err != nil {
 		return nil, fmt.Errorf("encode destination custom fields: %w", err)
 	}
-	labelIDs, err := s.destinationLabelIDs(itemID, input.DestinationWorkspaceID)
-	if err != nil {
-		return nil, err
-	}
-
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, fmt.Errorf("begin item workspace move: %w", err)
@@ -595,14 +582,6 @@ func (s *ItemWorkspaceMoveService) Move(itemID, actorUserID int, input ItemWorks
 	childIDs, err := detachMoveChildren(tx, itemID)
 	if err != nil {
 		return nil, err
-	}
-	if _, err := tx.Exec(`DELETE FROM item_labels WHERE item_id = ?`, itemID); err != nil {
-		return nil, fmt.Errorf("clear source labels: %w", err)
-	}
-	for _, labelID := range labelIDs {
-		if _, err := tx.Exec(`INSERT INTO item_labels (item_id, label_id, created_at) VALUES (?, ?, ?)`, itemID, labelID, now); err != nil {
-			return nil, fmt.Errorf("attach destination label: %w", err)
-		}
 	}
 	if _, err := tx.Exec(`DELETE FROM item_milestones WHERE item_id = ?`, itemID); err != nil {
 		return nil, fmt.Errorf("clear milestones: %w", err)
@@ -674,30 +653,6 @@ func (s *ItemWorkspaceMoveService) Move(itemID, actorUserID int, input ItemWorks
 		Preview:          preview,
 		DetachedChildIDs: childIDs,
 	}, nil
-}
-
-func (s *ItemWorkspaceMoveService) destinationLabelIDs(itemID, workspaceID int) ([]int, error) {
-	rows, err := s.db.Query(`
-		SELECT destination.id
-		FROM item_labels il
-		JOIN labels source ON source.id = il.label_id
-		JOIN labels destination ON destination.workspace_id = ? AND LOWER(destination.name) = LOWER(source.name)
-		WHERE il.item_id = ?
-		ORDER BY destination.id
-	`, workspaceID, itemID)
-	if err != nil {
-		return nil, fmt.Errorf("resolve destination labels: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	ids := []int{}
-	for rows.Next() {
-		var id int
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
 }
 
 func detachMoveChildren(tx database.Tx, itemID int) ([]int, error) {

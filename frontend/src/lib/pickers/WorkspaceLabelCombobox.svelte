@@ -45,27 +45,21 @@
   );
 
   $effect(() => {
-    const id = Number(workspaceId);
     if (providedLabels !== null) return;
-    if (!Number.isFinite(id) || id <= 0) {
-      loadedLabels = [];
-      createdLabels = [];
-      return;
-    }
-    void loadLabels(id);
+    void loadLabels();
   });
 
-  async function loadLabels(id) {
+  async function loadLabels() {
     const token = ++loadToken;
     internalLoading = true;
     error = null;
     createdLabels = [];
     try {
-      const response = await api.labels.getAll(id);
+      const response = await api.labels.getAll();
       if (token === loadToken) loadedLabels = response || [];
     } catch (err) {
       if (token !== loadToken) return;
-      console.error('Failed to load workspace labels:', err);
+      console.error('Failed to load global labels:', err);
       error = err.message || 'Failed to load labels';
       loadedLabels = [];
     } finally {
@@ -104,7 +98,7 @@
       value = selected.map((label) => label.name);
       onSelect({ value, labels: selected });
     } catch (err) {
-      console.error('Failed to create workspace label:', err);
+      console.error('Failed to create global label:', err);
       errorToast(t('dialogs.alerts.failedToCreateLabel', { error: err.message }));
     }
   }

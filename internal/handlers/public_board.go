@@ -68,12 +68,23 @@ func rewritePublicAttachmentURLs(content, slug string) string {
 type PublicBoardHandler struct {
 	db                database.Database
 	permissionService *services.PermissionService
+	publicBoardScope  *services.PublicBoardScopeService
 	attachmentPath    string
 }
 
 // NewPublicBoardHandler creates a new PublicBoardHandler
 func NewPublicBoardHandler(db database.Database, permissionService *services.PermissionService, attachmentPath string) *PublicBoardHandler {
-	return &PublicBoardHandler{db: db, permissionService: permissionService, attachmentPath: attachmentPath}
+	return &PublicBoardHandler{
+		db:                db,
+		permissionService: permissionService,
+		publicBoardScope:  services.NewPublicBoardScopeService(db, permissionService),
+		attachmentPath:    attachmentPath,
+	}
+}
+
+func isPublicBoardScopeError(err error) bool {
+	return errors.Is(err, services.ErrPublicBoardWorkspaceScopeRequired) ||
+		errors.Is(err, services.ErrPublicBoardWorkspaceNotFound)
 }
 
 // publicBoardCard is a stripped-down item for public display
@@ -329,11 +340,14 @@ func (h *PublicBoardHandler) GetPublicBoard(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	// Scope QL evaluation to the collection's home workspace when set; fall
-	// back to every active workspace only for workspace-less public
-	// collections.
+	// Resolve the mandatory query scope and narrow it further to the
+	// collection's home workspace when one is set.
 	scopedWorkspaceIDs, err := h.resolveCollectionWorkspaceIDs(collectionID)
 	if err != nil {
+		if isPublicBoardScopeError(err) {
+			respondNotFound(w, r, "board")
+			return
+		}
 		respondInternalError(w, r, err)
 		return
 	}
@@ -558,39 +572,28 @@ func (h *PublicBoardHandler) buildDefaultColumns() ([]boardColumnInfo, error) {
 	return columns, nil
 }
 
-func (h *PublicBoardHandler) getAllActiveWorkspaceIDs() ([]int, error) {
-	rows, err := h.db.Query("SELECT id FROM workspaces WHERE active = true")
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	var ids []int
-	for rows.Next() {
-		var id int
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return ids, nil
-}
-
-// resolveCollectionWorkspaceIDs scopes a collection to its home workspace, or
-// all active workspaces when global, to prevent public cross-workspace exposure.
+// resolveCollectionWorkspaceIDs derives the anonymous read boundary from the
+// collection query and intersects it with the optional home workspace.
 func (h *PublicBoardHandler) resolveCollectionWorkspaceIDs(collectionID int) ([]int, error) {
 	var wsID sql.NullInt64
-	err := h.db.QueryRow(`SELECT workspace_id FROM collections WHERE id = ?`, collectionID).Scan(&wsID)
+	var qlQuery string
+	err := h.db.QueryRow(`SELECT workspace_id, COALESCE(ql_query, '') FROM collections WHERE id = ?`, collectionID).Scan(&wsID, &qlQuery)
 	if err != nil {
 		return nil, err
 	}
-	if wsID.Valid {
-		return []int{int(wsID.Int64)}, nil
+	workspaceIDs, err := h.publicBoardScope.ResolveWorkspaceIDs(qlQuery)
+	if err != nil {
+		return nil, err
 	}
-	return h.getAllActiveWorkspaceIDs()
+	if !wsID.Valid {
+		return workspaceIDs, nil
+	}
+	for _, workspaceID := range workspaceIDs {
+		if workspaceID == int(wsID.Int64) {
+			return []int{workspaceID}, nil
+		}
+	}
+	return []int{}, nil
 }
 
 func (h *PublicBoardHandler) loadItemLabels(items []models.Item) map[int][]publicLabel {
@@ -775,6 +778,9 @@ func (h *PublicBoardHandler) DownloadAttachment(w http.ResponseWriter, r *http.R
 func (h *PublicBoardHandler) itemBelongsToCollection(itemID, collectionID int) (bool, error) {
 	scopedWorkspaceIDs, err := h.resolveCollectionWorkspaceIDs(collectionID)
 	if err != nil {
+		if isPublicBoardScopeError(err) {
+			return false, nil
+		}
 		return false, err
 	}
 

@@ -130,16 +130,13 @@ func (h *JiraImportHandler) recordUserMapping(jobID string, user JiraUserSummary
 	}
 }
 
-// ensureLabel returns the workspace-scoped label ID for name, creating the
-// label row if it doesn't exist yet. Color/created_at/updated_at fall back to
-// the schema defaults.
-func (h *JiraImportHandler) ensureLabel(workspaceID int, name string) (int, error) {
-	return h.imports.EnsureLabel(workspaceID, name)
+// ensureLabel returns the global label ID for name, creating it when needed.
+func (h *JiraImportHandler) ensureLabel(_ int, name string) (int, error) {
+	return h.imports.EnsureLabel(name)
 }
 
-// importLabels ensures each Jira label exists in the workspace and links it to
-// the imported item. Duplicates within the input slice are silently collapsed
-// so we don't trip the (item_id, label_id) UNIQUE constraint.
+// importLabels ensures each Jira label exists and links it to the imported
+// item. Duplicate input names are collapsed.
 func (h *JiraImportHandler) importLabels(workspaceID, itemID int, labels []string) {
 	if len(labels) == 0 {
 		return

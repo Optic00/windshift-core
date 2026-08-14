@@ -181,7 +181,7 @@ class WorkItemFormStore {
   }
 
   /**
-   * Get selected workspace label IDs for post-create assignment.
+   * Get selected global label IDs for post-create assignment.
    */
   get selectedLabelIds() {
     return (this.selectedLabels || [])

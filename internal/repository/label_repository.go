@@ -12,9 +12,7 @@ import (
 	"windshift/internal/models"
 )
 
-// LabelRepository persists workspace labels and the item↔label join
-// (item_labels). Both the per-label CRUD endpoints and the item-list
-// endpoints' bulk-load helper route through here.
+// LabelRepository persists the global label catalog and item assignments.
 type LabelRepository struct {
 	db database.Database
 }
@@ -24,16 +22,13 @@ func NewLabelRepository(db database.Database) *LabelRepository {
 	return &LabelRepository{db: db}
 }
 
-const labelColumns = "id, name, color, workspace_id, created_at, updated_at"
+const labelColumns = "id, name, color, created_at, updated_at"
 
-// ListByWorkspace returns all labels in the given workspace, ordered by name.
-func (r *LabelRepository) ListByWorkspace(workspaceID int) ([]models.Label, error) {
-	rows, err := r.db.Query(
-		"SELECT "+labelColumns+" FROM labels WHERE workspace_id = ? ORDER BY name",
-		workspaceID,
-	)
+// ListAll returns the global label catalog ordered by name.
+func (r *LabelRepository) ListAll() ([]models.Label, error) {
+	rows, err := r.db.Query("SELECT " + labelColumns + " FROM labels ORDER BY name")
 	if err != nil {
-		return nil, fmt.Errorf("list labels for workspace %d: %w", workspaceID, err)
+		return nil, fmt.Errorf("list labels: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -46,7 +41,7 @@ func (r *LabelRepository) GetByID(id int) (*models.Label, error) {
 	err := r.db.QueryRow(
 		"SELECT "+labelColumns+" FROM labels WHERE id = ?",
 		id,
-	).Scan(&label.ID, &label.Name, &label.Color, &label.WorkspaceID, &label.CreatedAt, &label.UpdatedAt)
+	).Scan(&label.ID, &label.Name, &label.Color, &label.CreatedAt, &label.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -56,68 +51,46 @@ func (r *LabelRepository) GetByID(id int) (*models.Label, error) {
 	return &label, nil
 }
 
-// FindIDByName returns an exact-name label within one workspace.
-func (r *LabelRepository) FindIDByName(workspaceID int, name string) (int, error) {
+// FindIDByName returns a case-insensitive global label match.
+func (r *LabelRepository) FindIDByName(name string) (int, error) {
 	var id int
-	err := r.db.QueryRow(
-		"SELECT id FROM labels WHERE workspace_id = ? AND name = ?",
-		workspaceID,
-		name,
-	).Scan(&id)
+	err := r.db.QueryRow("SELECT id FROM labels WHERE LOWER(name) = LOWER(?)", name).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, ErrNotFound
 	}
 	if err != nil {
-		return 0, fmt.Errorf("find label %q in workspace %d: %w", name, workspaceID, err)
+		return 0, fmt.Errorf("find label %q: %w", name, err)
 	}
 	return id, nil
 }
 
-// GetWorkspaceID returns the workspace_id for a label or ErrNotFound when missing.
-func (r *LabelRepository) GetWorkspaceID(id int) (int, error) {
-	var workspaceID int
-	err := r.db.QueryRow("SELECT workspace_id FROM labels WHERE id = ?", id).Scan(&workspaceID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, ErrNotFound
-	}
-	if err != nil {
-		return 0, fmt.Errorf("get label %d workspace: %w", id, err)
-	}
-	return workspaceID, nil
-}
-
-// NameExistsInWorkspace reports whether a label with the given name already
-// exists in the workspace. excludeID > 0 excludes that row from the check (so
-// an Update doesn't collide with itself).
-func (r *LabelRepository) NameExistsInWorkspace(workspaceID int, name string, excludeID int) (bool, error) {
+// NameExists reports whether a case-insensitive global name already exists.
+func (r *LabelRepository) NameExists(name string, excludeID int) (bool, error) {
 	var count int
 	var err error
 	if excludeID > 0 {
-		err = r.db.QueryRow(
-			"SELECT COUNT(*) FROM labels WHERE name = ? AND workspace_id = ? AND id != ?",
-			name, workspaceID, excludeID,
-		).Scan(&count)
+		err = r.db.QueryRow("SELECT COUNT(*) FROM labels WHERE LOWER(name) = LOWER(?) AND id != ?", name, excludeID).Scan(&count)
 	} else {
-		err = r.db.QueryRow(
-			"SELECT COUNT(*) FROM labels WHERE name = ? AND workspace_id = ?",
-			name, workspaceID,
-		).Scan(&count)
+		err = r.db.QueryRow("SELECT COUNT(*) FROM labels WHERE LOWER(name) = LOWER(?)", name).Scan(&count)
 	}
 	if err != nil {
-		return false, fmt.Errorf("check label name %q in workspace %d: %w", name, workspaceID, err)
+		return false, fmt.Errorf("check label name %q: %w", name, err)
 	}
 	return count > 0, nil
 }
 
 // Create inserts a label and returns the id + the stamped timestamp.
-func (r *LabelRepository) Create(name, color string, workspaceID int) (int64, time.Time, error) {
+func (r *LabelRepository) Create(name, color string) (int64, time.Time, error) {
 	now := time.Now()
 	var id int64
 	err := r.db.QueryRow(`
-		INSERT INTO labels (name, color, workspace_id, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?) RETURNING id
-	`, name, color, workspaceID, now, now).Scan(&id)
+		INSERT INTO labels (name, color, created_at, updated_at)
+		VALUES (?, ?, ?, ?) RETURNING id
+	`, name, color, now, now).Scan(&id)
 	if err != nil {
+		if database.IsUniqueConstraintError(err) {
+			return 0, time.Time{}, ErrDuplicateEntry
+		}
 		return 0, time.Time{}, fmt.Errorf("create label: %w", err)
 	}
 	return id, now, nil
@@ -130,6 +103,9 @@ func (r *LabelRepository) Update(id int, name, color string) error {
 		name, color, time.Now(), id,
 	)
 	if err != nil {
+		if database.IsUniqueConstraintError(err) {
+			return ErrDuplicateEntry
+		}
 		return fmt.Errorf("update label %d: %w", id, err)
 	}
 	return nil
@@ -146,7 +122,7 @@ func (r *LabelRepository) Delete(id int) error {
 // ListForItem returns the labels currently attached to an item, ordered by name.
 func (r *LabelRepository) ListForItem(itemID int) ([]models.Label, error) {
 	rows, err := r.db.Query(`
-		SELECT l.id, l.name, l.color, l.workspace_id, l.created_at, l.updated_at
+		SELECT l.id, l.name, l.color, l.created_at, l.updated_at
 		FROM item_labels il
 		JOIN labels l ON il.label_id = l.id
 		WHERE il.item_id = ?
@@ -203,25 +179,23 @@ func (r *LabelRepository) ReplaceItemLabelsTx(ctx context.Context, tx database.T
 	return nil
 }
 
-// EnsureByNameTx returns an existing case-insensitive workspace label or
-// creates it inside the caller's transaction.
-func (r *LabelRepository) EnsureByNameTx(ctx context.Context, tx database.Tx, workspaceID int, name, color string) (int, error) {
+// EnsureByNameTx returns an existing case-insensitive global label or creates it.
+func (r *LabelRepository) EnsureByNameTx(ctx context.Context, tx database.Tx, name, color string) (int, error) {
 	var id int
 	err := tx.QueryRowContext(ctx,
-		"SELECT id FROM labels WHERE workspace_id = ? AND LOWER(name) = LOWER(?)",
-		workspaceID, name).Scan(&id)
+		"SELECT id FROM labels WHERE LOWER(name) = LOWER(?)", name).Scan(&id)
 	if err == nil {
 		return id, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
-		return 0, fmt.Errorf("find label %q in workspace %d: %w", name, workspaceID, err)
+		return 0, fmt.Errorf("find label %q: %w", name, err)
 	}
 	err = tx.QueryRowContext(ctx, `
-		INSERT INTO labels (workspace_id, name, color, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?) RETURNING id
-	`, workspaceID, name, color, time.Now(), time.Now()).Scan(&id)
+		INSERT INTO labels (name, color, created_at, updated_at)
+		VALUES (?, ?, ?, ?) RETURNING id
+	`, name, color, time.Now(), time.Now()).Scan(&id)
 	if err != nil {
-		return 0, fmt.Errorf("create label %q in workspace %d: %w", name, workspaceID, err)
+		return 0, fmt.Errorf("create label %q: %w", name, err)
 	}
 	return id, nil
 }
@@ -275,7 +249,7 @@ func (r *LabelRepository) LoadForItemsContext(ctx context.Context, items []model
 	}
 
 	query := fmt.Sprintf(`
-		SELECT il.item_id, l.id, l.name, l.color, l.workspace_id, l.created_at, l.updated_at
+		SELECT il.item_id, l.id, l.name, l.color, l.created_at, l.updated_at
 		FROM item_labels il
 		JOIN labels l ON il.label_id = l.id
 		WHERE il.item_id IN (%s)
@@ -292,7 +266,7 @@ func (r *LabelRepository) LoadForItemsContext(ctx context.Context, items []model
 	for rows.Next() {
 		var itemID int
 		var label models.Label
-		if err := rows.Scan(&itemID, &label.ID, &label.Name, &label.Color, &label.WorkspaceID,
+		if err := rows.Scan(&itemID, &label.ID, &label.Name, &label.Color,
 			&label.CreatedAt, &label.UpdatedAt); err != nil {
 			return fmt.Errorf("scan label: %w", err)
 		}
@@ -314,7 +288,7 @@ func scanLabels(rows *sql.Rows) ([]models.Label, error) {
 	labels := []models.Label{}
 	for rows.Next() {
 		var label models.Label
-		if err := rows.Scan(&label.ID, &label.Name, &label.Color, &label.WorkspaceID,
+		if err := rows.Scan(&label.ID, &label.Name, &label.Color,
 			&label.CreatedAt, &label.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan label: %w", err)
 		}

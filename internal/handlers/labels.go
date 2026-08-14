@@ -3,7 +3,6 @@ package handlers
 import (
 	"errors"
 	"net/http"
-	"strconv"
 
 	"windshift/internal/logger"
 	"windshift/internal/models"
@@ -36,34 +35,12 @@ func NewLabelHandler(
 	}
 }
 
-// GetAll lists labels for a workspace
+// GetAll lists the global label catalog.
 func (h *LabelHandler) GetAll(w http.ResponseWriter, r *http.Request) {
-	workspaceIDStr := r.URL.Query().Get("workspace_id")
-	if workspaceIDStr == "" {
-		respondValidationError(w, r, "workspace_id is required")
+	if _, ok := RequireAuth(w, r); !ok {
 		return
 	}
-
-	workspaceID, err := strconv.Atoi(workspaceIDStr)
-	if err != nil {
-		respondValidationError(w, r, "Invalid workspace_id")
-		return
-	}
-
-	// Check workspace view permission
-	user, ok := RequireAuth(w, r)
-	if !ok {
-		return
-	}
-	if h.permissionService != nil {
-		hasPermission, permErr := h.permissionService.HasWorkspacePermission(user.ID, workspaceID, models.PermissionItemView)
-		if permErr != nil || !hasPermission {
-			respondNotFound(w, r, "Labels")
-			return
-		}
-	}
-
-	labels, err := h.repo.ListByWorkspace(workspaceID)
+	labels, err := h.repo.ListAll()
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -74,6 +51,9 @@ func (h *LabelHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 
 // Get returns a single label by ID
 func (h *LabelHandler) Get(w http.ResponseWriter, r *http.Request) {
+	if _, ok := RequireAuth(w, r); !ok {
+		return
+	}
 	id, ok := requireIDParam(w, r, "id")
 	if !ok {
 		return
@@ -87,19 +67,6 @@ func (h *LabelHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
-	}
-
-	// Check workspace view permission
-	user, ok := RequireAuth(w, r)
-	if !ok {
-		return
-	}
-	if h.permissionService != nil {
-		hasPermission, permErr := h.permissionService.HasWorkspacePermission(user.ID, label.WorkspaceID, models.PermissionItemView)
-		if permErr != nil || !hasPermission {
-			respondNotFound(w, r, "Label")
-			return
-		}
 	}
 
 	respondJSONOK(w, label)
@@ -136,18 +103,22 @@ func (h *LabelHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check uniqueness
-	exists, err := h.repo.NameExistsInWorkspace(input.WorkspaceID, input.Name, 0)
+	exists, err := h.repo.NameExists(input.Name, 0)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
 	if exists {
-		respondConflict(w, r, "A label with this name already exists in this workspace")
+		respondConflict(w, r, "A label with this name already exists")
 		return
 	}
 
-	id, _, err := h.repo.Create(input.Name, input.Color, input.WorkspaceID)
+	id, _, err := h.repo.Create(input.Name, input.Color)
 	if err != nil {
+		if errors.Is(err, repository.ErrDuplicateEntry) {
+			respondConflict(w, r, "A label with this name already exists")
+			return
+		}
 		respondInternalError(w, r, err)
 		return
 	}
@@ -188,20 +159,22 @@ func (h *LabelHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get current label to find workspace_id and check permission
-	workspaceID, ok := h.resolveLabelWorkspace(w, r, id)
-	if !ok {
+	if _, err := h.repo.GetByID(id); errors.Is(err, repository.ErrNotFound) {
+		respondNotFound(w, r, "Label")
+		return
+	} else if err != nil {
+		respondInternalError(w, r, err)
 		return
 	}
 
 	// Check uniqueness (excluding current)
-	exists, err := h.repo.NameExistsInWorkspace(workspaceID, input.Name, id)
+	exists, err := h.repo.NameExists(input.Name, id)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
 	if exists {
-		respondConflict(w, r, "A label with this name already exists in this workspace")
+		respondConflict(w, r, "A label with this name already exists")
 		return
 	}
 
@@ -210,6 +183,10 @@ func (h *LabelHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.repo.Update(id, input.Name, input.Color); err != nil {
+		if errors.Is(err, repository.ErrDuplicateEntry) {
+			respondConflict(w, r, "A label with this name already exists")
+			return
+		}
 		respondInternalError(w, r, err)
 		return
 	}
@@ -235,8 +212,11 @@ func (h *LabelHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify label exists and user has workspace edit permission
-	if _, ok := h.resolveLabelWorkspace(w, r, id); !ok {
+	if _, err := h.repo.GetByID(id); errors.Is(err, repository.ErrNotFound) {
+		respondNotFound(w, r, "Label")
+		return
+	} else if err != nil {
+		respondInternalError(w, r, err)
 		return
 	}
 
@@ -272,24 +252,15 @@ func (h *LabelHandler) checkItemEditPermission(w http.ResponseWriter, r *http.Re
 	return CheckItemPermission(w, r, h.itemRepo, h.permissionService, itemID, models.PermissionItemEdit)
 }
 
-func (h *LabelHandler) labelsBelongToItemWorkspace(w http.ResponseWriter, r *http.Request, itemID int, labelIDs []int) bool {
-	workspaceID, err := h.itemRepo.GetWorkspaceID(itemID)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return false
-	}
+func (h *LabelHandler) labelsExist(w http.ResponseWriter, r *http.Request, labelIDs []int) bool {
 	for _, labelID := range labelIDs {
-		labelWorkspaceID, err := h.repo.GetWorkspaceID(labelID)
+		_, err := h.repo.GetByID(labelID)
 		if errors.Is(err, repository.ErrNotFound) {
 			respondNotFound(w, r, "Label")
 			return false
 		}
 		if err != nil {
 			respondInternalError(w, r, err)
-			return false
-		}
-		if labelWorkspaceID != workspaceID {
-			respondNotFound(w, r, "Label")
 			return false
 		}
 	}
@@ -314,25 +285,6 @@ func (h *LabelHandler) requireWorkspaceEditPermission(w http.ResponseWriter, r *
 	return true
 }
 
-// resolveLabelWorkspace fetches the workspace_id for the given label and
-// verifies the current user has edit permission. Returns the workspace ID and
-// true on success, or writes an HTTP error and returns false on failure.
-func (h *LabelHandler) resolveLabelWorkspace(w http.ResponseWriter, r *http.Request, labelID int) (int, bool) {
-	workspaceID, err := h.repo.GetWorkspaceID(labelID)
-	if errors.Is(err, repository.ErrNotFound) {
-		respondNotFound(w, r, "Label")
-		return 0, false
-	}
-	if err != nil {
-		respondInternalError(w, r, err)
-		return 0, false
-	}
-	if !h.requireWorkspaceEditPermission(w, r, workspaceID) {
-		return 0, false
-	}
-	return workspaceID, true
-}
-
 // SetItemLabels replaces all labels on an item
 func (h *LabelHandler) SetItemLabels(w http.ResponseWriter, r *http.Request) {
 	itemID, ok := requireIDParam(w, r, "id")
@@ -351,7 +303,7 @@ func (h *LabelHandler) SetItemLabels(w http.ResponseWriter, r *http.Request) {
 		respondBadRequest(w, r, err.Error())
 		return
 	}
-	if !h.labelsBelongToItemWorkspace(w, r, itemID, input.LabelIDs) {
+	if !h.labelsExist(w, r, input.LabelIDs) {
 		return
 	}
 
@@ -386,7 +338,7 @@ func (h *LabelHandler) AddItemLabel(w http.ResponseWriter, r *http.Request) {
 		respondValidationError(w, r, "label_id is required")
 		return
 	}
-	if !h.labelsBelongToItemWorkspace(w, r, itemID, []int{input.LabelID}) {
+	if !h.labelsExist(w, r, []int{input.LabelID}) {
 		return
 	}
 
