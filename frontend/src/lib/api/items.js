@@ -166,6 +166,19 @@ export const items = {
       }),
     'update'
   ),
+  bulkPatch: withCrossTabNotice(
+    (patches) =>
+      fetchAPI('/items/bulk-patch', {
+        method: 'POST',
+        body: JSON.stringify({ patches }),
+      }),
+    'update'
+  ),
+  getRoadmapHierarchyDates: (rootIds) =>
+    fetchAPI('/items/roadmap-hierarchy-dates', {
+      method: 'POST',
+      body: JSON.stringify({ root_ids: rootIds }),
+    }),
   // Perform a workflow status transition. Use this instead of passing
   // status_id to update() — the update endpoint rejects status_id so that
   // validator-mode and condition-mode workflow rules are always enforced.

@@ -16,6 +16,15 @@ type bulkUpdateItemsRequest struct {
 	Set     map[string]any `json:"set"`
 }
 
+type bulkItemPatchRequest struct {
+	ItemID int            `json:"item_id"`
+	Set    map[string]any `json:"set"`
+}
+
+type bulkPatchItemsRequest struct {
+	Patches []bulkItemPatchRequest `json:"patches"`
+}
+
 type completeIterationRequest struct {
 	MoveIncompleteToIterationID *int `json:"move_incomplete_to_iteration_id"`
 }
@@ -63,6 +72,51 @@ func (h *ItemHandler) BulkUpdate(w http.ResponseWriter, r *http.Request) {
 		"sql_statements", result.SQLStatements,
 		"duration_ms", result.Duration.Milliseconds(),
 	)
+	respondJSONOK(w, map[string]any{
+		"atomic":          true,
+		"requested_count": result.RequestedCount,
+		"updated_count":   result.UpdatedCount,
+		"unchanged_count": result.UnchangedCount,
+		"items":           items,
+	})
+}
+
+// BulkPatch atomically applies a distinct field patch to each requested item.
+func (h *ItemHandler) BulkPatch(w http.ResponseWriter, r *http.Request) {
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+	req, ok := decodeJSON[bulkPatchItemsRequest](w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := h.requestDBContext(r)
+	defer cancel()
+	started := time.Now()
+	if h.bulkUpdate == nil {
+		h.bulkUpdate = services.NewItemUpdateService(h.db).WithPermissionService(h.permissionService)
+	}
+
+	patches := make([]services.BulkItemPatch, len(req.Patches))
+	for i, patch := range req.Patches {
+		patches[i] = services.BulkItemPatch{ItemID: patch.ItemID, Fields: patch.Set}
+	}
+	result, err := h.bulkUpdate.BulkPatchItems(ctx, services.BulkPatchItemsRequest{
+		Patches: patches,
+		UserID:  user.ID,
+		AuthorizeWorkspace: func(workspaceID int) (bool, error) {
+			return h.canEditItem(user.ID, workspaceID)
+		},
+	})
+	if err != nil {
+		h.observeBulkOperation("item_bulk_patch", len(req.Patches), 0, 0, 0, time.Since(started), true)
+		h.respondBulkMutationError(w, r, err, "Item")
+		return
+	}
+
+	items := h.emitBulkUpdateResults(user.ID, user.Username, result.Results)
+	h.observeBulkOperation("item_bulk_patch", result.RequestedCount, result.UpdatedCount, result.SQLStatements, len(result.Results), result.Duration, false)
 	respondJSONOK(w, map[string]any{
 		"atomic":          true,
 		"requested_count": result.RequestedCount,
@@ -150,9 +204,11 @@ func (h *ItemHandler) respondBulkMutationError(w http.ResponseWriter, r *http.Re
 		respondNotFound(w, r, resource)
 	case errors.Is(err, services.ErrBulkItemForbidden), errors.Is(err, services.ErrIterationCompletionForbidden):
 		respondForbidden(w, r)
+	case errors.Is(err, services.ErrBulkPatchLimit):
+		respondBadRequest(w, r, "operation exceeds the 5000-item limit")
 	case errors.Is(err, services.ErrBulkItemLimit), errors.Is(err, services.ErrIterationCompletionLimit):
 		respondBadRequest(w, r, "operation exceeds the 500-item limit")
-	case errors.Is(err, services.ErrBulkFieldsRequired), services.IsBulkItemFieldError(err), services.IsBulkItemValidationError(err):
+	case errors.Is(err, services.ErrBulkFieldsRequired), errors.Is(err, services.ErrBulkDuplicateItem), services.IsBulkItemFieldError(err), services.IsBulkItemValidationError(err):
 		respondValidationError(w, r, err.Error())
 	case errors.Is(err, services.ErrIterationCompletionConflict):
 		respondConflict(w, r, err.Error())

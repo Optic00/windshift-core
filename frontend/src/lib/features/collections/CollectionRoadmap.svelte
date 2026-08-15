@@ -14,14 +14,17 @@
   import StaticViewBackground from '../../layout/StaticViewBackground.svelte';
   import SubFilterBar from './SubFilterBar.svelte';
   import Select from '../../components/Select.svelte';
+  import Toggle from '../../components/Toggle.svelte';
   import ItemDetail from '../items/ItemDetail.svelte';
   import RoadmapItemPreview from './RoadmapItemPreview.svelte';
+  import { buildHierarchyDatePatches, projectHierarchyDates } from './roadmapHierarchyDates.js';
   import { Settings, ChevronLeft, ChevronRight, Diamond, ChevronDown, Circle, GitBranch, CalendarClock } from '@lucide/svelte';
   import { getVisibleColor } from '../../utils/colorUtils.js';
   import { itemTypeIconMap } from '../../utils/icons.js';
   import { SYSTEM_FIELDS } from '../../stores/fieldConfig.js';
   import Button from '../../components/Button.svelte';
   import LazyRender from '../../components/LazyRender.svelte';
+  import { errorToast } from '../../stores/toasts.svelte.js';
   import { useEventListener } from 'runed';
 
   // Props
@@ -70,6 +73,85 @@
   let linkTypes = $state([]);
   let customFields = $state([]);
   let screenFields = $state([]);
+
+  // Hierarchy scheduling is a local roadmap view mode. It only uses the
+  // canonical scheduling fields and never writes merely because it is enabled.
+  let hierarchyMode = $state('off');
+  let adjustHierarchyDates = $state(false);
+  let hierarchyDateItems = $state([]);
+  let hierarchyDatesLoading = $state(false);
+  let hierarchyDatesLoaded = $state(false);
+  let hierarchyDatesError = $state('');
+  let hierarchyLoadGeneration = 0;
+
+  let hierarchyFieldsReady = $derived(
+    roadmapConfig.start_field_id === 'start_date' && roadmapConfig.end_field_id === 'end_date'
+  );
+  let hierarchyProjectionActive = $derived(
+    hierarchyMode !== 'off' && hierarchyFieldsReady && hierarchyDatesLoaded && !hierarchyDatesError
+  );
+  let hierarchyProjection = $derived.by(() =>
+    hierarchyProjectionActive
+      ? projectHierarchyDates(hierarchyDateItems, hierarchyMode)
+      : new Map()
+  );
+
+  function setHierarchyMode(mode) {
+    if (mode !== 'off' && !hierarchyFieldsReady) return;
+    hierarchyMode = mode;
+  }
+
+  async function loadHierarchyDates(rootIds) {
+    const generation = ++hierarchyLoadGeneration;
+    hierarchyDatesLoading = true;
+    hierarchyDatesLoaded = false;
+    hierarchyDatesError = '';
+    try {
+      const result = await api.items.getRoadmapHierarchyDates(rootIds);
+      if (generation !== hierarchyLoadGeneration) return;
+      if (result?.truncated) {
+        hierarchyDateItems = [];
+        adjustHierarchyDates = false;
+        hierarchyDatesError = t('collections.roadmapHierarchyTruncated');
+        return;
+      }
+      hierarchyDateItems = result?.items || [];
+      hierarchyDatesLoaded = true;
+    } catch (err) {
+      if (generation !== hierarchyLoadGeneration) return;
+      hierarchyDateItems = [];
+      adjustHierarchyDates = false;
+      hierarchyDatesError = t('collections.roadmapHierarchyLoadError');
+      console.error('Failed to load roadmap hierarchy dates:', err);
+    } finally {
+      if (generation === hierarchyLoadGeneration) hierarchyDatesLoading = false;
+    }
+  }
+
+  $effect(() => {
+    const enabled = hierarchyMode !== 'off' && hierarchyFieldsReady && !collectionStore.loading;
+    const roots = enabled
+      ? collectionStore.items
+          .filter((item) => item?.id != null)
+          .map((item) => item.id)
+      : [];
+    // Include visible dates so an external item refresh reloads the full projection.
+    const signature = enabled
+      ? collectionStore.items
+          .map((item) => `${item.id}:${item.parent_id ?? ''}:${item.start_date ?? ''}:${item.end_date ?? ''}`)
+          .join('|')
+      : '';
+    if (!enabled) {
+      hierarchyLoadGeneration++;
+      hierarchyDateItems = [];
+      hierarchyDatesLoaded = false;
+      hierarchyDatesLoading = false;
+      hierarchyDatesError = '';
+      return;
+    }
+    void signature;
+    untrack(() => loadHierarchyDates(roots));
+  });
 
   // Zoom: 'week' | 'month' | 'quarter'
   let zoom = $state('month');
@@ -172,8 +254,7 @@
 
     if (!collectionStore.loading && roadmapConfig.start_field_id) {
       for (const item of collectionStore.items) {
-        const startVal = getDateValue(item, roadmapConfig.start_field_id);
-        const endVal = roadmapConfig.end_field_id ? getDateValue(item, roadmapConfig.end_field_id) : null;
+        const { start: startVal, end: endVal } = getEffectiveDateRange(item);
         if (startVal) {
           const pos = dateToColPos(parseRoadmapDate(startVal));
           if (pos < -prependCount) prependCount = Math.ceil(Math.abs(pos)) + 1;
@@ -409,8 +490,7 @@
   });
 
   function itemHasDate(item) {
-    const start = getDateValue(item, roadmapConfig.start_field_id);
-    const end = roadmapConfig.end_field_id ? getDateValue(item, roadmapConfig.end_field_id) : null;
+    const { start, end } = getEffectiveDateRange(item);
     return !!(start || end);
   }
 
@@ -441,8 +521,8 @@
     const sourceItems = collectionStore.loading ? [] : collectionStore.items;
     return sourceItems
       .map(item => {
-        const start = getDateValue(item, roadmapConfig.start_field_id);
-        const end = roadmapConfig.end_field_id ? getDateValue(item, roadmapConfig.end_field_id) : null;
+        const effectiveRange = getEffectiveDateRange(item);
+        const { start, end } = effectiveRange;
 
         if (!start && !end) return null;
 
@@ -477,6 +557,8 @@
           statusColor: color,
           startDate: startDate ? formatDateValue(startDate) : null,
           endDate: endDate ? formatDateValue(endDate) : null,
+          hierarchyAdjusted: effectiveRange.adjusted,
+          isSummary: effectiveRange.summary,
         };
       })
       .filter(Boolean)
@@ -513,6 +595,26 @@
       return item.custom_field_values?.[cfId] ?? null;
     }
     return item[fieldId] ?? null;
+  }
+
+  function getEffectiveDateRange(item) {
+    if (hierarchyProjectionActive) {
+      const projected = hierarchyProjection.get(Number(item.id));
+      if (projected) {
+        return {
+          start: projected.startDate,
+          end: projected.endDate,
+          adjusted: projected.adjusted,
+          summary: projected.summary,
+        };
+      }
+    }
+    return {
+      start: getDateValue(item, roadmapConfig.start_field_id),
+      end: roadmapConfig.end_field_id ? getDateValue(item, roadmapConfig.end_field_id) : null,
+      adjusted: false,
+      summary: false,
+    };
   }
 
   function parseRoadmapDate(value) {
@@ -644,11 +746,19 @@
 
   function onStartFieldChange(val) {
     roadmapConfig.start_field_id = val;
+    if (val !== 'start_date') {
+      hierarchyMode = 'off';
+      adjustHierarchyDates = false;
+    }
     saveConfig();
   }
 
   function onEndFieldChange(val) {
     roadmapConfig.end_field_id = val;
+    if (val !== 'end_date') {
+      hierarchyMode = 'off';
+      adjustHierarchyDates = false;
+    }
     saveConfig();
   }
 
@@ -679,7 +789,7 @@
 
   // --- Bar drag handlers (existing move/resize) ---
   function onBarPointerDown(e, item, mode) {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || (hierarchyMode === 'rollup' && item.isSummary)) return;
     e.preventDefault();
     e.stopPropagation();
 
@@ -743,10 +853,10 @@
 
     if (Object.keys(updateData).length > 0) {
       try {
-        await api.items.update(itemId, updateData);
-        reloadCollection();
+        await persistRoadmapDateEdit(itemId, updateData);
       } catch (e) {
         console.error('Failed to update item dates:', e);
+        errorToast(e?.message || t('collections.roadmapDateUpdateError'));
         reloadCollection();
       }
     }
@@ -769,6 +879,29 @@
     } else {
       data[fieldId] = dateStr;
     }
+  }
+
+  async function persistRoadmapDateEdit(itemId, updateData) {
+    if (adjustHierarchyDates && hierarchyMode !== 'off' && hierarchyFieldsReady) {
+      if (!hierarchyProjectionActive) {
+        throw new Error(t('collections.roadmapHierarchyNotReady'));
+      }
+      const fields = {};
+      if (Object.hasOwn(updateData, 'start_date')) fields.start_date = updateData.start_date;
+      if (Object.hasOwn(updateData, 'end_date')) fields.end_date = updateData.end_date;
+      const patches = buildHierarchyDatePatches({
+        items: hierarchyDateItems,
+        editedItemId: itemId,
+        fields,
+        mode: hierarchyMode,
+      });
+      await api.items.bulkPatch(patches);
+      reloadCollection();
+      await loadHierarchyDates(collectionStore.items.map((item) => item.id));
+      return;
+    }
+    await api.items.update(itemId, updateData);
+    reloadCollection();
   }
 
   function getDragOffset(item) {
@@ -872,10 +1005,11 @@
       schedulingItemIds = new Set(schedulingItemIds).add(item.id);
       schedulePreview = null;
       try {
-        await api.items.update(item.id, updateData);
+        await persistRoadmapDateEdit(item.id, updateData);
         await refreshCollectionItem(item.id);
       } catch (err) {
         console.error('Failed to schedule item:', err);
+        errorToast(err?.message || t('collections.roadmapDateUpdateError'));
         reloadCollection();
       } finally {
         const nextSchedulingIds = new Set(schedulingItemIds);
@@ -953,9 +1087,8 @@
               <button
                 bind:this={settingsButton}
                 onclick={() => settingsOpen = !settingsOpen}
-                disabled={!canConfigure}
-                title={!canConfigure ? t('workspaceSettings.accessDeniedDescription') : ''}
-                class="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                data-testid="roadmap-settings-button"
+                class="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded transition-colors"
                 style="color: var(--ds-text); background-color: var(--ctx-surface, var(--ds-surface));"
               >
                 <Settings class="w-4 h-4" />
@@ -965,35 +1098,96 @@
                 <div
                   bind:this={settingsPanel}
                   class="absolute right-0 top-full mt-1 rounded-lg shadow-xl z-[60] p-4"
-                  style="background-color: var(--ds-surface-raised); border: 1px solid var(--ds-border); min-width: 260px;"
+                  style="background-color: var(--ds-surface-raised); border: 1px solid var(--ds-border); min-width: 300px;"
+                  data-testid="roadmap-settings-panel"
                   transition:fly={{ y: -4, duration: 150 }}
                 >
                   <div class="flex flex-col gap-3">
                     <div>
                       <div class="block text-xs font-medium mb-1" style="color: var(--ds-text-subtle);">{t('collections.roadmapStartField')}</div>
                       <Select
+                        id="roadmap-start-field"
                         value={roadmapConfig.start_field_id}
                         options={dateFieldOptions}
                         size="small"
+                        disabled={!canConfigure}
                         onchange={onStartFieldChange}
                       />
                     </div>
                     <div>
                       <div class="block text-xs font-medium mb-1" style="color: var(--ds-text-subtle);">{t('collections.roadmapEndField')}</div>
                       <Select
+                        id="roadmap-end-field"
                         value={roadmapConfig.end_field_id}
                         options={[{ value: '', label: t('collections.roadmapNone') }, ...dateFieldOptions]}
                         size="small"
+                        disabled={!canConfigure}
                         onchange={onEndFieldChange}
                       />
                     </div>
                     <div>
                       <div class="block text-xs font-medium mb-1" style="color: var(--ds-text-subtle);">{t('collections.roadmapDependencyLinkType')}</div>
                       <Select
+                        id="roadmap-dependency-link-type"
                         value={roadmapConfig.dependency_link_type_id ? String(roadmapConfig.dependency_link_type_id) : ''}
                         options={linkTypeOptions}
                         size="small"
+                        disabled={!canConfigure}
                         onchange={onLinkTypeChange}
+                      />
+                    </div>
+                    <div class="pt-3" style="border-top: 1px solid var(--ds-border);">
+                      <div class="block text-xs font-medium mb-2" style="color: var(--ds-text-subtle);">
+                        {t('collections.roadmapHierarchyMode')}
+                      </div>
+                      <div class="grid grid-cols-3 gap-1" role="group" aria-label={t('collections.roadmapHierarchyMode')}>
+                        {#each [
+                          ['off', t('collections.roadmapHierarchyOff')],
+                          ['rollup', t('collections.roadmapRollup')],
+                          ['rolldown', t('collections.roadmapRolldown')]
+                        ] as [mode, label]}
+                          <button
+                            type="button"
+                            data-testid="roadmap-hierarchy-{mode}"
+                            aria-pressed={hierarchyMode === mode}
+                            disabled={mode !== 'off' && !hierarchyFieldsReady}
+                            class="rounded px-2 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+                            style={hierarchyMode === mode
+                              ? 'background-color: var(--ds-accent-blue-subtle); color: var(--ds-text-info); border: 1px solid var(--ds-border-focused);'
+                              : 'background-color: var(--ds-background-neutral); color: var(--ds-text-subtle); border: 1px solid transparent;'}
+                            onclick={() => setHierarchyMode(mode)}
+                          >
+                            {label}
+                          </button>
+                        {/each}
+                      </div>
+                      {#if !hierarchyFieldsReady}
+                        <p class="mt-2 text-xs leading-4" style="color: var(--ds-text-subtle);">
+                          {t('collections.roadmapHierarchyCanonicalHint')}
+                        </p>
+                      {:else if hierarchyDatesError}
+                        <p class="mt-2 text-xs leading-4" style="color: var(--ds-text-danger);" role="alert">
+                          {hierarchyDatesError}
+                        </p>
+                      {/if}
+                    </div>
+                    <div class="flex items-start justify-between gap-4">
+                      <div>
+                        <div class="text-sm" style="color: var(--ds-text);">
+                          {t('collections.roadmapAdjustRelatedDates')}
+                        </div>
+                        <p class="mt-0.5 text-xs leading-4" style="color: var(--ds-text-subtle);">
+                          {hierarchyMode === 'rolldown'
+                            ? t('collections.roadmapRolldownAdjustmentHint')
+                            : t('collections.roadmapRollupAdjustmentHint')}
+                        </p>
+                      </div>
+                      <Toggle
+                        bind:checked={adjustHierarchyDates}
+                        size="small"
+                        id="roadmap-adjust-related-dates"
+                        dataTestid="roadmap-adjust-related-dates"
+                        disabled={hierarchyMode === 'off' || hierarchyDatesLoading || Boolean(hierarchyDatesError)}
                       />
                     </div>
                   </div>
@@ -1071,8 +1265,6 @@
             class="mt-3 px-4 py-2 text-sm font-medium rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             style="background-color: var(--ds-accent-blue-subtle); color: var(--ds-text-info);"
             onclick={() => settingsOpen = true}
-            disabled={!canConfigure}
-            title={!canConfigure ? t('workspaceSettings.accessDeniedDescription') : ''}
           >
             {t('collections.roadmapSettings')}
           </button>
@@ -1283,8 +1475,10 @@
                                     data-testid="roadmap-bar-{item.id}"
                                     data-start-date={roadmapItem.startDate || ''}
                                     data-end-date={roadmapItem.endDate || ''}
+                                    data-hierarchy-summary={roadmapItem.isSummary ? 'true' : 'false'}
+                                    data-hierarchy-adjusted={roadmapItem.hierarchyAdjusted ? 'true' : 'false'}
                                     class="absolute flex items-center justify-center"
-                                    style="left: {barLeftPx + barWidthPx / 2 - 8}px; top: {(ROW_HEIGHT - 16) / 2}px; width: 16px; height: 16px; transform: rotate(45deg); background-color: {visibleColor}; border-radius: 2px; z-index: 10; cursor: grab;"
+                                    style="left: {barLeftPx + barWidthPx / 2 - 8}px; top: {(ROW_HEIGHT - 16) / 2}px; width: 16px; height: 16px; transform: rotate(45deg); background-color: {visibleColor}; border-radius: 2px; z-index: 10; cursor: {roadmapItem.isSummary ? 'default' : 'grab'};"
                                     role="button"
                                     tabindex="0"
                                   ></div>
@@ -1312,18 +1506,23 @@
                                     data-testid="roadmap-bar-{item.id}"
                                     data-start-date={roadmapItem.startDate || ''}
                                     data-end-date={roadmapItem.endDate || ''}
+                                    data-hierarchy-summary={roadmapItem.isSummary ? 'true' : 'false'}
+                                    data-hierarchy-adjusted={roadmapItem.hierarchyAdjusted ? 'true' : 'false'}
                                     class="absolute flex items-center rounded group/bar"
-                                    style="left: {barLeftPx}px; width: {barWidthPx}px; top: {(ROW_HEIGHT - 24) / 2}px; height: 24px; background-color: {visibleColor}; opacity: 0.85; z-index: 10; cursor: grab;"
+                                    style="left: {barLeftPx}px; width: {barWidthPx}px; top: {(ROW_HEIGHT - 24) / 2}px; height: 24px; background-color: {visibleColor}; opacity: {roadmapItem.isSummary ? '0.65' : '0.85'}; z-index: 10; cursor: {roadmapItem.isSummary ? 'default' : 'grab'}; border: {roadmapItem.isSummary ? '1px dashed currentColor' : 'none'};"
                                     role="button"
                                     tabindex="0"
                                   >
-                                <div
-                                  class="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize opacity-0 group-hover/bar:opacity-100 rounded-l"
-                                  style="background-color: rgba(0,0,0,0.2);"
-                                  role="separator"
-                                  tabindex="-1"
-                                  onpointerdown={(e) => { e.stopPropagation(); onBarPointerDown(e, roadmapItem, 'resize-left'); }}
-                                ></div>
+                                {#if !roadmapItem.isSummary}
+                                  <div
+                                    data-testid="roadmap-resize-left-{item.id}"
+                                    class="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize opacity-0 group-hover/bar:opacity-100 rounded-l"
+                                    style="background-color: rgba(0,0,0,0.2);"
+                                    role="separator"
+                                    tabindex="-1"
+                                    onpointerdown={(e) => { e.stopPropagation(); onBarPointerDown(e, roadmapItem, 'resize-left'); }}
+                                  ></div>
+                                {/if}
 
                                 <span class="text-xs font-medium px-2 truncate" style="color: white; text-shadow: 0 1px 2px rgba(0,0,0,0.3);">
                                   {#if barWidthPx > 60}
@@ -1331,13 +1530,16 @@
                                   {/if}
                                 </span>
 
-                                <div
-                                  class="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize opacity-0 group-hover/bar:opacity-100 rounded-r"
-                                  style="background-color: rgba(0,0,0,0.2);"
-                                  role="separator"
-                                  tabindex="-1"
-                                  onpointerdown={(e) => { e.stopPropagation(); onBarPointerDown(e, roadmapItem, 'resize-right'); }}
-                                ></div>
+                                {#if !roadmapItem.isSummary}
+                                  <div
+                                    data-testid="roadmap-resize-right-{item.id}"
+                                    class="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize opacity-0 group-hover/bar:opacity-100 rounded-r"
+                                    style="background-color: rgba(0,0,0,0.2);"
+                                    role="separator"
+                                    tabindex="-1"
+                                    onpointerdown={(e) => { e.stopPropagation(); onBarPointerDown(e, roadmapItem, 'resize-right'); }}
+                                  ></div>
+                                {/if}
                                   </div>
                                 {/snippet}
                               </RoadmapItemPreview>

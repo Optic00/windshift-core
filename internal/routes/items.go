@@ -23,6 +23,8 @@ func RegisterItemRoutes(deps *Deps) {
 	// Registered before /items/{id} so the literal segment wins over the wildcard.
 	api.HandleH("GET /items/batch", auth(http.HandlerFunc(deps.Items.Item.GetBatch)))
 	api.HandleH("POST /items/bulk-update", auth(http.HandlerFunc(deps.Items.Item.BulkUpdate)))
+	api.HandleH("POST /items/bulk-patch", auth(http.HandlerFunc(deps.Items.Item.BulkPatch)))
+	api.HandleH("POST /items/roadmap-hierarchy-dates", auth(http.HandlerFunc(deps.Items.Item.GetRoadmapHierarchyDates)))
 	api.HandleH("GET /items/cache-stats", auth(http.HandlerFunc(deps.Items.Item.GetCacheStats)))
 	// Stable key lookup for SPA/CLI deep links: /workspaces/WI/items/123.
 	api.HandleH("GET /workspaces/{key}/items/{number}/detail-summary", auth(http.HandlerFunc(deps.Items.Detail.GetByKeyAndNumber)))

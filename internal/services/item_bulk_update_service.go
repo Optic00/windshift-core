@@ -12,13 +12,18 @@ import (
 	"windshift/internal/validation"
 )
 
-const MaxBulkItemUpdates = 500
+const (
+	MaxBulkItemUpdates = 500
+	MaxBulkItemPatches = 5000
+)
 
 var (
 	ErrBulkItemNotFound   = errors.New("one or more items were not found")
 	ErrBulkItemForbidden  = errors.New("one or more items are not editable")
 	ErrBulkItemLimit      = errors.New("bulk item limit exceeded")
+	ErrBulkPatchLimit     = errors.New("bulk patch item limit exceeded")
 	ErrBulkFieldsRequired = errors.New("at least one field is required")
+	ErrBulkDuplicateItem  = errors.New("an item may only appear once in a bulk patch")
 )
 
 // Bulk-edit accepts the same safe fields as the single-item update surface,
@@ -56,13 +61,23 @@ type BulkUpdateItemsResult struct {
 	Duration       time.Duration
 }
 
+type BulkItemPatch struct {
+	ItemID int
+	Fields map[string]any
+}
+
+type BulkPatchItemsRequest struct {
+	Patches            []BulkItemPatch
+	UserID             int
+	AuthorizeWorkspace func(workspaceID int) (bool, error)
+}
+
 // BulkUpdateItems applies one field patch to every requested item in a single
 // transaction. Any missing item, permission denial, or validation failure
 // rolls the entire operation back. Since the operation only assigns values
 // (never increments/appends), retries are naturally idempotent; unchanged
 // items produce no write, history, or side effect result.
 func (s *ItemUpdateService) BulkUpdateItems(ctx context.Context, req BulkUpdateItemsRequest) (*BulkUpdateItemsResult, error) {
-	started := time.Now()
 	ids := uniquePositiveSortedIDs(req.ItemIDs)
 	if len(ids) == 0 {
 		return nil, ErrBulkItemNotFound
@@ -73,18 +88,55 @@ func (s *ItemUpdateService) BulkUpdateItems(ctx context.Context, req BulkUpdateI
 	if len(req.Fields) == 0 {
 		return nil, ErrBulkFieldsRequired
 	}
-	for field := range req.Fields {
-		if _, allowed := bulkEditableItemFields[field]; !allowed {
-			return nil, &BulkItemFieldError{Field: field}
+	patches := make([]BulkItemPatch, len(ids))
+	for i, id := range ids {
+		patches[i] = BulkItemPatch{ItemID: id, Fields: req.Fields}
+	}
+	return s.BulkPatchItems(ctx, BulkPatchItemsRequest{
+		Patches: patches, UserID: req.UserID, AuthorizeWorkspace: req.AuthorizeWorkspace,
+	})
+}
+
+// BulkPatchItems applies a distinct field patch to each requested item in one
+// transaction. Validation, permission, history, and post-commit side effects
+// match BulkUpdateItems.
+func (s *ItemUpdateService) BulkPatchItems(ctx context.Context, req BulkPatchItemsRequest) (*BulkUpdateItemsResult, error) {
+	started := time.Now()
+	if len(req.Patches) == 0 {
+		return nil, ErrBulkItemNotFound
+	}
+	if len(req.Patches) > MaxBulkItemPatches {
+		return nil, ErrBulkPatchLimit
+	}
+
+	fieldsByID := make(map[int]map[string]any, len(req.Patches))
+	requestedIDs := make([]int, 0, len(req.Patches))
+	for _, patch := range req.Patches {
+		if patch.ItemID <= 0 {
+			return nil, ErrBulkItemNotFound
 		}
+		if _, duplicate := fieldsByID[patch.ItemID]; duplicate {
+			return nil, ErrBulkDuplicateItem
+		}
+		if len(patch.Fields) == 0 {
+			return nil, ErrBulkFieldsRequired
+		}
+		for field := range patch.Fields {
+			if _, allowed := bulkEditableItemFields[field]; !allowed {
+				return nil, &BulkItemFieldError{Field: field}
+			}
+		}
+		if err := validateBulkItemFieldTypes(patch.Fields); err != nil {
+			return nil, err
+		}
+		fieldsByID[patch.ItemID] = patch.Fields
+		requestedIDs = append(requestedIDs, patch.ItemID)
 	}
-	if err := validateBulkItemFieldTypes(req.Fields); err != nil {
-		return nil, err
-	}
+	ids := uniquePositiveSortedIDs(requestedIDs)
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, fmt.Errorf("start bulk item update: %w", err)
+		return nil, fmt.Errorf("start bulk item patch: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
@@ -118,7 +170,7 @@ func (s *ItemUpdateService) BulkUpdateItems(ctx context.Context, req BulkUpdateI
 	pending := make([]UpdateItemResult, 0, len(originals))
 	for _, original := range originals {
 		updated := *original
-		if err := s.validator.ValidateAndApplyUpdates(&updated, req.Fields, req.UserID); err != nil {
+		if err := s.validator.ValidateAndApplyUpdates(&updated, fieldsByID[original.ID], req.UserID); err != nil {
 			return nil, fmt.Errorf("item %d validation failed: %w", original.ID, err)
 		}
 		history := s.compareAndGenerateHistory(original, &updated, req.UserID)

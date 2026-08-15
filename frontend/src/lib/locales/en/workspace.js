@@ -501,6 +501,18 @@ export default {
     roadmapZoomQuarter: 'Quarter',
     roadmapNoItems: 'No items with dates in the current range.',
     roadmapToday: 'Today',
+    roadmapHierarchyMode: 'Hierarchy dates',
+    roadmapHierarchyOff: 'Off',
+    roadmapRollup: 'Roll up',
+    roadmapRolldown: 'Roll down',
+    roadmapAdjustRelatedDates: 'Adjust related dates',
+    roadmapRollupAdjustmentHint: 'Update parent dates after a child date is edited.',
+    roadmapRolldownAdjustmentHint: 'Move only child dates that fall outside an edited parent.',
+    roadmapHierarchyCanonicalHint: 'Select Start Date and End Date above to use hierarchy scheduling.',
+    roadmapHierarchyLoadError: 'Hierarchy dates could not be loaded. Try again.',
+    roadmapHierarchyTruncated: 'This hierarchy is too large to adjust safely.',
+    roadmapHierarchyNotReady: 'Hierarchy dates are still loading. Try the edit again.',
+    roadmapDateUpdateError: 'Could not update roadmap dates. Try again.',
 
     // Backlog view
     noItemsInBacklog: 'No Items in Backlog',

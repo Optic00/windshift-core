@@ -116,6 +116,16 @@ type TimeRollup struct {
 	Truncated            bool  `json:"truncated"`              // True when the descendant set hit the max-items cap.
 }
 
+// RoadmapHierarchyDate is the minimal hierarchy projection used by roadmap
+// rollup and rolldown calculations.
+type RoadmapHierarchyDate struct {
+	ID          int    `json:"id"`
+	WorkspaceID int    `json:"workspace_id"`
+	ParentID    *int   `json:"parent_id"`
+	StartDate   string `json:"start_date,omitempty"`
+	EndDate     string `json:"end_date,omitempty"`
+}
+
 // ItemHistory represents a single change to an item field
 type ItemHistory struct {
 	ID        int       `json:"id"`
