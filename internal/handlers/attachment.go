@@ -42,6 +42,10 @@ type AttachmentHandler struct {
 	pagePermissionService *services.PagePermissionService // for entity_type='page' uploads (optional)
 }
 
+const maxThumbnailSourcePixels = 25_000_000
+
+var errThumbnailSourceTooLarge = errors.New("thumbnail source dimensions exceed the pixel limit")
+
 func NewAttachmentHandler(db database.Database, attachmentPath string, permissionService *services.PermissionService) *AttachmentHandler {
 	return &AttachmentHandler{
 		db:                db,
@@ -1546,7 +1550,19 @@ func (h *AttachmentHandler) generateThumbnail(originalPath, filename string) (st
 	}
 	defer func() { _ = file.Close() }()
 
-	// Decode image
+	config, _, err := image.DecodeConfig(file)
+	if err != nil {
+		slog.Error("failed to read image dimensions", slog.String("component", "attachments"), slog.Any("error", err))
+		return "", err
+	}
+	if config.Width <= 0 || config.Height <= 0 || config.Width > maxThumbnailSourcePixels/config.Height {
+		return "", fmt.Errorf("%w: %dx%d exceeds %d pixels", errThumbnailSourceTooLarge, config.Width, config.Height, maxThumbnailSourcePixels)
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return "", fmt.Errorf("rewind image after dimension check: %w", err)
+	}
+
+	// Decode image after its declared dimensions pass the allocation bound.
 	slog.Debug("decoding image", slog.String("component", "attachments"))
 	img, format, err := image.Decode(file)
 	if err != nil {

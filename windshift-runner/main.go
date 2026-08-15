@@ -19,6 +19,7 @@
 //	WSRUNNER_ALLOW_INSECURE      set to 1 to permit a plaintext http:// WS_API_URL (dev only)
 //	WSRUNNER_NAME                runner display name (default: hostname)
 //	WSRUNNER_IMAGE               windshift-agent container image (required to run jobs)
+//	WSRUNNER_ALLOWED_IMAGES      comma-separated additional agent images that jobs may override to
 //	WSRUNNER_ALLOW_UNLABELED_IMAGE  set to 1 to accept an agent image without the
 //	                             org.windshift.agent-contract label (pre-WI-312 images)
 //	WSRUNNER_DOCKER              docker binary (default: docker)
@@ -105,9 +106,11 @@ func main() {
 	// plain container. Both receive the same sandbox tunables.
 	kindRunner := &services.KindDispatchRunner{
 		CodingAgent: &services.DockerAgentRunner{
-			Image:         image,
-			DockerBinary:  dockerBin,
-			InitialPrompt: initialPrompt,
+			Image:               image,
+			DockerBinary:        dockerBin,
+			AllowedImages:       splitNonEmpty(os.Getenv("WSRUNNER_ALLOWED_IMAGES")),
+			AllowUnlabeledImage: envOr("WSRUNNER_ALLOW_UNLABELED_IMAGE", "") == "1",
+			InitialPrompt:       initialPrompt,
 		},
 		Container: &services.ContainerImageRunner{DockerBinary: dockerBin},
 	}
@@ -302,8 +305,8 @@ func preflightAPIURL(ctx context.Context, logger *log.Logger, baseURL string) {
 // image that lacks it, because a non-agent image "succeeds" silently (exit 0,
 // no JSONL events, reported as no_changes).
 const (
-	agentContractLabel   = "org.windshift.agent-contract"
-	agentContractVersion = "v1"
+	agentContractLabel   = services.AgentContractLabel
+	agentContractVersion = services.AgentContractVersion
 )
 
 // preflightAgentImage inspects WSRUNNER_IMAGE for the agent-contract label
@@ -385,6 +388,16 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func splitNonEmpty(value string) []string {
+	var values []string
+	for _, part := range strings.Split(value, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			values = append(values, part)
+		}
+	}
+	return values
 }
 
 func envDuration(logger *log.Logger, key string, fallback time.Duration) time.Duration {

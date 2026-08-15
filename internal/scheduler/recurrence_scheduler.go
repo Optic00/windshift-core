@@ -18,6 +18,10 @@ import (
 // one scheduler pass. Diagnostics use the same value when reporting backlog.
 const DefaultRecurrenceBatchSize = 100
 
+// MaxRecurrenceInstancesPerRulePass limits both recurrence expansion work and
+// item creation for one rule in one scheduler pass.
+const MaxRecurrenceInstancesPerRulePass = 100
+
 // RecurrenceScheduler handles periodic generation of recurring task instances
 type RecurrenceScheduler struct {
 	db              database.Database
@@ -182,10 +186,10 @@ func (rs *RecurrenceScheduler) generateInstancesForRule(rule *models.RecurrenceR
 		generateUntil = *rule.DtEnd
 	}
 
-	// Get occurrences in the window
-	occurrences := r.Between(startFrom, generateUntil, true)
-
-	if len(occurrences) == 0 {
+	// Expand incrementally so high-frequency rules never materialize an
+	// unbounded occurrence slice in memory.
+	nextOccurrence := r.After(startFrom, true)
+	if nextOccurrence.IsZero() || nextOccurrence.After(generateUntil) {
 		// No occurrences in window, update next check time
 		nextCheck := now.Add(24 * time.Hour)
 		_ = rs.recurrenceRepo.UpdateNextCheck(rule.ID, nextCheck)
@@ -213,7 +217,11 @@ func (rs *RecurrenceScheduler) generateInstancesForRule(rule *models.RecurrenceR
 	lastOK := startFrom
 	var firstFailure error
 	generatedCount := 0
-	for _, occurrence := range occurrences {
+	examinedCount := 0
+	for !nextOccurrence.IsZero() && !nextOccurrence.After(generateUntil) && examinedCount < MaxRecurrenceInstancesPerRulePass {
+		occurrence := nextOccurrence
+		nextOccurrence = r.After(occurrence, false)
+		examinedCount++
 		dateKey := occurrence.Format("2006-01-02")
 		if existingDates[dateKey] {
 			if occurrence.After(lastOK) {
@@ -241,6 +249,9 @@ func (rs *RecurrenceScheduler) generateInstancesForRule(rule *models.RecurrenceR
 	progressTo := generateUntil
 	nextCheck := now.Add(24 * time.Hour)
 	if firstFailure != nil {
+		progressTo = lastOK
+		nextCheck = now.Add(rs.checkInterval)
+	} else if !nextOccurrence.IsZero() && !nextOccurrence.After(generateUntil) {
 		progressTo = lastOK
 		nextCheck = now.Add(rs.checkInterval)
 	}

@@ -25,6 +25,9 @@ var ErrRecurrenceWorkspaceLimit = errors.New("workspace recurrence rule limit re
 // surface.
 const MaxRecurrenceRulesPerWorkspace = 100
 
+// MaxRecurrenceLeadTimeDays bounds how far one scheduler pass may look ahead.
+const MaxRecurrenceLeadTimeDays = 365
+
 // RecurrenceWorkspaceLimitMessage is the stable user-facing explanation
 // returned by every recurrence creation surface when a workspace is full.
 func RecurrenceWorkspaceLimitMessage() string {
@@ -294,6 +297,9 @@ func buildRecurrenceRule(itemID, workspaceID, userID int, req models.CreateRecur
 		return nil, recurrenceInvalid(err.Error())
 	}
 	leadTimeDays := valueOr(req.LeadTimeDays, 14)
+	if err := validateRecurrenceLeadTime(leadTimeDays); err != nil {
+		return nil, err
+	}
 	copyAssignee := valueOr(req.CopyAssignee, true)
 	copyPriority := valueOr(req.CopyPriority, true)
 	copyCustomFields := valueOr(req.CopyCustomFields, true)
@@ -354,6 +360,9 @@ func applyRecurrenceUpdate(rule *models.RecurrenceRule, req models.UpdateRecurre
 		rule.Timezone = timezone
 	}
 	if req.LeadTimeDays != nil {
+		if err := validateRecurrenceLeadTime(*req.LeadTimeDays); err != nil {
+			return err
+		}
 		rule.LeadTimeDays = *req.LeadTimeDays
 	}
 	if req.CopyAssignee != nil {
@@ -373,6 +382,13 @@ func applyRecurrenceUpdate(rule *models.RecurrenceRule, req models.UpdateRecurre
 	}
 	if req.IsActive != nil {
 		rule.IsActive = *req.IsActive
+	}
+	return nil
+}
+
+func validateRecurrenceLeadTime(days int) error {
+	if days < 0 || days > MaxRecurrenceLeadTimeDays {
+		return recurrenceInvalid(fmt.Sprintf("lead_time_days must be between 0 and %d", MaxRecurrenceLeadTimeDays))
 	}
 	return nil
 }

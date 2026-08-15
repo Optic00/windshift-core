@@ -23,6 +23,8 @@ services:
       # daemon the first time it spawns an agent container (per job); there is
       # no separate agent service.
       WSRUNNER_IMAGE: ghcr.io/windshiftapp/windshift-agent:latest
+      # Optional exact allowlist for workspace-selected per-run overrides.
+      # WSRUNNER_ALLOWED_IMAGES: ghcr.io/windshiftapp/windshift-agent:review
       # WSRUNNER_CACHE_ROOT defaults to /var/lib/windshift-runner/cache (baked
       # into the image) — keep it under the same-path bind-mount below.
     volumes:

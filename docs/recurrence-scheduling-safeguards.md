@@ -1,8 +1,7 @@
 # Recurrence scheduling safeguards
 
-Windshift limits recurrence-rule cardinality and exposes scheduler pressure in
-System Administration. These safeguards bound the number of rules the
-scheduler must inspect, but they do not yet impose a per-rule instance budget.
+Windshift limits recurrence-rule cardinality, look-ahead, and per-pass
+expansion while exposing scheduler pressure in System Administration.
 
 ## Workspace rule limit
 
@@ -52,30 +51,28 @@ as backlogged when more than 100 rules are due.
 
 For each selected rule, the scheduler:
 
-1. Expands occurrences from the last completed boundary through the configured
-   lead-time window, honoring RRULE `COUNT` and `UNTIL` boundaries.
+1. Expands occurrences incrementally from the last completed boundary through
+   the configured lead-time window, honoring RRULE `COUNT` and `UNTIL`
+   boundaries.
 2. Skips dates that already have an instance.
-3. Creates each item and its recurrence-instance record in one transaction.
-4. Advances generation progress through the last successful or already-known
+3. Examines and creates at most 100 occurrences for that rule in one pass.
+4. Creates each item and its recurrence-instance record in one transaction.
+5. Advances generation progress through the last successful or already-known
    occurrence.
 
 A failure stops processing that rule at the failed occurrence so the next pass
-can retry without losing a date. Other rules in the selected batch continue.
-Failed rules are scheduled for the next five-minute pass, and the run is
-recorded as failed in scheduler diagnostics. A clean rule is checked again
+can retry without losing a date. A rule that reaches the 100-occurrence budget
+also remains due and resumes on the next five-minute pass. Other rules in the
+selected batch continue. Failed rules are recorded as failed in scheduler
+diagnostics. A clean rule that reaches its look-ahead horizon is checked again
 after 24 hours.
 
-## Remaining per-run safeguards
+## Lead-time limit
 
-The 100-rule workspace limit and 100-rule scheduler batch limit constrain rule
-cardinality and scheduler selection. They do not cap the number of occurrences
-expanded or items created while processing one rule. A dense rule combined
-with a large lead-time window can therefore still do substantial work in a
-single pass.
+`lead_time_days` must be between 0 and 365. The shared recurrence service
+enforces this range for cookie API and REST v1 create and update requests.
 
-There is currently no per-rule occurrence cap, per-pass item-generation cap,
-execution deadline, or cancellation boundary inside recurrence expansion.
-Those controls should be added before supporting substantially denser
-frequencies or larger lead-time windows. Until then, administrators should use
-the recurrence-volume and scheduler-run diagnostics to identify sustained
-backlogs or failing rules.
+The limits bound work per pass rather than total instances over a rule's
+lifetime. Ending conditions remain preferable for high-frequency rules, and
+administrators should use recurrence-volume and scheduler-run diagnostics to
+identify sustained backlogs or failing rules.

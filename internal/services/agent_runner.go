@@ -250,13 +250,15 @@ func (r *AgentRunner) Run(ctx context.Context, input RunInput, emit EventSink) R
 // like --cap-drop=ALL or --security-opt=no-new-privileges are part of
 // the contract and cannot be turned off.
 type DockerAgentRunner struct {
-	Image         string
-	DockerBinary  string
-	Env           map[string]string
-	ExtraArgs     []string
-	InitialPrompt string
-	IdleEventType string
-	ShutdownGrace time.Duration
+	Image               string
+	DockerBinary        string
+	AllowedImages       []string
+	AllowUnlabeledImage bool
+	Env                 map[string]string
+	ExtraArgs           []string
+	InitialPrompt       string
+	IdleEventType       string
+	ShutdownGrace       time.Duration
 
 	// Sandbox tunables. Empty / zero values fall back to the safe
 	// defaults declared by sandboxDefaults below.
@@ -264,6 +266,46 @@ type DockerAgentRunner struct {
 	PidsLimit int    // docker --pids-limit
 	Memory    string // docker --memory + --memory-swap
 	CPUs      string // docker --cpus
+}
+
+const (
+	// AgentContractLabel identifies images that implement the coding-agent JSONL contract.
+	AgentContractLabel = "org.windshift.agent-contract"
+	// AgentContractVersion is the contract version spoken by this runner.
+	AgentContractVersion = "v1"
+)
+
+// ValidateAgentContractImage verifies the selected coding-agent image before
+// execution. It pulls an image that is not yet present locally, then inspects
+// the label again.
+func ValidateAgentContractImage(ctx context.Context, dockerBin, image string, allowUnlabeled bool) error {
+	inspect := func() (string, error) {
+		out, err := exec.CommandContext(ctx, dockerBin, "image", "inspect", //nolint:gosec // argv execution does not invoke a shell
+			"--format", `{{index .Config.Labels "`+AgentContractLabel+`"}}`, image).Output()
+		return strings.TrimSpace(string(out)), err
+	}
+
+	label, err := inspect()
+	if err != nil {
+		if out, pullErr := exec.CommandContext(ctx, dockerBin, "pull", image).CombinedOutput(); pullErr != nil { //nolint:gosec // argv execution does not invoke a shell
+			return fmt.Errorf("pull image %s for agent-contract validation: %w: %s", image, pullErr, strings.TrimSpace(string(out)))
+		}
+		label, err = inspect()
+		if err != nil {
+			return fmt.Errorf("inspect image %s after pull for agent-contract validation: %w", image, err)
+		}
+	}
+
+	switch {
+	case label == AgentContractVersion:
+		return nil
+	case label == "" && allowUnlabeled:
+		return nil
+	case label == "":
+		return fmt.Errorf("image %s does not carry the %s label", image, AgentContractLabel)
+	default:
+		return fmt.Errorf("image %s carries %s=%q, but the runner requires %q", image, AgentContractLabel, label, AgentContractVersion)
+	}
 }
 
 // sandboxDefaults are the hardened defaults applied when the caller
@@ -378,6 +420,18 @@ func (r *DockerAgentRunner) agentImage(input RunInput) string {
 	return r.Image
 }
 
+func (r *DockerAgentRunner) imageAllowed(image string) bool {
+	if image == r.Image {
+		return true
+	}
+	for _, allowed := range r.AllowedImages {
+		if image == allowed {
+			return true
+		}
+	}
+	return false
+}
+
 // workspaceMountSpec renders the bind-mount argument for the per-run
 // checkout. The :Z suffix privately relabels the tree on SELinux-enforcing
 // hosts (WI-388): without it the container process gets EACCES on every read
@@ -391,12 +445,19 @@ func workspaceMountSpec(hostPath string) string {
 // Run implements Runner. Builds docker args from the runner's static
 // config + RunInput.Env, then dispatches through AgentRunner.
 func (r *DockerAgentRunner) Run(ctx context.Context, input RunInput, emit EventSink) RunnerResult {
-	if r.agentImage(input) == "" {
+	image := r.agentImage(input)
+	if image == "" {
 		return RunnerResult{Status: models.AgentRunStatusFailed, Error: "docker agent runner: Image is required"}
+	}
+	if !r.imageAllowed(image) {
+		return RunnerResult{Status: models.AgentRunStatusFailed, Error: fmt.Sprintf("docker agent runner: image %s is not in the runner image allowlist", image)}
 	}
 	bin := r.DockerBinary
 	if bin == "" {
 		bin = "docker"
+	}
+	if err := ValidateAgentContractImage(ctx, bin, image, r.AllowUnlabeledImage); err != nil {
+		return RunnerResult{Status: models.AgentRunStatusFailed, Error: "docker agent runner: " + err.Error()}
 	}
 
 	// Write env to a 0600 file passed via --env-file. Env values (which
