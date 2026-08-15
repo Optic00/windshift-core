@@ -1,7 +1,6 @@
 <script>
   import { jiraImport } from './JiraImportStore.svelte.js';
   import Modal from '../dialogs/Modal.svelte';
-  import ModalHeader from '../dialogs/ModalHeader.svelte';
   import DialogFooter from '../dialogs/DialogFooter.svelte';
   import Button from '../components/Button.svelte';
   import Spinner from '../components/Spinner.svelte';
@@ -11,7 +10,7 @@
   import {
     Cloud, Server, ChevronRight, ChevronLeft, ArrowRight,
     Briefcase, FileText, Activity, Hash, Box, AlertCircle,
-    ExternalLink, Eye, EyeOff, Plus, Users, Paperclip, Flag, Check
+    ExternalLink, Eye, EyeOff, Plus, Users, Paperclip, Flag, Check, X
   } from '@lucide/svelte';
   import Stepper from '../components/Stepper.svelte';
   import { addToast } from '../stores/toasts.svelte.js';
@@ -224,12 +223,36 @@
 <Modal bind:isOpen maxWidth="max-w-4xl" onclose={handleClose}>
   <div class="flex flex-col max-h-[90vh]" data-testid="jira-import-wizard">
     <!-- Header -->
-    <ModalHeader
-      title={modalTitle}
-      subtitle={modalSubtitle}
-      icon={deploymentType === 'datacenter' ? Server : Cloud}
-      onClose={handleClose}
-    />
+    <div
+      class="flex items-center gap-2.5 border-b px-5 py-3"
+      style="border-color: var(--ds-border);"
+    >
+      {#if deploymentType === 'datacenter'}
+        <Server class="h-5 w-5 shrink-0" style="color: var(--ds-interactive);" />
+      {:else}
+        <Cloud class="h-5 w-5 shrink-0" style="color: var(--ds-interactive);" />
+      {/if}
+      <div class="min-w-0 flex-1">
+        <h2 class="truncate text-base font-semibold leading-5" style="color: var(--ds-text);">
+          {modalTitle}
+        </h2>
+        {#if modalSubtitle}
+          <p class="mt-0.5 truncate text-xs leading-4" style="color: var(--ds-text-subtle);">
+            {modalSubtitle}
+          </p>
+        {/if}
+      </div>
+      <button
+        type="button"
+        data-testid="jira-import-close"
+        class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded transition-colors hover:bg-[var(--ds-background-neutral-hovered)] focus:outline-none focus:ring-2 focus:ring-[var(--ds-border-focused)]"
+        style="color: var(--ds-text-subtle);"
+        onclick={handleClose}
+        aria-label={t('aria.close')}
+      >
+        <X class="h-[18px] w-[18px]" />
+      </button>
+    </div>
 
     <!-- Step indicator -->
     <div class="px-6 w-full py-3 border-b overflow-x-auto" style="border-color: var(--ds-border);">
