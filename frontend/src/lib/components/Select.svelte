@@ -14,6 +14,7 @@
    *   id?: string,
    *   class?: string,
    *   menuWidth?: string,
+   *   portalOwner?: string,
    *   placeholder?: string,
    *   onchange?: (e?: any) => void,
    *   onfocus?: (e?: any) => void,
@@ -29,6 +30,7 @@
     id = undefined,
     class: className = '',
     menuWidth = '',
+    portalOwner = undefined,
     placeholder = '',
     onchange = undefined,
     onfocus = undefined,
@@ -198,6 +200,7 @@
   <div
     use:melt={$content}
     bind:this={listboxElement}
+    data-popover-owner={portalOwner}
     role="listbox"
     tabindex="-1"
     aria-activedescendant={highlightedIndex >= 0 ? optionId(options[highlightedIndex], highlightedIndex) : undefined}

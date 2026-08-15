@@ -56,6 +56,8 @@
   let settingsButton = $state(null);
 
   function onSettingsClickOutside(e) {
+    const portalOwner = e.target?.closest?.('[data-popover-owner]')?.dataset?.popoverOwner;
+    if (portalOwner === 'roadmap-settings') return;
     if (settingsPanel && !settingsPanel.contains(e.target) && settingsButton && !settingsButton.contains(e.target)) {
       settingsOpen = false;
     }
@@ -1111,6 +1113,7 @@
                         options={dateFieldOptions}
                         size="small"
                         disabled={!canConfigure}
+                        portalOwner="roadmap-settings"
                         onchange={onStartFieldChange}
                       />
                     </div>
@@ -1122,6 +1125,7 @@
                         options={[{ value: '', label: t('collections.roadmapNone') }, ...dateFieldOptions]}
                         size="small"
                         disabled={!canConfigure}
+                        portalOwner="roadmap-settings"
                         onchange={onEndFieldChange}
                       />
                     </div>
@@ -1133,6 +1137,7 @@
                         options={linkTypeOptions}
                         size="small"
                         disabled={!canConfigure}
+                        portalOwner="roadmap-settings"
                         onchange={onLinkTypeChange}
                       />
                     </div>
