@@ -95,7 +95,7 @@ func ValidateItemCreation(db database.Database, params ItemValidationParams) *It
 
 	// Validate related_work_item_id if provided
 	if params.RelatedWorkItemID != nil {
-		result := validateRelatedWorkItem(db, params.WorkspaceID, params.UserID, *params.RelatedWorkItemID)
+		result := validateRelatedWorkItem(db, params.WorkspaceID, params.UserID, *params.RelatedWorkItemID, params.PermService)
 		if !result.Valid {
 			return result
 		}
@@ -143,27 +143,19 @@ func validateParentHierarchy(db database.Database, parentID, itemTypeID *int, wo
 	return &ItemValidationResult{Valid: true}
 }
 
-// validateRelatedWorkItem validates that the related work item exists and is in a valid workspace
-func validateRelatedWorkItem(db database.Database, workspaceID, userID, relatedWorkItemID int) *ItemValidationResult {
-	// Verify workspace is personal and belongs to the user
-	var isPersonal bool
-	var ownerID *int
-	err := db.QueryRow(`
-		SELECT is_personal, owner_id FROM workspaces WHERE id = ?
-	`, workspaceID).Scan(&isPersonal, &ownerID)
-
-	if err != nil {
-		return &ItemValidationResult{Valid: false, Error: fmt.Sprintf("Failed to validate workspace: %v", err)}
+// validateRelatedWorkItem applies the shared relationship validation used by
+// item updates so create and update paths enforce the same permission rule.
+func validateRelatedWorkItem(
+	db database.Database,
+	workspaceID, userID, relatedWorkItemID int,
+	permService *PermissionService,
+) *ItemValidationResult {
+	validator := validation.NewItemFieldValidator(db)
+	if permService != nil {
+		validator.WithPermissionChecker(permService)
 	}
-
-	if !isPersonal || ownerID == nil || *ownerID != userID {
-		return &ItemValidationResult{Valid: false, Error: "Personal tasks must be created in your own personal workspace"}
+	if err := validator.ValidateRelatedWorkItem(workspaceID, userID, relatedWorkItemID); err != nil {
+		return &ItemValidationResult{Valid: false, Error: err.Error()}
 	}
-
-	// Verify the related work item exists.
-	if _, err := repository.NewItemRepository(db).GetWorkspaceID(relatedWorkItemID); err != nil {
-		return &ItemValidationResult{Valid: false, Error: "Related work item not found or access denied"}
-	}
-
 	return &ItemValidationResult{Valid: true}
 }

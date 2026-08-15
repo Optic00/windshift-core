@@ -68,9 +68,9 @@ func NewItemFieldValidator(db database.Database) *ItemFieldValidator {
 	return &ItemFieldValidator{db: db}
 }
 
-// WithPermissionChecker attaches a workspace permission checker so the
-// validator can enforce the caller's view-permission on a cross-workspace
-// parent assignment. Returns the receiver for chaining.
+// WithPermissionChecker attaches a workspace permission checker for item
+// relationships that may cross workspace boundaries. Returns the receiver for
+// chaining.
 func (v *ItemFieldValidator) WithPermissionChecker(checker WorkspacePermissionChecker) *ItemFieldValidator {
 	v.permChecker = checker
 	return v
@@ -424,15 +424,8 @@ func (v *ItemFieldValidator) ValidateAndApplyUpdates(
 				return &ValidationError{Field: "related_work_item_id", Message: "Invalid related_work_item_id type"}
 			}
 
-			// Validate workspace is personal and belongs to the user
-			if err := v.ValidatePersonalWorkspace(item.WorkspaceID, userID); err != nil {
+			if err := v.ValidateRelatedWorkItem(item.WorkspaceID, userID, newRelatedWorkItemID); err != nil {
 				return err
-			}
-
-			// Verify the related work item exists
-			_, err := repository.NewItemRepository(v.db).GetWorkspaceID(newRelatedWorkItemID)
-			if err != nil {
-				return &ValidationError{Field: "related_work_item_id", Message: "Related work item not found or access denied"}
 			}
 
 			item.RelatedWorkItemID = &newRelatedWorkItemID
@@ -637,6 +630,42 @@ func (v *ItemFieldValidator) ValidatePersonalWorkspace(workspaceID, userID int) 
 	}
 
 	return nil
+}
+
+// ValidateRelatedWorkItem verifies that a personal-workspace item may refer to
+// the requested work item without crossing an authorization boundary.
+func (v *ItemFieldValidator) ValidateRelatedWorkItem(workspaceID, userID, relatedWorkItemID int) error {
+	if err := v.ValidatePersonalWorkspace(workspaceID, userID); err != nil {
+		return err
+	}
+
+	relatedWorkspaceID, err := repository.NewItemRepository(v.db).GetWorkspaceID(relatedWorkItemID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return relatedWorkItemNotFoundError()
+	}
+	if err != nil {
+		return fmt.Errorf("failed to validate related work item: %w", err)
+	}
+	if v.permChecker == nil {
+		return relatedWorkItemNotFoundError()
+	}
+
+	hasView, err := v.permChecker.HasWorkspacePermission(userID, relatedWorkspaceID, models.PermissionItemView)
+	if err != nil {
+		return fmt.Errorf("failed to check related work item permission: %w", err)
+	}
+	if !hasView {
+		return relatedWorkItemNotFoundError()
+	}
+
+	return nil
+}
+
+func relatedWorkItemNotFoundError() *ValidationError {
+	return &ValidationError{
+		Field:   "related_work_item_id",
+		Message: "Related work item not found or access denied",
+	}
 }
 
 // ValidateIsTask validates that is_task can only be true for personal workspaces

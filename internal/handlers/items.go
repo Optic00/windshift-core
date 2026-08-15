@@ -1010,15 +1010,16 @@ func issueSyncContext(requestContext context.Context) (context.Context, context.
 	return context.WithTimeout(context.WithoutCancel(requestContext), 30*time.Second)
 }
 
-// maskInaccessibleProjectNames blanks the human-readable project name fields on
-// items whose project / time-project / effective-project the user is not allowed
-// to view. See TimePermissionService.MaskInaccessibleProjectNames.
+// maskInaccessibleProjectNames removes joined metadata that the viewer is not
+// allowed to see. See TimePermissionService.MaskInaccessibleProjectNames.
 func (h *ItemHandler) maskInaccessibleProjectNames(userID int, items []models.Item) {
 	services.NewTimePermissionService(h.db, h.permissionService).MaskInaccessibleProjectNames(userID, items)
+	services.MaskInaccessibleRelatedWorkItems(userID, items, h.permissionService)
 }
 
 func (h *ItemHandler) maskInaccessibleProjectNamesContext(ctx context.Context, userID int, items []models.Item) {
 	services.NewTimePermissionService(h.db, h.permissionService).MaskInaccessibleProjectNamesContext(ctx, userID, items)
+	services.MaskInaccessibleRelatedWorkItems(userID, items, h.permissionService)
 }
 
 // projectResolutionChanged reports whether an update touched a field that can
