@@ -165,7 +165,7 @@ type WorklogDetailFilter struct {
 	ProjectID            *int
 	ItemID               *int
 	DateFromUnix         *int64
-	DateToUnix           *int64
+	DateToExclusiveUnix  *int64
 }
 
 // ListDetails returns joined worklogs ordered newest-first.
@@ -200,9 +200,9 @@ func (r *TimeWorklogRepository) ListDetails(filter WorklogDetailFilter) ([]model
 		query += " AND w.date >= ?"
 		args = append(args, *filter.DateFromUnix)
 	}
-	if filter.DateToUnix != nil {
-		query += " AND w.date <= ?"
-		args = append(args, *filter.DateToUnix)
+	if filter.DateToExclusiveUnix != nil {
+		query += " AND w.date < ?"
+		args = append(args, *filter.DateToExclusiveUnix)
 	}
 	query += " ORDER BY w.date DESC, w.start_time DESC"
 
@@ -330,14 +330,14 @@ func (r *TimeWorklogRepository) Create(in NewWorklog) (int64, error) {
 }
 
 // WorklogListFilter narrows ListForUser results. Nil pointer fields disable
-// the corresponding filter; date bounds are unix seconds (inclusive).
+// the corresponding filter; the upper date bound is exclusive.
 type WorklogListFilter struct {
-	UserID       int
-	DateFromUnix *int64
-	DateToUnix   *int64
-	ProjectID    *int
-	Limit        int
-	Offset       int
+	UserID              int
+	DateFromUnix        *int64
+	DateToExclusiveUnix *int64
+	ProjectID           *int
+	Limit               int
+	Offset              int
 }
 
 // ListForUser returns a page of the user's worklogs, newest first, with the
@@ -362,9 +362,9 @@ func (r *TimeWorklogRepository) ListForUser(f WorklogListFilter) ([]models.Workl
 		query += " AND w.date >= ?"
 		qa = append(qa, *f.DateFromUnix)
 	}
-	if f.DateToUnix != nil {
-		query += " AND w.date <= ?"
-		qa = append(qa, *f.DateToUnix)
+	if f.DateToExclusiveUnix != nil {
+		query += " AND w.date < ?"
+		qa = append(qa, *f.DateToExclusiveUnix)
 	}
 	if f.ProjectID != nil {
 		query += " AND w.project_id = ?"

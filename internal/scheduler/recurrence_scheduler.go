@@ -157,11 +157,10 @@ func (rs *RecurrenceScheduler) generateInstancesForRule(rule *models.RecurrenceR
 	// BYDAY=MO etc. resolve to "Monday in the user's timezone" instead of "Monday in
 	// whatever zone time.Time happened to be scanned in (typically UTC)". DST is
 	// then handled correctly by rrule-go's tz-aware expansion.
-	loc, err := time.LoadLocation(rule.Timezone)
-	if err != nil || loc == nil {
+	_, loc := services.ResolveTimezoneOrUTC(rule.Timezone)
+	if loc == time.UTC && rule.Timezone != "" && rule.Timezone != "UTC" {
 		slog.Warn("invalid rule timezone, falling back to UTC",
-			"rule_id", rule.ID, "tz", rule.Timezone, "error", err)
-		loc = time.UTC
+			"rule_id", rule.ID, "tz", rule.Timezone)
 	}
 	ruleOpt.Dtstart = rule.DtStart.In(loc)
 

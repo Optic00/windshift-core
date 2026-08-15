@@ -17,7 +17,7 @@
   import PageHeader from '../layout/PageHeader.svelte';
   import { addToast } from '../stores/toasts.svelte.js';
   import { t } from '../stores/i18n.svelte.js';
-  import { formatDateTimeLocale } from '../utils/dateFormatter.js';
+  import { formatAuthenticatedDateTime as formatDateTimeLocale } from '../utils/authenticatedDateFormatter.js';
   import { confirm } from '../composables/useConfirm.js';
   import { safeHref } from '../utils/sanitize';
 

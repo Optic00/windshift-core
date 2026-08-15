@@ -226,16 +226,8 @@ func (bs *BriefingScheduler) generateAllBriefings(stop <-chan struct{}) {
 func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, lookups *repository.NameMaps, itemRepo *repository.ItemRepository, workspaceRepo *repository.WorkspaceRepository, u models.User, regenerate bool, nowUTC time.Time) bool {
 	userID := u.ID
 	firstName := u.FirstName
-	timezone := u.Timezone
-	if timezone == "" {
-		timezone = "UTC"
-	}
-
 	// Compute briefing boundaries in the user's timezone, not the server's.
-	loc, err := time.LoadLocation(timezone)
-	if err != nil || loc == nil {
-		loc = time.UTC
-	}
+	timezone, loc := services.ResolveTimezoneOrUTC(u.Timezone)
 	nowLocal := nowUTC.In(loc)
 	todayStart := time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(), 0, 0, 0, 0, loc)
 	yesterdayStart := todayStart.AddDate(0, 0, -1)

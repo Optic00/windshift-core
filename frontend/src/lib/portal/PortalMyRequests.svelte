@@ -6,7 +6,7 @@
   import Button from '../components/Button.svelte';
   import PageHeader from '../layout/PageHeader.svelte';
   import { portalStore } from '../stores/portal.svelte.js';
-  import { formatDateSimple } from '../utils/dateFormatter.js';
+  import { formatDateSimple, formatDateTimeLocale } from '../utils/dateFormatter.js';
 </script>
 
 {#if portalStore.selectedRequest}
@@ -66,7 +66,7 @@
                   {comment.author_name}
                 </div>
                 <time class="text-xs" style="color: var(--ds-text-subtle);">
-                  {new Date(comment.created_at).toLocaleString()}
+                  {formatDateTimeLocale(comment.created_at)}
                 </time>
               </div>
               <p class="text-sm leading-relaxed" style="color: var(--ds-text);">{comment.content}</p>

@@ -38,7 +38,7 @@
         statusColor: i.status_color,
         priorityName: i.priority_name,
         priorityColor: i.priority_color,
-        dueDate: i.due_date ? new Date(i.due_date) : null,
+        dueDate: i.due_date || null,
       }));
   }
 

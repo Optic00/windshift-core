@@ -5,7 +5,7 @@
   import AssigneePicker from '../pickers/AssigneePicker.svelte';
   import { confirm } from '../composables/useConfirm.js';
   import { api } from '../api.js';
-  import { formatDateTimeLocale } from '../utils/dateFormatter.js';
+  import { formatAuthenticatedDateTime as formatDateTimeLocale } from '../utils/authenticatedDateFormatter.js';
   import Spinner from '../components/Spinner.svelte';
   import { t } from '../stores/i18n.svelte.js';
   import { errorToast } from '../stores/toasts.svelte.js';
@@ -228,4 +228,3 @@
     </div>
   {/if}
 </div>
-

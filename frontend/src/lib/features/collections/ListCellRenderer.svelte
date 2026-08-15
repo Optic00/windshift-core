@@ -14,7 +14,7 @@
   import ListCustomFieldCell from './ListCustomFieldCell.svelte';
   import { Calendar, User, Target, Globe, Building2, FolderKanban } from '@lucide/svelte';
   import { itemTypeIconMap } from '../../utils/icons.js';
-  import { formatDate } from '../../utils/dateFormatter.js';
+  import { formatDate, formatDateOnly } from '../../utils/dateFormatter.js';
   import {
     createStatusPickerConfig,
     priorityPickerConfig as priorityConfig,
@@ -418,7 +418,7 @@
     {:else}
       <div class="flex items-center gap-1 text-sm whitespace-nowrap" style="color: var(--ds-text-subtle);">
         <Calendar class="w-4 h-4 flex-shrink-0" />
-        {item.due_date ? formatDate(item.due_date) : '-'}
+        {item.due_date ? formatDateOnly(item.due_date) : '-'}
       </div>
     {/if}
 

@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"windshift/internal/models"
 	"windshift/internal/repository"
@@ -183,7 +182,7 @@ func (h *ItemHandler) ChangeType(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.issueSyncService != nil && statusChanged && updatedItem.StatusID != nil {
 		go func(ctx context.Context, statusID int) {
-			ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			ctx, cancel := issueSyncContext(ctx)
 			defer cancel()
 			h.issueSyncService.PushStatusToGitHub(ctx, updatedItem.ID, statusID)
 		}(r.Context(), *updatedItem.StatusID)

@@ -32,6 +32,17 @@ func (h *SystemHandler) Shutdown(w http.ResponseWriter, r *http.Request) {
 	// Trigger shutdown after a brief delay to allow response to be sent
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-		h.shutdownChan <- os.Interrupt
+		if !trySendShutdown(h.shutdownChan) {
+			slog.Warn("shutdown signal channel is not ready")
+		}
 	}()
+}
+
+func trySendShutdown(shutdownChan chan os.Signal) bool {
+	select {
+	case shutdownChan <- os.Interrupt:
+		return true
+	default:
+		return false
+	}
 }

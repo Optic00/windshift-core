@@ -4,6 +4,7 @@
   import MilkdownEditor from '../../editors/LazyMilkdownEditor.svelte';
   import { ai } from '../../api/ai.js';
   import { navigate } from '../../router.js';
+  import { formatAuthenticatedInstant } from '../../utils/authenticatedDateFormatter.js';
 
   let briefing = $state(null);
   let loading = $state(true);
@@ -73,7 +74,7 @@
   </div>
   {#if briefing.generated_at}
     <p class="text-xs mt-3" style="color: var(--ds-text-subtlest);">
-      Updated {new Date(briefing.generated_at).toLocaleString(undefined, {
+      Updated {formatAuthenticatedInstant(briefing.generated_at, {
         month: 'short',
         day: 'numeric',
         hour: 'numeric',

@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"sort"
@@ -401,9 +400,9 @@ func jiraScreenFieldIsImportable(
 // requesting all fields plus the changelog so the tally can see history,
 // comment bodies, and custom-field values.
 func (h *JiraImportHandler) sampleIssues(ctx context.Context, client jira.Client, projectKey string, openOnly bool, limit int) []jira.JiraIssue {
-	jql := fmt.Sprintf("project = %s ORDER BY created DESC", projectKey)
+	jql := `project = "` + escapeHandlerJQLString(projectKey) + `" ORDER BY created DESC`
 	if openOnly {
-		jql = fmt.Sprintf("project = %s AND statusCategory != Done ORDER BY created DESC", projectKey)
+		jql = `project = "` + escapeHandlerJQLString(projectKey) + `" AND statusCategory != Done ORDER BY created DESC`
 	}
 
 	var out []jira.JiraIssue

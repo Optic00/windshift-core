@@ -1,4 +1,4 @@
-import { formatDate } from './dateFormatter.js';
+import { formatAuthenticatedInstant } from './authenticatedDateFormatter.js';
 import { escapeHtml } from './sanitize.ts';
 import { getStatusInlineStyle } from './statusColors.js';
 
@@ -62,7 +62,7 @@ export function createdAtColumn() {
     width: 'w-28',
     html: true,
     render: (item) =>
-      `<span class="whitespace-nowrap">${formatDate(item.created_at) || '—'}</span>`,
+      `<span class="whitespace-nowrap">${formatAuthenticatedInstant(item.created_at, { year: 'numeric', month: '2-digit', day: '2-digit' }) || '—'}</span>`,
   };
 }
 
@@ -74,6 +74,6 @@ export function updatedAtColumn(label) {
     width: 'w-28',
     html: true,
     render: (item) =>
-      `<span class="whitespace-nowrap">${formatDate(item.updated_at) || '—'}</span>`,
+      `<span class="whitespace-nowrap">${formatAuthenticatedInstant(item.updated_at, { year: 'numeric', month: '2-digit', day: '2-digit' }) || '—'}</span>`,
   };
 }

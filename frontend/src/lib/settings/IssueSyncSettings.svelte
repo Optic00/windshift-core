@@ -20,6 +20,7 @@
   import { safeHref } from '../utils/sanitize';
   import { workspaceDataStore } from '../stores/workspaceDataStore.svelte.js';
   import { loadIssueSyncPageData } from './issueSyncData.js';
+  import { formatAuthenticatedDateTime } from '../utils/authenticatedDateFormatter.js';
 
   let { workspaceId } = $props();
 
@@ -225,7 +226,7 @@
 
   function formatDate(dateStr) {
     if (!dateStr) return t('issueSync.never');
-    return new Date(dateStr).toLocaleString();
+    return formatAuthenticatedDateTime(dateStr);
   }
 
   let loadingStatuses = $state(false);

@@ -7,7 +7,8 @@
   import ItemAgentLog from '../items/ItemAgentLog.svelte';
   import { agentRuns } from '../../api/agentRuns.js';
   import { confirm } from '../../composables/useConfirm.js';
-  import { formatDateTimeLocale, formatDateShort } from '../../utils/dateFormatter.js';
+  import { worklogDateKey } from '../../utils/dateFormatter.js';
+  import { formatAuthenticatedDateTime as formatDateTimeLocale, formatAuthenticatedInstant } from '../../utils/authenticatedDateFormatter.js';
   import { t } from '../../stores/i18n.svelte.js';
   import { durationToString } from '../../utils/timeUtils.js';
   import { toHotkeyString, getShortcutDisplay } from '../../utils/keyboardShortcuts.js';
@@ -164,11 +165,11 @@
   }
 
   const worklogColumns = [
-    { key: 'date', label: t('common.date'), render: (w) => formatDateShort(new Date(w.date * 1000)), textColor: 'var(--ds-text-subtle)' },
+    { key: 'date', label: t('common.date'), render: (w) => worklogDateKey(w.date), textColor: 'var(--ds-text-subtle)' },
     { key: 'description', label: t('common.description'), render: (w) => w.description || t('items.noDescription') },
     { key: 'user_name', label: t('common.user'), render: (w) => w.user_name || '—' },
-    { key: 'start_time', label: t('time.start'), render: (w) => w.start_time ? new Date(w.start_time * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—', textColor: 'var(--ds-text-subtle)' },
-    { key: 'end_time', label: t('time.end'), render: (w) => w.end_time ? new Date(w.end_time * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—', textColor: 'var(--ds-text-subtle)' },
+    { key: 'start_time', label: t('time.start'), render: (w) => w.start_time ? formatAuthenticatedInstant(w.start_time * 1000, { hour: '2-digit', minute: '2-digit' }) : '—', textColor: 'var(--ds-text-subtle)' },
+    { key: 'end_time', label: t('time.end'), render: (w) => w.end_time ? formatAuthenticatedInstant(w.end_time * 1000, { hour: '2-digit', minute: '2-digit' }) : '—', textColor: 'var(--ds-text-subtle)' },
     { key: 'duration_minutes', label: t('time.duration'), render: (w) => `${Math.floor(w.duration_minutes / 60)}h ${w.duration_minutes % 60}m` },
     { key: 'project_name', label: t('common.project'), textColor: 'var(--ds-text-subtle)' },
     { key: 'actions', label: '', width: 'w-12' },

@@ -289,6 +289,10 @@ func buildRecurrenceRule(itemID, workspaceID, userID int, req models.CreateRecur
 	if req.Timezone != "" {
 		timezone = req.Timezone
 	}
+	timezone, _, err = ResolveTimezone(timezone)
+	if err != nil {
+		return nil, recurrenceInvalid(err.Error())
+	}
 	leadTimeDays := valueOr(req.LeadTimeDays, 14)
 	copyAssignee := valueOr(req.CopyAssignee, true)
 	copyPriority := valueOr(req.CopyPriority, true)
@@ -343,7 +347,11 @@ func applyRecurrenceUpdate(rule *models.RecurrenceRule, req models.UpdateRecurre
 		}
 	}
 	if req.Timezone != nil {
-		rule.Timezone = *req.Timezone
+		timezone, _, err := ResolveTimezone(*req.Timezone)
+		if err != nil {
+			return recurrenceInvalid(err.Error())
+		}
+		rule.Timezone = timezone
 	}
 	if req.LeadTimeDays != nil {
 		rule.LeadTimeDays = *req.LeadTimeDays

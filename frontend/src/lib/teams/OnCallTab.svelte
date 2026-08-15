@@ -15,6 +15,7 @@
   import LayerEditor from './LayerEditor.svelte';
   import OverrideEditor from './OverrideEditor.svelte';
   import { loadTeamOnCallOverview } from './onCallOverviewData.js';
+  import { formatAuthenticatedDateTime } from '../utils/authenticatedDateFormatter.js';
 
   let { team, canEdit } = $props();
 
@@ -78,9 +79,7 @@
 
   function formatOverrideTime(value) {
     if (!value) return '';
-    const d = new Date(value);
-    if (Number.isNaN(d.getTime())) return '';
-    return d.toLocaleString();
+    return formatAuthenticatedDateTime(value);
   }
 
   async function deleteOverride(scheduleId, override) {

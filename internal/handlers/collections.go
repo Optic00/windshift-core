@@ -272,6 +272,7 @@ func (h *CollectionHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_, workspaceProvided := payload["workspace_id"]
+	_, descriptionProvided := payload["description"]
 	_, categoryProvided := payload["category_id"]
 	_, isPublicProvided := payload["is_public"]
 	_, publicSlugProvided := payload["public_slug"]
@@ -300,6 +301,9 @@ func (h *CollectionHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// Preserve is_public unless the field is explicitly sent in the payload
 	if !isPublicProvided {
 		collection.IsPublic = existing.IsPublic
+	}
+	if !descriptionProvided {
+		collection.Description = existing.Description
 	}
 
 	// Public queries and workspace associations change anonymous visibility.
@@ -336,6 +340,10 @@ func (h *CollectionHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// Preserve public_slug unless the field is explicitly sent in the payload
 	if !publicSlugProvided {
 		collection.PublicSlug = existing.PublicSlug
+	}
+	if collection.IsPublic && (collection.PublicSlug == nil || *collection.PublicSlug == "") {
+		respondValidationError(w, r, "Public slug is required when public sharing is enabled")
+		return
 	}
 
 	// Preserve filter_state unless the field is explicitly sent in the payload.
@@ -377,6 +385,10 @@ func (h *CollectionHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.repo.Update(id, &collection); err != nil {
+		if database.IsUniqueConstraintError(err) {
+			respondConflict(w, r, "This public slug is already in use")
+			return
+		}
 		respondInternalError(w, r, err)
 		return
 	}

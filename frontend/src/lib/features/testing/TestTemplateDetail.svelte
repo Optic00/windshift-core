@@ -11,6 +11,7 @@
   import Textarea from '../../components/Textarea.svelte';
   import SectionHeader from '../../layout/SectionHeader.svelte';
   import { t } from '../../stores/i18n.svelte.js';
+  import { formatAuthenticatedDateTime } from '../../utils/authenticatedDateFormatter.js';
 
   let template = $state(null);
   let executions = $state([]);
@@ -198,9 +199,9 @@
               </h1>
             {/if}
             <div class="text-sm mt-1" style="color: var(--ds-text-subtle);">
-              Created: {new Date(template.created_at).toLocaleString()}
+              Created: {formatAuthenticatedDateTime(template.created_at)}
               {#if template.updated_at && template.updated_at !== template.created_at}
-                • Updated: {new Date(template.updated_at).toLocaleString()}
+                • Updated: {formatAuthenticatedDateTime(template.updated_at)}
               {/if}
             </div>
           </div>
@@ -312,9 +313,9 @@
                           {execution.name}
                         </div>
                         <div class="text-sm" style="color: var(--ds-text-subtle);">
-                          {t('testing.started')}: {new Date(execution.started_at).toLocaleString()}
+                          {t('testing.started')}: {formatAuthenticatedDateTime(execution.started_at)}
                           {#if execution.ended_at}
-                            • {t('testing.ended')}: {new Date(execution.ended_at).toLocaleString()}
+                            • {t('testing.ended')}: {formatAuthenticatedDateTime(execution.ended_at)}
                           {/if}
                         </div>
                       </div>

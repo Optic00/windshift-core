@@ -8,7 +8,7 @@
   import Textarea from '../../components/Textarea.svelte';
   import Badge from '../../components/Badge.svelte';
   import EmptyState from '../../components/EmptyState.svelte';
-  import { formatDateTimeLocale } from '../../utils/dateFormatter.js';
+  import { formatAuthenticatedDateTime as formatDateTimeLocale } from '../../utils/authenticatedDateFormatter.js';
   import { authStore } from '../../stores';
   import { confirm } from '../../composables/useConfirm.js';
 

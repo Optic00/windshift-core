@@ -78,11 +78,7 @@ func (ath *APITokenHandler) CreateToken(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if request.ExpiresOn != nil {
-		_, location, err := services.ResolveTimezone(user.Timezone)
-		if err != nil {
-			respondInternalError(w, r, err)
-			return
-		}
+		_, location := services.ResolveTimezoneOrUTC(user.Timezone)
 		date, err := services.ParseCivilDate(*request.ExpiresOn, location)
 		if err != nil {
 			respondValidationError(w, r, "expires_on must use YYYY-MM-DD format")

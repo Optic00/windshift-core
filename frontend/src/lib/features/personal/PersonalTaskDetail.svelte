@@ -12,7 +12,7 @@
   import Input from '../../components/Input.svelte';
   import { itemTypeIconMap } from '../../utils/icons.js';
   import { copyToClipboard } from '../../utils/clipboard.js';
-  import { formatDate } from '../../utils/dateFormatter.js';
+  import { formatDateOnly } from '../../utils/dateFormatter.js';
   import { navigate } from '../../router.js';
   import ItemDetailBreadcrumbs from '../items/ItemDetailBreadcrumbs.svelte';
   import { t } from '../../stores/i18n.svelte.js';
@@ -415,7 +415,7 @@
               style="color: {item.due_date ? 'var(--ds-text)' : 'var(--ds-text-subtle)'}; background: none; border: none; padding: 0;"
             >
               <Calendar class="w-4 h-4" />
-              {item.due_date ? formatDate(item.due_date) : t('personal.setDueDate')}
+              {item.due_date ? formatDateOnly(item.due_date) : t('personal.setDueDate')}
             </button>
             {#if item.due_date}
               <button

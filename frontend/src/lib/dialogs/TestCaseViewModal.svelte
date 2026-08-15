@@ -14,7 +14,7 @@
   import Modal from './Modal.svelte';
   import Button from '../components/Button.svelte';
   import { api } from '../api.js';
-  import { formatDateTimeLocale } from '../utils/dateFormatter.js';
+  import { formatAuthenticatedDateTime as formatDateTimeLocale } from '../utils/authenticatedDateFormatter.js';
   import { t } from '../stores/i18n.svelte.js';
 
   let {

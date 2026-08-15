@@ -1389,7 +1389,7 @@ func (c *cloudClient) GetIssueWorklogs(ctx context.Context, issueKey string, sta
 
 // GetIssueCount gets the total number of issues in a project using the new JQL search endpoint
 func (c *cloudClient) GetIssueCount(ctx context.Context, projectKey string, openOnly bool) (int, error) {
-	jql := fmt.Sprintf("project = %s", projectKey)
+	jql := `project = "` + escapeJQLString(projectKey) + `"`
 	if openOnly {
 		jql += " AND statusCategory != Done"
 	}

@@ -17,7 +17,8 @@
 	import PersonalLabelManager from '../features/labels/PersonalLabelManager.svelte';
 	import LeavePeriods from '../profile/LeavePeriods.svelte';
 	import { copyToClipboard } from '../utils/clipboard.js';
-	import { formatDate, formatDateSimple, formatDateShort } from '../utils/dateFormatter.js';
+	import { formatDate, formatDateSimple } from '../utils/dateFormatter.js';
+	import { formatAuthenticatedInstant } from '../utils/authenticatedDateFormatter.js';
 	import { t, i18n, SUPPORTED_LOCALES } from '../stores/i18n.svelte.js';
 	import { confirm } from '../composables/useConfirm.js';
 	import DescriptionText from '../components/DescriptionText.svelte';
@@ -1040,7 +1041,7 @@
 														<div>
 															<div class="font-medium text-sm" style="color: var(--ds-text);">{tok.name}</div>
 															<div class="text-xs" style="color: var(--ds-text-subtle);">
-																Created {formatDateShort(tok.created_at) || '-'} • Expires {formatDate(tok.expires_at) || 'Never expires'}
+														Created {formatAuthenticatedInstant(tok.created_at, { year: 'numeric', month: 'short', day: 'numeric' }) || '-'} • Expires {formatAuthenticatedInstant(tok.expires_at, { year: 'numeric', month: 'short', day: 'numeric' }) || 'Never expires'}
 															</div>
 														</div>
 													</div>

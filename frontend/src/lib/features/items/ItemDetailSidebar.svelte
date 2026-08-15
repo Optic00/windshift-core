@@ -25,7 +25,7 @@
   import { getShortcutDisplay } from '../../utils/keyboardShortcuts.js';
   import { workspacePermissions } from '../../stores';
   import { t } from '../../stores/i18n.svelte.js';
-  import { formatDateShort, formatCustomFieldDate } from '../../utils/dateFormatter.js';
+  import { formatDateOnly, formatCustomFieldDate } from '../../utils/dateFormatter.js';
   import { parseDuration, durationToString } from '../../utils/timeUtils.js';
   import { resolveOptionLabel, resolveOptionLabels } from '../../utils/optionUtils.js';
   import { booleanCustomFieldChecked, isBooleanCustomFieldType } from '../../utils/customFieldTypes.js';
@@ -1177,7 +1177,7 @@
             <div class="flex items-center gap-2">
               {#if item?.due_date}
                 <Calendar size={14} class="flex-shrink-0" style="color: var(--ds-text-subtle);" />
-                <span style="color: var(--ds-text);">{formatDateShort(item.due_date)}</span>
+                <span style="color: var(--ds-text);">{formatDateOnly(item.due_date)}</span>
               {:else}
                 <Text variant="subtle" size="sm">{t('common.none')}</Text>
               {/if}
@@ -1220,7 +1220,7 @@
             <div class="flex items-center gap-2">
               {#if item?.start_date}
                 <Calendar size={14} class="flex-shrink-0" style="color: var(--ds-text-subtle);" />
-                <span style="color: var(--ds-text);">{formatDateShort(item.start_date)}</span>
+                <span style="color: var(--ds-text);">{formatDateOnly(item.start_date)}</span>
               {:else}
                 <Text variant="subtle" size="sm">{t('common.none')}</Text>
               {/if}
@@ -1263,7 +1263,7 @@
             <div class="flex items-center gap-2">
               {#if item?.end_date}
                 <Calendar size={14} class="flex-shrink-0" style="color: var(--ds-text-subtle);" />
-                <span style="color: var(--ds-text);">{formatDateShort(item.end_date)}</span>
+                <span style="color: var(--ds-text);">{formatDateOnly(item.end_date)}</span>
               {:else}
                 <Text variant="subtle" size="sm">{t('common.none')}</Text>
               {/if}

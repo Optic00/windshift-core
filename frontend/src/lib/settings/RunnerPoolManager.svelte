@@ -16,6 +16,7 @@
   import Input from '../components/Input.svelte';
   import { successToast, errorToast } from '../stores/toasts.svelte.js';
   import { confirm } from '../composables/useConfirm.js';
+  import { formatAuthenticatedDateTime } from '../utils/authenticatedDateFormatter.js';
 
   let pools = $state([]);
   let loadingPools = $state(true);
@@ -181,7 +182,7 @@
   }
 
   function fmtDate(d) {
-    return d ? new Date(d).toLocaleString() : '—';
+    return d ? formatAuthenticatedDateTime(d) : '—';
   }
 
   function tokenStatus(tok) {

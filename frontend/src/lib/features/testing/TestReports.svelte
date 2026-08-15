@@ -14,6 +14,7 @@
   import TestCoverageReport from './TestCoverageReport.svelte';
   import { t } from '../../stores/i18n.svelte.js';
   import DescriptionText from '../../components/DescriptionText.svelte';
+  import { formatAuthenticatedDateTime } from '../../utils/authenticatedDateFormatter.js';
 
   let { workspaceId = null } = $props();
 
@@ -111,7 +112,7 @@
     {
       key: 'failed_at',
       label: t('testing.failedAt'),
-      render: (failure) => failure.failed_at ? new Date(failure.failed_at).toLocaleString() : '-'
+      render: (failure) => failure.failed_at ? formatAuthenticatedDateTime(failure.failed_at) : '-'
     }
   ]);
 
@@ -136,7 +137,7 @@
     {
       key: 'blocked_at',
       label: t('testing.blockedAt'),
-      render: (blocked) => blocked.blocked_at ? new Date(blocked.blocked_at).toLocaleString() : '-'
+      render: (blocked) => blocked.blocked_at ? formatAuthenticatedDateTime(blocked.blocked_at) : '-'
     }
   ]);
 

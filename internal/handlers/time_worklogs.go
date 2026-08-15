@@ -95,15 +95,15 @@ func (h *TimeWorklogHandler) filterWorklogsByPermission(worklogs []models.Worklo
 
 func applyWorklogDateFilters(r *http.Request, filter *repository.WorklogDetailFilter) {
 	if dateFrom := r.URL.Query().Get("date_from"); dateFrom != "" {
-		if parsed, err := time.Parse("2006-01-02", dateFrom); err == nil {
-			value := parsed.Unix()
+		if start, _, err := services.CivilDateRangeUTC(dateFrom, dateFrom, time.UTC); err == nil {
+			value := start.Unix()
 			filter.DateFromUnix = &value
 		}
 	}
 	if dateTo := r.URL.Query().Get("date_to"); dateTo != "" {
-		if parsed, err := time.Parse("2006-01-02", dateTo); err == nil {
-			value := parsed.Add(24*time.Hour - time.Second).Unix()
-			filter.DateToUnix = &value
+		if _, endExclusive, err := services.CivilDateRangeUTC(dateTo, dateTo, time.UTC); err == nil {
+			value := endExclusive.Unix()
+			filter.DateToExclusiveUnix = &value
 		}
 	}
 }
@@ -225,15 +225,16 @@ func (h *TimeWorklogHandler) validateAndParseWorklog(req WorklogRequest, userTim
 
 	timezone := userTimezone
 	if req.Timezone != "" {
-		timezone = req.Timezone
+		_, location, timezoneErr := services.ResolveTimezone(req.Timezone)
+		if timezoneErr != nil {
+			err = timezoneErr
+			return
+		}
+		date, err = services.ParseCivilDate(req.Date, location)
+	} else {
+		_, location := services.ResolveTimezoneOrUTC(timezone)
+		date, err = services.ParseCivilDate(req.Date, location)
 	}
-	_, location, timezoneErr := services.ResolveTimezone(timezone)
-	if timezoneErr != nil {
-		err = timezoneErr
-		return
-	}
-
-	date, err = services.ParseCivilDate(req.Date, location)
 	if err != nil {
 		return
 	}
@@ -251,39 +252,13 @@ func (h *TimeWorklogHandler) validateAndParseWorklog(req WorklogRequest, userTim
 		startTime = time.Unix(startUnix, 0)
 		endTime = time.Unix(endUnix, 0)
 	} else if req.DurationInput != "" {
-		// Duration shorthand like "1h", "30m", "2h15m"
-		duration, parseErr := ParseDuration(req.DurationInput)
-		if parseErr != nil {
-			err = fmt.Errorf("invalid duration: %v", parseErr)
+		var startUnix, endUnix int64
+		durationMins, startUnix, endUnix, err = services.ParseWorklogTimes(date, services.WorklogTimeInput{Duration: req.DurationInput})
+		if err != nil {
 			return
 		}
-
-		durationMins = int(duration / time.Minute)
-		if _, validationErr := services.ValidateWorklogDurationMinutes(durationMins); validationErr != nil {
-			err = validationErr
-			return
-		}
-
-		// Default to ending "now" and calculating start time backwards
-		if req.EndTime != "" {
-			endTime, parseErr = services.ResolveCivilClock(date, req.EndTime)
-			if parseErr != nil {
-				err = fmt.Errorf("invalid end_time: %w", parseErr)
-				return
-			}
-		} else {
-			now := time.Now().In(location)
-			endTime = now
-			if date.Year() != now.Year() || date.Month() != now.Month() || date.Day() != now.Day() {
-				// If not today, default end time to 17:00
-				endTime, err = services.ResolveCivilClock(date, "17:00")
-				if err != nil {
-					return
-				}
-			}
-		}
-
-		startTime = endTime.Add(-duration)
+		startTime = time.Unix(startUnix, 0)
+		endTime = time.Unix(endUnix, 0)
 	} else {
 		err = fmt.Errorf("either provide start_time+end_time or duration")
 		return

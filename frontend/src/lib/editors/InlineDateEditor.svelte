@@ -2,7 +2,7 @@
   import { tick } from 'svelte';
   import { Calendar } from '@lucide/svelte';
   import { t } from '../stores/i18n.svelte.js';
-  import { formatDate, formatDateShort } from '../utils/dateFormatter.js';
+  import { dateOnlyKey, formatDateOnly } from '../utils/dateFormatter.js';
   import BaseInlineEditor from './BaseInlineEditor.svelte';
   import Input from '../components/Input.svelte';
 
@@ -14,7 +14,7 @@
   } = $props();
 
   const effectivePlaceholder = $derived(placeholder || t('editors.selectDate'));
-  const displayValue = $derived(value ? (formatDateShort(value) || value) : '');
+  const displayValue = $derived(value ? (formatDateOnly(value) || value) : '');
 
   let baseEditor;
   let editValue = $state('');
@@ -22,7 +22,7 @@
 
   function formatInputDate(dateStr) {
     if (!dateStr) return '';
-    try { return formatDate(new Date(dateStr)); } catch { return ''; }
+    return dateOnlyKey(dateStr);
   }
 
   function handleStartEdit() {

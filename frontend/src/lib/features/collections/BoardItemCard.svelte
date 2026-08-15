@@ -3,7 +3,7 @@
   import Avatar from '../../components/Avatar.svelte';
   import DropIndicator from '../../layout/DropIndicator.svelte';
   import DropdownMenu from '../../layout/DropdownMenu.svelte';
-  import { formatDateShort } from '../../utils/dateFormatter.js';
+  import { formatDateOnly } from '../../utils/dateFormatter.js';
   import { itemTypeIconMap } from '../../utils/icons.js';
   import ItemKey from '../items/ItemKey.svelte';
   import CardFieldChip from './CardFieldChip.svelte';
@@ -159,7 +159,7 @@
             title="Due date"
           >
             <CalendarDays class="h-3 w-3 shrink-0" />
-            {formatDateShort(item.due_date)}
+            {formatDateOnly(item.due_date)}
           </span>
         {/if}
         <DependencySummary {item} links={dependencyLinks} />

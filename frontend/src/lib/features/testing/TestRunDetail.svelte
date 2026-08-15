@@ -11,6 +11,7 @@
   import { t } from '../../stores/i18n.svelte.js';
   import { errorToast, infoToast } from '../../stores/toasts.svelte.js';
   import { loadTestRunDetail } from './testRunDetailData.js';
+  import { formatAuthenticatedDateTime } from '../../utils/authenticatedDateFormatter.js';
 
   let testRun = $state(null);
   let testResults = $state([]);
@@ -226,9 +227,9 @@
               {testRun.name}
             </h1>
             <div class="text-sm mt-1" style="color: var(--ds-text-subtle);">
-              {t('testing.started')}: {new Date(testRun.started_at).toLocaleString()}
+              {t('testing.started')}: {formatAuthenticatedDateTime(testRun.started_at)}
               {#if testRun.ended_at}
-                • {t('testing.ended')}: {new Date(testRun.ended_at).toLocaleString()}
+                • {t('testing.ended')}: {formatAuthenticatedDateTime(testRun.ended_at)}
               {/if}
             </div>
           </div>
@@ -382,7 +383,7 @@
 
                     {#if result.executed_at}
                       <div class="text-xs mt-3 pt-2 border-t" style="border-color: var(--ds-border); color: var(--ds-text-subtle);">
-                        {t('testing.executed')}: {new Date(result.executed_at).toLocaleString()}
+                        {t('testing.executed')}: {formatAuthenticatedDateTime(result.executed_at)}
                       </div>
                     {/if}
                   </div>
@@ -471,7 +472,7 @@
               <div>
                 <div class="text-sm font-medium" style="color: var(--ds-text-subtle);">{t('testing.started')}</div>
                 <div class="text-sm" style="color: var(--ds-text);">
-                  {new Date(testRun.started_at).toLocaleString()}
+                  {formatAuthenticatedDateTime(testRun.started_at)}
                 </div>
               </div>
               
@@ -479,7 +480,7 @@
                 <div>
                   <div class="text-sm font-medium" style="color: var(--ds-text-subtle);">{t('testing.ended')}</div>
                   <div class="text-sm" style="color: var(--ds-text);">
-                    {new Date(testRun.ended_at).toLocaleString()}
+                    {formatAuthenticatedDateTime(testRun.ended_at)}
                   </div>
                 </div>
 

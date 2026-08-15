@@ -24,13 +24,6 @@ func NewOnCallService(db database.Database, onCallRepo *repository.OnCallReposit
 	}
 }
 
-// ComputeRotationForLayer determines which member is on call for the given layer
-// at the specified time. Returns nil if no member is on call (e.g. outside the
-// layer's active window or no members configured).
-func (s *OnCallService) ComputeRotationForLayer(layer *models.OnCallScheduleLayer, t time.Time) *int {
-	return s.computeRotationForLayer(layer, t, t.Location())
-}
-
 func (s *OnCallService) computeRotationForLayer(layer *models.OnCallScheduleLayer, instant time.Time, location *time.Location) *int {
 	startDate, err := parseOnCallDate(layer.StartDate)
 	if err != nil {

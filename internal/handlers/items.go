@@ -991,7 +991,7 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// Push status change to GitHub if issue sync is configured
 	if h.issueSyncService != nil && result.StatusChanged && updatedItem.StatusID != nil {
 		go func(ctx context.Context) {
-			ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			ctx, cancel := issueSyncContext(ctx)
 			defer cancel()
 			h.issueSyncService.PushStatusToGitHub(ctx, updatedItem.ID, *updatedItem.StatusID)
 		}(r.Context())
@@ -1004,6 +1004,10 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 	h.maskInaccessibleProjectNames(user.ID, maskedUpdated)
 
 	respondJSONOK(w, maskedUpdated[0])
+}
+
+func issueSyncContext(requestContext context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(requestContext), 30*time.Second)
 }
 
 // maskInaccessibleProjectNames blanks the human-readable project name fields on

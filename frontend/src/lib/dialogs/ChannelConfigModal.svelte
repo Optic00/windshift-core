@@ -21,6 +21,7 @@
   import ChannelSMTPConfig from '../features/channels/ChannelSMTPConfig.svelte';
   import ChannelFormConfig from '../features/channels/ChannelFormConfig.svelte';
   import FormBuilder from '../features/channels/FormBuilder.svelte';
+  import { formatAuthenticatedDateTime } from '../utils/authenticatedDateFormatter.js';
 
   let {
     isOpen = false,
@@ -681,7 +682,7 @@
           {#if channel.last_activity}
             <div class="pt-6 mt-6 border-t" style="border-color: var(--ds-border);">
               <div class="text-sm" style="color: var(--ds-text-subtle);">
-                {t('channel.lastActivity')}: {new Date(channel.last_activity).toLocaleString()}
+                {t('channel.lastActivity')}: {formatAuthenticatedDateTime(channel.last_activity)}
               </div>
             </div>
           {/if}

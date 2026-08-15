@@ -28,6 +28,16 @@ func ResolveTimezone(name string) (string, *time.Location, error) {
 	return name, location, nil
 }
 
+// ResolveTimezoneOrUTC validates stored display preferences and falls back to
+// UTC when legacy data is missing or invalid.
+func ResolveTimezoneOrUTC(name string) (string, *time.Location) {
+	resolved, location, err := ResolveTimezone(name)
+	if err != nil {
+		return "UTC", time.UTC
+	}
+	return resolved, location
+}
+
 // LookupUserTimezone returns a validated timezone for the acting user.
 func LookupUserTimezone(db database.Database, userID int) (string, error) {
 	var timezone sql.NullString
@@ -38,8 +48,8 @@ func LookupUserTimezone(db database.Database, userID int) (string, error) {
 	if timezone.Valid && strings.TrimSpace(timezone.String) != "" {
 		name = timezone.String
 	}
-	name, _, err := ResolveTimezone(name)
-	return name, err
+	name, _ = ResolveTimezoneOrUTC(name)
+	return name, nil
 }
 
 // ParseCivilDate parses a calendar date in location without changing the
@@ -51,6 +61,28 @@ func ParseCivilDate(value string, location *time.Location) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("invalid date format, use YYYY-MM-DD")
 	}
 	return time.Date(parsed.Year(), parsed.Month(), parsed.Day(), 0, 0, 0, 0, location), nil
+}
+
+// CivilDateRangeUTC converts an inclusive local date range to half-open UTC
+// bounds. Calendar-day arithmetic preserves 23-hour and 25-hour DST days.
+func CivilDateRangeUTC(startValue, endValue string, location *time.Location) (startUTC, endExclusiveUTC time.Time, err error) {
+	if location == nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("timezone location is required")
+	}
+
+	start, err := ParseCivilDate(startValue, location)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("invalid start date: %w", err)
+	}
+	end, err := ParseCivilDate(endValue, location)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("invalid end date: %w", err)
+	}
+	if end.Before(start) {
+		return time.Time{}, time.Time{}, fmt.Errorf("end date must not precede start date")
+	}
+
+	return start.UTC(), end.AddDate(0, 0, 1).UTC(), nil
 }
 
 // WorklogDateUnix encodes a business date as its established UTC-midnight key.
@@ -87,12 +119,15 @@ func onCallHandoffBoundary(date time.Time, clock string, location *time.Location
 	wall := time.Date(date.Year(), date.Month(), date.Day(), parsed.Hour(), parsed.Minute(), 0, 0, time.UTC)
 	for minute := 0; minute <= 180; minute++ {
 		candidateWall := wall.Add(time.Duration(minute) * time.Minute)
+		if candidateWall.Year() != date.Year() || candidateWall.Month() != date.Month() || candidateWall.Day() != date.Day() {
+			break
+		}
 		candidates := civilTimeCandidates(candidateWall.Year(), candidateWall.Month(), candidateWall.Day(), candidateWall.Hour(), candidateWall.Minute(), location)
 		if len(candidates) > 0 {
 			return candidates[0], nil
 		}
 	}
-	return time.Time{}, fmt.Errorf("could not resolve handoff time %s", clock)
+	return time.Time{}, fmt.Errorf("could not resolve handoff time %s on %s", clock, date.Format(time.DateOnly))
 }
 
 func civilTimeCandidates(year int, month time.Month, day, hour, minute int, location *time.Location) []time.Time {

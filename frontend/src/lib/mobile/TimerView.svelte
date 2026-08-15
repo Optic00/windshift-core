@@ -8,6 +8,7 @@
   import { formatItemKey } from '../utils/itemKey.js';
   import MobileHeader from './MobileHeader.svelte';
   import TimeLogModal from '../dialogs/TimeLogModal.svelte';
+  import { formatAuthenticatedInstant } from '../utils/authenticatedDateFormatter.js';
 
   const activeTimer = $derived(timerStore.activeTimer);
   // Most-recent-first; the worklog list/edit/delete + modal all come from the
@@ -18,7 +19,7 @@
 
   function fmtDay(epochSeconds) {
     if (!epochSeconds) return '';
-    return new Date(epochSeconds * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    return formatAuthenticatedInstant(epochSeconds * 1000, { month: 'short', day: 'numeric' });
   }
 
   async function stopTimer() {

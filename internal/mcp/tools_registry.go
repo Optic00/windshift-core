@@ -108,7 +108,7 @@ func (ms *MCPServer) buildEnv(user *models.User) (*aitools.Env, error) {
 	if err != nil {
 		return nil, err
 	}
-	timezone, _, err := services.ResolveTimezone(user.Timezone)
+	timezone, err := services.LookupUserTimezone(ms.deps.DB, user.ID)
 	if err != nil {
 		return nil, err
 	}

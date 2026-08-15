@@ -62,7 +62,7 @@
         .filter(item => item && item.id)
         .map(item => ({
           ...item,
-          dueDate: item.due_date ? new Date(item.due_date) : null,
+          dueDate: item.due_date || null,
           updatedDate: item.updated_at ? new Date(item.updated_at) : null
         }));
 

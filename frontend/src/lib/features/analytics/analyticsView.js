@@ -1,3 +1,5 @@
+export { formatDateOnly } from '../../utils/dateFormatter.js';
+
 export const ANALYTICS_MAX_RANGE_DAYS = 366;
 export const ANALYTICS_DEFAULT_RANGE_DAYS = 84;
 
@@ -55,17 +57,6 @@ export function validateAnalyticsRange(startDate, endDate) {
   if (days < 1) return 'reversed';
   if (days > ANALYTICS_MAX_RANGE_DAYS) return 'too_long';
   return null;
-}
-
-export function formatDateOnly(dateString, options = {}) {
-  const parts = dateParts(dateString);
-  if (!parts) return '—';
-  return new Intl.DateTimeFormat(undefined, {
-    month: 'short',
-    day: 'numeric',
-    timeZone: 'UTC',
-    ...options,
-  }).format(new Date(parts.timestamp));
 }
 
 export function formatDayNumber(value) {

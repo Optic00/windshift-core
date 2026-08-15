@@ -16,7 +16,8 @@
 	import AlertBox from '../components/AlertBox.svelte';
 	import Label from '../components/Label.svelte';
 	import { copyToClipboard } from '../utils/clipboard.js';
-	import { formatDate, formatDateShort } from '../utils/dateFormatter.js';
+	import { formatDate } from '../utils/dateFormatter.js';
+	import { formatAuthenticatedInstant } from '../utils/authenticatedDateFormatter.js';
 	import { errorToast, successToast } from '../stores/toasts.svelte.js';
 	import Checkbox from '../components/Checkbox.svelte';
 	import Radio from '../components/Radio.svelte';
@@ -344,7 +345,7 @@
 						<div>
 							<div class="font-medium" style="color: var(--ds-text);" data-testid="security-credential-name">{getCredentialName(credential)}</div>
 							<div class="text-sm" style="color: var(--ds-text-subtle);">
-								{getCredentialTypeName(credential.credential_type)} • Added {formatDateShort(credential.created_at) || '-'}
+								{getCredentialTypeName(credential.credential_type)} • Added {formatAuthenticatedInstant(credential.created_at, { year: 'numeric', month: 'short', day: 'numeric' }) || '-'}
 							</div>
 						</div>
 					</div>
@@ -446,7 +447,7 @@
 						<div>
 							<div class="font-medium" style="color: var(--ds-text);">{token.name}</div>
 							<div class="text-sm" style="color: var(--ds-text-subtle);">
-								Created {formatDateShort(token.created_at) || '-'} • Expires {formatDate(token.expires_at) || 'Never expires'}
+								Created {formatAuthenticatedInstant(token.created_at, { year: 'numeric', month: 'short', day: 'numeric' }) || '-'} • Expires {formatAuthenticatedInstant(token.expires_at, { year: 'numeric', month: 'short', day: 'numeric' }) || 'Never expires'}
 							</div>
 						</div>
 					</div>

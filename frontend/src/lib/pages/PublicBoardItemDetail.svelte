@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { publicBoard } from '../api/publicBoard.js';
-  import { formatRelativeTime, formatDateShort } from '../utils/dateFormatter.js';
+  import { formatRelativeTime, formatDateOnly } from '../utils/dateFormatter.js';
   import { itemTypeIconMap } from '../utils/icons.js';
   import { CheckSquare } from '@lucide/svelte';
   import Modal from '../dialogs/Modal.svelte';
@@ -198,7 +198,7 @@
               <Text variant="subtle" size="sm">Due Date</Text>
               <div class="flex items-center gap-2">
                 <span class="text-[13px]" class:text-red-500={isOverdue} class:font-medium={isOverdue}>
-                  {formatDateShort(item.due_date)}
+                  {formatDateOnly(item.due_date)}
                 </span>
               </div>
             </div>

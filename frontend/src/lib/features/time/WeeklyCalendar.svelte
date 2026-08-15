@@ -13,7 +13,8 @@
   import { errorToast, infoToast } from '../../stores/toasts.svelte.js';
   import { navigate } from '../../router.js';
   import { publicBaseURL } from '../../runtime/contextPath.js';
-  import { formatDate, formatDateWithOptions } from '../../utils/dateFormatter.js';
+  import { dateOnlyKey, formatDate, formatDateOnly, formatDateWithOptions } from '../../utils/dateFormatter.js';
+  import { serverNow } from '../../utils/serverClock.js';
   import Checkbox from '../../components/Checkbox.svelte';
   import Input from '../../components/Input.svelte';
   import DescriptionText from '../../components/DescriptionText.svelte';
@@ -302,7 +303,7 @@
   }
 
   function isToday(date) {
-    const today = new Date();
+    const today = serverNow();
     return date.toDateString() === today.toDateString();
   }
 
@@ -1069,10 +1070,10 @@
                                 {workItem.scheduledTime} - {minutesToTime(timeToMinutes(workItem.scheduledTime) + workItem.durationMinutes)}
                               </p>
                               {#if workItem.dueDate}
-                                {@const dueDate = new Date(workItem.dueDate)}
-                                {@const isOverdue = dueDate < new Date() && dueDate.toDateString() !== new Date().toDateString()}
+                                {@const dueDate = dateOnlyKey(workItem.dueDate)}
+                                {@const isOverdue = dueDate < formatDate(serverNow())}
                                 <p class="text-[10px]" style="color: {isOverdue ? 'var(--ds-text-danger)' : 'var(--ds-text-subtle)'};">
-                                  Due: {formatDateWithOptions(dueDate, { month: 'short', day: 'numeric' })}
+                                  Due: {formatDateOnly(dueDate, { month: 'short', day: 'numeric' })}
                                 </p>
                               {/if}
                               <button
@@ -1135,10 +1136,10 @@
                             >×</button>
                           </div>
                           {#if workItem.dueDate}
-                            {@const dueDate = new Date(workItem.dueDate)}
-                            {@const isOverdue = dueDate < new Date() && dueDate.toDateString() !== new Date().toDateString()}
+                            {@const dueDate = dateOnlyKey(workItem.dueDate)}
+                            {@const isOverdue = dueDate < formatDate(serverNow())}
                             <p class="text-[10px]" style="color: {isOverdue ? 'var(--ds-text-danger)' : 'var(--ds-text-subtle)'};">
-                              Due: {formatDateWithOptions(dueDate, { month: 'short', day: 'numeric' })}
+                              Due: {formatDateOnly(dueDate, { month: 'short', day: 'numeric' })}
                             </p>
                           {/if}
                           <button

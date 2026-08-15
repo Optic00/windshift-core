@@ -19,6 +19,7 @@
   import { t } from '../../stores/i18n.svelte.js';
   import { errorToast, warningToast } from '../../stores/toasts.svelte.js';
   import { useEventListener } from 'runed';
+  import { formatAuthenticatedDateTime } from '../../utils/authenticatedDateFormatter.js';
 
   let { workspaceId = null } = $props();
 
@@ -182,12 +183,12 @@
     {
       key: 'started_at',
       label: t('testing.started'),
-      render: (run) => run.started_at ? new Date(run.started_at).toLocaleString() : '-'
+      render: (run) => run.started_at ? formatAuthenticatedDateTime(run.started_at) : '-'
     },
     {
       key: 'ended_at',
       label: t('testing.ended'),
-      render: (run) => run.ended_at ? new Date(run.ended_at).toLocaleString() : '-'
+      render: (run) => run.ended_at ? formatAuthenticatedDateTime(run.ended_at) : '-'
     },
     {
       key: 'status',

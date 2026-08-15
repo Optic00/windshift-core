@@ -34,7 +34,9 @@ export function updateOffset(serverDateHeader) {
 
   // Median filters out one-off network jitter better than mean
   const sorted = samples.map((s) => s.offsetMs).sort((a, b) => a - b);
-  clockOffset = sorted[Math.floor(sorted.length / 2)];
+  const middle = Math.floor(sorted.length / 2);
+  clockOffset =
+    sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
 }
 
 /**

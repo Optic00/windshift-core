@@ -4,7 +4,7 @@
   import { workItemFormStore } from '../stores/workItemFormStore.svelte.js';
   import { workspacesStore } from '../stores';
   import { t } from '../stores/i18n.svelte.js';
-  import { formatDateWithOptions } from '../utils/dateFormatter.js';
+  import { formatDueDate } from '../utils/dateFormatter.js';
   import MilkdownEditor from '../editors/LazyMilkdownEditor.svelte';
   import ChipPicker from '../pickers/ChipPicker.svelte';
   import CustomFieldRenderer from '../features/items/CustomFieldRenderer.svelte';
@@ -67,19 +67,6 @@
     portal: 'body',
     forceVisible: true
   });
-
-  // Helper functions
-  function formatDueDate(dateStr) {
-    if (!dateStr) return null;
-    const date = new Date(dateStr);
-    const today = new Date();
-    const diffDays = Math.ceil((date.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-    if (diffDays === 0) return t('common.today');
-    if (diffDays === 1) return t('common.tomorrow');
-    if (diffDays === -1) return t('common.yesterday');
-    if (diffDays > 0 && diffDays <= 7) return `${diffDays} days`;
-    return formatDateWithOptions(date, { month: 'short', day: 'numeric' });
-  }
 
   // Optional dates are presented as chips. Open the browser's native calendar
   // as soon as the chip mounts its input so setting a date remains a one-click

@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -433,9 +432,9 @@ func (h *JiraImportHandler) Analyze(w http.ResponseWriter, r *http.Request) {
 	userMap := make(map[string]JiraUserSummary)
 	for _, projectKey := range req.ProjectKeys {
 		// Fetch a sample of issues to discover users (limit to 100 per project for performance)
-		jql := fmt.Sprintf("project = %s ORDER BY created DESC", projectKey)
+		jql := `project = "` + escapeHandlerJQLString(projectKey) + `" ORDER BY created DESC`
 		if req.OpenIssuesOnly {
-			jql = fmt.Sprintf("project = %s AND statusCategory != Done ORDER BY created DESC", projectKey)
+			jql = `project = "` + escapeHandlerJQLString(projectKey) + `" AND statusCategory != Done ORDER BY created DESC`
 		}
 
 		var searchResult *jira.SearchResult

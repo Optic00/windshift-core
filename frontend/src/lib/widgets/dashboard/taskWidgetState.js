@@ -96,10 +96,10 @@ export function normalizeTaskResponse(response, maxItems = 6) {
     .filter((i) => i?.id)
     .map((i) => ({
       ...i,
-      dueDate: i.due_date ? new Date(i.due_date) : null,
+      dueDate: i.due_date || null,
     }));
   active.sort((a, b) => {
-    if (a.dueDate && b.dueDate) return a.dueDate - b.dueDate;
+    if (a.dueDate && b.dueDate) return a.dueDate.localeCompare(b.dueDate);
     if (a.dueDate) return -1;
     if (b.dueDate) return 1;
     return 0;

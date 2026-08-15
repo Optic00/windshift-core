@@ -17,6 +17,7 @@
   import AlertBox from '../components/AlertBox.svelte';
   import ModalBackdrop from '../components/ModalBackdrop.svelte';
   import PageHeader from '../layout/PageHeader.svelte';
+  import { formatInstant } from '../utils/dateFormatter.js';
 
   let credentials = $state([]);
   let loadingCredentials = $state(false);
@@ -123,12 +124,9 @@
   }
 
   function formatDate(value) {
-    if (!value) return '';
-    try {
-      return new Date(value).toLocaleString();
-    } catch (_err) {
-      return value;
-    }
+    return formatInstant(value, 'UTC', {
+      year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+    });
   }
 
   function backToPortal() {

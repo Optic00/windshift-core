@@ -6,6 +6,7 @@
   import StatCard from '../../components/StatCard.svelte';
   import { getDatabasePools } from '../../api/diagnostics.js';
   import DiagnosticsSection from './DiagnosticsSection.svelte';
+  import { formatAuthenticatedDateTime } from '../../utils/authenticatedDateFormatter.js';
 
   let view = $state({ loading: true, error: null, data: null });
   let previousInstance = '';
@@ -102,7 +103,7 @@
       <Card>
         <div class="p-3 text-sm grid grid-cols-1 md:grid-cols-2 gap-2" style="color: var(--ds-text);">
           <div><span style="color: var(--ds-text-subtle);">Instance:</span> <span class="font-mono">{view.data.instance}</span></div>
-          <div><span style="color: var(--ds-text-subtle);">Sample:</span> {new Date(view.data.sampled_at).toLocaleString()}</div>
+          <div><span style="color: var(--ds-text-subtle);">Sample:</span> {formatAuthenticatedDateTime(view.data.sampled_at)}</div>
           {#if capacity}
             <div><span style="color: var(--ds-text-subtle);">Deployment budget:</span> {capacity.required_connections} / {capacity.server_max_connections} connections ({capacity.utilization_percent.toFixed(1)}%)</div>
             <div><span style="color: var(--ds-text-subtle);">Formula:</span> {capacity.replica_count} × {capacity.connections_per_replica} + {capacity.headroom_connections} headroom</div>

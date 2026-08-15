@@ -34,6 +34,7 @@
   import Tabs from '../../components/Tabs.svelte';
   import Textarea from '../../components/Textarea.svelte';
   import ConfirmDialog from '../../dialogs/ConfirmDialog.svelte';
+  import { formatAuthenticatedDateTime } from '../../utils/authenticatedDateFormatter.js';
   import AgentRunnerSetup from './AgentRunnerSetup.svelte';
 
   let { workspaceId, agentId, tab = 'overview' } = $props();
@@ -752,7 +753,7 @@
           </p>
           {#if agent.updated_at}
             <p class="mt-4 text-xs" style="color: var(--ds-text-subtlest);">
-              Updated {new Date(agent.updated_at).toLocaleString()}
+              Updated {formatAuthenticatedDateTime(agent.updated_at)}
             </p>
           {/if}
         </Card>

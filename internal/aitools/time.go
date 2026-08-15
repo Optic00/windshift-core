@@ -208,20 +208,20 @@ func init() {
 			}
 			filter := repository.WorklogListFilter{UserID: env.UserID, ProjectID: args.ProjectID, Limit: limit}
 			if args.DateFrom != "" {
-				t, err := time.Parse("2006-01-02", args.DateFrom)
+				start, _, err := services.CivilDateRangeUTC(args.DateFrom, args.DateFrom, time.UTC)
 				if err != nil {
 					return map[string]string{"error": "invalid date_from format, use YYYY-MM-DD"}, nil //nolint:nilerr // Tool validation errors use response payloads.
 				}
-				from := t.Unix()
+				from := start.Unix()
 				filter.DateFromUnix = &from
 			}
 			if args.DateTo != "" {
-				t, err := time.Parse("2006-01-02", args.DateTo)
+				_, endExclusive, err := services.CivilDateRangeUTC(args.DateTo, args.DateTo, time.UTC)
 				if err != nil {
 					return map[string]string{"error": "invalid date_to format, use YYYY-MM-DD"}, nil //nolint:nilerr // Tool validation errors use response payloads.
 				}
-				to := t.Add(24*time.Hour - time.Second).Unix()
-				filter.DateToUnix = &to
+				to := endExclusive.Unix()
+				filter.DateToExclusiveUnix = &to
 			}
 			worklogs, _, err := repository.NewTimeWorklogRepository(env.DB).ListForUser(filter)
 			if err != nil {

@@ -10,7 +10,8 @@
   import TimeLogModal from '../../dialogs/TimeLogModal.svelte';
   import PageHeader from '../../layout/PageHeader.svelte';
   import { t } from '../../stores/i18n.svelte.js';
-  import { formatDate } from '../../utils/dateFormatter.js';
+  import { formatDate, worklogDateKey } from '../../utils/dateFormatter.js';
+  import { serverNow } from '../../utils/serverClock.js';
 
   const STORAGE_KEY = 'windshift-timesheet-projects';
   const WEEKENDS_KEY = 'windshift-timesheet-show-weekends';
@@ -113,7 +114,7 @@
     const satKey = toDateKey(fullWeekDays[5]);
     const sunKey = toDateKey(fullWeekDays[6]);
     return weekWorklogs.some(wl => {
-      const dk = toDateKey(new Date(wl.date * 1000));
+      const dk = worklogDateKey(wl.date);
       return dk === satKey || dk === sunKey;
     });
   });
@@ -138,7 +139,7 @@
 
   // Check if date is today
   function isToday(date) {
-    const today = new Date();
+    const today = serverNow();
     return toDateKey(date) === toDateKey(today);
   }
 
@@ -215,7 +216,7 @@
         });
       }
       const row = rowMap.get(key);
-      const dateKey = toDateKey(new Date(wl.date * 1000));
+      const dateKey = worklogDateKey(wl.date);
       row.days.set(dateKey, (row.days.get(dateKey) || 0) + wl.duration_minutes);
     }
 

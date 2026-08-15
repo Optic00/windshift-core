@@ -12,7 +12,7 @@
   import { itemLiveUpdates } from '../stores/itemLiveUpdates.svelte.js';
   import { usePullToRefresh } from '../composables/usePullToRefresh.svelte.js';
   import { renderMarkdown } from '../utils/render-markdown.js';
-  import { formatDate } from '../utils/dateFormatter.js';
+  import { formatDateOnly } from '../utils/dateFormatter.js';
   import { formatItemKey } from '../utils/itemKey.js';
   import { workspacesStore } from '../stores';
   import MobileHeader from './MobileHeader.svelte';
@@ -81,7 +81,7 @@
       statusColor: c.status_color,
       priorityName: c.priority_name,
       priorityColor: c.priority_color,
-      dueDate: c.due_date ? new Date(c.due_date) : null,
+      dueDate: c.due_date || null,
     };
   }
 
@@ -501,7 +501,7 @@
     {#if item.due_date || personalTaskCount > 0}
       <dl class="meta">
         {#if item.due_date}
-          <div><dt>Due</dt><dd>{formatDate(item.due_date)}</dd></div>
+          <div><dt>Due</dt><dd>{formatDateOnly(item.due_date)}</dd></div>
         {/if}
         {#if personalTaskCount > 0}
           <div><dt>Personal tasks</dt><dd>{personalTaskCount} linked</dd></div>

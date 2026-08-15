@@ -7,7 +7,7 @@
   import { agentRuns } from '../../api/agentRuns.js';
   import Lozenge from '../../components/Lozenge.svelte';
   import EmptyState from '../../components/EmptyState.svelte';
-  import { formatDateTimeLocale } from '../../utils/dateFormatter.js';
+  import { formatAuthenticatedDateTime as formatDateTimeLocale } from '../../utils/authenticatedDateFormatter.js';
   import { t } from '../../stores/i18n.svelte.js';
   import { workspacePermissions } from '../../stores';
   import { confirm } from '../../composables/useConfirm.js';

@@ -14,6 +14,7 @@
   import { t } from '../stores/i18n.svelte.js';
   import DescriptionText from '../components/DescriptionText.svelte';
   import AlertBox from '../components/AlertBox.svelte';
+  import { formatAuthenticatedDateTime } from '../utils/authenticatedDateFormatter.js';
 
   /**
    * @type {{
@@ -329,11 +330,11 @@
             {#if customer.created_at}
               <div class="pt-4 border-t space-y-2" style="border-color: var(--ds-border);">
                 <div class="text-xs" style="color: var(--ds-text-subtle);">
-                  <span class="font-medium">{t('workspaces.customers.metadata.created')}:</span> {new Date(customer.created_at).toLocaleString()}
+                  <span class="font-medium">{t('workspaces.customers.metadata.created')}:</span> {formatAuthenticatedDateTime(customer.created_at)}
                 </div>
                 {#if customer.updated_at}
                   <div class="text-xs" style="color: var(--ds-text-subtle);">
-                    <span class="font-medium">{t('workspaces.customers.metadata.updated')}:</span> {new Date(customer.updated_at).toLocaleString()}
+                    <span class="font-medium">{t('workspaces.customers.metadata.updated')}:</span> {formatAuthenticatedDateTime(customer.updated_at)}
                   </div>
                 {/if}
                 {#if customer.user_name}
@@ -357,7 +358,7 @@
               <div class="py-3">
                 <div class="font-medium text-sm" style="color: var(--ds-text);">{submission.title || submission.subject || `Submission #${submission.id}`}</div>
                 {#if submission.created_at}
-                  <DescriptionText as="div">{new Date(submission.created_at).toLocaleString()}</DescriptionText>
+                  <DescriptionText as="div">{formatAuthenticatedDateTime(submission.created_at)}</DescriptionText>
                 {/if}
               </div>
             {/each}

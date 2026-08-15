@@ -9,7 +9,7 @@
   import EmptyState from '../components/EmptyState.svelte';
   import Badge from '../components/Badge.svelte';
   import Button from '../components/Button.svelte';
-  import { formatDateTimeLocale } from '../utils/dateFormatter.js';
+  import { formatAuthenticatedDateTime as formatDateTimeLocale } from '../utils/authenticatedDateFormatter.js';
 
   let requests = $state([]);
   let loading = $state(true);

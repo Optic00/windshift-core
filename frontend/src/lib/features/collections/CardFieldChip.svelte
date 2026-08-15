@@ -1,7 +1,7 @@
 <script>
   import { CalendarDays, Clock, CornerLeftUp } from '@lucide/svelte';
   import Chip from '../../components/Chip.svelte';
-  import { formatDate, formatDateShort, formatStatusAge } from '../../utils/dateFormatter.js';
+  import { formatDate, formatDateOnly, formatDateShort, formatStatusAge } from '../../utils/dateFormatter.js';
   import { resolveOptionLabel } from '../../utils/optionUtils.js';
   import { durationToString } from '../../utils/timeUtils.js';
   import { booleanCustomFieldChecked, isBooleanCustomFieldType } from '../../utils/customFieldTypes.js';
@@ -79,15 +79,15 @@
     {/if}
   {:else if cardField.field_identifier === 'due_date' && item.due_date}
     <Chip appearance="metadata" icon={CalendarDays} title="Due date">
-      {formatDateShort(item.due_date)}
+      {formatDateOnly(item.due_date)}
     </Chip>
   {:else if cardField.field_identifier === 'start_date' && item.start_date}
     <Chip appearance="metadata" icon={CalendarDays} title="Start date">
-      Start: {formatDateShort(item.start_date)}
+      Start: {formatDateOnly(item.start_date)}
     </Chip>
   {:else if cardField.field_identifier === 'end_date' && item.end_date}
     <Chip appearance="metadata" icon={CalendarDays} title="End date">
-      End: {formatDateShort(item.end_date)}
+      End: {formatDateOnly(item.end_date)}
     </Chip>
   {:else if cardField.field_identifier === 'story_points' && item.story_points != null}
     <Chip appearance="metadata" title="Story points">
@@ -172,7 +172,7 @@
   {#if customFieldDef && customFieldValue != null}
     {#if customFieldDef.field_type === 'date'}
       <Chip appearance="metadata" icon={CalendarDays} title={customFieldDef.name}>
-        {formatDateShort(customFieldValue)}
+        {formatDateOnly(customFieldValue)}
       </Chip>
     {:else if (customFieldDef.field_type === 'select' || customFieldDef.field_type === 'multiselect') && customFieldDef.options}
       <Chip appearance="metadata" title={customFieldDef.name}>

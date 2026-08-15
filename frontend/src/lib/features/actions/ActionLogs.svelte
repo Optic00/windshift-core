@@ -6,6 +6,7 @@
   import Button from '../../components/Button.svelte';
   import ExecutionTraceModal from './ExecutionTraceModal.svelte';
   import { ArrowLeft, CheckCircle, XCircle, Clock, SkipForward, Eye } from '@lucide/svelte';
+  import { formatAuthenticatedDateTime } from '../../utils/authenticatedDateFormatter.js';
 
   let { workspaceId, action, onBack } = $props();
 
@@ -65,7 +66,7 @@
 
   function formatDate(dateStr) {
     if (!dateStr) return '-';
-    return new Date(dateStr).toLocaleString();
+    return formatAuthenticatedDateTime(dateStr);
   }
 </script>
 

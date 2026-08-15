@@ -105,22 +105,22 @@ func (h *TimeWorklogHandler) ListMine(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if dateFrom := r.URL.Query().Get("date_from"); dateFrom != "" {
-		t, err := time.Parse("2006-01-02", dateFrom)
+		start, _, err := services.CivilDateRangeUTC(dateFrom, dateFrom, time.UTC)
 		if err != nil {
 			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "invalid date_from format, use YYYY-MM-DD"))
 			return
 		}
-		from := t.Unix()
+		from := start.Unix()
 		filter.DateFromUnix = &from
 	}
 	if dateTo := r.URL.Query().Get("date_to"); dateTo != "" {
-		t, err := time.Parse("2006-01-02", dateTo)
+		_, endExclusive, err := services.CivilDateRangeUTC(dateTo, dateTo, time.UTC)
 		if err != nil {
 			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "invalid date_to format, use YYYY-MM-DD"))
 			return
 		}
-		to := t.Add(24*time.Hour - time.Second).Unix()
-		filter.DateToUnix = &to
+		to := endExclusive.Unix()
+		filter.DateToExclusiveUnix = &to
 	}
 	if projectIDStr := r.URL.Query().Get("project_id"); projectIDStr != "" {
 		pid, err := strconv.Atoi(projectIDStr)
@@ -216,9 +216,13 @@ func (h *TimeWorklogHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	timezone := user.Timezone
-	if req.Timezone != "" {
-		timezone = req.Timezone
+	timezone := req.Timezone
+	if timezone == "" {
+		timezone, err = services.LookupUserTimezone(h.DB, user.ID)
+		if err != nil {
+			h.RespondInternalError(w, r)
+			return
+		}
 	}
 	resolvedTimezone, location, err := services.ResolveTimezone(timezone)
 	if err != nil {

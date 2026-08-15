@@ -11,7 +11,8 @@
   import StatCard from '../../components/StatCard.svelte';
   import Chart from '../../widgets/Chart.svelte';
   import { t } from '../../stores/i18n.svelte.js';
-  import { formatDate, formatDateSimple, formatDateWithOptions } from '../../utils/dateFormatter.js';
+  import { formatDate, formatDateOnly, formatDateSimple, worklogDateKey } from '../../utils/dateFormatter.js';
+  import { formatAuthenticatedInstant } from '../../utils/authenticatedDateFormatter.js';
   import { openMarkdownPrintView } from '../print/markdownPrintWindow.js';
   import { buildTimeReportMarkdown } from './timeReportMarkdown.js';
 
@@ -107,7 +108,7 @@
       }
       memberMap[key].totalMinutes += w.duration_minutes;
       memberMap[key].entries += 1;
-      const dateStr = formatDateSimple(new Date(w.date * 1000));
+      const dateStr = worklogDateKey(w.date);
       memberMap[key].dates.add(dateStr);
       dateSet.add(dateStr);
     });
@@ -128,7 +129,7 @@
 
     const dailyMap = {};
     projectWorklogs.forEach(w => {
-      const dateStr = formatDate(new Date(w.date * 1000));
+      const dateStr = worklogDateKey(w.date);
       dailyMap[dateStr] = (dailyMap[dateStr] || 0) + w.duration_minutes;
     });
 
@@ -137,7 +138,7 @@
       .map(date => ({
         date: new Date(date),
         count: Math.round((dailyMap[date] / 60) * 100) / 100,
-        label: formatDateSimple(new Date(date))
+        label: formatDateOnly(date)
       }));
   });
 
@@ -149,7 +150,7 @@
   ]);
 
   const reportColumns = $derived([
-    { key: 'date', label: t('common.date'), render: (w) => formatDateSimple(new Date(w.date * 1000)) },
+    { key: 'date', label: t('common.date'), render: (w) => formatDateOnly(worklogDateKey(w.date)) },
     { key: 'customer_name', label: t('time.reports.customer') },
     { key: 'project_name', label: t('time.reports.project'), slot: 'project' },
     { key: 'description', label: t('common.description') },
@@ -282,8 +283,7 @@
   }
 
   function formatTime(unixTimestamp) {
-    const date = new Date(unixTimestamp * 1000);
-    return formatDateWithOptions(date, { hour: '2-digit', minute: '2-digit', hour12: false });
+    return formatAuthenticatedInstant(unixTimestamp * 1000, { hour: '2-digit', minute: '2-digit', hour12: false });
   }
 
   // Export functions
@@ -306,7 +306,7 @@
 
     worklogs.forEach(worklog => {
       csvData.push([
-        formatDateSimple(new Date(worklog.date * 1000)),
+        worklogDateKey(worklog.date),
         worklog.customer_name,
         worklog.project_name,
         worklog.description,
@@ -337,7 +337,7 @@
 
     projectWorklogs.forEach(worklog => {
       csvData.push([
-        formatDateSimple(new Date(worklog.date * 1000)),
+        worklogDateKey(worklog.date),
         worklog.user_name || 'Unknown',
         worklog.customer_name,
         worklog.project_name,
@@ -400,7 +400,7 @@
         from: filters.date_from || 'All time',
         to: filters.date_to || 'Present',
       },
-      generated: formatDateSimple(new Date()),
+      generated: formatAuthenticatedInstant(new Date(), { year: 'numeric', month: 'short', day: 'numeric' }),
       summary: [
         { label: 'Total Hours', value: `${summary.totalHours}h` },
         { label: 'Total Entries', value: summary.totalEntries },
@@ -409,7 +409,7 @@
         { label: 'Top Customer', value: `${summary.topCustomer?.name || 'N/A'} (${summary.topCustomer?.hours || 0}h)` },
       ],
       entries: worklogs.map((worklog) => ({
-        heading: `${formatDateSimple(new Date(worklog.date * 1000))} — ${worklog.project_name}`,
+        heading: `${formatDateOnly(worklogDateKey(worklog.date))} — ${worklog.project_name}`,
         fields: [
           { label: 'Customer', value: worklog.customer_name },
           { label: 'Duration', value: formatDuration(worklog.duration_minutes) },
@@ -440,7 +440,7 @@
         from: projectDateFrom || 'All time',
         to: projectDateTo || 'Present',
       },
-      generated: formatDateSimple(new Date()),
+      generated: formatAuthenticatedInstant(new Date(), { year: 'numeric', month: 'short', day: 'numeric' }),
       summary: summaryRows,
       team: memberBreakdown.map((member) => ({
         name: member.user_name,
@@ -449,7 +449,7 @@
         average: `${member.avgPerDay}h`,
       })),
       entries: projectWorklogs.map((worklog) => ({
-        heading: `${formatDateSimple(new Date(worklog.date * 1000))} — ${worklog.user_name || 'Unknown'}`,
+        heading: `${formatDateOnly(worklogDateKey(worklog.date))} — ${worklog.user_name || 'Unknown'}`,
         fields: [
           { label: 'Duration', value: formatDuration(worklog.duration_minutes) },
           { label: 'Description', value: worklog.description },

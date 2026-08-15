@@ -1,10 +1,11 @@
 <script>
   import { AlertCircle, RefreshCw } from '@lucide/svelte';
   import { api } from '../api.js';
-  import { formatDueDate, getDaysOverdue } from '../utils/dateFormatter.js';
+  import { dateOnlyKey, formatDate, formatDueDate, getDaysOverdue } from '../utils/dateFormatter.js';
+  import { serverNow } from '../utils/serverClock.js';
   import WidgetState from './WidgetState.svelte';
   import { t } from '../stores/i18n.svelte.js';
-  import { normalizeDate, getDoneStatusIds } from './doneStatusHelper.js';
+  import { getDoneStatusIds } from './doneStatusHelper.js';
 
   let { workspaceId = null, collectionFilter = null } = $props();
 
@@ -57,8 +58,8 @@
           workspace_item_number: item.workspace_item_number
         }))
         .filter(item => {
-          const dueDate = normalizeDate(item.due_date);
-          return dueDate && dueDate.getTime() < Date.now();
+          const dueDate = dateOnlyKey(item.due_date);
+          return dueDate && dueDate < formatDate(serverNow());
         })
         .sort((a, b) => {
           const dateA = new Date(a.due_date);
