@@ -28,7 +28,7 @@
         </span>
         <StatusBadge status={{ label: portalStore.selectedRequest.status, categoryColor: portalStore.selectedRequest.status_category_color }} />
       </div>
-      <h1 class="text-2xl sm:text-3xl font-semibold tracking-tight" style="color: var(--ds-text);">
+      <h1 data-testid="portal-request-detail-title" class="text-2xl sm:text-3xl font-semibold tracking-tight" style="color: var(--ds-text);">
         {portalStore.selectedRequest.title}
       </h1>
       {#if portalStore.selectedRequest.description}

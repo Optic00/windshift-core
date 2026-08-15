@@ -18,10 +18,8 @@ import (
 	"windshift/internal/database"
 )
 
-// FracIndexMaxRetries caps the number of unique-violation retries on the
-// item INSERT / reorder UPDATE paths. The retry path only fires when a
-// concurrent writer wins the race on idx_items_frac_index between two
-// transactions that read the same neighbor keys before either committed.
+// FracIndexMaxRetries caps transaction retries on the item INSERT and reorder
+// paths. Reorders retry unique collisions and PostgreSQL concurrency aborts.
 const FracIndexMaxRetries = 5
 
 // fracIndexJitterLen is the number of random base62 digits appended to a
@@ -69,6 +67,14 @@ func IsFracIndexUniqueViolation(err error) bool {
 		return pqErr.Code == "23505" && pqErr.Constraint == "idx_items_frac_index"
 	}
 	return isSQLiteUniqueViolation(err, "items.frac_index")
+}
+
+func isFracIndexRetryableTransactionError(err error) bool {
+	var pqErr *pq.Error
+	if !errors.As(err, &pqErr) {
+		return false
+	}
+	return pqErr.Code == "40P01" || pqErr.Code == "40001"
 }
 
 // IsWorkspaceItemNumberUniqueViolation reports whether err is specifically a
@@ -470,10 +476,9 @@ func fracIndexJitter() string {
 // frac_indexes inside a transaction (with FOR UPDATE on Postgres so
 // concurrent moves involving the same neighbors block at the DB rather
 // than racing on idx_items_frac_index), computes KeyBetween in Go, and
-// writes the UPDATE — all atomically. The unique-violation retry is the
-// backstop for cases the locks don't cover (non-generator writers, brief
-// partitions). Each retry re-reads the neighbors so a concurrent reorder
-// that moved them is naturally accounted for.
+// writes the UPDATE — all atomically. The retry loop handles unique collisions
+// and PostgreSQL deadlock or serialization aborts. Each retry starts a fresh
+// transaction and re-reads the neighbors, so it never reuses stale bounds.
 //
 // prevID / nextID may be nil to indicate "start of list" / "end of list".
 func MoveItemBetween(db database.Database, itemID int, prevID, nextID *int) (string, error) {
@@ -547,16 +552,17 @@ func MoveItemBetween(db database.Database, itemID int, prevID, nextID *int) (str
 			}
 			return key, nil
 		}
-		if !IsFracIndexUniqueViolation(err) {
+		if !IsFracIndexUniqueViolation(err) && !isFracIndexRetryableTransactionError(err) {
 			return "", err
 		}
 		lastErr = err
-		slog.Warn("frac_index unique violation on move, retrying",
+		slog.Warn("frac_index move transaction aborted, retrying",
 			slog.Int("attempt", attempt+1),
 			slog.Int("item_id", itemID),
+			slog.Any("error", err),
 			slog.String("component", "fracindex"))
 	}
-	return "", fmt.Errorf("move item %d failed after %d frac_index retries: %w", itemID, FracIndexMaxRetries, lastErr)
+	return "", fmt.Errorf("move item %d failed after %d transaction retries: %w", itemID, FracIndexMaxRetries, lastErr)
 }
 
 func requestGlobalRankMigrationAfterHotGap(db database.Database, itemID int) {

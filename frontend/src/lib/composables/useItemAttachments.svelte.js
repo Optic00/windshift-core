@@ -1,3 +1,4 @@
+import { onDestroy } from 'svelte';
 import { api } from '../api.js';
 import { attachmentStatus } from '../stores';
 
@@ -10,6 +11,11 @@ import { attachmentStatus } from '../stores';
  * @returns {Object} Attachment state and methods
  */
 export function useItemAttachments(getItemId, showError = console.error) {
+  let destroyed = false;
+  onDestroy(() => {
+    destroyed = true;
+  });
+
   // State
   let attachments = $state([]);
   let pagination = $state(null);
@@ -68,7 +74,7 @@ export function useItemAttachments(getItemId, showError = console.error) {
         pagination = null;
       }
     } catch (err) {
-      if (err?.name === 'AbortError') return;
+      if (destroyed || err?.name === 'AbortError') return;
       console.error('Failed to load attachments:', err);
       attachments = [];
       pagination = null;
