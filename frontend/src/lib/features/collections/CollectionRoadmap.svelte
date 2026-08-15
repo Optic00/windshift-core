@@ -1253,7 +1253,7 @@
       {#if roadmapConfig.start_field_id && unscheduledItemCount > 0}
         <div
           class="mb-4 flex items-center gap-2 rounded-md px-3 py-2 text-xs"
-          style="background-color: var(--ds-background-neutral-hovered); color: var(--ds-text-subtle);"
+          style="background-color: var(--ds-background-neutral-hovered); color: var(--ctx-text, var(--ds-text));"
           data-testid="roadmap-unscheduled-hint"
         >
           <CalendarClock class="h-4 w-4 shrink-0" />
