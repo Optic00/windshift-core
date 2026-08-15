@@ -116,6 +116,7 @@ type Server struct {
 	webhookLimiter        *middleware.RateLimiter
 	searchLimiter         *middleware.RateLimiter
 	calendarFeedLimiter   *middleware.RateLimiter
+	publicBoardLimiter    *middleware.RateLimiter
 	userConcurrency       *middleware.UserConcurrencyLimiter
 
 	actualPort   int
@@ -309,6 +310,9 @@ func (s *Server) initialize() error {
 	s.ssoRateLimiter = middleware.NewRateLimiter(10.0/60.0, 5, cfg.UseProxy, additionalProxyList)
 	s.portalAuthLimiter = middleware.NewRateLimiter(3.0/60.0, 3, cfg.UseProxy, additionalProxyList)
 	s.calendarFeedLimiter = middleware.NewRateLimiter(10.0/60.0, 15, cfg.UseProxy, additionalProxyList)
+	// Public boards are anonymous and can trigger substantial query and file IO.
+	// Keep this limiter IP-keyed even when authenticated IP limiting is disabled.
+	s.publicBoardLimiter = middleware.NewRateLimiter(30.0/60.0, 60, cfg.UseProxy, additionalProxyList)
 	// OAuth /token is unauthenticated (server-to-server), so it must stay
 	// IP-keyed and must NOT honor DisableIPRateLimit — otherwise enabling that
 	// flag for NAT deployments would silently remove all brute-force protection
@@ -1383,6 +1387,7 @@ func (s *Server) initialize() error {
 		WebhookLimiter:        s.webhookLimiter,
 		SearchLimiter:         s.searchLimiter,
 		CalendarFeedLimiter:   s.calendarFeedLimiter,
+		PublicBoardLimiter:    s.publicBoardLimiter,
 
 		Auth: routes.AuthHandlers{
 			Auth:       authHandler,
@@ -2106,6 +2111,9 @@ func (s *Server) cleanup() {
 	}
 	if s.calendarFeedLimiter != nil {
 		s.calendarFeedLimiter.Stop()
+	}
+	if s.publicBoardLimiter != nil {
+		s.publicBoardLimiter.Stop()
 	}
 
 	// Stop notification manager (flush cached notifications to DB)
