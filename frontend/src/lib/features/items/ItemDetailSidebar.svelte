@@ -7,6 +7,7 @@
   import Avatar from '../../components/Avatar.svelte';
   import Input from '../../components/Input.svelte';
   import Text from '../../components/Text.svelte';
+  import TruncatedFieldValue from '../../components/TruncatedFieldValue.svelte';
   import DropdownMenu from '../../layout/DropdownMenu.svelte';
   import ItemPicker from '../../pickers/ItemPicker.svelte';
   import UserPicker from '../../pickers/UserPicker.svelte';
@@ -29,6 +30,7 @@
   import { parseDuration, durationToString } from '../../utils/timeUtils.js';
   import { resolveOptionLabel, resolveOptionLabels } from '../../utils/optionUtils.js';
   import { booleanCustomFieldChecked, isBooleanCustomFieldType } from '../../utils/customFieldTypes.js';
+  import { customFieldLinkHref } from '../../utils/customFieldLinks.js';
   import { isSystemFieldConfigured, systemFieldIdentifiers } from '../../utils/screenFields.js';
   import StatusBadge from '../../components/StatusBadge.svelte';
   import Badge from '../../components/Badge.svelte';
@@ -1304,6 +1306,7 @@
               {:else}
                 <button
                   onclick={() => startEditingCustomField(screenField.field_identifier)}
+                  data-testid={`item-custom-field-edit-${fieldDef.id}`}
                   class="w-full flex items-center justify-between px-2 py-1.5 text-sm transition-colors rounded group"
                   onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'}
                   onmouseleave={(e) => e.currentTarget.style.backgroundColor = ''}
@@ -1400,23 +1403,40 @@
                     </div>
                   </div>
                 {:else}
-                  <button
-                    onclick={() => startEditingCustomField(screenField.field_identifier)}
-                    data-testid={`item-custom-field-edit-${fieldDef.id}`}
-                    class="w-full flex items-center justify-between px-2 py-1.5 text-sm transition-colors rounded group"
-                    onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'}
-                    onmouseleave={(e) => e.currentTarget.style.backgroundColor = ''}
-                    disabled={!canEdit || !fieldEditable}
+                  {@const hasValue = currentValue !== null && currentValue !== undefined && currentValue !== ''}
+                  {@const displayValue = hasValue ? formatCustomFieldValue(fieldDef, currentValue) : t('common.none')}
+                  {@const valueHref = customFieldLinkHref(fieldDef.field_type, currentValue)}
+                  <div
+                    class="group flex min-w-0 items-center gap-4 rounded px-2 py-1.5 text-sm transition-colors hover:bg-[var(--ds-background-neutral-hovered)]"
                   >
-                    <Text variant="subtle" size="sm">{fieldDef.name}</Text>
-                    <span style="color: {currentValue ? 'var(--ds-text)' : 'var(--ds-text-subtle)'};">
-                      {#if currentValue !== null && currentValue !== undefined && currentValue !== ''}
-                        {formatCustomFieldValue(fieldDef, currentValue)}
-                      {:else}
-                        {t('common.none')}
-                      {/if}
-                    </span>
-                  </button>
+                    {#if valueHref}
+                      <button
+                        type="button"
+                        onclick={() => startEditingCustomField(screenField.field_identifier)}
+                        data-testid={`item-custom-field-edit-${fieldDef.id}`}
+                        class="max-w-[45%] shrink-0 truncate rounded-sm text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-default"
+                        style="color: var(--ds-text-subtle); outline-color: var(--ds-border-focused);"
+                        disabled={!canEdit || !fieldEditable}
+                      >
+                        {fieldDef.name}
+                      </button>
+                    {:else}
+                      <Text variant="subtle" size="sm" class="max-w-[45%] shrink-0 truncate">{fieldDef.name}</Text>
+                    {/if}
+
+                    <div class="min-w-0 flex-1 text-right" style="color: {hasValue ? 'var(--ds-text)' : 'var(--ds-text-subtle)'};">
+                      <TruncatedFieldValue
+                        value={displayValue}
+                        href={valueHref}
+                        onactivate={valueHref ? null : () => startEditingCustomField(screenField.field_identifier)}
+                        disabled={!canEdit || !fieldEditable}
+                        subtle={!hasValue}
+                        testId={valueHref
+                          ? `item-custom-field-value-${fieldDef.id}`
+                          : `item-custom-field-edit-${fieldDef.id}`}
+                      />
+                    </div>
+                  </div>
                 {/if}
               </div>
             {/if}
