@@ -56,7 +56,10 @@
   });
 </script>
 
-<div class="flex flex-col items-center justify-center min-h-[300px] p-8">
+<div
+  data-testid="portal-verify-link"
+  class="flex flex-col items-center justify-center min-h-[300px] p-8"
+>
   {#if status === 'verifying'}
     <div class="text-center">
       <div class="w-16 h-16 mx-auto mb-6 rounded-full flex items-center justify-center" style="background-color: var(--ds-background-neutral);">

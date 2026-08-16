@@ -651,15 +651,14 @@
     <!-- Portal Login Modal (Magic Link) - always accessible -->
     <PortalLoginModal onloginsuccess={handleLoginSuccess} />
 
-    <!-- Magic Link Verification - always accessible.
-         closeOnEscape lets the user bail out if the verify request hangs;
-         closeOnClick stays false to avoid accidental dismissal mid-verify.
-         onclose strips the token from the URL via replaceState so the modal
-         actually closes (show is bound to !!verifyToken) and the token isn't
-         left in browser history. -->
+    <!-- Wait for the initial auth check before redeeming the link so its
+         response cannot overwrite the verified session. Verification
+         redirects programmatically, so close without an outro. Escape still
+         lets the user leave a hung request; outside clicks stay disabled. -->
     <ModalBackdrop
-      show={!!verifyToken}
+      show={authCheckComplete && !!verifyToken}
       blur={4}
+      transition={false}
       closeOnClick={false}
       closeOnEscape={true}
       onclose={() => {

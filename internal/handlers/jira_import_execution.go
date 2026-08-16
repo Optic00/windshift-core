@@ -1015,7 +1015,8 @@ func (h *JiraImportHandler) preflightJiraCustomFields(
 
 	setCandidates := make(map[string]map[int]struct{}, len(assetMappings))
 	choiceLabels := make(map[string]map[string]string, len(choiceMappings))
-	for projectKey, keys := range issueKeysByProject {
+	for _, projectKey := range projectKeys {
+		keys := issueKeysByProject[projectKey]
 		for start := 0; start < len(keys); start += 100 {
 			end := start + 100
 			if end > len(keys) {
