@@ -332,15 +332,16 @@ func (r *ItemRepository) GetPortalCreatorEmail(itemID, channelID int) (string, e
 // ListPortalCustomerSubmissions — a ticket a portal customer created, with
 // workspace + status metadata for display in the customer profile.
 type PortalCustomerSubmission struct {
-	ID            int
-	WorkspaceID   int
-	WorkspaceName string
-	WorkspaceKey  string
-	Title         string
-	Description   string
-	StatusName    string
-	StatusColor   string
-	CreatedAt     string
+	ID                  int
+	WorkspaceID         int
+	WorkspaceItemNumber int
+	WorkspaceName       string
+	WorkspaceKey        string
+	Title               string
+	Description         string
+	StatusName          string
+	StatusColor         string
+	CreatedAt           string
 }
 
 // ListPortalCustomerSubmissions returns all items created by the given portal
@@ -349,7 +350,7 @@ type PortalCustomerSubmission struct {
 func (r *ItemRepository) ListPortalCustomerSubmissions(customerID int) ([]PortalCustomerSubmission, error) {
 	rows, err := r.db.Query(`
 		SELECT
-			i.id, i.workspace_id, i.title, i.description,
+			i.id, i.workspace_id, i.workspace_item_number, i.title, i.description,
 			COALESCE(s.name, ''), COALESCE(sc.color, '#6b7280'),
 			i.created_at,
 			w.name AS workspace_name,
@@ -370,7 +371,7 @@ func (r *ItemRepository) ListPortalCustomerSubmissions(customerID int) ([]Portal
 	for rows.Next() {
 		var s PortalCustomerSubmission
 		if err := rows.Scan(
-			&s.ID, &s.WorkspaceID, &s.Title, &s.Description,
+			&s.ID, &s.WorkspaceID, &s.WorkspaceItemNumber, &s.Title, &s.Description,
 			&s.StatusName, &s.StatusColor, &s.CreatedAt,
 			&s.WorkspaceName, &s.WorkspaceKey,
 		); err != nil {

@@ -287,6 +287,11 @@ func (h *PortalCustomersHandler) GetCustomerChannels(w http.ResponseWriter, r *h
 
 // GetCustomerSubmissions returns all portal submissions by this customer
 func (h *PortalCustomersHandler) GetCustomerSubmissions(w http.ResponseWriter, r *http.Request) {
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+
 	idStr := r.PathValue("id")
 	customerID, err := strconv.Atoi(idStr)
 	if err != nil {
@@ -295,15 +300,17 @@ func (h *PortalCustomersHandler) GetCustomerSubmissions(w http.ResponseWriter, r
 	}
 
 	type CustomerSubmission struct {
-		ID            int    `json:"id"`
-		WorkspaceID   int    `json:"workspace_id"`
-		WorkspaceName string `json:"workspace_name"`
-		WorkspaceKey  string `json:"workspace_key"`
-		Title         string `json:"title"`
-		Description   string `json:"description"`
-		StatusName    string `json:"status_name"`
-		StatusColor   string `json:"status_color"`
-		CreatedAt     string `json:"created_at"`
+		ID                  int    `json:"id"`
+		WorkspaceID         int    `json:"workspace_id"`
+		WorkspaceItemNumber int    `json:"workspace_item_number"`
+		WorkspaceName       string `json:"workspace_name"`
+		WorkspaceKey        string `json:"workspace_key"`
+		CanView             bool   `json:"can_view"`
+		Title               string `json:"title"`
+		Description         string `json:"description"`
+		StatusName          string `json:"status_name"`
+		StatusColor         string `json:"status_color"`
+		CreatedAt           string `json:"created_at"`
 	}
 
 	rows, err := repository.NewItemRepository(h.db).ListPortalCustomerSubmissions(customerID)
@@ -312,18 +319,37 @@ func (h *PortalCustomersHandler) GetCustomerSubmissions(w http.ResponseWriter, r
 		return
 	}
 
+	accessibleWorkspaceIDs, err := GetAccessibleWorkspaceIDs(user, h.db, h.permService)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	workspaceAccess := make(map[int]struct{}, len(accessibleWorkspaceIDs))
+	for _, workspaceID := range accessibleWorkspaceIDs {
+		workspaceAccess[workspaceID] = struct{}{}
+	}
+
 	submissions := make([]CustomerSubmission, len(rows))
 	for i, s := range rows {
+		_, canView := workspaceAccess[s.WorkspaceID]
+		workspaceName, workspaceKey, workspaceItemNumber := "", "", 0
+		if canView {
+			workspaceName = s.WorkspaceName
+			workspaceKey = s.WorkspaceKey
+			workspaceItemNumber = s.WorkspaceItemNumber
+		}
 		submissions[i] = CustomerSubmission{
-			ID:            s.ID,
-			WorkspaceID:   s.WorkspaceID,
-			WorkspaceName: s.WorkspaceName,
-			WorkspaceKey:  s.WorkspaceKey,
-			Title:         s.Title,
-			Description:   s.Description,
-			StatusName:    s.StatusName,
-			StatusColor:   s.StatusColor,
-			CreatedAt:     s.CreatedAt,
+			ID:                  s.ID,
+			WorkspaceID:         s.WorkspaceID,
+			WorkspaceItemNumber: workspaceItemNumber,
+			WorkspaceName:       workspaceName,
+			WorkspaceKey:        workspaceKey,
+			CanView:             canView,
+			Title:               s.Title,
+			Description:         s.Description,
+			StatusName:          s.StatusName,
+			StatusColor:         s.StatusColor,
+			CreatedAt:           s.CreatedAt,
 		}
 	}
 

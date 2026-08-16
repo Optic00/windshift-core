@@ -15,6 +15,8 @@
   import DescriptionText from '../components/DescriptionText.svelte';
   import AlertBox from '../components/AlertBox.svelte';
   import { formatAuthenticatedDateTime } from '../utils/authenticatedDateFormatter.js';
+  import { itemUrl } from '../utils/urls.js';
+  import { getChannelTypeIcon } from '../features/channels/channelTypes.js';
 
   /**
    * @type {{
@@ -51,9 +53,9 @@
   // Tabs
   let activeTab = $state('overview');
   const tabs = [
-    { id: 'overview', label: t('common.overview') || 'Overview', icon: Users },
-    { id: 'submissions', label: t('workspaces.customers.submissions') || 'Submissions', icon: Send },
-    { id: 'channels', label: t('workspaces.customers.channels') || 'Channels', icon: MessageCircle },
+    { id: 'overview', label: t('common.overview') || 'Overview', icon: Users, testid: 'customer-detail-overview-tab' },
+    { id: 'submissions', label: t('workspaces.customers.submissions') || 'Submissions', icon: Send, testid: 'customer-detail-submissions-tab' },
+    { id: 'channels', label: t('workspaces.customers.channels') || 'Channels', icon: MessageCircle, testid: 'customer-detail-channels-tab' },
   ];
 
   // Lazy-loaded data
@@ -139,6 +141,11 @@
     } finally {
       loadingChannels = false;
     }
+  }
+
+  function submissionHref(submission) {
+    if (!submission?.can_view || !submission?.workspace_id || !submission?.id) return null;
+    return itemUrl({ workspaceId: submission.workspace_id, itemId: submission.id });
   }
 
   // Lazy-load data when switching tabs
@@ -355,12 +362,41 @@
         {:else if submissions && submissions.length > 0}
           <div class="divide-y" style="border-color: var(--ds-border);">
             {#each submissions as submission (submission.id)}
-              <div class="py-3">
-                <div class="font-medium text-sm" style="color: var(--ds-text);">{submission.title || submission.subject || `Submission #${submission.id}`}</div>
+              {@const href = submissionHref(submission)}
+              <svelte:element
+                this={href ? 'a' : 'div'}
+                {href}
+                class="flex min-w-0 items-start justify-between gap-4 py-3 no-underline {href ? 'group rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2' : ''}"
+                style={href ? 'color: inherit; outline-color: var(--ds-border-focused);' : undefined}
+                data-testid={`customer-submission-${submission.id}`}
+              >
+                <div class="min-w-0">
+                  <div class="truncate text-sm font-medium {href ? 'group-hover:underline' : ''}" style="color: {href ? 'var(--ds-link)' : 'var(--ds-text)'};">
+                    {submission.title || submission.subject || `Submission #${submission.id}`}
+                  </div>
+                  <div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs" style="color: var(--ds-text-subtle);">
+                    {#if submission.can_view && submission.workspace_key && submission.workspace_item_number}
+                      <span class="font-medium" style="color: var(--ds-text);">
+                        {submission.workspace_key}-{submission.workspace_item_number}
+                      </span>
+                    {/if}
+                    {#if submission.can_view && submission.workspace_name}
+                      <span>{submission.workspace_name}</span>
+                    {/if}
+                    {#if submission.status_name}
+                      <span
+                        class="inline-flex rounded-full px-1.5 py-0.5 font-medium"
+                        style="background-color: {submission.status_color}20; color: {submission.status_color};"
+                      >
+                        {submission.status_name}
+                      </span>
+                    {/if}
+                  </div>
+                </div>
                 {#if submission.created_at}
-                  <DescriptionText as="div">{formatAuthenticatedDateTime(submission.created_at)}</DescriptionText>
+                  <DescriptionText as="div" class="shrink-0 text-right">{formatAuthenticatedDateTime(submission.created_at)}</DescriptionText>
                 {/if}
-              </div>
+              </svelte:element>
             {/each}
           </div>
         {:else}
@@ -378,10 +414,26 @@
         {:else if channels && channels.length > 0}
           <div class="divide-y" style="border-color: var(--ds-border);">
             {#each channels as channel (channel.id)}
-              <div class="py-3">
-                <div class="font-medium text-sm" style="color: var(--ds-text);">{channel.name || channel.title || `Channel #${channel.id}`}</div>
-                {#if channel.type}
-                  <DescriptionText as="div">{channel.type}</DescriptionText>
+              {@const ChannelIcon = getChannelTypeIcon(channel.channel_type)}
+              <div class="flex min-w-0 items-start justify-between gap-4 py-3" data-testid={`customer-channel-${channel.channel_id}`}>
+                <div class="flex min-w-0 items-start gap-3">
+                  <ChannelIcon class="mt-0.5 h-4 w-4 shrink-0" style="color: var(--ds-icon-subtle);" />
+                  <div class="min-w-0">
+                    <div class="truncate text-sm font-medium" style="color: var(--ds-text);">
+                      {channel.channel_name || `Channel #${channel.channel_id}`}
+                    </div>
+                    <div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs" style="color: var(--ds-text-subtle);">
+                      {#if channel.channel_type}
+                        <span class="capitalize">{t(`channels.${channel.channel_type}`, channel.channel_type)}</span>
+                      {/if}
+                      <span>#{channel.channel_id}</span>
+                    </div>
+                  </div>
+                </div>
+                {#if channel.created_at}
+                  <DescriptionText as="div" class="shrink-0 text-right">
+                    {t('common.created')} {formatAuthenticatedDateTime(channel.created_at)}
+                  </DescriptionText>
                 {/if}
               </div>
             {/each}
