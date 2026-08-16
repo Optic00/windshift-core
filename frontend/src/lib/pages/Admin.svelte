@@ -330,6 +330,7 @@
                 {@const buttonIndex = buttonIndices.get(item.id)}
                 {@const isItemActive = activeTab === item.id}
                 <LinkComponent
+                  data-testid="admin-navigation-item"
                   bind:element={navButtons[buttonIndex]}
                   href="/admin/{item.id}"
                   active={isItemActive}
