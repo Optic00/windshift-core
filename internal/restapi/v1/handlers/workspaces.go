@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"windshift/internal/authz"
 	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
@@ -27,7 +28,7 @@ func NewWorkspaceHandler(db database.Database, permissionService *services.Permi
 	return &WorkspaceHandler{
 		BaseHandler:      NewBaseHandler(db, permissionService),
 		db:               db,
-		workspaceService: services.NewWorkspaceService(db),
+		workspaceService: services.NewWorkspaceServiceWithAccess(db, authz.New(db, permissionService)),
 		itemCRUD:         services.NewItemCRUDService(db),
 	}
 }
@@ -43,6 +44,7 @@ type WorkspaceResponse struct {
 	Description             string   `json:"description"`
 	Active                  bool     `json:"active"`
 	IsPersonal              bool     `json:"is_personal"`
+	IsTemplate              bool     `json:"is_template"`
 	InternalCommentsEnabled bool     `json:"internal_comments_enabled"`
 	Icon                    string   `json:"icon,omitempty"`
 	Color                   string   `json:"color,omitempty"`
@@ -52,12 +54,16 @@ type WorkspaceResponse struct {
 }
 
 // WorkspaceCreateRequest is the request body for creating a workspace
+// `template_workspace_id` optionally names a visible template workspace whose
+// configuration-set assignment, work-item templates, and seed items are cloned
+// into the new workspace.
 type WorkspaceCreateRequest struct {
-	Name        string `json:"name" validate:"required,max=100"`
-	Key         string `json:"key" validate:"required,min=2,max=10,alphanum"`
-	Description string `json:"description,omitempty"`
-	Icon        string `json:"icon,omitempty"`
-	Color       string `json:"color,omitempty"`
+	Name                string `json:"name" validate:"required,max=100"`
+	Key                 string `json:"key" validate:"required,min=2,max=10,alphanum"`
+	Description         string `json:"description,omitempty"`
+	Icon                string `json:"icon,omitempty"`
+	Color               string `json:"color,omitempty"`
+	TemplateWorkspaceID *int   `json:"template_workspace_id,omitempty"`
 }
 
 // WorkspaceUpdateRequest is the request body for updating a workspace
@@ -67,6 +73,20 @@ type WorkspaceUpdateRequest struct {
 	Active      *bool   `json:"active,omitempty"`
 	Icon        *string `json:"icon,omitempty"`
 	Color       *string `json:"color,omitempty"`
+	IsTemplate  *bool   `json:"is_template,omitempty"`
+}
+
+// WorkspaceTemplateSummaryResponse is the public API representation of a
+// workspace usable as a creation template.
+type WorkspaceTemplateSummaryResponse struct {
+	ID                   int    `json:"id"`
+	Name                 string `json:"name"`
+	Description          string `json:"description"`
+	Icon                 string `json:"icon,omitempty"`
+	Color                string `json:"color,omitempty"`
+	ConfigurationSetName string `json:"configuration_set_name,omitempty"`
+	TemplateCount        int    `json:"template_count"`
+	ItemCount            int    `json:"item_count"`
 }
 
 func toWorkspaceResponse(ws *models.Workspace) WorkspaceResponse {
@@ -77,6 +97,7 @@ func toWorkspaceResponse(ws *models.Workspace) WorkspaceResponse {
 		Description:             ws.Description,
 		Active:                  ws.Active,
 		IsPersonal:              ws.IsPersonal,
+		IsTemplate:              ws.IsTemplate,
 		InternalCommentsEnabled: ws.InternalCommentsEnabled,
 		Icon:                    ws.Icon,
 		Color:                   ws.Color,
@@ -163,7 +184,7 @@ func (h *WorkspaceHandler) Get(w http.ResponseWriter, r *http.Request) {
 // Create handles POST /rest/api/v1/workspaces
 //
 // @Summary      Create a workspace
-// @Description  Requires the global `workspace.create` permission in addition to the workspaces:write token scope.
+// @Description  Requires the global `workspace.create` permission in addition to the workspaces:write token scope. Optionally pass template_workspace_id to clone a visible template workspace's configuration-set assignment, work-item templates, and seed items.
 // @Tags         workspaces
 // @Accept       json
 // @Produce      json
@@ -173,7 +194,9 @@ func (h *WorkspaceHandler) Get(w http.ResponseWriter, r *http.Request) {
 // @Failure      400   {object}  handlers.ErrorResponse  "Invalid request body or missing required field"
 // @Failure      401   {object}  handlers.ErrorResponse
 // @Failure      403   {object}  handlers.ErrorResponse  "Token lacks workspaces:write or caller lacks workspace.create"
+// @Failure      404   {object}  handlers.ErrorResponse  "TEMPLATE_WORKSPACE_NOT_FOUND: template workspace missing or not visible"
 // @Failure      409   {object}  handlers.ErrorResponse  "A workspace with this key already exists"
+// @Failure      422   {object}  handlers.ErrorResponse  "INVALID_WORKSPACE_TEMPLATE or WORKSPACE_TEMPLATE_TOO_LARGE"
 // @Failure      500   {object}  handlers.ErrorResponse
 // @Router       /workspaces [post]
 func (h *WorkspaceHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -211,20 +234,49 @@ func (h *WorkspaceHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.workspaceService.Create(services.CreateWorkspaceParams{
-		Name:        req.Name,
-		Key:         req.Key,
-		Description: req.Description,
-		Icon:        req.Icon,
-		Color:       req.Color,
-		CreatorID:   user.ID,
+	result, err := h.workspaceService.Create(r.Context(), services.CreateWorkspaceParams{
+		Name:                req.Name,
+		Key:                 req.Key,
+		Description:         req.Description,
+		Icon:                req.Icon,
+		Color:               req.Color,
+		CreatorID:           user.ID,
+		TemplateWorkspaceID: req.TemplateWorkspaceID,
 	})
 	if err != nil {
+		if errors.Is(err, services.ErrTemplateWorkspaceNotFound) {
+			h.RespondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeTemplateWorkspaceNotFound, "Template workspace not found or not visible"))
+			return
+		}
+		if errors.Is(err, services.ErrInvalidWorkspaceTemplate) {
+			h.RespondError(w, r, restapi.NewAPIError(http.StatusUnprocessableEntity, restapi.ErrCodeInvalidWorkspaceTemplate, "Workspace cannot be used as a template"))
+			return
+		}
+		if errors.Is(err, services.ErrWorkspaceTemplateTooLarge) {
+			h.RespondError(w, r, restapi.NewAPIError(http.StatusUnprocessableEntity, restapi.ErrCodeWorkspaceTemplateTooLarge, "Template workspace exceeds the seed item limit"))
+			return
+		}
 		h.RespondInternalError(w, r)
 		return
 	}
 
-	h.Auditor.Log(r, user, logger.ActionWorkspaceCreate, logger.ResourceWorkspace, &result.Workspace.ID, result.Workspace.Name)
+	if h.PermissionService != nil {
+		h.PermissionService.InvalidateActiveWorkspaceCache()
+		h.PermissionService.OnEveryoneAccessChanged()
+	}
+
+	if req.TemplateWorkspaceID != nil {
+		h.Auditor.LogWithDetails(r, user, logger.ActionWorkspaceCreateFromTemplate, logger.ResourceWorkspace,
+			&result.Workspace.ID, result.Workspace.Name, map[string]any{
+				"source_workspace_id":         result.SourceWorkspaceID,
+				"config_set_attached":         result.ConfigSetAttached,
+				"templates_copied":            result.TemplatesCopied,
+				"items_copied":                result.ItemsCopied,
+				"omitted_custom_field_values": result.OmittedCustomFieldValues,
+			})
+	} else {
+		h.Auditor.Log(r, user, logger.ActionWorkspaceCreate, logger.ResourceWorkspace, &result.Workspace.ID, result.Workspace.Name)
+	}
 	resp := toWorkspaceResponse(result.Workspace)
 	resp.Warnings = warnings
 	h.RespondCreated(w, resp)
@@ -283,10 +335,15 @@ func (h *WorkspaceHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Active:      req.Active,
 		Icon:        req.Icon,
 		Color:       req.Color,
+		IsTemplate:  req.IsTemplate,
 	})
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			h.RespondError(w, r, restapi.ErrWorkspaceNotFound)
+			return
+		}
+		if errors.Is(err, services.ErrPersonalWorkspaceTemplate) {
+			h.RespondError(w, r, restapi.NewAPIError(http.StatusUnprocessableEntity, restapi.ErrCodeInvalidWorkspaceTemplate, "Personal workspaces cannot be templates"))
 			return
 		}
 		h.RespondInternalError(w, r)
@@ -343,6 +400,55 @@ func (h *WorkspaceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	h.Auditor.Log(r, user, logger.ActionWorkspaceDelete, logger.ResourceWorkspace, &wsID, "")
 	h.RespondNoContent(w)
+}
+
+// ListTemplates handles GET /rest/api/v1/workspace-templates
+//
+// @Summary      List workspaces usable as creation templates
+// @Description  Active, non-personal workspaces marked as templates and visible to the caller, with configuration-set name and copy counts.
+// @Tags         workspaces
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {array}   handlers.WorkspaceTemplateSummaryResponse
+// @Failure      401  {object}  handlers.ErrorResponse
+// @Failure      403  {object}  handlers.ErrorResponse  "Token lacks the workspaces:read scope"
+// @Failure      500  {object}  handlers.ErrorResponse
+// @Router       /workspace-templates [get]
+func (h *WorkspaceHandler) ListTemplates(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.RequireAuth(w, r)
+	if !ok {
+		return
+	}
+
+	summaries, err := h.workspaceService.ListTemplateSummaries(r.Context())
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+
+	visible := make([]WorkspaceTemplateSummaryResponse, 0, len(summaries))
+	for _, summary := range summaries {
+		canView, err := h.Perms.HasWorkspacePermission(user.ID, summary.ID, models.PermissionItemView)
+		if err != nil {
+			h.RespondInternalError(w, r)
+			return
+		}
+		if !canView {
+			continue
+		}
+		visible = append(visible, WorkspaceTemplateSummaryResponse{
+			ID:                   summary.ID,
+			Name:                 summary.Name,
+			Description:          summary.Description,
+			Icon:                 summary.Icon,
+			Color:                summary.Color,
+			ConfigurationSetName: summary.ConfigurationSetName,
+			TemplateCount:        summary.TemplateCount,
+			ItemCount:            summary.ItemCount,
+		})
+	}
+
+	h.RespondOK(w, visible)
 }
 
 // GetItems handles GET /rest/api/v1/workspaces/{id}/items

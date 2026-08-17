@@ -56,7 +56,8 @@
       active: true,
       time_project_id: null,
       default_view: 'board',
-      internal_comments_enabled: false
+      internal_comments_enabled: false,
+      is_template: false
     };
   }
 
@@ -161,7 +162,8 @@
           active: loaded.active,
           time_project_id: loaded.time_project_id || null,
           default_view: loaded.default_view || 'board',
-          internal_comments_enabled: loaded.internal_comments_enabled || false
+          internal_comments_enabled: loaded.internal_comments_enabled || false,
+          is_template: loaded.is_template || false
         };
         selectedTimeProjectCategories = loaded.time_project_categories || [];
       }
@@ -404,6 +406,20 @@
           </div>
           <Toggle bind:checked={formData.internal_comments_enabled} />
         </div>
+
+        {#if workspace && !workspace.is_personal}
+          <div class="flex items-center justify-between" data-testid="workspace-template-toggle-row">
+            <div>
+              <div class="text-sm font-medium mb-1" style="color: var(--ds-text);">
+                {t('workspaceSettings.availableAsTemplate')}
+              </div>
+              <p class="text-xs" style="color: var(--ds-text-subtle);">
+                {t('workspaceSettings.availableAsTemplateHelp')}
+              </p>
+            </div>
+            <Toggle bind:checked={formData.is_template} dataTestid="workspace-template-toggle" />
+          </div>
+        {/if}
         </div>
 
         <div class="flex items-center gap-3 mt-6">

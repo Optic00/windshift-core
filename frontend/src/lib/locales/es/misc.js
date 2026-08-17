@@ -753,6 +753,11 @@ export default {
     workspaceName: 'Nombre del {type}',
     workspaceKeyPlaceholder: 'Clave del espacio de trabajo (ej.: PROJ, TEAM)',
     addDescription: 'Agregar descripción...',
+    workspaceTemplate: 'Plantilla',
+    workspaceTemplateBlank: 'Espacio de trabajo en blanco',
+    workspaceTemplateLoading: 'Cargando plantillas...',
+    workspaceTemplateError: 'No se pudieron cargar las plantillas de espacios de trabajo',
+    workspaceTemplateMeta: '{templates} plantillas · {items} elementos',
     // Field labels
     type: 'Tipo',
     priority: 'Prioridad',

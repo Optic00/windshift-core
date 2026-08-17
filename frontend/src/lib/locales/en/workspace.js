@@ -3,6 +3,7 @@ export default {
     title: 'Workspaces',
     subtitle: 'Manage your workspaces and projects',
     workspace: 'Workspace',
+    template: 'Template',
     workspaces_one: '{count} workspace',
     workspaces_other: '{count} workspaces',
     createWorkspace: 'Create Workspace',
@@ -668,6 +669,9 @@ export default {
     enableInternalComments: 'Enable internal comments',
     enableInternalCommentsHint:
       'Allow marking comments as internal notes on all items, not just portal requests.',
+    availableAsTemplate: 'Available as template',
+    availableAsTemplateHelp:
+      'Workspace creators can start a new workspace from a copy of this workspace\u2019s configuration set, work item templates, and current items. Members, history, and files are never copied.',
 
     // View options
     views: {

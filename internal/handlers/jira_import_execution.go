@@ -1934,7 +1934,7 @@ func (h *JiraImportHandler) ensureJiraTimeProject(jobID string, workspaceID int,
 
 // ensureWorkspace creates a dedicated workspace for an imported Jira project.
 // createdByUserID grants the import initiator workspace admin access; pass 0 if unknown.
-func (h *JiraImportHandler) ensureWorkspace(_ context.Context, jobID string, mapping *WorkspaceMapping, createdByUserID int) (int, error) {
+func (h *JiraImportHandler) ensureWorkspace(ctx context.Context, jobID string, mapping *WorkspaceMapping, createdByUserID int) (int, error) {
 	if !mapping.CreateNew || mapping.WindshiftID != nil {
 		return 0, fmt.Errorf("jira project %s must create a new workspace; existing workspaces cannot be reused", mapping.JiraKey)
 	}
@@ -1942,7 +1942,7 @@ func (h *JiraImportHandler) ensureWorkspace(_ context.Context, jobID string, map
 	workspaceSvc := services.NewWorkspaceService(h.db)
 
 	// Create new workspace using service
-	result, err := workspaceSvc.Create(services.CreateWorkspaceParams{
+	result, err := workspaceSvc.Create(ctx, services.CreateWorkspaceParams{
 		Name:        mapping.NewWorkspaceName,
 		Key:         mapping.NewWorkspaceKey,
 		Description: "Imported from Jira",

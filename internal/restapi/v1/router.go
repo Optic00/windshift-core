@@ -142,6 +142,7 @@ func RegisterRoutes(deps restapi.Deps) {
 
 	v1.HandleWithMiddleware("GET /workspaces", workspaceHandler.List, bearerAuth.RequirePermission("workspaces:read"))
 	v1.HandleWithMiddleware("POST /workspaces", workspaceHandler.Create, bearerAuth.RequirePermission("workspaces:write"))
+	v1.HandleWithMiddleware("GET /workspace-templates", workspaceHandler.ListTemplates, bearerAuth.RequirePermission("workspaces:read"))
 	v1.HandleWithMiddleware("GET /workspaces/{id}", workspaceHandler.Get, bearerAuth.RequirePermission("workspaces:read"), router.RequireNumericID)
 	v1.HandleWithMiddleware("PUT /workspaces/{id}", workspaceHandler.Update, bearerAuth.RequirePermission("workspaces:write"), router.RequireNumericID)
 	v1.HandleWithMiddleware("DELETE /workspaces/{id}", workspaceHandler.Delete, bearerAuth.RequirePermission("workspaces:delete"), router.RequireNumericID)

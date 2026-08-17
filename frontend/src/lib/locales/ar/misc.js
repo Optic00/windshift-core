@@ -741,6 +741,11 @@ export default {
     workspaceName: 'اسم {type}',
     workspaceKeyPlaceholder: 'مفتاح مساحة العمل (مثال: PROJ، TEAM)',
     addDescription: 'إضافة وصف...',
+    workspaceTemplate: 'قالب',
+    workspaceTemplateBlank: 'مساحة عمل فارغة',
+    workspaceTemplateLoading: 'جارٍ تحميل القوالب...',
+    workspaceTemplateError: 'فشل تحميل قوالب مساحات العمل',
+    workspaceTemplateMeta: '{templates} قوالب · {items} عناصر',
     // Field labels
     type: 'النوع',
     priority: 'الأولوية',

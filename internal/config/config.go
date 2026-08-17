@@ -58,12 +58,13 @@ type Config struct {
 	Memory       MemoryConfig
 
 	// Flat fields (no logical grouping)
-	AttachmentPath      string
-	EnableAdminFallback bool
-	DisableIPRateLimit  bool
-	MaxUserConcurrency  int
-	MCPEnabled          bool
-	RecoverUser         string
+	AttachmentPath       string
+	EnableAdminFallback  bool
+	DisableIPRateLimit   bool
+	MaxUserConcurrency   int
+	MaxTemplateSeedItems int
+	MCPEnabled           bool
+	RecoverUser          string
 
 	// Wire-time values (not env/flag-driven)
 	FrontendFiles embed.FS

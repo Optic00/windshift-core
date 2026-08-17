@@ -24,20 +24,20 @@ func NewWorkspaceRepository(db database.Database) *WorkspaceRepository {
 }
 
 // workspaceSelectBase is the common SELECT columns for workspace queries.
-const workspaceSelectBase = `SELECT w.id, w.name, w.key, w.description, w.active, w.time_project_id, w.is_personal, w.owner_id, w.icon, w.color, w.avatar_url, w.default_view, w.display_mode, w.internal_comments_enabled, w.created_at, w.updated_at,
+const workspaceSelectBase = `SELECT w.id, w.name, w.key, w.description, w.active, w.is_template, w.time_project_id, w.is_personal, w.owner_id, w.icon, w.color, w.avatar_url, w.default_view, w.display_mode, w.internal_comments_enabled, w.created_at, w.updated_at,
        tp.name as time_project_name`
 
 const workspaceFromJoinsBase = ` FROM workspaces w
 LEFT JOIN time_projects tp ON w.time_project_id = tp.id`
 
-const workspaceGroupByBase = ` GROUP BY w.id, w.name, w.key, w.description, w.active, w.time_project_id, w.is_personal, w.owner_id, w.icon, w.color, w.avatar_url, w.default_view, w.display_mode, w.internal_comments_enabled, w.created_at, w.updated_at, tp.name`
+const workspaceGroupByBase = ` GROUP BY w.id, w.name, w.key, w.description, w.active, w.is_template, w.time_project_id, w.is_personal, w.owner_id, w.icon, w.color, w.avatar_url, w.default_view, w.display_mode, w.internal_comments_enabled, w.created_at, w.updated_at, tp.name`
 
 // scanWorkspaceBase scans a standard workspace row and applies nullable fields.
 func scanWorkspaceBase(s interface{ Scan(dest ...any) error }) (models.Workspace, error) {
 	var ws models.Workspace
 	var icon, color, defaultView, displayMode, timeProjectName sql.NullString
 	err := s.Scan(&ws.ID, &ws.Name, &ws.Key, &ws.Description,
-		&ws.Active, &ws.TimeProjectID, &ws.IsPersonal, &ws.OwnerID,
+		&ws.Active, &ws.IsTemplate, &ws.TimeProjectID, &ws.IsPersonal, &ws.OwnerID,
 		&icon, &color, &ws.AvatarURL, &defaultView, &displayMode,
 		&ws.InternalCommentsEnabled,
 		&ws.CreatedAt, &ws.UpdatedAt, &timeProjectName)
@@ -201,7 +201,7 @@ func (r *WorkspaceRepository) FindByID(id int) (*models.Workspace, error) {
 		LEFT JOIN workspace_configuration_sets wcs ON w.id = wcs.workspace_id
 		WHERE w.id = ?`+workspaceGroupByBase+`, wcs.configuration_set_id
 	`, id).Scan(&workspace.ID, &workspace.Name, &workspace.Key, &workspace.Description,
-		&workspace.Active, &workspace.TimeProjectID, &workspace.IsPersonal, &workspace.OwnerID,
+		&workspace.Active, &workspace.IsTemplate, &workspace.TimeProjectID, &workspace.IsPersonal, &workspace.OwnerID,
 		&icon, &color, &workspace.AvatarURL, &defaultView, &displayMode,
 		&workspace.InternalCommentsEnabled,
 		&workspace.CreatedAt, &workspace.UpdatedAt,
@@ -231,11 +231,11 @@ func (r *WorkspaceRepository) FindByIDBasic(id int) (*models.Workspace, error) {
 	var icon, color sql.NullString
 
 	err := r.db.QueryRow(`
-		SELECT id, name, key, description, active, is_personal, icon, color, internal_comments_enabled
+		SELECT id, name, key, description, active, is_personal, is_template, icon, color, internal_comments_enabled
 		FROM workspaces
 		WHERE id = ?
 	`, id).Scan(&workspace.ID, &workspace.Name, &workspace.Key, &workspace.Description,
-		&workspace.Active, &workspace.IsPersonal, &icon, &color, &workspace.InternalCommentsEnabled)
+		&workspace.Active, &workspace.IsPersonal, &workspace.IsTemplate, &icon, &color, &workspace.InternalCommentsEnabled)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -305,11 +305,11 @@ func (r *WorkspaceRepository) CreateTx(tx database.Tx, workspace *models.Workspa
 	var id int64
 
 	err := tx.QueryRow(`
-		INSERT INTO workspaces (name, key, description, active, time_project_id, is_personal, owner_id, icon, color, avatar_url, default_view, display_mode, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO workspaces (name, key, description, active, is_template, time_project_id, is_personal, owner_id, icon, color, avatar_url, default_view, display_mode, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		RETURNING id
 	`, workspace.Name, workspace.Key, workspace.Description, workspace.Active,
-		workspace.TimeProjectID, workspace.IsPersonal, workspace.OwnerID,
+		workspace.IsTemplate, workspace.TimeProjectID, workspace.IsPersonal, workspace.OwnerID,
 		workspace.Icon, workspace.Color, workspace.AvatarURL, workspace.DefaultView, "default",
 		now, now).Scan(&id)
 

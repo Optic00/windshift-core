@@ -112,6 +112,24 @@ var Catalog = []Migration{
 		`,
 	},
 	{
+		Version:       "20260815_workspaces_is_template",
+		Name:          "Mark workspaces as reusable templates",
+		CheckSQLite:   sqliteColumnCheck("workspaces", "is_template"),
+		CheckPostgres: pgColumnCheck("workspaces", "is_template"),
+		SQLite: `
+			ALTER TABLE workspaces ADD COLUMN is_template BOOLEAN NOT NULL DEFAULT false;
+			CREATE INDEX IF NOT EXISTS idx_workspaces_template_active
+				ON workspaces(is_template, active)
+				WHERE is_template = true;
+		`,
+		Postgres: `
+			ALTER TABLE workspaces ADD COLUMN is_template BOOLEAN NOT NULL DEFAULT false;
+			CREATE INDEX IF NOT EXISTS idx_workspaces_template_active
+				ON workspaces(is_template, active)
+				WHERE is_template = true;
+		`,
+	},
+	{
 		Version:       "20260814_global_item_labels",
 		Name:          "Consolidate item labels into a global catalog",
 		CheckSQLite:   "SELECT CASE WHEN EXISTS(SELECT 1 FROM pragma_table_info('labels') WHERE name='workspace_id') THEN 0 ELSE 1 END",

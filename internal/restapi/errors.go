@@ -40,6 +40,11 @@ const (
 	ErrCodeConflict                = "CONFLICT"
 	ErrCodeAlreadyExists           = "ALREADY_EXISTS"
 
+	// Workspace templates
+	ErrCodeTemplateWorkspaceNotFound = "TEMPLATE_WORKSPACE_NOT_FOUND"
+	ErrCodeInvalidWorkspaceTemplate  = "INVALID_WORKSPACE_TEMPLATE"
+	ErrCodeWorkspaceTemplateTooLarge = "WORKSPACE_TEMPLATE_TOO_LARGE"
+
 	// Feature flags
 	ErrCodePluginsDisabled = "PLUGINS_DISABLED"
 

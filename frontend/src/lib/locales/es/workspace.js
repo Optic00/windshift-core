@@ -3,6 +3,7 @@ export default {
     title: 'Espacios de trabajo',
     subtitle: 'Administrar sus espacios de trabajo y proyectos',
     workspace: 'Espacio de trabajo',
+    template: 'Plantilla',
     workspaces_one: '{count} espacio de trabajo',
     workspaces_other: '{count} espacios de trabajo',
     createWorkspace: 'Crear espacio de trabajo',
@@ -595,6 +596,9 @@ export default {
     failedToUploadAvatar: 'Error al subir el avatar: {error}',
     enableInternalComments: 'Habilitar comentarios internos',
     enableInternalCommentsHint: 'Permitir marcar comentarios como notas internas en todos los elementos, no solo en solicitudes del portal.',
+    availableAsTemplate: 'Disponible como plantilla',
+    availableAsTemplateHelp:
+      'Quienes crean espacios de trabajo pueden iniciar uno nuevo a partir de una copia del conjunto de configuración, las plantillas de elementos y los elementos actuales de este espacio. Los miembros, el historial y los archivos nunca se copian.',
   },
   lookAndFeel: {
     title: 'Apariencia y diseño',

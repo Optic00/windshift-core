@@ -329,6 +329,10 @@ func (s *Server) initialize() error {
 	// can't starve the others. Applied to the api group below.
 	s.userConcurrency = middleware.NewUserConcurrencyLimiter(cfg.MaxUserConcurrency)
 
+	if cfg.MaxTemplateSeedItems > 0 {
+		services.MaxTemplateSeedItems = cfg.MaxTemplateSeedItems
+	}
+
 	s.tokenTracker = services.NewTokenTracker(s.db, services.DefaultTokenTrackerConfig())
 
 	apiTokenCacheMB, _ := config.SplitSSHCacheBudget(s.memoryBudget.APITokenCacheMB, cfg.SSH.Enabled)

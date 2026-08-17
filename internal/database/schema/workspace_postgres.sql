@@ -14,12 +14,16 @@ CREATE TABLE IF NOT EXISTS workspaces (
 	default_view TEXT DEFAULT 'board', -- Default view when entering workspace (board, backlog, list, tree, map)
 	display_mode TEXT DEFAULT 'default', -- Display mode for workspace layout (default, board)
 	internal_comments_enabled BOOLEAN DEFAULT false, -- Allow internal comments on all items (not just portal requests)
+	is_template BOOLEAN DEFAULT false, -- Workspace can be used as a creation template
 	created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 	updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_workspaces_is_personal ON workspaces(is_personal);
 CREATE INDEX IF NOT EXISTS idx_workspaces_owner_id ON workspaces(owner_id);
+CREATE INDEX IF NOT EXISTS idx_workspaces_template_active ON workspaces(is_template, active) WHERE is_template = true;
+
+-- migration: 20260815_workspaces_is_template
 
 -- Junction table for workspace and time project categories relationship
 CREATE TABLE IF NOT EXISTS workspace_time_project_categories (
