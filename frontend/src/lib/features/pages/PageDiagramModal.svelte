@@ -185,7 +185,7 @@
           </Button>
           <Button
             variant="primary"
-            disabled={saving || loadingSeed || !!loadError}
+            disabled={saving || loadingSeed || !!loadError || !editorComponent}
             loading={saving}
             onclick={handleSave}
             dataTestid="page-diagram-save"
