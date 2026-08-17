@@ -125,10 +125,12 @@
 	 * Initial load of the newest comment page.
 	 */
 	async function loadComments({ initial = false } = {}) {
+		const version = ++reconciliationVersion;
 		let response;
 		try {
 			response = await loadAttributedComments(api, itemId, { limit: COMMENT_PAGE_SIZE });
 		} catch (err) {
+			if (version !== reconciliationVersion) return;
 			// Navigation can unload the document while this request is in flight.
 			// That is expected lifecycle control flow, not a failed comment load.
 			if (isExpectedBackgroundSyncError(err)) return;
@@ -144,6 +146,7 @@
 			}
 			return;
 		}
+		if (version !== reconciliationVersion) return;
 
 		comments = response?.comments || [];
 		hasMore = Boolean(response?.has_more);

@@ -12,8 +12,13 @@ import { attachmentStatus } from '../stores';
  */
 export function useItemAttachments(getItemId, showError = console.error) {
   let destroyed = false;
-  onDestroy(() => {
+  const markDestroyed = () => {
     destroyed = true;
+  };
+  globalThis.window?.addEventListener('pagehide', markDestroyed);
+  onDestroy(() => {
+    markDestroyed();
+    globalThis.window?.removeEventListener('pagehide', markDestroyed);
   });
 
   // State
