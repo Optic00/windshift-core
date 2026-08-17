@@ -47,6 +47,7 @@
   {#if $open}
     <div
       use:melt={$tooltipContent}
+      data-testid="tooltip"
       class="z-[100] rounded-md bg-[#253858] text-white shadow-lg {contentClass}"
     >
       {#if tip}

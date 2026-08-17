@@ -714,6 +714,7 @@
         <Input
           type="date"
           value={formatDateForInput(value)}
+          dataTestid={`custom-field-input-${field.id}`}
           oninput={(e) => onChange(formatDateFromInput(/** @type {HTMLInputElement} */ (e.target).value))}
           class="w-full px-3 py-2 text-sm hover:bg-gray-50 focus:outline-none transition-colors bg-transparent border rounded"
           style="background-color: {isDarkMode ? '#1e293b' : 'var(--ds-background-input)'}; border-color: {isDarkMode ? '#475569' : 'var(--ds-border)'}; color: {isDarkMode ? '#e2e8f0' : 'var(--ds-text)'};"
@@ -728,6 +729,7 @@
         <!-- svelte-ignore a11y_autofocus -->
         <Textarea
           {value}
+          data-testid={`custom-field-input-${field.id}`}
           oninput={(e) => onChange(/** @type {HTMLTextAreaElement} */ (e.target).value)}
           class="w-full px-3 py-2 text-sm hover:bg-gray-50 focus:outline-none transition-colors bg-transparent border rounded"
           style="background-color: {isDarkMode ? '#1e293b' : 'var(--ds-background-input)'}; border-color: {isDarkMode ? '#475569' : 'var(--ds-border)'}; color: {isDarkMode ? '#e2e8f0' : 'var(--ds-text)'};"
@@ -746,6 +748,7 @@
           type="number"
           step="any"
           {value}
+          dataTestid={`custom-field-input-${field.id}`}
           oninput={(e) => onChange(/** @type {HTMLInputElement} */ (e.target).value)}
           class="w-full px-3 py-2 text-sm hover:bg-gray-50 focus:outline-none transition-colors bg-transparent border rounded tabular-nums"
           style="background-color: {isDarkMode ? '#1e293b' : 'var(--ds-background-input)'}; border-color: {isDarkMode ? '#475569' : 'var(--ds-border)'}; color: {isDarkMode ? '#e2e8f0' : 'var(--ds-text)'};"
@@ -775,6 +778,7 @@
         <Input
           type="email"
           {value}
+          dataTestid={`custom-field-input-${field.id}`}
           oninput={(e) => onChange(/** @type {HTMLInputElement} */ (e.target).value)}
           class="w-full px-3 py-2 text-sm hover:bg-gray-50 focus:outline-none transition-colors bg-transparent border rounded"
           style="background-color: {isDarkMode ? '#1e293b' : 'var(--ds-background-input)'}; border-color: {isDarkMode ? '#475569' : 'var(--ds-border)'}; color: {isDarkMode ? '#e2e8f0' : 'var(--ds-text)'};"
@@ -791,6 +795,7 @@
         <Input
           type="url"
           {value}
+          dataTestid={`custom-field-input-${field.id}`}
           oninput={(e) => onChange(/** @type {HTMLInputElement} */ (e.target).value)}
           class="w-full px-3 py-2 text-sm hover:bg-gray-50 focus:outline-none transition-colors bg-transparent border rounded"
           style="background-color: {isDarkMode ? '#1e293b' : 'var(--ds-background-input)'}; border-color: {isDarkMode ? '#475569' : 'var(--ds-border)'}; color: {isDarkMode ? '#e2e8f0' : 'var(--ds-text)'};"
