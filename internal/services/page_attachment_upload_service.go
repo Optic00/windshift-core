@@ -23,9 +23,14 @@ import (
 	"windshift/internal/fileserve"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/utils"
 
 	"golang.org/x/image/draw"
 )
+
+// maxAttachmentThumbnailSourcePixels bounds the declared dimensions an
+// attachment may carry before the thumbnail decoder allocates for it.
+const maxAttachmentThumbnailSourcePixels = 25_000_000
 
 var (
 	ErrPageAttachmentUploadDisabled = errors.New("page attachment upload disabled")
@@ -348,6 +353,10 @@ func generateAttachmentThumbnail(originalPath, filename string) (string, error) 
 	}
 	defer func() { _ = file.Close() }()
 
+	// Reject pixel bombs before the full decode allocates.
+	if err := utils.EnsureImageDimensionsBounded(file, maxAttachmentThumbnailSourcePixels); err != nil {
+		return "", err
+	}
 	img, _, err := image.Decode(file)
 	if err != nil {
 		return "", err

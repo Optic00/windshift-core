@@ -1002,6 +1002,16 @@ func (h *ChannelHandler) UpdateChannelConfig(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	resourceName := ""
+	if channel, lookupErr := h.service.GetByID(ctx, id); lookupErr == nil && channel != nil {
+		resourceName = channel.Name
+	}
+	h.auditor.LogWithDetails(r, user,
+		logger.ActionChannelUpdate, logger.ResourceChannel,
+		&id, resourceName,
+		map[string]any{"change_type": "configuration"},
+	)
+
 	respondJSONOK(w, map[string]any{
 		"success": updated,
 		"message": "Channel configuration updated successfully",

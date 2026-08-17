@@ -104,6 +104,7 @@
     from_email: '',
     from_name: '',
     encryption: 'tls',
+    skip_tls_verify: false,
     enabled: false
   });
 
@@ -253,6 +254,7 @@
           from_email: config.smtp_from_email || '',
           from_name: config.smtp_from_name || '',
           encryption: config.smtp_encryption || 'tls',
+          skip_tls_verify: config.smtp_skip_tls_verify || false,
           enabled: channel.status === 'enabled'
         };
       } else if (channel.type === 'form') {

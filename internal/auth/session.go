@@ -255,13 +255,21 @@ func (sm *SessionManager) RefreshSession(token string, rememberMe bool) error {
 		duration = ExtendedSessionDuration
 	}
 
-	newExpiresAt := time.Now().Add(duration)
-	query := `UPDATE user_sessions SET expires_at = ? WHERE session_token IN (?, ?) AND is_active = true`
-	_, err := sm.db.ExecWrite(query, newExpiresAt, hashSessionToken(token), token)
+	now := time.Now()
+	newExpiresAt := now.Add(duration)
+	query := `UPDATE user_sessions SET expires_at = ? WHERE session_token IN (?, ?) AND is_active = true AND expires_at > ?`
+	result, err := sm.db.ExecWrite(query, newExpiresAt, hashSessionToken(token), token, now)
 	if err != nil {
 		return fmt.Errorf("failed to refresh session: %w", err)
 	}
 	sm.invalidateSessionValidationToken(token)
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to inspect refreshed session: %w", err)
+	}
+	if rowsAffected != 1 {
+		return ErrInvalidSession
+	}
 	return nil
 }
 

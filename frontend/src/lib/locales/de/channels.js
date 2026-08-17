@@ -243,6 +243,8 @@ export default {
     smtpFromName: 'Absendername',
     smtpFromNamePlaceholder: 'Anzeigename für ausgehende E-Mails',
     smtpEncryption: 'Verschlüsselung',
+    smtpSkipTlsVerify: 'Zertifikatsprüfung überspringen',
+    smtpSkipTlsVerifyDescription: 'Selbstsignierte oder nicht vertrauenswürdige Zertifikate nur für diesen SMTP-Server zulassen. Dies schwächt die Verbindungssicherheit.',
     noEncryption: 'Keine (nicht empfohlen)',
     authentication: 'Authentifizierung',
     senderSettings: 'Absendereinstellungen',

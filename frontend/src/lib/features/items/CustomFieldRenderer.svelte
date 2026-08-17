@@ -58,7 +58,8 @@
     onStartEdit = null, onCancel = null, showSelectedInTrigger = true, autoOpenPickers = true,
     noPadding = false, itemId = null, users: providedUsers = null, fieldLinks = null,
     onFieldLinksChanged = null,
-    optionData = {}, optionLoading = {}, onRequestOptions = null, loadAssetOptions = null
+    optionData = {}, optionLoading = {}, onRequestOptions = null, loadAssetOptions = null,
+    displayAlignment = 'start', truncateDisplay = false, displayTestId = undefined
   } = $props();
 
   const users = $derived(providedUsers ?? referenceDisplayCache.users);
@@ -320,8 +321,9 @@
     {#if onStartEdit && !disabled}
       <button
         type="button"
-        class="w-full flex items-center gap-2 justify-start {noPadding ? '' : 'px-3'} py-2 text-sm hover:bg-gray-50 transition-colors text-left rounded"
+        class="flex w-full min-w-0 items-center gap-2 {displayAlignment === 'end' ? 'justify-end text-right' : 'justify-start text-left'} {truncateDisplay ? 'whitespace-nowrap overflow-hidden' : ''} {noPadding ? '' : 'px-3'} py-2 text-sm hover:bg-gray-50 transition-colors rounded"
         onclick={handleClick}
+        data-testid={displayTestId}
       >
         {#if value !== null && value !== undefined && value !== ''}
           {#if field.field_type === 'user'}
@@ -330,7 +332,7 @@
               <div class="w-4 h-4 rounded-full bg-blue-500 flex items-center justify-center text-white text-[9px] font-medium flex-shrink-0">
                 {userData.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
               </div>
-              <span style="color: var(--ds-text);">{userData.name}</span>
+              <span class={truncateDisplay ? 'min-w-0 truncate' : ''} style="color: var(--ds-text);">{userData.name}</span>
             {:else if usersLoading}
               <span style="color: var(--ds-text-subtle);">{t('common.loading')}</span>
             {:else}
@@ -356,11 +358,11 @@
             {:else}
               <Calendar class="w-4 h-4 flex-shrink-0" style="color: var(--ds-text-subtle);" />
             {/if}
-            <span style="color: var(--ds-text);">{renderDisplayValue()}</span>
+            <span class={truncateDisplay ? 'min-w-0 truncate' : ''} style="color: var(--ds-text);">{renderDisplayValue()}</span>
           {:else if field.field_type === 'asset'}
             <!-- Display asset with icon -->
             <Box class="w-4 h-4 flex-shrink-0" style="color: var(--ds-text-subtle);" />
-            <span style="color: var(--ds-text);">{renderDisplayValue()}</span>
+            <span class={truncateDisplay ? 'min-w-0 truncate' : ''} style="color: var(--ds-text);">{renderDisplayValue()}</span>
           {:else if field.field_type === 'portalcustomer'}
             <!-- Display portal customer with icon -->
             <User class="w-4 h-4 flex-shrink-0" style="color: var(--ds-text-subtle);" />
@@ -390,7 +392,7 @@
           {:else if field.field_type === 'number'}
             <span class="tabular-nums" style="color: var(--ds-text);">{renderDisplayValue()}</span>
           {:else}
-            <span style="color: var(--ds-text);">{renderDisplayValue()}</span>
+            <span class={truncateDisplay ? 'min-w-0 truncate' : ''} style="color: var(--ds-text);">{renderDisplayValue()}</span>
           {/if}
         {:else}
           {#if field.field_type === 'user'}
@@ -410,20 +412,23 @@
           {:else if field.field_type === 'url'}
             <ExternalLink class="w-4 h-4 flex-shrink-0" style="color: var(--ds-text-subtle);" />
           {/if}
-          <span style="color: var(--ds-text-subtle);">{t('items.setField', { field: field.name.toLowerCase() })}</span>
+          <span class={truncateDisplay ? 'min-w-0 truncate' : ''} style="color: var(--ds-text-subtle);">{t('items.setField', { field: field.name.toLowerCase() })}</span>
         {/if}
       </button>
     {:else}
       <!-- Static display (no click handler or disabled) -->
-      <div class="{noPadding ? '' : 'px-3'} py-2 text-sm {disabled ? 'opacity-50' : ''}">
+      <div
+        class="min-w-0 {displayAlignment === 'end' ? 'text-right' : ''} {truncateDisplay ? 'whitespace-nowrap overflow-hidden' : ''} {noPadding ? '' : 'px-3'} py-2 text-sm {disabled ? 'opacity-50' : ''}"
+        data-testid={displayTestId}
+      >
         {#if value !== null && value !== undefined && value !== ''}
           {#if field.field_type === 'user'}
             {#if userData}
-              <div class="flex items-center gap-2">
+              <div class="flex min-w-0 items-center gap-2 {displayAlignment === 'end' ? 'justify-end' : ''}">
                 <div class="w-4 h-4 rounded-full bg-blue-500 flex items-center justify-center text-white text-[9px] font-medium flex-shrink-0">
                   {userData.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
                 </div>
-                <span style="color: var(--ds-text);">{userData.name}</span>
+                <span class={truncateDisplay ? 'min-w-0 truncate' : ''} style="color: var(--ds-text);">{userData.name}</span>
               </div>
             {:else if usersLoading}
               <span style="color: var(--ds-text-subtle);">{t('common.loading')}</span>
@@ -453,9 +458,9 @@
               <span style="color: var(--ds-text);">{renderDisplayValue()}</span>
             </div>
           {:else if field.field_type === 'asset'}
-            <div class="flex items-center gap-2">
+            <div class="flex min-w-0 items-center gap-2 {displayAlignment === 'end' ? 'justify-end' : ''}">
               <Box class="w-4 h-4" style="color: var(--ds-text-subtle);" />
-              <span style="color: var(--ds-text);">{renderDisplayValue()}</span>
+              <span class={truncateDisplay ? 'min-w-0 truncate' : ''} style="color: var(--ds-text);">{renderDisplayValue()}</span>
             </div>
           {:else if field.field_type === 'portalcustomer'}
             <div class="flex items-center gap-2">
@@ -506,10 +511,10 @@
           {:else if field.field_type === 'number'}
             <span class="tabular-nums" style="color: var(--ds-text);">{renderDisplayValue()}</span>
           {:else}
-            <span style="color: var(--ds-text);">{renderDisplayValue()}</span>
+            <span class={truncateDisplay ? 'block min-w-0 truncate' : ''} style="color: var(--ds-text);">{renderDisplayValue()}</span>
           {/if}
         {:else}
-          <span style="color: var(--ds-text-subtle);">{t('items.notSet')}</span>
+          <span class={truncateDisplay ? 'block min-w-0 truncate' : ''} style="color: var(--ds-text-subtle);">{t('items.notSet')}</span>
         {/if}
       </div>
     {/if}

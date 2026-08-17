@@ -281,6 +281,8 @@ export default {
     smtpFromName: 'From Name',
     smtpFromNamePlaceholder: 'Display name for outgoing emails',
     smtpEncryption: 'Encryption',
+    smtpSkipTlsVerify: 'Skip certificate verification',
+    smtpSkipTlsVerifyDescription: 'Allow self-signed or untrusted certificates for this SMTP server only. This weakens connection security.',
     noEncryption: 'None (not recommended)',
     authentication: 'Authentication',
     senderSettings: 'Sender Settings',

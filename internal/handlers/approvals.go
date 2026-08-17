@@ -387,7 +387,7 @@ func (h *ApprovalHandler) RefreshApprovers(w http.ResponseWriter, r *http.Reques
 }
 
 // EscalateNow runs the configured escalation policy for a pending step
-// immediately (ignores escalation_due_at). Admin only.
+// immediately (ignores escalation_due_at). Workspace admin only.
 //
 // POST /api/approvals/{id}/steps/{step_id}/escalate
 func (h *ApprovalHandler) EscalateNow(w http.ResponseWriter, r *http.Request) {
@@ -408,7 +408,7 @@ func (h *ApprovalHandler) EscalateNow(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !CheckItemPermission(w, r, h.itemRepo, h.permService, itemID, models.PermissionItemEdit) {
+	if !CheckItemPermission(w, r, h.itemRepo, h.permService, itemID, models.PermissionWorkspaceAdmin) {
 		return
 	}
 

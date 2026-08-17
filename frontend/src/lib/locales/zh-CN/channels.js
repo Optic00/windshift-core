@@ -241,6 +241,8 @@ export default {
     smtpFromName: '发件人名称',
     smtpFromNamePlaceholder: '外发邮件的显示名称',
     smtpEncryption: '加密',
+    smtpSkipTlsVerify: '跳过证书验证',
+    smtpSkipTlsVerifyDescription: '仅允许此 SMTP 服务器使用自签名或不受信任的证书。这会降低连接安全性。',
     noEncryption: '无（不推荐）',
     authentication: '认证',
     senderSettings: '发件人设置',

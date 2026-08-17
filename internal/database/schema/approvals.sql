@@ -191,5 +191,8 @@ CREATE INDEX IF NOT EXISTS idx_approval_decisions_actor
 CREATE UNIQUE INDEX IF NOT EXISTS uq_approval_decisions_one_vote_per_actor
     ON approval_decisions(approval_step_instance_id, actor_user_id)
     WHERE decision IN ('approve', 'reject');
+CREATE UNIQUE INDEX IF NOT EXISTS uq_approval_decisions_one_vote_per_portal_customer
+    ON approval_decisions(approval_step_instance_id, actor_portal_customer_id)
+    WHERE actor_portal_customer_id IS NOT NULL AND decision IN ('approve', 'reject');
 
 -- migration: 0030_approval_set_statuses_is_active

@@ -259,6 +259,8 @@ export default {
     smtpFromName: 'Nombre del remitente',
     smtpFromNamePlaceholder: 'Nombre para mostrar en correos salientes',
     smtpEncryption: 'Cifrado',
+    smtpSkipTlsVerify: 'Omitir la verificación del certificado',
+    smtpSkipTlsVerifyDescription: 'Permite certificados autofirmados o no confiables solo para este servidor SMTP. Esto reduce la seguridad de la conexión.',
     noEncryption: 'Ninguno (no recomendado)',
     authentication: 'Autenticación',
     senderSettings: 'Configuración del remitente',

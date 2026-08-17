@@ -463,9 +463,9 @@ func (s *NotificationSMTPSender) dispatch(config *models.ChannelConfig, toEmail,
 
 	switch strings.ToLower(config.SMTPEncryption) {
 	case "tls", "starttls":
-		return sendWithStartTLS(addr, auth, fromEmail, toEmail, message)
+		return sendWithStartTLS(addr, auth, fromEmail, toEmail, message, config.SMTPSkipTLSVerify)
 	case "ssl":
-		return sendWithSSL(addr, auth, fromEmail, toEmail, message)
+		return sendWithSSL(addr, auth, fromEmail, toEmail, message, config.SMTPSkipTLSVerify)
 	case "none":
 		if EncryptionModeAllowed(config.SMTPEncryption) {
 			return sendPlaintext(addr, auth, fromEmail, toEmail, message)
@@ -491,7 +491,7 @@ func (s *NotificationSMTPSender) sendEmail(config *models.ChannelConfig, toEmail
 // sendWithStartTLS sends email using STARTTLS encryption. The dial goes
 // through utils.SafeNetDialer so a maliciously-configured SMTPHost cannot
 // reach loopback / private-IP / link-local / CGNAT targets.
-func sendWithStartTLS(addr string, auth smtp.Auth, from, to, message string) error {
+func sendWithStartTLS(addr string, auth smtp.Auth, from, to, message string, skipTLSVerify bool) error {
 	conn, err := utils.SafeNetDialer(smtpDialTimeout).Dial("tcp", addr)
 	if err != nil {
 		return err
@@ -507,7 +507,7 @@ func sendWithStartTLS(addr string, auth smtp.Auth, from, to, message string) err
 	}
 	defer func() { _ = client.Close() }()
 
-	tlsConfig := smtpTLSConfig(addr)
+	tlsConfig := smtpTLSConfig(addr, skipTLSVerify)
 
 	if err = client.StartTLS(tlsConfig); err != nil { //nolint:gocritic
 		return err
@@ -518,8 +518,8 @@ func sendWithStartTLS(addr string, auth smtp.Auth, from, to, message string) err
 
 // sendWithSSL sends email using SSL/TLS encryption. SafeNetDialer enforces
 // the SSRF reject list before the TLS handshake.
-func sendWithSSL(addr string, auth smtp.Auth, from, to, message string) error {
-	tlsConfig := smtpTLSConfig(addr)
+func sendWithSSL(addr string, auth smtp.Auth, from, to, message string, skipTLSVerify bool) error {
+	tlsConfig := smtpTLSConfig(addr, skipTLSVerify)
 
 	conn, err := tls.DialWithDialer(utils.SafeNetDialer(smtpDialTimeout), "tcp", addr, tlsConfig)
 	if err != nil {
@@ -540,8 +540,10 @@ func sendWithSSL(addr string, auth smtp.Auth, from, to, message string) error {
 	return sendWithClient(client, auth, from, to, message)
 }
 
-func smtpTLSConfig(addr string) *tls.Config {
-	return utils.OutboundTLSConfig(hostFromAddr(addr))
+func smtpTLSConfig(addr string, skipTLSVerify bool) *tls.Config {
+	config := utils.OutboundTLSConfig(hostFromAddr(addr))
+	config.InsecureSkipVerify = config.InsecureSkipVerify || skipTLSVerify //nolint:gosec // Explicit SMTP channel or process-wide opt-in.
+	return config
 }
 
 // sendPlaintext sends email over an unencrypted SMTP connection. Gated by

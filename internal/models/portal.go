@@ -37,13 +37,14 @@ type ChannelCategory struct {
 // ChannelConfig represents configuration for different channel types
 type ChannelConfig struct {
 	// SMTP Configuration
-	SMTPHost       string `json:"smtp_host,omitempty"`
-	SMTPPort       int    `json:"smtp_port,omitempty"`
-	SMTPUsername   string `json:"smtp_username,omitempty"`
-	SMTPPassword   string `json:"smtp_password,omitempty"`
-	SMTPFromEmail  string `json:"smtp_from_email,omitempty"`
-	SMTPFromName   string `json:"smtp_from_name,omitempty"`
-	SMTPEncryption string `json:"smtp_encryption,omitempty"` // tls, ssl, none
+	SMTPHost          string `json:"smtp_host,omitempty"`
+	SMTPPort          int    `json:"smtp_port,omitempty"`
+	SMTPUsername      string `json:"smtp_username,omitempty"`
+	SMTPPassword      string `json:"smtp_password,omitempty"`
+	SMTPFromEmail     string `json:"smtp_from_email,omitempty"`
+	SMTPFromName      string `json:"smtp_from_name,omitempty"`
+	SMTPEncryption    string `json:"smtp_encryption,omitempty"` // tls, ssl, none
+	SMTPSkipTLSVerify bool   `json:"smtp_skip_tls_verify,omitempty"`
 
 	// Webhook Configuration
 	WebhookURL              string            `json:"webhook_url,omitempty"`

@@ -2,9 +2,7 @@ package email
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/mail"
@@ -113,7 +111,7 @@ func (p *Processor) ProcessEmail(
 	var result *ProcessingResult
 	if parentItemID != nil {
 		// This is a reply - add comment to existing item
-		result, err = p.addCommentFromReply(ctx, email, *parentItemID, customerID)
+		result, err = p.addCommentFromReply(email, *parentItemID, customerID)
 	} else {
 		// This is a new conversation - create item
 		result, err = p.createItemFromEmail(ctx, email, channelID, config, customerID)
@@ -464,7 +462,6 @@ func (p *Processor) createItemFromEmail( //nolint:unparam // ctx reserved for fu
 
 // addCommentFromReply adds a comment to an existing item from an email reply
 func (p *Processor) addCommentFromReply(
-	ctx context.Context,
 	email *ParsedEmail,
 	itemID int,
 	customerID int,
@@ -480,25 +477,16 @@ func (p *Processor) addCommentFromReply(
 		}, nil
 	}
 
-	// Get user ID from portal customer (if linked)
-	var linkedUserID int
-	err := p.db.QueryRowContext(ctx, `
-		SELECT user_id FROM portal_customers WHERE id = ? AND user_id IS NOT NULL
-	`, customerID).Scan(&linkedUserID)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		slog.Warn("failed to get user_id for portal customer", "error", err)
-	}
-
 	// All comment writes go through CommentService (notifications, mentions,
 	// webhooks, email reply handling, and the item-change publish). It is always
-	// wired in production; treat a nil service as a misconfiguration rather than
-	// writing SQL here.
+	// wired in production. Inbound From is not an authentication credential, so
+	// even a portal customer linked to a user remains a portal identity here.
 	if p.commentService == nil {
 		return nil, fmt.Errorf("comment service not configured")
 	}
 	result, err := p.commentService.Create(services.CreateCommentParams{
 		ItemID:           itemID,
-		AuthorID:         linkedUserID,
+		AuthorID:         0,
 		PortalCustomerID: &customerID,
 		Content:          content,
 	})

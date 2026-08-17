@@ -256,6 +256,8 @@ export default {
     smtpFromName: 'اسم المرسل',
     smtpFromNamePlaceholder: 'الاسم المعروض للرسائل الصادرة',
     smtpEncryption: 'التشفير',
+    smtpSkipTlsVerify: 'تخطي التحقق من الشهادة',
+    smtpSkipTlsVerifyDescription: 'السماح بالشهادات الموقعة ذاتيًا أو غير الموثوقة لخادم SMTP هذا فقط. يؤدي ذلك إلى إضعاف أمان الاتصال.',
     noEncryption: 'بدون تشفير (غير مستحسن)',
     authentication: 'المصادقة',
     senderSettings: 'إعدادات المرسل',

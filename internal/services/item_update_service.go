@@ -72,10 +72,9 @@ type HistoryEntry = repository.HistoryEntry
 
 // UpdateItem updates an item with validation, transaction safety, and history tracking.
 //
-// Workflow-status changes must NOT go through this path — callers should use
-// WorkflowService.PerformTransition directly (via the HTTP transition endpoint
-// or an action executor). Accepting status_id here would skip the transition
-// validation + event emission pipeline, so we reject it defensively.
+// Workflow and workspace moves must not go through this path. Each has a
+// dedicated service that enforces its authorization, mapping, and cleanup
+// invariants, so reject those fields before opening a transaction.
 func (s *ItemUpdateService) UpdateItem(req UpdateItemRequest) (*UpdateItemResult, error) {
 	if _, hasStatus := req.UpdateData["status_id"]; hasStatus {
 		return nil, &validation.ValidationError{
@@ -87,6 +86,12 @@ func (s *ItemUpdateService) UpdateItem(req UpdateItemRequest) (*UpdateItemResult
 		return nil, &validation.ValidationError{
 			Field:   "item_type_id",
 			Message: "must be changed via the item type change endpoint, not item update",
+		}
+	}
+	if _, hasWorkspace := req.UpdateData["workspace_id"]; hasWorkspace {
+		return nil, &validation.ValidationError{
+			Field:   "workspace_id",
+			Message: "must be changed via the workspace move endpoint, not item update",
 		}
 	}
 

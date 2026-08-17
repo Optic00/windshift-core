@@ -362,9 +362,13 @@ func (h *AuthHandler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
 
 // RefreshSession extends the current session
 func (h *AuthHandler) RefreshSession(w http.ResponseWriter, r *http.Request) {
-	// Get session token
 	token, err := h.sessionManager.GetSessionFromRequest(r)
 	if err != nil {
+		respondUnauthorized(w, r)
+		return
+	}
+	if _, err := h.sessionManager.ValidateSessionContext(r.Context(), token, h.getClientIP(r)); err != nil {
+		h.sessionManager.ClearSessionCookie(w, r)
 		respondUnauthorized(w, r)
 		return
 	}
@@ -379,6 +383,11 @@ func (h *AuthHandler) RefreshSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.sessionManager.RefreshSession(token, req.RememberMe); err != nil {
+		if errors.Is(err, auth.ErrSessionExpired) || errors.Is(err, auth.ErrInvalidSession) || errors.Is(err, auth.ErrSessionNotFound) {
+			h.sessionManager.ClearSessionCookie(w, r)
+			respondUnauthorized(w, r)
+			return
+		}
 		respondInternalError(w, r, err)
 		return
 	}

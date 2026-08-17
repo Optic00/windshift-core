@@ -1386,15 +1386,23 @@
                     onCancel={() => oncancelEdit?.({ field: `custom_field_${screenField.field_identifier}` })}
                   />
                 {:else if ['user', 'multi_user', 'asset'].includes(fieldDef.field_type)}
-                  <div class="w-full flex items-center justify-between px-2 text-sm">
-                    <Text variant="subtle" size="sm">{fieldDef.name}</Text>
-                    <div class="min-w-0 text-right">
+                  <div class="flex w-full min-w-0 items-center gap-4 px-2 text-sm">
+                    <span
+                      class="max-w-[45%] shrink-0 truncate"
+                      data-testid={`item-custom-field-label-${fieldDef.id}`}
+                    >
+                      <Text variant="subtle" size="sm">{fieldDef.name}</Text>
+                    </span>
+                    <div class="min-w-0 flex-1 text-right">
                       <CustomFieldRenderer
                         field={fieldDef}
                         value={currentValue}
                         readonly={true}
                         disabled={!canEdit || !fieldEditable}
                         noPadding={true}
+                        displayAlignment="end"
+                        truncateDisplay={true}
+                        displayTestId={`item-custom-field-display-${fieldDef.id}`}
                         {milestones}
                         {iterations}
                         itemId={item?.id}

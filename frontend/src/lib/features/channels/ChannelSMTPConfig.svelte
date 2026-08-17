@@ -21,6 +21,7 @@
       from_email: '',
       from_name: '',
       encryption: 'tls',
+      skip_tls_verify: false,
       enabled: false
     }),
     onSave = () => {}
@@ -96,7 +97,8 @@
       smtp_password: formData.password || undefined,
       smtp_from_email: formData.from_email,
       smtp_from_name: formData.from_name || '',
-      smtp_encryption: formData.encryption || 'tls'
+      smtp_encryption: formData.encryption || 'tls',
+      smtp_skip_tls_verify: formData.skip_tls_verify || false
     };
   }
 
@@ -125,6 +127,16 @@
       <div>
         <Label color="default" class="mb-2">{t('channel.smtpEncryption')}</Label>
         <Select bind:value={formData.encryption} options={[{ value: 'tls', label: 'TLS (Port 587)' }, { value: 'ssl', label: 'SSL (Port 465)' }]} />
+      </div>
+
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <div class="text-sm font-medium" style="color: var(--ds-text);">
+            {t('channel.smtpSkipTlsVerify')}
+          </div>
+          <DescriptionText>{t('channel.smtpSkipTlsVerifyDescription')}</DescriptionText>
+        </div>
+        <Toggle bind:checked={formData.skip_tls_verify} dataTestid="smtp-skip-tls-verify" />
       </div>
     </div>
 

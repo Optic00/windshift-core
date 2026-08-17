@@ -46,7 +46,8 @@ services:
       - LOG_FORMAT=json
       # OPTIONAL: accept self-signed certificates for outbound TLS connections
       # (SMTP, IMAP, LDAP, HTTPS integrations). This disables server identity
-      # verification; leave false unless every destination network is trusted.
+      # verification for the whole process; prefer the SMTP channel setting
+      # when only one mail server needs this exception.
       - TLS_SKIP_VERIFY=${TLS_SKIP_VERIFY:-false}
       # Total process budget. Keep the container limit below in sync.
       - WINDSHIFT_MEMORY_LIMIT_MB=${WINDSHIFT_MEMORY_LIMIT_MB:-2048}

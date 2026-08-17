@@ -8,6 +8,7 @@ import (
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/services"
+	"windshift/internal/validation"
 )
 
 func (h *ItemHandler) PreviewWorkspaceMove(w http.ResponseWriter, r *http.Request) {
@@ -28,7 +29,7 @@ func (h *ItemHandler) MoveWorkspace(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	result, err := h.itemWorkspaceMove.Move(itemID, user.ID, input)
+	result, err := h.itemWorkspaceMove.MoveContext(r.Context(), itemID, user.ID, input)
 	if err != nil {
 		h.respondWorkspaceMoveError(w, r, err)
 		return
@@ -98,6 +99,7 @@ func (h *ItemHandler) requireWorkspaceMove(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *ItemHandler) respondWorkspaceMoveError(w http.ResponseWriter, r *http.Request, err error) {
+	var validationErr *validation.ValidationError
 	switch {
 	case errors.Is(err, repository.ErrNotFound):
 		respondNotFound(w, r, "item or destination workspace")
@@ -106,6 +108,8 @@ func (h *ItemHandler) respondWorkspaceMoveError(w http.ResponseWriter, r *http.R
 		errors.Is(err, services.ErrItemWorkspaceMoveInvalidStatus),
 		errors.Is(err, services.ErrItemWorkspaceMoveInvalidPriority):
 		respondValidationError(w, r, err.Error())
+	case errors.As(err, &validationErr):
+		respondValidationError(w, r, validationErr.Error())
 	default:
 		respondInternalError(w, r, err)
 	}

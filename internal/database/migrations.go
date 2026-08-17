@@ -70,6 +70,48 @@ const legacyScopeRowsAbsent = `
 // with row dependencies; otherwise entries may be reordered freely.
 var Catalog = []Migration{
 	{
+		Version:       "20260816_portal_approval_vote_uniqueness",
+		Name:          "Enforce one portal-customer vote per approval step",
+		CheckSQLite:   sqliteIndexCheck("uq_approval_decisions_one_vote_per_portal_customer"),
+		CheckPostgres: pgIndexCheck("uq_approval_decisions_one_vote_per_portal_customer"),
+		SQLite: `
+			DELETE FROM approval_decisions
+			WHERE id IN (
+				SELECT id FROM (
+					SELECT id, ROW_NUMBER() OVER (
+						PARTITION BY approval_step_instance_id, actor_portal_customer_id
+						ORDER BY created_at, id
+					) AS duplicate_rank
+					FROM approval_decisions
+					WHERE actor_portal_customer_id IS NOT NULL
+					  AND decision IN ('approve', 'reject')
+				) duplicate_votes
+				WHERE duplicate_rank > 1
+			);
+			CREATE UNIQUE INDEX uq_approval_decisions_one_vote_per_portal_customer
+				ON approval_decisions(approval_step_instance_id, actor_portal_customer_id)
+				WHERE actor_portal_customer_id IS NOT NULL AND decision IN ('approve', 'reject');
+		`,
+		Postgres: `
+			DELETE FROM approval_decisions
+			WHERE id IN (
+				SELECT id FROM (
+					SELECT id, ROW_NUMBER() OVER (
+						PARTITION BY approval_step_instance_id, actor_portal_customer_id
+						ORDER BY created_at, id
+					) AS duplicate_rank
+					FROM approval_decisions
+					WHERE actor_portal_customer_id IS NOT NULL
+					  AND decision IN ('approve', 'reject')
+				) duplicate_votes
+				WHERE duplicate_rank > 1
+			);
+			CREATE UNIQUE INDEX uq_approval_decisions_one_vote_per_portal_customer
+				ON approval_decisions(approval_step_instance_id, actor_portal_customer_id)
+				WHERE actor_portal_customer_id IS NOT NULL AND decision IN ('approve', 'reject');
+		`,
+	},
+	{
 		Version:       "20260814_global_item_labels",
 		Name:          "Consolidate item labels into a global catalog",
 		CheckSQLite:   "SELECT CASE WHEN EXISTS(SELECT 1 FROM pragma_table_info('labels') WHERE name='workspace_id') THEN 0 ELSE 1 END",

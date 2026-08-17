@@ -910,15 +910,17 @@ func (h *ItemHandler) emitItemCreatedFallback(item *models.Item, user *models.Us
 }
 
 // itemUpdateValidationMessage preserves the legacy transport wording for the
-// workflow-protected fields. The shared update pipeline rejects both for every
+// protected fields. The shared update pipeline rejects them for every
 // transport with a field-scoped ValidationError; only the transport-specific
-// pointer to the transition/change-type endpoints differs.
+// pointer to the dedicated endpoints differs.
 func itemUpdateValidationMessage(valErr *validation.ValidationError) string {
 	switch valErr.Field {
 	case "status_id":
 		return "status_id may not be set via item update; use POST /items/{id}/transition"
 	case "item_type_id":
 		return "item_type_id may not be set via item update; use POST /items/{id}/change-type"
+	case "workspace_id":
+		return "workspace_id may not be set via item update; use POST /items/{id}/move-workspace"
 	default:
 		return valErr.Error()
 	}
@@ -963,8 +965,8 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// Run the shared user-facing update pipeline. REST v1 uses this same
 	// service instance so committed-item events, mentions, activity, and cache
 	// invalidation do not depend on the transport. The pipeline also rejects
-	// status_id and item_type_id so workflow and condition rules are always
-	// enforced front of the dedicated transition/change-type flows.
+	// status_id, item_type_id, and workspace_id so workflow, condition, and
+	// cross-workspace move rules stay in their dedicated flows.
 	result, err := h.itemUpdate.Update(user.ID, user.Username, id, updateData)
 
 	if err != nil {

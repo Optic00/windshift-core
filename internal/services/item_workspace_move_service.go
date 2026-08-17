@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/validation"
 )
 
 var (
@@ -537,6 +539,11 @@ func (s *ItemWorkspaceMoveService) destinationCustomFields(values map[string]any
 }
 
 func (s *ItemWorkspaceMoveService) Move(itemID, actorUserID int, input ItemWorkspaceMoveInput) (*ItemWorkspaceMoveResult, error) {
+	return s.MoveContext(context.Background(), itemID, actorUserID, input)
+}
+
+// MoveContext moves an item while honoring cancellation from the caller.
+func (s *ItemWorkspaceMoveService) MoveContext(ctx context.Context, itemID, actorUserID int, input ItemWorkspaceMoveInput) (*ItemWorkspaceMoveResult, error) {
 	if input.TargetItemTypeID <= 0 {
 		return nil, ErrItemWorkspaceMoveInvalidType
 	}
@@ -549,6 +556,9 @@ func (s *ItemWorkspaceMoveService) Move(itemID, actorUserID int, input ItemWorks
 	}
 	item, err := s.loadSnapshot(itemID)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.validateWorkflowGuards(ctx, item, preview); err != nil {
 		return nil, err
 	}
 	customValues, _, _, err := s.destinationCustomFields(item.CustomFieldValues, input.DestinationWorkspaceID, input.TargetItemTypeID)
@@ -585,9 +595,6 @@ func (s *ItemWorkspaceMoveService) Move(itemID, actorUserID int, input ItemWorks
 	}
 	if _, err := tx.Exec(`DELETE FROM item_milestones WHERE item_id = ?`, itemID); err != nil {
 		return nil, fmt.Errorf("clear milestones: %w", err)
-	}
-	if _, err := tx.Exec(`DELETE FROM approval_requests WHERE item_id = ?`, itemID); err != nil {
-		return nil, fmt.Errorf("clear approvals: %w", err)
 	}
 	if _, err := tx.Exec(`UPDATE recurrence_rules SET workspace_id = ?, status_on_create = NULL, updated_at = ? WHERE template_item_id = ?`, input.DestinationWorkspaceID, now, itemID); err != nil {
 		return nil, fmt.Errorf("remap recurrence: %w", err)
@@ -653,6 +660,81 @@ func (s *ItemWorkspaceMoveService) Move(itemID, actorUserID int, input ItemWorks
 		Preview:          preview,
 		DetachedChildIDs: childIDs,
 	}, nil
+}
+
+func (s *ItemWorkspaceMoveService) validateWorkflowGuards(ctx context.Context, item *itemMoveSnapshot, preview *ItemWorkspaceMovePreview) error {
+	guard := NewItemTypeChangeService(s.db)
+	pending, err := guard.itemHasPendingApproval(item.ID)
+	if err != nil {
+		return fmt.Errorf("check pending approval before workspace move: %w", err)
+	}
+	if pending {
+		return &validation.ValidationError{
+			Field:   "destination_workspace_id",
+			Message: "Cannot move an item while an approval is pending",
+		}
+	}
+	if item.StatusID == nil || preview.TargetStatusID == *item.StatusID {
+		return nil
+	}
+
+	targetTypeID := preview.TargetItemTypeID
+	targetWorkflowID, err := guard.workflowService.GetWorkflowIDForItem(preview.DestinationWorkspaceID, &targetTypeID)
+	if err != nil {
+		return fmt.Errorf("resolve destination workflow: %w", err)
+	}
+
+	approvalBound, err := guard.statusIsApprovalBound(ctx, preview.DestinationWorkspaceID, targetTypeID, preview.TargetStatusID)
+	if err != nil {
+		return err
+	}
+	if approvalBound {
+		return &validation.ValidationError{
+			Field:   "target_status_id",
+			Message: "Target status requires approval in the destination workspace",
+		}
+	}
+	if targetWorkflowID == nil {
+		return nil
+	}
+
+	initialStatusID, err := guard.workflowService.GetInitialStatusID(*targetWorkflowID)
+	if err != nil {
+		return err
+	}
+	if initialStatusID != nil && *initialStatusID == preview.TargetStatusID {
+		return nil
+	}
+
+	transitionID, err := guard.findWorkflowTransitionID(*targetWorkflowID, *item.StatusID, preview.TargetStatusID)
+	if err != nil {
+		return err
+	}
+	if transitionID == nil {
+		return &validation.ValidationError{
+			Field:   "target_status_id",
+			Message: "Target status is not reachable by a direct transition in the destination workflow",
+		}
+	}
+
+	conditionSetID, err := guard.resolveConditionSetIDForItemType(preview.DestinationWorkspaceID, targetTypeID)
+	if err != nil {
+		return err
+	}
+	if conditionSetID == nil {
+		return nil
+	}
+	hasConditions, err := guard.transitionHasConditions(*conditionSetID, *transitionID)
+	if err != nil {
+		return err
+	}
+	if hasConditions {
+		return &validation.ValidationError{
+			Field:   "target_status_id",
+			Message: "Target status transition has conditions in the destination workspace",
+		}
+	}
+	return nil
 }
 
 func detachMoveChildren(tx database.Tx, itemID int) ([]int, error) {

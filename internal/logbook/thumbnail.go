@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"windshift/internal/utils"
+
 	"golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
 )
@@ -20,6 +22,10 @@ import (
 const thumbnailMaxSize = 600
 const previewMaxSize = 1200
 const thumbnailJPEGQuality = 85
+
+// maxDecodePixels bounds the declared dimensions an ingested image may carry
+// before the thumbnail decoder allocates for it.
+const maxDecodePixels = 25_000_000
 
 // pdftoppmTimeout caps how long pdftoppm may run on a single page render.
 // Real-world first-page renders finish in well under a second; this is a
@@ -55,7 +61,8 @@ func GenerateThumbnailAndPreview(docID, filePath, mimeType, outputDir string) (t
 	return thumbPath, previewPath, nil
 }
 
-// decodeImage decodes an image file from disk.
+// decodeImage decodes an image file from disk. Declared dimensions above
+// maxDecodePixels are rejected before the full decode allocates.
 func decodeImage(inputPath string) (image.Image, error) {
 	f, err := os.Open(inputPath) //nolint:gosec // G304 — inputPath from DB-stored path (UUID dirs + filepath.Base filename)
 	if err != nil {
@@ -63,6 +70,9 @@ func decodeImage(inputPath string) (image.Image, error) {
 	}
 	defer f.Close()
 
+	if err := utils.EnsureImageDimensionsBounded(f, maxDecodePixels); err != nil {
+		return nil, err
+	}
 	img, _, err := image.Decode(f)
 	if err != nil {
 		return nil, fmt.Errorf("decode image: %w", err)
