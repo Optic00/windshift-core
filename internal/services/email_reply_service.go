@@ -12,6 +12,7 @@ import (
 
 	"windshift/internal/database"
 	"windshift/internal/emailutil"
+	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/smtp"
 )
@@ -21,6 +22,7 @@ import (
 type EmailReplyService struct {
 	db         database.Database
 	smtpSender ThreadedEmailSender
+	idResolver *IDResolverService
 	outboxMu   sync.Mutex
 }
 
@@ -29,6 +31,7 @@ func NewEmailReplyService(db database.Database, smtpSender ThreadedEmailSender) 
 	return &EmailReplyService{
 		db:         db,
 		smtpSender: smtpSender,
+		idResolver: NewIDResolverService(db),
 	}
 }
 
@@ -150,15 +153,7 @@ func (s *EmailReplyService) HandleCommentCreated(params HandleCommentParams) err
 	messageID := fmt.Sprintf("<ws-comment-%d@%s>", params.CommentID, smtpDomain)
 
 	// Get author name for email template
-	var authorName string
-	if err := s.db.QueryRow("SELECT first_name || ' ' || last_name FROM users WHERE id = ?", params.AuthorID).Scan(&authorName); err != nil {
-		slog.Warn("failed to look up author full name", slog.Any("error", err), slog.Int("author_id", params.AuthorID))
-	}
-	if authorName == "" {
-		if err := s.db.QueryRow("SELECT username FROM users WHERE id = ?", params.AuthorID).Scan(&authorName); err != nil {
-			slog.Warn("failed to look up author username", slog.Any("error", err), slog.Int("author_id", params.AuthorID))
-		}
-	}
+	authorName := s.idResolver.ResolveUserName(params.AuthorID)
 	if authorName == "" {
 		authorName = "Team member"
 	}
@@ -372,10 +367,7 @@ func (s *EmailReplyService) deliverPendingReply(commentID int) (bool, error) {
 }
 
 func (s *EmailReplyService) recordReplyFailure(commentID, previousAttempts int, sendErr error) {
-	shift := previousAttempts
-	if shift > 6 {
-		shift = 6
-	}
+	shift := min(previousAttempts, 6)
 	nextAttempt := time.Now().Add(time.Minute * time.Duration(1<<shift))
 	if _, err := s.db.ExecWrite(`
 		UPDATE email_reply_outbox
@@ -386,6 +378,10 @@ func (s *EmailReplyService) recordReplyFailure(commentID, previousAttempts int, 
 		slog.Error("failed to record email reply delivery failure", "comment_id", commentID, "error", err)
 	}
 }
+
+// fallbackSMTPFromEmail is used when no default outbound SMTP channel is
+// configured or its config can't be read.
+const fallbackSMTPFromEmail = "noreply@windshift.local"
 
 // getSMTPDomain extracts the domain from the SMTP from email.
 func (s *EmailReplyService) getSMTPDomain() string {
@@ -407,17 +403,12 @@ func (s *EmailReplyService) getSMTPFromEmail() string {
 		LIMIT 1
 	`).Scan(&configJSON)
 	if err != nil {
-		return "noreply@windshift.local"
+		return fallbackSMTPFromEmail
 	}
 
-	// Simple extraction — look for smtp_from_email in JSON
-	// We avoid importing models here to keep it simple
-	type smtpConfig struct {
-		SMTPFromEmail string `json:"smtp_from_email"`
-	}
-	var cfg smtpConfig
+	var cfg models.ChannelConfig
 	if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil || cfg.SMTPFromEmail == "" {
-		return "noreply@windshift.local"
+		return fallbackSMTPFromEmail
 	}
 	return cfg.SMTPFromEmail
 }

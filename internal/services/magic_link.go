@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
@@ -12,6 +13,7 @@ import (
 
 	"windshift/internal/database"
 	"windshift/internal/emailutil"
+	"windshift/internal/repository"
 )
 
 var (
@@ -226,73 +228,32 @@ func (s *MagicLinkService) ValidateMagicLink(token string, expectedChannelID int
 	return hint, nil
 }
 
-// FindOrCreatePortalCustomer finds a portal customer by email or creates one if it doesn't exist
+// FindOrCreatePortalCustomer finds a portal customer by email or creates one
+// if it doesn't exist, then grants access to the channel.
 func (s *MagicLinkService) FindOrCreatePortalCustomer(email, name string, channelID int) (int, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	if email == "" {
 		return 0, fmt.Errorf("email is required")
 	}
-	// First try to find existing customer
-	var customerID int
-	findQuery := `SELECT id FROM portal_customers WHERE LOWER(email) = ?`
-	err := s.db.QueryRow(findQuery, email).Scan(&customerID)
 
-	if err == nil {
-		// Customer exists, grant channel access if not already granted
-		if err := s.grantChannelAccess(customerID, channelID); err != nil {
-			return 0, err
-		}
-		return customerID, nil
+	repo := repository.NewPortalCustomerRepository(s.db)
+	customerID, created, err := repo.FindOrCreateByEmail(context.Background(), name, email)
+	if err != nil {
+		return 0, err
 	}
-
-	if !errors.Is(err, sql.ErrNoRows) {
-		return 0, fmt.Errorf("failed to find portal customer: %w", err)
-	}
-
-	// Customer doesn't exist. Another request for the same email may be doing
-	// this concurrently, so let the unique email constraint pick a winner and
-	// re-read its row if this insert loses the race.
-	insertQuery := `
-		INSERT INTO portal_customers (name, email, created_at, updated_at)
-		VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-		ON CONFLICT DO NOTHING
-		RETURNING id
-	`
-	err = s.db.QueryRow(insertQuery, name, email).Scan(&customerID)
-	if errors.Is(err, sql.ErrNoRows) {
-		if err = s.db.QueryRow(findQuery, email).Scan(&customerID); err != nil {
-			return 0, fmt.Errorf("failed to re-select portal customer after conflict: %w", err)
-		}
-	} else if err != nil {
-		return 0, fmt.Errorf("failed to create portal customer: %w", err)
-	}
-
-	// Grant channel access
-	if err := s.grantChannelAccess(customerID, channelID); err != nil {
+	if _, err := repo.EnsureChannelAccess(customerID, channelID); err != nil {
 		return 0, err
 	}
 
-	slog.Info("portal customer created", slog.String("component", "magic_link"), slog.Int("portal_customer_id", customerID), slog.String("email", email))
-	return customerID, nil
-}
-
-// grantChannelAccess grants a portal customer access to a channel if not
-// already granted. The upsert is safe under concurrent login requests.
-func (s *MagicLinkService) grantChannelAccess(portalCustomerID, channelID int) error {
-	_, err := s.db.ExecWrite(`
-		INSERT INTO portal_customer_channels (portal_customer_id, channel_id, created_at)
-		VALUES (?, ?, ?)
-		ON CONFLICT(portal_customer_id, channel_id) DO NOTHING
-	`, portalCustomerID, channelID, time.Now())
-	if err != nil {
-		return fmt.Errorf("grant portal customer %d access to channel %d: %w", portalCustomerID, channelID, err)
+	if created {
+		slog.Info("portal customer created", slog.String("component", "magic_link"), slog.Int("portal_customer_id", customerID), slog.String("email", email))
 	}
-	return nil
+	return customerID, nil
 }
 
 // GetPortalCustomerByEmail finds a portal customer by email
 func (s *MagicLinkService) GetPortalCustomerByEmail(email string) (customerID int, firstName string, err error) {
-	query := `SELECT id, name FROM portal_customers WHERE email = ?`
+	query := `SELECT id, name FROM portal_customers WHERE LOWER(email) = LOWER(?)`
 	err = s.db.QueryRow(query, email).Scan(&customerID, &firstName)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

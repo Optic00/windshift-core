@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"windshift/internal/database"
@@ -48,6 +49,46 @@ func (r *PortalCustomerRepository) FindIDByEmail(email string) (int, error) {
 		return 0, fmt.Errorf("find portal customer by email: %w", err)
 	}
 	return id, nil
+}
+
+// FindOrCreateByEmail returns the id of the portal customer whose email
+// matches case-insensitively (both sides trimmed), creating the customer when
+// missing. The insert uses ON CONFLICT DO NOTHING so a concurrent writer with
+// the same address makes this call fall through and re-read the winning row
+// instead of failing; created reports whether this call inserted the row.
+func (r *PortalCustomerRepository) FindOrCreateByEmail(ctx context.Context, name, email string) (id int, created bool, err error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	name = strings.TrimSpace(name)
+
+	err = r.db.QueryRowContext(ctx,
+		"SELECT id FROM portal_customers WHERE LOWER(email) = ?", email,
+	).Scan(&id)
+	if err == nil {
+		return id, false, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return 0, false, fmt.Errorf("failed to query portal customer: %w", err)
+	}
+
+	var insertedID int64
+	err = r.db.QueryRowContext(ctx, `
+		INSERT INTO portal_customers (name, email, created_at, updated_at)
+		VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		ON CONFLICT DO NOTHING
+		RETURNING id
+	`, name, email).Scan(&insertedID)
+	if errors.Is(err, sql.ErrNoRows) {
+		if err := r.db.QueryRowContext(ctx,
+			"SELECT id FROM portal_customers WHERE LOWER(email) = ?", email,
+		).Scan(&id); err != nil {
+			return 0, false, fmt.Errorf("failed to re-select portal customer after conflict: %w", err)
+		}
+		return id, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("failed to create portal customer: %w", err)
+	}
+	return int(insertedID), true, nil
 }
 
 func (r *PortalCustomerRepository) Create(name, email string, organisationID int) (int, error) {

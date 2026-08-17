@@ -173,7 +173,8 @@ func dedupKeyFor(email *ParsedEmail, channelID int, uidValidity uint32) string {
 	return fmt.Sprintf("synth:%d:%d:%d", channelID, uidValidity, email.UID)
 }
 
-// findOrCreatePortalCustomer finds an existing portal customer or creates a new one
+// findOrCreatePortalCustomer resolves the sender to a portal customer by
+// email, creating one on first contact, and grants channel access.
 func (p *Processor) findOrCreatePortalCustomer(
 	ctx context.Context,
 	email, name string,
@@ -191,57 +192,17 @@ func (p *Processor) findOrCreatePortalCustomer(
 		}
 	}
 
-	// Try to find existing customer by email
-	var customerID int
-	err := p.db.QueryRow(`
-		SELECT id FROM portal_customers WHERE LOWER(email) = ?
-	`, email).Scan(&customerID)
-
-	if err == nil {
-		// Customer exists
-		if err := p.grantChannelAccess(ctx, customerID, channelID, email, config); err != nil {
-			return 0, err
-		}
-		return customerID, nil
-	}
-
-	if !errors.Is(err, sql.ErrNoRows) {
-		return 0, fmt.Errorf("failed to query portal customer: %w", err)
-	}
-
-	// Create new customer. Use ON CONFLICT DO NOTHING RETURNING id so a
-	// concurrent inserter (another process in a multi-instance deployment, or
-	// an admin creating a customer with the same address) doesn't make us fail
-	// with a unique-constraint error — instead we fall through and re-select
-	// the row the winner created.
-	var id int64
-	err = p.db.QueryRow(`
-		INSERT INTO portal_customers (name, email, created_at, updated_at)
-		VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-		ON CONFLICT DO NOTHING
-		RETURNING id
-	`, name, email).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		// Lost the race; another inserter committed first. Re-read their row.
-		if err = p.db.QueryRow(`SELECT id FROM portal_customers WHERE LOWER(email) = ?`, email).Scan(&customerID); err != nil {
-			return 0, fmt.Errorf("failed to re-select portal customer after conflict: %w", err)
-		}
-		if err := p.grantChannelAccess(ctx, customerID, channelID, email, config); err != nil {
-			return 0, err
-		}
-		return customerID, nil
-	}
+	customerID, created, err := repository.NewPortalCustomerRepository(p.db).FindOrCreateByEmail(ctx, name, email)
 	if err != nil {
-		return 0, fmt.Errorf("failed to create portal customer: %w", err)
+		return 0, err
+	}
+	if created {
+		slog.Info("created portal customer from email", "customer_id", customerID, "email", email)
 	}
 
-	customerID = int(id)
 	if err := p.grantChannelAccess(ctx, customerID, channelID, email, config); err != nil {
 		return 0, err
 	}
-
-	slog.Info("created portal customer from email", "customer_id", customerID, "email", email)
-
 	return customerID, nil
 }
 
@@ -252,12 +213,9 @@ func (p *Processor) findOrCreatePortalCustomer(
 // (e.g. a "manual registration only" portal must not auto-admit arbitrary
 // senders just because they emailed the ingest channel).
 func (p *Processor) grantChannelAccess(ctx context.Context, customerID, channelID int, senderEmail string, config *models.ChannelConfig) error {
+	repo := repository.NewPortalCustomerRepository(p.db)
 	// Grant access to email channel
-	if _, err := p.db.ExecWriteContext(ctx, `
-		INSERT INTO portal_customer_channels (portal_customer_id, channel_id)
-		VALUES (?, ?)
-		ON CONFLICT DO NOTHING
-	`, customerID, channelID); err != nil {
+	if _, err := repo.EnsureChannelAccess(customerID, channelID); err != nil {
 		return fmt.Errorf("grant customer access to email channel: %w", err)
 	}
 
@@ -273,11 +231,7 @@ func (p *Processor) grantChannelAccess(ctx context.Context, customerID, channelI
 		)
 		return nil
 	}
-	if _, err := p.db.ExecWriteContext(ctx, `
-		INSERT INTO portal_customer_channels (portal_customer_id, channel_id)
-		VALUES (?, ?)
-		ON CONFLICT DO NOTHING
-	`, customerID, portalID); err != nil {
+	if _, err := repo.EnsureChannelAccess(customerID, portalID); err != nil {
 		return fmt.Errorf("grant customer access to connected portal: %w", err)
 	}
 	return nil
