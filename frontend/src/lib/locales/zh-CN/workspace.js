@@ -3,6 +3,7 @@ export default {
     title: '工作区',
     subtitle: '管理您的工作区和项目',
     workspace: '工作区',
+    template: '模板',
     workspaces_one: '{count} 个工作区',
     workspaces_other: '{count} 个工作区',
     createWorkspace: '创建工作区',
@@ -548,6 +549,9 @@ export default {
     activeWorkspaceHelp: '停用时，仅系统管理员和工作区管理员可访问此工作区。所有数据将保留。',
     enableInternalComments: '启用内部评论',
     enableInternalCommentsHint: '允许在所有事项上将评论标记为内部备注，而不仅是门户请求。',
+    availableAsTemplate: '可用作模板',
+    availableAsTemplateHelp:
+      '创建工作区的用户可以基于此工作区的配置集、工作项模板和当前事项的副本启动新工作区。成员、历史记录和文件永远不会被复制。',
     views: {
       board: '看板',
       backlog: '待办列表',

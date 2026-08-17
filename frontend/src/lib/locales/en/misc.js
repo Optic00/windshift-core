@@ -751,6 +751,11 @@ export default {
     workspaceName: '{type} name',
     workspaceKeyPlaceholder: 'Workspace key (e.g., PROJ, TEAM)',
     addDescription: 'Add description...',
+    workspaceTemplate: 'Template',
+    workspaceTemplateBlank: 'Blank workspace',
+    workspaceTemplateLoading: 'Loading templates...',
+    workspaceTemplateError: 'Failed to load workspace templates',
+    workspaceTemplateMeta: '{templates} templates · {items} items',
     // Field labels
     type: 'Type',
     template: 'Template',

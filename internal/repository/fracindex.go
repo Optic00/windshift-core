@@ -77,6 +77,14 @@ func isFracIndexRetryableTransactionError(err error) bool {
 	return pqErr.Code == "40P01" || pqErr.Code == "40001"
 }
 
+// IsSerializationAbort reports PostgreSQL serialization failures and
+// deadlocks — the cases where retrying the whole transaction on a fresh
+// snapshot is the documented recovery. Exported for service-level clone
+// transactions that need the same retry classification.
+func IsSerializationAbort(err error) bool {
+	return isFracIndexRetryableTransactionError(err)
+}
+
 // IsWorkspaceItemNumberUniqueViolation reports whether err is specifically a
 // UNIQUE-constraint violation on (workspace_id, workspace_item_number).
 // GetNextWorkspaceItemNumber now serializes allocation per workspace with an
@@ -448,6 +456,74 @@ func GenerateFracIndexForNewItem(tx database.Tx, drivers ...string) (string, err
 		return base, nil
 	}
 	return EncodeGlobalRank(*bucket, base)
+}
+
+// GenerateFracIndexesForBatch returns count strictly increasing frac_index
+// keys for one bulk append (workspace-template cloning). It takes the global
+// rank mutation lock once, reads MAX(frac_index) once, then chains KeyBetween
+// successors with jitter, so the relative order of the batch is preserved and
+// every key is globally unique without per-item locking. Callers write the
+// returned keys inside the same transaction and retry the whole transaction
+// on IsFracIndexUniqueViolation, exactly like the single-item path.
+func GenerateFracIndexesForBatch(tx database.Tx, count int, drivers ...string) ([]string, error) {
+	if count <= 0 {
+		return nil, nil
+	}
+	driver := ""
+	if len(drivers) > 0 {
+		driver = drivers[0]
+	}
+	if err := acquireGlobalRankMutationLock(tx, driver); err != nil {
+		return nil, err
+	}
+	var last sql.NullString
+	err := tx.QueryRow(`SELECT frac_index
+		FROM items
+		WHERE frac_index IS NOT NULL
+		ORDER BY frac_index DESC
+		LIMIT 1`).Scan(&last)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("read max frac_index: %w", err)
+	}
+
+	prev := ""
+	var bucket *GlobalRankBucket
+	if last.Valid {
+		if parsed, parseErr := ParseGlobalRank(last.String); parseErr == nil {
+			prev = parsed.Fraction
+			parsedBucket := parsed.Bucket
+			bucket = &parsedBucket
+		}
+	}
+	if bucket == nil {
+		if state, stateErr := loadGlobalRankState(tx); stateErr == nil && state.Phase != GlobalRankPhaseLegacy {
+			activeBucket := state.ActiveBucket
+			bucket = &activeBucket
+		}
+	}
+
+	keys := make([]string, 0, count)
+	for i := 0; i < count; i++ {
+		base, err := KeyBetween(prev, "")
+		if err != nil {
+			return nil, err
+		}
+		base += fracIndexJitter()
+		key := base
+		if bucket != nil {
+			key, err = EncodeGlobalRank(*bucket, base)
+			if err != nil {
+				return nil, err
+			}
+		}
+		keys = append(keys, key)
+		if parsed, parseErr := ParseGlobalRank(key); parseErr == nil {
+			prev = parsed.Fraction
+		} else {
+			prev = key
+		}
+	}
+	return keys, nil
 }
 
 // fracIndexJitter returns fracIndexJitterLen random base62 digits, with the

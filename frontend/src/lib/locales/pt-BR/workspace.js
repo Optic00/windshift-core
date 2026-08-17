@@ -3,6 +3,7 @@ export default {
     title: 'Workspaces',
     subtitle: 'Gerencie seus workspaces e projetos',
     workspace: 'Workspace',
+    template: 'Modelo',
     workspaces_one: '{count} workspace',
     workspaces_other: '{count} workspaces',
     createWorkspace: 'Criar Workspace',
@@ -595,6 +596,9 @@ export default {
     failedToUploadAvatar: 'Falha ao enviar avatar: {error}',
     enableInternalComments: 'Habilitar comentários internos',
     enableInternalCommentsHint: 'Permitir marcar comentários como notas internas em todos os itens, não apenas em solicitações do portal.',
+    availableAsTemplate: 'Disponível como modelo',
+    availableAsTemplateHelp:
+      'Quem cria workspaces pode iniciar um novo a partir de uma cópia do conjunto de configuração, dos modelos de itens e dos itens atuais deste workspace. Membros, histórico e arquivos nunca são copiados.',
   },
   lookAndFeel: {
     title: 'Aparência e Estilo',

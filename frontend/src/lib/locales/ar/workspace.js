@@ -3,6 +3,7 @@ export default {
     title: 'مساحات العمل',
     subtitle: 'إدارة مساحات العمل والمشاريع',
     workspace: 'مساحة عمل',
+    template: 'قالب',
     workspaces_one: '{count} مساحة عمل',
     workspaces_other: '{count} مساحات عمل',
     createWorkspace: 'إنشاء مساحة عمل',
@@ -595,6 +596,9 @@ export default {
     failedToUploadAvatar: 'فشل رفع الصورة الرمزية: {error}',
     enableInternalComments: 'تفعيل التعليقات الداخلية',
     enableInternalCommentsHint: 'السماح بتحديد التعليقات كملاحظات داخلية على جميع العناصر، وليس فقط طلبات البوابة.',
+    availableAsTemplate: 'متاح كقالب',
+    availableAsTemplateHelp:
+      'يمكن لمنشئي مساحات العمل بدء مساحة جديدة من نسخة لمجموعة الإعدادات وقوالب عناصر العمل والعناصر الحالية لهذه المساحة. لا يتم نسخ الأعضاء أو السجل أو الملفات أبدًا.',
   },
   lookAndFeel: {
     title: 'المظهر والتصميم',

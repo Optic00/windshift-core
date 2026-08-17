@@ -10,6 +10,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/restapi"
 	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
@@ -27,17 +28,18 @@ type WorkspaceHandler struct {
 
 // CreateWorkspaceRequest represents the request payload for creating a workspace
 type CreateWorkspaceRequest struct {
-	Name          string `json:"name" validate:"required,max=100"`
-	Key           string `json:"key" validate:"required,min=2,max=10,alphanum"`
-	Description   string `json:"description" validate:"max=500"`
-	Active        *bool  `json:"active,omitempty"` // Defaults to true if not specified
-	TimeProjectID *int   `json:"time_project_id,omitempty"`
-	IsPersonal    bool   `json:"is_personal"`
-	OwnerID       *int   `json:"owner_id,omitempty"`
-	Icon          string `json:"icon,omitempty"`
-	Color         string `json:"color,omitempty"`
-	AvatarURL     string `json:"avatar_url,omitempty"`
-	DefaultView   string `json:"default_view,omitempty"` // Default view when entering workspace (board, backlog, list, tree, map)
+	Name                string `json:"name" validate:"required,max=100"`
+	Key                 string `json:"key" validate:"required,min=2,max=10,alphanum"`
+	Description         string `json:"description" validate:"max=500"`
+	Active              *bool  `json:"active,omitempty"` // Defaults to true if not specified
+	TimeProjectID       *int   `json:"time_project_id,omitempty"`
+	IsPersonal          bool   `json:"is_personal"`
+	OwnerID             *int   `json:"owner_id,omitempty"`
+	Icon                string `json:"icon,omitempty"`
+	Color               string `json:"color,omitempty"`
+	AvatarURL           string `json:"avatar_url,omitempty"`
+	DefaultView         string `json:"default_view,omitempty"` // Default view when entering workspace (board, backlog, list, tree, map)
+	TemplateWorkspaceID *int   `json:"template_workspace_id,omitempty"`
 }
 
 // UpdateWorkspaceRequest represents the request payload for updating a workspace
@@ -55,15 +57,17 @@ type UpdateWorkspaceRequest struct {
 	DefaultView             *string                    `json:"default_view,omitempty"`
 	InternalCommentsEnabled *bool                      `json:"internal_comments_enabled,omitempty"`
 	TimeProjectCategories   *[]int                     `json:"time_project_categories,omitempty"`
+	IsTemplate              *bool                      `json:"is_template,omitempty"`
 }
 
 func NewWorkspaceHandler(db database.Database, permissionService *services.PermissionService, activityTracker *services.ActivityTracker, keyCache *WorkspaceKeyCache) *WorkspaceHandler {
+	authzService := authz.New(db, permissionService)
 	return &WorkspaceHandler{
 		db:                db,
 		repo:              repository.NewWorkspaceRepository(db),
-		workspaceService:  services.NewWorkspaceService(db),
+		workspaceService:  services.NewWorkspaceServiceWithAccess(db, authzService),
 		permissionService: permissionService,
-		authz:             authz.New(db, permissionService),
+		authz:             authzService,
 		activityTracker:   activityTracker,
 		keyCache:          keyCache,
 	}
@@ -251,12 +255,6 @@ func (h *WorkspaceHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Default active to true if not specified
-	isActive := true
-	if req.Active != nil {
-		isActive = *req.Active
-	}
-
 	// Default view to 'board' if not specified
 	defaultView := req.DefaultView
 	if defaultView == "" {
@@ -264,38 +262,33 @@ func (h *WorkspaceHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	avatarURL := req.AvatarURL
-	ws := &models.Workspace{
-		Name:          req.Name,
-		Key:           req.Key,
-		Description:   req.Description,
-		Active:        isActive,
-		TimeProjectID: req.TimeProjectID,
-		IsPersonal:    req.IsPersonal,
-		OwnerID:       req.OwnerID,
-		Icon:          req.Icon,
-		Color:         req.Color,
-		AvatarURL:     &avatarURL,
-		DefaultView:   defaultView,
-	}
-	id, err := database.WithTxResult(h.db, func(tx database.Tx) (int64, error) {
-		newID, err := h.repo.CreateTx(tx, ws)
-		if err != nil {
-			return 0, err
-		}
-
-		if err := h.repo.GrantAdministratorRoleTx(tx, newID, user.ID); err != nil {
-			return 0, err
-		}
-		return newID, nil
+	result, err := h.workspaceService.Create(r.Context(), services.CreateWorkspaceParams{
+		Name:                req.Name,
+		Key:                 req.Key,
+		Description:         req.Description,
+		Icon:                req.Icon,
+		Color:               req.Color,
+		CreatorID:           user.ID,
+		Active:              req.Active,
+		TimeProjectID:       req.TimeProjectID,
+		IsPersonal:          req.IsPersonal,
+		OwnerID:             req.OwnerID,
+		AvatarURL:           &avatarURL,
+		DefaultView:         defaultView,
+		TemplateWorkspaceID: req.TemplateWorkspaceID,
 	})
 	if err != nil {
 		if errors.Is(err, repository.ErrDuplicateEntry) {
 			respondConflict(w, r, "A workspace with this key already exists")
 			return
 		}
+		if respondWorkspaceTemplateError(w, r, err) {
+			return
+		}
 		respondInternalError(w, r, err)
 		return
 	}
+	id := int64(result.Workspace.ID)
 	// The transaction is committed even if response hydration below fails, so
 	// invalidate access snapshots immediately after the successful mutation.
 	h.keyCache.Invalidate()
@@ -316,8 +309,12 @@ func (h *WorkspaceHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Log audit event
-	h.logWorkspaceAudit(r, logger.ActionWorkspaceCreate, &workspace.ID, workspace.Name, workspace.Key, workspace.Description, workspace.Active, workspace.IsPersonal)
+	if req.TemplateWorkspaceID != nil {
+		h.logWorkspaceCloneAudit(r, workspace, result)
+	} else {
+		// Log audit event
+		h.logWorkspaceAudit(r, logger.ActionWorkspaceCreate, &workspace.ID, workspace.Name, workspace.Key, workspace.Description, workspace.Active, workspace.IsPersonal)
+	}
 
 	respondJSONCreated(w, workspace)
 }
@@ -373,10 +370,14 @@ func (h *WorkspaceHandler) Update(w http.ResponseWriter, r *http.Request) {
 		DefaultView:             req.DefaultView,
 		InternalCommentsEnabled: req.InternalCommentsEnabled,
 		TimeProjectCategories:   req.TimeProjectCategories,
+		IsTemplate:              req.IsTemplate,
 	})
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			respondNotFound(w, r, "workspace")
+			return
+		}
+		if respondWorkspaceTemplateError(w, r, err) {
 			return
 		}
 		respondInternalError(w, r, err)
@@ -458,6 +459,12 @@ func (h *WorkspaceHandler) Update(w http.ResponseWriter, r *http.Request) {
 			details["internal_comments_enabled_changed"] = map[string]any{
 				"old": oldWorkspace.InternalCommentsEnabled,
 				"new": workspace.InternalCommentsEnabled,
+			}
+		}
+		if oldWorkspace.IsTemplate != workspace.IsTemplate {
+			details["is_template_changed"] = map[string]any{
+				"old": oldWorkspace.IsTemplate,
+				"new": workspace.IsTemplate,
 			}
 		}
 
@@ -556,6 +563,81 @@ func (h *WorkspaceHandler) logWorkspaceAudit(r *http.Request, actionType string,
 		},
 		Success: true,
 	})
+}
+
+// respondWorkspaceTemplateError maps the workspace-template sentinel errors to
+// their documented HTTP contracts. Returns false when err is none of them.
+func respondWorkspaceTemplateError(w http.ResponseWriter, r *http.Request, err error) bool {
+	switch {
+	case errors.Is(err, services.ErrTemplateWorkspaceNotFound):
+		respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeTemplateWorkspaceNotFound, "Template workspace not found or not visible"))
+	case errors.Is(err, services.ErrInvalidWorkspaceTemplate):
+		respondError(w, r, restapi.NewAPIError(http.StatusUnprocessableEntity, restapi.ErrCodeInvalidWorkspaceTemplate, "Workspace cannot be used as a template"))
+	case errors.Is(err, services.ErrWorkspaceTemplateTooLarge):
+		respondError(w, r, restapi.NewAPIError(http.StatusUnprocessableEntity, restapi.ErrCodeWorkspaceTemplateTooLarge, "Template workspace exceeds the seed item limit"))
+	case errors.Is(err, services.ErrPersonalWorkspaceTemplate):
+		respondError(w, r, restapi.NewAPIError(http.StatusUnprocessableEntity, restapi.ErrCodeInvalidWorkspaceTemplate, "Personal workspaces cannot be templates"))
+	default:
+		return false
+	}
+	return true
+}
+
+// logWorkspaceCloneAudit records one workspace.create_from_template event
+// with the source workspace and copy counts.
+func (h *WorkspaceHandler) logWorkspaceCloneAudit(r *http.Request, workspace *models.Workspace, result *services.CreateWorkspaceResult) {
+	currentUser := utils.GetCurrentUser(r)
+	if currentUser == nil {
+		return
+	}
+	_ = logger.LogAudit(h.db, logger.AuditEvent{
+		UserID:       currentUser.ID,
+		Username:     currentUser.Username,
+		IPAddress:    utils.GetClientIP(r),
+		UserAgent:    r.UserAgent(),
+		ActionType:   logger.ActionWorkspaceCreateFromTemplate,
+		ResourceType: logger.ResourceWorkspace,
+		ResourceID:   &workspace.ID,
+		ResourceName: workspace.Name,
+		Details: map[string]any{
+			"key":                         workspace.Key,
+			"source_workspace_id":         result.SourceWorkspaceID,
+			"config_set_attached":         result.ConfigSetAttached,
+			"templates_copied":            result.TemplatesCopied,
+			"items_copied":                result.ItemsCopied,
+			"omitted_custom_field_values": result.OmittedCustomFieldValues,
+		},
+		Success: true,
+	})
+}
+
+// ListTemplates handles GET /workspace-templates. Returns the active,
+// non-personal template workspaces visible to the caller as summary rows.
+func (h *WorkspaceHandler) ListTemplates(w http.ResponseWriter, r *http.Request) {
+	currentUser, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+
+	summaries, err := h.workspaceService.ListTemplateSummaries(r.Context())
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+
+	visible := make([]models.WorkspaceTemplateSummary, 0, len(summaries))
+	for _, summary := range summaries {
+		canView, err := h.canViewWorkspace(currentUser.ID, summary.ID)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return
+		}
+		if canView {
+			visible = append(visible, summary)
+		}
+	}
+
+	respondJSONOK(w, visible)
 }
 
 // requireWorkspaceAdminAccess extracts the workspace ID from the request path,

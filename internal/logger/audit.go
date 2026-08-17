@@ -330,9 +330,10 @@ const (
 	ActionWorkspaceRoleDelete = "workspace_role.delete"
 
 	// Workspace management
-	ActionWorkspaceCreate = "workspace.create"
-	ActionWorkspaceUpdate = "workspace.update"
-	ActionWorkspaceDelete = "workspace.delete"
+	ActionWorkspaceCreate             = "workspace.create"
+	ActionWorkspaceCreateFromTemplate = "workspace.create_from_template"
+	ActionWorkspaceUpdate             = "workspace.update"
+	ActionWorkspaceDelete             = "workspace.delete"
 
 	// Group management
 	ActionGroupCreate       = "group.create"

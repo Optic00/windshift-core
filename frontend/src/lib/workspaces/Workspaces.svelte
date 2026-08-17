@@ -114,6 +114,7 @@
           {#if canCreate}
             <Button
               variant="primary"
+              dataTestid="workspaces-create"
               icon={Plus}
               onclick={startCreate}
               keyboardHint={getShortcutDisplay('workspaces', 'addWorkspace')}
@@ -160,6 +161,15 @@
             {#if workspace.is_personal}
               <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800">
                 Personal
+              </span>
+            {/if}
+            {#if workspace.is_template}
+              <span
+                data-testid={`workspace-template-badge-${workspace.id}`}
+                class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
+                style="background-color: var(--ds-accent-blue-subtle); color: var(--ds-text-accent-blue);"
+              >
+                {t('workspaces.template')}
               </span>
             {/if}
           </div>

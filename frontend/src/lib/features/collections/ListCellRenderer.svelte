@@ -141,7 +141,7 @@
           </div>
         {/if}
       {/if}
-      <div class="flex-1 min-w-0">
+      <div class="flex-1 min-w-0" data-testid={`workspace-item-title-${item.id}`}>
         {#if canEdit}
           <InlineFieldEditor
             {item}

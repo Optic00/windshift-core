@@ -7,6 +7,7 @@ export default {
     title: 'Arbeitsbereiche',
     subtitle: 'Ihre Arbeitsbereiche und Projekte verwalten',
     workspace: 'Arbeitsbereich',
+    template: 'Vorlage',
     workspaces_one: '{count} Arbeitsbereich',
     workspaces_other: '{count} Arbeitsbereiche',
     createWorkspace: 'Arbeitsbereich erstellen',
@@ -599,6 +600,9 @@ export default {
     failedToUploadAvatar: 'Avatar-Upload fehlgeschlagen: {error}',
     enableInternalComments: 'Interne Kommentare aktivieren',
     enableInternalCommentsHint: 'Ermöglicht es, Kommentare bei allen Elementen als interne Notizen zu markieren, nicht nur bei Portal-Anfragen.',
+    availableAsTemplate: 'Als Vorlage verfügbar',
+    availableAsTemplateHelp:
+      'Ersteller von Arbeitsbereichen können einen neuen Arbeitsbereich aus einer Kopie des Konfigurationssatzes, der Elementvorlagen und der aktuellen Elemente dieses Arbeitsbereichs starten. Mitglieder, Verlauf und Dateien werden nie kopiert.',
   },
   lookAndFeel: {
     title: 'Erscheinungsbild',

@@ -18,6 +18,8 @@ type Workspace struct {
 	// Personal workspace fields
 	IsPersonal bool `json:"is_personal"`        // Flag to indicate personal workspace
 	OwnerID    *int `json:"owner_id,omitempty"` // User ID for personal workspaces
+	// Template flag: workspace can be selected as a source when creating workspaces
+	IsTemplate bool `json:"is_template"`
 	// Time tracking integration
 	TimeProjectID *int `json:"time_project_id,omitempty"` // Default time-tracking project for worklogs on items in this workspace
 	// Visual identity fields
@@ -34,6 +36,19 @@ type Workspace struct {
 	OwnerName             string `json:"owner_name,omitempty"` // Name of workspace owner for API responses
 	ConfigurationSetID    *int64 `json:"configuration_set_id,omitempty"`
 	TimeProjectCategories []int  `json:"time_project_categories,omitempty"` // Restricted time project categories for this workspace
+}
+
+// WorkspaceTemplateSummary is the picker-facing summary of a workspace marked
+// as a template: identity fields plus counts of what a clone would receive.
+type WorkspaceTemplateSummary struct {
+	ID                   int    `json:"id"`
+	Name                 string `json:"name"`
+	Description          string `json:"description"`
+	Icon                 string `json:"icon"`
+	Color                string `json:"color"`
+	ConfigurationSetName string `json:"configuration_set_name"`
+	TemplateCount        int    `json:"template_count"`
+	ItemCount            int    `json:"item_count"`
 }
 
 // WorkspaceHomepageSection represents a section on the workspace homepage

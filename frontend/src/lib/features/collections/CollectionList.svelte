@@ -439,7 +439,7 @@
           <!-- Table Body -->
           <div>
             {#each filteredItems as item (item.id)}
-              <div class="px-4 py-3 list-row transition-colors" style="border-top: 1px solid var(--ds-border);" data-item-row data-item-id={item.id}>
+              <div class="px-4 py-3 list-row transition-colors" style="border-top: 1px solid var(--ds-border);" data-item-row data-item-id={item.id} data-testid={`workspace-item-row-${item.id}`}>
                 <LazyRender>
                   {#snippet children()}
                     <div

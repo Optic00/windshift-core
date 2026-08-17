@@ -87,8 +87,14 @@
   let workspaceFormData = $state({
     name: '',
     key: '',
-    description: ''
+    description: '',
+    template_workspace_id: null
   });
+
+  let workspaceTemplateOptions = $state([]);
+  let workspaceTemplatesLoading = $state(false);
+  let workspaceTemplatesError = $state(null);
+  let workspaceTemplatesLoaded = $state(false);
 
   let collectionFormData = $state({
     name: '',
@@ -147,7 +153,8 @@
     workspaceFormData = {
       name: '',
       key: '',
-      description: ''
+      description: '',
+      template_workspace_id: null
     };
 
     collectionFormData = {
@@ -164,6 +171,23 @@
     selectedType = type;
     if (type === 'work-item' && !$workspacesStore.loaded) {
       loadWorkspaces();
+    }
+  }
+
+  async function loadWorkspaceTemplates() {
+    if (workspaceTemplatesLoaded || workspaceTemplatesLoading) return;
+    workspaceTemplatesLoading = true;
+    workspaceTemplatesError = null;
+    try {
+      const templates = await api.workspaces.getTemplates();
+      workspaceTemplateOptions = Array.isArray(templates) ? templates : [];
+      workspaceTemplatesLoaded = true;
+    } catch (error) {
+      console.error('Failed to load workspace templates:', error);
+      workspaceTemplateOptions = [];
+      workspaceTemplatesError = error?.message || String(error);
+    } finally {
+      workspaceTemplatesLoading = false;
     }
   }
 
@@ -247,14 +271,18 @@
         navigate('/milestones');
         close();
       } else if (selectedType === 'workspace') {
-        const result = await api.workspaces.create({
+        const payload = {
           name: workspaceFormData.name,
           key: workspaceFormData.key,
           description: workspaceFormData.description || '',
           icon: 'Package',
           color: '#3b82f6',
           active: true
-        });
+        };
+        if (workspaceFormData.template_workspace_id) {
+          payload.template_workspace_id = workspaceFormData.template_workspace_id;
+        }
+        const result = await api.workspaces.create(payload);
 
         window.dispatchEvent(new CustomEvent('refresh-workspaces'));
         if (!skipNavigate) {
@@ -315,6 +343,18 @@
   $effect(() => {
     if (isOpen && !$workspacesStore.loaded && $workspacesStore.regularWorkspaces.length === 0) {
       loadWorkspaces();
+    }
+  });
+
+  // Load template summaries when the workspace form opens for a user who may
+  // create workspaces. Blank creation works without them.
+  $effect(() => {
+    if (
+      isOpen &&
+      selectedType === 'workspace' &&
+      ($permissionStore.userPermissionKeys?.has('workspace.create') || $isSystemAdmin)
+    ) {
+      loadWorkspaceTemplates();
     }
   });
 
@@ -507,6 +547,9 @@
           <WorkspaceForm
             bind:this={workspaceFormRef}
             bind:formData={workspaceFormData}
+            templates={workspaceTemplateOptions}
+            templatesLoading={workspaceTemplatesLoading}
+            templatesError={workspaceTemplatesError}
             bind:nameInputRef={nameInputRef}
           />
         {:else if selectedType === 'collection'}
