@@ -115,6 +115,7 @@
   let assetStatusesRequestSeq = 0;
   let allCustomFieldsRequestSeq = 0;
   let selectedTypeFieldsRequestSeq = 0;
+  let assetsRequestSeq = 0;
 
   onMount(async () => {
     await loadAssetSets();
@@ -226,6 +227,8 @@
 
   async function loadAssets() {
     if (!selectedSetId) return;
+    const setId = selectedSetId;
+    const requestSeq = ++assetsRequestSeq;
     try {
       const filters = {
         limit: pageSize,
@@ -251,10 +254,12 @@
       if (qlParts.length > 0) {
         filters.ql = qlParts.join(' AND ');
       }
-      const result = await api.assets.getAll(selectedSetId, filters);
+      const result = await api.assets.getAll(setId, filters);
+      if (requestSeq !== assetsRequestSeq || selectedSetId !== setId) return;
       assets = result?.assets || [];
       totalAssets = result?.total || 0;
     } catch (error) {
+      if (requestSeq !== assetsRequestSeq || selectedSetId !== setId) return;
       console.error('Failed to load assets:', error);
     }
   }
