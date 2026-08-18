@@ -1,7 +1,7 @@
 <script>
   import { Plus, RefreshCw, Search } from '@lucide/svelte';
-  import Select from '../../components/Select.svelte';
   import { api } from '../../api.js';
+  import BasePicker from '../../pickers/BasePicker.svelte';
   import { t } from '../../stores/i18n.svelte.js';
   import { navigate } from '../../router.js';
   import DashboardItemRow from './DashboardItemRow.svelte';
@@ -34,23 +34,18 @@
   const selectedCollection = $derived(
     collections.find((collection) => String(collection.id) === selectedCollectionId) ?? null
   );
-  const collectionOptions = $derived.by(() => {
-    const options = collections.map((collection) => ({
-      value: String(collection.id),
-      label: formatCollectionLabel(collection),
-      disabled: false,
-    }));
+  const collectionPickerItems = $derived.by(() => {
     if (selectedCollectionId && !selectedCollection) {
-      options.unshift({
-        value: selectedCollectionId,
-        label: t('widgets.savedSearch.collectionUnavailable'),
-        disabled: true,
-      });
+      return [
+        {
+          id: selectedCollectionId,
+          name: t('widgets.savedSearch.collectionUnavailable'),
+          unavailable: true,
+        },
+        ...collections,
+      ];
     }
-    return [
-      { value: '', label: t('widgets.savedSearch.selectCollection'), disabled: true },
-      ...options,
-    ];
+    return collections;
   });
 
   $effect(() => {
@@ -166,13 +161,19 @@
 </script>
 
 {#snippet collectionSelector()}
-  <Select
+  <BasePicker
     id="saved-search-collection-select"
-    value={selectedCollectionId}
-    options={collectionOptions}
+    value={selectedCollectionId || null}
+    items={collectionPickerItems}
+    loading={loadingCollections}
+    placeholder={t('widgets.savedSearch.selectCollection')}
     ariaLabel={t('widgets.savedSearch.selectCollection')}
     disabled={loadingCollections}
-    onchange={handleCollectionChange}
+    positioning={{ strategy: 'fixed', placement: 'bottom-start', sameWidth: true }}
+    searchFields={['name', 'description', (collection) => formatCollectionLabel(collection)]}
+    getValue={(collection) => String(collection?.id ?? '')}
+    getLabel={formatCollectionLabel}
+    onSelect={(collection) => handleCollectionChange(collection?.id)}
   />
 {/snippet}
 

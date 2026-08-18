@@ -17,6 +17,7 @@
     id = undefined,
     placeholder = '',
     label = '',
+    ariaLabel = undefined,
     class: className = '',
 
     // Feature toggles
@@ -519,7 +520,7 @@
       {/each}
       <input bind:this={inputRef} use:melt={$input} {id} type="text"
              placeholder={selectedItems.length === 0 ? resolvedPlaceholder : ''}
-             {disabled} onkeydowncapture={handleKeydown}
+             {disabled} aria-label={ariaLabel} onkeydowncapture={handleKeydown}
              class="flex-1 min-w-[120px] px-1 py-0.5 bg-transparent border-0 outline-none text-sm"
              style="color: var(--ds-text);" />
     </div>
@@ -530,6 +531,7 @@
   {:else}
     <!-- Single-select: Input/Trigger (original combobox mode) -->
     <input use:melt={$input} {id} type="text" placeholder={resolvedPlaceholder} {disabled}
+           aria-label={ariaLabel}
            onkeydowncapture={handleKeydown}
            class="w-full px-4 py-2 pr-16 rounded border transition-all duration-200
                   focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50
