@@ -878,7 +878,7 @@
                 <!-- svelte-ignore a11y_no_static_element_interactions -->
                 <div
                   data-board-column={colIndex}
-                  class="relative rounded-lg border transition-all w-[212px] flex-shrink-0 flex flex-col"
+                  class="relative rounded-lg border transition-all w-60 flex-shrink-0 flex flex-col"
                   style="border-color: {column.status_ids.length === 0 ? 'var(--ds-border-warning, #ca8a04)' : 'var(--ds-border)'}; border-style: {column.status_ids.length === 0 ? 'dashed' : 'solid'}; background-color: var(--ds-surface-raised);"
                 >
                   <!-- Column reorder DropIndicator -->
@@ -886,8 +886,8 @@
                     <DropIndicator edge={columnDragState.get(colIndex)?.closestEdge} gap={8} />
                   {/if}
 
-                  <!-- Column Header: single row with grip, name, WIP, delete -->
-                  <div class="flex items-center gap-1 px-2 py-1.5 border-b" style="border-color: var(--ds-border);">
+                  <!-- Column name and actions -->
+                  <div class="flex items-center gap-1.5 px-2 py-1.5">
                     <!-- svelte-ignore a11y_no_static_element_interactions -->
                     <div
                       data-column-drag-handle
@@ -901,19 +901,9 @@
                       type="text"
                       value={column.name}
                       oninput={(e) => updateColumnName(colIndex, e.currentTarget.value)}
+                      dataTestid={`board-column-name-${colIndex}`}
                       class="flex-1 font-semibold min-w-0"
                       placeholder={t('placeholders.columnName')}
-                      size="small"
-                    />
-
-                    <Input
-                      type="number"
-                      value={column.wip_limit || ''}
-                      oninput={(e) => updateWIPLimit(colIndex, e.currentTarget.value)}
-                      class="w-14 text-center flex-shrink-0"
-                      placeholder="WIP"
-                      title={t('settings.boardConfig.wipLimit')}
-                      min={1}
                       size="small"
                     />
 
@@ -927,6 +917,30 @@
                     >
                       <X class="w-4 h-4" />
                     </button>
+                  </div>
+
+                  <!-- WIP limit -->
+                  <div class="flex items-center justify-between gap-3 px-2 pb-2 border-b" style="border-color: var(--ds-border);">
+                    <label
+                      for={`board-column-wip-${colIndex}`}
+                      class="text-xs font-medium"
+                      style="color: var(--ds-text-subtle);"
+                    >
+                      {t('settings.boardConfig.wipLimit')}
+                    </label>
+                    <Input
+                      id={`board-column-wip-${colIndex}`}
+                      type="number"
+                      value={column.wip_limit || ''}
+                      oninput={(e) => updateWIPLimit(colIndex, e.currentTarget.value)}
+                      dataTestid={`board-column-wip-${colIndex}`}
+                      class="text-center flex-shrink-0"
+                      style="width: 3.75rem;"
+                      placeholder="—"
+                      title={t('settings.boardConfig.wipLimit')}
+                      min={1}
+                      size="small"
+                    />
                   </div>
 
                   <!-- Column Body -->
