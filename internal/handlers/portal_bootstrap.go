@@ -157,6 +157,7 @@ func (h *PortalHandler) portalAuthSnapshot(ctx context.Context, r *http.Request)
 			"name":       session.User.FirstName + " " + session.User.LastName,
 			"first_name": session.User.FirstName,
 			"last_name":  session.User.LastName,
+			"avatar_url": session.User.AvatarURL,
 		}
 		return response, nil
 	}

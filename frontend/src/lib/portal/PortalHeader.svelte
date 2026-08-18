@@ -51,7 +51,7 @@
       return {
         name: $portalAuthStore.user.name || 'Windshift user',
         email: $portalAuthStore.user.email,
-        avatar: null,
+        avatar: $portalAuthStore.user.avatar_url,
         canManageProfile: false,
       };
     }
@@ -266,8 +266,17 @@
             style="color: {shellText}; border-color: {hasVisualBackground ? 'rgba(255,255,255,0.28)' : 'var(--ds-border)'}; background-color: {hasVisualBackground ? 'rgba(255,255,255,0.1)' : 'var(--ds-surface-card)'};"
             aria-label="Open account menu"
           >
-            <Menu class="w-[18px] h-[18px] sm:hidden" />
-            <User class="w-[18px] h-[18px] hidden sm:block" />
+            {#if account?.avatar}
+              <img
+                src={account.avatar}
+                alt=""
+                class="absolute inset-0 h-full w-full rounded-full object-cover"
+                data-testid="portal-user-avatar"
+              />
+            {:else}
+              <Menu class="w-[18px] h-[18px] sm:hidden" />
+              <User class="w-[18px] h-[18px] hidden sm:block" />
+            {/if}
             {#if portalStore.openRequestCount + portalStore.pendingApprovalCount > 0}
               <span
                 class="sm:hidden absolute -top-1 -right-1 min-w-4 h-4 px-1 inline-flex items-center justify-center rounded-full text-[10px] font-semibold text-white bg-red-500"

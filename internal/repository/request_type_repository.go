@@ -30,7 +30,8 @@ const requestTypeSelectColumns = `
 	rt.visibility_group_ids, rt.visibility_org_ids, rt.workspace_id,
 	rt.title_template, rt.created_at, rt.updated_at,
 	c.name as channel_name, it.name as item_type_name,
-	ws.name as workspace_name, ws.key as workspace_key`
+	ws.name as workspace_name, ws.key as workspace_key,
+	(SELECT COUNT(*) FROM request_type_fields rtf WHERE rtf.request_type_id = rt.id) as field_count`
 
 const requestTypeFromJoins = `
 	FROM request_types rt
@@ -49,7 +50,7 @@ func scanRequestType(scanner interface {
 		&visibilityGroupIDs, &visibilityOrgIDs, &rt.WorkspaceID,
 		&rt.TitleTemplate, &rt.CreatedAt, &rt.UpdatedAt,
 		&rt.ChannelName, &rt.ItemTypeName,
-		&workspaceName, &workspaceKey); err != nil {
+		&workspaceName, &workspaceKey, &rt.FieldCount); err != nil {
 		return rt, err
 	}
 	rt.VisibilityGroupIDs = decodeIntJSONArray(visibilityGroupIDs)

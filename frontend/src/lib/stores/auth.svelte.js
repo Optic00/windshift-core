@@ -301,6 +301,10 @@ function createAuthStore() {
       error.set(null);
     },
 
+    patchCurrentUser(updates) {
+      user.update((current) => (current ? { ...current, ...updates } : current));
+    },
+
     // Clear error
     clearError() {
       error.set(null);

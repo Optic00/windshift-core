@@ -461,8 +461,21 @@ func ensureDefaultPortalSection(config string) (string, error) {
 		}
 	}
 
+	changed := false
+	if _, ok := cfg["portal_gradient"]; !ok {
+		cfg["portal_gradient"] = 1
+		changed = true
+	}
+
 	if existing, ok := cfg["portal_sections"].([]any); ok && len(existing) > 0 {
-		return config, nil
+		if !changed {
+			return config, nil
+		}
+		out, err := json.Marshal(cfg)
+		if err != nil {
+			return "", err
+		}
+		return string(out), nil
 	}
 
 	cfg["portal_sections"] = []any{

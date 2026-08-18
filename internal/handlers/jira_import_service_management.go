@@ -146,6 +146,7 @@ func (h *JiraImportHandler) ensureJiraPortal(
 		PortalWorkspaceIDs:     []int{workspaceID},
 		PortalTitle:            portalTitle,
 		PortalDescription:      "Imported from Jira Service Management",
+		PortalGradient:         1,
 		PortalRegistrationMode: "manual",
 	})
 	if err != nil {

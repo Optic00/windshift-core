@@ -259,9 +259,7 @@ type RequestType struct {
 	// across connected workspaces apart. Empty when workspace_id is NULL.
 	WorkspaceName string `json:"workspace_name,omitempty"`
 	WorkspaceKey  string `json:"workspace_key,omitempty"`
-	// FieldCount is the number of configured form fields, populated by the
-	// portal request-types listing so the UI can show counts without a
-	// per-request-type fields fetch.
+	// FieldCount is the number of configured form fields in request-type listings.
 	FieldCount int `json:"field_count"`
 }
 

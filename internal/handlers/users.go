@@ -543,6 +543,7 @@ func (h *UserHandler) UpdateAvatar(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
+	h.invalidateUserSessions(id)
 
 	user, err := h.repo.GetByID(id)
 	if errors.Is(err, repository.ErrNotFound) {

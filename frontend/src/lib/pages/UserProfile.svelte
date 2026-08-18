@@ -371,11 +371,8 @@
 			const uploadResult = await api.attachments.upload(formData);
 			
 			if (uploadResult && uploadResult.success && uploadResult.avatar_url) {
-				// Use the avatar_url directly from the upload response
-				await api.updateUserAvatar(currentUserId, uploadResult.avatar_url);
-				
-				// Reload user profile to show new avatar
-				await loadUserProfile();
+				user = await api.updateUserAvatar(currentUserId, uploadResult.avatar_url);
+				authStore.patchCurrentUser({ avatar_url: user.avatar_url || uploadResult.avatar_url });
 				showAvatarUpload = false;
 			}
 		} catch (err) {
@@ -397,8 +394,8 @@
 		if (!avatarConfirmed) return;
 
 		try {
-			await api.updateUserAvatar(currentUserId, null);
-			await loadUserProfile();
+			user = await api.updateUserAvatar(currentUserId, null);
+			authStore.patchCurrentUser({ avatar_url: '' });
 		} catch (err) {
 			error = err.message || t('dialogs.alerts.failedToDelete', { error: 'avatar' });
 		}

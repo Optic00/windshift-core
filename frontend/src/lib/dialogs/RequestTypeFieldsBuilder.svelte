@@ -62,10 +62,12 @@
   let steps = $state([1]);
   let currentStep = $state(1);
 
-  // Drag state (for reordering configured fields only)
+  // Drag state for reordering fields and moving them between steps.
   let fieldDragState = $state(new Map());
   let setupCleanups = $state([]);
-  let setupTimeout;
+  let builderRoot = $state(null);
+  let stepDropTarget = $state(null);
+  let dragSetupVersion = 0;
 
   // Virtual field creation
   let addingVirtualField = $state(false);
@@ -78,6 +80,8 @@
   let editingField = $state(null);
   let editDisplayName = $state('');
   let editDescription = $state('');
+  let editVirtualFieldOptions = $state([]);
+  let editFieldError = $state(null);
 
   // Add-field popover
   let addFieldQuery = $state('');
@@ -140,12 +144,21 @@
     };
   });
 
-  // Re-setup drag-and-drop (configured fields reorder) when fields/step change
+  // Re-setup drag-and-drop when the visible fields or steps change.
   $effect(() => {
-    if (!loading && fields && typeof document !== 'undefined') {
-      if (setupTimeout) clearTimeout(setupTimeout);
-      setupTimeout = setTimeout(() => setupDragAndDrop(), 50);
+    const dragSetupKey = !loading
+      ? `${currentStep}:${steps.join(',')}:${currentStepFields.map(f => f.field_identifier).join(',')}`
+      : '';
+    const version = ++dragSetupVersion;
+    if (dragSetupKey && builderRoot && typeof document !== 'undefined') {
+      tick().then(() => {
+        if (version === dragSetupVersion) setupDragAndDrop();
+      });
     }
+    return () => {
+      dragSetupVersion++;
+      cleanupDragAndDrop();
+    };
   });
 
   async function loadFields() {
@@ -231,20 +244,19 @@
     }
   }
 
-  // === Drag and Drop (configured fields reorder only) ===
+  // === Drag and Drop ===
 
   function cleanupDragAndDrop() {
-    if (setupTimeout) clearTimeout(setupTimeout);
     setupCleanups.forEach(fn => fn());
     setupCleanups = [];
     fieldDragState = new Map();
+    stepDropTarget = null;
   }
 
   function setupDragAndDrop() {
     cleanupDragAndDrop();
 
-    /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('[data-configured-field]')).forEach((element) => {
-      const fieldIndex = parseInt(element.dataset.fieldIndex);
+    /** @type {NodeListOf<HTMLElement>} */ (builderRoot.querySelectorAll('[data-configured-field]')).forEach((element) => {
       const fieldId = element.dataset.fieldId;
 
       fieldDragState.set(fieldId, { closestEdge: null });
@@ -253,7 +265,7 @@
       const draggableCleanup = draggable({
         element,
         dragHandle: dragHandle || element,
-        getInitialData: () => ({ fieldIndex, fieldId, type: 'configured-field' }),
+        getInitialData: () => ({ fieldId, sourceStep: currentStep, type: 'configured-field' }),
         onDragStart: () => { element.style.opacity = '0.5'; },
         onDrop: () => {
           element.style.opacity = '';
@@ -265,8 +277,8 @@
         element,
         canDrop: ({ source }) => {
           const data = source.data;
-          if (data.type === 'configured-field' && data.fieldIndex === fieldIndex) return false;
-          return data.type === 'configured-field';
+          return data.type === 'configured-field' &&
+            data.sourceStep === currentStep && data.fieldId !== fieldId;
         },
         getData: ({ input, element }) => {
           return attachClosestEdge({}, { input, element, allowedEdges: ['top', 'bottom'] });
@@ -281,7 +293,7 @@
         onDrop: ({ self, source }) => {
           const closestEdge = extractClosestEdge(self.data);
           if (source.data.type === 'configured-field') {
-            reorderFieldWithEdge(source.data.fieldIndex, fieldIndex, closestEdge);
+            reorderFieldWithEdge(source.data.fieldId, fieldId, closestEdge);
           }
           setDragState(fieldId, { closestEdge: null });
         }
@@ -291,6 +303,23 @@
         draggableCleanup();
         dropTargetCleanup();
       });
+    });
+
+    /** @type {NodeListOf<HTMLElement>} */ (builderRoot.querySelectorAll('[data-step-drop-target]')).forEach((element) => {
+      const targetStep = Number(element.dataset.stepDropTarget);
+      const cleanup = dropTargetForElements({
+        element,
+        canDrop: ({ source }) => source.data.type === 'configured-field' && source.data.sourceStep !== targetStep,
+        onDragEnter: () => { stepDropTarget = targetStep; },
+        onDragLeave: () => {
+          if (stepDropTarget === targetStep) stepDropTarget = null;
+        },
+        onDrop: ({ source }) => {
+          moveFieldToStep(source.data.fieldId, targetStep);
+          stepDropTarget = null;
+        }
+      });
+      setupCleanups.push(cleanup);
     });
   }
 
@@ -332,11 +361,11 @@
     $addFieldOpen = false;
   }
 
-  function reorderFieldWithEdge(fromIndex, toIndex, closestEdge) {
-    if (fromIndex === toIndex) return;
+  function reorderFieldWithEdge(sourceFieldId, targetFieldId, closestEdge) {
+    if (sourceFieldId === targetFieldId) return;
     const sortedFields = currentStepFields;
-    const movedField = sortedFields[fromIndex];
-    const targetField = sortedFields[toIndex];
+    const movedField = sortedFields.find(field => field.field_identifier === sourceFieldId);
+    const targetField = sortedFields.find(field => field.field_identifier === targetFieldId);
     if (!movedField || !targetField) return;
 
     let newOrder;
@@ -347,6 +376,18 @@
     }
     movedField.display_order = newOrder;
     recalculateDisplayOrder();
+    saveFields();
+  }
+
+  function moveFieldToStep(fieldId, targetStep) {
+    const movedField = fields.find(field => field.field_identifier === fieldId);
+    if (!movedField || (movedField.step_number || 1) === targetStep) return;
+
+    const targetFields = fields.filter(field => (field.step_number || 1) === targetStep);
+    movedField.step_number = targetStep;
+    movedField.display_order = targetFields.length;
+    recalculateDisplayOrder();
+    currentStep = targetStep;
     saveFields();
   }
 
@@ -443,10 +484,22 @@
     editingField = field;
     editDisplayName = field.display_name || '';
     editDescription = field.description || '';
+    editVirtualFieldOptions = parseVirtualFieldOptions(field.virtual_field_options);
+    editFieldError = null;
   }
 
   function saveFieldEdit() {
     if (editingField) {
+      if (editingField.field_type === 'virtual' && editingField.virtual_field_type === 'select') {
+        const validOptions = editVirtualFieldOptions
+          .map(option => ({ value: option.value.trim(), label: option.label.trim() }))
+          .filter(option => option.value && option.label);
+        if (validOptions.length === 0) {
+          editFieldError = t('requestTypeFields.addAtLeastOneOption');
+          return;
+        }
+        editingField.virtual_field_options = JSON.stringify(validOptions);
+      }
       editingField.display_name = editDisplayName.trim() || null;
       editingField.description = editDescription.trim() || null;
       fields = [...fields];
@@ -459,6 +512,28 @@
     editingField = null;
     editDisplayName = '';
     editDescription = '';
+    editVirtualFieldOptions = [];
+    editFieldError = null;
+  }
+
+  function parseVirtualFieldOptions(value) {
+    if (!value) return [];
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed)
+        ? parsed.map(option => ({ value: option.value || '', label: option.label || '' }))
+        : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function addEditVirtualFieldOption() {
+    editVirtualFieldOptions = [...editVirtualFieldOptions, { value: '', label: '' }];
+  }
+
+  function removeEditVirtualFieldOption(index) {
+    editVirtualFieldOptions = editVirtualFieldOptions.filter((_, optionIndex) => optionIndex !== index);
   }
 
   // === Step Management ===
@@ -531,7 +606,7 @@
   }
 </script>
 
-<div class="flex flex-col h-full">
+<div class="flex flex-col h-full" bind:this={builderRoot}>
   <!-- Header — matches the customize panel's header sizing (px-6 py-4 + text-lg) so they line up across the seam. -->
   <div
     class="flex items-center justify-between px-6 py-4 border-b flex-shrink-0"
@@ -572,10 +647,14 @@
           {@const hasFields = stepHasFields(step)}
           <button
             onclick={() => currentStep = step}
+            data-step-drop-target={step}
+            data-testid={`request-type-step-${step}`}
             class="px-3 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-1.5"
             style="
               background-color: {currentStep === step
                 ? 'var(--ds-interactive)'
+                : stepDropTarget === step
+                  ? 'var(--ds-interactive-subtle)'
                 : hasFields
                   ? 'var(--ds-surface-raised)'
                   : 'var(--ds-status-warning-subtle)'};
@@ -700,6 +779,7 @@
             <div
               class="cursor-grab active:cursor-grabbing flex-shrink-0 p-1 rounded"
               style="touch-action: none;"
+              data-testid={`request-type-field-drag-${field.field_identifier}`}
             >
               <svg class="w-4 h-4" style="color: var(--ds-text-subtle);" fill="currentColor" viewBox="0 0 24 24">
                 <circle cx="9" cy="6" r="1.5"/>
@@ -738,6 +818,7 @@
               />
               <button
                 onclick={() => startEditingField(field)}
+                data-testid={`request-type-field-edit-${field.field_identifier}`}
                 class="p-1.5 rounded transition-all opacity-0 group-hover:opacity-100"
                 style="color: var(--ds-text-subtle);"
                 title={t('layout.editDisplaySettings')}
@@ -969,6 +1050,56 @@
           size="small"
         />
       </div>
+
+      {#if editingField.field_type === 'virtual' && editingField.virtual_field_type === 'select'}
+        <div>
+          <span class="block text-sm font-medium mb-2" style="color: var(--ds-text);">
+            {t('requestTypeFields.options')}
+          </span>
+          <div class="space-y-2">
+            {#each editVirtualFieldOptions as option, index}
+              <div class="flex gap-2">
+                <Input
+                  type="text"
+                  bind:value={option.value}
+                  placeholder={t('requestTypeFields.value')}
+                  size="small"
+                  dataTestid={`request-type-edit-option-value-${index}`}
+                  class="flex-1"
+                />
+                <Input
+                  type="text"
+                  bind:value={option.label}
+                  placeholder={t('requestTypeFields.label')}
+                  size="small"
+                  dataTestid={`request-type-edit-option-label-${index}`}
+                  class="flex-1"
+                />
+                <button
+                  onclick={() => removeEditVirtualFieldOption(index)}
+                  class="p-1.5 rounded"
+                  style="color: var(--ds-status-error);"
+                  aria-label={t('common.remove')}
+                >
+                  <Trash2 class="w-4 h-4" />
+                </button>
+              </div>
+            {/each}
+            <button
+              onclick={addEditVirtualFieldOption}
+              class="text-sm flex items-center gap-1"
+              style="color: var(--ds-interactive);"
+            >
+              <Plus class="w-4 h-4" />
+              {t('requestTypeFields.addOption')}
+            </button>
+          </div>
+        </div>
+      {/if}
+
+      {#if editFieldError}
+        <p class="text-sm" style="color: var(--ds-status-error);">{editFieldError}</p>
+      {/if}
 
       <div class="flex gap-2 pt-2">
         <Button onclick={saveFieldEdit} variant="primary" size="medium" class="flex-1">

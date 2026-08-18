@@ -387,6 +387,7 @@ func (h *PortalAuthHandler) GetCurrentCustomer(w http.ResponseWriter, r *http.Re
 						"name":       session.User.FirstName + " " + session.User.LastName,
 						"first_name": session.User.FirstName,
 						"last_name":  session.User.LastName,
+						"avatar_url": session.User.AvatarURL,
 					},
 				})
 				return
