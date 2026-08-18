@@ -1,7 +1,12 @@
 <script>
   import { t } from '../stores/i18n.svelte.js';
   import { getDashboardWidgetMinWidth, getDashboardWidgetDefaultWidth } from '../services/dashboardWidgetRegistry.js';
-  import { ROW_COUNT_WIDGETS, ROW_COUNT_OPTIONS, resolveRowCount, resolveDensity } from './dashboard/taskWidgetState.js';
+  import {
+    ROW_COUNT_OPTIONS,
+    resolveRowCount,
+    resolveDensity,
+    shouldShowRowControls,
+  } from './dashboard/taskWidgetState.js';
   import DropdownMenu from '../layout/DropdownMenu.svelte';
   import { useEventListener } from 'runed';
   import { ChevronDown, Check } from '@lucide/svelte';
@@ -76,7 +81,7 @@
     iconClass: '',
   })));
 
-  const supportsRowCount = $derived(ROW_COUNT_WIDGETS.has(widgetType));
+  const supportsRowCount = $derived(shouldShowRowControls(widgetType, config));
   const currentRowCount = $derived(resolveRowCount(config, width));
   const currentDensity = $derived(resolveDensity(config));
 

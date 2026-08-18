@@ -1,5 +1,5 @@
 <script>
-  import { RefreshCw, Search } from '@lucide/svelte';
+  import { Plus, RefreshCw, Search } from '@lucide/svelte';
   import Select from '../../components/Select.svelte';
   import { api } from '../../api.js';
   import { t } from '../../stores/i18n.svelte.js';
@@ -34,16 +34,24 @@
   const selectedCollection = $derived(
     collections.find((collection) => String(collection.id) === selectedCollectionId) ?? null
   );
-  const selectedCollectionName = $derived(
-    selectedCollection?.name || t('widgets.savedSearch.collectionUnavailable')
-  );
-  const collectionOptions = $derived.by(() => [
-    { value: '', label: t('widgets.savedSearch.selectCollection'), disabled: true },
-    ...collections.map((collection) => ({
+  const collectionOptions = $derived.by(() => {
+    const options = collections.map((collection) => ({
       value: String(collection.id),
       label: formatCollectionLabel(collection),
-    })),
-  ]);
+      disabled: false,
+    }));
+    if (selectedCollectionId && !selectedCollection) {
+      options.unshift({
+        value: selectedCollectionId,
+        label: t('widgets.savedSearch.collectionUnavailable'),
+        disabled: true,
+      });
+    }
+    return [
+      { value: '', label: t('widgets.savedSearch.selectCollection'), disabled: true },
+      ...options,
+    ];
+  });
 
   $effect(() => {
     if (collectionScope === lastCollectionScope) return;
@@ -139,6 +147,12 @@
     onconfigchange?.({ collectionId });
   }
 
+  function createCollection() {
+    window.dispatchEvent(new CustomEvent('show-create-modal', {
+      detail: { type: 'collection', workspaceId },
+    }));
+  }
+
   function getItemKey(item) {
     if (item.workspace_key && item.workspace_item_number != null) {
       return `${item.workspace_key}-${item.workspace_item_number}`;
@@ -151,7 +165,34 @@
   }
 </script>
 
+{#snippet collectionSelector()}
+  <Select
+    id="saved-search-collection-select"
+    value={selectedCollectionId}
+    options={collectionOptions}
+    ariaLabel={t('widgets.savedSearch.selectCollection')}
+    disabled={loadingCollections}
+    onchange={handleCollectionChange}
+  />
+{/snippet}
+
 <div class="saved-search-widget" data-testid="saved-search-widget">
+  {#if selectedCollectionId}
+    <div
+      class="mb-3 flex items-center justify-between gap-3"
+      data-testid="saved-search-collection-toolbar"
+    >
+      <div class="min-w-0 flex-1">
+        {@render collectionSelector()}
+      </div>
+      {#if !loading && !error}
+        <span class="shrink-0 text-xs" style="color: var(--ds-text-subtle);">
+          {t('widgets.savedSearch.itemCount', { count: items.length })}
+        </span>
+      {/if}
+    </div>
+  {/if}
+
   {#if !selectedCollectionId}
     <div
       class="flex flex-col items-center gap-3 rounded-xl border border-dashed px-4 py-6 text-center"
@@ -182,16 +223,22 @@
           </button>
         </div>
       {:else if collections.length === 0}
-        <p class="text-xs">{t('widgets.savedSearch.noCollections')}</p>
+        <div class="flex flex-col items-center gap-3">
+          <p class="text-xs">{t('widgets.savedSearch.noCollections')}</p>
+          <button
+            type="button"
+            class="inline-flex items-center gap-2 rounded border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-[var(--ds-background-neutral-hovered)] focus:outline-none focus:ring-2 focus:ring-[var(--ds-border-focused)]"
+            style="border-color: var(--ds-border); color: var(--ds-text); background-color: var(--ds-surface-raised);"
+            onclick={createCollection}
+            data-testid="saved-search-create-collection"
+          >
+            <Plus class="h-4 w-4" />
+            {t('collections.newCollection')}
+          </button>
+        </div>
       {:else}
         <div class="w-full max-w-sm text-left">
-          <Select
-            id="saved-search-collection-select"
-            value={selectedCollectionId}
-            options={collectionOptions}
-            ariaLabel={t('widgets.savedSearch.selectCollection')}
-            onchange={handleCollectionChange}
-          />
+          {@render collectionSelector()}
         </div>
       {/if}
     </div>
@@ -230,10 +277,6 @@
       <p class="text-xs">{t('widgets.savedSearch.emptySubtitle')}</p>
     </div>
   {:else}
-    <div class="mb-3 flex items-center justify-between gap-3 text-xs" style="color: var(--ds-text-subtle);">
-      <span class="truncate" title={selectedCollectionName}>{selectedCollectionName}</span>
-      <span class="shrink-0">{t('widgets.savedSearch.itemCount', { count: items.length })}</span>
-    </div>
     <ul class="flex flex-col gap-1.5">
       {#each items as item (item.id)}
         <li>

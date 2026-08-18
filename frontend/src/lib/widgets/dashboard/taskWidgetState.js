@@ -18,6 +18,16 @@ export const ROW_COUNT_WIDGETS = new Set(['assigned-to-me', 'personal-tasks', 's
 export const ROW_COUNT_OPTIONS = [5, 10, 15, 'all'];
 
 /**
+ * Row controls are useful only after a Saved Search has a collection to show.
+ */
+export function shouldShowRowControls(widgetType, config) {
+  return (
+    ROW_COUNT_WIDGETS.has(widgetType) &&
+    (widgetType !== 'saved-search' || Boolean(config?.collectionId))
+  );
+}
+
+/**
  * Default row count for a widget that has no explicit override yet.
  * Scales with width: below half width shows 6, at or above shows 10.
  * @param {number} width - current widget column span (1..12)

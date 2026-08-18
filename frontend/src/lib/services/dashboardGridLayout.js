@@ -33,8 +33,7 @@ function widgetRows(widgets, totalColumns) {
 /**
  * Resolve the neighbouring widget and legal width range for a dashboard resize.
  * The right neighbour is preferred because the handle is on the target's right
- * edge. The left neighbour lets the final widget in a row use presets/keyboard
- * resizing without changing the row's total width.
+ * edge. Unused columns are consumed before a neighbour is resized.
  */
 export function getDashboardResizeBounds(
   widgets,
@@ -50,11 +49,14 @@ export function getDashboardResizeBounds(
 
   const target = row[targetIndex];
   const targetWidth = widgetWidth(target, totalColumns);
+  const usedWidth = row.reduce((sum, widget) => sum + widgetWidth(widget, totalColumns), 0);
+  const freeWidth = Math.max(0, totalColumns - usedWidth);
   const neighbour = row[targetIndex + 1] ?? row[targetIndex - 1] ?? null;
   if (!neighbour) {
+    const targetMin = Math.min(targetWidth, Math.max(1, getMinWidth(target.type)));
     return {
-      minWidth: targetWidth,
-      maxWidth: targetWidth,
+      minWidth: targetMin,
+      maxWidth: Math.max(targetMin, targetWidth + freeWidth),
       neighbourId: null,
     };
   }
@@ -66,7 +68,7 @@ export function getDashboardResizeBounds(
 
   return {
     minWidth: targetMin,
-    maxWidth: Math.max(targetMin, pairWidth - neighbourMin),
+    maxWidth: Math.max(targetMin, pairWidth + freeWidth - neighbourMin),
     neighbourId: neighbour.id,
   };
 }
@@ -94,17 +96,32 @@ export function resizeDashboardWidgetRow(
     ? Math.round(Number(requestedWidth))
     : currentWidth;
   const width = Math.min(bounds.maxWidth, Math.max(bounds.minWidth, requested));
-  if (!bounds.neighbourId || width === currentWidth) {
+  if (width === currentWidth) {
     return { widgets, width: currentWidth, bounds };
+  }
+
+  if (!bounds.neighbourId) {
+    return {
+      widgets: widgets.map((widget) => (widget.id === widgetId ? { ...widget, width } : widget)),
+      width,
+      bounds,
+    };
   }
 
   const neighbour = widgets.find((widget) => widget.id === bounds.neighbourId);
   const neighbourWidth = widgetWidth(neighbour, totalColumns);
   const delta = width - currentWidth;
+  const row = widgetRows(widgets, totalColumns).find((candidate) =>
+    candidate.some((widget) => widget.id === widgetId)
+  );
+  const usedWidth =
+    row?.reduce((sum, widget) => sum + widgetWidth(widget, totalColumns), 0) ?? totalColumns;
+  const freeWidth = Math.max(0, totalColumns - usedWidth);
+  const neighbourDelta = delta > 0 ? Math.max(0, delta - freeWidth) : delta;
   const resized = widgets.map((widget) => {
     if (widget.id === widgetId) return { ...widget, width };
     if (widget.id === bounds.neighbourId) {
-      return { ...widget, width: neighbourWidth - delta };
+      return { ...widget, width: neighbourWidth - neighbourDelta };
     }
     return widget;
   });
