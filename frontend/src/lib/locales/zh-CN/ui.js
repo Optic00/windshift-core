@@ -340,6 +340,18 @@ export default {
     createdChart: {
       emptyMessage: '无创建数据',
     },
+    savedSearch: {
+      loadingCollections: '正在加载已保存的集合...',
+      setupTitle: '选择已保存的集合',
+      setupSubtitle: '选择一个集合，在此显示其中的工作项。',
+      selectCollection: '选择集合',
+      noCollections: '没有可用的已保存集合',
+      collectionUnavailable: '已保存的集合不可用',
+      itemCount: '{count} 个事项',
+      emptyTitle: '没有匹配的工作项',
+      emptySubtitle: '此已保存的集合没有匹配的工作项',
+      loadError: '加载已保存集合失败',
+    },
     milestoneProgress: {
       emptyTitle: '无里程碑',
       emptySubtitle: '创建里程碑以跟踪进度',

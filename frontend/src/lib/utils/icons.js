@@ -255,6 +255,7 @@ export const workspaceIconMap = {
   Printer,
   RefreshCw,
   Save,
+  Search,
   Wrench,
   Truck,
   Volume2,

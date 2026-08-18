@@ -73,6 +73,16 @@ export const widgetRegistry = [
     maxWidth: 3,
   },
   {
+    type: 'saved-search',
+    name: 'Saved Search',
+    description: 'Display work items from a saved collection',
+    category: widgetCategories.ADDITIONAL,
+    icon: 'Search',
+    minWidth: 1,
+    defaultWidth: 2,
+    maxWidth: 3,
+  },
+  {
     type: 'overdue-items',
     name: 'Overdue Items',
     description: 'Items past their due date',

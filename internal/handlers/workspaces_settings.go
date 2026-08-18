@@ -144,6 +144,7 @@ func (h *WorkspaceHandler) UpdateHomepageLayout(w http.ResponseWriter, r *http.R
 		"upcoming-deadlines": true,
 		"iteration-timeline": true,
 		"test-coverage":      true,
+		"saved-search":       true,
 	}
 
 	const (

@@ -405,6 +405,18 @@ export default {
     createdChart: {
       emptyMessage: 'Nenhum dado de criação disponível',
     },
+    savedSearch: {
+      loadingCollections: 'Carregando coleções salvas...',
+      setupTitle: 'Escolha uma coleção salva',
+      setupSubtitle: 'Selecione uma coleção para mostrar seus itens de trabalho aqui.',
+      selectCollection: 'Selecionar coleção',
+      noCollections: 'Nenhuma coleção salva disponível',
+      collectionUnavailable: 'Coleção salva indisponível',
+      itemCount: '{count} itens',
+      emptyTitle: 'Nenhum item de trabalho correspondente',
+      emptySubtitle: 'Esta coleção salva não tem itens correspondentes',
+      loadError: 'Falha ao carregar a coleção salva',
+    },
     milestoneProgress: {
       emptyTitle: 'Nenhum marco',
       emptySubtitle: 'Crie marcos para acompanhar o progresso',

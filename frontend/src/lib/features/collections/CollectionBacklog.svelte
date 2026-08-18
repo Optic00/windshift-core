@@ -21,6 +21,8 @@
   import { errorToast, successToast, warningToast } from '../../stores/toasts.svelte.js';
   import { getIncompleteIterationItems } from './iterationCompletion.js';
   import CompleteIterationDialog from '../../dialogs/CompleteIterationDialog.svelte';
+  import { workspacesStore } from '../../stores/workspaces.svelte.js';
+  import { isSystemFieldAvailableForItem } from '../../utils/screenFields.js';
 
   let { workspaceId, collectionId = null } = $props();
 
@@ -49,6 +51,12 @@
   let collapsedSections = $state(new Set());
   let sectionDropHighlight = $state(new Map()); // iterationId|'unassigned' -> boolean
   let pendingActionItemIds = $state(new Set());
+  let pendingStoryPointsItemIds = $state(new Set());
+  let storyPointsScreenConfiguration = $state({
+    ready: false,
+    configSetsByWorkspaceId: new Map(),
+    screensById: new Map(),
+  });
 
   // --- Complete Iteration dialog state ---
   let completeIterationShow = $state(false);
@@ -138,6 +146,101 @@
     addIterationPickerValue = null;
   }
 
+  async function loadStoryPointsScreenConfiguration() {
+    const workspaceRecords = workspaceId
+      ? [{
+          id: workspaceDataStore.workspace?.id ?? Number(workspaceId),
+          configuration_set_id: workspaceDataStore.workspace?.configuration_set_id ?? null,
+        }]
+      : (await workspacesStore.load()).map((availableWorkspace) => ({
+          id: availableWorkspace.id,
+          configuration_set_id: availableWorkspace.configuration_set_id ?? null,
+        }));
+
+    const configSetIds = [...new Set(
+      workspaceRecords
+        .map((record) => record.configuration_set_id)
+        .filter((configSetId) => configSetId != null)
+        .map((configSetId) => String(configSetId))
+    )];
+
+    const [screensOutcome, configSetOutcomes] = await Promise.all([
+      api.screens.getAllWithFields()
+        .then((screens) => ({ status: 'fulfilled', value: screens }))
+        .catch((error) => ({ status: 'rejected', reason: error })),
+      Promise.allSettled(configSetIds.map((configSetId) => api.configurationSets.get(configSetId))),
+    ]);
+
+    if (screensOutcome.status === 'rejected') {
+      console.error('Failed to load screens for backlog fields:', screensOutcome.reason);
+    }
+
+    const screensById = new Map(
+      (Array.isArray(screensOutcome.value) ? screensOutcome.value : [])
+        .filter((screen) => screen?.id != null)
+        .map((screen) => [screen.id, screen])
+    );
+    const configSetsById = new Map();
+    configSetOutcomes.forEach((outcome, index) => {
+      if (outcome.status === 'fulfilled' && outcome.value) {
+        configSetsById.set(configSetIds[index], outcome.value);
+      } else if (outcome.status === 'rejected') {
+        console.error(`Failed to load configuration set ${configSetIds[index]} for backlog fields:`, outcome.reason);
+      }
+    });
+
+    const configSetsByWorkspaceId = new Map();
+    workspaceRecords.forEach((record) => {
+      if (record?.id == null) return;
+      const workspaceKey = String(record.id);
+      const configSetId = record.configuration_set_id;
+      configSetsByWorkspaceId.set(
+        workspaceKey,
+        configSetId == null ? null : configSetsById.get(String(configSetId))
+      );
+    });
+
+    storyPointsScreenConfiguration = {
+      ready: true,
+      configSetsByWorkspaceId,
+      screensById,
+    };
+  }
+
+  function storyPointsConfiguredForItem(item) {
+    if (!storyPointsScreenConfiguration.ready) return false;
+    return isSystemFieldAvailableForItem(
+      item,
+      'story_points',
+      storyPointsScreenConfiguration.configSetsByWorkspaceId,
+      storyPointsScreenConfiguration.screensById
+    );
+  }
+
+  function setStoryPointsPending(itemId, pending) {
+    const next = new Set(pendingStoryPointsItemIds);
+    if (pending) next.add(itemId);
+    else next.delete(itemId);
+    pendingStoryPointsItemIds = next;
+  }
+
+  async function updateStoryPoints(item, value) {
+    if (pendingStoryPointsItemIds.has(item.id)) return;
+    setStoryPointsPending(item.id, true);
+
+    try {
+      await api.items.update(item.id, { story_points: value });
+      collectionStore.backlogItems = collectionStore.backlogItems.map((backlogItem) =>
+        backlogItem.id === item.id ? { ...backlogItem, story_points: value } : backlogItem
+      );
+    } catch (error) {
+      console.error('Failed to update story points:', error);
+      errorToast(t('collections.backlogActionFailed'));
+    } finally {
+      setStoryPointsPending(item.id, false);
+    }
+  }
+
   // Total item count across all sections
   let totalItemCount = $derived(collectionStore.backlogPagination?.total ?? backlogItems.length);
 
@@ -169,6 +272,7 @@
     if (workspaceId) {
       await loadWorkspaceGradient(workspaceId);
       await workspaceDataStore.initialize(workspaceId);
+      await loadStoryPointsScreenConfiguration();
 
       // Load iterations for this workspace
       try {
@@ -184,6 +288,7 @@
       restorePersistedState();
     } else {
       await workspaceDataStore.initializeGlobal();
+      await loadStoryPointsScreenConfiguration();
     }
     loading = false;
   });
@@ -736,6 +841,9 @@
               onStartIteration={startIteration}
               onCompleteIteration={completeIteration}
               onRemoveGlobal={removeGlobalIteration}
+              storyPointsConfiguredForItem={storyPointsConfiguredForItem}
+              storyPointsPendingItemIds={pendingStoryPointsItemIds}
+              onUpdateStoryPoints={updateStoryPoints}
             />
           {/each}
 
@@ -758,6 +866,9 @@
             onOpenItem={openItem}
             onMoveItemToBoundary={moveItemToBoundary}
             onAssignItemToIteration={assignItemToIteration}
+            storyPointsConfiguredForItem={storyPointsConfiguredForItem}
+            storyPointsPendingItemIds={pendingStoryPointsItemIds}
+            onUpdateStoryPoints={updateStoryPoints}
           />
 
           <!-- Load More -->

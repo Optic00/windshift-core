@@ -460,6 +460,18 @@ export default {
       emptySubtitle: 'Recently viewed items will appear here',
       loadError: 'Failed to load recent items',
     },
+    savedSearch: {
+      loadingCollections: 'Loading saved collections...',
+      setupTitle: 'Choose a saved collection',
+      setupSubtitle: 'Select a collection to show its work items here.',
+      selectCollection: 'Select a collection',
+      noCollections: 'No saved collections available',
+      collectionUnavailable: 'Saved collection unavailable',
+      itemCount: '{count} items',
+      emptyTitle: 'No matching work items',
+      emptySubtitle: 'This saved collection has no matching items',
+      loadError: 'Failed to load saved collection',
+    },
     milestoneProgress: {
       emptyTitle: 'No milestones',
       emptySubtitle: 'Create milestones to track progress',

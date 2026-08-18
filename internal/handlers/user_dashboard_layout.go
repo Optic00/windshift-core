@@ -48,6 +48,7 @@ var validDashboardWidgetTypes = map[string]bool{
 	"recent-workspaces":   true,
 	"assigned-to-me":      true,
 	"personal-tasks":      true,
+	"saved-search":        true,
 }
 
 const (

@@ -16,6 +16,7 @@
    *   menuWidth?: string,
    *   portalOwner?: string,
    *   placeholder?: string,
+   *   ariaLabel?: string,
    *   onchange?: (e?: any) => void,
    *   onfocus?: (e?: any) => void,
    *   onblur?: (e?: any) => void,
@@ -32,6 +33,7 @@
     menuWidth = '',
     portalOwner = undefined,
     placeholder = '',
+    ariaLabel = undefined,
     onchange = undefined,
     onfocus = undefined,
     onblur = undefined
@@ -178,6 +180,7 @@
     aria-required={required || undefined}
     aria-haspopup="listbox"
     aria-expanded={$open}
+    aria-label={ariaLabel}
     class="w-full rounded border transition-all duration-200 flex items-center justify-between gap-2
            focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50
            disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer text-left {sizeClasses}"

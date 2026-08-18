@@ -5,6 +5,7 @@
   import ItemCard from './ItemCard.svelte';
   import Lozenge from '../../components/Lozenge.svelte';
   import { getStatusCategory } from '../../utils/statusColors.js';
+  import { t } from '../../stores/i18n.svelte.js';
 
   /**
    * Reusable list-row props. Lookup arrays enrich the item; leading and trailing
@@ -28,9 +29,16 @@
     timestamp = null,
     formatTimestamp = null,
     compact = false,
+    showStoryPoints = false,
+    storyPointsSaving = false,
+    onStoryPointsChange = null,
     leading = null,
     trailing = null,
   } = $props();
+
+  let editingStoryPoints = $state(false);
+  let storyPointsEditValue = $state('');
+  let storyPointsError = $state(false);
 
   // Compute the display key - prefer item.workspace_key, fallback to workspace.key
   const displayKey = $derived.by(() => {
@@ -91,6 +99,51 @@
   // Resolve the status badge color, preferring a pre-resolved color on the item
   // (e.g. status_color from the homepage activity API where statuses arrays aren't loaded)
   const statusColor = $derived(item.status_color || statusCategory?.color || '#6b7280');
+
+  function startEditingStoryPoints(event) {
+    event?.stopPropagation();
+    if (storyPointsSaving) return;
+    storyPointsEditValue = item.story_points == null ? '' : String(item.story_points);
+    storyPointsError = false;
+    editingStoryPoints = true;
+  }
+
+  function cancelStoryPointsEdit(event) {
+    event?.stopPropagation();
+    editingStoryPoints = false;
+    storyPointsError = false;
+  }
+
+  function saveStoryPoints(event) {
+    event?.stopPropagation();
+    const raw = String(storyPointsEditValue ?? '').trim();
+    const parsed = raw === '' ? null : Number(raw);
+    if (parsed !== null && (!Number.isFinite(parsed) || parsed < 0)) {
+      storyPointsError = true;
+      return;
+    }
+
+    if (parsed === (item.story_points ?? null)) {
+      editingStoryPoints = false;
+      storyPointsError = false;
+      return;
+    }
+
+    editingStoryPoints = false;
+    storyPointsError = false;
+    onStoryPointsChange?.(parsed);
+  }
+
+  function handleStoryPointsKeydown(event) {
+    event.stopPropagation();
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      saveStoryPoints(event);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      cancelStoryPointsEdit(event);
+    }
+  }
 </script>
 
 <ItemCard href={itemHref} {onclick} {compact}>
@@ -147,6 +200,51 @@
       <!-- Status Badge -->
       {#if showStatus && status}
         <Lozenge text={status.name.replace(/_/g, ' ')} customBg={statusColor} />
+      {/if}
+
+      {#if showStoryPoints}
+        <div
+          class="flex-shrink-0"
+          data-testid={`backlog-story-points-${item.id}`}
+        >
+          {#if editingStoryPoints}
+            <input
+              type="number"
+              min="0"
+              step="0.5"
+              aria-label={t('items.storyPoints')}
+              aria-invalid={storyPointsError}
+              aria-describedby={storyPointsError ? `backlog-story-points-error-${item.id}` : undefined}
+              data-testid={`backlog-story-points-input-${item.id}`}
+              class="w-16 rounded border px-2 py-1 text-xs tabular-nums outline-none"
+              style="background-color: var(--ds-surface-card); border-color: {storyPointsError ? 'var(--ds-text-danger)' : 'var(--ds-border-focused)'}; color: var(--ds-text);"
+              bind:value={storyPointsEditValue}
+              disabled={storyPointsSaving}
+              onclick={(event) => event.stopPropagation()}
+              onblur={saveStoryPoints}
+              onkeydown={handleStoryPointsKeydown}
+            />
+            {#if storyPointsError}
+              <span id={`backlog-story-points-error-${item.id}`} class="sr-only">
+                {t('items.enterField', { field: t('items.storyPoints') })}
+              </span>
+            {/if}
+          {:else}
+            <button
+              type="button"
+              class="inline-flex items-center gap-1 rounded px-2 py-1 text-xs tabular-nums transition-colors hover:bg-black/5 dark:hover:bg-white/10 disabled:cursor-wait disabled:opacity-60"
+              style="color: var(--ds-text-subtle);"
+              title={t('items.setField', { field: t('items.storyPoints') })}
+              aria-label={t('items.setField', { field: t('items.storyPoints') })}
+              data-testid={`backlog-story-points-button-${item.id}`}
+              disabled={storyPointsSaving}
+              onclick={startEditingStoryPoints}
+            >
+              <span style="color: var(--ds-text);">{item.story_points ?? t('items.notSet')}</span>
+              <span>SP</span>
+            </button>
+          {/if}
+        </div>
       {/if}
 
       {#if trailing}{@render trailing()}{/if}

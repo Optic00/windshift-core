@@ -143,6 +143,28 @@ export function customFieldsFromScreen(screen) {
   return (screen?.fields || []).filter((field) => field.field_type === 'custom');
 }
 
+/**
+ * Checks whether an item can use a system field on its effective edit screen.
+ * A missing workspace mapping means the screen configuration is unresolved.
+ */
+export function isSystemFieldAvailableForItem(
+  item,
+  fieldName,
+  configSetsByWorkspaceId,
+  screensById,
+  fallbackScreenId = 1
+) {
+  const workspaceId = item?.workspace_id;
+  const workspaceKey = workspaceId == null ? null : String(workspaceId);
+  if (!workspaceKey || !configSetsByWorkspaceId?.has(workspaceKey)) return false;
+
+  const configSet = configSetsByWorkspaceId.get(workspaceKey);
+  if (configSet === undefined) return false;
+  const screenId = resolveEffectiveScreenIds(configSet, item?.item_type_id, fallbackScreenId).edit;
+  const screen = screensById?.get(screenId) || screensById?.get(String(screenId));
+  return isSystemFieldConfigured(systemFieldsFromScreen(screen), fieldName);
+}
+
 /** Resolve inline-detail visibility as edit ∪ view; view-only fields remain
  * read-only, while edit fields use effective identifiers. */
 export function buildDetailScreenFieldConfig(editScreen, viewScreen = null) {

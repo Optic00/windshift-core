@@ -406,6 +406,18 @@ export default {
     createdChart: {
       emptyMessage: 'لا تتوفر بيانات الإنشاء',
     },
+    savedSearch: {
+      loadingCollections: 'جارٍ تحميل المجموعات المحفوظة...',
+      setupTitle: 'اختر مجموعة محفوظة',
+      setupSubtitle: 'حدد مجموعة لعرض عناصر العمل الخاصة بها هنا.',
+      selectCollection: 'تحديد مجموعة',
+      noCollections: 'لا توجد مجموعات محفوظة متاحة',
+      collectionUnavailable: 'المجموعة المحفوظة غير متاحة',
+      itemCount: '{count} عناصر',
+      emptyTitle: 'لا توجد عناصر عمل مطابقة',
+      emptySubtitle: 'لا تحتوي هذه المجموعة المحفوظة على عناصر مطابقة',
+      loadError: 'فشل تحميل المجموعة المحفوظة',
+    },
     milestoneProgress: {
       emptyTitle: 'لا توجد معالم',
       emptySubtitle: 'أنشئ معالم لتتبع التقدم',

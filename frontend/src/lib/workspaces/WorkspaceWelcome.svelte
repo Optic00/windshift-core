@@ -50,6 +50,7 @@
   import UpcomingDeadlinesWidget from '../widgets/UpcomingDeadlinesWidget.svelte';
   import IterationTimelineWidget from '../widgets/IterationTimelineWidget.svelte';
   import TestCoverageWidget from '../widgets/TestCoverageWidget.svelte';
+  import SavedSearchWidget from '../widgets/dashboard/SavedSearchWidget.svelte';
 
   // Customization sidebar
   import WorkspaceCustomizationSidebar from './WorkspaceCustomizationSidebar.svelte';
@@ -558,6 +559,15 @@
     return width;
   }
 
+  function updateWidgetConfig(widgetId, configChanges) {
+    widgets = widgets.map((widget) =>
+      widget.id === widgetId
+        ? { ...widget, config: { ...(widget.config ?? {}), ...configChanges } }
+        : widget
+    );
+    debouncedSave();
+  }
+
   // Drag and drop setup
   function setupDragAndDrop() {
     cleanupDragAndDrop();
@@ -805,9 +815,11 @@
                     resizeMinWidth={getWidgetMinWidth(widget.type)}
                     resizeMaxWidth={getWidgetMaxWidth(widget.type)}
                     resizeDefaultWidth={getDefaultWidth(widget.type)}
+                    config={widget.config ?? {}}
                     isEditing={isCustomizeMode}
                     onremove={() => removeWidget(widget.id)}
                     onwidthchange={(newWidth) => updateWidgetWidth(widget.id, newWidth)}
+                    onconfigchange={(changes) => updateWidgetConfig(widget.id, changes)}
                   >
                     {#if widget.type === 'stats'}
                       <StatsCardWidget {stats} {statusCategories} />
@@ -829,6 +841,12 @@
                       <IterationTimelineWidget {workspaceId} />
                     {:else if widget.type === 'test-coverage'}
                       <TestCoverageWidget {workspaceId} collectionId={collectionId} />
+                    {:else if widget.type === 'saved-search'}
+                      <SavedSearchWidget
+                        {workspaceId}
+                        config={widget.config ?? {}}
+                        onconfigchange={(changes) => updateWidgetConfig(widget.id, changes)}
+                      />
                     {:else}
                       <div class="text-center py-8 text-sm" style="color: var(--ds-text-subtle);">
                         Unknown widget type: {widget.type}

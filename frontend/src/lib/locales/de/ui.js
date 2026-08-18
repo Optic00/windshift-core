@@ -404,6 +404,18 @@ export default {
     createdChart: {
       emptyMessage: 'Keine Erstellungsdaten verfügbar',
     },
+    savedSearch: {
+      loadingCollections: 'Gespeicherte Sammlungen werden geladen...',
+      setupTitle: 'Gespeicherte Sammlung auswählen',
+      setupSubtitle: 'Wähle eine Sammlung, deren Arbeitselemente hier angezeigt werden.',
+      selectCollection: 'Sammlung auswählen',
+      noCollections: 'Keine gespeicherten Sammlungen verfügbar',
+      collectionUnavailable: 'Gespeicherte Sammlung nicht verfügbar',
+      itemCount: '{count} Einträge',
+      emptyTitle: 'Keine passenden Arbeitselemente',
+      emptySubtitle: 'Diese gespeicherte Sammlung enthält keine passenden Elemente',
+      loadError: 'Gespeicherte Sammlung konnte nicht geladen werden',
+    },
     milestoneProgress: {
       emptyTitle: 'Keine Meilensteine',
       emptySubtitle: 'Erstellen Sie Meilensteine, um den Fortschritt zu verfolgen',

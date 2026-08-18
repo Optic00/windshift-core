@@ -51,6 +51,15 @@ export const dashboardWidgetRegistry = [
     minWidth: 3,
   },
   {
+    type: 'saved-search',
+    name: 'Saved Search',
+    description: 'Display work items from a saved collection',
+    category: dashboardWidgetCategories.WORK,
+    icon: 'Search',
+    defaultWidth: 6,
+    minWidth: 4,
+  },
+  {
     type: 'assigned-to-me',
     name: 'Assigned to Me',
     description: 'Open items assigned to you across all workspaces',

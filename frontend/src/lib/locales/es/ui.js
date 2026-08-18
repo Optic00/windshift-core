@@ -406,6 +406,18 @@ export default {
     createdChart: {
       emptyMessage: 'No hay datos de creación disponibles',
     },
+    savedSearch: {
+      loadingCollections: 'Cargando colecciones guardadas...',
+      setupTitle: 'Elige una colección guardada',
+      setupSubtitle: 'Selecciona una colección para mostrar aquí sus elementos de trabajo.',
+      selectCollection: 'Seleccionar colección',
+      noCollections: 'No hay colecciones guardadas disponibles',
+      collectionUnavailable: 'Colección guardada no disponible',
+      itemCount: '{count} elementos',
+      emptyTitle: 'No hay elementos de trabajo coincidentes',
+      emptySubtitle: 'Esta colección guardada no tiene elementos coincidentes',
+      loadError: 'No se pudo cargar la colección guardada',
+    },
     milestoneProgress: {
       emptyTitle: 'Sin hitos',
       emptySubtitle: 'Crea hitos para seguir el progreso',

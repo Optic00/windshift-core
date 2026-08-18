@@ -30,6 +30,9 @@
     onStartIteration = null,
     onCompleteIteration = null,
     onRemoveGlobal = null,
+    storyPointsConfiguredForItem = null,
+    storyPointsPendingItemIds = new Set(),
+    onUpdateStoryPoints = null,
   } = $props();
 
   const statusColors = {
@@ -189,6 +192,9 @@
                     {statusCategories}
                     onclick={(e) => onOpenItem?.(item.id, e)}
                     showStatus={true}
+                    showStoryPoints={storyPointsConfiguredForItem?.(item) ?? false}
+                    storyPointsSaving={storyPointsPendingItemIds.has(item.id)}
+                    onStoryPointsChange={(value) => onUpdateStoryPoints?.(item, value)}
                   >
                     {#snippet leading()}
                       <div class="cursor-grab active:cursor-grabbing" style="{styles.dragHandleStyle}">

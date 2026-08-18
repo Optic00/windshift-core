@@ -37,6 +37,7 @@
   import RecentWorkspacesWidget from '../widgets/dashboard/RecentWorkspacesWidget.svelte';
   import AssignedToMeWidget from '../widgets/dashboard/AssignedToMeWidget.svelte';
   import PersonalTasksWidget from '../widgets/dashboard/PersonalTasksWidget.svelte';
+  import SavedSearchWidget from '../widgets/dashboard/SavedSearchWidget.svelte';
 
   let greeting = $derived(homepageStore.greeting);
   let currentDate = $derived(homepageStore.currentDate);
@@ -503,6 +504,11 @@
                         <AssignedToMeWidget config={widget.config ?? {}} />
                       {:else if widget.type === 'personal-tasks'}
                         <PersonalTasksWidget config={widget.config ?? {}} />
+                      {:else if widget.type === 'saved-search'}
+                        <SavedSearchWidget
+                          config={widget.config ?? {}}
+                          onconfigchange={(changes) => updateWidgetConfig(widget.id, changes)}
+                        />
                       {:else}
                         <div class="text-center py-8 text-sm" style="color: var(--ds-text-subtle);">
                           Unknown widget type: {widget.type}

@@ -10,7 +10,7 @@ export const DEFAULT_DONE_RANGE_DAYS = 7;
 /**
  * Widget types that support the row-count / density controls.
  */
-export const ROW_COUNT_WIDGETS = new Set(['assigned-to-me', 'personal-tasks']);
+export const ROW_COUNT_WIDGETS = new Set(['assigned-to-me', 'personal-tasks', 'saved-search']);
 
 /**
  * Row count options offered in the widget menu.
