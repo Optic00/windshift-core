@@ -20,7 +20,6 @@ import (
 
 // itemSummaryDTO is the trimmed shape used in list responses.
 type itemSummaryDTO struct {
-	ID               int      `json:"id"`
 	Key              string   `json:"key,omitempty"`
 	Title            string   `json:"title"`
 	Status           string   `json:"status,omitempty"`
@@ -49,7 +48,6 @@ type itemDetailDTO struct {
 
 func itemToSummary(item *models.Item) itemSummaryDTO {
 	s := itemSummaryDTO{
-		ID:               item.ID,
 		Title:            item.Title,
 		Status:           item.StatusName,
 		StatusID:         item.StatusID,
