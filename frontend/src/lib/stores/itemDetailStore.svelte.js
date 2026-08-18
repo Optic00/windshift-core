@@ -880,6 +880,7 @@ class ItemDetailStore {
         this.item = { ...this.item, ...updatedItem };
         this.hasChanges = true;
         this.cancelEditing('status');
+        await this.refreshAvailableTransitions();
         return;
       } else if (field === 'priority_id') {
         const newPriorityId = directValue !== null ? directValue : null;
