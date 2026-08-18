@@ -12,7 +12,7 @@
 </script>
 
 <div
-  class={`min-h-screen ${className}`}
+  class={`min-h-screen w-fit min-w-full ${className}`}
   style={`${backgroundStyle} ${contextVars} background-attachment: fixed; ${rootStyle}`}
   data-testid={testid}
 >

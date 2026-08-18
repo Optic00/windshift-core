@@ -1408,6 +1408,7 @@
     backgroundStyle={styles.backgroundStyle}
     contextVars={styles.contextVars}
     contentClass="p-6 min-w-fit"
+    testid="collection-board-background"
   >
     <!-- Content Container -->
       <!-- Header with view tabs -->
