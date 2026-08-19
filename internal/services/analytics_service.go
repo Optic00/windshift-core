@@ -242,7 +242,7 @@ func (s *AnalyticsService) evaluateQLToItemIDs(
 		return []int{}, nil
 	}
 
-	sqlQuery := fmt.Sprintf(`SELECT i.id FROM items i WHERE (%s)`, sqlWhere)
+	sqlQuery := fmt.Sprintf(`SELECT i.id %s WHERE (%s)`, repository.ItemListFilterFromClause(), sqlWhere)
 	if workspaceID > 0 {
 		sqlQuery += ` AND i.workspace_id = ?`
 		sqlArgs = append(sqlArgs, workspaceID)

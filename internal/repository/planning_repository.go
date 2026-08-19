@@ -71,12 +71,10 @@ func (r *PlanningRepository) GetWorkspaceMilestoneProgress(workspaceID int, filt
 	query := `
 		SELECT m.id, m.name, m.target_date, m.status, mc.color,
 		       sc.name, sc.color, sc.is_completed, COUNT(i.id)
-		FROM items i
+		` + ItemListFilterFromClause() + `
 		JOIN item_milestones im ON im.item_id = i.id
 		JOIN milestones m ON m.id = im.milestone_id
 		LEFT JOIN milestone_categories mc ON m.category_id = mc.id
-		LEFT JOIN statuses st ON i.status_id = st.id
-		LEFT JOIN status_categories sc ON st.category_id = sc.id
 		WHERE i.workspace_id = ?
 		  AND (m.status IS NULL OR LOWER(m.status) <> 'completed')`
 	args := []any{workspaceID}

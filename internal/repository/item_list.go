@@ -133,11 +133,11 @@ type itemListCursor struct {
 	ID   int    `json:"i"`
 }
 
-// itemListFilterFromClause contains every table alias referenced by
+// ItemListFilterFromClause contains every table alias referenced by
 // buildWhereClause, including aliases emitted by the CQL generator. Keep this
-// shared by count, page-selection, and distinct-workspace queries so a valid
-// filter cannot succeed in one list path and fail in another.
-func itemListFilterFromClause() string {
+// shared by item-list and analytics queries so a valid filter cannot succeed
+// in one path and fail in another.
+func ItemListFilterFromClause() string {
 	return `FROM items i
 		JOIN workspaces w ON i.workspace_id = w.id
 		LEFT JOIN item_types it ON i.item_type_id = it.id
@@ -245,7 +245,7 @@ func (r *ItemRepository) FindAllWithDetailsPageContext(ctx context.Context, para
 		COALESCE(%s, i.created_at) as status_since
 	`, descriptionExpr, cql.CurrentStatusTransitionAtExpr(""))
 
-	fromClause := itemListFilterFromClause() + `
+	fromClause := ItemListFilterFromClause() + `
 		LEFT JOIN items p ON i.parent_id = p.id
 		LEFT JOIN users assignee ON i.assignee_id = assignee.id
 		LEFT JOIN users creator ON i.creator_id = creator.id
@@ -255,7 +255,7 @@ func (r *ItemRepository) FindAllWithDetailsPageContext(ctx context.Context, para
 
 	// Keep display-only parent and user joins out of the count/page plan, but
 	// retain every alias that buildWhereClause or generated QL can reference.
-	countFromClause := itemListFilterFromClause()
+	countFromClause := ItemListFilterFromClause()
 	pagePlan := r.buildItemListPagePlan(params, countFromClause, whereClause, args)
 	var total int
 	var err error
@@ -484,7 +484,7 @@ func (r *ItemRepository) buildItemListPagePlan(
 func (r *ItemRepository) FindDistinctWorkspaceIDsContext(ctx context.Context, params ItemListParams) ([]int, error) {
 	whereClause, args := r.buildWhereClause(params)
 	query := `SELECT DISTINCT i.workspace_id
-		` + itemListFilterFromClause() + whereClause + `
+		` + ItemListFilterFromClause() + whereClause + `
 		ORDER BY i.workspace_id`
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
