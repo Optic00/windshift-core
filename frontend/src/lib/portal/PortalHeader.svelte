@@ -7,7 +7,6 @@
     KeyRound,
     List,
     LogOut,
-    Menu,
     Moon,
     Palette,
     Settings,
@@ -71,6 +70,8 @@
     return null;
   });
 
+  let accountInitials = $derived(account ? getInitials(account.name) : '');
+
   function closeMenus() {
     portalStore.showProfileMenu = false;
     portalStore.showMainMenu = false;
@@ -102,6 +103,16 @@
   function handleLoginClick() {
     portalStore.showLoginDialog = true;
     closeMenus();
+  }
+
+  /** @param {string} name */
+  function getInitials(name) {
+    if (!name) return '';
+    const parts = name.trim().split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) {
+      return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    }
+    return parts[0].substring(0, 2).toUpperCase();
   }
 
   function removeBrokenAvatar(event) {
@@ -277,11 +288,14 @@
           >
             <span
               data-testid="portal-user-avatar-fallback"
-              class="relative z-0 flex items-center justify-center"
+              class="relative z-0 flex items-center justify-center text-xs font-semibold select-none"
               aria-hidden="true"
             >
-              <Menu class="w-[18px] h-[18px] sm:hidden" />
-              <User class="w-[18px] h-[18px] hidden sm:block" />
+              {#if accountInitials}
+                {accountInitials}
+              {:else}
+                <User class="w-[18px] h-[18px]" />
+              {/if}
             </span>
             {#if account?.avatar}
               <img
@@ -329,11 +343,15 @@
                 <div class="relative w-9 h-9 flex-none">
                   <div
                     data-testid="portal-account-avatar-fallback"
-                    class="w-9 h-9 rounded-full flex items-center justify-center"
-                    style="background-color: var(--ds-background-neutral); color: var(--ds-text-subtle);"
+                    class="w-9 h-9 rounded-full flex items-center justify-center text-xs font-semibold select-none"
+                    style="background-color: var(--ds-background-neutral); color: var(--ds-text);"
                     aria-hidden="true"
                   >
-                    <User class="w-4 h-4" />
+                    {#if accountInitials}
+                      {accountInitials}
+                    {:else}
+                      <User class="w-4 h-4" />
+                    {/if}
                   </div>
                   {#if account.avatar}
                     <img
