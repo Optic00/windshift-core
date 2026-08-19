@@ -264,7 +264,7 @@
 {/snippet}
 
 <ModalBackdrop
-  show={portalStore.showCustomizePanel && portalStore.activeSection !== 'request-types' && !portalStore.isEditing}
+  show={portalStore.showCustomizePanel && portalStore.activeSection !== 'request-types'}
   opacity={0.3}
   blur={0}
   align="none"

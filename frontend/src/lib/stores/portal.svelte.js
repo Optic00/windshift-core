@@ -1464,7 +1464,19 @@ export const portalStore = {
   },
   set showCustomizePanel(value) {
     const wasUsingManagementData = isEditing || showCustomizePanel;
-    showCustomizePanel = Boolean(value);
+    const shouldShowCustomizePanel = Boolean(value);
+
+    // Customization is an editing workflow. Keep both entry points in sync so
+    // draggable portal content is ready as soon as the panel opens.
+    if (shouldShowCustomizePanel) {
+      showCustomizePanel = true;
+      isEditing = true;
+    } else {
+      if (isEditing) saveCustomizations();
+      isEditing = false;
+      showCustomizePanel = false;
+    }
+
     const usesManagementData = isEditing || showCustomizePanel;
     if (portalData?.channel_id && usesManagementData !== wasUsingManagementData) {
       void loadAssetReports({ forCustomization: usesManagementData });
