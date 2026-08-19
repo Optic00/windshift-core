@@ -278,7 +278,7 @@ func fieldSemanticsFor(entityType EntityType, fieldName string) fieldSemantics {
 	// milestone fields are handled by generateMilestoneComparison (M2M via
 	// item_milestones); no name-substitution shortcut applies here.
 	case "itemtype", "item_type_id", "itemtypeid":
-		return fieldSemantics{referenceNameField: "it.name"}
+		return fieldSemantics{bareIdentifierValue: true, referenceNameField: "it.name"}
 	case "timeproject", "time_project_id", "timeprojectid":
 		return fieldSemantics{referenceNameField: "tp.name"}
 	case "iteration", "iteration_id", "iterationid":
@@ -602,11 +602,13 @@ func (g *SQLGenerator) generateComparison(node *ASTNode) (sql string, args []any
 	leftOnlyArgs := append([]any(nil), leftArgs...)
 	leftArgs = append(leftArgs, rightArgs...)
 
-	// String reference values compare against the corresponding name field.
+	// Name values compare against the corresponding reference name field.
 	isReferenceFieldComparison := false
-	if node.Left.Type == NodeIdentifier && node.Right.Type == NodeLiteral && node.Right.DataType == STRING {
+	if node.Left.Type == NodeIdentifier &&
+		(node.Right.Type == NodeLiteral && node.Right.DataType == STRING ||
+			node.Right.Type == NodeIdentifier && semantics.bareIdentifierValue) {
 		if nameField := semantics.referenceNameField; nameField != "" {
-			// Replace the ID field with the name field for string comparisons
+			// Replace the ID field with the name field for name comparisons.
 			leftSQL = nameField
 			isReferenceFieldComparison = true
 			// The name field substitution drops the original left expression,
@@ -776,20 +778,25 @@ func (g *SQLGenerator) generateInExpression(node *ASTNode) (sql string, args []a
 		return "", nil, errors.New("IN expression requires a list of values")
 	}
 
-	// Smart reference field handling: check if any value is a string and this is a reference field
+	// Smart reference field handling: use the name field when any value is a name.
 	hasStringValue := false
+	hasReferenceNameValue := false
 	for _, valueNode := range node.Values.Arguments {
 		if valueNode.DataType == STRING {
 			hasStringValue = true
+			hasReferenceNameValue = true
+		}
+		if valueNode.DataType == IDENTIFIER && semantics.referenceNameField != "" {
+			hasReferenceNameValue = true
 			break
 		}
 	}
 
-	// If we have string values and this is a reference field, use the name field
+	// If we have name values and this is a reference field, use the name field.
 	isReferenceFieldIn := false
-	if node.Field.Type == NodeIdentifier && hasStringValue {
+	if node.Field.Type == NodeIdentifier && hasReferenceNameValue {
 		if nameField := semantics.referenceNameField; nameField != "" {
-			// Replace the ID field with the name field for string comparisons
+			// Replace the ID field with the name field for name comparisons.
 			fieldSQL = nameField
 			isReferenceFieldIn = true
 		}
@@ -1876,6 +1883,8 @@ func (g *SQLGenerator) mapItemFieldName(fieldName string) (expr string, args []a
 	// Item type fields
 	case "itemtype", "item_type_id", "itemtypeid":
 		return prefix + "i.item_type_id", nil, nil
+	case "type":
+		return prefix + "it.name", nil, nil
 	case "itemtypename":
 		return prefix + "it.name", nil, nil
 
