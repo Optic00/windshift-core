@@ -3,6 +3,7 @@ package cql
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Evaluator evaluates QL queries against SQL database
@@ -20,7 +21,7 @@ func NewEvaluator(workspaceMap map[string]int, customFieldMap CustomFieldMap, db
 
 // evaluateQL tokenizes and parses a CQL query, then generates SQL using the given generator.
 // This is the shared pipeline for both item and asset evaluators.
-func evaluateQL(cqlQuery string, gen *SQLGenerator) (string, []any, error) { //nolint:gocritic // unnamedResult
+func evaluateQLAt(cqlQuery string, gen *SQLGenerator, evaluationTime time.Time) (string, []any, error) { //nolint:gocritic // unnamedResult
 	if strings.TrimSpace(cqlQuery) == "" {
 		return "", nil, nil
 	}
@@ -40,7 +41,7 @@ func evaluateQL(cqlQuery string, gen *SQLGenerator) (string, []any, error) { //n
 	}
 
 	// Generate SQL
-	sqlStr, args, err := gen.GenerateSQL(ast)
+	sqlStr, args, err := gen.GenerateSQLAt(ast, evaluationTime)
 	if err != nil {
 		return "", nil, fmt.Errorf("SQL generation error: %w", err)
 	}
@@ -48,9 +49,19 @@ func evaluateQL(cqlQuery string, gen *SQLGenerator) (string, []any, error) { //n
 	return sqlStr, args, nil
 }
 
+func evaluateQL(cqlQuery string, gen *SQLGenerator) (string, []any, error) { //nolint:gocritic // unnamedResult
+	return evaluateQLAt(cqlQuery, gen, time.Now().UTC())
+}
+
 // EvaluateToSQL converts a QL query string to SQL WHERE clause
 func (e *Evaluator) EvaluateToSQL(cqlQuery string) (string, []any, error) { //nolint:gocritic // unnamedResult
 	return evaluateQL(cqlQuery, e.sqlGenerator)
+}
+
+// EvaluateToSQLAt converts a QL query using a caller-provided evaluation time.
+// It is useful for deterministic tests and does not mutate the evaluator.
+func (e *Evaluator) EvaluateToSQLAt(cqlQuery string, evaluationTime time.Time) (string, []any, error) { //nolint:gocritic // unnamedResult
+	return evaluateQLAt(cqlQuery, e.sqlGenerator, evaluationTime)
 }
 
 // AssetEvaluator evaluates QL queries for assets
@@ -126,4 +137,11 @@ func (e *AssetEvaluator) EvaluateToSQL(cqlQuery string) (string, []any, error) {
 	// Inject workspace map for linkedOf() inner queries
 	e.sqlGenerator.workspaceMap = e.workspaceMap
 	return evaluateQL(cqlQuery, e.sqlGenerator)
+}
+
+// EvaluateToSQLAt converts an asset query using a caller-provided evaluation
+// time without mutating the evaluator's temporal state.
+func (e *AssetEvaluator) EvaluateToSQLAt(cqlQuery string, evaluationTime time.Time) (string, []any, error) { //nolint:gocritic // unnamedResult
+	e.sqlGenerator.workspaceMap = e.workspaceMap
+	return evaluateQLAt(cqlQuery, e.sqlGenerator, evaluationTime)
 }

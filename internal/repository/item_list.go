@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"windshift/internal/cql"
 	"windshift/internal/database"
 	"windshift/internal/models"
 )
@@ -29,18 +30,6 @@ var dbTimeLayouts = []string{
 	"2006-01-02 15:04:05.999999999",
 	"2006-01-02 15:04:05",
 }
-
-// currentStatusTransitionAtExpr is shaped to use
-// idx_item_history_current_status_latest: equality on item/status followed by
-// the newest matching transition. LIMIT 1 lets the database stop at the first
-// index entry instead of aggregating all matching history rows.
-const currentStatusTransitionAtExpr = `(SELECT ih.changed_at
-	FROM item_history ih
-	WHERE ih.item_id = i.id
-		AND ih.field_name = 'status_id'
-		AND ih.new_value = CAST(i.status_id AS TEXT)
-	ORDER BY ih.changed_at DESC
-	LIMIT 1)`
 
 // parseDBTime tolerantly parses a datetime string returned from SQLite.
 func parseDBTime(s string) (time.Time, bool) {
@@ -254,7 +243,7 @@ func (r *ItemRepository) FindAllWithDetailsPageContext(ctx context.Context, para
 		creator.first_name || ' ' || creator.last_name as creator_name, creator.email as creator_email,
 		st.name as status_name, sc.color as status_color, pri.name as priority_name, pri.icon as priority_icon, pri.color as priority_color,
 		COALESCE(%s, i.created_at) as status_since
-	`, descriptionExpr, currentStatusTransitionAtExpr)
+	`, descriptionExpr, cql.CurrentStatusTransitionAtExpr(""))
 
 	fromClause := itemListFilterFromClause() + `
 		LEFT JOIN items p ON i.parent_id = p.id
@@ -646,7 +635,7 @@ func (r *ItemRepository) buildWhereClause(params ItemListParams) (whereClause st
 	if params.Filters.CompletedSince != nil {
 		whereClause += ` AND (
 			COALESCE(sc.is_completed, FALSE) = FALSE
-			OR COALESCE(` + currentStatusTransitionAtExpr + `, i.created_at) >= ?
+			OR ` + cql.CurrentCompletedAtExpr("") + ` >= ?
 		)`
 		args = append(args, *params.Filters.CompletedSince)
 	}

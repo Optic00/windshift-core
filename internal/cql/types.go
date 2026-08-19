@@ -31,6 +31,7 @@ const (
 	STRING
 	NUMBER
 	DATE
+	RelativeDate
 	BOOLEAN
 	NULL
 
@@ -46,6 +47,7 @@ const (
 	NotIn        // NOT IN
 	IS           // IS (used with NULL)
 	IsNot        // IS NOT (used with NULL)
+	EMPTY        // EMPTY (used with IS)
 
 	// Logical operators
 	AND
@@ -65,8 +67,8 @@ const (
 // String returns a string representation of the token type
 func (t TokenType) String() string {
 	names := []string{
-		"IDENTIFIER", "STRING", "NUMBER", "DATE", "BOOLEAN", "NULL",
-		"EQUALS", "NotEquals", "LessThan", "LessEqual", "GreaterThan", "GreaterEqual", "CONTAINS", "IN", "NotIn", "IS", "IsNot",
+		"IDENTIFIER", "STRING", "NUMBER", "DATE", "RELATIVE_DATE", "BOOLEAN", "NULL",
+		"EQUALS", "NotEquals", "LessThan", "LessEqual", "GreaterThan", "GreaterEqual", "CONTAINS", "IN", "NotIn", "IS", "IsNot", "EMPTY",
 		"AND", "OR", "NOT",
 		"LPAREN", "RPAREN", "COMMA",
 		"EOF", "FUNCTION",

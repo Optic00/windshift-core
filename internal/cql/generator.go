@@ -19,6 +19,7 @@ type SQLGenerator struct {
 	customFieldMap        CustomFieldMap // Maps lowercase custom field name to {ID, Kind} for the entity being queried
 	itemCustomFieldMap    CustomFieldMap // Item-side custom field map, used by inner item queries inside asset linkedOf()
 	legacyNameKeyFallback bool           // Also read legacy custom_field_values keyed by field name
+	evaluationTime        time.Time      // Captured once per top-level SQL generation
 }
 
 // NewSQLGenerator creates an outer work-item query generator. A nil field map
@@ -87,11 +88,19 @@ func (g *SQLGenerator) jsonExtractLiteralKey(column string, fieldID int) string 
 
 // GenerateSQL converts a QL AST to SQL WHERE clause
 func (g *SQLGenerator) GenerateSQL(ast *ASTNode) (sql string, args []any, err error) {
+	return g.GenerateSQLAt(ast, time.Now().UTC())
+}
+
+// GenerateSQLAt converts an AST using one caller-provided evaluation time.
+// The generator copy keeps request-specific state out of reusable generators.
+func (g *SQLGenerator) GenerateSQLAt(ast *ASTNode, evaluationTime time.Time) (sql string, args []any, err error) {
 	if ast == nil {
 		return "", nil, nil
 	}
 
-	return g.generateNode(ast)
+	local := *g
+	local.evaluationTime = evaluationTime.UTC()
+	return local.generateNode(ast)
 }
 
 // generateNode generates SQL for a single AST node
@@ -173,6 +182,34 @@ func (g *SQLGenerator) generateNullCheck(node *ASTNode) (sql string, args []any,
 	return fmt.Sprintf("%s IS NULL", leftSQL), leftArgs, nil
 }
 
+func isRelativeInstantField(fieldName string) bool {
+	switch strings.ToLower(fieldName) {
+	case "created", "created_at", "createdat", "updated", "updated_at", "updatedat", "completed_at":
+		return true
+	default:
+		return false
+	}
+}
+
+func validateRelativeComparison(node *ASTNode) error {
+	if node.Right == nil || node.Right.Type != NodeLiteral {
+		return nil
+	}
+	if node.Right.DataType == NUMBER {
+		if node.Left.Type == NodeIdentifier && isRelativeInstantField(node.Left.Value) {
+			return fmt.Errorf("relative date literal requires a unit")
+		}
+		return nil
+	}
+	if node.Right.DataType != RelativeDate {
+		return nil
+	}
+	if node.Left.Type != NodeIdentifier || !isRelativeInstantField(node.Left.Value) {
+		return fmt.Errorf("relative date literal requires an instant field")
+	}
+	return nil
+}
+
 // generateBinaryOp generates SQL for binary operations (AND, OR, NOT)
 func (g *SQLGenerator) generateBinaryOp(node *ASTNode) (sql string, args []any, err error) {
 	switch strings.ToUpper(node.Operator) {
@@ -233,6 +270,8 @@ func fieldSemanticsFor(entityType EntityType, fieldName string) fieldSemantics {
 	case "workspace":
 		return fieldSemantics{workspaceReference: true}
 	case "workspacekey":
+		return fieldSemantics{caseInsensitive: true, bareIdentifierValue: true}
+	case "itemtypename":
 		return fieldSemantics{caseInsensitive: true, bareIdentifierValue: true}
 	case "project", "project_id", "projectid":
 		return fieldSemantics{referenceNameField: "proj.name"}
@@ -507,6 +546,9 @@ func (g *SQLGenerator) generateMilestoneInExpression(node *ASTNode) (sql string,
 
 // generateComparison generates SQL for comparison operations
 func (g *SQLGenerator) generateComparison(node *ASTNode) (sql string, args []any, err error) {
+	if err := validateRelativeComparison(node); err != nil {
+		return "", nil, err
+	}
 	semantics := fieldSemantics{}
 	if node.Left.Type == NodeIdentifier {
 		semantics = fieldSemanticsFor(g.entityType, node.Left.Value)
@@ -870,12 +912,12 @@ func (g *SQLGenerator) generateFunction(node *ASTNode) (sql string, args []any, 
 		// Customer organization ID - resolved at handler level before CQL parsing
 		return "?", []any{"current-organisation-id"}, nil //nolint:misspell // CQL function name uses British spelling
 	case "now":
-		return "?", []any{time.Now().UTC()}, nil
+		return "?", []any{g.evaluationTime}, nil
 	case "startofday":
-		now := time.Now().UTC()
+		now := g.evaluationTime
 		return "?", []any{time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)}, nil
 	case "endofday":
-		now := time.Now().UTC()
+		now := g.evaluationTime
 		return "?", []any{time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 59, 0, time.UTC)}, nil
 
 	case "childrenof":
@@ -904,7 +946,7 @@ func (g *SQLGenerator) generateFunction(node *ASTNode) (sql string, args []any, 
 
 		innerGenerator := NewInnerSQLGenerator(g.workspaceMap, g.customFieldMap, g.dbDriver)
 		innerGenerator.legacyNameKeyFallback = g.legacyNameKeyFallback
-		innerSQL, innerArgs, err := innerGenerator.GenerateSQL(innerAST)
+		innerSQL, innerArgs, err := innerGenerator.GenerateSQLAt(innerAST, g.evaluationTime)
 		if err != nil {
 			return "", nil, fmt.Errorf("childrenOf() inner query SQL generation error: %w", err)
 		}
@@ -928,6 +970,7 @@ func (g *SQLGenerator) generateFunction(node *ASTNode) (sql string, args []any, 
 					LEFT JOIN users inner_assignee ON inner_i.assignee_id = inner_assignee.id
 					LEFT JOIN users inner_creator ON inner_i.creator_id = inner_creator.id
 					LEFT JOIN statuses inner_st ON inner_i.status_id = inner_st.id
+					LEFT JOIN status_categories inner_sc ON inner_st.category_id = inner_sc.id
 					LEFT JOIN priorities inner_pri ON inner_i.priority_id = inner_pri.id
 					WHERE %s
 				)
@@ -984,7 +1027,7 @@ func (g *SQLGenerator) generateItemLinkedOf(node *ASTNode) (sql string, args []a
 
 	innerGenerator := NewInnerSQLGenerator(g.workspaceMap, g.customFieldMap, g.dbDriver)
 	innerGenerator.legacyNameKeyFallback = g.legacyNameKeyFallback
-	innerSQL, innerArgs, err := innerGenerator.GenerateSQL(innerAST)
+	innerSQL, innerArgs, err := innerGenerator.GenerateSQLAt(innerAST, g.evaluationTime)
 	if err != nil {
 		return "", nil, fmt.Errorf("linkedOf() inner query SQL generation error: %w", err)
 	}
@@ -1015,6 +1058,7 @@ func (g *SQLGenerator) generateItemLinkedOf(node *ASTNode) (sql string, args []a
 					LEFT JOIN users inner_assignee ON inner_i.assignee_id = inner_assignee.id
 					LEFT JOIN users inner_creator ON inner_i.creator_id = inner_creator.id
 					LEFT JOIN statuses inner_st ON inner_i.status_id = inner_st.id
+					LEFT JOIN status_categories inner_sc ON inner_st.category_id = inner_sc.id
 					LEFT JOIN priorities inner_pri ON inner_i.priority_id = inner_pri.id
 					WHERE %s
 				))
@@ -1030,6 +1074,7 @@ func (g *SQLGenerator) generateItemLinkedOf(node *ASTNode) (sql string, args []a
 					LEFT JOIN users inner_assignee ON inner_i.assignee_id = inner_assignee.id
 					LEFT JOIN users inner_creator ON inner_i.creator_id = inner_creator.id
 					LEFT JOIN statuses inner_st ON inner_i.status_id = inner_st.id
+					LEFT JOIN status_categories inner_sc ON inner_st.category_id = inner_sc.id
 					LEFT JOIN priorities inner_pri ON inner_i.priority_id = inner_pri.id
 					WHERE %s
 				))
@@ -1078,7 +1123,7 @@ func (g *SQLGenerator) generateAssetLinkedOf(node *ASTNode) (sql string, args []
 	// resolve to the numeric JSON key used in items.custom_field_values.
 	innerGenerator := NewInnerSQLGenerator(g.workspaceMap, g.itemCustomFieldMap, g.dbDriver)
 	innerGenerator.legacyNameKeyFallback = g.legacyNameKeyFallback
-	innerSQL, innerArgs, err := innerGenerator.GenerateSQL(innerAST)
+	innerSQL, innerArgs, err := innerGenerator.GenerateSQLAt(innerAST, g.evaluationTime)
 	if err != nil {
 		return "", nil, fmt.Errorf("linkedOf() inner query SQL generation error: %w", err)
 	}
@@ -1107,6 +1152,7 @@ func (g *SQLGenerator) generateAssetLinkedOf(node *ASTNode) (sql string, args []
 					LEFT JOIN users inner_assignee ON inner_i.assignee_id = inner_assignee.id
 					LEFT JOIN users inner_creator ON inner_i.creator_id = inner_creator.id
 					LEFT JOIN statuses inner_st ON inner_i.status_id = inner_st.id
+					LEFT JOIN status_categories inner_sc ON inner_st.category_id = inner_sc.id
 					LEFT JOIN priorities inner_pri ON inner_i.priority_id = inner_pri.id
 					WHERE %s
 				))
@@ -1122,6 +1168,7 @@ func (g *SQLGenerator) generateAssetLinkedOf(node *ASTNode) (sql string, args []
 					LEFT JOIN users inner_assignee ON inner_i.assignee_id = inner_assignee.id
 					LEFT JOIN users inner_creator ON inner_i.creator_id = inner_creator.id
 					LEFT JOIN statuses inner_st ON inner_i.status_id = inner_st.id
+					LEFT JOIN status_categories inner_sc ON inner_st.category_id = inner_sc.id
 					LEFT JOIN priorities inner_pri ON inner_i.priority_id = inner_pri.id
 					WHERE %s
 				))
@@ -1788,6 +1835,8 @@ func (g *SQLGenerator) mapItemFieldName(fieldName string) (expr string, args []a
 		return prefix + "i.created_at", nil, nil
 	case "updated", "updated_at", "updatedat":
 		return prefix + "i.updated_at", nil, nil
+	case "completed_at":
+		return CurrentCompletedAtExpr(prefix), nil, nil
 	case "due_date", "due-date", "duedate":
 		return prefix + "i.due_date", nil, nil
 
@@ -1871,6 +1920,12 @@ func (g *SQLGenerator) convertLiteral(node *ASTNode) any {
 			return t
 		}
 		return node.Value
+	case RelativeDate:
+		duration, err := parseRelativeLiteral(node.Value)
+		if err != nil {
+			return node.Value
+		}
+		return g.evaluationTime.Add(duration)
 	case BOOLEAN:
 		// Convert to int64 for consistent database compatibility
 		// SQLite stores booleans as integers, this ensures proper comparison

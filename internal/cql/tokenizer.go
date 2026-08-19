@@ -85,6 +85,34 @@ func (t *Tokenizer) readNumber() string {
 	return value.String()
 }
 
+// tryReadRelativeLiteral reads the restricted relative-time grammar. It
+// leaves the tokenizer untouched when the current sequence is a regular
+// number, so existing numeric literals keep their behavior.
+func (t *Tokenizer) tryReadRelativeLiteral() (value string, found bool, err error) {
+	startPosition := t.position
+	startCurrent := t.current
+	if t.current == '-' {
+		t.advance()
+	}
+
+	digitStart := t.position
+	for t.current >= '0' && t.current <= '9' {
+		t.advance()
+	}
+	if t.position == digitStart || (t.current != 'd' && t.current != 'h' && t.current != 'm') {
+		t.position = startPosition
+		t.current = startCurrent
+		return "", false, nil
+	}
+
+	t.advance()
+	value = t.input[startPosition:t.position]
+	if _, err := parseRelativeLiteral(value); err != nil {
+		return "", false, t.Error(err.Error())
+	}
+	return value, true, nil
+}
+
 // readIdentifier reads an identifier or keyword. The `.` separator is allowed
 // inside identifiers so that documented syntax like `custom.epicLink` tokenizes
 // as a single identifier; downstream safety is enforced by validCustomFieldNameRegex
@@ -184,6 +212,12 @@ func (t *Tokenizer) Tokenize() ([]Token, error) {
 
 		// Numbers and dates
 		if unicode.IsDigit(t.current) {
+			if value, ok, err := t.tryReadRelativeLiteral(); err != nil {
+				return nil, err
+			} else if ok {
+				tokens = append(tokens, Token{Type: RelativeDate, Value: value, Pos: start})
+				continue
+			}
 			if t.isDatePattern() {
 				// Read as date
 				date := t.input[t.position : t.position+10]
@@ -203,6 +237,12 @@ func (t *Tokenizer) Tokenize() ([]Token, error) {
 		// position (after an operator, comma, opening paren, or at start of input)
 		// — QL has no binary minus.
 		if t.current == '-' && unicode.IsDigit(t.peekAhead(1)) && canPrefixUnaryMinus(previousNonWhitespaceTokenType(tokens)) {
+			if value, ok, err := t.tryReadRelativeLiteral(); err != nil {
+				return nil, err
+			} else if ok {
+				tokens = append(tokens, Token{Type: RelativeDate, Value: value, Pos: start})
+				continue
+			}
 			t.advance() // consume '-'
 			number := "-" + t.readNumber()
 			tokens = append(tokens, Token{Type: NUMBER, Value: number, Pos: start})
@@ -238,6 +278,8 @@ func (t *Tokenizer) Tokenize() ([]Token, error) {
 				tokens = append(tokens, Token{Type: BOOLEAN, Value: strings.ToLower(identifier), Pos: start})
 			case "NULL":
 				tokens = append(tokens, Token{Type: NULL, Value: "null", Pos: start})
+			case "EMPTY":
+				tokens = append(tokens, Token{Type: EMPTY, Value: "empty", Pos: start})
 			case "IS":
 				// Look ahead for "IS NOT"
 				oldPos := t.position
