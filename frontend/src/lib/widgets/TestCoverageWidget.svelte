@@ -2,7 +2,9 @@
   import { onMount } from 'svelte';
   import { ShieldX } from '@lucide/svelte';
   import EmptyState from '../components/EmptyState.svelte';
+  import PieChartSegments from '../components/PieChartSegments.svelte';
   import { api } from '../api.js';
+  import { buildCoveragePieSegments } from '../utils/pieChart.js';
 
   let { workspaceId, collectionId = null } = $props();
 
@@ -12,9 +14,8 @@
 
   // Pie chart configuration
   const radius = 48;
-  const circumference = 2 * Math.PI * radius;
   const coveredColor = 'var(--ds-status-success-solid, #10b981)';
-  const notCoveredColor = 'var(--ds-status-danger-solid, #ef4444)';
+  const notCoveredColor = 'var(--ds-status-danger-solid, #ef4444)';;
 
   onMount(() => {
     loadCoverageData();
@@ -35,39 +36,7 @@
   }
 
   function buildPieSegments(covered, notCovered, total) {
-    if (!total || total <= 0) return [];
-
-    const segments = [];
-    let offset = 0;
-
-    if (covered > 0) {
-      const fraction = covered / total;
-      const arcLength = fraction * circumference;
-      segments.push({
-        key: 'covered',
-        color: coveredColor,
-        dasharray: `${arcLength} ${circumference}`,
-        offset: offset,
-        label: 'Covered',
-        count: covered
-      });
-      offset -= arcLength;
-    }
-
-    if (notCovered > 0) {
-      const fraction = notCovered / total;
-      const arcLength = fraction * circumference;
-      segments.push({
-        key: 'not-covered',
-        color: notCoveredColor,
-        dasharray: `${arcLength} ${circumference}`,
-        offset: offset,
-        label: 'Not Covered',
-        count: notCovered
-      });
-    }
-
-    return segments;
+    return buildCoveragePieSegments(covered, notCovered, total, coveredColor, notCoveredColor, radius);
   }
 
   const segments = $derived(coverageData ? buildPieSegments(coverageData.covered, coverageData.not_covered, coverageData.total) : []);
@@ -95,28 +64,7 @@
     <div class="coverage-content">
       <div class="pie-wrapper">
         <svg viewBox="0 0 140 140" role="img" aria-label="Test coverage breakdown">
-          <circle
-            cx="70"
-            cy="70"
-            r={radius}
-            fill="transparent"
-            stroke="var(--ds-border)"
-            stroke-width="16"
-          />
-          {#each segments as segment (segment.key)}
-            <circle
-              cx="70"
-              cy="70"
-              r={radius}
-              fill="transparent"
-              stroke={segment.color}
-              stroke-width="16"
-              stroke-linecap="butt"
-              stroke-dasharray={segment.dasharray}
-              stroke-dashoffset={segment.offset}
-              transform="rotate(-90 70 70)"
-            />
-          {/each}
+          <PieChartSegments {segments} {radius} />
           <text class="pie-percent" x="70" y="68">{Math.round(coverageRate)}%</text>
           <text class="pie-label" x="70" y="84">covered</text>
         </svg>

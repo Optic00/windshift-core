@@ -291,6 +291,11 @@ func (n AssetActionNode) FlowNodeID() int { return n.ID }
 // SetFlowActionID sets the node's action ID for generic action-flow helpers.
 func (n *AssetActionNode) SetFlowActionID(id int) { n.ActionID = id }
 
+// FlowNodeData returns the node fields for storage-level flow conversion.
+func (n AssetActionNode) FlowNodeData() (actionID int, nodeType, config string, x, y float64) {
+	return n.ActionID, string(n.NodeType), n.NodeConfig, n.PositionX, n.PositionY
+}
+
 // AssetActionEdge represents a connection between nodes in an asset action flow
 type AssetActionEdge struct {
 	ID           int       `json:"id"`
@@ -321,6 +326,14 @@ func (e *AssetActionEdge) SetFlowSourceNodeID(id int) { e.SourceNodeID = id }
 
 // SetFlowTargetNodeID sets the edge's target node ID for generic action-flow helpers.
 func (e *AssetActionEdge) SetFlowTargetNodeID(id int) { e.TargetNodeID = id }
+
+// FlowEdgeID returns the edge's ID for storage-level flow conversion.
+func (e AssetActionEdge) FlowEdgeID() int { return e.ID }
+
+// FlowEdgeData returns the edge fields for storage-level flow conversion.
+func (e AssetActionEdge) FlowEdgeData() (actionID int, edgeType, sourceHandle, targetHandle string) {
+	return e.ActionID, e.EdgeType, e.SourceHandle, e.TargetHandle
+}
 
 // AssetActionExecutionLog represents the audit trail for asset action executions
 type AssetActionExecutionLog struct {

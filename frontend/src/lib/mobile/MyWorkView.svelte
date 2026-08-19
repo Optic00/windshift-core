@@ -8,6 +8,7 @@
   import { assignedToMeQuery } from '../widgets/dashboard/taskWidgetState.js';
   import MobileHeader from './MobileHeader.svelte';
   import MobileItemRow from './MobileItemRow.svelte';
+  import MobileListState from './MobileListState.svelte';
   import UserAvatar from '../components/UserAvatar.svelte';
 
   const SEGMENTS = [
@@ -155,26 +156,20 @@
 </MobileHeader>
 
 <div class="list" data-testid="my-work-list">
-  {#if loading && rows.length === 0}
-    <div class="skeleton">
-      {#each Array(5) as _}
-        <div class="sk-row"></div>
-      {/each}
-    </div>
-  {:else if errored}
-    <div class="msg" data-testid="my-work-error">
-      <p>Couldn't load your work.</p>
-      <button class="retry" onclick={() => load(segment)} disabled={loading} type="button">Retry</button>
-    </div>
-  {:else if rows.length === 0}
-    <p class="msg" data-testid="my-work-empty">
-      {segment === 'assigned' ? 'Nothing assigned to you right now.' : segment === 'watched' ? "You aren't watching any items." : 'No recent activity.'}
-    </p>
-  {:else}
+  <MobileListState
+    {loading}
+    {errored}
+    rowCount={rows.length}
+    errorTestId="my-work-error"
+    emptyTestId="my-work-empty"
+    errorMessage="Couldn't load your work."
+    emptyMessage={segment === 'assigned' ? 'Nothing assigned to you right now.' : segment === 'watched' ? "You aren't watching any items." : 'No recent activity.'}
+    onretry={() => load(segment)}
+  >
     {#each rows as row (row.itemId)}
       <MobileItemRow {...row} />
     {/each}
-  {/if}
+  </MobileListState>
 </div>
 
 <style>
@@ -206,45 +201,5 @@
     background-color: var(--ds-surface-selected, var(--ds-background-neutral));
     color: var(--ds-text);
     border-color: var(--ds-border-bold, var(--ds-border));
-  }
-
-  .msg {
-    padding: 2rem 1.25rem;
-    text-align: center;
-    color: var(--ds-text-subtle);
-    font-size: 0.875rem;
-  }
-
-  .msg p { margin: 0; }
-  .retry {
-    min-height: 40px;
-    margin-top: 0.75rem;
-    padding: 0.45rem 1rem;
-    border: 1px solid var(--ds-interactive);
-    border-radius: var(--radius-md, 6px);
-    background: var(--ds-interactive);
-    color: var(--ds-text-inverse, #fff);
-    font: inherit;
-    font-weight: var(--font-semibold, 600);
-    cursor: pointer;
-  }
-  .retry:disabled { opacity: 0.6; }
-
-  .skeleton {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .sk-row {
-    height: 56px;
-    border-bottom: 1px solid var(--ds-border);
-    background: linear-gradient(90deg, var(--ds-surface) 0%, var(--ds-background-neutral) 50%, var(--ds-surface) 100%);
-    background-size: 200% 100%;
-    animation: shimmer 1.2s ease-in-out infinite;
-  }
-
-  @keyframes shimmer {
-    0% { background-position: 200% 0; }
-    100% { background-position: -200% 0; }
   }
 </style>

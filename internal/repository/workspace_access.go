@@ -2,12 +2,11 @@ package repository
 
 import "windshift/internal/database"
 
-// GetAccessibleWorkspaceIDs returns all workspace IDs the user can access based
-// on direct role assignments, group memberships, active status, and personal ownership.
-// This is the single-query implementation that resolves access in SQL.
-func GetAccessibleWorkspaceIDs(db database.Database, userID int) ([]int, error) {
-	rows, err := db.Query(`
-		SELECT DISTINCT w.id
+// AccessibleWorkspacesJoin resolves, in SQL, the workspaces a user can
+// access: direct role assignments, group memberships, inactive-but-assigned
+// workspaces, and personal ownership. Placeholders (user id ×3) follow the
+// joins in order.
+const AccessibleWorkspacesJoin = `
 		FROM workspaces w
 		LEFT JOIN user_workspace_roles uwr ON w.id = uwr.workspace_id AND uwr.user_id = ?
 		LEFT JOIN (
@@ -20,7 +19,13 @@ func GetAccessibleWorkspaceIDs(db database.Database, userID int) ([]int, error) 
 		   OR (w.active = false AND uwr.role_id IS NOT NULL)
 		   OR (w.active = false AND grp.workspace_id IS NOT NULL)
 		   OR (w.is_personal = true AND w.owner_id = ?)
-	`, userID, userID, userID)
+	`
+
+// GetAccessibleWorkspaceIDs returns all workspace IDs the user can access based
+// on direct role assignments, group memberships, active status, and personal ownership.
+// This is the single-query implementation that resolves access in SQL.
+func GetAccessibleWorkspaceIDs(db database.Database, userID int) ([]int, error) {
+	rows, err := db.Query("SELECT DISTINCT w.id"+AccessibleWorkspacesJoin, userID, userID, userID)
 	if err != nil {
 		return nil, err
 	}

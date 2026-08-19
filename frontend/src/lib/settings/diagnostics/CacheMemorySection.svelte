@@ -5,22 +5,11 @@
   import Lozenge from '../../components/Lozenge.svelte';
   import StatCard from '../../components/StatCard.svelte';
   import { getCacheMemory } from '../../api/diagnostics.js';
+  import { formatBytes } from '../../utils/bytes.js';
   import DiagnosticsSection from './DiagnosticsSection.svelte';
 
   let view = $state({ loading: true, error: null, data: null });
   let previousEvictions = new Map();
-
-  function formatBytes(value) {
-    if (!Number.isFinite(value) || value < 0) return '—';
-    const units = ['B', 'KiB', 'MiB', 'GiB'];
-    let amount = value;
-    let unit = 0;
-    while (amount >= 1024 && unit < units.length - 1) {
-      amount /= 1024;
-      unit += 1;
-    }
-    return `${amount.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
-  }
 
   async function load() {
     view = { ...view, loading: true, error: null };

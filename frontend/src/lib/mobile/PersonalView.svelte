@@ -4,6 +4,7 @@
   import { navigate } from '../router.js';
   import { Check } from '@lucide/svelte';
   import MobileHeader from './MobileHeader.svelte';
+  import MobileListState from './MobileListState.svelte';
 
   // Personal-workspace status ids: 1 = Open, 3 = Done (workspace default taxonomy).
   const STATUS_OPEN = 1;
@@ -93,18 +94,17 @@
 <MobileHeader title="Personal" />
 
 <div class="list" data-testid="personal-list">
-  {#if loading && tasks.length === 0}
-    <div class="skeleton">
-      {#each Array(5) as _}<div class="sk-row"></div>{/each}
-    </div>
-  {:else if errored}
-    <div class="msg" data-testid="personal-error">
-      <p>Couldn't load your personal tasks.</p>
-      <button class="retry" onclick={load} disabled={loading} type="button">Retry</button>
-    </div>
-  {:else if tasks.length === 0}
-    <p class="msg" data-testid="personal-empty">Your personal todo list is empty.</p>
-  {:else}
+  <MobileListState
+    {loading}
+    {errored}
+    rowCount={tasks.length}
+    skeletonRowHeight={52}
+    errorTestId="personal-error"
+    emptyTestId="personal-empty"
+    errorMessage="Couldn't load your personal tasks."
+    emptyMessage="Your personal todo list is empty."
+    onretry={load}
+  >
     {#each tasks as task (task.id)}
       {@const done = isDone(task)}
       <div class="row" data-testid="personal-row">
@@ -124,7 +124,7 @@
         </button>
       </div>
     {/each}
-  {/if}
+  </MobileListState>
 </div>
 
 <style>
@@ -175,36 +175,4 @@
     text-decoration: line-through;
     color: var(--ds-text-subtlest, var(--ds-text-subtle));
   }
-
-  .msg {
-    padding: 2rem 1.25rem;
-    text-align: center;
-    color: var(--ds-text-subtle);
-    font-size: 0.875rem;
-  }
-
-  .msg p { margin: 0; }
-  .retry {
-    min-height: 40px;
-    margin-top: 0.75rem;
-    padding: 0.45rem 1rem;
-    border: 1px solid var(--ds-interactive);
-    border-radius: var(--radius-md, 6px);
-    background: var(--ds-interactive);
-    color: var(--ds-text-inverse, #fff);
-    font: inherit;
-    font-weight: var(--font-semibold, 600);
-    cursor: pointer;
-  }
-  .retry:disabled { opacity: 0.6; }
-
-  .skeleton { display: flex; flex-direction: column; }
-  .sk-row {
-    height: 52px;
-    border-bottom: 1px solid var(--ds-border);
-    background: linear-gradient(90deg, var(--ds-surface) 0%, var(--ds-background-neutral) 50%, var(--ds-surface) 100%);
-    background-size: 200% 100%;
-    animation: shimmer 1.2s ease-in-out infinite;
-  }
-  @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 </style>

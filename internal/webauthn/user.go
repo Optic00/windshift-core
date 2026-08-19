@@ -3,7 +3,6 @@ package webauthn
 import (
 	"fmt"
 	"strconv"
-	"time"
 
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
@@ -87,22 +86,8 @@ func (u *User) CredentialExcludeList() []protocol.CredentialDescriptor {
 
 // WebAuthnCredential represents a stored WebAuthn credential in the database
 type WebAuthnCredential struct {
-	ID                  string   `json:"id"` // Base64 encoded credential ID
-	UserID              int      `json:"user_id"`
-	CredentialName      string   `json:"credential_name"`
-	PublicKey           []byte   `json:"-"` // COSE encoded public key (not sent to client)
-	AttestationType     string   `json:"attestation_type"`
-	AAGUID              []byte   `json:"-"` // Authenticator GUID
-	SignCount           uint32   `json:"sign_count"`
-	CloneWarning        bool     `json:"clone_warning"`
-	Transport           []string `json:"transport"` // ['usb', 'nfc', 'ble', 'internal']
-	FlagsUserPresent    bool     `json:"flags_user_present"`
-	FlagsUserVerified   bool     `json:"flags_user_verified"`
-	FlagsBackupEligible bool     `json:"flags_backup_eligible"`
-	FlagsBackupState    bool     `json:"flags_backup_state"`
-	CreatedAt           string   `json:"created_at"`
-	UpdatedAt           string   `json:"updated_at"`
-	LastUsedAt          *string  `json:"last_used_at,omitempty"`
+	UserID int `json:"user_id"`
+	persistence.CredentialWireFields
 }
 
 // ToWebAuthnCredential converts database credential to webauthn.Credential
@@ -117,44 +102,12 @@ func FromWebAuthnCredential(userID int, name string, cred *webauthn.Credential) 
 }
 
 func webAuthnCredentialFromRecord(record persistence.CredentialRecord) WebAuthnCredential {
-	credential := WebAuthnCredential{
-		ID:                  record.ID,
-		UserID:              record.OwnerID,
-		CredentialName:      record.CredentialName,
-		PublicKey:           record.PublicKey,
-		AttestationType:     record.AttestationType,
-		AAGUID:              record.AAGUID,
-		SignCount:           record.SignCount,
-		CloneWarning:        record.CloneWarning,
-		Transport:           record.Transport,
-		FlagsUserPresent:    record.FlagsUserPresent,
-		FlagsUserVerified:   record.FlagsUserVerified,
-		FlagsBackupEligible: record.FlagsBackupEligible,
-		FlagsBackupState:    record.FlagsBackupState,
-		CreatedAt:           record.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:           record.UpdatedAt.Format(time.RFC3339),
+	return WebAuthnCredential{
+		UserID:               record.OwnerID,
+		CredentialWireFields: record.WireFields(),
 	}
-	if record.LastUsedAt != nil {
-		lastUsedAt := record.LastUsedAt.Format(time.RFC3339)
-		credential.LastUsedAt = &lastUsedAt
-	}
-	return credential
 }
 
 func credentialRecordFromWebAuthnCredential(credential *WebAuthnCredential) persistence.CredentialRecord {
-	return persistence.CredentialRecord{
-		ID:                  credential.ID,
-		OwnerID:             credential.UserID,
-		CredentialName:      credential.CredentialName,
-		PublicKey:           credential.PublicKey,
-		AttestationType:     credential.AttestationType,
-		AAGUID:              credential.AAGUID,
-		SignCount:           credential.SignCount,
-		CloneWarning:        credential.CloneWarning,
-		Transport:           credential.Transport,
-		FlagsUserPresent:    credential.FlagsUserPresent,
-		FlagsUserVerified:   credential.FlagsUserVerified,
-		FlagsBackupEligible: credential.FlagsBackupEligible,
-		FlagsBackupState:    credential.FlagsBackupState,
-	}
+	return persistence.RecordFromWireFields(credential.CredentialWireFields, credential.UserID)
 }

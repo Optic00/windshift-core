@@ -97,6 +97,60 @@ func ValidateActionFields(name, triggerType string) string {
 
 // --- Generic node+edge creation with rollback ---
 
+// FlowNodeSource is implemented by domain node types whose fields can be
+// copied losslessly into the storage-level FlowNode.
+type FlowNodeSource interface {
+	FlowNodeItem
+	FlowNodeData() (actionID int, nodeType, config string, x, y float64)
+}
+
+// FlowEdgeSource is implemented by domain edge types whose fields can be
+// copied losslessly into the storage-level FlowEdge.
+type FlowEdgeSource interface {
+	FlowEdgeItem
+	FlowEdgeID() int
+	FlowEdgeData() (actionID int, edgeType, sourceHandle, targetHandle string)
+}
+
+// ToFlowNodes converts domain flow nodes to the storage-level representation.
+func ToFlowNodes[
+	N any, NP interface {
+		*N
+		FlowNodeSource
+	},
+](nodes []N) []FlowNode {
+	out := make([]FlowNode, len(nodes))
+	for i := range nodes {
+		np := NP(&nodes[i])
+		actionID, nodeType, config, x, y := np.FlowNodeData()
+		out[i] = FlowNode{
+			ID: np.FlowNodeID(), ActionID: actionID, NodeType: nodeType,
+			NodeConfig: config, PositionX: x, PositionY: y,
+		}
+	}
+	return out
+}
+
+// ToFlowEdges converts domain flow edges to the storage-level representation.
+func ToFlowEdges[
+	E any, EP interface {
+		*E
+		FlowEdgeSource
+	},
+](edges []E) []FlowEdge {
+	out := make([]FlowEdge, len(edges))
+	for i := range edges {
+		ep := EP(&edges[i])
+		actionID, edgeType, sourceHandle, targetHandle := ep.FlowEdgeData()
+		out[i] = FlowEdge{
+			ID: ep.FlowEdgeID(), ActionID: actionID,
+			SourceNodeID: ep.FlowSourceNodeID(), TargetNodeID: ep.FlowTargetNodeID(),
+			EdgeType: edgeType, SourceHandle: sourceHandle, TargetHandle: targetHandle,
+		}
+	}
+	return out
+}
+
 // FlowNodeItem is the interface that pointer-to-node types must implement
 // so they can be used with CreateFlowNodesAndEdges.
 type FlowNodeItem interface {

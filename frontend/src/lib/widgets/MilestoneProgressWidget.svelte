@@ -1,13 +1,14 @@
 <script>
   import { Flag } from '@lucide/svelte';
   import EmptyState from '../components/EmptyState.svelte';
+  import PieChartSegments from '../components/PieChartSegments.svelte';
   import { t } from '../stores/i18n.svelte.js';
   import { formatDateShort } from '../utils/dateFormatter.js';
+  import { buildPieSegments } from '../utils/pieChart.js';
 
   let { milestones = [] } = $props();
 
   const radius = 48;
-  const circumference = 2 * Math.PI * radius;
   const fallbackColors = ['#2563eb', '#0ea5e9', '#10b981', '#f97316', '#ec4899', '#8b5cf6', '#facc15', '#14b8a6'];
 
   const formatPercent = (value) => {
@@ -45,22 +46,7 @@
   }
 
   function buildSegments(breakdown, totalItems) {
-    if (!totalItems || totalItems <= 0) return [];
-    let offset = 0;
-    return breakdown
-      .filter(segment => segment.count > 0)
-      .map(segment => {
-        const fraction = segment.count / totalItems;
-        const arcLength = Math.max(fraction * circumference, 0);
-        const dasharray = `${arcLength} ${circumference}`;
-        const segmentData = {
-          ...segment,
-          dasharray,
-          offset
-        };
-        offset -= arcLength;
-        return segmentData;
-      });
+    return buildPieSegments(breakdown, totalItems, radius);
   }
 </script>
 
@@ -96,28 +82,7 @@
             <div class="pie-wrapper">
               {#if milestone.total_items > 0}
                 <svg viewBox="0 0 140 140" role="img" aria-label="Milestone status breakdown">
-                  <circle
-                    cx="70"
-                    cy="70"
-                    r={radius}
-                    fill="transparent"
-                    stroke="var(--ds-border)"
-                    stroke-width="16"
-                  />
-                  {#each segments as segment (segment.key)}
-                    <circle
-                      cx="70"
-                      cy="70"
-                      r={radius}
-                      fill="transparent"
-                      stroke={segment.color}
-                      stroke-width="16"
-                      stroke-linecap="butt"
-                      stroke-dasharray={segment.dasharray}
-                      stroke-dashoffset={segment.offset}
-                      transform="rotate(-90 70 70)"
-                    />
-                  {/each}
+                  <PieChartSegments {segments} {radius} />
                   <text class="pie-total" x="70" y="68">{milestone.total_items || 0}</text>
                   <text class="pie-label" x="70" y="84">{t('widgets.milestoneProgress.items')}</text>
                 </svg>

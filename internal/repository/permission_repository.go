@@ -26,6 +26,23 @@ func NewPermissionRepository(db database.Database) *PermissionRepository {
 
 const permissionColumns = "id, permission_key, permission_name, description, scope, is_system, created_at, updated_at"
 
+// SystemAdminGrantQuery matches a user's system.admin global permission,
+// either granted directly or via an active group. Used by the permission
+// cache and authz probes; keep aligned with handlers/auth_policy.go.
+const SystemAdminGrantQuery = `
+	SELECT EXISTS(
+		SELECT 1 FROM user_global_permissions ugp
+		JOIN permissions p ON ugp.permission_id = p.id
+		WHERE ugp.user_id = ? AND p.permission_key = 'system.admin'
+		UNION
+		SELECT 1 FROM group_members gm
+		JOIN groups g ON g.id = gm.group_id
+		JOIN group_global_permissions ggp ON ggp.group_id = gm.group_id
+		JOIN permissions p ON p.id = ggp.permission_id
+		WHERE gm.user_id = ? AND p.permission_key = 'system.admin' AND g.is_active = true
+	)
+`
+
 // GroupGlobalGrant is one row of the group_global_permissions table as
 // surfaced by the admin "all group permissions" listing.
 type GroupGlobalGrant struct {

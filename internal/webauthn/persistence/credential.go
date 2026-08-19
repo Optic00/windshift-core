@@ -265,3 +265,71 @@ func (record CredentialRecord) ToWebAuthnCredential() (webauthn.Credential, erro
 		},
 	}, nil
 }
+
+// CredentialWireFields is the API-facing subset of a stored credential
+// shared by the internal-user and portal-customer wire types. Each wire type
+// embeds it and adds its owner ID field under the JSON key its API contract
+// requires.
+type CredentialWireFields struct {
+	ID                  string   `json:"id"` // Base64 encoded credential ID
+	CredentialName      string   `json:"credential_name"`
+	PublicKey           []byte   `json:"-"` // COSE encoded public key (not sent to client)
+	AttestationType     string   `json:"attestation_type"`
+	AAGUID              []byte   `json:"-"` // Authenticator GUID
+	SignCount           uint32   `json:"sign_count"`
+	CloneWarning        bool     `json:"clone_warning"`
+	Transport           []string `json:"transport"` // ['usb', 'nfc', 'ble', 'internal']
+	FlagsUserPresent    bool     `json:"flags_user_present"`
+	FlagsUserVerified   bool     `json:"flags_user_verified"`
+	FlagsBackupEligible bool     `json:"flags_backup_eligible"`
+	FlagsBackupState    bool     `json:"flags_backup_state"`
+	CreatedAt           string   `json:"created_at"`
+	UpdatedAt           string   `json:"updated_at"`
+	LastUsedAt          *string  `json:"last_used_at,omitempty"`
+}
+
+// WireFields converts the record to the shared wire fields, formatting
+// timestamps as RFC3339.
+func (record CredentialRecord) WireFields() CredentialWireFields {
+	fields := CredentialWireFields{
+		ID:                  record.ID,
+		CredentialName:      record.CredentialName,
+		PublicKey:           record.PublicKey,
+		AttestationType:     record.AttestationType,
+		AAGUID:              record.AAGUID,
+		SignCount:           record.SignCount,
+		CloneWarning:        record.CloneWarning,
+		Transport:           record.Transport,
+		FlagsUserPresent:    record.FlagsUserPresent,
+		FlagsUserVerified:   record.FlagsUserVerified,
+		FlagsBackupEligible: record.FlagsBackupEligible,
+		FlagsBackupState:    record.FlagsBackupState,
+		CreatedAt:           record.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:           record.UpdatedAt.Format(time.RFC3339),
+	}
+	if record.LastUsedAt != nil {
+		lastUsedAt := record.LastUsedAt.Format(time.RFC3339)
+		fields.LastUsedAt = &lastUsedAt
+	}
+	return fields
+}
+
+// RecordFromWireFields rebuilds the storage record from the shared wire
+// fields. Timestamps are not parsed back; the record's times stay zero.
+func RecordFromWireFields(fields CredentialWireFields, ownerID int) CredentialRecord {
+	return CredentialRecord{
+		ID:                  fields.ID,
+		OwnerID:             ownerID,
+		CredentialName:      fields.CredentialName,
+		PublicKey:           fields.PublicKey,
+		AttestationType:     fields.AttestationType,
+		AAGUID:              fields.AAGUID,
+		SignCount:           fields.SignCount,
+		CloneWarning:        fields.CloneWarning,
+		Transport:           fields.Transport,
+		FlagsUserPresent:    fields.FlagsUserPresent,
+		FlagsUserVerified:   fields.FlagsUserVerified,
+		FlagsBackupEligible: fields.FlagsBackupEligible,
+		FlagsBackupState:    fields.FlagsBackupState,
+	}
+}

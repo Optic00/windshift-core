@@ -2,7 +2,7 @@
   import { ListChecks } from '@lucide/svelte';
   import { authStore, workspacesStore } from '../../stores';
   import { api } from '../../api.js';
-  import DashboardItemRow from './DashboardItemRow.svelte';
+  import DashboardTaskList from './DashboardTaskList.svelte';
   import {
     completedSinceCutoff,
     normalizeTaskResponse,
@@ -70,38 +70,13 @@
   }
 </script>
 
-{#if loading && tasks.length === 0}
-  <div class="space-y-2 animate-pulse">
-    {#each Array(3) as _}
-      <div class="h-11 rounded" style="background-color: var(--ds-background-neutral);"></div>
-    {/each}
-  </div>
-{:else if errored}
-  <div class="flex flex-col items-center text-center py-6" style="color: var(--ds-text-subtle);">
-    <ListChecks class="w-6 h-6 mb-2 opacity-60" />
-    <p class="text-sm">Couldn't load your personal tasks</p>
-  </div>
-{:else if tasks.length === 0}
-  <div class="flex flex-col items-center text-center py-6" style="color: var(--ds-text-subtle);">
-    <ListChecks class="w-6 h-6 mb-2 opacity-60" />
-    <p class="text-sm">Your personal todo list is empty</p>
-  </div>
-{:else}
-  <ul class="flex flex-col gap-1.5">
-    {#each tasks as task (task.id)}
-      <li>
-        <DashboardItemRow
-          title={task.title}
-          itemKey={`${task.workspace_key}-${task.workspace_item_number}`}
-          statusName={task.status_name}
-          statusColor={task.status_color}
-          priorityName={task.priority_name}
-          priorityColor={task.priority_color}
-          dueDate={task.dueDate}
-          {density}
-          onclick={() => openTask(task)}
-        />
-      </li>
-    {/each}
-  </ul>
-{/if}
+<DashboardTaskList
+  {loading}
+  {errored}
+  {tasks}
+  icon={ListChecks}
+  errorMessage="Couldn't load your personal tasks"
+  emptyMessage="Your personal todo list is empty"
+  {density}
+  {openTask}
+/>

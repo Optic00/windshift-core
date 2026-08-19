@@ -52,18 +52,7 @@ func (s *WorkspaceService) List(params WorkspaceListParams) ([]models.Workspace,
 	rows, err := s.db.Query(`
 		SELECT DISTINCT w.id, w.name, w.key, w.description, w.active, w.is_template, w.is_personal,
 		       w.icon, w.color, w.internal_comments_enabled, w.created_at, w.updated_at
-		FROM workspaces w
-		LEFT JOIN user_workspace_roles uwr ON w.id = uwr.workspace_id AND uwr.user_id = ?
-		LEFT JOIN (
-			SELECT DISTINCT gwr.workspace_id
-			FROM group_workspace_roles gwr
-			JOIN group_members gm ON gwr.group_id = gm.group_id
-			WHERE gm.user_id = ?
-		) grp ON w.id = grp.workspace_id
-		WHERE (w.active = true AND (w.is_personal = false OR w.is_personal IS NULL))
-		   OR (w.active = false AND uwr.role_id IS NOT NULL)
-		   OR (w.active = false AND grp.workspace_id IS NOT NULL)
-		   OR (w.is_personal = true AND w.owner_id = ?)
+		`+repository.AccessibleWorkspacesJoin+`
 		ORDER BY w.name
 		LIMIT ? OFFSET ?
 	`, params.UserID, params.UserID, params.UserID, params.Limit, params.Offset)
@@ -95,21 +84,8 @@ func (s *WorkspaceService) List(params WorkspaceListParams) ([]models.Workspace,
 
 	// Get total count
 	var total int
-	err = s.db.QueryRow(`
-		SELECT COUNT(DISTINCT w.id)
-		FROM workspaces w
-		LEFT JOIN user_workspace_roles uwr ON w.id = uwr.workspace_id AND uwr.user_id = ?
-		LEFT JOIN (
-			SELECT DISTINCT gwr.workspace_id
-			FROM group_workspace_roles gwr
-			JOIN group_members gm ON gwr.group_id = gm.group_id
-			WHERE gm.user_id = ?
-		) grp ON w.id = grp.workspace_id
-		WHERE (w.active = true AND (w.is_personal = false OR w.is_personal IS NULL))
-		   OR (w.active = false AND uwr.role_id IS NOT NULL)
-		   OR (w.active = false AND grp.workspace_id IS NOT NULL)
-		   OR (w.is_personal = true AND w.owner_id = ?)
-	`, params.UserID, params.UserID, params.UserID).Scan(&total)
+	err = s.db.QueryRow("SELECT COUNT(DISTINCT w.id)"+repository.AccessibleWorkspacesJoin,
+		params.UserID, params.UserID, params.UserID).Scan(&total)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to count workspaces: %w", err)
 	}

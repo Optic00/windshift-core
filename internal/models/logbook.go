@@ -262,6 +262,11 @@ func (n LogbookActionNode) FlowNodeID() int { return n.ID }
 // SetFlowActionID sets the node's action ID for generic action-flow helpers.
 func (n *LogbookActionNode) SetFlowActionID(id int) { n.ActionID = id }
 
+// FlowNodeData returns the node fields for storage-level flow conversion.
+func (n LogbookActionNode) FlowNodeData() (actionID int, nodeType, config string, x, y float64) {
+	return n.ActionID, string(n.NodeType), n.NodeConfig, n.PositionX, n.PositionY
+}
+
 // LogbookActionEdge represents a connection between nodes in a logbook action flow
 type LogbookActionEdge struct {
 	ID           int       `json:"id"`
@@ -292,6 +297,14 @@ func (e *LogbookActionEdge) SetFlowSourceNodeID(id int) { e.SourceNodeID = id }
 
 // SetFlowTargetNodeID sets the edge's target node ID for generic action-flow helpers.
 func (e *LogbookActionEdge) SetFlowTargetNodeID(id int) { e.TargetNodeID = id }
+
+// FlowEdgeID returns the edge's ID for storage-level flow conversion.
+func (e LogbookActionEdge) FlowEdgeID() int { return e.ID }
+
+// FlowEdgeData returns the edge fields for storage-level flow conversion.
+func (e LogbookActionEdge) FlowEdgeData() (actionID int, edgeType, sourceHandle, targetHandle string) {
+	return e.ActionID, e.EdgeType, e.SourceHandle, e.TargetHandle
+}
 
 // LogbookActionExecutionLog represents the audit trail for logbook action executions
 type LogbookActionExecutionLog struct {

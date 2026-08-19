@@ -1134,20 +1134,8 @@ func (r *ActionRepository) DeleteCapability(id int) error {
 
 // SaveActionWithNodesAndEdges saves an action along with its nodes and edges in a transaction
 func (r *ActionRepository) SaveActionWithNodesAndEdges(action *models.Action, nodes []models.ActionNode, edges []models.ActionEdge) error {
-	flowNodes := make([]actionutil.FlowNode, len(nodes))
-	for i, n := range nodes {
-		flowNodes[i] = actionutil.FlowNode{
-			ID: n.ID, ActionID: n.ActionID, NodeType: string(n.NodeType),
-			NodeConfig: n.NodeConfig, PositionX: n.PositionX, PositionY: n.PositionY,
-		}
-	}
-	flowEdges := make([]actionutil.FlowEdge, len(edges))
-	for i, e := range edges {
-		flowEdges[i] = actionutil.FlowEdge{
-			ID: e.ID, SourceNodeID: e.SourceNodeID, TargetNodeID: e.TargetNodeID,
-			EdgeType: e.EdgeType, SourceHandle: e.SourceHandle, TargetHandle: e.TargetHandle,
-		}
-	}
+	flowNodes := actionutil.ToFlowNodes(nodes)
+	flowEdges := actionutil.ToFlowEdges(edges)
 
 	const updateSQL = `
 		UPDATE actions SET

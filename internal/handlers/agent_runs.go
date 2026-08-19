@@ -187,23 +187,33 @@ func (h *AgentRunHandler) Rerun(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]any{"started": started})
 }
 
-// Get returns a single run. Workspace permission gates access by way of
-// the run row's workspace_id.
-func (h *AgentRunHandler) Get(w http.ResponseWriter, r *http.Request) {
+// requireRunForRead resolves the id path param, loads the run, and enforces
+// the read gate shared by the per-run endpoints.
+func (h *AgentRunHandler) requireRunForRead(w http.ResponseWriter, r *http.Request) (*models.AgentRun, bool) {
 	runID, ok := requireIDParam(w, r, "id")
 	if !ok {
-		return
+		return nil, false
 	}
 	user, ok := RequireAuth(w, r)
 	if !ok {
-		return
+		return nil, false
 	}
 	run, err := h.repo.Get(r.Context(), runID)
 	if err != nil {
 		respondNotFound(w, r, "agent run")
-		return
+		return nil, false
 	}
 	if !h.requireRunRead(w, r, user.ID, run) {
+		return nil, false
+	}
+	return run, true
+}
+
+// Get returns a single run. Workspace permission gates access by way of
+// the run row's workspace_id.
+func (h *AgentRunHandler) Get(w http.ResponseWriter, r *http.Request) {
+	run, ok := h.requireRunForRead(w, r)
+	if !ok {
 		return
 	}
 	respondJSON(w, http.StatusOK, toAgentRunResponse(run))
@@ -212,27 +222,15 @@ func (h *AgentRunHandler) Get(w http.ResponseWriter, r *http.Request) {
 // Usage returns the run's metered LLM token + cost totals (WI-494).
 // GET /agent-runs/{id}/usage. Same view-permission gate as Get.
 func (h *AgentRunHandler) Usage(w http.ResponseWriter, r *http.Request) {
-	runID, ok := requireIDParam(w, r, "id")
+	run, ok := h.requireRunForRead(w, r)
 	if !ok {
-		return
-	}
-	user, ok := RequireAuth(w, r)
-	if !ok {
-		return
-	}
-	run, err := h.repo.Get(r.Context(), runID)
-	if err != nil {
-		respondNotFound(w, r, "agent run")
-		return
-	}
-	if !h.requireRunRead(w, r, user.ID, run) {
 		return
 	}
 	if h.usage == nil {
 		respondJSON(w, http.StatusOK, repository.RunUsageTotals{})
 		return
 	}
-	totals, err := h.usage.TotalsForRun(r.Context(), runID)
+	totals, err := h.usage.TotalsForRun(r.Context(), run.ID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -243,25 +241,13 @@ func (h *AgentRunHandler) Usage(w http.ResponseWriter, r *http.Request) {
 // Events returns the run's event stream. ?after_id=N for "give me
 // everything after id N"; the UI polls this every few seconds.
 func (h *AgentRunHandler) Events(w http.ResponseWriter, r *http.Request) {
-	runID, ok := requireIDParam(w, r, "id")
+	run, ok := h.requireRunForRead(w, r)
 	if !ok {
-		return
-	}
-	user, ok := RequireAuth(w, r)
-	if !ok {
-		return
-	}
-	run, err := h.repo.Get(r.Context(), runID)
-	if err != nil {
-		respondNotFound(w, r, "agent run")
-		return
-	}
-	if !h.requireRunRead(w, r, user.ID, run) {
 		return
 	}
 	afterID := parseQueryInt(r, "after_id", 0)
 	limit := parseQueryInt(r, "limit", 200)
-	events, err := h.repo.ListEventsAfter(r.Context(), runID, afterID, limit)
+	events, err := h.repo.ListEventsAfter(r.Context(), run.ID, afterID, limit)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return

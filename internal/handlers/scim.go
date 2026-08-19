@@ -308,31 +308,11 @@ func (h *SCIMHandler) listGroupsFiltered(filter string, startIndex, count int) (
 }
 
 func (h *SCIMHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
-	filter := r.URL.Query().Get("filter")
-	startIndexStr := r.URL.Query().Get("startIndex")
-	countStr := r.URL.Query().Get("count")
-
-	startIndex := 1
-	if startIndexStr != "" {
-		if val, err := strconv.Atoi(startIndexStr); err == nil && val > 0 {
-			startIndex = val
-		}
-	}
-
-	count := 100
-	if countStr != "" {
-		if val, err := strconv.Atoi(countStr); err == nil && val > 0 && val <= 200 {
-			count = val
-		}
-	}
+	filter, startIndex, count := scimListPagingFromQuery(r)
 
 	response, err := h.listUsersFiltered(filter, startIndex, count)
 	if err != nil {
-		if isInvalidFilterErr(err) {
-			respondSCIMErrorMsg(w, http.StatusBadRequest, err.Error(), "invalidFilter")
-		} else {
-			respondSCIMErrorMsg(w, http.StatusInternalServerError, err.Error(), "")
-		}
+		respondSCIMListError(w, err)
 		return
 	}
 
@@ -682,31 +662,11 @@ func (h *SCIMHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 // Group endpoints.
 
 func (h *SCIMHandler) ListGroups(w http.ResponseWriter, r *http.Request) {
-	filter := r.URL.Query().Get("filter")
-	startIndexStr := r.URL.Query().Get("startIndex")
-	countStr := r.URL.Query().Get("count")
-
-	startIndex := 1
-	if startIndexStr != "" {
-		if val, err := strconv.Atoi(startIndexStr); err == nil && val > 0 {
-			startIndex = val
-		}
-	}
-
-	count := 100
-	if countStr != "" {
-		if val, err := strconv.Atoi(countStr); err == nil && val > 0 && val <= 200 {
-			count = val
-		}
-	}
+	filter, startIndex, count := scimListPagingFromQuery(r)
 
 	response, err := h.listGroupsFiltered(filter, startIndex, count)
 	if err != nil {
-		if isInvalidFilterErr(err) {
-			respondSCIMErrorMsg(w, http.StatusBadRequest, err.Error(), "invalidFilter")
-		} else {
-			respondSCIMErrorMsg(w, http.StatusInternalServerError, err.Error(), "")
-		}
+		respondSCIMListError(w, err)
 		return
 	}
 
@@ -1036,6 +996,31 @@ func (h *SCIMHandler) DeleteGroup(w http.ResponseWriter, r *http.Request) {
 
 // Me endpoint.
 
+// scimListPagingFromQuery reads the shared SCIM list query parameters
+// (filter, startIndex, count) with the server-side defaults and caps.
+func scimListPagingFromQuery(r *http.Request) (filter string, startIndex, count int) {
+	filter = r.URL.Query().Get("filter")
+	startIndex = 1
+	if val, err := strconv.Atoi(r.URL.Query().Get("startIndex")); err == nil && val > 0 {
+		startIndex = val
+	}
+	count = 100
+	if val, err := strconv.Atoi(r.URL.Query().Get("count")); err == nil && val > 0 && val <= 200 {
+		count = val
+	}
+	return filter, startIndex, count
+}
+
+// respondSCIMListError maps a filtered-list failure to a SCIM error,
+// preserving the invalidFilter classification for syntax errors.
+func respondSCIMListError(w http.ResponseWriter, err error) {
+	if isInvalidFilterErr(err) {
+		respondSCIMErrorMsg(w, http.StatusBadRequest, err.Error(), "invalidFilter")
+	} else {
+		respondSCIMErrorMsg(w, http.StatusInternalServerError, err.Error(), "")
+	}
+}
+
 func (h *SCIMHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 	respondSCIMErrorMsg(w, http.StatusNotImplemented, "The /Me endpoint is not implemented", "")
 }
@@ -1043,29 +1028,11 @@ func (h *SCIMHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 // Search endpoints.
 
 func (h *SCIMHandler) SearchRequest(w http.ResponseWriter, r *http.Request) {
-	h.limitRequestBody(w, r)
-
-	var searchReq models.SCIMSearchRequest
-	if err := newJSONDecoder(w, r).Decode(&searchReq); err != nil {
-		if err.Error() == "http: request body too large" {
-			respondSCIMErrorMsg(w, http.StatusRequestEntityTooLarge, "Request body too large", "tooLarge")
-			return
-		}
-		respondSCIMErrorMsg(w, http.StatusBadRequest, "Invalid request body", "invalidValue")
+	searchReq, ok := h.decodeSCIMSearchBody(w, r)
+	if !ok {
 		return
 	}
-
-	startIndex := searchReq.StartIndex
-	if startIndex < 1 {
-		startIndex = 1
-	}
-	count := searchReq.Count
-	if count <= 0 {
-		count = 100
-	}
-	if count > 200 {
-		count = 200
-	}
+	startIndex, count := normalizeSCIMPaging(searchReq.StartIndex, searchReq.Count)
 
 	resourceType, remainingFilter := ExtractResourceTypeFilter(searchReq.Filter)
 
@@ -1073,11 +1040,7 @@ func (h *SCIMHandler) SearchRequest(w http.ResponseWriter, r *http.Request) {
 	case "User":
 		response, err := h.listUsersFiltered(remainingFilter, startIndex, count)
 		if err != nil {
-			if isInvalidFilterErr(err) {
-				respondSCIMErrorMsg(w, http.StatusBadRequest, err.Error(), "invalidFilter")
-			} else {
-				respondSCIMErrorMsg(w, http.StatusInternalServerError, err.Error(), "")
-			}
+			respondSCIMListError(w, err)
 			return
 		}
 		respondSCIMJSON(w, http.StatusOK, response)
@@ -1085,11 +1048,7 @@ func (h *SCIMHandler) SearchRequest(w http.ResponseWriter, r *http.Request) {
 	case "Group":
 		response, err := h.listGroupsFiltered(remainingFilter, startIndex, count)
 		if err != nil {
-			if isInvalidFilterErr(err) {
-				respondSCIMErrorMsg(w, http.StatusBadRequest, err.Error(), "invalidFilter")
-			} else {
-				respondSCIMErrorMsg(w, http.StatusInternalServerError, err.Error(), "")
-			}
+			respondSCIMListError(w, err)
 			return
 		}
 		respondSCIMJSON(w, http.StatusOK, response)
@@ -1135,77 +1094,63 @@ func (h *SCIMHandler) SearchRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SCIMHandler) SearchUsers(w http.ResponseWriter, r *http.Request) {
-	h.limitRequestBody(w, r)
-
-	var searchReq models.SCIMSearchRequest
-	if err := newJSONDecoder(w, r).Decode(&searchReq); err != nil {
-		if err.Error() == "http: request body too large" {
-			respondSCIMErrorMsg(w, http.StatusRequestEntityTooLarge, "Request body too large", "tooLarge")
-			return
-		}
-		respondSCIMErrorMsg(w, http.StatusBadRequest, "Invalid request body", "invalidValue")
+	searchReq, ok := h.decodeSCIMSearchBody(w, r)
+	if !ok {
 		return
 	}
-
-	startIndex := searchReq.StartIndex
-	if startIndex < 1 {
-		startIndex = 1
-	}
-	count := searchReq.Count
-	if count <= 0 {
-		count = 100
-	}
-	if count > 200 {
-		count = 200
-	}
+	startIndex, count := normalizeSCIMPaging(searchReq.StartIndex, searchReq.Count)
 
 	response, err := h.listUsersFiltered(searchReq.Filter, startIndex, count)
 	if err != nil {
-		if isInvalidFilterErr(err) {
-			respondSCIMErrorMsg(w, http.StatusBadRequest, err.Error(), "invalidFilter")
-		} else {
-			respondSCIMErrorMsg(w, http.StatusInternalServerError, err.Error(), "")
-		}
+		respondSCIMListError(w, err)
 		return
 	}
 	respondSCIMJSON(w, http.StatusOK, response)
 }
 
 func (h *SCIMHandler) SearchGroups(w http.ResponseWriter, r *http.Request) {
-	h.limitRequestBody(w, r)
+	searchReq, ok := h.decodeSCIMSearchBody(w, r)
+	if !ok {
+		return
+	}
+	startIndex, count := normalizeSCIMPaging(searchReq.StartIndex, searchReq.Count)
 
+	response, err := h.listGroupsFiltered(searchReq.Filter, startIndex, count)
+	if err != nil {
+		respondSCIMListError(w, err)
+		return
+	}
+	respondSCIMJSON(w, http.StatusOK, response)
+}
+
+// decodeSCIMSearchBody parses the POST search body, enforcing the request
+// size limit and SCIM error shapes.
+func (h *SCIMHandler) decodeSCIMSearchBody(w http.ResponseWriter, r *http.Request) (models.SCIMSearchRequest, bool) {
+	h.limitRequestBody(w, r)
 	var searchReq models.SCIMSearchRequest
 	if err := newJSONDecoder(w, r).Decode(&searchReq); err != nil {
 		if err.Error() == "http: request body too large" {
 			respondSCIMErrorMsg(w, http.StatusRequestEntityTooLarge, "Request body too large", "tooLarge")
-			return
+		} else {
+			respondSCIMErrorMsg(w, http.StatusBadRequest, "Invalid request body", "invalidValue")
 		}
-		respondSCIMErrorMsg(w, http.StatusBadRequest, "Invalid request body", "invalidValue")
-		return
+		return models.SCIMSearchRequest{}, false
 	}
+	return searchReq, true
+}
 
-	startIndex := searchReq.StartIndex
+// normalizeSCIMPaging clamps SCIM paging to the server defaults and caps.
+func normalizeSCIMPaging(startIndex, count int) (normalizedStartIndex, normalizedCount int) {
 	if startIndex < 1 {
 		startIndex = 1
 	}
-	count := searchReq.Count
 	if count <= 0 {
 		count = 100
 	}
 	if count > 200 {
 		count = 200
 	}
-
-	response, err := h.listGroupsFiltered(searchReq.Filter, startIndex, count)
-	if err != nil {
-		if isInvalidFilterErr(err) {
-			respondSCIMErrorMsg(w, http.StatusBadRequest, err.Error(), "invalidFilter")
-		} else {
-			respondSCIMErrorMsg(w, http.StatusInternalServerError, err.Error(), "")
-		}
-		return
-	}
-	respondSCIMJSON(w, http.StatusOK, response)
+	return startIndex, count
 }
 
 // Bulk endpoint.

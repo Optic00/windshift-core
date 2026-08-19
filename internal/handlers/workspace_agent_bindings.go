@@ -591,20 +591,8 @@ func (h *WorkspaceAgentBindingHandler) CreateProfile(w http.ResponseWriter, r *h
 // class remain immutable, and identity fields are accepted only for
 // workspace-managed identities.
 func (h *WorkspaceAgentBindingHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
-	workspaceID, ok := requireIDParam(w, r, "workspaceId")
+	workspaceID, id, user, ok := h.requireProfileAdmin(w, r)
 	if !ok {
-		return
-	}
-	user, ok := RequireAuth(w, r)
-	if !ok {
-		return
-	}
-	if !RequireWorkspacePermission(w, r, user.ID, workspaceID, models.PermissionWorkspaceAdmin, h.permissionService) {
-		return
-	}
-	id, err := strconv.Atoi(r.PathValue("id"))
-	if err != nil || id <= 0 {
-		respondBadRequest(w, r, "id path param must be a positive integer")
 		return
 	}
 	var body updateStudioProfileBody
@@ -994,6 +982,13 @@ func (h *WorkspaceAgentBindingHandler) ActivateProfile(w http.ResponseWriter, r 
 }
 
 func (h *WorkspaceAgentBindingHandler) requireProfileAdmin(w http.ResponseWriter, r *http.Request) (workspaceID, profileID int, user *models.User, ok bool) {
+	return h.requireBindingAdmin(w, r)
+}
+
+// requireBindingAdmin resolves the shared workspace-admin prologue for
+// per-binding routes: workspace id, authenticated user, workspace admin
+// permission, and positive binding id path param.
+func (h *WorkspaceAgentBindingHandler) requireBindingAdmin(w http.ResponseWriter, r *http.Request) (workspaceID, bindingID int, user *models.User, ok bool) {
 	workspaceID, ok = requireIDParam(w, r, "workspaceId")
 	if !ok {
 		return 0, 0, nil, false
@@ -1005,12 +1000,12 @@ func (h *WorkspaceAgentBindingHandler) requireProfileAdmin(w http.ResponseWriter
 	if !RequireWorkspacePermission(w, r, user.ID, workspaceID, models.PermissionWorkspaceAdmin, h.permissionService) {
 		return 0, 0, nil, false
 	}
-	profileID, err := strconv.Atoi(r.PathValue("id"))
-	if err != nil || profileID <= 0 {
+	bindingID, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil || bindingID <= 0 {
 		respondBadRequest(w, r, "id path param must be a positive integer")
 		return 0, 0, nil, false
 	}
-	return workspaceID, profileID, user, true
+	return workspaceID, bindingID, user, true
 }
 
 // List returns every binding configured in the workspace.
@@ -1070,19 +1065,7 @@ func (h *WorkspaceAgentBindingHandler) Create(w http.ResponseWriter, r *http.Req
 		sanitize.Pair{Target: &body.RepoBaseRef, Policy: sanitize.ShortIdentifier},
 		sanitize.Pair{Target: &body.Instructions, Policy: sanitize.RichText},
 	)
-	repos := make([]services.RepoInput, 0, len(body.Repos))
-	for i := range body.Repos {
-		sanitize.ApplyAll(
-			sanitize.Pair{Target: &body.Repos[i].RepoSlug, Policy: sanitize.ShortIdentifier},
-			sanitize.Pair{Target: &body.Repos[i].RepoBaseRef, Policy: sanitize.ShortIdentifier},
-		)
-		repos = append(repos, services.RepoInput{
-			RepoSlug:        body.Repos[i].RepoSlug,
-			RepoBaseRef:     body.Repos[i].RepoBaseRef,
-			SCMConnectionID: body.Repos[i].SCMConnectionID,
-			IsPrimary:       body.Repos[i].IsPrimary,
-		})
-	}
+	repos := sanitizeRepoInputs(body.Repos)
 
 	binding, err := h.bindings.Create(r.Context(), services.CreateBindingRequest{
 		WorkspaceID:     workspaceID,
@@ -1157,20 +1140,8 @@ type updateBindingBody struct {
 // Update edits an existing binding's mutable configuration (WI-450). Identity
 // and target pool are immutable; see updateBindingBody.
 func (h *WorkspaceAgentBindingHandler) Update(w http.ResponseWriter, r *http.Request) {
-	workspaceID, ok := requireIDParam(w, r, "workspaceId")
+	workspaceID, id, user, ok := h.requireBindingAdmin(w, r)
 	if !ok {
-		return
-	}
-	user, ok := RequireAuth(w, r)
-	if !ok {
-		return
-	}
-	if !RequireWorkspacePermission(w, r, user.ID, workspaceID, models.PermissionWorkspaceAdmin, h.permissionService) {
-		return
-	}
-	id, err := strconv.Atoi(r.PathValue("id"))
-	if err != nil || id <= 0 {
-		respondBadRequest(w, r, "id path param must be a positive integer")
 		return
 	}
 	var body updateBindingBody
@@ -1179,19 +1150,7 @@ func (h *WorkspaceAgentBindingHandler) Update(w http.ResponseWriter, r *http.Req
 		return
 	}
 	sanitize.Apply(&body.Instructions, sanitize.RichText)
-	repos := make([]services.RepoInput, 0, len(body.Repos))
-	for i := range body.Repos {
-		sanitize.ApplyAll(
-			sanitize.Pair{Target: &body.Repos[i].RepoSlug, Policy: sanitize.ShortIdentifier},
-			sanitize.Pair{Target: &body.Repos[i].RepoBaseRef, Policy: sanitize.ShortIdentifier},
-		)
-		repos = append(repos, services.RepoInput{
-			RepoSlug:        body.Repos[i].RepoSlug,
-			RepoBaseRef:     body.Repos[i].RepoBaseRef,
-			SCMConnectionID: body.Repos[i].SCMConnectionID,
-			IsPrimary:       body.Repos[i].IsPrimary,
-		})
-	}
+	repos := sanitizeRepoInputs(body.Repos)
 
 	binding, err := h.bindings.UpdateBinding(r.Context(), services.UpdateBindingRequest{
 		WorkspaceID:      workspaceID,
@@ -1240,6 +1199,25 @@ func (h *WorkspaceAgentBindingHandler) Update(w http.ResponseWriter, r *http.Req
 	respondJSON(w, http.StatusOK, h.withSkillIDs(r, toBindingResponse(binding)))
 }
 
+// sanitizeRepoInputs sanitizes repo slugs and refs from the request body and
+// maps them to the service-layer input shape.
+func sanitizeRepoInputs(repos []createBindingRepoBody) []services.RepoInput {
+	inputs := make([]services.RepoInput, 0, len(repos))
+	for i := range repos {
+		sanitize.ApplyAll(
+			sanitize.Pair{Target: &repos[i].RepoSlug, Policy: sanitize.ShortIdentifier},
+			sanitize.Pair{Target: &repos[i].RepoBaseRef, Policy: sanitize.ShortIdentifier},
+		)
+		inputs = append(inputs, services.RepoInput{
+			RepoSlug:        repos[i].RepoSlug,
+			RepoBaseRef:     repos[i].RepoBaseRef,
+			SCMConnectionID: repos[i].SCMConnectionID,
+			IsPrimary:       repos[i].IsPrimary,
+		})
+	}
+	return inputs
+}
+
 // isSkillAttachError reports whether the error came from skill-id
 // validation during binding create/update (bad or foreign ids → 400).
 func isSkillAttachError(err error) bool {
@@ -1262,20 +1240,8 @@ type updateAgentConfigBody struct {
 // create/delete-only for everything else; this narrow update lets admins
 // iterate on personas without recreating the binding.
 func (h *WorkspaceAgentBindingHandler) UpdateAgentConfig(w http.ResponseWriter, r *http.Request) {
-	workspaceID, ok := requireIDParam(w, r, "workspaceId")
+	workspaceID, id, user, ok := h.requireBindingAdmin(w, r)
 	if !ok {
-		return
-	}
-	user, ok := RequireAuth(w, r)
-	if !ok {
-		return
-	}
-	if !RequireWorkspacePermission(w, r, user.ID, workspaceID, models.PermissionWorkspaceAdmin, h.permissionService) {
-		return
-	}
-	id, err := strconv.Atoi(r.PathValue("id"))
-	if err != nil || id <= 0 {
-		respondBadRequest(w, r, "id path param must be a positive integer")
 		return
 	}
 	var body updateAgentConfigBody
@@ -1310,21 +1276,8 @@ func (h *WorkspaceAgentBindingHandler) UpdateAgentConfig(w http.ResponseWriter, 
 // Delete preserves the compatibility route while archiving the profile.
 // Stable binding, acting-user, run, and attribution references survive.
 func (h *WorkspaceAgentBindingHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	workspaceID, ok := requireIDParam(w, r, "workspaceId")
+	workspaceID, id, user, ok := h.requireBindingAdmin(w, r)
 	if !ok {
-		return
-	}
-	user, ok := RequireAuth(w, r)
-	if !ok {
-		return
-	}
-	if !RequireWorkspacePermission(w, r, user.ID, workspaceID, models.PermissionWorkspaceAdmin, h.permissionService) {
-		return
-	}
-	idStr := r.PathValue("id")
-	id, err := strconv.Atoi(idStr)
-	if err != nil || id <= 0 {
-		respondBadRequest(w, r, "id path param must be a positive integer")
 		return
 	}
 	n, err := h.bindings.Delete(r.Context(), id, workspaceID, user.ID)
@@ -1344,20 +1297,8 @@ func (h *WorkspaceAgentBindingHandler) Delete(w http.ResponseWriter, r *http.Req
 
 // Restore reopens an archived profile as Draft with its stable identifiers.
 func (h *WorkspaceAgentBindingHandler) Restore(w http.ResponseWriter, r *http.Request) {
-	workspaceID, ok := requireIDParam(w, r, "workspaceId")
+	workspaceID, id, user, ok := h.requireBindingAdmin(w, r)
 	if !ok {
-		return
-	}
-	user, ok := RequireAuth(w, r)
-	if !ok {
-		return
-	}
-	if !RequireWorkspacePermission(w, r, user.ID, workspaceID, models.PermissionWorkspaceAdmin, h.permissionService) {
-		return
-	}
-	id, err := strconv.Atoi(r.PathValue("id"))
-	if err != nil || id <= 0 {
-		respondBadRequest(w, r, "id path param must be a positive integer")
 		return
 	}
 	binding, err := h.bindings.Restore(r.Context(), id, workspaceID)
@@ -1398,20 +1339,8 @@ type testLLMResponse struct {
 // mutations. A provider/connection failure is surfaced as 502 so the admin
 // sees the upstream message rather than an opaque 500.
 func (h *WorkspaceAgentBindingHandler) TestLLM(w http.ResponseWriter, r *http.Request) {
-	workspaceID, ok := requireIDParam(w, r, "workspaceId")
+	workspaceID, id, _, ok := h.requireBindingAdmin(w, r)
 	if !ok {
-		return
-	}
-	user, ok := RequireAuth(w, r)
-	if !ok {
-		return
-	}
-	if !RequireWorkspacePermission(w, r, user.ID, workspaceID, models.PermissionWorkspaceAdmin, h.permissionService) {
-		return
-	}
-	id, err := strconv.Atoi(r.PathValue("id"))
-	if err != nil || id <= 0 {
-		respondBadRequest(w, r, "id path param must be a positive integer")
 		return
 	}
 	body, ok := decodeOptionalJSON[testLLMRequest](w, r)
@@ -1456,20 +1385,8 @@ type testRunResponse struct {
 // when the coding-agent runner isn't configured on this server or the binding
 // targets a remote runner pool (test runs are local-runtime only).
 func (h *WorkspaceAgentBindingHandler) TestRun(w http.ResponseWriter, r *http.Request) {
-	workspaceID, ok := requireIDParam(w, r, "workspaceId")
+	workspaceID, id, user, ok := h.requireBindingAdmin(w, r)
 	if !ok {
-		return
-	}
-	user, ok := RequireAuth(w, r)
-	if !ok {
-		return
-	}
-	if !RequireWorkspacePermission(w, r, user.ID, workspaceID, models.PermissionWorkspaceAdmin, h.permissionService) {
-		return
-	}
-	id, err := strconv.Atoi(r.PathValue("id"))
-	if err != nil || id <= 0 {
-		respondBadRequest(w, r, "id path param must be a positive integer")
 		return
 	}
 	runID, err := h.bindings.StartTestRun(r.Context(), id, workspaceID, user.ID)

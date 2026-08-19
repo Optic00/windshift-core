@@ -317,20 +317,8 @@ func (r *LogbookActionRepository) CreateEdge(edge *models.LogbookActionEdge) (in
 
 // SaveActionWithNodesAndEdges saves a logbook action with its nodes and edges in a transaction
 func (r *LogbookActionRepository) SaveActionWithNodesAndEdges(action *models.LogbookAction, nodes []models.LogbookActionNode, edges []models.LogbookActionEdge) error {
-	flowNodes := make([]actionutil.FlowNode, len(nodes))
-	for i, n := range nodes {
-		flowNodes[i] = actionutil.FlowNode{
-			ID: n.ID, ActionID: n.ActionID, NodeType: string(n.NodeType),
-			NodeConfig: n.NodeConfig, PositionX: n.PositionX, PositionY: n.PositionY,
-		}
-	}
-	flowEdges := make([]actionutil.FlowEdge, len(edges))
-	for i, e := range edges {
-		flowEdges[i] = actionutil.FlowEdge{
-			ID: e.ID, SourceNodeID: e.SourceNodeID, TargetNodeID: e.TargetNodeID,
-			EdgeType: e.EdgeType, SourceHandle: e.SourceHandle, TargetHandle: e.TargetHandle,
-		}
-	}
+	flowNodes := actionutil.ToFlowNodes(nodes)
+	flowEdges := actionutil.ToFlowEdges(edges)
 
 	const updateSQL = `
 		UPDATE logbook_actions SET

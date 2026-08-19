@@ -3,9 +3,11 @@
   import { onMount } from 'svelte';
   import { api } from '../api.js';
   import { authStore } from '../stores';
-  import { Plus, Check } from '@lucide/svelte';
   import { t } from '../stores/i18n.svelte.js';
   import { errorToast } from '../stores/toasts.svelte.js';
+  import { parseLabelValue, labelIdsForNames } from './labelComboboxUtils.js';
+  import LabelItemRow from './LabelItemRow.svelte';
+  import LabelCreateRow from './LabelCreateRow.svelte';
 
   // userId semantics:
   //   undefined  → unified mode: load mine ∪ shared; inline-create makes a
@@ -39,21 +41,10 @@
   const loading = $derived(providedLabels === null ? internalLoading : providedLoading);
 
   // Convert value (array of names or comma-separated string) to array of names
-  const valueAsNames = $derived.by(() => {
-    if (!value) return [];
-    if (Array.isArray(value)) return value;
-    if (typeof value === 'string' && value.trim()) {
-      return value.split(',').map(name => name.trim()).filter(name => name);
-    }
-    return [];
-  });
+  const valueAsNames = $derived.by(() => parseLabelValue(value));
 
   // Map label names to label IDs for the picker
-  const valueAsIds = $derived.by(() => {
-    return valueAsNames
-      .map(name => labels.find(l => l.name === name)?.id)
-      .filter(Boolean);
-  });
+  const valueAsIds = $derived.by(() => labelIdsForNames(valueAsNames, labels));
 
   onMount(async () => {
     if (providedLabels === null) await loadLabels();
@@ -158,33 +149,11 @@
   onChange={handleChange}
   onCancel={handleCancel}
 >
-  {#snippet itemSnippet({ item: label, isSelected })}
-    <div class="flex items-center gap-3 flex-1 min-w-0">
-      <span
-        class="inline-block w-3 h-3 rounded-full flex-shrink-0"
-        style="background-color: {label.color || '#3B82F6'};"
-        aria-hidden="true"
-      ></span>
-      <span class="font-medium text-sm" style="color: var(--ds-text);">
-        {label.name}
-      </span>
-    </div>
+  {#snippet itemSnippet({ item: label })}
+    <LabelItemRow {label} />
   {/snippet}
 
   {#snippet noResultsSnippet({ searchQuery })}
-    <div class="p-3 text-sm text-center" style="color: var(--ds-text-subtle);">
-      <div class="space-y-2">
-        <div>{t('pickers.noLabelsFoundFor', { query: searchQuery })}</div>
-        <button
-          type="button"
-          class="flex items-center gap-2 px-3 py-1 rounded transition-colors mx-auto"
-          style="background-color: var(--ds-background-accent-blue-subtlest); color: var(--ds-interactive);"
-          onclick={() => handleCreate(searchQuery)}
-        >
-          <Plus class="w-4 h-4" />
-          {t('pickers.createItem', { value: searchQuery })}
-        </button>
-      </div>
-    </div>
+    <LabelCreateRow searchQuery={searchQuery} oncreate={handleCreate} />
   {/snippet}
 </BasePicker>

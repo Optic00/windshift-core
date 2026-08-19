@@ -134,19 +134,7 @@ func (a *Authz) CanViewWorkspaceTx(ctx context.Context, tx database.Tx, userID, 
 
 	// System admins pass every workspace check.
 	var hasSystemAdmin bool
-	err = tx.QueryRowContext(ctx, `
-		SELECT EXISTS(
-			SELECT 1 FROM user_global_permissions ugp
-			JOIN permissions p ON ugp.permission_id = p.id
-			WHERE ugp.user_id = ? AND p.permission_key = 'system.admin'
-			UNION
-			SELECT 1 FROM group_members gm
-			JOIN groups g ON g.id = gm.group_id
-			JOIN group_global_permissions ggp ON ggp.group_id = gm.group_id
-			JOIN permissions p ON p.id = ggp.permission_id
-			WHERE gm.user_id = ? AND p.permission_key = 'system.admin' AND g.is_active = true
-		)
-	`, userID, userID).Scan(&hasSystemAdmin)
+	err = tx.QueryRowContext(ctx, repository.SystemAdminGrantQuery, userID, userID).Scan(&hasSystemAdmin)
 	if err != nil {
 		return false, fmt.Errorf("check template access system admin: %w", err)
 	}

@@ -284,19 +284,7 @@ func (ps *PermissionService) IsSystemAdmin(userID int) (bool, error) {
 	// Keep this probe aligned with auth_policy.go when the snapshot is absent.
 	atomic.AddInt64(&ps.misses, 1)
 	var hasPermission bool
-	err = ps.db.QueryRow(`
-		SELECT EXISTS(
-			SELECT 1 FROM user_global_permissions ugp
-			JOIN permissions p ON ugp.permission_id = p.id
-			WHERE ugp.user_id = ? AND p.permission_key = 'system.admin'
-			UNION
-			SELECT 1 FROM group_members gm
-			JOIN groups g ON g.id = gm.group_id
-			JOIN group_global_permissions ggp ON ggp.group_id = gm.group_id
-			JOIN permissions p ON p.id = ggp.permission_id
-			WHERE gm.user_id = ? AND p.permission_key = 'system.admin' AND g.is_active = true
-		)
-	`, userID, userID).Scan(&hasPermission)
+	err = ps.db.QueryRow(repository.SystemAdminGrantQuery, userID, userID).Scan(&hasPermission)
 	if err != nil {
 		atomic.AddInt64(&ps.errors, 1)
 		return false, fmt.Errorf("error checking system admin permission: %w", err)
@@ -313,19 +301,7 @@ func (ps *PermissionService) IsSystemAdminContext(ctx context.Context, userID in
 	}
 	atomic.AddInt64(&ps.misses, 1)
 	var hasPermission bool
-	err := ps.db.QueryRowContext(ctx, `
-		SELECT EXISTS(
-			SELECT 1 FROM user_global_permissions ugp
-			JOIN permissions p ON ugp.permission_id = p.id
-			WHERE ugp.user_id = ? AND p.permission_key = 'system.admin'
-			UNION
-			SELECT 1 FROM group_members gm
-			JOIN groups g ON g.id = gm.group_id
-			JOIN group_global_permissions ggp ON ggp.group_id = gm.group_id
-			JOIN permissions p ON p.id = ggp.permission_id
-			WHERE gm.user_id = ? AND p.permission_key = 'system.admin' AND g.is_active = true
-		)
-	`, userID, userID).Scan(&hasPermission)
+	err := ps.db.QueryRowContext(ctx, repository.SystemAdminGrantQuery, userID, userID).Scan(&hasPermission)
 	if err != nil {
 		atomic.AddInt64(&ps.errors, 1)
 		return false, fmt.Errorf("error checking system admin permission: %w", err)
@@ -882,19 +858,7 @@ func (ps *PermissionService) buildUserPermissionCache(userID int) (*models.UserP
 	// Check if user has system.admin permission, either directly or via an
 	// active group. Mirrors auth_policy.go's display SQL — see IsSystemAdmin.
 	var hasSystemAdmin bool
-	err = ps.db.QueryRow(`
-		SELECT EXISTS(
-			SELECT 1 FROM user_global_permissions ugp
-			JOIN permissions p ON ugp.permission_id = p.id
-			WHERE ugp.user_id = ? AND p.permission_key = 'system.admin'
-			UNION
-			SELECT 1 FROM group_members gm
-			JOIN groups g ON g.id = gm.group_id
-			JOIN group_global_permissions ggp ON ggp.group_id = gm.group_id
-			JOIN permissions p ON p.id = ggp.permission_id
-			WHERE gm.user_id = ? AND p.permission_key = 'system.admin' AND g.is_active = true
-		)
-	`, userID, userID).Scan(&hasSystemAdmin)
+	err = ps.db.QueryRow(repository.SystemAdminGrantQuery, userID, userID).Scan(&hasSystemAdmin)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return cached, nil // User not found, return empty permissions
