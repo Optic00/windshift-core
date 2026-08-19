@@ -1,6 +1,7 @@
 <script>
   import { Search, Plus, X, AlertCircle } from '@lucide/svelte';
-  import { itemTypeIconMap, priorityIconMap } from '../utils/icons.js';
+  import { priorityIconMap } from '../utils/icons.js';
+  import ItemTypeIcon from '../components/ItemTypeIcon.svelte';
   import { t } from '../stores/i18n.svelte.js';
   import { confirm } from '../composables/useConfirm.js';
   import { isGenericSubtaskType } from '../utils/hierarchy.js';
@@ -105,22 +106,23 @@
           >
             <div class="flex items-center gap-3 min-w-0">
               {#if entityType === 'priorities' || entityType === 'item-types'}
-                <div
-                  class="w-6 h-6 rounded flex items-center justify-center flex-shrink-0"
-                  style="background-color: {entityType === 'item-types' ? entity.color || '#3b82f6' : (entity.color || '#3b82f6') + '20'};"
-                >
-                  {#if entityType === 'item-types' && entity.icon && itemTypeIconMap[entity.icon]}
-                    {@const EntityIcon = itemTypeIconMap[entity.icon]}
-                    <EntityIcon class="w-4 h-4 text-white" />
-                  {:else if entityType === 'priorities' && entity.icon && priorityIconMap[entity.icon]}
-                    {@const EntityIcon = priorityIconMap[entity.icon]}
-                    <EntityIcon class="w-4 h-4" style="color: {entity.color || '#3b82f6'};" />
-                  {:else}
-                    <span style="color: {entityType === 'item-types' ? 'white' : entity.color || '#3b82f6'}; font-size: 12px;" class="font-medium">
-                      {entity.name?.charAt(0) || '?'}
-                    </span>
-                  {/if}
-                </div>
+                {#if entityType === 'item-types'}
+                  <ItemTypeIcon itemType={entity} class="w-6 h-6 rounded flex-shrink-0" size={16} />
+                {:else}
+                  <div
+                    class="w-6 h-6 rounded flex items-center justify-center flex-shrink-0"
+                    style="background-color: {(entity.color || '#3b82f6') + '20'};"
+                  >
+                    {#if entity.icon && priorityIconMap[entity.icon]}
+                      {@const EntityIcon = priorityIconMap[entity.icon]}
+                      <EntityIcon class="w-4 h-4" style="color: {entity.color || '#3b82f6'};" />
+                    {:else}
+                      <span style="color: {entity.color || '#3b82f6'}; font-size: 12px;" class="font-medium">
+                        {entity.name?.charAt(0) || '?'}
+                      </span>
+                    {/if}
+                  </div>
+                {/if}
               {/if}
               <div class="min-w-0">
                 <div class="font-medium text-sm truncate" style="color: var(--ds-text);">
@@ -179,22 +181,23 @@
           >
             <div class="flex items-center gap-3 min-w-0 flex-1">
               {#if entityType === 'priorities' || entityType === 'item-types'}
-                <div
-                  class="w-6 h-6 rounded flex items-center justify-center flex-shrink-0"
-                  style="background-color: {entityType === 'item-types' ? entity.color || '#3b82f6' : (entity.color || '#3b82f6') + '20'};"
-                >
-                  {#if entityType === 'item-types' && entity.icon && itemTypeIconMap[entity.icon]}
-                    {@const EntityIcon = itemTypeIconMap[entity.icon]}
-                    <EntityIcon class="w-4 h-4 text-white" />
-                  {:else if entityType === 'priorities' && entity.icon && priorityIconMap[entity.icon]}
-                    {@const EntityIcon = priorityIconMap[entity.icon]}
-                    <EntityIcon class="w-4 h-4" style="color: {entity.color || '#3b82f6'};" />
-                  {:else}
-                    <span style="color: {entityType === 'item-types' ? 'white' : entity.color || '#3b82f6'}; font-size: 12px;" class="font-medium">
-                      {entity.name?.charAt(0) || '?'}
-                    </span>
-                  {/if}
-                </div>
+                {#if entityType === 'item-types'}
+                  <ItemTypeIcon itemType={entity} class="w-6 h-6 rounded flex-shrink-0" size={16} />
+                {:else}
+                  <div
+                    class="w-6 h-6 rounded flex items-center justify-center flex-shrink-0"
+                    style="background-color: {(entity.color || '#3b82f6') + '20'};"
+                  >
+                    {#if entity.icon && priorityIconMap[entity.icon]}
+                      {@const EntityIcon = priorityIconMap[entity.icon]}
+                      <EntityIcon class="w-4 h-4" style="color: {entity.color || '#3b82f6'};" />
+                    {:else}
+                      <span style="color: {entity.color || '#3b82f6'}; font-size: 12px;" class="font-medium">
+                        {entity.name?.charAt(0) || '?'}
+                      </span>
+                    {/if}
+                  </div>
+                {/if}
               {/if}
               <div class="min-w-0 flex-1">
                 <div class="font-medium text-sm truncate" style="color: var(--ds-text);">

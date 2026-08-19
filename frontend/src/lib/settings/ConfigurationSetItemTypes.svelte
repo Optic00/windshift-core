@@ -1,7 +1,7 @@
 <script>
   import { t } from '../stores/i18n.svelte.js';
-  import { FileText, ChevronRight, ChevronDown } from '@lucide/svelte';
-  import { itemTypeIconMap } from '../utils/icons.js';
+  import { ChevronRight, ChevronDown } from '@lucide/svelte';
+  import ItemTypeIcon from '../components/ItemTypeIcon.svelte';
   import ConfigurationSetEntityPicker from '../pickers/ConfigurationSetEntityPicker.svelte';
   import ScreenPicker from '../pickers/ScreenPicker.svelte';
   import WorkflowPicker from '../pickers/WorkflowPicker.svelte';
@@ -189,16 +189,10 @@
           <tbody>
             {#each assignedItemTypes as itemType}
               {@const config = getConfig(itemType.id)}
-              {@const ItemTypeIcon = itemTypeIconMap[itemType.icon] || FileText}
               <tr class="border-t" style="border-color: var(--ds-border);">
                 <td class="px-4 py-3">
                   <div class="flex items-center gap-2">
-                    <div
-                      class="w-6 h-6 rounded flex items-center justify-center flex-shrink-0"
-                      style="background-color: {itemType.color || '#3b82f6'};"
-                    >
-                      <ItemTypeIcon class="w-4 h-4 text-white" />
-                    </div>
+                    <ItemTypeIcon itemType={itemType} class="w-6 h-6 rounded flex-shrink-0" size={16} />
                     <span class="font-medium" style="color: var(--ds-text);">{itemType.name}</span>
                   </div>
                 </td>

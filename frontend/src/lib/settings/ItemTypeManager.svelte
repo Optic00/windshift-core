@@ -7,6 +7,7 @@
   import { Plus, Edit, Trash2, FileText } from '@lucide/svelte';
   import { itemTypeIconMap, itemTypeIconOptions } from '../utils/icons.js';
   import Button from '../components/Button.svelte';
+  import ItemTypeIcon from '../components/ItemTypeIcon.svelte';
   import DataTable from '../components/DataTable.svelte';
   import ModalHeader from '../dialogs/ModalHeader.svelte';
   import PageHeader from '../layout/PageHeader.svelte';
@@ -294,11 +295,8 @@
     })}
   >
     {#snippet icon(itemType)}
-      {@const ItemTypeIcon = itemTypeIconMap[itemType.icon] || FileText}
       <div class="flex items-center justify-center">
-        <div class="w-6 h-6 rounded flex items-center justify-center" style="background-color: {itemType.color}">
-          <ItemTypeIcon size={12} color="white" />
-        </div>
+        <ItemTypeIcon itemType={itemType} class="w-6 h-6 rounded" size={12} />
       </div>
     {/snippet}
 
