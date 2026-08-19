@@ -100,6 +100,12 @@
     portalStore.showLoginDialog = true;
     closeMenus();
   }
+
+  function removeBrokenAvatar(event) {
+    if (event.currentTarget instanceof HTMLImageElement) {
+      event.currentTarget.remove();
+    }
+  }
 </script>
 
 <header
@@ -266,16 +272,22 @@
             style="color: {shellText}; border-color: {hasVisualBackground ? 'rgba(255,255,255,0.28)' : 'var(--ds-border)'}; background-color: {hasVisualBackground ? 'rgba(255,255,255,0.1)' : 'var(--ds-surface-card)'};"
             aria-label="Open account menu"
           >
+            <span
+              data-testid="portal-user-avatar-fallback"
+              class="relative z-0 flex items-center justify-center"
+              aria-hidden="true"
+            >
+              <Menu class="w-[18px] h-[18px] sm:hidden" />
+              <User class="w-[18px] h-[18px] hidden sm:block" />
+            </span>
             {#if account?.avatar}
               <img
                 src={account.avatar}
                 alt=""
-                class="absolute inset-0 h-full w-full rounded-full object-cover"
+                class="absolute inset-0 z-10 h-full w-full rounded-full object-cover"
                 data-testid="portal-user-avatar"
+                onerror={removeBrokenAvatar}
               />
-            {:else}
-              <Menu class="w-[18px] h-[18px] sm:hidden" />
-              <User class="w-[18px] h-[18px] hidden sm:block" />
             {/if}
             {#if portalStore.openRequestCount + portalStore.pendingApprovalCount > 0}
               <span
@@ -311,16 +323,24 @@
           >
             {#if account}
               <div class="px-3 py-3 mb-1 border-b flex items-center gap-3" style="border-color: var(--ds-border);">
-                {#if account.avatar}
-                  <img src={account.avatar} alt="" class="w-9 h-9 rounded-full object-cover flex-none" />
-                {:else}
+                <div class="relative w-9 h-9 flex-none">
                   <div
-                    class="w-9 h-9 rounded-full flex items-center justify-center flex-none"
+                    data-testid="portal-account-avatar-fallback"
+                    class="w-9 h-9 rounded-full flex items-center justify-center"
                     style="background-color: var(--ds-background-neutral); color: var(--ds-text-subtle);"
+                    aria-hidden="true"
                   >
                     <User class="w-4 h-4" />
                   </div>
-                {/if}
+                  {#if account.avatar}
+                    <img
+                      src={account.avatar}
+                      alt=""
+                      class="absolute inset-0 z-10 w-9 h-9 rounded-full object-cover"
+                      onerror={removeBrokenAvatar}
+                    />
+                  {/if}
+                </div>
                 <div class="min-w-0">
                   <div class="font-medium text-sm truncate" style="color: var(--ds-text);">
                     {account.name}
