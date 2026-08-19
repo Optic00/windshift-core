@@ -10,6 +10,7 @@
     Tag,
   } from '@lucide/svelte';
   import Spinner from '../components/Spinner.svelte';
+  import Badge from '../components/Badge.svelte';
   import StatusBadge from '../components/StatusBadge.svelte';
   import Textarea from '../components/Textarea.svelte';
   import Button from '../components/Button.svelte';
@@ -89,9 +90,7 @@
           <div class="flex items-center justify-between gap-3 mb-5">
             <h2 class="text-lg font-semibold" style="color: var(--ds-text);">Activity</h2>
             {#if portalStore.requestComments.length > 0}
-              <span class="text-xs font-medium px-2 py-1 rounded-full" style="background-color: var(--ds-background-neutral); color: var(--ds-text-subtle);">
-                {portalStore.requestComments.length}
-              </span>
+              <Badge variant="neutral" size="sm">{portalStore.requestComments.length}</Badge>
             {/if}
           </div>
 
@@ -282,7 +281,7 @@
   .request-list {
     overflow: hidden;
     border: 1px solid var(--ds-border);
-    border-radius: 0.75rem;
+    border-radius: var(--radius-lg);
     background-color: var(--ds-surface-card);
     background-image: radial-gradient(
       circle,
@@ -295,18 +294,8 @@
   }
 
   .request-list-row {
-    position: relative;
-    isolation: isolate;
     background-color: color-mix(in srgb, var(--ds-surface-card) 96%, transparent);
     border-color: var(--ds-border);
-  }
-
-  .request-list-row::before {
-    position: absolute;
-    inset: 0 auto 0 0;
-    width: 3px;
-    background-color: var(--request-accent);
-    content: '';
   }
 
   .request-list-row:hover {
@@ -333,14 +322,14 @@
   .request-row-icon {
     width: 2.5rem;
     height: 2.5rem;
-    border-radius: 0.625rem;
+    border-radius: var(--radius-md);
   }
 
   .request-detail-icon {
     width: 2.75rem;
     height: 2.75rem;
     margin-top: 0.25rem;
-    border-radius: 0.75rem;
+    border-radius: var(--radius-md);
   }
 
   .request-row-chevron {
@@ -378,7 +367,7 @@
   .request-details-card {
     padding: 1.25rem;
     border: 1px solid var(--ds-border);
-    border-radius: 0.75rem;
+    border-radius: var(--radius-lg);
     background-color: var(--ds-surface-card);
     box-shadow: var(--ds-shadow-raised);
   }
@@ -389,7 +378,7 @@
     gap: 0.75rem;
     padding: 1rem;
     border: 1px solid var(--ds-border);
-    border-radius: 0.625rem;
+    border-radius: var(--radius-lg);
     background-color: color-mix(in srgb, var(--ds-background-neutral) 52%, var(--ds-surface-card));
   }
 
@@ -400,7 +389,7 @@
     justify-content: center;
     width: 2rem;
     height: 2rem;
-    border-radius: 999px;
+    border-radius: var(--radius-full);
     background-color: var(--ds-interactive-subtle);
     color: var(--ds-interactive);
     font-size: 0.75rem;
@@ -413,7 +402,7 @@
     gap: 0.625rem;
     padding: 1rem;
     border: 1px dashed var(--ds-border-bold);
-    border-radius: 0.625rem;
+    border-radius: var(--radius-lg);
     background-color: var(--ds-background-neutral);
   }
 
