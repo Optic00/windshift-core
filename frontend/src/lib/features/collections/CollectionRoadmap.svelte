@@ -18,14 +18,14 @@
   import ItemDetail from '../items/ItemDetail.svelte';
   import RoadmapItemPreview from './RoadmapItemPreview.svelte';
   import { buildHierarchyDatePatches, projectHierarchyDates } from './roadmapHierarchyDates.js';
-  import { Settings, ChevronLeft, ChevronRight, Diamond, ChevronDown, Circle, GitBranch, CalendarClock } from '@lucide/svelte';
+  import { Settings, ChevronLeft, ChevronRight, Diamond, ChevronDown, Circle, GitBranch, CalendarClock, RotateCcw } from '@lucide/svelte';
   import { getVisibleColor } from '../../utils/colorUtils.js';
   import { itemTypeIconMap } from '../../utils/icons.js';
   import { SYSTEM_FIELDS } from '../../stores/fieldConfig.js';
   import Button from '../../components/Button.svelte';
   import LazyRender from '../../components/LazyRender.svelte';
   import { errorToast } from '../../stores/toasts.svelte.js';
-  import { useEventListener } from 'runed';
+  import { useEventListener, useResizeObserver } from 'runed';
 
   // Props
   let { workspaceId, collectionId = null } = $props();
@@ -173,8 +173,11 @@
   const ROADMAP_LINK_CHUNK = 200; // ids per batched /links/batch request (server cap 500)
 
   // Timeline computation
-  let timelineContainer = $state(null);
   let containerWidth = $state(1200);
+  let timelineScrollLeft = $state(0);
+
+  const QUARTER_PLANNING_MONTHS = 60;
+  const ZOOM_COLUMN_WIDTHS = { week: 40, month: 60, quarter: 80 };
 
   // --- Tree panel state ---
   let treePanelWidth = $state(280);
@@ -220,11 +223,19 @@
     return opts;
   });
 
-  // Zoom config
+  // Zoom config. The quarter view keeps a five-year planning horizon and all
+  // views add columns until the timeline fills its available width.
   let zoomConfig = $derived.by(() => {
-    if (zoom === 'week') return { columnDays: 1, headerFormat: 'week', visibleColumns: 42 };
-    if (zoom === 'quarter') return { columnDays: 30, headerFormat: 'quarter', visibleColumns: 12 };
-    return { columnDays: 7, headerFormat: 'month', visibleColumns: 20 };
+    const base = zoom === 'week'
+      ? { columnDays: 1, headerFormat: 'week', baseVisibleColumns: 42, navigationColumns: 21 }
+      : zoom === 'quarter'
+        ? { columnDays: 30, headerFormat: 'quarter', baseVisibleColumns: QUARTER_PLANNING_MONTHS, navigationColumns: 6 }
+        : { columnDays: 7, headerFormat: 'month', baseVisibleColumns: 20, navigationColumns: 10 };
+    const viewportColumns = Math.ceil(containerWidth / ZOOM_COLUMN_WIDTHS[zoom]);
+    return {
+      ...base,
+      visibleColumns: Math.max(base.baseVisibleColumns, viewportColumns),
+    };
   });
 
   // Snap granularity in days: week/month zoom → 1 day, quarter zoom → 7 days
@@ -628,11 +639,7 @@
   }
 
   // Column width in pixels
-  let colWidth = $derived.by(() => {
-    if (zoom === 'week') return 40;
-    if (zoom === 'month') return 60;
-    return 80;
-  });
+  let colWidth = $derived(ZOOM_COLUMN_WIDTHS[zoom]);
 
   let totalWidth = $derived(colWidth * columns.length);
 
@@ -772,15 +779,17 @@
 
   // Navigation
   function scrollLeft() {
-    scrollOffset -= Math.floor(zoomConfig.visibleColumns / 2);
+    scrollOffset -= zoomConfig.navigationColumns;
   }
 
   function scrollRight() {
-    scrollOffset += Math.floor(zoomConfig.visibleColumns / 2);
+    scrollOffset += zoomConfig.navigationColumns;
   }
 
   function goToToday() {
     scrollOffset = 0;
+    timelineScrollLeft = 0;
+    if (timelineScrollContainer) timelineScrollContainer.scrollLeft = 0;
   }
 
   // Item click
@@ -1040,10 +1049,18 @@
   }
 
   function syncTimelineScroll(e) {
+    timelineScrollLeft = e.target.scrollLeft;
     if (treeScrollContainer && treeScrollContainer.scrollTop !== e.target.scrollTop) {
       treeScrollContainer.scrollTop = e.target.scrollTop;
     }
   }
+
+  let isAwayFromToday = $derived(scrollOffset !== 0 || timelineScrollLeft > 0);
+
+  useResizeObserver(() => timelineScrollContainer, (entries) => {
+    const entry = entries[0];
+    if (entry) containerWidth = entry.contentRect.width;
+  });
 
   onMount(async () => {
     if (workspaceId) {
@@ -1215,6 +1232,7 @@
           <div class="flex rounded overflow-hidden" style="border: 1px solid var(--ctx-border, var(--ds-border)); background-color: var(--ctx-surface, var(--ds-surface));">
             {#each [['week', t('collections.roadmapZoomWeek')], ['month', t('collections.roadmapZoomMonth')], ['quarter', t('collections.roadmapZoomQuarter')]] as [z, label]}
               <button
+                data-testid="roadmap-zoom-{z}"
                 class="px-3 py-1.5 text-xs font-medium transition-colors"
                 style={zoom === z ? 'background-color: var(--ds-accent-blue-subtle); color: var(--ds-text-info);' : `color: var(--ds-text-subtle);`}
                 onclick={() => zoom = z}
@@ -1226,6 +1244,7 @@
 
           <!-- Navigation -->
           <button
+            data-testid="roadmap-scroll-left"
             class="p-1.5 rounded transition-colors"
             style="color: var(--ctx-text-subtle, var(--ds-text-subtle));"
             onclick={scrollLeft}
@@ -1240,12 +1259,29 @@
             {t('collections.roadmapToday')}
           </button>
           <button
+            data-testid="roadmap-scroll-right"
             class="p-1.5 rounded transition-colors"
             style="color: var(--ctx-text-subtle, var(--ds-text-subtle));"
             onclick={scrollRight}
           >
             <ChevronRight class="w-4 h-4" />
           </button>
+        </div>
+
+        <div class="flex items-center justify-end">
+          {#if isAwayFromToday}
+            <button
+              data-testid="roadmap-return-today"
+              class="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-xs font-medium transition-colors"
+              style="color: var(--ds-text-subtle); border: 1px solid var(--ds-border-subtle, var(--ds-border)); background-color: transparent;"
+              title={t('collections.roadmapToday')}
+              aria-label={t('collections.roadmapToday')}
+              onclick={goToToday}
+            >
+              <RotateCcw class="h-3.5 w-3.5" />
+              {t('collections.roadmapToday')}
+            </button>
+          {/if}
         </div>
 
       </div>
@@ -1375,10 +1411,11 @@
             <div
               class="flex-1 overflow-x-auto overflow-y-auto timeline-scroll"
               style="touch-action: pan-x pan-y;"
+              data-testid="roadmap-timeline-scroll"
               bind:this={timelineScrollContainer}
               onscroll={syncTimelineScroll}
             >
-              <div style="min-width: {totalWidth}px;">
+              <div data-testid="roadmap-timeline-content" style="min-width: {totalWidth}px;">
                 <!-- Header row: month/quarter groups -->
                 <div class="relative sticky top-0 z-30" style="height: 29px; border-bottom: 1px solid var(--ctx-border, var(--ds-border)); background-color: var(--ctx-surface, var(--ds-surface));">
                   {#each monthGroups as group}

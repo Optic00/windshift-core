@@ -7,7 +7,12 @@
   import { navigate } from '../../router.js';
   import { collectionStore, reloadCollection } from '../../stores/collectionContext.js';
   import { createDeleteItemHandler, createItemActionsBuilder } from '../../utils/workItemTableHelpers.js';
-  import { getSystemFieldName } from '../../stores/fieldConfig.js';
+  import {
+    buildListColumnConfiguration,
+    DEFAULT_LIST_COLUMNS,
+    getListColumnLabel,
+    listColumnsFromConfig,
+  } from '../../utils/workItemListColumns.js';
   import { useGradientStyles } from '../../stores/workspaceGradient.svelte.js';
   import { workspacePermissions } from '../../stores/workspacePermissions.svelte.js';
   import { collectionEditorOptions, collectionFieldLinks, workspaceDataStore } from '../../stores/index.js';
@@ -69,15 +74,6 @@
     }
     collectionStore.setSorting(sortKey, sortDirection);
   }
-
-  // Default column configuration
-  const defaultColumns = [
-    { field_identifier: 'key', field_type: 'system', display_order: 0, width: 1 },
-    { field_identifier: 'title', field_type: 'system', display_order: 1, width: 4 },
-    { field_identifier: 'status', field_type: 'system', display_order: 2, width: 2 },
-    { field_identifier: 'priority', field_type: 'system', display_order: 3, width: 2 },
-    { field_identifier: 'created_at', field_type: 'system', display_order: 4, width: 2 }
-  ];
 
   // Centralized gradient styling
   const styles = useGradientStyles();
@@ -210,25 +206,16 @@
     try {
       const config = await collectionStore.getBoardConfiguration(workspaceId, collectionId);
       boardConfig = config;
-      listColumns = config?.list_columns && config.list_columns.length > 0
-        ? [...config.list_columns].sort((a, b) => a.display_order - b.display_order)
-        : [...defaultColumns];
+      listColumns = listColumnsFromConfig(config);
     } catch (error) {
       boardConfig = null;
-      listColumns = [...defaultColumns];
+      listColumns = [...DEFAULT_LIST_COLUMNS];
     }
   }
 
   async function saveBoardConfiguration(newColumns) {
     try {
-      const configData = {
-        columns: boardConfig?.columns || [],
-        backlog_status_ids: boardConfig?.backlog_status_ids || [],
-        list_columns: newColumns,
-        card_fields: boardConfig?.card_fields || [],
-        roadmap_config: boardConfig?.roadmap_config || null,
-        show_rightmost_column_last_50: Boolean(boardConfig?.show_rightmost_column_last_50)
-      };
+      const configData = buildListColumnConfiguration(boardConfig, newColumns);
 
       if (boardConfig?.id) {
         // Update existing config
@@ -238,9 +225,7 @@
           configData
         );
         boardConfig = updated;
-        listColumns = updated.list_columns && updated.list_columns.length > 0
-          ? [...updated.list_columns].sort((a, b) => a.display_order - b.display_order)
-          : [...defaultColumns];
+        listColumns = listColumnsFromConfig(updated);
       } else {
         // Create new config - pass raw collectionId so API can detect workspace-level config
         const created = await api.collections.createBoardConfiguration(
@@ -249,9 +234,7 @@
           configData
         );
         boardConfig = created;
-        listColumns = created.list_columns && created.list_columns.length > 0
-          ? [...created.list_columns].sort((a, b) => a.display_order - b.display_order)
-          : [...defaultColumns];
+        listColumns = listColumnsFromConfig(created);
       }
     } catch (error) {
       console.error('Failed to save board configuration:', error);
@@ -337,15 +320,6 @@
   }
 
 
-  // Get column header name
-  function getColumnHeaderName(column) {
-    if (column.field_type === 'system') {
-      return getSystemFieldName(column.field_identifier);
-    }
-    const customField = customFieldDefinitions.find(f => String(f.id) === column.field_identifier);
-    return customField?.name || column.field_identifier;
-  }
-
 </script>
 
 {#if loading}
@@ -420,7 +394,7 @@
                   class="group inline-flex items-center gap-1 cursor-pointer select-none"
                   onclick={() => toggleSort(column.field_identifier)}
                 >
-                  {getColumnHeaderName(column)}
+                  {getListColumnLabel(column, customFieldDefinitions)}
                   {#if sortKey === column.field_identifier && sortDirection === 'asc'}
                     <ArrowUp class="w-3.5 h-3.5" style="color: var(--ds-text-subtle);" />
                   {:else if sortKey === column.field_identifier && sortDirection === 'desc'}
@@ -430,7 +404,7 @@
                   {/if}
                 </button>
               {:else}
-                <div>{getColumnHeaderName(column)}</div>
+                <div>{getListColumnLabel(column, customFieldDefinitions)}</div>
               {/if}
             {/each}
             <div>{t('common.actions')}</div>

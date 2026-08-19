@@ -37,8 +37,8 @@
     projects = [],
     itemTypes = [],
     customFieldDefinitions = [],
-    onitemUpdated,
-    onupdateError,
+    onitemUpdated = undefined,
+    onupdateError = undefined,
   } = $props();
 
   // Get the field definition for custom fields
@@ -112,7 +112,12 @@
   const statusConfig = $derived(createStatusPickerConfig(statusCategories));
 </script>
 
-{#if column.field_type === 'system'}
+{#if column.field_type === 'workspace'}
+  <span class="block truncate text-sm" style="color: var(--ds-text);" title={workspace?.name || item.workspace_name || ''}>
+    {workspace?.name || item.workspace_name || '-'}
+  </span>
+
+{:else if column.field_type === 'system'}
   {#if column.field_identifier === 'key'}
     <!-- Item Key -->
     <div class="flex items-center gap-2 min-w-0">
@@ -170,7 +175,7 @@
         disabled={!canEdit}
       />
     {:else}
-      {@const selectedStatus = [...editorOptions.statuses, ...statuses].find(s => s.id === item.status_id)}
+      {@const selectedStatus = [...editorOptions.statuses, ...statuses].find(s => s.id === item.status_id) || (item.status_name ? { name: item.status_name, category_id: null } : null)}
       {@const statusCategory = selectedStatus ? statusCategories.find(sc => sc.id === selectedStatus.category_id) : null}
       {#if canEdit}
         <ItemPicker
@@ -208,7 +213,7 @@
 
   {:else if column.field_identifier === 'priority'}
     <!-- Priority -->
-    {@const selectedPriority = [...editorOptions.priorities, ...priorities].find(p => p.id === item.priority_id)}
+    {@const selectedPriority = [...editorOptions.priorities, ...priorities].find(p => p.id === item.priority_id) || (item.priority_name ? { name: item.priority_name, color: item.priority_color } : null)}
     {#if canEdit}
       <ItemPicker
         value={item.priority_id}
@@ -299,6 +304,11 @@
             {assignee.first_name} {assignee.last_name}
           </span>
         </div>
+      {:else if item.assignee_name}
+        <div class="flex items-center gap-2">
+          <User class="w-4 h-4" style="color: var(--ds-text-subtle);" />
+          <span class="text-sm truncate" style="color: var(--ds-text);">{item.assignee_name}</span>
+        </div>
       {:else}
         <span class="text-sm" style="color: var(--ds-text-subtle);">-</span>
       {/if}
@@ -354,7 +364,7 @@
 
   {:else if column.field_identifier === 'iteration'}
     <!-- Iteration -->
-    {@const iteration = [...editorOptions.iterations, ...iterations].find(i => i.id === item.iteration_id)}
+    {@const iteration = [...editorOptions.iterations, ...iterations].find(i => i.id === item.iteration_id) || (item.iteration_name ? { name: item.iteration_name, is_global: false } : null)}
     {#if canEdit}
       <ItemPicker
         value={item.iteration_id}
@@ -431,7 +441,7 @@
 
   {:else if column.field_identifier === 'project'}
     <!-- Project -->
-    {@const project = [...editorOptions.projects, ...projects].find(p => p.id === item.project_id)}
+    {@const project = [...editorOptions.projects, ...projects].find(p => p.id === item.project_id) || (item.project_name ? { name: item.project_name } : null)}
     {#if canEdit}
       <ItemPicker
         value={item.project_id}

@@ -5,17 +5,13 @@
   import { t } from '../../stores/i18n.svelte.js';
   import { errorToast, warningToast } from '../../stores/toasts.svelte.js';
   import { IconFilter as Filter, IconSearch as Search } from '@tabler/icons-svelte-runes';
-  import Button from '../../components/Button.svelte';
   import Card from '../../components/Card.svelte';
-  import DataTable from '../../components/DataTable.svelte';
   import Pagination from '../../components/Pagination.svelte';
   import CollectionsSidebar from './CollectionsSidebar.svelte';
   import CollectionsBreadcrumbs from './CollectionsBreadcrumbs.svelte';
   import QlQueryBar from '../shared/QlQueryBar.svelte';
-  import { getStatusColor as getStatusColorUtil, getStatusStyle } from '../../utils/statusColors.js';
   import { createWorkItemSearchStore } from '../../stores/searchStore.svelte.js';
   import { createWorkItemSearchHandlers } from '../../composables/useWorkItemSearch.svelte.js';
-  import { buildWorkItemColumns, createdAtColumn } from '../../utils/workItemColumns.js';
   import {
     decorateWorkItems,
     createDeleteItemHandler,
@@ -25,7 +21,14 @@
   import Modal from '../../dialogs/Modal.svelte';
   import WorkspacePicker from '../../pickers/WorkspacePicker.svelte';
   import { collectionCategoriesStore } from '../../stores/collectionCategories.js';
-  import { permissionStore, isSystemAdmin, authStore } from '../../stores';
+  import { permissionStore, isSystemAdmin, authStore, workspaceDataStore } from '../../stores';
+  import ColumnSelector from './ColumnSelector.svelte';
+  import WorkItemListTable from './WorkItemListTable.svelte';
+  import {
+    buildListColumnConfiguration,
+    DEFAULT_LIST_COLUMNS,
+    listColumnsFromConfig,
+  } from '../../utils/workItemListColumns.js';
   import DialogFooter from '../../dialogs/DialogFooter.svelte';
 
   let { collectionId = null } = $props();
@@ -60,6 +63,21 @@
   let currentPage = $state(1);
   let itemsPerPage = $state(/** @type {number} */ (50));
   let sidebarCollapsed = $state(false);
+  let boardConfig = $state(null);
+  let listColumns = $state([...DEFAULT_LIST_COLUMNS]);
+
+  let itemTypes = $derived(workspaceDataStore.itemTypes);
+  let listStatuses = $derived(workspaceDataStore.statuses);
+  let listStatusCategories = $derived(workspaceDataStore.statusCategories);
+  let listPriorities = $derived(workspaceDataStore.priorities);
+  let customFieldDefinitions = $derived(workspaceDataStore.customFieldDefinitions);
+  let canConfigureColumns = $derived(
+    Boolean(
+      currentCollection &&
+        authStore.currentUser?.id != null &&
+        String(currentCollection.created_by) === String(authStore.currentUser.id),
+    ),
+  );
 
   // Workspace / sharing modals
   let returnWorkspaceId = $state(null);
@@ -72,8 +90,11 @@
   let workspaceAssociationSaving = $state(false);
 
   onMount(async () => {
-    await store.loadReferenceData();
-    await collectionCategoriesStore.init();
+    await Promise.all([
+      store.loadReferenceData(),
+      collectionCategoriesStore.init(),
+      workspaceDataStore.initializeGlobal(),
+    ]);
 
     const urlParams = new URLSearchParams(window.location.search);
     const hasURLQuery = [
@@ -98,6 +119,8 @@
     if (loadCollectionId) {
       await loadCollectionById(loadCollectionId, hasURLQuery);
     } else {
+      boardConfig = null;
+      listColumns = [...DEFAULT_LIST_COLUMNS];
       store.restoreFromURL();
       if (storeState.hasFilters) {
         await store.executeSearch({ page: currentPage, limit: itemsPerPage });
@@ -113,6 +136,7 @@
       if (!collection) return;
       currentCollection = collection;
       slugSaved = !!(collection.is_public && collection.public_slug);
+      await loadBoardConfiguration(collection.id);
       if (restoreURLQuery) {
         store.restoreFromURL();
       } else {
@@ -126,6 +150,46 @@
     } catch (error) {
       console.error('Failed to load collection:', error);
     }
+  }
+
+  async function loadBoardConfiguration(id) {
+    try {
+      const config = await api.collections.getBoardConfiguration(id);
+      boardConfig = config;
+      listColumns = listColumnsFromConfig(config);
+    } catch (error) {
+      console.error('Failed to load list column configuration:', error);
+      boardConfig = null;
+      listColumns = [...DEFAULT_LIST_COLUMNS];
+    }
+  }
+
+  async function saveBoardConfiguration(newColumns) {
+    if (!currentCollection) return;
+
+    try {
+      const configData = buildListColumnConfiguration(boardConfig, newColumns);
+      const savedConfig = boardConfig?.id
+        ? await api.collections.updateBoardConfiguration(
+            currentCollection.id,
+            boardConfig.id,
+            configData,
+          )
+        : await api.collections.createBoardConfiguration(
+            currentCollection.id,
+            null,
+            configData,
+          );
+      boardConfig = savedConfig;
+      listColumns = listColumnsFromConfig(savedConfig);
+    } catch (error) {
+      console.error('Failed to save list column configuration:', error);
+      errorToast(t('dialogs.alerts.failedToSave', { error: error.message || error }));
+    }
+  }
+
+  function handleColumnChange({ columns }) {
+    void saveBoardConfiguration(columns);
   }
 
   async function hydrateFromCollection(collection) {
@@ -194,15 +258,6 @@
   });
 
   // ===== Table data =====
-
-  let workItemColumns = $derived(
-    buildWorkItemColumns({
-      itemUrl: (item) => `/workspaces/${item.workspace_id}/items/${item.id}`,
-      lastColumn: createdAtColumn(),
-      allStatuses,
-      statusCategories,
-    })
-  );
 
   let tableData = $derived(decorateWorkItems(workItems, workspaces));
 
@@ -416,10 +471,31 @@
         <div class="animate-pulse" style="color: var(--ds-text-subtle);">{t('collections.loadingWorkItems')}</div>
       </Card>
     {:else}
-      <DataTable
+      {#if currentCollection}
+        <div class="flex justify-end mb-4">
+          <ColumnSelector
+            columns={listColumns}
+            {customFieldDefinitions}
+            canConfigure={canConfigureColumns}
+            testId="collection-column-selector-trigger"
+            onchange={handleColumnChange}
+          />
+        </div>
+      {/if}
+
+      <WorkItemListTable
         data={tableData}
-        columns={workItemColumns}
-        keyField="id"
+        columns={listColumns}
+        {workspaces}
+        {customFieldDefinitions}
+        {itemTypes}
+        includeWorkspace={true}
+        statuses={listStatuses.length > 0 ? listStatuses : allStatuses}
+        statusCategories={listStatusCategories.length > 0 ? listStatusCategories : statusCategories}
+        priorities={listPriorities.length > 0 ? listPriorities : allPriorities}
+        collectionId={null}
+        canEdit={false}
+        testId="collection-search-results-table"
         emptyMessage={t('collections.noWorkItemsFound')}
         emptyDescription={t('collections.tryAdjustingFilters')}
         emptyIcon={Search}

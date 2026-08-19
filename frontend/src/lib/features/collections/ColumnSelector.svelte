@@ -12,6 +12,7 @@
     columns = [],
     customFieldDefinitions = [],
     canConfigure = true,
+    testId = 'column-selector-trigger',
     onchange,
   } = $props();
 
@@ -221,7 +222,7 @@
     class="flex items-center gap-2 px-3 py-2 text-sm rounded-lg transition-colors"
     style="color: var(--ctx-text-subtle, var(--ds-text-subtle));"
     title="Configure columns"
-    data-testid="column-selector-trigger"
+    data-testid={testId}
   >
     <Columns3 class="w-4 h-4" />
     <span>Columns</span>
@@ -297,12 +298,13 @@
 
           <!-- Remove Button (if not required) -->
           {#if !required}
-            <button
-              onclick={() => toggleColumn(column.field_identifier)}
-              class="p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/20 transition-colors"
-              style="color: var(--ds-text-subtle);"
-              title="Remove column"
-            >
+              <button
+                onclick={() => toggleColumn(column.field_identifier)}
+                class="p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/20 transition-colors"
+                style="color: var(--ds-text-subtle);"
+                title="Remove column"
+                data-testid={`remove-column-${column.field_identifier}`}
+              >
               <X class="w-3 h-3" />
             </button>
           {:else}
