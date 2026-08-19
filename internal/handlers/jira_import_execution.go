@@ -1589,7 +1589,9 @@ func authoritativeJiraWorkflowEdges(
 		if explicitlyGuarded {
 			group.guardedTransitions++
 		}
-		reviewLocked := !group.rulesComplete || explicitlyGuarded
+		// Do not turn incomplete source visibility into a synthetic deny rule.
+		// Only a guard that Jira explicitly reports should require review.
+		reviewLocked := explicitlyGuarded
 		toStatusID, ok := statusMap[transition.ToStatusID]
 		if !ok {
 			continue

@@ -239,7 +239,8 @@ type JiraProjectWorkflowConfiguration struct {
 	// RulesComplete is true only when the source API proves that every
 	// configured condition/validator is represented in Transitions. Jira
 	// Cloud's current bulk workflow read omits condition trees, so its value is
-	// false and imported non-initial edges require an operator review lock.
+	// false and rules that are not exposed are omitted from the imported
+	// condition sets.
 	RulesComplete bool
 }
 

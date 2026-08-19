@@ -259,10 +259,10 @@ func (h *JiraImportHandler) jiraConfigurationReadinessFindings(
 		})
 		if !config.RulesComplete && nonInitialTransitionCount > 0 {
 			findings = append(findings, jira.Finding{
-				Entity:     "Workflow transition activation",
+				Entity:     "Workflow rule visibility",
 				Category:   "workflow_rule",
-				Severity:   jira.SeverityBlocked,
-				Reason:     "Jira's current workflow read API does not expose configured condition trees. The graph imports, but every non-initial edge receives a generated Windshift validator lock until an operator reviews the source rules.",
+				Severity:   jira.SeverityLossy,
+				Reason:     "Jira's current workflow read API does not expose complete condition trees. The graph imports, but rules that cannot be identified are not recreated; only transitions with exposed conditions or validators receive a generated review lock.",
 				UsageCount: nonInitialTransitionCount,
 			})
 		}
