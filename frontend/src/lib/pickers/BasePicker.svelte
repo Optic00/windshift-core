@@ -620,7 +620,7 @@
         </div>
       {:else if noResultsSnippet && getCreateQuery()}
         <!-- Custom no-results content (for example, inline label creation). -->
-        {@render noResultsSnippet({ searchQuery: getCreateQuery() })}
+        {@render noResultsSnippet({ searchQuery: getCreateQuery(), onCreate: handleCreateOption })}
       {:else if canCreateCurrentInput()}
         <!-- Keep creation discoverable when filtering leaves no options. -->
         <div role="button" tabindex="0"

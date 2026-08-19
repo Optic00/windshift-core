@@ -13,11 +13,9 @@
   import Button from '../../components/Button.svelte';
   import Toggle from '../../components/Toggle.svelte';
   import Modal from '../../dialogs/Modal.svelte';
-  import ModalHeader from '../../dialogs/ModalHeader.svelte';
   import CategoryModal from '../../dialogs/CategoryModal.svelte';
   import MilestoneNavigation from './MilestoneNavigation.svelte';
   import MilestoneReleaseModal from './MilestoneReleaseModal.svelte';
-  import Textarea from '../../components/Textarea.svelte';
   import Lozenge from '../../components/Lozenge.svelte';
   import { categoriesStore } from '../../stores/categories.js';
   import { milestonesStore } from '../../stores/milestones.js';
@@ -28,17 +26,13 @@
   import { permissionStore, isSystemAdmin } from '../../stores/permissions.svelte.js';
   import { workspacePermissions } from '../../stores/workspacePermissions.svelte.js';
   import ColorDot from '../../components/ColorDot.svelte';
-  import Input from '../../components/Input.svelte';
-  import Label from '../../components/Label.svelte';
-  import BasePicker from '../../pickers/BasePicker.svelte';
-  import DialogFooter from '../../dialogs/DialogFooter.svelte';
+  import MilestoneFormDialog from './MilestoneFormDialog.svelte';
   import { toHotkeyString } from '../../utils/keyboardShortcuts.js';
   import EmptyState from '../../components/EmptyState.svelte';
   import PageHeader from '../../layout/PageHeader.svelte';
   import { useEventListener } from 'runed';
   import { loadMilestoneTestStatistics } from './milestoneStatisticsData.js';
   import {
-    canChangePlanningScope,
     preservePlanningScope
   } from '../../utils/planningScope.js';
 
@@ -319,15 +313,6 @@
 
   async function handleDeleteCategory(categoryId) {
     await categoriesStore.delete(categoryId);
-  }
-
-  function toggleScope() {
-    formData.is_global = !formData.is_global;
-    if (formData.is_global) {
-      formData.workspace_id = null;
-    } else {
-      formData.workspace_id = workspaceId ? parseInt(workspaceId, 10) : null;
-    }
   }
 
   // Filter milestones based on active category (only applies in global view)
@@ -762,124 +747,17 @@
 </div>
 
 <!-- Create/Edit Milestone Modal -->
-<Modal
-  isOpen={showCreateForm}
+<MilestoneFormDialog
+  bind:isOpen={showCreateForm}
+  bind:formData
+  {editingMilestone}
+  {isGlobalView}
+  {workspaceId}
+  canManageGlobal={canManageGlobal}
+  canManageWorkspace={!isGlobalView && canCreate}
   onclose={cancelForm}
   onSubmit={saveMilestone}
-  submitDisabled={!formData.name.trim()}
-  maxWidth="max-w-2xl"
->
-  {#snippet children(submitHint)}
-  <!-- Modal header -->
-  <ModalHeader title={editingMilestone ? t('common.edit') : t('common.create')} showCloseButton={false} />
-
-  <!-- Modal content -->
-  <div class="px-6 py-4">
-    <form onsubmit={(e) => { e.preventDefault(); saveMilestone(); }}>
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div>
-          <Label for="milestone-name" required class="mb-2">{t('milestones.milestoneName')}</Label>
-          <Input
-            id="milestone-name"
-            type="text"
-            bind:value={formData.name}
-            placeholder={t('milestones.milestoneNamePlaceholder')}
-            required
-          />
-        </div>
-
-        <div>
-          <Label for="milestone-target-date" class="mb-2">{t('milestones.targetDate')}</Label>
-          <Input
-            id="milestone-target-date"
-            type="date"
-            bind:value={formData.target_date}
-          />
-        </div>
-
-        <div>
-          <Label for="milestone-category" class="mb-2">{t('common.category')}</Label>
-          <BasePicker
-            bind:value={formData.category_id}
-            items={$categoriesStore}
-            placeholder={t('milestones.noCategory')}
-            showUnassigned={true}
-            unassignedLabel={t('milestones.noCategory')}
-            getValue={(item) => item.id}
-            getLabel={(item) => item.name}
-          />
-        </div>
-
-        <div>
-          <Label for="milestone-status-picker" class="mb-2">{t('common.status')}</Label>
-          <BasePicker
-            id="milestone-status-picker"
-            bind:value={formData.status}
-            items={statusOptions}
-            placeholder={t('milestones.selectStatus')}
-            getValue={(item) => item.value}
-            getLabel={(item) => item.label}
-          />
-        </div>
-
-        {#if !isGlobalView && canManageGlobal}
-          <!-- Scope Toggle -->
-          <div class="md:col-span-2">
-            <div class="p-4 rounded border" style="border-color: var(--ds-border); background-color: var(--ds-surface-raised);">
-              <div class="flex items-center justify-between">
-                <div class="flex items-center gap-3">
-                  {#if formData.is_global}
-                    <Globe class="w-5 h-5" style="color: var(--ds-interactive);" />
-                    <div>
-                      <p class="font-medium text-sm" style="color: var(--ds-text);">{t('milestones.globalMilestone')}</p>
-                      <p class="text-xs" style="color: var(--ds-text-subtle);">{t('milestones.globalMilestoneDescription')}</p>
-                    </div>
-                  {:else}
-                    <Building2 class="w-5 h-5" style="color: var(--ds-interactive);" />
-                    <div>
-                      <p class="font-medium text-sm" style="color: var(--ds-text);">{t('milestones.localMilestone')}</p>
-                      <p class="text-xs" style="color: var(--ds-text-subtle);">{t('milestones.localMilestoneDescription')}</p>
-                    </div>
-                  {/if}
-                </div>
-                {#if canChangePlanningScope(canManageGlobal, editingMilestone)}
-                  <button
-                    type="button"
-                    class="px-3 py-1.5 text-sm rounded border transition-colors"
-                    style="border-color: var(--ds-border); color: var(--ds-interactive);"
-                    onclick={toggleScope}
-                  >
-                    {t('milestones.switchTo', { scope: formData.is_global ? t('milestones.local') : t('milestones.global') })}
-                  </button>
-                {/if}
-              </div>
-            </div>
-          </div>
-        {/if}
-
-        <div class="md:col-span-2">
-          <Label for="milestone-description" class="mb-2">{t('common.description')}</Label>
-          <Textarea
-            id="milestone-description"
-            bind:value={formData.description}
-            rows={3}
-            placeholder={t('milestones.descriptionPlaceholder')}
-          />
-        </div>
-      </div>
-    </form>
-  </div>
-
-  <DialogFooter
-    onCancel={cancelForm}
-    onConfirm={saveMilestone}
-    confirmLabel={editingMilestone ? t('common.update') : t('common.create')}
-    disabled={!formData.name.trim()}
-    showKeyboardHint={true}
-    confirmKeyboardHint={submitHint}
-  />
-  {/snippet}
-</Modal>
+/>
 
 <!-- Release Modal -->
 {#if showReleaseModal && releasingMilestone}

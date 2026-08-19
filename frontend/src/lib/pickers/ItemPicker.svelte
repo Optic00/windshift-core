@@ -26,6 +26,9 @@
     keepOpenOnFooterTab = false,
     onSearchChange = null,
     searchDebounce = 300,
+    allowCreate = false,
+    onCreate = null,
+    noResultsSnippet = null,
     searchTestid = undefined,
     optionTestid = null,
     onOpen = null,
@@ -69,6 +72,9 @@
   getLabel={finalConfig.getLabel}
   serverSearch={!!onSearchChange}
   {searchDebounce}
+  {allowCreate}
+  {onCreate}
+  {noResultsSnippet}
   {searchTestid}
   {optionTestid}
   onSearchChange={(query) => onSearchChange?.(query)}
