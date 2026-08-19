@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"windshift/internal/constants"
 	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
@@ -452,16 +453,25 @@ func (s *WorkflowService) PerformTransition(
 		return nil, err
 	}
 
-	if item.StatusID == nil {
-		return nil, &TransitionRejection{
-			Code:    "no_current_status",
-			Message: "item has no current status; cannot transition",
+	missingStatus := item.StatusID == nil
+	oldStatusID := constants.StatusIDOpen
+	if missingStatus {
+		isPersonal, err := repository.IsPersonalWorkspace(s.db, item.WorkspaceID)
+		if err != nil {
+			return nil, fmt.Errorf("resolve item workspace: %w", err)
 		}
+		if !isPersonal {
+			return nil, &TransitionRejection{
+				Code:    "no_current_status",
+				Message: "item has no current status; cannot transition",
+			}
+		}
+	} else {
+		oldStatusID = *item.StatusID
 	}
-	oldStatusID := *item.StatusID
 
 	// No-op: target equals current status.
-	if oldStatusID == req.ToStatusID {
+	if !missingStatus && oldStatusID == req.ToStatusID {
 		return &PerformTransitionResult{
 			Item:        item,
 			OldStatusID: &oldStatusID,

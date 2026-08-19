@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"windshift/internal/constants"
 	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
@@ -311,6 +312,17 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 	// If status is still nil, resolve from workflow initial status using cache.
 	if statusID == nil {
 		statusID, _ = workflowService.GetInitialStatusIDCached(params.WorkspaceID, params.ItemTypeID)
+	}
+	// Personal workspaces intentionally have no workflow, but their tasks still
+	// use the shared Open/Done status pair. Keep new personal items completable.
+	if statusID == nil {
+		isPersonal, err := repository.IsPersonalWorkspace(db, params.WorkspaceID)
+		if err != nil {
+			return 0, fmt.Errorf("resolve personal workspace status: %w", err)
+		}
+		if isPersonal {
+			statusID = intPtr(constants.StatusIDOpen)
+		}
 	}
 
 	// Resolve priority ID BEFORE transaction: direct ID takes precedence, then text mapping, then default
