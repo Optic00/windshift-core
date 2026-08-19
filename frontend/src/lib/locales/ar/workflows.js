@@ -102,6 +102,9 @@ export default {
     setStart: 'تعيين البداية',
     removeFromWorkflow: 'إزالة من سير العمل',
     swapDirection: 'عكس الاتجاه',
+    allStatuses: 'الكل',
+    fromAllStatuses: 'السماح بالانتقالات من كل حالة أخرى',
+    transitionHint4: 'حدد "الكل" على حالة للسماح بالانتقالات من كل حالة أخرى',
   },
 
   screens: {

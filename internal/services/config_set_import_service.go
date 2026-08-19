@@ -344,7 +344,8 @@ func (s *ConfigSetImportService) apply(ctx context.Context, tx database.Tx, tpl 
 	//    → transition_id map for later condition/approval references.
 	type transitionKey struct {
 		workflowName string
-		fromName     string // empty for initial transitions
+		fromName     string // empty for initial and from-all transitions
+		fromAll      bool
 		toName       string
 	}
 	workflowNameToID := map[string]int{}
@@ -362,7 +363,9 @@ func (s *ConfigSetImportService) apply(ctx context.Context, tx database.Tx, tpl 
 			}
 			var fromID *int
 			fromName := ""
-			if t.FromStatusName != nil {
+			if t.FromAllStatuses {
+				t.FromStatusName = nil
+			} else if t.FromStatusName != nil {
 				fid, ok := statusNameToID[lowerStr(*t.FromStatusName)]
 				if !ok {
 					return 0, nil, fmt.Errorf("workflow %q: transition references unknown from_status %q", wf.Name, *t.FromStatusName)
@@ -374,7 +377,7 @@ func (s *ConfigSetImportService) apply(ctx context.Context, tx database.Tx, tpl 
 			if err != nil {
 				return 0, nil, fmt.Errorf("workflow %q: insert transition: %w", wf.Name, err)
 			}
-			transitionKeyToID[transitionKey{lowerStr(wf.Name), lowerStr(fromName), lowerStr(t.ToStatusName)}] = tID
+			transitionKeyToID[transitionKey{lowerStr(wf.Name), lowerStr(fromName), t.FromAllStatuses, lowerStr(t.ToStatusName)}] = tID
 		}
 	}
 
@@ -393,7 +396,7 @@ func (s *ConfigSetImportService) apply(ctx context.Context, tx database.Tx, tpl 
 			if tc.FromStatusName != nil {
 				fromName = *tc.FromStatusName
 			}
-			tID, ok := transitionKeyToID[transitionKey{lowerStr(set.WorkflowName), lowerStr(fromName), lowerStr(tc.ToStatusName)}]
+			tID, ok := transitionKeyToID[transitionKey{lowerStr(set.WorkflowName), lowerStr(fromName), tc.FromAllStatuses, lowerStr(tc.ToStatusName)}]
 			if !ok {
 				return 0, nil, fmt.Errorf("condition_set %q: transition (%s → %s) not found in workflow %q", set.Name, displayFrom(tc.FromStatusName), tc.ToStatusName, set.WorkflowName)
 			}
@@ -424,11 +427,11 @@ func (s *ConfigSetImportService) apply(ctx context.Context, tx database.Tx, tpl 
 			if !ok {
 				return 0, nil, fmt.Errorf("approval_set %q: unknown status %q", set.Name, ss.StatusName)
 			}
-			approveTID, ok := transitionKeyToID[transitionKey{lowerStr(set.WorkflowName), lowerStrPtr(ss.ApproveTransition.FromStatusName), lowerStr(ss.ApproveTransition.ToStatusName)}]
+			approveTID, ok := transitionKeyToID[transitionKey{lowerStr(set.WorkflowName), lowerStrPtr(ss.ApproveTransition.FromStatusName), ss.ApproveTransition.FromAllStatuses, lowerStr(ss.ApproveTransition.ToStatusName)}]
 			if !ok {
 				return 0, nil, fmt.Errorf("approval_set %q: approve_transition not found", set.Name)
 			}
-			denyTID, ok := transitionKeyToID[transitionKey{lowerStr(set.WorkflowName), lowerStrPtr(ss.DenyTransition.FromStatusName), lowerStr(ss.DenyTransition.ToStatusName)}]
+			denyTID, ok := transitionKeyToID[transitionKey{lowerStr(set.WorkflowName), lowerStrPtr(ss.DenyTransition.FromStatusName), ss.DenyTransition.FromAllStatuses, lowerStr(ss.DenyTransition.ToStatusName)}]
 			if !ok {
 				return 0, nil, fmt.Errorf("approval_set %q: deny_transition not found", set.Name)
 			}
@@ -664,9 +667,9 @@ func (s *ConfigSetImportService) createWorkflow(ctx context.Context, tx database
 func (s *ConfigSetImportService) createWorkflowTransition(ctx context.Context, tx database.Tx, workflowID int, fromStatusID *int, toStatusID int, t ConfigSetTplWorkflowTransition, now time.Time) (int, error) {
 	var id int
 	err := tx.QueryRowContext(ctx, `
-		INSERT INTO workflow_transitions (workflow_id, from_status_id, to_status_id, display_order, source_handle, target_handle, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id
-	`, workflowID, fromStatusID, toStatusID, t.DisplayOrder, t.SourceHandle, t.TargetHandle, now).Scan(&id)
+		INSERT INTO workflow_transitions (workflow_id, from_status_id, to_status_id, from_all_statuses, display_order, source_handle, target_handle, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+	`, workflowID, fromStatusID, toStatusID, t.FromAllStatuses, t.DisplayOrder, t.SourceHandle, t.TargetHandle, now).Scan(&id)
 	return id, err
 }
 

@@ -184,11 +184,12 @@ type AttachmentResponse struct {
 
 // TransitionResponse represents an available workflow transition
 type TransitionResponse struct {
-	ID           int            `json:"id"`
-	FromStatusID *int           `json:"from_status_id,omitempty"`
-	ToStatusID   int            `json:"to_status_id"`
-	FromStatus   *StatusSummary `json:"from_status,omitempty"`
-	ToStatus     *StatusSummary `json:"to_status,omitempty"`
+	ID              int            `json:"id"`
+	FromStatusID    *int           `json:"from_status_id,omitempty"`
+	FromAllStatuses bool           `json:"from_all_statuses"`
+	ToStatusID      int            `json:"to_status_id"`
+	FromStatus      *StatusSummary `json:"from_status,omitempty"`
+	ToStatus        *StatusSummary `json:"to_status,omitempty"`
 }
 
 // TransitionRequest is the body for POST /rest/api/v1/items/{id}/transition

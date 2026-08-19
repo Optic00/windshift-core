@@ -222,15 +222,27 @@ func (r *StatusRepository) GetTransitionOption(statusID int64) (*StatusTransitio
 	return &option, nil
 }
 
-// ListAvailableTransitionOptions returns direct workflow transitions from a status.
+// ListAvailableTransitionOptions returns the workflow transitions usable from
+// a status: direct edges plus from-all rows targeting statuses without a
+// direct edge from this status.
 func (r *StatusRepository) ListAvailableTransitionOptions(workflowID int, fromStatusID int64) ([]StatusTransitionOption, error) {
 	rows, err := r.db.Query(`
 		SELECT wt.id, s.id, s.name, sc.color
 		FROM workflow_transitions wt
 		JOIN statuses s ON wt.to_status_id = s.id
 		LEFT JOIN status_categories sc ON s.category_id = sc.id
-		WHERE wt.workflow_id = ? AND wt.from_status_id = ?
-	`, workflowID, fromStatusID)
+		WHERE wt.workflow_id = ?
+		  AND (
+			wt.from_status_id = ?
+			OR (
+				wt.from_all_statuses = TRUE
+				AND wt.to_status_id NOT IN (
+					SELECT to_status_id FROM workflow_transitions WHERE workflow_id = ? AND from_status_id = ?
+				)
+			)
+		  )
+		ORDER BY CASE WHEN wt.from_all_statuses THEN 1 ELSE 0 END, wt.display_order
+	`, workflowID, fromStatusID, workflowID, fromStatusID)
 	if err != nil {
 		return nil, err
 	}

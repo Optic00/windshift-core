@@ -70,6 +70,14 @@ const legacyScopeRowsAbsent = `
 // with row dependencies; otherwise entries may be reordered freely.
 var Catalog = []Migration{
 	{
+		Version:       "20260814_workflow_transitions_from_all",
+		Name:          "Allow workflow transitions from every other status",
+		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('workflow_transitions') WHERE name='from_all_statuses'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='workflow_transitions' AND column_name='from_all_statuses'",
+		SQLite:        "ALTER TABLE workflow_transitions ADD COLUMN from_all_statuses BOOLEAN NOT NULL DEFAULT false",
+		Postgres:      "ALTER TABLE workflow_transitions ADD COLUMN IF NOT EXISTS from_all_statuses BOOLEAN NOT NULL DEFAULT false",
+	},
+	{
 		Version:       "20260816_portal_approval_vote_uniqueness",
 		Name:          "Enforce one portal-customer vote per approval step",
 		CheckSQLite:   sqliteIndexCheck("uq_approval_decisions_one_vote_per_portal_customer"),

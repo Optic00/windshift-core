@@ -12,12 +12,16 @@
   import '@xyflow/svelte/dist/style.css';
   import StatusNode from './StatusNode.svelte';
   import ReconnectableEdge from './ReconnectableEdge.svelte';
+  import AllIncomingEdge from './AllIncomingEdge.svelte';
   import {
     statusesToNodes,
     transitionsToEdges,
     nodesToStatuses,
     edgesToTransitions,
+    allIncomingEdgesToTransitions,
     createEdge,
+    createAllIncomingEdge,
+    isAllIncomingEdge,
     addPreservationTransitions,
     positionPersistence,
     DEFAULT_WORKFLOW_POSITIONS
@@ -42,7 +46,8 @@
   };
 
   const edgeTypes = {
-    reconnectable: ReconnectableEdge
+    reconnectable: ReconnectableEdge,
+    'all-incoming': AllIncomingEdge
   };
 
   // Flow options
@@ -60,6 +65,7 @@
   useEventListener(() => window, 'workflow-edge-swap', (event) => handleEdgeSwap(event));
   useEventListener(() => window, 'workflow-set-initial', (/** @type {CustomEvent<{statusId?: any}>} */ event) => handleSetInitial(event.detail?.statusId));
   useEventListener(() => window, 'workflow-status-remove', (event) => onStatusRemove(event));
+  useEventListener(() => window, 'workflow-toggle-all-incoming', (/** @type {CustomEvent<{statusId?: any}>} */ event) => handleToggleAllIncoming(event.detail?.statusId));
 
   $effect(() => {
     const w = workflow;
@@ -92,18 +98,36 @@
       };
     }).filter(Boolean);
 
-    // Detect initial status from transition where from_status_id is NULL
-    const initialTransition = (workflow.transitions || []).find(t => t.from_status_id === null);
+    // Detect initial status from transition where from_status_id is NULL.
+    // From-all rows also have a NULL from status but are not initial.
+    const initialTransition = (workflow.transitions || []).find(
+      (t) => t.from_status_id === null && !t.from_all_statuses
+    );
     initialStatusId = initialTransition?.to_status_id || null;
 
+    // Statuses reachable from every other status get the special loop arrow
+    const allIncomingStatusIds = new Set(
+      (workflow.transitions || [])
+        .filter((t) => t.from_all_statuses)
+        .map((t) => t.to_status_id)
+    );
+
     // Load existing transitions (exclude self-preservation transitions)
-    workingTransitions = workflow.transitions?.filter(t => 
+    workingTransitions = workflow.transitions?.filter(t =>
       t.from_status_id !== null && t.from_status_id !== t.to_status_id
     ) || [];
 
     // Convert to Svelte Flow format
-    nodes = statusesToNodes(workflowStatuses, initialStatusId);
-    edges = calculateEdgeOffsets(transitionsToEdges(workingTransitions));
+    nodes = statusesToNodes(workflowStatuses, initialStatusId).map((node) => ({
+      ...node,
+      data: { ...node.data, fromAll: allIncomingStatusIds.has(node.data.statusId) }
+    }));
+    edges = [
+      ...calculateEdgeOffsets(transitionsToEdges(workingTransitions)),
+      ...[...allIncomingStatusIds]
+        .filter((statusId) => nodes.some((node) => node.data.statusId === statusId))
+        .map((statusId) => createAllIncomingEdge(statusId, workflow.id))
+    ];
 
     // If no initial status set, default to first node (if any)
     if (!initialStatusId && nodes.length > 0) {
@@ -168,6 +192,8 @@
     });
     // Recalculate offsets after edge changes
     edges = calculateEdgeOffsets(edges);
+    // Deleting the special arrow (e.g. via Delete key) unticks the checkbox
+    nodes = syncFromAllNodes(nodes, edges);
   }
 
   function handleEdgeSwap(event) {
@@ -211,11 +237,14 @@
   function calculateEdgeOffsets(edgeList) {
     const OFFSET_STEP = 12; // pixels between parallel edges
 
-    // Group edges by their connection points
+    // Group edges by their connection points. The special all-statuses loop
+    // stays out of the grouping so it does not displace regular arrows.
     const sourceGroups = {}; // key: "nodeId-handle" -> array of edge indices
     const targetGroups = {};
 
     edgeList.forEach((edge, index) => {
+      if (isAllIncomingEdge(edge)) return;
+
       const sourceKey = `${edge.source}-${edge.sourceHandle}`;
       const targetKey = `${edge.target}-${edge.targetHandle}`;
 
@@ -228,6 +257,10 @@
 
     // Calculate offsets for each edge
     return edgeList.map((edge, index) => {
+      if (isAllIncomingEdge(edge)) {
+        return { ...edge, data: { ...edge.data, offset: 0 } };
+      }
+
       const sourceKey = `${edge.source}-${edge.sourceHandle}`;
       const targetKey = `${edge.target}-${edge.targetHandle}`;
 
@@ -269,7 +302,8 @@
         name: status.name,
         category_color: status.category_color,
         category_name: status.category_name,
-        description: status.description
+        description: status.description,
+        fromAll: false
       }
     };
 
@@ -306,6 +340,29 @@
     removeStatusFromWorkflow(event.detail.statusId);
   }
 
+  // Keep the node checkbox in sync with the presence of its special arrow.
+  function syncFromAllNodes(nodeList, edgeList) {
+    const allEdgeTargets = new Set(
+      edgeList.filter(isAllIncomingEdge).map((edge) => parseInt(edge.target.replace('status-', ''), 10))
+    );
+    return nodeList.map((node) => ({
+      ...node,
+      data: { ...node.data, fromAll: allEdgeTargets.has(node.data.statusId) }
+    }));
+  }
+
+  function handleToggleAllIncoming(statusId) {
+    if (!statusId) return;
+    const nodeId = `status-${statusId}`;
+    const existing = edges.find((edge) => isAllIncomingEdge(edge) && edge.target === nodeId);
+    if (existing) {
+      edges = edges.filter((edge) => edge !== existing);
+    } else {
+      edges = [...edges, createAllIncomingEdge(statusId, workflow.id)];
+    }
+    nodes = syncFromAllNodes(nodes, edges);
+  }
+
   async function saveWorkflowDesign() {
     if (!workflow) return;
 
@@ -323,10 +380,17 @@
         workflow.id
       );
 
+      // From-all rows power the special "every other status" arrows and are
+      // appended after the initial row so they are never stripped as NULL-from
+      const transitionsWithAll = [
+        ...transitionsWithInitial,
+        ...allIncomingEdgesToTransitions(edges, workflow.id)
+      ];
+
       // Add preservation transitions for disconnected statuses
       const allTransitions = addPreservationTransitions(
-        currentStatuses, 
-        transitionsWithInitial, 
+        currentStatuses,
+        transitionsWithAll,
         workflow.id
       );
 
@@ -403,13 +467,15 @@
       <div class="text-xs hint-body">
         {t('workflows.transitionHint1')}<br/>
         {t('workflows.transitionHint2')}<br/>
-        {t('workflows.transitionHint3')}
+        {t('workflows.transitionHint3')}<br/>
+        {t('workflows.transitionHint4')}
       </div>
     </div>
     <div class="space-y-3">
       {#each availableStatuses as status}
         <button
           type="button"
+          data-testid={`workflow-status-option-${status.id}`}
           class="appearance-none bg-transparent border-none font-[inherit] text-[inherit] text-left w-full p-3 rounded border status-card cursor-pointer transition-colors"
           onclick={() => addStatusToWorkflow(status)}
         >
@@ -479,6 +545,20 @@
               stroke-width="1"
             />
           </marker>
+          <marker
+            id="workflow-all-arrowhead"
+            markerWidth="5"
+            markerHeight="5"
+            refX="4"
+            refY="2.5"
+            orient="auto"
+            markerUnits="strokeWidth"
+          >
+            <polygon
+              points="0,0.4 4.4,2.5 0,4.6 1.2,2.5"
+              fill="var(--workflow-accent, #3b82f6)"
+            />
+          </marker>
         </defs>
       </svg>
     </SvelteFlow>
@@ -504,6 +584,7 @@
         {t('common.cancel')}
       </button>
       <button
+        data-testid="workflow-save"
         class="px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
         onclick={saveWorkflowDesign}
         disabled={savingTransitions || nodes.length === 0}

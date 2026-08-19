@@ -105,6 +105,9 @@ export default {
     setStart: 'Establecer inicio',
     removeFromWorkflow: 'Eliminar del flujo de trabajo',
     swapDirection: 'Invertir dirección',
+    allStatuses: 'Todos',
+    fromAllStatuses: 'Permitir transiciones desde todos los demás estados',
+    transitionHint4: 'Marque «Todos» en un estado para permitir transiciones desde todos los demás estados',
   },
 
   screens: {

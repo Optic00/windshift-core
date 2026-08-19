@@ -554,13 +554,15 @@ func GetInitialStatusForItemType(db database.Database, itemTypeID int) (string, 
 	}
 
 	// Now get the initial status from the workflow
-	// The initial status is identified by from_status_id IS NULL in workflow_transitions
+	// The initial status is identified by from_status_id IS NULL (and not a
+	// from-all row) in workflow_transitions
 	statusQuery := `
 		SELECT s.name
 		FROM workflow_transitions wt
 		JOIN statuses s ON wt.to_status_id = s.id
 		WHERE wt.workflow_id = ?
 		  AND wt.from_status_id IS NULL
+		  AND wt.from_all_statuses = FALSE
 		ORDER BY wt.display_order ASC
 		LIMIT 1
 	`

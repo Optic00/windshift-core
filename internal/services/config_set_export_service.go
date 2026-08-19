@@ -269,7 +269,7 @@ func (s *ConfigSetExportService) exportWorkflow(ctx context.Context, workflowID 
 	wf.Description = description.String
 
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT wt.id, wt.from_status_id, wt.to_status_id, wt.display_order,
+		SELECT wt.id, wt.from_status_id, wt.to_status_id, wt.from_all_statuses, wt.display_order,
 		       COALESCE(wt.source_handle, ''), COALESCE(wt.target_handle, ''),
 		       fs.name AS from_status_name, ts.name AS to_status_name
 		FROM workflow_transitions wt
@@ -287,28 +287,30 @@ func (s *ConfigSetExportService) exportWorkflow(ctx context.Context, workflowID 
 		var transitionID int
 		var fromID sql.NullInt64
 		var toID int
+		var fromAll bool
 		var displayOrder int
 		var sourceHandle, targetHandle string
 		var fromName sql.NullString
 		var toName string
-		if scanErr := rows.Scan(&transitionID, &fromID, &toID, &displayOrder, &sourceHandle, &targetHandle, &fromName, &toName); scanErr != nil {
+		if scanErr := rows.Scan(&transitionID, &fromID, &toID, &fromAll, &displayOrder, &sourceHandle, &targetHandle, &fromName, &toName); scanErr != nil {
 			return nil, scanErr
 		}
 
 		t := ConfigSetTplWorkflowTransition{
-			ToStatusName: toName,
-			DisplayOrder: displayOrder,
-			SourceHandle: sourceHandle,
-			TargetHandle: targetHandle,
+			ToStatusName:    toName,
+			FromAllStatuses: fromAll,
+			DisplayOrder:    displayOrder,
+			SourceHandle:    sourceHandle,
+			TargetHandle:    targetHandle,
 		}
-		if fromName.Valid {
+		if fromName.Valid && !fromAll {
 			f := fromName.String
 			t.FromStatusName = &f
 			statusNames[int(fromID.Int64)] = f
 		}
 		statusNames[toID] = toName
 
-		ref := ConfigSetTplTransitionRef{ToStatusName: toName}
+		ref := ConfigSetTplTransitionRef{ToStatusName: toName, FromAllStatuses: fromAll}
 		if t.FromStatusName != nil {
 			ref.FromStatusName = t.FromStatusName
 		}
@@ -372,9 +374,10 @@ func (s *ConfigSetExportService) exportConditionSet(ctx context.Context, conditi
 			continue
 		}
 		tc := ConfigSetTplTransitionCondition{
-			FromStatusName: ref.FromStatusName,
-			ToStatusName:   ref.ToStatusName,
-			LogicMode:      r.LogicMode,
+			FromStatusName:  ref.FromStatusName,
+			ToStatusName:    ref.ToStatusName,
+			FromAllStatuses: ref.FromAllStatuses,
+			LogicMode:       r.LogicMode,
 		}
 
 		condRows, err := s.db.QueryContext(ctx, `

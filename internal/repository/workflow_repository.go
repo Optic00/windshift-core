@@ -262,14 +262,14 @@ func (r *WorkflowRepository) Delete(id int) (cancelledApprovalIDs []int, err err
 // workflow names. The result is never nil.
 func (r *WorkflowRepository) ListTransitions(workflowID int) ([]models.WorkflowTransition, error) {
 	query := `
-		SELECT wt.id, wt.workflow_id, wt.from_status_id, wt.to_status_id, wt.display_order, wt.source_handle, wt.target_handle, wt.created_at,
+		SELECT wt.id, wt.workflow_id, wt.from_status_id, wt.to_status_id, wt.from_all_statuses, wt.display_order, wt.source_handle, wt.target_handle, wt.created_at,
 		       fs.name as from_status_name, ts.name as to_status_name, w.name as workflow_name
 		FROM workflow_transitions wt
 		LEFT JOIN statuses fs ON wt.from_status_id = fs.id
 		JOIN statuses ts ON wt.to_status_id = ts.id
 		JOIN workflows w ON wt.workflow_id = w.id
 		WHERE wt.workflow_id = ?
-		ORDER BY wt.from_status_id NULLS FIRST, wt.display_order ASC`
+		ORDER BY CASE WHEN wt.from_all_statuses THEN 1 ELSE 0 END, wt.from_status_id NULLS FIRST, wt.display_order ASC`
 
 	rows, err := r.db.Query(query, workflowID)
 	if err != nil {
@@ -283,13 +283,13 @@ func (r *WorkflowRepository) ListTransitions(workflowID int) ([]models.WorkflowT
 // for enriched workflow list responses.
 func (r *WorkflowRepository) ListAllTransitions() ([]models.WorkflowTransition, error) {
 	rows, err := r.db.Query(`
-		SELECT wt.id, wt.workflow_id, wt.from_status_id, wt.to_status_id, wt.display_order, wt.source_handle, wt.target_handle, wt.created_at,
+		SELECT wt.id, wt.workflow_id, wt.from_status_id, wt.to_status_id, wt.from_all_statuses, wt.display_order, wt.source_handle, wt.target_handle, wt.created_at,
 		       fs.name as from_status_name, ts.name as to_status_name, w.name as workflow_name
 		FROM workflow_transitions wt
 		LEFT JOIN statuses fs ON wt.from_status_id = fs.id
 		JOIN statuses ts ON wt.to_status_id = ts.id
 		JOIN workflows w ON wt.workflow_id = w.id
-		ORDER BY wt.workflow_id, wt.from_status_id NULLS FIRST, wt.display_order ASC
+		ORDER BY wt.workflow_id, CASE WHEN wt.from_all_statuses THEN 1 ELSE 0 END, wt.from_status_id NULLS FIRST, wt.display_order ASC
 	`)
 	if err != nil {
 		return nil, err
@@ -308,7 +308,7 @@ func scanWorkflowTransitions(rows *sql.Rows) ([]models.WorkflowTransition, error
 		var targetHandle sql.NullString
 
 		err := rows.Scan(&transition.ID, &transition.WorkflowID, &fromStatusID, &transition.ToStatusID,
-			&transition.DisplayOrder, &sourceHandle, &targetHandle, &transition.CreatedAt, &fromStatusName,
+			&transition.FromAllStatuses, &transition.DisplayOrder, &sourceHandle, &targetHandle, &transition.CreatedAt, &fromStatusName,
 			&transition.ToStatusName, &transition.WorkflowName)
 		if err != nil {
 			return nil, err
@@ -344,22 +344,32 @@ func scanWorkflowTransitions(rows *sql.Rows) ([]models.WorkflowTransition, error
 	return transitions, nil
 }
 
-// ListAvailableTransitions returns directed transitions a workflow allows out
-// of a given status. NULL from-status rows are creation-only initial
-// transitions and must never appear as moves from an existing item.
-// The result is never nil.
+// ListAvailableTransitions returns the directed transitions a workflow allows
+// out of a given status: rows from that status plus from-all rows targeting
+// statuses without a direct edge. NULL from-status rows that are not
+// from-all are creation-only initial transitions and must never appear as
+// moves from an existing item. The result is never nil.
 func (r *WorkflowRepository) ListAvailableTransitions(workflowID, statusID int) ([]models.WorkflowTransition, error) {
 	query := `
-		SELECT wt.id, wt.workflow_id, wt.from_status_id, wt.to_status_id, wt.display_order, wt.created_at,
+		SELECT wt.id, wt.workflow_id, wt.from_status_id, wt.to_status_id, wt.from_all_statuses, wt.display_order, wt.created_at,
 		       fs.name as from_status_name, ts.name as to_status_name, w.name as workflow_name
 		FROM workflow_transitions wt
 		LEFT JOIN statuses fs ON wt.from_status_id = fs.id
 		JOIN statuses ts ON wt.to_status_id = ts.id
 		JOIN workflows w ON wt.workflow_id = w.id
-		WHERE wt.workflow_id = ? AND wt.from_status_id = ?
-		ORDER BY wt.display_order ASC`
+		WHERE wt.workflow_id = ?
+		  AND (
+			wt.from_status_id = ?
+			OR (
+				wt.from_all_statuses = TRUE
+			AND wt.to_status_id NOT IN (
+				SELECT to_status_id FROM workflow_transitions WHERE workflow_id = ? AND from_status_id = ?
+			)
+			)
+		  )
+		ORDER BY CASE WHEN wt.from_all_statuses THEN 1 ELSE 0 END, wt.display_order ASC`
 
-	rows, err := r.db.Query(query, workflowID, statusID)
+	rows, err := r.db.Query(query, workflowID, statusID, workflowID, statusID)
 	if err != nil {
 		return nil, err
 	}
@@ -372,7 +382,7 @@ func (r *WorkflowRepository) ListAvailableTransitions(workflowID, statusID int) 
 		var fromStatusName sql.NullString
 
 		err := rows.Scan(&transition.ID, &transition.WorkflowID, &fromStatusID, &transition.ToStatusID,
-			&transition.DisplayOrder, &transition.CreatedAt, &fromStatusName,
+			&transition.FromAllStatuses, &transition.DisplayOrder, &transition.CreatedAt, &fromStatusName,
 			&transition.ToStatusName, &transition.WorkflowName)
 		if err != nil {
 			return nil, err
@@ -402,7 +412,8 @@ func (r *WorkflowRepository) ListAvailableTransitions(workflowID, statusID int) 
 
 // ReplaceTransitions reconciles a workflow's transitions with the given
 // payload inside a single transaction. Identity is the (from_status_id,
-// to_status_id) pair, not the row id: unchanged transitions keep their id,
+// from_all_statuses, to_status_id) triple, not the row id: unchanged
+// transitions keep their id,
 // which is what keeps condition_set_transitions / approval_set_statuses
 // references intact and stops cosmetic edits from tripping the CASCADE →
 // RESTRICT chain into approval_requests.
@@ -418,8 +429,8 @@ func (r *WorkflowRepository) ReplaceTransitions(workflowID int, transitions []mo
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Load current transitions keyed by (from_status_id, to_status_id). We diff
-	// the payload against this map below.
+	// Load current transitions keyed by (from_status_id, from_all_statuses,
+	// to_status_id). We diff the payload against this map below.
 	type oldTransition struct {
 		id           int
 		displayOrder int
@@ -429,7 +440,7 @@ func (r *WorkflowRepository) ReplaceTransitions(workflowID int, transitions []mo
 	oldByKey := map[string]oldTransition{}
 	{
 		oldRows, qErr := tx.Query(
-			"SELECT id, from_status_id, to_status_id, display_order, source_handle, target_handle FROM workflow_transitions WHERE workflow_id = ?",
+			"SELECT id, from_status_id, to_status_id, from_all_statuses, display_order, source_handle, target_handle FROM workflow_transitions WHERE workflow_id = ?",
 			workflowID,
 		)
 		if qErr != nil {
@@ -439,11 +450,12 @@ func (r *WorkflowRepository) ReplaceTransitions(workflowID int, transitions []mo
 			var ot oldTransition
 			var fromID sql.NullInt64
 			var toID int
-			if sErr := oldRows.Scan(&ot.id, &fromID, &toID, &ot.displayOrder, &ot.sourceHandle, &ot.targetHandle); sErr != nil {
+			var fromAll bool
+			if sErr := oldRows.Scan(&ot.id, &fromID, &toID, &fromAll, &ot.displayOrder, &ot.sourceHandle, &ot.targetHandle); sErr != nil {
 				_ = oldRows.Close()
 				return nil, sErr
 			}
-			oldByKey[transitionKey(fromID, toID)] = ot
+			oldByKey[transitionKey(fromID, toID, fromAll)] = ot
 		}
 		if rerr := oldRows.Err(); rerr != nil {
 			_ = oldRows.Close()
@@ -470,6 +482,12 @@ func (r *WorkflowRepository) ReplaceTransitions(workflowID int, transitions []mo
 			return nil, ErrTransitionToStatusNotFound
 		}
 
+		// From-all transitions apply to every other status, so they carry no
+		// concrete from-status.
+		if transition.FromAllStatuses {
+			transition.FromStatusID = nil
+		}
+
 		if transition.FromStatusID != nil {
 			var fromStatusExists bool
 			if sErr := tx.QueryRow("SELECT EXISTS(SELECT 1 FROM statuses WHERE id = ?)", *transition.FromStatusID).Scan(&fromStatusExists); sErr != nil {
@@ -484,7 +502,7 @@ func (r *WorkflowRepository) ReplaceTransitions(workflowID int, transitions []mo
 		if transition.FromStatusID != nil {
 			fromNullInt = sql.NullInt64{Int64: int64(*transition.FromStatusID), Valid: true}
 		}
-		newByKey[transitionKey(fromNullInt, transition.ToStatusID)] = transition
+		newByKey[transitionKey(fromNullInt, transition.ToStatusID, transition.FromAllStatuses)] = transition
 	}
 
 	// Diff: anything in old but not in new is being removed.
@@ -541,9 +559,9 @@ func (r *WorkflowRepository) ReplaceTransitions(workflowID int, transitions []mo
 		}
 
 		if _, err = tx.Exec(`
-			INSERT INTO workflow_transitions (workflow_id, from_status_id, to_status_id, display_order, source_handle, target_handle, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?)
-		`, workflowID, fromNullInt, transition.ToStatusID, transition.DisplayOrder, transition.SourceHandle, transition.TargetHandle, time.Now()); err != nil {
+			INSERT INTO workflow_transitions (workflow_id, from_status_id, to_status_id, from_all_statuses, display_order, source_handle, target_handle, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`, workflowID, fromNullInt, transition.ToStatusID, transition.FromAllStatuses, transition.DisplayOrder, transition.SourceHandle, transition.TargetHandle, time.Now()); err != nil {
 			return nil, err
 		}
 	}
@@ -554,8 +572,13 @@ func (r *WorkflowRepository) ReplaceTransitions(workflowID int, transitions []mo
 	return cancelledApprovalIDs, nil
 }
 
-// transitionKey creates a unique key for a transition by its from/to status IDs.
-func transitionKey(fromStatusID sql.NullInt64, toStatusID int) string {
+// transitionKey creates a unique key for a transition by its from/to status
+// IDs and from-all flag. NULL-from rows split into initial ("nil") and
+// from-all ("all") namespaces so the two wildcard kinds never collide.
+func transitionKey(fromStatusID sql.NullInt64, toStatusID int, fromAll bool) string {
+	if fromAll {
+		return fmt.Sprintf("all:%d", toStatusID)
+	}
 	if fromStatusID.Valid {
 		return fmt.Sprintf("%d:%d", fromStatusID.Int64, toStatusID)
 	}

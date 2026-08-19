@@ -103,6 +103,9 @@ export default {
     setStart: 'Start setzen',
     removeFromWorkflow: 'Aus Workflow entfernen',
     swapDirection: 'Richtung tauschen',
+    allStatuses: 'Alle',
+    fromAllStatuses: 'Übergänge von jedem anderen Status erlauben',
+    transitionHint4: 'Aktivieren Sie „Alle" an einem Status, um Übergänge von jedem anderen Status zu erlauben',
   },
 
   screens: {

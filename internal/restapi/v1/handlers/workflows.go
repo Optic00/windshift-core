@@ -179,8 +179,9 @@ func (h *WorkflowHandler) getWorkflowTransitions(workflowID int) ([]dto.Transiti
 	var transitions []dto.TransitionResponse
 	for _, t := range results {
 		tr := dto.TransitionResponse{
-			ID:         t.ID,
-			ToStatusID: t.ToStatusID,
+			ID:              t.ID,
+			FromAllStatuses: t.FromAllStatuses,
+			ToStatusID:      t.ToStatusID,
 			ToStatus: &dto.StatusSummary{
 				ID:            t.ToStatusID,
 				Name:          t.ToStatusName,

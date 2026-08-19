@@ -374,8 +374,12 @@ func (s *ItemTypeChangeService) findWorkflowTransitionID(workflowID, fromStatusI
 	var id int
 	err := s.db.QueryRow(`
 		SELECT id FROM workflow_transitions
-		WHERE workflow_id = ? AND from_status_id = ? AND to_status_id = ?
-	`, workflowID, fromStatusID, toStatusID).Scan(&id)
+		WHERE workflow_id = ?
+		  AND to_status_id = ?
+		  AND (from_status_id = ? OR from_all_statuses = TRUE)
+		ORDER BY CASE WHEN from_status_id IS NULL THEN 1 ELSE 0 END, display_order
+		LIMIT 1
+	`, workflowID, toStatusID, fromStatusID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

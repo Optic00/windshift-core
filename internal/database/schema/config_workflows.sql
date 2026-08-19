@@ -165,6 +165,7 @@ CREATE TABLE IF NOT EXISTS workflow_transitions (
 	workflow_id INTEGER NOT NULL,
 	from_status_id INTEGER,  -- NULL means it's an initial status
 	to_status_id INTEGER NOT NULL,
+	from_all_statuses BOOLEAN NOT NULL DEFAULT false,  -- TRUE = allowed from every other status (from_status_id stays NULL)
 	display_order INTEGER DEFAULT 0,
 	source_handle TEXT,  -- Connection point on source status (top, right, bottom, left)
 	target_handle TEXT,  -- Connection point on target status (top, right, bottom, left)

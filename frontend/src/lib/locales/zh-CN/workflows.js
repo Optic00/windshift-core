@@ -95,6 +95,9 @@ export default {
     setStart: '设置起点',
     removeFromWorkflow: '从工作流移除',
     swapDirection: '交换方向',
+    allStatuses: '全部',
+    fromAllStatuses: '允许从其他所有状态转入',
+    transitionHint4: '勾选状态上的“全部”，即可允许从其他所有状态转入',
   },
 
   screens: {

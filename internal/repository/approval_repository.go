@@ -262,7 +262,8 @@ func (r *ApprovalRepository) FindGatedRequestForTransition(ctx context.Context, 
 		JOIN workflow_transitions wt
 			ON wt.id IN (ass.approve_transition_id, ass.deny_transition_id)
 		WHERE ar.item_id = ? AND ar.status = 'pending'
-		  AND wt.from_status_id = ? AND wt.to_status_id = ?
+		  AND (wt.from_status_id = ? OR wt.from_all_statuses = TRUE)
+		  AND wt.to_status_id = ?
 		LIMIT 1
 	`, itemID, fromStatusID, toStatusID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -642,14 +643,19 @@ func (r *ApprovalRepository) GetItemCurrentStatusID(ctx context.Context, tx data
 }
 
 // GetTransitionEndpoints returns (from_status_id, to_status_id) for a
-// workflow_transitions row. Used by finalizeRequest to compute the
-// destination status for the approve/deny transition.
-func (r *ApprovalRepository) GetTransitionEndpoints(ctx context.Context, tx database.Tx, transitionID int) (fromStatusID, toStatusID int, err error) {
+// workflow_transitions row. The source is nil for an all-statuses or initial
+// transition. finalizeRequest only needs the destination status.
+func (r *ApprovalRepository) GetTransitionEndpoints(ctx context.Context, tx database.Tx, transitionID int) (fromStatusID *int, toStatusID int, err error) {
+	var fromStatus sql.NullInt64
 	err = tx.QueryRowContext(ctx,
 		`SELECT from_status_id, to_status_id FROM workflow_transitions WHERE id = ?`, transitionID,
-	).Scan(&fromStatusID, &toStatusID)
+	).Scan(&fromStatus, &toStatusID)
 	if err != nil {
-		return 0, 0, notFoundOrWrap(err, "load transition endpoints")
+		return nil, 0, notFoundOrWrap(err, "load transition endpoints")
+	}
+	if fromStatus.Valid {
+		id := int(fromStatus.Int64)
+		fromStatusID = &id
 	}
 	return fromStatusID, toStatusID, nil
 }

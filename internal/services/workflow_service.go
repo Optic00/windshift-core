@@ -207,14 +207,17 @@ func (s *WorkflowService) IsValidStatusTransition(workspaceID int, itemTypeID *i
 		return true, nil
 	}
 
-	// Check if the transition exists in the workflow
+	// Check if the transition exists in the workflow: either a direct edge or a
+	// from-all row that admits every source status.
 	var exists bool
 	err = s.db.QueryRow(`
 		SELECT EXISTS(
 			SELECT 1 FROM workflow_transitions
-			WHERE workflow_id = ? AND from_status_id = ? AND to_status_id = ?
+			WHERE workflow_id = ?
+			  AND to_status_id = ?
+			  AND (from_status_id = ? OR from_all_statuses = TRUE)
 		)
-	`, *workflowID, fromStatusID, toStatusID).Scan(&exists)
+	`, *workflowID, toStatusID, fromStatusID).Scan(&exists)
 
 	if err != nil {
 		return false, fmt.Errorf("failed to check transition: %w", err)
@@ -338,12 +341,17 @@ func (s *WorkflowService) IsValidStatusTransitionForUser(ctx context.Context, wo
 		return true, "", nil
 	}
 
-	// Check workflow transition exists and get its ID
+	// Resolve the governing transition row: a direct edge wins over a from-all
+	// row so a specific edge keeps its own conditions and validators.
 	var transitionID int
 	err = s.db.QueryRow(`
 		SELECT id FROM workflow_transitions
-		WHERE workflow_id = ? AND from_status_id = ? AND to_status_id = ?
-	`, *workflowID, fromStatusID, toStatusID).Scan(&transitionID)
+		WHERE workflow_id = ?
+		  AND to_status_id = ?
+		  AND (from_status_id = ? OR from_all_statuses = TRUE)
+		ORDER BY CASE WHEN from_status_id IS NULL THEN 1 ELSE 0 END, display_order
+		LIMIT 1
+	`, *workflowID, toStatusID, fromStatusID).Scan(&transitionID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, "", nil
@@ -609,13 +617,18 @@ func IsTransitionRejection(err error) *TransitionRejection {
 	return nil
 }
 
-// GetTransitionID returns the transition ID for a workflow transition.
+// GetTransitionID returns the transition ID for a workflow transition. A
+// direct edge is preferred over a from-all row targeting the same status.
 func (s *WorkflowService) GetTransitionID(workflowID int, fromStatusID, toStatusID int64) (int, error) {
 	var id int
 	err := s.db.QueryRow(`
 		SELECT id FROM workflow_transitions
-		WHERE workflow_id = ? AND from_status_id = ? AND to_status_id = ?
-	`, workflowID, fromStatusID, toStatusID).Scan(&id)
+		WHERE workflow_id = ?
+		  AND to_status_id = ?
+		  AND (from_status_id = ? OR from_all_statuses = TRUE)
+		ORDER BY CASE WHEN from_status_id IS NULL THEN 1 ELSE 0 END, display_order
+		LIMIT 1
+	`, workflowID, toStatusID, fromStatusID).Scan(&id)
 	if err != nil {
 		return 0, err
 	}
@@ -636,14 +649,24 @@ func (s *WorkflowService) GetAvailableTransitions(workspaceID int, itemTypeID *i
 		return []StatusTransition{}, nil
 	}
 
-	// Get valid transitions from current status
+	// Get valid transitions from the current status. From-all rows add targets
+	// that have no direct edge from this status.
 	rows, err := s.db.Query(`
 		SELECT s.id, s.name, sc.color
 		FROM workflow_transitions wt
 		JOIN statuses s ON wt.to_status_id = s.id
 		LEFT JOIN status_categories sc ON s.category_id = sc.id
-		WHERE wt.workflow_id = ? AND wt.from_status_id = ?
-	`, *workflowID, currentStatusID)
+		WHERE wt.workflow_id = ?
+		  AND (
+			wt.from_status_id = ?
+			OR (
+				wt.from_all_statuses = TRUE
+				AND wt.to_status_id NOT IN (
+					SELECT to_status_id FROM workflow_transitions WHERE workflow_id = ? AND from_status_id = ?
+				)
+			)
+		  )
+	`, *workflowID, currentStatusID, *workflowID, currentStatusID)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to query transitions: %w", err)
@@ -731,7 +754,8 @@ type StatusTransition struct {
 }
 
 // GetInitialStatusID returns the initial status ID for a workflow
-// The initial status is identified by from_status_id IS NULL in workflow_transitions
+// The initial status is identified by from_status_id IS NULL (and not a
+// from-all row) in workflow_transitions
 func (s *WorkflowService) GetInitialStatusID(workflowID int) (*int, error) {
 	var statusID int
 	err := s.db.QueryRow(`
@@ -739,6 +763,7 @@ func (s *WorkflowService) GetInitialStatusID(workflowID int) (*int, error) {
 		FROM workflow_transitions wt
 		WHERE wt.workflow_id = ?
 		  AND wt.from_status_id IS NULL
+		  AND wt.from_all_statuses = FALSE
 		ORDER BY wt.display_order ASC
 		LIMIT 1
 	`, workflowID).Scan(&statusID)
@@ -771,6 +796,7 @@ type WorkflowResult struct {
 type WorkflowTransitionResult struct {
 	ID                int
 	FromStatusID      *int
+	FromAllStatuses   bool
 	FromStatusName    string
 	FromCategoryName  string
 	FromCategoryColor string
@@ -878,7 +904,7 @@ func (s *WorkflowService) scanTransitions(rows *sql.Rows) ([]WorkflowTransitionR
 		var fromStatusID sql.NullInt64
 		var fromStatusName, fromCategoryName, fromCategoryColor sql.NullString
 
-		err := rows.Scan(&t.ID, &fromStatusID, &t.ToStatusID,
+		err := rows.Scan(&t.ID, &fromStatusID, &t.ToStatusID, &t.FromAllStatuses,
 			&fromStatusName, &t.ToStatusName,
 			&fromCategoryName, &fromCategoryColor,
 			&t.ToCategoryName, &t.ToCategoryColor)
@@ -907,7 +933,7 @@ func (s *WorkflowService) scanTransitions(rows *sql.Rows) ([]WorkflowTransitionR
 // GetTransitions retrieves all transitions for a workflow.
 func (s *WorkflowService) GetTransitions(workflowID int) ([]WorkflowTransitionResult, error) {
 	rows, err := s.db.Query(`
-		SELECT wt.id, wt.from_status_id, wt.to_status_id,
+		SELECT wt.id, wt.from_status_id, wt.to_status_id, wt.from_all_statuses,
 		       fs.name as from_status_name, ts.name as to_status_name,
 		       fsc.name as from_category_name, fsc.color as from_category_color,
 		       tsc.name as to_category_name, tsc.color as to_category_color
@@ -932,7 +958,7 @@ func (s *WorkflowService) GetTransitions(workflowID int) ([]WorkflowTransitionRe
 // from an existing item.
 func (s *WorkflowService) GetTransitionsFromStatus(statusID int) ([]WorkflowTransitionResult, error) {
 	rows, err := s.db.Query(`
-		SELECT wt.id, wt.from_status_id, wt.to_status_id,
+		SELECT wt.id, wt.from_status_id, wt.to_status_id, wt.from_all_statuses,
 		       fs.name as from_status_name, ts.name as to_status_name,
 		       fsc.name as from_category_name, fsc.color as from_category_color,
 		       tsc.name as to_category_name, tsc.color as to_category_color
@@ -968,7 +994,7 @@ func (s *WorkflowService) GetTransitionsForItem(
 	}
 
 	rows, err := s.db.Query(`
-		SELECT wt.id, wt.from_status_id, wt.to_status_id,
+		SELECT wt.id, wt.from_status_id, wt.to_status_id, wt.from_all_statuses,
 		       fs.name as from_status_name, ts.name as to_status_name,
 		       fsc.name as from_category_name, fsc.color as from_category_color,
 		       tsc.name as to_category_name, tsc.color as to_category_color
@@ -977,9 +1003,18 @@ func (s *WorkflowService) GetTransitionsForItem(
 		JOIN statuses ts ON wt.to_status_id = ts.id
 		LEFT JOIN status_categories fsc ON fs.category_id = fsc.id
 		JOIN status_categories tsc ON ts.category_id = tsc.id
-		WHERE wt.workflow_id = ? AND wt.from_status_id = ?
-		ORDER BY wt.display_order
-	`, *workflowID, statusID)
+		WHERE wt.workflow_id = ?
+		  AND (
+			wt.from_status_id = ?
+			OR (
+				wt.from_all_statuses = TRUE
+				AND wt.to_status_id NOT IN (
+					SELECT to_status_id FROM workflow_transitions WHERE workflow_id = ? AND from_status_id = ?
+				)
+			)
+		  )
+		ORDER BY CASE WHEN wt.from_all_statuses THEN 1 ELSE 0 END, wt.display_order
+	`, *workflowID, statusID, *workflowID, statusID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get item workflow transitions: %w", err)
 	}

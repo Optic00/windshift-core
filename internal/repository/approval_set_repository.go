@@ -346,7 +346,8 @@ func (r *ApprovalSetRepository) TransitionExistsFromStatus(ctx context.Context, 
 	err := r.db.QueryRowContext(ctx, `
 		SELECT EXISTS(
 			SELECT 1 FROM workflow_transitions
-			WHERE id = ? AND workflow_id = ? AND from_status_id = ?
+			WHERE id = ? AND workflow_id = ?
+			  AND (from_status_id = ? OR from_all_statuses = TRUE)
 		)
 	`, transitionID, workflowID, fromStatusID).Scan(&ok)
 	if err != nil {

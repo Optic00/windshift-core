@@ -123,7 +123,7 @@ func (s *TransitionMatrixService) load(ctx context.Context, workspaceID int) (*W
 		return nil, err
 	}
 	queryStarted = time.Now()
-	edges, err := s.loadEdges(ctx, workflowIDs)
+	edges, anyEdges, err := s.loadEdges(ctx, workflowIDs)
 	matrix.QueryDuration += time.Since(queryStarted)
 	matrix.SQLCount++
 	if err != nil {
@@ -134,10 +134,19 @@ func (s *TransitionMatrixService) load(ctx context.Context, workspaceID int) (*W
 	for _, workflowID := range workflowIDs {
 		byStatus := make(map[int][]StatusTransitionOption, len(statuses))
 		for _, status := range statuses {
-			options := make([]StatusTransitionOption, 0, 1+len(edges[workflowID][status.StatusID]))
+			options := make([]StatusTransitionOption, 0, 1+len(edges[workflowID][status.StatusID])+len(anyEdges[workflowID]))
 			options = append(options, status)
 			added := map[int]struct{}{status.StatusID: {}}
 			for _, edge := range edges[workflowID][status.StatusID] {
+				if _, exists := added[edge.StatusID]; exists {
+					continue
+				}
+				options = append(options, edge)
+				added[edge.StatusID] = struct{}{}
+			}
+			// From-all rows apply from every status; direct edges above already
+			// claimed their targets, so only uncovered ones are appended.
+			for _, edge := range anyEdges[workflowID] {
 				if _, exists := added[edge.StatusID]; exists {
 					continue
 				}
@@ -214,14 +223,14 @@ func (s *TransitionMatrixService) loadStatuses(ctx context.Context, workflowIDs 
 	return statuses, nil
 }
 
-func (s *TransitionMatrixService) loadEdges(ctx context.Context, workflowIDs []int) (map[int]map[int][]StatusTransitionOption, error) {
+func (s *TransitionMatrixService) loadEdges(ctx context.Context, workflowIDs []int) (edgesByStatus map[int]map[int][]StatusTransitionOption, anyEdgesByWorkflow map[int][]StatusTransitionOption, err error) {
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(workflowIDs)), ",")
 	query := fmt.Sprintf(`
-		SELECT wt.workflow_id, wt.from_status_id, wt.id, s.id, s.name, sc.color
+		SELECT wt.workflow_id, wt.from_status_id, wt.from_all_statuses, wt.id, s.id, s.name, sc.color
 		FROM workflow_transitions wt
 		JOIN statuses s ON s.id = wt.to_status_id
 		LEFT JOIN status_categories sc ON sc.id = s.category_id
-		WHERE wt.workflow_id IN (%s) AND wt.from_status_id IS NOT NULL
+		WHERE wt.workflow_id IN (%s) AND (wt.from_status_id IS NOT NULL OR wt.from_all_statuses = TRUE)
 		ORDER BY wt.workflow_id, wt.from_status_id, wt.display_order, wt.id
 	`, placeholders)
 	args := make([]any, len(workflowIDs))
@@ -230,24 +239,28 @@ func (s *TransitionMatrixService) loadEdges(ctx context.Context, workflowIDs []i
 	}
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("load transition-matrix edges: %w", err)
+		return nil, nil, fmt.Errorf("load transition-matrix edges: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
 	edges := make(map[int]map[int][]StatusTransitionOption, len(workflowIDs))
+	anyEdges := make(map[int][]StatusTransitionOption, len(workflowIDs))
 	for rows.Next() {
-		var workflowID, fromStatusID int
+		var workflowID int
+		var fromStatusID sql.NullInt64
+		var fromAll bool
 		var option repository.StatusTransitionOption
 		var categoryColor sql.NullString
 		if err := rows.Scan(
 			&workflowID,
 			&fromStatusID,
+			&fromAll,
 			&option.TransitionID,
 			&option.StatusID,
 			&option.StatusName,
 			&categoryColor,
 		); err != nil {
-			return nil, fmt.Errorf("scan transition-matrix edge: %w", err)
+			return nil, nil, fmt.Errorf("scan transition-matrix edge: %w", err)
 		}
 		if categoryColor.Valid {
 			option.CategoryColor = &categoryColor.String
@@ -255,12 +268,17 @@ func (s *TransitionMatrixService) loadEdges(ctx context.Context, workflowIDs []i
 		if edges[workflowID] == nil {
 			edges[workflowID] = map[int][]StatusTransitionOption{}
 		}
-		edges[workflowID][fromStatusID] = append(edges[workflowID][fromStatusID], option)
+		if fromAll {
+			anyEdges[workflowID] = append(anyEdges[workflowID], option)
+			continue
+		}
+		fromID := int(fromStatusID.Int64)
+		edges[workflowID][fromID] = append(edges[workflowID][fromID], option)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate transition-matrix edges: %w", err)
+		return nil, nil, fmt.Errorf("iterate transition-matrix edges: %w", err)
 	}
-	return edges, nil
+	return edges, anyEdges, nil
 }
 
 func uniqueSortedWorkflowIDs(itemTypeWorkflows map[int]int) []int {

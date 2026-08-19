@@ -104,6 +104,9 @@ export default {
     setStart: 'Definir início',
     removeFromWorkflow: 'Remover do workflow',
     swapDirection: 'Inverter direção',
+    allStatuses: 'Todos',
+    fromAllStatuses: 'Permitir transições de todos os outros statuses',
+    transitionHint4: 'Marque "Todos" em um status para permitir transições de todos os outros statuses',
   },
 
   screens: {

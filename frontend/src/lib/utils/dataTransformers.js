@@ -53,7 +53,9 @@ export function transitionsToEdges(transitions) {
   return transitions
     .filter(
       (transition) =>
-        transition.from_status_id !== null && transition.from_status_id !== transition.to_status_id
+        transition.from_status_id !== null &&
+        transition.from_status_id !== transition.to_status_id &&
+        !transition.from_all_statuses
     )
     .map((transition, index) => {
       // Use saved handles if available, otherwise distribute intelligently
@@ -103,20 +105,78 @@ export function nodesToStatuses(nodes) {
 }
 
 /**
+ * Edge type for the special "from every other status" transition arrow.
+ * These edges are self-loops rendered by AllIncomingEdge.svelte and are
+ * converted back to from_all_statuses transition rows on save.
+ */
+export const ALL_INCOMING_EDGE_TYPE = 'all-incoming';
+
+export function isAllIncomingEdge(edge) {
+  return edge?.type === ALL_INCOMING_EDGE_TYPE || edge?.data?.from_all_statuses === true;
+}
+
+/**
+ * Create the special loop edge shown when a status accepts transitions
+ * from every other status
+ * @param {number} statusId - Target status ID
+ * @param {number} workflowId - Workflow ID
+ * @returns {Object} Svelte Flow edge object
+ */
+export function createAllIncomingEdge(statusId, workflowId) {
+  return {
+    id: `edge-all-${statusId}`,
+    type: ALL_INCOMING_EDGE_TYPE,
+    source: `status-${statusId}`,
+    target: `status-${statusId}`,
+    sourceHandle: 'top',
+    targetHandle: 'target-left',
+    sourcePosition: 'top',
+    targetPosition: 'left',
+    deletable: true,
+    data: {
+      transitionId: null,
+      workflow_id: workflowId,
+      from_status_id: null,
+      to_status_id: statusId,
+      from_all_statuses: true,
+      display_order: 0,
+    },
+  };
+}
+
+/**
  * Convert Svelte Flow edges back to workflow transitions format
  * @param {Array} edges - Svelte Flow edges array
  * @param {number} workflowId - Current workflow ID
  * @returns {Array} Workflow transitions
  */
 export function edgesToTransitions(edges, workflowId) {
-  return edges.map((edge, index) => ({
-    id: edge.data?.transitionId || null,
+  return edges
+    .filter((edge) => !isAllIncomingEdge(edge))
+    .map((edge, index) => ({
+      id: edge.data?.transitionId || null,
+      workflow_id: workflowId,
+      from_status_id: edge.data?.from_status_id || parseInt(edge.source.replace('status-', ''), 10),
+      to_status_id: edge.data?.to_status_id || parseInt(edge.target.replace('status-', ''), 10),
+      display_order: edge.data?.display_order || index,
+      source_handle: edge.sourceHandle || 'right',
+      target_handle: edge.targetHandle || 'left',
+    }));
+}
+
+/**
+ * Build from_all_statuses transition rows for every all-incoming edge
+ * @param {Array} edges - Svelte Flow edges array
+ * @param {number} workflowId - Current workflow ID
+ * @returns {Array} Workflow transitions with from_all_statuses
+ */
+export function allIncomingEdgesToTransitions(edges, workflowId) {
+  return edges.filter(isAllIncomingEdge).map((edge, index) => ({
     workflow_id: workflowId,
-    from_status_id: edge.data?.from_status_id || parseInt(edge.source.replace('status-', ''), 10),
+    from_status_id: null,
+    from_all_statuses: true,
     to_status_id: edge.data?.to_status_id || parseInt(edge.target.replace('status-', ''), 10),
-    display_order: edge.data?.display_order || index,
-    source_handle: edge.sourceHandle || 'right',
-    target_handle: edge.targetHandle || 'left',
+    display_order: 2000 + index,
   }));
 }
 

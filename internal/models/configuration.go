@@ -223,14 +223,15 @@ type Workflow struct {
 
 // WorkflowTransition represents a transition between statuses in a workflow
 type WorkflowTransition struct {
-	ID           int       `json:"id"`
-	WorkflowID   int       `json:"workflow_id"`
-	FromStatusID *int      `json:"from_status_id"` // NULL means it's an initial status
-	ToStatusID   int       `json:"to_status_id"`
-	DisplayOrder int       `json:"display_order"`
-	SourceHandle string    `json:"source_handle,omitempty"` // Connection point on source status (top, right, bottom, left)
-	TargetHandle string    `json:"target_handle,omitempty"` // Connection point on target status (top, right, bottom, left)
-	CreatedAt    time.Time `json:"created_at"`
+	ID              int       `json:"id"`
+	WorkflowID      int       `json:"workflow_id"`
+	FromStatusID    *int      `json:"from_status_id"` // NULL means it's an initial status
+	ToStatusID      int       `json:"to_status_id"`
+	FromAllStatuses bool      `json:"from_all_statuses"` // TRUE = allowed from every other status; from_status_id stays NULL
+	DisplayOrder    int       `json:"display_order"`
+	SourceHandle    string    `json:"source_handle,omitempty"` // Connection point on source status (top, right, bottom, left)
+	TargetHandle    string    `json:"target_handle,omitempty"` // Connection point on target status (top, right, bottom, left)
+	CreatedAt       time.Time `json:"created_at"`
 	// Joined fields for API responses
 	FromStatusName string `json:"from_status_name,omitempty"`
 	ToStatusName   string `json:"to_status_name,omitempty"`

@@ -115,13 +115,15 @@ type ConfigSetTplWorkflow struct {
 }
 
 // ConfigSetTplWorkflowTransition carries from/to status names. FromStatusName
-// is a pointer-string: nil means "initial transition" (from_status_id IS NULL).
+// is a pointer-string: nil means "initial transition" (from_status_id IS
+// NULL) unless FromAllStatuses marks a transition from every other status.
 type ConfigSetTplWorkflowTransition struct {
-	FromStatusName *string `json:"from_status_name"`
-	ToStatusName   string  `json:"to_status_name"`
-	DisplayOrder   int     `json:"display_order,omitempty"`
-	SourceHandle   string  `json:"source_handle,omitempty"`
-	TargetHandle   string  `json:"target_handle,omitempty"`
+	FromStatusName  *string `json:"from_status_name"`
+	ToStatusName    string  `json:"to_status_name"`
+	FromAllStatuses bool    `json:"from_all_statuses,omitempty"`
+	DisplayOrder    int     `json:"display_order,omitempty"`
+	SourceHandle    string  `json:"source_handle,omitempty"`
+	TargetHandle    string  `json:"target_handle,omitempty"`
 }
 
 type ConfigSetTplConditionSet struct {
@@ -132,10 +134,11 @@ type ConfigSetTplConditionSet struct {
 }
 
 type ConfigSetTplTransitionCondition struct {
-	FromStatusName *string                 `json:"from_status_name"`
-	ToStatusName   string                  `json:"to_status_name"`
-	LogicMode      string                  `json:"logic_mode"`
-	Conditions     []ConfigSetTplCondition `json:"conditions,omitempty"`
+	FromStatusName  *string                 `json:"from_status_name"`
+	ToStatusName    string                  `json:"to_status_name"`
+	FromAllStatuses bool                    `json:"from_all_statuses,omitempty"`
+	LogicMode       string                  `json:"logic_mode"`
+	Conditions      []ConfigSetTplCondition `json:"conditions,omitempty"`
 }
 
 // ConfigSetTplCondition keeps the rule type and config as a free-form object.
@@ -169,8 +172,9 @@ type ConfigSetTplApprovalSetStatus struct {
 }
 
 type ConfigSetTplTransitionRef struct {
-	FromStatusName *string `json:"from_status_name"`
-	ToStatusName   string  `json:"to_status_name"`
+	FromStatusName  *string `json:"from_status_name"`
+	ToStatusName    string  `json:"to_status_name"`
+	FromAllStatuses bool    `json:"from_all_statuses,omitempty"`
 }
 
 // ConfigSetTplApprovalStep mirrors models.ApprovalStep but swaps every

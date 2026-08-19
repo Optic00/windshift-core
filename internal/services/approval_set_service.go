@@ -238,8 +238,9 @@ func (s *ApprovalSetService) persistSetStatuses(ctx context.Context, tx database
 }
 
 // validateSetStatuses runs the full template-validation pass: per-status
-// invariants (transitions originate at the configured status, both transitions
-// differ, etc.) plus per-step invariants delegated to validateApprovalStep.
+// invariants (transitions are valid from the configured status directly or via
+// a from-all row, both transitions differ, etc.) plus per-step invariants
+// delegated to validateApprovalStep.
 func (s *ApprovalSetService) validateSetStatuses(ctx context.Context, workflowID int, setStatuses []models.ApprovalSetStatus) error {
 	seenStatus := make(map[int]bool, len(setStatuses))
 	for _, ass := range setStatuses {

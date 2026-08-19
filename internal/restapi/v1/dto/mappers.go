@@ -266,9 +266,10 @@ func MapServiceTransitionsToResponse(transitions []services.WorkflowTransitionRe
 	result := make([]TransitionResponse, len(transitions))
 	for i, t := range transitions {
 		resp := TransitionResponse{
-			ID:           t.ID,
-			FromStatusID: t.FromStatusID,
-			ToStatusID:   t.ToStatusID,
+			ID:              t.ID,
+			FromStatusID:    t.FromStatusID,
+			FromAllStatuses: t.FromAllStatuses,
+			ToStatusID:      t.ToStatusID,
 		}
 
 		if t.FromStatusID != nil {
