@@ -76,6 +76,15 @@
     await collectionCategoriesStore.init();
 
     const urlParams = new URLSearchParams(window.location.search);
+    const hasURLQuery = [
+      'raw',
+      'ql',
+      'workspaces',
+      'statuses',
+      'priorities',
+      'search',
+      'dynamicFilters',
+    ].some((key) => urlParams.has(key));
     const wsParam = urlParams.get('workspace');
     if (wsParam) returnWorkspaceId = wsParam;
 
@@ -87,7 +96,7 @@
     }
 
     if (loadCollectionId) {
-      await loadCollectionById(loadCollectionId);
+      await loadCollectionById(loadCollectionId, hasURLQuery);
     } else {
       store.restoreFromURL();
       if (storeState.hasFilters) {
@@ -98,13 +107,17 @@
     loading = false;
   });
 
-  async function loadCollectionById(id) {
+  async function loadCollectionById(id, restoreURLQuery = false) {
     try {
       const collection = await api.collections.get(id);
       if (!collection) return;
       currentCollection = collection;
       slugSaved = !!(collection.is_public && collection.public_slug);
-      await hydrateFromCollection(collection);
+      if (restoreURLQuery) {
+        store.restoreFromURL();
+      } else {
+        await hydrateFromCollection(collection);
+      }
       await store.executeSearch({ page: 1, limit: itemsPerPage });
 
       const url = new URL(window.location.href);
