@@ -61,7 +61,7 @@ func (h *LeaveHandler) validateLeaveRequest(w http.ResponseWriter, r *http.Reque
 			return false
 		}
 
-		exists, err := h.userRepo.Exists(*req.SubstituteUserID)
+		exists, err := h.userRepo.ActiveExists(*req.SubstituteUserID)
 		if err != nil {
 			respondInternalError(w, r, err)
 			return false

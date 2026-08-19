@@ -327,8 +327,10 @@ func (v *ItemFieldValidator) ValidateAndApplyUpdates(
 		}
 	}
 
-	// Assignee ID validation
-	if err := v.ValidateNullableUserID(updateData, "assignee_id", &item.AssigneeID, "Assignee user"); err != nil {
+	// Assignee ID validation only accepts active users. Active users are the
+	// same account population exposed by the assignment picker; treating
+	// inactive rows as unavailable also prevents probing user IDs.
+	if err := v.ValidateNullableActiveUserID(updateData, "assignee_id", &item.AssigneeID, "Assignee user"); err != nil {
 		return err
 	}
 
@@ -538,6 +540,28 @@ func (v *ItemFieldValidator) ValidateNullableUserID(
 	destination **int,
 	entityName string,
 ) error {
+	return v.validateNullableUserID(updateData, fieldName, destination, entityName, false)
+}
+
+// ValidateNullableActiveUserID validates a nullable user field against active
+// users only. Inactive users are not available to user-facing assignment
+// flows and must be indistinguishable from unknown users.
+func (v *ItemFieldValidator) ValidateNullableActiveUserID(
+	updateData map[string]any,
+	fieldName string,
+	destination **int,
+	entityName string,
+) error {
+	return v.validateNullableUserID(updateData, fieldName, destination, entityName, true)
+}
+
+func (v *ItemFieldValidator) validateNullableUserID(
+	updateData map[string]any,
+	fieldName string,
+	destination **int,
+	entityName string,
+	activeOnly bool,
+) error {
 	if value, ok := updateData[fieldName]; ok {
 		if value == nil {
 			*destination = nil
@@ -546,8 +570,13 @@ func (v *ItemFieldValidator) ValidateNullableUserID(
 			if !ok {
 				return &ValidationError{Field: fieldName, Message: fmt.Sprintf("Invalid %s type", entityName)}
 			}
-			// Validate user exists
-			exists, err := v.EntityExists("users", newID)
+			var exists bool
+			var err error
+			if activeOnly {
+				exists, err = repository.NewUserRepository(v.db).ActiveExists(newID)
+			} else {
+				exists, err = v.EntityExists("users", newID)
+			}
 			if err != nil {
 				return fmt.Errorf("failed to validate user: %w", err)
 			}
