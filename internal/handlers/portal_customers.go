@@ -505,18 +505,7 @@ func (h *PortalCustomersHandler) UpdatePortalCustomerOrganisation(w http.Respons
 	//nolint:misspell // British spelling used in database (customer_organisation_id)
 	// Update the customer organisation assignment
 	query := `UPDATE portal_customers SET customer_organisation_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
-	result, err := h.db.ExecWrite(query, requestData.CustomerOrganisationID, customerID)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	if rowsAffected == 0 {
-		respondNotFound(w, r, "customer")
+	if !h.execCustomerWrite(w, r, query, requestData.CustomerOrganisationID, customerID) {
 		return
 	}
 
@@ -601,6 +590,26 @@ func (h *PortalCustomersHandler) UpdatePortalCustomer(w http.ResponseWriter, r *
 	respondJSONOK(w, c)
 }
 
+// execCustomerWrite runs a single-row portal customer write and writes the
+// error responses itself, including a 404 when no row matched.
+func (h *PortalCustomersHandler) execCustomerWrite(w http.ResponseWriter, r *http.Request, query string, args ...any) bool {
+	result, err := h.db.ExecWrite(query, args...)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return false
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		respondInternalError(w, r, err)
+		return false
+	}
+	if rowsAffected == 0 {
+		respondNotFound(w, r, "customer")
+		return false
+	}
+	return true
+}
+
 // DeletePortalCustomer deletes a portal customer
 func (h *PortalCustomersHandler) DeletePortalCustomer(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
@@ -611,19 +620,7 @@ func (h *PortalCustomersHandler) DeletePortalCustomer(w http.ResponseWriter, r *
 	}
 
 	// Delete the portal customer
-	query := `DELETE FROM portal_customers WHERE id = ?`
-	result, err := h.db.ExecWrite(query, id)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	if rowsAffected == 0 {
-		respondNotFound(w, r, "customer")
+	if !h.execCustomerWrite(w, r, `DELETE FROM portal_customers WHERE id = ?`, id) {
 		return
 	}
 
@@ -638,28 +635,9 @@ func (h *PortalCustomersHandler) DeletePortalCustomer(w http.ResponseWriter, r *
 //
 //nolint:misspell // "organisation" is intentional British spelling used throughout codebase
 func (h *PortalCustomersHandler) GetOrganisationContacts(w http.ResponseWriter, r *http.Request) {
-	user, ok := RequireAuth(w, r)
+	_, orgID, ok := h.requireOrgViewAccess(w, r)
 	if !ok {
 		return
-	}
-
-	idStr := r.PathValue("id")
-	orgID, err := strconv.Atoi(idStr)
-	if err != nil {
-		respondInvalidID(w, r, "id")
-		return
-	}
-
-	if h.customerOrgPermission != nil {
-		canView, err := h.customerOrgPermission.CanView(user.ID, orgID)
-		if err != nil {
-			respondInternalError(w, r, err)
-			return
-		}
-		if !canView {
-			respondForbidden(w, r)
-			return
-		}
 	}
 
 	//nolint:misspell // "organisation" is intentional British spelling used throughout codebase
@@ -714,30 +692,45 @@ func (h *PortalCustomersHandler) GetOrganisationContacts(w http.ResponseWriter, 
 // GetOrganisationTickets returns all work items created by contacts belonging to a customer organisation,
 // filtered by the requesting user's workspace permissions.
 //
+// requireOrgViewAccess resolves the organisation ID from the path and checks
+// the caller's organisation view permission. Writes the auth/ACL responses
+// itself and returns the authenticated user for follow-up queries.
+//
 //nolint:misspell // "organisation" is intentional British spelling used throughout codebase
-func (h *PortalCustomersHandler) GetOrganisationTickets(w http.ResponseWriter, r *http.Request) {
-	user, ok := RequireAuth(w, r)
+func (h *PortalCustomersHandler) requireOrgViewAccess(w http.ResponseWriter, r *http.Request) (user *models.User, orgID int, ok bool) {
+	user, ok = RequireAuth(w, r)
 	if !ok {
-		return
+		return nil, 0, false
 	}
 
-	idStr := r.PathValue("id")
-	orgID, err := strconv.Atoi(idStr)
+	orgID, err := strconv.Atoi(r.PathValue("id"))
 	if err != nil {
 		respondInvalidID(w, r, "id")
-		return
+		return nil, 0, false
 	}
 
 	if h.customerOrgPermission != nil {
 		canView, err := h.customerOrgPermission.CanView(user.ID, orgID)
 		if err != nil {
 			respondInternalError(w, r, err)
-			return
+			return nil, 0, false
 		}
 		if !canView {
 			respondForbidden(w, r)
-			return
+			return nil, 0, false
 		}
+	}
+	return user, orgID, true
+}
+
+// GetOrganisationTickets returns all work items created by contacts belonging to a customer organisation,
+// filtered by the requesting user's workspace permissions.
+//
+//nolint:misspell // "organisation" is intentional British spelling used throughout codebase
+func (h *PortalCustomersHandler) GetOrganisationTickets(w http.ResponseWriter, r *http.Request) {
+	user, orgID, ok := h.requireOrgViewAccess(w, r)
+	if !ok {
+		return
 	}
 
 	// Org ACL is the gate; do not intersect with workspace permissions.

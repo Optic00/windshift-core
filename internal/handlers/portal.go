@@ -373,9 +373,15 @@ func (h *PortalHandler) verifyPortalSessionBinding(w http.ResponseWriter, r *htt
 // portal is not found. Callers always defer the returned cancel (a no-op on
 // failure).
 func (h *PortalHandler) resolvePortalBySlug(w http.ResponseWriter, r *http.Request) (context.Context, context.CancelFunc, models.Channel, models.ChannelConfig, bool) {
+	return h.resolvePortalBySlugTimeout(w, r, 10*time.Second)
+}
+
+// resolvePortalBySlugTimeout is resolvePortalBySlug with an explicit context
+// deadline for handlers whose work needs more than the default 10 seconds.
+func (h *PortalHandler) resolvePortalBySlugTimeout(w http.ResponseWriter, r *http.Request, timeout time.Duration) (context.Context, context.CancelFunc, models.Channel, models.ChannelConfig, bool) {
 	slug := r.PathValue("slug")
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 
 	portalResult, err := h.findChannelByPortalSlug(ctx, slug)
 	if err != nil {
@@ -388,6 +394,36 @@ func (h *PortalHandler) resolvePortalBySlug(w http.ResponseWriter, r *http.Reque
 		return nil, func() {}, models.Channel{}, models.ChannelConfig{}, false
 	}
 	return ctx, cancel, portalResult.channel, portalResult.config, true
+}
+
+// callerVisibility resolves the group and organisation IDs that gate request
+// type and asset report visibility for the current caller (internal user
+// groups, plus the org when the caller is a portal customer).
+func (h *PortalHandler) callerVisibility(ctx context.Context, r *http.Request) (userGroupIDs []int, customerOrgID *int) {
+	_, portalCustomerID := h.getAuthFromContext(r)
+	userGroupIDs = h.getInternalUserGroupIDs(ctx, r)
+	if portalCustomerID != nil {
+		customerOrgID = h.getPortalCustomerOrgID(ctx, *portalCustomerID)
+	}
+	return userGroupIDs, customerOrgID
+}
+
+// resolveVisibleRequestType loads a request type and enforces the channel and
+// visibility gates shared by field loading, drafts, and submission. It writes
+// a 404 (not 403) on every failure so hidden request types cannot be
+// enumerated by guessing IDs.
+func (h *PortalHandler) resolveVisibleRequestType(ctx context.Context, w http.ResponseWriter, r *http.Request, channelID, requestTypeID int) (*models.RequestType, bool) {
+	rt, err := h.getRequestTypeWithVisibility(ctx, requestTypeID)
+	if err != nil || rt.ChannelID != channelID {
+		respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Request type not found"))
+		return nil, false
+	}
+	userGroupIDs, customerOrgID := h.callerVisibility(ctx, r)
+	if !rt.IsVisibleTo(userGroupIDs, customerOrgID) {
+		respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Request type not found"))
+		return nil, false
+	}
+	return rt, true
 }
 
 // GetPortal returns the portal configuration for public display
@@ -465,17 +501,12 @@ func (h *PortalHandler) loadPortalData(ctx context.Context, channel models.Chann
 // GetRequestTypes returns request types for a normal portal view, filtered by
 // the same visibility rules as field loading, drafts, and submission.
 func (h *PortalHandler) GetRequestTypes(w http.ResponseWriter, r *http.Request) {
-	slug := r.PathValue("slug")
-
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-
-	portalResult, err := h.findChannelByPortalSlug(ctx, slug)
-	if err != nil {
-		respondNotFound(w, r, "portal")
+	ctx, cancel, channel, _, ok := h.resolvePortalBySlug(w, r)
+	if !ok {
 		return
 	}
-	channel := portalResult.channel
+	defer cancel()
+
 	vc := h.getPortalVisibilityContext(ctx, r, channel.ID)
 	requestTypes, err := h.loadPortalRequestTypes(ctx, channel.ID, vc)
 	if err != nil {
@@ -616,31 +647,9 @@ func (h *PortalHandler) SubmitToPortal(w http.ResponseWriter, r *http.Request) {
 	// title field is hidden from the form.
 	var requestType *models.RequestType
 	if submission.RequestTypeID != nil {
-		var err error
-		requestType, err = h.getRequestTypeWithVisibility(ctx, *submission.RequestTypeID)
-		if err != nil {
-			respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Request type not found"))
-			return
-		}
-
-		// Verify the request type belongs to this channel
-		if requestType.ChannelID != channel.ID {
-			respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Request type not found"))
-			return
-		}
-
-		// Get user context for visibility check
-		userGroupIDs := h.getInternalUserGroupIDs(ctx, r)
-		var customerOrgID *int
-		if portalCustomerID != nil {
-			customerOrgID = h.getPortalCustomerOrgID(ctx, *portalCustomerID)
-		}
-
-		// Check visibility — return 404 (not 403) to avoid leaking the
-		// existence of request types the user can't see, matching the
-		// not-found / wrong-channel branches above.
-		if !requestType.IsVisibleTo(userGroupIDs, customerOrgID) {
-			respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Request type not found"))
+		var ok bool
+		requestType, ok = h.resolveVisibleRequestType(ctx, w, r, channel.ID, *submission.RequestTypeID)
+		if !ok {
 			return
 		}
 	}

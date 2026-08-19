@@ -4,11 +4,10 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"strconv"
 	"time"
 
+	"windshift/internal/models"
 	"windshift/internal/repository"
-	"windshift/internal/restapi"
 	"windshift/internal/sanitize"
 )
 
@@ -27,6 +26,23 @@ func (h *PortalHandler) draftIdentityFromContext(r *http.Request) (repository.Dr
 	}, true
 }
 
+// resolveDraftPortal resolves the portal slug and the draft identity shared by
+// all draft endpoints. It writes the 404/401 responses itself; callers defer
+// the returned cancel.
+func (h *PortalHandler) resolveDraftPortal(w http.ResponseWriter, r *http.Request) (context.Context, context.CancelFunc, models.Channel, repository.DraftIdentity, bool) {
+	ctx, cancel, channel, _, ok := h.resolvePortalBySlug(w, r)
+	if !ok {
+		return nil, cancel, models.Channel{}, repository.DraftIdentity{}, false
+	}
+	identity, ok := h.draftIdentityFromContext(r)
+	if !ok {
+		cancel()
+		respondUnauthorized(w, r)
+		return nil, cancel, models.Channel{}, repository.DraftIdentity{}, false
+	}
+	return ctx, cancel, channel, identity, true
+}
+
 // resolveDraftRequestType validates that a request type exists, lives in the
 // given portal channel, and is visible to the caller. Same shape as the
 // equivalent check in SubmitToPortal — uses 404 instead of 403 to avoid
@@ -39,27 +55,8 @@ func (h *PortalHandler) resolveDraftRequestType(
 	r *http.Request,
 	channelID, requestTypeID int,
 ) bool {
-	rt, err := h.getRequestTypeWithVisibility(ctx, requestTypeID)
-	if err != nil {
-		respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Request type not found"))
-		return false
-	}
-	if rt.ChannelID != channelID {
-		respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Request type not found"))
-		return false
-	}
-
-	_, portalCustomerID := h.getAuthFromContext(r)
-	userGroupIDs := h.getInternalUserGroupIDs(ctx, r)
-	var customerOrgID *int
-	if portalCustomerID != nil {
-		customerOrgID = h.getPortalCustomerOrgID(ctx, *portalCustomerID)
-	}
-	if !rt.IsVisibleTo(userGroupIDs, customerOrgID) {
-		respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Request type not found"))
-		return false
-	}
-	return true
+	_, ok := h.resolveVisibleRequestType(ctx, w, r, channelID, requestTypeID)
+	return ok
 }
 
 // SaveDraft upserts the caller's in-progress form state for one request type.
@@ -71,17 +68,11 @@ func (h *PortalHandler) resolveDraftRequestType(
 // overwrites the existing row — there is at most one draft per
 // (identity, request_type).
 func (h *PortalHandler) SaveDraft(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel, channel, _, ok := h.resolvePortalBySlug(w, r)
+	ctx, cancel, channel, identity, ok := h.resolveDraftPortal(w, r)
 	if !ok {
 		return
 	}
 	defer cancel()
-
-	identity, ok := h.draftIdentityFromContext(r)
-	if !ok {
-		respondUnauthorized(w, r)
-		return
-	}
 
 	var body struct {
 		RequestTypeID *int           `json:"request_type_id"`
@@ -135,17 +126,11 @@ func (h *PortalHandler) SaveDraft(w http.ResponseWriter, r *http.Request) {
 //
 //	GET /portal/{slug}/drafts
 func (h *PortalHandler) GetMyDrafts(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel, channel, _, ok := h.resolvePortalBySlug(w, r)
+	ctx, cancel, channel, identity, ok := h.resolveDraftPortal(w, r)
 	if !ok {
 		return
 	}
 	defer cancel()
-
-	identity, ok := h.draftIdentityFromContext(r)
-	if !ok {
-		respondUnauthorized(w, r)
-		return
-	}
 
 	summaries, err := h.draftRepo.ListByIdentityForChannel(ctx, channel.ID, identity)
 	if err != nil {
@@ -153,12 +138,7 @@ func (h *PortalHandler) GetMyDrafts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, portalCustomerID := h.getAuthFromContext(r)
-	userGroupIDs := h.getInternalUserGroupIDs(ctx, r)
-	var customerOrgID *int
-	if portalCustomerID != nil {
-		customerOrgID = h.getPortalCustomerOrgID(ctx, *portalCustomerID)
-	}
+	userGroupIDs, customerOrgID := h.callerVisibility(ctx, r)
 	visible := make([]repository.PortalRequestDraftSummary, 0, len(summaries))
 	for _, summary := range summaries {
 		requestType, loadErr := h.getRequestTypeWithVisibility(ctx, summary.RequestTypeID)
@@ -179,21 +159,14 @@ func (h *PortalHandler) GetMyDrafts(w http.ResponseWriter, r *http.Request) {
 //
 //	GET /portal/{slug}/drafts/{requestTypeId}
 func (h *PortalHandler) GetDraftByRequestType(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel, channel, _, ok := h.resolvePortalBySlug(w, r)
+	ctx, cancel, channel, identity, ok := h.resolveDraftPortal(w, r)
 	if !ok {
 		return
 	}
 	defer cancel()
 
-	identity, ok := h.draftIdentityFromContext(r)
+	requestTypeID, ok := requireIDParam(w, r, "requestTypeId")
 	if !ok {
-		respondUnauthorized(w, r)
-		return
-	}
-
-	requestTypeID, err := strconv.Atoi(r.PathValue("requestTypeId"))
-	if err != nil {
-		respondInvalidID(w, r, "requestTypeId")
 		return
 	}
 
@@ -220,21 +193,14 @@ func (h *PortalHandler) GetDraftByRequestType(w http.ResponseWriter, r *http.Req
 //
 //	DELETE /portal/{slug}/drafts/{requestTypeId}
 func (h *PortalHandler) DeleteDraft(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel, channel, _, ok := h.resolvePortalBySlug(w, r)
+	ctx, cancel, channel, identity, ok := h.resolveDraftPortal(w, r)
 	if !ok {
 		return
 	}
 	defer cancel()
 
-	identity, ok := h.draftIdentityFromContext(r)
+	requestTypeID, ok := requireIDParam(w, r, "requestTypeId")
 	if !ok {
-		respondUnauthorized(w, r)
-		return
-	}
-
-	requestTypeID, err := strconv.Atoi(r.PathValue("requestTypeId"))
-	if err != nil {
-		respondInvalidID(w, r, "requestTypeId")
 		return
 	}
 

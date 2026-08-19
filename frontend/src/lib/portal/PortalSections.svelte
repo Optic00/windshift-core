@@ -116,6 +116,24 @@
   });
 </script>
 
+<!-- Inline edit input for the section title/subtitle, sharing the save and
+     cancel key handlers. -->
+{#snippet sectionEditInput(className, styleAttr, placeholder)}
+  <Input
+    type="text"
+    bind:value={editingSectionValue}
+    onkeydown={(e) => {
+      if (e.key === 'Enter') saveSection();
+      if (e.key === 'Escape') cancelEditingSection();
+    }}
+    onblur={saveSection}
+    class={className}
+    style={styleAttr}
+    {placeholder}
+    autofocus
+  />
+{/snippet}
+
 <!-- Portal Sections -->
 <div class="space-y-10">
   {#each portalStore.portalSections as section, sectionIndex}
@@ -178,19 +196,11 @@
           <!-- Section Title -->
           {#if portalStore.isEditing}
             {#if editingSectionId === section.id && editingSectionField === 'title'}
-              <Input
-                type="text"
-                bind:value={editingSectionValue}
-                onkeydown={(e) => {
-                  if (e.key === 'Enter') saveSection();
-                  if (e.key === 'Escape') cancelEditingSection();
-                }}
-                onblur={saveSection}
-                class="text-xl font-medium mb-1 bg-transparent border-b-2 focus:outline-none w-full"
-                style="border-color: var(--ds-border-focused); color: var(--ds-text);"
-                placeholder="Section title (click to edit)"
-                autofocus
-              />
+              {@render sectionEditInput(
+                'text-xl font-medium mb-1 bg-transparent border-b-2 focus:outline-none w-full',
+                'border-color: var(--ds-border-focused); color: var(--ds-text);',
+                'Section title (click to edit)'
+              )}
             {:else if section.title}
               <button
                 onclick={() => startEditingSection(section.id, 'title')}
@@ -217,19 +227,11 @@
           <!-- Section Subtitle -->
           {#if portalStore.isEditing}
             {#if editingSectionId === section.id && editingSectionField === 'subtitle'}
-              <Input
-                type="text"
-                bind:value={editingSectionValue}
-                onkeydown={(e) => {
-                  if (e.key === 'Enter') saveSection();
-                  if (e.key === 'Escape') cancelEditingSection();
-                }}
-                onblur={saveSection}
-                class="text-sm mb-4 bg-transparent border-b focus:outline-none w-full"
-                style="border-color: var(--ds-border-focused); color: var(--ds-text-subtle);"
-                placeholder="Subtitle (optional, click to edit)"
-                autofocus
-              />
+              {@render sectionEditInput(
+                'text-sm mb-4 bg-transparent border-b focus:outline-none w-full',
+                'border-color: var(--ds-border-focused); color: var(--ds-text-subtle);',
+                'Subtitle (optional, click to edit)'
+              )}
             {:else}
               <button
                 onclick={() => startEditingSection(section.id, 'subtitle')}

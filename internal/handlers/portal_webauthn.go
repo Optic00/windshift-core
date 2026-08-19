@@ -81,6 +81,21 @@ func requirePortalCustomer(w http.ResponseWriter, r *http.Request) (int, bool) {
 
 // ----- registration -----
 
+// requireCredentialName sanitizes and validates the passkey credential name
+// shared by registration start and complete. Writes the error response itself.
+func requireCredentialName(w http.ResponseWriter, r *http.Request, raw string) (string, bool) {
+	name := strings.TrimSpace(sanitize.PlainTextField.Sanitize(raw))
+	if name == "" {
+		respondValidationError(w, r, "Credential name is required")
+		return "", false
+	}
+	if utf8.RuneCountInString(name) > maxPortalCredentialNameLen {
+		respondValidationError(w, r, "Credential name is too long")
+		return "", false
+	}
+	return name, true
+}
+
 type portalRegistrationStartRequest struct {
 	CredentialName string `json:"credential_name"`
 }
@@ -102,14 +117,9 @@ func (h *PortalWebAuthnHandler) StartPortalRegistration(w http.ResponseWriter, r
 	if !ok {
 		return
 	}
-	sanitize.Apply(&req.CredentialName, sanitize.PlainTextField)
-	name := strings.TrimSpace(req.CredentialName)
-	if name == "" {
-		respondValidationError(w, r, "Credential name is required")
-		return
-	}
-	if utf8.RuneCountInString(name) > maxPortalCredentialNameLen {
-		respondValidationError(w, r, "Credential name is too long")
+	// Validate the name up front so the flow fails before the ceremony;
+	// it is stored when the registration is completed.
+	if _, ok := requireCredentialName(w, r, req.CredentialName); !ok {
 		return
 	}
 
@@ -163,14 +173,8 @@ func (h *PortalWebAuthnHandler) CompletePortalRegistration(w http.ResponseWriter
 	if !ok {
 		return
 	}
-	sanitize.Apply(&req.CredentialName, sanitize.PlainTextField)
-	name := strings.TrimSpace(req.CredentialName)
-	if name == "" {
-		respondValidationError(w, r, "Credential name is required")
-		return
-	}
-	if utf8.RuneCountInString(name) > maxPortalCredentialNameLen {
-		respondValidationError(w, r, "Credential name is too long")
+	name, ok := requireCredentialName(w, r, req.CredentialName)
+	if !ok {
 		return
 	}
 

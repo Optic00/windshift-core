@@ -15,24 +15,37 @@ var errPortalApprovalActorUnauthorized = errors.New("portal approval actor is no
 
 // Portal approval access is limited to active approver pools.
 
-// GetMyApprovals lists an actor's pending portal approvals.
-func (h *PortalHandler) GetMyApprovals(w http.ResponseWriter, r *http.Request) {
+// beginPortalApprovalAction resolves the portal and the linked approval
+// actor shared by every portal approval endpoint. It writes the
+// 401/403/503/404 responses itself; callers defer the returned cancel.
+func (h *PortalHandler) beginPortalApprovalAction(w http.ResponseWriter, r *http.Request) (context.Context, context.CancelFunc, models.Channel, portalApprovalActor, bool) {
 	if h.approvalService == nil {
 		respondServiceUnavailable(w, r, "approvals not configured")
-		return
+		return nil, func() {}, models.Channel{}, portalApprovalActor{}, false
 	}
 
 	ctx, cancel, channel, _, ok := h.resolvePortalBySlug(w, r)
 	if !ok {
-		return
+		return nil, cancel, models.Channel{}, portalApprovalActor{}, false
 	}
-	defer cancel()
-	r = r.WithContext(ctx)
 
-	actor, ok := h.requirePortalApprovalActor(w, r)
+	// The actor lookup reads the request context, so rebind the bounded
+	// context onto the request before resolving linked identities.
+	actor, ok := h.requirePortalApprovalActor(w, r.WithContext(ctx))
+	if !ok {
+		cancel()
+		return nil, cancel, models.Channel{}, portalApprovalActor{}, false
+	}
+	return ctx, cancel, channel, actor, true
+}
+
+// GetMyApprovals lists an actor's pending portal approvals.
+func (h *PortalHandler) GetMyApprovals(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel, channel, actor, ok := h.beginPortalApprovalAction(w, r)
 	if !ok {
 		return
 	}
+	defer cancel()
 
 	status := r.URL.Query().Get("status")
 	requests, err := h.getApprovalsForPortalActor(ctx, actor, status, channel.ID)
@@ -46,36 +59,32 @@ func (h *PortalHandler) GetMyApprovals(w http.ResponseWriter, r *http.Request) {
 	respondJSONOK(w, requests)
 }
 
+// resolvePortalApprovalRequest loads an approval request scoped to the
+// portal's channel and visible to the actor. Writes a 404 when the request
+// does not exist in this channel or the actor cannot view it.
+func (h *PortalHandler) resolvePortalApprovalRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, channelID int, actor portalApprovalActor) (*models.ApprovalRequest, int, bool) {
+	requestID, ok := requireIDParam(w, r, "id")
+	if !ok {
+		return nil, 0, false
+	}
+	req, err := h.approvalService.GetRequestInChannel(ctx, requestID, channelID)
+	if err != nil || !portalActorCanViewRequest(actor, req) {
+		respondNotFound(w, r, "Approval request")
+		return nil, 0, false
+	}
+	return req, requestID, true
+}
+
 // GetApproval returns an approval visible to the portal actor.
 func (h *PortalHandler) GetApproval(w http.ResponseWriter, r *http.Request) {
-	if h.approvalService == nil {
-		respondServiceUnavailable(w, r, "approvals not configured")
-		return
-	}
-
-	ctx, cancel, channel, _, ok := h.resolvePortalBySlug(w, r)
+	ctx, cancel, channel, actor, ok := h.beginPortalApprovalAction(w, r)
 	if !ok {
 		return
 	}
 	defer cancel()
-	r = r.WithContext(ctx)
 
-	actor, ok := h.requirePortalApprovalActor(w, r)
+	req, _, ok := h.resolvePortalApprovalRequest(ctx, w, r, channel.ID, actor)
 	if !ok {
-		return
-	}
-	requestID, ok := requireIDParam(w, r, "id")
-	if !ok {
-		return
-	}
-
-	req, err := h.approvalService.GetRequestInChannel(ctx, requestID, channel.ID)
-	if err != nil {
-		respondNotFound(w, r, "Approval request")
-		return
-	}
-	if !portalActorCanViewRequest(actor, req) {
-		respondNotFound(w, r, "Approval request")
 		return
 	}
 	respondJSONOK(w, req)
@@ -89,29 +98,14 @@ type portalDecideRequest struct {
 
 // DecideAsPortalCustomer records a portal actor's decision.
 func (h *PortalHandler) DecideAsPortalCustomer(w http.ResponseWriter, r *http.Request) {
-	if h.approvalService == nil {
-		respondServiceUnavailable(w, r, "approvals not configured")
-		return
-	}
-
-	ctx, cancel, channel, _, ok := h.resolvePortalBySlug(w, r)
+	ctx, cancel, channel, actor, ok := h.beginPortalApprovalAction(w, r)
 	if !ok {
 		return
 	}
 	defer cancel()
-	r = r.WithContext(ctx)
 
-	actor, ok := h.requirePortalApprovalActor(w, r)
+	scopedRequest, requestID, ok := h.resolvePortalApprovalRequest(ctx, w, r, channel.ID, actor)
 	if !ok {
-		return
-	}
-	requestID, ok := requireIDParam(w, r, "id")
-	if !ok {
-		return
-	}
-	scopedRequest, loadErr := h.approvalService.GetRequestInChannel(ctx, requestID, channel.ID)
-	if loadErr != nil || !portalActorCanViewRequest(actor, scopedRequest) {
-		respondNotFound(w, r, "Approval request")
 		return
 	}
 

@@ -3,9 +3,7 @@ package handlers
 import (
 	"context"
 	"net/http"
-	"strconv"
 	"strings"
-	"time"
 
 	"windshift/internal/sanitize"
 )
@@ -14,28 +12,15 @@ import (
 // Approver access permits reading and commenting only and ends with the pending
 // approval step. On success callers must defer cancel.
 func (h *PortalHandler) resolvePortalRequest(w http.ResponseWriter, r *http.Request) (itemID int, internalUserID *int, portalCustomerID *int, ctx context.Context, cancel context.CancelFunc, ok bool) { //nolint:gocritic // multiple results needed for this complex guard
-	slug := r.PathValue("slug")
-	itemIDStr := r.PathValue("itemId")
-	itemID, err := strconv.Atoi(itemIDStr)
-	if err != nil {
-		respondInvalidID(w, r, "itemId")
+	itemID, itemOK := requireIDParam(w, r, "itemId")
+	if !itemOK {
 		return 0, nil, nil, nil, nil, false
 	}
 
-	ctx, cancel = context.WithTimeout(r.Context(), 10*time.Second)
-
-	// Find channel by portal slug
-	portalResult, err := h.findChannelByPortalSlug(ctx, slug)
-	if err != nil {
-		cancel()
-		respondNotFound(w, r, "portal")
+	ctx, cancel, channel, _, portalOK := h.resolvePortalBySlug(w, r)
+	if !portalOK {
 		return 0, nil, nil, nil, nil, false
 	}
-	if !h.verifyPortalSessionBinding(w, r, portalResult.channel.ID) {
-		cancel()
-		return 0, nil, nil, nil, nil, false
-	}
-	channel := portalResult.channel
 
 	// Get auth info from context (middleware already validated)
 	internalUserID, portalCustomerID = h.getAuthFromContext(r)
@@ -104,21 +89,11 @@ func (h *PortalHandler) callerIsActiveApproverOnItem(ctx context.Context, itemID
 
 // GetMyRequests returns all requests submitted by the authenticated portal customer through this portal
 func (h *PortalHandler) GetMyRequests(w http.ResponseWriter, r *http.Request) {
-	slug := r.PathValue("slug")
-
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel, channel, _, ok := h.resolvePortalBySlug(w, r)
+	if !ok {
+		return
+	}
 	defer cancel()
-
-	// Find channel by portal slug
-	portalResult, err := h.findChannelByPortalSlug(ctx, slug)
-	if err != nil {
-		respondNotFound(w, r, "portal")
-		return
-	}
-	if !h.verifyPortalSessionBinding(w, r, portalResult.channel.ID) {
-		return
-	}
-	channel := portalResult.channel
 
 	requests, err := h.loadMyPortalRequests(ctx, r, channel.ID)
 	if err != nil {

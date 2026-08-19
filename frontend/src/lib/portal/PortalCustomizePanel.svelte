@@ -228,6 +228,41 @@
 </script>
 
 <!-- Customization Panel Overlay (hide when editing request types so sections are visible) -->
+
+<!-- Shared card fragments for the request-type and asset-report lists. -->
+{#snippet cardIconBadge(color, Icon)}
+  <div class="flex-shrink-0">
+    <div class="w-8 h-8 rounded flex items-center justify-center" style="background-color: {color || '#6b7280'};">
+      <Icon size={16} color="white" />
+    </div>
+  </div>
+{/snippet}
+
+{#snippet dragHandle()}
+  <div class="cursor-grab active:cursor-grabbing pt-1" style="color: {portalStore.isDarkMode ? '#64748b' : '#9ca3af'};" data-drag-handle>
+    <GripVertical class="w-4 h-4" />
+  </div>
+{/snippet}
+
+{#snippet visibilityShield(restricted, onConfigure)}
+  <div class="flex-shrink-0">
+    <Tooltip content={restricted ? t('portal.visibility.hasRestrictions') : t('portal.visibility.noRestrictions')} placement="top">
+      {#snippet children()}
+        <button
+          onclick={onConfigure}
+          class="p-1.5 rounded transition-all hover:bg-black/5"
+          title={t('portal.visibility.configureVisibility')}
+        >
+          <Shield
+            class="w-4 h-4"
+            style="color: {restricted ? '#f59e0b' : (portalStore.isDarkMode ? '#94a3b8' : '#6b7280')};"
+          />
+        </button>
+      {/snippet}
+    </Tooltip>
+  </div>
+{/snippet}
+
 <ModalBackdrop
   show={portalStore.showCustomizePanel && portalStore.activeSection !== 'request-types' && !portalStore.isEditing}
   opacity={0.3}
@@ -453,16 +488,10 @@
               >
                 <div class="flex items-start gap-3">
                   <!-- Icon Preview -->
-                  <div class="flex-shrink-0">
-                    <div class="w-8 h-8 rounded flex items-center justify-center" style="background-color: {requestType.color || '#6b7280'};">
-                      <RequestTypeIcon size={16} color="white" />
-                    </div>
-                  </div>
+                  {@render cardIconBadge(requestType.color, RequestTypeIcon)}
 
                   <!-- Drag Handle -->
-                  <div class="cursor-grab active:cursor-grabbing pt-1" style="color: {portalStore.isDarkMode ? '#64748b' : '#9ca3af'};" data-drag-handle>
-                    <GripVertical class="w-4 h-4" />
-                  </div>
+                  {@render dragHandle()}
 
                   <!-- Content -->
                   <div class="flex-1 min-w-0">
@@ -496,22 +525,7 @@
                   </div>
 
                   <!-- Visibility Button -->
-                  <div class="flex-shrink-0">
-                    <Tooltip content={hasVisibilityRestrictions(requestType) ? t('portal.visibility.hasRestrictions') : t('portal.visibility.noRestrictions')} placement="top">
-                      {#snippet children()}
-                        <button
-                          onclick={() => openVisibilityModal(requestType)}
-                          class="p-1.5 rounded transition-all hover:bg-black/5"
-                          title={t('portal.visibility.configureVisibility')}
-                        >
-                          <Shield
-                            class="w-4 h-4"
-                            style="color: {hasVisibilityRestrictions(requestType) ? '#f59e0b' : (portalStore.isDarkMode ? '#94a3b8' : '#6b7280')};"
-                          />
-                        </button>
-                      {/snippet}
-                    </Tooltip>
-                  </div>
+                  {@render visibilityShield(hasVisibilityRestrictions(requestType), () => openVisibilityModal(requestType))}
 
                   <!-- Actions Dropdown -->
                   <div class="flex-shrink-0">
@@ -587,16 +601,10 @@
               >
                 <div class="flex items-start gap-3">
                   <!-- Icon Preview -->
-                  <div class="flex-shrink-0">
-                    <div class="w-8 h-8 rounded flex items-center justify-center" style="background-color: {report.color || '#6b7280'};">
-                      <ReportIcon size={16} color="white" />
-                    </div>
-                  </div>
+                  {@render cardIconBadge(report.color, ReportIcon)}
 
                   <!-- Drag Handle -->
-                  <div class="cursor-grab active:cursor-grabbing pt-1" style="color: {portalStore.isDarkMode ? '#64748b' : '#9ca3af'};" data-drag-handle>
-                    <GripVertical class="w-4 h-4" />
-                  </div>
+                  {@render dragHandle()}
 
                   <!-- Content -->
                   <div class="flex-1 min-w-0">
@@ -622,22 +630,7 @@
                   </div>
 
                   <!-- Visibility Button -->
-                  <div class="flex-shrink-0">
-                    <Tooltip content={hasAssetReportVisibilityRestrictions(report) ? t('portal.visibility.hasRestrictions') : t('portal.visibility.noRestrictions')} placement="top">
-                      {#snippet children()}
-                        <button
-                          onclick={() => openAssetReportVisibilityModal(report)}
-                          class="p-1.5 rounded transition-all hover:bg-black/5"
-                          title={t('portal.visibility.configureVisibility')}
-                        >
-                          <Shield
-                            class="w-4 h-4"
-                            style="color: {hasAssetReportVisibilityRestrictions(report) ? '#f59e0b' : (portalStore.isDarkMode ? '#94a3b8' : '#6b7280')};"
-                          />
-                        </button>
-                      {/snippet}
-                    </Tooltip>
-                  </div>
+                  {@render visibilityShield(hasAssetReportVisibilityRestrictions(report), () => openAssetReportVisibilityModal(report))}
 
                   <!-- Actions Dropdown -->
                   <div class="flex-shrink-0">

@@ -54,6 +54,20 @@ func (h *PortalAuthHandler) findPortalBySlug(ctx context.Context, slug string) (
 	return h.portalAuthRepo.FindPortalBySlug(ctx, slug)
 }
 
+// resolvePortalChannel resolves the portal for auth endpoints: a bounded
+// context plus the channel lookup, writing a 404 when the portal is unknown.
+// Callers defer the returned cancel.
+func (h *PortalAuthHandler) resolvePortalChannel(w http.ResponseWriter, r *http.Request) (context.Context, context.CancelFunc, *models.Channel, bool) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	channel, _, err := h.findPortalBySlug(ctx, r.PathValue("slug"))
+	if err != nil {
+		cancel()
+		respondNotFound(w, r, "portal")
+		return nil, func() {}, nil, false
+	}
+	return ctx, cancel, channel, true
+}
+
 // RequestMagicLink handles POST /portal/{slug}/auth/request
 // Sends a magic link email to the portal customer
 func (h *PortalAuthHandler) RequestMagicLink(w http.ResponseWriter, r *http.Request) {
@@ -189,18 +203,13 @@ func (h *PortalAuthHandler) RequestMagicLink(w http.ResponseWriter, r *http.Requ
 // VerifyMagicLink handles GET /portal/{slug}/auth/verify
 // Verifies the magic link token and creates a session
 func (h *PortalAuthHandler) VerifyMagicLink(w http.ResponseWriter, r *http.Request) {
-	slug := r.PathValue("slug")
 	token := r.URL.Query().Get("token")
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-
-	// Find portal
-	channel, _, err := h.findPortalBySlug(ctx, slug)
-	if err != nil {
-		respondNotFound(w, r, "portal")
+	_, cancel, channel, ok := h.resolvePortalChannel(w, r)
+	if !ok {
 		return
 	}
+	defer cancel()
 
 	if token == "" {
 		respondValidationError(w, r, "Token is required")
@@ -321,17 +330,11 @@ func (h *PortalAuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 // GetCurrentCustomer handles GET /portal/{slug}/auth/me
 // Returns the current authenticated portal customer or internal user
 func (h *PortalAuthHandler) GetCurrentCustomer(w http.ResponseWriter, r *http.Request) {
-	slug := r.PathValue("slug")
-
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-
-	// Find portal
-	channel, _, err := h.findPortalBySlug(ctx, slug)
-	if err != nil {
-		respondNotFound(w, r, "portal")
+	ctx, cancel, channel, ok := h.resolvePortalChannel(w, r)
+	if !ok {
 		return
 	}
+	defer cancel()
 
 	// Try portal session first. Sessions minted on a different portal are
 	// ignored so the cookie cannot be used to introspect identity on a portal

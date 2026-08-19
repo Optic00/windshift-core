@@ -111,72 +111,75 @@ func (h *PortalHandler) assetReportBindingAvailable(config *models.ChannelConfig
 	return services.IsItemTypeAllowedInWorkspace(h.db, *workspaceID, *itemTypeID)
 }
 
-// ExecuteAssetReport executes a CQL query for an asset report and returns the assets
-func (h *PortalHandler) ExecuteAssetReport(w http.ResponseWriter, r *http.Request) {
-	slug := r.PathValue("slug")
-	reportIDStr := r.PathValue("id")
-	reportID, err := strconv.Atoi(reportIDStr)
-	if err != nil {
-		respondInvalidID(w, r, "id")
-		return
+// resolvePortalAssetReport resolves the portal and loads an asset report
+// through the gate shared by the field and execute paths: the report must
+// belong to the resolved channel, be active, have a usable binding, and be
+// visible to the caller. GetAssetReports mirrors the same gate when listing.
+// Every failure writes a 404 (not 403) so report existence is not disclosed
+// to unauthorized callers. Callers defer the returned cancel.
+func (h *PortalHandler) resolvePortalAssetReport(
+	w http.ResponseWriter,
+	r *http.Request,
+	timeout time.Duration,
+) (context.Context, context.CancelFunc, *models.AssetReport, bool) {
+	reportID, ok := requireIDParam(w, r, "id")
+	if !ok {
+		return nil, func() {}, nil, false
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-	defer cancel()
-
-	portalResult, err := h.findChannelByPortalSlug(ctx, slug)
-	if err != nil {
-		respondNotFound(w, r, "portal")
-		return
-	}
-	channel := portalResult.channel
-	if !h.verifyPortalSessionBinding(w, r, channel.ID) {
-		return
+	ctx, cancel, channel, config, ok := h.resolvePortalBySlugTimeout(w, r, timeout)
+	if !ok {
+		return nil, cancel, nil, false
 	}
 
 	report, err := repository.NewAssetReportRepository(h.db).GetByID(reportID)
 	if errors.Is(err, repository.ErrNotFound) {
+		cancel()
 		respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Asset report not found"))
-		return
+		return nil, cancel, nil, false
 	}
 	if err != nil {
+		cancel()
 		respondInternalError(w, r, err)
-		return
+		return nil, cancel, nil, false
 	}
-
-	if report.ChannelID != channel.ID {
+	if report.ChannelID != channel.ID || !report.IsActive {
+		cancel()
 		respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Asset report not found"))
-		return
+		return nil, cancel, nil, false
 	}
-
-	if !report.IsActive {
-		respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Asset report not found"))
-		return
-	}
-	bindingAvailable, err := h.assetReportBindingAvailable(&portalResult.config, report.RunMode, report.ItemTypeID, report.WorkspaceID)
+	bindingAvailable, err := h.assetReportBindingAvailable(&config, report.RunMode, report.ItemTypeID, report.WorkspaceID)
 	if err != nil {
+		cancel()
 		respondInternalError(w, r, err)
-		return
+		return nil, cancel, nil, false
 	}
 	if !bindingAvailable {
+		cancel()
 		respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Asset report not found"))
-		return
+		return nil, cancel, nil, false
 	}
 
-	// Visibility check — must mirror GetAssetReports so the list and execute paths
-	// agree on who can see this report. Return 404 (not 403) so report existence
-	// is not disclosed to unauthorized callers.
 	vc := h.getPortalVisibilityContext(ctx, r, channel.ID)
-	if !vc.isAdmin {
-		if !report.IsVisibleTo(vc.userGroupIDs, vc.customerOrgID) {
-			respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Asset report not found"))
-			return
-		}
+	if !vc.isAdmin && !report.IsVisibleTo(vc.userGroupIDs, vc.customerOrgID) {
+		cancel()
+		respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Asset report not found"))
+		return nil, cancel, nil, false
 	}
+	return ctx, cancel, report, true
+}
+
+// ExecuteAssetReport executes a CQL query for an asset report and returns the assets
+func (h *PortalHandler) ExecuteAssetReport(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel, report, ok := h.resolvePortalAssetReport(w, r, 30*time.Second)
+	if !ok {
+		return
+	}
+	defer cancel()
 
 	var portalCustomerID *int
 	var customerOrgID *int
-	portalCustomerID, _ = h.getPortalCustomerID(ctx, r, channel.ID)
+	portalCustomerID, _ = h.getPortalCustomerID(ctx, r, report.ChannelID)
 
 	//nolint:misspell // British spelling used in database
 	if portalCustomerID != nil {
@@ -203,7 +206,7 @@ func (h *PortalHandler) ExecuteAssetReport(w http.ResponseWriter, r *http.Reques
 		// Required-field check: load the schema and reject when any required
 		// field is missing or blank. This blocks empty submissions from
 		// leaking the unrestricted query result.
-		fields, ferr := h.loadAssetReportFields(reportID)
+		fields, ferr := h.loadAssetReportFields(report.ID)
 		if ferr != nil {
 			respondInternalError(w, r, ferr)
 			return
@@ -304,6 +307,7 @@ func (h *PortalHandler) ExecuteAssetReport(w http.ResponseWriter, r *http.Reques
 
 	page := 1
 	perPage := 25
+	var err error
 	if p := r.URL.Query().Get("page"); p != "" {
 		var pInt int
 		if pInt, err = strconv.Atoi(p); err == nil && pInt > 0 {
@@ -357,22 +361,14 @@ func (h *PortalHandler) ExecuteAssetReport(w http.ResponseWriter, r *http.Reques
 
 // GetAssetReports returns asset reports for a portal, filtered by visibility
 func (h *PortalHandler) GetAssetReports(w http.ResponseWriter, r *http.Request) {
-	slug := r.PathValue("slug")
-
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel, channel, config, ok := h.resolvePortalBySlug(w, r)
+	if !ok {
+		return
+	}
 	defer cancel()
 
-	portalResult, err := h.findChannelByPortalSlug(ctx, slug)
-	if err != nil {
-		respondNotFound(w, r, "portal")
-		return
-	}
-	channel := portalResult.channel
-	if !h.verifyPortalSessionBinding(w, r, channel.ID) {
-		return
-	}
 	vc := h.getPortalVisibilityContext(ctx, r, channel.ID)
-	assetReports, err := h.loadPortalAssetReports(portalResult, vc)
+	assetReports, err := h.loadPortalAssetReports(channel, config, vc)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -380,8 +376,7 @@ func (h *PortalHandler) GetAssetReports(w http.ResponseWriter, r *http.Request) 
 	respondJSONOK(w, assetReports)
 }
 
-func (h *PortalHandler) loadPortalAssetReports(portalResult *channelResult, vc portalVisibilityContext) ([]models.PublicAssetReport, error) {
-	channel := portalResult.channel
+func (h *PortalHandler) loadPortalAssetReports(channel models.Channel, config models.ChannelConfig, vc portalVisibilityContext) ([]models.PublicAssetReport, error) {
 	reports, err := repository.NewAssetReportRepository(h.db).ListByChannel(channel.ID)
 	if err != nil {
 		return nil, err
@@ -392,7 +387,7 @@ func (h *PortalHandler) loadPortalAssetReports(portalResult *channelResult, vc p
 		if !ar.IsActive {
 			continue
 		}
-		bindingAvailable, err := h.assetReportBindingAvailable(&portalResult.config, ar.RunMode, ar.ItemTypeID, ar.WorkspaceID)
+		bindingAvailable, err := h.assetReportBindingAvailable(&config, ar.RunMode, ar.ItemTypeID, ar.WorkspaceID)
 		if err != nil {
 			return nil, err
 		}
@@ -435,45 +430,21 @@ func (h *PortalHandler) loadPortalAssetReports(portalResult *channelResult, vc p
 // GetRequestTypeFields returns fields for a request type (portal-aware authentication)
 // Accepts either internal session OR portal customer session
 func (h *PortalHandler) GetRequestTypeFields(w http.ResponseWriter, r *http.Request) {
-	slug := r.PathValue("slug")
-	requestTypeIDStr := r.PathValue("id")
-	requestTypeID, err := strconv.Atoi(requestTypeIDStr)
-	if err != nil {
-		respondInvalidID(w, r, "id")
+	ctx, cancel, channel, _, ok := h.resolvePortalBySlug(w, r)
+	if !ok {
 		return
 	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	portalResult, err := h.findChannelByPortalSlug(ctx, slug)
-	if err != nil {
-		respondNotFound(w, r, "portal")
-		return
-	}
-	if !h.verifyPortalSessionBinding(w, r, portalResult.channel.ID) {
+	requestTypeID, ok := requireIDParam(w, r, "id")
+	if !ok {
 		return
 	}
 
-	// Load the request type with visibility data so we can enforce both the
-	// channel-membership and the visibility check below; mirrors the gate used
-	// by SubmitToPortal. Without the visibility check, hidden request types
-	// can be enumerated by guessing IDs because the fields endpoint would
-	// reveal their form structure.
-	requestType, err := h.getRequestTypeWithVisibility(ctx, requestTypeID)
-	if err != nil || requestType.ChannelID != portalResult.channel.ID {
-		respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Request type not found"))
-		return
-	}
-
-	_, portalCustomerID := h.getAuthFromContext(r)
-	userGroupIDs := h.getInternalUserGroupIDs(ctx, r)
-	var customerOrgID *int
-	if portalCustomerID != nil {
-		customerOrgID = h.getPortalCustomerOrgID(ctx, *portalCustomerID)
-	}
-	if !requestType.IsVisibleTo(userGroupIDs, customerOrgID) {
-		respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Request type not found"))
+	// Load the request type through the shared visibility gate; without it,
+	// hidden request types can be enumerated by guessing IDs because the
+	// fields endpoint would reveal their form structure.
+	if _, ok := h.resolveVisibleRequestType(ctx, w, r, channel.ID, requestTypeID); !ok {
 		return
 	}
 
@@ -490,29 +461,21 @@ func (h *PortalHandler) GetRequestTypeFields(w http.ResponseWriter, r *http.Requ
 // GetCustomFields returns custom field definitions used by this portal's request types
 // Accepts either internal session OR portal customer session
 func (h *PortalHandler) GetCustomFields(w http.ResponseWriter, r *http.Request) {
-	slug := r.PathValue("slug")
-
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel, channel, _, ok := h.resolvePortalBySlug(w, r)
+	if !ok {
+		return
+	}
 	defer cancel()
-
-	portalResult, err := h.findChannelByPortalSlug(ctx, slug)
-	if err != nil {
-		respondNotFound(w, r, "portal")
-		return
-	}
-	if !h.verifyPortalSessionBinding(w, r, portalResult.channel.ID) {
-		return
-	}
 
 	// Resolve visibility context so we only return custom fields for request
 	// types / asset reports the caller is allowed to see. Without this the
 	// endpoint leaks field names, descriptions, and option vocabularies for
 	// hidden request types — same gate GetRequestTypes / GetAssetReports use.
-	vc := h.getPortalVisibilityContext(ctx, r, portalResult.channel.ID)
+	vc := h.getPortalVisibilityContext(ctx, r, channel.ID)
 
-	fields, err := h.portalService.GetCustomFieldsForChannel(ctx, portalResult.channel.ID, vc.userGroupIDs, vc.customerOrgID, vc.isAdmin)
+	fields, err := h.portalService.GetCustomFieldsForChannel(ctx, channel.ID, vc.userGroupIDs, vc.customerOrgID, vc.isAdmin)
 	if err != nil {
-		slog.Error("failed to get custom fields for channel", slog.String("component", "portal"), slog.Int("channel_id", portalResult.channel.ID), slog.Any("error", err))
+		slog.Error("failed to get custom fields for channel", slog.String("component", "portal"), slog.Int("channel_id", channel.ID), slog.Any("error", err))
 		respondInternalError(w, r, err)
 		return
 	}
@@ -557,59 +520,18 @@ func (h *PortalHandler) loadAssetReportFields(assetReportID int) ([]models.Asset
 // report, gated by the same visibility check as the list and execute paths.
 // Direct-mode reports have no field schema; the response is an empty array.
 func (h *PortalHandler) GetAssetReportFields(w http.ResponseWriter, r *http.Request) {
-	slug := r.PathValue("slug")
-	reportIDStr := r.PathValue("id")
-	reportID, err := strconv.Atoi(reportIDStr)
-	if err != nil {
-		respondInvalidID(w, r, "id")
+	_, cancel, report, ok := h.resolvePortalAssetReport(w, r, 10*time.Second)
+	if !ok {
 		return
 	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	portalResult, err := h.findChannelByPortalSlug(ctx, slug)
-	if err != nil {
-		respondNotFound(w, r, "portal")
-		return
-	}
-	channel := portalResult.channel
-	if !h.verifyPortalSessionBinding(w, r, channel.ID) {
-		return
-	}
-
-	report, err := repository.NewAssetReportRepository(h.db).GetByID(reportID)
-	if errors.Is(err, repository.ErrNotFound) || (err == nil && (report.ChannelID != channel.ID || !report.IsActive)) {
-		respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Asset report not found"))
-		return
-	}
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	bindingAvailable, err := h.assetReportBindingAvailable(&portalResult.config, report.RunMode, report.ItemTypeID, report.WorkspaceID)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	if !bindingAvailable {
-		respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Asset report not found"))
-		return
-	}
-
-	vc := h.getPortalVisibilityContext(ctx, r, channel.ID)
-	if !vc.isAdmin {
-		if !report.IsVisibleTo(vc.userGroupIDs, vc.customerOrgID) {
-			respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Asset report not found"))
-			return
-		}
-	}
 	if report.RunMode != "form" {
 		respondJSONOK(w, []models.AssetReportField{})
 		return
 	}
 
-	fields, err := h.loadAssetReportFields(reportID)
+	fields, err := h.loadAssetReportFields(report.ID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return

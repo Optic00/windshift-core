@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
-	"time"
 
 	"windshift/internal/auth"
 	"windshift/internal/middleware"
@@ -35,18 +34,13 @@ type PortalUserBootstrapResponse struct {
 // types and asset reports use one shared visibility context and remain
 // best-effort, matching the old frontend loaders' failure behavior.
 func (h *PortalHandler) GetBootstrap(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel, channel, config, ok := h.resolvePortalBySlug(w, r)
+	if !ok {
+		return
+	}
 	defer cancel()
 
-	portalResult, err := h.findChannelByPortalSlug(ctx, r.PathValue("slug"))
-	if err != nil {
-		respondNotFound(w, r, "portal")
-		return
-	}
-	if !h.verifyPortalSessionBinding(w, r, portalResult.channel.ID) {
-		return
-	}
-	portal, err := h.loadPortalData(ctx, portalResult.channel, portalResult.config)
+	portal, err := h.loadPortalData(ctx, channel, config)
 	if errors.Is(err, repository.ErrNotFound) {
 		respondNotFound(w, r, "workspace")
 		return
@@ -61,23 +55,23 @@ func (h *PortalHandler) GetBootstrap(w http.ResponseWriter, r *http.Request) {
 		RequestTypes: []models.RequestType{},
 		AssetReports: []models.PublicAssetReport{},
 	}
-	vc := h.getPortalVisibilityContext(ctx, r, portalResult.channel.ID)
+	vc := h.getPortalVisibilityContext(ctx, r, channel.ID)
 	var wait sync.WaitGroup
 	wait.Add(2)
 	go func() {
 		defer wait.Done()
-		requestTypes, err := h.loadPortalRequestTypes(ctx, portalResult.channel.ID, vc)
+		requestTypes, err := h.loadPortalRequestTypes(ctx, channel.ID, vc)
 		if err != nil {
-			slog.Warn("portal bootstrap: request types unavailable", "channel_id", portalResult.channel.ID, "error", err)
+			slog.Warn("portal bootstrap: request types unavailable", "channel_id", channel.ID, "error", err)
 			return
 		}
 		response.RequestTypes = requestTypes
 	}()
 	go func() {
 		defer wait.Done()
-		assetReports, err := h.loadPortalAssetReports(portalResult, vc)
+		assetReports, err := h.loadPortalAssetReports(channel, config, vc)
 		if err != nil {
-			slog.Warn("portal bootstrap: asset reports unavailable", "channel_id", portalResult.channel.ID, "error", err)
+			slog.Warn("portal bootstrap: asset reports unavailable", "channel_id", channel.ID, "error", err)
 			return
 		}
 		response.AssetReports = assetReports
