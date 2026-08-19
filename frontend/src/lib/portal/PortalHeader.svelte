@@ -36,6 +36,9 @@
   );
 
   let account = $derived.by(() => {
+    const internalAvatar =
+      $authStore.currentUser?.avatar_url || $portalAuthStore.user?.avatar_url || null;
+
     if ($portalAuthStore.isAuthenticated && $portalAuthStore.customer) {
       return {
         name:
@@ -51,7 +54,7 @@
       return {
         name: $portalAuthStore.user.name || 'Windshift user',
         email: $portalAuthStore.user.email,
-        avatar: $portalAuthStore.user.avatar_url,
+        avatar: internalAvatar,
         canManageProfile: false,
       };
     }
