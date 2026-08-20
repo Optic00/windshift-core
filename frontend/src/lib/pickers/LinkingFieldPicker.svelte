@@ -4,6 +4,7 @@
   import { X, Plus, Search, Link2 } from '@lucide/svelte';
   import { errorToast } from '../stores/toasts.svelte.js';
   import Input from '../components/Input.svelte';
+  import ItemTypeIcon from '../components/ItemTypeIcon.svelte';
 
   let {
     fieldId,
@@ -161,8 +162,12 @@
         {@const displayItem = getLinkDisplayItem(link)}
         <div class="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs group"
           style="background: var(--ds-background-neutral); color: var(--ds-text); border: 1px solid var(--ds-border);">
-          {#if displayItem.typeColor}
-            <span class="w-2 h-2 rounded-full flex-shrink-0" style="background: {displayItem.typeColor};"></span>
+          {#if displayItem.type === 'item'}
+            <ItemTypeIcon
+              icon={displayItem.typeIcon}
+              color={displayItem.typeColor}
+              title={displayItem.typeName}
+            />
           {/if}
           {#if displayItem.type === 'item' && displayItem.workspaceId}
             <a

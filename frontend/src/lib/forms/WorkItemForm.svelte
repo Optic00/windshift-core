@@ -1,6 +1,5 @@
 <script>
   import { MoreHorizontal, Calendar, Flag, User, Layers, ChevronDown, FileText, Briefcase, Hash, Clock } from '@lucide/svelte';
-  import { getItemTypeIcon } from '../utils/icons.js';
   import ItemTypeIcon from '../components/ItemTypeIcon.svelte';
   import { workItemFormStore } from '../stores/workItemFormStore.svelte.js';
   import { workspacesStore } from '../stores';
@@ -32,10 +31,6 @@
   let selectedPriorityObj = $state(null);
 
   // Derived state for UI
-  let selectedItemTypeIcon = $derived(
-    store.selectedItemType?.icon ? getItemTypeIcon(store.selectedItemType.icon) : Layers
-  );
-
   // Additional fields toggle
   let showAdditionalFields = $state(false);
 
@@ -223,13 +218,16 @@
         items={store.availableItemTypes}
         getValue={(t) => t.id}
         getLabel={(t) => t.name}
-        icon={selectedItemTypeIcon}
+        icon={Layers}
         placeholder={t('createModal.type')}
         testId="create-item-type-chip"
         onSelect={(itemType) => store.setItemType(itemType.id)}
       >
+        {#snippet triggerSnippet({ item })}
+          <ItemTypeIcon itemType={item} />
+        {/snippet}
         {#snippet itemSnippet({ item })}
-          <ItemTypeIcon itemType={item} variant="plain" size="sm" />
+          <ItemTypeIcon itemType={item} />
           <span>{item.name}</span>
         {/snippet}
       </ChipPicker>

@@ -136,7 +136,7 @@
       {#if item.item_type_id && itemTypes.length > 0}
         {@const itemType = itemTypes.find(type => type.id === item.item_type_id)}
         {#if itemType}
-          <ItemTypeIcon {itemType} size="xs" />
+          <ItemTypeIcon {itemType} />
         {/if}
       {/if}
       <div class="flex-1 min-w-0" data-testid={`workspace-item-title-${item.id}`}>

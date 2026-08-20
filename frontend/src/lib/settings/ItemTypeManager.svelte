@@ -296,7 +296,7 @@
   >
     {#snippet icon(itemType)}
       <div class="flex items-center justify-center">
-        <ItemTypeIcon itemType={itemType} size="md" />
+        <ItemTypeIcon itemType={itemType} />
       </div>
     {/snippet}
 

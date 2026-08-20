@@ -722,7 +722,7 @@
                         <div class="flex flex-wrap gap-2">
                           {#each configSet.item_types_detailed as itemType}
                             <Lozenge customBg={itemType.color} size="md">
-                              <ItemTypeIcon icon={itemType.icon} color={itemType.color} size="xs" />
+                              <ItemTypeIcon icon={itemType.icon} color={itemType.color} />
                               {itemType.name}
                             </Lozenge>
                           {/each}

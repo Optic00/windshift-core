@@ -227,12 +227,7 @@
                 data-testid="page-work-items-add-result"
                 data-item-id={result.id}
               >
-                <div
-                  class="row-icon"
-                  style="background-color: {(result.item_type_color || '#6b7280')}20; color: {(result.item_type_color || '#6b7280')};"
-                >
-                  <ItemTypeIcon icon={result.item_type_icon} color={result.item_type_color} variant="plain" size="xs" />
-                </div>
+                <ItemTypeIcon icon={result.item_type_icon} color={result.item_type_color} />
                 <span class="row-title">{result.title}</span>
                 <span class="row-meta">{result.workspace_name || ''}</span>
               </button>
@@ -265,12 +260,7 @@
               data-item-id={linkedItemId}
             >
               <a class="row row--link" href={linkedItemHref}>
-                <div
-                  class="row-icon"
-                  style="background-color: {(linkedItemIconColor || '#6b7280')}20; color: {(linkedItemIconColor || '#6b7280')};"
-                >
-                  <ItemTypeIcon icon={linkedItemIconKey} color={linkedItemIconColor} variant="plain" size="xs" />
-                </div>
+                <ItemTypeIcon icon={linkedItemIconKey} color={linkedItemIconColor} />
                 <span class="row-key">{linkedItemKey}</span>
                 <span class="row-title">{linkedItemTitle}</span>
                 {#if linkedItemStatus}
@@ -431,15 +421,6 @@
   .row--link:hover,
   .row--highlighted {
     background: var(--ds-surface-hover);
-  }
-  .row-icon {
-    width: 22px;
-    height: 22px;
-    border-radius: 999px;
-    flex-shrink: 0;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
   }
   .row-key {
     font-family: var(--ds-font-mono, ui-monospace, monospace);

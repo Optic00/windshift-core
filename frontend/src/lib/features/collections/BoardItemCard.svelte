@@ -136,7 +136,6 @@
           {#if itemType}
             <ItemTypeIcon
               {itemType}
-              size="xs"
               testId={`board-card-type-icon-${item.id}`}
             />
           {/if}

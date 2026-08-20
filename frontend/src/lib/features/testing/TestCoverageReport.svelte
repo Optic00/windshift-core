@@ -417,9 +417,7 @@
               class:selected={selectedTypeIds.includes(type.id)}
               onclick={() => toggleItemType(type.id)}
             >
-              <div class="type-icon" style="background-color: {type.color}20; color: {type.color};">
-                <ItemTypeIcon itemType={type} variant="plain" size="lg" class="type-icon-item" />
-              </div>
+              <ItemTypeIcon itemType={type} />
               <span class="type-name">{type.name}</span>
               {#if selectedTypeIds.includes(type.id)}
                 <IconCircleCheck class="type-check" />
@@ -611,16 +609,6 @@
   .type-option.selected {
     border-color: var(--ds-accent);
     background-color: var(--ds-accent-subtle, rgba(59, 130, 246, 0.05));
-  }
-
-  .type-icon {
-    width: 40px;
-    height: 40px;
-    border-radius: 0.375rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: 600;
   }
 
   .type-name {

@@ -17,6 +17,7 @@
     required = false,
     searchable = false,
     searchFields = ['name'],
+    triggerSnippet = null,
     itemSnippet = null,
     onSelect = () => {},
     testId = null
@@ -163,7 +164,9 @@
     e.currentTarget.style.backgroundColor = 'var(--ds-surface)';
   }}
 >
-  {#if Icon}
+  {#if triggerSnippet && selectedItem}
+    {@render triggerSnippet({ item: selectedItem })}
+  {:else if Icon}
     <Icon size={14} style="color: var(--ds-text-subtle); flex-shrink: 0;" />
   {/if}
   {#if colorDot}

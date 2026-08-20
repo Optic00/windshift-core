@@ -486,7 +486,6 @@
                   <ItemTypeIcon
                     icon={typeInfo.iconName}
                     color={typeInfo.color}
-                    size="xs"
                     title={typeInfo.label}
                   />
                 </div>

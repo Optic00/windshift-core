@@ -608,7 +608,7 @@
                 {#if breadcrumb.level === 'root'}
                   <Home class="w-3.5 h-3.5" />
                 {:else if breadcrumb.itemType}
-                  <ItemTypeIcon itemType={breadcrumb.itemType} size="xs" />
+                  <ItemTypeIcon itemType={breadcrumb.itemType} />
                 {/if}
 
                 <!-- Text -->
@@ -669,7 +669,7 @@
                   <div class="flex items-center justify-between">
                     <div class="flex items-center gap-2">
                       {#if itemType}
-                        <ItemTypeIcon {itemType} size="xs" />
+                        <ItemTypeIcon {itemType} />
                       {/if}
                       <ItemKey item={backboneItem} {workspace}
                         onClick={(e) => handleKeyClick(backboneItem, e)}
@@ -761,7 +761,7 @@
                       <div class="flex items-center justify-between">
                         <div class="flex items-center gap-2">
                           {#if childItemType}
-                            <ItemTypeIcon itemType={childItemType} size="xs" />
+                            <ItemTypeIcon itemType={childItemType} />
                           {/if}
                           <ItemKey item={childItem} {workspace}
                             onClick={(e) => handleKeyClick(childItem, e)}

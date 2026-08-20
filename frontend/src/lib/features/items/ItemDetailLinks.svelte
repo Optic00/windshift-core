@@ -316,8 +316,6 @@
               <ItemTypeIcon
                 icon={linkedItemTypeIcon}
                 color={linkedItemTypeColor || '#6b7280'}
-                variant="tinted"
-                size="md"
               />
               <!-- Item key -->
               <LinkComponent
@@ -492,9 +490,9 @@
                 {/if}
                 <!-- Item type icon -->
                 {#if childItemType}
-                  <ItemTypeIcon itemType={childItemType} variant="tinted" size="md" />
+                  <ItemTypeIcon itemType={childItemType} />
                 {:else}
-                  <ItemTypeIcon variant="tinted" size="md" />
+                  <ItemTypeIcon />
                 {/if}
                 <!-- Item key -->
                 <ItemKey item={childItem} {workspace}

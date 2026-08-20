@@ -13,7 +13,6 @@
   import { Plus, ChevronDown, ChevronRight, MoreHorizontal, Layers, ArrowDownUp } from '@lucide/svelte';
   import ItemPicker from '../../pickers/ItemPicker.svelte';
   import { buildIterationPickerConfig } from '../iterations/iterationPickerUtils.js';
-  import { getItemTypeIcon } from '../../utils/icons.js';
   import ItemTypeIcon from '../../components/ItemTypeIcon.svelte';
   import { draggable, dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter';
   import { attachClosestEdge, extractClosestEdge } from '@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge';
@@ -864,8 +863,7 @@
         testid: `board-group-by-type-${type.id}`,
         title: type.name,
         subtitle: 'Use these items as swimlanes',
-        icon: getItemTypeIcon(type.icon),
-        iconColor: type.color,
+        itemType: type,
         badge: groupByItemTypeId === type.id ? 'Selected' : '',
         onClick: () => setGroupByItemType(type.id)
       }))
@@ -1569,7 +1567,6 @@
                       <ItemTypeIcon
                         icon={selectedGroupByItemType.icon}
                         color={lane.isUnassigned ? 'var(--ds-background-neutral-bold, #6b7280)' : selectedGroupByItemType.color}
-                        size="sm"
                         title={selectedGroupByItemType.name}
                       />
                     {/if}

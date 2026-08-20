@@ -16,7 +16,6 @@
   import { confirm } from '../composables/useConfirm.js';
   import ChipPicker from '../pickers/ChipPicker.svelte';
   import UserPicker from '../pickers/UserPicker.svelte';
-  import { getItemTypeIcon } from '../utils/icons.js';
   import ItemTypeIcon from '../components/ItemTypeIcon.svelte';
   import { safeHref } from '../utils/sanitize';
   import { workspaceDataStore } from '../stores/workspaceDataStore.svelte.js';
@@ -270,11 +269,6 @@
     linkedRepos.map(r => ({ value: String(r.id), label: r.repository_name }))
   );
 
-  const selectedItemType = $derived(itemTypes.find(it => it.id === formData.default_item_type_id));
-  const selectedItemTypeIcon = $derived(
-    selectedItemType?.icon ? getItemTypeIcon(selectedItemType.icon) : Layers
-  );
-
   const priorityOptions = $derived(
     priorities.map(p => ({ value: String(p.id), label: p.name }))
   );
@@ -332,12 +326,15 @@
         items={itemTypes}
         getValue={(t) => t.id}
         getLabel={(t) => t.name}
-        icon={selectedItemTypeIcon}
+        icon={Layers}
         placeholder={t('issueSync.selectItemType')}
         onSelect={(itemType) => formData.default_item_type_id = itemType.id}
       >
+        {#snippet triggerSnippet({ item })}
+          <ItemTypeIcon itemType={item} />
+        {/snippet}
         {#snippet itemSnippet({ item })}
-          <ItemTypeIcon itemType={item} variant="plain" size="sm" />
+          <ItemTypeIcon itemType={item} />
           <span>{item.name}</span>
         {/snippet}
       </ChipPicker>

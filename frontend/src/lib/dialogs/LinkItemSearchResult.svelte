@@ -25,8 +25,6 @@
     <ItemTypeIcon
       icon={result.item_type_icon}
       color={result.item_type_color}
-      variant="tinted"
-      size="lg"
     />
 
     <div class="flex-1 min-w-0">

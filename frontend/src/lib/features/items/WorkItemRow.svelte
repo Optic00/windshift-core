@@ -152,7 +152,7 @@
 
       <!-- Item Type Icon -->
       {#if showIcon}
-        <ItemTypeIcon itemType={itemType} size="sm" class="rounded" />
+        <ItemTypeIcon itemType={itemType} />
       {/if}
 
       <!-- Item Key -->

@@ -7,6 +7,7 @@
   import { tick } from 'svelte';
   import Checkbox from '../components/Checkbox.svelte';
   import Input from '../components/Input.svelte';
+  import ItemTypeIcon from '../components/ItemTypeIcon.svelte';
 
   let {
     triggerText = '',
@@ -400,6 +401,8 @@
                 class="w-2 h-2 mr-3 rounded-full flex-shrink-0"
                 style="background-color: {itemData.iconColor || 'var(--ds-icon-subtle)'};"
               ></span>
+            {:else if itemData.itemType}
+              <ItemTypeIcon itemType={itemData.itemType} class="mr-3" />
             {:else if itemData.icon}
               {#if itemData.iconColor}
                 {@const ItemIcon = itemData.icon}

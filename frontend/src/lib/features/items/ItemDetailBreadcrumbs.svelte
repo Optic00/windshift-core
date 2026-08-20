@@ -269,7 +269,7 @@
         {#if parent.itemType}
           <Tooltip content={parent.itemType.name}>
             {#snippet children()}
-              <ItemTypeIcon itemType={parent.itemType} size="xs" class="cursor-help" />
+              <ItemTypeIcon itemType={parent.itemType} class="cursor-help" />
             {/snippet}
           </Tooltip>
         {/if}
@@ -460,7 +460,7 @@
                 <div class="flex items-center gap-2">
                   <!-- Item Type Icon -->
                   {#if resultItemType}
-                    <ItemTypeIcon itemType={resultItemType} size="xs" />
+                    <ItemTypeIcon itemType={resultItemType} />
                   {/if}
 
                   <!-- Item Key -->
@@ -494,7 +494,7 @@
               class="rounded cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500"
               title="Change item type"
             >
-              <ItemTypeIcon itemType={currentItemType} size="xs" />
+              <ItemTypeIcon itemType={currentItemType} />
             </button>
           {/snippet}
         </Tooltip>
@@ -541,7 +541,7 @@
                   class="w-full px-3 py-2 text-left flex items-center gap-2 disabled:opacity-50"
                   style:background={hasHierarchyMismatch && fitsCurrentParent ? 'var(--ds-background-success-subtle, var(--ds-surface))' : undefined}
                 >
-                  <ItemTypeIcon itemType={type} size="xs" />
+                  <ItemTypeIcon itemType={type} />
                   <span class="min-w-0 flex-1">
                     <span class="block truncate text-sm" style="color: var(--ds-text);">{type.name}</span>
                     <span

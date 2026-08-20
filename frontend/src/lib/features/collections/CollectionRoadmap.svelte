@@ -1376,8 +1376,6 @@
                       <ItemTypeIcon
                         icon={typeInfo.iconName}
                         color={typeInfo.color}
-                        variant="plain"
-                        size="sm"
                         title={typeInfo.label}
                       />
 

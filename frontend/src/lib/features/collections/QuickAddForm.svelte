@@ -240,8 +240,6 @@
               <ItemTypeIcon
                 icon={selectedItemType.icon}
                 color={selectedItemType.color}
-                variant="plain"
-                size="md"
               />
             {:else}
               <Package class="w-4 h-4" style="color: var(--ds-icon);" />
@@ -261,7 +259,6 @@
               <ItemTypeIcon
                 icon={selectedItemType.icon}
                 color={selectedItemType.color}
-                size="xs"
                 title={selectedItemType.name}
               />
             {:else}
@@ -288,7 +285,7 @@
                 onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-selected)'}
                 onmouseleave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
               >
-                <ItemTypeIcon {itemType} size="sm" />
+                <ItemTypeIcon {itemType} />
                 <span class="truncate">{itemType.name}</span>
               </button>
             {/each}

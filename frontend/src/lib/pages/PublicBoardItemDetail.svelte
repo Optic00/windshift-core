@@ -159,7 +159,6 @@
                 <ItemTypeIcon
                   icon={item.item_type_icon}
                   color={item.item_type_color || 'var(--ds-accent-blue)'}
-                  size="sm"
                 />
                 <span class="text-[13px]">{item.item_type_name}</span>
               </div>

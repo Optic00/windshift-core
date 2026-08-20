@@ -220,15 +220,6 @@ export const itemTypeIconMap = {
 export const itemTypeIconOptions = Object.keys(itemTypeIconMap).sort();
 
 /**
- * Resolve an item type icon name to its lucide component with a consistent
- * fallback. Use for APIs that need a raw component (menu items, ChipPicker
- * icon props); rendered icons should use ItemTypeIcon.svelte instead.
- */
-export function getItemTypeIcon(iconName) {
-  return itemTypeIconMap[iconName] || itemTypeIconMap.FileText;
-}
-
-/**
  * Central icon map for priorities.
  * Used across ConfigurationSetEntityPicker, ConfigurationSetPriorities, and PriorityManager.
  */
