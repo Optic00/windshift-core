@@ -13,10 +13,13 @@ export function createLocale(modules) {
   return result;
 }
 
-function mergeInto(target, source) {
+export function mergeInto(target, source) {
   for (const [key, value] of Object.entries(source)) {
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+      continue;
+    }
     if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-      const existing = target[key];
+      const existing = Object.hasOwn(target, key) ? target[key] : undefined;
       const child = existing !== null && typeof existing === 'object' ? existing : {};
       target[key] = mergeInto(child, value);
     } else {

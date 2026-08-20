@@ -15,6 +15,7 @@
 import { glob, readdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { mergeInto } from '../src/lib/locales/createLocale.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const LOCALES_DIR = join(__dirname, '..', 'src', 'lib', 'locales');
@@ -78,19 +79,6 @@ function flattenAll(obj, prefix = '') {
     }
   }
   return entries;
-}
-
-function mergeInto(target, source) {
-  for (const [key, value] of Object.entries(source)) {
-    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-      const existing = target[key];
-      const child = existing !== null && typeof existing === 'object' ? existing : {};
-      target[key] = mergeInto(child, value);
-    } else {
-      target[key] = value;
-    }
-  }
-  return target;
 }
 
 function extractPlaceholders(str) {
