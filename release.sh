@@ -174,13 +174,22 @@ create_git_tag() {
     fi
 
     if [ "$DRY_RUN" = true ]; then
-        log_info "[DRY-RUN] Would create git tag: $tag"
+        log_info "[DRY-RUN] Would create signed git tag: $tag"
         log_info "[DRY-RUN] Would push tag to remote"
         return 0
     fi
 
-    git tag -a "$tag" -m "Release $tag"
-    log_success "Created git tag: $tag"
+    if [ -n "${RELEASE_GPG_KEY:-}" ]; then
+        git -c gpg.format=openpgp -c user.signingkey="$RELEASE_GPG_KEY" \
+            tag -s "$tag" -m "Release $tag"
+    else
+        local ssh_key
+        ssh_key=$(release_ssh_signing_key) ||
+            die "Release signing requires RELEASE_GPG_KEY or RELEASE_SSH_KEY (or an SSH user.signingkey in Git config)"
+        git -c gpg.format=ssh -c user.signingkey="$ssh_key" \
+            tag -s "$tag" -m "Release $tag"
+    fi
+    log_success "Created signed git tag: $tag"
     git push origin "$tag"
     log_success "Pushed tag to remote"
     TAG_CREATED=true
@@ -884,27 +893,107 @@ write_release_provenance() {
     log_success "Wrote PROVENANCE.txt"
 }
 
-sign_checksums_if_possible() {
+release_ssh_signing_key() {
+    if [ -n "${RELEASE_SSH_KEY:-}" ]; then
+        printf '%s\n' "$RELEASE_SSH_KEY"
+        return 0
+    fi
+
+    [ "$(git config --get gpg.format 2>/dev/null || true)" = "ssh" ] || return 1
+    git config --get user.signingkey 2>/dev/null
+}
+
+release_signing_identity() {
+    if [ -n "${RELEASE_SIGNING_IDENTITY:-}" ]; then
+        printf '%s\n' "$RELEASE_SIGNING_IDENTITY"
+        return 0
+    fi
+
+    git config --get user.email 2>/dev/null
+}
+
+preflight_release_signing() {
     if [ "$DRY_RUN" = true ]; then
-        log_info "[DRY-RUN] Would sign SHA256SUMS.txt if gpg is available"
+        log_info "[DRY-RUN] Would verify the release signing key"
         return 0
     fi
 
-    [ -f dist/releases/SHA256SUMS.txt ] || return 0
-
-    if [ -z "${RELEASE_GPG_KEY:-}" ]; then
-        log_warn "RELEASE_GPG_KEY not set; SHA256SUMS.txt will not be signed"
+    if [ -n "${RELEASE_GPG_KEY:-}" ]; then
+        command -v gpg >/dev/null 2>&1 ||
+            die "gpg is required when RELEASE_GPG_KEY is set"
+        gpg --batch --list-secret-keys "$RELEASE_GPG_KEY" >/dev/null 2>&1 ||
+            die "No GPG secret key found for RELEASE_GPG_KEY=$RELEASE_GPG_KEY"
+        log_success "GPG release signing key is available"
         return 0
     fi
 
-    if ! command -v gpg >/dev/null 2>&1; then
-        log_warn "gpg not found; SHA256SUMS.txt will not be signed"
+    local ssh_key identity
+    ssh_key=$(release_ssh_signing_key) ||
+        die "Release signing requires RELEASE_GPG_KEY or RELEASE_SSH_KEY (or an SSH user.signingkey in Git config)"
+    identity=$(release_signing_identity) ||
+        die "SSH release signing requires RELEASE_SIGNING_IDENTITY or user.email in Git config"
+    [ -n "$identity" ] ||
+        die "SSH release signing requires RELEASE_SIGNING_IDENTITY or user.email in Git config"
+    [ -f "$ssh_key" ] ||
+        die "SSH release signing key not found: $ssh_key"
+    command -v ssh-keygen >/dev/null 2>&1 ||
+        die "ssh-keygen is required for SSH release signing"
+    log_success "SSH release signing key is available"
+}
+
+sign_release_checksums() {
+    if [ "$DRY_RUN" = true ]; then
+        log_info "[DRY-RUN] Would sign and verify SHA256SUMS.txt"
         return 0
     fi
 
-    gpg --batch --yes --armor --detach-sign --local-user "$RELEASE_GPG_KEY" \
-        -o dist/releases/SHA256SUMS.txt.asc dist/releases/SHA256SUMS.txt
-    log_success "Signed SHA256SUMS.txt -> SHA256SUMS.txt.asc"
+    local checksums="dist/releases/SHA256SUMS.txt"
+    [ -s "$checksums" ] || die "Missing or empty $checksums"
+
+    if [ -n "${RELEASE_GPG_KEY:-}" ]; then
+        local gpg_signature="${checksums}.asc"
+        gpg --batch --yes --armor --detach-sign --local-user "$RELEASE_GPG_KEY" \
+            -o "$gpg_signature" "$checksums" ||
+            die "Failed to sign SHA256SUMS.txt with GPG"
+        [ -s "$gpg_signature" ] || die "GPG did not create $gpg_signature"
+        gpg --batch --verify "$gpg_signature" "$checksums" >/dev/null 2>&1 ||
+            die "Generated GPG release signature could not be verified"
+        log_success "Signed and verified SHA256SUMS.txt -> SHA256SUMS.txt.asc"
+        return 0
+    fi
+
+    local ssh_key identity ssh_signature public_key allowed_signers
+    ssh_key=$(release_ssh_signing_key) ||
+        die "Release signing requires RELEASE_GPG_KEY or RELEASE_SSH_KEY (or an SSH user.signingkey in Git config)"
+    identity=$(release_signing_identity) ||
+        die "SSH release signing requires RELEASE_SIGNING_IDENTITY or user.email in Git config"
+    ssh_signature="${checksums}.sig"
+
+    ssh-keygen -Y sign -f "$ssh_key" -n windshift-release "$checksums" >/dev/null ||
+        die "Failed to sign SHA256SUMS.txt with SSH"
+    [ -s "$ssh_signature" ] || die "SSH signing did not create $ssh_signature"
+
+    if [[ "$ssh_key" == *.pub ]]; then
+        public_key=$(awk 'NR == 1 { print $1 " " $2 }' "$ssh_key")
+    else
+        public_key=$(ssh-keygen -y -f "$ssh_key") ||
+            die "Could not derive the public key for release signature verification"
+    fi
+    [ -n "$public_key" ] || die "Could not derive the public release signing key"
+
+    allowed_signers="dist/releases/.allowed_signers.tmp"
+    printf '%s %s\n' "$identity" "$public_key" > "$allowed_signers"
+    if ! ssh-keygen -Y verify \
+        -f "$allowed_signers" \
+        -I "$identity" \
+        -n windshift-release \
+        -s "$ssh_signature" \
+        < "$checksums" >/dev/null 2>&1; then
+        rm -f "$allowed_signers"
+        die "Generated SSH release signature could not be verified"
+    fi
+    rm -f "$allowed_signers"
+    log_success "Signed and verified SHA256SUMS.txt -> SHA256SUMS.txt.sig"
 }
 
 ensure_buildx() {
@@ -1019,6 +1108,18 @@ create_github_release() {
 
     check_gh_cli
 
+    if [ "$DRY_RUN" = false ]; then
+        local signature_found=false
+        for signature in dist/releases/SHA256SUMS.txt.asc dist/releases/SHA256SUMS.txt.sig; do
+            if [ -s "$signature" ]; then
+                signature_found=true
+                break
+            fi
+        done
+        [ "$signature_found" = true ] ||
+            die "Refusing to publish a release without a SHA256SUMS.txt signature"
+    fi
+
     # Create git tag if needed
     local current_tag=$(get_git_tag)
     if [ -z "$current_tag" ]; then
@@ -1033,7 +1134,7 @@ create_github_release() {
 
     # Collect assets
     local assets=()
-    for file in dist/releases/*.tar.gz dist/releases/*.zip dist/releases/*.dmg dist/releases/SHA256SUMS.txt dist/releases/SHA256SUMS.txt.asc dist/releases/PROVENANCE.txt; do
+    for file in dist/releases/*.tar.gz dist/releases/*.zip dist/releases/*.dmg dist/releases/SHA256SUMS.txt dist/releases/SHA256SUMS.txt.asc dist/releases/SHA256SUMS.txt.sig dist/releases/PROVENANCE.txt; do
         [ -f "$file" ] && assets+=("$file")
     done
 
@@ -1133,6 +1234,7 @@ cmd_release() {
     determine_version
 
     REQUIRE_SIGNED_DMG=true
+    preflight_release_signing
 
     if [ "$CONFIRM" = true ] && [ "$DRY_RUN" = false ]; then
         echo ""
@@ -1170,7 +1272,7 @@ cmd_release() {
     build_desktop_mac
     write_release_provenance
     generate_checksums
-    sign_checksums_if_possible
+    sign_release_checksums
     build_docker
     create_github_release
 
@@ -1217,13 +1319,21 @@ GHCR push access is probed for 'push' and 'release', and an expired 1Password
 session is refreshed via 'op signin' whenever the DMG will be built. Bad
 credentials therefore fail in seconds rather than after a full build.
 
-Desktop signing (optional, only consulted when running on macOS):
+Desktop signing (required for an official macOS release):
   APPLE_SIGNING_IDENTITY  Developer ID Application cert name in your keychain
   APPLE_ID                Apple ID email (for notarization)
   APPLE_PASSWORD          App-specific password (for notarization)
   APPLE_PASSWORD_OP_REF   1Password item ID — alternative to APPLE_PASSWORD
   APPLE_TEAM_ID           Apple Developer team ID (for notarization)
-  RELEASE_GPG_KEY         Optional GPG key id/email used to sign SHA256SUMS.txt
+
+Release signing (required for 'release'):
+  RELEASE_GPG_KEY         GPG key id/email used to create SHA256SUMS.txt.asc
+  RELEASE_SSH_KEY         SSH private/public key path used to create SHA256SUMS.txt.sig
+                          Defaults to Git's SSH user.signingkey when configured.
+  RELEASE_SIGNING_IDENTITY
+                          SSH signer identity; defaults to Git's user.email.
+
+Desktop behavior:
   For 'build' and 'push': when unset, the DMG is produced unsigned and
   unnotarized — Gatekeeper will block double-click on download, users must
   right-click → Open.
@@ -1335,4 +1445,6 @@ main() {
     esac
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi
