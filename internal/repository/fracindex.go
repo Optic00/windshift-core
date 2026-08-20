@@ -79,8 +79,7 @@ func isFracIndexRetryableTransactionError(err error) bool {
 
 // IsSerializationAbort reports PostgreSQL serialization failures and
 // deadlocks — the cases where retrying the whole transaction on a fresh
-// snapshot is the documented recovery. Exported for service-level clone
-// transactions that need the same retry classification.
+// snapshot is the documented recovery.
 func IsSerializationAbort(err error) bool {
 	return isFracIndexRetryableTransactionError(err)
 }

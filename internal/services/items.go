@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -362,29 +361,16 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 		}
 	}
 
-	// runInsertTx executes the per-attempt portion of CreateItem inside a
-	// single transaction: read MAX(frac_index), compute the next key (with a
-	// random jitter suffix so concurrent appends don't collide), INSERT the
-	// item, attach milestones. Hoisted into a closure so the retry loop can
-	// re-issue the whole transaction without re-running the upstream item-type
-	// / status / priority resolution. Both the MAX read and the INSERT share
-	// the same tx snapshot, so no cache is needed.
-	runInsertTx := func() (int64, string, error) {
-		tx, err := db.Begin()
-		if err != nil {
-			return 0, "", fmt.Errorf("failed to start transaction: %w", err)
-		}
-		defer func() { _ = tx.Rollback() }()
-
+	itemID, err := repository.WithItemCreateTransaction(context.Background(), db, func(tx database.Tx) (int, error) {
 		fracIndex, err := repository.GenerateFracIndexForNewItem(tx, db.GetDriverName())
 		if err != nil {
-			return 0, "", fmt.Errorf("failed to generate frac_index: %w", err)
+			return 0, fmt.Errorf("failed to generate frac_index: %w", err)
 		}
 
 		// Get next workspace-specific item number (within transaction to prevent race conditions)
 		nextWorkspaceItemNumber, err := repository.NewItemRepository(db).GetNextWorkspaceItemNumber(tx, params.WorkspaceID)
 		if err != nil {
-			return 0, "", fmt.Errorf("failed to generate workspace item number: %w", err)
+			return 0, fmt.Errorf("failed to generate workspace item number: %w", err)
 		}
 
 		// Insert item with all fields
@@ -434,7 +420,7 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 			updatedAt,
 			updatedAt, // last_active_at: a new item is "active" as of creation
 		).Scan(&itemID); err != nil {
-			return 0, "", fmt.Errorf("failed to insert item: %w", err)
+			return 0, fmt.Errorf("failed to insert item: %w", err)
 		}
 
 		// Attach milestones inside the same transaction so a milestone-validation
@@ -444,49 +430,20 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 				"INSERT INTO item_milestones (item_id, milestone_id, created_at) VALUES (?, ?, ?)",
 				itemID, mID, now,
 			); err != nil {
-				return 0, "", fmt.Errorf("failed to attach milestone %d to new item: %w", mID, err)
+				return 0, fmt.Errorf("failed to attach milestone %d to new item: %w", mID, err)
 			}
 		}
-
-		if err := tx.Commit(); err != nil {
-			return 0, "", fmt.Errorf("failed to commit transaction: %w", err)
-		}
-		return itemID, fracIndex, nil
-	}
-
-	// Catch-only retry on the two collision-prone unique constraints:
-	// idx_items_frac_index and (workspace_id, workspace_item_number). The
-	// success path takes one iteration. Each iteration runs a fresh
-	// transaction; MAX(frac_index) is re-read (jitter makes a repeat collision
-	// astronomically unlikely) and MAX(workspace_item_number) is re-read locked
-	// on Postgres, so concurrent writers' commits are picked up automatically —
-	// no cache to invalidate.
-	var itemID int64
-	for attempt := 0; attempt < repository.FracIndexMaxRetries; attempt++ {
-		id, fracIndex, ierr := runInsertTx()
-		if ierr == nil {
-			itemID = id
-			break
-		}
-		retriable := repository.IsFracIndexUniqueViolation(ierr) ||
-			repository.IsWorkspaceItemNumberUniqueViolation(ierr)
-		if !retriable {
-			return 0, ierr
-		}
-		slog.Warn("item insert unique violation, retrying",
-			slog.Int("attempt", attempt+1),
-			slog.String("frac_index", fracIndex),
-			slog.String("component", "fracindex"))
-		if attempt == repository.FracIndexMaxRetries-1 {
-			return 0, fmt.Errorf("failed to insert item after %d retries: %w", repository.FracIndexMaxRetries, ierr)
-		}
+		return int(itemID), nil
+	})
+	if err != nil {
+		return 0, err
 	}
 
 	// Record item creation history asynchronously if a creator is specified
 	if params.CreatorID != nil {
 		historyService := GetHistoryService(db)
 		historyService.RecordItemCreationHistoryAsync(db, models.Item{
-			ID:              int(itemID),
+			ID:              itemID,
 			WorkspaceID:     params.WorkspaceID,
 			ItemTypeID:      params.ItemTypeID,
 			Title:           params.Title,
@@ -517,18 +474,18 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 		if triggeredBy == 0 && params.CreatorID != nil {
 			triggeredBy = *params.CreatorID
 		}
-		maybeTriggerAssigneeRun(params.WorkspaceID, int(itemID), nil, params.AssigneeID, triggeredBy)
+		maybeTriggerAssigneeRun(params.WorkspaceID, itemID, nil, params.AssigneeID, triggeredBy)
 	}
 	repository.InvalidateItemListCountCache(db)
 
 	// Live-update publish (WI-483): the insert has committed. Announce the new
 	// item, and refresh the parent's child list if this item has a parent.
-	PublishItemChange(int(itemID), ItemChangeCreated)
+	PublishItemChange(itemID, ItemChangeCreated)
 	if params.ParentID != nil {
 		PublishItemChange(*params.ParentID, ItemChangeUpdated)
 	}
 
-	return itemID, nil
+	return int64(itemID), nil
 }
 
 // GetInitialStatusForItemType determines the initial status for an item type

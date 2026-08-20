@@ -672,9 +672,7 @@ func coerceTemplateOptionID(v any) (int, bool) {
 // be retried on a fresh transaction: PostgreSQL serialization aborts and the
 // rare global rank or workspace item-number unique collisions.
 func isWorkspaceCloneRetryable(err error) bool {
-	return repository.IsSerializationAbort(err) ||
-		repository.IsFracIndexUniqueViolation(err) ||
-		repository.IsWorkspaceItemNumberUniqueViolation(err)
+	return repository.IsItemCreateRetryable(err)
 }
 
 // logWorkspaceCloneResult records clone outcome and volume for operations

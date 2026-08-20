@@ -283,61 +283,46 @@ func (s *IssueSyncService) createItemFromIssue(ctx context.Context, config *mode
 
 	milestoneID := s.resolveMilestoneID(config, issue)
 
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	nextNum, err := s.itemRepo.GetNextWorkspaceItemNumber(tx, config.WorkspaceID)
-	if err != nil {
-		return fmt.Errorf("get next item number: %w", err)
-	}
-
 	newItem := &models.Item{
-		WorkspaceID:         config.WorkspaceID,
-		WorkspaceItemNumber: nextNum,
-		ItemTypeID:          config.DefaultItemTypeID,
-		Title:               issue.Title,
-		Description:         issue.Body,
-		StatusID:            statusID,
-		PriorityID:          config.DefaultPriorityID,
-		AssigneeID:          assigneeID,
-	}
-	itemID, err := s.itemRepo.Create(tx, newItem)
-	if err != nil {
-		return fmt.Errorf("create item: %w", err)
+		WorkspaceID: config.WorkspaceID,
+		ItemTypeID:  config.DefaultItemTypeID,
+		Title:       issue.Title,
+		Description: issue.Body,
+		StatusID:    statusID,
+		PriorityID:  config.DefaultPriorityID,
+		AssigneeID:  assigneeID,
 	}
 
 	milestoneIDs := []int{}
 	if milestoneID != nil {
 		milestoneIDs = append(milestoneIDs, *milestoneID)
 	}
-	if err := repository.NewMilestoneAttachRepository(s.db).ReplaceItemMilestonesTx(ctx, tx, itemID, milestoneIDs); err != nil {
-		return err
-	}
+	itemID, err := s.itemRepo.CreateWithRetry(ctx, newItem, func(tx database.Tx, itemID int) error {
+		if err := repository.NewMilestoneAttachRepository(s.db).ReplaceItemMilestonesTx(ctx, tx, itemID, milestoneIDs); err != nil {
+			return err
+		}
 
-	now := time.Now()
-	_, err = tx.Exec(`
-		INSERT INTO issue_sync_items (
-			issue_sync_config_id, item_id, github_issue_number, github_issue_id,
-			github_issue_url, last_synced_at, last_github_updated_at, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`,
-		config.ID, itemID, issue.Number, issue.ID,
-		issue.URL, now, issue.UpdatedAt, now, now,
-	)
+		now := time.Now()
+		if _, err := tx.Exec(`
+			INSERT INTO issue_sync_items (
+				issue_sync_config_id, item_id, github_issue_number, github_issue_id,
+				github_issue_url, last_synced_at, last_github_updated_at, created_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`,
+			config.ID, itemID, issue.Number, issue.ID,
+			issue.URL, now, issue.UpdatedAt, now, now,
+		); err != nil {
+			return fmt.Errorf("insert sync item: %w", err)
+		}
+
+		// Keep item, labels, and sync metadata atomic.
+		if err := s.syncLabels(ctx, tx, config, issue, itemID); err != nil {
+			return fmt.Errorf("sync labels: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
-		return fmt.Errorf("insert sync item: %w", err)
-	}
-
-	// Keep item, labels, and sync metadata atomic.
-	if err := s.syncLabels(ctx, tx, config, issue, itemID); err != nil {
-		return fmt.Errorf("sync labels: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit: %w", err)
+		return fmt.Errorf("create item from issue: %w", err)
 	}
 
 	slog.Info("created item from GitHub issue",

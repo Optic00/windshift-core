@@ -755,6 +755,9 @@ func (r *ItemRepository) GetNextWorkspaceItemNumber(tx database.Tx, workspaceID 
 	return int(maxNumber + 1), nil
 }
 
+// Create inserts an item in a caller-owned transaction. Production creation
+// flows should use CreateWithRetry so rank and item-number conflicts restart
+// the full transaction.
 func (r *ItemRepository) Create(tx database.Tx, item *models.Item) (int, error) {
 	if err := acquireGlobalRankMutationLock(tx, r.db.GetDriverName()); err != nil {
 		return 0, err

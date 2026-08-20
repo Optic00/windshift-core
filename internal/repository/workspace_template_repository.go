@@ -317,7 +317,7 @@ func (r *WorkspaceTemplateRepository) InsertClonedItemTx(ctx context.Context, tx
 		insert.CreatorID, insert.CreatedAt, insert.CreatedAt, insert.CreatedAt).Scan(&id)
 	if err != nil {
 		if database.IsUniqueConstraintError(err) {
-			return 0, ErrDuplicateEntry
+			return 0, fmt.Errorf("%w: %w", ErrDuplicateEntry, err)
 		}
 		return 0, fmt.Errorf("insert cloned item: %w", err)
 	}

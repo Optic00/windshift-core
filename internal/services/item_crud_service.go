@@ -189,76 +189,44 @@ func (s *ItemCRUDService) Copy(itemID int, opts CopyOptions) (*CopyResult, error
 		return nil, fmt.Errorf("source item not found: %w", err)
 	}
 
-	const maxRetries = 5
-	var newID int
-	var lastErr error
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		newID, lastErr = database.WithTxResult(s.db, func(tx database.Tx) (int, error) {
-			fracIndex, err := repository.GenerateFracIndexForNewItem(tx, s.db.GetDriverName())
-			if err != nil {
-				return 0, err
-			}
-			nextNum, err := s.repo.GetNextWorkspaceItemNumber(tx, source.WorkspaceID)
-			if err != nil {
-				return 0, err
-			}
+	parentID := opts.NewParentID
+	if parentID == nil {
+		parentID = source.ParentID
+	}
+	newItem := &models.Item{
+		WorkspaceID:       source.WorkspaceID,
+		ItemTypeID:        source.ItemTypeID,
+		Title:             opts.NewTitle,
+		Description:       source.Description,
+		StatusID:          source.StatusID,
+		PriorityID:        source.PriorityID,
+		DueDate:           source.DueDate,
+		StartDate:         source.StartDate,
+		EndDate:           source.EndDate,
+		IsTask:            source.IsTask,
+		IterationID:       source.IterationID,
+		ProjectID:         source.ProjectID,
+		InheritProject:    source.InheritProject,
+		AssigneeID:        source.AssigneeID,
+		CreatorID:         &opts.CreatorID,
+		CustomFieldValues: source.CustomFieldValues,
+		ParentID:          parentID,
+		RelatedWorkItemID: source.RelatedWorkItemID,
+		StoryPoints:       source.StoryPoints,
+	}
 
-			parentID := opts.NewParentID
-			if parentID == nil {
-				parentID = source.ParentID
-			}
-			newItem := &models.Item{
-				WorkspaceID:         source.WorkspaceID,
-				WorkspaceItemNumber: nextNum,
-				ItemTypeID:          source.ItemTypeID,
-				Title:               opts.NewTitle,
-				Description:         source.Description,
-				StatusID:            source.StatusID,
-				PriorityID:          source.PriorityID,
-				DueDate:             source.DueDate,
-				StartDate:           source.StartDate,
-				EndDate:             source.EndDate,
-				IsTask:              source.IsTask,
-				IterationID:         source.IterationID,
-				ProjectID:           source.ProjectID,
-				InheritProject:      source.InheritProject,
-				AssigneeID:          source.AssigneeID,
-				CreatorID:           &opts.CreatorID,
-				CustomFieldValues:   source.CustomFieldValues,
-				ParentID:            parentID,
-				RelatedWorkItemID:   source.RelatedWorkItemID,
-				StoryPoints:         source.StoryPoints,
-				FracIndex:           &fracIndex,
-			}
-
-			id, err := s.repo.Create(tx, newItem)
-			if err != nil {
-				return 0, fmt.Errorf("failed to create copy: %w", err)
-			}
-
-			now := time.Now()
-			if _, err := tx.Exec(`
-				INSERT INTO item_milestones (item_id, milestone_id, created_at)
-				SELECT ?, milestone_id, ? FROM item_milestones WHERE item_id = ?
-			`, id, now, source.ID); err != nil {
-				return 0, fmt.Errorf("failed to copy milestones: %w", err)
-			}
-
-			return id, nil
-		})
-		if lastErr == nil {
-			break
+	newID, err := s.repo.CreateWithRetry(context.Background(), newItem, func(tx database.Tx, itemID int) error {
+		now := time.Now()
+		if _, err := tx.Exec(`
+			INSERT INTO item_milestones (item_id, milestone_id, created_at)
+			SELECT ?, milestone_id, ? FROM item_milestones WHERE item_id = ?
+		`, itemID, now, source.ID); err != nil {
+			return fmt.Errorf("copy item milestones: %w", err)
 		}
-		if !repository.IsFracIndexUniqueViolation(lastErr) {
-			return nil, lastErr
-		}
-		slog.Warn("frac_index unique violation on copy, retrying",
-			slog.Int("attempt", attempt+1),
-			slog.Int("source_item_id", source.ID),
-			slog.String("component", "fracindex"))
-		if attempt == maxRetries-1 {
-			return nil, fmt.Errorf("copy item %d failed after %d frac_index retries: %w", source.ID, maxRetries, lastErr)
-		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("copy item %d: %w", source.ID, err)
 	}
 
 	updateService := NewItemUpdateService(s.db)

@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -265,24 +266,6 @@ func (rs *RecurrenceScheduler) generateInstancesForRule(rule *models.RecurrenceR
 
 // createInstance creates a single recurring task instance
 func (rs *RecurrenceScheduler) createInstance(rule *models.RecurrenceRule, template *models.Item, scheduledDate time.Time) error {
-	tx, err := rs.db.Begin()
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	// Get next workspace item number
-	nextNum, err := rs.itemRepo.GetNextWorkspaceItemNumber(tx, template.WorkspaceID)
-	if err != nil {
-		return fmt.Errorf("failed to get next item number: %w", err)
-	}
-
-	// Get next sequence number for this rule
-	seqNum, err := rs.recurrenceRepo.GetNextSequenceNumber(tx, rule.ID)
-	if err != nil {
-		return fmt.Errorf("failed to get sequence number: %w", err)
-	}
-
 	// Determine status. The user can pin one explicitly; otherwise resolve via the
 	// workspace's configuration set → workflow → initial transition (the same path
 	// used by handlers/portal.go and handlers/forms.go). The previous hard-coded
@@ -306,14 +289,13 @@ func (rs *RecurrenceScheduler) createInstance(rule *models.RecurrenceRule, templ
 	// goes through ItemRepository so the items-table write lives in the
 	// repository layer (same path scm/issue_sync.go uses), not in the scheduler.
 	item := &models.Item{
-		WorkspaceID:         template.WorkspaceID,
-		WorkspaceItemNumber: nextNum,
-		ItemTypeID:          template.ItemTypeID,
-		Title:               template.Title,
-		StatusID:            &statusID,
-		DueDate:             &scheduledDate,
-		IsTask:              template.IsTask,
-		ParentID:            template.ParentID,
+		WorkspaceID: template.WorkspaceID,
+		ItemTypeID:  template.ItemTypeID,
+		Title:       template.Title,
+		StatusID:    &statusID,
+		DueDate:     &scheduledDate,
+		IsTask:      template.IsTask,
+		ParentID:    template.ParentID,
 	}
 	if rule.CopyDescription {
 		item.Description = template.Description
@@ -328,24 +310,23 @@ func (rs *RecurrenceScheduler) createInstance(rule *models.RecurrenceRule, templ
 		item.CustomFieldValues = template.CustomFieldValues
 	}
 
-	itemID, err := rs.itemRepo.Create(tx, item)
-	if err != nil {
-		return fmt.Errorf("failed to create item: %w", err)
-	}
-
-	// Create the instance record
-	err = rs.recurrenceRepo.CreateInstance(tx, &models.RecurrenceInstance{
-		RecurrenceRuleID: rule.ID,
-		InstanceItemID:   itemID,
-		ScheduledDate:    scheduledDate,
-		SequenceNumber:   seqNum,
+	itemID, err := rs.itemRepo.CreateWithRetry(context.Background(), item, func(tx database.Tx, itemID int) error {
+		seqNum, err := rs.recurrenceRepo.GetNextSequenceNumber(tx, rule.ID)
+		if err != nil {
+			return fmt.Errorf("get next recurrence sequence number: %w", err)
+		}
+		if err := rs.recurrenceRepo.CreateInstance(tx, &models.RecurrenceInstance{
+			RecurrenceRuleID: rule.ID,
+			InstanceItemID:   itemID,
+			ScheduledDate:    scheduledDate,
+			SequenceNumber:   seqNum,
+		}); err != nil {
+			return fmt.Errorf("create recurrence instance: %w", err)
+		}
+		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create instance record: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return err
+		return fmt.Errorf("create recurring item: %w", err)
 	}
 
 	// Live-update publish (WI-483): the recurrence instance committed. Announce
