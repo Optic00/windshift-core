@@ -128,12 +128,11 @@ type ItemCreationParams struct {
 	// insert-then-link flow to stage a level -1 item before its source parent
 	// has been imported. No interactive or automation caller should set it.
 	AllowUnparentedGenericSubtask bool
-	// ValidatingUserID and PermService enable project-assignment access control.
-	// When ValidatingUserID > 0 and PermService is non-nil, CreateItem rejects a
+	// ValidatingUserID marks user-facing creation. CreateItem uses it to reject
+	// inactive or unknown assignees. When PermService is also set, it rejects a
 	// ProjectID / TimeProjectID the user may not view (returning ErrProjectNotFound,
 	// indistinguishable from a non-existent project to avoid ID enumeration).
-	// User-facing create handlers set both; internal callers (import, recurrence,
-	// copy of already-authorized items) leave them zero to skip the check.
+	// Internal callers such as imports leave it zero to preserve imported identity.
 	ValidatingUserID int
 	PermService      *PermissionService
 	// MandatoryTemplateOut, when non-nil, is populated by CreateItem with the
@@ -190,6 +189,15 @@ func validateProjectAssignmentAccess(db database.Database, perm *PermissionServi
 func CreateItem(db database.Database, params ItemCreationParams) (int64, error) {
 	if err := validation.ValidatePlanningAssignments(db, params.WorkspaceID, params.MilestoneIDs, params.IterationID); err != nil {
 		return 0, err
+	}
+	if params.ValidatingUserID > 0 && params.AssigneeID != nil {
+		active, err := repository.NewUserRepository(db).ActiveExists(*params.AssigneeID)
+		if err != nil {
+			return 0, fmt.Errorf("failed to validate assignee: %w", err)
+		}
+		if !active {
+			return 0, &validation.ValidationError{Field: "assignee_id", Message: "Assignee user not found"}
+		}
 	}
 
 	// Enforce project-assignment access control: a user may only attach a
