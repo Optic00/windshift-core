@@ -47,6 +47,7 @@ func RegisterItemRoutes(deps *Deps) {
 	api.HandleH("POST /items/{id}/change-type", auth(http.HandlerFunc(deps.Items.Item.ChangeType)))
 	api.HandleH("POST /items/{id}/transition", auth(http.HandlerFunc(deps.Items.Item.Transition)))
 	api.HandleH("GET /items/{id}/history", auth(http.HandlerFunc(deps.Items.Item.GetItemHistory)))
+	api.HandleH("GET /items/{id}/status-durations", auth(http.HandlerFunc(deps.Items.Item.GetStatusDurations)))
 
 	// Item hierarchy endpoints
 	api.HandleH("GET /items/{id}/children", auth(http.HandlerFunc(deps.Items.Item.GetChildrenNew)))

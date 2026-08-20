@@ -146,6 +146,22 @@ type ItemHistory struct {
 	ResolvedNewValue *string `json:"resolved_new_value,omitempty"` // Human-readable version of new_value
 }
 
+// ItemStatusDuration is the accumulated time an item has spent in one status.
+type ItemStatusDuration struct {
+	StatusID        int       `json:"status_id"`
+	StatusName      string    `json:"status_name"`
+	DurationSeconds int64     `json:"duration_seconds"`
+	FirstEnteredAt  time.Time `json:"first_entered_at"`
+	LastEnteredAt   time.Time `json:"last_entered_at"`
+	IsCurrent       bool      `json:"is_current"`
+}
+
+// ItemStatusDurations is computed from the item's status transition history.
+type ItemStatusDurations struct {
+	Statuses     []ItemStatusDuration `json:"statuses"`
+	CalculatedAt time.Time            `json:"calculated_at"`
+}
+
 // ItemDiagram represents a diagram associated with an item
 type ItemDiagram struct {
 	ID          int       `json:"id"`

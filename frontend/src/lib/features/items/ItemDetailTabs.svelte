@@ -1,5 +1,6 @@
 <script>
-  import { MessageSquare, Clock, Play, Info, History, Edit, Trash2, MoreHorizontal, Bot, Activity, CalendarClock, TimerReset } from '@lucide/svelte';
+  import { MessageSquare, Clock, Play, Info, History, Edit, Trash2, MoreHorizontal, Bot, Activity, CalendarClock, TimerReset, RefreshCw } from '@lucide/svelte';
+  import { api } from '../../api.js';
   import Button from '../../components/Button.svelte';
   import DropdownMenu from '../../layout/DropdownMenu.svelte';
   import Comments from '../items/Comments.svelte';
@@ -7,7 +8,7 @@
   import ItemAgentLog from '../items/ItemAgentLog.svelte';
   import { agentRuns } from '../../api/agentRuns.js';
   import { confirm } from '../../composables/useConfirm.js';
-  import { dateOnlyKey, formatDateOnly, formatDueDate, formatStatusAge, getDaysOverdue, worklogDateKey } from '../../utils/dateFormatter.js';
+  import { dateOnlyKey, formatDateOnly, formatDueDate, getDaysOverdue, worklogDateKey } from '../../utils/dateFormatter.js';
   import { serverNow } from '../../utils/serverClock.js';
   import { formatAuthenticatedDateTime as formatDateTimeLocale, formatAuthenticatedInstant } from '../../utils/authenticatedDateFormatter.js';
   import { t } from '../../stores/i18n.svelte.js';
@@ -18,6 +19,7 @@
   import EmptyState from '../../components/EmptyState.svelte';
   import DataTable from '../../components/DataTable.svelte';
   import Toggle from '../../components/Toggle.svelte';
+  import Spinner from '../../components/Spinner.svelte';
   // Direct store access for the child-item rollup keeps the time-tab logic
   // co-located and avoids threading four extra props through ItemDetail and
   // ItemDetailContent for a feature that only lives in this tab.
@@ -37,12 +39,6 @@
     oneditworklog = undefined,
     ondeleteworklog = undefined,
   } = $props();
-
-  function getStatusName(statusId) {
-    if (!statusId) return '';
-    const status = statusOptions.find(s => s.id === statusId);
-    return status?.name || '';
-  }
 
   let commentCount = $state(0);
 
@@ -92,11 +88,63 @@
 
   const DUE_SOON_DAYS = 7;
 
+  let statusDurations = $state([]);
+  let statusDurationsLoading = $state(false);
+  let statusDurationsError = $state(false);
+  let statusDurationsRetry = $state(0);
+
+  $effect(() => {
+    const id = item?.id;
+    const shouldLoad = tab === 'details' && Boolean(id);
+    const requestVersion = statusDurationsRetry;
+    if (!shouldLoad) return;
+
+    const controller = new AbortController();
+    statusDurationsLoading = true;
+    statusDurationsError = false;
+    api.items.getStatusDurations(id, { signal: controller.signal })
+      .then((result) => {
+        if (!controller.signal.aborted && item?.id === id && statusDurationsRetry === requestVersion) {
+          statusDurations = Array.isArray(result?.statuses) ? result.statuses : [];
+        }
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) {
+          statusDurations = [];
+          statusDurationsError = true;
+          console.error('Error loading item status durations:', error);
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) statusDurationsLoading = false;
+      });
+
+    return () => controller.abort();
+  });
+
   function getElapsedDays(value) {
     if (!value) return null;
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return null;
     return Math.max(0, Math.floor((serverNow().getTime() - date.getTime()) / 86400000));
+  }
+
+  function getActivityTimestamp(currentItem) {
+    const candidates = [
+      currentItem?.created_at,
+      currentItem?.updated_at,
+      currentItem?.last_active_at,
+    ];
+    let latest = null;
+    let latestTime = Number.NEGATIVE_INFINITY;
+    for (const value of candidates) {
+      if (!value) continue;
+      const timestamp = new Date(value).getTime();
+      if (Number.isNaN(timestamp) || timestamp <= latestTime) continue;
+      latest = value;
+      latestTime = timestamp;
+    }
+    return latest;
   }
 
   function isItemCompleted(currentItem) {
@@ -111,7 +159,7 @@
       return { state: 'completed', days: null, variant: 'success' };
     }
 
-    const days = getElapsedDays(currentItem?.last_active_at || currentItem?.updated_at);
+    const days = getElapsedDays(getActivityTimestamp(currentItem));
     if (days === null) {
       return { state: 'unknown', days: null, variant: 'neutral' };
     }
@@ -138,7 +186,27 @@
 
   const activityHealth = $derived(getActivityHealth(item));
   const dueHealth = $derived(getDueHealth(item));
-  const statusAge = $derived(formatStatusAge(item?.status_since));
+  const activityTimestamp = $derived(getActivityTimestamp(item));
+
+  function formatStatusDuration(value) {
+    const seconds = Math.max(0, Math.floor(Number(value) || 0));
+    if (seconds < 60) return t('items.durationLessThanMinute');
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) {
+      const remainingMinutes = minutes % 60;
+      return remainingMinutes ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+    }
+    const days = Math.floor(hours / 24);
+    if (days < 7) {
+      const remainingHours = hours % 24;
+      return remainingHours ? `${days}d ${remainingHours}h` : `${days}d`;
+    }
+    const weeks = Math.floor(days / 7);
+    const remainingDays = days % 7;
+    return remainingDays ? `${weeks}w ${remainingDays}d` : `${weeks}w`;
+  }
 
   function getActivityLabel(state) {
     return t(`items.activityHealth${state.charAt(0).toUpperCase()}${state.slice(1)}`);
@@ -316,7 +384,7 @@
               <p class="mt-1 max-w-[65ch] text-xs leading-5 text-[var(--ds-text-subtle)]">{t('items.healthOverviewDescription')}</p>
             </div>
 
-            <div class="grid min-[761px]:grid-cols-3">
+            <div class="grid min-[761px]:grid-cols-2">
               <div class="min-w-0 px-4 py-5 min-[421px]:px-6" data-testid="item-health-activity">
                 <div class="flex items-center justify-between gap-3">
                   <span class="inline-flex items-center gap-2 text-xs font-semibold text-[var(--ds-text-subtle)]"><Activity class="h-4 w-4" />{t('items.activity')}</span>
@@ -332,8 +400,8 @@
                   <p class="mt-4 text-base font-semibold leading-snug text-[var(--ds-text)]">—</p>
                 {/if}
                 <p class="mt-1 text-xs leading-5 text-[var(--ds-text-subtle)]">
-                  {#if item.last_active_at || item.updated_at}
-                    {t('items.lastActivityAt', { date: formatDateTimeLocale(item.last_active_at || item.updated_at) })}
+                  {#if activityTimestamp}
+                    {t('items.lastActivityAt', { date: formatDateTimeLocale(activityTimestamp) })}
                   {:else}
                     {t('items.activityUnavailable')}
                   {/if}
@@ -361,20 +429,51 @@
                 </p>
               </div>
 
-              <div class="min-w-0 border-t border-[var(--ds-border)] px-4 py-5 min-[421px]:px-6 min-[761px]:border-t-0 min-[761px]:border-l" data-testid="item-health-status-age">
-                <div class="flex items-center justify-between gap-3">
-                  <span class="inline-flex items-center gap-2 text-xs font-semibold text-[var(--ds-text-subtle)]"><TimerReset class="h-4 w-4" />{t('items.timeInStatus')}</span>
-                  <Badge variant="neutral" size="xs">{item.status_name || getStatusName(item.status_id) || t('items.unknown')}</Badge>
+            </div>
+
+            <div class="border-t border-[var(--ds-border)] px-4 py-5 min-[421px]:px-6" data-testid="item-health-status-durations">
+              <div class="flex flex-col gap-1 min-[521px]:flex-row min-[521px]:items-start min-[521px]:justify-between min-[521px]:gap-6">
+                <div>
+                  <h4 class="inline-flex items-center gap-2 text-xs font-semibold text-[var(--ds-text-subtle)]"><TimerReset class="h-4 w-4" />{t('items.timeInStatus')}</h4>
+                  <p class="mt-1 max-w-[65ch] text-xs leading-5 text-[var(--ds-text-subtle)]">{t('items.statusDurationsDescription')}</p>
                 </div>
-                <p class="mt-4 text-base font-semibold leading-snug text-[var(--ds-text)]">{statusAge || '—'}</p>
-                <p class="mt-1 text-xs leading-5 text-[var(--ds-text-subtle)]">
-                  {#if item.status_since}
-                    {t('items.statusSince', { date: formatDateTimeLocale(item.status_since) })}
-                  {:else}
-                    {t('items.statusHistoryUnavailable')}
-                  {/if}
-                </p>
               </div>
+
+              {#if statusDurationsLoading}
+                <div class="flex items-center gap-3 py-6 text-xs text-[var(--ds-text-subtle)]" data-testid="item-status-durations-loading">
+                  <Spinner size="sm" />
+                  <span>{t('items.statusDurationsLoading')}</span>
+                </div>
+              {:else if statusDurationsError}
+                <div class="flex flex-col items-start gap-3 py-5 min-[521px]:flex-row min-[521px]:items-center min-[521px]:justify-between" data-testid="item-status-durations-error">
+                  <p class="text-xs leading-5 text-[var(--ds-text-subtle)]">{t('items.statusDurationsLoadError')}</p>
+                  <button
+                    type="button"
+                    class="inline-flex items-center gap-2 rounded-md border border-[var(--ds-border)] px-3 py-1.5 text-xs font-semibold text-[var(--ds-text)] transition-colors hover:bg-[var(--ds-surface-sunken)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-interactive)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--ds-surface-raised)]"
+                    data-testid="item-status-durations-retry"
+                    onclick={() => statusDurationsRetry += 1}
+                  >
+                    <RefreshCw class="h-3.5 w-3.5" />
+                    {t('items.statusDurationsRetry')}
+                  </button>
+                </div>
+              {:else if statusDurations.length === 0}
+                <p class="py-5 text-xs leading-5 text-[var(--ds-text-subtle)]" data-testid="item-status-durations-empty">{t('items.statusDurationsEmpty')}</p>
+              {:else}
+                <ul class="mt-4 divide-y divide-[var(--ds-border)] border-y border-[var(--ds-border)]" data-testid="item-status-durations-list">
+                  {#each statusDurations as duration (duration.status_id)}
+                    <li class="flex min-w-0 items-center justify-between gap-4 py-3" data-testid={`item-status-duration-${duration.status_id}`}>
+                      <div class="flex min-w-0 items-center gap-2">
+                        <span class="truncate text-sm font-medium text-[var(--ds-text)]">{duration.status_name || t('items.unknown')}</span>
+                        {#if duration.is_current}
+                          <Badge variant="info" size="xs">{t('items.currentStatus')}</Badge>
+                        {/if}
+                      </div>
+                      <span class="shrink-0 text-sm font-semibold tabular-nums text-[var(--ds-text)]">{formatStatusDuration(duration.duration_seconds)}</span>
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
             </div>
           </section>
 

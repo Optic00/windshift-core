@@ -265,6 +265,8 @@ export const items = {
   ),
   // Get history of changes for an item
   getHistory: (itemId) => fetchAPI(`/items/${itemId}/history`),
+  getStatusDurations: (itemId, requestOptions = {}) =>
+    fetchAPI(`/items/${itemId}/status-durations`, requestOptions),
 
   // Get items created in the last N days
   getRecentlyCreated: (workspaceId, days = 7) => {
