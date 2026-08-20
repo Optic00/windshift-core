@@ -491,10 +491,10 @@
               data-testid="item-type-change-trigger"
               data-item-type-id={currentItemType.id}
               onclick={openItemTypeSelector}
-              class="rounded cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500"
+              class="inline-flex h-6 w-6 items-center justify-center rounded leading-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500"
               title="Change item type"
             >
-              <ItemTypeIcon itemType={currentItemType} />
+              <ItemTypeIcon itemType={currentItemType} testId="item-type-change-icon" />
             </button>
           {/snippet}
         </Tooltip>
