@@ -1,5 +1,5 @@
 <script>
-  import { MessageSquare, Clock, Play, Info, History, Edit, Trash2, MoreHorizontal, Bot } from '@lucide/svelte';
+  import { MessageSquare, Clock, Play, Info, History, Edit, Trash2, MoreHorizontal, Bot, Activity, CalendarClock, TimerReset } from '@lucide/svelte';
   import Button from '../../components/Button.svelte';
   import DropdownMenu from '../../layout/DropdownMenu.svelte';
   import Comments from '../items/Comments.svelte';
@@ -7,7 +7,8 @@
   import ItemAgentLog from '../items/ItemAgentLog.svelte';
   import { agentRuns } from '../../api/agentRuns.js';
   import { confirm } from '../../composables/useConfirm.js';
-  import { worklogDateKey } from '../../utils/dateFormatter.js';
+  import { dateOnlyKey, formatDateOnly, formatDueDate, formatStatusAge, getDaysOverdue, worklogDateKey } from '../../utils/dateFormatter.js';
+  import { serverNow } from '../../utils/serverClock.js';
   import { formatAuthenticatedDateTime as formatDateTimeLocale, formatAuthenticatedInstant } from '../../utils/authenticatedDateFormatter.js';
   import { t } from '../../stores/i18n.svelte.js';
   import { durationToString } from '../../utils/timeUtils.js';
@@ -20,7 +21,7 @@
   // Direct store access for the child-item rollup keeps the time-tab logic
   // co-located and avoids threading four extra props through ItemDetail and
   // ItemDetailContent for a feature that only lives in this tab.
-  import { itemDetailStore } from '../../stores';
+  import { itemDetailStore, workspaceDataStore } from '../../stores';
 
   let {
     item,
@@ -88,6 +89,75 @@
     hasEstimate ? totalLoggedMinutes / estimateMinutes : 0,
   );
   const overBudget = $derived(hasEstimate && totalLoggedMinutes > estimateMinutes);
+
+  const STALE_AFTER_DAYS = 14;
+  const DUE_SOON_DAYS = 7;
+
+  function getElapsedDays(value) {
+    if (!value) return null;
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return null;
+    return Math.max(0, Math.floor((serverNow().getTime() - date.getTime()) / 86400000));
+  }
+
+  function isItemCompleted(currentItem) {
+    if (currentItem?.completed_at) return true;
+    return workspaceDataStore.statuses.some(
+      (status) => Number(status?.id) === Number(currentItem?.status_id) && status?.is_completed,
+    );
+  }
+
+  function getActivityHealth(currentItem) {
+    if (isItemCompleted(currentItem)) {
+      return { state: 'completed', days: null, variant: 'success' };
+    }
+
+    const days = getElapsedDays(currentItem?.last_active_at || currentItem?.updated_at);
+    if (days === null) {
+      return { state: 'unknown', days: null, variant: 'neutral' };
+    }
+    if (days >= STALE_AFTER_DAYS) {
+      return { state: 'stale', days, variant: 'warning' };
+    }
+    return { state: 'active', days, variant: 'success' };
+  }
+
+  function getDueHealth(currentItem) {
+    if (isItemCompleted(currentItem)) {
+      return { state: 'completed', days: null, variant: 'success' };
+    }
+    if (!dateOnlyKey(currentItem?.due_date)) {
+      return { state: 'unscheduled', days: null, variant: 'neutral' };
+    }
+
+    const days = -getDaysOverdue(currentItem.due_date);
+    if (days < 0) return { state: 'overdue', days, variant: 'danger' };
+    if (days === 0) return { state: 'today', days, variant: 'warning' };
+    if (days <= DUE_SOON_DAYS) return { state: 'soon', days, variant: 'warning' };
+    return { state: 'scheduled', days, variant: 'info' };
+  }
+
+  const activityHealth = $derived(getActivityHealth(item));
+  const dueHealth = $derived(getDueHealth(item));
+  const statusAge = $derived(formatStatusAge(item?.status_since));
+
+  function getActivityLabel(state) {
+    return t(`items.activityHealth${state.charAt(0).toUpperCase()}${state.slice(1)}`);
+  }
+
+  function getDueLabel(state) {
+    return t(`items.dueHealth${state.charAt(0).toUpperCase()}${state.slice(1)}`);
+  }
+
+  function getItemKey() {
+    const workspaceKey = workspace?.key || item?.workspace_key || 'WORK';
+    return `${workspaceKey}-${item?.workspace_item_number ?? item?.id}`;
+  }
+
+  function getParentKey() {
+    const workspaceKey = workspace?.key || item?.workspace_key || 'WORK';
+    return `${workspaceKey}-${item?.parent_workspace_item_number ?? item?.parent_id}`;
+  }
 
   function handleToggleChildItems(checked) {
     itemDetailStore.includeChildItems = checked;
@@ -240,43 +310,119 @@
       {#if tab === 'comments'}
         <Comments itemId={item.id} isPersonalWorkspace={workspace?.is_personal} isPortalRequest={!!item.request_type_id} enableInternalComments={workspace?.internal_comments_enabled} onCommentsLoaded={handleCommentsLoaded} />
       {:else if tab === 'details'}
-        <div class="space-y-4">
-          <div class="grid grid-cols-2 gap-6">
-            <div>
-              <h4 class="text-xs font-medium mb-1" style="color: var(--ds-text-subtle);">{t('items.created')}</h4>
-              <p class="text-sm" style="color: var(--ds-text);">{formatDateTimeLocale(item.created_at) || '-'}</p>
-              {#if item.creator_name}
-                <DescriptionText>{t('items.by')} {item.creator_name}</DescriptionText>
-              {/if}
+        <div class="grid gap-8" data-testid="item-details-overview">
+          <section class="overflow-hidden rounded-xl border border-[var(--ds-border)] bg-[var(--ds-surface-raised)]" aria-labelledby="item-health-heading">
+            <div class="border-b border-[var(--ds-border)] px-4 py-4 min-[421px]:px-6 min-[421px]:pt-5">
+              <h3 id="item-health-heading" class="text-sm font-semibold text-[var(--ds-text)]">{t('items.healthOverview')}</h3>
+              <p class="mt-1 max-w-[65ch] text-xs leading-5 text-[var(--ds-text-subtle)]">{t('items.healthOverviewDescription')}</p>
             </div>
-            <div>
-              <h4 class="text-xs font-medium mb-1" style="color: var(--ds-text-subtle);">{t('items.lastUpdated')}</h4>
-              <p class="text-sm" style="color: var(--ds-text);">{formatDateTimeLocale(item.updated_at) || '-'}</p>
-              {#if item.updated_by_name}
-                <DescriptionText>{t('items.by')} {item.updated_by_name}</DescriptionText>
-              {/if}
-            </div>
-          </div>
 
-          <!-- Additional metadata can be added here -->
-          <div class="pt-2">
-            <h4 class="text-xs font-medium mb-2" style="color: var(--ds-text-subtle);">{t('items.workItemInformation')}</h4>
-            <div class="space-y-2">
-              <div class="flex justify-between">
-                <span class="text-xs" style="color: var(--ds-text-subtle);">{t('items.id')}</span>
-                <span class="text-xs font-mono" style="color: var(--ds-text);">{workspace?.key || 'WORK'}-{item.id}</span>
-              </div>
-              <div class="flex justify-between">
-                <span class="text-xs" style="color: var(--ds-text-subtle);">{t('items.type')}</span>
-                <span class="text-xs" style="color: var(--ds-text);">{item.item_type_name || t('items.workItem')}</span>
-              </div>
-              {#if item.parent_id}
-                <div class="flex justify-between">
-                  <span class="text-xs" style="color: var(--ds-text-subtle);">{t('items.parent')}</span>
-                  <span class="text-xs" style="color: var(--ds-text);">{workspace?.key || 'WORK'}-{item.parent_id}</span>
+            <div class="grid min-[761px]:grid-cols-3">
+              <div class="min-w-0 px-4 py-5 min-[421px]:px-6" data-testid="item-health-activity">
+                <div class="flex items-center justify-between gap-3">
+                  <span class="inline-flex items-center gap-2 text-xs font-semibold text-[var(--ds-text-subtle)]"><Activity class="h-4 w-4" />{t('items.activity')}</span>
+                  <Badge variant={activityHealth.variant} size="xs">{getActivityLabel(activityHealth.state)}</Badge>
                 </div>
-              {/if}
+                {#if activityHealth.state === 'completed'}
+                  <p class="mt-4 text-base font-semibold leading-snug text-[var(--ds-text)]">{t('items.activityMonitoringComplete')}</p>
+                {:else if activityHealth.days === 0}
+                  <p class="mt-4 text-base font-semibold leading-snug text-[var(--ds-text)]">{t('items.activityToday')}</p>
+                {:else if activityHealth.days !== null}
+                  <p class="mt-4 text-base font-semibold leading-snug text-[var(--ds-text)]">{t('items.activityIdleDays', { count: activityHealth.days })}</p>
+                {:else}
+                  <p class="mt-4 text-base font-semibold leading-snug text-[var(--ds-text)]">—</p>
+                {/if}
+                <p class="mt-1 text-xs leading-5 text-[var(--ds-text-subtle)]">
+                  {#if item.last_active_at || item.updated_at}
+                    {t('items.lastActivityAt', { date: formatDateTimeLocale(item.last_active_at || item.updated_at) })}
+                  {:else}
+                    {t('items.activityUnavailable')}
+                  {/if}
+                </p>
+              </div>
+
+              <div class="min-w-0 border-t border-[var(--ds-border)] px-4 py-5 min-[421px]:px-6 min-[761px]:border-t-0 min-[761px]:border-l" data-testid="item-health-due-date">
+                <div class="flex items-center justify-between gap-3">
+                  <span class="inline-flex items-center gap-2 text-xs font-semibold text-[var(--ds-text-subtle)]"><CalendarClock class="h-4 w-4" />{t('items.dueDate')}</span>
+                  <Badge variant={dueHealth.variant} size="xs">{getDueLabel(dueHealth.state)}</Badge>
+                </div>
+                {#if dueHealth.state === 'completed'}
+                  <p class="mt-4 text-base font-semibold leading-snug text-[var(--ds-text)]">
+                    {item.completed_at ? t('items.completedOn', { date: formatDateOnly(item.completed_at) }) : t('items.workCompleted')}
+                  </p>
+                {:else}
+                  <p class="mt-4 text-base font-semibold leading-snug text-[var(--ds-text)]">{item.due_date ? formatDueDate(item.due_date) : t('dueDate.noDueDate')}</p>
+                {/if}
+                <p class="mt-1 text-xs leading-5 text-[var(--ds-text-subtle)]">
+                  {#if item.due_date}
+                    {t('items.dueOn', { date: formatDateOnly(item.due_date) })}
+                  {:else}
+                    {t('items.dueDateUnavailable')}
+                  {/if}
+                </p>
+              </div>
+
+              <div class="min-w-0 border-t border-[var(--ds-border)] px-4 py-5 min-[421px]:px-6 min-[761px]:border-t-0 min-[761px]:border-l" data-testid="item-health-status-age">
+                <div class="flex items-center justify-between gap-3">
+                  <span class="inline-flex items-center gap-2 text-xs font-semibold text-[var(--ds-text-subtle)]"><TimerReset class="h-4 w-4" />{t('items.timeInStatus')}</span>
+                  <Badge variant="neutral" size="xs">{item.status_name || getStatusName(item.status_id) || t('items.unknown')}</Badge>
+                </div>
+                <p class="mt-4 text-base font-semibold leading-snug text-[var(--ds-text)]">{statusAge || '—'}</p>
+                <p class="mt-1 text-xs leading-5 text-[var(--ds-text-subtle)]">
+                  {#if item.status_since}
+                    {t('items.statusSince', { date: formatDateTimeLocale(item.status_since) })}
+                  {:else}
+                    {t('items.statusHistoryUnavailable')}
+                  {/if}
+                </p>
+              </div>
             </div>
+          </section>
+
+          <div class="grid gap-8 min-[761px]:grid-cols-2 min-[761px]:gap-10">
+            <section aria-labelledby="item-timeline-heading">
+              <h3 id="item-timeline-heading" class="mb-3 text-sm font-semibold text-[var(--ds-text)]">{t('items.timeline')}</h3>
+              <dl class="border-t border-[var(--ds-border)]">
+                <div class="grid gap-1 border-b border-[var(--ds-border)] py-3.5 min-[421px]:grid-cols-[minmax(7rem,0.8fr)_minmax(0,1.2fr)] min-[421px]:gap-4">
+                  <dt class="text-xs text-[var(--ds-text-subtle)]">{t('items.created')}</dt>
+                  <dd class="min-w-0 [overflow-wrap:anywhere] text-left text-xs text-[var(--ds-text)] min-[421px]:text-right">
+                    <span class="block text-sm">{formatDateTimeLocale(item.created_at) || '—'}</span>
+                    {#if item.creator_name}
+                      <DescriptionText>{t('items.by')} {item.creator_name}</DescriptionText>
+                    {/if}
+                  </dd>
+                </div>
+                <div class="grid gap-1 border-b border-[var(--ds-border)] py-3.5 min-[421px]:grid-cols-[minmax(7rem,0.8fr)_minmax(0,1.2fr)] min-[421px]:gap-4">
+                  <dt class="text-xs text-[var(--ds-text-subtle)]">{t('items.lastUpdated')}</dt>
+                  <dd class="min-w-0 [overflow-wrap:anywhere] text-left text-xs text-[var(--ds-text)] min-[421px]:text-right">
+                    <span class="block text-sm">{formatDateTimeLocale(item.updated_at) || '—'}</span>
+                    {#if item.updated_by_name}
+                      <DescriptionText>{t('items.by')} {item.updated_by_name}</DescriptionText>
+                    {/if}
+                  </dd>
+                </div>
+              </dl>
+            </section>
+
+            <section aria-labelledby="item-information-heading">
+              <h3 id="item-information-heading" class="mb-3 text-sm font-semibold text-[var(--ds-text)]">{t('items.workItemInformation')}</h3>
+              <dl class="border-t border-[var(--ds-border)]">
+                <div class="grid gap-1 border-b border-[var(--ds-border)] py-3.5 min-[421px]:grid-cols-[minmax(7rem,0.8fr)_minmax(0,1.2fr)] min-[421px]:gap-4">
+                  <dt class="text-xs text-[var(--ds-text-subtle)]">{t('items.id')}</dt>
+                  <dd class="min-w-0 [overflow-wrap:anywhere] text-left font-mono text-xs text-[var(--ds-text)] min-[421px]:text-right">{getItemKey()}</dd>
+                </div>
+                <div class="grid gap-1 border-b border-[var(--ds-border)] py-3.5 min-[421px]:grid-cols-[minmax(7rem,0.8fr)_minmax(0,1.2fr)] min-[421px]:gap-4">
+                  <dt class="text-xs text-[var(--ds-text-subtle)]">{t('items.type')}</dt>
+                  <dd class="min-w-0 [overflow-wrap:anywhere] text-left text-xs text-[var(--ds-text)] min-[421px]:text-right">{item.item_type_name || t('items.workItem')}</dd>
+                </div>
+                {#if item.parent_id}
+                  <div class="grid gap-1 border-b border-[var(--ds-border)] py-3.5 min-[421px]:grid-cols-[minmax(7rem,0.8fr)_minmax(0,1.2fr)] min-[421px]:gap-4">
+                    <dt class="text-xs text-[var(--ds-text-subtle)]">{t('items.parent')}</dt>
+                    <dd class="min-w-0 [overflow-wrap:anywhere] text-left font-mono text-xs text-[var(--ds-text)] min-[421px]:text-right">{getParentKey()}</dd>
+                  </div>
+                {/if}
+              </dl>
+            </section>
           </div>
         </div>
       {:else if tab === 'time' && moduleSettings.time_tracking_enabled}
