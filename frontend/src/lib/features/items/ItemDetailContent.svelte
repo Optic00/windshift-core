@@ -21,7 +21,6 @@
     parentHierarchy = [],
     currentItemType = null,
     currentHierarchyLevel = null,
-    iconMap = {},
     workspaceId = null,
     editingTitle = $bindable(false),
     editTitle = $bindable(''),
@@ -367,7 +366,6 @@
             {currentItemType}
             {currentHierarchyLevel}
             {item}
-            {iconMap}
             {workspaceId}
             onnavigate={handleNavigate}
             onparentChanged={handleParentChanged}

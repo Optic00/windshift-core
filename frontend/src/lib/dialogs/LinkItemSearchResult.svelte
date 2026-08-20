@@ -1,7 +1,6 @@
 <script>
-  import { FileText } from '@lucide/svelte';
   import ItemKey from '../features/items/ItemKey.svelte';
-  import { itemTypeIconMap } from '../utils/icons.js';
+  import ItemTypeIcon from '../components/ItemTypeIcon.svelte';
   import { t } from '../stores/i18n.svelte.js';
 
   let {
@@ -10,10 +9,6 @@
     onhighlight = null,
     onselect = null,
   } = $props();
-
-  const iconMap = itemTypeIconMap;
-  let itemTypeIcon = $derived(result.item_type_icon);
-  let itemTypeColor = $derived(result.item_type_color || 'var(--ds-icon)');
 </script>
 
 <button
@@ -27,22 +22,12 @@
   onclick={onselect}
 >
   <div class="flex items-center gap-2">
-    {#if itemTypeIcon && iconMap[itemTypeIcon]}
-      {@const ItemTypeIconComponent = iconMap[itemTypeIcon]}
-      <div
-        class="w-7 h-7 rounded flex items-center justify-center flex-shrink-0"
-        style="background-color: color-mix(in srgb, {itemTypeColor} 16%, transparent); color: {itemTypeColor};"
-      >
-        <ItemTypeIconComponent class="w-4 h-4" />
-      </div>
-    {:else}
-      <div
-        class="w-7 h-7 rounded flex items-center justify-center flex-shrink-0"
-        style="background-color: var(--ds-background-neutral); color: var(--ds-icon-subtle);"
-      >
-        <FileText class="w-4 h-4" />
-      </div>
-    {/if}
+    <ItemTypeIcon
+      icon={result.item_type_icon}
+      color={result.item_type_color}
+      variant="tinted"
+      size="lg"
+    />
 
     <div class="flex-1 min-w-0">
       <div class="font-medium text-sm truncate">{result.title}</div>

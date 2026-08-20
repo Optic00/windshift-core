@@ -9,7 +9,6 @@
   import { getShortcut, matchesShortcut, isTypingInField } from '../../utils/keyboardShortcuts.js';
   import { Trash2, X, Copy, BookOpen, Search, GitBranch, Repeat, FolderInput } from '@lucide/svelte';
   import { Bookmark, BookmarkCheck, ExternalLink } from '@lucide/svelte';
-  import { itemTypeIconMap } from '../../utils/icons.js';
   import { addToast, successToast, errorToast, infoToast } from '../../stores/toasts.svelte.js';
   import { timerStore } from '../../stores/timerStore.svelte.js';
   import { useItemAttachments } from '../../composables/useItemAttachments.svelte.js';
@@ -41,9 +40,6 @@ import TestCaseViewModal from '../../dialogs/TestCaseViewModal.svelte';
 import RecurrenceEditor from '../../editors/RecurrenceEditor.svelte';
 import Button from '../../components/Button.svelte';
 import NativeSelect from '../../components/NativeSelect.svelte';
-
-  // Use centralized icon map for work item types
-  const iconMap = itemTypeIconMap;
 
   let {
     workspaceId = null,
@@ -1226,7 +1222,6 @@ import NativeSelect from '../../components/NativeSelect.svelte';
     parentHierarchy={itemDetailStore.parentHierarchy}
     currentItemType={itemDetailStore.currentItemType}
     currentHierarchyLevel={itemDetailStore.currentHierarchyLevel}
-    {iconMap}
     {workspaceId}
     editingTitle={itemDetailStore.editing.title.active}
     editTitle={itemDetailStore.editing.title.value}

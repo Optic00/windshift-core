@@ -6,6 +6,7 @@
   import { portal } from '../../actions/portal.js';
   import { t } from '../../stores/i18n.svelte.js';
   import { itemTypeIconMap, workspaceIconMap } from '../../utils/icons.js';
+  import ItemTypeIcon from '../../components/ItemTypeIcon.svelte';
   import {
     getDisplayString,
     getShortcut,
@@ -236,8 +237,12 @@
             title={selectedItemType?.name || 'Select type'}
           >
             {#if selectedItemType}
-              {@const SelectedTypeIcon = iconMap[selectedItemType.icon] || Package}
-              <SelectedTypeIcon class="w-4 h-4" style="color: {selectedItemType.color};" />
+              <ItemTypeIcon
+                icon={selectedItemType.icon}
+                color={selectedItemType.color}
+                variant="plain"
+                size="md"
+              />
             {:else}
               <Package class="w-4 h-4" style="color: var(--ds-icon);" />
             {/if}
@@ -253,13 +258,12 @@
             title={selectedItemType?.name || t('collections.selectType')}
           >
             {#if selectedItemType}
-              {@const SelectedTypeSmallIcon = iconMap[selectedItemType.icon] || Package}
-              <span
-                class="flex h-4 w-4 shrink-0 items-center justify-center rounded text-white"
-                style="background-color: {selectedItemType.color};"
-              >
-                <SelectedTypeSmallIcon class="h-3 w-3" />
-              </span>
+              <ItemTypeIcon
+                icon={selectedItemType.icon}
+                color={selectedItemType.color}
+                size="xs"
+                title={selectedItemType.name}
+              />
             {:else}
               <span class="text-xs" style="color: var(--ds-text-subtle);">{t('collections.selectType')}</span>
             {/if}
@@ -275,7 +279,6 @@
             style="{itemTypeMenuStyle} background-color: var(--ds-surface-raised); border-color: var(--ds-border);"
           >
             {#each formState.availableTypes as itemType}
-              {@const TypeDropdownIcon = iconMap[itemType.icon] || Package}
               <button
                 type="button"
                 onclick={() => selectItemType(itemType.id)}
@@ -285,12 +288,7 @@
                 onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-selected)'}
                 onmouseleave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
               >
-                <div
-                  class="w-5 h-5 rounded flex items-center justify-center"
-                  style="background-color: {itemType.color};"
-                >
-                  <TypeDropdownIcon class="w-3 h-3 text-white" />
-                </div>
+                <ItemTypeIcon {itemType} size="sm" />
                 <span class="truncate">{itemType.name}</span>
               </button>
             {/each}

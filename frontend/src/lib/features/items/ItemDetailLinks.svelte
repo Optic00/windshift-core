@@ -1,6 +1,6 @@
 <script>
-  import { FileText, Link2, Trash2, Plus, GripVertical } from '@lucide/svelte';
-  import { itemTypeIconMap } from '../../utils/icons.js';
+  import { Link2, Trash2, Plus, GripVertical, FileText } from '@lucide/svelte';
+  import ItemTypeIcon from '../../components/ItemTypeIcon.svelte';
   import Button from '../../components/Button.svelte';
   import LinkComponent from '../../components/Link.svelte';
   import { onDestroy } from 'svelte';
@@ -36,9 +36,7 @@
 
   const TEST_LINK_TYPE_ID = 1;
 
-  // Use centralized icon map for item types
   let currentItemId = $derived(parseInt(itemId));
-  const iconMap = itemTypeIconMap;
 
   // Partition links into the work-item group (items / test_cases / assets)
   // and the page group. Pages render differently — no status badge, no
@@ -315,22 +313,12 @@
           >
             <div class="flex items-center gap-3 flex-1 min-w-0">
               <!-- Item type icon -->
-              {#if linkedItemTypeIcon && iconMap[linkedItemTypeIcon]}
-                {@const LinkedIcon = iconMap[linkedItemTypeIcon]}
-                <div
-                  class="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
-                  style="background-color: {linkedItemTypeColor || '#6b7280'}20; color: {linkedItemTypeColor || '#6b7280'};"
-                >
-                  <LinkedIcon class="w-3.5 h-3.5" />
-                </div>
-              {:else}
-                <div
-                  class="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
-                  style="background-color: #6b728020; color: #6b7280;"
-                >
-                  <FileText class="w-3.5 h-3.5" />
-                </div>
-              {/if}
+              <ItemTypeIcon
+                icon={linkedItemTypeIcon}
+                color={linkedItemTypeColor || '#6b7280'}
+                variant="tinted"
+                size="md"
+              />
               <!-- Item key -->
               <LinkComponent
                 href={linkedItemHref}
@@ -504,20 +492,9 @@
                 {/if}
                 <!-- Item type icon -->
                 {#if childItemType}
-                  {@const ChildTypeIcon = iconMap[childItemType.icon] || FileText}
-                  <div
-                    class="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
-                    style="background-color: {childItemType.color || '#6b7280'}20; color: {childItemType.color || '#6b7280'};"
-                  >
-                    <ChildTypeIcon class="w-3.5 h-3.5" />
-                  </div>
+                  <ItemTypeIcon itemType={childItemType} variant="tinted" size="md" />
                 {:else}
-                  <div
-                    class="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
-                    style="background-color: #6b728020; color: #6b7280;"
-                  >
-                    <FileText class="w-3.5 h-3.5" />
-                  </div>
+                  <ItemTypeIcon variant="tinted" size="md" />
                 {/if}
                 <!-- Item key -->
                 <ItemKey item={childItem} {workspace}

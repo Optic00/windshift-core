@@ -4,8 +4,8 @@
   import { collectionStore } from '../../stores/collectionContext.js';
   import { t } from '../../stores/i18n.svelte.js';
   import { useGradientStyles, loadWorkspaceGradient } from '../../stores/workspaceGradient.svelte.js';
-  import { ChevronRight, ChevronDown, GitBranch, Circle, FileCheck, Minus } from '@lucide/svelte';
-  import { itemTypeIconMap } from '../../utils/icons.js';
+  import { ChevronRight, ChevronDown, FileCheck, Minus } from '@lucide/svelte';
+  import ItemTypeIcon from '../../components/ItemTypeIcon.svelte';
   import ViewHeader from '../../layout/ViewHeader.svelte';
   import StaticViewBackground from '../../layout/StaticViewBackground.svelte';
   import SubFilterBar from './SubFilterBar.svelte';
@@ -221,11 +221,11 @@
     if (!item.item_type_id || !itemTypes.length) {
       // Fallback to hierarchy level based icons
       const fallbackIndicators = [
-        { icon: GitBranch, color: '#9333ea', label: 'Epic' },      // Level 0
-        { icon: Circle, color: '#2563eb', label: 'Feature' },      // Level 1
-        { icon: Circle, color: '#16a34a', label: 'Story' },        // Level 2
-        { icon: Circle, color: '#ea580c', label: 'Task' },         // Level 3
-        { icon: Circle, color: '#4b5563', label: 'Subtask' }       // Level 4+
+        { iconName: 'GitBranch', color: '#9333ea', label: 'Epic' },      // Level 0
+        { iconName: 'Circle', color: '#2563eb', label: 'Feature' },      // Level 1
+        { iconName: 'Circle', color: '#16a34a', label: 'Story' },        // Level 2
+        { iconName: 'Circle', color: '#ea580c', label: 'Task' },         // Level 3
+        { iconName: 'Circle', color: '#4b5563', label: 'Subtask' }       // Level 4+
       ];
       return fallbackIndicators[Math.min(item.level || 0, fallbackIndicators.length - 1)];
     }
@@ -234,14 +234,14 @@
     const itemType = itemTypes.find(type => type.id === item.item_type_id);
     if (itemType) {
       return {
-        icon: itemTypeIconMap[itemType.icon] || itemTypeIconMap.FileText,
+        iconName: itemType.icon,
         color: itemType.color, // Use the actual hex color
         label: itemType.name
       };
     }
 
     // Fallback if item type not found
-    return { icon: Circle, color: '#4b5563', label: 'Unknown' };
+    return { iconName: 'Circle', color: '#4b5563', label: 'Unknown' };
   }
 
   function renderTreeItems(parentId = null, level = 0, result = [], rootItems = null) {
@@ -483,11 +483,12 @@
                   {/if}
 
                   <!-- Work Item Type Icon -->
-                  <div class="w-4 h-4 rounded flex items-center justify-center" style="background-color: {typeInfo.color.startsWith('#') ? typeInfo.color : 'var(--ds-interactive-subtle)'}">
-                    <typeInfo.icon
-                      class="w-2.5 h-2.5 text-white"
-                    />
-                  </div>
+                  <ItemTypeIcon
+                    icon={typeInfo.iconName}
+                    color={typeInfo.color}
+                    size="xs"
+                    title={typeInfo.label}
+                  />
                 </div>
 
                 <!-- Issue Key + Test Case Count Badge -->

@@ -1,7 +1,7 @@
 <script>
   import { createPopover, melt } from '@melt-ui/svelte';
-  import { Link2, FileText, Trash2, Plus, X } from '@lucide/svelte';
-  import { itemTypeIconMap } from '../../utils/icons.js';
+  import { Link2, Trash2, Plus, X } from '@lucide/svelte';
+  import ItemTypeIcon from '../../components/ItemTypeIcon.svelte';
   import { api } from '../../api.js';
   import { t } from '../../stores/i18n.svelte.js';
   import { errorToast } from '../../stores/toasts.svelte.js';
@@ -25,8 +25,6 @@
     onlinkCreated = () => {},
     onlinkRemoved = () => {},
   } = $props();
-
-  const iconMap = itemTypeIconMap;
 
   const {
     elements: { trigger, content },
@@ -233,12 +231,7 @@
                   class="row-icon"
                   style="background-color: {(result.item_type_color || '#6b7280')}20; color: {(result.item_type_color || '#6b7280')};"
                 >
-                  {#if result.item_type_icon && iconMap[result.item_type_icon]}
-                    {@const I = iconMap[result.item_type_icon]}
-                    <I size={12} />
-                  {:else}
-                    <FileText size={12} />
-                  {/if}
+                  <ItemTypeIcon icon={result.item_type_icon} color={result.item_type_color} variant="plain" size="xs" />
                 </div>
                 <span class="row-title">{result.title}</span>
                 <span class="row-meta">{result.workspace_name || ''}</span>
@@ -276,12 +269,7 @@
                   class="row-icon"
                   style="background-color: {(linkedItemIconColor || '#6b7280')}20; color: {(linkedItemIconColor || '#6b7280')};"
                 >
-                  {#if linkedItemIconKey && iconMap[linkedItemIconKey]}
-                    {@const I = iconMap[linkedItemIconKey]}
-                    <I size={12} />
-                  {:else}
-                    <FileText size={12} />
-                  {/if}
+                  <ItemTypeIcon icon={linkedItemIconKey} color={linkedItemIconColor} variant="plain" size="xs" />
                 </div>
                 <span class="row-key">{linkedItemKey}</span>
                 <span class="row-title">{linkedItemTitle}</span>

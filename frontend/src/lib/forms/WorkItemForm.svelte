@@ -1,6 +1,7 @@
 <script>
   import { MoreHorizontal, Calendar, Flag, User, Layers, ChevronDown, FileText, Briefcase, Hash, Clock } from '@lucide/svelte';
-  import { itemTypeIconMap } from '../utils/icons.js';
+  import { getItemTypeIcon } from '../utils/icons.js';
+  import ItemTypeIcon from '../components/ItemTypeIcon.svelte';
   import { workItemFormStore } from '../stores/workItemFormStore.svelte.js';
   import { workspacesStore } from '../stores';
   import { t } from '../stores/i18n.svelte.js';
@@ -32,7 +33,7 @@
 
   // Derived state for UI
   let selectedItemTypeIcon = $derived(
-    store.selectedItemType?.icon ? itemTypeIconMap[store.selectedItemType.icon] : Layers
+    store.selectedItemType?.icon ? getItemTypeIcon(store.selectedItemType.icon) : Layers
   );
 
   // Additional fields toggle
@@ -228,8 +229,7 @@
         onSelect={(itemType) => store.setItemType(itemType.id)}
       >
         {#snippet itemSnippet({ item })}
-          {@const TypeIcon = item.icon ? itemTypeIconMap[item.icon] : Layers}
-          <TypeIcon size={14} style="color: var(--ds-text-subtle); flex-shrink: 0;" />
+          <ItemTypeIcon itemType={item} variant="plain" size="sm" />
           <span>{item.name}</span>
         {/snippet}
       </ChipPicker>

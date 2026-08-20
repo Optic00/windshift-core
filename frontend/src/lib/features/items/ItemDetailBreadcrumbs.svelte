@@ -1,7 +1,8 @@
 <script>
-  import { AlertTriangle, Check, FileText, Edit3, X, Search } from '@lucide/svelte';
+  import { AlertTriangle, Check, Edit3, X, Search } from '@lucide/svelte';
   import Tooltip from '../../components/Tooltip.svelte';
   import Input from '../../components/Input.svelte';
+  import ItemTypeIcon from '../../components/ItemTypeIcon.svelte';
   import ItemKey from '../items/ItemKey.svelte';
   import { api } from '../../api.js';
   import { t } from '../../stores/i18n.svelte.js';
@@ -17,7 +18,6 @@
   currentItemType,
   currentHierarchyLevel,
   item,
-  iconMap,
   workspaceId,
   itemTypes: providedItemTypes = [],
   onnavigate = null,
@@ -269,13 +269,7 @@
         {#if parent.itemType}
           <Tooltip content={parent.itemType.name}>
             {#snippet children()}
-              {@const ParentIcon = iconMap[parent.itemType.icon] || FileText}
-              <div
-                class="w-4 h-4 rounded flex items-center justify-center text-white text-xs cursor-help"
-                style="background-color: {parent.itemType.color};"
-              >
-                <ParentIcon class="w-3 h-3" />
-              </div>
+              <ItemTypeIcon itemType={parent.itemType} size="xs" class="cursor-help" />
             {/snippet}
           </Tooltip>
         {/if}
@@ -466,14 +460,7 @@
                 <div class="flex items-center gap-2">
                   <!-- Item Type Icon -->
                   {#if resultItemType}
-                    {@const ResultIcon = iconMap[resultItemType.icon] || FileText}
-                    <div
-                      class="w-4 h-4 rounded flex items-center justify-center text-white text-xs flex-shrink-0"
-                      style="background-color: {resultItemType.color};"
-                      title={resultItemType.name}
-                    >
-                      <ResultIcon class="w-3 h-3" />
-                    </div>
+                    <ItemTypeIcon itemType={resultItemType} size="xs" />
                   {/if}
 
                   <!-- Item Key -->
@@ -499,17 +486,15 @@
       <div class="relative flex-shrink-0">
         <Tooltip content="{currentItemType.name} ({currentHierarchyLevel?.name || 'Unknown level'}) — click to change">
           {#snippet children()}
-            {@const CurrentIcon = iconMap[currentItemType.icon] || FileText}
             <button
               type="button"
               data-testid="item-type-change-trigger"
               data-item-type-id={currentItemType.id}
               onclick={openItemTypeSelector}
-              class="w-4 h-4 rounded flex items-center justify-center text-white text-xs cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500"
-              style="background-color: {currentItemType.color};"
+              class="rounded cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500"
               title="Change item type"
             >
-              <CurrentIcon class="w-3 h-3" />
+              <ItemTypeIcon itemType={currentItemType} size="xs" />
             </button>
           {/snippet}
         </Tooltip>
@@ -546,7 +531,6 @@
             {/if}
             <div class="max-h-72 overflow-y-auto py-1">
               {#each displayedItemTypes as type (type.id)}
-                {@const TypeIcon = iconMap[type.icon] || FileText}
                 {@const fitsCurrentParent = directParent?.itemType && canItemTypeBeChildOf(type, directParent.itemType)}
                 <button
                   type="button"
@@ -557,12 +541,7 @@
                   class="w-full px-3 py-2 text-left flex items-center gap-2 disabled:opacity-50"
                   style:background={hasHierarchyMismatch && fitsCurrentParent ? 'var(--ds-background-success-subtle, var(--ds-surface))' : undefined}
                 >
-                  <span
-                    class="w-4 h-4 rounded flex items-center justify-center text-white text-xs flex-shrink-0"
-                    style="background-color: {type.color};"
-                  >
-                    <TypeIcon class="w-3 h-3" />
-                  </span>
+                  <ItemTypeIcon itemType={type} size="xs" />
                   <span class="min-w-0 flex-1">
                     <span class="block truncate text-sm" style="color: var(--ds-text);">{type.name}</span>
                     <span

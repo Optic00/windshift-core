@@ -2,8 +2,7 @@
   import { onMount } from 'svelte';
   import { publicBoard } from '../api/publicBoard.js';
   import { formatRelativeTime, formatDateOnly } from '../utils/dateFormatter.js';
-  import { itemTypeIconMap } from '../utils/icons.js';
-  import { CheckSquare } from '@lucide/svelte';
+  import ItemTypeIcon from '../components/ItemTypeIcon.svelte';
   import Modal from '../dialogs/Modal.svelte';
   import ModalHeader from '../dialogs/ModalHeader.svelte';
   import StatusBadge from '../components/StatusBadge.svelte';
@@ -15,10 +14,6 @@
   let loading = $state(true);
   let error = $state(null);
   let LazyMilkdownEditor = $state(null);
-
-  let ItemTypeIcon = $derived(
-    item?.item_type_icon ? (itemTypeIconMap[item.item_type_icon] || CheckSquare) : CheckSquare
-  );
 
   onMount(async () => {
     // Load editor component lazily
@@ -161,12 +156,11 @@
             <div class="w-full flex items-center justify-between px-2 py-1.5 text-sm rounded">
               <Text variant="subtle" size="sm">Type</Text>
               <div class="flex items-center gap-2">
-                <div
-                  class="w-5 h-5 rounded flex items-center justify-center flex-shrink-0"
-                  style="background-color: {item.item_type_color || 'var(--ds-accent-blue)'};"
-                >
-                  <ItemTypeIcon class="w-3 h-3" style="color: white;" />
-                </div>
+                <ItemTypeIcon
+                  icon={item.item_type_icon}
+                  color={item.item_type_color || 'var(--ds-accent-blue)'}
+                  size="sm"
+                />
                 <span class="text-[13px]">{item.item_type_name}</span>
               </div>
             </div>

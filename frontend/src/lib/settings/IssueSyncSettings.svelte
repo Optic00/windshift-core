@@ -16,7 +16,8 @@
   import { confirm } from '../composables/useConfirm.js';
   import ChipPicker from '../pickers/ChipPicker.svelte';
   import UserPicker from '../pickers/UserPicker.svelte';
-  import { itemTypeIconMap } from '../utils/icons.js';
+  import { getItemTypeIcon } from '../utils/icons.js';
+  import ItemTypeIcon from '../components/ItemTypeIcon.svelte';
   import { safeHref } from '../utils/sanitize';
   import { workspaceDataStore } from '../stores/workspaceDataStore.svelte.js';
   import { loadIssueSyncPageData } from './issueSyncData.js';
@@ -271,7 +272,7 @@
 
   const selectedItemType = $derived(itemTypes.find(it => it.id === formData.default_item_type_id));
   const selectedItemTypeIcon = $derived(
-    selectedItemType?.icon ? itemTypeIconMap[selectedItemType.icon] : Layers
+    selectedItemType?.icon ? getItemTypeIcon(selectedItemType.icon) : Layers
   );
 
   const priorityOptions = $derived(
@@ -336,8 +337,7 @@
         onSelect={(itemType) => formData.default_item_type_id = itemType.id}
       >
         {#snippet itemSnippet({ item })}
-          {@const TypeIcon = item.icon ? itemTypeIconMap[item.icon] : Layers}
-          <TypeIcon size={14} style="color: var(--ds-text-subtle); flex-shrink: 0;" />
+          <ItemTypeIcon itemType={item} variant="plain" size="sm" />
           <span>{item.name}</span>
         {/snippet}
       </ChipPicker>

@@ -10,15 +10,11 @@
   import Button from '../../components/Button.svelte';
   import Checkbox from '../../components/Checkbox.svelte';
   import Input from '../../components/Input.svelte';
-  import { itemTypeIconMap } from '../../utils/icons.js';
   import { copyToClipboard } from '../../utils/clipboard.js';
   import { formatDateOnly } from '../../utils/dateFormatter.js';
   import { navigate } from '../../router.js';
   import ItemDetailBreadcrumbs from '../items/ItemDetailBreadcrumbs.svelte';
   import { t } from '../../stores/i18n.svelte.js';
-
-  // Use centralized icon map for work item types
-  const iconMap = itemTypeIconMap;
 
   let {
     itemId,
@@ -331,7 +327,6 @@
           {currentItemType}
           {currentHierarchyLevel}
           {item}
-          {iconMap}
           {workspaceId}
           onnavigate={(path) => navigate(path)}
           onparentChanged={loadHierarchyData}

@@ -16,10 +16,9 @@
     IconRefresh,
     IconCircleCheck,
     IconCircleX,
-    IconLink,
-    IconPackage
+    IconLink
   } from '@tabler/icons-svelte-runes';
-  import { itemTypeIconMap } from '../../utils/icons.js';
+  import ItemTypeIcon from '../../components/ItemTypeIcon.svelte';
   import { t } from '../../stores/i18n.svelte.js';
   import { errorToast } from '../../stores/toasts.svelte.js';
 
@@ -419,12 +418,7 @@
               onclick={() => toggleItemType(type.id)}
             >
               <div class="type-icon" style="background-color: {type.color}20; color: {type.color};">
-                {#if type.icon && itemTypeIconMap[type.icon]}
-                  {@const CoverageTypeIcon = itemTypeIconMap[type.icon]}
-                  <CoverageTypeIcon size={20} />
-                {:else}
-                  <IconPackage size={20} />
-                {/if}
+                <ItemTypeIcon itemType={type} variant="plain" size="lg" class="type-icon-item" />
               </div>
               <span class="type-name">{type.name}</span>
               {#if selectedTypeIds.includes(type.id)}

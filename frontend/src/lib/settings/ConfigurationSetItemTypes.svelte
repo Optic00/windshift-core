@@ -192,7 +192,7 @@
               <tr class="border-t" style="border-color: var(--ds-border);">
                 <td class="px-4 py-3">
                   <div class="flex items-center gap-2">
-                    <ItemTypeIcon itemType={itemType} class="w-6 h-6 rounded flex-shrink-0" size={16} />
+                    <ItemTypeIcon itemType={itemType} size="md" />
                     <span class="font-medium" style="color: var(--ds-text);">{itemType.name}</span>
                   </div>
                 </td>

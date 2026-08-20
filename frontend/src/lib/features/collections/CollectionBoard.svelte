@@ -13,7 +13,8 @@
   import { Plus, ChevronDown, ChevronRight, MoreHorizontal, Layers, ArrowDownUp } from '@lucide/svelte';
   import ItemPicker from '../../pickers/ItemPicker.svelte';
   import { buildIterationPickerConfig } from '../iterations/iterationPickerUtils.js';
-  import { itemTypeIconMap } from '../../utils/icons.js';
+  import { getItemTypeIcon } from '../../utils/icons.js';
+  import ItemTypeIcon from '../../components/ItemTypeIcon.svelte';
   import { draggable, dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter';
   import { attachClosestEdge, extractClosestEdge } from '@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge';
   import ItemDetail from '../items/ItemDetail.svelte';
@@ -858,19 +859,16 @@
         }
       ] : []),
       ...(sortedTypes.length > 0 ? [{ id: 'group-divider', type: 'divider' }] : []),
-      ...sortedTypes.map(type => {
-        const TypeIcon = itemTypeIconMap[type.icon] || itemTypeIconMap.FileText;
-        return {
-          id: `group-type-${type.id}`,
-          testid: `board-group-by-type-${type.id}`,
-          title: type.name,
-          subtitle: 'Use these items as swimlanes',
-          icon: TypeIcon,
-          iconColor: type.color,
-          badge: groupByItemTypeId === type.id ? 'Selected' : '',
-          onClick: () => setGroupByItemType(type.id)
-        };
-      })
+      ...sortedTypes.map(type => ({
+        id: `group-type-${type.id}`,
+        testid: `board-group-by-type-${type.id}`,
+        title: type.name,
+        subtitle: 'Use these items as swimlanes',
+        icon: getItemTypeIcon(type.icon),
+        iconColor: type.color,
+        badge: groupByItemTypeId === type.id ? 'Selected' : '',
+        onClick: () => setGroupByItemType(type.id)
+      }))
     ];
   });
 
@@ -1544,7 +1542,6 @@
         <div class={selectedGroupByItemType ? 'space-y-4' : ''} data-testid="board-view">
           {#each boardSwimlanes as lane (lane.id)}
             {@const laneExpanded = isSwimlaneExpanded(lane.id)}
-            {@const LaneTypeIcon = selectedGroupByItemType ? (itemTypeIconMap[selectedGroupByItemType.icon] || itemTypeIconMap.FileText) : null}
             <!-- No type can legally be created under this lane's item (the lane
                  groups by the lowest hierarchy level), so the column loses its
                  add affordance rather than opening a form that cannot submit. -->
@@ -1568,13 +1565,13 @@
                     {:else}
                       <ChevronRight class="w-4 h-4 flex-shrink-0" />
                     {/if}
-                    {#if LaneTypeIcon}
-                      <span
-                        class="w-5 h-5 rounded flex items-center justify-center text-white flex-shrink-0"
-                        style="background-color: {lane.isUnassigned ? 'var(--ds-background-neutral-bold, #6b7280)' : selectedGroupByItemType.color};"
-                      >
-                        <LaneTypeIcon class="w-3 h-3" />
-                      </span>
+                    {#if selectedGroupByItemType}
+                      <ItemTypeIcon
+                        icon={selectedGroupByItemType.icon}
+                        color={lane.isUnassigned ? 'var(--ds-background-neutral-bold, #6b7280)' : selectedGroupByItemType.color}
+                        size="sm"
+                        title={selectedGroupByItemType.name}
+                      />
                     {/if}
                     <span class="min-w-0 flex-1 text-left">
                       <span class="block font-semibold truncate">{lane.title}</span>

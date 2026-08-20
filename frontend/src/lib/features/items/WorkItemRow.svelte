@@ -1,6 +1,5 @@
 <script>
-  import { CheckSquare } from '@lucide/svelte';
-  import { itemTypeIconMap } from '../../utils/icons.js';
+  import ItemTypeIcon from '../../components/ItemTypeIcon.svelte';
   import { formatDateSimple } from '../../utils/dateFormatter.js';
   import ItemCard from './ItemCard.svelte';
   import Lozenge from '../../components/Lozenge.svelte';
@@ -153,20 +152,7 @@
 
       <!-- Item Type Icon -->
       {#if showIcon}
-        {#if itemType}
-          {@const RowTypeIcon = itemTypeIconMap[itemType.icon] || itemTypeIconMap.FileText}
-          <div
-            class="w-5 h-5 rounded flex items-center justify-center flex-shrink-0"
-            style="background-color: {itemType.color};"
-            title={itemType.name}
-          >
-            <RowTypeIcon class="w-3 h-3" style="color: white;" />
-          </div>
-        {:else}
-          <div class="w-5 h-5 rounded flex items-center justify-center flex-shrink-0" style="background-color: var(--ds-accent-blue);">
-            <CheckSquare class="w-3 h-3" style="color: white;" />
-          </div>
-        {/if}
+        <ItemTypeIcon itemType={itemType} size="sm" class="rounded" />
       {/if}
 
       <!-- Item Key -->

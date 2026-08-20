@@ -18,9 +18,9 @@
   import ItemDetail from '../items/ItemDetail.svelte';
   import RoadmapItemPreview from './RoadmapItemPreview.svelte';
   import { buildHierarchyDatePatches, projectHierarchyDates } from './roadmapHierarchyDates.js';
-  import { Settings, ChevronLeft, ChevronRight, Diamond, ChevronDown, Circle, GitBranch, CalendarClock, RotateCcw } from '@lucide/svelte';
+  import { Settings, ChevronLeft, ChevronRight, Diamond, ChevronDown, CalendarClock, RotateCcw } from '@lucide/svelte';
   import { getVisibleColor } from '../../utils/colorUtils.js';
-  import { itemTypeIconMap } from '../../utils/icons.js';
+  import ItemTypeIcon from '../../components/ItemTypeIcon.svelte';
   import { SYSTEM_FIELDS } from '../../stores/fieldConfig.js';
   import Button from '../../components/Button.svelte';
   import LazyRender from '../../components/LazyRender.svelte';
@@ -463,23 +463,23 @@
   function getItemTypeInfo(item) {
     if (!item.item_type_id || !itemTypes.length) {
       const fallback = [
-        { icon: GitBranch, color: '#9333ea', label: 'Epic' },
-        { icon: Circle, color: '#2563eb', label: 'Feature' },
-        { icon: Circle, color: '#16a34a', label: 'Story' },
-        { icon: Circle, color: '#ea580c', label: 'Task' },
-        { icon: Circle, color: '#6b7280', label: 'Subtask' }
+        { iconName: 'GitBranch', color: '#9333ea', label: 'Epic' },
+        { iconName: 'Circle', color: '#2563eb', label: 'Feature' },
+        { iconName: 'Circle', color: '#16a34a', label: 'Story' },
+        { iconName: 'Circle', color: '#ea580c', label: 'Task' },
+        { iconName: 'Circle', color: '#6b7280', label: 'Subtask' }
       ];
       return fallback[Math.min(item.level || 0, fallback.length - 1)];
     }
     const it = itemTypes.find(type => type.id === item.item_type_id);
     if (it) {
       return {
-        icon: itemTypeIconMap[it.icon] || itemTypeIconMap.FileText || Circle,
+        iconName: it.icon,
         color: it.color,
         label: it.name
       };
     }
-    return { icon: Circle, color: '#6b7280', label: 'Unknown' };
+    return { iconName: 'Circle', color: '#6b7280', label: 'Unknown' };
   }
 
   function renderTreeItems(parentId = null, level = 0, result = []) {
@@ -1344,7 +1344,6 @@
               {#each treeData as item (item.id)}
                 {@const typeInfo = getItemTypeInfo(item)}
                 {@const scheduled = itemHasDate(item)}
-                {@const TypeIcon = typeInfo.icon}
                 <button
                   data-testid="roadmap-item-{item.id}"
                   class="flex items-center gap-1.5 w-full text-left group/tree-row"
@@ -1374,9 +1373,13 @@
                       {/if}
 
                       <!-- Type icon -->
-                      <span class="shrink-0 flex items-center justify-center w-4 h-4" style="color: {typeInfo.color};">
-                        <TypeIcon class="w-3.5 h-3.5" />
-                      </span>
+                      <ItemTypeIcon
+                        icon={typeInfo.iconName}
+                        color={typeInfo.color}
+                        variant="plain"
+                        size="sm"
+                        title={typeInfo.label}
+                      />
 
                       <!-- Item key -->
                       {#if item.item_key}

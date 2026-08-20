@@ -107,7 +107,7 @@
             <div class="flex items-center gap-3 min-w-0">
               {#if entityType === 'priorities' || entityType === 'item-types'}
                 {#if entityType === 'item-types'}
-                  <ItemTypeIcon itemType={entity} class="w-6 h-6 rounded flex-shrink-0" size={16} />
+                  <ItemTypeIcon itemType={entity} size="md" />
                 {:else}
                   <div
                     class="w-6 h-6 rounded flex items-center justify-center flex-shrink-0"
@@ -182,7 +182,7 @@
             <div class="flex items-center gap-3 min-w-0 flex-1">
               {#if entityType === 'priorities' || entityType === 'item-types'}
                 {#if entityType === 'item-types'}
-                  <ItemTypeIcon itemType={entity} class="w-6 h-6 rounded flex-shrink-0" size={16} />
+                  <ItemTypeIcon itemType={entity} size="md" />
                 {:else}
                   <div
                     class="w-6 h-6 rounded flex items-center justify-center flex-shrink-0"

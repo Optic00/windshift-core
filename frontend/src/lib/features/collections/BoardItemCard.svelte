@@ -4,7 +4,7 @@
   import DropIndicator from '../../layout/DropIndicator.svelte';
   import DropdownMenu from '../../layout/DropdownMenu.svelte';
   import { formatDateOnly } from '../../utils/dateFormatter.js';
-  import { itemTypeIconMap } from '../../utils/icons.js';
+  import ItemTypeIcon from '../../components/ItemTypeIcon.svelte';
   import ItemKey from '../items/ItemKey.svelte';
   import CardFieldChip from './CardFieldChip.svelte';
   import DependencySummary from './DependencySummary.svelte';
@@ -134,15 +134,11 @@
       >
         <span class="inline-flex shrink-0 items-center gap-1.5">
           {#if itemType}
-            {@const TypeIcon = itemTypeIconMap[itemType.icon] || itemTypeIconMap.FileText}
-            <span
-              class="flex h-4 w-4 shrink-0 items-center justify-center rounded text-white"
-              style="background-color: {itemType.color};"
-              title={itemType.name}
-              data-testid={`board-card-type-icon-${item.id}`}
-            >
-              <TypeIcon class="h-3 w-3" />
-            </span>
+            <ItemTypeIcon
+              {itemType}
+              size="xs"
+              testId={`board-card-type-icon-${item.id}`}
+            />
           {/if}
           <ItemKey
             {item}

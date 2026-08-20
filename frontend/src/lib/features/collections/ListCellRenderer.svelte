@@ -13,7 +13,7 @@
   import Checkbox from '../../components/Checkbox.svelte';
   import ListCustomFieldCell from './ListCustomFieldCell.svelte';
   import { Calendar, User, Target, Globe, Building2, FolderKanban } from '@lucide/svelte';
-  import { itemTypeIconMap } from '../../utils/icons.js';
+  import ItemTypeIcon from '../../components/ItemTypeIcon.svelte';
   import { formatDate, formatDateOnly } from '../../utils/dateFormatter.js';
   import {
     createStatusPickerConfig,
@@ -136,14 +136,7 @@
       {#if item.item_type_id && itemTypes.length > 0}
         {@const itemType = itemTypes.find(type => type.id === item.item_type_id)}
         {#if itemType}
-          {@const CellTypeIcon = itemTypeIconMap[itemType.icon] || itemTypeIconMap.FileText}
-          <div
-            class="w-4 h-4 rounded flex items-center justify-center text-white text-xs flex-shrink-0"
-            style="background-color: {itemType.color};"
-            title={itemType.name}
-          >
-            <CellTypeIcon class="w-3 h-3" />
-          </div>
+          <ItemTypeIcon {itemType} size="xs" />
         {/if}
       {/if}
       <div class="flex-1 min-w-0" data-testid={`workspace-item-title-${item.id}`}>

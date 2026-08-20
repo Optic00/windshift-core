@@ -8,8 +8,8 @@
   import { collectionStore, reloadCollection } from '../../stores/collectionContext.js';
   import { workspaceDataStore, workspacesStore } from '../../stores/index.js';
   import { useGradientStyles, loadWorkspaceGradient } from '../../stores/workspaceGradient.svelte.js';
-  import { FileText, Plus, ChevronDown, ChevronRight, Home, MapPin } from '@lucide/svelte';
-  import { itemTypeIconMap } from '../../utils/icons.js';
+  import { Plus, ChevronDown, ChevronRight, Home, MapPin } from '@lucide/svelte';
+  import ItemTypeIcon from '../../components/ItemTypeIcon.svelte';
   import EmptyState from '../../components/EmptyState.svelte';
   import Textarea from '../../components/Textarea.svelte';
   import { monitorForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter';
@@ -40,9 +40,6 @@
   let workspaces = $derived($workspacesStore.regularWorkspaces || []);
   let currentParentId = $state(null); // null = root level, otherwise parent ID for current backbone
   let hierarchyBreadcrumbs = $state([]); // Navigation breadcrumbs for hierarchy levels
-
-  // Use centralized icon map for item types
-  const iconMap = itemTypeIconMap;
 
   let currentCollectionName = $state('Default');
 
@@ -611,15 +608,7 @@
                 {#if breadcrumb.level === 'root'}
                   <Home class="w-3.5 h-3.5" />
                 {:else if breadcrumb.itemType}
-                  {@const BreadcrumbIcon = iconMap[breadcrumb.itemType.icon] || FileText}
-                  <div
-                    class="w-4 h-4 rounded flex items-center justify-center"
-                    style="background-color: {breadcrumb.itemType.color};"
-                  >
-                    <BreadcrumbIcon
-                      class="w-2.5 h-2.5 text-white"
-                    />
-                  </div>
+                  <ItemTypeIcon itemType={breadcrumb.itemType} size="xs" />
                 {/if}
 
                 <!-- Text -->
@@ -680,14 +669,7 @@
                   <div class="flex items-center justify-between">
                     <div class="flex items-center gap-2">
                       {#if itemType}
-                        {@const MapItemIcon = iconMap[itemType.icon] || FileText}
-                        <div
-                          class="w-4 h-4 rounded flex items-center justify-center text-white text-xs flex-shrink-0"
-                          style="background-color: {itemType.color};"
-                          title={itemType.name}
-                        >
-                          <MapItemIcon class="w-3 h-3" />
-                        </div>
+                        <ItemTypeIcon {itemType} size="xs" />
                       {/if}
                       <ItemKey item={backboneItem} {workspace}
                         onClick={(e) => handleKeyClick(backboneItem, e)}
@@ -779,14 +761,7 @@
                       <div class="flex items-center justify-between">
                         <div class="flex items-center gap-2">
                           {#if childItemType}
-                            {@const ChildIcon = iconMap[childItemType.icon] || FileText}
-                            <div
-                              class="w-4 h-4 rounded flex items-center justify-center text-white text-xs flex-shrink-0"
-                              style="background-color: {childItemType.color};"
-                              title={childItemType.name}
-                            >
-                              <ChildIcon class="w-3 h-3" />
-                            </div>
+                            <ItemTypeIcon itemType={childItemType} size="xs" />
                           {/if}
                           <ItemKey item={childItem} {workspace}
                             onClick={(e) => handleKeyClick(childItem, e)}

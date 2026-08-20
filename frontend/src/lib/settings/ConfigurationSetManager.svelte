@@ -7,15 +7,10 @@
   import { navigate } from '../router.js';
   import { formatDateSimple } from '../utils/dateFormatter.js';
   import {
-    Plus, Edit, Trash2, Save, X, Settings, Workflow,
-    FileText, Target, Zap, BookOpen, CheckSquare, Bug, Minus, Star, Flag,
-    Lightbulb, User, Users, Calendar, Clock, MapPin, Search, Filter, Tag,
-    Bookmark, Heart, Shield, Key, Lock, Globe, Wifi, Database, Server,
-    Code, Terminal, Folder, Image, Video, Music, Download, Upload, Send,
-    Mail, Phone, MessageSquare, AlertCircle, Info, CheckCircle, XCircle,
-    HelpCircle, Archive, Trash, Copy, Scissors, Paperclip, Link, ExternalLink,
-    Circle, Layers
+    Plus, Edit, Trash2, Settings, Workflow,
+    FileText, Search, AlertCircle, Upload, Layers, Copy, Download
   } from '@lucide/svelte';
+  import ItemTypeIcon from '../components/ItemTypeIcon.svelte';
   import Button from '../components/Button.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import Panel from '../components/Panel.svelte';
@@ -34,17 +29,6 @@
   import FileInput from '../components/FileInput.svelte';
   import { toHotkeyString } from '../utils/keyboardShortcuts.js';
   import DescriptionText from '../components/DescriptionText.svelte';
-
-  // Icon mapping for item types
-  const iconMap = {
-    Target, Zap, BookOpen, CheckSquare, Bug, Minus, Star, Flag, Lightbulb,
-    Settings, User, Users, Calendar, Clock, MapPin, Search, Filter, Tag,
-    Bookmark, Heart, Shield, Key, Lock, Globe, Wifi, Database, Server,
-    Code, Terminal, FileText, Folder, Image, Video, Music, Download,
-    Upload, Send, Mail, Phone, MessageSquare, AlertCircle, Info,
-    CheckCircle, XCircle, HelpCircle, Archive, Trash, Edit, Copy,
-    Scissors, Paperclip, Link, ExternalLink, Circle, Layers
-  };
 
   let configurationSets = $state([]);
   let workspaces = $state([]);
@@ -737,11 +721,8 @@
                       {#if configSet.item_types_detailed && configSet.item_types_detailed.length > 0}
                         <div class="flex flex-wrap gap-2">
                           {#each configSet.item_types_detailed as itemType}
-                            {@const ItemTypeIcon = iconMap[itemType.icon] || FileText}
                             <Lozenge customBg={itemType.color} size="md">
-                              <span class="flex items-center justify-center w-4 h-4 rounded" style="background-color: {itemType.color};">
-                                <ItemTypeIcon size={10} color="white" />
-                              </span>
+                              <ItemTypeIcon icon={itemType.icon} color={itemType.color} size="xs" />
                               {itemType.name}
                             </Lozenge>
                           {/each}
