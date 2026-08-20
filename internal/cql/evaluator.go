@@ -134,14 +134,15 @@ func stringArg(v any) string {
 
 // EvaluateToSQL converts a QL query string to SQL WHERE clause for assets
 func (e *AssetEvaluator) EvaluateToSQL(cqlQuery string) (string, []any, error) { //nolint:gocritic // unnamedResult
-	// Inject workspace map for linkedOf() inner queries
-	e.sqlGenerator.workspaceMap = e.workspaceMap
-	return evaluateQL(cqlQuery, e.sqlGenerator)
+	local := *e.sqlGenerator
+	local.workspaceMap = e.workspaceMap
+	return evaluateQL(cqlQuery, &local)
 }
 
 // EvaluateToSQLAt converts an asset query using a caller-provided evaluation
 // time without mutating the evaluator's temporal state.
 func (e *AssetEvaluator) EvaluateToSQLAt(cqlQuery string, evaluationTime time.Time) (string, []any, error) { //nolint:gocritic // unnamedResult
-	e.sqlGenerator.workspaceMap = e.workspaceMap
-	return evaluateQLAt(cqlQuery, e.sqlGenerator, evaluationTime)
+	local := *e.sqlGenerator
+	local.workspaceMap = e.workspaceMap
+	return evaluateQLAt(cqlQuery, &local, evaluationTime)
 }

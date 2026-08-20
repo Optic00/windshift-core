@@ -759,10 +759,9 @@ func (r *ItemRepository) buildOrderByClause(sortBy string, sortAsc bool) string 
 }
 
 func (r *ItemRepository) defaultOrderBy() string {
-	// NULLS LAST preserves legacy rows while allowing PostgreSQL and SQLite to
-	// use the workspace/frac_index index for canonical 0.8.5 ranks. The item ID
-	// tie-breaker makes page boundaries deterministic across concurrent writes.
-	return ` ORDER BY i.frac_index ASC NULLS LAST, i.created_at DESC, i.id ASC`
+	// frac_index is non-null and globally unique, so it fully determines order
+	// while allowing workspace lists to seek through the composite rank index.
+	return ` ORDER BY i.frac_index ASC`
 }
 
 // scanItemList scans rows into a slice of items

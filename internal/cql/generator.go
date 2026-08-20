@@ -258,31 +258,31 @@ type fieldSemantics struct {
 
 // fieldSemanticsFor keeps value handling consistent across comparison and IN.
 func fieldSemanticsFor(entityType EntityType, fieldName string) fieldSemantics {
-	switch strings.ToLower(fieldName) {
-	case "status", "priority", "type", "assettype", "asset_type", "category":
-		return fieldSemantics{caseInsensitive: true, bareIdentifierValue: true}
-	}
-	if entityType != EntityTypeItem {
-		return fieldSemantics{}
+	fieldName = strings.ToLower(fieldName)
+	if entityType == EntityTypeItem {
+		switch fieldName {
+		case "workspace":
+			return fieldSemantics{workspaceReference: true}
+		case "workspacekey":
+			return fieldSemantics{caseInsensitive: true, bareIdentifierValue: true}
+		case "itemtypename", "type":
+			return fieldSemantics{caseInsensitive: true, bareIdentifierValue: true}
+		case "project", "project_id", "projectid":
+			return fieldSemantics{referenceNameField: "proj.name"}
+		// milestone fields are handled by generateMilestoneComparison (M2M via
+		// item_milestones); no name-substitution shortcut applies here.
+		case "itemtype", "item_type_id", "itemtypeid":
+			return fieldSemantics{caseInsensitive: true, bareIdentifierValue: true, referenceNameField: "it.name"}
+		case "timeproject", "time_project_id", "timeprojectid":
+			return fieldSemantics{referenceNameField: "tp.name"}
+		case "iteration", "iteration_id", "iterationid":
+			return fieldSemantics{referenceNameField: "iter.name"}
+		}
 	}
 
-	switch strings.ToLower(fieldName) {
-	case "workspace":
-		return fieldSemantics{workspaceReference: true}
-	case "workspacekey":
+	switch fieldName {
+	case "status", "priority", "type", "assettype", "asset_type", "category":
 		return fieldSemantics{caseInsensitive: true, bareIdentifierValue: true}
-	case "itemtypename":
-		return fieldSemantics{caseInsensitive: true, bareIdentifierValue: true}
-	case "project", "project_id", "projectid":
-		return fieldSemantics{referenceNameField: "proj.name"}
-	// milestone fields are handled by generateMilestoneComparison (M2M via
-	// item_milestones); no name-substitution shortcut applies here.
-	case "itemtype", "item_type_id", "itemtypeid":
-		return fieldSemantics{bareIdentifierValue: true, referenceNameField: "it.name"}
-	case "timeproject", "time_project_id", "timeprojectid":
-		return fieldSemantics{referenceNameField: "tp.name"}
-	case "iteration", "iteration_id", "iterationid":
-		return fieldSemantics{referenceNameField: "iter.name"}
 	}
 	return fieldSemantics{}
 }
@@ -625,6 +625,8 @@ func (g *SQLGenerator) generateComparison(node *ASTNode) (sql string, args []any
 			isCustomFieldComparison = true
 		}
 	}
+	caseInsensitive := semantics.caseInsensitive &&
+		(semantics.referenceNameField == "" || isReferenceFieldComparison)
 
 	// Match Postgres date expression indexes; SQLite's string cast below matches
 	// its equivalent index shape.
@@ -665,7 +667,7 @@ func (g *SQLGenerator) generateComparison(node *ASTNode) (sql string, args []any
 
 	switch node.Operator {
 	case "=":
-		if semantics.caseInsensitive {
+		if caseInsensitive {
 			// Make status, priority, type, category comparisons case-insensitive
 			return fmt.Sprintf("LOWER(%s) = LOWER(%s)", leftSQL, rightSQL), leftArgs, nil
 		}
@@ -675,7 +677,7 @@ func (g *SQLGenerator) generateComparison(node *ASTNode) (sql string, args []any
 		}
 		return fmt.Sprintf("%s = %s", leftSQL, rightSQL), leftArgs, nil
 	case "!=", "<>":
-		if semantics.caseInsensitive {
+		if caseInsensitive {
 			// Make status, priority, type, category comparisons case-insensitive
 			return fmt.Sprintf("LOWER(%s) != LOWER(%s)", leftSQL, rightSQL), leftArgs, nil
 		}
@@ -858,8 +860,10 @@ func (g *SQLGenerator) generateInExpression(node *ASTNode) (sql string, args []a
 	var placeholders []string
 	args = append(args, fieldArgs...)
 
+	caseInsensitive := semantics.caseInsensitive &&
+		(semantics.referenceNameField == "" || isReferenceFieldIn)
 	for _, valueNode := range node.Values.Arguments {
-		if semantics.caseInsensitive {
+		if caseInsensitive {
 			placeholders = append(placeholders, "LOWER(?)")
 		} else {
 			placeholders = append(placeholders, "?")
@@ -869,7 +873,7 @@ func (g *SQLGenerator) generateInExpression(node *ASTNode) (sql string, args []a
 
 	placeholderList := strings.Join(placeholders, ", ")
 
-	if semantics.caseInsensitive {
+	if caseInsensitive {
 		// Make status, priority, type, category IN comparisons case-insensitive
 		if strings.EqualFold(node.Operator, "NOT IN") {
 			return fmt.Sprintf("LOWER(%s) NOT IN (%s)", fieldSQL, placeholderList), args, nil
@@ -925,7 +929,8 @@ func (g *SQLGenerator) generateFunction(node *ASTNode) (sql string, args []any, 
 		return "?", []any{time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)}, nil
 	case "endofday":
 		now := g.evaluationTime
-		return "?", []any{time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 59, 0, time.UTC)}, nil
+		nextDay := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
+		return "?", []any{nextDay.Add(-time.Nanosecond)}, nil
 
 	case "childrenof":
 		// childrenOf("ql query") - Find all descendants of items matching the inner query

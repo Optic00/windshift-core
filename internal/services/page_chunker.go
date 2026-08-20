@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"strings"
+	"unicode/utf8"
 
 	"windshift/internal/models"
 )
@@ -158,6 +159,9 @@ func splitOversizeChunk(c chunkSpec) []chunkSpec {
 		}
 		if cut < pageChunkMinBytes {
 			cut = pageChunkMaxBytes
+		}
+		for cut > 0 && !utf8.RuneStart(body[cut]) {
+			cut--
 		}
 		piece := strings.TrimRight(body[:cut], "\n")
 		out = append(out, chunkSpec{

@@ -74,16 +74,17 @@ func (s *WorkspaceService) createWorkspaceTx(ctx context.Context, tx database.Tx
 	}
 
 	newID, err := s.repo.CreateTx(tx, &models.Workspace{
-		Name:        params.Name,
-		Key:         key,
-		Description: params.Description,
-		Active:      params.Active == nil || *params.Active,
-		IsPersonal:  params.IsPersonal,
-		OwnerID:     params.OwnerID,
-		Icon:        params.Icon,
-		Color:       params.Color,
-		AvatarURL:   params.AvatarURL,
-		DefaultView: params.DefaultView,
+		Name:          params.Name,
+		Key:           key,
+		Description:   params.Description,
+		Active:        params.Active == nil || *params.Active,
+		TimeProjectID: params.TimeProjectID,
+		IsPersonal:    params.IsPersonal,
+		OwnerID:       params.OwnerID,
+		Icon:          params.Icon,
+		Color:         params.Color,
+		AvatarURL:     params.AvatarURL,
+		DefaultView:   params.DefaultView,
 	})
 	if err != nil {
 		return nil, err
@@ -518,7 +519,7 @@ func (c *workspaceTemplateClone) copyItemLinks(source *templateSourceWorkspace) 
 
 func (c *workspaceTemplateClone) hydrateDestination() (*models.Workspace, error) {
 	rows := c.tx.QueryRowContext(c.ctx, `
-		SELECT id, name, key, description, active, is_template, is_personal, owner_id, icon, color,
+		SELECT id, name, key, description, active, is_template, time_project_id, is_personal, owner_id, icon, color,
 		       avatar_url, default_view, internal_comments_enabled, created_at, updated_at
 		FROM workspaces WHERE id = ?
 	`, c.destinationID)
@@ -526,7 +527,7 @@ func (c *workspaceTemplateClone) hydrateDestination() (*models.Workspace, error)
 	var workspace models.Workspace
 	var icon, color, defaultView sql.NullString
 	err := rows.Scan(&workspace.ID, &workspace.Name, &workspace.Key, &workspace.Description,
-		&workspace.Active, &workspace.IsTemplate, &workspace.IsPersonal, &workspace.OwnerID,
+		&workspace.Active, &workspace.IsTemplate, &workspace.TimeProjectID, &workspace.IsPersonal, &workspace.OwnerID,
 		&icon, &color, &workspace.AvatarURL, &defaultView,
 		&workspace.InternalCommentsEnabled, &workspace.CreatedAt, &workspace.UpdatedAt)
 	if err != nil {

@@ -150,7 +150,8 @@ func (h *WorkspaceHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 	// 1. Get total collections count
 	collectionCount, err := h.repo.CountCollections(workspaceID)
 	if err != nil {
-		slog.Error("failed to count collections", slog.String("component", "workspaces"), slog.Int("workspace_id", workspaceID), slog.Any("error", err))
+		respondInternalError(w, r, err)
+		return
 	}
 	stats.TotalCollections = collectionCount + 1 // +1 for default collection
 
@@ -160,57 +161,57 @@ func (h *WorkspaceHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 	sinceCutoff := time.Now().AddDate(0, 0, -30)
 	itemStats, err := repository.NewItemRepository(h.db).ComputeWorkspaceItemStats(workspaceID, filterSQL, filterArgs, sinceCutoff)
 	if err != nil {
-		slog.Error("failed to compute workspace item stats", slog.String("component", "workspaces"), slog.Int("workspace_id", workspaceID), slog.Any("error", err))
-	} else {
-		stats.TotalItems = itemStats.TotalItems
-		stats.ItemsByStatusCategory = itemStats.ItemsByStatusCategory
-		stats.PriorityBreakdown = itemStats.PriorityBreakdown
-		stats.AssignmentDistribution = make([]AssignmentStats, 0, len(itemStats.AssignmentDistribution))
-		for _, a := range itemStats.AssignmentDistribution {
-			stats.AssignmentDistribution = append(stats.AssignmentDistribution, AssignmentStats{
-				UserID:       a.UserID,
-				UserName:     a.UserName,
-				FirstName:    a.FirstName,
-				LastName:     a.LastName,
-				ItemCount:    a.ItemCount,
-				IsUnassigned: a.UserID == nil,
-			})
+		respondInternalError(w, r, err)
+		return
+	}
+	stats.TotalItems = itemStats.TotalItems
+	stats.ItemsByStatusCategory = itemStats.ItemsByStatusCategory
+	stats.PriorityBreakdown = itemStats.PriorityBreakdown
+	stats.AssignmentDistribution = make([]AssignmentStats, 0, len(itemStats.AssignmentDistribution))
+	for _, a := range itemStats.AssignmentDistribution {
+		stats.AssignmentDistribution = append(stats.AssignmentDistribution, AssignmentStats{
+			UserID:       a.UserID,
+			UserName:     a.UserName,
+			FirstName:    a.FirstName,
+			LastName:     a.LastName,
+			ItemCount:    a.ItemCount,
+			IsUnassigned: a.UserID == nil,
+		})
+	}
+	// Determine which time projects the caller may see by name. nil = full
+	// access (no masking); otherwise only the listed project IDs keep names.
+	var allowedProjects map[int]struct{}
+	if accessible, accErr := services.NewTimePermissionService(h.db, h.permissionService).GetAccessibleProjects(authUser.ID); accErr != nil {
+		slog.Warn("failed to load accessible projects for stats masking", slog.Int("user_id", authUser.ID), slog.Any("error", accErr))
+		allowedProjects = map[int]struct{}{} // fail closed: mask all names
+	} else if accessible != nil {
+		allowedProjects = make(map[int]struct{}, len(accessible))
+		for _, id := range accessible {
+			allowedProjects[id] = struct{}{}
 		}
-		// Determine which time projects the caller may see by name. nil = full
-		// access (no masking); otherwise only the listed project IDs keep names.
-		var allowedProjects map[int]struct{}
-		if accessible, accErr := services.NewTimePermissionService(h.db, h.permissionService).GetAccessibleProjects(authUser.ID); accErr != nil {
-			slog.Warn("failed to load accessible projects for stats masking", slog.Int("user_id", authUser.ID), slog.Any("error", accErr))
-			allowedProjects = map[int]struct{}{} // fail closed: mask all names
-		} else if accessible != nil {
-			allowedProjects = make(map[int]struct{}, len(accessible))
-			for _, id := range accessible {
-				allowedProjects[id] = struct{}{}
-			}
-		}
+	}
 
-		stats.ProjectStatistics = make([]ProjectStats, 0, len(itemStats.ProjectStatistics))
-		for _, p := range itemStats.ProjectStatistics {
-			project := ProjectStats{
-				ProjectID:      p.ProjectID,
-				ProjectName:    p.ProjectName,
-				ProjectColor:   p.ProjectColor,
-				ItemCount:      p.ItemCount,
-				CompletedCount: p.CompletedCount,
-			}
-			// Strip the name/color of a restricted project the caller can't view,
-			// keeping the aggregate counts. allowedProjects == nil means full access.
-			if allowedProjects != nil && p.ProjectID != nil {
-				if _, ok := allowedProjects[*p.ProjectID]; !ok {
-					project.ProjectName = ""
-					project.ProjectColor = ""
-				}
-			}
-			if project.ItemCount > 0 {
-				project.CompletionPercent = float64(project.CompletedCount) / float64(project.ItemCount) * 100
-			}
-			stats.ProjectStatistics = append(stats.ProjectStatistics, project)
+	stats.ProjectStatistics = make([]ProjectStats, 0, len(itemStats.ProjectStatistics))
+	for _, p := range itemStats.ProjectStatistics {
+		project := ProjectStats{
+			ProjectID:      p.ProjectID,
+			ProjectName:    p.ProjectName,
+			ProjectColor:   p.ProjectColor,
+			ItemCount:      p.ItemCount,
+			CompletedCount: p.CompletedCount,
 		}
+		// Strip the name/color of a restricted project the caller can't view,
+		// keeping the aggregate counts. allowedProjects == nil means full access.
+		if allowedProjects != nil && p.ProjectID != nil {
+			if _, ok := allowedProjects[*p.ProjectID]; !ok {
+				project.ProjectName = ""
+				project.ProjectColor = ""
+			}
+		}
+		if project.ItemCount > 0 {
+			project.CompletionPercent = float64(project.CompletedCount) / float64(project.ItemCount) * 100
+		}
+		stats.ProjectStatistics = append(stats.ProjectStatistics, project)
 	}
 
 	// 7. Load milestone progress for active milestones referenced in this workspace
@@ -240,7 +241,8 @@ func (h *WorkspaceHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 		}
 		stats.MilestoneProgress = milestoneProgress
 	} else {
-		slog.Error("failed to load milestone progress", slog.String("component", "workspaces"), slog.Int("workspace_id", workspaceID), slog.Any("error", mpErr))
+		respondInternalError(w, r, mpErr)
+		return
 	}
 
 	respondJSONOK(w, stats)

@@ -158,9 +158,11 @@
       boardConfig = config;
       listColumns = listColumnsFromConfig(config);
     } catch (error) {
-      console.error('Failed to load list column configuration:', error);
       boardConfig = null;
       listColumns = [...DEFAULT_LIST_COLUMNS];
+      if (error?.status !== 404) {
+        console.error('Failed to load list column configuration:', error);
+      }
     }
   }
 
