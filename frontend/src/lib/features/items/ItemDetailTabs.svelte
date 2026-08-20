@@ -156,32 +156,32 @@
 
   function getActivityHealth(currentItem) {
     if (isItemCompleted(currentItem)) {
-      return { state: 'completed', days: null, variant: 'success' };
+      return { state: 'completed', days: null };
     }
 
     const days = getElapsedDays(getActivityTimestamp(currentItem));
     if (days === null) {
-      return { state: 'unknown', days: null, variant: 'neutral' };
+      return { state: 'unknown', days: null };
     }
     if (days >= workItemStalenessSettings.staleAfterDays) {
-      return { state: 'stale', days, variant: 'warning' };
+      return { state: 'stale', days };
     }
-    return { state: 'active', days, variant: 'success' };
+    return { state: 'active', days };
   }
 
   function getDueHealth(currentItem) {
     if (isItemCompleted(currentItem)) {
-      return { state: 'completed', days: null, variant: 'success' };
+      return { state: 'completed', days: null };
     }
     if (!dateOnlyKey(currentItem?.due_date)) {
-      return { state: 'unscheduled', days: null, variant: 'neutral' };
+      return { state: 'unscheduled', days: null };
     }
 
     const days = -getDaysOverdue(currentItem.due_date);
-    if (days < 0) return { state: 'overdue', days, variant: 'danger' };
-    if (days === 0) return { state: 'today', days, variant: 'warning' };
-    if (days <= DUE_SOON_DAYS) return { state: 'soon', days, variant: 'warning' };
-    return { state: 'scheduled', days, variant: 'info' };
+    if (days < 0) return { state: 'overdue', days };
+    if (days === 0) return { state: 'today', days };
+    if (days <= DUE_SOON_DAYS) return { state: 'soon', days };
+    return { state: 'scheduled', days };
   }
 
   const activityHealth = $derived(getActivityHealth(item));
@@ -206,14 +206,6 @@
     const weeks = Math.floor(days / 7);
     const remainingDays = days % 7;
     return remainingDays ? `${weeks}w ${remainingDays}d` : `${weeks}w`;
-  }
-
-  function getActivityLabel(state) {
-    return t(`items.activityHealth${state.charAt(0).toUpperCase()}${state.slice(1)}`);
-  }
-
-  function getDueLabel(state) {
-    return t(`items.dueHealth${state.charAt(0).toUpperCase()}${state.slice(1)}`);
   }
 
   function getItemKey() {
@@ -378,26 +370,23 @@
         <Comments itemId={item.id} isPersonalWorkspace={workspace?.is_personal} isPortalRequest={!!item.request_type_id} enableInternalComments={workspace?.internal_comments_enabled} onCommentsLoaded={handleCommentsLoaded} />
       {:else if tab === 'details'}
         <div class="grid gap-8" data-testid="item-details-overview">
-          <section class="overflow-hidden rounded-xl border border-[var(--ds-border)] bg-[var(--ds-surface-raised)]" aria-labelledby="item-health-heading">
-            <div class="border-b border-[var(--ds-border)] px-4 py-4 min-[421px]:px-6 min-[421px]:pt-5">
-              <h3 id="item-health-heading" class="text-sm font-semibold text-[var(--ds-text)]">{t('items.healthOverview')}</h3>
-              <p class="mt-1 max-w-[65ch] text-xs leading-5 text-[var(--ds-text-subtle)]">{t('items.healthOverviewDescription')}</p>
-            </div>
-
+          <section class="overflow-hidden rounded-xl border border-[var(--ds-border)] bg-[var(--ds-surface-raised)]" aria-label={t('items.healthOverview')}>
             <div class="grid min-[761px]:grid-cols-2">
-              <div class="min-w-0 px-4 py-5 min-[421px]:px-6" data-testid="item-health-activity">
+              <div class="min-w-0 px-4 py-4 min-[421px]:px-6" data-testid="item-health-activity">
                 <div class="flex items-center justify-between gap-3">
                   <span class="inline-flex items-center gap-2 text-xs font-semibold text-[var(--ds-text-subtle)]"><Activity class="h-4 w-4" />{t('items.activity')}</span>
-                  <Badge variant={activityHealth.variant} size="xs">{getActivityLabel(activityHealth.state)}</Badge>
+                  {#if activityHealth.state === 'stale'}
+                    <Badge variant="warning" size="xs">{t('items.activityHealthStale')}</Badge>
+                  {/if}
                 </div>
                 {#if activityHealth.state === 'completed'}
-                  <p class="mt-4 text-base font-semibold leading-snug text-[var(--ds-text)]">{t('items.activityMonitoringComplete')}</p>
+                  <p class="mt-3 text-base font-semibold leading-snug text-[var(--ds-text)]">{t('items.activityHealthCompleted')}</p>
                 {:else if activityHealth.days === 0}
-                  <p class="mt-4 text-base font-semibold leading-snug text-[var(--ds-text)]">{t('items.activityToday')}</p>
+                  <p class="mt-3 text-base font-semibold leading-snug text-[var(--ds-text)]">{t('items.activityToday')}</p>
                 {:else if activityHealth.days !== null}
-                  <p class="mt-4 text-base font-semibold leading-snug text-[var(--ds-text)]">{t('items.activityIdleDays', { count: activityHealth.days })}</p>
+                  <p class="mt-3 text-base font-semibold leading-snug text-[var(--ds-text)]">{t('items.activityIdleDays', { count: activityHealth.days })}</p>
                 {:else}
-                  <p class="mt-4 text-base font-semibold leading-snug text-[var(--ds-text)]">—</p>
+                  <p class="mt-3 text-base font-semibold leading-snug text-[var(--ds-text)]">—</p>
                 {/if}
                 <p class="mt-1 text-xs leading-5 text-[var(--ds-text-subtle)]">
                   {#if activityTimestamp}
@@ -408,36 +397,26 @@
                 </p>
               </div>
 
-              <div class="min-w-0 border-t border-[var(--ds-border)] px-4 py-5 min-[421px]:px-6 min-[761px]:border-t-0 min-[761px]:border-l" data-testid="item-health-due-date">
-                <div class="flex items-center justify-between gap-3">
-                  <span class="inline-flex items-center gap-2 text-xs font-semibold text-[var(--ds-text-subtle)]"><CalendarClock class="h-4 w-4" />{t('items.dueDate')}</span>
-                  <Badge variant={dueHealth.variant} size="xs">{getDueLabel(dueHealth.state)}</Badge>
-                </div>
+              <div class="min-w-0 border-t border-[var(--ds-border)] px-4 py-4 min-[421px]:px-6 min-[761px]:border-t-0 min-[761px]:border-l" data-testid="item-health-due-date">
+                <span class="inline-flex items-center gap-2 text-xs font-semibold text-[var(--ds-text-subtle)]"><CalendarClock class="h-4 w-4" />{t('items.dueDate')}</span>
                 {#if dueHealth.state === 'completed'}
-                  <p class="mt-4 text-base font-semibold leading-snug text-[var(--ds-text)]">
+                  <p class="mt-3 text-base font-semibold leading-snug text-[var(--ds-text)]">
                     {item.completed_at ? t('items.completedOn', { date: formatDateOnly(item.completed_at) }) : t('items.workCompleted')}
                   </p>
                 {:else}
-                  <p class="mt-4 text-base font-semibold leading-snug text-[var(--ds-text)]">{item.due_date ? formatDueDate(item.due_date) : t('dueDate.noDueDate')}</p>
+                  <p class="mt-3 text-base font-semibold leading-snug text-[var(--ds-text)]">{item.due_date ? formatDueDate(item.due_date) : t('dueDate.noDueDate')}</p>
                 {/if}
-                <p class="mt-1 text-xs leading-5 text-[var(--ds-text-subtle)]">
-                  {#if item.due_date}
+                {#if item.due_date && ['overdue', 'today', 'soon'].includes(dueHealth.state)}
+                  <p class="mt-1 text-xs leading-5 text-[var(--ds-text-subtle)]">
                     {t('items.dueOn', { date: formatDateOnly(item.due_date) })}
-                  {:else}
-                    {t('items.dueDateUnavailable')}
-                  {/if}
-                </p>
+                  </p>
+                {/if}
               </div>
 
             </div>
 
-            <div class="border-t border-[var(--ds-border)] px-4 py-5 min-[421px]:px-6" data-testid="item-health-status-durations">
-              <div class="flex flex-col gap-1 min-[521px]:flex-row min-[521px]:items-start min-[521px]:justify-between min-[521px]:gap-6">
-                <div>
-                  <h4 class="inline-flex items-center gap-2 text-xs font-semibold text-[var(--ds-text-subtle)]"><TimerReset class="h-4 w-4" />{t('items.timeInStatus')}</h4>
-                  <p class="mt-1 max-w-[65ch] text-xs leading-5 text-[var(--ds-text-subtle)]">{t('items.statusDurationsDescription')}</p>
-                </div>
-              </div>
+            <div class="border-t border-[var(--ds-border)] px-4 py-4 min-[421px]:px-6" data-testid="item-health-status-durations">
+              <h4 class="inline-flex items-center gap-2 text-xs font-semibold text-[var(--ds-text-subtle)]"><TimerReset class="h-4 w-4" />{t('items.timeInStatus')}</h4>
 
               {#if statusDurationsLoading}
                 <div class="flex items-center gap-3 py-6 text-xs text-[var(--ds-text-subtle)]" data-testid="item-status-durations-loading">
@@ -460,9 +439,9 @@
               {:else if statusDurations.length === 0}
                 <p class="py-5 text-xs leading-5 text-[var(--ds-text-subtle)]" data-testid="item-status-durations-empty">{t('items.statusDurationsEmpty')}</p>
               {:else}
-                <ul class="mt-4 divide-y divide-[var(--ds-border)] border-y border-[var(--ds-border)]" data-testid="item-status-durations-list">
+                <ul class="mt-2 divide-y divide-[var(--ds-border)]" data-testid="item-status-durations-list">
                   {#each statusDurations as duration (duration.status_id)}
-                    <li class="flex min-w-0 items-center justify-between gap-4 py-3" data-testid={`item-status-duration-${duration.status_id}`}>
+                    <li class="flex min-w-0 items-center justify-between gap-4 py-2.5" data-testid={`item-status-duration-${duration.status_id}`}>
                       <div class="flex min-w-0 items-center gap-2">
                         <span class="truncate text-sm font-medium text-[var(--ds-text)]">{duration.status_name || t('items.unknown')}</span>
                         {#if duration.is_current}
