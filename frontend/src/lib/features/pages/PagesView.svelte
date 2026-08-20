@@ -11,9 +11,14 @@
   import PageWorkItemsButton from './PageWorkItemsButton.svelte';
   import IconSelector from '../../pickers/IconSelector.svelte';
   import { workspaceIconMap } from '../../utils/icons.js';
-  import { IconX } from '@tabler/icons-svelte-runes';
+  import {
+    IconArrowsMaximize,
+    IconArrowsMinimize,
+    IconX,
+  } from '@tabler/icons-svelte-runes';
   import { parseMarkdownHeadings, slugify } from './markdownToc.js';
   import DropdownMenu from '../../layout/DropdownMenu.svelte';
+  import Tooltip from '../../components/Tooltip.svelte';
   import {
     IconBook as Book,
     IconDots as Dots,
@@ -91,6 +96,7 @@
   // table of contents on the right. Resets to 'edit' when the route
   // changes — writing-first default matches Confluence/Notion.
   let mode = $state('edit');
+  let canvasExpanded = $state(false);
 
   let headings = $derived(parseMarkdownHeadings(draftContent));
 
@@ -630,7 +636,13 @@
   {:else if loadingPage}
     <p class="status">{t('pages.pageLoading')}</p>
   {:else if selectedPage}
-    <div class="page-frame">
+    <div
+      class="page-frame"
+      class:canvas-expanded={canvasExpanded}
+      class:has-toc={mode === 'read' && headings.length > 0}
+      data-testid="page-canvas"
+      data-width={canvasExpanded ? 'wide' : 'comfortable'}
+    >
       <div class="toolbar">
         <div class="title-wrap">
           {#if PageTitleIcon}
@@ -706,6 +718,26 @@
               <span>{t('pages.modeRead')}</span>
             </button>
           </div>
+          <Tooltip
+            content={t(canvasExpanded ? 'pages.canvasComfortable' : 'pages.canvasWide')}
+            placement="bottom"
+            class="inline-flex"
+          >
+            <button
+              type="button"
+              class="canvas-width-toggle"
+              aria-label={t(canvasExpanded ? 'pages.canvasComfortable' : 'pages.canvasWide')}
+              aria-pressed={canvasExpanded}
+              onclick={() => (canvasExpanded = !canvasExpanded)}
+              data-testid="page-canvas-width-toggle"
+            >
+              {#if canvasExpanded}
+                <IconArrowsMinimize size={16} aria-hidden="true" />
+              {:else}
+                <IconArrowsMaximize size={16} aria-hidden="true" />
+              {/if}
+            </button>
+          </Tooltip>
           <DropdownMenu
             triggerIcon={Dots}
             items={toolbarMenuItems}
@@ -863,17 +895,16 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
+    container-type: inline-size;
   }
 
   .page-frame {
+    --page-gutter: clamp(1rem, 4cqi, 3rem);
+    --page-reading-width: 75ch;
     width: 100%;
-    /* No max-width — use the full pane. The right-hand TOC column
-       takes its own 220px slot in the editor-row, so the editor still
-       has a natural right margin when headings exist.
-       No horizontal padding either — that pad is pushed onto each
-       content child below so the toolbar's bottom border can run
-       edge-to-edge across the pane while the icons + body content
-       remain visually inset. */
+    max-width: calc(
+      var(--page-reading-width) + var(--page-gutter) + var(--page-gutter)
+    );
     margin: 0 auto;
     padding: 0;
     display: flex;
@@ -881,6 +912,17 @@
     gap: 1rem;
     flex: 1;
     min-height: 0;
+  }
+
+  .page-frame.has-toc {
+    max-width: calc(
+      var(--page-reading-width) + 220px + 2rem + var(--page-gutter) +
+        var(--page-gutter) + var(--page-gutter)
+    );
+  }
+
+  .page-frame.canvas-expanded {
+    max-width: none;
   }
 
   .empty-page {
@@ -908,7 +950,8 @@
     display: flex;
     gap: 1rem;
     align-items: center;
-    padding: 0 3rem;
+    flex-wrap: wrap;
+    padding: 0 var(--page-gutter);
   }
 
   .label-row {
@@ -916,7 +959,7 @@
     flex-wrap: wrap;
     gap: 0.375rem;
     align-items: center;
-    padding: 0 3rem;
+    padding: 0 var(--page-gutter);
     margin-top: -0.5rem;
   }
 
@@ -943,7 +986,7 @@
   }
 
   .title-wrap {
-    flex: 1;
+    flex: 1 1 18rem;
     min-width: 0;
     display: flex;
     align-items: center;
@@ -971,6 +1014,9 @@
     display: flex;
     gap: 0.5rem;
     align-items: center;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    margin-left: auto;
   }
 
   .appearance-actions {
@@ -987,11 +1033,10 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 0;
+    width: 1rem;
     height: 1.5rem;
-    margin-left: 0;
+    margin-left: 0.125rem;
     padding: 0;
-    overflow: hidden;
     border: none;
     border-radius: 0.25rem;
     background: transparent;
@@ -999,14 +1044,11 @@
     cursor: pointer;
     opacity: 0;
     pointer-events: none;
-    transition: width 120ms ease, margin-left 120ms ease, opacity 120ms ease,
-      background-color 120ms ease, color 120ms ease;
+    transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease;
   }
 
   .appearance-actions:hover .clear-icon-button,
   .appearance-actions:focus-within .clear-icon-button {
-    width: 1rem;
-    margin-left: 0.125rem;
     opacity: 1;
     pointer-events: auto;
   }
@@ -1070,6 +1112,31 @@
     color: var(--ds-text);
   }
 
+  .canvas-width-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+    border: none;
+    border-radius: 0.25rem;
+    background: transparent;
+    color: var(--ds-text-subtle);
+    cursor: pointer;
+  }
+
+  .canvas-width-toggle:hover,
+  .canvas-width-toggle[aria-pressed='true'] {
+    background: var(--ds-background-neutral-hovered);
+    color: var(--ds-text);
+  }
+
+  .canvas-width-toggle:focus-visible {
+    outline: 2px solid var(--ds-border-focused);
+    outline-offset: 2px;
+  }
+
   :global(.toolbar-kebab) {
     display: inline-flex;
     align-items: center;
@@ -1088,19 +1155,13 @@
     color: var(--ds-text);
   }
 
-  /* Single-column when no TOC; two-column only when there are
-     headings to show. Grid with a reserved 220px right column left
-     dead space below the editor frame, even when the TOC wasn't
-     rendered. */
+  /* The TOC gets a fixed supporting rail only when headings exist. */
   .editor-row {
     display: flex;
     flex-direction: row;
     gap: 2rem;
     flex: 1;
     min-height: 0;
-    /* No horizontal padding — the toolbar's bottom divider must hit
-       both walls flush. The TOC carries its own right margin (below)
-       so it doesn't kiss the right edge when present. */
   }
 
   /* Frameless editor: no border, no rounded corners, no background —
@@ -1160,29 +1221,24 @@
     overflow: visible;
   }
 
-  /* Confluence-style toolbar: floats on the page background with a
-     single hairline beneath it instead of being a tinted card top.
-     The 3rem left inset matches the title above and the body below;
-     the bottom border spans the full toolbar width (= full
-     .editor-frame width), so the hairline visually extends edge-to-
-     edge of the pane while the icons stay inset. */
+  /* The formatting toolbar stays frameless with one divider across the canvas. */
   :global(.editor-frame .milkdown-wrapper .milkdown-toolbar) {
     border: none;
     border-radius: 0;
     background: transparent;
-    padding: 0 3rem 0.375rem 3rem;
+    padding: 0 var(--page-gutter) 0.375rem;
     border-bottom: 1px solid var(--ds-border);
   }
 
   :global(.editor-frame .milkdown-wrapper .milkdown-editor .milkdown) {
     flex: 1;
     min-height: 0;
-    /* Top: breathing room below the toolbar divider.
-       Left/right: keeps the prose inset 3rem so it aligns with the
-       title above (the toolbar divider's left edge runs further out). */
-    padding: 1.5rem 3rem 0 3rem;
+    /* Keep the prose aligned with the title and below the toolbar divider. */
+    padding: 1.5rem var(--page-gutter) 0;
     display: flex;
     flex-direction: column;
+    font-size: 1rem;
+    line-height: 1.6;
   }
 
   /* ProseMirror itself must grow so the entire empty column is
@@ -1201,10 +1257,8 @@
     max-height: calc(100vh - 8rem);
     overflow-y: auto;
     padding-left: 1rem;
-    /* Inset from the pane's right wall. Carried here (instead of on
-       .editor-row) so the editor's toolbar divider can run flush to
-       the right edge in Edit mode when the TOC isn't shown. */
-    margin-right: 3rem;
+    /* Keep the supporting rail inset from the canvas edge. */
+    margin-right: var(--page-gutter);
     border-left: 1px solid var(--ds-border);
     font-size: 0.8125rem;
   }
@@ -1244,10 +1298,13 @@
   }
 
   @media (max-width: 1100px) {
-    .editor-row {
-      grid-template-columns: 1fr;
-    }
     .toc {
+      display: none;
+    }
+  }
+
+  @container (max-width: 52rem) {
+    .canvas-width-toggle {
       display: none;
     }
   }

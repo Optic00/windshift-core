@@ -54,6 +54,8 @@ export default {
     "modeEdit": "Editar",
     "modeRead": "Ler",
     "modeAria": "Modo de visualização",
+    "canvasWide": "Usar tela de largura total",
+    "canvasComfortable": "Usar tela com largura de leitura",
     "errorLoadTree": "Falha ao carregar páginas",
     "errorLoadPage": "Falha ao carregar página",
     "errorSave": "Falha ao salvar",

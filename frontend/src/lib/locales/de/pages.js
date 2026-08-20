@@ -54,6 +54,8 @@ export default {
     "modeEdit": "Bearbeiten",
     "modeRead": "Lesen",
     "modeAria": "Ansichtsmodus",
+    "canvasWide": "Leinwand in voller Breite verwenden",
+    "canvasComfortable": "Leinwand in lesbarer Breite verwenden",
     "errorLoadTree": "Fehler beim Laden der Seiten",
     "errorLoadPage": "Fehler beim Laden der Seite",
     "errorSave": "Fehler beim Laden Speichern",

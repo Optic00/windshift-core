@@ -54,6 +54,8 @@ export default {
     "modeEdit": "Editar",
     "modeRead": "Leer",
     "modeAria": "Modo de visualización",
+    "canvasWide": "Usar lienzo de ancho completo",
+    "canvasComfortable": "Usar lienzo de ancho legible",
     "errorLoadTree": "Error al cargar las páginas",
     "errorLoadPage": "Error al cargar la página",
     "errorSave": "Error al guardar",

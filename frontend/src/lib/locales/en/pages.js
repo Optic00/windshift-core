@@ -74,6 +74,8 @@ export default {
     modeEdit: 'Edit',
     modeRead: 'Read',
     modeAria: 'View mode',
+    canvasWide: 'Use full-width canvas',
+    canvasComfortable: 'Use readable-width canvas',
 
     // Error fallbacks
     errorLoadTree: 'Failed to load pages',

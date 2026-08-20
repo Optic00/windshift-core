@@ -54,6 +54,8 @@ export default {
     "modeEdit": "تحرير",
     "modeRead": "قراءة",
     "modeAria": "وضع العرض",
+    "canvasWide": "استخدام لوحة بعرض كامل",
+    "canvasComfortable": "استخدام لوحة بعرض مريح للقراءة",
     "errorLoadTree": "فشل تحميل الصفحات",
     "errorLoadPage": "فشل تحميل الصفحة",
     "errorSave": "فشل في حفظ",

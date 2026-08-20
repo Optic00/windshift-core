@@ -54,6 +54,8 @@ export default {
     "modeEdit": "编辑",
     "modeRead": "读取",
     "modeAria": "查看模式",
+    "canvasWide": "使用全宽画布",
+    "canvasComfortable": "使用易读宽度画布",
     "errorLoadTree": "加载页面失败",
     "errorLoadPage": "加载页面失败",
     "errorSave": "加载失败保存",
