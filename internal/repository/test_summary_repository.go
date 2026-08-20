@@ -183,8 +183,8 @@ func (r *TestSummaryRepository) GetTrend(filter ReportFilter) ([]TrendPoint, err
 	// which will not scan into a Go string. Cast to text explicitly on Postgres
 	// so the scan target stays uniform across backends. SQLite's DATE()
 	// returns TEXT in ISO format and works correctly now that the driver is
-	// configured with _time_format=sqlite (and legacy rows are normalized at
-	// startup — see backfillLegacyDatetimeFormat).
+	// configured with _time_format=sqlite (legacy rows were normalized by the
+	// one-time datetime backfill that shipped with the 0.8.5 schema floor).
 	dateExpr := "DATE(tr.started_at)"
 	if r.db.GetDriverName() == "postgres" {
 		dateExpr = "TO_CHAR(tr.started_at, 'YYYY-MM-DD')"

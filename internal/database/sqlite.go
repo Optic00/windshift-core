@@ -233,8 +233,15 @@ func initializeSQLiteDatabase(db *SQLiteDB) error {
 		if err := db.initializeDefaultData(); err != nil {
 			return fmt.Errorf("failed to initialize default data: %w", err)
 		}
-	} else if _, err := db.Exec("PRAGMA optimize=0x10002"); err != nil {
-		slog.Warn("PRAGMA optimize failed (may be using older SQLite)", slog.String("component", "database"), slog.Any("error", err))
+	} else {
+		// Preflight: refuse a pre-0.8.5 database before any retained
+		// migration can run (or fail mid-ALTER on a missing table).
+		if err := ValidateCanonicalSchemaCheckpoint(db); err != nil {
+			return fmt.Errorf("database startup refused: %w", err)
+		}
+		if _, err := db.Exec("PRAGMA optimize=0x10002"); err != nil {
+			slog.Warn("PRAGMA optimize failed (may be using older SQLite)", slog.String("component", "database"), slog.Any("error", err))
+		}
 	}
 
 	if err := runPendingMigrations(db, Catalog); err != nil {
