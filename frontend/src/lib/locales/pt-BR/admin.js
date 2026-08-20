@@ -142,6 +142,10 @@ export default {
         title: 'Modelos de agente',
         description: 'Substituir o catálogo de criação do Agent Studio: nomes de modelos, tipos de perfil e instruções',
       },
+      workItemStaleness: {
+        title: 'Métricas de qualidade',
+        description: 'Configurar quando itens de trabalho sem atividade são considerados inativos',
+      },
 
       aiFeatures: {
         title: 'Recursos de IA',
@@ -792,6 +796,22 @@ export default {
         },
       },
     },
+    workItemStaleness: {
+      title: 'Inatividade de itens de trabalho',
+      subtitle: 'Usar um único limite de atividade nos detalhes e nas análises dos itens de trabalho',
+      thresholdTitle: 'Limite para itens de trabalho sem atividade',
+      thresholdDescription:
+        'Um item de trabalho não concluído é considerado inativo após este número de dias completos sem comentários, edições ou outra atividade registrada.',
+      daysLabel: 'Dias sem atividade',
+      daysHelper: 'Escolha um número inteiro entre 1 e 365.',
+      impact: 'Essa alteração se aplica imediatamente a todos os espaços de trabalho do sistema.',
+      save: 'Salvar limite',
+      saveSuccess: 'Limite de inatividade salvo',
+      saveFailed: 'Falha ao salvar o limite de inatividade',
+      loadFailed: 'Falha ao carregar as configurações de inatividade',
+      validation: 'Insira um número inteiro entre 1 e 365 dias.',
+    },
+
     actionCapabilities: {
       title: 'Capacidades de ação',
       subtitle: 'Gerenciar capacidades provisionadas para nós de ações de automação',

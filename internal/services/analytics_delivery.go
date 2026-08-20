@@ -13,7 +13,6 @@ import (
 
 const (
 	analyticsIDBatchSize = 400
-	analyticsStaleDays   = 14
 	analyticsItemLimit   = 8
 	analyticsMaxDays     = 366
 )
@@ -181,6 +180,10 @@ func (s *AnalyticsService) GetAnalyticsContext(ctx context.Context, params Resol
 	if err != nil {
 		return nil, err
 	}
+	stalenessSettings, err := s.workItemStaleness.Get()
+	if err != nil {
+		return nil, err
+	}
 
 	now := s.now()
 	firstCompletions := analyticsFirstCompletions(data)
@@ -193,7 +196,7 @@ func (s *AnalyticsService) GetAnalyticsContext(ctx context.Context, params Resol
 	return &AnalyticsResult{
 		SchemaVersion: 2,
 		Dataset:       ds.Summary,
-		Health:        analyticsWorkHealth(data, now),
+		Health:        analyticsWorkHealth(data, now, stalenessSettings.StaleAfterDays),
 		Throughput:    analyticsThroughput(data, firstCompletions, params.StartDate, params.EndDate),
 		AgingWIP:      analyticsAgingWIP(data, now),
 		DeliveryTime:  analyticsDeliveryTime(data, firstCompletions, params.StartDate, params.EndDate, now),
@@ -444,9 +447,9 @@ func analyticsFirstCompletions(data *analyticsDeliveryData) map[int]time.Time {
 	return completions
 }
 
-func analyticsWorkHealth(data *analyticsDeliveryData, now time.Time) WorkHealthResult {
+func analyticsWorkHealth(data *analyticsDeliveryData, now time.Time, staleAfterDays int) WorkHealthResult {
 	result := WorkHealthResult{
-		StaleAfterDays: analyticsStaleDays,
+		StaleAfterDays: staleAfterDays,
 		AttentionItems: []AnalyticsItemSummary{},
 		DataQuality:    DataQuality{Sufficient: len(data.Items) > 0},
 	}
@@ -456,7 +459,7 @@ func analyticsWorkHealth(data *analyticsDeliveryData, now time.Time) WorkHealthR
 	}
 
 	nowDate := analyticsUTCDate(now)
-	staleBefore := nowDate.AddDate(0, 0, -analyticsStaleDays)
+	staleBefore := nowDate.AddDate(0, 0, -staleAfterDays)
 	type rankedItem struct {
 		item  analyticsItem
 		flags []string

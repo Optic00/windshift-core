@@ -249,8 +249,9 @@ type CollectionHandlers struct {
 
 // AIHandlers groups AI-related handlers.
 type AIHandlers struct {
-	AI            *handlers.AIHandler
-	LLMConnection *handlers.LLMConnectionHandler
+	AI                *handlers.AIHandler
+	LLMConnection     *handlers.LLMConnectionHandler
+	WorkItemStaleness *handlers.WorkItemStalenessHandler
 }
 
 // TeamHandlers groups team, leave, and on-call handlers.

@@ -146,6 +146,10 @@ export default {
         title: 'Plantillas de agentes',
         description: 'Anular el catálogo de creación de Agent Studio: nombres de plantillas, tipos de perfil e instrucciones',
       },
+      workItemStaleness: {
+        title: 'Métricas de calidad',
+        description: 'Configurar cuándo los elementos de trabajo sin actividad se consideran inactivos',
+      },
 
       actionCapabilities: {
         title: 'Capacidades de acción',
@@ -792,6 +796,22 @@ export default {
       createCustomField: 'Crear campo personalizado',
       customFieldsGlobalNote: 'Los campos personalizados se administran globalmente mediante un administrador del sistema.',
     },
+    workItemStaleness: {
+      title: 'Inactividad de elementos de trabajo',
+      subtitle: 'Usar un único umbral de actividad en los detalles y análisis de elementos de trabajo',
+      thresholdTitle: 'Umbral de elementos de trabajo sin actividad',
+      thresholdDescription:
+        'Un elemento de trabajo sin finalizar se considera inactivo después de este número de días completos sin comentarios, cambios u otra actividad registrada.',
+      daysLabel: 'Días sin actividad',
+      daysHelper: 'Elige un número entero entre 1 y 365.',
+      impact: 'Este cambio se aplica inmediatamente a todos los espacios de trabajo del sistema.',
+      save: 'Guardar umbral',
+      saveSuccess: 'Umbral de inactividad guardado',
+      saveFailed: 'No se pudo guardar el umbral de inactividad',
+      loadFailed: 'No se pudo cargar la configuración de inactividad',
+      validation: 'Introduce un número entero entre 1 y 365 días.',
+    },
+
     actionCapabilities: {
       title: 'Capacidades de acción',
       subtitle: 'Gestionar capacidades aprovisionadas para nodos de acciones de automatización',

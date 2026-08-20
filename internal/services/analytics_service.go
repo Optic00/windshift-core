@@ -18,13 +18,18 @@ var ErrAnalyticsCollectionNotFound = sql.ErrNoRows
 
 // AnalyticsService provides analytics computations for collection/workspace data.
 type AnalyticsService struct {
-	db  database.Database
-	now func() time.Time
+	db                database.Database
+	now               func() time.Time
+	workItemStaleness *WorkItemStalenessService
 }
 
 // NewAnalyticsService creates a new analytics service.
 func NewAnalyticsService(db database.Database) *AnalyticsService {
-	return &AnalyticsService{db: db, now: time.Now}
+	return &AnalyticsService{
+		db:                db,
+		now:               time.Now,
+		workItemStaleness: NewWorkItemStalenessService(db),
+	}
 }
 
 // GetCollectionWorkspaceID returns the workspace_id stored on the given

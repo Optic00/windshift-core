@@ -24,16 +24,18 @@ type ShellBootstrapHandler struct {
 	assets      *AssetHandler
 	hub         *HubHandler
 	channels    channelManagementCapability
+	staleness   *WorkItemStalenessHandler
 }
 
 type ShellBootstrapResponse struct {
-	Features         FeaturesResponse           `json:"features"`
-	ModuleSettings   *models.ModuleSettings     `json:"module_settings,omitempty"`
-	AttachmentStatus *services.AttachmentStatus `json:"attachment_status"`
-	AI               AIStatusResponse           `json:"ai"`
-	HasAssetSets     bool                       `json:"has_asset_sets"`
-	HasActivePortals bool                       `json:"has_active_portals"`
-	ManagesChannels  bool                       `json:"manages_channels"`
+	Features          FeaturesResponse                   `json:"features"`
+	ModuleSettings    *models.ModuleSettings             `json:"module_settings,omitempty"`
+	AttachmentStatus  *services.AttachmentStatus         `json:"attachment_status"`
+	AI                AIStatusResponse                   `json:"ai"`
+	HasAssetSets      bool                               `json:"has_asset_sets"`
+	HasActivePortals  bool                               `json:"has_active_portals"`
+	ManagesChannels   bool                               `json:"manages_channels"`
+	WorkItemStaleness services.WorkItemStalenessSettings `json:"work_item_staleness"`
 }
 
 func NewShellBootstrapHandler(
@@ -44,10 +46,11 @@ func NewShellBootstrapHandler(
 	assets *AssetHandler,
 	hub *HubHandler,
 	channels channelManagementCapability,
+	staleness *WorkItemStalenessHandler,
 ) *ShellBootstrapHandler {
 	return &ShellBootstrapHandler{
 		features: features, setup: setup, attachments: attachments,
-		ai: ai, assets: assets, hub: hub, channels: channels,
+		ai: ai, assets: assets, hub: hub, channels: channels, staleness: staleness,
 	}
 }
 
@@ -57,7 +60,10 @@ func (h *ShellBootstrapHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := ShellBootstrapResponse{AttachmentStatus: &services.AttachmentStatus{}}
+	response := ShellBootstrapResponse{
+		AttachmentStatus:  &services.AttachmentStatus{},
+		WorkItemStaleness: services.DefaultWorkItemStalenessSettings(),
+	}
 	if h.features != nil {
 		response.Features = h.features.Snapshot()
 	}
@@ -102,6 +108,14 @@ func (h *ShellBootstrapHandler) Get(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("shell bootstrap: channel management availability unavailable", "user_id", user.ID, "error", err)
 		} else {
 			response.ManagesChannels = managesChannels
+		}
+	}
+	if h.staleness != nil {
+		settings, err := h.staleness.Settings()
+		if err != nil {
+			slog.Warn("shell bootstrap: work item staleness settings unavailable", "error", err)
+		} else {
+			response.WorkItemStaleness = settings
 		}
 	}
 

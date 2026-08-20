@@ -18,6 +18,7 @@ import {
   llmConnections,
   llmProviders,
   runnerPools,
+  workItemStaleness,
 } from './ai.js';
 import { analytics } from './analytics.js';
 import { approvalSets } from './approvalSets.js';
@@ -453,6 +454,9 @@ export const api = {
 
   // AI features config (admin)
   aiFeatures,
+
+  // Shared work item staleness threshold (admin)
+  workItemStaleness,
 
   // LLM connection management (admin)
   llmConnections,

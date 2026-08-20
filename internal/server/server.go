@@ -1227,6 +1227,10 @@ func (s *Server) initialize() error {
 	systemHandler := handlers.NewSystemHandler(shutdownChan)
 
 	llmConnHandler := handlers.NewLLMConnectionHandler(llmManager, logger.NewAuditor(s.db), llmModelCache, llmModelRefresher)
+	workItemStalenessHandler := handlers.NewWorkItemStalenessHandler(
+		services.NewWorkItemStalenessService(s.db),
+		logger.NewAuditor(s.db),
+	)
 	aiHandler := handlers.NewAIHandler(
 		s.db,
 		llmManager,
@@ -1255,6 +1259,7 @@ func (s *Server) initialize() error {
 		assetHandler,
 		hubHandler,
 		channelService,
+		workItemStalenessHandler,
 	)
 
 	s.briefingScheduler = scheduler.NewBriefingScheduler(s.db, llmManager, permService, timePermissionService, services.NewUserReadService(s.db), promptStore)
@@ -1564,8 +1569,9 @@ func (s *Server) initialize() error {
 			TestCoverage: testCoverageHandler,
 		},
 		AI: routes.AIHandlers{
-			AI:            aiHandler,
-			LLMConnection: llmConnHandler,
+			AI:                aiHandler,
+			LLMConnection:     llmConnHandler,
+			WorkItemStaleness: workItemStalenessHandler,
 		},
 		Misc: routes.MiscHandlers{
 			Homepage:      homepageHandler,

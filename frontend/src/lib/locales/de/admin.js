@@ -147,6 +147,10 @@ export default {
         title: 'Agent-Vorlagen',
         description: 'Den Agent-Studio-Erstellungskatalog überschreiben: Vorlagennamen, Profiltypen und Anweisungen',
       },
+      workItemStaleness: {
+        title: 'Qualitätsmetriken',
+        description: 'Festlegen, wann unbearbeitete Arbeitselemente als inaktiv gelten',
+      },
 
       aiFeatures: {
         title: 'KI-Funktionen',
@@ -796,6 +800,22 @@ export default {
         },
       },
     },
+    workItemStaleness: {
+      title: 'Inaktivität von Arbeitselementen',
+      subtitle: 'Einen Aktivitätsgrenzwert für Arbeitselementdetails und Analysen verwenden',
+      thresholdTitle: 'Grenzwert für unbearbeitete Arbeitselemente',
+      thresholdDescription:
+        'Ein nicht abgeschlossenes Arbeitselement gilt nach dieser Anzahl voller Tage ohne Kommentare, Änderungen oder andere erfasste Aktivität als inaktiv.',
+      daysLabel: 'Tage ohne Aktivität',
+      daysHelper: 'Wählen Sie eine ganze Zahl zwischen 1 und 365.',
+      impact: 'Diese Änderung gilt systemweit für alle Arbeitsbereiche und wird sofort wirksam.',
+      save: 'Grenzwert speichern',
+      saveSuccess: 'Grenzwert für die Inaktivität von Arbeitselementen gespeichert',
+      saveFailed: 'Grenzwert für die Inaktivität von Arbeitselementen konnte nicht gespeichert werden',
+      loadFailed: 'Einstellungen zur Inaktivität von Arbeitselementen konnten nicht geladen werden',
+      validation: 'Geben Sie eine ganze Zahl zwischen 1 und 365 Tagen ein.',
+    },
+
     actionCapabilities: {
       title: 'Aktionsfähigkeiten',
       subtitle: 'Bereitgestellte Fähigkeiten für Automatisierungsaktionsknoten verwalten',

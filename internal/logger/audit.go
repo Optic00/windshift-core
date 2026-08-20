@@ -394,7 +394,8 @@ const (
 	ActionThemeActivate = "theme.activate"
 
 	// Module settings
-	ActionModuleSettingsUpdate = "module_settings.update"
+	ActionModuleSettingsUpdate    = "module_settings.update"
+	ActionWorkItemStalenessUpdate = "work_item_staleness.update"
 
 	// API Token management
 	ActionAPITokenCreate      = "api_token.create"
@@ -824,6 +825,7 @@ const (
 	ResourceIntegrationProvider  = "integration_provider"
 	ResourceIntegrationItemLink  = "integration_item_link"
 	ResourceIssueSyncConfig      = "issue_sync_config"
+	ResourceWorkItemStaleness    = "work_item_staleness"
 	ResourceEmailProvider        = "email_provider"
 	ResourceWebAuthn             = "webauthn"
 	ResourceCredential           = "credential"

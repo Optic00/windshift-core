@@ -27,6 +27,7 @@ export { testingStore } from './testing.svelte.js';
 export { timeEntryStore } from './timeEntryStore.svelte.js';
 export { uiStore } from './ui.svelte.js';
 export { workItemFormStore } from './workItemFormStore.svelte.js';
+export { workItemStalenessSettings } from './workItemStalenessSettings.svelte.js';
 export { workspaceDataStore } from './workspaceDataStore.svelte.js';
 export { workspacePathStore } from './workspacePathStore.svelte.js';
 export { workspacePermissions } from './workspacePermissions.svelte.js';

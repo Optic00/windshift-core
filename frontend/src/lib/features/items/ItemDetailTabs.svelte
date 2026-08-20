@@ -21,7 +21,7 @@
   // Direct store access for the child-item rollup keeps the time-tab logic
   // co-located and avoids threading four extra props through ItemDetail and
   // ItemDetailContent for a feature that only lives in this tab.
-  import { itemDetailStore, workspaceDataStore } from '../../stores';
+  import { itemDetailStore, workItemStalenessSettings, workspaceDataStore } from '../../stores';
 
   let {
     item,
@@ -90,7 +90,6 @@
   );
   const overBudget = $derived(hasEstimate && totalLoggedMinutes > estimateMinutes);
 
-  const STALE_AFTER_DAYS = 14;
   const DUE_SOON_DAYS = 7;
 
   function getElapsedDays(value) {
@@ -116,7 +115,7 @@
     if (days === null) {
       return { state: 'unknown', days: null, variant: 'neutral' };
     }
-    if (days >= STALE_AFTER_DAYS) {
+    if (days >= workItemStalenessSettings.staleAfterDays) {
       return { state: 'stale', days, variant: 'warning' };
     }
     return { state: 'active', days, variant: 'success' };

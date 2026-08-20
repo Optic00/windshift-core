@@ -47,6 +47,11 @@ export const aiFeatures = {
   updateConfig: (data) => put('/admin/ai-features', data),
 };
 
+export const workItemStaleness = {
+  get: () => get('/admin/work-item-staleness'),
+  update: (data) => put('/admin/work-item-staleness', data),
+};
+
 export const llmConnections = {
   getAll: () => get('/admin/llm-connections'),
   get: (id) => get(`/admin/llm-connections/${id}`),

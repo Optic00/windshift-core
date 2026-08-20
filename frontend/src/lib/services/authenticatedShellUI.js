@@ -7,6 +7,7 @@ import { logbookStore } from '../stores/logbook.svelte.js';
 import { moduleSettings } from '../stores/moduleSettings.js';
 import { permissionStore } from '../stores/permissions.svelte.js';
 import { themeStore } from '../stores/theme.svelte.js';
+import { workItemStalenessSettings } from '../stores/workItemStalenessSettings.svelte.js';
 import { workspaceDataStore } from '../stores/workspaceDataStore.svelte.js';
 import { currentWorkspace, workspacesStore } from '../stores/workspaces.svelte.js';
 
@@ -20,6 +21,7 @@ export function hydrateAuthenticatedShellUI(bootstrap) {
   aiStore.hydrate(bootstrap.ai);
   capabilitiesStore.hydrate(bootstrap.features);
   logbookStore.hydrateAvailability(bootstrap.features?.logbook_available);
+  workItemStalenessSettings.hydrate(bootstrap.work_item_staleness);
   permissionStore.setLogbookAvailable(bootstrap.features?.logbook_available === true);
   permissionStore.setHasAssetSets(bootstrap.has_asset_sets === true);
   permissionStore.setHasActivePortals(bootstrap.has_active_portals === true);

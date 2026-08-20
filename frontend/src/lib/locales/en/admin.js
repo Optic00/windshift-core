@@ -108,6 +108,10 @@ export default {
         title: 'AI Connections',
         description: 'Configure AI model providers for intelligent features',
       },
+      workItemStaleness: {
+        title: 'Quality Metrics',
+        description: 'Configure when untouched work items are considered stale',
+      },
       agentTemplates: {
         title: 'Agent Templates',
         description: 'Override the Agent Studio creation catalog: template names, profile types, and instructions',
@@ -771,6 +775,22 @@ export default {
             'AI-powered document classification, cleaning, and article generation for logbook',
         },
       },
+    },
+
+    workItemStaleness: {
+      title: 'Work Item Staleness',
+      subtitle: 'Use one activity threshold across work item details and analytics',
+      thresholdTitle: 'Untouched work item threshold',
+      thresholdDescription:
+        'An unfinished work item becomes stale after this many full days without comments, edits, or other recorded activity.',
+      daysLabel: 'Days without activity',
+      daysHelper: 'Choose a whole number from 1 to 365.',
+      impact: 'This change applies system-wide to all workspaces and takes effect immediately.',
+      save: 'Save threshold',
+      saveSuccess: 'Work item staleness threshold saved',
+      saveFailed: 'Failed to save work item staleness threshold',
+      loadFailed: 'Failed to load work item staleness settings',
+      validation: 'Enter a whole number between 1 and 365 days.',
     },
 
     // Action Capabilities
