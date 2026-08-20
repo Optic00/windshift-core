@@ -340,7 +340,11 @@ func (r *WorkspaceRepository) AssignTimeProjectIfUnset(workspaceID, timeProjectI
 // Delete removes a workspace by ID
 func (r *WorkspaceRepository) Delete(id int) error {
 	_, err := r.db.ExecWrite("DELETE FROM workspaces WHERE id = ?", id)
-	return err
+	if err != nil {
+		return err
+	}
+	InvalidateItemListCountCache(r.db, id)
+	return nil
 }
 
 // FindMissingOrPersonal accepts a set of workspace IDs and returns those that

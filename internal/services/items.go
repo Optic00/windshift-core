@@ -484,7 +484,7 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 		}
 		maybeTriggerAssigneeRun(params.WorkspaceID, itemID, nil, params.AssigneeID, triggeredBy)
 	}
-	repository.InvalidateItemListCountCache(db)
+	repository.InvalidateItemListCountCache(db, params.WorkspaceID)
 
 	// Live-update publish (WI-483): the insert has committed. Announce the new
 	// item, and refresh the parent's child list if this item has a parent.

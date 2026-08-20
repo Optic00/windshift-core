@@ -156,6 +156,9 @@ func OffboardUser(db database.Database, userID int, notificationDeleter UserNoti
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("failed to commit offboarding transaction: %w", err)
 	}
+	if personalWsID != nil {
+		repository.InvalidateItemListCountCache(db, *personalWsID)
+	}
 
 	if notificationDeleter != nil {
 		if err := notificationDeleter.DeleteUserNotifications(userID); err != nil {

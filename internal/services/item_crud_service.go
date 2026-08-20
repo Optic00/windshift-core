@@ -79,6 +79,7 @@ func (s *ItemCRUDService) DeleteSingle(itemID int) error {
 	// parent's child list after commit (WI-483). Best-effort: a lookup failure
 	// just means no parent refresh.
 	parentID, _ := s.repo.GetParentID(itemID)
+	workspaceID, _ := s.repo.GetWorkspaceID(itemID)
 	if err := database.WithTx(s.db, func(tx database.Tx) error {
 		if err := s.repo.DeleteItemLinks(tx, itemID); err != nil {
 			return err
@@ -90,6 +91,7 @@ func (s *ItemCRUDService) DeleteSingle(itemID int) error {
 	}); err != nil {
 		return err
 	}
+	repository.InvalidateItemListCountCache(s.db, workspaceID)
 
 	// Live-update publish (WI-483): the delete has committed.
 	PublishItemChange(itemID, ItemChangeDeleted)
@@ -109,6 +111,7 @@ func (s *ItemCRUDService) Delete(itemID int) (*DeleteResult, error) {
 		}
 		return nil, err
 	}
+	workspaceID, _ := s.repo.GetWorkspaceID(itemID)
 
 	// Get all descendant IDs for cascade operations
 	descendantIDs, err := s.repo.GetDescendantIDs(itemID)
@@ -149,6 +152,7 @@ func (s *ItemCRUDService) Delete(itemID int) (*DeleteResult, error) {
 	}); err != nil {
 		return nil, err
 	}
+	repository.InvalidateItemListCountCache(s.db, workspaceID)
 
 	// Live-update publish (WI-483): the cascade delete committed. Announce every
 	// removed item (so anyone viewing a descendant reconciles) and refresh the

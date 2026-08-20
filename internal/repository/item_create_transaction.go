@@ -99,6 +99,6 @@ func (r *ItemRepository) CreateWithRetry(
 	if err != nil {
 		return 0, err
 	}
-	InvalidateItemListCountCache(r.db)
+	InvalidateItemListCountCache(r.db, item.WorkspaceID)
 	return itemID, nil
 }

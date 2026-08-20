@@ -795,7 +795,6 @@ func (r *ItemRepository) Create(tx database.Tx, item *models.Item) (int, error) 
 		return 0, fmt.Errorf("failed to create item: %w", err)
 	}
 
-	invalidateItemListCountCache(r.db)
 	return int(id), nil
 }
 
@@ -824,7 +823,6 @@ func (r *ItemRepository) Update(tx database.Tx, item *models.Item) error {
 		return fmt.Errorf("failed to update item: %w", err)
 	}
 
-	invalidateItemListCountCache(r.db)
 	return nil
 }
 
@@ -892,7 +890,6 @@ func (r *ItemRepository) UpdateFields(tx database.Tx, itemID int, fields map[str
 	if err != nil {
 		return fmt.Errorf("failed to update item fields: %w", err)
 	}
-	invalidateItemListCountCache(r.db)
 	return nil
 }
 
@@ -961,7 +958,6 @@ func (r *ItemRepository) Delete(tx database.Tx, id int) error {
 	if err != nil {
 		return fmt.Errorf("failed to delete item: %w", err)
 	}
-	invalidateItemListCountCache(r.db)
 	return nil
 }
 

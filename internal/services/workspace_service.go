@@ -194,7 +194,7 @@ func (s *WorkspaceService) Create(ctx context.Context, params CreateWorkspacePar
 		}
 
 		if result.ItemsCopied > 0 || result.TemplatesCopied > 0 || result.ConfigSetAttached {
-			repository.InvalidateItemListCountCache(s.db)
+			repository.InvalidateItemListCountCache(s.db, result.Workspace.ID)
 			logWorkspaceCloneResult(result, time.Since(started))
 		}
 		return result, nil

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"reflect"
-	"strings"
 	"sync"
 	"time"
 
@@ -16,7 +15,10 @@ import (
 // Item list totals are shared by the many authenticated readers of the same
 // workspace. A short TTL absorbs the thundering herd caused by a page refresh
 // while mutation invalidation keeps local writes immediately observable.
-const itemListCountCacheTTL = 2 * time.Second
+const (
+	itemListCountCacheTTL         = 2 * time.Second
+	itemListCountCacheLoadTimeout = 12 * time.Second
+)
 
 type itemListCountCacheEntry struct {
 	count     int
@@ -25,9 +27,11 @@ type itemListCountCacheEntry struct {
 
 var itemListCountCache = struct {
 	sync.Mutex
-	entries map[string]itemListCountCacheEntry
+	entries     map[string]itemListCountCacheEntry
+	generations map[string]uint64
 }{
-	entries: make(map[string]itemListCountCacheEntry),
+	entries:     make(map[string]itemListCountCacheEntry),
+	generations: make(map[string]uint64),
 }
 
 var itemListCountFlights singleflight.Group
@@ -58,17 +62,22 @@ func cachedItemListCount(ctx context.Context, db database.Database, workspaceID 
 			itemListCountCache.Unlock()
 			return entry.count, nil
 		}
+		generation := itemListCountCache.generations[key]
 		itemListCountCache.Unlock()
 
+		loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), itemListCountCacheLoadTimeout)
+		defer cancel()
 		var count int
-		if err := db.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
+		if err := db.QueryRowContext(loadCtx, query, args...).Scan(&count); err != nil {
 			return 0, err
 		}
 
 		itemListCountCache.Lock()
-		itemListCountCache.entries[key] = itemListCountCacheEntry{
-			count:     count,
-			expiresAt: time.Now().Add(itemListCountCacheTTL),
+		if itemListCountCache.generations[key] == generation {
+			itemListCountCache.entries[key] = itemListCountCacheEntry{
+				count:     count,
+				expiresAt: time.Now().Add(itemListCountCacheTTL),
+			}
 		}
 		itemListCountCache.Unlock()
 		return count, nil
@@ -90,21 +99,22 @@ func cachedItemListCount(ctx context.Context, db database.Database, workspaceID 
 	}
 }
 
-// invalidateItemListCountCache drops totals for one database after a local
-// item mutation. Other replicas are bounded by the short TTL above.
-func invalidateItemListCountCache(db database.Database) {
-	prefix := itemListCountCacheDBKey(db) + ":workspace:"
-	itemListCountCache.Lock()
-	for key := range itemListCountCache.entries {
-		if strings.HasPrefix(key, prefix) {
-			delete(itemListCountCache.entries, key)
-		}
+// invalidateItemListCountCache drops one workspace total after a committed
+// membership change. Other replicas are bounded by the short TTL above.
+func invalidateItemListCountCache(db database.Database, workspaceID int) {
+	if workspaceID <= 0 {
+		return
 	}
+	key := itemListCountCacheKey(db, workspaceID)
+	itemListCountCache.Lock()
+	itemListCountCache.generations[key]++
+	delete(itemListCountCache.entries, key)
+	itemListCountFlights.Forget(key)
 	itemListCountCache.Unlock()
 }
 
 // InvalidateItemListCountCache makes a committed item mutation immediately
 // visible to the unfiltered workspace-list total cache.
-func InvalidateItemListCountCache(db database.Database) {
-	invalidateItemListCountCache(db)
+func InvalidateItemListCountCache(db database.Database, workspaceID int) {
+	invalidateItemListCountCache(db, workspaceID)
 }

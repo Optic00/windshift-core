@@ -273,17 +273,20 @@ func (s *ItemAttachmentService) RollbackPublicFormItem(itemID int) error {
 	}
 	_ = rows.Close()
 
+	itemRepo := repository.NewItemRepository(s.db)
+	workspaceID, _ := itemRepo.GetWorkspaceID(itemID)
 	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin public form item rollback: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err := repository.NewItemRepository(s.db).Delete(tx, itemID); err != nil {
+	if err := itemRepo.Delete(tx, itemID); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit public form item rollback: %w", err)
 	}
+	repository.InvalidateItemListCountCache(s.db, workspaceID)
 	for _, path := range paths {
 		if err := fileserve.RemoveUnderRoot(s.attachmentPath, path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			slog.Warn("failed to remove rolled-back public form attachment", slog.String("component", "attachments"), slog.String("file_path", path), slog.Any("error", err))

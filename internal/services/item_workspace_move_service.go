@@ -639,6 +639,8 @@ func (s *ItemWorkspaceMoveService) MoveContext(ctx context.Context, itemID, acto
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit item workspace move: %w", err)
 	}
+	repository.InvalidateItemListCountCache(s.db, item.WorkspaceID)
+	repository.InvalidateItemListCountCache(s.db, input.DestinationWorkspaceID)
 
 	updated, err := repository.NewItemRepository(s.db).FindByIDWithDetails(itemID)
 	if err != nil {
