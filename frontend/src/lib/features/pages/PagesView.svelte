@@ -901,9 +901,11 @@
   .page-frame {
     --page-gutter: clamp(1rem, 4cqi, 3rem);
     --page-reading-width: 75ch;
+    --page-minimum-canvas-width: 75%;
     width: 100%;
-    max-width: calc(
-      var(--page-reading-width) + var(--page-gutter) + var(--page-gutter)
+    max-width: max(
+      var(--page-minimum-canvas-width),
+      calc(var(--page-reading-width) + var(--page-gutter) + var(--page-gutter))
     );
     margin: 0 auto;
     padding: 0;
@@ -915,9 +917,12 @@
   }
 
   .page-frame.has-toc {
-    max-width: calc(
-      var(--page-reading-width) + 220px + 2rem + var(--page-gutter) +
-        var(--page-gutter) + var(--page-gutter)
+    max-width: max(
+      var(--page-minimum-canvas-width),
+      calc(
+        var(--page-reading-width) + 220px + 2rem + var(--page-gutter) +
+          var(--page-gutter) + var(--page-gutter)
+      )
     );
   }
 
