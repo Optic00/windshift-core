@@ -125,7 +125,8 @@ func (r *WorkspaceTemplateRepository) ListTemplateSummaries(ctx context.Context)
 func (r *WorkspaceTemplateRepository) LoadTemplateEligibilityTx(ctx context.Context, tx database.Tx, workspaceID int) (*TemplateEligibility, error) {
 	var eligibility TemplateEligibility
 	err := tx.QueryRowContext(ctx, `
-		SELECT id, active, is_personal, is_template FROM workspaces WHERE id = ?
+		SELECT id, COALESCE(active, false), COALESCE(is_personal, false), COALESCE(is_template, false)
+		FROM workspaces WHERE id = ?
 	`, workspaceID).Scan(&eligibility.ID, &eligibility.Active, &eligibility.IsPersonal, &eligibility.IsTemplate)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -271,7 +272,7 @@ func (r *WorkspaceTemplateRepository) CountWorkspaceItemsTx(ctx context.Context,
 // number order.
 func (r *WorkspaceTemplateRepository) ListSeedItemsTx(ctx context.Context, tx database.Tx, workspaceID int) ([]TemplateCloneItem, error) {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT id, item_type_id, title, description, is_task, status_id, priority_id,
+		SELECT id, item_type_id, title, description, COALESCE(is_task, false), status_id, priority_id,
 		       start_date, due_date, end_date, story_points, estimate_minutes,
 		       frac_index, custom_field_values, parent_id, related_work_item_id
 		FROM items

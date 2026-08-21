@@ -194,4 +194,6 @@ blog/
 /cmd/ws/ws
 /playground
 /docs
+!/docs/
+!/docs/metrics.md
 /CONTEXT.md

@@ -18,6 +18,47 @@ const (
 // ErrRoadmapHierarchyRootLimit identifies requests with too many root items.
 var ErrRoadmapHierarchyRootLimit = errors.New("roadmap hierarchy root limit exceeded")
 
+// GetRoadmapHierarchyRootWorkspaceIDs resolves the owning workspace for each
+// existing root so callers can authorize roots before expanding their trees.
+func (r *ItemRepository) GetRoadmapHierarchyRootWorkspaceIDs(ctx context.Context, rootIDs []int) (map[int]int, error) {
+	ids := uniquePositiveInts(rootIDs)
+	if len(ids) == 0 {
+		return map[int]int{}, nil
+	}
+	if len(ids) > maxRoadmapHierarchyRoots {
+		return nil, fmt.Errorf("%w (max %d)", ErrRoadmapHierarchyRootLimit, maxRoadmapHierarchyRoots)
+	}
+
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	args := make([]any, 0, len(ids))
+	for _, id := range ids {
+		args = append(args, id)
+	}
+
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, workspace_id
+		FROM items
+		WHERE id IN (`+placeholders+`)
+	`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query roadmap hierarchy root workspaces: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	workspaceIDs := make(map[int]int, len(ids))
+	for rows.Next() {
+		var itemID, workspaceID int
+		if err := rows.Scan(&itemID, &workspaceID); err != nil {
+			return nil, fmt.Errorf("scan roadmap hierarchy root workspace: %w", err)
+		}
+		workspaceIDs[itemID] = workspaceID
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate roadmap hierarchy root workspaces: %w", err)
+	}
+	return workspaceIDs, nil
+}
+
 // GetRoadmapHierarchyDates returns the requested roots and their descendants.
 // The result is intentionally minimal and capped for predictable roadmap loads.
 func (r *ItemRepository) GetRoadmapHierarchyDates(ctx context.Context, rootIDs []int) ([]models.RoadmapHierarchyDate, bool, error) {
@@ -45,6 +86,7 @@ func (r *ItemRepository) GetRoadmapHierarchyDates(ctx context.Context, rootIDs [
 			SELECT child.id, child.workspace_id, child.parent_id, child.start_date, child.end_date
 			FROM items child
 			JOIN hierarchy parent ON child.parent_id = parent.id
+				AND child.workspace_id = parent.workspace_id
 		)
 		SELECT DISTINCT id, workspace_id, parent_id, start_date, end_date
 		FROM hierarchy

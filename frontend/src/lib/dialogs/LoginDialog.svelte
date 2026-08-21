@@ -11,6 +11,7 @@
   import Input from '../components/Input.svelte';
   import Label from '../components/Label.svelte';
   import AlertBox from '../components/AlertBox.svelte';
+  import Spinner from '../components/Spinner.svelte';
   import {
     isWebAuthnSupported
   } from '../utils/webauthn-utils.js';
@@ -37,6 +38,7 @@
   let showFidoOption = $state(false);
   let ssoError = $state(null);
   let ssoRequiredMessage = $state(null);
+  let loginOptionsReady = $state(false);
 
   // Auth policy status (fetched on mount)
   let policyStatus = $state({
@@ -50,12 +52,16 @@
 
   // Initialize SSO status and auth policy on mount
   onMount(async () => {
-    await Promise.all([
-      ssoStore.initStatus(),
-      loadPolicyStatus()
-    ]);
-    // Check for SSO error in URL (after callback redirect)
-    ssoError = ssoStore.checkForError();
+    try {
+      await Promise.all([
+        ssoStore.initStatus(),
+        loadPolicyStatus()
+      ]);
+      // Check for SSO error in URL (after callback redirect)
+      ssoError = ssoStore.checkForError();
+    } finally {
+      loginOptionsReady = true;
+    }
   });
 
   // Load public policy status
@@ -252,6 +258,15 @@
       <AlertBox variant="error" message={$authStore.error} class="mb-4" />
     {/if}
 
+    {#if !loginOptionsReady}
+      <div
+        class="flex min-h-40 items-center justify-center gap-3 text-sm text-[var(--ds-text-subtle)]"
+        data-testid="login-options-loading"
+      >
+        <Spinner size="sm" />
+        <span>{t('common.loading')}</span>
+      </div>
+    {:else}
     <!-- Keep the session choice in front of SSO so it also remains available
          when the authentication policy hides the password form. -->
     {#if $ssoStore.enabled && !$ssoStore.statusLoading}
@@ -367,7 +382,11 @@
     {:else}
 
     <!-- Login Form -->
-    <form onsubmit={(e) => { e.preventDefault(); handleSubmit(); }} class="space-y-4">
+    <form
+      onsubmit={(e) => { e.preventDefault(); handleSubmit(); }}
+      class="space-y-4"
+      data-testid="login-password-form"
+    >
       <!-- Email/Username Field -->
       <div>
         <Label for="emailOrUsername" color="default" class="mb-1">
@@ -478,6 +497,7 @@
         {$authStore.loading ? t('auth.loggingIn') : t('auth.signIn')}
       </Button>
     </form>
+    {/if}
     {/if}
   </div>
   </div>

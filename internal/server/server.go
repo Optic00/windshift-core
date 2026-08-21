@@ -32,6 +32,7 @@ import (
 	"windshift/internal/llm"
 	"windshift/internal/logger"
 	mcpserver "windshift/internal/mcp"
+	appmetrics "windshift/internal/metrics"
 	"windshift/internal/middleware"
 	"windshift/internal/models"
 	"windshift/internal/plugins"
@@ -98,6 +99,7 @@ type Server struct {
 	databasePoolMonitor          *services.DatabasePoolMonitor
 	channelService               *services.ChannelService
 	memoryBudget                 config.MemoryBudget
+	metrics                      *appmetrics.Metrics
 
 	loginRateLimiter      *middleware.RateLimiter
 	runnerRegisterLimiter *middleware.RateLimiter
@@ -370,6 +372,8 @@ func (s *Server) initialize() error {
 	healthHandler := health.NewHandler(s.db.GetDB())
 	mux.HandleFunc("GET /healthz", healthHandler.Liveness)
 	mux.HandleFunc("GET /readyz", healthHandler.Readiness)
+	s.metrics = appmetrics.New(s.db)
+	mux.Handle("GET /metrics", s.metrics.Handler())
 
 	nmCfg := handlers.DefaultNotificationManagerConfig()
 	nmCfg.MaxCacheSize = s.memoryBudget.NotificationCacheMB
@@ -1746,10 +1750,11 @@ func (s *Server) initialize() error {
 	jiraHosts := NewJiraHostAllowlist(s.db, 60*time.Second)
 	go jiraHosts.Start(s.jiraHostStopChan)
 
-	// Apply middleware (recovery is outermost to catch all panics)
+	// Recovery converts panics before the metrics layer records the final status.
 	securityMiddleware := createSecurityHeaders(enableHTTPS, cfg.UseProxy, additionalProxyIPs, jiraHosts.Allowed)
 	compressionMiddleware := middleware.CreateCompressionMiddleware(cfg.UseProxy)
-	handler := middleware.Recovery(compressionMiddleware(securityMiddleware(mux)))
+	applicationHandler := middleware.Recovery(compressionMiddleware(securityMiddleware(s.metrics.CaptureRoutePattern(mux))))
+	handler := s.metrics.Instrument(applicationHandler)
 	handler = withContextPath(handler, cfg.ContextPath)
 
 	// Create HTTP server
@@ -2258,7 +2263,10 @@ func (s *Server) runSCMRepoSync(scmSyncService *scm.SyncService) {
 		select {
 		case <-ticker.C:
 			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
-			if err := scmSyncService.SyncAllRepositories(ctx); err != nil {
+			started := time.Now()
+			err := scmSyncService.SyncAllRepositories(ctx)
+			s.metrics.ObserveSCMPoll("repository_sync", time.Since(started), err)
+			if err != nil {
 				slog.Error("SCM sync error", "error", err)
 			}
 			cancel()
@@ -2281,7 +2289,10 @@ func (s *Server) runSCMLinkRefresh(scmSyncService *scm.SyncService) {
 		select {
 		case <-ticker.C:
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			if err := scmSyncService.RefreshAllPRLinkStates(ctx); err != nil {
+			started := time.Now()
+			err := scmSyncService.RefreshAllPRLinkStates(ctx)
+			s.metrics.ObserveSCMPoll("pull_request_refresh", time.Since(started), err)
+			if err != nil {
 				slog.Error("PR state refresh error", "error", err)
 			}
 			cancel()
@@ -2391,7 +2402,10 @@ func (s *Server) runIssueSync(issueSyncService *scm.IssueSyncService) {
 		select {
 		case <-ticker.C:
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-			if err := issueSyncService.SyncAll(ctx); err != nil {
+			started := time.Now()
+			err := issueSyncService.SyncAll(ctx)
+			s.metrics.ObserveSCMPoll("issue_sync", time.Since(started), err)
+			if err != nil {
 				slog.Error("Issue sync error", "error", err)
 			}
 			cancel()

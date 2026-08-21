@@ -228,12 +228,6 @@ func (h *WorkspaceHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	keyExists, err := h.workspaceService.KeyExists(req.Key)
-	if err == nil && keyExists {
-		h.RespondError(w, r, restapi.NewAPIError(http.StatusConflict, restapi.ErrCodeAlreadyExists, "Workspace key already exists"))
-		return
-	}
-
 	result, err := h.workspaceService.Create(r.Context(), services.CreateWorkspaceParams{
 		Name:                req.Name,
 		Key:                 req.Key,
@@ -244,6 +238,10 @@ func (h *WorkspaceHandler) Create(w http.ResponseWriter, r *http.Request) {
 		TemplateWorkspaceID: req.TemplateWorkspaceID,
 	})
 	if err != nil {
+		if errors.Is(err, repository.ErrDuplicateEntry) {
+			h.RespondError(w, r, restapi.NewAPIError(http.StatusConflict, restapi.ErrCodeAlreadyExists, "Workspace key already exists"))
+			return
+		}
 		if errors.Is(err, services.ErrTemplateWorkspaceNotFound) {
 			h.RespondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeTemplateWorkspaceNotFound, "Template workspace not found or not visible"))
 			return
