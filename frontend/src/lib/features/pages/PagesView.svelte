@@ -639,7 +639,6 @@
     <div
       class="page-frame"
       class:canvas-expanded={canvasExpanded}
-      class:has-toc={mode === 'read' && headings.length > 0}
       data-testid="page-canvas"
       data-width={canvasExpanded ? 'wide' : 'comfortable'}
     >
@@ -657,6 +656,7 @@
             id="page-title-input"
             bind:inputRef={titleInputEl}
             class="title-input"
+            variant="ghost"
             type="text"
             value={draftTitle}
             oninput={onTitleInput}
@@ -900,13 +900,8 @@
 
   .page-frame {
     --page-gutter: clamp(1rem, 4cqi, 3rem);
-    --page-reading-width: 75ch;
-    --page-minimum-canvas-width: 75%;
     width: 100%;
-    max-width: max(
-      var(--page-minimum-canvas-width),
-      calc(var(--page-reading-width) + var(--page-gutter) + var(--page-gutter))
-    );
+    max-width: none;
     margin: 0 auto;
     padding: 0;
     display: flex;
@@ -916,18 +911,14 @@
     min-height: 0;
   }
 
-  .page-frame.has-toc {
-    max-width: max(
-      var(--page-minimum-canvas-width),
-      calc(
-        var(--page-reading-width) + 220px + 2rem + var(--page-gutter) +
-          var(--page-gutter) + var(--page-gutter)
-      )
-    );
-  }
-
   .page-frame.canvas-expanded {
     max-width: none;
+  }
+
+  @media (min-width: 1281px) {
+    .page-frame:not(.canvas-expanded) {
+      max-width: 75%;
+    }
   }
 
   .empty-page {

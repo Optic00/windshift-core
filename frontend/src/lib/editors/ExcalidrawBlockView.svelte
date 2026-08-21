@@ -133,9 +133,9 @@
   .excalidraw-block {
     display: block;
     margin: 0.75rem 0;
-    border: 1px solid var(--border-color, #d1d5db);
+    border: 1px solid var(--ds-border);
     border-radius: 6px;
-    background: var(--surface-1, #fff);
+    background: var(--ds-surface-raised);
     overflow: hidden;
   }
   .excalidraw-block__canvas {
@@ -157,21 +157,21 @@
     display: flex;
     gap: 6px;
     align-items: center;
-    color: var(--text-muted, #6b7280);
+    color: var(--ds-text-subtle);
     font-size: 0.875rem;
   }
   .excalidraw-block__placeholder.error {
-    color: var(--danger-color, #b91c1c);
+    color: var(--ds-text-danger);
   }
   .excalidraw-block__caption {
     display: flex;
     align-items: center;
     justify-content: space-between;
     padding: 6px 10px;
-    border-top: 1px solid var(--border-color, #d1d5db);
-    background: var(--surface-2, #f9fafb);
+    border-top: 1px solid var(--ds-border);
+    background: var(--ds-surface-hovered);
     font-size: 0.8125rem;
-    color: var(--text-muted, #4b5563);
+    color: var(--ds-text-subtle);
   }
   .excalidraw-block__name {
     overflow: hidden;
@@ -195,8 +195,8 @@
     align-items: center;
   }
   .excalidraw-block__action:hover {
-    background: var(--surface-3, #e5e7eb);
-    border-color: var(--border-color, #d1d5db);
+    background: var(--ds-surface-raised-hovered);
+    border-color: var(--ds-border);
   }
   .excalidraw-block__delete {
     color: var(--ds-text-danger, #b91c1c);
