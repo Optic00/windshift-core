@@ -102,10 +102,11 @@ import NativeSelect from '../../components/NativeSelect.svelte';
     onDeleted: () => itemDetailStore.markDeleted(),
   });
 
-  // Abort store-owned requests before the browser tears down the document.
-  // Component destruction can happen too late for fetch to retain AbortError
-  // semantics during a full page navigation.
-  useEventListener(() => window, 'pagehide', () => itemDetailStore.reset());
+  // Abort requests during a real unload, but keep the loaded detail when the
+  // browser suspends this page for back-forward navigation.
+  useEventListener(() => window, 'pagehide', (event) => {
+    if (!event.persisted) itemDetailStore.reset();
+  });
 
   // Close the detail when the open item is deleted. Consume the shared flag
   // before closing so the next detail does not inherit the deletion state.
