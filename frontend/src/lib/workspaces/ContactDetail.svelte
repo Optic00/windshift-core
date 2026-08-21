@@ -1,7 +1,8 @@
 <script>
   import { onMount } from 'svelte';
-  import { IconArrowLeft as ArrowLeft, IconUsers as Users, IconMail as Mail, IconPhone as Phone, IconEdit as Edit2, IconSend as Send, IconMessage as MessageCircle } from '@tabler/icons-svelte-runes';
+  import { IconArrowLeft as ArrowLeft, IconUsers as Users, IconMail as Mail, IconPhone as Phone, IconEdit as Edit2, IconSend as Send, IconMessage as MessageCircle, IconTrash as Trash2, IconDots as MoreHorizontal } from '@tabler/icons-svelte-runes';
   import { api } from '../api.js';
+  import { confirm } from '../composables/useConfirm.js';
   import { errorToast } from '../stores/toasts.svelte.js';
   import Button from '../components/Button.svelte';
   import Avatar from '../components/Avatar.svelte';
@@ -17,12 +18,14 @@
   import { formatAuthenticatedDateTime } from '../utils/authenticatedDateFormatter.js';
   import { itemUrl } from '../utils/urls.js';
   import { getChannelTypeIcon } from '../features/channels/channelTypes.js';
+  import DropdownMenu from '../layout/DropdownMenu.svelte';
 
   /**
    * @type {{
    *   contactId?: any,
    *   customerOrganisations?: any[],
    *   portalCustomerFields?: any[],
+   *   canManage?: boolean,
    *   onBack?: (e?: any) => void,
    *   onCustomerUpdated?: (...args: any[]) => void,
    * }}
@@ -31,6 +34,7 @@
     contactId,
     customerOrganisations = [],
     portalCustomerFields = [],
+    canManage = false,
     onBack = () => {},
     onCustomerUpdated = () => {},
   } = $props();
@@ -41,6 +45,7 @@
   let error = $state(null);
   let isEditing = $state(false);
   let saving = $state(false);
+  let deleting = $state(false);
 
   let editFormData = $state({
     name: '',
@@ -115,6 +120,54 @@
     } finally {
       saving = false;
     }
+  }
+
+  async function deleteCustomer() {
+    const confirmed = await confirm({
+      title: t('workspaces.customers.deleteCustomer'),
+      message: t('workspaces.customers.confirmDeleteCustomer', { name: customer.name }),
+      confirmText: t('common.delete'),
+      cancelText: t('common.cancel'),
+      variant: 'danger',
+      icon: Trash2
+    });
+
+    if (!confirmed) return;
+
+    deleting = true;
+    try {
+      await api.portalCustomers.delete(customer.id);
+      await onCustomerUpdated();
+      onBack();
+    } catch (err) {
+      console.error('Failed to delete portal customer:', err);
+      errorToast(err.message || String(err));
+    } finally {
+      deleting = false;
+    }
+  }
+
+  function customerActions() {
+    return [
+      {
+        id: 'edit',
+        type: 'regular',
+        icon: Edit2,
+        title: t('common.edit'),
+        testid: 'customer-detail-edit',
+        onClick: startEditing
+      },
+      { type: 'divider' },
+      {
+        id: 'delete',
+        type: 'regular',
+        icon: Trash2,
+        title: t('common.delete'),
+        color: 'var(--ds-text-danger)',
+        testid: 'customer-detail-delete',
+        onClick: deleteCustomer
+      }
+    ];
   }
 
   async function loadSubmissions() {
@@ -201,20 +254,26 @@
           </span>
         {/if}
       </div>
+      {#if canManage && !isEditing}
+        <DropdownMenu
+          triggerIcon={MoreHorizontal}
+          triggerClass="w-8 h-8 flex items-center justify-center rounded-md transition-colors"
+          triggerStyle="background-color: var(--ds-surface); color: var(--ds-text-subtle);"
+          triggerTestid="customer-detail-actions"
+          triggerLabel={t('common.actions')}
+          items={customerActions()}
+          maxWidth="max-w-48"
+          placement="bottom-end"
+          showChevron={false}
+          iconOnly={true}
+          disabled={deleting}
+        />
+      {/if}
     </div>
 
     <!-- Tabs -->
     <Tabs {tabs} bind:activeTab>
       {#if activeTab === 'overview'}
-        <!-- Edit button -->
-        <div class="flex justify-end mb-4">
-          {#if !isEditing}
-            <Button variant="default" icon={Edit2} onclick={startEditing}>
-              {t('common.edit')}
-            </Button>
-          {/if}
-        </div>
-
         {#if isEditing}
           <!-- Edit Form -->
           <div class="space-y-4">

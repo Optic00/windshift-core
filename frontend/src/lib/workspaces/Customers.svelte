@@ -374,6 +374,7 @@
         contactId={contactDetailId}
         {customerOrganisations}
         {portalCustomerFields}
+        {canManage}
         onBack={() => navigate('/organizations')}
         onCustomerUpdated={() => loadPortalCustomers()}
       />
