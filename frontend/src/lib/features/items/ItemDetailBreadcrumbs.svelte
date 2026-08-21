@@ -3,6 +3,7 @@
   import Tooltip from '../../components/Tooltip.svelte';
   import Input from '../../components/Input.svelte';
   import ItemTypeIcon from '../../components/ItemTypeIcon.svelte';
+  import ItemDetailBreadcrumbLevel from './ItemDetailBreadcrumbLevel.svelte';
   import ItemKey from '../items/ItemKey.svelte';
   import { api } from '../../api.js';
   import { t } from '../../stores/i18n.svelte.js';
@@ -265,14 +266,11 @@
   <!-- Parent Hierarchy in breadcrumb -->
   {#if parentHierarchy.length > 0}
     {#each parentHierarchy as parent}
-      <div class="flex items-center gap-2 min-w-0">
-        {#if parent.itemType}
-          <Tooltip content={parent.itemType.name}>
-            {#snippet children()}
-              <ItemTypeIcon itemType={parent.itemType} class="cursor-help" />
-            {/snippet}
-          </Tooltip>
-        {/if}
+      <ItemDetailBreadcrumbLevel
+        itemType={parent.itemType}
+        iconSlotTestId={`item-parent-type-icon-slot-${parent.id}`}
+        iconTestId={`item-parent-type-icon-${parent.id}`}
+      >
         <a
           data-testid={`item-parent-breadcrumb-${parent.id}`}
           href={`/workspaces/${parent.workspace_id}/items/${parent.id}`}
@@ -282,7 +280,7 @@
         >
           {parent.title}
         </a>
-      </div>
+      </ItemDetailBreadcrumbLevel>
       <span class="flex-shrink-0">/</span>
     {/each}
   {:else if !item.parent_id && !(workspace?.is_personal && item.related_work_item_id)}
@@ -481,24 +479,19 @@
     {/if}
   </div>
   {/if}
-  <div class="flex items-center gap-2 min-w-0 flex-1" style="color: var(--ds-text);">
-    {#if currentItemType}
-      <div class="relative flex-shrink-0">
-        <Tooltip content="{currentItemType.name} ({currentHierarchyLevel?.name || 'Unknown level'}) — click to change">
-          {#snippet children()}
-            <button
-              type="button"
-              data-testid="item-type-change-trigger"
-              data-item-type-id={currentItemType.id}
-              onclick={openItemTypeSelector}
-              class="inline-flex h-6 w-6 items-center justify-center rounded leading-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500"
-              title="Change item type"
-            >
-              <ItemTypeIcon itemType={currentItemType} testId="item-type-change-icon" />
-            </button>
-          {/snippet}
-        </Tooltip>
-
+  <ItemDetailBreadcrumbLevel
+    itemType={currentItemType}
+    iconTooltip={currentItemType ? `${currentItemType.name} (${currentHierarchyLevel?.name || 'Unknown level'}) — click to change` : undefined}
+    iconTitle="Change item type"
+    iconSlotTestId="item-type-icon-slot"
+    iconTriggerTestId="item-type-change-trigger"
+    iconTestId="item-type-change-icon"
+    oniconclick={openItemTypeSelector}
+    class="flex-1"
+    style="color: var(--ds-text);"
+  >
+    {#snippet iconOverlay()}
+      {#if currentItemType}
         {#if showItemTypeSelector}
           <div
             data-testid="item-type-selector"
@@ -569,8 +562,8 @@
             </div>
           </div>
         {/if}
-      </div>
-    {/if}
+      {/if}
+    {/snippet}
     <Tooltip content={t('items.clickToCopyKey')}>
       {#snippet children()}
         <button
@@ -584,7 +577,7 @@
       {/snippet}
     </Tooltip>
     <span class="truncate">{item.title}</span>
-  </div>
+  </ItemDetailBreadcrumbLevel>
 </div>
 
 {#if hasHierarchyMismatch}
