@@ -159,43 +159,21 @@ func (h *AuthPolicyHandler) UpdateAuthPolicy(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// When enabling passkey_only or sso_primary with fallback disabled,
-	// verify that ALL admin users have a passkey enrolled to prevent lockout
+	// Verify that every administrator can use the selected login method when
+	// emergency password fallback is unavailable.
 	if !h.fallbackEnabled && !req.PreviewMode && (req.Policy == AuthPolicyPasskeyOnly || req.Policy == AuthPolicySSOPrimary) {
-		var adminsWithoutPasskey int
-		// Check both direct user permissions AND group-based permissions
-		err := h.db.QueryRow(`
-			SELECT COUNT(DISTINCT admin_user_id) FROM (
-				-- Direct user permissions
-				SELECT ugp.user_id as admin_user_id
-				FROM user_global_permissions ugp
-				JOIN permissions gp ON ugp.permission_id = gp.id
-				JOIN users u ON ugp.user_id = u.id
-				WHERE gp.permission_key = 'system.admin'
-				AND u.is_active = true
-				AND NOT EXISTS(SELECT 1 FROM webauthn_credentials wc WHERE wc.user_id = ugp.user_id)
-				UNION
-				-- Group-based permissions
-				SELECT gm.user_id as admin_user_id
-				FROM group_members gm
-				JOIN groups g ON gm.group_id = g.id
-				JOIN group_global_permissions ggp ON gm.group_id = ggp.group_id
-				JOIN permissions gp ON ggp.permission_id = gp.id
-				JOIN users u ON gm.user_id = u.id
-				WHERE gp.permission_key = 'system.admin'
-				AND g.is_active = true
-				AND u.is_active = true
-				AND NOT EXISTS(SELECT 1 FROM webauthn_credentials wc WHERE wc.user_id = gm.user_id)
-			)
-		`).Scan(&adminsWithoutPasskey)
-
+		adminsWithoutRequiredLogin, err := h.countAdminsWithoutRequiredLogin(req.Policy)
 		if err != nil {
 			respondInternalError(w, r, err)
 			return
 		}
 
-		if adminsWithoutPasskey > 0 {
-			respondBadRequest(w, r, "Cannot enable this policy: some administrators do not have passkeys enrolled. Enable --enable-fallback flag or ensure all admins have passkeys.")
+		if adminsWithoutRequiredLogin > 0 {
+			message := "Cannot enable this policy: some administrators do not have passkeys enrolled. Enable --enable-fallback flag or ensure all admins have passkeys."
+			if req.Policy == AuthPolicySSOPrimary {
+				message = "Cannot enable SSO Required: some administrators do not have an account linked to an enabled SSO provider. Ask every administrator to sign in with SSO once to link their account, or enable emergency administrator password fallback by restarting the server with --enable-fallback or ENABLE_ADMIN_FALLBACK=true."
+			}
+			respondBadRequest(w, r, message)
 			return
 		}
 	}
@@ -399,6 +377,59 @@ func (h *AuthPolicyHandler) isSSOConfigured() bool {
 	var count int
 	err := h.db.QueryRow("SELECT COUNT(*) FROM sso_providers WHERE enabled = true").Scan(&count)
 	return err == nil && count > 0
+}
+
+func (h *AuthPolicyHandler) countAdminsWithoutRequiredLogin(policy AuthPolicy) (int, error) {
+	const activeAdmins = `
+		WITH active_admins AS (
+			SELECT ugp.user_id
+			FROM user_global_permissions ugp
+			JOIN permissions p ON p.id = ugp.permission_id
+			JOIN users u ON u.id = ugp.user_id
+			WHERE p.permission_key = 'system.admin'
+			AND u.is_active = true
+			UNION
+			SELECT gm.user_id
+			FROM group_members gm
+			JOIN groups g ON g.id = gm.group_id
+			JOIN group_global_permissions ggp ON ggp.group_id = gm.group_id
+			JOIN permissions p ON p.id = ggp.permission_id
+			JOIN users u ON u.id = gm.user_id
+			WHERE p.permission_key = 'system.admin'
+			AND g.is_active = true
+			AND u.is_active = true
+		)
+	`
+
+	var query string
+	switch policy {
+	case AuthPolicyPasskeyOnly:
+		query = activeAdmins + `
+			SELECT COUNT(*)
+			FROM active_admins a
+			WHERE NOT EXISTS (
+				SELECT 1 FROM webauthn_credentials wc WHERE wc.user_id = a.user_id
+			)
+		`
+	case AuthPolicySSOPrimary:
+		query = activeAdmins + `
+			SELECT COUNT(*)
+			FROM active_admins a
+			WHERE NOT EXISTS (
+				SELECT 1
+				FROM user_external_accounts ea
+				JOIN sso_providers sp ON sp.id = ea.provider_id
+				WHERE ea.user_id = a.user_id
+				AND sp.enabled = true
+			)
+		`
+	default:
+		return 0, nil
+	}
+
+	var count int
+	err := h.db.QueryRow(query).Scan(&count)
+	return count, err
 }
 
 // upsertSetting updates or inserts a system setting
