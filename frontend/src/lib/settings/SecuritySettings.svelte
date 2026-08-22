@@ -405,7 +405,7 @@
           <div class="p-2 rounded-lg" style="background-color: var(--ds-background-neutral);">
             <UserCog class="w-5 h-5" style="color: var(--ds-icon);" />
           </div>
-          <div class="flex-1">
+          <div class="min-w-0 flex-1">
             <div class="flex items-center justify-between">
               <div>
                 <h3 class="text-base font-medium" style="color: var(--ds-text);">Coding-Agent Centralized Service Users</h3>

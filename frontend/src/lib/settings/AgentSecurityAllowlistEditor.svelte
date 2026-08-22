@@ -199,16 +199,20 @@
       </div>
     {/if}
 
-    <div class="mt-4 p-3 rounded-md" style="background-color: var(--ds-background-neutral);">
+    <div
+      class="add-grant mt-4 p-3 rounded-md"
+      style="background-color: var(--ds-background-neutral);"
+      data-testid="agent-security-add-grant"
+    >
       <p class="text-xs font-medium mb-2" style="color: var(--ds-text);">Add grant</p>
-      <div class="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
-        <div class="md:col-span-4">
+      <div class="add-grant-fields grid gap-3 items-end">
+        <div class="min-w-0">
           <label for="add-user" class="block text-xs mb-1" style="color: var(--ds-text-subtle);">User</label>
           <div id="add-user">
             <UserPicker bind:value={addUserId} users={serviceUsers} placeholder="Pick a service user" class="min-h-[38px]" />
           </div>
         </div>
-        <div class="md:col-span-3">
+        <div class="min-w-0">
           <label for="add-workspace" class="block text-xs mb-1" style="color: var(--ds-text-subtle);">Workspace</label>
           <div id="add-workspace">
             <WorkspacePicker
@@ -218,11 +222,11 @@
             />
           </div>
         </div>
-        <div class="md:col-span-4">
+        <div class="min-w-0">
           <label for="add-reason" class="block text-xs mb-1" style="color: var(--ds-text-subtle);">Reason (audit-logged)</label>
           <Input id="add-reason" size="small" class="min-h-[38px]" bind:value={addReason} placeholder="e.g. pilot rollout for acme-agent" />
         </div>
-        <div class="md:col-span-1">
+        <div class="min-w-0">
           <!-- shortcut-guard-exempt: admin settings tab action, not a primary global-create surface -->
           <Button
             variant="primary"
@@ -252,3 +256,19 @@
   onconfirm={confirmRemove}
   oncancel={cancelRemove}
 />
+
+<style>
+  .add-grant {
+    container-type: inline-size;
+  }
+
+  .add-grant-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  @container (min-width: 48rem) {
+    .add-grant-fields {
+      grid-template-columns: minmax(0, 4fr) minmax(0, 3fr) minmax(0, 4fr) max-content;
+    }
+  }
+</style>
