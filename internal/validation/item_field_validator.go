@@ -41,12 +41,19 @@ type ProjectAccessChecker interface {
 	CanViewProject(userID, projectID int) (bool, error)
 }
 
+// WorkspaceAssigneeChecker reports whether a user can act on items in a
+// workspace. *services.WorkspaceUserResolver satisfies it.
+type WorkspaceAssigneeChecker interface {
+	CanActInWorkspace(userID, workspaceID int) (bool, error)
+}
+
 // ItemFieldValidator provides validation for item fields during create/update operations
 type ItemFieldValidator struct {
-	db             database.Database
-	permChecker    WorkspacePermissionChecker
-	cycleChecker   HierarchyCycleChecker
-	projectChecker ProjectAccessChecker
+	db              database.Database
+	permChecker     WorkspacePermissionChecker
+	cycleChecker    HierarchyCycleChecker
+	projectChecker  ProjectAccessChecker
+	assigneeChecker WorkspaceAssigneeChecker
 }
 
 // allowedEntityTables is a whitelist of valid table names for EntityExists checks
@@ -91,6 +98,12 @@ func (v *ItemFieldValidator) WithCycleChecker(checker HierarchyCycleChecker) *It
 // don't mutate those fields may omit it. Returns the receiver for chaining.
 func (v *ItemFieldValidator) WithProjectAccessChecker(checker ProjectAccessChecker) *ItemFieldValidator {
 	v.projectChecker = checker
+	return v
+}
+
+// WithWorkspaceAssigneeChecker attaches the shared workspace-user resolver.
+func (v *ItemFieldValidator) WithWorkspaceAssigneeChecker(checker WorkspaceAssigneeChecker) *ItemFieldValidator {
+	v.assigneeChecker = checker
 	return v
 }
 
@@ -327,11 +340,19 @@ func (v *ItemFieldValidator) ValidateAndApplyUpdates(
 		}
 	}
 
-	// Assignee ID validation only accepts active users. Active users are the
-	// same account population exposed by the assignment picker; treating
-	// inactive rows as unavailable also prevents probing user IDs.
+	// Reject inactive and unknown users first, then apply the shared workspace
+	// access and ready-binding rules without exposing which check failed.
 	if err := v.ValidateNullableActiveUserID(updateData, "assignee_id", &item.AssigneeID, "Assignee user"); err != nil {
 		return err
+	}
+	if _, changed := updateData["assignee_id"]; changed && item.AssigneeID != nil && v.assigneeChecker != nil {
+		actionable, err := v.assigneeChecker.CanActInWorkspace(*item.AssigneeID, item.WorkspaceID)
+		if err != nil {
+			return fmt.Errorf("failed to validate assignee workspace access: %w", err)
+		}
+		if !actionable {
+			return &ValidationError{Field: "assignee_id", Message: "Assignee user not found"}
+		}
 	}
 
 	// Creator ID validation

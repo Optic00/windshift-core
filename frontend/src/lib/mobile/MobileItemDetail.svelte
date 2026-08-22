@@ -584,7 +584,7 @@
     <!-- Comments. Keyed on itemId so it reloads when navigating item → item. -->
     <section class="comments">
       {#key itemId}
-        <Comments {itemId} onCommentsLoaded={() => {}} />
+        <Comments {itemId} workspaceId={item.workspace_id} onCommentsLoaded={() => {}} />
       {/key}
     </section>
   </div>

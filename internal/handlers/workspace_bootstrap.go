@@ -191,32 +191,10 @@ func emptyHomepageLayout() models.WorkspaceHomepageLayout {
 }
 
 func (h *WorkspaceBootstrapHandler) listAssignableUsers(ctx context.Context, workspaceID int) ([]models.User, error) {
-	users, err := h.users.userSvc.ListAll()
-	if err != nil {
-		return nil, err
+	if h.users.workspaceUsers == nil {
+		return nil, errors.New("workspace user resolver is not configured")
 	}
-
-	var presence map[int]string
-	if h.users.agentPresence != nil {
-		presence, err = h.users.agentPresence.ForWorkspace(ctx, workspaceID)
-		if err != nil {
-			slog.Warn("workspace bootstrap: resolve agent presence", "workspace_id", workspaceID, "error", err)
-			presence = nil
-		}
-	}
-	for i := range users {
-		users[i].Email = ""
-		users[i].Timezone = ""
-		users[i].Language = ""
-		if users[i].IsAgent && presence != nil {
-			if value, ok := presence[users[i].ID]; ok {
-				users[i].AgentPresence = value
-			} else {
-				users[i].AgentPresence = services.AgentPresenceUnbound
-			}
-		}
-	}
-	return users, nil
+	return h.users.workspaceUsers.List(ctx, workspaceID)
 }
 
 func (h *WorkspaceBootstrapHandler) listMilestones(userID, workspaceID int) ([]models.Milestone, error) {

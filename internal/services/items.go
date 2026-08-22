@@ -129,7 +129,7 @@ type ItemCreationParams struct {
 	// has been imported. No interactive or automation caller should set it.
 	AllowUnparentedGenericSubtask bool
 	// ValidatingUserID marks user-facing creation. CreateItem uses it to reject
-	// inactive or unknown assignees. When PermService is also set, it rejects a
+	// assignees who cannot act in the workspace. PermService also rejects a
 	// ProjectID / TimeProjectID the user may not view (returning ErrProjectNotFound,
 	// indistinguishable from a non-existent project to avoid ID enumeration).
 	// Internal callers such as imports leave it zero to preserve imported identity.
@@ -191,11 +191,17 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 		return 0, err
 	}
 	if params.ValidatingUserID > 0 && params.AssigneeID != nil {
-		active, err := repository.NewUserRepository(db).ActiveExists(*params.AssigneeID)
+		var actionable bool
+		var err error
+		if params.PermService != nil {
+			actionable, err = NewWorkspaceUserResolver(db, params.PermService).CanActInWorkspace(*params.AssigneeID, params.WorkspaceID)
+		} else {
+			actionable, err = repository.NewUserRepository(db).ActiveExists(*params.AssigneeID)
+		}
 		if err != nil {
 			return 0, fmt.Errorf("failed to validate assignee: %w", err)
 		}
-		if !active {
+		if !actionable {
 			return 0, &validation.ValidationError{Field: "assignee_id", Message: "Assignee user not found"}
 		}
 	}

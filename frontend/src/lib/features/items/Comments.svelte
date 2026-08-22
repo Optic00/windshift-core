@@ -26,7 +26,7 @@
 	// Get shortcut configuration (use same as description save)
 	const submitShortcut = getShortcut('description', 'save');
 
-	let { itemId, isPersonalWorkspace = false, isPortalRequest = false, enableInternalComments = false, onCommentsLoaded } = $props();
+	let { itemId, workspaceId = null, isPersonalWorkspace = false, isPortalRequest = false, enableInternalComments = false, onCommentsLoaded } = $props();
 
 	let comments = $state([]);
 	let newCommentContent = $state('');
@@ -537,6 +537,7 @@
 									showToolbar={true}
 									compact={true}
 									{itemId}
+									{workspaceId}
 									{isPersonalWorkspace}
 								/>
 								<div class="flex items-center justify-between mt-3">
@@ -605,6 +606,7 @@
 						compact={true}
 						testId="comment-composer"
 						{itemId}
+						{workspaceId}
 						{isPersonalWorkspace}
 					/>
 				</div>

@@ -41,6 +41,11 @@ func (s *ItemUpdateService) WithPermissionService(permService *PermissionService
 	// they pass. CanViewProject is pure-SQL plus the global-admin check on the
 	// supplied permission service, so this reuses the same identity.
 	s.validator = s.validator.WithProjectAccessChecker(NewTimePermissionService(s.db, permService))
+	if permService == nil {
+		s.validator = s.validator.WithWorkspaceAssigneeChecker(nil)
+	} else {
+		s.validator = s.validator.WithWorkspaceAssigneeChecker(NewWorkspaceUserResolver(s.db, permService))
+	}
 	return s
 }
 

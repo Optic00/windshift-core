@@ -14,14 +14,16 @@ import (
 // UserHandler handles public API requests for users
 type UserHandler struct {
 	BaseHandler
-	userSvc *services.UserReadService
+	userSvc        *services.UserReadService
+	workspaceUsers *services.WorkspaceUserResolver
 }
 
 // NewUserHandler creates a new user handler
 func NewUserHandler(db database.Database, permissionService *services.PermissionService) *UserHandler {
 	return &UserHandler{
-		BaseHandler: NewBaseHandler(db, permissionService),
-		userSvc:     services.NewUserReadService(db),
+		BaseHandler:    NewBaseHandler(db, permissionService),
+		userSvc:        services.NewUserReadService(db),
+		workspaceUsers: services.NewWorkspaceUserResolver(db, permissionService),
 	}
 }
 
@@ -30,19 +32,20 @@ func NewUserHandler(db database.Database, permissionService *services.Permission
 // info severity for any field sanitize had to modify at decode time
 // (only populated by admin Update today; List omits it via omitempty).
 type UserResponse struct {
-	ID        int      `json:"id"`
-	Email     string   `json:"email"`
-	Username  string   `json:"username"`
-	FirstName string   `json:"first_name"`
-	LastName  string   `json:"last_name"`
-	FullName  string   `json:"full_name"`
-	IsActive  bool     `json:"is_active"`
-	IsAgent   bool     `json:"is_agent,omitempty"`
-	AvatarURL string   `json:"avatar_url,omitempty"`
-	Timezone  string   `json:"timezone,omitempty"`
-	Language  string   `json:"language,omitempty"`
-	CreatedAt string   `json:"created_at"`
-	Warnings  []string `json:"warnings,omitempty"`
+	ID            int      `json:"id"`
+	Email         string   `json:"email"`
+	Username      string   `json:"username"`
+	FirstName     string   `json:"first_name"`
+	LastName      string   `json:"last_name"`
+	FullName      string   `json:"full_name"`
+	IsActive      bool     `json:"is_active"`
+	IsAgent       bool     `json:"is_agent,omitempty"`
+	AgentPresence string   `json:"agent_presence,omitempty"`
+	AvatarURL     string   `json:"avatar_url,omitempty"`
+	Timezone      string   `json:"timezone,omitempty"`
+	Language      string   `json:"language,omitempty"`
+	CreatedAt     string   `json:"created_at"`
+	Warnings      []string `json:"warnings,omitempty"`
 }
 
 // List handles GET /rest/api/v1/users
@@ -174,7 +177,7 @@ func (h *UserHandler) GetCurrent(w http.ResponseWriter, r *http.Request) {
 // GetAssignableForWorkspace handles GET /rest/api/v1/workspaces/{id}/assignable-users
 //
 // @Summary      List assignable users for a workspace
-// @Description  Returns active users with limited fields for assignment pickers. Unlike /users this needs no global user.list permission — view access to the workspace is enough. Sensitive fields (email, timezone, language) are always stripped. Mirrors the session surface's assignable-users endpoint.
+// @Description  Returns active users who can view the workspace, plus only agents with a ready workspace binding. Unlike /users this needs no global user.list permission. Sensitive fields (email, timezone, language) are always stripped. Shared by assignment and mention pickers.
 // @Tags         users
 // @Produce      json
 // @Security     BearerAuth
@@ -186,11 +189,12 @@ func (h *UserHandler) GetCurrent(w http.ResponseWriter, r *http.Request) {
 // @Failure      500  {object}  handlers.ErrorResponse
 // @Router       /workspaces/{id}/assignable-users [get]
 func (h *UserHandler) GetAssignableForWorkspace(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.RequireWorkspaceViewAccess(w, r); !ok {
+	workspaceID, ok := h.RequireWorkspaceViewAccess(w, r)
+	if !ok {
 		return
 	}
 
-	users, err := h.userSvc.ListAll()
+	users, err := h.workspaceUsers.List(r.Context(), workspaceID)
 	if err != nil {
 		h.RespondInternalError(w, r)
 		return
@@ -206,15 +210,16 @@ func (h *UserHandler) GetAssignableForWorkspace(w http.ResponseWriter, r *http.R
 // mapUserToLimitedResponse converts a models.User to UserResponse with sensitive fields stripped
 func mapUserToLimitedResponse(u *models.User) UserResponse {
 	return UserResponse{
-		ID:        u.ID,
-		Username:  u.Username,
-		FirstName: u.FirstName,
-		LastName:  u.LastName,
-		FullName:  u.FullName,
-		IsActive:  u.IsActive,
-		IsAgent:   u.IsAgent,
-		AvatarURL: u.AvatarURL,
-		CreatedAt: u.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		ID:            u.ID,
+		Username:      u.Username,
+		FirstName:     u.FirstName,
+		LastName:      u.LastName,
+		FullName:      u.FullName,
+		IsActive:      u.IsActive,
+		IsAgent:       u.IsAgent,
+		AgentPresence: u.AgentPresence,
+		AvatarURL:     u.AvatarURL,
+		CreatedAt:     u.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
 }
 

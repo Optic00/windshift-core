@@ -485,7 +485,7 @@ func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResul
 		// Create-only agent mention triggers require an internal credential principal;
 		// logged trigger failures never block comments.
 		if s.agentMentionTrigger != nil && s.mentionService != nil && params.ActorUserID > 0 {
-			if ids, err := s.mentionService.ResolveMentionedUserIDs(params.Content); err != nil {
+			if ids, err := s.mentionService.ResolveActionableMentionedUserIDs(params.Content, item.WorkspaceID); err != nil {
 				slog.Warn("failed to resolve mentions for agent trigger",
 					slog.String("component", "comment_service"),
 					slog.Int64("comment_id", commentID),

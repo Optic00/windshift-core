@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -33,6 +34,13 @@ type MentionService struct {
 	db                  database.Database
 	notificationService *NotificationService
 	permissionService   *PermissionService
+	workspaceUsers      *WorkspaceUserResolver
+}
+
+// SetWorkspaceUserResolver aligns stored mentions and agent triggers with the
+// same actionable-user roster used by mention and assignment pickers.
+func (s *MentionService) SetWorkspaceUserResolver(resolver *WorkspaceUserResolver) {
+	s.workspaceUsers = resolver
 }
 
 // NewMentionService creates a new mention service
@@ -67,9 +75,8 @@ func (s *MentionService) ExtractMentionIdentifiers(content string) []string {
 
 // ResolveMentionedUserIDs parses content and resolves every @mention to an
 // active user id, skipping identifiers that match no user. IDs follow first
-// appearance order and are deduplicated. Used by the comment-@mention
-// coding-agent trigger (WI-264), which needs the resolved principals rather
-// than the mention rows ProcessMentions writes.
+// appearance order and are deduplicated. Workspace-sensitive callers should
+// use ResolveActionableMentionedUserIDs.
 func (s *MentionService) ResolveMentionedUserIDs(content string) ([]int, error) {
 	identifiers := s.ExtractMentionIdentifiers(content)
 	if len(identifiers) == 0 {
@@ -87,6 +94,48 @@ func (s *MentionService) ResolveMentionedUserIDs(content string) ([]int, error) 
 		}
 		seen[userID] = true
 		ids = append(ids, userID)
+	}
+	return ids, nil
+}
+
+// ResolveActionableMentionedUserIDs resolves mentions and removes users who
+// cannot act in the target workspace.
+func (s *MentionService) ResolveActionableMentionedUserIDs(content string, workspaceID int) ([]int, error) {
+	ids, err := s.ResolveMentionedUserIDs(content)
+	if err != nil || len(ids) == 0 {
+		return ids, err
+	}
+	if s.workspaceUsers == nil {
+		filtered := make([]int, 0, len(ids))
+		for _, userID := range ids {
+			if s.canUserReceiveMention(userID, workspaceID) {
+				filtered = append(filtered, userID)
+			}
+		}
+		return filtered, nil
+	}
+
+	actionable, err := s.actionableUserIDs(context.Background(), workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]int, 0, len(ids))
+	for _, userID := range ids {
+		if _, ok := actionable[userID]; ok {
+			filtered = append(filtered, userID)
+		}
+	}
+	return filtered, nil
+}
+
+func (s *MentionService) actionableUserIDs(ctx context.Context, workspaceID int) (map[int]struct{}, error) {
+	users, err := s.workspaceUsers.List(ctx, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve actionable mention users: %w", err)
+	}
+	ids := make(map[int]struct{}, len(users))
+	for _, user := range users {
+		ids[user.ID] = struct{}{}
 	}
 	return ids, nil
 }
@@ -133,8 +182,16 @@ func (s *MentionService) resolveUserIdentifier(identifier string) (userID int, d
 func (s *MentionService) ProcessMentions(params ProcessMentionsParams) error {
 	slog.Debug("Processing mentions", slog.String("component", "mentions"), slog.String("source_type", params.SourceType), slog.Int("source_id", params.SourceID), slog.Int("item_id", params.ItemID))
 
-	// Resolve active, visible recipients, then diff them against stored mentions.
+	// Resolve active, actionable recipients, then diff them against stored mentions.
 	identifiers := s.ExtractMentionIdentifiers(params.Content)
+	var actionable map[int]struct{}
+	if s.workspaceUsers != nil && len(identifiers) > 0 {
+		var err error
+		actionable, err = s.actionableUserIDs(context.Background(), params.WorkspaceID)
+		if err != nil {
+			return err
+		}
+	}
 
 	currentMentions := make(map[int]string) // userID -> displayName
 	for _, identifier := range identifiers {
@@ -149,9 +206,9 @@ func (s *MentionService) ProcessMentions(params ProcessMentionsParams) error {
 		if userID == params.ActorUserID {
 			continue
 		}
-		// Visibility prevents notifications from exposing inaccessible items.
-		if !s.canUserReceiveMention(userID, params.WorkspaceID) {
-			slog.Debug("skipping mention: user lacks workspace view permission",
+		_, isActionable := actionable[userID]
+		if (actionable != nil && !isActionable) || (actionable == nil && !s.canUserReceiveMention(userID, params.WorkspaceID)) {
+			slog.Debug("skipping mention: user cannot act in workspace",
 				slog.String("component", "mentions"),
 				slog.Int("user_id", userID),
 				slog.Int("workspace_id", params.WorkspaceID),

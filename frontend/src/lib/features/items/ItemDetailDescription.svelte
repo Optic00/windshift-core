@@ -155,6 +155,7 @@
         placeholder={t('items.enterDescription')}
         showToolbar={true}
         itemId={item.id}
+        workspaceId={item.workspace_id}
         onImageInsert={handleImageInsert}
       />
       <div class="flex items-center gap-2">

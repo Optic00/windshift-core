@@ -15,6 +15,7 @@
     query = '',
     position = { x: 0, y: 0 },
     open = $bindable(false),
+    workspaceId = null,
     isPersonalWorkspace = false,
     onSelect = null,
     onCancel = null
@@ -23,6 +24,8 @@
   // State
   let users = $state([]);
   let loading = $state(false);
+  let loadedWorkspaceId = $state(undefined);
+  let loadRequest = 0;
   let highlightedIndex = $state(0);
   let containerElement = $state(null);
   // Measured menu size, used to keep the picker fully on-screen.
@@ -31,10 +34,11 @@
 
   // Editors keep the picker mounted while it is closed. Defer the user
   // catalog until somebody actually types an @ mention; pages with several
-  // editors otherwise issue one identical /users request per editor.
+  // editors otherwise issue one identical roster request per editor.
   $effect(() => {
     const shouldLoad = open;
-    if (shouldLoad) untrack(() => void loadUsers());
+    const requestedWorkspaceId = workspaceId;
+    if (shouldLoad) untrack(() => void loadUsers(requestedWorkspaceId));
   });
 
   // Re-measure after result changes so the transient menu clamp stays accurate.
@@ -82,17 +86,29 @@
     { capture: true }
   );
 
-  async function loadUsers() {
-    if (loading || users.length > 0) return;
+  async function loadUsers(requestedWorkspaceId) {
+    const scopedWorkspaceId = requestedWorkspaceId || null;
+    if (users.length > 0 && loadedWorkspaceId === scopedWorkspaceId) return;
+
+    const request = ++loadRequest;
     try {
       loading = true;
-      users = await api.getUsers() || [];
+      const roster = scopedWorkspaceId
+        ? await api.getAssignableUsers(scopedWorkspaceId)
+        : await api.getUsers();
+      if (request !== loadRequest) return;
+
+      // The backend roster is shared with assignment and already enforces
+      // workspace access plus ready agent bindings.
+      users = roster || [];
+      loadedWorkspaceId = scopedWorkspaceId;
     } catch (err) {
+      if (request !== loadRequest) return;
       if (err?.name === 'AbortError') return;
       console.error('Failed to load users:', err);
       users = [];
     } finally {
-      loading = false;
+      if (request === loadRequest) loading = false;
     }
   }
 

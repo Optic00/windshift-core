@@ -863,10 +863,11 @@ func (s *Server) initialize() error {
 	runnerRegistry := services.NewRunnerRegistryService(repository.NewRunnerRepository(s.db), nil)
 	runnerControlHandler := handlers.NewRunnerControlHandler(runnerRegistry, repository.NewAgentRunRepository(s.db), codingRunSvc, repository.NewActionRepository(s.db), nil, baseURL)
 	agentBindingHandler.SetRunnerOnboarding(runnerRegistry, baseURL)
-	// Agent presence for assignment pickers (WI-272): binding → pool →
-	// heartbeat-fresh runner count, surfaced as online/offline/local/unbound.
+	// Agent presence for workspace rosters (WI-272): ready binding → pool →
+	// heartbeat-fresh runner count, surfaced as online/offline/local.
 	agentPresenceService := services.NewAgentPresenceService(agentBindingRepo, repository.NewRunnerRepository(s.db))
-	userHandler.SetAgentPresenceService(agentPresenceService)
+	workspaceUsers := services.NewWorkspaceUserResolver(s.db, permService)
+	userHandler.SetWorkspaceUserResolver(workspaceUsers)
 	agentBindingHandler.SetPresenceService(agentPresenceService)
 	workspaceBootstrapHandler := handlers.NewWorkspaceBootstrapHandler(workspaceHandler, userHandler, milestoneHandler, iterationHandler, timeProjectHandler)
 	// Secretless access layer (WI-144): brokers a granted credential to a
@@ -970,6 +971,7 @@ func (s *Server) initialize() error {
 	itemHandler.SetSSEHub(sseHub)
 
 	mentionService := services.NewMentionService(s.db, s.notificationService, permService)
+	mentionService.SetWorkspaceUserResolver(workspaceUsers)
 	itemHandler.SetMentionService(mentionService)
 	commentHandler.SetMentionService(mentionService)
 

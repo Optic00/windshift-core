@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"math/big"
 	"net/http"
-	"strconv"
 
 	"windshift/internal/logger"
 	"windshift/internal/models"
@@ -28,13 +27,12 @@ type UserHandler struct {
 	offboardUser       func(id int) error
 	deactivateCascade  func(id int) (services.AgentDeactivationResult, error)
 	invalidateSessions func(id int)
-	agentPresence      *services.AgentPresenceService // optional; nil when the agent harness is off
+	workspaceUsers     *services.WorkspaceUserResolver
 }
 
-// SetAgentPresenceService wires the optional presence resolver used to
-// decorate agent users in the assignable-users response (WI-272).
-func (h *UserHandler) SetAgentPresenceService(s *services.AgentPresenceService) {
-	h.agentPresence = s
+// SetWorkspaceUserResolver wires the shared picker and validation roster.
+func (h *UserHandler) SetWorkspaceUserResolver(resolver *services.WorkspaceUserResolver) {
+	h.workspaceUsers = resolver
 }
 
 func (h *UserHandler) invalidateUserSessions(userID int) {
@@ -770,44 +768,34 @@ func (h *UserHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	respondJSONOK(w, response)
 }
 
-// GetAssignable returns only active users with limited fields for assignment
-// pickers. Agent users are decorated with a workspace-scoped presence signal
-// (online/offline/local/unbound, WI-272) so assigners can see whether
-// assigning to the agent would actually start a run.
+// GetAssignable returns the shared mention and assignment roster. Every user
+// can view the workspace; agents also have a ready binding there.
 func (h *UserHandler) GetAssignable(w http.ResponseWriter, r *http.Request) {
-	if _, ok := RequireAuth(w, r); !ok {
+	currentUser, ok := RequireAuth(w, r)
+	if !ok {
 		return
 	}
-
-	users, err := h.userSvc.ListAll()
+	workspaceID, ok := requireIDParam(w, r, "workspaceId")
+	if !ok {
+		return
+	}
+	canView, err := h.permissionService.HasWorkspacePermission(currentUser.ID, workspaceID, models.PermissionItemView)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
-
-	// Presence enrichment is best-effort: a resolver failure degrades to
-	// undecorated users, never a failed picker.
-	var presence map[int]string
-	if h.agentPresence != nil {
-		if workspaceID, err := strconv.Atoi(r.PathValue("workspaceId")); err == nil && workspaceID > 0 {
-			if presence, err = h.agentPresence.ForWorkspace(r.Context(), workspaceID); err != nil {
-				slog.Warn("assignable users: resolve agent presence", "workspace_id", workspaceID, "error", err)
-				presence = nil
-			}
-		}
+	if !canView {
+		respondNotFound(w, r, "workspace")
+		return
 	}
-
-	for i := range users {
-		users[i].Email = ""
-		users[i].Timezone = ""
-		users[i].Language = ""
-		if users[i].IsAgent && presence != nil {
-			if p, ok := presence[users[i].ID]; ok {
-				users[i].AgentPresence = p
-			} else {
-				users[i].AgentPresence = services.AgentPresenceUnbound
-			}
-		}
+	if h.workspaceUsers == nil {
+		respondInternalError(w, r, errors.New("workspace user resolver is not configured"))
+		return
+	}
+	users, err := h.workspaceUsers.List(r.Context(), workspaceID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
 	}
 
 	respondJSONOK(w, users)

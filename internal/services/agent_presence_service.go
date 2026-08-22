@@ -14,8 +14,8 @@ import (
 //   - online:  remote-pool binding with at least one live runner
 //   - offline: remote-pool binding but no runner with a fresh heartbeat
 //   - local:   binding runs on this server's in-process runtime
-//   - unbound: agent user with no binding in the workspace (assignment
-//     would silently do nothing — the picker should say so)
+//   - unbound: agent user with no ready binding in the workspace; actionable
+//     rosters exclude these users
 const (
 	AgentPresenceOnline  = "online"
 	AgentPresenceOffline = "offline"
@@ -41,9 +41,8 @@ func NewAgentPresenceService(bindings *repository.WorkspaceAgentBindingRepositor
 	}
 }
 
-// ForWorkspace maps acting_user_id → presence for every binding in the
-// workspace. Agent users absent from the map have no binding there
-// (AgentPresenceUnbound is the caller's default for them).
+// ForWorkspace maps acting_user_id → presence for every ready binding in the
+// workspace. Agent users absent from the map cannot currently act there.
 func (s *AgentPresenceService) ForWorkspace(ctx context.Context, workspaceID int) (map[int]string, error) {
 	bindings, err := s.bindings.ListForWorkspace(ctx, workspaceID)
 	if err != nil {
@@ -53,6 +52,9 @@ func (s *AgentPresenceService) ForWorkspace(ctx context.Context, workspaceID int
 	liveByPool := map[int]int{}
 	out := make(map[int]string, len(bindings))
 	for _, b := range bindings {
+		if b.Lifecycle != models.AgentLifecycleReady {
+			continue
+		}
 		if b.TargetPoolID == nil {
 			out[b.ActingUserID] = AgentPresenceLocal
 			continue

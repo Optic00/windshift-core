@@ -457,7 +457,7 @@
           {/if}
         </div>
       </div>
-      <Comments itemId={item.id} isPersonalWorkspace={true} onCommentsLoaded={handleCommentsLoaded} />
+      <Comments itemId={item.id} workspaceId={item.workspace_id} isPersonalWorkspace={true} onCommentsLoaded={handleCommentsLoaded} />
     </div>
   {/if}
 {/snippet}

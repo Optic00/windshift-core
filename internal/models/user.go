@@ -42,8 +42,8 @@ type User struct {
 	AgentProvenance string `json:"agent_provenance,omitempty"`
 	OAuthClientID   *int   `json:"oauth_client_id,omitempty"`
 	// AgentPresence is a transient, workspace-scoped availability signal for
-	// assignment pickers (WI-272): online | offline | local | unbound. Never
-	// persisted; populated only by the assignable-users endpoint.
+	// actionable-user pickers (WI-272): online | offline | local. Unbound agents
+	// are omitted from workspace rosters.
 	AgentPresence string `json:"agent_presence,omitempty"`
 }
 

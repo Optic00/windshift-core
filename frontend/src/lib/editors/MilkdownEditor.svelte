@@ -812,6 +812,7 @@
   bind:open={mentionPickerOpen}
   query={mentionQuery}
   position={mentionPosition}
+  {workspaceId}
   {isPersonalWorkspace}
   onSelect={handleMentionSelect}
   onCancel={handleMentionCancel}
