@@ -436,7 +436,8 @@ func (h *RunnerBrokerHandler) ProxyGit(w http.ResponseWriter, r *http.Request) {
 		// transport intentionally ignores proxy environment variables so they
 		// cannot bypass the checked dialer.
 		Transport: ssrfSafeTransport(egressResponseHeaderTimeout),
-		Director: func(req *http.Request) {
+		Rewrite: func(proxyReq *httputil.ProxyRequest) {
+			req := proxyReq.Out
 			req.URL.Scheme = target.Scheme
 			req.URL.Host = target.Host
 			req.Host = target.Host
@@ -498,8 +499,9 @@ func (h *RunnerBrokerHandler) ProxyHTTP(w http.ResponseWriter, r *http.Request) 
 		// metadata endpoint or internal services. The dialer re-resolves and
 		// re-checks at connect time, which also defends against DNS rebinding.
 		Transport: ssrfSafeTransport(egressResponseHeaderTimeout),
-		Director: func(req *http.Request) {
-			req.URL = tu
+		Rewrite: func(proxyReq *httputil.ProxyRequest) {
+			req := proxyReq.Out
+			*req.URL = *tu
 			req.Host = tu.Host
 			req.Header.Del("X-Windshift-Target")
 			req.Header.Del("Authorization") // strip the run-token

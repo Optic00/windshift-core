@@ -42,7 +42,8 @@ func newLogbookProxyHandler(cfg LogbookProxyConfig) (http.Handler, error) {
 	}
 
 	proxy := &httputil.ReverseProxy{
-		Director: func(req *http.Request) {
+		Rewrite: func(proxyReq *httputil.ProxyRequest) {
+			req := proxyReq.Out
 			req.URL.Scheme = target.Scheme
 			req.URL.Host = target.Host
 			req.Host = target.Host

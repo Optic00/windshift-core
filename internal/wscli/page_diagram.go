@@ -175,7 +175,7 @@ func parsePageDiagramID(raw, kind string) (int, error) {
 	return id, nil
 }
 
-func pageDiagramInput() (string, json.RawMessage, error) {
+func pageDiagramInput() (mermaid string, excalidraw json.RawMessage, err error) {
 	payload, err := buildDiagramPayload(pageDiagramMermaid, pageDiagramExcalidraw, pageDiagramFromFile)
 	if err != nil {
 		return "", nil, err

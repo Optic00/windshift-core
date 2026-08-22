@@ -277,25 +277,26 @@ func (s *PageDiagramService) requirePage(userID, pageID int, op string) (*models
 	return page, nil
 }
 
-func (s *PageDiagramService) readPageDiagramPayload(pageID, attachmentID int) (*repository.PageAttachmentRecord, json.RawMessage, string, error) {
-	rec, err := s.attachments.GetPageAttachmentRecord(pageID, attachmentID)
+func (s *PageDiagramService) readPageDiagramPayload(pageID, attachmentID int) (record *repository.PageAttachmentRecord, payload json.RawMessage, kind string, err error) {
+	record, err = s.attachments.GetPageAttachmentRecord(pageID, attachmentID)
 	if err != nil {
 		return nil, nil, "", err
 	}
-	file, err := fileserve.OpenUnderRoot(s.attachmentPath, rec.FilePath)
+	file, err := fileserve.OpenUnderRoot(s.attachmentPath, record.FilePath)
 	if err != nil {
 		return nil, nil, "", ErrPageDiagramNotFound
 	}
 	defer func() { _ = file.Close() }()
-	payload, err := io.ReadAll(io.LimitReader(file, MaxDiagramPayloadBytes+1))
+	payloadBytes, err := io.ReadAll(io.LimitReader(file, MaxDiagramPayloadBytes+1))
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("read page diagram attachment: %w", err)
 	}
-	kind, err := ValidateStoredDiagramPayload(payload)
+	payload = json.RawMessage(payloadBytes)
+	kind, err = ValidateStoredDiagramPayload(payload)
 	if err != nil {
 		return nil, nil, "", err
 	}
-	return rec, json.RawMessage(payload), kind, nil
+	return record, payload, kind, nil
 }
 
 func (s *PageDiagramService) compensateFailedMutation(pageID, attachmentID int, mutationErr error) error {
