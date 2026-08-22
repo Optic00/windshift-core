@@ -736,7 +736,8 @@
         >
           {#snippet action()}
             {#if onCreateForm}
-              <Button onclick={onCreateForm} variant="primary" size="small" icon={IconPlus}>
+              <!-- shortcut-guard-exempt: This is the page's single primary action. -->
+              <Button onclick={onCreateForm} variant="primary" size="small" icon={IconPlus} dataTestid="form-create-open">
                 {t('forms.createForm')}
               </Button>
             {/if}
@@ -746,7 +747,8 @@
         <div class="space-y-2 max-w-2xl mx-auto">
           {#if onCreateForm}
             <div class="flex justify-end mb-2">
-              <Button onclick={onCreateForm} variant="primary" size="small" icon={IconPlus}>
+              <!-- shortcut-guard-exempt: This is the page's single primary action. -->
+              <Button onclick={onCreateForm} variant="primary" size="small" icon={IconPlus} dataTestid="form-create-open">
                 {t('forms.createForm')}
               </Button>
             </div>

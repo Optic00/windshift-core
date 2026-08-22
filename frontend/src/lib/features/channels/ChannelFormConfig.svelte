@@ -3,10 +3,7 @@
   import Input from '../../components/Input.svelte';
   import Textarea from '../../components/Textarea.svelte';
   import Label from '../../components/Label.svelte';
-  import WorkspacePicker from '../../pickers/WorkspacePicker.svelte';
-  import FormIntegrationPanel from './FormIntegrationPanel.svelte';
   import DescriptionText from '../../components/DescriptionText.svelte';
-  import Toggle from '../../components/Toggle.svelte';
 
   let {
     formData = $bindable({
@@ -19,7 +16,6 @@
       success_message: '',
       redirect_url: ''
     }),
-    workspaces = null,
   } = $props();
 
   const themes = [
@@ -47,9 +43,6 @@
     }
     if (!SLUG_PATTERN.test(formData.slug.trim())) {
       return { valid: false, message: t('channel.formSlugInvalid') };
-    }
-    if (!formData.workspace_ids?.length) {
-      return { valid: false, message: t('channel.selectAtLeastOneWorkspace') };
     }
     if (formData.brand_color && !HEX_COLOR_PATTERN.test(formData.brand_color)) {
       return { valid: false, message: t('channel.formBrandColorInvalid') };
@@ -79,7 +72,7 @@
 <div class="pt-6 border-t" style="border-color: var(--ds-border);">
   <h4 class="text-sm font-semibold mb-4" style="color: var(--ds-text);">{t('channel.formConfiguration')}</h4>
   <DescriptionText>
-    Channel settings define the shared public URL, branding, and default success behavior for every form in this channel.
+    Set the shared public URL and optional appearance for this channel.
   </DescriptionText>
 
   <div class="mt-4 space-y-4">
@@ -95,19 +88,7 @@
         title={t('validation.slugInvalid')}
       />
       <DescriptionText>
-        {t('channel.formUrl')}: /forms/{formData.slug || 'your-slug'}
-      </DescriptionText>
-    </div>
-
-    <div>
-      <WorkspacePicker
-        bind:value={formData.workspace_ids}
-        items={workspaces}
-        label="{t('channel.targetWorkspaces')} *"
-        placeholder={t('channel.searchWorkspaces')}
-      />
-      <DescriptionText>
-        Forms can target only these workspaces. Each form chooses one target workspace of its own.
+        Forms will be shared at /forms/{formData.slug || 'your-url'}.
       </DescriptionText>
     </div>
 
@@ -162,23 +143,5 @@
       </DescriptionText>
     </div>
 
-    <!-- Integration Panel (only show when slug is set) -->
-    {#if formData.slug}
-      <div class="pt-4 border-t" style="border-color: var(--ds-border);">
-        <FormIntegrationPanel slug={formData.slug} />
-      </div>
-    {/if}
-
-    <div class="flex items-center justify-between">
-      <div>
-        <div class="text-sm font-medium" style="color: var(--ds-text);">
-          {t('channel.enableForm')}
-        </div>
-        <div class="text-xs mt-1" style="color: var(--ds-text-subtle);">
-          {formData.enabled ? t('channel.formIsActive') : t('channel.formIsInactive')}
-        </div>
-      </div>
-      <Toggle bind:checked={formData.enabled} />
-    </div>
   </div>
 </div>

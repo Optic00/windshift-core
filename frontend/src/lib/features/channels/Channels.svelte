@@ -21,6 +21,7 @@
   import Spinner from '../../components/Spinner.svelte';
   import ChannelNavigation from './ChannelNavigation.svelte';
   import { channelTypes as channelTypeDefs, allTypesEntry, getChannelTypeIcon } from './channelTypes.js';
+  import { channelAdminRoute } from './channelRoutes.js';
   import CategoryModal from '../../dialogs/CategoryModal.svelte';
   import ChannelConfigModal from '../../dialogs/ChannelConfigModal.svelte';
   import EmailLogModal from '../../dialogs/EmailLogModal.svelte';
@@ -137,10 +138,9 @@
   function getChannelActionItems(channel) {
     const items = [
       { title: 'Configure', icon: IconSettings, onClick: () => {
-        if (channel.type === 'form') {
-          navigate(`/admin/channels/${channel.id}/forms`);
-        } else if (channel.type === 'portal') {
-          navigate(`/admin/channels/${channel.id}/portal`);
+        const route = channelAdminRoute(channel);
+        if (route) {
+          navigate(route);
         } else {
           openConfigModal(channel);
         }
@@ -228,6 +228,11 @@
     if (!match || showConfigModal) return;
     const channel = channels.find(candidate => candidate.id === Number(match[1]));
     if (channel) {
+      const route = channelAdminRoute(channel);
+      if (route) {
+        navigate(route);
+        return;
+      }
       selectedChannel = channel;
       showConfigModal = true;
     }
@@ -277,9 +282,12 @@
   }
 
   function showAddChannelForm() {
+    const filteredType = channelTypeDefs.some(type => type.id === activeTypeFilter)
+      ? activeTypeFilter
+      : 'portal';
     channelFormData = {
       name: '',
-      type: 'portal',
+      type: filteredType,
       description: '',
       category_id: activeCategoryId ? parseInt(activeCategoryId) : null,
       slug: ''
@@ -323,9 +331,13 @@
       await loadChannels();
       cancelChannelForm();
 
-      // Open config modal for the new channel
-      selectedChannel = channels.find(channel => channel.id === newChannel.id) || newChannel;
-      showConfigModal = true;
+      const route = channelAdminRoute(newChannel);
+      if (route) {
+        navigate(route);
+      } else {
+        selectedChannel = channels.find(channel => channel.id === newChannel.id) || newChannel;
+        showConfigModal = true;
+      }
     } catch (error) {
       console.error('Failed to save channel:', error);
       errorToast('Failed to save channel: ' + (error.message || error));
@@ -412,10 +424,9 @@
   }
 
   function handleRowClick(channel) {
-    if (channel.type === 'form') {
-      navigate(`/admin/channels/${channel.id}/forms`);
-    } else if (channel.type === 'portal') {
-      navigate(`/admin/channels/${channel.id}/portal`);
+    const route = channelAdminRoute(channel);
+    if (route) {
+      navigate(route);
     } else {
       openConfigModal(channel);
     }
@@ -524,6 +535,7 @@
           variant="primary"
           icon={IconPlus}
           size="medium"
+          dataTestid="channel-create-open"
           keyboardHint={getShortcutDisplay('channels', 'addChannel')}
           hotkeyConfig={{ key: toHotkeyString('channels', 'addChannel'), guard: () => !showAddForm && !showConfigModal && !showCategoryModal }}
         >
@@ -643,6 +655,8 @@
             <button
               type="button"
               onclick={() => channelFormData.type = option.id}
+              data-testid={`channel-type-${option.id}`}
+              aria-pressed={channelFormData.type === option.id}
               class="flex items-center gap-2 px-3 py-2 rounded-lg border transition-all"
               style={channelFormData.type === option.id
                 ? 'border-color: var(--ds-border-focused); background: var(--ds-surface-selected);'
@@ -657,7 +671,9 @@
 
       {#if channelFormData.type === 'portal' || channelFormData.type === 'form'}
         <div>
-          <Label for="channelSlug" required color="default" class="mb-2">Slug</Label>
+          <Label for="channelSlug" required color="default" class="mb-2">
+            {channelFormData.type === 'form' ? 'Public URL' : 'Slug'}
+          </Label>
           <Input
             id="channelSlug"
             bind:value={channelFormData.slug}
@@ -668,25 +684,31 @@
             placeholder="e.g., support"
           />
           <DescriptionText>
-            {channelFormData.type === 'portal' ? '/portal/' : '/forms/'}{channelFormData.slug || '...'}
+            {#if channelFormData.type === 'form'}
+              Forms will be shared at /forms/{channelFormData.slug || 'your-url'}.
+            {:else}
+              /portal/{channelFormData.slug || '...'}
+            {/if}
           </DescriptionText>
         </div>
       {/if}
 
-      <div>
-        <Label for="channelCategory" color="default" class="mb-2">Category</Label>
-        <Select id="channelCategory" bind:value={channelFormData.category_id} options={[{ value: null, label: 'No Category' }, ...$channelCategoriesStore.map(c => ({ value: c.id, label: c.name }))]} />
-      </div>
+      {#if channelFormData.type !== 'form'}
+        <div>
+          <Label for="channelCategory" color="default" class="mb-2">Category</Label>
+          <Select id="channelCategory" bind:value={channelFormData.category_id} options={[{ value: null, label: 'No Category' }, ...$channelCategoriesStore.map(c => ({ value: c.id, label: c.name }))]} />
+        </div>
 
-      <div>
-        <Label for="channelDescription" color="default" class="mb-2">Description</Label>
-        <Textarea
-          id="channelDescription"
-          bind:value={channelFormData.description}
-          rows={3}
-          placeholder="Brief description of this channel's purpose"
-        />
-      </div>
+        <div>
+          <Label for="channelDescription" color="default" class="mb-2">Description</Label>
+          <Textarea
+            id="channelDescription"
+            bind:value={channelFormData.description}
+            rows={3}
+            placeholder="Brief description of this channel's purpose"
+          />
+        </div>
+      {/if}
     </div>
   </div>
 
@@ -695,6 +717,7 @@
     onCancel={cancelChannelForm}
     onConfirm={handleChannelSubmit}
     confirmLabel={t('channels.createChannel')}
+    confirmTestid="channel-create-confirm"
     disabled={!channelFormData.name.trim() ||
       ((channelFormData.type === 'portal' || channelFormData.type === 'form') && !channelFormData.slug.trim()) || creating}
     showKeyboardHint={true}

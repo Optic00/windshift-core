@@ -44,7 +44,28 @@ export async function saveChannelSettings({ channel, channelFormData, configRef,
   }
 
   const currentlyEnabled = channel.status === 'enabled';
-  if (enabled !== currentlyEnabled) {
+  if (typeof enabled === 'boolean' && enabled !== currentlyEnabled) {
     await api.channels.toggle(channel.id);
   }
+}
+
+export async function prepareFormChannelForWorkspace({ channel, workspaceIds, workspaceId }) {
+  const currentWorkspaceIds = workspaceIds || [];
+  const nextWorkspaceIds = currentWorkspaceIds.includes(workspaceId)
+    ? currentWorkspaceIds
+    : [...currentWorkspaceIds, workspaceId];
+
+  if (nextWorkspaceIds !== currentWorkspaceIds) {
+    await api.channels.updateConfig(channel.id, {
+      form_workspace_ids: nextWorkspaceIds,
+    });
+  }
+
+  let status = channel.status;
+  if (status !== 'enabled') {
+    const updated = await api.channels.toggle(channel.id);
+    status = updated?.status || 'enabled';
+  }
+
+  return { workspaceIds: nextWorkspaceIds, status };
 }

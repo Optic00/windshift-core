@@ -15,7 +15,12 @@
   import FormIntegrationPanel from './FormIntegrationPanel.svelte';
   import ChannelManagersTab from '../../settings/ChannelManagersTab.svelte';
   import CreateFormModal from './CreateFormModal.svelte';
-  import { channelBasicFormData, parseChannelConfig, saveChannelSettings } from './channelAdmin.js';
+  import {
+    channelBasicFormData,
+    parseChannelConfig,
+    prepareFormChannelForWorkspace,
+    saveChannelSettings,
+  } from './channelAdmin.js';
 
   let channel = $state(null);
   let loading = $state(true);
@@ -129,10 +134,23 @@
     formBuilderStore.loadForms(channelId);
   }
 
+  async function prepareFormCreation(workspaceId) {
+    const prepared = await prepareFormChannelForWorkspace({
+      channel,
+      workspaceIds: formChannelFormData.workspace_ids,
+      workspaceId,
+    });
+    formChannelFormData.workspace_ids = prepared.workspaceIds;
+    formChannelFormData.enabled = prepared.status === 'enabled';
+    channel = { ...channel, status: prepared.status };
+  }
+
   let tabs = $derived([
     { id: 'forms', label: () => t('forms.title'), icon: IconForms },
     { id: 'settings', label: () => t('channel.configuration'), icon: IconSettings },
-    { id: 'integration', label: () => t('forms.integration.title'), icon: IconCode },
+    ...(formBuilderStore.forms.length > 0
+      ? [{ id: 'integration', label: () => t('forms.integration.title'), icon: IconCode }]
+      : []),
     ...($isSystemAdmin
       ? [{ id: 'managers', label: () => t('channel.managers'), icon: IconUsers }]
       : []),
@@ -151,12 +169,6 @@
   {#snippet children(tabId)}
     {#if tabId === 'forms'}
       <div class="px-16 py-8">
-        <div class="mx-auto mb-6 max-w-2xl rounded-xl border p-4" style="border-color: var(--ds-border); background: var(--ds-background-neutral);">
-          <h2 class="text-sm font-semibold" style="color: var(--ds-text);">Forms in this channel</h2>
-          <p class="mt-1 text-sm" style="color: var(--ds-text-subtle);">
-            This channel hosts one or more public forms. Each form has its own fields and submission settings, and creates a work item in its configured target workspace.
-          </p>
-        </div>
         <FormBuilder
           {channelId}
           channelSlug={formChannelFormData.slug}
@@ -203,7 +215,7 @@
     <CreateFormModal
       bind:isOpen={showCreateModal}
       channelId={channelId}
-      channelWorkspaceIds={formChannelFormData.workspace_ids}
+      onPrepare={prepareFormCreation}
       onCreated={handleFormCreated}
       onClose={() => showCreateModal = false}
     />

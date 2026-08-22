@@ -6,17 +6,15 @@
   import Modal from '../../dialogs/Modal.svelte';
   import ModalHeader from '../../dialogs/ModalHeader.svelte';
   import Input from '../../components/Input.svelte';
-  import Textarea from '../../components/Textarea.svelte';
   import Label from '../../components/Label.svelte';
   import DialogFooter from '../../dialogs/DialogFooter.svelte';
-  import IconSelector from '../../pickers/IconSelector.svelte';
   import BasePicker from '../../pickers/BasePicker.svelte';
   import DescriptionText from '../../components/DescriptionText.svelte';
 
   let {
     isOpen = $bindable(false),
     channelId = null,
-    channelWorkspaceIds = [],
+    onPrepare = async () => {},
     onCreated = () => {},
     onClose = () => {},
   } = $props();
@@ -42,11 +40,7 @@
         api.configurationSets.getAll(),
       ]);
       configSets = allConfigSets?.configuration_sets || [];
-      if (channelWorkspaceIds && channelWorkspaceIds.length > 0) {
-        availableWorkspaces = allWorkspaces.filter(ws => channelWorkspaceIds.includes(ws.id));
-      } else {
-        availableWorkspaces = allWorkspaces;
-      }
+      availableWorkspaces = allWorkspaces;
     } catch (err) {
       console.error('Failed to load workspaces:', err);
     }
@@ -106,6 +100,7 @@
 
     try {
       submitting = true;
+      await onPrepare(formData.workspace_id);
       await api.requestTypes.create(channelId, {
         name: formData.name.trim(),
         description: formData.description.trim(),
@@ -159,32 +154,15 @@
       </div>
 
       <div>
-        <Label for="form-description" color="default" class="mb-2">{t('forms.formDescription')}</Label>
-        <Textarea
-          id="form-description"
-          bind:value={formData.description}
-          rows={3}
-          placeholder={t('forms.formDescriptionPlaceholder')}
-        />
-      </div>
-
-      <div>
-        <IconSelector
-          bind:selectedIcon={formData.icon}
-          bind:selectedColor={formData.color}
-          label={t('portal.iconAndColor')}
-          compact
-        />
-      </div>
-
-      <div>
         <Label color="default" required class="mb-2">{t('channel.targetWorkspace')}</Label>
         <BasePicker
+          id="form-workspace"
           bind:value={formData.workspace_id}
           items={availableWorkspaces}
           placeholder={t('channel.selectWorkspace')}
           getValue={(item) => item.id}
           getLabel={(item) => item.name}
+          optionTestid={(option) => `form-workspace-${option.value}`}
         />
         <DescriptionText>
           Every response to this form creates a work item in this workspace.
@@ -194,11 +172,13 @@
       <div>
         <Label color="default" required class="mb-2">{t('forms.createsItemType')}</Label>
         <BasePicker
+          id="form-item-type"
           bind:value={formData.item_type_id}
           items={itemTypes}
           placeholder={t('forms.selectItemType')}
           getValue={(item) => item.id}
           getLabel={(item) => item.name}
+          optionTestid={(option) => `form-item-type-${option.value}`}
           disabled={!formData.workspace_id}
         />
         {#if !formData.workspace_id}
@@ -218,6 +198,7 @@
       onCancel={handleClose}
       onConfirm={handleSubmit}
       confirmLabel={t('forms.createForm')}
+      confirmTestid="form-create-confirm"
       disabled={!formData.name.trim() || !formData.workspace_id || !formData.item_type_id || submitting}
       showKeyboardHint={true}
       confirmKeyboardHint={submitHint}
