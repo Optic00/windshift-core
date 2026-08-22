@@ -2782,22 +2782,74 @@ func formatCredentialHeaderValue(credType models.ActionCredentialType, scheme, p
 
 // isURLAllowed checks if a URL matches any of the allowed patterns.
 // Patterns support wildcards: * matches any sequence of non-/ characters,
-// ** matches any sequence including /.
+// ** matches any sequence including /. The URL is parsed and matched
+// component-wise instead of as a raw string: # and ? terminate the
+// authority during URL parsing but are matched by *, so a raw match lets
+// https://evil.com#.windshift.dev/ satisfy https://*.windshift.dev/** and
+// send credential-backed headers to a host the allowlist never named.
 func isURLAllowed(rawURL string, patterns []string) bool {
 	if len(patterns) == 0 {
 		return false
 	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.Opaque != "" {
+		return false
+	}
+	// parsed.Host excludes userinfo and cannot contain /, ?, or #, so
+	// wildcards matched against it stay confined to the authority the
+	// HTTP client will actually contact. Scheme and host compare
+	// case-insensitively, as they do on the wire.
+	scheme := strings.ToLower(parsed.Scheme)
+	host := strings.ToLower(parsed.Host)
+	pathAndAfter := parsed.EscapedPath()
+	if parsed.RawQuery != "" {
+		pathAndAfter += "?" + parsed.RawQuery
+	}
+	if parsed.Fragment != "" {
+		pathAndAfter += "#" + parsed.Fragment
+	}
 	for _, pattern := range patterns {
-		if matchURLPattern(rawURL, pattern) {
+		schemePattern, hostPattern, pathPattern, ok := splitURLPattern(pattern)
+		if !ok {
+			continue
+		}
+		if matchURLComponent(scheme, schemePattern) &&
+			matchURLComponent(host, hostPattern) &&
+			matchURLComponent(pathAndAfter, pathPattern) {
 			return true
 		}
 	}
 	return false
 }
 
-// matchURLPattern matches a URL against a pattern with * and ** wildcards.
-func matchURLPattern(rawURL, pattern string) bool {
-	// Convert pattern to regex
+// splitURLPattern splits an allowlist pattern at its scheme delimiter and
+// the first path, query, or fragment separator. ok is false for patterns
+// without a scheme, which can never have matched a full URL. When a pattern
+// carries no separator at all, a trailing ** still spans the path as it did
+// under raw-string matching (https://** allows every https URL); since a
+// host can never contain /, a single * reattached to the authority segment
+// preserves the same prefix reach without bridging into query or fragment.
+func splitURLPattern(pattern string) (scheme, authority, path string, ok bool) {
+	schemePart, rest, found := strings.Cut(pattern, "://")
+	if !found {
+		return "", "", "", false
+	}
+	if cut := strings.IndexAny(rest, "/?#"); cut >= 0 {
+		return strings.ToLower(schemePart), strings.ToLower(rest[:cut]), rest[cut:], true
+	}
+	if strings.HasSuffix(rest, "**") {
+		return strings.ToLower(schemePart), strings.ToLower(rest[:len(rest)-2]) + "*", "**", true
+	}
+	return strings.ToLower(schemePart), strings.ToLower(rest), "", true
+}
+
+// matchURLComponent matches a single URL component against one pattern
+// segment with * and ** wildcards, anchored at both ends. An empty segment
+// matches only an empty component.
+func matchURLComponent(component, pattern string) bool {
+	if pattern == "" {
+		return component == ""
+	}
 	regexStr := "^"
 	for i := 0; i < len(pattern); i++ {
 		switch {
@@ -2812,11 +2864,8 @@ func matchURLPattern(rawURL, pattern string) bool {
 	}
 	regexStr += "$"
 
-	matched, err := regexp.MatchString(regexStr, rawURL)
-	if err != nil {
-		return false
-	}
-	return matched
+	matched, err := regexp.MatchString(regexStr, component)
+	return err == nil && matched
 }
 
 // doHTTPRequest enforces the URL allowlist on every redirect and blocks
