@@ -21,7 +21,8 @@
 
   onMount(async () => {
     try {
-      connections = await api.llmProviders.getEnabled();
+      const enabledConnections = await api.llmProviders.getEnabled();
+      connections = Array.isArray(enabledConnections) ? enabledConnections : [];
       const def = connections.find(c => c.is_default);
       if (def) selectedConnectionId = def.id;
     } catch (e) { /* silent — fallback still works */ }

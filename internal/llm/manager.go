@@ -388,7 +388,7 @@ func (m *ConnectionManager) ListEnabledPublic() ([]PublicConnectionInfo, error) 
 	}
 	defer rows.Close()
 
-	var out []PublicConnectionInfo
+	out := make([]PublicConnectionInfo, 0)
 	for rows.Next() {
 		var c PublicConnectionInfo
 		var providerType string
