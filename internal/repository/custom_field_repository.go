@@ -639,21 +639,52 @@ func (r *CustomFieldRepository) ListRowsWithCustomFieldsPageByKey(tableName stri
 	return results, rows.Err()
 }
 
-// UpdateRowCustomFields overwrites custom_field_values for a single row in
-// items or assets. tableName must be one of the trusted names "items" or
-// "assets".
-func (r *CustomFieldRepository) UpdateRowCustomFields(tableName string, id int, newVal string) error {
+// CompareAndSwapRowCustomFields updates custom_field_values only when it still
+// matches oldVal. This prevents asynchronous cleanup from overwriting a newer
+// user edit. tableName must be one of the trusted names "items" or "assets".
+func (r *CustomFieldRepository) CompareAndSwapRowCustomFields(tableName string, id int, oldVal, newVal string) (bool, error) {
 	if tableName != "items" && tableName != "assets" {
-		return fmt.Errorf("invalid table for custom field values: %q", tableName)
+		return false, fmt.Errorf("invalid table for custom field values: %q", tableName)
 	}
-	_, err := r.db.ExecWrite(
-		fmt.Sprintf(`UPDATE %s SET custom_field_values = ? WHERE id = ?`, tableName),
-		newVal, id,
+	var (
+		result sql.Result
+		err    error
 	)
-	if err != nil {
-		return fmt.Errorf("update cfv row: %w", err)
+	if newVal == "" {
+		result, err = r.db.ExecWrite(
+			fmt.Sprintf(`UPDATE %s SET custom_field_values = NULL WHERE id = ? AND custom_field_values = ?`, tableName),
+			id, oldVal,
+		)
+	} else {
+		result, err = r.db.ExecWrite(
+			fmt.Sprintf(`UPDATE %s SET custom_field_values = ? WHERE id = ? AND custom_field_values = ?`, tableName),
+			newVal, id, oldVal,
+		)
 	}
-	return nil
+	if err != nil {
+		return false, fmt.Errorf("compare and swap cfv row: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("read cfv compare-and-swap result: %w", err)
+	}
+	return affected > 0, nil
+}
+
+// FindRowCustomFields returns the current custom_field_values value for a row.
+func (r *CustomFieldRepository) FindRowCustomFields(tableName string, id int) (currentValue string, found bool, err error) {
+	if tableName != "items" && tableName != "assets" {
+		return "", false, fmt.Errorf("invalid table for custom field values: %q", tableName)
+	}
+	var value sql.NullString
+	err = r.db.QueryRow(fmt.Sprintf(`SELECT custom_field_values FROM %s WHERE id = ?`, tableName), id).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("find cfv row: %w", err)
+	}
+	return value.String, true, nil
 }
 
 // --- portal custom_field_values -------------------------------------------

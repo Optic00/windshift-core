@@ -584,6 +584,7 @@
         type: 'regular',
         icon: Edit,
         title: t('common.edit'),
+        testid: 'custom-field-edit',
         hoverClass: 'hover-bg',
         onClick: () => startEdit(field)
       }
@@ -596,6 +597,7 @@
         type: 'regular',
         icon: Trash2,
         title: t('common.delete'),
+        testid: 'custom-field-delete',
         color: 'var(--ds-text-danger)',
         hoverClass: 'hover-danger',
         onClick: () => deleteField(field)
@@ -759,6 +761,7 @@
             triggerStyle="border-color: var(--ds-border); background: var(--ds-surface); color: var(--ds-text);"
             triggerAlignment="between"
             showChevron={true}
+            disabled={!!editingField}
             maxWidth="max-w-72"
             items={fieldTypes.map(type => ({
               id: type.value,
@@ -766,7 +769,7 @@
               icon: type.icon,
               iconColor: type.iconColor,
               title: type.label,
-              testid: isBooleanCustomFieldType(type.value) ? 'custom-field-type-checkbox' : undefined,
+              testid: `custom-field-type-${type.value}`,
               onClick: () => {
                 if (isBooleanCustomFieldType(type.value)) {
                   optionItems = [];
@@ -776,6 +779,11 @@
               }
             }))}
           />
+          {#if editingField}
+            <p class="mt-2 text-xs" style="color: var(--ds-text-subtle);">
+              Field type cannot be changed after creation.
+            </p>
+          {/if}
           {#if isMilestoneField}
             <p class="text-sm mt-2 p-2 rounded" style="color: var(--ds-text); background: var(--ds-surface); border: 1px solid var(--ds-border);">
               {t('fields.milestoneHint')}
@@ -1063,6 +1071,8 @@
       emptyMessage={t('fields.noFields')}
       emptyIcon={Circle}
       actionItems={buildFieldDropdownItems}
+      actionTriggerTestid={() => 'custom-field-actions'}
+      rowAttrs={() => ({ 'data-testid': 'custom-field-row' })}
     >
       {#snippet name(field)}
         <div>

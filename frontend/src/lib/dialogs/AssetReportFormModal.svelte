@@ -298,13 +298,6 @@
                     bind:checked={values[field.field_identifier]}
                     label={getFieldLabel(field)}
                   />
-                {:else if field.virtual_field_type === 'number'}
-                  <Input
-                    type="number"
-                    bind:value={values[field.field_identifier]}
-                    placeholder={getFieldLabel(field)}
-                    size="medium"
-                  />
                 {:else}
                   <Input
                     type="text"

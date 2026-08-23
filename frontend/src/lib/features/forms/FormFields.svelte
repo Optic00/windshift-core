@@ -31,14 +31,14 @@
   {#if currentStepFields.some((field) => field.field_identifier === 'title')}
     {@const titleField = currentStepFields.find((field) => field.field_identifier === 'title')}
     <div>
-      <Label for={`${idPrefix}-title`} required={titleField.is_required} class="mb-1.5" color="default">
+	  <Label for={`${idPrefix}-title`} required={true} class="mb-1.5" color="default">
         {titleField.display_name || t('requestForm.title')}
       </Label>
       <Input
         id={`${idPrefix}-title`}
         bind:value={formData.title}
         placeholder={t('requestForm.enterTitle')}
-        required={titleField.is_required}
+		required={true}
       />
       {#if titleField.description}
         <p class="mt-1 text-xs" style="color: var(--ds-text-subtle);">{titleField.description}</p>

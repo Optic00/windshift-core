@@ -167,7 +167,7 @@ func (h *PortalCustomersHandler) GetPortalCustomers(w http.ResponseWriter, r *ht
 		c, err := scanPortalCustomer(rows)
 		if err != nil {
 			if isCustomFieldParseError(err) {
-				// Log error but continue with other customers
+				slog.Warn("failed to parse custom field values for customer", slog.String("component", "portal"), slog.Int("customer_id", c.ID), slog.Any("error", err))
 				continue
 			}
 			respondInternalError(w, r, err)

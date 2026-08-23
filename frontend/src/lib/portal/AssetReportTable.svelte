@@ -4,6 +4,7 @@
   import { portalStore, iconMap } from '../stores/portal.svelte.js';
   import { t } from '../stores/i18n.svelte.js';
   import Input from '../components/Input.svelte';
+  import CustomFieldRenderer from '../features/items/CustomFieldRenderer.svelte';
 
   let {
     report,
@@ -21,6 +22,8 @@
   let pageSize = $state(10);
   let totalCount = $state(0);
   let totalPages = $state(0);
+  let customFieldDefinitions = $state([]);
+  let definitionLoadToken = 0;
 
   // Form-mode state. For run_mode='form' reports the user submits values that
   // get substituted into the report's CQL before the query runs. Until they
@@ -104,6 +107,25 @@
     }
   }
 
+  async function loadCustomFieldDefinitions() {
+    if (!slug) {
+      customFieldDefinitions = [];
+      return;
+    }
+    const myToken = ++definitionLoadToken;
+    try {
+      const definitions = await api.portal.getCustomFields(slug);
+      if (myToken === definitionLoadToken) {
+        customFieldDefinitions = definitions || [];
+      }
+    } catch (err) {
+      if (myToken === definitionLoadToken) {
+        console.error('Failed to load custom field definitions:', err);
+        customFieldDefinitions = [];
+      }
+    }
+  }
+
   function submitForm(event) {
     event?.preventDefault?.();
     formSubmitted = true;
@@ -132,6 +154,11 @@
     loadAssets();
   });
 
+  $effect(() => {
+    slug;
+    loadCustomFieldDefinitions();
+  });
+
   function nextPage() {
     if (page < totalPages) {
       page++;
@@ -155,11 +182,27 @@
       category: t('common.category'),
       type: t('common.type')
     };
-    // Check for custom fields (cf_ prefix)
     if (col.startsWith('cf_')) {
-      return col.replace('cf_', '').replace(/_/g, ' ');
+      return getCustomFieldDefinition(col)?.name || col.slice(3).replace(/_/g, ' ');
     }
     return labels[col] || col;
+  }
+
+  function getCustomFieldDefinition(col) {
+    if (!col.startsWith('cf_')) return null;
+    const fieldID = Number.parseInt(col.slice(3), 10);
+    if (!Number.isFinite(fieldID)) return null;
+    return customFieldDefinitions.find((field) => field.id === fieldID) || null;
+  }
+
+  function getCustomFieldValue(asset, col) {
+    if (!col.startsWith('cf_')) return null;
+    return asset.custom_field_values?.[col.slice(3)] ?? null;
+  }
+
+  function hasCustomFieldValue(value) {
+    if (value === null || value === '') return false;
+    return !Array.isArray(value) || value.length > 0;
   }
 
   // Get cell value for a column. Logical column names ("status", "type",
@@ -174,14 +217,6 @@
     }
     if (col === 'type') {
       return asset.asset_type_name ?? '-';
-    }
-    // Custom fields: cf_<id> reads custom_field_values[id]. The backend stores
-    // values keyed by custom field id (string-encoded in the JSON column).
-    if (col.startsWith('cf_')) {
-      const key = col.slice(3);
-      const cfValue = asset.custom_field_values?.[key];
-      if (cfValue === null || cfValue === undefined) return '-';
-      return String(cfValue);
     }
     return asset[col] ?? '-';
   }
@@ -330,6 +365,7 @@
               <th
                 class="text-left px-4 py-3 text-sm font-medium capitalize"
                 style="color: var(--ds-text-subtle);"
+                data-testid={`asset-report-column-${col}`}
               >
                 {getColumnLabel(col)}
               </th>
@@ -340,8 +376,27 @@
           {#each assets as asset}
             <tr class="border-b last:border-b-0 hover:bg-black/5" style="border-color: var(--ds-border);">
               {#each displayColumns as col}
-                <td class="px-4 py-3 text-sm" style="color: var(--ds-text);">
-                  {getCellValue(asset, col)}
+                {@const customFieldDefinition = getCustomFieldDefinition(col)}
+                {@const customFieldValue = getCustomFieldValue(asset, col)}
+                <td
+                  class="px-4 py-3 text-sm"
+                  style="color: var(--ds-text);"
+                  data-testid={`asset-report-cell-${asset.id}-${col}`}
+                >
+                  {#if col.startsWith('cf_')}
+                    {#if customFieldDefinition && hasCustomFieldValue(customFieldValue)}
+                      <CustomFieldRenderer
+                        field={customFieldDefinition}
+                        value={customFieldValue}
+                        readonly={true}
+                        noPadding={true}
+                      />
+                    {:else}
+                      -
+                    {/if}
+                  {:else}
+                    {getCellValue(asset, col)}
+                  {/if}
                 </td>
               {/each}
             </tr>

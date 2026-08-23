@@ -194,7 +194,7 @@
     autoOpenPickers={false}
     {milestones}
     {iterations}
-    users={editorOptions?.users ?? users}
+    users={editorOptions?.loaded?.users ? editorOptions.users : users}
     optionData={editorOptions ?? {}}
     optionLoading={editorOptions?.loading ?? {}}
     onRequestOptions={(field) => editorOptions && collectionEditorOptions.load(workspaceId, field)}

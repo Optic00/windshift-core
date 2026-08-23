@@ -1,8 +1,12 @@
 package validation
 
 import (
+	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
+	"strings"
+	"time"
 
 	"windshift/internal/database"
 	"windshift/internal/models"
@@ -49,9 +53,106 @@ func ValidateAndNormalizeCustomFieldValues(db database.Database, cfv map[string]
 			}
 		case "text", "textarea":
 			cfv[fieldKey] = sanitizeTextValue(def.FieldType, raw)
+		case "number":
+			normalized, err := normalizeNumberValue(fieldKey, raw)
+			if err != nil {
+				return err
+			}
+			cfv[fieldKey] = normalized
+		case "date":
+			normalized, err := normalizeDateValue(fieldKey, raw)
+			if err != nil {
+				return err
+			}
+			cfv[fieldKey] = normalized
 		}
 	}
 	return nil
+}
+
+func normalizeNumberValue(fieldKey string, raw any) (any, error) {
+	if raw == nil {
+		return nil, nil
+	}
+
+	var value float64
+	var err error
+	switch typed := raw.(type) {
+	case string:
+		trimmed := strings.TrimSpace(typed)
+		if trimmed == "" {
+			return nil, nil
+		}
+		value, err = strconv.ParseFloat(trimmed, 64)
+	case json.Number:
+		value, err = typed.Float64()
+	case float64:
+		value = typed
+	case float32:
+		value = float64(typed)
+	case int:
+		value = float64(typed)
+	case int8:
+		value = float64(typed)
+	case int16:
+		value = float64(typed)
+	case int32:
+		value = float64(typed)
+	case int64:
+		value = float64(typed)
+	case uint:
+		value = float64(typed)
+	case uint8:
+		value = float64(typed)
+	case uint16:
+		value = float64(typed)
+	case uint32:
+		value = float64(typed)
+	case uint64:
+		value = float64(typed)
+	default:
+		return nil, &ValidationError{
+			Field:   "custom_field_values." + fieldKey,
+			Message: fmt.Sprintf("number value must be numeric or empty, got %T", raw),
+		}
+	}
+	if err != nil {
+		return nil, &ValidationError{
+			Field:   "custom_field_values." + fieldKey,
+			Message: "number value must be numeric or empty",
+		}
+	}
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return nil, &ValidationError{
+			Field:   "custom_field_values." + fieldKey,
+			Message: "number value must be finite",
+		}
+	}
+	return value, nil
+}
+
+func normalizeDateValue(fieldKey string, raw any) (any, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	value, ok := raw.(string)
+	if !ok {
+		return nil, &ValidationError{
+			Field:   "custom_field_values." + fieldKey,
+			Message: "date value must use YYYY-MM-DD format or be empty",
+		}
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	if _, err := time.Parse(time.DateOnly, value); err != nil {
+		return nil, &ValidationError{
+			Field:   "custom_field_values." + fieldKey,
+			Message: "date value must use YYYY-MM-DD format or be empty",
+		}
+	}
+	return value, nil
 }
 
 // ValidateCheckboxValue enforces the asset-aligned boolean value contract. An

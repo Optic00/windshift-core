@@ -1315,7 +1315,11 @@ func (as *ActionService) executeSetFieldCustom(ctx *models.ExecutionContext, ste
 	if err != nil {
 		return fmt.Errorf("resolve custom field type: %w", err)
 	}
-	switch fieldTypes[fieldKey] {
+	fieldType, ok := fieldTypes[fieldKey]
+	if !ok {
+		return fmt.Errorf("set_field: custom field %d does not exist", config.CustomFieldID)
+	}
+	switch fieldType {
 	case "select":
 		// An empty substitution clears the field rather than failing
 		// option-id validation.
@@ -1327,6 +1331,17 @@ func (as *ActionService) executeSetFieldCustom(ctx *models.ExecutionContext, ste
 		// JSON array ("[1,2]") or a CSV of option ids — decode before
 		// validation so each element is checked against the option set.
 		cfv[fieldKey] = parseActionMultiselectValue(value)
+	case models.CustomFieldTypeBoolean, models.CustomFieldTypeCheckbox:
+		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "":
+			cfv[fieldKey] = nil
+		case "true":
+			cfv[fieldKey] = true
+		case "false":
+			cfv[fieldKey] = false
+		default:
+			return fmt.Errorf("set_field: custom field %d requires true or false", config.CustomFieldID)
+		}
 	}
 	if err := validation.ValidateAndNormalizeCustomFieldValues(as.db, cfv); err != nil {
 		return fmt.Errorf("set_field: custom field %d: %w", config.CustomFieldID, err)

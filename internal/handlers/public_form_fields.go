@@ -124,7 +124,7 @@ func validateVirtualField(field publicFormFieldSchema) error {
 	}
 	fieldType := strings.TrimSpace(*field.VirtualFieldType)
 	switch fieldType {
-	case "text", "textarea", "checkbox", "number":
+	case "text", "textarea", "checkbox":
 		return nil
 	case "select":
 	default:

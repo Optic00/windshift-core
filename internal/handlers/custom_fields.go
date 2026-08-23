@@ -212,7 +212,7 @@ func (h *CustomFieldHandler) validateAndNormalizeCustomField(w http.ResponseWrit
 		return nil, nil, false
 	}
 
-	if (cf.FieldType == "select" || cf.FieldType == "multiselect") && cf.Options != "" {
+	if cf.FieldType == "select" || cf.FieldType == "multiselect" {
 		normalized, vErr := normalizeSelectOptions(cf.Options)
 		if vErr != nil {
 			if vErr.validation {
@@ -346,6 +346,14 @@ func (h *CustomFieldHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if models.CanonicalCustomFieldType(oldCF.FieldType) != cf.FieldType {
+		respondValidationError(w, r, "Custom field type cannot be changed after creation")
+		return
+	}
+	if req.Indexed != nil && !indexableFieldTypes[cf.FieldType] {
+		respondValidationError(w, r, fmt.Sprintf("Field type '%s' cannot be indexed. Only number, date, and text fields support indexing.", cf.FieldType))
+		return
+	}
 
 	now := time.Now()
 	if err := h.repo.Update(id, &cf, now); err != nil {
@@ -363,11 +371,6 @@ func (h *CustomFieldHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	// Handle indexing changes if provided
 	if req.Indexed != nil {
-		if !indexableFieldTypes[oldCF.FieldType] {
-			respondValidationError(w, r, fmt.Sprintf("Field type '%s' cannot be indexed. Only number, date, and text fields support indexing.", oldCF.FieldType))
-			return
-		}
-
 		for _, table := range []struct {
 			name   string
 			wanted bool
@@ -477,62 +480,77 @@ func (h *CustomFieldHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Guard against deleting a field that still holds values: items/assets/portal
-	// records store values as JSON keyed by the field id, so an unguarded delete
-	// silently strips live data (the renderer just ignores unknown keys, and the
-	// async cfv cleanup below scrubs the keys out). Mirror the item-type guard and
-	// make the admin clear the values first. The async cleanup stays as
-	// defense-in-depth for anything written concurrently with this delete.
-	inUse, err := h.repo.CountRowsUsingField(id)
-	if err != nil {
-		h.logAndRespondDatabaseError(w, r, err)
-		return
-	}
-	if inUse > 0 {
-		respondConflict(w, r, fmt.Sprintf("Cannot delete custom field: it is used by %d record(s). Clear those values first.", inUse))
-		return
-	}
-
-	// Handle linking field cascade: delete mirror or clear mirror_field_id from primary
+	deleteIDs := []int{id}
+	var linkingOpts *linkingFieldOptions
 	if info.FieldType == "linking" {
-		h.handleLinkingFieldDelete(id)
-	}
-
-	// Drop any database indexes before deleting the field
-	indexNames, err := h.repo.ListIndexNamesForField(id)
-	if err != nil {
-		h.logAndRespondDatabaseError(w, r, err)
-		return
-	}
-
-	for _, indexName := range indexNames {
-		dropSQL := fmt.Sprintf("DROP INDEX IF EXISTS %s", indexName)
-		if err := h.repo.ExecDDL(dropSQL); err != nil {
-			slog.Warn("failed to drop index during field deletion", slog.String("component", "custom_fields"), slog.String("index", indexName), slog.Any("error", err))
+		linkingOpts, err = h.findLinkingDeleteOptions(id)
+		if err != nil {
+			h.logAndRespondDatabaseError(w, r, err)
+			return
+		}
+		if linkingOpts != nil && linkingOpts.MirrorFieldID > 0 {
+			if _, err := h.repo.FindDeleteInfo(linkingOpts.MirrorFieldID); err == nil {
+				deleteIDs = append([]int{linkingOpts.MirrorFieldID}, deleteIDs...)
+			} else if !errors.Is(err, repository.ErrNotFound) {
+				h.logAndRespondDatabaseError(w, r, err)
+				return
+			}
 		}
 	}
 
-	// Cancel any still-pending async index build so it can't rebuild an index
-	// for the field we just dropped (Postgres index_build jobs; no-op on SQLite).
-	if err := scheduler.CancelPendingIndexBuilds(h.db, id); err != nil {
-		slog.Warn("custom_fields: failed to cancel pending index builds",
-			slog.Int("field_id", id), slog.Any("error", err))
+	// Check every field in a linking cascade before deleting either definition.
+	// The asynchronous scrub remains defense-in-depth for concurrent writes.
+	for _, fieldID := range deleteIDs {
+		inUse, err := h.repo.CountRowsUsingField(fieldID)
+		if err != nil {
+			h.logAndRespondDatabaseError(w, r, err)
+			return
+		}
+		if inUse > 0 {
+			respondConflict(w, r, fmt.Sprintf("Cannot delete custom field: it is used by %d record(s). Clear those values first.", inUse))
+			return
+		}
 	}
 
-	if err := h.repo.Delete(id); err != nil {
-		respondInternalError(w, r, err)
-		return
+	indexesByField := make(map[int][]string, len(deleteIDs))
+	for _, fieldID := range deleteIDs {
+		indexNames, err := h.repo.ListIndexNamesForField(fieldID)
+		if err != nil {
+			h.logAndRespondDatabaseError(w, r, err)
+			return
+		}
+		indexesByField[fieldID] = indexNames
 	}
 
-	// Enqueue async cleanup: items' cfv JSON still carries the deleted
-	// field's key. Inline scrubbing is unsafe here — a busy workspace can
-	// have millions of items. CFVCleanupScheduler drains the queue in
-	// batches; the user's Delete request returns immediately.
-	if err := scheduler.EnqueueFieldCleanup(h.db, id); err != nil {
-		slog.Warn("custom_fields: failed to enqueue cfv cleanup job",
-			slog.Int("field_id", id), slog.Any("error", err))
-		// Don't fail the request — the orphan tolerance is well-defined
-		// (renderer ignores unknown field keys) and the queue is best-effort.
+	if linkingOpts != nil && linkingOpts.MirrorOfFieldID > 0 {
+		if err := h.clearPrimaryMirrorReference(linkingOpts.MirrorOfFieldID); err != nil {
+			h.logAndRespondDatabaseError(w, r, err)
+			return
+		}
+	}
+
+	for _, fieldID := range deleteIDs {
+		for _, indexName := range indexesByField[fieldID] {
+			dropSQL := fmt.Sprintf("DROP INDEX IF EXISTS %s", indexName)
+			if err := h.repo.ExecDDL(dropSQL); err != nil {
+				slog.Warn("failed to drop index during field deletion", slog.String("component", "custom_fields"), slog.String("index", indexName), slog.Any("error", err))
+			}
+		}
+
+		if err := scheduler.CancelPendingIndexBuilds(h.db, fieldID); err != nil {
+			slog.Warn("custom_fields: failed to cancel pending index builds",
+				slog.Int("field_id", fieldID), slog.Any("error", err))
+		}
+
+		if err := h.repo.Delete(fieldID); err != nil {
+			respondInternalError(w, r, err)
+			return
+		}
+
+		if err := scheduler.EnqueueFieldCleanup(h.db, fieldID); err != nil {
+			slog.Warn("custom_fields: failed to enqueue cfv cleanup job",
+				slog.Int("field_id", fieldID), slog.Any("error", err))
+		}
 	}
 
 	currentUser := utils.GetCurrentUser(r)
@@ -777,35 +795,37 @@ func (h *CustomFieldHandler) createMirrorField(primaryID int, opts *linkingField
 	return mirrorID, nil
 }
 
-// handleLinkingFieldDelete handles cascade deletion of mirror fields when a linking field is deleted
-func (h *CustomFieldHandler) handleLinkingFieldDelete(fieldID int) {
+func (h *CustomFieldHandler) findLinkingDeleteOptions(fieldID int) (*linkingFieldOptions, error) {
 	optionsJSON, err := h.repo.FindOptions(fieldID)
-	if err != nil || optionsJSON == "" {
-		return
+	if err != nil {
+		return nil, err
+	}
+	if optionsJSON == "" {
+		return nil, nil
 	}
 
 	var opts linkingFieldOptions
 	if err := json.Unmarshal([]byte(optionsJSON), &opts); err != nil {
-		return
+		return nil, fmt.Errorf("decode linking field options: %w", err)
 	}
+	return &opts, nil
+}
 
-	if opts.MirrorFieldID > 0 {
-		// This is a primary field - delete its mirror
-		_ = h.repo.Delete(opts.MirrorFieldID)
-	} else if opts.MirrorOfFieldID > 0 {
-		// This is a mirror field - clear mirror_field_id from primary
-		primaryOptsJSON, err := h.repo.FindOptions(opts.MirrorOfFieldID)
-		if err != nil || primaryOptsJSON == "" {
-			return
-		}
-		var primaryOpts map[string]any
-		if err := json.Unmarshal([]byte(primaryOptsJSON), &primaryOpts); err == nil {
-			delete(primaryOpts, "mirror_field_id")
-			if updatedJSON, err := json.Marshal(primaryOpts); err == nil {
-				_ = h.repo.UpdateOptions(int64(opts.MirrorOfFieldID), string(updatedJSON))
-			}
-		}
+func (h *CustomFieldHandler) clearPrimaryMirrorReference(primaryFieldID int) error {
+	primaryOptsJSON, err := h.repo.FindOptions(primaryFieldID)
+	if err != nil || primaryOptsJSON == "" {
+		return err
 	}
+	var primaryOpts map[string]any
+	if err := json.Unmarshal([]byte(primaryOptsJSON), &primaryOpts); err != nil {
+		return fmt.Errorf("decode primary linking field options: %w", err)
+	}
+	delete(primaryOpts, "mirror_field_id")
+	updatedJSON, err := json.Marshal(primaryOpts)
+	if err != nil {
+		return err
+	}
+	return h.repo.UpdateOptions(int64(primaryFieldID), string(updatedJSON))
 }
 
 // cleanupRemovedOptions detects which option IDs an edit removed and enqueues an

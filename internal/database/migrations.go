@@ -139,6 +139,20 @@ var Catalog = []Migration{
 				WHERE is_template = true;
 		`,
 	},
+	{
+		Version:       "20260823_cfv_cleanup_retries",
+		Name:          "Add retry scheduling to custom field maintenance jobs",
+		CheckSQLite:   sqliteColumnCheck("pending_custom_field_cleanups", "attempt_count"),
+		CheckPostgres: pgColumnCheck("pending_custom_field_cleanups", "attempt_count"),
+		SQLite: `
+			ALTER TABLE pending_custom_field_cleanups ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0;
+			ALTER TABLE pending_custom_field_cleanups ADD COLUMN next_attempt_at DATETIME;
+		`,
+		Postgres: `
+			ALTER TABLE pending_custom_field_cleanups ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0;
+			ALTER TABLE pending_custom_field_cleanups ADD COLUMN next_attempt_at TIMESTAMPTZ;
+		`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {

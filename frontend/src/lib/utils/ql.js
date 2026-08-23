@@ -23,6 +23,8 @@ export const TokenType = {
   CONTAINS: 'CONTAINS', // ~
   IN: 'IN', // IN
   NOT_IN: 'NOT_IN', // NOT IN
+  IS: 'IS', // IS
+  NULL: 'NULL', // NULL
 
   AND: 'AND',
   OR: 'OR',
@@ -203,6 +205,12 @@ export class QLTokenizer {
           case 'IN':
             tokens.push({ type: TokenType.IN, value: 'IN' });
             break;
+          case 'IS':
+            tokens.push({ type: TokenType.IS, value: 'IS' });
+            break;
+          case 'NULL':
+            tokens.push({ type: TokenType.NULL, value: null });
+            break;
           case 'TRUE':
           case 'FALSE':
             tokens.push({ type: TokenType.BOOLEAN, value: upperIdent.toLowerCase() });
@@ -295,6 +303,7 @@ export const NodeType = {
   BINARY_OP: 'BINARY_OP',
   COMPARISON: 'COMPARISON',
   IN_EXPRESSION: 'IN_EXPRESSION',
+  NULL_CHECK: 'NULL_CHECK',
   IDENTIFIER: 'IDENTIFIER',
   LITERAL: 'LITERAL',
   FUNCTION_CALL: 'FUNCTION_CALL',
@@ -402,6 +411,21 @@ export class QLParser {
   comparison() {
     const left = this.primary();
 
+    if (this.match(TokenType.IS)) {
+      this.advance();
+      let operator = 'IS NULL';
+      if (this.match(TokenType.NOT)) {
+        this.advance();
+        operator = 'IS NOT NULL';
+      }
+      this.consume(TokenType.NULL, 'Expected NULL after IS');
+      return {
+        type: NodeType.NULL_CHECK,
+        operator,
+        field: left,
+      };
+    }
+
     if (
       this.match(
         TokenType.EQUALS,
@@ -448,7 +472,15 @@ export class QLParser {
       };
     }
 
-    if (this.match(TokenType.STRING, TokenType.NUMBER, TokenType.DATE, TokenType.BOOLEAN)) {
+    if (
+      this.match(
+        TokenType.STRING,
+        TokenType.NUMBER,
+        TokenType.DATE,
+        TokenType.BOOLEAN,
+        TokenType.NULL
+      )
+    ) {
       const token = this.advance();
       return {
         type: NodeType.LITERAL,
@@ -661,6 +693,8 @@ export class QLEvaluator {
         return this.evaluateComparison(ast, item);
       case NodeType.IN_EXPRESSION:
         return this.evaluateInExpression(ast, item);
+      case NodeType.NULL_CHECK:
+        return this.evaluateNullCheck(ast, item);
       case NodeType.IDENTIFIER:
         return this.getFieldValue(ast.value, item);
       case NodeType.LITERAL:
@@ -691,6 +725,12 @@ export class QLEvaluator {
 
   evaluateInExpression(ast, item) {
     return evaluateInExpressionShared(this, ast, item);
+  }
+
+  evaluateNullCheck(ast, item) {
+    const value = this.evaluate(ast.field, item);
+    const isNull = value === null || value === undefined;
+    return ast.operator === 'IS NOT NULL' ? !isNull : isNull;
   }
 
   evaluateFunction(ast, _item) {
@@ -829,7 +869,13 @@ export class QLBuilder {
 
     if (filters.dynamicFields && filters.dynamicFields.length > 0) {
       filters.dynamicFields.forEach((filter) => {
-        if (filter.field && (filter.value || (filter.values && filter.values.length > 0))) {
+        if (
+          filter.field &&
+          (filter.operator === 'IS NULL' ||
+            filter.operator === 'IS NOT NULL' ||
+            filter.value ||
+            (filter.values && filter.values.length > 0))
+        ) {
           const condition = QLBuilder.buildFieldCondition(filter);
           if (condition) {
             conditions.push(condition);
@@ -851,6 +897,10 @@ export class QLBuilder {
 
     // Wrap field ID in backticks to handle names with spaces (e.g. cf_Time Estimate)
     const fieldId = `\`${field.id}\``;
+
+    if (operator === 'IS NULL' || operator === 'IS NOT NULL') {
+      return `${fieldId} ${operator}`;
+    }
 
     if ((operator === 'IN' || operator === 'NOT IN') && values && values.length > 0) {
       const valuesList = values.map((v) => QLBuilder.formatValue(v, field.type)).join(', ');
@@ -1065,7 +1115,8 @@ export class QLBuilder {
   static _projectCustomField(node, result, customFieldsById) {
     const isComparison = node?.type === NodeType.COMPARISON;
     const isIn = node?.type === NodeType.IN_EXPRESSION;
-    if (!isComparison && !isIn) return false;
+    const isNullCheck = node?.type === NodeType.NULL_CHECK;
+    if (!isComparison && !isIn && !isNullCheck) return false;
 
     const fieldNode = isComparison ? node.left : node.field;
     if (fieldNode?.type !== NodeType.IDENTIFIER) return false;
@@ -1083,6 +1134,29 @@ export class QLBuilder {
         operator: node.operator,
         value: '',
         values,
+      });
+      return true;
+    }
+
+    if (isNullCheck) {
+      result.dynamicFields.push({
+        field: QLBuilder._resolveField(fieldId, customFieldsById, 'text'),
+        operator: node.operator,
+        value: '',
+        values: [],
+      });
+      return true;
+    }
+
+    if (
+      node.right?.dataType === TokenType.NULL &&
+      (node.operator === '=' || node.operator === '!=')
+    ) {
+      result.dynamicFields.push({
+        field: QLBuilder._resolveField(fieldId, customFieldsById, 'text'),
+        operator: node.operator === '=' ? 'IS NULL' : 'IS NOT NULL',
+        value: '',
+        values: [],
       });
       return true;
     }
@@ -1198,6 +1272,8 @@ export class AssetQLEvaluator {
         return this.evaluateComparison(ast, asset);
       case NodeType.IN_EXPRESSION:
         return this.evaluateInExpression(ast, asset);
+      case NodeType.NULL_CHECK:
+        return this.evaluateNullCheck(ast, asset);
       case NodeType.IDENTIFIER:
         return this.getFieldValue(ast.value, asset);
       case NodeType.LITERAL:
@@ -1228,6 +1304,12 @@ export class AssetQLEvaluator {
 
   evaluateInExpression(ast, asset) {
     return evaluateInExpressionShared(this, ast, asset);
+  }
+
+  evaluateNullCheck(ast, asset) {
+    const value = this.evaluate(ast.field, asset);
+    const isNull = value === null || value === undefined;
+    return ast.operator === 'IS NOT NULL' ? !isNull : isNull;
   }
 
   evaluateFunction(ast, _asset) {

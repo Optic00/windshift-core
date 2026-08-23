@@ -174,17 +174,22 @@
         if (typeof v === 'object' && v.name) {
           return v.name;
         }
-        return `Customer #${v}`;
+		return `Customer #${typeof v === 'object' ? v.id : v}`;
       case 'customerorganisation':
         if (typeof v === 'object' && v.name) {
           return v.name;
         }
-        return `Organisation #${v}`;
+		return `Organisation #${typeof v === 'object' ? v.id : v}`;
       case 'select':
       case 'multiselect':
         if (field.options) {
           if (field.field_type === 'multiselect') {
-            return resolveOptionLabels(field.options, Array.isArray(v) ? v : []).join(', ');
+			const values = Array.isArray(v)
+			  ? v
+			  : typeof v === 'string' && v.includes(',')
+				? v.split(',').map(item => item.trim()).filter(Boolean)
+				: [v];
+			return resolveOptionLabels(field.options, values).join(', ');
           }
           return resolveOptionLabel(field.options, v);
         }
@@ -201,6 +206,11 @@
         return v;
     }
   }
+
+	function hasDisplayValue() {
+	  if (value === null || value === undefined || value === '') return false;
+	  return !(field.field_type === 'multiselect' && Array.isArray(value) && value.length === 0);
+	}
 
   // Handle keydown for text/number inputs
   function handleKeydown(event) {
@@ -325,7 +335,7 @@
         onclick={handleClick}
         data-testid={displayTestId}
       >
-        {#if value !== null && value !== undefined && value !== ''}
+		{#if hasDisplayValue()}
           {#if field.field_type === 'user'}
             <!-- Display user with avatar -->
             {#if userData}
@@ -421,7 +431,7 @@
         class="min-w-0 {displayAlignment === 'end' ? 'text-right' : ''} {truncateDisplay ? 'whitespace-nowrap overflow-hidden' : ''} {noPadding ? '' : 'px-3'} py-2 text-sm {disabled ? 'opacity-50' : ''}"
         data-testid={displayTestId}
       >
-        {#if value !== null && value !== undefined && value !== ''}
+		{#if hasDisplayValue()}
           {#if field.field_type === 'user'}
             {#if userData}
               <div class="flex min-w-0 items-center gap-2 {displayAlignment === 'end' ? 'justify-end' : ''}">

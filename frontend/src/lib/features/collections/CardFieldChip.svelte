@@ -2,7 +2,7 @@
   import { CalendarDays, Clock, CornerLeftUp } from '@lucide/svelte';
   import Chip from '../../components/Chip.svelte';
   import { formatDate, formatDateOnly, formatDateShort, formatStatusAge } from '../../utils/dateFormatter.js';
-  import { resolveOptionLabel } from '../../utils/optionUtils.js';
+  import { resolveOptionLabel, resolveOptionLabels } from '../../utils/optionUtils.js';
   import { durationToString } from '../../utils/timeUtils.js';
   import { booleanCustomFieldChecked, isBooleanCustomFieldType } from '../../utils/customFieldTypes.js';
   import { t } from '../../stores/i18n.svelte.js';
@@ -174,9 +174,13 @@
       <Chip appearance="metadata" icon={CalendarDays} title={customFieldDef.name}>
         {formatDateOnly(customFieldValue)}
       </Chip>
-    {:else if (customFieldDef.field_type === 'select' || customFieldDef.field_type === 'multiselect') && customFieldDef.options}
+    {:else if customFieldDef.field_type === 'select' && customFieldDef.options}
       <Chip appearance="metadata" title={customFieldDef.name}>
         {resolveOptionLabel(customFieldDef.options, customFieldValue) || customFieldValue}
+      </Chip>
+    {:else if customFieldDef.field_type === 'multiselect' && customFieldDef.options}
+      <Chip appearance="metadata" title={customFieldDef.name}>
+        {resolveOptionLabels(customFieldDef.options, customFieldValue).join(', ') || customFieldValue}
       </Chip>
     {:else if isBooleanCustomFieldType(customFieldDef.field_type)}
       {@const checked = booleanCustomFieldChecked(customFieldValue)}
@@ -186,8 +190,9 @@
         </Chip>
       </span>
     {:else if customFieldDef.field_type === 'number'}
+	  {@const numericValue = parseFloat(String(customFieldValue))}
       <Chip appearance="metadata" title={customFieldDef.name}>
-        {parseFloat(String(customFieldValue))}
+		{Number.isFinite(numericValue) ? numericValue : String(customFieldValue)}
       </Chip>
     {:else if customFieldDef.field_type === 'user' && customFieldUserNames.length > 0}
       <Chip appearance="metadata" title={customFieldDef.name}>

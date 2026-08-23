@@ -185,7 +185,20 @@ var systemFieldSortColumns = map[string]string{
 // unsortableCustomFieldTypes lists custom field types that cannot be meaningfully sorted.
 var unsortableCustomFieldTypes = map[string]bool{
 	"multiselect": true,
+	"multi_user":  true,
 	"linking":     true,
+}
+
+// numericCustomFieldSortTypes store scalar numbers or entity/option IDs.
+var numericCustomFieldSortTypes = map[string]bool{
+	"number":               true,
+	"select":               true,
+	"milestone":            true,
+	"iteration":            true,
+	"user":                 true,
+	"asset":                true,
+	"portalcustomer":       true,
+	"customerorganisation": true, //nolint:misspell // matches the field type
 }
 
 // SystemSortableFieldKeys returns the list of system field identifiers that support sorting.
@@ -751,7 +764,7 @@ func (r *ItemRepository) buildOrderByClause(sortBy string, sortAsc bool) string 
 		expr = fmt.Sprintf(`NULLIF(i.custom_field_values, '') ->> '$.%q'`, sortBy)
 	}
 
-	if fieldType == "number" {
+	if numericCustomFieldSortTypes[fieldType] {
 		expr = fmt.Sprintf("CAST(%s AS NUMERIC)", expr)
 	}
 

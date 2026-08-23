@@ -59,7 +59,9 @@ export function validateFormStep({
   const stepFields = fields.filter((field) => (field.step_number || 1) === step);
 
   for (const field of stepFields) {
-    if (!field.is_required) continue;
+    const required =
+      field.is_required || (field.field_type === 'default' && field.field_identifier === 'title');
+    if (!required) continue;
 
     let value;
     if (field.field_type === 'default') {

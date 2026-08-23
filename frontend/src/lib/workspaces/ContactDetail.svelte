@@ -92,6 +92,11 @@
     }
   }
 
+  function hasCustomFieldValue(value) {
+    if (value === undefined || value === null || value === '') return false;
+    return !Array.isArray(value) || value.length > 0;
+  }
+
   function startEditing() {
     editFormData = {
       name: customer.name,
@@ -376,7 +381,7 @@
 
             <!-- Custom Field Values (read-only) -->
             {#if portalCustomerFields.length > 0 && customer.custom_field_values}
-              {@const filledFields = portalCustomerFields.filter(f => customer.custom_field_values[f.name] !== undefined && customer.custom_field_values[f.name] !== null && customer.custom_field_values[f.name] !== '')}
+              {@const filledFields = portalCustomerFields.filter(f => hasCustomFieldValue(customer.custom_field_values[f.name]))}
               {#if filledFields.length > 0}
                 <div class="pt-4 border-t" style="border-color: var(--ds-border);">
                   <h3 class="text-sm font-medium mb-3" style="color: var(--ds-text);">{t('workspaces.customers.customFields')}</h3>
@@ -384,7 +389,13 @@
                     {#each filledFields as field}
                       <div>
                         <div class="text-xs font-medium mb-1" style="color: var(--ds-text-subtle);">{field.label || field.name}</div>
-                        <div style="color: var(--ds-text);">{customer.custom_field_values[field.name]}</div>
+                        <CustomFieldRenderer
+                          {field}
+                          value={customer.custom_field_values[field.name]}
+                          readonly={true}
+                          noPadding={true}
+                          displayTestId={`customer-custom-field-${field.id}-value`}
+                        />
                       </div>
                     {/each}
                   </div>

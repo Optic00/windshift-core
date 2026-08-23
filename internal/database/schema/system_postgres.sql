@@ -561,6 +561,8 @@ CREATE TABLE IF NOT EXISTS pending_custom_field_cleanups (
 	started_at TIMESTAMPTZ,
 	completed_at TIMESTAMPTZ,
 	items_processed INTEGER NOT NULL DEFAULT 0,
+	attempt_count INTEGER NOT NULL DEFAULT 0,
+	next_attempt_at TIMESTAMPTZ,
 	error_message TEXT
 );
 

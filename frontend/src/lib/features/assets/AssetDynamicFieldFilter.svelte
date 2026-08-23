@@ -8,7 +8,7 @@
   import Checkbox from '../../components/Checkbox.svelte';
   import Input from '../../components/Input.svelte';
   import { t } from '../../stores/i18n.svelte.js';
-  import { booleanOptions, operatorsByType, isMultiValueOperator } from '../shared/filterOperators.js';
+	import { booleanOptions, operatorsByType, isMultiValueOperator, isNullOperator } from '../shared/filterOperators.js';
 
   let {
     filter = { field: null, operator: '=', value: '', values: [] },
@@ -177,8 +177,10 @@
           onSelect={(item) => {
             if (item) {
               const newOperator = item.value;
-              if (newOperator === 'IN' || newOperator === 'NOT IN') {
+			  if (isMultiValueOperator(newOperator)) {
                 onChange({ ...filter, operator: newOperator, values: [], value: '' });
+			  } else if (isNullOperator(newOperator)) {
+				onChange({ ...filter, operator: newOperator, value: '', values: [] });
               } else {
                 onChange({ ...filter, operator: newOperator, values: [] });
               }
@@ -189,7 +191,9 @@
 
       <!-- Value Input -->
       <div class={compact ? "flex-1 min-w-0" : "flex-1"} style={compact ? "" : "min-width: 200px;"}>
-      {#if isMultiValueOperator(filter.operator)}
+	  {#if isNullOperator(filter.operator)}
+		<div class="px-3 py-2 text-sm" style="color: var(--ds-text-subtle);">No value required</div>
+	  {:else if isMultiValueOperator(filter.operator)}
         {#if valueOptions.length > 0}
           <div class="border rounded p-2 max-h-32 overflow-y-auto" style="border-color: var(--ds-border); background-color: var(--ds-surface);">
             {#each valueOptions as option}

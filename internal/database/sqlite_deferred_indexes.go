@@ -96,13 +96,12 @@ func createDeferredSQLiteCustomFieldIndexes(db Database) {
 }
 
 func buildSQLiteCustomFieldIndexSQL(fieldID int, fieldType, targetTable, indexName string) string {
-	castType := "TEXT"
-	if fieldType == "number" {
-		castType = "NUMERIC"
-	}
 	fieldIDStr := strconv.Itoa(fieldID)
 	// %q would Go-quote the field ID and escape characters, breaking the
 	// JSON path literal embedded in the SQL.
-	return fmt.Sprintf(`CREATE INDEX %s ON %s(CAST(NULLIF(custom_field_values,'') ->> '$."%s"' AS %s))`, //nolint:gocritic // see comment above
-		indexName, targetTable, fieldIDStr, castType)
+	expression := fmt.Sprintf(`NULLIF(custom_field_values,'') ->> '$."%s"'`, fieldIDStr) //nolint:gocritic // see comment above
+	if fieldType == "number" {
+		expression = fmt.Sprintf("CAST(%s AS NUMERIC)", expression)
+	}
+	return fmt.Sprintf(`CREATE INDEX %s ON %s(%s)`, indexName, targetTable, expression)
 }
