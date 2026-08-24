@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { api } from '../../api.js';
-  import { attachmentStatus, workspacesStore } from '../../stores';
+  import { attachmentStatus } from '../../stores';
   import { workspaceDataStore } from '../../stores/workspaceDataStore.svelte.js';
   import Modal from '../../dialogs/Modal.svelte';
   import Comments from '../items/Comments.svelte';
@@ -19,14 +19,13 @@
   let {
     itemId,
     workspaceId,
-    statuses = [],
     isModal = true,
     onclose = null,
     onupdate = null
   } = $props();
 
-  // Load statuses if not provided (for full-page mode)
-  let localStatuses = $state([]);
+  const STATUS_ID_OPEN = 1;
+  const STATUS_ID_DONE = 3;
 
   // Core state
   let item = $state(null);
@@ -55,28 +54,15 @@
   let currentHierarchyLevel = $state(null);
   let itemTypes = $state([]);
 
-  // Use provided statuses or fall back to locally loaded ones
-  let effectiveStatuses = $derived(statuses.length > 0 ? statuses : localStatuses);
-
   onMount(async () => {
-    const initialLoads = [loadItem(), loadWorkspace()];
-    if (statuses.length === 0) initialLoads.push(loadStatuses());
+    const initialLoads = [loadItem()];
+    if (!isModal) initialLoads.push(loadWorkspace());
     if (attachmentStatus.enabled) initialLoads.push(loadAttachments());
     await Promise.all(initialLoads);
 
-    await loadHierarchyData();
+    if (!isModal) await loadHierarchyData();
     loading = false;
   });
-
-  async function loadStatuses() {
-    try {
-      await workspaceDataStore.initialize(workspaceId);
-      localStatuses = workspaceDataStore.statuses;
-    } catch (err) {
-      console.error('Failed to load statuses:', err);
-      localStatuses = [];
-    }
-  }
 
   async function loadItem() {
     try {
@@ -138,36 +124,16 @@
 
   // Done toggle logic (from TodoList)
   function isTaskCompleted() {
-    const status = effectiveStatuses.find(s => s.id === item?.status_id);
-    return status?.category_name === 'Done' ||
-           status?.name?.toLowerCase().includes('complete') ||
-           status?.name?.toLowerCase().includes('done');
+    return item?.status_id === STATUS_ID_DONE;
   }
 
   async function toggleDone() {
     try {
       saving = true;
-      let targetStatusId;
-
-      if (isTaskCompleted()) {
-        // Move to "Open" or first non-done status
-        const openStatus = effectiveStatuses.find(s => s.name?.toLowerCase() === 'open') ||
-                          effectiveStatuses.find(s => s.category_name !== 'Done') ||
-                          effectiveStatuses[0];
-        targetStatusId = openStatus?.id;
-      } else {
-        // Move to "Done" status
-        const doneStatus = effectiveStatuses.find(s => s.category_name === 'Done') ||
-                          effectiveStatuses.find(s => s.name?.toLowerCase().includes('done')) ||
-                          effectiveStatuses.find(s => s.name?.toLowerCase().includes('complete'));
-        targetStatusId = doneStatus?.id;
-      }
-
-      if (targetStatusId) {
-        await api.items.transition(item.id, targetStatusId);
-        item = { ...item, status_id: targetStatusId };
-        onupdate?.();
-      }
+      const targetStatusId = isTaskCompleted() ? STATUS_ID_OPEN : STATUS_ID_DONE;
+      await api.items.transition(item.id, targetStatusId);
+      item = { ...item, status_id: targetStatusId };
+      onupdate?.();
     } catch (err) {
       console.error('Failed to toggle done status:', err);
       error = err.message;
@@ -301,15 +267,6 @@
     }
   }
 
-  function openFullDetails() {
-    const personalWsId = $workspacesStore.personalWorkspace?.id;
-    if (workspaceId && workspaceId !== personalWsId) {
-      navigate(`/workspaces/${workspaceId}/items/${itemId}`);
-    } else {
-      navigate(`/personal/items/${itemId}`);
-    }
-  }
-
 </script>
 
 {#snippet taskContent()}
@@ -347,6 +304,7 @@
           disabled={saving}
           size="medium"
           class="task-complete-checkbox"
+          dataTestid="personal-task-status-toggle"
         />
 
         <!-- Editable Title -->
@@ -373,12 +331,8 @@
       </div>
 
       {#if isModal}
-        {@const personalWsId = $workspacesStore.personalWorkspace?.id}
-        {@const fullDetailsHref = workspaceId && workspaceId !== personalWsId
-          ? `/workspaces/${workspaceId}/items/${itemId}`
-          : `/personal/items/${itemId}`}
         <div class="flex items-center gap-1">
-          <Button variant="ghost" icon={ExternalLink} href={fullDetailsHref} title={t('items.fullDetails')} />
+          <Button variant="ghost" icon={ExternalLink} href={`/personal/items/${itemId}`} title={t('items.fullDetails')} />
           <Button variant="ghost" icon={X} onclick={closeModal} title={t('common.close')} />
         </div>
       {/if}
@@ -387,7 +341,7 @@
     <!-- Body -->
     <div class="{isModal ? 'p-4 max-h-[70vh] overflow-y-auto' : 'px-6 py-6'}">
       <!-- Due Date -->
-      <div class="mb-4">
+      <div class="mb-4" data-testid="personal-task-due-date">
         {#if editingDueDate}
           <div class="flex items-center gap-2">
             <Calendar class="w-4 h-4" style="color: var(--ds-text-subtle);" />
@@ -463,7 +417,7 @@
 {/snippet}
 
 {#if isModal}
-  <Modal isOpen={true} onclose={closeModal} maxWidth="max-w-2xl">
+  <Modal isOpen={true} onclose={closeModal} maxWidth="max-w-2xl" dataTestid="personal-task-detail">
     {@render taskContent()}
   </Modal>
 {:else}

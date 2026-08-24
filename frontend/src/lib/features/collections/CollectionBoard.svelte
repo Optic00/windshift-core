@@ -8,7 +8,12 @@
   import { useGradientStyles, loadWorkspaceGradient } from '../../stores/workspaceGradient.svelte.js';
   import QuickAddForm from './QuickAddForm.svelte';
   import { getCollection, checkItemVisibility } from './collectionService.js';
-  import { RIGHTMOST_COLUMN_LIMIT, buildDisplayColumns } from './boardColumns.js';
+  import {
+    RIGHTMOST_COLUMN_LIMIT,
+    boardStatusIdForItem,
+    buildDisplayColumns,
+    statusIdForBoardColumnMove,
+  } from './boardColumns.js';
   import { infoToast, successToast, warningToast } from '../../stores/toasts.svelte.js';
   import { Plus, ChevronDown, ChevronRight, MoreHorizontal, Layers, ArrowDownUp } from '@lucide/svelte';
   import ItemPicker from '../../pickers/ItemPicker.svelte';
@@ -17,6 +22,7 @@
   import { draggable, dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter';
   import { attachClosestEdge, extractClosestEdge } from '@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge';
   import ItemDetail from '../items/ItemDetail.svelte';
+  import PersonalTaskDetail from '../personal/PersonalTaskDetail.svelte';
   import ViewHeader from '../../layout/ViewHeader.svelte';
   import StaticViewBackground from '../../layout/StaticViewBackground.svelte';
   import Button from '../../components/Button.svelte';
@@ -77,6 +83,12 @@
   // Quick-add state per column
   let quickAddState = $state({});
   let workspaces = $derived($workspacesStore.regularWorkspaces || []);
+  let personalWorkspaceIds = $derived(new Set(
+    ($workspacesStore.allWorkspaces || [])
+      .filter((candidate) => candidate.is_personal)
+      .map((candidate) => Number(candidate.id))
+  ));
+  let selectedItem = $derived(items.find((item) => item.id === selectedItemId) ?? null);
   let collectionAllowsAllWorkspaces = $derived(
     collectionStore.boardWorkspaceScopeLoaded &&
     !workspaceId &&
@@ -529,11 +541,15 @@
   });
 
   function getItemsByStatus(statusId, itemSubset = filteredItems) {
-    return itemSubset.filter(item => item.status_id === statusId);
+    return itemSubset.filter(
+      item => boardStatusIdForItem(item, validColumns, personalWorkspaceIds) === statusId
+    );
   }
 
   function getItemsByColumn(column, itemSubset = filteredItems) {
-    return itemSubset.filter(item => column.status_ids && column.status_ids.includes(item.status_id));
+    return itemSubset.filter(item => column.status_ids?.includes(
+      boardStatusIdForItem(item, validColumns, personalWorkspaceIds)
+    ));
   }
 
   function parseLaneParentId(value) {
@@ -544,7 +560,12 @@
   }
 
   function isExcludedRightmostSwimlaneParent(item) {
-    return Boolean(excludeRightmostSwimlaneParents && rightmostBoardColumnStatusIds.has(item.status_id));
+    return Boolean(
+      excludeRightmostSwimlaneParents &&
+      rightmostBoardColumnStatusIds.has(
+        boardStatusIdForItem(item, validColumns, personalWorkspaceIds)
+      )
+    );
   }
 
   function isEligibleSwimlaneParent(item) {
@@ -962,12 +983,24 @@
   }
 
   function getMoveMenuItems(item) {
-    return displayColumns
-      .filter(column => column.status_ids?.length > 0 && !column.status_ids.includes(item.status_id))
-      .map(column => {
-        const targetStatusId = column.status_ids[0];
+    const currentBoardStatusId = boardStatusIdForItem(item, validColumns, personalWorkspaceIds);
+    const personalTask = personalWorkspaceIds.has(Number(item.workspace_id));
+    return validColumns
+      .map(column => ({
+        column,
+        targetStatusId: statusIdForBoardColumnMove(
+          item,
+          column,
+          validColumns,
+          personalWorkspaceIds,
+        ),
+      }))
+      .filter(({ column, targetStatusId }) => (
+        targetStatusId != null && !column.status_ids.includes(currentBoardStatusId)
+      ))
+      .map(({ column, targetStatusId }) => {
         const targetStatus = statuses.find(status => status.id === targetStatusId);
-        const targetName = targetStatus?.name || column.name;
+        const targetName = personalTask ? column.name : targetStatus?.name || column.name;
         return {
           id: `move-${item.id}-${targetStatusId}`,
           title: targetName,
@@ -1074,8 +1107,15 @@
           if (data.type !== 'work-item' || data.item.id === itemId) {
             return false;
           }
-
-          return true;
+          const targetColumn = getBoardColumnForItem(item);
+          return Boolean(
+            targetColumn && statusIdForBoardColumnMove(
+              data.item,
+              targetColumn,
+              validColumns,
+              personalWorkspaceIds,
+            ) != null
+          );
         },
         getData: ({ input, element }) => {
           return attachClosestEdge({}, {
@@ -1126,18 +1166,32 @@
 
       const status = statuses.find(s => s.id === statusId);
       if (!status) return;
+      const targetColumn = validColumns.find(column => column.status_ids?.[0] === statusId);
+      if (!targetColumn) return;
       const targetLaneParentId = parseLaneParentId(element.dataset.swimlaneParentId);
 
       const cleanup = dropTargetForElements({
         element,
         canDrop: ({ source }) => {
-          // Allow all work items to enter so we can show valid/invalid feedback
-          // Actual validation happens in onDrop
-          return (/** @type {any} */ (source.data)).type === 'work-item';
+          const data = /** @type {any} */ (source.data);
+          return data.type === 'work-item' && statusIdForBoardColumnMove(
+            data.item,
+            targetColumn,
+            validColumns,
+            personalWorkspaceIds,
+          ) != null;
         },
         onDragEnter: ({ source }) => {
           const data = /** @type {any} */ (source.data);
-          if (data.type === 'work-item') {
+          if (
+            data.type === 'work-item' &&
+            statusIdForBoardColumnMove(
+              data.item,
+              targetColumn,
+              validColumns,
+              personalWorkspaceIds,
+            ) != null
+          ) {
             // The server is authoritative for workflow validation. Highlight
             // every status target and let the optimistic drop roll back if the
             // transition is rejected.
@@ -1159,17 +1213,24 @@
             if (dropTargets.length > 1 && dropTargets[0].element !== element) {
               return;
             }
-            const isSameStatus = data.item.status_id === statusId;
+            const transitionStatusId = statusIdForBoardColumnMove(
+              data.item,
+              targetColumn,
+              validColumns,
+              personalWorkspaceIds,
+            );
+            if (transitionStatusId == null) return;
+            const isSameStatus = data.item.status_id === transitionStatusId;
             if (!isSameStatus && wouldChangeLaneParent(data.item, targetLaneParentId)) {
               warnUnsupportedCombinedBoardMove();
               return;
             }
             const previousStatusId = data.item.status_id;
-            if (!isSameStatus) updateLocalItemStatus(data.item.id, statusId);
+            if (!isSameStatus) updateLocalItemStatus(data.item.id, transitionStatusId);
             try {
               let droppedItem = data.item;
               if (!isSameStatus) {
-                droppedItem = await api.items.transition(data.item.id, statusId);
+                droppedItem = await api.items.transition(data.item.id, transitionStatusId);
                 mergeLocalItem(data.item.id, droppedItem);
               }
               await updateItemParentForLane(droppedItem, targetLaneParentId);
@@ -1202,8 +1263,14 @@
 
   function getStatusByItemId(itemId) {
     const item = items.find(i => i.id === itemId);
-    if (!item || !item.status_id) return null;
-    return statuses.find(s => s.id === item.status_id);
+    if (!item) return null;
+    const boardStatusId = boardStatusIdForItem(item, validColumns, personalWorkspaceIds);
+    return statuses.find(s => s.id === boardStatusId);
+  }
+
+  function getBoardColumnForItem(item) {
+    const boardStatusId = boardStatusIdForItem(item, validColumns, personalWorkspaceIds);
+    return validColumns.find(column => column.status_ids?.includes(boardStatusId));
   }
 
   function updateLocalItemStatus(itemId, statusId) {
@@ -1256,7 +1323,19 @@
       resetAllColumnStyles();
 
       const currentStatusId = draggedItem.status_id;
-      const targetStatusId = targetStatus.id;
+      const targetColumn = validColumns.find(column => column.status_ids?.includes(targetStatus.id));
+      const targetStatusId = targetColumn
+        ? statusIdForBoardColumnMove(
+            draggedItem,
+            targetColumn,
+            validColumns,
+            personalWorkspaceIds,
+          )
+        : null;
+      if (targetStatusId == null) {
+        reloadCollection();
+        return;
+      }
 
       // Check if we need to update status
       const isSameStatus = currentStatusId === targetStatusId;
@@ -1302,7 +1381,7 @@
 
       // Get items in the target status for position calculation
       const laneItems = targetLaneParentId === undefined ? filteredItems : getItemsForLaneParent(targetLaneParentId);
-      const statusItems = getItemsByStatus(targetStatusId, laneItems);
+      const statusItems = getItemsByStatus(targetStatus.id, laneItems);
 
       // Find the target item's position in the sorted status items
       const targetIndex = statusItems.findIndex(item => item.id === targetItem.id);
@@ -1740,12 +1819,21 @@
 
 <!-- Item Detail Modal -->
 {#if showItemModal && selectedItemId}
-  <ItemDetail
-    workspaceId={workspaceId}
-    itemId={selectedItemId}
-    isModal={true}
-    onclose={closeItemModal}
-  />
+  {#if selectedItem && personalWorkspaceIds.has(Number(selectedItem.workspace_id))}
+    <PersonalTaskDetail
+      itemId={selectedItemId}
+      workspaceId={selectedItem.workspace_id}
+      onclose={closeItemModal}
+      onupdate={reloadCollection}
+    />
+  {:else}
+    <ItemDetail
+      workspaceId={workspaceId}
+      itemId={selectedItemId}
+      isModal={true}
+      onclose={closeItemModal}
+    />
+  {/if}
 {/if}
 
 <style>

@@ -559,7 +559,6 @@
     <PersonalTaskDetail
       itemId={selectedItemId}
       workspaceId={getWorkspaceIdForItem(selectedItemId)}
-      {statuses}
       onclose={closeItemModal}
       onupdate={handleItemUpdate}
     />

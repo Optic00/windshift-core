@@ -8,6 +8,10 @@
  * for the separate rightmost-column fetch. */
 export const RIGHTMOST_COLUMN_LIMIT = 50;
 
+// Personal tasks use the system Open and Done statuses without a workflow.
+export const PERSONAL_TASK_OPEN_STATUS_ID = 1;
+export const PERSONAL_TASK_DONE_STATUS_ID = 3;
+
 const CATEGORY_ORDER = {
   'To Do': 1,
   'In Progress': 2,
@@ -43,6 +47,57 @@ export function buildDisplayColumns(boardConfig, statuses = []) {
     wip_limit: null,
     is_default_column: true,
   }));
+}
+
+function firstStatusId(column) {
+  return column?.status_ids?.[0] ?? null;
+}
+
+function isPersonalTask(item, personalWorkspaceIds) {
+  return personalWorkspaceIds?.has(Number(item?.workspace_id)) ?? false;
+}
+
+/**
+ * Resolves the status used to place an item on a board. Personal Open and Done
+ * map to the first and last visible columns while regular items keep their
+ * persisted workflow status.
+ */
+export function boardStatusIdForItem(item, columns = [], personalWorkspaceIds = new Set()) {
+  if (!isPersonalTask(item, personalWorkspaceIds)) return item?.status_id ?? null;
+
+  const validColumns = columns.filter((column) => column.status_ids?.length > 0);
+  if (validColumns.length === 0) return item?.status_id ?? null;
+
+  const endpointColumn =
+    item?.status_id === PERSONAL_TASK_DONE_STATUS_ID
+      ? validColumns[validColumns.length - 1]
+      : validColumns[0];
+  return firstStatusId(endpointColumn);
+}
+
+/**
+ * Resolves the persisted status for a board move. Personal tasks can only be
+ * moved to board endpoints, which translate back to Open or Done.
+ */
+export function statusIdForBoardColumnMove(
+  item,
+  targetColumn,
+  columns = [],
+  personalWorkspaceIds = new Set()
+) {
+  if (!isPersonalTask(item, personalWorkspaceIds)) return firstStatusId(targetColumn);
+
+  const validColumns = columns.filter((column) => column.status_ids?.length > 0);
+  const targetIndex = validColumns.indexOf(targetColumn);
+  if (targetIndex < 0) return null;
+  if (validColumns.length === 1) {
+    return item?.status_id === PERSONAL_TASK_DONE_STATUS_ID
+      ? PERSONAL_TASK_DONE_STATUS_ID
+      : PERSONAL_TASK_OPEN_STATUS_ID;
+  }
+  if (targetIndex === 0) return PERSONAL_TASK_OPEN_STATUS_ID;
+  if (targetIndex === validColumns.length - 1) return PERSONAL_TASK_DONE_STATUS_ID;
+  return null;
 }
 
 /**
