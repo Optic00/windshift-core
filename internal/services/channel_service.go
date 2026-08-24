@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/google/uuid"
+	"uuid"
 
 	"windshift/internal/database"
 	"windshift/internal/models"
@@ -480,7 +480,7 @@ func ensureDefaultPortalSection(config string) (string, error) {
 
 	cfg["portal_sections"] = []any{
 		map[string]any{
-			"id":               uuid.NewString(),
+			"id":               uuid.New().String(),
 			"title":            "",
 			"subtitle":         "",
 			"display_order":    0,

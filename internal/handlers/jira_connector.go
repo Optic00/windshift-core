@@ -16,7 +16,7 @@ import (
 	"windshift/internal/sso"
 	"windshift/internal/utils"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 // JiraImportHandler handles Jira import endpoints

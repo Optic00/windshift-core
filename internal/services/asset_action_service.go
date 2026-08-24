@@ -19,7 +19,7 @@ import (
 	"windshift/internal/sanitize"
 	"windshift/internal/utils"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 // AssetActionService handles asynchronous asset action execution

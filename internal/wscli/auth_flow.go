@@ -23,6 +23,8 @@ import (
 // auth.DefaultAgentScopes so the CLI mint and the API/UI mints stay in lockstep.
 var defaultCLIScopes = auth.DefaultAgentScopes
 
+const maxRequestHeaderValueCount = 128
+
 type cliCapabilities struct {
 	AutoOnboardingEnabled bool   `json:"auto_onboarding_enabled"`
 	ManualTokensEnabled   bool   `json:"manual_tokens_enabled"`
@@ -125,7 +127,11 @@ func runCLIAuthFlow(instanceURL, agentName, hostname string, scopes []string) (*
 		}
 	})
 
-	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	srv := &http.Server{
+		Handler:             mux,
+		ReadHeaderTimeout:   5 * time.Second,
+		MaxHeaderValueCount: maxRequestHeaderValueCount,
+	}
 	go func() { _ = srv.Serve(ln) }()
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)

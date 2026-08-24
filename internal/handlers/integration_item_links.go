@@ -19,7 +19,7 @@ import (
 	"windshift/internal/sso"
 	"windshift/internal/utils"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 // IntegrationItemLinksHandler handles item integration link endpoints

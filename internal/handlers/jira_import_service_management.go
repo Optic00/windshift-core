@@ -16,7 +16,7 @@ import (
 	"windshift/internal/repository"
 	"windshift/internal/sanitize"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 const jiraRequestTypeFieldType = "com.atlassian.servicedesk:vp-origin"
@@ -227,7 +227,7 @@ func (h *JiraImportHandler) ensureJiraPortalRequestTypeSection(channelID int, re
 		requestTypeIDs = append(requestTypeIDs, id)
 	}
 	sort.Ints(requestTypeIDs)
-	if err := h.imports.AddPortalRequestTypeSection(context.Background(), channelID, requestTypeIDs, uuid.NewString()); err != nil {
+	if err := h.imports.AddPortalRequestTypeSection(context.Background(), channelID, requestTypeIDs, uuid.New().String()); err != nil {
 		return fmt.Errorf("update Jira portal request type section: %w", err)
 	}
 	return nil

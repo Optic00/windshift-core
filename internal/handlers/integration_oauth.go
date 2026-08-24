@@ -18,7 +18,7 @@ import (
 	"windshift/internal/models"
 	"windshift/internal/sso"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 // IntegrationOAuthHandler handles OAuth flows and user connection management

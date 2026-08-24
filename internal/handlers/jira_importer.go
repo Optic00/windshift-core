@@ -19,7 +19,7 @@ import (
 	"windshift/internal/utils"
 	"windshift/internal/xray"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 // GetJobStatus handles GET /api/admin/jira-import/jobs/{jobId}

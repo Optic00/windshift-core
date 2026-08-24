@@ -16,7 +16,7 @@ import (
 	"windshift/internal/sanitize"
 	"windshift/internal/sso"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 // ErrTodoistSyncAlreadyRunning is returned by SyncConfig when another run

@@ -23,7 +23,7 @@ import (
 	"windshift/internal/services"
 	"windshift/internal/validation"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 // ensureUsers matches or creates users for import.

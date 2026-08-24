@@ -10,7 +10,7 @@ import (
 
 	"windshift/internal/utils"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 // syncBaseURL is the base of the Todoist Sync API (v1). The data client batches

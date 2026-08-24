@@ -28,7 +28,7 @@ import (
 	"windshift/internal/utils"
 	"windshift/internal/validation"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 // LLMConnectionResolver resolves an LLM connection ID to a client.

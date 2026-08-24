@@ -57,7 +57,10 @@ import (
 // internal/config/Load; this package only consumes the result.
 type Config = config.Config
 
-const databasePoolBudgetWarningPercent = 90
+const (
+	databasePoolBudgetWarningPercent = 90
+	maxRequestHeaderValueCount       = 128
+)
 
 // Server represents a windshift HTTP server instance.
 type Server struct {
@@ -1761,11 +1764,12 @@ func (s *Server) initialize() error {
 
 	// Create HTTP server
 	s.httpServer = &http.Server{
-		Handler:        handler,
-		ReadTimeout:    15 * time.Second,
-		WriteTimeout:   30 * time.Second,
-		IdleTimeout:    60 * time.Second,
-		MaxHeaderBytes: 1 << 20,
+		Handler:             handler,
+		ReadTimeout:         15 * time.Second,
+		WriteTimeout:        30 * time.Second,
+		IdleTimeout:         60 * time.Second,
+		MaxHeaderBytes:      1 << 20,
+		MaxHeaderValueCount: maxRequestHeaderValueCount,
 	}
 
 	return nil

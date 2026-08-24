@@ -17,7 +17,7 @@ import (
 	"windshift/internal/sanitize"
 	"windshift/internal/services"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 // Processor handles email-to-item/comment conversion

@@ -14,7 +14,7 @@ import (
 	"windshift/internal/models"
 	"windshift/internal/restapi"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 // Handlers holds all HTTP handlers for the logbook system.

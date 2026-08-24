@@ -1,6 +1,6 @@
 module windshift
 
-go 1.26.6
+go 1.27.0
 
 require (
 	charm.land/bubbles/v2 v2.1.0
@@ -27,7 +27,6 @@ require (
 	github.com/go-webauthn/webauthn v0.17.4
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/jsonschema-go v0.4.2
-	github.com/google/uuid v1.6.0
 	github.com/gorilla/securecookie v1.1.2
 	github.com/grafana/sobek v0.0.0-20260406180825-6d789dcdd177
 	github.com/jimlambrt/gldap v0.1.14
@@ -133,6 +132,7 @@ require (
 	github.com/google/go-tpm v0.9.8 // indirect
 	github.com/google/pprof v0.0.0-20250317173921-a4b03ec1a45e // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
+	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.20 // indirect
 	github.com/googleapis/gax-go/v2 v2.23.0 // indirect
 	github.com/gorilla/css v1.0.1 // indirect

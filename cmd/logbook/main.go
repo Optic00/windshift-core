@@ -20,6 +20,8 @@ import (
 	"windshift/internal/utils"
 )
 
+const maxRequestHeaderValueCount = 128
+
 func main() {
 	// Resolve all env vars through the shared config package — no inline
 	// os.Getenv calls anywhere in this entrypoint.
@@ -98,11 +100,12 @@ func main() {
 
 	// Create HTTP server
 	httpServer := &http.Server{
-		Handler:        handler,
-		ReadTimeout:    30 * time.Second,
-		WriteTimeout:   120 * time.Second, // Long timeout for file uploads
-		IdleTimeout:    60 * time.Second,
-		MaxHeaderBytes: 1 << 20,
+		Handler:             handler,
+		ReadTimeout:         30 * time.Second,
+		WriteTimeout:        120 * time.Second, // Long timeout for file uploads
+		IdleTimeout:         60 * time.Second,
+		MaxHeaderBytes:      1 << 20,
+		MaxHeaderValueCount: maxRequestHeaderValueCount,
 	}
 
 	// Start listening

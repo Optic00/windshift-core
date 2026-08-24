@@ -11,7 +11,7 @@ import (
 	"windshift/internal/repository"
 	"windshift/internal/services"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 type Service struct {

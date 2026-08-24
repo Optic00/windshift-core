@@ -18,7 +18,7 @@ import (
 	"windshift/internal/repository/actionutil"
 	"windshift/internal/utils"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 // generateUUID creates a new UUID string for execution chain tracking.

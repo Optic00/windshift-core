@@ -16,7 +16,7 @@ import (
 	"windshift/internal/services"
 	"windshift/internal/validation"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 type UserMapping struct {
@@ -316,7 +316,7 @@ func (s *Service) UpsertExternalIssueLink(
 	}
 	linkID := existingID
 	if linkID == "" {
-		linkID = uuid.NewString()
+		linkID = uuid.New().String()
 	}
 	linkedBy := "jira-import"
 	if createdBy.Valid {

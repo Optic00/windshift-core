@@ -16,15 +16,15 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"uuid"
+
+	securejoin "github.com/cyphar/filepath-securejoin"
 
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/sanitize"
 	"windshift/internal/utils"
-
-	securejoin "github.com/cyphar/filepath-securejoin"
-	"github.com/google/uuid"
 )
 
 const importErrorCap = 100

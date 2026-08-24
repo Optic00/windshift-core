@@ -12,7 +12,7 @@ import (
 	"windshift/internal/sso"
 	"windshift/internal/utils"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 // IntegrationProviderHandler handles admin CRUD for integration providers

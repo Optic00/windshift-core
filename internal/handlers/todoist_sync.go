@@ -13,7 +13,7 @@ import (
 	"windshift/internal/services"
 	"windshift/internal/sso"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 // TodoistSyncHandler exposes the per-user Todoist personal-task sync settings
