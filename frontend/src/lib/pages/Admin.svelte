@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { currentRoute, navigate } from '../router.js';
   import Input from '../components/Input.svelte';
   import { t } from '../stores/i18n.svelte.js';
@@ -46,7 +46,7 @@
   import PluginModalContainer from '../layout/PluginModalContainer.svelte';
   import LinkComponent from '../components/Link.svelte';
   import SidebarHeader from '../layout/SidebarHeader.svelte';
-  import { IconFileText, IconPuzzle, IconSearch, IconX } from '@tabler/icons-svelte-runes';
+  import { IconFileText, IconMenu2, IconPuzzle, IconSearch, IconX } from '@tabler/icons-svelte-runes';
   import { useEventListener } from 'runed';
   import PermissionGuard from '../layout/PermissionGuard.svelte';
   import { resolveAdminGroups } from '../admin/adminNavigation.js';
@@ -80,6 +80,8 @@
   // Search functionality
   let searchQuery = $state('');
   let searchInput = $state(null);
+  let adminNavigationOpen = $state(false);
+  let adminNavigationToggle = $state(null);
 
   // Navigation focus management
   let navButtons = $state([]);
@@ -132,6 +134,7 @@
 
   // Create flat list of all items for search
   const allAdminItems = $derived(adminGroupsWithPlugins.flatMap(group => group.items));
+  const activeAdminItem = $derived(allAdminItems.find(item => item.id === activeTab));
 
   // Filter groups and items based on search
   const filteredGroups = $derived(
@@ -151,6 +154,19 @@
   function clearSearch() {
     searchQuery = '';
     searchInput?.focus();
+  }
+
+  async function openAdminNavigation() {
+    adminNavigationOpen = true;
+    await tick();
+    searchInput?.focus();
+  }
+
+  function closeAdminNavigation(restoreFocus = false) {
+    adminNavigationOpen = false;
+    if (restoreFocus) {
+      void tick().then(() => adminNavigationToggle?.focus());
+    }
   }
 
   // Keyboard navigation for search
@@ -214,12 +230,22 @@
 
   // Global keyboard shortcut handler
   function handleGlobalKeydown(event) {
+    if (event.key === 'Escape' && adminNavigationOpen) {
+      event.preventDefault();
+      closeAdminNavigation(true);
+      return;
+    }
+
     // Focus search on '/' key, but never steal printable input from forms/editors
     // or modal dialogs (e.g. the global create dialog opened over admin pages).
     if (event.key !== '/' || isTypingInField(event) || document.querySelector('[role="dialog"][aria-modal="true"]')) return;
 
     event.preventDefault();
-    searchInput?.focus();
+    if (window.matchMedia('(max-width: 1100px)').matches) {
+      void openAdminNavigation();
+    } else {
+      searchInput?.focus();
+    }
   }
 
   function handleTabClick(tabId) {
@@ -273,14 +299,42 @@
 </script>
 
 <!-- Main container with sidebar layout -->
-<div class="flex min-h-screen" style="background-color: var(--ds-surface);">
+<div class="admin-shell flex min-h-screen min-w-0" style="background-color: var(--ds-surface);">
   <!-- Channel managers can use channel routes without seeing the rest of the
        system-administration navigation. Non-channel admin routes remain
        guarded in MainApp. -->
   {#if $isSystemAdmin}
-    <div class="w-64 border-r flex-shrink-0" style="border-color: var(--ds-border); background-color: var(--ds-surface-raised);">
+    {#if adminNavigationOpen}
+      <button
+        type="button"
+        class="admin-navigation-backdrop"
+        data-testid="admin-navigation-backdrop"
+        aria-label="Close admin navigation"
+        onclick={() => closeAdminNavigation(true)}
+      ></button>
+    {/if}
+    <aside
+      id="admin-navigation"
+      class:admin-navigation-open={adminNavigationOpen}
+      class="admin-sidebar w-64 border-r flex-shrink-0"
+      style="border-color: var(--ds-border); background-color: var(--ds-surface-raised);"
+      aria-label="Admin settings"
+    >
     <div class="p-6">
-      <SidebarHeader title={t('settings.admin')} description={t('settings.systemSettings')} noBorder />
+      <div class="admin-sidebar-heading">
+        <div class="admin-sidebar-title">
+          <SidebarHeader title={t('settings.admin')} description={t('settings.systemSettings')} noBorder />
+        </div>
+        <button
+          type="button"
+          class="admin-navigation-close"
+          data-testid="admin-navigation-close"
+          aria-label="Close admin navigation"
+          onclick={() => closeAdminNavigation(true)}
+        >
+          <IconX size={20} stroke={1.5} aria-hidden="true" />
+        </button>
+      </div>
       
       <!-- Search -->
       <div class="mb-4 relative">
@@ -331,9 +385,11 @@
                 {@const isItemActive = activeTab === item.id}
                 <LinkComponent
                   data-testid="admin-navigation-item"
+                  id="admin-navigation-item-{item.id}"
                   bind:element={navButtons[buttonIndex]}
                   href="/admin/{item.id}"
                   active={isItemActive}
+                  onClick={() => closeAdminNavigation()}
                   onkeydown={(e) => handleNavKeydown(e, buttonIndex)}
                   class="w-full group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-all cursor-pointer"
                   style={isItemActive ? 'background: var(--ds-surface-selected); color: var(--ds-text);' : 'color: var(--ds-text-subtle);'}
@@ -374,11 +430,33 @@
         </div>
       </nav>
     </div>
-    </div>
+    </aside>
   {/if}
 
   <!-- Main Content -->
-  <div class="flex-1 flex flex-col overflow-hidden">
+  <div class="admin-main flex-1 flex flex-col min-w-0 overflow-hidden">
+    {#if $isSystemAdmin}
+      <header class="admin-mobile-header">
+        <button
+          type="button"
+          class="admin-navigation-toggle"
+          data-testid="admin-navigation-toggle"
+          bind:this={adminNavigationToggle}
+          aria-label="Open admin navigation"
+          aria-controls="admin-navigation"
+          aria-expanded={adminNavigationOpen}
+          onclick={openAdminNavigation}
+        >
+          <IconMenu2 size={22} stroke={1.5} aria-hidden="true" />
+        </button>
+        <div class="min-w-0">
+          <p class="admin-mobile-eyebrow">{t('settings.admin')}</p>
+          <p class="admin-mobile-section" data-testid="admin-active-section">
+            {activeAdminItem?.label || t('settings.systemSettings')}
+          </p>
+        </div>
+      </header>
+    {/if}
     <!-- Nested detail routes (no padding) -->
     {#if isFormChannelRoute}
       <FormChannelPage />
@@ -388,8 +466,8 @@
       {@const DetailComponent = matchedDetailRoute.component}
       <DetailComponent />
     {:else}
-    <div class="px-16 py-12 pb-0 flex-1 overflow-y-auto">
-      <div class="pr-0 pl-0">
+    <div class="admin-content px-16 py-12 pb-0 flex-1 min-w-0 overflow-y-auto">
+      <div class="min-w-0 pr-0 pl-0">
       <!-- Custom Fields Tab -->
   {#if activeTab === 'custom-fields'}
     <CustomFields />
@@ -569,6 +647,125 @@
 <PluginModalContainer />
 
 <style>
+  .admin-shell {
+    position: relative;
+    width: 100%;
+  }
+
+  .admin-mobile-header,
+  .admin-navigation-close,
+  .admin-navigation-backdrop {
+    display: none;
+  }
+
+  @media (max-width: 1100px) {
+    .admin-sidebar {
+      position: absolute;
+      z-index: 30;
+      inset: 0 auto 0 0;
+      width: min(20rem, calc(100% - 3rem));
+      overflow-y: auto;
+      visibility: hidden;
+      transform: translateX(-100%);
+      transition:
+        transform var(--duration-normal, 200ms) var(--ease-smooth, ease),
+        visibility var(--duration-normal, 200ms) var(--ease-smooth, ease);
+      box-shadow: var(--ds-shadow-overlay, 0 8px 24px rgb(9 30 66 / 25%));
+    }
+
+    .admin-sidebar.admin-navigation-open {
+      visibility: visible;
+      transform: translateX(0);
+    }
+
+    .admin-sidebar-heading {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+    }
+
+    .admin-sidebar-title {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .admin-navigation-close,
+    .admin-navigation-toggle {
+      display: inline-flex;
+      width: 2.75rem;
+      height: 2.75rem;
+      flex: 0 0 2.75rem;
+      align-items: center;
+      justify-content: center;
+      border: 0;
+      border-radius: 0.5rem;
+      color: var(--ds-icon);
+      background: transparent;
+    }
+
+    .admin-navigation-close:hover,
+    .admin-navigation-toggle:hover {
+      background: var(--ds-background-neutral-hovered);
+    }
+
+    .admin-navigation-close:focus-visible,
+    .admin-navigation-toggle:focus-visible {
+      outline: 2px solid var(--ds-border-focused, var(--ds-link));
+      outline-offset: 2px;
+    }
+
+    .admin-navigation-backdrop {
+      display: block;
+      position: absolute;
+      z-index: 20;
+      inset: 0;
+      border: 0;
+      background: color-mix(in srgb, var(--ds-blanket, #091e42) 54%, transparent);
+    }
+
+    .admin-mobile-header {
+      display: flex;
+      position: sticky;
+      z-index: 10;
+      top: 0;
+      min-width: 0;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.625rem 1rem;
+      border-bottom: 1px solid var(--ds-border);
+      background: var(--ds-surface-raised);
+    }
+
+    .admin-mobile-eyebrow {
+      color: var(--ds-text-subtle);
+      font-size: 0.6875rem;
+      font-weight: 600;
+      line-height: 1rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .admin-mobile-section {
+      overflow: hidden;
+      color: var(--ds-text);
+      font-size: 0.875rem;
+      font-weight: 600;
+      line-height: 1.25rem;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .admin-content {
+      padding: 1.5rem clamp(1rem, 4vw, 2rem) 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .admin-sidebar {
+      transition: none;
+    }
+  }
+
   :global(.tiptap-editor) {
     outline: none;
     white-space: pre-wrap;

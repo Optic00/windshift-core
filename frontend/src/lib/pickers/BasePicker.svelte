@@ -521,7 +521,7 @@
       <input bind:this={inputRef} use:melt={$input} {id} type="text"
              placeholder={selectedItems.length === 0 ? resolvedPlaceholder : ''}
              {disabled} aria-label={ariaLabel} onkeydowncapture={handleKeydown}
-             class="flex-1 min-w-[120px] px-1 py-0.5 bg-transparent border-0 outline-none text-sm"
+             class="min-w-0 basis-[120px] flex-1 px-1 py-0.5 bg-transparent border-0 outline-none text-sm"
              style="color: var(--ds-text);" />
     </div>
     <div class="absolute right-2 top-1/2 transform -translate-y-1/2 flex items-center gap-1 pointer-events-none">

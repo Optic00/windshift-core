@@ -252,7 +252,7 @@
   }
 </script>
 
-<div>
+<div class="security-settings">
   <PageHeader title={t('settings.security.title')} subtitle={t('settings.security.subtitle')} icon={Shield} />
 
   {#if loading}
@@ -266,9 +266,9 @@
         <div class="p-2 rounded-lg" style="background-color: var(--ds-background-neutral);">
           <Calendar class="w-5 h-5" style="color: var(--ds-icon);" />
         </div>
-        <div class="flex-1">
-          <div class="flex items-center justify-between">
-            <div>
+        <div class="min-w-0 flex-1">
+          <div class="flex items-center justify-between gap-4">
+            <div class="min-w-0">
               <h3 class="text-base font-medium" style="color: var(--ds-text);">{t('settings.security.calendarFeeds')}</h3>
               <p class="text-sm mt-1" style="color: var(--ds-text-subtle);">
                 {t('settings.security.calendarFeedsDesc')}
@@ -297,9 +297,9 @@
           <div class="p-2 rounded-lg" style="background-color: var(--ds-background-neutral);">
             <Terminal class="w-5 h-5" style="color: var(--ds-icon);" />
           </div>
-          <div class="flex-1">
-            <div class="flex items-center justify-between">
-              <div>
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center justify-between gap-4">
+              <div class="min-w-0">
                 <h3 class="text-base font-medium" style="color: var(--ds-text);">{t('settings.security.pluginExecution')}</h3>
                 <p class="text-sm mt-1" style="color: var(--ds-text-subtle);">
                   {t('settings.security.pluginExecutionDesc')}
@@ -329,9 +329,9 @@
           <div class="p-2 rounded-lg" style="background-color: var(--ds-background-neutral);">
             <Users class="w-5 h-5" style="color: var(--ds-icon);" />
           </div>
-          <div class="flex-1">
+          <div class="min-w-0 flex-1">
             <div class="flex items-center justify-between gap-4">
-              <div>
+              <div class="min-w-0">
                 <h3 class="text-base font-medium" style="color: var(--ds-text);">Workspace-Managed Agents</h3>
                 <p class="text-sm mt-1" style="color: var(--ds-text-subtle);">
                   Allow workspace admins to create agent identities owned by their workspace. Existing agents remain available when disabled; new agents can instead use enabled centralized service identities.
@@ -356,9 +356,9 @@
           <div class="p-2 rounded-lg" style="background-color: var(--ds-background-neutral);">
             <Users class="w-5 h-5" style="color: var(--ds-icon);" />
           </div>
-          <div class="flex-1">
-            <div class="flex items-center justify-between">
-              <div>
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center justify-between gap-4">
+              <div class="min-w-0">
                 <h3 class="text-base font-medium" style="color: var(--ds-text);">User-Managed Agents</h3>
                 <p class="text-sm mt-1" style="color: var(--ds-text-subtle);">
                   Allow non-admin users to create their own agent users from their profile and mint API tokens for them. Agents inherit their owner's permissions at all times.
@@ -406,8 +406,8 @@
             <UserCog class="w-5 h-5" style="color: var(--ds-icon);" />
           </div>
           <div class="min-w-0 flex-1">
-            <div class="flex items-center justify-between">
-              <div>
+            <div class="flex items-center justify-between gap-4">
+              <div class="min-w-0">
                 <h3 class="text-base font-medium" style="color: var(--ds-text);">Coding-Agent Centralized Service Users</h3>
                 <p class="text-sm mt-1" style="color: var(--ds-text-subtle);">
                   Allow workspace admins to bind coding-agent runs to centralized service users.
@@ -448,7 +448,7 @@
         <div class="p-2 rounded-lg" style="background-color: var(--ds-background-neutral);">
           <Key class="w-5 h-5" style="color: var(--ds-icon);" />
         </div>
-        <div class="flex-1">
+        <div class="min-w-0 flex-1">
           <div>
             <h3 class="text-base font-medium" style="color: var(--ds-text);">Authentication Policy</h3>
             <p class="text-sm mt-1" style="color: var(--ds-text-subtle);">
@@ -565,7 +565,7 @@
             <!-- Policy Enforcement Notice -->
             {#if authPolicyConfig.policy !== 'password' && !authPolicyConfig.preview_mode}
               <div class="mt-4">
-                <AlertBox variant="warning">
+                <AlertBox variant="warning" class="security-fallback-alert">
                   <strong>Policy Active:</strong> Users without the required authentication method will be prompted to enroll on their next login.
                   {#if authPolicyConfig.fallback_enabled}
                     System administrators have password fallback access (rate limited).
@@ -584,7 +584,7 @@
               </div>
             {:else}
               <div class="mt-4">
-                <AlertBox variant="success">
+                <AlertBox variant="success" class="security-fallback-alert">
                   <strong>Fallback Disabled:</strong> System administrators must comply with the authentication policy.
                   To enable emergency fallback, restart the server with <code class="px-1 py-0.5 rounded" style="background: var(--ds-background-neutral);">--enable-fallback</code> or <code class="px-1 py-0.5 rounded" style="background: var(--ds-background-neutral);">ENABLE_ADMIN_FALLBACK=true</code>.
                 </AlertBox>
@@ -611,3 +611,10 @@
   onconfirm={applyAgentCentralized}
   oncancel={cancelAgentCentralized}
 />
+
+<style>
+  .security-settings :global(.security-fallback-alert > .text-sm.flex-1) {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+</style>
