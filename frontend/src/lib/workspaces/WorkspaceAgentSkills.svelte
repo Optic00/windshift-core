@@ -7,7 +7,7 @@
   // the content.
 
   import { onMount } from 'svelte';
-  import { BookOpen, FileText, Loader2, Pencil, Plus, Trash2, X } from '@lucide/svelte';
+  import { AlertTriangle, BookOpen, FileText, Loader2, Pencil, Plus, Trash2, X } from '@lucide/svelte';
   import { agentSkills } from '../api.js';
   import Panel from '../components/Panel.svelte';
   import Button from '../components/Button.svelte';
@@ -39,9 +39,11 @@
   let formDescription = $state('');
   let formBody = $state('');
   let formEnabled = $state(true);
-  // Referenced workspace pages (WI-517): [{ id, title }]. Their current
-  // markdown is inlined into the body the agent receives via `ws skill get`.
+  // Referenced pages are snapshotted when the skill is saved. Runs never read
+  // live page content through this editor relationship.
   let formPages = $state([]);
+  let pagePrefixBytes = $state(0);
+  let pagePrefixRunes = $state(0);
   // Bumping this remounts the page picker after each pick so it returns to an
   // empty search — single-select pickers otherwise keep the last label.
   let pagePickerNonce = $state(0);
@@ -71,6 +73,8 @@
     formBody = '';
     formEnabled = true;
     formPages = [];
+    pagePrefixBytes = 0;
+    pagePrefixRunes = 0;
     pagePickerValue = null;
     showModal = true;
   }
@@ -81,7 +85,16 @@
     formDescription = skill.description || '';
     formBody = skill.body || '';
     formEnabled = !!skill.enabled;
-    formPages = (skill.pages || []).map((p) => ({ id: p.id, title: p.title }));
+    formPages = (skill.pages || []).map((p) => ({
+      id: p.id,
+      title: p.title,
+      snapshotTitle: p.snapshot_title,
+      stale: !!p.stale,
+      activationBytes: p.activation_bytes || 0,
+      activationRunes: p.activation_runes || 0,
+    }));
+    pagePrefixBytes = skill.usage?.page_prefix_bytes || 0;
+    pagePrefixRunes = skill.usage?.page_prefix_runes || 0;
     pagePickerValue = null;
     showModal = true;
   }
@@ -104,7 +117,21 @@
     editingId = null;
   }
 
-  let canSave = $derived(!!formName.trim() && !saving);
+  let bodyBytes = $derived(new TextEncoder().encode(formBody).length);
+  let bodyRunes = $derived([...formBody].length);
+  let estimatedBytes = $derived(
+    bodyBytes +
+      (formPages.length > 0 ? pagePrefixBytes : 0) +
+      formPages.reduce((total, page) => total + (page.activationBytes || 0), 0),
+  );
+  let estimatedRunes = $derived(
+    bodyRunes +
+      (formPages.length > 0 ? pagePrefixRunes : 0) +
+      formPages.reduce((total, page) => total + (page.activationRunes || 0), 0),
+  );
+  let estimatedTokens = $derived(Math.max(Math.ceil(estimatedBytes / 4), estimatedRunes));
+  let overBudget = $derived(estimatedBytes > 256 * 1024 || estimatedTokens > 64 * 1024);
+  let canSave = $derived(!!formName.trim() && !saving && !overBudget);
 
   async function save() {
     if (!canSave) return;
@@ -257,13 +284,12 @@
         <p class="mt-1 text-xs text-[var(--ds-text-subtle)]">Markdown — the SKILL.md content the agent reads on demand.</p>
       </div>
 
-      <!-- Reference pages (WI-517): attached pages' current markdown is inlined
-           into the body the agent receives, so a skill can be built from living
-           workspace docs instead of pasted (stale) copies. -->
+      <!-- Page content is copied on save so later edits cannot silently widen
+           or alter the instructions available to an existing skill. -->
       <div class="pt-4 border-t border-[var(--ds-border)]" data-testid="agent-skill-pages">
         <Label class="mb-1">Reference pages</Label>
         <p class="mb-2 text-xs text-[var(--ds-text-subtle)]">
-          Attach workspace pages — their current content is inlined into the body the agent receives.
+          Saving copies the selected pages into this skill. Later page edits are not used until you save the skill again.
         </p>
         {#if formPages.length > 0}
           <div class="flex flex-wrap gap-2 mb-2">
@@ -274,6 +300,11 @@
               >
                 <FileText class="w-3.5 h-3.5 shrink-0 text-[var(--ds-text-subtle)]" />
                 <span class="truncate max-w-[16rem]">{page.title || 'Untitled'}</span>
+                {#if page.stale}
+                  <span class="inline-flex items-center gap-1 text-[var(--ds-text-warning)]" data-testid="agent-skill-page-stale">
+                    <AlertTriangle class="w-3 h-3" /> Updated since snapshot
+                  </span>
+                {/if}
                 <button
                   type="button"
                   onclick={() => removePage(page.id)}
@@ -297,6 +328,23 @@
             onSelect={addPage}
           />
         {/key}
+        <p class="mt-2 text-xs text-[var(--ds-text-subtle)]">
+          Attached page content is shared with every run that receives this skill, regardless of the page's own viewer list. Saving refreshes all selected snapshots.
+        </p>
+      </div>
+
+      <div class="rounded-md border border-[var(--ds-border)] bg-[var(--ds-background-neutral)] px-3 py-2" data-testid="agent-skill-usage">
+        <div class="flex items-center justify-between gap-3 text-xs">
+          <span class="font-medium text-[var(--ds-text)]">Activation size</span>
+          <span class={overBudget ? 'text-[var(--ds-text-danger)]' : 'text-[var(--ds-text-subtle)]'}>
+            {Math.ceil(estimatedBytes / 1024)} / 256 KiB · ~{estimatedTokens.toLocaleString()} / 65,536 tokens
+          </span>
+        </div>
+        {#if overBudget}
+          <p class="mt-1 text-xs text-[var(--ds-text-danger)]">Remove content or references before saving.</p>
+        {:else if formPages.some((page) => !page.activationBytes && !page.activationRunes)}
+          <p class="mt-1 text-xs text-[var(--ds-text-subtle)]">The server adds new page snapshots and verifies the final total.</p>
+        {/if}
       </div>
 
       <div class="pt-4 border-t border-[var(--ds-border)]">

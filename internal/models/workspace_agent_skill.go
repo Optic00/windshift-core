@@ -17,10 +17,13 @@ type WorkspaceAgentSkill struct {
 	Body        string `json:"body,omitempty"`
 	Enabled     bool   `json:"enabled"`
 	// Pages are the workspace pages referenced by this skill (WI-517). On the
-	// admin surface they round-trip so the editor can render the current
-	// selection; on the agent-facing `ws skill get` surface their markdown is
-	// inlined into Body instead. nil/omitted when the skill references none.
-	Pages []SkillPageReference `json:"pages,omitempty"`
+	// admin surface they round-trip with snapshot review state; the exact saved
+	// content is rendered into a run grant. nil/omitted when there are none.
+	Pages []SkillPageReference  `json:"pages,omitempty"`
+	Usage *SkillActivationUsage `json:"usage,omitempty"`
+	// ActivationError is copied into a run grant when legacy content cannot be
+	// activated safely. It is internal and never author-controlled.
+	ActivationError string `json:"-"`
 	// CreatedByUserID is a soft audit ref; nil when the creator was deleted.
 	CreatedByUserID *int      `json:"created_by_user_id,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
@@ -29,9 +32,24 @@ type WorkspaceAgentSkill struct {
 
 // SkillPageReference is a lightweight handle on a workspace page referenced by
 // a skill (WI-517): enough for the editor to render a chip and for the agent
-// surface to label the inlined section, without carrying the page body around
-// until it is actually needed.
+// surface to show the selected source and whether it changed since review.
 type SkillPageReference struct {
-	ID    int    `json:"id"`
-	Title string `json:"title"`
+	ID              int       `json:"id"`
+	Title           string    `json:"title"`
+	SnapshotTitle   string    `json:"snapshot_title,omitempty"`
+	ContentSnapshot string    `json:"-"`
+	SnapshotAt      time.Time `json:"snapshot_at"`
+	PageUpdatedAt   time.Time `json:"page_updated_at,omitempty"`
+	Stale           bool      `json:"stale"`
+	ActivationBytes int       `json:"activation_bytes"`
+	ActivationRunes int       `json:"activation_runes"`
+}
+
+type SkillActivationUsage struct {
+	Bytes           int `json:"bytes"`
+	EstimatedTokens int `json:"estimated_tokens"`
+	MaxBytes        int `json:"max_bytes"`
+	MaxTokens       int `json:"max_tokens"`
+	PagePrefixBytes int `json:"page_prefix_bytes"`
+	PagePrefixRunes int `json:"page_prefix_runes"`
 }

@@ -899,7 +899,7 @@ func (r *AgentRunRepository) GetRunByTokenID(ctx context.Context, tokenID int) (
 	`, tokenID)
 	var grantsJSON sql.NullString
 	if err := row.Scan(&runID, &workspaceID, &grantsJSON, &status); err != nil {
-		return 0, 0, nil, "", err
+		return 0, 0, nil, "", notFoundOrWrap(err, "get run by token")
 	}
 	if grantsJSON.Valid && grantsJSON.String != "" {
 		grants = &models.RunGrants{}

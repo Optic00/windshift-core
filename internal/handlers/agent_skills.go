@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"windshift/internal/agentskills"
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
@@ -16,7 +17,7 @@ import (
 // maxSkillBodyLen caps a skill's markdown body. Skills are loaded into the
 // agent's context wholesale via `ws skill get`, so an unbounded body is a
 // context-window footgun; 64 KiB comfortably fits any reasonable SKILL.md.
-const maxSkillBodyLen = 64 * 1024
+const maxSkillBodyLen = agentskills.MaxBodyBytes
 
 // AgentSkillHandler exposes the workspace-admin CRUD for the agent-skills
 // library (WI-258). Skills are markdown knowledge packs attachable to agent
@@ -33,10 +34,8 @@ func NewAgentSkillHandler(repo *repository.WorkspaceAgentSkillRepository, permis
 	return &AgentSkillHandler{repo: repo, permissionService: permissionService, auditor: auditor}
 }
 
-// maxSkillPages caps how many workspace pages a skill may reference. Each
-// referenced page's body is inlined into what `ws skill get` returns, so an
-// unbounded list is the same context-window footgun maxSkillBodyLen guards
-// against — 25 living docs is already generous for one skill.
+// maxSkillPages caps how many workspace pages a skill may snapshot. The
+// aggregate activation budget applies after all snapshots are rendered.
 const maxSkillPages = 25
 
 type skillBody struct {
@@ -44,15 +43,15 @@ type skillBody struct {
 	Description string `json:"description"`
 	Body        string `json:"body"`
 	Enabled     *bool  `json:"enabled,omitempty"`
-	// PageIDs are the workspace pages to reference (WI-517). Full replace:
-	// the supplied set becomes the skill's references on every write.
+	// PageIDs are snapshotted on every save. Full replace: the supplied set
+	// becomes the skill's references.
 	PageIDs []int `json:"page_ids"`
 }
 
 func (b *skillBody) sanitize() {
 	sanitize.ApplyAll(
 		sanitize.Pair{Target: &b.Name, Policy: sanitize.PlainTextField},
-		sanitize.Pair{Target: &b.Description, Policy: sanitize.RichText},
+		sanitize.Pair{Target: &b.Description, Policy: sanitize.PlainTextField},
 		sanitize.Pair{Target: &b.Body, Policy: sanitize.LongDocument},
 	)
 }
@@ -70,6 +69,9 @@ func (b skillBody) validate() string {
 		return "body must be at most 64 KiB"
 	case len(b.PageIDs) > maxSkillPages:
 		return "a skill may reference at most 25 pages"
+	}
+	if err := agentskills.ValidateMetadata(b.Name, b.Description); err != nil {
+		return err.Error()
 	}
 	return ""
 }
@@ -114,6 +116,7 @@ func (h *AgentSkillHandler) List(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.Pages = refs
+		s.Usage = activationUsage(s.Body, refs)
 	}
 	respondJSON(w, http.StatusOK, skills)
 }
@@ -129,9 +132,17 @@ func (h *AgentSkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 		respondBadRequest(w, r, "invalid request body")
 		return
 	}
+	if err := agentskills.ValidateMetadata(body.Name, body.Description); err != nil {
+		respondBadRequest(w, r, err.Error())
+		return
+	}
 	body.sanitize()
 	if msg := body.validate(); msg != "" {
 		respondBadRequest(w, r, msg)
+		return
+	}
+	pages, usage, ok := h.preparePageSnapshots(w, r, workspaceID, body.Body, body.PageIDs)
+	if !ok {
 		return
 	}
 	skill := &models.WorkspaceAgentSkill{
@@ -140,6 +151,7 @@ func (h *AgentSkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Description: strings.TrimSpace(body.Description),
 		Body:        body.Body,
 		Enabled:     body.Enabled == nil || *body.Enabled,
+		Usage:       usage,
 	}
 	uid := user.ID
 	skill.CreatedByUserID = &uid
@@ -153,7 +165,7 @@ func (h *AgentSkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	skill.ID = id
-	if !h.setPageRefs(w, r, skill, body.PageIDs) {
+	if !h.setPageRefs(w, r, skill, pages) {
 		return
 	}
 	h.auditor.LogWithDetails(r, user, "agent_skill.create", "workspace_agent_skill", &id, "", map[string]any{
@@ -179,9 +191,17 @@ func (h *AgentSkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 		respondBadRequest(w, r, "invalid request body")
 		return
 	}
+	if err := agentskills.ValidateMetadata(body.Name, body.Description); err != nil {
+		respondBadRequest(w, r, err.Error())
+		return
+	}
 	body.sanitize()
 	if msg := body.validate(); msg != "" {
 		respondBadRequest(w, r, msg)
+		return
+	}
+	pages, usage, ok := h.preparePageSnapshots(w, r, workspaceID, body.Body, body.PageIDs)
+	if !ok {
 		return
 	}
 	skill := &models.WorkspaceAgentSkill{
@@ -191,6 +211,7 @@ func (h *AgentSkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Description: strings.TrimSpace(body.Description),
 		Body:        body.Body,
 		Enabled:     body.Enabled == nil || *body.Enabled,
+		Usage:       usage,
 	}
 	n, err := h.repo.Update(r.Context(), skill)
 	if err != nil {
@@ -205,7 +226,7 @@ func (h *AgentSkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 		respondNotFound(w, r, "agent skill")
 		return
 	}
-	if !h.setPageRefs(w, r, skill, body.PageIDs) {
+	if !h.setPageRefs(w, r, skill, pages) {
 		return
 	}
 	h.auditor.LogWithDetails(r, user, "agent_skill.update", "workspace_agent_skill", &id, "", map[string]any{
@@ -268,6 +289,7 @@ func (h *AgentSkillHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	skill.Pages = refs
+	skill.Usage = activationUsage(skill.Body, refs)
 	respondJSON(w, http.StatusOK, skill)
 }
 
@@ -275,12 +297,8 @@ func (h *AgentSkillHandler) Get(w http.ResponseWriter, r *http.Request) {
 // populates skill.Pages for the response. A page id that is not a page in the
 // skill's workspace is a client error (400); anything else is a 500. Returns
 // false when it has already written an error response.
-func (h *AgentSkillHandler) setPageRefs(w http.ResponseWriter, r *http.Request, skill *models.WorkspaceAgentSkill, pageIDs []int) bool {
-	if err := h.repo.ReplaceSkillPages(r.Context(), skill.ID, skill.WorkspaceID, pageIDs); err != nil {
-		if errors.Is(err, repository.ErrSkillPageNotInWorkspace) {
-			respondBadRequest(w, r, err.Error())
-			return false
-		}
+func (h *AgentSkillHandler) setPageRefs(w http.ResponseWriter, r *http.Request, skill *models.WorkspaceAgentSkill, pages []models.SkillPageReference) bool {
+	if err := h.repo.ReplaceSkillPageSnapshots(r.Context(), skill.ID, pages); err != nil {
 		respondInternalError(w, r, err)
 		return false
 	}
@@ -290,5 +308,52 @@ func (h *AgentSkillHandler) setPageRefs(w http.ResponseWriter, r *http.Request, 
 		return false
 	}
 	skill.Pages = refs
+	skill.Usage = activationUsage(skill.Body, refs)
 	return true
+}
+
+func (h *AgentSkillHandler) preparePageSnapshots(w http.ResponseWriter, r *http.Request, workspaceID int, body string, pageIDs []int) ([]models.SkillPageReference, *models.SkillActivationUsage, bool) {
+	pages, err := h.repo.ResolveSkillPageSnapshots(r.Context(), workspaceID, pageIDs)
+	if errors.Is(err, repository.ErrSkillPageNotInWorkspace) {
+		respondBadRequest(w, r, err.Error())
+		return nil, nil, false
+	}
+	if err != nil {
+		respondInternalError(w, r, err)
+		return nil, nil, false
+	}
+	_, usage, err := agentskills.RenderActivation(body, pages)
+	if errors.Is(err, agentskills.ErrActivationTooLarge) {
+		respondBadRequest(w, r, "skill body and referenced page snapshots must fit within 256 KiB and an estimated 64K tokens")
+		return nil, nil, false
+	}
+	if err != nil {
+		respondInternalError(w, r, err)
+		return nil, nil, false
+	}
+	return pages, usageModel(usage), true
+}
+
+func activationUsage(body string, pages []models.SkillPageReference) *models.SkillActivationUsage {
+	_, usage, _ := agentskills.RenderActivation(body, pages)
+	model := usageModel(usage)
+	populatePageUsage(pages, model)
+	return model
+}
+
+func usageModel(usage agentskills.Usage) *models.SkillActivationUsage {
+	return &models.SkillActivationUsage{
+		Bytes: usage.Bytes, EstimatedTokens: usage.EstimatedTokens,
+		MaxBytes: usage.MaxBytes, MaxTokens: usage.MaxTokens,
+	}
+}
+
+func populatePageUsage(pages []models.SkillPageReference, usage *models.SkillActivationUsage) {
+	for i := range pages {
+		bytes, runes, prefixBytes, prefixRunes := agentskills.PageSnapshotUsage(pages[i])
+		pages[i].ActivationBytes = bytes
+		pages[i].ActivationRunes = runes
+		usage.PagePrefixBytes = prefixBytes
+		usage.PagePrefixRunes = prefixRunes
+	}
 }

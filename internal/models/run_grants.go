@@ -21,10 +21,31 @@ type RunGrants struct {
 	// GitRepos is one grant per repository a multi-repo run may reach (WI-449).
 	// The broker authorizes each git request against the grant whose Repo
 	// matches the requested owner/repo — deny-by-default if none matches.
-	GitRepos []GitGrant `json:"git_repos,omitempty"`
-	LLM      *LLMGrant  `json:"llm,omitempty"`
-	Secrets  []int      `json:"secrets,omitempty"` // ActionCredential ids the run may fetch
-	HTTP     []string   `json:"http,omitempty"`    // allowed outbound URL prefixes
+	GitRepos []GitGrant   `json:"git_repos,omitempty"`
+	LLM      *LLMGrant    `json:"llm,omitempty"`
+	Secrets  []int        `json:"secrets,omitempty"` // ActionCredential ids the run may fetch
+	HTTP     []string     `json:"http,omitempty"`    // allowed outbound URL prefixes
+	Skills   []SkillGrant `json:"skills,omitempty"`  // immutable skill bodies available to this run
+}
+
+type SkillGrant struct {
+	ID          int    `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Body        string `json:"body"`
+	Error       string `json:"error,omitempty"`
+}
+
+func (g *RunGrants) SkillFor(id int) *SkillGrant {
+	if g == nil {
+		return nil
+	}
+	for i := range g.Skills {
+		if g.Skills[i].ID == id {
+			return &g.Skills[i]
+		}
+	}
+	return nil
 }
 
 // GitGrant scopes a run's git access to a single repo and the single ref it

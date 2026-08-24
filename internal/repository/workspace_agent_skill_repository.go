@@ -241,33 +241,67 @@ func (r *WorkspaceAgentSkillRepository) ReplaceBindingSkills(ctx context.Context
 // workspace are rejected, so a workspace admin cannot reference a foreign
 // workspace's page by guessing ids. Mirrors ReplaceBindingSkills.
 func (r *WorkspaceAgentSkillRepository) ReplaceSkillPages(ctx context.Context, skillID, workspaceID int, pageIDs []int) error {
-	ids := uniqueInts(pageIDs)
-	if len(ids) > 0 {
-		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
-		args := make([]any, 0, len(ids)+1)
-		args = append(args, workspaceID)
-		for _, id := range ids {
-			args = append(args, id)
-		}
-		var n int
-		//nolint:gosec // G201: placeholders is built from a fixed "?," pattern, never user input
-		if err := r.db.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM pages WHERE workspace_id = ? AND id IN (`+placeholders+`)`,
-			args...).Scan(&n); err != nil {
-			return fmt.Errorf("validate page ids: %w", err)
-		}
-		if n != len(ids) {
-			return ErrSkillPageNotInWorkspace
-		}
+	snapshots, err := r.ResolveSkillPageSnapshots(ctx, workspaceID, pageIDs)
+	if err != nil {
+		return err
 	}
+	return r.ReplaceSkillPageSnapshots(ctx, skillID, snapshots)
+}
+
+// ResolveSkillPageSnapshots validates page ownership and captures the exact
+// title and content that a subsequent skill save will authorize.
+func (r *WorkspaceAgentSkillRepository) ResolveSkillPageSnapshots(ctx context.Context, workspaceID int, pageIDs []int) ([]models.SkillPageReference, error) {
+	ids := uniqueInts(pageIDs)
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, workspaceID)
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	//nolint:gosec // G201: placeholders is built from a fixed "?," pattern, never user input
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, title, content, updated_at
+		FROM pages WHERE workspace_id = ? AND id IN (`+placeholders+`)
+		ORDER BY title ASC, id ASC
+	`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("resolve skill page snapshots: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	refs := make([]models.SkillPageReference, 0, len(ids))
+	for rows.Next() {
+		var ref models.SkillPageReference
+		if err := rows.Scan(&ref.ID, &ref.SnapshotTitle, &ref.ContentSnapshot, &ref.PageUpdatedAt); err != nil {
+			return nil, err
+		}
+		ref.Title = ref.SnapshotTitle
+		refs = append(refs, ref)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(refs) != len(ids) {
+		return nil, ErrSkillPageNotInWorkspace
+	}
+	return refs, nil
+}
+
+// ReplaceSkillPageSnapshots stores a full replacement of reviewed page content.
+func (r *WorkspaceAgentSkillRepository) ReplaceSkillPageSnapshots(ctx context.Context, skillID int, snapshots []models.SkillPageReference) error {
 	if _, err := r.db.ExecWriteContext(ctx, `DELETE FROM workspace_agent_skill_pages WHERE skill_id = ?`, skillID); err != nil {
 		return fmt.Errorf("clear skill pages: %w", err)
 	}
-	for _, id := range ids {
+	for _, snapshot := range snapshots {
 		if _, err := r.db.ExecWriteContext(ctx, `
-			INSERT INTO workspace_agent_skill_pages (skill_id, page_id) VALUES (?, ?)
-		`, skillID, id); err != nil {
-			return fmt.Errorf("reference page %d: %w", id, err)
+			INSERT INTO workspace_agent_skill_pages (
+				skill_id, page_id, title_snapshot, content_snapshot,
+				page_updated_at_snapshot, snapshot_at
+			) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		`, skillID, snapshot.ID, snapshot.SnapshotTitle, snapshot.ContentSnapshot, snapshot.PageUpdatedAt); err != nil {
+			return fmt.Errorf("reference page %d: %w", snapshot.ID, err)
 		}
 	}
 	return nil
@@ -278,7 +312,9 @@ func (r *WorkspaceAgentSkillRepository) ReplaceSkillPages(ctx context.Context, s
 // never returns dangling ids.
 func (r *WorkspaceAgentSkillRepository) PageRefsForSkill(ctx context.Context, skillID int) ([]models.SkillPageReference, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT p.id, p.title
+		SELECT p.id, p.title, sp.title_snapshot, sp.content_snapshot,
+		       sp.snapshot_at, p.updated_at,
+		       CASE WHEN p.updated_at <> sp.page_updated_at_snapshot THEN true ELSE false END
 		FROM workspace_agent_skill_pages sp
 		JOIN pages p ON p.id = sp.page_id
 		WHERE sp.skill_id = ?
@@ -291,7 +327,10 @@ func (r *WorkspaceAgentSkillRepository) PageRefsForSkill(ctx context.Context, sk
 	var out []models.SkillPageReference
 	for rows.Next() {
 		var ref models.SkillPageReference
-		if err := rows.Scan(&ref.ID, &ref.Title); err != nil {
+		if err := rows.Scan(
+			&ref.ID, &ref.Title, &ref.SnapshotTitle, &ref.ContentSnapshot,
+			&ref.SnapshotAt, &ref.PageUpdatedAt, &ref.Stale,
+		); err != nil {
 			return nil, err
 		}
 		out = append(out, ref)

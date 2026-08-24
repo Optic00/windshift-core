@@ -105,7 +105,7 @@ type AgentRun struct {
 	ChainDepth             int    `json:"chain_depth,omitempty"`
 	SessionID              string `json:"session_id,omitempty"`
 	ProfileVersion         int    `json:"profile_version,omitempty"`
-	// GrantsJSON contains only admitted capability/tool names. ProfileSnapshotJSON
+	// GrantsJSON contains admitted capabilities and immutable run inputs. ProfileSnapshotJSON
 	// contains the immutable Standard profile inputs used by the run.
 	GrantsJSON          string `json:"grants_json,omitempty"`
 	ProfileSnapshotJSON string `json:"profile_snapshot_json,omitempty"`

@@ -153,6 +153,37 @@ var Catalog = []Migration{
 			ALTER TABLE pending_custom_field_cleanups ADD COLUMN next_attempt_at TIMESTAMPTZ;
 		`,
 	},
+	{
+		Version:       "20260824_agent_skill_page_snapshots",
+		Name:          "Snapshot pages referenced by agent skills",
+		CheckSQLite:   sqliteColumnCheck("workspace_agent_skill_pages", "content_snapshot"),
+		CheckPostgres: pgColumnCheck("workspace_agent_skill_pages", "content_snapshot"),
+		SQLite: `
+			ALTER TABLE workspace_agent_skill_pages ADD COLUMN title_snapshot TEXT NOT NULL DEFAULT '';
+			ALTER TABLE workspace_agent_skill_pages ADD COLUMN content_snapshot TEXT NOT NULL DEFAULT '';
+			ALTER TABLE workspace_agent_skill_pages ADD COLUMN page_updated_at_snapshot DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00';
+			ALTER TABLE workspace_agent_skill_pages ADD COLUMN snapshot_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00';
+			UPDATE workspace_agent_skill_pages
+			SET title_snapshot = COALESCE((SELECT title FROM pages WHERE pages.id = page_id), ''),
+			    content_snapshot = COALESCE((SELECT content FROM pages WHERE pages.id = page_id), ''),
+			    page_updated_at_snapshot = COALESCE((SELECT updated_at FROM pages WHERE pages.id = page_id), CURRENT_TIMESTAMP),
+			    snapshot_at = CURRENT_TIMESTAMP;
+		`,
+		Postgres: `
+			ALTER TABLE workspace_agent_skill_pages ADD COLUMN title_snapshot TEXT NOT NULL DEFAULT '';
+			ALTER TABLE workspace_agent_skill_pages ADD COLUMN content_snapshot TEXT NOT NULL DEFAULT '';
+			ALTER TABLE workspace_agent_skill_pages ADD COLUMN page_updated_at_snapshot TIMESTAMPTZ;
+			ALTER TABLE workspace_agent_skill_pages ADD COLUMN snapshot_at TIMESTAMPTZ;
+			UPDATE workspace_agent_skill_pages sp
+			SET title_snapshot = p.title,
+			    content_snapshot = p.content,
+			    page_updated_at_snapshot = p.updated_at,
+			    snapshot_at = CURRENT_TIMESTAMP
+			FROM pages p WHERE p.id = sp.page_id;
+			ALTER TABLE workspace_agent_skill_pages ALTER COLUMN page_updated_at_snapshot SET NOT NULL;
+			ALTER TABLE workspace_agent_skill_pages ALTER COLUMN snapshot_at SET NOT NULL;
+		`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {

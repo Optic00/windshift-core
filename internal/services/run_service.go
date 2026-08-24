@@ -5,6 +5,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -391,6 +392,13 @@ func (s *RunService) Start(ctx context.Context, req RunRequest) (int, error) {
 		Status:      models.AgentRunStatusQueued,
 		Trigger:     req.Trigger,
 		IsEphemeral: req.Ephemeral,
+	}
+	if req.Grants != nil {
+		grantsJSON, err := json.Marshal(req.Grants)
+		if err != nil {
+			return 0, fmt.Errorf("run service: marshal grants: %w", err)
+		}
+		run.GrantsJSON = string(grantsJSON)
 	}
 	if req.BindingID > 0 {
 		bID := req.BindingID

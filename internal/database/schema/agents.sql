@@ -262,15 +262,15 @@ CREATE TABLE IF NOT EXISTS workspace_agent_binding_skills (
 CREATE INDEX IF NOT EXISTS idx_workspace_agent_binding_skills_skill
     ON workspace_agent_binding_skills(skill_id);
 
--- Workspace agent skill pages (WI-517): a skill may reference N workspace
--- pages. When the agent fetches the skill body (`ws skill get <id>`) the
--- referenced pages' markdown is inlined into the body it receives, so the
--- curator can build a skill out of living workspace docs instead of pasting
--- their content (which would then go stale). Page deletion cascades the row
--- away; the skill simply stops referencing it.
+-- Workspace agent skill pages store a reviewed snapshot. Editing a source page
+-- never changes what an agent receives until an admin saves the skill again.
 CREATE TABLE IF NOT EXISTS workspace_agent_skill_pages (
     skill_id INTEGER NOT NULL,
     page_id INTEGER NOT NULL,
+    title_snapshot TEXT NOT NULL DEFAULT '',
+    content_snapshot TEXT NOT NULL DEFAULT '',
+    page_updated_at_snapshot DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    snapshot_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (skill_id, page_id),
     FOREIGN KEY (skill_id) REFERENCES workspace_agent_skills(id) ON DELETE CASCADE,

@@ -242,6 +242,10 @@ CREATE INDEX IF NOT EXISTS idx_workspace_agent_binding_skills_skill
 CREATE TABLE IF NOT EXISTS workspace_agent_skill_pages (
     skill_id INTEGER NOT NULL,
     page_id INTEGER NOT NULL,
+    title_snapshot TEXT NOT NULL DEFAULT '',
+    content_snapshot TEXT NOT NULL DEFAULT '',
+    page_updated_at_snapshot TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    snapshot_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (skill_id, page_id),
     FOREIGN KEY (skill_id) REFERENCES workspace_agent_skills(id) ON DELETE CASCADE,
