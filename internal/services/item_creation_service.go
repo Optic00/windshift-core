@@ -102,7 +102,9 @@ func (s *ItemCreationService) create(
 	input ItemCreateInput,
 	actionContext *ActionContext,
 ) (*ItemCreateResult, error) {
-	if err := validation.ValidateTitle(input.Title); err != nil {
+	var err error
+	input.Title, err = validation.NormalizeTitle(input.Title)
+	if err != nil {
 		return nil, err
 	}
 	if err := validation.ValidateMarkdownSource("description", input.Description, validation.MarkdownMaxBytes, false); err != nil {

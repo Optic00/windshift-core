@@ -1522,7 +1522,7 @@ func (h *JiraImportHandler) importComments(jobID string, itemID int, issue *jira
 			commentID = previousMapping.WindshiftID
 		} else {
 			var result *services.CreateCommentResult
-			result, importErr = commentSvc.Create(services.CreateCommentParams{
+			result, importErr = commentSvc.CreateImported(services.CreateCommentParams{
 				ItemID:           itemID,
 				AuthorID:         authorID,
 				PortalCustomerID: portalCustomerID,

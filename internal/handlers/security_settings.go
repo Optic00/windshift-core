@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"windshift/internal/logger"
 	"windshift/internal/repository"
@@ -14,24 +15,36 @@ import (
 
 // SecuritySettingsHandler handles admin security settings
 type SecuritySettingsHandler struct {
-	settings        *repository.SystemSettingRepository
-	auditor         *logger.Auditor
-	pluginsDisabled bool
+	settings              *repository.SystemSettingRepository
+	auditor               *logger.Auditor
+	pluginsDisabled       bool
+	externalImagesAllowed atomic.Bool
 }
 
 // NewSecuritySettingsHandler creates a new security settings handler
 func NewSecuritySettingsHandler(settings *repository.SystemSettingRepository, auditor *logger.Auditor, pluginsDisabled bool) *SecuritySettingsHandler {
-	return &SecuritySettingsHandler{
+	h := &SecuritySettingsHandler{
 		settings:        settings,
 		auditor:         auditor,
 		pluginsDisabled: pluginsDisabled,
 	}
+	if value, ok, err := settings.GetValue("allow_external_images"); err == nil && ok {
+		h.externalImagesAllowed.Store(strings.EqualFold(value, "true"))
+	}
+	return h
+}
+
+// ExternalImagesAllowed reports whether CSP may load images from arbitrary
+// HTTP and HTTPS origins.
+func (h *SecuritySettingsHandler) ExternalImagesAllowed() bool {
+	return h.externalImagesAllowed.Load()
 }
 
 // SecuritySettings represents the security configuration
 type SecuritySettings struct {
 	CalendarFeedEnabled    bool   `json:"calendar_feed_enabled"`
 	PluginCLIExecEnabled   bool   `json:"plugin_cli_exec_enabled"`
+	AllowExternalImages    bool   `json:"allow_external_images"`
 	PluginsDisabled        bool   `json:"plugins_disabled"`
 	APIKeyCreationPolicy   string `json:"api_key_creation_policy"`   // "all_users", "groups_only", or "disabled"
 	APIKeyAllowedGroupIDs  []int  `json:"api_key_allowed_group_ids"` // Group IDs when policy = "groups_only"
@@ -45,6 +58,7 @@ func (h *SecuritySettingsHandler) GetSecuritySettings(w http.ResponseWriter, r *
 	settings := SecuritySettings{
 		CalendarFeedEnabled:    true,              // Default enabled
 		PluginCLIExecEnabled:   false,             // Default disabled for security
+		AllowExternalImages:    false,             // Default restricted to approved image origins
 		PluginsDisabled:        h.pluginsDisabled, // Read-only, set by startup flag
 		APIKeyCreationPolicy:   "all_users",       // Default: everyone can create
 		APIKeyAllowedGroupIDs:  []int{},
@@ -58,6 +72,9 @@ func (h *SecuritySettingsHandler) GetSecuritySettings(w http.ResponseWriter, r *
 	}
 	if v, ok, _ := h.settings.GetValue("plugin_cli_exec_enabled"); ok {
 		settings.PluginCLIExecEnabled = strings.EqualFold(v, "true")
+	}
+	if v, ok, _ := h.settings.GetValue("allow_external_images"); ok {
+		settings.AllowExternalImages = strings.EqualFold(v, "true")
 	}
 	if v, ok, _ := h.settings.GetValue("api_key_creation_policy"); ok {
 		settings.APIKeyCreationPolicy = v
@@ -163,6 +180,15 @@ func (h *SecuritySettingsHandler) UpdateSecuritySettings(w http.ResponseWriter, 
 		return
 	}
 
+	if err := h.settings.Upsert(
+		"allow_external_images", boolToString(settings.AllowExternalImages),
+		"boolean", "Allow Markdown images from arbitrary HTTP and HTTPS origins", "security",
+	); err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	h.externalImagesAllowed.Store(settings.AllowExternalImages)
+
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
 		h.auditor.LogWithDetails(r, currentUser,
@@ -172,6 +198,7 @@ func (h *SecuritySettingsHandler) UpdateSecuritySettings(w http.ResponseWriter, 
 			map[string]any{
 				"calendar_feed_enabled":     settings.CalendarFeedEnabled,
 				"plugin_cli_exec_enabled":   settings.PluginCLIExecEnabled,
+				"allow_external_images":     settings.AllowExternalImages,
 				"api_key_creation_policy":   settings.APIKeyCreationPolicy,
 				"api_key_allowed_group_ids": settings.APIKeyAllowedGroupIDs,
 				"allow_user_managed_agents": settings.AllowUserManagedAgents,

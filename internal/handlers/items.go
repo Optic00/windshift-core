@@ -1405,13 +1405,16 @@ func (h *ItemHandler) Copy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The prefix is generated locally, so cap the derived title without
-	// rewriting the original title's characters.
+	// Cap the generated title by runes before applying the shared title contract.
 	copyTitleRunes := []rune(fmt.Sprintf("COPY - %s", originalItem.Title))
 	if len(copyTitleRunes) > validation.TitleMaxRunes {
 		copyTitleRunes = copyTitleRunes[:validation.TitleMaxRunes]
 	}
-	copyTitle := string(copyTitleRunes)
+	copyTitle, err := validation.NormalizeTitle(string(copyTitleRunes))
+	if err != nil {
+		respondValidationError(w, r, err.Error())
+		return
+	}
 
 	result, err := services.NewItemCRUDService(h.db).Copy(id, services.CopyOptions{
 		NewTitle:  copyTitle,

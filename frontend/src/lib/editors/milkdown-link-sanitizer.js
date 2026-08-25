@@ -3,35 +3,21 @@
 
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import { $prose } from '@milkdown/kit/utils';
+import { isSafeMarkdownURL } from '../utils/markdown-url-policy.ts';
 
-const SAFE_URL_SCHEMES = /^(https?:|mailto:|tel:|page:|#|\/)/i;
-const SAFE_IMAGE_URL_SCHEMES = /^(https?:|blob:|#|\/)/i;
-
-/**
- * Check whether a URL is safe to navigate to.
- * Allows http(s), mailto, tel, fragment (#), and relative URLs.
- * Blocks javascript:, vbscript:, data:, and any other dangerous scheme.
- * @param {string} url
- * @returns {boolean}
- */
-function isSafeUrlWithSchemes(url, safeSchemes) {
+function isEmptyUrl(url) {
   if (!url) return true;
-  const trimmed = url.trim();
-  if (trimmed === '') return true;
-  // Reject protocol-relative URLs (`//evil.com`) — browsers resolve these against the
-  // current page's scheme, so they're effectively external navigation without a scheme.
-  if (trimmed.startsWith('//')) return false;
-  // Relative URLs (no scheme) are safe
-  if (!trimmed.includes(':')) return true;
-  return safeSchemes.test(trimmed);
+  return url.trim() === '';
 }
 
+/** @param {string} url */
 export function isSafeUrl(url) {
-  return isSafeUrlWithSchemes(url, SAFE_URL_SCHEMES);
+  return isEmptyUrl(url) || isSafeMarkdownURL(url);
 }
 
+/** @param {string} url */
 export function isSafeImageUrl(url) {
-  return isSafeUrlWithSchemes(url, SAFE_IMAGE_URL_SCHEMES);
+  return isEmptyUrl(url) || isSafeMarkdownURL(url, { image: true, allowBlobImage: true });
 }
 
 const linkSanitizerPluginKey = new PluginKey('link-sanitizer');

@@ -12,23 +12,21 @@ const (
 	MarkdownMaxBytes = 256 * 1024
 )
 
-// ValidateTitle validates a plain-text title without rewriting accepted source.
-func ValidateTitle(title string) error {
-	if title == "" || strings.TrimSpace(title) == "" {
-		return &ValidationError{Field: "title", Message: "Title is required"}
-	}
-	if strings.TrimSpace(title) != title {
-		return &ValidationError{Field: "title", Message: "Title must not have surrounding whitespace"}
+// NormalizeTitle trims and validates a plain-text title.
+func NormalizeTitle(title string) (string, error) {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return "", &ValidationError{Field: "title", Message: "Title is required"}
 	}
 	if utf8.RuneCountInString(title) > TitleMaxRunes {
-		return &ValidationError{Field: "title", Message: fmt.Sprintf("Title must be at most %d characters", TitleMaxRunes)}
+		return "", &ValidationError{Field: "title", Message: fmt.Sprintf("Title must be at most %d characters", TitleMaxRunes)}
 	}
 	for _, r := range title {
 		if r == '\n' || r == '\r' || unicode.IsControl(r) {
-			return &ValidationError{Field: "title", Message: "Title must be a single line without control characters"}
+			return "", &ValidationError{Field: "title", Message: "Title must be a single line without control characters"}
 		}
 	}
-	return nil
+	return title, nil
 }
 
 // ValidateMarkdownSource validates Markdown without trimming, decoding,

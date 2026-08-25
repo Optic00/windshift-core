@@ -177,9 +177,10 @@ func (v *ItemFieldValidator) ValidateAndApplyUpdates(
 	updateData map[string]any,
 	userID int, // for permission checks on personal tasks
 ) error {
-	// Title validation preserves accepted source.
+	// Titles use the same normalization as the create and update services.
 	if title, ok := updateData["title"].(string); ok {
-		if err := ValidateTitle(title); err != nil {
+		title, err := NormalizeTitle(title)
+		if err != nil {
 			return err
 		}
 		item.Title = title

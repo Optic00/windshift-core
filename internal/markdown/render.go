@@ -7,6 +7,7 @@ import (
 	"html"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -21,12 +22,13 @@ import (
 )
 
 var (
-	classPattern     = regexp.MustCompile(`^(?:language-[A-Za-z0-9_+-]+)$`)
-	pageIDPattern    = regexp.MustCompile(`^\d+$`)
-	linkPattern      = regexp.MustCompile(`(?i)^(?:https?:[^\x00-\x20]*|mailto:[^\x00-\x20]*|tel:[^\x00-\x20]*|page:[0-9]+|#[^\x00-\x20]*|/(?:[^/\\\x00-\x20][^\\\x00-\x20]*)?|[^/:?#\\\x00-\x20][^:\\\x00-\x20]*)$`)
-	imagePattern     = regexp.MustCompile(`(?i)^(?:https?:[^\x00-\x20]*|data:image/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+=*|/(?:[^/\\\x00-\x20][^\\\x00-\x20]*)?|[^/:?#\\\x00-\x20][^:\\\x00-\x20]*)$`)
-	rasterDataPrefix = regexp.MustCompile(`(?i)^image/(?:png|jpeg|gif|webp);base64,`)
-	markdownHTML     = goldmark.New(
+	commonURLSchemes    = []string{"http", "https"}
+	linkOnlyURLSchemes  = []string{"mailto", "tel"}
+	sanitizerURLSchemes = slices.Concat(commonURLSchemes, linkOnlyURLSchemes, []string{"page"})
+	classPattern        = regexp.MustCompile(`^(?:language-[A-Za-z0-9_+-]+)$`)
+	pageIDPattern       = regexp.MustCompile(`^\d+$`)
+	rasterDataPrefix    = regexp.MustCompile(`(?i)^image/(?:png|jpeg|gif|webp);base64,`)
+	markdownHTML        = goldmark.New(
 		goldmark.WithExtensions(extension.GFM),
 		goldmark.WithParserOptions(parser.WithASTTransformers(
 			util.Prioritized(linkPolicyTransformer{}, 500),
@@ -80,11 +82,15 @@ func validDestination(destination string, image bool) bool {
 		return true
 	}
 
-	switch strings.ToLower(parsed.Scheme) {
-	case "http", "https":
+	scheme := strings.ToLower(parsed.Scheme)
+	if slices.Contains(commonURLSchemes, scheme) {
 		return true
-	case "mailto", "tel":
-		return !image
+	}
+	if !image && slices.Contains(linkOnlyURLSchemes, scheme) {
+		return true
+	}
+
+	switch scheme {
 	case "page":
 		return !image && pageIDPattern.MatchString(parsed.Opaque)
 	case "data":
@@ -128,16 +134,19 @@ func newPolicy() *bluemonday.Policy {
 		"a", "img", "table", "thead", "tbody", "tr", "th", "td",
 		"input",
 	)
-	p.AllowAttrs("href").Matching(linkPattern).OnElements("a")
+	// Goldmark destinations pass through validDestination before rendering.
+	// Keep bluemonday focused on the final HTML allowlist and scheme defense
+	// instead of maintaining a second copy of the destination grammar.
+	p.AllowAttrs("href").OnElements("a")
 	p.AllowAttrs("title").OnElements("a", "img")
-	p.AllowAttrs("src").Matching(imagePattern).OnElements("img")
+	p.AllowAttrs("src").OnElements("img")
 	p.AllowAttrs("alt").OnElements("img")
 	p.AllowAttrs("class").Matching(classPattern).OnElements("code")
 	p.AllowAttrs("align").Matching(regexp.MustCompile(`^(?:left|right|center)$`)).OnElements("th", "td")
 	p.AllowAttrs("type").Matching(regexp.MustCompile(`^checkbox$`)).OnElements("input")
 	p.AllowAttrs("checked", "disabled").Matching(regexp.MustCompile(`^$`)).OnElements("input")
 	p.AllowRelativeURLs(true)
-	p.AllowURLSchemes("http", "https", "mailto", "tel", "page")
+	p.AllowURLSchemes(sanitizerURLSchemes...)
 	p.AllowURLSchemeWithCustomPolicy("data", func(parsed *url.URL) bool {
 		if parsed.RawQuery != "" || parsed.Fragment != "" {
 			return false

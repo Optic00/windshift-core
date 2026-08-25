@@ -134,7 +134,7 @@ type publicComment struct {
 	AuthorName   string `json:"author_name"`
 	AuthorAvatar string `json:"author_avatar,omitempty"`
 	Content      string `json:"content"`
-	ContentHTML  string `json:"content_html"`
+	ContentHTML  string `json:"content_html,omitempty"`
 	CreatedAt    string `json:"created_at"`
 }
 

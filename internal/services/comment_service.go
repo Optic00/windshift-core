@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"windshift/internal/database"
 	"windshift/internal/models"
@@ -274,9 +275,7 @@ type UpdateImportedCommentParams struct {
 }
 
 func (s *CommentService) UpdateImported(params UpdateImportedCommentParams) error {
-	if err := validateCommentSource(params.Content); err != nil {
-		return err
-	}
+	params.Content = normalizeImportedCommentSource(params.Content)
 	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin imported comment update: %w", err)
@@ -320,9 +319,7 @@ func (s *CommentService) UpdateImported(params UpdateImportedCommentParams) erro
 // themselves after they commit. authorID == 0 inserts a system (NULL author)
 // comment.
 func (s *CommentService) CreateInTx(ctx context.Context, tx database.Tx, itemID, authorID int, content string, createdAt time.Time) (int64, error) {
-	if err := validateCommentSource(content); err != nil {
-		return 0, err
-	}
+	content = normalizeImportedCommentSource(content)
 	var author any
 	if authorID != 0 {
 		author = authorID
@@ -335,9 +332,7 @@ func (s *CommentService) CreateInTx(ctx context.Context, tx database.Tx, itemID,
 // UpdateContentInTx updates a comment's content inside an existing transaction,
 // with no side-effects/publish (the caller publishes after it commits).
 func (s *CommentService) UpdateContentInTx(ctx context.Context, tx database.Tx, commentID int, content string, updatedAt time.Time) error {
-	if err := validateCommentSource(content); err != nil {
-		return err
-	}
+	content = normalizeImportedCommentSource(content)
 	_, err := tx.ExecContext(ctx, updateCommentSQL, content, updatedAt, commentID)
 	return err
 }
@@ -346,7 +341,17 @@ func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResul
 	if err := validateCommentSource(params.Content); err != nil {
 		return nil, err
 	}
+	return s.create(params)
+}
 
+// CreateImported creates a comment from an external system without rejecting
+// the surrounding import when its source needs UTF-8 repair or truncation.
+func (s *CommentService) CreateImported(params CreateCommentParams) (*CreateCommentResult, error) {
+	params.Content = normalizeImportedCommentSource(params.Content)
+	return s.create(params)
+}
+
+func (s *CommentService) create(params CreateCommentParams) (*CreateCommentResult, error) {
 	// 2. Get item details for notifications and the webhook payload
 	item, err := repository.NewItemRepository(s.db).FindByIDWithDetails(params.ItemID)
 	if err != nil {
@@ -744,6 +749,19 @@ func normalizeCommentFeedLimit(limit int) int {
 
 func validateCommentSource(content string) error {
 	return validation.ValidateMarkdownSource("content", content, validation.MarkdownMaxBytes, true)
+}
+
+func normalizeImportedCommentSource(content string) string {
+	content = strings.ToValidUTF8(content, "\uFFFD")
+	if len(content) <= validation.MarkdownMaxBytes {
+		return content
+	}
+
+	content = content[:validation.MarkdownMaxBytes]
+	for content != "" && !utf8.ValidString(content) {
+		content = content[:len(content)-1]
+	}
+	return content
 }
 
 // Update updates a comment's content

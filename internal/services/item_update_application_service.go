@@ -135,7 +135,8 @@ func itemUpdateData(fields map[string]json.RawMessage) (map[string]any, error) {
 		if err := decodeItemUpdateField(raw, "title", &value); err != nil {
 			return nil, err
 		}
-		if err := validation.ValidateTitle(value); err != nil {
+		value, err := validation.NormalizeTitle(value)
+		if err != nil {
 			return nil, err
 		}
 		updateData["title"] = value

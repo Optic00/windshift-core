@@ -1,4 +1,5 @@
 import DOMPurify from 'dompurify';
+import { isSafeMarkdownURL, markdownURLSchemes } from './markdown-url-policy.ts';
 
 /**
  * Sanitize HTML with an allowlist of safe formatting tags.
@@ -127,27 +128,10 @@ const markdownAttributes = [
   'rel',
 ];
 
-const domPurifyMarkdownURI = /^(?:(?:https?|mailto|tel|page|data):|[#/]|[^/:?#\\]+(?:[/?#]|$))/i;
-const rasterDataURI = /^data:image\/(?:png|jpeg|gif|webp);base64,[a-z0-9+/]+=*$/i;
-
-function hasUnsafeMarkdownURLCharacters(value: string): boolean {
-  if (value.includes('\\') || /%5c/i.test(value)) return true;
-  for (const character of value) {
-    const code = character.charCodeAt(0);
-    if (code <= 0x20 || code === 0x7f) return true;
-  }
-  return false;
-}
-
-function isSafeMarkdownURL(value: string, image: boolean): boolean {
-  if (!value || value.startsWith('//') || hasUnsafeMarkdownURLCharacters(value)) return false;
-  if (value.startsWith('#') || value.startsWith('/')) return true;
-  if (image && rasterDataURI.test(value)) return true;
-  if (/^https?:/i.test(value)) return true;
-  if (!image && /^(?:mailto:|tel:)/i.test(value)) return true;
-  if (!image && /^page:[0-9]+$/i.test(value)) return true;
-  return /^[^/:?#\\][^:\\]*$/.test(value);
-}
+const domPurifyMarkdownURI = new RegExp(
+  `^(?:(?:${markdownURLSchemes.join('|')}):|[#/]|[^/:?#\\\\]+(?:[/?#]|$))`,
+  'i'
+);
 
 /** Sanitize server-rendered Markdown at the final browser boundary. */
 export function sanitizeMarkdownHtml(dirty: string): string {
@@ -158,8 +142,10 @@ export function sanitizeMarkdownHtml(dirty: string): string {
     data: { attrName: string; attrValue: string; keepAttr: boolean }
   ) => {
     const name = data.attrName.toLowerCase();
-    if (name === 'href' && !isSafeMarkdownURL(data.attrValue, false)) data.keepAttr = false;
-    if (name === 'src' && !isSafeMarkdownURL(data.attrValue, true)) data.keepAttr = false;
+    if (name === 'href' && !isSafeMarkdownURL(data.attrValue)) data.keepAttr = false;
+    if (name === 'src' && !isSafeMarkdownURL(data.attrValue, { image: true })) {
+      data.keepAttr = false;
+    }
   };
 
   DOMPurify.addHook('uponSanitizeAttribute', validateMarkdownURL);

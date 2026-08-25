@@ -5,6 +5,7 @@
     size = 'medium',           // 'small' | 'medium' | 'large'
     label = null,
     labelPosition = 'right',   // 'left' | 'right'
+    ariaLabel = null,
     onchange = null,
     id = undefined,
     dataTestid = undefined,
@@ -57,7 +58,7 @@
     data-testid={dataTestid}
     role="switch"
     aria-checked={checked}
-    aria-label="Toggle"
+    aria-label={ariaLabel || 'Toggle'}
     {disabled}
     class="relative inline-flex items-center shrink-0 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[var(--ds-border-focused)]
            disabled:opacity-50 disabled:cursor-not-allowed {currentSize.button} {className}"

@@ -459,6 +459,12 @@ export default {
       pluginExecutionDesc: 'Allow plugins to execute shell commands on the server',
       pluginExecutionWarning:
         "Warning: Enabling this setting allows plugins to execute shell commands. Commands are restricted to each plugin's own directory for security. Only enable if you trust all installed plugins.",
+      externalImages: 'External Markdown Images',
+      externalImagesDesc: 'Allow Markdown content to load images from any HTTP or HTTPS host',
+      externalImagesRefresh:
+        'Changes apply when users next load or refresh a page. Unsplash, Atlassian, configured Jira hosts, attachments, and embedded images remain available when disabled.',
+      externalImagesWarning:
+        "External images can reveal viewer IP addresses and browser details, and can send requests to services reachable from a viewer's network. Enable only if you trust content authors.",
       failedToLoad: 'Failed to load security settings',
       failedToSave: 'Failed to save settings',
     },

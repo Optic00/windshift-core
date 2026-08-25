@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { Shield, Calendar, Loader2, Terminal, Key, Users, UserCog, AlertTriangle, ChevronDown, ChevronUp } from '@lucide/svelte';
+  import { Shield, Calendar, Image as ImageIcon, Loader2, Terminal, Key, Users, UserCog, AlertTriangle, ChevronDown, ChevronUp } from '@lucide/svelte';
   import { agentSecurity, getSecuritySettings, updateSecuritySettings, authPolicy } from '../api.js';
   import AgentSecurityAllowlistEditor from './AgentSecurityAllowlistEditor.svelte';
   import Toggle from '../components/Toggle.svelte';
@@ -19,6 +19,7 @@
 
   let calendarFeedEnabled = $state(true);
   let pluginCliExecEnabled = $state(false);
+  let allowExternalImages = $state(false);
   let allowUserManagedAgents = $state(false);
   let maxAgentsPerUser = $state(5);
   let workspaceManagedAgents = $state(true);
@@ -111,6 +112,7 @@
       const settings = await getSecuritySettings();
       calendarFeedEnabled = settings.calendar_feed_enabled ?? true;
       pluginCliExecEnabled = settings.plugin_cli_exec_enabled ?? false;
+      allowExternalImages = settings.allow_external_images ?? false;
       allowUserManagedAgents = settings.allow_user_managed_agents ?? false;
       maxAgentsPerUser = settings.max_agents_per_user ?? 5;
       workspaceManagedAgents = settings.workspace_managed_agents ?? true;
@@ -151,15 +153,18 @@
       await updateSecuritySettings({
         calendar_feed_enabled: calendarFeedEnabled,
         plugin_cli_exec_enabled: pluginCliExecEnabled,
+        allow_external_images: allowExternalImages,
         allow_user_managed_agents: allowUserManagedAgents,
         max_agents_per_user: maxAgentsPerUser,
         workspace_managed_agents: workspaceManagedAgents,
         api_key_creation_policy: apiKeyCreationPolicy,
         api_key_allowed_group_ids: apiKeyAllowedGroupIds
       });
+      return true;
     } catch (err) {
       errorToast(t('settings.security.failedToSave'));
       console.error('Failed to save settings:', err);
+      return false;
     } finally {
       saving = false;
     }
@@ -190,6 +195,13 @@
   async function handleCliExecToggle(newValue) {
     pluginCliExecEnabled = newValue;
     await saveSettings();
+  }
+
+  async function handleExternalImagesToggle(newValue) {
+    allowExternalImages = newValue;
+    if (!(await saveSettings())) {
+      allowExternalImages = !newValue;
+    }
   }
 
   async function handleUserManagedAgentsToggle(newValue) {
@@ -289,6 +301,45 @@
         </div>
       </div>
     </Panel>
+
+    <!-- External Markdown Images -->
+    <div class="mt-4">
+      <Panel padding="spacious">
+        <div class="flex items-start gap-4">
+          <div class="p-2 rounded-lg" style="background-color: var(--ds-background-neutral);">
+            <ImageIcon class="w-5 h-5" style="color: var(--ds-icon);" />
+          </div>
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center justify-between gap-4">
+              <div class="min-w-0">
+                <h3 class="text-base font-medium" style="color: var(--ds-text);">
+                  {t('settings.security.externalImages')}
+                </h3>
+                <p class="text-sm mt-1" style="color: var(--ds-text-subtle);">
+                  {t('settings.security.externalImagesDesc')}
+                </p>
+                <p class="text-xs mt-2" style="color: var(--ds-text-subtle);">
+                  {t('settings.security.externalImagesRefresh')}
+                </p>
+              </div>
+              <Toggle
+                bind:checked={allowExternalImages}
+                ariaLabel={t('settings.security.externalImages')}
+                dataTestid="external-images-toggle"
+                disabled={saving}
+                onchange={handleExternalImagesToggle}
+              />
+            </div>
+
+            {#if allowExternalImages}
+              <div class="mt-3">
+                <AlertBox variant="warning" message={t('settings.security.externalImagesWarning')} />
+              </div>
+            {/if}
+          </div>
+        </div>
+      </Panel>
+    </div>
 
     <!-- Plugin CLI Execution Settings -->
     <div class="mt-4">

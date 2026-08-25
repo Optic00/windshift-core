@@ -10,6 +10,15 @@ import (
 
 // MapItemToResponse converts a models.Item to an ItemResponse DTO
 func MapItemToResponse(item *models.Item, baseURL string) *ItemResponse {
+	resp := mapItemToResponse(item, baseURL)
+	if resp == nil {
+		return nil
+	}
+	resp.DescriptionHTML, _ = markdown.Render(item.Description)
+	return resp
+}
+
+func mapItemToResponse(item *models.Item, baseURL string) *ItemResponse {
 	if item == nil {
 		return nil
 	}
@@ -32,8 +41,6 @@ func MapItemToResponse(item *models.Item, baseURL string) *ItemResponse {
 		UpdatedAt:           item.UpdatedAt,
 		CompletedAt:         item.CompletedAt,
 	}
-	resp.DescriptionHTML, _ = markdown.Render(item.Description)
-
 	// Map status
 	if item.StatusID != nil {
 		resp.Status = &StatusSummary{
@@ -133,11 +140,11 @@ func MapItemToResponse(item *models.Item, baseURL string) *ItemResponse {
 	return resp
 }
 
-// MapItemsToResponse converts a slice of models.Item to ItemResponse DTOs
+// MapItemsToResponse converts items without detail-only rendered fields.
 func MapItemsToResponse(items []models.Item, baseURL string) []ItemResponse {
 	result := make([]ItemResponse, len(items))
 	for i := range items {
-		result[i] = *MapItemToResponse(&items[i], baseURL)
+		result[i] = *mapItemToResponse(&items[i], baseURL)
 	}
 	return result
 }

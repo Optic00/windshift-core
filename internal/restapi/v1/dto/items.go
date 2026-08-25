@@ -4,7 +4,8 @@ import (
 	"time"
 )
 
-// ItemResponse is the public API representation of an Item
+// ItemResponse is the public API representation of an Item. DescriptionHTML
+// is populated for single-item and mutation responses, not collections.
 type ItemResponse struct {
 	ID                  int            `json:"id"`
 	WorkspaceID         int            `json:"workspace_id"`
@@ -139,7 +140,7 @@ type CommentResponse struct {
 	ID          int          `json:"id"`
 	ItemID      int          `json:"item_id"`
 	Content     string       `json:"content"`
-	ContentHTML string       `json:"content_html"`
+	ContentHTML string       `json:"content_html,omitempty"`
 	Author      *UserSummary `json:"author,omitempty"`
 	CreatedAt   time.Time    `json:"created_at"`
 	UpdatedAt   time.Time    `json:"updated_at"`

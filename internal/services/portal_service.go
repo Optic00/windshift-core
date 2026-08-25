@@ -172,7 +172,7 @@ type PortalComment struct {
 	AuthorID         *int   `json:"author_id,omitempty"`
 	PortalCustomerID *int   `json:"portal_customer_id,omitempty"`
 	Content          string `json:"content"`
-	ContentHTML      string `json:"content_html"`
+	ContentHTML      string `json:"content_html,omitempty"`
 	CreatedAt        string `json:"created_at"`
 	UpdatedAt        string `json:"updated_at"`
 	AuthorName       string `json:"author_name"`

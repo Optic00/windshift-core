@@ -1756,7 +1756,7 @@ func (s *Server) initialize() error {
 	go jiraHosts.Start(s.jiraHostStopChan)
 
 	// Recovery converts panics before the metrics layer records the final status.
-	securityMiddleware := createSecurityHeaders(enableHTTPS, cfg.UseProxy, additionalProxyIPs, jiraHosts.Allowed)
+	securityMiddleware := createSecurityHeaders(enableHTTPS, cfg.UseProxy, additionalProxyIPs, jiraHosts.Allowed, securitySettingsHandler.ExternalImagesAllowed)
 	compressionMiddleware := middleware.CreateCompressionMiddleware(cfg.UseProxy)
 	applicationHandler := middleware.Recovery(compressionMiddleware(securityMiddleware(s.metrics.CaptureRoutePattern(mux))))
 	handler := s.metrics.Instrument(applicationHandler)
