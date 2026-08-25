@@ -809,18 +809,27 @@
       : columnItems;
   }
 
-  // Use server totals for split-fetched capped rightmost columns, except
-  // swimlanes or active filters where loaded counts are authoritative.
-  function getColumnTotal(columnIndex, allColumnItems) {
+  // Use the deferred partition's server total when all of its statuses belong
+  // to this column. Swimlanes and active client filters keep loaded counts.
+  function getColumnTotal(column, allColumnItems) {
+    const deferred = collectionStore.boardDeferred;
+    const columnStatusIds = new Set(column.status_ids || []);
     const useServerTotal =
-      collectionStore.rightmostCap &&
+      deferred &&
       !selectedGroupByItemType &&
       !searchQuery.trim() &&
       !iterationFilterId &&
-      shouldLimitRightmostColumn(columnIndex);
-    return useServerTotal
-      ? Math.max(collectionStore.rightmostCap.total, allColumnItems.length)
-      : allColumnItems.length;
+      deferred.statusIds.every((statusId) => columnStatusIds.has(statusId));
+    if (!useServerTotal) return allColumnItems.length;
+
+    const deferredStatusIds = new Set(deferred.statusIds);
+    const loadedDeferredCount = allColumnItems.filter((item) =>
+      deferredStatusIds.has(item.status_id)
+    ).length;
+    return Math.max(
+      allColumnItems.length,
+      allColumnItems.length - loadedDeferredCount + deferred.total
+    );
   }
 
   let selectedGroupByItemType = $derived(
@@ -1492,7 +1501,7 @@
           workspaceName={workspace?.name || ''}
           collection={currentCollectionName}
           viewName="Board"
-          itemCount={(collectionStore.itemsPagination?.total ?? filteredItems.length) + (collectionStore.rightmostCap?.total ?? 0)}
+          itemCount={collectionStore.itemsTotalCount}
         >
           {#snippet actions()}
             <div class="flex items-center gap-3">
@@ -1674,7 +1683,7 @@
                     {@const quickAddKey = `${lane.id}-${column.id}`}
                     {@const allColumnItems = getItemsByColumn(column, lane.items)}
                     {@const columnItems = getDisplayItemsByColumn(column, columnIndex, validColumns, lane.items)}
-                    {@const columnTotal = getColumnTotal(columnIndex, allColumnItems)}
+                    {@const columnTotal = getColumnTotal(column, allColumnItems)}
                     {@const hiddenColumnItemCount = columnTotal - columnItems.length}
                     {@const isOverWip = column.wip_limit && allColumnItems.length > column.wip_limit}
                     {#if isColumnCollapsed(column.id)}
@@ -1745,7 +1754,11 @@
                         {:else}
                           {#if hiddenColumnItemCount > 0}
                             <p class="text-xs mb-3" style={styles.glassSubtleTextStyle}>
-                              Showing latest {columnItems.length} of {columnTotal} items in this column.
+                              {#if collectionStore.boardDeferred?.capped}
+                                Showing latest {columnItems.length} of {columnTotal} items in this column.
+                              {:else}
+                                Showing {columnItems.length} of {columnTotal} items in this column. Load more to see the remaining completed work.
+                              {/if}
                             </p>
                           {/if}
                           <div class="space-y-1">
@@ -1794,8 +1807,8 @@
               style="{styles.glassStyle?.(12) ?? ''} {styles.glassTextStyle ?? ''}"
             >
               {collectionStore.itemsLoadingMore ? t('common.loading') : t('common.loadMore')}
-              {#if collectionStore.itemsPagination?.total && !iterationFilterId}
-                ({collectionStore.itemsPagination.total - collectionStore.mainItemsLoadedCount} {t('common.remaining')})
+              {#if collectionStore.itemsRemainingCount > 0 && !iterationFilterId}
+                ({collectionStore.itemsRemainingCount} {t('common.remaining')})
               {/if}
             </button>
           </div>
