@@ -124,6 +124,13 @@ type ItemListPage struct {
 	NextCursor string
 }
 
+// ItemIDPage is the lightweight counterpart to ItemListPage for callers that
+// need the selected item set without hydrating item details.
+type ItemIDPage struct {
+	IDs   []int
+	Total int
+}
+
 // ErrInvalidItemListCursor identifies a malformed opaque list continuation.
 // Handlers map it to a validation response instead of exposing a SQL error.
 var ErrInvalidItemListCursor = errors.New("invalid item list cursor")
@@ -369,6 +376,56 @@ func (r *ItemRepository) FindAllWithDetailsPageContext(ctx context.Context, para
 		}
 	}
 	return page, nil
+}
+
+// FindIDPageContext returns one ordered item-ID page using the same filters,
+// access scope, count, and sorting contract as the full item list.
+func (r *ItemRepository) FindIDPageContext(ctx context.Context, params ItemListParams) (ItemIDPage, error) {
+	whereClause, args := r.buildWhereClause(params)
+	fromClause := ItemListFilterFromClause()
+	plan := r.buildItemListPagePlan(params, fromClause, whereClause, args)
+
+	var total int
+	if plan.workspaceCountID != 0 {
+		var err error
+		total, err = cachedItemListCount(ctx, r.db, plan.workspaceCountID, plan.countQuery, plan.countArgs...)
+		if err != nil {
+			return ItemIDPage{}, fmt.Errorf("failed to count item ids: %w", err)
+		}
+	} else if err := r.db.QueryRowContext(ctx, plan.countQuery, plan.countArgs...).Scan(&total); err != nil {
+		return ItemIDPage{}, fmt.Errorf("failed to count item ids: %w", err)
+	}
+
+	limit := params.Pagination.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	offset := max(params.Pagination.Offset, 0)
+	query := "SELECT i.id " + plan.pageFromClause + plan.pageWhereClause +
+		r.buildOrderByClause(params.SortBy, params.SortAsc) +
+		fmt.Sprintf(" LIMIT %d OFFSET %d", limit, offset)
+
+	rows, err := r.db.QueryContext(ctx, query, plan.pageArgs...)
+	if err != nil {
+		return ItemIDPage{}, fmt.Errorf("failed to query item ids: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	ids := make([]int, 0, min(limit, total))
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return ItemIDPage{}, fmt.Errorf("failed to scan item id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return ItemIDPage{}, fmt.Errorf("failed to iterate item ids: %w", err)
+	}
+	return ItemIDPage{IDs: ids, Total: total}, nil
 }
 
 // unfilteredWorkspaceListWorkspaceID identifies the direct workspace-list hot

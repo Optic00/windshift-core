@@ -664,6 +664,23 @@ components:
         name:
           type: string
       type: object
+    internal_restapi_v1_handlers.batchItemLinksResponse:
+      properties:
+        has_more_links:
+          type: boolean
+        incoming:
+          items:
+            $ref: '#/components/schemas/models.ItemLink'
+          type: array
+        item_id:
+          type: integer
+        next_after_link_id:
+          type: integer
+        outgoing:
+          items:
+            $ref: '#/components/schemas/models.ItemLink'
+          type: array
+      type: object
     internal_restapi_v1_handlers.capabilityDTO:
       properties:
         capability_type:
@@ -8420,6 +8437,96 @@ paths:
       security:
       - BearerAuth: []
       summary: Create a cross-entity link
+      tags:
+      - links
+  /links/batch:
+    get:
+      description: Selects up to 100 visible anchor items by CQL or explicit ids and
+        returns at most 50 direct item-to-item links per anchor. The operation is
+        one hop only. Supply exactly one of `ql` or `ids`. When an item has more links,
+        request that single item with `ids` and `after_id` to continue.
+      parameters:
+      - description: CQL selecting anchor items
+        in: query
+        name: ql
+        schema:
+          type: string
+      - description: Comma-separated anchor item ids (max 100)
+        in: query
+        name: ids
+        schema:
+          type: string
+      - description: CQL item page (1-based)
+        in: query
+        name: page
+        schema:
+          type: integer
+      - description: CQL items per page (max 100)
+        in: query
+        name: limit
+        schema:
+          type: integer
+      - description: CQL item sort field
+        in: query
+        name: sort
+        schema:
+          type: string
+      - description: 'CQL item sort order: asc or desc'
+        in: query
+        name: order
+        schema:
+          type: string
+      - description: Exclusive link cursor; valid only with one explicit item id
+        in: query
+        name: after_id
+        schema:
+          type: integer
+      - description: Include links managed by custom fields
+        in: query
+        name: include_custom_fields
+        schema:
+          type: boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/internal_restapi_v1_handlers.PaginatedResponse'
+                - properties:
+                    data:
+                      items:
+                        $ref: '#/components/schemas/internal_restapi_v1_handlers.batchItemLinksResponse'
+                      type: array
+                  type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_restapi_v1_handlers.ErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_restapi_v1_handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_restapi_v1_handlers.ErrorResponse'
+          description: Forbidden
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/internal_restapi_v1_handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List direct links for a batch of items
       tags:
       - links
   /links/{id}:

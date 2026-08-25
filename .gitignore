@@ -185,6 +185,7 @@ blog/
 !/docs/recurrence-scheduling-safeguards.md
 !/docs/jira-service-management-import.md
 !/docs/jira-import-fidelity-gap-analysis.md
+!/docs/item-put-change-feed-audit-2026-08-25.md
 !/docs/WI-531-public-forms-backend-api-audit.md
 !/docs/WI-523-public-forms-completion.md
 !/docs/xray-jira-test-case-import.md

@@ -1,10 +1,12 @@
 package services
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -154,8 +156,17 @@ func (s *ItemLinkService) CreateLinkWithChecks(userID int, params CreateItemLink
 		return nil, err
 	}
 
-	// Check both directions for an existing link.
-	exists, err := itemLinkExists(s.db, params)
+	createdBy := userID
+	params.CreatedBy = &createdBy
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Check both directions for an existing link inside the write transaction.
+	exists, err := itemLinkExists(tx, params)
 	if err != nil {
 		return nil, err
 	}
@@ -163,16 +174,19 @@ func (s *ItemLinkService) CreateLinkWithChecks(userID int, params CreateItemLink
 		return nil, ErrLinkExists
 	}
 
-	createdBy := userID
-	params.CreatedBy = &createdBy
-
-	id, err := s.CreateLink(params)
+	id, err := createItemLink(tx, params)
 	if err != nil {
 		return nil, err
 	}
 	if id == 0 {
 		// CreateLink returns 0 on INSERT OR IGNORE; treat as duplicate.
 		return nil, ErrLinkExists
+	}
+	if err := s.touchLinkedItems(tx, time.Now(), params); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("failed to commit item link: %w", err)
 	}
 
 	return s.finishCreatedLink(userID, params, id)
@@ -189,9 +203,36 @@ func (s *ItemLinkService) ReplaceSingleValueFieldLinkWithChecks(userID int, para
 
 	createdBy := userID
 	params.CreatedBy = &createdBy
-	link, err := database.WithTxResult(s.db, func(tx database.Tx) (*models.ItemLink, error) {
+	type replacementResult struct {
+		link     *models.ItemLink
+		affected []CreateItemLinkParams
+	}
+	result, err := database.WithTxResult(s.db, func(tx database.Tx) (*replacementResult, error) {
 		if err := lockLinkSource(tx, s.db.GetDriverName(), params.SourceType, params.SourceID); err != nil {
 			return nil, err
+		}
+		affected := []CreateItemLinkParams{params}
+		rows, err := tx.Query(`
+			SELECT source_type, source_id, target_type, target_id
+			FROM item_links
+			WHERE custom_field_id = ? AND source_type = ? AND source_id = ?
+		`, *params.CustomFieldID, params.SourceType, params.SourceID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load previous field links: %w", err)
+		}
+		for rows.Next() {
+			var previous CreateItemLinkParams
+			if err := rows.Scan(&previous.SourceType, &previous.SourceID, &previous.TargetType, &previous.TargetID); err != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("failed to scan previous field link: %w", err)
+			}
+			affected = append(affected, previous)
+		}
+		if err := rows.Close(); err != nil {
+			return nil, fmt.Errorf("failed to close previous field links: %w", err)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("failed to iterate previous field links: %w", err)
 		}
 		if _, err := tx.ExecWrite(`
 			DELETE FROM item_links
@@ -222,13 +263,20 @@ func (s *ItemLinkService) ReplaceSingleValueFieldLinkWithChecks(userID int, para
 		if created == nil {
 			return nil, fmt.Errorf("failed to load replacement field link: %w", ErrLinkNotFound)
 		}
-		return created, nil
+		if err := s.touchLinkedItems(tx, time.Now(), affected...); err != nil {
+			return nil, err
+		}
+		return &replacementResult{link: created, affected: affected}, nil
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	return s.finishHydratedCreatedLink(userID, params, link), nil
+	if params.SourceType == "item" {
+		s.emitLinkedEvents(userID, params, result.link)
+	}
+	publishItemLinkChanges(result.affected...)
+	return result.link, nil
 }
 
 func lockLinkSource(tx database.Tx, driver, entityType string, entityID int) error {
@@ -320,20 +368,17 @@ func (s *ItemLinkService) finishHydratedCreatedLink(userID int, params CreateIte
 		s.emitLinkedEvents(userID, params, link)
 	}
 	// Refresh both item endpoints because the UI renders links bidirectionally.
-	publishItemLinkChange(params.SourceType, params.SourceID, params.TargetType, params.TargetID)
+	publishItemLinkChanges(params)
 	return link
 }
 
-// publishItemLinkChange announces a link add/remove to every endpoint that is a
+// publishItemLinkChanges announces link changes to every affected endpoint that is a
 // work item (WI-483). The legacy notification path fires only for an item
 // source; an item that is merely the target (or whose link source is a page)
 // would otherwise never refresh its linked-items section.
-func publishItemLinkChange(sourceType string, sourceID int, targetType string, targetID int) {
-	if sourceType == "item" {
-		PublishItemChange(sourceID, ItemChangeLink)
-	}
-	if targetType == "item" {
-		PublishItemChange(targetID, ItemChangeLink)
+func publishItemLinkChanges(links ...CreateItemLinkParams) {
+	for _, itemID := range linkedItemIDs(links) {
+		PublishItemChange(itemID, ItemChangeLink)
 	}
 }
 
@@ -355,20 +400,70 @@ func (s *ItemLinkService) DeleteLinkWithChecks(userID, linkID int) error {
 		return err
 	}
 
-	result, err := s.db.ExecWrite("DELETE FROM item_links WHERE id = ?", linkID)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin item link deletion: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	result, err := tx.Exec("DELETE FROM item_links WHERE id = ?", linkID)
 	if err != nil {
 		return fmt.Errorf("failed to delete link: %w", err)
 	}
 	if rows, _ := result.RowsAffected(); rows == 0 {
 		return ErrLinkNotFound
 	}
+	if err := s.touchLinkedItems(tx, time.Now(), CreateItemLinkParams{
+		SourceType: link.SourceType,
+		SourceID:   link.SourceID,
+		TargetType: link.TargetType,
+		TargetID:   link.TargetID,
+	}); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit item link deletion: %w", err)
+	}
 
 	if link.SourceType == "item" {
 		s.emitUnlinkedEvents(userID, link)
 	}
 	// Refresh both item endpoints after removal.
-	publishItemLinkChange(link.SourceType, link.SourceID, link.TargetType, link.TargetID)
+	publishItemLinkChanges(CreateItemLinkParams{
+		SourceType: link.SourceType,
+		SourceID:   link.SourceID,
+		TargetType: link.TargetType,
+		TargetID:   link.TargetID,
+	})
 	return nil
+}
+
+func (s *ItemLinkService) touchLinkedItems(tx database.Tx, now time.Time, links ...CreateItemLinkParams) error {
+	itemRepo := repository.NewItemRepository(s.db)
+	for _, itemID := range linkedItemIDs(links) {
+		if err := itemRepo.TouchChanged(tx, itemID, now); err != nil {
+			return fmt.Errorf("touch linked item %d: %w", itemID, err)
+		}
+	}
+	return nil
+}
+
+func linkedItemIDs(links []CreateItemLinkParams) []int {
+	itemIDSet := make(map[int]struct{}, len(links)*2)
+	for _, link := range links {
+		if link.SourceType == "item" {
+			itemIDSet[link.SourceID] = struct{}{}
+		}
+		if link.TargetType == "item" {
+			itemIDSet[link.TargetID] = struct{}{}
+		}
+	}
+	itemIDs := make([]int, 0, len(itemIDSet))
+	for itemID := range itemIDSet {
+		itemIDs = append(itemIDs, itemID)
+	}
+	slices.Sort(itemIDs)
+	return itemIDs
 }
 
 // ListLinksForEntityWithChecks returns visible outgoing and incoming links;
@@ -1059,7 +1154,25 @@ func (s *ItemLinkService) getLinksWhere(whereClause string, args ...any) ([]mode
 }
 
 func getLinksWhere(db itemLinkQuerier, whereClause string, args ...any) ([]models.ItemLink, error) {
-	query := `
+	rows, err := db.Query(itemLinksWhereQuery(whereClause), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	return scanItemLinks(rows)
+}
+
+func getLinksWhereContext(ctx context.Context, db database.Database, whereClause string, args ...any) ([]models.ItemLink, error) {
+	rows, err := db.QueryContext(ctx, itemLinksWhereQuery(whereClause), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	return scanItemLinks(rows)
+}
+
+func itemLinksWhereQuery(whereClause string) string {
+	return `
 		SELECT il.id, il.link_type_id, il.source_type, il.source_id, il.target_type, il.target_id,
 		       il.created_by, il.created_at,
 		       lt.name, lt.color, lt.forward_label, lt.reverse_label,
@@ -1113,12 +1226,9 @@ func getLinksWhere(db itemLinkQuerier, whereClause string, args ...any) ([]model
 		WHERE ` + whereClause + `
 		ORDER BY lt.name, il.created_at DESC
 	`
-	rows, err := db.Query(query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
+}
 
+func scanItemLinks(rows *sql.Rows) ([]models.ItemLink, error) {
 	var links []models.ItemLink
 	for rows.Next() {
 		var link models.ItemLink

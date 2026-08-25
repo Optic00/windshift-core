@@ -3,8 +3,10 @@ package handlers
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
+	"windshift/internal/models"
 	"windshift/internal/restapi"
 	"windshift/internal/services"
 )
@@ -18,7 +20,8 @@ import (
 // (asset checker, page checker, notification emitter, action emitter).
 type LinkHandler struct {
 	BaseHandler
-	svc *services.ItemLinkService
+	svc   *services.ItemLinkService
+	items *services.ItemCRUDService
 }
 
 // NewLinkHandler wires the v1 link surface against a service supplied
@@ -26,7 +29,11 @@ type LinkHandler struct {
 // cookie-auth handler uses so notifications, action events, asset and
 // page permission checks all behave identically across surfaces.
 func NewLinkHandler(base BaseHandler, svc *services.ItemLinkService) *LinkHandler {
-	return &LinkHandler{BaseHandler: base, svc: svc}
+	return &LinkHandler{
+		BaseHandler: base,
+		svc:         svc,
+		items:       services.NewItemCRUDService(base.DB),
+	}
 }
 
 // --- request payloads ---
@@ -37,6 +44,16 @@ type linkCreateRequest struct {
 	SourceID   int    `json:"source_id"`
 	TargetType string `json:"target_type"`
 	TargetID   int    `json:"target_id"`
+}
+
+const maxBatchLinkItems = 100
+
+type batchItemLinksResponse struct {
+	ItemID          int               `json:"item_id"`
+	Outgoing        []models.ItemLink `json:"outgoing"`
+	Incoming        []models.ItemLink `json:"incoming"`
+	HasMoreLinks    bool              `json:"has_more_links"`
+	NextAfterLinkID int               `json:"next_after_link_id,omitempty"`
 }
 
 // --- endpoints ---
@@ -64,6 +81,141 @@ func (h *LinkHandler) ListLinkTypes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.RespondOK(w, types)
+}
+
+// GetLinksBatch handles GET /rest/api/v1/links/batch.
+//
+// @Summary      List direct links for a batch of items
+// @Description  Selects up to 100 visible anchor items by CQL or explicit ids and returns at most 50 direct item-to-item links per anchor. The operation is one hop only. Supply exactly one of `ql` or `ids`. When an item has more links, request that single item with `ids` and `after_id` to continue.
+// @Tags         links
+// @Produce      json
+// @Security     BearerAuth
+// @Param        ql                     query     string  false  "CQL selecting anchor items"
+// @Param        ids                    query     string  false  "Comma-separated anchor item ids (max 100)"
+// @Param        page                   query     int     false  "CQL item page (1-based)"
+// @Param        limit                  query     int     false  "CQL items per page (max 100)"
+// @Param        sort                   query     string  false  "CQL item sort field"
+// @Param        order                  query     string  false  "CQL item sort order: asc or desc"
+// @Param        after_id               query     int     false  "Exclusive link cursor; valid only with one explicit item id"
+// @Param        include_custom_fields  query     bool    false  "Include links managed by custom fields"
+// @Success      200  {object}  handlers.PaginatedResponse{data=[]handlers.batchItemLinksResponse}
+// @Failure      400  {object}  handlers.ErrorResponse
+// @Failure      401  {object}  handlers.ErrorResponse
+// @Failure      403  {object}  handlers.ErrorResponse
+// @Failure      500  {object}  handlers.ErrorResponse
+// @Router       /links/batch [get]
+func (h *LinkHandler) GetLinksBatch(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.RequireAuth(w, r)
+	if !ok {
+		return
+	}
+
+	query := r.URL.Query()
+	ql := strings.TrimSpace(query.Get("ql"))
+	rawIDs := strings.TrimSpace(query.Get("ids"))
+	if (ql == "") == (rawIDs == "") {
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "exactly one of ql or ids is required"))
+		return
+	}
+
+	pagination := h.ParsePagination(r)
+	itemIDs := []int{}
+	total := 0
+	if ql != "" {
+		accessibleWorkspaceIDs, err := h.Perms.GetAccessibleWorkspaceIDs(user.ID)
+		if err != nil {
+			h.RespondInternalError(w, r)
+			return
+		}
+		page, err := h.items.ListIDsWithQLPageContext(r.Context(), services.ListWithQLParams{
+			QLQuery:      ql,
+			WorkspaceIDs: accessibleWorkspaceIDs,
+			UserID:       user.ID,
+			Pagination: services.PaginationParams{
+				Limit:  pagination.Limit,
+				Offset: pagination.Offset,
+			},
+			SortBy:  pagination.SortBy,
+			SortAsc: pagination.SortAsc,
+		})
+		if errors.Is(err, services.ErrQLQuery) {
+			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, err.Error()))
+			return
+		}
+		if err != nil {
+			h.RespondInternalError(w, r)
+			return
+		}
+		itemIDs = page.IDs
+		total = page.Total
+	} else {
+		seen := make(map[int]struct{})
+		for _, id := range parseIDList(rawIDs) {
+			if id <= 0 {
+				continue
+			}
+			if _, exists := seen[id]; exists {
+				continue
+			}
+			seen[id] = struct{}{}
+			itemIDs = append(itemIDs, id)
+		}
+		if len(itemIDs) == 0 {
+			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "ids must contain at least one positive item id"))
+			return
+		}
+		if len(itemIDs) > maxBatchLinkItems {
+			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "too many ids (max 100)"))
+			return
+		}
+		pagination.Page = 1
+		pagination.Limit = maxBatchLinkItems
+		pagination.Offset = 0
+		total = len(itemIDs)
+	}
+
+	afterID := 0
+	if rawAfterID := strings.TrimSpace(query.Get("after_id")); rawAfterID != "" {
+		parsed, err := strconv.Atoi(rawAfterID)
+		if err != nil || parsed < 0 {
+			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "after_id must be a non-negative integer"))
+			return
+		}
+		if ql != "" || len(itemIDs) != 1 {
+			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "after_id requires exactly one explicit item id"))
+			return
+		}
+		afterID = parsed
+	}
+
+	groups, err := h.svc.ListOneHopItemLinksPageWithChecks(
+		r.Context(),
+		user.ID,
+		itemIDs,
+		afterID,
+		services.MaxOneHopLinksPerItem,
+		query.Get("include_custom_fields") == "true",
+	)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+
+	response := make([]batchItemLinksResponse, 0, len(itemIDs))
+	for _, itemID := range itemIDs {
+		group := groups[itemID]
+		entry := batchItemLinksResponse{
+			ItemID:       itemID,
+			Outgoing:     group.Outgoing,
+			Incoming:     group.Incoming,
+			HasMoreLinks: group.HasMore,
+		}
+		if group.HasMore {
+			entry.NextAfterLinkID = group.NextAfterID
+		}
+		response = append(response, entry)
+	}
+	h.RespondPaginated(w, response, pagination, total)
 }
 
 // CreateLink handles POST /rest/api/v1/links

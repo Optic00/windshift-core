@@ -44,6 +44,7 @@
       }
       parts.push(`workspace_id = ${workspaceId}`);
       parts.push(`assignee_id = ${userId}`);
+      parts.push('status_completed = false');
       const ql = parts.join(' AND ');
 
       const response = await api.items.getAll({
@@ -66,9 +67,7 @@
           updatedDate: item.updated_at ? new Date(item.updated_at) : null
         }));
 
-      const active = normalized.filter(item => !item.completed_at);
-
-      active.sort((a, b) => {
+      normalized.sort((a, b) => {
         if (a.dueDate && b.dueDate) return a.dueDate - b.dueDate;
         if (a.dueDate) return -1;
         if (b.dueDate) return 1;
@@ -76,7 +75,7 @@
         return 0;
       });
 
-      tasks = active.slice(0, maxItems);
+      tasks = normalized.slice(0, maxItems);
     } catch (err) {
       if (currentVersion !== fetchVersion) return;
       console.error('Failed to load My Tasks widget:', err);

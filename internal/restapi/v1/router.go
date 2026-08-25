@@ -300,6 +300,7 @@ func RegisterRoutes(deps restapi.Deps) {
 	linkHandler := handlers.NewLinkHandler(handlers.NewBaseHandler(db, permissionService), linkSvc)
 
 	v1.HandleWithMiddleware("GET /link-types", linkHandler.ListLinkTypes, bearerAuth.RequirePermission("items:read"))
+	v1.HandleWithMiddleware("GET /links/batch", linkHandler.GetLinksBatch, bearerAuth.RequirePermission("items:read"))
 	v1.HandleWithMiddleware("POST /links", linkHandler.CreateLink, bearerAuth.RequirePermission("items:write"))
 	v1.HandleWithMiddleware("DELETE /links/{id}", linkHandler.DeleteLink, bearerAuth.RequirePermission("items:write"), router.RequireNumericID)
 	v1.HandleWithMiddleware("GET /items/{id}/links", linkHandler.GetLinksForEntity, bearerAuth.RequirePermission("items:read"), router.RequireNumericID)

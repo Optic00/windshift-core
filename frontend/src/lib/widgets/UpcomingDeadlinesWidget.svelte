@@ -4,7 +4,6 @@
   import DueMark from './dashboard/DueMark.svelte';
   import WidgetState from './WidgetState.svelte';
   import { t } from '../stores/i18n.svelte.js';
-  import { normalizeDate, getDoneStatusIds } from './doneStatusHelper.js';
 
   let { workspaceId = null, collectionFilter = null } = $props();
 
@@ -18,6 +17,12 @@
   let currentCollectionFilter = $state(null);
   let refreshInFlight = $state(false);
   let activeFetchId = $state(0);
+
+  function normalizeDate(dateString) {
+    if (!dateString) return null;
+    const date = new Date(dateString);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
 
   function isWithinWindow(dateString, now, cutoff) {
     const d = normalizeDate(dateString);
@@ -36,7 +41,6 @@
     refreshInFlight = true;
 
     try {
-      const doneStatusIds = await getDoneStatusIds(api);
       const trimmedFilter = (collectionFilter || '').trim();
       const parts = [];
       if (trimmedFilter) {
@@ -44,10 +48,8 @@
       }
       parts.push(`workspace_id = ${workspaceId}`);
       parts.push('due_date >= now()');
-      let vql = parts.join(' AND ');
-      if (doneStatusIds.length > 0) {
-        vql += ` AND status_id NOT IN (${doneStatusIds.join(',')})`;
-      }
+      parts.push('status_completed = false');
+      const vql = parts.join(' AND ');
 
       const [itemsResponse, allMilestones, allIterations] = await Promise.all([
         api.items.getAll({ ql: vql, limit: 50 }),

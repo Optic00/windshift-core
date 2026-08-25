@@ -98,9 +98,16 @@ func (r *LabelRepository) Create(name, color string) (int64, time.Time, error) {
 
 // Update overwrites a label's name and color.
 func (r *LabelRepository) Update(id int, name, color string) error {
-	_, err := r.db.ExecWrite(
+	tx, err := r.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin update label %d: %w", id, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	now := time.Now()
+	_, err = tx.Exec(
 		"UPDATE labels SET name = ?, color = ?, updated_at = ? WHERE id = ?",
-		name, color, time.Now(), id,
+		name, color, now, id,
 	)
 	if err != nil {
 		if database.IsUniqueConstraintError(err) {
@@ -108,13 +115,43 @@ func (r *LabelRepository) Update(id int, name, color string) error {
 		}
 		return fmt.Errorf("update label %d: %w", id, err)
 	}
+	if err := touchItemsAssignedLabel(tx, id, now); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit update label %d: %w", id, err)
+	}
 	return nil
 }
 
 // Delete removes a label row (cascading item_labels via FK).
 func (r *LabelRepository) Delete(id int) error {
-	if _, err := r.db.ExecWrite("DELETE FROM labels WHERE id = ?", id); err != nil {
+	tx, err := r.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin delete label %d: %w", id, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if err := touchItemsAssignedLabel(tx, id, time.Now()); err != nil {
+		return err
+	}
+	if _, err := tx.Exec("DELETE FROM labels WHERE id = ?", id); err != nil {
 		return fmt.Errorf("delete label %d: %w", id, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit delete label %d: %w", id, err)
+	}
+	return nil
+}
+
+// touchItemsAssignedLabel invalidates item payloads without treating a global
+// catalog edit as activity on every assigned card.
+func touchItemsAssignedLabel(tx database.Tx, labelID int, now time.Time) error {
+	if _, err := tx.Exec(`
+		UPDATE items SET updated_at = ?
+		WHERE id IN (SELECT item_id FROM item_labels WHERE label_id = ?)
+	`, now, labelID); err != nil {
+		return fmt.Errorf("touch items assigned label %d: %w", labelID, err)
 	}
 	return nil
 }
@@ -157,6 +194,9 @@ func (r *LabelRepository) ReplaceItemLabels(itemID int, labelIDs []int) error {
 		); err != nil {
 			return fmt.Errorf("add label %d to item %d: %w", labelID, itemID, err)
 		}
+	}
+	if err := NewItemRepository(r.db).TouchChanged(tx, itemID, now); err != nil {
+		return fmt.Errorf("touch item %d after replacing labels: %w", itemID, err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit replace item labels: %w", err)
@@ -203,9 +243,16 @@ func (r *LabelRepository) EnsureByNameTx(ctx context.Context, tx database.Tx, na
 // AddItemLabel attaches a label to an item. Returns ErrDuplicateEntry when
 // the pair already exists (the table has a unique constraint).
 func (r *LabelRepository) AddItemLabel(itemID, labelID int) error {
-	_, err := r.db.ExecWrite(
+	tx, err := r.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin add item label: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	now := time.Now()
+	_, err = tx.Exec(
 		"INSERT INTO item_labels (item_id, label_id, created_at) VALUES (?, ?, ?)",
-		itemID, labelID, time.Now(),
+		itemID, labelID, now,
 	)
 	if err != nil {
 		if database.IsUniqueConstraintError(err) {
@@ -213,17 +260,42 @@ func (r *LabelRepository) AddItemLabel(itemID, labelID int) error {
 		}
 		return fmt.Errorf("add label %d to item %d: %w", labelID, itemID, err)
 	}
+	if err := NewItemRepository(r.db).TouchChanged(tx, itemID, now); err != nil {
+		return fmt.Errorf("touch item %d after adding label %d: %w", itemID, labelID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit add label %d to item %d: %w", labelID, itemID, err)
+	}
 	return nil
 }
 
 // RemoveItemLabel detaches a label from an item. No-ops silently when the
 // pair isn't there.
 func (r *LabelRepository) RemoveItemLabel(itemID, labelID int) error {
-	if _, err := r.db.ExecWrite(
+	tx, err := r.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin remove item label: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	result, err := tx.Exec(
 		"DELETE FROM item_labels WHERE item_id = ? AND label_id = ?",
 		itemID, labelID,
-	); err != nil {
+	)
+	if err != nil {
 		return fmt.Errorf("remove label %d from item %d: %w", labelID, itemID, err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read removed label count for item %d: %w", itemID, err)
+	}
+	if rows > 0 {
+		if err := NewItemRepository(r.db).TouchChanged(tx, itemID, time.Now()); err != nil {
+			return fmt.Errorf("touch item %d after removing label %d: %w", itemID, labelID, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit remove label %d from item %d: %w", labelID, itemID, err)
 	}
 	return nil
 }

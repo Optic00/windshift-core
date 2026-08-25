@@ -582,6 +582,35 @@ func (s *ItemCRUDService) ListWithQLPageContext(ctx context.Context, params List
 	})
 }
 
+// ListIDsWithQLPageContext evaluates CQL and returns only the matching item-ID
+// page. It is intended for set-oriented enrichment such as batched link reads.
+func (s *ItemCRUDService) ListIDsWithQLPageContext(ctx context.Context, params ListWithQLParams) (repository.ItemIDPage, error) {
+	if len(params.WorkspaceIDs) == 0 {
+		return repository.ItemIDPage{IDs: []int{}}, nil
+	}
+
+	qlQuery := strings.TrimSpace(params.QLQuery)
+	qlSQL, qlArgs, err := s.evaluateQLContext(ctx, qlQuery, cql.UserContext(params.UserID))
+	if err != nil {
+		return repository.ItemIDPage{}, err
+	}
+
+	filters := params.Filters
+	filters.QLQuery = qlSQL
+	filters.QLArgs = qlArgs
+	if params.WorkspaceID > 0 {
+		filters.WorkspaceID = &params.WorkspaceID
+	}
+
+	return s.repo.FindIDPageContext(ctx, ItemListParams{
+		WorkspaceIDs: params.WorkspaceIDs,
+		Filters:      filters,
+		Pagination:   params.Pagination,
+		SortBy:       params.SortBy,
+		SortAsc:      params.SortAsc,
+	})
+}
+
 // ListDistinctWorkspaceIDsWithQLContext evaluates a CQL expression against
 // the caller's accessible workspaces and returns only the workspace IDs that
 // have matching items. This supports metadata views that need workspace-scoped

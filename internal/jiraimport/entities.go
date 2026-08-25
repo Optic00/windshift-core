@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/sanitize"
@@ -140,11 +141,17 @@ func (s *Service) EnsureLabel(name string) (int, error) {
 }
 
 func (s *Service) AddItemLabel(itemID, labelID int) error {
-	err := s.labels.AddItemLabel(itemID, labelID)
-	if errors.Is(err, repository.ErrDuplicateEntry) {
+	_, err := s.db.ExecWrite(
+		"INSERT INTO item_labels (item_id, label_id, created_at) VALUES (?, ?, ?)",
+		itemID, labelID, time.Now(),
+	)
+	if database.IsUniqueConstraintError(err) {
 		return nil
 	}
-	return err
+	if err != nil {
+		return fmt.Errorf("attach imported label %d to item %d: %w", labelID, itemID, err)
+	}
+	return nil
 }
 
 func (s *Service) CustomFieldOptions(fieldID int) string {

@@ -38,7 +38,7 @@ It ships as a single Go binary with the Svelte frontend built in.
 
 ## Get started
 
-[Download the latest release](https://windshift.sh/download), then follow the [quick start guide](https://windshift.sh/docs/01-getting-started/02-quick-start). Windshift is designed to run comfortably on anything from a Raspberry Pi to a dedicated server.
+[Download the latest release](https://windshift.sh/download), then follow the [quick start guide](https://windshift.sh/self-hosting/01-getting-started/02-quick-start). Windshift is designed to run comfortably on anything from a Raspberry Pi to a dedicated server.
 
 Want to build from source? See [BUILD.md](BUILD.md). For local development and contribution guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md).
 

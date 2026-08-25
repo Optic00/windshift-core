@@ -905,6 +905,17 @@ func (r *ItemRepository) TouchActivity(exec execer, itemID int, now time.Time) e
 	return nil
 }
 
+// TouchChanged marks a user-visible item change for delta sync and recency.
+func (r *ItemRepository) TouchChanged(exec execer, itemID int, now time.Time) error {
+	if _, err := exec.Exec(
+		"UPDATE items SET updated_at = ?, last_active_at = ? WHERE id = ?",
+		now, now, itemID,
+	); err != nil {
+		return fmt.Errorf("failed to touch changed item: %w", err)
+	}
+	return nil
+}
+
 // GetItemCustomFieldValue returns a decoded field value, or nil when absent.
 func (r *ItemRepository) GetItemCustomFieldValue(itemID, customFieldID int) (any, error) {
 	var raw sql.NullString
