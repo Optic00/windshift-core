@@ -8,7 +8,6 @@ import (
 
 	"windshift/internal/database"
 	"windshift/internal/models"
-	"windshift/internal/sanitize"
 	"windshift/internal/validation"
 )
 
@@ -136,14 +135,20 @@ func itemUpdateData(fields map[string]json.RawMessage) (map[string]any, error) {
 		if err := decodeItemUpdateField(raw, "title", &value); err != nil {
 			return nil, err
 		}
-		updateData["title"] = sanitize.PlainTextField.Sanitize(value)
+		if err := validation.ValidateTitle(value); err != nil {
+			return nil, err
+		}
+		updateData["title"] = value
 	}
 	if raw, ok := fields["description"]; ok && string(raw) != "null" {
 		var value string
 		if err := decodeItemUpdateField(raw, "description", &value); err != nil {
 			return nil, err
 		}
-		updateData["description"] = sanitize.RichText.Sanitize(value)
+		if err := validation.ValidateMarkdownSource("description", value, validation.MarkdownMaxBytes, false); err != nil {
+			return nil, err
+		}
+		updateData["description"] = value
 	}
 	for _, field := range []string{"priority_id", "assignee_id", "parent_id", "iteration_id", "project_id"} {
 		if raw, ok := fields[field]; ok {

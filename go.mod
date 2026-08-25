@@ -42,6 +42,7 @@ require (
 	github.com/spf13/cobra v1.8.0
 	github.com/spf13/pflag v1.0.10
 	github.com/teambition/rrule-go v1.8.2
+	github.com/yuin/goldmark v1.7.17
 	github.com/zitadel/oidc/v3 v3.45.3
 	golang.org/x/crypto v0.54.0
 	golang.org/x/image v0.45.0
@@ -182,7 +183,6 @@ require (
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
-	github.com/yuin/goldmark v1.7.17 // indirect
 	github.com/yuin/goldmark-emoji v1.0.5 // indirect
 	github.com/zitadel/logging v0.6.2 // indirect
 	github.com/zitadel/schema v1.3.2 // indirect

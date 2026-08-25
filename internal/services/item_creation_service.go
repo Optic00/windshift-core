@@ -8,7 +8,6 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
-	"windshift/internal/sanitize"
 	"windshift/internal/validation"
 )
 
@@ -103,8 +102,12 @@ func (s *ItemCreationService) create(
 	input ItemCreateInput,
 	actionContext *ActionContext,
 ) (*ItemCreateResult, error) {
-	input.Title = sanitize.PlainTextField.Sanitize(input.Title)
-	input.Description = sanitize.RichText.Sanitize(input.Description)
+	if err := validation.ValidateTitle(input.Title); err != nil {
+		return nil, err
+	}
+	if err := validation.ValidateMarkdownSource("description", input.Description, validation.MarkdownMaxBytes, false); err != nil {
+		return nil, err
+	}
 
 	validationResult := ValidateItemCreation(s.db, ItemValidationParams{
 		WorkspaceID:       input.WorkspaceID,

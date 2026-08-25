@@ -3,6 +3,7 @@ package dto
 import (
 	"fmt"
 
+	"windshift/internal/markdown"
 	"windshift/internal/models"
 	"windshift/internal/services"
 )
@@ -31,6 +32,7 @@ func MapItemToResponse(item *models.Item, baseURL string) *ItemResponse {
 		UpdatedAt:           item.UpdatedAt,
 		CompletedAt:         item.CompletedAt,
 	}
+	resp.DescriptionHTML, _ = markdown.Render(item.Description)
 
 	// Map status
 	if item.StatusID != nil {
@@ -153,6 +155,7 @@ func MapCommentToResponse(comment *models.Comment) *CommentResponse {
 		CreatedAt: comment.CreatedAt,
 		UpdatedAt: comment.UpdatedAt,
 	}
+	resp.ContentHTML, _ = markdown.Render(comment.Content)
 
 	if comment.AuthorID != nil {
 		resp.Author = &UserSummary{

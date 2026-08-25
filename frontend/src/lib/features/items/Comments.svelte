@@ -8,6 +8,7 @@
 	import { itemLiveUpdates } from '../../stores/itemLiveUpdates.svelte.js';
 	import MilkdownEditor from '../../editors/LazyMilkdownEditor.svelte';
 	import Button from '../../components/Button.svelte';
+	import SafeMarkdown from '../../components/SafeMarkdown.svelte';
 	import Avatar from '../../components/Avatar.svelte';
 	import Checkbox from '../../components/Checkbox.svelte';
 	import { formatRelativeTime } from '../../utils/dateFormatter.js';
@@ -379,7 +380,12 @@
 			// Update local state
 			comments = comments.map(c =>
 				c.id === editingCommentId
-					? { ...c, content: updated.content, updated_at: updated.updated_at }
+					? {
+							...c,
+							content: updated.content,
+							content_html: updated.content_html,
+							updated_at: updated.updated_at
+						}
 					: c
 			);
 
@@ -568,11 +574,7 @@
 						{:else}
 							<!-- Read Mode -->
 							<div class="comment-content text-sm" style="color: var(--ds-text);">
-								<MilkdownEditor
-									content={comment.content}
-									readonly={true}
-									showToolbar={false}
-								/>
+								<SafeMarkdown html={comment.content_html} source={comment.content} compact={true} />
 							</div>
 						{/if}
 					</div>

@@ -14,10 +14,10 @@ import (
 	"windshift/internal/authz"
 	"windshift/internal/database"
 	"windshift/internal/logger"
+	"windshift/internal/markdown"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/restapi"
-	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 	"windshift/internal/validation"
@@ -730,6 +730,10 @@ func (h *ItemHandler) loadItemForUser(ctx context.Context, user *models.User, id
 	masked := []models.Item{*item}
 	h.maskInaccessibleProjectNames(user.ID, masked)
 	*item = masked[0]
+	item.DescriptionHTML, err = markdown.Render(item.Description)
+	if err != nil {
+		return nil, fmt.Errorf("render item description: %w", err)
+	}
 
 	return item, nil
 }
@@ -864,6 +868,11 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	maskedCreated := []models.Item{*result.Item}
 	h.maskInaccessibleProjectNames(user.ID, maskedCreated)
+	maskedCreated[0].DescriptionHTML, err = markdown.Render(maskedCreated[0].Description)
+	if err != nil {
+		respondInternalError(w, r, fmt.Errorf("render created item description: %w", err))
+		return
+	}
 	respondJSONCreated(w, maskedCreated[0])
 }
 
@@ -1004,6 +1013,11 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// copy so async consumers of updatedItem aren't mutated.
 	maskedUpdated := []models.Item{*updatedItem}
 	h.maskInaccessibleProjectNames(user.ID, maskedUpdated)
+	maskedUpdated[0].DescriptionHTML, err = markdown.Render(maskedUpdated[0].Description)
+	if err != nil {
+		respondInternalError(w, r, fmt.Errorf("render updated item description: %w", err))
+		return
+	}
 
 	respondJSONOK(w, maskedUpdated[0])
 }
@@ -1391,8 +1405,13 @@ func (h *ItemHandler) Copy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create copy title
-	copyTitle := sanitize.PlainTextField.Sanitize(fmt.Sprintf("COPY - %s", originalItem.Title))
+	// The prefix is generated locally, so cap the derived title without
+	// rewriting the original title's characters.
+	copyTitleRunes := []rune(fmt.Sprintf("COPY - %s", originalItem.Title))
+	if len(copyTitleRunes) > validation.TitleMaxRunes {
+		copyTitleRunes = copyTitleRunes[:validation.TitleMaxRunes]
+	}
+	copyTitle := string(copyTitleRunes)
 
 	result, err := services.NewItemCRUDService(h.db).Copy(id, services.CopyOptions{
 		NewTitle:  copyTitle,
@@ -1406,6 +1425,11 @@ func (h *ItemHandler) Copy(w http.ResponseWriter, r *http.Request) {
 	newItem, err := repo.FindByID(result.NewItemID)
 	if err != nil {
 		respondInternalError(w, r, err)
+		return
+	}
+	newItem.DescriptionHTML, err = markdown.Render(newItem.Description)
+	if err != nil {
+		respondInternalError(w, r, fmt.Errorf("render copied item description: %w", err))
 		return
 	}
 	respondJSONOK(w, newItem)

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"windshift/internal/database"
+	"windshift/internal/markdown"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 )
@@ -142,6 +143,7 @@ type PortalRequestSummary struct {
 	WorkspaceKey        string  `json:"workspace_key"`
 	Title               string  `json:"title"`
 	Description         string  `json:"description"`
+	DescriptionHTML     string  `json:"description_html,omitempty"`
 	Status              string  `json:"status"`
 	Priority            string  `json:"priority"`
 	CreatedAt           string  `json:"created_at"`
@@ -170,6 +172,7 @@ type PortalComment struct {
 	AuthorID         *int   `json:"author_id,omitempty"`
 	PortalCustomerID *int   `json:"portal_customer_id,omitempty"`
 	Content          string `json:"content"`
+	ContentHTML      string `json:"content_html"`
 	CreatedAt        string `json:"created_at"`
 	UpdatedAt        string `json:"updated_at"`
 	AuthorName       string `json:"author_name"`
@@ -179,6 +182,7 @@ type PortalComment struct {
 // portalRequestSummaryFromRow maps a repository portal request row to the
 // portal API summary shape.
 func portalRequestSummaryFromRow(row repository.PortalRequestRow) PortalRequestSummary {
+	descriptionHTML, _ := markdown.Render(row.Description)
 	return PortalRequestSummary{
 		ID:                  row.ID,
 		WorkspaceID:         row.WorkspaceID,
@@ -187,6 +191,7 @@ func portalRequestSummaryFromRow(row repository.PortalRequestRow) PortalRequestS
 		WorkspaceKey:        row.WorkspaceKey,
 		Title:               row.Title,
 		Description:         row.Description,
+		DescriptionHTML:     descriptionHTML,
 		Status:              row.StatusName,
 		Priority:            row.PriorityName,
 		CreatedAt:           row.CreatedAt,
@@ -310,6 +315,10 @@ func (s *PortalService) GetRequestComments(ctx context.Context, itemID int) ([]P
 		if portalCustomerID.Valid {
 			id := int(portalCustomerID.Int64)
 			comment.PortalCustomerID = &id
+		}
+		comment.ContentHTML, err = markdown.Render(comment.Content)
+		if err != nil {
+			return nil, fmt.Errorf("render portal comment %d: %w", comment.ID, err)
 		}
 		comments = append(comments, comment)
 	}

@@ -13,7 +13,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
-	"windshift/internal/sanitize"
+	"windshift/internal/validation"
 )
 
 // WebhookDispatcher is an interface for dispatching webhook events.
@@ -274,6 +274,9 @@ type UpdateImportedCommentParams struct {
 }
 
 func (s *CommentService) UpdateImported(params UpdateImportedCommentParams) error {
+	if err := validateCommentSource(params.Content); err != nil {
+		return err
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin imported comment update: %w", err)
@@ -284,7 +287,7 @@ func (s *CommentService) UpdateImported(params UpdateImportedCommentParams) erro
 		params.ItemID,
 		params.AuthorID,
 		params.PortalCustomerID,
-		sanitize.Comment.Sanitize(params.Content),
+		params.Content,
 		params.IsPrivate,
 		params.CreatedAt,
 		params.UpdatedAt,
@@ -317,25 +320,32 @@ func (s *CommentService) UpdateImported(params UpdateImportedCommentParams) erro
 // themselves after they commit. authorID == 0 inserts a system (NULL author)
 // comment.
 func (s *CommentService) CreateInTx(ctx context.Context, tx database.Tx, itemID, authorID int, content string, createdAt time.Time) (int64, error) {
+	if err := validateCommentSource(content); err != nil {
+		return 0, err
+	}
 	var author any
 	if authorID != 0 {
 		author = authorID
 	}
 	var id int64
-	err := tx.QueryRowContext(ctx, insertCommentAuthorSQL, itemID, author, sanitize.Comment.Sanitize(content), false, createdAt, createdAt).Scan(&id)
+	err := tx.QueryRowContext(ctx, insertCommentAuthorSQL, itemID, author, content, false, createdAt, createdAt).Scan(&id)
 	return id, err
 }
 
 // UpdateContentInTx updates a comment's content inside an existing transaction,
 // with no side-effects/publish (the caller publishes after it commits).
 func (s *CommentService) UpdateContentInTx(ctx context.Context, tx database.Tx, commentID int, content string, updatedAt time.Time) error {
-	_, err := tx.ExecContext(ctx, updateCommentSQL, sanitize.Comment.Sanitize(content), updatedAt, commentID)
+	if err := validateCommentSource(content); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, updateCommentSQL, content, updatedAt, commentID)
 	return err
 }
 
 func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResult, error) {
-	// 1. Sanitize content (XSS prevention — strips HTML tags + dangerous Markdown URLs)
-	sanitizedContent := sanitize.Comment.Sanitize(params.Content)
+	if err := validateCommentSource(params.Content); err != nil {
+		return nil, err
+	}
 
 	// 2. Get item details for notifications and the webhook payload
 	item, err := repository.NewItemRepository(s.db).FindByIDWithDetails(params.ItemID)
@@ -366,7 +376,7 @@ func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResul
 	if params.PortalCustomerID != nil && params.AuthorID == 0 {
 		// Portal customer without linked user — insert with portal_customer_id
 		err = tx.QueryRow(insertCommentPortalSQL,
-			params.ItemID, *params.PortalCustomerID, sanitizedContent, params.IsPrivate, now, updatedAt).Scan(&commentID)
+			params.ItemID, *params.PortalCustomerID, params.Content, params.IsPrivate, now, updatedAt).Scan(&commentID)
 	} else {
 		// Internal user or portal customer with linked user; AuthorID == 0 with no
 		// portal customer inserts a system (NULL author) comment.
@@ -375,7 +385,7 @@ func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResul
 			authorID = params.AuthorID
 		}
 		err = tx.QueryRow(insertCommentAuthorSQL,
-			params.ItemID, authorID, sanitizedContent, params.IsPrivate, now, updatedAt).Scan(&commentID)
+			params.ItemID, authorID, params.Content, params.IsPrivate, now, updatedAt).Scan(&commentID)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to create comment: %w", err)
@@ -492,9 +502,9 @@ func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResul
 					slog.Any("error", err),
 				)
 			} else if len(ids) > 0 {
-				// Admission outlives client disconnects; use stored sanitized content so
+				// Admission outlives client disconnects and uses the stored source so
 				// agent instructions cannot diverge from the visible comment.
-				if err := s.agentMentionTrigger.MaybeStartRunsForMentions(context.Background(), item.WorkspaceID, params.ItemID, ids, params.ActorUserID, sanitizedContent, int(commentID)); err != nil {
+				if err := s.agentMentionTrigger.MaybeStartRunsForMentions(context.Background(), item.WorkspaceID, params.ItemID, ids, params.ActorUserID, params.Content, int(commentID)); err != nil {
 					slog.Warn("coding-agent mention trigger failed",
 						slog.String("component", "comment_service"),
 						slog.Int("item_id", params.ItemID),
@@ -517,7 +527,7 @@ func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResul
 				ItemID:           params.ItemID,
 				AuthorID:         params.AuthorID,
 				PortalCustomerID: params.PortalCustomerID,
-				Content:          sanitizedContent,
+				Content:          params.Content,
 				IsPrivate:        params.IsPrivate,
 			}); err != nil {
 				slog.Warn("failed to handle email reply for comment",
@@ -732,10 +742,15 @@ func normalizeCommentFeedLimit(limit int) int {
 	return limit
 }
 
+func validateCommentSource(content string) error {
+	return validation.ValidateMarkdownSource("content", content, validation.MarkdownMaxBytes, true)
+}
+
 // Update updates a comment's content
 func (s *CommentService) Update(commentID int, content string, userID int) (*models.Comment, error) {
-	// Sanitize content (strips HTML tags + dangerous Markdown URLs)
-	sanitizedContent := sanitize.Comment.Sanitize(content)
+	if err := validateCommentSource(content); err != nil {
+		return nil, err
+	}
 
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -756,7 +771,7 @@ func (s *CommentService) Update(commentID int, content string, userID int) (*mod
 
 	// Update the comment
 	now := time.Now()
-	_, err = tx.ExecWrite(updateCommentSQL, sanitizedContent, now, commentID)
+	_, err = tx.ExecWrite(updateCommentSQL, content, now, commentID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update comment: %w", err)
 	}

@@ -11,11 +11,11 @@ import (
 	"windshift/internal/cql"
 	"windshift/internal/database"
 	"windshift/internal/logger"
+	"windshift/internal/markdown"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/restapi"
 	"windshift/internal/restapi/v1/dto"
-	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/validation"
 )
@@ -992,15 +992,6 @@ func (h *ItemHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
-	// Sanitize at the handler boundary in addition to CommentService.Create:
-	// the response body below is built from req.Content (not the stored
-	// row), so without sanitizing here the response would echo back the
-	// raw payload even though the stored row is clean. Sanitize is
-	// idempotent — double-coverage is fine.
-	commentWarnings := sanitize.ApplyAllWithWarnings(
-		sanitize.Pair{Target: &req.Content, Policy: sanitize.Comment, Label: "Comment"},
-	)
-
 	if !h.ValidateRequiredString(w, r, req.Content, "content") {
 		return
 	}
@@ -1013,6 +1004,16 @@ func (h *ItemHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		ActorUserID: user.ID,
 	})
 	if err != nil {
+		var validationErr *validation.ValidationError
+		if errors.As(err, &validationErr) {
+			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, validationErr.Message).WithDetails(map[string]string{"field": validationErr.Field}))
+			return
+		}
+		h.RespondInternalError(w, r)
+		return
+	}
+	contentHTML, err := markdown.Render(req.Content)
+	if err != nil {
 		h.RespondInternalError(w, r)
 		return
 	}
@@ -1023,9 +1024,10 @@ func (h *ItemHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		fullName = user.FirstName + " " + user.LastName
 	}
 	response := dto.CommentResponse{
-		ID:      int(result.CommentID),
-		ItemID:  itemID,
-		Content: req.Content,
+		ID:          int(result.CommentID),
+		ItemID:      itemID,
+		Content:     req.Content,
+		ContentHTML: contentHTML,
 		Author: &dto.UserSummary{
 			ID:        user.ID,
 			Email:     user.Email,
@@ -1035,7 +1037,6 @@ func (h *ItemHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 			FullName:  fullName,
 			AvatarURL: user.AvatarURL,
 		},
-		Warnings: commentWarnings,
 	}
 	h.RespondCreated(w, response)
 }

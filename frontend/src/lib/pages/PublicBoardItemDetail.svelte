@@ -7,23 +7,15 @@
   import ModalHeader from '../dialogs/ModalHeader.svelte';
   import StatusBadge from '../components/StatusBadge.svelte';
   import Text from '../components/Text.svelte';
+  import SafeMarkdown from '../components/SafeMarkdown.svelte';
 
   let { slug, itemKey, onclose } = $props();
 
   let item = $state(null);
   let loading = $state(true);
   let error = $state(null);
-  let LazyMilkdownEditor = $state(null);
 
   onMount(async () => {
-    // Load editor component lazily
-    try {
-      const mod = await import('../editors/LazyMilkdownEditor.svelte');
-      LazyMilkdownEditor = mod.default;
-    } catch {
-      // Editor failed to load, we'll show plain text fallback
-    }
-
     try {
       item = await publicBoard.getItem(slug, itemKey);
     } catch (err) {
@@ -66,15 +58,9 @@
         <div class="mb-6">
           <h4 class="text-xs font-semibold uppercase tracking-wider mb-2" style="color: var(--ds-text-subtle);">Description</h4>
           {#if item.description}
-            {#if LazyMilkdownEditor}
-              <div class="rounded-md p-3" style="border: 1px solid var(--ds-border);">
-                <LazyMilkdownEditor content={item.description} readonly={true} showToolbar={false} />
-              </div>
-            {:else}
-              <div class="rounded-md p-3 text-sm leading-relaxed whitespace-pre-wrap" style="border: 1px solid var(--ds-border); color: var(--ds-text);">
-                {item.description}
-              </div>
-            {/if}
+            <div class="rounded-md p-3" style="border: 1px solid var(--ds-border);">
+              <SafeMarkdown html={item.description_html} source={item.description} />
+            </div>
           {:else}
             <p class="text-xs italic" style="color: var(--ds-text-disabled);">No description</p>
           {/if}
@@ -108,15 +94,9 @@
                       <span class="text-[11px]" style="color: var(--ds-text-disabled);">{formatRelativeTime(comment.created_at)}</span>
                     </div>
                     <!-- Content -->
-                    {#if LazyMilkdownEditor}
-                      <div class="comment-content">
-                        <LazyMilkdownEditor content={comment.content} readonly={true} showToolbar={false} compact={true} />
-                      </div>
-                    {:else}
-                      <div class="text-[13px] leading-normal whitespace-pre-wrap" style="color: var(--ds-text);">
-                        {comment.content}
-                      </div>
-                    {/if}
+                    <div class="comment-content">
+                      <SafeMarkdown html={comment.content_html} source={comment.content} compact={true} />
+                    </div>
                   </div>
                 </div>
               {/each}

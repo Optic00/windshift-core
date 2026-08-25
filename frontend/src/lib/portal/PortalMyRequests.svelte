@@ -15,6 +15,7 @@
   import Textarea from '../components/Textarea.svelte';
   import Button from '../components/Button.svelte';
   import PageHeader from '../layout/PageHeader.svelte';
+  import SafeMarkdown from '../components/SafeMarkdown.svelte';
   import { iconMap, portalStore } from '../stores/portal.svelte.js';
   import { formatDateSimple, formatDateTimeLocale } from '../utils/dateFormatter.js';
 </script>
@@ -65,9 +66,9 @@
                 {request.title}
               </h1>
               {#if request.description}
-                <p class="text-base mt-4 leading-relaxed max-w-3xl" style="color: var(--ds-text-subtle);">
-                  {request.description}
-                </p>
+                <div class="text-base mt-4 leading-relaxed max-w-3xl" style="color: var(--ds-text-subtle);">
+                  <SafeMarkdown html={request.description_html} source={request.description} />
+                </div>
               {/if}
             </div>
           </div>
@@ -114,9 +115,9 @@
                         {formatDateTimeLocale(comment.created_at)}
                       </time>
                     </div>
-                    <p class="text-sm leading-relaxed whitespace-pre-wrap" style="color: var(--ds-text);">
-                      {comment.content}
-                    </p>
+                    <div class="text-sm leading-relaxed" style="color: var(--ds-text);">
+                      <SafeMarkdown html={comment.content_html} source={comment.content} compact={true} />
+                    </div>
                   </div>
                 </article>
               {:else}

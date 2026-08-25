@@ -13,6 +13,7 @@ type ItemResponse struct {
 	WorkspaceItemNumber int            `json:"workspace_item_number"`
 	Title               string         `json:"title"`
 	Description         string         `json:"description,omitempty"`
+	DescriptionHTML     string         `json:"description_html,omitempty"`
 	IsTask              bool           `json:"is_task"`
 	DueDate             *time.Time     `json:"due_date,omitempty"`
 	StartDate           *time.Time     `json:"start_date,omitempty"`
@@ -135,13 +136,14 @@ type ItemUpdateRequest struct {
 // frontend can toast them at info severity. omitempty when nothing
 // was modified.
 type CommentResponse struct {
-	ID        int          `json:"id"`
-	ItemID    int          `json:"item_id"`
-	Content   string       `json:"content"`
-	Author    *UserSummary `json:"author,omitempty"`
-	CreatedAt time.Time    `json:"created_at"`
-	UpdatedAt time.Time    `json:"updated_at"`
-	Warnings  []string     `json:"warnings,omitempty"`
+	ID          int          `json:"id"`
+	ItemID      int          `json:"item_id"`
+	Content     string       `json:"content"`
+	ContentHTML string       `json:"content_html"`
+	Author      *UserSummary `json:"author,omitempty"`
+	CreatedAt   time.Time    `json:"created_at"`
+	UpdatedAt   time.Time    `json:"updated_at"`
+	Warnings    []string     `json:"warnings,omitempty"`
 }
 
 // CommentCreateRequest is the request body for creating a comment

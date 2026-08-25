@@ -84,6 +84,98 @@ export function sanitizeHtml(dirty: string): string {
   });
 }
 
+const markdownTags = [
+  'p',
+  'br',
+  'hr',
+  'blockquote',
+  'pre',
+  'code',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'ul',
+  'ol',
+  'li',
+  'em',
+  'strong',
+  'del',
+  'a',
+  'img',
+  'table',
+  'thead',
+  'tbody',
+  'tr',
+  'th',
+  'td',
+  'input',
+];
+
+const markdownAttributes = [
+  'href',
+  'title',
+  'src',
+  'alt',
+  'class',
+  'align',
+  'type',
+  'checked',
+  'disabled',
+  'rel',
+];
+
+const domPurifyMarkdownURI = /^(?:(?:https?|mailto|tel|page|data):|[#/]|[^/:?#\\]+(?:[/?#]|$))/i;
+const rasterDataURI = /^data:image\/(?:png|jpeg|gif|webp);base64,[a-z0-9+/]+=*$/i;
+
+function hasUnsafeMarkdownURLCharacters(value: string): boolean {
+  if (value.includes('\\') || /%5c/i.test(value)) return true;
+  for (const character of value) {
+    const code = character.charCodeAt(0);
+    if (code <= 0x20 || code === 0x7f) return true;
+  }
+  return false;
+}
+
+function isSafeMarkdownURL(value: string, image: boolean): boolean {
+  if (!value || value.startsWith('//') || hasUnsafeMarkdownURLCharacters(value)) return false;
+  if (value.startsWith('#') || value.startsWith('/')) return true;
+  if (image && rasterDataURI.test(value)) return true;
+  if (/^https?:/i.test(value)) return true;
+  if (!image && /^(?:mailto:|tel:)/i.test(value)) return true;
+  if (!image && /^page:[0-9]+$/i.test(value)) return true;
+  return /^[^/:?#\\][^:\\]*$/.test(value);
+}
+
+/** Sanitize server-rendered Markdown at the final browser boundary. */
+export function sanitizeMarkdownHtml(dirty: string): string {
+  if (!dirty) return '';
+
+  const validateMarkdownURL = (
+    _node: Element,
+    data: { attrName: string; attrValue: string; keepAttr: boolean }
+  ) => {
+    const name = data.attrName.toLowerCase();
+    if (name === 'href' && !isSafeMarkdownURL(data.attrValue, false)) data.keepAttr = false;
+    if (name === 'src' && !isSafeMarkdownURL(data.attrValue, true)) data.keepAttr = false;
+  };
+
+  DOMPurify.addHook('uponSanitizeAttribute', validateMarkdownURL);
+  try {
+    return DOMPurify.sanitize(dirty, {
+      ALLOWED_TAGS: markdownTags,
+      ALLOWED_ATTR: markdownAttributes,
+      ALLOWED_URI_REGEXP: domPurifyMarkdownURI,
+      ALLOW_DATA_ATTR: false,
+      FORBID_TAGS: ['svg', 'math', 'style', 'template'],
+    });
+  } finally {
+    DOMPurify.removeHook('uponSanitizeAttribute');
+  }
+}
+
 /**
  * Strip all HTML tags, returning plain text.
  * Use when only text content is needed and no HTML should remain.

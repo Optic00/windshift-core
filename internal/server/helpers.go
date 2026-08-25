@@ -319,7 +319,7 @@ func createSecurityHeaders(enableHTTPS, useProxy bool, additionalProxies []net.I
 			r = r.WithContext(ctx)
 
 			// Jira Cloud returns project avatar URLs on Atlassian's shared API origin.
-			imgSrc := "'self' data: blob: https://images.unsplash.com https://api.atlassian.com"
+			imgSrc := "'self' data: blob: https: http:"
 			if jiraOrigins != nil {
 				for _, origin := range jiraOrigins() {
 					imgSrc += " " + origin

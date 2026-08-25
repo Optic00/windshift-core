@@ -10,6 +10,7 @@ type Item struct {
 	ItemTypeID          *int       `json:"item_type_id,omitempty"` // Optional, defaults to workspace's default item type
 	Title               string     `json:"title"`
 	Description         string     `json:"description"`
+	DescriptionHTML     string     `json:"description_html,omitempty" db:"-"`
 	StatusID            *int       `json:"status_id,omitempty"`    // Foreign key to statuses table
 	PriorityID          *int       `json:"priority_id,omitempty"`  // Foreign key to priorities table
 	DueDate             *time.Time `json:"due_date,omitempty"`     // Due date for item completion
@@ -185,8 +186,9 @@ type Comment struct {
 	ItemID           int       `json:"item_id"`                      // Changed from IssueID to ItemID
 	AuthorID         *int      `json:"author_id,omitempty"`          // User ID (nullable for portal customer comments)
 	PortalCustomerID *int      `json:"portal_customer_id,omitempty"` // Portal customer ID (for email-based comments)
-	Content          string    `json:"content"`                      // TipTap JSON content
-	IsPrivate        bool      `json:"is_private"`                   // For private notes (action automation)
+	Content          string    `json:"content"`                      // Untrusted Markdown source
+	ContentHTML      string    `json:"content_html,omitempty" db:"-"`
+	IsPrivate        bool      `json:"is_private"` // For private notes (action automation)
 	CreatedAt        time.Time `json:"created_at"`
 	UpdatedAt        time.Time `json:"updated_at"`
 	// Joined fields for API responses

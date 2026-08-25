@@ -11,7 +11,6 @@
   import { useItemEventStream } from '../composables/useItemEventStream.svelte.js';
   import { itemLiveUpdates } from '../stores/itemLiveUpdates.svelte.js';
   import { usePullToRefresh } from '../composables/usePullToRefresh.svelte.js';
-  import { renderMarkdown } from '../utils/render-markdown.js';
   import { formatDateOnly } from '../utils/dateFormatter.js';
   import { formatItemKey } from '../utils/itemKey.js';
   import { workspacesStore } from '../stores';
@@ -25,6 +24,7 @@
   import BasePicker from '../pickers/BasePicker.svelte';
   import UserPicker from '../pickers/UserPicker.svelte';
   import Avatar from '../components/Avatar.svelte';
+  import SafeMarkdown from '../components/SafeMarkdown.svelte';
 
   let { itemId } = $props();
 
@@ -56,7 +56,6 @@
   let scmOpen = $state(false);
   let agentOpen = $state(false);
 
-  const descriptionHtml = $derived(item?.description ? renderMarkdown(item.description) : '');
   const itemKey = $derived(formatItemKey(item) ?? '');
   const projectId = $derived(item?.time_project_id ?? item?.effective_project_id ?? null);
   const canStartTimer = $derived(!!item && !timerStore.hasActive && !!projectId);
@@ -493,8 +492,10 @@
       </UserPicker>
     </div>
 
-    {#if descriptionHtml}
-      <div class="html-content desc" data-testid="detail-description">{@html descriptionHtml}</div>
+    {#if item.description}
+      <div class="html-content desc" data-testid="detail-description">
+        <SafeMarkdown html={item.description_html} source={item.description} />
+      </div>
     {/if}
 
     <!-- Meta -->

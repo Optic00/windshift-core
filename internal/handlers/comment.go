@@ -12,11 +12,13 @@ import (
 
 	"windshift/internal/database"
 	"windshift/internal/logger"
+	"windshift/internal/markdown"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
+	"windshift/internal/validation"
 	"windshift/internal/webhook"
 )
 
@@ -137,6 +139,10 @@ func (h *CommentHandler) GetComments(w http.ResponseWriter, r *http.Request) {
 	page, err := h.commentService.GetFeedByItemID(itemID, includeAgentOwner, options)
 	if err != nil {
 		respondInternalError(w, r, fmt.Errorf("failed to fetch comments: %w", err))
+		return
+	}
+	if err := renderCommentMarkdown(page.Comments); err != nil {
+		respondInternalError(w, r, err)
 		return
 	}
 
@@ -293,6 +299,11 @@ func (h *CommentHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		ActorUserID: user.ID,
 	})
 	if err != nil {
+		var validationErr *validation.ValidationError
+		if errors.As(err, &validationErr) {
+			respondValidationError(w, r, validationErr.Message)
+			return
+		}
 		slog.Error("failed to create comment via service", slog.String("component", "comment"), slog.Any("error", err))
 		respondInternalError(w, r, fmt.Errorf("failed to create comment: %w", err))
 		return
@@ -312,6 +323,11 @@ func (h *CommentHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	comment, err := h.getCommentByID(int(commentID))
 	if err != nil {
 		respondInternalError(w, r, fmt.Errorf("failed to fetch created comment: %w", err))
+		return
+	}
+	comment.ContentHTML, err = markdown.Render(comment.Content)
+	if err != nil {
+		respondInternalError(w, r, fmt.Errorf("render created comment: %w", err))
 		return
 	}
 
@@ -424,7 +440,7 @@ func (h *CommentHandler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Write through CommentService (single comment-write chokepoint; sanitizes
+	// Write through CommentService (single comment-write chokepoint; validates
 	// the content and publishes the item-change event). Existence was already
 	// confirmed by requireCommentEditAccess above.
 	if h.commentService == nil {
@@ -432,6 +448,11 @@ func (h *CommentHandler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := h.commentService.Update(commentID, reqBody.Content, user.ID); err != nil {
+		var validationErr *validation.ValidationError
+		if errors.As(err, &validationErr) {
+			respondValidationError(w, r, validationErr.Message)
+			return
+		}
 		respondInternalError(w, r, fmt.Errorf("failed to update comment: %w", err))
 		return
 	}
@@ -440,6 +461,11 @@ func (h *CommentHandler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 	comment, err := h.getCommentByID(commentID)
 	if err != nil {
 		respondInternalError(w, r, fmt.Errorf("failed to fetch updated comment: %w", err))
+		return
+	}
+	comment.ContentHTML, err = markdown.Render(comment.Content)
+	if err != nil {
+		respondInternalError(w, r, fmt.Errorf("render updated comment: %w", err))
 		return
 	}
 

@@ -2,10 +2,13 @@ package handlers
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
-	"windshift/internal/sanitize"
+	"windshift/internal/markdown"
+	"windshift/internal/validation"
 )
 
 // resolvePortalRequest authorizes a request owner or active approver.
@@ -165,12 +168,19 @@ func (h *PortalHandler) AddRequestComment(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Sanitize comment content to prevent XSS (strips HTML tags + dangerous Markdown URLs)
-	sanitizedContent := sanitize.Comment.Sanitize(commentData.Content)
-
-	comment, err := h.portalService.CreateRequestComment(ctx, itemID, sanitizedContent, internalUserID, portalCustomerID)
+	comment, err := h.portalService.CreateRequestComment(ctx, itemID, commentData.Content, internalUserID, portalCustomerID)
 	if err != nil {
+		var validationErr *validation.ValidationError
+		if errors.As(err, &validationErr) {
+			respondValidationError(w, r, validationErr.Message)
+			return
+		}
 		respondInternalError(w, r, err)
+		return
+	}
+	contentHTML, err := markdown.Render(comment.Content)
+	if err != nil {
+		respondInternalError(w, r, fmt.Errorf("render portal comment: %w", err))
 		return
 	}
 
@@ -179,6 +189,7 @@ func (h *PortalHandler) AddRequestComment(w http.ResponseWriter, r *http.Request
 		"id":            comment.ID,
 		"item_id":       comment.ItemID,
 		"content":       comment.Content,
+		"content_html":  contentHTML,
 		"created_at":    comment.CreatedAt,
 		"updated_at":    comment.UpdatedAt,
 		"author_name":   comment.AuthorName,

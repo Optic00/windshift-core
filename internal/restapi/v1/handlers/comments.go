@@ -1,12 +1,15 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 
 	"windshift/internal/database"
 	"windshift/internal/models"
+	"windshift/internal/restapi"
 	"windshift/internal/restapi/v1/dto"
 	"windshift/internal/services"
+	"windshift/internal/validation"
 )
 
 // CommentHandler handles public API requests for standalone comments
@@ -93,22 +96,7 @@ func (h *CommentHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Convert to DTO response
-	comment := dto.CommentResponse{
-		ID:        commentWithDetails.ID,
-		ItemID:    commentWithDetails.ItemID,
-		Content:   commentWithDetails.Content,
-		CreatedAt: commentWithDetails.CreatedAt,
-		UpdatedAt: commentWithDetails.UpdatedAt,
-	}
-	if commentWithDetails.AuthorName != "" {
-		comment.Author = &dto.UserSummary{
-			FullName: commentWithDetails.AuthorName,
-			Email:    commentWithDetails.AuthorEmail,
-		}
-	}
-
-	h.RespondOK(w, comment)
+	h.RespondOK(w, dto.MapCommentToResponse(&commentWithDetails.Comment))
 }
 
 // requireEditableComment authenticates the caller, parses the comment ID from
@@ -164,26 +152,16 @@ func (h *CommentHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// Use service to update comment
 	updatedComment, err := h.commentService.Update(commentID, req.Content, user.ID)
 	if err != nil {
+		var validationErr *validation.ValidationError
+		if errors.As(err, &validationErr) {
+			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, validationErr.Message).WithDetails(map[string]string{"field": validationErr.Field}))
+			return
+		}
 		h.RespondInternalError(w, r)
 		return
 	}
 
-	// Convert to DTO response
-	comment := dto.CommentResponse{
-		ID:        updatedComment.ID,
-		ItemID:    updatedComment.ItemID,
-		Content:   updatedComment.Content,
-		CreatedAt: updatedComment.CreatedAt,
-		UpdatedAt: updatedComment.UpdatedAt,
-	}
-	if updatedComment.AuthorName != "" {
-		comment.Author = &dto.UserSummary{
-			FullName: updatedComment.AuthorName,
-			Email:    updatedComment.AuthorEmail,
-		}
-	}
-
-	h.RespondOK(w, comment)
+	h.RespondOK(w, dto.MapCommentToResponse(updatedComment))
 }
 
 // Delete handles DELETE /rest/api/v1/comments/{id}

@@ -13,7 +13,6 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
-	"windshift/internal/sanitize"
 	"windshift/internal/utils"
 )
 
@@ -178,18 +177,20 @@ func (v *ItemFieldValidator) ValidateAndApplyUpdates(
 	updateData map[string]any,
 	userID int, // for permission checks on personal tasks
 ) error {
-	// Title validation and sanitization
+	// Title validation preserves accepted source.
 	if title, ok := updateData["title"].(string); ok {
-		sanitizedTitle := sanitize.PlainTextField.Sanitize(title)
-		if strings.TrimSpace(sanitizedTitle) == "" {
-			return &ValidationError{Field: "title", Message: "Title is required"}
+		if err := ValidateTitle(title); err != nil {
+			return err
 		}
-		item.Title = sanitizedTitle
+		item.Title = title
 	}
 
-	// Description validation and sanitization
+	// Description validation preserves accepted source.
 	if description, ok := updateData["description"].(string); ok {
-		item.Description = sanitize.RichText.Sanitize(description)
+		if err := ValidateMarkdownSource("description", description, MarkdownMaxBytes, false); err != nil {
+			return err
+		}
+		item.Description = description
 	}
 
 	// is_task validation - can only be true for personal workspaces

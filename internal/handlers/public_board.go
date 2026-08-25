@@ -12,6 +12,7 @@ import (
 
 	"windshift/internal/database"
 	"windshift/internal/fileserve"
+	"windshift/internal/markdown"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/services"
@@ -133,28 +134,30 @@ type publicComment struct {
 	AuthorName   string `json:"author_name"`
 	AuthorAvatar string `json:"author_avatar,omitempty"`
 	Content      string `json:"content"`
+	ContentHTML  string `json:"content_html"`
 	CreatedAt    string `json:"created_at"`
 }
 
 type publicItemDetail struct {
-	Key            string          `json:"key"`
-	Title          string          `json:"title"`
-	Description    string          `json:"description"`
-	StatusName     string          `json:"status_name,omitempty"`
-	StatusColor    string          `json:"status_color,omitempty"`
-	PriorityName   string          `json:"priority_name,omitempty"`
-	PriorityIcon   string          `json:"priority_icon,omitempty"`
-	PriorityColor  string          `json:"priority_color,omitempty"`
-	ItemTypeName   string          `json:"item_type_name,omitempty"`
-	ItemTypeIcon   string          `json:"item_type_icon,omitempty"`
-	ItemTypeColor  string          `json:"item_type_color,omitempty"`
-	AssigneeName   string          `json:"assignee_name,omitempty"`
-	AssigneeAvatar string          `json:"assignee_avatar,omitempty"`
-	DueDate        string          `json:"due_date,omitempty"`
-	Labels         []publicLabel   `json:"labels,omitempty"`
-	StoryPoints    *float64        `json:"story_points,omitempty"`
-	Comments       []publicComment `json:"comments"`
-	CreatedAt      string          `json:"created_at"`
+	Key             string          `json:"key"`
+	Title           string          `json:"title"`
+	Description     string          `json:"description"`
+	DescriptionHTML string          `json:"description_html,omitempty"`
+	StatusName      string          `json:"status_name,omitempty"`
+	StatusColor     string          `json:"status_color,omitempty"`
+	PriorityName    string          `json:"priority_name,omitempty"`
+	PriorityIcon    string          `json:"priority_icon,omitempty"`
+	PriorityColor   string          `json:"priority_color,omitempty"`
+	ItemTypeName    string          `json:"item_type_name,omitempty"`
+	ItemTypeIcon    string          `json:"item_type_icon,omitempty"`
+	ItemTypeColor   string          `json:"item_type_color,omitempty"`
+	AssigneeName    string          `json:"assignee_name,omitempty"`
+	AssigneeAvatar  string          `json:"assignee_avatar,omitempty"`
+	DueDate         string          `json:"due_date,omitempty"`
+	Labels          []publicLabel   `json:"labels,omitempty"`
+	StoryPoints     *float64        `json:"story_points,omitempty"`
+	Comments        []publicComment `json:"comments"`
+	CreatedAt       string          `json:"created_at"`
 }
 
 // GetPublicBoardItem serves a single item detail for a public collection
@@ -231,26 +234,39 @@ func (h *PublicBoardHandler) GetPublicBoardItem(w http.ResponseWriter, r *http.R
 
 	// Rewrite attachment URLs for public access
 	description = rewritePublicAttachmentURLs(description, slug)
+	descriptionHTML, err := markdown.Render(description)
+	if err != nil {
+		respondInternalError(w, r, fmt.Errorf("render public item description: %w", err))
+		return
+	}
+	for i := range comments {
+		comments[i].ContentHTML, err = markdown.Render(comments[i].Content)
+		if err != nil {
+			respondInternalError(w, r, fmt.Errorf("render public comment: %w", err))
+			return
+		}
+	}
 
 	detail := publicItemDetail{
-		Key:            key,
-		Title:          title,
-		Description:    description,
-		StatusName:     publicItem.StatusName,
-		StatusColor:    publicItem.StatusColor,
-		PriorityName:   publicItem.PriorityName,
-		PriorityIcon:   publicItem.PriorityIcon,
-		PriorityColor:  publicItem.PriorityColor,
-		ItemTypeName:   publicItem.ItemTypeName,
-		ItemTypeIcon:   publicItem.ItemTypeIcon,
-		ItemTypeColor:  publicItem.ItemTypeColor,
-		AssigneeName:   publicItem.AssigneeName,
-		AssigneeAvatar: publicItem.AssigneeAvatar,
-		Labels:         labels,
-		Comments:       comments,
-		CreatedAt:      createdAt,
-		DueDate:        publicItem.DueDate,
-		StoryPoints:    publicItem.StoryPoints,
+		Key:             key,
+		Title:           title,
+		Description:     description,
+		DescriptionHTML: descriptionHTML,
+		StatusName:      publicItem.StatusName,
+		StatusColor:     publicItem.StatusColor,
+		PriorityName:    publicItem.PriorityName,
+		PriorityIcon:    publicItem.PriorityIcon,
+		PriorityColor:   publicItem.PriorityColor,
+		ItemTypeName:    publicItem.ItemTypeName,
+		ItemTypeIcon:    publicItem.ItemTypeIcon,
+		ItemTypeColor:   publicItem.ItemTypeColor,
+		AssigneeName:    publicItem.AssigneeName,
+		AssigneeAvatar:  publicItem.AssigneeAvatar,
+		Labels:          labels,
+		Comments:        comments,
+		CreatedAt:       createdAt,
+		DueDate:         publicItem.DueDate,
+		StoryPoints:     publicItem.StoryPoints,
 	}
 
 	respondJSONOK(w, detail)
