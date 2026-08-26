@@ -300,7 +300,7 @@ func (r *TeamRepository) IsTeamMember(teamID, userID int) (bool, error) {
 			SELECT 1 FROM team_groups tg
 			JOIN group_members gm ON gm.group_id = tg.group_id
 			WHERE tg.team_id = ? AND gm.user_id = ?
-		)
+		) AS memberships
 	`, teamID, userID, teamID, userID).Scan(&count)
 	if err != nil {
 		return false, fmt.Errorf("failed to check team membership: %w", err)

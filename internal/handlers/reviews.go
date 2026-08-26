@@ -6,20 +6,24 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/sanitize"
+	"windshift/internal/services"
 )
 
 type ReviewHandler struct {
-	db database.Database
+	db                database.Database
+	permissionService *services.PermissionService
 }
 
-func NewReviewHandler(db database.Database) *ReviewHandler {
+func NewReviewHandler(db database.Database, permissionService *services.PermissionService) *ReviewHandler {
 	return &ReviewHandler{
-		db: db,
+		db:                db,
+		permissionService: permissionService,
 	}
 }
 
@@ -374,7 +378,18 @@ func (h *ReviewHandler) GetCompletedItems(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	query := `
+	workspaceIDs, err := h.permissionService.AccessibleWorkspaceIDs(userID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	if len(workspaceIDs) == 0 {
+		respondJSONOK(w, []models.Item{})
+		return
+	}
+	workspacePlaceholders := strings.TrimSuffix(strings.Repeat("?,", len(workspaceIDs)), ",")
+
+	query := fmt.Sprintf(`
 		WITH completed_statuses AS (
 			SELECT s.id
 			FROM statuses s
@@ -400,11 +415,18 @@ func (h *ReviewHandler) GetCompletedItems(w http.ResponseWriter, r *http.Request
 		JOIN items i ON i.id = ce.item_id
 		JOIN workspaces w ON i.workspace_id = w.id
 		WHERE i.assignee_id = ?
+		  AND i.workspace_id IN (%s)
 		  AND DATE(ce.completed_at) >= ?
 		  AND DATE(ce.completed_at) <= ?
-		ORDER BY ce.completed_at DESC`
+		ORDER BY ce.completed_at DESC`, workspacePlaceholders)
 
-	rows, err := h.db.Query(query, userID, startDate, endDate)
+	args := make([]any, 0, len(workspaceIDs)+3)
+	args = append(args, userID)
+	for _, workspaceID := range workspaceIDs {
+		args = append(args, workspaceID)
+	}
+	args = append(args, startDate, endDate)
+	rows, err := h.db.Query(query, args...)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return

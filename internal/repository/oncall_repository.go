@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"windshift/internal/database"
@@ -12,6 +13,16 @@ import (
 
 type OnCallRepository struct {
 	db database.Database
+}
+
+// OnCallIncidentFilter limits incidents to teams and linked item workspaces
+// visible to the caller. AllTeams bypasses only the team filter.
+type OnCallIncidentFilter struct {
+	PolicyID     *int
+	Status       string
+	TeamIDs      []int
+	WorkspaceIDs []int
+	AllTeams     bool
 }
 
 func NewOnCallRepository(db database.Database) *OnCallRepository {
@@ -917,7 +928,11 @@ func (r *OnCallRepository) UpdateIncident(id int, status string, acknowledgedAt 
 	return err
 }
 
-func (r *OnCallRepository) GetActiveIncidents(policyID *int, status string) ([]models.OnCallIncident, error) {
+func (r *OnCallRepository) GetActiveIncidents(filter OnCallIncidentFilter) ([]models.OnCallIncident, error) {
+	if !filter.AllTeams && len(filter.TeamIDs) == 0 {
+		return []models.OnCallIncident{}, nil
+	}
+
 	query := `
 		SELECT i.id, i.escalation_policy_id, i.item_id, i.status,
 			i.triggered_at, i.acknowledged_at, i.acknowledged_by,
@@ -926,19 +941,33 @@ func (r *OnCallRepository) GetActiveIncidents(policyID *int, status string) ([]m
 			p.name as policy_name,
 			it.title as item_title
 		FROM on_call_incidents i
-		LEFT JOIN on_call_escalation_policies p ON p.id = i.escalation_policy_id
+		JOIN on_call_escalation_policies p ON p.id = i.escalation_policy_id
 		LEFT JOIN items it ON it.id = i.item_id
 		WHERE 1=1
 	`
 	args := []any{}
 
-	if policyID != nil {
+	if filter.PolicyID != nil {
 		query += " AND i.escalation_policy_id = ?"
-		args = append(args, *policyID)
+		args = append(args, *filter.PolicyID)
 	}
-	if status != "" {
+	if filter.Status != "" {
 		query += " AND i.status = ?"
-		args = append(args, status)
+		args = append(args, filter.Status)
+	}
+	if !filter.AllTeams {
+		query += " AND p.team_id IN (" + strings.TrimSuffix(strings.Repeat("?,", len(filter.TeamIDs)), ",") + ")"
+		for _, teamID := range filter.TeamIDs {
+			args = append(args, teamID)
+		}
+	}
+	if len(filter.WorkspaceIDs) == 0 {
+		query += " AND i.item_id IS NULL"
+	} else {
+		query += " AND (i.item_id IS NULL OR it.workspace_id IN (" + strings.TrimSuffix(strings.Repeat("?,", len(filter.WorkspaceIDs)), ",") + "))"
+		for _, workspaceID := range filter.WorkspaceIDs {
+			args = append(args, workspaceID)
+		}
 	}
 
 	query += " ORDER BY i.triggered_at DESC"

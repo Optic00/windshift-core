@@ -693,7 +693,7 @@ func (s *Server) initialize() error {
 	iterationHandler := handlers.NewIterationHandler(services.NewPlanningService(s.db), permService, logger.NewAuditor(s.db))
 	personalLabelHandler := handlers.NewPersonalLabelHandler(s.db, permService)
 	commentHandler := handlers.NewCommentHandler(s.db, permService, s.activityTracker, s.notificationService)
-	reviewHandler := handlers.NewReviewHandler(s.db)
+	reviewHandler := handlers.NewReviewHandler(s.db, permService)
 	calendarFeedHandler := handlers.NewCalendarFeedHandler(s.db, permService, cfg.BaseURL)
 	securitySettingsHandler := handlers.NewSecuritySettingsHandler(repository.NewSystemSettingRepository(s.db), logger.NewAuditor(s.db), cfg.Plugins.Disabled)
 

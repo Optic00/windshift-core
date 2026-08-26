@@ -352,6 +352,9 @@ func (h *OnCallHandler) GetSchedule(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
+	if !h.canViewTeamOnCall(w, r, schedule.TeamID) {
+		return
+	}
 
 	respondJSONOK(w, schedule)
 }
@@ -910,7 +913,7 @@ func (h *OnCallHandler) SetRules(w http.ResponseWriter, r *http.Request) {
 
 // ListIncidents returns active incidents, optionally filtered by policy.
 func (h *OnCallHandler) ListIncidents(w http.ResponseWriter, r *http.Request) {
-	_, ok := RequireAuth(w, r)
+	user, ok := RequireAuth(w, r)
 	if !ok {
 		return
 	}
@@ -925,7 +928,37 @@ func (h *OnCallHandler) ListIncidents(w http.ResponseWriter, r *http.Request) {
 		policyID = &parsed
 	}
 
-	incidents, err := h.onCallRepo.GetActiveIncidents(policyID, "")
+	allTeams, err := h.permissionService.HasGlobalPermissionContext(r.Context(), user.ID, models.PermissionTeamsManage)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+
+	var teamIDs []int
+	if !allTeams {
+		teams, teamErr := h.teamRepo.GetTeamsForUser(user.ID)
+		if teamErr != nil {
+			respondInternalError(w, r, teamErr)
+			return
+		}
+		teamIDs = make([]int, len(teams))
+		for i := range teams {
+			teamIDs[i] = teams[i].ID
+		}
+	}
+
+	workspaceIDs, err := h.permissionService.AccessibleWorkspaceIDs(user.ID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+
+	incidents, err := h.onCallRepo.GetActiveIncidents(repository.OnCallIncidentFilter{
+		PolicyID:     policyID,
+		TeamIDs:      teamIDs,
+		WorkspaceIDs: workspaceIDs,
+		AllTeams:     allTeams,
+	})
 	if err != nil {
 		respondInternalError(w, r, err)
 		return

@@ -2,6 +2,7 @@ package wscli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -159,29 +160,53 @@ func saveGlobalConfig(config Config) error {
 	path := getGlobalConfigPath()
 	dir := filepath.Dir(path)
 
-	if err := os.MkdirAll(dir, 0o750); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
-
-	f, err := os.Create(path) //nolint:gosec // G304 — path from getGlobalConfigPath() (user home dir)
-	if err != nil {
-		return fmt.Errorf("failed to create config file: %w", err)
+	if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // private directories require owner execute permission
+		return fmt.Errorf("failed to protect config directory: %w", err)
 	}
-	defer func() { _ = f.Close() }()
-
-	encoder := toml.NewEncoder(f)
-	return encoder.Encode(config)
+	return writeConfigAtomically(path, config)
 }
 
 func saveProjectConfig(config Config, path string) error {
-	f, err := os.Create(path) //nolint:gosec // G304 — path from CLI user's own config args
-	if err != nil {
-		return fmt.Errorf("failed to create config file: %w", err)
-	}
-	defer func() { _ = f.Close() }()
+	return writeConfigAtomically(path, config)
+}
 
-	encoder := toml.NewEncoder(f)
-	return encoder.Encode(config)
+func writeConfigAtomically(path string, config Config) error {
+	return writeFileAtomically(path, func(w io.Writer) error {
+		return toml.NewEncoder(w).Encode(config)
+	})
+}
+
+func writeFileAtomically(path string, write func(io.Writer) error) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+"-*.tmp") //nolint:gosec // destination directory is selected by the CLI user
+	if err != nil {
+		return fmt.Errorf("failed to create temporary config file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("failed to protect temporary config file: %w", err)
+	}
+	if err := write(tmp); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("failed to encode config file: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("failed to sync temporary config file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("failed to close temporary config file: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil { //nolint:gosec // both paths are in the caller-selected config directory
+		return fmt.Errorf("failed to replace config file: %w", err)
+	}
+	return nil
 }
 
 // ResolveStatus resolves a status input using aliases, falling back to the input itself
