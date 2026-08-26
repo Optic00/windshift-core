@@ -112,7 +112,15 @@ func New(db database.Database) *Metrics {
 	return m
 }
 
-// Handler returns the Prometheus exposition handler.
+// Handler returns the public Prometheus exposition handler. Restrict access at
+// the reverse proxy or network boundary when metrics should not be public.
+//
+// @Summary      Read Prometheus metrics
+// @Description  Returns Go runtime, process, database, HTTP, agent, webhook, and SCM metrics. Public; no authentication required. Restrict access at the reverse proxy or network boundary when metrics should not be publicly reachable.
+// @Tags         operations
+// @Produce      plain,application/openmetrics-text
+// @Success      200  {string}  string  "Prometheus or OpenMetrics text exposition"
+// @Router       /metrics [get]
 func (m *Metrics) Handler() http.Handler {
 	return m.handler
 }

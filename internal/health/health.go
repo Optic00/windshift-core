@@ -24,19 +24,41 @@ type Handler struct {
 	database Pinger
 }
 
+type livenessResponse struct {
+	Status string `json:"status"`
+}
+
+type readinessResponse struct {
+	Status   string `json:"status"`
+	Database string `json:"database"`
+}
+
 // NewHandler creates health handlers backed by the supplied database.
 func NewHandler(database Pinger) *Handler {
 	return &Handler{database: database}
 }
 
 // Liveness reports whether the HTTP process and router are serving requests.
+//
+// @Summary      Check server liveness
+// @Description  Reports whether the Windshift HTTP process and router are serving requests. Public; no authentication required.
+// @Tags         operations
+// @Produce      json
+// @Success      200  {object}  livenessResponse
+// @Router       /healthz [get]
 func (h *Handler) Liveness(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, struct {
-		Status string `json:"status"`
-	}{Status: "ok"})
+	writeJSON(w, http.StatusOK, livenessResponse{Status: "ok"})
 }
 
 // Readiness reports whether the application can reach its database.
+//
+// @Summary      Check server readiness
+// @Description  Reports whether Windshift can serve requests and reach its database. Public; no authentication required.
+// @Tags         operations
+// @Produce      json
+// @Success      200  {object}  readinessResponse
+// @Failure      503  {object}  readinessResponse
+// @Router       /readyz [get]
 func (h *Handler) Readiness(w http.ResponseWriter, r *http.Request) {
 	if h.database == nil {
 		writeUnavailable(w)
@@ -50,20 +72,14 @@ func (h *Handler) Readiness(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, struct {
-		Status   string `json:"status"`
-		Database string `json:"database"`
-	}{
+	writeJSON(w, http.StatusOK, readinessResponse{
 		Status:   "ready",
 		Database: "ok",
 	})
 }
 
 func writeUnavailable(w http.ResponseWriter) {
-	writeJSON(w, http.StatusServiceUnavailable, struct {
-		Status   string `json:"status"`
-		Database string `json:"database"`
-	}{
+	writeJSON(w, http.StatusServiceUnavailable, readinessResponse{
 		Status:   "not_ready",
 		Database: "unavailable",
 	})

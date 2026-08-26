@@ -15,6 +15,25 @@
         },
         "type": "object"
       },
+      "health.livenessResponse": {
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "health.readinessResponse": {
+        "properties": {
+          "database": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "internal_restapi_v1_handlers.AdminGroupCreateRequest": {
         "properties": {
           "description": {
@@ -6604,8 +6623,8 @@
   },
   "info": {
     "contact": {},
-    "description": "Public REST API for Windshift work-management. Authenticate every request with a bearer token (`Authorization: Bearer crw_*`). Tokens are scoped per route — see each operation's `security` block for the required scopes.",
-    "title": "Windshift REST API",
+    "description": "Public API reference for Windshift. REST operations use the `/rest/api/v1` base path and bearer tokens (`Authorization: Bearer crw_*`). Operational health and metrics endpoints are unauthenticated and use root-level paths.",
+    "title": "Windshift HTTP API",
     "version": "1"
   },
   "openapi": "3.0.3",
@@ -9468,6 +9487,32 @@
           "diagrams"
         ]
       }
+    },
+    "/healthz": {
+      "get": {
+        "description": "Reports whether the Windshift HTTP process and router are serving requests. Public; no authentication required.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/health.livenessResponse"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Check server liveness",
+        "tags": [
+          "operations"
+        ]
+      },
+      "servers": [
+        {
+          "url": "/"
+        }
+      ]
     },
     "/item-types": {
       "get": {
@@ -13316,6 +13361,37 @@
         ]
       }
     },
+    "/metrics": {
+      "get": {
+        "description": "Returns Go runtime, process, database, HTTP, agent, webhook, and SCM metrics. Public; no authentication required. Restrict access at the reverse proxy or network boundary when metrics should not be publicly reachable.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/openmetrics-text": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Prometheus or OpenMetrics text exposition"
+          }
+        },
+        "summary": "Read Prometheus metrics",
+        "tags": [
+          "operations"
+        ]
+      },
+      "servers": [
+        {
+          "url": "/"
+        }
+      ]
+    },
     "/milestones": {
       "get": {
         "description": "Paginated list of milestones across all scopes (global and workspace-scoped). Filtering by workspace is done via /workspaces/{id}/milestones.",
@@ -14324,6 +14400,42 @@
           "priorities"
         ]
       }
+    },
+    "/readyz": {
+      "get": {
+        "description": "Reports whether Windshift can serve requests and reach its database. Public; no authentication required.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/health.readinessResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/health.readinessResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Check server readiness",
+        "tags": [
+          "operations"
+        ]
+      },
+      "servers": [
+        {
+          "url": "/"
+        }
+      ]
     },
     "/recurrence-rules/preview": {
       "post": {

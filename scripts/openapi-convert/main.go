@@ -44,6 +44,9 @@ func main() {
 	if len(v3.Servers) == 0 && v2.BasePath != "" {
 		v3.AddServer(&openapi3.Server{URL: v2.BasePath})
 	}
+	if err := setOperationalServers(v3); err != nil {
+		die("set operational servers: %v", err)
+	}
 
 	if err := v3.Validate(context.Background()); err != nil {
 		die("validate OpenAPI 3.0: %v", err)
@@ -57,6 +60,17 @@ func main() {
 	}
 
 	fmt.Printf("converted %s -> %s, %s\n", *in, *outJSON, *outYAML)
+}
+
+func setOperationalServers(doc *openapi3.T) error {
+	for _, path := range []string{"/healthz", "/readyz", "/metrics"} {
+		pathItem := doc.Paths.Find(path)
+		if pathItem == nil {
+			return fmt.Errorf("required path %s is missing", path)
+		}
+		pathItem.Servers = openapi3.Servers{{URL: "/"}}
+	}
+	return nil
 }
 
 func writeJSON(path string, doc *openapi3.T) error {
