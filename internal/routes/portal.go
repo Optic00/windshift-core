@@ -9,26 +9,11 @@ func RegisterPortalRoutes(deps *Deps) {
 
 	api.Handle("GET /portal-assets/{id}", deps.Portal.Portal.DownloadPortalAttachment)
 
-	api.Handle("GET /portal/{slug}", deps.Portal.Portal.GetPortal)
 	if deps.PortalAuthMiddleware != nil {
 		api.HandleH("GET /portal/{slug}/bootstrap", deps.PortalAuthMiddleware.OptionalPortalAuth(http.HandlerFunc(deps.Portal.Portal.GetBootstrap)))
 	} else {
 		api.Handle("GET /portal/{slug}/bootstrap", deps.Portal.Portal.GetBootstrap)
 	}
-	api.Handle("GET /portal/{slug}/request-types", deps.Portal.Portal.GetRequestTypes)
-	assetReports := http.Handler(http.HandlerFunc(deps.Portal.Portal.GetAssetReports))
-	executeAssetReport := http.Handler(http.HandlerFunc(deps.Portal.Portal.ExecuteAssetReport))
-	assetReportFields := http.Handler(http.HandlerFunc(deps.Portal.Portal.GetAssetReportFields))
-	if deps.PortalAuthMiddleware != nil {
-		assetReports = deps.PortalAuthMiddleware.OptionalPortalAuth(assetReports)
-		executeAssetReport = deps.PortalAuthMiddleware.OptionalPortalAuth(executeAssetReport)
-		assetReportFields = deps.PortalAuthMiddleware.OptionalPortalAuth(assetReportFields)
-	}
-	api.HandleH("GET /portal/{slug}/asset-reports", assetReports)
-	api.HandleH("GET /portal/{slug}/asset-reports/{id}/execute", deps.PortalSearchLimiter.Limit(executeAssetReport))
-	api.HandleH("POST /portal/{slug}/asset-reports/{id}/execute", deps.PortalSearchLimiter.Limit(executeAssetReport))
-	api.HandleH("GET /portal/{slug}/asset-reports/{id}/fields", assetReportFields)
-	api.HandleH("POST /portal/{slug}/knowledge-base/search", deps.PortalSearchLimiter.Limit(http.HandlerFunc(deps.Portal.Portal.SearchKnowledgeBase)))
 
 	if deps.Portal.PortalAuth != nil {
 		api.HandleH("POST /portal/{slug}/auth/request", deps.PortalAuthLimiter.Limit(http.HandlerFunc(deps.Portal.PortalAuth.RequestMagicLink)))
@@ -45,6 +30,14 @@ func RegisterPortalRoutes(deps *Deps) {
 	if deps.PortalAuthMiddleware != nil {
 		portalAuth := deps.PortalAuthMiddleware.RequirePortalAuth
 		api.HandleH("GET /portal/{slug}/user-bootstrap", deps.PortalAuthMiddleware.OptionalPortalAuth(http.HandlerFunc(deps.Portal.Portal.GetUserBootstrap)))
+
+		api.HandleH("GET /portal/{slug}", portalAuth(http.HandlerFunc(deps.Portal.Portal.GetPortal)))
+		api.HandleH("GET /portal/{slug}/request-types", portalAuth(http.HandlerFunc(deps.Portal.Portal.GetRequestTypes)))
+		api.HandleH("GET /portal/{slug}/asset-reports", portalAuth(http.HandlerFunc(deps.Portal.Portal.GetAssetReports)))
+		api.HandleH("GET /portal/{slug}/asset-reports/{id}/execute", deps.PortalSearchLimiter.Limit(portalAuth(http.HandlerFunc(deps.Portal.Portal.ExecuteAssetReport))))
+		api.HandleH("POST /portal/{slug}/asset-reports/{id}/execute", deps.PortalSearchLimiter.Limit(portalAuth(http.HandlerFunc(deps.Portal.Portal.ExecuteAssetReport))))
+		api.HandleH("GET /portal/{slug}/asset-reports/{id}/fields", portalAuth(http.HandlerFunc(deps.Portal.Portal.GetAssetReportFields)))
+		api.HandleH("POST /portal/{slug}/knowledge-base/search", deps.PortalSearchLimiter.Limit(portalAuth(http.HandlerFunc(deps.Portal.Portal.SearchKnowledgeBase))))
 
 		api.HandleH("GET /portal/{slug}/request-types/{id}/fields", portalAuth(http.HandlerFunc(deps.Portal.Portal.GetRequestTypeFields)))
 		api.HandleH("GET /portal/{slug}/custom-fields", portalAuth(http.HandlerFunc(deps.Portal.Portal.GetCustomFields)))

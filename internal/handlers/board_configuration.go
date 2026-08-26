@@ -24,6 +24,8 @@ type BoardConfigurationHandler struct {
 	auditor           *logger.Auditor
 }
 
+const maxCompletedItemRetentionDays = 3650
+
 func NewBoardConfigurationHandler(
 	repo *repository.BoardConfigurationRepository,
 	collections *repository.CollectionRepository,
@@ -441,6 +443,10 @@ func (h *BoardConfigurationHandler) CreateForCollection(w http.ResponseWriter, r
 	// a CSS value (hex / rgb) — ShortIdentifier matches the slice 1
 	// precedent for asset types.
 	sanitizeBoardColumnRequests(req.Columns)
+	if message := validateBoardDisplayOptions(req); message != "" {
+		respondValidationError(w, r, message)
+		return
+	}
 
 	slog.Info("creating board configuration", "id", id, "columns_count", len(req.Columns), "backlog_status_ids", req.BacklogStatusIDs)
 
@@ -491,14 +497,15 @@ func (h *BoardConfigurationHandler) CreateForCollection(w http.ResponseWriter, r
 
 	// Return the created configuration
 	config := models.BoardConfiguration{
-		ID:                        configID,
-		CollectionID:              collectionID,
-		WorkspaceID:               workspaceID,
-		ListColumns:               req.ListColumns,
-		CardFields:                req.CardFields,
-		ShowRightmostColumnLast50: req.ShowRightmostColumnLast50,
-		CreatedAt:                 time.Now(),
-		UpdatedAt:                 time.Now(),
+		ID:                         configID,
+		CollectionID:               collectionID,
+		WorkspaceID:                workspaceID,
+		ListColumns:                req.ListColumns,
+		CardFields:                 req.CardFields,
+		ShowRightmostColumnLast50:  req.ShowRightmostColumnLast50,
+		CompletedItemRetentionDays: req.CompletedItemRetentionDays,
+		CreatedAt:                  time.Now(),
+		UpdatedAt:                  time.Now(),
 	}
 	columns, _ := h.repo.GetColumnsWithStatuses(configID)
 	config.Columns = columns
@@ -531,6 +538,10 @@ func (h *BoardConfigurationHandler) UpdateForCollection(w http.ResponseWriter, r
 		return
 	}
 	sanitizeBoardColumnRequests(req.Columns)
+	if message := validateBoardDisplayOptions(req); message != "" {
+		respondValidationError(w, r, message)
+		return
+	}
 	if collectionID != nil && !h.validatePublicCollectionCardFields(w, r, *collectionID, req.CardFields) {
 		return
 	}
@@ -557,6 +568,20 @@ func (h *BoardConfigurationHandler) UpdateForCollection(w http.ResponseWriter, r
 		h.auditor.Log(r, user, logger.ActionBoardConfigUpdate, logger.ResourceBoardConfiguration, &configID, "")
 	}
 	respondJSONOK(w, config)
+}
+
+func validateBoardDisplayOptions(req models.BoardConfigurationRequest) string {
+	if req.CompletedItemRetentionDays == nil {
+		return ""
+	}
+	if req.ShowRightmostColumnLast50 {
+		return "show_rightmost_column_last_50 and completed_item_retention_days cannot both be enabled"
+	}
+	days := *req.CompletedItemRetentionDays
+	if days < 1 || days > maxCompletedItemRetentionDays {
+		return "completed_item_retention_days must be between 1 and 3650"
+	}
+	return ""
 }
 
 // DeleteForCollection deletes the board configuration for a collection

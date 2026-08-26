@@ -1,5 +1,5 @@
 <script>
-  import { onMount, untrack } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
   import { useEventListener } from 'runed';
   import { t } from '../../stores/i18n.svelte.js';
   import { api } from '../../api.js';
@@ -60,8 +60,24 @@
   let projects = $derived(workspaceDataStore.projects);
   let customFieldDefinitions = $derived(workspaceDataStore.customFieldDefinitions);
 
-  // Dynamic view-specific state — derived directly from central store
-  let items = $derived(collectionStore.items);
+  let searchQuery = $state('');
+  let searchDebouncing = $state(false);
+  let searchEffectId = 0;
+  let searchActive = $derived(Boolean(searchQuery.trim()));
+  let activeItemsHasMore = $derived(
+    searchActive ? collectionStore.boardSearchHasMore : collectionStore.itemsHasMore
+  );
+  let activeItemsLoadingMore = $derived(
+    searchActive ? collectionStore.boardSearchLoadingMore : collectionStore.itemsLoadingMore
+  );
+  let activeItemsRemainingCount = $derived(
+    searchActive ? collectionStore.boardSearchRemainingCount : collectionStore.itemsRemainingCount
+  );
+
+  // Dynamic view-specific state — board searches use their own scoped server
+  // result set so normal board pagination and completed-item trimming remain
+  // unchanged when the query is cleared.
+  let items = $derived(searchActive ? collectionStore.boardSearchItems : collectionStore.items);
   let transitions = $state([]);
   let boardConfig = $state(null);
   let cardFields = $derived((boardConfig?.card_fields || []).slice().sort((a, b) => a.display_order - b.display_order));
@@ -73,7 +89,6 @@
   let pendingDrops = new Set(); // Track pending drop operations to prevent duplicates
   let showItemModal = $state(false);
   let selectedItemId = $state(null);
-  let searchQuery = $state('');
 
   // Cached outgoing and incoming links for dependency hover summaries.
   let dependencyLinksByItem = $state({});
@@ -130,6 +145,34 @@
 
   // Centralized gradient styling
   const styles = useGradientStyles();
+
+  $effect(() => {
+    const query = searchQuery.trim();
+    const scope = `${workspaceId ?? ''}|${collectionId ?? ''}|${collectionStore.subFilterQL}`;
+    const effectId = ++searchEffectId;
+    collectionStore.clearBoardSearch();
+
+    if (!query) {
+      searchDebouncing = false;
+      return;
+    }
+
+    searchDebouncing = true;
+    const timer = setTimeout(async () => {
+      await collectionStore.searchBoardItems(query);
+      if (
+        effectId === searchEffectId &&
+        query === searchQuery.trim() &&
+        scope === `${workspaceId ?? ''}|${collectionId ?? ''}|${collectionStore.subFilterQL}`
+      ) {
+        searchDebouncing = false;
+      }
+    }, 250);
+
+    return () => clearTimeout(timer);
+  });
+
+  onDestroy(() => collectionStore.clearBoardSearch());
 
   // Listen for newly created items
   async function handleRefreshWorkItems(event) {
@@ -524,20 +567,9 @@
   });
 
   let filteredItems = $derived.by(() => {
-    let nextItems = iterationFilterId
+    return iterationFilterId
       ? items.filter(item => item.iteration_id === iterationFilterId)
       : items;
-
-    if (!searchQuery.trim()) return nextItems;
-
-    const query = searchQuery.toLowerCase();
-    return nextItems.filter(item => {
-      if (item.title?.toLowerCase().includes(query)) return true;
-      if (item.description?.toLowerCase().includes(query)) return true;
-      const itemKey = `${item.workspace_key || ''}-${item.workspace_item_number}`.toLowerCase();
-      if (itemKey.includes(query)) return true;
-      return false;
-    });
   });
 
   function getItemsByStatus(statusId, itemSubset = filteredItems) {
@@ -783,7 +815,11 @@
   let rightmostBoardColumnStatusIds = $derived(new Set(rightmostBoardColumn?.status_ids || []));
 
   function shouldLimitRightmostColumn(columnIndex, columnsForBoard = validColumns) {
-    return Boolean(boardConfig?.show_rightmost_column_last_50 && columnIndex === columnsForBoard.length - 1);
+    return Boolean(
+      !searchActive &&
+      boardConfig?.show_rightmost_column_last_50 &&
+      columnIndex === columnsForBoard.length - 1
+    );
   }
 
   function itemRecencyValue(item) {
@@ -1600,9 +1636,20 @@
         <SearchInput
           bind:value={searchQuery}
           placeholder={t('common.search')}
+          dataTestid="board-search-input"
         />
         <SubFilterBar {workspaceId} />
       </div>
+
+      {#if searchActive && (searchDebouncing || collectionStore.boardSearchLoading)}
+        <p class="-mt-4 mb-4 text-sm" style="color: var(--ds-text-subtle);" data-testid="board-search-status">
+          {t('common.searching')}
+        </p>
+      {:else if searchActive && collectionStore.boardSearchError}
+        <p class="-mt-4 mb-4 text-sm" style="color: var(--ds-text-danger);" data-testid="board-search-error">
+          {t('common.error')}
+        </p>
+      {/if}
 
       <div class="sr-only" aria-live="polite">{boardAnnouncement}</div>
 
@@ -1797,18 +1844,20 @@
         </div>
 
         <!-- Load More -->
-        {#if collectionStore.itemsHasMore}
+        {#if activeItemsHasMore}
           <div class="mt-6 text-center">
             <button
               data-testid="board-load-more"
-              onclick={() => collectionStore.loadMoreItems()}
-              disabled={collectionStore.itemsLoadingMore}
+              onclick={() => searchActive
+                ? collectionStore.loadMoreBoardSearchItems()
+                : collectionStore.loadMoreItems()}
+              disabled={activeItemsLoadingMore}
               class="px-4 py-2 text-sm  rounded-lg border transition-colors"
               style="{styles.glassStyle?.(12) ?? ''} {styles.glassTextStyle ?? ''}"
             >
-              {collectionStore.itemsLoadingMore ? t('common.loading') : t('common.loadMore')}
-              {#if collectionStore.itemsRemainingCount > 0 && !iterationFilterId}
-                ({collectionStore.itemsRemainingCount} {t('common.remaining')})
+              {activeItemsLoadingMore ? t('common.loading') : t('common.loadMore')}
+              {#if activeItemsRemainingCount > 0 && !iterationFilterId}
+                ({activeItemsRemainingCount} {t('common.remaining')})
               {/if}
             </button>
           </div>

@@ -376,9 +376,10 @@ func (h *PortalHandler) resolvePortalBySlug(w http.ResponseWriter, r *http.Reque
 	return h.resolvePortalBySlugTimeout(w, r, 10*time.Second)
 }
 
-// resolvePortalBySlugTimeout is resolvePortalBySlug with an explicit context
-// deadline for handlers whose work needs more than the default 10 seconds.
-func (h *PortalHandler) resolvePortalBySlugTimeout(w http.ResponseWriter, r *http.Request, timeout time.Duration) (context.Context, context.CancelFunc, models.Channel, models.ChannelConfig, bool) {
+// resolvePortalEntryBySlugTimeout resolves the portal without granting access
+// to its protected content. The anonymous bootstrap uses this to render the
+// branded sign-in shell.
+func (h *PortalHandler) resolvePortalEntryBySlugTimeout(w http.ResponseWriter, r *http.Request, timeout time.Duration) (context.Context, context.CancelFunc, models.Channel, models.ChannelConfig, bool) {
 	slug := r.PathValue("slug")
 
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
@@ -394,6 +395,49 @@ func (h *PortalHandler) resolvePortalBySlugTimeout(w http.ResponseWriter, r *htt
 		return nil, func() {}, models.Channel{}, models.ChannelConfig{}, false
 	}
 	return ctx, cancel, portalResult.channel, portalResult.config, true
+}
+
+// portalChannelAccessAllowed applies the portal-level policy before object
+// visibility. Internal users may enter any portal. Portal customers may enter
+// open portals, while manual portals require a current channel grant.
+func (h *PortalHandler) portalChannelAccessAllowed(ctx context.Context, r *http.Request, channelID int, config models.ChannelConfig) (bool, error) {
+	internalUserID, portalCustomerID := h.getAuthFromContext(r)
+	if internalUserID != nil {
+		return true, nil
+	}
+	if portalCustomerID == nil {
+		return false, nil
+	}
+
+	switch config.PortalRegistrationMode {
+	case "", "open":
+		return true, nil
+	case "manual":
+		return h.customerHasChannelAccess(ctx, *portalCustomerID, channelID)
+	default:
+		return false, nil
+	}
+}
+
+// resolvePortalBySlugTimeout is resolvePortalBySlug with an explicit context
+// deadline for handlers whose work needs more than the default 10 seconds.
+func (h *PortalHandler) resolvePortalBySlugTimeout(w http.ResponseWriter, r *http.Request, timeout time.Duration) (context.Context, context.CancelFunc, models.Channel, models.ChannelConfig, bool) {
+	ctx, cancel, channel, config, ok := h.resolvePortalEntryBySlugTimeout(w, r, timeout)
+	if !ok {
+		return nil, cancel, models.Channel{}, models.ChannelConfig{}, false
+	}
+	allowed, err := h.portalChannelAccessAllowed(ctx, r, channel.ID, config)
+	if err != nil {
+		cancel()
+		respondInternalError(w, r, err)
+		return nil, func() {}, models.Channel{}, models.ChannelConfig{}, false
+	}
+	if !allowed {
+		cancel()
+		respondUnauthorized(w, r)
+		return nil, func() {}, models.Channel{}, models.ChannelConfig{}, false
+	}
+	return ctx, cancel, channel, config, true
 }
 
 // callerVisibility resolves the group and organisation IDs that gate request
@@ -426,7 +470,7 @@ func (h *PortalHandler) resolveVisibleRequestType(ctx context.Context, w http.Re
 	return rt, true
 }
 
-// GetPortal returns the portal configuration for public display
+// GetPortal returns the complete portal configuration to an authorized caller.
 func (h *PortalHandler) GetPortal(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel, channel, config, ok := h.resolvePortalBySlug(w, r)
 	if !ok {
@@ -446,6 +490,8 @@ func (h *PortalHandler) GetPortal(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *PortalHandler) loadPortalData(ctx context.Context, channel models.Channel, config models.ChannelConfig) (map[string]any, error) {
+	response := h.loadPortalEntryData(ctx, config)
+
 	// The first configured workspace remains the compatibility value for older clients.
 	var workspace models.Workspace
 	var workspaceID int
@@ -464,6 +510,25 @@ func (h *PortalHandler) loadPortalData(ctx context.Context, channel models.Chann
 		}
 	}
 
+	response["channel_id"] = channel.ID
+	response["workspace_ids"] = config.PortalWorkspaceIDs
+	response["workspace_id"] = workspaceID // First workspace for backward compatibility
+	response["workspace"] = workspace
+	response["search_placeholder"] = config.PortalSearchPlaceholder
+	response["search_hint"] = config.PortalSearchHint
+	response["footer_columns"] = config.PortalFooterColumns
+	response["sections"] = config.PortalSections
+	response["knowledge_base_share_link"] = config.KnowledgeBaseShareLink
+	response["knowledge_base_url"] = config.KnowledgeBaseURL
+	response["knowledge_base_share_id"] = config.KnowledgeBaseShareID
+
+	return response, nil
+}
+
+// loadPortalEntryData returns only the branding needed to identify a portal
+// and present its sign-in screen. Catalogs, routing IDs, sections, and
+// knowledge-base configuration remain behind portal authentication.
+func (h *PortalHandler) loadPortalEntryData(ctx context.Context, config models.ChannelConfig) map[string]any {
 	var hubLogoURL string
 	var hubConfigJSON string
 	if err := h.db.QueryRowContext(ctx, `SELECT value FROM system_settings WHERE key = 'portal_hub_config'`).Scan(&hubConfigJSON); err == nil && hubConfigJSON != "" {
@@ -473,29 +538,16 @@ func (h *PortalHandler) loadPortalData(ctx context.Context, channel models.Chann
 		}
 	}
 
-	response := map[string]any{
-		"channel_id":                channel.ID,
-		"slug":                      config.PortalSlug,
-		"title":                     config.PortalTitle,
-		"description":               config.PortalDescription,
-		"workspace_ids":             config.PortalWorkspaceIDs,
-		"workspace_id":              workspaceID, // First workspace for backward compatibility
-		"workspace":                 workspace,
-		"gradient":                  config.PortalGradient,
-		"theme":                     config.PortalTheme,
-		"search_placeholder":        config.PortalSearchPlaceholder,
-		"search_hint":               config.PortalSearchHint,
-		"footer_columns":            config.PortalFooterColumns,
-		"sections":                  config.PortalSections,
-		"knowledge_base_share_link": config.KnowledgeBaseShareLink,
-		"knowledge_base_url":        config.KnowledgeBaseURL,
-		"knowledge_base_share_id":   config.KnowledgeBaseShareID,
-		"background_image_url":      config.PortalBackgroundImageURL,
-		"logo_url":                  config.PortalLogoURL,
-		"hub_logo_url":              hubLogoURL,
+	return map[string]any{
+		"slug":                 config.PortalSlug,
+		"title":                config.PortalTitle,
+		"description":          config.PortalDescription,
+		"gradient":             config.PortalGradient,
+		"theme":                config.PortalTheme,
+		"background_image_url": config.PortalBackgroundImageURL,
+		"logo_url":             config.PortalLogoURL,
+		"hub_logo_url":         hubLogoURL,
 	}
-
-	return response, nil
 }
 
 // GetRequestTypes returns request types for a normal portal view, filtered by
@@ -608,37 +660,12 @@ func (h *PortalHandler) SubmitToPortal(w http.ResponseWriter, r *http.Request) {
 
 	authenticatedUserID, portalCustomerID := h.getAuthFromContext(r)
 
-	// Manual-registration portals require pre-existing customer access; other
-	// modes grant it on submission. Internal users use user_id instead.
-	if portalCustomerID != nil {
-		switch {
-		case config.PortalRegistrationMode != "" && config.PortalRegistrationMode != "open" && config.PortalRegistrationMode != "manual":
-			slog.Warn("portal blocked submit because registration mode is invalid",
-				slog.String("component", "portal"),
-				slog.Int("channel_id", channel.ID),
-			)
-			respondUnauthorized(w, r)
+	// Manual access was enforced while resolving the portal. Open portals add
+	// the customer grant on first submission so request tracking stays scoped.
+	if portalCustomerID != nil && (config.PortalRegistrationMode == "" || config.PortalRegistrationMode == "open") {
+		if accessErr := h.grantChannelAccess(ctx, *portalCustomerID, channel.ID); accessErr != nil {
+			respondInternalError(w, r, accessErr)
 			return
-		case config.PortalRegistrationMode == "manual":
-			hasAccess, accessErr := h.customerHasChannelAccess(ctx, *portalCustomerID, channel.ID)
-			if accessErr != nil {
-				respondInternalError(w, r, accessErr)
-				return
-			}
-			if !hasAccess {
-				slog.Warn("manual-mode portal blocked submit from customer without channel access",
-					slog.String("component", "portal"),
-					slog.Int("portal_customer_id", *portalCustomerID),
-					slog.Int("channel_id", channel.ID),
-				)
-				respondUnauthorized(w, r)
-				return
-			}
-		default:
-			if accessErr := h.grantChannelAccess(ctx, *portalCustomerID, channel.ID); accessErr != nil {
-				respondInternalError(w, r, accessErr)
-				return
-			}
 		}
 	}
 
@@ -775,17 +802,11 @@ func (h *PortalHandler) SubmitToPortal(w http.ResponseWriter, r *http.Request) {
 
 // SearchKnowledgeBase proxies knowledge base search requests to Docmost
 func (h *PortalHandler) SearchKnowledgeBase(w http.ResponseWriter, r *http.Request) {
-	slug := r.PathValue("slug")
-
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-
-	portalResult, err := h.findChannelByPortalSlug(ctx, slug)
-	if err != nil {
-		respondNotFound(w, r, "portal")
+	ctx, cancel, _, config, ok := h.resolvePortalBySlug(w, r)
+	if !ok {
 		return
 	}
-	config := portalResult.config
+	defer cancel()
 
 	if config.KnowledgeBaseURL == "" || config.KnowledgeBaseShareID == "" {
 		respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Knowledge base not configured for this portal"))
@@ -797,7 +818,7 @@ func (h *PortalHandler) SearchKnowledgeBase(w http.ResponseWriter, r *http.Reque
 		Query string `json:"query"`
 	}
 
-	if err = newJSONDecoder(w, r).Decode(&searchRequest); err != nil {
+	if err := newJSONDecoder(w, r).Decode(&searchRequest); err != nil {
 		if isRequestBodyTooLarge(err) {
 			respondRequestTooLarge(w, r)
 			return

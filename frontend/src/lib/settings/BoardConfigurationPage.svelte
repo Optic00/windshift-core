@@ -41,6 +41,9 @@
   let backlogStatusIDs = $state([]);
   let cardFields = $state([]);
   let showRightmostColumnLast50 = $state(false);
+  let trimCompletedItemsByAge = $state(false);
+  let completedItemRetentionDays = $state(30);
+  let completedItemRetentionError = $state('');
   let customFieldDefinitions = $state([]);
 
   const PUBLIC_BOARD_CARD_FIELDS = new Set([
@@ -178,11 +181,18 @@
             (field.field_type === 'system' && PUBLIC_BOARD_CARD_FIELDS.has(field.field_identifier))
         );
         showRightmostColumnLast50 = Boolean(boardConfig.show_rightmost_column_last_50);
+        const savedRetentionDays = Number(boardConfig.completed_item_retention_days);
+        trimCompletedItemsByAge = !showRightmostColumnLast50 && Number.isInteger(savedRetentionDays) && savedRetentionDays > 0;
+        completedItemRetentionDays = trimCompletedItemsByAge ? savedRetentionDays : 30;
+        completedItemRetentionError = '';
       } else {
         columns = [];
         backlogStatusIDs = statuses.filter(s => !s.is_default && !s.is_completed).map(s => s.id);
         cardFields = [];
         showRightmostColumnLast50 = false;
+        trimCompletedItemsByAge = false;
+        completedItemRetentionDays = 30;
+        completedItemRetentionError = '';
       }
     } catch (error) {
       console.error('Failed to load data:', error);
@@ -551,6 +561,23 @@
 
   function setShowRightmostColumnLast50(value) {
     showRightmostColumnLast50 = value;
+    if (value) {
+      trimCompletedItemsByAge = false;
+      completedItemRetentionError = '';
+    }
+    hasChanges = true;
+  }
+
+  function setTrimCompletedItemsByAge(value) {
+    trimCompletedItemsByAge = value;
+    if (value) showRightmostColumnLast50 = false;
+    completedItemRetentionError = '';
+    hasChanges = true;
+  }
+
+  function updateCompletedItemRetentionDays(value) {
+    completedItemRetentionDays = value;
+    completedItemRetentionError = '';
     hasChanges = true;
   }
 
@@ -628,6 +655,15 @@
   // --- Save / Reset / Cancel ---
 
   async function saveConfiguration() {
+    const retentionDays = Number(completedItemRetentionDays);
+    if (
+      trimCompletedItemsByAge &&
+      (!Number.isInteger(retentionDays) || retentionDays < 1 || retentionDays > 3650)
+    ) {
+      completedItemRetentionError = 'Enter a whole number from 1 to 3650.';
+      return;
+    }
+
     saving = true;
     try {
       const payload = {
@@ -648,7 +684,8 @@
           display_order: i,
           width: 0
         })),
-        show_rightmost_column_last_50: showRightmostColumnLast50
+        show_rightmost_column_last_50: showRightmostColumnLast50,
+        completed_item_retention_days: trimCompletedItemsByAge ? retentionDays : null
       };
 
       if (boardConfig && boardConfig.id) {
@@ -687,6 +724,9 @@
         backlogStatusIDs = [];
         cardFields = [];
         showRightmostColumnLast50 = false;
+        trimCompletedItemsByAge = false;
+        completedItemRetentionDays = 30;
+        completedItemRetentionError = '';
         hasChanges = false;
         goToBoard();
       } catch (error) {
@@ -698,6 +738,9 @@
       backlogStatusIDs = [];
       cardFields = [];
       showRightmostColumnLast50 = false;
+      trimCompletedItemsByAge = false;
+      completedItemRetentionDays = 30;
+      completedItemRetentionError = '';
       hasChanges = false;
     }
   }
@@ -790,15 +833,63 @@
 
         <!-- Columns Tab -->
         {#if activeTab === 'columns'}
-        <div class="mt-4 rounded border p-4" style="background-color: var(--ds-surface-raised); border-color: var(--ds-border);">
+        <div class="mt-4 flex flex-col gap-4 rounded border p-4" style="background-color: var(--ds-surface-raised); border-color: var(--ds-border);">
           <Checkbox
             bind:checked={showRightmostColumnLast50}
             onchange={setShowRightmostColumnLast50}
             disabled={!canConfigure}
+            dataTestid="board-rightmost-limit-enabled"
             label="Show only the latest 50 items in the rightmost column"
             hint="Useful for high-volume Done columns while keeping the rest of the board complete."
             size="small"
           />
+          {#if !showRightmostColumnLast50}
+            <div class="border-t pt-4" style="border-color: var(--ds-border);">
+              <Checkbox
+                bind:checked={trimCompletedItemsByAge}
+                onchange={setTrimCompletedItemsByAge}
+                disabled={!canConfigure}
+                dataTestid="board-completed-age-enabled"
+                label="Hide completed items by age"
+                hint="Show only completed work with recent activity. Unfinished work is always shown."
+                size="small"
+              />
+              {#if trimCompletedItemsByAge}
+                <div class="ml-6 mt-3 max-w-xs">
+                  <label
+                    for="board-completed-retention-days"
+                    class="mb-1.5 block text-xs font-medium"
+                    style="color: var(--ds-text-subtle);"
+                  >
+                    Recent activity window
+                  </label>
+                  <div class="flex items-center gap-2">
+                    <Input
+                      id="board-completed-retention-days"
+                      type="number"
+                      value={completedItemRetentionDays}
+                      oninput={(event) => updateCompletedItemRetentionDays(event.currentTarget.value)}
+                      min={1}
+                      max={3650}
+                      step={1}
+                      size="small"
+                      dataTestid="board-completed-retention-days"
+                      ariaDescribedby="board-completed-retention-help"
+                      class="w-24"
+                    />
+                    <span class="text-xs" style="color: var(--ds-text-subtle);">days</span>
+                  </div>
+                  <p
+                    id="board-completed-retention-help"
+                    class="mt-1.5 text-xs"
+                    style="color: {completedItemRetentionError ? 'var(--ds-text-danger)' : 'var(--ds-text-subtlest)'};"
+                  >
+                    {completedItemRetentionError || 'Completed items with no activity inside this window are hidden.'}
+                  </p>
+                </div>
+              {/if}
+            </div>
+          {/if}
         </div>
 
         <div class="grid grid-cols-1 lg:grid-cols-6 gap-3 mt-4 mb-6">

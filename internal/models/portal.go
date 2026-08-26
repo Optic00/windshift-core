@@ -321,9 +321,9 @@ type AssetReport struct {
 	ItemTypeName string `json:"item_type_name,omitempty"`
 }
 
-// PublicAssetReport is the unauthenticated portal contract for an asset
-// report. It intentionally excludes the internal CQL expression, visibility
-// principal IDs, channel/asset-set bindings, lifecycle flags, and timestamps.
+// PublicAssetReport is the portal-facing contract for an asset report. It
+// excludes the internal CQL expression, visibility principal IDs,
+// channel/asset-set bindings, lifecycle flags, and timestamps.
 type PublicAssetReport struct {
 	ID           int                      `json:"id"`
 	Name         string                   `json:"name"`

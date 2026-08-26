@@ -32,6 +32,12 @@ const DEFAULT_PAGE_SIZE = 100;
 const LIST_INITIAL_PAGE_SIZE = 50;
 const LARGE_COLLECTION_PAGE_SIZE = 250;
 const BOARD_UNFINISHED_PAGE_SIZE = 1000;
+const BOARD_SEARCH_PAGE_SIZE = 100;
+
+function completedActivityCutoff(days) {
+  if (!Number.isInteger(days) || days < 1) return null;
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+}
 
 function initialItemsPageSize(view) {
   if (view === 'workspace-list' || view === 'collection-list') return LIST_INITIAL_PAGE_SIZE;
@@ -89,6 +95,14 @@ class CollectionStore {
   boardDeferred = $state(null);
   rightmostCap = $state(null);
 
+  // Board search is a separate server-scoped result set. Keeping it apart
+  // prevents a search from changing the board's normal cap or pagination.
+  boardSearchItems = $state([]);
+  boardSearchPagination = $state(null);
+  boardSearchLoading = $state(false);
+  boardSearchLoadingMore = $state(false);
+  boardSearchError = $state(false);
+
   // Backlog pagination
   backlogPagination = $state(null);
   backlogHasMore = $state(false);
@@ -122,6 +136,8 @@ class CollectionStore {
   #boardConfigurationKey = null;
   #boardConfigurationPromise = null;
   #boardConfigurationLoaded = false;
+  #boardSearchId = 0;
+  #boardSearchQuery = '';
 
   constructor() {
     this.#unsubscribe = currentRoute.subscribe(($route) => {
@@ -220,6 +236,7 @@ class CollectionStore {
       this.#boardConfigurationPromise = null;
       this.#boardConfigurationLoaded = false;
       this.#changesWatermark = null;
+      this.clearBoardSearch();
     }
     this.#wsId = wsId;
     this.#colId = colId;
@@ -328,8 +345,14 @@ class CollectionStore {
       const completedStatusIds = statuses
         .filter((status) => status.is_completed || status.category_name === 'Done')
         .map((status) => status.id);
+      const retentionDays = Number(config?.completed_item_retention_days);
       return completedStatusIds.length
-        ? { statusIds: completedStatusIds, limit: DEFAULT_PAGE_SIZE, capped: false }
+        ? {
+            statusIds: completedStatusIds,
+            limit: DEFAULT_PAGE_SIZE,
+            capped: false,
+            completedActivitySince: completedActivityCutoff(retentionDays),
+          }
         : null;
     } catch (error) {
       if (error?.status !== 404) {
@@ -437,6 +460,7 @@ class CollectionStore {
       sub_ql: this.subFilterQL || undefined,
       collection,
       status_id: boardPartition.statusIds.join(','),
+      completed_activity_since: boardPartition.completedActivitySince || undefined,
       ...(boardPartition.capped
         ? { order_by: 'last_active_at', sort_direction: 'desc' }
         : this.#itemSortOptions()),
@@ -466,6 +490,91 @@ class CollectionStore {
     return mainTotal + (this.boardDeferred?.total ?? 0);
   }
 
+  get boardSearchHasMore() {
+    return calcHasMore(this.boardSearchPagination);
+  }
+
+  get boardSearchRemainingCount() {
+    const loaded = this.boardSearchItems.length;
+    return Math.max(0, (this.boardSearchPagination?.total ?? loaded) - loaded);
+  }
+
+  clearBoardSearch() {
+    this.#boardSearchId++;
+    this.#boardSearchQuery = '';
+    this.boardSearchItems = [];
+    this.boardSearchPagination = null;
+    this.boardSearchLoading = false;
+    this.boardSearchLoadingMore = false;
+    this.boardSearchError = false;
+  }
+
+  async searchBoardItems(query) {
+    const normalized = query.trim();
+    if (!normalized) {
+      this.clearBoardSearch();
+      return;
+    }
+
+    const searchId = ++this.#boardSearchId;
+    this.#boardSearchQuery = normalized;
+    this.boardSearchItems = [];
+    this.boardSearchPagination = null;
+    this.boardSearchLoading = true;
+    this.boardSearchError = false;
+
+    try {
+      const result = await this.#fetchBoardSearchPage(normalized, 1);
+      if (searchId !== this.#boardSearchId || normalized !== this.#boardSearchQuery) return;
+      this.boardSearchItems = result.items;
+      this.boardSearchPagination = result.pagination;
+    } catch (error) {
+      if (searchId !== this.#boardSearchId) return;
+      console.error('[collectionStore] board search failed:', error);
+      this.boardSearchError = true;
+    } finally {
+      if (searchId === this.#boardSearchId) {
+        this.boardSearchLoading = false;
+      }
+    }
+  }
+
+  async loadMoreBoardSearchItems() {
+    if (!this.#boardSearchQuery || !this.boardSearchHasMore || this.boardSearchLoadingMore) return;
+
+    const searchId = ++this.#boardSearchId;
+    const query = this.#boardSearchQuery;
+    const nextPage = (this.boardSearchPagination?.page ?? 0) + 1;
+    this.boardSearchLoadingMore = true;
+    this.boardSearchError = false;
+
+    try {
+      const result = await this.#fetchBoardSearchPage(query, nextPage);
+      if (searchId !== this.#boardSearchId || query !== this.#boardSearchQuery) return;
+      this.boardSearchItems = [...this.boardSearchItems, ...result.items];
+      this.boardSearchPagination = result.pagination;
+    } catch (error) {
+      if (searchId !== this.#boardSearchId) return;
+      console.error('[collectionStore] loading more board search results failed:', error);
+      this.boardSearchError = true;
+    } finally {
+      if (searchId === this.#boardSearchId) {
+        this.boardSearchLoadingMore = false;
+      }
+    }
+  }
+
+  #fetchBoardSearchPage(query, page) {
+    return fetchCollectionItems(this.#wsId, this.#colId, {
+      page,
+      limit: BOARD_SEARCH_PAGE_SIZE,
+      search: query,
+      sub_ql: this.subFilterQL || undefined,
+      collection: this.boardCollection ?? undefined,
+      ...this.#itemSortOptions(),
+    });
+  }
+
   #hasMoreItems() {
     if (this.boardDeferred) {
       return !this.boardDeferred.capped && calcHasMore(this.boardDeferred.pagination);
@@ -491,7 +600,12 @@ class CollectionStore {
         limit: pagination?.limit ?? DEFAULT_PAGE_SIZE,
         sub_ql: this.subFilterQL || undefined,
         ...this.#itemSortOptions(),
-        ...(deferred ? { status_id: deferred.statusIds.join(',') } : this.#boardExclusionFilter()),
+        ...(deferred
+          ? {
+              status_id: deferred.statusIds.join(','),
+              completed_activity_since: deferred.completedActivitySince || undefined,
+            }
+          : this.#boardExclusionFilter()),
       });
 
       if (loadId !== this.#loadId) return;
@@ -827,6 +941,8 @@ class CollectionStore {
     if (idx !== -1) Object.assign(this.items[idx], updated);
     const bIdx = this.backlogItems.findIndex((i) => i.id === updated.id);
     if (bIdx !== -1) Object.assign(this.backlogItems[bIdx], updated);
+    const searchIdx = this.boardSearchItems.findIndex((i) => i.id === updated.id);
+    if (searchIdx !== -1) Object.assign(this.boardSearchItems[searchIdx], updated);
   }
 
   #removeItemsById(ids) {
@@ -844,6 +960,7 @@ class CollectionStore {
       return false;
     });
     this.backlogItems = this.backlogItems.filter((item) => !ids.has(item.id));
+    this.boardSearchItems = this.boardSearchItems.filter((item) => !ids.has(item.id));
 
     const removedBacklog = beforeBacklog - this.backlogItems.length;
     if (removedItems > 0 && this.itemsPagination) {

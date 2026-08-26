@@ -71,15 +71,18 @@ type ItemFilters struct {
 	// entered that status on/after this ISO date; non-completed items always
 	// pass. Caps the indefinitely-growing "done" list on personal views.
 	CompletedSince *string
-	QLQuery        string // Custom QL query
-	QLArgs         []any
-	StatusIDs      []int  // Multi-value status filter (for backlog + search)
-	StatusIDsNot   []int  // Multi-value negated status filter
-	PriorityIDs    []int  // Multi-value priority filter
-	ItemIDs        []int  // Multi-value item ID filter
-	TextQuery      string // LIKE search on title/description
-	ItemKeyQuery   string // Workspace key pattern match (e.g. "OK-40")
-	ItemID         *int   // Filter by specific item ID
+	// CompletedActivitySince constrains completed items by their most recent
+	// activity while leaving unfinished items untouched.
+	CompletedActivitySince *string
+	QLQuery                string // Custom QL query
+	QLArgs                 []any
+	StatusIDs              []int  // Multi-value status filter (for backlog + search)
+	StatusIDsNot           []int  // Multi-value negated status filter
+	PriorityIDs            []int  // Multi-value priority filter
+	ItemIDs                []int  // Multi-value item ID filter
+	TextQuery              string // LIKE search on title/description
+	ItemKeyQuery           string // Workspace key pattern match (e.g. "OK-40")
+	ItemID                 *int   // Filter by specific item ID
 }
 
 func (f ItemFilters) hasScalarFilters() bool {
@@ -87,7 +90,7 @@ func (f ItemFilters) hasScalarFilters() bool {
 		f.AssigneeID != nil || f.CreatorID != nil || f.ItemTypeID != nil ||
 		f.MilestoneID != nil || f.IterationID != nil || f.ParentIDIsSet ||
 		f.Level != nil || f.MaxLevel != nil || f.CreatedSince != nil ||
-		f.CompletedSince != nil || f.ItemID != nil
+		f.CompletedSince != nil || f.CompletedActivitySince != nil || f.ItemID != nil
 }
 
 func (f ItemFilters) hasListFilters() bool {
@@ -708,6 +711,14 @@ func (r *ItemRepository) buildWhereClause(params ItemListParams) (whereClause st
 			OR ` + cql.CurrentCompletedAtExpr("") + ` >= ?
 		)`
 		args = append(args, *params.Filters.CompletedSince)
+	}
+
+	if params.Filters.CompletedActivitySince != nil {
+		whereClause += ` AND (
+			COALESCE(sc.is_completed, FALSE) = FALSE
+			OR COALESCE(i.last_active_at, i.updated_at, i.created_at) >= ?
+		)`
+		args = append(args, *params.Filters.CompletedActivitySince)
 	}
 
 	if len(params.Filters.StatusIDs) > 0 {

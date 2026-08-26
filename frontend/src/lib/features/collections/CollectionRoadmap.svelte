@@ -739,6 +739,7 @@
         dependency_link_type_id: roadmapConfig.dependency_link_type_id ? Number(roadmapConfig.dependency_link_type_id) : null,
       },
       show_rightmost_column_last_50: Boolean(boardConfig?.show_rightmost_column_last_50),
+      completed_item_retention_days: boardConfig?.completed_item_retention_days ?? null,
     };
 
     try {

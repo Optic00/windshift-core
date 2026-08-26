@@ -184,6 +184,14 @@ var Catalog = []Migration{
 			ALTER TABLE workspace_agent_skill_pages ALTER COLUMN snapshot_at SET NOT NULL;
 		`,
 	},
+	{
+		Version:       "20260826_board_completed_item_retention",
+		Name:          "Add completed item retention to board configurations",
+		CheckSQLite:   sqliteColumnCheck("board_configurations", "completed_item_retention_days"),
+		CheckPostgres: pgColumnCheck("board_configurations", "completed_item_retention_days"),
+		SQLite:        "ALTER TABLE board_configurations ADD COLUMN completed_item_retention_days INTEGER",
+		Postgres:      "ALTER TABLE board_configurations ADD COLUMN completed_item_retention_days INTEGER",
+	},
 }
 
 func (m Migration) checksum(driver string) string {

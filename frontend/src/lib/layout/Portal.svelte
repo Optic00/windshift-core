@@ -205,16 +205,20 @@
     }
   });
 
-  // Watch for auth state changes to reload request types after login
+  // Replace the anonymous sign-in shell with the protected portal after login,
+  // and clear protected portal state again after logout or access revocation.
   $effect(() => {
     const currentAuth = $authStore.isAuthenticated || $portalAuthStore.isAuthenticated;
 
-    // Only reload when auth state changes from false to true (login)
-    if (authCheckComplete && currentAuth && !previousAuthState && portalStore.currentSlug) {
-      if (portalAuthStore.userBootstrap?.authenticated) {
-        portalStore.hydrateUserBootstrap(portalAuthStore.userBootstrap);
+    if (authCheckComplete && currentAuth !== previousAuthState && portalStore.currentSlug) {
+      if (currentAuth) {
+        if (portalAuthStore.userBootstrap?.authenticated) {
+          portalStore.hydrateUserBootstrap(portalAuthStore.userBootstrap);
+        }
+      } else {
+        portalStore.hydrateUserBootstrap(null);
       }
-      portalStore.loadRequestTypes();
+      void portalStore.loadPortal(portalStore.currentSlug);
     }
 
     previousAuthState = currentAuth;
@@ -376,7 +380,7 @@
     navigate(next || `/portal/${slug}`, { replace: true });
 
     // Re-check auth. The auth-state effect reuses its badge snapshot and
-    // refreshes only the visibility-sensitive request-type catalog.
+    // replaces the anonymous shell with the protected portal bootstrap.
     const userBootstrap = await portalAuthStore.checkAuth(slug);
     portalStore.hydrateUserBootstrap(userBootstrap);
   }

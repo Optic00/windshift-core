@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 
 	"windshift/internal/auth"
 	"windshift/internal/middleware"
@@ -15,7 +16,7 @@ import (
 	"windshift/internal/services"
 )
 
-type PublicPortalBootstrapResponse struct {
+type PortalBootstrapResponse struct {
 	Portal       map[string]any             `json:"portal"`
 	RequestTypes []models.RequestType       `json:"request_types"`
 	AssetReports []models.PublicAssetReport `json:"asset_reports"`
@@ -30,15 +31,30 @@ type PortalUserBootstrapResponse struct {
 	MyApprovals   []*models.ApprovalRequest       `json:"my_approvals"`
 }
 
-// GetBootstrap composes the anonymous/optional-session portal shell. Request
-// types and asset reports use one shared visibility context and remain
-// best-effort, matching the old frontend loaders' failure behavior.
+// GetBootstrap returns a branded sign-in shell to anonymous or unauthorized
+// callers. Authorized callers also receive the portal configuration and its
+// visibility-filtered catalogs.
 func (h *PortalHandler) GetBootstrap(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel, channel, config, ok := h.resolvePortalBySlug(w, r)
+	ctx, cancel, channel, config, ok := h.resolvePortalEntryBySlugTimeout(w, r, 10*time.Second)
 	if !ok {
 		return
 	}
 	defer cancel()
+
+	response := PortalBootstrapResponse{
+		Portal:       h.loadPortalEntryData(ctx, config),
+		RequestTypes: []models.RequestType{},
+		AssetReports: []models.PublicAssetReport{},
+	}
+	allowed, err := h.portalChannelAccessAllowed(ctx, r, channel.ID, config)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	if !allowed {
+		respondJSONOK(w, response)
+		return
+	}
 
 	portal, err := h.loadPortalData(ctx, channel, config)
 	if errors.Is(err, repository.ErrNotFound) {
@@ -50,11 +66,7 @@ func (h *PortalHandler) GetBootstrap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := PublicPortalBootstrapResponse{
-		Portal:       portal,
-		RequestTypes: []models.RequestType{},
-		AssetReports: []models.PublicAssetReport{},
-	}
+	response.Portal = portal
 	vc := h.getPortalVisibilityContext(ctx, r, channel.ID)
 	var wait sync.WaitGroup
 	wait.Add(2)
@@ -84,13 +96,13 @@ func (h *PortalHandler) GetBootstrap(w http.ResponseWriter, r *http.Request) {
 // loaded on every signed-in portal entry. Anonymous probes return a stable
 // unauthenticated snapshot rather than a noisy 401 resource error.
 func (h *PortalHandler) GetUserBootstrap(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel, channel, _, ok := h.resolvePortalBySlug(w, r)
-	if !ok {
-		return
-	}
-	defer cancel()
 	internalUserID, portalCustomerID := h.getAuthFromContext(r)
 	if internalUserID == nil && portalCustomerID == nil {
+		_, cancel, _, _, ok := h.resolvePortalEntryBySlugTimeout(w, r, 10*time.Second)
+		if !ok {
+			return
+		}
+		defer cancel()
 		respondJSONOK(w, PortalUserBootstrapResponse{
 			Authenticated: false,
 			MyRequests:    []services.PortalRequestSummary{},
@@ -98,6 +110,12 @@ func (h *PortalHandler) GetUserBootstrap(w http.ResponseWriter, r *http.Request)
 		})
 		return
 	}
+
+	ctx, cancel, channel, _, ok := h.resolvePortalBySlug(w, r)
+	if !ok {
+		return
+	}
+	defer cancel()
 
 	response, err := h.portalAuthSnapshot(ctx, r)
 	if err != nil {

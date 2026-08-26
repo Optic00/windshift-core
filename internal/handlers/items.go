@@ -428,6 +428,29 @@ func (h *ItemHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 	if completedSince := r.URL.Query().Get("completed_since"); completedSince != "" {
 		filters.CompletedSince = &completedSince
 	}
+	if completedActivitySince := r.URL.Query().Get("completed_activity_since"); completedActivitySince != "" {
+		filters.CompletedActivitySince = &completedActivitySince
+	}
+
+	// Board and collection views use this parameter for scoped server-side
+	// search. It stays within the workspace/collection and QL filters resolved
+	// above, unlike the global /items/search endpoint.
+	if searchQuery := strings.TrimSpace(r.URL.Query().Get("search")); searchQuery != "" {
+		if len(searchQuery) > maxSearchQueryLength {
+			respondValidationError(w, r, fmt.Sprintf("Search query too long (max %d characters)", maxSearchQueryLength))
+			return
+		}
+		parts := strings.Split(strings.ToUpper(searchQuery), "-")
+		if len(parts) == 2 && parts[0] != "" {
+			if itemNumber, parseErr := strconv.Atoi(parts[1]); parseErr == nil && itemNumber > 0 {
+				filters.ItemKeyQuery = searchQuery
+			} else {
+				filters.TextQuery = searchQuery
+			}
+		} else {
+			filters.TextQuery = searchQuery
+		}
+	}
 
 	// ID filter (applies to both QL and non-QL queries)
 	if idParam := r.URL.Query().Get("id"); idParam != "" {

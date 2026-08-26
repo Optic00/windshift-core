@@ -26,6 +26,7 @@ export function buildListColumnConfiguration(config, listColumns) {
     card_fields: config?.card_fields || [],
     roadmap_config: config?.roadmap_config || null,
     show_rightmost_column_last_50: Boolean(config?.show_rightmost_column_last_50),
+    completed_item_retention_days: config?.completed_item_retention_days ?? null,
   };
 }
 

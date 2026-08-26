@@ -65,12 +65,13 @@ func (r *BoardConfigurationRepository) getConfig(where string, arg any) (*models
 	var config models.BoardConfiguration
 	var collID, wsID sql.NullInt64
 	var backlogStatusIDsJSON, listColumnsJSON, cardFieldsJSON, roadmapConfigJSON sql.NullString
+	var completedItemRetentionDays sql.NullInt64
 	err := r.db.QueryRow(`
-		SELECT id, collection_id, workspace_id, backlog_status_ids, list_columns, card_fields, roadmap_config, show_rightmost_column_last_50, created_at, updated_at
+		SELECT id, collection_id, workspace_id, backlog_status_ids, list_columns, card_fields, roadmap_config, show_rightmost_column_last_50, completed_item_retention_days, created_at, updated_at
 		FROM board_configurations
 		WHERE `+where,
 		arg,
-	).Scan(&config.ID, &collID, &wsID, &backlogStatusIDsJSON, &listColumnsJSON, &cardFieldsJSON, &roadmapConfigJSON, &config.ShowRightmostColumnLast50, &config.CreatedAt, &config.UpdatedAt)
+	).Scan(&config.ID, &collID, &wsID, &backlogStatusIDsJSON, &listColumnsJSON, &cardFieldsJSON, &roadmapConfigJSON, &config.ShowRightmostColumnLast50, &completedItemRetentionDays, &config.CreatedAt, &config.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -85,6 +86,10 @@ func (r *BoardConfigurationRepository) getConfig(where string, arg any) (*models
 	if wsID.Valid {
 		wid := int(wsID.Int64)
 		config.WorkspaceID = &wid
+	}
+	if completedItemRetentionDays.Valid {
+		days := int(completedItemRetentionDays.Int64)
+		config.CompletedItemRetentionDays = &days
 	}
 	unmarshalBoardConfigFields(&config, backlogStatusIDsJSON, listColumnsJSON, cardFieldsJSON, roadmapConfigJSON)
 	return &config, nil
@@ -109,15 +114,15 @@ func (r *BoardConfigurationRepository) Create(collectionID, workspaceID *int, re
 	if workspaceID != nil {
 		// Create workspace board configuration
 		err = tx.QueryRow(`
-			INSERT INTO board_configurations (workspace_id, backlog_status_ids, list_columns, card_fields, roadmap_config, show_rightmost_column_last_50, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
-			*workspaceID, configBytes.BacklogStatusIDs, configBytes.ListColumns, configBytes.CardFields, configBytes.RoadmapConfig, req.ShowRightmostColumnLast50, time.Now(), time.Now(),
+			INSERT INTO board_configurations (workspace_id, backlog_status_ids, list_columns, card_fields, roadmap_config, show_rightmost_column_last_50, completed_item_retention_days, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+			*workspaceID, configBytes.BacklogStatusIDs, configBytes.ListColumns, configBytes.CardFields, configBytes.RoadmapConfig, req.ShowRightmostColumnLast50, req.CompletedItemRetentionDays, time.Now(), time.Now(),
 		).Scan(&configID)
 	} else {
 		err = tx.QueryRow(`
-			INSERT INTO board_configurations (collection_id, backlog_status_ids, list_columns, card_fields, roadmap_config, show_rightmost_column_last_50, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
-			*collectionID, configBytes.BacklogStatusIDs, configBytes.ListColumns, configBytes.CardFields, configBytes.RoadmapConfig, req.ShowRightmostColumnLast50, time.Now(), time.Now(),
+			INSERT INTO board_configurations (collection_id, backlog_status_ids, list_columns, card_fields, roadmap_config, show_rightmost_column_last_50, completed_item_retention_days, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+			*collectionID, configBytes.BacklogStatusIDs, configBytes.ListColumns, configBytes.CardFields, configBytes.RoadmapConfig, req.ShowRightmostColumnLast50, req.CompletedItemRetentionDays, time.Now(), time.Now(),
 		).Scan(&configID)
 	}
 	if err != nil {
@@ -153,9 +158,9 @@ func (r *BoardConfigurationRepository) Update(configID int, req *models.BoardCon
 	// Update the configuration
 	_, err = tx.Exec(`
 		UPDATE board_configurations
-		SET backlog_status_ids = ?, list_columns = ?, card_fields = ?, roadmap_config = ?, show_rightmost_column_last_50 = ?, updated_at = ?
+		SET backlog_status_ids = ?, list_columns = ?, card_fields = ?, roadmap_config = ?, show_rightmost_column_last_50 = ?, completed_item_retention_days = ?, updated_at = ?
 		WHERE id = ?`,
-		configBytes.BacklogStatusIDs, configBytes.ListColumns, configBytes.CardFields, configBytes.RoadmapConfig, req.ShowRightmostColumnLast50, time.Now(), configID,
+		configBytes.BacklogStatusIDs, configBytes.ListColumns, configBytes.CardFields, configBytes.RoadmapConfig, req.ShowRightmostColumnLast50, req.CompletedItemRetentionDays, time.Now(), configID,
 	)
 	if err != nil {
 		return err

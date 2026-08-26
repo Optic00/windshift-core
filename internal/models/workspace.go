@@ -311,16 +311,17 @@ func (p IterationPatch) Apply(existing Iteration) Iteration {
 
 // BoardConfiguration represents a board layout configuration for a collection
 type BoardConfiguration struct {
-	ID                        int            `json:"id"`
-	CollectionID              *int           `json:"collection_id,omitempty"`
-	WorkspaceID               *int           `json:"workspace_id,omitempty"`
-	BacklogStatusIDs          []int          `json:"backlog_status_ids,omitempty"`
-	ListColumns               []ListColumn   `json:"list_columns,omitempty"`
-	CardFields                []ListColumn   `json:"card_fields,omitempty"`
-	RoadmapConfig             *RoadmapConfig `json:"roadmap_config,omitempty"`
-	ShowRightmostColumnLast50 bool           `json:"show_rightmost_column_last_50"`
-	CreatedAt                 time.Time      `json:"created_at"`
-	UpdatedAt                 time.Time      `json:"updated_at"`
+	ID                         int            `json:"id"`
+	CollectionID               *int           `json:"collection_id,omitempty"`
+	WorkspaceID                *int           `json:"workspace_id,omitempty"`
+	BacklogStatusIDs           []int          `json:"backlog_status_ids,omitempty"`
+	ListColumns                []ListColumn   `json:"list_columns,omitempty"`
+	CardFields                 []ListColumn   `json:"card_fields,omitempty"`
+	RoadmapConfig              *RoadmapConfig `json:"roadmap_config,omitempty"`
+	ShowRightmostColumnLast50  bool           `json:"show_rightmost_column_last_50"`
+	CompletedItemRetentionDays *int           `json:"completed_item_retention_days,omitempty"`
+	CreatedAt                  time.Time      `json:"created_at"`
+	UpdatedAt                  time.Time      `json:"updated_at"`
 	// Joined fields
 	Columns []BoardColumn `json:"columns,omitempty"`
 }
@@ -364,12 +365,13 @@ type BoardColumnStatus struct {
 
 // BoardConfigurationRequest represents the payload for creating/updating a board configuration
 type BoardConfigurationRequest struct {
-	Columns                   []BoardColumnRequest `json:"columns"`
-	BacklogStatusIDs          []int                `json:"backlog_status_ids,omitempty"`
-	ListColumns               []ListColumn         `json:"list_columns,omitempty"`
-	CardFields                []ListColumn         `json:"card_fields,omitempty"`
-	RoadmapConfig             *RoadmapConfig       `json:"roadmap_config,omitempty"`
-	ShowRightmostColumnLast50 bool                 `json:"show_rightmost_column_last_50"`
+	Columns                    []BoardColumnRequest `json:"columns"`
+	BacklogStatusIDs           []int                `json:"backlog_status_ids,omitempty"`
+	ListColumns                []ListColumn         `json:"list_columns,omitempty"`
+	CardFields                 []ListColumn         `json:"card_fields,omitempty"`
+	RoadmapConfig              *RoadmapConfig       `json:"roadmap_config,omitempty"`
+	ShowRightmostColumnLast50  bool                 `json:"show_rightmost_column_last_50"`
+	CompletedItemRetentionDays *int                 `json:"completed_item_retention_days"`
 }
 
 // BoardColumnRequest represents the payload for a column in the board configuration

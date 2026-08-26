@@ -315,6 +315,7 @@ CREATE TABLE IF NOT EXISTS board_configurations (
 	roadmap_config TEXT,
 	card_fields TEXT,
 	show_rightmost_column_last_50 BOOLEAN DEFAULT false,
+	completed_item_retention_days INTEGER,
 	created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 	updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
