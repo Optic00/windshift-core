@@ -58,6 +58,7 @@ type ItemHandler struct {
 	iterationComplete *services.IterationCompletionService
 	bulkMetrics       *services.BulkOperationMetrics
 	dbRequestTimeout  time.Duration
+	now               func() time.Time
 }
 
 const defaultDBRequestTimeout = 12 * time.Second
@@ -111,6 +112,7 @@ func NewItemHandler(db database.Database, permissionService *services.Permission
 		iterationComplete:   services.NewIterationCompletionService(db),
 		bulkMetrics:         services.NewBulkOperationMetrics(),
 		dbRequestTimeout:    defaultDBRequestTimeout,
+		now:                 time.Now,
 	}
 }
 
@@ -428,8 +430,14 @@ func (h *ItemHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 	if completedSince := r.URL.Query().Get("completed_since"); completedSince != "" {
 		filters.CompletedSince = &completedSince
 	}
-	if completedActivitySince := r.URL.Query().Get("completed_activity_since"); completedActivitySince != "" {
-		filters.CompletedActivitySince = &completedActivitySince
+	if completedActivityDays := r.URL.Query().Get("completed_activity_days"); completedActivityDays != "" {
+		days, err := strconv.Atoi(completedActivityDays)
+		if err != nil || days < 1 || days > maxCompletedItemRetentionDays {
+			respondValidationError(w, r, "completed_activity_days must be between 1 and 3650")
+			return
+		}
+		cutoff := h.now().UTC().AddDate(0, 0, -days)
+		filters.CompletedActivitySince = &cutoff
 	}
 
 	// Board and collection views use this parameter for scoped server-side

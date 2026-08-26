@@ -73,7 +73,7 @@ type ItemFilters struct {
 	CompletedSince *string
 	// CompletedActivitySince constrains completed items by their most recent
 	// activity while leaving unfinished items untouched.
-	CompletedActivitySince *string
+	CompletedActivitySince *time.Time
 	QLQuery                string // Custom QL query
 	QLArgs                 []any
 	StatusIDs              []int  // Multi-value status filter (for backlog + search)

@@ -34,11 +34,6 @@ const LARGE_COLLECTION_PAGE_SIZE = 250;
 const BOARD_UNFINISHED_PAGE_SIZE = 1000;
 const BOARD_SEARCH_PAGE_SIZE = 100;
 
-function completedActivityCutoff(days) {
-  if (!Number.isInteger(days) || days < 1) return null;
-  return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-}
-
 function initialItemsPageSize(view) {
   if (view === 'workspace-list' || view === 'collection-list') return LIST_INITIAL_PAGE_SIZE;
   if (
@@ -346,12 +341,16 @@ class CollectionStore {
         .filter((status) => status.is_completed || status.category_name === 'Done')
         .map((status) => status.id);
       const retentionDays = Number(config?.completed_item_retention_days);
+      const completedActivityDays =
+        Number.isInteger(retentionDays) && retentionDays >= 1 && retentionDays <= 3650
+          ? retentionDays
+          : null;
       return completedStatusIds.length
         ? {
             statusIds: completedStatusIds,
             limit: DEFAULT_PAGE_SIZE,
             capped: false,
-            completedActivitySince: completedActivityCutoff(retentionDays),
+            completedActivityDays,
           }
         : null;
     } catch (error) {
@@ -460,7 +459,7 @@ class CollectionStore {
       sub_ql: this.subFilterQL || undefined,
       collection,
       status_id: boardPartition.statusIds.join(','),
-      completed_activity_since: boardPartition.completedActivitySince || undefined,
+      completed_activity_days: boardPartition.completedActivityDays || undefined,
       ...(boardPartition.capped
         ? { order_by: 'last_active_at', sort_direction: 'desc' }
         : this.#itemSortOptions()),
@@ -603,7 +602,7 @@ class CollectionStore {
         ...(deferred
           ? {
               status_id: deferred.statusIds.join(','),
-              completed_activity_since: deferred.completedActivitySince || undefined,
+              completed_activity_days: deferred.completedActivityDays || undefined,
             }
           : this.#boardExclusionFilter()),
       });
