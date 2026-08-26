@@ -20,6 +20,7 @@
   import { buildIterationPickerConfig } from '../iterations/iterationPickerUtils.js';
   import ItemTypeIcon from '../../components/ItemTypeIcon.svelte';
   import { draggable, dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter';
+  import { autoScrollWindowForElements } from '@atlaskit/pragmatic-drag-and-drop-auto-scroll/element';
   import { attachClosestEdge, extractClosestEdge } from '@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge';
   import ItemDetail from '../items/ItemDetail.svelte';
   import PersonalTaskDetail from '../personal/PersonalTaskDetail.svelte';
@@ -85,6 +86,7 @@
   let loading = $state(true);
   let currentCollectionName = $derived(collectionStore.collectionName);
   let setupTimeout;
+  let autoScrollCleanup;
   let setupElements = new Map(); // Track which elements have drag/drop set up and their cleanup functions
   let pendingDrops = new Set(); // Track pending drop operations to prevent duplicates
   let showItemModal = $state(false);
@@ -142,6 +144,7 @@
   // Edge-based drag state
   let dragState = $state(new Map()); // Track drag state for each item: { isDragging: boolean, closestEdge: 'top'|'bottom'|null }
   let boardAnnouncement = $state('');
+  let boardViewElement = $state(null);
 
   // Centralized gradient styling
   const styles = useGradientStyles();
@@ -172,7 +175,10 @@
     return () => clearTimeout(timer);
   });
 
-  onDestroy(() => collectionStore.clearBoardSearch());
+  onDestroy(() => {
+    collectionStore.clearBoardSearch();
+    autoScrollCleanup?.();
+  });
 
   // Listen for newly created items
   async function handleRefreshWorkItems(event) {
@@ -400,6 +406,12 @@
   }
 
   onMount(async () => {
+    autoScrollCleanup = autoScrollWindowForElements({
+      canScroll: ({ source }) =>
+        source.data.type === 'work-item' && Boolean(boardViewElement?.contains(source.element)),
+      getAllowedAxis: () => 'horizontal',
+    });
+
     await Promise.all([
       workspaceId ? loadWorkspaceGradient(workspaceId) : Promise.resolve(),
       workspaceId
@@ -1672,7 +1684,11 @@
         </div>
       {:else}
         <!-- Board Columns / Swimlanes -->
-        <div class={selectedGroupByItemType ? 'space-y-4' : ''} data-testid="board-view">
+        <div
+          bind:this={boardViewElement}
+          class={selectedGroupByItemType ? 'space-y-4' : ''}
+          data-testid="board-view"
+        >
           {#each boardSwimlanes as lane (lane.id)}
             {@const laneExpanded = isSwimlaneExpanded(lane.id)}
             <!-- No type can legally be created under this lane's item (the lane
