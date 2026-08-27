@@ -277,7 +277,7 @@
 />
 
 <div
-  class="min-h-screen max-w-7xl mx-auto px-6 pt-8 pb-6"
+  class="max-w-7xl mx-auto px-6 pt-8 pb-6"
   style="background-color: var(--ds-surface);"
   data-testid="homepage"
   data-ready={layoutLoaded}

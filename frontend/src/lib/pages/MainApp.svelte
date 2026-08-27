@@ -316,9 +316,9 @@
   </div>
 
   <footer
-    class="authenticated-footer transition-transform duration-200 ease-out {!$uiStore.reviewFullscreen ? 'ml-16' : ''}"
+    class="authenticated-footer transition-[margin] duration-200 ease-out"
     style={!$uiStore.reviewFullscreen
-      ? `transform: translateX(${$uiStore.navExpanded ? '136px' : '0px'})`
+      ? `margin-left: ${$uiStore.navExpanded ? '200px' : '64px'}`
       : ''}
   >
     <Footer />
