@@ -10,6 +10,13 @@ const defaultFontsDir = path.resolve(
 
 export const EXCALIDRAW_ASSET_ROUTE = '/excalidraw-assets/';
 const fontRoute = `${EXCALIDRAW_ASSET_ROUTE}fonts/`;
+// Excalidraw fetches this large CJK fallback from its version-pinned CDN.
+const cdnOnlyFontFamilies = new Set(['Xiaolai']);
+
+function isCdnOnlyFont(relativePath) {
+  const [fontFamily] = relativePath.split(/[\\/]/);
+  return cdnOnlyFontFamilies.has(fontFamily);
+}
 
 export function collectExcalidrawFontAssets(fontsDir = defaultFontsDir) {
   const assets = [];
@@ -19,6 +26,7 @@ export function collectExcalidrawFontAssets(fontsDir = defaultFontsDir) {
       const relativePath = path.join(relativeDirectory, entry.name);
       const absolutePath = path.join(directory, entry.name);
       if (entry.isDirectory()) {
+        if (isCdnOnlyFont(relativePath)) continue;
         visit(absolutePath, relativePath);
       } else if (entry.isFile() && entry.name.endsWith('.woff2')) {
         assets.push({
@@ -62,6 +70,10 @@ export function excalidrawAssetsPlugin({ fontsDir = defaultFontsDir } = {}) {
         try {
           relativePath = decodeURIComponent(pathname.slice(fontRoute.length));
         } catch {
+          next();
+          return;
+        }
+        if (isCdnOnlyFont(relativePath)) {
           next();
           return;
         }

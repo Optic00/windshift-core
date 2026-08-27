@@ -291,6 +291,8 @@ func isDefaultPort(scheme, port string) bool {
 	return (scheme == "https" && port == "443") || (scheme == "http" && port == "80")
 }
 
+const excalidrawFontCDNOrigin = "https://esm.sh"
+
 func createSecurityHeaders(enableHTTPS, useProxy bool, additionalProxies []net.IP, jiraOrigins func() []string, externalImagesAllowed func() bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -334,8 +336,8 @@ func createSecurityHeaders(enableHTTPS, useProxy bool, additionalProxies []net.I
 				"script-src 'self' 'nonce-" + nonce + "'; " +
 				"style-src 'self' 'unsafe-inline'; " +
 				"img-src " + imgSrc + "; " +
-				"font-src 'self'; " +
-				"connect-src 'self'; " +
+				"font-src 'self' " + excalidrawFontCDNOrigin + "; " +
+				"connect-src 'self' " + excalidrawFontCDNOrigin + "; " +
 				"media-src 'self'; " +
 				"object-src 'none'; " +
 				"frame-ancestors " + frameAncestors + "; " +
