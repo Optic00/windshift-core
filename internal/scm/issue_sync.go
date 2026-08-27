@@ -22,7 +22,6 @@ import (
 // IssueSyncService handles synchronization of GitHub Issues into Windshift items.
 type IssueSyncService struct {
 	db          database.Database
-	itemRepo    *repository.ItemRepository
 	encryption  *sso.SecretEncryption
 	syncMu      sync.Mutex
 	userService interface {
@@ -39,7 +38,7 @@ func (s *IssueSyncService) SetUserService(us interface {
 
 // NewIssueSyncService creates a new IssueSyncService.
 func NewIssueSyncService(db database.Database, encryption *sso.SecretEncryption) *IssueSyncService {
-	return &IssueSyncService{db: db, itemRepo: repository.NewItemRepository(db), encryption: encryption}
+	return &IssueSyncService{db: db, encryption: encryption}
 }
 
 // SyncAll finds all enabled issue sync configs and syncs each one.
@@ -283,7 +282,7 @@ func (s *IssueSyncService) createItemFromIssue(ctx context.Context, config *mode
 
 	milestoneID := s.resolveMilestoneID(config, issue)
 
-	newItem := &models.Item{
+	input := services.ItemCreateInput{
 		WorkspaceID: config.WorkspaceID,
 		ItemTypeID:  config.DefaultItemTypeID,
 		Title:       issue.Title,
@@ -297,39 +296,37 @@ func (s *IssueSyncService) createItemFromIssue(ctx context.Context, config *mode
 	if milestoneID != nil {
 		milestoneIDs = append(milestoneIDs, *milestoneID)
 	}
-	itemID, err := s.itemRepo.CreateWithRetry(ctx, newItem, func(tx database.Tx, itemID int) error {
-		if err := repository.NewMilestoneAttachRepository(s.db).ReplaceItemMilestonesTx(ctx, tx, itemID, milestoneIDs); err != nil {
-			return err
-		}
-
-		now := time.Now()
-		if _, err := tx.Exec(`
+	input.MilestoneIDs = milestoneIDs
+	item, err := services.NewExternalItemReconciliationService(s.db).Create(ctx, services.ExternalItemCreateRequest{
+		Policy: services.GitHubIssueSyncReconciliationPolicy(),
+		Input:  input,
+		AfterCreate: func(ctx context.Context, tx database.Tx, itemID int) error {
+			now := time.Now()
+			if _, err := tx.ExecContext(ctx, `
 			INSERT INTO issue_sync_items (
 				issue_sync_config_id, item_id, github_issue_number, github_issue_id,
 				github_issue_url, last_synced_at, last_github_updated_at, created_at, updated_at
 			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
-			config.ID, itemID, issue.Number, issue.ID,
-			issue.URL, now, issue.UpdatedAt, now, now,
-		); err != nil {
-			return fmt.Errorf("insert sync item: %w", err)
-		}
+				config.ID, itemID, issue.Number, issue.ID,
+				issue.URL, now, issue.UpdatedAt, now, now,
+			); err != nil {
+				return fmt.Errorf("insert sync item: %w", err)
+			}
 
-		// Keep item, labels, and sync metadata atomic.
-		if err := s.syncLabels(ctx, tx, config, issue, itemID); err != nil {
-			return fmt.Errorf("sync labels: %w", err)
-		}
-		return nil
+			// Keep item, labels, and sync metadata atomic.
+			if err := s.syncLabels(ctx, tx, config, issue, itemID); err != nil {
+				return fmt.Errorf("sync labels: %w", err)
+			}
+			return nil
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("create item from issue: %w", err)
 	}
 
 	slog.Info("created item from GitHub issue",
-		"config_id", config.ID, "issue_number", issue.Number, "item_id", itemID)
-
-	// Live-update publish (WI-483): the GitHub-sourced item create committed.
-	services.PublishItemChange(itemID, services.ItemChangeCreated)
+		"config_id", config.ID, "issue_number", issue.Number, "item_id", item.ID)
 
 	return nil
 }
@@ -340,58 +337,55 @@ func (s *IssueSyncService) updateItemFromIssue(ctx context.Context, config *mode
 	assigneeID := s.resolveAssigneeID(config, issue)
 	milestoneID := s.resolveMilestoneID(config, issue)
 
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if err := s.itemRepo.UpdateFields(tx, itemID, map[string]any{
-		"title":       issue.Title,
-		"description": issue.Body,
-		"status_id":   statusID,
-		"assignee_id": assigneeID,
-	}); err != nil {
-		return fmt.Errorf("update item: %w", err)
-	}
-
 	milestoneIDs := []int{}
 	if milestoneID != nil {
 		milestoneIDs = append(milestoneIDs, *milestoneID)
 	}
-	if err := repository.NewMilestoneAttachRepository(s.db).ReplaceItemMilestonesTx(ctx, tx, itemID, milestoneIDs); err != nil {
-		return err
+	var statusValue any
+	if statusID != nil {
+		statusValue = *statusID
 	}
-
-	now := time.Now()
-	result, err := tx.ExecContext(ctx,
-		"UPDATE issue_sync_items SET last_synced_at = ?, last_github_updated_at = ?, updated_at = ? WHERE id = ?",
-		now, issue.UpdatedAt, now, syncItemID)
+	var assigneeValue any
+	if assigneeID != nil {
+		assigneeValue = *assigneeID
+	}
+	_, err := services.NewExternalItemReconciliationService(s.db).Update(ctx, services.ExternalItemUpdateRequest{
+		Policy: services.GitHubIssueSyncReconciliationPolicy(),
+		ItemID: itemID,
+		UpdateData: map[string]any{
+			"title":         issue.Title,
+			"description":   issue.Body,
+			"status_id":     statusValue,
+			"assignee_id":   assigneeValue,
+			"milestone_ids": milestoneIDs,
+		},
+		AfterUpdate: func(ctx context.Context, tx database.Tx, _, _ *models.Item) error {
+			now := time.Now()
+			result, err := tx.ExecContext(ctx,
+				"UPDATE issue_sync_items SET last_synced_at = ?, last_github_updated_at = ?, updated_at = ? WHERE id = ?",
+				now, issue.UpdatedAt, now, syncItemID)
+			if err != nil {
+				return fmt.Errorf("update sync item %d: %w", syncItemID, err)
+			}
+			rowsAffected, err := result.RowsAffected()
+			if err != nil {
+				return fmt.Errorf("count updated sync items: %w", err)
+			}
+			if rowsAffected != 1 {
+				return fmt.Errorf("sync item %d not found", syncItemID)
+			}
+			if err := s.syncLabels(ctx, tx, config, issue, itemID); err != nil {
+				return fmt.Errorf("sync labels: %w", err)
+			}
+			return nil
+		},
+	})
 	if err != nil {
-		return fmt.Errorf("update sync item %d: %w", syncItemID, err)
-	}
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("count updated sync items: %w", err)
-	}
-	if rowsAffected != 1 {
-		return fmt.Errorf("sync item %d not found", syncItemID)
-	}
-
-	if err := s.syncLabels(ctx, tx, config, issue, itemID); err != nil {
-		return fmt.Errorf("sync labels: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit: %w", err)
+		return fmt.Errorf("update item from issue: %w", err)
 	}
 
 	slog.Info("updated item from GitHub issue",
 		"config_id", config.ID, "issue_number", issue.Number, "item_id", itemID)
-
-	// Live-update publish (WI-483): the GitHub-sourced item update committed
-	// (title/description/status/assignee may all have changed).
-	services.PublishItemChange(itemID, services.ItemChangeUpdated)
 
 	return nil
 }
@@ -903,7 +897,7 @@ func (s *IssueSyncService) GetSyncedItems(ctx context.Context, configID int) ([]
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	itemDetails, err := s.itemRepo.FindByIDsWithDetails(itemIDs)
+	itemDetails, err := repository.NewItemRepository(s.db).FindByIDsWithDetails(itemIDs)
 	if err != nil {
 		return nil, fmt.Errorf("load synced item details: %w", err)
 	}

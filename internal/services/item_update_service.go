@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -70,6 +71,19 @@ type UpdateItemResult struct {
 	FieldChanges  []HistoryEntry
 }
 
+// ItemUpdateTransactionHook extends the canonical update transaction with
+// source-owned records that must commit atomically with the item mutation.
+type ItemUpdateTransactionHook func(context.Context, database.Tx, *models.Item, *models.Item) error
+
+type itemUpdateOptions struct {
+	allowStatus             bool
+	recordHistory           bool
+	triggerAssignee         bool
+	publish                 bool
+	beforeUpdateTransaction ItemUpdateTransactionHook
+	afterUpdateTransaction  ItemUpdateTransactionHook
+}
+
 // HistoryEntry represents a single field change in item history.
 // It aliases the repository record so services can hand history rows straight
 // to ItemRepository.RecordHistory/RecordHistoryBatch without converting.
@@ -81,7 +95,18 @@ type HistoryEntry = repository.HistoryEntry
 // dedicated service that enforces its authorization, mapping, and cleanup
 // invariants, so reject those fields before opening a transaction.
 func (s *ItemUpdateService) UpdateItem(req UpdateItemRequest) (*UpdateItemResult, error) {
-	if _, hasStatus := req.UpdateData["status_id"]; hasStatus {
+	return s.updateItem(context.Background(), req, itemUpdateOptions{
+		recordHistory:   true,
+		triggerAssignee: true,
+		publish:         true,
+	})
+}
+
+func (s *ItemUpdateService) updateItem(ctx context.Context, req UpdateItemRequest, opts itemUpdateOptions) (*UpdateItemResult, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("item update requires a context")
+	}
+	if _, hasStatus := req.UpdateData["status_id"]; hasStatus && !opts.allowStatus {
 		return nil, &validation.ValidationError{
 			Field:   "status_id",
 			Message: "must be changed via the transition endpoint, not item update",
@@ -101,7 +126,7 @@ func (s *ItemUpdateService) UpdateItem(req UpdateItemRequest) (*UpdateItemResult
 	}
 
 	// Start transaction first so the read-modify-write is atomic
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to start transaction: %w", err)
 	}
@@ -128,6 +153,11 @@ func (s *ItemUpdateService) UpdateItem(req UpdateItemRequest) (*UpdateItemResult
 		}
 		if err := validation.ValidatePlanningAssignments(tx, existingItem.WorkspaceID, milestoneIDs, existingItem.IterationID); err != nil {
 			return nil, fmt.Errorf("validation failed: %w", err)
+		}
+	}
+	if opts.beforeUpdateTransaction != nil {
+		if err := opts.beforeUpdateTransaction(ctx, tx, originalItem, &existingItem); err != nil {
+			return nil, err
 		}
 	}
 
@@ -180,9 +210,18 @@ func (s *ItemUpdateService) UpdateItem(req UpdateItemRequest) (*UpdateItemResult
 		}
 	}
 
-	// Generate and record history entries
-	history := s.compareAndGenerateHistory(originalItem, &existingItem, req.UserID)
-	if hasMilestoneIDs {
+	if opts.afterUpdateTransaction != nil {
+		if err := opts.afterUpdateTransaction(ctx, tx, originalItem, &existingItem); err != nil {
+			return nil, err
+		}
+	}
+
+	// Generate and record history entries.
+	var history []HistoryEntry
+	if opts.recordHistory {
+		history = s.compareAndGenerateHistory(originalItem, &existingItem, req.UserID)
+	}
+	if opts.recordHistory && hasMilestoneIDs {
 		oldStr := joinIntsCSV(milestoneOldIDs)
 		newStr := joinIntsCSV(milestoneNewIDs)
 		if oldStr != newStr {
@@ -196,8 +235,10 @@ func (s *ItemUpdateService) UpdateItem(req UpdateItemRequest) (*UpdateItemResult
 			})
 		}
 	}
-	if err = s.recordItemHistory(tx, history); err != nil {
-		return nil, fmt.Errorf("failed to record history: %w", err)
+	if opts.recordHistory {
+		if err = s.recordItemHistory(tx, history); err != nil {
+			return nil, fmt.Errorf("failed to record history: %w", err)
+		}
 	}
 
 	// Commit the transaction
@@ -218,25 +259,29 @@ func (s *ItemUpdateService) UpdateItem(req UpdateItemRequest) (*UpdateItemResult
 	// surface — cookie handlers, REST v1, MCP/AI tools, automation actions —
 	// gets it. The trigger no-ops when the assignee did not change or no
 	// binding matches the new assignee.
-	maybeTriggerAssigneeRun(updatedItem.WorkspaceID, updatedItem.ID, originalItem.AssigneeID, updatedItem.AssigneeID, req.UserID)
+	if opts.triggerAssignee {
+		maybeTriggerAssigneeRun(updatedItem.WorkspaceID, updatedItem.ID, originalItem.AssigneeID, updatedItem.AssigneeID, req.UserID)
+	}
 
 	// Live-update publish (WI-483): the update has committed. Announce the item
 	// (status kind when the status changed), and on a reparent refresh both the
 	// old and new parents' child lists.
-	updateKind := ItemChangeUpdated
-	if statusChanged {
-		updateKind = ItemChangeStatus
-	}
-	PublishItemChange(updatedItem.ID, updateKind)
-	oldParent, newParent := originalItem.ParentID, updatedItem.ParentID
-	reparented := (oldParent == nil) != (newParent == nil) ||
-		(oldParent != nil && newParent != nil && *oldParent != *newParent)
-	if reparented {
-		if oldParent != nil {
-			PublishItemChange(*oldParent, ItemChangeUpdated)
+	if opts.publish {
+		updateKind := ItemChangeUpdated
+		if statusChanged {
+			updateKind = ItemChangeStatus
 		}
-		if newParent != nil {
-			PublishItemChange(*newParent, ItemChangeUpdated)
+		PublishItemChange(updatedItem.ID, updateKind)
+		oldParent, newParent := originalItem.ParentID, updatedItem.ParentID
+		reparented := (oldParent == nil) != (newParent == nil) ||
+			(oldParent != nil && newParent != nil && *oldParent != *newParent)
+		if reparented {
+			if oldParent != nil {
+				PublishItemChange(*oldParent, ItemChangeUpdated)
+			}
+			if newParent != nil {
+				PublishItemChange(*newParent, ItemChangeUpdated)
+			}
 		}
 	}
 

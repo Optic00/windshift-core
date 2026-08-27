@@ -124,6 +124,15 @@ type ItemCreationParams struct {
 	// bulk paths (e.g. the Jira importer) where pre-assigned items must not
 	// each start an agent run.
 	SkipAssigneeTrigger bool
+	// SkipPublish suppresses live item-change publication for callers that
+	// explicitly defer or replace post-commit publication.
+	SkipPublish bool
+	// SkipMandatoryTemplate preserves source content for reconciliation and
+	// import paths. User-facing creation keeps template enforcement enabled.
+	SkipMandatoryTemplate bool
+	// AfterCreate extends the canonical creation transaction with source-owned
+	// records that must commit atomically with the item and its milestones.
+	AfterCreate ItemCreateTransactionHook
 	// AllowUnparentedGenericSubtask permits the Jira importer's two-phase
 	// insert-then-link flow to stage a level -1 item before its source parent
 	// has been imported. No interactive or automation caller should set it.
@@ -142,6 +151,9 @@ type ItemCreationParams struct {
 	// description. TemplateID == 0 after the call means the type enforces none.
 	MandatoryTemplateOut *MandatoryTemplateInfo
 }
+
+// ItemCreateTransactionHook extends the item creation transaction.
+type ItemCreateTransactionHook func(context.Context, database.Tx, int) error
 
 // MandatoryTemplateInfo reports the mandatory template a resolved item type
 // enforces at create time and whether CreateItem applied its body (only when
@@ -184,9 +196,56 @@ func validateProjectAssignmentAccess(db database.Database, perm *PermissionServi
 	return nil
 }
 
+func resolveItemTypeForCreation(db database.Database, workspaceID int, itemTypeID *int) (*int, error) {
+	if itemTypeID != nil {
+		if *itemTypeID <= 0 {
+			return nil, ErrInvalidItemType
+		}
+		var exists bool
+		if err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM item_types WHERE id = ?)", *itemTypeID).Scan(&exists); err != nil {
+			return nil, fmt.Errorf("failed to check item type existence: %w", err)
+		}
+		if !exists {
+			return nil, ErrInvalidItemType
+		}
+
+		allowed, err := IsItemTypeAllowedInWorkspace(db, workspaceID, *itemTypeID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check item type restriction: %w", err)
+		}
+		if !allowed {
+			return nil, fmt.Errorf("item type is not allowed in this workspace")
+		}
+		return itemTypeID, nil
+	}
+
+	var defaultItemTypeID int
+	err := db.QueryRow(`
+		SELECT cs.default_item_type_id FROM configuration_sets cs
+		INNER JOIN workspace_configuration_sets wcs ON cs.id = wcs.configuration_set_id
+		WHERE wcs.workspace_id = ? AND cs.default_item_type_id IS NOT NULL
+		ORDER BY cs.is_default DESC
+		LIMIT 1
+	`, workspaceID).Scan(&defaultItemTypeID)
+	if err != nil {
+		err = db.QueryRow("SELECT id FROM item_types WHERE is_default = true LIMIT 1").Scan(&defaultItemTypeID)
+	}
+	if err != nil || defaultItemTypeID == 0 {
+		return nil, ErrMissingItemType
+	}
+	return &defaultItemTypeID, nil
+}
+
 // CreateItem creates a new item with proper transaction handling and number generation
 // This centralizes the item creation logic used by normal creation, portal submissions, and copying
 func CreateItem(db database.Database, params ItemCreationParams) (int64, error) {
+	return createItem(context.Background(), db, params)
+}
+
+func createItem(ctx context.Context, db database.Database, params ItemCreationParams) (int64, error) {
+	if ctx == nil {
+		return 0, fmt.Errorf("item creation requires a context")
+	}
 	if err := validation.ValidatePlanningAssignments(db, params.WorkspaceID, params.MilestoneIDs, params.IterationID); err != nil {
 		return 0, err
 	}
@@ -215,52 +274,11 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 		}
 	}
 
-	// Validate the supplied item type before anything else. IsItemTypeAllowedInWorkspace
-	// returns true for workspaces with no config set, so a bogus numeric id (e.g.
-	// `ws task create --type 999`) would otherwise slip through and be stored as a
-	// dangling reference — verify the row exists first, then the config-set restriction.
-	if params.ItemTypeID != nil && *params.ItemTypeID != 0 {
-		var itemTypeExists bool
-		if err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM item_types WHERE id = ?)", *params.ItemTypeID).Scan(&itemTypeExists); err != nil {
-			return 0, fmt.Errorf("failed to check item type existence: %w", err)
-		}
-		if !itemTypeExists {
-			return 0, ErrInvalidItemType
-		}
-
-		allowed, err := IsItemTypeAllowedInWorkspace(db, params.WorkspaceID, *params.ItemTypeID)
-		if err != nil {
-			return 0, fmt.Errorf("failed to check item type restriction: %w", err)
-		}
-		if !allowed {
-			return 0, fmt.Errorf("item type is not allowed in this workspace")
-		}
-	}
-
-	// Resolve default item type when omitted. Prefer the workspace's default
-	// configuration set's default_item_type_id; fall back to any item type
-	// flagged is_default globally. Mirrors the status/priority fallbacks so
-	// callers that don't specify a type (e.g. AI Chat's create_item tool) get
-	// a sensible default instead of a NULL item_type_id.
-	if params.ItemTypeID == nil {
-		var defaultItemTypeID int
-		err := db.QueryRow(`
-			SELECT cs.default_item_type_id FROM configuration_sets cs
-			INNER JOIN workspace_configuration_sets wcs ON cs.id = wcs.configuration_set_id
-			WHERE wcs.workspace_id = ? AND cs.default_item_type_id IS NOT NULL
-			ORDER BY cs.is_default DESC
-			LIMIT 1
-		`, params.WorkspaceID).Scan(&defaultItemTypeID)
-		if err != nil {
-			err = db.QueryRow("SELECT id FROM item_types WHERE is_default = true LIMIT 1").Scan(&defaultItemTypeID)
-		}
-		if err == nil && defaultItemTypeID != 0 {
-			params.ItemTypeID = &defaultItemTypeID
-		}
-	}
-
-	if params.ItemTypeID == nil {
-		return 0, ErrMissingItemType
+	// Resolve and validate the item type before status and hierarchy checks.
+	var err error
+	params.ItemTypeID, err = resolveItemTypeForCreation(db, params.WorkspaceID, params.ItemTypeID)
+	if err != nil {
+		return 0, err
 	}
 	if err := validation.ValidateGenericSubtaskBoundary(
 		db,
@@ -277,21 +295,24 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 	// fill an empty description with its body (decision #2: only when empty so
 	// agents/importers that supply a description stay predictable), and report
 	// what was enforced regardless of whether it was applied.
-	if mandatory, terr := repository.NewTemplateRepository(db).GetMandatoryForType(params.WorkspaceID, *params.ItemTypeID); terr == nil {
-		applied := false
-		if strings.TrimSpace(params.Description) == "" {
-			params.Description = mandatory.DescriptionBody
-			applied = true
-		}
-		if params.MandatoryTemplateOut != nil {
-			*params.MandatoryTemplateOut = MandatoryTemplateInfo{
-				TemplateID: mandatory.ID,
-				Name:       mandatory.Name,
-				Applied:    applied,
+	if !params.SkipMandatoryTemplate {
+		mandatory, terr := repository.NewTemplateRepository(db).GetMandatoryForType(params.WorkspaceID, *params.ItemTypeID)
+		if terr == nil {
+			applied := false
+			if strings.TrimSpace(params.Description) == "" {
+				params.Description = mandatory.DescriptionBody
+				applied = true
 			}
+			if params.MandatoryTemplateOut != nil {
+				*params.MandatoryTemplateOut = MandatoryTemplateInfo{
+					TemplateID: mandatory.ID,
+					Name:       mandatory.Name,
+					Applied:    applied,
+				}
+			}
+		} else if !errors.Is(terr, repository.ErrNotFound) {
+			return 0, fmt.Errorf("failed to resolve mandatory template: %w", terr)
 		}
-	} else if !errors.Is(terr, repository.ErrNotFound) {
-		return 0, fmt.Errorf("failed to resolve mandatory template: %w", terr)
 	}
 
 	now := time.Now()
@@ -313,7 +334,7 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 	var statusID *int
 	if params.StatusID != nil {
 		if params.ValidatingUserID > 0 {
-			if err := workflowService.ValidateCreateStatusOverride(context.Background(), params.WorkspaceID, params.ItemTypeID, *params.StatusID); err != nil {
+			if err := workflowService.ValidateCreateStatusOverride(ctx, params.WorkspaceID, params.ItemTypeID, *params.StatusID); err != nil {
 				return 0, err
 			}
 		}
@@ -375,7 +396,7 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 		}
 	}
 
-	itemID, err := repository.WithItemCreateTransaction(context.Background(), db, func(tx database.Tx) (int, error) {
+	itemID, err := repository.WithItemCreateTransaction(ctx, db, func(tx database.Tx) (int, error) {
 		fracIndex, err := repository.GenerateFracIndexForNewItem(tx, db.GetDriverName())
 		if err != nil {
 			return 0, fmt.Errorf("failed to generate frac_index: %w", err)
@@ -447,6 +468,11 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 				return 0, fmt.Errorf("failed to attach milestone %d to new item: %w", mID, err)
 			}
 		}
+		if params.AfterCreate != nil {
+			if err := params.AfterCreate(ctx, tx, int(itemID)); err != nil {
+				return 0, err
+			}
+		}
 		return int(itemID), nil
 	})
 	if err != nil {
@@ -494,9 +520,11 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 
 	// Live-update publish (WI-483): the insert has committed. Announce the new
 	// item, and refresh the parent's child list if this item has a parent.
-	PublishItemChange(itemID, ItemChangeCreated)
-	if params.ParentID != nil {
-		PublishItemChange(*params.ParentID, ItemChangeUpdated)
+	if !params.SkipPublish {
+		PublishItemChange(itemID, ItemChangeCreated)
+		if params.ParentID != nil {
+			PublishItemChange(*params.ParentID, ItemChangeUpdated)
+		}
 	}
 
 	return int64(itemID), nil
