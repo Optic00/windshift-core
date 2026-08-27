@@ -261,6 +261,7 @@ export default {
     smtpEncryption: 'Cifrado',
     smtpSkipTlsVerify: 'Omitir la verificación del certificado',
     smtpSkipTlsVerifyDescription: 'Permite certificados autofirmados o no confiables solo para este servidor SMTP. Esto reduce la seguridad de la conexión.',
+    smtpNoEncryptionWarning: 'El contenido del correo y los metadatos de entrega se enviarán sin cifrar. Use esta opción solo con un relé SMTP local de confianza.',
     noEncryption: 'Ninguno (no recomendado)',
     authentication: 'Autenticación',
     senderSettings: 'Configuración del remitente',

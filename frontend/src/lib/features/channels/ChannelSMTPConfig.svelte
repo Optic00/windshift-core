@@ -90,15 +90,16 @@
   }
 
   export function getConfig() {
+    const plaintext = formData.encryption === 'none';
     return {
       smtp_host: formData.host,
       smtp_port: formData.port || 587,
-      smtp_username: formData.username || '',
-      smtp_password: formData.password || undefined,
+      smtp_username: plaintext ? '' : formData.username || '',
+      smtp_password: plaintext ? '' : formData.password || undefined,
       smtp_from_email: formData.from_email,
       smtp_from_name: formData.from_name || '',
       smtp_encryption: formData.encryption || 'tls',
-      smtp_skip_tls_verify: formData.skip_tls_verify || false
+      smtp_skip_tls_verify: plaintext ? false : formData.skip_tls_verify || false
     };
   }
 
@@ -126,37 +127,54 @@
 
       <div>
         <Label color="default" class="mb-2">{t('channel.smtpEncryption')}</Label>
-        <Select bind:value={formData.encryption} options={[{ value: 'tls', label: 'TLS (Port 587)' }, { value: 'ssl', label: 'SSL (Port 465)' }]} />
+        <Select
+          id="smtp-encryption"
+          bind:value={formData.encryption}
+          ariaLabel={t('channel.smtpEncryption')}
+          options={[
+            { value: 'tls', label: 'STARTTLS (Port 587)' },
+            { value: 'ssl', label: 'Implicit TLS (Port 465)' },
+            { value: 'none', label: t('channel.noEncryption') }
+          ]}
+        />
       </div>
 
-      <div class="flex items-start justify-between gap-4">
-        <div>
-          <div class="text-sm font-medium" style="color: var(--ds-text);">
-            {t('channel.smtpSkipTlsVerify')}
-          </div>
-          <DescriptionText>{t('channel.smtpSkipTlsVerifyDescription')}</DescriptionText>
+      {#if formData.encryption === 'none'}
+        <div data-testid="smtp-plaintext-warning">
+          <AlertBox variant="warning" message={t('channel.smtpNoEncryptionWarning')} />
         </div>
-        <Toggle bind:checked={formData.skip_tls_verify} dataTestid="smtp-skip-tls-verify" />
-      </div>
+      {:else}
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <div class="text-sm font-medium" style="color: var(--ds-text);">
+              {t('channel.smtpSkipTlsVerify')}
+            </div>
+            <DescriptionText>{t('channel.smtpSkipTlsVerifyDescription')}</DescriptionText>
+          </div>
+          <Toggle bind:checked={formData.skip_tls_verify} dataTestid="smtp-skip-tls-verify" />
+        </div>
+      {/if}
     </div>
 
     <!-- Authentication -->
-    <div class="pt-4 border-t" style="border-color: var(--ds-border);">
-      <h5 class="text-sm font-semibold mb-3" style="color: var(--ds-text);">{t('channel.authentication')}</h5>
-      <div class="space-y-4">
-        <div>
-          <Label color="default" class="mb-2">{t('channel.smtpUsername')}</Label>
-          <Input type="text" bind:value={formData.username} placeholder={t('channel.smtpUsernamePlaceholder')} />
-        </div>
-        <div>
-          <Label color="default" class="mb-2">{t('channel.smtpPassword')}</Label>
-          <Input type="password" bind:value={formData.password} placeholder={t('channel.secretPlaceholder')} />
-          <DescriptionText>
-            {t('channel.leaveBlankPassword')}
-          </DescriptionText>
+    {#if formData.encryption !== 'none'}
+      <div class="pt-4 border-t" style="border-color: var(--ds-border);">
+        <h5 class="text-sm font-semibold mb-3" style="color: var(--ds-text);">{t('channel.authentication')}</h5>
+        <div class="space-y-4">
+          <div>
+            <Label color="default" class="mb-2">{t('channel.smtpUsername')}</Label>
+            <Input type="text" bind:value={formData.username} placeholder={t('channel.smtpUsernamePlaceholder')} dataTestid="smtp-username" />
+          </div>
+          <div>
+            <Label color="default" class="mb-2">{t('channel.smtpPassword')}</Label>
+            <Input type="password" bind:value={formData.password} placeholder={t('channel.secretPlaceholder')} dataTestid="smtp-password" />
+            <DescriptionText>
+              {t('channel.leaveBlankPassword')}
+            </DescriptionText>
+          </div>
         </div>
       </div>
-    </div>
+    {/if}
 
     <!-- Sender Settings -->
     <div class="pt-4 border-t" style="border-color: var(--ds-border);">

@@ -245,6 +245,7 @@ export default {
     smtpEncryption: 'Verschlüsselung',
     smtpSkipTlsVerify: 'Zertifikatsprüfung überspringen',
     smtpSkipTlsVerifyDescription: 'Selbstsignierte oder nicht vertrauenswürdige Zertifikate nur für diesen SMTP-Server zulassen. Dies schwächt die Verbindungssicherheit.',
+    smtpNoEncryptionWarning: 'E-Mail-Inhalte und Zustellungsmetadaten werden unverschlüsselt übertragen. Verwenden Sie dies nur mit einem vertrauenswürdigen lokalen SMTP-Relay.',
     noEncryption: 'Keine (nicht empfohlen)',
     authentication: 'Authentifizierung',
     senderSettings: 'Absendereinstellungen',

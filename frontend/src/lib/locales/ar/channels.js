@@ -258,6 +258,7 @@ export default {
     smtpEncryption: 'التشفير',
     smtpSkipTlsVerify: 'تخطي التحقق من الشهادة',
     smtpSkipTlsVerifyDescription: 'السماح بالشهادات الموقعة ذاتيًا أو غير الموثوقة لخادم SMTP هذا فقط. يؤدي ذلك إلى إضعاف أمان الاتصال.',
+    smtpNoEncryptionWarning: 'سيتم إرسال محتوى البريد الإلكتروني وبيانات التسليم الوصفية دون تشفير. استخدم هذا الخيار فقط مع مرحل SMTP محلي موثوق.',
     noEncryption: 'بدون تشفير (غير مستحسن)',
     authentication: 'المصادقة',
     senderSettings: 'إعدادات المرسل',

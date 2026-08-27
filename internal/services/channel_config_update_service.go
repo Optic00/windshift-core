@@ -325,7 +325,7 @@ func (s *ChannelConfigUpdateService) prepareWebhookEnable(config *models.Channel
 }
 
 // prepareSMTPEnable validates an outbound SMTP channel before activation:
-// host, port, from address (as a bare mailbox), and an allowed TLS mode.
+// host, port, from address, transport mode, and authentication policy.
 func (s *ChannelConfigUpdateService) prepareSMTPEnable(config *models.ChannelConfig) error {
 	if strings.TrimSpace(config.SMTPHost) == "" || config.SMTPPort <= 0 || config.SMTPPort > 65535 || strings.TrimSpace(config.SMTPFromEmail) == "" {
 		return channelConfigInvalid("SMTP host, port, and from address are required before enabling this channel")
@@ -333,8 +333,8 @@ func (s *ChannelConfigUpdateService) prepareSMTPEnable(config *models.ChannelCon
 	if !validBareEmail(strings.TrimSpace(config.SMTPFromEmail)) {
 		return channelConfigInvalid("SMTP from address must be a valid bare email address")
 	}
-	if !windshiftsmtp.EncryptionModeAllowed(config.SMTPEncryption) {
-		return channelConfigInvalid("SMTP encryption must be tls, starttls, or ssl")
+	if err := windshiftsmtp.ValidateTransport(config); err != nil {
+		return channelConfigInvalid(err.Error())
 	}
 	return nil
 }
@@ -714,8 +714,11 @@ func validateEnabledChannel(channel *models.Channel, config *models.ChannelConfi
 		}
 	case "smtp":
 		from := strings.TrimSpace(config.SMTPFromEmail)
-		if strings.TrimSpace(config.SMTPHost) == "" || config.SMTPPort <= 0 || config.SMTPPort > 65535 || from == "" || !validBareEmail(from) || !windshiftsmtp.EncryptionModeAllowed(config.SMTPEncryption) {
-			return channelConfigInvalid("Enabled SMTP channels require a valid host, port, from address, and TLS mode")
+		if strings.TrimSpace(config.SMTPHost) == "" || config.SMTPPort <= 0 || config.SMTPPort > 65535 || from == "" || !validBareEmail(from) {
+			return channelConfigInvalid("Enabled SMTP channels require a valid host, port, from address, and transport mode")
+		}
+		if err := windshiftsmtp.ValidateTransport(config); err != nil {
+			return channelConfigInvalid(err.Error())
 		}
 	}
 	return nil

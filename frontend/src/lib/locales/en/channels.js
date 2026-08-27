@@ -283,6 +283,7 @@ export default {
     smtpEncryption: 'Encryption',
     smtpSkipTlsVerify: 'Skip certificate verification',
     smtpSkipTlsVerifyDescription: 'Allow self-signed or untrusted certificates for this SMTP server only. This weakens connection security.',
+    smtpNoEncryptionWarning: 'Email contents and delivery metadata will be sent without encryption. Use this only with a trusted local SMTP relay.',
     noEncryption: 'None (not recommended)',
     authentication: 'Authentication',
     senderSettings: 'Sender Settings',

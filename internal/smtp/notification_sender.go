@@ -12,7 +12,6 @@ import (
 	"net"
 	"net/mail"
 	"net/smtp"
-	"os"
 	"strings"
 	"time"
 
@@ -23,36 +22,43 @@ import (
 	"windshift/internal/utils"
 )
 
-// e2eInsecureSMTPEnv, when set to "1", unlocks plaintext SMTP over loopback.
-// Used solely by the e2e harness (run-e2e.sh exports it) so Mailpit can
-// capture transactional sends without a TLS dance. Production deployments
-// must never set this — leaving it unset preserves the dispatch() rejection
-// of encryption="none" and SafeNetDialer's loopback block.
-const e2eInsecureSMTPEnv = "WINDSHIFT_E2E_INSECURE_SMTP"
-
-func e2eInsecureSMTPEnabled() bool {
-	return os.Getenv(e2eInsecureSMTPEnv) == "1"
-}
-
 // EncryptionModeAllowed reports whether the sender can dispatch with the
-// configured mode. Plaintext is deliberately available only to the local E2E
-// harness; channel validation and dispatch must use the same policy so a test
-// configuration cannot be accepted by one layer and rejected by the other.
+// configured mode. Unknown and empty modes are rejected so a typo can never
+// silently downgrade a connection to plaintext.
 func EncryptionModeAllowed(mode string) bool {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "tls", "starttls", "ssl":
+	case "tls", "starttls", "ssl", "none":
 		return true
-	case "none":
-		return e2eInsecureSMTPEnabled()
 	default:
 		return false
 	}
+}
+
+// ValidateTransport rejects unsupported modes and authentication without TLS.
+// Plaintext SMTP is intended for trusted relays that authorize by network;
+// credentials must never be exposed on the connection.
+func ValidateTransport(config *models.ChannelConfig) error {
+	if config == nil {
+		return fmt.Errorf("SMTP config is required")
+	}
+	mode := strings.ToLower(strings.TrimSpace(config.SMTPEncryption))
+	if !EncryptionModeAllowed(mode) {
+		return fmt.Errorf("SMTP encryption %q not allowed; use \"tls\", \"starttls\", \"ssl\", or \"none\"", config.SMTPEncryption)
+	}
+	if mode == "none" && (strings.TrimSpace(config.SMTPUsername) != "" || config.SMTPPassword != "") {
+		return ErrSMTPAuthenticationRequiresTLS
+	}
+	return nil
 }
 
 // ErrSMTPNotConfigured is returned when a transactional send is attempted but
 // SMTP isn't configured. Re-exported by `internal/services` so existing
 // callers (e.g. internal/handlers/auth.go) keep working.
 var ErrSMTPNotConfigured = errors.New("SMTP is not configured")
+
+// ErrSMTPAuthenticationRequiresTLS is returned when a plaintext channel
+// contains credentials that would otherwise be exposed on the connection.
+var ErrSMTPAuthenticationRequiresTLS = errors.New("SMTP authentication requires TLS")
 
 // Encryptor mirrors email.Encryptor — duplicated here to avoid an
 // smtp→email→services→smtp import cycle. *sso.SecretEncryption (the same
@@ -422,13 +428,10 @@ func formatMessageIDHeader(value string) string {
 	return "<" + value + ">"
 }
 
-// dispatch picks the encryption path (TLS/SSL) and sends the assembled MIME
+// dispatch picks the configured transport and sends the assembled MIME
 // message. Shared by sendEmail and SendThreadedEmail so the encryption switch
-// lives in exactly one place. Plaintext SMTP is refused — it ships AUTH PLAIN
-// credentials in the clear and bypasses the server-identity check, mirroring
-// how email/imap_client.go rejects plaintext IMAP. Misconfigurations (empty
-// or typo'd SMTPEncryption) are surfaced as errors instead of silently
-// downgrading.
+// lives in exactly one place. Plaintext SMTP is allowed only without
+// authentication; empty or unknown modes are errors rather than downgrades.
 //
 // dispatch is a method (rather than a free function) so it can decrypt the
 // at-rest SMTPPassword before passing it to AUTH PLAIN — every caller goes
@@ -449,6 +452,9 @@ func (s *NotificationSMTPSender) dispatch(config *models.ChannelConfig, toEmail,
 	if strings.TrimSpace(config.SMTPHost) == "" || config.SMTPPort <= 0 || config.SMTPPort > 65535 {
 		return fmt.Errorf("invalid SMTP host or port")
 	}
+	if err := ValidateTransport(config); err != nil {
+		return err
+	}
 	password, err := decryptOrLegacy(s.encryption, config.SMTPPassword)
 	if err != nil {
 		return err
@@ -461,18 +467,15 @@ func (s *NotificationSMTPSender) dispatch(config *models.ChannelConfig, toEmail,
 
 	addr := fmt.Sprintf("%s:%d", config.SMTPHost, config.SMTPPort)
 
-	switch strings.ToLower(config.SMTPEncryption) {
+	switch strings.ToLower(strings.TrimSpace(config.SMTPEncryption)) {
 	case "tls", "starttls":
 		return sendWithStartTLS(addr, auth, fromEmail, toEmail, message, config.SMTPSkipTLSVerify)
 	case "ssl":
 		return sendWithSSL(addr, auth, fromEmail, toEmail, message, config.SMTPSkipTLSVerify)
 	case "none":
-		if EncryptionModeAllowed(config.SMTPEncryption) {
-			return sendPlaintext(addr, auth, fromEmail, toEmail, message)
-		}
-		fallthrough
+		return sendPlaintext(addr, fromEmail, toEmail, message)
 	default:
-		return fmt.Errorf("SMTP encryption %q not allowed; use \"tls\", \"starttls\", or \"ssl\"", config.SMTPEncryption)
+		return fmt.Errorf("SMTP encryption %q not allowed", config.SMTPEncryption)
 	}
 }
 
@@ -546,12 +549,11 @@ func smtpTLSConfig(addr string, skipTLSVerify bool) *tls.Config {
 	return config
 }
 
-// sendPlaintext sends email over an unencrypted SMTP connection. Gated by
-// WINDSHIFT_E2E_INSECURE_SMTP=1 (set only by the e2e harness so Mailpit on
-// loopback can capture transactional sends). Uses a plain net.Dialer rather
-// than utils.SafeNetDialer so 127.0.0.1 is reachable.
-func sendPlaintext(addr string, auth smtp.Auth, from, to, message string) error {
-	conn, err := (&net.Dialer{Timeout: smtpDialTimeout}).Dial("tcp", addr)
+// sendPlaintext sends unauthenticated email over an unencrypted connection.
+// SafeNetDialer keeps the process-wide local-connection policy effective for
+// this transport just as it is for TLS SMTP.
+func sendPlaintext(addr, from, to, message string) error {
+	conn, err := utils.SafeNetDialer(smtpDialTimeout).Dial("tcp", addr)
 	if err != nil {
 		return err
 	}
@@ -566,7 +568,7 @@ func sendPlaintext(addr string, auth smtp.Auth, from, to, message string) error 
 	}
 	defer func() { _ = client.Close() }()
 
-	return sendWithClient(client, auth, from, to, message)
+	return sendWithClient(client, nil, from, to, message)
 }
 
 // sendWithClient performs authentication, addressing, and message delivery on an established SMTP client.

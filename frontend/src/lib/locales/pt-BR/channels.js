@@ -260,6 +260,7 @@ export default {
     smtpEncryption: 'Criptografia',
     smtpSkipTlsVerify: 'Ignorar verificação do certificado',
     smtpSkipTlsVerifyDescription: 'Permite certificados autoassinados ou não confiáveis somente para este servidor SMTP. Isso reduz a segurança da conexão.',
+    smtpNoEncryptionWarning: 'O conteúdo do e-mail e os metadados de entrega serão enviados sem criptografia. Use esta opção apenas com um relay SMTP local confiável.',
     noEncryption: 'Nenhuma (não recomendado)',
     authentication: 'Autenticação',
     senderSettings: 'Configurações do Remetente',

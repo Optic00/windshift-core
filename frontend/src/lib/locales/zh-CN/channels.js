@@ -243,6 +243,7 @@ export default {
     smtpEncryption: '加密',
     smtpSkipTlsVerify: '跳过证书验证',
     smtpSkipTlsVerifyDescription: '仅允许此 SMTP 服务器使用自签名或不受信任的证书。这会降低连接安全性。',
+    smtpNoEncryptionWarning: '邮件内容和投递元数据将不加密发送。仅可将此选项用于受信任的本地 SMTP 中继。',
     noEncryption: '无（不推荐）',
     authentication: '认证',
     senderSettings: '发件人设置',
