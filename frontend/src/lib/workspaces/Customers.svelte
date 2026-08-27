@@ -362,7 +362,7 @@
   />
 
   <!-- Main Content -->
-  <div class="flex-1 p-6">
+  <div class="flex-1 min-w-0 p-6">
     {#if loading}
       <div class="flex items-center justify-center h-64">
         <Spinner />

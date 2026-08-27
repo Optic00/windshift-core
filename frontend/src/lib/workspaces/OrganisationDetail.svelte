@@ -132,7 +132,7 @@
 </script>
 
 <!-- Header -->
-<div class="flex items-center gap-4">
+<div class="flex items-center gap-4 mb-8">
   {#if organisation}
     <Avatar
       src={organisation.avatar_url}
@@ -142,8 +142,9 @@
       rounded="md"
     />
   {/if}
-  <div class="flex-1">
+  <div class="flex-1 min-w-0">
     <PageHeader
+      marginClass="mb-0"
       title={organisation ? organisation.name : (t('workspaces.customers.unassignedCustomers'))}
       subtitle={t('workspaces.customers.customerCount', { count: filteredCount })}
     >

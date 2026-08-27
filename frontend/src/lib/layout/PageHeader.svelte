@@ -10,7 +10,8 @@
     textStyle = '',
     subtitleStyle = '',
     children = null,
-    actions = null
+    actions = null,
+    marginClass = 'mb-8'
   } = $props();
 </script>
 
@@ -25,4 +26,5 @@
   {textStyle}
   {subtitleStyle}
   iconStyle={subtitleStyle}
+  {marginClass}
 />
