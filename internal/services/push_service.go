@@ -260,11 +260,12 @@ type webPushSender func(context.Context, []byte, *webpush.Subscription, *webpush
 // push messages when notifications are created. It is a no-op when VAPID keys
 // are not configured (Enabled() == false).
 type PushService struct {
-	db         database.Database
-	cfg        config.PushConfig
-	serviceCfg PushServiceConfig
-	httpClient *http.Client
-	send       webPushSender
+	db          database.Database
+	cfg         config.PushConfig
+	serviceCfg  PushServiceConfig
+	httpClient  *http.Client
+	send        webPushSender
+	permService *PermissionService
 
 	queue        chan pushJob
 	enqueueMu    sync.RWMutex
@@ -292,11 +293,11 @@ type PushService struct {
 
 // NewPushService constructs a PushService. The returned service is safe to use
 // even when push is disabled — every method degrades to a no-op / empty result.
-func NewPushService(db database.Database, cfg config.PushConfig) *PushService {
-	return newPushService(db, cfg, DefaultPushServiceConfig(), webpush.SendNotificationWithContext)
+func NewPushService(db database.Database, cfg config.PushConfig, permissionServices ...*PermissionService) *PushService {
+	return newPushService(db, cfg, DefaultPushServiceConfig(), webpush.SendNotificationWithContext, permissionServices...)
 }
 
-func newPushService(db database.Database, cfg config.PushConfig, serviceCfg PushServiceConfig, sender webPushSender) *PushService {
+func newPushService(db database.Database, cfg config.PushConfig, serviceCfg PushServiceConfig, sender webPushSender, permissionServices ...*PermissionService) *PushService {
 	defaults := DefaultPushServiceConfig()
 	if serviceCfg.QueueSize <= 0 {
 		serviceCfg.QueueSize = defaults.QueueSize
@@ -343,6 +344,9 @@ func newPushService(db database.Database, cfg config.PushConfig, serviceCfg Push
 		queue:        make(chan pushJob, serviceCfg.QueueSize),
 		workerCtx:    workerCtx,
 		workerCancel: workerCancel,
+	}
+	if len(permissionServices) > 0 {
+		service.permService = permissionServices[0]
 	}
 	if service.Enabled() {
 		service.wg.Add(serviceCfg.Workers)
@@ -488,6 +492,13 @@ func (s *PushService) dispatch(ctx context.Context, notification models.Notifica
 			err = fmt.Errorf("push dispatch panic: %v", recovered)
 		}
 	}()
+	visible, err := s.notificationVisible(notification)
+	if err != nil {
+		return err
+	}
+	if !visible {
+		return nil
+	}
 
 	body := notification.Message
 	if body == "" {
@@ -521,6 +532,29 @@ func (s *PushService) dispatch(ctx context.Context, notification models.Notifica
 		Type:  notification.Type,
 		URL:   actionURL,
 	})
+}
+
+func (s *PushService) notificationVisible(notification models.Notification) (bool, error) {
+	switch notification.AuthorizationScope {
+	case models.NotificationScopeSystem, models.NotificationScopeAsset:
+		return true, nil
+	case models.NotificationScopeWorkspace:
+		if notification.WorkspaceID == nil || s.permService == nil {
+			return false, nil
+		}
+		workspaceIDs, err := s.permService.AccessibleWorkspaceIDs(notification.UserID)
+		if err != nil {
+			return false, fmt.Errorf("resolve push notification workspace scope: %w", err)
+		}
+		for _, workspaceID := range workspaceIDs {
+			if workspaceID == *notification.WorkspaceID {
+				return true, nil
+			}
+		}
+		return false, nil
+	default:
+		return false, nil
+	}
 }
 
 // deliver loads the user's active subscriptions and sends one push each,

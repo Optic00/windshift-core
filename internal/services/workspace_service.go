@@ -41,21 +41,30 @@ func NewWorkspaceServiceWithAccess(db database.Database, access WorkspaceSourceA
 
 // WorkspaceListParams contains the parameters for listing workspaces.
 type WorkspaceListParams struct {
-	UserID int
-	Limit  int
-	Offset int
+	WorkspaceIDs []int
+	Limit        int
+	Offset       int
 }
 
-// List retrieves all workspaces accessible to a user with pagination.
-// This checks both direct user workspace roles and group workspace roles.
+// List retrieves a page from an already-authorized workspace ID snapshot.
 func (s *WorkspaceService) List(params WorkspaceListParams) ([]models.Workspace, int, error) {
+	if len(params.WorkspaceIDs) == 0 {
+		return []models.Workspace{}, 0, nil
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(params.WorkspaceIDs)), ",")
+	workspaceArgs := make([]any, len(params.WorkspaceIDs))
+	for i, workspaceID := range params.WorkspaceIDs {
+		workspaceArgs[i] = workspaceID
+	}
+	listArgs := append(append([]any{}, workspaceArgs...), params.Limit, params.Offset)
 	rows, err := s.db.Query(`
-		SELECT DISTINCT w.id, w.name, w.key, w.description, w.active, w.is_template, w.is_personal,
+		SELECT w.id, w.name, w.key, w.description, w.active, w.is_template, w.is_personal,
 		       w.icon, w.color, w.internal_comments_enabled, w.created_at, w.updated_at
-		`+repository.AccessibleWorkspacesJoin+`
+		FROM workspaces w
+		WHERE w.id IN (`+placeholders+`)
 		ORDER BY w.name
 		LIMIT ? OFFSET ?
-	`, params.UserID, params.UserID, params.UserID, params.Limit, params.Offset)
+	`, listArgs...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to list workspaces: %w", err)
 	}
@@ -82,10 +91,8 @@ func (s *WorkspaceService) List(params WorkspaceListParams) ([]models.Workspace,
 		workspaces = []models.Workspace{}
 	}
 
-	// Get total count
 	var total int
-	err = s.db.QueryRow("SELECT COUNT(DISTINCT w.id)"+repository.AccessibleWorkspacesJoin,
-		params.UserID, params.UserID, params.UserID).Scan(&total)
+	err = s.db.QueryRow("SELECT COUNT(*) FROM workspaces WHERE id IN ("+placeholders+")", workspaceArgs...).Scan(&total)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to count workspaces: %w", err)
 	}

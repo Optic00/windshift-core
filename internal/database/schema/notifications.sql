@@ -22,6 +22,11 @@ CREATE TABLE IF NOT EXISTS notifications (
 	avatar TEXT, -- Initials or avatar identifier
 	action_url TEXT, -- URL to navigate to when clicked
 	metadata TEXT, -- JSON for additional data
+	authorization_scope TEXT NOT NULL DEFAULT 'legacy', -- legacy rows fail closed at delivery
+	workspace_id INTEGER,
+	item_id INTEGER,
+	source_type TEXT,
+	source_id INTEGER,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -32,6 +37,7 @@ CREATE INDEX IF NOT EXISTS idx_notifications_timestamp ON notifications(timestam
 CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(read);
 CREATE INDEX IF NOT EXISTS idx_notifications_sent_at ON notifications(sent_at);
 CREATE INDEX IF NOT EXISTS idx_notifications_type ON notifications(type);
+CREATE INDEX IF NOT EXISTS idx_notifications_workspace_id ON notifications(workspace_id);
 
 -- Email templates: per-sender HTML/text/subject Go templates editable from the
 -- admin UI. `name` is the lookup key consumed by senders (e.g. "magic_link",

@@ -128,11 +128,16 @@ func (h *WorkspaceHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	pagination := h.ParsePagination(r)
+	accessibleWorkspaceIDs, err := h.Perms.GetAccessibleWorkspaceIDs(user.ID)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
 
 	results, total, err := h.workspaceService.List(services.WorkspaceListParams{
-		UserID: user.ID,
-		Limit:  pagination.Limit,
-		Offset: pagination.Offset,
+		WorkspaceIDs: accessibleWorkspaceIDs,
+		Limit:        pagination.Limit,
+		Offset:       pagination.Offset,
 	})
 	if err != nil {
 		h.RespondInternalError(w, r)

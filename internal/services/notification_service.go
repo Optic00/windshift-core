@@ -124,83 +124,128 @@ type NotificationService struct {
 	errors           int64
 }
 
-// UnreadEmailBatches returns notifications that still need emailing, grouped by
-// user. It filters out in-app-read notifications so a user who reads their tray
-// within the batch window doesn't get a redundant email, and caps each user's
-// batch at maxBatchSize via SQL ROW_NUMBER so a user with a huge backlog (say
-// 100k unread) doesn't drag the entire row set across the wire just to keep a
-// handful of them. Window functions are supported on SQLite 3.25+ and on every
-// supported Postgres version.
+// UnreadEmailBatches resolves one current workspace scope per recipient, then
+// bulk-filters and caps that recipient's pending rows. Legacy scopes fail closed.
 func (ns *NotificationService) UnreadEmailBatches(maxBatchSize int) (map[string]*UserNotificationBatch, error) {
-	query := `
-		SELECT id, user_id, title, message, type, timestamp, read,
-		       sent_at, avatar, action_url, metadata, created_at, updated_at,
-		       email, first_name, last_name
-		FROM (
-			SELECT n.id, n.user_id, n.title, n.message, n.type, n.timestamp, n.read,
-			       n.sent_at, n.avatar, n.action_url, n.metadata, n.created_at, n.updated_at,
-			       u.email, u.first_name, u.last_name,
-			       ROW_NUMBER() OVER (PARTITION BY u.email ORDER BY n.timestamp DESC) AS rn
-			FROM notifications n
-			JOIN users u ON n.user_id = u.id
-			WHERE n.sent_at IS NULL AND n.read = false AND u.email != ''
-		) ranked
-		WHERE rn <= ?
-		ORDER BY email, timestamp DESC
-	`
-
-	rows, err := ns.db.Query(query, maxBatchSize)
+	rows, err := ns.db.Query(`
+		SELECT DISTINCT u.id, u.email, u.first_name, u.last_name
+		FROM notifications n
+		JOIN users u ON n.user_id = u.id
+		WHERE n.sent_at IS NULL AND n.read = false AND u.email != ''
+		  AND n.authorization_scope IN (?, ?, ?)
+	`, models.NotificationScopeSystem, models.NotificationScopeWorkspace, models.NotificationScopeAsset)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query unread notifications: %w", err)
+		return nil, fmt.Errorf("query notification email recipients: %w", err)
 	}
-	defer rows.Close()
-
-	userBatches := make(map[string]*UserNotificationBatch)
-
+	type recipient struct {
+		id                 int
+		email, first, last string
+	}
+	recipients := make([]recipient, 0)
 	for rows.Next() {
-		var n models.Notification
-		var avatar, actionURL, metadata *string
-		var email, firstName, lastName string
+		var candidate recipient
+		if err := rows.Scan(&candidate.id, &candidate.email, &candidate.first, &candidate.last); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("scan notification email recipient: %w", err)
+		}
+		recipients = append(recipients, candidate)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, fmt.Errorf("iterate notification email recipients: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close notification email recipients: %w", err)
+	}
 
-		err := rows.Scan(
-			&n.ID, &n.UserID, &n.Title, &n.Message, &n.Type,
-			&n.Timestamp, &n.Read, &n.SentAt, &avatar, &actionURL, &metadata,
-			&n.CreatedAt, &n.UpdatedAt, &email, &firstName, &lastName,
-		)
+	batches := make(map[string]*UserNotificationBatch, len(recipients))
+	for _, candidate := range recipients {
+		workspaceIDs := []int{}
+		if ns.permService != nil {
+			workspaceIDs, err = ns.permService.AccessibleWorkspaceIDs(candidate.id)
+			if err != nil {
+				return nil, fmt.Errorf("resolve notification scope for user %d: %w", candidate.id, err)
+			}
+		}
+		notifications, err := ns.unreadEmailNotificationsForUser(candidate.id, workspaceIDs, maxBatchSize)
 		if err != nil {
 			return nil, err
 		}
+		if len(notifications) == 0 {
+			continue
+		}
+		batch := &UserNotificationBatch{
+			UserID:          candidate.id,
+			UserEmail:       candidate.email,
+			UserName:        strings.TrimSpace(candidate.first + " " + candidate.last),
+			Notifications:   notifications,
+			NotificationIDs: make([]int, len(notifications)),
+		}
+		for i, notification := range notifications {
+			batch.NotificationIDs[i] = notification.ID
+		}
+		batches[candidate.email] = batch
+	}
+	return batches, nil
+}
 
-		// Set optional fields
+func (ns *NotificationService) unreadEmailNotificationsForUser(userID int, workspaceIDs []int, limit int) ([]models.Notification, error) {
+	args := []any{userID, models.NotificationScopeSystem, models.NotificationScopeAsset}
+	scope := "n.authorization_scope IN (?, ?)"
+	if len(workspaceIDs) > 0 {
+		placeholders := make([]string, len(workspaceIDs))
+		for i, workspaceID := range workspaceIDs {
+			placeholders[i] = "?"
+			args = append(args, workspaceID)
+		}
+		scope += " OR (n.authorization_scope = ? AND n.workspace_id IN (" + strings.Join(placeholders, ",") + "))"
+		args = append(args[:3], append([]any{models.NotificationScopeWorkspace}, args[3:]...)...)
+	}
+	args = append(args, limit)
+	rows, err := ns.db.Query(`
+		SELECT n.id, n.user_id, n.title, n.message, n.type, n.timestamp, n.read,
+		       n.sent_at, n.avatar, n.action_url, n.metadata, n.authorization_scope,
+		       n.workspace_id, n.item_id, n.source_type, n.source_id, n.created_at, n.updated_at
+		FROM notifications n
+		WHERE n.user_id = ? AND n.sent_at IS NULL AND n.read = false AND (`+scope+`)
+		ORDER BY n.timestamp DESC, n.id DESC
+		LIMIT ?
+	`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query unread notifications for user %d: %w", userID, err)
+	}
+	defer rows.Close()
+
+	notifications := make([]models.Notification, 0, limit)
+	for rows.Next() {
+		var notification models.Notification
+		var avatar, actionURL, metadata, sourceType *string
+		if err := rows.Scan(
+			&notification.ID, &notification.UserID, &notification.Title, &notification.Message, &notification.Type,
+			&notification.Timestamp, &notification.Read, &notification.SentAt, &avatar, &actionURL, &metadata,
+			&notification.AuthorizationScope, &notification.WorkspaceID, &notification.ItemID, &sourceType, &notification.SourceID,
+			&notification.CreatedAt, &notification.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan unread notification for user %d: %w", userID, err)
+		}
 		if avatar != nil {
-			n.Avatar = *avatar
+			notification.Avatar = *avatar
 		}
 		if actionURL != nil {
-			n.ActionURL = *actionURL
+			notification.ActionURL = *actionURL
 		}
 		if metadata != nil {
-			n.Metadata = *metadata
+			notification.Metadata = *metadata
 		}
-
-		// Get or create user batch
-		batch, exists := userBatches[email]
-		if !exists {
-			userName := fmt.Sprintf("%s %s", firstName, lastName)
-			batch = &UserNotificationBatch{
-				UserID:          n.UserID,
-				UserEmail:       email,
-				UserName:        userName,
-				Notifications:   []models.Notification{},
-				NotificationIDs: []int{},
-			}
-			userBatches[email] = batch
+		if sourceType != nil {
+			notification.SourceType = *sourceType
 		}
-
-		batch.Notifications = append(batch.Notifications, n)
-		batch.NotificationIDs = append(batch.NotificationIDs, n.ID)
+		notifications = append(notifications, notification)
 	}
-
-	return userBatches, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate unread notifications for user %d: %w", userID, err)
+	}
+	return notifications, nil
 }
 
 // NewNotificationService creates a new notification service. The
@@ -278,7 +323,8 @@ func (ns *NotificationService) NotifyUsers(userIDs []int, workspaceID, itemID, a
 			return ns.permService.HasWorkspacePermission(userID, workspaceID, models.PermissionItemView)
 		}
 	}
-	_, err := ns.notifyUsersAtURL(userIDs, actorUserID, notifType, title, message, itemActionURL(workspaceID, itemID), authorize)
+	_, err := ns.notifyUsersAtURL(userIDs, actorUserID, notifType, title, message, itemActionURL(workspaceID, itemID),
+		models.NotificationScopeWorkspace, &workspaceID, &itemID, "item", &itemID, authorize)
 	return err
 }
 
@@ -297,10 +343,19 @@ func (ns *NotificationService) NotifyUsersForAsset(userIDs []int, setID, assetID
 	authorize := func(userID int) (bool, error) {
 		return checker.HasAssetSetPermission(userID, setID, AssetPermissionKeyView)
 	}
-	return ns.notifyUsersAtURL(userIDs, actorUserID, notifType, title, message, actionURL, authorize)
+	return ns.notifyUsersAtURL(userIDs, actorUserID, notifType, title, message, actionURL,
+		models.NotificationScopeAsset, nil, nil, "asset", &assetID, authorize)
 }
 
-func (ns *NotificationService) notifyUsersAtURL(userIDs []int, actorUserID int, notifType, title, message, actionURL string, authorize func(int) (bool, error)) ([]int, error) {
+func (ns *NotificationService) notifyUsersAtURL(
+	userIDs []int,
+	actorUserID int,
+	notifType, title, message, actionURL, authorizationScope string,
+	workspaceID, itemID *int,
+	sourceType string,
+	sourceID *int,
+	authorize func(int) (bool, error),
+) ([]int, error) {
 	if ns.notificationManager == nil {
 		return nil, fmt.Errorf("notification manager not configured")
 	}
@@ -327,13 +382,18 @@ func (ns *NotificationService) notifyUsersAtURL(userIDs []int, actorUserID int, 
 			}
 		}
 		notifications = append(notifications, models.Notification{
-			UserID:    uid,
-			Title:     title,
-			Message:   message,
-			Type:      notifType,
-			Timestamp: now,
-			Read:      false,
-			ActionURL: actionURL,
+			UserID:             uid,
+			Title:              title,
+			Message:            message,
+			Type:               notifType,
+			Timestamp:          now,
+			Read:               false,
+			ActionURL:          actionURL,
+			AuthorizationScope: authorizationScope,
+			WorkspaceID:        workspaceID,
+			ItemID:             itemID,
+			SourceType:         sourceType,
+			SourceID:           sourceID,
 		})
 		deliveredUserIDs = append(deliveredUserIDs, uid)
 	}
@@ -522,13 +582,18 @@ func (ns *NotificationService) processEvent(ctx context.Context, event *Notifica
 			}
 
 			notifications = append(notifications, models.Notification{
-				UserID:    userID,
-				Title:     title,
-				Message:   message,
-				Type:      ns.getNotificationType(event.EventType),
-				Timestamp: now,
-				Read:      false,
-				ActionURL: itemActionURL(event.WorkspaceID, event.ItemID),
+				UserID:             userID,
+				Title:              title,
+				Message:            message,
+				Type:               ns.getNotificationType(event.EventType),
+				Timestamp:          now,
+				Read:               false,
+				ActionURL:          itemActionURL(event.WorkspaceID, event.ItemID),
+				AuthorizationScope: models.NotificationScopeWorkspace,
+				WorkspaceID:        &event.WorkspaceID,
+				ItemID:             &event.ItemID,
+				SourceType:         event.EventType,
+				SourceID:           &event.ItemID,
 			})
 		}
 	}

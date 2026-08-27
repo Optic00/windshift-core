@@ -293,10 +293,38 @@ func (at *ActivityTracker) GetUserActivity(userID int) (*UserActivityCache, erro
 	return result, nil
 }
 
-// mergePendingActivities adds pending buffer activities to the cached result
+// mergePendingActivities adds pending visits and item activity to a cached result.
 func (at *ActivityTracker) mergePendingActivities(userID int, cached *UserActivityCache) {
 	at.pendingMu.RLock()
 	defer at.pendingMu.RUnlock()
+
+	for _, visit := range at.pendingWorkspaceVisits {
+		if visit.UserID != userID {
+			continue
+		}
+
+		found := false
+		for i, existing := range cached.WorkspaceVisits {
+			if existing.WorkspaceID != visit.WorkspaceID {
+				continue
+			}
+			if visit.VisitedAt.After(existing.VisitedAt) {
+				cached.WorkspaceVisits[i].VisitedAt = visit.VisitedAt
+			}
+			cached.WorkspaceVisits[i].VisitCount += visit.VisitCount
+			found = true
+			break
+		}
+		if !found {
+			cached.WorkspaceVisits = append(cached.WorkspaceVisits, *visit)
+		}
+	}
+	sort.Slice(cached.WorkspaceVisits, func(i, j int) bool {
+		return cached.WorkspaceVisits[i].VisitedAt.After(cached.WorkspaceVisits[j].VisitedAt)
+	})
+	if len(cached.WorkspaceVisits) > at.config.MaxWorkspaceVisits {
+		cached.WorkspaceVisits = cached.WorkspaceVisits[:at.config.MaxWorkspaceVisits]
+	}
 
 	for _, activity := range at.pendingItemActivities {
 		if activity.UserID != userID {

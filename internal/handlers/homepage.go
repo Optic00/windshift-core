@@ -145,8 +145,9 @@ func (h *HomepageHandler) GetHomepage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Get total workspace count (excluding personal workspaces for onboarding purposes)
-	workspaceCount, err := h.workspaceRepo.CountNonPersonal()
+	// Homepage totals cover only the workspaces visible in this request's
+	// permission snapshot.
+	workspaceCount, err := h.workspaceRepo.CountNonPersonalByIDs(accessibleWorkspaceIDs)
 	if err != nil {
 		slog.Warn("error getting workspace count", slog.String("component", "homepage"), slog.Any("error", err))
 		// Continue even if count fails - not critical
@@ -154,8 +155,7 @@ func (h *HomepageHandler) GetHomepage(w http.ResponseWriter, r *http.Request) {
 		homepageData.TotalWorkspaceCount = workspaceCount
 	}
 
-	// Get total item count system-wide (for onboarding purposes)
-	itemCount, err := h.itemRepo.CountActiveNonPersonalItems()
+	itemCount, err := h.itemRepo.CountNonPersonalByWorkspaceIDs(accessibleWorkspaceIDs)
 	if err != nil {
 		slog.Warn("error getting item count", slog.String("component", "homepage"), slog.Any("error", err))
 		// Continue even if count fails - not critical
@@ -165,7 +165,7 @@ func (h *HomepageHandler) GetHomepage(w http.ResponseWriter, r *http.Request) {
 
 	// Batch load workspace details for recent visits
 	if len(userActivity.WorkspaceVisits) > 0 {
-		workspaceActivities, err := h.getWorkspaceActivitiesBatch(userActivity.WorkspaceVisits)
+		workspaceActivities, err := h.getWorkspaceActivitiesBatch(userActivity.WorkspaceVisits, accessibleWorkspaceIDs)
 		if err != nil {
 			slog.Warn("error loading workspace activities", slog.String("component", "homepage"), slog.Any("error", err))
 		} else {
@@ -272,18 +272,28 @@ func (h *HomepageHandler) GetHomepage(w http.ResponseWriter, r *http.Request) {
 	respondJSONOK(w, homepageData)
 }
 
-// getWorkspaceActivitiesBatch batch loads workspace details for multiple workspace visits
-func (h *HomepageHandler) getWorkspaceActivitiesBatch(visits []services.WorkspaceVisit) ([]WorkspaceActivity, error) {
-	if len(visits) == 0 {
+// getWorkspaceActivitiesBatch loads current metadata only for visible visits.
+func (h *HomepageHandler) getWorkspaceActivitiesBatch(visits []services.WorkspaceVisit, accessibleWorkspaceIDs []int) ([]WorkspaceActivity, error) {
+	if len(visits) == 0 || len(accessibleWorkspaceIDs) == 0 {
 		return []WorkspaceActivity{}, nil
 	}
 
-	// Build workspace ID list
-	workspaceIDs := make([]int, len(visits))
+	allowed := make(map[int]struct{}, len(accessibleWorkspaceIDs))
+	for _, workspaceID := range accessibleWorkspaceIDs {
+		allowed[workspaceID] = struct{}{}
+	}
+
+	workspaceIDs := make([]int, 0, len(visits))
 	visitMap := make(map[int]services.WorkspaceVisit)
-	for i, visit := range visits {
-		workspaceIDs[i] = visit.WorkspaceID
+	for _, visit := range visits {
+		if _, ok := allowed[visit.WorkspaceID]; !ok {
+			continue
+		}
+		workspaceIDs = append(workspaceIDs, visit.WorkspaceID)
 		visitMap[visit.WorkspaceID] = visit
+	}
+	if len(workspaceIDs) == 0 {
+		return []WorkspaceActivity{}, nil
 	}
 
 	basics, err := h.workspaceRepo.FindBasicsByIDs(workspaceIDs)

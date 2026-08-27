@@ -17,6 +17,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/sanitize"
+	"windshift/internal/services"
 	"windshift/internal/utils"
 
 	"github.com/allegro/bigcache/v3"
@@ -101,8 +102,9 @@ type PushDispatcher interface {
 
 // NotificationHandler handles HTTP requests for notifications
 type NotificationHandler struct {
-	manager *NotificationManager
-	service NotificationService
+	manager     *NotificationManager
+	service     NotificationService
+	permService *services.PermissionService
 }
 
 // NewNotificationManager creates a new notification manager with BigCache
@@ -135,11 +137,12 @@ func NewNotificationManager(db database.Database, nmCfg NotificationManagerConfi
 }
 
 // NewNotificationHandler creates a new notification handler
-func NewNotificationHandler(manager *NotificationManager, service NotificationService) *NotificationHandler {
-	return &NotificationHandler{
-		manager: manager,
-		service: service,
+func NewNotificationHandler(manager *NotificationManager, service NotificationService, permissionServices ...*services.PermissionService) *NotificationHandler {
+	handler := &NotificationHandler{manager: manager, service: service}
+	if len(permissionServices) > 0 {
+		handler.permService = permissionServices[0]
 	}
+	return handler
 }
 
 // getCacheKey generates a cache key for a user's notifications
@@ -282,6 +285,9 @@ func (nm *NotificationManager) AddNotificationsContext(ctx context.Context, noti
 	userIDs := make([]int, len(stored))
 	now := time.Now()
 	for i := range stored {
+		if err := validateNotificationAuthorizationScope(stored[i]); err != nil {
+			return nil, err
+		}
 		stored[i].CreatedAt = now
 		stored[i].UpdatedAt = now
 		if stored[i].Timestamp.IsZero() {
@@ -361,20 +367,43 @@ func (nm *NotificationManager) AddNotificationsContext(ctx context.Context, noti
 	return stored, nil
 }
 
+func validateNotificationAuthorizationScope(notification models.Notification) error {
+	switch notification.AuthorizationScope {
+	case models.NotificationScopeSystem:
+		if notification.WorkspaceID != nil {
+			return fmt.Errorf("system notification cannot carry workspace authorization scope")
+		}
+	case models.NotificationScopeWorkspace:
+		if notification.WorkspaceID == nil || *notification.WorkspaceID <= 0 {
+			return fmt.Errorf("workspace notification requires workspace provenance")
+		}
+	case models.NotificationScopeAsset:
+		if notification.SourceID == nil || *notification.SourceID <= 0 {
+			return fmt.Errorf("asset notification requires source provenance")
+		}
+	default:
+		return fmt.Errorf("notification requires trusted authorization scope")
+	}
+	return nil
+}
+
 func insertNotificationChunk(ctx context.Context, tx database.Tx, notifications []models.Notification) error {
 	values := make([]string, len(notifications))
-	args := make([]any, 0, len(notifications)*11)
+	args := make([]any, 0, len(notifications)*16)
 	for i, notification := range notifications {
-		values[i] = "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+		values[i] = "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 		args = append(args,
 			notification.UserID, notification.Title, notification.Message, notification.Type,
 			notification.Timestamp, notification.Read, nullableString(notification.Avatar),
 			nullableString(notification.ActionURL), nullableString(notification.Metadata),
+			notification.AuthorizationScope, notification.WorkspaceID, notification.ItemID,
+			nullableString(notification.SourceType), notification.SourceID,
 			notification.CreatedAt, notification.UpdatedAt,
 		)
 	}
 	query := `
-		INSERT INTO notifications (user_id, title, message, type, timestamp, read, avatar, action_url, metadata, created_at, updated_at)
+		INSERT INTO notifications (user_id, title, message, type, timestamp, read, avatar, action_url, metadata,
+			authorization_scope, workspace_id, item_id, source_type, source_id, created_at, updated_at)
 		VALUES ` + strings.Join(values, ",") + ` RETURNING id`
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -634,7 +663,8 @@ const notificationTrayRetention = 10 * 24 * time.Hour
 // queryNotifications loads one retained notification page from the database.
 func (nm *NotificationManager) queryNotifications(userID, limit, offset int) ([]models.Notification, error) {
 	query := `
-		SELECT id, user_id, title, message, type, timestamp, read, seen_at, avatar, action_url, metadata, created_at, updated_at
+		SELECT id, user_id, title, message, type, timestamp, read, seen_at, avatar, action_url, metadata,
+		       authorization_scope, workspace_id, item_id, source_type, source_id, created_at, updated_at
 		FROM notifications
 		WHERE user_id = ? AND timestamp >= ?
 		ORDER BY timestamp DESC, id DESC
@@ -651,11 +681,13 @@ func (nm *NotificationManager) queryNotifications(userID, limit, offset int) ([]
 	var notifications []models.Notification
 	for rows.Next() {
 		var n models.Notification
-		var avatar, actionURL, metadata *string
+		var avatar, actionURL, metadata, sourceType *string
+		var workspaceID, itemID, sourceID *int
 
 		err := rows.Scan(
 			&n.ID, &n.UserID, &n.Title, &n.Message, &n.Type,
 			&n.Timestamp, &n.Read, &n.SeenAt, &avatar, &actionURL, &metadata,
+			&n.AuthorizationScope, &workspaceID, &itemID, &sourceType, &sourceID,
 			&n.CreatedAt, &n.UpdatedAt,
 		)
 		if err != nil {
@@ -671,6 +703,12 @@ func (nm *NotificationManager) queryNotifications(userID, limit, offset int) ([]
 		if metadata != nil {
 			n.Metadata = *metadata
 		}
+		n.WorkspaceID = workspaceID
+		n.ItemID = itemID
+		n.SourceID = sourceID
+		if sourceType != nil {
+			n.SourceType = *sourceType
+		}
 
 		notifications = append(notifications, n)
 	}
@@ -679,6 +717,64 @@ func (nm *NotificationManager) queryNotifications(userID, limit, offset int) ([]
 	}
 
 	return notifications, nil
+}
+
+// GetVisibleUserNotifications applies one authorized workspace snapshot to a
+// paginated tray query. Legacy and unknown scopes fail closed.
+func (nm *NotificationManager) GetVisibleUserNotifications(userID int, workspaceIDs []int, limit, offset int) ([]models.Notification, error) {
+	args := []any{userID, time.Now().Add(-notificationTrayRetention), models.NotificationScopeSystem, models.NotificationScopeAsset}
+	scope := "authorization_scope IN (?, ?)"
+	if len(workspaceIDs) > 0 {
+		placeholders := make([]string, len(workspaceIDs))
+		for i, workspaceID := range workspaceIDs {
+			placeholders[i] = "?"
+			args = append(args, workspaceID)
+		}
+		scope += " OR (authorization_scope = ? AND workspace_id IN (" + strings.Join(placeholders, ",") + "))"
+		args = append(args[:4], append([]any{models.NotificationScopeWorkspace}, args[4:]...)...)
+	}
+	args = append(args, limit, offset)
+	query := `
+		SELECT id, user_id, title, message, type, timestamp, read, seen_at, avatar, action_url, metadata,
+		       authorization_scope, workspace_id, item_id, source_type, source_id, created_at, updated_at
+		FROM notifications
+		WHERE user_id = ? AND timestamp >= ? AND (` + scope + `)
+		ORDER BY timestamp DESC, id DESC
+		LIMIT ? OFFSET ?
+	`
+	rows, err := nm.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	notifications := make([]models.Notification, 0)
+	for rows.Next() {
+		var notification models.Notification
+		var avatar, actionURL, metadata, sourceType *string
+		if err := rows.Scan(
+			&notification.ID, &notification.UserID, &notification.Title, &notification.Message, &notification.Type,
+			&notification.Timestamp, &notification.Read, &notification.SeenAt, &avatar, &actionURL, &metadata,
+			&notification.AuthorizationScope, &notification.WorkspaceID, &notification.ItemID, &sourceType, &notification.SourceID,
+			&notification.CreatedAt, &notification.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		if avatar != nil {
+			notification.Avatar = *avatar
+		}
+		if actionURL != nil {
+			notification.ActionURL = *actionURL
+		}
+		if metadata != nil {
+			notification.Metadata = *metadata
+		}
+		if sourceType != nil {
+			notification.SourceType = *sourceType
+		}
+		notifications = append(notifications, notification)
+	}
+	return notifications, rows.Err()
 }
 
 // Stop stops the notification manager
@@ -759,7 +855,16 @@ func (nh *NotificationHandler) GetNotifications(w http.ResponseWriter, r *http.R
 		}
 	}
 
-	notifications, err := nh.manager.GetUserNotifications(userID, limit, offset)
+	workspaceIDs := []int{}
+	if nh.permService != nil {
+		var err error
+		workspaceIDs, err = nh.permService.AccessibleWorkspaceIDs(userID)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return
+		}
+	}
+	notifications, err := nh.manager.GetVisibleUserNotifications(userID, workspaceIDs, limit, offset)
 	if err != nil {
 		slog.Error("failed to get notifications", slog.String("component", "notifications"), slog.Int("user_id", userID), slog.Any("error", err))
 		respondInternalError(w, r, err)
@@ -820,6 +925,11 @@ func (nh *NotificationHandler) CreateNotification(w http.ResponseWriter, r *http
 
 	// Force caller identity — never trust the request body's user_id.
 	notification.UserID = user.ID
+	notification.AuthorizationScope = models.NotificationScopeSystem
+	notification.WorkspaceID = nil
+	notification.ItemID = nil
+	notification.SourceType = "user.reminder"
+	notification.SourceID = nil
 
 	if notification.Timestamp.IsZero() {
 		notification.Timestamp = time.Now()

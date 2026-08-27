@@ -1648,16 +1648,23 @@ func (r *ItemRepository) FindByIDsWithDetails(ids []int) ([]*models.Item, error)
 
 // Homepage aggregations.
 
-func (r *ItemRepository) CountActiveNonPersonalItems() (int, error) {
+// CountNonPersonalByWorkspaceIDs returns the non-personal item count in the
+// given workspaces.
+func (r *ItemRepository) CountNonPersonalByWorkspaceIDs(workspaceIDs []int) (int, error) {
+	if len(workspaceIDs) == 0 {
+		return 0, nil
+	}
+	placeholders, args := inPlaceholders(workspaceIDs)
 	var count int
 	err := r.db.QueryRow(`
 		SELECT COUNT(*)
 		FROM items i
-		JOIN workspaces w ON i.workspace_id = w.id
-		WHERE (w.is_personal = false OR w.is_personal IS NULL)
-	`).Scan(&count)
+		JOIN workspaces w ON w.id = i.workspace_id
+		WHERE i.workspace_id IN (`+placeholders+`)
+		  AND (w.is_personal = false OR w.is_personal IS NULL)
+	`, args...).Scan(&count)
 	if err != nil {
-		return 0, fmt.Errorf("count non-personal items: %w", err)
+		return 0, fmt.Errorf("count visible items: %w", err)
 	}
 	return count, nil
 }

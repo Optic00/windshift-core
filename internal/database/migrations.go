@@ -192,6 +192,28 @@ var Catalog = []Migration{
 		SQLite:        "ALTER TABLE board_configurations ADD COLUMN completed_item_retention_days INTEGER",
 		Postgres:      "ALTER TABLE board_configurations ADD COLUMN completed_item_retention_days INTEGER",
 	},
+	{
+		Version:       "20260827_notification_provenance",
+		Name:          "Add authorization provenance to notifications",
+		CheckSQLite:   sqliteColumnCheck("notifications", "authorization_scope"),
+		CheckPostgres: pgColumnCheck("notifications", "authorization_scope"),
+		SQLite: `
+			ALTER TABLE notifications ADD COLUMN authorization_scope TEXT NOT NULL DEFAULT 'legacy';
+			ALTER TABLE notifications ADD COLUMN workspace_id INTEGER;
+			ALTER TABLE notifications ADD COLUMN item_id INTEGER;
+			ALTER TABLE notifications ADD COLUMN source_type TEXT;
+			ALTER TABLE notifications ADD COLUMN source_id INTEGER;
+			CREATE INDEX idx_notifications_workspace_id ON notifications(workspace_id);
+		`,
+		Postgres: `
+			ALTER TABLE notifications ADD COLUMN authorization_scope TEXT NOT NULL DEFAULT 'legacy';
+			ALTER TABLE notifications ADD COLUMN workspace_id INTEGER;
+			ALTER TABLE notifications ADD COLUMN item_id INTEGER;
+			ALTER TABLE notifications ADD COLUMN source_type TEXT;
+			ALTER TABLE notifications ADD COLUMN source_id INTEGER;
+			CREATE INDEX idx_notifications_workspace_id ON notifications(workspace_id);
+		`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {

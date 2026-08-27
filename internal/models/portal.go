@@ -480,22 +480,34 @@ type EmailMessageTracking struct {
 	ProcessedAt time.Time `json:"processed_at"`
 }
 
-// Notification represents a system notification for a user
+const (
+	NotificationScopeLegacy    = "legacy"
+	NotificationScopeSystem    = "system"
+	NotificationScopeWorkspace = "workspace"
+	NotificationScopeAsset     = "asset"
+)
+
+// Notification represents a system notification for a user.
 type Notification struct {
-	ID        int        `json:"id"`
-	UserID    int        `json:"user_id"`
-	Title     string     `json:"title"`
-	Message   string     `json:"message"`
-	Type      string     `json:"type"` // info, warning, error, success, assignment, comment, status_change, reminder, milestone
-	Timestamp time.Time  `json:"timestamp"`
-	Read      bool       `json:"read"`
-	SeenAt    *time.Time `json:"seen_at,omitempty"`    // When the user observed the notification in the tray (NULL until then). Distinct from Read: seeing does not suppress email batching.
-	SentAt    *time.Time `json:"sent_at,omitempty"`    // When notification was sent via email (NULL if not sent)
-	Avatar    string     `json:"avatar,omitempty"`     // Initials or avatar identifier
-	ActionURL string     `json:"action_url,omitempty"` // URL to navigate to when clicked
-	Metadata  string     `json:"metadata,omitempty"`   // JSON for additional data
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
+	ID                 int        `json:"id"`
+	UserID             int        `json:"user_id"`
+	Title              string     `json:"title"`
+	Message            string     `json:"message"`
+	Type               string     `json:"type"` // info, warning, error, success, assignment, comment, status_change, reminder, milestone
+	Timestamp          time.Time  `json:"timestamp"`
+	Read               bool       `json:"read"`
+	SeenAt             *time.Time `json:"seen_at,omitempty"`    // When the user observed the notification in the tray (NULL until then). Distinct from Read: seeing does not suppress email batching.
+	SentAt             *time.Time `json:"sent_at,omitempty"`    // When notification was sent via email (NULL if not sent)
+	Avatar             string     `json:"avatar,omitempty"`     // Initials or avatar identifier
+	ActionURL          string     `json:"action_url,omitempty"` // URL to navigate to when clicked
+	Metadata           string     `json:"metadata,omitempty"`   // JSON for additional data
+	AuthorizationScope string     `json:"authorization_scope"`
+	WorkspaceID        *int       `json:"workspace_id,omitempty"`
+	ItemID             *int       `json:"item_id,omitempty"`
+	SourceType         string     `json:"source_type,omitempty"`
+	SourceID           *int       `json:"source_id,omitempty"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
 }
 
 // NotificationCache represents a cached notification for BigCache storage

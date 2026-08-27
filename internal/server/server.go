@@ -740,13 +740,13 @@ func (s *Server) initialize() error {
 		userPreferencesService,
 	)
 
-	notificationHandler := handlers.NewNotificationHandler(s.notificationManager, s.notificationService)
+	notificationHandler := handlers.NewNotificationHandler(s.notificationManager, s.notificationService, permService)
 	emailTemplateHandler := handlers.NewEmailTemplateHandler(repository.NewEmailTemplateRepository(s.db), logger.NewAuditor(s.db))
 
 	// Push dispatches every notification; VAPID config resolves env, persisted,
 	// then generated keys.
 	pushCfg := services.ResolveVAPIDConfig(s.db, cfg.Push, slog.Default())
-	pushService := services.NewPushService(s.db, pushCfg)
+	pushService := services.NewPushService(s.db, pushCfg, permService)
 	pushHandler := handlers.NewPushHandler(pushService)
 	s.notificationManager.SetPushDispatcher(pushService)
 	if pushService.Enabled() {

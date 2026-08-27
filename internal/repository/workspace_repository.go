@@ -490,15 +490,20 @@ func (r *WorkspaceRepository) GetActivePersonalWorkspaceID(userID int) (int, err
 	return id, nil
 }
 
-// CountNonPersonal returns the number of non-personal workspaces.
-// Rows where is_personal is NULL are treated as non-personal.
-func (r *WorkspaceRepository) CountNonPersonal() (int, error) {
+// CountNonPersonalByIDs returns the number of non-personal workspaces in ids.
+func (r *WorkspaceRepository) CountNonPersonalByIDs(ids []int) (int, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	placeholders, args := inPlaceholders(ids)
 	var count int
-	err := r.db.QueryRow(
-		`SELECT COUNT(*) FROM workspaces WHERE is_personal = false OR is_personal IS NULL`,
-	).Scan(&count)
+	err := r.db.QueryRow(`
+		SELECT COUNT(*) FROM workspaces
+		WHERE id IN (`+placeholders+`)
+		  AND (is_personal = false OR is_personal IS NULL)
+	`, args...).Scan(&count)
 	if err != nil {
-		return 0, fmt.Errorf("count non-personal workspaces: %w", err)
+		return 0, fmt.Errorf("count visible non-personal workspaces: %w", err)
 	}
 	return count, nil
 }

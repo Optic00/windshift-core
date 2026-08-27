@@ -1735,11 +1735,14 @@ func (h *SCIMHandler) notifyAdminsOfSCIMCascade(ownerID int, ownerUsername, trig
 	}
 	for _, aid := range adminIDs {
 		_, err := h.notificationService.CreateNotification(models.Notification{
-			UserID:   aid,
-			Title:    title,
-			Message:  message,
-			Type:     "warning",
-			Metadata: string(meta),
+			UserID:             aid,
+			Title:              title,
+			Message:            message,
+			Type:               "warning",
+			Metadata:           string(meta),
+			AuthorizationScope: models.NotificationScopeSystem,
+			SourceType:         "scim.user_deactivation",
+			SourceID:           &ownerID,
 		})
 		if err != nil {
 			slog.Warn("scim: failed to create admin notification",
