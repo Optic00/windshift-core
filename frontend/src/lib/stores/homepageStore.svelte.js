@@ -14,7 +14,10 @@ import {
   getDashboardWidgetDefaultWidth,
   getDashboardWidgetMinWidth,
 } from '../services/dashboardWidgetRegistry.js';
-import { formatDateSimple, formatDateWithOptions } from '../utils/dateFormatter.js';
+import {
+  formatDateWithOptions,
+  formatRelativeTime as formatRelativeTimeValue,
+} from '../utils/dateFormatter.js';
 import { t } from './i18n.svelte.js';
 import { errorToast } from './toasts.svelte.js';
 
@@ -187,7 +190,7 @@ class HomepageStore {
 
   // === Section management ===
 
-  addSection(title = 'New Section', subtitle = '') {
+  addSection(title = t('dashboard.editor.newSection'), subtitle = '') {
     const newSection = {
       id: crypto.randomUUID(),
       title,
@@ -393,13 +396,13 @@ class HomepageStore {
 
     // Determine greeting based on time of day
     if (hour >= 5 && hour < 12) {
-      this.greeting = 'Good morning';
+      this.greeting = 'dashboard.goodMorning';
     } else if (hour >= 12 && hour < 18) {
-      this.greeting = 'Good afternoon';
+      this.greeting = 'dashboard.goodAfternoon';
     } else if (hour >= 18 && hour < 22) {
-      this.greeting = 'Good evening';
+      this.greeting = 'dashboard.goodEvening';
     } else {
-      this.greeting = 'Good night';
+      this.greeting = 'dashboard.goodNight';
     }
 
     // Format current date
@@ -447,21 +450,7 @@ class HomepageStore {
    * Format relative time.
    */
   formatRelativeTime(timestamp) {
-    if (!timestamp) return 'Unknown';
-
-    const now = new Date();
-    const then = new Date(timestamp);
-    const diffMs = now.getTime() - then.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
-
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins} minute${diffMins !== 1 ? 's' : ''} ago`;
-    if (diffHours < 24) return `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
-    if (diffDays < 7) return `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;
-
-    return formatDateSimple(then);
+    return timestamp ? formatRelativeTimeValue(timestamp) : t('common.unknown');
   }
 
   /**

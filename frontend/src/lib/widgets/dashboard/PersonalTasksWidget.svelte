@@ -1,6 +1,7 @@
 <script>
   import { ListChecks } from '@lucide/svelte';
   import { authStore, workspacesStore } from '../../stores';
+  import { t } from '../../stores/i18n.svelte.js';
   import { api } from '../../api.js';
   import DashboardTaskList from './DashboardTaskList.svelte';
   import {
@@ -75,8 +76,8 @@
   {errored}
   {tasks}
   icon={ListChecks}
-  errorMessage="Couldn't load your personal tasks"
-  emptyMessage="Your personal todo list is empty"
+  errorMessage={t('dashboard.states.personalTasksLoadError')}
+  emptyMessage={t('dashboard.states.personalTasksEmpty')}
   {density}
   {openTask}
 />

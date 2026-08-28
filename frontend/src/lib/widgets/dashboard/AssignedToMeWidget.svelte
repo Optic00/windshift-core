@@ -1,6 +1,7 @@
 <script>
   import { CheckSquare } from '@lucide/svelte';
   import { authStore } from '../../stores';
+  import { t } from '../../stores/i18n.svelte.js';
   import { api } from '../../api.js';
   import DashboardTaskList from './DashboardTaskList.svelte';
   import {
@@ -64,8 +65,8 @@
   {errored}
   {tasks}
   icon={CheckSquare}
-  errorMessage="Couldn't load your assigned items"
-  emptyMessage="Nothing assigned to you right now"
+  errorMessage={t('dashboard.states.assignedLoadError')}
+  emptyMessage={t('dashboard.states.assignedEmpty')}
   {density}
   {openTask}
 />
