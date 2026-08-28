@@ -647,7 +647,7 @@
   }
 </script>
 
-<Modal bind:isOpen maxWidth="max-w-md" zIndexClass="z-[60]" onSubmit={submit} submitDisabled={!canSubmit} onclose={handleClose}>
+<Modal bind:isOpen maxWidth="max-w-md" zIndexClass="z-[500]" onSubmit={submit} submitDisabled={!canSubmit} onclose={handleClose}>
   <div class="create" data-testid="mobile-create-dialog">
     <h2 class="title">{isPersonal ? 'New personal task' : isChild ? 'New sub-item' : 'New item'}</h2>
 
@@ -760,7 +760,12 @@
 
       {#if optionalFieldCount > 0}
         <section class="field-section optional" data-testid="configured-optional-fields">
-          <button type="button" class="optional-toggle" onclick={() => showOptionalFields = !showOptionalFields}>
+          <button
+            type="button"
+            class="optional-toggle"
+            data-testid="create-optional-toggle"
+            onclick={() => showOptionalFields = !showOptionalFields}
+          >
             <span>Optional fields ({optionalFieldCount})</span>
             <span aria-hidden="true">{showOptionalFields ? '−' : '+'}</span>
           </button>
