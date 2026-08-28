@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"windshift/internal/database"
+	"windshift/internal/itemevents"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 )
@@ -103,15 +104,16 @@ func (s *ItemDeletionApplicationService) Delete(req ItemDeletionRequest) (*ItemD
 	}
 
 	ancestorIDs := s.loadAncestorIDs(item.ID)
+	metadata := itemevents.User(req.ActorUserID, "application")
 	deletedCount := 1
 	var descendantIDs []int
 	switch req.Mode {
 	case ItemDeletionSingle:
-		if err := s.crud.DeleteSingle(item.ID); err != nil {
+		if err := s.crud.DeleteSingleWithMetadata(item.ID, metadata); err != nil {
 			return nil, err
 		}
 	case ItemDeletionCascade:
-		result, err := s.crud.Delete(item.ID)
+		result, err := s.crud.DeleteWithMetadata(item.ID, metadata)
 		if err != nil {
 			return nil, err
 		}

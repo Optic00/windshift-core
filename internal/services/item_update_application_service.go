@@ -259,9 +259,10 @@ func (s *ItemUpdateApplicationService) updateItem(
 	}
 
 	result, err := s.update.UpdateItem(UpdateItemRequest{
-		ItemID:     itemID,
-		UpdateData: updateData,
-		UserID:     actorUserID,
+		ItemID:        itemID,
+		UpdateData:    updateData,
+		UserID:        actorUserID,
+		EventMetadata: itemEventMetadata(actorUserID, "application", actionContext),
 	})
 	if err != nil {
 		return nil, err

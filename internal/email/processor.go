@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"windshift/internal/database"
+	"windshift/internal/itemevents"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/sanitize"
@@ -423,6 +424,7 @@ func (p *Processor) createItemFromEmail( //nolint:unparam // ctx reserved for fu
 		PriorityID:              config.EmailDefaultPriorityID,
 		CreatorPortalCustomerID: &customerID,
 		ChannelID:               &channelID,
+		EventMetadata:           itemevents.PortalCustomer(customerID, "email"),
 	}
 
 	// Create the item via the shared service entry point.
@@ -489,6 +491,7 @@ func (p *Processor) addCommentFromReply(
 		AuthorID:         0,
 		PortalCustomerID: &customerID,
 		Content:          content,
+		EventMetadata:    itemevents.PortalCustomer(customerID, "email"),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create comment: %w", err)

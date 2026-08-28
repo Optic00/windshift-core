@@ -530,18 +530,70 @@ func (r *ActionRepository) CreateExecutionLog(log *models.ActionExecutionLog) (i
 	err := r.db.QueryRow(`
 		INSERT INTO action_execution_logs (
 			action_id, item_id, trigger_event, status,
-			trigger_user_id, effective_actor_user_id, started_at
+			trigger_user_id, effective_actor_user_id, started_at, durable_event_key
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
 	`,
 		log.ActionID, log.ItemID, log.TriggerEvent, log.Status,
-		log.TriggerUserID, log.EffectiveActorUserID, time.Now(),
+		log.TriggerUserID, log.EffectiveActorUserID, time.Now(), durableEventKeyValue(log.DurableEventKey),
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create execution log: %w", err)
 	}
 
 	return int(id), nil
+}
+
+func durableEventKeyValue(key string) any {
+	if key == "" {
+		return nil
+	}
+	return key
+}
+
+// GetExecutionLogByDurableTarget returns the execution record that fences one
+// event/action pair. Manual and legacy logs have no durable key.
+func (r *ActionRepository) GetExecutionLogByDurableTarget(eventKey string, actionID int) (*models.ActionExecutionLog, error) {
+	log := &models.ActionExecutionLog{}
+	var itemID, triggerUserID, effectiveActorUserID sql.NullInt64
+	var completedAt sql.NullTime
+	var errorMessage, executionTrace sql.NullString
+	err := r.db.QueryRow(`
+		SELECT id, action_id, item_id, trigger_event, status,
+		       trigger_user_id, effective_actor_user_id, started_at,
+		       completed_at, error_message, execution_trace, durable_event_key
+		FROM action_execution_logs
+		WHERE durable_event_key = ? AND action_id = ?
+	`, eventKey, actionID).Scan(
+		&log.ID, &log.ActionID, &itemID, &log.TriggerEvent, &log.Status,
+		&triggerUserID, &effectiveActorUserID, &log.StartedAt,
+		&completedAt, &errorMessage, &executionTrace, &log.DurableEventKey,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if itemID.Valid {
+		value := int(itemID.Int64)
+		log.ItemID = &value
+	}
+	if triggerUserID.Valid {
+		value := int(triggerUserID.Int64)
+		log.TriggerUserID = &value
+	}
+	if effectiveActorUserID.Valid {
+		value := int(effectiveActorUserID.Int64)
+		log.EffectiveActorUserID = &value
+	}
+	if completedAt.Valid {
+		log.CompletedAt = &completedAt.Time
+	}
+	if errorMessage.Valid {
+		log.ErrorMessage = errorMessage.String
+	}
+	if executionTrace.Valid {
+		log.ExecutionTrace = executionTrace.String
+	}
+	return log, nil
 }
 
 // UpdateExecutionLog updates an execution log entry

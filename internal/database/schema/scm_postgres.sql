@@ -121,6 +121,27 @@ CREATE INDEX IF NOT EXISTS idx_workspace_repos_connection ON workspace_repositor
 CREATE INDEX IF NOT EXISTS idx_workspace_repos_name ON workspace_repositories(repository_name);
 CREATE INDEX IF NOT EXISTS idx_workspace_repos_active ON workspace_repositories(is_active);
 
+-- Durable health snapshots for scheduled SCM operations. One row per
+-- connection and operation keeps diagnostics useful without retaining an
+-- unbounded failure history.
+CREATE TABLE IF NOT EXISTS scm_connection_health (
+	workspace_scm_connection_id INTEGER NOT NULL,
+	operation TEXT NOT NULL,
+	last_attempt_at TIMESTAMPTZ NOT NULL,
+	last_success_at TIMESTAMPTZ,
+	last_failure_at TIMESTAMPTZ,
+	consecutive_failures INTEGER NOT NULL DEFAULT 0,
+	checked_resources INTEGER NOT NULL DEFAULT 0,
+	failed_resources INTEGER NOT NULL DEFAULT 0,
+	last_error TEXT,
+	updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	PRIMARY KEY (workspace_scm_connection_id, operation),
+	FOREIGN KEY (workspace_scm_connection_id) REFERENCES workspace_scm_connections(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_scm_connection_health_failures
+	ON scm_connection_health(consecutive_failures, last_failure_at);
+
 -- Item SCM Links (PRs, commits, branches linked to items)
 CREATE TABLE IF NOT EXISTS item_scm_links (
 	id SERIAL PRIMARY KEY,

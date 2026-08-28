@@ -172,6 +172,11 @@ export function getCacheMemory() {
   return fetchAPI('/admin/diagnostics/cache-memory');
 }
 
+/** Durable health for scheduled repository sync and pull-request refresh operations. */
+export function getSCMConnectionHealth() {
+  return fetchAPI('/admin/diagnostics/scm-connections');
+}
+
 /**
  * Global recurrence-rule cardinality and scheduler queue pressure.
  *
@@ -193,4 +198,34 @@ export function updateRecurrenceVolumeSettings(settings) {
     method: 'PUT',
     body: JSON.stringify(settings),
   });
+}
+
+/** Durable domain-event delivery health and terminal failures. */
+export function getDomainEventDiagnostics(opts = {}) {
+  return fetchAPI(
+    diagnosticsQuery('domain-events', opts, {
+      consumerKey: 'consumer_key',
+      workspaceId: 'workspace_id',
+    })
+  );
+}
+
+/** Schedule a terminal domain-event delivery for another attempt. */
+export function replayDomainEvent(eventId, consumerKey, reason) {
+  return changeDomainEventDelivery(eventId, consumerKey, 'replay', reason);
+}
+
+/** Explicitly skip a terminal delivery and unblock its aggregate. */
+export function skipDomainEvent(eventId, consumerKey, reason) {
+  return changeDomainEventDelivery(eventId, consumerKey, 'skip', reason);
+}
+
+function changeDomainEventDelivery(eventId, consumerKey, action, reason) {
+  return fetchAPI(
+    `/admin/diagnostics/domain-events/${eventId}/${encodeURIComponent(consumerKey)}/${action}`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }
+  );
 }

@@ -12,6 +12,7 @@ import (
 
 	"windshift/internal/cql"
 	"windshift/internal/database"
+	"windshift/internal/itemevents"
 	"windshift/internal/models"
 	"windshift/internal/utils"
 )
@@ -591,12 +592,39 @@ func (r *AssetRepository) DeleteSet(setID int) error {
 // HardDeleteSet deletes a set and relies on foreign-key cascades for its owned
 // rows. Polymorphic item_links cannot carry an asset foreign key, so links in
 // either direction are removed explicitly in the same transaction first.
-func (r *AssetRepository) HardDeleteSet(setID int) error {
+func (r *AssetRepository) HardDeleteSet(setID int, eventMetadata ...itemevents.Metadata) error {
 	tx, err := r.db.Begin()
 	if err != nil {
 		return fmt.Errorf("failed to begin asset set deletion: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	rows, err := tx.Query("SELECT id FROM assets WHERE set_id = ? ORDER BY id", setID)
+	if err != nil {
+		return fmt.Errorf("load asset set links for deletion: %w", err)
+	}
+	var assetIDs []int
+	for rows.Next() {
+		var assetID int
+		if err := rows.Scan(&assetID); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		assetIDs = append(assetIDs, assetID)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	metadata := itemevents.System("application")
+	if len(eventMetadata) > 0 {
+		metadata = eventMetadata[0]
+	}
+	if err := itemevents.NewRecorder(r.db).RemovedLinks(context.Background(), tx, "asset", assetIDs, metadata); err != nil {
+		return err
+	}
 
 	if _, err := tx.Exec(`
 		DELETE FROM item_links
@@ -2309,8 +2337,18 @@ type CreateAssetInput struct {
 }
 
 func (r *AssetRepository) CreateAsset(in CreateAssetInput) (int, error) {
+	var id int
+	err := database.WithTx(r.db, func(tx database.Tx) error {
+		var err error
+		id, err = r.CreateAssetInTx(tx, in)
+		return err
+	})
+	return id, err
+}
+
+func (r *AssetRepository) CreateAssetInTx(tx database.Tx, in CreateAssetInput) (int, error) {
 	var id int64
-	err := r.db.QueryRow(`
+	err := tx.QueryRow(`
 		INSERT INTO assets (set_id, asset_type_id, category_id, status_id, title, description, asset_tag, custom_field_values, created_by, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
 	`, in.SetID, in.AssetTypeID, in.CategoryID, in.StatusID, in.Title, in.Description, in.AssetTag,
@@ -2332,7 +2370,13 @@ type UpdateAssetInput struct {
 }
 
 func (r *AssetRepository) UpdateAsset(assetID int, in UpdateAssetInput) error {
-	result, err := r.db.ExecWrite(`
+	return database.WithTx(r.db, func(tx database.Tx) error {
+		return r.UpdateAssetInTx(tx, assetID, in)
+	})
+}
+
+func (r *AssetRepository) UpdateAssetInTx(tx database.Tx, assetID int, in UpdateAssetInput) error {
+	result, err := tx.ExecWrite(`
 		UPDATE assets
 		SET asset_type_id = ?, category_id = ?, status_id = ?, title = ?, description = ?,
 		    asset_tag = ?, custom_field_values = ?, updated_at = ?
@@ -2348,12 +2392,20 @@ func (r *AssetRepository) UpdateAsset(assetID int, in UpdateAssetInput) error {
 	return nil
 }
 
-func (r *AssetRepository) DeleteAssetWithLinks(assetID int) error {
-	tx, err := r.db.Begin()
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
+func (r *AssetRepository) DeleteAssetWithLinks(assetID int, eventMetadata ...itemevents.Metadata) error {
+	metadata := itemevents.System("application")
+	if len(eventMetadata) > 0 {
+		metadata = eventMetadata[0]
 	}
-	defer func() { _ = tx.Rollback() }()
+	return database.WithTx(r.db, func(tx database.Tx) error {
+		return r.DeleteAssetWithLinksInTx(context.Background(), tx, assetID, metadata)
+	})
+}
+
+func (r *AssetRepository) DeleteAssetWithLinksInTx(ctx context.Context, tx database.Tx, assetID int, metadata itemevents.Metadata) error {
+	if err := itemevents.NewRecorder(r.db).RemovedLinks(ctx, tx, "asset", []int{assetID}, metadata); err != nil {
+		return err
+	}
 
 	if _, err := tx.Exec(
 		`DELETE FROM item_links WHERE (source_type = 'asset' AND source_id = ?) OR (target_type = 'asset' AND target_id = ?)`,
@@ -2370,7 +2422,7 @@ func (r *AssetRepository) DeleteAssetWithLinks(assetID int) error {
 		return ErrNotFound
 	}
 
-	return tx.Commit()
+	return nil
 }
 
 // scanAssetRow populates an AssetRow from the full joined projection.
@@ -2516,11 +2568,38 @@ func (r *AssetRepository) ListInterruptedImportJobIDs() ([]string, error) {
 }
 
 func (r *AssetRepository) DeleteAssetsFromImportJob(jobID string) error {
-	_, err := r.db.ExecWrite(`DELETE FROM assets WHERE import_job_id = ?`, jobID)
+	tx, err := r.db.Begin()
 	if err != nil {
+		return fmt.Errorf("begin asset import rollback: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	rows, err := tx.Query("SELECT id FROM assets WHERE import_job_id = ? ORDER BY id", jobID)
+	if err != nil {
+		return fmt.Errorf("load asset import links: %w", err)
+	}
+	var assetIDs []int
+	for rows.Next() {
+		var assetID int
+		if err := rows.Scan(&assetID); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		assetIDs = append(assetIDs, assetID)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := itemevents.NewRecorder(r.db).RemovedLinks(context.Background(), tx, "asset", assetIDs, itemevents.Import(jobID)); err != nil {
+		return err
+	}
+	if _, err := tx.ExecWrite(`DELETE FROM assets WHERE import_job_id = ?`, jobID); err != nil {
 		return fmt.Errorf("failed to delete assets for job %s: %w", jobID, err)
 	}
-	return nil
+	return tx.Commit()
 }
 
 func (r *AssetRepository) MarkInterruptedImportsFailed(completedAt time.Time) (int, error) {
@@ -2571,7 +2650,17 @@ type JiraImportAssetRowInput struct {
 // when present and otherwise using the database clock.
 func (r *AssetRepository) InsertJiraImportedAsset(in JiraImportAssetRowInput) (int, error) {
 	var id int
-	err := r.db.QueryRow(`
+	err := database.WithTx(r.db, func(tx database.Tx) error {
+		var err error
+		id, err = r.InsertJiraImportedAssetInTx(tx, in)
+		return err
+	})
+	return id, err
+}
+
+func (r *AssetRepository) InsertJiraImportedAssetInTx(tx database.Tx, in JiraImportAssetRowInput) (int, error) {
+	var id int
+	err := tx.QueryRow(`
 		INSERT INTO assets
 			(set_id, asset_type_id, status_id, title, description, asset_tag,
 			 custom_field_values, import_job_id, created_at, updated_at)
@@ -2588,7 +2677,17 @@ func (r *AssetRepository) InsertJiraImportedAsset(in JiraImportAssetRowInput) (i
 // InsertImportedAsset inserts a single asset row during CSV import.
 func (r *AssetRepository) InsertImportedAsset(in ImportAssetRowInput) (int, error) {
 	var id int
-	err := r.db.QueryRow(`
+	err := database.WithTx(r.db, func(tx database.Tx) error {
+		var err error
+		id, err = r.InsertImportedAssetInTx(tx, in)
+		return err
+	})
+	return id, err
+}
+
+func (r *AssetRepository) InsertImportedAssetInTx(tx database.Tx, in ImportAssetRowInput) (int, error) {
+	var id int
+	err := tx.QueryRow(`
 		INSERT INTO assets (set_id, asset_type_id, category_id, status_id, title, description, asset_tag, custom_field_values, import_job_id, created_by, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		RETURNING id

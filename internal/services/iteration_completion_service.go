@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"windshift/internal/database"
+	"windshift/internal/itemevents"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 )
@@ -187,6 +188,32 @@ func (s *IterationCompletionService) Complete(ctx context.Context, req CompleteI
 		if err != nil {
 			return nil, fmt.Errorf("move incomplete iteration items: %w", err)
 		}
+
+		updatedItems, err := repository.NewItemRepository(s.db).FindByIDsForUpdateContext(ctx, tx, changedIDs)
+		result.SQLStatements++
+		if err != nil {
+			return nil, fmt.Errorf("load iteration completion item events: %w", err)
+		}
+		metadata := itemevents.User(req.UserID, "application")
+		metadata.OccurredAt = now
+		newIterationValue := any(nil)
+		if req.TargetIterationID != nil {
+			newIterationValue = *req.TargetIterationID
+		}
+		records := make([]itemevents.UpdateRecord, 0, len(updatedItems))
+		for _, item := range updatedItems {
+			records = append(records, itemevents.UpdateRecord{
+				Item: item,
+				Changes: []itemevents.FieldChange{{
+					Field: "iteration_id", OldValue: req.IterationID, NewValue: newIterationValue,
+				}},
+				Metadata: metadata,
+			})
+		}
+		if _, err := itemevents.NewRecorder(s.db).UpdatedBatch(ctx, tx, records); err != nil {
+			return nil, err
+		}
+		result.SQLStatements += 2
 	}
 
 	_, err = tx.ExecContext(ctx, `

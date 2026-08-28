@@ -67,10 +67,10 @@ type ActionService struct {
 	actionCache map[int][]*models.Action
 	cacheMu     sync.RWMutex
 
-	// Event processing
-	eventChan chan *models.ActionEvent
-	stopChan  chan struct{}
-	wg        sync.WaitGroup
+	// Event admission and cache lifecycle.
+	durableIngress *DurableActionIngress
+	stopChan       chan struct{}
+	wg             sync.WaitGroup
 
 	// Dependencies for action execution
 	notificationService *NotificationService
@@ -120,23 +120,22 @@ func NewActionService(db database.Database, config ActionServiceConfig, chainSto
 		chainStore = NewExecutionChainStore()
 	}
 	service := &ActionService{
-		db:          db,
-		repo:        repository.NewActionRepository(db),
-		itemRepo:    repository.NewItemRepository(db),
-		config:      config,
-		actionCache: make(map[int][]*models.Action),
-		eventChan:   make(chan *models.ActionEvent, config.EventBufferSize),
-		stopChan:    make(chan struct{}),
-		chainStore:  chainStore,
-		itemUpdate:  NewItemUpdateApplicationService(db, nil),
+		db:             db,
+		repo:           repository.NewActionRepository(db),
+		itemRepo:       repository.NewItemRepository(db),
+		config:         config,
+		actionCache:    make(map[int][]*models.Action),
+		durableIngress: NewDurableActionIngress(db),
+		stopChan:       make(chan struct{}),
+		chainStore:     chainStore,
+		itemUpdate:     NewItemUpdateApplicationService(db, nil),
 	}
 
 	if err := service.refreshActionCache(); err != nil {
 		slog.Warn("failed to load initial action cache", slog.String("component", "actions"), slog.Any("error", err))
 	}
 
-	service.wg.Add(2)
-	go service.eventProcessor()
+	service.wg.Add(1)
 	go service.cacheRefresher()
 
 	slog.Debug("action service initialized", slog.String("component", "actions"), slog.Duration("refresh_interval", config.RefreshInterval))
@@ -220,25 +219,26 @@ func (as *ActionService) SetPermissionService(ps *PermissionService) {
 	}
 }
 
-// EmitActionEvent sends an event to be processed asynchronously (non-blocking)
+// EmitActionEvent durably admits an action trigger. Item compatibility events
+// stop at the recorded canonical cutover; SCM observations remain durable.
 func (as *ActionService) EmitActionEvent(event *models.ActionEvent) {
-	slog.Debug("queuing action event",
-		slog.String("component", "actions"),
-		slog.String("event_type", string(event.EventType)),
-		slog.Int("workspace_id", event.WorkspaceID),
-		slog.Int("item_id", event.ItemID),
-	)
-
-	select {
-	case as.eventChan <- event:
-	default:
-		slog.Warn("action event channel full, dropping event",
+	if event == nil {
+		return
+	}
+	if err := as.durableIngress.Emit(context.Background(), event); err != nil {
+		slog.Error("failed to persist action event",
 			slog.String("component", "actions"),
 			slog.String("event_type", string(event.EventType)),
 			slog.Int("workspace_id", event.WorkspaceID),
+			slog.Any("error", err),
 		)
 		atomic.AddInt64(&as.errors, 1)
 	}
+}
+
+// EmitActionEventInTx admits an SCM observation with its source ledger row.
+func (as *ActionService) EmitActionEventInTx(ctx context.Context, tx database.Tx, event *models.ActionEvent) error {
+	return as.durableIngress.EmitInTx(ctx, tx, event)
 }
 
 // Stop gracefully shuts down the action service
@@ -256,41 +256,6 @@ func (as *ActionService) Stop() {
 		slog.Debug("action service stopped successfully", slog.String("component", "actions"))
 	case <-time.After(3 * time.Second):
 		slog.Warn("action service stop timed out after 3s", slog.String("component", "actions"))
-	}
-}
-
-// eventProcessor runs in background and processes events from the channel
-func (as *ActionService) eventProcessor() {
-	defer as.wg.Done()
-
-	for {
-		select {
-		case event := <-as.eventChan:
-			if err := as.processEvent(event); err != nil {
-				slog.Error("failed to process action event",
-					slog.String("component", "actions"),
-					slog.String("event_type", string(event.EventType)),
-					slog.Any("error", err),
-				)
-				atomic.AddInt64(&as.errors, 1)
-			} else {
-				atomic.AddInt64(&as.eventsProcessed, 1)
-			}
-		case <-as.stopChan:
-			slog.Debug("stopping action event processor", slog.String("component", "actions"))
-			// Finish queued events so shutdown does not silently drop work.
-			for len(as.eventChan) > 0 {
-				event := <-as.eventChan
-				if err := as.processEvent(event); err != nil {
-					slog.Error("failed to process action event during shutdown",
-						slog.String("component", "actions"),
-						slog.String("event_type", string(event.EventType)),
-						slog.Any("error", err),
-					)
-				}
-			}
-			return
-		}
 	}
 }
 
@@ -393,11 +358,6 @@ func (as *ActionService) InvalidateWorkspaceCache(workspaceID int) {
 	as.cacheMu.Unlock()
 }
 
-// getChain retrieves an execution chain from the shared store by its ID.
-func (as *ActionService) getChain(chainID string) *ExecutionChain {
-	return as.chainStore.GetChain(chainID)
-}
-
 // createChain creates a new execution chain in the shared store.
 func (as *ActionService) createChain(chainID string) *ExecutionChain {
 	return as.chainStore.CreateChain(chainID)
@@ -408,89 +368,8 @@ func (as *ActionService) cleanupChains() {
 	as.chainStore.Cleanup()
 }
 
-// MaxCascadeDepth is the maximum depth of nested action triggers (safety limit)
+// MaxCascadeDepth bounds action-triggered mutation chains across consumers.
 const MaxCascadeDepth = 5
-
-// processEvent processes a single action event
-func (as *ActionService) processEvent(event *models.ActionEvent) error { //nolint:unparam // error return kept for API consistency
-	slog.Debug("processing action event",
-		slog.String("component", "actions"),
-		slog.String("event_type", string(event.EventType)),
-		slog.Int("workspace_id", event.WorkspaceID),
-		slog.Int("item_id", event.ItemID),
-		slog.Bool("triggered_by_action", event.TriggeredByAction),
-		slog.Int("cascade_depth", event.CascadeDepth),
-	)
-
-	// Enforce the cascade depth limit.
-	if event.CascadeDepth >= MaxCascadeDepth {
-		slog.Warn("action execution depth limit reached",
-			slog.String("component", "actions"),
-			slog.String("chain_id", event.ExecutionChainID),
-			slog.Int("depth", event.CascadeDepth),
-		)
-		return nil
-	}
-
-	// Load chain state for cascade loop detection.
-	var chain *ExecutionChain
-	if event.ExecutionChainID != "" {
-		chain = as.getChain(event.ExecutionChainID)
-		if chain == nil {
-			slog.Warn("execution chain not found in cache",
-				slog.String("component", "actions"),
-				slog.String("chain_id", event.ExecutionChainID),
-			)
-			// Missing chains start fresh as a safe default.
-		}
-	}
-
-	as.cacheMu.RLock()
-	actions := as.actionCache[event.WorkspaceID]
-	as.cacheMu.RUnlock()
-
-	if len(actions) == 0 {
-		slog.Debug("no enabled actions for workspace",
-			slog.String("component", "actions"),
-			slog.Int("workspace_id", event.WorkspaceID),
-		)
-		return nil
-	}
-
-	for _, action := range actions {
-		actionKey := fmt.Sprintf("workspace:%d", action.ID)
-		if chain != nil && chain.HasExecuted(actionKey) {
-			slog.Debug("skipping action - already executed in chain",
-				slog.String("component", "actions"),
-				slog.Int("action_id", action.ID),
-				slog.String("action_name", action.Name),
-				slog.String("chain_id", event.ExecutionChainID),
-			)
-			continue
-		}
-
-		if as.matchesTrigger(action, event) {
-			slog.Debug("action matches trigger, executing",
-				slog.String("component", "actions"),
-				slog.Int("action_id", action.ID),
-				slog.String("action_name", action.Name),
-			)
-
-			if err := as.executeAction(action, event, chain); err != nil {
-				slog.Error("failed to execute action",
-					slog.String("component", "actions"),
-					slog.Int("action_id", action.ID),
-					slog.Any("error", err),
-				)
-				// Continue with other actions even if one fails
-			} else {
-				atomic.AddInt64(&as.actionsExecuted, 1)
-			}
-		}
-	}
-
-	return nil
-}
 
 // matchesTrigger checks if an action's trigger matches the event
 func (as *ActionService) matchesTrigger(action *models.Action, event *models.ActionEvent) bool {
@@ -575,7 +454,8 @@ func (as *ActionService) matchesTrigger(action *models.Action, event *models.Act
 			}
 		}
 
-	case models.ActionTriggerSCMPRLinked, models.ActionTriggerSCMPRMerged:
+	case models.ActionTriggerSCMTagCreated, models.ActionTriggerSCMReleaseBranchCreated,
+		models.ActionTriggerSCMPRLinked, models.ActionTriggerSCMPRMerged:
 		if config.WorkspaceRepositoryID != nil {
 			repoID := utils.InterfaceToIntPtr(event.NewValues["repo.workspace_repository_id"])
 			if repoID == nil || *repoID != *config.WorkspaceRepositoryID {
@@ -595,6 +475,10 @@ func (as *ActionService) matchesTrigger(action *models.Action, event *models.Act
 
 // executeAction executes an action's flow
 func (as *ActionService) executeAction(action *models.Action, event *models.ActionEvent, chain *ExecutionChain) error {
+	return as.executeActionForEvent(action, event, chain, "")
+}
+
+func (as *ActionService) executeActionForEvent(action *models.Action, event *models.ActionEvent, chain *ExecutionChain, durableEventKey string) error {
 	if action == nil {
 		return errors.New("action is required")
 	}
@@ -621,27 +505,55 @@ func (as *ActionService) executeAction(action *models.Action, event *models.Acti
 	chain.MarkExecuted(actionKey)
 
 	// Record both the trigger user and effective permission actor.
-	triggerUserID := event.ActorUserID
 	// The action may override the triggering user below.
 	effectiveActorID := event.ActorUserID
+	var triggerUserID, effectiveActorUserID *int
+	if event.ActorUserID > 0 {
+		triggerValue := event.ActorUserID
+		effectiveValue := event.ActorUserID
+		triggerUserID = &triggerValue
+		effectiveActorUserID = &effectiveValue
+	}
+	var itemID *int
+	if event.ItemID > 0 {
+		value := event.ItemID
+		itemID = &value
+	}
 	log := &models.ActionExecutionLog{
 		ActionID:             action.ID,
-		ItemID:               &event.ItemID,
+		ItemID:               itemID,
 		TriggerEvent:         string(event.EventType),
 		Status:               models.ActionStatusRunning,
-		TriggerUserID:        &triggerUserID,
-		EffectiveActorUserID: &effectiveActorID,
+		TriggerUserID:        triggerUserID,
+		EffectiveActorUserID: effectiveActorUserID,
 		StartedAt:            startTime,
+		DurableEventKey:      durableEventKey,
 	}
-	logID, err := as.repo.CreateExecutionLog(log)
-	if err != nil {
-		slog.Warn("failed to create execution log",
-			slog.String("component", "actions"),
-			slog.Int("action_id", action.ID),
-			slog.Any("error", err),
-		)
+	if durableEventKey != "" {
+		existing, loadErr := as.repo.GetExecutionLogByDurableTarget(durableEventKey, action.ID)
+		if loadErr == nil {
+			if existing.Status == models.ActionStatusCompleted {
+				return nil
+			}
+			log.ID = existing.ID
+		} else if !errors.Is(loadErr, sql.ErrNoRows) {
+			return fmt.Errorf("load durable action execution: %w", loadErr)
+		}
 	}
-	log.ID = logID
+	if log.ID == 0 {
+		logID, err := as.repo.CreateExecutionLog(log)
+		if err != nil {
+			if durableEventKey != "" {
+				return fmt.Errorf("create durable execution log: %w", err)
+			}
+			slog.Warn("failed to create execution log",
+				slog.String("component", "actions"),
+				slog.Int("action_id", action.ID),
+				slog.Any("error", err),
+			)
+		}
+		log.ID = logID
+	}
 
 	// Resolve the effective actor: action.ActorUserID overrides the triggering
 	// user (subject to action.set_actor permission, enforced at CRUD time).
@@ -651,7 +563,7 @@ func (as *ActionService) executeAction(action *models.Action, event *models.Acti
 		log.EffectiveActorUserID = &effectiveActorID
 	}
 
-	if (action.TriggerType == models.ActionTriggerSCMPRLinked || action.TriggerType == models.ActionTriggerSCMPRMerged) && effectiveActorID <= 0 {
+	if isSCMActionTrigger(action.TriggerType) && effectiveActorID <= 0 {
 		log.Status = models.ActionStatusFailed
 		log.ErrorMessage = "SCM trigger requires an actor_user_id override because the sync loop has no authenticated user"
 		completedAt := time.Now()
@@ -789,6 +701,9 @@ func (as *ActionService) executeAction(action *models.Action, event *models.Acti
 
 	if logErr := as.repo.UpdateExecutionLog(log); logErr != nil {
 		slog.Error("failed to update execution log", slog.Any("error", logErr), slog.Int("action_id", action.ID))
+		if durableEventKey != "" {
+			return fmt.Errorf("complete durable action execution log: %w", logErr)
+		}
 	}
 
 	slog.Debug("action execution completed",
@@ -798,6 +713,9 @@ func (as *ActionService) executeAction(action *models.Action, event *models.Acti
 		slog.Duration("duration", time.Since(startTime)),
 	)
 
+	if log.Status == models.ActionStatusFailed {
+		return fmt.Errorf("action %d completed with failed steps", action.ID)
+	}
 	return nil
 }
 
@@ -1428,9 +1346,10 @@ func (as *ActionService) executeSetStatusID(statusID int, ctx *models.ExecutionC
 
 	workflowService := NewWorkflowService(as.db)
 	result, err := workflowService.PerformTransition(context.Background(), PerformTransitionRequest{
-		ItemID:      itemID,
-		ToStatusID:  statusID,
-		ActorUserID: ctx.EffectiveActorID,
+		ItemID:        itemID,
+		ToStatusID:    statusID,
+		ActorUserID:   ctx.EffectiveActorID,
+		EventMetadata: itemEventMetadata(ctx.EffectiveActorID, "automation", actionContextFromExecution(ctx)),
 		// Automations skip conditions — empty modes enforces only workflow validity.
 		Modes: nil,
 	}, as.itemRepo, nil, as.approvalService)
@@ -1562,10 +1481,11 @@ func (as *ActionService) executeTransitionItem(node *models.ActionNode, ctx *mod
 
 	workflowService := NewWorkflowService(as.db)
 	result, err := workflowService.PerformTransition(context.Background(), PerformTransitionRequest{
-		ItemID:      item.ID,
-		ToStatusID:  targetStatusID,
-		ActorUserID: ctx.EffectiveActorID,
-		Modes:       nil, // Automations are gated by workflow validity only.
+		ItemID:        item.ID,
+		ToStatusID:    targetStatusID,
+		ActorUserID:   ctx.EffectiveActorID,
+		EventMetadata: itemEventMetadata(ctx.EffectiveActorID, "automation", actionContextFromExecution(ctx)),
+		Modes:         nil, // Automations are gated by workflow validity only.
 	}, as.itemRepo, nil, as.approvalService)
 	if err != nil {
 		if rej := IsTransitionRejection(err); rej != nil {
@@ -1734,11 +1654,12 @@ func (as *ActionService) executeAddComment(node *models.ActionNode, ctx *models.
 	content := as.substituteVariables(config.Content, ctx)
 
 	result, err := as.commentService.Create(CreateCommentParams{
-		ItemID:      itemID,
-		AuthorID:    ctx.EffectiveActorID,
-		Content:     content,
-		IsPrivate:   config.IsPrivate,
-		ActorUserID: ctx.EffectiveActorID,
+		ItemID:        itemID,
+		AuthorID:      ctx.EffectiveActorID,
+		Content:       content,
+		IsPrivate:     config.IsPrivate,
+		ActorUserID:   ctx.EffectiveActorID,
+		EventMetadata: itemEventMetadata(ctx.EffectiveActorID, "automation", actionContextFromExecution(ctx)),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create comment via service: %w", err)

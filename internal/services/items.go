@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"windshift/internal/constants"
 	"windshift/internal/database"
+	"windshift/internal/itemevents"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/validation"
@@ -150,6 +152,9 @@ type ItemCreationParams struct {
 	// ws CLI) echo the enforced structure even when they supplied their own
 	// description. TemplateID == 0 after the call means the type enforces none.
 	MandatoryTemplateOut *MandatoryTemplateInfo
+	// EventMetadata overrides inferred actor/source provenance for the canonical
+	// item.created fact. Empty fields receive safe defaults.
+	EventMetadata itemevents.Metadata
 }
 
 // ItemCreateTransactionHook extends the item creation transaction.
@@ -473,36 +478,48 @@ func createItem(ctx context.Context, db database.Database, params ItemCreationPa
 				return 0, err
 			}
 		}
+		var customFieldValues map[string]any
+		if params.CustomFieldValuesJSON != "" {
+			if err := json.Unmarshal([]byte(params.CustomFieldValuesJSON), &customFieldValues); err != nil {
+				return 0, fmt.Errorf("decode item event custom fields: %w", err)
+			}
+		}
+		var virtualFieldData map[string]any
+		if params.VirtualFieldDataJSON != "" {
+			if err := json.Unmarshal([]byte(params.VirtualFieldDataJSON), &virtualFieldData); err != nil {
+				return 0, fmt.Errorf("decode item event virtual fields: %w", err)
+			}
+		}
+		item := &models.Item{
+			ID: int(itemID), WorkspaceID: params.WorkspaceID,
+			WorkspaceItemNumber: nextWorkspaceItemNumber, ItemTypeID: params.ItemTypeID,
+			Title: params.Title, Description: params.Description,
+			StatusID: statusID, PriorityID: priorityID, IsTask: params.IsTask,
+			AssigneeID: params.AssigneeID, ReporterID: params.ReporterID,
+			CreatorID: params.CreatorID, CreatorPortalCustomerID: params.CreatorPortalCustomerID,
+			ChannelID: params.ChannelID, RequestTypeID: params.RequestTypeID,
+			ParentID: params.ParentID, IterationID: params.IterationID,
+			ProjectID: params.ProjectID, InheritProject: params.InheritProject, TimeProjectID: params.TimeProjectID,
+			RelatedWorkItemID: params.RelatedWorkItemID,
+			DueDate:           params.DueDate, StartDate: params.StartDate, EndDate: params.EndDate,
+			StoryPoints: params.StoryPoints, EstimateMinutes: params.EstimateMinutes,
+			CustomFieldValues: customFieldValues, VirtualFieldData: virtualFieldData,
+			CreatedAt: createdAt, UpdatedAt: updatedAt,
+		}
+		metadata := itemCreateEventMetadata(params, createdAt)
+		if params.CreatorID != nil {
+			history := creationHistoryEntries(*item, *params.CreatorID, metadata.OccurredAt)
+			if err := repository.NewItemRepository(db).RecordHistoryBatch(tx, history); err != nil {
+				return 0, fmt.Errorf("record item creation history: %w", err)
+			}
+		}
+		if _, err := itemevents.NewRecorder(db).Created(ctx, tx, item, params.MilestoneIDs, metadata); err != nil {
+			return 0, err
+		}
 		return int(itemID), nil
 	})
 	if err != nil {
 		return 0, err
-	}
-
-	// Record item creation history asynchronously if a creator is specified
-	if params.CreatorID != nil {
-		historyService := GetHistoryService(db)
-		historyService.RecordItemCreationHistoryAsync(db, models.Item{
-			ID:              itemID,
-			WorkspaceID:     params.WorkspaceID,
-			ItemTypeID:      params.ItemTypeID,
-			Title:           params.Title,
-			Description:     params.Description,
-			StatusID:        statusID,
-			PriorityID:      priorityID,
-			IterationID:     params.IterationID,
-			ProjectID:       params.ProjectID,
-			InheritProject:  params.InheritProject,
-			TimeProjectID:   params.TimeProjectID,
-			AssigneeID:      params.AssigneeID,
-			CreatorID:       params.CreatorID,
-			ParentID:        params.ParentID,
-			DueDate:         params.DueDate,
-			StartDate:       params.StartDate,
-			EndDate:         params.EndDate,
-			StoryPoints:     params.StoryPoints,
-			EstimateMinutes: params.EstimateMinutes,
-		}, *params.CreatorID)
 	}
 
 	// Items created with an assignee already set fire the coding-agent

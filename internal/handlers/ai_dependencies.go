@@ -13,6 +13,7 @@ import (
 	"windshift/internal/aitooladapter"
 	"windshift/internal/aitools"
 	"windshift/internal/auth"
+	"windshift/internal/itemevents"
 	"windshift/internal/llm"
 	"windshift/internal/models"
 	"windshift/internal/repository"
@@ -488,14 +489,14 @@ func (h *AIHandler) AcceptDependencies(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		linkID, err := linkService.CreateLink(services.CreateItemLinkParams{
+		linkID, err := linkService.CreateLinkWithMetadata(services.CreateItemLinkParams{
 			LinkTypeID: s.LinkTypeID,
 			SourceType: "item",
 			SourceID:   s.SourceItemID,
 			TargetType: "item",
 			TargetID:   s.TargetItemID,
 			CreatedBy:  &user.ID,
-		})
+		}, itemevents.User(user.ID, "agent"))
 		if err != nil {
 			skipped++
 			continue

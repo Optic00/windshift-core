@@ -17,16 +17,12 @@ type ActionEventEmitter interface {
 	EmitActionEvent(event *models.ActionEvent)
 }
 
-// AssetActionEventEmitter is an interface for emitting asset action events.
-type AssetActionEventEmitter interface {
-	EmitAssetActionEvent(event *models.AssetActionEvent)
-}
-
 // ActionContext carries cascade context through event emission,
 // enabling cross-application loop prevention.
 type ActionContext struct {
 	TriggeredByAction bool
 	ExecutionChainID  string
+	CausationEventKey string
 	CascadeDepth      int
 	SourceApplication string
 }
@@ -39,7 +35,6 @@ type EventCoordinator struct {
 	activityTracker     *ActivityTracker
 	webhookDispatcher   WebhookDispatcher
 	actionService       ActionEventEmitter
-	assetActionService  AssetActionEventEmitter
 	magicLinkService    *MagicLinkService
 }
 
@@ -70,21 +65,11 @@ func (ec *EventCoordinator) SetActionService(as ActionEventEmitter) {
 	ec.actionService = as
 }
 
-// SetAssetActionService sets the asset action service for asset automation workflows.
-func (ec *EventCoordinator) SetAssetActionService(as AssetActionEventEmitter) {
-	ec.assetActionService = as
-}
-
 // SetMagicLinkService wires the magic-link service so approval steps that
 // resolve to portal customers can send a magic-link email pointing at the
 // customer-facing decide page.
 func (ec *EventCoordinator) SetMagicLinkService(ml *MagicLinkService) {
 	ec.magicLinkService = ml
-}
-
-// GetAssetActionService returns the asset action service, if set.
-func (ec *EventCoordinator) GetAssetActionService() AssetActionEventEmitter {
-	return ec.assetActionService
 }
 
 // EmitItemCreated emits events for a newly created item.

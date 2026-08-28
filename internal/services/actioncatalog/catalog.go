@@ -136,28 +136,28 @@ func Build() (*Catalog, error) {
 	if err := registerTrigger[models.ActionTriggerConfig](c, triggerSpec{
 		Type:        models.ActionTriggerSCMTagCreated,
 		Label:       "SCM: tag created",
-		Description: "Fires when a synced source-control repository discovers a new tag/release ref.",
+		Description: "Fires when a synced source-control repository discovers a new tag/release ref. SCM triggers have no authenticated actor, so the action must set an actor_user_id override.",
 	}); err != nil {
 		return nil, err
 	}
 	if err := registerTrigger[models.ActionTriggerConfig](c, triggerSpec{
 		Type:        models.ActionTriggerSCMReleaseBranchCreated,
 		Label:       "SCM: release branch created",
-		Description: "Fires when a synced source-control repository discovers a new release branch ref.",
+		Description: "Fires when a synced source-control repository discovers a new release branch ref. SCM triggers have no authenticated actor, so the action must set an actor_user_id override.",
 	}); err != nil {
 		return nil, err
 	}
 	if err := registerTrigger[models.ActionTriggerConfig](c, triggerSpec{
 		Type:        models.ActionTriggerSCMPRLinked,
 		Label:       "SCM: pull request linked",
-		Description: "Fires when a synced repository discovers a new pull request linked to a work item. SCM triggers have no authenticated actor, so the action must set an actor_user_id override to perform item mutations.",
+		Description: "Fires when a synced repository discovers a new pull request linked to a work item. SCM triggers have no authenticated actor, so the action must set an actor_user_id override.",
 	}); err != nil {
 		return nil, err
 	}
 	if err := registerTrigger[models.ActionTriggerConfig](c, triggerSpec{
 		Type:        models.ActionTriggerSCMPRMerged,
 		Label:       "SCM: pull request merged",
-		Description: "Fires when a linked pull request transitions to merged. SCM triggers have no authenticated actor, so the action must set an actor_user_id override to perform item mutations.",
+		Description: "Fires when a linked pull request transitions to merged. SCM triggers have no authenticated actor, so the action must set an actor_user_id override.",
 	}); err != nil {
 		return nil, err
 	}

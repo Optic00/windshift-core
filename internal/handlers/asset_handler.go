@@ -17,13 +17,12 @@ import (
 // the cookie-auth and the bearer-auth v1 handler share one instance of
 // each so the two surfaces produce identical audit rows.
 type AssetHandler struct {
-	db                 database.Database
-	repo               *repository.AssetRepository
-	permissionService  *services.PermissionService
-	assetPerm          *services.AssetPermissionService
-	assetService       *services.AssetService
-	attachmentPath     string
-	assetActionService *services.AssetActionService
+	db                database.Database
+	repo              *repository.AssetRepository
+	permissionService *services.PermissionService
+	assetPerm         *services.AssetPermissionService
+	assetService      *services.AssetService
+	attachmentPath    string
 }
 
 // NewAssetHandler creates a new asset handler
@@ -46,20 +45,9 @@ func (h *AssetHandler) AssetPermissionService() *services.AssetPermissionService
 	return h.assetPerm
 }
 
-// AssetService returns the shared mutation/audit/automation service so
-// the v1 wireup can use the same instance — the cookie-auth handler
-// already wired SetAssetActionService onto it, so both surfaces share
-// one automation emitter as well.
+// AssetService returns the shared mutation, audit, and durable-event service.
 func (h *AssetHandler) AssetService() *services.AssetService {
 	return h.assetService
-}
-
-// SetAssetActionService sets the asset action service for emitting automation events
-func (h *AssetHandler) SetAssetActionService(s *services.AssetActionService) {
-	h.assetActionService = s
-	// Forward to the mutation service too so audits + automation events
-	// fired by the v1 surface end up on the same channel.
-	h.assetService.SetActionService(s)
 }
 
 // Role name constants — these are response-shape strings, not used by the

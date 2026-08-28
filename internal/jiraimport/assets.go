@@ -1,14 +1,18 @@
 package jiraimport
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"strings"
 	"time"
 
+	"windshift/internal/assetevents"
+	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/services"
 )
 
 func (s *Service) EnsureAssetSet(name, description string, creatorUserID int) (setID int, created bool, err error) {
@@ -171,7 +175,37 @@ func (s *Service) AssetReference(jobID, jiraID, jiraKey string) (AssetReference,
 }
 
 func (s *Service) InsertAsset(input repository.JiraImportAssetRowInput) (int, error) {
-	return s.assets.InsertJiraImportedAsset(input)
+	var assetID int
+	err := database.WithTx(s.db, func(tx database.Tx) error {
+		var err error
+		assetID, err = s.assets.InsertJiraImportedAssetInTx(tx, input)
+		if err != nil {
+			return err
+		}
+		values := map[string]any{
+			"title": input.Title, "description": input.Description, "asset_tag": input.AssetTag,
+			"asset_type_id": input.AssetTypeID, "status_id": input.StatusID,
+		}
+		var customValues map[string]any
+		if json.Unmarshal([]byte(input.CustomFieldValuesJSON), &customValues) == nil {
+			for key, value := range customValues {
+				values[key] = value
+			}
+		}
+		metadata := assetevents.System("jira_import")
+		metadata.SourceRef = input.ImportJobID
+		snapshot := assetevents.AssetSnapshot{
+			ID: assetID, SetID: input.SetID, AssetTypeID: input.AssetTypeID,
+			StatusID: input.StatusID, Title: input.Title, Description: input.Description, AssetTag: input.AssetTag,
+		}
+		if _, err = assetevents.NewRecorder(s.db).Created(context.Background(), tx, snapshot, values, metadata); err != nil {
+			return err
+		}
+		return services.NewDurableAssetActionIngress(s.db).EmitInTx(context.Background(), tx, &models.AssetActionEvent{
+			EventType: models.AssetTriggerAssetCreated, SetID: input.SetID, AssetID: assetID, NewValues: values,
+		})
+	})
+	return assetID, err
 }
 
 func (s *Service) AssetCustomFieldValues(assetID int) (map[string]any, error) {

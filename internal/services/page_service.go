@@ -6,6 +6,7 @@
 package services
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -18,6 +19,7 @@ import (
 	"unicode"
 
 	"windshift/internal/database"
+	"windshift/internal/itemevents"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/sanitize"
@@ -483,7 +485,7 @@ func (s *PageService) MoveAcrossWorkspace(actorID, pageID, destinationWorkspaceI
 			pageIDs = append(pageIDs, descendant.ID)
 		}
 
-		if err := s.rehomePageSubtreeRelationsTx(tx, pageIDs, destinationWorkspaceID); err != nil {
+		if err := s.rehomePageSubtreeRelationsTx(tx, pageIDs, destinationWorkspaceID, actorID); err != nil {
 			return nil, err
 		}
 
@@ -503,7 +505,7 @@ func (s *PageService) MoveAcrossWorkspace(actorID, pageID, destinationWorkspaceI
 // labels, explicit ACLs, item links, and workspace-agent skill references are
 // removed. Search chunks follow the page. Attachments and revisions are not
 // workspace-scoped and remain untouched.
-func (s *PageService) rehomePageSubtreeRelationsTx(tx database.Tx, pageIDs []int, destinationWorkspaceID int) error {
+func (s *PageService) rehomePageSubtreeRelationsTx(tx database.Tx, pageIDs []int, destinationWorkspaceID, actorID int) error {
 	if len(pageIDs) == 0 {
 		return nil
 	}
@@ -587,6 +589,10 @@ func (s *PageService) rehomePageSubtreeRelationsTx(tx database.Tx, pageIDs []int
 		return fmt.Errorf("clear workspace skill page references during workspace move: %w", err)
 	}
 	linkArgs := append(append([]any{}, args...), args...)
+	metadata := itemevents.User(actorID, "application")
+	if err := itemevents.NewRecorder(s.db).RemovedLinks(context.Background(), tx, "page", pageIDs, metadata); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`
 		DELETE FROM item_links
 		WHERE (source_type = 'page' AND source_id IN (`+idList+`))

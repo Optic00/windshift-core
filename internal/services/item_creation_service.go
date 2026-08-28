@@ -172,6 +172,7 @@ func (s *ItemCreationService) create(
 		ValidatingUserID:      actorUserID,
 		PermService:           s.perm,
 		MandatoryTemplateOut:  &mandatoryTemplate,
+		EventMetadata:         itemEventMetadata(actorUserID, "application", actionContext),
 	})
 	if err != nil {
 		return nil, err

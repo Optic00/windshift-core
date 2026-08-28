@@ -344,16 +344,44 @@ func (r *LogbookActionRepository) SaveActionWithNodesAndEdges(action *models.Log
 func (r *LogbookActionRepository) CreateExecutionLog(log *models.LogbookActionExecutionLog) (int, error) {
 	var id int
 	err := r.db.QueryRow(`
-		INSERT INTO logbook_action_execution_logs (action_id, document_id, trigger_event, status, started_at)
-		VALUES ($1, $2, $3, $4, $5) RETURNING id
+		INSERT INTO logbook_action_execution_logs (
+			action_id, document_id, trigger_event, status, started_at, durable_event_key
+		) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id
 	`,
-		log.ActionID, log.DocumentID, log.TriggerEvent, log.Status, time.Now(),
+		log.ActionID, log.DocumentID, log.TriggerEvent, log.Status, time.Now(), durableEventKeyValue(log.DurableEventKey),
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create logbook execution log: %w", err)
 	}
 
 	return id, nil
+}
+
+// GetExecutionLogByDurableTarget returns the stable execution identity for one
+// durable document event and frozen action.
+func (r *LogbookActionRepository) GetExecutionLogByDurableTarget(eventKey string, actionID int) (*models.LogbookActionExecutionLog, error) {
+	log := &models.LogbookActionExecutionLog{}
+	var documentID sql.NullString
+	var completedAt sql.NullTime
+	err := r.db.QueryRow(`
+		SELECT id, action_id, document_id, trigger_event, status, started_at,
+		       completed_at, error_message, execution_trace, durable_event_key
+		FROM logbook_action_execution_logs
+		WHERE durable_event_key = $1 AND action_id = $2
+	`, eventKey, actionID).Scan(
+		&log.ID, &log.ActionID, &documentID, &log.TriggerEvent, &log.Status,
+		&log.StartedAt, &completedAt, &log.ErrorMessage, &log.ExecutionTrace, &log.DurableEventKey,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if documentID.Valid {
+		log.DocumentID = &documentID.String
+	}
+	if completedAt.Valid {
+		log.CompletedAt = &completedAt.Time
+	}
+	return log, nil
 }
 
 // UpdateExecutionLog updates a logbook action execution log entry
@@ -375,7 +403,7 @@ func (r *LogbookActionRepository) UpdateExecutionLog(log *models.LogbookActionEx
 func (r *LogbookActionRepository) GetExecutionLogs(actionID, limit, offset int) ([]*models.LogbookActionExecutionLog, error) {
 	rows, err := r.db.Query(`
 		SELECT l.id, l.action_id, l.document_id, l.trigger_event, l.status,
-		       l.started_at, l.completed_at, l.error_message, l.execution_trace,
+		       l.started_at, l.completed_at, l.error_message, l.execution_trace, l.durable_event_key,
 		       a.name
 		FROM logbook_action_execution_logs l
 		LEFT JOIN logbook_actions a ON l.action_id = a.id
@@ -395,7 +423,7 @@ func (r *LogbookActionRepository) GetExecutionLogs(actionID, limit, offset int) 
 func (r *LogbookActionRepository) GetBucketExecutionLogs(bucketID string, limit, offset int) ([]*models.LogbookActionExecutionLog, error) {
 	rows, err := r.db.Query(`
 		SELECT l.id, l.action_id, l.document_id, l.trigger_event, l.status,
-		       l.started_at, l.completed_at, l.error_message, l.execution_trace,
+		       l.started_at, l.completed_at, l.error_message, l.execution_trace, l.durable_event_key,
 		       a.name
 		FROM logbook_action_execution_logs l
 		LEFT JOIN logbook_actions a ON l.action_id = a.id
@@ -417,11 +445,11 @@ func (r *LogbookActionRepository) scanExecutionLogs(rows *sql.Rows) ([]*models.L
 		log := &models.LogbookActionExecutionLog{}
 		var documentID sql.NullString
 		var completedAt sql.NullTime
-		var errorMessage, executionTrace, actionName sql.NullString
+		var errorMessage, executionTrace, durableEventKey, actionName sql.NullString
 
 		err := rows.Scan(
 			&log.ID, &log.ActionID, &documentID, &log.TriggerEvent, &log.Status,
-			&log.StartedAt, &completedAt, &errorMessage, &executionTrace,
+			&log.StartedAt, &completedAt, &errorMessage, &executionTrace, &durableEventKey,
 			&actionName,
 		)
 		if err != nil {
@@ -439,6 +467,9 @@ func (r *LogbookActionRepository) scanExecutionLogs(rows *sql.Rows) ([]*models.L
 		}
 		if executionTrace.Valid {
 			log.ExecutionTrace = executionTrace.String
+		}
+		if durableEventKey.Valid {
+			log.DurableEventKey = durableEventKey.String
 		}
 		if actionName.Valid {
 			log.ActionName = actionName.String

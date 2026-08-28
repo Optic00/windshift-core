@@ -19,6 +19,17 @@ func pgColumnCheck(table, column string) string {
 	)
 }
 
+func sqliteTableCheck(table string) string {
+	return fmt.Sprintf("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='%s'", table)
+}
+
+func pgTableCheck(table string) string {
+	return fmt.Sprintf(
+		"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='%s'",
+		table,
+	)
+}
+
 // sqliteIndexCheck / pgIndexCheck for index-only migrations. The Postgres
 // variant is pinned to current_schema() — matching an identically-named
 // index in an unrelated schema would falsely stamp the migration as applied.

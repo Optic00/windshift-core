@@ -173,9 +173,10 @@ func (s *ExternalItemReconciliationService) Update(ctx context.Context, req Exte
 	}
 
 	return NewItemUpdateService(s.db).updateItem(ctx, UpdateItemRequest{
-		ItemID:     req.ItemID,
-		UpdateData: req.UpdateData,
-		UserID:     req.Policy.ActorUserID,
+		ItemID:        req.ItemID,
+		UpdateData:    req.UpdateData,
+		UserID:        req.Policy.ActorUserID,
+		EventMetadata: itemEventMetadata(req.Policy.ActorUserID, string(req.Policy.Source), nil),
 	}, itemUpdateOptions{
 		allowStatus:             true,
 		recordHistory:           req.Policy.RecordHistory,

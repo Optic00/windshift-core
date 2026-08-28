@@ -9,11 +9,10 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
-	"time"
 
-	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/services"
 )
 
 // requireAssetAccess authenticates and authorizes an asset through its set.
@@ -310,16 +309,15 @@ func (h *AssetHandler) CreateAssetLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	now := time.Now()
-
-	var linkID int64
-	err = h.db.QueryRow(`
-		INSERT INTO item_links (link_type_id, source_type, source_id, target_type, target_id, created_by, created_at)
-		VALUES (?, 'asset', ?, ?, ?, ?, ?) RETURNING id
-	`, req.LinkTypeID, assetID, req.TargetType, req.TargetID, currentUser.ID, now).Scan(&linkID)
-
+	link, err := services.NewItemLinkService(h.db).
+		WithPermissionService(h.permissionService).
+		WithAssetPermissionChecker(h).
+		CreateLinkWithChecks(currentUser.ID, services.CreateItemLinkParams{
+			LinkTypeID: req.LinkTypeID, SourceType: "asset", SourceID: assetID,
+			TargetType: req.TargetType, TargetID: req.TargetID,
+		})
 	if err != nil {
-		if database.IsUniqueConstraintError(err) {
+		if errors.Is(err, services.ErrLinkExists) {
 			respondConflict(w, r, "Link already exists")
 		} else {
 			respondInternalError(w, r, err)
@@ -328,13 +326,13 @@ func (h *AssetHandler) CreateAssetLink(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := map[string]any{
-		"id":           linkID,
+		"id":           link.ID,
 		"link_type_id": req.LinkTypeID,
 		"source_type":  "asset",
 		"source_id":    assetID,
 		"target_type":  req.TargetType,
 		"target_id":    req.TargetID,
-		"created_at":   now,
+		"created_at":   link.CreatedAt,
 	}
 
 	respondJSONCreated(w, response)

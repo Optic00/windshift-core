@@ -26,6 +26,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/email"
 	"windshift/internal/emailutil"
+	"windshift/internal/events"
 	"windshift/internal/handlers"
 	"windshift/internal/health"
 	"windshift/internal/ldap"
@@ -83,6 +84,7 @@ type Server struct {
 	workflowService              *services.WorkflowService
 	actionService                *services.ActionService
 	assetActionService           *services.AssetActionService
+	eventEngine                  *events.Engine
 	approvalEscalationSweeper    *services.ApprovalEscalationSweeper
 	emailScheduler               *scheduler.EmailScheduler
 	emailTrackingRetention       *scheduler.EmailTrackingRetentionSweeper
@@ -223,6 +225,7 @@ func (s *Server) initialize() error {
 	if err = database.ValidateCanonicalSchemaCheckpoint(s.db); err != nil {
 		return fmt.Errorf("database startup refused: %w", err)
 	}
+	s.eventEngine = events.NewEngine(s.db, events.DefaultConfig())
 
 	if err = emailutil.SeedTemplates(s.db); err != nil {
 		slog.Warn("failed to seed default email templates", "error", err)
@@ -442,11 +445,17 @@ func (s *Server) initialize() error {
 	s.actionService = services.NewActionService(s.db, services.DefaultActionServiceConfig(), chainStore)
 	s.actionService.SetNotificationService(s.notificationService)
 	s.actionService.SetPermissionService(permService)
+	if err := services.PrepareDurableActionEngine(context.Background(), s.eventEngine, s.actionService, cfg.ActivateDurableActions); err != nil {
+		return fmt.Errorf("prepare durable action consumers: %w", err)
+	}
 	slog.Info("action service initialized")
 
 	s.assetActionService = services.NewAssetActionService(s.db, services.DefaultActionServiceConfig(), chainStore)
 	s.assetActionService.SetNotificationService(s.notificationService)
 	s.assetActionService.SetPermissionService(permService)
+	if err := services.PrepareDurableAssetActionEngine(context.Background(), s.eventEngine, s.assetActionService, cfg.ActivateDurableAssetActions); err != nil {
+		return fmt.Errorf("prepare durable asset action consumers: %w", err)
+	}
 	slog.Info("asset action service initialized")
 
 	// Determine base URL — cfg.BaseURL is already resolved by config.Load
@@ -886,7 +895,6 @@ func (s *Server) initialize() error {
 	}
 
 	assetHandler := handlers.NewAssetHandler(s.db, permService, cfg.AttachmentPath)
-	assetHandler.SetAssetActionService(s.assetActionService)
 	actionsHandler.SetAssetService(assetHandler.AssetService())
 	s.actionService.SetAssetNodeServices(assetHandler.AssetService(), assetHandler.AssetPermissionService())
 	if n, err := assetHandler.ReconcileInterruptedImports(); err != nil {
@@ -952,7 +960,6 @@ func (s *Server) initialize() error {
 	eventCoordinator.SetActivityTracker(s.activityTracker)
 	eventCoordinator.SetWebhookDispatcher(webhookSender)
 	eventCoordinator.SetActionService(s.actionService)
-	eventCoordinator.SetAssetActionService(s.assetActionService)
 	eventCoordinator.SetMagicLinkService(magicLinkService)
 	s.actionService.SetEventCoordinator(eventCoordinator)
 	s.assetActionService.SetAssetPermissionChecker(assetHandler)
@@ -1077,6 +1084,7 @@ func (s *Server) initialize() error {
 	//     by external_key (with optional release attach + commit-issue
 	//     attachment via the scm.MilestoneAttacher adapter).
 	scmSyncService.SetActionEvents(s.actionService)
+	scmSyncService.SetDurableActionEvents(s.actionService)
 	milestoneItemUpdater := services.NewItemUpdateApplicationService(s.db, permService)
 	milestoneItemUpdater.SetEmitter(eventCoordinator)
 	milestoneAttacher := scm.NewMilestoneAttacher(
@@ -1310,11 +1318,9 @@ func (s *Server) initialize() error {
 			// Node execution endpoint for logbook actions (create_item, create_asset on SQLite)
 			nodeExecHandler := handlers.NewLogbookNodeExecutionHandler(
 				ssoSecret,
-				eventCoordinator,
 				permService,
 				assetHandler,
 				itemHandler.ItemCreationService(),
-				repository.NewAssetRepository(s.db),
 			)
 			mux.Handle("POST /api/internal/logbook/execute-node", http.HandlerFunc(nodeExecHandler.HandleNodeExecution))
 			slog.Info("internal logbook node execution endpoint enabled")
@@ -1513,6 +1519,8 @@ func (s *Server) initialize() error {
 				repository.NewSystemSettingRepository(s.db),
 				s.globalRankMigrationScheduler,
 				s.memoryBudget,
+				s.eventEngine.Store(),
+				repository.NewSCMHealthRepository(s.db),
 			),
 			AgentSecurity: handlers.NewAgentSecurityHandler(
 				agentSecurityRepo,
@@ -1773,6 +1781,9 @@ func (s *Server) initialize() error {
 		IdleTimeout:         60 * time.Second,
 		MaxHeaderBytes:      1 << 20,
 		MaxHeaderValueCount: maxRequestHeaderValueCount,
+	}
+	if err := s.eventEngine.Start(context.Background()); err != nil {
+		return fmt.Errorf("start domain event engine: %w", err)
 	}
 
 	return nil
@@ -2054,6 +2065,13 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		}
 	}
 
+	if s.eventEngine != nil {
+		slog.Info("stopping domain event engine")
+		if err := s.eventEngine.Shutdown(ctx); err != nil {
+			slog.Warn("domain event engine did not stop in time", "error", err)
+		}
+	}
+
 	// Cleanup remaining resources
 	s.cleanup()
 
@@ -2078,6 +2096,13 @@ func isAPIPath(p string) bool {
 func (s *Server) cleanup() {
 	if s.databasePoolMonitor != nil {
 		s.databasePoolMonitor.Stop()
+	}
+	if s.eventEngine != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := s.eventEngine.Shutdown(ctx); err != nil {
+			slog.Warn("domain event engine cleanup did not stop in time", "error", err)
+		}
+		cancel()
 	}
 	// initialize may fail after this scheduler has started. Stop and join it
 	// before closing the database so an in-flight rank batch cannot race cleanup.

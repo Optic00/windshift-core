@@ -43,6 +43,10 @@ func RegisterAdminRoutes(deps *Deps) {
 	api.HandleH("GET /admin/diagnostics/session-validation-cache", admin(http.HandlerFunc(deps.Admin.Diagnostics.GetSessionValidationCache)))
 	api.HandleH("GET /admin/diagnostics/recurrence-volume", admin(http.HandlerFunc(deps.Admin.Diagnostics.GetRecurrenceVolume)))
 	api.HandleH("PUT /admin/diagnostics/recurrence-volume", admin(http.HandlerFunc(deps.Admin.Diagnostics.UpdateRecurrenceVolumeSettings)))
+	api.HandleH("GET /admin/diagnostics/domain-events", admin(http.HandlerFunc(deps.Admin.Diagnostics.GetDomainEvents)))
+	api.HandleH("GET /admin/diagnostics/scm-connections", admin(http.HandlerFunc(deps.Admin.Diagnostics.GetSCMConnections)))
+	api.HandleH("POST /admin/diagnostics/domain-events/{eventID}/{consumerKey}/replay", admin(http.HandlerFunc(deps.Admin.Diagnostics.ReplayDomainEvent)))
+	api.HandleH("POST /admin/diagnostics/domain-events/{eventID}/{consumerKey}/skip", admin(http.HandlerFunc(deps.Admin.Diagnostics.SkipDomainEvent)))
 
 	// Authentication policy endpoints (admin only)
 	api.HandleH("GET /admin/auth-policy", admin(http.HandlerFunc(deps.Admin.AuthPolicy.GetAuthPolicy)))

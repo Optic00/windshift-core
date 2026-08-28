@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"windshift/internal/itemevents"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/validation"
@@ -49,6 +50,7 @@ type BulkUpdateItemsRequest struct {
 	ItemIDs            []int
 	Fields             map[string]any
 	UserID             int
+	EventMetadata      itemevents.Metadata
 	AuthorizeWorkspace func(workspaceID int) (bool, error)
 }
 
@@ -69,6 +71,7 @@ type BulkItemPatch struct {
 type BulkPatchItemsRequest struct {
 	Patches            []BulkItemPatch
 	UserID             int
+	EventMetadata      itemevents.Metadata
 	AuthorizeWorkspace func(workspaceID int) (bool, error)
 }
 
@@ -93,7 +96,8 @@ func (s *ItemUpdateService) BulkUpdateItems(ctx context.Context, req BulkUpdateI
 		patches[i] = BulkItemPatch{ItemID: id, Fields: req.Fields}
 	}
 	return s.BulkPatchItems(ctx, BulkPatchItemsRequest{
-		Patches: patches, UserID: req.UserID, AuthorizeWorkspace: req.AuthorizeWorkspace,
+		Patches: patches, UserID: req.UserID, EventMetadata: req.EventMetadata,
+		AuthorizeWorkspace: req.AuthorizeWorkspace,
 	})
 }
 
@@ -168,6 +172,7 @@ func (s *ItemUpdateService) BulkPatchItems(ctx context.Context, req BulkPatchIte
 	}
 
 	pending := make([]UpdateItemResult, 0, len(originals))
+	eventRecords := make([]itemevents.UpdateRecord, 0, len(originals))
 	for _, original := range originals {
 		updated := *original
 		if err := s.validator.ValidateAndApplyUpdates(&updated, fieldsByID[original.ID], req.UserID); err != nil {
@@ -185,7 +190,17 @@ func (s *ItemUpdateService) BulkPatchItems(ctx context.Context, req BulkPatchIte
 			return nil, fmt.Errorf("record item %d history: %w", original.ID, err)
 		}
 		sqlStatements += len(history)
+		metadata := mergeItemEventMetadata(req.EventMetadata, itemEventMetadata(req.UserID, "application", nil))
+		if metadata.OccurredAt.IsZero() {
+			metadata.OccurredAt = history[0].ChangedAt
+		}
+		eventRecords = append(eventRecords, itemevents.UpdateRecord{
+			Item: &updated, Changes: itemevents.Changes(original, &updated), Metadata: metadata,
+		})
 		pending = append(pending, UpdateItemResult{OriginalItem: original, FieldChanges: history})
+	}
+	if _, err := itemevents.NewRecorder(s.db).UpdatedBatch(ctx, tx, eventRecords); err != nil {
+		return nil, err
 	}
 
 	if err := tx.Commit(); err != nil {

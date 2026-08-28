@@ -14,6 +14,7 @@ import (
 	"windshift/internal/auth"
 	"windshift/internal/cacheutil"
 	"windshift/internal/config"
+	domainevents "windshift/internal/events"
 	"windshift/internal/llm"
 	"windshift/internal/logger"
 	"windshift/internal/models"
@@ -49,6 +50,8 @@ type DiagnosticsHandler struct {
 	settingsRepo        *repository.SystemSettingRepository
 	globalRankScheduler *scheduler.GlobalRankMigrationScheduler
 	memoryBudget        config.MemoryBudget
+	eventStore          *domainevents.Store
+	scmHealthRepo       *repository.SCMHealthRepository
 }
 
 // NewDiagnosticsHandler creates a new diagnostics handler.
@@ -72,6 +75,8 @@ func NewDiagnosticsHandler(
 	settingsRepo *repository.SystemSettingRepository,
 	globalRankScheduler *scheduler.GlobalRankMigrationScheduler,
 	memoryBudget config.MemoryBudget,
+	eventStore *domainevents.Store,
+	scmHealthRepo *repository.SCMHealthRepository,
 ) *DiagnosticsHandler {
 	return &DiagnosticsHandler{
 		sessionManager:      sessionManager,
@@ -93,7 +98,24 @@ func NewDiagnosticsHandler(
 		settingsRepo:        settingsRepo,
 		globalRankScheduler: globalRankScheduler,
 		memoryBudget:        memoryBudget,
+		eventStore:          eventStore,
+		scmHealthRepo:       scmHealthRepo,
 	}
+}
+
+// GetSCMConnections returns durable health for scheduled SCM operations.
+//
+// GET /api/admin/diagnostics/scm-connections
+func (h *DiagnosticsHandler) GetSCMConnections(w http.ResponseWriter, r *http.Request) {
+	connections, err := h.scmHealthRepo.ListConnectionDiagnostics(r.Context())
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	if connections == nil {
+		connections = []repository.SCMConnectionDiagnostic{}
+	}
+	respondJSONOK(w, connections)
 }
 
 // GetCacheMemory returns the configured process budget and live BigCache

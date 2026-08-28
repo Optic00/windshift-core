@@ -17,6 +17,7 @@ import (
 	"windshift/internal/auth"
 	"windshift/internal/database"
 	"windshift/internal/fileserve"
+	"windshift/internal/itemevents"
 	"windshift/internal/middleware"
 	"windshift/internal/models"
 	"windshift/internal/repository"
@@ -747,6 +748,12 @@ func (h *PortalHandler) SubmitToPortal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	eventMetadata := itemevents.System("portal")
+	if portalCustomerID != nil {
+		eventMetadata = itemevents.PortalCustomer(*portalCustomerID, "portal")
+	} else if authenticatedUserID != nil {
+		eventMetadata = itemevents.User(*authenticatedUserID, "portal")
+	}
 	itemID, err := services.CreateItem(h.db, services.ItemCreationParams{
 		WorkspaceID:             targetWorkspaceID,
 		Title:                   submission.Title,
@@ -760,6 +767,7 @@ func (h *PortalHandler) SubmitToPortal(w http.ResponseWriter, r *http.Request) {
 		RequestTypeID:           submission.RequestTypeID,
 		CustomFieldValuesJSON:   string(customFieldsJSON),
 		VirtualFieldDataJSON:    string(virtualFieldsJSON),
+		EventMetadata:           eventMetadata,
 	})
 	if err != nil {
 		respondInternalError(w, r, err)

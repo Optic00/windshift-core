@@ -146,6 +146,18 @@ var pageLabelsSchema string
 //go:embed schema/agents.sql
 var agentsSchema string
 
+//go:embed schema/events.sql
+var eventsSchema string
+
+//go:embed schema/action_events.sql
+var actionEventsSchema string
+
+//go:embed schema/action_event_targets.sql
+var actionEventTargetsSchema string
+
+//go:embed schema/asset_action_events.sql
+var assetActionEventsSchema string
+
 // DB wraps a sql.DB connection with a dedicated write connection
 type DB struct {
 	*sql.DB

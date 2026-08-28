@@ -3,8 +3,8 @@ package scm
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
-	"log/slog"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -69,9 +69,8 @@ func (s *SyncService) loadMilestonePatterns(ctx context.Context, repoID int) (ta
 }
 
 // isRefProcessed reports whether (repoID, refType, refName) is already
-// in scm_processed_refs. A row there means the corresponding ActionEvent
-// has been queued at least once; the action engine itself owns idempotency
-// for downstream effects via the per-action upsert_key.
+// in scm_processed_refs. A row means the ref was baselined or its event was
+// durably admitted, so later syncs must not observe it as new.
 func (s *SyncService) isRefProcessed(ctx context.Context, repoID int, refType, refName string) (bool, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx, `
@@ -84,9 +83,8 @@ func (s *SyncService) isRefProcessed(ctx context.Context, repoID int, refType, r
 	return n > 0, nil
 }
 
-// markRefProcessed inserts the idempotency row. Caller invokes this only
-// after a successful event emission so a failure leaves the ref eligible
-// for retry on the next tick.
+// markRefProcessed inserts the idempotency row for a baseline or a legacy
+// event emission. Durable admission uses recordRefObservation's transaction.
 func (s *SyncService) markRefProcessed(ctx context.Context, repoID int, refType, refName, sha string) error {
 	_, err := s.db.ExecWriteContext(ctx, `
 		INSERT INTO scm_processed_refs(workspace_repository_id, ref_type, ref_name, sha, processed_at)
@@ -95,8 +93,59 @@ func (s *SyncService) markRefProcessed(ctx context.Context, repoID int, refType,
 	return err
 }
 
-// syncTagsAndReleases emits new matching tags with chronological prev_tag; providers without tag support no-op.
-func (s *SyncService) syncTagsAndReleases(ctx context.Context, provider Provider, owner, repo string, repoID, workspaceID int) error {
+func (s *SyncService) recordRefObservation(
+	ctx context.Context,
+	repoID int,
+	refType, refName, sha string,
+	event *models.ActionEvent,
+	emit bool,
+) error {
+	if s.durableActionEvents == nil {
+		if emit && s.actionEvents != nil {
+			s.actionEvents.EmitActionEvent(event)
+		}
+		return s.markRefProcessed(ctx, repoID, refType, refName, sha)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin SCM ref observation: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx, `
+		INSERT INTO scm_processed_refs(workspace_repository_id, ref_type, ref_name, sha, processed_at)
+		VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT (workspace_repository_id, ref_type, ref_name) DO NOTHING
+	`, repoID, refType, refName, sha)
+	if err != nil {
+		return fmt.Errorf("admit SCM ref identity: %w", err)
+	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read SCM ref admission result: %w", err)
+	}
+	if inserted == 0 {
+		return nil
+	}
+	if emit {
+		if err := s.durableActionEvents.EmitActionEventInTx(ctx, tx, event); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit SCM ref observation: %w", err)
+	}
+	return nil
+}
+
+// syncTagsAndReleases baselines first-sync tags and emits later matching tags
+// with chronological prev_tag. Providers without tag support no-op.
+func (s *SyncService) syncTagsAndReleases(
+	ctx context.Context,
+	provider Provider,
+	owner, repo string,
+	repoID, workspaceID int,
+	baseline bool,
+) error {
 	rp, ok := provider.(RefProvider)
 	if !ok {
 		return nil
@@ -124,13 +173,14 @@ func (s *SyncService) syncTagsAndReleases(ctx context.Context, provider Provider
 		return matched[i].CreatedAt.Before(matched[j].CreatedAt)
 	})
 
+	var syncErrs []error
 	for i, t := range matched {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		seen, err := s.isRefProcessed(ctx, repoID, "tag", t.Name)
 		if err != nil {
-			slog.Error("Failed to check processed ref", slog.String("component", "scm"), slog.Any("error", err))
+			syncErrs = append(syncErrs, fmt.Errorf("check processed tag %q: %w", t.Name, err))
 			continue
 		}
 		if seen {
@@ -140,20 +190,34 @@ func (s *SyncService) syncTagsAndReleases(ctx context.Context, provider Provider
 		if i > 0 {
 			prev = matched[i-1].Name
 		}
-		s.emitTagEvent(workspaceID, repoID, owner, repo, t, prev)
-		if err := s.markRefProcessed(ctx, repoID, "tag", t.Name, t.SHA); err != nil {
-			slog.Error("Failed to mark tag processed", slog.String("component", "scm"), slog.String("tag", t.Name), slog.Any("error", err))
+		if err := s.recordRefObservation(
+			ctx,
+			repoID,
+			"tag",
+			t.Name,
+			t.SHA,
+			s.tagEvent(workspaceID, repoID, owner, repo, t, prev),
+			!baseline,
+		); err != nil {
+			syncErrs = append(syncErrs, fmt.Errorf("persist tag %q observation: %w", t.Name, err))
 		}
 	}
-	return nil
+	return errors.Join(syncErrs...)
 }
 
-// syncReleaseBranches lists branches matching the repo's branch pattern
-// and emits an ActionEvent per newly observed one. Branches don't carry
+// syncReleaseBranches lists branches matching the repo's branch pattern. It
+// baselines first-sync branches and emits an ActionEvent for later refs.
+// Branches don't carry
 // a usable creation timestamp from most providers, so there's no
 // "prev_branch" concept — the create_milestone action's upsert_key is
 // what pairs the branch with its later tag.
-func (s *SyncService) syncReleaseBranches(ctx context.Context, provider Provider, owner, repo string, repoID, workspaceID int) error {
+func (s *SyncService) syncReleaseBranches(
+	ctx context.Context,
+	provider Provider,
+	owner, repo string,
+	repoID, workspaceID int,
+	baseline bool,
+) error {
 	_, branchPattern, err := s.loadMilestonePatterns(ctx, repoID)
 	if err != nil {
 		return err
@@ -162,6 +226,7 @@ func (s *SyncService) syncReleaseBranches(ctx context.Context, provider Provider
 	if err != nil {
 		return fmt.Errorf("list branches: %w", err)
 	}
+	var syncErrs []error
 	for _, b := range branches {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -171,28 +236,32 @@ func (s *SyncService) syncReleaseBranches(ctx context.Context, provider Provider
 		}
 		seen, err := s.isRefProcessed(ctx, repoID, "branch", b.Name)
 		if err != nil {
-			slog.Error("Failed to check processed ref", slog.String("component", "scm"), slog.Any("error", err))
+			syncErrs = append(syncErrs, fmt.Errorf("check processed branch %q: %w", b.Name, err))
 			continue
 		}
 		if seen {
 			continue
 		}
-		s.emitBranchEvent(workspaceID, repoID, owner, repo, b)
-		if err := s.markRefProcessed(ctx, repoID, "branch", b.Name, b.SHA); err != nil {
-			slog.Error("Failed to mark branch processed", slog.String("component", "scm"), slog.String("branch", b.Name), slog.Any("error", err))
+		if err := s.recordRefObservation(
+			ctx,
+			repoID,
+			"branch",
+			b.Name,
+			b.SHA,
+			s.branchEvent(workspaceID, repoID, owner, repo, b),
+			!baseline,
+		); err != nil {
+			syncErrs = append(syncErrs, fmt.Errorf("persist branch %q observation: %w", b.Name, err))
 		}
 	}
-	return nil
+	return errors.Join(syncErrs...)
 }
 
 // emitTagEvent constructs and dispatches an ActionEvent for a newly
 // observed tag. The payload lives entirely in NewValues so the variable
 // substitution layer (`{{ref.short}}` etc.) can read it without a new
 // struct field on ActionEvent.
-func (s *SyncService) emitTagEvent(workspaceID, repoID int, owner, repo string, t Tag, prevTagName string) {
-	if s.actionEvents == nil {
-		return
-	}
+func (s *SyncService) tagEvent(workspaceID, repoID int, owner, repo string, t Tag, prevTagName string) *models.ActionEvent {
 	values := map[string]any{
 		"ref.name":                     t.Name,
 		"ref.short":                    refShort("tag", t.Name),
@@ -204,19 +273,16 @@ func (s *SyncService) emitTagEvent(workspaceID, repoID int, owner, repo string, 
 		"repo.full_name":               fmt.Sprintf("%s/%s", owner, repo),
 		"repo.workspace_repository_id": repoID,
 	}
-	s.actionEvents.EmitActionEvent(&models.ActionEvent{
+	return &models.ActionEvent{
 		EventType:   models.ActionTriggerSCMTagCreated,
 		WorkspaceID: workspaceID,
 		NewValues:   values,
-	})
+	}
 }
 
 // emitBranchEvent: same as emitTagEvent but for the release-branch case.
 // No prev_branch; the action's upsert_key is the pairing mechanism.
-func (s *SyncService) emitBranchEvent(workspaceID, repoID int, owner, repo string, b Branch) {
-	if s.actionEvents == nil {
-		return
-	}
+func (s *SyncService) branchEvent(workspaceID, repoID int, owner, repo string, b Branch) *models.ActionEvent {
 	values := map[string]any{
 		"ref.name":                     b.Name,
 		"ref.short":                    refShort("branch", b.Name),
@@ -227,9 +293,9 @@ func (s *SyncService) emitBranchEvent(workspaceID, repoID int, owner, repo strin
 		"repo.full_name":               fmt.Sprintf("%s/%s", owner, repo),
 		"repo.workspace_repository_id": repoID,
 	}
-	s.actionEvents.EmitActionEvent(&models.ActionEvent{
+	return &models.ActionEvent{
 		EventType:   models.ActionTriggerSCMReleaseBranchCreated,
 		WorkspaceID: workspaceID,
 		NewValues:   values,
-	})
+	}
 }

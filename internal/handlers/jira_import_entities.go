@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"windshift/internal/itemevents"
 	"windshift/internal/jira"
 	"windshift/internal/models"
 	"windshift/internal/repository"
@@ -1177,6 +1178,7 @@ func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, works
 		CustomFieldValuesJSON:   customFieldValuesJSON,
 		CreatedAt:               createdAt,
 		UpdatedAt:               updatedAt,
+		EventMetadata:           itemevents.Import(jobID),
 		// A bulk import of issues pre-assigned to an agent user must not
 		// start one agent run per imported item.
 		SkipAssigneeTrigger:           true,
@@ -1302,7 +1304,7 @@ func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, works
 	if mediaResolver != nil && rawDescription != nil {
 		linked := jira.ConvertADFToMarkdown(rawDescription, mentionResolver, mediaResolver)
 		if linked != "" && linked != description {
-			if err := h.imports.UpdateItemDescription(int(itemID), linked); err != nil {
+			if err := h.imports.UpdateItemDescription(int(itemID), linked, itemevents.Import(jobID)); err != nil {
 				slog.Warn("Failed to update item description with linked media",
 					slog.String("component", "jira"),
 					slog.String("issue", issue.Key),
@@ -1531,6 +1533,7 @@ func (h *JiraImportHandler) importComments(jobID string, itemID int, issue *jira
 				IsPrivate:        isPrivate,
 				CreatedAt:        createdAt,
 				UpdatedAt:        updatedAt, // preserve Jira's original updated timestamp
+				EventMetadata:    itemevents.Import(jobID),
 			})
 			if importErr == nil {
 				commentID = int(result.CommentID)
@@ -1684,13 +1687,13 @@ func (h *JiraImportHandler) importIssueLinks(jobID string) error {
 					slog.Any("error", previousErr))
 				previousMapping = nil
 			}
-			linkID, err := linkSvc.CreateLink(services.CreateItemLinkParams{
+			linkID, err := linkSvc.CreateLinkWithMetadata(services.CreateItemLinkParams{
 				LinkTypeID: linkTypeID,
 				SourceType: "item",
 				SourceID:   info.SourceID,
 				TargetType: "item",
 				TargetID:   targetID,
-			})
+			}, itemevents.Import(jobID))
 			if err != nil {
 				slog.Error("Failed to create item link",
 					slog.String("component", "jira"),

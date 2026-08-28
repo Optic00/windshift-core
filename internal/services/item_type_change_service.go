@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"windshift/internal/database"
+	"windshift/internal/itemevents"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/validation"
@@ -238,7 +239,23 @@ func (s *ItemTypeChangeService) ApplyChange(itemID, userID, targetTypeID int, ne
 		if err := s.itemRepo.RecordHistoryBatch(tx, history); err != nil {
 			return fmt.Errorf("record item history: %w", err)
 		}
-		return nil
+		updated := *original
+		updated.ItemTypeID = &targetTypeID
+		if nextStatusID != nil {
+			updated.StatusID = nextStatusID
+		}
+		metadata := itemevents.User(userID, "application")
+		metadata.OccurredAt = now
+		recorder := itemevents.NewRecorder(s.db)
+		changes := itemevents.Changes(original, &updated)
+		if nextStatusID != nil {
+			if _, err := recorder.StatusChanged(context.Background(), tx, &updated, original.StatusID, nextStatusID, changes, metadata); err != nil {
+				return err
+			}
+			return nil
+		}
+		_, err := recorder.Updated(context.Background(), tx, &updated, changes, metadata)
+		return err
 	})
 	if err != nil {
 		return nil, err

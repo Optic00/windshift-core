@@ -337,15 +337,16 @@ func (e AssetActionEdge) FlowEdgeData() (actionID int, edgeType, sourceHandle, t
 
 // AssetActionExecutionLog represents the audit trail for asset action executions
 type AssetActionExecutionLog struct {
-	ID             int                   `json:"id"`
-	ActionID       int                   `json:"action_id"`
-	AssetID        *int                  `json:"asset_id,omitempty"`
-	TriggerEvent   string                `json:"trigger_event"`
-	Status         ActionExecutionStatus `json:"status"`
-	StartedAt      time.Time             `json:"started_at"`
-	CompletedAt    *time.Time            `json:"completed_at,omitempty"`
-	ErrorMessage   string                `json:"error_message,omitempty"`
-	ExecutionTrace string                `json:"execution_trace,omitempty"`
+	ID              int                   `json:"id"`
+	ActionID        int                   `json:"action_id"`
+	AssetID         *int                  `json:"asset_id,omitempty"`
+	TriggerEvent    string                `json:"trigger_event"`
+	Status          ActionExecutionStatus `json:"status"`
+	StartedAt       time.Time             `json:"started_at"`
+	CompletedAt     *time.Time            `json:"completed_at,omitempty"`
+	ErrorMessage    string                `json:"error_message,omitempty"`
+	ExecutionTrace  string                `json:"execution_trace,omitempty"`
+	DurableEventKey string                `json:"durable_event_key,omitempty"`
 	// Joined fields
 	ActionName string `json:"action_name,omitempty"`
 	AssetTitle string `json:"asset_title,omitempty"`
@@ -364,6 +365,7 @@ type AssetActionEvent struct {
 	ExecutionChainID  string `json:"execution_chain_id,omitempty"`
 	CascadeDepth      int    `json:"cascade_depth,omitempty"`
 	SourceApplication string `json:"source_application,omitempty"`
+	CausationEventKey string `json:"causation_event_key,omitempty"`
 }
 
 // AssetTriggerConfig represents trigger-specific configuration for asset actions

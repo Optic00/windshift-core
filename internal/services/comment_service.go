@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"windshift/internal/database"
+	"windshift/internal/itemevents"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/validation"
@@ -151,6 +152,7 @@ type CreateCommentParams struct {
 	CreatedAt             *time.Time // Optional: override created_at (e.g. for imports preserving original timestamps)
 	UpdatedAt             *time.Time // Optional: override updated_at (imports preserving original timestamps); defaults to created_at
 	SuppressNotifications bool       // Skip notifications, mentions, webhooks, and email replies (e.g. plugin-created comments)
+	EventMetadata         itemevents.Metadata
 }
 
 // CreateCommentResult contains the result of creating a comment.
@@ -313,12 +315,13 @@ func (s *CommentService) UpdateImported(params UpdateImportedCommentParams) erro
 }
 
 // CreateInTx inserts a comment row inside an existing transaction and returns
-// its id, with NO side-effects (no notifications, activity bump, or publish).
+// its id, with no post-commit side effects. The canonical domain fact is part
+// of the caller-owned transaction.
 // Callers that must write a comment atomically with other rows — GitHub issue
 // sync writes its tracking rows in the same tx — use this and publish
 // themselves after they commit. authorID == 0 inserts a system (NULL author)
 // comment.
-func (s *CommentService) CreateInTx(ctx context.Context, tx database.Tx, itemID, authorID int, content string, createdAt time.Time) (int64, error) {
+func (s *CommentService) CreateInTx(ctx context.Context, tx database.Tx, itemID, authorID int, content string, createdAt time.Time, eventMetadata ...itemevents.Metadata) (int64, error) {
 	content = normalizeImportedCommentSource(content)
 	var author any
 	if authorID != 0 {
@@ -326,6 +329,28 @@ func (s *CommentService) CreateInTx(ctx context.Context, tx database.Tx, itemID,
 	}
 	var id int64
 	err := tx.QueryRowContext(ctx, insertCommentAuthorSQL, itemID, author, content, false, createdAt, createdAt).Scan(&id)
+	if err != nil {
+		return 0, err
+	}
+	var workspaceID int
+	if err := tx.QueryRowContext(ctx, "SELECT workspace_id FROM items WHERE id = ?", itemID).Scan(&workspaceID); err != nil {
+		return 0, fmt.Errorf("load comment item workspace: %w", err)
+	}
+	metadata := itemevents.System("external_sync")
+	if authorID > 0 {
+		metadata = itemevents.User(authorID, "external_sync")
+	}
+	metadata.OccurredAt = createdAt
+	if len(eventMetadata) > 0 {
+		metadata = mergeItemEventMetadata(eventMetadata[0], metadata)
+	}
+	var authorIDPtr *int
+	if authorID > 0 {
+		authorIDPtr = &authorID
+	}
+	_, err = itemevents.NewRecorder(s.db).CommentCreated(ctx, tx, workspaceID, itemevents.CommentCreatedV1{
+		ItemID: itemID, CommentID: id, AuthorID: authorIDPtr,
+	}, metadata)
 	return id, err
 }
 
@@ -348,6 +373,9 @@ func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResul
 // the surrounding import when its source needs UTF-8 repair or truncation.
 func (s *CommentService) CreateImported(params CreateCommentParams) (*CreateCommentResult, error) {
 	params.Content = normalizeImportedCommentSource(params.Content)
+	if params.EventMetadata.SourceKind == "" {
+		params.EventMetadata.SourceKind = "import"
+	}
 	return s.create(params)
 }
 
@@ -397,6 +425,27 @@ func (s *CommentService) create(params CreateCommentParams) (*CreateCommentResul
 	}
 	if err := repository.NewItemRepository(s.db).TouchActivity(tx, params.ItemID, now); err != nil {
 		return nil, fmt.Errorf("failed to record comment activity: %w", err)
+	}
+	fallback := itemevents.System("application")
+	var authorID *int
+	switch {
+	case params.PortalCustomerID != nil && params.AuthorID == 0:
+		fallback = itemevents.PortalCustomer(*params.PortalCustomerID, "portal")
+	case params.ActorUserID > 0:
+		fallback = itemevents.User(params.ActorUserID, "application")
+	case params.AuthorID > 0:
+		fallback = itemevents.User(params.AuthorID, "application")
+	}
+	if params.AuthorID > 0 {
+		authorID = &params.AuthorID
+	}
+	fallback.OccurredAt = now
+	metadata := mergeItemEventMetadata(params.EventMetadata, fallback)
+	if _, err := itemevents.NewRecorder(s.db).CommentCreated(context.Background(), tx, item.WorkspaceID, itemevents.CommentCreatedV1{
+		ItemID: params.ItemID, CommentID: commentID, AuthorID: authorID,
+		PortalCustomerID: params.PortalCustomerID, IsPrivate: params.IsPrivate,
+	}, metadata); err != nil {
+		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("failed to commit comment: %w", err)

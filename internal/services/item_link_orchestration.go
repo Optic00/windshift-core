@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"windshift/internal/database"
+	"windshift/internal/itemevents"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 )
@@ -182,7 +183,17 @@ func (s *ItemLinkService) CreateLinkWithChecks(userID int, params CreateItemLink
 		// CreateLink returns 0 on INSERT OR IGNORE; treat as duplicate.
 		return nil, ErrLinkExists
 	}
-	if err := s.touchLinkedItems(tx, time.Now(), params); err != nil {
+	now := time.Now()
+	if err := s.touchLinkedItems(tx, now, params); err != nil {
+		return nil, err
+	}
+	metadata := itemevents.User(userID, "application")
+	metadata.OccurredAt = now
+	if _, err := itemevents.NewRecorder(s.db).LinkChanged(context.Background(), tx, itemevents.Linked, models.ItemLink{
+		ID: int(id), LinkTypeID: params.LinkTypeID,
+		SourceType: params.SourceType, SourceID: params.SourceID,
+		TargetType: params.TargetType, TargetID: params.TargetID,
+	}, metadata); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -212,8 +223,9 @@ func (s *ItemLinkService) ReplaceSingleValueFieldLinkWithChecks(userID int, para
 			return nil, err
 		}
 		affected := []CreateItemLinkParams{params}
+		var previousLinks []models.ItemLink
 		rows, err := tx.Query(`
-			SELECT source_type, source_id, target_type, target_id
+			SELECT id, link_type_id, source_type, source_id, target_type, target_id
 			FROM item_links
 			WHERE custom_field_id = ? AND source_type = ? AND source_id = ?
 		`, *params.CustomFieldID, params.SourceType, params.SourceID)
@@ -221,12 +233,16 @@ func (s *ItemLinkService) ReplaceSingleValueFieldLinkWithChecks(userID int, para
 			return nil, fmt.Errorf("failed to load previous field links: %w", err)
 		}
 		for rows.Next() {
-			var previous CreateItemLinkParams
-			if err := rows.Scan(&previous.SourceType, &previous.SourceID, &previous.TargetType, &previous.TargetID); err != nil {
+			var previous models.ItemLink
+			if err := rows.Scan(&previous.ID, &previous.LinkTypeID, &previous.SourceType, &previous.SourceID, &previous.TargetType, &previous.TargetID); err != nil {
 				_ = rows.Close()
 				return nil, fmt.Errorf("failed to scan previous field link: %w", err)
 			}
-			affected = append(affected, previous)
+			affected = append(affected, CreateItemLinkParams{
+				LinkTypeID: previous.LinkTypeID, SourceType: previous.SourceType, SourceID: previous.SourceID,
+				TargetType: previous.TargetType, TargetID: previous.TargetID,
+			})
+			previousLinks = append(previousLinks, previous)
 		}
 		if err := rows.Close(); err != nil {
 			return nil, fmt.Errorf("failed to close previous field links: %w", err)
@@ -239,6 +255,13 @@ func (s *ItemLinkService) ReplaceSingleValueFieldLinkWithChecks(userID int, para
 			WHERE custom_field_id = ? AND source_type = ? AND source_id = ?
 		`, *params.CustomFieldID, params.SourceType, params.SourceID); err != nil {
 			return nil, fmt.Errorf("failed to clear previous field link: %w", err)
+		}
+		metadata := itemevents.User(userID, "application")
+		recorder := itemevents.NewRecorder(s.db)
+		for _, previous := range previousLinks {
+			if _, err := recorder.LinkChanged(context.Background(), tx, itemevents.Unlinked, previous, metadata); err != nil {
+				return nil, err
+			}
 		}
 
 		exists, err := itemLinkExists(tx, params)
@@ -264,6 +287,9 @@ func (s *ItemLinkService) ReplaceSingleValueFieldLinkWithChecks(userID int, para
 			return nil, fmt.Errorf("failed to load replacement field link: %w", ErrLinkNotFound)
 		}
 		if err := s.touchLinkedItems(tx, time.Now(), affected...); err != nil {
+			return nil, err
+		}
+		if _, err := recorder.LinkChanged(context.Background(), tx, itemevents.Linked, *created, metadata); err != nil {
 			return nil, err
 		}
 		return &replacementResult{link: created, affected: affected}, nil
@@ -413,12 +439,18 @@ func (s *ItemLinkService) DeleteLinkWithChecks(userID, linkID int) error {
 	if rows, _ := result.RowsAffected(); rows == 0 {
 		return ErrLinkNotFound
 	}
-	if err := s.touchLinkedItems(tx, time.Now(), CreateItemLinkParams{
+	now := time.Now()
+	if err := s.touchLinkedItems(tx, now, CreateItemLinkParams{
 		SourceType: link.SourceType,
 		SourceID:   link.SourceID,
 		TargetType: link.TargetType,
 		TargetID:   link.TargetID,
 	}); err != nil {
+		return err
+	}
+	metadata := itemevents.User(userID, "application")
+	metadata.OccurredAt = now
+	if _, err := itemevents.NewRecorder(s.db).LinkChanged(context.Background(), tx, itemevents.Unlinked, *link, metadata); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {

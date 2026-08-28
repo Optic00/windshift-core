@@ -1,8 +1,10 @@
 package services
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -32,10 +34,9 @@ type AssetActionService struct {
 	actionCache map[int][]*models.AssetAction
 	cacheMu     sync.RWMutex
 
-	// Event processing
-	eventChan chan *models.AssetActionEvent
-	stopChan  chan struct{}
-	wg        sync.WaitGroup
+	durableIngress *DurableAssetActionIngress
+	stopChan       chan struct{}
+	wg             sync.WaitGroup
 
 	// Dependencies
 	notificationService *NotificationService
@@ -92,14 +93,14 @@ func NewAssetActionService(db database.Database, config ActionServiceConfig, cha
 		chainStore = NewExecutionChainStore()
 	}
 	service := &AssetActionService{
-		db:           db,
-		repo:         repository.NewAssetActionRepository(db),
-		config:       config,
-		actionCache:  make(map[int][]*models.AssetAction),
-		eventChan:    make(chan *models.AssetActionEvent, config.EventBufferSize),
-		stopChan:     make(chan struct{}),
-		chainStore:   chainStore,
-		itemCreation: NewItemCreationService(db, nil),
+		db:             db,
+		repo:           repository.NewAssetActionRepository(db),
+		config:         config,
+		actionCache:    make(map[int][]*models.AssetAction),
+		durableIngress: NewDurableAssetActionIngress(db),
+		stopChan:       make(chan struct{}),
+		chainStore:     chainStore,
+		itemCreation:   NewItemCreationService(db, nil),
 	}
 
 	// Load initial cache
@@ -107,9 +108,7 @@ func NewAssetActionService(db database.Database, config ActionServiceConfig, cha
 		slog.Warn("failed to load initial asset action cache", slog.String("component", "asset-actions"), slog.Any("error", err))
 	}
 
-	// Start background workers
-	service.wg.Add(2)
-	go service.eventProcessor()
+	service.wg.Add(1)
 	go service.cacheRefresher()
 
 	slog.Debug("asset action service initialized", slog.String("component", "asset-actions"))
@@ -217,47 +216,22 @@ func (as *AssetActionService) SetAssetPermissionChecker(checker AssetSetPermissi
 	as.assetPermChecker = checker
 }
 
-// EmitAssetActionEvent sends an event to be processed asynchronously (non-blocking)
+// EmitAssetActionEvent durably admits a compatibility trigger before the
+// recorded canonical asset cutover.
 func (as *AssetActionService) EmitAssetActionEvent(event *models.AssetActionEvent) {
-	slog.Debug("queuing asset action event",
-		slog.String("component", "asset-actions"),
-		slog.String("event_type", string(event.EventType)),
-		slog.Int("set_id", event.SetID),
-		slog.Int("asset_id", event.AssetID),
-	)
-
-	select {
-	case as.eventChan <- event:
-	default:
-		slog.Warn("asset action event channel full, dropping event",
+	if event == nil {
+		return
+	}
+	if err := as.durableIngress.Emit(context.Background(), event); err != nil {
+		slog.Error("failed to persist asset action event",
 			slog.String("component", "asset-actions"),
 			slog.String("event_type", string(event.EventType)),
 			slog.Int("set_id", event.SetID),
+			slog.Int("asset_id", event.AssetID),
+			slog.Any("error", err),
 		)
 		atomic.AddInt64(&as.errors, 1)
 	}
-}
-
-// ProcessImportedAssetEvent executes an import event synchronously. Imports can
-// produce events faster than the ordinary bounded async queue can drain; using
-// synchronous processing applies backpressure instead of silently dropping
-// asset-created events when a large CSV is imported.
-func (as *AssetActionService) ProcessImportedAssetEvent(event *models.AssetActionEvent) error {
-	return as.processEvent(event)
-}
-
-// isActionStillEnabled returns true if the action is present in the enabled-actions
-// cache for its set. Used to short-circuit events that were queued before the
-// user disabled the action.
-func (as *AssetActionService) isActionStillEnabled(setID, actionID int) bool {
-	as.cacheMu.RLock()
-	defer as.cacheMu.RUnlock()
-	for _, a := range as.actionCache[setID] {
-		if a.ID == actionID {
-			return true
-		}
-	}
-	return false
 }
 
 // InvalidateSetCache invalidates the cache for a specific asset set
@@ -296,38 +270,6 @@ func (as *AssetActionService) Stop() {
 		slog.Debug("asset action service stopped successfully", slog.String("component", "asset-actions"))
 	case <-time.After(3 * time.Second):
 		slog.Warn("asset action service stop timed out after 3s", slog.String("component", "asset-actions"))
-	}
-}
-
-func (as *AssetActionService) eventProcessor() {
-	defer as.wg.Done()
-
-	for {
-		select {
-		case event := <-as.eventChan:
-			if err := as.processEvent(event); err != nil {
-				slog.Error("failed to process asset action event",
-					slog.String("component", "asset-actions"),
-					slog.String("event_type", string(event.EventType)),
-					slog.Any("error", err),
-				)
-				atomic.AddInt64(&as.errors, 1)
-			} else {
-				atomic.AddInt64(&as.eventsProcessed, 1)
-			}
-		case <-as.stopChan:
-			slog.Debug("stopping asset action event processor", slog.String("component", "asset-actions"))
-			for len(as.eventChan) > 0 {
-				event := <-as.eventChan
-				if err := as.processEvent(event); err != nil {
-					slog.Error("failed to process asset action event during shutdown",
-						slog.String("component", "asset-actions"),
-						slog.Any("error", err),
-					)
-				}
-			}
-			return
-		}
 	}
 }
 
@@ -387,85 +329,6 @@ func (as *AssetActionService) refreshActionCache() error {
 	as.cacheMu.Lock()
 	as.actionCache = newCache
 	as.cacheMu.Unlock()
-
-	return nil
-}
-
-func (as *AssetActionService) processEvent(event *models.AssetActionEvent) error { //nolint:unparam // error kept for interface consistency
-	slog.Debug("processing asset action event",
-		slog.String("component", "asset-actions"),
-		slog.String("event_type", string(event.EventType)),
-		slog.Int("set_id", event.SetID),
-		slog.Int("asset_id", event.AssetID),
-		slog.Bool("triggered_by_action", event.TriggeredByAction),
-		slog.Int("cascade_depth", event.CascadeDepth),
-	)
-
-	// Check cascade depth limit
-	if event.CascadeDepth >= MaxCascadeDepth {
-		slog.Warn("asset action execution depth limit reached",
-			slog.String("component", "asset-actions"),
-			slog.String("chain_id", event.ExecutionChainID),
-			slog.Int("depth", event.CascadeDepth),
-		)
-		return nil
-	}
-
-	// Get chain state for cycle detection
-	var chain *ExecutionChain
-	if event.ExecutionChainID != "" {
-		chain = as.chainStore.GetChain(event.ExecutionChainID)
-	}
-
-	// Get actions for this set from cache
-	as.cacheMu.RLock()
-	actions := as.actionCache[event.SetID]
-	as.cacheMu.RUnlock()
-
-	if len(actions) == 0 {
-		return nil
-	}
-
-	for _, action := range actions {
-		// Cycle detection
-		actionKey := fmt.Sprintf("asset:%d", action.ID)
-		if chain != nil && chain.HasExecuted(actionKey) {
-			slog.Debug("skipping asset action - already executed in chain",
-				slog.String("component", "asset-actions"),
-				slog.Int("action_id", action.ID),
-				slog.String("chain_id", event.ExecutionChainID),
-			)
-			continue
-		}
-
-		if as.matchesTrigger(action, event) {
-			// Re-check enablement against the live cache: an earlier event in
-			// this batch may have been queued before the user disabled the
-			// action. InvalidateSetCache rewrites actionCache[setID] to only
-			// enabled actions, so absence == disabled.
-			if !as.isActionStillEnabled(event.SetID, action.ID) {
-				slog.Debug("skipping asset action - disabled mid-queue",
-					slog.String("component", "asset-actions"),
-					slog.Int("action_id", action.ID),
-				)
-				continue
-			}
-			result, err := as.executeActionWithResult(action, event, chain)
-			switch {
-			case err != nil:
-				slog.Error("failed to execute asset action",
-					slog.String("component", "asset-actions"),
-					slog.Int("action_id", action.ID),
-					slog.Any("error", err),
-				)
-				atomic.AddInt64(&as.errors, 1)
-			case result.Status == models.ActionStatusFailed:
-				atomic.AddInt64(&as.errors, 1)
-			case result.Status == models.ActionStatusCompleted:
-				atomic.AddInt64(&as.actionsExecuted, 1)
-			}
-		}
-	}
 
 	return nil
 }
@@ -538,6 +401,10 @@ func (as *AssetActionService) executeAction(action *models.AssetAction, event *m
 }
 
 func (as *AssetActionService) executeActionWithResult(action *models.AssetAction, event *models.AssetActionEvent, chain *ExecutionChain) (*AssetActionExecutionResult, error) {
+	return as.executeActionWithResultForEvent(action, event, chain, "")
+}
+
+func (as *AssetActionService) executeActionWithResultForEvent(action *models.AssetAction, event *models.AssetActionEvent, chain *ExecutionChain, durableEventKey string) (*AssetActionExecutionResult, error) {
 	if action == nil {
 		return nil, fmt.Errorf("asset action is required")
 	}
@@ -564,17 +431,31 @@ func (as *AssetActionService) executeActionWithResult(action *models.AssetAction
 
 	// Create execution log
 	log := &models.AssetActionExecutionLog{
-		ActionID:     action.ID,
-		AssetID:      &event.AssetID,
-		TriggerEvent: string(event.EventType),
-		Status:       models.ActionStatusRunning,
-		StartedAt:    startTime,
+		ActionID:        action.ID,
+		AssetID:         &event.AssetID,
+		TriggerEvent:    string(event.EventType),
+		Status:          models.ActionStatusRunning,
+		StartedAt:       startTime,
+		DurableEventKey: durableEventKey,
 	}
-	logID, err := as.repo.CreateExecutionLog(log)
-	if err != nil {
-		return nil, fmt.Errorf("create asset action execution log: %w", err)
+	if durableEventKey != "" {
+		existing, loadErr := as.repo.GetExecutionLogByDurableTarget(durableEventKey, action.ID)
+		if loadErr == nil {
+			if existing.Status == models.ActionStatusCompleted || existing.Status == models.ActionStatusSkipped {
+				return &AssetActionExecutionResult{LogID: existing.ID, Status: existing.Status, ErrorMessage: existing.ErrorMessage}, nil
+			}
+			log.ID = existing.ID
+		} else if !errors.Is(loadErr, sql.ErrNoRows) {
+			return nil, fmt.Errorf("load durable asset action execution: %w", loadErr)
+		}
 	}
-	log.ID = logID
+	if log.ID == 0 {
+		logID, err := as.repo.CreateExecutionLog(log)
+		if err != nil {
+			return nil, fmt.Errorf("create asset action execution log: %w", err)
+		}
+		log.ID = logID
+	}
 
 	// Build execution context
 	ctx := &models.AssetActionExecutionContext{
@@ -873,7 +754,6 @@ func (as *AssetActionService) executeSetField(node *models.AssetActionNode, ctx 
 	}
 
 	assetService := NewAssetService(as.db, assetRepo)
-	assetService.SetActionService(as)
 	updated, err := assetService.MutateAsset(
 		automationAuditActor(as.db, ctx.Event.ActorUserID, "asset_action"),
 		ctx.Event.AssetID,
@@ -883,6 +763,7 @@ func (as *AssetActionService) executeSetField(node *models.AssetActionNode, ctx 
 			ExecutionChainID:  ctx.ChainID,
 			CascadeDepth:      ctx.Event.CascadeDepth + 1,
 			SourceApplication: "asset",
+			CausationEventKey: ctx.Event.CausationEventKey,
 		},
 	)
 	if err != nil {
@@ -958,7 +839,6 @@ func (as *AssetActionService) executeSetStatus(node *models.AssetActionNode, ctx
 		oldStatusID = *current.StatusID
 	}
 	assetService := NewAssetService(as.db, assetRepo)
-	assetService.SetActionService(as)
 	if _, err := assetService.MutateAsset(
 		automationAuditActor(as.db, ctx.Event.ActorUserID, "asset_action"),
 		ctx.Event.AssetID,
@@ -968,6 +848,7 @@ func (as *AssetActionService) executeSetStatus(node *models.AssetActionNode, ctx
 			ExecutionChainID:  ctx.ChainID,
 			CascadeDepth:      ctx.Event.CascadeDepth + 1,
 			SourceApplication: "asset",
+			CausationEventKey: ctx.Event.CausationEventKey,
 		},
 	); err != nil {
 		return fmt.Errorf("mutate asset status: %w", err)

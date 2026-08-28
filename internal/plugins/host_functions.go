@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"windshift/internal/itemevents"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 
@@ -379,6 +380,7 @@ func (m *Manager) createCommentHostFunction(ctx context.Context, plugin *extism.
 		Content:               req.Content,
 		ActorUserID:           req.AuthorID,
 		SuppressNotifications: req.SuppressNotifications,
+		EventMetadata:         itemevents.Integration(pluginName, "plugin"),
 	})
 	if err != nil {
 		m.logger.Warn("create_comment failed", "error", err, "plugin", pluginName, "item_id", req.ItemID)

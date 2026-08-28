@@ -16,6 +16,7 @@ import (
 
 	"windshift/internal/auth"
 	"windshift/internal/database"
+	"windshift/internal/itemevents"
 	"windshift/internal/logger"
 	"windshift/internal/middleware"
 	"windshift/internal/models"
@@ -663,6 +664,12 @@ func (h *FormHandler) SubmitForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	eventMetadata := itemevents.System("form")
+	if portalCustomerID != nil {
+		eventMetadata = itemevents.PortalCustomer(*portalCustomerID, "form")
+	} else if authenticatedUserID != nil {
+		eventMetadata = itemevents.User(*authenticatedUserID, "form")
+	}
 	// Create item
 	itemID, err := services.CreateItem(h.db, services.ItemCreationParams{
 		WorkspaceID:             targetWorkspaceID,
@@ -677,6 +684,7 @@ func (h *FormHandler) SubmitForm(w http.ResponseWriter, r *http.Request) {
 		RequestTypeID:           submission.RequestTypeID,
 		CustomFieldValuesJSON:   string(customFieldsJSON),
 		VirtualFieldDataJSON:    string(virtualFieldsJSON),
+		EventMetadata:           eventMetadata,
 	})
 	if err != nil {
 		respondInternalError(w, r, err)

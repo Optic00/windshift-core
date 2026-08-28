@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"windshift/internal/database"
+	"windshift/internal/itemevents"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 )
@@ -303,10 +304,41 @@ func (c *workspaceTemplateClone) copySeedItems(source *templateSourceWorkspace) 
 	if err := c.copyLabels(source); err != nil {
 		return 0, 0, err
 	}
+	if err := c.recordCreatedItems(); err != nil {
+		return 0, 0, err
+	}
 	if err := c.copyItemLinks(source); err != nil {
 		return 0, 0, err
 	}
 	return len(items), omittedValues, nil
+}
+
+func (c *workspaceTemplateClone) eventMetadata() itemevents.Metadata {
+	metadata := itemevents.System("template")
+	if c.creator > 0 {
+		metadata = itemevents.User(c.creator, "template")
+	}
+	metadata.OccurredAt = c.now
+	return metadata
+}
+
+func (c *workspaceTemplateClone) recordCreatedItems() error {
+	ids := make([]int, 0, len(c.idMap))
+	for _, id := range c.idMap {
+		ids = append(ids, id)
+	}
+	sort.Ints(ids)
+	items, err := repository.NewItemRepository(c.service.db).FindByIDsForUpdateContext(c.ctx, c.tx, ids)
+	if err != nil {
+		return err
+	}
+	records := make([]itemevents.CreateRecord, 0, len(items))
+	metadata := c.eventMetadata()
+	for _, item := range items {
+		records = append(records, itemevents.CreateRecord{Item: item, Metadata: metadata})
+	}
+	_, err = itemevents.NewRecorder(c.service.db).CreatedBatch(c.ctx, c.tx, records)
+	return err
 }
 
 // validateItemReferences rejects snapshots referencing deleted catalog rows
@@ -510,7 +542,18 @@ func (c *workspaceTemplateClone) copyItemLinks(source *templateSourceWorkspace) 
 		remapped := link
 		remapped.SourceID = newSourceID
 		remapped.TargetID = newTargetID
-		if err := c.service.templates.InsertItemLinkTx(c.ctx, c.tx, remapped, c.creator, c.now); err != nil {
+		linkID, err := c.service.templates.InsertItemLinkTx(c.ctx, c.tx, remapped, c.creator, c.now)
+		if err != nil {
+			return err
+		}
+		if linkID == 0 {
+			continue
+		}
+		if _, err := itemevents.NewRecorder(c.service.db).LinkChanged(c.ctx, c.tx, itemevents.Linked, models.ItemLink{
+			ID: linkID, LinkTypeID: remapped.LinkTypeID,
+			SourceType: "item", SourceID: remapped.SourceID,
+			TargetType: "item", TargetID: remapped.TargetID,
+		}, c.eventMetadata()); err != nil {
 			return err
 		}
 	}

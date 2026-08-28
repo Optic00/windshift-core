@@ -437,20 +437,25 @@ func (r *WorkspaceTemplateRepository) ListItemLinksTx(ctx context.Context, tx da
 }
 
 // InsertItemLinkTx writes one remapped item-to-item link.
-func (r *WorkspaceTemplateRepository) InsertItemLinkTx(ctx context.Context, tx database.Tx, link TemplateCloneLink, creatorID int, now time.Time) error {
+func (r *WorkspaceTemplateRepository) InsertItemLinkTx(ctx context.Context, tx database.Tx, link TemplateCloneLink, creatorID int, now time.Time) (int, error) {
 	var customFieldID any
 	if link.CustomFieldID.Valid {
 		customFieldID = link.CustomFieldID.Int64
 	}
-	_, err := tx.ExecContext(ctx, `
+	var id int
+	err := tx.QueryRowContext(ctx, `
 		INSERT INTO item_links (link_type_id, source_type, source_id, target_type, target_id, created_by, custom_field_id, created_at)
 		VALUES (?, 'item', ?, 'item', ?, ?, ?, ?)
 		ON CONFLICT (link_type_id, source_type, source_id, target_type, target_id) DO NOTHING
-	`, link.LinkTypeID, link.SourceID, link.TargetID, creatorID, customFieldID, now)
-	if err != nil {
-		return fmt.Errorf("insert cloned item link: %w", err)
+		RETURNING id
+	`, link.LinkTypeID, link.SourceID, link.TargetID, creatorID, customFieldID, now).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
 	}
-	return nil
+	if err != nil {
+		return 0, fmt.Errorf("insert cloned item link: %w", err)
+	}
+	return id, nil
 }
 
 // LoadCustomFieldDefsTx loads the definitions referenced by cloned custom

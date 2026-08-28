@@ -1,12 +1,14 @@
 package logbookapi
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"windshift/internal/database"
+	"windshift/internal/events"
 	"windshift/internal/llm"
 	"windshift/internal/logbook"
 	"windshift/internal/logbookauth"
@@ -26,12 +28,13 @@ var errMissingMainServerSecret = errors.New("logbook: MainServerSecret (SSO_SECR
 
 // ServerConfig holds configuration for the logbook server.
 type ServerConfig struct {
-	Port             string
-	StoragePath      string
-	LLMEndpoint      string
-	MainServerURL    string
-	MainServerSecret string
-	BaseURL          string
+	Port                   string
+	StoragePath            string
+	LLMEndpoint            string
+	MainServerURL          string
+	MainServerSecret       string
+	BaseURL                string
+	ActivateDurableActions bool
 }
 
 // Server represents the logbook HTTP server.
@@ -40,6 +43,7 @@ type Server struct {
 	handlers      *Handlers
 	config        ServerConfig
 	actionService *logbook.LogbookActionService
+	eventEngine   *events.Engine
 }
 
 // NewServer creates and wires all logbook components.
@@ -76,8 +80,17 @@ func NewServer(db database.Database, cfg ServerConfig, articleClient llm.Client)
 	// Create action service and handlers
 	actionRepo := repository.NewLogbookActionRepository(db)
 	actionService := logbook.NewLogbookActionService(db, actionRepo, cfg.MainServerURL, cfg.MainServerSecret, cfg.BaseURL)
+	eventEngine := events.NewEngine(db, events.DefaultConfig())
+	if err := logbook.PrepareDurableLogbookActionEngine(context.Background(), eventEngine, actionService, cfg.ActivateDurableActions); err != nil {
+		actionService.Stop()
+		return nil, err
+	}
+	if err := eventEngine.Start(context.Background()); err != nil {
+		actionService.Stop()
+		return nil, err
+	}
 
-	ingestionService := logbook.NewIngestionService(repo, articleClient, actionService)
+	ingestionService := logbook.NewIngestionService(repo, articleClient, logbook.NewDurableDocumentEventRecorder(db))
 	handlers := NewHandlers(repo, logbookPermService, ingestionService, cfg.StoragePath)
 	actionHandlers := NewActionHandlers(actionRepo, logbookPermService, actionService, repo)
 
@@ -100,17 +113,23 @@ func NewServer(db database.Database, cfg ServerConfig, articleClient llm.Client)
 		handlers:      handlers,
 		config:        cfg,
 		actionService: actionService,
+		eventEngine:   eventEngine,
 	}, nil
 }
 
 // Stop gracefully shuts down the logbook server components.
-func (s *Server) Stop() {
+func (s *Server) Stop(ctx context.Context) error {
 	if s.handlers != nil {
 		s.handlers.Shutdown()
+	}
+	var shutdownErr error
+	if s.eventEngine != nil {
+		shutdownErr = s.eventEngine.Shutdown(ctx)
 	}
 	if s.actionService != nil {
 		s.actionService.Stop()
 	}
+	return shutdownErr
 }
 
 // Handler returns the HTTP handler for the logbook server.

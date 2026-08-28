@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"windshift/internal/itemevents"
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
@@ -245,7 +246,7 @@ func (h *AssetHandler) DeleteAssetSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.repo.HardDeleteSet(setID); err != nil {
+	if err := h.repo.HardDeleteSet(setID, itemevents.User(currentUser.ID, "application")); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			respondNotFound(w, r, "set")
 			return

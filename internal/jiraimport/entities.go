@@ -1,6 +1,7 @@
 package jiraimport
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"windshift/internal/database"
+	"windshift/internal/itemevents"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/sanitize"
@@ -162,8 +164,30 @@ func (s *Service) CustomFieldOptions(fieldID int) string {
 	return options
 }
 
-func (s *Service) UpdateItemDescription(itemID int, description string) error {
-	return s.items.UpdateDescription(itemID, description)
+func (s *Service) UpdateItemDescription(itemID int, description string, metadata itemevents.Metadata) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	original, err := s.items.FindByIDForUpdate(tx, itemID)
+	if err != nil {
+		return err
+	}
+	if err := s.items.UpdateFields(tx, itemID, map[string]any{"description": description}); err != nil {
+		return err
+	}
+	updated, err := s.items.FindByIDForUpdate(tx, itemID)
+	if err != nil {
+		return err
+	}
+	if metadata.ActorKind == "" {
+		metadata = itemevents.Import("jira")
+	}
+	if _, err := itemevents.NewRecorder(s.db).Updated(context.Background(), tx, updated, itemevents.Changes(original, updated), metadata); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Service) ItemWorkspaceID(itemID int) (int, error) {
@@ -198,6 +222,15 @@ func (s *Service) UpdateImportedItem(itemID int, params services.ItemCreationPar
 		return 0, fmt.Errorf("begin Jira item upsert: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	repo := repository.NewItemRepository(s.db)
+	original, err := repo.FindByIDForUpdate(tx, itemID)
+	if err != nil {
+		return 0, fmt.Errorf("load imported Jira item: %w", err)
+	}
+	oldMilestoneIDs, err := loadItemMilestoneIDs(tx, itemID)
+	if err != nil {
+		return 0, err
+	}
 	fracIndex, err := repository.GenerateFracIndexForNewItem(tx, s.db.GetDriverName())
 	if err != nil {
 		return 0, fmt.Errorf("generate Jira re-import fractional index: %w", err)
@@ -238,11 +271,67 @@ func (s *Service) UpdateImportedItem(itemID int, params services.ItemCreationPar
 			return 0, fmt.Errorf("attach Jira milestone %d: %w", milestoneID, err)
 		}
 	}
+	updated, err := repo.FindByIDForUpdate(tx, itemID)
+	if err != nil {
+		return 0, fmt.Errorf("load updated imported Jira item: %w", err)
+	}
+	metadata := params.EventMetadata
+	if metadata.ActorKind == "" {
+		metadata = itemevents.Import("jira")
+	}
+	metadata.OccurredAt = updatedAt
+	changes := itemevents.Changes(original, updated)
+	if !equalIntIDs(oldMilestoneIDs, params.MilestoneIDs) {
+		changes = append(changes, itemevents.FieldChange{
+			Field: "milestones", OldValue: oldMilestoneIDs, NewValue: params.MilestoneIDs,
+		})
+	}
+	recorder := itemevents.NewRecorder(s.db)
+	if !equalIntPointers(original.StatusID, updated.StatusID) {
+		if _, err := recorder.StatusChanged(context.Background(), tx, updated, original.StatusID, updated.StatusID, changes, metadata); err != nil {
+			return 0, err
+		}
+	} else if _, err := recorder.Updated(context.Background(), tx, updated, changes, metadata); err != nil {
+		return 0, err
+	}
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("commit Jira item upsert: %w", err)
 	}
 	services.PublishItemChange(itemID, services.ItemChangeUpdated)
 	return int64(itemID), nil
+}
+
+func loadItemMilestoneIDs(tx database.Tx, itemID int) ([]int, error) {
+	rows, err := tx.Query("SELECT milestone_id FROM item_milestones WHERE item_id = ? ORDER BY milestone_id", itemID)
+	if err != nil {
+		return nil, fmt.Errorf("load imported Jira item milestones: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+func equalIntIDs(left, right []int) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func equalIntPointers(left, right *int) bool {
+	return left == nil && right == nil || left != nil && right != nil && *left == *right
 }
 
 func (s *Service) CommentExists(commentID int) bool {

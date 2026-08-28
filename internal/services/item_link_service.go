@@ -1,12 +1,15 @@
 package services
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 
 	"windshift/internal/database"
+	"windshift/internal/itemevents"
+	"windshift/internal/models"
 )
 
 // ItemLinkService owns the link-management business logic shared by every
@@ -69,6 +72,34 @@ var ErrInvalidLinkTypeForEntities = errors.New("link type does not allow these e
 // Returns the new link ID, or 0 if the link was a duplicate (INSERT OR IGNORE).
 func (s *ItemLinkService) CreateLink(params CreateItemLinkParams) (int64, error) {
 	return createItemLink(s.db, params)
+}
+
+// CreateLinkWithMetadata validates and inserts a link with its canonical fact
+// in one transaction. It is the internal path for imports and integrations
+// that perform authorization outside this service.
+func (s *ItemLinkService) CreateLinkWithMetadata(params CreateItemLinkParams, metadata itemevents.Metadata) (int64, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	id, err := createItemLink(tx, params)
+	if err != nil || id == 0 {
+		return id, err
+	}
+	link := models.ItemLink{
+		ID: int(id), LinkTypeID: params.LinkTypeID,
+		SourceType: params.SourceType, SourceID: params.SourceID,
+		TargetType: params.TargetType, TargetID: params.TargetID,
+		CreatedBy: params.CreatedBy, CustomFieldID: params.CustomFieldID,
+	}
+	if _, err := itemevents.NewRecorder(s.db).LinkChanged(context.Background(), tx, itemevents.Linked, link, metadata); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 func createItemLink(db itemLinkQuerier, params CreateItemLinkParams) (int64, error) {

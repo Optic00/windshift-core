@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS action_execution_logs (
 	completed_at DATETIME,
 	error_message TEXT,
 	execution_trace TEXT,          -- JSON step log
+	durable_event_key TEXT,
 	FOREIGN KEY (action_id) REFERENCES actions(id) ON DELETE CASCADE,
 	FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE SET NULL,
 	FOREIGN KEY (trigger_user_id) REFERENCES users(id) ON DELETE SET NULL,
@@ -95,6 +96,9 @@ CREATE INDEX IF NOT EXISTS idx_action_execution_logs_action_id ON action_executi
 CREATE INDEX IF NOT EXISTS idx_action_execution_logs_item_id ON action_execution_logs(item_id);
 CREATE INDEX IF NOT EXISTS idx_action_execution_logs_status ON action_execution_logs(status);
 CREATE INDEX IF NOT EXISTS idx_action_execution_logs_started_at ON action_execution_logs(started_at);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_action_execution_logs_durable_target
+	ON action_execution_logs(durable_event_key, action_id)
+	WHERE durable_event_key IS NOT NULL;
 
 -- Action capabilities: admin-provisioned resources that action nodes can reference
 CREATE TABLE IF NOT EXISTS action_capabilities (

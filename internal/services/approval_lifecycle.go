@@ -399,7 +399,8 @@ func (s *ApprovalService) finalizeRequest(ctx context.Context, tx database.Tx, r
 	if historyActor == 0 {
 		historyActor = req.TriggeredByUserID
 	}
-	if err := s.workflowService.CommitTransition(tx, itemRepo, req.ItemID, ass.StatusID, toStatusID, historyActor); err != nil {
+	metadata := itemEventMetadata(historyActor, "approval", nil)
+	if err := s.workflowService.CommitTransition(ctx, tx, itemRepo, req.ItemID, ass.StatusID, toStatusID, historyActor, metadata); err != nil {
 		return fmt.Errorf("commit driven transition: %w", err)
 	}
 
@@ -495,7 +496,8 @@ func (s *ApprovalService) Cancel(ctx context.Context, requestID, actorUserID int
 
 		if out.revertTo != 0 {
 			itemRepo := repository.NewItemRepository(s.db)
-			if err := s.workflowService.CommitTransition(tx, itemRepo, req.ItemID, req.StatusID, out.revertTo, actorUserID); err != nil {
+			metadata := itemEventMetadata(actorUserID, "approval", nil)
+			if err := s.workflowService.CommitTransition(ctx, tx, itemRepo, req.ItemID, req.StatusID, out.revertTo, actorUserID, metadata); err != nil {
 				return out, fmt.Errorf("revert item status: %w", err)
 			}
 			auditMeta["reverted_to_status_id"] = out.revertTo

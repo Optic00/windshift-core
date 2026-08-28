@@ -11,6 +11,7 @@ import (
 	"windshift/internal/constants"
 	"windshift/internal/database"
 	"windshift/internal/integrations/todoist"
+	"windshift/internal/itemevents"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/sanitize"
@@ -523,14 +524,15 @@ func (st *itemPersonalStore) ListTasks(workspaceID int) ([]repository.PersonalWo
 func (st *itemPersonalStore) CreateTask(workspaceID, userID int, s taskState) (int, error) {
 	statusID := statusForCompleted(s.Completed)
 	params := ItemCreationParams{
-		WorkspaceID: workspaceID,
-		Title:       s.Title,
-		Description: s.Description,
-		StatusID:    &statusID,
-		IsTask:      true,
-		AssigneeID:  &userID,
-		CreatorID:   &userID,
-		DueDate:     dueTime(s.Due),
+		WorkspaceID:   workspaceID,
+		Title:         s.Title,
+		Description:   s.Description,
+		StatusID:      &statusID,
+		IsTask:        true,
+		AssigneeID:    &userID,
+		CreatorID:     &userID,
+		DueDate:       dueTime(s.Due),
+		EventMetadata: itemevents.Integration("todoist", "integration"),
 	}
 	id, err := CreateItem(st.db, params)
 	return int(id), err
@@ -558,7 +560,26 @@ func (st *itemPersonalStore) UpdateTask(itemID int, s taskState, fields []string
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err := repository.NewItemRepository(st.db).UpdateFields(tx, itemID, update); err != nil {
+	repo := repository.NewItemRepository(st.db)
+	original, err := repo.FindByIDForUpdate(tx, itemID)
+	if err != nil {
+		return err
+	}
+	if err := repo.UpdateFields(tx, itemID, update); err != nil {
+		return err
+	}
+	updated, err := repo.FindByIDForUpdate(tx, itemID)
+	if err != nil {
+		return err
+	}
+	metadata := itemevents.Integration("todoist", "integration")
+	recorder := itemevents.NewRecorder(st.db)
+	changes := itemevents.Changes(original, updated)
+	if _, statusChanged := update["status_id"]; statusChanged {
+		if _, err := recorder.StatusChanged(context.Background(), tx, updated, original.StatusID, updated.StatusID, changes, metadata); err != nil {
+			return err
+		}
+	} else if _, err := recorder.Updated(context.Background(), tx, updated, changes, metadata); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -576,7 +597,7 @@ func (st *itemPersonalStore) UpdateTask(itemID int, s taskState, fields []string
 }
 
 func (st *itemPersonalStore) DeleteTask(itemID int) error {
-	return NewItemCRUDService(st.db).DeleteSingle(itemID)
+	return NewItemCRUDService(st.db).DeleteSingleWithMetadata(itemID, itemevents.Integration("todoist", "integration"))
 }
 
 func statusForCompleted(completed bool) int {

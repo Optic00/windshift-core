@@ -13,6 +13,7 @@ import (
 
 	"windshift/internal/authz"
 	"windshift/internal/database"
+	"windshift/internal/itemevents"
 	"windshift/internal/logger"
 	"windshift/internal/markdown"
 	"windshift/internal/models"
@@ -1327,6 +1328,9 @@ func (h *ItemHandler) ReparentChildren(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	eventRecords := make([]itemevents.UpdateRecord, 0, len(children))
+	metadata := itemevents.User(user.ID, "application")
+	metadata.OccurredAt = time.Now()
 	// Update parent_id for all direct children
 	for _, child := range children {
 		if child.ItemTypeID != nil {
@@ -1344,6 +1348,15 @@ func (h *ItemHandler) ReparentChildren(w http.ResponseWriter, r *http.Request) {
 			respondInternalError(w, r, err)
 			return
 		}
+		updated := *child
+		updated.ParentID = req.NewParentID
+		eventRecords = append(eventRecords, itemevents.UpdateRecord{
+			Item: &updated, Changes: itemevents.Changes(child, &updated), Metadata: metadata,
+		})
+	}
+	if _, err := itemevents.NewRecorder(h.db).UpdatedBatch(r.Context(), tx, eventRecords); err != nil {
+		respondInternalError(w, r, err)
+		return
 	}
 
 	if err := tx.Commit(); err != nil {

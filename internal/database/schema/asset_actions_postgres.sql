@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS asset_action_execution_logs (
 	completed_at TIMESTAMPTZ,
 	error_message TEXT,
 	execution_trace TEXT,          -- JSON step log
+	durable_event_key TEXT,
 	FOREIGN KEY (action_id) REFERENCES asset_actions(id) ON DELETE CASCADE,
 	FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE SET NULL
 );
@@ -71,3 +72,6 @@ CREATE INDEX IF NOT EXISTS idx_asset_action_exec_logs_action_id ON asset_action_
 CREATE INDEX IF NOT EXISTS idx_asset_action_exec_logs_asset_id ON asset_action_execution_logs(asset_id);
 CREATE INDEX IF NOT EXISTS idx_asset_action_exec_logs_status ON asset_action_execution_logs(status);
 CREATE INDEX IF NOT EXISTS idx_asset_action_exec_logs_started_at ON asset_action_execution_logs(started_at);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_asset_action_execution_logs_durable_target
+	ON asset_action_execution_logs(durable_event_key, action_id)
+	WHERE durable_event_key IS NOT NULL;

@@ -191,3 +191,7 @@ CREATE INDEX IF NOT EXISTS idx_logbook_action_logs_document ON logbook_action_ex
 CREATE INDEX IF NOT EXISTS idx_logbook_action_logs_status ON logbook_action_execution_logs(status);
 CREATE INDEX IF NOT EXISTS idx_logbook_action_logs_started ON logbook_action_execution_logs(started_at);
 
+ALTER TABLE logbook_action_execution_logs ADD COLUMN IF NOT EXISTS durable_event_key TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_logbook_action_logs_durable_target
+	ON logbook_action_execution_logs(durable_event_key, action_id)
+	WHERE durable_event_key IS NOT NULL;

@@ -308,15 +308,16 @@ func (e LogbookActionEdge) FlowEdgeData() (actionID int, edgeType, sourceHandle,
 
 // LogbookActionExecutionLog represents the audit trail for logbook action executions
 type LogbookActionExecutionLog struct {
-	ID             int                   `json:"id"`
-	ActionID       int                   `json:"action_id"`
-	DocumentID     *string               `json:"document_id,omitempty"`
-	TriggerEvent   string                `json:"trigger_event"`
-	Status         ActionExecutionStatus `json:"status"`
-	StartedAt      time.Time             `json:"started_at"`
-	CompletedAt    *time.Time            `json:"completed_at,omitempty"`
-	ErrorMessage   string                `json:"error_message,omitempty"`
-	ExecutionTrace string                `json:"execution_trace,omitempty"`
+	ID              int                   `json:"id"`
+	ActionID        int                   `json:"action_id"`
+	DocumentID      *string               `json:"document_id,omitempty"`
+	TriggerEvent    string                `json:"trigger_event"`
+	Status          ActionExecutionStatus `json:"status"`
+	StartedAt       time.Time             `json:"started_at"`
+	CompletedAt     *time.Time            `json:"completed_at,omitempty"`
+	ErrorMessage    string                `json:"error_message,omitempty"`
+	ExecutionTrace  string                `json:"execution_trace,omitempty"`
+	DurableEventKey string                `json:"durable_event_key,omitempty"`
 
 	// Joined fields
 	ActionName    string `json:"action_name,omitempty"`
@@ -362,6 +363,7 @@ type LogbookActionEvent struct {
 	ExecutionChainID  string `json:"execution_chain_id,omitempty"`
 	CascadeDepth      int    `json:"cascade_depth,omitempty"`
 	SourceApplication string `json:"source_application,omitempty"`
+	CausationEventKey string `json:"causation_event_key,omitempty"`
 }
 
 // CreateLogbookActionRequest represents the API request to create a logbook action

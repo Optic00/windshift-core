@@ -11,6 +11,7 @@ import (
 	"windshift/internal/auth"
 	"windshift/internal/cql"
 	"windshift/internal/database"
+	"windshift/internal/itemevents"
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
@@ -355,6 +356,7 @@ func init() {
 				CreatorID:        &env.UserID,
 				ValidatingUserID: env.UserID,
 				PermService:      env.PermService,
+				EventMetadata:    itemevents.Agent(fmt.Sprintf("user:%d", env.UserID), "agent"),
 			})
 			if err != nil {
 				return map[string]string{"error": fmt.Sprintf("create failed: %s", err.Error())}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error

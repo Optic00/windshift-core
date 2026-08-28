@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"windshift/internal/database"
+	"windshift/internal/itemevents"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/services"
@@ -621,7 +622,7 @@ func (s *IssueSyncService) syncComments(ctx context.Context, provider IssueProvi
 			body := fmt.Sprintf("**@%s** commented on GitHub:\n\n%s", ghComment.User.Username, ghComment.Body)
 			now := time.Now()
 
-			wsCommentID, insertErr := commentSvc.CreateInTx(ctx, tx, itemID, 0, body, now)
+			wsCommentID, insertErr := commentSvc.CreateInTx(ctx, tx, itemID, 0, body, now, itemevents.Integration("github", "scm"))
 			if insertErr != nil {
 				slog.Error("insert synced comment", "github_comment_id", ghComment.ID, "error", insertErr)
 				continue

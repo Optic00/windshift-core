@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"windshift/internal/database"
+	"windshift/internal/itemevents"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/validation"
@@ -574,8 +575,13 @@ func (s *ItemWorkspaceMoveService) MoveContext(ctx context.Context, itemID, acto
 		return nil, fmt.Errorf("begin item workspace move: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	itemRepo := repository.NewItemRepository(s.db)
+	originalInTx, err := itemRepo.FindByIDForUpdate(tx, itemID)
+	if err != nil {
+		return nil, err
+	}
 
-	newNumber, err := repository.NewItemRepository(s.db).GetNextWorkspaceItemNumber(tx, input.DestinationWorkspaceID)
+	newNumber, err := itemRepo.GetNextWorkspaceItemNumber(tx, input.DestinationWorkspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -589,7 +595,7 @@ func (s *ItemWorkspaceMoveService) MoveContext(ctx context.Context, itemID, acto
 		return nil, fmt.Errorf("reserve old item key: %w", err)
 	}
 
-	childIDs, err := detachMoveChildren(tx, itemID)
+	childIDs, err := detachMoveChildren(tx, itemID, now)
 	if err != nil {
 		return nil, err
 	}
@@ -630,10 +636,38 @@ func (s *ItemWorkspaceMoveService) MoveContext(ctx context.Context, itemID, acto
 	if err != nil {
 		return nil, fmt.Errorf("encode move history: %w", err)
 	}
-	if err := repository.NewItemRepository(s.db).RecordHistory(tx, repository.HistoryEntry{
+	history := repository.HistoryEntry{
 		ItemID: itemID, UserID: actorUserID, FieldName: "workspace_move",
 		OldValue: preview.SourceKey, NewValue: string(historyJSON), ChangedAt: now,
-	}); err != nil {
+	}
+	if err := itemRepo.RecordHistory(tx, history); err != nil {
+		return nil, err
+	}
+	updatedInTx, err := itemRepo.FindByIDForUpdate(tx, itemID)
+	if err != nil {
+		return nil, err
+	}
+	metadata := itemevents.User(actorUserID, "application")
+	metadata.OccurredAt = now
+	recorder := itemevents.NewRecorder(s.db)
+	for _, childID := range childIDs {
+		child, err := itemRepo.FindByIDForUpdate(tx, childID)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := recorder.Updated(ctx, tx, child, []itemevents.FieldChange{{
+			Field: "parent_id", OldValue: itemID, NewValue: nil,
+		}}, metadata); err != nil {
+			return nil, err
+		}
+	}
+	changes := itemevents.Changes(originalInTx, updatedInTx)
+	if originalInTx.StatusID != nil && *originalInTx.StatusID != input.TargetStatusID {
+		newStatusID := input.TargetStatusID
+		if _, err := recorder.StatusChanged(ctx, tx, updatedInTx, originalInTx.StatusID, &newStatusID, changes, metadata); err != nil {
+			return nil, err
+		}
+	} else if _, err := recorder.Updated(ctx, tx, updatedInTx, changes, metadata); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -739,7 +773,7 @@ func (s *ItemWorkspaceMoveService) validateWorkflowGuards(ctx context.Context, i
 	return nil
 }
 
-func detachMoveChildren(tx database.Tx, itemID int) ([]int, error) {
+func detachMoveChildren(tx database.Tx, itemID int, changedAt time.Time) ([]int, error) {
 	rows, err := tx.Query(`SELECT id, COALESCE(path, '/') FROM items WHERE parent_id = ? ORDER BY id`, itemID)
 	if err != nil {
 		return nil, fmt.Errorf("list children to detach: %w", err)
@@ -771,7 +805,7 @@ func detachMoveChildren(tx database.Tx, itemID int) ([]int, error) {
 		if _, err := tx.Exec(`UPDATE items SET path = ? || SUBSTR(path, ?) WHERE path LIKE ?`, newPrefix, len(oldPrefix)+1, oldPrefix+"%"); err != nil {
 			return nil, fmt.Errorf("rewrite detached child descendants: %w", err)
 		}
-		if _, err := tx.Exec(`UPDATE items SET parent_id = NULL, path = '/', updated_at = ? WHERE id = ?`, time.Now(), child.id); err != nil {
+		if _, err := tx.Exec(`UPDATE items SET parent_id = NULL, path = '/', updated_at = ? WHERE id = ?`, changedAt, child.id); err != nil {
 			return nil, fmt.Errorf("detach child: %w", err)
 		}
 		ids = append(ids, child.id)

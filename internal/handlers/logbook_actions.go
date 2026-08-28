@@ -25,22 +25,18 @@ import (
 // performing a write.
 type LogbookNodeExecutionHandler struct {
 	secret            string
-	eventCoordinator  *services.EventCoordinator
 	permissionService *services.PermissionService
 	assetHandler      *AssetHandler
 	itemCreation      *services.ItemCreationService
-	assetRepo         *repository.AssetRepository
 }
 
 // NewLogbookNodeExecutionHandler creates a new node execution handler.
-func NewLogbookNodeExecutionHandler(secret string, eventCoordinator *services.EventCoordinator, permissionService *services.PermissionService, assetHandler *AssetHandler, itemCreation *services.ItemCreationService, assetRepo *repository.AssetRepository) *LogbookNodeExecutionHandler {
+func NewLogbookNodeExecutionHandler(secret string, permissionService *services.PermissionService, assetHandler *AssetHandler, itemCreation *services.ItemCreationService) *LogbookNodeExecutionHandler {
 	return &LogbookNodeExecutionHandler{
 		secret:            secret,
-		eventCoordinator:  eventCoordinator,
 		permissionService: permissionService,
 		assetHandler:      assetHandler,
 		itemCreation:      itemCreation,
-		assetRepo:         assetRepo,
 	}
 }
 
@@ -201,8 +197,8 @@ func (h *LogbookNodeExecutionHandler) executeCreateAsset(nodeConfig string, even
 
 	// Authorize: the action config may target any asset set, so verify the
 	// acting user has create permission on the target set before inserting.
-	if h.assetHandler == nil || h.assetRepo == nil {
-		return nil, fmt.Errorf("create_asset blocked: asset permission or repository service not configured")
+	if h.assetHandler == nil || h.assetHandler.AssetService() == nil {
+		return nil, fmt.Errorf("create_asset blocked: asset permission or mutation service not configured")
 	}
 	hasPerm, permErr := h.assetHandler.HasAssetSetPermission(event.ActorUserID, config.AssetSetID, services.AssetPermissionKeyCreate)
 	if permErr != nil {
@@ -211,34 +207,10 @@ func (h *LogbookNodeExecutionHandler) executeCreateAsset(nodeConfig string, even
 	if !hasPerm {
 		return nil, fmt.Errorf("user %d not authorized to create assets in set %d", event.ActorUserID, config.AssetSetID)
 	}
-	belongs, err := h.assetRepo.AssetTypeBelongsToSet(config.AssetTypeID, config.AssetSetID)
-	if err != nil {
-		return nil, fmt.Errorf("validate asset type: %w", err)
-	}
-	if !belongs {
-		return nil, fmt.Errorf("asset type %d does not belong to set %d", config.AssetTypeID, config.AssetSetID)
-	}
-	if config.CategoryID != nil {
-		belongs, err = h.assetRepo.CategoryBelongsToSet(*config.CategoryID, config.AssetSetID)
-		if err != nil {
-			return nil, fmt.Errorf("validate asset category: %w", err)
-		}
-		if !belongs {
-			return nil, fmt.Errorf("asset category %d does not belong to set %d", *config.CategoryID, config.AssetSetID)
-		}
-	}
-	if config.StatusID != nil {
-		belongs, err = h.assetRepo.StatusBelongsToSet(*config.StatusID, config.AssetSetID)
-		if err != nil {
-			return nil, fmt.Errorf("validate asset status: %w", err)
-		}
-		if !belongs {
-			return nil, fmt.Errorf("asset status %d does not belong to set %d", *config.StatusID, config.AssetSetID)
-		}
-	}
-
 	createdAt := time.Now()
-	assetID, err := h.assetRepo.CreateAsset(repository.CreateAssetInput{
+	asset, err := h.assetHandler.AssetService().CreateAssetWithContext(services.AuditActor{
+		UserID: event.ActorUserID, Source: "logbook_action",
+	}, repository.CreateAssetInput{
 		SetID:       config.AssetSetID,
 		AssetTypeID: config.AssetTypeID,
 		CategoryID:  config.CategoryID,
@@ -248,24 +220,16 @@ func (h *LogbookNodeExecutionHandler) executeCreateAsset(nodeConfig string, even
 		AssetTag:    config.AssetTag,
 		CreatedBy:   event.ActorUserID,
 		CreatedAt:   createdAt,
+	}, nil, services.AssetAutomationContext{
+		TriggeredByAction: true,
+		ExecutionChainID:  req.ExecutionChainID,
+		CascadeDepth:      req.CascadeDepth + 1,
+		SourceApplication: "logbook",
 	})
 	if err != nil {
 		return nil, err
 	}
-
-	// Emit asset action event with cascade context (once asset action service exists)
-	if h.eventCoordinator != nil && h.eventCoordinator.GetAssetActionService() != nil {
-		h.eventCoordinator.GetAssetActionService().EmitAssetActionEvent(&models.AssetActionEvent{
-			EventType:         models.AssetTriggerAssetCreated,
-			SetID:             config.AssetSetID,
-			AssetID:           assetID,
-			ActorUserID:       event.ActorUserID,
-			TriggeredByAction: true,
-			ExecutionChainID:  req.ExecutionChainID,
-			CascadeDepth:      req.CascadeDepth + 1,
-			SourceApplication: "logbook",
-		})
-	}
+	assetID := asset.ID
 
 	return map[string]any{
 		"asset_id":     assetID,

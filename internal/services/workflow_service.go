@@ -12,6 +12,7 @@ import (
 
 	"windshift/internal/constants"
 	"windshift/internal/database"
+	"windshift/internal/itemevents"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 )
@@ -379,9 +380,10 @@ func (s *WorkflowService) IsValidStatusTransitionForUser(ctx context.Context, wo
 
 // PerformTransitionRequest is the input to WorkflowService.PerformTransition.
 type PerformTransitionRequest struct {
-	ItemID      int
-	ToStatusID  int
-	ActorUserID int
+	ItemID        int
+	ToStatusID    int
+	ActorUserID   int
+	EventMetadata itemevents.Metadata
 	// Modes selects which condition modes to enforce (e.g. []string{"validator", "condition"}
 	// for user-initiated transitions, or nil/empty for automation that should only be
 	// gated by workflow validity). Callers pass this through to
@@ -531,7 +533,8 @@ func (s *WorkflowService) PerformTransition(
 
 	// Transactional write + history entry.
 	if err := database.WithTx(s.db, func(tx database.Tx) error {
-		return s.CommitTransition(tx, itemRepo, req.ItemID, oldStatusID, req.ToStatusID, req.ActorUserID)
+		metadata := mergeItemEventMetadata(req.EventMetadata, itemEventMetadata(req.ActorUserID, "application", nil))
+		return s.CommitTransition(ctx, tx, itemRepo, req.ItemID, oldStatusID, req.ToStatusID, req.ActorUserID, metadata)
 	}); err != nil {
 		return nil, err
 	}
@@ -596,9 +599,11 @@ func logPostCommitApprovalError(req PerformTransitionRequest, oldStatusID int, h
 // because the approval itself is the gate; PerformTransition calls it after its
 // own gating logic for user-driven transitions.
 func (s *WorkflowService) CommitTransition(
-	tx database.Tx, itemRepo *repository.ItemRepository,
+	ctx context.Context, tx database.Tx, itemRepo *repository.ItemRepository,
 	itemID, oldStatusID, newStatusID, actorUserID int,
+	metadata itemevents.Metadata,
 ) error {
+	changedAt := time.Now()
 	if err := itemRepo.UpdateFields(tx, itemID, map[string]any{
 		"status_id": newStatusID,
 	}); err != nil {
@@ -611,9 +616,21 @@ func (s *WorkflowService) CommitTransition(
 		FieldName: "status_id",
 		OldValue:  fmt.Sprintf("%d", oldStatusID),
 		NewValue:  fmt.Sprintf("%d", newStatusID),
-		ChangedAt: time.Now(),
+		ChangedAt: changedAt,
 	}); err != nil {
 		return fmt.Errorf("record transition history: %w", err)
+	}
+	item, err := itemRepo.FindByIDForUpdate(tx, itemID)
+	if err != nil {
+		return err
+	}
+	if metadata.OccurredAt.IsZero() {
+		metadata.OccurredAt = changedAt
+	}
+	oldStatus, newStatus := oldStatusID, newStatusID
+	changes := []itemevents.FieldChange{{Field: "status_id", OldValue: oldStatus, NewValue: newStatus}}
+	if _, err := itemevents.NewRecorder(s.db).StatusChanged(ctx, tx, item, &oldStatus, &newStatus, changes, metadata); err != nil {
+		return err
 	}
 	return nil
 }

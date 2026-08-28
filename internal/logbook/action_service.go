@@ -2,7 +2,10 @@ package logbook
 
 import (
 	"bytes"
+	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -48,10 +51,9 @@ type LogbookActionService struct {
 	actionCache map[string][]*models.LogbookAction
 	cacheMu     sync.RWMutex
 
-	// Event processing
-	eventChan chan *models.LogbookActionEvent
-	stopChan  chan struct{}
-	wg        sync.WaitGroup
+	durableIngress *DurableLogbookActionIngress
+	stopChan       chan struct{}
+	wg             sync.WaitGroup
 
 	// Statistics
 	eventsProcessed int64
@@ -68,7 +70,7 @@ func NewLogbookActionService(db database.Database, repo *repository.LogbookActio
 		mainServerSecret: mainServerSecret,
 		baseURL:          baseURL,
 		actionCache:      make(map[string][]*models.LogbookAction),
-		eventChan:        make(chan *models.LogbookActionEvent, 500),
+		durableIngress:   NewDurableLogbookActionIngress(db),
 		stopChan:         make(chan struct{}),
 	}
 
@@ -80,8 +82,7 @@ func NewLogbookActionService(db database.Database, repo *repository.LogbookActio
 		slog.Warn("failed to load initial logbook action cache", slog.String("component", "logbook-actions"), slog.Any("error", err))
 	}
 
-	service.wg.Add(2)
-	go service.eventProcessor()
+	service.wg.Add(1)
 	go service.cacheRefresher()
 
 	slog.Info("logbook action service initialized", slog.String("component", "logbook-actions"))
@@ -89,22 +90,17 @@ func NewLogbookActionService(db database.Database, repo *repository.LogbookActio
 	return service
 }
 
-// EmitEvent sends a logbook action event for async processing.
+// EmitEvent durably admits a compatibility trigger before canonical cutover.
 func (s *LogbookActionService) EmitEvent(event *models.LogbookActionEvent) {
-	slog.Debug("queuing logbook action event",
-		slog.String("component", "logbook-actions"),
-		slog.String("event_type", string(event.EventType)),
-		slog.String("bucket_id", event.BucketID),
-		slog.String("document_id", event.DocumentID),
-	)
-
-	select {
-	case s.eventChan <- event:
-	default:
-		slog.Warn("logbook action event channel full, dropping event",
+	if event == nil {
+		return
+	}
+	if err := s.durableIngress.Emit(context.Background(), event); err != nil {
+		slog.Error("failed to persist logbook action event",
 			slog.String("component", "logbook-actions"),
 			slog.String("event_type", string(event.EventType)),
 			slog.String("bucket_id", event.BucketID),
+			slog.Any("error", err),
 		)
 		atomic.AddInt64(&s.errors, 1)
 	}
@@ -158,38 +154,6 @@ func (s *LogbookActionService) InvalidateBucketCache(bucketID string) {
 		delete(s.actionCache, bucketID)
 	}
 	s.cacheMu.Unlock()
-}
-
-func (s *LogbookActionService) eventProcessor() {
-	defer s.wg.Done()
-
-	for {
-		select {
-		case event := <-s.eventChan:
-			if err := s.processEvent(event); err != nil {
-				slog.Error("failed to process logbook action event",
-					slog.String("component", "logbook-actions"),
-					slog.String("event_type", string(event.EventType)),
-					slog.Any("error", err),
-				)
-				atomic.AddInt64(&s.errors, 1)
-			} else {
-				atomic.AddInt64(&s.eventsProcessed, 1)
-			}
-		case <-s.stopChan:
-			slog.Debug("stopping logbook action event processor", slog.String("component", "logbook-actions"))
-			for len(s.eventChan) > 0 {
-				event := <-s.eventChan
-				if err := s.processEvent(event); err != nil {
-					slog.Error("failed to process logbook event during shutdown",
-						slog.String("component", "logbook-actions"),
-						slog.Any("error", err),
-					)
-				}
-			}
-			return
-		}
-	}
 }
 
 func (s *LogbookActionService) cacheRefresher() {
@@ -254,65 +218,6 @@ func (s *LogbookActionService) refreshActionCache() error {
 		slog.String("component", "logbook-actions"),
 		slog.Int("bucket_count", len(newCache)),
 	)
-
-	return nil
-}
-
-func (s *LogbookActionService) processEvent(event *models.LogbookActionEvent) error { //nolint:unparam // error kept for interface consistency
-	slog.Debug("processing logbook action event",
-		slog.String("component", "logbook-actions"),
-		slog.String("event_type", string(event.EventType)),
-		slog.String("bucket_id", event.BucketID),
-		slog.String("document_id", event.DocumentID),
-		slog.Int("cascade_depth", event.CascadeDepth),
-	)
-
-	if event.CascadeDepth >= maxCascadeDepth {
-		slog.Warn("logbook cascade depth limit reached, not firing actions",
-			slog.String("component", "logbook-actions"),
-			slog.String("bucket_id", event.BucketID),
-			slog.String("execution_chain_id", event.ExecutionChainID),
-			slog.Int("depth", event.CascadeDepth),
-			slog.Int("max", maxCascadeDepth),
-		)
-		return nil
-	}
-
-	// Snapshot the slice under the lock. refreshActionCache replaces the map
-	// wholesale (not the individual slices), but a concurrent
-	// InvalidateBucketCache can overwrite `s.actionCache[bucketID]`. Copying
-	// the header is enough — we're about to iterate a stable backing array.
-	s.cacheMu.RLock()
-	cached := s.actionCache[event.BucketID]
-	actions := make([]*models.LogbookAction, len(cached))
-	copy(actions, cached)
-	s.cacheMu.RUnlock()
-
-	if len(actions) == 0 {
-		return nil
-	}
-
-	for _, action := range actions {
-		if s.matchesTrigger(action, event) {
-			slog.Info("logbook action matches trigger, executing",
-				slog.String("component", "logbook-actions"),
-				slog.Int("action_id", action.ID),
-				slog.String("action_name", action.Name),
-				slog.String("document_id", event.DocumentID),
-				slog.String("event_type", string(event.EventType)),
-			)
-
-			if err := s.executeAction(action, event); err != nil {
-				slog.Error("failed to execute logbook action",
-					slog.String("component", "logbook-actions"),
-					slog.Int("action_id", action.ID),
-					slog.Any("error", err),
-				)
-			} else {
-				atomic.AddInt64(&s.actionsExecuted, 1)
-			}
-		}
-	}
 
 	return nil
 }
@@ -429,21 +334,44 @@ func (s *LogbookActionService) executeAction(action *models.LogbookAction, event
 	}
 
 	log := &models.LogbookActionExecutionLog{
-		ActionID:     action.ID,
-		DocumentID:   &event.DocumentID,
-		TriggerEvent: string(event.EventType),
-		Status:       models.ActionStatusRunning,
-		StartedAt:    startTime,
+		ActionID:        action.ID,
+		DocumentID:      &event.DocumentID,
+		TriggerEvent:    string(event.EventType),
+		Status:          models.ActionStatusRunning,
+		StartedAt:       startTime,
+		DurableEventKey: event.CausationEventKey,
 	}
-	logID, err := s.repo.CreateExecutionLog(log)
-	if err != nil {
-		slog.Warn("failed to create logbook execution log",
-			slog.String("component", "logbook-actions"),
-			slog.Int("action_id", action.ID),
-			slog.Any("error", err),
-		)
+	if log.DurableEventKey != "" {
+		existing, err := s.repo.GetExecutionLogByDurableTarget(log.DurableEventKey, action.ID)
+		switch {
+		case err == nil:
+			if existing.Status == models.ActionStatusCompleted || existing.Status == models.ActionStatusSkipped {
+				return nil
+			}
+			log = existing
+			log.Status = models.ActionStatusRunning
+			log.CompletedAt = nil
+			log.ErrorMessage = ""
+			log.ExecutionTrace = ""
+			if err := s.repo.UpdateExecutionLog(log); err != nil {
+				return err
+			}
+		case !errors.Is(err, sql.ErrNoRows):
+			return fmt.Errorf("load durable logbook execution: %w", err)
+		default:
+			logID, err := s.repo.CreateExecutionLog(log)
+			if err != nil {
+				return err
+			}
+			log.ID = logID
+		}
+	} else {
+		logID, err := s.repo.CreateExecutionLog(log)
+		if err != nil {
+			return err
+		}
+		log.ID = logID
 	}
-	log.ID = logID
 
 	// Build execution variables
 	vars := map[string]any{
@@ -527,6 +455,19 @@ func (s *LogbookActionService) executeAction(action *models.LogbookAction, event
 	)
 
 	return nil
+}
+
+func (s *LogbookActionService) executeActionForEvent(action *models.LogbookAction, event *models.LogbookActionEvent, eventKey string) (*models.LogbookActionExecutionLog, error) {
+	copyEvent := *event
+	copyEvent.CausationEventKey = eventKey
+	if err := s.executeAction(action, &copyEvent); err != nil {
+		return nil, err
+	}
+	log, err := s.repo.GetExecutionLogByDurableTarget(eventKey, action.ID)
+	if err != nil {
+		return nil, fmt.Errorf("load completed durable logbook execution: %w", err)
+	}
+	return log, nil
 }
 
 func (s *LogbookActionService) topologicalSort(nodes []models.LogbookActionNode, edges []models.LogbookActionEdge) ([]models.LogbookActionNode, error) {

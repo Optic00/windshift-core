@@ -16,6 +16,7 @@ import (
 	"windshift/internal/aitooladapter"
 	"windshift/internal/aitools"
 	"windshift/internal/database"
+	"windshift/internal/itemevents"
 	"windshift/internal/llm"
 	"windshift/internal/models"
 	"windshift/internal/repository"
@@ -504,6 +505,7 @@ func (d *Dispatcher) execute(run *models.AgentRun) {
 		IsPrivate:             private,
 		ActorUserID:           snapshot.ActingUserID,
 		SuppressNotifications: false,
+		EventMetadata:         itemevents.Agent(fmt.Sprint(run.ID), "agent"),
 	})
 	if err != nil {
 		d.fail(run, fmt.Errorf("post final comment: %w", err))

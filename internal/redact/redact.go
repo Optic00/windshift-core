@@ -23,6 +23,12 @@ var (
 	// JSON string fields whose values are credentials. Keep this conservative:
 	// only quoted string values are rewritten so arbitrary JSON remains valid.
 	jsonSecretPattern = regexp.MustCompile(`(?i)("(?:api_key|apikey|token|access_token|refresh_token|password|client_secret|private_key|authorization)"\s*:\s*")[^"\\]*(?:\\.[^"\\]*)*(")`)
+
+	// Secret-bearing URL query parameters. Remove the complete name/value pair
+	// so persisted diagnostic text cannot reveal either the credential or which
+	// credential transport a provider used.
+	urlSecretQueryPattern = regexp.MustCompile(`(?i)([?&])(?:api_key|apikey|token|access_token|refresh_token|password|client_secret|authorization)=[^&#\s]*&?`)
+	urlEmptyQueryPattern  = regexp.MustCompile(`[?&]([#\s]|$)`)
 )
 
 // String strips known credential forms from a string before it reaches logs or
@@ -38,5 +44,7 @@ func String(s string) string {
 	s = authorizationBearerPattern.ReplaceAllString(s, "${1}[REDACTED]")
 	s = windshiftTokenPattern.ReplaceAllString(s, "[REDACTED]")
 	s = jsonSecretPattern.ReplaceAllString(s, "${1}[REDACTED]${2}")
+	s = urlSecretQueryPattern.ReplaceAllString(s, "${1}")
+	s = urlEmptyQueryPattern.ReplaceAllString(s, "$1")
 	return s
 }

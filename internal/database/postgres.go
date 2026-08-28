@@ -154,6 +154,18 @@ var pageLabelsSchemaPostgres string
 //go:embed schema/agents_postgres.sql
 var agentsSchemaPostgres string
 
+//go:embed schema/events_postgres.sql
+var eventsSchemaPostgres string
+
+//go:embed schema/action_events_postgres.sql
+var actionEventsSchemaPostgres string
+
+//go:embed schema/action_event_targets_postgres.sql
+var actionEventTargetsSchemaPostgres string
+
+//go:embed schema/asset_action_events_postgres.sql
+var assetActionEventsSchemaPostgres string
+
 // PostgresDB implements the Database interface for PostgreSQL
 type PostgresDB struct {
 	db  *sql.DB
@@ -532,6 +544,8 @@ func (p *PostgresDB) getPostgresSchemaFiles() []schemaFile {
 		{"pages_postgres.sql", pagesSchemaPostgres},
 		{"page_labels_postgres.sql", pageLabelsSchemaPostgres},
 		{"agents_postgres.sql", agentsSchemaPostgres},
+		{"events_postgres.sql", eventsSchemaPostgres},
+		{"action_event_targets_postgres.sql", actionEventTargetsSchemaPostgres},
 	}
 }
 

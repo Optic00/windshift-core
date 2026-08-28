@@ -12,6 +12,7 @@ import (
 
 	"windshift/internal/kreuzberg"
 	"windshift/internal/llm"
+	"windshift/internal/logbookevents"
 	"windshift/internal/models"
 )
 
@@ -19,14 +20,11 @@ import (
 type IngestionService struct {
 	repo          *Repository
 	articleClient llm.Client
-	actionService *LogbookActionService
+	eventRecorder DocumentEventRecorder
 
-	// docLocks serializes Ingest/Reprocess calls on the same document. Two
-	// concurrent reprocess requests would otherwise race on DeleteChunks /
-	// CreateChunks and leave a corrupt chunk set behind. The map is guarded
-	// by docLocksMu; entries are ref-counted and removed once the last
-	// holder releases, so the map's size tracks in-flight docs rather than
-	// the total distinct docs ever ingested.
+	// docLocks serializes completion for the same document so concurrent
+	// reprocess requests cannot replace each other's chunks. Entries are
+	// removed when the last holder releases.
 	docLocksMu sync.Mutex
 	docLocks   map[string]*docLockEntry
 }
@@ -40,11 +38,11 @@ type docLockEntry struct {
 }
 
 // NewIngestionService creates a new ingestion service.
-func NewIngestionService(repo *Repository, articleClient llm.Client, actionService *LogbookActionService) *IngestionService {
+func NewIngestionService(repo *Repository, articleClient llm.Client, eventRecorder DocumentEventRecorder) *IngestionService {
 	return &IngestionService{
 		repo:          repo,
 		articleClient: articleClient,
-		actionService: actionService,
+		eventRecorder: eventRecorder,
 		docLocks:      make(map[string]*docLockEntry),
 	}
 }
@@ -89,21 +87,27 @@ func (s *IngestionService) lockDoc(docID string) func() {
 	}
 }
 
+func (s *IngestionService) beginDocument(docID, statusMessage string) (*models.LogbookDocument, error) {
+	doc, err := s.repo.GetDocument(docID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get document: %w", err)
+	}
+	if doc == nil {
+		return nil, fmt.Errorf("document not found: %s", docID)
+	}
+	if err := s.repo.UpdateDocumentStatus(docID, models.LogbookDocStatusProcessing, statusMessage); err != nil {
+		return nil, err
+	}
+	return doc, nil
+}
+
 // IngestFile processes an uploaded file: extract text, chunk, embed, store.
 func (s *IngestionService) IngestFile(ctx context.Context, docID string) error {
 	release := s.lockDoc(docID)
 	defer release()
 
-	doc, err := s.repo.GetDocument(docID)
+	doc, err := s.beginDocument(docID, "")
 	if err != nil {
-		return fmt.Errorf("failed to get document: %w", err)
-	}
-	if doc == nil {
-		return fmt.Errorf("document not found: %s", docID)
-	}
-
-	// Update status to processing
-	if err := s.repo.UpdateDocumentStatus(docID, models.LogbookDocStatusProcessing, ""); err != nil {
 		return err
 	}
 
@@ -128,7 +132,7 @@ func (s *IngestionService) IngestFile(ctx context.Context, docID string) error {
 
 	// No text content (e.g. image files) — skip LLM processing, go straight to ready
 	if result.Content == "" {
-		return s.chunkContent(docID, "")
+		return s.chunkContent(ctx, doc, "", "", result.MimeType, result.Content)
 	}
 
 	if err := s.abortIfCanceled(ctx, docID, "before classify"); err != nil {
@@ -150,13 +154,7 @@ func (s *IngestionService) IngestFile(ctx context.Context, docID string) error {
 	}
 
 	// Chunk cleaned content instead of raw
-	if err := s.chunkContent(docID, cleanedContent); err != nil {
-		return err
-	}
-
-	// Emit event for action processing
-	s.emitDocumentEvent(doc, contentType, result.MimeType)
-	return nil
+	return s.chunkContent(ctx, doc, cleanedContent, contentType, result.MimeType, result.Content)
 }
 
 // IngestNote processes a markdown note: chunk and store.
@@ -164,16 +162,8 @@ func (s *IngestionService) IngestNote(ctx context.Context, docID string) error {
 	release := s.lockDoc(docID)
 	defer release()
 
-	doc, err := s.repo.GetDocument(docID)
+	doc, err := s.beginDocument(docID, "")
 	if err != nil {
-		return fmt.Errorf("failed to get document: %w", err)
-	}
-	if doc == nil {
-		return fmt.Errorf("document not found: %s", docID)
-	}
-
-	// Update status to processing
-	if err := s.repo.UpdateDocumentStatus(docID, models.LogbookDocStatusProcessing, ""); err != nil {
 		return err
 	}
 
@@ -195,13 +185,7 @@ func (s *IngestionService) IngestNote(ctx context.Context, docID string) error {
 		slog.Warn("failed to set note article", slog.String("doc_id", docID), slog.Any("error", err))
 	}
 
-	if err := s.chunkContent(docID, doc.RawContent); err != nil {
-		return err
-	}
-
-	// Emit event for action processing
-	s.emitDocumentEvent(doc, contentType, "text/markdown")
-	return nil
+	return s.chunkContent(ctx, doc, doc.RawContent, contentType, "text/markdown", doc.RawContent)
 }
 
 // ReprocessDocument re-processes an existing document (delete old chunks, re-chunk).
@@ -209,27 +193,16 @@ func (s *IngestionService) ReprocessDocument(ctx context.Context, docID string) 
 	release := s.lockDoc(docID)
 	defer release()
 
-	doc, err := s.repo.GetDocument(docID)
+	doc, err := s.beginDocument(docID, "reprocessing")
 	if err != nil {
-		return fmt.Errorf("failed to get document: %w", err)
-	}
-	if doc == nil {
-		return fmt.Errorf("document not found: %s", docID)
-	}
-
-	// Update status to processing
-	if err := s.repo.UpdateDocumentStatus(docID, models.LogbookDocStatusProcessing, "reprocessing"); err != nil {
-		return err
-	}
-
-	// Delete existing chunks
-	if err := s.repo.DeleteChunksByDocument(docID); err != nil {
-		_ = s.repo.UpdateDocumentStatus(docID, models.LogbookDocStatusError, fmt.Sprintf("chunk deletion failed: %v", err))
 		return err
 	}
 
 	content := doc.RawContent
-	var mimeType string
+	mimeType := doc.MimeType
+	if mimeType == "" && doc.SourceType == models.LogbookSourceNote {
+		mimeType = "text/markdown"
+	}
 
 	// For uploaded files, re-extract
 	if doc.SourceType == models.LogbookSourceUpload && doc.FilePath != "" {
@@ -251,7 +224,7 @@ func (s *IngestionService) ReprocessDocument(ctx context.Context, docID string) 
 
 	// No text content (e.g. image files) — skip LLM processing, go straight to ready
 	if content == "" {
-		return s.chunkContent(docID, "")
+		return s.chunkContent(ctx, doc, "", "", mimeType, content)
 	}
 
 	if err := s.abortIfCanceled(ctx, docID, "before classify"); err != nil {
@@ -272,11 +245,12 @@ func (s *IngestionService) ReprocessDocument(ctx context.Context, docID string) 
 		return err
 	}
 
-	return s.chunkContent(docID, cleanedContent)
+	return s.chunkContent(ctx, doc, cleanedContent, contentType, mimeType, content)
 }
 
 // chunkContent splits text into chunks and stores them.
-func (s *IngestionService) chunkContent(docID, content string) error {
+func (s *IngestionService) chunkContent(ctx context.Context, doc *models.LogbookDocument, content, contentType, mimeType, rawContent string) error {
+	docID := doc.ID
 	// Chunk the text
 	config := kreuzberg.DefaultChunkConfig()
 	textChunks, err := kreuzberg.ChunkText(content, config)
@@ -287,7 +261,9 @@ func (s *IngestionService) chunkContent(docID, content string) error {
 
 	if len(textChunks) == 0 {
 		slog.Warn("no chunks produced from document", slog.String("doc_id", docID))
-		return s.repo.UpdateDocumentStatus(docID, models.LogbookDocStatusReady, "no content to index")
+		return s.completeDocument(ctx, docID, nil, "no content to index", logbookevents.ClassifiedInput{
+			Document: classifiedDocumentSnapshot(doc, contentType, mimeType, rawContent), ActorUserID: doc.CreatedBy,
+		})
 	}
 
 	// Build model chunks
@@ -305,14 +281,9 @@ func (s *IngestionService) chunkContent(docID, content string) error {
 		}
 	}
 
-	// Store chunks
-	if err := s.repo.CreateChunks(docID, modelChunks); err != nil {
-		_ = s.repo.UpdateDocumentStatus(docID, models.LogbookDocStatusError, fmt.Sprintf("chunk storage failed: %v", err))
-		return fmt.Errorf("chunk storage failed: %w", err)
-	}
-
-	// Mark document as ready
-	if err := s.repo.UpdateDocumentStatus(docID, models.LogbookDocStatusReady, ""); err != nil {
+	if err := s.completeDocument(ctx, docID, modelChunks, "", logbookevents.ClassifiedInput{
+		Document: classifiedDocumentSnapshot(doc, contentType, mimeType, rawContent), ActorUserID: doc.CreatedBy,
+	}); err != nil {
 		return err
 	}
 
@@ -321,6 +292,22 @@ func (s *IngestionService) chunkContent(docID, content string) error {
 		slog.Int("chunks", len(modelChunks)),
 	)
 	return nil
+}
+
+func (s *IngestionService) completeDocument(ctx context.Context, docID string, chunks []models.LogbookChunk, statusMessage string, eventInput logbookevents.ClassifiedInput) error {
+	if err := s.repo.CompleteDocumentIngestion(ctx, docID, chunks, statusMessage, s.eventRecorder, eventInput); err != nil {
+		_ = s.repo.UpdateDocumentStatus(docID, models.LogbookDocStatusError, fmt.Sprintf("completion failed: %v", err))
+		return fmt.Errorf("complete document ingestion: %w", err)
+	}
+	return nil
+}
+
+func classifiedDocumentSnapshot(doc *models.LogbookDocument, contentType, mimeType, rawContent string) logbookevents.DocumentSnapshot {
+	return logbookevents.DocumentSnapshot{
+		ID: doc.ID, BucketID: doc.BucketID, Title: doc.Title,
+		ContentType: contentType, MimeType: mimeType, SourceType: doc.SourceType,
+		Author: doc.Author, RawContent: contentPreview(rawContent, 2000),
+	}
 }
 
 const maxArticleContentChars = 12000
@@ -615,24 +602,4 @@ func (s *IngestionService) generateThumbnail(docID, filePath, mimeType string) {
 // estimateTokens provides a rough token count estimate (~4 chars per token).
 func estimateTokens(text string) int {
 	return len(text) / 4
-}
-
-// emitDocumentEvent sends a document event directly to the action service.
-func (s *IngestionService) emitDocumentEvent(doc *models.LogbookDocument, contentType, mimeType string) {
-	if s.actionService == nil {
-		return
-	}
-
-	s.actionService.EmitEvent(&models.LogbookActionEvent{
-		EventType:   models.LogbookTriggerDocumentClassified,
-		BucketID:    doc.BucketID,
-		DocumentID:  doc.ID,
-		ActorUserID: doc.CreatedBy,
-		ContentType: contentType,
-		MimeType:    mimeType,
-		Title:       doc.Title,
-		SourceType:  doc.SourceType,
-		Author:      doc.Author,
-		RawContent:  contentPreview(doc.RawContent, 2000),
-	})
 }

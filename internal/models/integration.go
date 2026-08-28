@@ -812,11 +812,11 @@ type ActionTriggerConfig struct {
 	ItemTypeID                  *int   `json:"item_type_id,omitempty"` // Filter by item type (optional)
 	FieldName                   string `json:"field_name,omitempty"`   // Which field changed
 	LinkTypeID                  *int   `json:"link_type_id,omitempty"` // Filter by link type (optional)
-	// For scm_pr_linked and scm_pr_merged: optional filter to a specific
+	// For SCM triggers: optional filter to a specific
 	// workspace repository. When nil the trigger fires for any repository.
 	WorkspaceRepositoryID *int `json:"workspace_repository_id,omitempty"`
 
-	// For scm_pr_linked and scm_pr_merged: optional filter to a specific
+	// For SCM triggers: optional filter to a specific
 	// repository slug (e.g. "owner/repo"). Empty matches any repository.
 	RepositoryFullName string `json:"repository_full_name,omitempty"`
 
@@ -895,11 +895,12 @@ type ActionExecutionLog struct {
 	ErrorMessage         string                `json:"error_message,omitempty"`
 	ExecutionTrace       string                `json:"execution_trace,omitempty"` // JSON step log
 	// Joined fields for API responses
-	ActionName    string `json:"action_name,omitempty"`
-	ItemTitle     string `json:"item_title,omitempty"`
-	WorkspaceID   *int   `json:"workspace_id,omitempty"`
-	WorkspaceName string `json:"workspace_name,omitempty"`
-	DurationMs    *int64 `json:"duration_ms,omitempty"`
+	ActionName      string `json:"action_name,omitempty"`
+	ItemTitle       string `json:"item_title,omitempty"`
+	WorkspaceID     *int   `json:"workspace_id,omitempty"`
+	WorkspaceName   string `json:"workspace_name,omitempty"`
+	DurationMs      *int64 `json:"duration_ms,omitempty"`
+	DurableEventKey string `json:"-"`
 }
 
 // ActionEvent represents an event that can trigger actions

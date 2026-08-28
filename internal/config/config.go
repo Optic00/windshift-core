@@ -58,13 +58,15 @@ type Config struct {
 	Memory       MemoryConfig
 
 	// Flat fields (no logical grouping)
-	AttachmentPath       string
-	EnableAdminFallback  bool
-	DisableIPRateLimit   bool
-	MaxUserConcurrency   int
-	MaxTemplateSeedItems int
-	MCPEnabled           bool
-	RecoverUser          string
+	AttachmentPath              string
+	EnableAdminFallback         bool
+	DisableIPRateLimit          bool
+	MaxUserConcurrency          int
+	MaxTemplateSeedItems        int
+	MCPEnabled                  bool
+	RecoverUser                 string
+	ActivateDurableActions      bool
+	ActivateDurableAssetActions bool
 
 	// Wire-time values (not env/flag-driven)
 	FrontendFiles embed.FS
@@ -240,14 +242,15 @@ type JiraConfig struct {
 // sidecar binary (cmd/logbook/main.go). The sidecar never parses CLI flags
 // and has a narrower set of concerns than the main server.
 type LogbookSidecarConfig struct {
-	PostgresConn     string
-	Port             string
-	StoragePath      string
-	LLMEndpoint      string
-	ArticleEndpoint  string
-	MainServerURL    string
-	MainServerSecret string
-	BaseURL          string
-	Logging          LoggingConfig
-	OutboundTLS      OutboundTLSConfig
+	PostgresConn           string
+	Port                   string
+	StoragePath            string
+	LLMEndpoint            string
+	ArticleEndpoint        string
+	MainServerURL          string
+	MainServerSecret       string
+	BaseURL                string
+	ActivateDurableActions bool
+	Logging                LoggingConfig
+	OutboundTLS            OutboundTLSConfig
 }

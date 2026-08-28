@@ -214,6 +214,106 @@ var Catalog = []Migration{
 			CREATE INDEX idx_notifications_workspace_id ON notifications(workspace_id);
 		`,
 	},
+	{
+		Version: "20260827_domain_event_engine",
+		Name:    "Add durable domain event engine",
+		CheckSQLite: `
+			SELECT CASE WHEN COUNT(*) = 7 THEN 1 ELSE 0 END
+			FROM sqlite_master
+			WHERE type = 'table' AND name IN (
+				'domain_event_streams',
+				'domain_events',
+				'domain_event_consumers',
+				'domain_event_subscriptions',
+				'domain_event_consumer_streams',
+				'domain_event_deliveries',
+				'domain_event_delivery_actions'
+			)
+		`,
+		CheckPostgres: `
+			SELECT CASE WHEN COUNT(*) = 7 THEN 1 ELSE 0 END
+			FROM information_schema.tables
+			WHERE table_schema = current_schema() AND table_name IN (
+				'domain_event_streams',
+				'domain_events',
+				'domain_event_consumers',
+				'domain_event_subscriptions',
+				'domain_event_consumer_streams',
+				'domain_event_deliveries',
+				'domain_event_delivery_actions'
+			)
+		`,
+		SQLite:   eventsSchema,
+		Postgres: eventsSchemaPostgres,
+	},
+	{
+		Version: "20260827_durable_action_consumer",
+		Name:    "Add durable action consumer state",
+		CheckSQLite: `
+			SELECT CASE WHEN
+				EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='action_event_targets')
+				AND EXISTS (SELECT 1 FROM pragma_table_info('action_execution_logs') WHERE name='durable_event_key')
+			THEN 1 ELSE 0 END
+		`,
+		CheckPostgres: `
+			SELECT CASE WHEN
+				EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='action_event_targets')
+				AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='action_execution_logs' AND column_name='durable_event_key')
+			THEN 1 ELSE 0 END
+		`,
+		SQLite:   actionEventTargetsSchema + actionEventsSchema,
+		Postgres: actionEventTargetsSchemaPostgres + actionEventsSchemaPostgres,
+	},
+	{
+		Version:       "20260827_durable_asset_action_consumer",
+		Name:          "Add durable asset action execution identity",
+		CheckSQLite:   sqliteColumnCheck("asset_action_execution_logs", "durable_event_key"),
+		CheckPostgres: pgColumnCheck("asset_action_execution_logs", "durable_event_key"),
+		SQLite:        assetActionEventsSchema,
+		Postgres:      assetActionEventsSchemaPostgres,
+	},
+	{
+		Version:       "20260827_scm_connection_health",
+		Name:          "Add durable SCM connection health snapshots",
+		CheckSQLite:   sqliteTableCheck("scm_connection_health"),
+		CheckPostgres: pgTableCheck("scm_connection_health"),
+		SQLite: `
+			CREATE TABLE scm_connection_health (
+				workspace_scm_connection_id INTEGER NOT NULL,
+				operation TEXT NOT NULL,
+				last_attempt_at DATETIME NOT NULL,
+				last_success_at DATETIME,
+				last_failure_at DATETIME,
+				consecutive_failures INTEGER NOT NULL DEFAULT 0,
+				checked_resources INTEGER NOT NULL DEFAULT 0,
+				failed_resources INTEGER NOT NULL DEFAULT 0,
+				last_error TEXT,
+				updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				PRIMARY KEY (workspace_scm_connection_id, operation),
+				FOREIGN KEY (workspace_scm_connection_id) REFERENCES workspace_scm_connections(id) ON DELETE CASCADE
+			);
+			CREATE INDEX idx_scm_connection_health_failures
+				ON scm_connection_health(consecutive_failures, last_failure_at);
+		`,
+		Postgres: `
+			CREATE TABLE scm_connection_health (
+				workspace_scm_connection_id INTEGER NOT NULL,
+				operation TEXT NOT NULL,
+				last_attempt_at TIMESTAMPTZ NOT NULL,
+				last_success_at TIMESTAMPTZ,
+				last_failure_at TIMESTAMPTZ,
+				consecutive_failures INTEGER NOT NULL DEFAULT 0,
+				checked_resources INTEGER NOT NULL DEFAULT 0,
+				failed_resources INTEGER NOT NULL DEFAULT 0,
+				last_error TEXT,
+				updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				PRIMARY KEY (workspace_scm_connection_id, operation),
+				FOREIGN KEY (workspace_scm_connection_id) REFERENCES workspace_scm_connections(id) ON DELETE CASCADE
+			);
+			CREATE INDEX idx_scm_connection_health_failures
+				ON scm_connection_health(consecutive_failures, last_failure_at);
+		`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {

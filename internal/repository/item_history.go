@@ -61,7 +61,7 @@ func (r *ItemRepository) GetHistory(itemID, limit int) ([]HistoryEntry, error) {
 		SELECT id, item_id, user_id, field_name, old_value, new_value, changed_at
 		FROM item_history
 		WHERE item_id = ?
-		ORDER BY changed_at DESC
+		ORDER BY changed_at DESC, id DESC
 	`
 	if limit > 0 {
 		query += fmt.Sprintf(" LIMIT %d", limit)
@@ -96,7 +96,7 @@ func (r *ItemRepository) GetHistoryWithDetails(itemID, limit int) ([]models.Item
 		FROM item_history h
 		LEFT JOIN users u ON h.user_id = u.id
 		WHERE h.item_id = ?
-		ORDER BY h.changed_at DESC
+		ORDER BY h.changed_at DESC, h.id DESC
 	`
 	if limit > 0 {
 		query += fmt.Sprintf(" LIMIT %d", limit)

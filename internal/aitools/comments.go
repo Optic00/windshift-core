@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"windshift/internal/auth"
+	"windshift/internal/itemevents"
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/services"
@@ -116,10 +117,11 @@ func init() {
 				return map[string]string{"error": "permission denied"}, nil
 			}
 			result, err := env.CommentService.Create(services.CreateCommentParams{
-				ItemID:      itemID,
-				AuthorID:    env.UserID,
-				Content:     args.Content,
-				ActorUserID: env.UserID,
+				ItemID:        itemID,
+				AuthorID:      env.UserID,
+				Content:       args.Content,
+				ActorUserID:   env.UserID,
+				EventMetadata: itemevents.Agent(fmt.Sprintf("user:%d", env.UserID), "agent"),
 			})
 			if err != nil {
 				return nil, err

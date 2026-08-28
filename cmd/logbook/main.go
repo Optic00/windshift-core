@@ -81,12 +81,13 @@ func main() {
 
 	// Create and start logbook server
 	srvCfg := logbookapi.ServerConfig{
-		Port:             cfg.Port,
-		StoragePath:      cfg.StoragePath,
-		LLMEndpoint:      cfg.LLMEndpoint,
-		MainServerURL:    cfg.MainServerURL,
-		MainServerSecret: cfg.MainServerSecret,
-		BaseURL:          cfg.BaseURL,
+		Port:                   cfg.Port,
+		StoragePath:            cfg.StoragePath,
+		LLMEndpoint:            cfg.LLMEndpoint,
+		MainServerURL:          cfg.MainServerURL,
+		MainServerSecret:       cfg.MainServerSecret,
+		BaseURL:                cfg.BaseURL,
+		ActivateDurableActions: cfg.ActivateDurableActions,
 	}
 
 	srv, err := logbookapi.NewServer(db, srvCfg, articleClient)
@@ -136,7 +137,9 @@ func main() {
 		slog.Error("HTTP server shutdown error", "error", err)
 	}
 
-	srv.Stop()
+	if err := srv.Stop(ctx); err != nil {
+		slog.Error("logbook event engine shutdown error", "error", err)
+	}
 
 	slog.Info("logbook service stopped")
 }

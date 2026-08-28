@@ -12,6 +12,7 @@ import (
 
 	"windshift/internal/cql"
 	"windshift/internal/database"
+	"windshift/internal/itemevents"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 )
@@ -75,12 +76,34 @@ type DeleteResult struct {
 // preserves the legacy non-cascade delete endpoint semantics; use Delete for
 // item + descendants cleanup.
 func (s *ItemCRUDService) DeleteSingle(itemID int) error {
+	return s.DeleteSingleWithMetadata(itemID, itemevents.System("application"))
+}
+
+// DeleteSingleWithMetadata deletes one item and records its canonical fact.
+func (s *ItemCRUDService) DeleteSingleWithMetadata(itemID int, metadata itemevents.Metadata) error {
 	// Capture the parent BEFORE the destructive write so we can refresh the
 	// parent's child list after commit (WI-483). Best-effort: a lookup failure
 	// just means no parent refresh.
-	parentID, _ := s.repo.GetParentID(itemID)
-	workspaceID, _ := s.repo.GetWorkspaceID(itemID)
+	item, err := s.repo.FindByID(itemID)
+	if err != nil {
+		return err
+	}
+	parentID := item.ParentID
+	workspaceID := item.WorkspaceID
 	if err := database.WithTx(s.db, func(tx database.Tx) error {
+		locked, err := s.repo.FindByIDForUpdate(tx, itemID)
+		if err != nil {
+			return err
+		}
+		if metadata.OccurredAt.IsZero() {
+			metadata.OccurredAt = time.Now()
+		}
+		if err := recordRemovedItemLinks(context.Background(), s.db, tx, []int{itemID}, metadata); err != nil {
+			return err
+		}
+		if _, err := itemevents.NewRecorder(s.db).Deleted(context.Background(), tx, locked, 0, metadata); err != nil {
+			return err
+		}
 		if err := s.repo.DeleteItemLinks(tx, itemID); err != nil {
 			return err
 		}
@@ -103,6 +126,11 @@ func (s *ItemCRUDService) DeleteSingle(itemID int) error {
 
 // Delete removes an item and all its descendants
 func (s *ItemCRUDService) Delete(itemID int) (*DeleteResult, error) {
+	return s.DeleteWithMetadata(itemID, itemevents.System("application"))
+}
+
+// DeleteWithMetadata deletes an item subtree and records every removed item.
+func (s *ItemCRUDService) DeleteWithMetadata(itemID int, metadata itemevents.Metadata) (*DeleteResult, error) {
 	// Get parent ID before deleting
 	parentID, err := s.repo.GetParentID(itemID)
 	if err != nil {
@@ -122,6 +150,29 @@ func (s *ItemCRUDService) Delete(itemID int) (*DeleteResult, error) {
 	// Delete all related data for item and descendants
 	allIDs := append([]int{itemID}, descendantIDs...)
 	if err := database.WithTx(s.db, func(tx database.Tx) error {
+		items, err := s.repo.FindByIDsForUpdateContext(context.Background(), tx, allIDs)
+		if err != nil {
+			return err
+		}
+		if len(items) != len(allIDs) {
+			return repository.ErrNotFound
+		}
+		if metadata.OccurredAt.IsZero() {
+			metadata.OccurredAt = time.Now()
+		}
+		recorder := itemevents.NewRecorder(s.db)
+		if err := recordRemovedItemLinks(context.Background(), s.db, tx, allIDs, metadata); err != nil {
+			return err
+		}
+		for _, item := range items {
+			descendantCount := 0
+			if item.ID == itemID {
+				descendantCount = len(descendantIDs)
+			}
+			if _, err := recorder.Deleted(context.Background(), tx, item, descendantCount, metadata); err != nil {
+				return err
+			}
+		}
 		for _, id := range allIDs {
 			// Delete watches
 			if err := s.repo.DeleteItemWatches(tx, id); err != nil {
@@ -227,15 +278,24 @@ func (s *ItemCRUDService) Copy(itemID int, opts CopyOptions) (*CopyResult, error
 		`, itemID, now, source.ID); err != nil {
 			return fmt.Errorf("copy item milestones: %w", err)
 		}
-		return nil
+		created, err := s.repo.FindByIDForUpdate(tx, itemID)
+		if err != nil {
+			return err
+		}
+		metadata := itemevents.User(opts.CreatorID, "application")
+		metadata.OccurredAt = now
+		milestoneIDs, err := itemMilestoneIDsInTx(tx, itemID)
+		if err != nil {
+			return err
+		}
+		if err := s.repo.RecordHistoryBatch(tx, creationHistoryEntries(*created, opts.CreatorID, metadata.OccurredAt)); err != nil {
+			return fmt.Errorf("record copied item creation history: %w", err)
+		}
+		_, err = itemevents.NewRecorder(s.db).Created(context.Background(), tx, created, milestoneIDs, metadata)
+		return err
 	})
 	if err != nil {
 		return nil, fmt.Errorf("copy item %d: %w", source.ID, err)
-	}
-
-	updateService := NewItemUpdateService(s.db)
-	if err := updateService.recordItemCreationHistory(s.db, newID, opts.CreatorID); err != nil {
-		slog.Warn("failed to record item creation history", "error", err, "item_id", newID)
 	}
 
 	// Live-update publish (WI-483): the copy committed. Announce the new item and
@@ -692,7 +752,7 @@ func (s *ItemCRUDService) GetHistory(itemID int) ([]models.ItemHistory, error) {
 		FROM item_history h
 		LEFT JOIN users u ON h.user_id = u.id
 		WHERE h.item_id = ?
-		ORDER BY h.changed_at DESC
+		ORDER BY h.changed_at DESC, h.id DESC
 	`, itemID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch item history: %w", err)

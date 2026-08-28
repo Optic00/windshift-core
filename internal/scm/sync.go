@@ -14,6 +14,7 @@ import (
 
 	"windshift/internal/database"
 	"windshift/internal/models"
+	"windshift/internal/redact"
 	"windshift/internal/repository"
 	"windshift/internal/services"
 	"windshift/internal/sso"
@@ -54,12 +55,18 @@ type ActionEventEmitter interface {
 	EmitActionEvent(*models.ActionEvent)
 }
 
+type DurableActionEventRecorder interface {
+	EmitActionEventInTx(context.Context, database.Tx, *models.ActionEvent) error
+}
+
 // SyncService handles periodic synchronization of SCM repositories
 // to detect PRs, branches, and commits linked to work items
 type SyncService struct {
-	db         database.Database
-	encryption *sso.SecretEncryption
-	detector   *ItemKeyDetector
+	db                      database.Database
+	encryption              *sso.SecretEncryption
+	detector                *ItemKeyDetector
+	healthRepo              *repository.SCMHealthRepository
+	resolveProviderOverride func(context.Context, int) (Provider, error)
 
 	// syncMu guards SyncAllRepositories and refreshMu guards
 	// RefreshAllPRLinkStates so that an overrunning scheduler tick (>5
@@ -83,7 +90,8 @@ type SyncService struct {
 	// ActionEvents for the action engine to dispatch. Nil means the
 	// detection still happens (and the idempotency ledger fills) but
 	// nothing downstream consumes the events.
-	actionEvents ActionEventEmitter
+	actionEvents        ActionEventEmitter
+	durableActionEvents DurableActionEventRecorder
 
 	// Optional: when wired, the PR-comment poller starts continuation runs from
 	// "@agent" PR comments (WI-426). Nil disables the poller (e.g. the
@@ -113,6 +121,7 @@ func NewSyncService(db database.Database, encryption *sso.SecretEncryption) *Syn
 		db:         db,
 		encryption: encryption,
 		detector:   NewItemKeyDetector(),
+		healthRepo: repository.NewSCMHealthRepository(db),
 	}
 }
 
@@ -147,10 +156,20 @@ func (s *SyncService) SetActionEvents(e ActionEventEmitter) {
 	s.actionEvents = e
 }
 
+// SetDurableActionEvents makes SCM observation admission atomic with the SCM
+// idempotency ledger. The legacy emitter remains available to lightweight
+// embeddings and tests that do not install the durable event schema.
+func (s *SyncService) SetDurableActionEvents(recorder DurableActionEventRecorder) {
+	s.durableActionEvents = recorder
+}
+
 // resolveProvider creates an SCM provider for a connection. Credential
 // resolution (including the OAuth refresh-if-expiring step) lives in
 // CredentialResolver, shared with every other consumer.
 func (s *SyncService) resolveProvider(ctx context.Context, connectionID int) (Provider, error) {
+	if s.resolveProviderOverride != nil {
+		return s.resolveProviderOverride(ctx, connectionID)
+	}
 	credResolver := NewCredentialResolver(s.db, s.encryption)
 	provider, err := credResolver.GetProviderForConnection(ctx, connectionID)
 	if err != nil {
@@ -172,6 +191,12 @@ type repoInfo struct {
 	WorkspaceKey   string
 	ConnectionID   int
 	LastSyncedAt   time.Time
+}
+
+type prRefreshTarget struct {
+	LinkID         int
+	RepositoryName string
+	ExternalID     string
 }
 
 // SyncAllRepositories syncs all active repositories across all workspaces
@@ -226,6 +251,7 @@ func (s *SyncService) SyncAllRepositories(ctx context.Context) error {
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("iterate repositories: %w", err)
 	}
+	_ = rows.Close()
 
 	slog.Debug("Found active repositories to sync", slog.String("component", "scm"), slog.Int("count", len(repos)))
 
@@ -233,16 +259,57 @@ func (s *SyncService) SyncAllRepositories(ctx context.Context) error {
 	for _, r := range repos {
 		connectionRepos[r.ConnectionID] = append(connectionRepos[r.ConnectionID], r)
 	}
+	connectionRows, err := s.db.QueryContext(ctx, `
+		SELECT wsc.id
+		FROM workspace_scm_connections wsc
+		JOIN scm_providers sp ON sp.id = wsc.scm_provider_id
+		WHERE wsc.enabled = true AND sp.auth_method != 'oauth'
+	`)
+	if err != nil {
+		return fmt.Errorf("query SCM connections: %w", err)
+	}
+	for connectionRows.Next() {
+		var connectionID int
+		if err := connectionRows.Scan(&connectionID); err != nil {
+			_ = connectionRows.Close()
+			return fmt.Errorf("scan SCM connection: %w", err)
+		}
+		if _, exists := connectionRepos[connectionID]; !exists {
+			connectionRepos[connectionID] = nil
+		}
+	}
+	if err := connectionRows.Err(); err != nil {
+		_ = connectionRows.Close()
+		return fmt.Errorf("iterate SCM connections: %w", err)
+	}
+	_ = connectionRows.Close()
 
 	for connectionID, connectionRepoList := range connectionRepos {
+		if len(connectionRepoList) == 0 {
+			s.recordConnectionHealth(ctx, repository.SCMHealthResult{
+				ConnectionID: connectionID,
+				Operation:    repository.SCMHealthOperationRepositorySync,
+				AttemptedAt:  time.Now().UTC(),
+			})
+			continue
+		}
 		provider, err := s.resolveProvider(ctx, connectionID)
 		if err != nil {
-			slog.Error("Failed to resolve provider", slog.String("component", "scm"), slog.Int("connection_id", connectionID), slog.Any("error", err))
+			s.recordConnectionHealth(ctx, repository.SCMHealthResult{
+				ConnectionID:     connectionID,
+				Operation:        repository.SCMHealthOperationRepositorySync,
+				AttemptedAt:      time.Now().UTC(),
+				CheckedResources: len(connectionRepoList),
+				FailedResources:  len(connectionRepoList),
+				LastError:        fmt.Sprintf("resolve provider: %v", err),
+			})
 			continue
 		}
 
 		sem := make(chan struct{}, syncPerConnectionConcurrency)
 		var wg sync.WaitGroup
+		var healthMu sync.Mutex
+		var syncErrors []error
 		for _, repo := range connectionRepoList {
 			if ctx.Err() != nil {
 				break
@@ -253,11 +320,24 @@ func (s *SyncService) SyncAllRepositories(ctx context.Context) error {
 				defer wg.Done()
 				defer func() { <-sem }()
 				if err := s.syncRepository(ctx, provider, repo.ID, repo.RepositoryName, repo.DefaultBranch, repo.WorkspaceID, repo.WorkspaceKey, repo.ItemKeyPattern, repo.LastSyncedAt); err != nil {
-					slog.Error("Failed to sync repository", slog.String("component", "scm"), slog.String("repository", repo.RepositoryName), slog.Any("error", err))
+					healthMu.Lock()
+					syncErrors = append(syncErrors, fmt.Errorf("repository %s: %w", repo.RepositoryName, err))
+					healthMu.Unlock()
 				}
 			}(repo)
 		}
 		wg.Wait()
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		s.recordConnectionHealth(ctx, repository.SCMHealthResult{
+			ConnectionID:     connectionID,
+			Operation:        repository.SCMHealthOperationRepositorySync,
+			AttemptedAt:      time.Now().UTC(),
+			CheckedResources: len(connectionRepoList),
+			FailedResources:  len(syncErrors),
+			LastError:        joinedError(syncErrors),
+		})
 	}
 	// OAuth has no workspace-level principal. Repositories with an agent-owned
 	// PR are synced using the user who opened that PR, so review polling and
@@ -312,19 +392,41 @@ func (s *SyncService) syncOAuthAgentRepositories(ctx context.Context) error {
 		return err
 	}
 	resolver := NewCredentialResolver(s.db, s.encryption)
+	type connectionResult struct {
+		checked int
+		errors  []error
+	}
+	results := make(map[int]*connectionResult)
 	for _, r := range repos {
+		result := results[r.ConnectionID]
+		if result == nil {
+			result = &connectionResult{}
+			results[r.ConnectionID] = result
+		}
+		result.checked++
 		creds, err := resolver.GetCredentialsForUser(ctx, r.ConnectionID, r.userID)
 		if err != nil {
-			slog.Warn("OAuth agent repo: resolve user credential", slog.Int("repo", r.ID), slog.Int("user", r.userID), slog.Any("error", err))
+			result.errors = append(result.errors, fmt.Errorf("repository %s: resolve user credential: %w", r.RepositoryName, err))
 			continue
 		}
 		provider, err := resolver.CreateProvider(creds)
 		if err != nil {
+			result.errors = append(result.errors, fmt.Errorf("repository %s: create provider: %w", r.RepositoryName, err))
 			continue
 		}
 		if err := s.syncRepository(ctx, provider, r.ID, r.RepositoryName, r.DefaultBranch, r.WorkspaceID, r.WorkspaceKey, r.ItemKeyPattern, r.LastSyncedAt); err != nil {
-			slog.Warn("OAuth agent repo sync failed", slog.Int("repo", r.ID), slog.Any("error", err))
+			result.errors = append(result.errors, fmt.Errorf("repository %s: %w", r.RepositoryName, err))
 		}
+	}
+	for connectionID, result := range results {
+		s.recordConnectionHealth(ctx, repository.SCMHealthResult{
+			ConnectionID:     connectionID,
+			Operation:        repository.SCMHealthOperationRepositorySync,
+			AttemptedAt:      time.Now().UTC(),
+			CheckedResources: result.checked,
+			FailedResources:  len(result.errors),
+			LastError:        joinedError(result.errors),
+		})
 	}
 	return nil
 }
@@ -378,34 +480,39 @@ func (s *SyncService) syncRepository(ctx context.Context, provider Provider, rep
 
 	slog.Debug("Syncing repository", slog.String("component", "scm"), slog.String("repository", repositoryName), slog.String("workspace", workspaceKey))
 
+	var syncErrs []error
 	if err := s.syncPullRequests(ctx, provider, owner, repo, repoID, workspaceID, workspaceKey, itemKeyPattern, lastSyncedAt); err != nil {
-		slog.Error("Failed to sync pull requests", slog.String("component", "scm"), slog.String("repository", repositoryName), slog.Any("error", err))
+		syncErrs = append(syncErrs, fmt.Errorf("sync pull requests: %w", err))
 	}
 
 	// Sync commits on the default branch so commit messages containing item keys
 	// create commit links even when PR titles/bodies do not mention the item.
 	if err := s.syncCommits(ctx, provider, owner, repo, repoID, workspaceID, workspaceKey, itemKeyPattern, defaultBranch, lastSyncedAt); err != nil {
-		slog.Error("Failed to sync commits", slog.String("component", "scm"), slog.String("repository", repositoryName), slog.Any("error", err))
+		syncErrs = append(syncErrs, fmt.Errorf("sync commits: %w", err))
 	}
 
 	if err := s.syncBranches(ctx, provider, owner, repo, repoID, workspaceID, workspaceKey, itemKeyPattern); err != nil {
-		slog.Error("Failed to sync branches", slog.String("component", "scm"), slog.String("repository", repositoryName), slog.Any("error", err))
+		syncErrs = append(syncErrs, fmt.Errorf("sync branches: %w", err))
 	}
 
-	if err := s.syncReleaseBranches(ctx, provider, owner, repo, repoID, workspaceID); err != nil {
-		slog.Error("Failed to sync release branches", slog.String("component", "scm"), slog.String("repository", repositoryName), slog.Any("error", err))
+	baselineRefs := lastSyncedAt.IsZero()
+	if err := s.syncReleaseBranches(ctx, provider, owner, repo, repoID, workspaceID, baselineRefs); err != nil {
+		syncErrs = append(syncErrs, fmt.Errorf("sync release branches: %w", err))
 	}
 
-	if err := s.syncTagsAndReleases(ctx, provider, owner, repo, repoID, workspaceID); err != nil {
-		slog.Error("Failed to sync tags", slog.String("component", "scm"), slog.String("repository", repositoryName), slog.Any("error", err))
+	if err := s.syncTagsAndReleases(ctx, provider, owner, repo, repoID, workspaceID, baselineRefs); err != nil {
+		syncErrs = append(syncErrs, fmt.Errorf("sync tags: %w", err))
+	}
+	if err := errors.Join(syncErrs...); err != nil {
+		return fmt.Errorf("sync repository %q: %w", repositoryName, err)
 	}
 
-	_, err := s.db.ExecWrite(`
+	_, err := s.db.ExecWriteContext(ctx, `
 		UPDATE workspace_repositories SET last_synced_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
 	`, repoID)
 	if err != nil {
-		slog.Error("Failed to update last_synced_at", slog.String("component", "scm"), slog.Int("repo_id", repoID), slog.Any("error", err))
+		return fmt.Errorf("update repository sync checkpoint: %w", err)
 	}
 
 	return nil
@@ -415,8 +522,8 @@ func (s *SyncService) syncRepository(ctx context.Context, provider Provider, rep
 // fetch is delegated to iteratePullRequests so the loop can be unit-tested
 // in isolation; the callback below performs the per-PR work.
 func (s *SyncService) syncPullRequests(ctx context.Context, provider Provider, owner, repo string, repoID, workspaceID int, workspaceKey, itemKeyPattern string, lastSyncedAt time.Time) error {
-	return iteratePullRequests(ctx, provider, owner, repo, lastSyncedAt, syncMaxPRs, func(pr PullRequest) {
-		s.processPullRequest(ctx, provider, owner, repo, pr, repoID, workspaceID, workspaceKey, itemKeyPattern, lastSyncedAt)
+	return iteratePullRequests(ctx, provider, owner, repo, lastSyncedAt, syncMaxPRs, func(pr PullRequest) error {
+		return s.processPullRequest(ctx, provider, owner, repo, pr, repoID, workspaceID, workspaceKey, itemKeyPattern, lastSyncedAt)
 	})
 }
 
@@ -455,7 +562,7 @@ func shouldEmitPRMergeEvent(pr PullRequest, lastSyncedAt, now time.Time) bool {
 
 // iteratePullRequests walks descending update pages until the last page, cap,
 // lookback cutoff, or cancellation. First syncs omit the time cutoff.
-func iteratePullRequests(ctx context.Context, provider Provider, owner, repo string, lastSyncedAt time.Time, maxPRs int, fn func(PullRequest)) error {
+func iteratePullRequests(ctx context.Context, provider Provider, owner, repo string, lastSyncedAt time.Time, maxPRs int, fn func(PullRequest) error) error {
 	var cutoff time.Time
 	if !lastSyncedAt.IsZero() {
 		cutoff = lastSyncedAt.Add(-syncPRLookback)
@@ -487,7 +594,9 @@ func iteratePullRequests(ctx context.Context, provider Provider, owner, repo str
 				stop = true
 				break
 			}
-			fn(pr)
+			if err := fn(pr); err != nil {
+				return fmt.Errorf("process pull request %d: %w", pr.Number, err)
+			}
 			processed++
 			if processed >= maxPRs {
 				stop = true
@@ -506,10 +615,10 @@ func iteratePullRequests(ctx context.Context, provider Provider, owner, repo str
 // processPullRequest handles key detection, link upsert, smart-commit
 // dispatch, and action-engine events for a single PR. Extracted so the
 // paged loop above stays tight.
-func (s *SyncService) processPullRequest(ctx context.Context, provider Provider, owner, repo string, pr PullRequest, repoID, workspaceID int, workspaceKey, itemKeyPattern string, lastSyncedAt time.Time) {
+func (s *SyncService) processPullRequest(ctx context.Context, provider Provider, owner, repo string, pr PullRequest, repoID, workspaceID int, workspaceKey, itemKeyPattern string, lastSyncedAt time.Time) error {
 	keys := s.detectPullRequestKeys(&pr, workspaceKey, itemKeyPattern)
 	if len(keys) == 0 {
-		return
+		return nil
 	}
 
 	// Determine whether this PR is newly observed as merged (used to
@@ -523,6 +632,7 @@ func (s *SyncService) processPullRequest(ctx context.Context, provider Provider,
 	now := time.Now()
 	var itemIDs []int
 	linkedItems := make(map[int]bool) // item ids for which a *new* link was created
+	var observationErrs []error
 	for _, key := range keys {
 		itemID, err := s.findItemByKey(ctx, workspaceID, key.Prefix, key.Number)
 		if err != nil || itemID == 0 {
@@ -537,15 +647,25 @@ func (s *SyncService) processPullRequest(ctx context.Context, provider Provider,
 			state = models.SCMLinkStateClosed
 		}
 
-		created, err := s.upsertItemSCMLink(ctx, itemID, repoID, models.SCMLinkTypePullRequest,
-			strconv.Itoa(pr.Number), pr.URL, pr.Title, state, pr.Author.ID, pr.Author.Name, string(key.Source))
+		emitLinked := shouldEmitPRLinkEvent(pr, lastSyncedAt, now)
+		emitMerged := shouldEmitPRMergeEvent(pr, lastSyncedAt, now)
+		created, becameMerged, err := s.upsertPullRequestSCMLink(ctx, itemID, repoID,
+			strconv.Itoa(pr.Number), pr.URL, pr.Title, state, pr.Author.ID, pr.Author.Name, string(key.Source),
+			s.prLinkedEvent(workspaceID, itemID, repoID, owner, repo, pr),
+			s.prMergedEvent(workspaceID, itemID, repoID, owner, repo, pr), emitLinked, emitMerged)
 		if err != nil {
-			slog.Error("Failed to upsert PR link", slog.String("component", "scm"), slog.Int("item_id", itemID), slog.Any("error", err))
+			observationErrs = append(observationErrs, fmt.Errorf("persist PR %d observation for item %d: %w", pr.Number, itemID, err))
 			continue
 		}
-		if created && shouldEmitPRLinkEvent(pr, lastSyncedAt, now) {
+		if created && emitLinked && s.durableActionEvents == nil {
 			linkedItems[itemID] = true
 		}
+		if becameMerged && emitMerged && s.durableActionEvents == nil {
+			s.emitPRMergedEvent(workspaceID, itemID, repoID, owner, repo, pr)
+		}
+	}
+	if err := errors.Join(observationErrs...); err != nil {
+		return err
 	}
 
 	if len(linkedItems) > 0 {
@@ -561,15 +681,10 @@ func (s *SyncService) processPullRequest(ctx context.Context, provider Provider,
 		s.pollPRCommentTriggers(ctx, provider, owner, repo, pr, repoID, workspaceID, itemIDs)
 	}
 
-	if newlyMerged && shouldEmitPRMergeEvent(pr, lastSyncedAt, now) {
-		for _, itemID := range itemIDs {
-			s.emitPRMergedEvent(workspaceID, itemID, repoID, owner, repo, pr)
-		}
-	}
-
 	if newlyMerged && shouldRunSmartCommits(pr, lastSyncedAt, now) {
 		s.processSmartCommitsForPR(ctx, provider, owner, repo, pr, repoID, workspaceID, workspaceKey)
 	}
+	return nil
 }
 
 // prCommentTriggerRE matches the literal agent trigger token as a whole word
@@ -763,7 +878,7 @@ func (s *SyncService) processCommit(ctx context.Context, commit Commit, repoID, 
 		if err != nil || itemID == 0 {
 			continue
 		}
-		_, err = s.upsertItemSCMLink(ctx, itemID, repoID, models.SCMLinkTypeCommit,
+		err = s.upsertItemSCMLink(ctx, itemID, repoID, models.SCMLinkTypeCommit,
 			commit.SHA, commit.URL, title, "", authorExternalID, authorName, string(key.Source))
 		if err != nil {
 			slog.Error("Failed to upsert commit link", slog.String("component", "scm"), slog.Int("item_id", itemID), slog.String("sha", commit.SHA), slog.Any("error", err))
@@ -839,7 +954,7 @@ func (s *SyncService) syncBranches(ctx context.Context, provider Provider, owner
 			// Construct branch URL (best effort - varies by provider)
 			branchURL := fmt.Sprintf("https://github.com/%s/%s/tree/%s", owner, repo, branch.Name)
 
-			_, err = s.upsertItemSCMLink(ctx, itemID, repoID, models.SCMLinkTypeBranch,
+			err = s.upsertItemSCMLink(ctx, itemID, repoID, models.SCMLinkTypeBranch,
 				branch.Name, branchURL, branch.Name, "", "", "", string(key.Source))
 			if err != nil {
 				slog.Error("Failed to upsert branch link", slog.String("component", "scm"), slog.Int("item_id", itemID), slog.Any("error", err))
@@ -860,10 +975,9 @@ func (s *SyncService) findItemByKey(_ context.Context, workspaceID int, workspac
 	return itemID, err
 }
 
-// upsertItemSCMLink creates or updates an SCM link for an item and reports
-// whether it performed an insert (true) or an update (false).
+// upsertItemSCMLink creates or updates a non-PR SCM link for an item.
 func (s *SyncService) upsertItemSCMLink(ctx context.Context, itemID, repoID int, linkType models.SCMLinkType,
-	externalID, externalURL, title string, state models.SCMLinkState, authorExternalID, authorName, detectionSource string) (bool, error) {
+	externalID, externalURL, title string, state models.SCMLinkState, authorExternalID, authorName, detectionSource string) error {
 
 	// Try to find existing link
 	var existingID int
@@ -885,11 +999,11 @@ func (s *SyncService) upsertItemSCMLink(ctx context.Context, itemID, repoID int,
 			// PR/branch/commit for this item; refresh its SCM-links section.
 			services.PublishItemChange(itemID, services.ItemChangeLink)
 		}
-		return true, err
+		return err
 	}
 
 	if err != nil {
-		return false, err
+		return err
 	}
 
 	// Update existing link
@@ -906,7 +1020,77 @@ func (s *SyncService) upsertItemSCMLink(ctx context.Context, itemID, repoID int,
 		services.PublishItemChange(itemID, services.ItemChangeLink)
 	}
 
-	return false, err
+	return err
+}
+
+func (s *SyncService) upsertPullRequestSCMLink(
+	ctx context.Context,
+	itemID, repoID int,
+	externalID, externalURL, title string,
+	state models.SCMLinkState,
+	authorExternalID, authorName, detectionSource string,
+	linkedEvent, mergedEvent *models.ActionEvent,
+	emitLinked, emitMerged bool,
+) (created, becameMerged bool, err error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, false, fmt.Errorf("begin PR link observation: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var existingID int
+	var previousState models.SCMLinkState
+	err = tx.QueryRowContext(ctx, `
+		SELECT id, state FROM item_scm_links
+		WHERE item_id = ? AND workspace_repository_id = ? AND link_type = ? AND external_id = ?
+	`, itemID, repoID, models.SCMLinkTypePullRequest, externalID).Scan(&existingID, &previousState)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		created = true
+		becameMerged = state == models.SCMLinkStateMerged
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO item_scm_links (
+				item_id, workspace_repository_id, link_type, external_id,
+				external_url, title, state, author_external_id, author_name, detection_source
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, itemID, repoID, models.SCMLinkTypePullRequest, externalID, externalURL, title, state, authorExternalID, authorName, detectionSource)
+		if err != nil {
+			return false, false, err
+		}
+		if emitLinked && s.durableActionEvents != nil {
+			if err := s.durableActionEvents.EmitActionEventInTx(ctx, tx, linkedEvent); err != nil {
+				return false, false, err
+			}
+		}
+		if becameMerged && emitMerged && s.durableActionEvents != nil {
+			if err := s.durableActionEvents.EmitActionEventInTx(ctx, tx, mergedEvent); err != nil {
+				return false, false, err
+			}
+		}
+	case err != nil:
+		return false, false, err
+	default:
+		becameMerged = state == models.SCMLinkStateMerged && previousState != models.SCMLinkStateMerged
+		_, err = tx.ExecContext(ctx, `
+			UPDATE item_scm_links SET
+				external_url = ?, title = ?, state = ?,
+				author_external_id = ?, author_name = ?, updated_at = CURRENT_TIMESTAMP
+			WHERE id = ?
+		`, externalURL, title, state, authorExternalID, authorName, existingID)
+		if err != nil {
+			return false, false, err
+		}
+		if becameMerged && emitMerged && s.durableActionEvents != nil {
+			if err := s.durableActionEvents.EmitActionEventInTx(ctx, tx, mergedEvent); err != nil {
+				return false, false, err
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return false, false, fmt.Errorf("commit PR link observation: %w", err)
+	}
+	services.PublishItemChange(itemID, services.ItemChangeLink)
+	return created, becameMerged, nil
 }
 
 // emitPRLinkedEvent dispatches an scm_pr_linked action event for one linked
@@ -916,13 +1100,17 @@ func (s *SyncService) emitPRLinkedEvent(workspaceID, itemID, repoID int, owner, 
 	if s.actionEvents == nil {
 		return
 	}
-	s.actionEvents.EmitActionEvent(&models.ActionEvent{
+	s.actionEvents.EmitActionEvent(s.prLinkedEvent(workspaceID, itemID, repoID, owner, repo, pr))
+}
+
+func (s *SyncService) prLinkedEvent(workspaceID, itemID, repoID int, owner, repo string, pr PullRequest) *models.ActionEvent {
+	return &models.ActionEvent{
 		EventType:   models.ActionTriggerSCMPRLinked,
 		WorkspaceID: workspaceID,
 		ItemID:      itemID,
 		ActorUserID: 0, // sync loop has no authenticated actor; action must use actor_user_id override
 		NewValues:   s.prEventValues(pr, repoID, owner, repo),
-	})
+	}
 }
 
 // emitPRMergedEvent dispatches an scm_pr_merged action event for one linked
@@ -932,13 +1120,17 @@ func (s *SyncService) emitPRMergedEvent(workspaceID, itemID, repoID int, owner, 
 	if s.actionEvents == nil {
 		return
 	}
-	s.actionEvents.EmitActionEvent(&models.ActionEvent{
+	s.actionEvents.EmitActionEvent(s.prMergedEvent(workspaceID, itemID, repoID, owner, repo, pr))
+}
+
+func (s *SyncService) prMergedEvent(workspaceID, itemID, repoID int, owner, repo string, pr PullRequest) *models.ActionEvent {
+	return &models.ActionEvent{
 		EventType:   models.ActionTriggerSCMPRMerged,
 		WorkspaceID: workspaceID,
 		ItemID:      itemID,
 		ActorUserID: 0, // sync loop has no authenticated actor; action must use actor_user_id override
 		NewValues:   s.prEventValues(pr, repoID, owner, repo),
-	})
+	}
 }
 
 // prEventValues builds the shared NewValues payload for PR-linked and
@@ -1032,15 +1224,15 @@ func (s *SyncService) refreshItemSCMLink(ctx context.Context, linkID int, userID
 		return fmt.Errorf("failed to get link info: %w", err)
 	}
 
-	credResolver := NewCredentialResolver(s.db, s.encryption)
 	var provider Provider
 	if userID != nil {
+		credResolver := NewCredentialResolver(s.db, s.encryption)
 		provider, err = credResolver.GetProviderForUser(ctx, connectionID, *userID)
 		if err != nil {
 			return fmt.Errorf("failed to get provider for user: %w", err)
 		}
 	} else {
-		provider, err = credResolver.GetProviderForConnection(ctx, connectionID)
+		provider, err = s.resolveProvider(ctx, connectionID)
 		if err != nil {
 			return fmt.Errorf("failed to get provider: %w", err)
 		}
@@ -1458,44 +1650,57 @@ func (s *SyncService) RefreshAllPRLinkStates(ctx context.Context) error {
 	}
 	defer s.refreshMu.Unlock()
 
-	// Query all PR links that aren't already merged (merged is a final state)
-	// Skip links from OAuth connections — those are refreshed on-demand per user
+	// Include every enabled non-OAuth connection, even when it currently has no
+	// refreshable links. A zero-link successful attempt can clear stale health
+	// after a broken link is removed.
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT isl.id, wr.workspace_scm_connection_id
-		FROM item_scm_links isl
-		JOIN workspace_repositories wr ON wr.id = isl.workspace_repository_id
-		JOIN workspace_scm_connections wsc ON wsc.id = wr.workspace_scm_connection_id
+		SELECT wsc.id, isl.id, wr.repository_name, isl.external_id
+		FROM workspace_scm_connections wsc
 		JOIN scm_providers sp ON sp.id = wsc.scm_provider_id
-		WHERE isl.link_type = 'pull_request'
-		AND (isl.state IS NULL OR isl.state != 'merged')
-		AND sp.auth_method != 'oauth'
+		LEFT JOIN workspace_repositories wr
+			ON wr.workspace_scm_connection_id = wsc.id AND wr.is_active = true
+		LEFT JOIN item_scm_links isl
+			ON isl.workspace_repository_id = wr.id
+			AND isl.link_type = 'pull_request'
+			AND (isl.state IS NULL OR isl.state != 'merged')
+		WHERE wsc.enabled = true AND sp.auth_method != 'oauth'
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to query PR links: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	linksByConnection := make(map[int][]int)
+	linksByConnection := make(map[int][]prRefreshTarget)
 	totalLinks := 0
 	for rows.Next() {
-		var linkID, connectionID int
-		if err := rows.Scan(&linkID, &connectionID); err != nil {
-			continue
+		var connectionID int
+		var linkID sql.NullInt64
+		var repositoryName, externalID sql.NullString
+		if err := rows.Scan(&connectionID, &linkID, &repositoryName, &externalID); err != nil {
+			return fmt.Errorf("scan PR refresh connection: %w", err)
 		}
-		linksByConnection[connectionID] = append(linksByConnection[connectionID], linkID)
-		totalLinks++
+		if _, exists := linksByConnection[connectionID]; !exists {
+			linksByConnection[connectionID] = nil
+		}
+		if linkID.Valid {
+			linksByConnection[connectionID] = append(linksByConnection[connectionID], prRefreshTarget{
+				LinkID:         int(linkID.Int64),
+				RepositoryName: repositoryName.String,
+				ExternalID:     externalID.String,
+			})
+			totalLinks++
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("iterate PR links: %w", err)
 	}
-	if totalLinks == 0 {
+	if len(linksByConnection) == 0 {
 		return nil
 	}
 
 	slog.Debug("Refreshing state for PR links", slog.String("component", "scm"), slog.Int("count", totalLinks), slog.Int("connections", len(linksByConnection)))
 
-	var refreshErrors int
-	for _, linkIDs := range linksByConnection {
+	for connectionID, targets := range linksByConnection {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -1503,29 +1708,82 @@ func (s *SyncService) RefreshAllPRLinkStates(ctx context.Context) error {
 		sem := make(chan struct{}, syncPerConnectionConcurrency)
 		var wg sync.WaitGroup
 		var mu sync.Mutex
-		for _, linkID := range linkIDs {
+		var refreshErrors []error
+		for _, target := range targets {
 			if ctx.Err() != nil {
 				break
 			}
 			wg.Add(1)
 			sem <- struct{}{}
-			go func(linkID int) {
+			go func(target prRefreshTarget) {
 				defer wg.Done()
 				defer func() { <-sem }()
-				if err := s.RefreshItemSCMLink(ctx, linkID); err != nil {
-					slog.Error("Failed to refresh PR link", slog.String("component", "scm"), slog.Int("link_id", linkID), slog.Any("error", err))
+				if err := s.RefreshItemSCMLink(ctx, target.LinkID); err != nil {
 					mu.Lock()
-					refreshErrors++
+					refreshErrors = append(refreshErrors, fmt.Errorf("repository %s PR #%s: %w", target.RepositoryName, strings.TrimPrefix(target.ExternalID, "#"), err))
 					mu.Unlock()
 				}
-			}(linkID)
+			}(target)
 		}
 		wg.Wait()
-	}
-
-	if refreshErrors > 0 {
-		slog.Warn("Completed PR state refresh with errors", slog.String("component", "scm"), slog.Int("errors", refreshErrors), slog.Int("total_links", totalLinks))
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		s.recordConnectionHealth(ctx, repository.SCMHealthResult{
+			ConnectionID:     connectionID,
+			Operation:        repository.SCMHealthOperationPRLinkRefresh,
+			AttemptedAt:      time.Now().UTC(),
+			CheckedResources: len(targets),
+			FailedResources:  len(refreshErrors),
+			LastError:        joinedError(refreshErrors),
+		})
 	}
 
 	return nil
+}
+
+func (s *SyncService) recordConnectionHealth(ctx context.Context, result repository.SCMHealthResult) {
+	if s.healthRepo == nil {
+		s.healthRepo = repository.NewSCMHealthRepository(s.db)
+	}
+	transition, err := s.healthRepo.RecordResult(ctx, result)
+	if err != nil {
+		slog.Warn("Failed to record SCM connection health",
+			slog.String("component", "scm"),
+			slog.Int("connection_id", result.ConnectionID),
+			slog.String("operation", result.Operation),
+			slog.Any("error", err),
+		)
+		return
+	}
+	attributes := make([]any, 0, 6)
+	attributes = append(attributes,
+		slog.String("component", "scm"),
+		slog.Int("connection_id", result.ConnectionID),
+		slog.String("operation", result.Operation),
+		slog.Int("checked_resources", result.CheckedResources),
+		slog.Int("failed_resources", result.FailedResources),
+	)
+	if transition.Recovered {
+		slog.Info("SCM connection recovered", attributes...)
+		return
+	}
+	if result.FailedResources == 0 {
+		return
+	}
+	attributes = append(attributes, slog.String("error", redact.String(result.LastError)))
+	if transition.BecameUnhealthy || transition.ErrorChanged {
+		slog.Warn("SCM connection operation unhealthy", attributes...)
+		return
+	}
+	// Unchanged failures remain observable at debug level while diagnostics
+	// retain the durable counter and latest sanitized error.
+	slog.Debug("SCM connection operation still unhealthy", attributes...)
+}
+
+func joinedError(operationErrors []error) string {
+	if len(operationErrors) == 0 {
+		return ""
+	}
+	return errors.Join(operationErrors...).Error()
 }

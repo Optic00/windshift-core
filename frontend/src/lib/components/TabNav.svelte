@@ -13,6 +13,10 @@
   function switchTab(tabId) {
     navigate(`${basePath}?${paramName}=${tabId}`);
   }
+
+  function isActive(tab) {
+    return activeTab === tab.id || tab.matches?.includes(activeTab);
+  }
 </script>
 
 <div class="border-b" style="border-color: var(--ds-border);">
@@ -21,10 +25,10 @@
       <button
         onclick={() => switchTab(tab.id)}
         class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors"
-        style="{activeTab === tab.id
+        style="{isActive(tab)
           ? 'border-color: var(--ds-interactive); color: var(--ds-interactive);'
           : 'border-color: transparent; color: var(--ds-text-subtle);'}"
-        aria-current={activeTab === tab.id ? 'page' : undefined}
+        aria-current={isActive(tab) ? 'page' : undefined}
       >
         {tab.label}
       </button>

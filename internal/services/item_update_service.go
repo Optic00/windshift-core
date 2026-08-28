@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"windshift/internal/database"
+	"windshift/internal/itemevents"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/validation"
@@ -52,9 +53,10 @@ func (s *ItemUpdateService) WithPermissionService(permService *PermissionService
 
 // UpdateItemRequest contains the data needed to update an item
 type UpdateItemRequest struct {
-	ItemID     int
-	UpdateData map[string]any
-	UserID     int
+	ItemID        int
+	UpdateData    map[string]any
+	UserID        int
+	EventMetadata itemevents.Metadata
 }
 
 // FindItem loads an item through the item repository for pre-update
@@ -217,27 +219,52 @@ func (s *ItemUpdateService) updateItem(ctx context.Context, req UpdateItemReques
 	}
 
 	// Generate and record history entries.
+	eventHistory := s.compareAndGenerateHistory(originalItem, &existingItem, req.UserID)
 	var history []HistoryEntry
 	if opts.recordHistory {
-		history = s.compareAndGenerateHistory(originalItem, &existingItem, req.UserID)
+		history = append(history, eventHistory...)
 	}
-	if opts.recordHistory && hasMilestoneIDs {
+	if hasMilestoneIDs {
 		oldStr := joinIntsCSV(milestoneOldIDs)
 		newStr := joinIntsCSV(milestoneNewIDs)
 		if oldStr != newStr {
-			history = append(history, HistoryEntry{
+			entry := HistoryEntry{
 				ItemID:    req.ItemID,
 				UserID:    req.UserID,
 				FieldName: "milestones",
 				OldValue:  oldStr,
 				NewValue:  newStr,
 				ChangedAt: now,
-			})
+			}
+			eventHistory = append(eventHistory, entry)
+			if opts.recordHistory {
+				history = append(history, entry)
+			}
 		}
 	}
 	if opts.recordHistory {
 		if err = s.recordItemHistory(tx, history); err != nil {
 			return nil, fmt.Errorf("failed to record history: %w", err)
+		}
+	}
+	if len(eventHistory) > 0 {
+		metadata := mergeItemEventMetadata(req.EventMetadata, itemEventMetadata(req.UserID, "application", nil))
+		if metadata.OccurredAt.IsZero() {
+			metadata.OccurredAt = now
+		}
+		recorder := itemevents.NewRecorder(s.db)
+		changes := itemevents.Changes(originalItem, &existingItem)
+		if hasMilestoneIDs && joinIntsCSV(milestoneOldIDs) != joinIntsCSV(milestoneNewIDs) {
+			changes = append(changes, itemevents.FieldChange{
+				Field: "milestones", OldValue: milestoneOldIDs, NewValue: milestoneNewIDs,
+			})
+		}
+		if s.hasStatusChanged(originalItem, &existingItem) {
+			if _, err := recorder.StatusChanged(ctx, tx, &existingItem, originalItem.StatusID, existingItem.StatusID, changes, metadata); err != nil {
+				return nil, err
+			}
+		} else if _, err := recorder.Updated(ctx, tx, &existingItem, changes, metadata); err != nil {
+			return nil, err
 		}
 	}
 
@@ -396,6 +423,15 @@ func (s *ItemUpdateService) AddMilestone(req UpdateItemRequest, milestoneID int)
 	if err := s.recordItemHistory(tx, history); err != nil {
 		return nil, false, fmt.Errorf("failed to record history: %w", err)
 	}
+	metadata := mergeItemEventMetadata(req.EventMetadata, itemEventMetadata(req.UserID, "application", nil))
+	if metadata.OccurredAt.IsZero() {
+		metadata.OccurredAt = now
+	}
+	if _, err := itemevents.NewRecorder(s.db).Updated(
+		context.Background(), tx, originalItem, itemHistoryEventChanges(history), metadata,
+	); err != nil {
+		return nil, false, err
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, false, fmt.Errorf("failed to commit transaction: %w", err)
 	}
@@ -553,30 +589,11 @@ func (s *ItemUpdateService) compareAndGenerateHistory(original, updated *models.
 	return history
 }
 
-// RecordItemCreationHistory records the initial values when an item is created
-// This ensures that the item history shows the creation event with initial values
-func (s *ItemUpdateService) RecordItemCreationHistory(db database.Database, itemID, userID int) error {
-	return s.recordItemCreationHistory(db, itemID, userID)
-}
-
-// recordItemCreationHistory records the initial values when an item is created
-func (s *ItemUpdateService) recordItemCreationHistory(db database.Database, itemID, userID int) error {
-	// Load the newly created item to get all its initial values.
-	item, err := repository.NewItemRepository(db).FindByID(itemID)
-	if err != nil {
-		return fmt.Errorf("failed to load created item: %w", err)
-	}
-
-	history := creationHistoryEntries(*item, userID)
-	if err := repository.NewItemRepository(db).RecordHistoryBatch(db, history); err != nil {
-		return fmt.Errorf("failed to record creation history: %w", err)
-	}
-	return nil
-}
-
-func creationHistoryEntries(item models.Item, userID int) []HistoryEntry {
+func creationHistoryEntries(item models.Item, userID int, changedAt time.Time) []HistoryEntry {
 	var history []HistoryEntry
-	now := time.Now()
+	if changedAt.IsZero() {
+		changedAt = time.Now()
+	}
 
 	// Helper to add history entry (old_value is always empty for creation)
 	addHistory := func(fieldName, newValue string) {
@@ -587,7 +604,7 @@ func creationHistoryEntries(item models.Item, userID int) []HistoryEntry {
 				FieldName: fieldName,
 				OldValue:  "",
 				NewValue:  newValue,
-				ChangedAt: now,
+				ChangedAt: changedAt,
 			})
 		}
 	}
