@@ -83,6 +83,7 @@
   function getStatusColor(status) {
     switch (status) {
       case 'completed': return 'var(--ds-text-success)';
+      case 'completed_with_errors': return 'var(--ds-text-warning)';
       case 'running': return 'var(--ds-text-accent-blue)';
       case 'failed': return 'var(--ds-text-danger)';
       case 'data_deleted': return 'var(--ds-text-subtle)';
@@ -94,6 +95,7 @@
   function getStatusIcon(status) {
     switch (status) {
       case 'completed': return CheckCircle;
+      case 'completed_with_errors': return AlertTriangle;
       case 'running': return Loader;
       case 'failed': return XCircle;
       case 'data_deleted': return Trash2;
@@ -281,7 +283,7 @@
                       <StatusIcon size={16} style="color: {getStatusColor(job.status)};"
                                   class={job.status === 'running' ? 'animate-spin' : ''} />
                       <span data-testid="jira-import-history-status" class="text-sm capitalize" style="color: {getStatusColor(job.status)};">
-                        {job.status.replace('_', ' ')}
+                        {job.status.replaceAll('_', ' ')}
                       </span>
                     </div>
                     {#if job.phase && job.status === 'running'}
