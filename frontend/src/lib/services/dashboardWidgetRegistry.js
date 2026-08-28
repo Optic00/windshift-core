@@ -161,6 +161,18 @@ export function getDashboardSectionDisplay(section, translate) {
 }
 
 /**
+ * Preserve canonical default values when a localized section editor is saved
+ * without changing its translated display text.
+ */
+export function getDashboardSectionSaveValues(section, draft, translate) {
+  const display = getDashboardSectionDisplay(section, translate);
+  return {
+    title: draft.title === display.title ? section.title : draft.title,
+    subtitle: draft.subtitle === (display.subtitle || '') ? section.subtitle : draft.subtitle,
+  };
+}
+
+/**
  * Build the default three-section layout shown to users who have never
  * customized their dashboard (or whose saved layout is empty).
  */

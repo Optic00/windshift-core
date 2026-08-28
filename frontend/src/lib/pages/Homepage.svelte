@@ -22,6 +22,7 @@
 
   import {
     getDashboardSectionDisplay,
+    getDashboardSectionSaveValues,
     getDashboardWidgetMetadata,
   } from '../services/dashboardWidgetRegistry.js';
 
@@ -143,10 +144,15 @@
 
   function saveSection() {
     if (!editingSectionId) return;
-    homepageStore.updateSection(editingSectionId, {
+    const draft = {
       title: editingSectionTitle,
       subtitle: editingSectionSubtitle,
-    });
+    };
+    const section = sections.find((candidate) => candidate.id === editingSectionId);
+    homepageStore.updateSection(
+      editingSectionId,
+      section ? getDashboardSectionSaveValues(section, draft, t) : draft
+    );
     editingSectionId = null;
     isNewSection = false;
   }

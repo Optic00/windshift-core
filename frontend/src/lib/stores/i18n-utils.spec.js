@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildDefaultDashboardLayout,
   getDashboardSectionDisplay,
+  getDashboardSectionSaveValues,
 } from '../services/dashboardWidgetRegistry.js';
 import { formatRelativeTime } from '../utils/dateFormatter.js';
 import { i18n } from './i18n.svelte.js';
@@ -27,6 +28,70 @@ describe('dashboard section localization', () => {
     expect(getDashboardSectionDisplay(section, () => 'translated')).toEqual({
       title: 'My focus',
       subtitle: 'What matters now',
+    });
+  });
+
+  it('does not persist localized default text when an unchanged section is saved', () => {
+    const [section] = buildDefaultDashboardLayout().sections;
+    const german = (key) =>
+      ({
+        'dashboard.sections.yourDay.title': 'Dein Tag',
+        'dashboard.sections.yourDay.subtitle':
+          'Ein kurzer Blick auf alles, was Ihre Aufmerksamkeit braucht',
+      })[key];
+    const english = (key) =>
+      ({
+        'dashboard.sections.yourDay.title': 'Your Day',
+        'dashboard.sections.yourDay.subtitle': 'A quick read on what needs your attention',
+      })[key];
+    const displayedInGerman = getDashboardSectionDisplay(section, german);
+
+    const savedValues = getDashboardSectionSaveValues(section, displayedInGerman, german);
+    const savedSection = { ...section, ...savedValues };
+
+    expect(savedValues).toEqual({
+      title: 'Your Day',
+      subtitle: 'A quick read on what needs your attention',
+    });
+    expect(getDashboardSectionDisplay(savedSection, english)).toEqual({
+      title: 'Your Day',
+      subtitle: 'A quick read on what needs your attention',
+    });
+    expect(getDashboardSectionDisplay(savedSection, german)).toEqual(displayedInGerman);
+  });
+
+  it('persists actual edits made to localized section text', () => {
+    const [section] = buildDefaultDashboardLayout().sections;
+    const translate = (key) => `translated:${key}`;
+
+    expect(
+      getDashboardSectionSaveValues(
+        section,
+        { title: 'Mein Fokus', subtitle: 'Heute wichtig' },
+        translate
+      )
+    ).toEqual({
+      title: 'Mein Fokus',
+      subtitle: 'Heute wichtig',
+    });
+  });
+
+  it('preserves edits for custom sections', () => {
+    const section = {
+      id: 'custom-section',
+      title: 'Eigener Bereich',
+      subtitle: 'Meine Übersicht',
+    };
+
+    expect(
+      getDashboardSectionSaveValues(
+        section,
+        { title: 'Neuer Bereich', subtitle: 'Neue Übersicht' },
+        () => 'translated'
+      )
+    ).toEqual({
+      title: 'Neuer Bereich',
+      subtitle: 'Neue Übersicht',
     });
   });
 });
