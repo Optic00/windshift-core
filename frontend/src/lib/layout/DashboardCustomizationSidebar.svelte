@@ -29,25 +29,26 @@
   const categories = [
     {
       id: dashboardWidgetCategories.ACTIVITY,
-      name: 'Activity',
+      nameKey: 'dashboard.customization.activity.name',
       icon: Clock,
-      description: 'Briefings, activity streams, and notifications',
+      descriptionKey: 'dashboard.customization.activity.description',
     },
     {
       id: dashboardWidgetCategories.WORK,
-      name: 'Work',
+      nameKey: 'dashboard.customization.work.name',
       icon: CheckSquare,
-      description: 'Items, milestones, and things assigned to you',
+      descriptionKey: 'dashboard.customization.work.description',
     },
     {
       id: dashboardWidgetCategories.NAVIGATION,
-      name: 'Navigation',
+      nameKey: 'dashboard.customization.navigation.name',
       icon: Compass,
-      description: 'Quick access to workspaces',
+      descriptionKey: 'dashboard.customization.navigation.description',
     },
   ];
 
   let currentWidgets = $derived(getDashboardWidgetsByCategory(activeCategory));
+  let currentCategory = $derived(categories.find((category) => category.id === activeCategory));
 
   function handleKeydown(event) {
     if (event.key === 'Escape' && isOpen) {
@@ -90,7 +91,8 @@
           if (!isActive) e.currentTarget.style.cssText = 'color: var(--ds-text-subtle);';
         }}
         onclick={() => (activeCategory = category.id)}
-        title={category.name}
+        title={t(category.nameKey)}
+        aria-label={t(category.nameKey)}
       >
         <CategoryIcon class="w-5 h-5" />
       </button>
@@ -100,8 +102,8 @@
   <!-- Right content panel -->
   <div class="w-96 flex flex-col" style="background-color: var(--ds-surface-raised);">
     <ModalHeader
-      title={categories.find((c) => c.id === activeCategory)?.name || 'Widgets'}
-      subtitle={categories.find((c) => c.id === activeCategory)?.description || ''}
+      title={currentCategory ? t(currentCategory.nameKey) : t('dashboard.customization.widgets')}
+      subtitle={currentCategory ? t(currentCategory.descriptionKey) : ''}
       onClose={() => (isOpen = false)}
     />
 
@@ -130,14 +132,14 @@
                 <IconComponent class="w-5 h-5 text-white" />
               </div>
               <div class="flex-1 min-w-0">
-                <h3 class="text-sm font-medium" style="color: var(--ds-text);">{widget.name}</h3>
-                <DescriptionText>{widget.description}</DescriptionText>
+                <h3 class="text-sm font-medium" style="color: var(--ds-text);">{t(widget.nameKey)}</h3>
+                <DescriptionText>{t(widget.descriptionKey)}</DescriptionText>
                 <div class="flex items-center gap-2 mt-2">
                   <span
                     class="text-xs px-2 py-0.5 rounded"
                     style="background-color: var(--ds-background-neutral); color: var(--ds-text-subtle);"
                   >
-                    {widget.category}
+                    {t(`dashboard.customization.${widget.category}.name`)}
                   </span>
                   <span class="text-xs" style="color: var(--ds-text-subtlest);">
                     {t('widgets.defaultWidth', {
@@ -163,7 +165,8 @@
         style="background-color: var(--ds-background-neutral); border: 1px solid var(--ds-border);"
       >
         <p class="text-xs" style="color: var(--ds-text);">
-          <strong>Tip:</strong> Drag widgets from here into any section on your dashboard.
+          <strong>{t('dashboard.customization.tipLabel')}:</strong>
+          {t('dashboard.customization.tip')}
         </p>
       </div>
     </div>

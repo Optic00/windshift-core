@@ -1,5 +1,6 @@
 <script>
   import DueMark from './DueMark.svelte';
+  import { t } from '../../stores/i18n.svelte.js';
 
   let {
     title,
@@ -35,7 +36,7 @@
         class="inline-block w-2 h-2 rounded-full flex-shrink-0"
         style={`background-color: ${priorityColor};`}
         title={priorityName}
-        aria-label={`Priority: ${priorityName}`}
+        aria-label={t('dashboard.states.priorityLabel', { priority: priorityName })}
       ></span>
     {/if}
     <span class="text-sm truncate" style="color: var(--ds-text);">{title}</span>

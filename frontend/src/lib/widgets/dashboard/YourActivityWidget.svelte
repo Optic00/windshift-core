@@ -2,6 +2,7 @@
   import { Clock, Edit, MessageSquare, Eye } from '@lucide/svelte';
   import { homepageStore } from '../../stores';
   import { navigate } from '../../router.js';
+  import { t } from '../../stores/i18n.svelte.js';
 
   let activeTab = $derived(homepageStore.activeTab);
   let loading = $derived(homepageStore.loading);
@@ -13,9 +14,9 @@
   });
 
   const tabs = [
-    { id: 'viewed', label: 'Viewed', icon: Eye },
-    { id: 'edited', label: 'Edited', icon: Edit },
-    { id: 'commented', label: 'Commented', icon: MessageSquare },
+    { id: 'viewed', labelKey: 'dashboard.viewed', icon: Eye },
+    { id: 'edited', labelKey: 'dashboard.edited', icon: Edit },
+    { id: 'commented', labelKey: 'dashboard.commented', icon: MessageSquare },
   ];
 
   function open(item) {
@@ -36,7 +37,7 @@
         onclick={() => homepageStore.setActiveTab(tab.id)}
       >
         <TabIcon class="w-3.5 h-3.5" />
-        {tab.label}
+        {t(tab.labelKey)}
       </button>
     {/each}
   </div>
@@ -50,7 +51,7 @@
   {:else if items.length === 0}
     <div class="flex flex-col items-center text-center py-6" style="color: var(--ds-text-subtle);">
       <Clock class="w-6 h-6 mb-2 opacity-60" />
-      <p class="text-sm">No recent activity</p>
+      <p class="text-sm">{t('dashboard.noRecentActivity')}</p>
     </div>
   {:else}
     <ul class="flex flex-col">

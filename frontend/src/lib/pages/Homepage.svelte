@@ -21,6 +21,8 @@
   import { draggable, dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter';
 
   import {
+    getDashboardSectionDisplay,
+    getDashboardSectionSaveValues,
     getDashboardWidgetMetadata,
   } from '../services/dashboardWidgetRegistry.js';
 
@@ -40,6 +42,15 @@
   import SavedSearchWidget from '../widgets/dashboard/SavedSearchWidget.svelte';
 
   let greeting = $derived(homepageStore.greeting);
+  let greetingText = $derived(greeting ? t(greeting) : '');
+  let userName = $derived(authStore.currentUser?.first_name || '');
+  let personalizedGreeting = $derived(
+    greetingText
+      ? userName
+        ? t('dashboard.salutation.withName', { salutation: greetingText, name: userName })
+        : t('dashboard.salutation.withoutName', { salutation: greetingText })
+      : ''
+  );
   let currentDate = $derived(homepageStore.currentDate);
   let totalWorkspaceCount = $derived(homepageStore.totalWorkspaceCount);
   let totalItemCount = $derived(homepageStore.totalItemCount);
@@ -114,7 +125,7 @@
   }
 
   async function addSection() {
-    const created = homepageStore.addSection('New Section', '');
+    const created = homepageStore.addSection(t('dashboard.editor.newSection'), '');
     editingSectionId = created.id;
     editingSectionTitle = created.title;
     editingSectionSubtitle = created.subtitle;
@@ -133,18 +144,24 @@
   }
 
   function startEditingSection(section) {
+    const display = getDashboardSectionDisplay(section, t);
     editingSectionId = section.id;
-    editingSectionTitle = section.title;
-    editingSectionSubtitle = section.subtitle || '';
+    editingSectionTitle = display.title;
+    editingSectionSubtitle = display.subtitle || '';
     isNewSection = false;
   }
 
   function saveSection() {
     if (!editingSectionId) return;
-    homepageStore.updateSection(editingSectionId, {
+    const draft = {
       title: editingSectionTitle,
       subtitle: editingSectionSubtitle,
-    });
+    };
+    const section = sections.find((candidate) => candidate.id === editingSectionId);
+    homepageStore.updateSection(
+      editingSectionId,
+      section ? getDashboardSectionSaveValues(section, draft, t) : draft
+    );
     editingSectionId = null;
     isNewSection = false;
   }
@@ -170,7 +187,7 @@
   async function handleDeleteSection(sectionId) {
     const confirmed = await confirm({
       title: t('common.delete'),
-      message: 'Delete this section? All widgets in this section will be removed.',
+      message: t('dashboard.editor.deleteSectionConfirm'),
       confirmText: t('common.delete'),
       cancelText: t('common.cancel'),
       variant: 'danger',
@@ -263,7 +280,8 @@
   }
 
   function getWidgetTitle(type) {
-    return getDashboardWidgetMetadata(type)?.name || type;
+    const metadata = getDashboardWidgetMetadata(type);
+    return metadata ? t(metadata.nameKey) : type;
   }
 
   function getSectionWidgets(sectionId) {
@@ -287,7 +305,7 @@
     <div class="mb-6 flex items-start justify-between gap-4">
       <div>
         <Text as="h1" size="2xl" weight="semibold">
-          {greeting}, {authStore.currentUser?.first_name || 'there'}!
+          {personalizedGreeting}
         </Text>
         <Text as="p" size="sm" variant="subtle">{currentDate}</Text>
       </div>
@@ -298,14 +316,14 @@
           onclick={toggleEditMode}
           dataTestid="dashboard-edit-toggle"
         >
-          {isEditMode ? 'Done Editing' : 'Edit'}
+          {isEditMode ? t('dashboard.editor.doneEditing') : t('common.edit')}
         </Button>
         <Button
           variant={isCustomizeMode ? 'primary' : 'default'}
           icon={isCustomizeMode ? X : LayoutGrid}
           onclick={toggleCustomizeMode}
         >
-          {isCustomizeMode ? 'Done' : 'Customize'}
+          {isCustomizeMode ? t('common.done') : t('dashboard.editor.customize')}
         </Button>
       </div>
     </div>
@@ -317,7 +335,7 @@
       <DashboardOnboarding
         workspaceCount={totalWorkspaceCount}
         itemCount={totalItemCount}
-        userName={authStore.currentUser?.first_name || 'there'}
+        {userName}
         ondismiss={handleOnboardingDismiss}
         {canCreateWorkspaces}
         {accessibleWorkspaces}
@@ -327,7 +345,7 @@
     <DashboardOnboarding
       workspaceCount={totalWorkspaceCount}
       itemCount={totalItemCount}
-      userName={authStore.currentUser?.first_name || 'there'}
+      {userName}
       ondismiss={handleOnboardingDismiss}
       {canCreateWorkspaces}
       {accessibleWorkspaces}
@@ -343,7 +361,7 @@
       >
         <div class="flex items-center gap-2 text-sm" style="color: var(--ds-status-info-text);">
           <Edit3 class="h-4 w-4" />
-          <span>Edit mode: add, rename, reorder, or delete sections and widgets</span>
+          <span>{t('dashboard.editor.editModeDescription')}</span>
         </div>
         <!-- shortcut-guard-exempt: contextual edit-mode action -->
         <Button
@@ -353,7 +371,7 @@
           onclick={addSection}
           dataTestid="dashboard-add-section"
         >
-          Add Section
+          {t('dashboard.editor.addSection')}
         </Button>
       </div>
     {/if}
@@ -363,10 +381,11 @@
       <div class="space-y-10">
         {#each sections as section, sectionIndex (section.id)}
           {@const sectionWidgets = getSectionWidgets(section.id)}
+          {@const sectionDisplay = getDashboardSectionDisplay(section, t)}
           <section
             id={`dashboard-section-${section.id}`}
             data-testid="dashboard-section"
-            aria-label={section.title || 'Dashboard section'}
+            aria-label={sectionDisplay.title || t('dashboard.editor.sectionLabel')}
           >
             <!-- Section header -->
             <div class="flex items-center justify-between mb-4">
@@ -377,22 +396,22 @@
                     type="text"
                     bind:value={editingSectionTitle}
                     class="text-lg font-semibold"
-                    placeholder="Section title"
+                    placeholder={t('dashboard.editor.sectionTitlePlaceholder')}
                     onkeydown={handleSectionEditKeydown}
                     dataTestid="dashboard-section-title-input"
                   />
                   <Input
                     type="text"
                     bind:value={editingSectionSubtitle}
-                    placeholder="Subtitle (optional)"
+                    placeholder={t('dashboard.editor.sectionSubtitlePlaceholder')}
                     onkeydown={handleSectionEditKeydown}
                     size="small"
                   />
                   <Button variant="primary" size="small" onclick={saveSection}>
-                    Save <span class="ml-1 opacity-60">⏎</span>
+                    {t('common.save')} <span class="ml-1 opacity-60">⏎</span>
                   </Button>
                   <Button variant="default" size="small" onclick={cancelEditingSection}>
-                    Cancel <span class="ml-1 opacity-60">Esc</span>
+                    {t('common.cancel')} <span class="ml-1 opacity-60">Esc</span>
                   </Button>
                 </div>
               {:else}
@@ -401,9 +420,9 @@
                     id={`dashboard-section-heading-${section.id}`}
                     class="text-lg font-semibold"
                     style="color: var(--ds-text);"
-                  >{section.title}</h2>
-                  {#if section.subtitle}
-                    <p class="text-sm mt-0.5" style="color: var(--ds-text-subtle);">{section.subtitle}</p>
+                  >{sectionDisplay.title}</h2>
+                  {#if sectionDisplay.subtitle}
+                    <p class="text-sm mt-0.5" style="color: var(--ds-text-subtle);">{sectionDisplay.subtitle}</p>
                   {/if}
                 </div>
                 {#if isEditMode}
@@ -437,7 +456,8 @@
                       class="p-2 rounded transition-colors hover:bg-[var(--ds-background-neutral-hovered)]"
                       style="color: var(--ds-text-subtle);"
                       onclick={() => startEditingSection(section)}
-                      title="Rename section"
+                      title={t('dashboard.editor.renameSection')}
+                      aria-label={t('dashboard.editor.renameSection')}
                     >
                       <Pencil class="h-4 w-4" />
                     </button>
@@ -446,7 +466,8 @@
                       class="p-2 rounded transition-colors hover:bg-[var(--ds-background-neutral-hovered)]"
                       style="color: var(--ds-text-subtle);"
                       onclick={() => handleDeleteSection(section.id)}
-                      title="Delete section"
+                      title={t('dashboard.editor.deleteSection')}
+                      aria-label={t('dashboard.editor.deleteSection')}
                     >
                       <Trash2 class="h-4 w-4" />
                     </button>
@@ -511,7 +532,7 @@
                         />
                       {:else}
                         <div class="text-center py-8 text-sm" style="color: var(--ds-text-subtle);">
-                          Unknown widget type: {widget.type}
+                          {t('dashboard.editor.unknownWidgetType', { type: widget.type })}
                         </div>
                       {/if}
                     </WidgetWrapper>
@@ -519,8 +540,8 @@
                 </div>
               {:else}
                 <div class="text-center py-8" style="color: var(--ds-text-subtle);">
-                  <p class="text-sm">No widgets in this section yet</p>
-                  <p class="text-xs mt-1">Click "Customize" to add widgets</p>
+                  <p class="text-sm">{t('dashboard.editor.noWidgets')}</p>
+                  <p class="text-xs mt-1">{t('dashboard.editor.addWidgetsHint')}</p>
                 </div>
               {/if}
             </div>
@@ -530,8 +551,8 @@
         {#if sections.length === 0}
           <div class="flex flex-col items-center justify-center py-16" style="color: var(--ds-text-subtle);">
             <LayoutGrid class="h-16 w-16 mb-4 opacity-30" />
-            <p class="text-lg font-medium">No sections configured</p>
-            <p class="text-sm mt-2">Click "Edit" to add sections to your dashboard</p>
+            <p class="text-lg font-medium">{t('dashboard.editor.noSections')}</p>
+            <p class="text-sm mt-2">{t('dashboard.editor.addSectionsHint')}</p>
           </div>
         {/if}
       </div>
