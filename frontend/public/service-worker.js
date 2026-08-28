@@ -73,11 +73,18 @@ async function cachedRecoveryResponse() {
   }
 }
 
-async function fetchNavigation(req) {
+async function fetchNavigation(req, preloadResponse) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), NAVIGATION_TIMEOUT_MS);
+  const deadline = new Promise((_, reject) => {
+    controller.signal.addEventListener('abort', () => reject(new Error('Navigation timed out')), {
+      once: true,
+    });
+  });
   try {
-    return await fetch(req, { signal: controller.signal });
+    const preload = await Promise.race([Promise.resolve(preloadResponse), deadline]);
+    if (preload) return preload;
+    return await Promise.race([fetch(req, { signal: controller.signal }), deadline]);
   } finally {
     clearTimeout(timeout);
   }
@@ -127,8 +134,7 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(
     (async () => {
       try {
-        const preload = await event.preloadResponse;
-        const res = preload || (await fetchNavigation(req));
+        const res = await fetchNavigation(req, event.preloadResponse);
         if (isRetryableServerFailure(res)) return cachedRecoveryResponse();
         return res;
       } catch {

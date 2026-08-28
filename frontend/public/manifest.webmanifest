@@ -9,7 +9,6 @@
   "start_url": "./m",
   "scope": "./",
   "display": "standalone",
-  "display_override": ["window-controls-overlay", "standalone"],
   "orientation": "portrait",
   "background_color": "#ffffff",
   "theme_color": "#ffffff",

@@ -99,7 +99,18 @@
   <!-- Portaled to <body> and layered above every dialog tier (modals are
        z-50, stacked dialogs z-[60]/z-[70], tooltips z-[100]) — toasts are
        transient feedback and must never be buried by an open modal. -->
-  <div use:portal class="fixed top-12 left-1/2 -translate-x-1/2 z-[110] flex flex-col items-center">
+  <div
+    use:portal
+    class="fixed left-1/2 -translate-x-1/2 z-[110] flex flex-col items-center"
+    style="
+      top: max(3rem, calc(env(safe-area-inset-top, 0px) + 0.75rem));
+      width: min(
+        22.5rem,
+        calc(100vw - 2rem - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px))
+      );
+    "
+    data-testid="toast-viewport"
+  >
     {#each toasts.value as toast, index (toast.id)}
       {@const Icon = variantIcons[toast.variant]}
       {@const borderColor = variantBorders[toast.variant] || variantBorders['default']}
@@ -109,7 +120,7 @@
       {#if index < 3}
         <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
         <div
-          class="absolute w-[360px] rounded shadow-xl flex items-start gap-3 transition-all duration-300 ease-out {toast.clickable ? 'cursor-pointer hover:shadow-2xl' : ''}"
+          class="absolute w-full rounded shadow-xl flex items-start gap-3 transition-all duration-300 ease-out {toast.clickable ? 'cursor-pointer hover:shadow-2xl' : ''}"
           data-testid="toast"
           data-toast-variant={toast.variant}
           style="
