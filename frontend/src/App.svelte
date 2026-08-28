@@ -280,14 +280,17 @@
   }
 </script>
 
+<a class="skip-link" href="#app-main">Skip to main content</a>
 <div
+  id="app-main"
+  tabindex="-1"
   class="flex flex-col {isMobileRoute($currentRoute.view) ? 'h-dvh overflow-hidden' : 'min-h-screen'}"
   style="background-color: var(--ds-surface);"
 >
   {#if startupError}
     <div class="min-h-screen flex items-center justify-center w-full px-6" data-testid="startup-error">
       <div class="text-center max-w-sm">
-        <img src="windshift-3.svg" alt={APP_NAME} class="w-16 h-16 mx-auto mb-4 opacity-75" />
+        <img src="windshift-3.svg" alt={APP_NAME} width="64" height="64" class="w-16 h-16 mx-auto mb-4 opacity-75" />
         <h1 class="text-xl font-semibold mb-2">Unable to start Windshift</h1>
         <p class="text-gray-600 mb-1">{startupError}</p>
         <p class="text-sm text-gray-500 mb-5">Check your connection or server, then try again.</p>
@@ -359,7 +362,7 @@
       {:else if showLoginDialog}
         <!-- Login dialog will show, but we can show a minimal background -->
         <div class="text-center">
-          <img src="windshift-3.svg" alt="Windshift" class="w-16 h-16 mx-auto mb-4 opacity-50" />
+          <img src="windshift-3.svg" alt="Windshift" width="64" height="64" class="w-16 h-16 mx-auto mb-4 opacity-50" />
           <h1 class="text-2xl font-bold text-gray-400 mb-2">Windshift</h1>
           <p class="text-gray-500">Work Management</p>
         </div>
@@ -398,6 +401,24 @@
 {/if}
 
 <style>
+  .skip-link {
+    position: fixed;
+    top: 0.75rem;
+    left: 0.75rem;
+    z-index: 1000;
+    padding: 0.625rem 0.875rem;
+    border-radius: 0.375rem;
+    background: var(--ds-surface-raised);
+    color: var(--ds-text);
+    box-shadow: 0 4px 12px rgb(0 0 0 / 20%);
+    transform: translateY(-200%);
+    transition: transform 120ms ease;
+  }
+
+  .skip-link:focus-visible {
+    transform: translateY(0);
+  }
+
   /* Global CSS custom properties for theming - uses design tokens */
   :global(html) {
     --nav-bg-color: var(--ds-surface-raised);

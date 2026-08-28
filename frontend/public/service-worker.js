@@ -94,13 +94,9 @@ function scopedURL(value = 'm') {
 
 self.addEventListener('install', (event) => {
   // Cache only the dependency-free recovery document. A normal app document is
-  // safe only together with its exact hashed asset graph.
-  event.waitUntil(
-    Promise.all([
-      self.skipWaiting(),
-      caches.open(CACHE).then((cache) => cache.put(RECOVERY_KEY, recoveryResponse())),
-    ])
-  );
+  // safe only together with its exact hashed asset graph. Leave updates waiting
+  // until the client gives the user a chance to apply them.
+  event.waitUntil(caches.open(CACHE).then((cache) => cache.put(RECOVERY_KEY, recoveryResponse())));
 });
 
 self.addEventListener('activate', (event) => {
@@ -114,6 +110,9 @@ self.addEventListener('activate', (event) => {
           )
           .map((key) => caches.delete(key))
       );
+      if ('navigationPreload' in self.registration) {
+        await self.registration.navigationPreload.enable();
+      }
       await self.clients.claim();
     })()
   );
@@ -128,7 +127,8 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(
     (async () => {
       try {
-        const res = await fetchNavigation(req);
+        const preload = await event.preloadResponse;
+        const res = preload || (await fetchNavigation(req));
         if (isRetryableServerFailure(res)) return cachedRecoveryResponse();
         return res;
       } catch {
@@ -136,6 +136,10 @@ self.addEventListener('fetch', (event) => {
       }
     })()
   );
+});
+
+self.addEventListener('message', (event) => {
+  if (event.data?.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
 // --- Web Push ---
@@ -154,6 +158,7 @@ self.addEventListener('push', (event) => {
     data: { url: scopedURL(payload.url || 'm') },
     icon: scopedURL('apple-touch-icon.png'),
     badge: scopedURL('favicon-32x32.png'),
+    actions: [{ action: 'open', title: 'Open Windshift' }],
   };
   event.waitUntil(self.registration.showNotification(title, options));
 });

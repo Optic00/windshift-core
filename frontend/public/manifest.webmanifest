@@ -1,13 +1,40 @@
 {
+  "id": "./m",
   "name": "Windshift",
   "short_name": "Windshift",
   "description": "Review and manage your Windshift work from your phone.",
+  "lang": "en",
+  "dir": "ltr",
+  "categories": ["business", "productivity"],
   "start_url": "./m",
   "scope": "./",
   "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
   "orientation": "portrait",
   "background_color": "#ffffff",
   "theme_color": "#ffffff",
+  "shortcuts": [
+    {
+      "name": "My Work",
+      "short_name": "My Work",
+      "url": "./m"
+    },
+    {
+      "name": "Personal tasks",
+      "short_name": "Personal",
+      "url": "./m/personal"
+    },
+    {
+      "name": "Timer",
+      "short_name": "Timer",
+      "url": "./m/timer"
+    },
+    {
+      "name": "Notifications",
+      "short_name": "Alerts",
+      "url": "./m/notifications"
+    }
+  ],
   "icons": [
     {
       "src": "favicon-32x32.png",

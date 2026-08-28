@@ -1694,6 +1694,9 @@ func (s *Server) initialize() error {
 			mux.Handle("GET /windshift-3.svg", revalidatingAssets)
 			mux.Handle("GET /favicon-32x32.png", revalidatingAssets)
 			mux.Handle("GET /apple-touch-icon.png", revalidatingAssets)
+			mux.Handle("GET /apple-touch-startup-image-1170x2532.png", revalidatingAssets)
+			mux.Handle("GET /apple-touch-startup-image-1290x2796.png", revalidatingAssets)
+			mux.Handle("GET /apple-touch-startup-image-2048x2732.png", revalidatingAssets)
 			mux.Handle("GET /forms/widget.js", revalidatingAssets)
 			mux.Handle("GET /embed/", revalidatingAssets)
 

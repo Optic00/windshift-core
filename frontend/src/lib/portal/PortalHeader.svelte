@@ -335,7 +335,7 @@
             aria-label="Close account menu"
           ></button>
           <div
-            class="fixed left-4 right-4 top-[4.5rem] sm:absolute sm:left-auto sm:right-0 sm:top-11 sm:w-72 rounded-lg border p-1.5 shadow-lg"
+            class="portal-account-menu fixed left-4 right-4 top-[4.5rem] sm:absolute sm:left-auto sm:right-0 sm:top-11 sm:w-72 rounded-lg border p-1.5 shadow-lg"
             style="background-color: var(--ds-surface-card); border-color: var(--ds-border);"
           >
             {#if account}
@@ -441,6 +441,17 @@
 </header>
 
 <style>
+  .portal-account-menu {
+    max-width: calc(100vw - 2rem);
+  }
+
+  @media (max-width: 639px) {
+    .portal-account-menu {
+      left: max(1rem, env(safe-area-inset-left));
+      right: max(1rem, env(safe-area-inset-right));
+    }
+  }
+
   .portal-menu-item {
     display: flex;
     width: 100%;

@@ -15,6 +15,9 @@
       src="windshift-3.svg"
       alt={APP_NAME}
       class="mx-auto mb-4 h-16 w-16 motion-safe:animate-pulse"
+      width="64"
+      height="64"
+      decoding="async"
       data-testid="branded-loader-logo"
     />
     <p class="text-sm" style="color: var(--ds-text-subtle);">{label}</p>

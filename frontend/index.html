@@ -5,6 +5,22 @@
     <link rel="icon" type="image/svg+xml" href="/windshift-3.svg" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="preload" as="image" href="/windshift-3.svg" type="image/svg+xml" />
+    <link
+      rel="apple-touch-startup-image"
+      href="/apple-touch-startup-image-1170x2532.png"
+      media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/apple-touch-startup-image-1290x2796.png"
+      media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/apple-touch-startup-image-2048x2732.png"
+      media="(device-width: 1024px) and (device-height: 1366px) and (-webkit-device-pixel-ratio: 2)"
+    />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <!-- PWA: installable mobile surface (start_url = /m). Relative href so the
          link resolves against the injected <base href> on context-path deploys. -->
@@ -15,6 +31,18 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="Windshift" />
+    <meta
+      name="description"
+      content="Windshift is a self-hosted work management app for teams, with boards, workflows, time tracking, and notifications."
+    />
+    <link rel="canonical" href="/m" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Windshift - Work Management" />
+    <meta
+      property="og:description"
+      content="Self-hosted work management for teams, with boards, workflows, time tracking, and notifications."
+    />
+    <meta property="og:image" content="./apple-touch-icon.png" />
     <title>Windshift - Work Management</title>
     <style>
       /* Static recovery UI for failures that happen before Svelte can mount.
@@ -119,7 +147,7 @@
     <div id="app">
       <div id="windshift-boot" role="status" aria-live="polite">
         <div>
-          <img class="boot-logo" src="windshift-3.svg" alt="Windshift" />
+          <img class="boot-logo" src="windshift-3.svg" alt="Windshift" width="64" height="64" />
           <p>Starting Windshift…</p>
           <p id="windshift-boot-detail" class="boot-detail" hidden>
             This is taking longer than expected. Check your connection or server.

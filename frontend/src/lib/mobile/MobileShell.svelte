@@ -18,6 +18,7 @@
   import MobileChatView from './MobileChatView.svelte';
   import MobileCreateDialog from './MobileCreateDialog.svelte';
   import IosInstallSheet from './IosInstallSheet.svelte';
+  import ToastContainer from '../features/notifications/ToastContainer.svelte';
 
   const view = $derived($currentRoute.view);
   const TAB_VIEWS = ['mobile-my-work', 'mobile-personal', 'mobile-timer', 'mobile-notifications'];
@@ -90,6 +91,7 @@
 <!-- iOS "Add to Home Screen" instructions (opened from the user menu via the
      install helper's store; no-op until triggered). -->
 <IosInstallSheet />
+<ToastContainer />
 
 <style>
   .mobile-shell {

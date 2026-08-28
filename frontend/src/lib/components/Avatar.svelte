@@ -42,6 +42,15 @@
     xl: 'w-16 h-16 text-lg',
     '2xl': 'w-20 h-20 text-xl'
   };
+  const sizePixels = {
+    '2xs': 20,
+    xs: 24,
+    sm: 32,
+    md: 40,
+    lg: 48,
+    xl: 64,
+    '2xl': 80
+  };
 
   // Variant styles using design tokens
   const variantStyles = {
@@ -82,6 +91,10 @@
         {src}
         alt={computedAlt}
         {title}
+        width={sizePixels[size] ?? sizePixels.md}
+        height={sizePixels[size] ?? sizePixels.md}
+        loading="lazy"
+        decoding="async"
         class="{baseClasses} object-cover"
       />
     </button>
@@ -90,6 +103,10 @@
       {src}
       alt={computedAlt}
       {title}
+      width={sizePixels[size] ?? sizePixels.md}
+      height={sizePixels[size] ?? sizePixels.md}
+      loading="lazy"
+      decoding="async"
       class="{baseClasses} object-cover"
     />
   {/if}
