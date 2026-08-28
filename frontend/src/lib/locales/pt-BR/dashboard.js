@@ -1,6 +1,9 @@
 export default {
   dashboard: {
-    userFallback: 'que bom ver você',
+    salutation: {
+      withName: '{salutation}, {name}!',
+      withoutName: '{salutation}!',
+    },
     sections: {
       yourDay: {
         title: 'Seu dia',

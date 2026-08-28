@@ -132,7 +132,7 @@ async function extractSourceKeys() {
       keys.add(match[1]);
     }
     const metadataMatches = content.matchAll(
-      /\b(?:name|description|title|subtitle)Key:\s*['"]([a-zA-Z][a-zA-Z0-9_.]+)['"]/g
+      /\b(?:name|description|label|title|subtitle)Key:\s*['"]([a-zA-Z][a-zA-Z0-9_.]+)['"]/g
     );
     for (const match of metadataMatches) {
       keys.add(match[1]);

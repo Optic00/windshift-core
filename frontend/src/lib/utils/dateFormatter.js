@@ -265,10 +265,11 @@ export function formatRelativeTime(dateString) {
     const now = serverNow();
     const diffMs = date.getTime() - now.getTime();
     const absoluteMs = Math.abs(diffMs);
-    const formatter = new Intl.RelativeTimeFormat(getAppLocale(), { numeric: 'auto' });
+    const formatter = new Intl.RelativeTimeFormat(getAppLocale(), { numeric: 'always' });
+    const immediateFormatter = new Intl.RelativeTimeFormat(getAppLocale(), { numeric: 'auto' });
     const valueFor = (unitMs) => Math.sign(diffMs) * Math.floor(absoluteMs / unitMs);
 
-    if (absoluteMs < 60_000) return formatter.format(0, 'second');
+    if (absoluteMs < 60_000) return immediateFormatter.format(0, 'second');
     if (absoluteMs < 3_600_000) return formatter.format(valueFor(60_000), 'minute');
     if (absoluteMs < 86_400_000) return formatter.format(valueFor(3_600_000), 'hour');
     if (absoluteMs < 604_800_000) return formatter.format(valueFor(86_400_000), 'day');

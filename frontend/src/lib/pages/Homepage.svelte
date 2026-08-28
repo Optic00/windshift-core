@@ -42,6 +42,15 @@
   import SavedSearchWidget from '../widgets/dashboard/SavedSearchWidget.svelte';
 
   let greeting = $derived(homepageStore.greeting);
+  let greetingText = $derived(greeting ? t(greeting) : '');
+  let userName = $derived(authStore.currentUser?.first_name || '');
+  let personalizedGreeting = $derived(
+    greetingText
+      ? userName
+        ? t('dashboard.salutation.withName', { salutation: greetingText, name: userName })
+        : t('dashboard.salutation.withoutName', { salutation: greetingText })
+      : ''
+  );
   let currentDate = $derived(homepageStore.currentDate);
   let totalWorkspaceCount = $derived(homepageStore.totalWorkspaceCount);
   let totalItemCount = $derived(homepageStore.totalItemCount);
@@ -296,7 +305,7 @@
     <div class="mb-6 flex items-start justify-between gap-4">
       <div>
         <Text as="h1" size="2xl" weight="semibold">
-          {t(greeting)}, {authStore.currentUser?.first_name || t('dashboard.userFallback')}!
+          {personalizedGreeting}
         </Text>
         <Text as="p" size="sm" variant="subtle">{currentDate}</Text>
       </div>
@@ -326,7 +335,7 @@
       <DashboardOnboarding
         workspaceCount={totalWorkspaceCount}
         itemCount={totalItemCount}
-        userName={authStore.currentUser?.first_name || t('dashboard.userFallback')}
+        {userName}
         ondismiss={handleOnboardingDismiss}
         {canCreateWorkspaces}
         {accessibleWorkspaces}
@@ -336,7 +345,7 @@
     <DashboardOnboarding
       workspaceCount={totalWorkspaceCount}
       itemCount={totalItemCount}
-      userName={authStore.currentUser?.first_name || t('dashboard.userFallback')}
+      {userName}
       ondismiss={handleOnboardingDismiss}
       {canCreateWorkspaces}
       {accessibleWorkspaces}

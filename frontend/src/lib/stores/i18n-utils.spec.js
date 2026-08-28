@@ -117,4 +117,15 @@ describe('locale-aware relative time', () => {
 
     expect(formatRelativeTime('2026-08-28T11:39:00Z')).toBe('21 minutes ago');
   });
+
+  it('describes elapsed weeks and months instead of calendar periods', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-28T12:00:00Z'));
+    await i18n.setLocale('en');
+
+    expect(formatRelativeTime('2026-08-20T12:00:00Z')).toBe('1 week ago');
+    expect(formatRelativeTime('2026-07-14T12:00:00Z')).toBe('1 month ago');
+    expect(formatRelativeTime('2026-08-27T02:00:00Z')).toBe('1 day ago');
+    expect(formatRelativeTime('2026-09-05T12:00:00Z')).toBe('in 1 week');
+  });
 });
