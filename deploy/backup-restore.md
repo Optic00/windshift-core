@@ -163,7 +163,7 @@ Set `POSTGRES_SERVICE` to the confirmed service name and keep `remote_dump` for 
     [ "$(printf '%s\n' "$db_id" | sed '/^$/d' | wc -l | tr -d ' ')" = 1 ] || exit 1
     remote_dump=/tmp/windshift-manual-rollback-$$.dump
     docker cp "$ROLLBACK_DIR/database-before.dump" "$db_id:$remote_dump"
-    docker compose exec -T "$POSTGRES_SERVICE" sh -ec 'pg_restore --list "$1" >/dev/null' sh "$remote_dump"
+    docker compose exec -T -e REMOTE_DUMP="$remote_dump" "$POSTGRES_SERVICE" sh -ec 'pg_restore --list "$REMOTE_DUMP" >/dev/null'
 
 For `/data`, resolve exactly one Windshift container before stopping it:
 
@@ -180,7 +180,7 @@ For `/data`, resolve exactly one Windshift container before stopping it:
 
 For PostgreSQL, restore the already validated remote dump only after confirming the target database again:
 
-    docker compose exec -T "$POSTGRES_SERVICE" sh -ec 'pg_restore --clean --if-exists --no-owner --no-privileges --single-transaction --exit-on-error -U "$POSTGRES_USER" -d "$POSTGRES_DB" "$1"' sh "$remote_dump"
+    docker compose exec -T -e REMOTE_DUMP="$remote_dump" "$POSTGRES_SERVICE" sh -ec 'pg_restore --clean --if-exists --no-owner --no-privileges --single-transaction --exit-on-error -U "$POSTGRES_USER" -d "$POSTGRES_DB" "$REMOTE_DUMP"'
     docker compose exec -T "$POSTGRES_SERVICE" rm -f "$remote_dump"
 
 The PostgreSQL rollback cleans objects listed in its dump but may leave unrelated objects created by a newer schema.
