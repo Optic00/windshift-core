@@ -13058,6 +13058,126 @@
       }
     },
     "/links": {
+      "get": {
+        "description": "Returns a paginated, ID-ordered dependency graph for one workspace. Only non-custom-field item-to-item links with both endpoints in that workspace are returned. Cross-workspace and non-item links are excluded so link metadata from another workspace or permission domain cannot leak.",
+        "parameters": [
+          {
+            "description": "Workspace ID",
+            "in": "query",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Page number (1-based)",
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Links per page",
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/internal_restapi_v1_handlers.PaginatedResponse"
+                    },
+                    {
+                      "properties": {
+                        "data": {
+                          "items": {
+                            "$ref": "#/components/schemas/models.ItemLink"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_restapi_v1_handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid workspace ID or pagination"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_restapi_v1_handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_restapi_v1_handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Token lacks the items:read scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_restapi_v1_handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Workspace not found or not visible to caller"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_restapi_v1_handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List a workspace's direct work-item links",
+        "tags": [
+          "links",
+          "workspaces"
+        ]
+      },
       "post": {
         "description": "Creates a link between two entities (item/page/test_case). The link type must allow the given entity types; pages must share a workspace with the source item.",
         "requestBody": {

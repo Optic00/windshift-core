@@ -1204,6 +1204,13 @@ func getLinksWhereContext(ctx context.Context, db database.Database, whereClause
 }
 
 func itemLinksWhereQuery(whereClause string) string {
+	return itemLinksWhereQueryWithOrder(whereClause, "lt.name, il.created_at DESC")
+}
+
+// itemLinksWhereQueryWithOrder shares the joined response projection between
+// link reads that need different stable orderings. orderBy is always supplied
+// by service-owned constants, never request input.
+func itemLinksWhereQueryWithOrder(whereClause, orderBy string) string {
 	return `
 		SELECT il.id, il.link_type_id, il.source_type, il.source_id, il.target_type, il.target_id,
 		       il.created_by, il.created_at,
@@ -1256,7 +1263,7 @@ func itemLinksWhereQuery(whereClause string) string {
 		LEFT JOIN workspaces tpw ON tp.workspace_id = tpw.id
 		LEFT JOIN custom_field_definitions cfd ON il.custom_field_id = cfd.id
 		WHERE ` + whereClause + `
-		ORDER BY lt.name, il.created_at DESC
+		ORDER BY ` + orderBy + `
 	`
 }
 

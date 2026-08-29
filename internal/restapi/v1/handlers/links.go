@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -47,6 +48,45 @@ type linkCreateRequest struct {
 }
 
 const maxBatchLinkItems = 100
+
+// parseWorkspaceLinkPagination rejects page values whose offset would
+// overflow an int before the workspace link service performs any database
+// access. The shared parser remains permissive for legacy endpoints.
+func parseWorkspaceLinkPagination(r *http.Request) (restapi.PaginationParams, error) {
+	query := r.URL.Query()
+	if query.Has("sort") || query.Has("order") {
+		return restapi.PaginationParams{}, errors.New("sort and order are not supported; links are ordered by ID ascending")
+	}
+
+	pagination := restapi.PaginationParams{
+		Page:  restapi.DefaultPage,
+		Limit: restapi.DefaultLimit,
+	}
+	limitRaw := strings.TrimSpace(query.Get("limit"))
+	if query.Has("limit") {
+		limit, err := strconv.Atoi(limitRaw)
+		if err != nil || limit <= 0 || limit > restapi.MaxLimit {
+			return restapi.PaginationParams{}, errors.New("limit must be an integer between 1 and 100")
+		}
+		pagination.Limit = limit
+	}
+	pageRaw := strings.TrimSpace(query.Get("page"))
+	if !query.Has("page") {
+		pagination.Offset = 0
+		return pagination, nil
+	}
+
+	page, err := strconv.Atoi(pageRaw)
+	if err != nil || page <= 0 {
+		return restapi.PaginationParams{}, errors.New("page must be a positive integer")
+	}
+	if page-1 > math.MaxInt/pagination.Limit {
+		return restapi.PaginationParams{}, errors.New("page is too large")
+	}
+	pagination.Page = page
+	pagination.Offset = (page - 1) * pagination.Limit
+	return pagination, nil
+}
 
 type batchItemLinksResponse struct {
 	ItemID          int               `json:"item_id"`
@@ -216,6 +256,49 @@ func (h *LinkHandler) GetLinksBatch(w http.ResponseWriter, r *http.Request) {
 		response = append(response, entry)
 	}
 	h.RespondPaginated(w, response, pagination, total)
+}
+
+// ListWorkspaceItemLinks handles GET /rest/api/v1/links?workspace_id={id}.
+//
+// @Summary      List a workspace's direct work-item links
+// @Description  Returns a paginated, ID-ordered dependency graph for one workspace. Only non-custom-field item-to-item links with both endpoints in that workspace are returned. Cross-workspace and non-item links are excluded so link metadata from another workspace or permission domain cannot leak.
+// @Tags         links, workspaces
+// @Produce      json
+// @Security     BearerAuth
+// @Param        workspace_id  query int  true   "Workspace ID"
+// @Param        page   query int  false  "Page number (1-based)" minimum(1)
+// @Param        limit  query int  false  "Links per page" minimum(1) maximum(100)
+// @Success      200  {object}  handlers.PaginatedResponse{data=[]models.ItemLink}
+// @Failure      400  {object}  handlers.ErrorResponse  "Invalid workspace ID or pagination"
+// @Failure      401  {object}  handlers.ErrorResponse
+// @Failure      403  {object}  handlers.ErrorResponse  "Token lacks the items:read scope"
+// @Failure      404  {object}  handlers.ErrorResponse  "Workspace not found or not visible to caller"
+// @Failure      500  {object}  handlers.ErrorResponse
+// @Router       /links [get]
+func (h *LinkHandler) ListWorkspaceItemLinks(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.RequireAuth(w, r)
+	if !ok {
+		return
+	}
+	workspaceID, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("workspace_id")))
+	if err != nil || workspaceID <= 0 {
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "workspace_id must be a positive integer"))
+		return
+	}
+	pagination, err := parseWorkspaceLinkPagination(r)
+	if err != nil {
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, err.Error()))
+		return
+	}
+
+	links, total, err := h.svc.ListWorkspaceItemLinksWithChecks(
+		r.Context(), user.ID, workspaceID, pagination.Limit, pagination.Offset,
+	)
+	if err != nil {
+		h.respondLinkServiceError(w, r, "workspace", err)
+		return
+	}
+	h.RespondPaginated(w, links, pagination, total)
 }
 
 // CreateLink handles POST /rest/api/v1/links
