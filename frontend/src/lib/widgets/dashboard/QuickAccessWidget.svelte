@@ -15,6 +15,12 @@
   function go(workspace) {
     navigate(`/workspaces/${workspace.id}`);
   }
+
+  function createWorkspace() {
+    window.dispatchEvent(new CustomEvent('show-create-modal', {
+      detail: { type: 'workspace' },
+    }));
+  }
 </script>
 
 {#if workspaces.length === 0}
@@ -25,7 +31,7 @@
       <button
         class="mt-3 inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded"
         style="color: var(--ds-link);"
-        onclick={() => navigate('/workspaces/new')}
+        onclick={createWorkspace}
       >
         <Plus class="w-3.5 h-3.5" /> {t('dashboard.states.createWorkspace')}
       </button>
