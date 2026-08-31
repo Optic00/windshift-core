@@ -151,7 +151,7 @@
     <a
       href="/"
       onclick={closePopoverSurface}
-      class="flex items-center {$uiStore.navExpanded ? 'px-4' : 'justify-center'} w-full h-10 mb-2 hover:opacity-80 transition-opacity cursor-pointer"
+      class="flex items-center justify-start px-4 w-full h-10 mb-2 hover:opacity-80 transition-opacity cursor-pointer"
     >
       <img src="/windshift-3.svg" alt="Windshift" class="w-8 h-8 flex-shrink-0" />
       {#if $uiStore.navExpanded}
@@ -163,18 +163,18 @@
 
 {#snippet sidebarContent()}
   <!-- Main Navigation -->
-  <div class="flex flex-col {$uiStore.navExpanded ? 'items-stretch px-2.5' : 'items-center'} space-y-1 py-4">
+  <div class="flex flex-col items-stretch px-2.5 space-y-1 py-4">
 
     <!-- Workspaces -->
     <Tooltip content={t('nav.workspaces')} placement="right" disabled={$uiStore.navExpanded}>
-      <div class="{$uiStore.navExpanded ? 'w-full' : ''}">
+      <div class="w-full">
         <DropdownMenu
           triggerIcon={IconGridDots}
           triggerIconClass="w-5 h-5"
           triggerGap="gap-3"
           triggerText={$uiStore.navExpanded ? t('nav.workspaces') : ''}
           triggerLabel={t('nav.workspaces')}
-          triggerClass="{$uiStore.navExpanded ? 'w-full px-3' : 'w-10'} h-10 rounded flex items-center {$uiStore.navExpanded ? '' : 'justify-center'} cursor-pointer nav-button nav-button-emphasized {isWorkspaceRoute($currentRoute.view) || activeSurface === 'workspaces' ? 'nav-button-selected' : ''} {!$workspacesStore.loaded ? 'opacity-50 cursor-wait' : ''}"
+          triggerClass="w-full px-3 h-10 rounded flex items-center justify-start cursor-pointer nav-button nav-button-emphasized {isWorkspaceRoute($currentRoute.view) || activeSurface === 'workspaces' ? 'nav-button-selected' : ''} {!$workspacesStore.loaded ? 'opacity-50 cursor-wait' : ''}"
           triggerTestid="workspaces-dropdown-trigger"
           items={workspacesDropdownItems}
           maxWidth="max-w-xs"
@@ -251,11 +251,11 @@
 
 {#snippet sidebarFooter()}
   <!-- Bottom Section -->
-  <div class="flex flex-col {$uiStore.navExpanded ? 'items-stretch px-3' : 'items-center'} space-y-1 pt-2">
+  <div class="flex flex-col items-stretch px-2.5 space-y-1 pt-2">
     <!-- Nav Toggle Button -->
     <button
       onclick={() => uiStore.toggleNavExpanded()}
-      class="flex items-center {$uiStore.navExpanded ? 'w-full px-3' : 'w-10 justify-center'} h-10 mb-2 rounded cursor-pointer nav-button"
+      class="flex items-center justify-start w-full px-3 h-10 mb-2 rounded cursor-pointer nav-button"
       aria-label={$uiStore.navExpanded ? t('nav.collapse') : t('nav.expand')}
     >
       {#if $uiStore.navExpanded}
@@ -302,7 +302,7 @@
 
 <ScrollableSidebar
   as="nav"
-  class="main-sidebar {$uiStore.navExpanded ? 'w-[200px]' : 'w-16'} shadow-lg border-r py-4 fixed inset-y-0 z-40 themed-nav transition-all duration-200"
+  class="main-sidebar {$uiStore.navExpanded ? 'w-[200px]' : 'w-16'} shadow-lg border-r py-4 fixed inset-y-0 z-40 themed-nav transition-[width] duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none"
   style="border-color: var(--ds-border);"
   aria-label={t('aria.mainNavigation')}
   header={sidebarHeader}

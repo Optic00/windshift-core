@@ -297,7 +297,7 @@
   <Button class="sr-only" onclick={toggleTerminal} hotkeyConfig={{ key: 'Mod+`' }}>Toggle Terminal</Button>
 
   <div
-    class="authenticated-content flex flex-1 min-h-0 overflow-hidden transition-[margin] duration-200 ease-out"
+    class="authenticated-content flex flex-1 min-h-0 overflow-hidden transition-[margin] duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none"
     class:has-mobile-context-nav={showWorkspaceNav}
     style={!$uiStore.reviewFullscreen ? `margin-left: ${$uiStore.navExpanded ? '200px' : '64px'}` : ''}
   >
@@ -375,7 +375,7 @@
   </div>
 
   <footer
-    class="authenticated-footer flex-shrink-0 transition-[margin] duration-200 ease-out"
+    class="authenticated-footer flex-shrink-0 transition-[margin] duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none"
     style={!$uiStore.reviewFullscreen
       ? `margin-left: ${$uiStore.navExpanded ? '200px' : '64px'}`
       : ''}

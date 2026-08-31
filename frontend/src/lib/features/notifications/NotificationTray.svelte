@@ -93,7 +93,7 @@
   <!-- Notification Bell Button -->
   <button
     use:melt={$trigger}
-    class="{expanded ? 'w-full px-3' : 'w-10 justify-center'} h-10 rounded flex items-center cursor-pointer nav-button {$open ? 'nav-button-selected' : ''}"
+    class="w-full px-3 h-10 rounded flex items-center justify-start cursor-pointer nav-button {$open ? 'nav-button-selected' : ''}"
     title={t('notifications.title')}
     aria-label={t('notifications.title')}
   >
