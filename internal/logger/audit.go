@@ -555,6 +555,7 @@ const (
 	ActionZammadTicketUpdate        = "zammad_ticket.update"
 	ActionZammadTicketUnlink        = "zammad_ticket.unlink"
 	ActionZammadTicketRefresh       = "zammad_ticket.refresh"
+	ActionZammadTicketRefreshAll    = "zammad_ticket.refresh_all"
 
 	// Issue sync configuration
 	ActionIssueSyncConfigCreate = "issue_sync_config.create"

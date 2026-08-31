@@ -4,6 +4,7 @@ export default { zammad: {
   connectionCreated: '已创建 Zammad 连接', connectionUpdated: '已更新 Zammad 连接', saveConnectionFailed: '无法保存 Zammad 连接',
   connectionDeleted: '已删除 Zammad 连接', deleteConnection: '删除 Zammad 连接', deleteConnectionConfirm: '删除“{name}”？必须先取消所有现有工单关联。',
   deleteConnectionFailed: '无法删除 Zammad 连接', testConnection: '测试连接', connectionTestSucceeded: 'Zammad 连接测试成功', connectionTestFailed: 'Zammad 连接失败',
+  refreshAllTickets: '同步所有工单', refreshAllTicketsStarted: '已启动系统范围的 Zammad 同步', refreshAllTicketsAlreadyRunning: '系统范围的 Zammad 同步已在运行', refreshAllTicketsFailed: '无法在系统范围内同步 Zammad 工单',
   metadataSummary: '可用群组 {groups} 个，工单状态 {states} 个', slug: '短标识', baseUrl: '基础网址', apiToken: 'API 令牌',
   apiTokenDescription: '对此系统连接使用 Zammad API 令牌。', apiTokenAvailable: 'API 令牌可用', apiTokenMissing: '缺少 API 令牌',
   authMethod: '认证方式', oauth: 'OAuth', oauthDescription: '使用 Zammad OAuth 授权此连接。', oauthClientId: 'OAuth 客户端 ID', oauthClientSecret: 'OAuth 客户端密钥',

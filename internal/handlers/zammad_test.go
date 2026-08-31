@@ -126,6 +126,24 @@ func TestZammadHandlerReturnsStructuredValidationAndNotFoundErrors(t *testing.T)
 	}
 }
 
+func TestZammadHandlerRefreshAllTicketsQueuesBackgroundRun(t *testing.T) {
+	handler, _, user, _ := newZammadHandlerTest(t)
+	handler.SetSyncAllTrigger(func() bool { return true })
+	recorder := httptest.NewRecorder()
+	request := authenticatedZammadRequest(http.MethodPost, "/api/admin/zammad-ticket-links/refresh", nil, user)
+	handler.RefreshAllTickets(recorder, request)
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("unexpected status: %d %s", recorder.Code, recorder.Body.String())
+	}
+	var result map[string]bool
+	if err := json.Unmarshal(recorder.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if !result["started"] {
+		t.Fatalf("unexpected refresh result: %#v", result)
+	}
+}
+
 func TestZammadWorkspaceOwnersRequireItemEditPermission(t *testing.T) {
 	handler, db, user, workspaceID := newZammadHandlerTest(t)
 	if _, err := db.ExecWrite(`INSERT INTO user_workspace_roles (user_id, workspace_id, role_id, granted_by)

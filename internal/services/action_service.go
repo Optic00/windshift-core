@@ -2835,19 +2835,9 @@ func matchURLComponent(component, pattern string) bool {
 	return err == nil && matched
 }
 
-// SafeHTTPResponse is the bounded response returned by DoSafeHTTPRequest.
-// Headers are intentionally omitted so callers cannot accidentally persist or
-// expose authentication-adjacent response metadata.
-type SafeHTTPResponse struct {
-	StatusCode int
-	Body       []byte
-}
-
-// DoSafeHTTPRequest is the shared outbound HTTP boundary for integrations and
-// action nodes. It enforces the URL allowlist on every redirect, blocks
-// loopback/private/link-local destinations, applies a deadline, and caps the
-// response body at 1 MiB.
-func DoSafeHTTPRequest(ctx context.Context, method, targetURL, body string, headers, defaultHeaders map[string]string, timeoutSecs int, allowedPatterns []string) (*SafeHTTPResponse, error) {
+// doHTTPRequest enforces the URL allowlist on every redirect and blocks
+// loopback, private, and link-local destinations to prevent SSRF and rebinding.
+func doHTTPRequest(ctx context.Context, method, targetURL, body string, headers, defaultHeaders map[string]string, timeoutSecs int, allowedPatterns []string) (string, error) {
 	if timeoutSecs <= 0 {
 		timeoutSecs = 30
 	}
@@ -2862,7 +2852,7 @@ func DoSafeHTTPRequest(ctx context.Context, method, targetURL, body string, head
 
 	req, err := http.NewRequestWithContext(httpCtx, method, targetURL, bodyReader)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request for %q", redactHTTPURLForDiagnostics(targetURL))
+		return "", fmt.Errorf("failed to create request for %q", redactHTTPURLForDiagnostics(targetURL))
 	}
 
 	// Apply default headers first, then override with specific headers
@@ -2876,31 +2866,18 @@ func DoSafeHTTPRequest(ctx context.Context, method, targetURL, body string, head
 	client := newSSRFSafeClient(time.Duration(timeoutSecs)*time.Second, allowedPatterns)
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("request failed: %s", redactHTTPRequestError(err))
+		return "", fmt.Errorf("request failed: %s", redactHTTPRequestError(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	const maxResponseBody = 1 << 20
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody+1))
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1MB limit
 	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-	if len(respBody) > maxResponseBody {
-		return nil, fmt.Errorf("response body exceeds 1 MiB limit")
-	}
-
-	return &SafeHTTPResponse{StatusCode: resp.StatusCode, Body: respBody}, nil
-}
-
-func doHTTPRequest(ctx context.Context, method, targetURL, body string, headers, defaultHeaders map[string]string, timeoutSecs int, allowedPatterns []string) (string, error) {
-	resp, err := DoSafeHTTPRequest(ctx, method, targetURL, body, headers, defaultHeaders, timeoutSecs, allowedPatterns)
-	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to read response: %w", err)
 	}
 
 	result := map[string]any{
 		"status_code": resp.StatusCode,
-		"body":        string(resp.Body),
+		"body":        string(respBody),
 	}
 	resultJSON, _ := json.Marshal(result)
 	return string(resultJSON), nil

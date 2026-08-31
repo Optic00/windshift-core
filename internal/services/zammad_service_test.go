@@ -179,6 +179,16 @@ func (allowZammadPermission) HasWorkspacePermission(_, _ int, _ string) (bool, e
 	return true, nil
 }
 
+type recordingItemChangePublisher struct {
+	itemID int
+	kind   ItemChangeKind
+}
+
+func (p *recordingItemChangePublisher) PublishItemChange(itemID int, kind ItemChangeKind) {
+	p.itemID = itemID
+	p.kind = kind
+}
+
 type fakeZammadWorkflow struct {
 	db            database.Database
 	writes        int
@@ -2234,6 +2244,109 @@ func TestZammadDueSyncUsesAgeThreshold(t *testing.T) {
 	requests, _ := f.transport.counts()
 	if requests != 2 {
 		t.Fatalf("expected ticket and active-group refresh, got %d transport requests", requests)
+	}
+}
+
+func TestZammadDueSyncPollsFreshLinkOnNextSchedulerTick(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	if _, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID}); err != nil {
+		t.Fatal(err)
+	}
+	f.transport.resetRequests()
+	if err := f.service.SyncDue(context.Background(), 10); err != nil {
+		t.Fatal(err)
+	}
+	requests, _ := f.transport.counts()
+	if requests != 2 {
+		t.Fatalf("fresh link missed the next scheduler tick: requests=%d", requests)
+	}
+}
+
+func TestZammadSyncAllTicketLinksOverridesRetryDelay(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	link, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecWrite("UPDATE zammad_ticket_links SET next_attempt_at = ? WHERE id = ?", time.Now().Add(time.Hour), link.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.transport.resetRequests()
+	summary, err := f.service.SyncAllTicketLinks(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Selected != 1 || summary.Succeeded != 1 || summary.Failed != 0 || summary.Skipped != 0 {
+		t.Fatalf("unexpected system refresh summary: %#v", summary)
+	}
+	requests, _ := f.transport.counts()
+	if requests != 2 {
+		t.Fatalf("system refresh did not override the retry delay: requests=%d", requests)
+	}
+}
+
+func TestZammadSyncAllTicketLinksReportsAlreadyClaimedLinks(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	link, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := f.service.repo.ClaimSync(link.ID, "other-worker", time.Now().Add(time.Minute))
+	if err != nil || !claimed {
+		t.Fatalf("failed to create competing claim: claimed=%v err=%v", claimed, err)
+	}
+	f.transport.resetRequests()
+	summary, err := f.service.SyncAllTicketLinks(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Selected != 1 || summary.Succeeded != 0 || summary.Failed != 0 || summary.Skipped != 1 {
+		t.Fatalf("claimed link disappeared from system refresh summary: %#v", summary)
+	}
+	requests, _ := f.transport.counts()
+	if requests != 0 {
+		t.Fatalf("claimed link was refreshed concurrently: requests=%d", requests)
+	}
+}
+
+func TestZammadTicketSyncPublishesLivePanelUpdate(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	link, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	publisher := &recordingItemChangePublisher{}
+	SetItemChangePublisher(publisher)
+	t.Cleanup(func() { SetItemChangePublisher(nil) })
+
+	if _, err := f.service.SyncTicketLink(context.Background(), link.ID); err != nil {
+		t.Fatal(err)
+	}
+	if publisher.itemID != f.item1 || publisher.kind != ItemChangeZammad {
+		t.Fatalf("unexpected live-update event: item=%d kind=%q", publisher.itemID, publisher.kind)
+	}
+}
+
+func TestZammadTicketSyncFailurePublishesLivePanelUpdate(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	link, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	publisher := &recordingItemChangePublisher{}
+	SetItemChangePublisher(publisher)
+	t.Cleanup(func() { SetItemChangePublisher(nil) })
+	f.transport.getStatus = http.StatusBadGateway
+
+	if _, err := f.service.SyncTicketLink(context.Background(), link.ID); err == nil {
+		t.Fatal("expected upstream refresh failure")
+	}
+	if publisher.itemID != f.item1 || publisher.kind != ItemChangeZammad {
+		t.Fatalf("failure did not publish a live-update event: item=%d kind=%q", publisher.itemID, publisher.kind)
+	}
+	stored, err := f.service.GetTicketLink(link.ID)
+	if err != nil || stored.LastError == "" || stored.SyncState != models.ZammadSyncFailed {
+		t.Fatalf("failure state was not persisted: link=%#v err=%v", stored, err)
 	}
 }
 

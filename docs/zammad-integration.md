@@ -13,6 +13,8 @@ Admin connection endpoints are `GET|POST /api/admin/zammad-connections`, `GET|PU
 They list, create, inspect, update, delete, test, and authorize connections without returning any token or client secret.
 The OAuth callback is `GET /api/integrations/zammad/oauth/callback`.
 The explicit administrator retry is `POST /api/admin/zammad-ticket-links/{linkId}/retry-create`.
+`POST /api/admin/zammad-ticket-links/refresh` queues an asynchronous synchronization of every complete ticket link on enabled, authorized connections.
+Concurrent system-wide refresh requests are coalesced into the already queued or running job.
 
 Workspace and item routes are `GET /api/workspaces/{workspaceId}/zammad-connections`, `GET /api/workspaces/{workspaceId}/zammad-connections/{id}/metadata`, and `GET /api/workspaces/{workspaceId}/zammad-connections/{id}/owners?group_id={groupId}`.
 Ticket routes are `GET /api/items/{id}/zammad-links`, `POST /api/items/{id}/zammad-tickets`, `POST /api/items/{id}/zammad-ticket-links`, `PUT /api/zammad-ticket-links/{linkId}`, `DELETE /api/zammad-ticket-links/{linkId}`, and `POST /api/zammad-ticket-links/{linkId}/refresh`.
@@ -75,7 +77,8 @@ Deleting a connection is rejected while ticket links still exist, so each link m
 ## Refresh, backoff, and recovery
 
 `POST /api/zammad-ticket-links/{linkId}/refresh` performs an immediate remote read and updates the stored snapshot.
-A background scheduler also polls linked tickets approximately every two minutes.
+A background scheduler also polls linked tickets approximately every two minutes after the previous run completes.
+Successful refreshes and persisted synchronization failures publish an item event so an open item panel reloads its Zammad snapshot without a page refresh.
 Failed synchronization records a sanitized error and schedules another attempt after a retry delay.
 Fair ordering by the most recent attempt prevents repeatedly failing links from starving healthy links.
 Remote response bodies and credentials are never exposed to clients.

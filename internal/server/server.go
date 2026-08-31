@@ -1016,6 +1016,7 @@ func (s *Server) initialize() error {
 	zammadHandler.SetOAuthBaseURL(baseURL)
 	s.zammadSyncScheduler = scheduler.NewZammadSyncScheduler(zammadService)
 	s.zammadSyncScheduler.Start()
+	zammadHandler.SetSyncAllTrigger(s.zammadSyncScheduler.TriggerSyncAll)
 
 	// Standard profiles execute in-process through the canonical aitools
 	// registry. Wiring is intentionally late because their final comments and

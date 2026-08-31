@@ -952,6 +952,37 @@ func (r *ZammadRepository) ListDueTicketLinks(before time.Time, limit int) ([]*m
 	return links, rows.Err()
 }
 
+// ListSyncableTicketLinks returns one stable snapshot of every complete ticket
+// link covered by an enabled, authorized connection. Unlike the scheduler's
+// due list, an explicit refresh ignores age, retry-delay, and claim gates so
+// concurrent work can be reported as skipped instead of disappearing.
+func (r *ZammadRepository) ListSyncableTicketLinks() ([]*models.ZammadTicketLink, error) {
+	rows, err := r.db.Query(`SELECT ` + zammadTicketLinkColumns + `
+		FROM zammad_ticket_links ztl
+		JOIN integration_providers ip ON ip.id = ztl.provider_id
+		JOIN zammad_connections zc ON zc.provider_id = ztl.provider_id
+		WHERE ip.enabled = true AND ztl.ticket_id IS NOT NULL
+		  AND ztl.item_integration_link_id IS NOT NULL
+		  AND (zc.auth_method != 'oauth' OR EXISTS (
+			SELECT 1 FROM zammad_oauth_tokens zot
+			WHERE zot.provider_id = zc.provider_id AND zot.reauthorization_required = false
+		  ))
+		ORDER BY COALESCE(ztl.last_attempt_at, ztl.last_synced_at, ztl.created_at) ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	links := []*models.ZammadTicketLink{}
+	for rows.Next() {
+		link, err := scanZammadTicketLink(rows)
+		if err != nil {
+			return nil, err
+		}
+		links = append(links, link)
+	}
+	return links, rows.Err()
+}
+
 func (r *ZammadRepository) ClaimSync(id, syncOwner string, until time.Time) (bool, error) {
 	if syncOwner == "" {
 		return false, ErrInvalidInput
