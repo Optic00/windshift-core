@@ -40,6 +40,17 @@
   let setupCleanups = [];
   let setupTimeout;
 
+  function isDefaultSystemScreen(screen) {
+    return Boolean(screen?.builtin_key);
+  }
+
+  function getScreenDisplayValue(screen, field) {
+    if (isDefaultSystemScreen(screen)) {
+      return t(`screensPage.defaults.default.${field}`);
+    }
+    return screen?.[field] || '';
+  }
+
   onMount(async () => {
     await screenEditorStore.loadScreens();
   });
@@ -204,7 +215,7 @@
 
     const confirmed = await confirm({
       title: t('common.delete'),
-      message: t('dialogs.confirmations.deleteScreen', { name: screen.name }),
+      message: t('dialogs.confirmations.deleteScreen', { name: getScreenDisplayValue(screen, 'name') }),
       confirmText: t('common.delete'),
       cancelText: t('common.cancel'),
       variant: 'danger'
@@ -223,7 +234,8 @@
   }
 
   function getFieldWidthLabel(width) {
-    return screenEditorStore.getFieldWidthLabel(width);
+    const key = ['full', 'half', 'third', 'quarter'].includes(width) ? width : null;
+    return key ? t(`screensPage.fieldWidths.${key}`) : width;
   }
 
   function getFieldDisplayName(field) {
@@ -364,9 +376,9 @@
     >
       {#snippet name(screen)}
         <div>
-          <div style="color: var(--ds-text);">{screen.name}</div>
-          {#if screen.description}
-            <div class="text-sm mt-1" style="color: var(--ds-text-subtle);">{screen.description}</div>
+          <div style="color: var(--ds-text);">{getScreenDisplayValue(screen, 'name')}</div>
+          {#if getScreenDisplayValue(screen, 'description')}
+            <div class="text-sm mt-1" style="color: var(--ds-text-subtle);">{getScreenDisplayValue(screen, 'description')}</div>
           {/if}
         </div>
       {/snippet}
@@ -375,7 +387,7 @@
     <PageHeader
       icon={Settings}
       title={t('screensPage.configureFields')}
-      subtitle={t('screensPage.screenSubtitle', { name: editingScreenFields?.name })}
+      subtitle={t('screensPage.screenSubtitle', { name: getScreenDisplayValue(editingScreenFields, 'name') })}
     >
       {#snippet actions()}
         <div class="flex gap-3">

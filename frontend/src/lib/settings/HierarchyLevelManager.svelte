@@ -15,6 +15,7 @@
   import Textarea from '../components/Textarea.svelte';
   import { confirm } from '../composables/useConfirm.js';
   import { toHotkeyString } from '../utils/keyboardShortcuts.js';
+  import { builtinLocaleKey } from '../utils/systemLabels.js';
 
   let hierarchyLevels = $state([]);
   let isLoading = $state(true);
@@ -29,6 +30,13 @@
     description: ''
   });
 
+  function getDisplayValue(hierarchyLevel, field) {
+    const key = builtinLocaleKey(hierarchyLevel);
+    return key
+      ? t(`settings.hierarchyLevels.defaults.${key}.${field}`)
+      : hierarchyLevel[field];
+  }
+
 
   onMount(() => {
     loadHierarchyLevels();
@@ -41,7 +49,7 @@
       const data = await api.hierarchyLevels.getAll();
       hierarchyLevels = data.sort((a, b) => a.level - b.level);
     } catch (err) {
-      error = 'Failed to load hierarchy levels: ' + err.message;
+      error = t('settings.hierarchyLevels.failedToLoad');
     } finally {
       isLoading = false;
     }
@@ -91,14 +99,14 @@
       cancelEdit();
       error = null;
     } catch (err) {
-      error = err.message;
+      error = t('settings.hierarchyLevels.failedToSave');
     }
   }
 
   async function deleteHierarchyLevel(id, name) {
     const confirmed = await confirm({
       title: t('common.delete'),
-      message: `${t('settings.hierarchyLevels.confirmDelete')} "${name}"?`,
+      message: t('settings.hierarchyLevels.confirmDelete', { name }),
       confirmText: t('common.delete'),
       cancelText: t('common.cancel'),
       variant: 'danger',
@@ -111,7 +119,10 @@
       await api.hierarchyLevels.delete(id);
       await loadHierarchyLevels();
     } catch (err) {
-      errorToast(err.message || 'Failed to delete hierarchy level', 'Cannot Delete Hierarchy Level');
+      errorToast(
+        t('settings.hierarchyLevels.deleteFailed'),
+        t('settings.hierarchyLevels.cannotDeleteTitle')
+      );
     }
   }
 
@@ -124,12 +135,15 @@
     // Check if the new level already exists
     const conflictLevel = hierarchyLevels.find(h => h.level === newLevel);
     if (conflictLevel) {
-      error = `Level ${newLevel} is already occupied by "${conflictLevel.name}"`;
+      error = t('settings.hierarchyLevels.levelOccupied', {
+        level: newLevel,
+        name: getDisplayValue(conflictLevel, 'name')
+      });
       return;
     }
 
     if (newLevel < 0) {
-      error = 'Cannot move to negative level';
+      error = t('settings.hierarchyLevels.negativeLevel');
       return;
     }
 
@@ -141,19 +155,8 @@
       await loadHierarchyLevels();
       error = null;
     } catch (err) {
-      error = err.message;
+      error = t('settings.hierarchyLevels.failedToSave');
     }
-  }
-
-  function getLevelDescription(level) {
-    const descriptions = {
-      0: 'Top-level strategic work',
-      1: 'Large features or capabilities',
-      2: 'User stories and requirements',
-      3: 'Development tasks and bugs',
-      4: 'Sub-tasks and smaller work items'
-    };
-    return descriptions[level] || 'Work items at this level';
   }
 
   // Column definitions for DataTable
@@ -165,11 +168,13 @@
     },
     {
       key: 'name',
-      label: t('settings.hierarchyLevels.name')
+      label: t('settings.hierarchyLevels.name'),
+      render: hierarchyLevel => getDisplayValue(hierarchyLevel, 'name')
     },
     {
       key: 'description',
-      label: t('settings.hierarchyLevels.description')
+      label: t('settings.hierarchyLevels.description'),
+      render: hierarchyLevel => getDisplayValue(hierarchyLevel, 'description')
     },
     {
       key: 'actions',
@@ -211,7 +216,10 @@
         title: t('common.delete'),
         color: 'var(--ds-text-danger)',
         hoverClass: 'hover-danger',
-        onClick: () => deleteHierarchyLevel(hierarchyLevel.id, hierarchyLevel.name)
+        onClick: () => deleteHierarchyLevel(
+          hierarchyLevel.id,
+          getDisplayValue(hierarchyLevel, 'name')
+        )
       }
     ];
   }
@@ -244,7 +252,7 @@
   columns={hierarchyColumns}
   data={hierarchyLevels}
   keyField="id"
-  emptyMessage="No hierarchy levels configured yet."
+  emptyMessage={t('settings.hierarchyLevels.empty')}
   emptyIcon={Circle}
   actionItems={buildHierarchyDropdownItems}
 />
@@ -252,7 +260,10 @@
 <Modal isOpen={showCreateForm} onclose={cancelEdit} maxWidth="max-w-lg" onSubmit={saveHierarchyLevel}>
   {#snippet children(submitHint)}
   <!-- Modal header -->
-  <ModalHeader title="{editingId ? t('common.edit') : t('common.create')} {t('settings.hierarchyLevels.level')}" showCloseButton={false} />
+  <ModalHeader
+    title={editingId ? t('settings.hierarchyLevels.editTitle') : t('settings.hierarchyLevels.createTitle')}
+    showCloseButton={false}
+  />
 
   <!-- Modal content -->
   <div class="px-6 py-4">
@@ -267,7 +278,7 @@
           bind:value={formData.level}
           required
         />
-        <small>Numeric hierarchy level (0 = highest)</small>
+        <small>{t('settings.hierarchyLevels.numericHint')}</small>
       </div>
 
       <div class="form-group">
@@ -275,7 +286,7 @@
         <Input
           type="text"
           id="name"
-          placeholder="e.g. Initiative, Epic, Story, Task"
+          placeholder={t('settings.hierarchyLevels.namePlaceholder')}
           bind:value={formData.name}
           required
         />
@@ -285,7 +296,7 @@
         <label for="description">{t('settings.hierarchyLevels.description')}</label>
         <Textarea
           id="description"
-          placeholder="Brief description of this hierarchy level"
+          placeholder={t('settings.hierarchyLevels.descriptionPlaceholder')}
           bind:value={formData.description}
           rows={3}
         />

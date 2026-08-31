@@ -26,7 +26,7 @@
     Search,
   };
 
-  const categories = [
+  let categories = $derived([
     {
       id: dashboardWidgetCategories.ACTIVITY,
       nameKey: 'dashboard.customization.activity.name',
@@ -45,7 +45,7 @@
       icon: Compass,
       descriptionKey: 'dashboard.customization.navigation.description',
     },
-  ];
+  ]);
 
   let currentWidgets = $derived(getDashboardWidgetsByCategory(activeCategory));
   let currentCategory = $derived(categories.find((category) => category.id === activeCategory));

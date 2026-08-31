@@ -16,6 +16,7 @@
   import { toHotkeyString } from '../utils/keyboardShortcuts.js';
   import { t } from '../stores/i18n.svelte.js';
   import { confirm } from '../composables/useConfirm.js';
+  import { builtinLocaleKey } from '../utils/systemLabels.js';
 
   // State management
   let themes = $state([]);
@@ -24,6 +25,11 @@
   let error = $state(null);
   let showCreateForm = $state(false);
   let editingTheme = $state(null);
+
+  function getThemeDisplayValue(theme, field) {
+    const key = builtinLocaleKey(theme);
+    return key ? t(`settings.themeManager.defaults.${key}.${field}`) : (theme?.[field] || '');
+  }
 
   // Form data
   let newTheme = $state({
@@ -47,7 +53,7 @@
       error = null;
       themes = await api.themes.getAll();
     } catch (err) {
-      error = 'Failed to load themes: ' + err.message;
+      error = t('settings.themeManager.failedToLoad');
       console.error('Error loading themes:', err);
     } finally {
       loading = false;
@@ -79,7 +85,7 @@
       };
       showCreateForm = false;
     } catch (err) {
-      error = 'Failed to create theme: ' + err.message;
+      error = t('settings.themeManager.failedToCreate');
       console.error('Error creating theme:', err);
     }
   }
@@ -96,7 +102,7 @@
         activeTheme = updated;
       }
     } catch (err) {
-      error = 'Failed to update theme: ' + err.message;
+      error = t('settings.themeManager.failedToUpdate');
       console.error('Error updating theme:', err);
     }
   }
@@ -116,7 +122,7 @@
       await api.themes.delete(id);
       themes = themes.filter(t => t.id !== id);
     } catch (err) {
-      error = 'Failed to delete theme: ' + err.message;
+      error = t('settings.themeManager.failedToDelete');
       console.error('Error deleting theme:', err);
     }
   }
@@ -133,7 +139,7 @@
       // Apply theme immediately
       applyTheme(activeTheme);
     } catch (err) {
-      error = 'Failed to activate theme: ' + err.message;
+      error = t('settings.themeManager.failedToActivate');
       console.error('Error activating theme:', err);
     }
   }
@@ -203,7 +209,7 @@
   {#if activeTheme}
     <div class="mb-6 flex items-center space-x-2 text-sm" style="color: var(--ds-text-subtle);">
       <Palette class="w-4 h-4" />
-      <span>{t('common.active')}: <strong style="color: var(--ds-text);">{activeTheme.name}</strong></span>
+      <span>{t('common.active')}: <strong style="color: var(--ds-text);">{getThemeDisplayValue(activeTheme, 'name')}</strong></span>
     </div>
   {/if}
 
@@ -253,12 +259,12 @@
         </h4>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <span class="text-xs font-medium" style="color: var(--ds-text);">{t('common.color')}</span>
+            <span class="text-xs font-medium" style="color: var(--ds-text);">{t('settings.themeManager.background')}</span>
             <IconSelector bind:selectedColor={newTheme.nav_background_color_light} colorOnly compact />
           </div>
 
           <div>
-            <span class="text-xs font-medium" style="color: var(--ds-text);">{t('common.color')}</span>
+            <span class="text-xs font-medium" style="color: var(--ds-text);">{t('settings.themeManager.text')}</span>
             <IconSelector bind:selectedColor={newTheme.nav_text_color_light} colorOnly compact />
           </div>
         </div>
@@ -272,12 +278,12 @@
         </h4>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <span class="text-xs font-medium" style="color: var(--ds-text);">{t('common.color')}</span>
+            <span class="text-xs font-medium" style="color: var(--ds-text);">{t('settings.themeManager.background')}</span>
             <IconSelector bind:selectedColor={newTheme.nav_background_color_dark} colorOnly compact />
           </div>
 
           <div>
-            <span class="text-xs font-medium" style="color: var(--ds-text);">{t('common.color')}</span>
+            <span class="text-xs font-medium" style="color: var(--ds-text);">{t('settings.themeManager.text')}</span>
             <IconSelector bind:selectedColor={newTheme.nav_text_color_dark} colorOnly compact />
           </div>
         </div>
@@ -310,7 +316,7 @@
             >
               <div class="flex items-center space-x-2">
                 <Palette class="w-4 h-4" />
-                <span class="font-medium text-sm">Light</span>
+                <span class="font-medium text-sm">{t('settings.lightMode')}</span>
               </div>
             </div>
             <div
@@ -319,7 +325,7 @@
             >
               <div class="flex items-center space-x-2">
                 <Palette class="w-4 h-4" />
-                <span class="font-medium text-sm">Dark</span>
+                <span class="font-medium text-sm">{t('settings.darkMode')}</span>
               </div>
             </div>
           </div>
@@ -330,7 +336,7 @@
               <!-- Edit Form -->
               <form onsubmit={handleEditSubmit} class="space-y-4">
                 <div>
-                  <Label for="edit-theme-name" color="default" class="mb-1">Name</Label>
+                  <Label for="edit-theme-name" color="default" class="mb-1">{t('common.name')}</Label>
                   <Input
                     type="text"
                     id="edit-theme-name"
@@ -341,7 +347,7 @@
                 </div>
 
                 <div>
-                  <Label for="edit-theme-description" color="default" class="mb-1">Description</Label>
+                  <Label for="edit-theme-description" color="default" class="mb-1">{t('common.description')}</Label>
                   <Input
                     type="text"
                     id="edit-theme-description"
@@ -354,15 +360,15 @@
                 <div class="mb-3">
                   <h5 class="text-xs font-semibold mb-2 flex items-center gap-1" style="color: var(--ds-text-subtle);">
                     <span class="w-2 h-2 rounded-full bg-yellow-400"></span>
-                    Light Mode
+                    {t('settings.lightMode')}
                   </h5>
                   <div class="grid grid-cols-2 gap-3">
                     <div>
-                      <span class="block text-xs mb-1" style="color: var(--ds-text-subtle);">Background</span>
+                      <span class="block text-xs mb-1" style="color: var(--ds-text-subtle);">{t('settings.themeManager.background')}</span>
                       <IconSelector bind:selectedColor={editingTheme.nav_background_color_light} colorOnly compact />
                     </div>
                     <div>
-                      <span class="block text-xs mb-1" style="color: var(--ds-text-subtle);">Text</span>
+                      <span class="block text-xs mb-1" style="color: var(--ds-text-subtle);">{t('settings.themeManager.text')}</span>
                       <IconSelector bind:selectedColor={editingTheme.nav_text_color_light} colorOnly compact />
                     </div>
                   </div>
@@ -372,15 +378,15 @@
                 <div>
                   <h5 class="text-xs font-semibold mb-2 flex items-center gap-1" style="color: var(--ds-text-subtle);">
                     <span class="w-2 h-2 rounded-full bg-gray-700"></span>
-                    Dark Mode
+                    {t('settings.darkMode')}
                   </h5>
                   <div class="grid grid-cols-2 gap-3">
                     <div>
-                      <span class="block text-xs mb-1" style="color: var(--ds-text-subtle);">Background</span>
+                      <span class="block text-xs mb-1" style="color: var(--ds-text-subtle);">{t('settings.themeManager.background')}</span>
                       <IconSelector bind:selectedColor={editingTheme.nav_background_color_dark} colorOnly compact />
                     </div>
                     <div>
-                      <span class="block text-xs mb-1" style="color: var(--ds-text-subtle);">Text</span>
+                      <span class="block text-xs mb-1" style="color: var(--ds-text-subtle);">{t('settings.themeManager.text')}</span>
                       <IconSelector bind:selectedColor={editingTheme.nav_text_color_dark} colorOnly compact />
                     </div>
                   </div>
@@ -411,7 +417,7 @@
               <div class="flex justify-between items-start mb-4">
                 <div>
                   <h3 class="text-lg font-semibold flex items-center space-x-2" style="color: var(--ds-text);">
-                    <span>{theme.name}</span>
+                    <span>{getThemeDisplayValue(theme, 'name')}</span>
                     {#if theme.is_default}
                       <span class="px-2 py-1 text-xs rounded" style="background-color: var(--ds-surface-secondary); color: var(--ds-text-subtle);">{t('common.default')}</span>
                     {/if}
@@ -419,8 +425,8 @@
                       <span class="px-2 py-1 text-xs rounded" style="background-color: var(--ds-surface-success); color: var(--ds-text-success);">{t('common.active')}</span>
                     {/if}
                   </h3>
-                  {#if theme.description}
-                    <p class="text-sm mt-1" style="color: var(--ds-text-subtle);">{theme.description}</p>
+                  {#if getThemeDisplayValue(theme, 'description')}
+                    <p class="text-sm mt-1" style="color: var(--ds-text-subtle);">{getThemeDisplayValue(theme, 'description')}</p>
                   {/if}
                 </div>
               </div>
@@ -430,15 +436,15 @@
                 <div class="text-sm">
                   <h5 class="text-xs font-semibold mb-1 flex items-center gap-1" style="color: var(--ds-text-subtle);">
                     <span class="w-2 h-2 rounded-full bg-yellow-400"></span>
-                    Light
+                    {t('settings.lightMode')}
                   </h5>
                   <div class="space-y-1">
                     <div>
-                      <span style="color: var(--ds-text-subtle);">Bg:</span>
+                      <span style="color: var(--ds-text-subtle);">{t('settings.themeManager.background')}:</span>
                       <span class="font-mono" style="color: var(--ds-text);">{theme.nav_background_color_light}</span>
                     </div>
                     <div>
-                      <span style="color: var(--ds-text-subtle);">Text:</span>
+                      <span style="color: var(--ds-text-subtle);">{t('settings.themeManager.text')}:</span>
                       <span class="font-mono" style="color: var(--ds-text);">{theme.nav_text_color_light}</span>
                     </div>
                   </div>
@@ -447,15 +453,15 @@
                 <div class="text-sm">
                   <h5 class="text-xs font-semibold mb-1 flex items-center gap-1" style="color: var(--ds-text-subtle);">
                     <span class="w-2 h-2 rounded-full bg-gray-700"></span>
-                    Dark
+                    {t('settings.darkMode')}
                   </h5>
                   <div class="space-y-1">
                     <div>
-                      <span style="color: var(--ds-text-subtle);">Bg:</span>
+                      <span style="color: var(--ds-text-subtle);">{t('settings.themeManager.background')}:</span>
                       <span class="font-mono" style="color: var(--ds-text);">{theme.nav_background_color_dark}</span>
                     </div>
                     <div>
-                      <span style="color: var(--ds-text-subtle);">Text:</span>
+                      <span style="color: var(--ds-text-subtle);">{t('settings.themeManager.text')}:</span>
                       <span class="font-mono" style="color: var(--ds-text);">{theme.nav_text_color_dark}</span>
                     </div>
                   </div>

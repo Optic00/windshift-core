@@ -18,12 +18,24 @@
   import { t } from '../stores/i18n.svelte.js';
   import { confirm } from '../composables/useConfirm.js';
   import './settings-form.css';
+  import { builtinLocaleKey } from '../utils/systemLabels.js';
 
   let priorities = $state([]);
   let isLoading = $state(true);
   let error = $state(null);
   let editingId = $state(null);
   let showCreateForm = $state(false);
+
+  function getPriorityDisplayName(priority) {
+    const key = builtinLocaleKey(priority);
+    return key ? t(`priorities.${key}`) : priority.name;
+  }
+
+  function getConfigurationSetDisplayName(name, builtinKey = '') {
+    return builtinKey === 'default'
+      ? t('settings.itemTypes.defaultConfiguration')
+      : name;
+  }
 
   // Form data
   let formData = $state({
@@ -47,7 +59,7 @@
       // Sort by sort_order
       priorities = priorities.sort((a, b) => a.sort_order - b.sort_order);
     } catch (err) {
-      error = 'Failed to load priorities: ' + err.message;
+      error = t('priorities.failedToLoad');
     } finally {
       isLoading = false;
     }
@@ -99,7 +111,7 @@
   async function savePriority() {
     try {
       if (!formData.name.trim()) {
-        error = 'Priority name is required';
+        error = t('priorities.nameRequired');
         return;
       }
 
@@ -114,14 +126,14 @@
       error = null;
       window.dispatchEvent(new CustomEvent('refresh-workspace-data'));
     } catch (err) {
-      error = err.message;
+      error = t('priorities.failedToSave');
     }
   }
 
   async function deletePriority(id, name) {
     const confirmed = await confirm({
       title: t('common.delete'),
-      message: `Are you sure you want to delete "${name}"? This action cannot be undone.`,
+      message: t('priorities.confirmDelete', { name }),
       confirmText: t('common.delete'),
       cancelText: t('common.cancel'),
       variant: 'danger'
@@ -134,7 +146,7 @@
       error = null;
       window.dispatchEvent(new CustomEvent('refresh-workspace-data'));
     } catch (err) {
-      error = err.message;
+      error = t('priorities.deleteFailed');
     }
   }
 
@@ -148,7 +160,8 @@
     },
     {
       key: 'name',
-      label: t('common.name')
+      label: t('common.name'),
+      render: priority => getPriorityDisplayName(priority)
     },
     {
       key: 'is_default',
@@ -188,7 +201,7 @@
         title: t('common.delete'),
         color: 'var(--ds-text-danger)',
         hoverClass: 'hover-danger',
-        onClick: () => deletePriority(priority.id, priority.name)
+        onClick: () => deletePriority(priority.id, getPriorityDisplayName(priority))
       }
     ];
   }
@@ -247,11 +260,17 @@
     {#snippet configuration_set_names(priority)}
       <div class="flex flex-wrap gap-1">
         {#if priority.configuration_set_names && priority.configuration_set_names.length > 0}
-          {#each priority.configuration_set_names as configSetName}
-            <Lozenge color="gray" text={configSetName} />
+          {#each priority.configuration_set_names as configSetName, index}
+            <Lozenge
+              color="gray"
+              text={getConfigurationSetDisplayName(
+                configSetName,
+                priority.configuration_set_builtin_keys?.[index]
+              )}
+            />
           {/each}
         {:else}
-          <span class="text-xs text-gray-500">{t('common.noData')}</span>
+          <span class="text-xs text-gray-500">{t('pickers.noConfigurationSetsFound')}</span>
         {/if}
       </div>
     {/snippet}
@@ -270,7 +289,7 @@
           <Input
             type="text"
             id="name"
-            placeholder="e.g. Critical, High, Medium, Low"
+            placeholder={t('priorities.namePlaceholder')}
             bind:value={formData.name}
             required
           />

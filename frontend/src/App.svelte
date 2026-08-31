@@ -6,8 +6,9 @@
   import { api } from './lib/api.js';
   import { APP_NAME } from './lib/constants.js';
   import { themeStore } from './lib/stores/theme.svelte.js';
-  import { i18n, SUPPORTED_LOCALES } from './lib/stores/i18n.svelte.js';
+  import { i18n, SUPPORTED_LOCALES, t } from './lib/stores/i18n.svelte.js';
   import { safeLoginReturnPath } from './lib/utils/loginReturnPath.js';
+  import { getStartupCopy } from './lib/utils/startupCopy.js';
   import BrandedLoader from './lib/components/BrandedLoader.svelte';
   import LazyRootDialog from './lib/components/LazyRootDialog.svelte';
   import LazyRootView from './lib/components/LazyRootView.svelte';
@@ -36,6 +37,7 @@
   let showWelcomeAssistant = $state(false);
   let startupError = $state('');
   let startupSlow = $state(false);
+  let i18nReady = $state(false);
   let startupAttempt = 0;
   let themeAudience = null;
   let themeLoadGeneration = 0;
@@ -82,6 +84,7 @@
     try {
       // Initialize i18n (loads user's preferred locale)
       await withBootstrapDeadline(i18n.init());
+      i18nReady = true;
 
       // Check setup status first
       await checkSetupStatus();
@@ -113,9 +116,7 @@
       setupLoading = false;
       appInitialized = false;
       startupError =
-        error?.code === 'REQUEST_TIMEOUT'
-          ? 'The server took too long to respond.'
-          : 'Windshift could not connect to the server.';
+        error?.code === 'REQUEST_TIMEOUT' ? 'errors.TIMEOUT' : 'errors.NETWORK_ERROR';
     } finally {
       window.clearTimeout(slowTimer);
     }
@@ -280,7 +281,9 @@
   }
 </script>
 
-<a class="skip-link" href="#app-main">Skip to main content</a>
+<a class="skip-link" href="#app-main">
+  {getStartupCopy('common.skipToMainContent', i18nReady, t)}
+</a>
 <div
   id="app-main"
   tabindex="-1"
@@ -291,22 +294,23 @@
     <div class="min-h-screen flex items-center justify-center w-full px-6" data-testid="startup-error">
       <div class="text-center max-w-sm">
         <img src="windshift-3.svg" alt={APP_NAME} width="64" height="64" class="w-16 h-16 mx-auto mb-4 opacity-75" />
-        <h1 class="text-xl font-semibold mb-2">Unable to start Windshift</h1>
-        <p class="text-gray-600 mb-1">{startupError}</p>
-        <p class="text-sm text-gray-500 mb-5">Check your connection or server, then try again.</p>
+        <h1 class="text-xl font-semibold mb-2">
+          {getStartupCopy('errors.failedToLoad', i18nReady, t)} Windshift
+        </h1>
+        <p class="text-gray-600 mb-5">{getStartupCopy(startupError, i18nReady, t)}</p>
         <button
           type="button"
           class="min-h-11 px-5 py-2 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700"
           onclick={() => initializeApp()}
           data-testid="startup-retry"
-        >Retry</button>
+        >{getStartupCopy('common.retry', i18nReady, t)}</button>
       </div>
     </div>
   <!-- Show loading screen during initial setup/session checks -->
   {:else if setupLoading}
     <BrandedLoader
-      label={startupSlow ? 'Still connecting to Windshift…' : 'Connecting to Windshift…'}
-      detail={startupSlow ? 'This can take a moment on a slow connection.' : ''}
+      label={getStartupCopy('common.loading', i18nReady, t)}
+      detail={startupSlow ? getStartupCopy('common.loadingSlow', i18nReady, t) : ''}
     />
   <!-- Public board route - no authentication required -->
   {:else if $currentRoute.view === 'public-board'}
@@ -358,13 +362,16 @@
     <!-- Show loading or login screen while waiting for auth -->
     <div class="flex-1 flex items-center justify-center">
       {#if $authStore.loading}
-        <BrandedLoader fullViewport={false} />
+        <BrandedLoader
+          label={getStartupCopy('common.loading', i18nReady, t)}
+          fullViewport={false}
+        />
       {:else if showLoginDialog}
         <!-- Login dialog will show, but we can show a minimal background -->
         <div class="text-center">
           <img src="windshift-3.svg" alt="Windshift" width="64" height="64" class="w-16 h-16 mx-auto mb-4 opacity-50" />
           <h1 class="text-2xl font-bold text-gray-400 mb-2">Windshift</h1>
-          <p class="text-gray-500">Work Management</p>
+          <p class="text-gray-500">{t('footer.platformName')}</p>
         </div>
       {/if}
     </div>

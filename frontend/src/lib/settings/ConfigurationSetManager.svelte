@@ -29,6 +29,7 @@
   import FileInput from '../components/FileInput.svelte';
   import { toHotkeyString } from '../utils/keyboardShortcuts.js';
   import DescriptionText from '../components/DescriptionText.svelte';
+  import { builtinLocaleKey } from '../utils/systemLabels.js';
 
   let configurationSets = $state([]);
   let workspaces = $state([]);
@@ -68,6 +69,25 @@
   // assignments, etc.) get persisted.
   let pendingWorkflowChangePayload = $state(null);
   let pendingWorkflowChangeId = $state(null);
+
+  function getConfigurationSetDisplayValue(configSet, field) {
+    return configSet?.builtin_key
+      ? t(`settings.configSets.defaults.configuration.${field}`)
+      : (configSet?.[field] || '');
+  }
+
+  function getItemTypeDisplayName(itemType) {
+    const key = builtinLocaleKey(itemType);
+    return key ? t(`settings.itemTypes.defaults.${key}`) : itemType?.name;
+  }
+
+  function getScreenDisplayName(screenId, fallbackName) {
+    const screen = screens.find(candidate => candidate.id === screenId) ||
+      screens.find(candidate => candidate.name === fallbackName);
+    return screen?.builtin_key
+      ? t('screensPage.defaults.default.name')
+      : (fallbackName || screen?.name || t('settings.configSets.none'));
+  }
 
   // Form state
   let newConfigSet = $state({
@@ -289,7 +309,7 @@
 
     const confirmed = await confirm({
       title: t('common.delete'),
-      message: t('dialogs.confirmations.deleteItem', { name: configSet.name }),
+      message: t('dialogs.confirmations.deleteItem', { name: getConfigurationSetDisplayValue(configSet, 'name') }),
       confirmText: t('common.delete'),
       cancelText: t('common.cancel'),
       variant: 'danger'
@@ -345,19 +365,21 @@
 
   function getWorkspaceName(workspaceId) {
     const workspace = workspaces.find(w => w.id === workspaceId);
-    return workspace ? workspace.name : 'Unknown';
+    return workspace ? workspace.name : t('common.unknown');
   }
 
   function getWorkflowName(workflowId) {
-    if (!workflowId) return 'None';
+    if (!workflowId) return t('settings.configSets.none');
     const workflow = workflows.find(w => w.id === workflowId);
-    return workflow ? workflow.name : 'Unknown';
+    if (!workflow) return t('common.unknown');
+    return workflow.builtin_key ? t('workflows.defaults.default.name') : workflow.name;
   }
 
   function getNotificationSettingName(notificationSettingId) {
-    if (!notificationSettingId) return 'None';
+    if (!notificationSettingId) return t('settings.configSets.none');
     const setting = notificationSettings.find(s => s.id === notificationSettingId);
-    return setting ? setting.name : 'Unknown';
+    if (!setting) return t('common.unknown');
+    return setting.builtin_key ? t('settings.configSets.defaults.notifications.name') : setting.name;
   }
 
   // Helper functions for workspace selection
@@ -430,25 +452,23 @@
       const created = result && result.data ? result.data : result;
       const warnings = (result && result.warnings) || [];
       if (created && created.id) {
-        successToast(t('settings.configSets.importSuccess', { name: created.name }) || `Imported "${created.name}"`);
+        successToast(t('settings.configSets.importSuccess', { name: created.name }));
       }
-      for (const msg of warnings) {
-        // Surface non-fatal warnings (e.g. reused-by-name screen) so the
-        // operator knows what shape the new config set actually got.
-        errorToast(msg);
+      for (const warning of warnings) {
+        errorToast(warning);
       }
       await loadData(currentPage, itemsPerPage, searchQuery);
     } catch (err) {
       if (err && err.status === 422 && err.code === 'unresolved_references') {
-        unresolvedHeading = err.message || 'Import requires references that don\'t exist on this instance';
+        unresolvedHeading = t('settings.configSets.unresolvedReferencesHeading');
         unresolvedRefs = (err.details && err.details.unresolved) || [];
       } else if (err && err.status === 409 && err.code === 'default_entity_conflict') {
         // Same modal handles both cases — the items share a {kind, name}
         // shape; default-conflict entries just lack the `at` breadcrumb.
-        unresolvedHeading = err.message || 'Import would shadow a default-flagged entity on this instance';
+        unresolvedHeading = t('settings.configSets.defaultConflictHeading');
         unresolvedRefs = (err.details && err.details.conflicts) || [];
       } else {
-        errorToast(t('dialogs.alerts.failedToCreate', { error: err.message || err }));
+        errorToast(t('settings.configSets.importFailed'));
       }
     } finally {
       importing = false;
@@ -461,8 +481,8 @@
   }
 
   function unresolvedLabel(ref) {
-    if (ref.kind === 'user') return `User ${ref.email || ref.name || ''}`.trim();
-    return `${ref.kind.replace(/_/g, ' ')} "${ref.name || ref.email || ''}"`;
+    const kindKey = ['user', 'role', 'group', 'status_category'].includes(ref.kind) ? ref.kind : 'entity';
+    return t(`settings.configSets.unresolvedKinds.${kindKey}`, { name: ref.email || ref.name || '' });
   }
 
   // Search handler with debounce
@@ -485,7 +505,7 @@
 
 {#snippet headerActions()}
   <Button variant="default" icon={Upload} onclick={pickImportFile} disabled={importing}>
-    {importing ? 'Importing…' : 'Import'}
+    {importing ? t('settings.configSets.importing') : t('settings.configSets.import')}
   </Button>
   <Button variant="primary" icon={Plus} onclick={startCreating} keyboardHint="A" hotkeyConfig={{ key: toHotkeyString('configurationSets', 'add'), guard: () => !creating }}>
     {t('settings.configSets.addConfigSet')}
@@ -687,9 +707,9 @@
               <div class="flex items-center justify-between">
                 <div class="flex-1">
                   <div class="flex items-center gap-3 mb-2">
-                    <h3 class="text-lg font-medium" style="color: var(--ds-text);">{configSet.name}</h3>
+                    <h3 class="text-lg font-medium" style="color: var(--ds-text);">{getConfigurationSetDisplayValue(configSet, 'name')}</h3>
                     {#if configSet.is_default}
-                      <Lozenge color="blue" text="Default" />
+                      <Lozenge color="blue" text={t('common.default')} />
                     {/if}
                   </div>
 
@@ -723,7 +743,7 @@
                           {#each configSet.item_types_detailed as itemType}
                             <Lozenge customBg={itemType.color} size="md">
                               <ItemTypeIcon icon={itemType.icon} color={itemType.color} />
-                              {itemType.name}
+                              {getItemTypeDisplayName(itemType)}
                             </Lozenge>
                           {/each}
                         </div>
@@ -740,7 +760,7 @@
                           <span class="text-xs font-medium uppercase tracking-wide" style="color: var(--ds-text-subtle);">{t('settings.configSets.workflow')}</span>
                         </div>
                         {#if configSet.workflow_id}
-                          <span class="text-sm font-medium" style="color: var(--ds-text);">{configSet.workflow_name || getWorkflowName(configSet.workflow_id)}</span>
+                          <span class="text-sm font-medium" style="color: var(--ds-text);">{getWorkflowName(configSet.workflow_id)}</span>
                         {:else}
                           <span class="text-sm italic" style="color: var(--ds-text-disabled);">{t('settings.configSets.noneAssigned')}</span>
                         {/if}
@@ -752,7 +772,7 @@
                           <span class="text-xs font-medium uppercase tracking-wide" style="color: var(--ds-text-subtle);">{t('settings.configSets.notifications')}</span>
                         </div>
                         {#if configSet.notification_setting_id}
-                          <span class="text-sm font-medium" style="color: var(--ds-text);">{configSet.notification_setting_name || getNotificationSettingName(configSet.notification_setting_id)}</span>
+                          <span class="text-sm font-medium" style="color: var(--ds-text);">{getNotificationSettingName(configSet.notification_setting_id)}</span>
                         {:else}
                           <span class="text-sm italic" style="color: var(--ds-text-disabled);">{t('settings.configSets.noneAssigned')}</span>
                         {/if}
@@ -768,15 +788,15 @@
                       <div class="flex flex-wrap gap-4 text-sm">
                         <div>
                           <span class="text-xs" style="color: var(--ds-text-subtle);">{t('settings.configSets.createScreen')}</span>
-                          <span class="ml-1 font-medium" style="color: var(--ds-text);">{configSet.create_screen_name || t('settings.configSets.none')}</span>
+                          <span class="ml-1 font-medium" style="color: var(--ds-text);">{getScreenDisplayName(configSet.create_screen_id, configSet.create_screen_name)}</span>
                         </div>
                         <div>
                           <span class="text-xs" style="color: var(--ds-text-subtle);">{t('settings.configSets.editScreen')}</span>
-                          <span class="ml-1 font-medium" style="color: var(--ds-text);">{configSet.edit_screen_name || t('settings.configSets.none')}</span>
+                          <span class="ml-1 font-medium" style="color: var(--ds-text);">{getScreenDisplayName(configSet.edit_screen_id, configSet.edit_screen_name)}</span>
                         </div>
                         <div>
                           <span class="text-xs" style="color: var(--ds-text-subtle);">{t('settings.configSets.viewScreen')}</span>
-                          <span class="ml-1 font-medium" style="color: var(--ds-text);">{configSet.view_screen_name || t('settings.configSets.none')}</span>
+                          <span class="ml-1 font-medium" style="color: var(--ds-text);">{getScreenDisplayName(configSet.view_screen_id, configSet.view_screen_name)}</span>
                         </div>
                       </div>
                     </div>
@@ -787,8 +807,8 @@
                     <span class="text-xs" style="color: var(--ds-text-subtle);">{t('settings.configSets.created')} {formatDateSimple(configSet.created_at)}</span>
                   </div>
 
-                  {#if configSet.description}
-                    <p class="text-sm mt-2" style="color: var(--ds-text-subtle);">{configSet.description}</p>
+                  {#if getConfigurationSetDisplayValue(configSet, 'description')}
+                    <p class="text-sm mt-2" style="color: var(--ds-text-subtle);">{getConfigurationSetDisplayValue(configSet, 'description')}</p>
                   {/if}
                 </div>
 
@@ -798,10 +818,10 @@
                     size="small"
                     icon={Download}
                     disabled={configSet.is_default}
-                    title={configSet.is_default ? 'The default configuration set cannot be exported. Clone it first if you need a portable copy.' : 'Export this configuration set as a portable JSON template'}
+                    title={configSet.is_default ? t('settings.configSets.exportDefaultDisabled') : t('settings.configSets.exportTitle')}
                     onclick={() => exportConfigurationSet(configSet)}
                   >
-                    Export
+                    {t('settings.configSets.export')}
                   </Button>
                   <Button
                     variant="default"
@@ -983,12 +1003,11 @@
      or provision the missing identities before retrying. No write happened. -->
 <Modal isOpen={!!unresolvedRefs} onclose={dismissUnresolved} maxWidth="max-w-xl">
   {#snippet children()}
-  <ModalHeader title="Import: unresolved references" showCloseButton={true} onclose={dismissUnresolved} />
+  <ModalHeader title={t('settings.configSets.unresolvedImportTitle')} showCloseButton={true} onclose={dismissUnresolved} />
   <div class="px-6 py-4">
     <p class="text-sm mb-3" style="color: var(--ds-text);">{unresolvedHeading}</p>
     <p class="text-xs mb-3" style="color: var(--ds-text-subtle);">
-      Nothing was written. Either edit the source bundle to remove these references,
-      or create the missing entities on this instance and retry.
+      {t('settings.configSets.unresolvedImportDescription')}
     </p>
     <ul class="space-y-1 text-sm" style="color: var(--ds-text);">
       {#each (unresolvedRefs || []) as ref ((ref.at || '') + ref.kind + (ref.name || ref.email || ''))}
@@ -997,7 +1016,7 @@
           <div class="flex-1">
             <div class="font-medium">{unresolvedLabel(ref)}</div>
             {#if ref.at}
-              <div class="text-xs" style="color: var(--ds-text-subtle);">at {ref.at}</div>
+              <div class="text-xs" style="color: var(--ds-text-subtle);">{t('settings.configSets.referenceLocation', { path: ref.at })}</div>
             {/if}
           </div>
         </li>

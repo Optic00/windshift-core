@@ -21,6 +21,7 @@ import workspace from './workspace.js';
 import pages from './pages.js';
 import teams from './teams.js';
 import supplemental from './supplemental.js';
+import adminOperations from './adminOperations.js';
 import dashboard from './dashboard.js';
 
 export default createLocale({
@@ -41,5 +42,6 @@ export default createLocale({
   pages,
   teams,
   supplemental,
+  adminOperations,
   dashboard,
 });

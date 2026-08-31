@@ -1,13 +1,16 @@
 <script>
   import DueMark from './DueMark.svelte';
   import { t } from '../../stores/i18n.svelte.js';
+  import { systemPriorityName, systemStatusName } from '../../utils/systemLabels.js';
 
   let {
     title,
     itemKey,
     statusName = null,
+    statusBuiltinKey = null,
     statusColor = null,
     priorityName = null,
+    priorityBuiltinKey = null,
     priorityColor = null,
     dueDate = null,
     timestamp = null,
@@ -17,6 +20,8 @@
 
   const hasPriority = $derived(!!(priorityName && priorityColor));
   const hasStatus = $derived(!!statusName);
+  const localizedPriorityName = $derived(systemPriorityName({ name: priorityName, builtin_key: priorityBuiltinKey }));
+  const localizedStatusName = $derived(systemStatusName({ name: statusName, builtin_key: statusBuiltinKey }));
   const rowPadding = $derived(density === 'compact' ? 'p-1.5' : 'p-2');
 </script>
 
@@ -35,8 +40,8 @@
       <span
         class="inline-block w-2 h-2 rounded-full flex-shrink-0"
         style={`background-color: ${priorityColor};`}
-        title={priorityName}
-        aria-label={t('dashboard.states.priorityLabel', { priority: priorityName })}
+        title={localizedPriorityName}
+        aria-label={t('dashboard.states.priorityLabel', { priority: localizedPriorityName })}
       ></span>
     {/if}
     <span class="text-sm truncate" style="color: var(--ds-text);">{title}</span>
@@ -51,7 +56,7 @@
           ? `background-color: ${statusColor}1f; color: ${statusColor};`
           : 'background-color: var(--ds-background-neutral); color: var(--ds-text-subtle);'}
       >
-        {statusName}
+        {localizedStatusName}
       </span>
     {/if}
     {#if timestamp}

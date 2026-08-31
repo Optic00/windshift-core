@@ -17,11 +17,21 @@
 
   const resolvedPlaceholder = $derived(placeholder || t('pickers.selectScreen'));
 
+  function isDefaultSystemScreen(screen) {
+    return Boolean(screen?.builtin_key);
+  }
+
+  function getScreenDisplayValue(screen, field) {
+    return isDefaultSystemScreen(screen)
+      ? t(`screensPage.defaults.default.${field}`)
+      : (screen?.[field] || '');
+  }
+
   // Get the default screen name for the "Default" option label
   const defaultScreenName = $derived(() => {
     if (!defaultScreenId) return '';
     const screen = items.find(s => s.id === defaultScreenId);
-    return screen ? screen.name : '';
+    return screen ? getScreenDisplayValue(screen, 'name') : '';
   });
 
   // Dynamic label for the unassigned/default option (custom label takes precedence)
@@ -44,7 +54,7 @@
   {unassignedLabel}
   searchFields={['name', 'description']}
   getValue={(screen) => screen?.id}
-  getLabel={(screen) => screen?.name ?? ''}
+  getLabel={(screen) => getScreenDisplayValue(screen, 'name')}
   {onSelect}
   {onCancel}
 >
@@ -59,9 +69,9 @@
 
       <!-- Screen Info -->
       <div class="flex flex-col min-w-0">
-        <span class="font-medium truncate">{screen.name}</span>
-        {#if screen.description}
-          <span class="text-xs truncate" style="color: var(--ds-text-subtle);">{screen.description}</span>
+        <span class="font-medium truncate">{getScreenDisplayValue(screen, 'name')}</span>
+        {#if getScreenDisplayValue(screen, 'description')}
+          <span class="text-xs truncate" style="color: var(--ds-text-subtle);">{getScreenDisplayValue(screen, 'description')}</span>
         {/if}
       </div>
     </div>

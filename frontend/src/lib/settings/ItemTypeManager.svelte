@@ -26,6 +26,7 @@
     isGenericSubtaskType,
     sortItemTypesByHierarchy,
   } from '../utils/hierarchy.js';
+  import { builtinLocaleKey } from '../utils/systemLabels.js';
 
   let itemTypes = $state([]);
   let hierarchyLevels = $state([]);
@@ -34,6 +35,26 @@
   let editingId = $state(null);
   let originalHierarchyLevel = $state(null);
   let showCreateForm = $state(false);
+
+  function getItemTypeDisplayName(itemType) {
+    const key = builtinLocaleKey(itemType);
+    return key
+      ? t(`settings.itemTypes.defaults.${key}`)
+      : itemType.name;
+  }
+
+  function getHierarchyLevelDisplayName(hierarchyLevel) {
+    const key = builtinLocaleKey(hierarchyLevel);
+    return key
+      ? t(`settings.hierarchyLevels.defaults.${key}.name`)
+      : hierarchyLevel.name;
+  }
+
+  function getConfigurationSetDisplayName(name, builtinKey = '') {
+    return builtinKey === 'default'
+      ? t('settings.itemTypes.defaultConfiguration')
+      : name;
+  }
 
   // Form data
   let formData = $state({
@@ -61,7 +82,7 @@
       // Group by hierarchy level for better display
       itemTypes = sortItemTypesByHierarchy(itemTypes);
     } catch (err) {
-      error = 'Failed to load item types: ' + err.message;
+      error = err?.message || t('settings.itemTypes.failedToLoad');
     } finally {
       isLoading = false;
     }
@@ -155,14 +176,14 @@
       error = null;
       window.dispatchEvent(new CustomEvent('refresh-workspace-data'));
     } catch (err) {
-      errorToast(t('settings.itemTypes.failedToSave') + ' ' + err.message);
+      errorToast(err?.message || t('settings.itemTypes.failedToSave'));
     }
   }
 
   async function deleteItemType(id, name) {
     const confirmed = await confirm({
       title: t('common.delete'),
-      message: `Are you sure you want to delete "${name}"? This action cannot be undone.`,
+      message: t('settings.itemTypes.confirmDelete', { name }),
       confirmText: t('common.delete'),
       cancelText: t('common.cancel'),
       variant: 'danger'
@@ -175,7 +196,7 @@
       error = null;
       window.dispatchEvent(new CustomEvent('refresh-workspace-data'));
     } catch (err) {
-      error = err.message;
+      error = err?.message || t('settings.itemTypes.deleteFailed');
     }
   }
 
@@ -184,13 +205,21 @@
       return t('settings.itemTypes.genericSubtaskLevel');
     }
     const hierarchyLevel = hierarchyLevels.find(hl => hl.level === level);
-    return hierarchyLevel ? `Level ${level} - ${hierarchyLevel.name}` : `Level ${level}`;
+    return hierarchyLevel
+      ? t('settings.itemTypes.levelLabel', {
+          level,
+          name: getHierarchyLevelDisplayName(hierarchyLevel)
+        })
+      : t('settings.itemTypes.levelOnly', { level });
   }
 
   let hierarchyLevelOptions = $derived([
     ...hierarchyLevels.map(level => ({
       value: level.level,
-      label: `${level.name} (Level ${level.level})`
+      label: t('settings.itemTypes.levelOption', {
+        name: getHierarchyLevelDisplayName(level),
+        level: level.level
+      })
     })),
     {
       value: GENERIC_SUBTASK_HIERARCHY_LEVEL,
@@ -208,7 +237,8 @@
     },
     {
       key: 'name',
-      label: t('settings.itemTypes.name')
+      label: t('settings.itemTypes.name'),
+      render: itemType => getItemTypeDisplayName(itemType)
     },
     {
       key: 'hierarchy_level',
@@ -248,7 +278,7 @@
         title: t('common.delete'),
         color: 'var(--ds-text-danger)',
         hoverClass: 'hover-danger',
-        onClick: () => deleteItemType(itemType.id, itemType.name)
+        onClick: () => deleteItemType(itemType.id, getItemTypeDisplayName(itemType))
       }
     ];
   }
@@ -285,7 +315,7 @@
     data={itemTypes}
     keyField="id"
     loading={isLoading}
-    emptyMessage={t('settings.itemTypes.noItemTypes') || 'No work item types configured yet.'}
+    emptyMessage={t('settings.itemTypes.noItemTypes')}
     emptyIcon={FileText}
     actionItems={buildItemTypeDropdownItems}
     actionTriggerTestid={(itemType) => `item-type-actions-${itemType.id}`}
@@ -296,7 +326,7 @@
   >
     {#snippet icon(itemType)}
       <div class="flex items-center justify-center">
-        <ItemTypeIcon itemType={itemType} />
+        <ItemTypeIcon itemType={itemType} title={getItemTypeDisplayName(itemType)} />
       </div>
     {/snippet}
 
@@ -310,11 +340,17 @@
     {#snippet configuration_set_names(itemType)}
       <div class="flex flex-wrap gap-1">
         {#if itemType.configuration_set_names && itemType.configuration_set_names.length > 0}
-          {#each itemType.configuration_set_names as configSetName}
-            <Lozenge color="gray" text={configSetName} />
+          {#each itemType.configuration_set_names as configSetName, index}
+            <Lozenge
+              color="gray"
+              text={getConfigurationSetDisplayName(
+                configSetName,
+                itemType.configuration_set_builtin_keys?.[index]
+              )}
+            />
           {/each}
         {:else}
-          <span class="text-xs text-gray-500">No configuration sets</span>
+          <span class="text-xs text-gray-500">{t('settings.itemTypes.noConfigurationSets')}</span>
         {/if}
       </div>
     {/snippet}
@@ -332,7 +368,7 @@
           <Input
             type="text"
             id="name"
-            placeholder="e.g. Epic, Story, Task, Bug"
+            placeholder={t('settings.itemTypes.namePlaceholder')}
             bind:value={formData.name}
             required
           />
@@ -342,7 +378,7 @@
           <label for="description">{t('settings.itemTypes.description')}</label>
           <Textarea
             id="description"
-            placeholder="Brief description of this item type"
+            placeholder={t('settings.itemTypes.descriptionPlaceholder')}
             bind:value={formData.description}
             rows={2}
           />

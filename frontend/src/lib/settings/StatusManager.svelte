@@ -22,9 +22,7 @@
   import { confirm } from '../composables/useConfirm.js';
   import { loadStatusManagerData } from './statusManagerData.js';
   import './settings-form.css';
-
-  // System-protected status IDs (cannot be deleted)
-  const PROTECTED_STATUS_IDS = [1, 6]; // Open and Closed
+  import { builtinLocaleKey } from '../utils/systemLabels.js';
 
   let statuses = $state([]);
   let statusCategories = $state([]);
@@ -33,6 +31,22 @@
   let loadingCategories = $state(true);
   let showCreateForm = $state(false);
   let editingId = $state(null);
+
+  function getStatusDisplayValue(status, field) {
+    const key = builtinLocaleKey(status);
+    return key ? t(`statuses.defaults.${key}.${field}`) : status[field];
+  }
+
+  function getStatusCategoryDisplayName(category) {
+    const key = builtinLocaleKey(category);
+    return key
+      ? t(`settings.statusCategories.defaults.${key}.name`)
+      : category.name;
+  }
+
+  function isProtectedStatus(status) {
+    return status?.builtin_key === 'open' || status?.builtin_key === 'done';
+  }
 
   // Form state
   let formData = $state({
@@ -125,13 +139,13 @@
 
   async function deleteStatus(status) {
     // Protect system-critical statuses
-    if (PROTECTED_STATUS_IDS.includes(status.id)) {
+    if (isProtectedStatus(status)) {
       return; // Silently ignore - button should already be disabled
     }
 
     if (status.transitionCount > 0) {
       errorToast(t('dialogs.alerts.statusInUseByTransitions', {
-        name: status.name,
+        name: getStatusDisplayValue(status, 'name'),
         count: status.transitionCount
       }));
       return;
@@ -139,7 +153,9 @@
 
     const confirmed = await confirm({
       title: t('common.delete'),
-      message: t('dialogs.confirmations.deleteItem', { name: status.name }),
+      message: t('dialogs.confirmations.deleteItem', {
+        name: getStatusDisplayValue(status, 'name')
+      }),
       confirmText: t('common.delete'),
       cancelText: t('common.cancel'),
       variant: 'danger'
@@ -166,11 +182,11 @@
 
   function getCategoryName(categoryId) {
     const category = statusCategories.find(cat => cat.id === categoryId);
-    return category ? category.name : 'Unknown';
+    return category ? getStatusCategoryDisplayName(category) : t('common.unknown');
   }
 
   function buildStatusDropdownItems(status) {
-    const isProtected = PROTECTED_STATUS_IDS.includes(status.id);
+    const isProtected = isProtectedStatus(status);
     const inUse = status.transitionCount > 0;
 
     const items = [
@@ -216,13 +232,15 @@
     {
       key: 'description',
       label: t('common.description'),
-      render: (status) => status.description || '—',
+      render: (status) => getStatusDisplayValue(status, 'description') || '—',
       textColor: 'var(--ds-text-subtle)'
     },
     {
       key: 'transitions',
       label: t('workflows.transitions'),
-      render: (status) => `${status.transitionCount || 0} transition${status.transitionCount === 1 ? '' : 's'}`,
+      render: (status) => t('statuses.transitionCount', {
+        count: status.transitionCount || 0
+      }),
       textColor: 'var(--ds-text-subtle)'
     },
     {
@@ -273,7 +291,7 @@
     >
       {#snippet status(status)}
         <div class="flex items-center gap-3">
-          <h3 class="font-medium" style="color: var(--ds-text);">{status.name}</h3>
+          <h3 class="font-medium" style="color: var(--ds-text);">{getStatusDisplayValue(status, 'name')}</h3>
           {#if status.is_default}
             <Lozenge color="green" text={t('common.default')} />
           {/if}
@@ -302,7 +320,7 @@
           <Input
             type="text"
             id="name"
-            placeholder="e.g. Open, In Progress, Resolved"
+            placeholder={t('statuses.namePlaceholder')}
             bind:value={formData.name}
             required
             size="small"
@@ -316,7 +334,7 @@
             items={statusCategories}
             placeholder={t('categories.selectCategory')}
             getValue={(item) => item.id}
-            getLabel={(item) => item.name}
+            getLabel={getStatusCategoryDisplayName}
           />
         </div>
 

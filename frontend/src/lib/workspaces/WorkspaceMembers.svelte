@@ -17,7 +17,9 @@
   import DescriptionText from '../components/DescriptionText.svelte';
   import { confirm } from '../composables/useConfirm.js';
   import { errorToast } from '../stores/toasts.svelte.js';
+  import { t } from '../stores/i18n.svelte.js';
   import { toHotkeyString } from '../utils/keyboardShortcuts.js';
+  import { systemRoleDescription, systemRoleName } from '../utils/systemLabels.js';
 
   let { workspaceId } = $props();
 
@@ -26,7 +28,6 @@
   let roles = $state([]);
   let loading = $state(true);
   let error = $state(null);
-  const defaultRoleOrder = ['Viewer', 'Editor', 'Tester', 'Administrator'];
 
   // Add member modal state
   let showModal = $state(false);
@@ -45,6 +46,30 @@
   let currentPage = $state(1);
   let itemsPerPage = $state(20);
 
+  function assignmentRole(role) {
+    return roles.find(candidate => candidate.id === role?.role_id) || {
+      name: role?.role_name,
+      description: role?.role_description,
+      builtin_key: role?.role_builtin_key,
+      is_system: Boolean(role?.role_builtin_key)
+    };
+  }
+
+  function getRoleName(role) {
+    return systemRoleName(role);
+  }
+
+  function getRoleDescription(role) {
+    return systemRoleDescription(role);
+  }
+
+  function builtInRole(key) {
+    return roles.find(role => role.builtin_key === key) || {
+      builtin_key: key,
+      is_system: true
+    };
+  }
+
   onMount(async () => {
     await loadData();
   });
@@ -52,7 +77,7 @@
   async function loadData() {
     const workspaceIdNum = Number(workspaceId);
     if (!workspaceIdNum) {
-      error = 'Invalid workspace';
+      error = t('workspaceMembers.invalidWorkspace');
       return;
     }
     loading = true;
@@ -68,7 +93,7 @@
       roles = rolesData || [];
     } catch (err) {
       console.error('Failed to load workspace members:', err);
-      error = err.message || 'Failed to load workspace members';
+      error = t('workspaceMembers.loadFailed');
     } finally {
       loading = false;
     }
@@ -99,7 +124,7 @@
       await loadData();
     } catch (err) {
       console.error('Failed to add member:', err);
-      errorToast(`Failed to add member: ${err.message}`);
+      errorToast(t('workspaceMembers.addMemberFailed', { error: err.message }));
     } finally {
       adding = false;
     }
@@ -108,8 +133,11 @@
   async function handleRemoveMemberRole(member, role) {
     const userName = `${member.first_name || ''} ${member.last_name || ''}`.trim() || member.username;
     const confirmed = await confirm({
-      title: `Remove ${role.role_name} role from ${userName}?`,
-      message: 'This will revoke this role assignment from the user.'
+      title: t('workspaceMembers.removeRoleTitle', {
+        role: getRoleName(assignmentRole(role)),
+        name: userName
+      }),
+      message: t('workspaceMembers.removeRoleMessage')
     });
 
     if (!confirmed) return;
@@ -122,7 +150,7 @@
       await loadData();
     } catch (err) {
       console.error('Failed to remove role:', err);
-      errorToast(`Failed to remove role: ${err.message}`);
+      errorToast(t('workspaceMembers.removeRoleFailed', { error: err.message }));
     }
   }
 
@@ -149,7 +177,7 @@
       await loadData();
     } catch (err) {
       console.error('Failed to add group:', err);
-      errorToast(`Failed to add group: ${err.message}`);
+      errorToast(t('workspaceMembers.addGroupFailed', { error: err.message }));
     } finally {
       addingGroup = false;
     }
@@ -157,8 +185,11 @@
 
   async function handleRemoveGroupRole(group, role) {
     const confirmed = await confirm({
-      title: `Remove ${role.role_name} role from ${group.group_name}?`,
-      message: 'This will revoke this role assignment from the group.'
+      title: t('workspaceMembers.removeRoleTitle', {
+        role: getRoleName(assignmentRole(role)),
+        name: group.group_name
+      }),
+      message: t('workspaceMembers.removeRoleMessage')
     });
 
     if (!confirmed) return;
@@ -169,7 +200,7 @@
       await loadData();
     } catch (err) {
       console.error('Failed to remove group role:', err);
-      errorToast(`Failed to remove group role: ${err.message}`);
+      errorToast(t('workspaceMembers.removeRoleFailed', { error: err.message }));
     }
   }
 
@@ -192,13 +223,13 @@
     if (!role) return 'background-color: var(--ds-background-neutral); color: var(--ds-text-subtle);';
 
     // Role-specific styling using design system variables
-    if (role.name === 'Administrator') {
+    if (role.builtin_key === 'administrator') {
       return 'background-color: var(--ds-background-accent-purple-subtler); color: var(--ds-accent-purple);';
-    } else if (role.name === 'Editor') {
+    } else if (role.builtin_key === 'editor') {
       return 'background-color: var(--ds-accent-blue-subtler); color: var(--ds-accent-blue);';
-    } else if (role.name === 'Viewer') {
+    } else if (role.builtin_key === 'viewer') {
       return 'background-color: var(--ds-background-accent-green-subtler); color: var(--ds-accent-green);';
-    } else if (role.name === 'Tester') {
+    } else if (role.builtin_key === 'tester') {
       return 'background-color: var(--ds-accent-teal-subtler); color: var(--ds-accent-teal);';
     }
     return 'background-color: var(--ds-background-neutral); color: var(--ds-text-subtle);';
@@ -214,31 +245,31 @@
   // Viewer -> Editor -> Tester. Admin always requires explicit assignment.
   // A role with no explicit members means "Everyone" has that access,
   // but only if the parent role in the hierarchy is also open.
-  function getEffectiveAccess(roleName, roleMembers) {
+  function getEffectiveAccess(roleKey, roleMembers) {
     // A role is "open to everyone" only when it has NO explicit assignment —
     // neither a user member nor a group. This mirrors the backend, which counts
     // user_workspace_roles + group_workspace_roles when deciding everyone-access.
-    const assignedCount = (name) =>
-      members.filter(m => m.roles.some(r => r.role_name === name)).length +
-      groupAssignments.filter(g => g.roles.some(r => r.role_name === name)).length;
+    const assignedCount = (key) =>
+      members.filter(m => m.roles.some(r => r.role_builtin_key === key)).length +
+      groupAssignments.filter(g => g.roles.some(r => r.role_builtin_key === key)).length;
 
-    const viewerOpen = assignedCount('Viewer') === 0;
-    const editorOpen = assignedCount('Editor') === 0;
-    const testerOpen = assignedCount('Tester') === 0;
+    const viewerOpen = assignedCount('viewer') === 0;
+    const editorOpen = assignedCount('editor') === 0;
+    const testerOpen = assignedCount('tester') === 0;
 
-    const roleGroups = groupAssignments.filter(g => g.roles.some(r => r.role_name === roleName));
+    const roleGroups = groupAssignments.filter(g => g.roles.some(r => r.role_builtin_key === roleKey));
     const explicitCount = roleMembers.length + roleGroups.length;
     if (explicitCount > 0) {
       return { type: 'members', count: explicitCount };
     }
 
-    if (roleName === 'Viewer') {
+    if (roleKey === 'viewer') {
       return viewerOpen ? { type: 'everyone' } : { type: 'none' };
     }
-    if (roleName === 'Editor') {
+    if (roleKey === 'editor') {
       return viewerOpen && editorOpen ? { type: 'everyone' } : { type: 'none' };
     }
-    if (roleName === 'Tester') {
+    if (roleKey === 'tester') {
       return viewerOpen && editorOpen && testerOpen ? { type: 'everyone' } : { type: 'none' };
     }
     // Administrator: never implicit
@@ -246,27 +277,27 @@
   }
 
   // DataTable columns
-  const columns = [
+  const columns = $derived([
     {
       key: 'principal',
-      label: 'Member or group',
+      label: t('workspaceMembers.memberOrGroup'),
       slot: 'principal'
     },
     {
       key: 'roles',
-      label: 'Roles',
+      label: t('workspaceMembers.rolesLabel'),
       slot: 'role'
     },
     {
       key: 'actions',
-      label: 'Actions',
+      label: t('workspaceMembers.actions'),
       align: 'text-right'
     }
-  ];
+  ]);
 
   function getAssignmentActionItems(assignment) {
     return assignment.roles.map(role => ({
-      title: `Remove ${role.role_name}`,
+      title: t('workspaceMembers.removeRoleAction', { role: getRoleName(assignmentRole(role)) }),
       icon: Trash2,
       onClick: () => assignment.type === 'group'
         ? handleRemoveGroupRole(assignment, role)
@@ -281,7 +312,7 @@
       ...member,
       type: 'user',
       row_key: `user-${member.user_id}`,
-      displayName: `${member.first_name || ''} ${member.last_name || ''}`.trim() || member.username || member.email || 'Unknown user',
+      displayName: `${member.first_name || ''} ${member.last_name || ''}`.trim() || member.username || member.email || t('workspaceMembers.unknownUser'),
       detail: member.email || member.username || ''
     }));
 
@@ -290,7 +321,7 @@
       type: 'group',
       row_key: `group-${group.group_id}`,
       displayName: group.group_name,
-      detail: group.group_description || 'Group'
+      detail: group.group_description || t('workspaceMembers.group')
     }));
 
     return [...userRows, ...groupRows].sort((a, b) =>
@@ -323,22 +354,22 @@
   let prevSearchQuery = $state('');
 
   const roleSummaryRows = $derived(
-    defaultRoleOrder
-      .map((roleName) => {
-        const role = roles.find((r) => r.name === roleName);
-        if (!role) return null;
-        const roleMembers = members.filter((m) => m.roles.some((r) => r.role_name === roleName));
-        const roleGroups = groupAssignments.filter((g) => g.roles.some((r) => r.role_name === roleName));
-        return { name: roleName, role, members: roleMembers, groups: roleGroups, access: getEffectiveAccess(roleName, roleMembers) };
+    roles
+      .filter((role) => role.builtin_key)
+      .sort((a, b) => a.display_order - b.display_order)
+      .map((role) => {
+        const roleKey = role.builtin_key;
+        const roleMembers = members.filter((m) => m.roles.some((r) => r.role_builtin_key === roleKey));
+        const roleGroups = groupAssignments.filter((g) => g.roles.some((r) => r.role_builtin_key === roleKey));
+        return { name: roleKey, role, members: roleMembers, groups: roleGroups, access: getEffectiveAccess(roleKey, roleMembers) };
       })
-      .filter(Boolean)
   );
 
-  const roleSummaryColumns = [
-    { key: 'name', label: 'Role', slot: 'role' },
-    { key: 'access', label: 'Effective Access', slot: 'access' },
-    { key: 'members', label: 'Members', slot: 'members' },
-  ];
+  const roleSummaryColumns = $derived([
+    { key: 'name', label: t('workspaceMembers.role'), slot: 'role' },
+    { key: 'access', label: t('workspaceMembers.effectiveAccess'), slot: 'access' },
+    { key: 'members', label: t('workspaceMembers.assignments'), slot: 'members' },
+  ]);
   $effect(() => {
     if (searchQuery !== prevSearchQuery) {
       prevSearchQuery = searchQuery;
@@ -366,23 +397,27 @@
     <div class="flex items-start gap-3">
       <Shield class="w-4 h-4 text-blue-600 mt-0.5" />
       <div>
-        <h3 class="text-sm font-semibold" style="color: var(--ds-text);">Summary</h3>
+        <h3 class="text-sm font-semibold" style="color: var(--ds-text);">{t('workspaceMembers.summaryTitle')}</h3>
         <p class="text-sm mt-1" style="color: var(--ds-text-subtle);">
-          Shows effective role assignments for this workspace. Roles without explicit members are open to everyone. Hierarchy: Viewer &rarr; Editor &rarr; Tester.
+          {t('workspaceMembers.summaryDescription', {
+            viewer: getRoleName(builtInRole('viewer')),
+            editor: getRoleName(builtInRole('editor')),
+            tester: getRoleName(builtInRole('tester'))
+          })}
         </p>
       </div>
     </div>
 
     <DataTable columns={roleSummaryColumns} data={roleSummaryRows} keyField="name">
       {#snippet role(row)}
-        <div class="font-medium" style="color: var(--ds-text);">{row.name}</div>
-        <DescriptionText as="div">{row.role.description}</DescriptionText>
+        <div class="font-medium" style="color: var(--ds-text);">{getRoleName(row.role)}</div>
+        <DescriptionText as="div">{getRoleDescription(row.role)}</DescriptionText>
       {/snippet}
       {#snippet access(row)}
         {#if row.access.type === 'members'}
-          <Chip color="blue">{row.access.count} {row.access.count === 1 ? 'member' : 'members'}</Chip>
+          <Chip color="blue">{t('workspaceMembers.memberCount', { count: row.access.count })}</Chip>
         {:else if row.access.type === 'everyone'}
-          <Chip color="green">Everyone</Chip>
+          <Chip color="green">{t('workspaceMembers.everyone')}</Chip>
         {:else}
           <span class="text-xs" style="color: var(--ds-text-subtle);">&mdash;</span>
         {/if}
@@ -398,7 +433,7 @@
             {/each}
           </div>
         {:else}
-          <span class="text-xs" style="color: var(--ds-text-subtle);">No direct members</span>
+          <span class="text-xs" style="color: var(--ds-text-subtle);">{t('workspaceMembers.noDirectAssignments')}</span>
         {/if}
       {/snippet}
     </DataTable>
@@ -408,7 +443,7 @@
   <div class="flex items-center justify-end gap-2">
     <Button variant="primary" size="medium" onclick={() => showModal = true} keyboardHint="A" hotkeyConfig={{ key: toHotkeyString('workspaceMembers', 'addMember'), guard: () => !showModal }}>
       <UserPlus class="w-4 h-4 mr-2" />
-      Add Member
+      {t('workspaceMembers.addMember')}
     </Button>
     <Button
       variant="default"
@@ -418,20 +453,20 @@
       hotkeyConfig={{ key: toHotkeyString('workspaceMembers', 'addGroup'), guard: canOpenGroupModal }}
     >
       <Users class="w-4 h-4 mr-2" />
-      Add Group
+      {t('workspaceMembers.addGroup')}
     </Button>
   </div>
 
   <!-- Search Box -->
   <SearchInput
     bind:value={searchQuery}
-    placeholder="Search members or groups by name or email..."
+    placeholder={t('workspaceMembers.searchPlaceholder')}
   />
 
   <!-- Members Table -->
   {#if loading}
     <div class="text-center py-12" style="color: var(--ds-text-subtle);">
-      Loading workspace members...
+      {t('workspaceMembers.loading')}
     </div>
   {:else if error}
     <div class="text-center py-12 text-red-600">
@@ -443,7 +478,7 @@
         {columns}
         data={paginatedAssignments}
         keyField="row_key"
-        emptyMessage="No members or groups yet. Add users or groups to this workspace to grant access."
+        emptyMessage={t('workspaceMembers.empty')}
         emptyIcon={Shield}
         actionItems={getAssignmentActionItems}
         rowAttrs={(item) => ({ 'data-testid': `workspace-member-${item.row_key}` })}
@@ -467,7 +502,7 @@
             <div class="flex items-center gap-2">
               <Text size="sm" weight="medium">{item.displayName}</Text>
               {#if item.type === 'group'}
-                <Chip color="purple">Group</Chip>
+                <Chip color="purple">{t('workspaceMembers.group')}</Chip>
               {/if}
             </div>
             <Text size="xs" variant="subtle">{item.detail}</Text>
@@ -480,7 +515,7 @@
           {#each item.roles as role}
             <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium" style={getRoleBadgeStyle(role.role_id)}>
               <Shield class="w-3 h-3" />
-              {role.role_name}
+              {getRoleName(assignmentRole(role))}
             </span>
           {/each}
         </div>
@@ -499,7 +534,7 @@
       />
     {:else if searchQuery.trim()}
       <div class="text-sm text-center py-4" style="color: var(--ds-text-subtle);">
-        No members or groups found matching "{searchQuery}"
+        {t('workspaceMembers.noSearchResults', { query: searchQuery })}
       </div>
     {/if}
   {/if}
@@ -516,21 +551,21 @@
   {#snippet children(submitHint)}
   <div class="p-6">
     <h2 class="text-xl font-semibold mb-6" style="color: var(--ds-text);">
-      Add Workspace Member
+      {t('workspaceMembers.addMemberTitle')}
     </h2>
 
     <div class="space-y-4">
       <div>
-        <Label color="default" required class="mb-2">User</Label>
-        <UserPicker bind:value={selectedUserId} placeholder="Select user..." />
+        <Label color="default" required class="mb-2">{t('workspaceMembers.user')}</Label>
+        <UserPicker bind:value={selectedUserId} placeholder={t('workspaceMembers.selectUser')} />
       </div>
 
       <div>
-        <Label color="default" required class="mb-2">Role</Label>
+        <Label color="default" required class="mb-2">{t('workspaceMembers.role')}</Label>
         <Select
           bind:value={selectedRoleId}
           onchange={(value) => selectedRoleId = value ? Number(value) : null}
-          options={[{ value: null, label: 'Select role...' }, ...roles.map(role => ({ value: role.id, label: `${role.name} - ${role.description}` }))]}
+          options={[{ value: null, label: t('workspaceMembers.selectRole') }, ...roles.map(role => ({ value: role.id, label: `${getRoleName(role)} — ${getRoleDescription(role)}` }))]}
         />
       </div>
     </div>
@@ -543,7 +578,7 @@
         disabled={!selectedUserId || !selectedRoleId || adding}
         keyboardHint={submitHint}
       >
-        {adding ? 'Adding...' : 'Add Member'}
+        {adding ? t('workspaceMembers.addingMember') : t('workspaceMembers.addMember')}
       </Button>
       <Button
         variant="default"
@@ -552,7 +587,7 @@
         disabled={adding}
         keyboardHint="Esc"
       >
-        Cancel
+        {t('workspaceMembers.cancel')}
       </Button>
     </div>
   </div>
@@ -570,21 +605,21 @@
   {#snippet children(submitHint)}
   <div class="p-6">
     <h2 class="text-xl font-semibold mb-6" style="color: var(--ds-text);">
-      Add Group to Workspace
+      {t('workspaceMembers.addGroupTitle')}
     </h2>
 
     <div class="space-y-4">
       <div>
-        <Label color="default" required class="mb-2">Group</Label>
-        <GroupPicker bind:value={selectedGroupId} placeholder="Select group..." />
+        <Label color="default" required class="mb-2">{t('workspaceMembers.group')}</Label>
+        <GroupPicker bind:value={selectedGroupId} placeholder={t('workspaceMembers.selectGroup')} />
       </div>
 
       <div>
-        <Label color="default" required class="mb-2">Role</Label>
+        <Label color="default" required class="mb-2">{t('workspaceMembers.role')}</Label>
         <Select
           bind:value={selectedGroupRoleId}
           onchange={(value) => selectedGroupRoleId = value ? Number(value) : null}
-          options={[{ value: null, label: 'Select role...' }, ...roles.map(role => ({ value: role.id, label: `${role.name} - ${role.description}` }))]}
+          options={[{ value: null, label: t('workspaceMembers.selectRole') }, ...roles.map(role => ({ value: role.id, label: `${getRoleName(role)} — ${getRoleDescription(role)}` }))]}
         />
       </div>
     </div>
@@ -597,7 +632,7 @@
         disabled={!selectedGroupId || !selectedGroupRoleId || addingGroup}
         keyboardHint={submitHint}
       >
-        {addingGroup ? 'Adding...' : 'Add Group'}
+        {addingGroup ? t('workspaceMembers.addingGroup') : t('workspaceMembers.addGroup')}
       </Button>
       <Button
         variant="default"
@@ -606,7 +641,7 @@
         disabled={addingGroup}
         keyboardHint="Esc"
       >
-        Cancel
+        {t('workspaceMembers.cancel')}
       </Button>
     </div>
   </div>

@@ -20,11 +20,20 @@
   import DialogFooter from '../dialogs/DialogFooter.svelte';
   import { toHotkeyString } from '../utils/keyboardShortcuts.js';
   import DescriptionText from '../components/DescriptionText.svelte';
+  import { builtinLocaleKey } from '../utils/systemLabels.js';
 
   const linkTypes = writable([]);
 
   let showForm = $state(false);
   let editingLinkType = $state(null);
+
+  function getLinkTypeDisplayValue(linkType, field) {
+    const key = linkType?.is_system ? builtinLocaleKey(linkType) : '';
+    return key
+      ? t(`settings.linkTypes.defaults.${key}.${field}`)
+      : linkType[field];
+  }
+
   let formData = $state({
     name: '',
     description: '',
@@ -88,7 +97,7 @@
       showForm = false;
     } catch (error) {
       console.error('Failed to save link type:', error);
-      errorToast(t('settings.linkTypes.failedToSave') + ' ' + error.message);
+      errorToast(t('settings.linkTypes.failedToSave'));
     }
   }
 
@@ -242,7 +251,7 @@
             type="text"
             bind:value={formData.name}
             required
-            placeholder="e.g., Implements"
+            placeholder={t('settings.linkTypes.namePlaceholder')}
             size="small"
           />
         </div>
@@ -258,10 +267,10 @@
             type="text"
             bind:value={formData.forward_label}
             required
-            placeholder="e.g., implements"
+            placeholder={t('settings.linkTypes.forwardPlaceholder')}
             size="small"
           />
-          <DescriptionText>When A links to B, show as "A implements B"</DescriptionText>
+          <DescriptionText>{t('settings.linkTypes.forwardHint')}</DescriptionText>
         </div>
         <div>
           <Label color="default" class="mb-2">{t('settings.linkTypes.reverseLabel')}</Label>
@@ -269,10 +278,10 @@
             type="text"
             bind:value={formData.reverse_label}
             required
-            placeholder="e.g., implemented by"
+            placeholder={t('settings.linkTypes.reversePlaceholder')}
             size="small"
           />
-          <DescriptionText>When B is linked from A, show as "B implemented by A"</DescriptionText>
+          <DescriptionText>{t('settings.linkTypes.reverseHint')}</DescriptionText>
         </div>
       </div>
 
@@ -281,7 +290,7 @@
         <Textarea
           bind:value={formData.description}
           rows={3}
-          placeholder="Optional description of this relationship type"
+          placeholder={t('settings.linkTypes.descriptionPlaceholder')}
         />
       </div>
 
@@ -310,16 +319,16 @@
   columns={linkTypeColumns}
   data={$linkTypes}
   keyField="id"
-  emptyMessage="No link types found. Create your first link type to enable item relationships."
+  emptyMessage={t('settings.linkTypes.empty')}
   emptyIcon={Link}
   actionItems={buildLinkTypeActionItems}
 >
   <!-- Name column with description -->
   {#snippet name(linkType)}
     <div>
-      <div class="text-sm font-medium" style="color: var(--ds-text);">{linkType.name}</div>
+      <div class="text-sm font-medium" style="color: var(--ds-text);">{getLinkTypeDisplayValue(linkType, 'name')}</div>
       {#if linkType.description}
-        <div class="text-sm" style="color: var(--ds-text-subtle);">{linkType.description}</div>
+        <div class="text-sm" style="color: var(--ds-text-subtle);">{getLinkTypeDisplayValue(linkType, 'description')}</div>
       {/if}
     </div>
   {/snippet}
