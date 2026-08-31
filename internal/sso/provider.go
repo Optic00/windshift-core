@@ -36,7 +36,7 @@ type SSOProvider struct {
 	ClientSecret          string `json:"client_secret,omitempty"` // Only used for input, never stored
 	Scopes                string `json:"scopes"`
 	AutoProvisionUsers    bool   `json:"auto_provision_users"`
-	RequireVerifiedEmail  bool   `json:"require_verified_email"` // Require email_verified=true from IdP (default: true)
+	RequireVerifiedEmail  bool   `json:"require_verified_email"` // Trust provider-managed email when verification status is absent.
 	AttributeMapping      string `json:"attribute_mapping"`
 	// SAML-specific fields
 	SAMLIdPMetadataURL string    `json:"saml_idp_metadata_url,omitempty"` // IdP metadata URL for auto-configuration

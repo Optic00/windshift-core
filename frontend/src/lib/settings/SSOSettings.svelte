@@ -529,7 +529,7 @@
           size="small"
         />
 
-        {#if formData.auto_provision_users && !formData.require_verified_email}
+        {#if formData.require_verified_email}
           <AlertBox type="warning">
             <strong>{t('settings.sso.unsafeProvisioningWarningTitle')}</strong>
             <div class="mt-1">{t('settings.sso.unsafeProvisioningWarningBody')}</div>

@@ -557,13 +557,13 @@ export default {
       autoProvisionUsers: 'Auto-provision users',
       autoProvisionUsersDesc: 'Automatically create user accounts on first SSO login',
       manualUserCreationOnly: 'Manual user creation only',
-      trustIdpEmailVerification: 'Trust IdP email verification',
+      trustIdpEmailVerification: 'Trust provider-managed email addresses',
       trustIdpEmailVerificationDesc:
-        "When enabled, blocks login if the IdP explicitly reports the email as unverified. When the IdP doesn't report verification status, we'll send a verification email.",
-      idpVerificationNotEnforced: 'IdP verification not enforced',
-      unsafeProvisioningWarningTitle: 'Risky configuration',
+        'Skip Windshift email verification when this provider omits verification status. Explicitly unverified addresses still require verification.',
+      idpVerificationNotEnforced: 'Windshift verifies unconfirmed email',
+      unsafeProvisioningWarningTitle: 'Provider email trust enabled',
       unsafeProvisioningWarningBody:
-        'Auto-provisioning is enabled while the IdP email verification trust check is off. An identity provider that lets users self-assert email addresses can pre-empt or squat legitimate accounts, and may later be linked to access from stricter providers. Only use this combination with a fully trusted IdP.',
+        "Users whose provider omits email verification can be linked to existing accounts by email. Enable this only when the provider controls its users' email addresses.",
       testConnection: 'Test Connection',
       testing: 'Testing...',
       connectionSuccessful: 'Connection successful',

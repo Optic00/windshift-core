@@ -202,8 +202,6 @@ func (h *SSOHandler) SAMLAssertionConsumerService(w http.ResponseWriter, r *http
 		switch {
 		case err == sso.ErrAutoProvisionDisabled:
 			h.redirectWithError(w, r, "User account not found. Contact your administrator.")
-		case errors.Is(err, sso.ErrEmailNotVerified):
-			h.redirectWithError(w, r, "Your email address has not been verified by the identity provider")
 		case errors.Is(err, sso.ErrAccountLinkingRequiresVerification):
 			h.redirectWithError(w, r, "Cannot link to existing account: your identity provider must verify your email address first")
 		default:
@@ -369,9 +367,8 @@ func (h *SSOHandler) samlAssertionToClaims(info *sso.SAMLAssertionInfo, provider
 		claims.Username = strings.Split(claims.Email, "@")[0]
 	}
 
-	// SAML lacks a standard verified-email claim. Provider configuration decides
-	// whether email can auto-link an existing account, preventing an untrusted IdP
-	// assertion from taking one over.
+	// SAML lacks a standard verified-email claim. Provider trust decides whether
+	// the asserted email can auto-link an existing account.
 	claims.EmailVerifiedProvided = true
 	claims.EmailVerified = provider.RequireVerifiedEmail
 
