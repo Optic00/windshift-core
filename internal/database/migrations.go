@@ -478,6 +478,14 @@ var Catalog = []Migration{
 			CREATE UNIQUE INDEX uq_themes_builtin_key ON themes(builtin_key) WHERE builtin_key IS NOT NULL;
 		`,
 	},
+	{
+		Version:       "20260831_object_translations",
+		Name:          "Add instance-wide configurable object translations",
+		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='object_translations'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='object_translations'",
+		SQLite:        objectTranslationsSchema,
+		Postgres:      objectTranslationsSchemaPostgres,
+	},
 }
 
 func (m Migration) checksum(driver string) string {

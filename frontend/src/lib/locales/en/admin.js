@@ -975,6 +975,27 @@ export default {
       },
     },
 
+    localizedObjects: {
+      displayLabelFor: 'Display label for {locale}',
+      primaryHelp: 'This is the label administrators and users see in the active locale.',
+      localeOverrides: 'Locale overrides',
+      canonicalFallback: 'Advanced: canonical fallback',
+      canonicalHelp:
+        'The canonical value is used only when no matching instance or shipped translation applies. IDs, built-in keys, and automation behavior are unchanged.',
+      baseName: 'Canonical fallback name',
+      baseDescription: 'Canonical fallback description',
+      chooseCanonicalEffect: 'Choose what happens to locale overrides…',
+      keepOverrides: 'Change only the fallback and keep locale overrides',
+      removeInstanceOverrides: 'Change the fallback and remove instance overrides',
+      canonicalWarning:
+        'These locale translations will continue to take precedence over the canonical fallback. Choose explicitly how to handle administrator-managed overrides.',
+      canonicalChoiceRequired: 'Choose how the canonical change should affect locale overrides.',
+      localizedNameRequired: 'The active-locale display label is required.',
+      shippedFallback: 'Shipped fallback: {value}',
+      permissionRequired: 'Only an instance administrator can manage localized labels.',
+      loadFailed: 'Failed to load locale overrides.',
+    },
+
     // Workspace Roles
     workspaceRoles: {
       readOnlyNote:
