@@ -16,8 +16,12 @@ The explicit administrator retry is `POST /api/admin/zammad-ticket-links/{linkId
 `POST /api/admin/zammad-ticket-links/refresh` queues an asynchronous synchronization of every complete ticket link on enabled, authorized connections.
 Concurrent system-wide refresh requests are coalesced into the already queued or running job.
 
-Workspace and item routes are `GET /api/workspaces/{workspaceId}/zammad-connections`, `GET /api/workspaces/{workspaceId}/zammad-connections/{id}/metadata`, and `GET /api/workspaces/{workspaceId}/zammad-connections/{id}/owners?group_id={groupId}`.
-Ticket routes are `GET /api/items/{id}/zammad-links`, `GET /api/zammad-ticket-links/resolve/{correlationKey}`, `POST /api/items/{id}/zammad-tickets`, `POST /api/items/{id}/zammad-ticket-links`, `PUT /api/zammad-ticket-links/{linkId}`, `DELETE /api/zammad-ticket-links/{linkId}`, and `POST /api/zammad-ticket-links/{linkId}/refresh`.
+Workspace and item routes are `GET /api/workspaces/{workspaceId}/zammad-connections`, `GET /api/workspaces/{workspaceId}/zammad-connections/{id}/metadata`, `GET /api/workspaces/{workspaceId}/zammad-connections/{id}/owners?group_id={groupId}`, and `GET /api/workspaces/{workspaceId}/zammad-overview?limit={limit}`.
+Ticket routes are `GET /api/items/{id}/zammad-links`, `GET /api/items/{id}/zammad-history?limit={limit}`, `GET /api/zammad-ticket-links/resolve/{correlationKey}`, `POST /api/items/{id}/zammad-tickets`, `POST /api/items/{id}/zammad-ticket-links`, `PUT /api/zammad-ticket-links/{linkId}`, `DELETE /api/zammad-ticket-links/{linkId}`, and `POST /api/zammad-ticket-links/{linkId}/refresh`.
+The optional history and overview `limit` is an integer from 1 through 100 and defaults to 6 for item history and 5 for the workspace overview.
+Item history returns an `events` array containing only status, group, and owner changes observed during Windshift synchronization, including old and new IDs and point-in-time names, the ticket number, item identity, and observation time.
+The workspace overview returns current linked-ticket totals, active, closed, unassigned, unknown-status, synchronization-failure, and uncertain-creation counts, a per-connection status distribution, and the most recent observed changes.
+These responses are a polling-derived Windshift observation and are not a complete Zammad audit trail, so they do not claim the original Zammad change time, actor, or intermediate states between polls.
 
 Create-ticket requests contain `connection_id` and may contain `group_id`.
 Link-existing requests contain `connection_id` and `ticket_number`.

@@ -10,6 +10,8 @@ import (
 
 	"windshift/internal/database"
 	"windshift/internal/models"
+
+	"uuid"
 )
 
 type ZammadRepository struct {
@@ -47,6 +49,17 @@ type ZammadConnectionMutationSnapshot struct {
 	AllowedGroupIDs    []int
 	ClosedStateIDs     []int
 	CompletionStatusID *int
+}
+
+type ZammadWorkspaceTicketLink struct {
+	Link           *models.ZammadTicketLink
+	ItemKey        string
+	ClosedStateIDs []int
+}
+
+type zammadReadQueryer interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+	QueryRow(query string, args ...any) *sql.Row
 }
 
 func NewZammadRepository(db database.Database) *ZammadRepository {
@@ -623,6 +636,164 @@ func (r *ZammadRepository) GetTicketLinkForItem(itemID int, providerID string) (
 	return link, err
 }
 
+func (r *ZammadRepository) ListTicketChangesForItem(itemID, limit int) ([]models.ZammadTicketChange, error) {
+	rows, err := r.db.Query(`SELECT ztc.id, ztc.ticket_link_id, ztl.item_id,
+		w.key || '-' || CAST(i.workspace_item_number AS TEXT), ztl.ticket_number,
+		ztc.field_name, ztc.old_value_id, ztc.old_value_name, ztc.new_value_id, ztc.new_value_name, ztc.observed_at
+		FROM zammad_ticket_changes ztc
+		JOIN zammad_ticket_links ztl ON ztl.id = ztc.ticket_link_id
+		JOIN zammad_connections zc ON zc.provider_id = ztl.provider_id
+		JOIN items i ON i.id = ztl.item_id
+		JOIN workspaces w ON w.id = i.workspace_id
+		WHERE ztl.item_id = ? AND (
+			zc.applies_to_all_workspaces = true OR EXISTS (
+				SELECT 1 FROM zammad_connection_workspaces zcw
+				WHERE zcw.provider_id = ztl.provider_id AND zcw.workspace_id = i.workspace_id
+			)
+		)
+		ORDER BY ztc.observed_at DESC, ztc.id DESC LIMIT ?`, itemID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	return scanZammadTicketChanges(rows)
+}
+
+func (r *ZammadRepository) ListRecentTicketChangesForWorkspace(workspaceID, limit int) ([]models.ZammadTicketChange, error) {
+	return listRecentTicketChangesForWorkspace(r.db, workspaceID, limit)
+}
+
+func (r *ZammadRepository) ListRecentTicketChangesForWorkspaceTx(tx database.Tx, workspaceID, limit int) ([]models.ZammadTicketChange, error) {
+	return listRecentTicketChangesForWorkspace(tx, workspaceID, limit)
+}
+
+func listRecentTicketChangesForWorkspace(q zammadReadQueryer, workspaceID, limit int) ([]models.ZammadTicketChange, error) {
+	rows, err := q.Query(`SELECT ztc.id, ztc.ticket_link_id, ztl.item_id,
+		w.key || '-' || CAST(i.workspace_item_number AS TEXT), ztl.ticket_number,
+		ztc.field_name, ztc.old_value_id, ztc.old_value_name, ztc.new_value_id, ztc.new_value_name, ztc.observed_at
+		FROM zammad_ticket_changes ztc
+		JOIN zammad_ticket_links ztl ON ztl.id = ztc.ticket_link_id
+		JOIN zammad_connections zc ON zc.provider_id = ztl.provider_id
+		JOIN items i ON i.id = ztl.item_id
+		JOIN workspaces w ON w.id = i.workspace_id
+		WHERE i.workspace_id = ? AND (
+			zc.applies_to_all_workspaces = true OR EXISTS (
+				SELECT 1 FROM zammad_connection_workspaces zcw
+				WHERE zcw.provider_id = ztl.provider_id AND zcw.workspace_id = i.workspace_id
+			)
+		)
+		ORDER BY ztc.observed_at DESC, ztc.id DESC LIMIT ?`, workspaceID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	return scanZammadTicketChanges(rows)
+}
+
+func scanZammadTicketChanges(rows *sql.Rows) ([]models.ZammadTicketChange, error) {
+	changes := []models.ZammadTicketChange{}
+	for rows.Next() {
+		var change models.ZammadTicketChange
+		var oldID, newID sql.NullInt64
+		var oldName, newName sql.NullString
+		if err := rows.Scan(&change.ID, &change.LinkID, &change.ItemID, &change.ItemKey, &change.TicketNumber,
+			&change.Field, &oldID, &oldName, &newID, &newName, &change.ObservedAt); err != nil {
+			return nil, err
+		}
+		if oldID.Valid {
+			change.OldValue.ID = int(oldID.Int64)
+		}
+		if oldName.Valid {
+			change.OldValue.Name = oldName.String
+		}
+		if newID.Valid {
+			change.NewValue.ID = int(newID.Int64)
+		}
+		if newName.Valid {
+			change.NewValue.Name = newName.String
+		}
+		changes = append(changes, change)
+	}
+	return changes, rows.Err()
+}
+
+func (r *ZammadRepository) ListTicketLinksForWorkspace(workspaceID int) ([]ZammadWorkspaceTicketLink, error) {
+	return listTicketLinksForWorkspace(r.db, workspaceID)
+}
+
+func (r *ZammadRepository) ListTicketLinksForWorkspaceTx(tx database.Tx, workspaceID int) ([]ZammadWorkspaceTicketLink, error) {
+	return listTicketLinksForWorkspace(tx, workspaceID)
+}
+
+func listTicketLinksForWorkspace(q zammadReadQueryer, workspaceID int) ([]ZammadWorkspaceTicketLink, error) {
+	rows, err := q.Query(`SELECT `+zammadTicketLinkColumns+`,
+		w.key || '-' || CAST(i.workspace_item_number AS TEXT), zc.closed_state_ids
+		FROM zammad_ticket_links ztl
+		JOIN integration_providers ip ON ip.id = ztl.provider_id
+		JOIN items i ON i.id = ztl.item_id
+		JOIN workspaces w ON w.id = i.workspace_id
+		JOIN zammad_connections zc ON zc.provider_id = ztl.provider_id
+		WHERE i.workspace_id = ? AND ztl.ticket_id IS NOT NULL AND ztl.item_integration_link_id IS NOT NULL
+		AND (
+			zc.applies_to_all_workspaces = true OR EXISTS (
+				SELECT 1 FROM zammad_connection_workspaces zcw
+				WHERE zcw.provider_id = ztl.provider_id AND zcw.workspace_id = i.workspace_id
+			)
+		)`, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	result := []ZammadWorkspaceTicketLink{}
+	for rows.Next() {
+		var itemKey, closedJSON string
+		link, err := scanZammadTicketLink(zammadWorkspaceTicketLinkScanner{rows: rows, itemKey: &itemKey, closedJSON: &closedJSON})
+		if err != nil {
+			return nil, err
+		}
+		entry := ZammadWorkspaceTicketLink{Link: link, ItemKey: itemKey}
+		if err := json.Unmarshal([]byte(closedJSON), &entry.ClosedStateIDs); err != nil {
+			return nil, err
+		}
+		result = append(result, entry)
+	}
+	return result, rows.Err()
+}
+
+type zammadWorkspaceTicketLinkScanner struct {
+	rows       *sql.Rows
+	itemKey    *string
+	closedJSON *string
+}
+
+func (s zammadWorkspaceTicketLinkScanner) Scan(dest ...any) error {
+	return s.rows.Scan(append(dest, s.itemKey, s.closedJSON)...)
+}
+
+func (r *ZammadRepository) CountProblemTicketLinksForWorkspace(workspaceID int) (syncFailed, creationUncertain int, err error) {
+	return countProblemTicketLinksForWorkspace(r.db, workspaceID)
+}
+
+func (r *ZammadRepository) CountProblemTicketLinksForWorkspaceTx(tx database.Tx, workspaceID int) (syncFailed, creationUncertain int, err error) {
+	return countProblemTicketLinksForWorkspace(tx, workspaceID)
+}
+
+func countProblemTicketLinksForWorkspace(q zammadReadQueryer, workspaceID int) (syncFailed, creationUncertain int, err error) {
+	err = q.QueryRow(`SELECT
+		COALESCE(SUM(CASE WHEN ztl.sync_state = ? THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN ztl.sync_state = ? THEN 1 ELSE 0 END), 0)
+		FROM zammad_ticket_links ztl
+		JOIN items i ON i.id = ztl.item_id
+		JOIN zammad_connections zc ON zc.provider_id = ztl.provider_id
+		WHERE i.workspace_id = ? AND (
+			zc.applies_to_all_workspaces = true OR EXISTS (
+				SELECT 1 FROM zammad_connection_workspaces zcw
+				WHERE zcw.provider_id = ztl.provider_id AND zcw.workspace_id = i.workspace_id
+			)
+		)`, models.ZammadSyncFailed, models.ZammadSyncUncertain, workspaceID).Scan(&syncFailed, &creationUncertain)
+	return syncFailed, creationUncertain, err
+}
+
 // GetItemDestinationByCorrelationKey resolves the durable key and current
 // workspace in one snapshot through the provider/key uniqueness boundary.
 func (r *ZammadRepository) GetItemDestinationByCorrelationKey(providerID, correlationKey string) (itemID, workspaceID int, err error) {
@@ -905,6 +1076,41 @@ func (r *ZammadRepository) UpdateTicketLinkSyncTx(tx database.Tx, id, syncOwner 
 	if syncOwner == "" {
 		return ErrInvalidInput
 	}
+	var previousStatusID, previousGroupID, previousOwnerID sql.NullInt64
+	var previousStatusName, previousGroupName, previousOwnerName sql.NullString
+	query := `SELECT last_status_id, last_status_name, group_id, group_name, owner_id, owner_name
+		FROM zammad_ticket_links WHERE id = ? AND item_integration_link_id IS NOT NULL AND sync_lock_owner = ?`
+	if r.db.GetDriverName() == "postgres" {
+		query += " FOR UPDATE"
+	}
+	if err := tx.QueryRow(query, id, syncOwner).Scan(&previousStatusID, &previousStatusName, &previousGroupID, &previousGroupName, &previousOwnerID, &previousOwnerName); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrConcurrentUpdate
+		}
+		return err
+	}
+	changes := []struct {
+		field   string
+		oldID   sql.NullInt64
+		oldName sql.NullString
+		newID   int
+		newName string
+	}{
+		{"status", previousStatusID, previousStatusName, statusID, statusName},
+		{"owner", previousOwnerID, previousOwnerName, ownerID, ownerName},
+		{"group", previousGroupID, previousGroupName, groupID, groupName},
+	}
+	for _, change := range changes {
+		if !nullableIDChanged(change.oldID, change.newID) {
+			continue
+		}
+		if _, err := tx.ExecWrite(`INSERT INTO zammad_ticket_changes
+			(id, ticket_link_id, field_name, old_value_id, old_value_name, new_value_id, new_value_name, observed_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, uuid.New().String(), id, change.field,
+			nullableIntValue(change.oldID), nullableStringValue(change.oldName), nullablePositiveInt(change.newID), change.newName, now); err != nil {
+			return err
+		}
+	}
 	state := models.ZammadSyncLinked
 	var nextAttempt any
 	if safeError != "" {
@@ -933,6 +1139,27 @@ func (r *ZammadRepository) UpdateTicketLinkSyncTx(tx database.Tx, id, syncOwner 
 		return ErrConcurrentUpdate
 	}
 	return nil
+}
+
+func nullableIDChanged(previous sql.NullInt64, next int) bool {
+	if previous.Valid != (next > 0) {
+		return true
+	}
+	return previous.Valid && previous.Int64 != int64(next)
+}
+
+func nullableIntValue(value sql.NullInt64) any {
+	if !value.Valid {
+		return nil
+	}
+	return value.Int64
+}
+
+func nullableStringValue(value sql.NullString) string {
+	if !value.Valid {
+		return ""
+	}
+	return value.String
 }
 
 func (r *ZammadRepository) ListDueTicketLinks(before time.Time, limit int) ([]*models.ZammadTicketLink, error) {

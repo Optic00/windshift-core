@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -906,6 +908,89 @@ func (s *ZammadService) TicketLinksForItem(itemID int) ([]*models.ZammadTicketLi
 
 func (s *ZammadService) GetTicketLink(id string) (*models.ZammadTicketLink, error) {
 	return s.repo.GetTicketLink(id)
+}
+
+func (s *ZammadService) TicketHistoryForItem(itemID, limit int) ([]models.ZammadTicketChange, error) {
+	return s.repo.ListTicketChangesForItem(itemID, limit)
+}
+
+func (s *ZammadService) WorkspaceOverview(workspaceID, recentLimit int) (*models.ZammadWorkspaceOverview, error) {
+	ctx := context.Background()
+	var tx database.Tx
+	var err error
+	if database.IsPostgresDriver(s.db.GetDriverName()) {
+		tx, err = s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	} else {
+		// The SQLite wrapper normally starts transactions on its single writer
+		// connection. This is a read-only snapshot, so keep it on the read pool
+		// instead of serializing unrelated synchronization writes.
+		var sqliteTx *sql.Tx
+		sqliteTx, err = s.db.GetDB().BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+		if err == nil {
+			tx = database.NewSQLiteTx(sqliteTx)
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	links, err := s.repo.ListTicketLinksForWorkspaceTx(tx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	recent, err := s.repo.ListRecentTicketChangesForWorkspaceTx(tx, workspaceID, recentLimit)
+	if err != nil {
+		return nil, err
+	}
+	syncFailed, creationUncertain, err := s.repo.CountProblemTicketLinksForWorkspaceTx(tx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	overview := &models.ZammadWorkspaceOverview{ByStatus: []models.ZammadOverviewBucket{}, RecentChanges: recent}
+	overview.SyncFailed = syncFailed
+	overview.CreationUncertain = creationUncertain
+	statusBuckets := map[string]*models.ZammadOverviewBucket{}
+	for _, entry := range links {
+		link := entry.Link
+		overview.Total++
+		closed := link.LastStatusID > 0 && slices.Contains(entry.ClosedStateIDs, link.LastStatusID)
+		if link.LastStatusID <= 0 {
+			overview.UnknownStatus++
+		} else if closed {
+			overview.Closed++
+		} else {
+			overview.Active++
+		}
+		if link.OwnerID <= 1 {
+			overview.Unassigned++
+		}
+		key := fmt.Sprintf("%s:%d:%t", link.ProviderID, link.LastStatusID, closed)
+		bucket := statusBuckets[key]
+		if bucket == nil {
+			bucket = &models.ZammadOverviewBucket{
+				ConnectionID: link.ProviderID, ConnectionName: link.ProviderName,
+				ID: link.LastStatusID, Name: link.LastStatusName, Closed: closed,
+			}
+			statusBuckets[key] = bucket
+		}
+		bucket.Count++
+	}
+	for _, bucket := range statusBuckets {
+		overview.ByStatus = append(overview.ByStatus, *bucket)
+	}
+	sort.Slice(overview.ByStatus, func(i, j int) bool {
+		if overview.ByStatus[i].ConnectionID != overview.ByStatus[j].ConnectionID {
+			return overview.ByStatus[i].ConnectionID < overview.ByStatus[j].ConnectionID
+		}
+		if overview.ByStatus[i].Name == overview.ByStatus[j].Name {
+			return overview.ByStatus[i].ID < overview.ByStatus[j].ID
+		}
+		return overview.ByStatus[i].Name < overview.ByStatus[j].Name
+	})
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return overview, nil
 }
 
 func (s *ZammadService) ResolveTicketLink(correlationKey string) (itemID, workspaceID int, err error) {

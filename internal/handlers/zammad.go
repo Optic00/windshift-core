@@ -288,6 +288,60 @@ func (h *ZammadHandler) GetItemLinks(w http.ResponseWriter, r *http.Request) {
 	respondJSONOK(w, responses)
 }
 
+func (h *ZammadHandler) GetItemHistory(w http.ResponseWriter, r *http.Request) {
+	itemID, ok := requireIDParam(w, r, "id")
+	if !ok {
+		return
+	}
+	if !CheckItemPermission(w, r, h.itemRepo, h.permissionService, itemID, models.PermissionItemView) {
+		return
+	}
+	limit, ok := zammadReadLimit(w, r, 6)
+	if !ok {
+		return
+	}
+	history, err := h.service.TicketHistoryForItem(itemID, limit)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	respondJSONOK(w, map[string]any{"events": history})
+}
+
+func (h *ZammadHandler) GetWorkspaceOverview(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := requireIDParam(w, r, "workspaceId")
+	if !ok {
+		return
+	}
+	user, ok := RequireAuth(w, r)
+	if !ok || !RequireWorkspacePermission(w, r, user.ID, workspaceID, models.PermissionItemView, h.permissionService) {
+		return
+	}
+	limit, ok := zammadReadLimit(w, r, 5)
+	if !ok {
+		return
+	}
+	overview, err := h.service.WorkspaceOverview(workspaceID, limit)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	respondJSONOK(w, overview)
+}
+
+func zammadReadLimit(w http.ResponseWriter, r *http.Request, fallback int) (int, bool) {
+	raw := r.URL.Query().Get("limit")
+	if raw == "" {
+		return fallback, true
+	}
+	limit, err := strconv.Atoi(raw)
+	if err != nil || limit < 1 || limit > 100 {
+		respondValidationError(w, r, "limit must be between 1 and 100")
+		return 0, false
+	}
+	return limit, true
+}
+
 // ResolveTicketLink turns the opaque correlation key stored in Zammad into a
 // current Windshift item destination. Item permissions are checked before the
 // destination is disclosed so the link cannot be used to enumerate items.

@@ -9,6 +9,8 @@
     AlertTriangle,
     Edit2,
     Trash2,
+    ChevronDown,
+    ChevronUp,
   } from '@lucide/svelte';
   import { api } from '../../api.js';
   import Button from '../../components/Button.svelte';
@@ -19,12 +21,16 @@
   import FormField from '../../components/FormField.svelte';
   import Input from '../../components/Input.svelte';
   import { t } from '../../stores/i18n.svelte.js';
+  import { authStore } from '../../stores';
   import { successToast, errorToast } from '../../stores/toasts.svelte.js';
   import { confirm } from '../../composables/useConfirm.js';
   import { safeHref } from '../../utils/sanitize';
+  import { formatDateTimeLocale, getUserTimezone } from '../../utils/dateFormatter.js';
+  import { getZammadObservedValueLabel } from '../../utils/zammadObservations.js';
   import {
     isCurrentZammadMetadataRequest,
     isCurrentZammadPanelContext,
+    isCurrentZammadTimelineRequest,
   } from './zammadPanelContext.js';
 
   let { itemId, workspaceId, canEdit = false } = $props();
@@ -62,6 +68,14 @@
   let metadataVersion = 0;
   let editVersion = 0;
   let ownersVersion = 0;
+  let timelineEvents = $state([]);
+  let timelineLoading = $state(false);
+  let timelineError = $state('');
+  let showTimeline = $state(false);
+  let timelineLoaded = $state(false);
+  let timelineVersion = 0;
+  let timezone = $derived(getUserTimezone(authStore.currentUser));
+  const observedTimelineFields = new Set(['status', 'group', 'owner']);
 
   let usableConnections = $derived(connections.filter(isConnectionUsable));
   let unavailableConnections = $derived(connections.filter((connection) => !isConnectionUsable(connection)));
@@ -105,6 +119,7 @@
     metadataVersion += 1;
     editVersion += 1;
     ownersVersion += 1;
+    timelineVersion += 1;
     connections = [];
     links = [];
     metadata = { groups: [], states: [] };
@@ -133,6 +148,11 @@
     error = '';
     formError = '';
     editError = '';
+    timelineEvents = [];
+    timelineLoading = false;
+    timelineError = '';
+    showTimeline = false;
+    timelineLoaded = false;
   }
 
   function isConnectionUsable(connection) {
@@ -155,6 +175,76 @@
 
   function replaceLink(updated) {
     links = [updated, ...links.filter((entry) => entry.id !== updated.id)];
+    invalidateTimeline();
+  }
+
+  function invalidateTimeline() {
+    timelineLoaded = false;
+    if (showTimeline) void loadTimeline(contextVersion);
+  }
+
+  function timelineFieldLabel(field) {
+    const fields = {
+      status: 'status',
+      owner: 'owner',
+      group: 'group',
+    };
+    return t(`zammad.timeline.field.${fields[field]}`);
+  }
+
+  function timelineValueLabel(value) {
+    return getZammadObservedValueLabel(value, t);
+  }
+
+  function timelineChangeLabel(event) {
+    return t('zammad.timeline.change', {
+      field: timelineFieldLabel(event.field),
+      from: timelineValueLabel(event.old_value),
+      to: timelineValueLabel(event.new_value),
+    });
+  }
+
+  async function toggleTimeline() {
+    showTimeline = !showTimeline;
+    if (showTimeline && !timelineLoaded && !timelineLoading) {
+      await loadTimeline(contextVersion);
+    }
+  }
+
+  async function loadTimeline(version = contextVersion) {
+    const currentItemId = itemId;
+    const currentWorkspaceId = workspaceId;
+    const requestVersion = ++timelineVersion;
+    if (!currentItemId) return;
+    const isCurrentTimelineRequest = () =>
+      requestVersion === timelineVersion &&
+      isCurrentZammadTimelineRequest(
+        version,
+        contextVersion,
+        currentItemId,
+        itemId,
+        currentWorkspaceId,
+        workspaceId,
+      );
+    timelineLoading = true;
+    timelineError = '';
+    try {
+      const response = await api.zammadTickets.history(currentItemId, { limit: 6 });
+      if (!isCurrentTimelineRequest()) return;
+      timelineEvents = Array.isArray(response?.events)
+        ? response.events.filter((event) => observedTimelineFields.has(event?.field)).slice(0, 6)
+        : [];
+      timelineLoaded = true;
+    } catch (err) {
+      if (!isCurrentTimelineRequest()) return;
+      console.error('Failed to load Zammad timeline:', err);
+      timelineEvents = [];
+      timelineError = t('zammad.timeline.loadFailed');
+    } finally {
+      if (isCurrentTimelineRequest()) {
+        timelineLoading = false;
+      }
+    }
   }
 
   function selectedEditConnection() {
@@ -188,6 +278,7 @@
       if (currentVersion !== loadVersion || !isCurrentContext(version, currentItemId, currentWorkspaceId)) return;
       connections = loadedConnections;
       links = loadedLinks;
+      invalidateTimeline();
     } catch (err) {
       if (currentVersion !== loadVersion || !isCurrentContext(version, currentItemId, currentWorkspaceId)) return;
       console.error('Failed to load Zammad links:', err);
@@ -545,20 +636,20 @@
                     <div>{t('zammad.status')}: {link.last_status_name || t('zammad.unknown')}</div>
                     <div>{t('zammad.group')}: {link.group_name || t('zammad.unknown')}</div>
                     <div>{t('zammad.owner')}: {link.owner_name || t('zammad.unassignedOwner')}</div>
-                    <div>{link.last_synced_at ? t('zammad.lastSynced', { time: new Date(link.last_synced_at).toLocaleString() }) : t('zammad.notSynced')}</div>
+                    <div>{link.last_synced_at ? t('zammad.lastSynced', { time: formatDateTimeLocale(link.last_synced_at, timezone) }) : t('zammad.notSynced')}</div>
                   </div>
                 </div>
                 {#if canEdit}
                   <div class="flex items-center gap-1">
                     {#if linkConnectionUsable && link.ticket_id && link.sync_state !== 'creating'}
-                      <button class="p-1 rounded" onclick={() => openEditDialog(link)} disabled={savingEdit} title={t('zammad.editTicket')}>
+                      <button class="p-1 rounded" onclick={() => openEditDialog(link)} disabled={savingEdit} title={t('zammad.editTicket')} aria-label={t('zammad.editTicket')}>
                         <Edit2 class="w-4 h-4" />
                       </button>
-                      <button class="p-1 rounded" onclick={() => refresh(link)} disabled={refreshingId === link.id} title={t('zammad.refreshTicket')}>
+                      <button class="p-1 rounded" onclick={() => refresh(link)} disabled={refreshingId === link.id} title={t('zammad.refreshTicket')} aria-label={t('zammad.refreshTicket')}>
                         {#if refreshingId === link.id}<Loader2 class="w-4 h-4 animate-spin" />{:else}<RefreshCw class="w-4 h-4" />{/if}
                       </button>
                     {/if}
-                    <button class="p-1 rounded" onclick={() => removeLink(link)} disabled={removingId === link.id} title={t('zammad.removeTicketLink')}>
+                    <button class="p-1 rounded" onclick={() => removeLink(link)} disabled={removingId === link.id} title={t('zammad.removeTicketLink')} aria-label={t('zammad.removeTicketLink')}>
                       {#if removingId === link.id}<Loader2 class="w-4 h-4 animate-spin" />{:else}<Trash2 class="w-4 h-4" />{/if}
                     </button>
                   </div>
@@ -575,6 +666,46 @@
               {/if}
             </div>
           {/each}
+        </div>
+        <div class="mt-3 border-t pt-2" style="border-color: var(--ds-border);">
+          <button
+            class="inline-flex items-center gap-1 text-xs font-medium hover:underline"
+            onclick={toggleTimeline}
+            aria-expanded={showTimeline}
+            aria-controls={`zammad-timeline-${itemId}`}
+            style="color: var(--ds-link);"
+          >
+            {t('zammad.timeline.toggle')}
+            {#if showTimeline}<ChevronUp class="h-3.5 w-3.5" aria-hidden="true" />{:else}<ChevronDown class="h-3.5 w-3.5" aria-hidden="true" />{/if}
+          </button>
+          {#if showTimeline}
+            <div id={`zammad-timeline-${itemId}`} class="mt-2">
+              <p class="text-xs" style="color: var(--ds-text-subtle);">{t('zammad.timeline.observedHint')}</p>
+              {#if timelineLoading}
+                <div class="flex py-2"><Loader2 class="h-4 w-4 animate-spin" aria-label={t('common.loading')} /></div>
+              {:else if timelineError}
+                <div class="flex items-center gap-2 py-2 text-xs" role="status" style="color: var(--ds-text-danger);">
+                  <span>{timelineError}</span>
+                  <button class="underline" onclick={() => loadTimeline(contextVersion)}>{t('common.retry')}</button>
+                </div>
+              {:else if timelineEvents.length === 0}
+                <p class="py-2 text-xs" style="color: var(--ds-text-subtle);">{t('zammad.timeline.empty')}</p>
+              {:else}
+                <ol class="mt-2 space-y-2">
+                  {#each timelineEvents as event (event.id)}
+                    <li class="flex items-start gap-2 text-xs">
+                      <TicketCheck class="mt-0.5 h-3.5 w-3.5 flex-shrink-0" style="color: var(--ds-text-subtle);" aria-hidden="true" />
+                      <div>
+                        <span class="font-medium" style="color: var(--ds-text);">{t('zammad.ticketNumber', { number: event.ticket_number })}</span>
+                        <p style="color: var(--ds-text);">{timelineChangeLabel(event)}</p>
+                        <time datetime={event.observed_at} style="color: var(--ds-text-subtle);">{formatDateTimeLocale(event.observed_at, timezone)}</time>
+                      </div>
+                    </li>
+                  {/each}
+                </ol>
+              {/if}
+            </div>
+          {/if}
         </div>
       {/if}
     {/if}

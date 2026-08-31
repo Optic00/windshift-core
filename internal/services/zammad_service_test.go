@@ -1144,6 +1144,96 @@ func TestZammadSyncPersistsRemoteGroupAndOwner(t *testing.T) {
 	if synced.GroupID != 8 || synced.GroupName != "Escalations" || synced.OwnerID != 99 || synced.OwnerName != "Grace Hopper" || synced.LastSyncedAt == nil {
 		t.Fatalf("sync did not retain remote group/owner state: %#v", synced)
 	}
+	history, err := f.service.TicketHistoryForItem(f.item1, 10)
+	if err != nil || len(history) != 3 {
+		t.Fatalf("expected one event per observed status/group/owner change: history=%#v err=%v", history, err)
+	}
+	if _, err := f.service.SyncTicketLink(context.Background(), link.ID); err != nil {
+		t.Fatal(err)
+	}
+	history, err = f.service.TicketHistoryForItem(f.item1, 10)
+	if err != nil || len(history) != 3 {
+		t.Fatalf("identical snapshot duplicated observed changes: history=%#v err=%v", history, err)
+	}
+	if _, err := f.db.ExecWrite(`UPDATE items SET workspace_id = ? WHERE id = ?`, f.workspace2, f.item1); err != nil {
+		t.Fatal(err)
+	}
+	history, err = f.service.TicketHistoryForItem(f.item1, 10)
+	if err != nil || len(history) != 0 {
+		t.Fatalf("history remained visible after the item moved outside the connection scope: history=%#v err=%v", history, err)
+	}
+	overview, err := f.service.WorkspaceOverview(f.workspace2, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overview.Total != 0 || len(overview.RecentChanges) != 0 {
+		t.Fatalf("workspace overview disclosed a connection that is unavailable there: %#v", overview)
+	}
+}
+
+func TestZammadWorkspaceOverviewCountsOnlyCompleteTicketLinks(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	if _, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.service.CreateTicket(context.Background(), f.item2, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID}); err == nil {
+		t.Fatal("out-of-scope ticket creation unexpectedly succeeded")
+	}
+	overview, err := f.service.WorkspaceOverview(f.workspace1, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overview.Total != 1 || overview.Active != 1 || overview.Closed != 0 || overview.UnknownStatus != 0 || overview.Unassigned != 1 {
+		t.Fatalf("unexpected overview for complete link: %#v", overview)
+	}
+	if len(overview.ByStatus) != 1 || overview.ByStatus[0].Count != 1 {
+		t.Fatalf("overview omitted linked ticket status: %#v", overview.ByStatus)
+	}
+}
+
+func TestZammadWorkspaceOverviewSeparatesSameStatusAcrossConnections(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	if _, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := f.service.CreateConnection(models.CreateZammadConnectionRequest{
+		Slug: "second-helpdesk", Name: "Second helpdesk", BaseURL: "https://second-zammad.example.test",
+		APIToken: "synthetic-zammad-token", DefaultGroupID: 7, DefaultGroupName: "Support",
+		DefaultCustomer: "robot@example.test", WorkspaceIDs: []int{f.workspace1},
+	}, f.actorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecWrite(`INSERT INTO item_integration_links
+		(id, item_id, integration_provider_id, external_id, external_url, title, link_type, linked_by)
+		VALUES (?, ?, ?, ?, ?, ?, 'ticket', ?)`, "second-link-external", strconv.Itoa(f.item1), second.ProviderID, "902", "https://second-zammad.example.test/#ticket/zoom/902", "Zammad #902", strconv.Itoa(f.actorID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecWrite(`INSERT INTO zammad_ticket_links
+		(id, item_id, provider_id, item_integration_link_id, ticket_id, ticket_number, group_id, group_name, correlation_key, sync_state, last_status_id, last_status_name, created_by)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, "second-link", f.item1, second.ProviderID, "second-link-external", 902, "902", 7, "Support", "windshift:second-helpdesk:PRI-49", models.ZammadSyncLinked, 2, "open", f.actorID); err != nil {
+		t.Fatal(err)
+	}
+	overview, err := f.service.WorkspaceOverview(f.workspace1, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overview.Total != 2 || len(overview.ByStatus) != 2 {
+		t.Fatalf("same status IDs from distinct connections were merged: %#v", overview)
+	}
+	seenConnections := map[string]bool{}
+	for _, bucket := range overview.ByStatus {
+		if bucket.ID != 2 || bucket.Count != 1 {
+			t.Fatalf("unexpected bucket: %#v", bucket)
+		}
+		if bucket.ConnectionName == "" {
+			t.Fatalf("bucket response omitted the readable connection name: %#v", bucket)
+		}
+		seenConnections[bucket.ConnectionID] = true
+	}
+	if !seenConnections[f.connection.ProviderID] || !seenConnections[second.ProviderID] {
+		t.Fatalf("bucket response omitted connection identity: %#v", overview.ByStatus)
+	}
 }
 
 func TestZammadSyncRejectsTicketMovedToDisallowedGroupBeforeSnapshotOrCompletion(t *testing.T) {

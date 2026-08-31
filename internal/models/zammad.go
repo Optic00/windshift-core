@@ -208,3 +208,41 @@ func (link *ZammadTicketLink) Response() ZammadTicketLinkResponse {
 		CreatedAt: link.CreatedAt, UpdatedAt: link.UpdatedAt,
 	}
 }
+
+type ZammadTicketChangeValue struct {
+	ID   int    `json:"id,omitempty"`
+	Name string `json:"name,omitempty"`
+}
+
+type ZammadTicketChange struct {
+	ID           string                  `json:"id"`
+	LinkID       string                  `json:"link_id"`
+	ItemID       int                     `json:"item_id"`
+	ItemKey      string                  `json:"item_key"`
+	TicketNumber string                  `json:"ticket_number,omitempty"`
+	Field        string                  `json:"field"`
+	OldValue     ZammadTicketChangeValue `json:"old_value"`
+	NewValue     ZammadTicketChangeValue `json:"new_value"`
+	ObservedAt   time.Time               `json:"observed_at"`
+}
+
+type ZammadOverviewBucket struct {
+	ConnectionID   string `json:"connection_id"`
+	ConnectionName string `json:"connection_name"`
+	ID             int    `json:"id"`
+	Name           string `json:"name"`
+	Count          int    `json:"count"`
+	Closed         bool   `json:"closed,omitempty"`
+}
+
+type ZammadWorkspaceOverview struct {
+	Total             int                    `json:"total"`
+	Active            int                    `json:"active"`
+	Closed            int                    `json:"closed"`
+	Unassigned        int                    `json:"unassigned"`
+	SyncFailed        int                    `json:"sync_failed"`
+	CreationUncertain int                    `json:"creation_uncertain"`
+	UnknownStatus     int                    `json:"unknown_status"`
+	ByStatus          []ZammadOverviewBucket `json:"by_status"`
+	RecentChanges     []ZammadTicketChange   `json:"recent_changes"`
+}
