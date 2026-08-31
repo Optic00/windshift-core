@@ -17,7 +17,7 @@ The explicit administrator retry is `POST /api/admin/zammad-ticket-links/{linkId
 Concurrent system-wide refresh requests are coalesced into the already queued or running job.
 
 Workspace and item routes are `GET /api/workspaces/{workspaceId}/zammad-connections`, `GET /api/workspaces/{workspaceId}/zammad-connections/{id}/metadata`, and `GET /api/workspaces/{workspaceId}/zammad-connections/{id}/owners?group_id={groupId}`.
-Ticket routes are `GET /api/items/{id}/zammad-links`, `POST /api/items/{id}/zammad-tickets`, `POST /api/items/{id}/zammad-ticket-links`, `PUT /api/zammad-ticket-links/{linkId}`, `DELETE /api/zammad-ticket-links/{linkId}`, and `POST /api/zammad-ticket-links/{linkId}/refresh`.
+Ticket routes are `GET /api/items/{id}/zammad-links`, `GET /api/zammad-ticket-links/resolve/{correlationKey}`, `POST /api/items/{id}/zammad-tickets`, `POST /api/items/{id}/zammad-ticket-links`, `PUT /api/zammad-ticket-links/{linkId}`, `DELETE /api/zammad-ticket-links/{linkId}`, and `POST /api/zammad-ticket-links/{linkId}/refresh`.
 
 Create-ticket requests contain `connection_id` and may contain `group_id`.
 Link-existing requests contain `connection_id` and `ticket_number`.
@@ -49,9 +49,21 @@ Do not grant administration, user-management, group-management, delete-ticket, o
 Zammad role and group permissions must enforce the same boundary as `allowed_group_ids` in the Windshift connection.
 The default group must be active and included in that allowed set.
 
-Create an active text-compatible ticket object attribute named `windshift_item_key`, or configure another valid correlation field name.
+Create an active text ticket object attribute named `windshift_item_key`, or configure another valid correlation field name.
 Windshift writes a deterministic correlation key to this field and uses it to find an already-created ticket safely.
 The field is the idempotency boundary for create retries and must be readable by the service agent.
+
+For a permission-checked return link from Zammad to the current Windshift item, configure this link template on the same attribute:
+
+```text
+https://windshift.example/zammad/#{ticket.windshift_item_key}
+```
+
+Replace the origin and optional path prefix with the browser-visible Windshift base URL.
+If the connection uses a different correlation field, replace `windshift_item_key` in the placeholder too.
+The resolver accepts the correlation value whether Zammad leaves it literal or percent-encodes it in the generated URL.
+The target keeps working after an item moves because Windshift resolves the stored correlation key to the current workspace and item.
+Opening the link requires a Windshift session and `item.view` permission; missing and unauthorized targets are both reported as unavailable.
 
 ## Create, link, update, and unlink behavior
 

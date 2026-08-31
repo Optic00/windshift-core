@@ -58,6 +58,7 @@ func RegisterIntegrationRoutes(deps *Deps) {
 	api.HandleH("GET /workspaces/{workspaceId}/zammad-connections/{id}/metadata", auth(http.HandlerFunc(deps.Integrations.Zammad.GetWorkspaceMetadata)))
 	api.HandleH("GET /workspaces/{workspaceId}/zammad-connections/{id}/owners", auth(http.HandlerFunc(deps.Integrations.Zammad.GetWorkspaceOwners)))
 	api.HandleH("GET /items/{id}/zammad-links", auth(http.HandlerFunc(deps.Integrations.Zammad.GetItemLinks)))
+	api.HandleH("GET /zammad-ticket-links/resolve/{correlationKey}", auth(http.HandlerFunc(deps.Integrations.Zammad.ResolveTicketLink)))
 	api.HandleH("POST /items/{id}/zammad-tickets", auth(http.HandlerFunc(deps.Integrations.Zammad.CreateTicket)))
 	api.HandleH("POST /items/{id}/zammad-ticket-links", auth(http.HandlerFunc(deps.Integrations.Zammad.LinkExistingTicket)))
 	api.HandleH("PUT /zammad-ticket-links/{linkId}", auth(http.HandlerFunc(deps.Integrations.Zammad.UpdateTicketLink)))

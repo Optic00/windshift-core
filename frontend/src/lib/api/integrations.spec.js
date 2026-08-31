@@ -58,6 +58,24 @@ describe('Zammad ticket-link API', () => {
     vi.unstubAllGlobals();
   });
 
+  it('resolves a Zammad correlation key to its current item', async () => {
+    const destination = { workspace_id: 7, item_id: 42 };
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(destination), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(zammadTickets.resolve('windshift:provider:TST-42')).resolves.toEqual(destination);
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      '/api/zammad-ticket-links/resolve/windshift%3Aprovider%3ATST-42'
+    );
+  });
+
   it('loads assignable owners for the selected group', async () => {
     const owners = [
       { id: 1, name: 'Not assigned' },

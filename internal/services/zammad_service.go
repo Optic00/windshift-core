@@ -908,6 +908,22 @@ func (s *ZammadService) GetTicketLink(id string) (*models.ZammadTicketLink, erro
 	return s.repo.GetTicketLink(id)
 }
 
+func (s *ZammadService) ResolveTicketLink(correlationKey string) (itemID, workspaceID int, err error) {
+	correlationKey = strings.TrimSpace(correlationKey)
+	if correlationKey == "" || len(correlationKey) > 512 {
+		return 0, 0, repository.ErrNotFound
+	}
+	providerAndItem, ok := strings.CutPrefix(correlationKey, "windshift:")
+	if !ok {
+		return 0, 0, repository.ErrNotFound
+	}
+	providerID, itemKey, ok := strings.Cut(providerAndItem, ":")
+	if !ok || providerID == "" || itemKey == "" {
+		return 0, 0, repository.ErrNotFound
+	}
+	return s.repo.GetItemDestinationByCorrelationKey(providerID, correlationKey)
+}
+
 // LinkExistingTicket attaches a remote ticket without creating a second one.
 // The local reservation is written before the remote correlation field so a
 // competing item cannot claim the same provider/ticket pair.

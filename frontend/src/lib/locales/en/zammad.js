@@ -95,6 +95,8 @@ export default { zammad: {
   ticketLinkRemoveFailed: 'Failed to remove Zammad ticket assignment',
   ticketNumber: 'Zammad #{number}',
   lastSynced: 'Synced {time}',
+  returnLinkResolving: 'Opening the linked Windshift item...',
+  returnLinkFailed: 'The linked Windshift item could not be opened. It may no longer exist or you may not have access.',
   syncState: {
     pending: 'Ticket creation pending',
     creating: 'Creating ticket',

@@ -171,6 +171,105 @@ func TestZammadWorkspaceOwnersRequireItemEditPermission(t *testing.T) {
 	}
 }
 
+func TestZammadTicketLinkResolverRequiresViewPermission(t *testing.T) {
+	handler, db, user, workspaceID := newZammadHandlerTest(t)
+	var statusID int
+	if err := db.QueryRow(`SELECT id FROM statuses ORDER BY id LIMIT 1`).Scan(&statusID); err != nil {
+		t.Fatal(err)
+	}
+	itemResult, err := db.ExecWrite(`INSERT INTO items
+		(workspace_id, workspace_item_number, title, description, frac_index, status_id, creator_id, last_active_at)
+		VALUES (?, 1, 'Resolver target', '', 'a0', ?, ?, CURRENT_TIMESTAMP)`, workspaceID, statusID, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	itemID, _ := itemResult.LastInsertId()
+	if _, err := db.ExecWrite(`INSERT INTO action_credentials
+		(id, name, credential_type, applies_to_all_workspaces, encrypted_secret, is_enabled)
+		VALUES (1, 'Resolver credential', 'custom_header', true, 'test-ciphertext', true)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecWrite(`INSERT INTO integration_providers
+		(id, slug, name, provider_type, enabled)
+		VALUES ('zammad-resolver', 'zammad-resolver', 'Zammad resolver', 'zammad', true)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecWrite(`INSERT INTO zammad_connections
+		(provider_id, credential_id, base_url, default_customer)
+		VALUES ('zammad-resolver', 1, 'https://zammad.example.test', 'robot@example.test')`); err != nil {
+		t.Fatal(err)
+	}
+	correlationKey := "windshift:zammad-resolver:PRI-1"
+	if _, err := db.ExecWrite(`INSERT INTO zammad_ticket_links
+		(id, item_id, provider_id, correlation_key, sync_state, created_by)
+		VALUES ('resolver-link', ?, 'zammad-resolver', ?, ?, ?)`, itemID, correlationKey, models.ZammadSyncLinked, user.ID); err != nil {
+		t.Fatal(err)
+	}
+	movedWorkspaceResult, err := db.ExecWrite(`INSERT INTO workspaces (name, key) VALUES ('Moved target', 'MOV')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	movedWorkspaceID, _ := movedWorkspaceResult.LastInsertId()
+	if _, err := db.ExecWrite(`UPDATE items SET workspace_id = ? WHERE id = ?`, movedWorkspaceID, itemID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecWrite(`INSERT INTO user_workspace_roles (user_id, workspace_id, role_id, granted_by)
+		SELECT ?, ?, id, ? FROM workspace_roles WHERE name = 'Viewer'`, user.ID, movedWorkspaceID, user.ID); err != nil {
+		t.Fatal(err)
+	}
+	config := services.DefaultPermissionCacheConfig()
+	config.WarmupOnStartup = false
+	config.PreWarmActive = false
+	permissionService, err := services.NewPermissionService(db, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = permissionService.Close() })
+	handler.permissionService = permissionService
+
+	request := authenticatedZammadRequest(http.MethodGet, "/api/zammad-ticket-links/resolve/"+correlationKey, nil, user)
+	request.SetPathValue("correlationKey", correlationKey)
+	recorder := httptest.NewRecorder()
+	handler.ResolveTicketLink(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("viewer could not resolve linked item: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var destination struct {
+		WorkspaceID int `json:"workspace_id"`
+		ItemID      int `json:"item_id"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &destination); err != nil {
+		t.Fatal(err)
+	}
+	if destination.WorkspaceID != int(movedWorkspaceID) || destination.ItemID != int(itemID) {
+		t.Fatalf("unexpected resolver destination: %#v", destination)
+	}
+
+	deniedResult, err := db.ExecWrite(`INSERT INTO users (email, username, first_name, last_name)
+		VALUES ('denied@example.test', 'denied', 'Denied', 'User')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deniedID, _ := deniedResult.LastInsertId()
+	deniedRequest := authenticatedZammadRequest(http.MethodGet, "/api/zammad-ticket-links/resolve/"+correlationKey, nil, &models.User{ID: int(deniedID)})
+	deniedRequest.SetPathValue("correlationKey", correlationKey)
+	deniedRecorder := httptest.NewRecorder()
+	handler.ResolveTicketLink(deniedRecorder, deniedRequest)
+	if deniedRecorder.Code != http.StatusNotFound {
+		t.Fatalf("resolver disclosed an item without view permission: status=%d body=%s", deniedRecorder.Code, deniedRecorder.Body.String())
+	}
+
+	missingKey := "windshift:zammad-resolver:missing"
+	missingRequest := authenticatedZammadRequest(http.MethodGet, "/api/zammad-ticket-links/resolve/"+missingKey, nil, user)
+	missingRequest.SetPathValue("correlationKey", missingKey)
+	missingRecorder := httptest.NewRecorder()
+	handler.ResolveTicketLink(missingRecorder, missingRequest)
+	if missingRecorder.Code != deniedRecorder.Code || missingRecorder.Body.String() != deniedRecorder.Body.String() {
+		t.Fatalf("resolver distinguished an unauthorized target from a missing one: denied=%d %s missing=%d %s",
+			deniedRecorder.Code, deniedRecorder.Body.String(), missingRecorder.Code, missingRecorder.Body.String())
+	}
+}
+
 func TestZammadHandlerMapsRemoteAuthenticationFailureToBadGateway(t *testing.T) {
 	handler, _, _, _ := newZammadHandlerTest(t)
 	recorder := httptest.NewRecorder()

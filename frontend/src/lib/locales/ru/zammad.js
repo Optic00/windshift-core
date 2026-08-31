@@ -95,6 +95,8 @@ export default { zammad: {
   ticketLinkRemoveFailed: 'Не удалось удалить связь с заявкой Zammad',
   ticketNumber: 'Zammad №{number}',
   lastSynced: 'Синхронизировано: {time}',
+  returnLinkResolving: 'Открывается связанный элемент Windshift...',
+  returnLinkFailed: 'Не удалось открыть связанный элемент Windshift. Возможно, он больше не существует или у вас нет доступа.',
   syncState: {
     pending: 'Ожидается создание заявки',
     creating: 'Заявка создаётся',
