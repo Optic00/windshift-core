@@ -1,0 +1,418 @@
+package handlers
+
+import (
+	"errors"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+
+	"windshift/internal/integrations/zammad"
+	"windshift/internal/logger"
+	"windshift/internal/models"
+	"windshift/internal/repository"
+	"windshift/internal/restapi"
+	"windshift/internal/services"
+	"windshift/internal/utils"
+)
+
+type ZammadHandler struct {
+	itemRepo          *repository.ItemRepository
+	service           *services.ZammadService
+	permissionService *services.PermissionService
+	auditor           *logger.Auditor
+	publicBaseURL     string
+}
+
+func NewZammadHandler(itemRepo *repository.ItemRepository, service *services.ZammadService, permissionService *services.PermissionService, auditor *logger.Auditor) *ZammadHandler {
+	return &ZammadHandler{itemRepo: itemRepo, service: service, permissionService: permissionService, auditor: auditor}
+}
+
+func (h *ZammadHandler) SetOAuthBaseURL(baseURL string) { h.publicBaseURL = baseURL }
+
+// StartOAuth is protected by the system-admin route. State binding and the
+// fixed callback URI are enforced in the service, not delegated to clients.
+func (h *ZammadHandler) StartOAuth(w http.ResponseWriter, r *http.Request) {
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+	authURL, err := h.service.StartOAuth(r.Context(), r.PathValue("id"), user.ID, h.publicBaseURL)
+	if !h.respondServiceError(w, r, err) {
+		return
+	}
+	h.audit(r, user, logger.ActionZammadConnectionUpdate, logger.ResourceZammadConnection, r.PathValue("id"), "", map[string]any{"oauth_started": true})
+	respondJSONOK(w, map[string]string{"auth_url": authURL})
+}
+
+// OAuthCallback intentionally has no session requirement: the unguessable,
+// short-lived state is atomically consumed and carries its initiating admin.
+func (h *ZammadHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) {
+	state, code := r.URL.Query().Get("state"), r.URL.Query().Get("code")
+	if state == "" || code == "" || r.URL.Query().Get("error") != "" {
+		result, _ := h.service.ConsumeFailedOAuthCallback(state)
+		h.auditOAuthCallback(r, result, false)
+		h.redirectOAuthResult(w, r, false)
+		return
+	}
+	result, err := h.service.CompleteOAuth(r.Context(), state, code, h.publicBaseURL)
+	if err != nil {
+		h.auditOAuthCallback(r, result, false)
+		h.redirectOAuthResult(w, r, false)
+		return
+	}
+	h.auditOAuthCallback(r, result, true)
+	h.redirectOAuthResult(w, r, true)
+}
+
+func (h *ZammadHandler) auditOAuthCallback(r *http.Request, result *services.ZammadOAuthCallbackResult, success bool) {
+	if h.auditor == nil || result == nil || result.Initiator == nil {
+		return
+	}
+	details := map[string]any{"external_id": result.ProviderID, "oauth_callback": true, "credential_mutation": true}
+	if success {
+		h.auditor.LogWithDetails(r, result.Initiator, logger.ActionZammadOAuthCredentialSet, logger.ResourceZammadConnection, nil, result.ProviderName, details)
+		return
+	}
+	h.auditor.LogFailure(r, result.Initiator, logger.ActionZammadOAuthCredentialSet, logger.ResourceZammadConnection, nil, result.ProviderName, "oauth_callback_failed", details)
+}
+
+func (h *ZammadHandler) redirectOAuthResult(w http.ResponseWriter, r *http.Request, success bool) {
+	result := "error"
+	if success {
+		result = "success"
+	}
+	contextPath := ""
+	if publicURL, err := url.Parse(h.publicBaseURL); err == nil {
+		contextPath = strings.TrimRight(publicURL.EscapedPath(), "/")
+	}
+	http.Redirect(w, r, contextPath+"/admin/integration-providers?tab=zammad&oauth="+url.QueryEscape(result), http.StatusFound)
+}
+
+func (h *ZammadHandler) ListConnections(w http.ResponseWriter, r *http.Request) {
+	connections, err := h.service.ListConnections()
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	respondJSONOK(w, connections)
+}
+
+func (h *ZammadHandler) GetConnection(w http.ResponseWriter, r *http.Request) {
+	connection, err := h.service.GetConnection(r.PathValue("id"))
+	if !h.respondServiceError(w, r, err) {
+		return
+	}
+	respondJSONOK(w, connection)
+}
+
+func (h *ZammadHandler) CreateConnection(w http.ResponseWriter, r *http.Request) {
+	req, ok := decodeJSON[models.CreateZammadConnectionRequest](w, r)
+	if !ok {
+		return
+	}
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+	connection, err := h.service.CreateConnection(req, user.ID)
+	if !h.respondServiceError(w, r, err) {
+		return
+	}
+	h.audit(r, user, logger.ActionZammadConnectionCreate, logger.ResourceZammadConnection, connection.ProviderID, connection.Name, map[string]any{"workspace_ids": connection.WorkspaceIDs, "all_workspaces": connection.AppliesToAllWorkspaces})
+	respondJSONCreated(w, connection)
+}
+
+func (h *ZammadHandler) UpdateConnection(w http.ResponseWriter, r *http.Request) {
+	req, ok := decodeJSON[models.UpdateZammadConnectionRequest](w, r)
+	if !ok {
+		return
+	}
+	connection, err := h.service.UpdateConnection(r.PathValue("id"), req)
+	if !h.respondServiceError(w, r, err) {
+		return
+	}
+	h.audit(r, currentUser(r), logger.ActionZammadConnectionUpdate, logger.ResourceZammadConnection, connection.ProviderID, connection.Name, map[string]any{"token_rotated": req.APIToken != nil && *req.APIToken != ""})
+	respondJSONOK(w, connection)
+}
+
+func (h *ZammadHandler) DeleteConnection(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	connection, err := h.service.GetConnection(id)
+	if !h.respondServiceError(w, r, err) {
+		return
+	}
+	if !h.respondServiceError(w, r, h.service.DeleteConnection(id)) {
+		return
+	}
+	h.audit(r, currentUser(r), logger.ActionZammadConnectionDelete, logger.ResourceZammadConnection, id, connection.Name, nil)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *ZammadHandler) TestConnection(w http.ResponseWriter, r *http.Request) {
+	metadata, err := h.service.TestConnection(r.Context(), r.PathValue("id"))
+	if !h.respondServiceError(w, r, err) {
+		return
+	}
+	h.audit(r, currentUser(r), logger.ActionZammadConnectionTest, logger.ResourceZammadConnection, r.PathValue("id"), "", map[string]any{"groups": len(metadata.Groups), "states": len(metadata.States)})
+	respondJSONOK(w, map[string]any{"ok": true, "metadata": metadata})
+}
+
+func (h *ZammadHandler) RetryUncertainTicketCreation(w http.ResponseWriter, r *http.Request) {
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+	link, err := h.service.RetryUncertainTicketCreation(r.Context(), r.PathValue("linkId"), user.ID)
+	if !h.respondServiceError(w, r, err) {
+		return
+	}
+	h.audit(r, user, logger.ActionZammadTicketCreate, logger.ResourceZammadTicket, link.ID, link.TicketNumber, map[string]any{
+		"item_id": link.ItemID, "connection_id": link.ProviderID, "ticket_id": link.TicketID, "admin_uncertain_override": true,
+	})
+	respondJSONOK(w, link.Response())
+}
+
+func (h *ZammadHandler) ListWorkspaceConnections(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := requireIDParam(w, r, "workspaceId")
+	if !ok {
+		return
+	}
+	user, ok := RequireAuth(w, r)
+	if !ok || !RequireWorkspacePermission(w, r, user.ID, workspaceID, models.PermissionItemView, h.permissionService) {
+		return
+	}
+	connections, err := h.service.ListConnectionsForWorkspace(workspaceID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	responses := make([]models.ZammadWorkspaceConnection, 0, len(connections))
+	for _, connection := range connections {
+		ready := connection.AuthMethod == models.ZammadAuthMethodAPIToken && connection.HasAPIToken
+		if connection.AuthMethod == models.ZammadAuthMethodOAuth {
+			ready = connection.OAuthConnected && !connection.ReauthorizationRequired
+		}
+		responses = append(responses, models.ZammadWorkspaceConnection{
+			ProviderID: connection.ProviderID, Name: connection.Name, AuthMethod: connection.AuthMethod,
+			Ready: ready, OAuthConnected: connection.OAuthConnected, ReauthorizationRequired: connection.ReauthorizationRequired,
+			DefaultGroupID: connection.DefaultGroupID, DefaultGroupName: connection.DefaultGroupName,
+			AllowedGroupIDs: connection.AllowedGroupIDs,
+		})
+	}
+	respondJSONOK(w, responses)
+}
+
+func (h *ZammadHandler) GetWorkspaceMetadata(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := requireIDParam(w, r, "workspaceId")
+	if !ok {
+		return
+	}
+	user, ok := RequireAuth(w, r)
+	if !ok || !RequireWorkspacePermission(w, r, user.ID, workspaceID, models.PermissionItemView, h.permissionService) {
+		return
+	}
+	metadata, err := h.service.MetadataForWorkspace(r.Context(), r.PathValue("id"), workspaceID)
+	if !h.respondServiceError(w, r, err) {
+		return
+	}
+	respondJSONOK(w, metadata)
+}
+
+func (h *ZammadHandler) GetWorkspaceOwners(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := requireIDParam(w, r, "workspaceId")
+	if !ok {
+		return
+	}
+	user, ok := RequireAuth(w, r)
+	if !ok || !RequireWorkspacePermission(w, r, user.ID, workspaceID, models.PermissionItemView, h.permissionService) {
+		return
+	}
+	groupID, err := strconv.Atoi(r.URL.Query().Get("group_id"))
+	if err != nil || groupID <= 0 {
+		respondValidationError(w, r, "group_id must be positive")
+		return
+	}
+	owners, err := h.service.OwnersForWorkspace(r.Context(), r.PathValue("id"), workspaceID, groupID)
+	if !h.respondServiceError(w, r, err) {
+		return
+	}
+	respondJSONOK(w, owners)
+}
+
+func (h *ZammadHandler) GetItemLinks(w http.ResponseWriter, r *http.Request) {
+	itemID, ok := requireIDParam(w, r, "id")
+	if !ok {
+		return
+	}
+	if !CheckItemPermission(w, r, h.itemRepo, h.permissionService, itemID, models.PermissionItemView) {
+		return
+	}
+	links, err := h.service.TicketLinksForItem(itemID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	responses := make([]models.ZammadTicketLinkResponse, 0, len(links))
+	for _, link := range links {
+		responses = append(responses, link.Response())
+	}
+	respondJSONOK(w, responses)
+}
+
+func (h *ZammadHandler) CreateTicket(w http.ResponseWriter, r *http.Request) {
+	itemID, ok := requireIDParam(w, r, "id")
+	if !ok {
+		return
+	}
+	if !CheckItemPermission(w, r, h.itemRepo, h.permissionService, itemID, models.PermissionItemEdit) {
+		return
+	}
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+	req, ok := decodeJSON[models.CreateZammadTicketRequest](w, r)
+	if !ok {
+		return
+	}
+	link, err := h.service.CreateTicket(r.Context(), itemID, user.ID, req)
+	if !h.respondServiceError(w, r, err) {
+		return
+	}
+	h.audit(r, user, logger.ActionZammadTicketCreate, logger.ResourceZammadTicket, link.ID, link.TicketNumber, map[string]any{"item_id": link.ItemID, "connection_id": link.ProviderID, "ticket_id": link.TicketID, "sync_state": link.SyncState})
+	respondJSONOK(w, link.Response())
+}
+
+func (h *ZammadHandler) LinkExistingTicket(w http.ResponseWriter, r *http.Request) {
+	itemID, ok := requireIDParam(w, r, "id")
+	if !ok {
+		return
+	}
+	if !CheckItemPermission(w, r, h.itemRepo, h.permissionService, itemID, models.PermissionItemEdit) {
+		return
+	}
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+	req, ok := decodeJSON[models.LinkZammadTicketRequest](w, r)
+	if !ok {
+		return
+	}
+	link, err := h.service.LinkExistingTicket(r.Context(), itemID, user.ID, req)
+	if !h.respondServiceError(w, r, err) {
+		return
+	}
+	h.audit(r, user, logger.ActionZammadTicketLinkExisting, logger.ResourceZammadTicket, link.ID, link.TicketNumber, map[string]any{
+		"item_id": link.ItemID, "connection_id": link.ProviderID, "ticket_id": link.TicketID,
+	})
+	respondJSONCreated(w, link.Response())
+}
+
+func (h *ZammadHandler) UpdateTicketLink(w http.ResponseWriter, r *http.Request) {
+	link, err := h.service.GetTicketLink(r.PathValue("linkId"))
+	if !h.respondServiceError(w, r, err) {
+		return
+	}
+	if !CheckItemPermission(w, r, h.itemRepo, h.permissionService, link.ItemID, models.PermissionItemEdit) {
+		return
+	}
+	req, ok := decodeJSON[models.UpdateZammadTicketLinkRequest](w, r)
+	if !ok {
+		return
+	}
+	updated, err := h.service.UpdateTicketLink(r.Context(), link.ID, req)
+	if !h.respondServiceError(w, r, err) {
+		return
+	}
+	h.audit(r, currentUser(r), logger.ActionZammadTicketUpdate, logger.ResourceZammadTicket, updated.ID, updated.TicketNumber, map[string]any{
+		"item_id": updated.ItemID, "connection_id": updated.ProviderID, "ticket_id": updated.TicketID,
+		"state_id": updated.LastStatusID, "group_id": updated.GroupID, "owner_id": updated.OwnerID,
+	})
+	respondJSONOK(w, updated.Response())
+}
+
+func (h *ZammadHandler) DeleteTicketLink(w http.ResponseWriter, r *http.Request) {
+	link, err := h.service.GetTicketLink(r.PathValue("linkId"))
+	if !h.respondServiceError(w, r, err) {
+		return
+	}
+	if !CheckItemPermission(w, r, h.itemRepo, h.permissionService, link.ItemID, models.PermissionItemEdit) {
+		return
+	}
+	removed, err := h.service.UnlinkTicket(r.Context(), link.ID)
+	if !h.respondServiceError(w, r, err) {
+		return
+	}
+	h.audit(r, currentUser(r), logger.ActionZammadTicketUnlink, logger.ResourceZammadTicket, removed.ID, removed.TicketNumber, map[string]any{
+		"item_id": removed.ItemID, "connection_id": removed.ProviderID, "ticket_id": removed.TicketID,
+	})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *ZammadHandler) RefreshTicket(w http.ResponseWriter, r *http.Request) {
+	link, err := h.service.GetTicketLink(r.PathValue("linkId"))
+	if !h.respondServiceError(w, r, err) {
+		return
+	}
+	if !CheckItemPermission(w, r, h.itemRepo, h.permissionService, link.ItemID, models.PermissionItemEdit) {
+		return
+	}
+	link, err = h.service.SyncTicketLink(r.Context(), link.ID)
+	if !h.respondServiceError(w, r, err) {
+		return
+	}
+	h.audit(r, currentUser(r), logger.ActionZammadTicketRefresh, logger.ResourceZammadTicket, link.ID, link.TicketNumber, map[string]any{"item_id": link.ItemID, "connection_id": link.ProviderID, "ticket_id": link.TicketID, "status_id": link.LastStatusID})
+	respondJSONOK(w, link.Response())
+}
+
+func (h *ZammadHandler) audit(r *http.Request, user *models.User, action, resourceType, externalID, name string, details map[string]any) {
+	if h.auditor == nil || user == nil {
+		return
+	}
+	if details == nil {
+		details = map[string]any{}
+	}
+	details["external_id"] = externalID
+	h.auditor.LogWithDetails(r, user, action, resourceType, nil, name, details)
+}
+
+func currentUser(r *http.Request) *models.User {
+	return utils.GetCurrentUser(r)
+}
+
+func (h *ZammadHandler) respondServiceError(w http.ResponseWriter, r *http.Request, err error) bool {
+	if err == nil {
+		return true
+	}
+	switch {
+	case errors.Is(err, repository.ErrNotFound), errors.Is(err, services.ErrCredentialScopeMismatch):
+		respondNotFound(w, r, "zammad_connection")
+	case errors.Is(err, repository.ErrDuplicateEntry):
+		respondConflict(w, r, "A Zammad connection or ticket link with these identifiers already exists")
+	default:
+		var apiErr *zammad.APIError
+		var upstreamErr *zammad.UpstreamError
+		var configurationErr *zammad.ConfigurationError
+		var validationErr *services.ZammadValidationError
+		var transitionErr *services.TransitionRejection
+		if errors.Is(err, services.ErrZammadReauthorizationRequired) {
+			respondError(w, r, restapi.NewAPIError(http.StatusConflict, "ZAMMAD_REAUTHORIZATION_REQUIRED", "Zammad authorization must be renewed by a system administrator"))
+			return false
+		}
+		switch {
+		case errors.As(err, &validationErr):
+			respondValidationError(w, r, validationErr.Error())
+		case errors.As(err, &configurationErr):
+			respondBadRequest(w, r, configurationErr.Error())
+		case errors.As(err, &apiErr) || errors.As(err, &upstreamErr):
+			respondError(w, r, restapi.NewAPIError(http.StatusBadGateway, "ZAMMAD_UPSTREAM_ERROR", "Zammad could not complete the request"))
+		case errors.As(err, &transitionErr):
+			respondBadRequest(w, r, "The configured Windshift completion transition is not currently allowed")
+		default:
+			respondInternalError(w, r, err)
+		}
+	}
+	return false
+}

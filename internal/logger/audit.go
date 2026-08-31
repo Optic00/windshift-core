@@ -545,6 +545,16 @@ const (
 	ActionIntegrationProviderDelete = "integration_provider.delete"
 	ActionIntegrationItemLinkCreate = "integration_item_link.create"
 	ActionIntegrationItemLinkDelete = "integration_item_link.delete"
+	ActionZammadConnectionCreate    = "zammad_connection.create"
+	ActionZammadConnectionUpdate    = "zammad_connection.update"
+	ActionZammadConnectionDelete    = "zammad_connection.delete"
+	ActionZammadConnectionTest      = "zammad_connection.test"
+	ActionZammadOAuthCredentialSet  = "zammad_connection.oauth_credential_set" // #nosec G101 -- audit action name, not a credential
+	ActionZammadTicketCreate        = "zammad_ticket.create"
+	ActionZammadTicketLinkExisting  = "zammad_ticket.link_existing"
+	ActionZammadTicketUpdate        = "zammad_ticket.update"
+	ActionZammadTicketUnlink        = "zammad_ticket.unlink"
+	ActionZammadTicketRefresh       = "zammad_ticket.refresh"
 
 	// Issue sync configuration
 	ActionIssueSyncConfigCreate = "issue_sync_config.create"
@@ -825,6 +835,8 @@ const (
 	ResourceLLMConnection        = "llm_connection"
 	ResourceIntegrationProvider  = "integration_provider"
 	ResourceIntegrationItemLink  = "integration_item_link"
+	ResourceZammadConnection     = "zammad_connection"
+	ResourceZammadTicket         = "zammad_ticket"
 	ResourceIssueSyncConfig      = "issue_sync_config"
 	ResourceWorkItemStaleness    = "work_item_staleness"
 	ResourceEmailProvider        = "email_provider"

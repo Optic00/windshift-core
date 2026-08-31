@@ -65,10 +65,11 @@ type IntegrationProviderUpdate struct {
 }
 
 const integrationProviderColumns = "id, slug, name, provider_type, enabled, oauth_client_id, oauth_client_secret_encrypted, provider_config, created_at, updated_at"
+const genericIntegrationProviderFilter = "provider_type IN ('notion', 'todoist')"
 
 // List returns all integration_providers ordered by name.
 func (r *IntegrationProviderRepository) List() ([]IntegrationProvider, error) {
-	rows, err := r.db.Query("SELECT " + integrationProviderColumns + " FROM integration_providers ORDER BY name")
+	rows, err := r.db.Query("SELECT " + integrationProviderColumns + " FROM integration_providers WHERE " + genericIntegrationProviderFilter + " ORDER BY name")
 	if err != nil {
 		return nil, fmt.Errorf("list integration_providers: %w", err)
 	}
@@ -90,7 +91,7 @@ func (r *IntegrationProviderRepository) List() ([]IntegrationProvider, error) {
 
 // GetByID returns a single integration_provider or ErrNotFound.
 func (r *IntegrationProviderRepository) GetByID(id string) (*IntegrationProvider, error) {
-	row := r.db.QueryRow("SELECT "+integrationProviderColumns+" FROM integration_providers WHERE id = ?", id)
+	row := r.db.QueryRow("SELECT "+integrationProviderColumns+" FROM integration_providers WHERE id = ? AND "+genericIntegrationProviderFilter, id)
 	p, err := scanIntegrationProvider(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -167,7 +168,7 @@ func (r *IntegrationProviderRepository) Update(id string, req IntegrationProvide
 	sets = append(sets, "updated_at = CURRENT_TIMESTAMP")
 	args = append(args, id)
 
-	query := "UPDATE integration_providers SET " + strings.Join(sets, ", ") + " WHERE id = ?"
+	query := "UPDATE integration_providers SET " + strings.Join(sets, ", ") + " WHERE id = ? AND " + genericIntegrationProviderFilter
 	result, err := r.db.ExecWrite(query, args...)
 	if err != nil {
 		if database.IsUniqueConstraintError(err) {
@@ -185,7 +186,7 @@ func (r *IntegrationProviderRepository) Update(id string, req IntegrationProvide
 
 // Delete removes a row. Returns ErrNotFound when no row matches.
 func (r *IntegrationProviderRepository) Delete(id string) error {
-	result, err := r.db.ExecWrite("DELETE FROM integration_providers WHERE id = ?", id)
+	result, err := r.db.ExecWrite("DELETE FROM integration_providers WHERE id = ? AND "+genericIntegrationProviderFilter, id)
 	if err != nil {
 		return fmt.Errorf("delete integration_provider %s: %w", id, err)
 	}
