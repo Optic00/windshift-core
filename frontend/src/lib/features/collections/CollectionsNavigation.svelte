@@ -85,6 +85,7 @@
       icon={Tag}
       onclick={handleManageCategories}
       class="w-full justify-center"
+      dataTestid="collection-categories-manage"
     >
       {t('collections.manageCategories')}
     </Button>
