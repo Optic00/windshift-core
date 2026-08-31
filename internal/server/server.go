@@ -1228,6 +1228,7 @@ func (s *Server) initialize() error {
 	} else {
 		slog.Info("plugin system disabled")
 	}
+	ssoHandler.SetPluginManager(s.pluginManager)
 
 	pluginHandler := handlers.NewPluginHandler(s.pluginManager, repository.NewPluginRegistryRepository(s.db), logger.NewAuditor(s.db), cfg.Plugins.Disabled)
 

@@ -233,6 +233,11 @@ func NewSSOHandler(db database.Database, sessionManager *auth.SessionManager, pe
 	}
 }
 
+// SetPluginManager supplies the plugin manager after its dependencies are initialized.
+func (h *SSOHandler) SetPluginManager(pluginManager *plugins.Manager) {
+	h.pluginManager = pluginManager
+}
+
 // GetStatus returns the public SSO status (no auth required)
 func (h *SSOHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	providers, err := h.providerStore.ListEnabled()
