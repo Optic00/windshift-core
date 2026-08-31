@@ -5,6 +5,7 @@
   import { t } from '../stores/i18n.svelte.js';
   import { sanitizeHtml } from '../utils/sanitize.ts';
   import { tick } from 'svelte';
+  import { toStore } from 'svelte/store';
   import Checkbox from '../components/Checkbox.svelte';
   import Input from '../components/Input.svelte';
   import ItemTypeIcon from '../components/ItemTypeIcon.svelte';
@@ -31,12 +32,23 @@
     disabled = false,
     triggerTestid = '',
     triggerLabel = '',
+    isOpen = $bindable(false),
+    onOpenChange = null,
     children = undefined
   } = $props();
 
   const isDisabled = $derived(disabled || (items.length === 0 && !children));
 
   // Create popover (replaces createDropdownMenu to avoid typeahead focus-stealing)
+  const controlledOpen = toStore(
+    () => isOpen,
+    (value) => {
+      if (isOpen === value) return;
+      isOpen = value;
+      onOpenChange?.(value);
+    }
+  );
+
   const {
     elements: { trigger, content },
     states: { open }
@@ -47,6 +59,7 @@
       placement: /** @type {import('@floating-ui/dom').Placement} */ (placement || 'bottom')
     },
     portal: 'body',
+    open: controlledOpen,
     // svelte-ignore state_referenced_locally
     disabled: isDisabled
   }));
@@ -220,6 +233,7 @@
     use:melt={$content}
     data-menu-container
     role="menu"
+    tabindex="-1"
     onkeydown={handleMenuKeydown}
     class="{maxWidth} rounded shadow-xl border focus:outline-none z-[60]"
     style="background-color: var(--ds-surface-raised); border-color: var(--ds-border); box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.25), 0 10px 10px -5px rgba(0, 0, 0, 0.15);"

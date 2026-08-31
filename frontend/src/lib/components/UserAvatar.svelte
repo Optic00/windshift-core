@@ -14,7 +14,9 @@
     // minimal drops the items that navigate to the desktop app (My Workspace,
     // Profile, Security) — used on the mobile surface where those routes render
     // the full desktop UI. Theme + Sign Out remain.
-    minimal = false
+    minimal = false,
+    isOpen = $bindable(false),
+    onOpenChange = null,
   } = $props();
 
   // Local state
@@ -124,6 +126,8 @@
   triggerAlignment={expanded ? "start" : "center"}
   showChevron={false}
   triggerTestid="user-avatar-trigger"
+  {isOpen}
+  {onOpenChange}
   items={[
     ...((!minimal && authStore.currentUser) ? [{
       id: 'my-workspace',

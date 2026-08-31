@@ -19,6 +19,8 @@
     createModalWorkspaceId = null,
     createModalSkipNavigate = false,
     onclosecreate,
+    onclosecommand = () => {},
+    onclosechat = () => {},
   } = $props();
 
   let PomodoroSettingsModalComponent = $state(null);
@@ -65,7 +67,7 @@
   });
 </script>
 
-{#if commandPaletteState.loading}
+{#if commandPaletteState.loading && showCommandPalette}
   <ModalBackdrop
     show={true}
     opacity={0.4}
@@ -85,22 +87,22 @@
   </ModalBackdrop>
 {:else if commandPaletteState.component && showCommandPalette}
   {@const CommandPalette = commandPaletteState.component}
-  <CommandPalette bind:isOpen={showCommandPalette} onclose={() => showCommandPalette = false} />
+  <CommandPalette bind:isOpen={showCommandPalette} onclose={onclosecommand} />
 {:else if commandPaletteState.error && showCommandPalette}
   <!-- shortcut-guard-exempt: retrying a failed lazy import is a recovery action, not a form submission. -->
-  <ModalBackdrop show={true} opacity={0.4} zIndex={60} closeOnClick={false} onclose={() => showCommandPalette = false}>
+  <ModalBackdrop show={true} opacity={0.4} zIndex={60} closeOnClick={false} onclose={onclosecommand}>
     <div class="rounded-lg p-6 text-center" role="alert" style="background-color: var(--ds-surface-raised); color: var(--ds-text);">
       <p class="font-semibold">Failed to load Search</p>
       <p class="mt-1 text-sm" style="color: var(--ds-text-subtle);">Check your connection, then try again.</p>
       <div class="mt-4 flex justify-center gap-2">
-        <Button variant="secondary" onclick={() => showCommandPalette = false}>{t('common.close')}</Button>
+        <Button variant="secondary" onclick={onclosecommand}>{t('common.close')}</Button>
         <Button variant="primary" onclick={() => lazyComponents.retry('command-palette')}>{t('nav.retry')}</Button>
       </div>
     </div>
   </ModalBackdrop>
 {/if}
 
-{#if createModalState.loading}
+{#if createModalState.loading && showCreateModal}
   <ModalBackdrop show={true} opacity={0.4} closeOnClick={false} closeOnEscape={false} transition={false}>
     <div class="rounded-lg p-6" style="background-color: var(--ds-surface-raised); color: var(--ds-text-subtle);">
       <Spinner class="mx-auto mb-4" />
@@ -142,7 +144,7 @@
 
 {#if aiStore.chatAvailable && showChatPanel && chatPanelState.component}
   {@const ChatPanelComponent = chatPanelState.component}
-  <ChatPanelComponent bind:isOpen={showChatPanel} onclose={() => showChatPanel = false} />
+  <ChatPanelComponent bind:isOpen={showChatPanel} onclose={onclosechat} />
 {/if}
 
 <ToastContainer />
