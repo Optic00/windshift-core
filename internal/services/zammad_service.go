@@ -28,8 +28,15 @@ var zammadSlugPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,79}$`)
 
 var ErrZammadReauthorizationRequired = errors.New("zammad OAuth reauthorization is required")
 var ErrZammadOAuthSuperseded = errors.New("zammad OAuth operation was superseded by a configuration change")
+var ErrZammadOAuthRefreshInProgress = errors.New("zammad OAuth refresh is already in progress")
+var ErrZammadLinkReservationConflict = errors.New("zammad connection or item changed while the ticket link was being prepared")
+var ErrZammadTicketGroupPolicyChanged = errors.New("zammad connection no longer allows the ticket group")
+var ErrZammadConnectionBusy = errors.New("zammad connection has a ticket operation in progress")
 
 const zammadOAuthRefreshLeaseDuration = 2 * zammadHTTPTimeout
+const zammadOAuthRefreshWaitDuration = 5 * time.Second
+const zammadOAuthRefreshPollInterval = 50 * time.Millisecond
+const zammadSyncLeaseDuration = 5 * time.Minute
 
 type ZammadOAuthCallbackResult struct {
 	ProviderID      string
@@ -83,18 +90,22 @@ type zammadPermissionChecker interface {
 }
 
 type ZammadService struct {
-	db                      database.Database
-	repo                    *repository.ZammadRepository
-	credentials             *ActionCredentialService
-	permission              zammadPermissionChecker
-	workflow                zammadWorkflowTransitioner
-	condition               *ConditionService
-	approval                *ApprovalService
-	events                  *EventCoordinator
-	transportOverride       zammad.Transport
-	oauthTransportOverride  zammad.Transport
-	encryption              *sso.SecretEncryption
-	oauthBeforeRefreshClaim func()
+	db                         database.Database
+	repo                       *repository.ZammadRepository
+	credentials                *ActionCredentialService
+	permission                 zammadPermissionChecker
+	workflow                   zammadWorkflowTransitioner
+	condition                  *ConditionService
+	approval                   *ApprovalService
+	events                     *EventCoordinator
+	transportOverride          zammad.Transport
+	oauthTransportOverride     zammad.Transport
+	encryption                 *sso.SecretEncryption
+	oauthBeforeRefreshClaim    func()
+	updateBeforeLock           func()
+	persistBeforeLock          func()
+	updateBeforeRemoteWrite    func()
+	completionBeforeTransition func()
 }
 
 func NewZammadService(db database.Database, repo *repository.ZammadRepository, credentials *ActionCredentialService, permission zammadPermissionChecker, workflow zammadWorkflowTransitioner, condition *ConditionService, approval *ApprovalService) *ZammadService {
@@ -126,6 +137,22 @@ func (s *ZammadService) SetOAuthTransportForTesting(transport zammad.Transport) 
 
 func (s *ZammadService) SetOAuthBeforeRefreshClaimForTesting(hook func()) {
 	s.oauthBeforeRefreshClaim = hook
+}
+
+func (s *ZammadService) SetUpdateBeforeConnectionLockForTesting(hook func()) {
+	s.updateBeforeLock = hook
+}
+
+func (s *ZammadService) SetPersistBeforeConnectionLockForTesting(hook func()) {
+	s.persistBeforeLock = hook
+}
+
+func (s *ZammadService) SetUpdateBeforeRemoteWriteForTesting(hook func()) {
+	s.updateBeforeRemoteWrite = hook
+}
+
+func (s *ZammadService) SetCompletionBeforeTransitionForTesting(hook func()) {
+	s.completionBeforeTransition = hook
 }
 
 func (s *ZammadService) ListConnections() ([]*models.ZammadConnection, error) {
@@ -192,7 +219,6 @@ func (s *ZammadService) UpdateConnection(id string, req models.UpdateZammadConne
 		return nil, err
 	}
 	originalBaseURL := connection.BaseURL
-	originalCorrelationField := connection.CorrelationField
 	originalOAuthClientID := connection.OAuthClientID
 	oauthSecretChanged := req.OAuthClientSecret != nil && strings.TrimSpace(*req.OAuthClientSecret) != ""
 	if req.Slug != nil {
@@ -267,15 +293,6 @@ func (s *ZammadService) UpdateConnection(id string, req models.UpdateZammadConne
 	if err := validateZammadConnection(connection); err != nil {
 		return nil, err
 	}
-	if connection.BaseURL != originalBaseURL || connection.CorrelationField != originalCorrelationField {
-		hasLinks, err := s.repo.HasTicketLinks(connection.ProviderID)
-		if err != nil {
-			return nil, err
-		}
-		if hasLinks {
-			return nil, zammadValidationError("base_url and correlation_field cannot change after ticket creation has started")
-		}
-	}
 	if connection.AuthMethod == models.ZammadAuthMethodOAuth {
 		if err := validateZammadOAuthConfiguration(connection); err != nil {
 			return nil, err
@@ -292,7 +309,16 @@ func (s *ZammadService) UpdateConnection(id string, req models.UpdateZammadConne
 		if err != nil {
 			return nil, err
 		}
+		if s.updateBeforeLock != nil {
+			s.updateBeforeLock()
+		}
 		if err := database.WithTx(s.db, func(tx database.Tx) error {
+			if err := s.repo.LockConnectionTx(tx, connection.ProviderID); err != nil {
+				return err
+			}
+			if err := s.validateZammadConnectionLinksTx(tx, connection); err != nil {
+				return err
+			}
 			if err := s.repo.UpdateConnectionTx(tx, connection); err != nil {
 				return err
 			}
@@ -317,7 +343,16 @@ func (s *ZammadService) UpdateConnection(id string, req models.UpdateZammadConne
 	if err != nil {
 		return nil, err
 	}
+	if s.updateBeforeLock != nil {
+		s.updateBeforeLock()
+	}
 	if err := database.WithTx(s.db, func(tx database.Tx) error {
+		if err := s.repo.LockConnectionTx(tx, connection.ProviderID); err != nil {
+			return err
+		}
+		if err := s.validateZammadConnectionLinksTx(tx, connection); err != nil {
+			return err
+		}
 		if err := s.repo.UpdateConnectionTx(tx, connection); err != nil {
 			return err
 		}
@@ -329,14 +364,119 @@ func (s *ZammadService) UpdateConnection(id string, req models.UpdateZammadConne
 }
 
 func (s *ZammadService) DeleteConnection(id string) error {
-	hasLinks, err := s.repo.HasTicketLinksForConnection(id)
+	return database.WithTx(s.db, func(tx database.Tx) error {
+		if err := s.repo.LockConnectionTx(tx, id); err != nil {
+			return err
+		}
+		hasLinks, err := s.repo.HasTicketLinksForConnectionTx(tx, id)
+		if err != nil {
+			return err
+		}
+		if hasLinks {
+			return zammadValidationError("unlink all Zammad tickets before deleting this connection")
+		}
+		return s.repo.DeleteConnectionTx(tx, id)
+	})
+}
+
+func (s *ZammadService) validateZammadConnectionLinksTx(tx database.Tx, connection *models.ZammadConnection) error {
+	current, err := s.repo.ConnectionMutationSnapshotTx(tx, connection.ProviderID)
 	if err != nil {
 		return err
 	}
-	if hasLinks {
-		return zammadValidationError("unlink all Zammad tickets before deleting this connection")
+	links, err := s.repo.ListTicketLinkScopesForUpdateTx(tx, connection.ProviderID)
+	if err != nil {
+		return err
 	}
-	return s.repo.DeleteConnection(id)
+	if len(links) > 0 && (connection.BaseURL != current.BaseURL || connection.CorrelationField != current.CorrelationField) {
+		return zammadValidationError("base_url and correlation_field cannot change after ticket creation has started")
+	}
+	groupPolicyChanged := connection.DefaultGroupID != current.DefaultGroupID ||
+		connection.DefaultGroupName != current.DefaultGroupName ||
+		!slices.Equal(connection.AllowedGroupIDs, current.AllowedGroupIDs)
+	completionPolicyChanged := !slices.Equal(connection.ClosedStateIDs, current.ClosedStateIDs) ||
+		!optionalIntEqual(connection.CompletionStatusID, current.CompletionStatusID)
+	groupPolicyNarrows := groupPolicyChanged && zammadGroupPolicyNarrows(current, connection)
+	for _, link := range links {
+		if (groupPolicyChanged || completionPolicyChanged) && link.SyncLocked {
+			return ErrZammadConnectionBusy
+		}
+		if groupPolicyNarrows && !link.SetupComplete {
+			return ErrZammadConnectionBusy
+		}
+		if !zammadConnectionAllowsWorkspace(connection, link.WorkspaceID) {
+			return zammadValidationError("workspace scope cannot exclude items with linked Zammad tickets")
+		}
+		if !zammadConnectionAllowsGroupSnapshot(connection, link.GroupID, link.GroupName) {
+			return zammadValidationError("allowed groups cannot exclude linked Zammad tickets")
+		}
+	}
+	return nil
+}
+
+func optionalIntEqual(left, right *int) bool {
+	return (left == nil && right == nil) || (left != nil && right != nil && *left == *right)
+}
+
+func zammadConnectionAllowsWorkspace(connection *models.ZammadConnection, workspaceID int) bool {
+	return connection.AppliesToAllWorkspaces || slices.Contains(connection.WorkspaceIDs, workspaceID)
+}
+
+func zammadConnectionAllowsGroupSnapshot(connection *models.ZammadConnection, groupID int, groupName string) bool {
+	if len(connection.AllowedGroupIDs) > 0 {
+		return slices.Contains(connection.AllowedGroupIDs, groupID)
+	}
+	if connection.DefaultGroupID > 0 {
+		return connection.DefaultGroupID == groupID
+	}
+	return connection.DefaultGroupName != "" && connection.DefaultGroupName == groupName
+}
+
+// zammadGroupPolicyNarrows reports whether proposed can remove a group that an
+// incomplete ticket reservation may still need. Numeric group IDs can be
+// compared exactly. A name-only configuration has no stable ID to compare, so
+// only retaining the identical name-only policy is provably safe.
+func zammadGroupPolicyNarrows(current *repository.ZammadConnectionMutationSnapshot, proposed *models.ZammadConnection) bool {
+	if len(current.AllowedGroupIDs) > 0 {
+		for _, groupID := range current.AllowedGroupIDs {
+			if !zammadConnectionAllowsGroupSnapshot(proposed, groupID, "") {
+				return true
+			}
+		}
+		// The current default, including a name-only default, already resolves
+		// to one of these validated IDs. Preserving the entire allowlist is the
+		// complete safety condition and avoids treating a pure expansion as a
+		// narrowing when the stored default has no numeric ID.
+		return false
+	}
+	if current.DefaultGroupID > 0 {
+		return !zammadConnectionAllowsGroupSnapshot(proposed, current.DefaultGroupID, current.DefaultGroupName)
+	}
+	return len(proposed.AllowedGroupIDs) > 0 || proposed.DefaultGroupID > 0 || proposed.DefaultGroupName != current.DefaultGroupName
+}
+
+func (s *ZammadService) reserveZammadTicketLink(connection *models.ZammadConnection, item *models.Item, link *models.ZammadTicketLink, existing bool) error {
+	return database.WithTx(s.db, func(tx database.Tx) error {
+		snapshot, err := s.repo.LockTicketLinkReservationTx(tx, connection.ProviderID, item.ID)
+		if err != nil {
+			return err
+		}
+		if !snapshot.ConnectionEnabled || !snapshot.WorkspaceAllowed ||
+			snapshot.BaseURL != connection.BaseURL || snapshot.CorrelationField != connection.CorrelationField ||
+			snapshot.DefaultCustomer != connection.DefaultCustomer ||
+			snapshot.WorkspaceID != item.WorkspaceID || snapshot.WorkspaceItemNumber != item.WorkspaceItemNumber ||
+			snapshot.WorkspaceKey != item.WorkspaceKey ||
+			!zammadConnectionAllowsGroupSnapshot(&models.ZammadConnection{
+				DefaultGroupID: snapshot.DefaultGroupID, DefaultGroupName: snapshot.DefaultGroupName,
+				AllowedGroupIDs: snapshot.AllowedGroupIDs,
+			}, link.GroupID, link.GroupName) {
+			return ErrZammadLinkReservationConflict
+		}
+		if existing {
+			return s.repo.ReserveExistingTicketLinkTx(tx, link)
+		}
+		return s.repo.CreatePendingTicketLinkTx(tx, link)
+	})
 }
 
 // StartOAuth stores a short-lived state bound to this system connection and
@@ -477,7 +617,10 @@ func (s *ZammadService) oauthAccessToken(ctx context.Context, connection *models
 	}
 	token, err := s.repo.GetOAuthToken(connection.ProviderID)
 	if err != nil {
-		return "", ErrZammadReauthorizationRequired
+		if errors.Is(err, repository.ErrNotFound) {
+			return "", ErrZammadReauthorizationRequired
+		}
+		return "", err
 	}
 	if token.ReauthorizationRequired {
 		return "", ErrZammadReauthorizationRequired
@@ -486,15 +629,7 @@ func (s *ZammadService) oauthAccessToken(ctx context.Context, connection *models
 		return "", ErrZammadOAuthSuperseded
 	}
 	if token.ExpiresAt.After(time.Now().Add(2 * time.Minute)) {
-		raw, _, err := s.credentials.ResolveManaged(ctx, connection.CredentialID, workspaceID, string(models.IntegrationProviderZammad), connection.ProviderID)
-		if err != nil {
-			return "", err
-		}
-		bundle, err := parseZammadOAuthCredential(raw)
-		if err != nil {
-			return "", err
-		}
-		return bundle.AccessToken, nil
+		return s.resolveStoredZammadOAuthAccessToken(ctx, connection, workspaceID)
 	}
 	if s.oauthBeforeRefreshClaim != nil {
 		s.oauthBeforeRefreshClaim()
@@ -502,14 +637,52 @@ func (s *ZammadService) oauthAccessToken(ctx context.Context, connection *models
 	claimProviderID := connection.ProviderID
 	claimGeneration := token.OAuthGeneration
 	claimOwner := uuid.New().String()
-	claimed, err := s.repo.ClaimOAuthRefresh(claimProviderID, claimGeneration, claimOwner, time.Now().Add(zammadOAuthRefreshLeaseDuration))
-	if err != nil {
-		return "", err
-	}
-	if !claimed {
-		// Another request owns the short per-connection refresh lease. Never
-		// issue a competing refresh request, which could invalidate rotation.
-		return "", errors.New("zammad OAuth refresh is already in progress")
+	waitUntil := time.Now().Add(zammadOAuthRefreshWaitDuration)
+	for {
+		claimed, err := s.repo.ClaimOAuthRefresh(claimProviderID, claimGeneration, claimOwner, time.Now().Add(zammadOAuthRefreshLeaseDuration))
+		if err != nil {
+			return "", err
+		}
+		if claimed {
+			break
+		}
+
+		// Another request owns the per-connection refresh lease. Briefly wait
+		// for it to publish the rotated credential, then reuse that token rather
+		// than issuing a competing refresh request.
+		connection, err = s.repo.GetConnection(claimProviderID)
+		if err != nil {
+			return "", err
+		}
+		if connection.OAuthGeneration != claimGeneration {
+			return "", ErrZammadOAuthSuperseded
+		}
+		token, err = s.repo.GetOAuthToken(claimProviderID)
+		if err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				return "", ErrZammadReauthorizationRequired
+			}
+			return "", err
+		}
+		if token.ReauthorizationRequired {
+			return "", ErrZammadReauthorizationRequired
+		}
+		if token.OAuthGeneration != claimGeneration {
+			return "", ErrZammadOAuthSuperseded
+		}
+		if token.ExpiresAt.After(time.Now().Add(2 * time.Minute)) {
+			return s.resolveStoredZammadOAuthAccessToken(ctx, connection, workspaceID)
+		}
+		if !time.Now().Before(waitUntil) {
+			return "", ErrZammadOAuthRefreshInProgress
+		}
+		timer := time.NewTimer(zammadOAuthRefreshPollInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return "", ctx.Err()
+		case <-timer.C:
+		}
 	}
 	claimActive := true
 	defer func() {
@@ -526,7 +699,10 @@ func (s *ZammadService) oauthAccessToken(ctx context.Context, connection *models
 	}
 	token, err = s.repo.GetOAuthTokenForRefreshClaim(claimProviderID, claimGeneration, claimOwner)
 	if err != nil {
-		return "", ErrZammadOAuthSuperseded
+		if errors.Is(err, repository.ErrNotFound) {
+			return "", ErrZammadOAuthSuperseded
+		}
+		return "", err
 	}
 	if token.ReauthorizationRequired {
 		return "", ErrZammadReauthorizationRequired
@@ -596,6 +772,18 @@ func (s *ZammadService) oauthAccessToken(ctx context.Context, connection *models
 	return refreshed.AccessToken, nil
 }
 
+func (s *ZammadService) resolveStoredZammadOAuthAccessToken(ctx context.Context, connection *models.ZammadConnection, workspaceID int) (string, error) {
+	raw, _, err := s.credentials.ResolveManaged(ctx, connection.CredentialID, workspaceID, string(models.IntegrationProviderZammad), connection.ProviderID)
+	if err != nil {
+		return "", err
+	}
+	bundle, err := parseZammadOAuthCredential(raw)
+	if err != nil {
+		return "", err
+	}
+	return bundle.AccessToken, nil
+}
+
 func (s *ZammadService) markOAuthReauthorizationRequired(connection *models.ZammadConnection, generation int64, claimOwner string) error {
 	pending := pendingZammadOAuthCredential("reauthorization_required")
 	credentialUpdate, err := s.credentials.PrepareManagedSecretUpdate(connection.CredentialID, pending,
@@ -646,14 +834,10 @@ func (s *ZammadService) TestConnection(ctx context.Context, id string) (*models.
 		return nil, err
 	}
 	metadata, err := client.Metadata(ctx)
-	if err == nil && connection.AuthMethod == models.ZammadAuthMethodAPIToken {
-		err = client.ValidateCorrelationField(ctx, connection.CorrelationField)
-		metadata.CorrelationFieldVerified = err == nil
-	} else if err == nil {
-		// The scoped OAuth service account intentionally need not have
-		// admin.object. It is still tested against the groups and ticket-state
-		// endpoints it actually needs; the custom correlation field is shown as
-		// explicitly unverified rather than requiring broader privileges.
+	if err == nil {
+		// Least-privilege API-token and OAuth service accounts intentionally need
+		// not have admin.object. Test only the groups and ticket-state endpoints
+		// used at runtime and report the custom field as explicitly unverified.
 		metadata.CorrelationFieldVerified = false
 	}
 	if err == nil {
@@ -792,7 +976,7 @@ func (s *ZammadService) LinkExistingTicket(ctx context.Context, itemID, actorID 
 			CorrelationKey: correlation, SyncState: models.ZammadSyncCreating,
 			LastStatusID: ticket.StateID, LastStatusName: statusName, CreatedBy: &actorID,
 		}
-		if err := s.repo.ReserveExistingTicketLink(link); err != nil {
+		if err := s.reserveZammadTicketLink(connection, item, link, true); err != nil {
 			if !errors.Is(err, repository.ErrDuplicateEntry) {
 				return nil, err
 			}
@@ -801,13 +985,62 @@ func (s *ZammadService) LinkExistingTicket(ctx context.Context, itemID, actorID 
 				return nil, err
 			}
 			link = existing
-			correlation = link.CorrelationKey
 		}
+	}
+	syncOwner := uuid.New().String()
+	claimed, err := s.repo.ClaimSync(link.ID, syncOwner, time.Now().Add(zammadSyncLeaseDuration))
+	if err != nil {
+		return nil, err
+	}
+	if !claimed {
+		return nil, ErrZammadConnectionBusy
+	}
+	defer func() { _ = s.repo.ReleaseSyncClaim(link.ID, syncOwner) }()
+	link, err = s.repo.GetTicketLink(link.ID)
+	if err != nil {
+		return nil, err
+	}
+	if link.SyncState == models.ZammadSyncLinked && link.ItemIntegrationLinkID != "" {
+		return link, nil
+	}
+	if link.TicketID <= 0 || link.TicketID != ticket.ID {
+		return nil, zammadValidationError("this item already has another Zammad ticket for the selected connection")
+	}
+	// Reservation and claim may have waited behind another request. Reload the
+	// current connection and remote ticket before deciding whether to write the
+	// correlation field.
+	connection, client, err = s.client(ctx, link.ProviderID, item.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	ticket, err = client.GetTicket(ctx, link.TicketID)
+	if err != nil {
+		return nil, err
+	}
+	metadata, err = client.Metadata(ctx)
+	if err != nil {
+		return nil, err
+	}
+	group, err = allowedZammadGroup(connection, metadata.Groups, ticket.GroupID)
+	if err != nil {
+		return nil, err
+	}
+	remoteCorrelation, err = zammadTicketAttributeString(ticket, connection.CorrelationField)
+	if err != nil {
+		return nil, err
+	}
+	correlation = link.CorrelationKey
+	if remoteCorrelation != "" && remoteCorrelation != correlation {
+		return nil, zammadValidationError("Zammad ticket is already linked through another correlation key")
 	}
 
 	if remoteCorrelation == "" {
+		if err := s.renewZammadSyncClaim(link.ID, syncOwner); err != nil {
+			return nil, err
+		}
 		ticket, err = client.UpdateTicket(ctx, ticket.ID, nil, nil, nil, connection.CorrelationField, correlation)
 		if err != nil {
+			_ = s.repo.MarkTicketLinkSetupError(link.ID, syncOwner, RedactString(err.Error()))
 			return nil, err
 		}
 	}
@@ -820,8 +1053,12 @@ func (s *ZammadService) LinkExistingTicket(ctx context.Context, itemID, actorID 
 	link.OwnerName = resolveZammadOwnerName(ctx, client, ticket)
 	link.LastStatusID = ticket.StateID
 	link.LastStatusName = zammadStateName(metadata, ticket.StateID, ticket.StateName)
-	if err := s.repo.CompleteExistingTicketLink(link.ID, link.ID+"-external", link, actorID); err != nil {
+	if err := s.renewZammadSyncClaim(link.ID, syncOwner); err != nil {
 		return nil, err
+	}
+	if err := s.completeExistingTicketLinkWithCurrentGroupPolicy(link, syncOwner, actorID); err != nil {
+		_ = s.repo.MarkTicketLinkSetupError(link.ID, syncOwner, RedactString(err.Error()))
+		return nil, s.mapZammadSyncClaimError(err)
 	}
 	return s.repo.GetTicketLink(link.ID)
 }
@@ -872,37 +1109,58 @@ func (s *ZammadService) CreateTicket(ctx context.Context, itemID, actorID int, r
 			GroupID: groupID, GroupName: groupName, CorrelationKey: correlation,
 			SyncState: models.ZammadSyncPending, CreatedBy: &actorID,
 		}
-		if err := s.repo.CreatePendingTicketLink(link); err != nil && !errors.Is(err, repository.ErrDuplicateEntry) {
+		if err := s.reserveZammadTicketLink(connection, item, link, false); err != nil && !errors.Is(err, repository.ErrDuplicateEntry) {
 			return nil, err
 		}
 		link, err = s.repo.GetTicketLinkForItem(itemID, connection.ProviderID)
 		if err != nil {
 			return nil, err
 		}
-	} else {
-		// Once a durable creation attempt exists, retries keep its original
-		// destination and correlation key. This also covers an item moved to a
-		// different workspace between attempts.
-		groupID = link.GroupID
-		groupName = link.GroupName
-		correlation = link.CorrelationKey
 	}
 	if link.TicketID != 0 {
 		return link, nil
 	}
-	wasUncertain := link.SyncState == models.ZammadSyncUncertain
-	claimed, err := s.repo.ClaimTicketCreation(itemID, connection.ProviderID, time.Now())
+	syncOwner := uuid.New().String()
+	now := time.Now()
+	claimed, wasUncertain, err := s.repo.ClaimTicketCreation(link.ID, syncOwner, now, now.Add(zammadSyncLeaseDuration))
 	if err != nil {
 		return nil, err
 	}
 	if !claimed {
 		return s.repo.GetTicketLinkForItem(itemID, connection.ProviderID)
 	}
+	defer func() { _ = s.repo.ReleaseSyncClaim(link.ID, syncOwner) }()
+	link, err = s.repo.GetTicketLink(link.ID)
+	if err != nil {
+		return nil, err
+	}
+	if link.TicketID != 0 {
+		return link, nil
+	}
+	// Once a durable creation attempt exists, retries keep its original
+	// destination and correlation key. This also covers an item moved to a
+	// different workspace between attempts.
+	groupID = link.GroupID
+	groupName = link.GroupName
+	correlation = link.CorrelationKey
+	connection, client, err = s.client(ctx, link.ProviderID, item.WorkspaceID)
+	if err != nil {
+		return nil, s.failZammadTicketCreationBeforePost(link.ID, syncOwner, wasUncertain, err)
+	}
+	groups, err = client.Groups(ctx)
+	if err != nil {
+		return nil, s.failZammadTicketCreationBeforePost(link.ID, syncOwner, wasUncertain, err)
+	}
+	if _, err := allowedZammadGroup(connection, groups, groupID); err != nil {
+		return nil, s.failZammadTicketCreationBeforePost(link.ID, syncOwner, wasUncertain, err)
+	}
 
 	ticket, requestErr := client.FindByCorrelation(ctx, connection.CorrelationField, correlation)
 	postAttempted := false
 	if requestErr == nil && ticket == nil && wasUncertain {
-		_ = s.repo.MarkTicketLinkUncertain(link.ID, "Zammad ticket creation outcome is uncertain; retry only searches by correlation key")
+		if err := s.repo.MarkTicketLinkUncertain(link.ID, syncOwner, "Zammad ticket creation outcome is uncertain; retry only searches by correlation key"); err != nil {
+			return nil, s.mapZammadSyncClaimError(err)
+		}
 		return s.repo.GetTicketLink(link.ID)
 	}
 	if requestErr == nil && ticket == nil {
@@ -912,33 +1170,40 @@ func (s *ZammadService) CreateTicket(ctx context.Context, itemID, actorID int, r
 		if body == "" {
 			body = title
 		}
+		if err := s.renewZammadSyncClaim(link.ID, syncOwner); err != nil {
+			return nil, err
+		}
 		ticket, requestErr = client.CreateTicket(ctx, title, body, connection.DefaultCustomer,
 			groupName, connection.CorrelationField, correlation)
 	}
 	if requestErr != nil {
 		safeError := RedactString(requestErr.Error())
-		if postAttempted && zammadCreationOutcomeUncertain(requestErr) {
-			_ = s.repo.MarkTicketLinkUncertain(link.ID, safeError)
+		var markErr error
+		if wasUncertain || (postAttempted && zammadCreationOutcomeUncertain(requestErr)) {
+			markErr = s.repo.MarkTicketLinkUncertain(link.ID, syncOwner, safeError)
 		} else {
-			_ = s.repo.MarkTicketLinkFailed(link.ID, safeError)
+			markErr = s.repo.MarkTicketLinkFailed(link.ID, syncOwner, safeError)
+		}
+		if markErr != nil {
+			return nil, s.mapZammadSyncClaimError(markErr)
 		}
 		return nil, requestErr
 	}
-	if ticket.GroupID == 0 && !postAttempted {
+	if ticket.GroupID == 0 {
 		ticket, requestErr = client.GetTicket(ctx, ticket.ID)
 		if requestErr != nil {
-			_ = s.repo.MarkTicketLinkUncertain(link.ID, RedactString(requestErr.Error()))
+			if err := s.repo.MarkTicketLinkUncertain(link.ID, syncOwner, RedactString(requestErr.Error())); err != nil {
+				return nil, s.mapZammadSyncClaimError(err)
+			}
 			return nil, requestErr
 		}
 	}
 	ticketGroupID := ticket.GroupID
-	if ticketGroupID == 0 {
-		ticketGroupID = groupID
-		ticket.GroupID = groupID
-	}
 	allowedGroup, groupErr := s.requireAllowedTicketGroup(ctx, connection, client, ticket, groups)
 	if groupErr != nil {
-		_ = s.repo.MarkTicketLinkUncertain(link.ID, RedactString(groupErr.Error()))
+		if err := s.repo.MarkTicketLinkUncertain(link.ID, syncOwner, RedactString(groupErr.Error())); err != nil {
+			return nil, s.mapZammadSyncClaimError(err)
+		}
 		return nil, groupErr
 	}
 	statusName := ticket.StateName
@@ -950,12 +1215,17 @@ func (s *ZammadService) CreateTicket(ctx context.Context, itemID, actorID int, r
 		ticketGroupName = allowedGroup.Name
 	}
 	ticketURL := connection.BaseURL + "/#ticket/zoom/" + fmt.Sprintf("%d", ticket.ID)
-	if err := s.repo.CompleteTicketCreation(link.ID, ticket.ID, ticket.Number, ticketURL,
+	if err := s.renewZammadSyncClaim(link.ID, syncOwner); err != nil {
+		return nil, err
+	}
+	if err := s.completeTicketCreationWithCurrentGroupPolicy(link.ProviderID, link.ID, syncOwner, ticket.ID, ticket.Number, ticketURL,
 		ticket.StateID, statusName, ticketGroupID, ticketGroupName, ticket.OwnerID, ticket.OwnerName, actorID); err != nil {
 		// The remote ticket is known to exist. Keep retries search-only until
 		// the durable local association has been completed.
-		_ = s.repo.MarkTicketLinkUncertain(link.ID, RedactString(err.Error()))
-		return nil, err
+		if markErr := s.repo.MarkTicketLinkUncertain(link.ID, syncOwner, RedactString(err.Error())); markErr != nil {
+			return nil, s.mapZammadSyncClaimError(markErr)
+		}
+		return nil, s.mapZammadSyncClaimError(err)
 	}
 	return s.repo.GetTicketLink(link.ID)
 }
@@ -965,21 +1235,24 @@ func validateZammadMetadata(connection *models.ZammadConnection, metadata *model
 	for _, group := range metadata.Groups {
 		activeGroups[group.ID] = group.Name
 	}
+	defaultGroupID := connection.DefaultGroupID
 	if connection.DefaultGroupID > 0 {
 		if _, ok := activeGroups[connection.DefaultGroupID]; !ok {
 			return zammadValidationError("default Zammad group is missing or inactive")
 		}
 	} else if connection.DefaultGroupName != "" {
-		found := false
-		for _, name := range activeGroups {
+		for groupID, name := range activeGroups {
 			if name == connection.DefaultGroupName {
-				found = true
+				defaultGroupID = groupID
 				break
 			}
 		}
-		if !found {
+		if defaultGroupID == 0 {
 			return zammadValidationError("default Zammad group is missing or inactive")
 		}
+	}
+	if len(connection.AllowedGroupIDs) > 0 && !slices.Contains(connection.AllowedGroupIDs, defaultGroupID) {
+		return zammadValidationError("default Zammad group must be included in allowed_group_ids")
 	}
 	for _, groupID := range connection.AllowedGroupIDs {
 		if _, ok := activeGroups[groupID]; !ok {
@@ -1009,8 +1282,26 @@ func (s *ZammadService) UpdateTicketLink(ctx context.Context, linkID string, req
 	if err != nil {
 		return nil, err
 	}
-	if link.TicketID <= 0 {
-		return nil, zammadValidationError("Zammad ticket has not been created")
+	if link.TicketID <= 0 || link.ItemIntegrationLinkID == "" {
+		return nil, zammadValidationError("Zammad ticket link setup is incomplete")
+	}
+	syncOwner := uuid.New().String()
+	claimed, err := s.repo.ClaimSync(link.ID, syncOwner, time.Now().Add(zammadSyncLeaseDuration))
+	if err != nil {
+		return nil, err
+	}
+	if !claimed {
+		return nil, ErrZammadConnectionBusy
+	}
+	defer func() { _ = s.repo.ReleaseSyncClaim(link.ID, syncOwner) }()
+	// The caller's snapshot predates the claim. Reload after winning it so a
+	// completed closed-state episode cannot be replayed from stale state.
+	link, err = s.repo.GetTicketLink(link.ID)
+	if err != nil {
+		return nil, err
+	}
+	if link.TicketID <= 0 || link.ItemIntegrationLinkID == "" {
+		return nil, zammadValidationError("Zammad ticket link setup is incomplete")
 	}
 	item, err := repository.NewItemRepository(s.db).FindByIDWithDetails(link.ItemID)
 	if err != nil {
@@ -1057,11 +1348,25 @@ func (s *ZammadService) UpdateTicketLink(ctx context.Context, linkID string, req
 		}
 	}
 
+	if s.updateBeforeRemoteWrite != nil {
+		s.updateBeforeRemoteWrite()
+	}
+	if err := s.renewZammadSyncClaim(link.ID, syncOwner); err != nil {
+		return nil, err
+	}
+	currentConnection, err := s.repo.GetConnection(link.ProviderID)
+	if err != nil {
+		return nil, err
+	}
+	effectiveGroupName := zammadGroupName(metadata, effectiveGroupID, current.GroupName)
+	if !currentConnection.Enabled || !zammadConnectionAllowsGroupSnapshot(currentConnection, effectiveGroupID, effectiveGroupName) {
+		return nil, ErrZammadTicketGroupPolicyChanged
+	}
 	updated, err := client.UpdateTicket(ctx, link.TicketID, req.StateID, req.GroupID, ownerID, "", "")
 	if err != nil {
 		return nil, err
 	}
-	if err := s.persistTicketSnapshot(ctx, link, connection, client, updated, metadata); err != nil {
+	if err := s.persistTicketSnapshot(ctx, link, client, updated, metadata, syncOwner); err != nil {
 		return nil, err
 	}
 	return s.repo.GetTicketLink(link.ID)
@@ -1076,7 +1381,22 @@ func (s *ZammadService) UnlinkTicket(ctx context.Context, linkID string) (*model
 	if err != nil {
 		return nil, err
 	}
-	if link.TicketID > 0 {
+	syncOwner := uuid.New().String()
+	claimed, err := s.repo.ClaimSync(link.ID, syncOwner, time.Now().Add(zammadSyncLeaseDuration))
+	if err != nil {
+		return nil, err
+	}
+	if !claimed {
+		return nil, ErrZammadConnectionBusy
+	}
+	defer func() { _ = s.repo.ReleaseSyncClaim(link.ID, syncOwner) }()
+	link, err = s.repo.GetTicketLink(link.ID)
+	if err != nil {
+		return nil, err
+	}
+	needsCorrelationLookup := link.TicketID == 0 &&
+		(link.SyncState == models.ZammadSyncCreating || link.SyncState == models.ZammadSyncUncertain)
+	if link.TicketID > 0 || needsCorrelationLookup {
 		item, err := repository.NewItemRepository(s.db).FindByIDWithDetails(link.ItemID)
 		if err != nil {
 			return nil, err
@@ -1085,26 +1405,44 @@ func (s *ZammadService) UnlinkTicket(ctx context.Context, linkID string) (*model
 		if err != nil {
 			return nil, err
 		}
-		ticket, getErr := client.GetTicket(ctx, link.TicketID)
-		if getErr != nil {
+		var ticket *zammad.Ticket
+		var getErr error
+		if link.TicketID > 0 {
+			ticket, getErr = client.GetTicket(ctx, link.TicketID)
+		} else {
+			ticket, getErr = client.FindByCorrelation(ctx, connection.CorrelationField, link.CorrelationKey)
+		}
+		switch {
+		case getErr != nil:
 			var apiErr *zammad.APIError
-			if !errors.As(getErr, &apiErr) || apiErr.StatusCode != 404 {
+			if link.TicketID == 0 || !errors.As(getErr, &apiErr) || apiErr.StatusCode != 404 {
 				return nil, getErr
 			}
-		} else {
+		case ticket == nil:
+			// An empty search cannot prove that an ambiguously created ticket does
+			// not exist. Keep the pinned correlation so a later search or explicit
+			// administrator decision can recover it safely.
+			return nil, zammadValidationError("cannot safely unlink an uncertain Zammad ticket while correlation search is empty")
+		default:
 			remoteCorrelation, err := zammadTicketAttributeString(ticket, connection.CorrelationField)
 			if err != nil {
 				return nil, err
 			}
 			if remoteCorrelation == link.CorrelationKey {
+				if err := s.renewZammadSyncClaim(link.ID, syncOwner); err != nil {
+					return nil, err
+				}
 				if _, err := client.UpdateTicket(ctx, ticket.ID, nil, nil, nil, connection.CorrelationField, ""); err != nil {
 					return nil, err
 				}
 			}
 		}
 	}
-	if err := s.repo.DeleteTicketLink(link.ID); err != nil {
+	if err := s.renewZammadSyncClaim(link.ID, syncOwner); err != nil {
 		return nil, err
+	}
+	if err := s.repo.DeleteTicketLinkClaimed(link.ID, syncOwner); err != nil {
+		return nil, s.mapZammadSyncClaimError(err)
 	}
 	return link, nil
 }
@@ -1114,17 +1452,18 @@ func (s *ZammadService) SyncTicketLink(ctx context.Context, linkID string) (*mod
 	if err != nil {
 		return nil, err
 	}
-	if link.TicketID == 0 {
-		return nil, zammadValidationError("Zammad ticket has not been created")
+	if link.TicketID == 0 || link.ItemIntegrationLinkID == "" {
+		return nil, zammadValidationError("Zammad ticket link setup is incomplete")
 	}
-	claimed, err := s.repo.ClaimSync(link.ID, time.Now().Add(2*time.Minute))
+	syncOwner := uuid.New().String()
+	claimed, err := s.repo.ClaimSync(link.ID, syncOwner, time.Now().Add(zammadSyncLeaseDuration))
 	if err != nil {
 		return nil, err
 	}
 	if !claimed {
-		return link, nil
+		return nil, ErrZammadConnectionBusy
 	}
-	return s.syncClaimedTicketLink(ctx, link)
+	return s.syncClaimedTicketLink(ctx, link, syncOwner)
 }
 
 // RetryUncertainTicketCreation is an explicit administrator override after
@@ -1147,30 +1486,45 @@ func (s *ZammadService) RetryUncertainTicketCreation(ctx context.Context, linkID
 	})
 }
 
-func (s *ZammadService) syncClaimedTicketLink(ctx context.Context, link *models.ZammadTicketLink) (*models.ZammadTicketLink, error) {
+func (s *ZammadService) syncClaimedTicketLink(ctx context.Context, link *models.ZammadTicketLink, syncOwner string) (*models.ZammadTicketLink, error) {
+	defer func() { _ = s.repo.ReleaseSyncClaim(link.ID, syncOwner) }()
+	// The due-list/manual-refresh snapshot predates the sync claim. Reload after
+	// winning the claim so completion_applied and other idempotency state cannot
+	// be replayed from a stale worker snapshot.
+	current, err := s.repo.GetTicketLink(link.ID)
+	if err != nil {
+		return nil, err
+	}
+	link = current
 	item, itemErr := repository.NewItemRepository(s.db).FindByID(link.ItemID)
 	if itemErr != nil {
-		s.recordZammadSyncError(link, itemErr)
+		s.recordZammadSyncError(link, syncOwner, itemErr)
 		return nil, itemErr
 	}
 	connection, client, err := s.client(ctx, link.ProviderID, item.WorkspaceID)
 	if err != nil {
-		s.recordZammadSyncError(link, err)
+		if errors.Is(err, ErrZammadOAuthRefreshInProgress) {
+			_ = s.repo.ReleaseSyncClaim(link.ID, syncOwner)
+			return nil, err
+		}
+		s.recordZammadSyncError(link, syncOwner, err)
 		return nil, err
 	}
 	if !connection.Enabled {
-		_ = s.repo.UpdateTicketLinkSync(link.ID, link.LastStatusID, link.LastStatusName,
-			link.GroupID, link.GroupName, link.OwnerID, link.OwnerName, "", time.Now(), false, false)
+		if err := s.repo.UpdateTicketLinkSync(link.ID, syncOwner, link.LastStatusID, link.LastStatusName,
+			link.GroupID, link.GroupName, link.OwnerID, link.OwnerName, "", time.Now(), false, false); err != nil {
+			return nil, s.mapZammadSyncClaimError(err)
+		}
 		return s.repo.GetTicketLink(link.ID)
 	}
 	ticket, err := client.GetTicket(ctx, link.TicketID)
 	if err != nil {
-		s.recordZammadSyncError(link, err)
+		s.recordZammadSyncError(link, syncOwner, err)
 		return nil, err
 	}
 	allowedGroup, err := s.requireAllowedTicketGroup(ctx, connection, client, ticket, nil)
 	if err != nil {
-		s.recordZammadSyncError(link, err)
+		s.recordZammadSyncError(link, syncOwner, err)
 		return nil, err
 	}
 	if ticket.GroupName == "" {
@@ -1182,23 +1536,38 @@ func (s *ZammadService) syncClaimedTicketLink(ctx context.Context, link *models.
 	if needsStateName || needsGroupName {
 		metadata, err = client.Metadata(ctx)
 		if err != nil {
-			s.recordZammadSyncError(link, err)
+			s.recordZammadSyncError(link, syncOwner, err)
 			return nil, err
 		}
 	}
-	if err := s.persistTicketSnapshot(ctx, link, connection, client, ticket, metadata); err != nil {
+	if err := s.persistTicketSnapshot(ctx, link, client, ticket, metadata, syncOwner); err != nil {
 		return nil, err
 	}
 	return s.repo.GetTicketLink(link.ID)
 }
 
-func (s *ZammadService) recordZammadSyncError(link *models.ZammadTicketLink, err error) {
-	_ = s.repo.UpdateTicketLinkSync(link.ID, link.LastStatusID, link.LastStatusName,
+func (s *ZammadService) recordZammadSyncError(link *models.ZammadTicketLink, syncOwner string, err error) {
+	_ = s.repo.UpdateTicketLinkSync(link.ID, syncOwner, link.LastStatusID, link.LastStatusName,
 		link.GroupID, link.GroupName, link.OwnerID, link.OwnerName,
 		RedactString(err.Error()), time.Now(), false, false)
 }
 
-func (s *ZammadService) persistTicketSnapshot(ctx context.Context, link *models.ZammadTicketLink, connection *models.ZammadConnection, client *zammad.Client, ticket *zammad.Ticket, metadata *models.ZammadConnectionMetadata) error {
+func (s *ZammadService) persistTicketSnapshot(ctx context.Context, link *models.ZammadTicketLink, client *zammad.Client, ticket *zammad.Ticket, metadata *models.ZammadConnectionMetadata, syncOwner string) error {
+	if err := s.renewZammadSyncClaim(link.ID, syncOwner); err != nil {
+		return err
+	}
+	// A lease can expire without being taken over. Configuration may have
+	// changed during that gap, so reload both the idempotency state and policy
+	// only after renewal has made the operation exclusive again.
+	currentLink, err := s.repo.GetTicketLink(link.ID)
+	if err != nil {
+		return err
+	}
+	link = currentLink
+	connection, err := s.repo.GetConnection(link.ProviderID)
+	if err != nil {
+		return err
+	}
 	statusName := zammadStateName(metadata, ticket.StateID, ticket.StateName)
 	if statusName == "" && ticket.StateID == link.LastStatusID {
 		statusName = link.LastStatusName
@@ -1207,23 +1576,147 @@ func (s *ZammadService) persistTicketSnapshot(ctx context.Context, link *models.
 	if groupName == "" && ticket.GroupID == link.GroupID {
 		groupName = link.GroupName
 	}
+	if !zammadConnectionAllowsGroupSnapshot(connection, ticket.GroupID, groupName) {
+		s.recordZammadSyncError(link, syncOwner, ErrZammadTicketGroupPolicyChanged)
+		return ErrZammadTicketGroupPolicyChanged
+	}
 	ownerName := resolveZammadOwnerName(ctx, client, ticket)
 	isClosed := slices.Contains(connection.ClosedStateIDs, ticket.StateID)
 	completionApplied := false
 	if connection.CompletionStatusID != nil && isClosed && !link.CompletionApplied {
-		if err := s.completeWindshiftItem(ctx, link, connection); err != nil {
-			safeError := RedactString(err.Error())
-			_ = s.repo.UpdateTicketLinkSync(link.ID, ticket.StateID, statusName,
-				ticket.GroupID, groupName, ticket.OwnerID, ownerName,
-				safeError, time.Now(), false, false)
+		if s.completionBeforeTransition != nil {
+			s.completionBeforeTransition()
+		}
+		// Renew and reload unconditionally at the last boundary before the local
+		// side effect. A worker may have been paused long enough for takeover or
+		// for policy changes even without the test hook being installed.
+		if err := s.renewZammadSyncClaim(link.ID, syncOwner); err != nil {
 			return err
 		}
-		completionApplied = true
+		link, err = s.repo.GetTicketLink(link.ID)
+		if err != nil {
+			return err
+		}
+		connection, err = s.repo.GetConnection(link.ProviderID)
+		if err != nil {
+			return err
+		}
+		if !zammadConnectionAllowsGroupSnapshot(connection, ticket.GroupID, groupName) {
+			s.recordZammadSyncError(link, syncOwner, ErrZammadTicketGroupPolicyChanged)
+			return ErrZammadTicketGroupPolicyChanged
+		}
+		isClosed = slices.Contains(connection.ClosedStateIDs, ticket.StateID)
+		if connection.CompletionStatusID != nil && isClosed && !link.CompletionApplied {
+			completionCommitted, completionErr := s.completeWindshiftItem(ctx, link, connection)
+			if completionErr != nil {
+				safeError := RedactString(completionErr.Error())
+				_ = s.updateTicketLinkSyncWithCurrentGroupPolicy(link.ProviderID, link.ID, syncOwner, ticket.StateID, statusName,
+					ticket.GroupID, groupName, ticket.OwnerID, ownerName,
+					safeError, time.Now(), completionCommitted, completionCommitted)
+				return completionErr
+			}
+			completionApplied = true
+		}
 	}
 	setCompletionApplied := !isClosed || completionApplied
-	return s.repo.UpdateTicketLinkSync(link.ID, ticket.StateID, statusName,
+	err = s.updateTicketLinkSyncWithCurrentGroupPolicy(link.ProviderID, link.ID, syncOwner, ticket.StateID, statusName,
 		ticket.GroupID, groupName, ticket.OwnerID, ownerName,
 		"", time.Now(), setCompletionApplied, completionApplied)
+	if errors.Is(err, ErrZammadTicketGroupPolicyChanged) {
+		s.recordZammadSyncError(link, syncOwner, err)
+	}
+	return s.mapZammadSyncClaimError(err)
+}
+
+func (s *ZammadService) updateTicketLinkSyncWithCurrentGroupPolicy(providerID, linkID, syncOwner string, statusID int, statusName string, groupID int, groupName string, ownerID int, ownerName, safeError string, now time.Time, setCompletionApplied, completionApplied bool) error {
+	if s.persistBeforeLock != nil {
+		s.persistBeforeLock()
+	}
+	return database.WithTx(s.db, func(tx database.Tx) error {
+		if err := s.repo.LockConnectionTx(tx, providerID); err != nil {
+			return err
+		}
+		if err := s.requireCurrentZammadGroupTx(tx, providerID, groupID, groupName); err != nil {
+			return err
+		}
+		return s.repo.UpdateTicketLinkSyncTx(tx, linkID, syncOwner, statusID, statusName, groupID, groupName,
+			ownerID, ownerName, safeError, now, setCompletionApplied, completionApplied)
+	})
+}
+
+func (s *ZammadService) renewZammadSyncClaim(linkID, syncOwner string) error {
+	renewed, err := s.repo.RenewSyncClaim(linkID, syncOwner, time.Now().Add(zammadSyncLeaseDuration))
+	if err != nil {
+		return s.mapZammadSyncClaimError(err)
+	}
+	if !renewed {
+		return ErrZammadConnectionBusy
+	}
+	return nil
+}
+
+func (s *ZammadService) mapZammadSyncClaimError(err error) error {
+	if errors.Is(err, repository.ErrConcurrentUpdate) {
+		return ErrZammadConnectionBusy
+	}
+	return err
+}
+
+func (s *ZammadService) failZammadTicketCreationBeforePost(linkID, syncOwner string, wasUncertain bool, cause error) error {
+	var err error
+	if wasUncertain {
+		err = s.repo.MarkTicketLinkUncertain(linkID, syncOwner, RedactString(cause.Error()))
+	} else {
+		err = s.repo.MarkTicketLinkFailed(linkID, syncOwner, RedactString(cause.Error()))
+	}
+	if err != nil {
+		return s.mapZammadSyncClaimError(err)
+	}
+	return cause
+}
+
+func (s *ZammadService) completeTicketCreationWithCurrentGroupPolicy(providerID, linkID, syncOwner string, ticketID int, number, ticketURL string, statusID int, statusName string, groupID int, groupName string, ownerID int, ownerName string, linkedBy int) error {
+	if s.persistBeforeLock != nil {
+		s.persistBeforeLock()
+	}
+	return database.WithTx(s.db, func(tx database.Tx) error {
+		if err := s.repo.LockConnectionTx(tx, providerID); err != nil {
+			return err
+		}
+		if err := s.requireCurrentZammadGroupTx(tx, providerID, groupID, groupName); err != nil {
+			return err
+		}
+		return s.repo.CompleteTicketCreationTx(tx, linkID, syncOwner, ticketID, number, ticketURL, statusID, statusName,
+			groupID, groupName, ownerID, ownerName, linkedBy)
+	})
+}
+
+func (s *ZammadService) completeExistingTicketLinkWithCurrentGroupPolicy(link *models.ZammadTicketLink, syncOwner string, linkedBy int) error {
+	if s.persistBeforeLock != nil {
+		s.persistBeforeLock()
+	}
+	return database.WithTx(s.db, func(tx database.Tx) error {
+		if err := s.repo.LockConnectionTx(tx, link.ProviderID); err != nil {
+			return err
+		}
+		if err := s.requireCurrentZammadGroupTx(tx, link.ProviderID, link.GroupID, link.GroupName); err != nil {
+			return err
+		}
+		return s.repo.CompleteExistingTicketLinkTx(tx, link.ID, syncOwner, link.ID+"-external", link, linkedBy)
+	})
+}
+
+func (s *ZammadService) requireCurrentZammadGroupTx(tx database.Tx, providerID string, groupID int, groupName string) error {
+	defaultGroupID, defaultGroupName, allowedGroupIDs, err := s.repo.ConnectionGroupPolicyTx(tx, providerID)
+	if err != nil {
+		return err
+	}
+	if !zammadConnectionAllowsGroupSnapshot(&models.ZammadConnection{
+		DefaultGroupID: defaultGroupID, DefaultGroupName: defaultGroupName, AllowedGroupIDs: allowedGroupIDs,
+	}, groupID, groupName) {
+		return ErrZammadTicketGroupPolicyChanged
+	}
+	return nil
 }
 
 func resolveZammadOwnerName(ctx context.Context, client *zammad.Client, ticket *zammad.Ticket) string {
@@ -1251,8 +1744,15 @@ func resolveZammadOwnerName(ctx context.Context, client *zammad.Client, ticket *
 func allowedZammadGroups(connection *models.ZammadConnection, groups []models.ZammadGroup) []models.ZammadGroup {
 	allowed := make([]models.ZammadGroup, 0, len(groups))
 	for _, group := range groups {
-		if slices.Contains(connection.AllowedGroupIDs, group.ID) ||
-			(len(connection.AllowedGroupIDs) == 0 && (group.ID == connection.DefaultGroupID || group.Name == connection.DefaultGroupName)) {
+		isAllowed := slices.Contains(connection.AllowedGroupIDs, group.ID)
+		if len(connection.AllowedGroupIDs) == 0 {
+			if connection.DefaultGroupID > 0 {
+				isAllowed = group.ID == connection.DefaultGroupID
+			} else {
+				isAllowed = group.Name == connection.DefaultGroupName
+			}
+		}
+		if isAllowed {
 			allowed = append(allowed, group)
 		}
 	}
@@ -1272,32 +1772,14 @@ func (s *ZammadService) requireAllowedTicketGroup(ctx context.Context, connectio
 	if ticket == nil || ticket.GroupID <= 0 {
 		return models.ZammadGroup{}, zammadValidationError("Zammad ticket group is missing or invalid")
 	}
-	if len(knownGroups) > 0 {
-		return allowedZammadGroup(connection, knownGroups, ticket.GroupID)
-	}
-	if len(connection.AllowedGroupIDs) > 0 {
-		if slices.Contains(connection.AllowedGroupIDs, ticket.GroupID) {
-			return models.ZammadGroup{ID: ticket.GroupID, Name: ticket.GroupName, Active: true}, nil
+	if knownGroups == nil {
+		var err error
+		knownGroups, err = client.Groups(ctx)
+		if err != nil {
+			return models.ZammadGroup{}, err
 		}
-		return models.ZammadGroup{}, zammadValidationError("Zammad ticket group is not allowed for this connection")
 	}
-	if connection.DefaultGroupID > 0 {
-		if connection.DefaultGroupID == ticket.GroupID {
-			return models.ZammadGroup{ID: ticket.GroupID, Name: ticket.GroupName, Active: true}, nil
-		}
-		return models.ZammadGroup{}, zammadValidationError("Zammad ticket group is not allowed for this connection")
-	}
-	if ticket.GroupName != "" {
-		if ticket.GroupName == connection.DefaultGroupName {
-			return models.ZammadGroup{ID: ticket.GroupID, Name: ticket.GroupName, Active: true}, nil
-		}
-		return models.ZammadGroup{}, zammadValidationError("Zammad ticket group is not allowed for this connection")
-	}
-	groups, err := client.Groups(ctx)
-	if err != nil {
-		return models.ZammadGroup{}, err
-	}
-	return allowedZammadGroup(connection, groups, ticket.GroupID)
+	return allowedZammadGroup(connection, knownGroups, ticket.GroupID)
 }
 
 func zammadCreationOutcomeUncertain(err error) bool {
@@ -1371,38 +1853,39 @@ func (s *ZammadService) SyncDue(ctx context.Context, limit int) error {
 	}
 	var firstError error
 	for _, link := range links {
-		claimed, claimErr := s.repo.ClaimSync(link.ID, time.Now().Add(2*time.Minute))
+		syncOwner := uuid.New().String()
+		claimed, claimErr := s.repo.ClaimSync(link.ID, syncOwner, time.Now().Add(zammadSyncLeaseDuration))
 		if claimErr != nil || !claimed {
 			if claimErr != nil && firstError == nil {
 				firstError = claimErr
 			}
 			continue
 		}
-		if _, syncErr := s.syncClaimedTicketLink(ctx, link); syncErr != nil && firstError == nil {
+		if _, syncErr := s.syncClaimedTicketLink(ctx, link, syncOwner); syncErr != nil && firstError == nil {
 			firstError = syncErr
 		}
 	}
 	return firstError
 }
 
-func (s *ZammadService) completeWindshiftItem(ctx context.Context, link *models.ZammadTicketLink, connection *models.ZammadConnection) error {
+func (s *ZammadService) completeWindshiftItem(ctx context.Context, link *models.ZammadTicketLink, connection *models.ZammadConnection) (bool, error) {
 	if connection.CompletionStatusID == nil {
-		return nil
+		return false, nil
 	}
 	if connection.CreatedBy == nil {
-		return errors.New("configured Zammad actor no longer exists")
+		return false, errors.New("configured Zammad actor no longer exists")
 	}
 	itemRepo := repository.NewItemRepository(s.db)
 	item, err := itemRepo.FindByIDWithDetails(link.ItemID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	allowed, err := s.permission.HasWorkspacePermission(*connection.CreatedBy, item.WorkspaceID, models.PermissionItemEdit)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !allowed {
-		return errors.New("configured Zammad actor no longer has item edit permission")
+		return false, errors.New("configured Zammad actor no longer has item edit permission")
 	}
 	result, err := s.workflow.PerformTransition(ctx, PerformTransitionRequest{
 		ItemID: link.ItemID, ToStatusID: *connection.CompletionStatusID,
@@ -1414,13 +1897,13 @@ func (s *ZammadService) completeWindshiftItem(ctx context.Context, link *models.
 			return metadata
 		}(),
 	}, itemRepo, s.condition, s.approval)
-	if err != nil {
-		return err
+	if err != nil && result == nil {
+		return false, err
 	}
 	if !result.NoOp && s.events != nil {
 		s.events.EmitStatusChanged(result.Item, result.OldStatusID, result.NewStatusID, *connection.CreatedBy, "Zammad")
 	}
-	return nil
+	return true, err
 }
 
 func (s *ZammadService) client(ctx context.Context, id string, workspaceID int) (*models.ZammadConnection, *zammad.Client, error) {
@@ -1548,6 +2031,12 @@ func validateZammadConnection(connection *models.ZammadConnection) error {
 	}
 	if connection.DefaultGroupID < 0 {
 		return zammadValidationError("default_group_id must be positive")
+	}
+	if connection.DefaultGroupID == 0 && connection.DefaultGroupName == "" {
+		return zammadValidationError("default_group_id or default_group_name is required")
+	}
+	if connection.DefaultGroupID > 0 && len(connection.AllowedGroupIDs) > 0 && !slices.Contains(connection.AllowedGroupIDs, connection.DefaultGroupID) {
+		return zammadValidationError("default Zammad group must be included in allowed_group_ids")
 	}
 	if connection.CompletionStatusID != nil && *connection.CompletionStatusID <= 0 {
 		return zammadValidationError("completion_status_id must be positive")

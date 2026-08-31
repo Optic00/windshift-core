@@ -12,7 +12,7 @@ export default { zammad: {
   authMethod: 'Método de autenticación', oauth: 'OAuth', oauthDescription: 'Autoriza esta conexión con OAuth de Zammad.', oauthClientId: 'ID de cliente OAuth', oauthClientSecret: 'Secreto de cliente OAuth',
   secretStored: 'Guardado de forma segura - déjalo vacío para conservarlo', oauthPending: 'Autorización de OAuth pendiente', oauthConnectedStatus: 'OAuth conectado', oauthReauthorizationRequired: 'Se requiere volver a autorizar OAuth',
   connectOAuth: 'Conectar con Zammad', reauthorizeOAuth: 'Autorizar de nuevo', oauthConnected: 'OAuth de Zammad conectado', oauthConnectionFailed: 'Falló la autorización OAuth de Zammad', oauthAuthorizationFailed: 'No se pudo iniciar la autorización OAuth de Zammad',
-  correlationFieldNotVerified: 'Los permisos restringidos de OAuth impiden verificar automáticamente el campo de correlación. Comprueba que exista en Zammad antes de crear tickets.',
+  correlationFieldNotVerified: 'Los permisos restringidos de la cuenta de servicio impiden verificar automáticamente el campo de correlación. Comprueba que exista en Zammad antes de crear tickets.',
   defaultCustomer: 'Cliente predeterminado del ticket', defaultGroup: 'Grupo predeterminado', allowedGroups: 'Grupos de tickets permitidos', allowedGroupIds: 'IDs de grupos de Zammad permitidos', correlationField: 'Campo de correlación',
   correlationFieldHint: 'Crea este campo de texto en los tickets de Zammad para que los reintentos encuentren un ticket ya creado.',
   completionStatus: 'Estado de finalización en Windshift', noAutomaticCompletion: 'No finalizar automáticamente', closedStates: 'Estados cerrados de Zammad',

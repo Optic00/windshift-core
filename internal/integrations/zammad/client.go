@@ -253,41 +253,48 @@ func (c *Client) UpdateTicket(ctx context.Context, ticketID int, stateID, groupI
 // Owners searches on the effective target group. Zammad only keeps an
 // assignment when the selected agent has full access to the ticket group.
 func (c *Client) Owners(ctx context.Context, groupID int) ([]Owner, error) {
-	query := url.Values{}
-	query.Set("query", "*")
-	query.Add("permissions[]", "ticket.agent")
-	query.Set(fmt.Sprintf("group_ids[%d]", groupID), "full")
-	query.Set("per_page", "100")
-	var rawUsers []map[string]json.RawMessage
-	if err := c.getJSON(ctx, "/api/v1/users/search?"+query.Encode(), &rawUsers); err != nil {
-		return nil, err
-	}
-	owners := make([]Owner, 0, len(rawUsers))
-	for _, raw := range rawUsers {
-		var id int
-		var active bool
-		var first, last, login string
-		if json.Unmarshal(raw["id"], &id) != nil || id <= 0 {
-			continue
+	const pageSize = 100
+	owners := make([]Owner, 0)
+	for page := 1; ; page++ {
+		query := url.Values{}
+		query.Set("query", "*")
+		query.Add("permissions[]", "ticket.agent")
+		query.Set(fmt.Sprintf("group_ids[%d]", groupID), "full")
+		query.Set("page", strconv.Itoa(page))
+		query.Set("per_page", strconv.Itoa(pageSize))
+		var rawUsers []map[string]json.RawMessage
+		if err := c.getJSON(ctx, "/api/v1/users/search?"+query.Encode(), &rawUsers); err != nil {
+			return nil, err
 		}
-		if value, ok := raw["active"]; ok {
-			if err := json.Unmarshal(value, &active); err != nil || !active {
+		for _, raw := range rawUsers {
+			var id int
+			var active bool
+			var first, last, login string
+			if json.Unmarshal(raw["id"], &id) != nil || id <= 0 {
 				continue
 			}
+			if value, ok := raw["active"]; ok {
+				if err := json.Unmarshal(value, &active); err != nil || !active {
+					continue
+				}
+			}
+			var groups map[string][]string
+			groupValue, ok := raw["group_ids"]
+			if !ok || json.Unmarshal(groupValue, &groups) != nil || !containsAccess(groups[strconv.Itoa(groupID)], "full") {
+				continue
+			}
+			_ = json.Unmarshal(raw["firstname"], &first)
+			_ = json.Unmarshal(raw["lastname"], &last)
+			_ = json.Unmarshal(raw["login"], &login)
+			name := strings.TrimSpace(first + " " + last)
+			if name == "" {
+				name = login
+			}
+			owners = append(owners, Owner{ID: id, Name: name})
 		}
-		var groups map[string][]string
-		groupValue, ok := raw["group_ids"]
-		if !ok || json.Unmarshal(groupValue, &groups) != nil || !containsAccess(groups[strconv.Itoa(groupID)], "full") {
-			continue
+		if len(rawUsers) < pageSize {
+			break
 		}
-		_ = json.Unmarshal(raw["firstname"], &first)
-		_ = json.Unmarshal(raw["lastname"], &last)
-		_ = json.Unmarshal(raw["login"], &login)
-		name := strings.TrimSpace(first + " " + last)
-		if name == "" {
-			name = login
-		}
-		owners = append(owners, Owner{ID: id, Name: name})
 	}
 	return owners, nil
 }

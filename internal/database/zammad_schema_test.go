@@ -26,7 +26,7 @@ func TestZammadSchemaInitializesOnSQLite(t *testing.T) {
 		}
 	}
 
-	for _, version := range []string{"20260829_zammad_integration", "20260830_zammad_oauth_connections", "20260830_zammad_oauth_generation", "20260830_zammad_ticket_link_metadata", "20260830_zammad_ticket_link_completion_postgres"} {
+	for _, version := range []string{"20260829_zammad_integration", "20260830_zammad_oauth_connections", "20260830_zammad_oauth_generation", "20260830_zammad_ticket_link_metadata", "20260830_zammad_ticket_link_completion_postgres", "20260831_zammad_connection_config_revision", "20260831_zammad_ticket_sync_lock_owner"} {
 		var migrationCount int
 		if err := db.QueryRow("SELECT COUNT(*) FROM schema_migrations WHERE version=?", version).Scan(&migrationCount); err != nil {
 			t.Fatal(err)
@@ -40,7 +40,7 @@ func TestZammadSchemaInitializesOnSQLite(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = rows.Close() }()
-	var requiredCredential, authMethod, oauthGeneration, oauthAttempt bool
+	var requiredCredential, authMethod, oauthGeneration, configRevision, oauthAttempt bool
 	for rows.Next() {
 		var cid int
 		var name, columnType string
@@ -58,16 +58,20 @@ func TestZammadSchemaInitializesOnSQLite(t *testing.T) {
 		if name == "oauth_generation" {
 			oauthGeneration = notNull == 1
 		}
+		if name == "config_revision" {
+			configRevision = notNull == 1
+		}
 		if name == "oauth_attempt_id" {
 			oauthAttempt = true
 		}
 	}
-	if !requiredCredential || !authMethod || !oauthGeneration || !oauthAttempt {
+	if !requiredCredential || !authMethod || !oauthGeneration || !configRevision || !oauthAttempt {
 		t.Fatal("Zammad OAuth connection schema must retain the legacy managed-credential constraint")
 	}
 	for table, columns := range map[string][]string{
 		"zammad_oauth_tokens": {"oauth_generation", "refresh_claim_owner"},
 		"zammad_oauth_state":  {"oauth_generation"},
+		"zammad_ticket_links": {"sync_lock_owner"},
 	} {
 		for _, column := range columns {
 			var count int
@@ -116,7 +120,8 @@ func TestZammadTicketLinkMetadataSQLiteUpgrade(t *testing.T) {
 		);
 		DROP TABLE zammad_ticket_links;
 		ALTER TABLE zammad_ticket_links_legacy RENAME TO zammad_ticket_links;
-		DELETE FROM schema_migrations WHERE version = '20260830_zammad_ticket_link_metadata';
+		DELETE FROM schema_migrations
+		WHERE version IN ('20260830_zammad_ticket_link_metadata', '20260831_zammad_ticket_sync_lock_owner');
 	`)
 	if err != nil {
 		t.Fatal(err)
@@ -128,7 +133,7 @@ func TestZammadTicketLinkMetadataSQLiteUpgrade(t *testing.T) {
 		t.Fatalf("run additive ticket-link metadata migration: %v", err)
 	}
 
-	for _, column := range []string{"owner_id", "owner_name", "last_attempt_at", "next_attempt_at", "completion_applied"} {
+	for _, column := range []string{"owner_id", "owner_name", "last_attempt_at", "next_attempt_at", "completion_applied", "sync_lock_owner"} {
 		var count int
 		if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('zammad_ticket_links') WHERE name = ?", column).Scan(&count); err != nil {
 			t.Fatal(err)
@@ -173,6 +178,28 @@ func TestZammadTicketLinkMetadataMigrationBackendParity(t *testing.T) {
 	}
 }
 
+func TestZammadTicketSyncLockOwnerMigrationBackendParity(t *testing.T) {
+	var migration *Migration
+	for i := range Catalog {
+		if Catalog[i].Version == "20260831_zammad_ticket_sync_lock_owner" {
+			migration = &Catalog[i]
+			break
+		}
+	}
+	if migration == nil {
+		t.Fatal("Zammad sync lock owner migration is missing")
+	}
+	if !strings.Contains(migration.CheckSQLite, "sync_lock_owner") || !strings.Contains(migration.CheckPostgres, "sync_lock_owner") {
+		t.Fatal("sync lock owner migration checks must cover both backends")
+	}
+	if !strings.Contains(migration.SQLite, "ADD COLUMN sync_lock_owner TEXT") || !strings.Contains(migration.Postgres, "ADD COLUMN IF NOT EXISTS sync_lock_owner TEXT") {
+		t.Fatal("sync lock owner migration bodies must cover both backends")
+	}
+	if strings.Contains(zammadSchemaMigrationSQLite, "sync_lock_owner TEXT") || strings.Contains(zammadSchemaMigrationPostgres, "sync_lock_owner TEXT") {
+		t.Fatal("historical Zammad migration must remain checksum-stable; sync_lock_owner belongs only in the additive migration")
+	}
+}
+
 // This starts from the deployed 20260829 table shape. The OAuth migration is
 // additive: it preserves an API-token connection and permits a new OAuth row
 // with its mandatory managed-credential container.
@@ -214,6 +241,7 @@ func TestZammadOAuthSQLiteUpgradePreservesLegacyConnection(t *testing.T) {
 		DROP TABLE zammad_oauth_tokens;
 		DELETE FROM schema_migrations WHERE version = '20260830_zammad_oauth_connections';
 		DELETE FROM schema_migrations WHERE version = '20260830_zammad_oauth_generation';
+		DELETE FROM schema_migrations WHERE version = '20260831_zammad_connection_config_revision';
 	`)
 	if _, onErr := db.Exec("PRAGMA foreign_keys=ON"); onErr != nil {
 		t.Fatal(onErr)
@@ -225,9 +253,10 @@ func TestZammadOAuthSQLiteUpgradePreservesLegacyConnection(t *testing.T) {
 		t.Fatalf("run additive OAuth migration: %v", err)
 	}
 	var credentialID int
+	var configRevision int64
 	var authMethod string
-	if err := db.QueryRow(`SELECT credential_id, auth_method FROM zammad_connections WHERE provider_id='legacy-zammad'`).Scan(&credentialID, &authMethod); err != nil || credentialID != 9001 || authMethod != "api_token" {
-		t.Fatalf("legacy API connection was not preserved: credential=%d method=%q err=%v", credentialID, authMethod, err)
+	if err := db.QueryRow(`SELECT credential_id, auth_method, config_revision FROM zammad_connections WHERE provider_id='legacy-zammad'`).Scan(&credentialID, &authMethod, &configRevision); err != nil || credentialID != 9001 || authMethod != "api_token" || configRevision != 1 {
+		t.Fatalf("legacy API connection was not preserved: credential=%d method=%q revision=%d err=%v", credentialID, authMethod, configRevision, err)
 	}
 	for _, statement := range []string{
 		`INSERT INTO action_credentials(id, name, credential_type, applies_to_all_workspaces, encrypted_secret, is_enabled) VALUES (9002, 'OAuth pending', 'custom_header', true, 'opaque-pending-ciphertext', true)`,

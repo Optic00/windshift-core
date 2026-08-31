@@ -9,7 +9,7 @@ export default { zammad: {
   authMethod: '认证方式', oauth: 'OAuth', oauthDescription: '使用 Zammad OAuth 授权此连接。', oauthClientId: 'OAuth 客户端 ID', oauthClientSecret: 'OAuth 客户端密钥',
   secretStored: '已安全保存 - 留空以保持不变', oauthPending: '等待 OAuth 授权', oauthConnectedStatus: 'OAuth 已连接', oauthReauthorizationRequired: '需要重新授权 OAuth',
   connectOAuth: '连接 Zammad', reauthorizeOAuth: '再次授权', oauthConnected: 'Zammad OAuth 已连接', oauthConnectionFailed: 'Zammad OAuth 授权失败', oauthAuthorizationFailed: '无法开始 Zammad OAuth 授权',
-  correlationFieldNotVerified: '受限的 OAuth 权限无法自动验证关联字段。请在创建工单前确认该字段已存在于 Zammad 中。',
+  correlationFieldNotVerified: '受限的服务账号权限无法自动验证关联字段。请在创建工单前确认该字段已存在于 Zammad 中。',
   defaultCustomer: '默认工单客户', defaultGroup: '默认群组', allowedGroups: '允许的工单组', allowedGroupIds: '允许的 Zammad 组 ID', correlationField: '关联字段',
   correlationFieldHint: '请在 Zammad 工单中创建此文本字段，以便重试时找到已创建的工单。', completionStatus: 'Windshift 完成状态',
   noAutomaticCompletion: '不自动完成', closedStates: 'Zammad 已关闭状态', closedStateIds: 'Zammad 已关闭状态 ID',

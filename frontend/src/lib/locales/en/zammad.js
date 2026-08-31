@@ -37,7 +37,7 @@ export default { zammad: {
   oauthConnected: 'Zammad OAuth connected',
   oauthConnectionFailed: 'Zammad OAuth authorization failed',
   oauthAuthorizationFailed: 'Could not start Zammad OAuth authorization',
-  correlationFieldNotVerified: 'Restricted OAuth permissions prevent automatic verification of the correlation field. Verify that it exists in Zammad before creating tickets.',
+  correlationFieldNotVerified: 'Restricted service-account permissions prevent automatic verification of the correlation field. Verify that it exists in Zammad before creating tickets.',
   defaultCustomer: 'Default ticket customer',
   defaultGroup: 'Default group',
   allowedGroups: 'Allowed ticket groups',
