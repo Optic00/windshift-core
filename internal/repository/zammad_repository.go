@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -581,11 +582,13 @@ func replaceZammadConnectionWorkspaces(tx database.Tx, providerID string, applie
 }
 
 func (r *ZammadRepository) GetTicketLinksForItem(itemID int) ([]*models.ZammadTicketLink, error) {
-	rows, err := r.db.Query(`SELECT `+zammadTicketLinkColumns+`
+	rows, err := r.db.Query(`SELECT `+zammadTicketLinkColumns+`,
+		COALESCE(iil.title, ''), zc.closed_state_ids
 		FROM zammad_ticket_links ztl
 		JOIN integration_providers ip ON ip.id = ztl.provider_id
 		JOIN zammad_connections zc ON zc.provider_id = ztl.provider_id
 		JOIN items i ON i.id = ztl.item_id
+		LEFT JOIN item_integration_links iil ON iil.id = ztl.item_integration_link_id
 		WHERE ztl.item_id = ? AND (
 			zc.applies_to_all_workspaces = true OR EXISTS (
 				SELECT 1 FROM zammad_connection_workspaces zcw
@@ -598,13 +601,34 @@ func (r *ZammadRepository) GetTicketLinksForItem(itemID int) ([]*models.ZammadTi
 	defer func() { _ = rows.Close() }()
 	links := []*models.ZammadTicketLink{}
 	for rows.Next() {
-		link, err := scanZammadTicketLink(rows)
+		var storedTitle, closedJSON string
+		link, err := scanZammadTicketLink(zammadItemTicketLinkScanner{
+			rows: rows, storedTitle: &storedTitle, closedJSON: &closedJSON,
+		})
 		if err != nil {
 			return nil, err
 		}
+		if link.TicketNumber != "" {
+			link.TicketTitle = resolveZammadOverviewTicketTitle(storedTitle, link.TicketNumber)
+		}
+		var closedStateIDs []int
+		if err := json.Unmarshal([]byte(closedJSON), &closedStateIDs); err != nil {
+			return nil, fmt.Errorf("decode closed_state_ids for ticket link: %w", err)
+		}
+		link.Closed = link.LastStatusID > 0 && slices.Contains(closedStateIDs, link.LastStatusID)
 		links = append(links, link)
 	}
 	return links, rows.Err()
+}
+
+type zammadItemTicketLinkScanner struct {
+	rows        *sql.Rows
+	storedTitle *string
+	closedJSON  *string
+}
+
+func (s zammadItemTicketLinkScanner) Scan(dest ...any) error {
+	return s.rows.Scan(append(dest, s.storedTitle, s.closedJSON)...)
 }
 
 const zammadTicketLinkColumns = `

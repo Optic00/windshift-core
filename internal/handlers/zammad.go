@@ -281,9 +281,9 @@ func (h *ZammadHandler) GetItemLinks(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
-	responses := make([]models.ZammadTicketLinkResponse, 0, len(links))
+	responses := make([]models.ZammadItemTicketLinkResponse, 0, len(links))
 	for _, link := range links {
-		responses = append(responses, link.Response())
+		responses = append(responses, link.ItemResponse())
 	}
 	respondJSONOK(w, responses)
 }

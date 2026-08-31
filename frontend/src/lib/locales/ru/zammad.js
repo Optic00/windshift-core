@@ -83,6 +83,7 @@ export default { zammad: {
   editTicket: 'Изменить заявку Zammad',
   ticketUpdated: 'Заявка Zammad обновлена',
   ticketUpdateFailed: 'Не удалось обновить заявку Zammad',
+  ticketReloadAfterChangeFailed: 'Изменение в Zammad выполнено, но актуальные данные заявки не удалось загрузить повторно.',
   ticketRefreshed: 'Статус заявки Zammad обновлён',
   ticketRefreshFailed: 'Не удалось обновить заявку Zammad',
   retrySync: 'Повторить синхронизацию',

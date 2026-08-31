@@ -83,6 +83,7 @@ export default { zammad: {
   editTicket: 'Zammad-Ticket bearbeiten',
   ticketUpdated: 'Zammad-Ticket aktualisiert',
   ticketUpdateFailed: 'Zammad-Ticket konnte nicht aktualisiert werden',
+  ticketReloadAfterChangeFailed: 'Die Zammad-Änderung war erfolgreich, die aktuellen Ticketdaten konnten jedoch nicht neu geladen werden.',
   ticketRefreshed: 'Zammad-Ticketstatus aktualisiert',
   ticketRefreshFailed: 'Zammad-Ticket konnte nicht aktualisiert werden',
   retrySync: 'Synchronisation wiederholen',

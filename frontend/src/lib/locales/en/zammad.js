@@ -83,6 +83,7 @@ export default { zammad: {
   editTicket: 'Edit Zammad ticket',
   ticketUpdated: 'Zammad ticket updated',
   ticketUpdateFailed: 'Failed to update Zammad ticket',
+  ticketReloadAfterChangeFailed: 'The Zammad change succeeded, but the current ticket data could not be reloaded.',
   ticketRefreshed: 'Zammad ticket status refreshed',
   ticketRefreshFailed: 'Failed to refresh Zammad ticket',
   retrySync: 'Retry synchronization',

@@ -9,12 +9,16 @@
     AlertTriangle,
     Edit2,
     Trash2,
+    MoreHorizontal,
+    Link2,
     ChevronDown,
     ChevronUp,
   } from '@lucide/svelte';
   import { api } from '../../api.js';
   import Button from '../../components/Button.svelte';
+  import Lozenge from '../../components/Lozenge.svelte';
   import Text from '../../components/Text.svelte';
+  import DropdownMenu from '../../layout/DropdownMenu.svelte';
   import Modal from '../../dialogs/Modal.svelte';
   import ModalHeader from '../../dialogs/ModalHeader.svelte';
   import NativeSelect from '../../components/NativeSelect.svelte';
@@ -25,8 +29,12 @@
   import { successToast, errorToast } from '../../stores/toasts.svelte.js';
   import { confirm } from '../../composables/useConfirm.js';
   import { safeHref } from '../../utils/sanitize';
-  import { formatDateTimeLocale, getUserTimezone } from '../../utils/dateFormatter.js';
-  import { getZammadObservedValueLabel } from '../../utils/zammadObservations.js';
+  import { formatDateTimeLocale, formatRelativeTime, getUserTimezone } from '../../utils/dateFormatter.js';
+  import {
+    getZammadObservedValueLabel,
+    getZammadStatusAppearance,
+    getZammadStatusBucketLabel,
+  } from '../../utils/zammadObservations.js';
   import {
     isCurrentZammadMetadataRequest,
     isCurrentZammadPanelContext,
@@ -76,6 +84,11 @@
   let timelineVersion = 0;
   let timezone = $derived(getUserTimezone(authStore.currentUser));
   const observedTimelineFields = new Set(['status', 'group', 'owner']);
+  const loadOutcomes = Object.freeze({
+    loaded: 'loaded',
+    failed: 'failed',
+    superseded: 'superseded',
+  });
 
   let usableConnections = $derived(connections.filter(isConnectionUsable));
   let unavailableConnections = $derived(connections.filter((connection) => !isConnectionUsable(connection)));
@@ -173,9 +186,67 @@
     return usableConnections.find((connection) => connection.id === selectedConnectionId);
   }
 
-  function replaceLink(updated) {
-    links = [updated, ...links.filter((entry) => entry.id !== updated.id)];
-    invalidateTimeline();
+  function ticketHeading(link) {
+    const title = typeof link.ticket_title === 'string' ? link.ticket_title.trim() : '';
+    if (title) return title;
+    if (link.ticket_number) return t('zammad.ticketNumber', { number: link.ticket_number });
+    return t(`zammad.syncState.${link.sync_state}`);
+  }
+
+  function ticketNumberLabel(link) {
+    return link.ticket_number ? t('zammad.ticketNumber', { number: link.ticket_number }) : '';
+  }
+
+  function ticketStatusLabel(link) {
+    const statusName = typeof link.last_status_name === 'string' ? link.last_status_name.trim() : '';
+    if (statusName || Number(link.last_status_id) > 0) {
+      return getZammadStatusBucketLabel(
+        { id: link.last_status_id, name: link.last_status_name },
+        t,
+      );
+    }
+    return t(`zammad.syncState.${link.sync_state}`);
+  }
+
+  function ticketStatusAppearance(link) {
+    if (!link.last_status_id) {
+      if (link.sync_state === 'sync_failed') return 'error';
+      if (link.sync_state === 'creation_uncertain' || link.sync_state === 'creating' || link.sync_state === 'pending') return 'warning';
+    }
+    const statusName = typeof link.last_status_name === 'string' ? link.last_status_name.trim() : '';
+    if ((Number(link.last_status_id) > 0 || statusName) && typeof link.closed !== 'boolean') {
+      return 'default';
+    }
+    return getZammadStatusAppearance(
+      { id: link.last_status_id, name: link.last_status_name },
+      link.closed === true,
+    );
+  }
+
+  function addTicketActions() {
+    return [
+      { id: 'link', title: t('zammad.linkExistingTicket'), icon: Link2, onClick: openLinkDialog },
+      { id: 'create', title: t('zammad.createTicket'), icon: Plus, onClick: openCreateDialog },
+    ];
+  }
+
+  function ticketActions(link, linkConnectionUsable) {
+    const actions = [];
+    if (linkConnectionUsable && link.ticket_id && link.sync_state !== 'creating') {
+      actions.push(
+        { id: 'edit', title: t('zammad.editTicket'), icon: Edit2, onClick: () => openEditDialog(link) },
+        { id: 'refresh', title: t('zammad.refreshTicket'), icon: RefreshCw, onClick: () => refresh(link) },
+      );
+    }
+    if (actions.length > 0) actions.push({ id: 'divider', type: 'divider' });
+    actions.push({
+      id: 'remove',
+      title: t('zammad.removeTicketLink'),
+      icon: Trash2,
+      color: 'var(--ds-text-danger)',
+      onClick: () => removeLink(link),
+    });
+    return actions;
   }
 
   function invalidateTimeline() {
@@ -258,14 +329,55 @@
     return t('zammad.ticketCreationInProgress');
   }
 
-  async function load(currentItemId = itemId, currentWorkspaceId = workspaceId, version = contextVersion) {
+  function addMutationFallback(link) {
+    const existing = links.find((entry) => entry.id === link.id);
+    const fallback = { ...(existing || {}), ...link };
+    const responseTicketId = Number(link.ticket_id) || 0;
+    const existingTicketId = Number(existing?.ticket_id) || 0;
+    const responseTicketNumber = typeof link.ticket_number === 'string' ? link.ticket_number.trim() : '';
+    const existingTicketNumber = typeof existing?.ticket_number === 'string' ? existing.ticket_number.trim() : '';
+    const sameTicket = Boolean(existing) && (
+      responseTicketId > 0 || existingTicketId > 0
+        ? responseTicketId > 0 && responseTicketId === existingTicketId
+        : Boolean(responseTicketNumber && responseTicketNumber === existingTicketNumber)
+    );
+    if (!(typeof link.ticket_title === 'string' && link.ticket_title.trim())) {
+      if (sameTicket && typeof existing?.ticket_title === 'string' && existing.ticket_title.trim()) {
+        fallback.ticket_title = existing.ticket_title;
+      } else {
+        delete fallback.ticket_title;
+      }
+    }
+    if (typeof link.closed !== 'boolean') {
+      const statusUnchanged = Number(fallback.last_status_id) === Number(existing?.last_status_id);
+      if (sameTicket && statusUnchanged && typeof existing?.closed === 'boolean') {
+        fallback.closed = existing.closed;
+      } else {
+        delete fallback.closed;
+      }
+    }
+    links = [fallback, ...links.filter((entry) => entry.id !== link.id)];
+    invalidateTimeline();
+  }
+
+  function notifyMutationReload(outcome, successMessage) {
+    if (outcome === loadOutcomes.failed) errorToast(t('zammad.ticketReloadAfterChangeFailed'));
+    else successToast(successMessage);
+  }
+
+  async function load(
+    currentItemId = itemId,
+    currentWorkspaceId = workspaceId,
+    version = contextVersion,
+    { preserveExisting = false } = {},
+  ) {
     const currentVersion = ++loadVersion;
     if (!currentItemId || !currentWorkspaceId) {
       connections = [];
       links = [];
       loading = false;
       error = '';
-      return;
+      return loadOutcomes.loaded;
     }
 
     loading = true;
@@ -275,14 +387,20 @@
         api.zammadConnections.forWorkspace(currentWorkspaceId),
         api.zammadTickets.forItem(currentItemId),
       ]);
-      if (currentVersion !== loadVersion || !isCurrentContext(version, currentItemId, currentWorkspaceId)) return;
+      if (currentVersion !== loadVersion || !isCurrentContext(version, currentItemId, currentWorkspaceId)) {
+        return loadOutcomes.superseded;
+      }
       connections = loadedConnections;
       links = loadedLinks;
       invalidateTimeline();
+      return loadOutcomes.loaded;
     } catch (err) {
-      if (currentVersion !== loadVersion || !isCurrentContext(version, currentItemId, currentWorkspaceId)) return;
+      if (currentVersion !== loadVersion || !isCurrentContext(version, currentItemId, currentWorkspaceId)) {
+        return loadOutcomes.superseded;
+      }
       console.error('Failed to load Zammad links:', err);
-      error = t('zammad.loadLinksFailed');
+      if (!preserveExisting) error = t('zammad.loadLinksFailed');
+      return loadOutcomes.failed;
     } finally {
       if (currentVersion === loadVersion && isCurrentContext(version, currentItemId, currentWorkspaceId)) loading = false;
     }
@@ -374,15 +492,20 @@
         group_id: group.id,
       });
       if (!isCurrentContext(version, currentItemId)) return;
-      replaceLink(link);
+      addMutationFallback(link);
+      const reloaded = await load(currentItemId, workspaceId, version, { preserveExisting: true });
+      if (!isCurrentContext(version, currentItemId)) return;
       showCreate = false;
-      successToast(link.sync_state === 'linked' ? t('zammad.ticketCreated') : t('zammad.ticketCreationStarted'));
+      notifyMutationReload(
+        reloaded,
+        link.sync_state === 'linked' ? t('zammad.ticketCreated') : t('zammad.ticketCreationStarted'),
+      );
     } catch (err) {
       if (!isCurrentContext(version, currentItemId)) return;
       console.error('Failed to create Zammad ticket:', err);
       formError = err.message || t('zammad.ticketCreateFailed');
       errorToast(t('zammad.ticketCreateFailed'));
-      await load(currentItemId, workspaceId, version);
+      await load(currentItemId, workspaceId, version, { preserveExisting: true });
     } finally {
       if (isCurrentContext(version, currentItemId)) creating = false;
     }
@@ -401,9 +524,11 @@
         ticket_number: trimmedTicketNumber,
       });
       if (!isCurrentContext(version, currentItemId)) return;
-      replaceLink(link);
+      addMutationFallback(link);
+      const reloaded = await load(currentItemId, workspaceId, version, { preserveExisting: true });
+      if (!isCurrentContext(version, currentItemId)) return;
       showCreate = false;
-      successToast(t('zammad.ticketLinked'));
+      notifyMutationReload(reloaded, t('zammad.ticketLinked'));
     } catch (err) {
       if (!isCurrentContext(version, currentItemId)) return;
       console.error('Failed to link existing Zammad ticket:', err);
@@ -420,15 +545,16 @@
     const currentItemId = itemId;
     refreshingId = link.id;
     try {
-      const updated = await api.zammadTickets.refresh(link.id);
+      await api.zammadTickets.refresh(link.id);
       if (!isCurrentContext(version, currentItemId)) return;
-      replaceLink(updated);
-      successToast(t('zammad.ticketRefreshed'));
+      const reloaded = await load(currentItemId, workspaceId, version, { preserveExisting: true });
+      if (!isCurrentContext(version, currentItemId)) return;
+      notifyMutationReload(reloaded, t('zammad.ticketRefreshed'));
     } catch (err) {
       if (!isCurrentContext(version, currentItemId)) return;
       console.error('Failed to refresh Zammad ticket:', err);
       errorToast(t('zammad.ticketRefreshFailed'));
-      await load(currentItemId, workspaceId, version);
+      await load(currentItemId, workspaceId, version, { preserveExisting: true });
     } finally {
       if (isCurrentContext(version, currentItemId)) refreshingId = null;
     }
@@ -542,11 +668,12 @@
     savingEdit = true;
     editError = '';
     try {
-      const updated = await api.zammadTickets.update(editingLink.id, payload);
+      await api.zammadTickets.update(editingLink.id, payload);
       if (version !== editVersion || !isCurrentContext(context, currentItemId)) return;
-      replaceLink(updated);
       showEdit = false;
-      successToast(t('zammad.ticketUpdated'));
+      const reloaded = await load(currentItemId, workspaceId, context, { preserveExisting: true });
+      if (version !== editVersion || !isCurrentContext(context, currentItemId)) return;
+      notifyMutationReload(reloaded, t('zammad.ticketUpdated'));
     } catch (err) {
       if (version !== editVersion || !isCurrentContext(context, currentItemId)) return;
       console.error('Failed to update Zammad ticket:', err);
@@ -575,13 +702,16 @@
     try {
       await api.zammadTickets.delete(link.id);
       if (!isCurrentContext(version, currentItemId, currentWorkspaceId)) return;
-      successToast(t('zammad.ticketLinkRemoved'));
-      await load(currentItemId, currentWorkspaceId, version);
+      links = links.filter((entry) => entry.id !== link.id);
+      invalidateTimeline();
+      const reloaded = await load(currentItemId, currentWorkspaceId, version, { preserveExisting: true });
+      if (!isCurrentContext(version, currentItemId, currentWorkspaceId)) return;
+      notifyMutationReload(reloaded, t('zammad.ticketLinkRemoved'));
     } catch (err) {
       if (!isCurrentContext(version, currentItemId, currentWorkspaceId)) return;
       console.error('Failed to remove Zammad ticket link:', err);
       errorToast(t('zammad.ticketLinkRemoveFailed'));
-      await load(currentItemId, currentWorkspaceId, version);
+      await load(currentItemId, currentWorkspaceId, version, { preserveExisting: true });
     } finally {
       if (isCurrentContext(version, currentItemId, currentWorkspaceId)) removingId = null;
     }
@@ -597,11 +727,18 @@
         <Text variant="subtle" size="xs" weight="semibold" class="uppercase tracking-wider">{t('zammad.tickets')}</Text>
       </div>
       {#if usableConnections.length > 0 && canEdit}
-        <div class="flex items-center gap-1">
-          <!-- shortcut-guard-exempt: item-local integration actions are reached from the focused item panel -->
-          <Button variant="ghost" size="small" icon={Plus} onclick={openLinkDialog}>{t('zammad.linkExistingTicket')}</Button>
-          <Button variant="ghost" size="small" icon={Plus} onclick={openCreateDialog}>{t('zammad.createTicket')}</Button>
-        </div>
+        <!-- shortcut-guard-exempt: item-local integration actions are reached from the focused item panel -->
+        <DropdownMenu
+          items={addTicketActions()}
+          placement="bottom-end"
+          maxWidth="max-w-xs"
+          triggerText={t('common.add')}
+          triggerIcon={Plus}
+          triggerClass="px-2 py-1 rounded hover:bg-[var(--ds-background-neutral-hovered)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-border-focused)]"
+          triggerStyle="color: var(--ds-text-subtle);"
+          showChevron={false}
+          triggerLabel={t('common.add')}
+        />
       {/if}
     </div>
 
@@ -619,42 +756,43 @@
         <div class="space-y-2">
           {#each links as link}
             {@const linkConnectionUsable = usableConnections.some((connection) => connection.id === link.connection_id)}
-            <div class="rounded-md border px-3 py-2" style="border-color: var(--ds-border); background-color: var(--ds-background-neutral);">
-              <div class="flex items-center gap-2">
+            <article
+              class="rounded-md border p-3"
+              style="border-color: var(--ds-border); background-color: var(--ds-surface-raised);"
+              data-testid={`zammad-ticket-card-${link.id}`}
+            >
+              <div class="flex items-start gap-2">
                 <div class="flex-1 min-w-0">
                   {#if link.ticket_url}
-                    <a href={safeHref(link.ticket_url)} target="_blank" rel="noopener noreferrer" class="text-sm hover:underline inline-flex items-center gap-1" style="color: var(--ds-link);">
-                      {t('zammad.ticketNumber', { number: link.ticket_number })}<ExternalLink class="w-3 h-3" />
+                    <a
+                      href={safeHref(link.ticket_url)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="group inline-flex max-w-full items-start gap-1 text-sm font-medium leading-snug hover:underline"
+                      style="color: var(--ds-link);"
+                    >
+                      <span class="min-w-0 break-words">{ticketHeading(link)}</span>
+                      <ExternalLink class="mt-0.5 h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
                     </a>
-                  {:else if link.ticket_number}
-                    <span class="text-sm">{t('zammad.ticketNumber', { number: link.ticket_number })}</span>
                   {:else}
-                    <span class="text-sm">{t(`zammad.syncState.${link.sync_state}`)}</span>
+                    <span class="text-sm font-medium leading-snug" style="color: var(--ds-text);">{ticketHeading(link)}</span>
                   {/if}
-                  <div class="text-xs mt-1 space-y-0.5" style="color: var(--ds-text-subtle);">
-                    <div>{link.connection_name}</div>
-                    <div>{t('zammad.status')}: {link.last_status_name || t('zammad.unknown')}</div>
-                    <div>{t('zammad.group')}: {link.group_name || t('zammad.unknown')}</div>
-                    <div>{t('zammad.owner')}: {link.owner_name || t('zammad.unassignedOwner')}</div>
-                    <div>{link.last_synced_at ? t('zammad.lastSynced', { time: formatDateTimeLocale(link.last_synced_at, timezone) }) : t('zammad.notSynced')}</div>
+                  <div class="mt-1 flex min-w-0 flex-wrap items-center gap-x-1 text-xs" style="color: var(--ds-text-subtle);">
+                    {#if ticketNumberLabel(link) && ticketHeading(link) !== ticketNumberLabel(link)}
+                      <span>{ticketNumberLabel(link)}</span>
+                      {#if link.connection_name}<span aria-hidden="true">·</span>{/if}
+                    {/if}
+                    {#if link.connection_name}<span class="min-w-0 break-words">{link.connection_name}</span>{/if}
                   </div>
                 </div>
-                {#if canEdit}
-                  <div class="flex items-center gap-1">
-                    {#if linkConnectionUsable && link.ticket_id && link.sync_state !== 'creating'}
-                      <button class="p-1 rounded" onclick={() => openEditDialog(link)} disabled={savingEdit} title={t('zammad.editTicket')} aria-label={t('zammad.editTicket')}>
-                        <Edit2 class="w-4 h-4" />
-                      </button>
-                      <button class="p-1 rounded" onclick={() => refresh(link)} disabled={refreshingId === link.id} title={t('zammad.refreshTicket')} aria-label={t('zammad.refreshTicket')}>
-                        {#if refreshingId === link.id}<Loader2 class="w-4 h-4 animate-spin" />{:else}<RefreshCw class="w-4 h-4" />{/if}
-                      </button>
-                    {/if}
-                    <button class="p-1 rounded" onclick={() => removeLink(link)} disabled={removingId === link.id} title={t('zammad.removeTicketLink')} aria-label={t('zammad.removeTicketLink')}>
-                      {#if removingId === link.id}<Loader2 class="w-4 h-4 animate-spin" />{:else}<Trash2 class="w-4 h-4" />{/if}
-                    </button>
-                  </div>
-                {/if}
+                <Lozenge appearance={ticketStatusAppearance(link)} text={ticketStatusLabel(link)} />
               </div>
+              <dl class="mt-3 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
+                <dt style="color: var(--ds-text-subtle);">{t('zammad.group')}</dt>
+                <dd class="min-w-0 break-words text-right" style="color: var(--ds-text);">{link.group_name || t('zammad.unknown')}</dd>
+                <dt style="color: var(--ds-text-subtle);">{t('zammad.owner')}</dt>
+                <dd class="min-w-0 break-words text-right" style="color: var(--ds-text);">{link.owner_name || t('zammad.unassignedOwner')}</dd>
+              </dl>
               {#if !link.ticket_id && link.sync_state !== 'linked'}
                 <p class="text-xs mt-2" style="color: var(--ds-text-subtle);">{syncActionHint(link)}</p>
               {/if}
@@ -664,7 +802,36 @@
                   <span>{link.last_error}</span>
                 </div>
               {/if}
-            </div>
+              <footer class="mt-3 flex items-center justify-between gap-2 border-t pt-2" style="border-color: var(--ds-border);">
+                {#if link.last_synced_at}
+                  <time
+                    datetime={link.last_synced_at}
+                    title={formatDateTimeLocale(link.last_synced_at, timezone)}
+                    class="min-w-0 text-xs"
+                    style="color: var(--ds-text-subtle);"
+                  >{t('zammad.lastSynced', { time: formatRelativeTime(link.last_synced_at) })}</time>
+                {:else}
+                  <span class="text-xs" style="color: var(--ds-text-subtle);">{t('zammad.notSynced')}</span>
+                {/if}
+                {#if canEdit}
+                  {#if refreshingId === link.id || removingId === link.id || (savingEdit && editingLink?.id === link.id)}
+                    <Loader2 class="h-4 w-4 flex-shrink-0 animate-spin" aria-label={t('common.loading')} />
+                  {:else}
+                    <DropdownMenu
+                      items={ticketActions(link, linkConnectionUsable)}
+                      placement="bottom-end"
+                      maxWidth="max-w-xs"
+                      triggerIcon={MoreHorizontal}
+                      triggerClass="p-1 rounded hover:bg-[var(--ds-background-neutral-hovered)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ds-border-focused)]"
+                      triggerStyle="color: var(--ds-text-subtle);"
+                      iconOnly
+                      showChevron={false}
+                      triggerLabel={t('common.actions')}
+                    />
+                  {/if}
+                {/if}
+              </footer>
+            </article>
           {/each}
         </div>
         <div class="mt-3 border-t pt-2" style="border-color: var(--ds-border);">

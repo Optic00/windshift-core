@@ -158,6 +158,7 @@ type ZammadTicketLink struct {
 	ItemIntegrationLinkID string          `json:"item_integration_link_id,omitempty"`
 	TicketID              int             `json:"ticket_id,omitempty"`
 	TicketNumber          string          `json:"ticket_number,omitempty"`
+	TicketTitle           string          `json:"-"`
 	TicketURL             string          `json:"ticket_url,omitempty"`
 	GroupID               int             `json:"group_id,omitempty"`
 	GroupName             string          `json:"group_name,omitempty"`
@@ -167,6 +168,7 @@ type ZammadTicketLink struct {
 	SyncState             ZammadSyncState `json:"sync_state"`
 	LastStatusID          int             `json:"last_status_id,omitempty"`
 	LastStatusName        string          `json:"last_status_name,omitempty"`
+	Closed                bool            `json:"-"`
 	LastSyncedAt          *time.Time      `json:"last_synced_at,omitempty"`
 	LastAttemptAt         *time.Time      `json:"-"`
 	NextAttemptAt         *time.Time      `json:"-"`
@@ -206,6 +208,20 @@ func (link *ZammadTicketLink) Response() ZammadTicketLinkResponse {
 		LastStatusID: link.LastStatusID, LastStatusName: link.LastStatusName,
 		LastSyncedAt: link.LastSyncedAt, LastError: link.LastError,
 		CreatedAt: link.CreatedAt, UpdatedAt: link.UpdatedAt,
+	}
+}
+
+type ZammadItemTicketLinkResponse struct {
+	ZammadTicketLinkResponse
+	TicketTitle string `json:"ticket_title,omitempty"`
+	Closed      bool   `json:"closed"`
+}
+
+func (link *ZammadTicketLink) ItemResponse() ZammadItemTicketLinkResponse {
+	return ZammadItemTicketLinkResponse{
+		ZammadTicketLinkResponse: link.Response(),
+		TicketTitle:              link.TicketTitle,
+		Closed:                   link.Closed,
 	}
 }
 

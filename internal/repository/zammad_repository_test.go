@@ -89,6 +89,37 @@ func TestZammadCorrelationKeyResolvesCurrentItem(t *testing.T) {
 	}
 }
 
+func TestZammadItemTicketLinksIncludeRemoteTitleAndConfiguredClosedState(t *testing.T) {
+	f := newZammadLeaseFixture(t)
+	f.makeComplete(t)
+	if _, err := f.db.ExecWrite(`UPDATE zammad_connections
+		SET applies_to_all_workspaces = true, closed_state_ids = '[4]'
+		WHERE provider_id = 'zammad-test'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecWrite(`UPDATE item_integration_links SET title = 'VPN access unavailable'
+		WHERE id = 'zammad-link-external'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecWrite(`UPDATE zammad_ticket_links
+		SET last_status_id = 4, last_status_name = 'closed'
+		WHERE id = ?`, f.linkID); err != nil {
+		t.Fatal(err)
+	}
+
+	links, err := f.repo.GetTicketLinksForItem(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(links) != 1 || links[0].TicketTitle != "VPN access unavailable" || !links[0].Closed {
+		t.Fatalf("item ticket projection is incomplete: %#v", links)
+	}
+	response := links[0].ItemResponse()
+	if response.TicketTitle != "VPN access unavailable" || !response.Closed {
+		t.Fatalf("item ticket response lost display metadata: %#v", response)
+	}
+}
+
 func TestZammadOverviewTicketsAreCurrentOrderedAndWorkspaceScoped(t *testing.T) {
 	f := newZammadLeaseFixture(t)
 	f.makeComplete(t)
