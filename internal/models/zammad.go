@@ -239,6 +239,18 @@ type ZammadOverviewBucket struct {
 	Closed         bool   `json:"closed,omitempty"`
 }
 
+type ZammadOverviewTicket struct {
+	ID           string                  `json:"id"`
+	ItemID       int                     `json:"item_id"`
+	ItemKey      string                  `json:"item_key"`
+	TicketNumber string                  `json:"ticket_number"`
+	TicketTitle  string                  `json:"ticket_title"`
+	TicketURL    string                  `json:"ticket_url"`
+	Status       ZammadTicketChangeValue `json:"status"`
+	Group        ZammadTicketChangeValue `json:"group"`
+	Owner        ZammadTicketChangeValue `json:"owner"`
+}
+
 type ZammadWorkspaceOverview struct {
 	Total             int                    `json:"total"`
 	Active            int                    `json:"active"`
@@ -249,4 +261,5 @@ type ZammadWorkspaceOverview struct {
 	UnknownStatus     int                    `json:"unknown_status"`
 	ByStatus          []ZammadOverviewBucket `json:"by_status"`
 	RecentChanges     []ZammadTicketChange   `json:"recent_changes"`
+	Tickets           []ZammadOverviewTicket `json:"tickets"`
 }

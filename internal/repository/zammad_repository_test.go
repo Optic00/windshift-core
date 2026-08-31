@@ -89,6 +89,79 @@ func TestZammadCorrelationKeyResolvesCurrentItem(t *testing.T) {
 	}
 }
 
+func TestZammadOverviewTicketsAreCurrentOrderedAndWorkspaceScoped(t *testing.T) {
+	f := newZammadLeaseFixture(t)
+	f.makeComplete(t)
+	if _, err := f.db.ExecWrite(`UPDATE zammad_connections SET applies_to_all_workspaces = true WHERE provider_id = 'zammad-test'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecWrite(`UPDATE item_integration_links SET title = 'Persisted remote title'
+		WHERE id = 'zammad-link-external'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecWrite(`UPDATE zammad_ticket_links SET
+		last_status_id = 2, last_status_name = 'open', group_id = 7, group_name = 'Support',
+		owner_id = 9, owner_name = 'Ada Agent', last_synced_at = '2026-08-30 10:00:00'
+		WHERE id = ?`, f.linkID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecWrite(`INSERT INTO items
+		(id, workspace_id, workspace_item_number, title, description, frac_index, status_id, creator_id, last_active_at)
+		SELECT 2, 1, 2, 'Newer item', '', 'a1', status_id, 1, CURRENT_TIMESTAMP FROM items WHERE id = 1`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecWrite(`INSERT INTO item_integration_links
+		(id, item_id, integration_provider_id, external_id, external_url, title, link_type, linked_by)
+		VALUES ('overview-newer-external', '2', 'zammad-test', '902', 'https://zammad.example.test/#ticket/zoom/902', '', 'ticket', '1')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecWrite(`INSERT INTO zammad_ticket_links
+		(id, item_id, provider_id, item_integration_link_id, ticket_id, ticket_number, ticket_url,
+		 group_id, group_name, owner_id, owner_name, correlation_key, sync_state,
+		 last_status_id, last_status_name, last_synced_at, created_by)
+		VALUES ('overview-newer', 2, 'zammad-test', 'overview-newer-external', 902, '902',
+		 'https://zammad.example.test/#ticket/zoom/902', 8, 'Escalations', 1, 'Unassigned',
+		 'ZRT-2', ?, 3, 'pending', '2026-08-31 10:00:00', 1)`, models.ZammadSyncLinked); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecWrite(`INSERT INTO workspaces (id, name, key) VALUES (2, 'Other workspace', 'OTH')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecWrite(`INSERT INTO items
+		(id, workspace_id, workspace_item_number, title, description, frac_index, status_id, creator_id, last_active_at)
+		SELECT 3, 2, 1, 'Other item', '', 'a2', status_id, 1, CURRENT_TIMESTAMP FROM items WHERE id = 1`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecWrite(`INSERT INTO item_integration_links
+		(id, item_id, integration_provider_id, external_id, external_url, title, link_type, linked_by)
+		VALUES ('overview-other-external', '3', 'zammad-test', '903', 'https://zammad.example.test/#ticket/zoom/903', 'Other title', 'ticket', '1')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecWrite(`INSERT INTO zammad_ticket_links
+		(id, item_id, provider_id, item_integration_link_id, ticket_id, ticket_number, correlation_key, sync_state, created_by)
+		VALUES ('overview-other', 3, 'zammad-test', 'overview-other-external', 903, '903', 'OTH-1', ?, 1)`, models.ZammadSyncLinked); err != nil {
+		t.Fatal(err)
+	}
+
+	tickets, err := f.repo.ListOverviewTicketsForWorkspace(1, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tickets) != 2 {
+		t.Fatalf("overview tickets crossed workspace scope or omitted a complete link: %#v", tickets)
+	}
+	if tickets[0].ID != "overview-newer" || tickets[0].ItemID != 2 || tickets[0].ItemKey != "ZRT-2" || tickets[0].TicketTitle != "Zammad #902" ||
+		tickets[0].Status.ID != 3 || tickets[0].Status.Name != "pending" ||
+		tickets[0].Group.ID != 8 || tickets[0].Group.Name != "Escalations" ||
+		tickets[0].Owner.ID != 1 || tickets[0].Owner.Name != "Unassigned" {
+		t.Fatalf("newest overview ticket projection is incomplete: %#v", tickets[0])
+	}
+	if tickets[1].ItemID != 1 || tickets[1].TicketTitle != "Persisted remote title" ||
+		tickets[1].TicketNumber != "901" || tickets[1].Owner.Name != "Ada Agent" {
+		t.Fatalf("persisted remote title or current snapshot was lost: %#v", tickets[1])
+	}
+}
+
 func TestZammadSyncLeaseOwnerTakeoverProtectsSnapshotReleaseAndDelete(t *testing.T) {
 	f := newZammadLeaseFixture(t)
 	f.makeComplete(t)

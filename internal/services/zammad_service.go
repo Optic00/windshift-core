@@ -39,6 +39,7 @@ const zammadOAuthRefreshLeaseDuration = 2 * zammadHTTPTimeout
 const zammadOAuthRefreshWaitDuration = 5 * time.Second
 const zammadOAuthRefreshPollInterval = 50 * time.Millisecond
 const zammadSyncLeaseDuration = 5 * time.Minute
+const zammadOverviewTicketLimit = 25
 
 type ZammadOAuthCallbackResult struct {
 	ProviderID      string
@@ -938,6 +939,10 @@ func (s *ZammadService) WorkspaceOverview(workspaceID, recentLimit int) (*models
 	if err != nil {
 		return nil, err
 	}
+	tickets, err := s.repo.ListOverviewTicketsForWorkspaceTx(tx, workspaceID, zammadOverviewTicketLimit)
+	if err != nil {
+		return nil, err
+	}
 	recent, err := s.repo.ListRecentTicketChangesForWorkspaceTx(tx, workspaceID, recentLimit)
 	if err != nil {
 		return nil, err
@@ -946,7 +951,9 @@ func (s *ZammadService) WorkspaceOverview(workspaceID, recentLimit int) (*models
 	if err != nil {
 		return nil, err
 	}
-	overview := &models.ZammadWorkspaceOverview{ByStatus: []models.ZammadOverviewBucket{}, RecentChanges: recent}
+	overview := &models.ZammadWorkspaceOverview{
+		ByStatus: []models.ZammadOverviewBucket{}, RecentChanges: recent, Tickets: tickets,
+	}
 	overview.SyncFailed = syncFailed
 	overview.CreationUncertain = creationUncertain
 	statusBuckets := map[string]*models.ZammadOverviewBucket{}

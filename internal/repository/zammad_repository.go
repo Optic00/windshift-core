@@ -640,7 +640,7 @@ func (r *ZammadRepository) GetTicketLinkForItem(itemID int, providerID string) (
 func (r *ZammadRepository) ListTicketChangesForItem(itemID, limit int) ([]models.ZammadTicketChange, error) {
 	rows, err := r.db.Query(`SELECT ztc.id, ztc.ticket_link_id, ztl.item_id,
 		w.key || '-' || CAST(i.workspace_item_number AS TEXT), ztl.ticket_number,
-		i.title, iil.title, COALESCE(ztl.ticket_url, ''),
+		iil.title, COALESCE(ztl.ticket_url, ''),
 		ztl.group_id, ztl.group_name, ztl.owner_id, ztl.owner_name,
 		ztc.field_name, ztc.old_value_id, ztc.old_value_name, ztc.new_value_id, ztc.new_value_name, ztc.observed_at
 		FROM zammad_ticket_changes ztc
@@ -674,7 +674,7 @@ func (r *ZammadRepository) ListRecentTicketChangesForWorkspaceTx(tx database.Tx,
 func listRecentTicketChangesForWorkspace(q zammadReadQueryer, workspaceID, limit int) ([]models.ZammadTicketChange, error) {
 	rows, err := q.Query(`SELECT ztc.id, ztc.ticket_link_id, ztl.item_id,
 		w.key || '-' || CAST(i.workspace_item_number AS TEXT), ztl.ticket_number,
-		i.title, iil.title, COALESCE(ztl.ticket_url, ''),
+		iil.title, COALESCE(ztl.ticket_url, ''),
 		ztl.group_id, ztl.group_name, ztl.owner_id, ztl.owner_name,
 		ztc.field_name, ztc.old_value_id, ztc.old_value_name, ztc.new_value_id, ztc.new_value_name, ztc.observed_at
 		FROM zammad_ticket_changes ztc
@@ -704,16 +704,12 @@ func scanZammadTicketChanges(rows *sql.Rows) ([]models.ZammadTicketChange, error
 		var storedTitle sql.NullString
 		var groupID, ownerID, oldID, newID sql.NullInt64
 		var groupName, ownerName, oldName, newName sql.NullString
-		var itemTitle string
 		if err := rows.Scan(&change.ID, &change.LinkID, &change.ItemID, &change.ItemKey, &change.TicketNumber,
-			&itemTitle, &storedTitle, &change.TicketURL, &groupID, &groupName, &ownerID, &ownerName,
+			&storedTitle, &change.TicketURL, &groupID, &groupName, &ownerID, &ownerName,
 			&change.Field, &oldID, &oldName, &newID, &newName, &change.ObservedAt); err != nil {
 			return nil, err
 		}
-		change.TicketTitle = strings.TrimSpace(storedTitle.String)
-		if change.TicketTitle == "" || change.TicketTitle == "Zammad #"+change.TicketNumber {
-			change.TicketTitle = itemTitle
-		}
+		change.TicketTitle = resolveZammadOverviewTicketTitle(storedTitle.String, change.TicketNumber)
 		if groupID.Valid {
 			change.CurrentGroup.ID = int(groupID.Int64)
 		}
@@ -749,6 +745,86 @@ func (r *ZammadRepository) ListTicketLinksForWorkspace(workspaceID int) ([]Zamma
 
 func (r *ZammadRepository) ListTicketLinksForWorkspaceTx(tx database.Tx, workspaceID int) ([]ZammadWorkspaceTicketLink, error) {
 	return listTicketLinksForWorkspace(tx, workspaceID)
+}
+
+const maxZammadOverviewTickets = 25
+
+func (r *ZammadRepository) ListOverviewTicketsForWorkspace(workspaceID, limit int) ([]models.ZammadOverviewTicket, error) {
+	return listOverviewTicketsForWorkspace(r.db, workspaceID, limit)
+}
+
+func (r *ZammadRepository) ListOverviewTicketsForWorkspaceTx(tx database.Tx, workspaceID, limit int) ([]models.ZammadOverviewTicket, error) {
+	return listOverviewTicketsForWorkspace(tx, workspaceID, limit)
+}
+
+func listOverviewTicketsForWorkspace(q zammadReadQueryer, workspaceID, limit int) ([]models.ZammadOverviewTicket, error) {
+	if limit <= 0 || limit > maxZammadOverviewTickets {
+		limit = maxZammadOverviewTickets
+	}
+	rows, err := q.Query(`SELECT ztl.id, ztl.item_id,
+		w.key || '-' || CAST(i.workspace_item_number AS TEXT), ztl.ticket_number,
+		COALESCE(iil.title, ''), COALESCE(ztl.ticket_url, ''),
+		ztl.last_status_id, ztl.last_status_name,
+		ztl.group_id, ztl.group_name, ztl.owner_id, ztl.owner_name
+		FROM zammad_ticket_links ztl
+		JOIN item_integration_links iil ON iil.id = ztl.item_integration_link_id
+		JOIN items i ON i.id = ztl.item_id
+		JOIN workspaces w ON w.id = i.workspace_id
+		JOIN zammad_connections zc ON zc.provider_id = ztl.provider_id
+		WHERE i.workspace_id = ? AND ztl.ticket_id IS NOT NULL AND ztl.item_integration_link_id IS NOT NULL
+		AND (
+			zc.applies_to_all_workspaces = true OR EXISTS (
+				SELECT 1 FROM zammad_connection_workspaces zcw
+				WHERE zcw.provider_id = ztl.provider_id AND zcw.workspace_id = i.workspace_id
+			)
+		)
+		ORDER BY COALESCE(ztl.last_synced_at, ztl.created_at) DESC, ztl.id DESC
+		LIMIT ?`, workspaceID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	tickets := []models.ZammadOverviewTicket{}
+	for rows.Next() {
+		var ticket models.ZammadOverviewTicket
+		var storedTitle string
+		var statusID, groupID, ownerID sql.NullInt64
+		var statusName, groupName, ownerName sql.NullString
+		if err := rows.Scan(&ticket.ID, &ticket.ItemID, &ticket.ItemKey, &ticket.TicketNumber,
+			&storedTitle, &ticket.TicketURL,
+			&statusID, &statusName, &groupID, &groupName, &ownerID, &ownerName); err != nil {
+			return nil, err
+		}
+		ticket.TicketTitle = resolveZammadOverviewTicketTitle(storedTitle, ticket.TicketNumber)
+		if statusID.Valid {
+			ticket.Status.ID = int(statusID.Int64)
+		}
+		if statusName.Valid {
+			ticket.Status.Name = statusName.String
+		}
+		if groupID.Valid {
+			ticket.Group.ID = int(groupID.Int64)
+		}
+		if groupName.Valid {
+			ticket.Group.Name = groupName.String
+		}
+		if ownerID.Valid {
+			ticket.Owner.ID = int(ownerID.Int64)
+		}
+		if ownerName.Valid {
+			ticket.Owner.Name = ownerName.String
+		}
+		tickets = append(tickets, ticket)
+	}
+	return tickets, rows.Err()
+}
+
+func resolveZammadOverviewTicketTitle(storedTitle, ticketNumber string) string {
+	storedTitle = strings.TrimSpace(storedTitle)
+	if storedTitle == "" || storedTitle == "Zammad #"+ticketNumber {
+		return "Zammad #" + ticketNumber
+	}
+	return storedTitle
 }
 
 func listTicketLinksForWorkspace(q zammadReadQueryer, workspaceID int) ([]ZammadWorkspaceTicketLink, error) {

@@ -74,8 +74,8 @@
   }
 
   function currentOwnerLabel(owner) {
-    if (owner?.name?.trim()) return owner.name.trim();
     if (!owner?.id || owner.id <= 1) return t('zammad.unassignedOwner');
+    if (owner?.name?.trim()) return owner.name.trim();
     return valueLabel(owner);
   }
 
@@ -118,6 +118,7 @@
         unknown_status: 0,
         ...response,
         by_status: Array.isArray(response?.by_status) ? response.by_status : [],
+        tickets: Array.isArray(response?.tickets) ? response.tickets.slice(0, 25) : [],
         recent_changes: Array.isArray(response?.recent_changes)
           ? response.recent_changes
               .filter((change) => observedTimelineFields.has(change?.field))
@@ -184,6 +185,66 @@
           {/each}
         </ul>
       </section>
+
+      {#if overview.tickets.length > 0}
+        <section aria-labelledby="zammad-linked-tickets">
+          <h4 id="zammad-linked-tickets" class="text-xs font-semibold" style="color: var(--ds-text);">{t('zammad.tickets')}</h4>
+          <ul class="mt-2 space-y-2">
+            {#each overview.tickets as ticket (ticket.id)}
+              <li class="rounded-md border px-3 py-2.5 text-xs" style="border-color: var(--ds-border); background-color: var(--ds-background-neutral);">
+                <div class="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+                  {#if ticket.ticket_url}
+                    <a
+                      href={safeHref(ticket.ticket_url)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="inline-flex min-w-0 items-start gap-1 break-words font-medium hover:underline"
+                      style="color: var(--ds-link);"
+                      title={t('common.openInNewTab')}
+                    >
+                      <span class="min-w-0 break-words">{ticket.ticket_title || t('zammad.ticketNumber', { number: ticket.ticket_number })}</span>
+                      <ExternalLink class="mt-0.5 h-3 w-3 flex-shrink-0" aria-hidden="true" />
+                      <span class="sr-only">({t('common.openInNewTab')})</span>
+                    </a>
+                  {:else}
+                    <span class="min-w-0 break-words font-medium" style="color: var(--ds-text);">
+                      {ticket.ticket_title || t('zammad.ticketNumber', { number: ticket.ticket_number })}
+                    </span>
+                  {/if}
+                  <span class="flex-shrink-0 rounded px-1.5 py-0.5" style="background-color: var(--ds-background); color: var(--ds-text-subtle);">
+                    {t('zammad.status')}: {statusBucketLabel(ticket.status)}
+                  </span>
+                </div>
+                <div class="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5" style="color: var(--ds-text-subtle);">
+                  <a class="font-medium hover:underline" href={`/workspaces/${workspaceId}/items/${ticket.item_id}`} style="color: var(--ds-link);">
+                    {ticket.item_key}
+                  </a>
+                  <span aria-hidden="true">·</span>
+                  {#if ticket.ticket_url}
+                    <a
+                      href={safeHref(ticket.ticket_url)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="font-medium hover:underline"
+                      style="color: var(--ds-link);"
+                      title={t('common.openInNewTab')}
+                    >
+                      {t('zammad.ticketNumber', { number: ticket.ticket_number })}
+                      <span class="sr-only">({t('common.openInNewTab')})</span>
+                    </a>
+                  {:else}
+                    <span>{t('zammad.ticketNumber', { number: ticket.ticket_number })}</span>
+                  {/if}
+                  <span aria-hidden="true">·</span>
+                  <span class="min-w-0 break-words">{t('zammad.group')}: <span style="color: var(--ds-text);">{valueLabel(ticket.group)}</span></span>
+                  <span aria-hidden="true">·</span>
+                  <span class="min-w-0 break-words">{t('zammad.owner')}: <span style="color: var(--ds-text);">{currentOwnerLabel(ticket.owner)}</span></span>
+                </div>
+              </li>
+            {/each}
+          </ul>
+        </section>
+      {/if}
 
       <section aria-labelledby="zammad-recent-changes">
         <h4 id="zammad-recent-changes" class="text-xs font-semibold" style="color: var(--ds-text);">{t('zammad.overview.recentChanges')}</h4>

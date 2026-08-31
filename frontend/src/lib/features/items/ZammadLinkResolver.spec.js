@@ -89,6 +89,30 @@ describe('ZammadLinkResolver', () => {
           closed: false,
         },
       ],
+      tickets: [
+        {
+          id: 'link-42',
+          item_id: 42,
+          item_key: 'OPS-42',
+          ticket_title: 'VPN access after password change',
+          ticket_number: '12345',
+          ticket_url: 'https://zammad.example.test/#ticket/zoom/42',
+          status: { id: 2, name: 'open' },
+          group: { id: 7, name: 'IT / Network' },
+          owner: { id: 99, name: 'Grace Hopper' },
+        },
+        {
+          id: 'link-44',
+          item_id: 44,
+          item_key: 'OPS-44',
+          ticket_title: 'Printer queue unavailable',
+          ticket_number: '12347',
+          ticket_url: 'https://zammad.example.test/#ticket/zoom/44',
+          status: { id: 4, name: 'pending reminder' },
+          group: { id: 8, name: 'IT / Workplace' },
+          owner: { id: 1, name: '-' },
+        },
+      ],
       recent_changes: [
         {
           id: 'event-1',
@@ -122,12 +146,22 @@ describe('ZammadLinkResolver', () => {
     expect(
       screen.getByRole('link', { name: /OPS-42 VPN access after password change/ })
     ).toHaveAttribute('href', '/workspaces/7/items/42');
-    const zammadLink = screen.getByRole('link', { name: /Zammad #12345/ });
+    const zammadLink = screen.getAllByRole('link', { name: /Zammad #12345/ })[0];
     expect(zammadLink).toHaveAttribute('href', 'https://zammad.example.test/#ticket/zoom/42');
     expect(zammadLink).toHaveAttribute('target', '_blank');
     expect(zammadLink).toHaveAttribute('rel', 'noopener noreferrer');
-    expect(screen.getByText('IT / Network')).toBeInTheDocument();
-    expect(screen.getByText('Grace Hopper')).toBeInTheDocument();
+    expect(screen.getAllByText('IT / Network').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Grace Hopper').length).toBeGreaterThan(0);
+    expect(screen.getByRole('link', { name: /Printer queue unavailable/ })).toHaveAttribute(
+      'href',
+      'https://zammad.example.test/#ticket/zoom/44'
+    );
+    expect(screen.getByRole('link', { name: 'OPS-44' })).toHaveAttribute(
+      'href',
+      '/workspaces/7/items/44'
+    );
+    expect(screen.getByText('IT / Workplace')).toBeInTheDocument();
+    expect(screen.getByText('zammad.unassignedOwner')).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'OPS-43' })).not.toBeInTheDocument();
     expect(screen.getByText('Primary helpdesk · open: 1')).toBeInTheDocument();
     expect(screen.getByText('Second helpdesk · open: 1')).toBeInTheDocument();

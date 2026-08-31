@@ -1202,6 +1202,44 @@ func TestZammadWorkspaceOverviewCountsOnlyCompleteTicketLinks(t *testing.T) {
 	}
 }
 
+func TestZammadWorkspaceOverviewIncludesCurrentTicketAndSyncedRemoteTitle(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	link, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	overview, err := f.service.WorkspaceOverview(f.workspace1, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(overview.Tickets) != 1 {
+		t.Fatalf("newly linked ticket missing from overview: %#v", overview.Tickets)
+	}
+	ticket := overview.Tickets[0]
+	if ticket.ID != link.ID || ticket.ItemID != f.item1 || ticket.ItemKey != "PRI-49" || ticket.TicketNumber != "420901" ||
+		ticket.TicketTitle != "[PRI-49] Synthetic ticket source" ||
+		ticket.TicketURL != "https://zammad.example.test/#ticket/zoom/901" ||
+		ticket.Status.ID != 2 || ticket.Status.Name != "open" ||
+		ticket.Group.ID != 7 || ticket.Group.Name != "Support" {
+		t.Fatalf("newly linked ticket snapshot is incomplete: %#v", ticket)
+	}
+
+	f.transport.getTicket = map[string]any{
+		"id": 901, "number": "420901", "title": "Renamed in Zammad",
+		"group_id": 7, "group": "Support", "state_id": 2, "state": "open",
+	}
+	if _, err := f.service.SyncTicketLink(context.Background(), link.ID); err != nil {
+		t.Fatal(err)
+	}
+	overview, err = f.service.WorkspaceOverview(f.workspace1, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(overview.Tickets) != 1 || overview.Tickets[0].TicketTitle != "Renamed in Zammad" {
+		t.Fatalf("synchronized Zammad title was not persisted into the overview: %#v", overview.Tickets)
+	}
+}
+
 func TestZammadWorkspaceOverviewSeparatesSameStatusAcrossConnections(t *testing.T) {
 	f := newZammadServiceFixture(t, nil)
 	if _, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID}); err != nil {
