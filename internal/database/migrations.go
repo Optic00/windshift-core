@@ -747,6 +747,91 @@ var Catalog = []Migration{
 			ALTER TABLE zammad_ticket_links ADD COLUMN IF NOT EXISTS sync_lock_owner TEXT;
 		`,
 	},
+	{
+		Version: "20260831_zammad_ticket_link_item_restrict",
+		Name:    "Require Zammad ticket unlink before item deletion",
+		CheckSQLite: `
+			SELECT COUNT(*)
+			FROM pragma_foreign_key_list('zammad_ticket_links')
+			WHERE "table" = 'items' AND "from" = 'item_id' AND on_delete = 'RESTRICT'
+		`,
+		CheckPostgres: `
+			SELECT COUNT(*)
+			FROM information_schema.referential_constraints rc
+			JOIN information_schema.key_column_usage kcu
+			  ON kcu.constraint_schema = rc.constraint_schema
+			 AND kcu.constraint_name = rc.constraint_name
+			WHERE rc.constraint_schema = current_schema()
+			  AND kcu.table_schema = current_schema()
+			  AND kcu.table_name = 'zammad_ticket_links'
+			  AND kcu.column_name = 'item_id'
+			  AND rc.delete_rule = 'RESTRICT'
+		`,
+		SQLite: `
+			CREATE TABLE zammad_ticket_links_item_restrict (
+				id TEXT PRIMARY KEY,
+				item_id INTEGER NOT NULL,
+				provider_id TEXT NOT NULL,
+				item_integration_link_id TEXT,
+				ticket_id INTEGER,
+				ticket_number TEXT DEFAULT '',
+				ticket_url TEXT DEFAULT '',
+				group_id INTEGER,
+				group_name TEXT DEFAULT '',
+				owner_id INTEGER,
+				owner_name TEXT DEFAULT '',
+				correlation_key TEXT NOT NULL,
+				sync_state TEXT NOT NULL DEFAULT 'pending',
+				creating_started_at DATETIME,
+				last_status_id INTEGER,
+				last_status_name TEXT DEFAULT '',
+				last_synced_at DATETIME,
+				last_attempt_at DATETIME,
+				next_attempt_at DATETIME,
+				last_error TEXT DEFAULT '',
+				completion_applied BOOLEAN NOT NULL DEFAULT false,
+				sync_lock_until DATETIME,
+				sync_lock_owner TEXT,
+				created_by INTEGER,
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT,
+				FOREIGN KEY (provider_id) REFERENCES zammad_connections(provider_id) ON DELETE CASCADE,
+				FOREIGN KEY (item_integration_link_id) REFERENCES item_integration_links(id) ON DELETE SET NULL,
+				FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+				UNIQUE(item_id, provider_id),
+				UNIQUE(provider_id, ticket_id),
+				UNIQUE(provider_id, correlation_key)
+			);
+			INSERT INTO zammad_ticket_links_item_restrict (
+				id, item_id, provider_id, item_integration_link_id, ticket_id,
+				ticket_number, ticket_url, group_id, group_name, owner_id,
+				owner_name, correlation_key, sync_state, creating_started_at,
+				last_status_id, last_status_name, last_synced_at, last_attempt_at,
+				next_attempt_at, last_error, completion_applied, sync_lock_until,
+				sync_lock_owner, created_by, created_at, updated_at
+			)
+			SELECT
+				id, item_id, provider_id, item_integration_link_id, ticket_id,
+				ticket_number, ticket_url, group_id, group_name, owner_id,
+				owner_name, correlation_key, sync_state, creating_started_at,
+				last_status_id, last_status_name, last_synced_at, last_attempt_at,
+				next_attempt_at, last_error, completion_applied, sync_lock_until,
+				sync_lock_owner, created_by, created_at, updated_at
+			FROM zammad_ticket_links;
+			DROP TABLE zammad_ticket_links;
+			ALTER TABLE zammad_ticket_links_item_restrict RENAME TO zammad_ticket_links;
+			CREATE INDEX idx_zammad_ticket_links_item ON zammad_ticket_links(item_id);
+			CREATE INDEX idx_zammad_ticket_links_sync ON zammad_ticket_links(sync_state, last_synced_at);
+		`,
+		Postgres: `
+			ALTER TABLE zammad_ticket_links
+				DROP CONSTRAINT zammad_ticket_links_item_id_fkey;
+			ALTER TABLE zammad_ticket_links
+				ADD CONSTRAINT zammad_ticket_links_item_id_fkey
+				FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT;
+		`,
+	},
 }
 
 func applySQLiteSSOAttributeMappingDefault(db Database) (retErr error) {

@@ -750,6 +750,197 @@ func TestZammadUnlinkClearsOnlyExactRemoteCorrelationWithoutDeletingTicket(t *te
 	}
 }
 
+func TestZammadDisabledConnectionCanBeUnlinkedAndDeleted(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	link, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	disabled := false
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{Enabled: &disabled}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.service.UnlinkTicket(context.Background(), link.ID); err != nil {
+		t.Fatalf("unlink through disabled connection failed: %v", err)
+	}
+	if f.transport.ticket["windshift_item_key"] != "" {
+		t.Fatalf("disabled-connection unlink left remote correlation: %#v", f.transport.ticket)
+	}
+	if _, err := f.service.GetTicketLink(link.ID); !errors.Is(err, repository.ErrNotFound) {
+		t.Fatalf("disabled-connection unlink retained local link: %v", err)
+	}
+	if err := f.service.DeleteConnection(f.connection.ProviderID); err != nil {
+		t.Fatalf("connection remained undeletable after unlink: %v", err)
+	}
+}
+
+func TestZammadUnlinkStillRequiresWorkspaceScope(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	link, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecWrite("DELETE FROM zammad_connection_workspaces WHERE provider_id = ?", f.connection.ProviderID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.service.UnlinkTicket(context.Background(), link.ID); !errors.Is(err, ErrCredentialScopeMismatch) {
+		t.Fatalf("out-of-scope unlink returned %v", err)
+	}
+	if _, err := f.service.GetTicketLink(link.ID); err != nil {
+		t.Fatalf("out-of-scope unlink removed local link: %v", err)
+	}
+	if f.transport.ticket["windshift_item_key"] != link.CorrelationKey {
+		t.Fatalf("out-of-scope unlink changed remote correlation: %#v", f.transport.ticket)
+	}
+}
+
+func TestZammadUnlinkStillRequiresEnabledCredential(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	link, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecWrite("UPDATE action_credentials SET is_enabled = false WHERE id = ?", f.connection.CredentialID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.service.UnlinkTicket(context.Background(), link.ID); !errors.Is(err, ErrCredentialDisabled) {
+		t.Fatalf("disabled-credential unlink returned %v", err)
+	}
+	if _, err := f.service.GetTicketLink(link.ID); err != nil {
+		t.Fatalf("disabled-credential unlink removed local link: %v", err)
+	}
+	if f.transport.ticket["windshift_item_key"] != link.CorrelationKey {
+		t.Fatalf("disabled-credential unlink changed remote correlation: %#v", f.transport.ticket)
+	}
+}
+
+func TestZammadLinkedItemDeletionRequiresExplicitUnlink(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	link, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := f.db.ExecWrite("DELETE FROM items WHERE id = ?", f.item1); err == nil {
+		t.Fatal("database allowed direct deletion of a Zammad-linked item")
+	}
+	crud := NewItemCRUDService(f.db)
+	if _, err := crud.Delete(f.item1); !errors.Is(err, ErrItemHasZammadTicketLinks) {
+		t.Fatalf("linked item deletion returned %v", err)
+	}
+	if _, err := repository.NewItemRepository(f.db).FindByID(f.item1); err != nil {
+		t.Fatalf("rejected deletion removed item: %v", err)
+	}
+	if _, err := f.service.GetTicketLink(link.ID); err != nil {
+		t.Fatalf("rejected deletion removed Zammad link: %v", err)
+	}
+	var genericLinkCount int
+	if err := f.db.QueryRow("SELECT COUNT(*) FROM item_integration_links WHERE id = ?", link.ItemIntegrationLinkID).Scan(&genericLinkCount); err != nil || genericLinkCount != 1 {
+		t.Fatalf("rejected deletion removed generic item link: count=%d err=%v", genericLinkCount, err)
+	}
+
+	if _, err := f.service.UnlinkTicket(context.Background(), link.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := crud.Delete(f.item1); err != nil {
+		t.Fatalf("item remained undeletable after explicit unlink: %v", err)
+	}
+	if _, err := repository.NewItemRepository(f.db).FindByID(f.item1); !errors.Is(err, repository.ErrNotFound) {
+		t.Fatalf("item remained after unlink and delete: %v", err)
+	}
+}
+
+func TestZammadCascadeDeletionIsBlockedByLinkedDescendant(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	childID := mustInsertID(t, f.db, `INSERT INTO items
+		(workspace_id, workspace_item_number, parent_id, title, description, frac_index, status_id, creator_id, last_active_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+		f.workspace1, 50, f.item1, "Linked child", "Synthetic child", "a0V", f.openStatus, f.actorID)
+	if _, err := f.service.CreateTicket(context.Background(), childID, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := NewItemCRUDService(f.db).Delete(f.item1); !errors.Is(err, ErrItemHasZammadTicketLinks) {
+		t.Fatalf("cascade with linked descendant returned %v", err)
+	}
+	itemRepo := repository.NewItemRepository(f.db)
+	if _, err := itemRepo.FindByID(f.item1); err != nil {
+		t.Fatalf("rejected cascade removed root item: %v", err)
+	}
+	if _, err := itemRepo.FindByID(childID); err != nil {
+		t.Fatalf("rejected cascade removed linked descendant: %v", err)
+	}
+}
+
+func TestZammadLinkedItemsBlockWorkspaceDeletion(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	link, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	workspaceService := NewWorkspaceService(f.db)
+	if err := workspaceService.Delete(f.workspace1); !errors.Is(err, ErrWorkspaceHasZammadTicketLinks) {
+		t.Fatalf("workspace deletion with linked item returned %v", err)
+	}
+	if exists, err := repository.NewWorkspaceRepository(f.db).Exists(f.workspace1); err != nil || !exists {
+		t.Fatalf("rejected workspace deletion removed workspace: exists=%t err=%v", exists, err)
+	}
+	if _, err := repository.NewItemRepository(f.db).FindByID(f.item1); err != nil {
+		t.Fatalf("rejected workspace deletion removed item: %v", err)
+	}
+	if _, err := f.service.GetTicketLink(link.ID); err != nil {
+		t.Fatalf("rejected workspace deletion removed Zammad link: %v", err)
+	}
+
+	if _, err := f.service.UnlinkTicket(context.Background(), link.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := workspaceService.Delete(f.workspace1); err != nil {
+		t.Fatalf("workspace remained undeletable after explicit unlink: %v", err)
+	}
+	if exists, err := repository.NewWorkspaceRepository(f.db).Exists(f.workspace1); err != nil || exists {
+		t.Fatalf("workspace remained after unlink and delete: exists=%t err=%v", exists, err)
+	}
+}
+
+func TestZammadLinkedPersonalWorkspaceBlocksUserOffboardingBeforeMutation(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	if _, err := f.db.ExecWrite("UPDATE workspaces SET is_personal = true, owner_id = ? WHERE id = ?", f.actorID, f.workspace1); err != nil {
+		t.Fatal(err)
+	}
+	link, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var beforeEmail, beforeUsername string
+	var beforeActive bool
+	if err := f.db.QueryRow("SELECT email, username, is_active FROM users WHERE id = ?", f.actorID).Scan(&beforeEmail, &beforeUsername, &beforeActive); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := OffboardUser(f.db, f.actorID, nil); !errors.Is(err, ErrUserOffboardingHasZammadTicketLinks) {
+		t.Fatalf("offboarding with linked personal item returned %v", err)
+	}
+	var afterEmail, afterUsername string
+	var afterActive bool
+	if err := f.db.QueryRow("SELECT email, username, is_active FROM users WHERE id = ?", f.actorID).Scan(&afterEmail, &afterUsername, &afterActive); err != nil {
+		t.Fatal(err)
+	}
+	if beforeEmail != afterEmail || beforeUsername != afterUsername || beforeActive != afterActive {
+		t.Fatalf("blocked offboarding mutated user: before=(%q,%q,%t) after=(%q,%q,%t)", beforeEmail, beforeUsername, beforeActive, afterEmail, afterUsername, afterActive)
+	}
+	if exists, err := repository.NewWorkspaceRepository(f.db).Exists(f.workspace1); err != nil || !exists {
+		t.Fatalf("blocked offboarding removed personal workspace: exists=%t err=%v", exists, err)
+	}
+	if _, err := repository.NewItemRepository(f.db).FindByID(f.item1); err != nil {
+		t.Fatalf("blocked offboarding removed item: %v", err)
+	}
+	if _, err := f.service.GetTicketLink(link.ID); err != nil {
+		t.Fatalf("blocked offboarding removed Zammad link: %v", err)
+	}
+}
+
 func TestZammadUnlinkUpstreamFailurePreservesLocalLink(t *testing.T) {
 	f := newZammadServiceFixture(t, nil)
 	link, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})

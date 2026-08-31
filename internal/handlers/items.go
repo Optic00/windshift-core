@@ -1140,6 +1140,14 @@ func (h *ItemHandler) respondItemDeletionError(w http.ResponseWriter, r *http.Re
 		respondNotFound(w, r, "item")
 		return true
 	}
+	if errors.Is(err, services.ErrItemHasZammadTicketLinks) {
+		respondError(w, r, restapi.NewAPIError(
+			http.StatusConflict,
+			restapi.ErrCodeConflict,
+			"Unlink all Zammad tickets from the affected items before deleting them.",
+		))
+		return true
+	}
 	respondInternalError(w, r, err)
 	return true
 }

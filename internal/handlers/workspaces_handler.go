@@ -516,13 +516,12 @@ func (h *WorkspaceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Drop item number sequence for this workspace (PostgreSQL only, no-op for SQLite)
-	if err = h.repo.DropItemSequence(int64(id)); err != nil {
-		slog.Warn("failed to drop item sequence for workspace", slog.String("component", "workspaces"), slog.Int("workspace_id", id), slog.Any("error", err))
-	}
-
-	err = h.repo.Delete(id)
+	err = h.workspaceService.Delete(id)
 	if err != nil {
+		if errors.Is(err, services.ErrWorkspaceHasZammadTicketLinks) {
+			respondConflict(w, r, "Unlink all Zammad tickets from this workspace before deleting it.")
+			return
+		}
 		respondInternalError(w, r, err)
 		return
 	}
