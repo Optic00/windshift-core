@@ -383,7 +383,7 @@
       <Input bind:value={form.default_customer} placeholder="windshift@example.com" />
     </FormField>
     {#if editing && metadataByConnection[editing.id]?.groups?.length}
-      <FormField label={t('zammad.defaultGroup')}>
+      <FormField label={t('zammad.defaultGroup')} required>
         <NativeSelect
           value={String(form.default_group_id)}
           onchange={selectDefaultGroup}
@@ -404,7 +404,7 @@
         </div>
       </FormField>
     {:else}
-      <FormField label={t('zammad.defaultGroup')}>
+      <FormField label={t('zammad.defaultGroup')} required>
         <Input bind:value={form.default_group_name} placeholder="Support" />
       </FormField>
       <FormField label={t('zammad.allowedGroupIds')}>

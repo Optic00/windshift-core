@@ -33,6 +33,7 @@ type ZammadConnection struct {
 	CredentialID               int              `json:"-"`
 	AuthMethod                 ZammadAuthMethod `json:"auth_method"`
 	OAuthGeneration            int64            `json:"-"`
+	ConfigRevision             int64            `json:"-"`
 	OAuthAttemptID             string           `json:"-"`
 	OAuthClientID              string           `json:"oauth_client_id,omitempty"`
 	OAuthClientSecretEncrypted string           `json:"-"`

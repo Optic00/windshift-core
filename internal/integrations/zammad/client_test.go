@@ -3,6 +3,8 @@ package zammad
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -154,7 +156,7 @@ func TestClientOwnersUsesGroupPermissionQueryAndFiltersIneligibleUsers(t *testin
 			return
 		}
 		query := r.URL.Query()
-		if query.Get("query") != "*" || query.Get("permissions[]") != "ticket.agent" || query.Get("group_ids[7]") != "full" || query.Get("per_page") != "100" {
+		if query.Get("query") != "*" || query.Get("permissions[]") != "ticket.agent" || query.Get("group_ids[7]") != "full" || query.Get("page") != "1" || query.Get("per_page") != "100" {
 			t.Fatalf("unexpected owner query: %s", r.URL.RawQuery)
 		}
 		_, _ = w.Write([]byte(`[
@@ -174,5 +176,73 @@ func TestClientOwnersUsesGroupPermissionQueryAndFiltersIneligibleUsers(t *testin
 	}
 	if len(owners) != 1 || owners[0] != (Owner{ID: 2, Name: "Ada Lovelace"}) {
 		t.Fatalf("unexpected eligible owners: %#v", owners)
+	}
+}
+
+func TestClientOwnersPagesUntilShortPage(t *testing.T) {
+	t.Parallel()
+	pageOne := make([]string, 100)
+	for i := range pageOne {
+		pageOne[i] = fmt.Sprintf(`{"id":%d,"active":true,"login":"user-%d","group_ids":{"7":["full"]}}`, i+1, i+1)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/users/search" {
+			http.NotFound(w, r)
+			return
+		}
+		query := r.URL.Query()
+		if query.Get("query") != "*" || query.Get("permissions[]") != "ticket.agent" || query.Get("group_ids[7]") != "full" || query.Get("per_page") != "100" {
+			t.Fatalf("unexpected owner query: %s", r.URL.RawQuery)
+		}
+		switch query.Get("page") {
+		case "1":
+			_, _ = fmt.Fprintf(w, "[%s]", strings.Join(pageOne, ","))
+		case "2":
+			_, _ = w.Write([]byte(`[{"id":101,"active":true,"firstname":"Grace","lastname":"Hopper","group_ids":{"7":["full"]}}]`))
+		default:
+			t.Fatalf("unexpected page request: %s", query.Get("page"))
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "token", httpTestTransport{client: server.Client()})
+	owners, err := client.Owners(context.Background(), 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(owners) != 101 || owners[0] != (Owner{ID: 1, Name: "user-1"}) || owners[100] != (Owner{ID: 101, Name: "Grace Hopper"}) {
+		t.Fatalf("unexpected paged owners: len=%d first=%#v last=%#v", len(owners), owners[0], owners[len(owners)-1])
+	}
+}
+
+func TestClientOwnersPagingHonorsContext(t *testing.T) {
+	t.Parallel()
+	pageOne := make([]string, 100)
+	for i := range pageOne {
+		pageOne[i] = fmt.Sprintf(`{"id":%d,"active":true,"login":"user-%d","group_ids":{"7":["full"]}}`, i+1, i+1)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	requests := 0
+	transport := TransportFunc(func(requestCtx context.Context, _ string, _ string, _ []byte, _ map[string]string) (*Response, error) {
+		requests++
+		if requests == 1 {
+			cancel()
+			body := fmt.Sprintf("[%s]", strings.Join(pageOne, ","))
+			return &Response{StatusCode: http.StatusOK, Body: []byte(body)}, nil
+		}
+		if err := requestCtx.Err(); err != nil {
+			return nil, err
+		}
+		return &Response{StatusCode: http.StatusOK, Body: []byte(`[]`)}, nil
+	})
+
+	client := NewClient("https://zammad.example.test", "token", transport)
+	_, err := client.Owners(ctx, 7)
+	if err == nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context cancellation, got %v", err)
+	}
+	if requests != 2 {
+		t.Fatalf("expected second page request to receive canceled context, got %d requests", requests)
 	}
 }

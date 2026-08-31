@@ -37,7 +37,7 @@ export default { zammad: {
   oauthConnected: 'Zammad OAuth verbunden',
   oauthConnectionFailed: 'Zammad-OAuth-Autorisierung fehlgeschlagen',
   oauthAuthorizationFailed: 'Zammad-OAuth-Autorisierung konnte nicht gestartet werden',
-  correlationFieldNotVerified: 'Eingeschränkte OAuth-Berechtigungen verhindern die automatische Prüfung des Korrelationsfelds. Vor der Ticketerstellung dessen Existenz in Zammad prüfen.',
+  correlationFieldNotVerified: 'Eingeschränkte Servicekonto-Berechtigungen verhindern die automatische Prüfung des Korrelationsfelds. Vor der Ticketerstellung dessen Existenz in Zammad prüfen.',
   defaultCustomer: 'Standardkunde für Tickets',
   defaultGroup: 'Standardgruppe',
   allowedGroups: 'Erlaubte Ticketgruppen',

@@ -723,6 +723,30 @@ var Catalog = []Migration{
 			ALTER TABLE zammad_ticket_links ADD COLUMN IF NOT EXISTS completion_applied BOOLEAN NOT NULL DEFAULT false;
 		`,
 	},
+	{
+		Version:       "20260831_zammad_connection_config_revision",
+		Name:          "Add optimistic revision for Zammad connection configuration",
+		CheckSQLite:   sqliteColumnCheck("zammad_connections", "config_revision"),
+		CheckPostgres: pgColumnCheck("zammad_connections", "config_revision"),
+		SQLite: `
+			ALTER TABLE zammad_connections ADD COLUMN config_revision INTEGER NOT NULL DEFAULT 1;
+		`,
+		Postgres: `
+			ALTER TABLE zammad_connections ADD COLUMN IF NOT EXISTS config_revision BIGINT NOT NULL DEFAULT 1;
+		`,
+	},
+	{
+		Version:       "20260831_zammad_ticket_sync_lock_owner",
+		Name:          "Bind Zammad ticket sync leases to their owner",
+		CheckSQLite:   sqliteColumnCheck("zammad_ticket_links", "sync_lock_owner"),
+		CheckPostgres: pgColumnCheck("zammad_ticket_links", "sync_lock_owner"),
+		SQLite: `
+			ALTER TABLE zammad_ticket_links ADD COLUMN sync_lock_owner TEXT;
+		`,
+		Postgres: `
+			ALTER TABLE zammad_ticket_links ADD COLUMN IF NOT EXISTS sync_lock_owner TEXT;
+		`,
+	},
 }
 
 func applySQLiteSSOAttributeMappingDefault(db Database) (retErr error) {

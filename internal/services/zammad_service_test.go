@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,7 +30,9 @@ type fakeZammadTransport struct {
 	ticket                map[string]any
 	postErrorAfterCreate  error
 	postStatusAfterCreate int
+	postResponse          map[string]any
 	putError              error
+	searchError           error
 	getStatus             int
 	getTicket             map[string]any
 	hideSearch            bool
@@ -37,6 +40,8 @@ type fakeZammadTransport struct {
 	states                []map[string]any
 	users                 []map[string]any
 	putPayloads           []map[string]any
+	createGroupID         int
+	putRerouteGroupID     int
 }
 
 func (f *fakeZammadTransport) Do(_ context.Context, method, targetURL string, body []byte, headers map[string]string) (*zammad.Response, error) {
@@ -52,6 +57,11 @@ func (f *fakeZammadTransport) Do(_ context.Context, method, targetURL string, bo
 	}
 	switch {
 	case parsed.Path == "/api/v1/tickets/search":
+		if f.searchError != nil {
+			err := f.searchError
+			f.searchError = nil
+			return nil, err
+		}
 		if f.ticket == nil || f.hideSearch {
 			return jsonResponse(http.StatusOK, []any{}), nil
 		}
@@ -62,8 +72,12 @@ func (f *fakeZammadTransport) Do(_ context.Context, method, targetURL string, bo
 		if err := json.Unmarshal(body, &payload); err != nil {
 			return nil, err
 		}
+		createGroupID := f.createGroupID
+		if createGroupID == 0 {
+			createGroupID = 7
+		}
 		f.ticket = map[string]any{
-			"id": 901, "number": "420901", "group_id": 7,
+			"id": 901, "number": "420901", "group_id": createGroupID,
 			"state_id": 2, "state": "open",
 			"windshift_item_key": payload["windshift_item_key"],
 		}
@@ -76,6 +90,9 @@ func (f *fakeZammadTransport) Do(_ context.Context, method, targetURL string, bo
 			status := f.postStatusAfterCreate
 			f.postStatusAfterCreate = 0
 			return jsonResponse(status, map[string]string{"error": "synthetic create failure"}), nil
+		}
+		if f.postResponse != nil {
+			return jsonResponse(http.StatusCreated, f.postResponse), nil
 		}
 		return jsonResponse(http.StatusCreated, f.ticket), nil
 	case strings.HasPrefix(parsed.Path, "/api/v1/tickets/") && method == http.MethodPut:
@@ -91,6 +108,9 @@ func (f *fakeZammadTransport) Do(_ context.Context, method, targetURL string, bo
 		if f.ticket != nil {
 			for key, value := range payload {
 				f.ticket[key] = value
+			}
+			if f.putRerouteGroupID > 0 {
+				f.ticket["group_id"] = f.putRerouteGroupID
 			}
 		}
 		return jsonResponse(http.StatusOK, f.ticket), nil
@@ -160,8 +180,9 @@ func (allowZammadPermission) HasWorkspacePermission(_, _ int, _ string) (bool, e
 }
 
 type fakeZammadWorkflow struct {
-	db     database.Database
-	writes int
+	db            database.Database
+	writes        int
+	postCommitErr error
 }
 
 func (f *fakeZammadWorkflow) PerformTransition(_ context.Context, req PerformTransitionRequest, itemRepo *repository.ItemRepository, _ *ConditionService, _ transitionApprovalService) (*PerformTransitionResult, error) {
@@ -182,7 +203,11 @@ func (f *fakeZammadWorkflow) PerformTransition(_ context.Context, req PerformTra
 		return nil, err
 	}
 	newStatusID := req.ToStatusID
-	return &PerformTransitionResult{Item: item, OldStatusID: oldStatusID, NewStatusID: &newStatusID}, nil
+	result := &PerformTransitionResult{Item: item, OldStatusID: oldStatusID, NewStatusID: &newStatusID}
+	if f.postCommitErr != nil {
+		return result, f.postCommitErr
+	}
+	return result, nil
 }
 
 type zammadServiceFixture struct {
@@ -310,6 +335,65 @@ func TestZammadLinkExistingTicketPinsExactTicketAndIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestZammadLinkExistingTicketSetupFailureCannotBePromotedBySync(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	f.transport.ticket = map[string]any{
+		"id": 715, "number": "420715", "group_id": 7, "group": "Support",
+		"state_id": 2, "state": "open", "owner_id": 1,
+	}
+	f.transport.putError = context.DeadlineExceeded
+
+	_, err := f.service.LinkExistingTicket(context.Background(), f.item1, f.actorID, models.LinkZammadTicketRequest{
+		ConnectionID: f.connection.ProviderID, TicketNumber: "420715",
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected correlation update failure, got %v", err)
+	}
+	reserved, err := f.service.TicketLinksForItem(f.item1)
+	if err != nil || len(reserved) != 1 {
+		t.Fatalf("failed setup did not retain exactly one reservation: links=%#v err=%v", reserved, err)
+	}
+	link := reserved[0]
+	if link.SyncState != models.ZammadSyncCreating || link.ItemIntegrationLinkID != "" || link.LastError == "" {
+		t.Fatalf("failed setup looked complete or lost its safe error: %#v", link)
+	}
+	var genericLinks int
+	if err := f.db.QueryRow("SELECT COUNT(*) FROM item_integration_links WHERE integration_provider_id = ?", f.connection.ProviderID).Scan(&genericLinks); err != nil || genericLinks != 0 {
+		t.Fatalf("failed setup created a generic integration link: count=%d err=%v", genericLinks, err)
+	}
+
+	f.transport.resetRequests()
+	if err := f.service.SyncDue(context.Background(), 10); err != nil {
+		t.Fatal(err)
+	}
+	requests, _ := f.transport.counts()
+	if requests != 0 {
+		t.Fatalf("scheduler attempted to sync incomplete reservation: requests=%d", requests)
+	}
+	if _, err := f.service.SyncTicketLink(context.Background(), link.ID); err == nil {
+		t.Fatal("manual refresh promoted an incomplete reservation")
+	}
+	closedStateID := 4
+	if _, err := f.service.UpdateTicketLink(context.Background(), link.ID, models.UpdateZammadTicketLinkRequest{StateID: &closedStateID}); err == nil {
+		t.Fatal("ticket edit was allowed before link setup completed")
+	}
+	stored, err := f.service.GetTicketLink(link.ID)
+	if err != nil || stored.SyncState != models.ZammadSyncCreating || stored.ItemIntegrationLinkID != "" {
+		t.Fatalf("sync attempts changed incomplete reservation: link=%#v err=%v", stored, err)
+	}
+
+	f.transport.putError = nil
+	completed, err := f.service.LinkExistingTicket(context.Background(), f.item1, f.actorID, models.LinkZammadTicketRequest{
+		ConnectionID: f.connection.ProviderID, TicketNumber: "420715",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.ID != link.ID || completed.SyncState != models.ZammadSyncLinked || completed.ItemIntegrationLinkID == "" || completed.LastError != "" {
+		t.Fatalf("retry did not finish the retained reservation: %#v", completed)
+	}
+}
+
 func TestZammadLinkExistingTicketRejectsDisallowedGroupAndConflictingCorrelation(t *testing.T) {
 	t.Run("disallowed group", func(t *testing.T) {
 		f := newZammadServiceFixture(t, nil)
@@ -392,6 +476,263 @@ func TestZammadUpdateTicketLinkValidatesOwnerForEffectiveGroupAndPersistsSnapsho
 	}
 }
 
+func TestZammadTicketSnapshotBlocksConcurrentGroupPolicyNarrowing(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	link, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.transport.groups = []map[string]any{{"id": 7, "name": "Support", "active": true}, {"id": 8, "name": "Escalations", "active": true}}
+	initialAllowedGroups := []int{7, 8}
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroupIDs: &initialAllowedGroups}); err != nil {
+		t.Fatal(err)
+	}
+
+	arrived := make(chan struct{}, 1)
+	release := make(chan struct{})
+	f.service.SetPersistBeforeConnectionLockForTesting(func() {
+		arrived <- struct{}{}
+		<-release
+	})
+	defer f.service.SetPersistBeforeConnectionLockForTesting(nil)
+
+	newGroupID := 8
+	updateErr := make(chan error, 1)
+	go func() {
+		_, err := f.service.UpdateTicketLink(context.Background(), link.ID, models.UpdateZammadTicketLinkRequest{GroupID: &newGroupID})
+		updateErr <- err
+	}()
+	<-arrived
+	narrowedAllowedGroups := []int{7}
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroupIDs: &narrowedAllowedGroups}); !errors.Is(err, ErrZammadConnectionBusy) {
+		t.Fatalf("group policy changed while remote update was pending: %v", err)
+	}
+	close(release)
+	if err := <-updateErr; err != nil {
+		t.Fatalf("remote group move failed after conflicting policy update was rejected: %v", err)
+	}
+
+	stored, err := f.service.GetTicketLink(link.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.GroupID != 8 || stored.SyncState != models.ZammadSyncLinked || stored.LastError != "" {
+		t.Fatalf("rejected policy race prevented the valid snapshot: %#v", stored)
+	}
+	if got := int(f.transport.ticket["group_id"].(float64)); got != 8 {
+		t.Fatalf("test did not move the remote ticket before narrowing: group=%d", got)
+	}
+}
+
+func TestZammadExpiredUpdateLeaseReloadsGroupPolicyBeforeRemoteWrite(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	link, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.transport.groups = []map[string]any{{"id": 7, "name": "Support", "active": true}, {"id": 8, "name": "Escalations", "active": true}}
+	initialAllowed := []int{7, 8}
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroupIDs: &initialAllowed}); err != nil {
+		t.Fatal(err)
+	}
+	arrived := make(chan struct{}, 1)
+	release := make(chan struct{})
+	f.service.SetUpdateBeforeRemoteWriteForTesting(func() {
+		arrived <- struct{}{}
+		<-release
+	})
+	defer f.service.SetUpdateBeforeRemoteWriteForTesting(nil)
+
+	groupID := 8
+	updateErr := make(chan error, 1)
+	go func() {
+		_, err := f.service.UpdateTicketLink(context.Background(), link.ID, models.UpdateZammadTicketLinkRequest{GroupID: &groupID})
+		updateErr <- err
+	}()
+	<-arrived
+	if _, err := f.db.ExecWrite("UPDATE zammad_ticket_links SET sync_lock_until = ? WHERE id = ?", time.Now().Add(-time.Minute), link.ID); err != nil {
+		t.Fatal(err)
+	}
+	narrowed := []int{7}
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroupIDs: &narrowed}); err != nil {
+		t.Fatalf("group policy could not change after synthetic lease expiry: %v", err)
+	}
+	puts := f.transport.putCount()
+	close(release)
+	if err := <-updateErr; !errors.Is(err, ErrZammadTicketGroupPolicyChanged) {
+		t.Fatalf("expired update worker did not honor current group policy: %v", err)
+	}
+	if f.transport.putCount() != puts {
+		t.Fatalf("expired update worker wrote a group removed by current policy")
+	}
+}
+
+func TestZammadTicketCreationBlocksGroupNarrowingAcrossRemoteReroute(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	f.transport.groups = []map[string]any{{"id": 7, "name": "Support", "active": true}, {"id": 8, "name": "Escalations", "active": true}}
+	f.transport.createGroupID = 8
+	initialAllowedGroups := []int{7, 8}
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroupIDs: &initialAllowedGroups}); err != nil {
+		t.Fatal(err)
+	}
+	arrived := make(chan struct{}, 1)
+	release := make(chan struct{})
+	f.service.SetPersistBeforeConnectionLockForTesting(func() {
+		arrived <- struct{}{}
+		<-release
+	})
+	defer f.service.SetPersistBeforeConnectionLockForTesting(nil)
+
+	type creationResult struct {
+		link *models.ZammadTicketLink
+		err  error
+	}
+	result := make(chan creationResult, 1)
+	go func() {
+		link, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID, GroupID: 7})
+		result <- creationResult{link: link, err: err}
+	}()
+	<-arrived
+	narrowedAllowedGroups := []int{7}
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroupIDs: &narrowedAllowedGroups}); !errors.Is(err, ErrZammadConnectionBusy) {
+		t.Fatalf("group policy changed while rerouted ticket creation was incomplete: %v", err)
+	}
+	close(release)
+	created := <-result
+	if created.err != nil || created.link == nil || created.link.GroupID != 8 {
+		t.Fatalf("ticket creation did not finish under the preserved policy: link=%#v err=%v", created.link, created.err)
+	}
+}
+
+func TestZammadIncompleteReservationAllowsPolicyExpansionAndCorrelationRecovery(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	f.transport.groups = []map[string]any{{"id": 7, "name": "Support", "active": true}, {"id": 8, "name": "Escalations", "active": true}}
+	f.transport.createGroupID = 8
+	initialAllowedGroups := []int{7}
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroupIDs: &initialAllowedGroups}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})
+	var validationErr *ZammadValidationError
+	if !errors.As(err, &validationErr) {
+		t.Fatalf("rerouted ticket unexpectedly completed under the old group policy: %v", err)
+	}
+	links, err := f.service.TicketLinksForItem(f.item1)
+	if err != nil || len(links) != 1 || links[0].SyncState != models.ZammadSyncUncertain {
+		t.Fatalf("rerouted ticket was not retained for correlation recovery: links=%#v err=%v", links, err)
+	}
+
+	expandedAllowedGroups := []int{7, 8}
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroupIDs: &expandedAllowedGroups}); err != nil {
+		t.Fatalf("safe group policy expansion was blocked by incomplete reservation: %v", err)
+	}
+	narrowedAllowedGroups := []int{7}
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroupIDs: &narrowedAllowedGroups}); !errors.Is(err, ErrZammadConnectionBusy) {
+		t.Fatalf("group policy narrowing was allowed while reservation was incomplete: %v", err)
+	}
+
+	recovered, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})
+	if err != nil {
+		t.Fatalf("correlation retry did not recover after policy expansion: %v", err)
+	}
+	if recovered.TicketID != 901 || recovered.GroupID != 8 || recovered.SyncState != models.ZammadSyncLinked {
+		t.Fatalf("correlation retry did not complete the rerouted ticket: %#v", recovered)
+	}
+	_, posts := f.transport.counts()
+	if posts != 1 {
+		t.Fatalf("correlation retry created a duplicate ticket: posts=%d", posts)
+	}
+}
+
+func TestZammadGroupPolicyNarrows(t *testing.T) {
+	currentNumeric := &repository.ZammadConnectionMutationSnapshot{DefaultGroupID: 7, AllowedGroupIDs: []int{7, 8}}
+	currentNameOnly := &repository.ZammadConnectionMutationSnapshot{DefaultGroupName: "Support"}
+	tests := []struct {
+		name     string
+		current  *repository.ZammadConnectionMutationSnapshot
+		proposed *models.ZammadConnection
+		narrows  bool
+	}{
+		{
+			name: "numeric expansion", current: currentNumeric,
+			proposed: &models.ZammadConnection{DefaultGroupID: 7, AllowedGroupIDs: []int{7, 8, 9}},
+		},
+		{
+			name: "numeric expansion preserves name-only default through allowlist",
+			current: &repository.ZammadConnectionMutationSnapshot{
+				DefaultGroupName: "Support", AllowedGroupIDs: []int{7, 8},
+			},
+			proposed: &models.ZammadConnection{DefaultGroupName: "Support", AllowedGroupIDs: []int{7, 8, 9}},
+		},
+		{
+			name: "numeric narrowing", current: currentNumeric,
+			proposed: &models.ZammadConnection{DefaultGroupID: 7, AllowedGroupIDs: []int{7}}, narrows: true,
+		},
+		{
+			name: "old default remains allowed", current: &repository.ZammadConnectionMutationSnapshot{DefaultGroupID: 7},
+			proposed: &models.ZammadConnection{DefaultGroupID: 8, AllowedGroupIDs: []int{7, 8}},
+		},
+		{
+			name: "old default excluded", current: &repository.ZammadConnectionMutationSnapshot{DefaultGroupID: 7},
+			proposed: &models.ZammadConnection{DefaultGroupID: 8, AllowedGroupIDs: []int{8}}, narrows: true,
+		},
+		{
+			name: "same name-only policy", current: currentNameOnly,
+			proposed: &models.ZammadConnection{DefaultGroupName: "Support"},
+		},
+		{
+			name: "name-only changed to IDs", current: currentNameOnly,
+			proposed: &models.ZammadConnection{DefaultGroupID: 7, AllowedGroupIDs: []int{7}}, narrows: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := zammadGroupPolicyNarrows(tt.current, tt.proposed); got != tt.narrows {
+				t.Fatalf("zammadGroupPolicyNarrows() = %v, want %v", got, tt.narrows)
+			}
+		})
+	}
+}
+
+func TestZammadExistingTicketLinkBlocksGroupNarrowingAcrossRemoteReroute(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	f.transport.groups = []map[string]any{{"id": 7, "name": "Support", "active": true}, {"id": 8, "name": "Escalations", "active": true}}
+	f.transport.ticket = map[string]any{"id": 714, "number": "420714", "group_id": 7, "state_id": 2, "state": "open"}
+	f.transport.putRerouteGroupID = 8
+	initialAllowedGroups := []int{7, 8}
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroupIDs: &initialAllowedGroups}); err != nil {
+		t.Fatal(err)
+	}
+	arrived := make(chan struct{}, 1)
+	release := make(chan struct{})
+	f.service.SetPersistBeforeConnectionLockForTesting(func() {
+		arrived <- struct{}{}
+		<-release
+	})
+	defer f.service.SetPersistBeforeConnectionLockForTesting(nil)
+
+	type linkResult struct {
+		link *models.ZammadTicketLink
+		err  error
+	}
+	result := make(chan linkResult, 1)
+	go func() {
+		link, err := f.service.LinkExistingTicket(context.Background(), f.item1, f.actorID, models.LinkZammadTicketRequest{ConnectionID: f.connection.ProviderID, TicketNumber: "420714"})
+		result <- linkResult{link: link, err: err}
+	}()
+	<-arrived
+	narrowedAllowedGroups := []int{7}
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroupIDs: &narrowedAllowedGroups}); !errors.Is(err, ErrZammadConnectionBusy) {
+		t.Fatalf("group policy changed while rerouted existing-ticket link was incomplete: %v", err)
+	}
+	close(release)
+	linked := <-result
+	if linked.err != nil || linked.link == nil || linked.link.GroupID != 8 {
+		t.Fatalf("existing ticket link did not finish under the preserved policy: link=%#v err=%v", linked.link, linked.err)
+	}
+}
+
 func TestZammadUnlinkClearsOnlyExactRemoteCorrelationWithoutDeletingTicket(t *testing.T) {
 	f := newZammadServiceFixture(t, nil)
 	link, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})
@@ -440,6 +781,53 @@ func TestZammadUnlinkDoesNotClearAnotherCorrelation(t *testing.T) {
 	}
 	if _, err := f.service.GetTicketLink(link.ID); !errors.Is(err, repository.ErrNotFound) {
 		t.Fatalf("stale local link was not removed: %v", err)
+	}
+}
+
+func TestZammadUnlinkUncertainCreationResolvesExactCorrelationBeforeDelete(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	f.transport.postErrorAfterCreate = context.DeadlineExceeded
+	_, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected ambiguous create timeout, got %v", err)
+	}
+	links, err := f.service.TicketLinksForItem(f.item1)
+	if err != nil || len(links) != 1 || links[0].TicketID != 0 || links[0].SyncState != models.ZammadSyncUncertain {
+		t.Fatalf("ambiguous create reservation missing: links=%#v err=%v", links, err)
+	}
+	if _, err := f.service.UnlinkTicket(context.Background(), links[0].ID); err != nil {
+		t.Fatalf("uncertain unlink did not resolve the exact remote correlation: %v", err)
+	}
+	if f.transport.ticket["windshift_item_key"] != "" {
+		t.Fatalf("uncertain unlink left the resolved remote correlation: ticket=%#v", f.transport.ticket)
+	}
+	if _, err := f.service.GetTicketLink(links[0].ID); !errors.Is(err, repository.ErrNotFound) {
+		t.Fatalf("resolved uncertain reservation remained local: %v", err)
+	}
+}
+
+func TestZammadUnlinkUncertainCreationPreservesReservationWhenSearchIsEmpty(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	f.transport.postErrorAfterCreate = context.DeadlineExceeded
+	_, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected ambiguous create timeout, got %v", err)
+	}
+	links, err := f.service.TicketLinksForItem(f.item1)
+	if err != nil || len(links) != 1 {
+		t.Fatalf("ambiguous create reservation missing: links=%#v err=%v", links, err)
+	}
+	correlation := links[0].CorrelationKey
+	f.transport.hideSearch = true
+	if _, err := f.service.UnlinkTicket(context.Background(), links[0].ID); err == nil {
+		t.Fatal("uncertain unlink discarded an unresolved correlation")
+	}
+	stored, err := f.service.GetTicketLink(links[0].ID)
+	if err != nil || stored.SyncState != models.ZammadSyncUncertain {
+		t.Fatalf("empty correlation search removed uncertain reservation: link=%#v err=%v", stored, err)
+	}
+	if f.transport.ticket["windshift_item_key"] != correlation {
+		t.Fatalf("empty search changed remote correlation: ticket=%#v", f.transport.ticket)
 	}
 }
 
@@ -607,7 +995,12 @@ func TestZammadDueLinksRespectRetryDelayAndOAuthReauthorization(t *testing.T) {
 		t.Fatal(err)
 	}
 	attemptedAt := time.Now()
-	if err := f.service.repo.UpdateTicketLinkSync(link.ID, link.LastStatusID, link.LastStatusName,
+	syncOwner := "retry-delay-test"
+	claimed, err := f.service.repo.ClaimSync(link.ID, syncOwner, time.Now().Add(time.Minute))
+	if err != nil || !claimed {
+		t.Fatalf("could not claim retry-delay test link: claimed=%v err=%v", claimed, err)
+	}
+	if err := f.service.repo.UpdateTicketLinkSync(link.ID, syncOwner, link.LastStatusID, link.LastStatusName,
 		link.GroupID, link.GroupName, link.OwnerID, link.OwnerName,
 		"synthetic safe failure", attemptedAt, false, false); err != nil {
 		t.Fatal(err)
@@ -686,6 +1079,101 @@ func TestZammadAmbiguousCreateNeverPostsAgainWhileSearchIsEmpty(t *testing.T) {
 	}
 }
 
+func TestZammadUncertainCreateSurvivesTransientCorrelationSearchFailure(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	f.transport.postErrorAfterCreate = context.DeadlineExceeded
+	_, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected ambiguous initial timeout, got %v", err)
+	}
+	f.transport.searchError = context.DeadlineExceeded
+	if _, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID}); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected transient correlation-search failure, got %v", err)
+	}
+	links, err := f.service.TicketLinksForItem(f.item1)
+	if err != nil || len(links) != 1 || links[0].SyncState != models.ZammadSyncUncertain {
+		t.Fatalf("search failure downgraded uncertain creation: links=%#v err=%v", links, err)
+	}
+	f.transport.hideSearch = true
+	retried, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, posts := f.transport.counts()
+	if posts != 1 || retried.SyncState != models.ZammadSyncUncertain {
+		t.Fatalf("search failure enabled a duplicate POST: posts=%d link=%#v", posts, retried)
+	}
+}
+
+func TestZammadStaleCreatingLeaseRetriesSearchOnly(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	item, err := repository.NewItemRepository(f.db).FindByIDWithDetails(f.item1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := &models.ZammadTicketLink{
+		ID: "stale-create-link", ItemID: item.ID, ProviderID: f.connection.ProviderID,
+		GroupID: 7, GroupName: "Support", CorrelationKey: "windshift:stale-create:PRI-49",
+		SyncState: models.ZammadSyncPending, CreatedBy: &f.actorID,
+	}
+	if err := f.service.reserveZammadTicketLink(f.connection, item, link, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecWrite(`UPDATE zammad_ticket_links
+		SET sync_state = ?, creating_started_at = ?, sync_lock_until = ?, sync_lock_owner = ?
+		WHERE id = ?`, models.ZammadSyncCreating, time.Now().Add(-3*time.Minute), time.Now().Add(-time.Minute), "crashed-worker", link.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.transport.hideSearch = true
+	retried, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, posts := f.transport.counts()
+	if posts != 0 || retried.SyncState != models.ZammadSyncUncertain {
+		t.Fatalf("stale in-flight creation retried POST: posts=%d link=%#v", posts, retried)
+	}
+}
+
+func TestZammadCreateVerifiesGroupFromTicketDetailAfterPartialResponse(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		getTicket map[string]any
+		wantGroup int
+	}{
+		{
+			name:      "remote reroute is rejected",
+			getTicket: map[string]any{"id": 901, "number": "420901", "group_id": 8, "state_id": 2, "state": "open"},
+			wantGroup: 8,
+		},
+		{
+			name:      "missing detail group is rejected",
+			getTicket: map[string]any{"id": 901, "number": "420901", "state_id": 2, "state": "open"},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newZammadServiceFixture(t, nil)
+			f.transport.groups = []map[string]any{{"id": 7, "name": "Support", "active": true}, {"id": 8, "name": "Escalations", "active": true}}
+			f.transport.createGroupID = tt.wantGroup
+			f.transport.postResponse = map[string]any{"id": 901, "number": "420901", "state_id": 2, "state": "open"}
+			f.transport.getTicket = tt.getTicket
+
+			_, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})
+			var validationErr *ZammadValidationError
+			if !errors.As(err, &validationErr) {
+				t.Fatalf("partial create response completed without a verified allowed group: %v", err)
+			}
+			links, err := f.service.TicketLinksForItem(f.item1)
+			if err != nil || len(links) != 1 || links[0].SyncState != models.ZammadSyncUncertain || links[0].ItemIntegrationLinkID != "" {
+				t.Fatalf("unverified create was not retained as uncertain: links=%#v err=%v", links, err)
+			}
+			if got, ok := f.transport.ticket["group_id"].(int); tt.wantGroup > 0 && (!ok || got != tt.wantGroup) {
+				t.Fatalf("test did not model remote reroute: ticket=%#v", f.transport.ticket)
+			}
+		})
+	}
+}
+
 func TestZammadRejectsUnconfiguredGroupBeforeCreate(t *testing.T) {
 	f := newZammadServiceFixture(t, nil)
 	_, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID, GroupID: 99})
@@ -735,6 +1223,178 @@ func TestZammadWorkspaceScopeBlocksHTTPAndSecretIsEncrypted(t *testing.T) {
 	}
 	if _, _, err := f.credentials.Resolve(context.Background(), f.connection.CredentialID, f.workspace1); !errors.Is(err, ErrCredentialPurposeMismatch) {
 		t.Fatalf("managed Zammad credential resolved through generic action path: %v", err)
+	}
+}
+
+func TestZammadConnectionScopeCannotStrandExistingTicketLinks(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	link, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	excludedScope := []int{f.workspace2}
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{WorkspaceIDs: &excludedScope}); err == nil {
+		t.Fatal("connection scope excluded a workspace containing a linked ticket")
+	}
+	stored, err := f.service.GetTicketLink(link.ID)
+	if err != nil || stored.ItemIntegrationLinkID == "" {
+		t.Fatalf("rejected scope update changed the link: link=%#v err=%v", stored, err)
+	}
+	if _, _, err := f.credentials.ResolveManaged(context.Background(), f.connection.CredentialID, f.workspace1, string(models.IntegrationProviderZammad), f.connection.ProviderID); err != nil {
+		t.Fatalf("rejected scope update changed credential scope: %v", err)
+	}
+
+	expandedScope := []int{f.workspace1, f.workspace2}
+	updated, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{WorkspaceIDs: &expandedScope})
+	if err != nil || !slices.Contains(updated.WorkspaceIDs, f.workspace2) {
+		t.Fatalf("scope expansion with existing link failed: connection=%#v err=%v", updated, err)
+	}
+}
+
+func TestZammadConnectionRoutingAndGroupsCannotStrandExistingTicketLinks(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	if _, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID}); err != nil {
+		t.Fatal(err)
+	}
+	newBaseURL := "https://replacement.example.test"
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{BaseURL: &newBaseURL}); err == nil {
+		t.Fatal("base URL changed with an existing ticket link")
+	}
+	newCorrelationField := "replacement_item_key"
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{CorrelationField: &newCorrelationField}); err == nil {
+		t.Fatal("correlation field changed with an existing ticket link")
+	}
+	newDefaultGroupID := 8
+	newDefaultGroupName := "Escalations"
+	newAllowedGroups := []int{8}
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{
+		DefaultGroupID: &newDefaultGroupID, DefaultGroupName: &newDefaultGroupName, AllowedGroupIDs: &newAllowedGroups,
+	}); err == nil {
+		t.Fatal("group scope excluded an existing ticket link")
+	}
+	stored, err := f.service.GetConnection(f.connection.ProviderID)
+	if err != nil || stored.BaseURL != f.connection.BaseURL || stored.CorrelationField != f.connection.CorrelationField || stored.DefaultGroupID != 7 {
+		t.Fatalf("rejected routing/group updates changed connection: connection=%#v err=%v", stored, err)
+	}
+}
+
+func TestZammadReservationRejectsStaleConnectionAndItemSnapshots(t *testing.T) {
+	t.Run("connection routing", func(t *testing.T) {
+		f := newZammadServiceFixture(t, nil)
+		item, err := repository.NewItemRepository(f.db).FindByIDWithDetails(f.item1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		staleConnection := *f.connection
+		newBaseURL := "https://new-routing.example.test"
+		if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{BaseURL: &newBaseURL}); err != nil {
+			t.Fatal(err)
+		}
+		link := &models.ZammadTicketLink{ID: "stale-routing", ItemID: item.ID, ProviderID: f.connection.ProviderID, GroupID: 7, GroupName: "Support", CorrelationKey: "stale", SyncState: models.ZammadSyncPending, CreatedBy: &f.actorID}
+		if err := f.service.reserveZammadTicketLink(&staleConnection, item, link, false); !errors.Is(err, ErrZammadLinkReservationConflict) {
+			t.Fatalf("stale connection snapshot reserved a link: %v", err)
+		}
+	})
+
+	t.Run("connection group policy", func(t *testing.T) {
+		f := newZammadServiceFixture(t, nil)
+		item, err := repository.NewItemRepository(f.db).FindByIDWithDetails(f.item1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		staleConnection := *f.connection
+		newDefaultGroupID := 8
+		newDefaultGroupName := "Escalations"
+		newAllowedGroups := []int{8}
+		if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{
+			DefaultGroupID: &newDefaultGroupID, DefaultGroupName: &newDefaultGroupName, AllowedGroupIDs: &newAllowedGroups,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		link := &models.ZammadTicketLink{ID: "stale-group", ItemID: item.ID, ProviderID: f.connection.ProviderID, GroupID: 7, GroupName: "Support", CorrelationKey: "stale", SyncState: models.ZammadSyncPending, CreatedBy: &f.actorID}
+		if err := f.service.reserveZammadTicketLink(&staleConnection, item, link, false); !errors.Is(err, ErrZammadLinkReservationConflict) {
+			t.Fatalf("stale group policy reserved a link: %v", err)
+		}
+	})
+
+	t.Run("connection default customer", func(t *testing.T) {
+		f := newZammadServiceFixture(t, nil)
+		item, err := repository.NewItemRepository(f.db).FindByIDWithDetails(f.item1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		staleConnection := *f.connection
+		newDefaultCustomer := "new-customer@example.test"
+		if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{DefaultCustomer: &newDefaultCustomer}); err != nil {
+			t.Fatal(err)
+		}
+		link := &models.ZammadTicketLink{ID: "stale-customer", ItemID: item.ID, ProviderID: f.connection.ProviderID, GroupID: 7, GroupName: "Support", CorrelationKey: "stale", SyncState: models.ZammadSyncPending, CreatedBy: &f.actorID}
+		if err := f.service.reserveZammadTicketLink(&staleConnection, item, link, false); !errors.Is(err, ErrZammadLinkReservationConflict) {
+			t.Fatalf("stale default customer reserved a link: %v", err)
+		}
+	})
+
+	t.Run("item workspace and key", func(t *testing.T) {
+		f := newZammadServiceFixture(t, nil)
+		item, err := repository.NewItemRepository(f.db).FindByIDWithDetails(f.item1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.db.ExecWrite("UPDATE items SET workspace_id = ?, workspace_item_number = 2 WHERE id = ?", f.workspace2, f.item1); err != nil {
+			t.Fatal(err)
+		}
+		link := &models.ZammadTicketLink{ID: "stale-item", ItemID: item.ID, ProviderID: f.connection.ProviderID, GroupID: 7, GroupName: "Support", CorrelationKey: "stale", SyncState: models.ZammadSyncPending, CreatedBy: &f.actorID}
+		if err := f.service.reserveZammadTicketLink(f.connection, item, link, false); !errors.Is(err, ErrZammadLinkReservationConflict) {
+			t.Fatalf("stale item snapshot reserved a link: %v", err)
+		}
+	})
+}
+
+func TestZammadOutOfScopeLegacyLinkIsNotExposed(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	if _, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecWrite("UPDATE items SET workspace_id = ?, workspace_item_number = 2 WHERE id = ?", f.workspace2, f.item1); err != nil {
+		t.Fatal(err)
+	}
+	links, err := f.service.TicketLinksForItem(f.item1)
+	if err != nil || len(links) != 0 {
+		t.Fatalf("out-of-scope legacy link was exposed: links=%#v err=%v", links, err)
+	}
+}
+
+func TestZammadLinkedItemMoveRequiresDestinationConnectionScope(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	link, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var itemTypeID int
+	if err := f.db.QueryRow("SELECT id FROM item_types WHERE hierarchy_level >= 0 ORDER BY id LIMIT 1").Scan(&itemTypeID); err != nil {
+		t.Fatal(err)
+	}
+	input := ItemWorkspaceMoveInput{DestinationWorkspaceID: f.workspace2, TargetItemTypeID: itemTypeID, TargetStatusID: f.openStatus}
+	moveService := NewItemWorkspaceMoveService(f.db)
+	if _, err := moveService.Move(f.item1, f.actorID, input); err == nil {
+		t.Fatal("item moved outside its linked Zammad connection scope")
+	}
+
+	expandedScope := []int{f.workspace1, f.workspace2}
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{WorkspaceIDs: &expandedScope}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := moveService.Move(f.item1, f.actorID, input)
+	if err != nil {
+		t.Fatalf("item move inside linked Zammad connection scope failed: %v", err)
+	}
+	if result.Item.WorkspaceID != f.workspace2 {
+		t.Fatalf("item remained in workspace %d", result.Item.WorkspaceID)
+	}
+	stored, err := f.service.GetTicketLink(link.ID)
+	if err != nil || stored.CorrelationKey != link.CorrelationKey {
+		t.Fatalf("allowed item move changed linked ticket identity: link=%#v err=%v", stored, err)
 	}
 }
 
@@ -804,6 +1464,55 @@ func TestZammadConnectionUpdateRollsBackManagedCredentialOnProviderConflict(t *t
 	}
 }
 
+func TestZammadConcurrentPartialConnectionUpdatesDoNotOverwriteEachOther(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	arrived := make(chan struct{}, 2)
+	release := make(chan struct{})
+	f.service.SetUpdateBeforeConnectionLockForTesting(func() {
+		arrived <- struct{}{}
+		<-release
+	})
+	defer f.service.SetUpdateBeforeConnectionLockForTesting(nil)
+
+	updatedName := "Concurrent name"
+	expandedScope := []int{f.workspace1, f.workspace2}
+	errorsByRequest := make(chan error, 2)
+	go func() {
+		_, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{Name: &updatedName})
+		errorsByRequest <- err
+	}()
+	go func() {
+		_, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{WorkspaceIDs: &expandedScope})
+		errorsByRequest <- err
+	}()
+
+	<-arrived
+	<-arrived
+	close(release)
+	firstErr, secondErr := <-errorsByRequest, <-errorsByRequest
+	conflicts := 0
+	for _, err := range []error{firstErr, secondErr} {
+		if errors.Is(err, repository.ErrConcurrentUpdate) {
+			conflicts++
+		} else if err != nil {
+			t.Fatalf("unexpected concurrent update error: %v", err)
+		}
+	}
+	if conflicts != 1 {
+		t.Fatalf("expected exactly one optimistic conflict, got %d: first=%v second=%v", conflicts, firstErr, secondErr)
+	}
+
+	stored, err := f.service.GetConnection(f.connection.ProviderID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nameWon := stored.Name == updatedName && slices.Equal(stored.WorkspaceIDs, []int{f.workspace1})
+	scopeWon := stored.Name == f.connection.Name && slices.Equal(stored.WorkspaceIDs, expandedScope)
+	if !nameWon && !scopeWon {
+		t.Fatalf("concurrent partial updates produced a mixed or stale result: name=%q workspaces=%v", stored.Name, stored.WorkspaceIDs)
+	}
+}
+
 func TestZammadSyncUpdatesStatusAndDisabledConnectionsAreSkipped(t *testing.T) {
 	f := newZammadServiceFixture(t, nil)
 	link, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})
@@ -841,6 +1550,39 @@ func TestZammadDisabledConnectionCanStillBeTestedByAdmin(t *testing.T) {
 	}
 	if len(metadata.Groups) != 1 || metadata.Groups[0].Name != "Support" {
 		t.Fatalf("unexpected connection test metadata: %#v", metadata)
+	}
+}
+
+func TestZammadConnectionValidationRequiresUsableDefaultGroup(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	_, err := f.service.CreateConnection(models.CreateZammadConnectionRequest{
+		Slug: "missing-default", Name: "Missing default", BaseURL: "https://missing-default.example.test",
+		APIToken: "token", DefaultCustomer: "robot@example.test", WorkspaceIDs: []int{f.workspace1},
+	}, f.actorID)
+	var validationErr *ZammadValidationError
+	if !errors.As(err, &validationErr) {
+		t.Fatalf("connection without a default group was accepted: %v", err)
+	}
+
+	_, err = f.service.CreateConnection(models.CreateZammadConnectionRequest{
+		Slug: "default-outside-allowset", Name: "Default outside allowset", BaseURL: "https://default-outside.example.test",
+		APIToken: "token", DefaultGroupID: 7, AllowedGroupIDs: []int{8},
+		DefaultCustomer: "robot@example.test", WorkspaceIDs: []int{f.workspace1},
+	}, f.actorID)
+	if !errors.As(err, &validationErr) {
+		t.Fatalf("default group outside allowset was accepted: %v", err)
+	}
+}
+
+func TestZammadMetadataRequiresNamedDefaultGroupInsideAllowset(t *testing.T) {
+	connection := &models.ZammadConnection{DefaultGroupName: "Support", AllowedGroupIDs: []int{8}}
+	metadata := &models.ZammadConnectionMetadata{Groups: []models.ZammadGroup{
+		{ID: 7, Name: "Support", Active: true},
+		{ID: 8, Name: "Escalations", Active: true},
+	}}
+	var validationErr *ZammadValidationError
+	if err := validateZammadMetadata(connection, metadata); !errors.As(err, &validationErr) {
+		t.Fatalf("named default group outside allowset was accepted: %v", err)
 	}
 }
 
@@ -921,6 +1663,349 @@ func TestZammadClosedStateCompletesItemOnce(t *testing.T) {
 	}
 }
 
+func TestZammadCompletionPolicyCannotChangeDuringClaimedTransition(t *testing.T) {
+	workflow := &fakeZammadWorkflow{}
+	f := newZammadServiceFixture(t, workflow)
+	workflow.db = f.db
+	link, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := []int{4}
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{ClosedStateIDs: &closed, CompletionStatusID: &f.doneStatus}); err != nil {
+		t.Fatal(err)
+	}
+	f.transport.getTicket = map[string]any{"id": 901, "number": "420901", "group_id": 7, "state_id": 4, "state": "closed"}
+	arrived := make(chan struct{}, 1)
+	release := make(chan struct{})
+	f.service.SetCompletionBeforeTransitionForTesting(func() {
+		arrived <- struct{}{}
+		<-release
+	})
+	defer f.service.SetCompletionBeforeTransitionForTesting(nil)
+
+	syncErr := make(chan error, 1)
+	go func() {
+		_, err := f.service.SyncTicketLink(context.Background(), link.ID)
+		syncErr <- err
+	}()
+	<-arrived
+	noClosedStates := []int{}
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{
+		ClosedStateIDs: &noClosedStates, ClearCompletionStatus: true,
+	}); !errors.Is(err, ErrZammadConnectionBusy) {
+		t.Fatalf("completion policy changed during a claimed transition: %v", err)
+	}
+	close(release)
+	if err := <-syncErr; err != nil {
+		t.Fatalf("claimed transition failed after conflicting config update was rejected: %v", err)
+	}
+	stored, err := f.service.GetTicketLink(link.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workflow.writes != 1 || !stored.CompletionApplied {
+		t.Fatalf("completion did not commit exactly once: writes=%d link=%#v", workflow.writes, stored)
+	}
+}
+
+func TestZammadPostCommitTransitionErrorStillFencesClosedEpisode(t *testing.T) {
+	workflow := &fakeZammadWorkflow{postCommitErr: errors.New("synthetic post-commit hook failure")}
+	f := newZammadServiceFixture(t, workflow)
+	workflow.db = f.db
+	link, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := []int{4}
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{ClosedStateIDs: &closed, CompletionStatusID: &f.doneStatus}); err != nil {
+		t.Fatal(err)
+	}
+	f.transport.getTicket = map[string]any{"id": link.TicketID, "number": link.TicketNumber, "group_id": 7, "state_id": 4, "state": "closed"}
+	if _, err := f.service.SyncTicketLink(context.Background(), link.ID); err == nil {
+		t.Fatal("post-commit hook error was not reported")
+	}
+	stored, err := f.service.GetTicketLink(link.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workflow.writes != 1 || !stored.CompletionApplied {
+		t.Fatalf("committed transition was not fenced after hook error: writes=%d link=%#v", workflow.writes, stored)
+	}
+	if _, err := f.db.ExecWrite("UPDATE items SET status_id = ? WHERE id = ?", f.openStatus, f.item1); err != nil {
+		t.Fatal(err)
+	}
+	workflow.postCommitErr = nil
+	if _, err := f.service.SyncTicketLink(context.Background(), link.ID); err != nil {
+		t.Fatal(err)
+	}
+	var statusID int
+	if err := f.db.QueryRow("SELECT status_id FROM items WHERE id = ?", f.item1).Scan(&statusID); err != nil {
+		t.Fatal(err)
+	}
+	if workflow.writes != 1 || statusID != f.openStatus {
+		t.Fatalf("same remote closed episode replayed after post-commit error: writes=%d status=%d", workflow.writes, statusID)
+	}
+}
+
+func TestZammadClaimedSyncBlocksConcurrentUnlinkBeforeCompletion(t *testing.T) {
+	workflow := &fakeZammadWorkflow{}
+	f := newZammadServiceFixture(t, workflow)
+	workflow.db = f.db
+	link, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := []int{4}
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{ClosedStateIDs: &closed, CompletionStatusID: &f.doneStatus}); err != nil {
+		t.Fatal(err)
+	}
+	f.transport.getTicket = map[string]any{"id": link.TicketID, "number": link.TicketNumber, "group_id": 7, "state_id": 4, "state": "closed"}
+	arrived := make(chan struct{}, 1)
+	release := make(chan struct{})
+	f.service.SetCompletionBeforeTransitionForTesting(func() {
+		arrived <- struct{}{}
+		<-release
+	})
+	defer f.service.SetCompletionBeforeTransitionForTesting(nil)
+
+	syncErr := make(chan error, 1)
+	go func() {
+		_, err := f.service.SyncTicketLink(context.Background(), link.ID)
+		syncErr <- err
+	}()
+	<-arrived
+	if _, err := f.service.UnlinkTicket(context.Background(), link.ID); !errors.Is(err, ErrZammadConnectionBusy) {
+		t.Fatalf("unlink entered a claimed sync before completion: %v", err)
+	}
+	close(release)
+	if err := <-syncErr; err != nil {
+		t.Fatalf("claimed sync failed after concurrent unlink was rejected: %v", err)
+	}
+	stored, err := f.service.GetTicketLink(link.ID)
+	if err != nil {
+		t.Fatalf("rejected unlink removed the local link: %v", err)
+	}
+	if workflow.writes != 1 || !stored.CompletionApplied {
+		t.Fatalf("claimed sync did not complete exactly once: writes=%d link=%#v", workflow.writes, stored)
+	}
+}
+
+func TestZammadExpiredSyncLeaseReloadsChangedCompletionPolicyBeforeTransition(t *testing.T) {
+	workflow := &fakeZammadWorkflow{}
+	f := newZammadServiceFixture(t, workflow)
+	workflow.db = f.db
+	link, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := []int{4}
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{ClosedStateIDs: &closed, CompletionStatusID: &f.doneStatus}); err != nil {
+		t.Fatal(err)
+	}
+	f.transport.getTicket = map[string]any{"id": link.TicketID, "number": link.TicketNumber, "group_id": 7, "state_id": 4, "state": "closed"}
+	arrived := make(chan struct{}, 1)
+	release := make(chan struct{})
+	f.service.SetCompletionBeforeTransitionForTesting(func() {
+		arrived <- struct{}{}
+		<-release
+	})
+	defer f.service.SetCompletionBeforeTransitionForTesting(nil)
+
+	syncErr := make(chan error, 1)
+	go func() {
+		_, err := f.service.SyncTicketLink(context.Background(), link.ID)
+		syncErr <- err
+	}()
+	<-arrived
+	if _, err := f.db.ExecWrite("UPDATE zammad_ticket_links SET sync_lock_until = ? WHERE id = ?", time.Now().Add(-time.Minute), link.ID); err != nil {
+		t.Fatal(err)
+	}
+	noClosedStates := []int{}
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{
+		ClosedStateIDs: &noClosedStates, ClearCompletionStatus: true,
+	}); err != nil {
+		t.Fatalf("completion policy could not change after the synthetic lease expiry: %v", err)
+	}
+	close(release)
+	if err := <-syncErr; err != nil {
+		t.Fatalf("sync did not recover its untaken lease under the current policy: %v", err)
+	}
+	var statusID int
+	if err := f.db.QueryRow("SELECT status_id FROM items WHERE id = ?", f.item1).Scan(&statusID); err != nil {
+		t.Fatal(err)
+	}
+	if workflow.writes != 0 || statusID != f.openStatus {
+		t.Fatalf("expired worker applied the superseded completion policy: writes=%d status=%d", workflow.writes, statusID)
+	}
+}
+
+func TestZammadTicketCreationClaimBlocksConcurrentUnlinkBeforeCompletion(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	arrived := make(chan struct{}, 1)
+	release := make(chan struct{})
+	f.service.SetPersistBeforeConnectionLockForTesting(func() {
+		arrived <- struct{}{}
+		<-release
+	})
+	defer f.service.SetPersistBeforeConnectionLockForTesting(nil)
+
+	type createResult struct {
+		link *models.ZammadTicketLink
+		err  error
+	}
+	result := make(chan createResult, 1)
+	go func() {
+		link, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})
+		result <- createResult{link: link, err: err}
+	}()
+	<-arrived
+	links, err := f.service.TicketLinksForItem(f.item1)
+	if err != nil || len(links) != 1 {
+		t.Fatalf("creation reservation was not visible: links=%#v err=%v", links, err)
+	}
+	if _, err := f.service.UnlinkTicket(context.Background(), links[0].ID); !errors.Is(err, ErrZammadConnectionBusy) {
+		t.Fatalf("unlink deleted a claimed creation before local completion: %v", err)
+	}
+	close(release)
+	created := <-result
+	if created.err != nil || created.link == nil || created.link.ItemIntegrationLinkID == "" {
+		t.Fatalf("ticket creation did not complete after unlink was rejected: link=%#v err=%v", created.link, created.err)
+	}
+	var genericLinks int
+	if err := f.db.QueryRow("SELECT COUNT(*) FROM item_integration_links WHERE id = ?", created.link.ItemIntegrationLinkID).Scan(&genericLinks); err != nil {
+		t.Fatal(err)
+	}
+	if genericLinks != 1 {
+		t.Fatalf("ticket creation committed %d generic links, want 1", genericLinks)
+	}
+}
+
+func TestZammadExistingTicketClaimBlocksConcurrentUnlinkBeforeCompletion(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	f.transport.ticket = map[string]any{"id": 714, "number": "420714", "group_id": 7, "state_id": 2, "state": "open"}
+	arrived := make(chan struct{}, 1)
+	release := make(chan struct{})
+	f.service.SetPersistBeforeConnectionLockForTesting(func() {
+		arrived <- struct{}{}
+		<-release
+	})
+	defer f.service.SetPersistBeforeConnectionLockForTesting(nil)
+
+	type linkResult struct {
+		link *models.ZammadTicketLink
+		err  error
+	}
+	result := make(chan linkResult, 1)
+	go func() {
+		link, err := f.service.LinkExistingTicket(context.Background(), f.item1, f.actorID, models.LinkZammadTicketRequest{
+			ConnectionID: f.connection.ProviderID, TicketNumber: "420714",
+		})
+		result <- linkResult{link: link, err: err}
+	}()
+	<-arrived
+	links, err := f.service.TicketLinksForItem(f.item1)
+	if err != nil || len(links) != 1 {
+		t.Fatalf("existing-ticket reservation was not visible: links=%#v err=%v", links, err)
+	}
+	if _, err := f.service.UnlinkTicket(context.Background(), links[0].ID); !errors.Is(err, ErrZammadConnectionBusy) {
+		t.Fatalf("unlink deleted a claimed existing-ticket link before completion: %v", err)
+	}
+	close(release)
+	linked := <-result
+	if linked.err != nil || linked.link == nil || linked.link.ItemIntegrationLinkID == "" {
+		t.Fatalf("existing-ticket link did not complete after unlink was rejected: link=%#v err=%v", linked.link, linked.err)
+	}
+	var genericLinks int
+	if err := f.db.QueryRow("SELECT COUNT(*) FROM item_integration_links WHERE id = ?", linked.link.ItemIntegrationLinkID).Scan(&genericLinks); err != nil {
+		t.Fatal(err)
+	}
+	if genericLinks != 1 {
+		t.Fatalf("existing-ticket completion committed %d generic links, want 1", genericLinks)
+	}
+}
+
+func TestZammadSyncReloadsCompletionStateAfterClaim(t *testing.T) {
+	workflow := &fakeZammadWorkflow{}
+	f := newZammadServiceFixture(t, workflow)
+	workflow.db = f.db
+	link, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	closedStates := []int{4}
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{ClosedStateIDs: &closedStates, CompletionStatusID: &f.doneStatus}); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := f.service.GetTicketLink(link.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecWrite("UPDATE zammad_ticket_links SET completion_applied = true WHERE id = ?", link.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.transport.getTicket = map[string]any{"id": link.TicketID, "number": link.TicketNumber, "group_id": 7, "state_id": 4, "state": "closed"}
+	syncOwner := "stale-completion-test"
+	claimed, err := f.service.repo.ClaimSync(link.ID, syncOwner, time.Now().Add(time.Minute))
+	if err != nil || !claimed {
+		t.Fatalf("could not claim stale-link regression sync: claimed=%v err=%v", claimed, err)
+	}
+	updated, err := f.service.syncClaimedTicketLink(context.Background(), stale, syncOwner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workflow.writes != 0 || !updated.CompletionApplied {
+		t.Fatalf("stale completion state was replayed: writes=%d link=%#v", workflow.writes, updated)
+	}
+	var statusID int
+	if err := f.db.QueryRow("SELECT status_id FROM items WHERE id = ?", f.item1).Scan(&statusID); err != nil || statusID != f.openStatus {
+		t.Fatalf("stale sync changed item status: status=%d err=%v", statusID, err)
+	}
+}
+
+func TestZammadManualRefreshReportsBusyWhenAnotherWorkerOwnsLease(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	link, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := f.service.repo.ClaimSync(link.ID, "scheduler-owner", time.Now().Add(time.Minute))
+	if err != nil || !claimed {
+		t.Fatalf("scheduler could not claim ticket: claimed=%v err=%v", claimed, err)
+	}
+	if _, err := f.service.SyncTicketLink(context.Background(), link.ID); !errors.Is(err, ErrZammadConnectionBusy) {
+		t.Fatalf("manual refresh reported success while scheduler owned the lease: %v", err)
+	}
+	if err := f.service.repo.ReleaseSyncClaim(link.ID, "scheduler-owner"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestZammadSyncRejectsConfiguredGroupAfterItBecomesInactive(t *testing.T) {
+	workflow := &fakeZammadWorkflow{}
+	f := newZammadServiceFixture(t, workflow)
+	workflow.db = f.db
+	link, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	closedStates := []int{4}
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{ClosedStateIDs: &closedStates, CompletionStatusID: &f.doneStatus}); err != nil {
+		t.Fatal(err)
+	}
+	f.transport.groups = []map[string]any{{"id": 7, "name": "Support", "active": false}}
+	f.transport.getTicket = map[string]any{"id": link.TicketID, "number": link.TicketNumber, "group_id": 7, "state_id": 4, "state": "closed"}
+	_, err = f.service.SyncTicketLink(context.Background(), link.ID)
+	var validationErr *ZammadValidationError
+	if !errors.As(err, &validationErr) {
+		t.Fatalf("inactive configured group was accepted: %v", err)
+	}
+	stored, getErr := f.service.GetTicketLink(link.ID)
+	if getErr != nil || workflow.writes != 0 || stored.CompletionApplied {
+		t.Fatalf("inactive group changed completion state: link=%#v writes=%d err=%v", stored, workflow.writes, getErr)
+	}
+}
+
 func TestNormalizeZammadBaseURL(t *testing.T) {
 	tests := []struct {
 		input string
@@ -956,8 +2041,8 @@ func TestZammadDueSyncUsesAgeThreshold(t *testing.T) {
 		t.Fatal(err)
 	}
 	requests, _ := f.transport.counts()
-	if requests != 1 {
-		t.Fatalf("expected one ticket refresh, got %d transport requests", requests)
+	if requests != 2 {
+		t.Fatalf("expected ticket and active-group refresh, got %d transport requests", requests)
 	}
 }
 
@@ -973,7 +2058,7 @@ func TestZammadOAuthConnectionStoresConnectionTokensAndConsumesStateOnce(t *test
 	connection, err := f.service.CreateConnection(models.CreateZammadConnectionRequest{
 		Slug: "oauth-helpdesk", Name: "OAuth helpdesk", BaseURL: "https://oauth.example.test",
 		AuthMethod: models.ZammadAuthMethodOAuth, OAuthClientID: "synthetic-client", OAuthClientSecret: "synthetic-client-secret",
-		DefaultCustomer: "robot@example.test", WorkspaceIDs: []int{f.workspace1},
+		DefaultGroupName: "Support", DefaultCustomer: "robot@example.test", WorkspaceIDs: []int{f.workspace1},
 	}, f.actorID)
 	if err != nil {
 		t.Fatal(err)
@@ -991,7 +2076,7 @@ func TestZammadOAuthConnectionStoresConnectionTokensAndConsumesStateOnce(t *test
 	}
 	if _, err := f.service.CreateConnection(models.CreateZammadConnectionRequest{
 		Slug: "oauth-helpdesk", Name: "Duplicate OAuth helpdesk", BaseURL: "https://duplicate.example.test",
-		AuthMethod: models.ZammadAuthMethodOAuth, OAuthClientID: "client", OAuthClientSecret: "secret", DefaultCustomer: "robot@example.test", WorkspaceIDs: []int{f.workspace1},
+		AuthMethod: models.ZammadAuthMethodOAuth, OAuthClientID: "client", OAuthClientSecret: "secret", DefaultGroupName: "Support", DefaultCustomer: "robot@example.test", WorkspaceIDs: []int{f.workspace1},
 	}, f.actorID); !errors.Is(err, repository.ErrDuplicateEntry) {
 		t.Fatalf("expected duplicate OAuth connection error, got %v", err)
 	}
@@ -1113,7 +2198,7 @@ func createActiveZammadOAuthConnection(t *testing.T, f *zammadServiceFixture, sl
 	connection, err := f.service.CreateConnection(models.CreateZammadConnectionRequest{
 		Slug: slug, Name: "OAuth " + slug, BaseURL: "https://" + slug + ".example.test",
 		AuthMethod: models.ZammadAuthMethodOAuth, OAuthClientID: "client", OAuthClientSecret: "secret",
-		DefaultCustomer: "robot@example.test", WorkspaceIDs: []int{f.workspace1},
+		DefaultGroupName: "Support", DefaultCustomer: "robot@example.test", WorkspaceIDs: []int{f.workspace1},
 	}, f.actorID)
 	if err != nil {
 		t.Fatal(err)
@@ -1154,7 +2239,7 @@ func TestZammadOAuthCallbackCannotCommitAfterConfigurationReset(t *testing.T) {
 	connection, err := f.service.CreateConnection(models.CreateZammadConnectionRequest{
 		Slug: "callback-race", Name: "OAuth callback race", BaseURL: "https://callback-race.example.test",
 		AuthMethod: models.ZammadAuthMethodOAuth, OAuthClientID: "client", OAuthClientSecret: "secret",
-		DefaultCustomer: "robot@example.test", WorkspaceIDs: []int{f.workspace1},
+		DefaultGroupName: "Support", DefaultCustomer: "robot@example.test", WorkspaceIDs: []int{f.workspace1},
 	}, f.actorID)
 	if err != nil {
 		t.Fatal(err)
@@ -1211,7 +2296,7 @@ func TestZammadOAuthCallbackPreservesConcurrentNameAndScopeUpdate(t *testing.T) 
 	connection, err := f.service.CreateConnection(models.CreateZammadConnectionRequest{
 		Slug: "callback-metadata-race", Name: "Original callback name", BaseURL: "https://callback-metadata-race.example.test",
 		AuthMethod: models.ZammadAuthMethodOAuth, OAuthClientID: "client", OAuthClientSecret: "secret",
-		DefaultCustomer: "robot@example.test", WorkspaceIDs: []int{f.workspace1},
+		DefaultGroupName: "Support", DefaultCustomer: "robot@example.test", WorkspaceIDs: []int{f.workspace1},
 	}, f.actorID)
 	if err != nil {
 		t.Fatal(err)
@@ -1266,7 +2351,7 @@ func TestZammadOAuthParallelStartsLeaveOnlyNewestUsableState(t *testing.T) {
 	connection, err := f.service.CreateConnection(models.CreateZammadConnectionRequest{
 		Slug: "parallel-state", Name: "Parallel OAuth state", BaseURL: "https://parallel-state.example.test",
 		AuthMethod: models.ZammadAuthMethodOAuth, OAuthClientID: "client", OAuthClientSecret: "secret",
-		DefaultCustomer: "robot@example.test", WorkspaceIDs: []int{f.workspace1},
+		DefaultGroupName: "Support", DefaultCustomer: "robot@example.test", WorkspaceIDs: []int{f.workspace1},
 	}, f.actorID)
 	if err != nil {
 		t.Fatal(err)
@@ -1324,7 +2409,7 @@ func TestZammadOAuthNewStartSupersedesAlreadyRunningCallback(t *testing.T) {
 	connection, err := f.service.CreateConnection(models.CreateZammadConnectionRequest{
 		Slug: "running-callback", Name: "Running OAuth callback", BaseURL: "https://running-callback.example.test",
 		AuthMethod: models.ZammadAuthMethodOAuth, OAuthClientID: "client", OAuthClientSecret: "secret",
-		DefaultCustomer: "robot@example.test", WorkspaceIDs: []int{f.workspace1},
+		DefaultGroupName: "Support", DefaultCustomer: "robot@example.test", WorkspaceIDs: []int{f.workspace1},
 	}, f.actorID)
 	if err != nil {
 		t.Fatal(err)
@@ -1460,6 +2545,61 @@ func TestZammadOAuthRefreshPreservesConcurrentNameAndScopeUpdate(t *testing.T) {
 		t.Fatalf("refresh result: token=%q err=%v", result.token, result.err)
 	}
 	assertZammadManagedCredentialMetadata(t, f, connection, updatedName+" Zammad OAuth credentials", f.workspace2)
+}
+
+func TestZammadOAuthConcurrentRefreshWaitsForRotatedCredential(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	connection := createActiveZammadOAuthConnection(t, f, "refresh-contention", time.Now().Add(-time.Minute))
+	entered, release := make(chan struct{}), make(chan struct{})
+	var transportMu sync.Mutex
+	transportCalls := 0
+	f.service.SetOAuthTransportForTesting(zammad.TransportFunc(func(_ context.Context, _ string, _ string, _ []byte, _ map[string]string) (*zammad.Response, error) {
+		transportMu.Lock()
+		transportCalls++
+		call := transportCalls
+		transportMu.Unlock()
+		if call == 1 {
+			close(entered)
+			<-release
+		}
+		return jsonResponse(http.StatusOK, map[string]any{"access_token": "shared-refreshed-access", "refresh_token": "shared-refreshed-refresh", "expires_in": 3600}), nil
+	}))
+	type tokenResult struct {
+		token string
+		err   error
+	}
+	results := make(chan tokenResult, 2)
+	refresh := func() {
+		token, err := f.service.oauthAccessToken(context.Background(), connection, f.workspace1)
+		results <- tokenResult{token: token, err: err}
+	}
+	go refresh()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first OAuth refresh did not reach token exchange")
+	}
+	go refresh()
+	time.Sleep(2 * zammadOAuthRefreshPollInterval)
+	transportMu.Lock()
+	callsBeforeRelease := transportCalls
+	transportMu.Unlock()
+	if callsBeforeRelease != 1 {
+		t.Fatalf("contending request issued a second refresh: calls=%d", callsBeforeRelease)
+	}
+	close(release)
+	first, second := <-results, <-results
+	for i, result := range []tokenResult{first, second} {
+		if result.err != nil || result.token != "shared-refreshed-access" {
+			t.Fatalf("refresh result %d did not reuse rotated access token: token=%q err=%v", i+1, result.token, result.err)
+		}
+	}
+	transportMu.Lock()
+	finalCalls := transportCalls
+	transportMu.Unlock()
+	if finalCalls != 1 {
+		t.Fatalf("parallel refresh used the refresh token %d times", finalCalls)
+	}
 }
 
 func TestZammadOAuthRefreshCommitRequiresCurrentClaimOwner(t *testing.T) {
@@ -1639,7 +2779,7 @@ func TestZammadOAuthTestSkipsAdminOnlyCorrelationFieldCheck(t *testing.T) {
 	f.service.SetOAuthEncryption(sso.NewSecretEncryption("synthetic-server-secret-for-zammad-tests"))
 	connection, err := f.service.CreateConnection(models.CreateZammadConnectionRequest{
 		Slug: "oauth-scope", Name: "Scoped OAuth", BaseURL: "https://scope.example.test", AuthMethod: models.ZammadAuthMethodOAuth,
-		OAuthClientID: "client", OAuthClientSecret: "secret", DefaultCustomer: "robot@example.test", WorkspaceIDs: []int{f.workspace1},
+		OAuthClientID: "client", OAuthClientSecret: "secret", DefaultGroupName: "Support", DefaultCustomer: "robot@example.test", WorkspaceIDs: []int{f.workspace1},
 	}, f.actorID)
 	if err != nil {
 		t.Fatal(err)
@@ -1668,6 +2808,25 @@ func TestZammadOAuthTestSkipsAdminOnlyCorrelationFieldCheck(t *testing.T) {
 	metadata, err := f.service.TestConnection(context.Background(), connection.ProviderID)
 	if err != nil || metadata.CorrelationFieldVerified || calledObjectManager {
 		t.Fatalf("OAuth test must not require admin.object: metadata=%#v err=%v called=%v", metadata, err, calledObjectManager)
+	}
+}
+
+func TestZammadAPITokenTestSkipsAdminOnlyCorrelationFieldCheck(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	calledObjectManager := false
+	f.service.SetTransportForTesting(zammad.TransportFunc(func(_ context.Context, _ string, targetURL string, _ []byte, _ map[string]string) (*zammad.Response, error) {
+		if strings.Contains(targetURL, "object_manager_attributes") {
+			calledObjectManager = true
+			return jsonResponse(http.StatusForbidden, map[string]string{}), nil
+		}
+		if strings.Contains(targetURL, "/groups") {
+			return jsonResponse(http.StatusOK, []map[string]any{{"id": 7, "name": "Support", "active": true}}), nil
+		}
+		return jsonResponse(http.StatusOK, []map[string]any{{"id": 2, "name": "open", "active": true}}), nil
+	}))
+	metadata, err := f.service.TestConnection(context.Background(), f.connection.ProviderID)
+	if err != nil || metadata.CorrelationFieldVerified || calledObjectManager {
+		t.Fatalf("API-token test must not require admin.object: metadata=%#v err=%v called=%v", metadata, err, calledObjectManager)
 	}
 }
 

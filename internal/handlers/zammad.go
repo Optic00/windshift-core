@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -193,6 +194,7 @@ func (h *ZammadHandler) ListWorkspaceConnections(w http.ResponseWriter, r *http.
 		if connection.AuthMethod == models.ZammadAuthMethodOAuth {
 			ready = connection.OAuthConnected && !connection.ReauthorizationRequired
 		}
+		ready = ready && zammadConnectionHasUsableDefaultGroup(connection)
 		responses = append(responses, models.ZammadWorkspaceConnection{
 			ProviderID: connection.ProviderID, Name: connection.Name, AuthMethod: connection.AuthMethod,
 			Ready: ready, OAuthConnected: connection.OAuthConnected, ReauthorizationRequired: connection.ReauthorizationRequired,
@@ -201,6 +203,17 @@ func (h *ZammadHandler) ListWorkspaceConnections(w http.ResponseWriter, r *http.
 		})
 	}
 	respondJSONOK(w, responses)
+}
+
+// zammadConnectionHasUsableDefaultGroup checks only locally persisted
+// configuration. A name-based default is usable without an allowlist, but
+// cannot be proven to belong to a non-empty allowlist until remote metadata
+// resolves it to an ID. Do not present that ambiguous configuration as ready.
+func zammadConnectionHasUsableDefaultGroup(connection *models.ZammadConnection) bool {
+	if connection.DefaultGroupID <= 0 {
+		return strings.TrimSpace(connection.DefaultGroupName) != "" && len(connection.AllowedGroupIDs) == 0
+	}
+	return len(connection.AllowedGroupIDs) == 0 || slices.Contains(connection.AllowedGroupIDs, connection.DefaultGroupID)
 }
 
 func (h *ZammadHandler) GetWorkspaceMetadata(w http.ResponseWriter, r *http.Request) {
@@ -391,6 +404,18 @@ func (h *ZammadHandler) respondServiceError(w http.ResponseWriter, r *http.Reque
 		respondNotFound(w, r, "zammad_connection")
 	case errors.Is(err, repository.ErrDuplicateEntry):
 		respondConflict(w, r, "A Zammad connection or ticket link with these identifiers already exists")
+	case errors.Is(err, repository.ErrConcurrentUpdate):
+		respondConflict(w, r, "The Zammad connection changed while it was being updated. Reload and retry the action.")
+	case errors.Is(err, services.ErrZammadLinkReservationConflict):
+		respondConflict(w, r, "The Zammad connection or item changed while the ticket link was being prepared. Retry the action.")
+	case errors.Is(err, services.ErrZammadOAuthSuperseded):
+		w.Header().Set("Retry-After", "1")
+		respondConflict(w, r, "The Zammad authorization changed while the request was running. Reload and retry the action.")
+	case errors.Is(err, services.ErrZammadTicketGroupPolicyChanged):
+		respondConflict(w, r, "The Zammad connection no longer allows the ticket's group. Review the connection group policy before retrying.")
+	case errors.Is(err, services.ErrZammadConnectionBusy):
+		w.Header().Set("Retry-After", "1")
+		respondConflict(w, r, "A Zammad ticket operation is in progress. Retry the connection change shortly.")
 	default:
 		var apiErr *zammad.APIError
 		var upstreamErr *zammad.UpstreamError
@@ -399,6 +424,11 @@ func (h *ZammadHandler) respondServiceError(w http.ResponseWriter, r *http.Reque
 		var transitionErr *services.TransitionRejection
 		if errors.Is(err, services.ErrZammadReauthorizationRequired) {
 			respondError(w, r, restapi.NewAPIError(http.StatusConflict, "ZAMMAD_REAUTHORIZATION_REQUIRED", "Zammad authorization must be renewed by a system administrator"))
+			return false
+		}
+		if errors.Is(err, services.ErrZammadOAuthRefreshInProgress) {
+			w.Header().Set("Retry-After", "1")
+			respondServiceUnavailable(w, r, "Zammad authorization is being refreshed. Retry shortly.")
 			return false
 		}
 		switch {

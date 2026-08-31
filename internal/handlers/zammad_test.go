@@ -137,6 +137,101 @@ func TestZammadHandlerMapsRemoteAuthenticationFailureToBadGateway(t *testing.T) 
 	}
 }
 
+func TestZammadHandlerMapsOAuthRefreshContentionToRetryableResponse(t *testing.T) {
+	handler, _, _, _ := newZammadHandlerTest(t)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/admin/zammad-connections/example/test", nil)
+	if handler.respondServiceError(recorder, request, services.ErrZammadOAuthRefreshInProgress) {
+		t.Fatal("expected handler to write an error response")
+	}
+	if recorder.Code != http.StatusServiceUnavailable || recorder.Header().Get("Retry-After") != "1" {
+		t.Fatalf("unexpected refresh contention response: status=%d retry-after=%q body=%s", recorder.Code, recorder.Header().Get("Retry-After"), recorder.Body.String())
+	}
+}
+
+func TestZammadHandlerMapsSupersededOAuthOperationToRetryableConflict(t *testing.T) {
+	handler, _, _, _ := newZammadHandlerTest(t)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/admin/zammad-connections/example/test", nil)
+	if handler.respondServiceError(recorder, request, services.ErrZammadOAuthSuperseded) {
+		t.Fatal("expected handler to write an error response")
+	}
+	if recorder.Code != http.StatusConflict || recorder.Header().Get("Retry-After") != "1" {
+		t.Fatalf("unexpected superseded OAuth response: status=%d retry-after=%q body=%s", recorder.Code, recorder.Header().Get("Retry-After"), recorder.Body.String())
+	}
+}
+
+func TestZammadHandlerMapsReservationRaceToConflict(t *testing.T) {
+	handler, _, _, _ := newZammadHandlerTest(t)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/items/1/zammad-tickets", nil)
+	if handler.respondServiceError(recorder, request, services.ErrZammadLinkReservationConflict) {
+		t.Fatal("expected handler to write an error response")
+	}
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("unexpected reservation conflict response: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestZammadHandlerMapsConcurrentConnectionUpdateToConflict(t *testing.T) {
+	handler, _, _, _ := newZammadHandlerTest(t)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPatch, "/api/admin/zammad-connections/example", nil)
+	if handler.respondServiceError(recorder, request, repository.ErrConcurrentUpdate) {
+		t.Fatal("expected handler to write an error response")
+	}
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("unexpected connection conflict response: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestZammadHandlerMapsTicketGroupPolicyRaceToConflict(t *testing.T) {
+	handler, _, _, _ := newZammadHandlerTest(t)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPatch, "/api/integrations/zammad/ticket-links/example", nil)
+	if handler.respondServiceError(recorder, request, services.ErrZammadTicketGroupPolicyChanged) {
+		t.Fatal("expected handler to write an error response")
+	}
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("unexpected group policy conflict response: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestZammadHandlerMapsBusyConnectionToRetryableConflict(t *testing.T) {
+	handler, _, _, _ := newZammadHandlerTest(t)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPatch, "/api/admin/zammad-connections/example", nil)
+	if handler.respondServiceError(recorder, request, services.ErrZammadConnectionBusy) {
+		t.Fatal("expected handler to write an error response")
+	}
+	if recorder.Code != http.StatusConflict || recorder.Header().Get("Retry-After") != "1" {
+		t.Fatalf("unexpected busy connection response: status=%d retry-after=%q body=%s", recorder.Code, recorder.Header().Get("Retry-After"), recorder.Body.String())
+	}
+}
+
+func TestZammadConnectionReadyRequiresLocallyUsableDefaultGroup(t *testing.T) {
+	tests := []struct {
+		name       string
+		connection models.ZammadConnection
+		want       bool
+	}{
+		{name: "numeric default without allowlist", connection: models.ZammadConnection{DefaultGroupID: 7}, want: true},
+		{name: "numeric default inside allowlist", connection: models.ZammadConnection{DefaultGroupID: 7, AllowedGroupIDs: []int{7, 8}}, want: true},
+		{name: "numeric default outside allowlist", connection: models.ZammadConnection{DefaultGroupID: 7, AllowedGroupIDs: []int{8}}, want: false},
+		{name: "name default without allowlist", connection: models.ZammadConnection{DefaultGroupName: "Support"}, want: true},
+		{name: "name default with allowlist is unresolved", connection: models.ZammadConnection{DefaultGroupName: "Support", AllowedGroupIDs: []int{8}}, want: false},
+		{name: "missing default", connection: models.ZammadConnection{}, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := zammadConnectionHasUsableDefaultGroup(&tt.connection); got != tt.want {
+				t.Fatalf("zammadConnectionHasUsableDefaultGroup(%#v) = %v, want %v", tt.connection, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestZammadOAuthCallbackRedirectsToIntegrationsAdminTab(t *testing.T) {
 	handler, _, _, _ := newZammadHandlerTest(t)
 	recorder := httptest.NewRecorder()
@@ -160,7 +255,7 @@ func TestZammadOAuthCallbackAuditsInitiatorSuccessAndFailureWithoutSecrets(t *te
 	connection, err := handler.service.CreateConnection(models.CreateZammadConnectionRequest{
 		Slug: "audit-oauth", Name: "Audit OAuth", BaseURL: "https://audit-oauth.example.test",
 		AuthMethod: models.ZammadAuthMethodOAuth, OAuthClientID: "audit-client", OAuthClientSecret: "audit-client-secret",
-		DefaultCustomer: "robot@example.test", WorkspaceIDs: []int{workspaceID},
+		DefaultGroupName: "Support", DefaultCustomer: "robot@example.test", WorkspaceIDs: []int{workspaceID},
 	}, user.ID)
 	if err != nil {
 		t.Fatal(err)

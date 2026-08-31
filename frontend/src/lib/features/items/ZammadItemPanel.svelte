@@ -1,5 +1,4 @@
 <script>
-  import { onMount } from 'svelte';
   import {
     TicketCheck,
     Plus,
@@ -22,6 +21,10 @@
   import { successToast, errorToast } from '../../stores/toasts.svelte.js';
   import { confirm } from '../../composables/useConfirm.js';
   import { safeHref } from '../../utils/sanitize';
+  import {
+    isCurrentZammadMetadataRequest,
+    isCurrentZammadPanelContext,
+  } from './zammadPanelContext.js';
 
   let { itemId, workspaceId, canEdit = false } = $props();
 
@@ -53,6 +56,11 @@
   let error = $state('');
   let formError = $state('');
   let editError = $state('');
+  let loadVersion = 0;
+  let contextVersion = 0;
+  let metadataVersion = 0;
+  let editVersion = 0;
+  let ownersVersion = 0;
 
   let usableConnections = $derived(connections.filter(isConnectionUsable));
   let unavailableConnections = $derived(connections.filter((connection) => !isConnectionUsable(connection)));
@@ -66,7 +74,59 @@
   ]);
   let editPayloadAvailable = $derived(Object.keys(editPayload()).length > 0);
 
-  onMount(load);
+  $effect(() => {
+    const currentItemId = itemId;
+    const currentWorkspaceId = workspaceId;
+    const currentVersion = ++contextVersion;
+    resetContext();
+    void load(currentItemId, currentWorkspaceId, currentVersion);
+  });
+
+  function isCurrentContext(version, currentItemId = itemId, currentWorkspaceId = workspaceId) {
+    return isCurrentZammadPanelContext(
+      version,
+      contextVersion,
+      currentItemId,
+      itemId,
+      currentWorkspaceId,
+      workspaceId,
+    );
+  }
+
+  function resetContext() {
+    loadVersion += 1;
+    metadataVersion += 1;
+    editVersion += 1;
+    ownersVersion += 1;
+    connections = [];
+    links = [];
+    metadata = { groups: [], states: [] };
+    editMetadata = { groups: [], states: [] };
+    editOwners = [];
+    loading = Boolean(itemId && workspaceId);
+    loadingMetadata = false;
+    loadingEditMetadata = false;
+    loadingEditOwners = false;
+    creating = false;
+    linking = false;
+    savingEdit = false;
+    refreshingId = null;
+    removingId = null;
+    showCreate = false;
+    showEdit = false;
+    dialogMode = 'create';
+    selectedConnectionId = '';
+    selectedGroupId = '';
+    ticketNumber = '';
+    editingLink = null;
+    selectedEditStateId = '';
+    selectedEditGroupId = '';
+    selectedEditOwnerId = '1';
+    initialEdit = { stateId: '', groupId: '', ownerId: '1' };
+    error = '';
+    formError = '';
+    editError = '';
+  }
 
   function isConnectionUsable(connection) {
     if (connection.ready === false || connection.reauthorization_required === true) return false;
@@ -101,20 +161,32 @@
     return t('zammad.ticketCreationInProgress');
   }
 
-  async function load() {
-    if (!itemId || !workspaceId) return;
+  async function load(currentItemId = itemId, currentWorkspaceId = workspaceId, version = contextVersion) {
+    const currentVersion = ++loadVersion;
+    if (!currentItemId || !currentWorkspaceId) {
+      connections = [];
+      links = [];
+      loading = false;
+      error = '';
+      return;
+    }
+
     loading = true;
     error = '';
     try {
-      [connections, links] = await Promise.all([
-        api.zammadConnections.forWorkspace(workspaceId),
-        api.zammadTickets.forItem(itemId),
+      const [loadedConnections, loadedLinks] = await Promise.all([
+        api.zammadConnections.forWorkspace(currentWorkspaceId),
+        api.zammadTickets.forItem(currentItemId),
       ]);
+      if (currentVersion !== loadVersion || !isCurrentContext(version, currentItemId, currentWorkspaceId)) return;
+      connections = loadedConnections;
+      links = loadedLinks;
     } catch (err) {
+      if (currentVersion !== loadVersion || !isCurrentContext(version, currentItemId, currentWorkspaceId)) return;
       console.error('Failed to load Zammad links:', err);
       error = t('zammad.loadLinksFailed');
     } finally {
-      loading = false;
+      if (currentVersion === loadVersion && isCurrentContext(version, currentItemId, currentWorkspaceId)) loading = false;
     }
   }
 
@@ -125,10 +197,13 @@
     selectedConnectionId = usableConnections[0]?.id || '';
     selectedGroupId = '';
     showCreate = true;
-    await loadMetadata();
+    await loadMetadata(contextVersion);
   }
 
   function openLinkDialog() {
+    metadataVersion += 1;
+    loadingMetadata = false;
+    metadata = { groups: [], states: [] };
     dialogMode = 'link';
     formError = '';
     ticketNumber = '';
@@ -139,21 +214,36 @@
 
   function closeCreateDialog() {
     if (creating || linking) return;
+    metadataVersion += 1;
+    loadingMetadata = false;
     showCreate = false;
     formError = '';
   }
 
   async function handleCreateConnectionChange() {
     formError = '';
-    if (dialogMode === 'create') await loadMetadata();
+    if (dialogMode === 'create') await loadMetadata(contextVersion);
   }
 
-  async function loadMetadata() {
+  async function loadMetadata(version = contextVersion) {
+    const requestVersion = ++metadataVersion;
+    const connectionId = selectedConnectionId;
     const connection = selectedConnection();
     if (!connection) return;
+    const isCurrentRequest = () =>
+      isCurrentContext(version) &&
+      isCurrentZammadMetadataRequest(
+        requestVersion,
+        metadataVersion,
+        connectionId,
+        selectedConnectionId,
+        showCreate,
+        dialogMode,
+      );
     loadingMetadata = true;
     try {
       const loadedMetadata = await api.zammadConnections.metadata(workspaceId, connection.id);
+      if (!isCurrentRequest()) return;
       const groups = usableGroups(connection, loadedMetadata);
       metadata = { ...loadedMetadata, groups };
       const defaultGroup = metadata.groups.find(
@@ -161,77 +251,95 @@
       );
       selectedGroupId = String(defaultGroup?.id || metadata.groups[0]?.id || '');
     } catch (err) {
+      if (!isCurrentRequest()) return;
       console.error('Failed to load Zammad metadata:', err);
       formError = t('zammad.loadMetadataFailed');
       metadata = { groups: [], states: [] };
       selectedGroupId = '';
     } finally {
-      loadingMetadata = false;
+      if (isCurrentRequest()) {
+        loadingMetadata = false;
+      }
     }
   }
 
   async function createTicket() {
+    const version = contextVersion;
+    const currentItemId = itemId;
     const group = metadata.groups.find((entry) => entry.id === Number(selectedGroupId));
     if (!selectedConnectionId || !group) return;
     creating = true;
     formError = '';
     try {
-      const link = await api.zammadTickets.create(itemId, {
+      const link = await api.zammadTickets.create(currentItemId, {
         connection_id: selectedConnectionId,
         group_id: group.id,
       });
+      if (!isCurrentContext(version, currentItemId)) return;
       replaceLink(link);
       showCreate = false;
       successToast(link.sync_state === 'linked' ? t('zammad.ticketCreated') : t('zammad.ticketCreationStarted'));
     } catch (err) {
+      if (!isCurrentContext(version, currentItemId)) return;
       console.error('Failed to create Zammad ticket:', err);
       formError = err.message || t('zammad.ticketCreateFailed');
       errorToast(t('zammad.ticketCreateFailed'));
-      await load();
+      await load(currentItemId, workspaceId, version);
     } finally {
-      creating = false;
+      if (isCurrentContext(version, currentItemId)) creating = false;
     }
   }
 
   async function linkExistingTicket() {
+    const version = contextVersion;
+    const currentItemId = itemId;
     const trimmedTicketNumber = ticketNumber.trim();
     if (!selectedConnectionId || !trimmedTicketNumber) return;
     linking = true;
     formError = '';
     try {
-      const link = await api.zammadTickets.link(itemId, {
+      const link = await api.zammadTickets.link(currentItemId, {
         connection_id: selectedConnectionId,
         ticket_number: trimmedTicketNumber,
       });
+      if (!isCurrentContext(version, currentItemId)) return;
       replaceLink(link);
       showCreate = false;
       successToast(t('zammad.ticketLinked'));
     } catch (err) {
+      if (!isCurrentContext(version, currentItemId)) return;
       console.error('Failed to link existing Zammad ticket:', err);
       formError = err.message || t('zammad.ticketLinkFailed');
       errorToast(t('zammad.ticketLinkFailed'));
     } finally {
-      linking = false;
+      if (isCurrentContext(version, currentItemId)) linking = false;
     }
   }
 
   async function refresh(link) {
     if (!link.ticket_id) return;
+    const version = contextVersion;
+    const currentItemId = itemId;
     refreshingId = link.id;
     try {
       const updated = await api.zammadTickets.refresh(link.id);
+      if (!isCurrentContext(version, currentItemId)) return;
       replaceLink(updated);
       successToast(t('zammad.ticketRefreshed'));
     } catch (err) {
+      if (!isCurrentContext(version, currentItemId)) return;
       console.error('Failed to refresh Zammad ticket:', err);
       errorToast(t('zammad.ticketRefreshFailed'));
-      await load();
+      await load(currentItemId, workspaceId, version);
     } finally {
-      refreshingId = null;
+      if (isCurrentContext(version, currentItemId)) refreshingId = null;
     }
   }
 
   async function openEditDialog(link) {
+    const version = ++editVersion;
+    const currentItemId = itemId;
+    const currentWorkspaceId = workspaceId;
     const connection = usableConnections.find((entry) => entry.id === link.connection_id);
     if (!connection) {
       errorToast(t('zammad.connectionUnavailable'));
@@ -248,22 +356,25 @@
     showEdit = true;
     loadingEditMetadata = true;
     try {
-      const loadedMetadata = await api.zammadConnections.metadata(workspaceId, connection.id);
+      const loadedMetadata = await api.zammadConnections.metadata(currentWorkspaceId, connection.id);
+      if (version !== editVersion || !isCurrentContext(contextVersion, currentItemId, currentWorkspaceId) || !showEdit || editingLink?.id !== link.id) return;
       editMetadata = { ...loadedMetadata, groups: usableGroups(connection, loadedMetadata) };
       if (!editGroups.some((group) => String(group.id) === selectedEditGroupId)) {
         selectedEditGroupId = String(editGroups[0]?.id || '');
       }
       await loadEditOwners();
+      if (version !== editVersion || !isCurrentContext(contextVersion, currentItemId, currentWorkspaceId) || !showEdit || editingLink?.id !== link.id) return;
       initialEdit = {
         stateId: selectedEditStateId,
         groupId: selectedEditGroupId,
         ownerId: selectedEditOwnerId,
       };
     } catch (err) {
+      if (version !== editVersion || !isCurrentContext(contextVersion, currentItemId, currentWorkspaceId)) return;
       console.error('Failed to load Zammad ticket metadata:', err);
       editError = t('zammad.loadMetadataFailed');
     } finally {
-      loadingEditMetadata = false;
+      if (version === editVersion && isCurrentContext(contextVersion, currentItemId, currentWorkspaceId)) loadingEditMetadata = false;
     }
   }
 
@@ -275,25 +386,32 @@
   }
 
   async function loadEditOwners() {
+    const version = editVersion;
+    const requestVersion = ++ownersVersion;
+    const currentItemId = itemId;
+    const currentWorkspaceId = workspaceId;
     const connection = selectedEditConnection();
     if (!connection || !selectedEditGroupId) return;
     loadingEditOwners = true;
     try {
-      editOwners = await api.zammadConnections.owners(
-        workspaceId,
+      const loadedOwners = await api.zammadConnections.owners(
+        currentWorkspaceId,
         connection.id,
         Number(selectedEditGroupId),
       );
+      if (requestVersion !== ownersVersion || version !== editVersion || !isCurrentContext(contextVersion, currentItemId, currentWorkspaceId) || !showEdit) return;
+      editOwners = loadedOwners;
       if (!editOwners.some((owner) => String(owner.id) === selectedEditOwnerId)) {
         selectedEditOwnerId = '1';
       }
     } catch (err) {
+      if (requestVersion !== ownersVersion || version !== editVersion || !isCurrentContext(contextVersion, currentItemId, currentWorkspaceId)) return;
       console.error('Failed to load Zammad owners:', err);
       editError = t('zammad.loadOwnersFailed');
       editOwners = [];
       selectedEditOwnerId = '1';
     } finally {
-      loadingEditOwners = false;
+      if (requestVersion === ownersVersion && version === editVersion && isCurrentContext(contextVersion, currentItemId, currentWorkspaceId)) loadingEditOwners = false;
     }
   }
 
@@ -318,25 +436,33 @@
   }
 
   async function saveEdit() {
+    const context = contextVersion;
+    const version = editVersion;
+    const currentItemId = itemId;
     const payload = editPayload();
     if (!editingLink || Object.keys(payload).length === 0) return;
     savingEdit = true;
     editError = '';
     try {
       const updated = await api.zammadTickets.update(editingLink.id, payload);
+      if (version !== editVersion || !isCurrentContext(context, currentItemId)) return;
       replaceLink(updated);
       showEdit = false;
       successToast(t('zammad.ticketUpdated'));
     } catch (err) {
+      if (version !== editVersion || !isCurrentContext(context, currentItemId)) return;
       console.error('Failed to update Zammad ticket:', err);
       editError = err.message || t('zammad.ticketUpdateFailed');
       errorToast(t('zammad.ticketUpdateFailed'));
     } finally {
-      savingEdit = false;
+      if (version === editVersion && isCurrentContext(context, currentItemId)) savingEdit = false;
     }
   }
 
   async function removeLink(link) {
+    const version = contextVersion;
+    const currentItemId = itemId;
+    const currentWorkspaceId = workspaceId;
     const accepted = await confirm({
       title: t('zammad.removeTicketLink'),
       message: t('zammad.removeTicketLinkConfirm', { number: link.ticket_number }),
@@ -345,18 +471,21 @@
       variant: 'danger',
     });
     if (!accepted) return;
+    if (!isCurrentContext(version, currentItemId)) return;
 
     removingId = link.id;
     try {
       await api.zammadTickets.delete(link.id);
+      if (!isCurrentContext(version, currentItemId, currentWorkspaceId)) return;
       successToast(t('zammad.ticketLinkRemoved'));
-      await load();
+      await load(currentItemId, currentWorkspaceId, version);
     } catch (err) {
+      if (!isCurrentContext(version, currentItemId, currentWorkspaceId)) return;
       console.error('Failed to remove Zammad ticket link:', err);
       errorToast(t('zammad.ticketLinkRemoveFailed'));
-      await load();
+      await load(currentItemId, currentWorkspaceId, version);
     } finally {
-      removingId = null;
+      if (isCurrentContext(version, currentItemId, currentWorkspaceId)) removingId = null;
     }
   }
 </script>
@@ -414,7 +543,7 @@
                 </div>
                 {#if canEdit && linkConnectionUsable}
                   <div class="flex items-center gap-1">
-                    {#if link.ticket_id}
+                    {#if link.ticket_id && link.sync_state !== 'creating'}
                       <button class="p-1 rounded" onclick={() => openEditDialog(link)} disabled={savingEdit} title={t('zammad.editTicket')}>
                         <Edit2 class="w-4 h-4" />
                       </button>

@@ -16,13 +16,46 @@ type ZammadRepository struct {
 	db database.Database
 }
 
+type ZammadTicketLinkReservationSnapshot struct {
+	BaseURL             string
+	CorrelationField    string
+	ConnectionEnabled   bool
+	DefaultGroupID      int
+	DefaultGroupName    string
+	AllowedGroupIDs     []int
+	DefaultCustomer     string
+	WorkspaceID         int
+	WorkspaceItemNumber int
+	WorkspaceKey        string
+	WorkspaceAllowed    bool
+}
+
+type ZammadTicketLinkScope struct {
+	ItemID        int
+	WorkspaceID   int
+	GroupID       int
+	GroupName     string
+	SetupComplete bool
+	SyncLocked    bool
+}
+
+type ZammadConnectionMutationSnapshot struct {
+	BaseURL            string
+	CorrelationField   string
+	DefaultGroupID     int
+	DefaultGroupName   string
+	AllowedGroupIDs    []int
+	ClosedStateIDs     []int
+	CompletionStatusID *int
+}
+
 func NewZammadRepository(db database.Database) *ZammadRepository {
 	return &ZammadRepository{db: db}
 }
 
 const zammadConnectionColumns = `
 	zc.provider_id, ip.slug, ip.name, ip.enabled, zc.base_url,
-	zc.credential_id, zc.auth_method, zc.oauth_generation, COALESCE(zc.oauth_attempt_id, ''), ip.oauth_client_id, ip.oauth_client_secret_encrypted,
+	zc.credential_id, zc.auth_method, zc.oauth_generation, zc.config_revision, COALESCE(zc.oauth_attempt_id, ''), ip.oauth_client_id, ip.oauth_client_secret_encrypted,
 	EXISTS(SELECT 1 FROM zammad_oauth_tokens zot WHERE zot.provider_id = zc.provider_id AND zot.reauthorization_required = false),
 	COALESCE((SELECT reauthorization_required FROM zammad_oauth_tokens zot WHERE zot.provider_id = zc.provider_id), false),
 	zc.default_group_id, zc.default_group_name,
@@ -145,7 +178,27 @@ func (r *ZammadRepository) UpdateConnectionTx(tx database.Tx, connection *models
 	if err != nil {
 		return err
 	}
-	result, err := tx.Exec(`UPDATE integration_providers
+	result, err := tx.Exec(`UPDATE zammad_connections SET
+			credential_id = ?, auth_method = ?, base_url = ?, default_group_id = ?, default_group_name = ?, allowed_group_ids = ?,
+			default_customer = ?, correlation_field = ?, closed_state_ids = ?,
+			completion_status_id = ?, applies_to_all_workspaces = ?, config_revision = config_revision + 1,
+			updated_at = CURRENT_TIMESTAMP
+			WHERE provider_id = ? AND config_revision = ?`, nullablePositiveInt(connection.CredentialID), connection.AuthMethod, connection.BaseURL, nullablePositiveInt(connection.DefaultGroupID),
+		connection.DefaultGroupName, string(allowedGroupsJSON), connection.DefaultCustomer, connection.CorrelationField,
+		string(closedJSON), connection.CompletionStatusID,
+		connection.AppliesToAllWorkspaces, connection.ProviderID, connection.ConfigRevision)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrConcurrentUpdate
+	}
+	connection.ConfigRevision++
+	result, err = tx.Exec(`UPDATE integration_providers
 			SET slug = ?, name = ?, enabled = ?, oauth_client_id = ?, oauth_client_secret_encrypted = ?, updated_at = CURRENT_TIMESTAMP
 			WHERE id = ? AND provider_type = ?`, connection.Slug, connection.Name,
 		connection.Enabled, nullableString(connection.OAuthClientID), nullableString(connection.OAuthClientSecretEncrypted), connection.ProviderID, models.IntegrationProviderZammad)
@@ -158,45 +211,196 @@ func (r *ZammadRepository) UpdateConnectionTx(tx database.Tx, connection *models
 	if rows, _ := result.RowsAffected(); rows == 0 {
 		return ErrNotFound
 	}
-	_, err = tx.Exec(`UPDATE zammad_connections SET
-			credential_id = ?, auth_method = ?, base_url = ?, default_group_id = ?, default_group_name = ?, allowed_group_ids = ?,
-			default_customer = ?, correlation_field = ?, closed_state_ids = ?,
-			completion_status_id = ?, applies_to_all_workspaces = ?,
-			updated_at = CURRENT_TIMESTAMP
-			WHERE provider_id = ?`, nullablePositiveInt(connection.CredentialID), connection.AuthMethod, connection.BaseURL, nullablePositiveInt(connection.DefaultGroupID),
-		connection.DefaultGroupName, string(allowedGroupsJSON), connection.DefaultCustomer, connection.CorrelationField,
-		string(closedJSON), connection.CompletionStatusID,
-		connection.AppliesToAllWorkspaces, connection.ProviderID)
-	if err != nil {
-		return err
-	}
 	return replaceZammadConnectionWorkspaces(tx, connection.ProviderID, connection.AppliesToAllWorkspaces, connection.WorkspaceIDs)
 }
 
-func (r *ZammadRepository) DeleteConnection(id string) error {
-	return database.WithTx(r.db, func(tx database.Tx) error {
-		var credentialID sql.NullInt64
-		if err := tx.QueryRow("SELECT credential_id FROM zammad_connections WHERE provider_id = ?", id).Scan(&credentialID); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return ErrNotFound
-			}
-			return err
+func (r *ZammadRepository) DeleteConnectionTx(tx database.Tx, id string) error {
+	var credentialID sql.NullInt64
+	if err := tx.QueryRow("SELECT credential_id FROM zammad_connections WHERE provider_id = ?", id).Scan(&credentialID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
 		}
-		if _, err := tx.Exec("DELETE FROM integration_providers WHERE id = ?", id); err != nil {
-			return err
-		}
-		if credentialID.Valid {
-			_, err := tx.Exec("DELETE FROM action_credentials WHERE id = ?", credentialID.Int64)
-			return err
-		}
-		return nil
-	})
+		return err
+	}
+	if _, err := tx.Exec("DELETE FROM integration_providers WHERE id = ?", id); err != nil {
+		return err
+	}
+	if credentialID.Valid {
+		_, err := tx.Exec("DELETE FROM action_credentials WHERE id = ?", credentialID.Int64)
+		return err
+	}
+	return nil
 }
 
-func (r *ZammadRepository) HasTicketLinksForConnection(id string) (bool, error) {
+func (r *ZammadRepository) HasTicketLinksForConnectionTx(tx database.Tx, id string) (bool, error) {
 	var hasLinks bool
-	err := r.db.QueryRow("SELECT EXISTS(SELECT 1 FROM zammad_ticket_links WHERE provider_id = ?)", id).Scan(&hasLinks)
+	err := tx.QueryRow("SELECT EXISTS(SELECT 1 FROM zammad_ticket_links WHERE provider_id = ?)", id).Scan(&hasLinks)
 	return hasLinks, err
+}
+
+// LockConnectionTx is the first step of every connection mutation and ticket
+// reservation. PostgreSQL uses an explicit row lock; SQLite write transactions
+// are already started with _txlock=immediate.
+func (r *ZammadRepository) LockConnectionTx(tx database.Tx, id string) error {
+	query := "SELECT provider_id FROM zammad_connections WHERE provider_id = ?"
+	if r.db.GetDriverName() == "postgres" {
+		query += " FOR UPDATE"
+	}
+	var providerID string
+	if err := tx.QueryRow(query, id).Scan(&providerID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	return nil
+}
+
+// lockTicketLinkConnectionTx reads a ticket link's provider before acquiring
+// the provider's connection lock. The preliminary read intentionally carries
+// no row lock, so every actual lock acquisition remains connection first and
+// no ticket-link row can be locked ahead of its connection on PostgreSQL.
+func (r *ZammadRepository) lockTicketLinkConnectionTx(tx database.Tx, linkID string) error {
+	var providerID string
+	if err := tx.QueryRow("SELECT provider_id FROM zammad_ticket_links WHERE id = ?", linkID).Scan(&providerID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if err := r.LockConnectionTx(tx, providerID); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (r *ZammadRepository) ConnectionMutationSnapshotTx(tx database.Tx, id string) (*ZammadConnectionMutationSnapshot, error) {
+	snapshot := &ZammadConnectionMutationSnapshot{}
+	var allowedGroupIDsJSON, closedStateIDsJSON string
+	var completionStatusID sql.NullInt64
+	if err := tx.QueryRow(`SELECT base_url, correlation_field, COALESCE(default_group_id, 0),
+		default_group_name, allowed_group_ids, closed_state_ids, completion_status_id
+		FROM zammad_connections WHERE provider_id = ?`, id).Scan(
+		&snapshot.BaseURL, &snapshot.CorrelationField, &snapshot.DefaultGroupID,
+		&snapshot.DefaultGroupName, &allowedGroupIDsJSON, &closedStateIDsJSON, &completionStatusID,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	if err := json.Unmarshal([]byte(allowedGroupIDsJSON), &snapshot.AllowedGroupIDs); err != nil {
+		return nil, fmt.Errorf("decode Zammad allowed group IDs: %w", err)
+	}
+	if err := json.Unmarshal([]byte(closedStateIDsJSON), &snapshot.ClosedStateIDs); err != nil {
+		return nil, fmt.Errorf("decode Zammad closed state IDs: %w", err)
+	}
+	if completionStatusID.Valid {
+		value := int(completionStatusID.Int64)
+		snapshot.CompletionStatusID = &value
+	}
+	return snapshot, nil
+}
+
+func (r *ZammadRepository) ConnectionGroupPolicyTx(tx database.Tx, id string) (defaultGroupID int, defaultGroupName string, allowedGroupIDs []int, queryErr error) {
+	var allowedGroupIDsJSON string
+	if err := tx.QueryRow(`SELECT COALESCE(default_group_id, 0), default_group_name, allowed_group_ids
+		FROM zammad_connections WHERE provider_id = ?`, id).Scan(&defaultGroupID, &defaultGroupName, &allowedGroupIDsJSON); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, "", nil, ErrNotFound
+		}
+		return 0, "", nil, err
+	}
+	if err := json.Unmarshal([]byte(allowedGroupIDsJSON), &allowedGroupIDs); err != nil {
+		return 0, "", nil, fmt.Errorf("decode Zammad allowed group IDs: %w", err)
+	}
+	return defaultGroupID, defaultGroupName, allowedGroupIDs, nil
+}
+
+func (r *ZammadRepository) LockTicketLinkReservationTx(tx database.Tx, providerID string, itemID int) (*ZammadTicketLinkReservationSnapshot, error) {
+	connectionQuery := `SELECT zc.base_url, zc.correlation_field, ip.enabled,
+		COALESCE(zc.default_group_id, 0), zc.default_group_name, zc.allowed_group_ids, zc.default_customer
+		FROM zammad_connections zc
+		JOIN integration_providers ip ON ip.id = zc.provider_id
+		WHERE zc.provider_id = ?`
+	if r.db.GetDriverName() == "postgres" {
+		connectionQuery += " FOR UPDATE OF zc"
+	}
+	snapshot := &ZammadTicketLinkReservationSnapshot{}
+	var allowedGroupIDsJSON string
+	if err := tx.QueryRow(connectionQuery, providerID).Scan(
+		&snapshot.BaseURL, &snapshot.CorrelationField, &snapshot.ConnectionEnabled,
+		&snapshot.DefaultGroupID, &snapshot.DefaultGroupName, &allowedGroupIDsJSON, &snapshot.DefaultCustomer,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	if err := json.Unmarshal([]byte(allowedGroupIDsJSON), &snapshot.AllowedGroupIDs); err != nil {
+		return nil, fmt.Errorf("decode Zammad allowed group IDs: %w", err)
+	}
+	itemQuery := `SELECT i.workspace_id, i.workspace_item_number, w.key
+		FROM items i JOIN workspaces w ON w.id = i.workspace_id WHERE i.id = ?`
+	if r.db.GetDriverName() == "postgres" {
+		itemQuery += " FOR UPDATE OF i"
+	}
+	if err := tx.QueryRow(itemQuery, itemID).Scan(&snapshot.WorkspaceID, &snapshot.WorkspaceItemNumber, &snapshot.WorkspaceKey); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	if err := tx.QueryRow(`SELECT EXISTS(
+		SELECT 1 FROM zammad_connections zc
+		WHERE zc.provider_id = ? AND (
+			zc.applies_to_all_workspaces = true OR EXISTS (
+				SELECT 1 FROM zammad_connection_workspaces zcw
+				WHERE zcw.provider_id = zc.provider_id AND zcw.workspace_id = ?
+			)
+		))`, providerID, snapshot.WorkspaceID).Scan(&snapshot.WorkspaceAllowed); err != nil {
+		return nil, err
+	}
+	return snapshot, nil
+}
+
+func (r *ZammadRepository) ListTicketLinkScopesForUpdateTx(tx database.Tx, providerID string) ([]ZammadTicketLinkScope, error) {
+	query := `SELECT i.id, i.workspace_id, COALESCE(ztl.group_id, 0), COALESCE(ztl.group_name, ''),
+		ztl.item_integration_link_id IS NOT NULL,
+		ztl.sync_lock_until IS NOT NULL AND ztl.sync_lock_until > CURRENT_TIMESTAMP
+		FROM zammad_ticket_links ztl
+		JOIN items i ON i.id = ztl.item_id
+		WHERE ztl.provider_id = ? ORDER BY i.id`
+	if r.db.GetDriverName() == "postgres" {
+		query += " FOR UPDATE OF i"
+	}
+	rows, err := tx.Query(query, providerID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	scopes := []ZammadTicketLinkScope{}
+	for rows.Next() {
+		var scope ZammadTicketLinkScope
+		if err := rows.Scan(&scope.ItemID, &scope.WorkspaceID, &scope.GroupID, &scope.GroupName, &scope.SetupComplete, &scope.SyncLocked); err != nil {
+			return nil, err
+		}
+		scopes = append(scopes, scope)
+	}
+	return scopes, rows.Err()
+}
+
+func (r *ZammadRepository) HasTicketLinkUnavailableInWorkspaceTx(tx database.Tx, itemID, workspaceID int) (bool, error) {
+	var unavailable bool
+	err := tx.QueryRow(`SELECT EXISTS(
+		SELECT 1 FROM zammad_ticket_links ztl
+		JOIN zammad_connections zc ON zc.provider_id = ztl.provider_id
+		WHERE ztl.item_id = ? AND zc.applies_to_all_workspaces = false
+		AND NOT EXISTS (
+			SELECT 1 FROM zammad_connection_workspaces zcw
+			WHERE zcw.provider_id = ztl.provider_id AND zcw.workspace_id = ?
+		))`, itemID, workspaceID).Scan(&unavailable)
+	return unavailable, err
 }
 
 func (r *ZammadRepository) SetConnectionTestResult(id string, testedAt time.Time, testError string) error {
@@ -231,7 +435,7 @@ func scanZammadConnection(scanner interface{ Scan(...any) error }) (*models.Zamm
 	var oauthConnected, reauthorizationRequired bool
 	var allowedGroupsJSON, closedJSON string
 	err := scanner.Scan(&connection.ProviderID, &connection.Slug, &connection.Name,
-		&connection.Enabled, &connection.BaseURL, &credentialID, &authMethod, &connection.OAuthGeneration, &connection.OAuthAttemptID, &oauthClientID, &oauthClientSecret,
+		&connection.Enabled, &connection.BaseURL, &credentialID, &authMethod, &connection.OAuthGeneration, &connection.ConfigRevision, &connection.OAuthAttemptID, &oauthClientID, &oauthClientSecret,
 		&oauthConnected, &reauthorizationRequired, &groupID,
 		&groupName, &allowedGroupsJSON, &connection.DefaultCustomer, &connection.CorrelationField,
 		&closedJSON, &completionStatusID, &connection.AppliesToAllWorkspaces,
@@ -323,7 +527,14 @@ func (r *ZammadRepository) GetTicketLinksForItem(itemID int) ([]*models.ZammadTi
 	rows, err := r.db.Query(`SELECT `+zammadTicketLinkColumns+`
 		FROM zammad_ticket_links ztl
 		JOIN integration_providers ip ON ip.id = ztl.provider_id
-		WHERE ztl.item_id = ? ORDER BY ztl.created_at DESC`, itemID)
+		JOIN zammad_connections zc ON zc.provider_id = ztl.provider_id
+		JOIN items i ON i.id = ztl.item_id
+		WHERE ztl.item_id = ? AND (
+			zc.applies_to_all_workspaces = true OR EXISTS (
+				SELECT 1 FROM zammad_connection_workspaces zcw
+				WHERE zcw.provider_id = ztl.provider_id AND zcw.workspace_id = i.workspace_id
+			)
+		) ORDER BY ztl.created_at DESC`, itemID)
 	if err != nil {
 		return nil, err
 	}
@@ -369,14 +580,8 @@ func (r *ZammadRepository) GetTicketLinkForItem(itemID int, providerID string) (
 	return link, err
 }
 
-func (r *ZammadRepository) HasTicketLinks(providerID string) (bool, error) {
-	var exists bool
-	err := r.db.QueryRow("SELECT EXISTS(SELECT 1 FROM zammad_ticket_links WHERE provider_id = ?)", providerID).Scan(&exists)
-	return exists, err
-}
-
-func (r *ZammadRepository) CreatePendingTicketLink(link *models.ZammadTicketLink) error {
-	_, err := r.db.ExecWrite(`INSERT INTO zammad_ticket_links
+func (r *ZammadRepository) CreatePendingTicketLinkTx(tx database.Tx, link *models.ZammadTicketLink) error {
+	_, err := tx.Exec(`INSERT INTO zammad_ticket_links
 		(id, item_id, provider_id, group_id, group_name, correlation_key,
 		 sync_state, created_by)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, link.ID, link.ItemID, link.ProviderID,
@@ -388,11 +593,11 @@ func (r *ZammadRepository) CreatePendingTicketLink(link *models.ZammadTicketLink
 	return err
 }
 
-// ReserveExistingTicketLink claims the provider/ticket pair before changing
+// ReserveExistingTicketLinkTx claims the provider/ticket pair before changing
 // the remote correlation field. The unique constraint makes competing item
 // links fail closed rather than attaching one ticket to two Windshift items.
-func (r *ZammadRepository) ReserveExistingTicketLink(link *models.ZammadTicketLink) error {
-	_, err := r.db.ExecWrite(`INSERT INTO zammad_ticket_links
+func (r *ZammadRepository) ReserveExistingTicketLinkTx(tx database.Tx, link *models.ZammadTicketLink) error {
+	_, err := tx.Exec(`INSERT INTO zammad_ticket_links
 		(id, item_id, provider_id, ticket_id, ticket_number, ticket_url, group_id, group_name,
 		 owner_id, owner_name, correlation_key, sync_state, last_status_id, last_status_name, created_by)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -405,92 +610,218 @@ func (r *ZammadRepository) ReserveExistingTicketLink(link *models.ZammadTicketLi
 	return err
 }
 
-func (r *ZammadRepository) ClaimTicketCreation(itemID int, providerID string, now time.Time) (bool, error) {
-	staleBefore := now.Add(-2 * time.Minute)
-	result, err := r.db.ExecWrite(`UPDATE zammad_ticket_links
-		SET sync_state = ?, creating_started_at = ?, last_error = '', updated_at = CURRENT_TIMESTAMP
-		WHERE item_id = ? AND provider_id = ? AND (
-			sync_state IN (?, ?, ?) OR (sync_state = ? AND creating_started_at < ?)
-		)`, models.ZammadSyncCreating, now, itemID, providerID,
-		models.ZammadSyncPending, models.ZammadSyncFailed, models.ZammadSyncUncertain,
-		models.ZammadSyncCreating, staleBefore)
-	if err != nil {
-		return false, err
+// ClaimTicketCreation atomically claims a pending or retryable ticket
+// creation. Newly reserved existing tickets use the creating state with no
+// started timestamp and are eligible immediately; an older in-flight creation
+// is eligible only once its creation marker is stale. The sync lease is set in
+// the same update, so remote work has one owner from reservation to completion.
+func (r *ZammadRepository) ClaimTicketCreation(linkID, syncOwner string, now, until time.Time) (claimed, wasUncertain bool, err error) {
+	if syncOwner == "" {
+		return false, false, ErrInvalidInput
 	}
-	rows, _ := result.RowsAffected()
-	return rows == 1, nil
+	staleBefore := now.Add(-2 * time.Minute)
+	err = database.WithTx(r.db, func(tx database.Tx) error {
+		if err := r.lockTicketLinkConnectionTx(tx, linkID); err != nil {
+			return err
+		}
+		stateQuery := "SELECT sync_state FROM zammad_ticket_links WHERE id = ?"
+		if r.db.GetDriverName() == "postgres" {
+			stateQuery += " FOR UPDATE"
+		}
+		var previousState string
+		if err := tx.QueryRow(stateQuery, linkID).Scan(&previousState); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrNotFound
+			}
+			return err
+		}
+		result, err := tx.Exec(`UPDATE zammad_ticket_links
+			SET sync_state = ?, creating_started_at = ?, sync_lock_until = ?, sync_lock_owner = ?,
+				last_error = '', updated_at = CURRENT_TIMESTAMP
+			WHERE id = ?
+			  AND (sync_lock_until IS NULL OR sync_lock_until < CURRENT_TIMESTAMP)
+			  AND (sync_state IN (?, ?, ?)
+			       OR (sync_state = ? AND (creating_started_at IS NULL OR creating_started_at < ?)))`,
+			models.ZammadSyncCreating, now, until, syncOwner, linkID,
+			models.ZammadSyncPending, models.ZammadSyncFailed, models.ZammadSyncUncertain,
+			models.ZammadSyncCreating, staleBefore)
+		if err != nil {
+			return err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		claimed = rows == 1
+		// A stale creating state may have crashed while the POST response was in
+		// flight. Treat it like an explicitly uncertain outcome so the next
+		// worker searches by correlation only instead of risking a duplicate.
+		wasUncertain = claimed && (previousState == string(models.ZammadSyncUncertain) || previousState == string(models.ZammadSyncCreating))
+		return nil
+	})
+	return claimed, wasUncertain, err
 }
 
-func (r *ZammadRepository) CompleteTicketCreation(linkID string, ticketID int, number, ticketURL string, statusID int, statusName string, groupID int, groupName string, ownerID int, ownerName string, linkedBy int) error {
+func (r *ZammadRepository) CompleteTicketCreation(linkID, syncOwner string, ticketID int, number, ticketURL string, statusID int, statusName string, groupID int, groupName string, ownerID int, ownerName string, linkedBy int) error {
+	return database.WithTx(r.db, func(tx database.Tx) error {
+		if err := r.lockTicketLinkConnectionTx(tx, linkID); err != nil {
+			return err
+		}
+		return r.CompleteTicketCreationTx(tx, linkID, syncOwner, ticketID, number, ticketURL, statusID, statusName, groupID, groupName, ownerID, ownerName, linkedBy)
+	})
+}
+
+// CompleteTicketCreationTx finalizes a created ticket inside the caller's
+// connection-policy transaction.
+func (r *ZammadRepository) CompleteTicketCreationTx(tx database.Tx, linkID, syncOwner string, ticketID int, number, ticketURL string, statusID int, statusName string, groupID int, groupName string, ownerID int, ownerName string, linkedBy int) error {
+	if syncOwner == "" {
+		return ErrInvalidInput
+	}
 	genericLinkID := linkID + "-external"
 	metadata, _ := json.Marshal(map[string]any{
 		"status_id": statusID, "status_name": statusName,
 		"group_id": groupID, "group_name": groupName,
 		"owner_id": ownerID, "owner_name": ownerName,
 	})
-	return database.WithTx(r.db, func(tx database.Tx) error {
-		if _, err := tx.Exec(`INSERT INTO item_integration_links
+	result, err := tx.Exec(`INSERT INTO item_integration_links
 			(id, item_id, integration_provider_id, external_id, external_url,
 			 title, icon, link_type, link_metadata, linked_by)
 			SELECT ?, item_id, provider_id, ?, ?, ?, ?, 'ticket', ?, ?
-			FROM zammad_ticket_links WHERE id = ?
+			FROM zammad_ticket_links WHERE id = ? AND sync_lock_owner = ?
 			ON CONFLICT (item_id, integration_provider_id, external_id) DO UPDATE SET
 				external_url = excluded.external_url,
 				title = excluded.title,
 				link_metadata = excluded.link_metadata,
 				updated_at = CURRENT_TIMESTAMP`,
-			genericLinkID, strconv.Itoa(ticketID), ticketURL, "Zammad #"+number,
-			"ticket", string(metadata), strconv.Itoa(linkedBy), linkID); err != nil {
-			return err
-		}
-		if err := tx.QueryRow(`SELECT iil.id FROM item_integration_links iil
+		genericLinkID, strconv.Itoa(ticketID), ticketURL, "Zammad #"+number,
+		"ticket", string(metadata), strconv.Itoa(linkedBy), linkID, syncOwner)
+	if err != nil {
+		return err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return err
+	} else if rows == 0 {
+		return ErrConcurrentUpdate
+	}
+	if err := tx.QueryRow(`SELECT iil.id FROM item_integration_links iil
 			JOIN zammad_ticket_links ztl ON CAST(ztl.item_id AS TEXT) = iil.item_id
 				AND ztl.provider_id = iil.integration_provider_id
-			WHERE ztl.id = ? AND iil.external_id = ?`, linkID, strconv.Itoa(ticketID)).Scan(&genericLinkID); err != nil {
-			return err
-		}
-		_, err := tx.Exec(`UPDATE zammad_ticket_links SET
+		WHERE ztl.id = ? AND iil.external_id = ?`, linkID, strconv.Itoa(ticketID)).Scan(&genericLinkID); err != nil {
+		return err
+	}
+	result, err = tx.Exec(`UPDATE zammad_ticket_links SET
 			item_integration_link_id = ?, ticket_id = ?, ticket_number = ?,
 			ticket_url = ?, group_id = ?, group_name = ?, owner_id = ?, owner_name = ?,
 			sync_state = ?, creating_started_at = NULL,
 			last_status_id = ?, last_status_name = ?, last_synced_at = CURRENT_TIMESTAMP,
 			last_attempt_at = CURRENT_TIMESTAMP, next_attempt_at = NULL,
-			last_error = '', updated_at = CURRENT_TIMESTAMP
-			WHERE id = ?`, genericLinkID, ticketID, number, ticketURL,
-			nullablePositiveInt(groupID), groupName, nullablePositiveInt(ownerID), ownerName,
-			models.ZammadSyncLinked, nullablePositiveInt(statusID), statusName, linkID)
+		last_error = '', sync_lock_until = NULL, sync_lock_owner = NULL,
+		updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND sync_lock_owner = ?`, genericLinkID, ticketID, number, ticketURL,
+		nullablePositiveInt(groupID), groupName, nullablePositiveInt(ownerID), ownerName,
+		models.ZammadSyncLinked, nullablePositiveInt(statusID), statusName, linkID, syncOwner)
+	if err != nil {
 		return err
-	})
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return err
+	} else if rows != 1 {
+		return ErrConcurrentUpdate
+	}
+	return nil
 }
 
-func (r *ZammadRepository) CompleteExistingTicketLink(linkID, genericLinkID string, ticket *models.ZammadTicketLink, linkedBy int) error {
-	metadata, _ := json.Marshal(map[string]any{"status_id": ticket.LastStatusID, "status_name": ticket.LastStatusName, "group_id": ticket.GroupID, "group_name": ticket.GroupName, "owner_id": ticket.OwnerID, "owner_name": ticket.OwnerName})
+func (r *ZammadRepository) CompleteExistingTicketLink(linkID, syncOwner, genericLinkID string, ticket *models.ZammadTicketLink, linkedBy int) error {
 	return database.WithTx(r.db, func(tx database.Tx) error {
-		if _, err := tx.Exec(`INSERT INTO item_integration_links
-			(id, item_id, integration_provider_id, external_id, external_url, title, icon, link_type, link_metadata, linked_by)
-			SELECT ?, item_id, provider_id, ?, ?, ?, ?, 'ticket', ?, ? FROM zammad_ticket_links WHERE id = ?
-			ON CONFLICT (item_id, integration_provider_id, external_id) DO UPDATE SET external_url=excluded.external_url, title=excluded.title, link_metadata=excluded.link_metadata, updated_at=CURRENT_TIMESTAMP`,
-			genericLinkID, strconv.Itoa(ticket.TicketID), ticket.TicketURL, "Zammad #"+ticket.TicketNumber, "ticket", string(metadata), strconv.Itoa(linkedBy), linkID); err != nil {
+		if err := r.lockTicketLinkConnectionTx(tx, linkID); err != nil {
 			return err
 		}
-		_, err := tx.Exec(`UPDATE zammad_ticket_links SET item_integration_link_id=?, ticket_id=?, ticket_number=?, ticket_url=?, group_id=?, group_name=?, owner_id=?, owner_name=?, sync_state=?, creating_started_at=NULL, last_status_id=?, last_status_name=?, last_synced_at=CURRENT_TIMESTAMP, last_attempt_at=CURRENT_TIMESTAMP, next_attempt_at=NULL, last_error='', updated_at=CURRENT_TIMESTAMP WHERE id=?`,
-			genericLinkID, ticket.TicketID, ticket.TicketNumber, ticket.TicketURL, nullablePositiveInt(ticket.GroupID), ticket.GroupName, nullablePositiveInt(ticket.OwnerID), ticket.OwnerName, models.ZammadSyncLinked, nullablePositiveInt(ticket.LastStatusID), ticket.LastStatusName, linkID)
-		return err
+		return r.CompleteExistingTicketLinkTx(tx, linkID, syncOwner, genericLinkID, ticket, linkedBy)
 	})
 }
 
-func (r *ZammadRepository) MarkTicketLinkFailed(id, safeError string) error {
-	_, err := r.db.ExecWrite(`UPDATE zammad_ticket_links SET
-		sync_state = ?, creating_started_at = NULL, last_error = ?,
-		updated_at = CURRENT_TIMESTAMP WHERE id = ?`, models.ZammadSyncFailed, safeError, id)
-	return err
+// CompleteExistingTicketLinkTx finalizes an existing ticket link inside the
+// caller's connection-policy transaction.
+func (r *ZammadRepository) CompleteExistingTicketLinkTx(tx database.Tx, linkID, syncOwner, genericLinkID string, ticket *models.ZammadTicketLink, linkedBy int) error {
+	if syncOwner == "" {
+		return ErrInvalidInput
+	}
+	metadata, _ := json.Marshal(map[string]any{"status_id": ticket.LastStatusID, "status_name": ticket.LastStatusName, "group_id": ticket.GroupID, "group_name": ticket.GroupName, "owner_id": ticket.OwnerID, "owner_name": ticket.OwnerName})
+	result, err := tx.Exec(`INSERT INTO item_integration_links
+			(id, item_id, integration_provider_id, external_id, external_url, title, icon, link_type, link_metadata, linked_by)
+			SELECT ?, item_id, provider_id, ?, ?, ?, ?, 'ticket', ?, ? FROM zammad_ticket_links WHERE id = ? AND sync_lock_owner = ?
+			ON CONFLICT (item_id, integration_provider_id, external_id) DO UPDATE SET external_url=excluded.external_url, title=excluded.title, link_metadata=excluded.link_metadata, updated_at=CURRENT_TIMESTAMP`,
+		genericLinkID, strconv.Itoa(ticket.TicketID), ticket.TicketURL, "Zammad #"+ticket.TicketNumber, "ticket", string(metadata), strconv.Itoa(linkedBy), linkID, syncOwner)
+	if err != nil {
+		return err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return err
+	} else if rows == 0 {
+		return ErrConcurrentUpdate
+	}
+	if err := tx.QueryRow(`SELECT iil.id FROM item_integration_links iil
+			JOIN zammad_ticket_links ztl ON CAST(ztl.item_id AS TEXT) = iil.item_id
+				AND ztl.provider_id = iil.integration_provider_id
+			WHERE ztl.id = ? AND ztl.sync_lock_owner = ? AND iil.external_id = ?`,
+		linkID, syncOwner, strconv.Itoa(ticket.TicketID)).Scan(&genericLinkID); err != nil {
+		return err
+	}
+	result, err = tx.Exec(`UPDATE zammad_ticket_links SET item_integration_link_id=?, ticket_id=?, ticket_number=?, ticket_url=?, group_id=?, group_name=?, owner_id=?, owner_name=?, sync_state=?, creating_started_at=NULL, last_status_id=?, last_status_name=?, last_synced_at=CURRENT_TIMESTAMP, last_attempt_at=CURRENT_TIMESTAMP, next_attempt_at=NULL, last_error='', sync_lock_until=NULL, sync_lock_owner=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=? AND sync_lock_owner=?`,
+		genericLinkID, ticket.TicketID, ticket.TicketNumber, ticket.TicketURL, nullablePositiveInt(ticket.GroupID), ticket.GroupName, nullablePositiveInt(ticket.OwnerID), ticket.OwnerName, models.ZammadSyncLinked, nullablePositiveInt(ticket.LastStatusID), ticket.LastStatusName, linkID, syncOwner)
+	if err != nil {
+		return err
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return err
+	} else if rows != 1 {
+		return ErrConcurrentUpdate
+	}
+	return nil
 }
 
-func (r *ZammadRepository) MarkTicketLinkUncertain(id, safeError string) error {
-	_, err := r.db.ExecWrite(`UPDATE zammad_ticket_links SET
-		sync_state = ?, creating_started_at = NULL, last_error = ?,
-		updated_at = CURRENT_TIMESTAMP WHERE id = ?`, models.ZammadSyncUncertain, safeError, id)
-	return err
+func (r *ZammadRepository) MarkTicketLinkFailed(id, syncOwner, safeError string) error {
+	return r.markTicketLinkWithClaim(id, syncOwner, `sync_state = ?, creating_started_at = NULL, last_error = ?,
+		sync_lock_until = NULL, sync_lock_owner = NULL`, models.ZammadSyncFailed, safeError)
+}
+
+func (r *ZammadRepository) MarkTicketLinkUncertain(id, syncOwner, safeError string) error {
+	return r.markTicketLinkWithClaim(id, syncOwner, `sync_state = ?, creating_started_at = NULL, last_error = ?,
+		sync_lock_until = NULL, sync_lock_owner = NULL`, models.ZammadSyncUncertain, safeError)
+}
+
+// MarkTicketLinkSetupError retains an existing-ticket reservation after an
+// upstream correlation update failed. A retry can safely inspect the remote
+// field and finish the same reservation without allowing background sync to
+// treat it as a complete link.
+func (r *ZammadRepository) MarkTicketLinkSetupError(id, syncOwner, safeError string) error {
+	return r.markTicketLinkWithClaim(id, syncOwner, `last_error = ?,
+		sync_lock_until = NULL, sync_lock_owner = NULL`, safeError)
+}
+
+func (r *ZammadRepository) markTicketLinkWithClaim(id, syncOwner, setClause string, args ...any) error {
+	if syncOwner == "" {
+		return ErrInvalidInput
+	}
+	return database.WithTx(r.db, func(tx database.Tx) error {
+		if err := r.lockTicketLinkConnectionTx(tx, id); err != nil {
+			return err
+		}
+		args = append(args, id, syncOwner)
+		result, err := tx.Exec(`UPDATE zammad_ticket_links SET `+setClause+`, updated_at = CURRENT_TIMESTAMP
+			WHERE id = ? AND sync_lock_owner = ?`, args...)
+		if err != nil {
+			return err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rows != 1 {
+			return ErrConcurrentUpdate
+		}
+		return nil
+	})
 }
 
 func (r *ZammadRepository) ResetUncertainTicketCreation(id string) (bool, error) {
@@ -505,24 +836,47 @@ func (r *ZammadRepository) ResetUncertainTicketCreation(id string) (bool, error)
 	return rows == 1, nil
 }
 
-func (r *ZammadRepository) UpdateTicketLinkSync(id string, statusID int, statusName string, groupID int, groupName string, ownerID int, ownerName, safeError string, now time.Time, setCompletionApplied, completionApplied bool) error {
+func (r *ZammadRepository) UpdateTicketLinkSync(id, syncOwner string, statusID int, statusName string, groupID int, groupName string, ownerID int, ownerName, safeError string, now time.Time, setCompletionApplied, completionApplied bool) error {
+	return database.WithTx(r.db, func(tx database.Tx) error {
+		if err := r.lockTicketLinkConnectionTx(tx, id); err != nil {
+			return err
+		}
+		return r.UpdateTicketLinkSyncTx(tx, id, syncOwner, statusID, statusName, groupID, groupName, ownerID, ownerName, safeError, now, setCompletionApplied, completionApplied)
+	})
+}
+
+func (r *ZammadRepository) UpdateTicketLinkSyncTx(tx database.Tx, id, syncOwner string, statusID int, statusName string, groupID int, groupName string, ownerID int, ownerName, safeError string, now time.Time, setCompletionApplied, completionApplied bool) error {
+	if syncOwner == "" {
+		return ErrInvalidInput
+	}
 	state := models.ZammadSyncLinked
 	var nextAttempt any
 	if safeError != "" {
 		state = models.ZammadSyncFailed
 		nextAttempt = now.Add(time.Minute)
 	}
-	_, err := r.db.ExecWrite(`UPDATE zammad_ticket_links SET
+	result, err := tx.ExecWrite(`UPDATE zammad_ticket_links SET
 		last_status_id = ?, last_status_name = ?,
 		group_id = ?, group_name = ?, owner_id = ?, owner_name = ?,
 		last_synced_at = CASE WHEN ? = '' THEN ? ELSE last_synced_at END,
 		last_attempt_at = ?, next_attempt_at = ?,
-		last_error = ?, sync_state = ?, sync_lock_until = NULL,
+		last_error = ?, sync_state = ?, sync_lock_until = NULL, sync_lock_owner = NULL,
 		completion_applied = CASE WHEN ? THEN ? ELSE completion_applied END,
-		updated_at = CURRENT_TIMESTAMP WHERE id = ?`, nullablePositiveInt(statusID), statusName,
+		updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND item_integration_link_id IS NOT NULL AND sync_lock_owner = ?`, nullablePositiveInt(statusID), statusName,
 		nullablePositiveInt(groupID), groupName, nullablePositiveInt(ownerID), ownerName,
-		safeError, now, now, nextAttempt, safeError, state, setCompletionApplied, completionApplied, id)
-	return err
+		safeError, now, now, nextAttempt, safeError, state, setCompletionApplied, completionApplied, id, syncOwner)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return ErrConcurrentUpdate
+	}
+	return nil
 }
 
 func (r *ZammadRepository) ListDueTicketLinks(before time.Time, limit int) ([]*models.ZammadTicketLink, error) {
@@ -531,6 +885,7 @@ func (r *ZammadRepository) ListDueTicketLinks(before time.Time, limit int) ([]*m
 		JOIN integration_providers ip ON ip.id = ztl.provider_id
 		JOIN zammad_connections zc ON zc.provider_id = ztl.provider_id
 		WHERE ip.enabled = true AND ztl.ticket_id IS NOT NULL
+		  AND ztl.item_integration_link_id IS NOT NULL
 		  AND (zc.auth_method != 'oauth' OR EXISTS (
 			SELECT 1 FROM zammad_oauth_tokens zot
 			WHERE zot.provider_id = zc.provider_id AND zot.reauthorization_required = false
@@ -554,14 +909,83 @@ func (r *ZammadRepository) ListDueTicketLinks(before time.Time, limit int) ([]*m
 	return links, rows.Err()
 }
 
-func (r *ZammadRepository) ClaimSync(id string, until time.Time) (bool, error) {
-	result, err := r.db.ExecWrite(`UPDATE zammad_ticket_links SET sync_lock_until = ?
-		WHERE id = ? AND (sync_lock_until IS NULL OR sync_lock_until < CURRENT_TIMESTAMP)`, until, id)
-	if err != nil {
-		return false, err
+func (r *ZammadRepository) ClaimSync(id, syncOwner string, until time.Time) (bool, error) {
+	if syncOwner == "" {
+		return false, ErrInvalidInput
 	}
-	rows, _ := result.RowsAffected()
-	return rows == 1, nil
+	claimed := false
+	err := database.WithTx(r.db, func(tx database.Tx) error {
+		if err := r.lockTicketLinkConnectionTx(tx, id); err != nil {
+			return err
+		}
+		result, err := tx.Exec(`UPDATE zammad_ticket_links SET sync_lock_until = ?, sync_lock_owner = ?
+			WHERE id = ? AND (sync_lock_until IS NULL OR sync_lock_until < CURRENT_TIMESTAMP)`, until, syncOwner, id)
+		if err != nil {
+			return err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		claimed = rows == 1
+		return nil
+	})
+	return claimed, err
+}
+
+// RenewSyncClaim extends a lease only if it is still owned by syncOwner. An
+// expired lease may be renewed by its original owner until another worker
+// takes it over, which prevents an idle scheduler from leaving work stranded.
+func (r *ZammadRepository) RenewSyncClaim(id, syncOwner string, until time.Time) (bool, error) {
+	if syncOwner == "" {
+		return false, ErrInvalidInput
+	}
+	renewed := false
+	err := database.WithTx(r.db, func(tx database.Tx) error {
+		if err := r.lockTicketLinkConnectionTx(tx, id); err != nil {
+			return err
+		}
+		result, err := tx.Exec(`UPDATE zammad_ticket_links SET sync_lock_until = ?
+			WHERE id = ? AND sync_lock_owner = ?`, until, id, syncOwner)
+		if err != nil {
+			return err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		renewed = rows == 1
+		return nil
+	})
+	return renewed, err
+}
+
+// ReleaseSyncClaim clears only the caller's own lease. A stale worker that
+// lost a lease to a newer owner receives ErrConcurrentUpdate and cannot clear
+// that newer owner's lock.
+func (r *ZammadRepository) ReleaseSyncClaim(id, syncOwner string) error {
+	if syncOwner == "" {
+		return ErrInvalidInput
+	}
+	return database.WithTx(r.db, func(tx database.Tx) error {
+		if err := r.lockTicketLinkConnectionTx(tx, id); err != nil {
+			return err
+		}
+		result, err := tx.Exec(`UPDATE zammad_ticket_links
+			SET sync_lock_until = NULL, sync_lock_owner = NULL
+			WHERE id = ? AND sync_lock_owner = ?`, id, syncOwner)
+		if err != nil {
+			return err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rows != 1 {
+			return ErrConcurrentUpdate
+		}
+		return nil
+	})
 }
 
 func scanZammadTicketLink(scanner interface{ Scan(...any) error }) (*models.ZammadTicketLink, error) {
@@ -636,6 +1060,46 @@ func (r *ZammadRepository) DeleteTicketLink(id string) error {
 		}
 		if genericID.Valid {
 			_, err := tx.Exec(`DELETE FROM item_integration_links WHERE id=?`, genericID.String)
+			return err
+		}
+		return nil
+	})
+}
+
+// DeleteTicketLinkClaimed removes a ticket link and its generic item link only
+// while the caller still owns the sync lease. This keeps unlinking from
+// deleting a reservation or completed link after a different worker has taken
+// over an expired lease.
+func (r *ZammadRepository) DeleteTicketLinkClaimed(id, syncOwner string) error {
+	if syncOwner == "" {
+		return ErrInvalidInput
+	}
+	return database.WithTx(r.db, func(tx database.Tx) error {
+		if err := r.lockTicketLinkConnectionTx(tx, id); err != nil {
+			return err
+		}
+		var genericID sql.NullString
+		if err := tx.QueryRow(`SELECT item_integration_link_id
+			FROM zammad_ticket_links WHERE id = ? AND sync_lock_owner = ?`, id, syncOwner).Scan(&genericID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrConcurrentUpdate
+			}
+			return err
+		}
+		result, err := tx.Exec(`DELETE FROM zammad_ticket_links
+			WHERE id = ? AND sync_lock_owner = ?`, id, syncOwner)
+		if err != nil {
+			return err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rows != 1 {
+			return ErrConcurrentUpdate
+		}
+		if genericID.Valid {
+			_, err = tx.Exec(`DELETE FROM item_integration_links WHERE id = ?`, genericID.String)
 			return err
 		}
 		return nil

@@ -9,7 +9,7 @@ export default { zammad: {
   authMethod: 'طريقة المصادقة', oauth: 'OAuth', oauthDescription: 'فوّض هذا الاتصال باستخدام OAuth من Zammad.', oauthClientId: 'معرّف عميل OAuth', oauthClientSecret: 'سر عميل OAuth',
   secretStored: 'مخزّن بأمان - اتركه فارغًا للاحتفاظ به', oauthPending: 'تفويض OAuth قيد الانتظار', oauthConnectedStatus: 'OAuth متصل', oauthReauthorizationRequired: 'إعادة تفويض OAuth مطلوبة',
   connectOAuth: 'الاتصال بـ Zammad', reauthorizeOAuth: 'التفويض مرة أخرى', oauthConnected: 'تم اتصال OAuth مع Zammad', oauthConnectionFailed: 'فشل تفويض OAuth لـ Zammad', oauthAuthorizationFailed: 'تعذر بدء تفويض OAuth لـ Zammad',
-  correlationFieldNotVerified: 'تمنع أذونات OAuth المقيّدة التحقق التلقائي من حقل الربط. تأكد من وجوده في Zammad قبل إنشاء التذاكر.',
+  correlationFieldNotVerified: 'تمنع أذونات حساب الخدمة المقيّدة التحقق التلقائي من حقل الربط. تأكد من وجوده في Zammad قبل إنشاء التذاكر.',
   defaultCustomer: 'عميل التذكرة الافتراضي', defaultGroup: 'المجموعة الافتراضية', allowedGroups: 'مجموعات التذاكر المسموح بها', allowedGroupIds: 'معرفات مجموعات Zammad المسموح بها', correlationField: 'حقل الربط',
   correlationFieldHint: 'أنشئ هذا الحقل النصي في تذاكر Zammad حتى تعثر المحاولات المتكررة على التذكرة المنشأة.', completionStatus: 'حالة الإكمال في Windshift',
   noAutomaticCompletion: 'عدم الإكمال تلقائيا', closedStates: 'حالات Zammad المغلقة', closedStateIds: 'معرّفات حالات Zammad المغلقة',
