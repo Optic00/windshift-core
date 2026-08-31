@@ -246,6 +246,7 @@ type ZammadOverviewTicket struct {
 	TicketNumber string                  `json:"ticket_number"`
 	TicketTitle  string                  `json:"ticket_title"`
 	TicketURL    string                  `json:"ticket_url"`
+	Closed       bool                    `json:"closed"`
 	Status       ZammadTicketChangeValue `json:"status"`
 	Group        ZammadTicketChangeValue `json:"group"`
 	Owner        ZammadTicketChangeValue `json:"owner"`

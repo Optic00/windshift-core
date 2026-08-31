@@ -956,11 +956,18 @@ func (s *ZammadService) WorkspaceOverview(workspaceID, recentLimit int) (*models
 	}
 	overview.SyncFailed = syncFailed
 	overview.CreationUncertain = creationUncertain
+	ticketIndexByLinkID := make(map[string]int, len(overview.Tickets))
+	for index := range overview.Tickets {
+		ticketIndexByLinkID[overview.Tickets[index].ID] = index
+	}
 	statusBuckets := map[string]*models.ZammadOverviewBucket{}
 	for _, entry := range links {
 		link := entry.Link
 		overview.Total++
 		closed := link.LastStatusID > 0 && slices.Contains(entry.ClosedStateIDs, link.LastStatusID)
+		if index, ok := ticketIndexByLinkID[link.ID]; ok {
+			overview.Tickets[index].Closed = closed
+		}
 		if link.LastStatusID <= 0 {
 			overview.UnknownStatus++
 		} else if closed {

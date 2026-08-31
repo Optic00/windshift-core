@@ -6,6 +6,7 @@ import {
 } from '../../services/widgetRegistry.js';
 import {
   getZammadObservedValueLabel,
+  getZammadStatusAppearance,
   getZammadStatusBucketDisplayLabel,
   getZammadStatusBucketLabel,
   isCurrentZammadWorkspaceOverviewRequest,
@@ -95,6 +96,13 @@ describe('Zammad observation labels', () => {
         displayTranslate
       )
     ).toBe('Second helpdesk · open');
+  });
+
+  it('uses semantic appearances without relying on a configurable closed-state name', () => {
+    expect(getZammadStatusAppearance({ id: 91, name: 'custom final state' }, true)).toBe('success');
+    expect(getZammadStatusAppearance({ id: 2, name: 'open' }, false)).toBe('info');
+    expect(getZammadStatusAppearance({ id: 3, name: 'pending reminder' }, false)).toBe('warning');
+    expect(getZammadStatusAppearance({ id: 0, name: '' }, false)).toBe('default');
   });
 });
 

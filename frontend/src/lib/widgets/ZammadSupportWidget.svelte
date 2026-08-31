@@ -8,9 +8,11 @@
   import { safeHref } from '../utils/sanitize';
   import {
     getZammadObservedValueLabel,
+    getZammadStatusAppearance,
     getZammadStatusBucketDisplayLabel,
     isCurrentZammadWorkspaceOverviewRequest,
   } from '../utils/zammadObservations.js';
+  import Lozenge from '../components/Lozenge.svelte';
   import WidgetState from './WidgetState.svelte';
 
   let { workspaceId = null } = $props();
@@ -179,8 +181,11 @@
         <h4 id="zammad-status-summary" class="text-xs font-semibold" style="color: var(--ds-text);">{t('zammad.overview.byStatus')}</h4>
         <ul class="mt-2 flex flex-wrap gap-1.5">
           {#each overview.by_status as status}
-            <li class="rounded px-2 py-1 text-xs" style="background-color: var(--ds-background-neutral); color: var(--ds-text-subtle);">
-              {statusBucketLabel(status)}: {status.count}
+            <li>
+              <Lozenge
+                appearance={getZammadStatusAppearance(status)}
+                text={`${statusBucketLabel(status)}: ${status.count}`}
+              />
             </li>
           {/each}
         </ul>
@@ -211,8 +216,11 @@
                       {ticket.ticket_title || t('zammad.ticketNumber', { number: ticket.ticket_number })}
                     </span>
                   {/if}
-                  <span class="flex-shrink-0 rounded px-1.5 py-0.5" style="background-color: var(--ds-background); color: var(--ds-text-subtle);">
-                    {t('zammad.status')}: {statusBucketLabel(ticket.status)}
+                  <span class="flex-shrink-0">
+                    <Lozenge
+                      appearance={getZammadStatusAppearance(ticket.status, ticket.closed)}
+                      text={`${t('zammad.status')}: ${statusBucketLabel(ticket.status)}`}
+                    />
                   </span>
                 </div>
                 <div class="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5" style="color: var(--ds-text-subtle);">

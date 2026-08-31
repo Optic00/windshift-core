@@ -39,6 +39,16 @@ export function getZammadStatusBucketDisplayLabel(status, translate) {
   });
 }
 
+export function getZammadStatusAppearance(status, closed = status?.closed === true) {
+  if (closed) return 'success';
+  if (positiveId(status) === null) return 'default';
+
+  const normalizedName = nonEmptyName(status).toLowerCase();
+  if (/^pending(?:[\s_-]|$)/.test(normalizedName)) return 'warning';
+
+  return 'info';
+}
+
 export function isCurrentZammadWorkspaceOverviewRequest(
   requestVersion,
   currentVersion,

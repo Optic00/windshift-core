@@ -97,7 +97,8 @@ describe('ZammadLinkResolver', () => {
           ticket_title: 'VPN access after password change',
           ticket_number: '12345',
           ticket_url: 'https://zammad.example.test/#ticket/zoom/42',
-          status: { id: 2, name: 'open' },
+          closed: true,
+          status: { id: 4, name: 'closed' },
           group: { id: 7, name: 'IT / Network' },
           owner: { id: 99, name: 'Grace Hopper' },
         },
@@ -108,6 +109,7 @@ describe('ZammadLinkResolver', () => {
           ticket_title: 'Printer queue unavailable',
           ticket_number: '12347',
           ticket_url: 'https://zammad.example.test/#ticket/zoom/44',
+          closed: false,
           status: { id: 4, name: 'pending reminder' },
           group: { id: 8, name: 'IT / Workplace' },
           owner: { id: 1, name: '-' },
@@ -162,6 +164,10 @@ describe('ZammadLinkResolver', () => {
     );
     expect(screen.getByText('IT / Workplace')).toBeInTheDocument();
     expect(screen.getByText('zammad.unassignedOwner')).toBeInTheDocument();
+    expect(screen.getByText('zammad.status: closed').style.color).toBe('rgb(34, 197, 94)');
+    expect(screen.getByText('zammad.status: pending reminder').style.color).toBe(
+      'rgb(245, 158, 11)'
+    );
     expect(screen.queryByRole('link', { name: 'OPS-43' })).not.toBeInTheDocument();
     expect(screen.getByText('Primary helpdesk · open: 1')).toBeInTheDocument();
     expect(screen.getByText('Second helpdesk · open: 1')).toBeInTheDocument();

@@ -1219,6 +1219,7 @@ func TestZammadWorkspaceOverviewIncludesCurrentTicketAndSyncedRemoteTitle(t *tes
 	if ticket.ID != link.ID || ticket.ItemID != f.item1 || ticket.ItemKey != "PRI-49" || ticket.TicketNumber != "420901" ||
 		ticket.TicketTitle != "[PRI-49] Synthetic ticket source" ||
 		ticket.TicketURL != "https://zammad.example.test/#ticket/zoom/901" ||
+		ticket.Closed ||
 		ticket.Status.ID != 2 || ticket.Status.Name != "open" ||
 		ticket.Group.ID != 7 || ticket.Group.Name != "Support" {
 		t.Fatalf("newly linked ticket snapshot is incomplete: %#v", ticket)
@@ -1237,6 +1238,20 @@ func TestZammadWorkspaceOverviewIncludesCurrentTicketAndSyncedRemoteTitle(t *tes
 	}
 	if len(overview.Tickets) != 1 || overview.Tickets[0].TicketTitle != "Renamed in Zammad" {
 		t.Fatalf("synchronized Zammad title was not persisted into the overview: %#v", overview.Tickets)
+	}
+
+	closedStates := []int{2}
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{
+		ClosedStateIDs: &closedStates,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	overview, err = f.service.WorkspaceOverview(f.workspace1, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(overview.Tickets) != 1 || !overview.Tickets[0].Closed {
+		t.Fatalf("overview ticket ignored configured closed-state IDs: %#v", overview.Tickets)
 	}
 }
 
