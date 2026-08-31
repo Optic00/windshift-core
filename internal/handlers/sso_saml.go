@@ -370,12 +370,12 @@ func (h *SSOHandler) samlAssertionToClaims(info *sso.SAMLAssertionInfo, provider
 	}
 
 	// SAML lacks a standard verified-email claim. If the IdP asserts the mapped
-	// attribute, honour it; otherwise provider trust decides whether the
+	// attribute, honor it; otherwise provider trust decides whether the
 	// asserted email can auto-link an existing account.
 	claims.EmailVerifiedProvided = true
 	if attrMap.EmailVerified != "" {
 		if v := info.GetAttribute(attrMap.EmailVerified); v != "" {
-			// Any value that isn't a recognisable "true" means not verified.
+			// Any value that isn't a recognizable "true" means not verified.
 			if verified, err := strconv.ParseBool(strings.TrimSpace(v)); err == nil {
 				claims.EmailVerified = verified
 			}
