@@ -89,6 +89,110 @@ func TestZammadCorrelationKeyResolvesCurrentItem(t *testing.T) {
 	}
 }
 
+func TestZammadItemTicketLinksIncludeRemoteTitleAndConfiguredClosedState(t *testing.T) {
+	f := newZammadLeaseFixture(t)
+	f.makeComplete(t)
+	if _, err := f.db.ExecWrite(`UPDATE zammad_connections
+		SET applies_to_all_workspaces = true, closed_state_ids = '[4]'
+		WHERE provider_id = 'zammad-test'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecWrite(`UPDATE item_integration_links SET title = 'VPN access unavailable'
+		WHERE id = 'zammad-link-external'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecWrite(`UPDATE zammad_ticket_links
+		SET last_status_id = 4, last_status_name = 'closed'
+		WHERE id = ?`, f.linkID); err != nil {
+		t.Fatal(err)
+	}
+
+	links, err := f.repo.GetTicketLinksForItem(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(links) != 1 || links[0].TicketTitle != "VPN access unavailable" || !links[0].Closed {
+		t.Fatalf("item ticket projection is incomplete: %#v", links)
+	}
+	response := links[0].ItemResponse()
+	if response.TicketTitle != "VPN access unavailable" || !response.Closed {
+		t.Fatalf("item ticket response lost display metadata: %#v", response)
+	}
+}
+
+func TestZammadOverviewTicketsAreCurrentOrderedAndWorkspaceScoped(t *testing.T) {
+	f := newZammadLeaseFixture(t)
+	f.makeComplete(t)
+	if _, err := f.db.ExecWrite(`UPDATE zammad_connections SET applies_to_all_workspaces = true WHERE provider_id = 'zammad-test'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecWrite(`UPDATE item_integration_links SET title = 'Persisted remote title'
+		WHERE id = 'zammad-link-external'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecWrite(`UPDATE zammad_ticket_links SET
+		last_status_id = 2, last_status_name = 'open', group_id = 7, group_name = 'Support',
+		owner_id = 9, owner_name = 'Ada Agent', last_synced_at = '2026-08-30 10:00:00'
+		WHERE id = ?`, f.linkID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecWrite(`INSERT INTO items
+		(id, workspace_id, workspace_item_number, title, description, frac_index, status_id, creator_id, last_active_at)
+		SELECT 2, 1, 2, 'Newer item', '', 'a1', status_id, 1, CURRENT_TIMESTAMP FROM items WHERE id = 1`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecWrite(`INSERT INTO item_integration_links
+		(id, item_id, integration_provider_id, external_id, external_url, title, link_type, linked_by)
+		VALUES ('overview-newer-external', '2', 'zammad-test', '902', 'https://zammad.example.test/#ticket/zoom/902', '', 'ticket', '1')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecWrite(`INSERT INTO zammad_ticket_links
+		(id, item_id, provider_id, item_integration_link_id, ticket_id, ticket_number, ticket_url,
+		 group_id, group_name, owner_id, owner_name, correlation_key, sync_state,
+		 last_status_id, last_status_name, last_synced_at, created_by)
+		VALUES ('overview-newer', 2, 'zammad-test', 'overview-newer-external', 902, '902',
+		 'https://zammad.example.test/#ticket/zoom/902', 8, 'Escalations', 1, 'Unassigned',
+		 'ZRT-2', ?, 3, 'pending', '2026-08-31 10:00:00', 1)`, models.ZammadSyncLinked); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecWrite(`INSERT INTO workspaces (id, name, key) VALUES (2, 'Other workspace', 'OTH')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecWrite(`INSERT INTO items
+		(id, workspace_id, workspace_item_number, title, description, frac_index, status_id, creator_id, last_active_at)
+		SELECT 3, 2, 1, 'Other item', '', 'a2', status_id, 1, CURRENT_TIMESTAMP FROM items WHERE id = 1`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecWrite(`INSERT INTO item_integration_links
+		(id, item_id, integration_provider_id, external_id, external_url, title, link_type, linked_by)
+		VALUES ('overview-other-external', '3', 'zammad-test', '903', 'https://zammad.example.test/#ticket/zoom/903', 'Other title', 'ticket', '1')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecWrite(`INSERT INTO zammad_ticket_links
+		(id, item_id, provider_id, item_integration_link_id, ticket_id, ticket_number, correlation_key, sync_state, created_by)
+		VALUES ('overview-other', 3, 'zammad-test', 'overview-other-external', 903, '903', 'OTH-1', ?, 1)`, models.ZammadSyncLinked); err != nil {
+		t.Fatal(err)
+	}
+
+	tickets, err := f.repo.ListOverviewTicketsForWorkspace(1, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tickets) != 2 {
+		t.Fatalf("overview tickets crossed workspace scope or omitted a complete link: %#v", tickets)
+	}
+	if tickets[0].ID != "overview-newer" || tickets[0].ItemID != 2 || tickets[0].ItemKey != "ZRT-2" || tickets[0].TicketTitle != "Zammad #902" ||
+		tickets[0].Status.ID != 3 || tickets[0].Status.Name != "pending" ||
+		tickets[0].Group.ID != 8 || tickets[0].Group.Name != "Escalations" ||
+		tickets[0].Owner.ID != 1 || tickets[0].Owner.Name != "Unassigned" {
+		t.Fatalf("newest overview ticket projection is incomplete: %#v", tickets[0])
+	}
+	if tickets[1].ItemID != 1 || tickets[1].TicketTitle != "Persisted remote title" ||
+		tickets[1].TicketNumber != "901" || tickets[1].Owner.Name != "Ada Agent" {
+		t.Fatalf("persisted remote title or current snapshot was lost: %#v", tickets[1])
+	}
+}
+
 func TestZammadSyncLeaseOwnerTakeoverProtectsSnapshotReleaseAndDelete(t *testing.T) {
 	f := newZammadLeaseFixture(t)
 	f.makeComplete(t)
@@ -106,7 +210,7 @@ func TestZammadSyncLeaseOwnerTakeoverProtectsSnapshotReleaseAndDelete(t *testing
 	if err := f.repo.ReleaseSyncClaim(f.linkID, "owner-a"); !errors.Is(err, ErrConcurrentUpdate) {
 		t.Fatalf("owner A must not release owner B lease: %v", err)
 	}
-	if err := f.repo.UpdateTicketLinkSync(f.linkID, "owner-a", 4, "closed", 7, "Support", 0, "", "", now, true, true); !errors.Is(err, ErrConcurrentUpdate) {
+	if err := f.repo.UpdateTicketLinkSync(f.linkID, "owner-a", 4, "closed", 7, "Support", 0, "", "", "", now, true, true); !errors.Is(err, ErrConcurrentUpdate) {
 		t.Fatalf("owner A must not persist a snapshot after takeover: %v", err)
 	}
 	if err := f.repo.DeleteTicketLinkClaimed(f.linkID, "owner-a"); !errors.Is(err, ErrConcurrentUpdate) {
@@ -154,7 +258,7 @@ func TestZammadTicketCompletionRequiresCurrentLeaseOwner(t *testing.T) {
 		t.Fatalf("take over ticket creation lease as owner B: claimed=%v err=%v", claimed, err)
 	}
 
-	if err := f.repo.CompleteTicketCreation(f.linkID, "owner-a", 902, "902", "https://zammad.example.test/#ticket/zoom/902", 2, "open", 7, "Support", 0, "", 1); !errors.Is(err, ErrConcurrentUpdate) {
+	if err := f.repo.CompleteTicketCreation(f.linkID, "owner-a", 902, "902", "Synthetic ticket", "https://zammad.example.test/#ticket/zoom/902", 2, "open", 7, "Support", 0, "", 1); !errors.Is(err, ErrConcurrentUpdate) {
 		t.Fatalf("stale owner must not complete ticket creation: %v", err)
 	}
 	var genericCount int
@@ -165,7 +269,7 @@ func TestZammadTicketCompletionRequiresCurrentLeaseOwner(t *testing.T) {
 		t.Fatalf("stale owner created generic item link: count=%d", genericCount)
 	}
 
-	if err := f.repo.CompleteTicketCreation(f.linkID, "owner-b", 902, "902", "https://zammad.example.test/#ticket/zoom/902", 2, "open", 7, "Support", 0, "", 1); err != nil {
+	if err := f.repo.CompleteTicketCreation(f.linkID, "owner-b", 902, "902", "Synthetic ticket", "https://zammad.example.test/#ticket/zoom/902", 2, "open", 7, "Support", 0, "", 1); err != nil {
 		t.Fatalf("current owner completes ticket creation: %v", err)
 	}
 	var ticketID int
@@ -193,10 +297,10 @@ func TestZammadExistingTicketCompletionRequiresCurrentLeaseOwner(t *testing.T) {
 		TicketID: 903, TicketNumber: "903", TicketURL: "https://zammad.example.test/#ticket/zoom/903",
 		GroupID: 7, GroupName: "Support", LastStatusID: 2, LastStatusName: "open",
 	}
-	if err := f.repo.CompleteExistingTicketLink(f.linkID, "owner-a", f.linkID+"-external", ticket, 1); !errors.Is(err, ErrConcurrentUpdate) {
+	if err := f.repo.CompleteExistingTicketLink(f.linkID, "owner-a", f.linkID+"-external", ticket, "Synthetic ticket", 1); !errors.Is(err, ErrConcurrentUpdate) {
 		t.Fatalf("stale owner must not complete existing ticket link: %v", err)
 	}
-	if err := f.repo.CompleteExistingTicketLink(f.linkID, "owner-b", f.linkID+"-external", ticket, 1); err != nil {
+	if err := f.repo.CompleteExistingTicketLink(f.linkID, "owner-b", f.linkID+"-external", ticket, "Synthetic ticket", 1); err != nil {
 		t.Fatalf("current owner completes existing ticket link: %v", err)
 	}
 }
@@ -216,7 +320,7 @@ func TestZammadExistingTicketCompletionReusesPreexistingGenericLinkID(t *testing
 		TicketID: 903, TicketNumber: "903", TicketURL: "https://zammad.example.test/#ticket/zoom/903",
 		GroupID: 7, GroupName: "Support", LastStatusID: 2, LastStatusName: "open",
 	}
-	if err := f.repo.CompleteExistingTicketLink(f.linkID, "owner", f.linkID+"-external", ticket, 1); err != nil {
+	if err := f.repo.CompleteExistingTicketLink(f.linkID, "owner", f.linkID+"-external", ticket, "Synthetic ticket", 1); err != nil {
 		t.Fatalf("complete against preexisting generic link: %v", err)
 	}
 	var genericID string

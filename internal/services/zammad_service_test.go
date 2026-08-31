@@ -78,7 +78,7 @@ func (f *fakeZammadTransport) Do(_ context.Context, method, targetURL string, bo
 		}
 		f.ticket = map[string]any{
 			"id": 901, "number": "420901", "group_id": createGroupID,
-			"state_id": 2, "state": "open",
+			"title": payload["title"], "state_id": 2, "state": "open",
 			"windshift_item_key": payload["windshift_item_key"],
 		}
 		if f.postErrorAfterCreate != nil {
@@ -309,15 +309,19 @@ func TestZammadCreateTicketIsIdempotentAndPersistsGenericLink(t *testing.T) {
 		t.Fatal(err)
 	}
 	var count int
-	if err := f.db.QueryRow("SELECT COUNT(*) FROM item_integration_links WHERE id = ? AND external_id = ?", genericID, strconv.Itoa(first.TicketID)).Scan(&count); err != nil || count != 1 {
+	var title string
+	if err := f.db.QueryRow("SELECT COUNT(*), MAX(title) FROM item_integration_links WHERE id = ? AND external_id = ?", genericID, strconv.Itoa(first.TicketID)).Scan(&count, &title); err != nil || count != 1 {
 		t.Fatalf("generic link was not persisted: count=%d err=%v", count, err)
+	}
+	if title != "[PRI-49] Synthetic ticket source" {
+		t.Fatalf("generic link did not retain the Zammad ticket title: %q", title)
 	}
 }
 
 func TestZammadLinkExistingTicketPinsExactTicketAndIsIdempotent(t *testing.T) {
 	f := newZammadServiceFixture(t, nil)
 	f.transport.ticket = map[string]any{
-		"id": 711, "number": "420711", "group_id": 7, "group": "Support",
+		"id": 711, "number": "420711", "title": "Existing VPN request", "group_id": 7, "group": "Support",
 		"state_id": 2, "state": "open", "owner_id": 99,
 	}
 	f.transport.users = []map[string]any{{"id": 99, "active": true, "firstname": "Grace", "lastname": "Hopper", "group_ids": map[string][]string{"7": {"full"}}}}
@@ -1130,7 +1134,7 @@ func TestZammadSyncPersistsRemoteGroupAndOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.transport.getTicket = map[string]any{"id": 901, "number": "420901", "group_id": 8, "state_id": 3, "state": "pending", "owner_id": 99}
+	f.transport.getTicket = map[string]any{"id": 901, "number": "420901", "title": "Escalated VPN problem", "group_id": 8, "state_id": 3, "state": "pending", "owner_id": 99}
 	f.transport.groups = []map[string]any{{"id": 7, "name": "Support", "active": true}, {"id": 8, "name": "Escalations", "active": true}}
 	f.transport.users = []map[string]any{{"id": 99, "active": true, "firstname": "Grace", "lastname": "Hopper", "group_ids": map[string][]string{"8": {"full"}}}}
 	allowedGroups := []int{7, 8}
@@ -1143,6 +1147,156 @@ func TestZammadSyncPersistsRemoteGroupAndOwner(t *testing.T) {
 	}
 	if synced.GroupID != 8 || synced.GroupName != "Escalations" || synced.OwnerID != 99 || synced.OwnerName != "Grace Hopper" || synced.LastSyncedAt == nil {
 		t.Fatalf("sync did not retain remote group/owner state: %#v", synced)
+	}
+	history, err := f.service.TicketHistoryForItem(f.item1, 10)
+	if err != nil || len(history) != 3 {
+		t.Fatalf("expected one event per observed status/group/owner change: history=%#v err=%v", history, err)
+	}
+	for _, change := range history {
+		if change.TicketTitle != "Escalated VPN problem" || change.TicketURL != "https://zammad.example.test/#ticket/zoom/901" ||
+			change.CurrentGroup.ID != 8 || change.CurrentGroup.Name != "Escalations" ||
+			change.CurrentOwner.ID != 99 || change.CurrentOwner.Name != "Grace Hopper" {
+			t.Fatalf("observed change omitted current ticket context: %#v", change)
+		}
+	}
+	if _, err := f.service.SyncTicketLink(context.Background(), link.ID); err != nil {
+		t.Fatal(err)
+	}
+	history, err = f.service.TicketHistoryForItem(f.item1, 10)
+	if err != nil || len(history) != 3 {
+		t.Fatalf("identical snapshot duplicated observed changes: history=%#v err=%v", history, err)
+	}
+	if _, err := f.db.ExecWrite(`UPDATE items SET workspace_id = ? WHERE id = ?`, f.workspace2, f.item1); err != nil {
+		t.Fatal(err)
+	}
+	history, err = f.service.TicketHistoryForItem(f.item1, 10)
+	if err != nil || len(history) != 0 {
+		t.Fatalf("history remained visible after the item moved outside the connection scope: history=%#v err=%v", history, err)
+	}
+	overview, err := f.service.WorkspaceOverview(f.workspace2, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overview.Total != 0 || len(overview.RecentChanges) != 0 {
+		t.Fatalf("workspace overview disclosed a connection that is unavailable there: %#v", overview)
+	}
+}
+
+func TestZammadWorkspaceOverviewCountsOnlyCompleteTicketLinks(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	if _, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.service.CreateTicket(context.Background(), f.item2, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID}); err == nil {
+		t.Fatal("out-of-scope ticket creation unexpectedly succeeded")
+	}
+	overview, err := f.service.WorkspaceOverview(f.workspace1, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overview.Total != 1 || overview.Active != 1 || overview.Closed != 0 || overview.UnknownStatus != 0 || overview.Unassigned != 1 {
+		t.Fatalf("unexpected overview for complete link: %#v", overview)
+	}
+	if len(overview.ByStatus) != 1 || overview.ByStatus[0].Count != 1 {
+		t.Fatalf("overview omitted linked ticket status: %#v", overview.ByStatus)
+	}
+}
+
+func TestZammadWorkspaceOverviewIncludesCurrentTicketAndSyncedRemoteTitle(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	link, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	overview, err := f.service.WorkspaceOverview(f.workspace1, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(overview.Tickets) != 1 {
+		t.Fatalf("newly linked ticket missing from overview: %#v", overview.Tickets)
+	}
+	ticket := overview.Tickets[0]
+	if ticket.ID != link.ID || ticket.ItemID != f.item1 || ticket.ItemKey != "PRI-49" || ticket.TicketNumber != "420901" ||
+		ticket.TicketTitle != "[PRI-49] Synthetic ticket source" ||
+		ticket.TicketURL != "https://zammad.example.test/#ticket/zoom/901" ||
+		ticket.Closed ||
+		ticket.Status.ID != 2 || ticket.Status.Name != "open" ||
+		ticket.Group.ID != 7 || ticket.Group.Name != "Support" {
+		t.Fatalf("newly linked ticket snapshot is incomplete: %#v", ticket)
+	}
+
+	f.transport.getTicket = map[string]any{
+		"id": 901, "number": "420901", "title": "Renamed in Zammad",
+		"group_id": 7, "group": "Support", "state_id": 2, "state": "open",
+	}
+	if _, err := f.service.SyncTicketLink(context.Background(), link.ID); err != nil {
+		t.Fatal(err)
+	}
+	overview, err = f.service.WorkspaceOverview(f.workspace1, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(overview.Tickets) != 1 || overview.Tickets[0].TicketTitle != "Renamed in Zammad" {
+		t.Fatalf("synchronized Zammad title was not persisted into the overview: %#v", overview.Tickets)
+	}
+
+	closedStates := []int{2}
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{
+		ClosedStateIDs: &closedStates,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	overview, err = f.service.WorkspaceOverview(f.workspace1, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(overview.Tickets) != 1 || !overview.Tickets[0].Closed {
+		t.Fatalf("overview ticket ignored configured closed-state IDs: %#v", overview.Tickets)
+	}
+}
+
+func TestZammadWorkspaceOverviewSeparatesSameStatusAcrossConnections(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	if _, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := f.service.CreateConnection(models.CreateZammadConnectionRequest{
+		Slug: "second-helpdesk", Name: "Second helpdesk", BaseURL: "https://second-zammad.example.test",
+		APIToken: "synthetic-zammad-token", DefaultGroupID: 7, DefaultGroupName: "Support",
+		DefaultCustomer: "robot@example.test", WorkspaceIDs: []int{f.workspace1},
+	}, f.actorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecWrite(`INSERT INTO item_integration_links
+		(id, item_id, integration_provider_id, external_id, external_url, title, link_type, linked_by)
+		VALUES (?, ?, ?, ?, ?, ?, 'ticket', ?)`, "second-link-external", strconv.Itoa(f.item1), second.ProviderID, "902", "https://second-zammad.example.test/#ticket/zoom/902", "Zammad #902", strconv.Itoa(f.actorID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecWrite(`INSERT INTO zammad_ticket_links
+		(id, item_id, provider_id, item_integration_link_id, ticket_id, ticket_number, group_id, group_name, correlation_key, sync_state, last_status_id, last_status_name, created_by)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, "second-link", f.item1, second.ProviderID, "second-link-external", 902, "902", 7, "Support", "windshift:second-helpdesk:PRI-49", models.ZammadSyncLinked, 2, "open", f.actorID); err != nil {
+		t.Fatal(err)
+	}
+	overview, err := f.service.WorkspaceOverview(f.workspace1, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overview.Total != 2 || len(overview.ByStatus) != 2 {
+		t.Fatalf("same status IDs from distinct connections were merged: %#v", overview)
+	}
+	seenConnections := map[string]bool{}
+	for _, bucket := range overview.ByStatus {
+		if bucket.ID != 2 || bucket.Count != 1 {
+			t.Fatalf("unexpected bucket: %#v", bucket)
+		}
+		if bucket.ConnectionName == "" {
+			t.Fatalf("bucket response omitted the readable connection name: %#v", bucket)
+		}
+		seenConnections[bucket.ConnectionID] = true
+	}
+	if !seenConnections[f.connection.ProviderID] || !seenConnections[second.ProviderID] {
+		t.Fatalf("bucket response omitted connection identity: %#v", overview.ByStatus)
 	}
 }
 
@@ -1203,7 +1357,7 @@ func TestZammadDueLinksRespectRetryDelayAndOAuthReauthorization(t *testing.T) {
 	}
 	if err := f.service.repo.UpdateTicketLinkSync(link.ID, syncOwner, link.LastStatusID, link.LastStatusName,
 		link.GroupID, link.GroupName, link.OwnerID, link.OwnerName,
-		"synthetic safe failure", attemptedAt, false, false); err != nil {
+		"", "synthetic safe failure", attemptedAt, false, false); err != nil {
 		t.Fatal(err)
 	}
 	due, err := f.service.repo.ListDueTicketLinks(time.Now().Add(-2*time.Minute), 10)

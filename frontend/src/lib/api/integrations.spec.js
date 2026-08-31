@@ -76,6 +76,36 @@ describe('Zammad ticket-link API', () => {
     );
   });
 
+  it('loads a compact, observed Zammad timeline for one item', async () => {
+    const history = { events: [{ id: 'event-id', field: 'status' }] };
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(history), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(zammadTickets.history(99, { limit: 6 })).resolves.toEqual(history);
+
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/items/99/zammad-history?limit=6');
+  });
+
+  it('loads the workspace-wide Zammad support overview', async () => {
+    const overview = { total: 3, recent_changes: [] };
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(overview), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(zammadTickets.workspaceOverview(23, { limit: 5 })).resolves.toEqual(overview);
+
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/workspaces/23/zammad-overview?limit=5');
+  });
+
   it('loads assignable owners for the selected group', async () => {
     const owners = [
       { id: 1, name: 'Not assigned' },

@@ -16,7 +16,7 @@ func TestZammadSchemaInitializesOnSQLite(t *testing.T) {
 		t.Fatalf("initialize SQLite schema: %v", err)
 	}
 
-	for _, table := range []string{"zammad_connections", "zammad_connection_workspaces", "zammad_ticket_links", "zammad_oauth_tokens", "zammad_oauth_state"} {
+	for _, table := range []string{"zammad_connections", "zammad_connection_workspaces", "zammad_ticket_links", "zammad_ticket_changes", "zammad_oauth_tokens", "zammad_oauth_state"} {
 		var count int
 		if err := db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&count); err != nil {
 			t.Fatal(err)
@@ -26,7 +26,7 @@ func TestZammadSchemaInitializesOnSQLite(t *testing.T) {
 		}
 	}
 
-	for _, version := range []string{"20260829_zammad_integration", "20260830_zammad_oauth_connections", "20260830_zammad_oauth_generation", "20260830_zammad_ticket_link_metadata", "20260830_zammad_ticket_link_completion_postgres", "20260831_zammad_connection_config_revision", "20260831_zammad_ticket_sync_lock_owner", "20260831_zammad_ticket_link_item_restrict"} {
+	for _, version := range []string{"20260829_zammad_integration", "20260830_zammad_oauth_connections", "20260830_zammad_oauth_generation", "20260830_zammad_ticket_link_metadata", "20260830_zammad_ticket_link_completion_postgres", "20260831_zammad_connection_config_revision", "20260831_zammad_ticket_sync_lock_owner", "20260831_zammad_ticket_link_item_restrict", "20260831_zammad_ticket_change_history"} {
 		var migrationCount int
 		if err := db.QueryRow("SELECT COUNT(*) FROM schema_migrations WHERE version=?", version).Scan(&migrationCount); err != nil {
 			t.Fatal(err)
@@ -208,6 +208,27 @@ func TestZammadTicketSyncLockOwnerMigrationBackendParity(t *testing.T) {
 	}
 	if strings.Contains(zammadSchemaMigrationSQLite, "sync_lock_owner TEXT") || strings.Contains(zammadSchemaMigrationPostgres, "sync_lock_owner TEXT") {
 		t.Fatal("historical Zammad migration must remain checksum-stable; sync_lock_owner belongs only in the additive migration")
+	}
+}
+
+func TestZammadTicketChangeHistoryMigrationBackendParity(t *testing.T) {
+	var migration *Migration
+	for i := range Catalog {
+		if Catalog[i].Version == "20260831_zammad_ticket_change_history" {
+			migration = &Catalog[i]
+			break
+		}
+	}
+	if migration == nil {
+		t.Fatal("Zammad ticket change history migration is missing")
+	}
+	for _, body := range []string{migration.CheckSQLite, migration.CheckPostgres, migration.SQLite, migration.Postgres} {
+		if !strings.Contains(body, "zammad_ticket_changes") {
+			t.Fatal("ticket change history migration must cover both backends")
+		}
+	}
+	if strings.Contains(zammadSchemaMigrationSQLite, "zammad_ticket_changes") || strings.Contains(zammadSchemaMigrationPostgres, "zammad_ticket_changes") {
+		t.Fatal("historical Zammad migrations must remain checksum-stable")
 	}
 }
 

@@ -28,3 +28,21 @@ export function isCurrentZammadMetadataRequest(
     dialogMode === 'create'
   );
 }
+
+export function isCurrentZammadTimelineRequest(
+  requestVersion,
+  currentVersion,
+  requestItemId,
+  itemId,
+  requestWorkspaceId,
+  workspaceId
+) {
+  return isCurrentZammadPanelContext(
+    requestVersion,
+    currentVersion,
+    requestItemId,
+    itemId,
+    requestWorkspaceId,
+    workspaceId
+  );
+}
