@@ -45,6 +45,13 @@ type ZammadOAuthCallbackResult struct {
 	OAuthGeneration int64
 }
 
+type ZammadSyncSummary struct {
+	Selected  int `json:"selected"`
+	Succeeded int `json:"succeeded"`
+	Failed    int `json:"failed"`
+	Skipped   int `json:"skipped"`
+}
+
 // zammadOAuthCredential is encrypted as the secret of the provider-managed
 // action credential. It is deliberately not a value that can be sent as an
 // Authorization header, including while OAuth is pending.
@@ -1543,13 +1550,20 @@ func (s *ZammadService) syncClaimedTicketLink(ctx context.Context, link *models.
 	if err := s.persistTicketSnapshot(ctx, link, client, ticket, metadata, syncOwner); err != nil {
 		return nil, err
 	}
-	return s.repo.GetTicketLink(link.ID)
+	updated, err := s.repo.GetTicketLink(link.ID)
+	if err != nil {
+		return nil, err
+	}
+	PublishItemChange(updated.ItemID, ItemChangeZammad)
+	return updated, nil
 }
 
 func (s *ZammadService) recordZammadSyncError(link *models.ZammadTicketLink, syncOwner string, err error) {
-	_ = s.repo.UpdateTicketLinkSync(link.ID, syncOwner, link.LastStatusID, link.LastStatusName,
+	if updateErr := s.repo.UpdateTicketLinkSync(link.ID, syncOwner, link.LastStatusID, link.LastStatusName,
 		link.GroupID, link.GroupName, link.OwnerID, link.OwnerName,
-		RedactString(err.Error()), time.Now(), false, false)
+		RedactString(err.Error()), time.Now(), false, false); updateErr == nil {
+		PublishItemChange(link.ItemID, ItemChangeZammad)
+	}
 }
 
 func (s *ZammadService) persistTicketSnapshot(ctx context.Context, link *models.ZammadTicketLink, client *zammad.Client, ticket *zammad.Ticket, metadata *models.ZammadConnectionMetadata, syncOwner string) error {
@@ -1610,9 +1624,12 @@ func (s *ZammadService) persistTicketSnapshot(ctx context.Context, link *models.
 			completionCommitted, completionErr := s.completeWindshiftItem(ctx, link, connection)
 			if completionErr != nil {
 				safeError := RedactString(completionErr.Error())
-				_ = s.updateTicketLinkSyncWithCurrentGroupPolicy(link.ProviderID, link.ID, syncOwner, ticket.StateID, statusName,
+				updateErr := s.updateTicketLinkSyncWithCurrentGroupPolicy(link.ProviderID, link.ID, syncOwner, ticket.StateID, statusName,
 					ticket.GroupID, groupName, ticket.OwnerID, ownerName,
 					safeError, time.Now(), completionCommitted, completionCommitted)
+				if updateErr == nil {
+					PublishItemChange(link.ItemID, ItemChangeZammad)
+				}
 				return completionErr
 			}
 			completionApplied = true
@@ -1847,7 +1864,10 @@ func (s *ZammadService) SyncDue(ctx context.Context, limit int) error {
 	if limit <= 0 {
 		limit = 50
 	}
-	links, err := s.repo.ListDueTicketLinks(time.Now().Add(-2*time.Minute), limit)
+	// The scheduler interval controls the polling cadence. Applying the same
+	// age threshold here caused a freshly synchronized link to miss the next
+	// tick and made the effective cadence roughly twice as long.
+	links, err := s.repo.ListDueTicketLinks(time.Now(), limit)
 	if err != nil {
 		return err
 	}
@@ -1866,6 +1886,39 @@ func (s *ZammadService) SyncDue(ctx context.Context, limit int) error {
 		}
 	}
 	return firstError
+}
+
+// SyncAllTicketLinks performs one explicit, system-wide refresh of every
+// complete link covered by an enabled, authorized connection. Per-link
+// failures are summarized so one broken upstream ticket does not prevent the
+// remaining links from being refreshed.
+func (s *ZammadService) SyncAllTicketLinks(ctx context.Context) (ZammadSyncSummary, error) {
+	links, err := s.repo.ListSyncableTicketLinks()
+	if err != nil {
+		return ZammadSyncSummary{}, err
+	}
+	summary := ZammadSyncSummary{Selected: len(links)}
+	for _, link := range links {
+		if err := ctx.Err(); err != nil {
+			return summary, err
+		}
+		syncOwner := uuid.New().String()
+		claimed, claimErr := s.repo.ClaimSync(link.ID, syncOwner, time.Now().Add(zammadSyncLeaseDuration))
+		if claimErr != nil {
+			summary.Failed++
+			continue
+		}
+		if !claimed {
+			summary.Skipped++
+			continue
+		}
+		if _, syncErr := s.syncClaimedTicketLink(ctx, link, syncOwner); syncErr != nil {
+			summary.Failed++
+			continue
+		}
+		summary.Succeeded++
+	}
+	return summary, nil
 }
 
 func (s *ZammadService) completeWindshiftItem(ctx context.Context, link *models.ZammadTicketLink, connection *models.ZammadConnection) (bool, error) {

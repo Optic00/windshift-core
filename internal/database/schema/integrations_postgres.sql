@@ -89,7 +89,6 @@ CREATE TABLE IF NOT EXISTS todoist_sync_config (
 	sync_token TEXT DEFAULT '*',
 	last_synced_at TIMESTAMPTZ,
 	last_error TEXT DEFAULT '',
-	completion_applied BOOLEAN NOT NULL DEFAULT false,
 	sync_lock_until TIMESTAMPTZ,
 	created_at TIMESTAMPTZ DEFAULT NOW(),
 	updated_at TIMESTAMPTZ DEFAULT NOW(),

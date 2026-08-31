@@ -1,4 +1,5 @@
 <script>
+  import { useEventListener } from 'runed';
   import {
     TicketCheck,
     Plus,
@@ -80,6 +81,12 @@
     const currentVersion = ++contextVersion;
     resetContext();
     void load(currentItemId, currentWorkspaceId, currentVersion);
+  });
+
+  useEventListener(() => window, 'item-zammad-links-changed', (/** @type {CustomEvent<{itemId?: number|string}>} */ event) => {
+    const id = event?.detail?.itemId;
+    if (id == null || String(id) !== String(itemId)) return;
+    void load(itemId, workspaceId, contextVersion);
   });
 
   function isCurrentContext(version, currentItemId = itemId, currentWorkspaceId = workspaceId) {

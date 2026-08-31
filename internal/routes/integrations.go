@@ -51,6 +51,7 @@ func RegisterIntegrationRoutes(deps *Deps) {
 	api.HandleH("DELETE /admin/zammad-connections/{id}", admin(http.HandlerFunc(deps.Integrations.Zammad.DeleteConnection)))
 	api.HandleH("POST /admin/zammad-connections/{id}/test", admin(http.HandlerFunc(deps.Integrations.Zammad.TestConnection)))
 	api.HandleH("POST /admin/zammad-connections/{id}/oauth/start", admin(http.HandlerFunc(deps.Integrations.Zammad.StartOAuth)))
+	api.HandleH("POST /admin/zammad-ticket-links/refresh", admin(http.HandlerFunc(deps.Integrations.Zammad.RefreshAllTickets)))
 	api.Handle("GET /integrations/zammad/oauth/callback", http.HandlerFunc(deps.Integrations.Zammad.OAuthCallback))
 	api.HandleH("POST /admin/zammad-ticket-links/{linkId}/retry-create", admin(http.HandlerFunc(deps.Integrations.Zammad.RetryUncertainTicketCreation)))
 	api.HandleH("GET /workspaces/{workspaceId}/zammad-connections", auth(http.HandlerFunc(deps.Integrations.Zammad.ListWorkspaceConnections)))

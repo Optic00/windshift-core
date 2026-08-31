@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { api } from '../api.js';
-  import { Plus, Edit2, Trash2, Loader2, PlugZap } from '@lucide/svelte';
+  import { Plus, Edit2, Trash2, Loader2, PlugZap, RefreshCw } from '@lucide/svelte';
   import Button from '../components/Button.svelte';
   import Modal from '../dialogs/Modal.svelte';
   import ModalHeader from '../dialogs/ModalHeader.svelte';
@@ -25,6 +25,7 @@
   let saving = $state(false);
   let testingId = $state(null);
   let authorizingId = $state(null);
+  let refreshingAll = $state(false);
   let error = $state('');
   let showModal = $state(false);
   let editing = $state(null);
@@ -177,6 +178,20 @@
     }
   }
 
+  async function refreshAllTickets() {
+    refreshingAll = true;
+    try {
+      const result = await api.zammadConnections.refreshAllTickets();
+      if (result.started) successToast(t('zammad.refreshAllTicketsStarted'));
+      else warningToast(t('zammad.refreshAllTicketsAlreadyRunning'));
+    } catch (err) {
+      console.error('Failed to refresh all Zammad tickets:', err);
+      errorToast(t('zammad.refreshAllTicketsFailed'));
+    } finally {
+      refreshingAll = false;
+    }
+  }
+
   async function remove(connection) {
     const accepted = await confirm({
       title: t('zammad.deleteConnection'),
@@ -259,10 +274,16 @@
 <div>
   <SectionHeader title={t('zammad.connections')} subtitle={t('zammad.connectionsDescription')} class="mb-6">
     {#snippet actions()}
-      <!-- shortcut-guard-exempt: this secondary integration tab does not own a global add shortcut -->
-      <Button variant="primary" size="small" icon={Plus} onclick={openCreate}>
-        {t('zammad.addConnection')}
-      </Button>
+      <div class="flex items-center gap-2">
+        <Button variant="ghost" size="small" onclick={refreshAllTickets} disabled={refreshingAll || connections.length === 0}>
+          {#if refreshingAll}<Loader2 class="w-4 h-4 animate-spin" />{:else}<RefreshCw class="w-4 h-4" />{/if}
+          {t('zammad.refreshAllTickets')}
+        </Button>
+        <!-- shortcut-guard-exempt: this secondary integration tab does not own a global add shortcut -->
+        <Button variant="primary" size="small" icon={Plus} onclick={openCreate}>
+          {t('zammad.addConnection')}
+        </Button>
+      </div>
     {/snippet}
   </SectionHeader>
 

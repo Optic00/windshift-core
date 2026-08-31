@@ -23,6 +23,7 @@ type ZammadHandler struct {
 	permissionService *services.PermissionService
 	auditor           *logger.Auditor
 	publicBaseURL     string
+	syncAllTrigger    func() bool
 }
 
 func NewZammadHandler(itemRepo *repository.ItemRepository, service *services.ZammadService, permissionService *services.PermissionService, auditor *logger.Auditor) *ZammadHandler {
@@ -30,6 +31,8 @@ func NewZammadHandler(itemRepo *repository.ItemRepository, service *services.Zam
 }
 
 func (h *ZammadHandler) SetOAuthBaseURL(baseURL string) { h.publicBaseURL = baseURL }
+
+func (h *ZammadHandler) SetSyncAllTrigger(trigger func() bool) { h.syncAllTrigger = trigger }
 
 // StartOAuth is protected by the system-admin route. State binding and the
 // fixed callback URI are enforced in the service, not delegated to clients.
@@ -157,6 +160,18 @@ func (h *ZammadHandler) TestConnection(w http.ResponseWriter, r *http.Request) {
 	}
 	h.audit(r, currentUser(r), logger.ActionZammadConnectionTest, logger.ResourceZammadConnection, r.PathValue("id"), "", map[string]any{"groups": len(metadata.Groups), "states": len(metadata.States)})
 	respondJSONOK(w, map[string]any{"ok": true, "metadata": metadata})
+}
+
+func (h *ZammadHandler) RefreshAllTickets(w http.ResponseWriter, r *http.Request) {
+	if h.syncAllTrigger == nil {
+		respondServiceUnavailable(w, r, "Zammad synchronization is not available")
+		return
+	}
+	started := h.syncAllTrigger()
+	h.audit(r, currentUser(r), logger.ActionZammadTicketRefreshAll, logger.ResourceZammadTicket, "all", "", map[string]any{
+		"started": started,
+	})
+	respondJSON(w, http.StatusAccepted, map[string]bool{"started": started})
 }
 
 func (h *ZammadHandler) RetryUncertainTicketCreation(w http.ResponseWriter, r *http.Request) {

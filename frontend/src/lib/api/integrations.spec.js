@@ -28,6 +28,31 @@ describe('zammadConnections.startOAuth', () => {
   });
 });
 
+describe('zammadConnections.refreshAllTickets', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('starts a system-wide ticket refresh', async () => {
+    const result = { started: true };
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(result), {
+        status: 202,
+        headers: { 'content-type': 'application/json' },
+      })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(zammadConnections.refreshAllTickets()).resolves.toEqual(result);
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toBe('/api/admin/zammad-ticket-links/refresh');
+    expect(options.method).toBe('POST');
+    expect(options.body).toBeUndefined();
+  });
+});
+
 describe('Zammad ticket-link API', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
