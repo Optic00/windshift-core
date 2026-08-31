@@ -1,10 +1,11 @@
 <script>
   import { onMount } from 'svelte';
-  import { AlertTriangle, RefreshCw, TicketCheck } from '@lucide/svelte';
+  import { AlertTriangle, ExternalLink, RefreshCw, TicketCheck } from '@lucide/svelte';
   import { api } from '../api.js';
   import { authStore } from '../stores';
   import { t } from '../stores/i18n.svelte.js';
   import { formatDateTimeLocale, getUserTimezone } from '../utils/dateFormatter.js';
+  import { safeHref } from '../utils/sanitize';
   import {
     getZammadObservedValueLabel,
     getZammadStatusBucketDisplayLabel,
@@ -70,6 +71,12 @@
 
   function statusBucketLabel(status) {
     return getZammadStatusBucketDisplayLabel(status, t);
+  }
+
+  function currentOwnerLabel(owner) {
+    if (owner?.name?.trim()) return owner.name.trim();
+    if (!owner?.id || owner.id <= 1) return t('zammad.unassignedOwner');
+    return valueLabel(owner);
   }
 
   function changeLabel(change) {
@@ -185,15 +192,40 @@
         {:else}
           <ol class="mt-2 space-y-2">
             {#each overview.recent_changes as change (change.id)}
-              <li class="flex items-start gap-2 text-xs">
-                <TicketCheck class="mt-0.5 h-3.5 w-3.5 flex-shrink-0" style="color: var(--ds-text-subtle);" aria-hidden="true" />
-                <div class="min-w-0">
-                  <a class="font-medium hover:underline" href={`/workspaces/${workspaceId}/items/${change.item_id}`} style="color: var(--ds-link);">
-                    {change.item_key}
-                  </a>
-                  <span style="color: var(--ds-text-subtle);"> · {t('zammad.ticketNumber', { number: change.ticket_number })}</span>
-                  <p style="color: var(--ds-text);">{changeLabel(change)}</p>
-                  <time datetime={change.observed_at} style="color: var(--ds-text-subtle);">{formatDateTimeLocale(change.observed_at, timezone)}</time>
+              <li class="rounded-md border px-3 py-2.5 text-xs" style="border-color: var(--ds-border); background-color: var(--ds-background-neutral);">
+                <div class="flex items-start gap-2">
+                  <TicketCheck class="mt-0.5 h-3.5 w-3.5 flex-shrink-0" style="color: var(--ds-text-subtle);" aria-hidden="true" />
+                  <div class="min-w-0 flex-1">
+                    <div class="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+                      <a class="min-w-0 break-words font-medium hover:underline" href={`/workspaces/${workspaceId}/items/${change.item_id}`} style="color: var(--ds-link);">
+                        <span class="mr-1.5 whitespace-nowrap">{change.item_key}</span>
+                        <span style="color: var(--ds-text);">{change.ticket_title || change.item_key}</span>
+                      </a>
+                      {#if change.ticket_url}
+                        <a
+                          href={safeHref(change.ticket_url)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          class="inline-flex flex-shrink-0 items-center gap-1 font-medium hover:underline"
+                          style="color: var(--ds-link);"
+                          title={t('common.openInNewTab')}
+                        >
+                          {t('zammad.ticketNumber', { number: change.ticket_number })}
+                          <ExternalLink class="h-3 w-3" aria-hidden="true" />
+                          <span class="sr-only">({t('common.openInNewTab')})</span>
+                        </a>
+                      {:else}
+                        <span class="flex-shrink-0" style="color: var(--ds-text-subtle);">{t('zammad.ticketNumber', { number: change.ticket_number })}</span>
+                      {/if}
+                    </div>
+                    <p class="mt-1.5" style="color: var(--ds-text);">{changeLabel(change)}</p>
+                    <div class="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5" style="color: var(--ds-text-subtle);">
+                      <span class="min-w-0 break-words">{t('zammad.group')}: <span style="color: var(--ds-text);">{valueLabel(change.current_group)}</span></span>
+                      <span aria-hidden="true">·</span>
+                      <span class="min-w-0 break-words">{t('zammad.owner')}: <span style="color: var(--ds-text);">{currentOwnerLabel(change.current_owner)}</span></span>
+                    </div>
+                    <time class="mt-1 block" datetime={change.observed_at} style="color: var(--ds-text-subtle);">{formatDateTimeLocale(change.observed_at, timezone)}</time>
+                  </div>
                 </div>
               </li>
             {/each}

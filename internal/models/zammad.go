@@ -219,7 +219,11 @@ type ZammadTicketChange struct {
 	LinkID       string                  `json:"link_id"`
 	ItemID       int                     `json:"item_id"`
 	ItemKey      string                  `json:"item_key"`
+	TicketTitle  string                  `json:"ticket_title"`
 	TicketNumber string                  `json:"ticket_number,omitempty"`
+	TicketURL    string                  `json:"ticket_url,omitempty"`
+	CurrentGroup ZammadTicketChangeValue `json:"current_group"`
+	CurrentOwner ZammadTicketChangeValue `json:"current_owner"`
 	Field        string                  `json:"field"`
 	OldValue     ZammadTicketChangeValue `json:"old_value"`
 	NewValue     ZammadTicketChangeValue `json:"new_value"`

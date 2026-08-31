@@ -1142,6 +1142,7 @@ func (s *ZammadService) LinkExistingTicket(ctx context.Context, itemID, actorID 
 		return nil, zammadValidationError("Zammad ticket is already linked through another correlation key")
 	}
 
+	ticketTitle := ticket.Title
 	if remoteCorrelation == "" {
 		if err := s.renewZammadSyncClaim(link.ID, syncOwner); err != nil {
 			return nil, err
@@ -1150,6 +1151,9 @@ func (s *ZammadService) LinkExistingTicket(ctx context.Context, itemID, actorID 
 		if err != nil {
 			_ = s.repo.MarkTicketLinkSetupError(link.ID, syncOwner, RedactString(err.Error()))
 			return nil, err
+		}
+		if ticket.Title == "" {
+			ticket.Title = ticketTitle
 		}
 	}
 	link.TicketID = ticket.ID
@@ -1164,7 +1168,7 @@ func (s *ZammadService) LinkExistingTicket(ctx context.Context, itemID, actorID 
 	if err := s.renewZammadSyncClaim(link.ID, syncOwner); err != nil {
 		return nil, err
 	}
-	if err := s.completeExistingTicketLinkWithCurrentGroupPolicy(link, syncOwner, actorID); err != nil {
+	if err := s.completeExistingTicketLinkWithCurrentGroupPolicy(link, ticket.Title, syncOwner, actorID); err != nil {
 		_ = s.repo.MarkTicketLinkSetupError(link.ID, syncOwner, RedactString(err.Error()))
 		return nil, s.mapZammadSyncClaimError(err)
 	}
@@ -1326,7 +1330,7 @@ func (s *ZammadService) CreateTicket(ctx context.Context, itemID, actorID int, r
 	if err := s.renewZammadSyncClaim(link.ID, syncOwner); err != nil {
 		return nil, err
 	}
-	if err := s.completeTicketCreationWithCurrentGroupPolicy(link.ProviderID, link.ID, syncOwner, ticket.ID, ticket.Number, ticketURL,
+	if err := s.completeTicketCreationWithCurrentGroupPolicy(link.ProviderID, link.ID, syncOwner, ticket.ID, ticket.Number, ticket.Title, ticketURL,
 		ticket.StateID, statusName, ticketGroupID, ticketGroupName, ticket.OwnerID, ticket.OwnerName, actorID); err != nil {
 		// The remote ticket is known to exist. Keep retries search-only until
 		// the durable local association has been completed.
@@ -1620,7 +1624,7 @@ func (s *ZammadService) syncClaimedTicketLink(ctx context.Context, link *models.
 	}
 	if !connection.Enabled {
 		if err := s.repo.UpdateTicketLinkSync(link.ID, syncOwner, link.LastStatusID, link.LastStatusName,
-			link.GroupID, link.GroupName, link.OwnerID, link.OwnerName, "", time.Now(), false, false); err != nil {
+			link.GroupID, link.GroupName, link.OwnerID, link.OwnerName, "", "", time.Now(), false, false); err != nil {
 			return nil, s.mapZammadSyncClaimError(err)
 		}
 		return s.repo.GetTicketLink(link.ID)
@@ -1662,7 +1666,7 @@ func (s *ZammadService) syncClaimedTicketLink(ctx context.Context, link *models.
 func (s *ZammadService) recordZammadSyncError(link *models.ZammadTicketLink, syncOwner string, err error) {
 	if updateErr := s.repo.UpdateTicketLinkSync(link.ID, syncOwner, link.LastStatusID, link.LastStatusName,
 		link.GroupID, link.GroupName, link.OwnerID, link.OwnerName,
-		RedactString(err.Error()), time.Now(), false, false); updateErr == nil {
+		"", RedactString(err.Error()), time.Now(), false, false); updateErr == nil {
 		PublishItemChange(link.ItemID, ItemChangeZammad)
 	}
 }
@@ -1726,7 +1730,7 @@ func (s *ZammadService) persistTicketSnapshot(ctx context.Context, link *models.
 			if completionErr != nil {
 				safeError := RedactString(completionErr.Error())
 				updateErr := s.updateTicketLinkSyncWithCurrentGroupPolicy(link.ProviderID, link.ID, syncOwner, ticket.StateID, statusName,
-					ticket.GroupID, groupName, ticket.OwnerID, ownerName,
+					ticket.GroupID, groupName, ticket.OwnerID, ownerName, ticket.Title,
 					safeError, time.Now(), completionCommitted, completionCommitted)
 				if updateErr == nil {
 					PublishItemChange(link.ItemID, ItemChangeZammad)
@@ -1738,7 +1742,7 @@ func (s *ZammadService) persistTicketSnapshot(ctx context.Context, link *models.
 	}
 	setCompletionApplied := !isClosed || completionApplied
 	err = s.updateTicketLinkSyncWithCurrentGroupPolicy(link.ProviderID, link.ID, syncOwner, ticket.StateID, statusName,
-		ticket.GroupID, groupName, ticket.OwnerID, ownerName,
+		ticket.GroupID, groupName, ticket.OwnerID, ownerName, ticket.Title,
 		"", time.Now(), setCompletionApplied, completionApplied)
 	if errors.Is(err, ErrZammadTicketGroupPolicyChanged) {
 		s.recordZammadSyncError(link, syncOwner, err)
@@ -1746,7 +1750,7 @@ func (s *ZammadService) persistTicketSnapshot(ctx context.Context, link *models.
 	return s.mapZammadSyncClaimError(err)
 }
 
-func (s *ZammadService) updateTicketLinkSyncWithCurrentGroupPolicy(providerID, linkID, syncOwner string, statusID int, statusName string, groupID int, groupName string, ownerID int, ownerName, safeError string, now time.Time, setCompletionApplied, completionApplied bool) error {
+func (s *ZammadService) updateTicketLinkSyncWithCurrentGroupPolicy(providerID, linkID, syncOwner string, statusID int, statusName string, groupID int, groupName string, ownerID int, ownerName, ticketTitle, safeError string, now time.Time, setCompletionApplied, completionApplied bool) error {
 	if s.persistBeforeLock != nil {
 		s.persistBeforeLock()
 	}
@@ -1758,7 +1762,7 @@ func (s *ZammadService) updateTicketLinkSyncWithCurrentGroupPolicy(providerID, l
 			return err
 		}
 		return s.repo.UpdateTicketLinkSyncTx(tx, linkID, syncOwner, statusID, statusName, groupID, groupName,
-			ownerID, ownerName, safeError, now, setCompletionApplied, completionApplied)
+			ownerID, ownerName, ticketTitle, safeError, now, setCompletionApplied, completionApplied)
 	})
 }
 
@@ -1793,7 +1797,7 @@ func (s *ZammadService) failZammadTicketCreationBeforePost(linkID, syncOwner str
 	return cause
 }
 
-func (s *ZammadService) completeTicketCreationWithCurrentGroupPolicy(providerID, linkID, syncOwner string, ticketID int, number, ticketURL string, statusID int, statusName string, groupID int, groupName string, ownerID int, ownerName string, linkedBy int) error {
+func (s *ZammadService) completeTicketCreationWithCurrentGroupPolicy(providerID, linkID, syncOwner string, ticketID int, number, ticketTitle, ticketURL string, statusID int, statusName string, groupID int, groupName string, ownerID int, ownerName string, linkedBy int) error {
 	if s.persistBeforeLock != nil {
 		s.persistBeforeLock()
 	}
@@ -1804,12 +1808,12 @@ func (s *ZammadService) completeTicketCreationWithCurrentGroupPolicy(providerID,
 		if err := s.requireCurrentZammadGroupTx(tx, providerID, groupID, groupName); err != nil {
 			return err
 		}
-		return s.repo.CompleteTicketCreationTx(tx, linkID, syncOwner, ticketID, number, ticketURL, statusID, statusName,
+		return s.repo.CompleteTicketCreationTx(tx, linkID, syncOwner, ticketID, number, ticketTitle, ticketURL, statusID, statusName,
 			groupID, groupName, ownerID, ownerName, linkedBy)
 	})
 }
 
-func (s *ZammadService) completeExistingTicketLinkWithCurrentGroupPolicy(link *models.ZammadTicketLink, syncOwner string, linkedBy int) error {
+func (s *ZammadService) completeExistingTicketLinkWithCurrentGroupPolicy(link *models.ZammadTicketLink, ticketTitle, syncOwner string, linkedBy int) error {
 	if s.persistBeforeLock != nil {
 		s.persistBeforeLock()
 	}
@@ -1820,7 +1824,7 @@ func (s *ZammadService) completeExistingTicketLinkWithCurrentGroupPolicy(link *m
 		if err := s.requireCurrentZammadGroupTx(tx, link.ProviderID, link.GroupID, link.GroupName); err != nil {
 			return err
 		}
-		return s.repo.CompleteExistingTicketLinkTx(tx, link.ID, syncOwner, link.ID+"-external", link, linkedBy)
+		return s.repo.CompleteExistingTicketLinkTx(tx, link.ID, syncOwner, link.ID+"-external", link, ticketTitle, linkedBy)
 	})
 }
 

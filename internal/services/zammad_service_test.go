@@ -78,7 +78,7 @@ func (f *fakeZammadTransport) Do(_ context.Context, method, targetURL string, bo
 		}
 		f.ticket = map[string]any{
 			"id": 901, "number": "420901", "group_id": createGroupID,
-			"state_id": 2, "state": "open",
+			"title": payload["title"], "state_id": 2, "state": "open",
 			"windshift_item_key": payload["windshift_item_key"],
 		}
 		if f.postErrorAfterCreate != nil {
@@ -309,15 +309,19 @@ func TestZammadCreateTicketIsIdempotentAndPersistsGenericLink(t *testing.T) {
 		t.Fatal(err)
 	}
 	var count int
-	if err := f.db.QueryRow("SELECT COUNT(*) FROM item_integration_links WHERE id = ? AND external_id = ?", genericID, strconv.Itoa(first.TicketID)).Scan(&count); err != nil || count != 1 {
+	var title string
+	if err := f.db.QueryRow("SELECT COUNT(*), MAX(title) FROM item_integration_links WHERE id = ? AND external_id = ?", genericID, strconv.Itoa(first.TicketID)).Scan(&count, &title); err != nil || count != 1 {
 		t.Fatalf("generic link was not persisted: count=%d err=%v", count, err)
+	}
+	if title != "[PRI-49] Synthetic ticket source" {
+		t.Fatalf("generic link did not retain the Zammad ticket title: %q", title)
 	}
 }
 
 func TestZammadLinkExistingTicketPinsExactTicketAndIsIdempotent(t *testing.T) {
 	f := newZammadServiceFixture(t, nil)
 	f.transport.ticket = map[string]any{
-		"id": 711, "number": "420711", "group_id": 7, "group": "Support",
+		"id": 711, "number": "420711", "title": "Existing VPN request", "group_id": 7, "group": "Support",
 		"state_id": 2, "state": "open", "owner_id": 99,
 	}
 	f.transport.users = []map[string]any{{"id": 99, "active": true, "firstname": "Grace", "lastname": "Hopper", "group_ids": map[string][]string{"7": {"full"}}}}
@@ -1130,7 +1134,7 @@ func TestZammadSyncPersistsRemoteGroupAndOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.transport.getTicket = map[string]any{"id": 901, "number": "420901", "group_id": 8, "state_id": 3, "state": "pending", "owner_id": 99}
+	f.transport.getTicket = map[string]any{"id": 901, "number": "420901", "title": "Escalated VPN problem", "group_id": 8, "state_id": 3, "state": "pending", "owner_id": 99}
 	f.transport.groups = []map[string]any{{"id": 7, "name": "Support", "active": true}, {"id": 8, "name": "Escalations", "active": true}}
 	f.transport.users = []map[string]any{{"id": 99, "active": true, "firstname": "Grace", "lastname": "Hopper", "group_ids": map[string][]string{"8": {"full"}}}}
 	allowedGroups := []int{7, 8}
@@ -1147,6 +1151,13 @@ func TestZammadSyncPersistsRemoteGroupAndOwner(t *testing.T) {
 	history, err := f.service.TicketHistoryForItem(f.item1, 10)
 	if err != nil || len(history) != 3 {
 		t.Fatalf("expected one event per observed status/group/owner change: history=%#v err=%v", history, err)
+	}
+	for _, change := range history {
+		if change.TicketTitle != "Escalated VPN problem" || change.TicketURL != "https://zammad.example.test/#ticket/zoom/901" ||
+			change.CurrentGroup.ID != 8 || change.CurrentGroup.Name != "Escalations" ||
+			change.CurrentOwner.ID != 99 || change.CurrentOwner.Name != "Grace Hopper" {
+			t.Fatalf("observed change omitted current ticket context: %#v", change)
+		}
 	}
 	if _, err := f.service.SyncTicketLink(context.Background(), link.ID); err != nil {
 		t.Fatal(err)
@@ -1293,7 +1304,7 @@ func TestZammadDueLinksRespectRetryDelayAndOAuthReauthorization(t *testing.T) {
 	}
 	if err := f.service.repo.UpdateTicketLinkSync(link.ID, syncOwner, link.LastStatusID, link.LastStatusName,
 		link.GroupID, link.GroupName, link.OwnerID, link.OwnerName,
-		"synthetic safe failure", attemptedAt, false, false); err != nil {
+		"", "synthetic safe failure", attemptedAt, false, false); err != nil {
 		t.Fatal(err)
 	}
 	due, err := f.service.repo.ListDueTicketLinks(time.Now().Add(-2*time.Minute), 10)

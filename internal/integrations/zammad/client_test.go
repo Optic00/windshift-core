@@ -52,7 +52,7 @@ func TestClientMetadataCorrelationAndTicketCreation(t *testing.T) {
 		case r.URL.Path == "/api/v1/object_manager_attributes":
 			_, _ = w.Write([]byte(`[{"name":"windshift_item_key","object":"Ticket","active":true}]`))
 		case r.URL.Path == "/api/v1/tickets/search":
-			_, _ = w.Write([]byte(`[{"id":9,"number":"42009","group_id":1,"state_id":2,"state":"open","windshift_item_key":"windshift:abc:ITEM-49"}]`))
+			_, _ = w.Write([]byte(`[{"id":9,"number":"42009","title":"Existing support request","group_id":1,"state_id":2,"state":"open","windshift_item_key":"windshift:abc:ITEM-49"}]`))
 		case r.URL.Path == "/api/v1/tickets" && r.Method == http.MethodPost:
 			postCount++
 			body, _ := io.ReadAll(r.Body)
@@ -60,7 +60,7 @@ func TestClientMetadataCorrelationAndTicketCreation(t *testing.T) {
 				t.Fatalf("ticket payload lacks correlation field: %s", body)
 			}
 			w.WriteHeader(http.StatusCreated)
-			_, _ = w.Write([]byte(`{"id":10,"number":"42010","group_id":1,"state_id":2,"state":"open"}`))
+			_, _ = w.Write([]byte(`{"id":10,"number":"42010","title":"ITEM-50","group_id":1,"state_id":2,"state":"open"}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -79,11 +79,11 @@ func TestClientMetadataCorrelationAndTicketCreation(t *testing.T) {
 		t.Fatal(err)
 	}
 	found, err := client.FindByCorrelation(context.Background(), "windshift_item_key", "windshift:abc:ITEM-49")
-	if err != nil || found == nil || found.ID != 9 {
+	if err != nil || found == nil || found.ID != 9 || found.Title != "Existing support request" {
 		t.Fatalf("unexpected search result: ticket=%#v err=%v", found, err)
 	}
 	created, err := client.CreateTicket(context.Background(), "ITEM-50", "Synthetic body", "robot@example.test", "Support", "windshift_item_key", "windshift:abc:ITEM-50")
-	if err != nil || created.ID != 10 || postCount != 1 {
+	if err != nil || created.ID != 10 || created.Title != "ITEM-50" || postCount != 1 {
 		t.Fatalf("unexpected create result: ticket=%#v posts=%d err=%v", created, postCount, err)
 	}
 }

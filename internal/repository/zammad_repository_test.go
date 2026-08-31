@@ -106,7 +106,7 @@ func TestZammadSyncLeaseOwnerTakeoverProtectsSnapshotReleaseAndDelete(t *testing
 	if err := f.repo.ReleaseSyncClaim(f.linkID, "owner-a"); !errors.Is(err, ErrConcurrentUpdate) {
 		t.Fatalf("owner A must not release owner B lease: %v", err)
 	}
-	if err := f.repo.UpdateTicketLinkSync(f.linkID, "owner-a", 4, "closed", 7, "Support", 0, "", "", now, true, true); !errors.Is(err, ErrConcurrentUpdate) {
+	if err := f.repo.UpdateTicketLinkSync(f.linkID, "owner-a", 4, "closed", 7, "Support", 0, "", "", "", now, true, true); !errors.Is(err, ErrConcurrentUpdate) {
 		t.Fatalf("owner A must not persist a snapshot after takeover: %v", err)
 	}
 	if err := f.repo.DeleteTicketLinkClaimed(f.linkID, "owner-a"); !errors.Is(err, ErrConcurrentUpdate) {
@@ -154,7 +154,7 @@ func TestZammadTicketCompletionRequiresCurrentLeaseOwner(t *testing.T) {
 		t.Fatalf("take over ticket creation lease as owner B: claimed=%v err=%v", claimed, err)
 	}
 
-	if err := f.repo.CompleteTicketCreation(f.linkID, "owner-a", 902, "902", "https://zammad.example.test/#ticket/zoom/902", 2, "open", 7, "Support", 0, "", 1); !errors.Is(err, ErrConcurrentUpdate) {
+	if err := f.repo.CompleteTicketCreation(f.linkID, "owner-a", 902, "902", "Synthetic ticket", "https://zammad.example.test/#ticket/zoom/902", 2, "open", 7, "Support", 0, "", 1); !errors.Is(err, ErrConcurrentUpdate) {
 		t.Fatalf("stale owner must not complete ticket creation: %v", err)
 	}
 	var genericCount int
@@ -165,7 +165,7 @@ func TestZammadTicketCompletionRequiresCurrentLeaseOwner(t *testing.T) {
 		t.Fatalf("stale owner created generic item link: count=%d", genericCount)
 	}
 
-	if err := f.repo.CompleteTicketCreation(f.linkID, "owner-b", 902, "902", "https://zammad.example.test/#ticket/zoom/902", 2, "open", 7, "Support", 0, "", 1); err != nil {
+	if err := f.repo.CompleteTicketCreation(f.linkID, "owner-b", 902, "902", "Synthetic ticket", "https://zammad.example.test/#ticket/zoom/902", 2, "open", 7, "Support", 0, "", 1); err != nil {
 		t.Fatalf("current owner completes ticket creation: %v", err)
 	}
 	var ticketID int
@@ -193,10 +193,10 @@ func TestZammadExistingTicketCompletionRequiresCurrentLeaseOwner(t *testing.T) {
 		TicketID: 903, TicketNumber: "903", TicketURL: "https://zammad.example.test/#ticket/zoom/903",
 		GroupID: 7, GroupName: "Support", LastStatusID: 2, LastStatusName: "open",
 	}
-	if err := f.repo.CompleteExistingTicketLink(f.linkID, "owner-a", f.linkID+"-external", ticket, 1); !errors.Is(err, ErrConcurrentUpdate) {
+	if err := f.repo.CompleteExistingTicketLink(f.linkID, "owner-a", f.linkID+"-external", ticket, "Synthetic ticket", 1); !errors.Is(err, ErrConcurrentUpdate) {
 		t.Fatalf("stale owner must not complete existing ticket link: %v", err)
 	}
-	if err := f.repo.CompleteExistingTicketLink(f.linkID, "owner-b", f.linkID+"-external", ticket, 1); err != nil {
+	if err := f.repo.CompleteExistingTicketLink(f.linkID, "owner-b", f.linkID+"-external", ticket, "Synthetic ticket", 1); err != nil {
 		t.Fatalf("current owner completes existing ticket link: %v", err)
 	}
 }
@@ -216,7 +216,7 @@ func TestZammadExistingTicketCompletionReusesPreexistingGenericLinkID(t *testing
 		TicketID: 903, TicketNumber: "903", TicketURL: "https://zammad.example.test/#ticket/zoom/903",
 		GroupID: 7, GroupName: "Support", LastStatusID: 2, LastStatusName: "open",
 	}
-	if err := f.repo.CompleteExistingTicketLink(f.linkID, "owner", f.linkID+"-external", ticket, 1); err != nil {
+	if err := f.repo.CompleteExistingTicketLink(f.linkID, "owner", f.linkID+"-external", ticket, "Synthetic ticket", 1); err != nil {
 		t.Fatalf("complete against preexisting generic link: %v", err)
 	}
 	var genericID string

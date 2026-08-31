@@ -22,10 +22,13 @@ vi.mock('../../api.js', () => ({
 }));
 vi.mock('../../router.js', () => ({ navigate: mocks.navigate }));
 vi.mock('../../stores/i18n.svelte.js', () => ({
-  t: (key, params = {}) =>
-    key === 'zammad.overview.statusWithConnection'
-      ? `${params.connection} · ${params.status}`
-      : key,
+  t: (key, params = {}) => {
+    if (key === 'zammad.overview.statusWithConnection') {
+      return `${params.connection} · ${params.status}`;
+    }
+    if (key === 'zammad.ticketNumber') return `Zammad #${params.number}`;
+    return key;
+  },
 }));
 vi.mock('../../stores', () => ({ authStore: { currentUser: { timezone: 'UTC' } } }));
 
@@ -59,7 +62,7 @@ describe('ZammadLinkResolver', () => {
     await waitFor(() => expect(mocks.navigate).toHaveBeenCalledOnce());
   });
 
-  it('renders the workspace-wide support widget from status metadata only', async () => {
+  it('renders the workspace-wide support widget with actionable ticket context', async () => {
     mocks.workspaceOverview.mockResolvedValue({
       total: 4,
       active: 2,
@@ -91,7 +94,11 @@ describe('ZammadLinkResolver', () => {
           id: 'event-1',
           item_id: 42,
           item_key: 'OPS-42',
+          ticket_title: 'VPN access after password change',
           ticket_number: '12345',
+          ticket_url: 'https://zammad.example.test/#ticket/zoom/42',
+          current_group: { id: 7, name: 'IT / Network' },
+          current_owner: { id: 99, name: 'Grace Hopper' },
           field: 'status',
           old_value: { id: 1, name: 'new' },
           new_value: { id: 2, name: 'open' },
@@ -112,14 +119,19 @@ describe('ZammadLinkResolver', () => {
 
     await waitFor(() => expect(mocks.workspaceOverview).toHaveBeenCalledWith(7, { limit: 5 }));
     expect(await screen.findByTestId('zammad-support-overview')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'OPS-42' })).toHaveAttribute(
-      'href',
-      '/workspaces/7/items/42'
-    );
+    expect(
+      screen.getByRole('link', { name: /OPS-42 VPN access after password change/ })
+    ).toHaveAttribute('href', '/workspaces/7/items/42');
+    const zammadLink = screen.getByRole('link', { name: /Zammad #12345/ });
+    expect(zammadLink).toHaveAttribute('href', 'https://zammad.example.test/#ticket/zoom/42');
+    expect(zammadLink).toHaveAttribute('target', '_blank');
+    expect(zammadLink).toHaveAttribute('rel', 'noopener noreferrer');
+    expect(screen.getByText('IT / Network')).toBeInTheDocument();
+    expect(screen.getByText('Grace Hopper')).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'OPS-43' })).not.toBeInTheDocument();
     expect(screen.getByText('Primary helpdesk · open: 1')).toBeInTheDocument();
     expect(screen.getByText('Second helpdesk · open: 1')).toBeInTheDocument();
-    expect(screen.queryByText(/article|customer|subject/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/article|customer/i)).not.toBeInTheDocument();
   });
 
   it('refreshes the workspace-wide overview on demand', async () => {
