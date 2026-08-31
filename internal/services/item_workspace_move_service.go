@@ -580,14 +580,14 @@ func (s *ItemWorkspaceMoveService) MoveContext(ctx context.Context, itemID, acto
 	if err != nil {
 		return nil, err
 	}
-	zammadLinkUnavailable, err := repository.NewZammadRepository(s.db).HasTicketLinkUnavailableInWorkspaceTx(tx, itemID, input.DestinationWorkspaceID)
+	integrationLinkUnavailable, err := NewIntegrationLinkGuards(s.db).HasLinkUnavailableInWorkspaceTx(tx, itemID, input.DestinationWorkspaceID)
 	if err != nil {
-		return nil, fmt.Errorf("validate Zammad ticket links for workspace move: %w", err)
+		return nil, fmt.Errorf("validate integration links for workspace move: %w", err)
 	}
-	if zammadLinkUnavailable {
+	if integrationLinkUnavailable {
 		return nil, &validation.ValidationError{
 			Field:   "destination_workspace_id",
-			Message: "Destination workspace is not allowed by every linked Zammad connection",
+			Message: "Destination workspace is not allowed by every provider-managed integration link",
 		}
 	}
 

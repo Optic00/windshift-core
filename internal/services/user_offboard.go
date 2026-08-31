@@ -17,9 +17,9 @@ type UserNotificationDeleter interface {
 	DeleteUserNotifications(userID int) error
 }
 
-// ErrUserOffboardingHasZammadTicketLinks prevents deleting a personal
-// workspace while its Zammad tickets would lose their Windshift item links.
-var ErrUserOffboardingHasZammadTicketLinks = errors.New("user has linked Zammad tickets in personal workspace")
+// ErrUserOffboardingHasProtectedIntegrationLinks prevents deleting a personal
+// workspace while provider-managed links still need explicit cleanup.
+var ErrUserOffboardingHasProtectedIntegrationLinks = errors.New("user has provider-managed integration links in personal workspace")
 
 // OffboardUser deactivates a user and anonymizes their PII while preserving
 // audit trails. The user row is kept (anonymized) so that FK references from
@@ -39,7 +39,7 @@ func OffboardUser(db database.Database, userID int, notificationDeleter UserNoti
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Resolve the personal workspace and protect its Zammad links before any
+	// Resolve the personal workspace and protect its external links before any
 	// mutation in this transaction. Offboarding must not orphan linked tickets.
 	var personalWsID *int
 	var wsID int
@@ -58,13 +58,12 @@ func OffboardUser(db database.Database, userID int, notificationDeleter UserNoti
 		if err := itemRepo.LockWorkspaceItemsTx(tx, *personalWsID); err != nil {
 			return nil, err
 		}
-		zammadRepo := repository.NewZammadRepository(db)
-		hasLinks, err := zammadRepo.HasTicketLinksForWorkspaceTx(tx, *personalWsID)
+		hasLinks, err := NewIntegrationLinkGuards(db).HasLinksForWorkspaceTx(tx, *personalWsID)
 		if err != nil {
-			return nil, fmt.Errorf("failed to check personal workspace Zammad links: %w", err)
+			return nil, fmt.Errorf("failed to check personal workspace integration links: %w", err)
 		}
 		if hasLinks {
-			return nil, ErrUserOffboardingHasZammadTicketLinks
+			return nil, ErrUserOffboardingHasProtectedIntegrationLinks
 		}
 	}
 

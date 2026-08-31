@@ -3,7 +3,6 @@ package handlers
 import (
 	"errors"
 	"net/http"
-	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -22,7 +21,6 @@ type ZammadHandler struct {
 	service           *services.ZammadService
 	permissionService *services.PermissionService
 	auditor           *logger.Auditor
-	publicBaseURL     string
 	syncAllTrigger    func() bool
 }
 
@@ -30,68 +28,7 @@ func NewZammadHandler(itemRepo *repository.ItemRepository, service *services.Zam
 	return &ZammadHandler{itemRepo: itemRepo, service: service, permissionService: permissionService, auditor: auditor}
 }
 
-func (h *ZammadHandler) SetOAuthBaseURL(baseURL string) { h.publicBaseURL = baseURL }
-
 func (h *ZammadHandler) SetSyncAllTrigger(trigger func() bool) { h.syncAllTrigger = trigger }
-
-// StartOAuth is protected by the system-admin route. State binding and the
-// fixed callback URI are enforced in the service, not delegated to clients.
-func (h *ZammadHandler) StartOAuth(w http.ResponseWriter, r *http.Request) {
-	user, ok := RequireAuth(w, r)
-	if !ok {
-		return
-	}
-	authURL, err := h.service.StartOAuth(r.Context(), r.PathValue("id"), user.ID, h.publicBaseURL)
-	if !h.respondServiceError(w, r, err) {
-		return
-	}
-	h.audit(r, user, logger.ActionZammadConnectionUpdate, logger.ResourceZammadConnection, r.PathValue("id"), "", map[string]any{"oauth_started": true})
-	respondJSONOK(w, map[string]string{"auth_url": authURL})
-}
-
-// OAuthCallback intentionally has no session requirement: the unguessable,
-// short-lived state is atomically consumed and carries its initiating admin.
-func (h *ZammadHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) {
-	state, code := r.URL.Query().Get("state"), r.URL.Query().Get("code")
-	if state == "" || code == "" || r.URL.Query().Get("error") != "" {
-		result, _ := h.service.ConsumeFailedOAuthCallback(state)
-		h.auditOAuthCallback(r, result, false)
-		h.redirectOAuthResult(w, r, false)
-		return
-	}
-	result, err := h.service.CompleteOAuth(r.Context(), state, code, h.publicBaseURL)
-	if err != nil {
-		h.auditOAuthCallback(r, result, false)
-		h.redirectOAuthResult(w, r, false)
-		return
-	}
-	h.auditOAuthCallback(r, result, true)
-	h.redirectOAuthResult(w, r, true)
-}
-
-func (h *ZammadHandler) auditOAuthCallback(r *http.Request, result *services.ZammadOAuthCallbackResult, success bool) {
-	if h.auditor == nil || result == nil || result.Initiator == nil {
-		return
-	}
-	details := map[string]any{"external_id": result.ProviderID, "oauth_callback": true, "credential_mutation": true}
-	if success {
-		h.auditor.LogWithDetails(r, result.Initiator, logger.ActionZammadOAuthCredentialSet, logger.ResourceZammadConnection, nil, result.ProviderName, details)
-		return
-	}
-	h.auditor.LogFailure(r, result.Initiator, logger.ActionZammadOAuthCredentialSet, logger.ResourceZammadConnection, nil, result.ProviderName, "oauth_callback_failed", details)
-}
-
-func (h *ZammadHandler) redirectOAuthResult(w http.ResponseWriter, r *http.Request, success bool) {
-	result := "error"
-	if success {
-		result = "success"
-	}
-	contextPath := ""
-	if publicURL, err := url.Parse(h.publicBaseURL); err == nil {
-		contextPath = strings.TrimRight(publicURL.EscapedPath(), "/")
-	}
-	http.Redirect(w, r, contextPath+"/admin/integration-providers?tab=zammad&oauth="+url.QueryEscape(result), http.StatusFound)
-}
 
 func (h *ZammadHandler) ListConnections(w http.ResponseWriter, r *http.Request) {
 	connections, err := h.service.ListConnections()
@@ -189,6 +126,25 @@ func (h *ZammadHandler) RetryUncertainTicketCreation(w http.ResponseWriter, r *h
 	respondJSONOK(w, link.Response())
 }
 
+// DetachTicketLinkLocally is an administrator-only recovery action. The route
+// middleware enforces system-admin access; the handler records the deliberately
+// orphan-prone operation so it remains distinguishable from a normal unlink.
+func (h *ZammadHandler) DetachTicketLinkLocally(w http.ResponseWriter, r *http.Request) {
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+	link, err := h.service.DetachTicketLinkLocally(r.PathValue("linkId"))
+	if !h.respondServiceError(w, r, err) {
+		return
+	}
+	h.audit(r, user, logger.ActionZammadTicketDetachLocal, logger.ResourceZammadTicket, link.ID, link.TicketNumber, map[string]any{
+		"item_id": link.ItemID, "connection_id": link.ProviderID, "ticket_id": link.TicketID,
+		"remote_correlation_may_remain": true,
+	})
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *ZammadHandler) ListWorkspaceConnections(w http.ResponseWriter, r *http.Request) {
 	workspaceID, ok := requireIDParam(w, r, "workspaceId")
 	if !ok {
@@ -214,7 +170,7 @@ func (h *ZammadHandler) ListWorkspaceConnections(w http.ResponseWriter, r *http.
 			ProviderID: connection.ProviderID, Name: connection.Name, AuthMethod: connection.AuthMethod,
 			Ready: ready, OAuthConnected: connection.OAuthConnected, ReauthorizationRequired: connection.ReauthorizationRequired,
 			DefaultGroupID: connection.DefaultGroupID, DefaultGroupName: connection.DefaultGroupName,
-			AllowedGroupIDs: connection.AllowedGroupIDs,
+			AllowedGroups: connection.AllowedGroups,
 		})
 	}
 	respondJSONOK(w, responses)
@@ -226,9 +182,11 @@ func (h *ZammadHandler) ListWorkspaceConnections(w http.ResponseWriter, r *http.
 // resolves it to an ID. Do not present that ambiguous configuration as ready.
 func zammadConnectionHasUsableDefaultGroup(connection *models.ZammadConnection) bool {
 	if connection.DefaultGroupID <= 0 {
-		return strings.TrimSpace(connection.DefaultGroupName) != "" && len(connection.AllowedGroupIDs) == 0
+		return strings.TrimSpace(connection.DefaultGroupName) != "" && len(connection.AllowedGroups) == 0
 	}
-	return len(connection.AllowedGroupIDs) == 0 || slices.Contains(connection.AllowedGroupIDs, connection.DefaultGroupID)
+	return len(connection.AllowedGroups) == 0 || slices.ContainsFunc(connection.AllowedGroups, func(group models.ZammadGroupRef) bool {
+		return group.ID == connection.DefaultGroupID && strings.TrimSpace(group.Name) != ""
+	})
 }
 
 func (h *ZammadHandler) GetWorkspaceMetadata(w http.ResponseWriter, r *http.Request) {

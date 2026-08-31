@@ -361,10 +361,10 @@ func TestZammadConnectionReadyRequiresLocallyUsableDefaultGroup(t *testing.T) {
 		want       bool
 	}{
 		{name: "numeric default without allowlist", connection: models.ZammadConnection{DefaultGroupID: 7}, want: true},
-		{name: "numeric default inside allowlist", connection: models.ZammadConnection{DefaultGroupID: 7, AllowedGroupIDs: []int{7, 8}}, want: true},
-		{name: "numeric default outside allowlist", connection: models.ZammadConnection{DefaultGroupID: 7, AllowedGroupIDs: []int{8}}, want: false},
+		{name: "numeric default inside allowlist", connection: models.ZammadConnection{DefaultGroupID: 7, AllowedGroups: []models.ZammadGroupRef{{ID: 7, Name: "Support"}, {ID: 8, Name: "Escalations"}}}, want: true},
+		{name: "numeric default outside allowlist", connection: models.ZammadConnection{DefaultGroupID: 7, AllowedGroups: []models.ZammadGroupRef{{ID: 8, Name: "Escalations"}}}, want: false},
 		{name: "name default without allowlist", connection: models.ZammadConnection{DefaultGroupName: "Support"}, want: true},
-		{name: "name default with allowlist is unresolved", connection: models.ZammadConnection{DefaultGroupName: "Support", AllowedGroupIDs: []int{8}}, want: false},
+		{name: "name default with allowlist is unresolved", connection: models.ZammadConnection{DefaultGroupName: "Support", AllowedGroups: []models.ZammadGroupRef{{ID: 8, Name: "Escalations"}}}, want: false},
 		{name: "missing default", connection: models.ZammadConnection{}, want: false},
 	}
 
@@ -378,19 +378,37 @@ func TestZammadConnectionReadyRequiresLocallyUsableDefaultGroup(t *testing.T) {
 }
 
 func TestZammadOAuthCallbackRedirectsToIntegrationsAdminTab(t *testing.T) {
-	handler, _, _, _ := newZammadHandlerTest(t)
+	handler, db, _, _ := newZammadHandlerTest(t)
+	oauthHandler := NewIntegrationOAuthHandler(db, sso.NewSecretEncryption("synthetic-handler-test-secret"), "https://windshift.example.test")
+	oauthHandler.RegisterSystemOAuthFlow(models.IntegrationProviderZammad, handler.service, logger.NewAuditor(db))
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/api/integrations/zammad/oauth/callback?error=access_denied&state=missing", nil)
-	handler.OAuthCallback(recorder, request)
+	request := httptest.NewRequest(http.MethodGet, "/api/integrations/oauth/system/zammad/callback?error=access_denied&state=missing", nil)
+	request.SetPathValue("providerType", string(models.IntegrationProviderZammad))
+	request.SetPathValue("slug", "zammad")
+	oauthHandler.SystemOAuthCallback(recorder, request)
 	if recorder.Code != http.StatusFound || recorder.Header().Get("Location") != "/admin/integration-providers?tab=zammad&oauth=error" {
 		t.Fatalf("unexpected OAuth callback redirect: status=%d location=%q", recorder.Code, recorder.Header().Get("Location"))
 	}
 }
 
+func TestUserOAuthSlugCannotCollideWithSystemCallback(t *testing.T) {
+	_, db, _, _ := newZammadHandlerTest(t)
+	oauthHandler := NewIntegrationOAuthHandler(db, sso.NewSecretEncryption("synthetic-handler-test-secret"), "https://windshift.example.test")
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/integrations/oauth/zammad/callback?error=access_denied", nil)
+	request.SetPathValue("slug", "zammad")
+	oauthHandler.OAuthCallback(recorder, request)
+	if recorder.Code != http.StatusFound || !strings.HasPrefix(recorder.Header().Get("Location"), "/profile?tab=connected-accounts&oauth=error") {
+		t.Fatalf("user callback was dispatched as a system callback: status=%d location=%q", recorder.Code, recorder.Header().Get("Location"))
+	}
+}
+
 func TestZammadOAuthCallbackAuditsInitiatorSuccessAndFailureWithoutSecrets(t *testing.T) {
 	handler, db, user, workspaceID := newZammadHandlerTest(t)
-	handler.SetOAuthBaseURL("https://windshift.example.test")
-	handler.service.SetOAuthEncryption(sso.NewSecretEncryption("synthetic-handler-test-secret"))
+	encryption := sso.NewSecretEncryption("synthetic-handler-test-secret")
+	handler.service.SetOAuthEncryption(encryption)
+	oauthHandler := NewIntegrationOAuthHandler(db, encryption, "https://windshift.example.test")
+	oauthHandler.RegisterSystemOAuthFlow(models.IntegrationProviderZammad, handler.service, logger.NewAuditor(db))
 	handler.service.SetOAuthTransportForTesting(zammad.TransportFunc(func(_ context.Context, _ string, _ string, body []byte, _ map[string]string) (*zammad.Response, error) {
 		if strings.Contains(string(body), "failure-code") {
 			return &zammad.Response{StatusCode: http.StatusBadGateway, Body: []byte(`{"error":"upstream_failure"}`)}, nil
@@ -400,7 +418,8 @@ func TestZammadOAuthCallbackAuditsInitiatorSuccessAndFailureWithoutSecrets(t *te
 	connection, err := handler.service.CreateConnection(models.CreateZammadConnectionRequest{
 		Slug: "audit-oauth", Name: "Audit OAuth", BaseURL: "https://audit-oauth.example.test",
 		AuthMethod: models.ZammadAuthMethodOAuth, OAuthClientID: "audit-client", OAuthClientSecret: "audit-client-secret",
-		DefaultGroupName: "Support", DefaultCustomer: "robot@example.test", WorkspaceIDs: []int{workspaceID},
+		DefaultGroupID: 7, DefaultGroupName: "Support", AllowedGroups: []models.ZammadGroupRef{{ID: 7, Name: "Support"}},
+		DefaultCustomer: "robot@example.test", WorkspaceIDs: []int{workspaceID},
 	}, user.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -416,9 +435,11 @@ func TestZammadOAuthCallbackAuditsInitiatorSuccessAndFailureWithoutSecrets(t *te
 		if err != nil {
 			t.Fatal(err)
 		}
-		request := httptest.NewRequest(http.MethodGet, "/api/integrations/zammad/oauth/callback?state="+url.QueryEscape(parsed.Query().Get("state"))+"&code="+url.QueryEscape(code), nil)
+		request := httptest.NewRequest(http.MethodGet, "/api/integrations/oauth/system/zammad/callback?state="+url.QueryEscape(parsed.Query().Get("state"))+"&code="+url.QueryEscape(code), nil)
+		request.SetPathValue("providerType", string(models.IntegrationProviderZammad))
+		request.SetPathValue("slug", "zammad")
 		recorder := httptest.NewRecorder()
-		handler.OAuthCallback(recorder, request)
+		oauthHandler.SystemOAuthCallback(recorder, request)
 		if recorder.Code != http.StatusFound {
 			t.Fatalf("callback status = %d", recorder.Code)
 		}
@@ -427,7 +448,7 @@ func TestZammadOAuthCallbackAuditsInitiatorSuccessAndFailureWithoutSecrets(t *te
 	callback("failure-code")
 
 	rows, err := db.Query(`SELECT user_id, username, success, COALESCE(error_message, ''), COALESCE(details, '')
-		FROM audit_logs WHERE action_type = ? ORDER BY id`, logger.ActionZammadOAuthCredentialSet)
+		FROM audit_logs WHERE action_type = ? ORDER BY id`, logger.ActionIntegrationProviderOAuthCredentialSet)
 	if err != nil {
 		t.Fatal(err)
 	}

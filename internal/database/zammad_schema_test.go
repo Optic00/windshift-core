@@ -1,6 +1,7 @@
 package database
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,7 +17,7 @@ func TestZammadSchemaInitializesOnSQLite(t *testing.T) {
 		t.Fatalf("initialize SQLite schema: %v", err)
 	}
 
-	for _, table := range []string{"zammad_connections", "zammad_connection_workspaces", "zammad_ticket_links", "zammad_oauth_tokens", "zammad_oauth_state"} {
+	for _, table := range []string{"zammad_connections", "zammad_ticket_links", "zammad_oauth_tokens", "zammad_oauth_state"} {
 		var count int
 		if err := db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&count); err != nil {
 			t.Fatal(err)
@@ -26,7 +27,7 @@ func TestZammadSchemaInitializesOnSQLite(t *testing.T) {
 		}
 	}
 
-	for _, version := range []string{"20260829_zammad_integration", "20260830_zammad_oauth_connections", "20260830_zammad_oauth_generation", "20260830_zammad_ticket_link_metadata", "20260830_zammad_ticket_link_completion_postgres", "20260831_zammad_connection_config_revision", "20260831_zammad_ticket_sync_lock_owner", "20260831_zammad_ticket_link_item_restrict"} {
+	for _, version := range []string{"20260829_zammad_integration", "20260830_zammad_oauth_connections", "20260830_zammad_oauth_generation", "20260830_zammad_ticket_link_metadata", "20260830_zammad_ticket_link_completion_postgres", "20260831_zammad_connection_config_revision", "20260831_zammad_ticket_sync_lock_owner", "20260831_zammad_ticket_link_item_restrict", "20260831_zammad_persisted_group_catalog", "20260901_zammad_canonical_workspace_scope"} {
 		var migrationCount int
 		if err := db.QueryRow("SELECT COUNT(*) FROM schema_migrations WHERE version=?", version).Scan(&migrationCount); err != nil {
 			t.Fatal(err)
@@ -247,9 +248,10 @@ func TestZammadOAuthSQLiteUpgradePreservesLegacyConnection(t *testing.T) {
 	}
 	for _, statement := range []string{
 		`INSERT INTO users(id, email, username, first_name, last_name) VALUES (9001, 'zammad-upgrade@example.test', 'zammad-upgrade', 'Zammad', 'Upgrade')`,
-		`INSERT INTO action_credentials(id, name, credential_type, applies_to_all_workspaces, encrypted_secret, is_enabled) VALUES (9001, 'legacy API', 'custom_header', true, 'opaque-ciphertext', true)`,
+		`INSERT INTO workspaces(id, name, key) VALUES (9100, 'Legacy scope', 'LEGACY')`,
+		`INSERT INTO action_credentials(id, name, credential_type, applies_to_all_workspaces, encrypted_secret, secret_metadata, is_enabled) VALUES (9001, 'legacy API', 'custom_header', true, 'opaque-ciphertext', '{"_windshift_managed_credential":"v1","managed_by":"zammad","owner_id":"legacy-zammad"}', true)`,
 		`INSERT INTO integration_providers(id, slug, name, provider_type, enabled, provider_config) VALUES ('legacy-zammad', 'legacy-zammad', 'Legacy Zammad', 'zammad', true, '{}')`,
-		`INSERT INTO zammad_connections(provider_id, credential_id, auth_method, base_url, allowed_group_ids, default_customer, closed_state_ids, applies_to_all_workspaces, created_by) VALUES ('legacy-zammad', 9001, 'api_token', 'https://legacy.example.test', '[]', 'robot@example.test', '[]', true, 9001)`,
+		`INSERT INTO zammad_connections(provider_id, credential_id, auth_method, base_url, default_group_id, default_group_name, allowed_groups, default_customer, closed_state_ids, created_by) VALUES ('legacy-zammad', 9001, 'api_token', 'https://legacy.example.test', 7, 'Support', '[]', 'robot@example.test', '[]', 9001)`,
 	} {
 		if _, err := db.ExecWrite(statement); err != nil {
 			t.Fatal(err)
@@ -267,14 +269,22 @@ func TestZammadOAuthSQLiteUpgradePreservesLegacyConnection(t *testing.T) {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		INSERT INTO zammad_connections_legacy(provider_id, credential_id, base_url, default_group_id, default_group_name, allowed_group_ids, default_customer, correlation_field, closed_state_ids, completion_status_id, applies_to_all_workspaces, last_tested_at, last_test_error, created_by, created_at, updated_at)
-		SELECT provider_id, credential_id, base_url, default_group_id, default_group_name, allowed_group_ids, default_customer, correlation_field, closed_state_ids, completion_status_id, applies_to_all_workspaces, last_tested_at, last_test_error, created_by, created_at, updated_at FROM zammad_connections;
+		SELECT provider_id, credential_id, base_url, default_group_id, default_group_name, allowed_groups, default_customer, correlation_field, closed_state_ids, completion_status_id, false, last_tested_at, last_test_error, created_by, created_at, updated_at FROM zammad_connections;
 		DROP TABLE zammad_connections;
 		ALTER TABLE zammad_connections_legacy RENAME TO zammad_connections;
+		CREATE TABLE zammad_connection_workspaces (
+			provider_id TEXT NOT NULL, workspace_id INTEGER NOT NULL,
+			PRIMARY KEY (provider_id, workspace_id)
+		);
+		INSERT INTO zammad_connection_workspaces(provider_id, workspace_id) VALUES ('legacy-zammad', 9100);
+		UPDATE zammad_connections SET allowed_group_ids = '[7,"bad",8,0]';
 		DROP TABLE zammad_oauth_state;
 		DROP TABLE zammad_oauth_tokens;
 		DELETE FROM schema_migrations WHERE version = '20260830_zammad_oauth_connections';
 		DELETE FROM schema_migrations WHERE version = '20260830_zammad_oauth_generation';
 		DELETE FROM schema_migrations WHERE version = '20260831_zammad_connection_config_revision';
+		DELETE FROM schema_migrations WHERE version = '20260831_zammad_persisted_group_catalog';
+		DELETE FROM schema_migrations WHERE version = '20260901_zammad_canonical_workspace_scope';
 	`)
 	if _, onErr := db.Exec("PRAGMA foreign_keys=ON"); onErr != nil {
 		t.Fatal(onErr)
@@ -291,10 +301,29 @@ func TestZammadOAuthSQLiteUpgradePreservesLegacyConnection(t *testing.T) {
 	if err := db.QueryRow(`SELECT credential_id, auth_method, config_revision FROM zammad_connections WHERE provider_id='legacy-zammad'`).Scan(&credentialID, &authMethod, &configRevision); err != nil || credentialID != 9001 || authMethod != "api_token" || configRevision != 1 {
 		t.Fatalf("legacy API connection was not preserved: credential=%d method=%q revision=%d err=%v", credentialID, authMethod, configRevision, err)
 	}
+	var migratedGroupsJSON string
+	if err := db.QueryRow(`SELECT allowed_groups FROM zammad_connections WHERE provider_id='legacy-zammad'`).Scan(&migratedGroupsJSON); err != nil {
+		t.Fatal(err)
+	}
+	var migratedGroups []struct {
+		ID   int    `json:"id"`
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal([]byte(migratedGroupsJSON), &migratedGroups); err != nil || len(migratedGroups) != 2 || migratedGroups[0].ID != 7 || migratedGroups[0].Name != "Support" || migratedGroups[1].ID != 8 || migratedGroups[1].Name != "" {
+		t.Fatalf("legacy group IDs were not migrated safely: groups=%#v raw=%q err=%v", migratedGroups, migratedGroupsJSON, err)
+	}
+	var appliesToAll bool
+	if err := db.QueryRow(`SELECT applies_to_all_workspaces FROM action_credentials WHERE id=9001`).Scan(&appliesToAll); err != nil || appliesToAll {
+		t.Fatalf("legacy restricted scope was not copied to the managed credential: applies_all=%v err=%v", appliesToAll, err)
+	}
+	var scopeRows int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM action_credential_workspaces WHERE credential_id=9001 AND workspace_id=9100`).Scan(&scopeRows); err != nil || scopeRows != 1 {
+		t.Fatalf("legacy workspace allowlist was not copied to the managed credential: count=%d err=%v", scopeRows, err)
+	}
 	for _, statement := range []string{
 		`INSERT INTO action_credentials(id, name, credential_type, applies_to_all_workspaces, encrypted_secret, is_enabled) VALUES (9002, 'OAuth pending', 'custom_header', true, 'opaque-pending-ciphertext', true)`,
 		`INSERT INTO integration_providers(id, slug, name, provider_type, enabled, oauth_client_id, oauth_client_secret_encrypted, provider_config) VALUES ('oauth-zammad', 'oauth-zammad', 'OAuth Zammad', 'zammad', true, 'client', 'opaque-ciphertext', '{}')`,
-		`INSERT INTO zammad_connections(provider_id, credential_id, auth_method, base_url, allowed_group_ids, default_customer, closed_state_ids, applies_to_all_workspaces, created_by) VALUES ('oauth-zammad', 9002, 'oauth', 'https://oauth.example.test', '[]', 'robot@example.test', '[]', true, 9001)`,
+		`INSERT INTO zammad_connections(provider_id, credential_id, auth_method, base_url, allowed_groups, default_customer, closed_state_ids, applies_to_all_workspaces, created_by) VALUES ('oauth-zammad', 9002, 'oauth', 'https://oauth.example.test', '[]', 'robot@example.test', '[]', true, 9001)`,
 	} {
 		if _, err := db.ExecWrite(statement); err != nil {
 			t.Fatalf("upgraded schema rejected OAuth pending managed credential: %v", err)

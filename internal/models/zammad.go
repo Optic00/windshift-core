@@ -42,7 +42,7 @@ type ZammadConnection struct {
 	ReauthorizationRequired    bool             `json:"reauthorization_required,omitempty"`
 	DefaultGroupID             int              `json:"default_group_id,omitempty"`
 	DefaultGroupName           string           `json:"default_group_name,omitempty"`
-	AllowedGroupIDs            []int            `json:"allowed_group_ids"`
+	AllowedGroups              []ZammadGroupRef `json:"allowed_groups"`
 	DefaultCustomer            string           `json:"default_customer"`
 	CorrelationField           string           `json:"correlation_field"`
 	ClosedStateIDs             []int            `json:"closed_state_ids"`
@@ -66,7 +66,7 @@ type ZammadWorkspaceConnection struct {
 	ReauthorizationRequired bool             `json:"reauthorization_required,omitempty"`
 	DefaultGroupID          int              `json:"default_group_id,omitempty"`
 	DefaultGroupName        string           `json:"default_group_name,omitempty"`
-	AllowedGroupIDs         []int            `json:"allowed_group_ids"`
+	AllowedGroups           []ZammadGroupRef `json:"allowed_groups"`
 }
 
 type CreateZammadConnectionRequest struct {
@@ -80,6 +80,7 @@ type CreateZammadConnectionRequest struct {
 	OAuthClientSecret      string           `json:"oauth_client_secret,omitempty"`
 	DefaultGroupID         int              `json:"default_group_id,omitempty"`
 	DefaultGroupName       string           `json:"default_group_name,omitempty"`
+	AllowedGroups          []ZammadGroupRef `json:"allowed_groups,omitempty"`
 	AllowedGroupIDs        []int            `json:"allowed_group_ids,omitempty"`
 	DefaultCustomer        string           `json:"default_customer"`
 	CorrelationField       string           `json:"correlation_field,omitempty"`
@@ -100,6 +101,7 @@ type UpdateZammadConnectionRequest struct {
 	OAuthClientSecret      *string           `json:"oauth_client_secret,omitempty"`
 	DefaultGroupID         *int              `json:"default_group_id,omitempty"`
 	DefaultGroupName       *string           `json:"default_group_name,omitempty"`
+	AllowedGroups          *[]ZammadGroupRef `json:"allowed_groups,omitempty"`
 	AllowedGroupIDs        *[]int            `json:"allowed_group_ids,omitempty"`
 	DefaultCustomer        *string           `json:"default_customer,omitempty"`
 	CorrelationField       *string           `json:"correlation_field,omitempty"`
@@ -116,6 +118,14 @@ type ZammadGroup struct {
 	Active bool   `json:"active"`
 }
 
+// ZammadGroupRef is the persisted group policy used at runtime. Keeping both
+// the stable ID and display name avoids requiring Zammad's admin-only groups
+// endpoint after connection setup.
+type ZammadGroupRef struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
 type ZammadState struct {
 	ID          int    `json:"id"`
 	Name        string `json:"name"`
@@ -126,6 +136,7 @@ type ZammadState struct {
 type ZammadConnectionMetadata struct {
 	Groups                   []ZammadGroup `json:"groups"`
 	States                   []ZammadState `json:"states"`
+	GroupCatalogVerified     bool          `json:"group_catalog_verified"`
 	CorrelationFieldVerified bool          `json:"correlation_field_verified"`
 }
 

@@ -885,7 +885,7 @@ func (h *ItemHandler) Transition(w http.ResponseWriter, r *http.Request) {
 // @Failure      401  {object}  handlers.ErrorResponse
 // @Failure      403  {object}  handlers.ErrorResponse  "Token lacks the items:delete scope"
 // @Failure      404  {object}  handlers.ErrorResponse  "Item not found or not visible to caller"
-// @Failure      409  {object}  handlers.ErrorResponse  "Item or descendant still has a linked Zammad ticket"
+// @Failure      409  {object}  handlers.ErrorResponse  "Item or descendant still has a protected integration link"
 // @Failure      500  {object}  handlers.ErrorResponse
 // @Router       /items/{id} [delete]
 func (h *ItemHandler) Delete(w http.ResponseWriter, r *http.Request) {
@@ -909,11 +909,11 @@ func (h *ItemHandler) Delete(w http.ResponseWriter, r *http.Request) {
 			h.RespondError(w, r, restapi.ErrItemNotFound)
 			return
 		}
-		if errors.Is(err, services.ErrItemHasZammadTicketLinks) {
+		if errors.Is(err, services.ErrItemHasProtectedIntegrationLinks) {
 			h.RespondError(w, r, restapi.NewAPIError(
 				http.StatusConflict,
 				restapi.ErrCodeConflict,
-				"Unlink all Zammad tickets from the affected items before deleting them.",
+				"Remove all protected integration links from the affected items before deleting them.",
 			))
 			return
 		}

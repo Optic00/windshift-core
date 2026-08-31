@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"windshift/internal/database"
+	coreintegrations "windshift/internal/integrations"
 	"windshift/internal/integrations/zammad"
 	"windshift/internal/itemevents"
 	"windshift/internal/models"
@@ -38,12 +39,7 @@ const zammadOAuthRefreshWaitDuration = 5 * time.Second
 const zammadOAuthRefreshPollInterval = 50 * time.Millisecond
 const zammadSyncLeaseDuration = 5 * time.Minute
 
-type ZammadOAuthCallbackResult struct {
-	ProviderID      string
-	ProviderName    string
-	Initiator       *models.User
-	OAuthGeneration int64
-}
+type ZammadOAuthCallbackResult = coreintegrations.SystemOAuthCallbackResult
 
 type ZammadSyncSummary struct {
 	Selected  int `json:"selected"`
@@ -264,12 +260,19 @@ func (s *ZammadService) UpdateConnection(id string, req models.UpdateZammadConne
 	if req.DefaultGroupName != nil {
 		connection.DefaultGroupName = strings.TrimSpace(*req.DefaultGroupName)
 	}
-	if req.AllowedGroupIDs != nil {
+	if req.AllowedGroups != nil {
+		normalizedGroups := normalizeZammadGroupRefs(*req.AllowedGroups)
+		if err := validateZammadGroupRefs(*req.AllowedGroups); err != nil && !slices.Equal(normalizedGroups, connection.AllowedGroups) {
+			return nil, err
+		}
+		connection.AllowedGroups = normalizedGroups
+	} else if req.AllowedGroupIDs != nil {
 		if hasNonPositiveIDs(*req.AllowedGroupIDs) {
 			return nil, zammadValidationError("allowed_group_ids must contain positive IDs")
 		}
-		connection.AllowedGroupIDs = normalizePositiveIDs(*req.AllowedGroupIDs)
+		connection.AllowedGroups = legacyZammadGroupRefs(*req.AllowedGroupIDs, connection.DefaultGroupID, connection.DefaultGroupName)
 	}
+	syncZammadDefaultGroupName(connection)
 	if req.DefaultCustomer != nil {
 		connection.DefaultCustomer = strings.TrimSpace(*req.DefaultCustomer)
 	}
@@ -400,7 +403,7 @@ func (s *ZammadService) validateZammadConnectionLinksTx(tx database.Tx, connecti
 	}
 	groupPolicyChanged := connection.DefaultGroupID != current.DefaultGroupID ||
 		connection.DefaultGroupName != current.DefaultGroupName ||
-		!slices.Equal(connection.AllowedGroupIDs, current.AllowedGroupIDs)
+		!slices.Equal(effectiveZammadGroupRefs(connection), effectiveZammadSnapshotGroupRefs(current))
 	completionPolicyChanged := !slices.Equal(connection.ClosedStateIDs, current.ClosedStateIDs) ||
 		!optionalIntEqual(connection.CompletionStatusID, current.CompletionStatusID)
 	groupPolicyNarrows := groupPolicyChanged && zammadGroupPolicyNarrows(current, connection)
@@ -430,8 +433,10 @@ func zammadConnectionAllowsWorkspace(connection *models.ZammadConnection, worksp
 }
 
 func zammadConnectionAllowsGroupSnapshot(connection *models.ZammadConnection, groupID int, groupName string) bool {
-	if len(connection.AllowedGroupIDs) > 0 {
-		return slices.Contains(connection.AllowedGroupIDs, groupID)
+	allowedGroups := effectiveZammadGroupRefs(connection)
+	if len(allowedGroups) > 0 {
+		_, ok := zammadGroupRefByID(allowedGroups, groupID)
+		return ok
 	}
 	if connection.DefaultGroupID > 0 {
 		return connection.DefaultGroupID == groupID
@@ -444,9 +449,10 @@ func zammadConnectionAllowsGroupSnapshot(connection *models.ZammadConnection, gr
 // compared exactly. A name-only configuration has no stable ID to compare, so
 // only retaining the identical name-only policy is provably safe.
 func zammadGroupPolicyNarrows(current *repository.ZammadConnectionMutationSnapshot, proposed *models.ZammadConnection) bool {
-	if len(current.AllowedGroupIDs) > 0 {
-		for _, groupID := range current.AllowedGroupIDs {
-			if !zammadConnectionAllowsGroupSnapshot(proposed, groupID, "") {
+	currentGroups := effectiveZammadSnapshotGroupRefs(current)
+	if len(currentGroups) > 0 {
+		for _, group := range currentGroups {
+			if !zammadConnectionAllowsGroupSnapshot(proposed, group.ID, group.Name) {
 				return true
 			}
 		}
@@ -459,7 +465,7 @@ func zammadGroupPolicyNarrows(current *repository.ZammadConnectionMutationSnapsh
 	if current.DefaultGroupID > 0 {
 		return !zammadConnectionAllowsGroupSnapshot(proposed, current.DefaultGroupID, current.DefaultGroupName)
 	}
-	return len(proposed.AllowedGroupIDs) > 0 || proposed.DefaultGroupID > 0 || proposed.DefaultGroupName != current.DefaultGroupName
+	return len(effectiveZammadGroupRefs(proposed)) > 0 || proposed.DefaultGroupID > 0 || proposed.DefaultGroupName != current.DefaultGroupName
 }
 
 func (s *ZammadService) reserveZammadTicketLink(connection *models.ZammadConnection, item *models.Item, link *models.ZammadTicketLink, existing bool) error {
@@ -475,7 +481,7 @@ func (s *ZammadService) reserveZammadTicketLink(connection *models.ZammadConnect
 			snapshot.WorkspaceKey != item.WorkspaceKey ||
 			!zammadConnectionAllowsGroupSnapshot(&models.ZammadConnection{
 				DefaultGroupID: snapshot.DefaultGroupID, DefaultGroupName: snapshot.DefaultGroupName,
-				AllowedGroupIDs: snapshot.AllowedGroupIDs,
+				AllowedGroups: snapshot.AllowedGroups,
 			}, link.GroupID, link.GroupName) {
 			return ErrZammadLinkReservationConflict
 		}
@@ -492,6 +498,9 @@ func (s *ZammadService) StartOAuth(ctx context.Context, id string, actorID int, 
 	connection, err := s.repo.GetConnection(id)
 	if err != nil {
 		return "", err
+	}
+	if !connection.Enabled {
+		return "", zammadValidationError("connection is disabled")
 	}
 	if connection.AuthMethod != models.ZammadAuthMethodOAuth {
 		return "", zammadValidationError("connection does not use OAuth")
@@ -556,6 +565,9 @@ func (s *ZammadService) CompleteOAuth(ctx context.Context, state, code, publicBa
 	if connection.OAuthGeneration != consumed.OAuthGeneration {
 		return result, ErrZammadOAuthSuperseded
 	}
+	if !connection.Enabled {
+		return result, zammadValidationError("connection is disabled")
+	}
 	if connection.AuthMethod != models.ZammadAuthMethodOAuth {
 		return result, zammadValidationError("connection OAuth configuration changed")
 	}
@@ -602,7 +614,7 @@ func (s *ZammadService) CompleteOAuth(ctx context.Context, state, code, publicBa
 }
 
 func (s *ZammadService) oauthCallbackResult(consumed *repository.ZammadOAuthState) *ZammadOAuthCallbackResult {
-	result := &ZammadOAuthCallbackResult{ProviderID: consumed.ProviderID, OAuthGeneration: consumed.OAuthGeneration}
+	result := &ZammadOAuthCallbackResult{ProviderID: consumed.ProviderID, Generation: consumed.OAuthGeneration}
 	initiator, err := repository.NewUserRepository(s.db).GetByID(consumed.InitiatedBy)
 	if err != nil {
 		initiator = &models.User{ID: consumed.InitiatedBy, Username: "unknown"}
@@ -840,15 +852,16 @@ func (s *ZammadService) TestConnection(ctx context.Context, id string) (*models.
 	if err != nil {
 		return nil, err
 	}
-	metadata, err := client.Metadata(ctx)
+	metadata, err := zammadRuntimeMetadata(ctx, connection, client)
 	if err == nil {
 		// Least-privilege API-token and OAuth service accounts intentionally need
-		// not have admin.object. Test only the groups and ticket-state endpoints
-		// used at runtime and report the custom field as explicitly unverified.
+		// neither admin.object nor admin.group. The configured group catalog and
+		// custom field therefore remain explicitly unverified.
+		metadata.GroupCatalogVerified = false
 		metadata.CorrelationFieldVerified = false
 	}
 	if err == nil {
-		err = validateZammadMetadata(connection, metadata)
+		err = validateZammadStates(connection, metadata)
 	}
 	safeError := ""
 	if err != nil {
@@ -863,12 +876,7 @@ func (s *ZammadService) MetadataForWorkspace(ctx context.Context, id string, wor
 	if err != nil {
 		return nil, err
 	}
-	metadata, err := client.Metadata(ctx)
-	if err != nil {
-		return nil, err
-	}
-	metadata.Groups = allowedZammadGroups(connection, metadata.Groups)
-	return metadata, nil
+	return zammadRuntimeMetadata(ctx, connection, client)
 }
 
 func (s *ZammadService) OwnersForWorkspace(ctx context.Context, id string, workspaceID, groupID int) ([]models.ZammadOwner, error) {
@@ -879,11 +887,7 @@ func (s *ZammadService) OwnersForWorkspace(ctx context.Context, id string, works
 	if err != nil {
 		return nil, err
 	}
-	groups, err := client.Groups(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := allowedZammadGroup(connection, groups, groupID); err != nil {
+	if _, err := allowedZammadGroup(connection, groupID); err != nil {
 		return nil, err
 	}
 	owners, err := client.Owners(ctx, groupID)
@@ -955,11 +959,11 @@ func (s *ZammadService) LinkExistingTicket(ctx context.Context, itemID, actorID 
 	if ticket.Number != req.TicketNumber {
 		return nil, zammadValidationError("Zammad ticket was not found")
 	}
-	metadata, err := client.Metadata(ctx)
+	metadata, err := zammadRuntimeMetadata(ctx, connection, client)
 	if err != nil {
 		return nil, err
 	}
-	group, err := allowedZammadGroup(connection, metadata.Groups, ticket.GroupID)
+	group, err := allowedZammadGroup(connection, ticket.GroupID)
 	if err != nil {
 		return nil, err
 	}
@@ -1040,11 +1044,11 @@ func (s *ZammadService) LinkExistingTicket(ctx context.Context, itemID, actorID 
 	if err != nil {
 		return nil, err
 	}
-	metadata, err = client.Metadata(ctx)
+	metadata, err = zammadRuntimeMetadata(ctx, connection, client)
 	if err != nil {
 		return nil, err
 	}
-	group, err = allowedZammadGroup(connection, metadata.Groups, ticket.GroupID)
+	group, err = allowedZammadGroup(connection, ticket.GroupID)
 	if err != nil {
 		return nil, err
 	}
@@ -1099,27 +1103,13 @@ func (s *ZammadService) CreateTicket(ctx context.Context, itemID, actorID int, r
 	if groupID == 0 {
 		groupID = connection.DefaultGroupID
 	}
-	groups, metadataErr := client.Groups(ctx)
-	if metadataErr != nil {
-		return nil, metadataErr
+	group, err := allowedZammadGroup(connection, groupID)
+	if err != nil {
+		return nil, err
 	}
-	for _, group := range groups {
-		if group.ID == groupID || (groupID == 0 && group.Name == connection.DefaultGroupName) {
-			groupID = group.ID
-			groupName = group.Name
-			break
-		}
-	}
-	if groupID == 0 || groupName == "" {
-		return nil, zammadValidationError("selected Zammad group is missing or inactive")
-	}
-	allowed := slices.Contains(connection.AllowedGroupIDs, groupID)
-	if len(connection.AllowedGroupIDs) == 0 {
-		allowed = (connection.DefaultGroupID > 0 && connection.DefaultGroupID == groupID) ||
-			(connection.DefaultGroupID == 0 && connection.DefaultGroupName == groupName)
-	}
-	if !allowed {
-		return nil, zammadValidationError("selected Zammad group is not allowed for this connection")
+	groupID, groupName = group.ID, group.Name
+	if strings.TrimSpace(groupName) == "" {
+		return nil, zammadValidationError("selected Zammad group needs a stored name before tickets can be created")
 	}
 	correlation := fmt.Sprintf("windshift:%s:%s-%d", connection.ProviderID, item.WorkspaceKey, item.WorkspaceItemNumber)
 	link, err := s.repo.GetTicketLinkForItem(itemID, connection.ProviderID)
@@ -1170,11 +1160,7 @@ func (s *ZammadService) CreateTicket(ctx context.Context, itemID, actorID int, r
 	if err != nil {
 		return nil, s.failZammadTicketCreationBeforePost(link.ID, syncOwner, wasUncertain, err)
 	}
-	groups, err = client.Groups(ctx)
-	if err != nil {
-		return nil, s.failZammadTicketCreationBeforePost(link.ID, syncOwner, wasUncertain, err)
-	}
-	if _, err := allowedZammadGroup(connection, groups, groupID); err != nil {
+	if _, err := allowedZammadGroup(connection, groupID); err != nil {
 		return nil, s.failZammadTicketCreationBeforePost(link.ID, syncOwner, wasUncertain, err)
 	}
 
@@ -1222,7 +1208,7 @@ func (s *ZammadService) CreateTicket(ctx context.Context, itemID, actorID int, r
 		}
 	}
 	ticketGroupID := ticket.GroupID
-	allowedGroup, groupErr := s.requireAllowedTicketGroup(ctx, connection, client, ticket, groups)
+	allowedGroup, groupErr := s.requireAllowedTicketGroup(ctx, connection, client, ticket, nil)
 	if groupErr != nil {
 		if err := s.repo.MarkTicketLinkUncertain(link.ID, syncOwner, RedactString(groupErr.Error())); err != nil {
 			return nil, s.mapZammadSyncClaimError(err)
@@ -1253,35 +1239,7 @@ func (s *ZammadService) CreateTicket(ctx context.Context, itemID, actorID int, r
 	return s.repo.GetTicketLink(link.ID)
 }
 
-func validateZammadMetadata(connection *models.ZammadConnection, metadata *models.ZammadConnectionMetadata) error {
-	activeGroups := make(map[int]string, len(metadata.Groups))
-	for _, group := range metadata.Groups {
-		activeGroups[group.ID] = group.Name
-	}
-	defaultGroupID := connection.DefaultGroupID
-	if connection.DefaultGroupID > 0 {
-		if _, ok := activeGroups[connection.DefaultGroupID]; !ok {
-			return zammadValidationError("default Zammad group is missing or inactive")
-		}
-	} else if connection.DefaultGroupName != "" {
-		for groupID, name := range activeGroups {
-			if name == connection.DefaultGroupName {
-				defaultGroupID = groupID
-				break
-			}
-		}
-		if defaultGroupID == 0 {
-			return zammadValidationError("default Zammad group is missing or inactive")
-		}
-	}
-	if len(connection.AllowedGroupIDs) > 0 && !slices.Contains(connection.AllowedGroupIDs, defaultGroupID) {
-		return zammadValidationError("default Zammad group must be included in allowed_group_ids")
-	}
-	for _, groupID := range connection.AllowedGroupIDs {
-		if _, ok := activeGroups[groupID]; !ok {
-			return zammadValidationError(fmt.Sprintf("allowed Zammad group %d is missing or inactive", groupID))
-		}
-	}
+func validateZammadStates(connection *models.ZammadConnection, metadata *models.ZammadConnectionMetadata) error {
 	activeStates := make(map[int]struct{}, len(metadata.States))
 	for _, state := range metadata.States {
 		activeStates[state.ID] = struct{}{}
@@ -1338,7 +1296,7 @@ func (s *ZammadService) UpdateTicketLink(ctx context.Context, linkID string, req
 	if err != nil {
 		return nil, err
 	}
-	metadata, err := client.Metadata(ctx)
+	metadata, err := zammadRuntimeMetadata(ctx, connection, client)
 	if err != nil {
 		return nil, err
 	}
@@ -1347,7 +1305,7 @@ func (s *ZammadService) UpdateTicketLink(ctx context.Context, linkID string, req
 	if req.GroupID != nil {
 		effectiveGroupID = *req.GroupID
 	}
-	if _, err := allowedZammadGroup(connection, metadata.Groups, effectiveGroupID); err != nil {
+	if _, err := allowedZammadGroup(connection, effectiveGroupID); err != nil {
 		return nil, err
 	}
 	if req.StateID != nil && !zammadStateExists(metadata, *req.StateID) {
@@ -1470,6 +1428,42 @@ func (s *ZammadService) UnlinkTicket(ctx context.Context, linkID string) (*model
 	return link, nil
 }
 
+// DetachTicketLinkLocally is an explicit administrator recovery path for
+// upstream outages or permanently invalid credentials. It removes only the
+// local typed and generic links. The remote correlation value may remain in
+// Zammad and must be cleared there separately when the upstream system is
+// available again.
+func (s *ZammadService) DetachTicketLinkLocally(linkID string) (*models.ZammadTicketLink, error) {
+	link, err := s.repo.GetTicketLink(linkID)
+	if err != nil {
+		return nil, err
+	}
+	syncOwner := uuid.New().String()
+	claimed, err := s.repo.ClaimSync(link.ID, syncOwner, time.Now().Add(zammadSyncLeaseDuration))
+	if err != nil {
+		return nil, err
+	}
+	if !claimed {
+		return nil, ErrZammadConnectionBusy
+	}
+	deleted := false
+	defer func() {
+		if !deleted {
+			_ = s.repo.ReleaseSyncClaim(link.ID, syncOwner)
+		}
+	}()
+
+	link, err = s.repo.GetTicketLink(link.ID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.repo.DeleteTicketLinkClaimed(link.ID, syncOwner); err != nil {
+		return nil, s.mapZammadSyncClaimError(err)
+	}
+	deleted = true
+	return link, nil
+}
+
 func (s *ZammadService) SyncTicketLink(ctx context.Context, linkID string) (*models.ZammadTicketLink, error) {
 	link, err := s.repo.GetTicketLink(linkID)
 	if err != nil {
@@ -1557,7 +1551,7 @@ func (s *ZammadService) syncClaimedTicketLink(ctx context.Context, link *models.
 	needsStateName := ticket.StateName == "" && (ticket.StateID != link.LastStatusID || link.LastStatusName == "")
 	needsGroupName := ticket.GroupName == "" && (ticket.GroupID != link.GroupID || link.GroupName == "")
 	if needsStateName || needsGroupName {
-		metadata, err = client.Metadata(ctx)
+		metadata, err = zammadRuntimeMetadata(ctx, connection, client)
 		if err != nil {
 			s.recordZammadSyncError(link, syncOwner, err)
 			return nil, err
@@ -1740,12 +1734,12 @@ func (s *ZammadService) completeExistingTicketLinkWithCurrentGroupPolicy(link *m
 }
 
 func (s *ZammadService) requireCurrentZammadGroupTx(tx database.Tx, providerID string, groupID int, groupName string) error {
-	defaultGroupID, defaultGroupName, allowedGroupIDs, err := s.repo.ConnectionGroupPolicyTx(tx, providerID)
+	defaultGroupID, defaultGroupName, allowedGroups, err := s.repo.ConnectionGroupPolicyTx(tx, providerID)
 	if err != nil {
 		return err
 	}
 	if !zammadConnectionAllowsGroupSnapshot(&models.ZammadConnection{
-		DefaultGroupID: defaultGroupID, DefaultGroupName: defaultGroupName, AllowedGroupIDs: allowedGroupIDs,
+		DefaultGroupID: defaultGroupID, DefaultGroupName: defaultGroupName, AllowedGroups: allowedGroups,
 	}, groupID, groupName) {
 		return ErrZammadTicketGroupPolicyChanged
 	}
@@ -1774,26 +1768,20 @@ func resolveZammadOwnerName(ctx context.Context, client *zammad.Client, ticket *
 	return ""
 }
 
-func allowedZammadGroups(connection *models.ZammadConnection, groups []models.ZammadGroup) []models.ZammadGroup {
-	allowed := make([]models.ZammadGroup, 0, len(groups))
-	for _, group := range groups {
-		isAllowed := slices.Contains(connection.AllowedGroupIDs, group.ID)
-		if len(connection.AllowedGroupIDs) == 0 {
-			if connection.DefaultGroupID > 0 {
-				isAllowed = group.ID == connection.DefaultGroupID
-			} else {
-				isAllowed = group.Name == connection.DefaultGroupName
-			}
-		}
-		if isAllowed {
-			allowed = append(allowed, group)
-		}
+func allowedZammadGroups(connection *models.ZammadConnection) []models.ZammadGroup {
+	refs := effectiveZammadGroupRefs(connection)
+	if len(refs) == 0 && connection.DefaultGroupID > 0 {
+		refs = []models.ZammadGroupRef{{ID: connection.DefaultGroupID, Name: connection.DefaultGroupName}}
+	}
+	allowed := make([]models.ZammadGroup, 0, len(refs))
+	for _, group := range refs {
+		allowed = append(allowed, models.ZammadGroup{ID: group.ID, Name: group.Name, Active: true})
 	}
 	return allowed
 }
 
-func allowedZammadGroup(connection *models.ZammadConnection, groups []models.ZammadGroup, groupID int) (models.ZammadGroup, error) {
-	for _, group := range allowedZammadGroups(connection, groups) {
+func allowedZammadGroup(connection *models.ZammadConnection, groupID int) (models.ZammadGroup, error) {
+	for _, group := range allowedZammadGroups(connection) {
 		if group.ID == groupID {
 			return group, nil
 		}
@@ -1801,18 +1789,19 @@ func allowedZammadGroup(connection *models.ZammadConnection, groups []models.Zam
 	return models.ZammadGroup{}, zammadValidationError("selected Zammad group is missing, inactive, or not allowed for this connection")
 }
 
-func (s *ZammadService) requireAllowedTicketGroup(ctx context.Context, connection *models.ZammadConnection, client *zammad.Client, ticket *zammad.Ticket, knownGroups []models.ZammadGroup) (models.ZammadGroup, error) {
+func (s *ZammadService) requireAllowedTicketGroup(_ context.Context, connection *models.ZammadConnection, _ *zammad.Client, ticket *zammad.Ticket, _ []models.ZammadGroup) (models.ZammadGroup, error) {
 	if ticket == nil || ticket.GroupID <= 0 {
 		return models.ZammadGroup{}, zammadValidationError("Zammad ticket group is missing or invalid")
 	}
-	if knownGroups == nil {
-		var err error
-		knownGroups, err = client.Groups(ctx)
-		if err != nil {
-			return models.ZammadGroup{}, err
-		}
+	return allowedZammadGroup(connection, ticket.GroupID)
+}
+
+func zammadRuntimeMetadata(ctx context.Context, connection *models.ZammadConnection, client *zammad.Client) (*models.ZammadConnectionMetadata, error) {
+	states, err := client.States(ctx)
+	if err != nil {
+		return nil, err
 	}
-	return allowedZammadGroup(connection, knownGroups, ticket.GroupID)
+	return &models.ZammadConnectionMetadata{Groups: allowedZammadGroups(connection), States: states}, nil
 }
 
 func zammadCreationOutcomeUncertain(err error) bool {
@@ -2038,11 +2027,11 @@ func (s *ZammadService) clientForConnection(ctx context.Context, connection *mod
 }
 
 func (s *ZammadService) resolveStateName(ctx context.Context, client *zammad.Client, stateID int) string {
-	metadata, err := client.Metadata(ctx)
+	states, err := client.States(ctx)
 	if err != nil {
 		return ""
 	}
-	for _, state := range metadata.States {
+	for _, state := range states {
 		if state.ID == stateID {
 			return state.Name
 		}
@@ -2053,6 +2042,9 @@ func (s *ZammadService) resolveStateName(ctx context.Context, client *zammad.Cli
 func validateNewZammadConnection(req models.CreateZammadConnectionRequest, actorID int) (*models.ZammadConnection, error) {
 	if hasNonPositiveIDs(req.ClosedStateIDs) {
 		return nil, zammadValidationError("closed_state_ids must contain positive IDs")
+	}
+	if err := validateZammadGroupRefs(req.AllowedGroups); err != nil {
+		return nil, err
 	}
 	if hasNonPositiveIDs(req.AllowedGroupIDs) {
 		return nil, zammadValidationError("allowed_group_ids must contain positive IDs")
@@ -2080,12 +2072,16 @@ func validateNewZammadConnection(req models.CreateZammadConnectionRequest, actor
 		ProviderID: uuid.New().String(), Slug: strings.TrimSpace(req.Slug),
 		Name: strings.TrimSpace(req.Name), Enabled: enabled, BaseURL: baseURL,
 		DefaultGroupID: req.DefaultGroupID, DefaultGroupName: strings.TrimSpace(req.DefaultGroupName),
-		AllowedGroupIDs: normalizePositiveIDs(req.AllowedGroupIDs),
+		AllowedGroups:   normalizeZammadGroupRefs(req.AllowedGroups),
 		DefaultCustomer: strings.TrimSpace(req.DefaultCustomer), CorrelationField: correlationField,
 		ClosedStateIDs: normalizePositiveIDs(req.ClosedStateIDs), CompletionStatusID: req.CompletionStatusID,
 		AppliesToAllWorkspaces: appliesAll, WorkspaceIDs: normalizePositiveIDs(req.WorkspaceIDs),
 		CreatedBy: &actorID,
 	}
+	if len(connection.AllowedGroups) == 0 && len(req.AllowedGroupIDs) > 0 {
+		connection.AllowedGroups = legacyZammadGroupRefs(req.AllowedGroupIDs, connection.DefaultGroupID, connection.DefaultGroupName)
+	}
+	syncZammadDefaultGroupName(connection)
 	connection.AuthMethod = req.AuthMethod
 	if connection.AuthMethod == "" {
 		connection.AuthMethod = models.ZammadAuthMethodAPIToken
@@ -2125,8 +2121,15 @@ func validateZammadConnection(connection *models.ZammadConnection) error {
 	if connection.DefaultGroupID == 0 && connection.DefaultGroupName == "" {
 		return zammadValidationError("default_group_id or default_group_name is required")
 	}
-	if connection.DefaultGroupID > 0 && len(connection.AllowedGroupIDs) > 0 && !slices.Contains(connection.AllowedGroupIDs, connection.DefaultGroupID) {
-		return zammadValidationError("default Zammad group must be included in allowed_group_ids")
+	allowedGroups := effectiveZammadGroupRefs(connection)
+	if connection.DefaultGroupID > 0 && len(allowedGroups) > 0 {
+		defaultGroup, ok := zammadGroupRefByID(allowedGroups, connection.DefaultGroupID)
+		if !ok {
+			return zammadValidationError("default Zammad group must be included in allowed_groups")
+		}
+		if connection.DefaultGroupName != "" && defaultGroup.Name != "" && connection.DefaultGroupName != defaultGroup.Name {
+			return zammadValidationError("default Zammad group name must match allowed_groups")
+		}
 	}
 	if connection.CompletionStatusID != nil && *connection.CompletionStatusID <= 0 {
 		return zammadValidationError("completion_status_id must be positive")
@@ -2171,7 +2174,7 @@ func zammadOAuthRedirectURI(publicBaseURL string) (string, error) {
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.Opaque != "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return "", zammadValidationError("Zammad OAuth requires an absolute HTTPS public base URL")
 	}
-	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/api/integrations/zammad/oauth/callback"
+	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/api/integrations/oauth/system/zammad/callback"
 	parsed.RawPath = ""
 	return parsed.String(), nil
 }
@@ -2190,6 +2193,83 @@ func normalizePositiveIDs(ids []int) []int {
 		out = append(out, id)
 	}
 	return out
+}
+
+func validateZammadGroupRefs(groups []models.ZammadGroupRef) error {
+	seen := make(map[int]struct{}, len(groups))
+	for _, group := range groups {
+		if group.ID <= 0 {
+			return zammadValidationError("allowed_groups must contain positive IDs")
+		}
+		if strings.TrimSpace(group.Name) == "" {
+			return zammadValidationError("allowed_groups must contain a name for every group")
+		}
+		if _, exists := seen[group.ID]; exists {
+			return zammadValidationError("allowed_groups must not contain duplicate IDs")
+		}
+		seen[group.ID] = struct{}{}
+	}
+	return nil
+}
+
+func normalizeZammadGroupRefs(groups []models.ZammadGroupRef) []models.ZammadGroupRef {
+	seen := make(map[int]struct{}, len(groups))
+	out := make([]models.ZammadGroupRef, 0, len(groups))
+	for _, group := range groups {
+		if group.ID <= 0 {
+			continue
+		}
+		if _, exists := seen[group.ID]; exists {
+			continue
+		}
+		seen[group.ID] = struct{}{}
+		out = append(out, models.ZammadGroupRef{ID: group.ID, Name: strings.TrimSpace(group.Name)})
+	}
+	return out
+}
+
+func legacyZammadGroupRefs(groupIDs []int, defaultGroupID int, defaultGroupName string) []models.ZammadGroupRef {
+	groups := make([]models.ZammadGroupRef, 0, len(groupIDs))
+	for _, groupID := range normalizePositiveIDs(groupIDs) {
+		name := ""
+		if groupID == defaultGroupID {
+			name = strings.TrimSpace(defaultGroupName)
+		}
+		groups = append(groups, models.ZammadGroupRef{ID: groupID, Name: name})
+	}
+	return groups
+}
+
+func effectiveZammadGroupRefs(connection *models.ZammadConnection) []models.ZammadGroupRef {
+	if connection == nil {
+		return nil
+	}
+	return connection.AllowedGroups
+}
+
+func effectiveZammadSnapshotGroupRefs(snapshot *repository.ZammadConnectionMutationSnapshot) []models.ZammadGroupRef {
+	if snapshot == nil {
+		return nil
+	}
+	return snapshot.AllowedGroups
+}
+
+func syncZammadDefaultGroupName(connection *models.ZammadConnection) {
+	if connection == nil || connection.DefaultGroupID <= 0 {
+		return
+	}
+	if group, ok := zammadGroupRefByID(effectiveZammadGroupRefs(connection), connection.DefaultGroupID); ok && strings.TrimSpace(group.Name) != "" {
+		connection.DefaultGroupName = strings.TrimSpace(group.Name)
+	}
+}
+
+func zammadGroupRefByID(groups []models.ZammadGroupRef, groupID int) (models.ZammadGroupRef, bool) {
+	for _, group := range groups {
+		if group.ID == groupID {
+			return group, true
+		}
+	}
+	return models.ZammadGroupRef{}, false
 }
 
 func hasNonPositiveIDs(ids []int) bool {

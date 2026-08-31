@@ -461,8 +461,8 @@ func init() {
 				if errors.Is(err, services.ErrItemDeletionForbidden) {
 					return map[string]string{"error": "permission denied"}, nil
 				}
-				if errors.Is(err, services.ErrItemHasZammadTicketLinks) {
-					return map[string]string{"error": "unlink all Zammad tickets from the item or its descendants before deleting them"}, nil
+				if errors.Is(err, services.ErrItemHasProtectedIntegrationLinks) {
+					return map[string]string{"error": "remove all protected integration links from the item or its descendants before deleting them"}, nil
 				}
 				return nil, err
 			}

@@ -64,7 +64,8 @@ export const zammadConnections = {
   delete: (id) => fetchAPI(`/admin/zammad-connections/${id}`, { method: 'DELETE' }),
   test: (id) => fetchAPI(`/admin/zammad-connections/${id}/test`, { method: 'POST' }),
   refreshAllTickets: () => fetchAPI('/admin/zammad-ticket-links/refresh', { method: 'POST' }),
-  startOAuth: (id) => fetchAPI(`/admin/zammad-connections/${id}/oauth/start`, { method: 'POST' }),
+  startOAuth: (id) =>
+    fetchAPI(`/admin/integration-providers/${id}/oauth/start`, { method: 'POST' }),
   forWorkspace: (workspaceId) => fetchAPI(`/workspaces/${workspaceId}/zammad-connections`),
   metadata: (workspaceId, id) =>
     fetchAPI(`/workspaces/${workspaceId}/zammad-connections/${id}/metadata`),

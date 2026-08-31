@@ -44,6 +44,18 @@ type fakeZammadTransport struct {
 	putRerouteGroupID     int
 }
 
+func zammadTestGroupRefs(ids ...int) []models.ZammadGroupRef {
+	groups := make([]models.ZammadGroupRef, 0, len(ids))
+	for _, id := range ids {
+		name := "Support"
+		if id != 7 {
+			name = "Escalations"
+		}
+		groups = append(groups, models.ZammadGroupRef{ID: id, Name: name})
+	}
+	return groups
+}
+
 func (f *fakeZammadTransport) Do(_ context.Context, method, targetURL string, body []byte, headers map[string]string) (*zammad.Response, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -465,8 +477,8 @@ func TestZammadUpdateTicketLinkValidatesOwnerForEffectiveGroupAndPersistsSnapsho
 	f.transport.groups = []map[string]any{{"id": 7, "name": "Support", "active": true}, {"id": 8, "name": "Escalations", "active": true}}
 	f.transport.states = []map[string]any{{"id": 2, "name": "open", "active": true}, {"id": 4, "name": "closed", "active": true}}
 	f.transport.users = []map[string]any{{"id": 99, "active": true, "firstname": "Grace", "lastname": "Hopper", "group_ids": map[string][]string{"8": {"full"}}}}
-	allowedGroups := []int{7, 8}
-	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroupIDs: &allowedGroups}); err != nil {
+	allowedGroups := zammadTestGroupRefs(7, 8)
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroups: &allowedGroups}); err != nil {
 		t.Fatal(err)
 	}
 	stateID, groupID, ownerID := 4, 8, 99
@@ -493,8 +505,8 @@ func TestZammadTicketSnapshotBlocksConcurrentGroupPolicyNarrowing(t *testing.T) 
 		t.Fatal(err)
 	}
 	f.transport.groups = []map[string]any{{"id": 7, "name": "Support", "active": true}, {"id": 8, "name": "Escalations", "active": true}}
-	initialAllowedGroups := []int{7, 8}
-	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroupIDs: &initialAllowedGroups}); err != nil {
+	initialAllowedGroups := zammadTestGroupRefs(7, 8)
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroups: &initialAllowedGroups}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -513,8 +525,8 @@ func TestZammadTicketSnapshotBlocksConcurrentGroupPolicyNarrowing(t *testing.T) 
 		updateErr <- err
 	}()
 	<-arrived
-	narrowedAllowedGroups := []int{7}
-	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroupIDs: &narrowedAllowedGroups}); !errors.Is(err, ErrZammadConnectionBusy) {
+	narrowedAllowedGroups := zammadTestGroupRefs(7)
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroups: &narrowedAllowedGroups}); !errors.Is(err, ErrZammadConnectionBusy) {
 		t.Fatalf("group policy changed while remote update was pending: %v", err)
 	}
 	close(release)
@@ -541,8 +553,8 @@ func TestZammadExpiredUpdateLeaseReloadsGroupPolicyBeforeRemoteWrite(t *testing.
 		t.Fatal(err)
 	}
 	f.transport.groups = []map[string]any{{"id": 7, "name": "Support", "active": true}, {"id": 8, "name": "Escalations", "active": true}}
-	initialAllowed := []int{7, 8}
-	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroupIDs: &initialAllowed}); err != nil {
+	initialAllowed := zammadTestGroupRefs(7, 8)
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroups: &initialAllowed}); err != nil {
 		t.Fatal(err)
 	}
 	arrived := make(chan struct{}, 1)
@@ -563,8 +575,8 @@ func TestZammadExpiredUpdateLeaseReloadsGroupPolicyBeforeRemoteWrite(t *testing.
 	if _, err := f.db.ExecWrite("UPDATE zammad_ticket_links SET sync_lock_until = ? WHERE id = ?", time.Now().Add(-time.Minute), link.ID); err != nil {
 		t.Fatal(err)
 	}
-	narrowed := []int{7}
-	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroupIDs: &narrowed}); err != nil {
+	narrowed := zammadTestGroupRefs(7)
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroups: &narrowed}); err != nil {
 		t.Fatalf("group policy could not change after synthetic lease expiry: %v", err)
 	}
 	puts := f.transport.putCount()
@@ -581,8 +593,8 @@ func TestZammadTicketCreationBlocksGroupNarrowingAcrossRemoteReroute(t *testing.
 	f := newZammadServiceFixture(t, nil)
 	f.transport.groups = []map[string]any{{"id": 7, "name": "Support", "active": true}, {"id": 8, "name": "Escalations", "active": true}}
 	f.transport.createGroupID = 8
-	initialAllowedGroups := []int{7, 8}
-	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroupIDs: &initialAllowedGroups}); err != nil {
+	initialAllowedGroups := zammadTestGroupRefs(7, 8)
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroups: &initialAllowedGroups}); err != nil {
 		t.Fatal(err)
 	}
 	arrived := make(chan struct{}, 1)
@@ -603,8 +615,8 @@ func TestZammadTicketCreationBlocksGroupNarrowingAcrossRemoteReroute(t *testing.
 		result <- creationResult{link: link, err: err}
 	}()
 	<-arrived
-	narrowedAllowedGroups := []int{7}
-	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroupIDs: &narrowedAllowedGroups}); !errors.Is(err, ErrZammadConnectionBusy) {
+	narrowedAllowedGroups := zammadTestGroupRefs(7)
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroups: &narrowedAllowedGroups}); !errors.Is(err, ErrZammadConnectionBusy) {
 		t.Fatalf("group policy changed while rerouted ticket creation was incomplete: %v", err)
 	}
 	close(release)
@@ -618,8 +630,8 @@ func TestZammadIncompleteReservationAllowsPolicyExpansionAndCorrelationRecovery(
 	f := newZammadServiceFixture(t, nil)
 	f.transport.groups = []map[string]any{{"id": 7, "name": "Support", "active": true}, {"id": 8, "name": "Escalations", "active": true}}
 	f.transport.createGroupID = 8
-	initialAllowedGroups := []int{7}
-	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroupIDs: &initialAllowedGroups}); err != nil {
+	initialAllowedGroups := zammadTestGroupRefs(7)
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroups: &initialAllowedGroups}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -633,12 +645,12 @@ func TestZammadIncompleteReservationAllowsPolicyExpansionAndCorrelationRecovery(
 		t.Fatalf("rerouted ticket was not retained for correlation recovery: links=%#v err=%v", links, err)
 	}
 
-	expandedAllowedGroups := []int{7, 8}
-	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroupIDs: &expandedAllowedGroups}); err != nil {
+	expandedAllowedGroups := zammadTestGroupRefs(7, 8)
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroups: &expandedAllowedGroups}); err != nil {
 		t.Fatalf("safe group policy expansion was blocked by incomplete reservation: %v", err)
 	}
-	narrowedAllowedGroups := []int{7}
-	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroupIDs: &narrowedAllowedGroups}); !errors.Is(err, ErrZammadConnectionBusy) {
+	narrowedAllowedGroups := zammadTestGroupRefs(7)
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroups: &narrowedAllowedGroups}); !errors.Is(err, ErrZammadConnectionBusy) {
 		t.Fatalf("group policy narrowing was allowed while reservation was incomplete: %v", err)
 	}
 
@@ -656,7 +668,7 @@ func TestZammadIncompleteReservationAllowsPolicyExpansionAndCorrelationRecovery(
 }
 
 func TestZammadGroupPolicyNarrows(t *testing.T) {
-	currentNumeric := &repository.ZammadConnectionMutationSnapshot{DefaultGroupID: 7, AllowedGroupIDs: []int{7, 8}}
+	currentNumeric := &repository.ZammadConnectionMutationSnapshot{DefaultGroupID: 7, AllowedGroups: zammadTestGroupRefs(7, 8)}
 	currentNameOnly := &repository.ZammadConnectionMutationSnapshot{DefaultGroupName: "Support"}
 	tests := []struct {
 		name     string
@@ -666,26 +678,26 @@ func TestZammadGroupPolicyNarrows(t *testing.T) {
 	}{
 		{
 			name: "numeric expansion", current: currentNumeric,
-			proposed: &models.ZammadConnection{DefaultGroupID: 7, AllowedGroupIDs: []int{7, 8, 9}},
+			proposed: &models.ZammadConnection{DefaultGroupID: 7, AllowedGroups: zammadTestGroupRefs(7, 8, 9)},
 		},
 		{
 			name: "numeric expansion preserves name-only default through allowlist",
 			current: &repository.ZammadConnectionMutationSnapshot{
-				DefaultGroupName: "Support", AllowedGroupIDs: []int{7, 8},
+				DefaultGroupName: "Support", AllowedGroups: zammadTestGroupRefs(7, 8),
 			},
-			proposed: &models.ZammadConnection{DefaultGroupName: "Support", AllowedGroupIDs: []int{7, 8, 9}},
+			proposed: &models.ZammadConnection{DefaultGroupName: "Support", AllowedGroups: zammadTestGroupRefs(7, 8, 9)},
 		},
 		{
 			name: "numeric narrowing", current: currentNumeric,
-			proposed: &models.ZammadConnection{DefaultGroupID: 7, AllowedGroupIDs: []int{7}}, narrows: true,
+			proposed: &models.ZammadConnection{DefaultGroupID: 7, AllowedGroups: zammadTestGroupRefs(7)}, narrows: true,
 		},
 		{
 			name: "old default remains allowed", current: &repository.ZammadConnectionMutationSnapshot{DefaultGroupID: 7},
-			proposed: &models.ZammadConnection{DefaultGroupID: 8, AllowedGroupIDs: []int{7, 8}},
+			proposed: &models.ZammadConnection{DefaultGroupID: 8, AllowedGroups: zammadTestGroupRefs(7, 8)},
 		},
 		{
 			name: "old default excluded", current: &repository.ZammadConnectionMutationSnapshot{DefaultGroupID: 7},
-			proposed: &models.ZammadConnection{DefaultGroupID: 8, AllowedGroupIDs: []int{8}}, narrows: true,
+			proposed: &models.ZammadConnection{DefaultGroupID: 8, AllowedGroups: zammadTestGroupRefs(8)}, narrows: true,
 		},
 		{
 			name: "same name-only policy", current: currentNameOnly,
@@ -693,7 +705,7 @@ func TestZammadGroupPolicyNarrows(t *testing.T) {
 		},
 		{
 			name: "name-only changed to IDs", current: currentNameOnly,
-			proposed: &models.ZammadConnection{DefaultGroupID: 7, AllowedGroupIDs: []int{7}}, narrows: true,
+			proposed: &models.ZammadConnection{DefaultGroupID: 7, AllowedGroups: zammadTestGroupRefs(7)}, narrows: true,
 		},
 	}
 	for _, tt := range tests {
@@ -710,8 +722,8 @@ func TestZammadExistingTicketLinkBlocksGroupNarrowingAcrossRemoteReroute(t *test
 	f.transport.groups = []map[string]any{{"id": 7, "name": "Support", "active": true}, {"id": 8, "name": "Escalations", "active": true}}
 	f.transport.ticket = map[string]any{"id": 714, "number": "420714", "group_id": 7, "state_id": 2, "state": "open"}
 	f.transport.putRerouteGroupID = 8
-	initialAllowedGroups := []int{7, 8}
-	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroupIDs: &initialAllowedGroups}); err != nil {
+	initialAllowedGroups := zammadTestGroupRefs(7, 8)
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroups: &initialAllowedGroups}); err != nil {
 		t.Fatal(err)
 	}
 	arrived := make(chan struct{}, 1)
@@ -732,8 +744,8 @@ func TestZammadExistingTicketLinkBlocksGroupNarrowingAcrossRemoteReroute(t *test
 		result <- linkResult{link: link, err: err}
 	}()
 	<-arrived
-	narrowedAllowedGroups := []int{7}
-	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroupIDs: &narrowedAllowedGroups}); !errors.Is(err, ErrZammadConnectionBusy) {
+	narrowedAllowedGroups := zammadTestGroupRefs(7)
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroups: &narrowedAllowedGroups}); !errors.Is(err, ErrZammadConnectionBusy) {
 		t.Fatalf("group policy changed while rerouted existing-ticket link was incomplete: %v", err)
 	}
 	close(release)
@@ -757,6 +769,42 @@ func TestZammadUnlinkClearsOnlyExactRemoteCorrelationWithoutDeletingTicket(t *te
 	}
 	if _, err := f.service.GetTicketLink(link.ID); !errors.Is(err, repository.ErrNotFound) {
 		t.Fatalf("unlink retained local association: %v", err)
+	}
+}
+
+func TestZammadLocalDetachRemovesLinksWithoutContactingUnavailableUpstream(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	link, err := f.service.CreateTicket(context.Background(), f.item1, f.actorID, models.CreateZammadTicketRequest{ConnectionID: f.connection.ProviderID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.transport.resetRequests()
+	f.transport.getStatus = http.StatusServiceUnavailable
+	f.transport.putError = errors.New("synthetic upstream outage")
+
+	detached, err := f.service.DetachTicketLinkLocally(link.ID)
+	if err != nil {
+		t.Fatalf("local detach failed while upstream was unavailable: %v", err)
+	}
+	if detached.ID != link.ID {
+		t.Fatalf("local detach returned the wrong link: got %q want %q", detached.ID, link.ID)
+	}
+	requests, _ := f.transport.counts()
+	if requests != 0 {
+		t.Fatalf("local detach contacted Zammad %d times", requests)
+	}
+	if f.transport.ticket["windshift_item_key"] != link.CorrelationKey {
+		t.Fatalf("local detach unexpectedly changed remote correlation: %#v", f.transport.ticket)
+	}
+	if _, err := f.service.GetTicketLink(link.ID); !errors.Is(err, repository.ErrNotFound) {
+		t.Fatalf("local detach retained typed link: %v", err)
+	}
+	var genericLinkCount int
+	if err := f.db.QueryRow("SELECT COUNT(*) FROM item_integration_links WHERE id = ?", link.ItemIntegrationLinkID).Scan(&genericLinkCount); err != nil || genericLinkCount != 0 {
+		t.Fatalf("local detach retained generic link: count=%d err=%v", genericLinkCount, err)
+	}
+	if _, err := NewItemCRUDService(f.db).Delete(f.item1); err != nil {
+		t.Fatalf("item remained protected after local detach: %v", err)
 	}
 }
 
@@ -790,7 +838,7 @@ func TestZammadUnlinkStillRequiresWorkspaceScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.db.ExecWrite("DELETE FROM zammad_connection_workspaces WHERE provider_id = ?", f.connection.ProviderID); err != nil {
+	if _, err := f.db.ExecWrite("DELETE FROM action_credential_workspaces WHERE credential_id = ?", f.connection.CredentialID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.service.UnlinkTicket(context.Background(), link.ID); !errors.Is(err, ErrCredentialScopeMismatch) {
@@ -835,7 +883,7 @@ func TestZammadLinkedItemDeletionRequiresExplicitUnlink(t *testing.T) {
 		t.Fatal("database allowed direct deletion of a Zammad-linked item")
 	}
 	crud := NewItemCRUDService(f.db)
-	if _, err := crud.Delete(f.item1); !errors.Is(err, ErrItemHasZammadTicketLinks) {
+	if _, err := crud.Delete(f.item1); !errors.Is(err, ErrItemHasProtectedIntegrationLinks) {
 		t.Fatalf("linked item deletion returned %v", err)
 	}
 	if _, err := repository.NewItemRepository(f.db).FindByID(f.item1); err != nil {
@@ -870,7 +918,7 @@ func TestZammadCascadeDeletionIsBlockedByLinkedDescendant(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := NewItemCRUDService(f.db).Delete(f.item1); !errors.Is(err, ErrItemHasZammadTicketLinks) {
+	if _, err := NewItemCRUDService(f.db).Delete(f.item1); !errors.Is(err, ErrItemHasProtectedIntegrationLinks) {
 		t.Fatalf("cascade with linked descendant returned %v", err)
 	}
 	itemRepo := repository.NewItemRepository(f.db)
@@ -890,7 +938,7 @@ func TestZammadLinkedItemsBlockWorkspaceDeletion(t *testing.T) {
 	}
 
 	workspaceService := NewWorkspaceService(f.db)
-	if err := workspaceService.Delete(f.workspace1); !errors.Is(err, ErrWorkspaceHasZammadTicketLinks) {
+	if err := workspaceService.Delete(f.workspace1); !errors.Is(err, ErrWorkspaceHasProtectedIntegrationLinks) {
 		t.Fatalf("workspace deletion with linked item returned %v", err)
 	}
 	if exists, err := repository.NewWorkspaceRepository(f.db).Exists(f.workspace1); err != nil || !exists {
@@ -929,7 +977,7 @@ func TestZammadLinkedPersonalWorkspaceBlocksUserOffboardingBeforeMutation(t *tes
 		t.Fatal(err)
 	}
 
-	if _, err := OffboardUser(f.db, f.actorID, nil); !errors.Is(err, ErrUserOffboardingHasZammadTicketLinks) {
+	if _, err := OffboardUser(f.db, f.actorID, nil); !errors.Is(err, ErrUserOffboardingHasProtectedIntegrationLinks) {
 		t.Fatalf("offboarding with linked personal item returned %v", err)
 	}
 	var afterEmail, afterUsername string
@@ -1133,8 +1181,8 @@ func TestZammadSyncPersistsRemoteGroupAndOwner(t *testing.T) {
 	f.transport.getTicket = map[string]any{"id": 901, "number": "420901", "group_id": 8, "state_id": 3, "state": "pending", "owner_id": 99}
 	f.transport.groups = []map[string]any{{"id": 7, "name": "Support", "active": true}, {"id": 8, "name": "Escalations", "active": true}}
 	f.transport.users = []map[string]any{{"id": 99, "active": true, "firstname": "Grace", "lastname": "Hopper", "group_ids": map[string][]string{"8": {"full"}}}}
-	allowedGroups := []int{7, 8}
-	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroupIDs: &allowedGroups}); err != nil {
+	allowedGroups := zammadTestGroupRefs(7, 8)
+	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{AllowedGroups: &allowedGroups}); err != nil {
 		t.Fatal(err)
 	}
 	synced, err := f.service.SyncTicketLink(context.Background(), link.ID)
@@ -1154,10 +1202,10 @@ func TestZammadSyncRejectsTicketMovedToDisallowedGroupBeforeSnapshotOrCompletion
 	if err != nil {
 		t.Fatal(err)
 	}
-	allowedGroups := []int{7}
+	allowedGroups := zammadTestGroupRefs(7)
 	closedStates := []int{4}
 	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{
-		AllowedGroupIDs:    &allowedGroups,
+		AllowedGroups:      &allowedGroups,
 		ClosedStateIDs:     &closedStates,
 		CompletionStatusID: &f.doneStatus,
 	}); err != nil {
@@ -1468,9 +1516,9 @@ func TestZammadConnectionRoutingAndGroupsCannotStrandExistingTicketLinks(t *test
 	}
 	newDefaultGroupID := 8
 	newDefaultGroupName := "Escalations"
-	newAllowedGroups := []int{8}
+	newAllowedGroups := zammadTestGroupRefs(8)
 	if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{
-		DefaultGroupID: &newDefaultGroupID, DefaultGroupName: &newDefaultGroupName, AllowedGroupIDs: &newAllowedGroups,
+		DefaultGroupID: &newDefaultGroupID, DefaultGroupName: &newDefaultGroupName, AllowedGroups: &newAllowedGroups,
 	}); err == nil {
 		t.Fatal("group scope excluded an existing ticket link")
 	}
@@ -1507,9 +1555,9 @@ func TestZammadReservationRejectsStaleConnectionAndItemSnapshots(t *testing.T) {
 		staleConnection := *f.connection
 		newDefaultGroupID := 8
 		newDefaultGroupName := "Escalations"
-		newAllowedGroups := []int{8}
+		newAllowedGroups := zammadTestGroupRefs(8)
 		if _, err := f.service.UpdateConnection(f.connection.ProviderID, models.UpdateZammadConnectionRequest{
-			DefaultGroupID: &newDefaultGroupID, DefaultGroupName: &newDefaultGroupName, AllowedGroupIDs: &newAllowedGroups,
+			DefaultGroupID: &newDefaultGroupID, DefaultGroupName: &newDefaultGroupName, AllowedGroups: &newAllowedGroups,
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -1752,6 +1800,9 @@ func TestZammadDisabledConnectionCanStillBeTestedByAdmin(t *testing.T) {
 	if len(metadata.Groups) != 1 || metadata.Groups[0].Name != "Support" {
 		t.Fatalf("unexpected connection test metadata: %#v", metadata)
 	}
+	if metadata.GroupCatalogVerified || metadata.CorrelationFieldVerified {
+		t.Fatalf("least-privilege checks must report admin-only metadata as unverified: %#v", metadata)
+	}
 }
 
 func TestZammadConnectionValidationRequiresUsableDefaultGroup(t *testing.T) {
@@ -1767,7 +1818,7 @@ func TestZammadConnectionValidationRequiresUsableDefaultGroup(t *testing.T) {
 
 	_, err = f.service.CreateConnection(models.CreateZammadConnectionRequest{
 		Slug: "default-outside-allowset", Name: "Default outside allowset", BaseURL: "https://default-outside.example.test",
-		APIToken: "token", DefaultGroupID: 7, AllowedGroupIDs: []int{8},
+		APIToken: "token", DefaultGroupID: 7, AllowedGroups: zammadTestGroupRefs(8),
 		DefaultCustomer: "robot@example.test", WorkspaceIDs: []int{f.workspace1},
 	}, f.actorID)
 	if !errors.As(err, &validationErr) {
@@ -1775,15 +1826,40 @@ func TestZammadConnectionValidationRequiresUsableDefaultGroup(t *testing.T) {
 	}
 }
 
-func TestZammadMetadataRequiresNamedDefaultGroupInsideAllowset(t *testing.T) {
-	connection := &models.ZammadConnection{DefaultGroupName: "Support", AllowedGroupIDs: []int{8}}
-	metadata := &models.ZammadConnectionMetadata{Groups: []models.ZammadGroup{
-		{ID: 7, Name: "Support", Active: true},
-		{ID: 8, Name: "Escalations", Active: true},
-	}}
+func TestZammadLegacyGroupCatalogCanBeSavedUnchanged(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	connection, err := f.service.CreateConnection(models.CreateZammadConnectionRequest{
+		Slug: "legacy-groups", Name: "Legacy groups", BaseURL: "https://legacy-groups.example.test",
+		APIToken: "token", DefaultGroupID: 7, DefaultGroupName: "Support", AllowedGroupIDs: []int{7, 8},
+		DefaultCustomer: "robot@example.test", WorkspaceIDs: []int{f.workspace1},
+	}, f.actorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(connection.AllowedGroups) != 2 || connection.AllowedGroups[1].ID != 8 || connection.AllowedGroups[1].Name != "" {
+		t.Fatalf("unexpected legacy catalog: %#v", connection.AllowedGroups)
+	}
+	name := "Legacy groups renamed"
+	updated, err := f.service.UpdateConnection(connection.ProviderID, models.UpdateZammadConnectionRequest{
+		Name: &name, AllowedGroups: &connection.AllowedGroups,
+	})
+	if err != nil {
+		t.Fatalf("unchanged legacy group catalog blocked an unrelated update: %v", err)
+	}
+	if updated.Name != name || len(updated.AllowedGroups) != 2 || updated.AllowedGroups[1].Name != "" {
+		t.Fatalf("legacy group catalog was not preserved: %#v", updated)
+	}
+}
+
+func TestZammadMetadataValidatesOnlyRuntimeTicketStates(t *testing.T) {
+	connection := &models.ZammadConnection{DefaultGroupName: "Support", AllowedGroups: zammadTestGroupRefs(8), ClosedStateIDs: []int{4}}
+	metadata := &models.ZammadConnectionMetadata{
+		Groups: []models.ZammadGroup{{ID: 99, Name: "Different", Active: true}},
+		States: []models.ZammadState{{ID: 2, Name: "open", Active: true}},
+	}
 	var validationErr *ZammadValidationError
-	if err := validateZammadMetadata(connection, metadata); !errors.As(err, &validationErr) {
-		t.Fatalf("named default group outside allowset was accepted: %v", err)
+	if err := validateZammadStates(connection, metadata); !errors.As(err, &validationErr) {
+		t.Fatalf("missing configured closed state was accepted: %v", err)
 	}
 }
 
@@ -2182,7 +2258,7 @@ func TestZammadManualRefreshReportsBusyWhenAnotherWorkerOwnsLease(t *testing.T) 
 	}
 }
 
-func TestZammadSyncRejectsConfiguredGroupAfterItBecomesInactive(t *testing.T) {
+func TestZammadSyncUsesPersistedGroupPolicyWithoutAdminLookup(t *testing.T) {
 	workflow := &fakeZammadWorkflow{}
 	f := newZammadServiceFixture(t, workflow)
 	workflow.db = f.db
@@ -2197,13 +2273,12 @@ func TestZammadSyncRejectsConfiguredGroupAfterItBecomesInactive(t *testing.T) {
 	f.transport.groups = []map[string]any{{"id": 7, "name": "Support", "active": false}}
 	f.transport.getTicket = map[string]any{"id": link.TicketID, "number": link.TicketNumber, "group_id": 7, "state_id": 4, "state": "closed"}
 	_, err = f.service.SyncTicketLink(context.Background(), link.ID)
-	var validationErr *ZammadValidationError
-	if !errors.As(err, &validationErr) {
-		t.Fatalf("inactive configured group was accepted: %v", err)
+	if err != nil {
+		t.Fatalf("persisted group policy required an admin-only lookup: %v", err)
 	}
 	stored, getErr := f.service.GetTicketLink(link.ID)
-	if getErr != nil || workflow.writes != 0 || stored.CompletionApplied {
-		t.Fatalf("inactive group changed completion state: link=%#v writes=%d err=%v", stored, workflow.writes, getErr)
+	if getErr != nil || workflow.writes != 1 || !stored.CompletionApplied {
+		t.Fatalf("persisted group policy did not complete normal sync: link=%#v writes=%d err=%v", stored, workflow.writes, getErr)
 	}
 }
 
@@ -2242,8 +2317,8 @@ func TestZammadDueSyncUsesAgeThreshold(t *testing.T) {
 		t.Fatal(err)
 	}
 	requests, _ := f.transport.counts()
-	if requests != 2 {
-		t.Fatalf("expected ticket and active-group refresh, got %d transport requests", requests)
+	if requests != 1 {
+		t.Fatalf("expected only the ticket refresh, got %d transport requests", requests)
 	}
 }
 
@@ -2257,7 +2332,7 @@ func TestZammadDueSyncPollsFreshLinkOnNextSchedulerTick(t *testing.T) {
 		t.Fatal(err)
 	}
 	requests, _ := f.transport.counts()
-	if requests != 2 {
+	if requests != 1 {
 		t.Fatalf("fresh link missed the next scheduler tick: requests=%d", requests)
 	}
 }
@@ -2280,7 +2355,7 @@ func TestZammadSyncAllTicketLinksOverridesRetryDelay(t *testing.T) {
 		t.Fatalf("unexpected system refresh summary: %#v", summary)
 	}
 	requests, _ := f.transport.counts()
-	if requests != 2 {
+	if requests != 1 {
 		t.Fatalf("system refresh did not override the retry delay: requests=%d", requests)
 	}
 }
@@ -2396,7 +2471,7 @@ func TestZammadOAuthConnectionStoresConnectionTokensAndConsumesStateOnce(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.Path != "/oauth/authorize" || parsed.Query().Get("scope") != "full" || parsed.Query().Get("redirect_uri") != "https://windshift.example.test/api/integrations/zammad/oauth/callback" {
+	if parsed.Path != "/oauth/authorize" || parsed.Query().Get("scope") != "full" || parsed.Query().Get("redirect_uri") != "https://windshift.example.test/api/integrations/oauth/system/zammad/callback" {
 		t.Fatalf("unexpected authorization URL: %s", authURL)
 	}
 	if _, err := f.service.StartOAuth(context.Background(), connection.ProviderID, f.actorID, "http://windshift.example.test"); err == nil {
@@ -2591,6 +2666,54 @@ func TestZammadOAuthCallbackCannotCommitAfterConfigurationReset(t *testing.T) {
 	raw, _, err := f.credentials.ResolveManaged(context.Background(), connection.CredentialID, f.workspace1, string(models.IntegrationProviderZammad), connection.ProviderID)
 	if err != nil || !strings.Contains(raw, `"status":"pending"`) || strings.Contains(raw, "stale-access") {
 		t.Fatalf("stale callback reactivated credential: raw=%q err=%v", raw, err)
+	}
+}
+
+func TestZammadOAuthCallbackCannotCommitAfterConnectionIsDisabled(t *testing.T) {
+	f := newZammadServiceFixture(t, nil)
+	f.service.SetOAuthEncryption(sso.NewSecretEncryption("synthetic-server-secret-for-zammad-tests"))
+	connection, err := f.service.CreateConnection(models.CreateZammadConnectionRequest{
+		Slug: "callback-disable", Name: "OAuth callback disable", BaseURL: "https://callback-disable.example.test",
+		AuthMethod: models.ZammadAuthMethodOAuth, OAuthClientID: "client", OAuthClientSecret: "secret",
+		DefaultGroupName: "Support", DefaultCustomer: "robot@example.test", WorkspaceIDs: []int{f.workspace1},
+	}, f.actorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authURL, err := f.service.StartOAuth(context.Background(), connection.ProviderID, f.actorID, "https://windshift.example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(authURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	f.service.SetOAuthTransportForTesting(zammad.TransportFunc(func(_ context.Context, _ string, _ string, _ []byte, _ map[string]string) (*zammad.Response, error) {
+		close(entered)
+		<-release
+		return jsonResponse(http.StatusOK, map[string]any{"access_token": "stale-access", "refresh_token": "stale-refresh", "expires_in": 3600}), nil
+	}))
+	done := make(chan error, 1)
+	go func() {
+		_, callbackErr := f.service.CompleteOAuth(context.Background(), parsed.Query().Get("state"), "code", "https://windshift.example.test")
+		done <- callbackErr
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("OAuth callback did not reach token exchange")
+	}
+	disabled := false
+	if _, err := f.service.UpdateConnection(connection.ProviderID, models.UpdateZammadConnectionRequest{Enabled: &disabled}); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	if err := <-done; !errors.Is(err, ErrZammadOAuthSuperseded) {
+		t.Fatalf("disabled connection accepted OAuth credentials: %v", err)
+	}
+	if _, err := f.service.StartOAuth(context.Background(), connection.ProviderID, f.actorID, "https://windshift.example.test"); err == nil {
+		t.Fatal("disabled connection allowed a new OAuth attempt")
 	}
 }
 
@@ -3083,7 +3206,8 @@ func TestZammadOAuthTestSkipsAdminOnlyCorrelationFieldCheck(t *testing.T) {
 	f.service.SetOAuthEncryption(sso.NewSecretEncryption("synthetic-server-secret-for-zammad-tests"))
 	connection, err := f.service.CreateConnection(models.CreateZammadConnectionRequest{
 		Slug: "oauth-scope", Name: "Scoped OAuth", BaseURL: "https://scope.example.test", AuthMethod: models.ZammadAuthMethodOAuth,
-		OAuthClientID: "client", OAuthClientSecret: "secret", DefaultGroupName: "Support", DefaultCustomer: "robot@example.test", WorkspaceIDs: []int{f.workspace1},
+		OAuthClientID: "client", OAuthClientSecret: "secret", DefaultGroupID: 7, DefaultGroupName: "Support",
+		AllowedGroups: zammadTestGroupRefs(7), DefaultCustomer: "robot@example.test", WorkspaceIDs: []int{f.workspace1},
 	}, f.actorID)
 	if err != nil {
 		t.Fatal(err)

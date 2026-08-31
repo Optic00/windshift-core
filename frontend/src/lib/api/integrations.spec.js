@@ -22,7 +22,7 @@ describe('zammadConnections.startOAuth', () => {
 
     expect(fetchMock).toHaveBeenCalledOnce();
     const [url, options] = fetchMock.mock.calls[0];
-    expect(url).toBe('/api/admin/zammad-connections/connection-id/oauth/start');
+    expect(url).toBe('/api/admin/integration-providers/connection-id/oauth/start');
     expect(options.method).toBe('POST');
     expect(options.body).toBeUndefined();
   });

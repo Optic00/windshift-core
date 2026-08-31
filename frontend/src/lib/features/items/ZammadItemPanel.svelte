@@ -141,7 +141,7 @@
   }
 
   function usableGroups(connection, loadedMetadata) {
-    const allowedIds = connection?.allowed_group_ids || [];
+    const allowedIds = (connection?.allowed_groups || []).map((group) => group.id);
     return loadedMetadata.groups.filter((group) => {
       if (group.active === false) return false;
       if (allowedIds.length > 0) return allowedIds.includes(group.id);

@@ -445,8 +445,8 @@ func (h *UserHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.offboardUser(id); err != nil {
-		if errors.Is(err, services.ErrUserOffboardingHasZammadTicketLinks) {
-			respondConflict(w, r, "Cannot offboard user while their personal workspace contains linked Zammad tickets")
+		if errors.Is(err, services.ErrUserOffboardingHasProtectedIntegrationLinks) {
+			respondConflict(w, r, "Cannot offboard user while their personal workspace contains protected integration links")
 			return
 		}
 		respondInternalError(w, r, err)

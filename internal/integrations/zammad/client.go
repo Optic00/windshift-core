@@ -91,6 +91,16 @@ func (c *Client) Metadata(ctx context.Context) (*models.ZammadConnectionMetadata
 	if err != nil {
 		return nil, err
 	}
+	activeStates, err := c.States(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &models.ZammadConnectionMetadata{Groups: activeGroups, States: activeStates}, nil
+}
+
+// States returns the active ticket states. Unlike Groups, Zammad permits this
+// endpoint for ordinary ticket agents, so it is safe for runtime use.
+func (c *Client) States(ctx context.Context) ([]models.ZammadState, error) {
 	states := []models.ZammadState{}
 	if err := c.getJSON(ctx, "/api/v1/ticket_states", &states); err != nil {
 		return nil, err
@@ -101,7 +111,7 @@ func (c *Client) Metadata(ctx context.Context) (*models.ZammadConnectionMetadata
 			activeStates = append(activeStates, state)
 		}
 	}
-	return &models.ZammadConnectionMetadata{Groups: activeGroups, States: activeStates}, nil
+	return activeStates, nil
 }
 
 func (c *Client) Groups(ctx context.Context) ([]models.ZammadGroup, error) {

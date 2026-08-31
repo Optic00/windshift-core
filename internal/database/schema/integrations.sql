@@ -148,12 +148,11 @@ CREATE TABLE IF NOT EXISTS zammad_connections (
 	base_url TEXT NOT NULL,
 	default_group_id INTEGER,
 	default_group_name TEXT DEFAULT '',
-	allowed_group_ids TEXT NOT NULL DEFAULT '[]',
+	allowed_groups TEXT NOT NULL DEFAULT '[]',
 	default_customer TEXT NOT NULL,
 	correlation_field TEXT NOT NULL DEFAULT 'windshift_item_key',
 	closed_state_ids TEXT NOT NULL DEFAULT '[]',
 	completion_status_id INTEGER,
-	applies_to_all_workspaces BOOLEAN NOT NULL DEFAULT false,
 	last_tested_at DATETIME,
 	last_test_error TEXT DEFAULT '',
 	created_by INTEGER,
@@ -193,16 +192,6 @@ CREATE TABLE IF NOT EXISTS zammad_oauth_state (
 
 CREATE INDEX IF NOT EXISTS idx_zammad_oauth_state_expires ON zammad_oauth_state(expires_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_zammad_oauth_state_provider ON zammad_oauth_state(provider_id);
-
-CREATE TABLE IF NOT EXISTS zammad_connection_workspaces (
-	provider_id TEXT NOT NULL,
-	workspace_id INTEGER NOT NULL,
-	PRIMARY KEY (provider_id, workspace_id),
-	FOREIGN KEY (provider_id) REFERENCES zammad_connections(provider_id) ON DELETE CASCADE,
-	FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_zammad_connection_workspaces_workspace ON zammad_connection_workspaces(workspace_id);
 
 CREATE TABLE IF NOT EXISTS zammad_ticket_links (
 	id TEXT PRIMARY KEY,

@@ -45,7 +45,10 @@ const connection = {
   oauth_connected: true,
   default_group_id: 0,
   default_group_name: 'Windshift',
-  allowed_group_ids: [2, 3],
+  allowed_groups: [
+    { id: 2, name: 'Support' },
+    { id: 3, name: 'Escalations' },
+  ],
   default_customer: 'windshift@example.test',
   correlation_field: 'windshift_item_key',
   closed_state_ids: [4],

@@ -195,7 +195,11 @@ func (r *ZammadRepository) GuardOAuthGenerationTx(tx database.Tx, providerID str
 
 func (r *ZammadRepository) GuardOAuthCallbackTx(tx database.Tx, providerID string, generation int64, attemptID string) (bool, error) {
 	result, err := tx.Exec(`UPDATE zammad_connections SET oauth_attempt_id = NULL
-		WHERE provider_id = ? AND oauth_generation = ? AND oauth_attempt_id = ?`, providerID, generation, attemptID)
+		WHERE provider_id = ? AND oauth_generation = ? AND oauth_attempt_id = ?
+		AND EXISTS (
+			SELECT 1 FROM integration_providers ip
+			WHERE ip.id = zammad_connections.provider_id AND ip.enabled = true
+		)`, providerID, generation, attemptID)
 	if err != nil {
 		return false, err
 	}

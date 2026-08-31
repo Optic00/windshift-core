@@ -13,27 +13,27 @@ import (
 	"windshift/internal/repository"
 )
 
-var ErrWorkspaceHasZammadTicketLinks = errors.New("workspace has linked Zammad tickets")
+var ErrWorkspaceHasProtectedIntegrationLinks = errors.New("workspace has provider-managed integration links")
 
 // WorkspaceService encapsulates workspace business logic used by both HTTP handlers
 // and other services.
 type WorkspaceService struct {
-	db         database.Database
-	repo       *repository.WorkspaceRepository
-	itemRepo   *repository.ItemRepository
-	templates  *repository.WorkspaceTemplateRepository
-	zammadRepo *repository.ZammadRepository
-	access     WorkspaceSourceAccess
+	db                    database.Database
+	repo                  *repository.WorkspaceRepository
+	itemRepo              *repository.ItemRepository
+	templates             *repository.WorkspaceTemplateRepository
+	integrationLinkGuards *IntegrationLinkGuards
+	access                WorkspaceSourceAccess
 }
 
 // NewWorkspaceService creates a new WorkspaceService.
 func NewWorkspaceService(db database.Database) *WorkspaceService {
 	return &WorkspaceService{
-		db:         db,
-		repo:       repository.NewWorkspaceRepository(db),
-		itemRepo:   repository.NewItemRepository(db),
-		templates:  repository.NewWorkspaceTemplateRepository(db),
-		zammadRepo: repository.NewZammadRepository(db),
+		db:                    db,
+		repo:                  repository.NewWorkspaceRepository(db),
+		itemRepo:              repository.NewItemRepository(db),
+		templates:             repository.NewWorkspaceTemplateRepository(db),
+		integrationLinkGuards: NewIntegrationLinkGuards(db),
 	}
 }
 
@@ -365,12 +365,12 @@ func (s *WorkspaceService) Delete(id int) error {
 			return err
 		}
 
-		hasZammadLinks, err := s.zammadRepo.HasTicketLinksForWorkspaceTx(tx, id)
+		hasProtectedLinks, err := s.integrationLinkGuards.HasLinksForWorkspaceTx(tx, id)
 		if err != nil {
 			return err
 		}
-		if hasZammadLinks {
-			return ErrWorkspaceHasZammadTicketLinks
+		if hasProtectedLinks {
+			return ErrWorkspaceHasProtectedIntegrationLinks
 		}
 
 		if err := s.repo.DeleteTx(tx, id); err != nil {

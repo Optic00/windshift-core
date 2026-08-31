@@ -1013,7 +1013,7 @@ func (s *Server) initialize() error {
 	zammadService.SetEventCoordinator(eventCoordinator)
 	zammadService.SetOAuthEncryption(scmProviderHandler.GetEncryption())
 	zammadHandler := handlers.NewZammadHandler(repository.NewItemRepository(s.db), zammadService, permService, logger.NewAuditor(s.db))
-	zammadHandler.SetOAuthBaseURL(baseURL)
+	integrationOAuthHandler.RegisterSystemOAuthFlow(models.IntegrationProviderZammad, zammadService, logger.NewAuditor(s.db))
 	s.zammadSyncScheduler = scheduler.NewZammadSyncScheduler(zammadService)
 	s.zammadSyncScheduler.Start()
 	zammadHandler.SetSyncAllTrigger(s.zammadSyncScheduler.TriggerSyncAll)

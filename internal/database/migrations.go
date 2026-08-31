@@ -833,6 +833,96 @@ var Catalog = []Migration{
 		`,
 	},
 	{
+		Version:       "20260831_zammad_persisted_group_catalog",
+		Name:          "Persist Zammad group names for least-privilege runtime access",
+		CheckSQLite:   sqliteColumnCheck("zammad_connections", "allowed_groups"),
+		CheckPostgres: pgColumnCheck("zammad_connections", "allowed_groups"),
+		SQLite: `
+			ALTER TABLE zammad_connections ADD COLUMN allowed_groups TEXT NOT NULL DEFAULT '[]';
+			UPDATE zammad_connections
+			SET allowed_groups = COALESCE((
+				SELECT json_group_array(json_object(
+					'id', CAST(group_id.value AS INTEGER),
+					'name', CASE
+						WHEN CAST(group_id.value AS INTEGER) = default_group_id THEN default_group_name
+						ELSE ''
+					END
+				))
+				FROM json_each(zammad_connections.allowed_group_ids) AS group_id
+				WHERE group_id.type = 'integer' AND CAST(group_id.value AS INTEGER) > 0
+			), '[]');
+		`,
+		Postgres: `
+			ALTER TABLE zammad_connections ADD COLUMN IF NOT EXISTS allowed_groups TEXT NOT NULL DEFAULT '[]';
+			UPDATE zammad_connections
+			SET allowed_groups = COALESCE((
+				SELECT jsonb_agg(jsonb_build_object(
+					'id', group_id.value::INTEGER,
+					'name', CASE
+						WHEN group_id.value::INTEGER = default_group_id THEN default_group_name
+						ELSE ''
+					END
+				))::TEXT
+				FROM jsonb_array_elements_text(zammad_connections.allowed_group_ids::jsonb) AS group_id(value)
+				WHERE group_id.value ~ '^[1-9][0-9]*$'
+			), '[]');
+		`,
+	},
+	{
+		Version: "20260901_zammad_canonical_workspace_scope",
+		Name:    "Backfill managed-credential scope for existing Zammad connections",
+		CheckSQLite: `SELECT CASE WHEN
+			NOT EXISTS (SELECT 1 FROM pragma_table_info('zammad_connections') WHERE name='applies_to_all_workspaces')
+			OR NOT EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='zammad_connection_workspaces')
+			THEN 1 ELSE 0 END`,
+		CheckPostgres: `SELECT CASE WHEN
+			NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='zammad_connections' AND column_name='applies_to_all_workspaces')
+			OR NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='zammad_connection_workspaces')
+			THEN 1 ELSE 0 END`,
+		SQLite: `
+			UPDATE action_credentials
+			SET applies_to_all_workspaces = (
+				SELECT zc.applies_to_all_workspaces FROM zammad_connections zc
+				WHERE zc.credential_id = action_credentials.id
+			)
+			WHERE id IN (SELECT credential_id FROM zammad_connections)
+			  AND json_extract(secret_metadata, '$._windshift_managed_credential') = 'v1'
+			  AND json_extract(secret_metadata, '$.managed_by') = 'zammad'
+			  AND json_extract(secret_metadata, '$.owner_id') = (
+				SELECT zc.provider_id FROM zammad_connections zc
+				WHERE zc.credential_id = action_credentials.id
+			  );
+			INSERT OR IGNORE INTO action_credential_workspaces (credential_id, workspace_id)
+			SELECT zc.credential_id, zcw.workspace_id
+			FROM zammad_connections zc
+			JOIN zammad_connection_workspaces zcw ON zcw.provider_id = zc.provider_id
+			JOIN action_credentials ac ON ac.id = zc.credential_id
+			WHERE zc.applies_to_all_workspaces = false
+			  AND json_extract(ac.secret_metadata, '$._windshift_managed_credential') = 'v1'
+			  AND json_extract(ac.secret_metadata, '$.managed_by') = 'zammad'
+			  AND json_extract(ac.secret_metadata, '$.owner_id') = zc.provider_id;
+		`,
+		Postgres: `
+			UPDATE action_credentials ac
+			SET applies_to_all_workspaces = zc.applies_to_all_workspaces
+			FROM zammad_connections zc
+			WHERE zc.credential_id = ac.id
+			  AND ac.secret_metadata::jsonb ->> '_windshift_managed_credential' = 'v1'
+			  AND ac.secret_metadata::jsonb ->> 'managed_by' = 'zammad'
+			  AND ac.secret_metadata::jsonb ->> 'owner_id' = zc.provider_id;
+			INSERT INTO action_credential_workspaces (credential_id, workspace_id)
+			SELECT zc.credential_id, zcw.workspace_id
+			FROM zammad_connections zc
+			JOIN zammad_connection_workspaces zcw ON zcw.provider_id = zc.provider_id
+			JOIN action_credentials ac ON ac.id = zc.credential_id
+			WHERE zc.applies_to_all_workspaces = false
+			  AND ac.secret_metadata::jsonb ->> '_windshift_managed_credential' = 'v1'
+			  AND ac.secret_metadata::jsonb ->> 'managed_by' = 'zammad'
+			  AND ac.secret_metadata::jsonb ->> 'owner_id' = zc.provider_id
+				ON CONFLICT (credential_id, workspace_id) DO NOTHING;
+		`,
+	},
+	{
 		Version:       "20260901_daily_briefing_workspace_provenance",
 		Name:          "Record daily briefing workspace provenance",
 		CheckSQLite:   sqliteColumnCheck("daily_briefings", "source_workspace_ids"),

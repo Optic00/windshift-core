@@ -44,7 +44,7 @@
       has_oauth_client_secret: false,
       default_group_id: '',
       default_group_name: '',
-      allowed_group_ids: [],
+      allowed_groups: [],
       default_customer: '',
       correlation_field: 'windshift_item_key',
       closed_state_ids: [],
@@ -111,7 +111,7 @@
       has_oauth_client_secret: connection.has_oauth_client_secret === true,
       default_group_id: connection.default_group_id || '',
       default_group_name: connection.default_group_name || '',
-      allowed_group_ids: connection.allowed_group_ids || [],
+      allowed_groups: connection.allowed_groups || [],
       default_customer: connection.default_customer || '',
       correlation_field: connection.correlation_field || 'windshift_item_key',
       closed_state_ids: connection.closed_state_ids || [],
@@ -131,6 +131,9 @@
         completion_status_id: Number(form.completion_status_id) || undefined,
         clear_completion_status: false,
       };
+      if (data.allowed_groups.length === 0 && data.default_group_id && data.default_group_name.trim()) {
+        data.allowed_groups = [{ id: data.default_group_id, name: data.default_group_name.trim() }];
+      }
       delete data.has_oauth_client_secret;
       if (data.auth_method === 'oauth') {
         delete data.api_token;
@@ -167,6 +170,9 @@
       const result = await api.zammadConnections.test(connection.id);
       metadataByConnection = { ...metadataByConnection, [connection.id]: result.metadata };
       successToast(t('zammad.connectionTestSucceeded'));
+	  if (result.metadata?.group_catalog_verified === false) {
+		warningToast(t('zammad.groupCatalogNotVerified'));
+	  }
       if (result.metadata?.correlation_field_verified === false) {
         warningToast(t('zammad.correlationFieldNotVerified'));
       }
@@ -257,9 +263,10 @@
   }
 
   function toggleAllowedGroup(id, checked) {
-    form.allowed_group_ids = checked
-      ? [...new Set([...form.allowed_group_ids, id])]
-      : form.allowed_group_ids.filter((groupId) => groupId !== id);
+    const group = metadataByConnection[editing?.id]?.groups?.find((entry) => entry.id === id);
+    form.allowed_groups = checked
+      ? [...form.allowed_groups.filter((entry) => entry.id !== id), { id, name: group?.name || '' }]
+      : form.allowed_groups.filter((entry) => entry.id !== id);
   }
 
   function selectDefaultGroup(value) {
@@ -268,6 +275,17 @@
       (entry) => entry.id === Number(form.default_group_id),
     );
     form.default_group_name = group?.name || '';
+  }
+
+  function serializeAllowedGroups(groups) {
+    return groups.map((group) => `${group.id}:${group.name}`).join(', ');
+  }
+
+  function parseAllowedGroups(value) {
+    return value.split(',').map((entry) => {
+      const [rawId, ...nameParts] = entry.split(':');
+      return { id: Number(rawId.trim()), name: nameParts.join(':').trim() };
+    }).filter((group) => group.id > 0 && group.name);
   }
 </script>
 
@@ -337,6 +355,9 @@
             {#if metadataByConnection[connection.id].correlation_field_verified === false}
               <p class="text-xs mt-1" style="color: var(--ds-text-warning);">{t('zammad.correlationFieldNotVerified')}</p>
             {/if}
+			{#if metadataByConnection[connection.id].group_catalog_verified === false}
+			  <p class="text-xs mt-1" style="color: var(--ds-text-warning);">{t('zammad.groupCatalogNotVerified')}</p>
+			{/if}
           {/if}
         </div>
       {/each}
@@ -416,7 +437,7 @@
           {#each metadataByConnection[editing.id].groups as group}
             <Checkbox
               id={`zammad-group-${group.id}`}
-              checked={form.allowed_group_ids.includes(group.id)}
+              checked={form.allowed_groups.some((entry) => entry.id === group.id)}
               onchange={(checked) => toggleAllowedGroup(group.id, checked)}
               label={group.name}
               size="small"
@@ -426,13 +447,16 @@
       </FormField>
     {:else}
       <FormField label={t('zammad.defaultGroup')} required>
-        <Input bind:value={form.default_group_name} placeholder="Support" />
+        <div class="grid grid-cols-[8rem_1fr] gap-2">
+          <Input bind:value={form.default_group_id} type="number" placeholder="7" />
+          <Input bind:value={form.default_group_name} placeholder="Support" />
+        </div>
       </FormField>
       <FormField label={t('zammad.allowedGroupIds')}>
         <Input
-          value={form.allowed_group_ids.join(',')}
-          oninput={(event) => (form.allowed_group_ids = event.currentTarget.value.split(',').map(Number).filter(Boolean))}
-          placeholder="7,8"
+          value={serializeAllowedGroups(form.allowed_groups)}
+          oninput={(event) => (form.allowed_groups = parseAllowedGroups(event.currentTarget.value))}
+          placeholder="7:Support, 8:Escalations"
         />
       </FormField>
     {/if}

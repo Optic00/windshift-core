@@ -22,7 +22,7 @@ type ZammadTicketLinkReservationSnapshot struct {
 	ConnectionEnabled   bool
 	DefaultGroupID      int
 	DefaultGroupName    string
-	AllowedGroupIDs     []int
+	AllowedGroups       []models.ZammadGroupRef
 	DefaultCustomer     string
 	WorkspaceID         int
 	WorkspaceItemNumber int
@@ -44,7 +44,7 @@ type ZammadConnectionMutationSnapshot struct {
 	CorrelationField   string
 	DefaultGroupID     int
 	DefaultGroupName   string
-	AllowedGroupIDs    []int
+	AllowedGroups      []models.ZammadGroupRef
 	ClosedStateIDs     []int
 	CompletionStatusID *int
 }
@@ -59,8 +59,8 @@ const zammadConnectionColumns = `
 	EXISTS(SELECT 1 FROM zammad_oauth_tokens zot WHERE zot.provider_id = zc.provider_id AND zot.reauthorization_required = false),
 	COALESCE((SELECT reauthorization_required FROM zammad_oauth_tokens zot WHERE zot.provider_id = zc.provider_id), false),
 	zc.default_group_id, zc.default_group_name,
-	zc.allowed_group_ids, zc.default_customer, zc.correlation_field, zc.closed_state_ids,
-	zc.completion_status_id, zc.applies_to_all_workspaces,
+	zc.allowed_groups, zc.default_customer, zc.correlation_field, zc.closed_state_ids,
+	zc.completion_status_id, (SELECT applies_to_all_workspaces FROM action_credentials ac WHERE ac.id = zc.credential_id),
 	zc.last_tested_at, zc.last_test_error, zc.created_by,
 	zc.created_at, zc.updated_at`
 
@@ -81,9 +81,9 @@ func (r *ZammadRepository) ListConnectionsForWorkspace(workspaceID int) ([]*mode
 		FROM zammad_connections zc
 		JOIN integration_providers ip ON ip.id = zc.provider_id
 		WHERE ip.enabled = true AND (
-			zc.applies_to_all_workspaces = true OR EXISTS (
-				SELECT 1 FROM zammad_connection_workspaces zcw
-				WHERE zcw.provider_id = zc.provider_id AND zcw.workspace_id = ?
+			EXISTS (SELECT 1 FROM action_credentials ac WHERE ac.id = zc.credential_id AND ac.applies_to_all_workspaces = true) OR EXISTS (
+				SELECT 1 FROM action_credential_workspaces acw
+				WHERE acw.credential_id = zc.credential_id AND acw.workspace_id = ?
 			)
 		)
 		ORDER BY ip.name`, workspaceID)
@@ -119,9 +119,9 @@ func (r *ZammadRepository) IsConnectionAvailableToWorkspace(id string, workspace
 		SELECT 1 FROM zammad_connections zc
 		JOIN integration_providers ip ON ip.id = zc.provider_id
 		WHERE zc.provider_id = ? AND ip.enabled = true AND (
-			zc.applies_to_all_workspaces = true OR EXISTS (
-				SELECT 1 FROM zammad_connection_workspaces zcw
-				WHERE zcw.provider_id = zc.provider_id AND zcw.workspace_id = ?
+			EXISTS (SELECT 1 FROM action_credentials ac WHERE ac.id = zc.credential_id AND ac.applies_to_all_workspaces = true) OR EXISTS (
+				SELECT 1 FROM action_credential_workspaces acw
+				WHERE acw.credential_id = zc.credential_id AND acw.workspace_id = ?
 			)
 		))`, id, workspaceID).Scan(&available)
 	return available, err
@@ -135,9 +135,9 @@ func (r *ZammadRepository) IsConnectionScopedToWorkspace(id string, workspaceID 
 	err := r.db.QueryRow(`SELECT EXISTS(
 		SELECT 1 FROM zammad_connections zc
 		WHERE zc.provider_id = ? AND (
-			zc.applies_to_all_workspaces = true OR EXISTS (
-				SELECT 1 FROM zammad_connection_workspaces zcw
-				WHERE zcw.provider_id = zc.provider_id AND zcw.workspace_id = ?
+			EXISTS (SELECT 1 FROM action_credentials ac WHERE ac.id = zc.credential_id AND ac.applies_to_all_workspaces = true) OR EXISTS (
+				SELECT 1 FROM action_credential_workspaces acw
+				WHERE acw.credential_id = zc.credential_id AND acw.workspace_id = ?
 			)
 		))`, id, workspaceID).Scan(&scoped)
 	return scoped, err
@@ -148,7 +148,7 @@ func (r *ZammadRepository) CreateConnection(connection *models.ZammadConnection)
 	if err != nil {
 		return err
 	}
-	allowedGroupsJSON, err := json.Marshal(connection.AllowedGroupIDs)
+	allowedGroupsJSON, err := json.Marshal(connection.AllowedGroups)
 	if err != nil {
 		return err
 	}
@@ -165,17 +165,16 @@ func (r *ZammadRepository) CreateConnection(connection *models.ZammadConnection)
 		}
 		if _, err := tx.Exec(`INSERT INTO zammad_connections
 			(provider_id, credential_id, auth_method, base_url, default_group_id,
-			 default_group_name, allowed_group_ids, default_customer, correlation_field,
-			 closed_state_ids, completion_status_id, applies_to_all_workspaces,
+			 default_group_name, allowed_groups, default_customer, correlation_field,
+			 closed_state_ids, completion_status_id,
 			 created_by)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, connection.ProviderID,
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, connection.ProviderID,
 			nullablePositiveInt(connection.CredentialID), connection.AuthMethod, connection.BaseURL, nullablePositiveInt(connection.DefaultGroupID),
 			connection.DefaultGroupName, string(allowedGroupsJSON), connection.DefaultCustomer, connection.CorrelationField,
-			string(closedJSON), connection.CompletionStatusID,
-			connection.AppliesToAllWorkspaces, connection.CreatedBy); err != nil {
+			string(closedJSON), connection.CompletionStatusID, connection.CreatedBy); err != nil {
 			return err
 		}
-		return replaceZammadConnectionWorkspaces(tx, connection.ProviderID, connection.AppliesToAllWorkspaces, connection.WorkspaceIDs)
+		return nil
 	})
 }
 
@@ -190,19 +189,18 @@ func (r *ZammadRepository) UpdateConnectionTx(tx database.Tx, connection *models
 	if err != nil {
 		return err
 	}
-	allowedGroupsJSON, err := json.Marshal(connection.AllowedGroupIDs)
+	allowedGroupsJSON, err := json.Marshal(connection.AllowedGroups)
 	if err != nil {
 		return err
 	}
 	result, err := tx.Exec(`UPDATE zammad_connections SET
-			credential_id = ?, auth_method = ?, base_url = ?, default_group_id = ?, default_group_name = ?, allowed_group_ids = ?,
+			credential_id = ?, auth_method = ?, base_url = ?, default_group_id = ?, default_group_name = ?, allowed_groups = ?,
 			default_customer = ?, correlation_field = ?, closed_state_ids = ?,
-			completion_status_id = ?, applies_to_all_workspaces = ?, config_revision = config_revision + 1,
+			completion_status_id = ?, config_revision = config_revision + 1,
 			updated_at = CURRENT_TIMESTAMP
 			WHERE provider_id = ? AND config_revision = ?`, nullablePositiveInt(connection.CredentialID), connection.AuthMethod, connection.BaseURL, nullablePositiveInt(connection.DefaultGroupID),
 		connection.DefaultGroupName, string(allowedGroupsJSON), connection.DefaultCustomer, connection.CorrelationField,
-		string(closedJSON), connection.CompletionStatusID,
-		connection.AppliesToAllWorkspaces, connection.ProviderID, connection.ConfigRevision)
+		string(closedJSON), connection.CompletionStatusID, connection.ProviderID, connection.ConfigRevision)
 	if err != nil {
 		return err
 	}
@@ -227,7 +225,7 @@ func (r *ZammadRepository) UpdateConnectionTx(tx database.Tx, connection *models
 	if rows, _ := result.RowsAffected(); rows == 0 {
 		return ErrNotFound
 	}
-	return replaceZammadConnectionWorkspaces(tx, connection.ProviderID, connection.AppliesToAllWorkspaces, connection.WorkspaceIDs)
+	return nil
 }
 
 func (r *ZammadRepository) DeleteConnectionTx(tx database.Tx, id string) error {
@@ -319,21 +317,21 @@ func (r *ZammadRepository) lockTicketLinkConnectionTx(tx database.Tx, linkID str
 
 func (r *ZammadRepository) ConnectionMutationSnapshotTx(tx database.Tx, id string) (*ZammadConnectionMutationSnapshot, error) {
 	snapshot := &ZammadConnectionMutationSnapshot{}
-	var allowedGroupIDsJSON, closedStateIDsJSON string
+	var allowedGroupsJSON, closedStateIDsJSON string
 	var completionStatusID sql.NullInt64
 	if err := tx.QueryRow(`SELECT base_url, correlation_field, COALESCE(default_group_id, 0),
-		default_group_name, allowed_group_ids, closed_state_ids, completion_status_id
+		default_group_name, allowed_groups, closed_state_ids, completion_status_id
 		FROM zammad_connections WHERE provider_id = ?`, id).Scan(
 		&snapshot.BaseURL, &snapshot.CorrelationField, &snapshot.DefaultGroupID,
-		&snapshot.DefaultGroupName, &allowedGroupIDsJSON, &closedStateIDsJSON, &completionStatusID,
+		&snapshot.DefaultGroupName, &allowedGroupsJSON, &closedStateIDsJSON, &completionStatusID,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
-	if err := json.Unmarshal([]byte(allowedGroupIDsJSON), &snapshot.AllowedGroupIDs); err != nil {
-		return nil, fmt.Errorf("decode Zammad allowed group IDs: %w", err)
+	if err := json.Unmarshal([]byte(allowedGroupsJSON), &snapshot.AllowedGroups); err != nil {
+		return nil, fmt.Errorf("decode Zammad allowed groups: %w", err)
 	}
 	if err := json.Unmarshal([]byte(closedStateIDsJSON), &snapshot.ClosedStateIDs); err != nil {
 		return nil, fmt.Errorf("decode Zammad closed state IDs: %w", err)
@@ -345,24 +343,24 @@ func (r *ZammadRepository) ConnectionMutationSnapshotTx(tx database.Tx, id strin
 	return snapshot, nil
 }
 
-func (r *ZammadRepository) ConnectionGroupPolicyTx(tx database.Tx, id string) (defaultGroupID int, defaultGroupName string, allowedGroupIDs []int, queryErr error) {
-	var allowedGroupIDsJSON string
-	if err := tx.QueryRow(`SELECT COALESCE(default_group_id, 0), default_group_name, allowed_group_ids
-		FROM zammad_connections WHERE provider_id = ?`, id).Scan(&defaultGroupID, &defaultGroupName, &allowedGroupIDsJSON); err != nil {
+func (r *ZammadRepository) ConnectionGroupPolicyTx(tx database.Tx, id string) (defaultGroupID int, defaultGroupName string, allowedGroups []models.ZammadGroupRef, queryErr error) {
+	var allowedGroupsJSON string
+	if err := tx.QueryRow(`SELECT COALESCE(default_group_id, 0), default_group_name, allowed_groups
+		FROM zammad_connections WHERE provider_id = ?`, id).Scan(&defaultGroupID, &defaultGroupName, &allowedGroupsJSON); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, "", nil, ErrNotFound
 		}
 		return 0, "", nil, err
 	}
-	if err := json.Unmarshal([]byte(allowedGroupIDsJSON), &allowedGroupIDs); err != nil {
-		return 0, "", nil, fmt.Errorf("decode Zammad allowed group IDs: %w", err)
+	if err := json.Unmarshal([]byte(allowedGroupsJSON), &allowedGroups); err != nil {
+		return 0, "", nil, fmt.Errorf("decode Zammad allowed groups: %w", err)
 	}
-	return defaultGroupID, defaultGroupName, allowedGroupIDs, nil
+	return defaultGroupID, defaultGroupName, allowedGroups, nil
 }
 
 func (r *ZammadRepository) LockTicketLinkReservationTx(tx database.Tx, providerID string, itemID int) (*ZammadTicketLinkReservationSnapshot, error) {
 	connectionQuery := `SELECT zc.base_url, zc.correlation_field, ip.enabled,
-		COALESCE(zc.default_group_id, 0), zc.default_group_name, zc.allowed_group_ids, zc.default_customer
+		COALESCE(zc.default_group_id, 0), zc.default_group_name, zc.allowed_groups, zc.default_customer
 		FROM zammad_connections zc
 		JOIN integration_providers ip ON ip.id = zc.provider_id
 		WHERE zc.provider_id = ?`
@@ -370,18 +368,18 @@ func (r *ZammadRepository) LockTicketLinkReservationTx(tx database.Tx, providerI
 		connectionQuery += " FOR UPDATE OF zc"
 	}
 	snapshot := &ZammadTicketLinkReservationSnapshot{}
-	var allowedGroupIDsJSON string
+	var allowedGroupsJSON string
 	if err := tx.QueryRow(connectionQuery, providerID).Scan(
 		&snapshot.BaseURL, &snapshot.CorrelationField, &snapshot.ConnectionEnabled,
-		&snapshot.DefaultGroupID, &snapshot.DefaultGroupName, &allowedGroupIDsJSON, &snapshot.DefaultCustomer,
+		&snapshot.DefaultGroupID, &snapshot.DefaultGroupName, &allowedGroupsJSON, &snapshot.DefaultCustomer,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
-	if err := json.Unmarshal([]byte(allowedGroupIDsJSON), &snapshot.AllowedGroupIDs); err != nil {
-		return nil, fmt.Errorf("decode Zammad allowed group IDs: %w", err)
+	if err := json.Unmarshal([]byte(allowedGroupsJSON), &snapshot.AllowedGroups); err != nil {
+		return nil, fmt.Errorf("decode Zammad allowed groups: %w", err)
 	}
 	itemQuery := `SELECT i.workspace_id, i.workspace_item_number, w.key
 		FROM items i JOIN workspaces w ON w.id = i.workspace_id WHERE i.id = ?`
@@ -397,9 +395,9 @@ func (r *ZammadRepository) LockTicketLinkReservationTx(tx database.Tx, providerI
 	if err := tx.QueryRow(`SELECT EXISTS(
 		SELECT 1 FROM zammad_connections zc
 		WHERE zc.provider_id = ? AND (
-			zc.applies_to_all_workspaces = true OR EXISTS (
-				SELECT 1 FROM zammad_connection_workspaces zcw
-				WHERE zcw.provider_id = zc.provider_id AND zcw.workspace_id = ?
+			EXISTS (SELECT 1 FROM action_credentials ac WHERE ac.id = zc.credential_id AND ac.applies_to_all_workspaces = true) OR EXISTS (
+				SELECT 1 FROM action_credential_workspaces acw
+				WHERE acw.credential_id = zc.credential_id AND acw.workspace_id = ?
 			)
 		))`, providerID, snapshot.WorkspaceID).Scan(&snapshot.WorkspaceAllowed); err != nil {
 		return nil, err
@@ -438,10 +436,12 @@ func (r *ZammadRepository) HasTicketLinkUnavailableInWorkspaceTx(tx database.Tx,
 	err := tx.QueryRow(`SELECT EXISTS(
 		SELECT 1 FROM zammad_ticket_links ztl
 		JOIN zammad_connections zc ON zc.provider_id = ztl.provider_id
-		WHERE ztl.item_id = ? AND zc.applies_to_all_workspaces = false
+		WHERE ztl.item_id = ? AND EXISTS (
+			SELECT 1 FROM action_credentials ac WHERE ac.id = zc.credential_id AND ac.applies_to_all_workspaces = false
+		)
 		AND NOT EXISTS (
-			SELECT 1 FROM zammad_connection_workspaces zcw
-			WHERE zcw.provider_id = ztl.provider_id AND zcw.workspace_id = ?
+			SELECT 1 FROM action_credential_workspaces acw
+			WHERE acw.credential_id = zc.credential_id AND acw.workspace_id = ?
 		))`, itemID, workspaceID).Scan(&unavailable)
 	return unavailable, err
 }
@@ -525,16 +525,18 @@ func scanZammadConnection(scanner interface{ Scan(...any) error }) (*models.Zamm
 	if err := json.Unmarshal([]byte(closedJSON), &connection.ClosedStateIDs); err != nil {
 		return nil, fmt.Errorf("decode closed_state_ids: %w", err)
 	}
-	if err := json.Unmarshal([]byte(allowedGroupsJSON), &connection.AllowedGroupIDs); err != nil {
-		return nil, fmt.Errorf("decode allowed_group_ids: %w", err)
+	if err := json.Unmarshal([]byte(allowedGroupsJSON), &connection.AllowedGroups); err != nil {
+		return nil, fmt.Errorf("decode allowed_groups: %w", err)
 	}
 	connection.HasAPIToken = connection.AuthMethod == models.ZammadAuthMethodAPIToken && connection.CredentialID > 0
 	return &connection, nil
 }
 
 func (r *ZammadRepository) connectionWorkspaceIDs(providerID string) ([]int, error) {
-	rows, err := r.db.Query(`SELECT workspace_id FROM zammad_connection_workspaces
-		WHERE provider_id = ? ORDER BY workspace_id`, providerID)
+	rows, err := r.db.Query(`SELECT acw.workspace_id
+		FROM zammad_connections zc
+		JOIN action_credential_workspaces acw ON acw.credential_id = zc.credential_id
+		WHERE zc.provider_id = ? ORDER BY acw.workspace_id`, providerID)
 	if err != nil {
 		return nil, err
 	}
@@ -550,22 +552,6 @@ func (r *ZammadRepository) connectionWorkspaceIDs(providerID string) ([]int, err
 	return ids, rows.Err()
 }
 
-func replaceZammadConnectionWorkspaces(tx database.Tx, providerID string, appliesAll bool, workspaceIDs []int) error {
-	if _, err := tx.Exec("DELETE FROM zammad_connection_workspaces WHERE provider_id = ?", providerID); err != nil {
-		return err
-	}
-	if appliesAll {
-		return nil
-	}
-	for _, workspaceID := range workspaceIDs {
-		if _, err := tx.Exec(`INSERT INTO zammad_connection_workspaces(provider_id, workspace_id)
-			VALUES (?, ?)`, providerID, workspaceID); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func (r *ZammadRepository) GetTicketLinksForItem(itemID int) ([]*models.ZammadTicketLink, error) {
 	rows, err := r.db.Query(`SELECT `+zammadTicketLinkColumns+`
 		FROM zammad_ticket_links ztl
@@ -573,9 +559,9 @@ func (r *ZammadRepository) GetTicketLinksForItem(itemID int) ([]*models.ZammadTi
 		JOIN zammad_connections zc ON zc.provider_id = ztl.provider_id
 		JOIN items i ON i.id = ztl.item_id
 		WHERE ztl.item_id = ? AND (
-			zc.applies_to_all_workspaces = true OR EXISTS (
-				SELECT 1 FROM zammad_connection_workspaces zcw
-				WHERE zcw.provider_id = ztl.provider_id AND zcw.workspace_id = i.workspace_id
+			EXISTS (SELECT 1 FROM action_credentials ac WHERE ac.id = zc.credential_id AND ac.applies_to_all_workspaces = true) OR EXISTS (
+				SELECT 1 FROM action_credential_workspaces acw
+				WHERE acw.credential_id = zc.credential_id AND acw.workspace_id = i.workspace_id
 			)
 		) ORDER BY ztl.created_at DESC`, itemID)
 	if err != nil {
@@ -1134,23 +1120,6 @@ func scanZammadTicketLink(scanner interface{ Scan(...any) error }) (*models.Zamm
 		link.CreatedBy = &v
 	}
 	return &link, nil
-}
-
-func (r *ZammadRepository) DeleteTicketLink(id string) error {
-	return database.WithTx(r.db, func(tx database.Tx) error {
-		var genericID sql.NullString
-		if err := tx.QueryRow(`SELECT item_integration_link_id FROM zammad_ticket_links WHERE id=?`, id).Scan(&genericID); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(`DELETE FROM zammad_ticket_links WHERE id=?`, id); err != nil {
-			return err
-		}
-		if genericID.Valid {
-			_, err := tx.Exec(`DELETE FROM item_integration_links WHERE id=?`, genericID.String)
-			return err
-		}
-		return nil
-	})
 }
 
 // DeleteTicketLinkClaimed removes a ticket link and its generic item link only
