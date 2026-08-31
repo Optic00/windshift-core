@@ -55,6 +55,7 @@ func (h *IntegrationOAuthHandler) StartOAuth(w http.ResponseWriter, r *http.Requ
 	err := h.db.QueryRow(`
 		SELECT id, provider_type, oauth_client_id
 		FROM integration_providers WHERE slug = ? AND enabled = true
+		AND provider_type IN ('notion', 'todoist')
 	`, slug).Scan(&providerID, &providerType, &clientID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -364,7 +365,7 @@ func (h *IntegrationOAuthHandler) GetAvailableProviders(w http.ResponseWriter, r
 	rows, err := h.db.Query(`
 		SELECT id, slug, name, provider_type
 		FROM integration_providers
-		WHERE enabled = true
+		WHERE enabled = true AND provider_type IN ('notion', 'todoist')
 		ORDER BY name
 	`)
 	if err != nil {

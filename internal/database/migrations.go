@@ -8,6 +8,128 @@ import (
 	"slices"
 )
 
+const zammadSchemaMigrationSQLite = `
+	CREATE TABLE zammad_connections (
+		provider_id TEXT PRIMARY KEY,
+		credential_id INTEGER NOT NULL,
+		base_url TEXT NOT NULL,
+		default_group_id INTEGER,
+		default_group_name TEXT DEFAULT '',
+		allowed_group_ids TEXT NOT NULL DEFAULT '[]',
+		default_customer TEXT NOT NULL,
+		correlation_field TEXT NOT NULL DEFAULT 'windshift_item_key',
+		closed_state_ids TEXT NOT NULL DEFAULT '[]',
+		completion_status_id INTEGER,
+		applies_to_all_workspaces BOOLEAN NOT NULL DEFAULT false,
+		last_tested_at DATETIME,
+		last_test_error TEXT DEFAULT '',
+		created_by INTEGER,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (provider_id) REFERENCES integration_providers(id) ON DELETE CASCADE,
+		FOREIGN KEY (credential_id) REFERENCES action_credentials(id) ON DELETE RESTRICT,
+		FOREIGN KEY (completion_status_id) REFERENCES statuses(id) ON DELETE SET NULL,
+		FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+	);
+	CREATE INDEX idx_zammad_connections_credential ON zammad_connections(credential_id);
+	CREATE TABLE zammad_connection_workspaces (
+		provider_id TEXT NOT NULL,
+		workspace_id INTEGER NOT NULL,
+		PRIMARY KEY (provider_id, workspace_id),
+		FOREIGN KEY (provider_id) REFERENCES zammad_connections(provider_id) ON DELETE CASCADE,
+		FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+	);
+	CREATE INDEX idx_zammad_connection_workspaces_workspace ON zammad_connection_workspaces(workspace_id);
+	CREATE TABLE zammad_ticket_links (
+		id TEXT PRIMARY KEY,
+		item_id INTEGER NOT NULL,
+		provider_id TEXT NOT NULL,
+		item_integration_link_id TEXT,
+		ticket_id INTEGER,
+		ticket_number TEXT DEFAULT '',
+		ticket_url TEXT DEFAULT '',
+		group_id INTEGER,
+		group_name TEXT DEFAULT '',
+		correlation_key TEXT NOT NULL,
+		sync_state TEXT NOT NULL DEFAULT 'pending',
+		creating_started_at DATETIME,
+		last_status_id INTEGER,
+		last_status_name TEXT DEFAULT '',
+		last_synced_at DATETIME,
+		last_error TEXT DEFAULT '',
+		completion_applied BOOLEAN NOT NULL DEFAULT false,
+		sync_lock_until DATETIME,
+		created_by INTEGER,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
+		FOREIGN KEY (provider_id) REFERENCES zammad_connections(provider_id) ON DELETE CASCADE,
+		FOREIGN KEY (item_integration_link_id) REFERENCES item_integration_links(id) ON DELETE SET NULL,
+		FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+		UNIQUE(item_id, provider_id),
+		UNIQUE(provider_id, ticket_id),
+		UNIQUE(provider_id, correlation_key)
+	);
+	CREATE INDEX idx_zammad_ticket_links_item ON zammad_ticket_links(item_id);
+	CREATE INDEX idx_zammad_ticket_links_sync ON zammad_ticket_links(sync_state, last_synced_at);
+`
+
+const zammadSchemaMigrationPostgres = `
+	CREATE TABLE zammad_connections (
+		provider_id TEXT PRIMARY KEY REFERENCES integration_providers(id) ON DELETE CASCADE,
+		credential_id INTEGER NOT NULL REFERENCES action_credentials(id) ON DELETE RESTRICT,
+		base_url TEXT NOT NULL,
+		default_group_id INTEGER,
+		default_group_name TEXT DEFAULT '',
+		allowed_group_ids TEXT NOT NULL DEFAULT '[]',
+		default_customer TEXT NOT NULL,
+		correlation_field TEXT NOT NULL DEFAULT 'windshift_item_key',
+		closed_state_ids TEXT NOT NULL DEFAULT '[]',
+		completion_status_id INTEGER REFERENCES statuses(id) ON DELETE SET NULL,
+		applies_to_all_workspaces BOOLEAN NOT NULL DEFAULT false,
+		last_tested_at TIMESTAMPTZ,
+		last_test_error TEXT DEFAULT '',
+		created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+		created_at TIMESTAMPTZ DEFAULT NOW(),
+		updated_at TIMESTAMPTZ DEFAULT NOW()
+	);
+	CREATE INDEX idx_zammad_connections_credential ON zammad_connections(credential_id);
+	CREATE TABLE zammad_connection_workspaces (
+		provider_id TEXT NOT NULL REFERENCES zammad_connections(provider_id) ON DELETE CASCADE,
+		workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+		PRIMARY KEY (provider_id, workspace_id)
+	);
+	CREATE INDEX idx_zammad_connection_workspaces_workspace ON zammad_connection_workspaces(workspace_id);
+	CREATE TABLE zammad_ticket_links (
+		id TEXT PRIMARY KEY,
+		item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+		provider_id TEXT NOT NULL REFERENCES zammad_connections(provider_id) ON DELETE CASCADE,
+		item_integration_link_id TEXT REFERENCES item_integration_links(id) ON DELETE SET NULL,
+		ticket_id INTEGER,
+		ticket_number TEXT DEFAULT '',
+		ticket_url TEXT DEFAULT '',
+		group_id INTEGER,
+		group_name TEXT DEFAULT '',
+		correlation_key TEXT NOT NULL,
+		sync_state TEXT NOT NULL DEFAULT 'pending',
+		creating_started_at TIMESTAMPTZ,
+		last_status_id INTEGER,
+		last_status_name TEXT DEFAULT '',
+		last_synced_at TIMESTAMPTZ,
+		last_error TEXT DEFAULT '',
+		completion_applied BOOLEAN NOT NULL DEFAULT false,
+		sync_lock_until TIMESTAMPTZ,
+		created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+		created_at TIMESTAMPTZ DEFAULT NOW(),
+		updated_at TIMESTAMPTZ DEFAULT NOW(),
+		UNIQUE(item_id, provider_id),
+		UNIQUE(provider_id, ticket_id),
+		UNIQUE(provider_id, correlation_key)
+	);
+	CREATE INDEX idx_zammad_ticket_links_item ON zammad_ticket_links(item_id);
+	CREATE INDEX idx_zammad_ticket_links_sync ON zammad_ticket_links(sync_state, last_synced_at);
+`
+
 // Migration is one entry in the schema_migrations catalog. Version is a
 // stable slug used as the schema_migrations primary key; Name is a human
 // label. CheckSQLite / CheckPostgres are queries that return COUNT >= 1
@@ -498,6 +620,108 @@ var Catalog = []Migration{
 		SQLite:      "applySQLiteSSOAttributeMappingDefault:v1",
 		Postgres:    `ALTER TABLE sso_providers ALTER COLUMN attribute_mapping SET DEFAULT '{"email":"email","name":"name","given_name":"given_name","family_name":"family_name","username":"preferred_username","email_verified":"email_verified"}'`,
 		ApplySQLite: applySQLiteSSOAttributeMappingDefault,
+	},
+	{
+		Version:       "20260829_zammad_integration",
+		Name:          "Add Zammad connections and durable ticket links",
+		CheckSQLite:   sqliteTableCheck("zammad_ticket_links"),
+		CheckPostgres: pgTableCheck("zammad_ticket_links"),
+		SQLite:        zammadSchemaMigrationSQLite,
+		Postgres:      zammadSchemaMigrationPostgres,
+	},
+	{
+		Version:       "20260830_zammad_oauth_connections",
+		Name:          "Add connection-scoped Zammad OAuth credentials",
+		CheckSQLite:   sqliteTableCheck("zammad_oauth_tokens"),
+		CheckPostgres: pgTableCheck("zammad_oauth_tokens"),
+		SQLite: `
+			ALTER TABLE zammad_connections ADD COLUMN auth_method TEXT NOT NULL DEFAULT 'api_token';
+			CREATE TABLE zammad_oauth_tokens (
+				provider_id TEXT PRIMARY KEY REFERENCES zammad_connections(provider_id) ON DELETE CASCADE,
+				expires_at DATETIME NOT NULL,
+				reauthorization_required BOOLEAN NOT NULL DEFAULT false, refresh_lock_until DATETIME, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			);
+			CREATE TABLE zammad_oauth_state (
+				state TEXT PRIMARY KEY, provider_id TEXT NOT NULL REFERENCES zammad_connections(provider_id) ON DELETE CASCADE,
+				initiated_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at DATETIME NOT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			);
+			CREATE INDEX idx_zammad_oauth_state_expires ON zammad_oauth_state(expires_at);
+		`,
+		Postgres: `
+			ALTER TABLE zammad_connections ADD COLUMN IF NOT EXISTS auth_method TEXT NOT NULL DEFAULT 'api_token';
+			CREATE TABLE zammad_oauth_tokens (
+				provider_id TEXT PRIMARY KEY REFERENCES zammad_connections(provider_id) ON DELETE CASCADE,
+				expires_at TIMESTAMPTZ NOT NULL,
+				reauthorization_required BOOLEAN NOT NULL DEFAULT false, refresh_lock_until TIMESTAMPTZ, updated_at TIMESTAMPTZ DEFAULT NOW()
+			);
+			CREATE TABLE zammad_oauth_state (
+				state TEXT PRIMARY KEY, provider_id TEXT NOT NULL REFERENCES zammad_connections(provider_id) ON DELETE CASCADE,
+				initiated_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ DEFAULT NOW()
+			);
+			CREATE INDEX idx_zammad_oauth_state_expires ON zammad_oauth_state(expires_at);
+		`,
+	},
+	{
+		Version:       "20260830_zammad_oauth_generation",
+		Name:          "Bind Zammad OAuth writes to connection generations and refresh claims",
+		CheckSQLite:   sqliteColumnCheck("zammad_connections", "oauth_generation"),
+		CheckPostgres: pgColumnCheck("zammad_connections", "oauth_generation"),
+		SQLite: `
+			ALTER TABLE zammad_connections ADD COLUMN oauth_generation INTEGER NOT NULL DEFAULT 1;
+			ALTER TABLE zammad_connections ADD COLUMN oauth_attempt_id TEXT;
+			ALTER TABLE zammad_oauth_tokens ADD COLUMN oauth_generation INTEGER NOT NULL DEFAULT 1;
+			ALTER TABLE zammad_oauth_tokens ADD COLUMN refresh_claim_owner TEXT;
+			ALTER TABLE zammad_oauth_state ADD COLUMN oauth_generation INTEGER NOT NULL DEFAULT 1;
+			DELETE FROM zammad_oauth_state;
+			CREATE UNIQUE INDEX idx_zammad_oauth_state_provider ON zammad_oauth_state(provider_id);
+		`,
+		Postgres: `
+			ALTER TABLE zammad_connections ADD COLUMN IF NOT EXISTS oauth_generation BIGINT NOT NULL DEFAULT 1;
+			ALTER TABLE zammad_connections ADD COLUMN IF NOT EXISTS oauth_attempt_id TEXT;
+			ALTER TABLE zammad_oauth_tokens ADD COLUMN IF NOT EXISTS oauth_generation BIGINT NOT NULL DEFAULT 1;
+			ALTER TABLE zammad_oauth_tokens ADD COLUMN IF NOT EXISTS refresh_claim_owner TEXT;
+			ALTER TABLE zammad_oauth_state ADD COLUMN IF NOT EXISTS oauth_generation BIGINT NOT NULL DEFAULT 1;
+			DELETE FROM zammad_oauth_state;
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_zammad_oauth_state_provider ON zammad_oauth_state(provider_id);
+		`,
+	},
+	{
+		Version: "20260830_zammad_ticket_link_metadata",
+		Name:    "Add Zammad ticket ownership and retry metadata",
+		CheckSQLite: `
+			SELECT CASE WHEN COUNT(*) = 4 THEN 1 ELSE 0 END
+			FROM pragma_table_info('zammad_ticket_links')
+			WHERE name IN ('owner_id', 'owner_name', 'last_attempt_at', 'next_attempt_at')
+		`,
+		CheckPostgres: `
+			SELECT CASE WHEN COUNT(*) = 4 THEN 1 ELSE 0 END
+			FROM information_schema.columns
+			WHERE table_schema = current_schema()
+			  AND table_name = 'zammad_ticket_links'
+			  AND column_name IN ('owner_id', 'owner_name', 'last_attempt_at', 'next_attempt_at')
+		`,
+		SQLite: `
+			ALTER TABLE zammad_ticket_links ADD COLUMN owner_id INTEGER;
+			ALTER TABLE zammad_ticket_links ADD COLUMN owner_name TEXT DEFAULT '';
+			ALTER TABLE zammad_ticket_links ADD COLUMN last_attempt_at DATETIME;
+			ALTER TABLE zammad_ticket_links ADD COLUMN next_attempt_at DATETIME;
+		`,
+		Postgres: `
+			ALTER TABLE zammad_ticket_links ADD COLUMN IF NOT EXISTS owner_id INTEGER;
+			ALTER TABLE zammad_ticket_links ADD COLUMN IF NOT EXISTS owner_name TEXT DEFAULT '';
+			ALTER TABLE zammad_ticket_links ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMPTZ;
+			ALTER TABLE zammad_ticket_links ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ;
+		`,
+	},
+	{
+		Version:       "20260830_zammad_ticket_link_completion_postgres",
+		Name:          "Backfill missing PostgreSQL Zammad completion marker",
+		CheckSQLite:   `SELECT 1`,
+		CheckPostgres: pgColumnCheck("zammad_ticket_links", "completion_applied"),
+		SQLite:        `SELECT 1;`,
+		Postgres: `
+			ALTER TABLE zammad_ticket_links ADD COLUMN IF NOT EXISTS completion_applied BOOLEAN NOT NULL DEFAULT false;
+		`,
 	},
 }
 

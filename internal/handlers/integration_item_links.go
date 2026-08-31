@@ -86,7 +86,7 @@ func (h *IntegrationItemLinksHandler) GetItemLinks(w http.ResponseWriter, r *htt
 			ip.name AS provider_name, ip.provider_type
 		FROM item_integration_links iil
 		JOIN integration_providers ip ON ip.id = iil.integration_provider_id
-		WHERE iil.item_id = ?
+		WHERE iil.item_id = ? AND ip.provider_type != 'zammad'
 		ORDER BY iil.created_at DESC
 	`, itemID)
 	if err != nil {
@@ -172,7 +172,7 @@ func (h *IntegrationItemLinksHandler) CreateItemLink(w http.ResponseWriter, r *h
 
 	// Verify provider exists and is enabled
 	var providerExists bool
-	err := h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM integration_providers WHERE id = ? AND enabled = true)", req.ProviderID).Scan(&providerExists)
+	err := h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM integration_providers WHERE id = ? AND enabled = true AND provider_type IN ('notion', 'todoist'))", req.ProviderID).Scan(&providerExists)
 	if err != nil || !providerExists {
 		respondBadRequest(w, r, "Integration provider not found or disabled")
 		return
@@ -234,6 +234,10 @@ func (h *IntegrationItemLinksHandler) DeleteItemLink(w http.ResponseWriter, r *h
 		respondInternalError(w, r, fmt.Errorf("invalid item id on integration link: %w", err))
 		return
 	}
+	if link.ProviderType == string(models.IntegrationProviderZammad) {
+		respondNotFound(w, r, "integration_link")
+		return
+	}
 
 	if !CheckItemPermission(w, r, repository.NewItemRepository(h.db), h.permissionService, itemID, models.PermissionItemEdit) {
 		return
@@ -245,7 +249,6 @@ func (h *IntegrationItemLinksHandler) DeleteItemLink(w http.ResponseWriter, r *h
 		respondInternalError(w, r, err)
 		return
 	}
-
 	h.auditItemLink(r, user, logger.ActionIntegrationItemLinkDelete, link)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -274,6 +277,10 @@ func (h *IntegrationItemLinksHandler) RefreshItemLink(w http.ResponseWriter, r *
 		} else {
 			respondInternalError(w, r, err)
 		}
+		return
+	}
+	if providerType == models.IntegrationProviderZammad {
+		respondNotFound(w, r, "integration_link")
 		return
 	}
 
