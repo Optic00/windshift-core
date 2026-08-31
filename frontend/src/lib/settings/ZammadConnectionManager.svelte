@@ -247,8 +247,8 @@
       : form.allowed_group_ids.filter((groupId) => groupId !== id);
   }
 
-  function selectDefaultGroup(event) {
-    form.default_group_id = event.currentTarget.value;
+  function selectDefaultGroup(value) {
+    form.default_group_id = value;
     const group = metadataByConnection[editing?.id]?.groups?.find(
       (entry) => entry.id === Number(form.default_group_id),
     );
