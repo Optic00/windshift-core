@@ -26,7 +26,7 @@ func TestZammadSchemaInitializesOnSQLite(t *testing.T) {
 		}
 	}
 
-	for _, version := range []string{"20260829_zammad_integration", "20260830_zammad_oauth_connections", "20260830_zammad_oauth_generation", "20260830_zammad_ticket_link_metadata", "20260830_zammad_ticket_link_completion_postgres", "20260831_zammad_connection_config_revision", "20260831_zammad_ticket_sync_lock_owner"} {
+	for _, version := range []string{"20260829_zammad_integration", "20260830_zammad_oauth_connections", "20260830_zammad_oauth_generation", "20260830_zammad_ticket_link_metadata", "20260830_zammad_ticket_link_completion_postgres", "20260831_zammad_connection_config_revision", "20260831_zammad_ticket_sync_lock_owner", "20260831_zammad_ticket_link_item_restrict"} {
 		var migrationCount int
 		if err := db.QueryRow("SELECT COUNT(*) FROM schema_migrations WHERE version=?", version).Scan(&migrationCount); err != nil {
 			t.Fatal(err)
@@ -121,7 +121,11 @@ func TestZammadTicketLinkMetadataSQLiteUpgrade(t *testing.T) {
 		DROP TABLE zammad_ticket_links;
 		ALTER TABLE zammad_ticket_links_legacy RENAME TO zammad_ticket_links;
 		DELETE FROM schema_migrations
-		WHERE version IN ('20260830_zammad_ticket_link_metadata', '20260831_zammad_ticket_sync_lock_owner');
+		WHERE version IN (
+			'20260830_zammad_ticket_link_metadata',
+			'20260831_zammad_ticket_sync_lock_owner',
+			'20260831_zammad_ticket_link_item_restrict'
+		);
 	`)
 	if err != nil {
 		t.Fatal(err)
@@ -141,6 +145,13 @@ func TestZammadTicketLinkMetadataSQLiteUpgrade(t *testing.T) {
 		if count != 1 {
 			t.Fatalf("expected migrated zammad_ticket_links.%s", column)
 		}
+	}
+	var deleteRule string
+	if err := db.QueryRow(`SELECT on_delete FROM pragma_foreign_key_list('zammad_ticket_links') WHERE "table" = 'items' AND "from" = 'item_id'`).Scan(&deleteRule); err != nil {
+		t.Fatal(err)
+	}
+	if deleteRule != "RESTRICT" {
+		t.Fatalf("expected migrated item foreign key to restrict deletion, got %q", deleteRule)
 	}
 }
 
@@ -197,6 +208,28 @@ func TestZammadTicketSyncLockOwnerMigrationBackendParity(t *testing.T) {
 	}
 	if strings.Contains(zammadSchemaMigrationSQLite, "sync_lock_owner TEXT") || strings.Contains(zammadSchemaMigrationPostgres, "sync_lock_owner TEXT") {
 		t.Fatal("historical Zammad migration must remain checksum-stable; sync_lock_owner belongs only in the additive migration")
+	}
+}
+
+func TestZammadTicketLinkItemRestrictMigrationBackendParity(t *testing.T) {
+	var migration *Migration
+	for i := range Catalog {
+		if Catalog[i].Version == "20260831_zammad_ticket_link_item_restrict" {
+			migration = &Catalog[i]
+			break
+		}
+	}
+	if migration == nil {
+		t.Fatal("Zammad item deletion restriction migration is missing")
+	}
+	if !strings.Contains(migration.CheckSQLite, "on_delete = 'RESTRICT'") || !strings.Contains(migration.CheckPostgres, "delete_rule = 'RESTRICT'") {
+		t.Fatal("item deletion restriction migration checks must cover both backends")
+	}
+	if !strings.Contains(migration.SQLite, "REFERENCES items(id) ON DELETE RESTRICT") || !strings.Contains(migration.Postgres, "REFERENCES items(id) ON DELETE RESTRICT") {
+		t.Fatal("item deletion restriction migration bodies must cover both backends")
+	}
+	if !strings.Contains(zammadSchemaMigrationSQLite, "REFERENCES items(id) ON DELETE CASCADE") || !strings.Contains(zammadSchemaMigrationPostgres, "REFERENCES items(id) ON DELETE CASCADE") {
+		t.Fatal("historical Zammad migrations must remain checksum-stable")
 	}
 }
 

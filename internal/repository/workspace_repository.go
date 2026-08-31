@@ -347,6 +347,15 @@ func (r *WorkspaceRepository) Delete(id int) error {
 	return nil
 }
 
+// DeleteTx removes a workspace inside the caller's transaction. Cache
+// invalidation remains the caller's post-commit responsibility.
+func (r *WorkspaceRepository) DeleteTx(tx database.Tx, id int) error {
+	if _, err := tx.ExecWrite("DELETE FROM workspaces WHERE id = ?", id); err != nil {
+		return err
+	}
+	return nil
+}
+
 // FindMissingOrPersonal accepts a set of workspace IDs and returns those that
 // don't exist or are flagged as personal — i.e. invalid as portal/form
 // submission targets. Used by UpdateChannelConfig to reject bogus IDs before
@@ -399,6 +408,20 @@ func (r *WorkspaceRepository) Exists(id int) (bool, error) {
 	var exists bool
 	err := r.db.QueryRow("SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = ?)", id).Scan(&exists)
 	return exists, err
+}
+
+// LockForDeleteTx locks a workspace before its items are fenced and deleted.
+func (r *WorkspaceRepository) LockForDeleteTx(tx database.Tx, id int) (bool, error) {
+	query := "SELECT id FROM workspaces WHERE id = ?"
+	if r.db.GetDriverName() == "postgres" {
+		query += " FOR UPDATE"
+	}
+	var lockedID int
+	err := tx.QueryRow(query, id).Scan(&lockedID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // KeyExists checks if a workspace key exists
@@ -705,5 +728,16 @@ func (r *WorkspaceRepository) DropItemSequence(workspaceID int64) error {
 	}
 	seqName := fmt.Sprintf("workspace_%d_item_seq", workspaceID)
 	_, err := r.db.ExecWrite(fmt.Sprintf(`DROP SEQUENCE IF EXISTS %q`, seqName))
+	return err
+}
+
+// DropItemSequenceTx removes the per-workspace sequence inside the caller's
+// transaction. No-op on SQLite.
+func (r *WorkspaceRepository) DropItemSequenceTx(tx database.Tx, workspaceID int64) error {
+	if r.db.GetDriverName() != "postgres" {
+		return nil
+	}
+	seqName := fmt.Sprintf("workspace_%d_item_seq", workspaceID)
+	_, err := tx.ExecWrite(fmt.Sprintf(`DROP SEQUENCE IF EXISTS %q`, seqName))
 	return err
 }

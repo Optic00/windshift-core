@@ -18,8 +18,9 @@ import (
 )
 
 var (
-	ErrCollectionNotFound = errors.New("collection not found")
-	ErrQLQuery            = errors.New("QL query error")
+	ErrCollectionNotFound       = errors.New("collection not found")
+	ErrQLQuery                  = errors.New("QL query error")
+	ErrItemHasZammadTicketLinks = errors.New("item has linked Zammad tickets")
 )
 
 // ItemCRUDService handles item CRUD operations
@@ -27,6 +28,7 @@ type ItemCRUDService struct {
 	db            database.Database
 	repo          *repository.ItemRepository
 	workspaceRepo *repository.WorkspaceRepository
+	zammadRepo    *repository.ZammadRepository
 }
 
 // NewItemCRUDService creates a new item CRUD service
@@ -35,6 +37,7 @@ func NewItemCRUDService(db database.Database) *ItemCRUDService {
 		db:            db,
 		repo:          repository.NewItemRepository(db),
 		workspaceRepo: repository.NewWorkspaceRepository(db),
+		zammadRepo:    repository.NewZammadRepository(db),
 	}
 }
 
@@ -94,6 +97,13 @@ func (s *ItemCRUDService) DeleteSingleWithMetadata(itemID int, metadata itemeven
 		locked, err := s.repo.FindByIDForUpdate(tx, itemID)
 		if err != nil {
 			return err
+		}
+		hasZammadLinks, err := s.zammadRepo.HasTicketLinksForItemsTx(tx, []int{itemID})
+		if err != nil {
+			return err
+		}
+		if hasZammadLinks {
+			return ErrItemHasZammadTicketLinks
 		}
 		if metadata.OccurredAt.IsZero() {
 			metadata.OccurredAt = time.Now()
@@ -158,6 +168,13 @@ func (s *ItemCRUDService) deleteItemSubtree(rootID int, itemIDs []int, descendan
 		}
 		if len(items) != len(itemIDs) {
 			return repository.ErrNotFound
+		}
+		hasZammadLinks, err := s.zammadRepo.HasTicketLinksForItemsTx(tx, itemIDs)
+		if err != nil {
+			return err
+		}
+		if hasZammadLinks {
+			return ErrItemHasZammadTicketLinks
 		}
 		if metadata.OccurredAt.IsZero() {
 			metadata.OccurredAt = time.Now()

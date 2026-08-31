@@ -127,6 +127,22 @@ func (r *ZammadRepository) IsConnectionAvailableToWorkspace(id string, workspace
 	return available, err
 }
 
+// IsConnectionScopedToWorkspace checks only the configured workspace scope.
+// Cleanup paths use it so an administrator can disable a connection without
+// making its existing links impossible to remove.
+func (r *ZammadRepository) IsConnectionScopedToWorkspace(id string, workspaceID int) (bool, error) {
+	var scoped bool
+	err := r.db.QueryRow(`SELECT EXISTS(
+		SELECT 1 FROM zammad_connections zc
+		WHERE zc.provider_id = ? AND (
+			zc.applies_to_all_workspaces = true OR EXISTS (
+				SELECT 1 FROM zammad_connection_workspaces zcw
+				WHERE zcw.provider_id = zc.provider_id AND zcw.workspace_id = ?
+			)
+		))`, id, workspaceID).Scan(&scoped)
+	return scoped, err
+}
+
 func (r *ZammadRepository) CreateConnection(connection *models.ZammadConnection) error {
 	closedJSON, err := json.Marshal(connection.ClosedStateIDs)
 	if err != nil {
@@ -236,6 +252,33 @@ func (r *ZammadRepository) HasTicketLinksForConnectionTx(tx database.Tx, id stri
 	var hasLinks bool
 	err := tx.QueryRow("SELECT EXISTS(SELECT 1 FROM zammad_ticket_links WHERE provider_id = ?)", id).Scan(&hasLinks)
 	return hasLinks, err
+}
+
+func (r *ZammadRepository) HasTicketLinksForItemsTx(tx database.Tx, itemIDs []int) (bool, error) {
+	if len(itemIDs) == 0 {
+		return false, nil
+	}
+	placeholders, args := inPlaceholders(itemIDs)
+	var hasLinks bool
+	err := tx.QueryRow("SELECT EXISTS(SELECT 1 FROM zammad_ticket_links WHERE item_id IN ("+placeholders+"))", args...).Scan(&hasLinks)
+	if err != nil {
+		return false, fmt.Errorf("check Zammad ticket links for items: %w", err)
+	}
+	return hasLinks, nil
+}
+
+func (r *ZammadRepository) HasTicketLinksForWorkspaceTx(tx database.Tx, workspaceID int) (bool, error) {
+	var hasLinks bool
+	err := tx.QueryRow(`SELECT EXISTS(
+		SELECT 1
+		FROM zammad_ticket_links ztl
+		JOIN items i ON i.id = ztl.item_id
+		WHERE i.workspace_id = ?
+	)`, workspaceID).Scan(&hasLinks)
+	if err != nil {
+		return false, fmt.Errorf("check Zammad ticket links for workspace: %w", err)
+	}
+	return hasLinks, nil
 }
 
 // LockConnectionTx is the first step of every connection mutation and ticket

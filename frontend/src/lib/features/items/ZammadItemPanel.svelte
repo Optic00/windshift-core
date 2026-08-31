@@ -541,9 +541,9 @@
                     <div>{link.last_synced_at ? t('zammad.lastSynced', { time: new Date(link.last_synced_at).toLocaleString() }) : t('zammad.notSynced')}</div>
                   </div>
                 </div>
-                {#if canEdit && linkConnectionUsable}
+                {#if canEdit}
                   <div class="flex items-center gap-1">
-                    {#if link.ticket_id && link.sync_state !== 'creating'}
+                    {#if linkConnectionUsable && link.ticket_id && link.sync_state !== 'creating'}
                       <button class="p-1 rounded" onclick={() => openEditDialog(link)} disabled={savingEdit} title={t('zammad.editTicket')}>
                         <Edit2 class="w-4 h-4" />
                       </button>

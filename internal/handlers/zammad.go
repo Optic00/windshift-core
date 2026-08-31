@@ -238,7 +238,7 @@ func (h *ZammadHandler) GetWorkspaceOwners(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	user, ok := RequireAuth(w, r)
-	if !ok || !RequireWorkspacePermission(w, r, user.ID, workspaceID, models.PermissionItemView, h.permissionService) {
+	if !ok || !RequireWorkspacePermission(w, r, user.ID, workspaceID, models.PermissionItemEdit, h.permissionService) {
 		return
 	}
 	groupID, err := strconv.Atoi(r.URL.Query().Get("group_id"))

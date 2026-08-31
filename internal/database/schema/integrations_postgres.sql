@@ -178,7 +178,7 @@ CREATE INDEX IF NOT EXISTS idx_zammad_connection_workspaces_workspace ON zammad_
 
 CREATE TABLE IF NOT EXISTS zammad_ticket_links (
 	id TEXT PRIMARY KEY,
-	item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+	item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE RESTRICT,
 	provider_id TEXT NOT NULL REFERENCES zammad_connections(provider_id) ON DELETE CASCADE,
 	item_integration_link_id TEXT REFERENCES item_integration_links(id) ON DELETE SET NULL,
 	ticket_id INTEGER,

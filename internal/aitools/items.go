@@ -461,6 +461,9 @@ func init() {
 				if errors.Is(err, services.ErrItemDeletionForbidden) {
 					return map[string]string{"error": "permission denied"}, nil
 				}
+				if errors.Is(err, services.ErrItemHasZammadTicketLinks) {
+					return map[string]string{"error": "unlink all Zammad tickets from the item or its descendants before deleting them"}, nil
+				}
 				return nil, err
 			}
 			env.AuditWrite(logger.ResourceItem, itemID, "delete_item", result.Item.Title)

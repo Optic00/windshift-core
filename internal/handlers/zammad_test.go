@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -122,6 +123,33 @@ func TestZammadHandlerReturnsStructuredValidationAndNotFoundErrors(t *testing.T)
 	handler.GetConnection(recorder, request)
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("expected not-found status 404, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestZammadWorkspaceOwnersRequireItemEditPermission(t *testing.T) {
+	handler, db, user, workspaceID := newZammadHandlerTest(t)
+	if _, err := db.ExecWrite(`INSERT INTO user_workspace_roles (user_id, workspace_id, role_id, granted_by)
+		SELECT ?, ?, id, ? FROM workspace_roles WHERE name = 'Viewer'`, user.ID, workspaceID, user.ID); err != nil {
+		t.Fatal(err)
+	}
+	config := services.DefaultPermissionCacheConfig()
+	config.WarmupOnStartup = false
+	config.PreWarmActive = false
+	permissionService, err := services.NewPermissionService(db, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = permissionService.Close() })
+	handler.permissionService = permissionService
+
+	workspacePathID := strconv.Itoa(workspaceID)
+	request := authenticatedZammadRequest(http.MethodGet, "/api/workspaces/"+workspacePathID+"/zammad-connections/helpdesk/owners?group_id=7", nil, user)
+	request.SetPathValue("workspaceId", workspacePathID)
+	request.SetPathValue("id", "helpdesk")
+	recorder := httptest.NewRecorder()
+	handler.GetWorkspaceOwners(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("viewer could enumerate Zammad owners: status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }
 

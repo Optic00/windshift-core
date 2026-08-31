@@ -1401,7 +1401,7 @@ func (s *ZammadService) UnlinkTicket(ctx context.Context, linkID string) (*model
 		if err != nil {
 			return nil, err
 		}
-		connection, client, err := s.client(ctx, link.ProviderID, item.WorkspaceID)
+		connection, client, err := s.clientForUnlink(ctx, link.ProviderID, item.WorkspaceID)
 		if err != nil {
 			return nil, err
 		}
@@ -1916,6 +1916,27 @@ func (s *ZammadService) client(ctx context.Context, id string, workspaceID int) 
 		return nil, nil, err
 	}
 	if !available {
+		return nil, nil, ErrCredentialScopeMismatch
+	}
+	client, err := s.clientForConnection(ctx, connection, workspaceID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return connection, client, nil
+}
+
+// clientForUnlink permits cleanup through a disabled connection while keeping
+// its workspace and managed-credential boundaries intact.
+func (s *ZammadService) clientForUnlink(ctx context.Context, id string, workspaceID int) (*models.ZammadConnection, *zammad.Client, error) {
+	connection, err := s.repo.GetConnection(id)
+	if err != nil {
+		return nil, nil, err
+	}
+	scoped, err := s.repo.IsConnectionScopedToWorkspace(id, workspaceID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !scoped {
 		return nil, nil, ErrCredentialScopeMismatch
 	}
 	client, err := s.clientForConnection(ctx, connection, workspaceID)

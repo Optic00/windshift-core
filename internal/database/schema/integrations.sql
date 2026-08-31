@@ -231,7 +231,7 @@ CREATE TABLE IF NOT EXISTS zammad_ticket_links (
 	created_by INTEGER,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-	FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
+	FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE RESTRICT,
 	FOREIGN KEY (provider_id) REFERENCES zammad_connections(provider_id) ON DELETE CASCADE,
 	FOREIGN KEY (item_integration_link_id) REFERENCES item_integration_links(id) ON DELETE SET NULL,
 	FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
