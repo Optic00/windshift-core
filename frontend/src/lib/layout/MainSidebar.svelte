@@ -151,7 +151,7 @@
     <a
       href="/"
       onclick={closePopoverSurface}
-      class="main-sidebar-track flex h-10 items-center justify-start px-4 mb-2 hover:opacity-80 transition-opacity cursor-pointer"
+      class="flex items-center justify-start px-4 w-full h-10 mb-2 hover:opacity-80 transition-opacity cursor-pointer"
     >
       <img src="/windshift-3.svg" alt="Windshift" class="w-8 h-8 flex-shrink-0" />
       {#if $uiStore.navExpanded}
@@ -163,7 +163,7 @@
 
 {#snippet sidebarContent()}
   <!-- Main Navigation -->
-  <div class="main-sidebar-track flex flex-col items-stretch px-2.5 space-y-1 py-4">
+  <div class="flex flex-col items-stretch px-2.5 space-y-1 py-4">
 
     <!-- Workspaces -->
     <Tooltip content={t('nav.workspaces')} placement="right" disabled={$uiStore.navExpanded}>
@@ -251,7 +251,7 @@
 
 {#snippet sidebarFooter()}
   <!-- Bottom Section -->
-  <div class="main-sidebar-track flex flex-col items-stretch px-2.5 space-y-1 pt-2">
+  <div class="flex flex-col items-stretch px-2.5 space-y-1 pt-2">
     <!-- Nav Toggle Button -->
     <button
       onclick={() => uiStore.toggleNavExpanded()}
@@ -316,14 +316,6 @@
   :global(.main-sidebar) {
     height: 100vh;
     height: 100dvh;
-  }
-
-  /* Keep navigation rows at their final width while the sidebar shell reveals
-     them. Active backgrounds and shortcut hints then move as one surface
-     instead of reflowing independently during expansion. */
-  .main-sidebar-track {
-    width: 12.5rem;
-    flex-shrink: 0;
   }
 
   .sidebar-quick-actions {
