@@ -95,6 +95,8 @@ export default { zammad: {
   ticketLinkRemoveFailed: 'Zammad-Ticketzuordnung konnte nicht entfernt werden',
   ticketNumber: 'Zammad #{number}',
   lastSynced: 'Synchronisiert: {time}',
+  returnLinkResolving: 'Der verknüpfte Windshift-Eintrag wird geöffnet...',
+  returnLinkFailed: 'Der verknüpfte Windshift-Eintrag konnte nicht geöffnet werden. Er existiert möglicherweise nicht mehr oder du hast keinen Zugriff.',
   syncState: {
     pending: 'Ticketerstellung ausstehend',
     creating: 'Ticket wird erstellt',

@@ -77,6 +77,18 @@ func (f *zammadLeaseFixture) makeComplete(t *testing.T) {
 	}
 }
 
+func TestZammadCorrelationKeyResolvesCurrentItem(t *testing.T) {
+	f := newZammadLeaseFixture(t)
+
+	itemID, workspaceID, err := f.repo.GetItemDestinationByCorrelationKey("zammad-test", "ZRT-1")
+	if err != nil || itemID != 1 || workspaceID != 1 {
+		t.Fatalf("resolve correlation key: item=%d workspace=%d err=%v", itemID, workspaceID, err)
+	}
+	if _, _, err := f.repo.GetItemDestinationByCorrelationKey("zammad-test", "missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing correlation key must fail closed: %v", err)
+	}
+}
+
 func TestZammadSyncLeaseOwnerTakeoverProtectsSnapshotReleaseAndDelete(t *testing.T) {
 	f := newZammadLeaseFixture(t)
 	f.makeComplete(t)

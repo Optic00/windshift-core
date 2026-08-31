@@ -623,6 +623,19 @@ func (r *ZammadRepository) GetTicketLinkForItem(itemID int, providerID string) (
 	return link, err
 }
 
+// GetItemDestinationByCorrelationKey resolves the durable key and current
+// workspace in one snapshot through the provider/key uniqueness boundary.
+func (r *ZammadRepository) GetItemDestinationByCorrelationKey(providerID, correlationKey string) (itemID, workspaceID int, err error) {
+	err = r.db.QueryRow(`SELECT ztl.item_id, i.workspace_id
+		FROM zammad_ticket_links ztl
+		JOIN items i ON i.id = ztl.item_id
+		WHERE ztl.provider_id = ? AND ztl.correlation_key = ?`, providerID, correlationKey).Scan(&itemID, &workspaceID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, 0, ErrNotFound
+	}
+	return itemID, workspaceID, err
+}
+
 func (r *ZammadRepository) CreatePendingTicketLinkTx(tx database.Tx, link *models.ZammadTicketLink) error {
 	_, err := tx.Exec(`INSERT INTO zammad_ticket_links
 		(id, item_id, provider_id, group_id, group_name, correlation_key,

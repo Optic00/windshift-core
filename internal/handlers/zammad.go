@@ -288,6 +288,27 @@ func (h *ZammadHandler) GetItemLinks(w http.ResponseWriter, r *http.Request) {
 	respondJSONOK(w, responses)
 }
 
+// ResolveTicketLink turns the opaque correlation key stored in Zammad into a
+// current Windshift item destination. Item permissions are checked before the
+// destination is disclosed so the link cannot be used to enumerate items.
+func (h *ZammadHandler) ResolveTicketLink(w http.ResponseWriter, r *http.Request) {
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+	itemID, workspaceID, err := h.service.ResolveTicketLink(r.PathValue("correlationKey"))
+	if err != nil {
+		respondNotFound(w, r, "Item")
+		return
+	}
+	allowed, err := h.permissionService.HasWorkspacePermission(user.ID, workspaceID, models.PermissionItemView)
+	if err != nil || !allowed {
+		respondNotFound(w, r, "Item")
+		return
+	}
+	respondJSONOK(w, map[string]int{"workspace_id": workspaceID, "item_id": itemID})
+}
+
 func (h *ZammadHandler) CreateTicket(w http.ResponseWriter, r *http.Request) {
 	itemID, ok := requireIDParam(w, r, "id")
 	if !ok {

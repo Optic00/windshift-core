@@ -75,6 +75,8 @@ export const zammadConnections = {
 };
 
 export const zammadTickets = {
+  resolve: (correlationKey) =>
+    fetchAPI(`/zammad-ticket-links/resolve/${encodeURIComponent(correlationKey)}`),
   forItem: (itemId) => fetchAPI(`/items/${itemId}/zammad-links`),
   create: (itemId, data) =>
     fetchAPI(`/items/${itemId}/zammad-tickets`, {
