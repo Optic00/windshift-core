@@ -46,6 +46,7 @@
   import PluginModalContainer from '../layout/PluginModalContainer.svelte';
   import LinkComponent from '../components/Link.svelte';
   import SidebarHeader from '../layout/SidebarHeader.svelte';
+  import ScrollableSidebar from '../layout/ScrollableSidebar.svelte';
   import { IconFileText, IconMenu2, IconPuzzle, IconSearch, IconX } from '@tabler/icons-svelte-runes';
   import { useEventListener } from 'runed';
   import PermissionGuard from '../layout/PermissionGuard.svelte';
@@ -298,8 +299,58 @@
   }
 </script>
 
+{#snippet adminSidebarHeader()}
+  <div class="p-6 pb-3">
+    <div class="admin-sidebar-heading">
+      <div class="admin-sidebar-title">
+        <SidebarHeader title={t('settings.admin')} description={t('settings.systemSettings')} noBorder />
+      </div>
+      <button
+        type="button"
+        class="admin-navigation-close"
+        data-testid="admin-navigation-close"
+        aria-label="Close admin navigation"
+        onclick={() => closeAdminNavigation(true)}
+      >
+        <IconX size={20} stroke={1.5} aria-hidden="true" />
+      </button>
+    </div>
+
+    <!-- Search stays available while the navigation list scrolls. -->
+    <div class="relative">
+      <label for="admin-search" class="sr-only">Search admin settings</label>
+      <div class="relative">
+        <IconSearch size={16} stroke={1.5} class="absolute left-3 top-1/2 transform -translate-y-1/2" style="color: var(--ds-icon-subtle);" aria-hidden="true" />
+        <Input
+          id="admin-search"
+          bind:this={searchInput}
+          bind:value={searchQuery}
+          onkeydown={handleSearchKeydown}
+          type="search"
+          placeholder={t('common.search')}
+          class="pl-10 pr-8"
+          ariaDescribedby={searchQuery && filteredGroups.length === 0 ? 'search-no-results' : undefined}
+          size="small"
+        />
+        {#if searchQuery}
+          <button
+            onclick={clearSearch}
+            class="absolute right-2 top-1/2 transform -translate-y-1/2 p-1 transition-colors"
+            style="color: var(--ds-icon-subtle);"
+            onmouseenter={(e) => e.currentTarget.style.color = 'var(--ds-icon)'}
+            onmouseleave={(e) => e.currentTarget.style.color = 'var(--ds-icon-subtle)'}
+            aria-label={t('search.clearSearch')}
+          >
+            <IconX size={12} stroke={1.5} aria-hidden="true" />
+          </button>
+        {/if}
+      </div>
+    </div>
+  </div>
+{/snippet}
+
 <!-- Main container with sidebar layout -->
-<div class="admin-shell flex min-h-screen min-w-0" style="background-color: var(--ds-surface);">
+<div class="admin-shell flex h-full min-h-0 min-w-0 overflow-hidden" style="background-color: var(--ds-surface);">
   <!-- Channel managers can use channel routes without seeing the rest of the
        system-administration navigation. Non-channel admin routes remain
        guarded in MainApp. -->
@@ -313,63 +364,19 @@
         onclick={() => closeAdminNavigation(true)}
       ></button>
     {/if}
-    <aside
+    <ScrollableSidebar
+      as="aside"
       id="admin-navigation"
-      class:admin-navigation-open={adminNavigationOpen}
-      class="admin-sidebar w-64 border-r flex-shrink-0"
+      class="admin-sidebar w-64 border-r flex-shrink-0 {adminNavigationOpen ? 'admin-navigation-open' : ''}"
       style="border-color: var(--ds-border); background-color: var(--ds-surface-raised);"
       aria-label="Admin settings"
+      header={adminSidebarHeader}
+      scrollClass="px-6"
+      scrollTestid="admin-navigation-scroll"
     >
-    <div class="p-6">
-      <div class="admin-sidebar-heading">
-        <div class="admin-sidebar-title">
-          <SidebarHeader title={t('settings.admin')} description={t('settings.systemSettings')} noBorder />
-        </div>
-        <button
-          type="button"
-          class="admin-navigation-close"
-          data-testid="admin-navigation-close"
-          aria-label="Close admin navigation"
-          onclick={() => closeAdminNavigation(true)}
-        >
-          <IconX size={20} stroke={1.5} aria-hidden="true" />
-        </button>
-      </div>
-      
-      <!-- Search -->
-      <div class="mb-4 relative">
-        <label for="admin-search" class="sr-only">Search admin settings</label>
-        <div class="relative">
-          <IconSearch size={16} stroke={1.5} class="absolute left-3 top-1/2 transform -translate-y-1/2" style="color: var(--ds-icon-subtle);" aria-hidden="true" />
-          <Input
-            id="admin-search"
-            bind:this={searchInput}
-            bind:value={searchQuery}
-            onkeydown={handleSearchKeydown}
-            type="search"
-            placeholder={t('common.search')}
-            class="pl-10 pr-8"
-            ariaDescribedby={searchQuery && filteredGroups.length === 0 ? 'search-no-results' : undefined}
-            size="small"
-          />
-          {#if searchQuery}
-            <button
-              onclick={clearSearch}
-              class="absolute right-2 top-1/2 transform -translate-y-1/2 p-1 transition-colors"
-              style="color: var(--ds-icon-subtle);"
-              onmouseenter={(e) => e.currentTarget.style.color = 'var(--ds-icon)'}
-              onmouseleave={(e) => e.currentTarget.style.color = 'var(--ds-icon-subtle)'}
-              aria-label={t('search.clearSearch')}
-            >
-              <IconX size={12} stroke={1.5} aria-hidden="true" />
-            </button>
-          {/if}
-        </div>
-      </div>
-
       <!-- Navigation -->
       <nav class="space-y-6 pb-6" aria-label="Admin settings">
-        {#each filteredGroups as group}
+        {#each filteredGroups as group (group.id)}
           <div role="group" aria-labelledby="group-{group.id}">
             <!-- Group Header -->
             <div class="px-2 pt-3 pb-1 mb-1">
@@ -380,7 +387,7 @@
 
             <!-- Group Items -->
             <div class="space-y-1">
-              {#each group.items as item}
+              {#each group.items as item (item.id)}
                 {@const buttonIndex = buttonIndices.get(item.id)}
                 {@const isItemActive = activeTab === item.id}
                 <LinkComponent
@@ -429,8 +436,7 @@
           {/if}
         </div>
       </nav>
-    </div>
-    </aside>
+    </ScrollableSidebar>
   {/if}
 
   <!-- Main Content -->
@@ -623,7 +629,7 @@
   {/if}
 
   <!-- Plugin Components -->
-  {#each allAdminItems.filter(item => item.isPlugin) as pluginItem}
+  {#each allAdminItems.filter(item => item.isPlugin) as pluginItem (pluginItem.id)}
     {#if activeTab === pluginItem.id}
       {@const pluginName = pluginItem.pluginData?.pluginName || 'unknown'}
       {@const iframeSrc = `/api/plugins/${pluginName}/assets/${pluginItem.pluginData?.component || 'index.html'}`}
@@ -659,7 +665,7 @@
   }
 
   @media (max-width: 1100px) {
-    .admin-sidebar {
+    :global(.admin-sidebar) {
       position: absolute;
       z-index: 30;
       inset: 0 auto 0 0;
@@ -673,7 +679,7 @@
       box-shadow: var(--ds-shadow-overlay, 0 8px 24px rgb(9 30 66 / 25%));
     }
 
-    .admin-sidebar.admin-navigation-open {
+    :global(.admin-sidebar.admin-navigation-open) {
       visibility: visible;
       transform: translateX(0);
     }
@@ -761,7 +767,7 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .admin-sidebar {
+    :global(.admin-sidebar) {
       transition: none;
     }
   }

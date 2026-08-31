@@ -2,6 +2,7 @@
   import MethodBadge from './MethodBadge.svelte';
   import Input from '../../components/Input.svelte';
   import { filterGroups } from './openapi-store.svelte.js';
+  import ScrollableSidebar from '../../layout/ScrollableSidebar.svelte';
 
   let {
     groups,
@@ -21,7 +22,7 @@
   }
 </script>
 
-<aside class="sidebar" data-testid="api-docs-sidebar">
+{#snippet sidebarHeader()}
   <header class="sidebar-head">
     <h1 class="sidebar-title">API reference</h1>
     <p class="sidebar-meta">{groups.reduce((n, g) => n + g.operations.length, 0)} operations</p>
@@ -41,7 +42,16 @@
       <span class="filter-count">{visibleCount}</span>
     {/if}
   </div>
+{/snippet}
 
+<ScrollableSidebar
+  as="aside"
+  class="sidebar"
+  data-testid="api-docs-sidebar"
+  aria-label="API reference"
+  header={sidebarHeader}
+  scrollTestid="api-docs-navigation-scroll"
+>
   <nav class="groups">
     {#each visibleGroups as group (group.tag)}
       <section class="group">
@@ -70,18 +80,15 @@
       <p class="empty">No operations match “{query}”.</p>
     {/if}
   </nav>
-</aside>
+</ScrollableSidebar>
 
 <style>
-  .sidebar {
+  :global(.sidebar) {
     width: 280px;
     flex-shrink: 0;
     border-right: 1px solid var(--ds-border);
     background: var(--ds-surface);
-    overflow-y: auto;
     height: 100%;
-    display: flex;
-    flex-direction: column;
   }
   .sidebar-head {
     padding: 18px 18px 8px;
@@ -127,8 +134,6 @@
   }
   .groups {
     padding: 4px 0 24px;
-    flex: 1 1 auto;
-    overflow-y: auto;
   }
   .group {
     margin-top: 14px;

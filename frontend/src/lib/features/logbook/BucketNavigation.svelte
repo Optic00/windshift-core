@@ -13,7 +13,7 @@
   import Input from '../../components/Input.svelte';
   import Textarea from '../../components/Textarea.svelte';
   import { IconPlus as Plus, IconFolderOpen as FolderOpen } from '@tabler/icons-svelte-runes';
-  import SidebarHeader from '../../layout/SidebarHeader.svelte';
+  import NavigationSidebar from '../../layout/NavigationSidebar.svelte';
 
   let { activeBucketId = null } = $props();
 
@@ -44,11 +44,25 @@
   let isAllActive = $derived(activeBucketId === null);
 </script>
 
-<!-- Bucket Navigation Sidebar -->
-<div class="w-64 border-r flex flex-col p-6 flex-shrink-0" style="border-color: var(--ds-border); background-color: var(--ds-surface-raised);">
-  <!-- Header -->
-  <SidebarHeader title={t('logbook.title')} description={t('logbook.subtitle')} noBorder />
+{#snippet sidebarFooter()}
+  {#if $permissionStore.isSystemAdmin}
+    <div class="px-6 pb-6 pt-4 border-t" style="border-color: var(--ds-border);">
+      <!-- shortcut-guard-exempt: contextual sidebar action; the modal owns its submit behavior -->
+      <Button
+        dataTestid="logbook-create-bucket"
+        variant="default"
+        icon={Plus}
+        onclick={() => showCreateForm = true}
+        class="w-full justify-center"
+      >
+        {t('logbook.createBucket')}
+      </Button>
+    </div>
+  {/if}
+{/snippet}
 
+<!-- Bucket Navigation Sidebar -->
+<NavigationSidebar title={t('logbook.title')} description={t('logbook.subtitle')} footer={sidebarFooter}>
   <!-- Navigation -->
   <nav class="flex-1 space-y-1">
     <!-- All Documents -->
@@ -84,22 +98,7 @@
     {/each}
   </nav>
 
-  <!-- Footer - Create Bucket (admin only) -->
-  {#if $permissionStore.isSystemAdmin}
-    <div class="pt-4 border-t" style="border-color: var(--ds-border);">
-      <!-- shortcut-guard-exempt: contextual sidebar action; the modal owns its submit behavior -->
-      <Button
-        dataTestid="logbook-create-bucket"
-        variant="default"
-        icon={Plus}
-        onclick={() => showCreateForm = true}
-        class="w-full justify-center"
-      >
-        {t('logbook.createBucket')}
-      </Button>
-    </div>
-  {/if}
-</div>
+</NavigationSidebar>
 
 <!-- Create Bucket Modal -->
 <Modal

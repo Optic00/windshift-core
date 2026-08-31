@@ -7,7 +7,7 @@
   import Button from '../../components/Button.svelte';
   import { getHexFromColorName } from '../../utils/colors.js';
   import { t } from '../../stores/i18n.svelte.js';
-  import SidebarHeader from '../../layout/SidebarHeader.svelte';
+  import NavigationSidebar from '../../layout/NavigationSidebar.svelte';
   
   // Get active category from URL params
   let activeCategoryId = $derived($currentRoute.params?.categoryId || null);
@@ -33,11 +33,23 @@
   );
 </script>
 
+{#snippet sidebarFooter()}
+  {#if canManageCategories}
+    <div class="px-6 pb-6 pt-4 border-t" style="border-color: var(--ds-border);">
+      <Button
+        variant="default"
+        icon={Tag}
+        onclick={handleManageCategories}
+        class="w-full justify-center"
+      >
+        {t('milestones.manageCategories')}
+      </Button>
+    </div>
+  {/if}
+{/snippet}
+
 <!-- Milestone Navigation Sidebar -->
-<div class="w-64 border-r flex flex-col p-6" style="border-color: var(--ds-border); background-color: var(--ds-surface-raised);">
-  <!-- Header -->
-  <SidebarHeader title={t('milestones.title')} description={t('milestones.subtitle')} noBorder />
-  
+<NavigationSidebar title={t('milestones.title')} description={t('milestones.subtitle')} footer={sidebarFooter}>
   <!-- Navigation -->
   <nav class="flex-1 space-y-1">
     <!-- All Categories -->
@@ -72,17 +84,4 @@
     {/each}
   </nav>
   
-  <!-- Footer - Manage Categories -->
-  {#if canManageCategories}
-    <div class="pt-4 border-t" style="border-color: var(--ds-border);">
-      <Button
-        variant="default"
-        icon={Tag}
-        onclick={handleManageCategories}
-        class="w-full justify-center"
-      >
-        {t('milestones.manageCategories')}
-      </Button>
-    </div>
-  {/if}
-</div>
+</NavigationSidebar>

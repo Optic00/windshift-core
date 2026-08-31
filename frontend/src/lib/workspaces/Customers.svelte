@@ -343,7 +343,7 @@
 </script>
 
 <div
-  class="flex min-h-screen"
+  class="flex h-full min-h-0 overflow-hidden"
   style="background-color: var(--ds-surface);"
   data-testid="portal-customers-page"
   data-ready={!loading && !error}
@@ -362,7 +362,7 @@
   />
 
   <!-- Main Content -->
-  <div class="flex-1 min-w-0 p-6">
+  <div class="flex-1 min-w-0 min-h-0 overflow-y-auto p-6">
     {#if loading}
       <div class="flex items-center justify-center h-64">
         <Spinner />
@@ -453,7 +453,7 @@
         <div class="col-span-full pt-4 border-t" style="border-color: var(--ds-border);">
           <h3 class="text-sm font-medium mb-3" style="color: var(--ds-text);">{t('workspaces.customers.customFields')}</h3>
           <div class="space-y-4">
-            {#each portalCustomerFields as field}
+            {#each portalCustomerFields as field (field.id ?? field.name)}
               <CustomFieldRenderer
                 {field}
                 bind:value={formData.custom_field_values[field.name]}

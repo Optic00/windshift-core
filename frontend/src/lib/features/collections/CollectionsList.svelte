@@ -229,10 +229,10 @@
   }
 </script>
 
-<div class="flex min-h-screen" style="background-color: var(--ds-surface);">
+<div class="flex h-full min-h-0 overflow-hidden" style="background-color: var(--ds-surface);">
   <CollectionsNavigation />
 
-  <div class="flex-1">
+  <div class="flex-1 min-h-0 overflow-y-auto">
     <div class="p-6">
       <!-- Header -->
       <PageHeader

@@ -5,6 +5,7 @@
   import Avatar from '../components/Avatar.svelte';
   import { t } from '../stores/i18n.svelte.js';
   import SidebarHeader from '../layout/SidebarHeader.svelte';
+  import NavigationSidebar from '../layout/NavigationSidebar.svelte';
 
   let {
     organisations = [],
@@ -34,24 +35,40 @@
   }
 </script>
 
-<div class="w-64 min-w-64 flex-shrink-0 border-r flex flex-col p-6" style="border-color: var(--ds-border); background-color: var(--ds-surface-raised);">
-  <!-- Header -->
-  <SidebarHeader title={t('workspaces.customers.title')} description={t('workspaces.customers.subtitle')} noBorder />
+{#snippet sidebarHeader()}
+  <div class="px-6 pt-6 pb-3">
+    <SidebarHeader title={t('workspaces.customers.title')} description={t('workspaces.customers.subtitle')} noBorder />
 
-  <!-- Search -->
-  <div class="relative mb-4">
-    <Search class="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2" style="color: var(--ds-icon-subtle);" />
-    <Input
-      type="text"
-      bind:value={searchQuery}
-      placeholder={t('workspaces.customers.searchOrganisations')}
-      class="pl-9"
-      size="small"
-    />
+    <!-- Search remains available while the organisation list scrolls. -->
+    <div class="relative">
+      <Search class="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2" style="color: var(--ds-icon-subtle);" />
+      <Input
+        type="text"
+        bind:value={searchQuery}
+        placeholder={t('workspaces.customers.searchOrganisations')}
+        class="pl-9"
+        size="small"
+      />
+    </div>
   </div>
+{/snippet}
 
+{#snippet sidebarFooter()}
+  <div class="px-6 pb-6 pt-4 border-t" style="border-color: var(--ds-border);">
+    <Button variant="default" icon={Plus} onclick={onManageOrgs} class="w-full justify-center">
+      {t('workspaces.customers.manageOrganisations')}
+    </Button>
+  </div>
+{/snippet}
+
+<NavigationSidebar
+  title={t('workspaces.customers.title')}
+  header={sidebarHeader}
+  footer={sidebarFooter}
+  contentClass="px-6 pb-6"
+>
   <!-- Navigation -->
-  <nav class="flex-1 overflow-y-auto space-y-1 -mx-1 px-1 -mt-1 pt-1">
+  <nav class="space-y-1 -mx-1 px-1 -mt-1 pt-1">
     <!-- Unassigned -->
     <button
       data-org-id="null"
@@ -107,10 +124,4 @@
     {/if}
   </nav>
 
-  <!-- Footer -->
-  <div class="pt-4 border-t" style="border-color: var(--ds-border);">
-    <Button variant="default" icon={Plus} onclick={onManageOrgs} class="w-full justify-center">
-      {t('workspaces.customers.manageOrganisations')}
-    </Button>
-  </div>
-</div>
+</NavigationSidebar>

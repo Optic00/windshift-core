@@ -71,7 +71,7 @@
 <style>
   .api-docs {
     display: flex;
-    height: calc(100vh - var(--ds-app-header-height, 0px));
+    height: 100%;
     min-height: 0;
     width: 100%;
     background: var(--ds-surface);

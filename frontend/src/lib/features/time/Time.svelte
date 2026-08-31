@@ -8,7 +8,7 @@
   import { currentRoute, navigate } from '../../router.js';
   import { t } from '../../stores/i18n.svelte.js';
   import { permissionStore, isSystemAdmin } from '../../stores';
-  import SidebarHeader from '../../layout/SidebarHeader.svelte';
+  import NavigationSidebar from '../../layout/NavigationSidebar.svelte';
 
   let activeTab = $state('time-entry');
 
@@ -51,35 +51,30 @@
 </script>
 
 <!-- Main container with sidebar layout -->
-<div class="flex min-h-screen" style="background-color: var(--ds-surface);">
+<div class="flex h-full min-h-0 overflow-hidden" style="background-color: var(--ds-surface);">
   <!-- Left Sidebar -->
-  <div class="w-64 border-r flex-shrink-0" style="border-color: var(--ds-border); background-color: var(--ds-surface-raised);">
-    <div class="p-6">
-      <SidebarHeader title={t('time.title')} description={t('time.subtitle')} noBorder />
-      
-      <!-- Navigation -->
-      <nav class="space-y-1">
-        {#each tabs as tab}
-          {@const isTabActive = activeTab === tab.id}
-          {@const TabIcon = tab.icon}
-          <button
-            onclick={() => handleTabClick(tab)}
-            class="w-full group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-all cursor-pointer"
-            style={isTabActive ? 'background: var(--ds-surface-selected); color: var(--ds-text);' : 'color: var(--ds-text-subtle);'}
-            onmouseenter={(e) => { if (!isTabActive) e.currentTarget.style.cssText = 'background: var(--ds-background-neutral-hovered); color: var(--ds-text);'; }}
-            onmouseleave={(e) => { if (!isTabActive) e.currentTarget.style.cssText = 'color: var(--ds-text-subtle);'; }}
-          >
-            <TabIcon class="flex-shrink-0 -ml-1 mr-3 w-5 h-5" />
-            {tab.label}
-          </button>
-        {/each}
-      </nav>
-    </div>
-  </div>
+  <NavigationSidebar title={t('time.title')} description={t('time.subtitle')}>
+    <nav class="space-y-1">
+      {#each tabs as tab (tab.id)}
+        {@const isTabActive = activeTab === tab.id}
+        {@const TabIcon = tab.icon}
+        <button
+          onclick={() => handleTabClick(tab)}
+          class="w-full group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-all cursor-pointer"
+          style={isTabActive ? 'background: var(--ds-surface-selected); color: var(--ds-text);' : 'color: var(--ds-text-subtle);'}
+          onmouseenter={(e) => { if (!isTabActive) e.currentTarget.style.cssText = 'background: var(--ds-background-neutral-hovered); color: var(--ds-text);'; }}
+          onmouseleave={(e) => { if (!isTabActive) e.currentTarget.style.cssText = 'color: var(--ds-text-subtle);'; }}
+        >
+          <TabIcon class="flex-shrink-0 -ml-1 mr-3 w-5 h-5" />
+          {tab.label}
+        </button>
+      {/each}
+    </nav>
+  </NavigationSidebar>
 
   <!-- Main Content -->
-  <div class="flex-1">
-    {#each tabs as tab}
+  <div class="flex-1 min-h-0 overflow-y-auto">
+    {#each tabs as tab (tab.id)}
       {#if activeTab === tab.id}
         {@const TabComponent = tab.component}
         <div class="p-6">

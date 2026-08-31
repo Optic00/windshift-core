@@ -11,7 +11,7 @@
 </script>
 
 {#if canAdmin}
-  <nav class="flex-1 px-4 pt-2 space-y-1 overflow-y-auto" data-testid="workspace-admin-nav" aria-label={t('workspaceSettings.title')}>
+  <nav class="px-4 pt-2 pb-2 space-y-1" data-testid="workspace-admin-nav" aria-label={t('workspaceSettings.title')}>
     {#each workspaceSettingsItems as item (item.id)}
       {@const ItemIcon = item.icon}
       {@const active = $currentRoute.view === item.view}
