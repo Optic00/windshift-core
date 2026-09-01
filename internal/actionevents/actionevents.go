@@ -288,7 +288,7 @@ func RunTargets(ctx context.Context, store *TargetStore, eventKey string, callba
 	}
 
 	var targetErrors []error
-	permanent := false
+	hasTransientFailure := false
 	var executed int64
 	for _, target := range targets {
 		if target.State == "completed" || target.State == "skipped" {
@@ -298,26 +298,35 @@ func RunTargets(ctx context.Context, store *TargetStore, eventKey string, callba
 		if completionErr == nil && completed {
 			if err := store.markCompleted(ctx, eventKey, target.ActionID); err != nil {
 				targetErrors = append(targetErrors, err)
+				hasTransientFailure = true
 			}
 			continue
 		}
 		if completionErr != nil && !errors.Is(completionErr, sql.ErrNoRows) {
 			targetErrors = append(targetErrors, fmt.Errorf("load durable action execution: %w", completionErr))
+			hasTransientFailure = true
 			continue
 		}
 		if err := store.markRunning(ctx, eventKey, target.ActionID); err != nil {
 			targetErrors = append(targetErrors, err)
+			hasTransientFailure = true
 			continue
 		}
 		isPermanent, err := callbacks.Execute(target.ActionID)
 		if err != nil {
-			permanent = permanent || isPermanent
-			_ = store.markFailed(ctx, eventKey, target.ActionID, err)
+			if !isPermanent {
+				hasTransientFailure = true
+			}
+			if markErr := store.markFailed(ctx, eventKey, target.ActionID, err); markErr != nil {
+				targetErrors = append(targetErrors, markErr)
+				hasTransientFailure = true
+			}
 			targetErrors = append(targetErrors, err)
 			continue
 		}
 		if err := store.markCompleted(ctx, eventKey, target.ActionID); err != nil {
 			targetErrors = append(targetErrors, err)
+			hasTransientFailure = true
 			continue
 		}
 		executed++
@@ -326,8 +335,8 @@ func RunTargets(ctx context.Context, store *TargetStore, eventKey string, callba
 		return executed, nil
 	}
 	err = errors.Join(targetErrors...)
-	if permanent {
-		return executed, events.Permanent(err)
+	if hasTransientFailure {
+		return executed, err
 	}
-	return executed, err
+	return executed, events.Permanent(err)
 }

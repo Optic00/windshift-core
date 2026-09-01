@@ -20,7 +20,7 @@
   import { buildIterationPickerConfig } from '../iterations/iterationPickerUtils.js';
   import ItemTypeIcon from '../../components/ItemTypeIcon.svelte';
   import { draggable, dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter';
-  import { autoScrollWindowForElements } from '@atlaskit/pragmatic-drag-and-drop-auto-scroll/element';
+  import { autoScrollForElements } from '@atlaskit/pragmatic-drag-and-drop-auto-scroll/element';
   import { attachClosestEdge, extractClosestEdge } from '@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge';
   import ItemDetail from '../items/ItemDetail.svelte';
   import PersonalTaskDetail from '../personal/PersonalTaskDetail.svelte';
@@ -87,7 +87,6 @@
   let loading = $state(true);
   let currentCollectionName = $derived(collectionStore.collectionName);
   let setupTimeout;
-  let autoScrollCleanup;
   let setupElements = new Map(); // Track which elements have drag/drop set up and their cleanup functions
   let pendingDrops = new Set(); // Track pending drop operations to prevent duplicates
   let showItemModal = $state(false);
@@ -145,7 +144,7 @@
   // Edge-based drag state
   let dragState = $state(new Map()); // Track drag state for each item: { isDragging: boolean, closestEdge: 'top'|'bottom'|null }
   let boardAnnouncement = $state('');
-  let boardViewElement = $state(null);
+  let boardScrollElement = $state(null);
 
   // Centralized gradient styling
   const styles = useGradientStyles();
@@ -178,7 +177,14 @@
 
   onDestroy(() => {
     collectionStore.clearBoardSearch();
-    autoScrollCleanup?.();
+  });
+
+  $effect(() => {
+    if (!boardScrollElement) return;
+    return autoScrollForElements({
+      element: boardScrollElement,
+      getAllowedAxis: () => 'horizontal',
+    });
   });
 
   // Listen for newly created items
@@ -412,12 +418,6 @@
   }
 
   onMount(async () => {
-    autoScrollCleanup = autoScrollWindowForElements({
-      canScroll: ({ source }) =>
-        source.data.type === 'work-item' && Boolean(boardViewElement?.contains(source.element)),
-      getAllowedAxis: () => 'horizontal',
-    });
-
     await Promise.all([
       workspaceId ? loadWorkspaceGradient(workspaceId) : Promise.resolve(),
       workspaceId
@@ -1542,12 +1542,17 @@
     <div class="animate-pulse">{t('common.loading')}</div>
   </div>
 {:else if workspace || !workspaceId}
-  <StaticViewBackground
-    backgroundStyle={styles.backgroundStyle}
-    contextVars={styles.contextVars}
-    contentClass="p-6 min-w-fit"
-    testid="collection-board-background"
+  <div
+    bind:this={boardScrollElement}
+    class="w-full min-w-0 max-w-full overflow-x-auto"
+    data-testid="board-scroll-container"
   >
+    <StaticViewBackground
+      backgroundStyle={styles.backgroundStyle}
+      contextVars={styles.contextVars}
+      contentClass="p-6 min-w-fit"
+      testid="collection-board-background"
+    >
     <!-- Content Container -->
       <!-- Header with view tabs -->
       <div class="mb-8">
@@ -1691,7 +1696,6 @@
       {:else}
         <!-- Board Columns / Swimlanes -->
         <div
-          bind:this={boardViewElement}
           class={selectedGroupByItemType ? 'space-y-4' : ''}
           data-testid="board-view"
         >
@@ -1892,7 +1896,8 @@
           </p>
         </div>
       {/if}
-  </StaticViewBackground>
+    </StaticViewBackground>
+  </div>
 {:else}
   <div class="p-6">
     <div class="text-center" style="color: var(--ds-text-subtle);">

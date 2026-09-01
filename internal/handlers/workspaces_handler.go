@@ -684,7 +684,7 @@ func (h *WorkspaceHandler) requireWorkspaceAdminAccess(w http.ResponseWriter, r 
 		return 0, false
 	}
 	if !canAdmin {
-		respondForbidden(w, r)
+		respondNotFound(w, r, "workspace")
 		return 0, false
 	}
 

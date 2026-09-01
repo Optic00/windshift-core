@@ -132,8 +132,25 @@ func (h *CollectionHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
-
-	respondJSONOK(w, collections)
+	workspaceIDs, err := h.permissionService.AccessibleWorkspaceIDs(currentUser.ID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	accessible := make(map[int]struct{}, len(workspaceIDs))
+	for _, workspaceID := range workspaceIDs {
+		accessible[workspaceID] = struct{}{}
+	}
+	visible := make([]models.Collection, 0, len(collections))
+	for _, collection := range collections {
+		if collection.WorkspaceID != nil {
+			if _, ok := accessible[*collection.WorkspaceID]; !ok {
+				continue
+			}
+		}
+		visible = append(visible, collection)
+	}
+	respondJSONOK(w, visible)
 }
 
 // Get returns a specific collection by ID
@@ -155,6 +172,9 @@ func (h *CollectionHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		respondInternalError(w, r, err)
+		return
+	}
+	if !h.requireCollectionWorkspaceAccess(w, r, currentUser.ID, collection) {
 		return
 	}
 
@@ -297,6 +317,9 @@ func (h *CollectionHandler) Update(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
+	if !h.requireCollectionWorkspaceAccess(w, r, currentUser.ID, existing) {
+		return
+	}
 
 	// Preserve is_public unless the field is explicitly sent in the payload
 	if !isPublicProvided {
@@ -422,6 +445,14 @@ func (h *CollectionHandler) UpdatePublicSharing(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
+	collection, err := h.repo.GetModel(id)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	if !h.requireCollectionWorkspaceAccess(w, r, currentUser.ID, collection) {
+		return
+	}
 
 	// Check public board permission
 	isAdmin, _ := h.permissionService.IsSystemAdmin(currentUser.ID)
@@ -439,11 +470,6 @@ func (h *CollectionHandler) UpdatePublicSharing(w http.ResponseWriter, r *http.R
 		}
 		if !slugRegex.MatchString(*payload.PublicSlug) {
 			respondValidationError(w, r, "Public slug must be 3-64 characters, lowercase alphanumeric and hyphens only")
-			return
-		}
-		collection, err := h.repo.GetModel(id)
-		if err != nil {
-			respondInternalError(w, r, err)
 			return
 		}
 		if !h.authorizePublicBoardScope(w, r, currentUser.ID, collection.QLQuery) {
@@ -479,6 +505,14 @@ func (h *CollectionHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	collection, err := h.repo.GetModel(id)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	if !h.requireCollectionWorkspaceAccess(w, r, currentUser.ID, collection) {
+		return
+	}
 
 	if err := h.repo.Delete(id); err != nil {
 		respondInternalError(w, r, err)
@@ -488,4 +522,16 @@ func (h *CollectionHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	logAudit(h.db, r, currentUser, logger.ActionCollectionDelete, logger.ResourceCollection, &id, "")
 
 	respondJSONOK(w, map[string]string{"message": "Collection deleted successfully"})
+}
+
+func (h *CollectionHandler) requireCollectionWorkspaceAccess(w http.ResponseWriter, r *http.Request, userID int, collection *models.Collection) bool {
+	if collection.WorkspaceID == nil {
+		return true
+	}
+	allowed, err := h.permissionService.HasWorkspacePermission(userID, *collection.WorkspaceID, models.PermissionItemView)
+	if err != nil || !allowed {
+		respondNotFound(w, r, "collection")
+		return false
+	}
+	return true
 }

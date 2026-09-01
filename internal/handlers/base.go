@@ -60,7 +60,8 @@ func RequireAuth(w http.ResponseWriter, r *http.Request) (*models.User, bool) {
 }
 
 // RequireWorkspacePermission checks if the user has a specific workspace permission.
-// If the user doesn't have permission, it writes a 403 Forbidden response.
+// If the user doesn't have permission, it writes a 404 response so private
+// workspace existence is not disclosed.
 // Returns true if permitted, false otherwise (error already written to response).
 // Usage:
 //
@@ -70,7 +71,7 @@ func RequireAuth(w http.ResponseWriter, r *http.Request) (*models.User, bool) {
 func RequireWorkspacePermission(w http.ResponseWriter, r *http.Request, userID, workspaceID int, permission string, permService *services.PermissionService) bool {
 	hasPermission, err := permService.HasWorkspacePermission(userID, workspaceID, permission)
 	if err != nil || !hasPermission {
-		respondForbidden(w, r)
+		respondNotFound(w, r, "workspace")
 		return false
 	}
 	return true

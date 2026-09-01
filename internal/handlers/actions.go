@@ -854,11 +854,15 @@ func (h *ActionsHandler) ExecuteAction(w http.ResponseWriter, r *http.Request) {
 	// Execute the action (this is synchronous for immediate feedback)
 	err = h.actionService.ExecuteActionManually(action, req.ItemID, currentUser.ID)
 	if err != nil {
+		if errors.Is(err, services.ErrActionCompletedWithFailedSteps) {
+			respondJSONOK(w, map[string]string{"status": string(models.ActionStatusFailed)})
+			return
+		}
 		respondInternalError(w, r, fmt.Errorf("failed to execute action: %w", err))
 		return
 	}
 
-	respondJSONOK(w, map[string]string{"status": "completed"})
+	respondJSONOK(w, map[string]string{"status": string(models.ActionStatusCompleted)})
 }
 
 // --- Capability management endpoints ---

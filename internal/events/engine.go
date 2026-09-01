@@ -97,6 +97,7 @@ type Engine struct {
 
 	mu            sync.Mutex
 	handlers      map[string]Handler
+	nextHandler   int
 	started       bool
 	used          bool
 	cancel        context.CancelFunc
@@ -349,7 +350,7 @@ func (e *Engine) handle(ctx context.Context, handler Handler, delivery Delivery)
 		return nil
 	}
 
-	retry := !isPermanent(err) && delivery.AttemptCount < e.config.MaxAttempts
+	retry := !IsPermanent(err) && delivery.AttemptCount < e.config.MaxAttempts
 	nextAttempt := e.now()
 	if retry {
 		nextAttempt = nextAttempt.Add(e.retryDelay(delivery.AttemptCount))
@@ -381,7 +382,15 @@ func (e *Engine) handlerKeys() []string {
 		keys = append(keys, key)
 	}
 	slices.Sort(keys)
-	return keys
+	if len(keys) == 0 {
+		return keys
+	}
+	start := e.nextHandler % len(keys)
+	e.nextHandler = (start + 1) % len(keys)
+	if start == 0 {
+		return keys
+	}
+	return append(keys[start:], keys[:start]...)
 }
 
 func (e *Engine) handler(key string) Handler {

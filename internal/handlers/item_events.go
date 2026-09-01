@@ -42,21 +42,21 @@ func (h *ItemHandler) Events(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	itemRepo := repository.NewItemRepository(h.db)
-	if !CheckItemPermission(w, r, itemRepo, h.permissionService, itemID, models.PermissionItemView) {
+	workspaceID, err := itemRepo.GetWorkspaceID(itemID)
+	if err != nil {
+		respondNotFound(w, r, "Item")
+		return
+	}
+	allowed, err := h.permissionService.HasWorkspacePermission(user.ID, workspaceID, models.PermissionItemView)
+	if err != nil || !allowed {
+		respondNotFound(w, r, "Item")
 		return
 	}
 
-	// authorized re-evaluates item.view for this user. The stream is authorized
-	// at connect AND re-checked on every heartbeat (below), so a mid-stream
-	// permission revocation — or the item's deletion — stops delivery within one
-	// heartbeat instead of continuing to leak changes (WI-484). The check is a
-	// brief query, not a held connection, so the idle stream still holds no DB
-	// connection between heartbeats.
+	// Re-evaluate item.view before every post-connect write so revocation takes
+	// effect before the next event or heartbeat is disclosed. Workspace identity
+	// is immutable for an item, so the stream does not need another item query.
 	authorized := func() bool {
-		workspaceID, err := itemRepo.GetWorkspaceID(itemID)
-		if err != nil {
-			return false // item no longer exists
-		}
 		ok, err := h.permissionService.HasWorkspacePermission(user.ID, workspaceID, models.PermissionItemView)
 		return err == nil && ok
 	}
@@ -96,6 +96,9 @@ func (h *ItemHandler) Events(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case ev := <-sub.Events():
+			if !authorized() {
+				return
+			}
 			writeSSEEvent(w, string(ev.Kind), ev.ItemID)
 			if sub.TakeStale() {
 				// A later event was dropped (buffer overflow); tell the client to
@@ -104,8 +107,7 @@ func (h *ItemHandler) Events(w http.ResponseWriter, r *http.Request) {
 			}
 			flusher.Flush()
 		case <-heartbeat.C:
-			// Re-authorize before the next heartbeat write: stop streaming if the
-			// user lost item.view (or the item was deleted) since connecting.
+			// Re-authorize before the next heartbeat write.
 			if !authorized() {
 				return
 			}

@@ -55,7 +55,7 @@ func (h *ThemeHandler) GetActiveTheme(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, fmt.Errorf("failed to get active theme: %w", err))
 		return
 	}
-	if !localizeObjectResponse(w, r, h.translations, "theme", theme) {
+	if !localizeObjectResponse(w, r, h.translations, "theme", &theme) {
 		return
 	}
 	respondJSONOK(w, theme)

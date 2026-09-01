@@ -12,8 +12,8 @@
   import ItemTypeIcon from '../../components/ItemTypeIcon.svelte';
   import EmptyState from '../../components/EmptyState.svelte';
   import Textarea from '../../components/Textarea.svelte';
-  import { monitorForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter';
-  import { draggable, dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter';
+  import { draggable, dropTargetForElements, monitorForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter';
+  import { autoScrollForElements } from '@atlaskit/pragmatic-drag-and-drop-auto-scroll/element';
   import Tooltip from '../../components/Tooltip.svelte';
   import ViewHeader from '../../layout/ViewHeader.svelte';
   import StaticViewBackground from '../../layout/StaticViewBackground.svelte';
@@ -53,6 +53,7 @@
   // Item detail modal state
   let selectedItemId = $state(null);
   let showItemModal = $state(false);
+  let mapScrollElement = $state(null);
 
 
   // Centralized gradient styling
@@ -64,6 +65,14 @@
   }
 
   useEventListener(() => window, 'popstate', handlePopState);
+
+  $effect(() => {
+    if (!mapScrollElement) return;
+    return autoScrollForElements({
+      element: mapScrollElement,
+      getAllowedAxis: () => 'horizontal',
+    });
+  });
 
   onMount(async () => {
     if (workspaceId) {
@@ -568,6 +577,7 @@
     backgroundStyle={styles.backgroundStyle}
     contextVars={styles.contextVars}
     contentClass=""
+    rootStyle="width: 100%; min-width: 0; max-width: 100%;"
     testid="map-view"
   >
     <!-- Header -->
@@ -642,7 +652,11 @@
     </div>
 
     <!-- Story Map Container -->
-    <div class="p-6 overflow-x-auto">
+    <div
+      bind:this={mapScrollElement}
+      class="p-6 overflow-x-auto"
+      data-testid="map-scroll-container"
+    >
       <div class="min-w-max">
         <!-- Backbone (Horizontal) -->
         <div

@@ -42,6 +42,10 @@ type AssetSetPermissionChecker interface {
 	HasAssetSetPermission(userID, setID int, permissionKey string) (bool, error)
 }
 
+// ErrActionCompletedWithFailedSteps means execution finished and its log
+// contains the actionable failure details.
+var ErrActionCompletedWithFailedSteps = errors.New("action completed with failed steps")
+
 // ActionServiceConfig represents configuration for the action service
 type ActionServiceConfig struct {
 	RefreshInterval time.Duration // How often to refresh action cache
@@ -714,7 +718,7 @@ func (as *ActionService) executeActionForEvent(action *models.Action, event *mod
 	)
 
 	if log.Status == models.ActionStatusFailed {
-		return fmt.Errorf("action %d completed with failed steps", action.ID)
+		return fmt.Errorf("%w: action %d", ErrActionCompletedWithFailedSteps, action.ID)
 	}
 	return nil
 }

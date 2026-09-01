@@ -16,13 +16,18 @@ var ErrInvalidColorMode = errors.New("invalid color mode")
 
 // UserPreferencesService owns user preference use cases.
 type UserPreferencesService struct {
-	prefsRepo *repository.UserPreferencesRepository
-	themeRepo *repository.ThemeRepository
+	prefsRepo         *repository.UserPreferencesRepository
+	themeRepo         *repository.ThemeRepository
+	permissionService *PermissionService
 }
 
 // NewUserPreferencesService creates a UserPreferencesService.
-func NewUserPreferencesService(prefsRepo *repository.UserPreferencesRepository, themeRepo *repository.ThemeRepository) *UserPreferencesService {
-	return &UserPreferencesService{prefsRepo: prefsRepo, themeRepo: themeRepo}
+func NewUserPreferencesService(prefsRepo *repository.UserPreferencesRepository, themeRepo *repository.ThemeRepository, permissionServices ...*PermissionService) *UserPreferencesService {
+	service := &UserPreferencesService{prefsRepo: prefsRepo, themeRepo: themeRepo}
+	if len(permissionServices) > 0 {
+		service.permissionService = permissionServices[0]
+	}
+	return service
 }
 
 func (s *UserPreferencesService) loadData(userID int) (models.UserPreferencesData, error) {
@@ -157,7 +162,14 @@ func (s *UserPreferencesService) GetTUI(userID int) (models.UserTUIPreferences, 
 	if prefs.TUI == nil {
 		return models.UserTUIPreferences{}, nil
 	}
-	return *prefs.TUI, nil
+	tui := *prefs.TUI
+	if tui.LastWorkspaceID != nil && s.permissionService != nil {
+		allowed, err := s.permissionService.HasWorkspacePermission(userID, *tui.LastWorkspaceID, models.PermissionItemView)
+		if err != nil || !allowed {
+			tui.LastWorkspaceID = nil
+		}
+	}
+	return tui, nil
 }
 
 // UpdateTUI stores the SSH TUI preferences sub-document without clobbering
@@ -179,6 +191,12 @@ func (s *UserPreferencesService) UpdateTUI(userID int, tui models.UserTUIPrefere
 	}
 	if tui.LastWorkspaceID != nil && *tui.LastWorkspaceID <= 0 {
 		tui.LastWorkspaceID = nil
+	}
+	if tui.LastWorkspaceID != nil && s.permissionService != nil {
+		allowed, err := s.permissionService.HasWorkspacePermission(userID, *tui.LastWorkspaceID, models.PermissionItemView)
+		if err != nil || !allowed {
+			tui.LastWorkspaceID = nil
+		}
 	}
 
 	prefs, err := s.loadData(userID)

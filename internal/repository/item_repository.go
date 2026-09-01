@@ -1427,6 +1427,35 @@ func (r *ItemRepository) ResolveItemKeyReferences(keys []string) ([]KeyReference
 	return results, rows.Err()
 }
 
+func (r *ItemRepository) ResolveItemKeyReferencesInWorkspaces(keys []string, workspaceIDs []int) ([]KeyReference, error) {
+	if len(keys) == 0 || len(workspaceIDs) == 0 {
+		return []KeyReference{}, nil
+	}
+	keyPlaceholders, args := inPlaceholders(keys)
+	workspacePlaceholders, workspaceArgs := inPlaceholders(workspaceIDs)
+	args = append(args, workspaceArgs...)
+	query := `SELECT w.key || '-' || CAST(i.workspace_item_number AS TEXT) as item_key, i.id, i.workspace_id
+		FROM items i
+		JOIN workspaces w ON i.workspace_id = w.id
+		WHERE w.key || '-' || CAST(i.workspace_item_number AS TEXT) IN (` + keyPlaceholders + `)
+		  AND i.workspace_id IN (` + workspacePlaceholders + `)`
+	rows, err := r.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve scoped item keys: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	results := []KeyReference{}
+	for rows.Next() {
+		var ref KeyReference
+		if err := rows.Scan(&ref.ItemKey, &ref.ItemID, &ref.WorkspaceID); err != nil {
+			return nil, fmt.Errorf("scan scoped key reference: %w", err)
+		}
+		results = append(results, ref)
+	}
+	return results, rows.Err()
+}
+
 type CandidateItem struct {
 	ID          int
 	ItemKey     string

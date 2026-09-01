@@ -24,6 +24,7 @@ func NewUserPreferencesHandler(db database.Database, permissionService *services
 		prefsSvc: services.NewUserPreferencesService(
 			repository.NewUserPreferencesRepository(db),
 			repository.NewThemeRepository(db),
+			permissionService,
 		),
 	}
 }

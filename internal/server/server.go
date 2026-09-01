@@ -743,7 +743,7 @@ func (s *Server) initialize() error {
 
 	themeHandler := handlers.NewThemeHandler(services.NewThemeService(repository.NewThemeRepository(s.db)), logger.NewAuditor(s.db)).WithObjectTranslations(objectTranslationService)
 	objectTranslationHandler := handlers.NewObjectTranslationHandler(objectTranslationService)
-	userPreferencesService := services.NewUserPreferencesService(repository.NewUserPreferencesRepository(s.db), repository.NewThemeRepository(s.db))
+	userPreferencesService := services.NewUserPreferencesService(repository.NewUserPreferencesRepository(s.db), repository.NewThemeRepository(s.db), permService)
 	userPreferencesHandler := handlers.NewUserPreferencesHandler(userPreferencesService)
 	homepageHandler := handlers.NewHomepageHandler(
 		repository.NewWorkspaceRepository(s.db),

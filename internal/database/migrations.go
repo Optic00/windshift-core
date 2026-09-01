@@ -499,6 +499,14 @@ var Catalog = []Migration{
 		Postgres:    `ALTER TABLE sso_providers ALTER COLUMN attribute_mapping SET DEFAULT '{"email":"email","name":"name","given_name":"given_name","family_name":"family_name","username":"preferred_username","email_verified":"email_verified"}'`,
 		ApplySQLite: applySQLiteSSOAttributeMappingDefault,
 	},
+	{
+		Version:       "20260901_daily_briefing_workspace_provenance",
+		Name:          "Record daily briefing workspace provenance",
+		CheckSQLite:   sqliteColumnCheck("daily_briefings", "source_workspace_ids"),
+		CheckPostgres: pgColumnCheck("daily_briefings", "source_workspace_ids"),
+		SQLite:        "ALTER TABLE daily_briefings ADD COLUMN source_workspace_ids TEXT",
+		Postgres:      "ALTER TABLE daily_briefings ADD COLUMN source_workspace_ids TEXT",
+	},
 }
 
 func applySQLiteSSOAttributeMappingDefault(db Database) (retErr error) {
