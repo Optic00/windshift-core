@@ -377,18 +377,7 @@ func (as *AssetActionService) matchesTrigger(action *models.AssetAction, event *
 	}
 
 	if event.EventType == models.AssetTriggerAssetStatusChanged {
-		if config.FromStatusID != nil {
-			oldStatusID := utils.InterfaceToIntPtr(event.OldValues["status_id"])
-			if oldStatusID == nil || *oldStatusID != *config.FromStatusID {
-				return false
-			}
-		}
-		if config.ToStatusID != nil {
-			newStatusID := utils.InterfaceToIntPtr(event.NewValues["status_id"])
-			if newStatusID == nil || *newStatusID != *config.ToStatusID {
-				return false
-			}
-		}
+		return matchesStatusTransition(config.FromStatusID, config.ToStatusID, event.OldValues, event.NewValues)
 	}
 
 	return true

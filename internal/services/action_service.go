@@ -375,6 +375,22 @@ func (as *ActionService) cleanupChains() {
 // MaxCascadeDepth bounds action-triggered mutation chains across consumers.
 const MaxCascadeDepth = 5
 
+func matchesStatusTransition(fromStatusID, toStatusID *int, oldValues, newValues map[string]any) bool {
+	if fromStatusID != nil {
+		oldStatusID := utils.InterfaceToIntPtr(oldValues["status_id"])
+		if oldStatusID == nil || *oldStatusID != *fromStatusID {
+			return false
+		}
+	}
+	if toStatusID != nil {
+		newStatusID := utils.InterfaceToIntPtr(newValues["status_id"])
+		if newStatusID == nil || *newStatusID != *toStatusID {
+			return false
+		}
+	}
+	return true
+}
+
 // matchesTrigger checks if an action's trigger matches the event
 func (as *ActionService) matchesTrigger(action *models.Action, event *models.ActionEvent) bool {
 	if action.TriggerType != event.EventType {
@@ -408,73 +424,68 @@ func (as *ActionService) matchesTrigger(action *models.Action, event *models.Act
 
 	switch event.EventType {
 	case models.ActionTriggerStatusTransition:
-		if config.FromStatusID != nil {
-			oldStatusID := utils.InterfaceToIntPtr(event.OldValues["status_id"])
-			if oldStatusID == nil || *oldStatusID != *config.FromStatusID {
-				return false
-			}
-		}
-		if config.ToStatusID != nil {
-			newStatusID := utils.InterfaceToIntPtr(event.NewValues["status_id"])
-			if newStatusID == nil || *newStatusID != *config.ToStatusID {
-				return false
-			}
-		}
-		// Match the destination status category when configured.
-		if config.ToStatusCategoryIsCompleted != nil {
-			newStatusID := utils.InterfaceToIntPtr(event.NewValues["status_id"])
-			if newStatusID == nil {
-				return false
-			}
-			st, err := NewStatusService(as.db).GetStatus(*newStatusID)
-			if err != nil || st == nil {
-				return false
-			}
-			if st.IsCompleted != *config.ToStatusCategoryIsCompleted {
-				return false
-			}
-		}
+		return matchesStatusTransition(config.FromStatusID, config.ToStatusID, event.OldValues, event.NewValues) &&
+			as.matchesDestinationStatusCategory(config.ToStatusCategoryIsCompleted, event.NewValues)
 
 	case models.ActionTriggerItemCreated, models.ActionTriggerItemUpdated:
-		// Normalize item type IDs before comparing them.
-		if config.ItemTypeID != nil {
-			itemTypeID := utils.InterfaceToIntPtr(event.NewValues["item_type_id"])
-			if itemTypeID == nil || *itemTypeID != *config.ItemTypeID {
-				return false
-			}
-		}
-		if event.EventType == models.ActionTriggerItemUpdated && config.FieldName != "" {
-			if _, changed := event.NewValues[config.FieldName]; !changed {
-				return false
-			}
-		}
+		return matchesItemActionTrigger(config, event)
 
 	case models.ActionTriggerItemLinked:
-		// Normalize link type IDs before comparing them.
-		if config.LinkTypeID != nil {
-			linkTypeID := utils.InterfaceToIntPtr(event.NewValues["link_type_id"])
-			if linkTypeID == nil || *linkTypeID != *config.LinkTypeID {
-				return false
-			}
-		}
+		return matchesItemLinkTrigger(config.LinkTypeID, event.NewValues)
 
 	case models.ActionTriggerSCMTagCreated, models.ActionTriggerSCMReleaseBranchCreated,
 		models.ActionTriggerSCMPRLinked, models.ActionTriggerSCMPRMerged:
-		if config.WorkspaceRepositoryID != nil {
-			repoID := utils.InterfaceToIntPtr(event.NewValues["repo.workspace_repository_id"])
-			if repoID == nil || *repoID != *config.WorkspaceRepositoryID {
-				return false
-			}
-		}
-		if config.RepositoryFullName != "" {
-			fullName := fmt.Sprintf("%v", event.NewValues["repo.full_name"])
-			if !strings.EqualFold(fullName, config.RepositoryFullName) {
-				return false
-			}
-		}
+		return matchesSCMActionTrigger(config, event.NewValues)
 	}
 
 	return true
+}
+
+func (as *ActionService) matchesDestinationStatusCategory(isCompleted *bool, newValues map[string]any) bool {
+	if isCompleted == nil {
+		return true
+	}
+	newStatusID := utils.InterfaceToIntPtr(newValues["status_id"])
+	if newStatusID == nil {
+		return false
+	}
+	status, err := NewStatusService(as.db).GetStatus(*newStatusID)
+	return err == nil && status != nil && status.IsCompleted == *isCompleted
+}
+
+func matchesItemActionTrigger(config models.ActionTriggerConfig, event *models.ActionEvent) bool {
+	if config.ItemTypeID != nil {
+		itemTypeID := utils.InterfaceToIntPtr(event.NewValues["item_type_id"])
+		if itemTypeID == nil || *itemTypeID != *config.ItemTypeID {
+			return false
+		}
+	}
+	if event.EventType == models.ActionTriggerItemUpdated && config.FieldName != "" {
+		_, changed := event.NewValues[config.FieldName]
+		return changed
+	}
+	return true
+}
+
+func matchesItemLinkTrigger(linkTypeID *int, newValues map[string]any) bool {
+	if linkTypeID == nil {
+		return true
+	}
+	eventLinkTypeID := utils.InterfaceToIntPtr(newValues["link_type_id"])
+	return eventLinkTypeID != nil && *eventLinkTypeID == *linkTypeID
+}
+
+func matchesSCMActionTrigger(config models.ActionTriggerConfig, newValues map[string]any) bool {
+	if config.WorkspaceRepositoryID != nil {
+		repositoryID := utils.InterfaceToIntPtr(newValues["repo.workspace_repository_id"])
+		if repositoryID == nil || *repositoryID != *config.WorkspaceRepositoryID {
+			return false
+		}
+	}
+	if config.RepositoryFullName == "" {
+		return true
+	}
+	return strings.EqualFold(fmt.Sprintf("%v", newValues["repo.full_name"]), config.RepositoryFullName)
 }
 
 // executeAction executes an action's flow
