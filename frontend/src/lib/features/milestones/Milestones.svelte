@@ -519,14 +519,14 @@
 </script>
 
 <!-- Main container with two-panel layout -->
-<div class="flex min-h-screen" style="background-color: var(--ds-surface);">
+<div class="flex h-full min-h-0 overflow-hidden" style="background-color: var(--ds-surface);">
   <!-- Left Sidebar - Navigation (only in global view) -->
   {#if isGlobalView}
     <MilestoneNavigation />
   {/if}
 
   <!-- Main Content -->
-  <div class="flex-1">
+  <div class="flex-1 min-h-0 overflow-y-auto">
     <div class="p-6">
       <!-- Header -->
       <PageHeader

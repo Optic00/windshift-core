@@ -38,12 +38,12 @@
 </script>
 
 <!-- Main container with two-panel layout -->
-<div class="flex min-h-screen" style="background-color: var(--ds-surface);">
+<div class="flex h-full min-h-0 overflow-hidden" style="background-color: var(--ds-surface);">
   <!-- Left Sidebar - Bucket Navigation -->
   <BucketNavigation {activeBucketId} />
 
   <!-- Main Content -->
-  <div class="flex-1 flex flex-col">
+  <div class="flex-1 min-h-0 overflow-y-auto flex flex-col">
     {#if logbookStore.bucketsLoading && !logbookStore.bucketsLoaded}
       <div class="flex items-center justify-center h-64">
         <Spinner />

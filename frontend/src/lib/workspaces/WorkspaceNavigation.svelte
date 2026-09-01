@@ -23,6 +23,7 @@
   import { moduleSettings } from '../stores/moduleSettings.js';
   import { api } from '../api.js';
   import DropdownMenu from '../layout/DropdownMenu.svelte';
+  import ScrollableSidebar from '../layout/ScrollableSidebar.svelte';
   import Tooltip from '../components/Tooltip.svelte';
   import PagesNavSidebar from '../features/pages/PagesNavSidebar.svelte';
   import WorkspaceAdminNav from './WorkspaceAdminNav.svelte';
@@ -511,135 +512,173 @@
   <div class="w-8 border-t my-1" style="border-color: var(--ds-border);"></div>
 {/snippet}
 
+{#snippet regularSidebarHeader()}
+  {@render workspaceHeader()}
+
+  <!-- Keep workspace context visible while its navigation scrolls. -->
+  <div class="px-4 pt-2 mb-6">
+    <Tooltip content={t('collections.collection')} placement="right">
+      <DropdownMenu
+        triggerText={collectionDisplayName}
+        items={collectionDropdownItems}
+        maxWidth="max-w-full"
+        showChevron={true}
+        placement="bottom-start"
+        triggerClass="w-full text-left font-medium rounded !px-3 !py-2.5 !text-sm transition-colors"
+        triggerStyle="background-color: var(--ds-surface); border: 1px solid var(--ds-border); color: var(--ds-text);"
+        triggerAlignment="between"
+      />
+    </Tooltip>
+  </div>
+{/snippet}
+
+{#snippet sidebarResizeHandle()}
+  {@render resizeHandle()}
+{/snippet}
+
+{#snippet drilldownSidebarHeader()}
+  {@render workspaceHeader({ backLink: true })}
+{/snippet}
+
+{#snippet collapsedSidebarHeader()}
+  <div class="h-10 mb-2 w-full flex items-center justify-center">
+    {@render workspaceAvatar(true)}
+  </div>
+{/snippet}
+
+{#snippet collapsedSidebarContent()}
+  {#if isSettingsView}
+    <!-- Collapsed admin rail: back arrow + a module icon per settings page. -->
+    <div class="flex flex-col items-center space-y-1 mt-6">
+      {@render collapsedNavIcon({ href: `/workspaces/${workspaceId}`, label: t('workspaceSettings.backToWorkspace'), icon: ArrowLeft, isActive: false })}
+      {@render sectionDivider()}
+      {#each workspaceSettingsItems as item (item.id)}
+        {@render collapsedNavIcon({ href: workspaceSettingsRoute(workspaceId, item.id), label: t(item.labelKey), icon: item.icon, isActive: $currentRoute.view === item.view })}
+      {/each}
+    </div>
+  {:else if $currentWorkspace?.is_personal}
+    <div class="flex flex-col items-center space-y-1 mt-6">
+      {#each PERSONAL_NAV_ITEMS as item (item.route)}
+        {@render collapsedNavIcon({ href: item.route, label: t(item.labelKey), icon: item.icon, isActive: $currentRoute.view === item.view })}
+      {/each}
+    </div>
+  {:else}
+    <div class="flex flex-col items-center space-y-1 mt-6">
+      {@render collapsedNavIcon({ href: getNavigationUrl('overview'), label: t('workspaceSettings.views.overview'), icon: Home, isActive: $currentRoute.view === 'workspace-overview' })}
+
+      {#each workspaceViewItems as view (view.id)}
+        {@render collapsedNavIcon({ href: getNavigationUrl(view.id), label: viewLabel(view), icon: view.icon, isActive: $currentRoute.view === `workspace-${view.id}` })}
+      {/each}
+
+      {#if $moduleSettings.test_management_enabled && canViewTests && !currentCollectionId}
+        {@render sectionDivider()}
+        {#each testNavigationItems as view (view.id)}
+          {@render collapsedNavIcon({ href: getTestNavigationUrl(view.id), label: viewLabel(view), icon: view.icon, isActive: activeTestNavId === view.id })}
+        {/each}
+      {/if}
+
+      {@render sectionDivider()}
+      {#each filteredWorkspaceOnlyViews as view (view.id)}
+        {@render collapsedNavIcon({ href: getNavigationUrl(view.id), label: viewLabel(view), icon: view.icon, testId: view.testId, isActive: isWorkspaceViewActive(view) })}
+      {/each}
+
+      {#if canAdmin}
+        {@render collapsedNavIcon({ href: `/workspaces/${workspaceId}/settings/general`, label: t('workspaceSettings.title'), icon: Settings, isActive: isSettingsActive() })}
+      {/if}
+    </div>
+  {/if}
+{/snippet}
+
+{#snippet collapsedSidebarFooter()}
+  <Tooltip content={t('collections.expandSidebar')} placement="right">
+    <button
+      type="button"
+      onclick={() => uiStore.wsSidebarCollapsed = false}
+      class="w-10 h-10 rounded flex items-center justify-center transition-colors"
+      style="color: var(--ds-text-subtle);"
+      onmouseenter={(e) => e.currentTarget.style.cssText = 'background: var(--ds-background-neutral-hovered); color: var(--ds-text);'}
+      onmouseleave={(e) => e.currentTarget.style.cssText = 'color: var(--ds-text-subtle);'}
+    >
+      <IconChevronRight size={20} />
+    </button>
+  </Tooltip>
+
+  {@render resizeHandle()}
+{/snippet}
+
 {#if isCollapsed}
   <!-- Collapsed icon-only sidebar -->
-  <div class="relative h-full flex-shrink-0 border-r flex flex-col items-center py-4 {sidebarBgClass}" style="width: {COLLAPSED_WIDTH}px; {sidebarBgStyle}">
-    <div class="h-10 mb-2 w-full flex items-center justify-center">
-      {@render workspaceAvatar(true)}
-    </div>
-
-    {#if isSettingsView}
-      <!-- Collapsed admin rail: back arrow + a module icon per settings page. -->
-      <div class="flex flex-col items-center space-y-1 mt-6">
-        {@render collapsedNavIcon({ href: `/workspaces/${workspaceId}`, label: t('workspaceSettings.backToWorkspace'), icon: ArrowLeft, isActive: false })}
-        {@render sectionDivider()}
-        {#each workspaceSettingsItems as item}
-          {@render collapsedNavIcon({ href: workspaceSettingsRoute(workspaceId, item.id), label: t(item.labelKey), icon: item.icon, isActive: $currentRoute.view === item.view })}
-        {/each}
-      </div>
-    {:else if $currentWorkspace?.is_personal}
-      <div class="flex flex-col items-center space-y-1 mt-6">
-        {#each PERSONAL_NAV_ITEMS as item}
-          {@render collapsedNavIcon({ href: item.route, label: t(item.labelKey), icon: item.icon, isActive: $currentRoute.view === item.view })}
-        {/each}
-      </div>
-    {:else}
-      <div class="flex flex-col items-center space-y-1 mt-6">
-        {@render collapsedNavIcon({ href: getNavigationUrl('overview'), label: t('workspaceSettings.views.overview'), icon: Home, isActive: $currentRoute.view === 'workspace-overview' })}
-
-        {#each workspaceViewItems as view}
-          {@render collapsedNavIcon({ href: getNavigationUrl(view.id), label: viewLabel(view), icon: view.icon, isActive: $currentRoute.view === `workspace-${view.id}` })}
-        {/each}
-
-        {#if $moduleSettings.test_management_enabled && canViewTests && !currentCollectionId}
-          {@render sectionDivider()}
-          {#each testNavigationItems as view}
-            {@render collapsedNavIcon({ href: getTestNavigationUrl(view.id), label: viewLabel(view), icon: view.icon, isActive: activeTestNavId === view.id })}
-          {/each}
-        {/if}
-
-        {@render sectionDivider()}
-        {#each filteredWorkspaceOnlyViews as view}
-          {@render collapsedNavIcon({ href: getNavigationUrl(view.id), label: viewLabel(view), icon: view.icon, testId: view.testId, isActive: isWorkspaceViewActive(view) })}
-        {/each}
-
-        {#if canAdmin}
-          {@render collapsedNavIcon({ href: `/workspaces/${workspaceId}/settings/general`, label: t('workspaceSettings.title'), icon: Settings, isActive: isSettingsActive() })}
-        {/if}
-      </div>
-    {/if}
-
-    <div class="flex-1"></div>
-
-    <Tooltip content={t('collections.expandSidebar')} placement="right">
-      <button
-        type="button"
-        onclick={() => uiStore.wsSidebarCollapsed = false}
-        class="w-10 h-10 rounded flex items-center justify-center transition-colors"
-        style="color: var(--ds-text-subtle);"
-        onmouseenter={(e) => e.currentTarget.style.cssText = 'background: var(--ds-background-neutral-hovered); color: var(--ds-text);'}
-        onmouseleave={(e) => e.currentTarget.style.cssText = 'color: var(--ds-text-subtle);'}
-      >
-        <IconChevronRight size={20} />
-      </button>
-    </Tooltip>
-
-    {@render resizeHandle()}
-  </div>
+  <ScrollableSidebar
+    class="relative h-full flex-shrink-0 border-r items-center py-4 {sidebarBgClass}"
+    style="width: {COLLAPSED_WIDTH}px; {sidebarBgStyle}"
+    aria-label={t('aria.mainNavigation')}
+    header={collapsedSidebarHeader}
+    footer={collapsedSidebarFooter}
+    reserveScrollbarSpace={false}
+    scrollClass="w-full"
+    scrollTestid="workspace-navigation-scroll"
+  >
+    {@render collapsedSidebarContent()}
+  </ScrollableSidebar>
 {:else if isSettingsView}
   <!-- Workspace admin drilldown: keep the workspace identity header (with a
        back link) and swap the body for the folded admin module nav. -->
-  <div
+  <ScrollableSidebar
     class="sidebar-mode-panel relative h-full flex-shrink-0 {sidebarBgClass} border-r flex flex-col py-4"
     style="width: {sidebarWidth}px; min-width: {MIN_WIDTH}px; max-width: {MAX_WIDTH}px; {sidebarBgStyle}"
     data-testid="workspace-admin-sidebar"
+    aria-label={t('workspaceSettings.title')}
+    header={drilldownSidebarHeader}
+    footer={sidebarResizeHandle}
+    scrollTestid="workspace-admin-navigation-scroll"
   >
-    {@render workspaceHeader({ backLink: true })}
-    <div class="flex flex-1 min-h-0">
-      <WorkspaceAdminNav {workspaceId} />
-    </div>
-    {@render resizeHandle()}
-  </div>
+    <WorkspaceAdminNav {workspaceId} />
+  </ScrollableSidebar>
 {:else if $currentRoute.view === 'workspace-pages' || $currentRoute.view === 'workspace-pages-archived'}
   <!-- Pages drilldown keeps the common workspace identity header and swaps the body for the page tree. -->
-  <div
+  <ScrollableSidebar
     class="sidebar-mode-panel relative h-full flex-shrink-0 {sidebarBgClass} border-r flex flex-col py-4"
     style="width: {sidebarWidth}px; min-width: {MIN_WIDTH}px; max-width: {MAX_WIDTH}px; {sidebarBgStyle}"
+    aria-label={t('pages.treeHeading')}
+    header={drilldownSidebarHeader}
+    footer={sidebarResizeHandle}
+    scrollContent={false}
+    reserveScrollbarSpace={false}
   >
-    {@render workspaceHeader({ backLink: true })}
     <div class="flex flex-1 min-h-0">
       <PagesNavSidebar {workspaceId} embedded />
     </div>
-    {@render resizeHandle()}
-  </div>
+  </ScrollableSidebar>
 {:else if $currentWorkspace?.is_personal}
   <!-- Simplified Personal Workspace Sidebar -->
-  <div class="sidebar-mode-panel relative h-full flex-shrink-0 {sidebarBgClass} border-r flex flex-col py-4" style="width: {sidebarWidth}px; min-width: {MIN_WIDTH}px; max-width: {MAX_WIDTH}px; {sidebarBgStyle}">
-    {@render workspaceHeader()}
-
-    <nav class="flex-1 px-4 pt-2 space-y-1">
-      {#each PERSONAL_NAV_ITEMS as item}
+  <ScrollableSidebar
+    class="sidebar-mode-panel relative h-full flex-shrink-0 {sidebarBgClass} border-r py-4"
+    style="width: {sidebarWidth}px; min-width: {MIN_WIDTH}px; max-width: {MAX_WIDTH}px; {sidebarBgStyle}"
+    aria-label={t('aria.mainNavigation')}
+    header={workspaceHeader}
+    footer={sidebarResizeHandle}
+    scrollTestid="workspace-navigation-scroll"
+  >
+    <nav class="px-4 pt-2 space-y-1 pb-2">
+      {#each PERSONAL_NAV_ITEMS as item (item.route)}
         {@render navLink({ href: item.route, label: t(item.labelKey), icon: item.icon, isActive: $currentRoute.view === item.view })}
       {/each}
     </nav>
-
-    {@render resizeHandle()}
-  </div>
+  </ScrollableSidebar>
 {:else}
   <!-- Regular Workspace Navigation Sidebar -->
-  <div class="sidebar-mode-panel relative h-full flex-shrink-0 {sidebarBgClass} border-r flex flex-col py-4" style="width: {sidebarWidth}px; min-width: {MIN_WIDTH}px; max-width: {MAX_WIDTH}px; {sidebarBgStyle}">
-    {@render workspaceHeader()}
-
-    <!-- Collection Selector -->
-    <div class="px-4 pt-2 mb-6">
-      <Tooltip content={t('collections.collection')} placement="right">
-        <DropdownMenu
-          triggerText={collectionDisplayName}
-          items={collectionDropdownItems}
-          maxWidth="max-w-full"
-          showChevron={true}
-          placement="bottom-start"
-          triggerClass="w-full text-left font-medium rounded !px-3 !py-2.5 !text-sm transition-colors"
-          triggerStyle="background-color: var(--ds-surface); border: 1px solid var(--ds-border); color: var(--ds-text);"
-          triggerAlignment="between"
-        />
-      </Tooltip>
-    </div>
-
-    <nav class="flex-1 px-4 space-y-1">
+  <ScrollableSidebar
+    class="sidebar-mode-panel relative h-full flex-shrink-0 {sidebarBgClass} border-r py-4"
+    style="width: {sidebarWidth}px; min-width: {MIN_WIDTH}px; max-width: {MAX_WIDTH}px; {sidebarBgStyle}"
+    aria-label={t('aria.mainNavigation')}
+    header={regularSidebarHeader}
+    footer={sidebarResizeHandle}
+    scrollTestid="workspace-navigation-scroll"
+  >
+    <nav class="px-4 space-y-1 pb-2">
       {@render navLink({ href: getNavigationUrl('overview'), label: t('workspaceSettings.views.overview'), tooltip: t('commandPalette.commands.workspaceOverview.description'), icon: Home, isActive: $currentRoute.view === 'workspace-overview' })}
 
-      {#each workspaceViewItems as view}
+      {#each workspaceViewItems as view (view.id)}
         {@render navLink({ href: getNavigationUrl(view.id), label: viewLabel(view), tooltip: viewTooltip(view), icon: view.icon, testId: view.testId, isActive: $currentRoute.view === `workspace-${view.id}` })}
       {/each}
 
@@ -671,7 +710,7 @@
 
           {#if testsExpanded}
             <div id="workspace-tests-navigation" class="space-y-1" data-testid="workspace-tests-navigation">
-              {#each testNavigationItems as view}
+              {#each testNavigationItems as view (view.id)}
                 {@render navLink({ href: getTestNavigationUrl(view.id), label: viewLabel(view), tooltip: viewTooltip(view), icon: view.icon, isActive: activeTestNavId === view.id })}
               {/each}
             </div>
@@ -694,7 +733,7 @@
 
         {#if workspaceToolsExpanded}
           <div class="space-y-1" data-testid="workspace-tools-navigation">
-            {#each filteredWorkspaceOnlyViews as view}
+            {#each filteredWorkspaceOnlyViews as view (view.id)}
               {@render navLink({ href: getNavigationUrl(view.id), label: viewLabel(view), tooltip: viewTooltip(view), icon: view.icon, testId: view.testId, isActive: isWorkspaceViewActive(view) })}
             {/each}
 
@@ -706,13 +745,11 @@
         {/if}
       </div>
     </nav>
-
-    {@render resizeHandle()}
-  </div>
+  </ScrollableSidebar>
 {/if}
 
 <style>
-  .sidebar-mode-panel {
+  :global(.sidebar-mode-panel) {
     animation: sidebar-mode-enter 180ms var(--ease-smooth, ease) both;
   }
 
@@ -796,7 +833,7 @@
       transform: none;
     }
 
-    .sidebar-mode-panel,
+    :global(.sidebar-mode-panel),
     nav,
     nav .border-t {
       animation: none;

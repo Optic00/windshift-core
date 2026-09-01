@@ -7,6 +7,7 @@
   import { useEventListener } from 'runed';
   import { uiStore } from '../../stores/ui.svelte.js';
   import { collectionStore } from '../../stores/collectionContext.js';
+  import ScrollableSidebar from '../../layout/ScrollableSidebar.svelte';
 
 
   const MIN_WIDTH = 180;
@@ -74,13 +75,81 @@
   const sidebarBgStyle = 'background-color: var(--ds-surface); border-color: var(--ds-border);';
 </script>
 
+{#snippet resizeHandle()}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="ws-resize-handle"
+    onmousedown={onResizeStart}
+    ondblclick={onResizeHandleDblClick}
+  ></div>
+{/snippet}
+
+{#snippet expandedHeader()}
+  <div class="px-4 mb-4 pb-4 border-b" style="border-color: var(--ds-border);">
+    <div class="flex items-center gap-3 w-full p-1">
+      <div class="flex items-center justify-center w-10 h-10 flex-shrink-0">
+        <div class="w-8 h-8 rounded-md flex items-center justify-center" style="background-color: var(--ds-accent-blue-subtle);">
+          <FolderOpen size={18} style="color: var(--ds-text-info);" />
+        </div>
+      </div>
+      <div class="flex-1 min-w-0">
+        <Tooltip content={collectionName}>
+          <div class="font-medium text-sm truncate" style="color: var(--ds-text);">{collectionName}</div>
+        </Tooltip>
+        <div class="text-xs" style="color: var(--ds-text-subtle);">Collection{#if itemCount > 0} · {itemCount} items{/if}</div>
+      </div>
+    </div>
+  </div>
+{/snippet}
+
+{#snippet collapsedFooter()}
+  <div class="w-8 border-t mb-2" style="border-color: var(--ds-border);"></div>
+  <Tooltip content="Back to Collections" placement="right">
+    <a
+      href="/collections"
+      class="w-10 h-10 rounded flex items-center justify-center cursor-pointer transition-colors mb-1 no-underline"
+      style="color: var(--ds-text-subtle);"
+      onmouseenter={(e) => e.currentTarget.style.cssText = 'background: var(--ds-background-neutral-hovered); color: var(--ds-text);'}
+      onmouseleave={(e) => e.currentTarget.style.cssText = 'color: var(--ds-text-subtle);'}
+    >
+      <FolderOpen size={20} />
+    </a>
+  </Tooltip>
+  <Tooltip content="Expand sidebar" placement="right">
+    <button
+      onclick={() => uiStore.wsSidebarCollapsed = false}
+      class="w-10 h-10 rounded flex items-center justify-center transition-colors"
+      style="color: var(--ds-text-subtle);"
+      onmouseenter={(e) => e.currentTarget.style.cssText = 'background: var(--ds-background-neutral-hovered); color: var(--ds-text);'}
+      onmouseleave={(e) => e.currentTarget.style.cssText = 'color: var(--ds-text-subtle);'}
+    >
+      <IconChevronRight size={20} />
+    </button>
+  </Tooltip>
+  {@render resizeHandle()}
+{/snippet}
+
+{#snippet expandedFooter()}
+  <div class="px-4 pt-4 border-t" style="border-color: var(--ds-border);">
+    <Button variant="default" icon={FolderOpen} href="/collections" class="w-full justify-center">
+      Back to Collections
+    </Button>
+  </div>
+  {@render resizeHandle()}
+{/snippet}
+
 {#if isCollapsed}
   <!-- Collapsed icon-only sidebar -->
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="relative h-full flex-shrink-0 border-r flex flex-col items-center py-4"
-       style="width: 48px; {sidebarBgStyle}">
+  <ScrollableSidebar
+    class="relative h-full flex-shrink-0 border-r items-center py-4"
+    style="width: 48px; {sidebarBgStyle}"
+    aria-label="Collection navigation"
+    footer={collapsedFooter}
+    reserveScrollbarSpace={false}
+    scrollClass="w-full"
+  >
     <div class="flex flex-col items-center space-y-1 mt-2">
-      {#each collectionViewItems as view}
+      {#each collectionViewItems as view (view.id)}
         {@const isActive = $currentRoute.view === view.routeView}
         {@const ViewIcon = view.icon}
         <Tooltip content={view.label} placement="right">
@@ -112,63 +181,20 @@
         </a>
       </Tooltip>
     </div>
-
-    <!-- Spacer -->
-    <div class="flex-1"></div>
-
-    <!-- Back to Collections -->
-    <div class="w-8 border-t mb-2" style="border-color: var(--ds-border);"></div>
-    <Tooltip content="Back to Collections" placement="right">
-      <a
-        href="/collections"
-        class="w-10 h-10 rounded flex items-center justify-center cursor-pointer transition-colors mb-1 no-underline"
-        style="color: var(--ds-text-subtle);"
-        onmouseenter={(e) => e.currentTarget.style.cssText = 'background: var(--ds-background-neutral-hovered); color: var(--ds-text);'}
-        onmouseleave={(e) => e.currentTarget.style.cssText = 'color: var(--ds-text-subtle);'}
-      >
-        <FolderOpen size={20} />
-      </a>
-    </Tooltip>
-
-    <!-- Expand button -->
-    <Tooltip content="Expand sidebar" placement="right">
-      <button onclick={() => uiStore.wsSidebarCollapsed = false}
-              class="w-10 h-10 rounded flex items-center justify-center transition-colors"
-              style="color: var(--ds-text-subtle);"
-              onmouseenter={(e) => e.currentTarget.style.cssText = 'background: var(--ds-background-neutral-hovered); color: var(--ds-text);'}
-              onmouseleave={(e) => e.currentTarget.style.cssText = 'color: var(--ds-text-subtle);'}>
-        <IconChevronRight size={20} />
-      </button>
-    </Tooltip>
-
-    <!-- Resize handle -->
-    <div class="ws-resize-handle" onmousedown={onResizeStart} ondblclick={onResizeHandleDblClick}></div>
-  </div>
+  </ScrollableSidebar>
 {:else}
   <!-- Expanded Collection Navigation Sidebar -->
-  <div class="relative h-full flex-shrink-0 border-r flex flex-col py-4" style="width: {sidebarWidth}px; min-width: {MIN_WIDTH}px; max-width: {MAX_WIDTH}px; {sidebarBgStyle}">
-
-    <!-- Collection Header -->
-    <div class="px-4 mb-4 pb-4 border-b" style="border-color: var(--ds-border);">
-      <!-- Collection info (static) -->
-      <div class="flex items-center gap-3 w-full p-1">
-        <div class="flex items-center justify-center w-10 h-10 flex-shrink-0">
-          <div class="w-8 h-8 rounded-md flex items-center justify-center" style="background-color: var(--ds-accent-blue-subtle);">
-            <FolderOpen size={18} style="color: var(--ds-text-info);" />
-          </div>
-        </div>
-        <div class="flex-1 min-w-0">
-          <Tooltip content={collectionName}>
-            <div class="font-medium text-sm truncate" style="color: var(--ds-text);">{collectionName}</div>
-          </Tooltip>
-          <div class="text-xs" style="color: var(--ds-text-subtle);">Collection{#if itemCount > 0} · {itemCount} items{/if}</div>
-        </div>
-      </div>
-    </div>
-
-    <nav class="flex-1 px-4 space-y-2">
+  <ScrollableSidebar
+    class="relative h-full flex-shrink-0 border-r py-4"
+    style="width: {sidebarWidth}px; min-width: {MIN_WIDTH}px; max-width: {MAX_WIDTH}px; {sidebarBgStyle}"
+    aria-label="Collection navigation"
+    header={expandedHeader}
+    footer={expandedFooter}
+    scrollClass="px-4"
+  >
+    <nav class="space-y-2 pb-2">
       <!-- View Items -->
-      {#each collectionViewItems as view}
+      {#each collectionViewItems as view (view.id)}
         {@const isActive = $currentRoute.view === view.routeView}
         {@const ViewIcon = view.icon}
         <Tooltip content={view.tooltip} placement="right">
@@ -206,27 +232,7 @@
         </Tooltip>
       </div>
     </nav>
-
-    <!-- Footer - Back to Collections -->
-    <div class="px-4 pt-4 border-t" style="border-color: var(--ds-border);">
-      <Button
-        variant="default"
-        icon={FolderOpen}
-        href="/collections"
-        class="w-full justify-center"
-      >
-        Back to Collections
-      </Button>
-    </div>
-
-    <!-- Resize handle -->
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div
-      class="ws-resize-handle"
-      onmousedown={onResizeStart}
-      ondblclick={onResizeHandleDblClick}
-    ></div>
-  </div>
+  </ScrollableSidebar>
 {/if}
 
 <style>

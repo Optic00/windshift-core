@@ -14,7 +14,9 @@
     // minimal drops the items that navigate to the desktop app (My Workspace,
     // Profile, Security) — used on the mobile surface where those routes render
     // the full desktop UI. Theme + Sign Out remain.
-    minimal = false
+    minimal = false,
+    isOpen = $bindable(false),
+    onOpenChange = null,
   } = $props();
 
   // Local state
@@ -22,13 +24,6 @@
 
   // Subscribe to personal workspace from store
   const personalWorkspace = $derived($workspacesStore.personalWorkspace);
-
-  // Generate user initials
-  const userInitials = $derived(
-    authStore.currentUser
-      ? (authStore.currentUser.first_name?.[0]?.toUpperCase() || '') + (authStore.currentUser.last_name?.[0]?.toUpperCase() || '')
-      : ''
-  );
 
   // Only show avatar if attachments are enabled and user has an avatar
   const showAvatar = $derived(attachmentStatus.enabled && authStore.currentUser?.avatar_url);
@@ -109,21 +104,20 @@
 <div data-testid="user-avatar-menu" onmouseenter={loadPersonalWorkspaceIfNeeded} onfocusin={loadPersonalWorkspaceIfNeeded}>
 <DropdownMenu
   triggerAvatar={showAvatar ? authStore.currentUser?.avatar_url : null}
-  triggerText={expanded && label ? label : (showAvatar ? '' : userInitials)}
+  triggerText={expanded && label ? label : ''}
   triggerLabel={label || t('nav.profile')}
-  triggerIcon={expanded && !showAvatar ? User : null}
+  triggerIcon={!showAvatar ? User : null}
   triggerIconClass="w-5 h-5"
-  triggerClass={expanded
-    ? "w-full px-3 h-10 rounded flex items-center cursor-pointer nav-button"
-    : (showAvatar
-      ? "w-8 h-8 rounded-full cursor-pointer hover:opacity-80 transition-opacity overflow-hidden"
-      : "w-8 h-8 rounded-full flex items-center justify-center cursor-pointer nav-button text-xs font-bold select-none"
-    )
+  triggerClass={showAvatar
+    ? "w-full pl-1.5 pr-3 h-10 rounded flex items-center cursor-pointer nav-button overflow-hidden"
+    : "w-full px-3 h-10 rounded flex items-center cursor-pointer nav-button"
   }
-  triggerGap={expanded ? "gap-3" : ""}
-  triggerAlignment={expanded ? "start" : "center"}
+  triggerGap={showAvatar || expanded ? "gap-3" : ""}
+  triggerAlignment={showAvatar || expanded ? "start" : "center"}
   showChevron={false}
   triggerTestid="user-avatar-trigger"
+  {isOpen}
+  {onOpenChange}
   items={[
     ...((!minimal && authStore.currentUser) ? [{
       id: 'my-workspace',

@@ -102,7 +102,7 @@
 {:else if view === 'collections-edit'}
   <Collections collectionId={route.params.id} />
 {:else if view === 'channels'}
-  <div style="background-color: var(--ds-surface);">
+  <div class="h-full min-h-0 overflow-y-auto" style="background-color: var(--ds-surface);">
     <Channels />
   </div>
 {:else if view === 'hub' || view === 'hub-inbox'}
@@ -146,28 +146,25 @@
     <NotFound />
   </div>
 {:else if view === 'admin'}
-  {#if route.path.startsWith('/admin/channels')}
+  <!-- Keep one guard/component tree for every admin route. Switching between
+       Channels and another admin tab must not remount Admin and reset its
+       independently scrollable navigation. -->
+  <PermissionGuard requireSystemAdmin={!route.path.startsWith('/admin/channels')}>
     {@render lazyLoadedComponent(view, routeProps)}
-  {:else}
-    <PermissionGuard requireSystemAdmin={true}>
-      {#snippet children()}
-        {@render lazyLoadedComponent(view, routeProps)}
-      {/snippet}
-      {#snippet fallback(requiredPermissionDisplay)}
-        <UnauthorizedAccess
-          message="You need system administrator privileges to access the administration panel."
-          requiredPermission={requiredPermissionDisplay}
-        />
-      {/snippet}
-    </PermissionGuard>
-  {/if}
+    {#snippet fallback(requiredPermissionDisplay)}
+      <UnauthorizedAccess
+        message="You need system administrator privileges to access the administration panel."
+        requiredPermission={requiredPermissionDisplay}
+      />
+    {/snippet}
+  </PermissionGuard>
 {:else if view === 'workspace-actions'}
   <div class="h-full" style="background-color: var(--ds-surface); height: calc(100vh - 56px);">
     {@render lazyLoadedComponent(view, routeProps)}
   </div>
 {:else if routeEntry.config}
   {#if wrapper === 'surface-full'}
-    <div style="background-color: var(--ds-surface);">
+    <div class="h-full min-h-0 overflow-y-auto" style="background-color: var(--ds-surface);">
       {@render lazyLoadedComponent(view, routeProps)}
     </div>
   {:else if wrapper === 'surface-padded'}

@@ -21,6 +21,7 @@
     IconArchive as Archive
   } from '@tabler/icons-svelte-runes';
   import DropdownMenu from '../../layout/DropdownMenu.svelte';
+  import ScrollableSidebar from '../../layout/ScrollableSidebar.svelte';
   import EmptyState from '../../components/EmptyState.svelte';
   import Tooltip from '../../components/Tooltip.svelte';
   import Input from '../../components/Input.svelte';
@@ -638,7 +639,7 @@
   }
 </script>
 
-<aside class="pages-sidebar" class:pages-sidebar--embedded={embedded} data-testid="pages-nav-sidebar">
+{#snippet sidebarHeader()}
   <header class="header">
     <div class="title-row">
       <h2>{t('pages.treeHeading')}</h2>
@@ -778,7 +779,16 @@
       </button>
     {/if}
   </div>
+{/snippet}
 
+<ScrollableSidebar
+  as="aside"
+  class="pages-sidebar {embedded ? 'pages-sidebar--embedded' : ''}"
+  data-testid="pages-nav-sidebar"
+  aria-label={t('pages.treeHeading')}
+  header={sidebarHeader}
+  scrollTestid="pages-navigation-scroll"
+>
   {#if loading}
     <p class="status">{t('pages.treeLoading')}</p>
   {:else if pages.length === 0}
@@ -870,7 +880,7 @@
       {/each}
     </ul>
   {/if}
-</aside>
+</ScrollableSidebar>
 
 {#if moveDialogPage}
   <PageMoveDialog
@@ -891,16 +901,13 @@
 {/if}
 
 <style>
-  .pages-sidebar {
-    display: flex;
-    flex-direction: column;
+  :global(.pages-sidebar) {
     height: 100%;
     background: var(--ds-surface);
     border-right: 1px solid var(--ds-border);
-    overflow-y: auto;
   }
 
-  .pages-sidebar--embedded {
+  :global(.pages-sidebar--embedded) {
     height: 100%;
     min-height: 0;
     flex: 1;

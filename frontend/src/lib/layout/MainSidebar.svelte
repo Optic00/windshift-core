@@ -11,6 +11,7 @@
   import NavLink from './NavLink.svelte';
   import UserAvatar from '../components/UserAvatar.svelte';
   import NotificationTray from '../features/notifications/NotificationTray.svelte';
+  import ScrollableSidebar from './ScrollableSidebar.svelte';
   import {
     IconSearch, IconSettings, IconPlus, IconGridDots, IconUserScan,
     IconFolders, IconLayoutSidebarLeftExpand, IconLayoutSidebarLeftCollapse,
@@ -22,7 +23,9 @@
     onShowCommandPalette = () => {},
     onShowCreateModal = () => {},
     onShowChatPanel = () => {},
-    onToggleTerminal = () => {}
+    onToggleTerminal = () => {},
+    activeSurface = null,
+    onSurfaceChange = () => {},
   } = $props();
 
   const isTauri = getIsTauri();
@@ -126,14 +129,29 @@
   function showCreateDropdown() {
     onShowCreateModal();
   }
+
+  function setPopoverSurface(surface, open) {
+    if (open) {
+      onSurfaceChange(surface);
+    } else if (activeSurface === surface) {
+      onSurfaceChange(null);
+    }
+  }
+
+  function closePopoverSurface() {
+    if (activeSurface === 'workspaces' || activeSurface === 'notifications' || activeSurface === 'profile') {
+      onSurfaceChange(null);
+    }
+  }
 </script>
 
-<nav class="main-sidebar {$uiStore.navExpanded ? 'w-[200px]' : 'w-16'} shadow-lg border-r flex flex-col py-4 fixed h-full z-40 themed-nav transition-all duration-200 overflow-x-hidden" style="border-color: var(--ds-border);" aria-label={t('aria.mainNavigation')}>
+{#snippet sidebarHeader()}
   <!-- Logo -->
   <Tooltip content="Windshift" placement="right" disabled={$uiStore.navExpanded}>
     <a
       href="/"
-      class="flex items-center {$uiStore.navExpanded ? 'px-4' : 'justify-center'} w-full h-10 mb-2 hover:opacity-80 transition-opacity cursor-pointer"
+      onclick={closePopoverSurface}
+      class="flex items-center justify-start px-4 w-full h-10 mb-2 hover:opacity-80 transition-opacity cursor-pointer"
     >
       <img src="windshift-3.svg" alt="Windshift" class="w-8 h-8 flex-shrink-0" />
       {#if $uiStore.navExpanded}
@@ -141,20 +159,22 @@
       {/if}
     </a>
   </Tooltip>
+{/snippet}
 
+{#snippet sidebarContent()}
   <!-- Main Navigation -->
-  <div class="flex mt-6 flex-col {$uiStore.navExpanded ? 'items-stretch px-2.5' : 'items-center'} space-y-1 flex-1">
+  <div class="flex flex-col items-stretch px-2.5 space-y-1 py-4">
 
     <!-- Workspaces -->
     <Tooltip content={t('nav.workspaces')} placement="right" disabled={$uiStore.navExpanded}>
-      <div class="{$uiStore.navExpanded ? 'w-full' : ''}">
+      <div class="w-full">
         <DropdownMenu
           triggerIcon={IconGridDots}
           triggerIconClass="w-5 h-5"
           triggerGap="gap-3"
           triggerText={$uiStore.navExpanded ? t('nav.workspaces') : ''}
           triggerLabel={t('nav.workspaces')}
-          triggerClass="{$uiStore.navExpanded ? 'w-full px-3' : 'w-10'} h-10 rounded flex items-center {$uiStore.navExpanded ? '' : 'justify-center'} cursor-pointer nav-button nav-button-emphasized {isWorkspaceRoute($currentRoute.view) ? 'nav-button-selected' : ''} {!$workspacesStore.loaded ? 'opacity-50 cursor-wait' : ''}"
+          triggerClass="w-full px-3 h-10 rounded flex items-center justify-start cursor-pointer nav-button nav-button-emphasized {isWorkspaceRoute($currentRoute.view) || activeSurface === 'workspaces' ? 'nav-button-selected' : ''} {!$workspacesStore.loaded ? 'opacity-50 cursor-wait' : ''}"
           triggerTestid="workspaces-dropdown-trigger"
           items={workspacesDropdownItems}
           maxWidth="max-w-xs"
@@ -162,6 +182,8 @@
           placement="right-start"
           iconOnly={!$uiStore.navExpanded}
           triggerAlignment={$uiStore.navExpanded ? 'start' : 'center'}
+          isOpen={activeSurface === 'workspaces'}
+          onOpenChange={(open) => setPopoverSurface('workspaces', open)}
         />
       </div>
     </Tooltip>
@@ -175,25 +197,31 @@
         href={item.href}
         isActive={item.activeViews.includes($currentRoute.view)}
         expanded={$uiStore.navExpanded}
+        onclick={closePopoverSurface}
       />
     {/each}
 
-    <!-- Top Actions Section - "Notch" style centered positioning -->
-    <div class="flex flex-col items-stretch space-y-2 my-6 py-4">
+    <!-- Global actions share the same rhythm as navigation, but remain a
+         distinct task group instead of a second navigation section. -->
+    <div class="sidebar-quick-actions flex flex-col items-stretch space-y-1 my-3 py-3 border-y">
       <NavLink
         id="global-create-button"
         icon={IconPlus}
         label={t('nav.create')}
         onclick={showCreateDropdown}
         expanded={$uiStore.navExpanded}
-        variant="primary"
-        tooltipSuffix=" (C)"
+        variant="accent"
+        isActive={activeSurface === 'create'}
+        shortcut={getShortcutDisplay('global', 'create')}
+        tooltipSuffix=" ({getShortcutDisplay('global', 'create')})"
       />
       <NavLink
         icon={IconSearch}
         label={t('nav.search')}
         onclick={onShowCommandPalette}
         expanded={$uiStore.navExpanded}
+        isActive={activeSurface === 'search'}
+        shortcut={getShortcutDisplay('global', 'commandPalette')}
         tooltipSuffix=" ({getShortcutDisplay('global', 'commandPalette')} or Space Space)"
       />
       {#if aiStore.chatAvailable}
@@ -203,6 +231,8 @@
           label={t('nav.aiChat')}
           onclick={onShowChatPanel}
           expanded={$uiStore.navExpanded}
+          isActive={activeSurface === 'chat'}
+          shortcut={getShortcutDisplay('global', 'aiChat')}
           tooltipSuffix=" ({getShortcutDisplay('global', 'aiChat')})"
         />
       {/if}
@@ -217,13 +247,15 @@
       {/if}
     </div>
   </div>
+{/snippet}
 
+{#snippet sidebarFooter()}
   <!-- Bottom Section -->
-  <div class="flex flex-col {$uiStore.navExpanded ? 'items-stretch px-3' : 'items-center'} space-y-1 mt-auto">
+  <div class="flex flex-col items-stretch px-2.5 space-y-1 pt-2">
     <!-- Nav Toggle Button -->
     <button
       onclick={() => uiStore.toggleNavExpanded()}
-      class="flex items-center {$uiStore.navExpanded ? 'w-full px-3' : 'w-10 justify-center'} h-10 mb-2 rounded cursor-pointer nav-button"
+      class="flex items-center justify-start w-full px-3 h-10 mb-2 rounded cursor-pointer nav-button"
       aria-label={$uiStore.navExpanded ? t('nav.collapse') : t('nav.expand')}
     >
       {#if $uiStore.navExpanded}
@@ -242,24 +274,56 @@
         href={item.href}
         isActive={item.activeViews.includes($currentRoute.view)}
         expanded={$uiStore.navExpanded}
+        onclick={closePopoverSurface}
       />
     {/each}
 
     <!-- Notification Tray -->
     <Tooltip content={t('nav.notifications')} placement="right" disabled={$uiStore.navExpanded}>
-      <NotificationTray expanded={$uiStore.navExpanded} label={t('nav.notifications')} />
+      <NotificationTray
+        expanded={$uiStore.navExpanded}
+        label={t('nav.notifications')}
+        isOpen={activeSurface === 'notifications'}
+        onOpenChange={(open) => setPopoverSurface('notifications', open)}
+      />
     </Tooltip>
 
     <!-- User Profile Avatar -->
     <Tooltip content={t('nav.profile')} placement="right" disabled={$uiStore.navExpanded}>
-      <UserAvatar expanded={$uiStore.navExpanded} label={t('nav.profile')} />
+      <UserAvatar
+        expanded={$uiStore.navExpanded}
+        label={t('nav.profile')}
+        isOpen={activeSurface === 'profile'}
+        onOpenChange={(open) => setPopoverSurface('profile', open)}
+      />
     </Tooltip>
   </div>
-</nav>
+{/snippet}
+
+<ScrollableSidebar
+  as="nav"
+  class="main-sidebar {$uiStore.navExpanded ? 'w-[200px]' : 'w-16'} shadow-lg border-r py-4 fixed inset-y-0 z-40 themed-nav transition-[width] duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none"
+  style="border-color: var(--ds-border);"
+  aria-label={t('aria.mainNavigation')}
+  header={sidebarHeader}
+  footer={sidebarFooter}
+  scrollTestid="main-navigation-scroll"
+>
+  {@render sidebarContent()}
+</ScrollableSidebar>
 
 <style>
+  :global(.main-sidebar) {
+    height: 100vh;
+    height: 100dvh;
+  }
+
+  .sidebar-quick-actions {
+    border-color: color-mix(in srgb, var(--ds-border) 75%, transparent);
+  }
+
   @media (max-width: 767px) {
-    .main-sidebar {
+    :global(.main-sidebar) {
       width: 4rem;
     }
   }

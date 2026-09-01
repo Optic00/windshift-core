@@ -3,7 +3,7 @@
   import { Tag, FolderOpen } from '@lucide/svelte';
   import { navigate, currentRoute } from '../../router.js';
   import { t } from '../../stores/i18n.svelte.js';
-  import SidebarHeader from '../../layout/SidebarHeader.svelte';
+  import NavigationSidebar from '../../layout/NavigationSidebar.svelte';
   import { collectionCategoriesStore } from '../../stores/collectionCategories.js';
   import Button from '../../components/Button.svelte';
   import { getHexFromColorName } from '../../utils/colors.js';
@@ -27,9 +27,21 @@
   }
 </script>
 
-<div class="w-64 border-r flex flex-col p-6" style="border-color: var(--ds-border); background-color: var(--ds-surface-raised);">
-  <SidebarHeader title={t('collections.title')} description={t('collections.subtitle')} noBorder />
+{#snippet sidebarFooter()}
+  <div class="px-6 pb-6 pt-4 border-t" style="border-color: var(--ds-border);">
+    <Button
+      variant="default"
+      icon={Tag}
+      onclick={handleManageCategories}
+      class="w-full justify-center"
+      dataTestid="collection-categories-manage"
+    >
+      {t('collections.manageCategories')}
+    </Button>
+  </div>
+{/snippet}
 
+<NavigationSidebar title={t('collections.title')} description={t('collections.subtitle')} footer={sidebarFooter}>
   <nav class="flex-1 space-y-1">
     <!-- All Global Collections -->
     <a
@@ -78,16 +90,4 @@
     </a>
   </nav>
 
-  <!-- Footer - Manage Categories -->
-  <div class="pt-4 border-t" style="border-color: var(--ds-border);">
-    <Button
-      variant="default"
-      icon={Tag}
-      onclick={handleManageCategories}
-      class="w-full justify-center"
-      dataTestid="collection-categories-manage"
-    >
-      {t('collections.manageCategories')}
-    </Button>
-  </div>
-</div>
+</NavigationSidebar>

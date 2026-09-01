@@ -434,14 +434,14 @@
 </script>
 
 <!-- Main container with sidebar layout -->
-<div class="flex min-h-screen" style="background-color: var(--ds-surface);">
+<div class="flex h-full min-h-0 overflow-hidden" style="background-color: var(--ds-surface);">
   <!-- Left Sidebar - Category Navigation (only when not embedded in Admin) -->
   {#if !embedded}
     <ChannelNavigation />
   {/if}
 
   <!-- Main Content -->
-  <div class="flex-1 {embedded ? '' : 'p-6'}">
+  <div class="flex-1 min-h-0 overflow-y-auto {embedded ? '' : 'p-6'}">
     <!-- Embedded Tab Navigation -->
     {#if embedded}
       <div class="border-b mb-6" style="border-color: var(--ds-border);">
@@ -651,7 +651,7 @@
       <div>
         <Label color="default" class="mb-2">Type</Label>
         <div class="flex flex-wrap gap-2">
-          {#each channelTypeDefs as option}
+          {#each channelTypeDefs as option (option.id)}
             <button
               type="button"
               onclick={() => channelFormData.type = option.id}

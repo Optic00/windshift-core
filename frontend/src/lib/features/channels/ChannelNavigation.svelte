@@ -6,7 +6,7 @@
   import Button from '../../components/Button.svelte';
   import { getHexFromColorName } from '../../utils/colors.js';
   import { t } from '../../stores/i18n.svelte.js';
-  import SidebarHeader from '../../layout/SidebarHeader.svelte';
+  import NavigationSidebar from '../../layout/NavigationSidebar.svelte';
   import { channelTypes as channelTypeDefs, allTypesEntry } from './channelTypes.js';
   import { isSystemAdmin } from '../../stores/permissions.svelte.js';
 
@@ -51,11 +51,23 @@
   }
 </script>
 
-<!-- Channel Navigation Sidebar -->
-<div class="w-64 border-r flex flex-col p-6" style="border-color: var(--ds-border); background-color: var(--ds-surface-raised);">
-  <!-- Header -->
-  <SidebarHeader title={t('channels.title')} description={t('channels.subtitle')} noBorder />
+{#snippet sidebarFooter()}
+  {#if $isSystemAdmin}
+    <div class="px-6 pb-6 pt-4 border-t" style="border-color: var(--ds-border);">
+      <Button
+        variant="default"
+        icon={IconTag}
+        onclick={handleManageCategories}
+        class="w-full justify-center"
+      >
+        {t('channels.manageCategories')}
+      </Button>
+    </div>
+  {/if}
+{/snippet}
 
+<!-- Channel Navigation Sidebar -->
+<NavigationSidebar title={t('channels.title')} description={t('channels.subtitle')} footer={sidebarFooter}>
   <!-- Navigation -->
   <nav class="flex-1 space-y-4">
     <!-- Channel Types Section -->
@@ -118,17 +130,4 @@
     </div>
   </nav>
 
-  <!-- Footer - Manage Categories -->
-  {#if $isSystemAdmin}
-    <div class="pt-4 border-t" style="border-color: var(--ds-border);">
-      <Button
-        variant="default"
-        icon={IconTag}
-        onclick={handleManageCategories}
-        class="w-full justify-center"
-      >
-        {t('channels.manageCategories')}
-      </Button>
-    </div>
-  {/if}
-</div>
+</NavigationSidebar>

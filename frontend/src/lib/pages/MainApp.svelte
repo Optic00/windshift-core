@@ -47,6 +47,7 @@
   let showCommandPalette = $state(false);
   let showCreateModal = $state(false);
   let showChatPanel = $state(false);
+  let activeSidebarSurface = $state(null);
   let createModalInitialType = $state('work-item');
   let createModalSkipNavigate = $state(false);
   let createModalWorkspaceId = $state(null);
@@ -83,6 +84,7 @@
   }
 
   function toggleTerminal() {
+    closeAllSidebarSurfaces();
     terminalStore.toggle();
     if (!TerminalPanelComponent) void loadTerminalPanel();
   }
@@ -139,32 +141,78 @@
 
   function closeCreateModal() {
     showCreateModal = false;
+    if (activeSidebarSurface === 'create') activeSidebarSurface = null;
     createModalInitialType = 'work-item';
     createModalSkipNavigate = false;
     createModalWorkspaceId = null;
   }
 
+  function closeAllSidebarSurfaces() {
+    activeSidebarSurface = null;
+    showCommandPalette = false;
+    showCreateModal = false;
+    showChatPanel = false;
+    createModalInitialType = 'work-item';
+    createModalSkipNavigate = false;
+    createModalWorkspaceId = null;
+  }
+
+  function activateSidebarSurface(surface) {
+    const shouldClose = activeSidebarSurface === surface;
+    closeAllSidebarSurfaces();
+    if (shouldClose) return;
+
+    activeSidebarSurface = surface;
+    showCommandPalette = surface === 'search';
+    showCreateModal = surface === 'create';
+    showChatPanel = surface === 'chat';
+  }
+
+  function handleSidebarSurfaceChange(surface) {
+    if (surface === null) {
+      if (['workspaces', 'notifications', 'profile'].includes(activeSidebarSurface)) {
+        activeSidebarSurface = null;
+      }
+      return;
+    }
+    activateSidebarSurface(surface);
+  }
+
+  function closeCommandPalette() {
+    showCommandPalette = false;
+    if (activeSidebarSurface === 'search') activeSidebarSurface = null;
+  }
+
+  function closeChatPanel() {
+    showChatPanel = false;
+    if (activeSidebarSurface === 'chat') activeSidebarSurface = null;
+  }
+
   function showCreateDropdown() {
+    closeAllSidebarSurfaces();
     createModalWorkspaceId = null;
     const currentWorkspaceId = $currentRoute.params?.id;
     if (currentWorkspaceId && CREATE_MODAL_WORKSPACE_VIEWS.has($currentRoute.view)) {
       createModalWorkspaceId = Number.parseInt(currentWorkspaceId, 10);
     }
+    activeSidebarSurface = 'create';
     showCreateModal = true;
   }
 
   function showCreateModalFromEvent(detail) {
+    closeAllSidebarSurfaces();
     if (detail.type) createModalInitialType = detail.type;
     createModalSkipNavigate = detail.skipNavigate || false;
     createModalWorkspaceId = detail.workspaceId
       ? Number.parseInt(String(detail.workspaceId), 10)
       : null;
+    activeSidebarSurface = 'create';
     showCreateModal = true;
   }
 
   useMainAppLifecycle({
     onEmailVerificationChange: (show) => showEmailVerificationBanner = show,
-    onShowCommandPalette: () => showCommandPalette = true,
+    onShowCommandPalette: () => activateSidebarSurface('search'),
     onShowCreateModal: showCreateModalFromEvent,
   });
 
@@ -182,6 +230,15 @@
   const showCollectionNav = $derived(
     !$uiStore.reviewFullscreen && GLOBAL_COLLECTION_VIEWS.has($currentRoute.view)
   );
+
+  let previousRoutePath = $state(null);
+  $effect(() => {
+    const routePath = $currentRoute.path;
+    if (previousRoutePath !== null && previousRoutePath !== routePath) {
+      closeAllSidebarSurfaces();
+    }
+    previousRoutePath = routePath;
+  });
 
   $effect(() => {
     const route = $currentRoute;
@@ -215,7 +272,7 @@
   });
 </script>
 
-<div class="min-h-screen flex flex-col" style="background-color: var(--ds-surface);">
+<div class="desktop-app-shell h-dvh min-h-0 overflow-hidden flex flex-col" style="background-color: var(--ds-surface);">
   <EmailVerificationBanner
     show={showEmailVerificationBanner}
     ondismiss={() => showEmailVerificationBanner = false}
@@ -223,22 +280,24 @@
 
   {#if !$uiStore.reviewFullscreen}
     <MainSidebar
-      onShowCommandPalette={() => showCommandPalette = true}
+      onShowCommandPalette={() => activateSidebarSurface('search')}
       onShowCreateModal={showCreateDropdown}
-      onShowChatPanel={() => showChatPanel = true}
+      onShowChatPanel={() => activateSidebarSurface('chat')}
       onToggleTerminal={toggleTerminal}
+      activeSurface={activeSidebarSurface}
+      onSurfaceChange={handleSidebarSurfaceChange}
     />
   {/if}
 
-  <Button class="sr-only" onclick={() => showCommandPalette = true} hotkeyConfig={{ key: toHotkeyString('global', 'commandPalette') }}>Command Palette</Button>
+  <Button class="sr-only" onclick={() => activateSidebarSurface('search')} hotkeyConfig={{ key: toHotkeyString('global', 'commandPalette') }}>Command Palette</Button>
   <Button class="sr-only" onclick={showCreateDropdown} hotkeyConfig={{ key: toHotkeyString('global', 'create') }}>Create</Button>
   {#if aiStore.chatAvailable}
-    <Button class="sr-only" onclick={() => showChatPanel = !showChatPanel} hotkeyConfig={{ key: toHotkeyString('global', 'aiChat') }}>AI Chat</Button>
+    <Button class="sr-only" onclick={() => activateSidebarSurface('chat')} hotkeyConfig={{ key: toHotkeyString('global', 'aiChat') }}>AI Chat</Button>
   {/if}
   <Button class="sr-only" onclick={toggleTerminal} hotkeyConfig={{ key: 'Mod+`' }}>Toggle Terminal</Button>
 
   <div
-    class="authenticated-content flex flex-1 transition-[margin] duration-200 ease-out"
+    class="authenticated-content flex flex-1 min-h-0 overflow-hidden transition-[margin] duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none"
     class:has-mobile-context-nav={showWorkspaceNav}
     style={!$uiStore.reviewFullscreen ? `margin-left: ${$uiStore.navExpanded ? '200px' : '64px'}` : ''}
   >
@@ -264,7 +323,7 @@
         ></button>
       {/if}
       <div
-        class="workspace-context-nav"
+        class="workspace-context-nav h-full min-h-0"
         class:mobile-open={mobileWorkspaceNavOpen}
         out:slide={{ duration: 200, axis: 'x' }}
       >
@@ -275,19 +334,19 @@
         />
       </div>
     {:else if showCollectionNav}
-      <div out:slide={{ duration: 200, axis: 'x' }}>
+      <div class="h-full min-h-0" out:slide={{ duration: 200, axis: 'x' }}>
         <CollectionNavigation collectionId={$currentRoute.params.id} />
       </div>
     {/if}
 
-    <div class="flex-1 flex min-w-0 main-split-container">
+    <div class="flex-1 flex min-w-0 min-h-0 overflow-hidden main-split-container">
       <div
-        class="flex flex-col min-w-0"
+        class="flex flex-col min-w-0 min-h-0"
         style={terminalState.visible
           ? `width: ${terminalState.splitPercent}%; flex-shrink: 0;`
           : 'flex: 1;'}
       >
-        <main class="flex-1">
+        <main class="flex-1 min-h-0 overflow-y-auto overscroll-contain">
           <MainRouteContent view={effectiveView} route={$currentRoute} {lazyComponents} />
         </main>
       </div>
@@ -316,7 +375,7 @@
   </div>
 
   <footer
-    class="authenticated-footer transition-[margin] duration-200 ease-out"
+    class="authenticated-footer flex-shrink-0 transition-[margin] duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none"
     style={!$uiStore.reviewFullscreen
       ? `margin-left: ${$uiStore.navExpanded ? '200px' : '64px'}`
       : ''}
@@ -334,6 +393,8 @@
   {createModalWorkspaceId}
   {createModalSkipNavigate}
   onclosecreate={closeCreateModal}
+  onclosecommand={closeCommandPalette}
+  onclosechat={closeChatPanel}
 />
 
 <style>
@@ -416,28 +477,54 @@
       box-shadow var(--duration-normal, 200ms) var(--ease-smooth, ease);
   }
 
-  :global(.themed-nav .nav-button::before) {
-    content: '';
-    position: absolute;
-    inset: -2px;
-    border-radius: 8px;
-    background: radial-gradient(circle at center, var(--ds-interactive) 0%, transparent 70%);
-    opacity: 0;
-    transition: opacity var(--duration-normal, 200ms) var(--ease-smooth, ease);
-    pointer-events: none;
-    z-index: -1;
-  }
-
   :global(.themed-nav .nav-button:hover) {
     background-color: var(--ds-background-neutral-hovered);
   }
 
-  :global(.themed-nav .nav-button:hover::before) {
-    opacity: 0.12;
-  }
-
   :global(.themed-nav .nav-button.nav-button-emphasized) {
     background-color: color-mix(in srgb, var(--ds-interactive) 8%, transparent);
+  }
+
+  :global(.themed-nav .nav-button.nav-button-accent) {
+    color: var(--ds-text-link);
+    background-color: color-mix(in srgb, var(--ds-interactive-subtle) 72%, transparent);
+  }
+
+  :global(.themed-nav .nav-button.nav-button-accent:hover),
+  :global(.themed-nav .nav-button.nav-button-accent.nav-button-selected) {
+    color: var(--ds-text-link-hovered);
+    background-color: var(--ds-interactive-subtle);
+  }
+
+  :global(.themed-nav .nav-shortcut) {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 0.1875rem;
+  }
+
+  :global(.themed-nav .nav-shortcut-key) {
+    display: inline-flex;
+    min-width: 1.5rem;
+    height: 1.5rem;
+    padding-inline: 0.3125rem;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--ds-border);
+    border-radius: 0.25rem;
+    color: var(--ds-text-subtle);
+    background: color-mix(in srgb, var(--ds-surface) 65%, transparent);
+    box-shadow: 0 1px 0 var(--ds-border-bold);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-weight: 600;
+    font-size: 0.6875rem;
+    line-height: 1rem;
+    text-align: center;
+  }
+
+  :global(.themed-nav .nav-button:focus-visible) {
+    outline: 2px solid var(--ds-border-focused);
+    outline-offset: 2px;
   }
 
   :global(.themed-nav .bg-primary) {

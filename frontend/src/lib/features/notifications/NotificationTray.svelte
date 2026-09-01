@@ -9,22 +9,35 @@
   import { navigate } from '../../router.js';
   import { t } from '../../stores/i18n.svelte.js';
   import { createPopover, melt } from '@melt-ui/svelte';
+  import { toStore } from 'svelte/store';
 
   const AUTO_SEEN_DELAY_MS = 5000;
 
   let {
     expanded = false,
-    label = ''
+    label = '',
+    isOpen = $bindable(false),
+    onOpenChange = null,
   } = $props();
 
   let unreadCount = $state(0);
 
   // Portal above the sidebar stacking context.
+  const controlledOpen = toStore(
+    () => isOpen,
+    (value) => {
+      if (isOpen === value) return;
+      isOpen = value;
+      onOpenChange?.(value);
+    }
+  );
+
   const {
     elements: { trigger, content },
     states: { open }
   } = createPopover({
     forceVisible: true,
+    open: controlledOpen,
     positioning: {
       placement: 'right-start'
     },
@@ -80,7 +93,7 @@
   <!-- Notification Bell Button -->
   <button
     use:melt={$trigger}
-    class="{expanded ? 'w-full px-3' : 'w-10 justify-center'} h-10 rounded flex items-center cursor-pointer nav-button {$open ? 'nav-button-selected' : ''}"
+    class="w-full px-3 h-10 rounded flex items-center justify-start cursor-pointer nav-button {$open ? 'nav-button-selected' : ''}"
     title={t('notifications.title')}
     aria-label={t('notifications.title')}
   >
@@ -108,6 +121,7 @@
   {#if $open}
     <div
       use:melt={$content}
+      tabindex="-1"
       class="notification-dropdown z-[60] w-96 rounded shadow-xl max-h-[500px] overflow-hidden"
       style="background-color: var(--ds-surface-overlay); border: 1px solid var(--ds-border); color: var(--ds-text);"
       in:fly={{ x: -10, duration: 200, easing: quintOut }}
