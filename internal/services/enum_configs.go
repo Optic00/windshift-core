@@ -221,27 +221,15 @@ func NewContactRoleConfig() EnumConfig {
 		// database.IsUniqueConstraintError will catch duplicates and return 409
 
 		BeforeUpdate: func(db database.Database, id int, entity any) (bool, int, string) {
-			var isSystem bool
-			err := db.QueryRow("SELECT is_system FROM contact_roles WHERE id = ?", id).Scan(&isSystem)
-			if err != nil {
-				return false, 404, "Contact role not found"
-			}
-			if isSystem {
-				return false, 403, "System contact roles cannot be modified"
-			}
-			return true, 0, ""
+			return checkSystemEnumMutation(db, id,
+				"SELECT is_system FROM contact_roles WHERE id = ?",
+				"Contact role not found", "System contact roles cannot be modified")
 		},
 
 		BeforeDelete: func(db database.Database, id int) (bool, int, string) {
-			var isSystem bool
-			err := db.QueryRow("SELECT is_system FROM contact_roles WHERE id = ?", id).Scan(&isSystem)
-			if err != nil {
-				return false, 404, "Contact role not found"
-			}
-			if isSystem {
-				return false, 403, "System contact roles cannot be deleted"
-			}
-			return true, 0, ""
+			return checkSystemEnumMutation(db, id,
+				"SELECT is_system FROM contact_roles WHERE id = ?",
+				"Contact role not found", "System contact roles cannot be deleted")
 		},
 
 		InsertArgs: func(entity any, now time.Time) (string, string, []any) {
@@ -268,38 +256,19 @@ func NewContactRoleConfig() EnumConfig {
 // NewStatusConfig returns the configuration for Status CRUD
 func NewStatusConfig() EnumConfig {
 	return EnumConfig{
-		TableName:  "statuses",
-		EntityName: "Status",
-		SelectColumns: `s.id, COALESCE(s.builtin_key, ''), s.name, s.description, s.category_id, s.is_default, s.created_at, s.updated_at,
-		       sc.name as category_name, COALESCE(sc.builtin_key, ''), sc.color as category_color`,
-		SelectQuery: `
-			SELECT s.id, COALESCE(s.builtin_key, ''), s.name, s.description, s.category_id, s.is_default, s.created_at, s.updated_at,
-			       sc.name as category_name, COALESCE(sc.builtin_key, ''), sc.color as category_color
-			FROM statuses s
-			JOIN status_categories sc ON s.category_id = sc.id
-			ORDER BY s.is_default DESC, sc.name ASC, s.name ASC`,
-		GetByIDQuery: `
-			SELECT s.id, COALESCE(s.builtin_key, ''), s.name, s.description, s.category_id, s.is_default, s.created_at, s.updated_at,
-			       sc.name as category_name, COALESCE(sc.builtin_key, ''), sc.color as category_color
-			FROM statuses s
-			JOIN status_categories sc ON s.category_id = sc.id
-			WHERE s.id = ?`,
+		TableName:      "statuses",
+		EntityName:     "Status",
+		SelectColumns:  statusSelectColumns,
+		SelectQuery:    statusSelectQuery,
+		GetByIDQuery:   statusByIDQuery,
 		DefaultOrderBy: "s.is_default DESC, sc.name ASC, s.name ASC",
 
 		ScanRow: func(rows *sql.Rows) (EnumEntity, error) {
-			var s models.Status
-			err := rows.Scan(&s.ID, &s.BuiltinKey, &s.Name, &s.Description, &s.CategoryID,
-				&s.IsDefault, &s.CreatedAt, &s.UpdatedAt,
-				&s.CategoryName, &s.CategoryBuiltinKey, &s.CategoryColor)
-			return &s, err
+			return scanStatus(rows)
 		},
 
 		ScanSingleRow: func(row *sql.Row) (EnumEntity, error) {
-			var s models.Status
-			err := row.Scan(&s.ID, &s.BuiltinKey, &s.Name, &s.Description, &s.CategoryID,
-				&s.IsDefault, &s.CreatedAt, &s.UpdatedAt,
-				&s.CategoryName, &s.CategoryBuiltinKey, &s.CategoryColor)
-			return &s, err
+			return scanStatus(row)
 		},
 
 		Validate: func(entity any, isUpdate bool) string {
@@ -345,29 +314,7 @@ func NewStatusConfig() EnumConfig {
 			return true, 0, ""
 		},
 
-		CheckDependencies: func(db database.Database, id int) string {
-			// Check workflow transitions
-			var transitionCount int
-			if err := db.QueryRow("SELECT COUNT(*) FROM workflow_transitions WHERE from_status_id = ? OR to_status_id = ?", id, id).Scan(&transitionCount); err != nil {
-				slog.Error("dependency check failed", slog.Any("error", err), slog.String("table", "workflow_transitions"), slog.Int("id", id))
-				return "Unable to verify dependencies — please try again"
-			}
-			if transitionCount > 0 {
-				return "Cannot delete status that is in use by workflow transitions"
-			}
-
-			// Check items
-			itemCount, err := repository.NewItemRepository(db).CountByField("status_id", id)
-			if err != nil {
-				slog.Error("dependency check failed", slog.Any("error", err), slog.String("table", "items"), slog.Int("id", id))
-				return "Unable to verify dependencies — please try again"
-			}
-			if itemCount > 0 {
-				return fmt.Sprintf("Cannot delete status that is in use by %d work item(s)", itemCount)
-			}
-
-			return ""
-		},
+		CheckDependencies: statusDependencyError,
 
 		InsertArgs: func(entity any, now time.Time) (string, string, []any) {
 			s := entity.(*models.Status) //nolint:errcheck // type assertion is safe here
@@ -393,17 +340,11 @@ func NewLinkTypeConfig() EnumConfig {
 		DefaultOrderBy: "is_system DESC, name ASC",
 
 		ScanRow: func(rows *sql.Rows) (EnumEntity, error) {
-			var l models.LinkType
-			err := rows.Scan(&l.ID, &l.BuiltinKey, &l.Name, &l.Description, &l.ForwardLabel, &l.ReverseLabel,
-				&l.Color, &l.IsSystem, &l.Active, &l.CreatedAt, &l.UpdatedAt)
-			return &l, err
+			return scanLinkType(rows)
 		},
 
 		ScanSingleRow: func(row *sql.Row) (EnumEntity, error) {
-			var l models.LinkType
-			err := row.Scan(&l.ID, &l.BuiltinKey, &l.Name, &l.Description, &l.ForwardLabel, &l.ReverseLabel,
-				&l.Color, &l.IsSystem, &l.Active, &l.CreatedAt, &l.UpdatedAt)
-			return &l, err
+			return scanLinkType(row)
 		},
 
 		Validate: func(entity any, isUpdate bool) string {
@@ -435,27 +376,15 @@ func NewLinkTypeConfig() EnumConfig {
 		},
 
 		BeforeUpdate: func(db database.Database, id int, entity any) (bool, int, string) {
-			var isSystem bool
-			err := db.QueryRow("SELECT is_system FROM link_types WHERE id = ?", id).Scan(&isSystem)
-			if err != nil {
-				return false, 404, "Link type not found"
-			}
-			if isSystem {
-				return false, 403, "System link types cannot be modified"
-			}
-			return true, 0, ""
+			return checkSystemEnumMutation(db, id,
+				"SELECT is_system FROM link_types WHERE id = ?",
+				"Link type not found", "System link types cannot be modified")
 		},
 
 		BeforeDelete: func(db database.Database, id int) (bool, int, string) {
-			var isSystem bool
-			err := db.QueryRow("SELECT is_system FROM link_types WHERE id = ?", id).Scan(&isSystem)
-			if err != nil {
-				return false, 404, "Link type not found"
-			}
-			if isSystem {
-				return false, 403, "System link types cannot be deleted"
-			}
-			return true, 0, ""
+			return checkSystemEnumMutation(db, id,
+				"SELECT is_system FROM link_types WHERE id = ?",
+				"Link type not found", "System link types cannot be deleted")
 		},
 
 		CheckDependencies: func(db database.Database, id int) string {
@@ -496,27 +425,11 @@ func NewItemTypeConfig() EnumConfig {
 		DefaultOrderBy: "hierarchy_level ASC, sort_order ASC, name ASC",
 
 		ScanRow: func(rows *sql.Rows) (EnumEntity, error) {
-			var it models.ItemType
-			var description sql.NullString
-			err := rows.Scan(&it.ID, &it.BuiltinKey, &it.Name, &description, &it.IsDefault,
-				&it.Icon, &it.Color, &it.HierarchyLevel, &it.SortOrder,
-				&it.CreatedAt, &it.UpdatedAt)
-			if description.Valid {
-				it.Description = description.String
-			}
-			return &it, err
+			return scanItemType(rows)
 		},
 
 		ScanSingleRow: func(row *sql.Row) (EnumEntity, error) {
-			var it models.ItemType
-			var description sql.NullString
-			err := row.Scan(&it.ID, &it.BuiltinKey, &it.Name, &description, &it.IsDefault,
-				&it.Icon, &it.Color, &it.HierarchyLevel, &it.SortOrder,
-				&it.CreatedAt, &it.UpdatedAt)
-			if description.Valid {
-				it.Description = description.String
-			}
-			return &it, err
+			return scanItemType(row)
 		},
 
 		ApplyDefaults: func(entity any) {

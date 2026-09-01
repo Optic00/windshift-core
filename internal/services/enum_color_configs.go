@@ -12,10 +12,6 @@ import (
 
 const defaultEnumColor = "#3b82f6"
 
-type rowScanner interface {
-	Scan(dest ...any) error
-}
-
 type coloredEnumFields struct {
 	id          *int
 	name        *string
