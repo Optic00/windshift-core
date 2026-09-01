@@ -6,10 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
-	"strconv"
-	"strings"
-	"time"
 
 	"windshift/internal/database"
 	"windshift/internal/fileserve"
@@ -109,36 +105,12 @@ func (s *ItemAttachmentService) UploadPublicFormAttachment(in ItemAttachmentUplo
 }
 
 func (s *ItemAttachmentService) validateUpload(in ItemAttachmentUploadInput) error {
-	if s.attachmentPath == "" {
-		return ErrItemAttachmentDisabled
-	}
-	if strings.TrimSpace(in.OriginalFilename) == "" {
-		return fmt.Errorf("%w: filename is required", ErrItemAttachmentInvalid)
-	}
-	if len(in.FileData) == 0 {
-		return fmt.Errorf("%w: file is empty", ErrItemAttachmentInvalid)
-	}
-	if err := validateAttachmentFileExtension(in.OriginalFilename); err != nil {
-		return fmt.Errorf("%w: %s", ErrItemAttachmentInvalid, err.Error())
-	}
-	detectedMimeType, err := verifyAttachmentFileContent(in.FileData, in.OriginalFilename)
-	if err != nil {
-		return fmt.Errorf("%w: File content validation failed: %s", ErrItemAttachmentInvalid, err.Error())
-	}
-	settings, err := loadAttachmentSettings(s.db, s.attachmentPath)
-	if err != nil {
-		return fmt.Errorf("get attachment settings: %w", err)
-	}
-	if !settings.Enabled {
-		return ErrItemAttachmentDisabled
-	}
-	if int64(len(in.FileData)) > settings.MaxFileSize {
-		return fmt.Errorf("%w: File too large. Maximum size: %d bytes", ErrItemAttachmentInvalid, settings.MaxFileSize)
-	}
-	if err := validateAllowedMimeType(settings.AllowedMimeTypes, detectedMimeType); err != nil {
-		return fmt.Errorf("%w: %s", ErrItemAttachmentInvalid, err.Error())
-	}
-	return nil
+	_, err := validateAttachmentUpload(s.db, s.attachmentPath, attachmentFileInput{
+		originalFilename: in.OriginalFilename,
+		data:             in.FileData,
+		validationSize:   int64(len(in.FileData)),
+	}, attachmentValidationErrors{disabled: ErrItemAttachmentDisabled, invalid: ErrItemAttachmentInvalid})
+	return err
 }
 
 func (s *ItemAttachmentService) uploadItemAttachment(in ItemAttachmentUploadInput, authorize bool) (models.AttachmentUploadResponse, error) {
@@ -158,40 +130,21 @@ func (s *ItemAttachmentService) uploadItemAttachment(in ItemAttachmentUploadInpu
 			return models.AttachmentUploadResponse{}, ErrItemAttachmentNotFound
 		}
 	}
-	if err := s.validateUpload(in); err != nil {
+	fileInput := attachmentFileInput{
+		originalFilename: in.OriginalFilename,
+		data:             in.FileData,
+		validationSize:   int64(len(in.FileData)),
+	}
+	detectedMimeType, err := validateAttachmentUpload(s.db, s.attachmentPath, fileInput, attachmentValidationErrors{
+		disabled: ErrItemAttachmentDisabled,
+		invalid:  ErrItemAttachmentInvalid,
+	})
+	if err != nil {
 		return models.AttachmentUploadResponse{}, err
 	}
-	detectedMimeType, err := verifyAttachmentFileContent(in.FileData, in.OriginalFilename)
+	stored, err := storeAttachmentFile(s.attachmentPath, "items", "item", in.ItemID, fileInput, detectedMimeType)
 	if err != nil {
-		return models.AttachmentUploadResponse{}, fmt.Errorf("%w: File content validation failed: %s", ErrItemAttachmentInvalid, err.Error())
-	}
-
-	uniqueFilename, err := generateAttachmentFilename(in.OriginalFilename)
-	if err != nil {
-		return models.AttachmentUploadResponse{}, fmt.Errorf("generate filename: %w", err)
-	}
-
-	// Match the cookie-auth path layout (attachments/items/{itemID}/...) so
-	// downloads/thumbnails served by the existing v1 AttachmentHandler resolve
-	// the same files regardless of which surface wrote them.
-	itemDir := filepath.Join(s.attachmentPath, "items", strconv.Itoa(in.ItemID))
-	if err := os.MkdirAll(itemDir, 0o750); err != nil { //nolint:gosec // path built from configured root + numeric item id
-		return models.AttachmentUploadResponse{}, fmt.Errorf("create attachment directory: %w", err)
-	}
-	filePath := filepath.Join(itemDir, uniqueFilename)
-	if err := os.WriteFile(filePath, in.FileData, 0o600); err != nil { //nolint:gosec // path built from configured root + generated filename
-		return models.AttachmentUploadResponse{}, fmt.Errorf("save file: %w", err)
-	}
-
-	hasThumbnail := false
-	thumbnailPath := ""
-	if strings.HasPrefix(detectedMimeType, "image/") {
-		if path, err := generateAttachmentThumbnail(filePath, uniqueFilename); err == nil {
-			hasThumbnail = true
-			thumbnailPath = path
-		} else {
-			slog.Warn("failed to generate item attachment thumbnail", slog.String("component", "attachments"), slog.Any("error", err))
-		}
+		return models.AttachmentUploadResponse{}, err
 	}
 
 	var uploaderID *int
@@ -201,21 +154,18 @@ func (s *ItemAttachmentService) uploadItemAttachment(in ItemAttachmentUploadInpu
 	attachmentID, err := s.attachmentService.CreateRecord(CreateAttachmentParams{
 		ItemID:           in.ItemID,
 		EntityType:       "item",
-		Filename:         uniqueFilename,
+		Filename:         stored.filename,
 		OriginalFilename: in.OriginalFilename,
-		FilePath:         filePath,
-		MimeType:         detectedMimeType,
-		FileSize:         int64(len(in.FileData)),
+		FilePath:         stored.path,
+		MimeType:         stored.mimeType,
+		FileSize:         stored.size,
 		UploadedBy:       uploaderID,
-		HasThumbnail:     hasThumbnail,
-		ThumbnailPath:    thumbnailPath,
+		HasThumbnail:     stored.hasThumbnail,
+		ThumbnailPath:    stored.thumbnailPath,
 		Category:         "",
 	})
 	if err != nil {
-		_ = os.Remove(filePath) //nolint:gosec // cleanup of path built above
-		if thumbnailPath != "" {
-			_ = os.Remove(thumbnailPath) //nolint:gosec // cleanup of path derived from filePath
-		}
+		removeStoredAttachmentFile(stored)
 		return models.AttachmentUploadResponse{}, fmt.Errorf("save attachment record: %w", err)
 	}
 
@@ -225,21 +175,7 @@ func (s *ItemAttachmentService) uploadItemAttachment(in ItemAttachmentUploadInpu
 		slog.Warn("failed to record attachment upload history", slog.String("component", "attachments"), slog.Any("error", histErr))
 	}
 
-	itemID := in.ItemID
-	return models.AttachmentUploadResponse{
-		Success: true,
-		Message: "File uploaded successfully",
-		Attachment: models.Attachment{
-			ID:               int(attachmentID),
-			ItemID:           &itemID,
-			Filename:         uniqueFilename,
-			OriginalFilename: in.OriginalFilename,
-			MimeType:         detectedMimeType,
-			FileSize:         int64(len(in.FileData)),
-			UploadedBy:       uploaderID,
-			CreatedAt:        time.Now(),
-		},
-	}, nil
+	return newAttachmentUploadResponse(attachmentID, in.ItemID, in.OriginalFilename, uploaderID, stored), nil
 }
 
 // RollbackPublicFormItem removes attachment blobs and the just-created item
