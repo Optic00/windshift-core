@@ -870,7 +870,7 @@ func (as *AssetActionService) executeCondition(node *models.AssetActionNode, ctx
 		fieldValue = ctx.Variables["new_"+config.FieldName]
 	}
 
-	result := evaluateCondition(fieldValue, config.Operator, config.Value)
+	result := evaluateAssetActionCondition(fieldValue, config.Operator, config.Value)
 
 	stepResult.Output = map[string]any{
 		"condition_result": result,
@@ -974,23 +974,12 @@ func (as *AssetActionService) canExecuteNode(nodeID int, edges []models.AssetAct
 	return actionutil.CanExecuteNodeTyped(nodeID, edges, executedNodes, ctx.StepResults)
 }
 
-// evaluateCondition evaluates a condition (reused from workspace action service)
-func evaluateCondition(value any, operator, compareValue string) bool {
+func evaluateAssetActionCondition(value any, operator, compareValue string) bool {
 	strValue := fmt.Sprintf("%v", value)
-
+	if result, handled := evaluateStringActionCondition(strValue, operator, compareValue); handled {
+		return result
+	}
 	switch operator {
-	case "eq", "==", "equals":
-		return strValue == compareValue
-	case "ne", "!=", "not_equals":
-		return strValue != compareValue
-	case "contains":
-		return strings.Contains(strValue, compareValue)
-	case "not_contains":
-		return !strings.Contains(strValue, compareValue)
-	case "starts_with":
-		return strings.HasPrefix(strValue, compareValue)
-	case "ends_with":
-		return strings.HasSuffix(strValue, compareValue)
 	case "gt", ">":
 		if numVal, err := strconv.ParseFloat(strValue, 64); err == nil {
 			if numCompare, err := strconv.ParseFloat(compareValue, 64); err == nil {
@@ -1005,10 +994,6 @@ func evaluateCondition(value any, operator, compareValue string) bool {
 			}
 		}
 		return strValue < compareValue
-	case "is_empty":
-		return strValue == "" || strValue == "null" || strValue == "<nil>"
-	case "is_not_empty":
-		return strValue != "" && strValue != "null" && strValue != "<nil>"
 	default:
 		return false
 	}

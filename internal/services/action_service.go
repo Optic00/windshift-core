@@ -1241,45 +1241,11 @@ func (as *ActionService) executeSetFieldCustom(ctx *models.ExecutionContext, ste
 		return err
 	}
 
-	// Validate options and sanitize substituted user content before persisting.
-	fieldKey := strconv.Itoa(config.CustomFieldID)
-	cfv := map[string]any{fieldKey: value}
-	fieldTypes, err := validation.CustomFieldTypes(as.db, cfv)
+	normalized, err := as.normalizeSetFieldCustomValue(config.CustomFieldID, value)
 	if err != nil {
-		return fmt.Errorf("resolve custom field type: %w", err)
+		return err
 	}
-	fieldType, ok := fieldTypes[fieldKey]
-	if !ok {
-		return fmt.Errorf("set_field: custom field %d does not exist", config.CustomFieldID)
-	}
-	switch fieldType {
-	case "select":
-		// An empty substitution clears the field rather than failing
-		// option-id validation.
-		if strings.TrimSpace(value) == "" {
-			cfv[fieldKey] = nil
-		}
-	case "multiselect":
-		// Multiselect values arrive as the substituted string form of a
-		// JSON array ("[1,2]") or a CSV of option ids — decode before
-		// validation so each element is checked against the option set.
-		cfv[fieldKey] = parseActionMultiselectValue(value)
-	case models.CustomFieldTypeBoolean, models.CustomFieldTypeCheckbox:
-		switch strings.ToLower(strings.TrimSpace(value)) {
-		case "":
-			cfv[fieldKey] = nil
-		case "true":
-			cfv[fieldKey] = true
-		case "false":
-			cfv[fieldKey] = false
-		default:
-			return fmt.Errorf("set_field: custom field %d requires true or false", config.CustomFieldID)
-		}
-	}
-	if err := validation.ValidateAndNormalizeCustomFieldValues(as.db, cfv); err != nil {
-		return fmt.Errorf("set_field: custom field %d: %w", config.CustomFieldID, err)
-	}
-	newValue := cfv[fieldKey]
+	newValue := normalized.value
 
 	oldValue, err := as.itemRepo.GetItemCustomFieldValue(itemID, config.CustomFieldID)
 	if err != nil {
@@ -1299,7 +1265,7 @@ func (as *ActionService) executeSetFieldCustom(ctx *models.ExecutionContext, ste
 	for key, existingValue := range item.CustomFieldValues {
 		customFieldValues[key] = existingValue
 	}
-	customFieldValues[fieldKey] = newValue
+	customFieldValues[normalized.key] = newValue
 	result, err := as.updateItemFromAction(ctx, map[string]any{
 		"custom_field_values": customFieldValues,
 	})
@@ -1307,7 +1273,7 @@ func (as *ActionService) executeSetFieldCustom(ctx *models.ExecutionContext, ste
 		return err
 	}
 	if result.Item.CustomFieldValues != nil {
-		newValue = result.Item.CustomFieldValues[fieldKey]
+		newValue = result.Item.CustomFieldValues[normalized.key]
 	}
 
 	key := "custom_field_" + strconv.Itoa(config.CustomFieldID)
@@ -1319,6 +1285,47 @@ func (as *ActionService) executeSetFieldCustom(ctx *models.ExecutionContext, ste
 	}
 
 	return nil
+}
+
+type normalizedActionCustomField struct {
+	key   string
+	value any
+}
+
+func (as *ActionService) normalizeSetFieldCustomValue(customFieldID int, value string) (normalizedActionCustomField, error) {
+	fieldKey := strconv.Itoa(customFieldID)
+	values := map[string]any{fieldKey: value}
+	fieldTypes, err := validation.CustomFieldTypes(as.db, values)
+	if err != nil {
+		return normalizedActionCustomField{}, fmt.Errorf("resolve custom field type: %w", err)
+	}
+	fieldType, ok := fieldTypes[fieldKey]
+	if !ok {
+		return normalizedActionCustomField{}, fmt.Errorf("set_field: custom field %d does not exist", customFieldID)
+	}
+	switch fieldType {
+	case "select":
+		if strings.TrimSpace(value) == "" {
+			values[fieldKey] = nil
+		}
+	case "multiselect":
+		values[fieldKey] = parseActionMultiselectValue(value)
+	case models.CustomFieldTypeBoolean, models.CustomFieldTypeCheckbox:
+		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "":
+			values[fieldKey] = nil
+		case "true":
+			values[fieldKey] = true
+		case "false":
+			values[fieldKey] = false
+		default:
+			return normalizedActionCustomField{}, fmt.Errorf("set_field: custom field %d requires true or false", customFieldID)
+		}
+	}
+	if err := validation.ValidateAndNormalizeCustomFieldValues(as.db, values); err != nil {
+		return normalizedActionCustomField{}, fmt.Errorf("set_field: custom field %d: %w", customFieldID, err)
+	}
+	return normalizedActionCustomField{key: fieldKey, value: values[fieldKey]}, nil
 }
 
 // parseActionMultiselectValue decodes a substituted multiselect set_field
@@ -1815,20 +1822,10 @@ func (as *ActionService) executeCondition(node *models.ActionNode, ctx *models.E
 // evaluateCondition evaluates a condition
 func (as *ActionService) evaluateCondition(value any, operator, compareValue string) bool {
 	strValue := fmt.Sprintf("%v", value)
-
+	if result, handled := evaluateStringActionCondition(strValue, operator, compareValue); handled {
+		return result
+	}
 	switch operator {
-	case "eq", "==", "equals":
-		return strValue == compareValue
-	case "ne", "!=", "not_equals":
-		return strValue != compareValue
-	case "contains":
-		return strings.Contains(strValue, compareValue)
-	case "not_contains":
-		return !strings.Contains(strValue, compareValue)
-	case "starts_with":
-		return strings.HasPrefix(strValue, compareValue)
-	case "ends_with":
-		return strings.HasSuffix(strValue, compareValue)
 	case "gt", ">":
 		return compareNumericOrString(strValue, compareValue, func(a, b float64) bool { return a > b }, func(a, b string) bool { return a > b })
 	case "lt", "<":
@@ -1837,12 +1834,31 @@ func (as *ActionService) evaluateCondition(value any, operator, compareValue str
 		return compareNumericOrString(strValue, compareValue, func(a, b float64) bool { return a >= b }, func(a, b string) bool { return a >= b })
 	case "lte", "<=":
 		return compareNumericOrString(strValue, compareValue, func(a, b float64) bool { return a <= b }, func(a, b string) bool { return a <= b })
-	case "is_empty":
-		return strValue == "" || strValue == "null" || strValue == "<nil>"
-	case "is_not_empty":
-		return strValue != "" && strValue != "null" && strValue != "<nil>"
 	default:
 		return false
+	}
+}
+
+func evaluateStringActionCondition(value, operator, compareValue string) (matched, handled bool) {
+	switch operator {
+	case "eq", "==", "equals":
+		return value == compareValue, true
+	case "ne", "!=", "not_equals":
+		return value != compareValue, true
+	case "contains":
+		return strings.Contains(value, compareValue), true
+	case "not_contains":
+		return !strings.Contains(value, compareValue), true
+	case "starts_with":
+		return strings.HasPrefix(value, compareValue), true
+	case "ends_with":
+		return strings.HasSuffix(value, compareValue), true
+	case "is_empty":
+		return value == "" || value == "null" || value == "<nil>", true
+	case "is_not_empty":
+		return value != "" && value != "null" && value != "<nil>", true
+	default:
+		return false, false
 	}
 }
 
