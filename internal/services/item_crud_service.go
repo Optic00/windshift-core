@@ -114,13 +114,7 @@ func (s *ItemCRUDService) DeleteSingleWithMetadata(itemID int, metadata itemeven
 	}); err != nil {
 		return err
 	}
-	repository.InvalidateItemListCountCache(s.db, workspaceID)
-
-	// Live-update publish (WI-483): the delete has committed.
-	PublishItemChange(itemID, ItemChangeDeleted)
-	if parentID != nil {
-		PublishItemChange(*parentID, ItemChangeUpdated)
-	}
+	s.finishItemDeletion(workspaceID, []int{itemID}, parentID)
 	return nil
 }
 
@@ -131,7 +125,6 @@ func (s *ItemCRUDService) Delete(itemID int) (*DeleteResult, error) {
 
 // DeleteWithMetadata deletes an item subtree and records every removed item.
 func (s *ItemCRUDService) DeleteWithMetadata(itemID int, metadata itemevents.Metadata) (*DeleteResult, error) {
-	// Get parent ID before deleting
 	parentID, err := s.repo.GetParentID(itemID)
 	if err != nil {
 		if err == repository.ErrNotFound {
@@ -140,86 +133,81 @@ func (s *ItemCRUDService) DeleteWithMetadata(itemID int, metadata itemevents.Met
 		return nil, err
 	}
 	workspaceID, _ := s.repo.GetWorkspaceID(itemID)
-
-	// Get all descendant IDs for cascade operations
 	descendantIDs, err := s.repo.GetDescendantIDs(itemID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get descendants: %w", err)
 	}
-
-	// Delete all related data for item and descendants
 	allIDs := append([]int{itemID}, descendantIDs...)
-	if err := database.WithTx(s.db, func(tx database.Tx) error {
-		items, err := s.repo.FindByIDsForUpdateContext(context.Background(), tx, allIDs)
+	if err := s.deleteItemSubtree(itemID, allIDs, len(descendantIDs), metadata); err != nil {
+		return nil, err
+	}
+	s.finishItemDeletion(workspaceID, allIDs, parentID)
+	return &DeleteResult{
+		DeletedCount:   len(allIDs),
+		DescendantIDs:  descendantIDs,
+		AffectedParent: parentID,
+	}, nil
+}
+
+func (s *ItemCRUDService) deleteItemSubtree(rootID int, itemIDs []int, descendantCount int, metadata itemevents.Metadata) error {
+	return database.WithTx(s.db, func(tx database.Tx) error {
+		ctx := context.Background()
+		items, err := s.repo.FindByIDsForUpdateContext(ctx, tx, itemIDs)
 		if err != nil {
 			return err
 		}
-		if len(items) != len(allIDs) {
+		if len(items) != len(itemIDs) {
 			return repository.ErrNotFound
 		}
 		if metadata.OccurredAt.IsZero() {
 			metadata.OccurredAt = time.Now()
 		}
 		recorder := itemevents.NewRecorder(s.db)
-		if err := recordRemovedItemLinks(context.Background(), s.db, tx, allIDs, metadata); err != nil {
+		if err := recordRemovedItemLinks(ctx, s.db, tx, itemIDs, metadata); err != nil {
 			return err
 		}
 		for _, item := range items {
-			descendantCount := 0
-			if item.ID == itemID {
-				descendantCount = len(descendantIDs)
+			removedDescendants := 0
+			if item.ID == rootID {
+				removedDescendants = descendantCount
 			}
-			if _, err := recorder.Deleted(context.Background(), tx, item, descendantCount, metadata); err != nil {
+			if _, err := recorder.Deleted(ctx, tx, item, removedDescendants, metadata); err != nil {
 				return err
 			}
 		}
-		for _, id := range allIDs {
-			// Delete watches
-			if err := s.repo.DeleteItemWatches(tx, id); err != nil {
+		for _, id := range itemIDs {
+			if err := s.deleteItemRelationsTx(tx, id); err != nil {
 				return err
 			}
-
-			// Delete history
-			if err := s.repo.DeleteItemHistory(tx, id); err != nil {
-				return err
-			}
-
-			// Delete links
-			if err := s.repo.DeleteItemLinks(tx, id); err != nil {
-				return err
-			}
-
-			// Clear worklog references
-			if err := s.repo.ClearWorklogItemReferences(tx, id); err != nil {
-				return err
-			}
-
-			// Delete the item itself
 			if err := s.repo.Delete(tx, id); err != nil {
 				return err
 			}
 		}
 		return nil
-	}); err != nil {
-		return nil, err
-	}
-	repository.InvalidateItemListCountCache(s.db, workspaceID)
+	})
+}
 
-	// Live-update publish (WI-483): the cascade delete committed. Announce every
-	// removed item (so anyone viewing a descendant reconciles) and refresh the
-	// affected parent's child list.
-	for _, id := range allIDs {
+func (s *ItemCRUDService) deleteItemRelationsTx(tx database.Tx, itemID int) error {
+	if err := s.repo.DeleteItemWatches(tx, itemID); err != nil {
+		return err
+	}
+	if err := s.repo.DeleteItemHistory(tx, itemID); err != nil {
+		return err
+	}
+	if err := s.repo.DeleteItemLinks(tx, itemID); err != nil {
+		return err
+	}
+	return s.repo.ClearWorklogItemReferences(tx, itemID)
+}
+
+func (s *ItemCRUDService) finishItemDeletion(workspaceID int, itemIDs []int, parentID *int) {
+	repository.InvalidateItemListCountCache(s.db, workspaceID)
+	for _, id := range itemIDs {
 		PublishItemChange(id, ItemChangeDeleted)
 	}
 	if parentID != nil {
 		PublishItemChange(*parentID, ItemChangeUpdated)
 	}
-
-	return &DeleteResult{
-		DeletedCount:   len(allIDs),
-		DescendantIDs:  descendantIDs,
-		AffectedParent: parentID,
-	}, nil
 }
 
 // CopyOptions contains options for copying an item
@@ -485,6 +473,31 @@ func (s *ItemCRUDService) evaluateQLContext(requestCtx context.Context, qlQuery 
 	return qlSQL, qlArgs, nil
 }
 
+type resolvedItemListQL struct {
+	sql                string
+	args               []any
+	collectionResolved bool
+}
+
+func (s *ItemCRUDService) resolveItemListQLContext(ctx context.Context, qlQuery string, collectionID int, subQL string, userID int) (resolvedItemListQL, error) {
+	qlQuery, collectionResolved, err := s.resolveCollectionQLContext(ctx, qlQuery, collectionID)
+	if err != nil {
+		return resolvedItemListQL{}, err
+	}
+	if subQL = strings.TrimSpace(subQL); subQL != "" {
+		if qlQuery == "" {
+			qlQuery = subQL
+		} else {
+			qlQuery = "(" + qlQuery + ") AND (" + subQL + ")"
+		}
+	}
+	qlSQL, qlArgs, err := s.evaluateQLContext(ctx, qlQuery, cql.UserContext(userID))
+	if err != nil {
+		return resolvedItemListQL{}, err
+	}
+	return resolvedItemListQL{sql: qlSQL, args: qlArgs, collectionResolved: collectionResolved}, nil
+}
+
 // BacklogParams contains parameters for retrieving backlog items
 type BacklogParams struct {
 	WorkspaceID      int    // 0 if not specified (collection-only query)
@@ -521,33 +534,17 @@ func (s *ItemCRUDService) GetBacklogItemsContext(ctx context.Context, params Bac
 		StatusIDs: backlogStatusIDs,
 	}
 
-	// Resolve QL query from collection or direct parameter
-	qlQuery, collectionResolved, err := s.resolveCollectionQLContext(ctx, params.QLQuery, params.CollectionID)
+	resolvedQL, err := s.resolveItemListQLContext(ctx, params.QLQuery, params.CollectionID, params.SubQLQuery, params.UserID)
 	if err != nil {
 		return nil, 0, err
 	}
-
-	// Combine with sub-filter QL if provided
-	if subQL := strings.TrimSpace(params.SubQLQuery); subQL != "" {
-		if qlQuery != "" {
-			qlQuery = "(" + qlQuery + ") AND (" + subQL + ")"
-		} else {
-			qlQuery = subQL
-		}
-	}
-
-	// Evaluate QL query into SQL
-	qlSQL, qlArgs, err := s.evaluateQLContext(ctx, qlQuery, cql.UserContext(params.UserID))
-	if err != nil {
-		return nil, 0, err
-	}
-	if qlSQL != "" {
-		filters.QLQuery = qlSQL
-		filters.QLArgs = qlArgs
+	if resolvedQL.sql != "" {
+		filters.QLQuery = resolvedQL.sql
+		filters.QLArgs = resolvedQL.args
 	}
 
 	// Apply workspace_id filter only when no collection was resolved
-	if !collectionResolved && params.WorkspaceID > 0 {
+	if !resolvedQL.collectionResolved && params.WorkspaceID > 0 {
 		filters.WorkspaceID = &params.WorkspaceID
 	}
 
@@ -596,39 +593,23 @@ func (s *ItemCRUDService) ListWithQLPageContext(ctx context.Context, params List
 
 	filters := params.Filters
 
-	// Resolve QL query from collection or direct parameter
-	qlQuery, collectionResolved, err := s.resolveCollectionQLContext(ctx, params.QLQuery, params.CollectionID)
+	resolvedQL, err := s.resolveItemListQLContext(ctx, params.QLQuery, params.CollectionID, params.SubQLQuery, params.UserID)
 	if err != nil {
 		return repository.ItemListPage{}, err
 	}
-
-	// Combine with sub-filter QL if provided
-	if subQL := strings.TrimSpace(params.SubQLQuery); subQL != "" {
-		if qlQuery != "" {
-			qlQuery = "(" + qlQuery + ") AND (" + subQL + ")"
-		} else {
-			qlQuery = subQL
-		}
-	}
-
-	// Evaluate QL query into SQL
-	qlSQL, qlArgs, err := s.evaluateQLContext(ctx, qlQuery, cql.UserContext(params.UserID))
-	if err != nil {
-		return repository.ItemListPage{}, err
-	}
-	if qlSQL != "" {
-		filters.QLQuery = qlSQL
-		filters.QLArgs = qlArgs
+	if resolvedQL.sql != "" {
+		filters.QLQuery = resolvedQL.sql
+		filters.QLArgs = resolvedQL.args
 	}
 
 	// If collection was resolved but produced no effective query, return empty results.
 	// A collection with no filter means "nothing to show yet."
-	if collectionResolved && filters.QLQuery == "" {
+	if resolvedQL.collectionResolved && filters.QLQuery == "" {
 		return repository.ItemListPage{Items: []models.Item{}}, nil
 	}
 
 	// Apply workspace_id filter only when no collection was resolved
-	if !collectionResolved && params.WorkspaceID > 0 {
+	if !resolvedQL.collectionResolved && params.WorkspaceID > 0 {
 		filters.WorkspaceID = &params.WorkspaceID
 	}
 
