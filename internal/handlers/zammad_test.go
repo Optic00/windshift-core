@@ -166,7 +166,7 @@ func TestZammadWorkspaceOwnersRequireItemEditPermission(t *testing.T) {
 	request.SetPathValue("id", "helpdesk")
 	recorder := httptest.NewRecorder()
 	handler.GetWorkspaceOwners(recorder, request)
-	if recorder.Code != http.StatusForbidden {
+	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("viewer could enumerate Zammad owners: status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }

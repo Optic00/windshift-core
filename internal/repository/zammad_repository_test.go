@@ -138,6 +138,67 @@ func TestZammadSyncLeaseOwnerTakeoverProtectsSnapshotReleaseAndDelete(t *testing
 	}
 }
 
+func TestZammadSQLiteTimePredicatesNormalizeNonUTCTimestamps(t *testing.T) {
+	f := newZammadLeaseFixture(t)
+	f.makeComplete(t)
+	localNow := time.Now().In(time.FixedZone("UTC+14", 14*60*60))
+
+	if _, err := f.db.ExecWrite(`UPDATE zammad_ticket_links SET next_attempt_at = ? WHERE id = ?`, localNow.Add(-time.Minute), f.linkID); err != nil {
+		t.Fatal(err)
+	}
+	due, err := f.repo.ListDueTicketLinks(localNow.Add(time.Minute), 10)
+	if err != nil || len(due) != 1 || due[0].ID != f.linkID {
+		t.Fatalf("non-UTC retry timestamp was not compared in UTC: links=%#v err=%v", due, err)
+	}
+
+	claimed, err := f.repo.ClaimSync(f.linkID, "expired-owner", localNow.Add(-time.Minute))
+	if err != nil || !claimed {
+		t.Fatalf("claim expired non-UTC lease: claimed=%v err=%v", claimed, err)
+	}
+	claimed, err = f.repo.ClaimSync(f.linkID, "replacement-owner", localNow.Add(time.Minute))
+	if err != nil || !claimed {
+		t.Fatalf("take over expired non-UTC lease: claimed=%v err=%v", claimed, err)
+	}
+
+	if err := f.repo.CreateOAuthState("non-utc-state", "zammad-test", 1, 1, localNow.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	state, err := f.repo.ConsumeOAuthState("non-utc-state")
+	if err != nil || state.ProviderID != "zammad-test" || state.InitiatedBy != 1 {
+		t.Fatalf("non-UTC OAuth expiry was not compared in UTC: state=%#v err=%v", state, err)
+	}
+
+	if err := f.repo.UpsertOAuthToken(ZammadOAuthToken{
+		ProviderID: "zammad-test", OAuthGeneration: 1, ExpiresAt: localNow.Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecWrite(`UPDATE zammad_oauth_tokens
+		SET refresh_lock_until = ?, refresh_claim_owner = ? WHERE provider_id = ?`,
+		localNow.Add(-time.Minute), "expired-oauth-owner", "zammad-test"); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err = f.repo.ClaimOAuthRefresh("zammad-test", 1, "replacement-oauth-owner", localNow.Add(time.Minute))
+	if err != nil || !claimed {
+		t.Fatalf("take over expired non-UTC OAuth lease: claimed=%v err=%v", claimed, err)
+	}
+	if _, err := f.repo.GetOAuthTokenForRefreshClaim("zammad-test", 1, "replacement-oauth-owner"); err != nil {
+		t.Fatalf("read active non-UTC OAuth lease: %v", err)
+	}
+	if err := database.WithTx(f.db, func(tx database.Tx) error {
+		guarded, err := f.repo.GuardOAuthRefreshClaimTx(tx, "zammad-test", 1, "replacement-oauth-owner")
+		if err != nil {
+			return err
+		}
+		if !guarded {
+			t.Fatal("active non-UTC OAuth lease was not guarded")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestZammadTicketCompletionRequiresCurrentLeaseOwner(t *testing.T) {
 	f := newZammadLeaseFixture(t)
 	now := time.Now().UTC()

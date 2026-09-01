@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -35,7 +36,7 @@ func (t httpTestTransport) Do(ctx context.Context, method, targetURL string, bod
 	return &Response{StatusCode: resp.StatusCode, Body: responseBody}, nil
 }
 
-func TestClientStatesCorrelationAndTicketCreation(t *testing.T) {
+func TestClientStatesCorrelationSearchAndTicketCreation(t *testing.T) {
 	t.Parallel()
 	const token = "synthetic-secret-token"
 	postCount := 0
@@ -47,14 +48,13 @@ func TestClientStatesCorrelationAndTicketCreation(t *testing.T) {
 		switch {
 		case r.URL.Path == "/api/v1/ticket_states":
 			_, _ = w.Write([]byte(`[{"id":4,"name":"closed","state_type_id":5,"active":true},{"id":5,"name":"inactive","active":false}]`))
-		case r.URL.Path == "/api/v1/object_manager_attributes":
-			_, _ = w.Write([]byte(`[{"name":"windshift_item_key","object":"Ticket","active":true}]`))
 		case r.URL.Path == "/api/v1/tickets/search":
 			_, _ = w.Write([]byte(`[{"id":9,"number":"42009","group_id":1,"state_id":2,"state":"open","windshift_item_key":"windshift:abc:ITEM-49"}]`))
 		case r.URL.Path == "/api/v1/tickets" && r.Method == http.MethodPost:
 			postCount++
 			body, _ := io.ReadAll(r.Body)
-			if !strings.Contains(string(body), `"windshift_item_key":"windshift:abc:ITEM-50"`) {
+			if !strings.Contains(string(body), `"windshift_item_key":"windshift:abc:ITEM-50"`) ||
+				!strings.Contains(string(body), `"group_id":7`) || strings.Contains(string(body), `"group":`) {
 				t.Fatalf("ticket payload lacks correlation field: %s", body)
 			}
 			w.WriteHeader(http.StatusCreated)
@@ -73,14 +73,11 @@ func TestClientStatesCorrelationAndTicketCreation(t *testing.T) {
 	if len(states) != 1 || states[0].Name != "closed" {
 		t.Fatalf("unexpected states: %#v", states)
 	}
-	if err := client.ValidateCorrelationField(context.Background(), "windshift_item_key"); err != nil {
-		t.Fatal(err)
-	}
 	found, err := client.FindByCorrelation(context.Background(), "windshift_item_key", "windshift:abc:ITEM-49")
 	if err != nil || found == nil || found.ID != 9 {
 		t.Fatalf("unexpected search result: ticket=%#v err=%v", found, err)
 	}
-	created, err := client.CreateTicket(context.Background(), "ITEM-50", "Synthetic body", "robot@example.test", "Support", "windshift_item_key", "windshift:abc:ITEM-50")
+	created, err := client.CreateTicket(context.Background(), "ITEM-50", "Synthetic body", "robot@example.test", 7, "windshift_item_key", "windshift:abc:ITEM-50")
 	if err != nil || created.ID != 10 || postCount != 1 {
 		t.Fatalf("unexpected create result: ticket=%#v posts=%d err=%v", created, postCount, err)
 	}
@@ -154,7 +151,7 @@ func TestClientOwnersUsesGroupPermissionQueryAndFiltersIneligibleUsers(t *testin
 			return
 		}
 		query := r.URL.Query()
-		if query.Get("query") != "*" || query.Get("permissions[]") != "ticket.agent" || query.Get("group_ids[7]") != "full" || query.Get("page") != "1" || query.Get("per_page") != "100" {
+		if query.Get("query") != "*" || query.Get("expand") != "true" || query.Get("permissions[]") != "ticket.agent" || query.Get("group_ids[7]") != "full" || query.Get("page") != "1" || query.Get("per_page") != "100" {
 			t.Fatalf("unexpected owner query: %s", r.URL.RawQuery)
 		}
 		_, _ = w.Write([]byte(`[
@@ -177,6 +174,31 @@ func TestClientOwnersUsesGroupPermissionQueryAndFiltersIneligibleUsers(t *testin
 	}
 }
 
+func TestClientOwnersDecodesZammad711ExpandedSearchFixture(t *testing.T) {
+	t.Parallel()
+	fixture, err := os.ReadFile("testdata/users_search_expand_zammad_7_1_1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/users/search" || r.URL.Query().Get("expand") != "true" {
+			t.Fatalf("unexpected owner request: %s?%s", r.URL.Path, r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(fixture)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "token", httpTestTransport{client: server.Client()})
+	owners, err := client.Owners(context.Background(), 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(owners) != 1 || owners[0] != (Owner{ID: 42, Name: "Ada Lovelace"}) {
+		t.Fatalf("unexpected owners from Zammad 7.1.1 fixture: %#v", owners)
+	}
+}
+
 func TestClientOwnersPagesUntilShortPage(t *testing.T) {
 	t.Parallel()
 	pageOne := make([]string, 100)
@@ -189,7 +211,7 @@ func TestClientOwnersPagesUntilShortPage(t *testing.T) {
 			return
 		}
 		query := r.URL.Query()
-		if query.Get("query") != "*" || query.Get("permissions[]") != "ticket.agent" || query.Get("group_ids[7]") != "full" || query.Get("per_page") != "100" {
+		if query.Get("query") != "*" || query.Get("expand") != "true" || query.Get("permissions[]") != "ticket.agent" || query.Get("group_ids[7]") != "full" || query.Get("per_page") != "100" {
 			t.Fatalf("unexpected owner query: %s", r.URL.RawQuery)
 		}
 		switch query.Get("page") {

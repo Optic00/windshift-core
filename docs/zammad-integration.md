@@ -50,6 +50,7 @@ This lets Windshift read the required ticket metadata and owners, create tickets
 Do not grant administration, user-management, group-management, delete-ticket, or unrestricted access to other groups.
 Zammad role and group permissions must enforce the same boundary as `allowed_groups` in the Windshift connection.
 The default group must be active and included in that allowed set.
+The default customer must already exist as an active Zammad user and is resolved by its configured login or email address.
 Store every allowed group as an ID and name pair, for example `{"id":7,"name":"Support"}`.
 Windshift persists this small catalog and does not call Zammad's administrator-only `GET /api/v1/groups` endpoint during ticket creation, linking, updating, or synchronization.
 The legacy `allowed_group_ids` request field is accepted only as an upgrade bridge; new clients should send `allowed_groups`.
@@ -57,9 +58,15 @@ Because the least-privilege service account cannot list all groups, connection t
 During an upgrade, all legacy group IDs remain authorized for existing links, but only a group whose stored name is known can be selected for new ticket creation.
 An administrator must confirm and store the `ID:name` pair before creating tickets in a legacy non-default group.
 
+Owner discovery calls `/api/v1/users/search` with `expand=true`, `permissions[]=ticket.agent`, and the effective `group_ids[{id}]=full` filter.
+The expanded search contract returns an array of user records containing the active flag, display-name fields, and group access map required for local defense-in-depth validation.
+This request shape was verified with the restricted service account against Zammad 7.1.1; the checked-in client fixture contains the same field names and types with identifying values replaced.
+Ticket creation sends the persisted numeric `group_id`, so a later group rename does not invalidate the configured destination.
+
 Create an active text ticket object attribute named `windshift_item_key`, or configure another valid correlation field name.
 Windshift writes a deterministic correlation key to this field and uses it to find an already-created ticket safely.
 The field is the idempotency boundary for create retries and must be readable by the service agent.
+Windshift never reads the administrator-only object-manager endpoint at runtime, so the connection test cannot verify this field automatically.
 
 For a permission-checked return link from Zammad to the current Windshift item, configure this link template on the same attribute:
 
@@ -88,7 +95,7 @@ That retry searches by correlation key before permitting a new create.
 
 Linking an existing ticket verifies that it exists, belongs to a configured allowed group, and is not already associated with another correlation key.
 Updating a link sends only the requested state, group, and owner changes to Zammad.
-The selected group must be in the persisted allowlist, the selected state must be active, and the selected owner must be able to change tickets in the resulting group.
+The selected group must be in the persisted allowlist, the selected state must be active, and the selected owner must have Zammad's `full` ticket access in the resulting group.
 Changing the group without selecting an owner resets the ticket to Zammad's unassigned owner.
 Unlinking clears the remote correlation field only when it still equals this Windshift link's exact key, removes the local association and visible item link, and never deletes the remote ticket.
 If the remote result is ambiguous, the local link remains so the operation can be retried safely.

@@ -413,7 +413,6 @@ func (h *ZammadHandler) respondServiceError(w http.ResponseWriter, r *http.Reque
 	default:
 		var apiErr *zammad.APIError
 		var upstreamErr *zammad.UpstreamError
-		var configurationErr *zammad.ConfigurationError
 		var validationErr *services.ZammadValidationError
 		var transitionErr *services.TransitionRejection
 		if errors.Is(err, services.ErrZammadReauthorizationRequired) {
@@ -428,8 +427,6 @@ func (h *ZammadHandler) respondServiceError(w http.ResponseWriter, r *http.Reque
 		switch {
 		case errors.As(err, &validationErr):
 			respondValidationError(w, r, validationErr.Error())
-		case errors.As(err, &configurationErr):
-			respondBadRequest(w, r, configurationErr.Error())
 		case errors.As(err, &apiErr) || errors.As(err, &upstreamErr):
 			respondError(w, r, restapi.NewAPIError(http.StatusBadGateway, "ZAMMAD_UPSTREAM_ERROR", "Zammad could not complete the request"))
 		case errors.As(err, &transitionErr):

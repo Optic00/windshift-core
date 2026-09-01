@@ -141,8 +141,6 @@ func (f *fakeZammadTransport) Do(_ context.Context, method, targetURL string, bo
 		return jsonResponse(http.StatusOK, []map[string]any{{"id": 2, "name": "open", "active": true}, {"id": 4, "name": "closed", "active": true}}), nil
 	case parsed.Path == "/api/v1/users/search":
 		return jsonResponse(http.StatusOK, f.users), nil
-	case parsed.Path == "/api/v1/object_manager_attributes":
-		return jsonResponse(http.StatusOK, []map[string]any{{"name": "windshift_item_key", "object": "Ticket", "active": true}}), nil
 	default:
 		return jsonResponse(http.StatusNotFound, map[string]string{"error": "not found"}), nil
 	}

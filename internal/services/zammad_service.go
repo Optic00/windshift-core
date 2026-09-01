@@ -1155,7 +1155,6 @@ func (s *ZammadService) CreateTicket(ctx context.Context, itemID, actorID int, r
 	// destination and correlation key. This also covers an item moved to a
 	// different workspace between attempts.
 	groupID = link.GroupID
-	groupName = link.GroupName
 	correlation = link.CorrelationKey
 	connection, client, err = s.client(ctx, link.ProviderID, item.WorkspaceID)
 	if err != nil {
@@ -1184,7 +1183,7 @@ func (s *ZammadService) CreateTicket(ctx context.Context, itemID, actorID int, r
 			return nil, err
 		}
 		ticket, requestErr = client.CreateTicket(ctx, title, body, connection.DefaultCustomer,
-			groupName, connection.CorrelationField, correlation)
+			groupID, connection.CorrelationField, correlation)
 	}
 	if requestErr != nil {
 		safeError := RedactString(requestErr.Error())

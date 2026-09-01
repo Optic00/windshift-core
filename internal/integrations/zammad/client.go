@@ -43,10 +43,6 @@ type UpstreamError struct{ Cause error }
 func (e *UpstreamError) Error() string { return "Zammad request failed" }
 func (e *UpstreamError) Unwrap() error { return e.Cause }
 
-type ConfigurationError struct{ Message string }
-
-func (e *ConfigurationError) Error() string { return e.Message }
-
 type Client struct {
 	baseURL   string
 	authValue string
@@ -80,12 +76,6 @@ type Owner struct {
 	Name string
 }
 
-type objectAttribute struct {
-	Name   string `json:"name"`
-	Object string `json:"object"`
-	Active bool   `json:"active"`
-}
-
 // States returns the active ticket states. Zammad permits this endpoint for
 // ordinary ticket agents, so it is safe for runtime use.
 func (c *Client) States(ctx context.Context) ([]models.ZammadState, error) {
@@ -100,19 +90,6 @@ func (c *Client) States(ctx context.Context) ([]models.ZammadState, error) {
 		}
 	}
 	return activeStates, nil
-}
-
-func (c *Client) ValidateCorrelationField(ctx context.Context, field string) error {
-	attributes := []objectAttribute{}
-	if err := c.getJSON(ctx, "/api/v1/object_manager_attributes", &attributes); err != nil {
-		return err
-	}
-	for _, attribute := range attributes {
-		if attribute.Active && attribute.Name == field && strings.EqualFold(attribute.Object, "Ticket") {
-			return nil
-		}
-	}
-	return &ConfigurationError{Message: fmt.Sprintf("Zammad ticket field %q is missing or inactive", field)}
 }
 
 func (c *Client) FindByCorrelation(ctx context.Context, field, value string) (*Ticket, error) {
@@ -163,10 +140,10 @@ func (c *Client) FindByNumber(ctx context.Context, number string) (*Ticket, erro
 	return nil, nil
 }
 
-func (c *Client) CreateTicket(ctx context.Context, title, body, customer, groupName, correlationField, correlationValue string) (*Ticket, error) {
+func (c *Client) CreateTicket(ctx context.Context, title, body, customer string, groupID int, correlationField, correlationValue string) (*Ticket, error) {
 	payload := map[string]any{
 		"title":    title,
-		"group":    groupName,
+		"group_id": groupID,
 		"customer": customer,
 		"article": map[string]any{
 			"subject":  title,
@@ -242,6 +219,10 @@ func (c *Client) Owners(ctx context.Context, groupID int) ([]Owner, error) {
 	for page := 1; ; page++ {
 		query := url.Values{}
 		query.Set("query", "*")
+		// Zammad's label/term search form is intentionally compact. Request the
+		// documented expanded record form explicitly so owner validation always
+		// receives active, group_ids, and display-name fields.
+		query.Set("expand", "true")
 		query.Add("permissions[]", "ticket.agent")
 		query.Set(fmt.Sprintf("group_ids[%d]", groupID), "full")
 		query.Set("page", strconv.Itoa(page))
