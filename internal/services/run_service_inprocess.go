@@ -282,41 +282,8 @@ func (s *RunService) Report(ctx context.Context, runID int, result RunnerResult)
 	delete(s.claims, runID)
 	s.claimsMu.Unlock()
 
-	if result.ContainerID != "" {
-		if err := s.repo.SetContainerID(ctx, runID, result.ContainerID); err != nil {
-			s.logger.Printf("run service: set container_id run=%d: %v", runID, err)
-		}
-	}
-	status := result.Status
-	if !models.IsAgentRunTerminal(status) {
-		status = models.AgentRunStatusFailed
-		if result.Error == "" {
-			result.Error = fmt.Sprintf("runner returned non-terminal status %q", result.Status)
-		}
-	}
-
-	// The orchestrator pushes because agents lack SCM credentials. Each repo is
-	// delivered independently; no-commit repos are skipped, while a push failure
-	// fails the run so the PR hook cannot open an unpushed branch.
-	var pushedRepos []PostRunRepo
-	if status == models.AgentRunStatusSucceeded && st != nil && !st.ephemeral && len(st.checkouts) > 0 && s.preparer != nil {
-		for i, pw := range st.checkouts {
-			rspec := st.repos[i]
-			rr := PostRunRepo{RepoSlug: rspec.RepoSlug, Branch: pw.Branch, BaseCommit: pw.BaseCommit}
-			switch err := s.preparer.Push(context.Background(), pw, rspec.Token); {
-			case errors.Is(err, repoprep.ErrNoNewCommits):
-				rr.Branch = "" // nothing delivered for this repo
-				if err := s.repo.AppendEvent(ctx, runID, "lifecycle", fmt.Sprintf(`{"phase":"no_changes","repo":%q}`, rspec.RepoSlug)); err != nil {
-					s.logger.Printf("run service: append no_changes event run=%d: %v", runID, err)
-				}
-			case err != nil:
-				s.logger.Printf("run service: push run branch run=%d repo=%s: %v", runID, rspec.RepoSlug, err)
-				status = models.AgentRunStatusFailed
-				result.Error = fmt.Sprintf("push run branch %s: %v", rspec.RepoSlug, err)
-			}
-			pushedRepos = append(pushedRepos, rr)
-		}
-	}
+	status := s.normalizeRunnerResult(ctx, runID, &result)
+	pushedRepos, status := s.pushClaimRepos(ctx, runID, st, status, &result)
 	// Legacy scalar branch fields mirror the primary repo's no-change outcome.
 	noChanges := len(pushedRepos) > 0 && pushedRepos[0].Branch == ""
 
@@ -373,6 +340,31 @@ func (s *RunService) Report(ctx context.Context, runID int, result RunnerResult)
 	s.unregisterCancel(runID)
 	s.wg.Done()
 	return nil
+}
+
+// pushClaimRepos delivers local checkout branches before the run is finalized.
+func (s *RunService) pushClaimRepos(ctx context.Context, runID int, st *claimState, status string, result *RunnerResult) (repos []PostRunRepo, finalStatus string) {
+	if status != models.AgentRunStatusSucceeded || st == nil || st.ephemeral || len(st.checkouts) == 0 || s.preparer == nil {
+		return nil, status
+	}
+	repos = make([]PostRunRepo, 0, len(st.checkouts))
+	for i, prepared := range st.checkouts {
+		repo := st.repos[i]
+		pushed := PostRunRepo{RepoSlug: repo.RepoSlug, Branch: prepared.Branch, BaseCommit: prepared.BaseCommit}
+		switch err := s.preparer.Push(context.Background(), prepared, repo.Token); {
+		case errors.Is(err, repoprep.ErrNoNewCommits):
+			pushed.Branch = ""
+			if err := s.repo.AppendEvent(ctx, runID, "lifecycle", fmt.Sprintf(`{"phase":"no_changes","repo":%q}`, repo.RepoSlug)); err != nil {
+				s.logger.Printf("run service: append no_changes event run=%d: %v", runID, err)
+			}
+		case err != nil:
+			s.logger.Printf("run service: push run branch run=%d repo=%s: %v", runID, repo.RepoSlug, err)
+			status = models.AgentRunStatusFailed
+			result.Error = fmt.Sprintf("push run branch %s: %v", repo.RepoSlug, err)
+		}
+		repos = append(repos, pushed)
+	}
+	return repos, status
 }
 
 // Heartbeat implements OrchestratorClient. The in-process worker holds the
