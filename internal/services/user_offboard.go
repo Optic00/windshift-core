@@ -1,10 +1,13 @@
 package services
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 
 	"windshift/internal/database"
+	"windshift/internal/models"
 	"windshift/internal/repository"
 )
 
@@ -21,7 +24,11 @@ type UserNotificationDeleter interface {
 // Returns the IDs of api_tokens revoked during the transaction so the caller
 // can evict them from TokenManager's validation cache (the cache key is a
 // SHA256 of the raw token, not visible to this DB-only service).
-func OffboardUser(db database.Database, userID int, notificationDeleter UserNotificationDeleter) (revokedTokenIDs []int, err error) {
+func OffboardUser(db database.Database, userID int, notificationDeleter UserNotificationDeleter, invalidators ...*AuthorizationCacheInvalidator) (revokedTokenIDs []int, err error) {
+	var cacheInvalidator *AuthorizationCacheInvalidator
+	if len(invalidators) > 0 {
+		cacheInvalidator = invalidators[0]
+	}
 	tx, err := db.Begin()
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
@@ -56,6 +63,8 @@ func OffboardUser(db database.Database, userID int, notificationDeleter UserNoti
 	var wsID int
 	if err := row.Scan(&wsID); err == nil {
 		personalWsID = &wsID
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("failed to load personal workspace: %w", err)
 	}
 	itemRepo := repository.NewItemRepository(db)
 	if personalWsID != nil {
@@ -82,9 +91,11 @@ func OffboardUser(db database.Database, userID int, notificationDeleter UserNoti
 	}
 	for tokenRows.Next() {
 		var id int
-		if scanErr := tokenRows.Scan(&id); scanErr == nil {
-			revokedTokenIDs = append(revokedTokenIDs, id)
+		if scanErr := tokenRows.Scan(&id); scanErr != nil {
+			_ = tokenRows.Close()
+			return nil, fmt.Errorf("failed to scan api_token: %w", scanErr)
 		}
+		revokedTokenIDs = append(revokedTokenIDs, id)
 	}
 	if err := tokenRows.Err(); err != nil {
 		_ = tokenRows.Close()
@@ -108,6 +119,29 @@ func OffboardUser(db database.Database, userID int, notificationDeleter UserNoti
 	// e) Remove group memberships
 	if _, err := tx.Exec(`DELETE FROM group_members WHERE user_id = ?`, userID); err != nil {
 		return nil, fmt.Errorf("failed to remove group memberships: %w", err)
+	}
+
+	var changesEveryone bool
+	if err := tx.QueryRow(`
+		SELECT EXISTS(
+			SELECT 1
+			FROM user_workspace_roles target
+			JOIN workspace_roles wr ON wr.id = target.role_id
+			WHERE target.user_id = ?
+			  AND wr.builtin_key IN (?, ?, ?)
+			  AND NOT EXISTS (
+				SELECT 1 FROM user_workspace_roles other
+				WHERE other.workspace_id = target.workspace_id
+				  AND other.role_id = target.role_id
+				  AND other.user_id <> target.user_id
+			  )
+			  AND NOT EXISTS (
+				SELECT 1 FROM group_workspace_roles gwr
+				WHERE gwr.workspace_id = target.workspace_id AND gwr.role_id = target.role_id
+			  )
+		)
+	`, userID, models.RoleBuiltinViewer, models.RoleBuiltinEditor, models.RoleBuiltinTester).Scan(&changesEveryone); err != nil {
+		return nil, fmt.Errorf("failed to capture implicit access effect: %w", err)
 	}
 
 	// f) Remove workspace role assignments
@@ -158,6 +192,14 @@ func OffboardUser(db database.Database, userID int, notificationDeleter UserNoti
 	}
 	if personalWsID != nil {
 		repository.InvalidateItemListCountCache(db, *personalWsID)
+	}
+	if err := cacheInvalidator.Apply(AuthorizationInvalidation{
+		UserIDs:                 []int{userID},
+		ResetPermissions:        changesEveryone,
+		ActiveWorkspacesChanged: personalWsID != nil,
+		WorkspaceKeysChanged:    personalWsID != nil,
+	}); err != nil {
+		return revokedTokenIDs, fmt.Errorf("invalidate authorization caches after offboarding: %w", err)
 	}
 
 	if notificationDeleter != nil {

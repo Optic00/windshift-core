@@ -21,15 +21,21 @@ type WorkspaceHandler struct {
 	db               database.Database
 	workspaceService *services.WorkspaceService
 	itemCRUD         *services.ItemCRUDService
+	cacheInvalidator *services.AuthorizationCacheInvalidator
 }
 
 // NewWorkspaceHandler creates a new workspace handler
-func NewWorkspaceHandler(db database.Database, permissionService *services.PermissionService) *WorkspaceHandler {
+func NewWorkspaceHandler(db database.Database, permissionService *services.PermissionService, invalidators ...*services.AuthorizationCacheInvalidator) *WorkspaceHandler {
+	cacheInvalidator := services.NewAuthorizationCacheInvalidator(permissionService, nil)
+	if len(invalidators) > 0 && invalidators[0] != nil {
+		cacheInvalidator = invalidators[0]
+	}
 	return &WorkspaceHandler{
 		BaseHandler:      NewBaseHandler(db, permissionService),
 		db:               db,
 		workspaceService: services.NewWorkspaceServiceWithAccess(db, authz.New(db, permissionService)),
 		itemCRUD:         services.NewItemCRUDService(db),
+		cacheInvalidator: cacheInvalidator,
 	}
 }
 
@@ -263,9 +269,13 @@ func (h *WorkspaceHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.PermissionService != nil {
-		h.PermissionService.InvalidateActiveWorkspaceCache()
-		h.PermissionService.OnEveryoneAccessChanged()
+	if err := h.cacheInvalidator.Apply(services.AuthorizationInvalidation{
+		ResetPermissions:        true,
+		ActiveWorkspacesChanged: true,
+		WorkspaceKeysChanged:    true,
+	}); err != nil {
+		h.RespondInternalError(w, r)
+		return
 	}
 
 	if req.TemplateWorkspaceID != nil {
@@ -331,6 +341,12 @@ func (h *WorkspaceHandler) Update(w http.ResponseWriter, r *http.Request) {
 		sanitize.Pair{Target: req.Color, Policy: sanitize.ShortIdentifier, Label: "Color"},
 	)
 
+	before, err := h.workspaceService.GetByID(wsID)
+	if err != nil {
+		h.RespondError(w, r, restapi.ErrWorkspaceNotFound)
+		return
+	}
+
 	ws, err := h.workspaceService.Update(services.UpdateWorkspaceParams{
 		ID:          wsID,
 		Name:        req.Name,
@@ -349,6 +365,13 @@ func (h *WorkspaceHandler) Update(w http.ResponseWriter, r *http.Request) {
 			h.RespondError(w, r, restapi.NewAPIError(http.StatusUnprocessableEntity, restapi.ErrCodeInvalidWorkspaceTemplate, "Personal workspaces cannot be templates"))
 			return
 		}
+		h.RespondInternalError(w, r)
+		return
+	}
+	if err := h.cacheInvalidator.Apply(services.AuthorizationInvalidation{
+		ResetPermissions:        before.Active != ws.Active,
+		ActiveWorkspacesChanged: before.Active != ws.Active,
+	}); err != nil {
 		h.RespondInternalError(w, r)
 		return
 	}
@@ -397,6 +420,14 @@ func (h *WorkspaceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 			h.RespondError(w, r, restapi.ErrWorkspaceNotFound)
 			return
 		}
+		h.RespondInternalError(w, r)
+		return
+	}
+	if err := h.cacheInvalidator.Apply(services.AuthorizationInvalidation{
+		ResetPermissions:        true,
+		ActiveWorkspacesChanged: true,
+		WorkspaceKeysChanged:    true,
+	}); err != nil {
 		h.RespondInternalError(w, r)
 		return
 	}

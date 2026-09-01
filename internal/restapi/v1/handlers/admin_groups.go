@@ -16,14 +16,20 @@ import (
 // AdminGroupHandler handles admin group management in REST API v1.
 type AdminGroupHandler struct {
 	BaseHandler
-	repo *repository.AdminGroupRepository
+	repo             *repository.AdminGroupRepository
+	cacheInvalidator *services.AuthorizationCacheInvalidator
 }
 
 // NewAdminGroupHandler creates a new admin group handler.
-func NewAdminGroupHandler(db database.Database, permissionService *services.PermissionService) *AdminGroupHandler {
+func NewAdminGroupHandler(db database.Database, permissionService *services.PermissionService, invalidators ...*services.AuthorizationCacheInvalidator) *AdminGroupHandler {
+	cacheInvalidator := services.NewAuthorizationCacheInvalidator(permissionService, nil)
+	if len(invalidators) > 0 && invalidators[0] != nil {
+		cacheInvalidator = invalidators[0]
+	}
 	return &AdminGroupHandler{
-		BaseHandler: NewBaseHandler(db, permissionService),
-		repo:        repository.NewAdminGroupRepository(db),
+		BaseHandler:      NewBaseHandler(db, permissionService),
+		repo:             repository.NewAdminGroupRepository(db),
+		cacheInvalidator: cacheInvalidator,
 	}
 }
 
@@ -234,12 +240,21 @@ func (h *AdminGroupHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	invalidation, err := h.cacheInvalidator.GroupDeletePlan(id)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
 
-	if err := h.repo.Delete(id); err != nil {
+	if err = h.repo.Delete(id); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			h.RespondNotFound(w, r)
 			return
 		}
+		h.RespondInternalError(w, r)
+		return
+	}
+	if err := h.cacheInvalidator.Apply(invalidation); err != nil {
 		h.RespondInternalError(w, r)
 		return
 	}

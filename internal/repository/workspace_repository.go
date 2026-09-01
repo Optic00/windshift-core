@@ -288,8 +288,8 @@ func (r *WorkspaceRepository) FindAll(userID int, isPersonalOnly bool) ([]models
 func (r *WorkspaceRepository) GrantAdministratorRoleTx(tx database.Tx, workspaceID int64, userID int) error {
 	result, err := tx.Exec(`
 		INSERT INTO user_workspace_roles (workspace_id, user_id, role_id, granted_by, granted_at)
-		SELECT ?, ?, id, ?, CURRENT_TIMESTAMP FROM workspace_roles WHERE name = 'Administrator'
-	`, workspaceID, userID, userID)
+		SELECT ?, ?, id, ?, CURRENT_TIMESTAMP FROM workspace_roles WHERE builtin_key = ?
+	`, workspaceID, userID, userID, models.RoleBuiltinAdministrator)
 	if err != nil {
 		return fmt.Errorf("failed to grant admin role to workspace creator: %w", err)
 	}

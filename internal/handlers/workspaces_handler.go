@@ -24,6 +24,7 @@ type WorkspaceHandler struct {
 	authz             *authz.Authz
 	activityTracker   *services.ActivityTracker
 	keyCache          *WorkspaceKeyCache
+	cacheInvalidator  *services.AuthorizationCacheInvalidator
 }
 
 // CreateWorkspaceRequest represents the request payload for creating a workspace
@@ -60,8 +61,12 @@ type UpdateWorkspaceRequest struct {
 	IsTemplate              *bool                      `json:"is_template,omitempty"`
 }
 
-func NewWorkspaceHandler(db database.Database, permissionService *services.PermissionService, activityTracker *services.ActivityTracker, keyCache *WorkspaceKeyCache) *WorkspaceHandler {
+func NewWorkspaceHandler(db database.Database, permissionService *services.PermissionService, activityTracker *services.ActivityTracker, keyCache *WorkspaceKeyCache, invalidators ...*services.AuthorizationCacheInvalidator) *WorkspaceHandler {
 	authzService := authz.New(db, permissionService)
+	cacheInvalidator := services.NewAuthorizationCacheInvalidator(permissionService, keyCache)
+	if len(invalidators) > 0 && invalidators[0] != nil {
+		cacheInvalidator = invalidators[0]
+	}
 	return &WorkspaceHandler{
 		db:                db,
 		repo:              repository.NewWorkspaceRepository(db),
@@ -70,6 +75,7 @@ func NewWorkspaceHandler(db database.Database, permissionService *services.Permi
 		authz:             authzService,
 		activityTracker:   activityTracker,
 		keyCache:          keyCache,
+		cacheInvalidator:  cacheInvalidator,
 	}
 }
 
@@ -291,10 +297,13 @@ func (h *WorkspaceHandler) Create(w http.ResponseWriter, r *http.Request) {
 	id := int64(result.Workspace.ID)
 	// The transaction is committed even if response hydration below fails, so
 	// invalidate access snapshots immediately after the successful mutation.
-	h.keyCache.Invalidate()
-	if h.permissionService != nil {
-		h.permissionService.InvalidateActiveWorkspaceCache()
-		h.permissionService.OnEveryoneAccessChanged()
+	if err := h.cacheInvalidator.Apply(services.AuthorizationInvalidation{
+		ResetPermissions:        true,
+		ActiveWorkspacesChanged: true,
+		WorkspaceKeysChanged:    true,
+	}); err != nil {
+		respondInternalError(w, r, err)
+		return
 	}
 
 	// Create item number sequence for this workspace (PostgreSQL only, no-op for SQLite)
@@ -383,9 +392,16 @@ func (h *WorkspaceHandler) Update(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
-	if h.permissionService != nil {
-		h.permissionService.InvalidateActiveWorkspaceCache()
-		h.permissionService.OnEveryoneAccessChanged()
+	permissionsChanged := oldWorkspace.Active != workspace.Active ||
+		oldWorkspace.IsPersonal != workspace.IsPersonal ||
+		!workspaceIntPointersEqual(oldWorkspace.OwnerID, workspace.OwnerID)
+	if err := h.cacheInvalidator.Apply(services.AuthorizationInvalidation{
+		ResetPermissions:        permissionsChanged,
+		ActiveWorkspacesChanged: oldWorkspace.Active != workspace.Active,
+		WorkspaceKeysChanged:    oldWorkspace.Key != workspace.Key,
+	}); err != nil {
+		respondInternalError(w, r, err)
+		return
 	}
 
 	// Load time project categories for the response
@@ -397,9 +413,6 @@ func (h *WorkspaceHandler) Update(w http.ResponseWriter, r *http.Request) {
 	} else {
 		workspace.TimeProjectCategories = timeProjectCats // Set even if empty
 	}
-
-	// Invalidate workspace key cache (key may have changed)
-	h.keyCache.Invalidate()
 
 	// Log audit event with change tracking
 	currentUser := utils.GetCurrentUser(r)
@@ -499,6 +512,13 @@ func workspaceStringPointerValue(value *string) any {
 	return *value
 }
 
+func workspaceIntPointersEqual(a, b *int) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
 func (h *WorkspaceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id, ok := h.requireWorkspaceAdminAccess(w, r)
 	if !ok {
@@ -527,10 +547,13 @@ func (h *WorkspaceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Invalidate workspace key cache
-	h.keyCache.Invalidate()
-	if h.permissionService != nil {
-		h.permissionService.InvalidateActiveWorkspaceCache()
+	if err := h.cacheInvalidator.Apply(services.AuthorizationInvalidation{
+		ResetPermissions:        true,
+		ActiveWorkspacesChanged: true,
+		WorkspaceKeysChanged:    true,
+	}); err != nil {
+		respondInternalError(w, r, err)
+		return
 	}
 
 	// Log audit event

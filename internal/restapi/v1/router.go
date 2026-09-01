@@ -36,7 +36,7 @@ func RegisterRoutes(deps restapi.Deps) {
 	itemHandler := handlers.NewItemHandler(db, permissionService, deps.CommentService, deps.ItemCreationService)
 	itemHandler.SetItemUpdateApplicationService(deps.ItemUpdateApplicationService)
 	itemHandler.SetItemDeletionApplicationService(deps.ItemDeletionApplicationService)
-	workspaceHandler := handlers.NewWorkspaceHandler(db, permissionService)
+	workspaceHandler := handlers.NewWorkspaceHandler(db, permissionService, deps.AuthorizationCacheInvalidator)
 	statusHandler := handlers.NewStatusHandler(db, permissionService, objectTranslationService)
 	workflowHandler := handlers.NewWorkflowHandler(db, permissionService)
 	itemTypeHandler := handlers.NewItemTypeHandler(db, permissionService, objectTranslationService)
@@ -507,7 +507,7 @@ func RegisterRoutes(deps restapi.Deps) {
 	v1.HandleWithMiddleware("DELETE /timer/stop", activeTimerHandler.StopTimer, bearerAuth.RequirePermission("time:write"))
 
 	adminUserHandler := handlers.NewAdminUserHandler(db, permissionService)
-	adminGroupHandler := handlers.NewAdminGroupHandler(db, permissionService)
+	adminGroupHandler := handlers.NewAdminGroupHandler(db, permissionService, deps.AuthorizationCacheInvalidator)
 	adminAuditLogHandler := handlers.NewAdminAuditLogHandler(db, permissionService)
 	adminAPITokenHandler := handlers.NewAdminAPITokenHandler(db, tokenManager, permissionService)
 	objectTranslationHandler := handlers.NewObjectTranslationHandler(

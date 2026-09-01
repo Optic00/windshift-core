@@ -480,6 +480,7 @@ func (s *Server) initialize() error {
 	invitationService := services.NewInvitationService(s.db, smtpSender, baseURL)
 
 	workspaceKeyCache := handlers.NewWorkspaceKeyCache(repository.NewWorkspaceRepository(s.db))
+	authorizationCacheInvalidator := services.NewAuthorizationCacheInvalidator(permService, workspaceKeyCache)
 
 	transitionMatrixService := services.NewTransitionMatrixService(s.db)
 	bulkOperationMetrics := services.NewBulkOperationMetrics()
@@ -488,7 +489,7 @@ func (s *Server) initialize() error {
 	itemHandler.SetBulkOperationMetrics(bulkOperationMetrics)
 	itemHandler.SetDBRequestTimeout(s.config.DB.RequestTimeout)
 	customFieldHandler := handlers.NewCustomFieldHandler(s.db)
-	workspaceHandler := handlers.NewWorkspaceHandler(s.db, permService, s.activityTracker, workspaceKeyCache)
+	workspaceHandler := handlers.NewWorkspaceHandler(s.db, permService, s.activityTracker, workspaceKeyCache, authorizationCacheInvalidator)
 	screenHandler := handlers.NewScreenHandler(s.db).WithObjectTranslations(objectTranslationService)
 	configSetHandler := handlers.NewConfigurationSetHandler(s.db, s.notificationService, permService).WithObjectTranslations(objectTranslationService)
 	itemTypeHandler := handlers.NewItemTypeHandler(s.db).WithObjectTranslations(objectTranslationService)
@@ -545,17 +546,15 @@ func (s *Server) initialize() error {
 		invitationService,
 		services.NewUserReadService(s.db),
 		func(id int) error {
-			tokenIDs, err := services.OffboardUser(s.db, id, s.notificationService)
-			if err != nil {
-				return err
-			}
+			tokenIDs, err := services.OffboardUser(s.db, id, s.notificationService, authorizationCacheInvalidator)
 			tokenManager.InvalidateTokens(tokenIDs)
-			return nil
+			sessionManager.InvalidateUserSessionValidation(id)
+			return err
 		},
 		userDeactivationService.DeactivateUser,
 		sessionManager.InvalidateUserSessionValidation,
 	)
-	groupHandler := handlers.NewGroupHandler(repository.NewGroupRepository(s.db), permService, logger.NewAuditor(s.db))
+	groupHandler := handlers.NewGroupHandler(repository.NewGroupRepository(s.db), permService, logger.NewAuditor(s.db), authorizationCacheInvalidator)
 	credentialHandler := handlers.NewCredentialHandler(repository.NewCredentialRepository(s.db), logger.NewAuditor(s.db), permService, cfg.SSH.Enabled)
 	var webAuthnHandler *handlers.WebAuthnHandler
 	if webAuthnConfig != nil {
@@ -594,6 +593,7 @@ func (s *Server) initialize() error {
 			return services.ActiveSystemAdminIDs(s.db)
 		},
 		s.notificationService,
+		authorizationCacheInvalidator,
 	)
 	scimTokenHandler := handlers.NewSCIMTokenHandler(scimTokenManager, logger.NewAuditor(s.db))
 
@@ -923,7 +923,8 @@ func (s *Server) initialize() error {
 	)
 	assetActionHandler := handlers.NewAssetActionHandler(repository.NewAssetActionRepository(s.db), assetHandler, s.assetActionService, logger.NewAuditor(s.db))
 
-	jiraImportHandler := handlers.NewJiraImportHandler(s.db, cfg.Auth.SessionSecret, cfg.Jira.CapturePayloadsDir)
+	jiraImportHandler := handlers.NewJiraImportHandler(s.db, cfg.Auth.SessionSecret, cfg.Jira.CapturePayloadsDir).
+		WithAuthorizationCacheInvalidator(authorizationCacheInvalidator)
 
 	// Share one credential manager so every in-process refresh/callback path
 	// uses the same per-channel lock and CAS config writer.
@@ -1659,6 +1660,7 @@ func (s *Server) initialize() error {
 		PageApplicationService:         pageHandler.PageApplicationService(),
 		PageDiagramService:             pageDiagramService,
 		ObjectTranslationService:       objectTranslationService,
+		AuthorizationCacheInvalidator:  authorizationCacheInvalidator,
 	}, v1.RegisterRoutes)
 
 	// MCP Server (Model Context Protocol) — opt-in via --mcp or MCP_ENABLED=true

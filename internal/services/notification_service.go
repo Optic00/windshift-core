@@ -981,8 +981,8 @@ func (ns *NotificationService) getWorkspaceAdmins(workspaceID int) []int {
 		SELECT DISTINCT uwr.user_id
 		FROM user_workspace_roles uwr
 		JOIN workspace_roles wr ON uwr.role_id = wr.id
-		WHERE uwr.workspace_id = ? AND wr.name = 'Administrator'
-	`, workspaceID)
+		WHERE uwr.workspace_id = ? AND wr.builtin_key = ?
+	`, workspaceID, models.RoleBuiltinAdministrator)
 }
 
 // getItemWatchers retrieves active watcher user IDs for an item

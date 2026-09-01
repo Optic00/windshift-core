@@ -93,7 +93,6 @@ type UserPermissionCache struct {
 	RoleAssignments      map[int][]int             `json:"role_assignments"`      // workspace_id -> role_ids
 	DirectPermissions    map[int][]string          `json:"direct_permissions"`    // workspace_id -> permission_keys (direct assignments)
 	PermissionSources    map[int]map[string]string `json:"permission_sources"`    // workspace_id -> permission_key -> source (role/direct/group)
-	ItemWorkspaceMap     map[int]int               `json:"item_workspace_map"`    // item_id -> workspace_id (lazy-loaded on demand)
 	CachedAt             time.Time                 `json:"cached_at"`
 	ExpiresAt            time.Time                 `json:"expires_at"`
 }

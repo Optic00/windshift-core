@@ -349,7 +349,7 @@ func CreateWorkspaceManagedAgentIdentity(ctx context.Context, tx database.Tx, p 
 	}
 
 	var editorRoleID int
-	if err := tx.QueryRowContext(ctx, `SELECT id FROM workspace_roles WHERE name = ?`, models.RoleEditor).Scan(&editorRoleID); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM workspace_roles WHERE builtin_key = ?`, models.RoleBuiltinEditor).Scan(&editorRoleID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, fmt.Errorf("load workspace-managed agent role %q: %w", models.RoleEditor, ErrNotFound)
 		}
@@ -364,15 +364,15 @@ func CreateWorkspaceManagedAgentIdentity(ctx context.Context, tx database.Tx, p 
 			SELECT 1
 			FROM user_workspace_roles uwr
 			JOIN workspace_roles wr ON wr.id = uwr.role_id
-			WHERE uwr.workspace_id = ? AND wr.name IN (?, ?)
+			WHERE uwr.workspace_id = ? AND wr.builtin_key IN (?, ?)
 			UNION ALL
 			SELECT 1
 			FROM group_workspace_roles gwr
 			JOIN workspace_roles wr ON wr.id = gwr.role_id
-			WHERE gwr.workspace_id = ? AND wr.name IN (?, ?)
+			WHERE gwr.workspace_id = ? AND wr.builtin_key IN (?, ?)
 		)
-	`, p.WorkspaceID, models.RoleViewer, models.RoleEditor,
-		p.WorkspaceID, models.RoleViewer, models.RoleEditor).Scan(&editorRestricted)
+	`, p.WorkspaceID, models.RoleBuiltinViewer, models.RoleBuiltinEditor,
+		p.WorkspaceID, models.RoleBuiltinViewer, models.RoleBuiltinEditor).Scan(&editorRestricted)
 	if err != nil {
 		return 0, fmt.Errorf("check workspace Editor restrictions: %w", err)
 	}

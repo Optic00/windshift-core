@@ -18,13 +18,19 @@ import (
 type GroupHandler struct {
 	repo              *repository.GroupRepository
 	permissionService *services.PermissionService
+	cacheInvalidator  *services.AuthorizationCacheInvalidator
 	auditor           *logger.Auditor
 }
 
-func NewGroupHandler(repo *repository.GroupRepository, permissionService *services.PermissionService, auditor *logger.Auditor) *GroupHandler {
+func NewGroupHandler(repo *repository.GroupRepository, permissionService *services.PermissionService, auditor *logger.Auditor, invalidators ...*services.AuthorizationCacheInvalidator) *GroupHandler {
+	cacheInvalidator := services.NewAuthorizationCacheInvalidator(permissionService, nil)
+	if len(invalidators) > 0 && invalidators[0] != nil {
+		cacheInvalidator = invalidators[0]
+	}
 	return &GroupHandler{
 		repo:              repo,
 		permissionService: permissionService,
+		cacheInvalidator:  cacheInvalidator,
 		auditor:           auditor,
 	}
 }
@@ -197,6 +203,14 @@ func (h *GroupHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now()
+	var invalidation services.AuthorizationInvalidation
+	if oldGroup.IsActive != req.IsActive {
+		invalidation, err = h.cacheInvalidator.GroupPlan(id)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return
+		}
+	}
 	if err := h.repo.Update(id, req.Name, req.Description, req.IsActive, now); err != nil {
 		if errors.Is(err, repository.ErrDuplicateEntry) {
 			respondConflict(w, r, "Group name already exists")
@@ -204,6 +218,12 @@ func (h *GroupHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 		respondInternalError(w, r, err)
 		return
+	}
+	if oldGroup.IsActive != req.IsActive {
+		if err := h.cacheInvalidator.Apply(invalidation); err != nil {
+			respondInternalError(w, r, err)
+			return
+		}
 	}
 
 	// Log audit event with change tracking
@@ -273,7 +293,16 @@ func (h *GroupHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	invalidation, err := h.cacheInvalidator.GroupDeletePlan(id)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
 	if err := h.repo.Delete(id); err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	if err := h.cacheInvalidator.Apply(invalidation); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
@@ -373,9 +402,10 @@ func (h *GroupHandler) AddMembers(w http.ResponseWriter, r *http.Request) {
 			respondInternalError(w, r, err)
 			return
 		}
-
-		// Invalidate permission cache for the user added to this group
-		_ = h.permissionService.OnUserGroupMembershipChanged(userID, groupID)
+		if err := h.cacheInvalidator.Apply(services.AuthorizationInvalidation{UserIDs: []int{userID}}); err != nil {
+			respondInternalError(w, r, err)
+			return
+		}
 
 		// Get user details for the response
 		userEmail, userName, userUsername, err := h.repo.GetUserDisplay(userID)
@@ -398,7 +428,6 @@ func (h *GroupHandler) AddMembers(w http.ResponseWriter, r *http.Request) {
 		})
 		addedUsernames = append(addedUsernames, userUsername)
 	}
-
 	// Log audit event
 	auditUser := utils.GetCurrentUser(r)
 	if auditUser != nil && len(addedMembers) > 0 {
@@ -449,7 +478,10 @@ func (h *GroupHandler) RemoveMembers(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if rowsAffected > 0 {
-			_ = h.permissionService.OnUserGroupMembershipChanged(userID, groupID)
+			if err := h.cacheInvalidator.Apply(services.AuthorizationInvalidation{UserIDs: []int{userID}}); err != nil {
+				respondInternalError(w, r, err)
+				return
+			}
 		}
 		removedCount += int(rowsAffected)
 	}
