@@ -1,18 +1,10 @@
 [
   {
     "id": 42,
-    "organization_id": null,
     "login": "ada.lovelace@example.invalid",
     "firstname": "Ada",
     "lastname": "Lovelace",
-    "email": "ada.lovelace@example.invalid",
     "active": true,
-    "role_ids": [2],
-    "roles": { "2": "Agent" },
-    "group_ids": { "7": ["full"] },
-    "groups": { "7": "Support" },
-    "preferences": {},
-    "created_at": "2026-09-01T12:00:00.000Z",
-    "updated_at": "2026-09-01T12:00:00.000Z"
+    "group_ids": { "7": ["full"] }
   }
 ]
