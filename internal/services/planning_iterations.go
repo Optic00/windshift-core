@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"windshift/internal/logger"
@@ -136,86 +135,11 @@ func (s *PlanningService) FindIterationByName(workspaceID int, name string) (*It
 
 // ListIterations retrieves iterations with pagination and filtering.
 func (s *PlanningService) ListIterations(params IterationListParams) ([]IterationResult, int, error) {
-	query := `
-		SELECT i.id, i.name, i.description, i.start_date, i.end_date, i.status,
-		       i.type_id, it.name as type_name, it.color as type_color,
-		       i.is_global, i.workspace_id, w.name as workspace_name,
-		       i.created_at, i.updated_at
-		FROM iterations i
-		LEFT JOIN iteration_types it ON i.type_id = it.id
-		LEFT JOIN workspaces w ON i.workspace_id = w.id
-		WHERE 1=1`
-
-	countQuery := "SELECT COUNT(*) FROM iterations i WHERE 1=1"
-	var args []any
-	var countArgs []any
-
-	// Filter by workspace - show local iterations for this workspace + optionally global iterations
-	switch {
-	case params.WorkspaceID != nil:
-		if params.IncludeGlobal {
-			query += " AND (i.workspace_id = ? OR i.is_global = ?)"
-			countQuery += " AND (i.workspace_id = ? OR i.is_global = ?)"
-			args = append(args, *params.WorkspaceID, true)
-			countArgs = append(countArgs, *params.WorkspaceID, true)
-		} else {
-			query += " AND i.workspace_id = ?"
-			countQuery += " AND i.workspace_id = ?"
-			args = append(args, *params.WorkspaceID)
-			countArgs = append(countArgs, *params.WorkspaceID)
-		}
-	case len(params.WorkspaceIDs) > 0:
-		workspaceClause, workspaceArgs := planningWorkspaceFilter("i.workspace_id", params.WorkspaceIDs)
-		workspaceClause = strings.TrimPrefix(workspaceClause, " AND ")
-		if params.IncludeGlobal {
-			query += " AND (i.is_global = ? OR " + workspaceClause + ")"
-			countQuery += " AND (i.is_global = ? OR " + workspaceClause + ")"
-			args = append(args, true)
-			args = append(args, workspaceArgs...)
-			countArgs = append(countArgs, true)
-			countArgs = append(countArgs, workspaceArgs...)
-		} else {
-			query += " AND " + workspaceClause
-			countQuery += " AND " + workspaceClause
-			args = append(args, workspaceArgs...)
-			countArgs = append(countArgs, workspaceArgs...)
-		}
-	case params.IncludeGlobal:
-		// If no workspace specified but include_global, only show global iterations
-		query += " AND i.is_global = ?"
-		countQuery += " AND i.is_global = ?"
-		args = append(args, true)
-		countArgs = append(countArgs, true)
-	default:
-		// An unscoped local list must never widen to every workspace.
-		query += " AND 1=0"
-		countQuery += " AND 1=0"
-	}
-
-	// Filter by type
-	if params.TypeID != nil {
-		if *params.TypeID == 0 {
-			query += " AND i.type_id IS NULL"
-			countQuery += " AND i.type_id IS NULL"
-		} else {
-			query += " AND i.type_id = ?"
-			countQuery += " AND i.type_id = ?"
-			args = append(args, *params.TypeID)
-			countArgs = append(countArgs, *params.TypeID)
-		}
-	}
-
-	// Filter by status
-	if params.Status != "" {
-		query += " AND i.status = ?"
-		countQuery += " AND i.status = ?"
-		args = append(args, params.Status)
-		countArgs = append(countArgs, params.Status)
-	}
-
-	query += " ORDER BY i.start_date DESC, i.name"
-	query += " LIMIT ? OFFSET ?"
-	args = append(args, params.Limit, params.Offset)
+	list := newPlanningListQuery(iterationSelectQuery+"\nWHERE 1=1", "SELECT COUNT(*) FROM iterations i WHERE 1=1")
+	list.addWorkspaceScope("i.workspace_id", "i.is_global", params.WorkspaceID, params.WorkspaceIDs, params.IncludeGlobal)
+	list.addNullableIDFilter("i.type_id", params.TypeID)
+	list.addStringFilter("i.status", params.Status)
+	query, args := list.paginated(" ORDER BY i.start_date DESC, i.name", params.Limit, params.Offset)
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
@@ -226,7 +150,7 @@ func (s *PlanningService) ListIterations(params IterationListParams) ([]Iteratio
 	iterations, _ := scanIterations(rows)
 
 	var total int
-	if err := s.db.QueryRow(countQuery, countArgs...).Scan(&total); err != nil {
+	if err := s.db.QueryRow(list.countQuery, list.countArgs...).Scan(&total); err != nil {
 		slog.Warn("failed to get iteration pagination count", slog.Any("error", err))
 	}
 
@@ -235,16 +159,7 @@ func (s *PlanningService) ListIterations(params IterationListParams) ([]Iteratio
 
 // GetIteration retrieves an iteration by ID.
 func (s *PlanningService) GetIteration(id int) (*IterationResult, error) {
-	row := s.db.QueryRow(`
-		SELECT i.id, i.name, i.description, i.start_date, i.end_date, i.status,
-		       i.type_id, it.name as type_name, it.color as type_color,
-		       i.is_global, i.workspace_id, w.name as workspace_name,
-		       i.created_at, i.updated_at
-		FROM iterations i
-		LEFT JOIN iteration_types it ON i.type_id = it.id
-		LEFT JOIN workspaces w ON i.workspace_id = w.id
-		WHERE i.id = ?
-	`, id)
+	row := s.db.QueryRow(iterationSelectQuery+"\nWHERE i.id = ?", id)
 
 	iter, err := scanIterationRow(row)
 	if errors.Is(err, sql.ErrNoRows) {
