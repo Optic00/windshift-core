@@ -118,4 +118,47 @@ describe('ZammadConnectionManager', () => {
       )
     );
   });
+
+  it('labels migrated groups without names and excludes them from the default-group choices', async () => {
+    mocks.getConnections.mockResolvedValue([
+      {
+        ...connection,
+        default_group_id: 2,
+        allowed_groups: [
+          { id: 2, name: 'Windshift' },
+          { id: 99, name: '' },
+        ],
+      },
+    ]);
+    mocks.testConnection.mockResolvedValue({
+      metadata: {
+        groups: [
+          { id: 2, name: 'Windshift' },
+          { id: 99, name: '' },
+        ],
+        states: [],
+        correlation_field_verified: false,
+        group_catalog_verified: false,
+      },
+    });
+
+    const { container } = render(ZammadConnectionManager);
+    await screen.findByText('Zammad Dev');
+    await fireEvent.click(screen.getByRole('button', { name: 'zammad.testConnection' }));
+    await waitFor(() => expect(mocks.testConnection).toHaveBeenCalledWith('zammad-dev'));
+
+    const editButton = container.querySelector('svg.lucide-pen')?.closest('button');
+    expect(editButton).toBeTruthy();
+    await fireEvent.click(editButton);
+
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText('zammad.unverifiedGroup')).toBeInTheDocument();
+    const defaultGroupSelect = /** @type {HTMLSelectElement} */ (
+      within(dialog).getAllByRole('combobox')[0]
+    );
+    const defaultGroupOptions = Array.from(defaultGroupSelect.options).map(
+      (option) => option.textContent
+    );
+    expect(defaultGroupOptions).toEqual(['Windshift']);
+  });
 });

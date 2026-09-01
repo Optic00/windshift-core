@@ -170,9 +170,9 @@
       const result = await api.zammadConnections.test(connection.id);
       metadataByConnection = { ...metadataByConnection, [connection.id]: result.metadata };
       successToast(t('zammad.connectionTestSucceeded'));
-	  if (result.metadata?.group_catalog_verified === false) {
-		warningToast(t('zammad.groupCatalogNotVerified'));
-	  }
+      if (result.metadata?.group_catalog_verified === false) {
+        warningToast(t('zammad.groupCatalogNotVerified'));
+      }
       if (result.metadata?.correlation_field_verified === false) {
         warningToast(t('zammad.correlationFieldNotVerified'));
       }
@@ -277,6 +277,16 @@
     form.default_group_name = group?.name || '';
   }
 
+  function hasKnownGroupName(group) {
+    return Boolean(group?.name?.trim());
+  }
+
+  function groupLabel(group) {
+    return hasKnownGroupName(group)
+      ? group.name.trim()
+      : t('zammad.unverifiedGroup', { id: group.id });
+  }
+
   function serializeAllowedGroups(groups) {
     return groups.map((group) => `${group.id}:${group.name}`).join(', ');
   }
@@ -355,9 +365,9 @@
             {#if metadataByConnection[connection.id].correlation_field_verified === false}
               <p class="text-xs mt-1" style="color: var(--ds-text-warning);">{t('zammad.correlationFieldNotVerified')}</p>
             {/if}
-			{#if metadataByConnection[connection.id].group_catalog_verified === false}
-			  <p class="text-xs mt-1" style="color: var(--ds-text-warning);">{t('zammad.groupCatalogNotVerified')}</p>
-			{/if}
+            {#if metadataByConnection[connection.id].group_catalog_verified === false}
+              <p class="text-xs mt-1" style="color: var(--ds-text-warning);">{t('zammad.groupCatalogNotVerified')}</p>
+            {/if}
           {/if}
         </div>
       {/each}
@@ -429,7 +439,9 @@
         <NativeSelect
           value={String(form.default_group_id)}
           onchange={selectDefaultGroup}
-          options={metadataByConnection[editing.id].groups.map((group) => ({ value: String(group.id), label: group.name }))}
+          options={metadataByConnection[editing.id].groups
+            .filter(hasKnownGroupName)
+            .map((group) => ({ value: String(group.id), label: groupLabel(group) }))}
         />
       </FormField>
       <FormField label={t('zammad.allowedGroups')} required>
@@ -439,7 +451,7 @@
               id={`zammad-group-${group.id}`}
               checked={form.allowed_groups.some((entry) => entry.id === group.id)}
               onchange={(checked) => toggleAllowedGroup(group.id, checked)}
-              label={group.name}
+              label={groupLabel(group)}
               size="small"
             />
           {/each}

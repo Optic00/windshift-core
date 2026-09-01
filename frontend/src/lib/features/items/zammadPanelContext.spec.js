@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   isCurrentZammadMetadataRequest,
   isCurrentZammadPanelContext,
+  isUsableZammadGroup,
 } from './zammadPanelContext.js';
 
 describe('Zammad item panel context guards', () => {
@@ -39,5 +40,13 @@ describe('Zammad metadata request guards', () => {
     expect(isCurrentZammadMetadataRequest(3, 3, 'connection', 'connection', true, 'create')).toBe(
       true
     );
+  });
+});
+
+describe('Zammad group choices', () => {
+  it('offers only active groups with a verified persisted name', () => {
+    expect(isUsableZammadGroup({ id: 2, name: 'Windshift', active: true })).toBe(true);
+    expect(isUsableZammadGroup({ id: 3, name: '   ', active: true })).toBe(false);
+    expect(isUsableZammadGroup({ id: 4, name: 'Legacy', active: false })).toBe(false);
   });
 });

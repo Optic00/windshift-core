@@ -28,3 +28,7 @@ export function isCurrentZammadMetadataRequest(
     dialogMode === 'create'
   );
 }
+
+export function isUsableZammadGroup(group) {
+  return group?.active !== false && Boolean(group?.name?.trim());
+}

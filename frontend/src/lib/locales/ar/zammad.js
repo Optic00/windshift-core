@@ -5,7 +5,7 @@ export default { zammad: {
   connectionDeleted: 'تم حذف اتصال Zammad', deleteConnection: 'حذف اتصال Zammad', deleteConnectionConfirm: 'هل تريد حذف «{name}»؟ يجب أولًا إلغاء ربط التذاكر الحالية.',
   deleteConnectionFailed: 'تعذر حذف اتصال Zammad', testConnection: 'اختبار الاتصال', connectionTestSucceeded: 'نجح اتصال Zammad', connectionTestFailed: 'فشل اتصال Zammad',
   refreshAllTickets: 'مزامنة جميع التذاكر', refreshAllTicketsStarted: 'بدأت مزامنة Zammad على مستوى النظام', refreshAllTicketsAlreadyRunning: 'مزامنة Zammad على مستوى النظام قيد التشغيل بالفعل', refreshAllTicketsFailed: 'تعذرت مزامنة تذاكر Zammad على مستوى النظام',
-  metadataSummary: 'تتوفر {groups} مجموعات و{states} حالات تذاكر', slug: 'المعرّف المختصر', baseUrl: 'الرابط الأساسي', apiToken: 'رمز API',
+  metadataSummary: 'تم تكوين {groups} مجموعات وتتوفر {states} حالات تذاكر', slug: 'المعرّف المختصر', baseUrl: 'الرابط الأساسي', apiToken: 'رمز API',
   apiTokenDescription: 'استخدم رمز API من Zammad لهذا الاتصال على مستوى النظام.', apiTokenAvailable: 'رمز API متاح', apiTokenMissing: 'رمز API مفقود',
   authMethod: 'طريقة المصادقة', oauth: 'OAuth', oauthDescription: 'فوّض هذا الاتصال باستخدام OAuth من Zammad.', oauthClientId: 'معرّف عميل OAuth', oauthClientSecret: 'سر عميل OAuth',
   secretStored: 'مخزّن بأمان - اتركه فارغًا للاحتفاظ به', oauthPending: 'تفويض OAuth قيد الانتظار', oauthConnectedStatus: 'OAuth متصل', oauthReauthorizationRequired: 'إعادة تفويض OAuth مطلوبة',

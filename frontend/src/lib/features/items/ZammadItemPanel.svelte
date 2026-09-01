@@ -25,6 +25,7 @@
   import {
     isCurrentZammadMetadataRequest,
     isCurrentZammadPanelContext,
+    isUsableZammadGroup,
   } from './zammadPanelContext.js';
 
   let { itemId, workspaceId, canEdit = false } = $props();
@@ -65,7 +66,7 @@
 
   let usableConnections = $derived(connections.filter(isConnectionUsable));
   let unavailableConnections = $derived(connections.filter((connection) => !isConnectionUsable(connection)));
-  let editGroups = $derived(editMetadata.groups.filter((group) => group.active !== false));
+  let editGroups = $derived(editMetadata.groups.filter(isUsableZammadGroup));
   let editStates = $derived(editMetadata.states.filter((state) => state.active !== false));
   let editOwnerOptions = $derived([
     { value: '1', label: t('zammad.unassignedOwner') },
@@ -143,7 +144,7 @@
   function usableGroups(connection, loadedMetadata) {
     const allowedIds = (connection?.allowed_groups || []).map((group) => group.id);
     return loadedMetadata.groups.filter((group) => {
-      if (group.active === false) return false;
+      if (!isUsableZammadGroup(group)) return false;
       if (allowedIds.length > 0) return allowedIds.includes(group.id);
       return group.id === connection?.default_group_id || group.name === connection?.default_group_name;
     });

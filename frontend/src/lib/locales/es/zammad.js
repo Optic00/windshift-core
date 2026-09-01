@@ -8,7 +8,7 @@ export default { zammad: {
   deleteConnectionConfirm: '¿Eliminar «{name}»? Primero deben desvincularse los tickets existentes.', deleteConnectionFailed: 'No se pudo eliminar la conexión de Zammad',
   testConnection: 'Probar conexión', connectionTestSucceeded: 'La conexión de Zammad funciona', connectionTestFailed: 'La conexión de Zammad falló',
   refreshAllTickets: 'Sincronizar todos los tickets', refreshAllTicketsStarted: 'Se inició la sincronización de Zammad en todo el sistema', refreshAllTicketsAlreadyRunning: 'La sincronización de Zammad en todo el sistema ya está en curso', refreshAllTicketsFailed: 'No se pudieron sincronizar los tickets de Zammad en todo el sistema',
-  metadataSummary: '{groups} grupos y {states} estados de ticket disponibles', slug: 'Identificador', baseUrl: 'URL base', apiToken: 'Token de API',
+  metadataSummary: '{groups} grupos configurados y {states} estados de ticket disponibles', slug: 'Identificador', baseUrl: 'URL base', apiToken: 'Token de API',
   apiTokenDescription: 'Usa un token de API de Zammad para esta conexión del sistema.', apiTokenAvailable: 'Token de API disponible', apiTokenMissing: 'Falta el token de API',
   authMethod: 'Método de autenticación', oauth: 'OAuth', oauthDescription: 'Autoriza esta conexión con OAuth de Zammad.', oauthClientId: 'ID de cliente OAuth', oauthClientSecret: 'Secreto de cliente OAuth',
   secretStored: 'Guardado de forma segura - déjalo vacío para conservarlo', oauthPending: 'Autorización de OAuth pendiente', oauthConnectedStatus: 'OAuth conectado', oauthReauthorizationRequired: 'Se requiere volver a autorizar OAuth',
