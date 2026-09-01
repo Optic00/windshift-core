@@ -119,11 +119,12 @@ describe('ZammadConnectionManager', () => {
     );
   });
 
-  it('labels migrated groups without names and excludes them from the default-group choices', async () => {
+  it('labels and lets administrators repair migrated groups without names', async () => {
     mocks.getConnections.mockResolvedValue([
       {
         ...connection,
-        default_group_id: 2,
+        default_group_id: 99,
+        default_group_name: '',
         allowed_groups: [
           { id: 2, name: 'Windshift' },
           { id: 99, name: '' },
@@ -152,13 +153,30 @@ describe('ZammadConnectionManager', () => {
     await fireEvent.click(editButton);
 
     const dialog = screen.getByRole('dialog');
-    expect(within(dialog).getByText('zammad.unverifiedGroup')).toBeInTheDocument();
+    expect(within(dialog).getAllByText('zammad.unverifiedGroup')).toHaveLength(2);
     const defaultGroupSelect = /** @type {HTMLSelectElement} */ (
       within(dialog).getAllByRole('combobox')[0]
     );
     const defaultGroupOptions = Array.from(defaultGroupSelect.options).map(
       (option) => option.textContent
     );
-    expect(defaultGroupOptions).toEqual(['Windshift']);
+    expect(defaultGroupOptions).toEqual(['Windshift', 'zammad.unverifiedGroup']);
+    expect(defaultGroupSelect.value).toBe('99');
+
+    await fireEvent.input(within(dialog).getByLabelText('settings.groups.groupName'), {
+      target: { value: 'Legacy Support' },
+    });
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'common.update' }));
+
+    await waitFor(() =>
+      expect(mocks.updateConnection).toHaveBeenCalledWith(
+        'zammad-dev',
+        expect.objectContaining({
+          default_group_id: 99,
+          default_group_name: 'Legacy Support',
+          allowed_groups: expect.arrayContaining([{ id: 99, name: 'Legacy Support' }]),
+        })
+      )
+    );
   });
 });

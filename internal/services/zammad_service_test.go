@@ -134,11 +134,6 @@ func (f *fakeZammadTransport) Do(_ context.Context, method, targetURL string, bo
 			return jsonResponse(http.StatusOK, f.getTicket), nil
 		}
 		return jsonResponse(http.StatusOK, f.ticket), nil
-	case parsed.Path == "/api/v1/groups":
-		if f.groups != nil {
-			return jsonResponse(http.StatusOK, f.groups), nil
-		}
-		return jsonResponse(http.StatusOK, []map[string]any{{"id": 7, "name": "Support", "active": true}}), nil
 	case parsed.Path == "/api/v1/ticket_states":
 		if f.states != nil {
 			return jsonResponse(http.StatusOK, f.states), nil
@@ -3228,9 +3223,6 @@ func TestZammadOAuthTestSkipsAdminOnlyCorrelationFieldCheck(t *testing.T) {
 			calledObjectManager = true
 			return jsonResponse(http.StatusForbidden, map[string]string{}), nil
 		}
-		if strings.Contains(targetURL, "/groups") {
-			return jsonResponse(http.StatusOK, []map[string]any{{"id": 7, "name": "Support", "active": true}}), nil
-		}
 		return jsonResponse(http.StatusOK, []map[string]any{{"id": 2, "name": "open", "active": true}}), nil
 	}))
 	metadata, err := f.service.TestConnection(context.Background(), connection.ProviderID)
@@ -3247,9 +3239,6 @@ func TestZammadAPITokenTestSkipsAdminOnlyCorrelationFieldCheck(t *testing.T) {
 			calledObjectManager = true
 			return jsonResponse(http.StatusForbidden, map[string]string{}), nil
 		}
-		if strings.Contains(targetURL, "/groups") {
-			return jsonResponse(http.StatusOK, []map[string]any{{"id": 7, "name": "Support", "active": true}}), nil
-		}
 		return jsonResponse(http.StatusOK, []map[string]any{{"id": 2, "name": "open", "active": true}}), nil
 	}))
 	metadata, err := f.service.TestConnection(context.Background(), f.connection.ProviderID)
@@ -3260,7 +3249,7 @@ func TestZammadAPITokenTestSkipsAdminOnlyCorrelationFieldCheck(t *testing.T) {
 
 func TestZammadSafeTransportHonorsAllowLocalConnections(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/groups" {
+		if r.URL.Path != "/api/v1/ticket_states" {
 			t.Fatalf("unexpected path %q", r.URL.Path)
 		}
 		_, _ = w.Write([]byte(`[]`))
@@ -3270,11 +3259,11 @@ func TestZammadSafeTransportHonorsAllowLocalConnections(t *testing.T) {
 	defer utils.SetAllowLocalConnections(previous)
 	transport := newZammadSafeTransport(server.URL, "/api/v1/")
 	utils.SetAllowLocalConnections(true)
-	if _, err := transport.Do(context.Background(), http.MethodGet, server.URL+"/api/v1/groups", nil, nil); err != nil {
+	if _, err := transport.Do(context.Background(), http.MethodGet, server.URL+"/api/v1/ticket_states", nil, nil); err != nil {
 		t.Fatalf("ALLOW_LOCAL_CONNECTIONS=true blocked local Zammad target: %v", err)
 	}
 	utils.SetAllowLocalConnections(false)
-	if _, err := transport.Do(context.Background(), http.MethodGet, server.URL+"/api/v1/groups", nil, nil); !errors.Is(err, utils.ErrBlockedSSRFAddr) {
+	if _, err := transport.Do(context.Background(), http.MethodGet, server.URL+"/api/v1/ticket_states", nil, nil); !errors.Is(err, utils.ErrBlockedSSRFAddr) {
 		t.Fatalf("ALLOW_LOCAL_CONNECTIONS=false did not block local Zammad target: %v", err)
 	}
 }
@@ -3298,7 +3287,7 @@ func TestZammadClientsUseExactlyOneExpectedAuthorizationScheme(t *testing.T) {
 		}))},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			if _, err := testCase.client.Groups(context.Background()); err != nil {
+			if _, err := testCase.client.States(context.Background()); err != nil {
 				t.Fatal(err)
 			}
 		})

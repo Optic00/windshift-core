@@ -86,20 +86,8 @@ type objectAttribute struct {
 	Active bool   `json:"active"`
 }
 
-func (c *Client) Metadata(ctx context.Context) (*models.ZammadConnectionMetadata, error) {
-	activeGroups, err := c.Groups(ctx)
-	if err != nil {
-		return nil, err
-	}
-	activeStates, err := c.States(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return &models.ZammadConnectionMetadata{Groups: activeGroups, States: activeStates}, nil
-}
-
-// States returns the active ticket states. Unlike Groups, Zammad permits this
-// endpoint for ordinary ticket agents, so it is safe for runtime use.
+// States returns the active ticket states. Zammad permits this endpoint for
+// ordinary ticket agents, so it is safe for runtime use.
 func (c *Client) States(ctx context.Context) ([]models.ZammadState, error) {
 	states := []models.ZammadState{}
 	if err := c.getJSON(ctx, "/api/v1/ticket_states", &states); err != nil {
@@ -112,20 +100,6 @@ func (c *Client) States(ctx context.Context) ([]models.ZammadState, error) {
 		}
 	}
 	return activeStates, nil
-}
-
-func (c *Client) Groups(ctx context.Context) ([]models.ZammadGroup, error) {
-	groups := []models.ZammadGroup{}
-	if err := c.getJSON(ctx, "/api/v1/groups", &groups); err != nil {
-		return nil, err
-	}
-	activeGroups := groups[:0]
-	for _, group := range groups {
-		if group.Active {
-			activeGroups = append(activeGroups, group)
-		}
-	}
-	return activeGroups, nil
 }
 
 func (c *Client) ValidateCorrelationField(ctx context.Context, field string) error {

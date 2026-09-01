@@ -269,6 +269,13 @@
       : form.allowed_groups.filter((entry) => entry.id !== id);
   }
 
+  function setAllowedGroupName(id, name) {
+    form.allowed_groups = form.allowed_groups.map((entry) =>
+      entry.id === id ? { ...entry, name } : entry,
+    );
+    if (Number(form.default_group_id) === id) form.default_group_name = name;
+  }
+
   function selectDefaultGroup(value) {
     form.default_group_id = value;
     const group = metadataByConnection[editing?.id]?.groups?.find(
@@ -440,20 +447,31 @@
           value={String(form.default_group_id)}
           onchange={selectDefaultGroup}
           options={metadataByConnection[editing.id].groups
-            .filter(hasKnownGroupName)
+            .filter((group) => hasKnownGroupName(group) || group.id === Number(form.default_group_id))
             .map((group) => ({ value: String(group.id), label: groupLabel(group) }))}
         />
       </FormField>
       <FormField label={t('zammad.allowedGroups')} required>
         <div class="space-y-2 max-h-40 overflow-y-auto border rounded p-3" style="border-color: var(--ds-border);">
           {#each metadataByConnection[editing.id].groups as group}
-            <Checkbox
-              id={`zammad-group-${group.id}`}
-              checked={form.allowed_groups.some((entry) => entry.id === group.id)}
-              onchange={(checked) => toggleAllowedGroup(group.id, checked)}
-              label={groupLabel(group)}
-              size="small"
-            />
+            <div class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(10rem,1fr)] sm:items-center">
+              <Checkbox
+                id={`zammad-group-${group.id}`}
+                checked={form.allowed_groups.some((entry) => entry.id === group.id)}
+                onchange={(checked) => toggleAllowedGroup(group.id, checked)}
+                label={groupLabel(group)}
+                size="small"
+              />
+              {#if !hasKnownGroupName(group) && form.allowed_groups.some((entry) => entry.id === group.id)}
+                <Input
+                  value={form.allowed_groups.find((entry) => entry.id === group.id)?.name || ''}
+                  oninput={(event) => setAllowedGroupName(group.id, event.currentTarget.value)}
+                  placeholder={t('settings.groups.groupName')}
+                  ariaLabel={t('settings.groups.groupName')}
+                  size="small"
+                />
+              {/if}
+            </div>
           {/each}
         </div>
       </FormField>

@@ -35,7 +35,7 @@ func (t httpTestTransport) Do(ctx context.Context, method, targetURL string, bod
 	return &Response{StatusCode: resp.StatusCode, Body: responseBody}, nil
 }
 
-func TestClientMetadataCorrelationAndTicketCreation(t *testing.T) {
+func TestClientStatesCorrelationAndTicketCreation(t *testing.T) {
 	t.Parallel()
 	const token = "synthetic-secret-token"
 	postCount := 0
@@ -45,10 +45,8 @@ func TestClientMetadataCorrelationAndTicketCreation(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case r.URL.Path == "/api/v1/groups":
-			_, _ = w.Write([]byte(`[{"id":1,"name":"Support","active":true},{"id":2,"name":"Old","active":false}]`))
 		case r.URL.Path == "/api/v1/ticket_states":
-			_, _ = w.Write([]byte(`[{"id":4,"name":"closed","state_type_id":5,"active":true}]`))
+			_, _ = w.Write([]byte(`[{"id":4,"name":"closed","state_type_id":5,"active":true},{"id":5,"name":"inactive","active":false}]`))
 		case r.URL.Path == "/api/v1/object_manager_attributes":
 			_, _ = w.Write([]byte(`[{"name":"windshift_item_key","object":"Ticket","active":true}]`))
 		case r.URL.Path == "/api/v1/tickets/search":
@@ -68,12 +66,12 @@ func TestClientMetadataCorrelationAndTicketCreation(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.URL, token, httpTestTransport{client: server.Client()})
-	metadata, err := client.Metadata(context.Background())
+	states, err := client.States(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(metadata.Groups) != 1 || metadata.Groups[0].Name != "Support" || len(metadata.States) != 1 {
-		t.Fatalf("unexpected metadata: %#v", metadata)
+	if len(states) != 1 || states[0].Name != "closed" {
+		t.Fatalf("unexpected states: %#v", states)
 	}
 	if err := client.ValidateCorrelationField(context.Background(), "windshift_item_key"); err != nil {
 		t.Fatal(err)
@@ -98,7 +96,7 @@ func TestClientRedactsAPIErrorBodyAndToken(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.URL, token, httpTestTransport{client: server.Client()})
-	_, err := client.Metadata(context.Background())
+	_, err := client.States(context.Background())
 	if err == nil {
 		t.Fatal("expected authentication error")
 	}
@@ -118,7 +116,7 @@ func TestClientHonorsContextTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 	client := NewClient(server.URL, "token", httpTestTransport{client: server.Client()})
-	_, err := client.Metadata(ctx)
+	_, err := client.States(ctx)
 	if err == nil {
 		t.Fatal("expected timeout")
 	}
