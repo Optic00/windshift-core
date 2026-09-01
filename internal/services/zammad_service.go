@@ -1095,10 +1095,11 @@ func (s *ZammadService) CreateTicket(ctx context.Context, itemID, actorID int, r
 	if err != nil {
 		return nil, err
 	}
-	connection, client, err := s.client(ctx, req.ConnectionID, item.WorkspaceID)
+	connection, err := s.connection(req.ConnectionID, item.WorkspaceID)
 	if err != nil {
 		return nil, err
 	}
+	var client *zammad.Client
 	groupID, groupName := req.GroupID, ""
 	if groupID == 0 {
 		groupID = connection.DefaultGroupID
@@ -1965,22 +1966,30 @@ func (s *ZammadService) completeWindshiftItem(ctx context.Context, link *models.
 }
 
 func (s *ZammadService) client(ctx context.Context, id string, workspaceID int) (*models.ZammadConnection, *zammad.Client, error) {
-	connection, err := s.repo.GetConnection(id)
+	connection, err := s.connection(id, workspaceID)
 	if err != nil {
 		return nil, nil, err
-	}
-	available, err := s.repo.IsConnectionAvailableToWorkspace(id, workspaceID)
-	if err != nil {
-		return nil, nil, err
-	}
-	if !available {
-		return nil, nil, ErrCredentialScopeMismatch
 	}
 	client, err := s.clientForConnection(ctx, connection, workspaceID)
 	if err != nil {
 		return nil, nil, err
 	}
 	return connection, client, nil
+}
+
+func (s *ZammadService) connection(id string, workspaceID int) (*models.ZammadConnection, error) {
+	connection, err := s.repo.GetConnection(id)
+	if err != nil {
+		return nil, err
+	}
+	available, err := s.repo.IsConnectionAvailableToWorkspace(id, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	if !available {
+		return nil, ErrCredentialScopeMismatch
+	}
+	return connection, nil
 }
 
 // clientForUnlink permits cleanup through a disabled connection while keeping
