@@ -97,8 +97,8 @@ func RenderPickerCell(s *styles.Styles, label string, selected bool) string {
 // Width picks a reasonable form-field width given the terminal width.
 func Width(winW int) int {
 	w := winW - 8
-	if w < 30 {
-		w = 30
+	if w < 1 {
+		w = 1
 	}
 	if w > 80 {
 		w = 80

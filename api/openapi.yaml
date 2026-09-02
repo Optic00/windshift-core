@@ -648,6 +648,8 @@ components:
           type: string
         name:
           type: string
+        time_project_id:
+          type: integer
         updated_at:
           type: string
         warnings:
@@ -4110,6 +4112,8 @@ components:
           type: string
         name:
           type: string
+        time_project_id:
+          type: integer
         updated_at:
           type: string
         warnings:

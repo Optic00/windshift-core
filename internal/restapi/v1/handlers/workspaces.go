@@ -49,6 +49,7 @@ type WorkspaceResponse struct {
 	Key                     string   `json:"key"`
 	Description             string   `json:"description"`
 	Active                  bool     `json:"active"`
+	TimeProjectID           *int     `json:"time_project_id,omitempty"`
 	IsPersonal              bool     `json:"is_personal"`
 	IsTemplate              bool     `json:"is_template"`
 	InternalCommentsEnabled bool     `json:"internal_comments_enabled"`
@@ -102,6 +103,7 @@ func toWorkspaceResponse(ws *models.Workspace) WorkspaceResponse {
 		Key:                     ws.Key,
 		Description:             ws.Description,
 		Active:                  ws.Active,
+		TimeProjectID:           ws.TimeProjectID,
 		IsPersonal:              ws.IsPersonal,
 		IsTemplate:              ws.IsTemplate,
 		InternalCommentsEnabled: ws.InternalCommentsEnabled,

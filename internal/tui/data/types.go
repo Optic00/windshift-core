@@ -1,6 +1,9 @@
 package data
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // UserInfo carries the authenticated identity plumbed through from SSH.
 type UserInfo struct {
@@ -12,6 +15,7 @@ type UserInfo struct {
 	Username       string
 	FirstName      string
 	LastName       string
+	Timezone       string
 }
 
 // Prefs is the per-user TUI preferences document persisted server-side
@@ -75,25 +79,39 @@ type v1PrioritySummary struct {
 }
 
 type v1WorkspaceResponse struct {
-	ID          int    `json:"id"`
-	Name        string `json:"name"`
-	Key         string `json:"key"`
-	Description string `json:"description"`
-	Active      bool   `json:"active"`
+	ID            int    `json:"id"`
+	Name          string `json:"name"`
+	Key           string `json:"key"`
+	Description   string `json:"description"`
+	Active        bool   `json:"active"`
+	TimeProjectID *int   `json:"time_project_id,omitempty"`
 }
 
 type v1ItemResponse struct {
-	ID          int                `json:"id"`
-	WorkspaceID int                `json:"workspace_id"`
-	Title       string             `json:"title"`
-	Description string             `json:"description"`
-	ParentID    *int               `json:"parent_id,omitempty"`
-	Status      *v1StatusSummary   `json:"status,omitempty"`
-	Priority    *v1PrioritySummary `json:"priority,omitempty"`
-	Assignee    *v1UserSummary     `json:"assignee,omitempty"`
-	Creator     *v1UserSummary     `json:"creator,omitempty"`
-	CreatedAt   time.Time          `json:"created_at"`
-	UpdatedAt   time.Time          `json:"updated_at"`
+	ID                  int                `json:"id"`
+	WorkspaceID         int                `json:"workspace_id"`
+	WorkspaceKey        string             `json:"workspace_key"`
+	Key                 string             `json:"key"`
+	WorkspaceItemNumber int                `json:"workspace_item_number"`
+	Title               string             `json:"title"`
+	Description         string             `json:"description"`
+	ParentID            *int               `json:"parent_id,omitempty"`
+	Status              *v1StatusSummary   `json:"status,omitempty"`
+	Priority            *v1PrioritySummary `json:"priority,omitempty"`
+	Assignee            *v1UserSummary     `json:"assignee,omitempty"`
+	Creator             *v1UserSummary     `json:"creator,omitempty"`
+	Transitions         []v1Transition     `json:"transitions,omitempty"`
+	CreatedAt           time.Time          `json:"created_at"`
+	UpdatedAt           time.Time          `json:"updated_at"`
+}
+
+type v1Transition struct {
+	ToStatusID int              `json:"to_status_id"`
+	ToStatus   *v1StatusSummary `json:"to_status,omitempty"`
+}
+
+type v1CurrentUser struct {
+	Timezone string `json:"timezone"`
 }
 
 type v1CommentResponse struct {
@@ -152,7 +170,7 @@ type Workspace struct {
 	Key           string `json:"key"`
 	Description   string `json:"description"`
 	Active        bool   `json:"active"`
-	TimeProjectID *int   `json:"time_project_id"` // populated only by legacy callers; v1 omits it
+	TimeProjectID *int   `json:"time_project_id"`
 }
 
 // Status represents a workflow status
@@ -174,25 +192,27 @@ type Priority struct {
 }
 
 type WorkItem struct {
-	ID                int            `json:"id"`
-	WorkspaceID       int            `json:"workspace_id"`
-	ItemTypeID        *int           `json:"item_type_id"`
-	Title             string         `json:"title"`
-	Description       string         `json:"description"`
-	Status            string         `json:"status"`                // Legacy text field
-	Priority          string         `json:"priority"`              // Legacy text field
-	StatusID          *int           `json:"status_id,omitempty"`   // ID-based status
-	PriorityID        *int           `json:"priority_id,omitempty"` // ID-based priority
-	MilestoneID       *int           `json:"milestone_id"`
-	TimeProjectID     *int           `json:"time_project_id"`
-	AssigneeID        *int           `json:"assignee_id"`
-	CreatorID         *int           `json:"creator_id"`
-	CustomFieldValues map[string]any `json:"custom_field_values"`
-	ParentID          *int           `json:"parent_id"`
-	Path              string         `json:"path"`
-	Rank              *string        `json:"rank"`
-	CreatedAt         string         `json:"created_at"`
-	UpdatedAt         string         `json:"updated_at"`
+	ID                  int            `json:"id"`
+	WorkspaceID         int            `json:"workspace_id"`
+	Key                 string         `json:"key"`
+	WorkspaceItemNumber int            `json:"workspace_item_number"`
+	ItemTypeID          *int           `json:"item_type_id"`
+	Title               string         `json:"title"`
+	Description         string         `json:"description"`
+	Status              string         `json:"status"`                // Legacy text field
+	Priority            string         `json:"priority"`              // Legacy text field
+	StatusID            *int           `json:"status_id,omitempty"`   // ID-based status
+	PriorityID          *int           `json:"priority_id,omitempty"` // ID-based priority
+	MilestoneID         *int           `json:"milestone_id"`
+	TimeProjectID       *int           `json:"time_project_id"`
+	AssigneeID          *int           `json:"assignee_id"`
+	CreatorID           *int           `json:"creator_id"`
+	CustomFieldValues   map[string]any `json:"custom_field_values"`
+	ParentID            *int           `json:"parent_id"`
+	Path                string         `json:"path"`
+	Rank                *string        `json:"rank"`
+	CreatedAt           string         `json:"created_at"`
+	UpdatedAt           string         `json:"updated_at"`
 	// Joined fields for display
 	WorkspaceName   string `json:"workspace_name"`
 	WorkspaceKey    string `json:"workspace_key"`
@@ -205,11 +225,29 @@ type WorkItem struct {
 	CreatorName     string `json:"creator_name"`
 	CreatorEmail    string `json:"creator_email"`
 	// ID-based status/priority display fields
-	StatusName          string `json:"status_name,omitempty"`
-	StatusCategoryColor string `json:"category_color,omitempty"`
-	PriorityName        string `json:"priority_name,omitempty"`
-	PriorityIcon        string `json:"priority_icon,omitempty"`
-	PriorityColor       string `json:"priority_color,omitempty"`
+	StatusName          string   `json:"status_name,omitempty"`
+	StatusCategoryColor string   `json:"category_color,omitempty"`
+	PriorityName        string   `json:"priority_name,omitempty"`
+	PriorityIcon        string   `json:"priority_icon,omitempty"`
+	PriorityColor       string   `json:"priority_color,omitempty"`
+	Transitions         []Status `json:"transitions,omitempty"`
+}
+
+// DisplayKey returns the canonical API key, falling back only for legacy
+// fixtures that do not provide one.
+func (wi *WorkItem) DisplayKey(workspaceKey string) string {
+	if wi.Key != "" {
+		return wi.Key
+	}
+	key := wi.WorkspaceKey
+	if key == "" {
+		key = workspaceKey
+	}
+	number := wi.WorkspaceItemNumber
+	if number == 0 {
+		number = wi.ID
+	}
+	return fmt.Sprintf("%s-%d", key, number)
 }
 
 // GetLevel calculates hierarchy level from path. v1 doesn't surface a path
@@ -242,46 +280,38 @@ type Comment struct {
 }
 
 type TimeProject struct {
-	ID           int32   `json:"id"`
-	CustomerID   int32   `json:"customer_id"`
+	ID           int     `json:"id"`
 	Name         string  `json:"name"`
 	Description  *string `json:"description"`
-	HourlyRate   float64 `json:"hourly_rate"`
-	Active       bool    `json:"active"`
 	CustomerName *string `json:"customer_name"`
-}
-
-type CreateTimeLogRequest struct {
-	ProjectID   int     `json:"project_id"`
-	ItemID      *int    `json:"item_id"`
-	Description string  `json:"description"`
-	Date        string  `json:"date"`
-	StartTime   string  `json:"start_time"`
-	Duration    string  `json:"duration"`
-	EndTime     *string `json:"end_time"`
+	Status       string  `json:"status"`
 }
 
 // ─── v1 → TUI converters ─────────────────────────────────────────────
 
 func workspaceFromV1(w v1WorkspaceResponse) Workspace {
 	return Workspace{
-		ID:          w.ID,
-		Name:        SanitizeLine(w.Name),
-		Key:         SanitizeLine(w.Key),
-		Description: SanitizeText(w.Description),
-		Active:      w.Active,
+		ID:            w.ID,
+		Name:          SanitizeLine(w.Name),
+		Key:           SanitizeLine(w.Key),
+		Description:   SanitizeText(w.Description),
+		Active:        w.Active,
+		TimeProjectID: w.TimeProjectID,
 	}
 }
 
 func workItemFromV1(it v1ItemResponse) WorkItem {
 	wi := WorkItem{
-		ID:          it.ID,
-		WorkspaceID: it.WorkspaceID,
-		Title:       SanitizeLine(it.Title),
-		Description: SanitizeText(it.Description),
-		ParentID:    it.ParentID,
-		CreatedAt:   it.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:   it.UpdatedAt.Format(time.RFC3339),
+		ID:                  it.ID,
+		WorkspaceID:         it.WorkspaceID,
+		WorkspaceKey:        SanitizeLine(it.WorkspaceKey),
+		Key:                 SanitizeLine(it.Key),
+		WorkspaceItemNumber: it.WorkspaceItemNumber,
+		Title:               SanitizeLine(it.Title),
+		Description:         SanitizeText(it.Description),
+		ParentID:            it.ParentID,
+		CreatedAt:           it.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:           it.UpdatedAt.Format(time.RFC3339),
 	}
 	if it.Status != nil {
 		id := it.Status.ID
@@ -309,6 +339,18 @@ func workItemFromV1(it v1ItemResponse) WorkItem {
 		wi.CreatorID = &id
 		wi.CreatorName = SanitizeLine(it.Creator.FullName)
 		wi.CreatorEmail = SanitizeLine(it.Creator.Email)
+	}
+	for _, transition := range it.Transitions {
+		if transition.ToStatus == nil {
+			continue
+		}
+		wi.Transitions = append(wi.Transitions, Status{
+			ID:            transition.ToStatusID,
+			Name:          SanitizeLine(transition.ToStatus.Name),
+			CategoryID:    transition.ToStatus.CategoryID,
+			CategoryName:  SanitizeLine(transition.ToStatus.CategoryName),
+			CategoryColor: SanitizeLine(transition.ToStatus.CategoryColor),
+		})
 	}
 	return wi
 }
