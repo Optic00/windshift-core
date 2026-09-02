@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -56,12 +57,9 @@ func (t *TriageRunner) Run(ctx context.Context, input RunInput, emit EventSink) 
 	if input.Repo == nil {
 		return t.Inner.Run(ctx, input, emit)
 	}
-	if t.TriageBin == "" || t.CacheRoot == "" || t.APIBase == "" {
-		return RunnerResult{Status: models.AgentRunStatusFailed, Error: "triage runner: TriageBin, CacheRoot and APIBase are required for repo runs"}
-	}
-	token := input.Env["WS_TOKEN"]
-	if token == "" {
-		return RunnerResult{Status: models.AgentRunStatusFailed, Error: "triage runner: no WS_TOKEN for git-proxy auth"}
+	token, err := t.repoRunToken(input)
+	if err != nil {
+		return RunnerResult{Status: models.AgentRunStatusFailed, Error: err.Error()}
 	}
 	owner, repo, ok := splitSlug(input.Repo.Slug)
 	if !ok {
@@ -128,12 +126,9 @@ func (t *TriageRunner) Run(ctx context.Context, input RunInput, emit EventSink) 
 // run_service multi-repo path; the broker authorizes each push against that
 // repo's grant.
 func (t *TriageRunner) runMulti(ctx context.Context, input RunInput, emit EventSink) RunnerResult {
-	if t.TriageBin == "" || t.CacheRoot == "" || t.APIBase == "" {
-		return RunnerResult{Status: models.AgentRunStatusFailed, Error: "triage runner: TriageBin, CacheRoot and APIBase are required for repo runs"}
-	}
-	token := input.Env["WS_TOKEN"]
-	if token == "" {
-		return RunnerResult{Status: models.AgentRunStatusFailed, Error: "triage runner: no WS_TOKEN for git-proxy auth"}
+	token, err := t.repoRunToken(input)
+	if err != nil {
+		return RunnerResult{Status: models.AgentRunStatusFailed, Error: err.Error()}
 	}
 	tokenFile, cleanupToken, err := writeTokenFile(token, input.RunID)
 	if err != nil {
@@ -208,24 +203,22 @@ func (t *TriageRunner) runMulti(ctx context.Context, input RunInput, emit EventS
 // triageDirNames mirrors repoDirNames for the remote runner: a unique sibling
 // dir name per repo (last slug segment, numeric-suffixed on collision).
 func triageDirNames(repos []JobRepo) []string {
-	names := make([]string, len(repos))
-	seen := map[string]int{}
-	for i, r := range repos {
-		base := r.Slug
-		if idx := strings.LastIndex(base, "/"); idx >= 0 && idx < len(base)-1 {
-			base = base[idx+1:]
-		}
-		if base == "" {
-			base = fmt.Sprintf("repo%d", i)
-		}
-		name := base
-		if n, ok := seen[base]; ok {
-			name = fmt.Sprintf("%s-%d", base, n+1)
-		}
-		seen[base]++
-		names[i] = name
+	slugs := make([]string, len(repos))
+	for i, repo := range repos {
+		slugs[i] = repo.Slug
 	}
-	return names
+	return repoWorkspaceDirNames(slugs)
+}
+
+func (t *TriageRunner) repoRunToken(input RunInput) (string, error) {
+	if t.TriageBin == "" || t.CacheRoot == "" || t.APIBase == "" {
+		return "", errors.New("triage runner: TriageBin, CacheRoot and APIBase are required for repo runs")
+	}
+	token := input.Env["WS_TOKEN"]
+	if token == "" {
+		return "", errors.New("triage runner: no WS_TOKEN for git-proxy auth")
+	}
+	return token, nil
 }
 
 func (t *TriageRunner) prepare(ctx context.Context, jr JobRepo, runID int, proxyURL, tokenFile, destDir string) (triagePrepareOut, error) {
