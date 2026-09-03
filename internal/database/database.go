@@ -164,7 +164,8 @@ var assetActionEventsSchema string
 // DB wraps a sql.DB connection with a dedicated write connection
 type DB struct {
 	*sql.DB
-	writeConn *sql.DB // Dedicated single connection for writes
+	writeConn  *sql.DB // Dedicated single connection for writes
+	instanceID uint64
 }
 
 // NewDB opens SQLite with WAL, required pragmas, and separate read/write pools.
@@ -256,7 +257,12 @@ func NewDB(dataSourceName string, readConns, writeConns int) (*DB, error) {
 		}
 	}
 
-	return &DB{DB: db, writeConn: writeConn}, nil
+	return &DB{DB: db, writeConn: writeConn, instanceID: newDatabaseInstanceID()}, nil
+}
+
+// InstanceID distinguishes database pools created during this process.
+func (db *DB) InstanceID() uint64 {
+	return db.instanceID
 }
 
 // Close closes the database connections
