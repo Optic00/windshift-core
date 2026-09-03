@@ -58,7 +58,7 @@
 
   async function loadStatuses() {
     try {
-      statuses = await api.get('/statuses');
+      statuses = await api.statuses.getAll();
       loadingStatuses = false;
     } catch (error) {
       console.error('Failed to load statuses:', error);
@@ -68,7 +68,7 @@
 
   async function loadWorkflows() {
     try {
-      const result = await api.get('/workflows');
+      const result = await api.workflows.getAll();
       workflows = result;
       loading = false;
     } catch (error) {
@@ -103,7 +103,7 @@
     }
 
     try {
-      const created = await api.post('/workflows', newWorkflow);
+      const created = await api.workflows.create(newWorkflow);
       workflows = [...workflows, created];
       creating = false;
       newWorkflow = { name: '', description: '', is_default: false };
@@ -137,7 +137,7 @@
 
     try {
       translationEditor?.validate();
-      await api.put(`/workflows/${editingId}`, editWorkflow);
+      await api.workflows.update(editingId, editWorkflow);
       await translationEditor?.save();
       await loadWorkflows();
       editingId = null;
@@ -159,7 +159,7 @@
     if (!confirmed) return;
 
     try {
-      await api.delete(`/workflows/${workflow.id}`);
+      await api.workflows.delete(workflow.id);
       workflows = workflows.filter(wf => wf.id !== workflow.id);
       await loadWorkflows();
       window.dispatchEvent(new CustomEvent('refresh-workspace-data'));

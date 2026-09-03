@@ -123,14 +123,14 @@
 
       if (editingId) {
         translationEditor?.validate();
-        await api.put(`/statuses/${editingId}`, formData);
+        await api.statuses.update(editingId, formData);
         await translationEditor?.save();
         const reloaded = await loadStatusManagerData(api);
         statuses = reloaded.statuses;
         statusCategories = reloaded.statusCategories;
         workflowTransitions = reloaded.workflowTransitions;
       } else {
-        const created = await api.post('/statuses', formData);
+        const created = await api.statuses.create(formData);
         statuses = [...statuses, { ...created, transitionCount: 0 }];
       }
       
@@ -168,7 +168,7 @@
     if (!confirmed) return;
 
     try {
-      await api.delete(`/statuses/${status.id}`);
+      await api.statuses.delete(status.id);
       statuses = statuses.filter(s => s.id !== status.id);
       window.dispatchEvent(new CustomEvent('refresh-workspace-data'));
     } catch (error) {
