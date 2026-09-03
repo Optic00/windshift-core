@@ -302,7 +302,7 @@
     </div>
   </Card>
 {:else if workspace}
-  <div class="space-y-6">
+  <div class="space-y-6" data-testid={`workspace-settings-module-${activeTab}`}>
     <PageHeader
       icon={currentModule?.icon}
       title={t(currentModule?.labelKey)}

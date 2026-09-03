@@ -9,6 +9,8 @@
 
   let {
     workspaceId,
+    id = undefined,
+    testidPrefix = 'workspace-label-picker',
     value = $bindable(/** @type {string[] | string} */ ([])),
     placeholder = '',
     class: className = '',
@@ -96,6 +98,7 @@
 </script>
 
 <BasePicker
+  {id}
   value={valueAsIds}
   items={labels}
   {loading}
@@ -109,6 +112,7 @@
   searchFields={['name']}
   getValue={(label) => label?.id}
   getLabel={(label) => label?.name ?? ''}
+  optionTestid={(option) => `${testidPrefix}-option-${option.value}`}
   onOpen={() => onOpen?.()}
   onClose={() => onClose?.()}
   onChange={handleChange}

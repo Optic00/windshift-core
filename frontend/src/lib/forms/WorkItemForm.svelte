@@ -571,6 +571,8 @@
           <div class="space-y-1">
             <Label color="default">{t('items.labels') || 'Labels'}</Label>
             <WorkspaceLabelCombobox
+              id="create-label-picker-input"
+              testidPrefix="create-label-picker"
               workspaceId={store.formData.workspace_id}
               bind:value={store.formData.label_names}
               placeholder={t('items.selectOrCreateLabels') || 'Select or create labels...'}
@@ -716,6 +718,8 @@
               {t('items.labels') || 'Labels'} <span style="color: var(--ds-text-danger, #ef4444);">*</span>
             </Label>
             <WorkspaceLabelCombobox
+              id="create-label-picker-input"
+              testidPrefix="create-label-picker"
               workspaceId={store.formData.workspace_id}
               bind:value={store.formData.label_names}
               placeholder={t('items.selectOrCreateLabels') || 'Select or create labels...'}
