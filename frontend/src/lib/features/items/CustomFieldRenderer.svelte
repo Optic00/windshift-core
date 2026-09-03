@@ -16,7 +16,7 @@
   import { referenceDisplayCache } from '../../stores/referenceDisplayCache.svelte.js';
   import { t } from '../../stores/i18n.svelte.js';
   import { formatCustomFieldDate } from '../../utils/dateFormatter.js';
-  import { parseFieldOptions, resolveOptionLabel, resolveOptionLabels } from '../../utils/optionUtils.js';
+  import { fieldOptionsObject, parseFieldOptions, resolveOptionLabel, resolveOptionLabels } from '../../utils/optionUtils.js';
   import { safeHref } from '../../utils/sanitize';
   import { booleanCustomFieldChecked, isBooleanCustomFieldType } from '../../utils/customFieldTypes.js';
   import {
@@ -86,7 +86,7 @@
   }
 
   function parseAssetConfig() {
-    try { return field.options ? JSON.parse(field.options) : {}; }
+    try { return fieldOptionsObject(field.options); }
     catch { return {}; }
   }
 

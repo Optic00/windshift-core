@@ -90,7 +90,7 @@
 	async function loadUsers() {
 		loading = true;
 		try {
-			users = await api.getUsers();
+			users = await api.getAdminUsers();
 			error = '';
 		} catch (err) {
 			error = err.message || t('users.failedToLoad');

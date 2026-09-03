@@ -1,10 +1,18 @@
 import { notifyItemMutation } from '../utils/crossTabSync.js';
-import { fetchAPI } from './core.js';
+import { fetchAPI, fetchAPIV2, fetchV2Data } from './core.js';
 import { buildQueryString } from './utils.js';
 
 // Item ids per GET /items/batch request. Kept under the server cap (500) and
 // aligned with the links-batch chunk size to bound URL length.
 const ITEM_BATCH_CHUNK = 200;
+
+function itemListQuery(/** @type {Record<string, any>} */ filters = {}) {
+  const { limit, omit_descriptions, order_by, sort_direction, ...canonical } = filters;
+  if (limit != null) canonical.page_size = Math.min(Number(limit), 100);
+  if (omit_descriptions) canonical.fields = 'summary';
+  if (order_by) canonical.sort = sort_direction === 'desc' ? `-${order_by}` : order_by;
+  return buildQueryString(canonical);
+}
 
 /**
  * Wrap a mutating items API method so a successful call broadcasts a
@@ -39,7 +47,7 @@ function withCrossTabNotice(fn, type) {
  */
 function fetchItemDetailSummary(id, options = {}) {
   const { surface, ...requestOptions } = options;
-  return fetchAPI(
+  return fetchV2Data(
     `/items/${id}/detail-summary${surface ? `?surface=${encodeURIComponent(surface)}` : ''}`,
     requestOptions
   );
@@ -52,7 +60,7 @@ function fetchItemDetailSummary(id, options = {}) {
  */
 function fetchItemDetailSummaryByKey(workspaceKey, itemNumber, options = {}) {
   const { surface, ...requestOptions } = options;
-  return fetchAPI(
+  return fetchV2Data(
     `/workspaces/${encodeURIComponent(workspaceKey)}/items/${encodeURIComponent(itemNumber)}/detail-summary${surface ? `?surface=${encodeURIComponent(surface)}` : ''}`,
     requestOptions
   );
@@ -72,11 +80,11 @@ function fetchBacklog(
   }
   if (ql) params.append('ql', ql);
   if (sub_ql) params.append('sub_ql', sub_ql);
-  if (omit_descriptions) params.append('omit_descriptions', 'true');
+  if (omit_descriptions) params.append('fields', 'summary');
   if (include_watermark) params.append('include_watermark', 'true');
-  if (page) params.append('page', page);
-  if (limit) params.append('limit', limit);
-  return fetchAPI(`/items/backlog?${params}`);
+  if (page) params.append('page', String(page));
+  if (limit) params.append('page_size', String(Math.min(Number(limit), 100)));
+  return fetchAPIV2(`/items/backlog?${params}`);
 }
 
 async function fetchBacklogBoundary(workspaceId, collectionId, subQL, boundary) {
@@ -89,17 +97,17 @@ async function fetchBacklogBoundary(workspaceId, collectionId, subQL, boundary) 
 
   for (let attempt = 0; attempt < 2; attempt++) {
     const firstPage = await fetchBacklog(workspaceId, null, collectionId, options);
-    const firstItems = firstPage?.items ?? (Array.isArray(firstPage) ? firstPage : []);
+    const firstItems = firstPage?.data ?? [];
     if (boundary === 'start' || firstItems.length === 0) return firstItems[0] ?? null;
 
-    const total = firstPage?.pagination?.total ?? firstItems.length;
+    const total = firstPage?.pagination?.total_items ?? firstItems.length;
     if (total <= 1) return firstItems[0] ?? null;
 
     const lastPage = await fetchBacklog(workspaceId, null, collectionId, {
       ...options,
       page: total,
     });
-    const lastItems = lastPage?.items ?? (Array.isArray(lastPage) ? lastPage : []);
+    const lastItems = lastPage?.data ?? [];
     if (lastItems.length > 0) return lastItems[0];
   }
 
@@ -108,12 +116,12 @@ async function fetchBacklogBoundary(workspaceId, collectionId, subQL, boundary) 
 
 export const items = {
   getAll: (filters = {}, requestOptions = {}) => {
-    return fetchAPI(`/items${buildQueryString(filters)}`, requestOptions);
+    return fetchAPIV2(`/items${itemListQuery(filters)}`, requestOptions);
   },
-  get: (id, requestOptions = {}) => fetchAPI(`/items/${id}`, requestOptions),
+  get: (id, requestOptions = {}) => fetchV2Data(`/items/${id}`, requestOptions),
   getDetailSummary: fetchItemDetailSummary,
   getByKey: (workspaceKey, itemNumber, requestOptions = {}) =>
-    fetchAPI(
+    fetchV2Data(
       `/workspaces/${encodeURIComponent(workspaceKey)}/items/${encodeURIComponent(itemNumber)}`,
       requestOptions
     ),
@@ -135,14 +143,14 @@ export const items = {
       chunks.push(unique.slice(i, i + ITEM_BATCH_CHUNK));
     }
     const results = await Promise.all(
-      chunks.map((chunk) => fetchAPI(`/items/batch?ids=${chunk.join(',')}`))
+      chunks.map((chunk) => fetchV2Data(`/items/batch?ids=${chunk.join(',')}`))
     );
     return results.flat();
   },
-  getChanges: (filters = {}) => fetchAPI(`/items/changes${buildQueryString(filters)}`),
+  getChanges: (filters = {}) => fetchV2Data(`/items/changes${buildQueryString(filters)}`),
   create: withCrossTabNotice(
     (data) =>
-      fetchAPI('/items', {
+      fetchV2Data('/items', {
         method: 'POST',
         body: JSON.stringify(data),
       }),
@@ -150,8 +158,9 @@ export const items = {
   ),
   update: withCrossTabNotice(
     (id, data) =>
-      fetchAPI(`/items/${id}`, {
-        method: 'PUT',
+      fetchV2Data(`/items/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/merge-patch+json' },
         body: JSON.stringify(data),
       }),
     'update'
@@ -160,7 +169,7 @@ export const items = {
   // returns only changed items; unchanged retries produce no duplicate events.
   bulkUpdate: withCrossTabNotice(
     (itemIds, fields) =>
-      fetchAPI('/items/bulk-update', {
+      fetchV2Data('/items/bulk-update', {
         method: 'POST',
         body: JSON.stringify({ item_ids: itemIds, set: fields }),
       }),
@@ -168,14 +177,14 @@ export const items = {
   ),
   bulkPatch: withCrossTabNotice(
     (patches) =>
-      fetchAPI('/items/bulk-patch', {
+      fetchV2Data('/items/bulk-patch', {
         method: 'POST',
         body: JSON.stringify({ patches }),
       }),
     'update'
   ),
   getRoadmapHierarchyDates: (rootIds) =>
-    fetchAPI('/items/roadmap-hierarchy-dates', {
+    fetchV2Data('/items/roadmap-hierarchy-dates', {
       method: 'POST',
       body: JSON.stringify({ root_ids: rootIds }),
     }),
@@ -184,7 +193,7 @@ export const items = {
   // validator-mode and condition-mode workflow rules are always enforced.
   // Returns the updated item (unwrapped from the {item, old_status_id, ...} envelope).
   transition: withCrossTabNotice(async (id, toStatusId) => {
-    const response = await fetchAPI(`/items/${id}/transition`, {
+    const response = await fetchV2Data(`/items/${id}/transition`, {
       method: 'POST',
       body: JSON.stringify({ to_status_id: toStatusId }),
     });
@@ -192,39 +201,39 @@ export const items = {
   }, 'transition'),
   delete: withCrossTabNotice(
     (id) =>
-      fetchAPI(`/items/${id}`, {
+      fetchAPIV2(`/items/${id}`, {
         method: 'DELETE',
       }),
     'delete'
   ),
-  getDeleteInfo: (id) => fetchAPI(`/items/${id}/delete-info`),
+  getDeleteInfo: (id) => fetchV2Data(`/items/${id}/delete-info`),
   deleteCascade: withCrossTabNotice(
     (id) =>
-      fetchAPI(`/items/${id}/cascade`, {
+      fetchV2Data(`/items/${id}/cascade`, {
         method: 'DELETE',
       }),
     'delete'
   ),
   reparentChildren: (id, newParentId) =>
-    fetchAPI(`/items/${id}/reparent-children`, {
+    fetchV2Data(`/items/${id}/reparent-children`, {
       method: 'POST',
-      body: JSON.stringify({ newParentId }),
+      body: JSON.stringify({ parent_id: newParentId }),
     }),
   copy: withCrossTabNotice(
     (id) =>
-      fetchAPI(`/items/${id}/copy`, {
+      fetchV2Data(`/items/${id}/copy`, {
         method: 'POST',
       }),
     'create'
   ),
   previewWorkspaceMove: (id, data) =>
-    fetchAPI(`/items/${id}/move-workspace/preview`, {
+    fetchV2Data(`/items/${id}/move-workspace/preview`, {
       method: 'POST',
       body: JSON.stringify(data),
     }),
   moveWorkspace: withCrossTabNotice(
     (id, data) =>
-      fetchAPI(`/items/${id}/move-workspace`, {
+      fetchV2Data(`/items/${id}/move-workspace`, {
         method: 'POST',
         body: JSON.stringify(data),
       }),
@@ -232,8 +241,9 @@ export const items = {
   ),
   updateFracIndex: withCrossTabNotice(
     (id, data) =>
-      fetchAPI(`/items/${id}/frac-index`, {
-        method: 'PUT',
+      fetchV2Data(`/items/${id}/rank`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/merge-patch+json' },
         body: JSON.stringify(data),
       }),
     'reorder'
@@ -241,32 +251,32 @@ export const items = {
   getBacklog: fetchBacklog,
   getBacklogBoundary: fetchBacklogBoundary,
   getChildren: (itemId, requestOptions = {}) =>
-    fetchAPI(`/items/${itemId}/children`, requestOptions),
+    fetchV2Data(`/items/${itemId}/children`, requestOptions),
   getAncestors: (itemId, requestOptions = {}) =>
-    fetchAPI(`/items/${itemId}/ancestors`, requestOptions),
+    fetchV2Data(`/items/${itemId}/ancestors`, requestOptions),
   getDescendants: (itemId, maxDepth = null) => {
     const params = maxDepth ? `?max_depth=${maxDepth}` : '';
-    return fetchAPI(`/items/${itemId}/descendants${params}`);
+    return fetchV2Data(`/items/${itemId}/descendants${params}`);
   },
   getTimeRollup: (itemId, { maxDepth = 10 } = {}) =>
-    fetchAPI(`/items/${itemId}/time-rollup?max_depth=${maxDepth}`),
+    fetchV2Data(`/items/${itemId}/time-rollup?max_depth=${maxDepth}`),
   // Get available status transitions for a specific item based on workflow configuration
   getAvailableStatusTransitions: (itemId, requestOptions = {}) =>
-    fetchAPI(`/items/${itemId}/available-status-transitions`, requestOptions),
+    fetchV2Data(`/items/${itemId}/available-transitions`, requestOptions),
   analyzeTypeChange: (itemId, targetItemTypeId) =>
-    fetchAPI(`/items/${itemId}/type-change-analysis?target_item_type_id=${targetItemTypeId}`),
+    fetchV2Data(`/items/${itemId}/type-change-analysis?target_item_type_id=${targetItemTypeId}`),
   changeType: withCrossTabNotice(
     (itemId, data) =>
-      fetchAPI(`/items/${itemId}/change-type`, {
+      fetchV2Data(`/items/${itemId}/change-type`, {
         method: 'POST',
         body: JSON.stringify(data),
       }),
     'update'
   ),
   // Get history of changes for an item
-  getHistory: (itemId) => fetchAPI(`/items/${itemId}/history`),
+  getHistory: (itemId) => fetchV2Data(`/items/${itemId}/history`),
   getStatusDurations: (itemId, requestOptions = {}) =>
-    fetchAPI(`/items/${itemId}/status-durations`, requestOptions),
+    fetchV2Data(`/items/${itemId}/status-durations`, requestOptions),
 
   // Get items created in the last N days
   getRecentlyCreated: (workspaceId, days = 7) => {
@@ -282,20 +292,21 @@ export const items = {
 
   // Watch/unwatch items
   addWatch: (id) =>
-    fetchAPI(`/items/${id}/watch`, {
+    fetchV2Data(`/items/${id}/watch`, {
       method: 'POST',
+      body: JSON.stringify({}),
     }),
   removeWatch: (id) =>
-    fetchAPI(`/items/${id}/watch`, {
+    fetchV2Data(`/items/${id}/watch`, {
       method: 'DELETE',
     }),
-  getWatchStatus: (id, requestOptions = {}) => fetchAPI(`/items/${id}/watch`, requestOptions),
+  getWatchStatus: (id, requestOptions = {}) => fetchV2Data(`/items/${id}/watch`, requestOptions),
 
   // Personal tasks relationship
   getPersonalTasks: (itemId, requestOptions = {}) =>
-    fetchAPI(`/items/${itemId}/personal-tasks`, requestOptions),
+    fetchV2Data(`/items/${itemId}/personal-tasks`, requestOptions),
   unlinkPersonalTask: (itemId) =>
-    fetchAPI(`/items/${itemId}/related-work-item`, {
+    fetchAPIV2(`/items/${itemId}/related-work-item`, {
       method: 'DELETE',
     }),
 };

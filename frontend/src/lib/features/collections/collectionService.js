@@ -41,10 +41,10 @@ export async function fetchCollectionItems(
   }
 
   const response = await api.items.getAll(filters);
-  const items = response?.items ?? (Array.isArray(response) ? response : []);
+  const items = response?.data ?? [];
   const pagination = response?.pagination ?? null;
-  const sortableFields = response?.sortable_fields ?? [];
-  const watermark = response?.watermark ?? 0;
+  const sortableFields = response?.meta?.sortable_fields ?? [];
+  const watermark = response?.meta?.watermark ?? 0;
 
   const publicSlug =
     collection?.is_public && collection?.public_slug ? collection.public_slug : null;
@@ -79,9 +79,9 @@ export async function fetchCollectionBacklog(
     omit_descriptions: true,
     include_watermark: true,
   });
-  const items = response?.items ?? (Array.isArray(response) ? response : []);
+  const items = response?.data ?? [];
   const pagination = response?.pagination ?? null;
-  const watermark = response?.watermark ?? 0;
+  const watermark = response?.meta?.watermark ?? 0;
   return { items, collectionName, pagination, watermark };
 }
 
@@ -145,7 +145,7 @@ export async function checkItemVisibility(itemId, filters) {
     const response = await api.items.getAll(filtersWithId);
 
     // Handle paginated response
-    const items = response?.items || response || [];
+    const items = response?.data ?? [];
 
     // Check if the item is in the results
     return items.some((item) => item.id === itemId);

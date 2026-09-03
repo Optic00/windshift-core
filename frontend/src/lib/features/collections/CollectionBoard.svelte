@@ -95,7 +95,7 @@
   // Cached outgoing and incoming links for dependency hover summaries.
   let dependencyLinksByItem = $state({});
   let dependencyLinksToken = 0; // guards against stale async when items change
-  const DEPENDENCY_LINK_CHUNK = 200; // ids per batched /links/batch request (server cap 500)
+  const DEPENDENCY_LINK_CHUNK = 100;
 
   // Quick-add state per column
   let quickAddState = $state({});
@@ -512,7 +512,7 @@
     if (toFetch.length === 0) return;
     const token = ++dependencyLinksToken;
     const ids = toFetch.map((i) => i.id);
-    // Batch below the server's 500-ID cap.
+    // Batch at the canonical API cap.
     const chunks = [];
     for (let i = 0; i < ids.length; i += DEPENDENCY_LINK_CHUNK) {
       chunks.push(ids.slice(i, i + DEPENDENCY_LINK_CHUNK));
@@ -1414,7 +1414,7 @@
 
       // Update the frac_index using item IDs
       const indexData = {
-        prev_item_id: prevItemId,
+        previous_item_id: prevItemId,
         next_item_id: nextItemId
       };
       const updatedItem = await api.items.updateFracIndex(draggedItem.id, indexData);

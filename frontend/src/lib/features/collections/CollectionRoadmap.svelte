@@ -170,7 +170,7 @@
 
   // Links/dependencies
   let itemLinks = $state({});
-  const ROADMAP_LINK_CHUNK = 200; // ids per batched /links/batch request (server cap 500)
+  const ROADMAP_LINK_CHUNK = 100;
 
   // Timeline computation
   let containerWidth = $state(1200);
@@ -744,7 +744,7 @@
 
     try {
       if (boardConfigId) {
-        await api.collections.updateBoardConfiguration(collectionId, boardConfigId, payload);
+        await api.collections.updateBoardConfiguration(collectionId, boardConfigId, payload, workspaceId);
       } else {
         const result = await api.collections.createBoardConfiguration(collectionId, workspaceId, payload);
         boardConfigId = result.id;

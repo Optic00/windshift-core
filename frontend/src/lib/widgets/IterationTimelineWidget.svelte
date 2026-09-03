@@ -44,7 +44,7 @@
 
     try {
       const allIterations = await api.iterations.getAll({ workspace_id: workspaceId });
-      const iterationList = Array.isArray(allIterations) ? allIterations : (allIterations?.iterations ?? []);
+      const iterationList = allIterations || [];
 
       const relevant = iterationList
         .filter(isRelevantIteration)

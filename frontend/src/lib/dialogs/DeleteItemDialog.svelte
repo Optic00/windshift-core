@@ -93,7 +93,7 @@
       deleteInfo = result;
       // If item has a parent, default to that as the new parent
       if (deleteInfo?.parentId) {
-        selectedNewParentId = deleteInfo.parentId;
+        selectedNewParentId = deleteInfo.parent_id;
       }
     } catch (err) {
       if (!show || requestedItemId !== itemId) return;
@@ -115,12 +115,12 @@
       // Get items at the same hierarchy level in the same workspace
       // These are valid candidates for reparenting (siblings at the same level)
       const response = await api.items.getAll({
-        workspace_id: deleteInfo.workspaceId,
-        level: deleteInfo.hierarchyLevel,
+        workspace_id: deleteInfo.workspace_id,
+        level: deleteInfo.hierarchy_level,
         limit: 100
       });
 
-      const items = response?.items || response || [];
+      const items = response?.data ?? [];
       // Filter out the item being deleted and its descendants
       reparentCandidates = items.filter(i => i.id !== item.id);
     } catch (err) {
@@ -146,7 +146,7 @@
       } else {
         // Cascade delete
         const result = await api.items.deleteCascade(item.id);
-        ondeleted?.({ mode: 'deleteAll', deletedCount: result.deletedCount });
+        ondeleted?.({ mode: 'deleteAll', deletedCount: result.count });
       }
       show = false;
     } catch (err) {

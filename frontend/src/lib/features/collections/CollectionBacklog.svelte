@@ -416,8 +416,8 @@
       if (!boundaryItem || boundaryItem.id === item.id) return;
 
       await api.items.updateFracIndex(item.id, boundary === 'start'
-        ? { prev_item_id: null, next_item_id: boundaryItem.id }
-        : { prev_item_id: boundaryItem.id, next_item_id: null });
+        ? { previous_item_id: null, next_item_id: boundaryItem.id }
+        : { previous_item_id: boundaryItem.id, next_item_id: null });
 
       const otherItems = collectionStore.backlogItems.filter(i => i.id !== item.id);
       collectionStore.backlogItems = boundary === 'start'
@@ -644,7 +644,7 @@
 
       // Update the frac_index using item IDs
       const indexData = {
-        prev_item_id: prevItemId,
+        previous_item_id: prevItemId,
         next_item_id: nextItemId
       };
       await api.items.updateFracIndex(draggedItem.id, indexData);

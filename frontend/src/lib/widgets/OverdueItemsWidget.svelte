@@ -43,7 +43,7 @@
         ql: vql,
         limit: 50 // fetch more than needed, filter client-side
       });
-      const items = Array.isArray(response) ? response : (response?.items ?? []);
+      const items = response?.data ?? [];
       const parsedItems = items
         .map(item => ({
           id: item.id,

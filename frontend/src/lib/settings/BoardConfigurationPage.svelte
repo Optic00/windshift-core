@@ -690,7 +690,7 @@
       };
 
       if (boardConfig && boardConfig.id) {
-        await api.collections.updateBoardConfiguration(collectionId, boardConfig.id, payload);
+        await api.collections.updateBoardConfiguration(collectionId, boardConfig.id, payload, workspaceId);
       } else {
         const newConfig = await api.collections.createBoardConfiguration(collectionId, workspaceId, payload);
         boardConfig = newConfig;
@@ -719,7 +719,7 @@
 
     if (boardConfig) {
       try {
-        await api.collections.deleteBoardConfiguration(collectionId, boardConfig.id);
+        await api.collections.deleteBoardConfiguration(collectionId, boardConfig.id, workspaceId);
         boardConfig = null;
         columns = [];
         backlogStatusIDs = [];

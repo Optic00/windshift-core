@@ -528,7 +528,7 @@ class ItemDetailStore {
     ])
       .then(([customers, workItems, workspaces]) => {
         this.customers = customers || [];
-        this.workItems = workItems?.items || workItems || [];
+        this.workItems = workItems?.data ?? [];
         this.workspaces = workspaces || [];
         this.#timeModalDataLoaded = true;
       })

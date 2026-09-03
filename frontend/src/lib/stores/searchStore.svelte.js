@@ -183,8 +183,8 @@ export function createWorkItemSearchStore() {
     qlError.set(null);
     try {
       const response = await api.items.getAll({ ql: finalQl, page, limit });
-      if (response?.items) {
-        workItems.set(response.items);
+      if (response?.data) {
+        workItems.set(response.data);
         pagination.set(response.pagination || null);
       } else {
         workItems.set(response || []);
@@ -237,7 +237,7 @@ export function createWorkItemSearchStore() {
         statusCatalog.length ? null : api.statuses.getAll(),
         priorityCatalog.length ? null : api.priorities.getAll(),
       ]);
-      customFieldsCatalog = (cf?.data || []).map((field) => ({
+      customFieldsCatalog = (cf || []).map((field) => ({
         id: `cf_${field.name}`,
         name: field.name,
         type: field.field_type,

@@ -115,7 +115,7 @@ class TimeEntryStore {
   async loadWorkItems() {
     try {
       const result = await api.items.getAll({ limit: 100 });
-      this.workItems = result.items || [];
+      this.workItems = result.data ?? [];
     } catch (err) {
       console.error('Failed to load work items:', err);
       this.workItems = [];

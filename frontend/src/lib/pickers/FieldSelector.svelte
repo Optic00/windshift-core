@@ -5,6 +5,7 @@
   import SearchInput from '../components/SearchInput.svelte';
   import { api } from '../api.js';
   import { t } from '../stores/i18n.svelte.js';
+  import { fieldOptionsObject } from '../utils/optionUtils.js';
 
   let {
     placeholder = '',
@@ -113,14 +114,14 @@
     }
     try {
       const result = await api.customFields.getAll();
-      customFields = (result?.data || []).map(field => ({
+      customFields = (result || []).map(field => ({
         id: `cf_${field.name}`,
         customFieldId: field.id,
         name: field.name,
         type: field.field_type,
         description: field.description || t('pickers.customFieldDesc', { name: field.name }),
         isCustom: true,
-        options: field.options ? JSON.parse(field.options) : null
+        options: field.options ? fieldOptionsObject(field.options) : null
       }));
     } catch (error) {
       console.error('Failed to load custom fields:', error);

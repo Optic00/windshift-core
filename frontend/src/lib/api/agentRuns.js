@@ -4,7 +4,7 @@
 // listEventsAfter(runId, afterId) every few seconds and append to a
 // local store, trimming what you don't need to render.
 
-import { fetchAPI } from './core.js';
+import { fetchV2Data } from './core.js';
 
 /**
  * Append run-list pagination options to the query string.
@@ -13,7 +13,7 @@ import { fetchAPI } from './core.js';
  */
 function runListQuery(opts) {
   const params = new URLSearchParams();
-  if (opts.limit) params.set('limit', String(opts.limit));
+  if (opts.limit) params.set('page_size', String(opts.limit));
   if (opts.beforeId) params.set('before_id', String(opts.beforeId));
   const qs = params.toString();
   return qs ? `?${qs}` : '';
@@ -26,7 +26,7 @@ export const agentRuns = {
    * @param {{ limit?: number, beforeId?: number }} [opts]
    */
   listForWorkspace: (workspaceId, opts = {}) =>
-    fetchAPI(`/workspaces/${workspaceId}/agent-runs${runListQuery(opts)}`),
+    fetchV2Data(`/workspaces/${workspaceId}/agent-runs${runListQuery(opts)}`),
 
   /**
    * List the runs triggered against one work item (newest first) — backs
@@ -34,16 +34,17 @@ export const agentRuns = {
    * @param {number} itemId
    * @param {{ limit?: number, beforeId?: number }} [opts]
    */
-  listForItem: (itemId, opts = {}) => fetchAPI(`/items/${itemId}/agent-runs${runListQuery(opts)}`),
+  listForItem: (itemId, opts = {}) =>
+    fetchV2Data(`/items/${itemId}/agent-runs${runListQuery(opts)}`),
 
   /** Get a single run by id. */
-  get: (runId) => fetchAPI(`/agent-runs/${runId}`),
+  get: (runId) => fetchV2Data(`/agent-runs/${runId}`),
 
   /**
    * Get the run's metered LLM usage totals: prompt/completion/total tokens,
    * cost_usd (null when rates are unknown), and call count (WI-494).
    */
-  usage: (runId) => fetchAPI(`/agent-runs/${runId}/usage`),
+  usage: (runId) => fetchV2Data(`/agent-runs/${runId}/usage`),
 
   /**
    * Poll the run's event stream. `afterId` is the highest event id the
@@ -53,9 +54,9 @@ export const agentRuns = {
   listEventsAfter: (runId, afterId = 0, limit = 200) => {
     const params = new URLSearchParams({
       after_id: String(afterId),
-      limit: String(limit),
+      page_size: String(limit),
     });
-    return fetchAPI(`/agent-runs/${runId}/events?${params}`);
+    return fetchV2Data(`/agent-runs/${runId}/events?${params}`);
   },
 
   /**
@@ -65,7 +66,7 @@ export const agentRuns = {
    * that lost its terminal report and keeps the run 'running'). WI-512.
    */
   cancel: (runId, { force = false } = {}) =>
-    fetchAPI(`/agent-runs/${runId}/cancel${force ? '?force=true' : ''}`, {
+    fetchV2Data(`/agent-runs/${runId}/cancel${force ? '?force=true' : ''}`, {
       method: 'POST',
     }),
 
@@ -76,7 +77,7 @@ export const agentRuns = {
    * call was a no-op. Requires item.edit.
    */
   rerun: (itemId) =>
-    fetchAPI(`/items/${itemId}/agent-runs`, {
+    fetchV2Data(`/items/${itemId}/agent-runs`, {
       method: 'POST',
     }),
 };

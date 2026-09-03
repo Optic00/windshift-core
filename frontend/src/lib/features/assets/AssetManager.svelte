@@ -237,7 +237,7 @@
       // Load all available custom fields (excluding system default fields)
       // Note: Work item system fields (Status, Priority, etc.) don't apply to assets
       const result = await api.customFields.getAll();
-      const customFields = (result?.data || [])
+      const customFields = (result || [])
         .filter(f => !f.system_default)
         .map(f => ({
           identifier: f.id.toString(),

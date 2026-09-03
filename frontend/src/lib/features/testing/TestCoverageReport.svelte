@@ -239,8 +239,9 @@
         // Update existing config
         await api.tests.coverage.updateConfig(
           selectedCollectionId || 'default',
-          config.id,
-          configData
+		  config.id,
+		  configData,
+		  workspaceId
         );
       } else {
         // Create new config
@@ -381,14 +382,14 @@
       <div class="table-section">
         <DataTable
           {columns}
-          data={requirementsData?.items || []}
+		  data={requirementsData?.data || []}
           keyField="item_id"
           emptyMessage={t('testing.noRequirementsFound')}
           emptyIcon={IconShieldX}
           pagination={true}
           pageSize={pageSize}
           currentPage={currentPage}
-          totalItems={requirementsData?.pagination?.total || 0}
+		  totalItems={requirementsData?.pagination?.total_items || 0}
           onPageChange={handlePageChange}
         />
       </div>

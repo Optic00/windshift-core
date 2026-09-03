@@ -111,7 +111,7 @@
       if (portalSlug) {
         customFieldDefinitions = await api.portal.getCustomFields(portalSlug) || [];
       } else {
-        customFieldDefinitions = (await api.customFields.getAll())?.data || [];
+        customFieldDefinitions = await api.customFields.getAll();
       }
 
       const initialValues = initializeFormValues(fields, null, customFieldDefinitions);

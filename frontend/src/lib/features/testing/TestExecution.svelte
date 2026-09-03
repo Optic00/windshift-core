@@ -58,8 +58,7 @@
   async function loadWorkspaceItems() {
     try {
       const response = await api.items.getAll({ workspace_id: workspaceId });
-      // API returns { items: [], total_count, page, limit }
-      workspaceItems = response?.items || [];
+      workspaceItems = response?.data ?? [];
     } catch (error) {
       console.error('Failed to load workspace items:', error);
       workspaceItems = [];

@@ -25,7 +25,7 @@
   import { confirm } from '../composables/useConfirm.js';
   import { formatDateSimple } from '../utils/dateFormatter.js';
   import BasePicker from '../pickers/BasePicker.svelte';
-  import { parseFieldOptions, serializeOptions } from '../utils/optionUtils.js';
+  import { fieldOptionsObject, parseFieldOptions, serializeOptions } from '../utils/optionUtils.js';
   import { X as XIcon } from '@lucide/svelte';
   import DescriptionText from '../components/DescriptionText.svelte';
   import { customFieldFormData, loadCustomFieldsOverview } from './customFieldsData.js';
@@ -211,7 +211,7 @@
     // Parse asset field config
     if (field.field_type === 'asset' && field.options) {
       try {
-        const config = JSON.parse(field.options);
+        const config = fieldOptionsObject(field.options);
         assetSetId = config.asset_set_id || null;
         assetQlQuery = config.ql_query || config.cql_query || '';
         assetMulti = config.multi === true;
@@ -229,7 +229,7 @@
     // Parse linking field config
     if (field.field_type === 'linking' && field.options) {
       try {
-        const config = JSON.parse(field.options);
+        const config = fieldOptionsObject(field.options);
         linkingLinkTypeId = config.link_type_id || null;
         linkingAllowedItemTypeIds = config.allowed_item_type_ids || [];
         linkingAllowedEntityTypes = config.allowed_entity_types || ['item'];
@@ -481,7 +481,7 @@
   const isPortalCustomerField = $derived(formData.field_type === 'portalcustomer');
   const isCustomerOrganisationField = $derived(formData.field_type === 'customerorganisation');
   const isLinkingField = $derived(formData.field_type === 'linking');
-  const isLinkingMirror = $derived(isLinkingField && editingField && (() => { try { const o = JSON.parse(editingField.options || '{}'); return !!o.mirror_of_field_id; } catch { return false; } })());
+  const isLinkingMirror = $derived(isLinkingField && editingField && (() => { try { return !!fieldOptionsObject(editingField.options).mirror_of_field_id; } catch { return false; } })());
   const hideAppliesToSection = $derived(formData.field_type === 'portalcustomer' || formData.field_type === 'customerorganisation' || formData.field_type === 'linking');
 
   // Reactive statement to trigger re-calculation when screens data changes
@@ -613,7 +613,7 @@
       render: (field) => {
         if (field.options) {
           try {
-            const options = JSON.parse(field.options);
+            const options = fieldOptionsObject(field.options);
             if (options && options.items && Array.isArray(options.items)) {
               return `${options.items.length} options`;
             } else if (Array.isArray(options)) {

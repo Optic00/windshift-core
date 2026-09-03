@@ -200,18 +200,13 @@
     for (const image of workItemFormStore.pendingDescriptionImages) {
       if (!updatedDescription.includes(image.url)) continue;
 
-      const uploadFormData = new FormData();
-      uploadFormData.append('file', image.file);
-      uploadFormData.append('entity_type', 'item');
-      uploadFormData.append('entity_id', String(itemId));
-
-      const uploadResult = await api.attachments.upload(uploadFormData);
-      const attachmentId = uploadResult?.attachment?.id;
+      const attachment = await api.attachments.uploadToItem(itemId, image.file);
+      const attachmentId = attachment?.id;
       if (!attachmentId) {
         throw new Error('Image upload failed');
       }
 
-      const downloadUrl = `/api/attachments/${attachmentId}/download`;
+      const downloadUrl = api.attachments.getDownloadUrl(attachmentId);
       updatedDescription = updatedDescription.split(image.url).join(downloadUrl);
     }
 

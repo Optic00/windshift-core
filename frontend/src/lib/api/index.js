@@ -120,6 +120,7 @@ import {
   deactivateUser,
   deleteMyAgent,
   deleteUser,
+  getAdminUsers,
   getAgentOwner,
   getApiToken,
   getApiTokens,
@@ -164,6 +165,7 @@ export const api = {
 
   // Users (standalone functions)
   getUsers,
+  getAdminUsers,
   getAssignableUsers,
   getUser,
   getAgentOwner,

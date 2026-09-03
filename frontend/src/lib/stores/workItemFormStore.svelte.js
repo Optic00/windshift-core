@@ -263,8 +263,7 @@ class WorkItemFormStore {
   async loadCustomFields() {
     if (this.customFieldsLoaded) return;
     try {
-      const result = await api.customFields.getAll();
-      this.allCustomFields = result?.data || [];
+      this.allCustomFields = await api.customFields.getAll();
       this.customFieldsLoaded = true;
     } catch (error) {
       console.error('Failed to load custom fields:', error);
@@ -636,8 +635,7 @@ class WorkItemFormStore {
     this.templatesLoading = true;
     try {
       const list =
-        (await api.itemTemplates.getAll({ workspace_id: workspaceId, item_type_id: itemTypeId })) ??
-        [];
+        (await api.itemTemplates.getAll(workspaceId, { item_type_id: itemTypeId })) ?? [];
       // Guard against an out-of-order response after another type change.
       if (`${this.formData.workspace_id}:${this.formData.item_type_id}` !== key) return;
 

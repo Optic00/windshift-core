@@ -256,8 +256,8 @@
       }
       const result = await api.assets.getAll(setId, filters);
       if (requestSeq !== assetsRequestSeq || selectedSetId !== setId) return;
-      assets = result?.assets || [];
-      totalAssets = result?.total || 0;
+		assets = result?.data || [];
+		totalAssets = result?.pagination?.total_items || 0;
     } catch (error) {
       if (requestSeq !== assetsRequestSeq || selectedSetId !== setId) return;
       console.error('Failed to load assets:', error);

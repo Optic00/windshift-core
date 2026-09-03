@@ -280,8 +280,7 @@
   async function loadCustomFields() {
     if (customFieldsLoaded) return;
     try {
-      const result = await api.customFields.getAll();
-      allCustomFields = result?.data || [];
+      allCustomFields = await api.customFields.getAll();
     } catch (err) {
       console.error('Failed to load custom fields:', err);
       allCustomFields = [];
@@ -406,7 +405,7 @@
     templatesLoading = true;
     try {
       const list =
-        (await api.itemTemplates.getAll({ workspace_id: wsId, item_type_id: typeId })) ?? [];
+        (await api.itemTemplates.getAll(wsId, { item_type_id: typeId })) ?? [];
       // Guard against an out-of-order response after another type change.
       if (`${workspaceId}:${itemTypeId}` !== key) return;
 

@@ -183,7 +183,8 @@
         const updated = await api.collections.updateBoardConfiguration(
           collectionId,
           boardConfig.id,
-          configData
+          configData,
+          workspaceId
         );
         boardConfig = updated;
         listColumns = listColumnsFromConfig(updated);

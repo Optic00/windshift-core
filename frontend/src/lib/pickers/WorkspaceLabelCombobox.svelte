@@ -46,7 +46,7 @@
     error = null;
     createdLabels = [];
     try {
-      const response = await api.labels.getAll();
+      const response = await api.labels.getAll(workspaceId);
       if (token === loadToken) loadedLabels = response || [];
     } catch (err) {
       if (token !== loadToken) return;

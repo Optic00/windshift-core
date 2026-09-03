@@ -57,7 +57,7 @@
         api.iterations.getAll({ workspace_id: workspaceId }),
       ]);
 
-      const items = Array.isArray(itemsResponse) ? itemsResponse : (itemsResponse?.items ?? []);
+      const items = itemsResponse?.data ?? [];
       const milestonesArr = Array.isArray(allMilestones) ? allMilestones : [];
       const iterationsArr = Array.isArray(allIterations) ? allIterations : [];
 

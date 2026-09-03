@@ -131,7 +131,7 @@
       const [configSetsResponse, workspacesData, workflowsData, screensData, notificationSettingsData] = await Promise.all([
         api.get(`/configuration-sets?${params.toString()}`),
         api.workspaces.getAll(),
-        api.get('/workflows'),
+        api.workflows.getAll(),
         api.get('/screens'),
         api.notificationSettings.getAll()
       ]);
