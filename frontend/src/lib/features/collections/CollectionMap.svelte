@@ -111,14 +111,6 @@
     return loadStoryMapData(parentId);
   }
 
-  // Set up drag and drop whenever the data changes
-  $effect(() => {
-    if (backboneItems.length > 0 && !loading) {
-      // Use setTimeout to ensure DOM has been updated
-      setTimeout(setupDragAndDrop, 0);
-    }
-  });
-
   async function updateHierarchyBreadcrumbs() {
     const newBreadcrumbs = [];
 
@@ -248,71 +240,48 @@
     loadStoryMapData(backboneItemId);
   }
 
-  let dragDropCleanup = null;
-
-  function setupDragAndDrop() {
-    // Clean up existing drag/drop registrations
-    if (dragDropCleanup) {
-      dragDropCleanup();
-    }
-
-    // Monitor for drag and drop events
-    const monitor = monitorForElements({
+  $effect(() => {
+    return monitorForElements({
       onDrop({ source, location }) {
         const draggedItemId = parseInt(String(source.data.itemId));
         const targetParentId = location.current.dropTargets.length > 0
           ? parseInt(String(location.current.dropTargets[0].data.parentId))
           : null;
-
-
         if (targetParentId && draggedItemId) {
           moveItemToParent(draggedItemId, targetParentId);
-        } else {
         }
       }
     });
+  });
 
-    // Set up draggable items
-    const draggableCleanups = [];
-    /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('[data-testid^="draggable-item"]')).forEach(element => {
-      const cleanup = draggable({
-        element,
-        getInitialData: () => ({
-          itemId: element.getAttribute('data-item-id')
-        })
-      });
-      draggableCleanups.push(cleanup);
+  function registerMapItem(element, itemId) {
+    const cleanup = draggable({
+      element,
+      getInitialData: () => ({ itemId })
     });
+    return { destroy: cleanup };
+  }
 
-    // Set up drop zones
-    const dropTargetCleanups = [];
-    /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('[data-testid^="drop-zone"]')).forEach(element => {
-      const cleanup = dropTargetForElements({
-        element,
-        getData: () => ({
-          parentId: element.getAttribute('data-parent-id')
-        }),
-        onDragEnter: () => {
-          element.style.borderColor = 'var(--ds-border-focused)';
-          element.style.boxShadow = 'inset 0 0 0 2px var(--ds-border-focused)';
-        },
-        onDragLeave: () => {
-          element.style.borderColor = 'var(--ctx-border, var(--ds-border))';
-          element.style.boxShadow = '';
-        },
-        onDrop: () => {
-          element.style.borderColor = 'var(--ctx-border, var(--ds-border))';
-          element.style.boxShadow = '';
-        }
-      });
-      dropTargetCleanups.push(cleanup);
+  function registerMapDropZone(element, parentId) {
+    const reset = () => {
+      element.style.borderColor = 'var(--ctx-border, var(--ds-border))';
+      element.style.boxShadow = '';
+    };
+    const cleanup = dropTargetForElements({
+      element,
+      getData: () => ({ parentId }),
+      onDragEnter: () => {
+        element.style.borderColor = 'var(--ds-border-focused)';
+        element.style.boxShadow = 'inset 0 0 0 2px var(--ds-border-focused)';
+      },
+      onDragLeave: reset,
+      onDrop: reset,
     });
-
-    // Store cleanup function for next time
-    dragDropCleanup = () => {
-      monitor();
-      draggableCleanups.forEach(cleanup => cleanup());
-      dropTargetCleanups.forEach(cleanup => cleanup());
+    return {
+      destroy() {
+        reset();
+        cleanup();
+      }
     };
   }
 
@@ -724,6 +693,7 @@
 
               <!-- Drop Zone for this parent -->
               <div
+                use:registerMapDropZone={backboneItem.id}
                 class="min-h-96 p-3 rounded border-2 border-dashed transition-all"
                 style="border-color: var(--ctx-border, var(--ds-border)); background-color: var(--ctx-surface-overlay, var(--ds-surface-overlay)); backdrop-filter: var(--ctx-backdrop, none);"
                 data-parent-id={backboneItem.id}
@@ -739,6 +709,7 @@
                     {@const childItemType = getItemTypeInfo(childItem.item_type_id)}
                     <!-- svelte-ignore a11y_no_static_element_interactions -->
                     <div
+                      use:registerMapItem={childItem.id}
                       class="item-card rounded border p-3 cursor-move"
                       style="box-shadow: var(--ds-shadow-raised); {styles.cardStyle(4)}"
                       data-item-id={childItem.id}

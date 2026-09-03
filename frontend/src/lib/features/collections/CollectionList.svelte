@@ -163,45 +163,6 @@
     }
   });
 
-  // Setup drag for list rows (enables drag-to-terminal)
-  let dragCleanups = [];
-  $effect(() => {
-    // Re-run when filteredItems change
-    const items = filteredItems;
-    // Clean up previous
-    dragCleanups.forEach(fn => fn());
-    dragCleanups = [];
-
-    // Wait for DOM to render
-    requestAnimationFrame(() => {
-      /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('[data-item-row]')).forEach(element => {
-        const itemId = element.getAttribute('data-item-id');
-        const item = items.find(i => String(i.id) === itemId);
-        if (!item) return;
-
-        const cleanup = draggable({
-          element,
-          getInitialData: () => ({
-            item,
-            type: 'work-item'
-          }),
-          onDragStart: () => {
-            element.style.opacity = '0.5';
-          },
-          onDrop: () => {
-            element.style.opacity = '';
-          }
-        });
-        dragCleanups.push(cleanup);
-      });
-    });
-
-    return () => {
-      dragCleanups.forEach(fn => fn());
-      dragCleanups = [];
-    };
-  });
-
   async function loadBoardConfiguration() {
     try {
       const config = await collectionStore.getBoardConfiguration(workspaceId, collectionId);
@@ -274,6 +235,29 @@
       return false;
     });
   });
+  let filteredItemsById = $derived(new Map(filteredItems.map((item) => [item.id, item])));
+
+  function registerListRow(element, itemId) {
+    const cleanup = draggable({
+      element,
+      getInitialData: () => ({
+        item: filteredItemsById.get(itemId),
+        type: 'work-item'
+      }),
+      onDragStart: () => {
+        element.style.opacity = '0.5';
+      },
+      onDrop: () => {
+        element.style.opacity = '';
+      }
+    });
+    return {
+      destroy() {
+        element.style.opacity = '';
+        cleanup();
+      }
+    };
+  }
 
   // Linking fields live in item_links rather than custom_field_values. Hydrate
   // all visible rows through the bounded batch endpoint so adding one linking
@@ -413,7 +397,7 @@
           <!-- Table Body -->
           <div>
             {#each filteredItems as item (item.id)}
-              <div class="px-4 py-3 list-row transition-colors" style="border-top: 1px solid var(--ds-border);" data-item-row data-item-id={item.id} data-testid={`workspace-item-row-${item.id}`}>
+              <div use:registerListRow={item.id} class="px-4 py-3 list-row transition-colors" style="border-top: 1px solid var(--ds-border);" data-item-row data-item-id={item.id} data-testid={`workspace-item-row-${item.id}`}>
                 <LazyRender>
                   {#snippet children()}
                     <div

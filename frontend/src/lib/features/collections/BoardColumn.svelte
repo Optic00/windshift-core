@@ -17,6 +17,7 @@
     columnStyle = 'background-color: var(--ds-surface-raised); border-color: var(--ds-border);',
     textStyle = 'color: var(--ds-text);',
     subtleTextStyle = 'color: var(--ds-text-subtle);',
+    dndAction = () => {},
     onadd = null,
     oncollapse = null,
     children,
@@ -24,6 +25,7 @@
 </script>
 
 <div
+  use:dndAction={statusId}
   class="relative rounded border shadow-sm transition-colors"
   style="{columnStyle} {quickAddOpen ? 'z-index: 30;' : ''}"
   data-testid="board-column"
