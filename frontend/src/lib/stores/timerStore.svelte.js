@@ -199,6 +199,7 @@ class TimerStore {
         this.#stopSyncInterval();
       }
     } catch (err) {
+      if (err?.name === 'AbortError') return;
       console.error('Failed to sync timer:', err);
       this.error = err.message || 'Failed to sync timer';
     }

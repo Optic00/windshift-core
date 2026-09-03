@@ -84,6 +84,7 @@
     try {
       actions = await api.actions.getAll(workspaceId) || [];
     } catch (error) {
+      if (error?.name === 'AbortError') return;
       console.error('Failed to load actions:', error);
       errorToast(t('errors.failedToLoad'));
       actions = [];

@@ -275,7 +275,10 @@
         }
         const result = await api.workspaces.create(payload);
 
-        window.dispatchEvent(new CustomEvent('refresh-workspaces'));
+        workspacesStore.add(result);
+        window.dispatchEvent(new CustomEvent('refresh-workspaces', {
+          detail: { workspace: result }
+        }));
         if (!skipNavigate) {
           navigate(`/workspaces/${result.id}`);
         }

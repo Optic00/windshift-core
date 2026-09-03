@@ -203,6 +203,7 @@
       // Sync with current route (reactive statement will handle this, but we need to rebuild dropdown)
       syncCollectionWithRoute($currentRoute.params.collectionId);
     } catch (error) {
+      if (error?.name === 'AbortError') return;
       console.error('Failed to load collections:', error);
       collections = [];
       currentCollectionId = null;

@@ -14,9 +14,10 @@ const DEBOUNCE_MS = 250;
  */
 export function useItemEventStream(getItemId, handlers = {}) {
   let connected = $state(false);
+  let streamItemId = $derived(normalizeItemEventStreamID(getItemId()));
 
   $effect(() => {
-    const itemId = getItemId();
+    const itemId = streamItemId;
     if (!itemId) return;
     if (typeof EventSource === 'undefined') return; // SSR / unsupported → polling stays the source of truth
 
@@ -89,6 +90,12 @@ export function useItemEventStream(getItemId, handlers = {}) {
       return connected;
     },
   };
+}
+
+// Route parameters begin as strings and are later hydrated from API records as
+// numbers. Keep that representation-only change from reopening the stream.
+export function normalizeItemEventStreamID(itemId) {
+  return itemId ? String(itemId) : null;
 }
 
 /**
