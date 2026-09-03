@@ -1,10 +1,21 @@
 import { notifyItemMutation } from '../utils/crossTabSync.js';
+import { dateInputToISOString } from '../utils/dateFormatter.js';
 import { fetchAPI, fetchAPIV2, fetchV2Data } from './core.js';
 import { buildQueryString } from './utils.js';
 
 // Item ids per GET /items/batch request. Kept under the server cap (500) and
 // aligned with the links-batch chunk size to bound URL length.
 const ITEM_BATCH_CHUNK = 200;
+
+function itemMutationBody(data) {
+  const body = { ...data };
+  for (const field of ['due_date', 'start_date', 'end_date']) {
+    if (typeof body[field] === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body[field])) {
+      body[field] = dateInputToISOString(body[field]);
+    }
+  }
+  return body;
+}
 
 function itemListQuery(/** @type {Record<string, any>} */ filters = {}) {
   const { limit, omit_descriptions, order_by, sort_direction, ...canonical } = filters;
@@ -152,7 +163,7 @@ export const items = {
     (data) =>
       fetchV2Data('/items', {
         method: 'POST',
-        body: JSON.stringify(data),
+        body: JSON.stringify(itemMutationBody(data)),
       }),
     'create'
   ),
@@ -161,7 +172,7 @@ export const items = {
       fetchV2Data(`/items/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/merge-patch+json' },
-        body: JSON.stringify(data),
+        body: JSON.stringify(itemMutationBody(data)),
       }),
     'update'
   ),

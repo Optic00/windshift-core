@@ -49,7 +49,7 @@
   let stepsShortcutMode = $state(false);
   let stepsShortcutInput = $state('');
   let stepsShortcutTimeout = null;
-  const TEST_CASE_BATCH_SIZE = 250;
+  const TEST_CASE_BATCH_SIZE = 100;
   let testCaseSearchQuery = $state('');
   let testCaseSearchTimeout = null;
   let hasMoreTestCases = $state(false);

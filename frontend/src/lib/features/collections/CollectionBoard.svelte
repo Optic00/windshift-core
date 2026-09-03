@@ -460,7 +460,7 @@
 
   // Keep backlog count in sync
   $effect(() => {
-    backlogStore.setCount(workspaceId, collectionStore.backlogPagination?.total ?? collectionStore.backlogItems.length);
+    backlogStore.setCount(workspaceId, collectionStore.backlogPagination?.total_items ?? collectionStore.backlogItems.length);
   });
 
   // Reset dependency links when the viewed board changes.

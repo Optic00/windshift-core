@@ -21,7 +21,22 @@ export const updateUser = (id, data) =>
   fetchV2Data(`/admin/users/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/merge-patch+json' },
-    body: JSON.stringify(data),
+    body: JSON.stringify(
+      Object.fromEntries(
+        [
+          'email',
+          'username',
+          'first_name',
+          'last_name',
+          'avatar_url',
+          'timezone',
+          'language',
+          'is_active',
+        ]
+          .filter((field) => data[field] !== undefined)
+          .map((field) => [field, data[field]])
+      )
+    ),
   });
 export const updateUserAvatar = (id, avatar_url) =>
   fetchAPI(`/users/${id}/avatar`, {

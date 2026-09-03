@@ -32,12 +32,12 @@
   let requestedItemId = $state(null);
 
   // Derived values
-  const hasChildren = $derived(deleteInfo?.hasChildren || false);
-  const descendantCount = $derived(deleteInfo?.descendantCount || 0);
+  const hasChildren = $derived(deleteInfo?.has_children || false);
+  const descendantCount = $derived(deleteInfo?.descendant_count || 0);
   const totalCount = $derived(descendantCount + 1);
   const canConfirmDelete = $derived(
     (deleteInfo && !hasChildren) ||
-    (selectedMode === 'reparent' && (selectedNewParentId !== null || deleteInfo?.parentId === null)) ||
+    (selectedMode === 'reparent' && (selectedNewParentId !== null || deleteInfo?.parent_id === null)) ||
     (selectedMode === 'deleteAll' && confirmText.trim() === item?.title?.trim())
   );
 
@@ -92,7 +92,7 @@
       if (!show || requestedItemId !== itemId) return;
       deleteInfo = result;
       // If item has a parent, default to that as the new parent
-      if (deleteInfo?.parentId) {
+      if (deleteInfo?.parent_id) {
         selectedNewParentId = deleteInfo.parent_id;
       }
     } catch (err) {
@@ -105,7 +105,7 @@
   }
 
   async function loadReparentCandidates() {
-    if (!deleteInfo?.workspaceId || deleteInfo?.hierarchyLevel == null) {
+    if (!deleteInfo?.workspace_id || deleteInfo?.hierarchy_level == null) {
       reparentCandidates = [];
       return;
     }

@@ -554,7 +554,7 @@
         workspaceName={workspace?.name || ''}
         collection={currentCollectionName}
         viewName="Map"
-        itemCount={collectionStore.itemsPagination?.total ?? (backboneItems.length + Object.values(childItemsByParent).flat().length)}
+        itemCount={collectionStore.itemsPagination?.total_items ?? (backboneItems.length + Object.values(childItemsByParent).flat().length)}
       />
 
       <!-- Controls Bar -->

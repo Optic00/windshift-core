@@ -241,7 +241,7 @@
   }
 
   // Total item count across all sections
-  let totalItemCount = $derived(collectionStore.backlogPagination?.total ?? backlogItems.length);
+  let totalItemCount = $derived(collectionStore.backlogPagination?.total_items ?? backlogItems.length);
 
   // Centralized gradient styling
   const styles = useGradientStyles();
@@ -294,7 +294,7 @@
 
   // Keep backlog count in sync
   $effect(() => {
-    backlogStore.setCount(workspaceId, collectionStore.backlogPagination?.total ?? collectionStore.backlogItems.length);
+    backlogStore.setCount(workspaceId, collectionStore.backlogPagination?.total_items ?? collectionStore.backlogItems.length);
   });
 
   // Adaptive polling for backlog items: use cheap deltas, falling back to full refresh only when needed.
@@ -831,7 +831,7 @@
                 style="{styles.glassStyle?.(12) ?? ''} {styles.glassTextStyle ?? ''}"
               >
                 {collectionStore.backlogLoadingMore ? t('common.loading') : t('common.loadMore')}
-                {#if collectionStore.backlogPagination?.total}
+                {#if collectionStore.backlogPagination?.total_items}
                   ({collectionStore.backlogPagination.total - collectionStore.backlogItems.length} {t('common.remaining')})
                 {/if}
               </button>
@@ -841,7 +841,7 @@
           <!-- Summary -->
           <div class="mt-8 text-center">
             <p class="text-sm" style="color: var(--ctx-text-subtle, var(--ds-text-subtle));">
-              {t('collections.showingItemsFromBacklog', { count: collectionStore.backlogPagination?.total ?? backlogItems.length })}
+              {t('collections.showingItemsFromBacklog', { count: collectionStore.backlogPagination?.total_items ?? backlogItems.length })}
             </p>
           </div>
         </div>

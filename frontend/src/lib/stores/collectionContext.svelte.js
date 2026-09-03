@@ -274,7 +274,7 @@ class CollectionStore {
           ? {
               ...boardPartition,
               pagination: deferredResult.pagination,
-              total: deferredResult.pagination?.total ?? deferredResult.items.length,
+              total: deferredResult.pagination?.total_items ?? deferredResult.items.length,
             }
           : null;
         this.rightmostCap = this.boardDeferred?.capped
@@ -481,11 +481,11 @@ class CollectionStore {
       const loaded = this.items.filter((item) => deferredSet.has(item.status_id)).length;
       return Math.max(0, this.boardDeferred.total - loaded);
     }
-    return Math.max(0, (this.itemsPagination?.total ?? 0) - this.mainItemsLoadedCount);
+    return Math.max(0, (this.itemsPagination?.total_items ?? 0) - this.mainItemsLoadedCount);
   }
 
   get itemsTotalCount() {
-    const mainTotal = this.itemsPagination?.total ?? this.mainItemsLoadedCount;
+    const mainTotal = this.itemsPagination?.total_items ?? this.mainItemsLoadedCount;
     return mainTotal + (this.boardDeferred?.total ?? 0);
   }
 
@@ -495,7 +495,7 @@ class CollectionStore {
 
   get boardSearchRemainingCount() {
     const loaded = this.boardSearchItems.length;
-    return Math.max(0, (this.boardSearchPagination?.total ?? loaded) - loaded);
+    return Math.max(0, (this.boardSearchPagination?.total_items ?? loaded) - loaded);
   }
 
   clearBoardSearch() {
@@ -613,7 +613,7 @@ class CollectionStore {
         this.boardDeferred = {
           ...deferred,
           pagination: result.pagination,
-          total: result.pagination?.total ?? deferred.total,
+          total: result.pagination?.total_items ?? deferred.total,
         };
       } else {
         this.itemsPagination = result.pagination;
@@ -755,7 +755,7 @@ class CollectionStore {
           ? {
               ...boardPartition,
               pagination: deferredResult.pagination,
-              total: deferredResult.pagination?.total ?? deferredResult.items.length,
+              total: deferredResult.pagination?.total_items ?? deferredResult.items.length,
             }
           : null;
         this.rightmostCap = this.boardDeferred?.capped

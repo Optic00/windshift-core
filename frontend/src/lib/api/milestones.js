@@ -38,6 +38,16 @@ function planningBody(data) {
   return body;
 }
 
+function milestonePatch(data) {
+  const { name, description, target_date, status, category_id } = data;
+  return { name, description, target_date, status, category_id };
+}
+
+function iterationPatch(data) {
+  const { name, description, start_date, end_date, status, type_id } = data;
+  return { name, description, start_date, end_date, status, type_id };
+}
+
 export const milestones = {
   getAll: (filters = {}) => listPlanning('/milestones', filters),
   get: (id) => fetchV2Data(`/milestones/${id}`),
@@ -47,7 +57,7 @@ export const milestones = {
     fetchV2Data(`/milestones/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/merge-patch+json' },
-      body: JSON.stringify(data),
+      body: JSON.stringify(milestonePatch(data)),
     }),
   delete: (id) => fetchV2Data(`/milestones/${id}`, { method: 'DELETE' }),
   getTestStatistics: (id) => fetchV2Data(`/milestones/${id}/test-statistics`),
@@ -83,7 +93,7 @@ export const iterations = {
     fetchV2Data(`/iterations/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/merge-patch+json' },
-      body: JSON.stringify(data),
+      body: JSON.stringify(iterationPatch(data)),
     }),
   delete: (id) => fetchV2Data(`/iterations/${id}`, { method: 'DELETE' }),
   getProgress: (id) => fetchV2Data(`/iterations/${id}/progress`),
