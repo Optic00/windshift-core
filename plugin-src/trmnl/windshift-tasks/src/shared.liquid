@@ -3,11 +3,11 @@
   assigns below are in scope for full/half_horizontal/half_vertical/quadrant.
 
   Polled responses (see settings.yml polling_url):
-    IDX_0 = GET /rest/api/v1/users/me
-    IDX_1 = GET /rest/api/v1/search/items?ql=...
+    IDX_0 = GET /rest/api/v2/users/me
+    IDX_1 = GET /rest/api/v2/items?ql=...
 {%- endcomment -%}
 
-{%- assign me = IDX_0 -%}
+{%- assign me = IDX_0.data -%}
 {%- assign items = IDX_1.data -%}
 {%- assign total = IDX_1.pagination.total -%}
 
