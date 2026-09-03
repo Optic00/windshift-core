@@ -1686,6 +1686,7 @@
                         title={t('collections.expandColumn', { name: objectDisplayName(column, 'status') })}
                         onclick={() => toggleColumnCollapse(column.id)}
                       >
+                        <span class="sr-only" data-testid={`board-column-status-${column.status_ids[0]}`} aria-hidden="true"></span>
                         <ChevronRight class="w-4 h-4 flex-shrink-0" style={styles.glassTextStyle} />
                         <span class="board-column-collapsed-name font-semibold text-sm break-words" style={styles.glassTextStyle}>
                           {objectDisplayName(column, 'status')}

@@ -35,6 +35,7 @@
   data-swimlane-parent-id={swimlaneParentId}
   data-status-id={statusId}
 >
+  <span class="sr-only" data-testid={`board-column-status-${statusId}`} aria-hidden="true"></span>
   <div
     class="border-b border-t-4 p-4"
     style="border-bottom-color: var(--ctx-border, var(--ds-border)); border-top-color: {column.color};"
