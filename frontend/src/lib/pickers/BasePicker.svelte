@@ -577,7 +577,7 @@
       {#if loading}
         <div class="p-4 text-center" style="color: var(--ds-text-subtle);">{t('common.loading')}</div>
       {:else if options.length > 0}
-        <div role="listbox" class="max-h-60 overflow-y-auto">
+        <div role="listbox" data-testid="picker-option-list" class="max-h-60 overflow-y-auto">
           {#each options as opt, index (opt.value ?? 'unassigned')}
             {@const itemSelected = multiple ? isItemSelected(opt.value) : $isSelected(opt)}
             {@const isHighlighted = highlightedIndex === index}

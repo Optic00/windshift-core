@@ -88,7 +88,11 @@
     { value: 'linking', label: 'Linking', icon: Link2, iconColor: '#3B82F6' }
   ];
 
-  const selectedFieldType = $derived(fieldTypes.find(ft => ft.value === formData.field_type));
+  const fieldTypePickerPositioning = {
+    strategy: 'fixed',
+    placement: 'bottom-start',
+    sameWidth: true
+  };
 
   // Asset field configuration
   let assetSetId = $state(null);
@@ -273,6 +277,15 @@
     linkingMulti = true;
     linkingMirrorName = '';
     linkingMirrorAllowedItemTypeIds = [];
+  }
+
+  function selectFieldType(type) {
+    if (!type) return;
+    if (isBooleanCustomFieldType(type.value)) {
+      optionItems = [];
+      nextOptionId = 1;
+    }
+    formData.field_type = type.value;
   }
 
   // Board-configuration routes this page may return to. External, protocol-
@@ -661,6 +674,14 @@
   ]);
 </script>
 
+{#snippet fieldTypeOption({ item: fieldType })}
+  {@const FieldTypeIcon = fieldType.icon}
+  <div class="flex items-center gap-3 min-w-0">
+    <FieldTypeIcon class="w-4 h-4 flex-shrink-0" style="color: {fieldType.iconColor};" />
+    <span class="truncate">{fieldType.label}</span>
+  </div>
+{/snippet}
+
 <PageHeader
   icon={Database}
   title={t('fields.title')}
@@ -734,32 +755,19 @@
 
         <div>
           <Label for="field-type" required class="mb-2">{t('fields.fieldType')}</Label>
-          <DropdownMenu
-            triggerTestid="custom-field-type-trigger"
-            triggerIcon={selectedFieldType?.icon}
-            triggerIconBgColor={selectedFieldType?.iconColor}
-            triggerText={selectedFieldType?.label || 'Select type...'}
-            triggerClass="w-full h-[38px] rounded-lg border px-3 text-sm"
-            triggerStyle="border-color: var(--ds-border); background: var(--ds-surface); color: var(--ds-text);"
-            triggerAlignment="between"
-            showChevron={true}
+          <BasePicker
+            id="field-type"
+            value={formData.field_type}
+            items={fieldTypes}
+            placeholder="Select type..."
+            ariaLabel={t('fields.fieldType')}
             disabled={!!editingField}
-            maxWidth="max-w-72"
-            items={fieldTypes.map(type => ({
-              id: type.value,
-              type: 'regular',
-              icon: type.icon,
-              iconColor: type.iconColor,
-              title: type.label,
-              testid: `custom-field-type-${type.value}`,
-              onClick: () => {
-                if (isBooleanCustomFieldType(type.value)) {
-                  optionItems = [];
-                  nextOptionId = 1;
-                }
-                formData.field_type = type.value;
-              }
-            }))}
+            getValue={(type) => type.value}
+            getLabel={(type) => type.label}
+            itemSnippet={fieldTypeOption}
+            optionTestid={(option) => `custom-field-type-${option.value}`}
+            positioning={fieldTypePickerPositioning}
+            onSelect={selectFieldType}
           />
           {#if editingField}
             <p class="mt-2 text-xs" style="color: var(--ds-text-subtle);">
