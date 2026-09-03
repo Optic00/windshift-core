@@ -426,7 +426,7 @@
   class="min-h-screen flex flex-col"
   style="background-color: var(--ds-surface, #ffffff);"
   data-testid="portal-page"
-  data-ready={!!portalStore.portalData && authCheckComplete}
+  data-ready={!!portalStore.portalData && authCheckComplete && !portalStore.loading}
 >
   {#if portalStore.loading}
     <!-- Loading State -->
