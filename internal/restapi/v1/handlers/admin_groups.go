@@ -3,21 +3,18 @@ package handlers
 import (
 	"errors"
 	"net/http"
-	"time"
 
 	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/repository"
 	"windshift/internal/restapi"
-	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
 
 // AdminGroupHandler handles admin group management in REST API v1.
 type AdminGroupHandler struct {
 	BaseHandler
-	repo             *repository.AdminGroupRepository
-	cacheInvalidator *services.AuthorizationCacheInvalidator
+	application *services.GroupApplicationService
 }
 
 // NewAdminGroupHandler creates a new admin group handler.
@@ -27,9 +24,8 @@ func NewAdminGroupHandler(db database.Database, permissionService *services.Perm
 		cacheInvalidator = invalidators[0]
 	}
 	return &AdminGroupHandler{
-		BaseHandler:      NewBaseHandler(db, permissionService),
-		repo:             repository.NewAdminGroupRepository(db),
-		cacheInvalidator: cacheInvalidator,
+		BaseHandler: NewBaseHandler(db, permissionService),
+		application: services.NewGroupApplicationService(repository.NewGroupRepository(db), cacheInvalidator),
 	}
 }
 
@@ -83,13 +79,7 @@ func (h *AdminGroupHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	pagination := h.ParsePagination(r)
 
-	total, err := h.repo.Count()
-	if err != nil {
-		h.RespondInternalError(w, r)
-		return
-	}
-
-	records, err := h.repo.List(pagination.Limit, pagination.Offset)
+	records, total, err := h.application.ListPage(pagination.Limit, pagination.Offset)
 	if err != nil {
 		h.RespondInternalError(w, r)
 		return
@@ -134,30 +124,29 @@ func (h *AdminGroupHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
-	warnings := sanitize.ApplyAllWithWarnings(
-		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Group name"},
-		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
-	)
-
-	if req.Name == "" {
+	result, err := h.application.Create(req.Name, req.Description, user.ID)
+	if errors.Is(err, services.ErrGroupNameRequired) {
 		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeMissingField, "Group name is required"))
 		return
 	}
-
-	id, err := h.repo.Create(req.Name, req.Description, user.ID)
+	if errors.Is(err, services.ErrGroupDuplicate) {
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusConflict, restapi.ErrCodeConflict, "Group name already exists"))
+		return
+	}
 	if err != nil {
 		h.RespondInternalError(w, r)
 		return
 	}
 
-	h.Auditor.Log(r, user, logger.ActionGroupCreate, logger.ResourceGroup, &id, req.Name)
+	id := result.Group.ID
+	h.Auditor.Log(r, user, logger.ActionGroupCreate, logger.ResourceGroup, &id, result.Group.Name)
 	h.RespondCreated(w, AdminGroupResponse{
 		ID:          id,
-		Name:        req.Name,
-		Description: req.Description,
+		Name:        result.Group.Name,
+		Description: result.Group.Description,
 		MemberCount: 0,
-		CreatedAt:   time.Now().Format("2006-01-02T15:04:05Z07:00"),
-		Warnings:    warnings,
+		CreatedAt:   result.Group.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		Warnings:    result.Warnings,
 	})
 }
 
@@ -192,27 +181,36 @@ func (h *AdminGroupHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
-	sanitize.ApplyAll(
-		sanitize.Pair{Target: req.Name, Policy: sanitize.PlainTextField},
-		sanitize.Pair{Target: req.Description, Policy: sanitize.RichText},
-	)
-
-	update := repository.AdminGroupUpdate{Name: req.Name, Description: req.Description}
-	if update.IsEmpty() {
+	if req.Name != nil && *req.Name == "" {
+		req.Name = nil
+	}
+	if req.Description != nil && *req.Description == "" {
+		req.Description = nil
+	}
+	if req.Name == nil && req.Description == nil {
 		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "No fields to update"))
 		return
 	}
 
-	if err := h.repo.Update(id, update); err != nil {
+	result, err := h.application.Update(id, services.GroupUpdateInput{Name: req.Name, Description: req.Description})
+	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			h.RespondNotFound(w, r)
+			return
+		}
+		if errors.Is(err, services.ErrGroupManaged) {
+			h.RespondError(w, r, restapi.NewAPIError(http.StatusForbidden, restapi.ErrCodeForbidden, "Managed groups cannot be changed"))
+			return
+		}
+		if errors.Is(err, services.ErrGroupDuplicate) {
+			h.RespondError(w, r, restapi.NewAPIError(http.StatusConflict, restapi.ErrCodeConflict, "Group name already exists"))
 			return
 		}
 		h.RespondInternalError(w, r)
 		return
 	}
 
-	h.Auditor.Log(r, user, logger.ActionGroupUpdate, logger.ResourceGroup, &id, "")
+	h.Auditor.Log(r, user, logger.ActionGroupUpdate, logger.ResourceGroup, &id, result.Group.Name)
 	h.RespondNoContent(w)
 }
 
@@ -240,25 +238,20 @@ func (h *AdminGroupHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	invalidation, err := h.cacheInvalidator.GroupDeletePlan(id)
+	snapshot, err := h.application.Delete(id)
 	if err != nil {
-		h.RespondInternalError(w, r)
-		return
-	}
-
-	if err = h.repo.Delete(id); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			h.RespondNotFound(w, r)
+			return
+		}
+		if errors.Is(err, services.ErrGroupSystem) || errors.Is(err, services.ErrGroupManaged) {
+			h.RespondError(w, r, restapi.NewAPIError(http.StatusForbidden, restapi.ErrCodeForbidden, "Protected groups cannot be deleted"))
 			return
 		}
 		h.RespondInternalError(w, r)
 		return
 	}
-	if err := h.cacheInvalidator.Apply(invalidation); err != nil {
-		h.RespondInternalError(w, r)
-		return
-	}
 
-	h.Auditor.Log(r, user, logger.ActionGroupDelete, logger.ResourceGroup, &id, "")
+	h.Auditor.Log(r, user, logger.ActionGroupDelete, logger.ResourceGroup, &id, snapshot.Name)
 	h.RespondNoContent(w)
 }

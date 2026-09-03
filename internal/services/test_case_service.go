@@ -66,6 +66,13 @@ func (s *TestCaseService) CountAll(workspaceID int) (int, error) {
 	return s.repo.CountAll(workspaceID)
 }
 
+func (s *TestCaseService) Count(params TestCaseListParams) (int, error) {
+	return s.repo.Count(repository.TestCaseListParams{
+		WorkspaceID: params.WorkspaceID, FolderID: params.FolderID, All: params.All,
+		Search: params.Search, LabelID: params.LabelID,
+	})
+}
+
 // GetByID retrieves a single test case
 func (s *TestCaseService) GetByID(id, workspaceID int) (*models.TestCase, error) {
 	return s.repo.FindByID(id, workspaceID)

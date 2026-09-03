@@ -19,42 +19,39 @@ type UserInfo struct {
 }
 
 // Prefs is the per-user TUI preferences document persisted server-side
-// (v1 /users/me/tui-preferences). Pointer fields distinguish unset.
+// (`data.tui` from v2 /users/me/preferences). Pointer fields distinguish unset.
 type Prefs struct {
 	Theme           string   `json:"theme,omitempty"`
 	SplitRatio      *float64 `json:"split_ratio,omitempty"`
 	LastWorkspaceID *int     `json:"last_workspace_id,omitempty"`
 }
 
-// ─── v1 wire mirrors ──────────────────────────────────────────────────
-// These types mirror the relevant subset of internal/restapi/v1/dto. We
-// duplicate them rather than import the dto package to avoid pulling the
-// v1 layering dependency into the TUI. Field-for-field copies; if the
-// upstream DTO grows fields we care about, mirror them here.
+// These DTOs contain the subset of the canonical v2 contract used by the TUI.
 
-type v1PaginationMeta struct {
+type paginationDocument struct {
 	Page       int `json:"page"`
 	Limit      int `json:"limit"`
 	Total      int `json:"total"`
+	PageSize   int `json:"page_size"`
+	TotalItems int `json:"total_items"`
 	TotalPages int `json:"total_pages"`
 }
 
-type v1WorkspacesPage struct {
-	Data       []v1WorkspaceResponse `json:"data"`
-	Pagination v1PaginationMeta      `json:"pagination"`
+type dataDocument[T any] struct {
+	Data T `json:"data"`
 }
 
-type v1ItemsPage struct {
-	Data       []v1ItemResponse `json:"data"`
-	Pagination v1PaginationMeta `json:"pagination"`
+type workspacePageDocument struct {
+	Data       []workspaceDTO     `json:"data"`
+	Pagination paginationDocument `json:"pagination"`
 }
 
-type v1CommentsPage struct {
-	Data       []v1CommentResponse `json:"data"`
-	Pagination v1PaginationMeta    `json:"pagination"`
+type itemPageDocument struct {
+	Data       []itemDTO          `json:"data"`
+	Pagination paginationDocument `json:"pagination"`
 }
 
-type v1UserSummary struct {
+type userSummaryDTO struct {
 	ID        int    `json:"id"`
 	Email     string `json:"email"`
 	Username  string `json:"username"`
@@ -63,7 +60,7 @@ type v1UserSummary struct {
 	FullName  string `json:"full_name"`
 }
 
-type v1StatusSummary struct {
+type statusSummaryDTO struct {
 	ID            int    `json:"id"`
 	Name          string `json:"name"`
 	CategoryID    int    `json:"category_id"`
@@ -71,14 +68,24 @@ type v1StatusSummary struct {
 	CategoryColor string `json:"category_color,omitempty"`
 }
 
-type v1PrioritySummary struct {
+type statusDTO struct {
+	ID       int    `json:"id"`
+	Name     string `json:"name"`
+	Category struct {
+		ID    int    `json:"id"`
+		Name  string `json:"name"`
+		Color string `json:"color"`
+	} `json:"category"`
+}
+
+type priorityDTO struct {
 	ID    int    `json:"id"`
 	Name  string `json:"name"`
 	Icon  string `json:"icon,omitempty"`
 	Color string `json:"color,omitempty"`
 }
 
-type v1WorkspaceResponse struct {
+type workspaceDTO struct {
 	ID            int    `json:"id"`
 	Name          string `json:"name"`
 	Key           string `json:"key"`
@@ -87,43 +94,43 @@ type v1WorkspaceResponse struct {
 	TimeProjectID *int   `json:"time_project_id,omitempty"`
 }
 
-type v1ItemResponse struct {
-	ID                  int                `json:"id"`
-	WorkspaceID         int                `json:"workspace_id"`
-	WorkspaceKey        string             `json:"workspace_key"`
-	Key                 string             `json:"key"`
-	WorkspaceItemNumber int                `json:"workspace_item_number"`
-	Title               string             `json:"title"`
-	Description         string             `json:"description"`
-	ParentID            *int               `json:"parent_id,omitempty"`
-	Status              *v1StatusSummary   `json:"status,omitempty"`
-	Priority            *v1PrioritySummary `json:"priority,omitempty"`
-	Assignee            *v1UserSummary     `json:"assignee,omitempty"`
-	Creator             *v1UserSummary     `json:"creator,omitempty"`
-	Transitions         []v1Transition     `json:"transitions,omitempty"`
-	CreatedAt           time.Time          `json:"created_at"`
-	UpdatedAt           time.Time          `json:"updated_at"`
+type itemDTO struct {
+	ID                  int               `json:"id"`
+	WorkspaceID         int               `json:"workspace_id"`
+	WorkspaceKey        string            `json:"workspace_key"`
+	Key                 string            `json:"key"`
+	WorkspaceItemNumber int               `json:"workspace_item_number"`
+	Title               string            `json:"title"`
+	Description         string            `json:"description"`
+	ParentID            *int              `json:"parent_id,omitempty"`
+	Status              *statusSummaryDTO `json:"status,omitempty"`
+	Priority            *priorityDTO      `json:"priority,omitempty"`
+	Assignee            *userSummaryDTO   `json:"assignee,omitempty"`
+	Creator             *userSummaryDTO   `json:"creator,omitempty"`
+	Transitions         []transitionDTO   `json:"transitions,omitempty"`
+	CreatedAt           time.Time         `json:"created_at"`
+	UpdatedAt           time.Time         `json:"updated_at"`
 }
 
-type v1Transition struct {
-	ToStatusID int              `json:"to_status_id"`
-	ToStatus   *v1StatusSummary `json:"to_status,omitempty"`
+type transitionDTO struct {
+	ToStatusID int               `json:"to_status_id"`
+	ToStatus   *statusSummaryDTO `json:"to_status,omitempty"`
 }
 
-type v1CurrentUser struct {
+type currentUserDTO struct {
 	Timezone string `json:"timezone"`
 }
 
-type v1CommentResponse struct {
-	ID        int            `json:"id"`
-	ItemID    int            `json:"item_id"`
-	Content   string         `json:"content"`
-	Author    *v1UserSummary `json:"author,omitempty"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
+type commentDTO struct {
+	ID        int             `json:"id"`
+	ItemID    int             `json:"item_id"`
+	Content   string          `json:"content"`
+	Author    *userSummaryDTO `json:"author,omitempty"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
 }
 
-type v1AssignableUser struct {
+type assignableUserDTO struct {
 	ID        int    `json:"id"`
 	Username  string `json:"username"`
 	FullName  string `json:"full_name"`
@@ -132,7 +139,7 @@ type v1AssignableUser struct {
 	AvatarURL string `json:"avatar_url"`
 }
 
-type v1AgentRunResponse struct {
+type agentRunDTO struct {
 	ID        int        `json:"id"`
 	Status    string     `json:"status"`
 	JobKind   string     `json:"job_kind"`
@@ -142,7 +149,7 @@ type v1AgentRunResponse struct {
 	Error     string     `json:"error"`
 }
 
-// ─── TUI domain types (converters below adapt v1 wire to these) ──────
+// TUI domain types are kept independent from their wire DTOs.
 
 // User is an assignable user for the assignee picker.
 type User struct {
@@ -250,9 +257,8 @@ func (wi *WorkItem) DisplayKey(workspaceKey string) string {
 	return fmt.Sprintf("%s-%d", key, number)
 }
 
-// GetLevel calculates hierarchy level from path. v1 doesn't surface a path
-// string, so for v1-sourced items this returns 0; the work-item list groups
-// flat unless we later expand parent chains.
+// GetLevel calculates hierarchy level from path. Items without a path stay at
+// the root level.
 func (wi *WorkItem) GetLevel() int {
 	if wi.Path == "" {
 		return 0
@@ -287,9 +293,9 @@ type TimeProject struct {
 	Status       string  `json:"status"`
 }
 
-// ─── v1 → TUI converters ─────────────────────────────────────────────
+// Wire-to-domain converters sanitize server-provided text for terminal output.
 
-func workspaceFromV1(w v1WorkspaceResponse) Workspace {
+func workspaceFromDTO(w workspaceDTO) Workspace {
 	return Workspace{
 		ID:            w.ID,
 		Name:          SanitizeLine(w.Name),
@@ -300,7 +306,7 @@ func workspaceFromV1(w v1WorkspaceResponse) Workspace {
 	}
 }
 
-func workItemFromV1(it v1ItemResponse) WorkItem {
+func workItemFromDTO(it itemDTO) WorkItem {
 	wi := WorkItem{
 		ID:                  it.ID,
 		WorkspaceID:         it.WorkspaceID,
@@ -355,7 +361,7 @@ func workItemFromV1(it v1ItemResponse) WorkItem {
 	return wi
 }
 
-func commentFromV1(c v1CommentResponse) Comment {
+func commentFromDTO(c commentDTO) Comment {
 	out := Comment{
 		ID:        c.ID,
 		ItemID:    c.ItemID,

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -109,6 +110,11 @@ func (s *WorkspaceService) GetByID(id int) (*models.Workspace, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get workspace: %w", err)
 	}
+	categories, err := s.repo.GetTimeProjectCategories(id)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get workspace time project categories: %w", err)
+	}
+	ws.TimeProjectCategories = categories
 	return ws, nil
 }
 
@@ -349,6 +355,12 @@ func (s *WorkspaceService) Delete(id int) error {
 	}
 	if !exists {
 		return fmt.Errorf("workspace not found: %d: %w", id, repository.ErrNotFound)
+	}
+
+	// PostgreSQL workspaces have a per-workspace item-number sequence. SQLite
+	// treats this as a no-op.
+	if err := s.repo.DropItemSequence(int64(id)); err != nil {
+		slog.Warn("failed to drop item sequence for workspace", "workspace_id", id, "error", err)
 	}
 
 	// Delete workspace (cascade will handle related records)

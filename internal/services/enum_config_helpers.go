@@ -11,7 +11,8 @@ import (
 )
 
 const statusSelectColumns = `s.id, COALESCE(s.builtin_key, ''), s.name, s.description, s.category_id, s.is_default, s.created_at, s.updated_at,
-	       sc.name as category_name, COALESCE(sc.builtin_key, ''), sc.color as category_color`
+	       sc.name as category_name, COALESCE(sc.builtin_key, ''), sc.description as category_description,
+	       sc.color as category_color, sc.is_default as category_is_default, sc.is_completed`
 
 const statusSelectQuery = `
 	SELECT ` + statusSelectColumns + `
@@ -33,7 +34,8 @@ func scanStatus(scanner rowScanner) (EnumEntity, error) {
 	var status models.Status
 	err := scanner.Scan(&status.ID, &status.BuiltinKey, &status.Name, &status.Description, &status.CategoryID,
 		&status.IsDefault, &status.CreatedAt, &status.UpdatedAt,
-		&status.CategoryName, &status.CategoryBuiltinKey, &status.CategoryColor)
+		&status.CategoryName, &status.CategoryBuiltinKey, &status.CategoryDescription,
+		&status.CategoryColor, &status.CategoryIsDefault, &status.IsCompleted)
 	return &status, err
 }
 

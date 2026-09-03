@@ -15,10 +15,16 @@ type PaginatedResponse[T any] struct {
 	Total      int            `json:"total,omitempty"` // Some endpoints use total instead of pagination
 }
 
+type DataDocument[T any] struct {
+	Data T `json:"data"`
+}
+
 type PaginationMeta struct {
 	Page       int `json:"page"`
 	Limit      int `json:"limit"`
 	Total      int `json:"total"`
+	PageSize   int `json:"page_size"`
+	TotalItems int `json:"total_items"`
 	TotalPages int `json:"total_pages"`
 }
 
@@ -89,16 +95,26 @@ type Item struct {
 	ParentKey   string `json:"parent_key,omitempty"`
 	ParentTitle string `json:"parent_title,omitempty"`
 
-	// Related entities
-	Status     *StatusSummary     `json:"status,omitempty"`
-	Priority   *PrioritySummary   `json:"priority,omitempty"`
-	ItemType   *ItemTypeSummary   `json:"item_type,omitempty"`
-	Assignee   *UserSummary       `json:"assignee,omitempty"`
-	Creator    *UserSummary       `json:"creator,omitempty"`
-	Workspace  *WorkspaceSummary  `json:"workspace,omitempty"`
-	Milestones []MilestoneSummary `json:"milestones,omitempty"`
-	Iteration  *IterationSummary  `json:"iteration,omitempty"`
-	Project    *ProjectSummary    `json:"project,omitempty"`
+	// Canonical v2 relationship fields use IDs and display names directly.
+	StatusID      *int               `json:"status_id,omitempty"`
+	StatusName    string             `json:"status_name,omitempty"`
+	StatusColor   string             `json:"status_color,omitempty"`
+	PriorityID    *int               `json:"priority_id,omitempty"`
+	PriorityName  string             `json:"priority_name,omitempty"`
+	PriorityIcon  string             `json:"priority_icon,omitempty"`
+	PriorityColor string             `json:"priority_color,omitempty"`
+	ItemTypeID    *int               `json:"item_type_id,omitempty"`
+	ItemTypeName  string             `json:"item_type_name,omitempty"`
+	AssigneeID    *int               `json:"assignee_id,omitempty"`
+	AssigneeName  string             `json:"assignee_name,omitempty"`
+	CreatorID     *int               `json:"creator_id,omitempty"`
+	CreatorName   string             `json:"creator_name,omitempty"`
+	WorkspaceName string             `json:"workspace_name,omitempty"`
+	IterationID   *int               `json:"iteration_id,omitempty"`
+	IterationName string             `json:"iteration_name,omitempty"`
+	ProjectID     *int               `json:"project_id,omitempty"`
+	ProjectName   string             `json:"project_name,omitempty"`
+	Milestones    []MilestoneSummary `json:"milestones,omitempty"`
 
 	// Expanded collections
 	Comments    []Comment    `json:"comments,omitempty"`
@@ -144,7 +160,7 @@ type ItemCreateRequest struct {
 	CustomFields map[string]any `json:"custom_fields,omitempty"`
 }
 
-// ItemUpdateRequest is the body for PUT /rest/api/v1/items/{id}. It does NOT
+// ItemUpdateRequest is the merge patch for /rest/api/v2/items/{id}. It does not
 // carry status_id — status changes go through TransitionRequest on a
 // dedicated endpoint so workflow and condition rules are enforced.
 type ItemUpdateRequest struct {
@@ -164,12 +180,12 @@ type ItemUpdateRequest struct {
 	CustomFields map[string]any `json:"custom_fields,omitempty"`
 }
 
-// TransitionRequest is the body for POST /rest/api/v1/items/{id}/transition.
+// TransitionRequest is the body for POST /rest/api/v2/items/{id}/transition.
 type TransitionRequest struct {
 	ToStatusID int `json:"to_status_id"`
 }
 
-// ItemTypeChangeRequest is the body for POST /rest/api/v1/items/{id}/change-type.
+// ItemTypeChangeRequest is the body for POST /rest/api/v2/items/{id}/change-type.
 type ItemTypeChangeRequest struct {
 	TargetItemTypeID int  `json:"target_item_type_id"`
 	TargetStatusID   *int `json:"target_status_id,omitempty"`
@@ -316,6 +332,7 @@ type MilestoneCreateRequest struct {
 	Description string `json:"description,omitempty"`
 	TargetDate  string `json:"target_date,omitempty"`
 	Status      string `json:"status,omitempty"`
+	Scope       string `json:"scope,omitempty"`
 	WorkspaceID *int   `json:"workspace_id,omitempty"`
 }
 
@@ -369,8 +386,8 @@ type IterationSummary struct {
 	Name string `json:"name,omitempty"`
 }
 
-// Iteration mirrors the v1 IterationResponse payload returned by
-// /rest/api/v1/iterations and /rest/api/v1/workspaces/{id}/iterations.
+// Iteration is the canonical v2 iteration payload returned by
+// /rest/api/v2/iterations and /rest/api/v2/workspaces/{id}/iterations.
 type Iteration struct {
 	ID          int    `json:"id"`
 	Name        string `json:"name"`
@@ -393,15 +410,15 @@ type ProjectSummary struct {
 // Custom Fields
 // ============================================
 
-// CustomField mirrors the v1 CustomFieldResponse payload returned by
-// /rest/api/v1/custom-fields. Options is a JSON string for select /
+// CustomField is the canonical v2 custom-field payload returned by
+// /rest/api/v2/custom-fields. Options is a JSON string for select /
 // multiselect fields.
 type CustomField struct {
 	ID           int    `json:"id"`
 	Name         string `json:"name"`
 	FieldType    string `json:"field_type"`
 	Description  string `json:"description,omitempty"`
-	Options      string `json:"options,omitempty"`
+	Options      any    `json:"options"`
 	Required     bool   `json:"required"`
 	DisplayOrder int    `json:"display_order"`
 }
@@ -419,18 +436,12 @@ type Label struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// LabelListResponse is the {items:[...]} envelope used by the v1
-// global-label and item-label endpoints.
-type LabelListResponse struct {
-	Items []Label `json:"items"`
-}
-
-// ItemLabelSetRequest is the body for PUT /rest/api/v1/items/{id}/labels.
+// ItemLabelSetRequest is the body for PUT /rest/api/v2/items/{id}/labels.
 type ItemLabelSetRequest struct {
 	LabelIDs []int `json:"label_ids"`
 }
 
-// ItemLabelAddRequest is the body for POST /rest/api/v1/items/{id}/labels.
+// ItemLabelAddRequest is the body for POST /rest/api/v2/items/{id}/labels.
 type ItemLabelAddRequest struct {
 	LabelID int `json:"label_id"`
 }
@@ -448,10 +459,10 @@ type ItemTemplate struct {
 }
 
 // ItemTemplateListResponse is the envelope from GET
-// /rest/api/v1/workspaces/{id}/templates. MandatoryTemplateID is set when the
+// /rest/api/v2/workspaces/{id}/templates. MandatoryTemplateID is set when the
 // list was filtered by item_type_id and that type enforces a mandatory template.
 type ItemTemplateListResponse struct {
-	Items               []ItemTemplate `json:"items"`
+	Items               []ItemTemplate `json:"data"`
 	MandatoryTemplateID *int           `json:"mandatory_template_id,omitempty"`
 }
 
@@ -627,8 +638,7 @@ type TestResultUpdateRequest struct {
 // Pages (workspace knowledge / wiki)
 // ============================================
 
-// Page mirrors dto.PageResponse on the v1 surface; fields are kept
-// lowercase JSON to match what the server emits.
+// Page is the canonical v2 page payload.
 type Page struct {
 	ID                 int             `json:"id"`
 	WorkspaceID        int             `json:"workspace_id"`
@@ -1022,7 +1032,7 @@ type AssetStatusSummary struct {
 	Color string `json:"color,omitempty"`
 }
 
-// TimeProject mirrors the v1 time-projects response.
+// TimeProject is the canonical v2 time-project payload.
 type TimeProject struct {
 	ID            int            `json:"id"`
 	CustomerID    *int           `json:"customer_id,omitempty"`
@@ -1039,7 +1049,7 @@ type TimeProject struct {
 	TotalHours    *float64       `json:"total_hours,omitempty"`
 }
 
-// TimeWorklog mirrors the v1 worklog response.
+// TimeWorklog is the canonical v2 worklog payload.
 type TimeWorklog struct {
 	ID                  int      `json:"id"`
 	ProjectID           int      `json:"project_id"`
@@ -1062,7 +1072,7 @@ type TimeWorklog struct {
 	ProjectTotalHours   *float64 `json:"project_total_hours,omitempty"`
 }
 
-// TimeWorklogCreateRequest mirrors the v1 create-worklog request body.
+// TimeWorklogCreateRequest is the canonical v2 create-worklog request body.
 type TimeWorklogCreateRequest struct {
 	ProjectID       int    `json:"project_id"`
 	Description     string `json:"description"`
@@ -1075,7 +1085,7 @@ type TimeWorklogCreateRequest struct {
 	ItemKey         string `json:"item_key,omitempty"`
 }
 
-// TimerStartRequest mirrors the v1 start-timer request body.
+// TimerStartRequest is the v2 start-timer request body.
 type TimerStartRequest struct {
 	WorkspaceID int    `json:"workspace_id"`
 	ProjectID   int    `json:"project_id"`
@@ -1083,18 +1093,29 @@ type TimerStartRequest struct {
 	Description string `json:"description"`
 }
 
-// AssetImportJob mirrors dto.AssetImportJobResponse.
+type AssetCSVUpload struct {
+	UploadID  string   `json:"upload_id"`
+	Headers   []string `json:"headers"`
+	TotalRows int      `json:"total_rows"`
+	Delimiter string   `json:"delimiter"`
+}
+
+type AssetImportProgress struct {
+	Phase         string   `json:"phase"`
+	TotalRows     int      `json:"total_rows"`
+	ImportedCount int      `json:"imported_count"`
+	FailedCount   int      `json:"failed_count"`
+	Errors        []string `json:"errors,omitempty"`
+}
+
+// AssetImportJob is the v2 asynchronous import job.
 type AssetImportJob struct {
-	ID            int     `json:"id"`
-	SetID         int     `json:"set_id"`
-	AssetTypeID   int     `json:"asset_type_id,omitempty"`
-	Status        string  `json:"status"`
-	TotalRows     int     `json:"total_rows"`
-	ProcessedRows int     `json:"processed_rows"`
-	CreatedRows   int     `json:"created_rows"`
-	ErrorRows     int     `json:"error_rows"`
-	ErrorMessage  string  `json:"error_message,omitempty"`
-	CreatedAt     string  `json:"created_at"`
-	StartedAt     *string `json:"started_at,omitempty"`
-	CompletedAt   *string `json:"completed_at,omitempty"`
+	JobID        string               `json:"job_id"`
+	Status       string               `json:"status"`
+	Phase        string               `json:"phase,omitempty"`
+	Progress     *AssetImportProgress `json:"progress,omitempty"`
+	ErrorMessage string               `json:"error_message,omitempty"`
+	CreatedAt    *time.Time           `json:"created_at,omitempty"`
+	StartedAt    *time.Time           `json:"started_at,omitempty"`
+	CompletedAt  *time.Time           `json:"completed_at,omitempty"`
 }

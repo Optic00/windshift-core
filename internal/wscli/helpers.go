@@ -71,15 +71,9 @@ func itemDisplayFields(item *Item) (key, status, assignee, itemType string) {
 	if key == "" {
 		key = fmt.Sprintf("%s-%d", item.WorkspaceKey, item.WorkspaceItemNumber)
 	}
-	if item.Status != nil {
-		status = item.Status.Name
-	}
-	if item.Assignee != nil {
-		assignee = item.Assignee.FullName
-	}
-	if item.ItemType != nil {
-		itemType = item.ItemType.Name
-	}
+	status = item.StatusName
+	assignee = item.AssigneeName
+	itemType = item.ItemTypeName
 	return
 }
 

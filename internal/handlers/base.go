@@ -25,22 +25,6 @@ type AvailableField struct {
 	FieldType  string `json:"field_type,omitempty"`
 }
 
-// requireWorkspaceIDAndID parses {workspaceId} and {id} path params and pulls
-// the current user. Used by workspace-scoped resource handlers that don't need
-// a DB handle (services/repositories manage their own connections).
-func requireWorkspaceIDAndID(w http.ResponseWriter, r *http.Request) (workspaceID, id int, user *models.User, ok bool) {
-	workspaceID, ok = requireIDParam(w, r, "workspaceId")
-	if !ok {
-		return
-	}
-	id, ok = requireIDParam(w, r, "id")
-	if !ok {
-		return
-	}
-	user = utils.GetCurrentUser(r)
-	return
-}
-
 // RequireAuth checks if a user is authenticated and returns the user.
 // If not authenticated, it writes a 401 Unauthorized response.
 // Returns the user and true if authenticated, nil and false otherwise.

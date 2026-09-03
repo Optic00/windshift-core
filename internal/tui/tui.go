@@ -27,7 +27,7 @@ import (
 // usually deletes the token well before this on connection close.
 const tuiTokenLifetime = 24 * time.Hour
 
-// tuiTokenScopes is the minimal v1 permission set the TUI's APIClient needs:
+// tuiTokenScopes is the minimal v2 permission set the TUI's API client needs:
 // workspaces:read covers workspace list/get + workspace-scoped statuses;
 // items:read/write covers item CRUD + comments (which live under /items/{id}).
 // priorities:read covers the priority list. Time scopes cover project reads and
@@ -73,7 +73,7 @@ func NewTUIHandler(apiURL string, tokenManager *auth.TokenManager) func(s ssh.Se
 				LastName:       lastName,
 			}
 
-			// Mint a short-lived API token for the v1 endpoints. The narrow
+			// Mint a short-lived API token for the v2 endpoints. The narrow
 			// scope list reflects exactly what the TUI's APIClient calls.
 			if tokenManager != nil {
 				exp := time.Now().Add(tuiTokenLifetime)

@@ -13,6 +13,13 @@ import (
 	"windshift/internal/repository"
 )
 
+type ItemAttachmentBinary struct {
+	File             *os.File
+	OriginalFilename string
+	MimeType         string
+	FileSize         int64
+}
+
 var (
 	// ErrItemAttachmentDisabled is returned when attachment storage is not
 	// configured on this server.
@@ -80,6 +87,75 @@ func (s *ItemAttachmentService) UploadPolicy() (ItemAttachmentUploadPolicy, erro
 		_ = json.Unmarshal([]byte(settings.AllowedMimeTypes), &policy.AllowedMimeTypes)
 	}
 	return policy, nil
+}
+
+func (s *ItemAttachmentService) ListItemAttachments(userID, itemID, limit, offset int) ([]models.Attachment, int, error) {
+	allowed, err := s.attachmentService.CanViewItemAttachment(userID, itemID)
+	if err != nil {
+		return nil, 0, err
+	}
+	if !allowed {
+		return nil, 0, ErrItemAttachmentNotFound
+	}
+	return repository.NewAttachmentRepository(s.db).ListItem(itemID, limit, offset)
+}
+
+func (s *ItemAttachmentService) GetItemAttachment(userID, attachmentID int) (*models.Attachment, error) {
+	attachment, err := repository.NewAttachmentRepository(s.db).GetItem(attachmentID)
+	if err != nil {
+		return nil, ErrItemAttachmentNotFound
+	}
+	if attachment.ItemID == nil {
+		return nil, ErrItemAttachmentNotFound
+	}
+	allowed, err := s.attachmentService.CanViewItemAttachment(userID, *attachment.ItemID)
+	if err != nil {
+		return nil, err
+	}
+	if !allowed {
+		return nil, ErrItemAttachmentNotFound
+	}
+	return attachment, nil
+}
+
+func (s *ItemAttachmentService) OpenItemAttachment(userID, attachmentID int, thumbnail bool) (*ItemAttachmentBinary, error) {
+	if s.attachmentPath == "" {
+		return nil, ErrItemAttachmentDisabled
+	}
+	repo := repository.NewAttachmentRepository(s.db)
+	if thumbnail {
+		record, err := repo.GetItemThumbnailRecord(attachmentID)
+		if err != nil {
+			return nil, ErrItemAttachmentNotFound
+		}
+		allowed, err := s.attachmentService.permissionService.HasWorkspacePermission(userID, record.WorkspaceID, models.PermissionItemView)
+		if err != nil || !allowed {
+			return nil, ErrItemAttachmentNotFound
+		}
+		file, err := fileserve.OpenUnderRoot(s.attachmentPath, record.ThumbnailPath)
+		if err != nil {
+			return nil, ErrItemAttachmentNotFound
+		}
+		info, err := file.Stat()
+		if err != nil {
+			_ = file.Close()
+			return nil, err
+		}
+		return &ItemAttachmentBinary{File: file, OriginalFilename: "thumbnail.jpg", MimeType: "image/jpeg", FileSize: info.Size()}, nil
+	}
+	record, err := repo.GetItemDownloadRecord(attachmentID)
+	if err != nil {
+		return nil, ErrItemAttachmentNotFound
+	}
+	allowed, err := s.attachmentService.permissionService.HasWorkspacePermission(userID, record.WorkspaceID, models.PermissionItemView)
+	if err != nil || !allowed {
+		return nil, ErrItemAttachmentNotFound
+	}
+	file, err := fileserve.OpenUnderRoot(s.attachmentPath, record.FilePath)
+	if err != nil {
+		return nil, ErrItemAttachmentNotFound
+	}
+	return &ItemAttachmentBinary{File: file, OriginalFilename: record.OriginalFilename, MimeType: record.MimeType, FileSize: record.FileSize}, nil
 }
 
 // ValidatePublicFormAttachment performs every file-level check before a form

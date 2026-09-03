@@ -732,6 +732,10 @@ func (s *PageService) ListRevisions(pageID, limit, offset int) ([]models.PageRev
 	return s.pages.ListRevisions(pageID, limit, offset)
 }
 
+func (s *PageService) CountRevisions(pageID int) (int, error) {
+	return s.pages.CountRevisions(pageID)
+}
+
 // Restore overwrites a page's live content/title with the snapshot stored
 // in the given revision and records a new revision of change_type
 // 'restore'. The revision must belong to the same page; cross-page

@@ -23,7 +23,7 @@ var (
 var taskSearchCmd = &cobra.Command{
 	Use:   "search <query>",
 	Short: "Search work items by text or CQL filter",
-	Long: `Search items the caller can view via the v1 search endpoint.
+	Long: `Search items the caller can view via the v2 API.
 Multiple arguments are joined into a single query string. This is the same
 search as the top-level "ws search", scoped under "task" for discoverability;
 when a workspace is configured the results are filtered to it client-side.
@@ -918,7 +918,7 @@ func resolveItemTypeID(client *Client, input string, workspaceID *int) (int, err
 
 // parseCustomFieldFlags turns repeated --custom-field <field>=<value> flags
 // into the custom_fields wire map. Keys are resolved to custom-field IDs
-// (numeric input passes through; names resolve via the v1 custom-fields
+// (numeric input passes through; names resolve via the v2 custom-fields
 // read endpoint). Values pass through as strings — the server validates
 // them against the field type.
 func parseCustomFieldFlags(client *Client, pairs []string) (map[string]any, error) {
@@ -988,13 +988,13 @@ func resolveCustomFieldID(name string, defs []CustomField) (int, error) {
 	return 0, fmt.Errorf("unknown custom field %q. Available fields:\n  - %s", name, strings.Join(available, "\n  - "))
 }
 
-// parseProjectFlag parses the --project flag. The v1 API has no project
+// parseProjectFlag parses the --project flag. The v2 item API has no project
 // listing endpoint, so only numeric project IDs are accepted — no
 // name-based resolution.
 func parseProjectFlag(value string) (int, error) {
 	id, err := strconv.Atoi(value)
 	if err != nil || id <= 0 {
-		return 0, fmt.Errorf("invalid --project %q: expected a numeric project ID (the v1 API exposes no project listing, so names cannot be resolved)", value)
+		return 0, fmt.Errorf("invalid --project %q: expected a numeric project ID", value)
 	}
 	return id, nil
 }
@@ -1134,7 +1134,7 @@ func init() {
 	taskEditCmd.Flags().StringVar(&editEndDate, "end-date", "", "end date (YYYY-MM-DD)")
 	taskEditCmd.Flags().StringArrayVar(&editCustomFields, "custom-field", nil, "custom field value as <field>=<value> (repeatable; field is a name or numeric ID)")
 	taskEditCmd.Flags().StringVar(&editIteration, "iteration", "", "iteration (name or numeric ID)")
-	taskEditCmd.Flags().StringVar(&editProject, "project", "", "project ID (numeric only — the v1 API has no project listing endpoint)")
+	taskEditCmd.Flags().StringVar(&editProject, "project", "", "project ID (numeric only)")
 
 	// Create flags
 	taskCreateCmd.Flags().StringVarP(&createTitle, "title", "t", "", "task title (required)")
@@ -1150,5 +1150,5 @@ func init() {
 	taskCreateCmd.Flags().StringVar(&createEndDate, "end-date", "", "end date (YYYY-MM-DD)")
 	taskCreateCmd.Flags().StringArrayVar(&createCustomFields, "custom-field", nil, "custom field value as <field>=<value> (repeatable; field is a name or numeric ID)")
 	taskCreateCmd.Flags().StringVar(&createIteration, "iteration", "", "iteration (name or numeric ID)")
-	taskCreateCmd.Flags().StringVar(&createProject, "project", "", "project ID (numeric only — the v1 API has no project listing endpoint)")
+	taskCreateCmd.Flags().StringVar(&createProject, "project", "", "project ID (numeric only)")
 }

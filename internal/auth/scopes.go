@@ -57,7 +57,9 @@ const (
 	ScopeMCPAccess = "mcp:access"
 
 	// Collections
-	ScopeCollectionsRead = "collections:read"
+	ScopeCollectionsRead   = "collections:read"
+	ScopeCollectionsWrite  = "collections:write"
+	ScopeCollectionsDelete = "collections:delete"
 
 	// Actions (automation graphs — node-catalog discovery, action CRUD).
 	// :write is required for create/update; :read covers catalog + list/get.
@@ -194,6 +196,8 @@ var scopeCatalog = []ScopeInfo{
 	{Scope: ScopeItemTemplatesWrite, Resource: "item-templates", ResourceLabel: "Work item templates", Action: "write", Label: "Manage templates", Description: "Create and update work item templates."},
 
 	{Scope: ScopeCollectionsRead, Resource: "collections", ResourceLabel: "Collections", Action: "read", Label: "Read collections", Description: "Read collections and their reports."},
+	{Scope: ScopeCollectionsWrite, Resource: "collections", ResourceLabel: "Collections", Action: "write", Label: "Manage collections", Description: "Create, update, and share collections."},
+	{Scope: ScopeCollectionsDelete, Resource: "collections", ResourceLabel: "Collections", Action: "delete", Label: "Delete collections", Description: "Delete owned collections. Destructive — opt in deliberately."},
 
 	{Scope: ScopeUsersRead, Resource: "users", ResourceLabel: "Users", Action: "read", Label: "Read user directory", Description: "Read the user directory.", AgentDefault: true},
 

@@ -19,7 +19,7 @@ LDFLAGS=-ldflags="-s -w"
 # Directories
 FRONTEND_DIR=frontend
 
-.PHONY: all build build-linux build-windows build-windows-arm64 clean deps frontend help hooks lint dev-build release openapi openapi-check coding-agent-image dev-tools install-golangci-lint install-govulncheck install-deadcode ci-tools-check ci-go ci-frontend ci
+.PHONY: all build build-linux build-windows build-windows-arm64 clean deps frontend help hooks lint dev-build release openapi openapi-check openapi-v2-check coding-agent-image dev-tools install-golangci-lint install-govulncheck install-deadcode ci-tools-check ci-go ci-frontend ci
 
 # Tooling. swag is a tool dependency tracked in go.mod (see `tool` directive),
 # so the version is pinned and CI / dev installs always agree. `go tool swag`
@@ -160,6 +160,10 @@ openapi-check:
 			-out-yaml $$tmpdir/openapi.yaml \
 			-out-json $$tmpdir/openapi.json && \
 		echo "OpenAPI spec generates cleanly and validates as OpenAPI 3.0."
+	@$(MAKE) --no-print-directory openapi-v2-check
+
+openapi-v2-check:
+	@go run ./scripts/openapi-v2-check -spec api/openapi-v2.json
 
 # Run static analysis
 lint:
@@ -216,6 +220,6 @@ help:
 	@echo "  make dev-tools      - Install pinned Go tools used by CI"
 	@echo "  make hooks          - Install git pre-commit hook"
 	@echo "  make openapi        - Regenerate api/openapi.{yaml,json} from handler annotations"
-	@echo "  make openapi-check  - Verify api/openapi.{yaml,json} is up to date (used by hooks/CI)"
+	@echo "  make openapi-check  - Validate v1 generation and v2 route/spec parity (used by hooks/CI)"
 	@echo "  make coding-agent-image - Build the thin ws-carrier image (WS_IMAGE for windshift-agent)"
 	@echo "  make help           - Show this help message"

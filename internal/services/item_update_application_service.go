@@ -117,7 +117,7 @@ func (s *ItemUpdateApplicationService) UpdateJSONFields(actorUserID int, actorUs
 	if _, ok := fields["status_id"]; ok {
 		return nil, &validation.ValidationError{
 			Field:   "status_id",
-			Message: "status_id may not be set via item update; use POST /rest/api/v1/items/{id}/transition",
+			Message: "status_id may not be set via item update; use POST /rest/api/v2/items/{id}/transition",
 		}
 	}
 

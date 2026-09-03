@@ -208,11 +208,12 @@ func (r *UserRepository) GetByID(id int) (*models.User, error) {
 	var u models.User
 	var avatarURL, timezone, language sql.NullString
 	var requiresPasswordReset sql.NullBool
+	var agentOwnerUserID sql.NullInt64
 	err := r.db.QueryRow(`
-		SELECT id, email, username, first_name, last_name, is_active, avatar_url, requires_password_reset, timezone, language, COALESCE(is_agent, false), created_at, updated_at
+		SELECT id, email, username, first_name, last_name, is_active, avatar_url, requires_password_reset, timezone, language, COALESCE(is_agent, false), agent_owner_user_id, created_at, updated_at
 		FROM users WHERE id = ?
 	`, id).Scan(&u.ID, &u.Email, &u.Username, &u.FirstName, &u.LastName,
-		&u.IsActive, &avatarURL, &requiresPasswordReset, &timezone, &language, &u.IsAgent, &u.CreatedAt, &u.UpdatedAt)
+		&u.IsActive, &avatarURL, &requiresPasswordReset, &timezone, &language, &u.IsAgent, &agentOwnerUserID, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		return nil, notFoundOrWrap(err, fmt.Sprintf("get user %d", id))
 	}
@@ -225,6 +226,10 @@ func (r *UserRepository) GetByID(id int) (*models.User, error) {
 	u.Language = "en"
 	if language.Valid {
 		u.Language = language.String
+	}
+	if agentOwnerUserID.Valid {
+		ownerID := int(agentOwnerUserID.Int64)
+		u.AgentOwnerUserID = &ownerID
 	}
 	u.FullName = strings.TrimSpace(u.FirstName + " " + u.LastName)
 	return &u, nil
