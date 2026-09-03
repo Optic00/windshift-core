@@ -596,6 +596,7 @@
           priority_id: priorityId || null,
           assignee_id: assigneeId || null,
           milestone_ids: Array.isArray(milestoneIds) ? milestoneIds : [],
+          label_ids: selectedLabelIds(),
           iteration_id: iterationId || null,
           project_id: projectId || null,
           due_date: dateInputToISOString(dueDate),
@@ -618,9 +619,6 @@
       if (!isPersonal && !validateConfiguredFields()) return;
 
       const result = await api.items.create(createPayload());
-      if (!isPersonal && selectedLabelIds().length > 0) {
-        await api.labels.setForItem(result.id, selectedLabelIds());
-      }
       if (isPersonal) {
         // The newly created personal task lives in this tab's list - let the
         // active Personal view refresh itself. BroadcastChannel excludes the

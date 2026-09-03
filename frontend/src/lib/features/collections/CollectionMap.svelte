@@ -417,13 +417,11 @@
     }
 
     try {
-      // Create the item
       const newItem = await api.items.create({
         workspace_id: state.workspaceId,
         item_type_id: state.itemTypeId,
         title: state.title.trim(),
         description: '',
-        priority: 'medium',
         parent_id: parentId
       });
 
@@ -768,6 +766,7 @@
                   <!-- Add Card button when there are existing items -->
                   {#if !quickAddState[backboneItem.id]?.show && childItemsByParent[backboneItem.id]?.length > 0 && canAddChildren(backboneItem.id)}
                     <button
+                      data-testid="map-add-card-{backboneItem.id}"
                       onclick={() => initQuickAdd(backboneItem.id)}
                       class="w-full flex items-center gap-2 px-3 py-2 text-sm font-medium rounded border-2 border-dashed transition-colors "
                       style="border-color: var(--ctx-border, var(--ds-border)); background-color: transparent; color: var(--ds-text-subtle);"
@@ -789,6 +788,7 @@
                   {#if !quickAddState[backboneItem.id]?.show && (!childItemsByParent[backboneItem.id] || childItemsByParent[backboneItem.id].length === 0)}
                     {#if canAddChildren(backboneItem.id)}
                       <button
+                        data-testid="map-add-card-{backboneItem.id}"
                         onclick={() => initQuickAdd(backboneItem.id)}
                         class="w-full flex items-center gap-2 px-3 py-2 text-sm font-medium rounded border-2 border-dashed transition-colors"
                         style="border-color: var(--ctx-border, var(--ds-border)); background-color: transparent; color: var(--ds-text-subtle);"

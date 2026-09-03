@@ -57,6 +57,14 @@ func (c *itemCreation) validateAssignments() error {
 	if err := validation.ValidatePlanningAssignments(c.db, params.WorkspaceID, params.MilestoneIDs, params.IterationID); err != nil {
 		return err
 	}
+	labels := repository.NewLabelRepository(c.db)
+	for _, labelID := range params.LabelIDs {
+		if _, err := labels.GetByID(labelID); errors.Is(err, repository.ErrNotFound) {
+			return &validation.ValidationError{Field: "label_ids", Message: fmt.Sprintf("Label %d not found", labelID)}
+		} else if err != nil {
+			return fmt.Errorf("validate label %d: %w", labelID, err)
+		}
+	}
 	if params.ValidatingUserID > 0 && params.AssigneeID != nil {
 		actionable, err := c.assigneeCanAct()
 		if err != nil {
@@ -273,6 +281,11 @@ func (c *itemCreation) extendTransaction(tx database.Tx, itemID int) error {
 			c.now,
 		); err != nil {
 			return fmt.Errorf("failed to attach milestone %d to new item: %w", milestoneID, err)
+		}
+	}
+	if len(c.params.LabelIDs) > 0 {
+		if err := repository.NewLabelRepository(c.db).ReplaceItemLabelsTx(c.ctx, tx, itemID, c.params.LabelIDs); err != nil {
+			return err
 		}
 	}
 	if c.params.AfterCreate != nil {

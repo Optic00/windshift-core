@@ -229,10 +229,6 @@
         }
 
         let result = await api.items.create(formData);
-        if (formData.label_ids?.length > 0) {
-          const labels = await api.labels.setForItem(result.id, formData.label_ids);
-          result = { ...result, labels: labels || [] };
-        }
         const originalDescription = formData.description || '';
         const updatedDescription = await uploadPendingDescriptionImages(result.id, originalDescription);
         if (updatedDescription !== originalDescription) {

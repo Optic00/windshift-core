@@ -45,6 +45,7 @@ type itemCreateRequest struct {
 	EstimateMinutes   *int           `json:"estimate_minutes"`
 	CustomFieldValues map[string]any `json:"custom_field_values"`
 	MilestoneIDs      []int          `json:"milestone_ids"`
+	LabelIDs          []int          `json:"label_ids"`
 }
 
 type itemPatchRequest struct {
@@ -131,7 +132,7 @@ func registerItemRoutes(builder *routeBuilder, app *services.ItemApplicationServ
 			AssigneeID: input.AssigneeID, ParentID: input.ParentID,
 			RelatedWorkItemID: input.RelatedWorkItemID, StoryPoints: input.StoryPoints,
 			EstimateMinutes: input.EstimateMinutes, CustomFieldValues: input.CustomFieldValues,
-			MilestoneIDs: input.MilestoneIDs,
+			MilestoneIDs: input.MilestoneIDs, LabelIDs: input.LabelIDs,
 		})
 		return result, itemError(err)
 	})
