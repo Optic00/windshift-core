@@ -13,11 +13,20 @@ import (
 
 type document struct {
 	OpenAPI string                          `json:"openapi"`
+	Tags    []tag                           `json:"tags"`
 	Paths   map[string]map[string]operation `json:"paths"`
 }
 
+type tag struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
 type operation struct {
-	Security []map[string][]string `json:"security"`
+	OperationID string                `json:"operationId"`
+	Tags        []string              `json:"tags"`
+	Summary     string                `json:"summary"`
+	Security    []map[string][]string `json:"security"`
 }
 
 func main() {
@@ -35,6 +44,7 @@ func main() {
 	if !strings.HasPrefix(spec.OpenAPI, "3.") {
 		fail("openapi version %q is not 3.x", spec.OpenAPI)
 	}
+	declaredTags := validateTags(spec.Tags)
 
 	want := make(map[string]v2.Route)
 	for _, route := range v2.Inventory() {
@@ -48,6 +58,7 @@ func main() {
 		if !ok {
 			fail("route %s is missing", key)
 		}
+		validateDocumentation(route, operation, declaredTags)
 		validateSecurity(route, operation)
 	}
 
@@ -63,6 +74,43 @@ func main() {
 		}
 	}
 	fmt.Printf("API v2 OpenAPI parity is valid (%d operations).\n", len(want))
+}
+
+func validateTags(tags []tag) map[string]struct{} {
+	declared := make(map[string]struct{}, len(tags))
+	for _, tag := range tags {
+		name := strings.TrimSpace(tag.Name)
+		if name == "" {
+			fail("OpenAPI tag name is empty")
+		}
+		if strings.TrimSpace(tag.Description) == "" {
+			fail("OpenAPI tag %q has no description", name)
+		}
+		if _, exists := declared[name]; exists {
+			fail("OpenAPI tag %q is declared more than once", name)
+		}
+		declared[name] = struct{}{}
+	}
+	if len(declared) == 0 {
+		fail("OpenAPI document has no declared tags")
+	}
+	return declared
+}
+
+func validateDocumentation(route v2.Route, operation operation, declaredTags map[string]struct{}) {
+	if len(operation.Tags) != 1 {
+		fail("route %s %s must declare exactly one domain tag", route.Method, route.Path)
+	}
+	if _, ok := declaredTags[operation.Tags[0]]; !ok {
+		fail("route %s %s uses undeclared tag %q", route.Method, route.Path, operation.Tags[0])
+	}
+	summary := strings.TrimSpace(operation.Summary)
+	if summary == "" {
+		fail("route %s %s has no summary", route.Method, route.Path)
+	}
+	if len(summary) > 80 {
+		fail("route %s %s summary is longer than 80 characters", route.Method, route.Path)
+	}
 }
 
 func validateSecurity(route v2.Route, operation operation) {
