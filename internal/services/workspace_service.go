@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -376,12 +377,16 @@ func (s *WorkspaceService) Delete(id int) error {
 		if err := s.repo.DeleteTx(tx, id); err != nil {
 			return fmt.Errorf("delete workspace: %w", err)
 		}
-		if err := s.repo.DropItemSequenceTx(tx, int64(id)); err != nil {
-			return fmt.Errorf("drop workspace item sequence: %w", err)
-		}
 		return nil
 	}); err != nil {
 		return err
+	}
+
+	// The sequence is auxiliary cleanup. Run it after the workspace deletion
+	// commits so a failed DROP cannot roll back an otherwise valid deletion or
+	// leave a PostgreSQL transaction permanently aborted.
+	if err := s.repo.DropItemSequence(int64(id)); err != nil {
+		slog.Warn("failed to drop item sequence for workspace", "workspace_id", id, "error", err)
 	}
 
 	repository.InvalidateItemListCountCache(s.db, id)

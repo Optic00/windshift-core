@@ -190,6 +190,28 @@ func TestZammadTicketLinkMetadataMigrationBackendParity(t *testing.T) {
 	}
 }
 
+func TestZammadCanonicalWorkspaceScopeMigrationChecksumStability(t *testing.T) {
+	var migration *Migration
+	for i := range Catalog {
+		if Catalog[i].Version == "20260901_zammad_canonical_workspace_scope" {
+			migration = &Catalog[i]
+			break
+		}
+	}
+	if migration == nil {
+		t.Fatal("Zammad canonical workspace scope migration is missing")
+	}
+
+	for driver, want := range map[string]string{
+		driverSQLite:   "164fb8cb79ee0f5705aa5891540576995bc030260effc89c75a6de470e45a33f",
+		driverPostgres: "4d1561e94cff763531c5c68a749f5f32bc3f3aa2feb2493ac7911d697bd450b4",
+	} {
+		if got := migration.checksum(driver); got != want {
+			t.Fatalf("historical %s migration checksum changed: got %s, want %s", driver, got, want)
+		}
+	}
+}
+
 func TestZammadTicketSyncLockOwnerMigrationBackendParity(t *testing.T) {
 	var migration *Migration
 	for i := range Catalog {

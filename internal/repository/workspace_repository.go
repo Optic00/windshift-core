@@ -730,14 +730,3 @@ func (r *WorkspaceRepository) DropItemSequence(workspaceID int64) error {
 	_, err := r.db.ExecWrite(fmt.Sprintf(`DROP SEQUENCE IF EXISTS %q`, seqName))
 	return err
 }
-
-// DropItemSequenceTx removes the per-workspace sequence inside the caller's
-// transaction. No-op on SQLite.
-func (r *WorkspaceRepository) DropItemSequenceTx(tx database.Tx, workspaceID int64) error {
-	if r.db.GetDriverName() != "postgres" {
-		return nil
-	}
-	seqName := fmt.Sprintf("workspace_%d_item_seq", workspaceID)
-	_, err := tx.ExecWrite(fmt.Sprintf(`DROP SEQUENCE IF EXISTS %q`, seqName))
-	return err
-}
