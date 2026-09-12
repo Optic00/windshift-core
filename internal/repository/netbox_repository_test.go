@@ -3,6 +3,9 @@ package repository
 import (
 	"errors"
 	"fmt"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -19,27 +22,79 @@ type netBoxRepositoryFixture struct {
 	connection *models.NetBoxConnection
 }
 
+func newNetBoxRepositoryTestDB(t *testing.T, driver string) database.Database {
+	t.Helper()
+	if driver == "sqlite" {
+		db, err := database.NewSQLiteDB(filepath.Join(t.TempDir(), "netbox-repository.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = db.Close() })
+		return db
+	}
+	dsn := os.Getenv("WINDSHIFT_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("WINDSHIFT_TEST_POSTGRES_DSN is not set")
+	}
+	parsed, err := url.Parse(dsn)
+	if err != nil || (parsed.Scheme != "postgres" && parsed.Scheme != "postgresql") {
+		t.Fatal("WINDSHIFT_TEST_POSTGRES_DSN must be a PostgreSQL URI")
+	}
+	admin, err := database.NewPostgresDB(dsn, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = admin.Close() })
+	schema := fmt.Sprintf("netbox_repository_%d", time.Now().UnixNano())
+	if _, err := admin.Exec("CREATE SCHEMA " + schema); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if _, err := admin.Exec("DROP SCHEMA " + schema + " CASCADE"); err != nil {
+			t.Errorf("remove isolated NetBox repository test schema: %v", err)
+		}
+	})
+	query := parsed.Query()
+	query.Set("search_path", schema)
+	parsed.RawQuery = query.Encode()
+	db, err := database.NewPostgresDB(parsed.String(), 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return db
+}
+
 func newNetBoxRepositoryFixture(t *testing.T, driver string) *netBoxRepositoryFixture {
 	t.Helper()
-	var base *zammadLeaseFixture
-	if driver == "postgres" {
-		base = newZammadPostgresReviewFixture(t)
-	} else {
-		base = newZammadLeaseFixture(t)
+	db := newNetBoxRepositoryTestDB(t, driver)
+	if err := db.Initialize(); err != nil {
+		t.Fatal(err)
 	}
-	f := &netBoxRepositoryFixture{db: base.db, repo: NewNetBoxRepository(base.db)}
-	// Keep the common schema/users/items fixture, but no Zammad lifecycle
-	// guards: these tests must prove NetBox's own FK behavior independently.
 	for _, query := range []string{
-		"DELETE FROM integration_providers WHERE id = 'zammad-test'",
+		`INSERT INTO users (id, email, username, first_name, last_name)
+			VALUES (1, 'netbox-repository@example.test', 'netbox-repository', 'NetBox', 'Repository')`,
+		"INSERT INTO workspaces (id, name, key) VALUES (1, 'NetBox tests', 'NBT')",
 		"INSERT INTO workspaces (id, name, key) VALUES (2, 'Other NetBox workspace', 'NB2')",
-		"UPDATE action_credentials SET applies_to_all_workspaces = false WHERE id = 1",
+		`INSERT INTO action_credentials
+			(id, name, credential_type, applies_to_all_workspaces, encrypted_secret, is_enabled)
+			VALUES (1, 'NetBox test credential', 'custom_header', false, 'test-ciphertext', true)`,
 		"INSERT INTO action_credential_workspaces (credential_id, workspace_id) VALUES (1, 1)",
 	} {
-		if _, err := f.db.ExecWrite(query); err != nil {
+		if _, err := db.ExecWrite(query); err != nil {
 			t.Fatal(err)
 		}
 	}
+	var statusID int
+	if err := db.QueryRow("SELECT id FROM statuses ORDER BY id LIMIT 1").Scan(&statusID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecWrite(`INSERT INTO items
+		(id, workspace_id, workspace_item_number, title, description, frac_index, status_id, creator_id, last_active_at)
+		VALUES (1, 1, 1, 'NetBox repository test', '', 'a0', ?, 1, CURRENT_TIMESTAMP)`, statusID); err != nil {
+		t.Fatal(err)
+	}
+	f := &netBoxRepositoryFixture{db: db, repo: NewNetBoxRepository(db)}
 	actor := 1
 	f.connection = &models.NetBoxConnection{
 		ProviderID: "netbox-test", Slug: "netbox-test", Name: "NetBox test", Enabled: true,
