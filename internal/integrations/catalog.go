@@ -45,6 +45,10 @@ var providerCatalog = map[models.IntegrationProviderType]ProviderCapabilities{
 		CredentialOwner: CredentialOwnerSystem,
 		OAuth:           true,
 	},
+	models.IntegrationProviderNetBox: {
+		Type:            models.IntegrationProviderNetBox,
+		CredentialOwner: CredentialOwnerSystem,
+	},
 }
 
 // Capabilities returns the declared capabilities for a known provider type.

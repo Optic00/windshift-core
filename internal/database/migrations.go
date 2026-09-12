@@ -1044,7 +1044,95 @@ var Catalog = []Migration{
 			ALTER TABLE themes ADD COLUMN logo_url TEXT;
 		`,
 	},
+	{
+		Version: "20260912_netbox_integration",
+		Name:    "Add read-only NetBox connections and item snapshots",
+		CheckSQLite: `SELECT CASE WHEN
+			(SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('netbox_connections', 'netbox_item_links')) = 2
+			AND (SELECT COUNT(*) FROM pragma_table_info('netbox_connections') WHERE name='config_revision') = 1
+			AND (SELECT COUNT(*) FROM pragma_table_info('netbox_item_links') WHERE name='revision') = 1
+		THEN 1 ELSE 0 END`,
+		CheckPostgres: `SELECT CASE WHEN
+			(SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name IN ('netbox_connections', 'netbox_item_links')) = 2
+			AND (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='netbox_connections' AND column_name='config_revision') = 1
+			AND (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='netbox_item_links' AND column_name='revision') = 1
+		THEN 1 ELSE 0 END`,
+		SQLite:   netBoxSchemaSQLite,
+		Postgres: netBoxSchemaPostgres,
+	},
 }
+
+const netBoxSchemaSQLite = `
+-- Read-only NetBox snapshots, intentionally separate from generic item links.
+CREATE TABLE IF NOT EXISTS netbox_connections (
+	provider_id TEXT PRIMARY KEY,
+	credential_id INTEGER UNIQUE NOT NULL,
+	base_url TEXT NOT NULL,
+	auth_scheme TEXT NOT NULL CHECK (auth_scheme IN ('bearer', 'token')),
+	config_revision INTEGER NOT NULL DEFAULT 1 CHECK (config_revision > 0),
+	created_by INTEGER,
+	created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	FOREIGN KEY (provider_id) REFERENCES integration_providers(id) ON DELETE CASCADE,
+	FOREIGN KEY (credential_id) REFERENCES action_credentials(id) ON DELETE RESTRICT,
+	FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS netbox_item_links (
+	id TEXT PRIMARY KEY,
+	item_id INTEGER NOT NULL,
+	provider_id TEXT NOT NULL,
+	object_type TEXT NOT NULL CHECK (object_type IN ('dcim.device', 'virtualization.virtualmachine')),
+	object_id INTEGER NOT NULL CHECK (object_id > 0),
+	snapshot_json TEXT NOT NULL CHECK (length(CAST(snapshot_json AS BLOB)) <= 16384),
+	revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
+	snapshot_updated_at DATETIME NOT NULL,
+	created_by INTEGER,
+	created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
+	FOREIGN KEY (provider_id) REFERENCES netbox_connections(provider_id) ON DELETE CASCADE,
+	FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+	UNIQUE(item_id, provider_id, object_type, object_id)
+);
+CREATE INDEX IF NOT EXISTS idx_netbox_item_links_provider ON netbox_item_links(provider_id);
+CREATE INDEX IF NOT EXISTS idx_netbox_item_links_object ON netbox_item_links(provider_id, object_type, object_id);
+`
+
+const netBoxSchemaPostgres = `
+-- Read-only NetBox snapshots, intentionally separate from generic item links.
+CREATE TABLE IF NOT EXISTS netbox_connections (
+	provider_id TEXT PRIMARY KEY,
+	credential_id INTEGER UNIQUE NOT NULL,
+	base_url TEXT NOT NULL,
+	auth_scheme TEXT NOT NULL CHECK (auth_scheme IN ('bearer', 'token')),
+	config_revision BIGINT NOT NULL DEFAULT 1 CHECK (config_revision > 0),
+	created_by INTEGER,
+	created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	FOREIGN KEY (provider_id) REFERENCES integration_providers(id) ON DELETE CASCADE,
+	FOREIGN KEY (credential_id) REFERENCES action_credentials(id) ON DELETE RESTRICT,
+	FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS netbox_item_links (
+	id TEXT PRIMARY KEY,
+	item_id INTEGER NOT NULL,
+	provider_id TEXT NOT NULL,
+	object_type TEXT NOT NULL CHECK (object_type IN ('dcim.device', 'virtualization.virtualmachine')),
+	object_id BIGINT NOT NULL CHECK (object_id > 0),
+	snapshot_json TEXT NOT NULL CHECK (octet_length(snapshot_json) <= 16384),
+	revision BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0),
+	snapshot_updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
+	created_by INTEGER,
+	created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
+	FOREIGN KEY (provider_id) REFERENCES netbox_connections(provider_id) ON DELETE CASCADE,
+	FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+	UNIQUE(item_id, provider_id, object_type, object_id)
+);
+CREATE INDEX IF NOT EXISTS idx_netbox_item_links_provider ON netbox_item_links(provider_id);
+CREATE INDEX IF NOT EXISTS idx_netbox_item_links_object ON netbox_item_links(provider_id, object_type, object_id);
+`
 
 func applySQLiteSSOAttributeMappingDefault(db Database) (retErr error) {
 	sqliteDB, ok := db.(*SQLiteDB)

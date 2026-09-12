@@ -1048,6 +1048,8 @@ func (s *Server) initialize() error {
 	zammadService.SetEventCoordinator(eventCoordinator)
 	zammadService.SetOAuthEncryption(scmProviderHandler.GetEncryption())
 	zammadHandler := handlers.NewZammadHandler(repository.NewItemRepository(s.db), zammadService, permService, logger.NewAuditor(s.db))
+	netBoxService := services.NewNetBoxService(s.db, repository.NewNetBoxRepository(s.db), actionCredentialService, permService)
+	netBoxHandler := handlers.NewNetBoxHandler(netBoxService, repository.NewItemRepository(s.db), permService, logger.NewAuditor(s.db))
 	integrationOAuthHandler.RegisterSystemOAuthFlow(models.IntegrationProviderZammad, zammadService, logger.NewAuditor(s.db))
 	s.zammadSyncScheduler = scheduler.NewZammadSyncScheduler(zammadService)
 	s.zammadSyncScheduler.Start()
@@ -1589,6 +1591,7 @@ func (s *Server) initialize() error {
 			ItemLinks:   integrationItemLinksHandler,
 			TodoistSync: todoistSyncHandler,
 			Zammad:      zammadHandler,
+			NetBox:      netBoxHandler,
 		},
 		Pages: routes.PageHandlers{
 			KnowledgeSearch: knowledgeSearchHandler,

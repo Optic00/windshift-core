@@ -13,6 +13,7 @@ type IntegrationHandlers struct {
 	ItemLinks   *handlers.IntegrationItemLinksHandler
 	TodoistSync *handlers.TodoistSyncHandler
 	Zammad      *handlers.ZammadHandler
+	NetBox      *handlers.NetBoxHandler
 }
 
 // RegisterIntegrationRoutes registers integration provider, OAuth, and item link routes.
@@ -65,6 +66,20 @@ func RegisterIntegrationRoutes(deps *Deps) {
 	api.HandleH("PUT /zammad-ticket-links/{linkId}", auth(http.HandlerFunc(deps.Integrations.Zammad.UpdateTicketLink)))
 	api.HandleH("DELETE /zammad-ticket-links/{linkId}", auth(http.HandlerFunc(deps.Integrations.Zammad.DeleteTicketLink)))
 	api.HandleH("POST /zammad-ticket-links/{linkId}/refresh", auth(http.HandlerFunc(deps.Integrations.Zammad.RefreshTicket)))
+
+	// NetBox is a read-only remote source with local, workspace-scoped links.
+	api.HandleH("GET /admin/netbox-connections", admin(http.HandlerFunc(deps.Integrations.NetBox.ListConnections)))
+	api.HandleH("POST /admin/netbox-connections", admin(http.HandlerFunc(deps.Integrations.NetBox.CreateConnection)))
+	api.HandleH("GET /admin/netbox-connections/{id}", admin(http.HandlerFunc(deps.Integrations.NetBox.GetConnection)))
+	api.HandleH("PUT /admin/netbox-connections/{id}", admin(http.HandlerFunc(deps.Integrations.NetBox.UpdateConnection)))
+	api.HandleH("DELETE /admin/netbox-connections/{id}", admin(http.HandlerFunc(deps.Integrations.NetBox.DeleteConnection)))
+	api.HandleH("POST /admin/netbox-connections/{id}/test", admin(http.HandlerFunc(deps.Integrations.NetBox.TestConnection)))
+	api.HandleH("GET /workspaces/{workspaceId}/netbox-connections", auth(http.HandlerFunc(deps.Integrations.NetBox.ListWorkspaceConnections)))
+	api.HandleH("GET /workspaces/{workspaceId}/netbox-connections/{id}/search", auth(http.HandlerFunc(deps.Integrations.NetBox.Search)))
+	api.HandleH("GET /items/{id}/netbox-links", auth(http.HandlerFunc(deps.Integrations.NetBox.GetItemLinks)))
+	api.HandleH("POST /items/{id}/netbox-links", auth(http.HandlerFunc(deps.Integrations.NetBox.LinkObject)))
+	api.HandleH("DELETE /items/{id}/netbox-links/{linkId}", auth(http.HandlerFunc(deps.Integrations.NetBox.Unlink)))
+	api.HandleH("POST /items/{id}/netbox-links/{linkId}/refresh", auth(http.HandlerFunc(deps.Integrations.NetBox.RefreshLink)))
 
 	// Item links
 	api.HandleH("GET /items/{id}/integration-links", auth(http.HandlerFunc(deps.Integrations.ItemLinks.GetItemLinks)))

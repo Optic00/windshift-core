@@ -1,0 +1,15 @@
+export default { netbox: {
+  tab: 'NetBox', connections: 'NetBox-Verbindungen', connectionsDescription: 'Verknüpfe Arbeitsobjekte mit ausgewählten NetBox-Geräten und virtuellen Maschinen.',
+  addConnection: 'Verbindung hinzufügen', editConnection: 'Verbindung bearbeiten', noConnections: 'Keine NetBox-Verbindung eingerichtet', loadFailed: 'NetBox-Verbindungen konnten nicht geladen werden',
+  name: 'Name', slug: 'Kurzname', baseUrl: 'HTTPS-Basis-URL', authScheme: 'Token-Version', bearer: 'API-v2-Bearer-Token', legacy: 'Altes API-Token', apiToken: 'API-Token', enabled: 'Aktiv',
+  immutableHint: 'Basis-URL, Kurzname und Token-Version können nicht geändert werden. Lege dafür eine neue Verbindung an.', tokenPreserve: 'Leer lassen, um das gespeicherte Token beizubehalten.',
+  allWorkspaces: 'Alle Arbeitsbereiche erlauben', allowedWorkspaces: 'Erlaubte Arbeitsbereiche', selectWorkspace: 'Wähle mindestens einen Arbeitsbereich.',
+  sharingNotice: 'Daten dieses NetBox-Dienstkontos sind für alle Windshift-Leser der erlaubten Arbeitsbereiche sichtbar. Verwende ein minimal berechtigtes Nur-Lese-Token.',
+  save: 'Verbindung speichern', created: 'NetBox-Verbindung angelegt', updated: 'NetBox-Verbindung aktualisiert', saveFailed: 'NetBox-Verbindung konnte nicht gespeichert werden',
+  test: 'Verbindung testen', testSucceeded: 'NetBox-Verbindung erfolgreich', testFailed: 'NetBox-Verbindung fehlgeschlagen', noAllowedWorkspace: 'Die Verbindung hat keinen erlaubten Arbeitsbereich. Wähle einen aus, bevor du den Objektzugriff testest.',
+  enableBeforeTesting: 'Verbindung vor dem Testen aktivieren', editConflict: 'Diese Verbindung wurde während der Bearbeitung geändert. Verwirf deine Änderungen und lade sie neu, bevor du weiterarbeitest.', discardAndReload: 'Änderungen verwerfen und neu laden',
+  delete: 'Verbindung löschen', deleteConfirm: '„{name}“ löschen? Lokale Snapshots und Verknüpfungen werden entfernt. NetBox-Objekte bleiben unverändert.', deleted: 'NetBox-Verbindung gelöscht', deleteFailed: 'NetBox-Verbindung konnte nicht gelöscht werden',
+  panelTitle: 'NetBox', linkObject: 'Objekt verknüpfen', noLinks: 'Noch kein NetBox-Objekt verknüpft', noAvailableConnections: 'Für diesen Arbeitsbereich ist keine NetBox-Verbindung verfügbar.', loadLinksFailed: 'NetBox-Verknüpfungen konnten nicht geladen werden',
+  connection: 'Verbindung', type: 'Typ', devices: 'Geräte', virtualMachines: 'Virtuelle Maschinen', search: 'Suchen', searchPlaceholder: 'Name oder Suchbegriff', searchHint: 'Mindestens 2 Zeichen eingeben.', noResults: 'Keine passenden Objekte gefunden.', previous: 'Zurück', next: 'Weiter', link: 'Verknüpfen', linkFailed: 'NetBox-Objekt konnte nicht verknüpft werden',
+  open: 'In NetBox öffnen', refresh: 'Aktualisieren', unlink: 'Verknüpfung lösen', refreshFailed: 'Aktualisierung fehlgeschlagen. Der bisherige Snapshot bleibt erhalten.', unlinkFailed: 'NetBox-Verknüpfung konnte nicht gelöst werden', snapshotFrom: 'Snapshot vom {date}', status: 'Status', site: 'Standort', role: 'Rolle', ipv4: 'IPv4', ipv6: 'IPv6', close: 'Schließen'
+} };

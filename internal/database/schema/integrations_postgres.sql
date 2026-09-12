@@ -202,3 +202,39 @@ CREATE INDEX IF NOT EXISTS idx_zammad_ticket_links_item ON zammad_ticket_links(i
 CREATE INDEX IF NOT EXISTS idx_zammad_ticket_links_sync ON zammad_ticket_links(sync_state, last_synced_at);
 
 -- migration: 20260829_zammad_integration
+
+-- Read-only NetBox snapshots, intentionally separate from generic item links.
+CREATE TABLE IF NOT EXISTS netbox_connections (
+	provider_id TEXT PRIMARY KEY,
+	credential_id INTEGER UNIQUE NOT NULL,
+	base_url TEXT NOT NULL,
+	auth_scheme TEXT NOT NULL CHECK (auth_scheme IN ('bearer', 'token')),
+	config_revision BIGINT NOT NULL DEFAULT 1 CHECK (config_revision > 0),
+	created_by INTEGER,
+	created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	FOREIGN KEY (provider_id) REFERENCES integration_providers(id) ON DELETE CASCADE,
+	FOREIGN KEY (credential_id) REFERENCES action_credentials(id) ON DELETE RESTRICT,
+	FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS netbox_item_links (
+	id TEXT PRIMARY KEY,
+	item_id INTEGER NOT NULL,
+	provider_id TEXT NOT NULL,
+	object_type TEXT NOT NULL CHECK (object_type IN ('dcim.device', 'virtualization.virtualmachine')),
+	object_id BIGINT NOT NULL CHECK (object_id > 0),
+	snapshot_json TEXT NOT NULL CHECK (octet_length(snapshot_json) <= 16384),
+	revision BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0),
+	snapshot_updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
+	created_by INTEGER,
+	created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
+	FOREIGN KEY (provider_id) REFERENCES netbox_connections(provider_id) ON DELETE CASCADE,
+	FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+	UNIQUE(item_id, provider_id, object_type, object_id)
+);
+CREATE INDEX IF NOT EXISTS idx_netbox_item_links_provider ON netbox_item_links(provider_id);
+CREATE INDEX IF NOT EXISTS idx_netbox_item_links_object ON netbox_item_links(provider_id, object_type, object_id);
+
+-- migration: 20260912_netbox_integration

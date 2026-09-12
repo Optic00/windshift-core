@@ -32,6 +32,16 @@ cx
 !frontend/src/lib/features/items/ZammadLinkResolver.spec.js
 !internal/repository/zammad_repository_test.go
 
+# NetBox's public MVP ships its synthetic regression coverage with the code.
+!internal/integrations/netbox/client_test.go
+!internal/integrations/netbox/transport_test.go
+!internal/database/netbox_schema_test.go
+!internal/repository/netbox_repository_test.go
+!internal/services/netbox_service_test.go
+!internal/handlers/netbox_test.go
+!frontend/src/lib/settings/NetBoxConnectionManager.spec.js
+!frontend/src/lib/features/items/NetBoxItemPanel.spec.js
+
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
 
